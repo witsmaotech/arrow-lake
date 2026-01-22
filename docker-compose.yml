@@ -1,7 +1,6 @@
 # DIntelliHub 本地开发环境
 # 使用Docker Compose快速启动开发环境
-
-version: '3.8'
+# 注意: LanceDB作为Python库使用，不需要单独的Docker容器
 
 services:
   # PostgreSQL 元数据库
@@ -16,7 +15,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      - "15432:5432"  # 使用15432避免与系统PostgreSQL冲突
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U admin -d gravitino"]
       interval: 10s
@@ -65,26 +64,16 @@ services:
       echo 'MinIO buckets created successfully';
       "
 
-  # LanceDB 向量数据库
-  lancedb:
-    image: lancedb/lancedb:latest
-    container_name: dintellihub-lancedb
-    volumes:
-      - lancedb_data:/data
-    ports:
-      - "8080:8080"
-    networks:
-      - dintellihub-net
-    command: ["lancedb", "serve", "--host", "0.0.0.0", "--port", "8080"]
-
   # Redis 缓存 (可选)
+  # 注意: LanceDB作为Python库在应用代码中使用，数据存储在本地文件系统
+  # 示例: db = lancedb.connect("/data/lancedb")
   redis:
     image: redis:7-alpine
     container_name: dintellihub-redis
     volumes:
       - redis_data:/data
     ports:
-      - "6379:6379"
+      - "16379:6379"  # 使用16379避免与系统Redis冲突
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -98,13 +87,13 @@ services:
     image: prom/prometheus:latest
     container_name: dintellihub-prometheus
     volumes:
-      - ./deployments/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
       - prometheus_data:/prometheus
     ports:
       - "9090:9090"
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
+      # 使用默认配置，避免挂载不存在的配置文件
     networks:
       - dintellihub-net
 
@@ -117,44 +106,12 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: admin123
     volumes:
       - grafana_data:/var/lib/grafana
-      - ./deployments/monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
-      - ./deployments/monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
     ports:
-      - "3000:3000"
+      - "13000:3000"  # 使用13000避免冲突
     depends_on:
       - prometheus
     networks:
       - dintellihub-net
-
-  # Daft Processing Service (示例)
-  daft-processing:
-    build:
-      context: .
-      dockerfile: deployments/daft/Dockerfile
-    container_name: dintellihub-daft
-    environment:
-      - PYTHONUNBUFFERED=1
-      - MINIO_ENDPOINT=minio:9000
-      - MINIO_ACCESS_KEY=minioadmin
-      - MINIO_SECRET_KEY=minioadmin123
-      - POSTGRES_HOST=postgres
-      - POSTGRES_PORT=5432
-      - POSTGRES_USER=admin
-      - POSTGRES_PASSWORD=admin123
-      - POSTGRES_DB=gravitino
-    volumes:
-      - ./src:/app/src
-      - ./data:/app/data
-    ports:
-      - "8000:8000"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
-    networks:
-      - dintellihub-net
-    command: ["python", "-m", "src.api.main"]
 
 networks:
   dintellihub-net:
@@ -164,8 +121,6 @@ volumes:
   postgres_data:
     driver: local
   minio_data:
-    driver: local
-  lancedb_data:
     driver: local
   redis_data:
     driver: local
