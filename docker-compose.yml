@@ -1,0 +1,175 @@
+# DIntelliHub 本地开发环境
+# 使用Docker Compose快速启动开发环境
+
+version: '3.8'
+
+services:
+  # PostgreSQL 元数据库
+  postgres:
+    image: postgres:14-alpine
+    container_name: dintellihub-postgres
+    environment:
+      POSTGRES_DB: gravitino
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin123
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d gravitino"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - dintellihub-net
+
+  # MinIO 对象存储 (开发环境替代S3)
+  minio:
+    image: minio/minio:latest
+    container_name: dintellihub-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"   # API
+      - "9001:9001"   # Console
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    networks:
+      - dintellihub-net
+
+  # MinIO 初始化客户端（创建bucket）
+  minio-init:
+    image: minio/mc:latest
+    container_name: dintellihub-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      sleep 10;
+      /usr/bin/mc alias set minio http://minio:9000 minioadmin minioadmin123;
+      /usr/bin/mc mb minio/dintellihub-raw --ignore-existing;
+      /usr/bin/mc mb minio/dintellihub-processed --ignore-existing;
+      /usr/bin/mc mb minio/dintellihub-vectors --ignore-existing;
+      /usr/bin/mc mb minio/dintellihub-models --ignore-existing;
+      /usr/bin/mc mb minio/dintellihub-backups --ignore-existing;
+      echo 'MinIO buckets created successfully';
+      "
+
+  # LanceDB 向量数据库
+  lancedb:
+    image: lancedb/lancedb:latest
+    container_name: dintellihub-lancedb
+    volumes:
+      - lancedb_data:/data
+    ports:
+      - "8080:8080"
+    networks:
+      - dintellihub-net
+    command: ["lancedb", "serve", "--host", "0.0.0.0", "--port", "8080"]
+
+  # Redis 缓存 (可选)
+  redis:
+    image: redis:7-alpine
+    container_name: dintellihub-redis
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - dintellihub-net
+
+  # Prometheus 监控
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: dintellihub-prometheus
+    volumes:
+      - ./deployments/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    networks:
+      - dintellihub-net
+
+  # Grafana 可视化
+  grafana:
+    image: grafana/grafana:latest
+    container_name: dintellihub-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin123
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./deployments/monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./deployments/monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - dintellihub-net
+
+  # Daft Processing Service (示例)
+  daft-processing:
+    build:
+      context: .
+      dockerfile: deployments/daft/Dockerfile
+    container_name: dintellihub-daft
+    environment:
+      - PYTHONUNBUFFERED=1
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin123
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=admin
+      - POSTGRES_PASSWORD=admin123
+      - POSTGRES_DB=gravitino
+    volumes:
+      - ./src:/app/src
+      - ./data:/app/data
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - dintellihub-net
+    command: ["python", "-m", "src.api.main"]
+
+networks:
+  dintellihub-net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
+  minio_data:
+    driver: local
+  lancedb_data:
+    driver: local
+  redis_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
