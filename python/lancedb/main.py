@@ -141,12 +141,24 @@ async def semantic_search(request: SearchRequest):
             else:
                 score = 0.0
 
+            # Convert row to dict, handling numpy types
+            data = {}
+            for key, value in row.items():
+                # Convert numpy arrays to lists
+                if hasattr(value, 'tolist'):
+                    data[key] = value.tolist()
+                # Convert other numpy types to Python native types
+                elif hasattr(value, 'item'):
+                    data[key] = value.item()
+                else:
+                    data[key] = value
+
             # Build result item
             items.append(
                 SearchResult(
                     id=str(row.get("id", idx)),
                     score=score,
-                    data=row.to_dict(),
+                    data=data,
                 )
             )
 

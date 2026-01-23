@@ -124,6 +124,7 @@ services:
       context: .
       dockerfile: python/Dockerfile.lancedb
     container_name: dintellihub-lancedb
+    command: ["gunicorn", "lancedb_service.main:app", "--bind", "0.0.0.0:8765", "--workers", "8", "--worker-class", "uvicorn.workers.UvicornWorker", "--timeout", "120", "--access-logfile", "-", "--error-logfile", "-"]
     environment:
       - LANCEDB_URI=/data/lancedb
       - PORT=8765
