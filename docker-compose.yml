@@ -88,12 +88,14 @@ services:
     container_name: dintellihub-prometheus
     volumes:
       - prometheus_data:/prometheus
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     ports:
       - "9090:9090"
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
-      # 使用默认配置，避免挂载不存在的配置文件
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
     networks:
       - dintellihub-net
 
@@ -104,12 +106,85 @@ services:
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: admin123
+      GF_INSTALL_PLUGINS: ""
     volumes:
       - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
     ports:
       - "13000:3000"  # 使用13000避免冲突
     depends_on:
       - prometheus
+    networks:
+      - dintellihub-net
+
+  # LanceDB HTTP Service (向量数据库服务)
+  lancedb-service:
+    build:
+      context: .
+      dockerfile: python/Dockerfile.lancedb
+    container_name: dintellihub-lancedb
+    environment:
+      - LANCEDB_URI=/data/lancedb
+      - PORT=8765
+      - HOST=0.0.0.0
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=INFO
+    volumes:
+      - lancedb_data:/data/lancedb
+    ports:
+      - "8765:8765"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8765/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    networks:
+      - dintellihub-net
+
+  # Daft Processing HTTP Service (数据处理服务)
+  daft-service:
+    build:
+      context: .
+      dockerfile: python/Dockerfile.daft
+    container_name: dintellihub-daft
+    environment:
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin123
+      - MINIO_USE_SSL=false
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=admin
+      - POSTGRES_PASSWORD=admin123
+      - POSTGRES_DB=gravitino
+      - LANCEDB_SERVICE_URL=http://lancedb-service:8765
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=INFO
+      - RAY_ADDRESS=
+      - DAFT_WORKERS=4
+      - DAFT_MEMORY_LIMIT=16GB
+    volumes:
+      - ./data:/app/data
+      - daft_cache:/tmp/daft_cache
+    ports:
+      - "8001:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      lancedb-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
     networks:
       - dintellihub-net
 
@@ -127,4 +202,8 @@ volumes:
   prometheus_data:
     driver: local
   grafana_data:
+    driver: local
+  lancedb_data:
+    driver: local
+  daft_cache:
     driver: local

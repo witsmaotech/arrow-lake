@@ -1,0 +1,54 @@
+# DIntelliHub LanceDB HTTP Service
+# Based on Shannon project architecture
+FROM python:3.11-slim
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    gcc \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements first for better caching
+COPY requirements.txt /app/
+
+# Install Python dependencies
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir \
+    fastapi>=0.109.0 \
+    uvicorn[standard]>=0.27.0 \
+    gunicorn>=21.2.0 \
+    lancedb>=0.10.0 \
+    sentence-transformers>=2.2.0 \
+    pydantic>=2.0.0 \
+    pydantic-settings>=2.0.0 \
+    structlog>=24.0.0
+
+# Copy LanceDB service code
+# Rename to lancedb_service to avoid shadowing the lancedb package
+COPY python/lancedb/ /app/lancedb_service/
+
+# Create data directory
+RUN mkdir -p /data/lancedb
+
+# Add service directory to Python path
+ENV PYTHONPATH="/app:${PYTHONPATH}"
+
+# Expose port
+EXPOSE 8765
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:8765/health || exit 1
+
+# Run with Gunicorn for production
+CMD ["gunicorn", "lancedb_service.main:app", \
+     "--bind", "0.0.0.0:8765", \
+     "--workers", "4", \
+     "--worker-class", "uvicorn.workers.UvicornWorker", \
+     "--timeout", "120", \
+     "--access-logfile", "-", \
+     "--error-logfile", "-"]

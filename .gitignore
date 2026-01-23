@@ -85,3 +85,8 @@ ray_cluster*
 
 # Daft
 .daft/
+
+.claude/
+.bmad-core/
+.roomodes
+web-bundles/
