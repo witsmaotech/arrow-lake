@@ -1,0 +1,1 @@
+"""Arrow Lake catalog module."""
