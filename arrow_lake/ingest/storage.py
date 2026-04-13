@@ -67,6 +67,15 @@ class LanceStorageManager:
                 message=(f"Invalid dataset name '{name}': must match ^[a-zA-Z_][a-zA-Z0-9_-]*$"),
             )
 
+    @staticmethod
+    def _validate_identifier(value: str, label: str = "identifier") -> None:
+        """Validate a tag or column name against safe identifier pattern."""
+        if not _SAFE_DATASET_NAME_RE.match(value):
+            raise StorageError(
+                error_code=ErrorCode.VALIDATION_INVALID_CONFIG,
+                message=f"Invalid {label} '{value}': must match ^[a-zA-Z_][a-zA-Z0-9_-]*$",
+            )
+
     def create_dataset(self, name: str, data: pa.Table) -> None:
         """Create a new Lance dataset.
 
@@ -100,8 +109,9 @@ class LanceStorageManager:
             Arrow Table with the dataset contents.
 
         Raises:
-            StorageError: If dataset does not exist or version is invalid.
+            StorageError: If dataset does not exist, name is invalid, or version is invalid.
         """
+        self._validate_name(name)
         lance_dir = self._lance_dir(name)
 
         if not lance_dir.is_dir():
@@ -139,8 +149,9 @@ class LanceStorageManager:
             data: Arrow table to append.
 
         Raises:
-            StorageError: If dataset does not exist.
+            StorageError: If dataset does not exist or name is invalid.
         """
+        self._validate_name(name)
         path = self._get_dataset_path(name)
         if not self.dataset_exists(name):
             raise StorageError(
@@ -156,8 +167,9 @@ class LanceStorageManager:
             name: Dataset name.
 
         Raises:
-            StorageError: If dataset does not exist.
+            StorageError: If dataset does not exist or name is invalid.
         """
+        self._validate_name(name)
         import shutil
 
         path = self._lance_dir(name)
@@ -177,6 +189,7 @@ class LanceStorageManager:
         Returns:
             True if the dataset directory exists.
         """
+        self._validate_name(name)
         return self._lance_dir(name).is_dir()
 
     def list_datasets(self) -> list[str]:
@@ -200,8 +213,9 @@ class LanceStorageManager:
             CompactionStats with before/after version and data file count.
 
         Raises:
-            StorageError: If dataset does not exist.
+            StorageError: If dataset does not exist or name is invalid.
         """
+        self._validate_name(name)
         lance_dir = self._lance_dir(name)
 
         # Count data files before compaction
@@ -234,8 +248,10 @@ class LanceStorageManager:
             sql_expr: SQL expression for the column (e.g. "CAST(0 AS INT)").
 
         Raises:
-            StorageError: If dataset does not exist.
+            StorageError: If dataset does not exist or name/column invalid.
         """
+        self._validate_name(name)
+        self._validate_identifier(column_name, "column_name")
         table = self._open_lance(self._get_dataset_path(name))
         table.add_columns({column_name: sql_expr})
 
@@ -248,8 +264,9 @@ class LanceStorageManager:
             new_type: New pyarrow data type.
 
         Raises:
-            StorageError: If dataset does not exist.
+            StorageError: If dataset does not exist or name invalid.
         """
+        self._validate_name(name)
         table = self._open_lance(self._get_dataset_path(name))
         table.alter_columns({"path": column_name, "data_type": new_type})
 
@@ -263,6 +280,7 @@ class LanceStorageManager:
         Raises:
             StorageError: If dataset does not exist or column not found.
         """
+        self._validate_name(name)
         table = self._open_lance(self._get_dataset_path(name))
         try:
             table.drop_columns([column_name])
@@ -285,8 +303,9 @@ class LanceStorageManager:
             Current version number.
 
         Raises:
-            StorageError: If dataset does not exist.
+            StorageError: If dataset does not exist or name is invalid.
         """
+        self._validate_name(name)
         table = self._open_lance(self._get_dataset_path(name))
         return cast(int, table.version)
 
@@ -300,6 +319,7 @@ class LanceStorageManager:
             List of version metadata dicts, each containing
             'version', 'timestamp', and 'metadata'.
         """
+        self._validate_name(name)
         table = self._open_lance(self._get_dataset_path(name))
         raw_versions = table.list_versions()
         return [
@@ -320,8 +340,10 @@ class LanceStorageManager:
             version: Version to tag (defaults to latest).
 
         Raises:
-            StorageError: If dataset does not exist or tag already exists.
+            StorageError: If dataset does not exist, name/tag invalid, or tag already exists.
         """
+        self._validate_name(name)
+        self._validate_identifier(tag, "tag")
         table = self._open_lance(self._get_dataset_path(name))
         if version is None:
             version = table.version
@@ -346,8 +368,9 @@ class LanceStorageManager:
             Dict mapping tag names to version numbers.
 
         Raises:
-            StorageError: If a tag cannot be resolved.
+            StorageError: If a tag cannot be resolved or name is invalid.
         """
+        self._validate_name(name)
         import lance
 
         lance_dir = self._lance_dir(name)
@@ -373,8 +396,10 @@ class LanceStorageManager:
             tag: Tag name.
 
         Raises:
-            StorageError: If dataset does not exist or tag not found.
+            StorageError: If dataset does not exist, name/tag invalid, or tag not found.
         """
+        self._validate_name(name)
+        self._validate_identifier(tag, "tag")
         table = self._open_lance(self._get_dataset_path(name))
         try:
             table.tags.delete(tag)
@@ -398,8 +423,10 @@ class LanceStorageManager:
             Arrow Table with the tagged version's data.
 
         Raises:
-            StorageError: If dataset or tag does not exist.
+            StorageError: If dataset or tag does not exist, or name/tag invalid.
         """
+        self._validate_name(name)
+        self._validate_identifier(tag, "tag")
         import lance
 
         lance_dir = self._lance_dir(name)
@@ -427,7 +454,7 @@ class LanceStorageManager:
         db = lancedb.connect(self.base_uri)
 
         if mode == "create":
-            db.create_table(Path(path).name, data, mode="overwrite")
+            db.create_table(Path(path).name, data)
         elif mode == "append":
             table = db.open_table(Path(path).name)
             table.add(data)

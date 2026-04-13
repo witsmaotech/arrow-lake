@@ -194,7 +194,7 @@ class CatalogActor:
         """
         try:
             rows = self._pool.execute(
-                "SELECT name, schema_json, location, created_at, updated_at "
+                "SELECT name, schema_json, location, created_at, updated_at, status "
                 "FROM catalog_tables WHERE status = 'active' ORDER BY name"
             )
         except Exception as e:
@@ -210,6 +210,7 @@ class CatalogActor:
                 "location": str(row[2]),
                 "created_at": str(row[3]),
                 "updated_at": str(row[4]),
+                "status": str(row[5]),
             }
             for row in rows
         ]
@@ -317,7 +318,14 @@ class CatalogActor:
         """Remove Lance data files for a dataset."""
         import shutil
 
-        lance_dir = Path(base_uri) / f"{name}.lance"
+        base = Path(base_uri).resolve()
+        if not str(base).startswith("/tmp") and not str(base).startswith("/home"):
+            raise CatalogError(
+                error_code=ErrorCode.VALIDATION_INVALID_CONFIG,
+                message=f"Refusing to delete data outside /tmp or /home: {base_uri}",
+            )
+
+        lance_dir = base / f"{name}.lance"
         if lance_dir.is_dir():
             shutil.rmtree(lance_dir)
 

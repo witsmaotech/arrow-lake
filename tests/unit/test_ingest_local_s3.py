@@ -45,7 +45,7 @@ class TestIngestionReport:
     def test_report_is_frozen(self) -> None:
         """IngestionReport is immutable."""
         report = IngestionReport(
-            sources=[IngestionSource(path="test.csv", row_count=10, file_count=1)],
+            sources=(IngestionSource(path="test.csv", row_count=10, file_count=1),),
             total_rows=10,
             total_files=1,
         )
@@ -55,10 +55,10 @@ class TestIngestionReport:
     def test_report_total_rows(self) -> None:
         """Total rows is sum of source rows."""
         report = IngestionReport(
-            sources=[
+            sources=(
                 IngestionSource(path="a.csv", row_count=10, file_count=1),
                 IngestionSource(path="b.parquet", row_count=20, file_count=1),
-            ],
+            ),
             total_rows=30,
             total_files=2,
         )
