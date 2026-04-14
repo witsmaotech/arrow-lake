@@ -4,7 +4,9 @@ import pytest
 from arrow_lake.exceptions import (
     ArrowLakeError,
     CatalogError,
+    EmbeddingError,
     ErrorCode,
+    HttpError,
     IngestError,
     QueryError,
     RayRuntimeError,
@@ -17,7 +19,19 @@ class TestErrorCode:
     """Test ErrorCode enum values."""
 
     def test_enum_has_expected_categories(self) -> None:
-        expected_categories = {"STORAGE", "QUERY", "INGEST", "CATALOG", "RAY", "VALIDATION"}
+        expected_categories = {
+            "STORAGE",
+            "QUERY",
+            "INGEST",
+            "CATALOG",
+            "RAY",
+            "VALIDATION",
+            "HTTP",
+            "IMAGE",
+            "VIDEO",
+            "SCENE",
+            "EMBEDDING",
+        }
         actual_categories = {code.name.split("_")[0] for code in ErrorCode}
         assert actual_categories == expected_categories
 
@@ -83,6 +97,8 @@ class TestSubclassErrors:
             (CatalogError, ErrorCode.CATALOG_DATASET_NOT_FOUND),
             (RayRuntimeError, ErrorCode.RAY_RUNTIME_ACTOR_DEAD),
             (ValidationError, ErrorCode.VALIDATION_INVALID_CONFIG),
+            (HttpError, ErrorCode.HTTP_FETCH_FAILED),
+            (EmbeddingError, ErrorCode.EMBEDDING_MODEL_ERROR),
         ],
     )
     def test_subclass_is_arrow_lake_error(self, exception_cls: type, error_code: ErrorCode) -> None:
@@ -92,7 +108,16 @@ class TestSubclassErrors:
 
     @pytest.mark.parametrize(
         "exception_cls",
-        [StorageError, QueryError, IngestError, CatalogError, RayRuntimeError, ValidationError],
+        [
+            StorageError,
+            QueryError,
+            IngestError,
+            CatalogError,
+            RayRuntimeError,
+            ValidationError,
+            HttpError,
+            EmbeddingError,
+        ],
     )
     def test_subclass_can_be_raised_and_caught(self, exception_cls: type) -> None:
         with pytest.raises(ArrowLakeError):
@@ -103,7 +128,16 @@ class TestSubclassErrors:
 
     @pytest.mark.parametrize(
         "exception_cls",
-        [StorageError, QueryError, IngestError, CatalogError, RayRuntimeError, ValidationError],
+        [
+            StorageError,
+            QueryError,
+            IngestError,
+            CatalogError,
+            RayRuntimeError,
+            ValidationError,
+            HttpError,
+            EmbeddingError,
+        ],
     )
     def test_subclass_preserves_attributes(self, exception_cls: type) -> None:
         error = exception_cls(

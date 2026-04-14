@@ -39,6 +39,22 @@ class LogLevel(StrEnum):
     CRITICAL = "CRITICAL"
 
 
+class EmbeddingBackend(StrEnum):
+    """Supported embedding backends."""
+
+    LOCAL = "local"
+    OPENAI = "openai"
+    RAY_SERVE = "ray_serve"
+
+
+class DecodeQuality(StrEnum):
+    """Image decode fidelity levels."""
+
+    THUMBNAIL = "thumbnail"
+    PREVIEW = "preview"
+    FULL = "full"
+
+
 class StorageConfig(BaseModel):
     """Storage layer configuration.
 
@@ -103,6 +119,62 @@ class ObservabilityConfig(BaseModel):
         return v
 
 
+class HttpConfig(BaseModel):
+    """HTTP client configuration (Story 3.2).
+
+    Attributes:
+        timeout_seconds: Request timeout in seconds.
+        max_retries: Maximum retry attempts for transient failures.
+    """
+
+    timeout_seconds: float = 30.0
+    max_retries: int = 3
+
+
+class MediaConfig(BaseModel):
+    """Media processing configuration (Stories 3.3, 3.4).
+
+    Attributes:
+        thumbnail_size: Thumbnail image dimension (square).
+        preview_size: Preview image dimension (square).
+        max_image_dimension: Maximum allowed image dimension before downscaling.
+        retention_original_days: Days to retain original full-resolution images.
+    """
+
+    thumbnail_size: int = 64
+    preview_size: int = 512
+    max_image_dimension: int = 4096
+    retention_original_days: int = 90
+
+
+class EmbeddingConfig(BaseModel):
+    """Text embedding configuration (Stories 4.1, 4.3).
+
+    Attributes:
+        model: HuggingFace model name for local embedding.
+        batch_size: Number of texts to embed per batch.
+        backend: Embedding backend — "local", "openai", or "ray_serve".
+        api_base: Base URL for external embedding API.
+        api_key: API key for external embedding API.
+    """
+
+    model: str = "BAAI/bge-small-en-v1.5"
+    batch_size: int = 128
+    backend: EmbeddingBackend = EmbeddingBackend.LOCAL
+    api_base: str = ""
+    api_key: str = ""
+
+
+class DecodeConfig(BaseModel):
+    """Image decode fidelity configuration (Story 3.8).
+
+    Attributes:
+        quality: Default decode quality — "thumbnail", "preview", or "full".
+    """
+
+    quality: DecodeQuality = DecodeQuality.FULL
+
+
 class ArrowLakeConfig(BaseSettings):
     """Top-level Arrow Lake configuration.
 
@@ -126,6 +198,10 @@ class ArrowLakeConfig(BaseSettings):
     storage: StorageConfig = StorageConfig()
     compute: ComputeConfig = ComputeConfig()
     observability: ObservabilityConfig = ObservabilityConfig()
+    http: HttpConfig = HttpConfig()
+    media: MediaConfig = MediaConfig()
+    embedding: EmbeddingConfig = EmbeddingConfig()
+    decode: DecodeConfig = DecodeConfig()
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> ArrowLakeConfig:
@@ -163,6 +239,10 @@ class ArrowLakeConfig(BaseSettings):
             storage=merged["storage"],
             compute=merged["compute"],
             observability=merged["observability"],
+            http=merged["http"],
+            media=merged["media"],
+            embedding=merged["embedding"],
+            decode=merged["decode"],
         )
 
 
@@ -177,6 +257,10 @@ def _build_merged_update(base: ArrowLakeConfig, yaml_data: dict[str, Any]) -> di
         "storage": StorageConfig,
         "compute": ComputeConfig,
         "observability": ObservabilityConfig,
+        "http": HttpConfig,
+        "media": MediaConfig,
+        "embedding": EmbeddingConfig,
+        "decode": DecodeConfig,
     }
     result: dict[str, Any] = {}
 

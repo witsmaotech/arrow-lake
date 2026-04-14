@@ -51,6 +51,21 @@ class ErrorCode(StrEnum):
     VALIDATION_TYPE_ERROR = "VALIDATION_TYPE_ERROR"
     VALIDATION_SCHEMA_EVOLUTION = "VALIDATION_SCHEMA_EVOLUTION"
 
+    # HTTP errors (Story 3.2)
+    HTTP_FETCH_FAILED = "HTTP_FETCH_FAILED"
+    HTTP_TIMEOUT = "HTTP_TIMEOUT"
+    HTTP_RATE_LIMITED = "HTTP_RATE_LIMITED"
+
+    # Media errors (Stories 3.3, 3.4)
+    IMAGE_DECODE_FAILED = "IMAGE_DECODE_FAILED"
+    VIDEO_DECODE_FAILED = "VIDEO_DECODE_FAILED"
+    SCENE_DETECTION_FALLBACK = "SCENE_DETECTION_FALLBACK"
+
+    # Embedding errors (Stories 4.1, 4.3)
+    EMBEDDING_MODEL_ERROR = "EMBEDDING_MODEL_ERROR"
+    EMBEDDING_TIMEOUT = "EMBEDDING_TIMEOUT"
+    EMBEDDING_API_ERROR = "EMBEDDING_API_ERROR"
+
 
 class ArrowLakeError(Exception):
     """Base exception for all Arrow Lake errors.
@@ -103,3 +118,11 @@ class RayRuntimeError(ArrowLakeError):
 
 class ValidationError(ArrowLakeError):
     """Errors related to configuration, schema, and data validation."""
+
+
+class HttpError(ArrowLakeError):
+    """Errors related to HTTP data fetching (Story 3.2)."""
+
+
+class EmbeddingError(ArrowLakeError):
+    """Errors related to text embedding generation (Stories 4.1, 4.3)."""

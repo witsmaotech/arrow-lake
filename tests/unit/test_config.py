@@ -15,7 +15,11 @@ import pytest
 from arrow_lake.config import (
     ArrowLakeConfig,
     ComputeConfig,
+    DecodeConfig,
+    EmbeddingConfig,
+    HttpConfig,
     LogLevel,
+    MediaConfig,
     ObservabilityConfig,
     StorageBackend,
     StorageConfig,
@@ -337,3 +341,143 @@ observability:
         # Env var overrides preserved (not lost)
         assert config.storage.backend == "s3"
         assert config.compute.num_workers == 8
+
+
+class TestHttpConfig:
+    """Test HttpConfig defaults and validation (Story 3.2)."""
+
+    def test_default_timeout(self) -> None:
+        config = HttpConfig()
+        assert config.timeout_seconds == 30.0
+
+    def test_default_max_retries(self) -> None:
+        config = HttpConfig()
+        assert config.max_retries == 3
+
+    def test_custom_values(self) -> None:
+        config = HttpConfig(timeout_seconds=60.0, max_retries=5)
+        assert config.timeout_seconds == 60.0
+        assert config.max_retries == 5
+
+
+class TestMediaConfig:
+    """Test MediaConfig defaults and validation (Stories 3.3, 3.4)."""
+
+    def test_default_thumbnail_size(self) -> None:
+        config = MediaConfig()
+        assert config.thumbnail_size == 64
+
+    def test_default_preview_size(self) -> None:
+        config = MediaConfig()
+        assert config.preview_size == 512
+
+    def test_default_max_image_dimension(self) -> None:
+        config = MediaConfig()
+        assert config.max_image_dimension == 4096
+
+    def test_default_retention_days(self) -> None:
+        config = MediaConfig()
+        assert config.retention_original_days == 90
+
+
+class TestEmbeddingConfig:
+    """Test EmbeddingConfig defaults and validation (Stories 4.1, 4.3)."""
+
+    def test_default_model(self) -> None:
+        config = EmbeddingConfig()
+        assert config.model == "BAAI/bge-small-en-v1.5"
+
+    def test_default_batch_size(self) -> None:
+        config = EmbeddingConfig()
+        assert config.batch_size == 128
+
+    def test_default_backend_is_local(self) -> None:
+        config = EmbeddingConfig()
+        assert config.backend == "local"
+
+    def test_default_api_fields_empty(self) -> None:
+        config = EmbeddingConfig()
+        assert config.api_base == ""
+        assert config.api_key == ""
+
+    def test_custom_api_config(self) -> None:
+        config = EmbeddingConfig(
+            backend="openai",
+            api_base="https://api.openai.com/v1",
+            api_key="sk-test",
+        )
+        assert config.backend == "openai"
+        assert config.api_base == "https://api.openai.com/v1"
+        assert config.api_key == "sk-test"
+
+
+class TestDecodeConfig:
+    """Test DecodeConfig defaults and validation (Story 3.8)."""
+
+    def test_default_quality_is_full(self) -> None:
+        config = DecodeConfig()
+        assert config.quality == "full"
+
+    def test_custom_quality(self) -> None:
+        config = DecodeConfig(quality="thumbnail")
+        assert config.quality == "thumbnail"
+
+    def test_all_quality_levels(self) -> None:
+        for q in ("thumbnail", "preview", "full"):
+            config = DecodeConfig(quality=q)
+            assert config.quality == q
+
+
+class TestNewConfigsInArrowLake:
+    """Test that ArrowLakeConfig includes new Sprint 3 config sections."""
+
+    def test_has_http_config(self) -> None:
+        config = ArrowLakeConfig()
+        assert isinstance(config.http, HttpConfig)
+
+    def test_has_media_config(self) -> None:
+        config = ArrowLakeConfig()
+        assert isinstance(config.media, MediaConfig)
+
+    def test_has_embedding_config(self) -> None:
+        config = ArrowLakeConfig()
+        assert isinstance(config.embedding, EmbeddingConfig)
+
+    def test_has_decode_config(self) -> None:
+        config = ArrowLakeConfig()
+        assert isinstance(config.decode, DecodeConfig)
+
+    def test_env_override_http_timeout(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ARROW_LAKE__HTTP__TIMEOUT_SECONDS", "60.0")
+        config = ArrowLakeConfig()
+        assert config.http.timeout_seconds == 60.0
+
+    def test_env_override_embedding_model(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ARROW_LAKE__EMBEDDING__MODEL", "BAAI/bge-large-en-v1.5")
+        config = ArrowLakeConfig()
+        assert config.embedding.model == "BAAI/bge-large-en-v1.5"
+
+    def test_yaml_override_new_sections(self, tmp_path: Any) -> None:
+        yaml_content = """
+embedding:
+  model: BAAI/bge-large-en-v1.5
+  batch_size: 64
+
+media:
+  thumbnail_size: 128
+
+http:
+  timeout_seconds: 10.0
+
+decode:
+  quality: thumbnail
+"""
+        yaml_file = tmp_path / "config.yaml"
+        yaml_file.write_text(yaml_content)
+
+        config = ArrowLakeConfig.from_yaml(str(yaml_file))
+        assert config.embedding.model == "BAAI/bge-large-en-v1.5"
+        assert config.embedding.batch_size == 64
+        assert config.media.thumbnail_size == 128
+        assert config.http.timeout_seconds == 10.0
+        assert config.decode.quality == "thumbnail"

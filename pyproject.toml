@@ -32,6 +32,14 @@ dependencies = [
     # Object storage
     "boto3>=1.35",
     "pylance>=4.0.0",
+    # HTTP client (Story 3.2)
+    "httpx>=0.28",
+    # Multimodal ingestion (Stories 3.3-3.4)
+    "Pillow>=10.4",
+    "av>=12.0",
+    # Embedding (Stories 4.1, 4.3)
+    "torch>=2.4",
+    "sentence-transformers>=3.3",
 ]
 
 [dependency-groups]
@@ -39,7 +47,6 @@ dev = [
     "pytest>=9.0",
     "pytest-asyncio>=0.24",
     "pytest-cov>=7.1.0",
-    "httpx>=0.28",
     "ruff>=0.9.0",
     "mypy>=1.15",
     "pre-commit>=4.2",
@@ -53,14 +60,6 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["arrow_lake", "flows"]
 
-[project.optional-dependencies]
-gpu = [
-    "torch>=2.4",
-    "sentence-transformers>=3.3",
-    "Pillow>=10.4",
-    "av>=12.0",
-]
-
 [tool.ruff]
 target-version = "py311"
 line-length = 100
@@ -68,7 +67,7 @@ src = ["arrow_lake", "flows"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "A", "SIM", "RUF"]
-ignore = ["E501", "B008", "S101", "RUF002", "RUF003"]
+ignore = ["E501", "B008", "S101", "RUF002", "RUF003", "PERF203"]
 
 [tool.ruff.format]
 quote-style = "double"
@@ -97,6 +96,12 @@ module = [
     "structlog.*",
     "tqdm.*",
     "pyarrow.*",
+    "httpx.*",
+    "PIL.*",
+    "Pillow.*",
+    "av.*",
+    "torch.*",
+    "sentence_transformers.*",
 ]
 ignore_missing_imports = true
 
