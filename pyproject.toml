@@ -40,7 +40,16 @@ dependencies = [
     # Embedding (Stories 4.1, 4.3)
     "torch>=2.4",
     "sentence-transformers>=3.3",
+    # CLI (Story 7.2)
+    "click>=8.1",
+    "rich>=13.0",
 ]
+
+[project.scripts]
+arrow-lake = "arrow_lake.cli:main"
+
+[project.optional-dependencies]
+jupyter = ["jupyterlab>=4.0", "ipywidgets>=8.0"]
 
 [dependency-groups]
 dev = [
@@ -120,6 +129,7 @@ markers = [
     "integration: Integration tests (require Docker Compose)",
     "e2e: End-to-end tests",
     "smoke: Platform boot smoke tests",
+    "benchmark: Performance benchmarks (emit JSON, not asserted)",
 ]
 
 [tool.coverage.run]

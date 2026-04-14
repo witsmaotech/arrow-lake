@@ -1,0 +1,30 @@
+name: Nightly GPU Tests
+
+on:
+  schedule:
+    # Run at 02:00 UTC every weekday
+    - cron: "0 2 * * 1-5"
+  workflow_dispatch:
+
+jobs:
+  gpu-tests:
+    runs-on: [self-hosted, linux, gpu]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Run unit tests
+        run: uv run pytest tests/unit/ -v --tb=short -q
+
+      - name: Run integration tests
+        run: uv run pytest tests/integration/ -v --tb=short -q
+
+      - name: Run GPU-specific tests
+        run: uv run pytest tests/ -v --tb=short -q -k "gpu or embedding"
