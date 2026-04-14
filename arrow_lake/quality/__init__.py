@@ -15,3 +15,10 @@ __all__ = [
     "QualityReport",
     "compute_quality_scores",
 ]
+
+try:
+    import arrow_lake.quality.nemo_curator  # noqa: F401
+
+    __all__.append("NeMoCuratorFilter")
+except ImportError:
+    pass

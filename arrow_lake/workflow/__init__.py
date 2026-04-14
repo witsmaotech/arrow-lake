@@ -1,6 +1,7 @@
-"""Arrow Lake workflow orchestration module (Epic 6, Sprint 7)."""
+"""Arrow Lake workflow orchestration module (Epic 6, Sprint 7, Sprint 9)."""
 
 from arrow_lake.workflow.argo import ArgoWorkflowBridge
+from arrow_lake.workflow.audit import AuditEntry, AuditTrail
 from arrow_lake.workflow.base import ArrowLakeFlowSpec, FlowRegistry
 from arrow_lake.workflow.error_handler import (
     ClassifiedError,
@@ -16,6 +17,8 @@ from arrow_lake.workflow.tags import RunTags, find_failed_runs, generate_resume_
 __all__ = [
     "ArgoWorkflowBridge",
     "ArrowLakeFlowSpec",
+    "AuditEntry",
+    "AuditTrail",
     "CheckpointInfo",
     "ClassifiedError",
     "ErrorCategory",

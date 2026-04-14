@@ -122,6 +122,22 @@ class ErrorCode(StrEnum):
     FACET_QUERY_FAILED = "FACET_QUERY_FAILED"
     FACET_INVALID_COLUMN = "FACET_INVALID_COLUMN"
 
+    # Ensemble search errors (Sprint 9, Story 8.2)
+    ENSEMBLE_NO_COLUMNS = "ENSEMBLE_NO_COLUMNS"
+    ENSEMBLE_COLUMN_NOT_FOUND = "ENSEMBLE_COLUMN_NOT_FOUND"
+
+    # Lineage errors (Sprint 9, Story 8.3)
+    LINEAGE_QUERY_FAILED = "LINEAGE_QUERY_FAILED"
+    LINEAGE_STORE_FAILED = "LINEAGE_STORE_FAILED"
+
+    # Audit errors (Sprint 9, Story 8.4)
+    AUDIT_INTEGRITY_FAILED = "AUDIT_INTEGRITY_FAILED"
+    AUDIT_QUERY_FAILED = "AUDIT_QUERY_FAILED"
+    AUDIT_STORE_FAILED = "AUDIT_STORE_FAILED"
+
+    # NeMo Curator errors (Sprint 9, Story 8.5)
+    QUALITY_NEMO_MODEL_ERROR = "QUALITY_NEMO_MODEL_ERROR"
+
 
 class ArrowLakeError(Exception):
     """Base exception for all Arrow Lake errors.
@@ -194,3 +210,7 @@ class WorkflowError(ArrowLakeError):
 
 class ArgoError(WorkflowError):
     """Errors related to Argo Workflows deployment and management (Sprint 7)."""
+
+
+class AuditError(ArrowLakeError):
+    """Errors related to audit trail integrity and queries (Sprint 9, Story 8.4)."""

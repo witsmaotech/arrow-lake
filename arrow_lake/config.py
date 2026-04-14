@@ -320,6 +320,12 @@ class QualityConfig(BaseModel):
     image_min_width: int = 64
     image_min_height: int = 64
 
+    # NeMo Curator (Sprint 9, Story 8.5)
+    nemo_curator_enabled: bool = False
+    nemo_curator_model: str = "nemo/quality-scorer"
+    nemo_curator_threshold: float = 0.5
+    nemo_curator_batch_size: int = 64
+
 
 class OlapConfig(BaseModel):
     """OLAP analytics configuration (Story 5.4, 7.6).
@@ -517,6 +523,59 @@ class FacetedSearchConfig(BaseModel):
         return v
 
 
+class EnsembleSearchConfig(BaseModel):
+    """Ensemble search configuration (Sprint 9, Story 8.2).
+
+    Attributes:
+        default_top_k: Default number of results.
+        rrf_k: RRF smoothing constant.
+        fusion_method: Fusion method (only "rrf" supported).
+        candidate_multiplier: Per-column candidate pool size.
+    """
+
+    default_top_k: int = 10
+    rrf_k: int = 60
+    fusion_method: str = "rrf"
+    candidate_multiplier: int = 3
+
+    @field_validator("default_top_k", "rrf_k", "candidate_multiplier")
+    @classmethod
+    def validate_positive_int(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError(f"value must be >= 1, got {v}")
+        return v
+
+
+class LineageConfig(BaseModel):
+    """Data lineage configuration (Sprint 9, Story 8.3).
+
+    Attributes:
+        enabled: Whether lineage tracking is active.
+        store_dataset: Name of the lineage events dataset.
+        auto_record: Automatically record lineage on dataset operations.
+    """
+
+    enabled: bool = False
+    store_dataset: str = "_lineage_events"
+    auto_record: bool = True
+
+
+class AuditConfig(BaseModel):
+    """Event sourcing audit configuration (Sprint 9, Story 8.4).
+
+    Attributes:
+        enabled: Whether audit trail is active.
+        hmac_secret_key: Secret key for HMAC. Empty disables HMAC.
+        audit_dataset: Name of the audit trail dataset.
+        auto_record_workflow: Auto-record workflow events.
+    """
+
+    enabled: bool = False
+    hmac_secret_key: str = ""
+    audit_dataset: str = "_audit_trail"
+    auto_record_workflow: bool = True
+
+
 class ArrowLakeConfig(BaseSettings):
     """Top-level Arrow Lake configuration.
 
@@ -554,6 +613,9 @@ class ArrowLakeConfig(BaseSettings):
     autoscale: AutoscaleConfig = AutoscaleConfig()
     lifecycle: LifecycleConfig = LifecycleConfig()
     faceted: FacetedSearchConfig = FacetedSearchConfig()
+    ensemble: EnsembleSearchConfig = EnsembleSearchConfig()
+    lineage: LineageConfig = LineageConfig()
+    audit: AuditConfig = AuditConfig()
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> ArrowLakeConfig:
@@ -605,6 +667,9 @@ class ArrowLakeConfig(BaseSettings):
             autoscale=merged["autoscale"],
             lifecycle=merged["lifecycle"],
             faceted=merged["faceted"],
+            ensemble=merged["ensemble"],
+            lineage=merged["lineage"],
+            audit=merged["audit"],
         )
 
 
@@ -633,6 +698,9 @@ def _build_merged_update(base: ArrowLakeConfig, yaml_data: dict[str, Any]) -> di
         "autoscale": AutoscaleConfig,
         "lifecycle": LifecycleConfig,
         "faceted": FacetedSearchConfig,
+        "ensemble": EnsembleSearchConfig,
+        "lineage": LineageConfig,
+        "audit": AuditConfig,
     }
     result: dict[str, Any] = {}
 

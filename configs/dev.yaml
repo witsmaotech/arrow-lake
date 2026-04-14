@@ -114,3 +114,20 @@ faceted:
     - "source"
     - "quality_score"
     - "created_at"
+
+ensemble:
+  default_top_k: 10
+  rrf_k: 60
+  fusion_method: rrf
+  candidate_multiplier: 3
+
+lineage:
+  enabled: true
+  store_dataset: "_lineage_events"
+  auto_record: true
+
+audit:
+  enabled: true
+  hmac_secret_key: "dev-secret-key-change-in-prod"
+  audit_dataset: "_audit_trail"
+  auto_record_workflow: true

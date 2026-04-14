@@ -43,6 +43,9 @@ class TestErrorCode:
             "AUTOSCALE",
             "LIFECYCLE",
             "FACET",
+            "ENSEMBLE",
+            "LINEAGE",
+            "AUDIT",
         }
         actual_categories = {code.name.split("_")[0] for code in ErrorCode}
         assert actual_categories == expected_categories

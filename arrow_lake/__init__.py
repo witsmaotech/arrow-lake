@@ -23,6 +23,7 @@ from arrow_lake.exceptions import (
 if TYPE_CHECKING:
     from arrow_lake.quality.base import QualityFilterRegistry
     from arrow_lake.quality.models import QualityReport
+    from arrow_lake.query.ensemble import EnsembleSearchResult
     from arrow_lake.query.faceted import FacetedSearchResult
     from arrow_lake.query.fts import FullTextSearchResult
     from arrow_lake.query.hybrid import HybridSearchResult
@@ -32,8 +33,10 @@ if TYPE_CHECKING:
 __all__ = [
     "ArrowLakeConfig",
     "ArrowLakeError",
+    "AuditError",
     "CatalogError",
     "EmbeddingError",
+    "EnsembleSearchResult",
     "FacetedSearchResult",
     "FullTextSearchResult",
     "HttpError",
@@ -385,6 +388,215 @@ class Lake:
             vector_column=vector_column,
             where=where,
         )
+
+    def ensemble_search(
+        self,
+        dataset_name: str,
+        query_vector: list[float],
+        *,
+        columns: list[str] | None = None,
+        weights: dict[str, float] | None = None,
+        top_k: int | None = None,
+        where: str | None = None,
+    ) -> EnsembleSearchResult:
+        """Multi-model ensemble search via weighted RRF fusion (Story 8.2).
+
+        Searches multiple embedding columns and fuses results using
+        weighted Reciprocal Rank Fusion.
+
+        Args:
+            dataset_name: Name of the Lance dataset.
+            query_vector: Query embedding vector.
+            columns: Embedding columns to search (None = auto-detect).
+            weights: Per-column weights for RRF (None = all 1.0).
+            top_k: Number of results.
+            where: Optional metadata filter.
+
+        Returns:
+            EnsembleSearchResult with fused search results.
+        """
+        from arrow_lake.query.ensemble import EnsembleSearchBridge
+
+        bridge = EnsembleSearchBridge(self._get_storage(), config=self._config.ensemble)
+        return bridge.search(
+            dataset_name,
+            query_vector,
+            columns=columns,
+            weights=weights,
+            top_k=top_k,
+            where=where,
+        )
+
+    def lineage_record_event(
+        self,
+        dataset_name: str,
+        operation: str,
+        *,
+        source_datasets: list[str] | None = None,
+        transform_type: str = "",
+        actor: str = "system",
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        """Record a lineage event (Story 8.3).
+
+        Args:
+            dataset_name: Target dataset name.
+            operation: Operation type (create/append/transform/delete).
+            source_datasets: Upstream dataset names.
+            transform_type: Transformation type.
+            actor: Who triggered the event.
+            metadata: Additional context.
+        """
+        from arrow_lake.catalog.lineage import LineageStore, create_lineage_event
+
+        store = LineageStore(self._base_uri, config=self._config.lineage)
+        event = create_lineage_event(
+            dataset_name,
+            operation,
+            source_datasets=source_datasets,
+            transform_type=transform_type,
+            actor=actor,
+            metadata=metadata,
+        )
+        store.record_event(event)
+
+    def lineage_history(self, dataset_name: str) -> list[Any]:
+        """Get lineage history for a dataset (Story 8.3).
+
+        Args:
+            dataset_name: Dataset name.
+
+        Returns:
+            List of LineageEvent in chronological order.
+        """
+        from arrow_lake.catalog.lineage import LineageStore
+
+        store = LineageStore(self._base_uri, config=self._config.lineage)
+        return store.get_dataset_history(dataset_name)
+
+    def lineage_query(self, sql: str) -> Any:
+        """SQL query over lineage events (Story 8.3).
+
+        Args:
+            sql: SELECT-only SQL query.
+
+        Returns:
+            Arrow Table with query results.
+        """
+        from arrow_lake.catalog.lineage import LineageQueryBridge, LineageStore
+
+        store = LineageStore(self._base_uri, config=self._config.lineage)
+        bridge = LineageQueryBridge(store)
+        return bridge.query(sql)
+
+    def audit_record(
+        self,
+        event_type: str,
+        dataset_name: str = "",
+        actor: str = "system",
+        lance_version: int | None = None,
+        metaflow_run_id: str = "",
+        metaflow_tags: dict[str, str] | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> str:
+        """Record an audit entry (Story 8.4).
+
+        Args:
+            event_type: Type of event.
+            dataset_name: Affected dataset name.
+            actor: Who triggered the event.
+            lance_version: Lance version at time of event.
+            metaflow_run_id: Associated Metaflow run ID.
+            metaflow_tags: Associated Metaflow tags.
+            payload: Additional event data.
+
+        Returns:
+            The generated audit_id.
+        """
+        from arrow_lake.workflow.audit import AuditTrail
+
+        trail = AuditTrail(
+            self._base_uri,
+            audit_dataset=self._config.audit.audit_dataset,
+            hmac_secret_key=self._config.audit.hmac_secret_key,
+        )
+        return trail.record(
+            event_type=event_type,
+            dataset_name=dataset_name,
+            actor=actor,
+            lance_version=lance_version,
+            metaflow_run_id=metaflow_run_id,
+            metaflow_tags=metaflow_tags,
+            payload=payload,
+        )
+
+    def audit_verify(self, audit_id: str) -> bool:
+        """Verify HMAC integrity of an audit entry (Story 8.4).
+
+        Args:
+            audit_id: Audit entry ID to verify.
+
+        Returns:
+            True if intact, False if tampered or not found.
+        """
+        from arrow_lake.workflow.audit import AuditTrail
+
+        trail = AuditTrail(
+            self._base_uri,
+            audit_dataset=self._config.audit.audit_dataset,
+            hmac_secret_key=self._config.audit.hmac_secret_key,
+        )
+        return trail.verify(audit_id)
+
+    def audit_query(
+        self,
+        dataset_name: str | None = None,
+        start: str | None = None,
+        end: str | None = None,
+        event_type: str | None = None,
+    ) -> list[Any]:
+        """Query audit entries with optional filters (Story 8.4).
+
+        Args:
+            dataset_name: Filter by dataset name.
+            start: ISO timestamp lower bound.
+            end: ISO timestamp upper bound.
+            event_type: Filter by event type.
+
+        Returns:
+            List of AuditEntry.
+        """
+        from arrow_lake.workflow.audit import AuditTrail
+
+        trail = AuditTrail(
+            self._base_uri,
+            audit_dataset=self._config.audit.audit_dataset,
+            hmac_secret_key=self._config.audit.hmac_secret_key,
+        )
+        return trail.query(
+            dataset_name=dataset_name,
+            start=start,
+            end=end,
+            event_type=event_type,
+        )
+
+    def audit_export(self, dataset_name: str) -> dict[str, Any]:
+        """Export audit entries for a dataset (Story 8.4).
+
+        Args:
+            dataset_name: Dataset name to export.
+
+        Returns:
+            Dict with export metadata and entries.
+        """
+        from arrow_lake.workflow.audit import AuditTrail
+
+        trail = AuditTrail(
+            self._base_uri,
+            audit_dataset=self._config.audit.audit_dataset,
+            hmac_secret_key=self._config.audit.hmac_secret_key,
+        )
+        return trail.export(dataset_name)
 
     def version(self) -> str:
         """Return the current platform version."""
