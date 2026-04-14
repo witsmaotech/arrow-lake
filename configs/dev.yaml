@@ -72,3 +72,4 @@ workflow:
   checkpoint_enabled: true
   ray_execution_enabled: false
   auto_tag_runs: true
+  schedule_cron: "0 8 * * *"

@@ -14,9 +14,8 @@ Run with config::
     python flows/quality_pipeline_flow.py run --config-path configs/dev.yaml
 """
 
-from metaflow import FlowSpec, Parameter, step, project  # type: ignore[import-untyped]
-
 from arrow_lake.workflow.base import ArrowLakeFlowSpec
+from metaflow import FlowSpec, Parameter, project, step  # type: ignore[import-untyped]
 
 
 @project(name="arrow_lake")

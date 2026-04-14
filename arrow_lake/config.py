@@ -357,6 +357,7 @@ class WorkflowConfig(BaseModel):
     checkpoint_enabled: bool = True
     ray_execution_enabled: bool = False
     auto_tag_runs: bool = True
+    schedule_cron: str | None = None
 
     @field_validator("max_retry_attempts")
     @classmethod

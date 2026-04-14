@@ -501,3 +501,17 @@ class LanceStorageManager:
             StorageError: If dataset cannot be opened.
         """
         return self._open_lance(self._get_dataset_path(dataset_name))
+
+    def restore_dataset(self, name: str, data: pa.Table) -> None:
+        """Delete and recreate a dataset with new data (used for rollback).
+
+        Args:
+            name: Dataset name.
+            data: Arrow table to write.
+
+        Raises:
+            StorageError: If dataset does not exist or write fails.
+        """
+        self._validate_name(name)
+        self.delete_dataset(name)
+        self._write_lance(data, self._get_dataset_path(name), mode="create")
