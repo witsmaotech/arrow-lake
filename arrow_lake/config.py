@@ -322,15 +322,17 @@ class QualityConfig(BaseModel):
 
 
 class OlapConfig(BaseModel):
-    """OLAP analytics configuration (Story 5.4).
+    """OLAP analytics configuration (Story 5.4, 7.6).
 
     Attributes:
         max_result_rows: Maximum number of rows returned by OLAP queries.
         enable_predicate_pushdown: Whether to push down predicates to Lance.
+        enable_join: Whether JOIN queries are allowed.
     """
 
     max_result_rows: int = 100_000
     enable_predicate_pushdown: bool = True
+    enable_join: bool = True
 
     @field_validator("max_result_rows")
     @classmethod
@@ -454,6 +456,67 @@ class AutoscaleConfig(BaseModel):
         return v
 
 
+class LifecycleConfig(BaseModel):
+    """Blob lifecycle configuration (Story 7.7).
+
+    Attributes:
+        enabled: Whether automatic lifecycle tiering is active.
+        standard_to_ia_days: Days in Standard before transition to IA.
+        ia_to_glacier_days: Days in IA before transition to Glacier.
+        glacier_expiration_days: Days in Glacier before expiration/deletion.
+        excluded_prefixes: S3 key prefixes excluded from lifecycle transitions.
+        glacier_retrieval_tier: Glacier retrieval tier (Expedited/Standard/Bulk).
+    """
+
+    enabled: bool = False
+    standard_to_ia_days: int = 30
+    ia_to_glacier_days: int = 90
+    glacier_expiration_days: int = 365
+    excluded_prefixes: list[str] = ["thumbnails/", "previews/"]
+    glacier_retrieval_tier: str = "Standard"
+
+    @field_validator("standard_to_ia_days", "ia_to_glacier_days", "glacier_expiration_days")
+    @classmethod
+    def validate_days(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError(f"days must be >= 1, got {v}")
+        return v
+
+    @field_validator("glacier_retrieval_tier")
+    @classmethod
+    def validate_retrieval_tier(cls, v: str) -> str:
+        valid = {"Expedited", "Standard", "Bulk"}
+        if v not in valid:
+            raise ValueError(f"glacier_retrieval_tier must be one of {valid}, got {v!r}")
+        return v
+
+
+class FacetedSearchConfig(BaseModel):
+    """Faceted search configuration (Story 8.1).
+
+    Attributes:
+        max_facet_values: Maximum number of facet values to return per facet.
+        default_facet_columns: Default columns to compute facets for.
+        facet_filter_columns: Columns allowed for faceted filtering.
+    """
+
+    max_facet_values: int = 50
+    default_facet_columns: list[str] = ["modality", "source"]
+    facet_filter_columns: list[str] = [
+        "modality",
+        "source",
+        "quality_score",
+        "created_at",
+    ]
+
+    @field_validator("max_facet_values")
+    @classmethod
+    def validate_max_facet_values(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError(f"max_facet_values must be >= 1, got {v}")
+        return v
+
+
 class ArrowLakeConfig(BaseSettings):
     """Top-level Arrow Lake configuration.
 
@@ -489,6 +552,8 @@ class ArrowLakeConfig(BaseSettings):
     workflow: WorkflowConfig = WorkflowConfig()
     argo: ArgoConfig = ArgoConfig()
     autoscale: AutoscaleConfig = AutoscaleConfig()
+    lifecycle: LifecycleConfig = LifecycleConfig()
+    faceted: FacetedSearchConfig = FacetedSearchConfig()
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> ArrowLakeConfig:
@@ -538,6 +603,8 @@ class ArrowLakeConfig(BaseSettings):
             workflow=merged["workflow"],
             argo=merged["argo"],
             autoscale=merged["autoscale"],
+            lifecycle=merged["lifecycle"],
+            faceted=merged["faceted"],
         )
 
 
@@ -564,6 +631,8 @@ def _build_merged_update(base: ArrowLakeConfig, yaml_data: dict[str, Any]) -> di
         "workflow": WorkflowConfig,
         "argo": ArgoConfig,
         "autoscale": AutoscaleConfig,
+        "lifecycle": LifecycleConfig,
+        "faceted": FacetedSearchConfig,
     }
     result: dict[str, Any] = {}
 

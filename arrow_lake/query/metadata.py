@@ -1,7 +1,9 @@
-"""Metadata search bridge — Story 3.9.
+"""Metadata search bridge — Story 3.9, 7.6.
 
 Provides SQL query interface over Lance datasets via DuckDB.
 Uses zero-copy Arrow → DuckDB → Arrow pipeline.
+
+Story 7.6: Added to_arrow() convenience method on MetadataQueryResult.
 """
 
 from __future__ import annotations
@@ -20,12 +22,23 @@ _SAFE_IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_-]*$")
 
 @dataclass(frozen=True)
 class MetadataQueryResult:
-    """Result of a metadata SQL query."""
+    """Result of a metadata SQL query.
+
+    Attributes:
+        table: Arrow Table with query results.
+        row_count: Number of rows in the result.
+        column_count: Number of columns in the result.
+        sql: The SQL query that was executed.
+    """
 
     table: pa.Table
     row_count: int
     column_count: int
     sql: str
+
+    def to_arrow(self) -> pa.Table:
+        """Return the result as a PyArrow Table (zero-copy alias)."""
+        return self.table
 
 
 class MetadataSearchBridge:
@@ -41,19 +54,25 @@ class MetadataSearchBridge:
     def __init__(self, storage: LanceStorageManager) -> None:
         self._storage = storage
 
-    def query(self, dataset_name: str, sql: str) -> MetadataQueryResult:
+    def query(
+        self,
+        dataset_name: str,
+        sql: str,
+        tables: dict[str, pa.Table] | None = None,
+    ) -> MetadataQueryResult:
         """Execute a SQL query against a Lance dataset.
 
         Args:
             dataset_name: Name of the Lance dataset to query.
             sql: SQL query string (must be SELECT only).
+            tables: Additional Arrow tables to register for JOIN queries.
 
         Returns:
             MetadataQueryResult with Arrow table and metadata.
 
         Raises:
             QueryError: If SQL is not SELECT, dataset not found, or query fails.
-            ValueError: If dataset name is invalid.
+            ValueError: If dataset name or table name is invalid.
         """
         if not _SAFE_IDENTIFIER_RE.match(dataset_name):
             raise ValueError(f"Invalid dataset name '{dataset_name}'")
@@ -94,6 +113,12 @@ class MetadataSearchBridge:
                 message="Semicolons are not allowed (single statement only)",
             )
 
+        # Validate extra table names
+        if tables:
+            for name in tables:
+                if not _SAFE_IDENTIFIER_RE.match(name):
+                    raise ValueError(f"Invalid table name '{name}'")
+
         # Read dataset from Lance
         try:
             table = self._storage.read_dataset(dataset_name)
@@ -103,10 +128,12 @@ class MetadataSearchBridge:
                 message=f"Failed to read dataset '{dataset_name}': {exc}",
             ) from exc
 
-        # Register as DuckDB table and execute query
+        # Register tables and execute query
         conn = duckdb.connect()
         try:
             conn.register("data", table)
+            for name, extra_table in (tables or {}).items():
+                conn.register(name, extra_table)
             result_reader = conn.execute(sql).arrow()
             # DuckDB may return RecordBatchReader — convert to Table
             if hasattr(result_reader, "read_all"):

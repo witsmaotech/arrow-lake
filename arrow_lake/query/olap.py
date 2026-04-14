@@ -1,10 +1,16 @@
-"""OLAP analytics — Story 5.4.
+"""OLAP analytics — Story 5.4, 7.6.
 
 ruff noqa: F821 (Any used in annotations with __future__ import)
 
 Provides OlapSearchBridge for SQL analytics queries over Lance datasets.
 Uses DuckDB with zero-copy Arrow integration for GROUP BY, aggregation,
-window functions, and other OLAP operations.
+window functions, JOIN, and other OLAP operations.
+
+Story 7.6 additions:
+- Multi-table registration for JOIN queries
+- enable_join config flag for security control
+- to_arrow() convenience method on OlapQueryResult
+- daft_sql() placeholder (ADR-05: Daft 0.7.8 has no SQL)
 """
 
 from __future__ import annotations
@@ -20,6 +26,12 @@ from arrow_lake.config import OlapConfig
 from arrow_lake.exceptions import ErrorCode, QueryError
 
 _SAFE_IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_-]*$")
+
+_JOIN_KEYWORD_RE = re.compile(
+    r"\b(INNER\s+JOIN|LEFT\s+JOIN|RIGHT\s+JOIN|FULL\s+JOIN|CROSS\s+JOIN|"
+    r"JOIN|NATURAL\s+JOIN)\b",
+    re.IGNORECASE,
+)
 
 _DANGEROUS_KEYWORDS_RE = re.compile(
     r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|EXEC|EXECUTE|"
@@ -43,6 +55,10 @@ class OlapQueryResult:
     row_count: int
     column_count: int
     sql: str
+
+    def to_arrow(self) -> pa.Table:
+        """Return the result as a PyArrow Table (zero-copy alias)."""
+        return self.table
 
 
 class OlapSearchBridge:
@@ -75,6 +91,7 @@ class OlapSearchBridge:
         sql: str,
         *,
         max_rows: int | None = None,
+        tables: dict[str, pa.Table] | None = None,
     ) -> OlapQueryResult:
         """Execute an OLAP SQL query against a Lance dataset.
 
@@ -82,16 +99,24 @@ class OlapSearchBridge:
             dataset_name: Name of the Lance dataset to query.
             sql: SQL query string (must be SELECT only).
             max_rows: Maximum result rows (None = use config default).
+            tables: Additional Arrow tables to register for JOIN queries.
+                    Keys are table names (must match _SAFE_IDENTIFIER_RE).
 
         Returns:
             OlapQueryResult with Arrow table and metadata.
 
         Raises:
             QueryError: If SQL is invalid, dataset not found, or query fails.
-            ValueError: If dataset name is invalid.
+            ValueError: If dataset name or table name is invalid.
         """
         _validate_dataset_name(dataset_name)
         self._validate_sql(sql)
+
+        # Validate extra table names
+        if tables:
+            for name in tables:
+                if not _SAFE_IDENTIFIER_RE.match(name):
+                    raise ValueError(f"Invalid table name '{name}'")
 
         effective_max_rows = max_rows if max_rows is not None else self._config.max_result_rows
 
@@ -104,10 +129,12 @@ class OlapSearchBridge:
                 message=f"Failed to read dataset '{dataset_name}': {exc}",
             ) from exc
 
-        # Register as DuckDB table and execute query
+        # Register tables and execute query
         conn = duckdb.connect()
         try:
             conn.register("data", table)
+            for name, extra_table in (tables or {}).items():
+                conn.register(name, extra_table)
             result_reader = conn.execute(sql).arrow()
             # DuckDB may return RecordBatchReader — convert to Table
             if hasattr(result_reader, "read_all"):
@@ -176,13 +203,32 @@ class OlapSearchBridge:
         finally:
             conn.close()
 
-    @staticmethod
-    def _validate_sql(sql: str) -> None:
+    def daft_sql(self, sql: str) -> None:
+        """Placeholder for Daft SQL interface (ADR-05).
+
+        Daft 0.7.8 does not support df.sql(). Use the DuckDB path instead.
+        This method will be replaced with a real Daft SQL implementation
+        when Daft adds SQL support in a future version.
+
+        Args:
+            sql: SQL query string (unused in current version).
+
+        Raises:
+            NotImplementedError: Always. Use DuckDB via query() instead.
+        """
+        raise NotImplementedError(
+            "Daft SQL is not available in Daft 0.7.8. "
+            "Use the DuckDB OLAP path via OlapSearchBridge.query() instead."
+        )
+
+    def _validate_sql(self, sql: str) -> None:
         """Validate SQL is SELECT-only with no dangerous patterns.
+
+        When enable_join is False, blocks JOIN keywords as well.
 
         Raises:
             QueryError: If SQL is empty, not SELECT, contains dangerous
-                keywords, or contains semicolons.
+                keywords, contains semicolons, or contains JOIN when disabled.
         """
         if not sql or not sql.strip():
             raise QueryError(
@@ -196,6 +242,16 @@ class OlapSearchBridge:
                 error_code=ErrorCode.OLAP_QUERY_FAILED,
                 message="Only SELECT queries are allowed via OlapSearchBridge",
             )
+
+        # Block JOIN when disabled
+        if not self._config.enable_join:
+            join_match = _JOIN_KEYWORD_RE.search(stripped)
+            if join_match:
+                raise QueryError(
+                    error_code=ErrorCode.QUERY_JOIN_NOT_ALLOWED,
+                    message=f"JOIN queries are not allowed (enable_join=False): "
+                    f"'{join_match.group()!r}' found",
+                )
 
         # Block dangerous SQL keywords using word-boundary regex
         match = _DANGEROUS_KEYWORDS_RE.search(stripped)

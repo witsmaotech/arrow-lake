@@ -38,3 +38,24 @@ autoscale:
   idle_timeout_seconds: 600
   spot_preference: 0.8
   gpu_increment: 0.5
+
+lifecycle:
+  enabled: true
+  standard_to_ia_days: 30
+  ia_to_glacier_days: 90
+  glacier_expiration_days: 365
+  excluded_prefixes:
+    - "thumbnails/"
+    - "previews/"
+  glacier_retrieval_tier: Standard
+
+faceted:
+  max_facet_values: 50
+  default_facet_columns:
+    - "modality"
+    - "source"
+  facet_filter_columns:
+    - "modality"
+    - "source"
+    - "quality_score"
+    - "created_at"

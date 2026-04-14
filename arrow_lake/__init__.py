@@ -23,6 +23,7 @@ from arrow_lake.exceptions import (
 if TYPE_CHECKING:
     from arrow_lake.quality.base import QualityFilterRegistry
     from arrow_lake.quality.models import QualityReport
+    from arrow_lake.query.faceted import FacetedSearchResult
     from arrow_lake.query.fts import FullTextSearchResult
     from arrow_lake.query.hybrid import HybridSearchResult
     from arrow_lake.query.olap import OlapQueryResult
@@ -33,6 +34,7 @@ __all__ = [
     "ArrowLakeError",
     "CatalogError",
     "EmbeddingError",
+    "FacetedSearchResult",
     "FullTextSearchResult",
     "HttpError",
     "HybridSearchResult",
@@ -305,15 +307,18 @@ class Lake:
         sql: str,
         *,
         max_rows: int | None = None,
+        tables: dict[str, Any] | None = None,
     ) -> OlapQueryResult:
-        """OLAP analytics query via DuckDB SQL (Story 5.4).
+        """OLAP analytics query via DuckDB SQL (Story 5.4, 7.6).
 
-        Supports GROUP BY, aggregation, window functions, HAVING, ORDER BY, LIMIT.
+        Supports GROUP BY, aggregation, window functions, HAVING, ORDER BY,
+        LIMIT, and JOIN queries.
 
         Args:
             dataset_name: Name of the Lance dataset.
             sql: SQL query string (must be SELECT only).
             max_rows: Maximum result rows (None = use config default).
+            tables: Additional Arrow tables for JOIN queries.
 
         Returns:
             OlapQueryResult with Arrow table and metadata.
@@ -321,7 +326,65 @@ class Lake:
         from arrow_lake.query.olap import OlapSearchBridge
 
         bridge = OlapSearchBridge(self._get_storage(), config=self._config.olap)
-        return bridge.query(dataset_name, sql, max_rows=max_rows)
+        return bridge.query(dataset_name, sql, max_rows=max_rows, tables=tables)
+
+    def sql_query(
+        self,
+        dataset_name: str,
+        sql: str,
+        *,
+        max_rows: int | None = None,
+        tables: dict[str, Any] | None = None,
+    ) -> OlapQueryResult:
+        """SQL query — semantic alias for olap_query() (Story 7.6).
+
+        Args:
+            dataset_name: Name of the Lance dataset.
+            sql: SQL query string (must be SELECT only).
+            max_rows: Maximum result rows (None = use config default).
+            tables: Additional Arrow tables for JOIN queries.
+
+        Returns:
+            OlapQueryResult with Arrow table and metadata.
+        """
+        return self.olap_query(dataset_name, sql, max_rows=max_rows, tables=tables)
+
+    def faceted_search(
+        self,
+        dataset_name: str,
+        query_vector: list[float],
+        *,
+        facets: list[str] | None = None,
+        top_k: int = 10,
+        vector_column: str = "embedding",
+        where: str | None = None,
+    ) -> FacetedSearchResult:
+        """Faceted search combining facet counts with vector results (Story 8.1).
+
+        Delegates to FacetedSearchBridge.
+
+        Args:
+            dataset_name: Name of the Lance dataset.
+            query_vector: Query embedding vector.
+            facets: Column names for CUBE facet computation.
+            top_k: Number of results.
+            vector_column: Name of the vector column.
+            where: Optional metadata filter.
+
+        Returns:
+            FacetedSearchResult with search results and facet counts.
+        """
+        from arrow_lake.query.faceted import FacetedSearchBridge
+
+        bridge = FacetedSearchBridge(self._get_storage(), config=self._config.faceted)
+        return bridge.search(
+            dataset_name,
+            query_vector,
+            facets=facets,
+            top_k=top_k,
+            vector_column=vector_column,
+            where=where,
+        )
 
     def version(self) -> str:
         """Return the current platform version."""

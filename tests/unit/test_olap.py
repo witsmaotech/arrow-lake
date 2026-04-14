@@ -79,29 +79,35 @@ class TestOlapQueryResult:
 
 
 class TestSQLValidation:
-    """Test OlapSearchBridge._validate_sql static method."""
+    """Test OlapSearchBridge._validate_sql method."""
+
+    def _bridge(self) -> OlapSearchBridge:
+        return OlapSearchBridge(storage=MagicMock())
 
     def test_select_is_allowed(self) -> None:
         """SELECT queries should pass validation."""
-        OlapSearchBridge._validate_sql("SELECT * FROM data")
-        OlapSearchBridge._validate_sql("SELECT col1, SUM(col2) FROM data GROUP BY col1")
+        bridge = self._bridge()
+        bridge._validate_sql("SELECT * FROM data")
+        bridge._validate_sql("SELECT col1, SUM(col2) FROM data GROUP BY col1")
 
     def test_non_select_raises(self) -> None:
         """Non-SELECT queries should raise QueryError."""
+        bridge = self._bridge()
         with pytest.raises(QueryError, match="SELECT"):
-            OlapSearchBridge._validate_sql("INSERT INTO data VALUES (1)")
+            bridge._validate_sql("INSERT INTO data VALUES (1)")
 
         with pytest.raises(QueryError, match="SELECT"):
-            OlapSearchBridge._validate_sql("UPDATE data SET col1 = 1")
+            bridge._validate_sql("UPDATE data SET col1 = 1")
 
         with pytest.raises(QueryError, match="SELECT"):
-            OlapSearchBridge._validate_sql("DELETE FROM data")
+            bridge._validate_sql("DELETE FROM data")
 
         with pytest.raises(QueryError, match="SELECT"):
-            OlapSearchBridge._validate_sql("DROP TABLE data")
+            bridge._validate_sql("DROP TABLE data")
 
     def test_dangerous_keywords_blocked(self) -> None:
         """Dangerous SQL keywords should be blocked."""
+        bridge = self._bridge()
         dangerous_queries = [
             "SELECT * FROM data; DROP TABLE data",
             "SELECT * FROM data WHERE 1=1; INSERT INTO data VALUES (1)",
@@ -109,45 +115,51 @@ class TestSQLValidation:
         ]
         for sql in dangerous_queries:
             with pytest.raises(QueryError, match="not allowed"):
-                OlapSearchBridge._validate_sql(sql)
+                bridge._validate_sql(sql)
 
     def test_semicolons_blocked(self) -> None:
         """Semicolons should be blocked (single statement only)."""
+        bridge = self._bridge()
         with pytest.raises(QueryError, match="Semicolon"):
-            OlapSearchBridge._validate_sql("SELECT * FROM data;")
+            bridge._validate_sql("SELECT * FROM data;")
 
     def test_empty_query_raises(self) -> None:
         """Empty queries should raise QueryError."""
+        bridge = self._bridge()
         with pytest.raises(QueryError, match="empty"):
-            OlapSearchBridge._validate_sql("")
+            bridge._validate_sql("")
 
         with pytest.raises(QueryError, match="empty"):
-            OlapSearchBridge._validate_sql("   ")
+            bridge._validate_sql("   ")
 
     def test_select_with_window_function_allowed(self) -> None:
         """Window functions should be allowed."""
-        OlapSearchBridge._validate_sql(
+        bridge = self._bridge()
+        bridge._validate_sql(
             "SELECT *, ROW_NUMBER() OVER (PARTITION BY modality ORDER BY id) as rn FROM data"
         )
 
     def test_keywords_in_column_names_allowed(self) -> None:
         """Keywords as part of column names (word boundary) should be allowed."""
+        bridge = self._bridge()
         # 'executive' contains 'EXEC' but is not a standalone keyword
-        OlapSearchBridge._validate_sql("SELECT executive_name FROM data")
+        bridge._validate_sql("SELECT executive_name FROM data")
         # 'updated_at' contains 'UPDATE' but is not a standalone keyword
-        OlapSearchBridge._validate_sql("SELECT updated_at FROM data")
+        bridge._validate_sql("SELECT updated_at FROM data")
         # 'description' is fine
-        OlapSearchBridge._validate_sql("SELECT description FROM data")
+        bridge._validate_sql("SELECT description FROM data")
 
     def test_standalone_keywords_blocked(self) -> None:
         """Standalone dangerous keywords should still be blocked."""
+        bridge = self._bridge()
         with pytest.raises(QueryError, match="not allowed"):
-            OlapSearchBridge._validate_sql("SELECT * FROM data UNION SELECT * FROM other")
+            bridge._validate_sql("SELECT * FROM data UNION SELECT * FROM other")
 
     def test_union_except_intersect_blocked(self) -> None:
         """UNION, EXCEPT, INTERSECT should be blocked."""
+        bridge = self._bridge()
         with pytest.raises(QueryError, match="not allowed"):
-            OlapSearchBridge._validate_sql("SELECT * FROM data EXCEPT SELECT * FROM other")
+            bridge._validate_sql("SELECT * FROM data EXCEPT SELECT * FROM other")
 
 
 # ---------------------------------------------------------------------------

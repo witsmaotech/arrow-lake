@@ -130,6 +130,8 @@ markers = [
     "e2e: End-to-end tests",
     "smoke: Platform boot smoke tests",
     "benchmark: Performance benchmarks (emit JSON, not asserted)",
+    "distributed_gpu: Distributed GPU tests (requires K8s cluster, excluded from CI)",
+    "slow: Slow-running tests (>30s)",
 ]
 
 [tool.coverage.run]
