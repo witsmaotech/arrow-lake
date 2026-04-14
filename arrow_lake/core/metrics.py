@@ -35,6 +35,29 @@ catalog_queries_total: Counter = Counter(
     registry=REGISTRY,
 )
 
+# --- Epic 6: Workflow Metrics ---
+
+workflow_steps_total: Counter = Counter(
+    "arrow_lake_workflow_steps_total",
+    "Total number of workflow step executions.",
+    registry=REGISTRY,
+    labelnames=["flow_name", "step_name", "status"],
+)
+
+workflow_step_duration_seconds: Gauge = Gauge(
+    "arrow_lake_workflow_step_duration_seconds",
+    "Duration of workflow step execution in seconds.",
+    registry=REGISTRY,
+    labelnames=["flow_name", "step_name"],
+)
+
+workflow_retries_total: Counter = Counter(
+    "arrow_lake_workflow_retries_total",
+    "Total number of workflow step retries.",
+    registry=REGISTRY,
+    labelnames=["flow_name", "step_name"],
+)
+
 # --- Metrics toggle ---
 
 _metrics_enabled: bool = True

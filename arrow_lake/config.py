@@ -1,5 +1,7 @@
 """Arrow Lake configuration — 4-layer override system.
 
+ruff noqa: F821 (false positives from __future__ annotations + forward refs)
+
 Priority (low → high):
   1. Code defaults (Pydantic field defaults)
   2. .env file (via pydantic-settings)
@@ -53,6 +55,36 @@ class DecodeQuality(StrEnum):
     THUMBNAIL = "thumbnail"
     PREVIEW = "preview"
     FULL = "full"
+
+
+class DistanceMetric(StrEnum):
+    """Supported vector distance metrics."""
+
+    COSINE = "cosine"
+    L2 = "l2"
+    DOT = "dot"
+
+
+class VectorIndexType(StrEnum):
+    """Supported vector index types."""
+
+    IVF_PQ = "IVF_PQ"
+    IVF_FLAT = "IVF_FLAT"
+    IVF_HNSW_PQ = "IVF_HNSW_PQ"
+
+
+class SchemaValidationMode(StrEnum):
+    """Schema validation strictness levels."""
+
+    STRICT = "strict"
+    LENIENT = "lenient"
+
+
+class FilterMode(StrEnum):
+    """Quality filter combination semantics."""
+
+    ALL = "all"
+    ANY = "any"
 
 
 class StorageConfig(BaseModel):
@@ -175,6 +207,172 @@ class DecodeConfig(BaseModel):
     quality: DecodeQuality = DecodeQuality.FULL
 
 
+class VectorSearchConfig(BaseModel):
+    """Vector similarity search configuration (Story 5.1).
+
+    Attributes:
+        metric: Default distance metric for vector search.
+        default_index_type: Default vector index type.
+        default_top_k: Default number of results to return.
+        num_partitions: IVF partitions (auto-adjusted for large datasets).
+        num_sub_vectors: PQ sub-vector count (must be multiple of 8).
+        num_bits: PQ quantization bits per sub-vector.
+        nprobes: Number of IVF partitions to probe during search.
+        max_nprobes: Maximum nprobes for large-scale search.
+    """
+
+    metric: DistanceMetric = DistanceMetric.COSINE
+    default_index_type: VectorIndexType = VectorIndexType.IVF_PQ
+    default_top_k: int = 10
+    num_partitions: int = 256
+    num_sub_vectors: int = 24
+    num_bits: int = 8
+    nprobes: int = 20
+    max_nprobes: int = 256
+
+    @field_validator("default_top_k")
+    @classmethod
+    def validate_top_k(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError(f"default_top_k must be >= 1, got {v}")
+        return v
+
+    @field_validator("num_sub_vectors")
+    @classmethod
+    def validate_num_sub_vectors(cls, v: int) -> int:
+        if v < 1 or v % 8 != 0:
+            raise ValueError(f"num_sub_vectors must be a positive multiple of 8, got {v}")
+        return v
+
+
+class FullTextSearchConfig(BaseModel):
+    """Full-text search configuration (Story 5.2).
+
+    Attributes:
+        default_top_k: Default number of results to return.
+        fts_column: Default text column for FTS indexing.
+        stem: Whether to apply stemming during tokenization.
+        remove_stop_words: Whether to remove stop words.
+        lower_case: Whether to lowercase tokens.
+    """
+
+    default_top_k: int = 10
+    fts_column: str = "text_content"
+    stem: bool = True
+    remove_stop_words: bool = True
+    lower_case: bool = True
+
+    @field_validator("default_top_k")
+    @classmethod
+    def validate_top_k(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError(f"default_top_k must be >= 1, got {v}")
+        return v
+
+
+class HybridSearchConfig(BaseModel):
+    """Hybrid search configuration (Story 5.3).
+
+    Attributes:
+        default_top_k: Default number of final results to return.
+        rrf_k: RRF constant (paper recommends K=60).
+        vector_top_k_multiplier: Vector candidate count = default_top_k * multiplier.
+        fts_top_k_multiplier: FTS candidate count = default_top_k * multiplier.
+    """
+
+    default_top_k: int = 10
+    rrf_k: int = 60
+    vector_top_k_multiplier: int = 3
+    fts_top_k_multiplier: int = 3
+
+    @field_validator("default_top_k", "rrf_k", "vector_top_k_multiplier", "fts_top_k_multiplier")
+    @classmethod
+    def validate_positive_int(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError(f"value must be >= 1, got {v}")
+        return v
+
+
+class QualityConfig(BaseModel):
+    """Quality filtering and schema validation configuration (Epic 4).
+
+    Attributes:
+        enabled: Whether quality filtering is active.
+        filter_mode: AND ('all') or OR ('any') filter combination.
+        active_filters: Comma-separated names of enabled filters from registry.
+        schema_validation: strict rejects unknown cols + type mismatches;
+                          lenient drops unknown cols, safe-casts compatible types.
+        dead_letter_enabled: Whether rejected rows go to dead-letter table.
+        text_min_chars: Minimum text length for TextLengthFilter.
+        text_max_chars: Maximum text length for TextLengthFilter.
+        image_min_width: Minimum image width for ImageResolutionFilter.
+        image_min_height: Minimum image height for ImageResolutionFilter.
+    """
+
+    enabled: bool = True
+    filter_mode: FilterMode = FilterMode.ALL
+    active_filters: str = ""
+    schema_validation: SchemaValidationMode = SchemaValidationMode.LENIENT
+    dead_letter_enabled: bool = True
+    text_min_chars: int = 1
+    text_max_chars: int | None = None
+    image_min_width: int = 64
+    image_min_height: int = 64
+
+
+class OlapConfig(BaseModel):
+    """OLAP analytics configuration (Story 5.4).
+
+    Attributes:
+        max_result_rows: Maximum number of rows returned by OLAP queries.
+        enable_predicate_pushdown: Whether to push down predicates to Lance.
+    """
+
+    max_result_rows: int = 100_000
+    enable_predicate_pushdown: bool = True
+
+    @field_validator("max_result_rows")
+    @classmethod
+    def validate_max_result_rows(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError(f"max_result_rows must be >= 1, got {v}")
+        return v
+
+
+class WorkflowConfig(BaseModel):
+    """Workflow orchestration configuration (Epic 6).
+
+    Attributes:
+        max_retry_attempts: Maximum retry attempts per step.
+        min_backoff_seconds: Minimum backoff between retries (exponential).
+        max_backoff_seconds: Maximum backoff between retries.
+        checkpoint_enabled: Enable Lance version checkpointing before steps.
+        ray_execution_enabled: Enable Ray cluster execution (--with ray).
+        auto_tag_runs: Auto-generate tags from run metadata.
+    """
+
+    max_retry_attempts: int = 3
+    min_backoff_seconds: float = 1.0
+    max_backoff_seconds: float = 60.0
+    checkpoint_enabled: bool = True
+    ray_execution_enabled: bool = False
+    auto_tag_runs: bool = True
+
+    @field_validator("max_retry_attempts")
+    @classmethod
+    def validate_max_retry_attempts(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError(f"max_retry_attempts must be >= 0, got {v}")
+        return v
+
+    @field_validator("min_backoff_seconds", "max_backoff_seconds")
+    @classmethod
+    def validate_backoff(cls, v: float) -> float:
+        if v < 0:
+            raise ValueError(f"backoff_seconds must be >= 0, got {v}")
+        return v
+
+
 class ArrowLakeConfig(BaseSettings):
     """Top-level Arrow Lake configuration.
 
@@ -202,6 +400,12 @@ class ArrowLakeConfig(BaseSettings):
     media: MediaConfig = MediaConfig()
     embedding: EmbeddingConfig = EmbeddingConfig()
     decode: DecodeConfig = DecodeConfig()
+    vector: VectorSearchConfig = VectorSearchConfig()
+    fts: FullTextSearchConfig = FullTextSearchConfig()
+    hybrid: HybridSearchConfig = HybridSearchConfig()
+    olap: OlapConfig = OlapConfig()
+    quality: QualityConfig = QualityConfig()
+    workflow: WorkflowConfig = WorkflowConfig()
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> ArrowLakeConfig:
@@ -243,6 +447,12 @@ class ArrowLakeConfig(BaseSettings):
             media=merged["media"],
             embedding=merged["embedding"],
             decode=merged["decode"],
+            vector=merged["vector"],
+            fts=merged["fts"],
+            hybrid=merged["hybrid"],
+            olap=merged["olap"],
+            quality=merged["quality"],
+            workflow=merged["workflow"],
         )
 
 
@@ -261,6 +471,12 @@ def _build_merged_update(base: ArrowLakeConfig, yaml_data: dict[str, Any]) -> di
         "media": MediaConfig,
         "embedding": EmbeddingConfig,
         "decode": DecodeConfig,
+        "vector": VectorSearchConfig,
+        "fts": FullTextSearchConfig,
+        "hybrid": HybridSearchConfig,
+        "olap": OlapConfig,
+        "quality": QualityConfig,
+        "workflow": WorkflowConfig,
     }
     result: dict[str, Any] = {}
 

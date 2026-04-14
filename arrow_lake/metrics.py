@@ -8,6 +8,9 @@ from arrow_lake.core.metrics import (
     enable_metrics,
     get_metrics_enabled,
     system_uptime_seconds,
+    workflow_retries_total,
+    workflow_step_duration_seconds,
+    workflow_steps_total,
 )
 
 __all__ = [
@@ -18,4 +21,7 @@ __all__ = [
     "enable_metrics",
     "get_metrics_enabled",
     "system_uptime_seconds",
+    "workflow_retries_total",
+    "workflow_step_duration_seconds",
+    "workflow_steps_total",
 ]

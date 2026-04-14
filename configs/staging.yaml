@@ -1,0 +1,13 @@
+storage:
+  backend: minio
+  s3_endpoint: "http://staging-s3.internal:9000"
+  s3_region: "us-east-1"
+
+compute:
+  gpu_enabled: false
+  num_workers: 4
+
+observability:
+  metrics_enabled: true
+  metrics_port: 8000
+  log_level: INFO

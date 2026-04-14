@@ -69,6 +69,13 @@ src = ["arrow_lake", "flows"]
 select = ["E", "F", "W", "I", "N", "UP", "B", "A", "SIM", "RUF"]
 ignore = ["E501", "B008", "S101", "RUF002", "RUF003", "PERF203"]
 
+[tool.ruff.lint.per-file-ignores]
+"arrow_lake/config.py" = ["F821"]
+"arrow_lake/query/vector.py" = ["F821"]
+"arrow_lake/query/fts.py" = ["F821"]
+"arrow_lake/query/hybrid.py" = ["F821"]
+"arrow_lake/query/olap.py" = ["F821"]
+
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"

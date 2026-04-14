@@ -16,13 +16,23 @@ from arrow_lake.config import (
     ArrowLakeConfig,
     ComputeConfig,
     DecodeConfig,
+    DistanceMetric,
     EmbeddingConfig,
+    FilterMode,
+    FullTextSearchConfig,
     HttpConfig,
+    HybridSearchConfig,
     LogLevel,
     MediaConfig,
     ObservabilityConfig,
+    OlapConfig,
+    QualityConfig,
+    SchemaValidationMode,
     StorageBackend,
     StorageConfig,
+    VectorIndexType,
+    VectorSearchConfig,
+    WorkflowConfig,
 )
 
 
@@ -481,3 +491,578 @@ decode:
         assert config.media.thumbnail_size == 128
         assert config.http.timeout_seconds == 10.0
         assert config.decode.quality == "thumbnail"
+
+
+class TestVectorSearchConfig:
+    """Test VectorSearchConfig defaults and validation (Story 5.1)."""
+
+    def test_default_metric_is_cosine(self) -> None:
+        config = VectorSearchConfig()
+        assert config.metric == DistanceMetric.COSINE
+
+    def test_default_index_type_is_ivf_pq(self) -> None:
+        config = VectorSearchConfig()
+        assert config.default_index_type == VectorIndexType.IVF_PQ
+
+    def test_default_top_k(self) -> None:
+        config = VectorSearchConfig()
+        assert config.default_top_k == 10
+
+    def test_default_num_partitions(self) -> None:
+        config = VectorSearchConfig()
+        assert config.num_partitions == 256
+
+    def test_default_num_sub_vectors(self) -> None:
+        config = VectorSearchConfig()
+        assert config.num_sub_vectors == 24
+
+    def test_default_num_bits(self) -> None:
+        config = VectorSearchConfig()
+        assert config.num_bits == 8
+
+    def test_default_nprobes(self) -> None:
+        config = VectorSearchConfig()
+        assert config.nprobes == 20
+
+    def test_default_max_nprobes(self) -> None:
+        config = VectorSearchConfig()
+        assert config.max_nprobes == 256
+
+    def test_custom_metric(self) -> None:
+        config = VectorSearchConfig(metric=DistanceMetric.L2)
+        assert config.metric == DistanceMetric.L2
+
+    def test_custom_index_type(self) -> None:
+        config = VectorSearchConfig(default_index_type=VectorIndexType.IVF_FLAT)
+        assert config.default_index_type == VectorIndexType.IVF_FLAT
+
+    def test_top_k_must_be_positive(self) -> None:
+        with pytest.raises(ValueError, match="default_top_k"):
+            VectorSearchConfig(default_top_k=0)
+        with pytest.raises(ValueError, match="default_top_k"):
+            VectorSearchConfig(default_top_k=-1)
+
+    def test_num_sub_vectors_must_be_multiple_of_8(self) -> None:
+        with pytest.raises(ValueError, match="num_sub_vectors"):
+            VectorSearchConfig(num_sub_vectors=7)
+        with pytest.raises(ValueError, match="num_sub_vectors"):
+            VectorSearchConfig(num_sub_vectors=0)
+
+    def test_all_distance_metrics(self) -> None:
+        for m in DistanceMetric:
+            config = VectorSearchConfig(metric=m)
+            assert config.metric == m
+
+    def test_all_index_types(self) -> None:
+        for t in VectorIndexType:
+            config = VectorSearchConfig(default_index_type=t)
+            assert config.default_index_type == t
+
+
+class TestVectorConfigInArrowLake:
+    """Test VectorSearchConfig integration in ArrowLakeConfig (Story 5.1)."""
+
+    def test_has_vector_config(self) -> None:
+        config = ArrowLakeConfig()
+        assert isinstance(config.vector, VectorSearchConfig)
+
+    def test_vector_defaults(self) -> None:
+        config = ArrowLakeConfig()
+        assert config.vector.metric == "cosine"
+        assert config.vector.default_top_k == 10
+        assert config.vector.num_sub_vectors == 24
+
+    def test_env_override_vector_metric(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ARROW_LAKE__VECTOR__METRIC", "l2")
+        config = ArrowLakeConfig()
+        assert config.vector.metric == "l2"
+
+    def test_env_override_vector_nprobes(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ARROW_LAKE__VECTOR__NPROBES", "64")
+        config = ArrowLakeConfig()
+        assert config.vector.nprobes == 64
+
+    def test_yaml_override_vector(self, tmp_path: Any) -> None:
+        yaml_content = """
+vector:
+  metric: l2
+  default_top_k: 20
+  nprobes: 128
+"""
+        yaml_file = tmp_path / "config.yaml"
+        yaml_file.write_text(yaml_content)
+
+        config = ArrowLakeConfig.from_yaml(str(yaml_file))
+        assert config.vector.metric == "l2"
+        assert config.vector.default_top_k == 20
+        assert config.vector.nprobes == 128
+
+
+class TestFullTextSearchConfig:
+    """Test FullTextSearchConfig defaults and validation (Story 5.2)."""
+
+    def test_default_top_k(self) -> None:
+        config = FullTextSearchConfig()
+        assert config.default_top_k == 10
+
+    def test_default_fts_column(self) -> None:
+        config = FullTextSearchConfig()
+        assert config.fts_column == "text_content"
+
+    def test_default_stem(self) -> None:
+        config = FullTextSearchConfig()
+        assert config.stem is True
+
+    def test_default_remove_stop_words(self) -> None:
+        config = FullTextSearchConfig()
+        assert config.remove_stop_words is True
+
+    def test_default_lower_case(self) -> None:
+        config = FullTextSearchConfig()
+        assert config.lower_case is True
+
+    def test_custom_values(self) -> None:
+        config = FullTextSearchConfig(
+            default_top_k=5,
+            fts_column="description",
+            stem=False,
+            remove_stop_words=False,
+            lower_case=False,
+        )
+        assert config.default_top_k == 5
+        assert config.fts_column == "description"
+        assert config.stem is False
+        assert config.remove_stop_words is False
+        assert config.lower_case is False
+
+    def test_top_k_must_be_positive(self) -> None:
+        with pytest.raises(ValueError, match="default_top_k"):
+            FullTextSearchConfig(default_top_k=0)
+        with pytest.raises(ValueError, match="default_top_k"):
+            FullTextSearchConfig(default_top_k=-1)
+
+
+class TestFullTextSearchConfigInArrowLake:
+    """Test FullTextSearchConfig integration in ArrowLakeConfig (Story 5.2)."""
+
+    def test_has_fts_config(self) -> None:
+        config = ArrowLakeConfig()
+        assert isinstance(config.fts, FullTextSearchConfig)
+
+    def test_fts_defaults(self) -> None:
+        config = ArrowLakeConfig()
+        assert config.fts.default_top_k == 10
+        assert config.fts.fts_column == "text_content"
+        assert config.fts.stem is True
+        assert config.fts.remove_stop_words is True
+        assert config.fts.lower_case is True
+
+    def test_env_override_fts_top_k(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ARROW_LAKE__FTS__DEFAULT_TOP_K", "20")
+        config = ArrowLakeConfig()
+        assert config.fts.default_top_k == 20
+
+    def test_env_override_fts_column(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ARROW_LAKE__FTS__FTS_COLUMN", "description")
+        config = ArrowLakeConfig()
+        assert config.fts.fts_column == "description"
+
+    def test_yaml_override_fts(self, tmp_path: Any) -> None:
+        yaml_content = """
+fts:
+  default_top_k: 25
+  fts_column: description
+  stem: false
+"""
+        yaml_file = tmp_path / "config.yaml"
+        yaml_file.write_text(yaml_content)
+
+        config = ArrowLakeConfig.from_yaml(str(yaml_file))
+        assert config.fts.default_top_k == 25
+        assert config.fts.fts_column == "description"
+        assert config.fts.stem is False
+
+
+class TestHybridSearchConfig:
+    """Test HybridSearchConfig defaults and validation (Story 5.3)."""
+
+    def test_default_top_k(self) -> None:
+        config = HybridSearchConfig()
+        assert config.default_top_k == 10
+
+    def test_default_rrf_k(self) -> None:
+        config = HybridSearchConfig()
+        assert config.rrf_k == 60
+
+    def test_default_vector_top_k_multiplier(self) -> None:
+        config = HybridSearchConfig()
+        assert config.vector_top_k_multiplier == 3
+
+    def test_default_fts_top_k_multiplier(self) -> None:
+        config = HybridSearchConfig()
+        assert config.fts_top_k_multiplier == 3
+
+    def test_custom_values(self) -> None:
+        config = HybridSearchConfig(
+            default_top_k=5,
+            rrf_k=100,
+            vector_top_k_multiplier=5,
+            fts_top_k_multiplier=4,
+        )
+        assert config.default_top_k == 5
+        assert config.rrf_k == 100
+        assert config.vector_top_k_multiplier == 5
+        assert config.fts_top_k_multiplier == 4
+
+    def test_positive_validation(self) -> None:
+        with pytest.raises(ValueError):
+            HybridSearchConfig(default_top_k=0)
+        with pytest.raises(ValueError):
+            HybridSearchConfig(rrf_k=0)
+        with pytest.raises(ValueError):
+            HybridSearchConfig(vector_top_k_multiplier=-1)
+        with pytest.raises(ValueError):
+            HybridSearchConfig(fts_top_k_multiplier=0)
+
+
+class TestHybridSearchConfigInArrowLake:
+    """Test HybridSearchConfig integration in ArrowLakeConfig (Story 5.3)."""
+
+    def test_has_hybrid_config(self) -> None:
+        config = ArrowLakeConfig()
+        assert isinstance(config.hybrid, HybridSearchConfig)
+
+    def test_hybrid_defaults(self) -> None:
+        config = ArrowLakeConfig()
+        assert config.hybrid.default_top_k == 10
+        assert config.hybrid.rrf_k == 60
+        assert config.hybrid.vector_top_k_multiplier == 3
+        assert config.hybrid.fts_top_k_multiplier == 3
+
+    def test_env_override_hybrid_top_k(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ARROW_LAKE__HYBRID__DEFAULT_TOP_K", "20")
+        config = ArrowLakeConfig()
+        assert config.hybrid.default_top_k == 20
+
+    def test_env_override_hybrid_rrf_k(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ARROW_LAKE__HYBRID__RRF_K", "100")
+        config = ArrowLakeConfig()
+        assert config.hybrid.rrf_k == 100
+
+    def test_yaml_override_hybrid(self, tmp_path: Any) -> None:
+        yaml_content = """
+hybrid:
+  default_top_k: 15
+  rrf_k: 50
+  vector_top_k_multiplier: 5
+"""
+        yaml_file = tmp_path / "config.yaml"
+        yaml_file.write_text(yaml_content)
+
+        config = ArrowLakeConfig.from_yaml(str(yaml_file))
+        assert config.hybrid.default_top_k == 15
+        assert config.hybrid.rrf_k == 50
+        assert config.hybrid.vector_top_k_multiplier == 5
+
+
+class TestOlapConfig:
+    """Test OlapConfig defaults and validation (Story 5.4)."""
+
+    def test_default_max_result_rows(self) -> None:
+        config = OlapConfig()
+        assert config.max_result_rows == 100_000
+
+    def test_default_enable_predicate_pushdown(self) -> None:
+        config = OlapConfig()
+        assert config.enable_predicate_pushdown is True
+
+    def test_custom_values(self) -> None:
+        config = OlapConfig(
+            max_result_rows=50_000,
+            enable_predicate_pushdown=False,
+        )
+        assert config.max_result_rows == 50_000
+        assert config.enable_predicate_pushdown is False
+
+    def test_max_result_rows_must_be_positive(self) -> None:
+        with pytest.raises(ValueError, match="max_result_rows"):
+            OlapConfig(max_result_rows=0)
+        with pytest.raises(ValueError, match="max_result_rows"):
+            OlapConfig(max_result_rows=-1)
+
+
+class TestOlapConfigInArrowLake:
+    """Test OlapConfig integration in ArrowLakeConfig (Story 5.4)."""
+
+    def test_has_olap_config(self) -> None:
+        config = ArrowLakeConfig()
+        assert isinstance(config.olap, OlapConfig)
+
+    def test_olap_defaults(self) -> None:
+        config = ArrowLakeConfig()
+        assert config.olap.max_result_rows == 100_000
+        assert config.olap.enable_predicate_pushdown is True
+
+    def test_env_override_olap_max_rows(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ARROW_LAKE__OLAP__MAX_RESULT_ROWS", "50000")
+        config = ArrowLakeConfig()
+        assert config.olap.max_result_rows == 50_000
+
+    def test_yaml_override_olap(self, tmp_path: Any) -> None:
+        yaml_content = """
+olap:
+  max_result_rows: 200000
+  enable_predicate_pushdown: false
+"""
+        yaml_file = tmp_path / "config.yaml"
+        yaml_file.write_text(yaml_content)
+
+        config = ArrowLakeConfig.from_yaml(str(yaml_file))
+        assert config.olap.max_result_rows == 200_000
+        assert config.olap.enable_predicate_pushdown is False
+
+
+class TestQualityConfig:
+    """Test QualityConfig defaults and validation (Epic 4)."""
+
+    def test_default_enabled(self) -> None:
+        config = QualityConfig()
+        assert config.enabled is True
+
+    def test_default_filter_mode_is_all(self) -> None:
+        config = QualityConfig()
+        assert config.filter_mode == FilterMode.ALL
+
+    def test_default_active_filters_empty(self) -> None:
+        config = QualityConfig()
+        assert config.active_filters == ""
+
+    def test_default_schema_validation_is_lenient(self) -> None:
+        config = QualityConfig()
+        assert config.schema_validation == SchemaValidationMode.LENIENT
+
+    def test_default_dead_letter_enabled(self) -> None:
+        config = QualityConfig()
+        assert config.dead_letter_enabled is True
+
+    def test_default_text_min_chars(self) -> None:
+        config = QualityConfig()
+        assert config.text_min_chars == 1
+
+    def test_default_text_max_chars_is_none(self) -> None:
+        config = QualityConfig()
+        assert config.text_max_chars is None
+
+    def test_default_image_min_dimensions(self) -> None:
+        config = QualityConfig()
+        assert config.image_min_width == 64
+        assert config.image_min_height == 64
+
+    def test_custom_values(self) -> None:
+        config = QualityConfig(
+            enabled=False,
+            filter_mode=FilterMode.ANY,
+            active_filters="text_length,image_resolution",
+            schema_validation=SchemaValidationMode.STRICT,
+            dead_letter_enabled=False,
+            text_min_chars=5,
+            text_max_chars=10000,
+            image_min_width=128,
+            image_min_height=128,
+        )
+        assert config.enabled is False
+        assert config.filter_mode == FilterMode.ANY
+        assert config.active_filters == "text_length,image_resolution"
+        assert config.schema_validation == SchemaValidationMode.STRICT
+        assert config.dead_letter_enabled is False
+        assert config.text_min_chars == 5
+        assert config.text_max_chars == 10000
+        assert config.image_min_width == 128
+        assert config.image_min_height == 128
+
+    def test_filter_mode_accepts_string(self) -> None:
+        config = QualityConfig(filter_mode="any")
+        assert config.filter_mode == FilterMode.ANY
+
+    def test_schema_validation_accepts_string(self) -> None:
+        config = QualityConfig(schema_validation="strict")
+        assert config.schema_validation == SchemaValidationMode.STRICT
+
+    def test_all_filter_modes(self) -> None:
+        for mode in FilterMode:
+            config = QualityConfig(filter_mode=mode)
+            assert config.filter_mode == mode
+
+    def test_all_schema_validation_modes(self) -> None:
+        for mode in SchemaValidationMode:
+            config = QualityConfig(schema_validation=mode)
+            assert config.schema_validation == mode
+
+
+class TestQualityConfigInArrowLake:
+    """Test QualityConfig integration in ArrowLakeConfig (Epic 4)."""
+
+    def test_has_quality_config(self) -> None:
+        config = ArrowLakeConfig()
+        assert isinstance(config.quality, QualityConfig)
+
+    def test_quality_defaults(self) -> None:
+        config = ArrowLakeConfig()
+        assert config.quality.enabled is True
+        assert config.quality.filter_mode == "all"
+        assert config.quality.schema_validation == "lenient"
+        assert config.quality.dead_letter_enabled is True
+
+    def test_env_override_quality_enabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ARROW_LAKE__QUALITY__ENABLED", "false")
+        config = ArrowLakeConfig()
+        assert config.quality.enabled is False
+
+    def test_env_override_quality_filter_mode(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ARROW_LAKE__QUALITY__FILTER_MODE", "any")
+        config = ArrowLakeConfig()
+        assert config.quality.filter_mode == "any"
+
+    def test_env_override_quality_schema_validation(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ARROW_LAKE__QUALITY__SCHEMA_VALIDATION", "strict")
+        config = ArrowLakeConfig()
+        assert config.quality.schema_validation == "strict"
+
+    def test_env_override_quality_text_min_chars(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ARROW_LAKE__QUALITY__TEXT_MIN_CHARS", "10")
+        config = ArrowLakeConfig()
+        assert config.quality.text_min_chars == 10
+
+    def test_yaml_override_quality(self, tmp_path: Any) -> None:
+        yaml_content = """
+quality:
+  enabled: false
+  filter_mode: any
+  schema_validation: strict
+  text_min_chars: 5
+  image_min_width: 128
+"""
+        yaml_file = tmp_path / "config.yaml"
+        yaml_file.write_text(yaml_content)
+
+        config = ArrowLakeConfig.from_yaml(str(yaml_file))
+        assert config.quality.enabled is False
+        assert config.quality.filter_mode == "any"
+        assert config.quality.schema_validation == "strict"
+        assert config.quality.text_min_chars == 5
+        assert config.quality.image_min_width == 128
+
+    def test_from_yaml_with_prod_config_quality(self) -> None:
+        """Verify prod.yaml quality section loads correctly."""
+        config = ArrowLakeConfig.from_yaml("configs/prod.yaml")
+        assert config.quality.enabled is True
+        assert config.quality.schema_validation == "strict"
+        assert config.quality.image_min_width == 128
+        assert config.quality.image_min_height == 128
+
+    def test_from_yaml_with_dev_config_quality(self) -> None:
+        """Verify dev.yaml quality section loads correctly."""
+        config = ArrowLakeConfig.from_yaml("configs/dev.yaml")
+        assert config.quality.enabled is True
+        assert config.quality.schema_validation == "lenient"
+
+
+class TestWorkflowConfig:
+    """Test WorkflowConfig defaults and validation (Epic 6)."""
+
+    def test_default_max_retry_attempts(self) -> None:
+        config = WorkflowConfig()
+        assert config.max_retry_attempts == 3
+
+    def test_default_min_backoff_seconds(self) -> None:
+        config = WorkflowConfig()
+        assert config.min_backoff_seconds == 1.0
+
+    def test_default_max_backoff_seconds(self) -> None:
+        config = WorkflowConfig()
+        assert config.max_backoff_seconds == 60.0
+
+    def test_default_checkpoint_enabled(self) -> None:
+        config = WorkflowConfig()
+        assert config.checkpoint_enabled is True
+
+    def test_default_ray_execution_enabled(self) -> None:
+        config = WorkflowConfig()
+        assert config.ray_execution_enabled is False
+
+    def test_default_auto_tag_runs(self) -> None:
+        config = WorkflowConfig()
+        assert config.auto_tag_runs is True
+
+    def test_custom_values(self) -> None:
+        config = WorkflowConfig(
+            max_retry_attempts=5,
+            min_backoff_seconds=2.0,
+            max_backoff_seconds=120.0,
+            checkpoint_enabled=False,
+            ray_execution_enabled=True,
+            auto_tag_runs=False,
+        )
+        assert config.max_retry_attempts == 5
+        assert config.min_backoff_seconds == 2.0
+        assert config.max_backoff_seconds == 120.0
+        assert config.checkpoint_enabled is False
+        assert config.ray_execution_enabled is True
+        assert config.auto_tag_runs is False
+
+    def test_negative_max_retry_attempts_raises(self) -> None:
+        with pytest.raises(ValueError, match="max_retry_attempts"):
+            WorkflowConfig(max_retry_attempts=-1)
+
+    def test_negative_backoff_raises(self) -> None:
+        with pytest.raises(ValueError, match="backoff"):
+            WorkflowConfig(min_backoff_seconds=-1.0)
+
+
+class TestWorkflowConfigInArrowLake:
+    """Test WorkflowConfig integration in ArrowLakeConfig (Epic 6)."""
+
+    def test_has_workflow_config(self) -> None:
+        config = ArrowLakeConfig()
+        assert isinstance(config.workflow, WorkflowConfig)
+
+    def test_workflow_defaults(self) -> None:
+        config = ArrowLakeConfig()
+        assert config.workflow.max_retry_attempts == 3
+        assert config.workflow.checkpoint_enabled is True
+        assert config.workflow.ray_execution_enabled is False
+        assert config.workflow.auto_tag_runs is True
+
+    def test_env_override_workflow_max_retry(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ARROW_LAKE__WORKFLOW__MAX_RETRY_ATTEMPTS", "5")
+        config = ArrowLakeConfig()
+        assert config.workflow.max_retry_attempts == 5
+
+    def test_env_override_workflow_ray_enabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ARROW_LAKE__WORKFLOW__RAY_EXECUTION_ENABLED", "true")
+        config = ArrowLakeConfig()
+        assert config.workflow.ray_execution_enabled is True
+
+    def test_yaml_override_workflow(self, tmp_path: Any) -> None:
+        yaml_content = """
+workflow:
+  max_retry_attempts: 5
+  min_backoff_seconds: 2.0
+  ray_execution_enabled: true
+  checkpoint_enabled: false
+"""
+        yaml_file = tmp_path / "config.yaml"
+        yaml_file.write_text(yaml_content)
+
+        config = ArrowLakeConfig.from_yaml(str(yaml_file))
+        assert config.workflow.max_retry_attempts == 5
+        assert config.workflow.min_backoff_seconds == 2.0
+        assert config.workflow.ray_execution_enabled is True
+        assert config.workflow.checkpoint_enabled is False
+
+    def test_from_yaml_with_dev_config_workflow(self) -> None:
+        """Verify dev.yaml workflow section loads correctly."""
+        config = ArrowLakeConfig.from_yaml("configs/dev.yaml")
+        assert config.workflow.max_retry_attempts == 3
+        assert config.workflow.ray_execution_enabled is False
+        assert config.workflow.auto_tag_runs is True

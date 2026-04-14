@@ -28,3 +28,47 @@ embedding:
 
 decode:
   quality: full
+
+vector:
+  metric: cosine
+  default_index_type: IVF_PQ
+  default_top_k: 10
+  num_partitions: 256
+  num_sub_vectors: 24
+  num_bits: 8
+  nprobes: 20
+  max_nprobes: 256
+
+fts:
+  default_top_k: 10
+  fts_column: text_content
+  stem: true
+  remove_stop_words: true
+  lower_case: true
+
+hybrid:
+  default_top_k: 10
+  rrf_k: 60
+  vector_top_k_multiplier: 3
+  fts_top_k_multiplier: 3
+
+olap:
+  max_result_rows: 100000
+  enable_predicate_pushdown: true
+
+quality:
+  enabled: true
+  filter_mode: all
+  schema_validation: lenient
+  dead_letter_enabled: true
+  text_min_chars: 1
+  image_min_width: 64
+  image_min_height: 64
+
+workflow:
+  max_retry_attempts: 3
+  min_backoff_seconds: 1.0
+  max_backoff_seconds: 60.0
+  checkpoint_enabled: true
+  ray_execution_enabled: false
+  auto_tag_runs: true

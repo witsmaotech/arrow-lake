@@ -1,0 +1,18 @@
+# Arrow Lake — GPU overlay (Sprint 1, Story 1.9)
+#
+# Extends docker-compose.yml with GPU support.
+# Usage: docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.gpu.yml up -d
+
+services:
+  ray-head:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      ARROW_LAKE__COMPUTE__GPU_ENABLED: "true"

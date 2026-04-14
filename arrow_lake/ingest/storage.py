@@ -485,3 +485,19 @@ class LanceStorageManager:
 
         db = lancedb.connect(self.base_uri)
         return db.open_table(name)
+
+    def open_dataset(self, dataset_name: str) -> Any:
+        """Open a Lance dataset by name via lancedb.
+
+        Public wrapper around _open_lance for use by query bridges.
+
+        Args:
+            dataset_name: Dataset name.
+
+        Returns:
+            LanceDB Table object.
+
+        Raises:
+            StorageError: If dataset cannot be opened.
+        """
+        return self._open_lance(self._get_dataset_path(dataset_name))

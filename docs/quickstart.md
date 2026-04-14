@@ -169,6 +169,103 @@ ray.get(handle.restore_dataset.remote("users"))
 ray.get(handle.delete_table.remote("users", cascade=True, base_uri="./data/lake"))
 ```
 
+### Quality Filtering
+
+```python
+from arrow_lake import Lake
+
+lake = Lake(base_uri="./data/lake")
+report = lake.quality_filter("documents", active_filters="text_length")
+print(f"Passed: {report.passed}/{report.total}")  # Passed: 480/500
+print(report.to_json())  # {"total_rows": 500, "passed_rows": 480, ...}
+```
+
+### Built-in Filters
+
+```python
+import pyarrow as pa
+from arrow_lake.quality.builtin import TextLengthFilter, ImageResolutionFilter
+
+table = pa.table({"text_content": ["hello", "world", ""]})
+text_filter = TextLengthFilter(min_chars=1, max_chars=100)
+passed, rejected = text_filter.filter(table)
+print(passed.num_rows)    # 2
+print(rejected.num_rows)  # 1 (empty string rejected)
+
+img_table = pa.table({"image_width": [64, 128], "image_height": [64, 128]})
+img_filter = ImageResolutionFilter(min_width=128, min_height=128)
+passed, rejected = img_filter.filter(img_table)
+print(rejected.num_rows)  # 1 (64x64 below threshold)
+```
+
+### Custom Filter Registration
+
+```python
+from arrow_lake.quality.base import QualityFilterRegistry
+from arrow_lake.quality.builtin import TextLengthFilter, ImageResolutionFilter
+
+registry = QualityFilterRegistry()
+registry.register(TextLengthFilter(min_chars=5))
+registry.register(ImageResolutionFilter(min_width=64, min_height=64))
+
+# AND mode (default): rows must pass ALL filters
+report = registry.apply_all(table, active_filters="text_length,image_resolution")
+print(registry.list_filters())  # ["image_resolution", "text_length"]
+
+# OR mode: rows must pass ANY filter
+report_or = registry.apply_all(table, active_filters="text_length,image_resolution", mode="any")
+```
+
+### Schema Validation Gate
+
+```python
+from arrow_lake.quality.schema_validation import SchemaValidationGate
+import pyarrow as pa
+
+schema = pa.schema([("id", pa.int64()), ("text", pa.string())])
+
+# Lenient mode: drop unknown columns, safe-cast types
+gate = SchemaValidationGate(mode="lenient")
+rows = [{"id": 1, "text": "hello", "extra": "dropped"}]
+valid, rejected = gate.validate(rows, schema)
+print(len(valid))  # 1 (extra column dropped)
+
+# Strict mode: reject unknown columns and type mismatches
+gate_strict = SchemaValidationGate(mode="strict")
+valid, rejected = gate_strict.validate(rows, schema)
+print(len(rejected))  # 1 (unknown column "extra")
+```
+
+### Quality Scoring
+
+```python
+from arrow_lake.quality.scoring import compute_quality_scores
+
+# score_column defaults to "quality_score"
+scored = compute_quality_scores(table, report, rejected_table=rejected)
+scores = scored.column("quality_score").to_pylist()
+# Passed rows: 1.0, Rejected rows: max(0.0, 1.0 - 0.2 * num_filters)
+
+# Custom column name
+scored = compute_quality_scores(table, report, score_column="data_quality")
+```
+
+### Dead-Letter Handling
+
+```python
+from arrow_lake.quality.dead_letter import DeadLetterWriter
+
+writer = DeadLetterWriter(storage=manager)
+written = writer.write(
+    "documents",
+    rejected_table=rejected,
+    filter_name="text_length",
+    parent_version="v3",
+)
+# Writes to "documents_dead_letter" with extra columns:
+# _rejection_reason, _filter_name, _parent_version, _rejected_at
+```
+
 ## Data Testing Assertions
 
 ```python
