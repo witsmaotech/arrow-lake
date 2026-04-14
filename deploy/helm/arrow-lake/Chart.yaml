@@ -1,0 +1,18 @@
+apiVersion: v2
+name: arrow-lake
+description: Arrow Lake multimodal data lakehouse
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+maintainers:
+  - name: wits
+keywords:
+  - data-lakehouse
+  - lancedb
+  - ray
+  - vector-search
+dependencies:
+  - name: ray
+    version: "1.0.0"
+    repository: "https://ray-project.github.io/ray-helm"
+    condition: ray.enabled

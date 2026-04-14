@@ -1,8 +1,10 @@
-"""Arrow Lake Ray runtime module (Epic 6).
+"""Arrow Lake Ray runtime module (Epic 6, Sprint 7).
 
-Provides distributed execution infrastructure for Metaflow workflows.
+Provides distributed execution infrastructure for Metaflow workflows
+and GPU autoscaling for production deployments.
 """
 
+from arrow_lake.ray_runtime.autoscaler import GPUAutoscaler, ScalingEvent
 from arrow_lake.ray_runtime.cluster import (
     RayClusterInfo,
     RayResources,
@@ -20,11 +22,13 @@ from arrow_lake.ray_runtime.distributed import AutoScaleConfig, ProcessingResult
 
 __all__ = [
     "AutoScaleConfig",
+    "GPUAutoscaler",
     "PrefetchConfig",
     "ProcessingResult",
     "RayClusterInfo",
     "RayResources",
     "RemoteDataLoader",
+    "ScalingEvent",
     "create_torch_dataloader",
     "detect_gpu",
     "foreach",

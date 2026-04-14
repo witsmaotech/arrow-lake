@@ -4,17 +4,17 @@ global:
   evaluation_interval: 15s
 
 scrape_configs:
-  - job_name: "dintellihub-server"
+  - job_name: "arrow-lake-server"
     static_configs:
-      - targets: ["host.docker.internal:8000"]
+      - targets: ["arrow-lake-ray-head:8000"]
     metrics_path: "/metrics"
 
   - job_name: "ray-head"
     static_configs:
-      - targets: ["dintellihub-ray-head:8265"]
+      - targets: ["arrow-lake-ray-head:8265"]
     metrics_path: "/metrics"
 
   - job_name: "minio"
     static_configs:
-      - targets: ["dintellihub-minio:9000"]
+      - targets: ["arrow-lake-minio:9000"]
     metrics_path: "/minio/v2/metrics/cluster"

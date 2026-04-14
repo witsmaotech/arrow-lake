@@ -10,6 +10,7 @@ compute:
 observability:
   metrics_enabled: true
   metrics_port: 8000
+  metrics_path: "/metrics"
   log_level: DEBUG
 
 http:
@@ -72,4 +73,22 @@ workflow:
   checkpoint_enabled: true
   ray_execution_enabled: false
   auto_tag_runs: true
+  artifact_retention_days: 30
   schedule_cron: "0 8 * * *"
+
+argo:
+  namespace: default
+  service_account: arrow-lake
+  workflow_timeout: 3600
+  image: arrow-lake:latest
+  image_pull_policy: IfNotPresent
+  artifact_storage: ""
+
+autoscale:
+  enabled: false
+  min_workers: 0
+  max_workers: 8
+  scale_up_timeout_seconds: 300
+  idle_timeout_seconds: 600
+  spot_preference: 0.8
+  gpu_increment: 0.5

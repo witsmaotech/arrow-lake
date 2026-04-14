@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "arrow-lake.fullname" . }}-api
+  labels:
+    {{- include "arrow-lake.labels" . | nindent 4 }}
+    component: api-server
+spec:
+  replicas: {{ .Values.apiServer.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "arrow-lake.selectorLabels" . | nindent 6 }}
+      component: api-server
+  template:
+    metadata:
+      labels:
+        {{- include "arrow-lake.selectorLabels" . | nindent 8 }}
+        component: api-server
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: {{ .Values.observability.metricsPort | quote }}
+        prometheus.io/path: {{ .Values.observability.metricsPath }}
+    spec:
+      containers:
+        - name: api-server
+          image: {{ .Values.apiServer.image }}
+          imagePullPolicy: {{ .Values.apiServer.imagePullPolicy }}
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.observability.metricsPort }}
+              protocol: TCP
+          env:
+            - name: ARROW_LAKE__STORAGE__S3_ENDPOINT
+              value: {{ .Values.storage.endpoint | quote }}
+            - name: ARROW_LAKE__STORAGE__S3_BUCKET
+              value: {{ .Values.storage.bucket | quote }}
+            - name: ARROW_LAKE__STORAGE__S3_REGION
+              value: {{ .Values.storage.region | quote }}
+            - name: ARROW_LAKE__OBSERVABILITY__METRICS_ENABLED
+              value: {{ .Values.observability.metricsEnabled | quote }}
+            - name: ARROW_LAKE__OBSERVABILITY__METRICS_PORT
+              value: {{ .Values.observability.metricsPort | quote }}
+            - name: ARROW_LAKE__OBSERVABILITY__METRICS_PATH
+              value: {{ .Values.observability.metricsPath | quote }}
+            - name: ARROW_LAKE__OBSERVABILITY__LOG_LEVEL
+              value: {{ .Values.observability.logLevel | quote }}
+            - name: ARROW_LAKE__COMPUTE__RAY_ADDRESS
+              value: "{{ include "arrow-lake.fullname" . }}-ray-head-svc:6379"
+            {{- range $key, $value := .Values.apiServer.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.apiServer.healthPath }}
+              port: metrics
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.apiServer.healthPath }}
+              port: metrics
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+          resources:
+            {{- toYaml .Values.apiServer.resources | nindent 12 }}

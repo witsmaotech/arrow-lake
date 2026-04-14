@@ -35,6 +35,81 @@ catalog_queries_total: Counter = Counter(
     registry=REGISTRY,
 )
 
+# --- Story 7.8: Ingestion Metrics (FR-OBS-02) ---
+
+ingestion_rows_total: Counter = Counter(
+    "arrow_lake_ingestion_rows_total",
+    "Total number of rows ingested.",
+    registry=REGISTRY,
+    labelnames=["source"],
+)
+
+ingestion_bytes_total: Counter = Counter(
+    "arrow_lake_ingestion_bytes_total",
+    "Total bytes ingested.",
+    registry=REGISTRY,
+    labelnames=["source"],
+)
+
+ingestion_duration_seconds: Gauge = Gauge(
+    "arrow_lake_ingestion_duration_seconds",
+    "Duration of ingestion operation in seconds.",
+    registry=REGISTRY,
+    labelnames=["source"],
+)
+
+ingestion_errors_total: Counter = Counter(
+    "arrow_lake_ingestion_errors_total",
+    "Total number of ingestion errors.",
+    registry=REGISTRY,
+    labelnames=["source", "error_type"],
+)
+
+# --- Story 7.8: Processing Metrics (FR-OBS-03) ---
+
+processing_embeddings_total: Counter = Counter(
+    "arrow_lake_processing_embeddings_total",
+    "Total number of embeddings generated.",
+    registry=REGISTRY,
+    labelnames=["model"],
+)
+
+processing_quality_rejects_total: Counter = Counter(
+    "arrow_lake_processing_quality_rejects_total",
+    "Total number of rows rejected by quality filters.",
+    registry=REGISTRY,
+    labelnames=["filter_name"],
+)
+
+processing_active_tasks: Gauge = Gauge(
+    "arrow_lake_processing_active_tasks",
+    "Number of currently active processing tasks.",
+    registry=REGISTRY,
+)
+
+# --- Story 7.8: Query Metrics (FR-OBS-04) ---
+
+query_total: Counter = Counter(
+    "arrow_lake_query_total",
+    "Total number of queries executed.",
+    registry=REGISTRY,
+    labelnames=["query_type"],
+)
+
+query_latency_seconds: Gauge = Gauge(
+    "arrow_lake_query_latency_seconds",
+    "Query latency in seconds.",
+    registry=REGISTRY,
+    labelnames=["query_type"],
+)
+
+query_results_total: Counter = Counter(
+    "arrow_lake_query_results_total",
+    "Total number of query results returned.",
+    registry=REGISTRY,
+    labelnames=["query_type"],
+)
+
 # --- Epic 6: Workflow Metrics ---
 
 workflow_steps_total: Counter = Counter(

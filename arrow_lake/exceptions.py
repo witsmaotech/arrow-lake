@@ -100,6 +100,15 @@ class ErrorCode(StrEnum):
     WORKFLOW_TAG_CONFLICT = "WORKFLOW_TAG_CONFLICT"
     WORKFLOW_RESUME_FAILED = "WORKFLOW_RESUME_FAILED"
 
+    # Argo errors (Sprint 7)
+    ARGO_DEPLOY_FAILED = "ARGO_DEPLOY_FAILED"
+    ARGO_VALIDATION_FAILED = "ARGO_VALIDATION_FAILED"
+    ARGO_GENERATION_FAILED = "ARGO_GENERATION_FAILED"
+
+    # Autoscale errors (Sprint 7)
+    AUTOSCALE_FAILED = "AUTOSCALE_FAILED"
+    AUTOSCALE_TIMEOUT = "AUTOSCALE_TIMEOUT"
+
 
 class ArrowLakeError(Exception):
     """Base exception for all Arrow Lake errors.
@@ -168,3 +177,7 @@ class QualityError(ArrowLakeError):
 
 class WorkflowError(ArrowLakeError):
     """Errors related to workflow orchestration and step execution (Epic 6)."""
+
+
+class ArgoError(WorkflowError):
+    """Errors related to Argo Workflows deployment and management (Sprint 7)."""

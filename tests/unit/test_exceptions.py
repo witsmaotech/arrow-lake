@@ -39,6 +39,8 @@ class TestErrorCode:
             "OLAP",
             "QUALITY",
             "WORKFLOW",
+            "ARGO",
+            "AUTOSCALE",
         }
         actual_categories = {code.name.split("_")[0] for code in ErrorCode}
         assert actual_categories == expected_categories

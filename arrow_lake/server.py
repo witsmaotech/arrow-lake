@@ -1,8 +1,8 @@
-"""Health check endpoint for production deployments (Story 6.12).
+"""Health check endpoint for production deployments (Story 6.12, 7.8).
 
 Provides a lightweight HTTP server with:
 - GET /health — returns JSON health status
-- GET /metrics — Prometheus metrics endpoint
+- GET {metrics_path} — Prometheus metrics endpoint (default /metrics)
 
 Usage as standalone::
 
@@ -62,6 +62,19 @@ def health_response() -> tuple[dict[str, Any], int]:
     return status, http_code
 
 
+def _get_metrics_config() -> tuple[str, bool]:
+    """Read metrics path and enabled flag from environment.
+
+    Returns:
+        (metrics_path, metrics_enabled)
+    """
+    metrics_path = os.environ.get("ARROW_LAKE__OBSERVABILITY__METRICS_PATH", "/metrics")
+    metrics_enabled = (
+        os.environ.get("ARROW_LAKE__OBSERVABILITY__METRICS_ENABLED", "true").lower() == "true"
+    )
+    return metrics_path, metrics_enabled
+
+
 # --- WSGI App (no external dependencies) ---
 
 
@@ -78,14 +91,21 @@ def app(environ: dict[str, str], start_response: Any) -> Any:
         )
         return [json.dumps(body).encode()]
 
-    if path == "/metrics":
+    metrics_path, metrics_enabled = _get_metrics_config()
+
+    if path == metrics_path:
+        if not metrics_enabled:
+            start_response("403 Forbidden", [("Content-Type", "text/plain")])
+            return [b"Metrics disabled"]
         try:
             from prometheus_client import generate_latest
+
+            from arrow_lake.core.metrics import REGISTRY
         except ImportError:
             start_response("503 Service Unavailable", [("Content-Type", "text/plain")])
             return [b"prometheus_client not installed"]
         start_response("200 OK", [("Content-Type", "text/plain")])
-        return [generate_latest()]
+        return [generate_latest(REGISTRY)]
 
     start_response("404 Not Found", [("Content-Type", "text/plain")])
     return [b"Not Found"]

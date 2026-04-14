@@ -1,0 +1,25 @@
+# Arrow Lake Helm Chart — development overrides
+
+apiServer:
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "256Mi"
+    limits:
+      cpu: "1"
+      memory: "1Gi"
+
+ray:
+  enabled: true
+  worker:
+    replicaCount: 1
+
+observability:
+  logLevel: "DEBUG"
+
+networkPolicy:
+  enabled: false
+
+prometheusRules:
+  enabled: false

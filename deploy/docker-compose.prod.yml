@@ -6,10 +6,16 @@
 #   - Set required credentials (S3_ACCESS_KEY, S3_SECRET_KEY)
 #   - docker compose -f docker-compose.prod.yml --env-file .env.production up -d
 
+networks:
+  arrow-lake-internal:
+    driver: bridge
+
 services:
   minio:
     image: minio/minio:RELEASE.2025-04-09T00-03-04Z
     container_name: arrow-lake-minio
+    networks:
+      - arrow-lake-internal
     ports:
       - "9000:9000"
       - "9001:9001"
@@ -28,6 +34,8 @@ services:
 
   minio-init:
     image: minio/mc:RELEASE.2025-04-07T17-41-53Z
+    networks:
+      - arrow-lake-internal
     depends_on:
       minio:
         condition: service_healthy
@@ -42,8 +50,9 @@ services:
   ray-head:
     image: rayproject/ray:2.54.1-py311
     container_name: arrow-lake-ray-head
+    networks:
+      - arrow-lake-internal
     ports:
-      - "6379:6379"
       - "8265:8265"
       - "8000:8000"
     environment:
@@ -72,6 +81,8 @@ services:
 
   ray-worker:
     image: rayproject/ray:2.54.1-py311
+    networks:
+      - arrow-lake-internal
     depends_on:
       ray-head:
         condition: service_started

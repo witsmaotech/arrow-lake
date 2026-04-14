@@ -140,6 +140,7 @@ class ObservabilityConfig(BaseModel):
 
     metrics_enabled: bool = True
     metrics_port: int = 8000
+    metrics_path: str = "/metrics"
     log_level: LogLevel = LogLevel.INFO
     correlation_id: str = ""
 
@@ -349,6 +350,7 @@ class WorkflowConfig(BaseModel):
         checkpoint_enabled: Enable Lance version checkpointing before steps.
         ray_execution_enabled: Enable Ray cluster execution (--with ray).
         auto_tag_runs: Auto-generate tags from run metadata.
+        artifact_retention_days: Days to retain Argo workflow artifacts.
     """
 
     max_retry_attempts: int = 3
@@ -357,6 +359,7 @@ class WorkflowConfig(BaseModel):
     checkpoint_enabled: bool = True
     ray_execution_enabled: bool = False
     auto_tag_runs: bool = True
+    artifact_retention_days: int = 30
     schedule_cron: str | None = None
 
     @field_validator("max_retry_attempts")
@@ -371,6 +374,83 @@ class WorkflowConfig(BaseModel):
     def validate_backoff(cls, v: float) -> float:
         if v < 0:
             raise ValueError(f"backoff_seconds must be >= 0, got {v}")
+        return v
+
+
+class ArgoConfig(BaseModel):
+    """Argo Workflows configuration (Story 7.3).
+
+    Attributes:
+        namespace: Kubernetes namespace for Argo workflows.
+        service_account: Service account for workflow pods.
+        workflow_timeout: Workflow execution timeout in seconds.
+        image: Container image for workflow pods.
+        image_pull_policy: Image pull policy.
+        artifact_storage: Storage backend for Argo artifacts (s3:// or minio://).
+    """
+
+    namespace: str = "default"
+    service_account: str = "arrow-lake"
+    workflow_timeout: int = 3600
+    image: str = "arrow-lake:latest"
+    image_pull_policy: str = "IfNotPresent"
+    artifact_storage: str = ""
+
+    @field_validator("workflow_timeout")
+    @classmethod
+    def validate_timeout(cls, v: int) -> int:
+        if v < 60:
+            raise ValueError(f"workflow_timeout must be >= 60 seconds, got {v}")
+        return v
+
+
+class AutoscaleConfig(BaseModel):
+    """GPU autoscaling configuration (Story 7.5).
+
+    Attributes:
+        enabled: Whether GPU autoscaling is active.
+        min_workers: Minimum GPU workers (0 = scale to zero).
+        max_workers: Maximum GPU workers.
+        scale_up_timeout_seconds: Max wait time for scale-up.
+        idle_timeout_seconds: Seconds of inactivity before scale-down.
+        spot_preference: Prefer spot instances (0.0=on-demand, 1.0=spot-only).
+        gpu_increment: Fractional GPU increment (0.5 = half-GPU steps).
+    """
+
+    enabled: bool = False
+    min_workers: int = 0
+    max_workers: int = 8
+    scale_up_timeout_seconds: int = 300
+    idle_timeout_seconds: int = 600
+    spot_preference: float = 0.8
+    gpu_increment: float = 0.5
+
+    @field_validator("max_workers")
+    @classmethod
+    def validate_max_workers(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError(f"max_workers must be >= 1, got {v}")
+        return v
+
+    @field_validator("scale_up_timeout_seconds", "idle_timeout_seconds")
+    @classmethod
+    def validate_timeout(cls, v: int) -> int:
+        if v < 60:
+            raise ValueError(f"timeout must be >= 60 seconds, got {v}")
+        return v
+
+    @field_validator("spot_preference")
+    @classmethod
+    def validate_spot_preference(cls, v: float) -> float:
+        if not 0.0 <= v <= 1.0:
+            raise ValueError(f"spot_preference must be 0.0-1.0, got {v}")
+        return v
+
+    @field_validator("gpu_increment")
+    @classmethod
+    def validate_gpu_increment(cls, v: float) -> float:
+        if v not in (0.5, 1.0):
+            raise ValueError(f"gpu_increment must be 0.5 or 1.0, got {v}")
         return v
 
 
@@ -407,6 +487,8 @@ class ArrowLakeConfig(BaseSettings):
     olap: OlapConfig = OlapConfig()
     quality: QualityConfig = QualityConfig()
     workflow: WorkflowConfig = WorkflowConfig()
+    argo: ArgoConfig = ArgoConfig()
+    autoscale: AutoscaleConfig = AutoscaleConfig()
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> ArrowLakeConfig:
@@ -454,6 +536,8 @@ class ArrowLakeConfig(BaseSettings):
             olap=merged["olap"],
             quality=merged["quality"],
             workflow=merged["workflow"],
+            argo=merged["argo"],
+            autoscale=merged["autoscale"],
         )
 
 
@@ -478,6 +562,8 @@ def _build_merged_update(base: ArrowLakeConfig, yaml_data: dict[str, Any]) -> di
         "olap": OlapConfig,
         "quality": QualityConfig,
         "workflow": WorkflowConfig,
+        "argo": ArgoConfig,
+        "autoscale": AutoscaleConfig,
     }
     result: dict[str, Any] = {}
 

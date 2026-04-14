@@ -1,0 +1,67 @@
+{{- if .Values.prometheusRules.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "arrow-lake.fullname" . }}
+  labels:
+    {{- include "arrow-lake.labels" . | nindent 4 }}
+    prometheus: kube-prometheus
+spec:
+  groups:
+    - name: arrow-lake.alerts
+      rules:
+        - alert: ArrowLakeIngestionErrorRate
+          expr: |
+            (
+              sum(rate(arrow_lake_ingestion_errors_total[5m])) by (source)
+              /
+              sum(rate(arrow_lake_ingestion_rows_total[5m])) by (source)
+            ) > 0.1
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Arrow Lake ingestion error rate > 10%"
+            description: >
+              Ingestion error rate for source {{ $labels.source }} is
+              {{ $value | humanizePercentage }}.
+
+        - alert: ArrowLakeIngestionErrorRateCritical
+          expr: |
+            (
+              sum(rate(arrow_lake_ingestion_errors_total[5m])) by (source)
+              /
+              sum(rate(arrow_lake_ingestion_rows_total[5m])) by (source)
+            ) > 0.5
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Arrow Lake ingestion error rate > 50%"
+            description: >
+              Ingestion error rate for source {{ $labels.source }} is
+              {{ $value | humanizePercentage }}.
+
+        - alert: ArrowLakeQueryLatencyHigh
+          expr: |
+            histogram_quantile(0.95,
+              sum(rate(arrow_lake_query_latency_seconds_bucket[5m])) by (le, query_type)
+            ) > 1.0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Arrow Lake p95 query latency > 1s"
+            description: >
+              p95 query latency for {{ $labels.query_type }} is
+              {{ $value | humanizeDuration }}.
+
+        - alert: ArrowLakeSystemDegraded
+          expr: arrow_lake_system_uptime_seconds == 0
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Arrow Lake system health degraded"
+            description: "System uptime metric is zero, indicating a restart or health issue."
+{{- end }}

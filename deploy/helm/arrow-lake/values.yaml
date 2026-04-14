@@ -1,0 +1,61 @@
+# Arrow Lake Helm Chart — production defaults
+
+apiServer:
+  image: arrow-lake:latest
+  replicaCount: 1
+  imagePullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      cpu: "2"
+      memory: "2Gi"
+  env: {}
+  metricsPath: "/metrics"
+  healthPath: "/health"
+
+# Ray cluster configuration (delegated to ray-project/ray chart)
+ray:
+  enabled: true
+  head:
+    rayStartParams:
+      dashboard-host: "0.0.0.0"
+    resources:
+      requests:
+        cpu: "1"
+        memory: "2Gi"
+      limits:
+        cpu: "2"
+        memory: "4Gi"
+  worker:
+    replicaCount: 2
+    resources:
+      requests:
+        cpu: "1"
+        memory: "2Gi"
+      limits:
+        cpu: "2"
+        memory: "4Gi"
+
+# Storage configuration
+storage:
+  endpoint: "http://minio:9000"
+  bucket: "arrow-lake"
+  region: "us-east-1"
+
+# Observability
+observability:
+  metricsEnabled: "true"
+  metricsPort: 8000
+  metricsPath: "/metrics"
+  logLevel: "INFO"
+
+# Network policy
+networkPolicy:
+  enabled: false
+  allowExternal: false
+
+# Prometheus alerting rules
+prometheusRules:
+  enabled: false

@@ -10,6 +10,7 @@ compute:
 observability:
   metrics_enabled: true
   metrics_port: 8000
+  metrics_path: "/metrics"
   log_level: WARNING
 
 quality:
@@ -20,3 +21,20 @@ quality:
   text_min_chars: 1
   image_min_width: 128
   image_min_height: 128
+
+argo:
+  namespace: production
+  service_account: arrow-lake
+  workflow_timeout: 7200
+  image: arrow-lake:latest
+  image_pull_policy: IfNotPresent
+  artifact_storage: ""
+
+autoscale:
+  enabled: true
+  min_workers: 0
+  max_workers: 8
+  scale_up_timeout_seconds: 300
+  idle_timeout_seconds: 600
+  spot_preference: 0.8
+  gpu_increment: 0.5
