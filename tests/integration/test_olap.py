@@ -66,15 +66,15 @@ class TestBasicSelect:
     """Test basic SELECT queries."""
 
     def test_select_star(self, bridge: OlapSearchBridge, ds_olap: str) -> None:
-        result = bridge.query(ds_olap, "SELECT * FROM data LIMIT 10")
+        result = bridge.query(ds_olap, "SELECT * FROM olap_ds LIMIT 10")
 
         assert isinstance(result, OlapQueryResult)
         assert result.row_count == 10
         assert result.column_count == 5
-        assert result.sql == "SELECT * FROM data LIMIT 10"
+        assert result.sql == "SELECT * FROM olap_ds LIMIT 10"
 
     def test_select_columns(self, bridge: OlapSearchBridge, ds_olap: str) -> None:
-        result = bridge.query(ds_olap, "SELECT category, price FROM data LIMIT 5")
+        result = bridge.query(ds_olap, "SELECT category, price FROM olap_ds LIMIT 5")
 
         assert result.row_count == 5
         assert result.column_count == 2
@@ -93,7 +93,7 @@ class TestGroupBy:
     def test_group_by_count(self, bridge: OlapSearchBridge, ds_olap: str) -> None:
         result = bridge.query(
             ds_olap,
-            "SELECT category, COUNT(*) as cnt FROM data GROUP BY category",
+            "SELECT category, COUNT(*) as cnt FROM olap_ds GROUP BY category",
         )
 
         assert result.row_count == 5  # 5 categories
@@ -104,7 +104,7 @@ class TestGroupBy:
     def test_group_by_avg(self, bridge: OlapSearchBridge, ds_olap: str) -> None:
         result = bridge.query(
             ds_olap,
-            "SELECT category, AVG(price) as avg_price FROM data GROUP BY category",
+            "SELECT category, AVG(price) as avg_price FROM olap_ds GROUP BY category",
         )
 
         assert result.row_count == 5
@@ -113,7 +113,7 @@ class TestGroupBy:
     def test_group_by_sum(self, bridge: OlapSearchBridge, ds_olap: str) -> None:
         result = bridge.query(
             ds_olap,
-            "SELECT category, SUM(quantity) as total_qty FROM data GROUP BY category",
+            "SELECT category, SUM(quantity) as total_qty FROM olap_ds GROUP BY category",
         )
 
         assert result.row_count == 5
@@ -122,7 +122,7 @@ class TestGroupBy:
     def test_group_by_min_max(self, bridge: OlapSearchBridge, ds_olap: str) -> None:
         result = bridge.query(
             ds_olap,
-            "SELECT category, MIN(price) as min_p, MAX(price) as max_p FROM data GROUP BY category",
+            "SELECT category, MIN(price) as min_p, MAX(price) as max_p FROM olap_ds GROUP BY category",
         )
 
         assert result.row_count == 5
@@ -134,7 +134,7 @@ class TestGroupBy:
     def test_group_by_having(self, bridge: OlapSearchBridge, ds_olap: str) -> None:
         result = bridge.query(
             ds_olap,
-            "SELECT category, COUNT(*) as cnt FROM data GROUP BY category HAVING cnt > 150",
+            "SELECT category, COUNT(*) as cnt FROM olap_ds GROUP BY category HAVING cnt > 150",
         )
 
         assert result.row_count > 0
@@ -153,7 +153,7 @@ class TestOrderBy:
     def test_order_by_desc(self, bridge: OlapSearchBridge, ds_olap: str) -> None:
         result = bridge.query(
             ds_olap,
-            "SELECT category, COUNT(*) as cnt FROM data GROUP BY category ORDER BY cnt DESC",
+            "SELECT category, COUNT(*) as cnt FROM olap_ds GROUP BY category ORDER BY cnt DESC",
         )
 
         counts = result.table.column("cnt").to_pylist()
@@ -169,13 +169,13 @@ class TestLimit:
     """Test LIMIT pagination."""
 
     def test_limit_5(self, bridge: OlapSearchBridge, ds_olap: str) -> None:
-        result = bridge.query(ds_olap, "SELECT * FROM data LIMIT 5")
+        result = bridge.query(ds_olap, "SELECT * FROM olap_ds LIMIT 5")
 
         assert result.row_count == 5
 
     def test_limit_offset(self, bridge: OlapSearchBridge, ds_olap: str) -> None:
-        result1 = bridge.query(ds_olap, "SELECT * FROM data ORDER BY id LIMIT 5")
-        result2 = bridge.query(ds_olap, "SELECT * FROM data ORDER BY id LIMIT 5 OFFSET 5")
+        result1 = bridge.query(ds_olap, "SELECT * FROM olap_ds ORDER BY id LIMIT 5")
+        result2 = bridge.query(ds_olap, "SELECT * FROM olap_ds ORDER BY id LIMIT 5 OFFSET 5")
 
         ids1 = result1.table.column("id").to_pylist()
         ids2 = result2.table.column("id").to_pylist()
@@ -195,7 +195,7 @@ class TestWindowFunctions:
     def test_row_number(self, bridge: OlapSearchBridge, ds_olap: str) -> None:
         result = bridge.query(
             ds_olap,
-            "SELECT *, ROW_NUMBER() OVER (PARTITION BY category ORDER BY price DESC) as rn FROM data",
+            "SELECT *, ROW_NUMBER() OVER (PARTITION BY category ORDER BY price DESC) as rn FROM olap_ds",
         )
 
         assert result.row_count == 1000
@@ -204,7 +204,7 @@ class TestWindowFunctions:
     def test_rank(self, bridge: OlapSearchBridge, ds_olap: str) -> None:
         result = bridge.query(
             ds_olap,
-            "SELECT *, RANK() OVER (PARTITION BY category ORDER BY price DESC) as rnk FROM data",
+            "SELECT *, RANK() OVER (PARTITION BY category ORDER BY price DESC) as rnk FROM olap_ds",
         )
 
         assert result.row_count == 1000
@@ -220,7 +220,7 @@ class TestCountStar:
     """Test COUNT(*) queries."""
 
     def test_count_star(self, bridge: OlapSearchBridge, ds_olap: str) -> None:
-        result = bridge.query(ds_olap, "SELECT COUNT(*) as total FROM data")
+        result = bridge.query(ds_olap, "SELECT COUNT(*) as total FROM olap_ds")
 
         assert result.row_count == 1
         assert result.table.column("total")[0].as_py() == 1000
@@ -228,7 +228,7 @@ class TestCountStar:
     def test_count_with_filter(self, bridge: OlapSearchBridge, ds_olap: str) -> None:
         result = bridge.query(
             ds_olap,
-            "SELECT COUNT(*) as total FROM data WHERE category = 'cat-0'",
+            "SELECT COUNT(*) as total FROM olap_ds WHERE category = 'cat-0'",
         )
 
         assert result.row_count == 1
@@ -246,7 +246,7 @@ class TestEmptyResults:
     def test_no_matching_rows(self, bridge: OlapSearchBridge, ds_olap: str) -> None:
         result = bridge.query(
             ds_olap,
-            "SELECT * FROM data WHERE category = 'nonexistent'",
+            "SELECT * FROM olap_ds WHERE category = 'nonexistent'",
         )
 
         assert result.row_count == 0
@@ -265,13 +265,13 @@ class TestSecurity:
         from arrow_lake.exceptions import QueryError
 
         with pytest.raises(QueryError, match="SELECT"):
-            bridge.query(ds_olap, "DROP TABLE data")
+            bridge.query(ds_olap, "DROP TABLE olap_ds")
 
     def test_dangerous_keyword_rejected(self, bridge: OlapSearchBridge, ds_olap: str) -> None:
         from arrow_lake.exceptions import QueryError
 
         with pytest.raises(QueryError, match="not allowed"):
-            bridge.query(ds_olap, "SELECT * FROM data; INSERT INTO data VALUES (1)")
+            bridge.query(ds_olap, "SELECT * FROM olap_ds; INSERT INTO olap_ds VALUES (1)")
 
 
 # ---------------------------------------------------------------------------
@@ -303,7 +303,7 @@ class TestLargeDataset:
         bridge = OlapSearchBridge(storage)
         result = bridge.query(
             name,
-            "SELECT category, AVG(price) as avg_price, COUNT(*) as cnt FROM data GROUP BY category ORDER BY cnt DESC LIMIT 10",
+            "SELECT category, AVG(price) as avg_price, COUNT(*) as cnt FROM olap_large GROUP BY category ORDER BY cnt DESC LIMIT 10",
         )
 
         assert result.row_count == 10
@@ -328,7 +328,7 @@ class TestLakeSDK:
 
         lake = Lake(base_uri=str(tmp_path / "lance_data"))
         result = lake.olap_query(
-            ds_olap, "SELECT category, COUNT(*) as cnt FROM data GROUP BY category"
+            ds_olap, "SELECT category, COUNT(*) as cnt FROM olap_ds GROUP BY category"
         )
 
         assert isinstance(result, OlapQueryResult)

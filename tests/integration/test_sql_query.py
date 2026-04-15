@@ -45,7 +45,7 @@ class TestSQLJoin:
 
         result = bridge.query(
             ds_name,
-            "SELECT a.id, b.id as b_id FROM data a JOIN data b ON a.id = b.id WHERE a.id < 5",
+            "SELECT a.id, b.id as b_id FROM test_ds a JOIN test_ds b ON a.id = b.id WHERE a.id < 5",
         )
         assert result.row_count >= 1
         assert result.column_count >= 2
@@ -57,8 +57,8 @@ class TestSQLJoin:
 
         result = bridge.query(
             ds_name,
-            "SELECT a.modality, COUNT(*) as cnt FROM data a "
-            "JOIN data b ON a.id = b.id GROUP BY a.modality",
+            "SELECT a.modality, COUNT(*) as cnt FROM test_ds a "
+            "JOIN test_ds b ON a.id = b.id GROUP BY a.modality",
         )
         assert result.row_count >= 1
         # Should have modality and cnt columns
@@ -73,8 +73,8 @@ class TestSQLJoin:
 
         result = bridge.query(
             ds_name,
-            "SELECT a.modality, COUNT(*) as cnt FROM data a "
-            "JOIN data b ON a.id = b.id "
+            "SELECT a.modality, COUNT(*) as cnt FROM test_ds a "
+            "JOIN test_ds b ON a.id = b.id "
             "GROUP BY a.modality HAVING cnt > 0",
         )
         assert result.row_count >= 1
@@ -86,8 +86,8 @@ class TestSQLJoin:
 
         result = bridge.query(
             ds_name,
-            "SELECT a.id, a.value FROM data a "
-            "JOIN data b ON a.id = b.id "
+            "SELECT a.id, a.value FROM test_ds a "
+            "JOIN test_ds b ON a.id = b.id "
             "ORDER BY a.value DESC LIMIT 5",
         )
         assert result.row_count == 5
@@ -110,8 +110,8 @@ class TestMultiTableRegister:
 
         result = bridge.query(
             ds_name,
-            "SELECT data.id, data.modality, tags.tag FROM data "
-            "JOIN tags ON data.id = tags.id WHERE data.id < 3",
+            "SELECT test_ds.id, test_ds.modality, tags.tag FROM test_ds "
+            "JOIN tags ON test_ds.id = tags.id WHERE test_ds.id < 3",
             tables={"tags": extra_table},
         )
         assert result.row_count == 3
@@ -131,7 +131,7 @@ class TestMultiTableRegister:
 
         result = bridge.query(
             ds_name,
-            "SELECT data.id, tags.tag FROM data LEFT JOIN tags ON data.id = tags.id LIMIT 5",
+            "SELECT test_ds.id, tags.tag FROM test_ds LEFT JOIN tags ON test_ds.id = tags.id LIMIT 5",
             tables={"tags": extra_table},
         )
         assert result.row_count == 5
@@ -147,8 +147,8 @@ class TestSubquery:
 
         result = bridge.query(
             ds_name,
-            "SELECT id, value FROM data WHERE value > "
-            "(SELECT AVG(value) FROM data) ORDER BY value LIMIT 5",
+            "SELECT id, value FROM test_ds WHERE value > "
+            "(SELECT AVG(value) FROM test_ds) ORDER BY value LIMIT 5",
         )
         assert result.row_count == 5
 
@@ -160,7 +160,7 @@ class TestSubquery:
         result = bridge.query(
             ds_name,
             "SELECT modality, avg_val FROM "
-            "(SELECT modality, AVG(value) as avg_val FROM data GROUP BY modality) sub "
+            "(SELECT modality, AVG(value) as avg_val FROM test_ds GROUP BY modality) sub "
             "WHERE avg_val > 0",
         )
         assert result.row_count >= 1
@@ -176,7 +176,7 @@ class TestComplexOLAP:
 
         result = bridge.query(
             ds_name,
-            "SELECT id, value, ROW_NUMBER() OVER (ORDER BY value DESC) as rn FROM data LIMIT 5",
+            "SELECT id, value, ROW_NUMBER() OVER (ORDER BY value DESC) as rn FROM test_ds LIMIT 5",
         )
         assert result.row_count == 5
 
@@ -190,7 +190,7 @@ class TestComplexOLAP:
             "SELECT modality, "
             "CASE WHEN quality_score > 0.8 THEN 'high' ELSE 'low' END as tier, "
             "COUNT(*) as cnt "
-            "FROM data GROUP BY modality, tier ORDER BY modality",
+            "FROM test_ds GROUP BY modality, tier ORDER BY modality",
         )
         assert result.row_count >= 1
         col_names = {result.table.schema.field(i).name for i in range(result.column_count)}

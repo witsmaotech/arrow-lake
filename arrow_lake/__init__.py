@@ -450,7 +450,7 @@ class Lake:
         """
         from arrow_lake.catalog.lineage import LineageStore, create_lineage_event
 
-        store = LineageStore(self._base_uri, config=self._config.lineage)
+        store = LineageStore(self._base_uri)
         event = create_lineage_event(
             dataset_name,
             operation,
@@ -472,7 +472,7 @@ class Lake:
         """
         from arrow_lake.catalog.lineage import LineageStore
 
-        store = LineageStore(self._base_uri, config=self._config.lineage)
+        store = LineageStore(self._base_uri)
         return store.get_dataset_history(dataset_name)
 
     def lineage_query(self, sql: str) -> Any:
@@ -486,7 +486,7 @@ class Lake:
         """
         from arrow_lake.catalog.lineage import LineageQueryBridge, LineageStore
 
-        store = LineageStore(self._base_uri, config=self._config.lineage)
+        store = LineageStore(self._base_uri)
         bridge = LineageQueryBridge(store)
         return bridge.query(sql)
 

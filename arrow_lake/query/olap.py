@@ -132,7 +132,7 @@ class OlapSearchBridge:
         # Register tables and execute query
         conn = duckdb.connect()
         try:
-            conn.register("data", table)
+            conn.register(dataset_name, table)
             for name, extra_table in (tables or {}).items():
                 conn.register(name, extra_table)
             result_reader = conn.execute(sql).arrow()
@@ -189,7 +189,7 @@ class OlapSearchBridge:
 
         conn = duckdb.connect()
         try:
-            conn.register("data", table)
+            conn.register(dataset_name, table)
             result = conn.execute(f"EXPLAIN {sql}").fetchall()
             explain_lines = [row[0] for row in result if row]
             return "\n".join(explain_lines)

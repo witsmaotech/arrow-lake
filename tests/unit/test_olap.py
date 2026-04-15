@@ -177,12 +177,12 @@ class TestQuery:
         storage.read_dataset.return_value = sample_table
 
         bridge = OlapSearchBridge(storage)
-        result = bridge.query("test_ds", "SELECT * FROM data")
+        result = bridge.query("test_ds", "SELECT * FROM test_ds")
 
         assert isinstance(result, OlapQueryResult)
         assert result.row_count == 10
         assert result.column_count == 4
-        assert result.sql == "SELECT * FROM data"
+        assert result.sql == "SELECT * FROM test_ds"
 
     def test_query_group_by(self) -> None:
         """GROUP BY aggregation works."""
@@ -191,7 +191,7 @@ class TestQuery:
 
         bridge = OlapSearchBridge(storage)
         result = bridge.query(
-            "test_ds", "SELECT modality, COUNT(*) as cnt FROM data GROUP BY modality"
+            "test_ds", "SELECT modality, COUNT(*) as cnt FROM test_ds GROUP BY modality"
         )
 
         assert result.row_count == 2  # text, image
@@ -205,7 +205,7 @@ class TestQuery:
         bridge = OlapSearchBridge(storage)
         result = bridge.query(
             "test_ds",
-            "SELECT modality, COUNT(*) as cnt FROM data GROUP BY modality HAVING cnt > 40",
+            "SELECT modality, COUNT(*) as cnt FROM test_ds GROUP BY modality HAVING cnt > 40",
         )
 
         assert result.row_count > 0
@@ -218,7 +218,7 @@ class TestQuery:
         bridge = OlapSearchBridge(storage)
         result = bridge.query(
             "test_ds",
-            "SELECT source, COUNT(*) as cnt FROM data GROUP BY source ORDER BY cnt DESC",
+            "SELECT source, COUNT(*) as cnt FROM test_ds GROUP BY source ORDER BY cnt DESC",
         )
 
         counts = result.table.column("cnt").to_pylist()
@@ -230,7 +230,7 @@ class TestQuery:
         storage.read_dataset.return_value = _make_sample_table(100)
 
         bridge = OlapSearchBridge(storage)
-        result = bridge.query("test_ds", "SELECT * FROM data LIMIT 5")
+        result = bridge.query("test_ds", "SELECT * FROM test_ds LIMIT 5")
 
         assert result.row_count == 5
 
@@ -240,7 +240,7 @@ class TestQuery:
         storage.read_dataset.return_value = _make_sample_table(100)
 
         bridge = OlapSearchBridge(storage)
-        result = bridge.query("test_ds", "SELECT COUNT(*) as total FROM data")
+        result = bridge.query("test_ds", "SELECT COUNT(*) as total FROM test_ds")
 
         assert result.row_count == 1
 
@@ -252,7 +252,7 @@ class TestQuery:
         bridge = OlapSearchBridge(storage)
         result = bridge.query(
             "test_ds",
-            "SELECT *, ROW_NUMBER() OVER (PARTITION BY modality ORDER BY id) as rn FROM data",
+            "SELECT *, ROW_NUMBER() OVER (PARTITION BY modality ORDER BY id) as rn FROM test_ds",
         )
 
         assert result.row_count == 50
@@ -267,7 +267,7 @@ class TestQuery:
 
         config = OlapConfig(max_result_rows=5)
         bridge = OlapSearchBridge(storage, config=config)
-        result = bridge.query("test_ds", "SELECT * FROM data LIMIT 100")
+        result = bridge.query("test_ds", "SELECT * FROM test_ds LIMIT 100")
 
         assert result.row_count <= 5
 
@@ -278,7 +278,7 @@ class TestQuery:
 
         bridge = OlapSearchBridge(storage)
         with pytest.raises(QueryError, match="Failed to read"):
-            bridge.query("missing_ds", "SELECT * FROM data")
+            bridge.query("missing_ds", "SELECT * FROM missing_ds")
 
     def test_query_invalid_sql_raises(self) -> None:
         """Invalid SQL raises QueryError."""
@@ -293,7 +293,7 @@ class TestQuery:
         storage.read_dataset.return_value = _make_sample_table(100)
 
         bridge = OlapSearchBridge(storage)
-        result = bridge.query("test_ds", "SELECT * FROM data LIMIT 100", max_rows=3)
+        result = bridge.query("test_ds", "SELECT * FROM test_ds LIMIT 100", max_rows=3)
 
         assert result.row_count <= 3
 
@@ -312,7 +312,7 @@ class TestExplain:
         storage.read_dataset.return_value = _make_sample_table(10)
 
         bridge = OlapSearchBridge(storage)
-        result = bridge.explain("test_ds", "SELECT * FROM data")
+        result = bridge.explain("test_ds", "SELECT * FROM test_ds")
 
         assert isinstance(result, str)
         assert len(result) > 0
@@ -364,7 +364,7 @@ class TestDatasetNameValidation:
         storage.read_dataset.return_value = _make_sample_table(10)
 
         bridge = OlapSearchBridge(storage)
-        result = bridge.query("valid_dataset", "SELECT * FROM data")
+        result = bridge.query("valid_dataset", "SELECT * FROM valid_dataset")
         assert result.row_count == 10
 
     def test_name_with_hyphen_accepted(self) -> None:
@@ -372,7 +372,7 @@ class TestDatasetNameValidation:
         storage.read_dataset.return_value = _make_sample_table(10)
 
         bridge = OlapSearchBridge(storage)
-        result = bridge.query("my-dataset", "SELECT * FROM data")
+        result = bridge.query("my-dataset", 'SELECT * FROM "my-dataset"')
         assert result.row_count == 10
 
     def test_invalid_name_raises(self) -> None:
@@ -380,10 +380,10 @@ class TestDatasetNameValidation:
         bridge = OlapSearchBridge(storage)
 
         with pytest.raises(ValueError, match="Invalid dataset name"):
-            bridge.query("../etc/passwd", "SELECT * FROM data")
+            bridge.query("../etc/passwd", 'SELECT * FROM "../etc/passwd"')
 
         with pytest.raises(ValueError, match="Invalid dataset name"):
-            bridge.query("name; DROP TABLE", "SELECT * FROM data")
+            bridge.query("name; DROP TABLE", 'SELECT * FROM data')
 
         with pytest.raises(ValueError, match="Invalid dataset name"):
-            bridge.query("", "SELECT * FROM data")
+            bridge.query("", 'SELECT * FROM data')
