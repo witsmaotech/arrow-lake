@@ -643,5 +643,77 @@ class Lake:
                 )
             )
 
-        table = self._get_storage().read_table(dataset_name)
+        table = self._get_storage().read_dataset(dataset_name)
         return registry.apply_all(table, active_filters, mode=filter_mode)
+
+    def deduplicate(
+        self,
+        dataset_name: str,
+        *,
+        strategy: str | None = None,
+        action: str | None = None,
+        perceptual_threshold: int | None = None,
+    ) -> Any:
+        """Run content deduplication on a dataset (Story 4.7).
+
+        Delegates to ContentDeduplicator.
+
+        Args:
+            dataset_name: Name of the Lance dataset.
+            strategy: "exact", "perceptual", or "both" (None = use config).
+            action: "flag" or "remove" (None = use config).
+            perceptual_threshold: pHash Hamming distance (None = use config).
+
+        Returns:
+            DedupResult with dedup statistics and processed table.
+        """
+        from arrow_lake.quality.dedup import ContentDeduplicator
+
+        config = self._config.quality
+        dedup = ContentDeduplicator(
+            strategy=strategy or config.dedup_strategy,
+            action=action or config.dedup_action,
+            perceptual_threshold=perceptual_threshold or config.dedup_perceptual_threshold,
+        )
+        table = self._get_storage().read_dataset(dataset_name)
+        return dedup.deduplicate(table)
+
+    def export(
+        self,
+        dataset_name: str,
+        output_path: str,
+        *,
+        format: str | None = None,  # noqa: A002
+        columns: list[str] | None = None,
+        version: int | None = None,
+        compression: str | None = None,
+        overwrite: bool = False,
+    ) -> Any:
+        """Export a dataset to Parquet or CSV (Story 5.9).
+
+        Delegates to ExportBridge.
+
+        Args:
+            dataset_name: Name of the Lance dataset.
+            output_path: Output file path (.parquet or .csv).
+            format: Export format (None = auto-detect from path suffix).
+            columns: Optional column subset to export.
+            version: Dataset version to export (None = latest).
+            compression: Compression codec for Parquet.
+            overwrite: Allow overwriting existing file.
+
+        Returns:
+            ExportResult with export metadata.
+        """
+        from arrow_lake.query.export import ExportBridge
+
+        bridge = ExportBridge(self._get_storage(), config=self._config.export)
+        return bridge.export(
+            dataset_name,
+            output_path,
+            format=format,
+            columns=columns,
+            version=version,
+            compression=compression,
+            overwrite=overwrite,
+        )

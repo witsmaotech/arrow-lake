@@ -21,6 +21,10 @@ quality:
   text_min_chars: 1
   image_min_width: 128
   image_min_height: 128
+  dedup_enabled: true
+  dedup_strategy: both
+  dedup_action: remove
+  dedup_perceptual_threshold: 8
 
 argo:
   namespace: production
@@ -76,3 +80,9 @@ audit:
   hmac_secret_key: ""
   audit_dataset: "_audit_trail"
   auto_record_workflow: true
+
+export:
+  default_format: parquet
+  parquet_compression: zstd
+  csv_delimiter: ","
+  allow_overwrite: false

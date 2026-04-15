@@ -138,6 +138,14 @@ class ErrorCode(StrEnum):
     # NeMo Curator errors (Sprint 9, Story 8.5)
     QUALITY_NEMO_MODEL_ERROR = "QUALITY_NEMO_MODEL_ERROR"
 
+    # Dedup errors (Story 4.7)
+    DEDUP_HASH_COMPUTATION_FAILED = "DEDUP_HASH_COMPUTATION_FAILED"
+
+    # Export errors (Story 5.9)
+    EXPORT_FORMAT_NOT_SUPPORTED = "EXPORT_FORMAT_NOT_SUPPORTED"
+    EXPORT_PATH_INVALID = "EXPORT_PATH_INVALID"
+    EXPORT_WRITE_FAILED = "EXPORT_WRITE_FAILED"
+
 
 class ArrowLakeError(Exception):
     """Base exception for all Arrow Lake errors.

@@ -66,6 +66,10 @@ quality:
   text_min_chars: 1
   image_min_width: 64
   image_min_height: 64
+  dedup_enabled: true
+  dedup_strategy: exact
+  dedup_action: flag
+  dedup_perceptual_threshold: 10
 
 workflow:
   max_retry_attempts: 3
@@ -131,3 +135,9 @@ audit:
   hmac_secret_key: "dev-secret-key-change-in-prod"
   audit_dataset: "_audit_trail"
   auto_record_workflow: true
+
+export:
+  default_format: parquet
+  parquet_compression: snappy
+  csv_delimiter: ","
+  allow_overwrite: false

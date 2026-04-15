@@ -46,6 +46,8 @@ class TestErrorCode:
             "ENSEMBLE",
             "LINEAGE",
             "AUDIT",
+            "DEDUP",
+            "EXPORT",
         }
         actual_categories = {code.name.split("_")[0] for code in ErrorCode}
         assert actual_categories == expected_categories

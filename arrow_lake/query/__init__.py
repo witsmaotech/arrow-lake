@@ -5,6 +5,8 @@ from arrow_lake.query.streaming import StreamingResult
 __all__ = [
     "EnsembleSearchBridge",
     "EnsembleSearchResult",
+    "ExportBridge",
+    "ExportResult",
     "FacetCount",
     "FacetedSearchBridge",
     "FacetedSearchResult",
@@ -21,6 +23,8 @@ def __getattr__(name: str):
     _lazy_map = {
         "EnsembleSearchBridge": ("arrow_lake.query.ensemble", "EnsembleSearchBridge"),
         "EnsembleSearchResult": ("arrow_lake.query.ensemble", "EnsembleSearchResult"),
+        "ExportBridge": ("arrow_lake.query.export", "ExportBridge"),
+        "ExportResult": ("arrow_lake.query.export", "ExportResult"),
         "FacetCount": ("arrow_lake.query.faceted", "FacetCount"),
         "FacetedSearchBridge": ("arrow_lake.query.faceted", "FacetedSearchBridge"),
         "FacetedSearchResult": ("arrow_lake.query.faceted", "FacetedSearchResult"),

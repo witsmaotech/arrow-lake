@@ -51,6 +51,7 @@ arrow-lake = "arrow_lake.cli:main"
 [project.optional-dependencies]
 jupyter = ["jupyterlab>=4.0", "ipywidgets>=8.0"]
 nemo-curator = ["nemo-curator>=0.6"]
+dedup = ["imagehash>=4.3"]
 
 [dependency-groups]
 dev = [

@@ -326,6 +326,12 @@ class QualityConfig(BaseModel):
     nemo_curator_threshold: float = 0.5
     nemo_curator_batch_size: int = 64
 
+    # Content dedup (Story 4.7)
+    dedup_enabled: bool = False
+    dedup_strategy: str = "exact"
+    dedup_action: str = "flag"
+    dedup_perceptual_threshold: int = 10
+
 
 class OlapConfig(BaseModel):
     """OLAP analytics configuration (Story 5.4, 7.6).
@@ -546,6 +552,29 @@ class EnsembleSearchConfig(BaseModel):
         return v
 
 
+class ExportConfig(BaseModel):
+    """Data export configuration (Story 5.9).
+
+    Attributes:
+        default_format: Default export format ("parquet" or "csv").
+        parquet_compression: Compression codec for Parquet files.
+        csv_delimiter: Delimiter for CSV files.
+        allow_overwrite: Whether overwriting existing files is allowed.
+    """
+
+    default_format: str = "parquet"
+    parquet_compression: str = "snappy"
+    csv_delimiter: str = ","
+    allow_overwrite: bool = False
+
+    @field_validator("default_format")
+    @classmethod
+    def validate_format(cls, v: str) -> str:
+        if v not in ("parquet", "csv"):
+            raise ValueError(f"format must be 'parquet' or 'csv', got {v!r}")
+        return v
+
+
 class LineageConfig(BaseModel):
     """Data lineage configuration (Sprint 9, Story 8.3).
 
@@ -616,6 +645,7 @@ class ArrowLakeConfig(BaseSettings):
     ensemble: EnsembleSearchConfig = EnsembleSearchConfig()
     lineage: LineageConfig = LineageConfig()
     audit: AuditConfig = AuditConfig()
+    export: ExportConfig = ExportConfig()
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> ArrowLakeConfig:
@@ -670,6 +700,7 @@ class ArrowLakeConfig(BaseSettings):
             ensemble=merged["ensemble"],
             lineage=merged["lineage"],
             audit=merged["audit"],
+            export=merged["export"],
         )
 
 
@@ -700,6 +731,7 @@ def _build_merged_update(base: ArrowLakeConfig, yaml_data: dict[str, Any]) -> di
         "faceted": FacetedSearchConfig,
         "ensemble": EnsembleSearchConfig,
         "lineage": LineageConfig,
+        "export": ExportConfig,
         "audit": AuditConfig,
     }
     result: dict[str, Any] = {}
