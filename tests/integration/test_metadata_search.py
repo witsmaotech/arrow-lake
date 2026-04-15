@@ -47,27 +47,27 @@ class TestMetadataSearchBridge:
     """Test MetadataSearchBridge SQL queries."""
 
     def test_select_all(self, bridge: MetadataSearchBridge, populated: str) -> None:
-        result = bridge.query(populated, "SELECT * FROM data")
+        result = bridge.query(populated, "SELECT * FROM employees")
         assert result.row_count == 5
         assert isinstance(result.table, pa.Table)
 
     def test_select_with_filter(self, bridge: MetadataSearchBridge, populated: str) -> None:
-        result = bridge.query(populated, "SELECT * FROM data WHERE age > 35")
+        result = bridge.query(populated, "SELECT * FROM employees WHERE age > 35")
         assert result.row_count == 2
 
     def test_select_specific_columns(self, bridge: MetadataSearchBridge, populated: str) -> None:
-        result = bridge.query(populated, "SELECT name, salary FROM data")
+        result = bridge.query(populated, "SELECT name, salary FROM employees")
         assert result.row_count == 5
         assert result.table.num_columns == 2
 
     def test_aggregation(self, bridge: MetadataSearchBridge, populated: str) -> None:
         result = bridge.query(
-            populated, "SELECT city, AVG(salary) as avg_salary FROM data GROUP BY city"
+            populated, "SELECT city, AVG(salary) as avg_salary FROM employees GROUP BY city"
         )
         assert result.row_count == 3  # Beijing, Shanghai, Shenzhen
 
     def test_order_by(self, bridge: MetadataSearchBridge, populated: str) -> None:
-        result = bridge.query(populated, "SELECT * FROM data ORDER BY salary DESC")
+        result = bridge.query(populated, "SELECT * FROM employees ORDER BY salary DESC")
         assert result.row_count == 5
         salaries = result.table.column("salary").to_pylist()
         assert salaries == sorted(salaries, reverse=True)
@@ -96,7 +96,7 @@ class TestMetadataSearchBridge:
             bridge.query(populated, "SELECT * FROM data;")
 
     def test_empty_result(self, bridge: MetadataSearchBridge, populated: str) -> None:
-        result = bridge.query(populated, "SELECT * FROM data WHERE age > 100")
+        result = bridge.query(populated, "SELECT * FROM employees WHERE age > 100")
         assert result.row_count == 0
 
     def test_query_result_frozen(self) -> None:
@@ -132,7 +132,7 @@ class TestMetadataSearchPerformance:
 
         start = time.perf_counter()
         result = bridge.query(
-            "big_table", "SELECT category, COUNT(*) as cnt FROM data GROUP BY category"
+            "big_table", "SELECT category, COUNT(*) as cnt FROM big_table GROUP BY category"
         )
         elapsed = time.perf_counter() - start
 

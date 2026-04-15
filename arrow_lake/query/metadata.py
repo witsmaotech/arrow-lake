@@ -122,7 +122,7 @@ class MetadataSearchBridge:
         # Register tables and execute query
         conn = duckdb.connect()
         try:
-            conn.register("data", table)
+            conn.register(dataset_name, table)
             for name, extra_table in (tables or {}).items():
                 conn.register(name, extra_table)
             result_reader = conn.execute(sql).arrow()

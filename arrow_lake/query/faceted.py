@@ -139,9 +139,9 @@ class FacetedSearchBridge:
             _validate_where_clause(where)
             conn = duckdb.connect()
             try:
-                conn.register("data", table)
+                conn.register(dataset_name, table)
                 filtered_reader = conn.execute(
-                    f"SELECT * FROM data WHERE {where} LIMIT {top_k}"
+                    f"SELECT * FROM {dataset_name} WHERE {where} LIMIT {top_k}"
                 ).arrow()
                 if hasattr(filtered_reader, "read_all"):
                     table = filtered_reader.read_all()
@@ -187,11 +187,11 @@ class FacetedSearchBridge:
         if table.num_rows == 0:
             return []
 
-        cube_query = self._build_cube_query("data", facets, where)
+        cube_query = self._build_cube_query(dataset_name, facets, where)
 
         conn = duckdb.connect()
         try:
-            conn.register("data", table)
+            conn.register(dataset_name, table)
             result_reader = conn.execute(cube_query).arrow()
             if hasattr(result_reader, "read_all"):
                 cube_table = result_reader.read_all()
