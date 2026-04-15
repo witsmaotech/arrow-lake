@@ -146,11 +146,13 @@ class TestExactStrategy:
 
     def test_detects_duplicate_rows(self) -> None:
         data = b"same-image-bytes"
-        table = _make_image_table([
-            ("a", data),
-            ("b", data),
-            ("c", b"different-bytes"),
-        ])
+        table = _make_image_table(
+            [
+                ("a", data),
+                ("b", data),
+                ("c", b"different-bytes"),
+            ]
+        )
         d = ContentDeduplicator(strategy="exact", action="remove")
         result = d.deduplicate(table)
 
@@ -161,10 +163,12 @@ class TestExactStrategy:
 
     def test_flag_action_adds_column(self) -> None:
         data = b"same-image-bytes"
-        table = _make_image_table([
-            ("a", data),
-            ("b", data),
-        ])
+        table = _make_image_table(
+            [
+                ("a", data),
+                ("b", data),
+            ]
+        )
         d = ContentDeduplicator(strategy="exact", action="flag")
         result = d.deduplicate(table)
 
@@ -175,11 +179,13 @@ class TestExactStrategy:
         assert flags == [False, True]
 
     def test_no_duplicates(self) -> None:
-        table = _make_image_table([
-            ("a", b"img-a"),
-            ("b", b"img-b"),
-            ("c", b"img-c"),
-        ])
+        table = _make_image_table(
+            [
+                ("a", b"img-a"),
+                ("b", b"img-b"),
+                ("c", b"img-c"),
+            ]
+        )
         d = ContentDeduplicator(strategy="exact", action="remove")
         result = d.deduplicate(table)
 
@@ -235,11 +241,13 @@ class TestBothStrategy:
     def test_exact_then_perceptual(self) -> None:
         # Two identical images (exact dup) + one different
         data = b"same-image-bytes"
-        table = _make_image_table([
-            ("a", data),
-            ("b", data),
-            ("c", b"different-bytes"),
-        ])
+        table = _make_image_table(
+            [
+                ("a", data),
+                ("b", data),
+                ("c", b"different-bytes"),
+            ]
+        )
         d = ContentDeduplicator(strategy="both", action="remove")
         result = d.deduplicate(table)
 
@@ -273,10 +281,12 @@ class TestIncremental:
 
         _, seen = d.deduplicate_incremental(batch1)
 
-        batch2 = _make_image_table([
-            ("c", b"img-a"),  # dup of batch1 row a
-            ("d", b"img-c"),  # new
-        ])
+        batch2 = _make_image_table(
+            [
+                ("c", b"img-a"),  # dup of batch1 row a
+                ("d", b"img-c"),  # new
+            ]
+        )
         result, seen2 = d.deduplicate_incremental(batch2, existing_sha256=seen)
 
         assert result.unique_rows == 1

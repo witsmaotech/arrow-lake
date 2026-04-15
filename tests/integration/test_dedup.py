@@ -25,10 +25,12 @@ def _create_dataset(
     rows: list[tuple[str, bytes]],
 ) -> None:
     """Create a Lance dataset with id + image_data columns."""
-    table = pa.table({
-        "id": [r[0] for r in rows],
-        "image_data": [r[1] for r in rows],
-    })
+    table = pa.table(
+        {
+            "id": [r[0] for r in rows],
+            "image_data": [r[1] for r in rows],
+        }
+    )
     storage.create_dataset(name, table)
 
 
@@ -44,10 +46,12 @@ class TestDedupIntegration:
         """SHA-256 exact dedup identifies duplicate binary content."""
         img_a = b"image-content-a"
         img_b = b"image-content-b"
-        table = pa.table({
-            "id": ["r1", "r2", "r3", "r4"],
-            "image_data": [img_a, img_a, img_b, img_a],  # 2 dups of img_a
-        })
+        table = pa.table(
+            {
+                "id": ["r1", "r2", "r3", "r4"],
+                "image_data": [img_a, img_a, img_b, img_a],  # 2 dups of img_a
+            }
+        )
 
         d = ContentDeduplicator(strategy="exact", action="remove")
         result = d.deduplicate(table)
@@ -60,10 +64,12 @@ class TestDedupIntegration:
         """Flag mode keeps all rows and adds is_duplicate column."""
         img_a = b"image-content-a"
         img_b = b"image-content-b"
-        table = pa.table({
-            "id": ["r1", "r2", "r3"],
-            "image_data": [img_a, img_a, img_b],
-        })
+        table = pa.table(
+            {
+                "id": ["r1", "r2", "r3"],
+                "image_data": [img_a, img_a, img_b],
+            }
+        )
 
         d = ContentDeduplicator(strategy="exact", action="flag")
         result = d.deduplicate(table)
@@ -83,18 +89,22 @@ class TestDedupIntegration:
         d = ContentDeduplicator(strategy="exact", action="remove")
 
         # Batch 1
-        batch1 = pa.table({
-            "id": ["a", "b"],
-            "image_data": [b"img-a", b"img-b"],
-        })
+        batch1 = pa.table(
+            {
+                "id": ["a", "b"],
+                "image_data": [b"img-a", b"img-b"],
+            }
+        )
         result1, seen = d.deduplicate_incremental(batch1)
         assert result1.unique_rows == 2
 
         # Batch 2 with overlap
-        batch2 = pa.table({
-            "id": ["c", "d", "e"],
-            "image_data": [b"img-a", b"img-c", b"img-b"],  # a=dup, b=dup
-        })
+        batch2 = pa.table(
+            {
+                "id": ["c", "d", "e"],
+                "image_data": [b"img-a", b"img-c", b"img-b"],  # a=dup, b=dup
+            }
+        )
         result2, _seen2 = d.deduplicate_incremental(batch2, existing_sha256=seen)
         assert result2.unique_rows == 1  # only img-c is new
         assert result2.duplicates_found == 2
@@ -106,10 +116,12 @@ class TestDedupIntegration:
         # Create dataset
         img_a = b"image-content-a"
         img_b = b"image-content-b"
-        table = pa.table({
-            "id": ["r1", "r2", "r3"],
-            "image_data": [img_a, img_a, img_b],
-        })
+        table = pa.table(
+            {
+                "id": ["r1", "r2", "r3"],
+                "image_data": [img_a, img_a, img_b],
+            }
+        )
         storage.create_dataset("dedup_test", table)
 
         lake = Lake(base_uri=storage.base_uri)

@@ -7,6 +7,7 @@ from a filtered dataset, then intersects with vector search results.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -16,6 +17,20 @@ import pyarrow as pa
 from arrow_lake.config import FacetedSearchConfig
 
 __all__ = ["FacetCount", "FacetedSearchBridge", "FacetedSearchResult"]
+
+_DANGEROUS_KEYWORDS_RE = re.compile(
+    r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|GRANT|REVOKE|"
+    r"EXEC|EXECUTE|UNION|EXCEPT|INTERSECT)\b",
+    re.IGNORECASE,
+)
+
+
+def _validate_where_clause(where: str) -> None:
+    """Validate a WHERE clause for dangerous SQL keywords and semicolons."""
+    if _DANGEROUS_KEYWORDS_RE.search(where):
+        raise ValueError(f"Dangerous keyword detected in WHERE clause: {where}")
+    if ";" in where:
+        raise ValueError(f"Semicolons not allowed in WHERE clause: {where}")
 
 
 @dataclass(frozen=True)
@@ -121,6 +136,7 @@ class FacetedSearchBridge:
 
         # Apply where filter to results if provided
         if where and table.num_rows > 0:
+            _validate_where_clause(where)
             conn = duckdb.connect()
             try:
                 conn.register("data", table)
@@ -203,7 +219,11 @@ class FacetedSearchBridge:
             SQL query string.
         """
         facet_cols = ", ".join(facets)
-        where_clause = f" WHERE {where}" if where else ""
+        if where:
+            _validate_where_clause(where)
+            where_clause = f" WHERE {where}"
+        else:
+            where_clause = ""
         return f"SELECT {facet_cols}, COUNT(*) as count FROM {table_name}{where_clause} GROUP BY CUBE({facet_cols})"
 
     @staticmethod

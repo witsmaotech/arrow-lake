@@ -8,6 +8,7 @@ from arrow_lake._version import __version__
 from arrow_lake.config import ArrowLakeConfig
 from arrow_lake.exceptions import (
     ArrowLakeError,
+    AuditError,
     CatalogError,
     EmbeddingError,
     HttpError,
@@ -28,7 +29,7 @@ if TYPE_CHECKING:
     from arrow_lake.query.fts import FullTextSearchResult
     from arrow_lake.query.hybrid import HybridSearchResult
     from arrow_lake.query.olap import OlapQueryResult
-    from arrow_lake.query.vector import IndexInfo, VectorSearchResult
+    from arrow_lake.query.vector import IndexInfo, VectorSearchBridge, VectorSearchResult
 
 __all__ = [
     "ArrowLakeConfig",

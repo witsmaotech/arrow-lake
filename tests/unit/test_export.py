@@ -16,18 +16,22 @@ from arrow_lake.query.export import ExportBridge, ExportResult
 
 
 def _make_table(n: int = 5) -> pa.Table:
-    return pa.table({
-        "id": list(range(n)),
-        "text_content": [f"row-{i}" for i in range(n)],
-        "score": [float(i) for i in range(n)],
-        "image_data": [b"img-bytes"] * n,
-    })
+    return pa.table(
+        {
+            "id": list(range(n)),
+            "text_content": [f"row-{i}" for i in range(n)],
+            "score": [float(i) for i in range(n)],
+            "image_data": [b"img-bytes"] * n,
+        }
+    )
 
 
 class _MockStorage:
     """Mock storage manager for unit tests."""
 
-    def read_dataset(self, dataset_name: str, version: int | None = None, columns: list[str] | None = None):
+    def read_dataset(
+        self, dataset_name: str, version: int | None = None, columns: list[str] | None = None
+    ):
         return _make_table(5)
 
 
@@ -126,9 +130,12 @@ class TestBinaryColumnExclusion:
             assert "image_data" not in result.output_path  # just checking result
             assert result.format == "csv"
             # image_data should be excluded
-            assert "image_data" not in table.select(
-                [c for c in table.column_names if c not in {"image_data"}]
-            ).column_names
+            assert (
+                "image_data"
+                not in table.select(
+                    [c for c in table.column_names if c not in {"image_data"}]
+                ).column_names
+            )
 
     def test_parquet_includes_all_columns(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

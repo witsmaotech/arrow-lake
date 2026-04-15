@@ -7,6 +7,7 @@ Integrates with MinIO via Arrow Lake config for S3-compatible storage.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from re import compile as re_compile
@@ -17,6 +18,10 @@ import pyarrow as pa
 from arrow_lake.exceptions import ErrorCode, StorageError
 
 _SAFE_DATASET_NAME_RE = re_compile(r"^[a-zA-Z_][a-zA-Z0-9_-]*$")
+_DANGEROUS_SQL_EXPR_RE = re_compile(
+    r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|GRANT|REVOKE|EXEC|EXECUTE)\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -74,6 +79,20 @@ class LanceStorageManager:
             raise StorageError(
                 error_code=ErrorCode.VALIDATION_INVALID_CONFIG,
                 message=f"Invalid {label} '{value}': must match ^[a-zA-Z_][a-zA-Z0-9_-]*$",
+            )
+
+    @staticmethod
+    def _validate_sql_expr(expr: str) -> None:
+        """Validate a SQL expression for dangerous keywords and semicolons."""
+        if _DANGEROUS_SQL_EXPR_RE.search(expr):
+            raise StorageError(
+                error_code=ErrorCode.VALIDATION_INVALID_CONFIG,
+                message=f"Dangerous SQL keyword detected in expression: {expr}",
+            )
+        if ";" in expr:
+            raise StorageError(
+                error_code=ErrorCode.VALIDATION_INVALID_CONFIG,
+                message=f"Semicolons not allowed in SQL expression: {expr}",
             )
 
     def create_dataset(self, name: str, data: pa.Table) -> None:
@@ -252,6 +271,7 @@ class LanceStorageManager:
         """
         self._validate_name(name)
         self._validate_identifier(column_name, "column_name")
+        self._validate_sql_expr(sql_expr)
         table = self._open_lance(self._get_dataset_path(name))
         table.add_columns({column_name: sql_expr})
 
@@ -267,6 +287,7 @@ class LanceStorageManager:
             StorageError: If dataset does not exist or name invalid.
         """
         self._validate_name(name)
+        self._validate_identifier(column_name, "column_name")
         table = self._open_lance(self._get_dataset_path(name))
         table.alter_columns({"path": column_name, "data_type": new_type})
 
@@ -281,6 +302,7 @@ class LanceStorageManager:
             StorageError: If dataset does not exist or column not found.
         """
         self._validate_name(name)
+        self._validate_identifier(column_name, "column_name")
         table = self._open_lance(self._get_dataset_path(name))
         try:
             table.drop_columns([column_name])

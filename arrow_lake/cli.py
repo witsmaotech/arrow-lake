@@ -13,6 +13,7 @@ Usage::
 
 from __future__ import annotations
 
+import hashlib
 import sys
 from pathlib import Path
 
@@ -142,7 +143,7 @@ def ingest(source: str, table_name: str, base_uri: str, modality: str) -> None:
 
         ingestor = Ingestor(storage)
         report = ingestor.ingest(table_name, [source])
-        rows = getattr(report, "rows_ingested", 0)
+        rows = getattr(report, "total_rows", 0)
         _print_success(f"Ingested {rows} rows into '{table_name}'")
     except Exception as exc:
         _print_error(f"Ingestion failed: {exc}")
@@ -181,7 +182,7 @@ def search(
 
         vectors = np.stack(table.column("vector").to_pylist())
         # Use query hash as a deterministic pseudo-embedding when no real encoder is available
-        rng = np.random.RandomState(hash(query) & 0xFFFFFFFF)
+        rng = np.random.RandomState(int(hashlib.sha256(query.encode()).hexdigest(), 16) % (2**31))
         dim = vectors.shape[1]
         query_emb = rng.randn(dim).astype(np.float32)
         query_emb = query_emb / np.linalg.norm(query_emb)

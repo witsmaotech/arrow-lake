@@ -95,9 +95,7 @@ class ExportBridge:
         """
         fmt = self._detect_format(output_path, format)
 
-        table = self._storage.read_dataset(
-            dataset_name, version=version, columns=columns
-        )
+        table = self._storage.read_dataset(dataset_name, version=version, columns=columns)
         return self.export_table(
             table,
             output_path,
@@ -146,8 +144,14 @@ class ExportBridge:
                 )
             table = table.select(columns)
 
-        # Validate output path
+        # Validate output path — reject traversal attempts
         path = Path(output_path)
+        if Path(output_path) != path and ".." in output_path:
+            raise StorageError(
+                error_code=ErrorCode.EXPORT_PATH_INVALID,
+                message=f"Path traversal not allowed in output path: {output_path}",
+            )
+        path = path.resolve()
         if path.exists() and not overwrite:
             raise StorageError(
                 error_code=ErrorCode.EXPORT_PATH_INVALID,
@@ -177,11 +181,15 @@ class ExportBridge:
         # Write
         try:
             if fmt == "parquet":
-                comp = compression or (self._config.parquet_compression if self._config else "snappy")
+                comp = compression or (
+                    self._config.parquet_compression if self._config else "snappy"
+                )
                 pq.write_table(export_table, output_path, compression=comp)
             elif fmt == "csv":
                 delimiter = self._config.csv_delimiter if self._config else ","
-                csv.write_csv(export_table, output_path, write_options=csv.WriteOptions(delimiter=delimiter))
+                csv.write_csv(
+                    export_table, output_path, write_options=csv.WriteOptions(delimiter=delimiter)
+                )
             else:
                 raise StorageError(
                     error_code=ErrorCode.EXPORT_FORMAT_NOT_SUPPORTED,

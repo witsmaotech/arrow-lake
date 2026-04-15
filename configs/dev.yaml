@@ -132,7 +132,7 @@ lineage:
 
 audit:
   enabled: true
-  hmac_secret_key: "dev-secret-key-change-in-prod"
+  hmac_secret_key: ""  # MUST set via ARROW_LAKE__AUDIT__HMAC_SECRET_KEY in production
   audit_dataset: "_audit_trail"
   auto_record_workflow: true
 

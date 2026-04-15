@@ -20,6 +20,10 @@ import os
 from typing import Any
 from wsgiref.simple_server import make_server
 
+import structlog
+
+_log = structlog.get_logger(__name__)
+
 
 def health_response() -> tuple[dict[str, Any], int]:
     """Build health check response.
@@ -114,11 +118,11 @@ def app(environ: dict[str, str], start_response: Any) -> Any:
 def run_server(host: str = "0.0.0.0", port: int = 8000) -> None:
     """Run the health check server (blocking)."""
     server = make_server(host, port, app)
-    print(f"Arrow Lake health server running on http://{host}:{port}")
+    _log.info("health_server_started", host=host, port=port)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\nShutting down...")
+        _log.info("health_server_shutting_down")
         server.shutdown()
 
 

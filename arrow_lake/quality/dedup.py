@@ -180,7 +180,11 @@ class ContentDeduplicator:
         for i in range(total):
             h = sha256_col[i]
             if h and h not in seen:
-                seen[h] = str(new_table.column("id")[i].as_py()) if "id" in new_table.column_names else str(i)
+                seen[h] = (
+                    str(new_table.column("id")[i].as_py())
+                    if "id" in new_table.column_names
+                    else str(i)
+                )
                 unique_indices.append(i)
             elif h:
                 duplicate_count += 1

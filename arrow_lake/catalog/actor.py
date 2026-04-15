@@ -319,13 +319,14 @@ class CatalogActor:
         import shutil
 
         base = Path(base_uri).resolve()
-        if not str(base).startswith("/tmp") and not str(base).startswith("/home"):
+        lance_dir = base / f"{name}.lance"
+        # Safety check: lance_dir must still be under base (prevent traversal via name)
+        if not str(lance_dir.resolve()).startswith(str(base)):
             raise CatalogError(
                 error_code=ErrorCode.VALIDATION_INVALID_CONFIG,
-                message=f"Refusing to delete data outside /tmp or /home: {base_uri}",
+                message=f"Refusing to delete data outside base directory: {lance_dir}",
             )
 
-        lance_dir = base / f"{name}.lance"
         if lance_dir.is_dir():
             shutil.rmtree(lance_dir)
 

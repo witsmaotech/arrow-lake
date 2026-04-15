@@ -93,6 +93,11 @@ class AuditTrail:
         self._path = f"{base_uri}/{audit_dataset}"
         self._hmac_secret = hmac_secret_key.encode() if hmac_secret_key else b""
         self._initialized = False
+        if not hmac_secret_key:
+            structlog.get_logger(__name__).warning(
+                "audit_hmac_disabled",
+                message="HMAC secret key is empty — audit trail integrity verification is disabled",
+            )
 
     def record(
         self,

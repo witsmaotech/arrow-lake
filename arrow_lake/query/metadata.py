@@ -85,28 +85,19 @@ class MetadataSearchBridge:
             )
 
         # Block dangerous SQL patterns (injection prevention)
-        _dangerous_keywords = (
-            "INSERT",
-            "UPDATE",
-            "DELETE",
-            "DROP",
-            "ALTER",
-            "CREATE",
-            "TRUNCATE",
-            "EXEC",
-            "EXECUTE",
-            "GRANT",
-            "REVOKE",
-            "COPY",
-            "IMPORT",
-            "EXPORT",
+        import re
+
+        _dangerous_keywords_re = re.compile(
+            r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|"
+            r"EXEC|EXECUTE|GRANT|REVOKE|COPY|IMPORT|EXPORT)\b",
+            re.IGNORECASE,
         )
-        for keyword in _dangerous_keywords:
-            if keyword in stripped:
-                raise QueryError(
-                    error_code=ErrorCode.QUERY_SYNTAX_ERROR,
-                    message=f"Keyword '{keyword}' is not allowed in queries",
-                )
+        match = _dangerous_keywords_re.search(stripped)
+        if match:
+            raise QueryError(
+                error_code=ErrorCode.QUERY_SYNTAX_ERROR,
+                message=f"Keyword '{match.group()}' is not allowed in queries",
+            )
         if ";" in sql:
             raise QueryError(
                 error_code=ErrorCode.QUERY_SYNTAX_ERROR,

@@ -230,11 +230,12 @@ class LineageQueryBridge:
     def __init__(self, store: LineageStore) -> None:
         self._store = store
 
-    def query(self, sql: str) -> pa.Table:
+    def query(self, sql: str, params: list[str] | None = None) -> pa.Table:
         """Execute a SQL query over lineage events.
 
         Args:
             sql: SQL query string (must be SELECT only).
+            params: Optional parameterized query values (? placeholders).
 
         Returns:
             Arrow Table with query results.
@@ -261,7 +262,7 @@ class LineageQueryBridge:
         conn = duckdb.connect()
         try:
             conn.register("lineage", table)
-            result_reader = conn.execute(sql).arrow()
+            result_reader = conn.execute(sql, params if params else None).arrow()
             result_table = (
                 result_reader.read_all() if hasattr(result_reader, "read_all") else result_reader
             )
@@ -286,12 +287,8 @@ class LineageQueryBridge:
         Returns:
             List of LineageEvent representing upstream sources.
         """
-        sql = (
-            f"SELECT * FROM lineage "
-            f"WHERE source_datasets LIKE '%\"{dataset_name}\"%' "
-            f"ORDER BY timestamp"
-        )
-        table = self.query(sql)
+        sql = "SELECT * FROM lineage WHERE source_datasets LIKE ? ORDER BY timestamp"
+        table = self.query(sql, params=[f'%"{dataset_name}"%'])
         return [LineageStore._row_to_event(table, i) for i in range(table.num_rows)]
 
     def trace_downstream(self, dataset_name: str) -> list[LineageEvent]:
@@ -307,13 +304,13 @@ class LineageQueryBridge:
             List of LineageEvent representing downstream consumers.
         """
         sql = (
-            f"SELECT * FROM lineage "
-            f"WHERE dataset_name = '{dataset_name}' "
-            f"AND source_datasets != '[]' "
-            f"AND source_datasets IS NOT NULL "
-            f"ORDER BY timestamp"
+            "SELECT * FROM lineage "
+            "WHERE dataset_name = ? "
+            "AND source_datasets != '[]' "
+            "AND source_datasets IS NOT NULL "
+            "ORDER BY timestamp"
         )
-        table = self.query(sql)
+        table = self.query(sql, params=[dataset_name])
         return [LineageStore._row_to_event(table, i) for i in range(table.num_rows)]
 
     @staticmethod

@@ -26,13 +26,15 @@ def _create_sample_dataset(
     n: int = 10,
 ) -> None:
     """Create a sample Lance dataset for export tests."""
-    table = pa.table({
-        "id": list(range(n)),
-        "text_content": [f"document-{i}" for i in range(n)],
-        "score": [float(i * 10) for i in range(n)],
-        "modality": ["text"] * n,
-        "image_data": [f"img-{i}".encode() for i in range(n)],
-    })
+    table = pa.table(
+        {
+            "id": list(range(n)),
+            "text_content": [f"document-{i}" for i in range(n)],
+            "score": [float(i * 10) for i in range(n)],
+            "modality": ["text"] * n,
+            "image_data": [f"img-{i}".encode() for i in range(n)],
+        }
+    )
     storage.create_dataset(name, table)
 
 
@@ -73,20 +75,20 @@ class TestExportParquetIntegration:
         table = pq.read_table(output)
         assert set(table.column_names) == {"id", "text_content"}
 
-    def test_export_specific_version(
-        self, storage: LanceStorageManager, tmp_path: Path
-    ) -> None:
+    def test_export_specific_version(self, storage: LanceStorageManager, tmp_path: Path) -> None:
         """Export a specific dataset version."""
         _create_sample_dataset(storage, n=5)
 
         # Append more data to create version 2
-        extra = pa.table({
-            "id": [10, 11],
-            "text_content": ["doc-10", "doc-11"],
-            "score": [100.0, 110.0],
-            "modality": ["text", "text"],
-            "image_data": [b"img-10", b"img-11"],
-        })
+        extra = pa.table(
+            {
+                "id": [10, 11],
+                "text_content": ["doc-10", "doc-11"],
+                "score": [100.0, 110.0],
+                "modality": ["text", "text"],
+                "image_data": [b"img-10", b"img-11"],
+            }
+        )
         storage.append_dataset("export_test", extra)
 
         output = str(tmp_path / "v1.parquet")
@@ -99,7 +101,9 @@ class TestExportParquetIntegration:
 class TestExportCSVIntegration:
     """Integration: Export Lance dataset to CSV."""
 
-    def test_export_to_csv_excludes_binary(self, storage: LanceStorageManager, tmp_path: Path) -> None:
+    def test_export_to_csv_excludes_binary(
+        self, storage: LanceStorageManager, tmp_path: Path
+    ) -> None:
         """Export to CSV should exclude binary columns."""
         _create_sample_dataset(storage, n=5)
         output = str(tmp_path / "output.csv")
@@ -113,6 +117,7 @@ class TestExportCSVIntegration:
 
         # Read CSV back and verify no image_data column
         import pyarrow.csv as csv
+
         table = csv.read_csv(output)
         assert "image_data" not in table.column_names
 

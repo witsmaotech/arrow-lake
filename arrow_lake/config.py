@@ -332,6 +332,20 @@ class QualityConfig(BaseModel):
     dedup_action: str = "flag"
     dedup_perceptual_threshold: int = 10
 
+    @field_validator("dedup_strategy")
+    @classmethod
+    def validate_dedup_strategy(cls, v: str) -> str:
+        if v not in ("exact", "perceptual", "both"):
+            raise ValueError(f"dedup_strategy must be 'exact', 'perceptual', or 'both', got {v!r}")
+        return v
+
+    @field_validator("dedup_action")
+    @classmethod
+    def validate_dedup_action(cls, v: str) -> str:
+        if v not in ("flag", "remove"):
+            raise ValueError(f"dedup_action must be 'flag' or 'remove', got {v!r}")
+        return v
+
 
 class OlapConfig(BaseModel):
     """OLAP analytics configuration (Story 5.4, 7.6).
@@ -572,6 +586,14 @@ class ExportConfig(BaseModel):
     def validate_format(cls, v: str) -> str:
         if v not in ("parquet", "csv"):
             raise ValueError(f"format must be 'parquet' or 'csv', got {v!r}")
+        return v
+
+    @field_validator("parquet_compression")
+    @classmethod
+    def validate_compression(cls, v: str) -> str:
+        valid = {"snappy", "gzip", "brotli", "zstd", "lz4", "none"}
+        if v not in valid:
+            raise ValueError(f"parquet_compression must be one of {valid}, got {v!r}")
         return v
 
 
