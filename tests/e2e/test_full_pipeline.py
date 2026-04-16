@@ -31,8 +31,7 @@ def sample_table() -> pa.Table:
         {
             "id": [f"doc_{i:04d}" for i in range(n)],
             "text_content": [
-                f"Sample document {i} about machine learning and data processing"
-                for i in range(n)
+                f"Sample document {i} about machine learning and data processing" for i in range(n)
             ],
             "category": [f"cat_{i % 5}" for i in range(n)],
             "score": rng.rand(n).tolist(),
@@ -45,9 +44,7 @@ def sample_table() -> pa.Table:
 def populated_lake(lake: Lake, sample_table: pa.Table, tmp_path: Path) -> Lake:
     """Create a lake with ingested data, vector index, and FTS index."""
     lake._get_storage().create_dataset("documents", sample_table)
-    lake.create_vector_index(
-        "documents", vector_column="text_embedding", num_sub_vectors=8
-    )
+    lake.create_vector_index("documents", vector_column="text_embedding", num_sub_vectors=8)
     lake.create_fts_index("documents", fts_column="text_content")
     return lake
 
@@ -66,9 +63,7 @@ class TestIngestToSearchPipeline:
         datasets = storage.list_datasets()
         assert "documents" in datasets
 
-    def test_full_vector_search_flow(
-        self, populated_lake: Lake, sample_table: pa.Table
-    ) -> None:
+    def test_full_vector_search_flow(self, populated_lake: Lake, sample_table: pa.Table) -> None:
         """Vector search returns results from ingested data."""
         query_vec = sample_table.column("text_embedding")[0].as_py()
         result = populated_lake.search(
@@ -93,9 +88,7 @@ class TestIngestToSearchPipeline:
         assert result.table.num_rows > 0
         assert "_score" in result.table.column_names
 
-    def test_full_hybrid_search_flow(
-        self, populated_lake: Lake, sample_table: pa.Table
-    ) -> None:
+    def test_full_hybrid_search_flow(self, populated_lake: Lake, sample_table: pa.Table) -> None:
         """Hybrid search returns fused results from vector + FTS."""
         query_vec = sample_table.column("text_embedding")[0].as_py()
         result = populated_lake.hybrid_search(
@@ -168,9 +161,7 @@ class TestExportPipeline:
         assert Path(output).exists()
         assert Path(output).stat().st_size > 0
 
-    def test_export_to_csv_excludes_binary(
-        self, lake: Lake, tmp_path: Path
-    ) -> None:
+    def test_export_to_csv_excludes_binary(self, lake: Lake, tmp_path: Path) -> None:
         """Export to CSV excludes binary columns."""
         table = pa.table(
             {
@@ -196,9 +187,7 @@ class TestExportPipeline:
         lake._get_storage().create_dataset("col_ds", sample_table)
 
         output = str(tmp_path / "subset.parquet")
-        result = lake.export(
-            "col_ds", output, columns=["id", "category"], overwrite=True
-        )
+        result = lake.export("col_ds", output, columns=["id", "category"], overwrite=True)
 
         assert result.column_count == 2
 
@@ -208,9 +197,7 @@ class TestAuditPipeline:
 
     def test_audit_record_and_query(self, lake: Lake) -> None:
         """Record an audit entry and query it back."""
-        lake._get_storage().create_dataset(
-            "audit_ds", pa.table({"id": ["1"], "val": [10]})
-        )
+        lake._get_storage().create_dataset("audit_ds", pa.table({"id": ["1"], "val": [10]}))
 
         audit_id = lake.audit_record(
             event_type="data_ingest",
@@ -223,9 +210,7 @@ class TestAuditPipeline:
 
     def test_audit_verify_integrity(self, lake: Lake) -> None:
         """Verify HMAC integrity of a recorded audit entry."""
-        lake._get_storage().create_dataset(
-            "audit_v", pa.table({"id": ["1"], "val": [10]})
-        )
+        lake._get_storage().create_dataset("audit_v", pa.table({"id": ["1"], "val": [10]}))
 
         audit_id = lake.audit_record(
             event_type="create",
@@ -246,9 +231,7 @@ class TestLineagePipeline:
 
     def test_record_and_retrieve_lineage(self, lake: Lake) -> None:
         """Record a lineage event and retrieve dataset history."""
-        lake._get_storage().create_dataset(
-            "lineage_ds", pa.table({"id": ["1"], "val": [10]})
-        )
+        lake._get_storage().create_dataset("lineage_ds", pa.table({"id": ["1"], "val": [10]}))
 
         lake.lineage_record_event(
             "lineage_ds",
@@ -264,9 +247,7 @@ class TestLineagePipeline:
 
     def test_lineage_sql_query(self, lake: Lake) -> None:
         """SQL query over lineage events returns expected results."""
-        lake._get_storage().create_dataset(
-            "lineage_sql", pa.table({"id": ["1"], "val": [10]})
-        )
+        lake._get_storage().create_dataset("lineage_sql", pa.table({"id": ["1"], "val": [10]}))
 
         lake.lineage_record_event("lineage_sql", operation="create")
         lake.lineage_record_event("lineage_sql", operation="append")

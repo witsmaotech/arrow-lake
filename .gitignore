@@ -47,12 +47,24 @@ ENV/
 .env.local
 .env.*.local
 
-# Data
-data/
+# Data (root level only)
+/data/
 *.csv
 *.json
 *.parquet
 *.lance
+
+# But keep examples/data scripts and docs
+!examples/data/
+!examples/data/*.py
+!examples/data/*.md
+
+# Ignore downloaded binary data in examples/data
+examples/data/images/
+examples/data/videos/
+examples/data/audio/
+examples/data/texts/
+examples/data/dataset_manifest.json
 
 # Logs
 logs/

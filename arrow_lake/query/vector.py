@@ -9,7 +9,6 @@ Uses IVF_PQ index for scalable nearest-neighbor search.
 from __future__ import annotations
 
 import math
-import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -18,6 +17,7 @@ import structlog
 
 from arrow_lake.config import VectorSearchConfig
 from arrow_lake.exceptions import ErrorCode, QueryError
+from arrow_lake.validation import DANGEROUS_SQL_KEYWORDS_RE
 
 _LARGE_TABLE_THRESHOLD = 1_000_000
 _PQ_MIN_TRAINING_ROWS = 256
@@ -25,13 +25,6 @@ _DEFAULT_VECTOR_COLUMN = "text_embedding"
 _DEFAULT_EMBEDDING_DIM = 384
 
 _log = structlog.get_logger(__name__)
-
-# Dangerous SQL keywords for where clause validation
-_DANGEROUS_KEYWORDS_RE = re.compile(
-    r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|GRANT|REVOKE|"
-    r"EXEC|EXECUTE|UNION|EXCEPT|INTERSECT)\b",
-    re.IGNORECASE,
-)
 
 
 @dataclass(frozen=True)
@@ -346,7 +339,7 @@ class VectorSearchBridge:
         Raises:
             QueryError: If dangerous SQL keywords are detected.
         """
-        match = _DANGEROUS_KEYWORDS_RE.search(where)
+        match = DANGEROUS_SQL_KEYWORDS_RE.search(where)
         if match:
             raise QueryError(
                 error_code=ErrorCode.VECTOR_INVALID_QUERY,

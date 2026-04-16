@@ -1,7 +1,7 @@
 """Tests for arrow_lake.workflow.audit — Story 8.4 Event Sourcing Audit.
 
 Tests AuditEntry, AuditTrail (HMAC, record, query, export, replay),
-and AuditConfig using mocked lancedb (no real datasets).
+and AuditConfig using mocked LanceStorageManager (no real datasets).
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ import hashlib
 import hmac as hmac_mod
 import json
 from dataclasses import FrozenInstanceError
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pyarrow as pa
 import pytest
@@ -81,13 +81,11 @@ def _make_arrow_table(rows: list[dict[str, object]]) -> pa.Table:
     return pa.table(columns, schema=_AUDIT_SCHEMA)
 
 
-def _mock_lancedb_db(table: pa.Table) -> MagicMock:
-    """Create a mock lancedb connection that returns the given table."""
-    mock_db = MagicMock()
-    mock_table = MagicMock()
-    mock_table.to_arrow.return_value = table
-    mock_db.open_table.return_value = mock_table
-    return mock_db
+def _make_mock_storage() -> MagicMock:
+    """Create a mock LanceStorageManager."""
+    storage = MagicMock()
+    storage.dataset_exists.return_value = True
+    return storage
 
 
 # ---------------------------------------------------------------------------
@@ -148,18 +146,18 @@ class TestComputeHmac:
     """Test AuditTrail._compute_hmac."""
 
     def test_empty_secret_returns_empty_string(self) -> None:
-        trail = AuditTrail("/tmp/audit", hmac_secret_key="")
+        trail = AuditTrail(_make_mock_storage(), hmac_secret_key="")
         result = trail._compute_hmac({"audit_id": "abc"})
         assert result == ""
 
     def test_non_empty_secret_returns_hex_string(self) -> None:
-        trail = AuditTrail("/tmp/audit", hmac_secret_key="test-secret")
+        trail = AuditTrail(_make_mock_storage(), hmac_secret_key="test-secret")
         result = trail._compute_hmac({"audit_id": "abc", "timestamp": "2026-01-01T00:00:00"})
         assert len(result) == 64  # SHA-256 hex digest
         assert all(c in "0123456789abcdef" for c in result)
 
     def test_deterministic_output(self) -> None:
-        trail = AuditTrail("/tmp/audit", hmac_secret_key="test-secret")
+        trail = AuditTrail(_make_mock_storage(), hmac_secret_key="test-secret")
         data = {"audit_id": "abc", "timestamp": "2026-01-01T00:00:00"}
         r1 = trail._compute_hmac(data)
         r2 = trail._compute_hmac(data)
@@ -190,43 +188,43 @@ class TestVerify:
         expected_hash = _compute_hmac(secret, entry_dict)
         row = _make_audit_row(hmac_hash=expected_hash)
         table = _make_arrow_table([row])
-        mock_db = _mock_lancedb_db(table)
+        storage = _make_mock_storage()
+        storage.read_dataset.return_value = table
 
-        trail = AuditTrail("/tmp/audit", hmac_secret_key="test-secret")
+        trail = AuditTrail(storage, hmac_secret_key="test-secret")
         trail._initialized = True
-        with patch("lancedb.connect", return_value=mock_db):
-            assert trail.verify("abc") is True
+        assert trail.verify("abc") is True
 
     def test_tampered_hash_returns_false(self) -> None:
         row = _make_audit_row(hmac_hash="deadbeef" * 8)
         table = _make_arrow_table([row])
-        mock_db = _mock_lancedb_db(table)
+        storage = _make_mock_storage()
+        storage.read_dataset.return_value = table
 
-        trail = AuditTrail("/tmp/audit", hmac_secret_key="test-secret")
+        trail = AuditTrail(storage, hmac_secret_key="test-secret")
         trail._initialized = True
-        with patch("lancedb.connect", return_value=mock_db):
-            assert trail.verify("abc") is False
+        assert trail.verify("abc") is False
 
     def test_empty_hash_returns_true(self) -> None:
         """Empty hash means HMAC disabled (dev mode)."""
         row = _make_audit_row(hmac_hash="")
         table = _make_arrow_table([row])
-        mock_db = _mock_lancedb_db(table)
+        storage = _make_mock_storage()
+        storage.read_dataset.return_value = table
 
-        trail = AuditTrail("/tmp/audit", hmac_secret_key="test-secret")
+        trail = AuditTrail(storage, hmac_secret_key="test-secret")
         trail._initialized = True
-        with patch("lancedb.connect", return_value=mock_db):
-            assert trail.verify("abc") is True
+        assert trail.verify("abc") is True
 
     def test_not_found_returns_false(self) -> None:
         row = _make_audit_row(audit_id="other_id")
         table = _make_arrow_table([row])
-        mock_db = _mock_lancedb_db(table)
+        storage = _make_mock_storage()
+        storage.read_dataset.return_value = table
 
-        trail = AuditTrail("/tmp/audit", hmac_secret_key="test-secret")
+        trail = AuditTrail(storage, hmac_secret_key="test-secret")
         trail._initialized = True
-        with patch("lancedb.connect", return_value=mock_db):
-            assert trail.verify("nonexistent") is False
+        assert trail.verify("nonexistent") is False
 
 
 # ---------------------------------------------------------------------------
@@ -238,34 +236,37 @@ class TestRecord:
     """Test AuditTrail.record."""
 
     def test_generates_uuid_and_timestamp(self) -> None:
-        mock_db = MagicMock()
-        mock_table = MagicMock()
-        mock_db.open_table.return_value = mock_table
-
-        trail = AuditTrail("/tmp/audit")
+        storage = _make_mock_storage()
+        trail = AuditTrail(storage)
         trail._initialized = True
-        with patch("lancedb.connect", return_value=mock_db):
-            audit_id = trail.record("create", dataset_name="ds")
+        audit_id = trail.record("create", dataset_name="ds")
         assert len(audit_id) == 36
 
-        # Verify open_table().add() was called
-        mock_table.add.assert_called_once()
-        call_arg = mock_table.add.call_args[0][0]
+        # Verify append_dataset was called
+        storage.append_dataset.assert_called_once()
+        call_arg = storage.append_dataset.call_args[0][1]
         assert isinstance(call_arg, pa.Table)
         assert call_arg.num_rows == 1
 
-    def test_calls_lance_add_with_correct_schema(self) -> None:
-        mock_db = MagicMock()
-        mock_table = MagicMock()
-        mock_db.open_table.return_value = mock_table
-
-        trail = AuditTrail("/tmp/audit")
+    def test_calls_append_with_correct_schema(self) -> None:
+        storage = _make_mock_storage()
+        trail = AuditTrail(storage)
         trail._initialized = True
-        with patch("lancedb.connect", return_value=mock_db):
-            trail.record("checkpoint", dataset_name="my_ds", actor="alice")
-        call_arg = mock_table.add.call_args[0][0]
+        trail.record("checkpoint", dataset_name="my_ds", actor="alice")
+        call_arg = storage.append_dataset.call_args[0][1]
         assert "audit_id" in call_arg.column_names
         assert "hmac_hash" in call_arg.column_names
+
+    def test_record_with_hmac(self) -> None:
+        storage = _make_mock_storage()
+        trail = AuditTrail(storage, hmac_secret_key="secret-key")
+        trail._initialized = True
+        audit_id = trail.record("create", dataset_name="ds")
+        assert audit_id
+        call_arg = storage.append_dataset.call_args[0][1]
+        # Verify HMAC hash column is populated
+        hashes = call_arg.column("hmac_hash").to_pylist()
+        assert len(hashes[0]) == 64  # SHA-256 hex
 
 
 # ---------------------------------------------------------------------------
@@ -300,40 +301,37 @@ class TestQuery:
 
     def _setup_trail(self, rows: list[dict[str, object]]) -> tuple[AuditTrail, MagicMock]:
         table = _make_arrow_table(rows)
-        mock_db = _mock_lancedb_db(table)
-        trail = AuditTrail("/tmp/audit")
+        storage = _make_mock_storage()
+        storage.read_dataset.return_value = table
+        trail = AuditTrail(storage)
         trail._initialized = True
-        return trail, mock_db
+        return trail, storage
 
     def test_filter_by_dataset_name(self) -> None:
         rows = self._setup_rows()
-        trail, mock_db = self._setup_trail(rows)
-        with patch("lancedb.connect", return_value=mock_db):
-            result = trail.query(dataset_name="ds_a")
+        trail, _storage = self._setup_trail(rows)
+        result = trail.query(dataset_name="ds_a")
         assert len(result) == 2
         assert all(e.dataset_name == "ds_a" for e in result)
 
     def test_filter_by_event_type(self) -> None:
         rows = self._setup_rows()
-        trail, mock_db = self._setup_trail(rows)
-        with patch("lancedb.connect", return_value=mock_db):
-            result = trail.query(event_type="create")
+        trail, _storage = self._setup_trail(rows)
+        result = trail.query(event_type="create")
         assert len(result) == 2
         assert all(e.event_type == "create" for e in result)
 
     def test_filter_by_time_range(self) -> None:
         rows = self._setup_rows()
-        trail, mock_db = self._setup_trail(rows)
-        with patch("lancedb.connect", return_value=mock_db):
-            result = trail.query(start="2026-01-02T00:00:00", end="2026-01-03T00:00:00")
+        trail, _storage = self._setup_trail(rows)
+        result = trail.query(start="2026-01-02T00:00:00", end="2026-01-03T00:00:00")
         assert len(result) == 1
         assert result[0].audit_id == "a2"
 
     def test_no_filters_returns_all(self) -> None:
         rows = self._setup_rows()
-        trail, mock_db = self._setup_trail(rows)
-        with patch("lancedb.connect", return_value=mock_db):
-            result = trail.query()
+        trail, _storage = self._setup_trail(rows)
+        result = trail.query()
         assert len(result) == 3
 
 
@@ -354,12 +352,12 @@ class TestExport:
             ),
         ]
         table = _make_arrow_table(rows)
-        mock_db = _mock_lancedb_db(table)
+        storage = _make_mock_storage()
+        storage.read_dataset.return_value = table
 
-        trail = AuditTrail("/tmp/audit")
+        trail = AuditTrail(storage)
         trail._initialized = True
-        with patch("lancedb.connect", return_value=mock_db):
-            result = trail.export("ds_export")
+        result = trail.export("ds_export")
         assert result["dataset_name"] == "ds_export"
         assert result["total_entries"] == 1
         assert isinstance(result["entries"], list)
@@ -393,12 +391,12 @@ class TestReplay:
             ),
         ]
         table = _make_arrow_table(rows)
-        mock_db = _mock_lancedb_db(table)
+        storage = _make_mock_storage()
+        storage.read_dataset.return_value = table
 
-        trail = AuditTrail("/tmp/audit")
+        trail = AuditTrail(storage)
         trail._initialized = True
-        with patch("lancedb.connect", return_value=mock_db):
-            result = trail.replay("ds_replay", target_version=2)
+        result = trail.replay("ds_replay", target_version=2)
         assert len(result) == 2
         assert result[0].audit_id == "a1"
         assert result[1].audit_id == "a2"

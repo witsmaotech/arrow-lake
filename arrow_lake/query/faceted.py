@@ -7,30 +7,19 @@ from a filtered dataset, then intersects with vector search results.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from typing import Any
 
-import duckdb
 import pyarrow as pa
 
 from arrow_lake.config import FacetedSearchConfig
-
-__all__ = ["FacetCount", "FacetedSearchBridge", "FacetedSearchResult"]
-
-_DANGEROUS_KEYWORDS_RE = re.compile(
-    r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|GRANT|REVOKE|"
-    r"EXEC|EXECUTE|UNION|EXCEPT|INTERSECT)\b",
-    re.IGNORECASE,
+from arrow_lake.query._db import DuckDBSession
+from arrow_lake.validation import (
+    SAFE_IDENTIFIER_RE,
+    validate_sql_safety,
 )
 
-
-def _validate_where_clause(where: str) -> None:
-    """Validate a WHERE clause for dangerous SQL keywords and semicolons."""
-    if _DANGEROUS_KEYWORDS_RE.search(where):
-        raise ValueError(f"Dangerous keyword detected in WHERE clause: {where}")
-    if ";" in where:
-        raise ValueError(f"Semicolons not allowed in WHERE clause: {where}")
+__all__ = ["FacetCount", "FacetedSearchBridge", "FacetedSearchResult"]
 
 
 @dataclass(frozen=True)
@@ -122,24 +111,32 @@ class FacetedSearchBridge:
 
         Returns:
             FacetedSearchResult with search results and facet counts.
+
+        Raises:
+            ValueError: If dataset name or column names are invalid.
         """
+        if not SAFE_IDENTIFIER_RE.match(dataset_name):
+            raise ValueError(f"Invalid dataset name '{dataset_name}'")
         facet_columns = facets or self._config.default_facet_columns
 
         # Compute facet counts
         facet_list = self._compute_facets(dataset_name, facet_columns, where)
 
-        # Read dataset for result table
+        # Stream dataset for result table
         try:
-            table = self._storage.read_dataset(dataset_name)
+            if hasattr(self._storage, "scan_dataset"):
+                source = self._storage.scan_dataset(dataset_name)
+            else:
+                source = self._storage.read_dataset(dataset_name)
         except Exception:
             table = pa.Table.from_pydict({"id": []})
+            source = None
 
         # Apply where filter to results if provided
-        if where and table.num_rows > 0:
-            _validate_where_clause(where)
-            conn = duckdb.connect()
-            try:
-                conn.register(dataset_name, table)
+        if source is not None and where:
+            validate_sql_safety(where)
+            with DuckDBSession() as conn:
+                conn.register(dataset_name, source)
                 filtered_reader = conn.execute(
                     f"SELECT * FROM {dataset_name} WHERE {where} LIMIT {top_k}"
                 ).arrow()
@@ -147,8 +144,10 @@ class FacetedSearchBridge:
                     table = filtered_reader.read_all()
                 else:
                     table = filtered_reader
-            finally:
-                conn.close()
+        elif source is not None:
+            # Materialize reader to table for slicing
+            table = source.read_all() if hasattr(source, "read_all") else source
+        # else: table already set to empty above
 
         # Limit result to top_k
         if table.num_rows > top_k:
@@ -180,25 +179,29 @@ class FacetedSearchBridge:
             List of FacetCount with counts for each dimension.
         """
         try:
-            table = self._storage.read_dataset(dataset_name)
+            if hasattr(self._storage, "scan_dataset"):
+                source = self._storage.scan_dataset(dataset_name)
+            else:
+                source = self._storage.read_dataset(dataset_name)
         except Exception:
             return []
 
-        if table.num_rows == 0:
+        # Check if dataset is non-empty via schema (avoid materialization)
+        if hasattr(source, "schema"):
+            # RecordBatchReader — register directly, let DuckDB handle empty check
+            pass
+        elif hasattr(source, "num_rows") and source.num_rows == 0:
             return []
 
         cube_query = self._build_cube_query(dataset_name, facets, where)
 
-        conn = duckdb.connect()
-        try:
-            conn.register(dataset_name, table)
+        with DuckDBSession() as conn:
+            conn.register(dataset_name, source)
             result_reader = conn.execute(cube_query).arrow()
             if hasattr(result_reader, "read_all"):
                 cube_table = result_reader.read_all()
             else:
                 cube_table = result_reader
-        finally:
-            conn.close()
 
         return self._parse_cube_results(cube_table, facets)
 
@@ -220,7 +223,7 @@ class FacetedSearchBridge:
         """
         facet_cols = ", ".join(facets)
         if where:
-            _validate_where_clause(where)
+            validate_sql_safety(where)
             where_clause = f" WHERE {where}"
         else:
             where_clause = ""

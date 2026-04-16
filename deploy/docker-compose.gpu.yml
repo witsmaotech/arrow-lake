@@ -1,18 +1,54 @@
-# Arrow Lake — GPU overlay (Sprint 1, Story 1.9)
+# Arrow Lake — GPU Overlay
 #
-# Extends docker-compose.yml with GPU support.
-# Usage: docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.gpu.yml up -d
+# Replaces CPU images with GPU variants and adds NVIDIA device reservations.
+# Extends: docker-compose.yml
+#
+# Usage:
+#   make gpu    # via Makefile
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile gpu up -d
+#
+# Requires: NVIDIA Container Toolkit (nvidia-container-toolkit) installed on host.
 
 services:
+  # ---------------------------------------------------------------------------
+  # Ray Head — GPU-enabled build + device reservation
+  # ---------------------------------------------------------------------------
   ray-head:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.gpu
+    image: arrow-lake:gpu
     deploy:
       resources:
+        limits:
+          memory: ${RAY_HEAD_MEMORY_LIMIT:-4G}
         reservations:
           devices:
             - driver: nvidia
-              count: all
+              count: ${GPU_COUNT_PER_HEAD:-1}
               capabilities: [gpu]
     environment:
-      NVIDIA_VISIBLE_DEVICES: all
-      NVIDIA_DRIVER_CAPABILITIES: compute,utility
       ARROW_LAKE__COMPUTE__GPU_ENABLED: "true"
+      ARROW_LAKE__EMBEDDING__BACKEND: "local"
+
+  # ---------------------------------------------------------------------------
+  # Ray Worker — GPU-enabled build + device reservation
+  # ---------------------------------------------------------------------------
+  ray-worker:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.gpu
+    image: arrow-lake:gpu
+    deploy:
+      resources:
+        limits:
+          memory: ${RAY_WORKER_MEMORY:-8G}
+          cpus: "${RAY_WORKER_CPU_LIMIT:-2.0}"
+        reservations:
+          devices:
+            - driver: nvidia
+              count: ${GPU_COUNT_PER_WORKER:-1}
+              capabilities: [gpu]
+    environment:
+      ARROW_LAKE__COMPUTE__GPU_ENABLED: "true"
+      ARROW_LAKE__EMBEDDING__BACKEND: "local"

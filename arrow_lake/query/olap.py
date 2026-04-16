@@ -10,7 +10,9 @@ Story 7.6 additions:
 - Multi-table registration for JOIN queries
 - enable_join config flag for security control
 - to_arrow() convenience method on OlapQueryResult
-- daft_sql() placeholder (ADR-05: Daft 0.7.8 has no SQL)
+
+Note: Daft expression-based queries are available via Lake.daft_query().
+Daft 0.7.8 does not support SQL.
 """
 
 from __future__ import annotations
@@ -19,23 +21,19 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-import duckdb
 import pyarrow as pa
 
 from arrow_lake.config import OlapConfig
 from arrow_lake.exceptions import ErrorCode, QueryError
-
-_SAFE_IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_-]*$")
+from arrow_lake.query._db import DuckDBSession
+from arrow_lake.validation import (
+    DANGEROUS_SQL_KEYWORDS_RE,
+    validate_identifier,
+)
 
 _JOIN_KEYWORD_RE = re.compile(
     r"\b(INNER\s+JOIN|LEFT\s+JOIN|RIGHT\s+JOIN|FULL\s+JOIN|CROSS\s+JOIN|"
     r"JOIN|NATURAL\s+JOIN)\b",
-    re.IGNORECASE,
-)
-
-_DANGEROUS_KEYWORDS_RE = re.compile(
-    r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|EXEC|EXECUTE|"
-    r"GRANT|REVOKE|COPY|IMPORT|EXPORT|UNION|EXCEPT|INTERSECT)\b",
     re.IGNORECASE,
 )
 
@@ -115,14 +113,32 @@ class OlapSearchBridge:
         # Validate extra table names
         if tables:
             for name in tables:
-                if not _SAFE_IDENTIFIER_RE.match(name):
-                    raise ValueError(f"Invalid table name '{name}'")
+                validate_identifier(name)
 
         effective_max_rows = max_rows if max_rows is not None else self._config.max_result_rows
 
+        # Determine if streaming is safe (RecordBatchReader is single-use,
+        # so queries that reference the same table multiple times need
+        # a full materialized Table that can be scanned repeatedly).
+        # Unsafe patterns: JOIN (same table scanned twice), subqueries
+        # that reference the outer table.
+        stripped_sql = sql.strip().upper()
+        use_streaming = (
+            self._config.enable_streaming
+            and hasattr(self._storage, "scan_dataset")
+            and not _JOIN_KEYWORD_RE.search(stripped_sql)
+            and stripped_sql.count("SELECT") == 1
+        )
+
         # Read dataset from Lance
         try:
-            table = self._storage.read_dataset(dataset_name)
+            if use_streaming:
+                source = self._storage.scan_dataset(
+                    dataset_name,
+                    batch_size=self._config.scanner_batch_size,
+                )
+            else:
+                source = self._storage.read_dataset(dataset_name)
         except Exception as exc:
             raise QueryError(
                 error_code=ErrorCode.OLAP_QUERY_FAILED,
@@ -130,9 +146,8 @@ class OlapSearchBridge:
             ) from exc
 
         # Register tables and execute query
-        conn = duckdb.connect()
-        try:
-            conn.register(dataset_name, table)
+        with DuckDBSession() as conn:
+            conn.register(dataset_name, source)
             for name, extra_table in (tables or {}).items():
                 conn.register(name, extra_table)
             result_reader = conn.execute(sql).arrow()
@@ -141,15 +156,6 @@ class OlapSearchBridge:
                 result_table = result_reader.read_all()
             else:
                 result_table = result_reader
-        except QueryError:
-            raise
-        except Exception as exc:
-            raise QueryError(
-                error_code=ErrorCode.OLAP_QUERY_FAILED,
-                message=f"OLAP query failed on '{dataset_name}': {exc}",
-            ) from exc
-        finally:
-            conn.close()
 
         # Truncate to max_rows
         if result_table.num_rows > effective_max_rows:
@@ -187,39 +193,11 @@ class OlapSearchBridge:
                 message=f"Failed to read dataset '{dataset_name}': {exc}",
             ) from exc
 
-        conn = duckdb.connect()
-        try:
+        with DuckDBSession() as conn:
             conn.register(dataset_name, table)
             result = conn.execute(f"EXPLAIN {sql}").fetchall()
             explain_lines = [row[0] for row in result if row]
             return "\n".join(explain_lines)
-        except QueryError:
-            raise
-        except Exception as exc:
-            raise QueryError(
-                error_code=ErrorCode.OLAP_QUERY_FAILED,
-                message=f"EXPLAIN failed on '{dataset_name}': {exc}",
-            ) from exc
-        finally:
-            conn.close()
-
-    def daft_sql(self, sql: str) -> None:
-        """Placeholder for Daft SQL interface (ADR-05).
-
-        Daft 0.7.8 does not support df.sql(). Use the DuckDB path instead.
-        This method will be replaced with a real Daft SQL implementation
-        when Daft adds SQL support in a future version.
-
-        Args:
-            sql: SQL query string (unused in current version).
-
-        Raises:
-            NotImplementedError: Always. Use DuckDB via query() instead.
-        """
-        raise NotImplementedError(
-            "Daft SQL is not available in Daft 0.7.8. "
-            "Use the DuckDB OLAP path via OlapSearchBridge.query() instead."
-        )
 
     def _validate_sql(self, sql: str) -> None:
         """Validate SQL is SELECT-only with no dangerous patterns.
@@ -254,7 +232,7 @@ class OlapSearchBridge:
                 )
 
         # Block dangerous SQL keywords using word-boundary regex
-        match = _DANGEROUS_KEYWORDS_RE.search(stripped)
+        match = DANGEROUS_SQL_KEYWORDS_RE.search(stripped)
         if match:
             raise QueryError(
                 error_code=ErrorCode.OLAP_QUERY_FAILED,
@@ -274,5 +252,4 @@ def _validate_dataset_name(dataset_name: str) -> None:
     Raises:
         ValueError: If dataset name contains unsafe characters.
     """
-    if not _SAFE_IDENTIFIER_RE.match(dataset_name):
-        raise ValueError(f"Invalid dataset name '{dataset_name}'")
+    validate_identifier(dataset_name)

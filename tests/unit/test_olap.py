@@ -24,8 +24,18 @@ from arrow_lake.query.olap import OlapQueryResult, OlapSearchBridge
 
 
 def _make_mock_storage() -> MagicMock:
-    """Create a mock LanceStorageManager."""
-    return MagicMock()
+    """Create a mock LanceStorageManager that supports streaming."""
+    storage = MagicMock()
+
+    # scan_dataset returns the same data as read_dataset but as RecordBatchReader
+    def _scan_as_reader(*args: object, **kwargs: object) -> pa.RecordBatchReader:
+        table = storage.read_dataset.return_value
+        if table is None:
+            table = pa.table({})
+        return table.to_reader()
+
+    storage.scan_dataset.side_effect = _scan_as_reader
+    return storage
 
 
 def _make_sample_table(rows: int = 100) -> pa.Table:
@@ -275,6 +285,7 @@ class TestQuery:
         """Non-existent dataset raises QueryError."""
         storage = _make_mock_storage()
         storage.read_dataset.side_effect = FileNotFoundError("Dataset not found")
+        storage.scan_dataset.side_effect = FileNotFoundError("Dataset not found")
 
         bridge = OlapSearchBridge(storage)
         with pytest.raises(QueryError, match="Failed to read"):
@@ -379,11 +390,11 @@ class TestDatasetNameValidation:
         storage = _make_mock_storage()
         bridge = OlapSearchBridge(storage)
 
-        with pytest.raises(ValueError, match="Invalid dataset name"):
+        with pytest.raises(ValueError, match="Invalid identifier"):
             bridge.query("../etc/passwd", 'SELECT * FROM "../etc/passwd"')
 
-        with pytest.raises(ValueError, match="Invalid dataset name"):
-            bridge.query("name; DROP TABLE", 'SELECT * FROM data')
+        with pytest.raises(ValueError, match="Invalid identifier"):
+            bridge.query("name; DROP TABLE", "SELECT * FROM data")
 
-        with pytest.raises(ValueError, match="Invalid dataset name"):
-            bridge.query("", 'SELECT * FROM data')
+        with pytest.raises(ValueError, match="Invalid identifier"):
+            bridge.query("", "SELECT * FROM data")

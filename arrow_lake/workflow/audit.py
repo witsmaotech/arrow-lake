@@ -77,20 +77,19 @@ class AuditTrail:
     tamper detection via verify().
 
     Args:
-        base_uri: Base URI for Lance storage.
+        storage: LanceStorageManager for unified data access.
         audit_dataset: Name of the audit trail dataset.
         hmac_secret_key: Secret key for HMAC. Empty string disables HMAC.
     """
 
     def __init__(
         self,
-        base_uri: str,
+        storage: Any,
         audit_dataset: str = "_audit_trail",
         hmac_secret_key: str = "",
     ) -> None:
-        self._base_uri = base_uri
+        self._storage = storage
         self._audit_dataset = audit_dataset
-        self._path = f"{base_uri}/{audit_dataset}"
         self._hmac_secret = hmac_secret_key.encode() if hmac_secret_key else b""
         self._initialized = False
         if not hmac_secret_key:
@@ -157,11 +156,7 @@ class AuditTrail:
         table = pa.table({k: [v] for k, v in row.items()}, schema=_AUDIT_ENTRY_SCHEMA)
 
         try:
-            import lancedb
-
-            lancedb.connect(self._base_uri).open_table(self._audit_dataset).add(
-                table, mode="append"
-            )
+            self._storage.append_dataset(self._audit_dataset, table)
         except Exception as exc:
             raise AuditError(
                 error_code=ErrorCode.AUDIT_STORE_FAILED,
@@ -185,10 +180,8 @@ class AuditTrail:
         Returns:
             True if the entry is intact, False if tampered or not found.
         """
-        import lancedb
-
         try:
-            table = lancedb.connect(self._base_uri).open_table(self._audit_dataset).to_arrow()
+            table = self._storage.read_dataset(self._audit_dataset)
         except Exception:
             return False
 
@@ -241,10 +234,8 @@ class AuditTrail:
         Returns:
             List of matching AuditEntry in chronological order.
         """
-        import lancedb
-
         try:
-            table = lancedb.connect(self._base_uri).open_table(self._audit_dataset).to_arrow()
+            table = self._storage.read_dataset(self._audit_dataset)
         except Exception:
             return []
 
@@ -324,26 +315,13 @@ class AuditTrail:
         if self._initialized:
             return
 
-        from pathlib import Path
-
-        if not Path(self._base_uri).exists():
-            Path(self._base_uri).mkdir(parents=True, exist_ok=True)
-
-        try:
-            import lancedb
-
-            lancedb.connect(self._base_uri).open_table(self._audit_dataset)
-        except Exception:
+        if not self._storage.dataset_exists(self._audit_dataset):
             empty_table = pa.table(
                 {f.name: [] for f in _AUDIT_ENTRY_SCHEMA},
                 schema=_AUDIT_ENTRY_SCHEMA,
             )
-            import lancedb
-
-            lancedb.connect(self._base_uri).create_table(
-                self._audit_dataset, empty_table, mode="overwrite"
-            )
-            logger.info("audit_trail_created", path=self._base_uri)
+            self._storage.create_dataset(self._audit_dataset, empty_table)
+            logger.info("audit_trail_created", dataset=self._audit_dataset)
 
         self._initialized = True
 

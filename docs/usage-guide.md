@@ -708,7 +708,9 @@ upstream = lake.lineage_query(
 # 查询下游消费（谁依赖了 raw_events）
 # （需要使用 LineageQueryBridge.trace_downstream）
 from arrow_lake.catalog.lineage import LineageQueryBridge, LineageStore
-store = LineageStore("./data")
+from arrow_lake.ingest.storage import LanceStorageManager
+
+store = LineageStore(LanceStorageManager("./data"))
 bridge = LineageQueryBridge(store)
 downstream = bridge.trace_downstream("raw_events")
 for event in downstream:

@@ -1,9 +1,11 @@
 # Arrow Lake Helm Chart — production defaults
 
 apiServer:
-  image: arrow-lake:latest
+  image:
+    repository: arrow-lake
+    tag: latest
+    pullPolicy: IfNotPresent
   replicaCount: 1
-  imagePullPolicy: IfNotPresent
   resources:
     requests:
       cpu: "500m"

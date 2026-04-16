@@ -45,7 +45,7 @@ class RayServeEmbeddingEncoder:
         self,
         deployment_name: str = "embedding",
         batch_size: int = 128,
-        fallback_model: str = "BAAI/bge-small-en-v1.5",
+        fallback_model: str = "Qwen/Qwen3-Embedding-0.6B",
     ) -> None:
         self.deployment_name = deployment_name
         self.batch_size = batch_size

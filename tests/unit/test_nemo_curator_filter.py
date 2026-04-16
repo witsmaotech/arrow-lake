@@ -1,14 +1,21 @@
 """Tests for arrow_lake.quality.nemo_curator — Story 8.5 NeMo Curator Filter.
 
-Tests NeMoCuratorFilter (import guard, CPU heuristic fallback, filter),
-HAS_NEMO flag, and QualityConfig defaults. No GPU, no real nemo-curator.
+Tests NeMoCuratorFilter (import guard, CPU heuristic fallback, multi-classifier
+scoring, composite score), HAS_NEMO flag, and QualityConfig defaults.
+No GPU, no real nemo-curator.
 """
 
 from __future__ import annotations
 
 import pyarrow as pa
 from arrow_lake.config import QualityConfig
-from arrow_lake.quality.nemo_curator import HAS_NEMO, NeMoCuratorFilter
+from arrow_lake.quality.nemo_curator import (
+    HAS_NEMO,
+    NeMoCuratorFilter,
+    _aesthetic_heuristic,
+    _nsfw_heuristic,
+    _text_quality_heuristic,
+)
 
 # ---------------------------------------------------------------------------
 # TestImportGuard
@@ -55,37 +62,65 @@ class TestUsingFallback:
 
 
 # ---------------------------------------------------------------------------
-# TestCPUHeuristicScore
+# TestClassifiers
 # ---------------------------------------------------------------------------
 
 
-class TestCPUHeuristicScore:
-    """Test _cpu_heuristic_score CPU fallback heuristic."""
+class TestClassifiers:
+    """Test classifier configuration."""
 
-    def test_text_only(self) -> None:
-        f = NeMoCuratorFilter(text_max_chars=1000, image_max_pixels=16777216)
-        score = f._cpu_heuristic_score(text_len=500, img_w=None, img_h=None)
-        # score = 0.5 * min(1.0, 500/1000) = 0.5 * 0.5 = 0.25
-        assert abs(score - 0.25) < 0.01
+    def test_default_classifiers(self) -> None:
+        f = NeMoCuratorFilter()
+        assert f.classifiers == ("text_quality",)
 
-    def test_image_only(self) -> None:
-        f = NeMoCuratorFilter(text_max_chars=1000, image_max_pixels=16777216)
-        score = f._cpu_heuristic_score(text_len=None, img_w=1920, img_h=1080)
-        # score = 0.5 * min(1.0, 2073600/16777216) ~ 0.5 * 0.1236 ~ 0.0618
-        expected = 0.5 * (1920 * 1080) / 16777216
-        assert abs(score - expected) < 0.01
+    def test_custom_classifiers(self) -> None:
+        f = NeMoCuratorFilter(classifiers=("text_quality", "nsfw", "aesthetic"))
+        assert f.classifiers == ("text_quality", "nsfw", "aesthetic")
 
-    def test_both_text_and_image(self) -> None:
-        f = NeMoCuratorFilter(text_max_chars=1000, image_max_pixels=16777216)
-        score = f._cpu_heuristic_score(text_len=1000, img_w=1920, img_h=1080)
-        # score = 0.5 * 1.0 + 0.5 * (1920*1080)/16777216
-        expected = 0.5 * 1.0 + 0.5 * (1920 * 1080) / 16777216
-        assert abs(score - expected) < 0.01
+    def test_all_valid_classifier_names(self) -> None:
+        assert NeMoCuratorFilter.CLASSIFIERS == ("text_quality", "nsfw", "aesthetic")
 
-    def test_zero_text_and_image_returns_zero(self) -> None:
-        f = NeMoCuratorFilter(text_max_chars=1000, image_max_pixels=16777216)
-        score = f._cpu_heuristic_score(text_len=0, img_w=None, img_h=None)
-        assert score == 0.0
+
+# ---------------------------------------------------------------------------
+# TestHeuristicFunctions
+# ---------------------------------------------------------------------------
+
+
+class TestHeuristicFunctions:
+    """Test CPU fallback heuristic functions."""
+
+    def test_text_quality_short_text(self) -> None:
+        score = _text_quality_heuristic("hello", max_chars=1000)
+        assert score == min(1.0, 5 / 1000)
+
+    def test_text_quality_long_text(self) -> None:
+        score = _text_quality_heuristic("a" * 2000, max_chars=1000)
+        assert score == 1.0
+
+    def test_text_quality_none_returns_zero(self) -> None:
+        assert _text_quality_heuristic(None) == 0.0
+
+    def test_text_quality_empty_returns_zero(self) -> None:
+        assert _text_quality_heuristic("") == 0.0
+
+    def test_nsfw_clean_text(self) -> None:
+        assert _nsfw_heuristic("This is a clean sentence.") == 0.0
+
+    def test_nsfw_flagged_text(self) -> None:
+        assert _nsfw_heuristic("This is explicit content") == 0.9
+
+    def test_nsfw_none_returns_zero(self) -> None:
+        assert _nsfw_heuristic(None) == 0.0
+
+    def test_aesthetic_normal_image(self) -> None:
+        score = _aesthetic_heuristic(1920, 1080)
+        assert 0.0 < score < 1.0
+
+    def test_aesthetic_none_returns_zero(self) -> None:
+        assert _aesthetic_heuristic(None, 1080) == 0.0
+
+    def test_aesthetic_zero_dimensions(self) -> None:
+        assert _aesthetic_heuristic(0, 1080) == 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -103,13 +138,6 @@ class TestFilter:
         assert passed.num_rows == 0
         assert rejected.num_rows == 0
 
-    def test_calls_load_model_on_first_use(self) -> None:
-        f = NeMoCuratorFilter()
-        assert f._model is None
-        f._load_model()
-        # With HAS_NEMO=False, _model stays None but _using_fallback is True
-        assert f.using_fallback is True
-
     def test_returns_passed_rejected_tuple(self) -> None:
         f = NeMoCuratorFilter(threshold=0.5, text_max_chars=100)
         table = pa.table(
@@ -123,6 +151,105 @@ class TestFilter:
 
 
 # ---------------------------------------------------------------------------
+# TestMultiClassifierColumns
+# ---------------------------------------------------------------------------
+
+
+class TestMultiClassifierColumns:
+    """Test that multi-classifier filter adds score columns."""
+
+    def test_single_classifier_adds_text_and_composite(self) -> None:
+        f = NeMoCuratorFilter(
+            threshold=0.0,
+            classifiers=("text_quality",),
+        )
+        table = pa.table({"text_content": ["hello world"]})
+        passed, _ = f.filter(table)
+        assert "quality_text_score" in passed.column_names
+        assert "quality_composite_score" in passed.column_names
+
+    def test_all_classifiers_add_all_score_columns(self) -> None:
+        f = NeMoCuratorFilter(
+            threshold=0.0,
+            classifiers=("text_quality", "nsfw", "aesthetic"),
+        )
+        table = pa.table(
+            {
+                "text_content": ["hello"],
+                "image_width": [1920],
+                "image_height": [1080],
+            }
+        )
+        passed, _ = f.filter(table)
+        assert "quality_text_score" in passed.column_names
+        assert "quality_nsfw_score" in passed.column_names
+        assert "quality_aesthetic_score" in passed.column_names
+        assert "quality_composite_score" in passed.column_names
+
+    def test_nsfw_classifier_not_added_by_default(self) -> None:
+        f = NeMoCuratorFilter(threshold=0.0)
+        table = pa.table({"text_content": ["hello"]})
+        passed, _ = f.filter(table)
+        assert "quality_nsfw_score" not in passed.column_names
+
+    def test_composite_score_equals_single_classifier(self) -> None:
+        f = NeMoCuratorFilter(
+            threshold=0.0,
+            classifiers=("text_quality",),
+            text_max_chars=100,
+        )
+        text = "a" * 50
+        table = pa.table({"text_content": [text]})
+        passed, _ = f.filter(table)
+        text_score = passed.column("quality_text_score")[0].as_py()
+        composite_score = passed.column("quality_composite_score")[0].as_py()
+        assert abs(text_score - composite_score) < 0.001
+
+
+# ---------------------------------------------------------------------------
+# TestCompositeScore
+# ---------------------------------------------------------------------------
+
+
+class TestCompositeScore:
+    """Test composite score calculation with multiple classifiers."""
+
+    def test_composite_with_two_classifiers(self) -> None:
+        f = NeMoCuratorFilter(
+            threshold=0.0,
+            classifiers=("text_quality", "nsfw"),
+            text_max_chars=100,
+        )
+        # Clean text with score 0.5 -> text_quality=0.5, nsfw=0.0
+        # composite = (0.5 + 0.0) / 2 = 0.25
+        table = pa.table({"text_content": ["a" * 50]})
+        passed, _ = f.filter(table)
+        composite = passed.column("quality_composite_score")[0].as_py()
+        assert abs(composite - 0.25) < 0.01
+
+    def test_composite_with_three_classifiers(self) -> None:
+        f = NeMoCuratorFilter(
+            threshold=0.0,
+            classifiers=("text_quality", "nsfw", "aesthetic"),
+            text_max_chars=100,
+        )
+        table = pa.table(
+            {
+                "text_content": ["a" * 50],
+                "image_width": [1920],
+                "image_height": [1080],
+            }
+        )
+        passed, _ = f.filter(table)
+        text_score = passed.column("quality_text_score")[0].as_py()
+        nsfw_score = passed.column("quality_nsfw_score")[0].as_py()
+        aesthetic_score = passed.column("quality_aesthetic_score")[0].as_py()
+        composite = passed.column("quality_composite_score")[0].as_py()
+        expected = (text_score + nsfw_score + aesthetic_score) / 3
+        assert abs(composite - expected) < 0.001
+
+
+# ---------------------------------------------------------------------------
 # TestFilterCPUFallback
 # ---------------------------------------------------------------------------
 
@@ -132,7 +259,7 @@ class TestFilterCPUFallback:
 
     def test_short_text_rejected(self) -> None:
         f = NeMoCuratorFilter(threshold=0.5, text_max_chars=1000)
-        # text_len=10 -> score = 0.5 * 10/1000 = 0.005 < 0.5
+        # text_len=2 -> score = 2/1000 = 0.002 < 0.5
         table = pa.table({"text_content": ["hi"]})
         passed, rejected = f.filter(table)
         assert passed.num_rows == 0
@@ -140,7 +267,7 @@ class TestFilterCPUFallback:
 
     def test_long_text_passed(self) -> None:
         f = NeMoCuratorFilter(threshold=0.3, text_max_chars=1000)
-        # text_len=1000 -> score = 0.5 * 1.0 = 0.5 > 0.3
+        # text_len=1000 -> score = 1.0 > 0.3
         table = pa.table({"text_content": ["a" * 1000]})
         passed, rejected = f.filter(table)
         assert passed.num_rows == 1

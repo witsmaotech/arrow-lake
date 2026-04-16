@@ -8,16 +8,18 @@ Story 7.6: Added to_arrow() convenience method on MetadataQueryResult.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 
-import duckdb
 import pyarrow as pa
 
 from arrow_lake.exceptions import ErrorCode, QueryError
 from arrow_lake.ingest.storage import LanceStorageManager
-
-_SAFE_IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_-]*$")
+from arrow_lake.query._db import DuckDBSession
+from arrow_lake.validation import (
+    DANGEROUS_SQL_KEYWORDS_RE,
+    SAFE_IDENTIFIER_RE,
+    validate_identifier,
+)
 
 
 @dataclass(frozen=True)
@@ -74,7 +76,7 @@ class MetadataSearchBridge:
             QueryError: If SQL is not SELECT, dataset not found, or query fails.
             ValueError: If dataset name or table name is invalid.
         """
-        if not _SAFE_IDENTIFIER_RE.match(dataset_name):
+        if not SAFE_IDENTIFIER_RE.match(dataset_name):
             raise ValueError(f"Invalid dataset name '{dataset_name}'")
 
         stripped = sql.strip().upper()
@@ -85,14 +87,7 @@ class MetadataSearchBridge:
             )
 
         # Block dangerous SQL patterns (injection prevention)
-        import re
-
-        _dangerous_keywords_re = re.compile(
-            r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|"
-            r"EXEC|EXECUTE|GRANT|REVOKE|COPY|IMPORT|EXPORT)\b",
-            re.IGNORECASE,
-        )
-        match = _dangerous_keywords_re.search(stripped)
+        match = DANGEROUS_SQL_KEYWORDS_RE.search(stripped)
         if match:
             raise QueryError(
                 error_code=ErrorCode.QUERY_SYNTAX_ERROR,
@@ -107,12 +102,11 @@ class MetadataSearchBridge:
         # Validate extra table names
         if tables:
             for name in tables:
-                if not _SAFE_IDENTIFIER_RE.match(name):
-                    raise ValueError(f"Invalid table name '{name}'")
+                validate_identifier(name)
 
-        # Read dataset from Lance
+        # Read dataset from Lance (streaming via RecordBatchReader)
         try:
-            table = self._storage.read_dataset(dataset_name)
+            source = self._storage.scan_dataset(dataset_name)
         except Exception as exc:
             raise QueryError(
                 error_code=ErrorCode.QUERY_NO_RESULTS,
@@ -120,9 +114,8 @@ class MetadataSearchBridge:
             ) from exc
 
         # Register tables and execute query
-        conn = duckdb.connect()
-        try:
-            conn.register(dataset_name, table)
+        with DuckDBSession() as conn:
+            conn.register(dataset_name, source)
             for name, extra_table in (tables or {}).items():
                 conn.register(name, extra_table)
             result_reader = conn.execute(sql).arrow()
@@ -131,13 +124,6 @@ class MetadataSearchBridge:
                 result_table = result_reader.read_all()
             else:
                 result_table = result_reader
-        except Exception as exc:
-            raise QueryError(
-                error_code=ErrorCode.QUERY_SYNTAX_ERROR,
-                message=f"SQL query failed: {exc}",
-            ) from exc
-        finally:
-            conn.close()
 
         return MetadataQueryResult(
             table=result_table,

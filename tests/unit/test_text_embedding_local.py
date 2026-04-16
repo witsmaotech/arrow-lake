@@ -23,7 +23,7 @@ class TestEmbeddingBatch:
 
     def test_batch_is_frozen(self) -> None:
         batch = EmbeddingBatch(
-            embeddings=np.zeros((3, 384), dtype=np.float32),
+            embeddings=np.zeros((3, 1024), dtype=np.float32),
             null_mask=(False, False, False),
         )
         with pytest.raises(AttributeError):
@@ -38,7 +38,7 @@ class TestEmbeddingResult:
             total_rows=10,
             embedded_rows=10,
             null_rows=0,
-            embedding_dim=384,
+            embedding_dim=1024,
             vector_column="text_embedding",
         )
         with pytest.raises(AttributeError):
@@ -49,13 +49,13 @@ class TestEmbeddingResult:
             total_rows=10,
             embedded_rows=8,
             null_rows=2,
-            embedding_dim=384,
+            embedding_dim=1024,
             vector_column="text_embedding",
         )
         assert result.total_rows == 10
         assert result.embedded_rows == 8
         assert result.null_rows == 2
-        assert result.embedding_dim == 384
+        assert result.embedding_dim == 1024
 
 
 class TestLocalEmbeddingEncoder:
@@ -63,7 +63,7 @@ class TestLocalEmbeddingEncoder:
 
     def test_encoder_init_default_model(self) -> None:
         encoder = LocalEmbeddingEncoder()
-        assert encoder.model_name == "BAAI/bge-small-en-v1.5"
+        assert encoder.model_name == "Qwen/Qwen3-Embedding-0.6B"
         assert encoder.batch_size == 128
 
     def test_encoder_init_custom(self) -> None:
@@ -76,7 +76,7 @@ class TestLocalEmbeddingEncoder:
 
     def test_encode_column_with_mock(self) -> None:
         """Test encode_column with mocked SentenceTransformer."""
-        mock_embeddings = np.random.randn(3, 384).astype(np.float32)
+        mock_embeddings = np.random.randn(3, 1024).astype(np.float32)
 
         mock_model = MagicMock()
         mock_model.encode.return_value = mock_embeddings
@@ -94,12 +94,12 @@ class TestLocalEmbeddingEncoder:
         result = encoder.encode_column(table, column="text_content")
         assert result.total_rows == 3
         assert result.embedded_rows == 3
-        assert result.embedding_dim == 384
+        assert result.embedding_dim == 1024
         assert result.vector_column == "text_content_embedding"
 
     def test_encode_column_with_nulls(self) -> None:
         """NULL text values should produce null_mask entries."""
-        mock_embeddings = np.random.randn(2, 384).astype(np.float32)
+        mock_embeddings = np.random.randn(2, 1024).astype(np.float32)
 
         mock_model = MagicMock()
         mock_model.encode.return_value = mock_embeddings
@@ -139,7 +139,7 @@ class TestLocalEmbeddingEncoder:
 
     def test_encode_column_empty_strings_counted(self) -> None:
         """Empty strings should be treated as non-null."""
-        mock_embeddings = np.random.randn(2, 384).astype(np.float32)
+        mock_embeddings = np.random.randn(2, 1024).astype(np.float32)
         mock_model = MagicMock()
         mock_model.encode.return_value = mock_embeddings
 
@@ -169,7 +169,7 @@ class TestLocalEmbeddingEncoder:
 
     def test_build_embedding_table_output_type(self) -> None:
         """Verify output table has correct vector type."""
-        mock_embeddings = np.random.randn(2, 384).astype(np.float32)
+        mock_embeddings = np.random.randn(2, 1024).astype(np.float32)
         mock_model = MagicMock()
         mock_model.encode.return_value = mock_embeddings
 
@@ -184,4 +184,4 @@ class TestLocalEmbeddingEncoder:
         )
 
         result = encoder.encode_column(table, column="text_content")
-        assert result.embedding_dim == 384
+        assert result.embedding_dim == 1024

@@ -214,9 +214,9 @@ class FullTextSearchBridge:
         Raises:
             QueryError: If dangerous SQL keywords are detected.
         """
-        from arrow_lake.query.vector import _DANGEROUS_KEYWORDS_RE
+        from arrow_lake.validation import DANGEROUS_SQL_KEYWORDS_RE
 
-        match = _DANGEROUS_KEYWORDS_RE.search(where)
+        match = DANGEROUS_SQL_KEYWORDS_RE.search(where)
         if match:
             raise QueryError(
                 error_code=ErrorCode.FTS_SEARCH_FAILED,

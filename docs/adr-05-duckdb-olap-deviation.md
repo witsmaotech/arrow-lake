@@ -32,6 +32,22 @@ Lance → Arrow Table → DuckDB register → SQL → Arrow result
 
 这与 Rule 6 的指令直接矛盾。
 
+## 优化（2026-04-15）
+
+原始路径将整个 Lance 数据集物化为 Arrow Table 后注册到 DuckDB，对大内存场景不友好。
+
+**已实现 `scan_dataset()` 流式读取：**
+
+```
+Lance → RecordBatchReader → DuckDB register → SQL → Arrow result
+```
+
+- `LanceStorageManager.scan_dataset()` 返回 `pa.RecordBatchReader`，支持列投影、过滤、自定义 batch_size
+- `OlapSearchBridge` 自动检测 JOIN / 子查询场景（需多次扫描同一表），降级为全量读取
+- 配置项：`OlapConfig.enable_streaming`（默认 True）+ `OlapConfig.scanner_batch_size`（默认 10,000）
+
+**局限：** 当前仍返回完整 `pa.Table` 结果（非流式输出）。输入侧流式已实现，输出侧流式仍推迟到 Phase 2（见架构文档 H4）。
+
 ## 决策
 
 **当前使用 DuckDB 执行 OLAP SQL 查询是已知妥协。**

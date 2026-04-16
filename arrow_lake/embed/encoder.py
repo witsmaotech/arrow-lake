@@ -53,18 +53,22 @@ class LocalEmbeddingEncoder:
     - GPU auto-detection
     - NULL/empty text handling (returns null embedding)
     - Batch processing
+    - ModelScope support for China mainland users
 
     Args:
         model_name: HuggingFace model identifier.
+        model_source: Model download source — "huggingface" or "modelscope".
         batch_size: Number of texts per batch.
     """
 
     def __init__(
         self,
-        model_name: str = "BAAI/bge-small-en-v1.5",
+        model_name: str = "Qwen/Qwen3-Embedding-0.6B",
+        model_source: str = "huggingface",
         batch_size: int = 128,
     ) -> None:
         self.model_name = model_name
+        self.model_source = model_source
         self.batch_size = batch_size
         self._model: Any = None
         self._embedding_dim: int = 0
@@ -85,7 +89,13 @@ class LocalEmbeddingEncoder:
         except Exception:
             pass
 
-        self._model = SentenceTransformer(self.model_name, device=device)
+        if self.model_source == "modelscope":
+            from modelscope import snapshot_download
+
+            model_path = snapshot_download(self.model_name)
+            self._model = SentenceTransformer(model_path, device=device)
+        else:
+            self._model = SentenceTransformer(self.model_name, device=device)
         self._embedding_dim = self._model.get_embedding_dimension()
         return self._model
 
@@ -184,7 +194,7 @@ class ApiEmbeddingEncoder:
         batch_size: int = 128,
         timeout_seconds: float = 30.0,
         max_retries: int = 3,
-        fallback_model: str = "BAAI/bge-small-en-v1.5",
+        fallback_model: str = "Qwen/Qwen3-Embedding-0.6B",
     ) -> None:
         if not api_base:
             raise ValueError("api_base is required for ApiEmbeddingEncoder")
@@ -294,7 +304,7 @@ class ApiEmbeddingEncoder:
             result = local_encoder.encode_column(table, column="text_content")
             if result.embedded_rows == 0:
                 return EmbeddingBatch(
-                    embeddings=np.zeros((len(texts), 384), dtype=np.float32),
+                    embeddings=np.zeros((len(texts), 1024), dtype=np.float32),
                     null_mask=tuple(True for _ in texts),
                 )
             # Reconstruct embeddings from the encoder

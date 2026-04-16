@@ -13,12 +13,12 @@ keywords = ["data-lakehouse", "multimodal", "lance", "daft", "ray", "vector-sear
 dependencies = [
     # Core stack (DARMU) — exact pins from Story 1.2 Spike
     "daft==0.7.8",
-    "ray==2.54.1",
+    "ray[default]==2.54.1",
     "metaflow==2.19.22",
     "metaflow-ray==0.1.4",
     # Extension layer — exact pins from Story 1.2 Spike
     "lancedb==0.30.2",
-    "duckdb==1.5.1",
+    "duckdb==1.5.2",
     # Data models & config
     "pydantic>=2.10",
     "pydantic-settings>=2.7",
@@ -52,6 +52,7 @@ arrow-lake = "arrow_lake.cli:main"
 jupyter = ["jupyterlab>=4.0", "ipywidgets>=8.0"]
 nemo-curator = ["nemo-curator>=0.6"]
 dedup = ["imagehash>=4.3"]
+modelscope = ["modelscope>=1.18"]
 
 [dependency-groups]
 dev = [

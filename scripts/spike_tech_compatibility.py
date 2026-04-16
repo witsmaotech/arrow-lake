@@ -463,7 +463,6 @@ def test_metaflow_ray() -> SpikeResult:
     start = time.monotonic()
 
     try:
-        import metaflow
 
         metaflow_ver = _get_version("metaflow")
         ray_ver = _get_version("ray")

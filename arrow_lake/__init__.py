@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from arrow_lake._version import __version__
@@ -22,8 +24,10 @@ from arrow_lake.exceptions import (
 )
 
 if TYPE_CHECKING:
+    from arrow_lake.ingest.ingestor import IngestionReport
     from arrow_lake.quality.base import QualityFilterRegistry
     from arrow_lake.quality.models import QualityReport
+    from arrow_lake.query.daft_api import LazyDaftFrame
     from arrow_lake.query.ensemble import EnsembleSearchResult
     from arrow_lake.query.faceted import FacetedSearchResult
     from arrow_lake.query.fts import FullTextSearchResult
@@ -35,7 +39,9 @@ __all__ = [
     "ArrowLakeConfig",
     "ArrowLakeError",
     "AuditError",
+    "CatalogEntry",
     "CatalogError",
+    "CatalogResult",
     "EmbeddingError",
     "EnsembleSearchResult",
     "FacetedSearchResult",
@@ -60,6 +66,34 @@ __all__ = [
 ]
 
 
+@dataclass(frozen=True)
+class CatalogEntry:
+    """Metadata for a single dataset in the catalog.
+
+    Attributes:
+        name: Dataset name.
+        version: Current Lance dataset version.
+        num_rows: Number of rows in the dataset.
+    """
+
+    name: str
+    version: int
+    num_rows: int
+
+
+@dataclass(frozen=True)
+class CatalogResult:
+    """Result of a catalog listing operation.
+
+    Attributes:
+        datasets: List of dataset metadata entries.
+        total: Total number of datasets.
+    """
+
+    datasets: list[CatalogEntry]
+    total: int
+
+
 class Lake:
     """Arrow Lake SDK entry point.
 
@@ -78,6 +112,27 @@ class Lake:
         self._base_uri = base_uri
         self._config = config or ArrowLakeConfig()
         self._storage: Any = None
+        self._components: dict[str, Any] = {}
+
+    def _get_component(self, key: str, factory: Callable[[], Any]) -> Any:
+        """Lazy-init and cache a component instance."""
+        if key not in self._components:
+            self._components[key] = factory()
+        return self._components[key]
+
+    @classmethod
+    def from_yaml(cls, path: str, *, base_uri: str | None = None) -> Lake:
+        """Create a Lake instance from a YAML config file.
+
+        Args:
+            path: Path to YAML config file.
+            base_uri: Override base URI (None = use "./data").
+
+        Returns:
+            Lake instance with config loaded from YAML.
+        """
+        config = ArrowLakeConfig.from_yaml(path)
+        return cls(base_uri=base_uri or "./data", config=config)
 
     def _get_storage(self) -> Any:
         """Lazy-init and cache the storage manager."""
@@ -87,27 +142,144 @@ class Lake:
             self._storage = LanceStorageManager(self._base_uri)
         return self._storage
 
-    def ingest(self) -> None:
-        """Ingest data into the lakehouse.
+    def ingest(
+        self,
+        dataset_name: str,
+        file_paths: list[str],
+    ) -> IngestionReport:
+        """Ingest local files into a Lance dataset (Stories 3.1-3.5).
 
-        Raises:
-            NotImplementedError: Not yet implemented. Use Ingestor directly.
+        Delegates to Ingestor.
+
+        Args:
+            dataset_name: Target dataset name.
+            file_paths: List of file paths (CSV, JSON, JSONL, Parquet).
+
+        Returns:
+            IngestionReport with per-source and total stats.
         """
-        raise NotImplementedError(
-            "Lake.ingest() is not yet implemented. "
-            "Use Ingestor directly: from arrow_lake.ingest.ingestor import Ingestor"
-        )
+        from arrow_lake.ingest.ingestor import Ingestor
 
-    def catalog(self) -> None:
-        """Access the catalog for dataset metadata.
+        return Ingestor(self._get_storage()).ingest(dataset_name, file_paths)
 
-        Raises:
-            NotImplementedError: Not yet implemented. Use CatalogActor directly.
+    def ingest_http(
+        self,
+        dataset_name: str,
+        urls: list[str],
+    ) -> IngestionReport:
+        """Ingest files from HTTP(S) URLs (Story 3.2).
+
+        Delegates to Ingestor.
+
+        Args:
+            dataset_name: Target dataset name.
+            urls: List of HTTP(S) URLs.
+
+        Returns:
+            IngestionReport with per-source and total stats.
         """
-        raise NotImplementedError(
-            "Lake.catalog() is not yet implemented. "
-            "Use CatalogActor directly: from arrow_lake.catalog.actor import CatalogActor"
-        )
+        from arrow_lake.ingest.ingestor import Ingestor
+
+        return Ingestor(self._get_storage()).ingest_http(dataset_name, urls)
+
+    def ingest_images(
+        self,
+        dataset_name: str,
+        image_paths: list[str],
+    ) -> IngestionReport:
+        """Ingest image files with thumbnails and EXIF (Story 3.3).
+
+        Delegates to Ingestor.
+
+        Args:
+            dataset_name: Target dataset name.
+            image_paths: List of image file paths.
+
+        Returns:
+            IngestionReport with per-source and total stats.
+        """
+        from arrow_lake.ingest.ingestor import Ingestor
+
+        return Ingestor(self._get_storage()).ingest_images(dataset_name, image_paths)
+
+    def ingest_videos(
+        self,
+        dataset_name: str,
+        video_paths: list[str],
+    ) -> IngestionReport:
+        """Ingest video files with keyframe extraction (Story 3.4).
+
+        Delegates to Ingestor.
+
+        Args:
+            dataset_name: Target dataset name.
+            video_paths: List of video file paths.
+
+        Returns:
+            IngestionReport with per-source and total stats.
+        """
+        from arrow_lake.ingest.ingestor import Ingestor
+
+        return Ingestor(self._get_storage()).ingest_videos(dataset_name, video_paths)
+
+    def ingest_mixed(
+        self,
+        dataset_name: str,
+        sources: dict[str, list[str]],
+    ) -> IngestionReport:
+        """Ingest mixed modality sources into a unified table (Story 3.5).
+
+        Delegates to Ingestor.
+
+        Args:
+            dataset_name: Target dataset name.
+            sources: Dict mapping modality to list of paths/URLs.
+                     Supported keys: "files", "urls", "images", "videos".
+
+        Returns:
+            Combined IngestionReport.
+        """
+        from arrow_lake.ingest.ingestor import Ingestor
+
+        return Ingestor(self._get_storage()).ingest_mixed(dataset_name, sources)
+
+    def catalog(self) -> CatalogResult:
+        """List all datasets with metadata (Story 7.1).
+
+        Returns:
+            CatalogResult with dataset entries (name, version, row count).
+        """
+        storage = self._get_storage()
+        names = storage.list_datasets()
+        entries: list[CatalogEntry] = []
+        for name in names:
+            try:
+                ds = storage.open_dataset(name)
+                num_rows = ds.count_rows()
+            except Exception:
+                num_rows = 0
+            try:
+                version = storage.get_version(name)
+            except Exception:
+                version = 0
+            entries.append(CatalogEntry(name=name, version=version, num_rows=num_rows))
+        return CatalogResult(datasets=entries, total=len(entries))
+
+    def list_datasets(self) -> list[str]:
+        """List all dataset names.
+
+        Returns:
+            Sorted list of dataset name strings.
+        """
+        return self._get_storage().list_datasets()
+
+    def delete_dataset(self, name: str) -> None:
+        """Delete a dataset and all its data.
+
+        Args:
+            name: Dataset name to delete.
+        """
+        self._get_storage().delete_dataset(name)
 
     def query(
         self,
@@ -127,7 +299,10 @@ class Lake:
         """
         from arrow_lake.query.metadata import MetadataSearchBridge
 
-        bridge = MetadataSearchBridge(self._get_storage())
+        bridge = self._get_component(
+            "metadata",
+            lambda: MetadataSearchBridge(self._get_storage()),
+        )
         return bridge.query(dataset_name, sql)
 
     def search(
@@ -159,7 +334,10 @@ class Lake:
         """
         from arrow_lake.query.vector import VectorSearchBridge
 
-        bridge = VectorSearchBridge(self._get_storage(), config=self._config.vector)
+        bridge = self._get_component(
+            "vector",
+            lambda: VectorSearchBridge(self._get_storage(), config=self._config.vector),
+        )
         return bridge.search(
             dataset_name,
             query_vector,
@@ -199,7 +377,10 @@ class Lake:
         """
         from arrow_lake.query.vector import VectorSearchBridge
 
-        bridge = VectorSearchBridge(self._get_storage(), config=self._config.vector)
+        bridge = self._get_component(
+            "vector",
+            lambda: VectorSearchBridge(self._get_storage(), config=self._config.vector),
+        )
         return bridge.create_index(
             dataset_name,
             metric=metric,
@@ -235,7 +416,10 @@ class Lake:
         """
         from arrow_lake.query.fts import FullTextSearchBridge
 
-        bridge = FullTextSearchBridge(self._get_storage(), config=self._config.fts)
+        bridge = self._get_component(
+            "fts",
+            lambda: FullTextSearchBridge(self._get_storage(), config=self._config.fts),
+        )
         return bridge.search(
             dataset_name,
             query,
@@ -262,7 +446,10 @@ class Lake:
         """
         from arrow_lake.query.fts import FullTextSearchBridge
 
-        bridge = FullTextSearchBridge(self._get_storage(), config=self._config.fts)
+        bridge = self._get_component(
+            "fts",
+            lambda: FullTextSearchBridge(self._get_storage(), config=self._config.fts),
+        )
         bridge.create_index(dataset_name, fts_column=fts_column, replace=replace)
 
     def hybrid_search(
@@ -294,7 +481,10 @@ class Lake:
         """
         from arrow_lake.query.hybrid import HybridSearchBridge
 
-        bridge = HybridSearchBridge(self._get_storage(), config=self._config.hybrid)
+        bridge = self._get_component(
+            "hybrid",
+            lambda: HybridSearchBridge(self._get_storage(), config=self._config.hybrid),
+        )
         return bridge.search(
             dataset_name,
             query_vector,
@@ -329,7 +519,10 @@ class Lake:
         """
         from arrow_lake.query.olap import OlapSearchBridge
 
-        bridge = OlapSearchBridge(self._get_storage(), config=self._config.olap)
+        bridge = self._get_component(
+            "olap",
+            lambda: OlapSearchBridge(self._get_storage(), config=self._config.olap),
+        )
         return bridge.query(dataset_name, sql, max_rows=max_rows, tables=tables)
 
     def sql_query(
@@ -380,7 +573,10 @@ class Lake:
         """
         from arrow_lake.query.faceted import FacetedSearchBridge
 
-        bridge = FacetedSearchBridge(self._get_storage(), config=self._config.faceted)
+        bridge = self._get_component(
+            "faceted",
+            lambda: FacetedSearchBridge(self._get_storage(), config=self._config.faceted),
+        )
         return bridge.search(
             dataset_name,
             query_vector,
@@ -418,7 +614,10 @@ class Lake:
         """
         from arrow_lake.query.ensemble import EnsembleSearchBridge
 
-        bridge = EnsembleSearchBridge(self._get_storage(), config=self._config.ensemble)
+        bridge = self._get_component(
+            "ensemble",
+            lambda: EnsembleSearchBridge(self._get_storage(), config=self._config.ensemble),
+        )
         return bridge.search(
             dataset_name,
             query_vector,
@@ -450,7 +649,10 @@ class Lake:
         """
         from arrow_lake.catalog.lineage import LineageStore, create_lineage_event
 
-        store = LineageStore(self._base_uri)
+        store = self._get_component(
+            "lineage",
+            lambda: LineageStore(self._get_storage()),
+        )
         event = create_lineage_event(
             dataset_name,
             operation,
@@ -472,7 +674,10 @@ class Lake:
         """
         from arrow_lake.catalog.lineage import LineageStore
 
-        store = LineageStore(self._base_uri)
+        store = self._get_component(
+            "lineage",
+            lambda: LineageStore(self._get_storage()),
+        )
         return store.get_dataset_history(dataset_name)
 
     def lineage_query(self, sql: str) -> Any:
@@ -486,7 +691,10 @@ class Lake:
         """
         from arrow_lake.catalog.lineage import LineageQueryBridge, LineageStore
 
-        store = LineageStore(self._base_uri)
+        store = self._get_component(
+            "lineage",
+            lambda: LineageStore(self._get_storage()),
+        )
         bridge = LineageQueryBridge(store)
         return bridge.query(sql)
 
@@ -516,10 +724,13 @@ class Lake:
         """
         from arrow_lake.workflow.audit import AuditTrail
 
-        trail = AuditTrail(
-            self._base_uri,
-            audit_dataset=self._config.audit.audit_dataset,
-            hmac_secret_key=self._config.audit.hmac_secret_key,
+        trail = self._get_component(
+            "audit",
+            lambda: AuditTrail(
+                self._get_storage(),
+                audit_dataset=self._config.audit.audit_dataset,
+                hmac_secret_key=self._config.audit.hmac_secret_key,
+            ),
         )
         return trail.record(
             event_type=event_type,
@@ -542,10 +753,13 @@ class Lake:
         """
         from arrow_lake.workflow.audit import AuditTrail
 
-        trail = AuditTrail(
-            self._base_uri,
-            audit_dataset=self._config.audit.audit_dataset,
-            hmac_secret_key=self._config.audit.hmac_secret_key,
+        trail = self._get_component(
+            "audit",
+            lambda: AuditTrail(
+                self._get_storage(),
+                audit_dataset=self._config.audit.audit_dataset,
+                hmac_secret_key=self._config.audit.hmac_secret_key,
+            ),
         )
         return trail.verify(audit_id)
 
@@ -569,10 +783,13 @@ class Lake:
         """
         from arrow_lake.workflow.audit import AuditTrail
 
-        trail = AuditTrail(
-            self._base_uri,
-            audit_dataset=self._config.audit.audit_dataset,
-            hmac_secret_key=self._config.audit.hmac_secret_key,
+        trail = self._get_component(
+            "audit",
+            lambda: AuditTrail(
+                self._get_storage(),
+                audit_dataset=self._config.audit.audit_dataset,
+                hmac_secret_key=self._config.audit.hmac_secret_key,
+            ),
         )
         return trail.query(
             dataset_name=dataset_name,
@@ -592,10 +809,13 @@ class Lake:
         """
         from arrow_lake.workflow.audit import AuditTrail
 
-        trail = AuditTrail(
-            self._base_uri,
-            audit_dataset=self._config.audit.audit_dataset,
-            hmac_secret_key=self._config.audit.hmac_secret_key,
+        trail = self._get_component(
+            "audit",
+            lambda: AuditTrail(
+                self._get_storage(),
+                audit_dataset=self._config.audit.audit_dataset,
+                hmac_secret_key=self._config.audit.hmac_secret_key,
+            ),
         )
         return trail.export(dataset_name)
 
@@ -708,7 +928,10 @@ class Lake:
         """
         from arrow_lake.query.export import ExportBridge
 
-        bridge = ExportBridge(self._get_storage(), config=self._config.export)
+        bridge = self._get_component(
+            "export",
+            lambda: ExportBridge(self._get_storage(), config=self._config.export),
+        )
         return bridge.export(
             dataset_name,
             output_path,
@@ -718,3 +941,71 @@ class Lake:
             compression=compression,
             overwrite=overwrite,
         )
+
+    def daft_query(
+        self,
+        dataset_name: str,
+        *,
+        columns: list[str] | None = None,
+    ) -> LazyDaftFrame:
+        """Load a Lance dataset as a lazy Daft DataFrame (Story 3.7).
+
+        Returns a LazyDaftFrame for chained operations: select, filter,
+        sort, join, groupby. Call .collect() to materialize as Arrow Table.
+
+        Args:
+            dataset_name: Name of the Lance dataset.
+            columns: Optional column subset to load.
+
+        Returns:
+            LazyDaftFrame for further lazy operations.
+        """
+        from arrow_lake.query.daft_api import DaftQueryEngine
+
+        engine = self._get_component(
+            "daft",
+            lambda: DaftQueryEngine(self._base_uri),
+        )
+        return engine.load(dataset_name, columns=columns)
+
+    def list_flows(self) -> list[str]:
+        """List all registered Metaflow workflow names (Epic 6).
+
+        Returns:
+            Sorted list of registered flow names.
+        """
+        import flows
+
+        flows._register_flows()
+        return flows.FlowRegistry.list_flows()
+
+    def get_flow_info(self, name: str) -> dict[str, Any]:
+        """Get metadata for a registered Metaflow workflow (Epic 6).
+
+        Args:
+            name: Registered flow name.
+
+        Returns:
+            Dict with flow class name, module, and docstring.
+
+        Raises:
+            WorkflowError: If flow is not registered.
+        """
+        import flows
+
+        from arrow_lake.exceptions import ErrorCode, WorkflowError
+
+        flows._register_flows()
+        try:
+            flow_cls = flows.FlowRegistry.get(name)
+        except KeyError:
+            raise WorkflowError(
+                error_code=ErrorCode.WORKFLOW_FLOW_NOT_FOUND,
+                message=f"Flow '{name}' is not registered",
+            ) from None
+        return {
+            "name": name,
+            "class": flow_cls.__name__,
+            "module": flow_cls.__module__,
+            "doc": flow_cls.__doc__,
+        }

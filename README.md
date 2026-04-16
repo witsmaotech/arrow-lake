@@ -96,14 +96,14 @@ from arrow_lake import Lake
 
 lake = Lake.from_yaml("configs/dev.yaml")
 
-# 摄取数据
-lake.ingest("my_dataset", arrow_table)
+# 摄取数据（CSV, JSON, Parquet 文件）
+report = lake.ingest("my_dataset", ["data/data.csv", "data/data.json"])
 
-# 向量搜索
-results = lake.search("my_dataset", query="语义查询", top_k=10)
+# 向量搜索（需要嵌入向量）
+results = lake.search("my_dataset", query_vector=[0.1, 0.2, ...], top_k=10)
 
-# 数据质量检查
-report = lake.quality_check("my_dataset")
+# 数据质量过滤
+report = lake.quality_filter("my_dataset")
 
 # 数据导出
 lake.export("my_dataset", "output/data.parquet")

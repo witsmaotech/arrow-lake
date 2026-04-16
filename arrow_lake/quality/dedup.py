@@ -132,7 +132,12 @@ class ContentDeduplicator:
 
         # For "flag" action, keep duplicates but add is_duplicate column
         if self._action == "flag":
-            result_table = self._add_flag_column(table, sha256_col)
+            # Use the hash column that matches the actual dedup strategy
+            if self._strategy in ("perceptual", "both"):
+                phash_col = self._compute_phash_column(table)
+                result_table = self._add_flag_column(table, phash_col)
+            else:
+                result_table = self._add_flag_column(table, sha256_col)
 
         unique_count = total - duplicates
         return DedupResult(

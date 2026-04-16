@@ -23,8 +23,8 @@ spec:
     spec:
       containers:
         - name: api-server
-          image: {{ .Values.apiServer.image }}
-          imagePullPolicy: {{ .Values.apiServer.imagePullPolicy }}
+          image: "{{ .Values.apiServer.image.repository }}:{{ .Values.apiServer.image.tag }}"
+          imagePullPolicy: {{ .Values.apiServer.image.pullPolicy }}
           ports:
             - name: metrics
               containerPort: {{ .Values.observability.metricsPort }}

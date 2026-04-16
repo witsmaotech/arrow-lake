@@ -49,6 +49,13 @@ class EmbeddingBackend(StrEnum):
     RAY_SERVE = "ray_serve"
 
 
+class ModelSource(StrEnum):
+    """Model download source."""
+
+    HUGGINGFACE = "huggingface"
+    MODELSCOPE = "modelscope"
+
+
 class DecodeQuality(StrEnum):
     """Image decode fidelity levels."""
 
@@ -185,13 +192,15 @@ class EmbeddingConfig(BaseModel):
 
     Attributes:
         model: HuggingFace model name for local embedding.
+        model_source: Model download source — "huggingface" or "modelscope".
         batch_size: Number of texts to embed per batch.
         backend: Embedding backend — "local", "openai", or "ray_serve".
         api_base: Base URL for external embedding API.
         api_key: API key for external embedding API.
     """
 
-    model: str = "BAAI/bge-small-en-v1.5"
+    model: str = "Qwen/Qwen3-Embedding-0.6B"
+    model_source: ModelSource = ModelSource.HUGGINGFACE
     batch_size: int = 128
     backend: EmbeddingBackend = EmbeddingBackend.LOCAL
     api_base: str = ""
@@ -354,11 +363,16 @@ class OlapConfig(BaseModel):
         max_result_rows: Maximum number of rows returned by OLAP queries.
         enable_predicate_pushdown: Whether to push down predicates to Lance.
         enable_join: Whether JOIN queries are allowed.
+        scanner_batch_size: Rows per batch when streaming via Lance scanner.
+        enable_streaming: Use RecordBatchReader streaming instead of full
+            materialization for SQL queries.
     """
 
     max_result_rows: int = 100_000
     enable_predicate_pushdown: bool = True
     enable_join: bool = True
+    scanner_batch_size: int = 10_000
+    enable_streaming: bool = True
 
     @field_validator("max_result_rows")
     @classmethod
@@ -366,6 +380,16 @@ class OlapConfig(BaseModel):
         if v < 1:
             raise ValueError(f"max_result_rows must be >= 1, got {v}")
         return v
+
+
+class DaftConfig(BaseModel):
+    """Daft DataFrame engine configuration (Story 3.7).
+
+    Attributes:
+        enabled: Whether Daft query engine is available via Lake.daft_query().
+    """
+
+    enabled: bool = True
 
 
 class WorkflowConfig(BaseModel):
@@ -658,6 +682,7 @@ class ArrowLakeConfig(BaseSettings):
     fts: FullTextSearchConfig = FullTextSearchConfig()
     hybrid: HybridSearchConfig = HybridSearchConfig()
     olap: OlapConfig = OlapConfig()
+    daft: DaftConfig = DaftConfig()
     quality: QualityConfig = QualityConfig()
     workflow: WorkflowConfig = WorkflowConfig()
     argo: ArgoConfig = ArgoConfig()
@@ -713,6 +738,7 @@ class ArrowLakeConfig(BaseSettings):
             fts=merged["fts"],
             hybrid=merged["hybrid"],
             olap=merged["olap"],
+            daft=merged["daft"],
             quality=merged["quality"],
             workflow=merged["workflow"],
             argo=merged["argo"],
@@ -745,6 +771,7 @@ def _build_merged_update(base: ArrowLakeConfig, yaml_data: dict[str, Any]) -> di
         "fts": FullTextSearchConfig,
         "hybrid": HybridSearchConfig,
         "olap": OlapConfig,
+        "daft": DaftConfig,
         "quality": QualityConfig,
         "workflow": WorkflowConfig,
         "argo": ArgoConfig,

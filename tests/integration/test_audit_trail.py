@@ -8,7 +8,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from arrow_lake.ingest.storage import LanceStorageManager
 from arrow_lake.workflow.audit import AuditTrail
+
+
+def _make_storage(tmp_path: Path) -> LanceStorageManager:
+    return LanceStorageManager(str(tmp_path))
 
 
 class TestRecordAndVerify:
@@ -16,7 +21,7 @@ class TestRecordAndVerify:
 
     def test_record_and_verify(self, tmp_path: Path) -> None:
         """Create AuditTrail with secret key, record event, verify() returns True."""
-        trail = AuditTrail(str(tmp_path), hmac_secret_key="test-secret-key")
+        trail = AuditTrail(_make_storage(tmp_path), hmac_secret_key="test-secret-key")
         audit_id = trail.record(
             event_type="create",
             dataset_name="test_dataset",
@@ -28,14 +33,14 @@ class TestRecordAndVerify:
 
     def test_verify_nonexistent_id(self, tmp_path: Path) -> None:
         """verify() returns False for non-existent audit ID."""
-        trail = AuditTrail(str(tmp_path), hmac_secret_key="secret")
+        trail = AuditTrail(_make_storage(tmp_path), hmac_secret_key="secret")
         trail.record(event_type="create", dataset_name="ds")
 
         assert trail.verify("00000000-0000-0000-0000-000000000000") is False
 
     def test_verify_no_secret(self, tmp_path: Path) -> None:
         """verify() returns True when no secret key is configured (dev mode)."""
-        trail = AuditTrail(str(tmp_path), hmac_secret_key="")
+        trail = AuditTrail(_make_storage(tmp_path), hmac_secret_key="")
         audit_id = trail.record(event_type="create", dataset_name="ds")
 
         assert trail.verify(audit_id) is True
@@ -46,7 +51,7 @@ class TestQueryByDataset:
 
     def test_query_by_dataset(self, tmp_path: Path) -> None:
         """Record 3 events for dataset 'test_ds', query returns 3."""
-        trail = AuditTrail(str(tmp_path), hmac_secret_key="secret")
+        trail = AuditTrail(_make_storage(tmp_path), hmac_secret_key="secret")
         trail.record(event_type="create", dataset_name="test_ds")
         trail.record(event_type="append", dataset_name="test_ds")
         trail.record(event_type="transform", dataset_name="test_ds")
@@ -62,7 +67,7 @@ class TestQueryByDataset:
 
     def test_query_filters_by_event_type(self, tmp_path: Path) -> None:
         """Query with event_type filter returns only matching entries."""
-        trail = AuditTrail(str(tmp_path), hmac_secret_key="secret")
+        trail = AuditTrail(_make_storage(tmp_path), hmac_secret_key="secret")
         trail.record(event_type="create", dataset_name="ds")
         trail.record(event_type="append", dataset_name="ds")
         trail.record(event_type="delete", dataset_name="ds")
@@ -77,7 +82,7 @@ class TestExport:
 
     def test_export(self, tmp_path: Path) -> None:
         """Export returns dict with entries list."""
-        trail = AuditTrail(str(tmp_path), hmac_secret_key="secret")
+        trail = AuditTrail(_make_storage(tmp_path), hmac_secret_key="secret")
         trail.record(event_type="create", dataset_name="export_ds", actor="alice")
         trail.record(event_type="append", dataset_name="export_ds", actor="bob")
 
@@ -93,7 +98,7 @@ class TestExport:
 
     def test_export_empty_dataset(self, tmp_path: Path) -> None:
         """Export for dataset with no entries returns empty list."""
-        trail = AuditTrail(str(tmp_path), hmac_secret_key="secret")
+        trail = AuditTrail(_make_storage(tmp_path), hmac_secret_key="secret")
         exported = trail.export("nonexistent")
 
         assert exported["total_entries"] == 0

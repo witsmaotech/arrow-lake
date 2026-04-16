@@ -15,6 +15,14 @@ def _make_bridge(
     default_facet_columns: list[str] | None = None,
 ) -> FacetedSearchBridge:
     storage = MagicMock()
+
+    def _scan_as_reader(*args: object, **kwargs: object) -> pa.RecordBatchReader:
+        table = storage.read_dataset.return_value
+        if table is None:
+            table = pa.table({})
+        return table.to_reader()
+
+    storage.scan_dataset.side_effect = _scan_as_reader
     config = FacetedSearchConfig(
         max_facet_values=max_facet_values,
         default_facet_columns=default_facet_columns or ["modality", "source"],

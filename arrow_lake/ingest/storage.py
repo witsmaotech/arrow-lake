@@ -7,21 +7,17 @@ Integrates with MinIO via Arrow Lake config for S3-compatible storage.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from pathlib import Path
-from re import compile as re_compile
 from typing import Any, cast
 
 import pyarrow as pa
 
 from arrow_lake.exceptions import ErrorCode, StorageError
+from arrow_lake.validation import DANGEROUS_SQL_KEYWORDS_RE, SAFE_IDENTIFIER_RE
 
-_SAFE_DATASET_NAME_RE = re_compile(r"^[a-zA-Z_][a-zA-Z0-9_-]*$")
-_DANGEROUS_SQL_EXPR_RE = re_compile(
-    r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|GRANT|REVOKE|EXEC|EXECUTE)\b",
-    re.IGNORECASE,
-)
+# Backward-compatible alias for internal use
+_SAFE_DATASET_NAME_RE = SAFE_IDENTIFIER_RE
 
 
 @dataclass(frozen=True)
@@ -84,7 +80,7 @@ class LanceStorageManager:
     @staticmethod
     def _validate_sql_expr(expr: str) -> None:
         """Validate a SQL expression for dangerous keywords and semicolons."""
-        if _DANGEROUS_SQL_EXPR_RE.search(expr):
+        if DANGEROUS_SQL_KEYWORDS_RE.search(expr):
             raise StorageError(
                 error_code=ErrorCode.VALIDATION_INVALID_CONFIG,
                 message=f"Dangerous SQL keyword detected in expression: {expr}",
@@ -523,6 +519,50 @@ class LanceStorageManager:
             StorageError: If dataset cannot be opened.
         """
         return self._open_lance(self._get_dataset_path(dataset_name))
+
+    def scan_dataset(
+        self,
+        name: str,
+        *,
+        columns: list[str] | None = None,
+        filter_expr: str | None = None,
+        batch_size: int = 10_000,
+    ) -> pa.RecordBatchReader:
+        """Stream a Lance dataset as RecordBatchReader (zero materialization).
+
+        Returns a reader that yields batches on-demand instead of materializing
+        the entire dataset into memory. Suitable for registering with DuckDB.
+
+        Args:
+            name: Dataset name.
+            columns: Optional column subset to read.
+            filter_expr: Optional Lance filter expression (pushed down).
+            batch_size: Rows per batch (default 10k).
+
+        Returns:
+            pa.RecordBatchReader streaming the dataset.
+
+        Raises:
+            StorageError: If dataset does not exist or name is invalid.
+        """
+        self._validate_name(name)
+        lance_dir = self._lance_dir(name)
+
+        if not lance_dir.is_dir():
+            raise StorageError(
+                error_code=ErrorCode.STORAGE_PATH_NOT_FOUND,
+                message=f"Dataset '{name}' not found",
+            )
+
+        import lance
+
+        ds = lance.dataset(str(lance_dir))
+        scanner = ds.scanner(
+            columns=columns,
+            filter=filter_expr,
+            batch_size=batch_size,
+        )
+        return scanner.to_reader()
 
     def restore_dataset(self, name: str, data: pa.Table) -> None:
         """Delete and recreate a dataset with new data (used for rollback).

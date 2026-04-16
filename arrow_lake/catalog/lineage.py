@@ -8,27 +8,21 @@ event storage and DuckDB for SQL queries over lineage data.
 from __future__ import annotations
 
 import json
-import re
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-import duckdb
 import pyarrow as pa
 import structlog
 
 from arrow_lake.exceptions import CatalogError, ErrorCode
+from arrow_lake.query._db import DuckDBSession
+from arrow_lake.validation import DANGEROUS_SQL_KEYWORDS_RE
 
 logger = structlog.get_logger(__name__)
 
 __all__ = ["LineageEvent", "LineageQueryBridge", "LineageStore"]
-
-_DANGEROUS_KEYWORDS_RE = re.compile(
-    r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|EXEC|EXECUTE|"
-    r"GRANT|REVOKE|COPY|IMPORT|EXPORT|UNION|EXCEPT|INTERSECT)\b",
-    re.IGNORECASE,
-)
 
 _LINEAGE_EVENT_SCHEMA = pa.schema(
     [
@@ -94,14 +88,13 @@ class LineageStore:
     """Persists lineage events to a Lance dataset.
 
     Args:
-        base_uri: Base URI for Lance storage.
+        storage: LanceStorageManager for unified data access.
         store_dataset: Name of the lineage events dataset.
     """
 
-    def __init__(self, base_uri: str, store_dataset: str = "_lineage_events") -> None:
-        self._base_uri = base_uri
+    def __init__(self, storage: Any, store_dataset: str = "_lineage_events") -> None:
+        self._storage = storage
         self._store_dataset = store_dataset
-        self._path = f"{base_uri}/{store_dataset}"
         self._initialized = False
 
     def record_event(self, event: LineageEvent) -> None:
@@ -129,10 +122,7 @@ class LineageStore:
         table = pa.table({k: [v] for k, v in row.items()}, schema=_LINEAGE_EVENT_SCHEMA)
 
         try:
-            import lancedb
-
-            db = lancedb.connect(self._base_uri)
-            db.open_table(self._store_dataset).add(table)
+            self._storage.append_dataset(self._store_dataset, table)
         except Exception as exc:
             raise CatalogError(
                 error_code=ErrorCode.LINEAGE_STORE_FAILED,
@@ -158,9 +148,7 @@ class LineageStore:
         self._ensure_store()
 
         try:
-            import lancedb
-
-            table = lancedb.connect(self._base_uri).open_table(self._store_dataset).to_arrow()
+            table = self._storage.read_dataset(self._store_dataset)
         except Exception:
             return []
 
@@ -177,26 +165,13 @@ class LineageStore:
         if self._initialized:
             return
 
-        from pathlib import Path
-
-        if not Path(self._base_uri).exists():
-            Path(self._base_uri).mkdir(parents=True, exist_ok=True)
-
-        try:
-            import lancedb
-
-            lancedb.connect(self._base_uri).open_table(self._store_dataset)
-        except Exception:
+        if not self._storage.dataset_exists(self._store_dataset):
             empty_table = pa.table(
                 {f.name: [] for f in _LINEAGE_EVENT_SCHEMA},
                 schema=_LINEAGE_EVENT_SCHEMA,
             )
-            import lancedb
-
-            lancedb.connect(self._base_uri).create_table(
-                self._store_dataset, empty_table, mode="overwrite"
-            )
-            logger.info("lineage_store_created", path=self._base_uri)
+            self._storage.create_dataset(self._store_dataset, empty_table)
+            logger.info("lineage_store_created", dataset=self._store_dataset)
 
         self._initialized = True
 
@@ -246,33 +221,19 @@ class LineageQueryBridge:
         self._validate_sql(sql)
 
         try:
-            import lancedb
-
-            table = (
-                lancedb.connect(self._store._base_uri)
-                .open_table(self._store._store_dataset)
-                .to_arrow()
-            )
+            table = self._store._storage.read_dataset(self._store._store_dataset)
         except Exception:
             table = pa.table(
                 {f.name: [] for f in _LINEAGE_EVENT_SCHEMA},
                 schema=_LINEAGE_EVENT_SCHEMA,
             )
 
-        conn = duckdb.connect()
-        try:
+        with DuckDBSession() as conn:
             conn.register("lineage", table)
             result_reader = conn.execute(sql, params if params else None).arrow()
             result_table = (
                 result_reader.read_all() if hasattr(result_reader, "read_all") else result_reader
             )
-        except Exception as exc:
-            raise CatalogError(
-                error_code=ErrorCode.LINEAGE_QUERY_FAILED,
-                message=f"Lineage query failed: {exc}",
-            ) from exc
-        finally:
-            conn.close()
 
         return result_table
 
@@ -329,7 +290,7 @@ class LineageQueryBridge:
                 message="Only SELECT queries are allowed via LineageQueryBridge",
             )
 
-        match = _DANGEROUS_KEYWORDS_RE.search(stripped)
+        match = DANGEROUS_SQL_KEYWORDS_RE.search(stripped)
         if match:
             raise CatalogError(
                 error_code=ErrorCode.LINEAGE_QUERY_FAILED,

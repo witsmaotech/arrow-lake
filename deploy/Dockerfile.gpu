@@ -1,0 +1,109 @@
+# Arrow Lake — GPU Variant Dockerfile
+#
+# Extends the CPU build with CUDA runtime + cu124 PyTorch.
+# Build:  docker build -f deploy/Dockerfile.gpu -t arrow-lake:gpu .
+# Run:    docker run --gpus all arrow-lake:gpu python -c "import torch; print(torch.cuda.is_available())"
+
+# ==============================================================================
+# Stage 1 — builder (GPU)
+# ==============================================================================
+FROM --platform=$BUILDPLATFORM python:3.12-slim AS builder
+
+ARG TARGETARCH
+
+# System dependencies for building
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    curl \
+    git \
+    libcurl4-openssl-dev \
+    libssl-dev \
+    libgrpc++-dev \
+    protobuf-compiler \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+WORKDIR /build
+
+# Copy dependency manifests and source (hatchling needs README.md at build time)
+COPY pyproject.toml README.md ./
+COPY arrow_lake/ arrow_lake/
+COPY flows/ flows/
+
+# Create venv and install all dependencies (with BuildKit cache)
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv venv .venv \
+    && . .venv/bin/activate \
+    && uv pip install --no-cache-dir .
+
+# Replace CPU torch with CUDA 12.4 variant
+RUN --mount=type=cache,target=/root/.cache/uv \
+    . .venv/bin/activate \
+    && uv pip install --no-cache-dir --force-reinstall \
+    torch --index-url https://download.pytorch.org/whl/cu124
+
+# ==============================================================================
+# Stage 2 — runtime (GPU)
+# ==============================================================================
+FROM nvidia/cuda12.4.1-runtime-ubuntu22.04 AS runtime
+
+LABEL maintainer="wits@sunpw.dev"
+LABEL description="Arrow Lake GPU — Multimodal data lakehouse with CUDA support"
+LABEL org.opencontainers.image.source="https://github.com/wits-sunpw/arrow-lake"
+
+# Runtime system dependencies (Ubuntu packages)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    libcurl4-openssl-dev \
+    libgomp1 \
+    libgrpc++1 \
+    libssl3 \
+    python3 \
+    python3-pip \
+    python3-venv \
+    && rm -rf /var/lib/apt/lists/*
+
+# Ensure Python 3.12 is available (CUDA base ships 3.10)
+RUN ln -sf /usr/bin/python3 /usr/bin/python 2>/dev/null || true
+
+# Create non-root user
+RUN groupadd -r arrowlake && useradd -r -g arrowlake -d /app -s /sbin/nologin arrowlake
+
+WORKDIR /app
+
+# Copy virtual environment from builder
+COPY --from=builder /build/.venv /app/.venv
+
+# Fix shebangs: builder venv paths (/build/.venv) → runtime (/app/.venv)
+RUN find /app/.venv/bin/ -type f -exec sed -i '1s|^#!/build/.venv/bin/python3|#!/app/.venv/bin/python3|' {} +
+
+# Copy installed package source
+COPY --from=builder /build/arrow_lake /app/arrow_lake
+COPY --from=builder /build/flows /app/flows
+
+# Copy examples for testing / demos
+COPY examples/ /app/examples/
+
+# Activate venv in PATH
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONPATH="/app" \
+    PYTHONUNBUFFERED="1" \
+    PYTHONDONTWRITEBYTECODE="1" \
+    NVIDIA_VISIBLE_DEVICES="all" \
+    NVIDIA_DRIVER_CAPABILITIES="compute,utility" \
+    ARROW_LAKE__COMPUTE__GPU_ENABLED="true"
+
+# Install mc (MinIO Client) for health checks
+RUN curl -sL https://dl.min.io/client/mc/release/linux-amd64/mc -o /usr/local/bin/mc \
+    && chmod +x /usr/local/bin/mc
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD ["curl", "-sf", "http://localhost:8000/health"]
+
+CMD ["python", "-m", "arrow_lake.server", "--port", "8000"]

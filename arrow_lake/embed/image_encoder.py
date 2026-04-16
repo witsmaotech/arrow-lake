@@ -66,8 +66,11 @@ class CLIPImageEncoder:
     Lazily loads the HuggingFace model and processor on first ``encode()``
     call.  Automatically detects GPU availability and falls back to CPU.
 
+    Supports ModelScope as alternative model source for China mainland users.
+
     Args:
         model_name: HuggingFace model identifier.
+        model_source: Model download source — "huggingface" or "modelscope".
         batch_size: Number of images per batch.
         image_column: Name of the binary image column in the input table.
     """
@@ -75,10 +78,12 @@ class CLIPImageEncoder:
     def __init__(
         self,
         model_name: str = "openai/clip-vit-base-patch32",
+        model_source: str = "modelscope",
         batch_size: int = 32,
         image_column: str = "image",
     ) -> None:
         self.model_name = model_name
+        self.model_source = model_source
         self.batch_size = batch_size
         self.image_column = image_column
         self.embedding_dim = _MODEL_DIMENSIONS.get(model_name, 0)
@@ -99,10 +104,17 @@ class CLIPImageEncoder:
         logger.info(
             "image_encoder_loading",
             model=self.model_name,
+            source=self.model_source,
             dim=self.embedding_dim,
         )
-        self._processor = AutoImageProcessor.from_pretrained(self.model_name)
-        self._model = AutoModel.from_pretrained(self.model_name)
+        if self.model_source == "modelscope":
+            from modelscope import snapshot_download
+
+            model_path = snapshot_download(self.model_name)
+        else:
+            model_path = self.model_name
+        self._processor = AutoImageProcessor.from_pretrained(model_path)
+        self._model = AutoModel.from_pretrained(model_path)
 
     def encode(self, table: pa.Table) -> ImageEmbeddingResult:
         """Produce L2-normalized embeddings for images in *table*.

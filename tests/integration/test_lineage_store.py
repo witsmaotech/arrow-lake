@@ -12,6 +12,7 @@ from arrow_lake.catalog.lineage import (
     LineageStore,
     create_lineage_event,
 )
+from arrow_lake.ingest.storage import LanceStorageManager
 
 
 class TestRecordAndRetrieve:
@@ -19,7 +20,7 @@ class TestRecordAndRetrieve:
 
     def test_record_and_retrieve(self, tmp_path: Path) -> None:
         """Create LineageStore, record event, verify via get_dataset_history."""
-        store = LineageStore(str(tmp_path))
+        store = LineageStore(LanceStorageManager(str(tmp_path)))
         event = create_lineage_event(
             dataset_name="test_ds",
             operation="create",
@@ -35,7 +36,7 @@ class TestRecordAndRetrieve:
 
     def test_multiple_events(self, tmp_path: Path) -> None:
         """Record 3 events for same dataset, verify history returns all 3."""
-        store = LineageStore(str(tmp_path))
+        store = LineageStore(LanceStorageManager(str(tmp_path)))
 
         events = [
             create_lineage_event("test_ds", "create"),
@@ -52,7 +53,7 @@ class TestRecordAndRetrieve:
 
     def test_get_history_empty_dataset(self, tmp_path: Path) -> None:
         """get_dataset_history returns empty list for unknown dataset."""
-        store = LineageStore(str(tmp_path))
+        store = LineageStore(LanceStorageManager(str(tmp_path)))
         store.record_event(create_lineage_event("other_ds", "create"))
 
         history = store.get_dataset_history("nonexistent")
@@ -64,7 +65,7 @@ class TestLineageQueryBridge:
 
     def test_sql_query_over_lineage(self, tmp_path: Path) -> None:
         """SELECT * returns Arrow table with correct rows."""
-        store = LineageStore(str(tmp_path))
+        store = LineageStore(LanceStorageManager(str(tmp_path)))
         store.record_event(create_lineage_event("ds_a", "create"))
         store.record_event(create_lineage_event("ds_b", "append"))
 
@@ -82,7 +83,7 @@ class TestUpstreamTrace:
 
     def test_upstream_trace(self, tmp_path: Path) -> None:
         """Create dataset A, then B with source A. trace_upstream('A') finds B."""
-        store = LineageStore(str(tmp_path))
+        store = LineageStore(LanceStorageManager(str(tmp_path)))
         store.record_event(create_lineage_event("dataset_a", "create"))
         store.record_event(
             create_lineage_event(
@@ -102,7 +103,7 @@ class TestUpstreamTrace:
 
     def test_upstream_trace_no_dependents(self, tmp_path: Path) -> None:
         """trace_upstream returns empty when nothing depends on the dataset."""
-        store = LineageStore(str(tmp_path))
+        store = LineageStore(LanceStorageManager(str(tmp_path)))
         store.record_event(create_lineage_event("orphan_ds", "create"))
 
         bridge = LineageQueryBridge(store)
@@ -112,7 +113,7 @@ class TestUpstreamTrace:
 
     def test_downstream_trace(self, tmp_path: Path) -> None:
         """trace_downstream('B') finds events where B has upstream sources."""
-        store = LineageStore(str(tmp_path))
+        store = LineageStore(LanceStorageManager(str(tmp_path)))
         store.record_event(create_lineage_event("dataset_a", "create"))
         store.record_event(
             create_lineage_event(

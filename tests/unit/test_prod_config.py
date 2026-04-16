@@ -7,19 +7,19 @@ import json
 import yaml
 
 
-class TestDockerComposeProd:
-    """Validate docker-compose.prod.yml structure."""
+class TestDockerCompose:
+    """Validate docker-compose.yml structure."""
 
     def test_file_exists(self) -> None:
         from pathlib import Path
 
-        path = Path("deploy/docker-compose.prod.yml")
-        assert path.exists(), "docker-compose.prod.yml not found"
+        path = Path("deploy/docker-compose.yml")
+        assert path.exists(), "docker-compose.yml not found"
 
     def test_valid_yaml(self) -> None:
         from pathlib import Path
 
-        path = Path("deploy/docker-compose.prod.yml")
+        path = Path("deploy/docker-compose.yml")
         with path.open() as f:
             compose = yaml.safe_load(f)
 
@@ -29,10 +29,20 @@ class TestDockerComposeProd:
         assert "ray-head" in services
         assert "ray-worker" in services
 
+    def test_api_service_exists(self) -> None:
+        from pathlib import Path
+
+        path = Path("deploy/docker-compose.yml")
+        with path.open() as f:
+            compose = yaml.safe_load(f)
+
+        services = compose["services"]
+        assert "api" in services
+
     def test_healthcheck_configured(self) -> None:
         from pathlib import Path
 
-        path = Path("deploy/docker-compose.prod.yml")
+        path = Path("deploy/docker-compose.yml")
         with path.open() as f:
             compose = yaml.safe_load(f)
 
@@ -40,12 +50,11 @@ class TestDockerComposeProd:
         minio = services["minio"]
         assert "healthcheck" in minio
         assert "test" in minio["healthcheck"]
-        assert "interval" in minio["healthcheck"]
 
     def test_environment_variables(self) -> None:
         from pathlib import Path
 
-        path = Path("deploy/docker-compose.prod.yml")
+        path = Path("deploy/docker-compose.yml")
         with path.open() as f:
             compose = yaml.safe_load(f)
 

@@ -94,6 +94,10 @@ class TestCLIPImageEncoderInit:
         enc = CLIPImageEncoder(batch_size=16)
         assert enc.batch_size == 16
 
+    def test_default_model_source(self) -> None:
+        enc = CLIPImageEncoder()
+        assert enc.model_source == "modelscope"
+
     def test_default_image_column(self) -> None:
         enc = CLIPImageEncoder()
         assert enc.image_column == "image"
@@ -148,7 +152,7 @@ class TestCLIPImageEncoderEncode:
         mock_proc_cls.from_pretrained.return_value = proc
         mock_model_cls.from_pretrained.return_value = model
 
-        enc = CLIPImageEncoder()
+        enc = CLIPImageEncoder(model_source="huggingface")
         # Simulate image bytes
         table = pa.table(
             {
@@ -171,7 +175,7 @@ class TestCLIPImageEncoderEncode:
         mock_proc_cls.from_pretrained.return_value = proc
         mock_model_cls.from_pretrained.return_value = model
 
-        enc = CLIPImageEncoder()
+        enc = CLIPImageEncoder(model_source="huggingface")
         table = pa.table(
             {
                 "image": [None, None],

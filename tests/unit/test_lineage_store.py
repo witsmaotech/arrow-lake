@@ -1,7 +1,7 @@
 """Tests for arrow_lake.catalog.lineage — Story 8.3 Data Lineage.
 
 Tests LineageEvent, LineageStore, LineageQueryBridge, create_lineage_event,
-and LineageConfig using mocked lancedb/DuckDB (no real datasets).
+and LineageConfig using mocked LanceStorageManager (no real datasets).
 """
 
 from __future__ import annotations
@@ -20,6 +20,33 @@ from arrow_lake.catalog.lineage import (
 )
 from arrow_lake.config import LineageConfig
 from arrow_lake.exceptions import CatalogError
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_mock_storage() -> MagicMock:
+    """Create a mock LanceStorageManager."""
+    storage = MagicMock()
+    storage.dataset_exists.return_value = True
+    return storage
+
+
+_LINEAGE_SCHEMA = pa.schema(
+    [
+        pa.field("event_id", pa.string(), nullable=False),
+        pa.field("timestamp", pa.string(), nullable=False),
+        pa.field("dataset_name", pa.string(), nullable=False),
+        pa.field("operation", pa.string(), nullable=False),
+        pa.field("source_datasets", pa.string(), nullable=True),
+        pa.field("transform_type", pa.string(), nullable=True),
+        pa.field("lance_version", pa.int64(), nullable=True),
+        pa.field("actor", pa.string(), nullable=True),
+        pa.field("metadata", pa.string(), nullable=True),
+    ]
+)
+
 
 # ---------------------------------------------------------------------------
 # TestLineageEvent
@@ -120,52 +147,67 @@ class TestCreateLineageEvent:
 
 
 class TestLineageStore:
-    """Test LineageStore with mocked lancedb."""
+    """Test LineageStore with mocked LanceStorageManager."""
 
     def test_ensure_store_creates_dataset_on_first_use(self) -> None:
-        store = LineageStore("/tmp/test_lineage")
-        mock_db = MagicMock()
-        mock_table = MagicMock()
-        # First call to open_table raises (table doesn't exist yet)
-        # so _ensure_store creates it
-        mock_db.open_table.side_effect = [Exception("not found"), mock_table]
+        storage = _make_mock_storage()
+        storage.dataset_exists.return_value = False
 
-        with (
-            patch("lancedb.connect", return_value=mock_db),
-            patch("pathlib.Path.exists", return_value=True),
-        ):
-            store.record_event(
-                LineageEvent(
-                    event_id="e1",
-                    timestamp="2026-01-01T00:00:00",
-                    dataset_name="ds",
-                    operation="create",
-                    source_datasets=(),
-                    transform_type="",
-                    lance_version=None,
-                    actor="system",
-                    metadata=(),
-                )
-            )
-        # create_table should be called to init the store
-        mock_db.create_table.assert_called_once()
-        # open_table().add() should be called to record the event
-        mock_table.add.assert_called_once()
+        store = LineageStore(storage)
+        event = create_lineage_event("ds", "create")
+        store.record_event(event)
 
-    def test_record_event_calls_lancedb_add(self) -> None:
-        store = LineageStore("/tmp/test_lineage")
-        mock_db = MagicMock()
-        mock_table = MagicMock()
-        mock_db.open_table.return_value = mock_table
+        storage.create_dataset.assert_called_once()
+        storage.append_dataset.assert_called_once()
 
-        with patch("lancedb.connect", return_value=mock_db):
-            store._initialized = True
-            event = create_lineage_event("my_ds", "append")
-            store.record_event(event)
-        mock_table.add.assert_called_once()
-        call_arg = mock_table.add.call_args[0][0]
+    def test_record_event_calls_append(self) -> None:
+        storage = _make_mock_storage()
+
+        store = LineageStore(storage)
+        store._initialized = True
+        event = create_lineage_event("my_ds", "append")
+        store.record_event(event)
+
+        storage.append_dataset.assert_called_once()
+        call_arg = storage.append_dataset.call_args[0][1]
         assert isinstance(call_arg, pa.Table)
         assert call_arg.num_rows == 1
+
+    def test_record_event_propagates_error(self) -> None:
+        storage = _make_mock_storage()
+        storage.append_dataset.side_effect = PermissionError("denied")
+
+        store = LineageStore(storage)
+        store._initialized = True
+        event = create_lineage_event("ds", "create")
+
+        with pytest.raises(CatalogError, match="Failed to record"):
+            store.record_event(event)
+
+    def test_get_history_reads_dataset(self) -> None:
+        storage = _make_mock_storage()
+        table = pa.table(
+            {
+                "event_id": ["e1"],
+                "timestamp": ["2026-01-01"],
+                "dataset_name": ["target_ds"],
+                "operation": ["create"],
+                "source_datasets": [None],
+                "transform_type": [None],
+                "lance_version": [None],
+                "actor": [None],
+                "metadata": [None],
+            }
+        )
+        storage.read_dataset.return_value = table
+
+        store = LineageStore(storage)
+        store._initialized = True
+        history = store.get_dataset_history("target_ds")
+
+        storage.read_dataset.assert_called_once_with("_lineage_events")
+        assert len(history) == 1
+        assert history[0].dataset_name == "target_ds"
 
 
 # ---------------------------------------------------------------------------
@@ -210,7 +252,8 @@ class TestLineageQueryBridgeQuery:
     """Test LineageQueryBridge.query delegates to DuckDB."""
 
     def test_query_returns_arrow_table(self) -> None:
-        store = LineageStore("/tmp/test_lineage")
+        storage = _make_mock_storage()
+        store = LineageStore(storage)
         bridge = LineageQueryBridge(store)
         result_table = pa.table(
             {
@@ -225,23 +268,16 @@ class TestLineageQueryBridgeQuery:
                 "metadata": [None],
             }
         )
+        storage.read_dataset.return_value = result_table
 
-        mock_db = MagicMock()
-        mock_table = MagicMock()
-        mock_table.to_arrow.return_value = result_table
-        mock_db.open_table.return_value = mock_table
+        import duckdb as duckdb_mod
 
         mock_conn = MagicMock()
         mock_result = MagicMock()
         mock_result.read_all.return_value = result_table
         mock_conn.execute.return_value.arrow.return_value = mock_result
 
-        import duckdb as duckdb_mod
-
-        with (
-            patch("lancedb.connect", return_value=mock_db),
-            patch.object(duckdb_mod, "connect", return_value=mock_conn),
-        ):
+        with patch.object(duckdb_mod, "connect", return_value=mock_conn):
             result = bridge.query("SELECT * FROM lineage")
         assert isinstance(result, pa.Table)
 
@@ -270,16 +306,12 @@ class TestLineageQueryBridgeTrace:
         )
 
     def test_trace_upstream_uses_like_clause(self) -> None:
-        store = LineageStore("/tmp/test_lineage")
+        storage = _make_mock_storage()
+        store = LineageStore(storage)
         bridge = LineageQueryBridge(store)
         empty_table = self._make_empty_lineage_table()
+        storage.read_dataset.return_value = empty_table
 
-        mock_db = MagicMock()
-        mock_table = MagicMock()
-        mock_table.to_arrow.return_value = empty_table
-        mock_db.open_table.return_value = mock_table
-
-        # Mock duckdb to avoid needing pyarrow.dataset
         mock_conn = MagicMock()
         mock_result = MagicMock()
         mock_result.read_all.return_value = empty_table
@@ -289,23 +321,17 @@ class TestLineageQueryBridgeTrace:
 
         import duckdb as duckdb_mod
 
-        with (
-            patch("lancedb.connect", return_value=mock_db),
-            patch.object(duckdb_mod, "connect", return_value=mock_conn),
-        ):
+        with patch.object(duckdb_mod, "connect", return_value=mock_conn):
             result = bridge.trace_upstream("my_dataset")
         assert isinstance(result, list)
         assert len(result) == 0
 
     def test_trace_downstream_filters_dataset_name(self) -> None:
-        store = LineageStore("/tmp/test_lineage")
+        storage = _make_mock_storage()
+        store = LineageStore(storage)
         bridge = LineageQueryBridge(store)
         empty_table = self._make_empty_lineage_table()
-
-        mock_db = MagicMock()
-        mock_table = MagicMock()
-        mock_table.to_arrow.return_value = empty_table
-        mock_db.open_table.return_value = mock_table
+        storage.read_dataset.return_value = empty_table
 
         mock_conn = MagicMock()
         mock_result = MagicMock()
@@ -316,10 +342,7 @@ class TestLineageQueryBridgeTrace:
 
         import duckdb as duckdb_mod
 
-        with (
-            patch("lancedb.connect", return_value=mock_db),
-            patch.object(duckdb_mod, "connect", return_value=mock_conn),
-        ):
+        with patch.object(duckdb_mod, "connect", return_value=mock_conn):
             result = bridge.trace_downstream("my_dataset")
         assert isinstance(result, list)
         assert len(result) == 0

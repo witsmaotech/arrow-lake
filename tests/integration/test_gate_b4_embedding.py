@@ -1,6 +1,6 @@
 """Gate B4: Text embedding end-to-end validation.
 
-Validates LocalEmbeddingEncoder produces fixed_size_list<float>[384]:
+Validates LocalEmbeddingEncoder produces fixed_size_list<float>[1024]:
 - Encode text column to embeddings
 - Write embeddings to Lance dataset
 - Read back and verify dimensions
@@ -20,10 +20,10 @@ class TestGateB4TextEmbedding:
     """Validate text embedding pipeline end-to-end."""
 
     def test_encode_produces_correct_dimensions(self) -> None:
-        """Embedding vectors have dimension 384."""
+        """Embedding vectors have dimension 1024."""
         from arrow_lake.embed.encoder import LocalEmbeddingEncoder
 
-        encoder = LocalEmbeddingEncoder(model_name="BAAI/bge-small-en-v1.5")
+        encoder = LocalEmbeddingEncoder(model_name="Qwen/Qwen3-Embedding-0.6B")
         table = pa.table(
             {
                 "text_content": [
@@ -38,13 +38,13 @@ class TestGateB4TextEmbedding:
         assert result.total_rows == 3
         assert result.embedded_rows == 3
         assert result.null_rows == 0
-        assert result.embedding_dim == 384
+        assert result.embedding_dim == 1024
 
     def test_null_text_handling(self) -> None:
         """NULL texts produce null_mask=True and are skipped."""
         from arrow_lake.embed.encoder import LocalEmbeddingEncoder
 
-        encoder = LocalEmbeddingEncoder(model_name="BAAI/bge-small-en-v1.5")
+        encoder = LocalEmbeddingEncoder(model_name="Qwen/Qwen3-Embedding-0.6B")
         table = pa.table(
             {
                 "text_content": ["valid text", None, "another valid", None],
@@ -65,7 +65,7 @@ class TestGateB4TextEmbedding:
         """Empty table returns zero embedded rows."""
         from arrow_lake.embed.encoder import LocalEmbeddingEncoder
 
-        encoder = LocalEmbeddingEncoder(model_name="BAAI/bge-small-en-v1.5")
+        encoder = LocalEmbeddingEncoder(model_name="Qwen/Qwen3-Embedding-0.6B")
         table = pa.table({"text_content": []})
 
         result = encoder.encode_column(table, column="text_content")
@@ -76,7 +76,7 @@ class TestGateB4TextEmbedding:
         """Embedding column can be written to Lance and read back."""
         from arrow_lake.embed.encoder import LocalEmbeddingEncoder
 
-        encoder = LocalEmbeddingEncoder(model_name="BAAI/bge-small-en-v1.5")
+        encoder = LocalEmbeddingEncoder(model_name="Qwen/Qwen3-Embedding-0.6B")
 
         # Create source table
         texts = [f"Document about topic {i}" for i in range(10)]
@@ -85,7 +85,7 @@ class TestGateB4TextEmbedding:
         # Encode
         result = encoder.encode_column(source_table, column="text_content")
         assert result.embedded_rows == 10
-        assert result.embedding_dim == 384
+        assert result.embedding_dim == 1024
 
         # Get actual embeddings from the encoder
         model = encoder._load_model()
@@ -95,7 +95,7 @@ class TestGateB4TextEmbedding:
         )
 
         # Build embedding column with correct Arrow type
-        embedding_type = pa.list_(pa.float32(), 384)
+        embedding_type = pa.list_(pa.float32(), 1024)
         embedding_col = pa.array(
             [emb.tolist() for emb in embeddings],
             type=embedding_type,
@@ -118,13 +118,13 @@ class TestGateB4TextEmbedding:
         field = loaded.schema.field(result.vector_column)
         assert pa.types.is_fixed_size_list(field.type)
         assert pa.types.is_float32(field.type.value_type)
-        assert field.type.list_size == 384
+        assert field.type.list_size == 1024
 
     def test_all_null_column(self) -> None:
         """Column with all NULLs returns zero embedded rows."""
         from arrow_lake.embed.encoder import LocalEmbeddingEncoder
 
-        encoder = LocalEmbeddingEncoder(model_name="BAAI/bge-small-en-v1.5")
+        encoder = LocalEmbeddingEncoder(model_name="Qwen/Qwen3-Embedding-0.6B")
         table = pa.table(
             {
                 "text_content": pa.array([None, None, None], type=pa.string()),

@@ -15,6 +15,7 @@ import pytest
 from arrow_lake.config import (
     ArrowLakeConfig,
     ComputeConfig,
+    DaftConfig,
     DecodeConfig,
     DistanceMetric,
     EmbeddingConfig,
@@ -395,7 +396,7 @@ class TestEmbeddingConfig:
 
     def test_default_model(self) -> None:
         config = EmbeddingConfig()
-        assert config.model == "BAAI/bge-small-en-v1.5"
+        assert config.model == "Qwen/Qwen3-Embedding-0.6B"
 
     def test_default_batch_size(self) -> None:
         config = EmbeddingConfig()
@@ -1066,3 +1067,29 @@ workflow:
         assert config.workflow.max_retry_attempts == 3
         assert config.workflow.ray_execution_enabled is False
         assert config.workflow.auto_tag_runs is True
+
+
+class TestDaftConfig:
+    """Tests for DaftConfig (Story 3.7)."""
+
+    def test_daft_defaults(self) -> None:
+        config = DaftConfig()
+        assert config.enabled is True
+
+    def test_daft_in_arrowlake(self) -> None:
+        config = ArrowLakeConfig()
+        assert isinstance(config.daft, DaftConfig)
+        assert config.daft.enabled is True
+
+    def test_env_override_daft_enabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ARROW_LAKE__DAFT__ENABLED", "false")
+        config = ArrowLakeConfig()
+        assert config.daft.enabled is False
+
+    def test_yaml_override_daft(self, tmp_path: Any) -> None:
+        yaml_content = "daft:\n  enabled: false\n"
+        yaml_file = tmp_path / "config.yaml"
+        yaml_file.write_text(yaml_content)
+
+        config = ArrowLakeConfig.from_yaml(str(yaml_file))
+        assert config.daft.enabled is False

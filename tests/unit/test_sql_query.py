@@ -17,6 +17,14 @@ def _make_bridge(
 ) -> OlapSearchBridge:
     """Create a bridge with a mock storage."""
     storage = MagicMock()
+
+    def _scan_as_reader(*args: object, **kwargs: object) -> pa.RecordBatchReader:
+        table = storage.read_dataset.return_value
+        if table is None:
+            table = pa.table({})
+        return table.to_reader()
+
+    storage.scan_dataset.side_effect = _scan_as_reader
     config = OlapConfig(max_result_rows=max_rows, enable_join=enable_join)
     return OlapSearchBridge(storage=storage, config=config)
 
@@ -48,25 +56,6 @@ class TestToArrow:
         table = _make_table([{"id": 1, "name": "a", "value": 1.0}])
         result = OlapQueryResult(table=table, row_count=1, column_count=3, sql="SELECT * FROM t")
         assert result.to_arrow() is table
-
-
-class TestDaftSQLPlaceholder:
-    """Test daft_sql() placeholder method (ADR-05: Daft 0.7.8 has no SQL)."""
-
-    def test_daft_sql_raises_not_implemented(self) -> None:
-        bridge = _make_bridge()
-        with pytest.raises(NotImplementedError, match="Daft SQL"):
-            bridge.daft_sql("SELECT * FROM t")
-
-    def test_daft_sql_message_mentions_version(self) -> None:
-        bridge = _make_bridge()
-        with pytest.raises(NotImplementedError, match=r"0\.7\.8"):
-            bridge.daft_sql("SELECT * FROM t")
-
-    def test_daft_sql_message_mentions_duckdb_path(self) -> None:
-        bridge = _make_bridge()
-        with pytest.raises(NotImplementedError, match="DuckDB"):
-            bridge.daft_sql("SELECT * FROM t")
 
 
 class TestSQLJoinValidation:
@@ -143,7 +132,7 @@ class TestMultiTableRegister:
         bridge._storage.read_dataset.return_value = table
 
         # Invalid table name in extra_tables
-        with pytest.raises(ValueError, match="Invalid table name"):
+        with pytest.raises(ValueError, match="Invalid identifier"):
             bridge.query(
                 "data",
                 "SELECT * FROM data",

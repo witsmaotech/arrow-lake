@@ -1,0 +1,103 @@
+# Arrow Lake — Monitoring Overlay
+#
+# Prometheus + Grafana for observability.
+# Extends: docker-compose.yml
+#
+# Usage:
+#   make full    # via Makefile (all services + monitoring)
+#   docker compose -f docker-compose.yml -f docker-compose.monitoring.yml --profile monitoring up -d
+#
+# Access:
+#   Prometheus: http://localhost:${PROMETHEUS_PORT:-9090}
+#   Grafana:    http://localhost:${GRAFANA_PORT:-3000} (admin/admin)
+
+services:
+  # ---------------------------------------------------------------------------
+  # Prometheus — Metrics collection and alerting
+  # ---------------------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:${PROMETHEUS_VERSION:-v2.54.1}
+    container_name: arrow-lake-prometheus
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    networks:
+      - arrow-lake-net
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-30d}"
+      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
+      - "--web.console.templates=/usr/share/prometheus/consoles"
+    deploy:
+      resources:
+        limits:
+          memory: ${PROMETHEUS_MEMORY_LIMIT:-512M}
+          cpus: "${PROMETHEUS_CPU_LIMIT:-0.5}"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9090/-/healthy || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+        tag: "arrow-lake-prometheus"
+
+  # ---------------------------------------------------------------------------
+  # Grafana — Dashboards and visualization
+  # ---------------------------------------------------------------------------
+  grafana:
+    image: grafana/grafana:${GRAFANA_VERSION:-11.3.0}
+    container_name: arrow-lake-grafana
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_ROOT_URL: "%(protocol)s://%(domain)s/"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    networks:
+      - arrow-lake-net
+    deploy:
+      resources:
+        limits:
+          memory: ${GRAFANA_MEMORY_LIMIT:-256M}
+          cpus: "${GRAFANA_CPU_LIMIT:-0.25}"
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+        tag: "arrow-lake-grafana"
+
+# ==============================================================================
+# Volumes
+# ==============================================================================
+
+volumes:
+  prometheus-data:
+    driver: local
+  grafana-data:
+    driver: local

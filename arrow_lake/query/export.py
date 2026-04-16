@@ -131,6 +131,15 @@ class ExportBridge:
         Raises:
             StorageError: If format unsupported, path invalid, or write fails.
         """
+        # Validate output path — reject traversal attempts BEFORE format detection
+        output = Path(output_path)
+        if ".." in output.parts:
+            raise StorageError(
+                error_code=ErrorCode.EXPORT_PATH_INVALID,
+                message=f"Path traversal not allowed in output path: {output_path}",
+            )
+        path = output.resolve()
+
         fmt = self._detect_format(output_path, format)
 
         # Select columns if specified
@@ -143,15 +152,6 @@ class ExportBridge:
                     message=f"Columns not found: {missing}",
                 )
             table = table.select(columns)
-
-        # Validate output path — reject traversal attempts
-        path = Path(output_path)
-        if Path(output_path) != path and ".." in output_path:
-            raise StorageError(
-                error_code=ErrorCode.EXPORT_PATH_INVALID,
-                message=f"Path traversal not allowed in output path: {output_path}",
-            )
-        path = path.resolve()
         if path.exists() and not overwrite:
             raise StorageError(
                 error_code=ErrorCode.EXPORT_PATH_INVALID,

@@ -1,0 +1,61 @@
+# Version control
+.git/
+.gitignore
+.github/
+
+# BMAD artifacts
+_bmad/
+_bmad-output/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Environment files (secrets)
+.env
+.env.*
+!.env.example
+
+# IDE
+.roo/
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Tests (not needed in image)
+tests/
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# Node / JS artifacts
+node_modules/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Data directories (local dev data)
+data/
+*.parquet
+*.lance
+
+# Deploy artifacts (not needed in build context)
+deploy/.env
+deploy/scripts/
+deploy/monitoring/
+deploy/helm/
+deploy/*.yml
+deploy/Makefile

@@ -23,7 +23,7 @@ media:
   max_image_dimension: 4096
 
 embedding:
-  model: BAAI/bge-small-en-v1.5
+  model: Qwen/Qwen3-Embedding-0.6B
   batch_size: 128
   backend: local
 

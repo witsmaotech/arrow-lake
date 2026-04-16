@@ -1,0 +1,54 @@
+# Arrow Lake — Development Overlay
+#
+# Mounts local source code for hot-reload development.
+# Extends: docker-compose.yml
+#
+# Usage:
+#   make dev    # via Makefile
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile dev up -d
+
+services:
+  # ---------------------------------------------------------------------------
+  # API — writable source mount for hot-reload
+  # ---------------------------------------------------------------------------
+  api:
+    volumes:
+      - ../arrow_lake:/app/arrow_lake:ro
+      - ../flows:/app/flows:ro
+    environment:
+      ARROW_LAKE__OBSERVABILITY__LOG_LEVEL: "DEBUG"
+
+  # ---------------------------------------------------------------------------
+  # Ray Head — writable source + tests mount
+  # ---------------------------------------------------------------------------
+  ray-head:
+    volumes:
+      - ../arrow_lake:/app/arrow_lake:ro
+      - ../flows:/app/flows:ro
+      - ../tests:/app/tests:ro
+    environment:
+      ARROW_LAKE__OBSERVABILITY__LOG_LEVEL: "DEBUG"
+
+  # ---------------------------------------------------------------------------
+  # Ray Worker — read-only source mount
+  # ---------------------------------------------------------------------------
+  ray-worker:
+    volumes:
+      - ../arrow_lake:/app/arrow_lake:ro
+      - ../flows:/app/flows:ro
+    environment:
+      ARROW_LAKE__OBSERVABILITY__LOG_LEVEL: "DEBUG"
+
+  # ---------------------------------------------------------------------------
+  # Jupyter — full workspace mount for interactive development
+  # ---------------------------------------------------------------------------
+  jupyter:
+    volumes:
+      - ../arrow_lake:/app/arrow_lake
+      - ../flows:/app/flows
+      - ../tests:/app/tests
+      - ../configs:/app/configs:ro
+      - ../notebooks:/app/notebooks
+      - ../examples:/app/examples
+    environment:
+      ARROW_LAKE__OBSERVABILITY__LOG_LEVEL: "DEBUG"
