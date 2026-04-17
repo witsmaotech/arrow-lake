@@ -15,6 +15,7 @@ Usage::
 from __future__ import annotations
 
 import hashlib
+import subprocess
 import sys
 from pathlib import Path
 
@@ -410,3 +411,33 @@ def demo(base_uri: str, no_cleanup: bool) -> None:
     _print_success(f"Demo completed in {elapsed:.1f}s")
     if no_cleanup:
         console.print(f"Data preserved at: [cyan]{base_uri}[/cyan]")
+
+
+@main.command()
+@click.option("--base-uri", default="./demo_multimodal", help="Demo output directory")
+@click.option("--no-cleanup", is_flag=True, help="Keep demo data after completion")
+def multimodal_demo(base_uri: str, no_cleanup: bool) -> None:
+    """Run the multimodal demo — text, images, structured data, one platform."""
+    import sys
+
+    console.rule("[bold cyan]Arrow Lake Multimodal Demo[/bold cyan]")
+
+    project_root = str(Path(__file__).parent.parent)
+    os = __import__("os")
+    env = {**os.environ, "PYTHONPATH": f"{project_root}{os.pathsep}{os.environ.get('PYTHONPATH', '')}"}
+
+    cmd = [sys.executable, str(Path(project_root) / "examples" / "06_multimodal_demo.py")]
+    cmd.extend(["--base-uri", base_uri])
+    if no_cleanup:
+        cmd.append("--no-cleanup")
+
+    try:
+        result = subprocess.run(cmd, check=True, env=env, capture_output=True, text=True)
+        # Forward subprocess output through Click so CliRunner captures it
+        if result.stdout:
+            click.echo(result.stdout, nl=False)
+        if result.stderr:
+            click.echo(result.stderr, nl=False)
+    except FileNotFoundError:
+        _print_error("Demo script not found")
+        raise SystemExit(1) from None
