@@ -1,6 +1,6 @@
 [project]
 name = "arrow-lake"
-version = "0.1.0"
+version = "0.2.0"
 description = "Unified multimodal data lakehouse — Lance + Daft + Ray"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -43,6 +43,10 @@ dependencies = [
     # CLI (Story 7.2)
     "click>=8.1",
     "rich>=13.0",
+    # REST API (v0.2.0)
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+    "python-multipart>=0.0.18",
 ]
 
 [project.scripts]
@@ -87,6 +91,10 @@ ignore = ["E501", "B008", "S101", "RUF002", "RUF003", "PERF203"]
 "arrow_lake/query/fts.py" = ["F821"]
 "arrow_lake/query/hybrid.py" = ["F821"]
 "arrow_lake/query/olap.py" = ["F821"]
+"tests/api/*" = ["S101", "S106"]
+"examples/13_rest_api_basics.py" = ["RUF001", "RUF002", "RUF003"]
+"examples/14_rest_api_search_query.py" = ["RUF001", "RUF002", "RUF003"]
+"examples/15_rest_api_advanced.py" = ["RUF001", "RUF002", "RUF003"]
 
 [tool.ruff.format]
 quote-style = "double"

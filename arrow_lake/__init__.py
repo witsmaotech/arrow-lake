@@ -6,6 +6,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+import pyarrow as pa
+
 from arrow_lake._version import __version__
 from arrow_lake.config import ArrowLakeConfig
 from arrow_lake.exceptions import (
@@ -280,6 +282,42 @@ class Lake:
             name: Dataset name to delete.
         """
         self._get_storage().delete_dataset(name)
+
+    def create_dataset(self, name: str, data: pa.Table) -> None:
+        """Create a new dataset from an Arrow Table.
+
+        This is the primary way to write programmatic data into Arrow Lake.
+
+        Args:
+            name: Dataset name (must match ^[a-zA-Z_][a-zA-Z0-9_-]*$).
+            data: PyArrow Table to write as a Lance dataset.
+
+        Raises:
+            StorageError: If dataset already exists or name is invalid.
+            TypeError: If data is not a pyarrow.Table.
+        """
+        if not isinstance(data, pa.Table):
+            raise TypeError(
+                f"data must be a pyarrow.Table, got {type(data).__name__}"
+            )
+        self._get_storage().create_dataset(name, data)
+
+    def append_dataset(self, name: str, data: pa.Table) -> None:
+        """Append rows to an existing dataset from an Arrow Table.
+
+        Args:
+            name: Dataset name to append to.
+            data: PyArrow Table with matching schema.
+
+        Raises:
+            StorageError: If dataset does not exist or schema mismatch.
+            TypeError: If data is not a pyarrow.Table.
+        """
+        if not isinstance(data, pa.Table):
+            raise TypeError(
+                f"data must be a pyarrow.Table, got {type(data).__name__}"
+            )
+        self._get_storage().append_dataset(name, data)
 
     def query(
         self,

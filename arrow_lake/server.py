@@ -4,6 +4,10 @@ Provides a lightweight HTTP server with:
 - GET /health — returns JSON health status
 - GET {metrics_path} — Prometheus metrics endpoint (default /metrics)
 
+.. deprecated::
+    ``arrow_lake.server`` is deprecated since v0.2.0.
+    Use ``uvicorn arrow_lake.api.app:create_app --factory`` instead.
+
 Usage as standalone::
 
     python -m arrow_lake.server --port 8000
@@ -14,6 +18,15 @@ Usage with gunicorn::
 """
 
 from __future__ import annotations
+
+import warnings
+
+warnings.warn(
+    "arrow_lake.server is deprecated since v0.2.0. "
+    "Use 'uvicorn arrow_lake.api.app:create_app --factory' instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 import json
 import os

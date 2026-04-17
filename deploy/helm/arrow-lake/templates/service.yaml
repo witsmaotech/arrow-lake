@@ -8,9 +8,9 @@ metadata:
 spec:
   type: ClusterIP
   ports:
-    - name: metrics
-      port: {{ .Values.observability.metricsPort }}
-      targetPort: metrics
+    - name: api
+      port: 8000
+      targetPort: api
       protocol: TCP
   selector:
     {{- include "arrow-lake.selectorLabels" . | nindent 4 }}

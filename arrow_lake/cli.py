@@ -1,11 +1,12 @@
 """Arrow Lake CLI — command-line interface for common operations (Story 7.2).
 
-Provides subcommands: ingest, search, status, version.
+Provides subcommands: serve, ingest, search, status, version.
 
 Usage::
 
     arrow-lake --help
     arrow-lake version
+    arrow-lake serve --port 8000
     arrow-lake status --base-uri ./data/lake
     arrow-lake ingest --source ./data.csv --table my_data
     arrow-lake search --query "machine learning" --top-k 10
@@ -40,6 +41,35 @@ def _print_success(message: str) -> None:
 @click.version_option(package_name="arrow-lake", message="%(prog)s %(version)s")
 def main() -> None:
     """Arrow Lake — Unified multimodal data lakehouse CLI."""
+
+
+@main.command()
+@click.option("--host", default="0.0.0.0", help="Bind address")
+@click.option("--port", default=8000, type=int, help="Listen port")
+@click.option("--reload", is_flag=True, help="Enable hot-reload for development")
+def serve(host: str, port: int, reload: bool) -> None:
+    """Start the Arrow Lake REST API server."""
+    import subprocess
+    import sys
+
+    cmd = [sys.executable, "-m", "uvicorn", "arrow_lake.api.app:create_app"]
+    cmd.extend(["--factory", "--host", host, "--port", str(port)])
+    if reload:
+        cmd.append("--reload")
+
+    console.print(
+        f"Starting Arrow Lake API on [cyan]http://{host}:{port}[/cyan]"
+        f'{" (reload)" if reload else ""}'
+    )
+    console.print(f"Docs: http://{host}:{port}/docs")
+
+    try:
+        subprocess.run(cmd, check=True)
+    except KeyboardInterrupt:
+        _print_success("Server stopped")
+    except FileNotFoundError:
+        _print_error("uvicorn not installed. Run: pip install 'uvicorn[standard]'")
+        raise SystemExit(1) from None
 
 
 @main.command()
@@ -235,5 +265,148 @@ def search(
         _print_success(f"{results.num_rows} result(s)")
 
 
-if __name__ == "__main__":
-    main()
+@main.command()
+@click.option("--base-uri", default="./demo_data", help="Demo output directory")
+@click.option("--no-cleanup", is_flag=True, help="Keep demo data after completion")
+def demo(base_uri: str, no_cleanup: bool) -> None:
+    """Run an interactive demo — no Docker or config needed."""
+    import shutil
+    import time
+
+    import numpy as np
+    import pyarrow as pa
+
+    from arrow_lake import Lake
+
+    start_time = time.time()
+    console.rule("[bold cyan]Arrow Lake Demo[/bold cyan]")
+    console.print(
+        "This demo creates synthetic data and runs three queries.\n"
+        "No Docker, no config files, no external dependencies.\n"
+    )
+
+    lake = Lake(base_uri=base_uri)
+
+    try:
+        # --- Generate synthetic data ---
+        console.print("[bold]1. Creating synthetic dataset...[/bold]")
+        rng = np.random.RandomState(42)
+        n = 200
+        dim = 32
+
+        vectors = rng.randn(n, dim).astype(np.float32)
+        norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+        norms = np.where(norms == 0, 1, norms)
+        vectors = vectors / norms
+
+        sentences = [
+            "Machine learning models require large datasets for training",
+            "Deep learning architectures use neural networks with many layers",
+            "Data analytics helps businesses make informed decisions",
+            "Python is the most popular language for data science",
+            "Vector databases enable efficient similarity search",
+            "Natural language processing transforms text into embeddings",
+            "Computer vision models process images for classification",
+            "Reinforcement learning trains agents through reward signals",
+            "Time series forecasting predicts future values from historical data",
+            "Graph neural networks operate on structured graph representations",
+        ]
+
+        table = pa.table(
+            {
+                "id": [f"doc_{i:04d}" for i in range(n)],
+                "text_content": [sentences[i % len(sentences)] for i in range(n)],
+                "category": [
+                    "ml" if i % 4 == 0
+                    else "dl" if i % 4 == 1
+                    else "data" if i % 4 == 2
+                    else "dev"
+                    for i in range(n)
+                ],
+                "word_count": [8 + (i % 12) for i in range(n)],
+                "text_embedding": pa.FixedSizeListArray.from_arrays(
+                    vectors.ravel(), dim
+                ),
+            }
+        )
+
+        lake.create_dataset("demo_docs", table)
+        console.print(f"   Created [cyan]demo_docs[/cyan] with {n} rows\n")
+
+        # --- Vector search ---
+        console.print("[bold]2. Vector Search (top 5)[/bold]")
+        query_vec = rng.randn(dim).astype(np.float32)
+        query_vec = query_vec / np.linalg.norm(query_vec)
+
+        vs_result = lake.search("demo_docs", query_vec.tolist(), top_k=5)
+
+        vs_table = Table(title="Vector Search Results")
+        vs_table.add_column("#", justify="right", style="dim")
+        vs_table.add_column("ID")
+        vs_table.add_column("Category")
+        vs_table.add_column("Distance", justify="right", style="green")
+
+        for rank in range(min(vs_result.row_count, 5)):
+            row_id = vs_result.table.column("id")[rank].as_py()
+            cat = vs_result.table.column("category")[rank].as_py()
+            dist = vs_result.table.column("_distance")[rank].as_py()
+            vs_table.add_row(str(rank + 1), row_id, cat, f"{dist:.4f}")
+
+        console.print(vs_table)
+        console.print()
+
+        # --- SQL analytics ---
+        console.print("[bold]3. SQL Analytics[/bold]")
+        olap_result = lake.olap_query(
+            "demo_docs",
+            "SELECT category, COUNT(*) as cnt, AVG(word_count) as avg_words "
+            "FROM demo_docs GROUP BY category ORDER BY cnt DESC",
+        )
+
+        sql_table = Table(title="Category Statistics")
+        sql_table.add_column("Category", style="cyan")
+        sql_table.add_column("Count", justify="right")
+        sql_table.add_column("Avg Words", justify="right", style="green")
+
+        for i in range(olap_result.row_count):
+            cat = olap_result.table.column("category")[i].as_py()
+            cnt = olap_result.table.column("cnt")[i].as_py()
+            avg = olap_result.table.column("avg_words")[i].as_py()
+            sql_table.add_row(cat, str(cnt), f"{avg:.1f}")
+
+        console.print(sql_table)
+        console.print()
+
+        # --- Full-text search ---
+        console.print("[bold]4. Full-Text Search[/bold]")
+        try:
+            lake.create_fts_index("demo_docs")
+            fts_result = lake.text_search("demo_docs", "machine learning", top_k=5)
+
+            fts_table = Table(title="Full-Text Search: 'machine learning'")
+            fts_table.add_column("#", justify="right", style="dim")
+            fts_table.add_column("ID")
+            fts_table.add_column("Score", justify="right", style="green")
+
+            for rank in range(min(fts_result.row_count, 5)):
+                row_id = fts_result.table.column("id")[rank].as_py()
+                score = fts_result.table.column("_score")[rank].as_py()
+                fts_table.add_row(str(rank + 1), row_id, f"{score:.4f}")
+
+            console.print(fts_table)
+        except Exception as exc:
+            console.print(f"   [yellow]FTS skipped[/yellow]: {exc}")
+        console.print()
+
+    finally:
+        if not no_cleanup:
+            for ds in lake.list_datasets():
+                lake.delete_dataset(ds)
+            shutil.rmtree(base_uri, ignore_errors=True)
+            console.print("[dim]Demo data cleaned up.[/dim]")
+
+    elapsed = time.time() - start_time
+    console.rule()
+    _print_success(f"Demo completed in {elapsed:.1f}s")
+    if no_cleanup:
+        console.print(f"Data preserved at: [cyan]{base_uri}[/cyan]")

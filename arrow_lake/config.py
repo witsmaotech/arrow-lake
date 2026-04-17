@@ -98,6 +98,7 @@ class StorageConfig(BaseModel):
     """Storage layer configuration.
 
     Attributes:
+        base_uri: Base URI for Lance dataset storage (local path or s3:// URI).
         backend: Storage backend type (minio, s3, gcs, local).
         s3_endpoint: S3-compatible endpoint URL.
         s3_access_key: S3 access key (empty = use default credentials).
@@ -106,6 +107,7 @@ class StorageConfig(BaseModel):
         s3_region: S3 region.
     """
 
+    base_uri: str = "./data"
     backend: StorageBackend = StorageBackend.MINIO
     s3_endpoint: str = "http://localhost:9000"
     s3_access_key: str = ""
@@ -651,6 +653,32 @@ class AuditConfig(BaseModel):
     auto_record_workflow: bool = True
 
 
+class ApiConfig(BaseModel):
+    """REST API configuration (v0.2.0).
+
+    Attributes:
+        enabled: Whether the REST API server is active.
+        host: Bind address.
+        port: Listen port.
+        api_key: API key for authentication. Empty disables auth.
+        api_key_header: HTTP header name for API key.
+        cors_origins: Allowed CORS origins.
+        arrow_ipc_threshold_bytes: Results larger than this use Arrow IPC encoding.
+        request_timeout_seconds: Maximum request processing time.
+        max_request_size_bytes: Maximum HTTP request body size.
+    """
+
+    enabled: bool = False
+    host: str = "0.0.0.0"
+    port: int = 8000
+    api_key: str = ""
+    api_key_header: str = "X-API-Key"
+    cors_origins: list[str] = []
+    arrow_ipc_threshold_bytes: int = 10240  # 10 KB
+    request_timeout_seconds: float = 300.0
+    max_request_size_bytes: int = 100 * 1024 * 1024  # 100 MB
+
+
 class ArrowLakeConfig(BaseSettings):
     """Top-level Arrow Lake configuration.
 
@@ -693,6 +721,7 @@ class ArrowLakeConfig(BaseSettings):
     lineage: LineageConfig = LineageConfig()
     audit: AuditConfig = AuditConfig()
     export: ExportConfig = ExportConfig()
+    api: ApiConfig = ApiConfig()
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> ArrowLakeConfig:
@@ -749,6 +778,7 @@ class ArrowLakeConfig(BaseSettings):
             lineage=merged["lineage"],
             audit=merged["audit"],
             export=merged["export"],
+            api=merged["api"],
         )
 
 
@@ -782,6 +812,7 @@ def _build_merged_update(base: ArrowLakeConfig, yaml_data: dict[str, Any]) -> di
         "lineage": LineageConfig,
         "export": ExportConfig,
         "audit": AuditConfig,
+        "api": ApiConfig,
     }
     result: dict[str, Any] = {}
 

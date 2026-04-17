@@ -221,3 +221,52 @@ class TestCatalogEntryDTO:
         result = CatalogResult(datasets=[], total=0)
         with pytest.raises(AttributeError):
             result.total = 99  # type: ignore[misc]
+
+
+class TestLakeCreateDataset:
+    """Test Lake.create_dataset() public method."""
+
+    def test_create_dataset_writes_table(self, lake: Lake) -> None:
+        table = pa.table({"id": ["1", "2"], "val": [10, 20]})
+        lake.create_dataset("test_create", table)
+        assert "test_create" in lake.list_datasets()
+        result = lake.catalog()
+        entry = next(e for e in result.datasets if e.name == "test_create")
+        assert entry.num_rows == 2
+
+    def test_create_dataset_rejects_non_table(self, lake: Lake) -> None:
+        with pytest.raises(TypeError, match="pyarrow.Table"):
+            lake.create_dataset("bad", [1, 2, 3])  # type: ignore
+
+    def test_create_dataset_rejects_existing(self, lake: Lake) -> None:
+        table = pa.table({"a": [1]})
+        lake.create_dataset("dup", table)
+        with pytest.raises(Exception):
+            lake.create_dataset("dup", table)
+
+    def test_create_dataset_validates_name(self, lake: Lake) -> None:
+        table = pa.table({"a": [1]})
+        with pytest.raises(Exception):
+            lake.create_dataset("bad;name", table)
+
+
+class TestLakeAppendDataset:
+    """Test Lake.append_dataset() public method."""
+
+    def test_append_dataset_adds_rows(self, lake: Lake) -> None:
+        table = pa.table({"id": ["1"], "val": [10]})
+        lake.create_dataset("append_test", table)
+        more = pa.table({"id": ["2"], "val": [20]})
+        lake.append_dataset("append_test", more)
+        result = lake.catalog()
+        entry = next(e for e in result.datasets if e.name == "append_test")
+        assert entry.num_rows == 2
+
+    def test_append_dataset_rejects_non_table(self, lake: Lake) -> None:
+        with pytest.raises(TypeError):
+            lake.append_dataset("missing", "not a table")  # type: ignore
+
+    def test_append_dataset_rejects_missing_dataset(self, lake: Lake) -> None:
+        table = pa.table({"a": [1]})
+        with pytest.raises(Exception):
+            lake.append_dataset("nonexistent", table)

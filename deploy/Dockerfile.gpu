@@ -49,11 +49,14 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # ==============================================================================
 # Stage 2 — runtime (GPU)
 # ==============================================================================
-FROM nvidia/cuda12.4.1-runtime-ubuntu22.04 AS runtime
+FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04 AS runtime
 
 LABEL maintainer="wits@sunpw.dev"
 LABEL description="Arrow Lake GPU — Multimodal data lakehouse with CUDA support"
 LABEL org.opencontainers.image.source="https://github.com/wits-sunpw/arrow-lake"
+
+# Install uv for Python management
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 # Runtime system dependencies (Ubuntu packages)
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -62,13 +65,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 \
     libgrpc++1 \
     libssl3 \
-    python3 \
-    python3-pip \
-    python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
-# Ensure Python 3.12 is available (CUDA base ships 3.10)
-RUN ln -sf /usr/bin/python3 /usr/bin/python 2>/dev/null || true
+# Install standalone Python 3.12 via uv (reliable across all base images)
+RUN uv python install 3.12
+
+# Create symlinks so the builder venv works in the runtime image
+# venv bin/python3 → python → /usr/local/bin/python3 (builder path)
+RUN UV_PYTHON=$(uv python find 3.12) \
+    && ln -sf "$UV_PYTHON" /usr/local/bin/python3 \
+    && ln -sf "$UV_PYTHON" /usr/bin/python3 \
+    && ln -sf "$UV_PYTHON" /usr/bin/python \
+    && python3 --version
 
 # Create non-root user
 RUN groupadd -r arrowlake && useradd -r -g arrowlake -d /app -s /sbin/nologin arrowlake
@@ -106,4 +114,4 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
     CMD ["curl", "-sf", "http://localhost:8000/health"]
 
-CMD ["python", "-m", "arrow_lake.server", "--port", "8000"]
+CMD ["uvicorn", "arrow_lake.api.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]

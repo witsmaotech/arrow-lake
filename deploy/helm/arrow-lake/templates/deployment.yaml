@@ -18,7 +18,7 @@ spec:
         component: api-server
       annotations:
         prometheus.io/scrape: "true"
-        prometheus.io/port: {{ .Values.observability.metricsPort | quote }}
+        prometheus.io/port: "8000"
         prometheus.io/path: {{ .Values.observability.metricsPath }}
     spec:
       containers:
@@ -26,10 +26,16 @@ spec:
           image: "{{ .Values.apiServer.image.repository }}:{{ .Values.apiServer.image.tag }}"
           imagePullPolicy: {{ .Values.apiServer.image.pullPolicy }}
           ports:
-            - name: metrics
-              containerPort: {{ .Values.observability.metricsPort }}
+            - name: api
+              containerPort: 8000
               protocol: TCP
           env:
+            - name: ARROW_LAKE__API__ENABLED
+              value: "true"
+            - name: ARROW_LAKE__API__HOST
+              value: "0.0.0.0"
+            - name: ARROW_LAKE__API__PORT
+              value: "8000"
             - name: ARROW_LAKE__STORAGE__S3_ENDPOINT
               value: {{ .Values.storage.endpoint | quote }}
             - name: ARROW_LAKE__STORAGE__S3_BUCKET
@@ -53,14 +59,14 @@ spec:
           livenessProbe:
             httpGet:
               path: {{ .Values.apiServer.healthPath }}
-              port: metrics
+              port: api
             initialDelaySeconds: 10
             periodSeconds: 30
             timeoutSeconds: 5
           readinessProbe:
             httpGet:
               path: {{ .Values.apiServer.healthPath }}
-              port: metrics
+              port: api
             initialDelaySeconds: 5
             periodSeconds: 10
             timeoutSeconds: 3

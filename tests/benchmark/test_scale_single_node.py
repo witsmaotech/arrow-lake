@@ -293,7 +293,7 @@ class TestOLAPAtScale:
             "GROUP BY modality (1M rows)",
             lambda: bridge.query(
                 "olap_1m",
-                "SELECT modality, COUNT(*) as cnt, AVG(quality_score) FROM data GROUP BY modality",
+                "SELECT modality, COUNT(*) as cnt, AVG(quality_score) FROM olap_1m GROUP BY modality",
             ),
             rows=1_000_000,
             repeats=5,

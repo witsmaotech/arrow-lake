@@ -20,6 +20,7 @@ from arrow_lake.exceptions import ErrorCode, QueryError
 from arrow_lake.validation import DANGEROUS_SQL_KEYWORDS_RE
 
 _LARGE_TABLE_THRESHOLD = 1_000_000
+_SMALL_IVF_THRESHOLD = 65_536
 _PQ_MIN_TRAINING_ROWS = 256
 _DEFAULT_VECTOR_COLUMN = "text_embedding"
 _DEFAULT_EMBEDDING_DIM = 384
@@ -353,9 +354,12 @@ class VectorSearchBridge:
     def _auto_select_partitions(num_rows: int, base_partitions: int = 256) -> int:
         """Auto-select IVF partitions based on row count.
 
-        - <1M rows: use base_partitions
-        - >=1M rows: use sqrt(num_rows), capped at 4096
+        - <65_536 rows (small): use min(sqrt(num_rows) * 4, base_partitions),
+          which avoids the lance KMeans empty-cluster warning.
+        - >=1M rows: use sqrt(num_rows), capped at 4096.
         """
+        if num_rows < _SMALL_IVF_THRESHOLD:
+            return min(int(math.sqrt(num_rows)) * 4, base_partitions)
         if num_rows < _LARGE_TABLE_THRESHOLD:
             return base_partitions
         return min(int(math.sqrt(num_rows)), 4096)

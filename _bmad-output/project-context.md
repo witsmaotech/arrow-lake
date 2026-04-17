@@ -93,7 +93,7 @@ _This file contains critical rules and patterns that AI agents must follow when 
 8. **Ray Placement Group required** — CPU/GPU workers must be co-located on the same node. Cross-node Object Store access degrades 100-500x.
 9. **Catalog Actor is singleton** — Ray Named Actor with `resources={"catalog": 1}`. Only route for table metadata operations.
 10. **QueryEngine is NOT a Ray Actor** — Synchronous class. OLAP and catalog queries via DuckDB SQL (see ADR-05).
-11. **Connection pool: 4 read + 1 write** — Catalog-only workload sizing. Do NOT use 8 read connections (that was the pre-demotion number).
+11. **Connection pool: 6 read + 2 write** — Serves both OLAP analytics queries and Catalog metadata operations. OLAP queries register Lance tables in read-only mode and execute SQL.
 12. **Lance Fragment size: 128-512MB** — Monitor and auto-compact if out of range.
 13. **Version cleanup on schedule** — Use Metaflow `@schedule` for periodic version cleanup. `production` tag permanently retained.
 14. **GPU cost hard cap** — namespace `ResourceQuota` + Prometheus budget alerts.

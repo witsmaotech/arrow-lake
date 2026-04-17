@@ -204,5 +204,5 @@ deploy/                   # Docker、Compose、Helm
 
 ### 最后更新
 
-2026-04-13 — 专家评审后同步。DuckDB 降级为仅 Catalog，Daft SQL 升级为主 OLAP，连接池 8→4，8 个 Epic 共 80 个 Story。
+2026-04-14 — ADR-05: DuckDB OLAP 偏差记录。Rule 6 更新为反映 DuckDB 同时用于 Catalog + OLAP SQL 的当前实现。连接池调整为 6 读 + 2 写。长期目标仍为 Daft SQL 迁移。
 2026-04-13 — 版本锁定策略文档化。ArrowCopyDetector 作为 Story 1.5 AC 加入。规则 43-45 新增（Schema 迁移、限流、死锁预防）。架构文档新增 ADR-03（Object Store 规模）和 ADR-04（Embedding 服务）。

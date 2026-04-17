@@ -51,6 +51,7 @@ Thumbs.db
 data/
 lake_data/
 output/
+examples/lake_data/
 *.parquet
 *.lance
 

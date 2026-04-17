@@ -37,6 +37,7 @@ x-arrow-lake: &arrow-lake
       tag: "arrow-lake"
 
 x-arrow-lake-env: &arrow-lake-env
+  ARROW_LAKE__STORAGE__BASE_URI: "s3://${MINIO_BUCKET:-arrow-lake}"
   ARROW_LAKE__STORAGE__S3_ENDPOINT: "http://minio:9000"
   ARROW_LAKE__STORAGE__BACKEND: "minio"
   ARROW_LAKE__OBSERVABILITY__METRICS_ENABLED: "true"
@@ -62,6 +63,9 @@ services:
       - "${API_PORT:-8000}:8000"
     environment:
       <<: [*arrow-lake-env]
+      ARROW_LAKE__API__ENABLED: "true"
+      ARROW_LAKE__API__HOST: "0.0.0.0"
+      ARROW_LAKE__API__PORT: "8000"
       ARROW_LAKE__OBSERVABILITY__METRICS_PORT: "8000"
     depends_on:
       minio:
@@ -134,7 +138,7 @@ services:
     profiles: ["compute", "dev", "gpu", "monitoring"]
     container_name: arrow-lake-ray-head
     ports:
-      - "6379:6379"
+      - "6378:6379"
       - "8265:8265"
     environment:
       <<: [*arrow-lake-env]
@@ -173,6 +177,8 @@ services:
     <<: [*arrow-lake]
     profiles: ["compute", "dev", "gpu", "monitoring"]
     restart: unless-stopped
+    healthcheck:
+      disable: true
     deploy:
       replicas: ${RAY_WORKER_REPLICAS:-1}
       resources:
