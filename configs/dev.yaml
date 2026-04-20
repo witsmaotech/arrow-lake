@@ -76,7 +76,7 @@ workflow:
   min_backoff_seconds: 1.0
   max_backoff_seconds: 60.0
   checkpoint_enabled: true
-  ray_execution_enabled: false
+  ray_execution_enabled: true
   auto_tag_runs: true
   artifact_retention_days: 30
   schedule_cron: "0 8 * * *"

@@ -1065,7 +1065,7 @@ workflow:
         """Verify dev.yaml workflow section loads correctly."""
         config = ArrowLakeConfig.from_yaml("configs/dev.yaml")
         assert config.workflow.max_retry_attempts == 3
-        assert config.workflow.ray_execution_enabled is False
+        assert config.workflow.ray_execution_enabled is True
         assert config.workflow.auto_tag_runs is True
 
 
