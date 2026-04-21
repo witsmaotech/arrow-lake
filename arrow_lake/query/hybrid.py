@@ -15,7 +15,7 @@ from typing import Any
 import pyarrow as pa
 import structlog
 
-from arrow_lake.config import HybridSearchConfig
+from arrow_lake.config import HybridSearchConfig, StorageConfig
 from arrow_lake.exceptions import ErrorCode, QueryError
 
 _log = structlog.get_logger(__name__)
@@ -64,8 +64,12 @@ class HybridSearchBridge:
         self,
         storage: Any,
         config: HybridSearchConfig | None = None,
+        storage_config: StorageConfig | None = None,
+        lance_scan_mode: str = "auto",
     ) -> None:
         self._storage = storage
+        self._storage_config = storage_config
+        self._lance_scan_mode = lance_scan_mode
         self._config = config or HybridSearchConfig()
 
     def search(
@@ -124,13 +128,153 @@ class HybridSearchBridge:
         vector_top_k = effective_top_k * self._config.vector_top_k_multiplier
         fts_top_k = effective_top_k * self._config.fts_top_k_multiplier
 
+        # Try DuckDB native hybrid search first
+        if (
+            self._lance_scan_mode != "pyarrow_fallback"
+            and hasattr(self._storage, "dataset_uri")
+            and where is None
+        ):
+            try:
+                result_table = self._search_via_duckdb(
+                    dataset_name,
+                    query_vector,
+                    query_text,
+                    vector_column=vector_column,
+                    top_k=effective_top_k,
+                )
+            except QueryError:
+                raise
+            except Exception:
+                _log.debug(
+                    "DuckDB hybrid search failed, falling back to sub-bridge RRF",
+                    exc_info=True,
+                )
+                result_table = self._search_via_sub_bridges(
+                    dataset_name,
+                    query_vector,
+                    query_text,
+                    vector_top_k,
+                    fts_top_k,
+                    vector_column,
+                    fts_column,
+                    where,
+                    effective_top_k,
+                )
+        else:
+            result_table = self._search_via_sub_bridges(
+                dataset_name,
+                query_vector,
+                query_text,
+                vector_top_k,
+                fts_top_k,
+                vector_column,
+                fts_column,
+                where,
+                effective_top_k,
+            )
+
+        # Extract scores for result
+        max_rrf_score: float | None = None
+        if result_table.num_rows > 0 and "_rrf_score" in result_table.column_names:
+            scores = result_table.column("_rrf_score").to_pylist()
+            max_rrf_score = max(scores) if scores else None
+
+        return HybridSearchResult(
+            table=result_table,
+            row_count=result_table.num_rows,
+            query_text=query_text,
+            query_vector_dim=len(query_vector),
+            top_k=effective_top_k,
+            rrf_k=self._config.rrf_k,
+            max_rrf_score=max_rrf_score,
+        )
+
+    def _search_via_duckdb(
+        self,
+        dataset_name: str,
+        query_vector: list[float],
+        query_text: str,
+        *,
+        vector_column: str,
+        top_k: int,
+    ) -> pa.Table:
+        """Search via DuckDB lance_hybrid_search() SQL function.
+
+        Args:
+            dataset_name: Lance dataset name.
+            query_vector: Query embedding vector.
+            query_text: Search query string.
+            vector_column: Vector column name.
+            top_k: Number of results.
+
+        Returns:
+            Arrow Table with search results and _rrf_score column.
+
+        Raises:
+            QueryError: If DuckDB search fails.
+        """
+        from arrow_lake.query._db import create_duckdb_session
+
+        if not hasattr(self._storage, "dataset_uri"):
+            raise QueryError(
+                error_code=ErrorCode.HYBRID_SEARCH_FAILED,
+                message="storage.dataset_uri() not available for DuckDB native hybrid",
+            )
+
+        uri = self._storage.dataset_uri(dataset_name)
+
+        from arrow_lake.validation import validate_identifier
+
+        validate_identifier(vector_column)
+
+        vec_list = "[" + ", ".join(str(v) for v in query_vector) + "]"
+        safe_text = query_text.replace("'", "''")
+
+        sql = (
+            f"SELECT * FROM lance_hybrid_search("
+            f"  '{uri}',"
+            f"  '{vector_column}',"
+            f"  NULL,"  # fts_column — let Lance auto-detect
+            f"  CAST({vec_list} AS FLOAT[]),"
+            f"  '{safe_text}',"
+            f"  k := {top_k}"
+            f") LIMIT {top_k}"
+        )
+
+        with create_duckdb_session(storage_config=self._storage_config) as conn:
+            reader = conn.execute(sql).arrow()
+            if hasattr(reader, "read_all"):
+                return reader.read_all()
+            return reader
+
+    def _search_via_sub_bridges(
+        self,
+        dataset_name: str,
+        query_vector: list[float],
+        query_text: str,
+        vector_top_k: int,
+        fts_top_k: int,
+        vector_column: str,
+        fts_column: str | None,
+        where: str | None,
+        effective_top_k: int,
+    ) -> pa.Table:
+        """Search via VectorSearchBridge + FullTextSearchBridge + RRF fusion."""
+        from arrow_lake.query.fts import FullTextSearchBridge
+        from arrow_lake.query.vector import VectorSearchBridge
+
+        vector_bridge = VectorSearchBridge(
+            self._storage,
+            storage_config=self._storage_config,
+            lance_scan_mode=self._lance_scan_mode,
+        )
+        fts_bridge = FullTextSearchBridge(
+            self._storage,
+            storage_config=self._storage_config,
+            lance_scan_mode=self._lance_scan_mode,
+        )
+
         try:
-            from arrow_lake.query.fts import FullTextSearchBridge
-            from arrow_lake.query.vector import VectorSearchBridge
-
-            vector_bridge = VectorSearchBridge(self._storage)
-            fts_bridge = FullTextSearchBridge(self._storage)
-
             vector_result = vector_bridge.search(
                 dataset_name,
                 query_vector,
@@ -153,26 +297,11 @@ class HybridSearchBridge:
                 message=f"Hybrid search failed on '{dataset_name}': {exc}",
             ) from exc
 
-        fused_table = self._rrf_fuse(
+        return self._rrf_fuse(
             vector_result.table,
             fts_result.table,
             k=self._config.rrf_k,
             top_k=effective_top_k,
-        )
-
-        max_rrf_score: float | None = None
-        if fused_table.num_rows > 0 and "_rrf_score" in fused_table.column_names:
-            scores = fused_table.column("_rrf_score").to_pylist()
-            max_rrf_score = max(scores) if scores else None
-
-        return HybridSearchResult(
-            table=fused_table,
-            row_count=fused_table.num_rows,
-            query_text=query_text,
-            query_vector_dim=len(query_vector),
-            top_k=effective_top_k,
-            rrf_k=self._config.rrf_k,
-            max_rrf_score=max_rrf_score,
         )
 
     @staticmethod
@@ -267,14 +396,13 @@ class HybridSearchBridge:
         Raises:
             QueryError: If dangerous SQL keywords are detected.
         """
-        from arrow_lake.validation import DANGEROUS_SQL_KEYWORDS_RE
+        from arrow_lake.exceptions import ErrorCode, QueryError
+        from arrow_lake.validation import validate_where_clause
 
-        match = DANGEROUS_SQL_KEYWORDS_RE.search(where)
-        if match:
+        try:
+            validate_where_clause(where)
+        except ValueError as exc:
             raise QueryError(
                 error_code=ErrorCode.HYBRID_SEARCH_FAILED,
-                message=(
-                    f"Where clause contains dangerous SQL keyword: {match.group()!r}. "
-                    f"Only SELECT-safe filter expressions are allowed."
-                ),
-            )
+                message=str(exc),
+            ) from exc

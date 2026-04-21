@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 def mock_lake() -> MagicMock:
     """Return a mock Lake instance for isolated API tests."""
     lake = MagicMock()
-    lake.version.return_value = "0.2.0"
+    lake.version.return_value = "1.0.0"
     lake.catalog.return_value = MagicMock()
     return lake
 

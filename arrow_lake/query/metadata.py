@@ -4,22 +4,33 @@ Provides SQL query interface over Lance datasets via DuckDB.
 Uses zero-copy Arrow → DuckDB → Arrow pipeline.
 
 Story 7.6: Added to_arrow() convenience method on MetadataQueryResult.
+
+M0b migration:
+- DuckDBSession → create_duckdb_session() (extension loading + resource governance)
+- LanceScanAdapter.create_view() for native lance scan
+- Backward-compatible PyArrow fallback via conn.register()
 """
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
+from typing import Any
 
 import pyarrow as pa
 
+from arrow_lake.config import StorageConfig
 from arrow_lake.exceptions import ErrorCode, QueryError
 from arrow_lake.ingest.storage import LanceStorageManager
-from arrow_lake.query._db import DuckDBSession
+from arrow_lake.query._db import create_duckdb_session
+from arrow_lake.query.lance_adapter import create_lance_scan_adapter
 from arrow_lake.validation import (
     DANGEROUS_SQL_KEYWORDS_RE,
     SAFE_IDENTIFIER_RE,
     validate_identifier,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -46,15 +57,21 @@ class MetadataQueryResult:
 class MetadataSearchBridge:
     """Bridges Lance datasets to DuckDB for SQL metadata queries.
 
-    Pipeline: Lance → Arrow → DuckDB table → SQL → Arrow result.
+    Pipeline: Lance → (native scan | Arrow) → DuckDB → SQL → Arrow result.
     Only SELECT queries are allowed for safety.
 
     Args:
         storage: LanceStorageManager instance.
+        storage_config: Storage configuration for S3 access (None = local).
     """
 
-    def __init__(self, storage: LanceStorageManager) -> None:
+    def __init__(
+        self,
+        storage: LanceStorageManager,
+        storage_config: StorageConfig | None = None,
+    ) -> None:
         self._storage = storage
+        self._storage_config = storage_config
 
     def query(
         self,
@@ -113,9 +130,9 @@ class MetadataSearchBridge:
                 message=f"Failed to read dataset '{dataset_name}': {exc}",
             ) from exc
 
-        # Register tables and execute query
-        with DuckDBSession() as conn:
-            conn.register(dataset_name, source)
+        # Execute query with session
+        with create_duckdb_session(storage_config=self._storage_config) as conn:
+            self._register_dataset(conn, dataset_name, source)
             for name, extra_table in (tables or {}).items():
                 conn.register(name, extra_table)
             result_reader = conn.execute(sql).arrow()
@@ -131,3 +148,24 @@ class MetadataSearchBridge:
             column_count=result_table.num_columns,
             sql=sql,
         )
+
+    def _register_dataset(self, conn: Any, dataset_name: str, source: Any) -> None:
+        """Register a Lance dataset in DuckDB, preferring native lance scan.
+
+        Tries LanceScanAdapter.create_view() for zero-copy native scan.
+        Falls back to conn.register() for PyArrow compatibility.
+        """
+        try:
+            if hasattr(self._storage, "dataset_uri"):
+                uri = self._storage.dataset_uri(dataset_name)
+                adapter = create_lance_scan_adapter(conn, mode="auto")
+                adapter.create_view(conn, uri, dataset_name)
+                logger.debug("Registered %s via native lance scan", dataset_name)
+                return
+        except Exception:
+            logger.debug(
+                "Native lance scan failed for %s, falling back to PyArrow",
+                dataset_name,
+            )
+
+        conn.register(dataset_name, source)

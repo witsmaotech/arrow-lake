@@ -1,7 +1,7 @@
 # Arrow Lake v1.0 产品架构设计文档
 
 **版本**: v1.0-draft | **日期**: 2026-04-20
-**基于**: v0.2.0 五方评审共识 (架构师 5.8 / 开发 6.2 / BA 3.5 / PM 3.2 / 敏捷PM 4.5)
+**基于**: v0.2.0 五方评审共识 + 深度代码审查
 **状态**: 设计阶段，待用户审批
 
 ---
@@ -12,6 +12,58 @@ v0.2.0 阶段评审揭示：代码质量 8/10 但生产就绪度仅 ~5/10。核�
 
 1. **多模态 RAG + 知识图谱 (HugeGraph)** — 从"数据平台"升级为"智能数据平台"
 2. **MinIO 真实集成** — 当前所有数据仅存储在本地文件系统
+
+---
+
+## 零、当前架构问题诊断（代码审查发现）
+
+### 0A. DuckDB 定位（ADR-05/ADR-06 已确认）
+
+原始设计 (project-context Rule 6) 规定 DuckDB 仅用于 Catalog，Daft SQL 作为主 OLAP 引擎。但 Daft 0.7.8 无 SQL 能力，经两个 ADR 演进，DuckDB **正式成为 OLAP + Catalog 引擎**。
+
+**DuckDB 在代码中的实际职责：**
+- OLAP SQL 查询（`arrow_lake/query/olap.py`）
+- 分面搜索 CUBE（`arrow_lake/query/faceted.py`）
+- 元数据 SQL（`arrow_lake/query/metadata.py`）
+- Catalog 元数据存储（`arrow_lake/catalog/actor.py` — DuckDB 临时文件）
+
+### 0B. DuckDB 单节点生产方案
+
+**渐进式解决（3 阶段）：**
+
+| 阶段 | 方案 | 适用场景 |
+|------|------|---------|
+| v1.0 | 查询资源治理 (内存限制+并发控制+超时熔断) | 单节点+多并发 |
+| v1.1 | MotherDuck 云托管 | 需要弹性扩展 |
+| v1.2+ | DuckDB 分布式模式 | 数据量>10M行 |
+
+### 0C. DuckDB Lance 原生扩展 + DuckLake 分层架构 (2026-04-20 新增)
+
+**重大发现**: DuckDB 1.5.2 内置 Lance 扩展 + DuckLake 扩展，可直接在 Lance 文件上执行 SQL，并支持 DuckLake 可写衍生层。详见 `docs/adr-06-duckdb-olap-and-ducklake-evaluation.md`。
+
+**核心变更**：
+- DuckDB 同时加载 `lance` 和 `ducklake` 扩展，成为统一 SQL 引擎
+- `__lance_scan()` 替代 PyArrow 中间层，直接读取 Lance 文件
+- `lance_vector_search()` / `lance_fts()` / `lance_hybrid_search()` 原生 SQL 函数
+- DuckLake 作为可写衍生层：ETL 物化、工作区暂存、DML 支持
+
+**分层架构**：
+```
+DuckDB (统一 SQL 引擎)
+├── lance 扩展 → Lance (只读 SSOT: 原始数据、向量、FTS)
+├── ducklake 扩展 → DuckLake (可写衍生: ETL、物化、工作区)
+└── 原生 SQL → JOIN 跨存储查询
+```
+
+### 0D. 其他架构问题
+
+| # | 问题 | 严重度 | 位置 |
+|---|------|--------|------|
+| 1 | Lake God Class (950+ 行, 30+ 方法) | HIGH | `__init__.py` |
+| 2 | S3/MinIO storage_options 未传递 | HIGH | `storage.py` |
+| 3 | Ingestor 线程不安全 | MEDIUM | `ingestor.py` |
+| 4 | Schema 演化能力有限 | MEDIUM | `schema.py` |
+| 5 | Ray 单 Named Actor Catalog | MEDIUM | `catalog/actor.py` |
 
 ---
 
@@ -37,76 +89,315 @@ v0.2.0 阶段评审揭示：代码质量 8/10 但生产就绪度仅 ~5/10。核�
          |  Core Lake SDK  |       |  RAG Engine   |
          |  (Lake facade)  |       |  (新增模块)    |
          +--------+--------+       +-------+-------+
-                  |                        |
-    +-------------+-------------+  +-------+-------+
-    |             |             |  |               |
-+---v---+  +-----v-----+ +----v---v--+  +---------v---------+
-| Lance |  |  MinIO    | | HugeGraph |  |   LLM Providers   |
-|  DB   |  |  (S3)     | | (KG)      |  | OpenAI/Anthropic/  |
-| 向量+  |  | 媒体二进制 | | 图存储    |  | vLLM/Ollama        |
-| 元数据 |  | 生命周期   | | Gremlin   |  +-------------------+
-+-------+  +-----+-----+ +----+------+
-    |             |             |
-    +-----------+---------------+
-                |
-    +-----------v-----------+
-    |  Ray Cluster          |
-    |  (分布式计算引擎)       |
-    +-----------+-----------+
-                |
-    +-----------v-----------+
-    |  Prometheus + OTel    |
-    |  (可观测性)            |
-    +-----------------------+
+                  |
+         +--------v----------------------------------------------------+
+         |               Lance 数据格式层                               |
+         |  (列式存储 + 向量索引 IVF-PQ + 全文索引 Tantivy + 版本管理)    |
+         +----+----------------------------+---------------------------+
+              |                            |
+    +---------v---------+        +---------v-----------+
+    |  DuckDB SQL 引擎  |        |  DuckLake 衍生层   |
+    |  lance 扩展加载    |        |  ducklake 扩展加载 |
+    |  ───────────────  |        |  ─────────────────  |
+    |  __lance_scan     |        |  ETL 物化/暂存      |
+    |  lance_vector     |        |  DML (可读写)       |
+    |  lance_fts        |        |  快照/时间旅行       |
+    |  lance_hybrid     |        |  Parquet 格式        |
+    +---------+---------+        +---------+-----------+
+              |                            |
+              +──────────┬─────────────────+
+                         |
+              +----------v-----------+
+              |   MinIO / S3 存储    |
+              |   (Lance 格式后端)    |
+              |   storage_options    |
+              |   媒体二进制生命周期    |
+              +----------+-----------+
+                         |
+              +----------v-----------+
+              |   本地文件系统 (开发)  |
+              |   s3:// (生产)       |
+              +----------------------+
+
+         +------------------------------------------------------------+
+         |                       外部依赖                             |
+         |  +--------------+  +--------------+  +------------------+  |
+         |  | HugeGraph    |  | LLM Providers|  | Prometheus+OTel |  |
+         |  | (KG, 外部)   |  | OpenAI/vLLM  |  | (可观测性)       |  |
+         |  | Gremlin      |  | Anthropic    |  +------------------+  |
+         |  | Cypher       |  | Ollama      |                       |
+         |  +--------------+  +--------------+  +------------------+  |
+         |                                         | Ray Cluster     |  |
+         |                                         | (分布式计算)     |  |
+         |                                         +------------------+  |
+         +------------------------------------------------------------+
 ```
+
+### 分层说明
+
+| 层级 | 组件 | 职责 |
+|------|------|------|
+| **API 层** | FastAPI v1/v2 | HTTP 接口、认证、版本控制 |
+| **SDK 层** | Lake facade | 统一编程接口 |
+| **格式层** | **Lance** | 列式存储 + 向量索引 + 全文索引 + 版本管理 |
+| **计算层** | DuckDB + Lance 扩展 | OLAP SQL / 向量搜索 / FTS / 混合搜索 |
+| **衍生层** | DuckDB + DuckLake 扩展 | ETL 物化 / 可写工作区 / DML |
+| **存储层** | MinIO (S3) / 本地 FS | Lance 格式的持久化后端 |
+| **外部层** | HugeGraph / LLM / Ray / OTel | 知识图谱 / 生成 / 计算 / 可观测 |
 
 ### 组件职责矩阵
 
-| 组件 | 职责 | v0.2 状态 | v1.0 变更 |
-|------|------|----------|----------|
-| LanceStorageManager | 向量+元数据存储 | 仅本地路径 | 传递 storage_options 支持S3 |
-| MinIO | 对象存储 | 配置就绪,未连接 | 全链路集成,媒体二进制存储 |
-| HugeGraph Server | 知识图谱 | 不存在 | 新增: 图Schema,实体抽取,GraphRAG |
-| RAG Engine | 检索增强生成 | 仅检索(R),无生成(G) | 新增: LLM抽象,Prompt模板,上下文管理 |
-| FastAPI REST | HTTP接口 | 36端点,API Key auth | 新增: RAG/KG端点,RBAC,版本控制 |
-| Ray Cluster | 分布式计算 | 已有 | 新增: KG构建作为Ray任务 |
-| Prometheus+OTel | 可观测性 | 基础metrics | 新增: traces,完整healthcheck,告警规则 |
+| 组件 | 职责 | 格式 | v0.2 状态 | v1.0 变更 |
+|------|------|------|----------|----------|
+| **Lance** | 统一数据格式 (列式+向量+FTS+版本) | Lance 列式 | 已有 (via LanceDB) | 独立为格式层，不再与 LanceDB 绑定 |
+| **DuckDB** | 统一 SQL 引擎 (OLAP+向量+FTS+混合) | 内存计算 | OLAP+Catalog (ADR-06) | lance+ducklake 扩展,查询治理 |
+| **DuckLake** | 可写衍生层 (ETL/物化/工作区) | Parquet | 不存在 | 新增: DuckDB扩展加载 |
+| **MinIO** | Lance 格式存储后端 (S3) | S3 对象 | 配置就绪,未连接 | storage_options 接通,成为 Lance 生产存储 |
+| **HugeGraph** | 知识图谱 (外部部署) | 图数据库 | 不存在 | 新增: 图Schema,实体抽取,GraphRAG |
+| **RAG Engine** | 检索增强生成 | — | 仅检索(R),无生成(G) | 新增: LLM抽象,Prompt模板,上下文管理 |
+| **FastAPI REST** | HTTP接口 | — | 36端点,API Key auth | 新增: RAG/KG端点,RBAC,版本控制 |
+| **Ray Cluster** | 分布式计算 | — | 已有 | 新增: KG构建作为Ray任务 |
+| **Prometheus+OTel** | 可观测性 | — | 基础metrics | 新增: traces,完整healthcheck,告警规则 |
 
 ---
 
 ## 二、数据流总体关系
 
 ```
-[原始数据] --ingest--> [MinIO(二进制)] + [LanceDB(元数据+向量)]
-                                   |
+[原始数据] --ingest--> [Lance 格式层 (元数据+向量)]
+       |                      |
+       |              +-------v-------+
+       |              | MinIO / S3    | ← Lance 持久化后端 (storage_options)
+       |              | (生产)         |
+       |              +-------+-------+
+       |                      |
+       |              +-------v-------+
+       |              | 本地 FS       | ← Lance 持久化后端 (开发)
+       |              +---------------+
+       |
+       +---> [HugeGraph] ← KG Construction
+       |
+       +---> [MinIO 原始媒体] ← 二进制文件 (非 Lance)
+                      |
                       +------------+------------+
-                      |                         |
-               [KG Construction]         [Embedding]
-                      |                         |
-              [HugeGraph(实体+关系)]    [LanceDB(向量列)]
-                      |                         |
-                      +------------+------------+
                                    |
-                          [RAG Query Flow]
-                                   |
-                      +------------+------------+
-                      |                         |
-              [Vector/FTS/Hybrid]        [Graph Traversal]
-                      |                         |
-                      +------------+------------+
-                                   |
-                          [Context Assembly]
-                                   |
-                          [LLM Generation]
-                                   |
-                          [Cited Response]
+                          [DuckDB 统一查询层]
+                          ┌──────────────────────┐
+                          │ lance 扩展:          │
+                          │ · __lance_scan       │ → OLAP SQL
+                          │ · lance_vector_search│ → 向量搜索
+                          │ · lance_fts          │ → 全文搜索
+                          │ · lance_hybrid_search│ → 混合搜索
+                          ├──────────────────────┤
+                          │ ducklake 扩展:       │
+                          │ · ETL 物化           │ → 衍生数据
+                          │ · DML (读写)         │ → 工作区
+                          │ · 快照时间旅行         │ → 版本管理
+                          └──────────┬───────────┘
+                                     |
+                      +--------------+--------------+
+                      |                             |
+              [RAG Context Assembly]        [Graph Traversal]
+                      |                   [HugeGraph]
+                      |                             |
+                      +--------------+--------------+
+                                     |
+                              [LLM Generation]
+                                     |
+                              [Cited Response]
 ```
 
 ---
 
-## 三、模块设计
+## 三、计算框架层：Ray / Daft / Metaflow
 
-### 3A. MinIO/S3 生产存储集成
+> 本章说明架构图中"外部依赖"区域内三个计算框架的职责和数据流。
+
+### 3.0 框架总览
+
+```
+                    Lake Facade (统一入口)
+                    ┌──────────────────────────────┐
+                    │  lake.ingest()               │
+                    │  lake.query()                │
+                    │  lake.daft_query()           │
+                    │  lake.list_flows()           │
+                    └──────┬───────┬───────┬───────┘
+                           │       │       │
+              ┌────────────┘       │       └────────────┐
+              ▼                    ▼                      ▼
+     +────────────────+  +────────────────+  +──────────────────+
+     |     Ray         |  |     Daft       |  |    Metaflow      |
+     |  分布式计算      |  |  DataFrame API |  |   工作流编排      |
+     ├────────────────┤  ├────────────────┤  ├──────────────────┤
+     │ CatalogActor   │  │ read_lance()   │  │ QualityPipeline   │
+     │ @ray.remote    │  │ read_csv/json  │  │ MayaE2EFlow       │
+     │ foreach()      │  │ LazyDaftFrame  │  │ ScheduledQuality  │
+     │ RemoteDataLoader│ │ select/filter  │  │ @schedule @retry  │
+     │ GPUAutoscaler  │  │ sort/join/     │  │ Argo Bridge      │
+     │ Ray Serve      │  │   groupby      │  │ AuditTrail       │
+     └───────┬────────┘  └───────┬────────┘  └────────┬─────────┘
+             │                   │                    │
+             │  metaflow-ray 插件 │                    │
+             +───────────────────┼────────────────────┘
+                                 │
+                          ┌──────▼──────┐
+                          │ Lake Facade │  Metaflow Step 调用 Lake API
+                          │ (Ingest/    │  Ray 执行分布式任务
+                          │  Query/     │  Daft 读取+转换数据
+                          │  Catalog)   │
+                          └─────────────┘
+```
+
+### 3.0A. Ray — 分布式计算引擎
+
+**职责**: 任务并行化、服务编排、GPU 调度、Catalog 分布式管理。
+
+| 组件 | 位置 | 职责 |
+|------|------|------|
+| `CatalogActor` | `catalog/actor.py` | Ray Named Actor，分布式表元数据管理（内嵌 DuckDB） |
+| `CatalogReadReplica` | `catalog/replica.py` | CatalogActor 的高可用读副本 |
+| `foreach()` | `ray_runtime/distributed.py` | 并行 map：Arrow Table → N 分区 → @ray.remote 处理 → 合并 |
+| `RemoteDataLoader` | `ray_runtime/data_loader.py` | CPU→GPU 零拷贝数据管道（预取队列 + PyTorch DataLoader） |
+| `GPUAutoscaler` | `ray_runtime/autoscaler.py` | GPU 0→N 弹性伸缩（空闲超时缩容） |
+| `RayServeEmbeddingEncoder` | `embed/ray_serve_encoder.py` | Ray Serve 部署的分布式 Embedding 推理 |
+| Cluster 管理 | `ray_runtime/cluster.py` | `initialize_ray()`, `detect_gpu()`, `get_cluster_info()` |
+
+**数据流**:
+
+```
+Ingest 流程:
+  CSV/JSON/Parquet → Daft.read_*() → Arrow Table → Ray.foreach(partitions) → Lance
+
+Catalog 流程:
+  Lake.catalog.register_table() → ray.get(CatalogActor.register_table.remote()) → DuckDB (embedded)
+
+Embedding 流程:
+  Text Column → Ray Serve Deployment → Embedding Vector → Lance (vector column)
+
+分布式处理:
+  Arrow Table → foreach(table, fn, num_partitions=4) → N × @ray.remote(_process_partition) → 合并
+```
+
+**v1.0 变更**: 无重大变更。CatalogActor 的单节点 Named Actor 问题（0C #5）保持现状，未来可考虑 DuckDB MotherDuck 替代。
+
+### 3.0B. Daft — 惰性 DataFrame 引擎
+
+**职责**: 提供非 SQL 的表达式式 DataFrame API，作为 DuckDB SQL 的补充。
+
+| 组件 | 位置 | 职责 |
+|------|------|------|
+| `LazyDaftFrame` | `query/daft_api.py` | 惰性 DataFrame 封装（select/filter/sort/join/groupby/collect） |
+| `daft.read_lance()` | `query/daft_api.py` | 直接读取 Lance 数据集为 Daft DataFrame |
+| `daft.read_*()` | `ingest/ingestor.py` | Ingest 阶段读取 CSV/JSON/Parquet 文件 |
+
+**与 DuckDB 的分工**:
+
+| 维度 | DuckDB (SQL) | Daft (DataFrame API) |
+|------|-------------|---------------------|
+| 查询方式 | SQL 字符串 | Python 方法链 |
+| 评估策略 | 即时执行 | 惰性求值（collect() 触发） |
+| 强项 | 复杂聚合、JOIN、窗口函数 | ETL 管道、schema 演化、多模态 |
+| 向量搜索 | lance_vector_search() SQL | 不支持 |
+| 分布式 | 单进程 | 可运行在 Ray 集群上 |
+| 适用场景 | OLAP 分析、BI | 数据预处理、ETL、编程式转换 |
+
+**数据流**:
+
+```
+Query 流程 (DataFrame 路径):
+  lake.daft_query("dataset") → LazyDaftFrame
+    .select("col1", "col2")
+    .filter("col1 > 5")
+    .sort("col2", desc=True)
+    .groupby("col1")
+    .collect() → Arrow Table
+
+Ingest 流程:
+  daft.read_csv("file.csv") → Daft DataFrame → .to_arrow() → Lance
+```
+
+**v1.0 变更**: DuckDB Lance 扩展原生 SQL 后，Daft 的 OLAP 角色进一步收窄。Daft 继续承担 Ingest 文件读取和编程式 ETL，OLAP 分析统一走 DuckDB SQL。
+
+### 3.0C. Metaflow — 工作流编排
+
+**职责**: 将多步骤数据处理管道编排为可追踪、可重试、可调度的有向无环图 (DAG)。
+
+| 组件 | 位置 | 职责 |
+|------|------|------|
+| `ArrowLakeFlowSpec` | `workflow/base.py` | 所有 Flow 的基类 Mixin（配置加载、自动标记） |
+| `FlowRegistry` | `workflow/base.py` | Flow 注册/发现/列表 |
+| `QualityPipelineFlow` | `flows/quality_pipeline_flow.py` | 数据质量过滤管道 |
+| `MayaE2EFlow` | `flows/maya_e2e_flow.py` | 端到端演示管道（ingest→quality→embed→search） |
+| `ScheduledQualityFlow` | `flows/scheduled_quality_flow.py` | 每日定时质量检查（@schedule） |
+| `@retry` / `@schedule` | `workflow/retry.py`, `schedule.py` | 步骤重试 + 定时调度 |
+| `AuditTrail` | `workflow/audit.py` | 工作流事件审计（HMAC 完整性） |
+| `StateRollback` | `workflow/rollback.py` | 检查点级状态恢复 |
+| `ArgoWorkflowBridge` | `workflow/argo.py` | Metaflow → Argo Workflows 转换（K8s 原生） |
+
+**数据流**:
+
+```
+QualityPipelineFlow:
+  start → load_config → apply_filters(lake.quality_filter()) → end
+
+MayaE2EFlow:
+  start → ingest(lake.ingest()) → quality_filter(lake.quality_filter())
+        → embed(lake.embed()) → search(lake.vector_search()) → end
+
+Metaflow + Ray 集成:
+  Metaflow Step → Lake API → Ray.foreach() / CatalogActor → 分布式执行
+
+Metaflow → Argo:
+  Flow 定义 → ArgoWorkflowBridge → Kubernetes Argo Workflows → 生产调度
+```
+
+**v1.0 变更**:
+- KG 构建新增为 Metaflow Flow (`KnowledgeGraphBuildFlow`)
+- RAG 管道可封装为 Metaflow Flow 用于批量处理
+- Argo Bridge 用于生产环境 K8s 调度
+
+### 3.0D. 三框架协作关系
+
+```
+┌──────────────────────────────────────────────────────────┐
+│                    Metaflow 工作流                        │
+│  (编排层: 定义步骤顺序、重试、调度、审计)                    │
+│                                                          │
+│  ┌─────────┐   ┌──────────┐   ┌──────────┐              │
+│  │  Ingest │ → │  Quality │ → │  Embed   │   ...       │
+│  │  Step   │   │  Step    │   │  Step    │              │
+│  └────┬────┘   └────┬─────┘   └────┬─────┘              │
+│       │              │              │                     │
+│       ▼              ▼              ▼                     │
+│  ┌─────────────────────────────────────────────┐         │
+│  │            Lake Facade API                   │         │
+│  └────────┬──────────┬───────────┬─────────────┘         │
+│           │          │           │                          │
+│           ▼          ▼           ▼                          │
+│     ┌──────────┐ ┌────────┐ ┌──────────┐                  │
+│     │   Daft   │ │ DuckDB │ │   Ray    │                  │
+│     │ 文件读取  │ │ SQL OLAP│ │ 分布式    │                  │
+│     │ ETL 转换  │ │ 向量/FTS│ │ Catalog  │                  │
+│     │ 惰性求值  │ │ 混合搜索│ │ GPU 推理  │                  │
+│     └──────────┘ └────────┘ └──────────┘                  │
+│                                                         │
+│  基础设施: Ray Cluster / Argo Workflows (K8s)            │
+└──────────────────────────────────────────────────────────┘
+```
+
+**协作规则**:
+1. **Metaflow 编排，不执行计算** — 每个 @step 调用 Lake API，Lake 内部选择 DuckDB/Daft/Ray
+2. **Ray 提供分布式能力** — Metaflow 通过 `metaflow-ray` 插件在 Ray 集群上运行
+3. **Daft 负责数据读取** — Ingest 阶段文件解析统一走 Daft（CSV/JSON/Parquet），编程式 ETL 也走 Daft
+4. **DuckDB 负责数据查询** — OLAP/向量/FTS/混合搜索统一走 DuckDB Lance 扩展 SQL
+5. **Ray 负责 Catalog** — CatalogActor 是 Ray Named Actor，内嵌 DuckDB 做元数据存储
+
+---
+
+## 四、模块设计
+
+**定位**: MinIO 不是独立存储组件，而是 **Lance 格式的 S3 存储后端**。通过 `storage_options` 配置，Lance 数据可以写入 `s3://` URI。DuckDB Lance 扩展也可直接读取 S3 上的 Lance 文件。
 
 **现状诊断**: `LanceStorageManager._write_lance()` 和 `_open_lance()` 调用 `lancedb.connect(self.base_uri)` 未传递 `storage_options`，S3 模式不可用。
 
@@ -403,7 +694,7 @@ class BackupManager:
 
 ---
 
-## 四、数据流详细设计
+## 五、数据流详细设计
 
 ### 4.1 增强摄取流程
 
@@ -477,7 +768,7 @@ class BackupManager:
 
 ---
 
-## 五、文件变更清单
+## 六、文件变更清单
 
 ### 新增文件 (25 个)
 
@@ -531,7 +822,7 @@ class Lake(_LakeIngestMixin, _LakeSearchMixin, _LakeRAGMixin, _LakeKGMixin):
 
 ---
 
-## 六、新增依赖
+## 七、新增依赖
 
 ```toml
 # [project.dependencies]
@@ -546,7 +837,7 @@ ollama = ["ollama>=0.4"]
 
 ---
 
-## 七、配置设计
+## 八、配置设计
 
 ### 新增配置段
 
@@ -602,23 +893,9 @@ security:
 
 ---
 
-## 八、部署扩展
+## 九、部署扩展
 
-### Docker Compose 新增
-
-```yaml
-hugegraph-server:
-  image: hugegraph/hugegraph-server:1.5.0
-  container_name: arrow-lake-hugegraph
-  ports: ["8080:8080"]
-  volumes: [hugegraph-data:/opt/hugegraph-data]
-  healthcheck:
-    test: ["CMD-SHELL", "curl -sf http://localhost:8080/graphs/arrow_lake_kg/graph || exit 1"]
-    interval: 15s
-    timeout: 10s
-    retries: 5
-    start_period: 30s
-```
+> **注意**: HugeGraph 作为外部依赖独立部署，不由 Arrow Lake 管理。本地开发环境已部署 HugeGraph Server (:8080)。详见附录 B。
 
 ### Profile 矩阵
 
@@ -631,7 +908,16 @@ hugegraph-server:
 
 ---
 
-## 九、迁移路径 (4 个 Milestone)
+## 十、迁移路径 (5 个 Milestone)
+
+### M0: 架构技术债 (~1 周)
+- DuckDB 查询资源治理 (内存限制 + 并发控制 + 超时熔断)
+- DuckDB 扩展加载：`INSTALL lance; LOAD lance; INSTALL ducklake; LOAD ducklake`
+- 查询层重构：`olap.py` / `fts.py` / `hybrid.py` / `vector.py` 迁移到 DuckDB Lance 原生 SQL
+- DuckLake 衍生层集成：ETL 物化、可写工作区、快照管理
+- Lake facade Mixin 拆分 (IngestMixin, QueryMixin, AdminMixin)
+- S3/MinIO `storage_options` 接通
+- **验收**: DuckDB 10 并发查询不 OOM，Lance SQL OLAP 通过，DuckLake DML 正常
 
 ### M1: 生产存储 (~2 周)
 - LanceStorageManager S3 集成 + BlobStoreManager
@@ -654,7 +940,7 @@ hugegraph-server:
 
 ---
 
-## 十、风险与缓解
+## 十一、风险与缓解
 
 | 风险 | 影响 | 概率 | 缓解措施 |
 |------|------|------|---------|
@@ -666,7 +952,133 @@ hugegraph-server:
 
 ---
 
-## 附录: 相关文档
+## 附录 A: v0.2.0 深度 Gap 分析补充
+
+### A.1 架构文档遗漏项
+
+通过逐文件审查 v0.2.0 代码，发现以下遗漏：
+
+#### 1. S3Connector 未接入 Ingestor
+
+`arrow_lake/ingest/connectors.py` 中 `S3Connector` 已实现完整的文件发现功能（boto3 + 分页），但 `Ingestor.ingest_mixed()` 不支持消费 `s3://` URI。当前仅处理本地路径和 HTTP URL。
+
+**补充**: Ingestor 需增加 S3 URI 解析，支持 `S3Connector.list_files()` → Ingestor 管线的直通。
+
+#### 2. scan_dataset 也需要 storage_options
+
+`LanceStorageManager.scan_dataset()` (第 557 行) 使用 `lance.dataset()` 直接读取 Lance 文件，未经过 `lancedb.connect()`。当 `base_uri` 为 S3 路径时，同样需要传递 `storage_options`。
+
+**补充**: 所有调用 `lance.dataset()` / `lance.LanceDataset` 的位置都需要传递 S3 凭证。
+
+#### 3. CLIPImageEncoder 用于图像嵌入
+
+`arrow_lake/embed/` 下已有 `CLIPImageEncoder`，可直接复用于多模态 RAG 中的图像理解。RAG pipeline 需在 `context.py` 中区分 `modality` 类型选择对应的嵌入策略。
+
+#### 4. QualityFilterRegistry 存在但未自动调用
+
+质量过滤框架完整（`TextLengthFilter`, `ImageResolutionFilter`），但在 Ingestor 管线中是手动调用。v1.0 需要在 Ingestor 中注入自动质量过滤。
+
+#### 5. 现有 50+ ErrorCode 覆盖
+
+`exceptions.py` 已有 Storage/Query/Ingestion/Catalog/RayRuntime/Validation 等 50+ 错误码。新增 RAG/KG/Security 错误码时需保持命名风格一致。
+
+#### 6. API 已有 Request Size Limit + CORS + GZip
+
+`arrow_lake/api/app.py` 的中间件链已包含：请求体大小限制、CORS 配置、GZip 压缩。RBAC 中间件需插入在此链之后。
+
+#### 7. Metrics 端点已存在
+
+`arrow_lake/core/metrics.py` 和 `/metrics` Prometheus 端点已实现。OpenTelemetry 需要在此基础上增加 tracing（分布式追踪），而非替代现有 metrics。
+
+### A.2 设计模式复用指南
+
+v1.0 新模块应遵循 v0.2.0 已验证的设计模式：
+
+| 现有模式 | 示例 | v1.0 复用场景 |
+|---------|------|-------------|
+| Protocol 协议 | `QualityFilter` protocol | `BaseLLMProvider` 抽象 |
+| Registry 模式 | `QualityFilterRegistry` | `PromptTemplateRegistry` |
+| Bridge 模式 | `VectorSearchBridge`, `OlapSearchBridge` | `RAGQueryBridge`, `GraphQueryBridge` |
+| Config 4 层覆盖 | 代码→.env→环境变量→YAML | `LLMConfig`, `HugeGraphConfig` |
+| Mixin 模式 | Lake facade 拆分 | `_LakeRAGMixin`, `_LakeKGMixin` |
+| Factory 方法 | `create_llm_provider()` | LLM Provider 选择 |
+
+---
+
+## 附录 B: 部署架构 (独立文档)
+
+> HugeGraph 已在本地部署，不纳入 Arrow Lake 的 docker-compose 管理。部署扩展设计见独立文档 `docs/deploy-guide-v1.0.md`。
+
+### B.1 本地服务依赖 (v1.0)
+
+| 服务 | 部署方式 | 端口 | 用途 |
+|------|---------|------|------|
+| Arrow Lake API | `deploy/Dockerfile` | 8000 | 核心 API 服务 |
+| MinIO | `deploy/docker-compose.yml` | 9000/9001 | 对象存储 |
+| Ray Cluster | `deploy/docker-compose.gpu.yml` | 6379 | 分布式计算 |
+| **HugeGraph** | **本地部署 (已存在)** | **8080** | **知识图谱** |
+| **LLM (可选)** | **本地 vLLM/Ollama** | **11434/** | **本地推理** |
+| **Prometheus** | `deploy/docker-compose.monitoring.yml` | 9090 | **指标采集** |
+| **Grafana** | `deploy/docker-compose.monitoring.yml` | 3000 | **监控仪表盘** |
+
+### B.2 Arrow Lake docker-compose 仅管理自身服务
+
+Arrow Lake 的 docker-compose 仅管理：
+- API Server
+- MinIO (对象存储依赖)
+- Ray Cluster (可选)
+- Prometheus + Grafana (监控，可选)
+
+HugeGraph、LLM 推理服务作为**外部依赖**，通过配置文件连接：
+
+```yaml
+# configs/prod.yaml
+storage:
+  backend: minio
+  s3_endpoint: "http://localhost:9000"
+
+hugegraph:
+  enabled: true
+  host: localhost        # 本地已部署的 HugeGraph
+  port: 8080
+
+llm:
+  provider: vllm         # 本地 vLLM
+  api_base: "http://localhost:11434/v1"
+```
+
+### B3 服务连接拓扑
+
+```
+┌─────────────────────────────────────────────┐
+│              用户本地环境                      │
+│                                             │
+│  ┌──────────┐  ┌──────────┐  ┌──────────────┐ │
+│  │HugeGraph │  │  vLLM    │  │  Arrow Lake  │ │
+│  │  :8080   │  │  :11434  │  │  :8000      │ │
+│  └─────┬────┘  └────┬────┘  └──────┬──────┘ │
+│        │             │              │         │
+│  ┌─────v────┐  ┌───v───────┐  ┌────v──────┐ │
+│  │  MinIO    │  │          │  │  Ray     │ │
+│  │  :9000   │  │          │  │          │ │
+│  └──────────┘  └──────────┘  └──────────┘ │
+└─────────────────────────────────────────────┘
+```
+
+### B4 服务健康检查依赖链
+
+```
+GET /health/ready 检查顺序:
+  1. LanceDB 存储连接 (本地/S3)
+  2. MinIO S3 可达性
+  3. HugeGraph REST API (localhost:8080)
+  4. Ray Cluster (如启用)
+  5. LLM Provider (如配置)
+```
+
+---
+
+## 附录 C: 相关文档
 
 - [v0.2.0 阶段评审报告](phase-review-v0.2.0.md)
 - [ADR-05: DuckDB OLAP Deviation](adr-05-duckdb-olap-deviation.md)

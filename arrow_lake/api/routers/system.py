@@ -1,55 +1,76 @@
-"""System endpoints: health check and Prometheus metrics."""
+"""System endpoints: health probes and Prometheus metrics."""
 
 from __future__ import annotations
+
+import os
 
 from fastapi import APIRouter, Depends
 from starlette.responses import JSONResponse, PlainTextResponse, Response
 
-from arrow_lake.api.deps import get_config
+from arrow_lake.api.deps import get_app_config
 from arrow_lake.config import ArrowLakeConfig
 
 router = APIRouter(tags=["system"])
 
 
-@router.get("/health", summary="Health check")
-async def health_check(config: ArrowLakeConfig = Depends(get_config)) -> dict:
-    """Return service health status.
-
-    Checks storage accessibility and catalog availability.
-    """
-    status: dict = {"status": "ok", "version": ""}
-
-    # Import version lazily
+def _get_version() -> str:
+    """Lazy-load version string."""
     try:
         from arrow_lake._version import __version__
-        status["version"] = __version__
+        return __version__
     except Exception:
-        pass
+        return ""
 
-    # Check storage accessibility
-    import os
+
+def _check_storage(config: ArrowLakeConfig) -> tuple[str, bool]:
+    """Check storage accessibility. Returns (status_text, is_ok)."""
     base_uri = config.storage.base_uri
     if base_uri.startswith("s3://"):
-        # S3/MinIO backend — check via MinIO health endpoint
         try:
             import urllib.request
+
             endpoint = config.storage.s3_endpoint
             if endpoint:
                 health_url = endpoint.rstrip("/") + "/minio/health/live"
                 urllib.request.urlopen(health_url, timeout=3)
-                status["storage"] = "accessible"
-            else:
-                status["storage"] = "no_endpoint_configured"
-                status["status"] = "degraded"
+                return "accessible", True
+            return "no_endpoint_configured", False
         except Exception:
-            status["storage"] = "endpoint_unreachable"
-            status["status"] = "degraded"
-    elif os.path.isdir(base_uri):
-        status["storage"] = "accessible"
-    else:
-        status["storage"] = "not_found"
-        status["status"] = "degraded"
+            return "endpoint_unreachable", False
+    if os.path.isdir(base_uri):
+        return "accessible", True
+    return "not_found", False
 
+
+@router.get("/health/live", summary="Liveness probe")
+async def health_live() -> dict:
+    """Lightweight liveness check — returns 200 if process is running."""
+    return {"status": "ok"}
+
+
+@router.get("/health/ready", summary="Readiness probe")
+async def health_ready(config: ArrowLakeConfig = Depends(get_app_config)) -> Response:
+    """Readiness check — verifies storage and dependencies are accessible."""
+    status: dict = {"status": "ok", "version": _get_version()}
+    storage_text, storage_ok = _check_storage(config)
+    status["storage"] = storage_text
+    if not storage_ok:
+        status["status"] = "degraded"
+    http_code = 200 if status["status"] == "ok" else 503
+    return JSONResponse(content=status, status_code=http_code)
+
+
+@router.get("/health", summary="Health check (backward compatible)")
+async def health_check(config: ArrowLakeConfig = Depends(get_app_config)) -> Response:
+    """Return service health status. Checks storage accessibility.
+
+    Kept for backward compatibility. Prefer /health/live and /health/ready.
+    """
+    status: dict = {"status": "ok", "version": _get_version()}
+    storage_text, storage_ok = _check_storage(config)
+    status["storage"] = storage_text
+    if not storage_ok:
+        status["status"] = "degraded"
     http_code = 200 if status["status"] == "ok" else 503
     return JSONResponse(content=status, status_code=http_code)
 

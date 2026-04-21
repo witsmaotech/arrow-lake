@@ -111,6 +111,9 @@ RUN curl -sL https://dl.min.io/client/mc/release/linux-amd64/mc -o /usr/local/bi
 
 EXPOSE 8000
 
+# Run as non-root user
+USER arrowlake
+
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
     CMD ["curl", "-sf", "http://localhost:8000/health"]
 

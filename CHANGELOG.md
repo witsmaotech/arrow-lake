@@ -5,6 +5,74 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - 2026-04-21
+
+### Added
+
+v1.0 GA release — 2224 tests, 82.92% coverage, production-ready data lakehouse.
+
+**M0: Infrastructure & Query Migration**
+- DuckDB Lance extension abstraction layer (`_base.py`, `_db.py`, `lance_adapter.py`)
+- Native `__lance_scan()` with PyArrow streaming fallback
+- DuckLake workspace management (materialize, TTL cleanup, metadata tracking)
+- S3 storage_options schema and dual-path integration (Lance SDK + DuckDB SET)
+- Lake Facade decomposed into 9 focused mixins (ingest, search, query, admin, lineage, audit, rag, kg)
+
+**M1: Production Storage**
+- S3/MinIO blob storage with BlobStoreManager (multipart upload, presigned URLs)
+- Backup/restore manager (Lance + MinIO + DuckLake)
+- REST API backup endpoints
+
+**M2: RAG Pipeline**
+- LLM provider abstraction (Anthropic Claude, OpenAI-compatible)
+- RAG pipeline with citation support (retrieval → context assembly → generation)
+- Session management for multi-turn conversations
+- SSE streaming for real-time generation
+- Entity extraction endpoints
+- REST API: `/api/v2/rag/*`
+
+**M3: Knowledge Graph + GraphRAG**
+- HugeGraph REST client with schema management
+- Entity/relation extraction from unstructured text
+- Knowledge graph builder with task management
+- GraphRAG retrieval with 3-way RRF fusion
+- REST API: `/api/v2/kg/*`
+
+**M4: Production Readiness**
+- JWT authentication with access + refresh token flow
+- RBAC with ADMIN/EDITOR/VIEWER role hierarchy
+- API key authentication with rotation (90-day default)
+- OpenTelemetry distributed tracing
+- Separated liveness/readiness health probes
+- 15 REST API routers (system, datasets, search, query, quality, embedding, export, lineage, audit, backup, rag, kg, auth, admin)
+- Performance benchmark framework with baseline tracking
+- 6 Grafana dashboards (system, ingestion, processing, query, OMTM, SLO)
+
+**M5: Operations & Governance**
+- Rate limiting middleware (slowapi, disabled by default, per-endpoint config)
+- HTTP security response headers (HSTS, X-Content-Type-Options, X-Frame-Options, Referrer-Policy, CSP)
+- 11 Prometheus alert rules (HTTP errors, auth failures, ingestion stalled, rate limit, memory, latency)
+- SLO thresholds configuration in Helm values
+
+**Security Hardening**
+- SQL injection prevention centralized in `validation.py`
+- Path traversal protection in export
+- HMAC integrity verification on audit trail
+- JWT state propagation fallback in `get_current_user()`
+
+**Deploy Artifacts**
+- Multi-stage Docker build (CPU + GPU variants)
+- Docker Compose profiles (core, dev, gpu, monitoring, kg)
+- Helm chart with PrometheusRule, NetworkPolicy
+- Init scripts, TLS cert generation, bucket setup
+
+### Changed
+
+- Lake class decomposed from 1049-line monolith to 9 mixin modules
+- Query layer migrated from direct LanceDB SDK to DuckDB-native SQL with Lance extension
+- Auth middleware migrated from class-based BaseHTTPMiddleware to function-based with `@app.middleware("http")`
+- All config sections registered in `_build_merged_update()` and `from_yaml()` constructor
+
 ## [0.1.0] - 2026-04-15
 
 ### Added
@@ -66,7 +134,3 @@ Initial release — 80 stories across 9 Sprints, 1414 tests.
 - Path traversal protection
 - Input validation on all public APIs
 - No hardcoded credentials
-
-## [0.1.0] - Unreleased
-
-_No unreleased changes._

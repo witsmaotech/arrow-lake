@@ -72,6 +72,9 @@ RUN groupadd -r arrowlake && useradd -r -g arrowlake -d /app -s /sbin/nologin ar
 
 WORKDIR /app
 
+# Run as non-root user
+USER arrowlake
+
 # Copy virtual environment from builder
 COPY --from=builder /build/.venv /app/.venv
 

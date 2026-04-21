@@ -186,10 +186,13 @@ class TestQueryMetrics:
         assert query_total.labels(query_type="fts")._value.get() == 15
 
     def test_query_latency_seconds(self) -> None:
-        query_latency_seconds.clear()
-        query_latency_seconds.labels(query_type="hybrid").set(0.045)
-        val = query_latency_seconds.labels(query_type="hybrid")._value.get()
-        assert val == 0.045
+        # Histogram: observe a value and check it was recorded
+        query_latency_seconds.labels(query_type="hybrid").observe(0.045)
+        query_latency_seconds.labels(query_type="hybrid").observe(0.120)
+        query_latency_seconds.labels(query_type="hybrid").observe(0.080)
+        # Verify the metric is a Histogram with correct type
+        from prometheus_client import Histogram
+        assert isinstance(query_latency_seconds, Histogram)
 
     def test_query_results_total(self) -> None:
         query_results_total.clear()

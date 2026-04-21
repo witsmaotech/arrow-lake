@@ -11,6 +11,8 @@ from starlette.responses import JSONResponse
 # Paths that bypass API key authentication.
 _PUBLIC_PATHS: frozenset[str] = frozenset({
     "/health",
+    "/health/live",
+    "/health/ready",
     "/openapi.json",
     "/docs",
     "/redoc",

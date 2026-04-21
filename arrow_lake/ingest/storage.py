@@ -13,6 +13,7 @@ from typing import Any, cast
 
 import pyarrow as pa
 
+from arrow_lake.config import StorageBackend, StorageConfig
 from arrow_lake.exceptions import ErrorCode, StorageError
 from arrow_lake.validation import DANGEROUS_SQL_KEYWORDS_RE, SAFE_IDENTIFIER_RE
 
@@ -38,10 +39,27 @@ class LanceStorageManager:
 
     Args:
         base_uri: Base directory for all datasets.
+        storage_config: Storage configuration for S3 access (None = local).
     """
 
-    def __init__(self, base_uri: str | Path) -> None:
+    def __init__(
+        self,
+        base_uri: str | Path | StorageConfig,
+        *,
+        storage_config: StorageConfig | None = None,
+    ) -> None:
+        if isinstance(base_uri, StorageConfig):
+            storage_config = base_uri
+            base_uri = storage_config.base_uri
+
         self.base_uri = str(base_uri)
+        self._storage_config = storage_config
+        self._storage_options = storage_config.to_storage_options() if storage_config else None
+        self._connect_uri = (
+            storage_config.s3_uri
+            if storage_config and storage_config.backend != StorageBackend.LOCAL
+            else self.base_uri
+        )
 
     def _get_dataset_path(self, name: str) -> str:
         """Get the logical path for a named dataset (no .lance suffix).
@@ -58,6 +76,27 @@ class LanceStorageManager:
         lancedb creates {name}.lance directories on disk.
         """
         return Path(self.base_uri) / f"{name}.lance"
+
+    def dataset_uri(self, name: str) -> str:
+        """Get the Lance dataset URI for a named dataset.
+
+        Returns the filesystem path to the .lance directory, suitable for
+        use with __lance_scan() or lance.dataset().
+
+        Args:
+            name: Dataset name.
+
+        Returns:
+            Absolute path string to the Lance dataset directory.
+            For S3 backends, returns an s3:// URI.
+        """
+        self._validate_name(name)
+        if self._storage_config and self._storage_config.backend != StorageBackend.LOCAL:
+            path = self._storage_config.base_uri
+            if path.startswith("./"):
+                path = path[2:]
+            return f"{self._storage_config.s3_uri.rstrip('/')}/{name}.lance"
+        return str(self._lance_dir(name))
 
     @staticmethod
     def _validate_name(name: str) -> None:
@@ -469,7 +508,10 @@ class LanceStorageManager:
         """Write data to Lance format via lancedb."""
         import lancedb
 
-        db = lancedb.connect(self.base_uri)
+        db = lancedb.connect(
+            self._connect_uri,
+            storage_options=self._storage_options,
+        )
 
         if mode == "create":
             db.create_table(Path(path).name, data)
@@ -501,7 +543,10 @@ class LanceStorageManager:
                 message=f"Dataset '{name}' not found",
             )
 
-        db = lancedb.connect(self.base_uri)
+        db = lancedb.connect(
+            self._connect_uri,
+            storage_options=self._storage_options,
+        )
         return db.open_table(name)
 
     def open_dataset(self, dataset_name: str) -> Any:
@@ -548,7 +593,7 @@ class LanceStorageManager:
         self._validate_name(name)
         lance_dir = self._lance_dir(name)
 
-        if not lance_dir.is_dir():
+        if self._storage_options is None and not lance_dir.is_dir():
             raise StorageError(
                 error_code=ErrorCode.STORAGE_PATH_NOT_FOUND,
                 message=f"Dataset '{name}' not found",
@@ -556,7 +601,8 @@ class LanceStorageManager:
 
         import lance
 
-        ds = lance.dataset(str(lance_dir))
+        uri = self._storage_config.dataset_uri(name) if self._storage_config else str(lance_dir)
+        ds = lance.dataset(uri, storage_options=self._storage_options)
         scanner = ds.scanner(
             columns=columns,
             filter=filter_expr,

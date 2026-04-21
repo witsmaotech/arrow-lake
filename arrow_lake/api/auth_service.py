@@ -1,0 +1,131 @@
+"""JWT token creation and verification service.
+
+Uses PyJWT for encoding/decoding. Gracefully no-ops when PyJWT is not installed.
+"""
+
+from __future__ import annotations
+
+import logging
+from datetime import UTC, datetime, timedelta
+
+from arrow_lake.api.auth_models import Role, TokenPayload
+
+logger = logging.getLogger(__name__)
+
+_JWT_AVAILABLE = False
+try:
+    import jwt
+
+    _JWT_AVAILABLE = True
+except ImportError:
+    jwt = None  # type: ignore[assignment]
+
+
+class AuthService:
+    """JWT token management service.
+
+    Provides methods for creating access/refresh tokens, verifying tokens,
+    and refreshing expired access tokens.
+    """
+
+    def __init__(
+        self,
+        *,
+        secret_key: str,
+        algorithm: str = "HS256",
+        access_token_minutes: int = 30,
+        refresh_token_days: int = 7,
+        issuer: str = "arrow-lake",
+    ) -> None:
+        if not secret_key and _JWT_AVAILABLE:
+            logger.warning("JWT secret key is empty — tokens will be insecure")
+        self._secret_key = secret_key
+        self._algorithm = algorithm
+        self._access_minutes = access_token_minutes
+        self._refresh_days = refresh_token_days
+        self._issuer = issuer
+
+    def create_access_token(
+        self,
+        user_id: str,
+        role: Role = Role.VIEWER,
+        permissions: list[str] | None = None,
+    ) -> TokenPayload:
+        """Create a TokenPayload for an access token."""
+        now = datetime.now(UTC)
+        return TokenPayload(
+            sub=user_id,
+            role=role,
+            permissions=permissions or [],
+            exp=now + timedelta(minutes=self._access_minutes),
+            iat=now,
+            iss=self._issuer,
+        )
+
+    def create_refresh_token(
+        self,
+        user_id: str,
+        role: Role = Role.VIEWER,
+        permissions: list[str] | None = None,
+    ) -> str:
+        """Create and encode a refresh token."""
+        now = datetime.now(UTC)
+        payload = TokenPayload(
+            sub=user_id,
+            role=role,
+            permissions=permissions or [],
+            exp=now + timedelta(days=self._refresh_days),
+            iat=now,
+            iss=self._issuer,
+        )
+        return self._encode(payload)
+
+    def refresh_access_token(self, refresh_token: str) -> TokenPayload:
+        """Verify a refresh token and return a new access token payload."""
+        old_payload = self.verify_token(refresh_token)
+        return self.create_access_token(
+            user_id=old_payload.sub,
+            role=old_payload.role,
+            permissions=old_payload.permissions,
+        )
+
+    def verify_token(self, token: str) -> TokenPayload:
+        """Verify and decode a JWT token. Raises ValueError on failure."""
+        if not _JWT_AVAILABLE:
+            raise ValueError("PyJWT not installed — cannot verify tokens")
+
+        try:
+            data = jwt.decode(
+                token,
+                self._secret_key,
+                algorithms=[self._algorithm],
+                issuer=self._issuer,
+            )
+        except jwt.ExpiredSignatureError:
+            raise ValueError("Token expired") from None
+        except jwt.InvalidTokenError as exc:
+            raise ValueError(f"Invalid token: {exc}") from None
+
+        # JWT returns exp/iat as integers, convert to datetime for Pydantic
+        for key in ("exp", "iat"):
+            if key in data and isinstance(data[key], (int, float)):
+                data[key] = datetime.fromtimestamp(data[key], tz=UTC)
+
+        return TokenPayload.model_validate(data)
+
+    def _encode(self, payload: TokenPayload) -> str:
+        """Encode a TokenPayload to a JWT string."""
+        if not _JWT_AVAILABLE:
+            raise ValueError("PyJWT not installed — cannot encode tokens")
+        data = payload.model_dump(mode="json")
+        # PyJWT requires exp/iat as integer timestamps, not datetime strings
+        for key in ("exp", "iat"):
+            if key in data and isinstance(data[key], str):
+                data[key] = int(datetime.fromisoformat(data[key]).timestamp())
+            elif key in data and hasattr(data[key], "timestamp"):
+                data[key] = int(data[key].timestamp())
+        return jwt.encode(
+            data,
+            self._secret_key,
+            algorithm=self._algorithm,
+        )

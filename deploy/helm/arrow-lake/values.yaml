@@ -16,6 +16,8 @@ apiServer:
   env: {}
   metricsPath: "/metrics"
   healthPath: "/health"
+  healthLivePath: "/health/live"
+  healthReadyPath: "/health/ready"
 
 # Ray cluster configuration (delegated to ray-project/ray chart)
 ray:
@@ -61,3 +63,10 @@ networkPolicy:
 # Prometheus alerting rules
 prometheusRules:
   enabled: false
+
+# SLO thresholds (used by PrometheusRule alerts)
+slo:
+  p95_latency_seconds: 1.0
+  p99_latency_seconds: 5.0
+  error_budget_pct: 0.1
+  uptime_pct: 99.9

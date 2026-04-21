@@ -1,9 +1,15 @@
-"""Request/response middleware for compression and size limits."""
+"""Request/response middleware for compression, size limits, correlation ID, and security headers."""
 
 from __future__ import annotations
 
+import uuid
+
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
+from starlette.responses import JSONResponse, Response
+
+# Paths that skip security headers (operational/metrics endpoints)
+_SECURITY_SKIP_PREFIXES: tuple[str, ...] = ("/health", "/metrics")
 
 
 class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
@@ -19,8 +25,6 @@ class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
             try:
                 size = int(content_length)
                 if size > self.max_size_bytes:
-                    from starlette.responses import JSONResponse
-
                     return JSONResponse(
                         status_code=413,
                         content={
@@ -36,3 +40,60 @@ class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
                 pass
 
         return await call_next(request)
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Add HTTP security response headers to non-operational paths."""
+
+    def __init__(
+        self,
+        app,
+        *,
+        content_security_policy: str = "",
+        frame_options: str = "DENY",
+    ) -> None:
+        super().__init__(app)
+        self.content_security_policy = content_security_policy
+        self.frame_options = frame_options
+
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint):
+        response = await call_next(request)
+
+        path = request.url.path
+        if any(path.startswith(p) for p in _SECURITY_SKIP_PREFIXES):
+            return response
+
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["X-Request-ID"] = getattr(
+            request.state, "correlation_id", ""
+        ) or ""
+
+        if self.frame_options:
+            response.headers["X-Frame-Options"] = self.frame_options
+
+        if self.content_security_policy:
+            response.headers["Content-Security-Policy"] = self.content_security_policy
+
+        return response
+
+
+async def correlation_id_middleware_fn(
+    request: Request, call_next, *, auto_generate: bool = True
+) -> Response:
+    """Pure ASGI correlation ID middleware function.
+
+    Extracts or generates X-Request-ID and propagates it through the request.
+    Correctly propagates request.state when used with @app.middleware("http").
+    """
+    request_id = request.headers.get("X-Request-ID")
+    if not request_id and auto_generate:
+        request_id = str(uuid.uuid4())
+
+    request.state.correlation_id = request_id
+    response = await call_next(request)
+
+    if request_id:
+        response.headers["X-Request-ID"] = request_id
+
+    return response

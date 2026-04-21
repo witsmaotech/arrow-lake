@@ -13,6 +13,7 @@ __all__ = [
     "SAFE_IDENTIFIER_RE",
     "validate_identifier",
     "validate_sql_safety",
+    "validate_where_clause",
 ]
 
 # ---------------------------------------------------------------------------
@@ -64,3 +65,23 @@ def validate_identifier(name: str) -> None:
     """
     if not SAFE_IDENTIFIER_RE.match(name):
         raise ValueError(f"Invalid identifier '{name}': must match {SAFE_IDENTIFIER_RE.pattern}")
+
+
+def validate_where_clause(where: str) -> None:
+    """Validate a WHERE clause for dangerous SQL patterns.
+
+    Centralizes the duplicated _validate_where_clause() logic that
+    existed in vector.py, fts.py, and hybrid.py.
+
+    Args:
+        where: WHERE clause string to validate.
+
+    Raises:
+        ValueError: If dangerous SQL keywords are detected.
+    """
+    match = DANGEROUS_SQL_KEYWORDS_RE.search(where)
+    if match:
+        raise ValueError(
+            f"Where clause contains dangerous SQL keyword: {match.group()!r}. "
+            f"Only SELECT-safe filter expressions are allowed."
+        )

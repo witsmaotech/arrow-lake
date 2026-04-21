@@ -10,6 +10,8 @@ spec:
   groups:
     - name: arrow-lake.alerts
       rules:
+        # --- Ingestion alerts (existing) ---
+
         - alert: ArrowLakeIngestionErrorRate
           expr: |
             (
@@ -42,19 +44,37 @@ spec:
               Ingestion error rate for source {{ $labels.source }} is
               {{ $value | humanizePercentage }}.
 
+        # --- Query latency alerts (existing + enhanced) ---
+
         - alert: ArrowLakeQueryLatencyHigh
           expr: |
             histogram_quantile(0.95,
               sum(rate(arrow_lake_query_latency_seconds_bucket[5m])) by (le, query_type)
-            ) > 1.0
+            ) > {{ .Values.slo.p95_latency_seconds | default 1.0 }}
           for: 5m
           labels:
             severity: warning
           annotations:
-            summary: "Arrow Lake p95 query latency > 1s"
+            summary: "Arrow Lake p95 query latency > {{ .Values.slo.p95_latency_seconds | default 1.0 }}s"
             description: >
               p95 query latency for {{ $labels.query_type }} is
               {{ $value | humanizeDuration }}.
+
+        - alert: ArrowLakeQueryLatencyCritical
+          expr: |
+            histogram_quantile(0.99,
+              sum(rate(arrow_lake_query_latency_seconds_bucket[5m])) by (le, query_type)
+            ) > {{ .Values.slo.p99_latency_seconds | default 5.0 }}
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Arrow Lake p99 query latency > {{ .Values.slo.p99_latency_seconds | default 5.0 }}s"
+            description: >
+              p99 query latency for {{ $labels.query_type }} is
+              {{ $value | humanizeDuration }}.
+
+        # --- System health alerts ---
 
         - alert: ArrowLakeSystemDegraded
           expr: arrow_lake_system_uptime_seconds == 0
@@ -64,4 +84,97 @@ spec:
           annotations:
             summary: "Arrow Lake system health degraded"
             description: "System uptime metric is zero, indicating a restart or health issue."
+
+        # --- M5: SLA/SLO alerts ---
+
+        - alert: ArrowLakeHTTPErrorRateHigh
+          expr: |
+            (
+              sum(rate(arrow_lake_http_request_duration_seconds_count{status_code=~"5.."}[5m]))
+              /
+              sum(rate(arrow_lake_http_request_duration_seconds_count[5m]))
+            ) > 0.05
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Arrow Lake HTTP 5xx error rate > 5%"
+            description: >
+              HTTP 5xx error rate is {{ $value | humanizePercentage }},
+              exceeding the {{ .Values.slo.error_budget_pct | default 0.1 }} error budget threshold.
+
+        - alert: ArrowLakeHTTPErrorRateCritical
+          expr: |
+            (
+              sum(rate(arrow_lake_http_request_duration_seconds_count{status_code=~"5.."}[5m]))
+              /
+              sum(rate(arrow_lake_http_request_duration_seconds_count[5m]))
+            ) > 0.10
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Arrow Lake HTTP 5xx error rate > 10%"
+            description: >
+              HTTP 5xx error rate is {{ $value | humanizePercentage }}.
+              Immediate investigation required.
+
+        - alert: ArrowLakeAuthFailureRateHigh
+          expr: |
+            (
+              sum(rate(arrow_lake_auth_requests_total{status="failure"}[5m]))
+              /
+              sum(rate(arrow_lake_auth_requests_total[5m]))
+            ) > 0.20
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Arrow Lake auth failure rate > 20%"
+            description: >
+              Authentication failure rate is {{ $value | humanizePercentage }}.
+              Possible brute-force attack or misconfigured clients.
+
+        - alert: ArrowLakeIngestionStalled
+          expr: |
+            sum(increase(arrow_lake_ingestion_rows_total[10m])) == 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Arrow Lake ingestion stalled"
+            description: >
+              No rows ingested in the last 10 minutes across all sources.
+
+        - alert: ArrowLakeRateLimitHigh
+          expr: |
+            (
+              sum(rate(arrow_lake_rate_limit_rejected_total[5m]))
+              /
+              sum(rate(arrow_lake_http_request_duration_seconds_count[5m]))
+            ) > 0.30
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Arrow Lake rate limit rejection rate > 30%"
+            description: >
+              Rate limit is rejecting {{ $value | humanizePercentage }} of requests.
+              Consider increasing limits or investigating abuse.
+
+        - alert: ArrowLakeMemoryHigh
+          expr: |
+            (
+              process_resident_memory_bytes
+              /
+              {{ .Values.apiServer.resources.limits.memory | default "2Gi" | replace "Gi" "*1073741824" | replace "Mi" "*1048576" }}
+            ) > 0.90
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Arrow Lake memory usage > 90%"
+            description: >
+              Process memory is approaching the pod limit.
+              Risk of OOM kill. Consider increasing memory limit or investigating leaks.
 {{- end }}

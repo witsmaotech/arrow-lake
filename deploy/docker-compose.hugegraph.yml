@@ -1,0 +1,41 @@
+# Arrow Lake — HugeGraph overlay
+#
+# Extends base docker-compose.yml with HugeGraph graph database.
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.hugegraph.yml up -d hugegraph
+#
+# Reference: dev_notes/hugegraph_build_skills/batch03/hugegraph-docker-cluster.md
+
+services:
+  # ---------------------------------------------------------------------------
+  # HugeGraph — Graph database for Knowledge Graph + GraphRAG (M3)
+  # ---------------------------------------------------------------------------
+  hugegraph:
+    image: hugegraph/hugegraph:${HUGEGRAPH_VERSION:-1.7.0}
+    container_name: arrow-lake-hugegraph
+    profiles: ["kg", "full"]
+    restart: unless-stopped
+    ports:
+      - "${HUGEGRAPH_PORT:-8089}:8080"
+    environment:
+      HUGEGRAPH_STORAGE_BACKEND: "rocksdb"
+      HUGEGRAPH_GRAPH: "arrow_lake_kg"
+    volumes:
+      - hugegraph-data:/var/lib/hugegraph
+    networks:
+      - arrow-lake-net
+    deploy:
+      resources:
+        limits:
+          memory: ${HUGEGRAPH_MEMORY_LIMIT:-4G}
+          cpus: "${HUGEGRAPH_CPU_LIMIT:-2.0}"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/graphs/arrow_lake_kg/schema"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+volumes:
+  hugegraph-data:
+    driver: local

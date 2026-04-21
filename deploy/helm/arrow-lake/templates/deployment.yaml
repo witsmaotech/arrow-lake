@@ -58,14 +58,14 @@ spec:
             {{- end }}
           livenessProbe:
             httpGet:
-              path: {{ .Values.apiServer.healthPath }}
+              path: {{ .Values.apiServer.healthLivePath }}
               port: api
             initialDelaySeconds: 10
             periodSeconds: 30
             timeoutSeconds: 5
           readinessProbe:
             httpGet:
-              path: {{ .Values.apiServer.healthPath }}
+              path: {{ .Values.apiServer.healthReadyPath }}
               port: api
             initialDelaySeconds: 5
             periodSeconds: 10

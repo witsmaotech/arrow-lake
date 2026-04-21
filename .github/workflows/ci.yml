@@ -28,8 +28,19 @@ jobs:
       - name: MyPy type check
         run: uv run mypy arrow_lake/
 
+      - name: Security scan (bandit)
+        run: uv run bandit -r arrow_lake/ -x tests/ -ll
+
       - name: Run unit tests
-        run: uv run pytest tests/unit/ -v --cov=arrow_lake --cov-report=term-missing
+        run: uv run pytest tests/unit/ -v --cov=arrow_lake --cov-report=term-missing --cov-fail-under=80
 
       - name: Run integration tests (CPU only)
         run: uv run pytest tests/integration/ -v --tb=short -q
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: htmlcov/
+          retention-days: 7

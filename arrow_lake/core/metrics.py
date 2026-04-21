@@ -1,9 +1,13 @@
-"""Arrow Lake Prometheus metrics — Epic 1 baseline metrics.
+"""Arrow Lake Prometheus metrics — baseline metrics.
 
-Defines the Prometheus registry and 3 Epic 1 metrics:
+Defines the Prometheus registry and metrics:
 - system_uptime_seconds: Gauge for system uptime tracking
 - catalog_tables_total: Gauge for registered catalog table count
 - catalog_queries_total: Counter for total catalog queries served
+- query_latency_seconds: Histogram for query latency (p50/p95/p99)
+- http_request_duration_seconds: Histogram for HTTP request latency
+- auth_requests_total: Counter for authentication attempts
+- rate_limit_rejected_total: Counter for rate limit rejections
 
 All metrics use the ``arrow_lake_`` naming prefix.
 Metrics can be disabled globally via enable_metrics()/disable_metrics().
@@ -11,7 +15,7 @@ Metrics can be disabled globally via enable_metrics()/disable_metrics().
 
 from __future__ import annotations
 
-from prometheus_client import CollectorRegistry, Counter, Gauge
+from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram
 
 REGISTRY = CollectorRegistry()
 
@@ -96,11 +100,12 @@ query_total: Counter = Counter(
     labelnames=["query_type"],
 )
 
-query_latency_seconds: Gauge = Gauge(
+query_latency_seconds: Histogram = Histogram(
     "arrow_lake_query_latency_seconds",
     "Query latency in seconds.",
     registry=REGISTRY,
     labelnames=["query_type"],
+    buckets=[0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0],
 )
 
 query_results_total: Counter = Counter(
@@ -108,6 +113,32 @@ query_results_total: Counter = Counter(
     "Total number of query results returned.",
     registry=REGISTRY,
     labelnames=["query_type"],
+)
+
+# --- M4: HTTP and Auth metrics ---
+
+http_request_duration_seconds: Histogram = Histogram(
+    "arrow_lake_http_request_duration_seconds",
+    "HTTP request duration in seconds.",
+    registry=REGISTRY,
+    labelnames=["method", "path", "status_code"],
+    buckets=[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0],
+)
+
+auth_requests_total: Counter = Counter(
+    "arrow_lake_auth_requests_total",
+    "Total number of authentication attempts.",
+    registry=REGISTRY,
+    labelnames=["auth_method", "status"],
+)
+
+# --- M5: Rate Limit Metrics ---
+
+rate_limit_rejected_total: Counter = Counter(
+    "arrow_lake_rate_limit_rejected_total",
+    "Total number of requests rejected by rate limiting.",
+    registry=REGISTRY,
+    labelnames=["endpoint", "path"],
 )
 
 # --- Epic 6: Workflow Metrics ---

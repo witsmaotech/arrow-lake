@@ -1,0 +1,98 @@
+"""Knowledge graph request/response models (M3)."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from pydantic import BaseModel, Field
+
+# ---------------------------------------------------------------------------
+# Build
+# ---------------------------------------------------------------------------
+
+
+class KGBuildRequest(BaseModel):
+    dataset_name: str = Field(
+        ...,
+        min_length=1,
+        max_length=256,
+        pattern=r"^[a-zA-Z0-9_-]+$",
+        description="Name of the Lance dataset to build KG from",
+    )
+
+
+class KGBuildResponse(BaseModel):
+    task_id: str
+    status: str
+    message: str
+
+
+class KGBuildStatusResponse(BaseModel):
+    task_id: str
+    status: str
+    dataset_name: str
+    total_chunks: int = 0
+    processed_chunks: int = 0
+    entity_count: int = 0
+    relation_count: int = 0
+    error: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Schema
+# ---------------------------------------------------------------------------
+
+
+class KGSchemaResponse(BaseModel):
+    vertex_labels: list[str]
+    edge_labels: list[str]
+
+
+# ---------------------------------------------------------------------------
+# Gremlin Query
+# ---------------------------------------------------------------------------
+
+
+class KGQueryRequest(BaseModel):
+    gremlin: str = Field(..., min_length=1, max_length=10000, description="Gremlin query string")
+    timeout_seconds: float = Field(default=30.0, ge=1.0, le=300.0)
+
+
+class KGQueryResponse(BaseModel):
+    results: list[Any]
+    execution_time_ms: float
+
+
+# ---------------------------------------------------------------------------
+# Neighbors
+# ---------------------------------------------------------------------------
+
+
+class KGNeighborsResponse(BaseModel):
+    center_id: str
+    neighbors: list[dict[str, Any]]
+    depth: int
+
+
+# ---------------------------------------------------------------------------
+# Stats
+# ---------------------------------------------------------------------------
+
+
+class KGStatsResponse(BaseModel):
+    total_vertices: int
+    total_edges: int
+    graph_enabled: bool
+
+
+# ---------------------------------------------------------------------------
+# GraphRAG Query
+# ---------------------------------------------------------------------------
+
+
+class GraphRAGQueryRequest(BaseModel):
+    question: str = Field(..., min_length=1, max_length=5000, description="User question")
+    dataset_name: str = Field(..., min_length=1, max_length=256, description="Target dataset")
+    top_k: int = Field(default=5, ge=1, le=50)
+    traversal_depth: int = Field(default=2, ge=1, le=10)
+    graph_weight: float = Field(default=0.3, ge=0.0, le=1.0)

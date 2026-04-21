@@ -15,9 +15,12 @@ from typing import Any
 import pyarrow as pa
 import structlog
 
-from arrow_lake.config import VectorSearchConfig
+from arrow_lake.config import StorageConfig, VectorSearchConfig
 from arrow_lake.exceptions import ErrorCode, QueryError
-from arrow_lake.validation import DANGEROUS_SQL_KEYWORDS_RE
+from arrow_lake.validation import (
+    validate_identifier,
+    validate_where_clause,
+)
 
 _LARGE_TABLE_THRESHOLD = 1_000_000
 _SMALL_IVF_THRESHOLD = 65_536
@@ -71,9 +74,11 @@ class IndexInfo:
 
 
 class VectorSearchBridge:
-    """Bridges Lance datasets to LanceDB vector similarity search.
+    """Bridges Lance datasets to vector similarity search.
 
-    Pipeline: query vector -> LanceDB search -> Arrow Table with _distance.
+    Dual-path strategy:
+    - DuckDB native: uses lance_vector_search() SQL (preferred when available)
+    - LanceDB SDK: uses lancedb search builder (fallback)
 
     Thread safety: safe for concurrent reads. NOT safe for concurrent
     index creation on the same dataset.
@@ -81,11 +86,21 @@ class VectorSearchBridge:
     Args:
         storage: LanceStorageManager instance.
         config: Vector search configuration (None = use defaults).
+        storage_config: Storage configuration for S3 access (None = local).
+        lance_scan_mode: Scan mode — "auto", "native", or "pyarrow_fallback".
     """
 
-    def __init__(self, storage: Any, config: VectorSearchConfig | None = None) -> None:
+    def __init__(
+        self,
+        storage: Any,
+        config: VectorSearchConfig | None = None,
+        storage_config: StorageConfig | None = None,
+        lance_scan_mode: str = "auto",
+    ) -> None:
         self._storage = storage
         self._config = config or VectorSearchConfig()
+        self._storage_config = storage_config
+        self._lance_scan_mode = lance_scan_mode
 
     def create_index(
         self,
@@ -258,29 +273,45 @@ class VectorSearchBridge:
             )
 
         # Build search query
-        query_builder = table.search(
-            query=query_vector,
-            vector_column_name=vector_column,
-        )
-
-        if where is not None:
-            query_builder = query_builder.where(where)
-
-        query_builder = query_builder.limit(effective_top_k)
-
-        if nprobes is not None:
-            query_builder = query_builder.nprobes(min(nprobes, self._config.max_nprobes))
-
-        if metric is not None:
-            query_builder = query_builder.distance_type(metric)
-
-        try:
-            result_table = query_builder.to_arrow()
-        except Exception as exc:
-            raise QueryError(
-                error_code=ErrorCode.VECTOR_SEARCH_FAILED,
-                message=f"Vector search failed on '{dataset_name}': {exc}",
-            ) from exc
+        if (
+            self._lance_scan_mode != "pyarrow_fallback"
+            and hasattr(self._storage, "dataset_uri")
+            and where is None
+        ):
+            try:
+                result_table = self._search_via_duckdb(
+                    dataset_name,
+                    query_vector,
+                    top_k=effective_top_k,
+                    metric=metric,
+                    vector_column=vector_column,
+                    nprobes=nprobes,
+                )
+            except QueryError:
+                raise
+            except Exception:
+                _log.debug(
+                    "DuckDB vector search failed, falling back to LanceDB SDK", exc_info=True
+                )
+                result_table = self._search_via_lancedb(
+                    table,
+                    query_vector,
+                    effective_top_k,
+                    metric,
+                    vector_column,
+                    where,
+                    nprobes,
+                )
+        else:
+            result_table = self._search_via_lancedb(
+                table,
+                query_vector,
+                effective_top_k,
+                metric,
+                vector_column,
+                where,
+                nprobes,
+            )
 
         # Extract max distance for diagnostics
         max_distance: float | None = None
@@ -302,6 +333,104 @@ class VectorSearchBridge:
             top_k=effective_top_k,
             max_distance=max_distance,
         )
+
+    def _search_via_duckdb(
+        self,
+        dataset_name: str,
+        query_vector: list[float],
+        *,
+        top_k: int,
+        metric: str | None,
+        vector_column: str,
+        nprobes: int | None,
+    ) -> pa.Table:
+        """Search via DuckDB lance_vector_search() SQL function.
+
+        Args:
+            dataset_name: Lance dataset name.
+            query_vector: Query embedding vector.
+            top_k: Number of results.
+            metric: Distance metric.
+            vector_column: Vector column name.
+            nprobes: Number of IVF partitions to probe.
+
+        Returns:
+            Arrow Table with search results and _distance column.
+
+        Raises:
+            QueryError: If DuckDB search fails.
+        """
+        from arrow_lake.query._db import create_duckdb_session
+
+        if not hasattr(self._storage, "dataset_uri"):
+            raise QueryError(
+                error_code=ErrorCode.VECTOR_SEARCH_FAILED,
+                message="storage.dataset_uri() not available for DuckDB native search",
+            )
+
+        # Validate column name to prevent SQL injection
+        validate_identifier(vector_column)
+
+        uri = self._storage.dataset_uri(dataset_name)
+        vec_list = "[" + ", ".join(str(v) for v in query_vector) + "]"
+
+        sql_parts = [
+            "SELECT * FROM lance_vector_search(",
+            f"  '{uri}',",
+            f"  '{vector_column}',",
+            f"  CAST({vec_list} AS FLOAT[]),",
+            f"  k := {top_k}",
+        ]
+        if nprobes is not None:
+            sql_parts.append(f"  nprobs := {nprobes}")
+        if metric is not None:
+            sql_parts.append("  use_index := true")
+        sql_parts.append(")")
+
+        sql = "\n".join(sql_parts) + f" LIMIT {top_k}"
+
+        with create_duckdb_session(storage_config=self._storage_config) as conn:
+            reader = conn.execute(sql).arrow()
+            if hasattr(reader, "read_all"):
+                return reader.read_all()
+            return reader
+
+    def _search_via_lancedb(
+        self,
+        table: Any,
+        query_vector: list[float],
+        top_k: int,
+        metric: str | None,
+        vector_column: str,
+        where: str | None,
+        nprobes: int | None,
+    ) -> pa.Table:
+        """Search via LanceDB SDK (original path)."""
+        query_builder = table.search(
+            query=query_vector,
+            vector_column_name=vector_column,
+        )
+
+        if where is not None:
+            query_builder = query_builder.where(where)
+
+        query_builder = query_builder.limit(top_k)
+
+        if nprobes is not None:
+            query_builder = query_builder.nprobes(
+                min(nprobes, self._config.max_nprobes),
+            )
+
+        if metric is not None:
+            query_builder = query_builder.distance_type(metric)
+
+        try:
+            return query_builder.to_arrow()
+        except Exception as exc:
+            raise QueryError(
+                error_code=ErrorCode.VECTOR_SEARCH_FAILED,
+                message=f"Vector search failed: {exc}",
+            ) from exc
 
     def get_index_info(
         self,
@@ -340,15 +469,15 @@ class VectorSearchBridge:
         Raises:
             QueryError: If dangerous SQL keywords are detected.
         """
-        match = DANGEROUS_SQL_KEYWORDS_RE.search(where)
-        if match:
+        from arrow_lake.exceptions import ErrorCode, QueryError
+
+        try:
+            validate_where_clause(where)
+        except ValueError as exc:
             raise QueryError(
                 error_code=ErrorCode.VECTOR_INVALID_QUERY,
-                message=(
-                    f"Where clause contains dangerous SQL keyword: {match.group()!r}. "
-                    f"Only SELECT-safe filter expressions are allowed."
-                ),
-            )
+                message=str(exc),
+            ) from exc
 
     @staticmethod
     def _auto_select_partitions(num_rows: int, base_partitions: int = 256) -> int:

@@ -426,7 +426,7 @@ def multimodal_demo(base_uri: str, no_cleanup: bool) -> None:
     os = __import__("os")
     env = {**os.environ, "PYTHONPATH": f"{project_root}{os.pathsep}{os.environ.get('PYTHONPATH', '')}"}
 
-    cmd = [sys.executable, str(Path(project_root) / "examples" / "06_multimodal_demo.py")]
+    cmd = [sys.executable, str(Path(project_root) / "examples" / "ingestion" / "06_multimodal_demo.py")]
     cmd.extend(["--base-uri", base_uri])
     if no_cleanup:
         cmd.append("--no-cleanup")

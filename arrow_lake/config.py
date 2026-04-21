@@ -94,6 +94,15 @@ class FilterMode(StrEnum):
     ANY = "any"
 
 
+class LLMProviderType(StrEnum):
+    """Supported LLM providers for RAG generation."""
+
+    OPENAI = "openai"
+    ANTHROPIC = "anthropic"
+    VLLM = "vllm"
+    OLLAMA = "ollama"
+
+
 class StorageConfig(BaseModel):
     """Storage layer configuration.
 
@@ -114,6 +123,83 @@ class StorageConfig(BaseModel):
     s3_secret_key: str = ""
     s3_bucket: str = "arrow-lake"
     s3_region: str = "us-east-1"
+
+    # -- S3 helper methods for lance/boto3 and DuckDB integration --
+
+    @property
+    def s3_uri(self) -> str:
+        """Return the full dataset URI for Lance operations.
+
+        For LOCAL backend, returns base_uri as-is.
+        For S3-compatible backends, returns ``s3://{bucket}/{base_uri}``.
+        Leading ``./`` is stripped from base_uri for S3 paths.
+        """
+        if self.backend == StorageBackend.LOCAL:
+            return self.base_uri
+        path = self.base_uri
+        if path.startswith("./"):
+            path = path[2:]
+        return f"s3://{self.s3_bucket}/{path}"
+
+    def to_storage_options(self) -> dict[str, str] | None:
+        """Return storage_options dict for lance/boto3, or None for local.
+
+        The returned dict contains keys expected by both the Lance filesystem
+        abstraction and boto3-based S3 clients.
+        """
+        if self.backend == StorageBackend.LOCAL:
+            return None
+        return {
+            "region": self.s3_region,
+            "endpoint_url": self.s3_endpoint,
+            "aws_access_key_id": self.s3_access_key,
+            "aws_secret_access_key": self.s3_secret_key,
+            "allow_anonymous": "false",
+        }
+
+    def to_duckdb_s3_config(self) -> list[str]:
+        """Return list of DuckDB ``SET`` statements for S3 access.
+
+        Returns an empty list for LOCAL backend.
+        Single quotes in values are escaped to prevent SQL injection.
+        """
+        if self.backend == StorageBackend.LOCAL:
+            return []
+        return [
+            f"SET s3_region='{self.s3_region.replace(chr(39), chr(39) + chr(39))}'",
+            f"SET s3_endpoint='{self.s3_endpoint.replace(chr(39), chr(39) + chr(39))}'",
+            f"SET s3_access_key_id='{self.s3_access_key.replace(chr(39), chr(39) + chr(39))}'",
+            f"SET s3_secret_access_key='{self.s3_secret_key.replace(chr(39), chr(39) + chr(39))}'",
+        ]
+
+    @classmethod
+    def from_env(cls) -> StorageConfig:
+        """Create a StorageConfig from environment variables.
+
+        Reads:
+        - ``S3_ENDPOINT`` / ``S3_ENDPOINT_URL``
+        - ``AWS_ACCESS_KEY_ID``
+        - ``AWS_SECRET_ACCESS_KEY``
+        - ``S3_BUCKET``
+        - ``AWS_REGION`` / ``S3_DEFAULT_REGION``
+        """
+        import os
+
+        endpoint = os.environ.get("S3_ENDPOINT") or os.environ.get(
+            "S3_ENDPOINT_URL", "http://localhost:9000"
+        )
+        access_key = os.environ.get("AWS_ACCESS_KEY_ID", "")
+        secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
+        bucket = os.environ.get("S3_BUCKET", "arrow-lake")
+        region = os.environ.get("AWS_REGION") or os.environ.get("S3_DEFAULT_REGION", "us-east-1")
+        return cls(
+            backend=StorageBackend.MINIO,
+            s3_endpoint=endpoint,
+            s3_access_key=access_key,
+            s3_secret_key=secret_key,
+            s3_bucket=bucket,
+            s3_region=region,
+        )
 
 
 class ComputeConfig(BaseModel):
@@ -368,6 +454,15 @@ class OlapConfig(BaseModel):
         scanner_batch_size: Rows per batch when streaming via Lance scanner.
         enable_streaming: Use RecordBatchReader streaming instead of full
             materialization for SQL queries.
+        lance_scan_mode: Lance scan adapter mode — "auto", "native", or
+            "pyarrow_fallback".
+        max_query_memory_mb: Per-query memory limit in MB.
+        max_concurrent_queries: Maximum number of concurrent DuckDB queries.
+        query_timeout_seconds: Per-query timeout in seconds.
+        ducklake_enabled: Whether DuckLake extension is loaded for materialized
+            views and cross-storage joins.
+        ducklake_ttl_days: Default TTL in days for DuckLake materialized data.
+        ducklake_max_join_rows: Row budget for DuckLake materialize() calls.
     """
 
     max_result_rows: int = 100_000
@@ -375,6 +470,34 @@ class OlapConfig(BaseModel):
     enable_join: bool = True
     scanner_batch_size: int = 10_000
     enable_streaming: bool = True
+    lance_scan_mode: str = "auto"
+    max_query_memory_mb: int = 512
+    max_concurrent_queries: int = 4
+    query_timeout_seconds: int = 300
+    ducklake_enabled: bool = False
+    ducklake_ttl_days: int = 7
+    ducklake_max_join_rows: int = 1_000_000
+
+    @field_validator("lance_scan_mode")
+    @classmethod
+    def validate_lance_scan_mode(cls, v: str) -> str:
+        valid = {"auto", "native", "pyarrow_fallback"}
+        if v not in valid:
+            raise ValueError(f"lance_scan_mode must be one of {valid}, got {v!r}")
+        return v
+
+    @field_validator(
+        "max_query_memory_mb",
+        "max_concurrent_queries",
+        "query_timeout_seconds",
+        "ducklake_ttl_days",
+        "ducklake_max_join_rows",
+    )
+    @classmethod
+    def validate_positive_int(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError(f"value must be >= 1, got {v}")
+        return v
 
     @field_validator("max_result_rows")
     @classmethod
@@ -654,7 +777,7 @@ class AuditConfig(BaseModel):
 
 
 class ApiConfig(BaseModel):
-    """REST API configuration (v0.2.0).
+    """REST API configuration.
 
     Attributes:
         enabled: Whether the REST API server is active.
@@ -666,6 +789,9 @@ class ApiConfig(BaseModel):
         arrow_ipc_threshold_bytes: Results larger than this use Arrow IPC encoding.
         request_timeout_seconds: Maximum request processing time.
         max_request_size_bytes: Maximum HTTP request body size.
+        security_headers_enabled: Enable HTTP security response headers.
+        content_security_policy: CSP value. Empty = header not set.
+        frame_options: X-Frame-Options value (DENY, SAMEORIGIN, or empty to disable).
     """
 
     enabled: bool = False
@@ -677,6 +803,222 @@ class ApiConfig(BaseModel):
     arrow_ipc_threshold_bytes: int = 10240  # 10 KB
     request_timeout_seconds: float = 300.0
     max_request_size_bytes: int = 100 * 1024 * 1024  # 100 MB
+    auto_generate_request_id: bool = True
+    api_key_rotation_days: int = 90
+    security_headers_enabled: bool = True
+    content_security_policy: str = ""
+    frame_options: str = "DENY"
+
+
+class LLMConfig(BaseModel):
+    """LLM provider configuration for RAG generation.
+
+    Attributes:
+        provider: LLM backend type (openai, anthropic, vllm, ollama).
+        model: Model name to use for generation.
+        api_key: API key (empty for local models).
+        api_base: Custom API base URL (empty = use provider default).
+        temperature: Sampling temperature (0.0-2.0).
+        max_tokens: Maximum tokens to generate.
+        context_window_tokens: Model context window size for budget calculation.
+        timeout_seconds: HTTP request timeout.
+    """
+
+    provider: LLMProviderType = LLMProviderType.OPENAI
+    model: str = "gpt-4o-mini"
+    api_key: str = ""
+    api_base: str = ""
+    temperature: float = 0.7
+    max_tokens: int = 2048
+    context_window_tokens: int = 128000
+    timeout_seconds: float = 60.0
+    anthropic_version: str = "2023-06-01"
+
+    @field_validator("temperature")
+    @classmethod
+    def validate_temperature(cls, v: float) -> float:
+        if not 0.0 <= v <= 2.0:
+            raise ValueError(f"temperature must be 0.0-2.0, got {v}")
+        return v
+
+    @field_validator("timeout_seconds")
+    @classmethod
+    def validate_timeout(cls, v: float) -> float:
+        if v < 1.0:
+            raise ValueError(f"timeout_seconds must be >= 1.0, got {v}")
+        return v
+
+    @field_validator("max_tokens")
+    @classmethod
+    def validate_max_tokens(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError(f"max_tokens must be >= 1, got {v}")
+        return v
+
+
+class RAGConfig(BaseModel):
+    """RAG pipeline configuration.
+
+    Attributes:
+        enabled: Whether RAG endpoints are active.
+        default_retrieval_strategy: Default retrieval strategy (vector, fts, hybrid).
+        default_top_k: Default number of results to retrieve.
+        max_context_chunks: Maximum chunks in context window.
+        context_budget_ratio: Fraction of context window for retrieved chunks.
+        system_prompt: Default system prompt override.
+        history_dataset: Lance dataset name for session history.
+        enable_citations: Whether to track and return citations.
+    """
+
+    enabled: bool = False
+    default_retrieval_strategy: str = "hybrid"
+    default_top_k: int = 10
+    max_context_chunks: int = 20
+    context_budget_ratio: float = 0.75
+    system_prompt: str = ""
+    history_dataset: str = "_rag_sessions"
+    enable_citations: bool = True
+
+    @field_validator("context_budget_ratio")
+    @classmethod
+    def validate_ratio(cls, v: float) -> float:
+        if not 0.1 <= v <= 0.95:
+            raise ValueError(f"context_budget_ratio must be 0.1-0.95, got {v}")
+        return v
+
+
+class HugeGraphConfig(BaseModel):
+    """HugeGraph 知识图谱配置 (M3).
+
+    Attributes:
+        enabled: Whether KG functionality is active.
+        host: HugeGraph server hostname.
+        port: HugeGraph REST API port.
+        graph_name: Name of the graph in HugeGraph.
+        timeout_seconds: HTTP request timeout.
+        username: Auth username (empty = no auth).
+        password: Auth password.
+        auto_build_on_ingest: Auto-build KG on data ingestion.
+        build_batch_size: Vertices/edges per batch insert.
+        default_traversal_depth: Default hop depth for graph queries.
+        max_traversal_depth: Maximum allowed traversal depth.
+    """
+
+    enabled: bool = False
+    host: str = "localhost"
+    port: int = 8089
+    graph_name: str = "arrow_lake_kg"
+    timeout_seconds: float = 30.0
+    username: str = ""
+    password: str = ""
+    auto_build_on_ingest: bool = False
+    build_batch_size: int = 50
+    default_traversal_depth: int = 2
+    max_traversal_depth: int = 5
+
+    @field_validator("max_traversal_depth")
+    @classmethod
+    def validate_max_depth(cls, v: int) -> int:
+        if not 1 <= v <= 10:
+            raise ValueError(f"max_traversal_depth must be 1-10, got {v}")
+        return v
+
+    @field_validator("build_batch_size")
+    @classmethod
+    def validate_batch_size(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError(f"build_batch_size must be >= 1, got {v}")
+        return v
+
+    @field_validator("timeout_seconds")
+    @classmethod
+    def validate_timeout(cls, v: float) -> float:
+        if v < 1.0:
+            raise ValueError(f"timeout_seconds must be >= 1.0, got {v}")
+        return v
+
+
+class OpenTelemetryConfig(BaseModel):
+    """OpenTelemetry 分布式追踪配置 (M4).
+
+    Attributes:
+        enabled: Whether OTel tracing is active.
+        service_name: Service name for traces.
+        otel_endpoint: OTLP exporter endpoint URL.
+        trace_sample_rate: Fraction of traces to sample (0.0-1.0).
+    """
+
+    enabled: bool = False
+    service_name: str = "arrow-lake"
+    otel_endpoint: str = "http://localhost:4317"
+    trace_sample_rate: float = 1.0
+
+    @field_validator("trace_sample_rate")
+    @classmethod
+    def validate_sample_rate(cls, v: float) -> float:
+        if not 0.0 <= v <= 1.0:
+            raise ValueError(f"trace_sample_rate must be 0.0-1.0, got {v}")
+        return v
+
+
+class AuthMode(StrEnum):
+    """认证模式枚举."""
+
+    API_KEY = "api_key"
+    JWT = "jwt"
+    BOTH = "both"
+
+
+class AuthConfig(BaseModel):
+    """认证配置 (M4).
+
+    Attributes:
+        auth_mode: 认证模式.
+        jwt_secret_key: JWT 签名密钥.
+        jwt_algorithm: JWT 签名算法.
+        jwt_access_token_minutes: Access token 有效期 (分钟).
+        jwt_refresh_token_days: Refresh token 有效期 (天).
+        jwt_issuer: JWT issuer 声明.
+    """
+
+    auth_mode: AuthMode = AuthMode.API_KEY
+    jwt_secret_key: str = ""
+    jwt_algorithm: str = "HS256"
+    jwt_access_token_minutes: int = 30
+    jwt_refresh_token_days: int = 7
+    jwt_issuer: str = "arrow-lake"
+
+    @field_validator("jwt_access_token_minutes")
+    @classmethod
+    def validate_access_minutes(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError(f"jwt_access_token_minutes must be >= 1, got {v}")
+        return v
+
+    @field_validator("jwt_refresh_token_days")
+    @classmethod
+    def validate_refresh_days(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError(f"jwt_refresh_token_days must be >= 1, got {v}")
+        return v
+
+
+class RateLimitConfig(BaseModel):
+    """速率限制配置 (M5).
+
+    Attributes:
+        enabled: 是否启用速率限制.
+        default_requests_per_minute: 默认每分钟请求数.
+        default_burst: 默认突发请求数.
+        override_per_endpoint: 每端点自定义限制 {"path": rpm}.
+        exempt_paths: 免除限制的路径前缀列表.
+    """
+
+    enabled: bool = False
+    default_requests_per_minute: int = 60
+    default_burst: int = 10
+    override_per_endpoint: dict[str, int] = {}
+    exempt_paths: list[str] = ["/health", "/metrics", "/docs", "/openapi.json", "/redoc"]
 
 
 class ArrowLakeConfig(BaseSettings):
@@ -722,6 +1064,12 @@ class ArrowLakeConfig(BaseSettings):
     audit: AuditConfig = AuditConfig()
     export: ExportConfig = ExportConfig()
     api: ApiConfig = ApiConfig()
+    llm: LLMConfig = LLMConfig()
+    rag: RAGConfig = RAGConfig()
+    hugegraph: HugeGraphConfig = HugeGraphConfig()
+    opentelemetry: OpenTelemetryConfig = OpenTelemetryConfig()
+    auth: AuthConfig = AuthConfig()
+    rate_limit: RateLimitConfig = RateLimitConfig()
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> ArrowLakeConfig:
@@ -779,6 +1127,12 @@ class ArrowLakeConfig(BaseSettings):
             audit=merged["audit"],
             export=merged["export"],
             api=merged["api"],
+            llm=merged["llm"],
+            rag=merged["rag"],
+            hugegraph=merged["hugegraph"],
+            opentelemetry=merged["opentelemetry"],
+            auth=merged["auth"],
+            rate_limit=merged["rate_limit"],
         )
 
 
@@ -813,6 +1167,12 @@ def _build_merged_update(base: ArrowLakeConfig, yaml_data: dict[str, Any]) -> di
         "export": ExportConfig,
         "audit": AuditConfig,
         "api": ApiConfig,
+        "llm": LLMConfig,
+        "rag": RAGConfig,
+        "hugegraph": HugeGraphConfig,
+        "opentelemetry": OpenTelemetryConfig,
+        "auth": AuthConfig,
+        "rate_limit": RateLimitConfig,
     }
     result: dict[str, Any] = {}
 

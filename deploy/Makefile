@@ -12,6 +12,7 @@
 COMPOSE_FILE ?= -f docker-compose.yml
 COMPOSE_DEV   ?= -f docker-compose.dev.yml
 COMPOSE_GPU    ?= -f docker-compose.gpu.yml
+COMPOSE_KG     ?= -f docker-compose.hugegraph.yml
 COMPOSE_MON    ?= -f docker-compose.monitoring.yml
 PROJECT_NAME  ?= arrow-lake
 
@@ -22,13 +23,13 @@ PROFILE_GPU    = --profile gpu
 PROFILE_FULL   = --profile dev --profile monitoring
 
 # Common Compose invocation with all override files (for down/clean/ps/logs)
-ALL_FILES = $(COMPOSE_FILE) $(COMPOSE_DEV) $(COMPOSE_GPU) $(COMPOSE_MON)
+ALL_FILES = $(COMPOSE_FILE) $(COMPOSE_DEV) $(COMPOSE_GPU) $(COMPOSE_KG) $(COMPOSE_MON)
 
 # ---------------------------------------------------------------------------
 # Core commands
 # ---------------------------------------------------------------------------
 
-.PHONY: up dev gpu full down clean build ps logs env certs shell-api shell-ray shell-jupyter
+.PHONY: up dev gpu full kg down clean build ps logs env certs shell-api shell-ray shell-jupyter
 
 up:
 	docker compose $(COMPOSE_FILE) --project-name $(PROJECT_NAME) $(PROFILE_CORE) up -d
@@ -42,11 +43,14 @@ gpu:
 full:
 	docker compose $(COMPOSE_FILE) $(COMPOSE_DEV) $(COMPOSE_MON) --project-name $(PROJECT_NAME) $(PROFILE_FULL) up -d
 
+kg:
+	docker compose $(COMPOSE_FILE) $(COMPOSE_KG) --project-name $(PROJECT_NAME) --profile kg up -d
+
 down:
-	docker compose $(ALL_FILES) --project-name $(PROJECT_NAME) --profile core --profile compute --profile dev --profile gpu --profile monitoring down
+	docker compose $(ALL_FILES) --project-name $(PROJECT_NAME) --profile core --profile compute --profile dev --profile gpu --profile kg --profile monitoring down
 
 clean:
-	docker compose $(ALL_FILES) --project-name $(PROJECT_NAME) --profile core --profile compute --profile dev --profile gpu --profile monitoring down -v
+	docker compose $(ALL_FILES) --project-name $(PROJECT_NAME) --profile core --profile compute --profile dev --profile gpu --profile kg --profile monitoring down -v
 
 # ---------------------------------------------------------------------------
 # Build
@@ -69,10 +73,10 @@ build-gpu:
 # ---------------------------------------------------------------------------
 
 ps:
-	docker compose $(ALL_FILES) --project-name $(PROJECT_NAME) --profile core --profile compute --profile dev --profile gpu --profile monitoring ps
+	docker compose $(ALL_FILES) --project-name $(PROJECT_NAME) --profile core --profile compute --profile dev --profile gpu --profile kg --profile monitoring ps
 
 logs:
-	docker compose $(ALL_FILES) --project-name $(PROJECT_NAME) --profile core --profile compute --profile dev --profile gpu --profile monitoring logs -f --tail=50
+	docker compose $(ALL_FILES) --project-name $(PROJECT_NAME) --profile core --profile compute --profile dev --profile gpu --profile kg --profile monitoring logs -f --tail=50
 
 logs-api:
 	docker compose $(COMPOSE_FILE) $(COMPOSE_DEV) --project-name $(PROJECT_NAME) $(PROFILE_DEV) logs -f api
@@ -84,7 +88,7 @@ logs-jupyter:
 	docker compose $(COMPOSE_FILE) $(COMPOSE_DEV) $(COMPOSE_MON) --project-name $(PROJECT_NAME) $(PROFILE_DEV) logs -f jupyter
 
 restart:
-	docker compose $(ALL_FILES) --project-name $(PROJECT_NAME) --profile core --profile compute --profile dev --profile gpu --profile monitoring restart
+	docker compose $(ALL_FILES) --project-name $(PROJECT_NAME) --profile core --profile compute --profile dev --profile gpu --profile kg --profile monitoring restart
 
 # ---------------------------------------------------------------------------
 # Tools
@@ -117,6 +121,7 @@ help:
 	@echo "  make dev         Development mode (all services + source mount)"
 	@echo "  make gpu         GPU mode (Ray with CUDA)"
 	@echo "  make full        Full stack (all + Prometheus monitoring)"
+	@echo "  make kg          Knowledge Graph (HugeGraph)"
 	@echo "  make down        Stop all services, keep data"
 	@echo "  make clean       Stop all services, remove data volumes"
 	@echo ""

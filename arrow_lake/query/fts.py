@@ -14,7 +14,7 @@ from typing import Any
 import pyarrow as pa
 import structlog
 
-from arrow_lake.config import FullTextSearchConfig
+from arrow_lake.config import FullTextSearchConfig, StorageConfig
 from arrow_lake.exceptions import ErrorCode, QueryError
 
 _log = structlog.get_logger(__name__)
@@ -58,9 +58,13 @@ class FullTextSearchBridge:
         self,
         storage: Any,
         config: FullTextSearchConfig | None = None,
+        storage_config: StorageConfig | None = None,
+        lance_scan_mode: str = "auto",
     ) -> None:
         self._storage = storage
         self._config = config or FullTextSearchConfig()
+        self._storage_config = storage_config
+        self._lance_scan_mode = lance_scan_mode
 
     def create_index(
         self,
@@ -176,21 +180,38 @@ class FullTextSearchBridge:
                 message=f"Column '{column}' not found in dataset '{dataset_name}'",
             )
 
-        # Build FTS query
-        query_builder = table.search(query=query, fts_columns=column)
-
-        if where is not None:
-            query_builder = query_builder.where(where)
-
-        query_builder = query_builder.limit(effective_top_k)
-
-        try:
-            result_table = query_builder.to_arrow()
-        except Exception as exc:
-            raise QueryError(
-                error_code=ErrorCode.FTS_SEARCH_FAILED,
-                message=f"FTS search failed on '{dataset_name}': {exc}",
-            ) from exc
+        # Dual-path: DuckDB native (preferred) vs LanceDB SDK (fallback)
+        if (
+            self._lance_scan_mode != "pyarrow_fallback"
+            and hasattr(self._storage, "dataset_uri")
+            and where is None
+        ):
+            try:
+                result_table = self._search_via_duckdb(
+                    dataset_name,
+                    query,
+                    effective_top_k,
+                    column,
+                )
+            except QueryError:
+                raise
+            except Exception:
+                _log.debug("DuckDB FTS search failed, falling back to LanceDB SDK", exc_info=True)
+                result_table = self._search_via_lancedb(
+                    table,
+                    query,
+                    effective_top_k,
+                    column,
+                    where,
+                )
+        else:
+            result_table = self._search_via_lancedb(
+                table,
+                query,
+                effective_top_k,
+                column,
+                where,
+            )
 
         # Extract max score for diagnostics
         max_score: float | None = None
@@ -214,14 +235,87 @@ class FullTextSearchBridge:
         Raises:
             QueryError: If dangerous SQL keywords are detected.
         """
-        from arrow_lake.validation import DANGEROUS_SQL_KEYWORDS_RE
+        from arrow_lake.exceptions import ErrorCode, QueryError
+        from arrow_lake.validation import validate_where_clause
 
-        match = DANGEROUS_SQL_KEYWORDS_RE.search(where)
-        if match:
+        try:
+            validate_where_clause(where)
+        except ValueError as exc:
             raise QueryError(
                 error_code=ErrorCode.FTS_SEARCH_FAILED,
-                message=(
-                    f"Where clause contains dangerous SQL keyword: {match.group()!r}. "
-                    f"Only SELECT-safe filter expressions are allowed."
-                ),
+                message=str(exc),
+            ) from exc
+
+    def _search_via_duckdb(
+        self,
+        dataset_name: str,
+        query: str,
+        top_k: int,
+        fts_column: str,
+    ) -> pa.Table:
+        """Search via DuckDB lance_fts() SQL function.
+
+        Args:
+            dataset_name: Lance dataset name.
+            query: Search query string.
+            top_k: Number of results.
+            fts_column: Text column to search.
+
+        Returns:
+            Arrow Table with search results and _score column.
+
+        Raises:
+            QueryError: If DuckDB search fails.
+        """
+        from arrow_lake.query._db import create_duckdb_session
+
+        if not hasattr(self._storage, "dataset_uri"):
+            raise QueryError(
+                error_code=ErrorCode.FTS_SEARCH_FAILED,
+                message="storage.dataset_uri() not available for DuckDB native FTS",
             )
+
+        from arrow_lake.validation import validate_identifier
+
+        validate_identifier(fts_column)
+
+        uri = self._storage.dataset_uri(dataset_name)
+        safe_query = query.replace("'", "''")
+        sql = (
+            f"SELECT * FROM lance_fts("
+            f"  '{uri}',"
+            f"  '{fts_column}',"
+            f"  '{safe_query}',"
+            f"  k := {top_k}"
+            f") LIMIT {top_k}"
+        )
+
+        with create_duckdb_session(storage_config=self._storage_config) as conn:
+            reader = conn.execute(sql).arrow()
+            if hasattr(reader, "read_all"):
+                return reader.read_all()
+            return reader
+
+    def _search_via_lancedb(
+        self,
+        table: Any,
+        query: str,
+        top_k: int,
+        fts_column: str,
+        where: str | None,
+    ) -> pa.Table:
+        """Search via LanceDB SDK (original path)."""
+        query_builder = table.search(query=query, fts_columns=fts_column)
+
+        if where is not None:
+            query_builder = query_builder.where(where)
+
+        query_builder = query_builder.limit(top_k)
+
+        try:
+            return query_builder.to_arrow()
+        except Exception as exc:
+            raise QueryError(
+                error_code=ErrorCode.FTS_SEARCH_FAILED,
+                message=f"FTS search failed: {exc}",
+            ) from exc

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Path
 
-from arrow_lake.api.deps import get_lake
+from arrow_lake.api.auth_models import Role
+from arrow_lake.api.deps import get_lake, require_role
 from arrow_lake.api.models.common import _NAME_PATTERN, MessageResponse
 from arrow_lake.api.models.dataset import (
     DatasetInfo,
@@ -27,6 +28,7 @@ async def ingest_files(
     *,
     req: IngestFilesRequest,
     lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> IngestResponse:
     """Ingest local files into a dataset."""
     report = lake.ingest(name, req.file_paths)
@@ -39,6 +41,7 @@ async def ingest_http(
     *,
     req: IngestHttpRequest,
     lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> IngestResponse:
     """Ingest files from HTTP(S) URLs into a dataset."""
     report = lake.ingest_http(name, req.urls)
@@ -51,6 +54,7 @@ async def ingest_images(
     *,
     req: IngestImagesRequest,
     lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> IngestResponse:
     """Ingest image files with thumbnails and EXIF metadata."""
     report = lake.ingest_images(name, req.file_paths)
@@ -63,6 +67,7 @@ async def ingest_videos(
     *,
     req: IngestVideosRequest,
     lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> IngestResponse:
     """Ingest video files with keyframe extraction."""
     report = lake.ingest_videos(name, req.file_paths)
@@ -75,6 +80,7 @@ async def ingest_mixed(
     *,
     req: IngestMixedRequest,
     lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> IngestResponse:
     """Ingest mixed-modality sources (files, URLs, images, videos)."""
     report = lake.ingest_mixed(name, req.sources)
@@ -120,6 +126,7 @@ async def delete_dataset(
     name: str = Path(..., pattern=_NAME_PATTERN),
     *,
     lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> MessageResponse:
     """Delete a dataset and all its data."""
     lake.delete_dataset(name)

@@ -45,6 +45,31 @@ def _error_code_to_http_status(code: ErrorCode) -> int:
         return 503
     if code.startswith("STORAGE_") or code.startswith("HTTP_") or code.startswith("EMBEDDING_"):
         return 502
+    # RAG errors
+    if code in (ErrorCode.RAG_TEMPLATE_NOT_FOUND, ErrorCode.RAG_SESSION_NOT_FOUND):
+        return 404
+    if code == ErrorCode.RAG_CONTEXT_TOO_LONG:
+        return 400
+    if code == ErrorCode.RAG_PROVIDER_ERROR:
+        return 502
+    # Knowledge Graph errors
+    if code == ErrorCode.KG_GRAPH_NOT_FOUND:
+        return 404
+    if code == ErrorCode.KG_SCHEMA_ERROR:
+        return 400
+    if code == ErrorCode.KG_TRAVERSAL_TIMEOUT:
+        return 504
+    if code == ErrorCode.KG_CONNECTION_FAILED or code == ErrorCode.KG_EXTRACT_FAILED:
+        return 502
+    if code.startswith("KG_"):
+        return 500
+    # Auth errors (M4)
+    if code in (ErrorCode.AUTH_TOKEN_EXPIRED, ErrorCode.AUTH_INVALID_TOKEN):
+        return 401
+    if code == ErrorCode.AUTH_INSUFFICIENT_PERMISSIONS:
+        return 403
+    if code == ErrorCode.AUTH_API_KEY_ROTATION_REQUIRED:
+        return 403
     return 500
 
 

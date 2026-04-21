@@ -1,4 +1,4 @@
-"""In-process export task tracking (v0.2.0).
+"""In-process export task tracking.
 
 A lightweight in-memory task manager for async export operations.
 Upgraded to Redis/Celery in v0.3.0 for distributed deployments.

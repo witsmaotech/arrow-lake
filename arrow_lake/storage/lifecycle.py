@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 import structlog
+
 from arrow_lake.config import LifecycleConfig
 from arrow_lake.exceptions import ErrorCode, StorageError
 

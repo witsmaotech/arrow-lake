@@ -1,0 +1,11 @@
+# Knowledge Graph Configuration
+# Override in deployment profiles via ARROW_LAKE__HUGEGRAPH__ENABLED=true
+hugegraph:
+  enabled: false
+  host: localhost
+  port: 8089
+  graph_name: arrow_lake_kg
+  timeout_seconds: 30.0
+  build_batch_size: 50
+  default_traversal_depth: 2
+  max_traversal_depth: 5

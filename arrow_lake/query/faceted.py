@@ -3,21 +3,29 @@
 Provides multi-dimensional faceted navigation alongside vector search.
 Uses DuckDB CUBE to compute facet counts for all dimension combinations
 from a filtered dataset, then intersects with vector search results.
+
+M0b migration:
+- DuckDBSession → create_duckdb_session() (extension loading + resource governance)
+- LanceScanAdapter.create_view() for native lance scan
+- Backward-compatible PyArrow fallback via conn.register()
 """
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 
 import pyarrow as pa
 
-from arrow_lake.config import FacetedSearchConfig
-from arrow_lake.query._db import DuckDBSession
+from arrow_lake.config import FacetedSearchConfig, StorageConfig
+from arrow_lake.query._db import create_duckdb_session
 from arrow_lake.validation import (
     SAFE_IDENTIFIER_RE,
     validate_sql_safety,
 )
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["FacetCount", "FacetedSearchBridge", "FacetedSearchResult"]
 
@@ -64,7 +72,7 @@ class FacetedSearchBridge:
     """Bridges Lance datasets to DuckDB CUBE for faceted search.
 
     Pipeline:
-    1. Lance → Arrow → DuckDB register
+    1. Lance → (native scan | Arrow) → DuckDB
     2. CUBE query computes facet counts
     3. Vector search returns top-k results
     4. Results combined into FacetedSearchResult
@@ -72,15 +80,18 @@ class FacetedSearchBridge:
     Args:
         storage: LanceStorageManager instance.
         config: Faceted search configuration.
+        storage_config: Storage configuration for S3 access (None = local).
     """
 
     def __init__(
         self,
         storage: Any,
         config: FacetedSearchConfig | None = None,
+        storage_config: StorageConfig | None = None,
     ) -> None:
         self._storage = storage
         self._config = config or FacetedSearchConfig()
+        self._storage_config = storage_config
 
     @property
     def config(self) -> FacetedSearchConfig:
@@ -135,7 +146,7 @@ class FacetedSearchBridge:
         # Apply where filter to results if provided
         if source is not None and where:
             validate_sql_safety(where)
-            with DuckDBSession() as conn:
+            with create_duckdb_session(storage_config=self._storage_config) as conn:
                 conn.register(dataset_name, source)
                 filtered_reader = conn.execute(
                     f"SELECT * FROM {dataset_name} WHERE {where} LIMIT {top_k}"
@@ -195,7 +206,7 @@ class FacetedSearchBridge:
 
         cube_query = self._build_cube_query(dataset_name, facets, where)
 
-        with DuckDBSession() as conn:
+        with create_duckdb_session(storage_config=self._storage_config) as conn:
             conn.register(dataset_name, source)
             result_reader = conn.execute(cube_query).arrow()
             if hasattr(result_reader, "read_all"):

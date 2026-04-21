@@ -11,21 +11,28 @@ Story 7.6 additions:
 - enable_join config flag for security control
 - to_arrow() convenience method on OlapQueryResult
 
+M0b migration:
+- DuckDBSession → create_duckdb_session() (extension loading + resource governance)
+- LanceScanAdapter.create_view() for native lance scan
+- Backward-compatible PyArrow fallback via conn.register()
+
 Note: Daft expression-based queries are available via Lake.daft_query().
 Daft 0.7.8 does not support SQL.
 """
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from typing import Any
 
 import pyarrow as pa
 
-from arrow_lake.config import OlapConfig
+from arrow_lake.config import OlapConfig, StorageConfig
 from arrow_lake.exceptions import ErrorCode, QueryError
-from arrow_lake.query._db import DuckDBSession
+from arrow_lake.query._db import create_duckdb_session
+from arrow_lake.query.lance_adapter import create_lance_scan_adapter
 from arrow_lake.validation import (
     DANGEROUS_SQL_KEYWORDS_RE,
     validate_identifier,
@@ -36,6 +43,8 @@ _JOIN_KEYWORD_RE = re.compile(
     r"JOIN|NATURAL\s+JOIN)\b",
     re.IGNORECASE,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -62,7 +71,7 @@ class OlapQueryResult:
 class OlapSearchBridge:
     """Bridges Lance datasets to DuckDB for OLAP analytics queries.
 
-    Pipeline: Lance → Arrow → DuckDB register → SQL → Arrow result.
+    Pipeline: Lance → (native scan | Arrow) → DuckDB → SQL → Arrow result.
 
     Supports GROUP BY, aggregation functions, window functions, HAVING,
     ORDER BY, and LIMIT.
@@ -73,15 +82,18 @@ class OlapSearchBridge:
     Args:
         storage: LanceStorageManager instance.
         config: OLAP analytics configuration (None = use defaults).
+        storage_config: Storage configuration for S3 access (None = local).
     """
 
     def __init__(
         self,
         storage: Any,
         config: OlapConfig | None = None,
+        storage_config: StorageConfig | None = None,
     ) -> None:
         self._storage = storage
         self._config = config or OlapConfig()
+        self._storage_config = storage_config
 
     def query(
         self,
@@ -120,14 +132,20 @@ class OlapSearchBridge:
         # Determine if streaming is safe (RecordBatchReader is single-use,
         # so queries that reference the same table multiple times need
         # a full materialized Table that can be scanned repeatedly).
-        # Unsafe patterns: JOIN (same table scanned twice), subqueries
-        # that reference the outer table.
         stripped_sql = sql.strip().upper()
         use_streaming = (
             self._config.enable_streaming
             and hasattr(self._storage, "scan_dataset")
             and not _JOIN_KEYWORD_RE.search(stripped_sql)
             and stripped_sql.count("SELECT") == 1
+        )
+
+        # Build session with extensions and resource governance
+        session = create_duckdb_session(
+            max_memory_mb=self._config.max_query_memory_mb,
+            timeout_seconds=self._config.query_timeout_seconds,
+            olap_config=self._config,
+            storage_config=self._storage_config,
         )
 
         # Read dataset from Lance
@@ -145,9 +163,9 @@ class OlapSearchBridge:
                 message=f"Failed to read dataset '{dataset_name}': {exc}",
             ) from exc
 
-        # Register tables and execute query
-        with DuckDBSession() as conn:
-            conn.register(dataset_name, source)
+        # Execute query with LanceScanAdapter (native) or PyArrow fallback
+        with session as conn:
+            self._register_dataset(conn, dataset_name, source)
             for name, extra_table in (tables or {}).items():
                 conn.register(name, extra_table)
             result_reader = conn.execute(sql).arrow()
@@ -167,6 +185,95 @@ class OlapSearchBridge:
             column_count=result_table.num_columns,
             sql=sql,
         )
+
+    def materialize(
+        self,
+        dataset_name: str,
+        sql: str,
+        *,
+        view_name: str | None = None,
+        ttl_days: int | None = None,
+        max_join_rows: int | None = None,
+    ) -> int:
+        """Materialize a SQL query result as a DuckLake table.
+
+        Uses DuckLake for persistent materialized views with TTL-based
+        lifecycle management.
+
+        Args:
+            dataset_name: Name of the Lance dataset to query.
+            sql: SQL query string (must be SELECT only).
+            view_name: Name for the materialized table (None = auto-generate).
+            ttl_days: TTL in days (None = use config default).
+            max_join_rows: Maximum row budget (None = use config default).
+
+        Returns:
+            Number of rows materialized.
+
+        Raises:
+            QueryError: If SQL validation fails or materialization fails.
+            ValueError: If dataset name is invalid.
+        """
+        _validate_dataset_name(dataset_name)
+        self._validate_sql(sql)
+
+        if view_name is not None:
+            validate_identifier(view_name)
+
+        if not self._config.ducklake_enabled:
+            raise QueryError(
+                error_code=ErrorCode.OLAP_QUERY_FAILED,
+                message="DuckLake materialization is not enabled (ducklake_enabled=False)",
+            )
+
+        if view_name is None:
+            view_name = f"_materialized_{dataset_name}"
+
+        from arrow_lake.query.ducklake_workspace import DuckLakeWorkspace
+
+        workspace = DuckLakeWorkspace(
+            ttl_days=ttl_days or self._config.ducklake_ttl_days,
+            max_join_rows=max_join_rows or self._config.ducklake_max_join_rows,
+        )
+
+        # Read dataset
+        try:
+            source = self._storage.read_dataset(dataset_name)
+        except Exception as exc:
+            raise QueryError(
+                error_code=ErrorCode.OLAP_QUERY_FAILED,
+                message=f"Failed to read dataset '{dataset_name}': {exc}",
+            ) from exc
+
+        with create_duckdb_session(
+            max_memory_mb=self._config.max_query_memory_mb,
+            timeout_seconds=self._config.query_timeout_seconds,
+            olap_config=self._config,
+            storage_config=self._storage_config,
+        ) as conn:
+            self._register_dataset(conn, dataset_name, source)
+            return workspace.materialize(conn, sql, view_name)
+
+    def cleanup_materialized(self, ttl_days: int | None = None) -> list[str]:
+        """Drop expired materialized views.
+
+        Args:
+            ttl_days: Override TTL in days (None = use config default).
+
+        Returns:
+            List of dropped table names.
+        """
+        from arrow_lake.query.ducklake_workspace import DuckLakeWorkspace
+
+        workspace = DuckLakeWorkspace(
+            ttl_days=ttl_days or self._config.ducklake_ttl_days,
+        )
+
+        with create_duckdb_session(
+            olap_config=self._config,
+            storage_config=self._storage_config,
+        ) as conn:
+            return workspace.cleanup_expired(conn)
 
     def explain(self, dataset_name: str, sql: str) -> str:
         """Return DuckDB EXPLAIN output for query optimization analysis.
@@ -193,11 +300,51 @@ class OlapSearchBridge:
                 message=f"Failed to read dataset '{dataset_name}': {exc}",
             ) from exc
 
-        with DuckDBSession() as conn:
-            conn.register(dataset_name, table)
+        with create_duckdb_session(
+            max_memory_mb=self._config.max_query_memory_mb,
+            timeout_seconds=self._config.query_timeout_seconds,
+            olap_config=self._config,
+            storage_config=self._storage_config,
+        ) as conn:
+            self._register_dataset(conn, dataset_name, table)
             result = conn.execute(f"EXPLAIN {sql}").fetchall()
             explain_lines = [row[0] for row in result if row]
             return "\n".join(explain_lines)
+
+    def _register_dataset(self, conn: Any, dataset_name: str, source: Any) -> None:
+        """Register a Lance dataset in DuckDB, preferring native lance scan.
+
+        Tries LanceScanAdapter.create_view() for zero-copy native scan.
+        Falls back to conn.register() for PyArrow compatibility.
+
+        Args:
+            conn: Active DuckDB connection.
+            dataset_name: Name to register the dataset under.
+            source: Arrow Table or RecordBatchReader from storage.
+        """
+        if self._config.lance_scan_mode == "pyarrow_fallback":
+            conn.register(dataset_name, source)
+            return
+
+        # Try native lance scan
+        try:
+            if hasattr(self._storage, "dataset_uri"):
+                uri = self._storage.dataset_uri(dataset_name)
+                adapter = create_lance_scan_adapter(
+                    conn,
+                    mode=self._config.lance_scan_mode,
+                )
+                adapter.create_view(conn, uri, dataset_name)
+                logger.debug("Registered %s via native lance scan", dataset_name)
+                return
+        except Exception:
+            logger.debug(
+                "Native lance scan failed for %s, falling back to PyArrow",
+                dataset_name,
+            )
+
+        # Fallback: register Arrow source directly
+        conn.register(dataset_name, source)
 
     def _validate_sql(self, sql: str) -> None:
         """Validate SQL is SELECT-only with no dangerous patterns.
