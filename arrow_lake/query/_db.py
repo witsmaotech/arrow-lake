@@ -92,7 +92,8 @@ class DuckDBSession:
     def _configure_s3(self, conn: duckdb.DuckDBPyConnection) -> None:
         """Apply S3 configuration from StorageConfig if backend is not LOCAL.
 
-        Uses parameterized SET via prepare/execute to avoid SQL injection.
+        Sets both DuckDB SET variables (for httpfs) and environment variables
+        (for lance extension's Rust AWS SDK).
         """
         if self._storage_config is None:
             return
@@ -104,10 +105,29 @@ class DuckDBSession:
         def _esc(val: str) -> str:
             return val.replace("'", "''")
 
+        # Strip protocol prefix for DuckDB (it adds its own)
+        endpoint = config.s3_endpoint
+        if endpoint.startswith("http://"):
+            endpoint = endpoint[len("http://") :]
+        elif endpoint.startswith("https://"):
+            endpoint = endpoint[len("https://") :]
+        is_http = not config.s3_endpoint.startswith("https://")
+
         conn.execute(f"SET s3_region='{_esc(config.s3_region)}';")
-        conn.execute(f"SET s3_endpoint='{_esc(config.s3_endpoint)}';")
+        conn.execute(f"SET s3_endpoint='{_esc(endpoint)}';")
         conn.execute(f"SET s3_access_key_id='{_esc(config.s3_access_key)}';")
         conn.execute(f"SET s3_secret_access_key='{_esc(config.s3_secret_key)}';")
+        if is_http:
+            conn.execute("SET s3_use_ssl=false;")
+            conn.execute("SET s3_url_style='path';")
+
+        # Set environment variables for lance extension's Rust AWS SDK
+        # which does NOT read DuckDB SET variables
+        os.environ.setdefault("AWS_ACCESS_KEY_ID", config.s3_access_key)
+        os.environ.setdefault("AWS_SECRET_ACCESS_KEY", config.s3_secret_key)
+        os.environ.setdefault("AWS_REGION", config.s3_region)
+        if is_http:
+            os.environ.setdefault("AWS_ALLOW_HTTP", "true")
 
     def __enter__(self) -> duckdb.DuckDBPyConnection:
         """Create connection, load extensions, configure resources and S3."""

@@ -149,13 +149,17 @@ class StorageConfig(BaseModel):
         """
         if self.backend == StorageBackend.LOCAL:
             return None
-        return {
+        opts: dict[str, str] = {
             "region": self.s3_region,
             "endpoint_url": self.s3_endpoint,
             "aws_access_key_id": self.s3_access_key,
             "aws_secret_access_key": self.s3_secret_key,
             "allow_anonymous": "false",
         }
+        # LanceDB rust S3 client requires explicit allow_http for HTTP endpoints
+        if self.s3_endpoint.startswith("http://"):
+            opts["allow_http"] = "true"
+        return opts
 
     def to_duckdb_s3_config(self) -> list[str]:
         """Return list of DuckDB ``SET`` statements for S3 access.

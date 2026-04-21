@@ -166,9 +166,8 @@ class LanceStorageManager:
             StorageError: If dataset does not exist, name is invalid, or version is invalid.
         """
         self._validate_name(name)
-        lance_dir = self._lance_dir(name)
 
-        if not lance_dir.is_dir():
+        if not self.dataset_exists(name):
             raise StorageError(
                 error_code=ErrorCode.STORAGE_PATH_NOT_FOUND,
                 message=f"Dataset '{name}' not found",
@@ -177,8 +176,11 @@ class LanceStorageManager:
         if version is not None:
             import lance
 
+            lance_uri = self.dataset_uri(name)
             try:
-                ds = lance.dataset(str(lance_dir), version=version)
+                ds = lance.dataset(
+                    lance_uri, version=version, storage_options=self._storage_options
+                )
             except (ValueError, OSError) as exc:
                 raise StorageError(
                     error_code=ErrorCode.STORAGE_PATH_NOT_FOUND,
@@ -224,6 +226,17 @@ class LanceStorageManager:
             StorageError: If dataset does not exist or name is invalid.
         """
         self._validate_name(name)
+        if self._storage_config and self._storage_config.backend != StorageBackend.LOCAL:
+            import lancedb
+
+            if not self.dataset_exists(name):
+                raise StorageError(
+                    error_code=ErrorCode.STORAGE_PATH_NOT_FOUND,
+                    message=f"Dataset '{name}' does not exist",
+                )
+            db = lancedb.connect(self._connect_uri, storage_options=self._storage_options)
+            db.drop_table(name)
+            return
         import shutil
 
         path = self._lance_dir(name)
@@ -244,6 +257,13 @@ class LanceStorageManager:
             True if the dataset directory exists.
         """
         self._validate_name(name)
+        if self._storage_config and self._storage_config.backend != StorageBackend.LOCAL:
+            import lancedb
+
+            db = lancedb.connect(self._connect_uri, storage_options=self._storage_options)
+            result = db.list_tables()
+            tables = result.tables if hasattr(result, "tables") else result
+            return name in tables
         return self._lance_dir(name).is_dir()
 
     def list_datasets(self) -> list[str]:
@@ -252,6 +272,13 @@ class LanceStorageManager:
         Returns:
             Sorted list of dataset names (without .lance suffix).
         """
+        if self._storage_config and self._storage_config.backend != StorageBackend.LOCAL:
+            import lancedb
+
+            db = lancedb.connect(self._connect_uri, storage_options=self._storage_options)
+            result = db.list_tables()
+            tables = result.tables if hasattr(result, "tables") else result
+            return sorted(tables)
         base = Path(self.base_uri)
         if not base.exists():
             return []
@@ -601,7 +628,7 @@ class LanceStorageManager:
 
         import lance
 
-        uri = self._storage_config.dataset_uri(name) if self._storage_config else str(lance_dir)
+        uri = self.dataset_uri(name) if self._storage_config else str(lance_dir)
         ds = lance.dataset(uri, storage_options=self._storage_options)
         scanner = ds.scanner(
             columns=columns,

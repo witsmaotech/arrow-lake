@@ -305,7 +305,24 @@ class FullTextSearchBridge:
         where: str | None,
     ) -> pa.Table:
         """Search via LanceDB SDK (original path)."""
-        query_builder = table.search(query=query, fts_columns=fts_column)
+        # When schema has multiple vector columns, LanceDB requires explicit
+        # vector_column to disambiguate.  For pure FTS we pass the first one.
+        try:
+            query_builder = table.search(query=query, fts_columns=fts_column)
+        except ValueError:
+            schema = table.schema
+            for field in schema:
+                if pa.types.is_fixed_size_list(field.type) and pa.types.is_floating(
+                    field.type.value_type
+                ):
+                    query_builder = table.search(
+                        query=query,
+                        fts_columns=fts_column,
+                        vector_column_name=field.name,
+                    )
+                    break
+            else:
+                raise
 
         if where is not None:
             query_builder = query_builder.where(where)
