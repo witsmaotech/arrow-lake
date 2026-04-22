@@ -16,6 +16,8 @@ Metrics can be disabled globally via enable_metrics()/disable_metrics().
 from __future__ import annotations
 
 from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram
+import threading
+from typing import Any
 
 REGISTRY = CollectorRegistry()
 
@@ -164,23 +166,79 @@ workflow_retries_total: Counter = Counter(
     labelnames=["flow_name", "step_name"],
 )
 
-# --- Metrics toggle ---
+# --- Phase 3: DuckDB Session Pool Metrics ---
 
-_metrics_enabled: bool = True
+duckdb_pool_active_sessions: Gauge = Gauge(
+    "arrow_lake_duckdb_pool_active_sessions",
+    "Number of currently active DuckDB sessions.",
+    registry=REGISTRY,
+)
+
+duckdb_pool_queued_requests: Gauge = Gauge(
+    "arrow_lake_duckdb_pool_queued_requests",
+    "Number of requests waiting for a DuckDB session.",
+    registry=REGISTRY,
+)
+
+duckdb_pool_total_queries: Counter = Counter(
+    "arrow_lake_duckdb_pool_total_queries",
+    "Total number of DuckDB queries executed.",
+    registry=REGISTRY,
+)
+
+duckdb_pool_total_errors: Counter = Counter(
+    "arrow_lake_duckdb_pool_total_errors",
+    "Total number of DuckDB query errors.",
+    registry=REGISTRY,
+)
+
+duckdb_pool_total_timeouts: Counter = Counter(
+    "arrow_lake_duckdb_pool_total_timeouts",
+    "Total number of DuckDB session acquisition timeouts.",
+    registry=REGISTRY,
+)
+
+duckdb_pool_slow_queries: Counter = Counter(
+    "arrow_lake_duckdb_pool_slow_queries",
+    "Total number of slow DuckDB queries exceeding threshold.",
+    registry=REGISTRY,
+)
+
+# --- Metrics toggle (thread-safe via Event) ---
+
+_metrics_enabled = threading.Event()
+_metrics_enabled.set()
 
 
 def get_metrics_enabled() -> bool:
     """Return whether metrics collection is enabled."""
-    return _metrics_enabled
+    return _metrics_enabled.is_set()
 
 
 def enable_metrics() -> None:
     """Enable metrics collection."""
-    global _metrics_enabled
-    _metrics_enabled = True
+    _metrics_enabled.set()
 
 
 def disable_metrics() -> None:
     """Disable metrics collection."""
-    global _metrics_enabled
-    _metrics_enabled = False
+    _metrics_enabled.clear()
+
+
+class _QueryTimer:
+    """Context manager that records query count and latency."""
+
+    def __init__(self, query_type: str) -> None:
+        self._query_type = query_type
+        self._timer: Any = None
+
+    def __enter__(self) -> _QueryTimer:
+        if _metrics_enabled:
+            query_total.labels(query_type=self._query_type).inc()
+            self._timer = query_latency_seconds.labels(query_type=self._query_type).time()
+            self._timer.__enter__()
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        if self._timer is not None:
+            self._timer.__exit__(*args)

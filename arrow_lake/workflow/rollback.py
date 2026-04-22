@@ -13,7 +13,7 @@ from typing import Any
 
 import structlog
 
-from arrow_lake.exceptions import ErrorCode, WorkflowError
+from arrow_lake.exceptions import ErrorCode, StorageError, WorkflowError
 
 logger = structlog.get_logger(__name__)
 
@@ -83,7 +83,7 @@ class StateRollback:
                 tag=tag,
             )
             return info
-        except Exception as exc:
+        except (OSError, StorageError) as exc:
             raise WorkflowError(
                 error_code=ErrorCode.WORKFLOW_STATE_ROLLBACK_FAILED,
                 message=f"Failed to checkpoint {dataset_name}: {exc}",
@@ -121,7 +121,7 @@ class StateRollback:
             tmp_name = f"_rollback_tmp_{dataset_name}"
             try:
                 self._storage.create_dataset(tmp_name, checkpoint_data)
-            except Exception as tmp_exc:
+            except (OSError, StorageError) as tmp_exc:
                 raise WorkflowError(
                     error_code=ErrorCode.WORKFLOW_STATE_ROLLBACK_FAILED,
                     message=f"Failed to create safety copy for rollback: {tmp_exc}",
@@ -130,12 +130,12 @@ class StateRollback:
             try:
                 # Delete original dataset and recreate with checkpoint data
                 self._storage.restore_dataset(dataset_name, checkpoint_data)
-            except Exception as write_exc:
+            except (OSError, StorageError) as write_exc:
                 # Attempt recovery from temp
                 try:
                     self._storage.create_dataset(dataset_name, checkpoint_data)
                     logger.info("rollback_recovery_from_temp_succeeded", dataset=dataset_name)
-                except Exception:
+                except (OSError, StorageError):
                     logger.error(
                         "rollback_recovery_failed",
                         dataset=dataset_name,
@@ -150,7 +150,7 @@ class StateRollback:
             # Clean up temp dataset
             try:
                 self._storage.delete_dataset(tmp_name)
-            except Exception:
+            except (OSError, StorageError):
                 logger.warning("rollback_temp_cleanup_failed", tmp_name=tmp_name)
 
             new_version = self._storage.get_version(dataset_name)
@@ -163,7 +163,7 @@ class StateRollback:
             return new_version
         except WorkflowError:
             raise
-        except Exception as exc:
+        except (OSError, StorageError) as exc:
             raise WorkflowError(
                 error_code=ErrorCode.WORKFLOW_STATE_ROLLBACK_FAILED,
                 message=f"Rollback failed for {dataset_name}: {exc}",

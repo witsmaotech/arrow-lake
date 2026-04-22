@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+import time
 import uuid
 
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
@@ -75,6 +77,27 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         if self.content_security_policy:
             response.headers["Content-Security-Policy"] = self.content_security_policy
 
+        return response
+
+
+_PATH_TEMPLATE_RE = re.compile(r"/[0-9a-f]{8,}-|[0-9]+(?=/|$)")
+
+
+class MetricsMiddleware(BaseHTTPMiddleware):
+    """Record HTTP request duration to Prometheus."""
+
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint):
+        t0 = time.monotonic()
+        response = await call_next(request)
+        from arrow_lake.core.metrics import get_metrics_enabled, http_request_duration_seconds
+
+        if get_metrics_enabled():
+            path = _PATH_TEMPLATE_RE.sub("/:id", request.url.path)
+            http_request_duration_seconds.labels(
+                method=request.method,
+                path=path,
+                status_code=str(response.status_code),
+            ).observe(time.monotonic() - t0)
         return response
 
 

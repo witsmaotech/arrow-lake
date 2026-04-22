@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import botocore.exceptions
 import structlog
 
 from arrow_lake.config import LifecycleConfig
@@ -106,7 +107,7 @@ class BlobLifecycleManager:
                 rules_count=len(rules),
             )
             return {"status": "applied", "rules_applied": len(rules), "rules": rules}
-        except Exception as exc:
+        except (botocore.exceptions.ClientError, botocore.exceptions.BotoCoreError) as exc:
             raise StorageError(
                 error_code=ErrorCode.LIFECYCLE_RULE_APPLY_FAILED,
                 message=f"Failed to apply lifecycle rules to '{bucket}': {exc}",
@@ -128,7 +129,7 @@ class BlobLifecycleManager:
         try:
             response = self._s3_client.head_object(Bucket=bucket, Key=key)
             return response.get("StorageClass", "STANDARD")
-        except Exception as exc:
+        except (botocore.exceptions.ClientError, botocore.exceptions.BotoCoreError) as exc:
             raise StorageError(
                 error_code=ErrorCode.STORAGE_READ_FAILED,
                 message=f"Failed to get object tier for '{key}': {exc}",
@@ -178,7 +179,7 @@ class BlobLifecycleManager:
                 "days": days,
                 "tier": self._config.glacier_retrieval_tier,
             }
-        except Exception as exc:
+        except (botocore.exceptions.ClientError, botocore.exceptions.BotoCoreError) as exc:
             raise StorageError(
                 error_code=ErrorCode.LIFECYCLE_RESTORE_FAILED,
                 message=f"Failed to restore '{key}' from Glacier: {exc}",

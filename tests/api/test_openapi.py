@@ -74,6 +74,7 @@ _EXPECTED_PATHS = {
 }
 
 
+@pytest.mark.asyncio
 async def test_openapi_spec_available() -> None:
     """GET /openapi.json returns a valid OpenAPI 3.x schema."""
     app = create_app()
@@ -87,6 +88,7 @@ async def test_openapi_spec_available() -> None:
         assert schema["info"]["title"] == "Arrow Lake REST API"
 
 
+@pytest.mark.asyncio
 async def test_all_expected_endpoints_exist() -> None:
     """Every planned endpoint appears in the OpenAPI schema."""
     app = create_app()
@@ -105,6 +107,7 @@ async def test_all_expected_endpoints_exist() -> None:
         assert not missing, f"Missing endpoints in OpenAPI schema: {missing}"
 
 
+@pytest.mark.asyncio
 async def test_openapi_has_all_tags() -> None:
     """All declared tags are present and have at least one path."""
     app = create_app()
@@ -123,6 +126,7 @@ async def test_openapi_has_all_tags() -> None:
             assert tag in tag_names, f"Missing tag: {tag}"
 
 
+@pytest.mark.asyncio
 async def test_docs_and_redoc_available() -> None:
     """Swagger UI and ReDoc are accessible."""
     app = create_app()

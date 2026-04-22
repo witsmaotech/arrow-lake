@@ -135,7 +135,7 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-asyncio_mode = "auto"
+asyncio_mode = "strict"
 pythonpath = ["."]
 markers = [
     "integration: Integration tests (require Docker Compose)",

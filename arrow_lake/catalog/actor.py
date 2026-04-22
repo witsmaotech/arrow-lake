@@ -21,6 +21,8 @@ from arrow_lake.catalog.connection_pool import (
     _SAFE_IDENTIFIER_RE,
     DuckDBConnectionPool,
 )
+import duckdb
+
 from arrow_lake.exceptions import CatalogError, ErrorCode
 
 _INSERT_SQL = (
@@ -122,7 +124,7 @@ class CatalogActor:
 
         try:
             self._pool.execute_params(_INSERT_SQL, (name, schema_json, location, now, now))
-        except Exception as e:
+        except duckdb.Error as e:
             err_msg = str(e).lower()
             if (
                 "unique" in err_msg
@@ -164,7 +166,7 @@ class CatalogActor:
             rows = self._pool.execute_params(_SELECT_BY_NAME_SQL, (name,))
         except CatalogError:
             raise
-        except Exception as e:
+        except duckdb.Error as e:
             raise CatalogError(
                 error_code=ErrorCode.CATALOG_CONNECTION_FAILED,
                 message=f"Failed to get table '{name}': {e}",
@@ -197,7 +199,7 @@ class CatalogActor:
                 "SELECT name, schema_json, location, created_at, updated_at, status "
                 "FROM catalog_tables WHERE status = 'active' ORDER BY name"
             )
-        except Exception as e:
+        except duckdb.Error as e:
             raise CatalogError(
                 error_code=ErrorCode.CATALOG_CONNECTION_FAILED,
                 message=f"Failed to list tables: {e}",
@@ -236,7 +238,7 @@ class CatalogActor:
 
         try:
             self._pool.execute_params(_DELETE_BY_NAME_SQL, (name,))
-        except Exception as e:
+        except duckdb.Error as e:
             raise CatalogError(
                 error_code=ErrorCode.CATALOG_CONNECTION_FAILED,
                 message=f"Failed to delete table '{name}': {e}",
@@ -278,7 +280,7 @@ class CatalogActor:
                 "UPDATE catalog_tables SET status = 'archived', updated_at = ? WHERE name = ?",
                 (datetime.now(UTC).isoformat(), name),
             )
-        except Exception as e:
+        except duckdb.Error as e:
             raise CatalogError(
                 error_code=ErrorCode.CATALOG_CONNECTION_FAILED,
                 message=f"Failed to archive dataset '{name}': {e}",
@@ -306,7 +308,7 @@ class CatalogActor:
                 "UPDATE catalog_tables SET status = 'active', updated_at = ? WHERE name = ?",
                 (datetime.now(UTC).isoformat(), name),
             )
-        except Exception as e:
+        except duckdb.Error as e:
             raise CatalogError(
                 error_code=ErrorCode.CATALOG_CONNECTION_FAILED,
                 message=f"Failed to restore dataset '{name}': {e}",

@@ -16,7 +16,7 @@ from typing import Any
 import pyarrow as pa
 import structlog
 
-from arrow_lake.exceptions import CatalogError, ErrorCode
+from arrow_lake.exceptions import CatalogError, ErrorCode, StorageError
 from arrow_lake.query._db import DuckDBSession
 from arrow_lake.validation import DANGEROUS_SQL_KEYWORDS_RE
 
@@ -123,7 +123,7 @@ class LineageStore:
 
         try:
             self._storage.append_dataset(self._store_dataset, table)
-        except Exception as exc:
+        except (OSError, StorageError) as exc:
             raise CatalogError(
                 error_code=ErrorCode.LINEAGE_STORE_FAILED,
                 message=f"Failed to record lineage event: {exc}",
@@ -149,7 +149,7 @@ class LineageStore:
 
         try:
             table = self._storage.read_dataset(self._store_dataset)
-        except Exception:
+        except (StorageError, OSError):
             return []
 
         if table.num_rows == 0:
@@ -222,14 +222,14 @@ class LineageQueryBridge:
 
         try:
             table = self._store._storage.read_dataset(self._store._store_dataset)
-        except Exception:
+        except (StorageError, OSError):
             table = pa.table(
                 {f.name: [] for f in _LINEAGE_EVENT_SCHEMA},
                 schema=_LINEAGE_EVENT_SCHEMA,
             )
 
         with DuckDBSession() as conn:
-            conn.register("lineage", table)
+            conn.register(self._store._store_dataset, table)
             result_reader = conn.execute(sql, params if params else None).arrow()
             result_table = (
                 result_reader.read_all() if hasattr(result_reader, "read_all") else result_reader

@@ -28,6 +28,7 @@ class _LakeQueryMixin:
         Returns:
             MetadataQueryResult with Arrow table.
         """
+        from arrow_lake.core.metrics import _QueryTimer
         from arrow_lake.query.metadata import MetadataSearchBridge
 
         bridge = self._get_component(
@@ -37,7 +38,8 @@ class _LakeQueryMixin:
                 storage_config=self._config.storage,
             ),
         )
-        return bridge.query(dataset_name, sql)
+        with _QueryTimer("metadata_query"):
+            return bridge.query(dataset_name, sql)
 
     def olap_query(
         self,
@@ -71,7 +73,16 @@ class _LakeQueryMixin:
                 storage_config=self._config.storage,
             ),
         )
-        return bridge.query(dataset_name, sql, max_rows=max_rows, tables=tables)
+        from arrow_lake.api.telemetry import get_tracer
+        from arrow_lake.core.metrics import _QueryTimer, get_metrics_enabled, query_results_total
+
+        tracer = get_tracer()
+        with tracer.start_as_current_span("olap_query", attributes={"dataset": dataset_name}):
+            with _QueryTimer("olap_query"):
+                result = bridge.query(dataset_name, sql, max_rows=max_rows, tables=tables)
+        if get_metrics_enabled():
+            query_results_total.labels(query_type="olap_query").inc(result.table.num_rows)
+        return result
 
     def sql_query(
         self,
@@ -118,6 +129,7 @@ class _LakeQueryMixin:
         Returns:
             Number of rows materialized.
         """
+        from arrow_lake.core.metrics import _QueryTimer
         from arrow_lake.query.olap import OlapSearchBridge
 
         bridge = self._get_component(
@@ -128,13 +140,14 @@ class _LakeQueryMixin:
                 storage_config=self._config.storage,
             ),
         )
-        return bridge.materialize(
-            dataset_name,
-            sql,
-            view_name=view_name,
-            ttl_days=ttl_days,
-            max_join_rows=max_join_rows,
-        )
+        with _QueryTimer("materialize"):
+            return bridge.materialize(
+                dataset_name,
+                sql,
+                view_name=view_name,
+                ttl_days=ttl_days,
+                max_join_rows=max_join_rows,
+            )
 
     def cleanup_materialized(self, ttl_days: int | None = None) -> list[str]:
         """Drop expired materialized DuckLake views.
@@ -184,21 +197,23 @@ class _LakeQueryMixin:
         Returns:
             ExportResult with export metadata.
         """
+        from arrow_lake.core.metrics import _QueryTimer
         from arrow_lake.query.export import ExportBridge
 
         bridge = self._get_component(
             "export",
             lambda: ExportBridge(self._get_storage(), config=self._config.export),
         )
-        return bridge.export(
-            dataset_name,
-            output_path,
-            format=format,
-            columns=columns,
-            version=version,
-            compression=compression,
-            overwrite=overwrite,
-        )
+        with _QueryTimer("export"):
+            return bridge.export(
+                dataset_name,
+                output_path,
+                format=format,
+                columns=columns,
+                version=version,
+                compression=compression,
+                overwrite=overwrite,
+            )
 
     def daft_query(
         self,

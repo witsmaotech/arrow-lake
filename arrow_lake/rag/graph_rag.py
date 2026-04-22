@@ -11,6 +11,7 @@ falls back to the parent RAGPipeline.query() (pure vector RAG).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import TYPE_CHECKING
@@ -173,7 +174,9 @@ class GraphRAGPipeline(RAGPipeline):
             vector_task = super()._retrieve_and_build_context(
                 question, dataset_name, effective_top_k, strategy,
             )
-            graph_task = self._retrieve_graph_context(question, entities)
+            graph_task = asyncio.ensure_future(
+                self._retrieve_graph_context(question, entities)
+            )
 
             window, context_text = await vector_task
             graph_text = await graph_task

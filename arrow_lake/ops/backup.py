@@ -12,8 +12,11 @@ prefix on the configured S3/MinIO bucket.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+
+_HASH_ALGORITHM = "sha256"
 import shutil
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -23,7 +26,7 @@ from typing import Any
 import structlog
 
 from arrow_lake.config import StorageConfig
-from arrow_lake.exceptions import ErrorCode, StorageError
+from arrow_lake.exceptions import BackupError, ErrorCode, StorageError
 from arrow_lake.storage.blob_store import BlobStoreManager
 
 _log = structlog.get_logger(__name__)
@@ -167,8 +170,12 @@ class BackupManager:
         if dataset_names is not None:
             for name in dataset_names:
                 try:
-                    rows = self._backup_lance_dataset(name, prefix)
-                    manifest.datasets.append({"name": name, "rows": rows})
+                    rows, file_hashes = self._backup_lance_dataset(name, prefix)
+                    manifest.datasets.append({
+                        "name": name,
+                        "rows": rows,
+                        "file_hashes": file_hashes,
+                    })
                 except FileNotFoundError as exc:
                     _log.warning(
                         "backup_dataset_not_found",
@@ -185,7 +192,7 @@ class BackupManager:
                         exc_info=True,
                     )
                     manifest.status = "partial"
-                except Exception as exc:
+                except (OSError, RuntimeError) as exc:
                     _log.error(
                         "backup_dataset_unexpected_error",
                         dataset=name,
@@ -209,7 +216,7 @@ class BackupManager:
                         exc_info=True,
                     )
                     manifest.status = "partial"
-                except Exception as exc:
+                except StorageError as exc:
                     _log.error(
                         "backup_blob_prefix_unexpected_error",
                         prefix=bp,
@@ -223,13 +230,18 @@ class BackupManager:
         total_size = self._estimate_backup_size(prefix)
         manifest.total_size_bytes = total_size
 
-        # Upload manifest
+        # Upload manifest (atomic: staging → copy → delete)
         manifest_bytes = manifest.to_json().encode("utf-8")
-        self._blob_store.upload(
-            f"{prefix}{_MANIFEST_FILENAME}",
-            manifest_bytes,
-            content_type="application/json",
-        )
+        staging_key = f"{prefix}{_MANIFEST_FILENAME}.staging"
+        final_key = f"{prefix}{_MANIFEST_FILENAME}"
+        try:
+            self._blob_store.upload(staging_key, manifest_bytes, content_type="application/json")
+            self._blob_store.copy(staging_key, final_key)
+        finally:
+            try:
+                self._blob_store.delete(staging_key)
+            except (StorageError, OSError):
+                pass
 
         _log.info(
             "backup_created",
@@ -273,7 +285,7 @@ class BackupManager:
             BackupInfo of the restored backup.
 
         Raises:
-            StorageError: If backup not found or restore fails.
+            BackupError: If backup not found or restore fails.
         """
         manifest = self._load_manifest(backup_id)
 
@@ -286,14 +298,14 @@ class BackupManager:
                 self._restore_lance_dataset(name, manifest, overwrite=overwrite)
             except StorageError:
                 raise
-            except Exception as exc:
+            except (OSError, shutil.Error) as exc:
                 _log.error(
                     "restore_dataset_failed",
                     dataset=name,
                     backup_id=backup_id,
                     error=str(exc),
                 )
-                raise StorageError(
+                raise BackupError(
                     error_code=ErrorCode.STORAGE_READ_FAILED,
                     message=f"Failed to restore dataset '{name}' from backup '{backup_id}': {exc}",
                 ) from exc
@@ -307,14 +319,14 @@ class BackupManager:
                 self._restore_blob_prefix(bp, manifest)
             except StorageError:
                 raise
-            except Exception as exc:
+            except (OSError, shutil.Error) as exc:
                 _log.error(
                     "restore_blob_prefix_failed",
                     prefix=bp,
                     backup_id=backup_id,
                     error=str(exc),
                 )
-                raise StorageError(
+                raise BackupError(
                     error_code=ErrorCode.STORAGE_READ_FAILED,
                     message=f"Failed to restore blob prefix '{bp}' from backup '{backup_id}': {exc}",
                 ) from exc
@@ -342,14 +354,26 @@ class BackupManager:
     def list_backups(self) -> list[BackupInfo]:
         """List all available backups.
 
+        Paginates through all blobs under the backup prefix.
+
         Returns:
             List of BackupInfo for each backup found.
         """
-        result = self._blob_store.list_blobs(_BACKUP_PREFIX)
+        all_keys: list[str] = []
+        continuation_token: str | None = None
+        while True:
+            result = self._blob_store.list_blobs(
+                _BACKUP_PREFIX,
+                continuation_token=continuation_token,
+            )
+            all_keys.extend(result.keys)
+            continuation_token = result.next_token
+            if not continuation_token:
+                break
 
         # Collect unique backup IDs from manifest files
         backup_ids: set[str] = set()
-        for key in result.keys:
+        for key in all_keys:
             if key.endswith(_MANIFEST_FILENAME):
                 # Extract backup ID from "backups/{id}/manifest.json"
                 parts = key[len(_BACKUP_PREFIX) :].split("/")
@@ -410,14 +434,68 @@ class BackupManager:
         count = self._blob_store.delete_prefix(prefix)
         _log.info("backup_deleted", backup_id=backup_id, objects_deleted=count)
 
+    def verify_backup(self, backup_id: str) -> bool:
+        """Verify backup integrity by checking all file checksums.
+
+        Args:
+            backup_id: Backup identifier to verify.
+
+        Returns:
+            True if all checksums match, False otherwise.
+
+        Raises:
+            StorageError: If backup manifest not found.
+        """
+        manifest = self._load_manifest(backup_id)
+        all_ok = True
+
+        for ds_entry in manifest.datasets:
+            file_hashes = ds_entry.get("file_hashes", {})
+            if not file_hashes:
+                _log.debug("verify_skip_no_hashes", dataset=ds_entry["name"])
+                continue
+
+            backup_prefix = (
+                f"{_BACKUP_PREFIX}{backup_id}/datasets/{ds_entry['name']}/"
+            )
+            for rel_path, expected_hash in file_hashes.items():
+                try:
+                    data = self._blob_store.download(backup_prefix + rel_path)
+                    actual_hash = hashlib.sha256(data).hexdigest()
+                    if actual_hash != expected_hash:
+                        _log.error(
+                            "verify_checksum_mismatch",
+                            dataset=ds_entry["name"],
+                            file=rel_path,
+                            expected=expected_hash,
+                            actual=actual_hash,
+                        )
+                        all_ok = False
+                except (ImportError, OSError, RuntimeError) as exc:
+                    _log.error(
+                        "verify_read_failed",
+                        dataset=ds_entry["name"],
+                        file=rel_path,
+                        error=str(exc),
+                    )
+                    all_ok = False
+
+        _log.info(
+            "backup_verify_complete",
+            backup_id=backup_id,
+            datasets=len(manifest.datasets),
+            passed=all_ok,
+        )
+        return all_ok
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _backup_lance_dataset(self, dataset_name: str, backup_prefix: str) -> int:
+    def _backup_lance_dataset(self, dataset_name: str, backup_prefix: str) -> tuple[int, dict[str, str]]:
         """Copy a Lance dataset to the backup location.
 
-        Returns the number of rows in the dataset.
+        Returns (row_count, file_hashes) where file_hashes maps relative_path → sha256.
         """
         dataset_path = self._lance_base_uri / dataset_name
         if not dataset_path.is_dir():
@@ -425,6 +503,7 @@ class BackupManager:
 
         # Upload each file in the dataset directory
         row_count = 0
+        file_hashes: dict[str, str] = {}
         for item in dataset_path.rglob("*"):
             if not item.is_file():
                 continue
@@ -433,6 +512,7 @@ class BackupManager:
 
             data = item.read_bytes()
             self._blob_store.upload(backup_key, data)
+            file_hashes[str(rel_path)] = hashlib.sha256(data).hexdigest()
 
         # Try to get row count via Lance
         try:
@@ -440,10 +520,10 @@ class BackupManager:
 
             ds = lancedb.connect(str(dataset_path)).open_dataset(dataset_name)
             row_count = ds.count_rows()
-        except Exception:
+        except (ImportError, OSError, RuntimeError):
             row_count = -1
 
-        return row_count
+        return row_count, file_hashes
 
     def _backup_blob_prefix(self, src_prefix: str, dest_prefix: str) -> int:
         """Copy all blobs from src_prefix to dest_prefix (handles pagination)."""
@@ -465,9 +545,7 @@ class BackupManager:
 
             if not result.truncated:
                 break
-            # List result doesn't return token directly; use a best-effort
-            # re-list with increasing offset by tracking count
-            continuation_token = None
+            continuation_token = result.next_token
             if not result.keys:
                 break
 
@@ -494,6 +572,12 @@ class BackupManager:
 
         backup_prefix = f"{_BACKUP_PREFIX}{manifest.backup_id}/datasets/{dataset_name}/"
 
+        # Get file hashes from manifest for verification
+        ds_entry = next((d for d in manifest.datasets if d["name"] == dataset_name), None)
+        expected_hashes: dict[str, str] = {}
+        if ds_entry and "file_hashes" in ds_entry:
+            expected_hashes = ds_entry["file_hashes"]
+
         # Restore to a temporary directory first, then atomically move.
         tmp_path = dest_path.parent / f".{dataset_name}.restore-{os.getpid()}"
         try:
@@ -511,13 +595,27 @@ class BackupManager:
                 for key in result.keys:
                     data = self._blob_store.download(key)
                     rel_path = key[len(backup_prefix) :]
+
+                    # Verify checksum if manifest has hashes
+                    if expected_hashes and rel_path in expected_hashes:
+                        actual_hash = hashlib.sha256(data).hexdigest()
+                        if actual_hash != expected_hashes[rel_path]:
+                            raise StorageError(
+                                error_code=ErrorCode.STORAGE_READ_FAILED,
+                                message=(
+                                    f"Checksum mismatch for '{rel_path}' in dataset "
+                                    f"'{dataset_name}': expected {expected_hashes[rel_path]}, "
+                                    f"got {actual_hash}"
+                                ),
+                            )
+
                     local_path = tmp_path / rel_path
                     local_path.parent.mkdir(parents=True, exist_ok=True)
                     local_path.write_bytes(data)
 
                 if not result.truncated:
                     break
-                continuation_token = None
+                continuation_token = result.next_token
                 if not result.keys:
                     break
 
@@ -530,7 +628,7 @@ class BackupManager:
             if tmp_path.exists():
                 shutil.rmtree(tmp_path, ignore_errors=True)
             raise
-        except Exception as exc:
+        except (OSError, shutil.Error) as exc:
             if tmp_path.exists():
                 shutil.rmtree(tmp_path, ignore_errors=True)
             raise StorageError(
@@ -558,7 +656,7 @@ class BackupManager:
 
             if not result.truncated:
                 break
-            continuation_token = None
+            continuation_token = result.next_token
             if not result.keys:
                 break
 
@@ -596,13 +694,13 @@ class BackupManager:
                 try:
                     info = self._blob_store.head(key)
                     total += info.size_bytes
-                except Exception:
+                except (StorageError, OSError):
                     # Best effort — skip inaccessible objects
                     pass
 
             if not result.truncated:
                 break
-            continuation_token = None
+            continuation_token = result.next_token
             if not result.keys:
                 break
 

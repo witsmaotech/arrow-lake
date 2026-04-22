@@ -54,7 +54,7 @@ def health_response() -> tuple[dict[str, Any], int]:
         else:
             status["storage"] = "not_found"
             status["status"] = "degraded"
-    except Exception:
+    except (OSError, ImportError):
         status["storage"] = "error"
         status["status"] = "degraded"
 

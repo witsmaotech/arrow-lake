@@ -92,6 +92,44 @@ services:
         max-file: "5"
         tag: "arrow-lake-grafana"
 
+  # ---------------------------------------------------------------------------
+  # Jaeger — Distributed tracing (OTLP backend)
+  # ---------------------------------------------------------------------------
+  jaeger:
+    image: jaegertracing/all-in-one:${JAEGER_VERSION:-1.62}
+    container_name: arrow-lake-jaeger
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    ports:
+      - "${JAEGER_OTLP_GRPC_PORT:-4317}:4317"
+      - "${JAEGER_OTLP_HTTP_PORT:-4318}:4318"
+      - "${JAEGER_UI_PORT:-16686}:16686"
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    networks:
+      - arrow-lake-net
+    volumes:
+      - jaeger-data:/tmp/jaeger
+    command:
+      - "--collector.otlp.tls.enabled=false"
+    deploy:
+      resources:
+        limits:
+          memory: ${JAEGER_MEMORY_LIMIT:-512M}
+          cpus: "${JAEGER_CPU_LIMIT:-0.5}"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:16686/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+        tag: "arrow-lake-jaeger"
+
 # ==============================================================================
 # Volumes
 # ==============================================================================
@@ -100,4 +138,6 @@ volumes:
   prometheus-data:
     driver: local
   grafana-data:
+    driver: local
+  jaeger-data:
     driver: local

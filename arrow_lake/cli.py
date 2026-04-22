@@ -23,6 +23,8 @@ import click
 from rich.console import Console
 from rich.table import Table
 
+from arrow_lake.exceptions import StorageError
+
 console = Console()
 
 
@@ -116,7 +118,7 @@ def status(base_uri: str) -> None:
 
     try:
         tables = storage.list_datasets()
-    except Exception as exc:
+    except (StorageError, OSError, ValueError, TypeError) as exc:
         _print_error(f"Cannot list tables: {exc}")
         raise SystemExit(1) from None
 
@@ -138,7 +140,7 @@ def status(base_uri: str) -> None:
             if len(ds.column_names) > 5:
                 cols += ", ..."
             table.add_row(name, str(ds.num_rows), cols, str(version))
-        except Exception as exc:
+        except (StorageError, OSError, ValueError, TypeError) as exc:
             table.add_row(name, "[red]error[/red]", str(exc), "-")
 
     console.print(table)
@@ -176,7 +178,7 @@ def ingest(source: str, table_name: str, base_uri: str, modality: str) -> None:
         report = ingestor.ingest(table_name, [source])
         rows = getattr(report, "total_rows", 0)
         _print_success(f"Ingested {rows} rows into '{table_name}'")
-    except Exception as exc:
+    except (StorageError, OSError, ValueError, TypeError) as exc:
         _print_error(f"Ingestion failed: {exc}")
         raise SystemExit(1) from None
 
@@ -199,7 +201,7 @@ def search(
 
         storage = LanceStorageManager(base_uri=base_uri)
         table = storage.read_dataset(table_name)
-    except Exception as exc:
+    except (StorageError, OSError, ValueError, TypeError) as exc:
         _print_error(f"Cannot read dataset: {exc}")
         raise SystemExit(1) from None
 

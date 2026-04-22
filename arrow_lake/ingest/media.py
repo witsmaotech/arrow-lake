@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import PIL
 from PIL import Image
 from PIL.ExifTags import Base as ExifBase
 
@@ -77,7 +78,7 @@ def _exif_gps_to_decimal(gps_info: dict[int, tuple[object, ...]]) -> tuple[float
 
         def _to_degrees(value: tuple[object, ...]) -> float:
             d, m, s = value
-            return float(d) + float(m) / 60.0 + float(s) / 3600.0  # type: ignore[arg-type]
+            return float(int(d)) + float(int(m)) / 60.0 + float(int(s)) / 3600.0
 
         lat = _to_degrees(gps_lat) * (-1 if gps_lat_ref == "S" else 1)
         lon = _to_degrees(gps_lon) * (-1 if gps_lon_ref == "W" else 1)
@@ -177,7 +178,7 @@ class ImageProcessor:
         try:
             img: Image.Image = Image.open(io.BytesIO(original_bytes))
             img.load()
-        except Exception as exc:
+        except (PIL.UnidentifiedImageError, OSError) as exc:
             raise IngestError(
                 error_code=ErrorCode.IMAGE_DECODE_FAILED,
                 message=f"Failed to decode image '{path}': {exc}",
@@ -262,7 +263,7 @@ class VideoProcessor:
 
         try:
             container = av.open(str(path))
-        except Exception as exc:
+        except (OSError, RuntimeError, ValueError) as exc:
             raise IngestError(
                 error_code=ErrorCode.VIDEO_DECODE_FAILED,
                 message=f"Failed to open video '{path}': {exc}",
@@ -284,7 +285,7 @@ class VideoProcessor:
         try:
             keyframes = self._detect_scenes(container, video_stream)
             scene_used = True
-        except Exception:
+        except (RuntimeError, OSError):
             logger.warning(
                 "Scene detection failed for '%s', falling back to first frame",
                 path,

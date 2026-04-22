@@ -120,7 +120,7 @@ class EntityExtractor:
 
         try:
             response = await self._llm.generate(messages)
-        except Exception as exc:
+        except (RuntimeError, ValueError) as exc:
             raise KGError(
                 error_code=ErrorCode.KG_EXTRACT_FAILED,
                 message=f"LLM call failed for chunk {chunk_id}: {exc}",

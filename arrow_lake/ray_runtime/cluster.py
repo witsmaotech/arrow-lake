@@ -61,7 +61,7 @@ def detect_gpu() -> int:
         return cluster_resources.get("GPU", 0)
     except ImportError:
         return 0
-    except Exception as exc:
+    except RuntimeError as exc:
         logger.warning("gpu_detection_failed", error=str(exc))
         return 0
 
@@ -81,7 +81,7 @@ def get_cluster_info() -> RayClusterInfo:
         resources = ray.cluster_resources()
         try:
             address = ray.get_runtime_context().get_address()
-        except Exception:
+        except RuntimeError:
             address = ""
         return RayClusterInfo(
             available=True,
@@ -146,7 +146,7 @@ def initialize_ray(
     except ImportError:
         logger.warning("ray_not_installed", message="Ray not available")
         return False
-    except Exception as exc:
+    except RuntimeError as exc:
         logger.error("ray_init_failed", error=str(exc))
         return False
 

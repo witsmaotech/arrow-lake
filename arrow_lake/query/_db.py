@@ -58,7 +58,7 @@ class DuckDBSession:
         """Install and load required DuckDB extensions. Raises ArrowLakeError on failure."""
         try:
             conn.execute("INSTALL lance; LOAD lance;")
-        except Exception as exc:
+        except duckdb.CatalogException as exc:
             raise ArrowLakeError(
                 ErrorCode.LANCE_EXTENSION_ERROR,
                 f"Failed to load lance extension: {exc}",
@@ -67,7 +67,7 @@ class DuckDBSession:
         if self._load_ducklake:
             try:
                 conn.execute("INSTALL ducklake; LOAD ducklake;")
-            except Exception as exc:
+            except duckdb.CatalogException as exc:
                 raise ArrowLakeError(
                     ErrorCode.DUCKLAKE_EXTENSION_ERROR,
                     f"Failed to load ducklake extension: {exc}",
@@ -121,11 +121,16 @@ class DuckDBSession:
             conn.execute("SET s3_use_ssl=false;")
             conn.execute("SET s3_url_style='path';")
 
-        # Set environment variables for lance extension's Rust AWS SDK
-        # which does NOT read DuckDB SET variables
+        # Set environment variables for lance extension's Rust AWS SDK.
+        # The lance DuckDB extension uses object_store::aws::AmazonS3Builder
+        # whose with_env_s3() parses env vars via AmazonS3ConfigKey::from_str().
+        # It does NOT recognize AWS_ENDPOINT_URL_S3 (the AWS SDK standard name),
+        # only AWS_ENDPOINT_URL and its aliases.
+        # Ref: lancedb/lance rust/lance-io/src/object_store/providers/aws.rs
         os.environ.setdefault("AWS_ACCESS_KEY_ID", config.s3_access_key)
         os.environ.setdefault("AWS_SECRET_ACCESS_KEY", config.s3_secret_key)
         os.environ.setdefault("AWS_REGION", config.s3_region)
+        os.environ.setdefault("AWS_ENDPOINT_URL", config.s3_endpoint)
         if is_http:
             os.environ.setdefault("AWS_ALLOW_HTTP", "true")
 

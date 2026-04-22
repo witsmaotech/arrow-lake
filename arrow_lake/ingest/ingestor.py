@@ -381,7 +381,7 @@ class Ingestor:
             return df.to_arrow()
         except IngestError:
             raise
-        except Exception as exc:
+        except (ImportError, OSError, ValueError) as exc:
             raise IngestError(
                 error_code=ErrorCode.INGEST_FILE_NOT_FOUND,
                 message=f"Failed to read '{path}': {exc}",
@@ -422,7 +422,7 @@ class Ingestor:
             return df.to_arrow()
         except IngestError:
             raise
-        except Exception as exc:
+        except (ImportError, OSError, ValueError) as exc:
             raise IngestError(
                 error_code=ErrorCode.INGEST_FILE_NOT_FOUND,
                 message=f"Failed to read content: {exc}",

@@ -19,6 +19,7 @@ from typing import Any
 import pyarrow as pa
 
 from arrow_lake.config import FacetedSearchConfig, StorageConfig
+from arrow_lake.exceptions import StorageError
 from arrow_lake.query._db import create_duckdb_session
 from arrow_lake.validation import (
     SAFE_IDENTIFIER_RE,
@@ -129,6 +130,9 @@ class FacetedSearchBridge:
         if not SAFE_IDENTIFIER_RE.match(dataset_name):
             raise ValueError(f"Invalid dataset name '{dataset_name}'")
         facet_columns = facets or self._config.default_facet_columns
+        for col in facet_columns:
+            if not SAFE_IDENTIFIER_RE.match(col):
+                raise ValueError(f"Invalid facet column name '{col}'")
 
         # Compute facet counts
         facet_list = self._compute_facets(dataset_name, facet_columns, where)
@@ -139,7 +143,7 @@ class FacetedSearchBridge:
                 source = self._storage.scan_dataset(dataset_name)
             else:
                 source = self._storage.read_dataset(dataset_name)
-        except Exception:
+        except (StorageError, OSError, AttributeError):
             table = pa.Table.from_pydict({"id": []})
             source = None
 
@@ -194,7 +198,7 @@ class FacetedSearchBridge:
                 source = self._storage.scan_dataset(dataset_name)
             else:
                 source = self._storage.read_dataset(dataset_name)
-        except Exception:
+        except (ValueError, RuntimeError, AttributeError):
             return []
 
         # Check if dataset is non-empty via schema (avoid materialization)

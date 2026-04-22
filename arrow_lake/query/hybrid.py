@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+import duckdb
 import pyarrow as pa
 import structlog
 
@@ -140,11 +141,12 @@ class HybridSearchBridge:
                     query_vector,
                     query_text,
                     vector_column=vector_column,
+                    fts_column=fts_column,
                     top_k=effective_top_k,
                 )
             except QueryError:
                 raise
-            except Exception:
+            except (duckdb.Error, OSError):
                 _log.debug(
                     "DuckDB hybrid search failed, falling back to sub-bridge RRF",
                     exc_info=True,
@@ -196,6 +198,7 @@ class HybridSearchBridge:
         query_text: str,
         *,
         vector_column: str,
+        fts_column: str | None = None,
         top_k: int,
     ) -> pa.Table:
         """Search via DuckDB lance_hybrid_search() SQL function.
@@ -205,6 +208,7 @@ class HybridSearchBridge:
             query_vector: Query embedding vector.
             query_text: Search query string.
             vector_column: Vector column name.
+            fts_column: Full-text search column name.
             top_k: Number of results.
 
         Returns:
@@ -222,22 +226,32 @@ class HybridSearchBridge:
             )
 
         uri = self._storage.dataset_uri(dataset_name)
+        safe_uri = uri.replace("'", "''")
 
         from arrow_lake.validation import validate_identifier
 
         validate_identifier(vector_column)
+        if fts_column is not None:
+            validate_identifier(fts_column)
 
         vec_list = "[" + ", ".join(str(v) for v in query_vector) + "]"
         safe_text = query_text.replace("'", "''")
+        safe_fts = fts_column if fts_column else vector_column
 
         sql = (
             f"SELECT * FROM lance_hybrid_search("
-            f"  '{uri}',"
+            f"  '{safe_uri}',"
             f"  '{vector_column}',"
-            f"  NULL,"  # fts_column — let Lance auto-detect
             f"  CAST({vec_list} AS FLOAT[]),"
+            f"  '{safe_fts}',"
             f"  '{safe_text}',"
-            f"  k := {top_k}"
+            f"  alpha := 0.5,"
+            f"  use_index := false,"
+            f"  prefilter := false,"
+            f"  refine_factor := 1::BIGINT,"
+            f"  nprobs := 1::BIGINT,"
+            f"  oversample_factor := 1,"
+            f"  k := {top_k}::BIGINT"
             f") LIMIT {top_k}"
         )
 
@@ -291,7 +305,7 @@ class HybridSearchBridge:
             )
         except QueryError:
             raise
-        except Exception as exc:
+        except (ValueError, RuntimeError) as exc:
             raise QueryError(
                 error_code=ErrorCode.HYBRID_SEARCH_FAILED,
                 message=f"Hybrid search failed on '{dataset_name}': {exc}",

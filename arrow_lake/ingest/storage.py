@@ -433,7 +433,7 @@ class LanceStorageManager:
             version = table.version
         try:
             table.tags.create(tag, version=version)
-        except Exception as exc:
+        except (ValueError, OSError, RuntimeError) as exc:
             msg = str(exc).lower()
             if "already" in msg or "exists" in msg:
                 raise StorageError(
@@ -457,15 +457,17 @@ class LanceStorageManager:
         self._validate_name(name)
         import lance
 
-        lance_dir = self._lance_dir(name)
+        lance_uri = self.dataset_uri(name)
         table = self._open_lance(self._get_dataset_path(name))
         tag_names = list(table.tags.list())
         result: dict[str, int] = {}
         for tag_name in tag_names:
             try:
-                ds = lance.dataset(str(lance_dir), version=tag_name)
+                ds = lance.dataset(
+                    lance_uri, version=tag_name, storage_options=self._storage_options
+                )
                 result[tag_name] = ds.version
-            except Exception as exc:
+            except (ValueError, OSError, RuntimeError) as exc:
                 raise StorageError(
                     error_code=ErrorCode.STORAGE_PATH_NOT_FOUND,
                     message=f"Failed to resolve tag '{tag_name}' for dataset '{name}'",
@@ -487,7 +489,7 @@ class LanceStorageManager:
         table = self._open_lance(self._get_dataset_path(name))
         try:
             table.tags.delete(tag)
-        except Exception as exc:
+        except (ValueError, OSError, RuntimeError) as exc:
             msg = str(exc).lower()
             if "not found" in msg or "does not exist" in msg:
                 raise StorageError(
@@ -513,17 +515,19 @@ class LanceStorageManager:
         self._validate_identifier(tag, "tag")
         import lance
 
-        lance_dir = self._lance_dir(name)
-
-        if not lance_dir.is_dir():
+        if not self.dataset_exists(name):
             raise StorageError(
                 error_code=ErrorCode.STORAGE_PATH_NOT_FOUND,
                 message=f"Dataset '{name}' not found",
             )
 
+        lance_uri = self.dataset_uri(name)
+
         try:
-            ds = lance.dataset(str(lance_dir), version=tag)
-        except Exception as exc:
+            ds = lance.dataset(
+                lance_uri, version=tag, storage_options=self._storage_options
+            )
+        except (ValueError, OSError, RuntimeError) as exc:
             raise StorageError(
                 error_code=ErrorCode.STORAGE_PATH_NOT_FOUND,
                 message=f"Tag '{tag}' not found for dataset '{name}'",

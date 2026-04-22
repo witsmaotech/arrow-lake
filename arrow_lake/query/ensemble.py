@@ -145,7 +145,7 @@ class EnsembleSearchBridge:
                     where=where,
                 )
                 result_tables.append(result.table)
-            except Exception as exc:
+            except (ValueError, RuntimeError) as exc:
                 raise QueryError(
                     error_code=ErrorCode.VECTOR_SEARCH_FAILED,
                     message=f"Ensemble search failed on column '{col}': {exc}",

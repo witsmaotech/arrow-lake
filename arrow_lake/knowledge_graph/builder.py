@@ -116,7 +116,7 @@ class KGBuilder:
         try:
             await self._execute_build(task, chunks_table)
             task.status = KGBuildStatus.COMPLETED
-        except Exception as exc:
+        except (RuntimeError, OSError) as exc:
             task.status = KGBuildStatus.FAILED
             task.error = str(exc)
             logger.error("KG build %s failed: %s", task_id, exc)

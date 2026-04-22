@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from arrow_lake.exceptions import StorageError
+
 
 class _LakeAdminMixin:
     """Provides catalog listing, dataset management, workflow introspection, and versioning."""
@@ -14,6 +16,10 @@ class _LakeAdminMixin:
         Returns:
             CatalogResult with dataset entries (name, version, row count).
         """
+        from arrow_lake.core.metrics import catalog_queries_total, get_metrics_enabled
+
+        if get_metrics_enabled():
+            catalog_queries_total.inc()
         from arrow_lake._models import CatalogEntry, CatalogResult
 
         storage = self._get_storage()
@@ -23,11 +29,11 @@ class _LakeAdminMixin:
             try:
                 ds = storage.open_dataset(name)
                 num_rows = ds.count_rows()
-            except Exception:
+            except (StorageError, OSError):
                 num_rows = 0
             try:
                 version = storage.get_version(name)
-            except Exception:
+            except (StorageError, OSError):
                 version = 0
             entries.append(CatalogEntry(name=name, version=version, num_rows=num_rows))
         return CatalogResult(datasets=entries, total=len(entries))
@@ -47,6 +53,12 @@ class _LakeAdminMixin:
             name: Dataset name to delete.
         """
         self._get_storage().delete_dataset(name)
+        from arrow_lake.core.metrics import catalog_tables_total, get_metrics_enabled
+
+        if get_metrics_enabled():
+            val = catalog_tables_total._value.get()
+            if val is not None and val > 0:
+                catalog_tables_total.dec()
 
     def list_flows(self) -> list[str]:
         """List all registered Metaflow workflow names (Epic 6).

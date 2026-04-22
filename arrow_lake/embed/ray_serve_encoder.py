@@ -77,7 +77,7 @@ class RayServeEmbeddingEncoder:
                 deployment=self.deployment_name,
             )
             return self._handle
-        except Exception as exc:
+        except (ConnectionError, ImportError, TimeoutError, RuntimeError) as exc:
             raise EmbeddingError(
                 error_code=ErrorCode.EMBEDDING_RAY_SERVE_UNAVAILABLE,
                 message=f"Ray Serve deployment '{self.deployment_name}' not available: {exc}",
@@ -155,7 +155,7 @@ class RayServeEmbeddingEncoder:
                 exc,
             )
             return self._fallback_encode(table, column, rows_to_encode=non_null_count)
-        except Exception as exc:
+        except (ConnectionError, ImportError, TimeoutError, RuntimeError) as exc:
             if not fallback_enabled:
                 raise EmbeddingError(
                     error_code=ErrorCode.EMBEDDING_MODEL_ERROR,
@@ -182,7 +182,7 @@ class RayServeEmbeddingEncoder:
                     batch_size=self.batch_size,
                 )
             return self._fallback_encoder.encode_column(table, column=column)
-        except Exception as exc:
+        except (ConnectionError, ImportError, TimeoutError, RuntimeError) as exc:
             raise EmbeddingError(
                 error_code=ErrorCode.EMBEDDING_MODEL_ERROR,
                 message=f"Local fallback encoding also failed: {exc}",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
@@ -130,7 +131,35 @@ class _LakeIngestMixin:
         """
         if not isinstance(data, pa.Table):
             raise TypeError(f"data must be a pyarrow.Table, got {type(data).__name__}")
-        self._get_storage().create_dataset(name, data)
+        from arrow_lake.api.telemetry import get_tracer
+        from arrow_lake.core.metrics import (
+            catalog_tables_total,
+            get_metrics_enabled,
+            ingestion_bytes_total,
+            ingestion_duration_seconds,
+            ingestion_errors_total,
+            ingestion_rows_total,
+        )
+        from arrow_lake.exceptions import StorageError
+
+        tracer = get_tracer()
+        source = "programmatic"
+        t0 = time.monotonic()
+        rows = data.num_rows
+        nbytes = data.nbytes
+        try:
+            with tracer.start_as_current_span("create_dataset", attributes={"dataset": name, "rows": rows}):
+                self._get_storage().create_dataset(name, data)
+        except (StorageError, OSError, ValueError) as exc:
+            if get_metrics_enabled():
+                ingestion_errors_total.labels(source=source, error_type=type(exc).__name__).inc()
+            raise
+        else:
+            if get_metrics_enabled():
+                ingestion_rows_total.labels(source=source).inc(rows)
+                ingestion_bytes_total.labels(source=source).inc(nbytes)
+                ingestion_duration_seconds.labels(source=source).set(time.monotonic() - t0)
+                catalog_tables_total.inc()
 
     def append_dataset(self, name: str, data: pa.Table) -> None:
         """Append rows to an existing dataset from an Arrow Table.
@@ -145,7 +174,30 @@ class _LakeIngestMixin:
         """
         if not isinstance(data, pa.Table):
             raise TypeError(f"data must be a pyarrow.Table, got {type(data).__name__}")
-        self._get_storage().append_dataset(name, data)
+        from arrow_lake.core.metrics import (
+            get_metrics_enabled,
+            ingestion_bytes_total,
+            ingestion_duration_seconds,
+            ingestion_errors_total,
+            ingestion_rows_total,
+        )
+        from arrow_lake.exceptions import StorageError
+
+        source = "programmatic"
+        t0 = time.monotonic()
+        rows = data.num_rows
+        nbytes = data.nbytes
+        try:
+            self._get_storage().append_dataset(name, data)
+        except (StorageError, OSError, ValueError) as exc:
+            if get_metrics_enabled():
+                ingestion_errors_total.labels(source=source, error_type=type(exc).__name__).inc()
+            raise
+        else:
+            if get_metrics_enabled():
+                ingestion_rows_total.labels(source=source).inc(rows)
+                ingestion_bytes_total.labels(source=source).inc(nbytes)
+                ingestion_duration_seconds.labels(source=source).set(time.monotonic() - t0)
 
     def quality_filter(
         self,
@@ -188,8 +240,17 @@ class _LakeIngestMixin:
                 )
             )
 
-        table = self._get_storage().read_dataset(dataset_name)
-        return registry.apply_all(table, active_filters, mode=filter_mode)
+        from arrow_lake.core.metrics import _QueryTimer, get_metrics_enabled, processing_quality_rejects_total
+
+        with _QueryTimer("quality_filter"):
+            table = self._get_storage().read_dataset(dataset_name)
+            report = registry.apply_all(table, active_filters, mode=filter_mode)
+
+        if get_metrics_enabled():
+            for fr in report.filter_results:
+                processing_quality_rejects_total.labels(filter_name=fr.filter_name).inc(fr.rejected_count)
+
+        return report
 
     def deduplicate(
         self,

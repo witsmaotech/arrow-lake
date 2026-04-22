@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import TYPE_CHECKING, Any
 
 from arrow_lake.rag.pipeline import RAGPipeline, RAGResponse
@@ -41,7 +42,7 @@ class _LakeRAGMixin:
             # Attempt GraphRAG pipeline with KG augmentation
             try:
                 return self._create_graph_rag_pipeline(provider)
-            except Exception:
+            except (OSError, ValueError, RuntimeError, ConnectionError):
                 logger.warning(
                     "Failed to create GraphRAGPipeline, falling back to RAGPipeline",
                     exc_info=True,
@@ -120,7 +121,16 @@ class _LakeRAGMixin:
         """
         validate_identifier(dataset_name)
         pipeline = self._get_rag_pipeline()
-        return await pipeline.query(
+        from arrow_lake.core.metrics import (
+            get_metrics_enabled,
+            query_latency_seconds,
+            query_total,
+        )
+
+        if get_metrics_enabled():
+            query_total.labels(query_type="rag_query").inc()
+        t0 = time.monotonic()
+        result = await pipeline.query(
             question=question,
             dataset_name=dataset_name,
             top_k=top_k,
@@ -128,6 +138,9 @@ class _LakeRAGMixin:
             template_name=template_name,
             session_id=session_id,
         )
+        if get_metrics_enabled():
+            query_latency_seconds.labels(query_type="rag_query").observe(time.monotonic() - t0)
+        return result
 
     async def rag_query_stream(
         self,
@@ -144,6 +157,10 @@ class _LakeRAGMixin:
         """
         validate_identifier(dataset_name)
         pipeline = self._get_rag_pipeline()
+        from arrow_lake.core.metrics import get_metrics_enabled, query_total
+
+        if get_metrics_enabled():
+            query_total.labels(query_type="rag_query_stream").inc()
         async for chunk in pipeline.query_stream(
             question=question,
             dataset_name=dataset_name,

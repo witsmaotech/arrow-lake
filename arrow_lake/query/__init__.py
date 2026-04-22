@@ -3,6 +3,7 @@
 from arrow_lake.query.streaming import StreamingResult
 
 __all__ = [
+    "DuckDBSessionManager",
     "EnsembleSearchBridge",
     "EnsembleSearchResult",
     "ExportBridge",
@@ -14,6 +15,7 @@ __all__ = [
     "MetadataSearchBridge",
     "OlapQueryResult",
     "OlapSearchBridge",
+    "SessionPoolStats",
     "StreamingResult",
 ]
 
@@ -21,6 +23,7 @@ __all__ = [
 def __getattr__(name: str):
     """Lazy imports for query types to avoid circular imports."""
     _lazy_map = {
+        "DuckDBSessionManager": ("arrow_lake.query.session_manager", "DuckDBSessionManager"),
         "EnsembleSearchBridge": ("arrow_lake.query.ensemble", "EnsembleSearchBridge"),
         "EnsembleSearchResult": ("arrow_lake.query.ensemble", "EnsembleSearchResult"),
         "ExportBridge": ("arrow_lake.query.export", "ExportBridge"),
@@ -32,6 +35,7 @@ def __getattr__(name: str):
         "MetadataSearchBridge": ("arrow_lake.query.metadata", "MetadataSearchBridge"),
         "OlapQueryResult": ("arrow_lake.query.olap", "OlapQueryResult"),
         "OlapSearchBridge": ("arrow_lake.query.olap", "OlapSearchBridge"),
+        "SessionPoolStats": ("arrow_lake.query.session_manager", "SessionPoolStats"),
     }
     if name in _lazy_map:
         import importlib

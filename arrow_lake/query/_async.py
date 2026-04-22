@@ -20,18 +20,36 @@ from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["run_duckdb_query", "shutdown_query_executor"]
+__all__ = ["configure_query_executor", "run_duckdb_query", "shutdown_query_executor"]
 
 _query_executor: ThreadPoolExecutor | None = None
 _query_semaphore: asyncio.Semaphore | None = None
+_max_workers: int = 4
 
 
-def _get_executor(max_workers: int = 4) -> ThreadPoolExecutor:
+def configure_query_executor(max_workers: int = 4) -> None:
+    """Configure the query executor with the given concurrency limit.
+
+    Must be called before any queries are executed. Reconfiguring after
+    queries have started will recreate the executor, orphaning in-flight
+    tasks. Call only during application startup.
+
+    Args:
+        max_workers: Maximum concurrent DuckDB queries.
+    """
+    global _query_executor, _query_semaphore, _max_workers
+    _max_workers = max_workers
+    _query_executor = None
+    _query_semaphore = None
+    logger.info("Query executor configured: max_workers=%d", max_workers)
+
+
+def _get_executor() -> ThreadPoolExecutor:
     """Get or create the thread pool executor for DuckDB queries."""
     global _query_executor
     if _query_executor is None or _query_executor._shutdown:
         _query_executor = ThreadPoolExecutor(
-            max_workers=max_workers,
+            max_workers=_max_workers,
             thread_name_prefix="duckdb-query",
         )
     return _query_executor
@@ -40,7 +58,8 @@ def _get_executor(max_workers: int = 4) -> ThreadPoolExecutor:
 async def run_duckdb_query(func: object, *args: object, **kwargs: object) -> object:
     """Run a synchronous DuckDB function in a worker thread.
 
-    Uses a semaphore to limit concurrent DuckDB queries (default 4).
+    Uses a semaphore to limit concurrent DuckDB queries (default 4,
+    configurable via configure_query_executor()).
 
     Args:
         func: Synchronous function to execute (e.g. conn.execute).
@@ -58,7 +77,7 @@ async def run_duckdb_query(func: object, *args: object, **kwargs: object) -> obj
     global _query_semaphore
 
     if _query_semaphore is None:
-        _query_semaphore = asyncio.Semaphore(4)
+        _query_semaphore = asyncio.Semaphore(_max_workers)
 
     loop = asyncio.get_running_loop()
     executor = _get_executor()

@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, BinaryIO
 
+import botocore.exceptions
 import structlog
 
 from arrow_lake.config import StorageConfig
@@ -75,11 +76,13 @@ class BlobListResult:
         keys: Tuple of matching object keys.
         count: Number of objects found.
         truncated: Whether more results exist (pagination).
+        next_token: Pagination token for the next page (None = no more pages).
     """
 
     keys: tuple[str, ...]
     count: int
     truncated: bool
+    next_token: str | None = None
 
 
 class BlobStoreManager:
@@ -167,7 +170,7 @@ class BlobStoreManager:
             content_type = _guess_content_type(key)
 
         if isinstance(data, (bytes, bytearray)):
-            body: BinaryIO = _BytesReader(data)  # type: ignore[arg-type]
+            body: BinaryIO = _BytesReader(data)
             size = len(data)
         else:
             body = data
@@ -199,7 +202,7 @@ class BlobStoreManager:
             raise
         except ValueError:
             raise
-        except Exception as exc:
+        except (OSError, botocore.exceptions.ClientError, botocore.exceptions.BotoCoreError) as exc:
             raise StorageError(
                 error_code=ErrorCode.BLOB_UPLOAD_FAILED,
                 message=f"Failed to upload blob '{key}': {exc}",
@@ -273,7 +276,7 @@ class BlobStoreManager:
             raise
         except ValueError:
             raise
-        except Exception as exc:
+        except (OSError, botocore.exceptions.ClientError, botocore.exceptions.BotoCoreError) as exc:
             raise StorageError(
                 error_code=ErrorCode.BLOB_UPLOAD_FAILED,
                 message=f"Failed to upload file '{path}' to '{effective_key}': {exc}",
@@ -311,7 +314,7 @@ class BlobStoreManager:
                 error_code=ErrorCode.BLOB_DOWNLOAD_FAILED,
                 message=f"Failed to download blob '{key}': {exc}",
             ) from exc
-        except Exception as exc:
+        except (botocore.exceptions.BotoCoreError, OSError) as exc:
             raise StorageError(
                 error_code=ErrorCode.BLOB_DOWNLOAD_FAILED,
                 message=f"Failed to download blob '{key}': {exc}",
@@ -357,7 +360,7 @@ class BlobStoreManager:
                 error_code=ErrorCode.BLOB_DOWNLOAD_FAILED,
                 message=f"Failed to download '{key}' to '{dest}': {exc}",
             ) from exc
-        except Exception as exc:
+        except (botocore.exceptions.BotoCoreError, OSError) as exc:
             raise StorageError(
                 error_code=ErrorCode.BLOB_DOWNLOAD_FAILED,
                 message=f"Failed to download '{key}' to '{dest}': {exc}",
@@ -399,7 +402,7 @@ class BlobStoreManager:
                 Params={"Bucket": self._bucket, "Key": key},
                 ExpiresIn=expires_in,
             )
-        except (ClientError, Exception) as exc:
+        except (botocore.exceptions.ClientError, botocore.exceptions.BotoCoreError, OSError) as exc:
             raise StorageError(
                 error_code=ErrorCode.BLOB_PRESIGN_FAILED,
                 message=f"Failed to generate presigned URL for '{key}': {exc}",
@@ -445,7 +448,7 @@ class BlobStoreManager:
                 error_code=ErrorCode.STORAGE_READ_FAILED,
                 message=f"Failed to head blob '{key}': {exc}",
             ) from exc
-        except Exception as exc:
+        except (botocore.exceptions.BotoCoreError, OSError) as exc:
             raise StorageError(
                 error_code=ErrorCode.STORAGE_READ_FAILED,
                 message=f"Failed to head blob '{key}': {exc}",
@@ -469,8 +472,11 @@ class BlobStoreManager:
             error_code = exc.response.get("Error", {}).get("Code", "")
             if error_code in ("404", "NoSuchKey"):
                 return False
-            return False
-        except Exception:
+            raise StorageError(
+                error_code=ErrorCode.STORAGE_READ_FAILED,
+                message=f"Failed to check existence of '{key}': {exc}",
+            ) from exc
+        except (botocore.exceptions.BotoCoreError, OSError):
             return False
 
     # ------------------------------------------------------------------
@@ -489,7 +495,7 @@ class BlobStoreManager:
         try:
             self._s3.delete_object(Bucket=self._bucket, Key=key)
             _log.info("blob_deleted", key=key, bucket=self._bucket)
-        except Exception as exc:
+        except (botocore.exceptions.ClientError, botocore.exceptions.BotoCoreError, OSError) as exc:
             raise StorageError(
                 error_code=ErrorCode.BLOB_DELETE_FAILED,
                 message=f"Failed to delete blob '{key}': {exc}",
@@ -532,6 +538,34 @@ class BlobStoreManager:
         return count
 
     # ------------------------------------------------------------------
+    # Copy
+    # ------------------------------------------------------------------
+
+    def copy(self, source_key: str, dest_key: str) -> None:
+        """Copy a blob within the same bucket.
+
+        Args:
+            source_key: Source object key.
+            dest_key: Destination object key.
+
+        Raises:
+            StorageError: If copy operation fails.
+        """
+        _validate_blob_key(source_key)
+        _validate_blob_key(dest_key)
+        try:
+            self._s3.copy_object(
+                Bucket=self._bucket,
+                CopySource={"Bucket": self._bucket, "Key": source_key},
+                Key=dest_key,
+            )
+        except (botocore.exceptions.ClientError, botocore.exceptions.BotoCoreError, OSError) as exc:
+            raise StorageError(
+                error_code=ErrorCode.STORAGE_WRITE_FAILED,
+                message=f"Failed to copy '{source_key}' to '{dest_key}': {exc}",
+            ) from exc
+
+    # ------------------------------------------------------------------
     # List
     # ------------------------------------------------------------------
 
@@ -562,7 +596,7 @@ class BlobStoreManager:
 
         try:
             resp = self._s3.list_objects_v2(**kwargs)
-        except Exception as exc:
+        except (botocore.exceptions.ClientError, botocore.exceptions.BotoCoreError, OSError) as exc:
             raise StorageError(
                 error_code=ErrorCode.STORAGE_READ_FAILED,
                 message=f"Failed to list blobs under '{prefix}': {exc}",
@@ -573,6 +607,7 @@ class BlobStoreManager:
             keys=keys,
             count=len(keys),
             truncated=resp.get("IsTruncated", False),
+            next_token=resp.get("NextContinuationToken"),
         )
 
     # ------------------------------------------------------------------
@@ -644,7 +679,7 @@ class BlobStoreManager:
             # Best-effort abort on failure.
             try:
                 self._s3.abort_multipart_upload(Bucket=self._bucket, Key=key, UploadId=upload_id)
-            except Exception:
+            except (botocore.exceptions.ClientError, botocore.exceptions.BotoCoreError, OSError):
                 _log.warning("multipart_abort_failed", key=key, exc_info=True)
             raise StorageError(
                 error_code=ErrorCode.BLOB_UPLOAD_FAILED,
@@ -710,7 +745,7 @@ def _get_stream_size(stream: BinaryIO) -> int:
 class _BytesReader:
     """Wraps bytes in a seekable file-like object for boto3."""
 
-    def __init__(self, data: bytes) -> None:
+    def __init__(self, data: bytes | bytearray) -> None:
         self._data = data
         self._pos = 0
 

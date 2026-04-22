@@ -159,23 +159,28 @@ class ExportBridge:
             )
         path.parent.mkdir(parents=True, exist_ok=True)
 
-        # CSV: exclude binary columns
+        # CSV: exclude binary and fixed_size_list columns
         export_table = table
         if fmt == "csv":
-            binary_cols = [c for c in table.column_names if c in _BINARY_COLUMNS]
-            if binary_cols:
+            fixed_list_cols = [
+                f.name
+                for f in table.schema
+                if pa.types.is_fixed_size_list(f.type)
+            ]
+            exclude_cols = set(_BINARY_COLUMNS) | set(fixed_list_cols)
+            if exclude_cols:
                 logger.warning(
-                    "export_csv_binary_excluded",
-                    columns=binary_cols,
-                    reason="Binary columns cannot be exported to CSV",
+                    "export_csv_unsupported_excluded",
+                    columns=list(exclude_cols),
+                    reason="Binary and fixed_size_list columns cannot be exported to CSV",
                 )
-            non_binary = [c for c in table.column_names if c not in _BINARY_COLUMNS]
-            if non_binary:
-                export_table = table.select(non_binary)
+            non_excluded = [c for c in table.column_names if c not in exclude_cols]
+            if non_excluded:
+                export_table = table.select(non_excluded)
             else:
                 raise StorageError(
                     error_code=ErrorCode.EXPORT_WRITE_FAILED,
-                    message="No non-binary columns to export to CSV",
+                    message="No supported columns to export to CSV (all are binary or fixed_size_list)",
                 )
 
         # Write
@@ -197,7 +202,7 @@ class ExportBridge:
                 )
         except StorageError:
             raise
-        except Exception as exc:
+        except (ValueError, OSError) as exc:
             raise StorageError(
                 error_code=ErrorCode.EXPORT_WRITE_FAILED,
                 message=f"Failed to export to {output_path}: {exc}",

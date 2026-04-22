@@ -18,7 +18,7 @@ def _get_version() -> str:
     try:
         from arrow_lake._version import __version__
         return __version__
-    except Exception:
+    except ImportError:
         return ""
 
 
@@ -35,7 +35,7 @@ def _check_storage(config: ArrowLakeConfig) -> tuple[str, bool]:
                 urllib.request.urlopen(health_url, timeout=3)
                 return "accessible", True
             return "no_endpoint_configured", False
-        except Exception:
+        except ImportError:
             return "endpoint_unreachable", False
     if os.path.isdir(base_uri):
         return "accessible", True
@@ -103,7 +103,7 @@ async def version_info() -> dict:
     try:
         from arrow_lake._version import __version__
         result["version"] = __version__
-    except Exception:
+    except ImportError:
         pass
 
     import sys
@@ -115,7 +115,7 @@ async def version_info() -> dict:
         try:
             import importlib.metadata as im
             result[dep] = im.version(dep)
-        except Exception:
+        except ImportError:
             result[dep] = "not installed"
 
     return result

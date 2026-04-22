@@ -209,7 +209,7 @@ class NeMoCuratorFilter:
                 message="nemo-curator import failed, using CPU heuristic fallback",
             )
             self._using_fallback = True
-        except Exception as exc:
+        except (RuntimeError, OSError) as exc:
             raise QualityError(
                 error_code=ErrorCode.QUALITY_NEMO_MODEL_ERROR,
                 message=f"Failed to load NeMo Curator model: {exc}",
@@ -336,7 +336,7 @@ class NeMoCuratorFilter:
                 result = self._model.score(batch)  # type: ignore[union-attr]
                 for j, score in enumerate(result):
                     scores[i + j] = float(score)
-        except Exception:
+        except (RuntimeError, OSError):
             logger.warning(
                 "nemo_curator_inference_failed",
                 message=f"GPU inference failed for {classifier_type}, falling back to heuristic",
@@ -531,7 +531,7 @@ class NeMoDeduplicator:
                 if int(str(i)) not in seen:
                     seen.add(int(str(i)))
                     unique_indices.append(i)
-        except Exception:
+        except (RuntimeError, OSError):
             logger.warning("minhash_dedup_failed", message="Falling back to exact dedup")
             self._using_gpu = False
             return self._dedup_exact(table, texts)

@@ -72,6 +72,6 @@ def find_failed_runs(flow_name: str) -> list[str]:
                 continue
             failed.append(str(run.id))
         return failed
-    except Exception as exc:
+    except (OSError, ImportError, RuntimeError) as exc:
         logger.warning("workflow_find_failed_runs_error", error=str(exc))
         return []

@@ -12,7 +12,7 @@ from typing import Any
 
 import structlog
 
-from arrow_lake.exceptions import CatalogError, ErrorCode
+from arrow_lake.exceptions import CatalogError, ErrorCode, StorageError
 
 logger = structlog.get_logger(__name__)
 
@@ -78,7 +78,7 @@ class CatalogReadReplica:
             self._primary_available = True
             logger.info("catalog_replica_synced", count=len(tables))
             return len(tables)
-        except Exception as exc:
+        except (OSError, StorageError) as exc:
             self.mark_primary_unavailable()
             raise CatalogError(
                 error_code=ErrorCode.CATALOG_CONNECTION_FAILED,

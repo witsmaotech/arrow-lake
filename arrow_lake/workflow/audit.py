@@ -18,7 +18,7 @@ from typing import Any
 import pyarrow as pa
 import structlog
 
-from arrow_lake.exceptions import AuditError, ErrorCode
+from arrow_lake.exceptions import AuditError, ErrorCode, StorageError
 
 logger = structlog.get_logger(__name__)
 
@@ -157,7 +157,7 @@ class AuditTrail:
 
         try:
             self._storage.append_dataset(self._audit_dataset, table)
-        except Exception as exc:
+        except (OSError, StorageError) as exc:
             raise AuditError(
                 error_code=ErrorCode.AUDIT_STORE_FAILED,
                 message=f"Failed to record audit entry: {exc}",
@@ -182,7 +182,7 @@ class AuditTrail:
         """
         try:
             table = self._storage.read_dataset(self._audit_dataset)
-        except Exception:
+        except (StorageError, OSError):
             return False
 
         if table.num_rows == 0:
@@ -236,7 +236,7 @@ class AuditTrail:
         """
         try:
             table = self._storage.read_dataset(self._audit_dataset)
-        except Exception:
+        except (StorageError, OSError):
             return []
 
         if table.num_rows == 0:

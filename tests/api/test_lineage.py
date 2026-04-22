@@ -88,7 +88,7 @@ async def test_get_lineage_history(client: AsyncClient, mock_lake: MagicMock) ->
 async def test_query_lineage(client: AsyncClient, mock_lake: MagicMock) -> None:
     resp = await client.post(
         "/api/v1/lineage/query",
-        json={"sql": "SELECT * FROM lineage WHERE operation='create'"},
+        json={"sql": "SELECT * FROM _lineage_events WHERE operation='create'"},
     )
     assert resp.status_code == 200
     body = resp.json()
@@ -96,7 +96,7 @@ async def test_query_lineage(client: AsyncClient, mock_lake: MagicMock) -> None:
     assert len(body["data"]) == 2
 
     mock_lake.lineage_query.assert_called_once_with(
-        "SELECT * FROM lineage WHERE operation='create'"
+        "SELECT * FROM _lineage_events WHERE operation='create'"
     )
 
 

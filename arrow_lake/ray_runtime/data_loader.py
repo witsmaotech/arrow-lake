@@ -158,7 +158,7 @@ class RemoteDataLoader:
                 batch = ray.get(ref, timeout=300)
                 self._consume_index += 1
                 yield batch
-            except Exception as exc:
+            except (RuntimeError, OSError, ConnectionError) as exc:
                 logger.error(
                     "remote_loader_batch_failed",
                     batch_index=self._consume_index,

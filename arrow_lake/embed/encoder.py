@@ -154,11 +154,16 @@ class LocalEmbeddingEncoder:
                 normalize_embeddings=True,
             )
             embeddings = np.asarray(embeddings, dtype=np.float32)
-        except Exception as exc:
+        except (RuntimeError, OSError) as exc:
             raise EmbeddingError(
                 error_code=ErrorCode.EMBEDDING_MODEL_ERROR,
                 message=f"Failed to encode texts with '{self.model_name}': {exc}",
             ) from exc
+
+        from arrow_lake.core.metrics import get_metrics_enabled, processing_embeddings_total
+
+        if get_metrics_enabled():
+            processing_embeddings_total.labels(model=self.model_name).inc(non_null_count)
 
         return EmbeddingResult(
             total_rows=total_rows,
@@ -317,7 +322,7 @@ class ApiEmbeddingEncoder:
                 embeddings=embeddings,
                 null_mask=tuple(False for _ in texts),
             )
-        except Exception as exc:
+        except (ImportError, OSError) as exc:
             raise EmbeddingError(
                 error_code=ErrorCode.EMBEDDING_MODEL_ERROR,
                 message=f"Local fallback encoding also failed: {exc}",

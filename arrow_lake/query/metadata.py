@@ -17,10 +17,11 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+import duckdb
 import pyarrow as pa
 
 from arrow_lake.config import StorageConfig
-from arrow_lake.exceptions import ErrorCode, QueryError
+from arrow_lake.exceptions import ErrorCode, QueryError, StorageError
 from arrow_lake.ingest.storage import LanceStorageManager
 from arrow_lake.query._db import create_duckdb_session
 from arrow_lake.query.lance_adapter import create_lance_scan_adapter
@@ -124,7 +125,7 @@ class MetadataSearchBridge:
         # Read dataset from Lance (streaming via RecordBatchReader)
         try:
             source = self._storage.scan_dataset(dataset_name)
-        except Exception as exc:
+        except StorageError as exc:
             raise QueryError(
                 error_code=ErrorCode.QUERY_NO_RESULTS,
                 message=f"Failed to read dataset '{dataset_name}': {exc}",
@@ -162,7 +163,7 @@ class MetadataSearchBridge:
                 adapter.create_view(conn, uri, dataset_name)
                 logger.debug("Registered %s via native lance scan", dataset_name)
                 return
-        except Exception:
+        except (duckdb.Error, OSError):
             logger.debug(
                 "Native lance scan failed for %s, falling back to PyArrow",
                 dataset_name,

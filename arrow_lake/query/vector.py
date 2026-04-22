@@ -12,6 +12,7 @@ import math
 from dataclasses import dataclass
 from typing import Any
 
+import duckdb
 import pyarrow as pa
 import structlog
 
@@ -179,7 +180,7 @@ class VectorSearchBridge:
                 num_bits=effective_num_bits,
                 replace=replace,
             )
-        except Exception as exc:
+        except (ValueError, RuntimeError) as exc:
             raise QueryError(
                 error_code=ErrorCode.VECTOR_INDEX_FAILED,
                 message=f"Failed to create vector index on '{dataset_name}': {exc}",
@@ -289,7 +290,7 @@ class VectorSearchBridge:
                 )
             except QueryError:
                 raise
-            except Exception:
+            except (duckdb.Error, OSError):
                 _log.debug(
                     "DuckDB vector search failed, falling back to LanceDB SDK", exc_info=True
                 )
@@ -371,21 +372,35 @@ class VectorSearchBridge:
         # Validate column name to prevent SQL injection
         validate_identifier(vector_column)
 
+        # Validate top_k and nprobes bounds
+        if top_k < 1 or top_k > 10_000:
+            raise QueryError(
+                error_code=ErrorCode.VECTOR_INVALID_QUERY,
+                message=f"top_k must be between 1 and 10000, got {top_k}",
+            )
+        if nprobes is not None and (nprobes < 1 or nprobes > 65_536):
+            raise QueryError(
+                error_code=ErrorCode.VECTOR_INVALID_QUERY,
+                message=f"nprobes must be between 1 and 65536, got {nprobes}",
+            )
+
         uri = self._storage.dataset_uri(dataset_name)
         vec_list = "[" + ", ".join(str(v) for v in query_vector) + "]"
+        safe_uri = uri.replace("'", "''")
 
         sql_parts = [
             "SELECT * FROM lance_vector_search(",
-            f"  '{uri}',",
+            f"  '{safe_uri}',",
             f"  '{vector_column}',",
             f"  CAST({vec_list} AS FLOAT[]),",
-            f"  k := {top_k}",
+            f"  explain_verbose := false,",
+            f"  use_index := {metric is not None},",
+            f"  prefilter := false,",
+            f"  refine_factor := 1::BIGINT,",
+            f"  nprobs := {(nprobes or 1)}::BIGINT,",
+            f"  k := {top_k}::BIGINT",
+            ")",
         ]
-        if nprobes is not None:
-            sql_parts.append(f"  nprobs := {nprobes}")
-        if metric is not None:
-            sql_parts.append("  use_index := true")
-        sql_parts.append(")")
 
         sql = "\n".join(sql_parts) + f" LIMIT {top_k}"
 
@@ -426,7 +441,7 @@ class VectorSearchBridge:
 
         try:
             return query_builder.to_arrow()
-        except Exception as exc:
+        except (ValueError, RuntimeError) as exc:
             raise QueryError(
                 error_code=ErrorCode.VECTOR_SEARCH_FAILED,
                 message=f"Vector search failed: {exc}",
@@ -534,7 +549,7 @@ class VectorSearchBridge:
                             else 0,
                             columns=list(cols),
                         )
-        except Exception:
+        except (ValueError, RuntimeError, OSError):
             _log.debug(
                 "Failed to retrieve index info for column '%s'",
                 vector_column,

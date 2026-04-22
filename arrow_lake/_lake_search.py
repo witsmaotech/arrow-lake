@@ -59,15 +59,20 @@ class _LakeSearchMixin:
                 **self._bridge_kwargs(),
             ),
         )
-        return bridge.search(
-            dataset_name,
-            query_vector,
-            top_k=top_k,
-            metric=metric,
-            vector_column=vector_column,
-            where=where,
-            nprobes=nprobes,
-        )
+        from arrow_lake.api.telemetry import get_tracer
+        from arrow_lake.core.metrics import _QueryTimer
+
+        with get_tracer().start_as_current_span("vector_search", attributes={"dataset": dataset_name}):
+            with _QueryTimer("vector_search"):
+                return bridge.search(
+                dataset_name,
+                query_vector,
+                top_k=top_k,
+                metric=metric,
+                vector_column=vector_column,
+                where=where,
+                nprobes=nprobes,
+            )
 
     def create_vector_index(
         self,
@@ -149,13 +154,19 @@ class _LakeSearchMixin:
                 **self._bridge_kwargs(),
             ),
         )
-        return bridge.search(
-            dataset_name,
-            query,
-            top_k=top_k,
-            fts_column=fts_column,
-            where=where,
-        )
+        from arrow_lake.core.metrics import _QueryTimer
+        from arrow_lake.api.telemetry import get_tracer
+
+        tracer = get_tracer()
+        with tracer.start_as_current_span("text_search", attributes={"dataset": dataset_name}):
+            with _QueryTimer("text_search"):
+                return bridge.search(
+                    dataset_name,
+                    query,
+                    top_k=top_k,
+                    fts_column=fts_column,
+                    where=where,
+                )
 
     def create_fts_index(
         self,
@@ -222,15 +233,20 @@ class _LakeSearchMixin:
                 **self._bridge_kwargs(),
             ),
         )
-        return bridge.search(
-            dataset_name,
-            query_vector,
-            query_text,
-            top_k=top_k,
-            vector_column=vector_column,
-            fts_column=fts_column,
-            where=where,
-        )
+        from arrow_lake.api.telemetry import get_tracer
+        from arrow_lake.core.metrics import _QueryTimer
+
+        with get_tracer().start_as_current_span("hybrid_search", attributes={"dataset": dataset_name}):
+            with _QueryTimer("hybrid_search"):
+                return bridge.search(
+                dataset_name,
+                query_vector,
+                query_text,
+                top_k=top_k,
+                vector_column=vector_column,
+                fts_column=fts_column,
+                where=where,
+            )
 
     def faceted_search(
         self,
@@ -267,14 +283,17 @@ class _LakeSearchMixin:
                 storage_config=self._config.storage,
             ),
         )
-        return bridge.search(
-            dataset_name,
-            query_vector,
-            facets=facets,
-            top_k=top_k,
-            vector_column=vector_column,
-            where=where,
-        )
+        from arrow_lake.core.metrics import _QueryTimer
+
+        with _QueryTimer("faceted_search"):
+            return bridge.search(
+                dataset_name,
+                query_vector,
+                facets=facets,
+                top_k=top_k,
+                vector_column=vector_column,
+                where=where,
+            )
 
     def ensemble_search(
         self,
@@ -308,7 +327,10 @@ class _LakeSearchMixin:
             "ensemble",
             lambda: EnsembleSearchBridge(self._get_storage(), config=self._config.ensemble),
         )
-        return bridge.search(
+        from arrow_lake.core.metrics import _QueryTimer
+
+        with _QueryTimer("ensemble_search"):
+            return bridge.search(
             dataset_name,
             query_vector,
             columns=columns,

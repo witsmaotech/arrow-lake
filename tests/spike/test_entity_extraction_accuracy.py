@@ -181,6 +181,7 @@ async def llm_provider():
 class TestEntityExtractionAccuracy:
     """Benchmark entity extraction accuracy against gold standard."""
 
+    @pytest.mark.asyncio
     async def test_llm_available(self, llm_provider) -> None:
         """Verify the LLM provider is accessible."""
         resp = await llm_provider.generate(
@@ -195,6 +196,7 @@ class TestEntityExtractionAccuracy:
             LLMMessage(role="user", content=ENTITY_EXTRACT_PROMPT.format(text=text)),
         ]
 
+    @pytest.mark.asyncio
     async def test_extraction_format(self, llm_provider, gold_standard: list[dict]) -> None:
         """Verify extraction returns parseable JSON for all samples."""
         samples = gold_standard[:5]
@@ -215,6 +217,7 @@ class TestEntityExtractionAccuracy:
             f"Details: {json.dumps(failures, ensure_ascii=False, indent=2)}"
         )
 
+    @pytest.mark.asyncio
     async def test_extraction_accuracy(self, llm_provider, gold_standard: list[dict]) -> None:
         """Extract entities from gold standard and measure F1.
 

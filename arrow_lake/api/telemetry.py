@@ -59,7 +59,7 @@ def _instrument_app(app: Any) -> None:
 
         FastAPIInstrumentor().instrument_app(app)
         logger.info("FastAPI instrumentation enabled")
-    except Exception as exc:
+    except ImportError as exc:
         logger.warning("Failed to instrument FastAPI: %s", exc)
 
 
@@ -89,3 +89,55 @@ def setup_telemetry(config: Any, *, app: Any = None) -> None:
 
     if app is not None:
         _instrument_app(app)
+
+
+def get_tracer(name: str = "arrow-lake"):
+    """Get an OpenTelemetry tracer, or a no-op tracer if OTel is unavailable.
+
+    Safe to call at module level or inside hot paths. The no-op tracer returns
+    spans whose context-manager methods are no-ops.
+
+    Args:
+        name: Instrumentation library name.
+
+    Returns:
+        A tracer object with ``start_as_current_span(name)``.
+    """
+    if not _OTEL_AVAILABLE:
+        return _NoOpTracer()
+    from opentelemetry import trace
+
+    return trace.get_tracer(name)
+
+
+class _NoOpTracer:
+    """No-op tracer returned when opentelemetry is not installed."""
+
+    class _NoOpSpan:
+        def __enter__(self) -> _NoOpTracer._NoOpSpan:
+            return self
+
+        def __exit__(self, *args: Any) -> None:
+            pass
+
+        def set_attribute(self, key: str, value: Any) -> None:
+            pass
+
+        def add_event(self, name: str, **kwargs: Any) -> None:
+            pass
+
+        def end(self) -> None:
+            pass
+
+        def record_exception(self, exception: BaseException) -> None:
+            pass
+
+        def set_status(self, status: Any) -> None:
+            pass
+
+        @property
+        def is_recording(self) -> bool:
+            return False
+
+    def start_as_current_span(self, name: str, **kwargs: Any) -> _NoOpTracer._NoOpSpan:
+        return self._NoOpSpan()

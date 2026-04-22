@@ -12,11 +12,19 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
+
+import duckdb
 from contextlib import contextmanager, suppress
+from typing import Any
 
 from arrow_lake.exceptions import ArrowLakeError, ErrorCode
 
 logger = logging.getLogger(__name__)
+
+
+def _esc(s: str) -> str:
+    """Escape single quotes for SQL string interpolation."""
+    return s.replace("'", "''")
 
 __all__ = [
     "LanceScanAdapter",
@@ -35,11 +43,11 @@ class LanceScanAdapter(ABC):
     @abstractmethod
     def scan(
         self,
-        conn: object,
+        conn: Any,
         uri: str,
         *,
         columns: list[str] | None = None,
-    ) -> contextmanager:  # type: ignore[misc]
+    ) -> contextmanager[Any]:  
         """Scan a Lance dataset and return a DuckDB context with data registered.
 
         Args:
@@ -55,7 +63,7 @@ class LanceScanAdapter(ABC):
     @abstractmethod
     def create_view(
         self,
-        conn: object,
+        conn: Any,
         uri: str,
         view_name: str,
         *,
@@ -72,7 +80,7 @@ class LanceScanAdapter(ABC):
         ...
 
     @abstractmethod
-    def is_available(self, conn: object | None = None) -> bool:
+    def is_available(self, conn: Any | None = None) -> bool:
         """Check whether this adapter's prerequisites are met.
 
         Args:
@@ -94,19 +102,19 @@ class NativeLanceScanAdapter(LanceScanAdapter):
     def __init__(self) -> None:
         self._available: bool | None = None
 
-    def _load_lance_scan(self, conn: object) -> bool:
+    def _load_lance_scan(self, conn: Any) -> bool:
         """Probe whether __lance_scan is available in the current connection."""
         try:
-            result = conn.execute(  # type: ignore[union-attr]
+            result = conn.execute(  
                 "SELECT count(*) FROM duckdb_functions() WHERE function_name = '__lance_scan'"
             ).fetchone()
             available = result is not None and result[0] > 0
-        except Exception:
+        except (duckdb.Error, TypeError):
             available = False
         self._available = available
         return available
 
-    def is_available(self, conn: object | None = None) -> bool:
+    def is_available(self, conn: Any | None = None) -> bool:
         if self._available is not None:
             return self._available
         if conn is None:
@@ -116,38 +124,38 @@ class NativeLanceScanAdapter(LanceScanAdapter):
     @contextmanager
     def scan(
         self,
-        conn: object,
+        conn: Any,
         uri: str,
         *,
         columns: list[str] | None = None,
-    ) -> contextmanager:  # type: ignore[misc]
+    ) -> contextmanager[Any]:  
         """Yield connection with Lance dataset registered as table ``t``."""
         if not self.is_available(conn):
             raise ArrowLakeError(
                 ErrorCode.LANCE_EXTENSION_ERROR,
                 "Native lance scan is not available (lance extension not loaded)",
             )
-        conn.execute(  # type: ignore[union-attr]
-            f"CREATE OR REPLACE TABLE t AS SELECT * FROM __lance_scan('{uri}', explain_verbose := false)"
+        conn.execute(
+            f"CREATE OR REPLACE TABLE t AS SELECT * FROM __lance_scan('{_esc(uri)}', explain_verbose := false)"
         )
         try:
             yield conn
         finally:
             with suppress(Exception):
-                conn.execute("DROP TABLE IF EXISTS t")  # type: ignore[union-attr]
+                conn.execute("DROP TABLE IF EXISTS t")  
 
     def create_view(
         self,
-        conn: object,
+        conn: Any,
         uri: str,
         view_name: str,
         *,
         columns: list[str] | None = None,
     ) -> None:
         """Create a DuckDB VIEW backed by ``__lance_scan()``."""
-        conn.execute(  # type: ignore[union-attr]
+        conn.execute(  
             f"CREATE OR REPLACE VIEW {view_name} AS "
-            f"SELECT * FROM __lance_scan('{uri}', explain_verbose := false)"
+            f"SELECT * FROM __lance_scan('{_esc(uri)}', explain_verbose := false)"
         )
 
 
@@ -167,33 +175,33 @@ class PyArrowFallbackAdapter(LanceScanAdapter):
         """
         self._dataset = dataset
 
-    def is_available(self, conn: object | None = None) -> bool:
+    def is_available(self, conn: Any | None = None) -> bool:
         return True
 
     @contextmanager
     def scan(
         self,
-        conn: object,
+        conn: Any,
         uri: str,
         *,
         columns: list[str] | None = None,
-    ) -> contextmanager:  # type: ignore[misc]
+    ) -> contextmanager[Any]:  
         """Yield connection with Lance dataset registered as table ``t``."""
         scanner_kwargs: dict = {}
         if columns is not None:
             scanner_kwargs["columns"] = columns
 
         reader = self._dataset.scanner(**scanner_kwargs).to_reader()
-        conn.register("t", reader)  # type: ignore[union-attr]
+        conn.register("t", reader)  
         try:
             yield conn
         finally:
             with suppress(Exception):
-                conn.execute("DROP TABLE IF EXISTS t")  # type: ignore[union-attr]
+                conn.execute("DROP TABLE IF EXISTS t")  
 
     def create_view(
         self,
-        conn: object,
+        conn: Any,
         uri: str,
         view_name: str,
         *,
@@ -206,11 +214,11 @@ class PyArrowFallbackAdapter(LanceScanAdapter):
             scanner_kwargs["columns"] = columns
 
         reader = self._dataset.scanner(**scanner_kwargs).to_reader()
-        conn.register(view_name, reader)  # type: ignore[union-attr]
+        conn.register(view_name, reader)  
 
 
 def create_lance_scan_adapter(
-    conn: object,
+    conn: Any,
     *,
     mode: str = "auto",
     dataset: object | None = None,

@@ -27,10 +27,11 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+import duckdb
 import pyarrow as pa
 
 from arrow_lake.config import OlapConfig, StorageConfig
-from arrow_lake.exceptions import ErrorCode, QueryError
+from arrow_lake.exceptions import ErrorCode, QueryError, StorageError
 from arrow_lake.query._db import create_duckdb_session
 from arrow_lake.query.lance_adapter import create_lance_scan_adapter
 from arrow_lake.validation import (
@@ -157,7 +158,7 @@ class OlapSearchBridge:
                 )
             else:
                 source = self._storage.read_dataset(dataset_name)
-        except Exception as exc:
+        except (StorageError, OSError) as exc:
             raise QueryError(
                 error_code=ErrorCode.OLAP_QUERY_FAILED,
                 message=f"Failed to read dataset '{dataset_name}': {exc}",
@@ -239,7 +240,7 @@ class OlapSearchBridge:
         # Read dataset
         try:
             source = self._storage.read_dataset(dataset_name)
-        except Exception as exc:
+        except (StorageError, OSError) as exc:
             raise QueryError(
                 error_code=ErrorCode.OLAP_QUERY_FAILED,
                 message=f"Failed to read dataset '{dataset_name}': {exc}",
@@ -294,7 +295,7 @@ class OlapSearchBridge:
 
         try:
             table = self._storage.read_dataset(dataset_name)
-        except Exception as exc:
+        except (StorageError, OSError) as exc:
             raise QueryError(
                 error_code=ErrorCode.OLAP_QUERY_FAILED,
                 message=f"Failed to read dataset '{dataset_name}': {exc}",
@@ -337,7 +338,7 @@ class OlapSearchBridge:
                 adapter.create_view(conn, uri, dataset_name)
                 logger.debug("Registered %s via native lance scan", dataset_name)
                 return
-        except Exception:
+        except (duckdb.Error, OSError):
             logger.debug(
                 "Native lance scan failed for %s, falling back to PyArrow",
                 dataset_name,

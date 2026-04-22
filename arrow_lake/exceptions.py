@@ -253,6 +253,18 @@ class WorkflowError(ArrowLakeError):
     """Errors related to workflow orchestration and step execution (Epic 6)."""
 
 
+class BackupError(WorkflowError):
+    """Errors related to backup and restore operations."""
+
+
+class SchemaEvolutionError(CatalogError):
+    """Errors related to schema evolution and migration."""
+
+
+class DuckDBError(QueryError):
+    """Errors from the DuckDB query engine."""
+
+
 class ArgoError(WorkflowError):
     """Errors related to Argo Workflows deployment and management (Sprint 7)."""
 

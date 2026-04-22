@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+import duckdb
 import pyarrow as pa
 import structlog
 
@@ -115,7 +116,7 @@ class FullTextSearchBridge:
                 remove_stop_words=self._config.remove_stop_words,
                 lower_case=self._config.lower_case,
             )
-        except Exception as exc:
+        except (ValueError, RuntimeError) as exc:
             raise QueryError(
                 error_code=ErrorCode.FTS_INDEX_FAILED,
                 message=f"Failed to create FTS index on '{dataset_name}': {exc}",
@@ -195,7 +196,7 @@ class FullTextSearchBridge:
                 )
             except QueryError:
                 raise
-            except Exception:
+            except (duckdb.Error, OSError):
                 _log.debug("DuckDB FTS search failed, falling back to LanceDB SDK", exc_info=True)
                 result_table = self._search_via_lancedb(
                     table,
@@ -281,12 +282,14 @@ class FullTextSearchBridge:
 
         uri = self._storage.dataset_uri(dataset_name)
         safe_query = query.replace("'", "''")
+        safe_uri = uri.replace("'", "''")
         sql = (
             f"SELECT * FROM lance_fts("
-            f"  '{uri}',"
+            f"  '{safe_uri}',"
             f"  '{fts_column}',"
             f"  '{safe_query}',"
-            f"  k := {top_k}"
+            f"  prefilter := false,"
+            f"  k := {top_k}::BIGINT"
             f") LIMIT {top_k}"
         )
 
@@ -331,7 +334,7 @@ class FullTextSearchBridge:
 
         try:
             return query_builder.to_arrow()
-        except Exception as exc:
+        except (ValueError, RuntimeError) as exc:
             raise QueryError(
                 error_code=ErrorCode.FTS_SEARCH_FAILED,
                 message=f"FTS search failed: {exc}",

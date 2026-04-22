@@ -220,7 +220,7 @@ def foreach(
             try:
                 result = ray.get(ref, timeout=300)
                 results.append(result)
-            except Exception as exc:
+            except (RuntimeError, OSError, ConnectionError) as exc:
                 errors.append(f"partition-{partition_idx}: {exc}")
                 logger.error(
                     "distributed_partition_failed",

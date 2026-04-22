@@ -252,7 +252,7 @@ class TestLineagePipeline:
         lake.lineage_record_event("lineage_sql", operation="create")
         lake.lineage_record_event("lineage_sql", operation="append")
 
-        result = lake.lineage_query("SELECT * FROM lineage WHERE operation = 'append'")
+        result = lake.lineage_query("SELECT * FROM _lineage_events WHERE operation = 'append'")
         assert result.num_rows == 1
 
 

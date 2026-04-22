@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pyarrow as pa
 
@@ -61,11 +62,11 @@ class DuckLakeWorkspace:
     def _ensure_metadata_table(self, conn: object) -> None:
         """Create _metadata table if it doesn't exist."""
         try:
-            conn.execute(  # type: ignore[union-attr]
+            conn.execute(
                 f"SELECT 1 FROM {self._metadata_table} LIMIT 0"
             )
         except Exception:
-            conn.execute(  # type: ignore[union-attr]
+            conn.execute(
                 f"CREATE TABLE {self._metadata_table} ("
                 f"table_name VARCHAR, "
                 f"created_at TIMESTAMP, "
@@ -98,8 +99,8 @@ class DuckLakeWorkspace:
         # Check row budget
         count_sql = f"SELECT COUNT(*) FROM ({sql}) AS _count_check"
         try:
-            row_count = conn.execute(count_sql).fetchone()[0]  # type: ignore[union-attr]
-        except Exception as exc:
+            row_count = conn.execute(count_sql).fetchone()[0]
+        except duckdb.Error as exc:
             raise ArrowLakeError(
                 ErrorCode.OLAP_QUERY_FAILED,
                 f"Failed to count rows for materialization: {exc}",
@@ -112,7 +113,7 @@ class DuckLakeWorkspace:
             )
 
         # Create the materialized table
-        conn.execute(  # type: ignore[union-attr]
+        conn.execute(
             f"CREATE OR REPLACE TABLE {view_name} AS {sql}"
         )
 
@@ -120,7 +121,7 @@ class DuckLakeWorkspace:
         now = datetime.now(UTC)
         expires = now + timedelta(days=self._ttl_days)
         self._ensure_metadata_table(conn)
-        conn.execute(  # type: ignore[union-attr]
+        conn.execute(
             f"INSERT INTO {self._metadata_table} VALUES "
             f"('{view_name}', '{now.isoformat()}', '{expires.isoformat()}', {row_count})"
         )
@@ -140,7 +141,7 @@ class DuckLakeWorkspace:
         now = datetime.now(UTC).isoformat()
 
         try:
-            expired = conn.execute(  # type: ignore[union-attr]
+            expired = conn.execute(
                 f"SELECT table_name FROM {self._metadata_table} WHERE expires_at < '{now}'"
             ).fetchall()
         except Exception:
@@ -149,8 +150,8 @@ class DuckLakeWorkspace:
         dropped: list[str] = []
         for (table_name,) in expired:
             try:
-                conn.execute(f"DROP TABLE IF EXISTS {table_name}")  # type: ignore[union-attr]
-                conn.execute(  # type: ignore[union-attr]
+                conn.execute(f"DROP TABLE IF EXISTS {table_name}")
+                conn.execute(
                     f"DELETE FROM {self._metadata_table} WHERE table_name = '{table_name}'"
                 )
                 dropped.append(table_name)
@@ -170,7 +171,7 @@ class DuckLakeWorkspace:
         """
         self._ensure_metadata_table(conn)
         try:
-            rows = conn.execute(  # type: ignore[union-attr]
+            rows = conn.execute(
                 f"SELECT table_name FROM {self._metadata_table}"
             ).fetchall()
             return [row[0] for row in rows]

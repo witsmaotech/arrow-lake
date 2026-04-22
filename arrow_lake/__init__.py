@@ -106,6 +106,13 @@ class Lake(
         self._storage: Any = None
         self._components: dict[str, Any] = {}
 
+        import time as _time
+
+        from arrow_lake.core.metrics import system_uptime_seconds
+
+        system_uptime_seconds.set_to_current_time()
+        self._start_time = _time.monotonic()
+
     def _get_component(self, key: str, factory: Callable[[], Any]) -> Any:
         """Lazy-init and cache a component instance."""
         if key not in self._components:
