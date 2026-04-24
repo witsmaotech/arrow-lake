@@ -4,12 +4,13 @@ Tests FullTextSearchBridge:
 - DTO frozen dataclass
 - create_index (success, non-text column, replace)
 - search (results, empty, where filter, injection prevention, no index)
+- jieba Chinese tokenization integration
 """
 
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pyarrow as pa
 import pytest
@@ -22,17 +23,24 @@ from arrow_lake.query.fts import FullTextSearchBridge, FullTextSearchResult
 
 
 def _make_mock_storage() -> MagicMock:
-    """Create a mock LanceStorageManager."""
-    return MagicMock()
+    """Create a mock LanceStorageManager (no dataset_uri → sub-bridge path)."""
+    storage = MagicMock()
+    del storage.dataset_uri
+    return storage
 
 
 def _make_mock_lance_table(
     *,
     has_text_column: bool = True,
     is_large_string: bool = False,
+    has_fts_segmented: bool = True,
 ) -> MagicMock:
     """Create a mock LanceDB table with text column."""
     table = MagicMock()
+
+    names = ["text_content", "modality", "source"]
+    if has_fts_segmented:
+        names.append("_fts_segmented")
 
     if has_text_column:
         text_type = pa.large_string() if is_large_string else pa.string()
@@ -40,7 +48,7 @@ def _make_mock_lance_table(
         text_field.name = "text_content"
         text_field.type = text_type
         schema = MagicMock()
-        schema.names = ["text_content", "modality", "source"]
+        schema.names = names
         schema.field.side_effect = lambda name: {
             "text_content": text_field,
         }.get(name, MagicMock())
@@ -69,6 +77,31 @@ def _make_mock_fts_builder(result_table: pa.Table | None = None) -> MagicMock:
     builder.where.return_value = builder
     builder.limit.return_value = builder
     return builder
+
+
+def _make_mock_lance_table_no_jieba(
+    *,
+    has_text_column: bool = True,
+    is_large_string: bool = False,
+) -> MagicMock:
+    """Create a mock table WITHOUT _fts_segmented column (tokenizer_type=default)."""
+    table = MagicMock()
+
+    if has_text_column:
+        text_type = pa.large_string() if is_large_string else pa.string()
+        text_field = MagicMock()
+        text_field.name = "text_content"
+        text_field.type = text_type
+        schema = MagicMock()
+        schema.names = ["text_content", "modality", "source"]
+        schema.field.side_effect = lambda name: {
+            "text_content": text_field,
+        }.get(name, MagicMock())
+        table.schema = schema
+    else:
+        table.schema = MagicMock(names=["modality", "source"])
+
+    return table
 
 
 # ---------------------------------------------------------------------------
@@ -129,38 +162,69 @@ class TestFullTextSearchResult:
 class TestCreateIndex:
     """Test FullTextSearchBridge.create_index."""
 
-    def test_create_index_success(self) -> None:
-        """Happy path: create FTS index on text column."""
+    def test_create_index_success_default_tokenizer(self) -> None:
+        """Happy path with tokenizer_type=default: no segmented column."""
+        from arrow_lake.config import FullTextSearchConfig
+
         storage = _make_mock_storage()
-        mock_table = _make_mock_lance_table()
+        mock_table = _make_mock_lance_table_no_jieba()
         storage.open_dataset.return_value = mock_table
 
-        bridge = FullTextSearchBridge(storage)
+        config = FullTextSearchConfig(tokenizer_type="default")
+        bridge = FullTextSearchBridge(storage, config=config)
         bridge.create_index("test_ds")
 
         mock_table.create_fts_index.assert_called_once()
         call_kwargs = mock_table.create_fts_index.call_args[1]
         assert call_kwargs["field_names"] == "text_content"
-        assert call_kwargs["use_tantivy"] is False
-        assert call_kwargs["stem"] is True
-        assert call_kwargs["remove_stop_words"] is True
-        assert call_kwargs["lower_case"] is True
+
+    def test_create_index_success_jieba(self) -> None:
+        """With tokenizer_type=jieba: adds _fts_segmented column and indexes it."""
+        from arrow_lake.config import FullTextSearchConfig
+
+        mock_lance = MagicMock()
+        mock_lance.dataset.return_value.to_table.return_value = pa.table(
+            {"text_content": ["hello 机器学习"]}
+        )
+        mock_lance.dataset.return_value.count_rows.return_value = 1
+
+        storage = _make_mock_storage()
+        mock_table = _make_mock_lance_table_no_jieba()
+        mock_table.uri = "/tmp/test.lance"
+        storage.open_dataset.return_value = mock_table
+
+        config = FullTextSearchConfig(tokenizer_type="jieba")
+        bridge = FullTextSearchBridge(storage, config=config)
+
+        with patch.dict("sys.modules", {"lance": mock_lance}):
+            bridge.create_index("test_ds")
+
+        # lance.write_dataset should have been called to add _fts_segmented
+        mock_lance.write_dataset.assert_called_once()
+        # FTS index should be on _fts_segmented column
+        call_kwargs = mock_table.create_fts_index.call_args[1]
+        assert call_kwargs["field_names"] == "_fts_segmented"
 
     def test_create_index_large_string(self) -> None:
         """Create FTS index on large_string column."""
+        from arrow_lake.config import FullTextSearchConfig
+
         storage = _make_mock_storage()
-        mock_table = _make_mock_lance_table(is_large_string=True)
+        mock_table = _make_mock_lance_table_no_jieba(is_large_string=True)
         storage.open_dataset.return_value = mock_table
 
-        bridge = FullTextSearchBridge(storage)
+        config = FullTextSearchConfig(tokenizer_type="default")
+        bridge = FullTextSearchBridge(storage, config=config)
         bridge.create_index("test_ds")
 
         mock_table.create_fts_index.assert_called_once()
 
     def test_create_index_custom_column(self) -> None:
         """Create FTS index on a custom text column."""
+        from arrow_lake.config import FullTextSearchConfig
+
         storage = _make_mock_storage()
-        mock_table = _make_mock_lance_table()
+        mock_table = _make_mock_lance_table_no_jieba()
         # Override to have a custom column
         custom_field = MagicMock()
         custom_field.name = "description"
@@ -171,7 +235,8 @@ class TestCreateIndex:
         }.get(name, MagicMock())
         storage.open_dataset.return_value = mock_table
 
-        bridge = FullTextSearchBridge(storage)
+        config = FullTextSearchConfig(tokenizer_type="default")
+        bridge = FullTextSearchBridge(storage, config=config)
         bridge.create_index("test_ds", fts_column="description")
 
         call_kwargs = mock_table.create_fts_index.call_args[1]
@@ -179,11 +244,14 @@ class TestCreateIndex:
 
     def test_create_index_replace(self) -> None:
         """replace=True replaces existing index."""
+        from arrow_lake.config import FullTextSearchConfig
+
         storage = _make_mock_storage()
-        mock_table = _make_mock_lance_table()
+        mock_table = _make_mock_lance_table_no_jieba()
         storage.open_dataset.return_value = mock_table
 
-        bridge = FullTextSearchBridge(storage)
+        config = FullTextSearchConfig(tokenizer_type="default")
+        bridge = FullTextSearchBridge(storage, config=config)
         bridge.create_index("test_ds", replace=True)
 
         call_kwargs = mock_table.create_fts_index.call_args[1]
@@ -191,11 +259,14 @@ class TestCreateIndex:
 
     def test_create_index_no_replace(self) -> None:
         """replace=False does not replace existing index."""
+        from arrow_lake.config import FullTextSearchConfig
+
         storage = _make_mock_storage()
-        mock_table = _make_mock_lance_table()
+        mock_table = _make_mock_lance_table_no_jieba()
         storage.open_dataset.return_value = mock_table
 
-        bridge = FullTextSearchBridge(storage)
+        config = FullTextSearchConfig(tokenizer_type="default")
+        bridge = FullTextSearchBridge(storage, config=config)
         bridge.create_index("test_ds", replace=False)
 
         call_kwargs = mock_table.create_fts_index.call_args[1]
@@ -203,18 +274,23 @@ class TestCreateIndex:
 
     def test_create_index_column_not_found(self) -> None:
         """Raise FTS_INDEX_FAILED when text column missing."""
+        from arrow_lake.config import FullTextSearchConfig
+
         storage = _make_mock_storage()
-        mock_table = _make_mock_lance_table(has_text_column=False)
+        mock_table = _make_mock_lance_table_no_jieba(has_text_column=False)
         storage.open_dataset.return_value = mock_table
 
-        bridge = FullTextSearchBridge(storage)
+        config = FullTextSearchConfig(tokenizer_type="default")
+        bridge = FullTextSearchBridge(storage, config=config)
         with pytest.raises(QueryError, match="not found"):
             bridge.create_index("test_ds", fts_column="nonexistent")
 
     def test_create_index_non_text_column(self) -> None:
         """Raise FTS_INDEX_FAILED when column is not text type."""
+        from arrow_lake.config import FullTextSearchConfig
+
         storage = _make_mock_storage()
-        mock_table = _make_mock_lance_table()
+        mock_table = _make_mock_lance_table_no_jieba()
         # Override to have integer column
         int_field = MagicMock()
         int_field.name = "text_content"
@@ -224,18 +300,22 @@ class TestCreateIndex:
         }.get(name, MagicMock())
         storage.open_dataset.return_value = mock_table
 
-        bridge = FullTextSearchBridge(storage)
+        config = FullTextSearchConfig(tokenizer_type="default")
+        bridge = FullTextSearchBridge(storage, config=config)
         with pytest.raises(QueryError, match="not a text column"):
             bridge.create_index("test_ds")
 
     def test_create_index_failure(self) -> None:
         """Raise FTS_INDEX_FAILED on create_fts_index exception."""
+        from arrow_lake.config import FullTextSearchConfig
+
         storage = _make_mock_storage()
-        mock_table = _make_mock_lance_table()
+        mock_table = _make_mock_lance_table_no_jieba()
         mock_table.create_fts_index.side_effect = RuntimeError("Lance error")
         storage.open_dataset.return_value = mock_table
 
-        bridge = FullTextSearchBridge(storage)
+        config = FullTextSearchConfig(tokenizer_type="default")
+        bridge = FullTextSearchBridge(storage, config=config)
         with pytest.raises(QueryError, match="Failed to create FTS index"):
             bridge.create_index("test_ds")
 
@@ -248,10 +328,12 @@ class TestCreateIndex:
 class TestSearch:
     """Test FullTextSearchBridge.search."""
 
-    def test_search_returns_results(self) -> None:
-        """Happy path: search returns FullTextSearchResult with _score."""
+    def test_search_returns_results_default_tokenizer(self) -> None:
+        """Happy path with tokenizer_type=default."""
+        from arrow_lake.config import FullTextSearchConfig
+
         storage = _make_mock_storage()
-        mock_table = _make_mock_lance_table()
+        mock_table = _make_mock_lance_table_no_jieba()
         storage.open_dataset.return_value = mock_table
 
         result_table = pa.table(
@@ -264,7 +346,8 @@ class TestSearch:
         builder = _make_mock_fts_builder(result_table)
         mock_table.search.return_value = builder
 
-        bridge = FullTextSearchBridge(storage)
+        config = FullTextSearchConfig(tokenizer_type="default")
+        bridge = FullTextSearchBridge(storage, config=config)
         result = bridge.search("test_ds", "hello")
 
         assert isinstance(result, FullTextSearchResult)
@@ -273,11 +356,73 @@ class TestSearch:
         assert result.fts_column == "text_content"
         assert result.max_score == 2.5
         assert result.top_k == 10
+        # With default tokenizer, query is NOT segmented
+        mock_table.search.assert_called_once_with(
+            query="hello", query_type="fts", fts_columns="text_content"
+        )
+
+    def test_search_returns_results_jieba(self) -> None:
+        """With jieba: searches on _fts_segmented column with segmented query."""
+        from arrow_lake.config import FullTextSearchConfig
+
+        storage = _make_mock_storage()
+        mock_table = _make_mock_lance_table(has_fts_segmented=True)
+        storage.open_dataset.return_value = mock_table
+
+        result_table = pa.table(
+            {
+                "text_content": ["机器学习 教程"],
+                "_fts_segmented": ["机器 学习 教程"],
+                "modality": ["text"],
+                "_score": [2.5],
+            }
+        )
+        builder = _make_mock_fts_builder(result_table)
+        mock_table.search.return_value = builder
+
+        config = FullTextSearchConfig(tokenizer_type="jieba")
+        bridge = FullTextSearchBridge(storage, config=config)
+        result = bridge.search("test_ds", "机器学习")
+
+        assert result.row_count == 1
+        assert result.max_score == 2.5
+        # Should search on _fts_segmented column
+        mock_table.search.assert_called_once()
+        call_kwargs = mock_table.search.call_args[1]
+        assert call_kwargs["fts_columns"] == "_fts_segmented"
+
+    def test_search_jieba_hides_segmented_column(self) -> None:
+        """_fts_segmented column should be removed from result."""
+        from arrow_lake.config import FullTextSearchConfig
+
+        storage = _make_mock_storage()
+        mock_table = _make_mock_lance_table(has_fts_segmented=True)
+        storage.open_dataset.return_value = mock_table
+
+        result_table = pa.table(
+            {
+                "text_content": ["match"],
+                "_fts_segmented": ["match"],
+                "_score": [1.0],
+            }
+        )
+        builder = _make_mock_fts_builder(result_table)
+        mock_table.search.return_value = builder
+
+        config = FullTextSearchConfig(tokenizer_type="jieba")
+        bridge = FullTextSearchBridge(storage, config=config)
+        result = bridge.search("test_ds", "match")
+
+        # _fts_segmented should NOT be in the result
+        assert "_fts_segmented" not in result.table.column_names
+        assert "text_content" in result.table.column_names
 
     def test_search_score_column_present(self) -> None:
         """Result table includes _score column."""
+        from arrow_lake.config import FullTextSearchConfig
+
         storage = _make_mock_storage()
-        mock_table = _make_mock_lance_table()
+        mock_table = _make_mock_lance_table_no_jieba()
         storage.open_dataset.return_value = mock_table
 
         result_table = pa.table(
@@ -289,29 +434,35 @@ class TestSearch:
         builder = _make_mock_fts_builder(result_table)
         mock_table.search.return_value = builder
 
-        bridge = FullTextSearchBridge(storage)
+        config = FullTextSearchConfig(tokenizer_type="default")
+        bridge = FullTextSearchBridge(storage, config=config)
         result = bridge.search("test_ds", "match")
 
         assert "_score" in result.table.column_names
 
     def test_search_with_where_filter(self) -> None:
         """Where clause is passed to the query builder."""
+        from arrow_lake.config import FullTextSearchConfig
+
         storage = _make_mock_storage()
-        mock_table = _make_mock_lance_table()
+        mock_table = _make_mock_lance_table_no_jieba()
         storage.open_dataset.return_value = mock_table
 
         builder = _make_mock_fts_builder()
         mock_table.search.return_value = builder
 
-        bridge = FullTextSearchBridge(storage)
+        config = FullTextSearchConfig(tokenizer_type="default")
+        bridge = FullTextSearchBridge(storage, config=config)
         bridge.search("test_ds", "hello", where="modality = 'text'")
 
         builder.where.assert_called_once_with("modality = 'text'")
 
     def test_search_empty_results(self) -> None:
         """Empty results return 0-row table with max_score=None."""
+        from arrow_lake.config import FullTextSearchConfig
+
         storage = _make_mock_storage()
-        mock_table = _make_mock_lance_table()
+        mock_table = _make_mock_lance_table_no_jieba()
         storage.open_dataset.return_value = mock_table
 
         result_table = pa.table(
@@ -324,7 +475,8 @@ class TestSearch:
         builder = _make_mock_fts_builder(result_table)
         mock_table.search.return_value = builder
 
-        bridge = FullTextSearchBridge(storage)
+        config = FullTextSearchConfig(tokenizer_type="default")
+        bridge = FullTextSearchBridge(storage, config=config)
         result = bridge.search("test_ds", "nonexistent_query_xyz")
 
         assert result.row_count == 0
@@ -333,14 +485,17 @@ class TestSearch:
 
     def test_search_custom_top_k(self) -> None:
         """Custom top_k is passed to the query builder."""
+        from arrow_lake.config import FullTextSearchConfig
+
         storage = _make_mock_storage()
-        mock_table = _make_mock_lance_table()
+        mock_table = _make_mock_lance_table_no_jieba()
         storage.open_dataset.return_value = mock_table
 
         builder = _make_mock_fts_builder()
         mock_table.search.return_value = builder
 
-        bridge = FullTextSearchBridge(storage)
+        config = FullTextSearchConfig(tokenizer_type="default")
+        bridge = FullTextSearchBridge(storage, config=config)
         result = bridge.search("test_ds", "hello", top_k=5)
 
         assert result.top_k == 5
@@ -348,8 +503,10 @@ class TestSearch:
 
     def test_search_custom_fts_column(self) -> None:
         """Custom fts_column is used for search."""
+        from arrow_lake.config import FullTextSearchConfig
+
         storage = _make_mock_storage()
-        mock_table = _make_mock_lance_table()
+        mock_table = _make_mock_lance_table_no_jieba()
         # Add "description" to schema names
         mock_table.schema.names = ["text_content", "description", "modality"]
         storage.open_dataset.return_value = mock_table
@@ -357,16 +514,23 @@ class TestSearch:
         builder = _make_mock_fts_builder()
         mock_table.search.return_value = builder
 
-        bridge = FullTextSearchBridge(storage)
+        config = FullTextSearchConfig(tokenizer_type="default")
+        bridge = FullTextSearchBridge(storage, config=config)
         result = bridge.search("test_ds", "hello", fts_column="description")
 
         assert result.fts_column == "description"
-        mock_table.search.assert_called_once_with(query="hello", fts_columns="description")
+        mock_table.search.assert_called_once_with(
+            query="hello", query_type="fts", fts_columns="description"
+        )
 
     def test_search_empty_query_raises(self) -> None:
         """Raise FTS_SEARCH_FAILED when query is empty."""
+        from arrow_lake.config import FullTextSearchConfig
+
         storage = _make_mock_storage()
-        bridge = FullTextSearchBridge(storage)
+
+        config = FullTextSearchConfig(tokenizer_type="default")
+        bridge = FullTextSearchBridge(storage, config=config)
 
         with pytest.raises(QueryError, match="must not be empty"):
             bridge.search("test_ds", "")
@@ -376,11 +540,14 @@ class TestSearch:
 
     def test_search_invalid_top_k_raises(self) -> None:
         """Raise FTS_SEARCH_FAILED when top_k < 1."""
+        from arrow_lake.config import FullTextSearchConfig
+
         storage = _make_mock_storage()
-        mock_table = _make_mock_lance_table()
+        mock_table = _make_mock_lance_table_no_jieba()
         storage.open_dataset.return_value = mock_table
 
-        bridge = FullTextSearchBridge(storage)
+        config = FullTextSearchConfig(tokenizer_type="default")
+        bridge = FullTextSearchBridge(storage, config=config)
         with pytest.raises(QueryError, match="top_k must be >= 1"):
             bridge.search("test_ds", "hello", top_k=0)
 
@@ -389,18 +556,23 @@ class TestSearch:
 
     def test_search_column_not_found(self) -> None:
         """Raise FTS_SEARCH_FAILED when text column missing."""
+        from arrow_lake.config import FullTextSearchConfig
+
         storage = _make_mock_storage()
-        mock_table = _make_mock_lance_table(has_text_column=False)
+        mock_table = _make_mock_lance_table_no_jieba(has_text_column=False)
         storage.open_dataset.return_value = mock_table
 
-        bridge = FullTextSearchBridge(storage)
+        config = FullTextSearchConfig(tokenizer_type="default")
+        bridge = FullTextSearchBridge(storage, config=config)
         with pytest.raises(QueryError, match="not found"):
             bridge.search("test_ds", "hello")
 
     def test_search_failure(self) -> None:
         """Raise FTS_SEARCH_FAILED on search exception."""
+        from arrow_lake.config import FullTextSearchConfig
+
         storage = _make_mock_storage()
-        mock_table = _make_mock_lance_table()
+        mock_table = _make_mock_lance_table_no_jieba()
         storage.open_dataset.return_value = mock_table
 
         # Mock search() to succeed but to_arrow() to fail
@@ -410,7 +582,8 @@ class TestSearch:
         builder.limit.return_value = builder
         mock_table.search.return_value = builder
 
-        bridge = FullTextSearchBridge(storage)
+        config = FullTextSearchConfig(tokenizer_type="default")
+        bridge = FullTextSearchBridge(storage, config=config)
         with pytest.raises(QueryError, match="FTS search failed"):
             bridge.search("test_ds", "hello")
 
@@ -456,13 +629,13 @@ class TestConfigDrivenDefaults:
         from arrow_lake.config import FullTextSearchConfig
 
         storage = _make_mock_storage()
-        mock_table = _make_mock_lance_table()
+        mock_table = _make_mock_lance_table_no_jieba()
         storage.open_dataset.return_value = mock_table
 
         builder = _make_mock_fts_builder()
         mock_table.search.return_value = builder
 
-        config = FullTextSearchConfig(default_top_k=5)
+        config = FullTextSearchConfig(default_top_k=5, tokenizer_type="default")
         bridge = FullTextSearchBridge(storage, config=config)
         result = bridge.search("test_ds", "hello")
 
@@ -474,7 +647,7 @@ class TestConfigDrivenDefaults:
         from arrow_lake.config import FullTextSearchConfig
 
         storage = _make_mock_storage()
-        mock_table = _make_mock_lance_table()
+        mock_table = _make_mock_lance_table_no_jieba()
         # Override to have custom column
         custom_field = MagicMock()
         custom_field.name = "body"
@@ -488,22 +661,24 @@ class TestConfigDrivenDefaults:
         builder = _make_mock_fts_builder()
         mock_table.search.return_value = builder
 
-        config = FullTextSearchConfig(fts_column="body")
+        config = FullTextSearchConfig(fts_column="body", tokenizer_type="default")
         bridge = FullTextSearchBridge(storage, config=config)
         result = bridge.search("test_ds", "hello")
 
         assert result.fts_column == "body"
-        mock_table.search.assert_called_once_with(query="hello", fts_columns="body")
+        mock_table.search.assert_called_once_with(
+            query="hello", query_type="fts", fts_columns="body"
+        )
 
     def test_create_index_uses_config_stem(self) -> None:
         """create_index passes config stem to LanceDB."""
         from arrow_lake.config import FullTextSearchConfig
 
         storage = _make_mock_storage()
-        mock_table = _make_mock_lance_table()
+        mock_table = _make_mock_lance_table_no_jieba()
         storage.open_dataset.return_value = mock_table
 
-        config = FullTextSearchConfig(stem=False)
+        config = FullTextSearchConfig(stem=False, tokenizer_type="default")
         bridge = FullTextSearchBridge(storage, config=config)
         bridge.create_index("test_ds")
 
@@ -515,13 +690,13 @@ class TestConfigDrivenDefaults:
         from arrow_lake.config import FullTextSearchConfig
 
         storage = _make_mock_storage()
-        mock_table = _make_mock_lance_table()
+        mock_table = _make_mock_lance_table_no_jieba()
         storage.open_dataset.return_value = mock_table
 
         builder = _make_mock_fts_builder()
         mock_table.search.return_value = builder
 
-        config = FullTextSearchConfig(default_top_k=5)
+        config = FullTextSearchConfig(default_top_k=5, tokenizer_type="default")
         bridge = FullTextSearchBridge(storage, config=config)
         result = bridge.search("test_ds", "hello", top_k=20)
 
@@ -529,15 +704,80 @@ class TestConfigDrivenDefaults:
         builder.limit.assert_called_once_with(20)
 
     def test_no_config_uses_defaults(self) -> None:
-        """Bridge without config uses FullTextSearchConfig defaults."""
+        """Bridge without config uses FullTextSearchConfig defaults (jieba)."""
         storage = _make_mock_storage()
-        mock_table = _make_mock_lance_table()
+        mock_table = _make_mock_lance_table(has_fts_segmented=True)
         storage.open_dataset.return_value = mock_table
 
         builder = _make_mock_fts_builder()
         mock_table.search.return_value = builder
 
-        bridge = FullTextSearchBridge(storage)  # No config
+        bridge = FullTextSearchBridge(storage)  # No config — defaults to jieba
         result = bridge.search("test_ds", "hello")
 
         assert result.top_k == 10  # Default
+        # Should search on _fts_segmented column by default
+        call_kwargs = mock_table.search.call_args[1]
+        assert call_kwargs["fts_columns"] == "_fts_segmented"
+
+
+# ---------------------------------------------------------------------------
+# Add segmented column tests
+# ---------------------------------------------------------------------------
+
+
+class TestAddSegmentedColumn:
+    """Test _add_segmented_column helper."""
+
+    def test_segmented_column_added(self) -> None:
+        """_add_segmented_column reads data, segments, and writes back."""
+        from arrow_lake.config import FullTextSearchConfig
+
+        mock_lance = MagicMock()
+        original_table = pa.table({"text_content": ["hello world", "机器学习 基础"]})
+        mock_lance.dataset.return_value.to_table.return_value = original_table
+        mock_lance.dataset.return_value.count_rows.return_value = 2
+
+        storage = _make_mock_storage()
+        mock_table = _make_mock_lance_table_no_jieba()
+        mock_table.uri = "/tmp/test.lance"
+        storage.open_dataset.return_value = mock_table
+
+        config = FullTextSearchConfig(tokenizer_type="jieba")
+        bridge = FullTextSearchBridge(storage, config=config)
+
+        with patch.dict("sys.modules", {"lance": mock_lance}):
+            bridge.create_index("test_ds")
+
+        # Verify lance.dataset was called with the URI
+        mock_lance.dataset.assert_called_once_with("/tmp/test.lance")
+        # Verify lance.write_dataset was called
+        mock_lance.write_dataset.assert_called_once()
+        written_table = mock_lance.write_dataset.call_args[0][0]
+        assert "_fts_segmented" in written_table.column_names
+        assert written_table.num_rows == 2
+        assert mock_lance.write_dataset.call_args[0][1] == "/tmp/test.lance"
+
+    def test_none_values_preserved(self) -> None:
+        """None values in text column produce None in segmented column."""
+        from arrow_lake.config import FullTextSearchConfig
+
+        mock_lance = MagicMock()
+        original_table = pa.table({"text_content": [None, "hello"]})
+        mock_lance.dataset.return_value.to_table.return_value = original_table
+        mock_lance.dataset.return_value.count_rows.return_value = 2
+
+        storage = _make_mock_storage()
+        mock_table = _make_mock_lance_table_no_jieba()
+        mock_table.uri = "/tmp/test.lance"
+        storage.open_dataset.return_value = mock_table
+
+        config = FullTextSearchConfig(tokenizer_type="jieba")
+        bridge = FullTextSearchBridge(storage, config=config)
+
+        with patch.dict("sys.modules", {"lance": mock_lance}):
+            bridge.create_index("test_ds")
+
+        written_table = mock_lance.write_dataset.call_args[0][0]
+        seg_col = written_table.column("_fts_segmented").to_pylist()
+        assert seg_col[0] is None

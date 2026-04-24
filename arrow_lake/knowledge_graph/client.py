@@ -13,8 +13,10 @@ Key API differences from local docs:
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
+import re
 from typing import Any
 
 import httpx
@@ -25,7 +27,12 @@ from arrow_lake.exceptions import ErrorCode, KGError
 
 logger = logging.getLogger(__name__)
 
+# Safe vertex ID pattern: alphanumeric, underscore, hyphen only.
+_SAFE_VERTEX_ID_RE = re.compile(r"^[a-zA-Z0-9_\-:]+$")
+
 _DEFAULT_MAX_RETRIES = 3
+
+_BLOCKED_GREMLIN_PATTERNS = ("drop(", "eval(", "System.", "java.lang", "inject(")
 
 
 class HugeGraphClient:
@@ -47,6 +54,7 @@ class HugeGraphClient:
             base_url=self._base_url,
             headers=headers,
             timeout=httpx.Timeout(config.timeout_seconds),
+            http2=False,
         )
 
     # ------------------------------------------------------------------
@@ -113,6 +121,14 @@ class HugeGraphClient:
         The query must use {graph_name}.traversal() as the traversal source.
         Returns the data array from the result.
         """
+        query_lower = query.lower()
+        for pattern in _BLOCKED_GREMLIN_PATTERNS:
+            if pattern.lower() in query_lower:
+                raise KGError(
+                    error_code=ErrorCode.KG_QUERY_ERROR,
+                    message=f"Gremlin query contains blocked pattern: {pattern!r}",
+                )
+
         try:
             resp = await self._post("/gremlin", json_data={"gremlin": query})
         except httpx.HTTPError as exc:
@@ -133,8 +149,8 @@ class HugeGraphClient:
     # Vertex operations
     # ------------------------------------------------------------------
 
-    async def add_vertices(self, vertices: list[dict[str, Any]]) -> int:
-        """Batch insert vertices. Returns count of inserted vertices."""
+    async def add_vertices(self, vertices: list[dict[str, Any]]) -> list[str]:
+        """Batch insert vertices. Returns list of created vertex IDs."""
         try:
             resp = await self._post(
                 f"{self._graph_base}/graph/vertices/batch", json_data=vertices
@@ -150,10 +166,13 @@ class HugeGraphClient:
             )
 
         ids = resp.json()
-        return len(ids) if isinstance(ids, list) else 0
+        return ids if isinstance(ids, list) else []
 
     async def get_vertex(self, vertex_id: str) -> dict[str, Any] | None:
         """Get a vertex by ID. Returns None if not found."""
+        if not _SAFE_VERTEX_ID_RE.match(vertex_id):
+            logger.warning("Rejected unsafe vertex_id: %r", vertex_id)
+            return None
         try:
             resp = await self._get(
                 f'{self._graph_base}/graph/vertices/"{vertex_id}"'
@@ -275,11 +294,101 @@ class HugeGraphClient:
         return resp.json()
 
     # ------------------------------------------------------------------
+    # Graph management
+    # ------------------------------------------------------------------
+
+    async def ensure_graph(self) -> bool:
+        """Create the graph if it doesn't already exist.
+
+        Returns True if graph exists (or was created), False if creation
+        failed.
+        """
+        try:
+            graphs = await self.list_graphs()
+            if self._config.graph_name in graphs:
+                logger.debug("Graph '%s' already exists", self._config.graph_name)
+                return True
+        except (ConnectionError, httpx.HTTPStatusError, OSError):
+            pass
+
+        try:
+            body: dict[str, Any] = {
+                "gremlin.graph": "org.apache.hugegraph.HugeFactory",
+                "backend": "hstore",
+                "serializer": "binary",
+                "store": self._config.graph_name,
+                "task.scheduler_type": "distributed",
+            }
+            resp = await self._post(
+                f"/graphspaces/DEFAULT/graphs/{self._config.graph_name}",
+                json_data=body,
+            )
+            if resp.status_code in (200, 201, 202):
+                logger.info("Created graph '%s'", self._config.graph_name)
+                return True
+            logger.warning(
+                "Graph creation returned %d: %s",
+                resp.status_code,
+                resp.text[:200],
+            )
+            return False
+        except (ConnectionError, httpx.HTTPStatusError, OSError, TimeoutError) as exc:
+            logger.warning("Failed to create graph '%s': %s", self._config.graph_name, exc)
+            return False
+
+    async def list_graphs(self) -> list[str]:
+        """List all graphs in the HugeGraph instance."""
+        resp = await self._get("/graphs")
+        return resp.json().get("graphs", [])
+
+    async def graph_exists(self) -> bool:
+        """Check if the configured graph exists."""
+        try:
+            graphs = await self.list_graphs()
+            return self._config.graph_name in graphs
+        except (ConnectionError, httpx.HTTPStatusError, OSError):
+            return False
+
+    async def clear(self) -> None:
+        """Clear all data from the graph (schema + vertices + edges).
+
+        This is equivalent to dropping and re-creating the graph.
+        """
+        if not await self.graph_exists():
+            return
+        try:
+            resp = await self._post(
+                f"/graphspaces/DEFAULT/graphs/{self._config.graph_name}/clear",
+                json_data={"confirm_message": "I'm sure to delete all data"},
+            )
+            if resp.status_code in (200, 202):
+                logger.info("Graph '%s' cleared", self._config.graph_name)
+                return
+        except httpx.HTTPError:
+            pass
+        # Fallback: try legacy clear endpoint
+        try:
+            resp = await self._delete(
+                f"/graphspaces/DEFAULT/graphs/{self._config.graph_name}/clear"
+                "?confirm_message=I'm+sure+to+delete+all+data"
+            )
+            if resp.status_code not in (200, 202):
+                raise KGError(
+                    error_code=ErrorCode.KG_QUERY_FAILED,
+                    message=f"Clear graph failed: {resp.text}",
+                )
+        except httpx.HTTPError as exc:
+            raise KGError(
+                error_code=ErrorCode.KG_QUERY_FAILED,
+                message=f"Failed to clear graph: {exc}",
+            ) from exc
+
+    # ------------------------------------------------------------------
     # Schema operations
     # ------------------------------------------------------------------
 
     async def ensure_schema(self, schema: dict[str, Any]) -> None:
-        """Create schema elements in dependency order.
+        """Create the graph if needed, then create schema elements in dependency order.
 
         Schema dict must contain:
         - property_keys: list of {name, data_type, cardinality}
@@ -289,55 +398,60 @@ class HugeGraphClient:
 
         Ignores 400 errors (element already exists) and accepts 202 (async).
         """
+        await self.ensure_graph()
         base = self._graph_base + "/schema"
 
-        # PropertyKeys
+        # PropertyKeys — must be created before vertex/edge labels reference them
         for pk in schema.get("property_keys", []):
             try:
-                await self._post(f"{base}/propertykeys", json_data=pk)
-            except httpx.HTTPStatusError as exc:
-                if exc.response.status_code not in (400,):
+                resp = await self._post(f"{base}/propertykeys", json_data=pk)
+                if resp.status_code not in (200, 201, 202, 400):
                     raise KGError(
                         error_code=ErrorCode.KG_SCHEMA_ERROR,
                         message=f"PropertyKey creation failed: {pk['name']}",
-                        context={"detail": exc.response.text},
-                    ) from exc
+                        context={"status_code": resp.status_code, "detail": resp.text[:200]},
+                    )
+            except KGError:
+                raise
 
         # VertexLabels
         for vl in schema.get("vertex_labels", []):
             try:
-                await self._post(f"{base}/vertexlabels", json_data=vl)
-            except httpx.HTTPStatusError as exc:
-                if exc.response.status_code not in (400,):
+                resp = await self._post(f"{base}/vertexlabels", json_data=vl)
+                if resp.status_code not in (200, 201, 202, 400):
                     raise KGError(
                         error_code=ErrorCode.KG_SCHEMA_ERROR,
                         message=f"VertexLabel creation failed: {vl['name']}",
-                        context={"detail": exc.response.text},
-                    ) from exc
+                        context={"status_code": resp.status_code, "detail": resp.text[:200]},
+                    )
+            except KGError:
+                raise
 
         # EdgeLabels
         for el in schema.get("edge_labels", []):
             try:
-                await self._post(f"{base}/edgelabels", json_data=el)
-            except httpx.HTTPStatusError as exc:
-                if exc.response.status_code not in (400,):
+                resp = await self._post(f"{base}/edgelabels", json_data=el)
+                if resp.status_code not in (200, 201, 202, 400):
                     raise KGError(
                         error_code=ErrorCode.KG_SCHEMA_ERROR,
                         message=f"EdgeLabel creation failed: {el['name']}",
-                        context={"detail": exc.response.text},
-                    ) from exc
+                        context={"status_code": resp.status_code, "detail": resp.text[:200]},
+                    )
+            except KGError:
+                raise
 
         # IndexLabels
         for il in schema.get("index_labels", []):
             try:
-                await self._post(f"{base}/indexlabels", json_data=il)
-            except httpx.HTTPStatusError as exc:
-                if exc.response.status_code not in (400,):
+                resp = await self._post(f"{base}/indexlabels", json_data=il)
+                if resp.status_code not in (200, 201, 202, 400):
                     raise KGError(
                         error_code=ErrorCode.KG_SCHEMA_ERROR,
                         message=f"IndexLabel creation failed: {il['name']}",
-                        context={"detail": exc.response.text},
-                    ) from exc
+                        context={"status_code": resp.status_code, "detail": resp.text[:200]},
+                    )
+            except KGError:
+                raise
 
     async def get_schema(self) -> dict[str, Any]:
         """Get the current graph schema (vertex labels + edge labels)."""
@@ -358,41 +472,26 @@ class HugeGraphClient:
     # ------------------------------------------------------------------
 
     async def get_stats(self) -> dict[str, Any]:
-        """Get vertex and edge counts via Gremlin."""
-        g = self._config.graph_name
-        v_data = await self.gremlin(f"{g}.traversal().V().count()")
-        e_data = await self.gremlin(f"{g}.traversal().E().count()")
-
-        v_count = v_data[0] if v_data else 0
-        e_count = e_data[0] if e_data else 0
+        """Get vertex and edge counts via REST API."""
+        try:
+            v_resp = await self._get(
+                f"{self._graph_base}/graph/vertices?limit=0"
+            )
+            v_count = v_resp.json().get("total", 0)
+        except (ConnectionError, httpx.HTTPStatusError, KeyError, ValueError):
+            v_count = 0
+        try:
+            e_resp = await self._get(
+                f"{self._graph_base}/graph/edges?limit=0"
+            )
+            e_count = e_resp.json().get("total", 0)
+        except (ConnectionError, httpx.HTTPStatusError, KeyError, ValueError):
+            e_count = 0
 
         return {
             "total_vertices": v_count,
             "total_edges": e_count,
         }
-
-    # ------------------------------------------------------------------
-    # Graph management
-    # ------------------------------------------------------------------
-
-    async def clear(self) -> None:
-        """Clear all data from the graph. Use with caution."""
-        try:
-            resp = await self._delete(
-                f"/graphspaces/DEFAULT/graphs/{self._config.graph_name}/clear"
-                "?confirm_message=I'm+sure+to+delete+all+data"
-            )
-        except httpx.HTTPError as exc:
-            raise KGError(
-                error_code=ErrorCode.KG_QUERY_FAILED,
-                message=f"Failed to clear graph: {exc}",
-            ) from exc
-
-        if resp.status_code not in (200, 202):
-            raise KGError(
-                error_code=ErrorCode.KG_QUERY_FAILED,
-                message=f"Clear graph failed: {resp.text}",
-            )
 
     # ------------------------------------------------------------------
     # Lifecycle

@@ -36,8 +36,15 @@ def mock_client() -> object:
 
     client = AsyncMock()
     client.ensure_schema = AsyncMock()
-    client.add_vertices = AsyncMock(return_value=2)
-    client.add_edges = AsyncMock(return_value=1)
+
+    def _fake_add_vertices(vertices):
+        return [f"hg-{i}" for i in range(len(vertices))]
+
+    def _fake_add_edges(edges):
+        return len(edges)
+
+    client.add_vertices = AsyncMock(side_effect=_fake_add_vertices)
+    client.add_edges = AsyncMock(side_effect=_fake_add_edges)
     return client
 
 
@@ -286,6 +293,8 @@ def builder_no_build(config: HugeGraphConfig) -> KGBuilder:
 
     mock_client = AsyncMock()
     mock_extractor = AsyncMock()
+    mock_client.add_vertices = AsyncMock(side_effect=lambda v: [f"hg-{i}" for i in range(len(v))])
+    mock_client.add_edges = AsyncMock(side_effect=lambda e: len(e))
     return KGBuilder(mock_client, mock_extractor, config)
 
 

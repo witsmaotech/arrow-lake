@@ -239,13 +239,26 @@ class TestBothStrategy:
         assert d.name == "dedup_both"
 
     def test_exact_then_perceptual(self) -> None:
-        # Two identical images (exact dup) + one different
-        data = b"same-image-bytes"
+        from io import BytesIO
+
+        from PIL import Image
+
+        def _small_png() -> bytes:
+            buf = BytesIO()
+            Image.new("RGB", (4, 4), color=(0, 0, 0)).save(buf, format="PNG")
+            return buf.getvalue()
+
+        def _small_png_red() -> bytes:
+            buf = BytesIO()
+            Image.new("RGB", (4, 4), color=(255, 0, 0)).save(buf, format="PNG")
+            return buf.getvalue()
+
+        data = _small_png()
         table = _make_image_table(
             [
                 ("a", data),
                 ("b", data),
-                ("c", b"different-bytes"),
+                ("c", _small_png_red()),
             ]
         )
         d = ContentDeduplicator(strategy="both", action="remove")

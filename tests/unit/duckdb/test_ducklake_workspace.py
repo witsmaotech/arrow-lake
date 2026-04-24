@@ -107,6 +107,72 @@ class TestDuckLakeWorkspaceCleanup:
         assert len(drop_calls) == 0
 
 
+class TestDuckLakeWorkspaceSQLInjection:
+    """Test SQL injection prevention via validate_identifier."""
+
+    @pytest.fixture()
+    def ws(self):
+        from arrow_lake.query.ducklake_workspace import DuckLakeWorkspace
+        return DuckLakeWorkspace()
+
+    def test_materialize_rejects_sql_injection_view_name(self, ws) -> None:
+        """view_name containing SQL injection must raise ValueError."""
+        import duckdb
+        conn = duckdb.connect()
+        try:
+            with pytest.raises(ValueError, match="Invalid identifier"):
+                ws.materialize(conn, "SELECT 1", "x; DROP TABLE _ducklake_metadata; --")
+        finally:
+            conn.close()
+
+    def test_materialize_rejects_special_chars_in_view_name(self, ws) -> None:
+        """view_name with spaces or quotes must raise ValueError."""
+        import duckdb
+        conn = duckdb.connect()
+        try:
+            with pytest.raises(ValueError, match="Invalid identifier"):
+                ws.materialize(conn, "SELECT 1", "my view")
+            with pytest.raises(ValueError, match="Invalid identifier"):
+                ws.materialize(conn, "SELECT 1", "my'table")
+        finally:
+            conn.close()
+
+    def test_materialize_accepts_valid_identifier(self, ws) -> None:
+        """Valid identifiers should pass through without error."""
+        import duckdb
+        conn = duckdb.connect()
+        try:
+            ws.materialize(conn, "SELECT 42 AS col", "valid_view_name")
+            result = conn.execute("SELECT col FROM valid_view_name").fetchone()
+            assert result == (42,)
+        finally:
+            conn.execute("DROP TABLE IF EXISTS valid_view_name")
+            conn.close()
+
+    def test_cleanup_rejects_injected_table_names(self, ws) -> None:
+        """cleanup_expired must validate fetched table names."""
+        import duckdb
+        conn = duckdb.connect()
+        try:
+            ws._ensure_metadata_table(conn)
+            conn.execute(
+                "INSERT INTO _ducklake_metadata VALUES "
+                "('x; DROP TABLE', '2024-01-01T00:00:00+00:00', '2023-01-01T00:00:00+00:00', 1)"
+            )
+            # Should log warning but not crash
+            dropped = ws.cleanup_expired(conn)
+            assert dropped == []
+        finally:
+            conn.execute("DROP TABLE IF EXISTS _ducklake_metadata")
+            conn.close()
+
+    def test_init_rejects_invalid_metadata_table(self) -> None:
+        """metadata_table with injection must raise ValueError at construction."""
+        from arrow_lake.query.ducklake_workspace import DuckLakeWorkspace
+        with pytest.raises(ValueError, match="Invalid identifier"):
+            DuckLakeWorkspace(metadata_table="x; DROP TABLE users; --")
+
+
 class TestDuckLakeWorkspaceListTables:
     """Test listing materialized tables."""
 

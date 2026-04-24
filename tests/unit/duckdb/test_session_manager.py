@@ -234,14 +234,10 @@ class TestSessionManagerPrometheusMetrics:
         assert val >= 2
 
     def test_total_errors_counter(self, olap_config: OlapConfig) -> None:
-        import duckdb as _duckdb
-
         mgr = DuckDBSessionManager(olap_config)
-        # Test error on release (close error — must be duckdb.Error subclass)
         session = mgr.acquire()
-        session._session.__exit__ = MagicMock(
-            side_effect=_duckdb.Error("close fail"),
-        )
+        # Break the connection so release encounters an error
+        session._conn.close()
         session.release()
         val = duckdb_pool_total_errors._value.get()
         assert val >= 1

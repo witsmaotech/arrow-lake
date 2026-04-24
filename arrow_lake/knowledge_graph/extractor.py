@@ -17,6 +17,20 @@ from arrow_lake.rag.provider import BaseLLMProvider, LLMMessage
 
 logger = logging.getLogger(__name__)
 
+# Common suffixes for repairing truncated JSON from LLM output.
+_JSON_REPAIR_SUFFIXES = [
+    '"}]}',  # truncated mid-value in entity/relation
+    '"}\n]}',
+    '"}]}\n]}',
+    '}]}',
+    ']}',
+    '"}]',
+    '"}]}}',
+    'null}]}',
+    'null\n]}',
+    '"}\n  ]\n}',
+]
+
 _ENTITY_EXTRACT_PROMPT = """\
 You are a knowledge graph entity extractor. Analyze the given text and extract \
 entities and relations in JSON format.
@@ -129,14 +143,77 @@ class EntityExtractor:
 
         try:
             data = json.loads(response.content)
-        except (json.JSONDecodeError, ValueError) as exc:
-            raise KGError(
-                error_code=ErrorCode.KG_EXTRACT_FAILED,
-                message=f"Failed to parse LLM response as JSON for chunk {chunk_id}",
-                context={"chunk_id": chunk_id, "raw_response": response.content[:200]},
-            ) from exc
+        except (json.JSONDecodeError, ValueError):
+            # qwen3.x may wrap JSON in thinking tags or return empty content.
+            # Try extracting JSON from the response.
+            data = self._try_parse_json(response.content)
+            if data is None:
+                logger.warning(
+                    "Failed to extract JSON from LLM response for chunk %s, skipping. Raw: %s",
+                    chunk_id,
+                    response.content[:200],
+                )
+                return ExtractionResult(entities=(), relations=(), raw_text=text)
 
         return self._parse_extraction(data, text)
+
+    @staticmethod
+    def _try_parse_json(text: str) -> dict[str, Any] | None:
+        """Try to extract valid JSON from potentially malformed LLM output.
+
+        Handles: empty strings, thinking-tag wrapped content, markdown fences.
+        """
+        if not text or not text.strip():
+            return None
+
+        # Strip thinking tags: <think...</think > or </think >...<think >...</think >
+        stripped = text.strip()
+        if stripped.startswith("<think"):
+            end = stripped.find("</think")
+            if end != -1:
+                stripped = stripped[end + len("</think"):].strip()
+
+        # Strip markdown code fences
+        if stripped.startswith("```"):
+            lines = stripped.split("\n")
+            lines = [l for l in lines if not l.strip().startswith("```")]
+            stripped = "\n".join(lines).strip()
+
+        # Strip leading non-JSON (find first { or [ from the start)
+        start_idx = len(stripped)
+        for start_char in ("{", "["):
+            idx = stripped.find(start_char)
+            if 0 <= idx < start_idx:
+                start_idx = idx
+        if start_idx > 0:
+            stripped = stripped[start_idx:]
+
+        # Strip trailing non-JSON (find last } or ] from the end)
+        end_idx = -1
+        for end_char in ("}", "]"):
+            idx = stripped.rfind(end_char)
+            if idx > end_idx:
+                end_idx = idx
+        if end_idx >= 0:
+            stripped = stripped[: end_idx + 1]
+
+        try:
+            result = json.loads(stripped)
+            if isinstance(result, dict):
+                return result
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+        # Last resort: try to repair truncated JSON by closing open structures.
+        # Append closing chars in reverse order of how they would appear.
+        for suffix in _JSON_REPAIR_SUFFIXES:
+            try:
+                result = json.loads(stripped + suffix)
+                if isinstance(result, dict):
+                    return result
+            except (json.JSONDecodeError, ValueError):
+                continue
+        return None
 
     async def extract_batch(
         self, chunks: list[tuple[str, str]]

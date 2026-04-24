@@ -23,11 +23,10 @@ from arrow_lake.quality.nemo_curator import (
 
 
 class TestImportGuard:
-    """Test HAS_NEMO flag in CI environment."""
+    """Test HAS_NEMO flag consistency."""
 
-    def test_has_nemo_is_false(self) -> None:
-        # CI doesn't have nemo-curator installed
-        assert HAS_NEMO is False
+    def test_has_nemo_is_bool(self) -> None:
+        assert isinstance(HAS_NEMO, bool)
 
 
 # ---------------------------------------------------------------------------

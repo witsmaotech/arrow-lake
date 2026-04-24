@@ -70,9 +70,11 @@ class MetadataSearchBridge:
         self,
         storage: LanceStorageManager,
         storage_config: StorageConfig | None = None,
+        session_manager: Any = None,
     ) -> None:
         self._storage = storage
         self._storage_config = storage_config
+        self._session_manager = session_manager
 
     def query(
         self,
@@ -132,16 +134,29 @@ class MetadataSearchBridge:
             ) from exc
 
         # Execute query with session
-        with create_duckdb_session(storage_config=self._storage_config) as conn:
-            self._register_dataset(conn, dataset_name, source)
-            for name, extra_table in (tables or {}).items():
-                conn.register(name, extra_table)
-            result_reader = conn.execute(sql).arrow()
-            # DuckDB may return RecordBatchReader — convert to Table
-            if hasattr(result_reader, "read_all"):
-                result_table = result_reader.read_all()
-            else:
-                result_table = result_reader
+        if self._session_manager is not None:
+            managed = self._session_manager.acquire()
+            try:
+                self._register_dataset(managed.conn, dataset_name, source)
+                for name, extra_table in (tables or {}).items():
+                    managed.conn.register(name, extra_table)
+                result_reader = managed.conn.execute(sql).arrow()
+                if hasattr(result_reader, "read_all"):
+                    result_table = result_reader.read_all()
+                else:
+                    result_table = result_reader
+            finally:
+                managed.release()
+        else:
+            with create_duckdb_session(storage_config=self._storage_config) as conn:
+                self._register_dataset(conn, dataset_name, source)
+                for name, extra_table in (tables or {}).items():
+                    conn.register(name, extra_table)
+                result_reader = conn.execute(sql).arrow()
+                if hasattr(result_reader, "read_all"):
+                    result_table = result_reader.read_all()
+                else:
+                    result_table = result_reader
 
         return MetadataQueryResult(
             table=result_table,

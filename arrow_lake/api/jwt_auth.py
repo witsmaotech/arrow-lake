@@ -12,21 +12,29 @@ Usage in app.py::
 
 from __future__ import annotations
 
+import logging
+
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-# Path prefixes that bypass JWT authentication.
+logger = logging.getLogger(__name__)
+
+# Path prefixes that always bypass JWT authentication.
 _JWT_PUBLIC_PREFIXES: tuple[str, ...] = (
     "/health",
+    "/metrics",
+)
+
+# Doc path prefixes that bypass JWT only when docs are enabled.
+_JWT_DOC_PREFIXES: tuple[str, ...] = (
     "/docs",
     "/redoc",
     "/openapi.json",
-    "/metrics",
 )
 
 
 async def jwt_auth_middleware_fn(
-    request: Request, call_next, auth_service
+    request: Request, call_next, auth_service, *, docs_enabled: bool = True,
 ) -> Response:
     """Pure ASGI JWT authentication middleware function.
 
@@ -40,6 +48,10 @@ async def jwt_auth_middleware_fn(
 
     # Public path prefixes bypass auth
     if any(path.startswith(prefix) for prefix in _JWT_PUBLIC_PREFIXES):
+        return await call_next(request)
+
+    # Doc paths bypass auth only when docs are enabled
+    if docs_enabled and any(path.startswith(prefix) for prefix in _JWT_DOC_PREFIXES):
         return await call_next(request)
 
     # Auth endpoints bypass JWT (they use API key to get JWT)
@@ -64,6 +76,7 @@ async def jwt_auth_middleware_fn(
         request.state.user = payload
     except ValueError as exc:
         msg = str(exc)
+        logger.debug("JWT verification failed: %s", msg)
         if "expired" in msg.lower():
             return JSONResponse(
                 status_code=401,
@@ -78,7 +91,7 @@ async def jwt_auth_middleware_fn(
             content={
                 "success": False,
                 "error": "AUTH_INVALID_TOKEN",
-                "message": msg,
+                "message": "Invalid or malformed token",
             },
         )
 

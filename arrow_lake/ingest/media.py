@@ -114,7 +114,7 @@ def _extract_exif(img: Image.Image) -> ImageMetadata:
                 coords = _exif_gps_to_decimal(gps_info)
                 if coords is not None:
                     exif_gps_lat, exif_gps_lon = coords
-    except Exception:
+    except (ValueError, TypeError, KeyError, OSError):
         # EXIF extraction should never fail the pipeline
         logger.debug("EXIF extraction failed, returning null fields")
 

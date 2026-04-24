@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-04-24
+
+### Added
+- Kreuzberg PDF parser (Rust-core, 91+ format support) replacing marker_pdf/pypdf
+- TurboOCR GPU acceleration service with circuit breaker pattern and retry logic
+- Ingest dead-letter queue (`IngestDeadLetterQueue`) for failed document tracking with retry/resolve/purge
+- Performance benchmark suite (`examples/query/benchmark.py`) — DuckDB query, chunking, validation, token counting baselines
+- Document processing E2E test (`examples/ingestion/e2e_document_pipeline.py`)
+- Test fixture generator (`tests/fixtures/documents/`) — 10 synthetic documents (EN/ZH/markdown/CSV/JSONL/multilingual)
+- GraphRAG E2E test script (`examples/knowledge_graph/graphrag_e2e_test.py`)
+
+### Changed
+- Default OCR backend changed from `tesseract` to `paddleocr` (Kreuzberg config)
+- `backup.py` refactored from 617 to 375 lines — extracted `_manifest_to_info`, `_restore_item`, `_paginate_keys` helpers
+- `except Exception` narrowed from 17 to 4 occurrences — replaced with specific exception types across 12 files
+
+### Fixed
+- **Security**: SSRF prevention in TurboOcrClient (`_validate_endpoint` blocks private IPs)
+- **Security**: Gremlin injection prevention in HugeGraph client (`_BLOCKED_GREMLIN_PATTERNS`)
+- **Security**: SQL injection hardening — `escape_sql_literal()` with type check and length limit in `validation.py`
+- **Security**: JWT error message sanitization — non-expiry errors return generic message
+- **Security**: Blob key path sanitization in ingestor (prevents path traversal)
+- **Security**: Backup dataset name validation (rejects `..`, `/`, `\\`)
+- **Security**: API key empty-config defense-in-depth (rejects protected endpoints when no key configured)
+- Import-order bug in `hybrid.py` (`escape_sql_literal` used before import)
+- Duplicate property key creation loop removed in `knowledge_graph/client.py`
+- structlog-style logger call fixed in `ray_serve_encoder.py`
+- SentenceTransformer API compatibility (both `get_sentence_embedding_dimension` and `get_embedding_dimension`)
+
+### Removed
+- 52+ stale unit test files (unmaintained, referencing deleted modules)
+
+## [1.1.0] - 2026-04-22
+
+### Added
+- Production hardening: observability, metrics, and operational tooling
+
 ## [1.0.0] - 2026-04-21
 
 ### Added

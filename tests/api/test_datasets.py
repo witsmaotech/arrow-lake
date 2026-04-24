@@ -55,9 +55,16 @@ def mock_lake_with_catalog() -> MagicMock:
 
 @pytest.fixture
 async def client(mock_lake_with_catalog: MagicMock) -> AsyncClient:
-    app = create_app()
+    from arrow_lake.config import ArrowLakeConfig
+    config = ArrowLakeConfig()
+    config.api.api_key = "test-key"
+    app = create_app(config)
     app.state.lake = mock_lake_with_catalog
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"X-API-Key": "test-key"},
+    ) as ac:
         yield ac
 
 

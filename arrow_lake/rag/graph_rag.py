@@ -90,7 +90,9 @@ class GraphRAGPipeline(RAGPipeline):
         try:
             result = await self._kg_extractor.extract(question, chunk_id="question")
             return [e.name for e in result.entities]
-        except Exception:
+        except asyncio.CancelledError:
+            raise
+        except (AttributeError, TypeError, ValueError, OSError, RuntimeError):
             logger.warning(
                 "Entity extraction from question failed, continuing without entities",
                 exc_info=True,
@@ -119,7 +121,9 @@ class GraphRAGPipeline(RAGPipeline):
                 max_triplets=self._max_graph_triplets,
             )
             return self._kg_retriever.triplets_to_text(graph_result)
-        except Exception:
+        except asyncio.CancelledError:
+            raise
+        except (AttributeError, TypeError, ValueError, OSError, RuntimeError):
             logger.warning(
                 "Graph retrieval failed, degrading to vector-only context",
                 exc_info=True,
@@ -204,7 +208,9 @@ class GraphRAGPipeline(RAGPipeline):
                 session_id=session_id,
             )
 
-        except Exception:
+        except asyncio.CancelledError:
+            raise
+        except (AttributeError, TypeError, ValueError, OSError, RuntimeError):
             logger.warning(
                 "GraphRAG query failed, falling back to vector RAG",
                 exc_info=True,

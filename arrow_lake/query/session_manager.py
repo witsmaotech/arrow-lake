@@ -14,9 +14,11 @@ Thread safety: all public methods are thread-safe.
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
-from dataclasses import dataclass
+from collections import deque
+from dataclasses import dataclass, field
 from typing import Any
 
 import duckdb
@@ -24,6 +26,8 @@ import duckdb
 from arrow_lake.config import OlapConfig, StorageConfig
 from arrow_lake.core.metrics import (
     duckdb_pool_active_sessions,
+    duckdb_pool_evicted_connections_total,
+    duckdb_pool_health_checks_total,
     duckdb_pool_queued_requests,
     duckdb_pool_slow_queries,
     duckdb_pool_total_errors,
@@ -71,11 +75,13 @@ class _ManagedSession:
         session: DuckDBSession,
         conn: duckdb.DuckDBPyConnection,
         manager: DuckDBSessionManager,
+        created_at: float = 0.0,
     ) -> None:
         self._session = session
         self._conn = conn
         self._manager = manager
         self._released = False
+        self._created_at = created_at or time.monotonic()
 
     @property
     def conn(self) -> duckdb.DuckDBPyConnection:
@@ -101,6 +107,15 @@ class _ManagedSession:
                 pass
 
 
+@dataclass(frozen=True)
+class _IdleConnection:
+    """A connection sitting in the idle pool, awaiting reuse."""
+
+    conn: duckdb.DuckDBPyConnection
+    returned_at: float = field(default_factory=time.monotonic)
+    created_at: float = field(default_factory=time.monotonic)
+
+
 class DuckDBSessionManager:
     """Unified DuckDB session manager with concurrency control.
 
@@ -119,14 +134,22 @@ class DuckDBSessionManager:
         storage_config: StorageConfig | None = None,
         *,
         slow_query_threshold_ms: int = 5000,
+        idle_timeout_seconds: int = 300,
+        max_session_lifetime_seconds: int = 3600,
     ) -> None:
         self._olap_config = olap_config
         self._storage_config = storage_config
         self._slow_query_threshold_ms = slow_query_threshold_ms
+        self._idle_timeout_seconds = idle_timeout_seconds
+        self._max_session_lifetime_seconds = max_session_lifetime_seconds
 
         max_queries = olap_config.max_concurrent_queries
         self._semaphore = threading.Semaphore(max_queries)
         self._lock = threading.Lock()
+
+        # Idle connection pool
+        self._idle_pool: deque[_IdleConnection] = deque()
+        self._max_idle = max_queries
 
         # Statistics
         self._active_count = 0
@@ -203,14 +226,7 @@ class DuckDBSessionManager:
                 duckdb_pool_total_queries.inc()
 
         try:
-            session = DuckDBSession(
-                max_memory_mb=self._olap_config.max_query_memory_mb,
-                timeout_seconds=self._olap_config.query_timeout_seconds,
-                load_ducklake=load_ducklake,
-                olap_config=self._olap_config,
-                storage_config=self._storage_config,
-            )
-            conn = session.__enter__()
+            conn, created_at = self._acquire_connection(load_ducklake)
         except duckdb.Error:
             self._semaphore.release()
             with self._lock:
@@ -221,24 +237,114 @@ class DuckDBSessionManager:
                     duckdb_pool_total_errors.inc()
             raise
 
-        return _ManagedSession(session, conn, self)
+        return _ManagedSession(None, conn, self, created_at=created_at)
 
     def _release_session(self, managed: _ManagedSession) -> None:
-        """Release a managed session back to the pool."""
+        """Release a managed session — return to idle pool or destroy."""
+        conn = managed._conn
+        healthy = self._health_check(conn)
+
+        if healthy:
+            with self._lock:
+                if len(self._idle_pool) < self._max_idle:
+                    self._idle_pool.append(_IdleConnection(
+                        conn=conn,
+                        created_at=managed._created_at,
+                    ))
+                else:
+                    self._close_conn(conn)
+        else:
+            self._close_conn(conn)
+
+        with self._lock:
+            self._active_count = max(0, self._active_count - 1)
+            if get_metrics_enabled():
+                duckdb_pool_active_sessions.set(self._active_count)
+        self._semaphore.release()
+
+    def _acquire_connection(
+        self, load_ducklake: bool,
+    ) -> tuple[duckdb.DuckDBPyConnection, float]:
+        """Get a connection from idle pool or create a new one.
+
+        Returns:
+            Tuple of (connection, created_at_timestamp).
+        """
+        now = time.monotonic()
+        # Try idle pool first
+        while True:
+            with self._lock:
+                if not self._idle_pool:
+                    break
+                idle = self._idle_pool.popleft()
+                age = time.monotonic() - idle.returned_at
+                lifetime = time.monotonic() - idle.created_at
+                if age > self._idle_timeout_seconds or lifetime > self._max_session_lifetime_seconds:
+                    self._close_conn(idle.conn)
+                    if get_metrics_enabled():
+                        duckdb_pool_evicted_connections_total.inc()
+                    continue
+                conn = idle.conn
+                created_at = idle.created_at
+
+            if self._health_check(conn):
+                try:
+                    conn.execute("RESET memory_limit")
+                    conn.execute("RESET threads")
+                    conn.execute(f"SET memory_limit='{int(self._olap_config.max_query_memory_mb)}MB';")
+                    conn.execute(f"SET threads={os.cpu_count() or 4};")
+                    try:
+                        conn.execute(f"SET statement_timeout='{int(self._olap_config.query_timeout_seconds)}s';")
+                    except duckdb.CatalogException:
+                        pass
+                    if load_ducklake:
+                        conn.execute("INSTALL ducklake; LOAD ducklake;")
+                except duckdb.Error:
+                    self._close_conn(conn)
+                    continue
+                return conn, created_at
+            else:
+                self._close_conn(conn)
+
+        # No usable idle connection — create new (retry once on failure)
+        for attempt in range(2):
+            try:
+                session = DuckDBSession(
+                    max_memory_mb=self._olap_config.max_query_memory_mb,
+                    timeout_seconds=self._olap_config.query_timeout_seconds,
+                    load_ducklake=load_ducklake,
+                    olap_config=self._olap_config,
+                    storage_config=self._storage_config,
+                )
+                conn = session.__enter__()
+                return conn, time.monotonic()
+            except duckdb.Error:
+                if attempt == 0:
+                    logger.warning("connection_creation_failed_retrying")
+                    continue
+                raise
+
+    def _health_check(self, conn: duckdb.DuckDBPyConnection) -> bool:
+        """Check if a connection is still alive."""
         try:
-            managed._session.__exit__(None, None, None)
+            conn.execute("SELECT 1").fetchone()
+            if get_metrics_enabled():
+                duckdb_pool_health_checks_total.inc()
+            return True
         except duckdb.Error:
             with self._lock:
                 self._total_errors += 1
                 if get_metrics_enabled():
                     duckdb_pool_total_errors.inc()
-            logger.warning("Error closing DuckDB session", exc_info=True)
-        finally:
-            with self._lock:
-                self._active_count = max(0, self._active_count - 1)
-                if get_metrics_enabled():
-                    duckdb_pool_active_sessions.set(self._active_count)
-            self._semaphore.release()
+            return False
+
+    @staticmethod
+    def _close_conn(conn: duckdb.DuckDBPyConnection) -> None:
+        """Close a DuckDB connection, suppressing errors."""
+        try:
+            conn.close()
+        except duckdb.Error:
+            pass
 
     def record_slow_query(self) -> None:
         """Record a slow query event (called by query bridges)."""
@@ -270,15 +376,22 @@ class DuckDBSessionManager:
     def shutdown(self) -> None:
         """Gracefully shut down the session manager.
 
-        Does not force-close active sessions — they will complete naturally.
-        Prevents new session acquisitions.
+        Drains the idle pool and prevents new acquisitions.
+        Active sessions will complete naturally.
         """
         with self._lock:
             self._closed = True
+            idle_conns = list(self._idle_pool)
+            self._idle_pool.clear()
+
+        for idle in idle_conns:
+            self._close_conn(idle.conn)
+
         logger.info(
-            "Session manager shut down: queries=%d, errors=%d, timeouts=%d, slow=%d",
+            "Session manager shut down: queries=%d, errors=%d, timeouts=%d, slow=%d, idle_drained=%d",
             self._total_queries,
             self._total_errors,
             self._total_timeouts,
             self._slow_query_count,
+            len(idle_conns),
         )

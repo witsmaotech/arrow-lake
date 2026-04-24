@@ -89,10 +89,12 @@ class FacetedSearchBridge:
         storage: Any,
         config: FacetedSearchConfig | None = None,
         storage_config: StorageConfig | None = None,
+        session_manager: Any = None,
     ) -> None:
         self._storage = storage
         self._config = config or FacetedSearchConfig()
         self._storage_config = storage_config
+        self._session_manager = session_manager
 
     @property
     def config(self) -> FacetedSearchConfig:
@@ -150,15 +152,29 @@ class FacetedSearchBridge:
         # Apply where filter to results if provided
         if source is not None and where:
             validate_sql_safety(where)
-            with create_duckdb_session(storage_config=self._storage_config) as conn:
-                conn.register(dataset_name, source)
-                filtered_reader = conn.execute(
-                    f"SELECT * FROM {dataset_name} WHERE {where} LIMIT {top_k}"
-                ).arrow()
-                if hasattr(filtered_reader, "read_all"):
-                    table = filtered_reader.read_all()
-                else:
-                    table = filtered_reader
+            if self._session_manager is not None:
+                managed = self._session_manager.acquire()
+                try:
+                    managed.conn.register(dataset_name, source)
+                    filtered_reader = managed.conn.execute(
+                        f"SELECT * FROM {dataset_name} WHERE {where} LIMIT {top_k}"
+                    ).arrow()
+                    if hasattr(filtered_reader, "read_all"):
+                        table = filtered_reader.read_all()
+                    else:
+                        table = filtered_reader
+                finally:
+                    managed.release()
+            else:
+                with create_duckdb_session(storage_config=self._storage_config) as conn:
+                    conn.register(dataset_name, source)
+                    filtered_reader = conn.execute(
+                        f"SELECT * FROM {dataset_name} WHERE {where} LIMIT {top_k}"
+                    ).arrow()
+                    if hasattr(filtered_reader, "read_all"):
+                        table = filtered_reader.read_all()
+                    else:
+                        table = filtered_reader
         elif source is not None:
             # Materialize reader to table for slicing
             table = source.read_all() if hasattr(source, "read_all") else source
@@ -210,13 +226,25 @@ class FacetedSearchBridge:
 
         cube_query = self._build_cube_query(dataset_name, facets, where)
 
-        with create_duckdb_session(storage_config=self._storage_config) as conn:
-            conn.register(dataset_name, source)
-            result_reader = conn.execute(cube_query).arrow()
-            if hasattr(result_reader, "read_all"):
-                cube_table = result_reader.read_all()
-            else:
-                cube_table = result_reader
+        if self._session_manager is not None:
+            managed = self._session_manager.acquire()
+            try:
+                managed.conn.register(dataset_name, source)
+                result_reader = managed.conn.execute(cube_query).arrow()
+                if hasattr(result_reader, "read_all"):
+                    cube_table = result_reader.read_all()
+                else:
+                    cube_table = result_reader
+            finally:
+                managed.release()
+        else:
+            with create_duckdb_session(storage_config=self._storage_config) as conn:
+                conn.register(dataset_name, source)
+                result_reader = conn.execute(cube_query).arrow()
+                if hasattr(result_reader, "read_all"):
+                    cube_table = result_reader.read_all()
+                else:
+                    cube_table = result_reader
 
         return self._parse_cube_results(cube_table, facets)
 

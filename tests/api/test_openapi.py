@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from httpx import ASGITransport, AsyncClient
 
 from arrow_lake.api.app import create_app

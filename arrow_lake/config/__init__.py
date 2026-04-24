@@ -13,6 +13,7 @@ See project-context.md Rules 3, 35-38.
 
 from arrow_lake.config._enums import (
     AuthMode,
+    ChunkStrategy,
     DecodeQuality,
     DistanceMetric,
     EmbeddingBackend,
@@ -20,10 +21,13 @@ from arrow_lake.config._enums import (
     LLMProviderType,
     LogLevel,
     ModelSource,
+    OcrBackend,
+    PdfParseMode,
     SchemaValidationMode,
     StorageBackend,
     VectorIndexType,
 )
+from arrow_lake.config.document import DocumentConfig
 from arrow_lake.config.api import (
     ApiConfig,
     AuditConfig,
@@ -64,6 +68,7 @@ __all__ = [
     "ArrowLakeConfig",
     # Enums
     "AuthMode",
+    "ChunkStrategy",
     "DecodeQuality",
     "DistanceMetric",
     "EmbeddingBackend",
@@ -71,11 +76,14 @@ __all__ = [
     "LLMProviderType",
     "LogLevel",
     "ModelSource",
+    "OcrBackend",
+    "PdfParseMode",
     "SchemaValidationMode",
     "StorageBackend",
     "VectorIndexType",
     # Sub-configs
     "ApiConfig",
+    "DocumentConfig",
     "ArgoConfig",
     "AuditConfig",
     "AuthConfig",

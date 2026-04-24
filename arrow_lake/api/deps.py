@@ -76,18 +76,12 @@ def require_role(required_role: Role) -> Callable:
     _hierarchy = {Role.VIEWER: 0, Role.EDITOR: 1, Role.ADMIN: 2}
 
     def _check(request: Request) -> TokenPayload:
-        # If no auth service is configured, skip RBAC (auth disabled)
         svc = getattr(request.app.state, "auth_service", None)
         if svc is None:
-            user = getattr(request.state, "user", None)
-            if user is not None:
-                return user
-            # Auth disabled — allow full access
-            now = datetime.now(tz=timezone.utc)
-            return TokenPayload(
-                sub="anonymous", role=Role.ADMIN,
-                exp=now, iat=now,
-            )
+            # API Key auth validated by ApiKeyMiddleware — treat as ADMIN.
+            # BaseHTTPMiddleware doesn't propagate request.state, so we
+            # trust that the middleware already rejected invalid keys.
+            return TokenPayload(sub="api-key", role=Role.ADMIN, exp=0, iat=0)
 
         user = get_current_user(request)
         user_level = _hierarchy.get(user.role, -1)

@@ -13,6 +13,9 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+
+pytest.importorskip("duckdb")
+
 from arrow_lake.catalog.connection_pool import (
     DuckDBConnectionPool,
     PoolHealth,

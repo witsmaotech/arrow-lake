@@ -8,7 +8,8 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from arrow_lake.api.deps import get_lake
+from arrow_lake.api.auth_models import Role
+from arrow_lake.api.deps import get_lake, require_role
 from arrow_lake.api.models.knowledge_graph import (
     GraphRAGQueryRequest,
     KGBuildRequest,
@@ -53,7 +54,7 @@ def _kg_stats_enabled(lake: Any) -> bool:
 # ---------------------------------------------------------------------------
 
 
-@router.post("/build", response_model=KGBuildResponse)
+@router.post("/build", response_model=KGBuildResponse, dependencies=[Depends(require_role(Role.ADMIN))])
 async def kg_build(
     *,
     req: KGBuildRequest,
@@ -113,7 +114,7 @@ async def kg_schema(
         raise HTTPException(status_code=_kg_error_to_status(exc), detail=exc.message) from exc
 
 
-@router.post("/query", response_model=KGQueryResponse)
+@router.post("/query", response_model=KGQueryResponse, dependencies=[Depends(require_role(Role.EDITOR))])
 async def kg_query(
     *,
     req: KGQueryRequest,
@@ -141,6 +142,8 @@ async def kg_neighbors(
     lake: Any = Depends(get_lake),
 ) -> KGNeighborsResponse:
     """Get neighbor vertices of a given entity."""
+    if depth > 5:
+        raise HTTPException(status_code=400, detail=f"Depth too large: {depth} (max 5)")
     try:
         neighbors = await lake.kg_get_neighbors(entity_id, depth=depth)
         return KGNeighborsResponse(
@@ -168,7 +171,7 @@ async def kg_stats(
         raise HTTPException(status_code=_kg_error_to_status(exc), detail=exc.message) from exc
 
 
-@router.delete("/graph")
+@router.delete("/graph", dependencies=[Depends(require_role(Role.ADMIN))])
 async def kg_delete_graph(
     lake: Any = Depends(get_lake),
 ) -> dict[str, str]:
@@ -180,7 +183,7 @@ async def kg_delete_graph(
         raise HTTPException(status_code=_kg_error_to_status(exc), detail=exc.message) from exc
 
 
-@router.post("/query/graphrag")
+@router.post("/query/graphrag", dependencies=[Depends(require_role(Role.VIEWER))])
 async def graphrag_query(
     *,
     req: GraphRAGQueryRequest,

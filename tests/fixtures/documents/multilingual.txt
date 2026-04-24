@@ -1,0 +1,16 @@
+# Multilingual Test Document
+
+## English
+Natural language processing (NLP) is a field of artificial intelligence that focuses on the interaction between computers and humans using natural language.
+
+## 中文
+自然语言处理是人工智能的一个分支，研究计算机与人类自然语言之间的交互。
+
+## 日本語
+自然言語処理は、コンピュータと人間の自然言語の相互作用に焦点を当てた人工知能の分野です。
+
+## 한국어
+자연어 처리는 컴퓨터와 인간의 자연어 상호작용에 중점을 둔 인공 지능 분야입니다.
+
+## Français
+Le traitement du langage naturel est un domaine de l'intelligence artificielle qui se concentre sur l'interaction entre les ordinateurs et les langues humaines.

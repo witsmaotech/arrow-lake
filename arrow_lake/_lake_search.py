@@ -20,6 +20,7 @@ class _LakeSearchMixin:
         return {
             "storage_config": self._config.storage,
             "lance_scan_mode": self._config.olap.lance_scan_mode,
+            "session_manager": self.get_session_manager(),
         }
 
     def search(
@@ -281,6 +282,7 @@ class _LakeSearchMixin:
                 self._get_storage(),
                 config=self._config.faceted,
                 storage_config=self._config.storage,
+                session_manager=self.get_session_manager(),
             ),
         )
         from arrow_lake.core.metrics import _QueryTimer

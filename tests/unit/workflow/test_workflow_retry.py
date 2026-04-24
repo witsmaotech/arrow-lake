@@ -5,6 +5,9 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+pytest.importorskip("metaflow")
+
 from arrow_lake.workflow.retry import (
     RetryCategory,
     build_metaflow_retry,

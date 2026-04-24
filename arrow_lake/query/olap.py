@@ -91,10 +91,12 @@ class OlapSearchBridge:
         storage: Any,
         config: OlapConfig | None = None,
         storage_config: StorageConfig | None = None,
+        session_manager: Any = None,
     ) -> None:
         self._storage = storage
         self._config = config or OlapConfig()
         self._storage_config = storage_config
+        self._session_manager = session_manager
 
     def query(
         self,
@@ -141,13 +143,7 @@ class OlapSearchBridge:
             and stripped_sql.count("SELECT") == 1
         )
 
-        # Build session with extensions and resource governance
-        session = create_duckdb_session(
-            max_memory_mb=self._config.max_query_memory_mb,
-            timeout_seconds=self._config.query_timeout_seconds,
-            olap_config=self._config,
-            storage_config=self._storage_config,
-        )
+        session = self._managed_session()
 
         # Read dataset from Lance
         try:
@@ -246,12 +242,7 @@ class OlapSearchBridge:
                 message=f"Failed to read dataset '{dataset_name}': {exc}",
             ) from exc
 
-        with create_duckdb_session(
-            max_memory_mb=self._config.max_query_memory_mb,
-            timeout_seconds=self._config.query_timeout_seconds,
-            olap_config=self._config,
-            storage_config=self._storage_config,
-        ) as conn:
+        with self._managed_session(load_ducklake=True) as conn:
             self._register_dataset(conn, dataset_name, source)
             return workspace.materialize(conn, sql, view_name)
 
@@ -270,10 +261,7 @@ class OlapSearchBridge:
             ttl_days=ttl_days or self._config.ducklake_ttl_days,
         )
 
-        with create_duckdb_session(
-            olap_config=self._config,
-            storage_config=self._storage_config,
-        ) as conn:
+        with self._managed_session(load_ducklake=True) as conn:
             return workspace.cleanup_expired(conn)
 
     def explain(self, dataset_name: str, sql: str) -> str:
@@ -301,12 +289,7 @@ class OlapSearchBridge:
                 message=f"Failed to read dataset '{dataset_name}': {exc}",
             ) from exc
 
-        with create_duckdb_session(
-            max_memory_mb=self._config.max_query_memory_mb,
-            timeout_seconds=self._config.query_timeout_seconds,
-            olap_config=self._config,
-            storage_config=self._storage_config,
-        ) as conn:
+        with self._managed_session() as conn:
             self._register_dataset(conn, dataset_name, table)
             result = conn.execute(f"EXPLAIN {sql}").fetchall()
             explain_lines = [row[0] for row in result if row]
@@ -346,6 +329,18 @@ class OlapSearchBridge:
 
         # Fallback: register Arrow source directly
         conn.register(dataset_name, source)
+
+    def _managed_session(self, *, load_ducklake: bool = False) -> Any:
+        """Acquire a managed session from SessionManager or fallback."""
+        if self._session_manager is not None:
+            return self._session_manager.acquire(load_ducklake=load_ducklake)
+        return create_duckdb_session(
+            max_memory_mb=self._config.max_query_memory_mb,
+            timeout_seconds=self._config.query_timeout_seconds,
+            olap_config=self._config,
+            storage_config=self._storage_config,
+            load_ducklake=load_ducklake,
+        )
 
     def _validate_sql(self, sql: str) -> None:
         """Validate SQL is SELECT-only with no dangerous patterns.

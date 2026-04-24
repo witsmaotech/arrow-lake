@@ -8,6 +8,9 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pyarrow as pa
 import pytest
+
+pytest.importorskip("ray")
+
 from arrow_lake.embed.ray_serve_encoder import RayServeEmbeddingEncoder
 from arrow_lake.exceptions import EmbeddingError
 

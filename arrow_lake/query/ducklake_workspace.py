@@ -18,9 +18,11 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import duckdb
 import pyarrow as pa
 
 from arrow_lake.exceptions import ArrowLakeError, ErrorCode
+from arrow_lake.validation import SAFE_IDENTIFIER_RE, validate_identifier, validate_sql_safety
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +45,7 @@ class DuckLakeWorkspace:
         max_join_rows: int = 1_000_000,
         metadata_table: str = "_ducklake_metadata",
     ) -> None:
+        validate_identifier(metadata_table)
         self._ttl_days = ttl_days
         self._max_join_rows = max_join_rows
         self._metadata_table = metadata_table
@@ -65,7 +68,7 @@ class DuckLakeWorkspace:
             conn.execute(
                 f"SELECT 1 FROM {self._metadata_table} LIMIT 0"
             )
-        except Exception:
+        except duckdb.CatalogException:
             conn.execute(
                 f"CREATE TABLE {self._metadata_table} ("
                 f"table_name VARCHAR, "
@@ -95,7 +98,11 @@ class DuckLakeWorkspace:
 
         Raises:
             ArrowLakeError: If row count exceeds budget.
+            ValueError: If view_name is not a safe SQL identifier.
         """
+        validate_identifier(view_name)
+        validate_sql_safety(sql)
+
         # Check row budget
         count_sql = f"SELECT COUNT(*) FROM ({sql}) AS _count_check"
         try:
@@ -122,8 +129,8 @@ class DuckLakeWorkspace:
         expires = now + timedelta(days=self._ttl_days)
         self._ensure_metadata_table(conn)
         conn.execute(
-            f"INSERT INTO {self._metadata_table} VALUES "
-            f"('{view_name}', '{now.isoformat()}', '{expires.isoformat()}', {row_count})"
+            f"INSERT INTO {self._metadata_table} VALUES ($1, $2, $3, $4)",
+            [view_name, now.isoformat(), expires.isoformat(), row_count],
         )
 
         return row_count
@@ -138,24 +145,29 @@ class DuckLakeWorkspace:
             List of dropped table names.
         """
         self._ensure_metadata_table(conn)
-        now = datetime.now(UTC).isoformat()
+        now = datetime.now(UTC)
 
         try:
             expired = conn.execute(
-                f"SELECT table_name FROM {self._metadata_table} WHERE expires_at < '{now}'"
+                f"SELECT table_name FROM {self._metadata_table} WHERE expires_at < $1",
+                [now.isoformat()],
             ).fetchall()
-        except Exception:
+        except duckdb.Error:
             return []
 
         dropped: list[str] = []
         for (table_name,) in expired:
+            if not SAFE_IDENTIFIER_RE.match(table_name):
+                logger.warning("Skipping invalid table name in metadata: %r", table_name)
+                continue
             try:
                 conn.execute(f"DROP TABLE IF EXISTS {table_name}")
                 conn.execute(
-                    f"DELETE FROM {self._metadata_table} WHERE table_name = '{table_name}'"
+                    f"DELETE FROM {self._metadata_table} WHERE table_name = $1",
+                    [table_name],
                 )
                 dropped.append(table_name)
-            except Exception as exc:
+            except duckdb.Error as exc:
                 logger.warning("Failed to drop expired table %s: %s", table_name, exc)
 
         return dropped
@@ -175,5 +187,5 @@ class DuckLakeWorkspace:
                 f"SELECT table_name FROM {self._metadata_table}"
             ).fetchall()
             return [row[0] for row in rows]
-        except Exception:
+        except duckdb.Error:
             return []

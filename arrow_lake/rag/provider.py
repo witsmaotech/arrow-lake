@@ -120,13 +120,18 @@ class OpenAICompatibleProvider(BaseLLMProvider):
     def _build_body(
         self, messages: list[LLMMessage], stream: bool = False
     ) -> dict[str, Any]:
-        return {
+        body: dict[str, Any] = {
             "model": self._config.model,
             "messages": [{"role": m.role, "content": m.content} for m in messages],
             "temperature": self._config.temperature,
             "max_tokens": self._config.max_tokens,
             "stream": stream,
         }
+        # qwen3.x on Ollama: thinking tokens count against max_tokens budget,
+        # producing empty content.  Disable extended thinking for RAG use.
+        if self._config.provider == LLMProviderType.OLLAMA:
+            body["chat_template_kwargs"] = {"enable_thinking": False}
+        return body
 
     @retry(
         retry=retry_if_exception_type((httpx.TimeoutException, httpx.ConnectError)),

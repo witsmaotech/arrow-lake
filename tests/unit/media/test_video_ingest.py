@@ -11,6 +11,9 @@ from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
+
+pytest.importorskip("av")
+
 from arrow_lake.exceptions import ErrorCode, IngestError
 from arrow_lake.ingest.media import ExtractedKeyframe, VideoIngestResult, VideoProcessor
 

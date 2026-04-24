@@ -137,27 +137,25 @@ class KGBuilder:
         self, task: KGBuildTask, table: pa.Table
     ) -> None:
         """Run the full build pipeline."""
-        # 1. Ensure schema
+        # 1. Ensure schema (also creates graph if needed)
         schema_payload = schema_to_hugegraph_payload(ARROW_LAKE_KG_SCHEMA)
         await self._client.ensure_schema(schema_payload)
 
         if table.num_rows == 0:
             return
 
-        # 2. Collect unique documents
-        doc_names = self._unique_column_values(table, "document_name")
+        batch_size = self._config.build_batch_size
 
-        # 3. Insert document vertices
+        # 2. Collect unique documents and insert document vertices
+        doc_names = self._unique_column_values(table, "document_name")
         doc_vertices = [
-            {
-                "label": "document",
-                "properties": {"id": name, "name": name},
-            }
+            {"label": "document", "properties": {"id": name, "name": name}}
             for name in doc_names
         ]
-        await self._client.add_vertices(doc_vertices)
+        doc_hg_ids = await self._client.add_vertices(doc_vertices)
+        doc_id_map: dict[str, str] = dict(zip(doc_names, doc_hg_ids))
 
-        # 4. Insert chunk vertices
+        # 3. Insert chunk vertices
         chunk_ids = table.column("id").to_pylist()
         contents = table.column("content").to_pylist()
         doc_name_col = table.column("document_name").to_pylist()
@@ -166,36 +164,34 @@ class KGBuilder:
         chunk_vertices = [
             {
                 "label": "chunk",
-                "properties": {
-                    "id": cid,
-                    "content": content,
-                    "chunk_index": idx,
-                },
+                "properties": {"id": cid, "content": content, "chunk_index": idx},
             }
             for cid, content, idx in zip(chunk_ids, contents, chunk_indices, strict=True)
         ]
-        batch_size = self._config.build_batch_size
+        all_chunk_hg_ids: list[str] = []
         for i in range(0, len(chunk_vertices), batch_size):
             batch = chunk_vertices[i : i + batch_size]
-            await self._client.add_vertices(batch)
+            hg_ids = await self._client.add_vertices(batch)
+            all_chunk_hg_ids.extend(hg_ids)
+        chunk_id_map: dict[str, str] = dict(zip(chunk_ids, all_chunk_hg_ids))
 
-        # 5. Insert contains_chunk edges
+        # 4. Insert contains_chunk edges (document -> chunk)
         contains_edges: list[dict[str, Any]] = []
         for cid, doc_name in zip(chunk_ids, doc_name_col, strict=True):
             contains_edges.append({
                 "label": "contains_chunk",
-                "outV": doc_name,
+                "outV": doc_id_map[doc_name],
                 "outVLabel": "document",
-                "inV": cid,
+                "inV": chunk_id_map[cid],
                 "inVLabel": "chunk",
                 "properties": {},
             })
         for i in range(0, len(contains_edges), batch_size):
             await self._client.add_edges(contains_edges[i : i + batch_size])
 
-        # 6. Insert next_chunk edges (sequential chunks in same doc)
-        next_edges = self._build_next_chunk_edges(
-            chunk_ids, doc_name_col, chunk_indices
+        # 5. Insert next_chunk edges (sequential chunks in same doc)
+        next_edges = self._build_next_chunk_edges_hg(
+            chunk_id_map, doc_name_col, chunk_indices
         )
         if next_edges:
             for i in range(0, len(next_edges), batch_size):
@@ -213,46 +209,55 @@ class KGBuilder:
             if not result.entities and not result.relations:
                 continue
 
-            # 8. Insert entity vertices
+            # 8. Insert entity vertices and capture IDs
             entity_vertices = [
                 {
                     "label": "entity",
-                    "properties": {
-                        "name": e.name,
-                        "type": e.entity_type,
-                    },
+                    "properties": {"name": e.name, "type": e.entity_type},
                 }
                 for e in result.entities
             ]
+            entity_id_map: dict[str, str] = {}
             if entity_vertices:
-                await self._client.add_vertices(entity_vertices)
+                entity_hg_ids = await self._client.add_vertices(entity_vertices)
+                entity_id_map = dict(zip(
+                    [e.name for e in result.entities], entity_hg_ids
+                ))
 
             # 9. Insert references edges (chunk -> entity)
             ref_edges = [
                 {
                     "label": "references",
-                    "outV": cid,
+                    "outV": chunk_id_map[cid],
                     "outVLabel": "chunk",
-                    "inV": e.name,
+                    "inV": entity_id_map[e.name],
                     "inVLabel": "entity",
                     "properties": {},
                 }
                 for e in result.entities
+                if e.name in entity_id_map
             ]
             if ref_edges:
                 await self._client.add_edges(ref_edges)
 
             # 10. Insert relation edges (entity -> entity)
+            # Use "related_to" as the universal edge label; store the LLM
+            # relation type as a "weight" property (we can't add new properties
+            # to HugeGraph schema dynamically due to async creation issues).
             rel_edges = [
                 {
-                    "label": r.relation_type,
-                    "outV": r.source,
+                    "label": "related_to",
+                    "outV": entity_id_map[r.source],
                     "outVLabel": "entity",
-                    "inV": r.target,
+                    "inV": entity_id_map[r.target],
                     "inVLabel": "entity",
-                    "properties": dict(r.properties) if r.properties else {},
+                    "properties": {
+                        "weight": dict(r.properties).get("weight", 1.0)
+                        if r.properties else 1.0,
+                    },
                 }
                 for r in result.relations
+                if r.source in entity_id_map and r.target in entity_id_map
             ]
             if rel_edges:
                 await self._client.add_edges(rel_edges)
@@ -267,28 +272,28 @@ class KGBuilder:
         return list(dict.fromkeys(col.to_pylist()))
 
     @staticmethod
-    def _build_next_chunk_edges(
-        chunk_ids: list[str],
+    def _build_next_chunk_edges_hg(
+        chunk_id_map: dict[str, str],
         doc_names: list[str],
         chunk_indices: list[int],
     ) -> list[dict[str, Any]]:
-        """Build next_chunk edges between sequential chunks in the same document."""
+        """Build next_chunk edges using actual HugeGraph vertex IDs."""
         edges: list[dict[str, Any]] = []
-        # Group chunks by document
         doc_chunks: dict[str, list[tuple[int, str]]] = {}
-        for cid, doc, idx in zip(chunk_ids, doc_names, chunk_indices, strict=True):
-            doc_chunks.setdefault(doc, []).append((idx, cid))
+        for logical_id, doc, idx in zip(chunk_id_map, doc_names, chunk_indices, strict=True):
+            hg_id = chunk_id_map[logical_id]
+            doc_chunks.setdefault(doc, []).append((idx, hg_id))
 
         for _doc, chunks in doc_chunks.items():
             sorted_chunks = sorted(chunks, key=lambda x: x[0])
             for i in range(len(sorted_chunks) - 1):
-                _, curr_id = sorted_chunks[i]
-                _, next_id = sorted_chunks[i + 1]
+                _, curr_hg_id = sorted_chunks[i]
+                _, next_hg_id = sorted_chunks[i + 1]
                 edges.append({
                     "label": "next_chunk",
-                    "outV": curr_id,
+                    "outV": curr_hg_id,
                     "outVLabel": "chunk",
-                    "inV": next_id,
+                    "inV": next_hg_id,
                     "inVLabel": "chunk",
                     "properties": {},
                 })

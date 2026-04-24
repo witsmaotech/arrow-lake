@@ -1,0 +1,15 @@
+Machine Learning Fundamentals
+
+Machine learning is a subset of artificial intelligence that focuses on building systems that learn from data. There are three main types of machine learning: supervised learning, unsupervised learning, and reinforcement learning.
+
+Supervised Learning uses labeled data to train models. Common algorithms include linear regression, decision trees, random forests, and neural networks. The model learns to map input features to output labels.
+
+Unsupervised Learning works with unlabeled data. Clustering algorithms like K-means, DBSCAN, and hierarchical clustering group similar data points together. Dimensionality reduction techniques like PCA and t-SNE help visualize high-dimensional data.
+
+Reinforcement Learning trains agents through rewards and penalties. Applications include game playing (AlphaGo), robotics, and autonomous driving.
+
+Deep Learning uses neural networks with many layers. Convolutional neural networks (CNNs) excel at image recognition. Recurrent neural networks (RNNs) and transformers are used for natural language processing. The transformer architecture, introduced in "Attention Is All You Need" (2017), revolutionized NLP and led to models like BERT, GPT, and their successors.
+
+Transfer learning allows pre-trained models to be fine-tuned for specific tasks, reducing the need for large labeled datasets. This has democratized access to powerful AI capabilities.
+
+Key evaluation metrics include accuracy, precision, recall, F1 score, AUC-ROC, and mean squared error. Cross-validation provides robust estimates of model performance.

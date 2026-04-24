@@ -12,7 +12,7 @@ class TestRateLimitConfig:
 
     def test_default_values(self) -> None:
         config = RateLimitConfig()
-        assert config.enabled is False
+        assert config.enabled is True
         assert config.default_requests_per_minute == 60
         assert config.default_burst == 10
         assert config.override_per_endpoint == {}
@@ -35,7 +35,7 @@ class TestRateLimitConfig:
         config = ArrowLakeConfig()
         assert hasattr(config, "rate_limit")
         assert isinstance(config.rate_limit, RateLimitConfig)
-        assert config.rate_limit.enabled is False
+        assert config.rate_limit.enabled is True
 
     def test_config_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Rate limit config can be set via environment variables."""

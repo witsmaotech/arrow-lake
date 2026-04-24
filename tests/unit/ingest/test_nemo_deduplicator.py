@@ -6,8 +6,16 @@ GPU MinHash path is only tested structurally (no GPU in CI).
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import pyarrow as pa
+
 from arrow_lake.quality.nemo_curator import NeMoDeduplicator
+
+
+def _force_cpu():
+    """Context manager to force CPU exact-dedup path."""
+    return patch.object(NeMoDeduplicator, "_try_gpu", return_value=False)
 
 
 class TestNeMoDeduplicatorInit:
@@ -36,7 +44,7 @@ class TestNeMoDeduplicatorInit:
 
 
 class TestNeMoDeduplicatorFilter:
-    """Test NeMoDeduplicator.deduplicate()."""
+    """Test NeMoDeduplicator.deduplicate() on the CPU exact path."""
 
     def test_empty_table(self) -> None:
         d = NeMoDeduplicator()
@@ -49,61 +57,44 @@ class TestNeMoDeduplicatorFilter:
         d = NeMoDeduplicator()
         table = pa.table({"other": [1, 2, 3]})
         unique, dup = d.deduplicate(table)
-        # When text column is missing, all rows are returned as unique
         assert unique.num_rows == 3
         assert dup.num_rows == 0
 
     def test_exact_dedup_removes_duplicates(self) -> None:
         d = NeMoDeduplicator()
-        table = pa.table(
-            {
-                "text_content": ["hello", "hello", "world"],
-            }
-        )
-        unique, dup = d.deduplicate(table)
+        table = pa.table({"text_content": ["hello", "hello", "world"]})
+        with _force_cpu():
+            unique, dup = d.deduplicate(table)
         assert unique.num_rows == 2
         assert dup.num_rows == 1
 
     def test_exact_dedup_preserves_first_occurrence(self) -> None:
         d = NeMoDeduplicator()
-        table = pa.table(
-            {
-                "text_content": ["A", "B", "A"],
-            }
-        )
-        unique, _dup = d.deduplicate(table)
+        table = pa.table({"text_content": ["A", "B", "A"]})
+        with _force_cpu():
+            unique, _dup = d.deduplicate(table)
         assert unique.num_rows == 2
         texts = unique.column("text_content").to_pylist()
-        assert texts == ["A", "B"]  # First occurrence preserved
+        assert texts == ["A", "B"]
 
     def test_all_unique(self) -> None:
         d = NeMoDeduplicator()
-        table = pa.table(
-            {
-                "text_content": ["alpha", "beta", "gamma", "delta"],
-            }
-        )
-        unique, dup = d.deduplicate(table)
+        table = pa.table({"text_content": ["alpha", "beta", "gamma", "delta"]})
+        with _force_cpu():
+            unique, dup = d.deduplicate(table)
         assert unique.num_rows == 4
         assert dup.num_rows == 0
 
     def test_none_values_preserved(self) -> None:
         d = NeMoDeduplicator()
-        table = pa.table(
-            {
-                "text_content": ["hello", None, "world"],
-            }
-        )
-        unique, _dup = d.deduplicate(table)
-        assert unique.num_rows >= 2  # None treated as non-duplicate
+        table = pa.table({"text_content": ["hello", None, "world"]})
+        with _force_cpu():
+            unique, _dup = d.deduplicate(table)
+        assert unique.num_rows >= 2
 
     def test_total_preserved(self) -> None:
-        """unique + dup should always equal original count."""
         d = NeMoDeduplicator()
-        table = pa.table(
-            {
-                "text_content": ["x", "x", "y", "z"],
-            }
-        )
-        unique, dup = d.deduplicate(table)
+        table = pa.table({"text_content": ["x", "x", "y", "z"]})
+        with _force_cpu():
+            unique, dup = d.deduplicate(table)
         assert unique.num_rows + dup.num_rows == table.num_rows

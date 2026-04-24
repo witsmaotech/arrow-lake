@@ -65,6 +65,7 @@ class ApiConfig(BaseModel):
     request_timeout_seconds: float = 300.0
     max_request_size_bytes: int = 100 * 1024 * 1024  # 100 MB
     auto_generate_request_id: bool = True
+    docs_enabled: bool = True
     api_key_rotation_days: int = 90
     security_headers_enabled: bool = True
     content_security_policy: str = ""
@@ -116,7 +117,7 @@ class RateLimitConfig(BaseModel):
         exempt_paths: 免除限制的路径前缀列表.
     """
 
-    enabled: bool = False
+    enabled: bool = True
     default_requests_per_minute: int = 60
     default_burst: int = 10
     override_per_endpoint: dict[str, int] = {}

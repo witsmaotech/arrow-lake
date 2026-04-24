@@ -116,6 +116,51 @@ class _LakeIngestMixin:
 
         return Ingestor(self._get_storage()).ingest_mixed(dataset_name, sources)
 
+    def ingest_documents(
+        self,
+        dataset_name: str,
+        pdf_paths: list[str],
+        *,
+        doc_config: Any = None,
+    ) -> IngestionReport:
+        """Ingest PDF documents: parse → chunk → write to Lance dataset.
+
+        Delegates to Ingestor.ingest_documents().
+
+        Args:
+            dataset_name: Target dataset name.
+            pdf_paths: List of PDF file paths.
+            doc_config: Optional DocumentConfig for parsing/chunking options.
+
+        Returns:
+            IngestionReport with per-document and total stats.
+        """
+        from arrow_lake.ingest.ingestor import Ingestor
+        from arrow_lake.ingest.ocr import TurboOcrClient
+        from arrow_lake.storage.blob_store import BlobStoreManager
+
+        sc = self._config.storage
+        blob_store = self._get_component(
+            "blob_store",
+            lambda: BlobStoreManager(config=sc),
+        )
+
+        ocr_endpoint = "http://localhost:8002"
+        if doc_config is not None:
+            ocr_endpoint = getattr(doc_config, "ocr_endpoint", ocr_endpoint)
+
+        ocr_client = self._get_component(
+            "ocr_client",
+            lambda: TurboOcrClient(endpoint=ocr_endpoint),
+        )
+
+        return Ingestor(self._get_storage()).ingest_documents(
+            dataset_name, pdf_paths,
+            doc_config=doc_config,
+            blob_store=blob_store,
+            ocr_client=ocr_client,
+        )
+
     def create_dataset(self, name: str, data: pa.Table) -> None:
         """Create a new dataset from an Arrow Table.
 

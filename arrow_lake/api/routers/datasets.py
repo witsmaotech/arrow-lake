@@ -10,6 +10,7 @@ from arrow_lake.api.models.common import _NAME_PATTERN, MessageResponse
 from arrow_lake.api.models.dataset import (
     DatasetInfo,
     DatasetListResponse,
+    IngestDocumentsRequest,
     IngestFilesRequest,
     IngestHttpRequest,
     IngestImagesRequest,
@@ -84,6 +85,20 @@ async def ingest_mixed(
 ) -> IngestResponse:
     """Ingest mixed-modality sources (files, URLs, images, videos)."""
     report = lake.ingest_mixed(name, req.sources)
+    return IngestResponse.from_report(report)
+
+
+@router.post("/{name}/ingest/documents", response_model=IngestResponse, status_code=201)
+async def ingest_documents(
+    name: str = Path(..., pattern=_NAME_PATTERN),
+    *,
+    req: IngestDocumentsRequest,
+    lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.EDITOR)),
+) -> IngestResponse:
+    """Ingest PDF documents: parse → chunk → embed → store."""
+    doc_config = lake._config.document if hasattr(lake, '_config') else None
+    report = lake.ingest_documents(name, req.pdf_paths, doc_config=doc_config)
     return IngestResponse.from_report(report)
 
 

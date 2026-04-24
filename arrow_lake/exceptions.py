@@ -183,6 +183,14 @@ class ErrorCode(StrEnum):
     AUTH_INSUFFICIENT_PERMISSIONS = "AUTH_INSUFFICIENT_PERMISSIONS"
     AUTH_API_KEY_ROTATION_REQUIRED = "AUTH_API_KEY_ROTATION_REQUIRED"
 
+    # Document processing errors (v1.2)
+    DOCUMENT_PARSE_FAILED = "DOCUMENT_PARSE_FAILED"
+    DOCUMENT_OCR_FAILED = "DOCUMENT_OCR_FAILED"
+    DOCUMENT_CHUNK_FAILED = "DOCUMENT_CHUNK_FAILED"
+    DOCUMENT_UPLOAD_FAILED = "DOCUMENT_UPLOAD_FAILED"
+    DOCUMENT_UNSUPPORTED_FORMAT = "DOCUMENT_UNSUPPORTED_FORMAT"
+    DOCUMENT_TOO_LARGE = "DOCUMENT_TOO_LARGE"
+
 
 class ArrowLakeError(Exception):
     """Base exception for all Arrow Lake errors.
@@ -279,3 +287,7 @@ class RAGError(ArrowLakeError):
 
 class KGError(ArrowLakeError):
     """Errors related to knowledge graph operations (M3)."""
+
+
+class DocumentError(ArrowLakeError):
+    """Errors related to document processing, parsing, and ingestion (v1.2)."""

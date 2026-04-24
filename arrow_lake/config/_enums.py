@@ -92,3 +92,30 @@ class AuthMode(StrEnum):
     API_KEY = "api_key"
     JWT = "jwt"
     BOTH = "both"
+
+
+class OcrBackend(StrEnum):
+    """OCR engine backends for document processing."""
+
+    KREUZBERG = "kreuzberg"
+    TURBO_OCR = "turbo_ocr"
+
+
+class PdfParseMode(StrEnum):
+    """PDF parsing modes."""
+
+    TEXT = "text"
+    OCR = "ocr"
+    AUTO = "auto"
+
+
+class ChunkStrategy(StrEnum):
+    """Document chunking strategies."""
+
+    PAGE = "page"
+    PARAGRAPH = "paragraph"
+    RECURSIVE = "recursive"
+    SEMCHUNK = "semchunk"
+    CHONKIE_TOKEN = "chonkie_token"
+    CHONKIE_SEMANTIC = "chonkie_semantic"
+    CHONKIE_SDPM = "chonkie_sdpm"

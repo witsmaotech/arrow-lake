@@ -176,7 +176,7 @@ class CLIPImageEncoder:
                     embeddings[idx] = batch_embeddings[j].tolist()
                     embedded_count += 1
 
-            except Exception:
+            except (RuntimeError, ValueError, OSError):
                 logger.exception(
                     "image_encoder_batch_failed",
                     batch_start=batch_start,

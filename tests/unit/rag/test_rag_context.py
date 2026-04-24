@@ -227,3 +227,18 @@ class TestTableToChunks:
 
         chunks = table_to_chunks(table, dataset_name="empty")
         assert len(chunks) == 0
+
+    def test_missing_row_id_fallback(self) -> None:
+        """When row_id column is absent, fallback to range index."""
+        import pyarrow as pa
+
+        table = pa.table({
+            "text": ["Doc A", "Doc B", "Doc C"],
+            "_score": [0.9, 0.8, 0.7],
+        })
+
+        chunks = table_to_chunks(table, dataset_name="fts_results", score_column="_score")
+        assert len(chunks) == 3
+        assert chunks[0].row_id == "0"
+        assert chunks[1].row_id == "1"
+        assert chunks[2].row_id == "2"

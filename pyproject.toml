@@ -1,6 +1,6 @@
 [project]
 name = "arrow-lake"
-version = "1.0.0"
+version = "1.2.0"
 description = "Unified multimodal data lakehouse — Lance + Daft + Ray"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -18,6 +18,7 @@ dependencies = [
     "metaflow-ray==0.1.4",
     # Extension layer — exact pins from Story 1.2 Spike
     "lancedb==0.30.2",
+    "pylance>=0.21.0",
     "duckdb==1.5.2",
     # Data models & config
     "pydantic>=2.10",
@@ -31,7 +32,6 @@ dependencies = [
     "tenacity>=9.0",
     # Object storage
     "boto3>=1.35",
-    "pylance>=4.0.0",
     # HTTP client (Story 3.2)
     "httpx>=0.28",
     # Multimodal ingestion (Stories 3.3-3.4)
@@ -49,6 +49,8 @@ dependencies = [
     "python-multipart>=0.0.18",
     "respx>=0.22",
     "slowapi>=0.1.9",
+    # Deduplication (NeMo Curator MinHash fallback)
+    "datasketch>=1.6",
 ]
 
 [project.scripts]
@@ -56,12 +58,17 @@ arrow-lake = "arrow_lake.cli:main"
 
 [project.optional-dependencies]
 jupyter = ["jupyterlab>=4.0", "ipywidgets>=8.0"]
+fts = ["tantivy>=0.20.0", "jieba>=0.42"]
 rag = ["openai>=1.50", "anthropic>=0.40", "jinja2>=3.1"]
 nemo-curator = ["nemo-curator>=0.6"]
 dedup = ["imagehash>=4.3"]
 modelscope = ["modelscope>=1.18"]
 otel = ["opentelemetry-api>=1.24", "opentelemetry-sdk>=1.24", "opentelemetry-exporter-otlp-proto-grpc>=1.24"]
 jwt = ["PyJWT>=2.9"]
+document = ["kreuzberg>=0.1"]
+chunking-advanced = ["semchunk>=2.0"]
+chunking-semantic = ["chonkie>=1.0", "sentence-transformers>=3.3"]
+chunking-full = ["semchunk>=2.0", "chonkie>=1.0", "sentence-transformers>=3.3"]
 
 [dependency-groups]
 dev = [
@@ -130,12 +137,16 @@ module = [
     "av.*",
     "torch.*",
     "sentence_transformers.*",
+    "kreuzberg.*",
+    "jieba.*",
+    "semchunk.*",
+    "chonkie.*",
 ]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-asyncio_mode = "strict"
+asyncio_mode = "auto"
 pythonpath = ["."]
 markers = [
     "integration: Integration tests (require Docker Compose)",

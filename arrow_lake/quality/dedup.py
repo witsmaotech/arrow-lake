@@ -306,7 +306,7 @@ class ContentDeduplicator:
             return 0
         try:
             img = PILImage.open(io.BytesIO(image_bytes))
-            return int(imagehash.phash_simple_hash(img))
+            return int(str(imagehash.phash(img)), 16)
         except (ValueError, OSError) as exc:
             raise QualityError(
                 error_code=ErrorCode.DEDUP_HASH_COMPUTATION_FAILED,

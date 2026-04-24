@@ -397,7 +397,7 @@ def demo(base_uri: str, no_cleanup: bool) -> None:
                 fts_table.add_row(str(rank + 1), row_id, f"{score:.4f}")
 
             console.print(fts_table)
-        except Exception as exc:
+        except (ValueError, KeyError, OSError, RuntimeError) as exc:
             console.print(f"   [yellow]FTS skipped[/yellow]: {exc}")
         console.print()
 

@@ -11,6 +11,7 @@ import re
 __all__ = [
     "DANGEROUS_SQL_KEYWORDS_RE",
     "SAFE_IDENTIFIER_RE",
+    "escape_sql_literal",
     "validate_identifier",
     "validate_sql_safety",
     "validate_where_clause",
@@ -38,6 +39,9 @@ DANGEROUS_SQL_KEYWORDS_RE = re.compile(
 
 SAFE_IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_-]*$")
 
+_SQL_ESCAPE_RE = re.compile(r"('|\\)")
+_MAX_LITERAL_LENGTH = 10_000
+
 
 def validate_sql_safety(sql: str) -> None:
     """Validate that a SQL string contains no dangerous keywords.
@@ -52,6 +56,30 @@ def validate_sql_safety(sql: str) -> None:
         raise ValueError(f"Dangerous SQL keyword detected: {sql}")
     if ";" in sql:
         raise ValueError(f"Semicolons not allowed in SQL: {sql}")
+
+
+def escape_sql_literal(value: str, max_length: int = _MAX_LITERAL_LENGTH) -> str:
+    """Escape a string for safe embedding in a SQL single-quoted literal.
+
+    Handles single quotes and backslashes — the two characters that can
+    break out of a DuckDB string literal.  Also truncates excessively long
+    values to prevent abuse.
+
+    Args:
+        value: The string to escape.
+        max_length: Maximum allowed length (default 10 000).
+
+    Returns:
+        The escaped string (without surrounding quotes).
+
+    Raises:
+        ValueError: If the value exceeds *max_length* or is not a string.
+    """
+    if not isinstance(value, str):
+        raise ValueError(f"SQL literal must be a string, got {type(value).__name__}")
+    if len(value) > max_length:
+        raise ValueError(f"SQL literal too long ({len(value)} > {max_length})")
+    return _SQL_ESCAPE_RE.sub(r"\\\1", value)
 
 
 def validate_identifier(name: str) -> None:

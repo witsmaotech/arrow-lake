@@ -67,11 +67,13 @@ class HybridSearchBridge:
         config: HybridSearchConfig | None = None,
         storage_config: StorageConfig | None = None,
         lance_scan_mode: str = "auto",
+        session_manager: Any = None,
     ) -> None:
         self._storage = storage
         self._storage_config = storage_config
         self._lance_scan_mode = lance_scan_mode
         self._config = config or HybridSearchConfig()
+        self._session_manager = session_manager
 
     def search(
         self,
@@ -226,16 +228,16 @@ class HybridSearchBridge:
             )
 
         uri = self._storage.dataset_uri(dataset_name)
-        safe_uri = uri.replace("'", "''")
 
-        from arrow_lake.validation import validate_identifier
+        from arrow_lake.validation import escape_sql_literal, validate_identifier
 
+        safe_uri = escape_sql_literal(uri)
         validate_identifier(vector_column)
         if fts_column is not None:
             validate_identifier(fts_column)
 
         vec_list = "[" + ", ".join(str(v) for v in query_vector) + "]"
-        safe_text = query_text.replace("'", "''")
+        safe_text = escape_sql_literal(query_text)
         safe_fts = fts_column if fts_column else vector_column
 
         sql = (
@@ -255,11 +257,21 @@ class HybridSearchBridge:
             f") LIMIT {top_k}"
         )
 
-        with create_duckdb_session(storage_config=self._storage_config) as conn:
-            reader = conn.execute(sql).arrow()
-            if hasattr(reader, "read_all"):
-                return reader.read_all()
-            return reader
+        if self._session_manager is not None:
+            managed = self._session_manager.acquire()
+            try:
+                reader = managed.conn.execute(sql).arrow()
+                if hasattr(reader, "read_all"):
+                    return reader.read_all()
+                return reader
+            finally:
+                managed.release()
+        else:
+            with create_duckdb_session(storage_config=self._storage_config) as conn:
+                reader = conn.execute(sql).arrow()
+                if hasattr(reader, "read_all"):
+                    return reader.read_all()
+                return reader
 
     def _search_via_sub_bridges(
         self,

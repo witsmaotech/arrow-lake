@@ -54,6 +54,9 @@ class FullTextSearchConfig(BaseModel):
         stem: Whether to apply stemming during tokenization.
         remove_stop_words: Whether to remove stop words.
         lower_case: Whether to lowercase tokens.
+        tokenizer_type: Tokenization strategy — "default" (lancedb built-in)
+            or "jieba" (jieba CJK segmentation, recommended for Chinese).
+        jieba_user_dict: Path to jieba custom dictionary file.
     """
 
     default_top_k: int = 10
@@ -61,12 +64,21 @@ class FullTextSearchConfig(BaseModel):
     stem: bool = True
     remove_stop_words: bool = True
     lower_case: bool = True
+    tokenizer_type: str = "jieba"
+    jieba_user_dict: str | None = None
 
     @field_validator("default_top_k")
     @classmethod
     def validate_top_k(cls, v: int) -> int:
         if v < 1:
             raise ValueError(f"default_top_k must be >= 1, got {v}")
+        return v
+
+    @field_validator("tokenizer_type")
+    @classmethod
+    def validate_tokenizer_type(cls, v: str) -> str:
+        if v not in ("default", "jieba"):
+            raise ValueError(f"tokenizer_type must be 'default' or 'jieba', got '{v}'")
         return v
 
 

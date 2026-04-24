@@ -146,16 +146,16 @@ async def test_extract_filters_by_confidence(mock_llm: object) -> None:
 
 @pytest.mark.asyncio
 async def test_extract_json_parse_error(mock_llm: object) -> None:
-    """Invalid JSON from LLM should raise KGError."""
+    """Invalid JSON from LLM should return empty result (graceful degradation)."""
     mock_llm.generate.return_value = LLMResponse(
         content="not valid json {{{",
         model="test-model",
         provider="test",
     )
     extractor = EntityExtractor(mock_llm)
-    with pytest.raises(KGError) as exc_info:
-        await extractor.extract("some text")
-    assert exc_info.value.error_code == ErrorCode.KG_EXTRACT_FAILED
+    result = await extractor.extract("some text")
+    assert len(result.entities) == 0
+    assert len(result.relations) == 0
 
 
 # ---------------------------------------------------------------------------

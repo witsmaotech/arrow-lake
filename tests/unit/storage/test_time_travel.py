@@ -12,6 +12,9 @@ from pathlib import Path
 
 import pyarrow as pa
 import pytest
+
+pytest.importorskip("lance")
+
 from arrow_lake.exceptions import StorageError
 from arrow_lake.ingest.storage import LanceStorageManager
 

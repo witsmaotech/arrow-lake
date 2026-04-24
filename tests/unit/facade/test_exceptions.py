@@ -54,6 +54,7 @@ class TestErrorCode:
             "RAG",
             "KG",
             "AUTH",
+            "DOCUMENT",
         }
         actual_categories = {code.name.split("_")[0] for code in ErrorCode}
         assert actual_categories == expected_categories

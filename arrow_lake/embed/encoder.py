@@ -66,10 +66,12 @@ class LocalEmbeddingEncoder:
         model_name: str = "Qwen/Qwen3-Embedding-0.6B",
         model_source: str = "huggingface",
         batch_size: int = 128,
+        expected_dim: int = 0,
     ) -> None:
         self.model_name = model_name
         self.model_source = model_source
         self.batch_size = batch_size
+        self._expected_dim = expected_dim
         self._model: Any = None
         self._embedding_dim: int = 0
 
@@ -86,7 +88,7 @@ class LocalEmbeddingEncoder:
 
             if torch.cuda.is_available():
                 device = "cuda"
-        except Exception:
+        except (ImportError, OSError, RuntimeError):
             pass
 
         if self.model_source == "modelscope":
@@ -96,7 +98,26 @@ class LocalEmbeddingEncoder:
             self._model = SentenceTransformer(model_path, device=device)
         else:
             self._model = SentenceTransformer(self.model_name, device=device)
-        self._embedding_dim = self._model.get_embedding_dimension()
+        dim_getter = getattr(
+            self._model, "get_sentence_embedding_dimension",
+            getattr(self._model, "get_embedding_dimension", None),
+        )
+        if dim_getter is None:
+            raise EmbeddingError(
+                error_code=ErrorCode.EMBEDDING_MODEL_ERROR,
+                message=f"SentenceTransformer model '{self.model_name}' has no dimension introspection method",
+            )
+        self._embedding_dim = dim_getter()
+
+        if self._expected_dim > 0 and self._embedding_dim != self._expected_dim:
+            raise EmbeddingError(
+                error_code=ErrorCode.EMBEDDING_MODEL_ERROR,
+                message=(
+                    f"Embedding dimension mismatch: model '{self.model_name}' produces "
+                    f"{self._embedding_dim}D vectors, expected {self._expected_dim}D"
+                ),
+            )
+
         return self._model
 
     def encode_column(

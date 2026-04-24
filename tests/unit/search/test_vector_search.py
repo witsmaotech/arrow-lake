@@ -16,6 +16,9 @@ from unittest.mock import MagicMock
 
 import pyarrow as pa
 import pytest
+
+pytest.importorskip("lancedb")
+
 from arrow_lake.exceptions import QueryError
 from arrow_lake.query.vector import (
     IndexInfo,
@@ -29,8 +32,10 @@ from arrow_lake.query.vector import (
 
 
 def _make_mock_storage() -> MagicMock:
-    """Create a mock LanceStorageManager."""
-    return MagicMock()
+    """Create a mock LanceStorageManager (no dataset_uri → sub-bridge path)."""
+    storage = MagicMock()
+    del storage.dataset_uri
+    return storage
 
 
 def _make_mock_lance_table(

@@ -12,6 +12,11 @@ from arrow_lake.config._enums import (
     SchemaValidationMode,
 )
 
+QWEN3_VL_EMBEDDING_MODELS: dict[str, dict[str, object]] = {
+    "Qwen/Qwen3-VL-Embedding-2B": {"dim": 2048, "multimodal": True},
+    "Qwen/Qwen3-VL-Embedding-8B": {"dim": 4096, "multimodal": True},
+}
+
 
 class MediaConfig(BaseModel):
     """Media processing configuration (Stories 3.3, 3.4).
@@ -30,7 +35,7 @@ class MediaConfig(BaseModel):
 
 
 class EmbeddingConfig(BaseModel):
-    """Text embedding configuration (Stories 4.1, 4.3).
+    """Text embedding configuration (Stories 4.1, 4.3, v1.2).
 
     Attributes:
         model: HuggingFace model name for local embedding.
@@ -39,6 +44,8 @@ class EmbeddingConfig(BaseModel):
         backend: Embedding backend — "local", "openai", or "ray_serve".
         api_base: Base URL for external embedding API.
         api_key: API key for external embedding API.
+        expected_dim: Expected embedding dimension (0 = auto-detect from model).
+        validate_dimension: Whether to validate embedding dimension after model load.
     """
 
     model: str = "Qwen/Qwen3-Embedding-0.6B"
@@ -47,6 +54,24 @@ class EmbeddingConfig(BaseModel):
     backend: EmbeddingBackend = EmbeddingBackend.LOCAL
     api_base: str = ""
     api_key: str = ""
+    expected_dim: int = 0
+    validate_dimension: bool = True
+
+    @property
+    def known_dimension(self) -> int:
+        """Return known dimension for whitelisted models, or 0 if unknown."""
+        info = QWEN3_VL_EMBEDDING_MODELS.get(self.model)
+        if info:
+            return info["dim"]
+        return 0
+
+    @property
+    def is_multimodal(self) -> bool:
+        """Check if the configured model supports multimodal input."""
+        info = QWEN3_VL_EMBEDDING_MODELS.get(self.model)
+        if info:
+            return bool(info.get("multimodal"))
+        return False
 
 
 class DecodeConfig(BaseModel):

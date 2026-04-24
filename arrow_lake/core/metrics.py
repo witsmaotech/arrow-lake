@@ -204,6 +204,18 @@ duckdb_pool_slow_queries: Counter = Counter(
     registry=REGISTRY,
 )
 
+duckdb_pool_health_checks_total: Counter = Counter(
+    "arrow_lake_duckdb_pool_health_checks_total",
+    "Total number of DuckDB connection health checks performed.",
+    registry=REGISTRY,
+)
+
+duckdb_pool_evicted_connections_total: Counter = Counter(
+    "arrow_lake_duckdb_pool_evicted_connections_total",
+    "Total number of DuckDB connections evicted (idle timeout or zombie).",
+    registry=REGISTRY,
+)
+
 # --- Metrics toggle (thread-safe via Event) ---
 
 _metrics_enabled = threading.Event()

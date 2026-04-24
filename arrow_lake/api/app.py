@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -44,6 +45,38 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     yield
 
 
+logger = logging.getLogger(__name__)
+
+
+def _validate_auth_config(config: ArrowLakeConfig) -> None:
+    """Reject startup when API server is enabled without authentication configured."""
+    auth_mode = config.auth.auth_mode
+    api_key_set = bool(config.api.api_key)
+    jwt_set = bool(config.auth.jwt_secret_key)
+
+    if auth_mode == "api_key" and not api_key_set:
+        raise ValueError(
+            "API server enabled with auth_mode='api_key' but api_key is empty. "
+            "Set api.api_key in config or disable the API server."
+        )
+    if auth_mode == "jwt" and not jwt_set:
+        raise ValueError(
+            "API server enabled with auth_mode='jwt' but jwt_secret_key is empty. "
+            "Set auth.jwt_secret_key in config or disable the API server."
+        )
+    if auth_mode == "both" and not (api_key_set or jwt_set):
+        raise ValueError(
+            "API server enabled with auth_mode='both' but both api_key and jwt_secret_key are empty. "
+            "Configure at least one authentication method."
+        )
+
+    if getattr(config, "audit", None) and config.audit.enabled and not config.audit.hmac_secret_key:
+        raise ValueError(
+            "Audit trail enabled but hmac_secret_key is empty. "
+            "Set audit.hmac_secret_key to a strong random value."
+        )
+
+
 def create_app(config: ArrowLakeConfig | None = None) -> FastAPI:
     """Create and configure the Arrow Lake FastAPI application.
 
@@ -56,13 +89,18 @@ def create_app(config: ArrowLakeConfig | None = None) -> FastAPI:
     if config is None:
         config = get_config()
 
+    docs_url = "/docs" if config.api.docs_enabled else None
+    redoc_url = "/redoc" if config.api.docs_enabled else None
+    openapi_url = "/openapi.json" if config.api.docs_enabled else None
+
     app = FastAPI(
         title="Arrow Lake REST API",
         description="Unified multimodal data lakehouse REST API",
         version=__version__,
         lifespan=lifespan,
-        docs_url="/docs",
-        redoc_url="/redoc",
+        docs_url=docs_url,
+        redoc_url=redoc_url,
+        openapi_url=openapi_url,
         openapi_tags=[
             {"name": "system", "description": "Health, metrics, OpenAPI spec"},
             {"name": "datasets", "description": "Dataset management & ingestion"},
@@ -82,13 +120,17 @@ def create_app(config: ArrowLakeConfig | None = None) -> FastAPI:
     # Store config for lifespan access
     app.state.config = config
 
-    # CORS
+    # --- Auth enforcement ---
+    if config.api.enabled:
+        _validate_auth_config(config)
+
+    # CORS — restrict methods and headers to safe defaults
     app.add_middleware(
         CORSMiddleware,
         allow_origins=config.api.cors_origins,
         allow_credentials=False,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "X-API-Key", "X-Request-ID"],
     )
 
     # Exception handlers (before middleware to catch errors)
@@ -129,6 +171,7 @@ def create_app(config: ArrowLakeConfig | None = None) -> FastAPI:
             ApiKeyMiddleware,
             api_key=config.api.api_key,
             header_name=config.api.api_key_header,
+            docs_enabled=config.api.docs_enabled,
         )
 
     # --- Pure ASGI middleware (registered via @app.middleware) ---
@@ -159,7 +202,10 @@ def create_app(config: ArrowLakeConfig | None = None) -> FastAPI:
 
         @app.middleware("http")
         async def jwt_auth_middleware(request, call_next):
-            return await jwt_auth_middleware_fn(request, call_next, auth_service=svc)
+            return await jwt_auth_middleware_fn(
+                request, call_next, auth_service=svc,
+                docs_enabled=config.api.docs_enabled,
+            )
 
     app.include_router(system_router)
     app.include_router(datasets_router)

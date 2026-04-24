@@ -20,14 +20,14 @@ def _make_app_with_key(api_key: str) -> "FastAPI":
 
 
 @pytest.mark.asyncio
-async def test_no_api_key_configured_allows_all() -> None:
-    """When api_key is empty, all requests pass through."""
+async def test_no_api_key_configured_rejects_protected() -> None:
+    """When api_key is empty, protected endpoints are rejected (defense-in-depth)."""
     app = _make_app_with_key("")
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         resp = await ac.post("/api/v1/datasets/test/ingest", json={"file_paths": ["a.csv"]})
-        # Will 404 (endpoint not yet implemented) but NOT 401
-        assert resp.status_code != 401
+        assert resp.status_code == 401
+        assert "not configured" in resp.json()["message"]
 
 
 @pytest.mark.asyncio

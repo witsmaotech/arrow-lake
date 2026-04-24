@@ -7,6 +7,7 @@ Uses Daft for file reading and LanceStorageManager for writing.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar
@@ -324,6 +325,134 @@ class Ingestor:
 
         return IngestionReport(
             sources=tuple(report_sources),
+            total_rows=total_rows,
+            total_files=total_files,
+        )
+
+    def ingest_documents(
+        self,
+        dataset_name: str,
+        pdf_paths: list[str],
+        *,
+        doc_config: Any = None,
+        blob_store: Any = None,
+        ocr_client: Any = None,
+    ) -> IngestionReport:
+        """Ingest PDF documents: parse → chunk → write to Lance dataset.
+
+        Data flow:
+        1. Parse document (Kreuzberg / TurboOCR)
+        2. Upload raw PDF to BlobStore (optional)
+        3. Chunk extracted text
+        4. Write chunks as Lance rows with metadata
+
+        Args:
+            dataset_name: Target dataset name.
+            pdf_paths: List of PDF file paths.
+            doc_config: DocumentConfig for parsing/chunking options.
+            blob_store: BlobStoreManager for raw PDF storage (None = skip upload).
+            ocr_client: TurboOcrClient for scanned PDF OCR (None = Kreuzberg only).
+
+        Returns:
+            IngestionReport with per-document and total stats.
+
+        Raises:
+            DocumentError: If document parsing fails.
+            IngestError: If dataset write fails.
+        """
+        from arrow_lake.ingest.chunker import DocumentChunker
+        from arrow_lake.ingest.document import DocumentParser
+        from arrow_lake.exceptions import DocumentError, ErrorCode as DocErrorCode
+
+        if doc_config is not None:
+            from arrow_lake.config._enums import ChunkStrategy
+            chunker = DocumentChunker(
+                strategy=doc_config.chunk_strategy,
+                chunk_size=doc_config.chunk_size,
+                chunk_overlap=doc_config.chunk_overlap,
+                tokenizer=doc_config.chunk_tokenizer,
+                embedding_model=doc_config.semantic_embedding_model,
+                similarity_threshold=doc_config.semantic_similarity_threshold,
+                min_chunk_size=doc_config.semantic_min_chunk_size,
+            )
+            parser = DocumentParser(doc_config)
+        else:
+            chunker = DocumentChunker()
+            parser = DocumentParser()
+
+        sources: list[IngestionSource] = []
+        total_rows = 0
+        total_files = 0
+        first_table = True
+
+        for pdf_path_str in pdf_paths:
+            pdf_path = Path(pdf_path_str)
+
+            # Validate file size
+            max_size_mb = doc_config.max_file_size_mb if doc_config else 100
+            file_size = pdf_path.stat().st_size
+            if file_size > max_size_mb * 1024 * 1024:
+                raise DocumentError(
+                    error_code=DocErrorCode.DOCUMENT_TOO_LARGE,
+                    message=f"File '{pdf_path}' ({file_size} bytes) exceeds limit ({max_size_mb}MB)",
+                )
+
+            # Parse document
+            parsed = parser.parse(pdf_path, ocr_client=ocr_client)
+
+            # Upload raw PDF to BlobStore
+            blob_key = ""
+            if blob_store is not None and (doc_config is None or doc_config.store_raw_pdf):
+                prefix = doc_config.blob_prefix if doc_config else "documents/"
+                safe_stem = pdf_path.stem.replace("/", "_").replace("\\", "_")
+                blob_key = f"{prefix}{safe_stem}/{pdf_path.name}"
+                try:
+                    blob_store.upload(blob_key, pdf_path.read_bytes())
+                except OSError as exc:
+                    raise DocumentError(
+                        error_code=DocErrorCode.DOCUMENT_UPLOAD_FAILED,
+                        message=f"Failed to upload '{pdf_path}' to blob store: {exc}",
+                    ) from exc
+
+            # Chunk
+            chunks = chunker.chunk(list(parsed.pages))
+
+            if not chunks:
+                sources.append(IngestionSource(
+                    path=str(pdf_path),
+                    row_count=0,
+                    file_count=1,
+                ))
+                total_files += 1
+                continue
+
+            # Build Arrow table from chunks
+            doc_id = hashlib.sha256(str(pdf_path.resolve()).encode()).hexdigest()[:16]
+            rows = {
+                "text": [c.text for c in chunks],
+                "page_number": [c.page_number for c in chunks],
+                "chunk_index": [c.chunk_index for c in chunks],
+                "document_id": [doc_id] * len(chunks),
+                "blob_key": [blob_key] * len(chunks),
+            }
+            table = pa.table(rows)
+
+            if first_table:
+                self._manager.create_dataset(dataset_name, table)
+                first_table = False
+            else:
+                self._manager.append_dataset(dataset_name, table)
+
+            sources.append(IngestionSource(
+                path=str(pdf_path),
+                row_count=len(chunks),
+                file_count=1,
+            ))
+            total_rows += len(chunks)
+            total_files += 1
+
+        return IngestionReport(
+            sources=tuple(sources),
             total_rows=total_rows,
             total_files=total_files,
         )

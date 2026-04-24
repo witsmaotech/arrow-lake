@@ -36,6 +36,7 @@ class _LakeQueryMixin:
             lambda: MetadataSearchBridge(
                 self._get_storage(),
                 storage_config=self._config.storage,
+                session_manager=self.get_session_manager(),
             ),
         )
         with _QueryTimer("metadata_query"):
@@ -71,6 +72,7 @@ class _LakeQueryMixin:
                 self._get_storage(),
                 config=self._config.olap,
                 storage_config=self._config.storage,
+                session_manager=self.get_session_manager(),
             ),
         )
         from arrow_lake.api.telemetry import get_tracer
@@ -138,6 +140,7 @@ class _LakeQueryMixin:
                 self._get_storage(),
                 config=self._config.olap,
                 storage_config=self._config.storage,
+                session_manager=self.get_session_manager(),
             ),
         )
         with _QueryTimer("materialize"):
@@ -166,6 +169,7 @@ class _LakeQueryMixin:
                 self._get_storage(),
                 config=self._config.olap,
                 storage_config=self._config.storage,
+                session_manager=self.get_session_manager(),
             ),
         )
         return bridge.cleanup_materialized(ttl_days=ttl_days)

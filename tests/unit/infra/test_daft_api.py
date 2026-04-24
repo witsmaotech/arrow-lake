@@ -14,6 +14,9 @@ from typing import Any
 
 import pyarrow as pa
 import pytest
+
+pytest.importorskip("daft")
+
 from arrow_lake.query.daft_api import DaftQueryEngine, LazyDaftFrame
 
 

@@ -1,0 +1,508 @@
+"""Unit tests for document processing pipeline."""
+
+import json
+import sys
+import textwrap
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from arrow_lake.config._enums import ChunkStrategy, OcrBackend, PdfParseMode
+from arrow_lake.config.document import DocumentConfig
+from arrow_lake.exceptions import DocumentError, ErrorCode
+from arrow_lake.ingest.chunker import Chunk, DocumentChunker, _split_by_paragraph, _split_recursive
+
+# ---------------------------------------------------------------------------
+# Mock kreuzberg module (not installed in CI / dev)
+# ---------------------------------------------------------------------------
+# Provide lightweight stand-ins so arrow_lake.ingest.document can import and
+# the helper functions (_build_extraction_config, _result_to_pages) work
+# correctly under test.
+
+
+class _FakeOcrConfig:
+    def __init__(self, *, backend: str = "paddleocr", language: str = "eng"):
+        self.backend = backend
+        self.language = language
+
+
+class _FakePageConfig:
+    def __init__(self, *, extract_pages: bool = False):
+        self.extract_pages = extract_pages
+
+
+class _FakeExtractionConfig:
+    def __init__(
+        self,
+        *,
+        ocr: _FakeOcrConfig | None = None,
+        force_ocr: bool = False,
+        pages: _FakePageConfig | None = None,
+    ):
+        self.ocr = ocr
+        self.force_ocr = force_ocr
+        self.pages = pages
+
+
+class _FakeKreuzbergModule:
+    ExtractionConfig = _FakeExtractionConfig
+    OcrConfig = _FakeOcrConfig
+    PageConfig = _FakePageConfig
+    extract_file_sync = MagicMock()
+
+
+sys.modules.setdefault("kreuzberg", _FakeKreuzbergModule())
+
+
+# ---------------------------------------------------------------------------
+# Chunker tests
+# ---------------------------------------------------------------------------
+
+
+class TestSplitByParagraph:
+    def test_splits_on_double_newline(self):
+        text = "First paragraph\n\nSecond paragraph\n\nThird paragraph"
+        result = _split_by_paragraph(text)
+        assert len(result) == 3
+        assert result[0] == "First paragraph"
+
+    def test_strips_whitespace(self):
+        text = "  Para 1  \n\n  Para 2  "
+        result = _split_by_paragraph(text)
+        assert result[0] == "Para 1"
+        assert result[1] == "Para 2"
+
+    def test_empty_text(self):
+        assert _split_by_paragraph("") == []
+
+    def test_single_paragraph(self):
+        result = _split_by_paragraph("Just one paragraph")
+        assert result == ["Just one paragraph"]
+
+
+class TestSplitRecursive:
+    def test_short_text_single_chunk(self):
+        result = _split_recursive("Short text", size=100, overlap=0)
+        assert len(result) == 1
+        assert result[0] == "Short text"
+
+    def test_long_text_splits(self):
+        text = "This is sentence one. This is sentence two. " * 20
+        result = _split_recursive(text, size=50, overlap=0)
+        assert len(result) > 1
+
+    def test_overlap(self):
+        text = "Word " * 100
+        result = _split_recursive(text, size=50, overlap=10)
+        for i in range(len(result) - 1):
+            assert len(result[i]) > 0
+
+
+class TestDocumentChunker:
+    def test_page_strategy(self):
+        pages = [(1, "Page one content"), (2, "Page two content")]
+        chunker = DocumentChunker(strategy=ChunkStrategy.PAGE)
+        chunks = chunker.chunk(pages)
+        assert len(chunks) == 2
+        assert chunks[0].text == "Page one content"
+        assert chunks[0].page_number == 1
+
+    def test_paragraph_strategy(self):
+        pages = [(1, "Para one\n\nPara two\n\nPara three")]
+        chunker = DocumentChunker(strategy=ChunkStrategy.PARAGRAPH)
+        chunks = chunker.chunk(pages)
+        assert len(chunks) == 3
+
+    def test_recursive_strategy(self):
+        text = "This is sentence one. This is sentence two. " * 20
+        pages = [(1, text)]
+        chunker = DocumentChunker(strategy=ChunkStrategy.RECURSIVE, chunk_size=100)
+        chunks = chunker.chunk(pages)
+        assert len(chunks) > 1
+
+    def test_empty_pages(self):
+        chunker = DocumentChunker()
+        chunks = chunker.chunk([])
+        assert chunks == []
+
+    def test_skips_blank_pages(self):
+        pages = [(1, ""), (2, "  "), (3, "Content here")]
+        chunker = DocumentChunker(strategy=ChunkStrategy.PAGE)
+        chunks = chunker.chunk(pages)
+        assert len(chunks) == 1
+        assert chunks[0].page_number == 3
+
+    def test_sequential_chunk_indices(self):
+        pages = [(1, "Para one\n\nPara two")]
+        chunker = DocumentChunker(strategy=ChunkStrategy.PARAGRAPH)
+        chunks = chunker.chunk(pages)
+        for i, c in enumerate(chunks):
+            assert c.chunk_index == i
+
+    def test_metadata_none_by_default(self):
+        chunker = DocumentChunker()
+        chunks = chunker.chunk([(1, "Hello")])
+        assert chunks[0].metadata is None
+
+
+# ---------------------------------------------------------------------------
+# DocumentConfig tests
+# ---------------------------------------------------------------------------
+
+
+class TestDocumentConfig:
+    def test_defaults(self):
+        config = DocumentConfig()
+        assert config.pdf_parse_mode == PdfParseMode.AUTO
+        assert config.ocr_backend == OcrBackend.KREUZBERG
+        assert config.kreuzberg_ocr_backend == "paddleocr"
+        assert config.kreuzberg_language == "eng"
+        assert config.kreuzberg_force_ocr is False
+        assert config.chunk_strategy == ChunkStrategy.RECURSIVE
+        assert config.chunk_size == 512
+        assert config.chunk_overlap == 64
+
+    def test_chunk_size_validation(self):
+        with pytest.raises(ValueError, match="chunk_size must be >= 64"):
+            DocumentConfig(chunk_size=10)
+
+    def test_chunk_overlap_validation(self):
+        with pytest.raises(ValueError, match="chunk_overlap must be >= 0"):
+            DocumentConfig(chunk_overlap=-5)
+
+    def test_custom_values(self):
+        config = DocumentConfig(
+            pdf_parse_mode=PdfParseMode.TEXT,
+            ocr_backend=OcrBackend.TURBO_OCR,
+            chunk_strategy=ChunkStrategy.PAGE,
+            max_file_size_mb=50,
+        )
+        assert config.pdf_parse_mode == PdfParseMode.TEXT
+        assert config.ocr_backend == OcrBackend.TURBO_OCR
+
+    def test_deprecated_marker_pdf_maps_to_kreuzberg(self):
+        config = DocumentConfig(ocr_backend="marker_pdf")
+        assert config.ocr_backend == OcrBackend.KREUZBERG
+
+    def test_deprecated_pypdf_maps_to_kreuzberg(self):
+        config = DocumentConfig(ocr_backend="pypdf")
+        assert config.ocr_backend == OcrBackend.KREUZBERG
+
+
+# ---------------------------------------------------------------------------
+# Error codes
+# ---------------------------------------------------------------------------
+
+
+class TestDocumentErrorCodes:
+    def test_document_parse_failed(self):
+        assert ErrorCode.DOCUMENT_PARSE_FAILED == "DOCUMENT_PARSE_FAILED"
+
+    def test_document_ocr_failed(self):
+        assert ErrorCode.DOCUMENT_OCR_FAILED == "DOCUMENT_OCR_FAILED"
+
+    def test_document_chunk_failed(self):
+        assert ErrorCode.DOCUMENT_CHUNK_FAILED == "DOCUMENT_CHUNK_FAILED"
+
+    def test_document_upload_failed(self):
+        assert ErrorCode.DOCUMENT_UPLOAD_FAILED == "DOCUMENT_UPLOAD_FAILED"
+
+    def test_document_error_instance(self):
+        from arrow_lake.exceptions import DocumentError
+        err = DocumentError(
+            error_code=ErrorCode.DOCUMENT_PARSE_FAILED,
+            message="test error",
+        )
+        assert "DOCUMENT_PARSE_FAILED" in str(err)
+        assert "test error" in str(err)
+
+
+# ---------------------------------------------------------------------------
+# Embedding dimension validation
+# ---------------------------------------------------------------------------
+
+
+class TestEmbeddingDimensionValidation:
+    def test_qwen3_vl_embedding_models(self):
+        from arrow_lake.config.media import QWEN3_VL_EMBEDDING_MODELS
+        assert "Qwen/Qwen3-VL-Embedding-2B" in QWEN3_VL_EMBEDDING_MODELS
+        assert "Qwen/Qwen3-VL-Embedding-8B" in QWEN3_VL_EMBEDDING_MODELS
+
+    def test_2b_dimension(self):
+        from arrow_lake.config.media import QWEN3_VL_EMBEDDING_MODELS
+        assert QWEN3_VL_EMBEDDING_MODELS["Qwen/Qwen3-VL-Embedding-2B"]["dim"] == 2048
+
+    def test_8b_dimension(self):
+        from arrow_lake.config.media import QWEN3_VL_EMBEDDING_MODELS
+        assert QWEN3_VL_EMBEDDING_MODELS["Qwen/Qwen3-VL-Embedding-8B"]["dim"] == 4096
+
+    def test_known_dimension_for_vl_model(self):
+        from arrow_lake.config.media import EmbeddingConfig
+        config = EmbeddingConfig(model="Qwen/Qwen3-VL-Embedding-2B")
+        assert config.known_dimension == 2048
+
+    def test_known_dimension_unknown_model(self):
+        from arrow_lake.config.media import EmbeddingConfig
+        config = EmbeddingConfig(model="some/unknown-model")
+        assert config.known_dimension == 0
+
+    def test_is_multimodal_vl(self):
+        from arrow_lake.config.media import EmbeddingConfig
+        config = EmbeddingConfig(model="Qwen/Qwen3-VL-Embedding-2B")
+        assert config.is_multimodal is True
+
+    def test_is_multimodal_non_vl(self):
+        from arrow_lake.config.media import EmbeddingConfig
+        config = EmbeddingConfig(model="Qwen/Qwen3-Embedding-0.6B")
+        assert config.is_multimodal is False
+
+    def test_expected_dim_field(self):
+        from arrow_lake.config.media import EmbeddingConfig
+        config = EmbeddingConfig(expected_dim=768)
+        assert config.expected_dim == 768
+
+
+# ---------------------------------------------------------------------------
+# DocumentParser / Kreuzberg tests
+# ---------------------------------------------------------------------------
+
+
+def _mock_extraction_result(pages: list[str]):
+    """Build a mock Kreuzberg ExtractionResult with the given page texts."""
+    page_dicts = [
+        {"page_number": i + 1, "content": text, "is_blank": not text.strip()}
+        for i, text in enumerate(pages)
+    ]
+    mock_result = MagicMock()
+    mock_result.content = "\n\n".join(t for t in pages if t.strip())
+    mock_result.pages = page_dicts
+    return mock_result
+
+
+class TestBuildExtractionConfig:
+    def test_text_mode_no_ocr(self):
+        from arrow_lake.ingest.document import _build_extraction_config
+        cfg = DocumentConfig()
+        ext_cfg = _build_extraction_config(cfg, PdfParseMode.TEXT)
+        assert ext_cfg.ocr is None
+        assert ext_cfg.force_ocr is False
+
+    def test_ocr_mode_forces_ocr(self):
+        from arrow_lake.ingest.document import _build_extraction_config
+        cfg = DocumentConfig()
+        ext_cfg = _build_extraction_config(cfg, PdfParseMode.OCR)
+        assert ext_cfg.ocr is not None
+        assert ext_cfg.force_ocr is True
+
+    def test_auto_mode_passes_ocr_config(self):
+        from arrow_lake.ingest.document import _build_extraction_config
+        cfg = DocumentConfig()
+        ext_cfg = _build_extraction_config(cfg, PdfParseMode.AUTO)
+        assert ext_cfg.ocr is not None
+        assert ext_cfg.force_ocr is False
+
+    def test_kreuzberg_force_ocr_override(self):
+        from arrow_lake.ingest.document import _build_extraction_config
+        cfg = DocumentConfig(kreuzberg_force_ocr=True)
+        ext_cfg = _build_extraction_config(cfg, PdfParseMode.TEXT)
+        assert ext_cfg.force_ocr is True
+        assert ext_cfg.ocr is not None
+
+    def test_custom_ocr_backend_and_language(self):
+        from arrow_lake.ingest.document import _build_extraction_config
+        cfg = DocumentConfig(kreuzberg_ocr_backend="easyocr", kreuzberg_language="eng+chi_sim")
+        ext_cfg = _build_extraction_config(cfg, PdfParseMode.OCR)
+        assert ext_cfg.ocr.backend == "easyocr"
+        assert ext_cfg.ocr.language == "eng+chi_sim"
+
+
+class TestResultToPages:
+    def test_basic_conversion(self):
+        from arrow_lake.ingest.document import _result_to_pages
+        result = _mock_extraction_result(["Page one", "Page two", "Page three"])
+        pages = _result_to_pages(result, max_pages=0)
+        assert len(pages) == 3
+        assert pages[0] == (1, "Page one")
+        assert pages[2] == (3, "Page three")
+
+    def test_max_pages_limit(self):
+        from arrow_lake.ingest.document import _result_to_pages
+        result = _mock_extraction_result(["P1", "P2", "P3", "P4", "P5"])
+        pages = _result_to_pages(result, max_pages=3)
+        assert len(pages) == 3
+
+    def test_skips_empty_pages(self):
+        from arrow_lake.ingest.document import _result_to_pages
+        result = _mock_extraction_result(["Content", "", "   ", "More"])
+        pages = _result_to_pages(result, max_pages=0)
+        assert len(pages) == 2
+        assert pages[0] == (1, "Content")
+        assert pages[1] == (4, "More")
+
+
+class TestDocumentParser:
+    @patch("arrow_lake.ingest.document.extract_file_sync")
+    def test_parse_text_mode(self, mock_extract, tmp_path):
+        pdf = tmp_path / "test.pdf"
+        pdf.write_bytes(b"%PDF-1.4")
+        mock_extract.return_value = _mock_extraction_result(["Hello world"])
+
+        from arrow_lake.ingest.document import DocumentParser
+        parser = DocumentParser(DocumentConfig(pdf_parse_mode=PdfParseMode.TEXT))
+        result = parser.parse(str(pdf))
+
+        assert result.backend == "kreuzberg"
+        assert result.page_count == 1
+        assert result.text == "Hello world"
+        mock_extract.assert_called_once()
+
+    @patch("arrow_lake.ingest.document.extract_file_sync")
+    def test_parse_ocr_mode(self, mock_extract, tmp_path):
+        pdf = tmp_path / "scan.pdf"
+        pdf.write_bytes(b"%PDF-1.4")
+        mock_extract.return_value = _mock_extraction_result(["OCR page 1", "OCR page 2"])
+
+        from arrow_lake.ingest.document import DocumentParser
+        parser = DocumentParser(DocumentConfig(pdf_parse_mode=PdfParseMode.OCR))
+        result = parser.parse(str(pdf))
+
+        assert result.backend == "kreuzberg"
+        assert result.page_count == 2
+        call_args = mock_extract.call_args
+        ext_cfg = call_args.kwargs.get("config") or call_args[1].get("config")
+        assert ext_cfg.force_ocr is True
+
+    @patch("arrow_lake.ingest.document.extract_file_sync")
+    def test_parse_auto_mode(self, mock_extract, tmp_path):
+        pdf = tmp_path / "mixed.pdf"
+        pdf.write_bytes(b"%PDF-1.4")
+        mock_extract.return_value = _mock_extraction_result(["Some text"])
+
+        from arrow_lake.ingest.document import DocumentParser
+        parser = DocumentParser(DocumentConfig(pdf_parse_mode=PdfParseMode.AUTO))
+        result = parser.parse(str(pdf))
+
+        assert result.backend == "kreuzberg"
+        call_args = mock_extract.call_args
+        ext_cfg = call_args.kwargs.get("config") or call_args[1].get("config")
+        assert ext_cfg.force_ocr is False
+        assert ext_cfg.ocr is not None
+
+    @patch("arrow_lake.ingest.document.extract_file_sync")
+    def test_parse_max_pages(self, mock_extract, tmp_path):
+        pdf = tmp_path / "big.pdf"
+        pdf.write_bytes(b"%PDF-1.4")
+        mock_extract.return_value = _mock_extraction_result(
+            [f"Page {i}" for i in range(10)],
+        )
+
+        from arrow_lake.ingest.document import DocumentParser
+        parser = DocumentParser(DocumentConfig(max_pages=3))
+        result = parser.parse(str(pdf), max_pages=3)
+
+        assert result.page_count == 3
+
+    @patch("arrow_lake.ingest.document.extract_file_sync")
+    def test_parse_file_not_found(self, mock_extract):
+        from arrow_lake.ingest.document import DocumentParser
+        parser = DocumentParser()
+        with pytest.raises(FileNotFoundError, match="not found"):
+            parser.parse("/nonexistent/file.pdf")
+
+    @patch("arrow_lake.ingest.document.extract_file_sync")
+    def test_parse_kreuzberg_error(self, mock_extract, tmp_path):
+        pdf = tmp_path / "bad.pdf"
+        pdf.write_bytes(b"not a pdf")
+        mock_extract.side_effect = RuntimeError("Kreuzberg error")
+
+        from arrow_lake.ingest.document import DocumentParser
+        parser = DocumentParser()
+        with pytest.raises(DocumentError, match="Kreuzberg failed"):
+            parser.parse(str(pdf))
+
+    @patch("arrow_lake.ingest.document.extract_file_sync")
+    def test_parse_empty_result_raises(self, mock_extract, tmp_path):
+        pdf = tmp_path / "empty.pdf"
+        pdf.write_bytes(b"%PDF-1.4")
+        mock_extract.return_value = _mock_extraction_result([])
+
+        from arrow_lake.ingest.document import DocumentParser
+        parser = DocumentParser()
+        with pytest.raises(DocumentError, match="No text extracted"):
+            parser.parse(str(pdf))
+
+
+class TestDocumentParserTurboOcrFallback:
+    def test_turbo_ocr_primary_available(self, tmp_path):
+        pdf = tmp_path / "test.pdf"
+        pdf.write_bytes(b"%PDF-1.4")
+
+        ocr_client = MagicMock()
+        ocr_client.is_available.return_value = True
+        ocr_client.ocr.return_value = MagicMock(text="OCR page one\fOCR page two")
+
+        from arrow_lake.ingest.document import DocumentParser
+        parser = DocumentParser(DocumentConfig(ocr_backend=OcrBackend.TURBO_OCR))
+        result = parser.parse(str(pdf), ocr_client=ocr_client)
+
+        assert result.backend == "turbo_ocr"
+        assert result.page_count == 2
+
+    @patch("arrow_lake.ingest.document.extract_file_sync")
+    def test_turbo_ocr_fallback_to_kreuzberg(self, mock_extract, tmp_path):
+        pdf = tmp_path / "test.pdf"
+        pdf.write_bytes(b"%PDF-1.4")
+
+        ocr_client = MagicMock()
+        ocr_client.is_available.return_value = True
+        ocr_client.ocr.side_effect = ConnectionError("OCR failed")
+
+        mock_extract.return_value = _mock_extraction_result(["Fallback text"])
+
+        from arrow_lake.ingest.document import DocumentParser
+        parser = DocumentParser(
+            DocumentConfig(
+                ocr_backend=OcrBackend.TURBO_OCR,
+                ocr_fallback_enabled=True,
+            ),
+        )
+        result = parser.parse(str(pdf), ocr_client=ocr_client)
+
+        assert result.backend == "kreuzberg"
+
+    @patch("arrow_lake.ingest.document.extract_file_sync")
+    def test_turbo_ocr_unavailable_fallback_to_kreuzberg(self, mock_extract, tmp_path):
+        pdf = tmp_path / "test.pdf"
+        pdf.write_bytes(b"%PDF-1.4")
+
+        ocr_client = MagicMock()
+        ocr_client.is_available.return_value = False
+
+        mock_extract.return_value = _mock_extraction_result(["Text from kreuzberg"])
+
+        from arrow_lake.ingest.document import DocumentParser
+        parser = DocumentParser(
+            DocumentConfig(
+                ocr_backend=OcrBackend.TURBO_OCR,
+                ocr_fallback_enabled=True,
+            ),
+        )
+        result = parser.parse(str(pdf), ocr_client=ocr_client)
+
+        assert result.backend == "kreuzberg"
+        ocr_client.ocr.assert_not_called()
+
+    def test_turbo_ocr_no_fallback_raises(self, tmp_path):
+        pdf = tmp_path / "test.pdf"
+        pdf.write_bytes(b"%PDF-1.4")
+
+        from arrow_lake.ingest.document import DocumentParser
+        parser = DocumentParser(
+            DocumentConfig(
+                ocr_backend=OcrBackend.TURBO_OCR,
+                ocr_fallback_enabled=False,
+            ),
+        )
+        with pytest.raises(DocumentError, match="All parsing backends failed"):
+            parser.parse(str(pdf))

@@ -5,6 +5,9 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+pytest.importorskip("metaflow")
+
 from arrow_lake.workflow.tags import RunTags, find_failed_runs, generate_resume_tags
 
 

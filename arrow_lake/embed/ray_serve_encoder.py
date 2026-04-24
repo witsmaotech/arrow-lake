@@ -73,8 +73,8 @@ class RayServeEmbeddingEncoder:
         try:
             self._handle = ray_serve.get_deployment(self.deployment_name)
             logger.info(
-                "ray_serve_encoder_connected",
-                deployment=self.deployment_name,
+                "ray_serve_encoder_connected deployment=%s",
+                self.deployment_name,
             )
             return self._handle
         except (ConnectionError, ImportError, TimeoutError, RuntimeError) as exc:

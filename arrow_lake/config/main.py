@@ -17,6 +17,7 @@ from arrow_lake.config.api import (
     OpenTelemetryConfig,
     RateLimitConfig,
 )
+from arrow_lake.config.document import DocumentConfig
 from arrow_lake.config.infra import (
     ComputeConfig,
     DaftConfig,
@@ -69,6 +70,7 @@ _SECTION_TYPES: dict[str, type[BaseModel]] = {
     "opentelemetry": OpenTelemetryConfig,
     "auth": AuthConfig,
     "rate_limit": RateLimitConfig,
+    "document": DocumentConfig,
 }
 
 
@@ -121,6 +123,7 @@ class ArrowLakeConfig(BaseSettings):
     opentelemetry: OpenTelemetryConfig = OpenTelemetryConfig()
     auth: AuthConfig = AuthConfig()
     rate_limit: RateLimitConfig = RateLimitConfig()
+    document: DocumentConfig = DocumentConfig()
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> ArrowLakeConfig:

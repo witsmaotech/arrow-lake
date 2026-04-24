@@ -1,0 +1,49 @@
+=== SECTION 1: TECHNICAL OVERVIEW ===
+
+Arrow Lake v1.2 Release Notes
+
+This release includes the following major improvements:
+- Kreuzberg PDF parser (Rust-core, 91+ format support)
+- TurboOCR GPU acceleration with circuit breaker
+- Knowledge Graph integration via HugeGraph
+- GraphRAG pipeline for multi-hop reasoning
+- PaddleOCR as default OCR backend
+
+=== SECTION 2: CONFIGURATION ===
+
+# arrow_lake.yaml
+storage:
+  backend: local
+  base_uri: ./data
+
+llm:
+  provider: ollama
+  model: qwen3.5:9b
+  api_base: http://localhost:11434
+
+hugegraph:
+  enabled: true
+  host: localhost
+  port: 8089
+
+=== SECTION 3: API USAGE ===
+
+# Create a dataset
+curl -X POST http://localhost:8000/api/v1/datasets/my_data/ingest \
+  -H "X-API-Key: my-secret-key" \
+  -H "Content-Type: application/json" \
+  -d '{"file_paths": ["./docs/report.pdf"]}'
+
+# Search
+curl -X POST http://localhost:8000/api/v1/search/hybrid \
+  -H "Content-Type: application/json" \
+  -d '{"query": "machine learning algorithms", "top_k": 10}'
+
+=== SECTION 4: 数据统计 ===
+
+Total processed documents: 15,234
+Average chunks per document: 12.5
+Search latency (p99): 45ms
+Embedding generation rate: 2,800 chunks/sec
+Knowledge graph entities: 89,421
+Knowledge graph relations: 234,567

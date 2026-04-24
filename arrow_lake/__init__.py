@@ -20,6 +20,7 @@ from arrow_lake.exceptions import (
     ArrowLakeError,
     AuditError,
     CatalogError,
+    DocumentError,
     EmbeddingError,
     HttpError,
     IngestError,
@@ -50,6 +51,7 @@ __all__ = [
     "CatalogEntry",
     "CatalogError",
     "CatalogResult",
+    "DocumentError",
     "EmbeddingError",
     "EnsembleSearchResult",
     "FacetedSearchResult",
@@ -118,6 +120,31 @@ class Lake(
         if key not in self._components:
             self._components[key] = factory()
         return self._components[key]
+
+    def get_session_manager(self) -> Any:
+        """Get the shared DuckDB session manager (lazy-init).
+
+        Bridges use this to acquire managed connections instead of
+        creating per-query sessions.
+        """
+        return self._get_component(
+            "session_manager",
+            lambda: self._create_session_manager(),
+        )
+
+    def _create_session_manager(self) -> Any:
+        from arrow_lake.query.session_manager import DuckDBSessionManager
+
+        return DuckDBSessionManager(
+            olap_config=self._config.olap,
+            storage_config=self._config.storage,
+        )
+
+    def shutdown(self) -> None:
+        """Gracefully shut down the session manager and release resources."""
+        sm = self._components.get("session_manager")
+        if sm is not None:
+            sm.shutdown()
 
     @classmethod
     def from_yaml(cls, path: str, *, base_uri: str | None = None) -> Lake:

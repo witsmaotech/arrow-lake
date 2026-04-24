@@ -25,7 +25,7 @@ def _get_encoding(model: str) -> tiktoken.Encoding | None:
         return None
     try:
         return tiktoken.encoding_for_model(model)
-    except Exception:
+    except (KeyError, ValueError):
         return tiktoken.get_encoding("cl100k_base")
 
 
@@ -34,7 +34,14 @@ def count_tokens(text: str, model: str = "gpt-4o-mini") -> int:
     encoding = _get_encoding(model)
     if encoding is not None:
         return len(encoding.encode(text))
-    # Heuristic: ~4 chars per token
+    # Heuristic: CJK ~1.5 chars/token, ASCII ~4 chars/token
+    try:
+        from arrow_lake.query._chinese_tokenizer import has_cjk
+
+        if has_cjk(text):
+            return int(len(text) / 1.5)
+    except ImportError:
+        pass
     return len(text) // 4
 
 
@@ -248,7 +255,10 @@ def table_to_chunks(
         return []
 
     texts = table.column(text_column).to_pylist()
-    row_ids = table.column(row_id_column).to_pylist()
+    if row_id_column in table.column_names:
+        row_ids = table.column(row_id_column).to_pylist()
+    else:
+        row_ids = list(range(len(texts)))
 
     if score_column and score_column in table.column_names:
         scores = table.column(score_column).to_pylist()

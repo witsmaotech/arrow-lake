@@ -100,9 +100,8 @@ async def test_add_vertices(mock_client: HugeGraphClient) -> None:
         {"label": "person", "properties": {"name": "Bob"}},
     ]
     mock_client._client.post.return_value = _mock_response(201, ["id1", "id2"])
-    count = await mock_client.add_vertices(vertices)
-    assert count == 2
-    # Verify the path includes /graph/vertices/batch
+    ids = await mock_client.add_vertices(vertices)
+    assert ids == ["id1", "id2"]
     call_args = mock_client._client.post.call_args
     assert "/graph/vertices/batch" in call_args[0][0]
 
@@ -220,18 +219,9 @@ async def test_get_schema(mock_client: HugeGraphClient) -> None:
 
 @pytest.mark.asyncio
 async def test_get_stats(mock_client: HugeGraphClient) -> None:
-    # Two gremlin calls: V().count() and E().count()
-    mock_client._client.post.side_effect = [
-        _mock_response(200, {
-            "requestId": "1",
-            "status": {"code": 200},
-            "result": {"data": [100], "meta": {}},
-        }),
-        _mock_response(200, {
-            "requestId": "2",
-            "status": {"code": 200},
-            "result": {"data": [200], "meta": {}},
-        }),
+    mock_client._client.get.side_effect = [
+        _mock_response(200, {"total": 100}),
+        _mock_response(200, {"total": 200}),
     ]
     stats = await mock_client.get_stats()
     assert stats["total_vertices"] == 100
@@ -246,7 +236,9 @@ async def test_get_stats(mock_client: HugeGraphClient) -> None:
 @pytest.mark.asyncio
 async def test_ensure_schema(mock_client: HugeGraphClient) -> None:
     """Verify ensure_schema calls POST for each schema element."""
-    # All calls return 201 (or 202 for async)
+    # ensure_graph() first calls GET /graphs → graph already exists
+    mock_client._client.get.return_value = _mock_response(200, {"graphs": ["test_graph"]})
+    # Then schema POSTs (2 PK + 1 VL + 1 EL + 1 IL = 5)
     mock_client._client.post.side_effect = [
         _mock_response(201, {"id": "pk_name"}),
         _mock_response(201, {"id": "pk_type"}),
@@ -275,7 +267,6 @@ async def test_ensure_schema(mock_client: HugeGraphClient) -> None:
     }
     await mock_client.ensure_schema(schema)
 
-    # Should have called POST 5 times (2 PK + 1 VL + 1 EL + 1 IL)
     assert mock_client._client.post.call_count == 5
 
 
