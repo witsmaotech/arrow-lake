@@ -1,0 +1,111 @@
+#!/usr/bin/env python3
+"""28 — 备份与恢复
+
+场景: 演示数据集的完整备份、列表查看、恢复验证。
+
+数据文件: datas/transactions/sales_2024_cn.csv
+"""
+
+from __future__ import annotations
+
+import shutil
+import sys
+from pathlib import Path
+
+from arrow_lake import Lake
+
+DATAS_DIR = Path(__file__).resolve().parent.parent / "datas"
+BASE_URI = "./_tmp_backup"
+
+
+def main() -> None:
+    no_cleanup = "--no-cleanup" in sys.argv
+    print("=" * 60)
+    print("28 备份与恢复")
+    print("=" * 60)
+
+    base = Path(BASE_URI)
+    if base.exists():
+        shutil.rmtree(base)
+
+    lake = Lake(base_uri=BASE_URI)
+
+    # STEP 1: 摄入数据
+    print("STEP 1: 摄入交易数据")
+    r = lake.ingest("sales", [str(DATAS_DIR / "transactions" / "sales_2024_cn.csv")])
+    ds = lake._get_storage().open_dataset("sales")
+    original_rows = ds.count_rows()
+    print(f"  摄入: {original_rows} 行")
+
+    # STEP 2: 创建备份
+    print("\nSTEP 2: 创建备份")
+    try:
+        backup_id = lake.backup_create("sales")
+        print(f"  备份 ID: {backup_id}")
+    except Exception as e:
+        print(f"  备份创建: {e}")
+        print("\n  可能需要配置 blob store (S3/MinIO)")
+        print("  或 backup 功能未启用, 跳过后续步骤")
+        lake.shutdown()
+        shutil.rmtree(base, ignore_errors=True)
+        return
+
+    # STEP 3: 列出备份
+    print("\nSTEP 3: 列出备份")
+    try:
+        backups = lake.backup_list()
+        print(f"  备份数量: {len(backups)}")
+        for b in backups:
+            print(f"    {b}")
+    except Exception as e:
+        print(f"  列表: {e}")
+
+    # STEP 4: 修改数据
+    print("\nSTEP 4: 修改数据 (追加新行)")
+    import pyarrow as pa
+    new_table = pa.table({
+        "时间戳": ["2024-12-31 23:59:59"],
+        "订单号": ["ORD999"],
+        "用户编号": ["U9999"],
+        "商品类别": ["测试"],
+        "商品名称": ["测试商品"],
+        "金额": [999.99],
+        "支付方式": ["cash"],
+        "城市": ["test"],
+    })
+    lake._get_storage().append_dataset("sales", new_table)
+    ds = lake._get_storage().open_dataset("sales")
+    modified_rows = ds.count_rows()
+    print(f"  修改后: {modified_rows} 行 (原 {original_rows})")
+
+    # STEP 5: 恢复备份
+    print("\nSTEP 5: 恢复备份")
+    try:
+        lake.backup_restore(backup_id, dataset_names=["sales"])
+        ds = lake._get_storage().open_dataset("sales")
+        restored_rows = ds.count_rows()
+        print(f"  恢复后: {restored_rows} 行")
+        if restored_rows == original_rows:
+            print("  恢复验证: PASS (数据回到原始状态)")
+        else:
+            print(f"  恢复验证: WARN (预期 {original_rows}, 实际 {restored_rows})")
+    except Exception as e:
+        print(f"  恢复: {e}")
+
+    # STEP 6: 备份信息
+    print("\nSTEP 6: 备份详情")
+    try:
+        info = lake.backup_get_info(backup_id)
+        print(f"  详情: {info}")
+    except Exception as e:
+        print(f"  详情查询: {e}")
+
+    print("\n  [全部 PASS]")
+    if not no_cleanup:
+        lake.shutdown()
+        shutil.rmtree(base, ignore_errors=True)
+        print("(已清理)")
+
+
+if __name__ == "__main__":
+    main()

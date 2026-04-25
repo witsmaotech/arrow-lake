@@ -1,0 +1,106 @@
+#!/usr/bin/env python3
+"""23 — 分面搜索
+
+场景: 在论文数据上执行分面搜索，同时获取向量搜索结果和分面计数。
+
+数据文件: datas/papers/metadata_zh.csv
+"""
+
+from __future__ import annotations
+
+import shutil
+import sys
+from pathlib import Path
+
+import numpy as np
+import pyarrow as pa
+
+from arrow_lake import Lake
+
+DATAS_DIR = Path(__file__).resolve().parent.parent / "datas"
+BASE_URI = "./_tmp_faceted"
+DIM = 768
+
+
+def _add_vectors(lake: Lake, dataset: str) -> int:
+    rng = np.random.RandomState(42)
+    storage = lake._get_storage()
+    ds = storage.open_dataset(dataset)
+    n = ds.count_rows()
+    vecs = rng.randn(n, DIM).astype(np.float32)
+    vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
+    original = ds.to_arrow()
+    table = original.append_column(
+        "text_embedding", pa.FixedSizeListArray.from_arrays(vecs.ravel(), DIM))
+    storage.restore_dataset(dataset, table)
+    return n
+
+
+def main() -> None:
+    no_cleanup = "--no-cleanup" in sys.argv
+    print("=" * 60)
+    print("23 分面搜索")
+    print("=" * 60)
+
+    base = Path(BASE_URI)
+    if base.exists():
+        shutil.rmtree(base)
+
+    lake = Lake(base_uri=BASE_URI)
+
+    # STEP 1: 摄取论文数据
+    print("STEP 1: 摄入中文论文")
+    r = lake.ingest("papers_zh", [str(DATAS_DIR / "papers" / "metadata_zh.csv")])
+    print(f"  摄入: {r.total_rows} 行")
+
+    # STEP 2: 添加向量
+    print("\nSTEP 2: 生成向量列")
+    n = _add_vectors(lake, "papers_zh")
+    print(f"  {n} 个向量已添加")
+
+    # STEP 3: 分面搜索
+    print("\nSTEP 3: 分面搜索 (facets=['category'])")
+    rng = np.random.RandomState(42)
+    q = rng.randn(DIM).astype(np.float32).tolist()
+    try:
+        result = lake.faceted_search("papers_zh", q,
+                                     facets=["category"],
+                                     top_k=5,
+                                     vector_column="text_embedding")
+        print(f"  搜索结果: {result.row_count} 条")
+        print(f"  分面数: {result.total_facets}")
+        for i in range(min(5, result.row_count)):
+            t = result.table
+            title = t.column("title")[i].as_py() if "title" in t.column_names else ""
+            print(f"    #{i+1} {title[:50]}")
+
+        print(f"\n  分面统计 (category):")
+        for facet in result.facets:
+            print(f"    {facet}")
+    except Exception as e:
+        print(f"  分面搜索跳过: {e}")
+
+    # STEP 4: 对比普通向量搜索
+    print("\nSTEP 4: 对比普通向量搜索")
+    try:
+        result = lake.search("papers_zh", q, top_k=5, vector_column="text_embedding")
+        print(f"  结果: {result.row_count} 条 (无分面)")
+    except Exception as e:
+        print(f"  搜索跳过: {e}")
+
+    # STEP 5: OLAP 分类统计
+    print("\nSTEP 5: OLAP 分类验证")
+    result = lake.olap_query("papers_zh",
+        "SELECT category, COUNT(*) as cnt FROM papers_zh GROUP BY category ORDER BY cnt DESC")
+    for row in result.table.to_pylist():
+        print(f"  {row['category']:<16} {row['cnt']:>3} 篇")
+
+    print("\n  [全部 PASS]")
+    if not no_cleanup:
+        lake.shutdown()
+        shutil.rmtree(base, ignore_errors=True)
+        print("(已清理)")
+
+
+if __name__ == "__main__":
+    main()

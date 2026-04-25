@@ -224,18 +224,8 @@ async def graphrag_query(
 def _kg_error_to_status(exc: KGError) -> int:
     """Map a KGError to an HTTP status code.
 
-    This mirrors the mapping in arrow_lake.api.errors._error_code_to_http_status
-    but is kept local here to avoid an extra import chain.
+    Delegates to the canonical mapping in arrow_lake.api.errors.
     """
-    from arrow_lake.exceptions import ErrorCode
+    from arrow_lake.api.errors import _error_code_to_http_status
 
-    code = exc.error_code
-    if code == ErrorCode.KG_GRAPH_NOT_FOUND:
-        return 404
-    if code == ErrorCode.KG_SCHEMA_ERROR:
-        return 400
-    if code == ErrorCode.KG_TRAVERSAL_TIMEOUT:
-        return 504
-    if code in (ErrorCode.KG_CONNECTION_FAILED, ErrorCode.KG_EXTRACT_FAILED):
-        return 503
-    return 500
+    return _error_code_to_http_status(exc.error_code)

@@ -307,9 +307,25 @@ class BackupManager:
                 continue
             rel_path = item.relative_to(dataset_path)
             backup_key = f"{backup_prefix}datasets/{dataset_name}/{rel_path}"
-            data = item.read_bytes()
-            self._blob_store.upload(backup_key, data)
-            file_hashes[str(rel_path)] = hashlib.sha256(data).hexdigest()
+            # Stream file in 8MB chunks to limit memory usage
+            file_size = item.stat().st_size
+            sha = hashlib.sha256()
+            _CHUNK = 8 * 1024 * 1024
+            if file_size <= _CHUNK:
+                data = item.read_bytes()
+                sha.update(data)
+                self._blob_store.upload(backup_key, data)
+            else:
+                chunks: list[bytes] = []
+                with open(item, "rb") as f:
+                    while True:
+                        chunk = f.read(_CHUNK)
+                        if not chunk:
+                            break
+                        sha.update(chunk)
+                        chunks.append(chunk)
+                self._blob_store.upload(backup_key, b"".join(chunks))
+            file_hashes[str(rel_path)] = sha.hexdigest()
 
         try:
             import lancedb

@@ -14,6 +14,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import threading
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
@@ -63,14 +64,14 @@ class DeadLetterItem:
 class IngestDeadLetterQueue:
     """Persists failed ingestion items to a JSON-backed queue.
 
-    Thread safety: NOT safe for concurrent writes. Use external locking
-    if needed (e.g., file locks or database transactions).
+    Thread-safe: all public methods acquire an internal lock.
     """
 
     def __init__(self, base_dir: str | Path = "./data", queue_file: str = "ingest_dlq.jsonl") -> None:
         self._queue_path = Path(base_dir) / queue_file
         self._queue_path.parent.mkdir(parents=True, exist_ok=True)
         self._items: list[DeadLetterItem] = []
+        self._lock = threading.Lock()
         self._load()
 
     def add(self, file_path: str, error: str, *, dataset: str = "", metadata: dict[str, Any] | None = None) -> None:
@@ -80,64 +81,71 @@ class IngestDeadLetterQueue:
             dataset=dataset,
             metadata=metadata or {},
         )
-        self._items.append(item)
-        self._append_item(item)
+        with self._lock:
+            self._items.append(item)
+            self._append_item(item)
         return None
 
     def retry(self, file_path: str) -> bool:
-        for item in self._items:
-            if item.file_path == file_path and item.can_retry:
-                item.status = DLQStatus.RETRYING.value
-                item.attempt_count += 1
-                item.last_failed_at = datetime.now(UTC).isoformat()
-                self._save()
-                return True
-        return False
+        with self._lock:
+            for item in self._items:
+                if item.file_path == file_path and item.can_retry:
+                    item.status = DLQStatus.RETRYING.value
+                    item.attempt_count += 1
+                    item.last_failed_at = datetime.now(UTC).isoformat()
+                    self._save()
+                    return True
+            return False
 
     def resolve(self, file_path: str) -> bool:
-        for item in self._items:
-            if item.file_path == file_path and item.status != DLQStatus.RESOLVED.value:
-                item.status = DLQStatus.RESOLVED.value
-                self._save()
-                return True
-        return False
+        with self._lock:
+            for item in self._items:
+                if item.file_path == file_path and item.status != DLQStatus.RESOLVED.value:
+                    item.status = DLQStatus.RESOLVED.value
+                    self._save()
+                    return True
+            return False
 
     def mark_permanent(self, file_path: str, *, reason: str = "") -> bool:
-        for item in self._items:
-            if item.file_path == file_path:
-                item.status = DLQStatus.PERMANENT.value
-                if reason:
-                    item.last_error = reason
-                self._save()
-                return True
-        return False
+        with self._lock:
+            for item in self._items:
+                if item.file_path == file_path:
+                    item.status = DLQStatus.PERMANENT.value
+                    if reason:
+                        item.last_error = reason
+                    self._save()
+                    return True
+            return False
 
     def list_items(self, *, status: str | None = None, dataset: str | None = None) -> list[DeadLetterItem]:
-        items = self._items
-        if status:
-            items = [i for i in items if i.status == status]
-        if dataset:
-            items = [i for i in items if i.dataset == dataset]
-        return items
+        with self._lock:
+            items = self._items
+            if status:
+                items = [i for i in items if i.status == status]
+            if dataset:
+                items = [i for i in items if i.dataset == dataset]
+            return items
 
     def purge(self, *, resolved: bool = False, permanent: bool = False) -> int:
-        before = len(self._items)
-        if resolved:
-            self._items = [i for i in self._items if i.status != DLQStatus.RESOLVED.value]
-        if permanent:
-            self._items = [i for i in self._items if i.status != DLQStatus.PERMANENT.value]
-        removed = before - len(self._items)
-        if removed > 0:
-            self._save()
-        return removed
+        with self._lock:
+            before = len(self._items)
+            if resolved:
+                self._items = [i for i in self._items if i.status != DLQStatus.RESOLVED.value]
+            if permanent:
+                self._items = [i for i in self._items if i.status != DLQStatus.PERMANENT.value]
+            removed = before - len(self._items)
+            if removed > 0:
+                self._save()
+            return removed
 
     @property
     def stats(self) -> dict[str, int]:
-        counts: dict[str, int] = {}
-        for item in self._items:
-            counts[item.status] = counts.get(item.status, 0) + 1
-        counts["total"] = len(self._items)
-        return counts
+        with self._lock:
+            counts: dict[str, int] = {}
+            for item in self._items:
+                counts[item.status] = counts.get(item.status, 0) + 1
+            counts["total"] = len(self._items)
+            return counts
 
     def _load(self) -> None:
         if not self._queue_path.exists():

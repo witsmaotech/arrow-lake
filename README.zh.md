@@ -112,9 +112,9 @@ lake.export("my_dataset", "output/data.parquet")
 ### CLI
 
 ```bash
-arrow-lake ingest --source data.parquet --dataset my_data
-arrow-lake search --dataset my_data --query "搜索内容" --top-k 5
-arrow-lake export --dataset my_data --format parquet --output result.parquet
+arrow-lake ingest files my_data data.parquet
+arrow-lake search fts my_data --query "搜索内容" --top-k 5
+arrow-lake export my_data --output result.parquet --format parquet
 arrow-lake status
 ```
 

@@ -175,15 +175,21 @@ class GraphRAGPipeline(RAGPipeline):
             entities = await self._extract_question_entities(question)
 
             # Step 2: Parallel vector + graph retrieval
-            vector_task = super()._retrieve_and_build_context(
-                question, dataset_name, effective_top_k, strategy,
+            vector_task = asyncio.ensure_future(
+                super()._retrieve_and_build_context(
+                    question, dataset_name, effective_top_k, strategy,
+                )
             )
             graph_task = asyncio.ensure_future(
                 self._retrieve_graph_context(question, entities)
             )
 
-            window, context_text = await vector_task
-            graph_text = await graph_task
+            try:
+                window, context_text = await vector_task
+                graph_text = await graph_task
+            except Exception:
+                graph_task.cancel()
+                raise
 
             # Step 3: Add graph context to the window
             if graph_text:

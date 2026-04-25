@@ -2035,9 +2035,9 @@ So that I can interact with the platform quickly without writing Python scripts 
 **When** I run `arrow-lake --help`
 **Then** the CLI displays colored output with subcommands: `ingest`, `search`, `status`, `version`
 **And** `arrow-lake version` prints the installed version, Python version, and core dependency versions (Daft, Ray, Metaflow, Lance) in a formatted table
-**And** `arrow-lake ingest --source s3://my-bucket/data --table my_data --modality text` ingests files from the source into a Lance table named `my_data`
-**And** `arrow-lake search --query "autonomous driving" --modality image --top-k 10` returns the top 10 image results with scores in a formatted table
-**And** `arrow-lake search --query "machine learning" --modality text --top-k 5 --alpha 0.7` performs hybrid search with the specified alpha weight
+**And** `arrow-lake ingest files my_data s3://my-bucket/data` ingests files from the source into a Lance table named `my_data`
+**And** `arrow-lake search vector my_data --query "autonomous driving" --top-k 10` returns the top 10 image results with scores in a formatted table
+**And** `arrow-lake search hybrid my_data --query "machine learning"` performs hybrid search with RRF fusion
 **And** `arrow-lake status` lists all registered datasets with row counts, column schemas, and last update timestamps
 **And** error messages are displayed with clear colored formatting (red for errors, yellow for warnings, green for success)
 **And** `tests/unit/test_cli.py` validates all subcommands using click.testing.CliRunner with a temporary test dataset

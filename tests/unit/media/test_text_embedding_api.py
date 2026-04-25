@@ -63,15 +63,10 @@ class TestApiEmbeddingEncoderEncode:
         }
 
         encoder = ApiEmbeddingEncoder(api_base="https://api.example.com/v1", api_key="sk-test")
+        encoder._client = MagicMock()
+        encoder._client.post.return_value = mock_response
 
-        with patch("arrow_lake.embed.encoder.httpx.Client") as mock_client_cls:
-            mock_client = MagicMock()
-            mock_client.__enter__ = MagicMock(return_value=mock_client)
-            mock_client.__exit__ = MagicMock(return_value=False)
-            mock_client.post.return_value = mock_response
-            mock_client_cls.return_value = mock_client
-
-            result = encoder.encode(["hello", "world"])
+        result = encoder.encode(["hello", "world"])
 
         assert len(result.embeddings) == 2
         assert result.embeddings[0].shape == (384,)
@@ -85,19 +80,11 @@ class TestApiEmbeddingEncoderEncode:
         mock_response.text = "Rate limit exceeded"
 
         encoder = ApiEmbeddingEncoder(api_base="https://api.example.com/v1", api_key="sk-test")
+        encoder._client = MagicMock()
+        encoder._client.post.return_value = mock_response
 
-        with (
-            patch("arrow_lake.embed.encoder.httpx.Client") as mock_client_cls,
-            patch("arrow_lake.embed.encoder.stop_after_attempt"),
-        ):
-            mock_client = MagicMock()
-            mock_client.__enter__ = MagicMock(return_value=mock_client)
-            mock_client.__exit__ = MagicMock(return_value=False)
-            mock_client.post.return_value = mock_response
-            mock_client_cls.return_value = mock_client
-
-            with pytest.raises(EmbeddingError) as exc_info:
-                encoder.encode(["hello"])
+        with pytest.raises(EmbeddingError) as exc_info:
+            encoder.encode(["hello"])
             assert exc_info.value.error_code == ErrorCode.EMBEDDING_API_ERROR
 
     def test_timeout_raises_timeout_error(self) -> None:
@@ -106,17 +93,9 @@ class TestApiEmbeddingEncoderEncode:
         from arrow_lake.exceptions import EmbeddingError
 
         encoder = ApiEmbeddingEncoder(api_base="https://api.example.com/v1", api_key="sk-test")
+        encoder._client = MagicMock()
+        encoder._client.post.side_effect = httpx.TimeoutException("timed out")
 
-        with (
-            patch("arrow_lake.embed.encoder.httpx.Client") as mock_client_cls,
-            patch("arrow_lake.embed.encoder.stop_after_attempt"),
-        ):
-            mock_client = MagicMock()
-            mock_client.__enter__ = MagicMock(return_value=mock_client)
-            mock_client.__exit__ = MagicMock(return_value=False)
-            mock_client.post.side_effect = httpx.TimeoutException("timed out")
-            mock_client_cls.return_value = mock_client
-
-            with pytest.raises(EmbeddingError) as exc_info:
-                encoder.encode(["hello"])
+        with pytest.raises(EmbeddingError) as exc_info:
+            encoder.encode(["hello"])
             assert exc_info.value.error_code == ErrorCode.EMBEDDING_TIMEOUT

@@ -80,13 +80,24 @@ async def exchange_token(request: Request) -> TokenPair:
 @router.post("/refresh", summary="Refresh access token")
 async def refresh_token(request: Request) -> TokenPair:
     """Accept a refresh token in JSON body, return a new token pair."""
+    content_length = request.headers.get("content-length", "")
+    if content_length:
+        try:
+            if int(content_length) > 10_240:
+                raise HTTPException(status_code=413, detail="Request body too large")
+        except ValueError:
+            pass
     body = await request.json()
     refresh_token = body.get("refresh_token") if isinstance(body, dict) else None
     if not refresh_token or not isinstance(refresh_token, str):
         raise HTTPException(status_code=400, detail="refresh_token is required and must be a string")
     svc = _get_auth_service(request)
 
-    new_payload = svc.refresh_access_token(refresh_token)
+    try:
+        new_payload = svc.refresh_access_token(refresh_token)
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
     new_refresh = svc.create_refresh_token(
         user_id=new_payload.sub,
         role=new_payload.role,

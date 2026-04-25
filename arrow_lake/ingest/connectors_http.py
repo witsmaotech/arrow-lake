@@ -36,12 +36,25 @@ _PRIVATE_NETWORKS = [
 
 
 def _is_safe_hostname(hostname: str) -> bool:
-    """Check if hostname is not a private/internal IP address."""
+    """Check if hostname is not a private/internal IP address.
+
+    Resolves domain names via DNS to prevent DNS rebinding attacks.
+    """
+    import socket
+
     try:
         addr = ipaddress.ip_address(hostname)
         return not any(addr in net for net in _PRIVATE_NETWORKS)
     except ValueError:
-        # Not an IP address (e.g., domain name) — allow DNS resolution
+        # Not an IP literal — resolve DNS and check resolved IPs
+        try:
+            addrs = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+            for family, _, _, _, sockaddr in addrs:
+                ip = ipaddress.ip_address(sockaddr[0])
+                if any(ip in net for net in _PRIVATE_NETWORKS):
+                    return False
+        except (socket.gaierror, OSError):
+            pass
         return True
 
 
@@ -75,6 +88,20 @@ class HttpConnector:
     ) -> None:
         self.timeout_seconds = timeout_seconds
         self.max_retries = max_retries
+        self._client = httpx.Client(
+            timeout=timeout_seconds,
+            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+        )
+
+    def close(self) -> None:
+        """Close the underlying HTTP client."""
+        self._client.close()
+
+    def __enter__(self) -> HttpConnector:
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        self.close()
 
     def _validate_url(self, url: str) -> bool:
         """Validate URL scheme and block private/internal IP addresses.
@@ -149,21 +176,20 @@ class HttpConnector:
         retry_decorator = self._build_retry_decorator()
 
         def _do_fetch() -> HttpFetchResult:
-            with httpx.Client(timeout=self.timeout_seconds) as client:
-                response = client.get(url)
-                error_code = self._map_status_code(response.status_code)
-                if error_code is not None:
-                    raise HttpError(
-                        error_code=error_code,
-                        message=f"HTTP {response.status_code} fetching {url}: "
-                        f"{response.text[:200]}",
-                    )
-                return HttpFetchResult(
-                    url=url,
-                    content=response.content,
-                    content_type=response.headers.get("content-type", ""),
-                    status_code=response.status_code,
+            response = self._client.get(url)
+            error_code = self._map_status_code(response.status_code)
+            if error_code is not None:
+                raise HttpError(
+                    error_code=error_code,
+                    message=f"HTTP {response.status_code} fetching {url}: "
+                    f"{response.text[:200]}",
                 )
+            return HttpFetchResult(
+                url=url,
+                content=response.content,
+                content_type=response.headers.get("content-type", ""),
+                status_code=response.status_code,
+            )
 
         result: HttpFetchResult = retry_decorator(_do_fetch)()
         return result

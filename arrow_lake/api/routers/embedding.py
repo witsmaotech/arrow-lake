@@ -76,6 +76,7 @@ async def create_fts_index(
 @embed_router.post("/text", response_model=EmbeddingResponse)
 async def embed_text(req: TextEmbedRequest) -> EmbeddingResponse:
     """Compute text embeddings using a local model."""
+    import numpy as np
     import pyarrow as pa
 
     from arrow_lake.embed.encoder import LocalEmbeddingEncoder
@@ -87,13 +88,18 @@ async def embed_text(req: TextEmbedRequest) -> EmbeddingResponse:
     table = pa.table({"text_content": req.texts})
     result = encoder.encode_column(table, column="text_content")
 
-    # Extract embedding vectors from the result table
-    embeddings: list[list[float]] = []
-    col_name = result.vector_column
-    if col_name in table.column_names:
-        for val in table.column(col_name).to_pylist():
-            if val is not None:
-                embeddings.append(val)
+    if result.embedded_rows == 0 or result.embedding_dim == 0:
+        return EmbeddingResponse(
+            embeddings=[],
+            embedding_dim=0,
+            model=req.model,
+            total=result.total_rows,
+            null_count=result.null_rows,
+        )
+
+    model = encoder._load_model()
+    embeddings_list = model.encode(req.texts, normalize_embeddings=True)
+    embeddings = [e.tolist() for e in np.asarray(embeddings_list, dtype=np.float32)]
 
     return EmbeddingResponse(
         embeddings=embeddings,
@@ -129,11 +135,11 @@ async def embed_image(req: ImageEmbedRequest) -> EmbeddingResponse:
     )
     result = encoder.encode(table)
 
-    # Extract embedding vectors from the result table
+    # Extract embedding vectors from the result table (encode adds the vector column)
     embeddings: list[list[float]] = []
     col_name = result.vector_column
-    if col_name in table.column_names:
-        for val in table.column(col_name).to_pylist():
+    if col_name in result.column_names:
+        for val in result.column(col_name).to_pylist():
             if val is not None:
                 embeddings.append(val)
 

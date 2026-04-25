@@ -2035,9 +2035,9 @@ Sam 可以通过 Helm 部署到 K8s、利用弹性 GPU 突发扩展、通过 Pro
 **当** 我运行 `arrow-lake --help`
 **那么** CLI 显示带颜色的输出，包含子命令：`ingest`、`search`、`status`、`version`
 **并且** `arrow-lake version` 打印已安装版本、Python 版本和核心依赖版本（Daft、Ray、Metaflow、Lance），以格式化表格显示
-**并且** `arrow-lake ingest --source s3://my-bucket/data --table my_data --modality text` 将文件从源摄入到名为 `my_data` 的 Lance 表
-**并且** `arrow-lake search --query "autonomous driving" --modality image --top-k 10` 返回前 10 条图像结果，以格式化表格显示分数
-**并且** `arrow-lake search --query "machine learning" --modality text --top-k 5 --alpha 0.7` 使用指定 alpha 权重执行混合搜索
+**并且** `arrow-lake ingest files my_data s3://my-bucket/data` 将文件从源摄入到名为 `my_data` 的 Lance 表
+**并且** `arrow-lake search vector my_data --query "autonomous driving" --top-k 10` 返回前 10 条图像结果，以格式化表格显示分数
+**并且** `arrow-lake search hybrid my_data --query "machine learning"` 使用 RRF 融合执行混合搜索
 **并且** `arrow-lake status` 列出所有已注册数据集，包含行数、列 Schema 和最后更新时间戳
 **并且** 错误消息以清晰的彩色格式显示（红色为错误、黄色为警告、绿色为成功）
 **并且** `tests/unit/test_cli.py` 使用 click.testing.CliRunner 和临时测试数据集验证所有子命令

@@ -103,28 +103,35 @@ class DuckLakeWorkspace:
         validate_identifier(view_name)
         validate_sql_safety(sql)
 
-        # Check row budget
-        count_sql = f"SELECT COUNT(*) FROM ({sql}) AS _count_check"
+        # Create the materialized table directly — avoids double query
         try:
-            row_count = conn.execute(count_sql).fetchone()[0]
+            conn.execute(
+                f"CREATE OR REPLACE TABLE {view_name} AS {sql}"
+            )
         except duckdb.Error as exc:
             raise ArrowLakeError(
                 ErrorCode.OLAP_QUERY_FAILED,
-                f"Failed to count rows for materialization: {exc}",
+                f"Failed to materialize view '{view_name}': {exc}",
+            ) from exc
+
+        # Count rows and check budget from the materialized table
+        try:
+            row_count = conn.execute(
+                f"SELECT COUNT(*) FROM {view_name}"
+            ).fetchone()[0]
+        except duckdb.Error as exc:
+            raise ArrowLakeError(
+                ErrorCode.OLAP_QUERY_FAILED,
+                f"Failed to count materialized rows: {exc}",
             ) from exc
 
         if row_count > self._max_join_rows:
+            # Drop the oversized table to avoid leaving orphan data
+            conn.execute(f"DROP TABLE IF EXISTS {view_name}")
             raise ArrowLakeError(
                 ErrorCode.OLAP_QUERY_FAILED,
                 f"Materialization row count ({row_count}) exceeds budget ({self._max_join_rows})",
             )
-
-        # Create the materialized table
-        conn.execute(
-            f"CREATE OR REPLACE TABLE {view_name} AS {sql}"
-        )
-
-        # Record metadata
         now = datetime.now(UTC)
         expires = now + timedelta(days=self._ttl_days)
         self._ensure_metadata_table(conn)

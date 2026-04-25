@@ -213,7 +213,7 @@ class TestHttpConnectorRetry:
         assert decorator is not None
 
     def test_fetch_with_mock_success(self) -> None:
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import MagicMock
 
         from arrow_lake.ingest.connectors_http import HttpConnector, HttpFetchResult
 
@@ -224,19 +224,16 @@ class TestHttpConnectorRetry:
         mock_response.headers = {"content-type": "application/json"}
         mock_response.text = ""
 
-        mock_client = MagicMock()
-        mock_client.get.return_value = mock_response
-        mock_client.__enter__ = MagicMock(return_value=mock_client)
-        mock_client.__exit__ = MagicMock(return_value=False)
+        connector._client = MagicMock()
+        connector._client.get.return_value = mock_response
 
-        with patch("arrow_lake.ingest.connectors_http.httpx.Client", return_value=mock_client):
-            result = connector.fetch("https://example.com/data.json")
-            assert isinstance(result, HttpFetchResult)
-            assert result.status_code == 200
-            assert result.content == b'{"key": "value"}'
+        result = connector.fetch("https://example.com/data.json")
+        assert isinstance(result, HttpFetchResult)
+        assert result.status_code == 200
+        assert result.content == b'{"key": "value"}'
 
     def test_fetch_4xx_raises(self) -> None:
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import MagicMock
 
         from arrow_lake.ingest.connectors_http import HttpConnector
 
@@ -246,19 +243,14 @@ class TestHttpConnectorRetry:
         mock_response.text = "Not Found"
         mock_response.headers = {}
 
-        mock_client = MagicMock()
-        mock_client.get.return_value = mock_response
-        mock_client.__enter__ = MagicMock(return_value=mock_client)
-        mock_client.__exit__ = MagicMock(return_value=False)
+        connector._client = MagicMock()
+        connector._client.get.return_value = mock_response
 
-        with (
-            patch("arrow_lake.ingest.connectors_http.httpx.Client", return_value=mock_client),
-            pytest.raises(HttpError, match="404"),
-        ):
+        with pytest.raises(HttpError, match="404"):
             connector.fetch("https://example.com/missing")
 
     def test_fetch_429_raises_rate_limited(self) -> None:
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import MagicMock
 
         from arrow_lake.ingest.connectors_http import HttpConnector
 
@@ -268,15 +260,10 @@ class TestHttpConnectorRetry:
         mock_response.text = "Too Many Requests"
         mock_response.headers = {}
 
-        mock_client = MagicMock()
-        mock_client.get.return_value = mock_response
-        mock_client.__enter__ = MagicMock(return_value=mock_client)
-        mock_client.__exit__ = MagicMock(return_value=False)
+        connector._client = MagicMock()
+        connector._client.get.return_value = mock_response
 
-        with (
-            patch("arrow_lake.ingest.connectors_http.httpx.Client", return_value=mock_client),
-            pytest.raises(HttpError, match="429"),
-        ):
+        with pytest.raises(HttpError, match="429"):
             connector.fetch("https://example.com/data")
 
 

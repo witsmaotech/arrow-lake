@@ -30,12 +30,14 @@ class _Counter:
         self._timestamps: list[float] = []
         self._lock = asyncio.Lock()
 
-    async def hit(self, now: float, window: float) -> bool:
+    async def hit(self, now: float, window: float, limit: int = 0) -> bool:
         """Record a request and return True if within limit, False if exceeded."""
         async with self._lock:
             # Evict expired timestamps
             cutoff = now - window
             self._timestamps = [t for t in self._timestamps if t > cutoff]
+            if limit > 0 and len(self._timestamps) >= limit:
+                return False
             self._timestamps.append(now)
             return True
 
@@ -96,9 +98,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         now = time.time()
         counter = self._counters[key]
 
-        # Check if already at limit
-        current = await counter.count(now, _WINDOW_SECONDS)
-        if current >= self._rpm:
+        # Record the request and check limit atomically (avoids TOCTOU race)
+        allowed = await counter.hit(now, _WINDOW_SECONDS, limit=self._rpm)
+
+        if not allowed:
             from arrow_lake.core.metrics import rate_limit_rejected_total
 
             rate_limit_rejected_total.labels(endpoint=path, path=path).inc()
@@ -113,9 +116,6 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 },
                 headers={"Retry-After": str(retry_after)},
             )
-
-        # Record the request
-        await counter.hit(now, _WINDOW_SECONDS)
 
         response = await call_next(request)
 

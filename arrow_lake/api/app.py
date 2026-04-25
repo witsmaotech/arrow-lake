@@ -36,13 +36,23 @@ from arrow_lake.config import ArrowLakeConfig
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Application lifespan: initialize Lake instance on startup."""
+    """Application lifespan: initialize Lake instance on startup, cleanup on shutdown."""
     from arrow_lake import Lake
 
     config: ArrowLakeConfig = app.state.config
     lake = Lake(base_uri=config.storage.base_uri, config=config)
     app.state.lake = lake
     yield
+    # Shutdown: close auth service, LLM providers, session managers
+    auth_svc = getattr(app.state, "auth_service", None)
+    if auth_svc is not None:
+        pass  # AuthService has no closeable resources currently
+    # Flush metrics on shutdown if enabled
+    try:
+        from arrow_lake.core.metrics import flush_metrics
+        flush_metrics()
+    except Exception:
+        pass
 
 
 logger = logging.getLogger(__name__)

@@ -137,6 +137,9 @@ def _resize_and_encode(img: Image.Image, size: int, img_format: str = "JPEG") ->
     return buf.getvalue()
 
 
+_DEFAULT_MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
+
+
 class ImageProcessor:
     """Processes images: thumbnail, preview, EXIF extraction.
 
@@ -144,6 +147,7 @@ class ImageProcessor:
         thumbnail_size: Thumbnail dimension (square, pixels).
         preview_size: Preview dimension (square, pixels).
         max_image_dimension: Max dimension before downscaling.
+        max_file_size: Max image file size in bytes (default 50 MB).
     """
 
     def __init__(
@@ -151,10 +155,12 @@ class ImageProcessor:
         thumbnail_size: int = 64,
         preview_size: int = 512,
         max_image_dimension: int = 4096,
+        max_file_size: int = _DEFAULT_MAX_FILE_SIZE,
     ) -> None:
         self.thumbnail_size = thumbnail_size
         self.preview_size = preview_size
         self.max_image_dimension = max_image_dimension
+        self.max_file_size = max_file_size
 
     def process(self, image_path: str | Path) -> ProcessedImage:
         """Process an image file: extract metadata, generate thumbnail and preview.
@@ -172,6 +178,13 @@ class ImageProcessor:
         path = Path(image_path)
         if not path.exists():
             raise FileNotFoundError(f"Image not found: {path}")
+
+        file_size = path.stat().st_size
+        if file_size > self.max_file_size:
+            raise IngestError(
+                error_code=ErrorCode.IMAGE_DECODE_FAILED,
+                message=f"Image file too large: {file_size} bytes (max {self.max_file_size})",
+            )
 
         original_bytes = path.read_bytes()
 

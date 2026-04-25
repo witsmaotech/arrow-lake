@@ -340,11 +340,11 @@ class DuckDBSessionManager:
 
     @staticmethod
     def _close_conn(conn: duckdb.DuckDBPyConnection) -> None:
-        """Close a DuckDB connection, suppressing errors."""
+        """Close a DuckDB connection, logging errors."""
         try:
             conn.close()
-        except duckdb.Error:
-            pass
+        except duckdb.Error as exc:
+            logger.warning("Error closing DuckDB connection: %s", exc)
 
     def record_slow_query(self) -> None:
         """Record a slow query event (called by query bridges)."""

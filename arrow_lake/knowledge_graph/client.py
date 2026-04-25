@@ -32,7 +32,11 @@ _SAFE_VERTEX_ID_RE = re.compile(r"^[a-zA-Z0-9_\-:]+$")
 
 _DEFAULT_MAX_RETRIES = 3
 
-_BLOCKED_GREMLIN_PATTERNS = ("drop(", "eval(", "System.", "java.lang", "inject(")
+_BLOCKED_GREMLIN_PATTERNS = (
+    "drop(", "eval(", "System.", "java.lang", "inject(",
+    "GroovyShell", "ProcessBuilder", "Runtime.", "Exec(",
+    "org.apache", "new File(", "Class.forName",
+)
 
 
 class HugeGraphClient:

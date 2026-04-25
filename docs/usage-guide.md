@@ -834,10 +834,10 @@ export ARROW_LAKE__QUALITY__DEDUP_STRATEGY="exact"
 arrow-lake status
 
 # 数据摄取
-arrow-lake ingest --source data.parquet --dataset my_data
+arrow-lake ingest files my_data data.parquet
 
 # 导出
-arrow-lake export --dataset my_data --format parquet --output result.parquet
+arrow-lake export my_data --output result.parquet --format parquet
 
 # 查看 CLI 帮助
 arrow-lake --help

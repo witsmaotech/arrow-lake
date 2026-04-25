@@ -23,6 +23,13 @@ from arrow_lake.query._chinese_tokenizer import segment_query, segment_text
 
 _log = structlog.get_logger(__name__)
 
+try:
+    import tantivy  # noqa: F401
+
+    _TANTIVY_AVAILABLE = True
+except ImportError:
+    _TANTIVY_AVAILABLE = False
+
 
 @dataclass(frozen=True)
 class FullTextSearchResult:
@@ -119,14 +126,6 @@ class FullTextSearchBridge:
                 ),
             )
 
-        _TANTIVY_AVAILABLE = False
-        try:
-            import tantivy  # noqa: F401
-
-            _TANTIVY_AVAILABLE = True
-        except ImportError:
-            pass
-
         if not _TANTIVY_AVAILABLE:
             _log.warning(
                 "tantivy not installed — FTS index will use lance-index backend "
@@ -207,31 +206,50 @@ class FullTextSearchBridge:
         segmented_column = "_fts_segmented"
         uri = table.uri
 
-        # Read existing data and segment
+        # Read existing data and segment in chunks to limit memory usage
         ds = lance.dataset(uri)
         row_count = ds.count_rows()
-        if row_count > 100_000:
-            _log.warning(
-                "Large dataset (%d rows): _add_segmented_column loads all data into memory. "
-                "Consider chunking for datasets >100k rows.",
-                row_count,
+        _CHUNK_SIZE = 50_000
+
+        if row_count <= _CHUNK_SIZE:
+            original = ds.to_table()
+            raw_texts = original.column(source_column).to_pylist()
+            segmented = [
+                None if text is None else segment_text(str(text))
+                for text in raw_texts
+            ]
+            new_col = pa.array(segmented, type=pa.string())
+            new_table = original.append_column(segmented_column, new_col)
+            lance.write_dataset(new_table, uri, mode="overwrite")
+        else:
+            # Chunked: process in batches, merge via Lance append
+            _log.info(
+                "Large dataset (%d rows): segmenting in chunks of %d",
+                row_count, _CHUNK_SIZE,
             )
-        original = ds.to_table()
-        raw_texts = original.column(source_column).to_pylist()
+            import lance.dataset as lance_ds
 
-        segmented = []
-        for text in raw_texts:
-            if text is None:
-                segmented.append(None)
-            else:
-                segmented.append(segment_text(str(text)))
-
-        # Build new table with the segmented column added
-        new_col = pa.array(segmented, type=pa.string())
-        new_table = original.append_column(segmented_column, new_col)
-
-        # Overwrite the dataset
-        lance.write_dataset(new_table, uri, mode="overwrite")
+            first_chunk = True
+            for offset in range(0, row_count, _CHUNK_SIZE):
+                batch = ds.to_table(
+                    columns=[source_column],
+                    offset=offset,
+                    limit=_CHUNK_SIZE,
+                )
+                raw_texts = batch.column(source_column).to_pylist()
+                segmented = [
+                    None if text is None else segment_text(str(text))
+                    for text in raw_texts
+                ]
+                new_col = pa.array(segmented, type=pa.string())
+                chunk_table = batch.append_column(segmented_column, new_col)
+                if first_chunk:
+                    lance.write_dataset(chunk_table, uri, mode="overwrite")
+                    first_chunk = False
+                else:
+                    lance.write_dataset(chunk_table, uri, mode="append")
+            # Reopen to validate
+            ds = lance.dataset(uri)
 
         _log.info(
             "Added jieba-segmented column '%s' to dataset '%s' (%d rows)",
@@ -351,55 +369,6 @@ class FullTextSearchBridge:
                 error_code=ErrorCode.FTS_SEARCH_FAILED,
                 message=str(exc),
             ) from exc
-
-    def _search_via_duckdb(
-        self,
-        dataset_name: str,
-        query: str,
-        top_k: int,
-        fts_column: str,
-    ) -> pa.Table:
-        """Search via DuckDB lance_fts() SQL function."""
-        from arrow_lake.query._db import create_duckdb_session
-
-        if not hasattr(self._storage, "dataset_uri"):
-            raise QueryError(
-                error_code=ErrorCode.FTS_SEARCH_FAILED,
-                message="storage.dataset_uri() not available for DuckDB native FTS",
-            )
-
-        from arrow_lake.validation import escape_sql_literal, validate_identifier
-
-        validate_identifier(fts_column)
-
-        uri = self._storage.dataset_uri(dataset_name)
-        safe_query = escape_sql_literal(query)
-        safe_uri = escape_sql_literal(uri)
-        sql = (
-            f"SELECT * FROM lance_fts("
-            f"  '{safe_uri}',"
-            f"  '{fts_column}',"
-            f"  '{safe_query}',"
-            f"  prefilter := false,"
-            f"  k := {top_k}::BIGINT"
-            f") LIMIT {top_k}"
-        )
-
-        if self._session_manager is not None:
-            managed = self._session_manager.acquire()
-            try:
-                reader = managed.conn.execute(sql).arrow()
-                if hasattr(reader, "read_all"):
-                    return reader.read_all()
-                return reader
-            finally:
-                managed.release()
-        else:
-            with create_duckdb_session(storage_config=self._storage_config) as conn:
-                reader = conn.execute(sql).arrow()
-                if hasattr(reader, "read_all"):
-                    return reader.read_all()
-                return reader
 
     def _search_via_lancedb(
         self,

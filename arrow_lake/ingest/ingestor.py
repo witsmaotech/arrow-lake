@@ -58,6 +58,36 @@ class Ingestor:
 
     def __init__(self, manager: Any) -> None:
         self._manager = manager
+        self._first_table_seen: dict[str, bool] = {}
+
+    def _write_table(
+        self,
+        dataset_name: str,
+        table: pa.Table,
+        sources: list[IngestionSource],
+        source_path: str,
+    ) -> None:
+        """Write a table to the dataset (create or append) and track the source."""
+        if not self._first_table_seen.get(dataset_name, False):
+            self._manager.create_dataset(dataset_name, table)
+            self._first_table_seen[dataset_name] = True
+        else:
+            self._manager.append_dataset(dataset_name, table)
+
+        sources.append(IngestionSource(
+            path=source_path,
+            row_count=table.num_rows,
+            file_count=1,
+        ))
+
+    @staticmethod
+    def _build_report(sources: list[IngestionSource]) -> IngestionReport:
+        """Build an IngestionReport from a list of sources."""
+        return IngestionReport(
+            sources=tuple(sources),
+            total_rows=sum(s.row_count for s in sources),
+            total_files=sum(s.file_count for s in sources),
+        )
 
     def ingest(
         self,
@@ -77,35 +107,14 @@ class Ingestor:
             IngestError: If ingestion fails.
         """
         sources: list[IngestionSource] = []
-        total_rows = 0
-        total_files = 0
-        first_table: pa.Table | None = None
 
         for file_path in file_paths:
             path = Path(file_path)
             file_type = self._detect_file_type(path)
             table = self._read_file(path, file_type)
+            self._write_table(dataset_name, table, sources, str(path))
 
-            if first_table is None:
-                first_table = table
-                self._manager.create_dataset(dataset_name, table)
-            else:
-                self._manager.append_dataset(dataset_name, table)
-
-            src = IngestionSource(
-                path=str(path),
-                row_count=table.num_rows,
-                file_count=1,
-            )
-            sources.append(src)
-            total_rows += table.num_rows
-            total_files += 1
-
-        return IngestionReport(
-            sources=tuple(sources),
-            total_rows=total_rows,
-            total_files=total_files,
-        )
+        return self._build_report(sources)
 
     def ingest_http(
         self,
@@ -128,35 +137,14 @@ class Ingestor:
 
         connector = HttpConnector()
         sources: list[IngestionSource] = []
-        total_rows = 0
-        total_files = 0
-        first_table: pa.Table | None = None
 
         for url in urls:
             result = connector.fetch(url)
             suffix = self._detect_file_type(Path(url))
             table = self._read_bytes(result.content, suffix)
+            self._write_table(dataset_name, table, sources, result.url)
 
-            if first_table is None:
-                first_table = table
-                self._manager.create_dataset(dataset_name, table)
-            else:
-                self._manager.append_dataset(dataset_name, table)
-
-            src = IngestionSource(
-                path=result.url,
-                row_count=table.num_rows,
-                file_count=1,
-            )
-            sources.append(src)
-            total_rows += table.num_rows
-            total_files += 1
-
-        return IngestionReport(
-            sources=tuple(sources),
-            total_rows=total_rows,
-            total_files=total_files,
-        )
+        return self._build_report(sources)
 
     def ingest_images(
         self,
@@ -179,9 +167,6 @@ class Ingestor:
 
         processor = ImageProcessor()
         sources: list[IngestionSource] = []
-        total_rows = 0
-        total_files = 0
-        first_table: pa.Table | None = None
 
         for img_path in image_paths:
             result = processor.process(img_path)
@@ -195,27 +180,9 @@ class Ingestor:
                 "exif_model": result.metadata.exif_model,
             }
             table = pa.table({k: [v] for k, v in row.items()})
+            self._write_table(dataset_name, table, sources, str(img_path))
 
-            if first_table is None:
-                first_table = table
-                self._manager.create_dataset(dataset_name, table)
-            else:
-                self._manager.append_dataset(dataset_name, table)
-
-            src = IngestionSource(
-                path=str(img_path),
-                row_count=table.num_rows,
-                file_count=1,
-            )
-            sources.append(src)
-            total_rows += table.num_rows
-            total_files += 1
-
-        return IngestionReport(
-            sources=tuple(sources),
-            total_rows=total_rows,
-            total_files=total_files,
-        )
+        return self._build_report(sources)
 
     def ingest_videos(
         self,
@@ -238,9 +205,6 @@ class Ingestor:
 
         processor = VideoProcessor()
         sources: list[IngestionSource] = []
-        total_rows = 0
-        total_files = 0
-        first_table: pa.Table | None = None
 
         for vid_path in video_paths:
             result = processor.extract_keyframes(vid_path)
@@ -250,27 +214,9 @@ class Ingestor:
                 "video_duration_ms": result.duration_ms,
             }
             table = pa.table({k: [v] for k, v in row.items()})
+            self._write_table(dataset_name, table, sources, str(vid_path))
 
-            if first_table is None:
-                first_table = table
-                self._manager.create_dataset(dataset_name, table)
-            else:
-                self._manager.append_dataset(dataset_name, table)
-
-            src = IngestionSource(
-                path=str(vid_path),
-                row_count=table.num_rows,
-                file_count=1,
-            )
-            sources.append(src)
-            total_rows += table.num_rows
-            total_files += 1
-
-        return IngestionReport(
-            sources=tuple(sources),
-            total_rows=total_rows,
-            total_files=total_files,
-        )
+        return self._build_report(sources)
 
     def ingest_mixed(
         self,
@@ -381,9 +327,6 @@ class Ingestor:
             parser = DocumentParser()
 
         sources: list[IngestionSource] = []
-        total_rows = 0
-        total_files = 0
-        first_table = True
 
         for pdf_path_str in pdf_paths:
             pdf_path = Path(pdf_path_str)
@@ -423,7 +366,6 @@ class Ingestor:
                     row_count=0,
                     file_count=1,
                 ))
-                total_files += 1
                 continue
 
             # Build Arrow table from chunks
@@ -437,25 +379,9 @@ class Ingestor:
             }
             table = pa.table(rows)
 
-            if first_table:
-                self._manager.create_dataset(dataset_name, table)
-                first_table = False
-            else:
-                self._manager.append_dataset(dataset_name, table)
+            self._write_table(dataset_name, table, sources, str(pdf_path))
 
-            sources.append(IngestionSource(
-                path=str(pdf_path),
-                row_count=len(chunks),
-                file_count=1,
-            ))
-            total_rows += len(chunks)
-            total_files += 1
-
-        return IngestionReport(
-            sources=tuple(sources),
-            total_rows=total_rows,
-            total_files=total_files,
-        )
+        return self._build_report(sources)
 
     @classmethod
     def _detect_file_type(cls, path: Path) -> str:

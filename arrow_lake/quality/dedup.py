@@ -113,6 +113,7 @@ class ContentDeduplicator:
 
         # Compute hashes
         sha256_col = self._compute_sha256_column(table)
+        phash_col: list[int] | None = None
 
         if self._strategy == "exact":
             result_table = self._apply_exact_dedup(table, sha256_col)
@@ -123,8 +124,8 @@ class ContentDeduplicator:
             # both: exact first, then perceptual on unique
             unique_table = self._apply_exact_dedup(table, sha256_col)
             if unique_table.num_rows > 0:
-                phash_col = self._compute_phash_column(unique_table)
-                result_table = self._apply_perceptual_dedup(unique_table, phash_col)
+                unique_phash = self._compute_phash_column(unique_table)
+                result_table = self._apply_perceptual_dedup(unique_table, unique_phash)
             else:
                 result_table = unique_table
 
@@ -132,10 +133,11 @@ class ContentDeduplicator:
 
         # For "flag" action, keep duplicates but add is_duplicate column
         if self._action == "flag":
-            # Use the hash column that matches the actual dedup strategy
             if self._strategy in ("perceptual", "both"):
-                phash_col = self._compute_phash_column(table)
-                result_table = self._add_flag_column(table, phash_col)
+                # phash must match original table length for flag column
+                if phash_col is None:
+                    phash_col = self._compute_phash_column(table)
+                result_table = self._add_flag_column_perceptual(table, phash_col)
             else:
                 result_table = self._add_flag_column(table, sha256_col)
 
@@ -336,21 +338,33 @@ class ContentDeduplicator:
         return (unique_indices and table.take(unique_indices)) or table.slice(0, 0)
 
     def _apply_perceptual_dedup(self, table: pa.Table, phash_col: list[int]) -> pa.Table:
-        """Remove perceptual duplicates based on pHash Hamming distance."""
-        seen: list[int] = []
-        unique_indices: list[int] = []
+        """Remove perceptual duplicates based on pHash Hamming distance.
+
+        Uses a bucket-based approach: group hashes by their high bits to avoid
+        O(n²) comparison. Only compares hashes within the same bucket.
+        """
         threshold = self._perceptual_threshold
+        # Bucket by high 16 bits — hashes that differ in high bits will always
+        # have Hamming distance > threshold for reasonable thresholds (<16)
+        bucket_bits = max(16, threshold + 1)
+        bucket_mask = ((1 << bucket_bits) - 1) << (64 - bucket_bits)
+        buckets: dict[int, list[tuple[int, int]]] = {}  # bucket_key -> [(index, hash)]
+        unique_indices: list[int] = []
+
         for _i, h in enumerate(phash_col):
-            is_dup = False
             if h == 0:
                 unique_indices.append(_i)
                 continue
-            for existing_h in seen:
-                if self._hamming_distance(h, existing_h) < threshold:
-                    is_dup = True
-                    break
+            bucket_key = h & bucket_mask
+            bucket = buckets.get(bucket_key, [])
+            is_dup = any(self._hamming_distance(h, existing_h) < threshold for _, existing_h in bucket)
+            # Also check adjacent bucket for hashes near boundary
+            if not is_dup and bucket_key != 0:
+                adj_bucket = buckets.get(bucket_key - (1 << (64 - bucket_bits)), [])
+                is_dup = any(self._hamming_distance(h, existing_h) < threshold for _, existing_h in adj_bucket)
             if not is_dup:
-                seen.append(h)
+                bucket.append((_i, h))
+                buckets[bucket_key] = bucket
                 unique_indices.append(_i)
         return (unique_indices and table.take(unique_indices)) or table.slice(0, 0)
 
@@ -359,11 +373,7 @@ class ContentDeduplicator:
         original_table: pa.Table,
         sha256_col: list[str],
     ) -> pa.Table:
-        """Add is_duplicate column to original table based on sha256 lookup.
-
-        A row is a duplicate if its hash was already seen at an earlier position.
-        The first occurrence of each hash is NOT a duplicate.
-        """
+        """Add is_duplicate column to original table based on sha256 lookup."""
         flag_values: list[bool] = []
         seen: set[str] = set()
         for h in sha256_col:
@@ -373,6 +383,33 @@ class ContentDeduplicator:
                 flag_values.append(False)
                 if h:
                     seen.add(h)
+
+        return original_table.append_column(
+            pa.field("is_duplicate", pa.bool_(), nullable=False),
+            pa.array(flag_values, type=pa.bool_()),
+        )
+
+    def _add_flag_column_perceptual(
+        self,
+        original_table: pa.Table,
+        phash_col: list[int],
+    ) -> pa.Table:
+        """Add is_duplicate column based on perceptual hash Hamming distance."""
+        flag_values: list[bool] = []
+        seen: list[int] = []
+        threshold = self._perceptual_threshold
+        for h in phash_col:
+            if h == 0:
+                flag_values.append(False)
+                continue
+            is_dup = False
+            for existing_h in seen:
+                if self._hamming_distance(h, existing_h) < threshold:
+                    is_dup = True
+                    break
+            if not is_dup:
+                seen.append(h)
+            flag_values.append(is_dup)
 
         return original_table.append_column(
             pa.field("is_duplicate", pa.bool_(), nullable=False),

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -167,5 +168,12 @@ def _build_merged_update(base: ArrowLakeConfig, yaml_data: dict[str, Any]) -> di
         if section in yaml_data:
             base_dict.update(yaml_data[section])
         result[section] = model_cls(**base_dict)
+
+    unrecognized = set(yaml_data) - set(_SECTION_TYPES)
+    if unrecognized:
+        logging.getLogger(__name__).warning(
+            "YAML config contains unrecognized sections (ignored): %s",
+            ", ".join(sorted(unrecognized)),
+        )
 
     return result

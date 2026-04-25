@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # ---------------------------------------------------------------------------
 # Index management
@@ -60,3 +60,14 @@ class ImageEmbedRequest(BaseModel):
     images: list[str] = Field(..., min_length=1, max_length=32)
     model: str = "openai/clip-vit-base-patch32"
     model_source: str = "modelscope"
+
+    @field_validator("images")
+    @classmethod
+    def _validate_image_size(cls, images: list[str]) -> list[str]:
+        _MAX_BASE64_LEN = 27_000_000  # ~20MB decoded
+        for i, img in enumerate(images):
+            if len(img) > _MAX_BASE64_LEN:
+                raise ValueError(
+                    f"Image at index {i} exceeds maximum size (base64 length {len(img)} > {_MAX_BASE64_LEN})"
+                )
+        return images

@@ -84,6 +84,28 @@ class BaseLLMProvider(ABC):
         """Close the underlying HTTP client."""
 
 
+class _RetryMixin:
+    """Shared retry and no-retry request helpers for httpx-based providers."""
+
+    _client: httpx.AsyncClient
+
+    @retry(
+        retry=retry_if_exception_type((httpx.TimeoutException, httpx.ConnectError)),
+        stop=stop_after_attempt(_DEFAULT_MAX_RETRIES),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        reraise=True,
+    )
+    async def _request(self, body: dict[str, Any]) -> httpx.Response:
+        """Send a POST request with tenacity retry on transient failures."""
+        return await self._client.post(self._endpoint, json=body)
+
+    async def _request_no_retry(self, body: dict[str, Any]) -> httpx.Response:
+        """Send a POST request without retry (for streaming)."""
+        return await self._client.post(self._endpoint, json=body)
+
+    _endpoint: str = "/chat/completions"
+
+
 # ---------------------------------------------------------------------------
 # OpenAI-compatible provider (OpenAI / vLLM / Ollama)
 # ---------------------------------------------------------------------------
@@ -95,7 +117,7 @@ _DEFAULT_BASE_URLS: dict[LLMProviderType, str] = {
 }
 
 
-class OpenAICompatibleProvider(BaseLLMProvider):
+class OpenAICompatibleProvider(_RetryMixin, BaseLLMProvider):
     """Provider for OpenAI-compatible APIs.
 
     Supports OpenAI, vLLM, and Ollama (all use ``/v1/chat/completions``).
@@ -115,6 +137,7 @@ class OpenAICompatibleProvider(BaseLLMProvider):
             base_url=self._base_url,
             headers=headers,
             timeout=httpx.Timeout(config.timeout_seconds),
+            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
         )
 
     def _build_body(
@@ -132,20 +155,6 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         if self._config.provider == LLMProviderType.OLLAMA:
             body["chat_template_kwargs"] = {"enable_thinking": False}
         return body
-
-    @retry(
-        retry=retry_if_exception_type((httpx.TimeoutException, httpx.ConnectError)),
-        stop=stop_after_attempt(_DEFAULT_MAX_RETRIES),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        reraise=True,
-    )
-    async def _request(self, body: dict[str, Any]) -> httpx.Response:
-        """Send a POST request with tenacity retry on transient failures."""
-        return await self._client.post("/chat/completions", json=body)
-
-    async def _request_no_retry(self, body: dict[str, Any]) -> httpx.Response:
-        """Send a POST request without retry (for streaming, where retry causes data duplication)."""
-        return await self._client.post("/chat/completions", json=body)
 
     async def generate(self, messages: list[LLMMessage]) -> LLMResponse:
         try:
@@ -223,15 +232,11 @@ class OpenAICompatibleProvider(BaseLLMProvider):
 # ---------------------------------------------------------------------------
 
 
-# ---------------------------------------------------------------------------
-# Anthropic provider
-# ---------------------------------------------------------------------------
-
-
-class AnthropicProvider(BaseLLMProvider):
+class AnthropicProvider(_RetryMixin, BaseLLMProvider):
     """Provider for Anthropic Claude API (``/v1/messages``)."""
 
     _ANTHROPIC_VERSION = "2023-06-01"
+    _endpoint = "/v1/messages"
 
     def __init__(self, config: LLMConfig) -> None:
         super().__init__(config)
@@ -253,6 +258,7 @@ class AnthropicProvider(BaseLLMProvider):
             base_url=self._base_url,
             headers=headers,
             timeout=httpx.Timeout(config.timeout_seconds),
+            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
         )
 
     def _build_body(
@@ -278,20 +284,6 @@ class AnthropicProvider(BaseLLMProvider):
         if self._config.temperature != 1.0:
             body["temperature"] = self._config.temperature
         return body
-
-    @retry(
-        retry=retry_if_exception_type((httpx.TimeoutException, httpx.ConnectError)),
-        stop=stop_after_attempt(_DEFAULT_MAX_RETRIES),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        reraise=True,
-    )
-    async def _request(self, body: dict[str, Any]) -> httpx.Response:
-        """Send a POST request with tenacity retry on transient failures."""
-        return await self._client.post("/v1/messages", json=body)
-
-    async def _request_no_retry(self, body: dict[str, Any]) -> httpx.Response:
-        """Send a POST request without retry (for streaming)."""
-        return await self._client.post("/v1/messages", json=body)
 
     async def generate(self, messages: list[LLMMessage]) -> LLMResponse:
         try:

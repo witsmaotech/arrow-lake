@@ -231,6 +231,15 @@ class ApiEmbeddingEncoder:
         self.timeout_seconds = timeout_seconds
         self.max_retries = max_retries
         self.fallback_model = fallback_model
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        self._headers = headers
+        self._client = httpx.Client(
+            timeout=self.timeout_seconds,
+            headers=headers,
+            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+        )
 
     def encode(self, texts: list[str]) -> EmbeddingBatch:
         """Encode texts via the API.
@@ -244,10 +253,6 @@ class ApiEmbeddingEncoder:
         Raises:
             EmbeddingError: On API error, timeout, or rate limit.
         """
-        headers: dict[str, str] = {"Content-Type": "application/json"}
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
-
         @retry(
             retry=retry_if_exception_type((httpx.TimeoutException, httpx.ConnectError)),
             stop=stop_after_attempt(self.max_retries),
@@ -255,44 +260,42 @@ class ApiEmbeddingEncoder:
             reraise=True,
         )
         def _do_encode(texts_to_encode: list[str]) -> EmbeddingBatch:
-            with httpx.Client(timeout=self.timeout_seconds) as client:
-                response = client.post(
-                    f"{self.api_base}/embeddings",
-                    json={
-                        "model": self.model_name,
-                        "input": texts_to_encode,
-                    },
-                    headers=headers,
+            response = self._client.post(
+                f"{self.api_base}/embeddings",
+                json={
+                    "model": self.model_name,
+                    "input": texts_to_encode,
+                },
+            )
+
+            if response.status_code == 429:
+                raise EmbeddingError(
+                    error_code=ErrorCode.EMBEDDING_API_ERROR,
+                    message=f"Rate limited by embedding API: {response.text[:200]}",
                 )
 
-                if response.status_code == 429:
-                    raise EmbeddingError(
-                        error_code=ErrorCode.EMBEDDING_API_ERROR,
-                        message=f"Rate limited by embedding API: {response.text[:200]}",
-                    )
-
-                if response.status_code != 200:
-                    raise EmbeddingError(
-                        error_code=ErrorCode.EMBEDDING_API_ERROR,
-                        message=(
-                            f"Embedding API returned {response.status_code}: {response.text[:200]}"
-                        ),
-                    )
-
-                data = response.json()
-                embeddings = []
-                null_mask: list[bool] = []
-
-                # Sort by index to maintain order
-                sorted_data = sorted(data["data"], key=lambda x: x["index"])
-                for item in sorted_data:
-                    embeddings.append(item["embedding"])
-                    null_mask.append(False)
-
-                return EmbeddingBatch(
-                    embeddings=np.array(embeddings, dtype=np.float32),
-                    null_mask=tuple(null_mask),
+            if response.status_code != 200:
+                raise EmbeddingError(
+                    error_code=ErrorCode.EMBEDDING_API_ERROR,
+                    message=(
+                        f"Embedding API returned {response.status_code}: {response.text[:200]}"
+                    ),
                 )
+
+            data = response.json()
+            embeddings = []
+            null_mask: list[bool] = []
+
+            # Sort by index to maintain order
+            sorted_data = sorted(data["data"], key=lambda x: x["index"])
+            for item in sorted_data:
+                embeddings.append(item["embedding"])
+                null_mask.append(False)
+
+            return EmbeddingBatch(
+                embeddings=np.array(embeddings, dtype=np.float32),
+                null_mask=tuple(null_mask),
+            )
 
         try:
             return _do_encode(texts)
@@ -325,20 +328,16 @@ class ApiEmbeddingEncoder:
                 model_name=self.fallback_model,
                 batch_size=self.batch_size,
             )
-            # Build a temporary Arrow table to use encode_column
-            table = pa.table({"text_content": texts})
-            result = local_encoder.encode_column(table, column="text_content")
-            if result.embedded_rows == 0:
-                return EmbeddingBatch(
-                    embeddings=np.zeros((len(texts), 1024), dtype=np.float32),
-                    null_mask=tuple(True for _ in texts),
-                )
-            # Reconstruct embeddings from the encoder
             model = local_encoder._load_model()
             embeddings = np.asarray(
                 model.encode(texts, normalize_embeddings=True),
                 dtype=np.float32,
             )
+            if len(embeddings) == 0:
+                return EmbeddingBatch(
+                    embeddings=np.zeros((len(texts), embeddings.shape[1]), dtype=np.float32),
+                    null_mask=tuple(True for _ in texts),
+                )
             return EmbeddingBatch(
                 embeddings=embeddings,
                 null_mask=tuple(False for _ in texts),

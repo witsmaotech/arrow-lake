@@ -65,8 +65,8 @@ Runs a self-contained demo with synthetic data — vector search, SQL analytics,
 ```bash
 arrow-lake demo                  # Interactive demo
 arrow-lake serve                 # Start REST API server
-arrow-lake ingest --source data.csv --table my_data
-arrow-lake search --query "ML" --table my_data --top-k 5
+arrow-lake ingest files my_data data.csv
+arrow-lake search vector my_data --query "ML" --top-k 5
 arrow-lake status
 ```
 
