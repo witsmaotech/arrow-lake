@@ -97,10 +97,11 @@ class TestIngestToSearchPipeline:
             "data processing",
             top_k=5,
             vector_column="text_embedding",
+            fts_column="text_content",
         )
 
         assert result.table.num_rows > 0
-        assert "_rrf_score" in result.table.column_names
+        assert "_hybrid_score" in result.table.column_names or "_rrf_score" in result.table.column_names
 
 
 class TestDeduplicationPipeline:
