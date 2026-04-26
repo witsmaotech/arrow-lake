@@ -45,7 +45,7 @@ def main() -> None:
         "category": [f"cat_{i % 4}" for i in range(n)],
     })
     lake.create_dataset("products", table)
-    ds = storage.open_dataset("products")
+    ds = lake.open_dataset("products")
     print(f"  初始 schema: {len(ds.schema)} 列")
     for f in ds.schema:
         print(f"    {f.name}: {f.type}")
@@ -56,7 +56,7 @@ def main() -> None:
     print("\nSTEP 2: 添加计算列 (discount_price)")
     try:
         storage.add_column("products", "discount_price", "CAST(price * 0.9 AS DOUBLE)")
-        ds = storage.open_dataset("products")
+        ds = lake.open_dataset("products")
         print(f"  添加列后: {len(ds.schema)} 列")
         for f in ds.schema:
             print(f"    {f.name}: {f.type}")
@@ -69,7 +69,7 @@ def main() -> None:
     print("\nSTEP 3: 修改列类型 (price: float64 → float32)")
     try:
         storage.alter_column("products", "price", pa.float32())
-        ds = storage.open_dataset("products")
+        ds = lake.open_dataset("products")
         for f in ds.schema:
             if f.name == "price":
                 print(f"  price → {f.type}")
@@ -80,7 +80,7 @@ def main() -> None:
     print("\nSTEP 4: 删除列 (discount_price)")
     try:
         storage.drop_column("products", "discount_price")
-        ds = storage.open_dataset("products")
+        ds = lake.open_dataset("products")
         print(f"  删除后: {len(ds.schema)} 列")
         for f in ds.schema:
             print(f"    {f.name}: {f.type}")
@@ -96,7 +96,7 @@ def main() -> None:
         "category": [f"cat_{i % 4}" for i in range(n, n + 10)],
     })
     storage.append_dataset("products", new_table)
-    ds = storage.open_dataset("products")
+    ds = lake.open_dataset("products")
     print(f"  追加后: {ds.count_rows()} 行")
 
     try:

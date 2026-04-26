@@ -1,6 +1,6 @@
 # Arrow Lake CLI 完全参考手册
 
-> 涵盖全部 40+ 命令、参数说明、示例输出与 Python SDK 对应关系。配合 5 个端到端实战场景，从本地开发到 S3/MinIO 生产部署一气呵成。
+> 涵盖全部 95+ 命令、参数说明、示例输出与 Python SDK 对应关系。配合 5 个端到端实战场景，从本地开发到 S3/MinIO 生产部署一气呵成。
 
 **示例数据**: 本教程所有实战场景使用的数据文件位于 [`docs/cookbook/datas/`](datas/README.md) 目录，可直接运行。包含论文元数据 CSV、交易记录 CSV、知识库 JSONL 等真实示例。
 
@@ -54,7 +54,7 @@ arrow-lake version
 ┏━━━━━━━━━━━━┳━━━━━━━━━┓
 ┃ Component  ┃ Version ┃
 ┡━━━━━━━━━━━━╇━━━━━━━━━┩
-│ arrow-lake │ 1.0.0   │
+│ arrow-lake │ 1.2.0   │
 │ python     │ 3.11.9  │
 │ pyarrow    │ 18.1.0  │
 │ duckdb     │ 1.2.1   │
@@ -151,6 +151,58 @@ arrow-lake catalog delete old_data --yes    # 跳过确认
 ```
 
 > **警告**: 删除不可恢复。建议先执行 `backup create`。
+
+#### `catalog rename <name> <new_name>` — 重命名数据集
+
+```bash
+arrow-lake catalog rename old_name new_name
+```
+
+**SDK 等价:**
+
+```python
+lake.rename_dataset("old_name", "new_name")
+```
+
+#### `catalog copy <name> <new_name>` — 复制数据集
+
+```bash
+arrow-lake catalog copy documents documents_backup
+```
+
+**SDK 等价:**
+
+```python
+lake.copy_dataset("documents", "documents_backup")
+```
+
+#### `catalog merge --sources <src1,src2,...> <target>` — 合并数据集
+
+所有源数据集必须有相同的 schema。
+
+```bash
+arrow-lake catalog merge --sources "q1_2024,q2_2024,q3_2024" yearly_sales
+```
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--sources` | — (**必填**) | 逗号分隔的源数据集名称 |
+| `target` | — (**位置参数**) | 目标数据集名称 |
+
+#### `catalog health` — 系统健康检查
+
+```bash
+arrow-lake catalog health
+```
+
+检查存储可达性、DuckDB 会话池、运行时间等。
+
+#### `catalog inspect <name>` — 查看数据集元数据（catalog 视图）
+
+```bash
+arrow-lake catalog inspect documents
+arrow-lake catalog inspect documents --json
+```
 
 ---
 
@@ -348,6 +400,52 @@ result = lake.hybrid_search("papers", vec, "attention mechanism",
                             top_k=10, vector_column="text_embedding")
 ```
 
+#### `search faceted <dataset>` — 分面搜索 (v1.2)
+
+向量搜索 + 分组统计，适用于筛选型场景。
+
+```bash
+arrow-lake search faceted products \
+    --query "laptop" \
+    --facets "category,brand" \
+    --top-k 20
+```
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--query` | — (**必填**) | 搜索文本 |
+| `--facets` | 无 | 逗号分隔的分面列 |
+| `--top-k` | `10` | 返回结果数 |
+| `--column` | `text_embedding` | 向量列名 |
+| `--model` | `Qwen/Qwen3-Embedding-0.6B` | 嵌入模型 |
+
+输出包含搜索结果和分面计数的两张表。
+
+**SDK 等价:**
+
+```python
+result = lake.faceted_search("products", vec, facets=["category", "brand"], top_k=20)
+```
+
+#### `search ensemble <dataset>` — 集成搜索 (v1.2)
+
+跨多个嵌入列加权融合搜索。
+
+```bash
+arrow-lake search ensemble papers \
+    --query "transformer architecture" \
+    --columns "text_embedding,title_embedding" \
+    --weights '{"text_embedding": 0.7, "title_embedding": 0.3}' \
+    --top-k 10
+```
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--columns` | — (**必填**) | 逗号分隔的嵌入列名 |
+| `--weights` | 无 | JSON 格式的列权重字典 |
+| `--query` | — (**必填**) | 搜索文本 |
+| `--top-k` | `10` | 返回结果数 |
+
 ---
 
 ### 5. `arrow-lake index` — 索引管理
@@ -387,6 +485,42 @@ arrow-lake index fts papers --column text_content
 
 ```python
 lake.create_fts_index("papers", fts_column="text_content")
+```
+
+#### `index list-vector <dataset>` — 列出向量索引 (v1.2)
+
+```bash
+arrow-lake index list-vector papers
+```
+
+#### `index info-vector <dataset>` — 查看向量索引信息 (v1.2)
+
+```bash
+arrow-lake index info-vector papers
+```
+
+#### `index rebuild-vector <dataset>` — 重建向量索引 (v1.2)
+
+```bash
+arrow-lake index rebuild-vector papers --column text_embedding
+```
+
+#### `index delete-vector <dataset>` — 删除向量索引 (v1.2)
+
+```bash
+arrow-lake index delete-vector papers
+```
+
+#### `index info-fts <dataset>` — 查看全文索引信息 (v1.2)
+
+```bash
+arrow-lake index info-fts papers
+```
+
+#### `index delete-fts <dataset>` — 删除全文索引 (v1.2)
+
+```bash
+arrow-lake index delete-fts papers
 ```
 
 ---
@@ -451,6 +585,26 @@ arrow-lake query materialize sales \
 
 ```python
 row_count = lake.materialize("sales", sql, view_name="category_summary", ttl_days=30)
+```
+
+#### `query meta <dataset>` — 数据集元数据查询 (v1.2)
+
+```bash
+arrow-lake query meta papers
+```
+
+#### `query cleanup-materialized` — 清理过期物化视图 (v1.2)
+
+```bash
+arrow-lake query cleanup-materialized
+```
+
+#### `query daft <dataset>` — Daft DataFrame 查询 (v1.2)
+
+将数据集加载为 Daft DataFrame 并显示。
+
+```bash
+arrow-lake query daft papers --sql "SELECT * FROM papers LIMIT 10"
 ```
 
 ---
@@ -660,6 +814,84 @@ arrow-lake kg delete --yes
 
 > **警告**: 不可恢复，需重建。
 
+#### `kg export` — 导出知识图谱
+
+```bash
+arrow-lake kg export --output graph.json
+```
+
+#### `kg import` — 导入知识图谱
+
+```bash
+arrow-lake kg import --input graph.json
+```
+
+#### `kg traverser` — 图遍历算法子组 (v1.2 新增)
+
+8 种遍历算法：
+
+```bash
+# 最短路径
+arrow-lake kg traverser shortest-path --source v1 --target v2
+
+# 所有最短路径
+arrow-lake kg traverser all-shortest-paths --source v1 --target v2
+
+# 加权最短路径
+arrow-lake kg traverser weighted-shortest --source v1 --target v2
+
+# 单源最短路径
+arrow-lake kg traverser single-source-shortest --source v1
+
+# 多节点最短路径
+arrow-lake kg traverser multi-node-shortest --sources "v1,v2" --targets "v3,v4"
+
+# 射线（非环路径）
+arrow-lake kg traverser rays --source v1 --max-depth 5
+
+# 环检测
+arrow-lake kg traverser rings --source v1 --max-depth 5
+
+# 交叉点
+arrow-lake kg traverser crosspoints --source v1 --target v2
+
+# 自定义多步遍历
+arrow-lake kg traverser customized --source v1
+```
+
+#### `kg algo` — 图 OLAP 算法子组 (v1.2 新增)
+
+9 种算法：
+
+```bash
+# PageRank — 识别重要节点
+arrow-lake kg algo pagerank
+
+# Louvain — 社区发现
+arrow-lake kg algo louvain
+
+# Label Propagation — 社区检测
+arrow-lake kg algo label-propagation
+
+# WCC — 弱连通分量
+arrow-lake kg algo wcc
+
+# 三角计数
+arrow-lake kg algo triangle-count
+
+# 度中心性
+arrow-lake kg algo degree-centrality
+
+# 接近中心性
+arrow-lake kg algo closeness-centrality
+
+# K-core 分解
+arrow-lake kg algo k-core --k 3
+
+# 介数中心性
+arrow-lake kg algo betweenness-centrality
+```
+
 ---
 
 ### 12. `arrow-lake rag` — RAG 问答
@@ -714,6 +946,53 @@ arrow-lake rag templates
 | `entity_extract` | EXTRACT | 实体抽取 |
 | `entity_extract_from_question` | EXTRACT | 从问题中抽取实体 |
 
+#### `rag stream <dataset> <question>` — 流式输出 (v1.2)
+
+逐 chunk 输出 RAG 回答，适合交互式场景。
+
+```bash
+arrow-lake rag stream papers "什么是 RAG？" --top-k 5
+```
+
+#### `rag batch` — 批量查询 (v1.2)
+
+一次提交多个问题并发查询。
+
+```bash
+arrow-lake rag batch papers "问题1" "问题2" "问题3" --top-k 5
+```
+
+#### `rag extract` — 实体抽取 (v1.2)
+
+```bash
+arrow-lake rag extract papers --top-k 20
+```
+
+#### `rag feedback` — 提交反馈 (v1.2)
+
+```bash
+arrow-lake rag feedback --session-id s1 --turn 0 --rating positive
+arrow-lake rag feedback --session-id s1 --turn 0 --rating negative --comment "回答不够详细"
+```
+
+#### `rag history` — 查看会话历史 (v1.2)
+
+```bash
+arrow-lake rag history --session-id s1
+```
+
+#### `rag cleanup-sessions` — 清理过期会话 (v1.2)
+
+```bash
+arrow-lake rag cleanup-sessions
+```
+
+#### `rag get-feedback` — 获取会话反馈 (v1.2)
+
+```bash
+arrow-lake rag get-feedback --session-id s1
+```
+
 ---
 
 ### 13. `arrow-lake config` — 配置管理
@@ -735,6 +1014,156 @@ arrow-lake config init --output prod.yaml  # 自定义文件名
 ```
 
 生成的配置文件包含全部可配置项和注释说明，可直接编辑使用。
+
+---
+
+### 14. `arrow-lake audit` — 审计追踪 (v1.2 新增)
+
+完整的审计日志记录、HMAC 完整性验证、异常检测。
+
+#### `audit record <event_type>` — 记录审计事件
+
+```bash
+arrow-lake audit record dataset_ingested --dataset papers --actor admin \
+    --payload '{"rows": 500, "format": "parquet"}'
+```
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--dataset` | 无 | 关联的数据集 |
+| `--actor` | `cli` | 操作者 |
+| `--payload` | 无 | JSON 格式附加数据 |
+
+#### `audit verify <audit_id>` — 验证完整性
+
+```bash
+arrow-lake audit verify audit-20260426-001
+```
+
+#### `audit query` — 查询审计日志
+
+```bash
+arrow-lake audit query --dataset papers --start 2026-01-01 --end 2026-04-01
+arrow-lake audit query --event-type dataset_ingested
+```
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--dataset` | 无 | 按数据集过滤 |
+| `--start` | 无 | 起始时间 (ISO) |
+| `--end` | 无 | 结束时间 (ISO) |
+| `--event-type` | 无 | 按事件类型过滤 |
+
+#### `audit export <dataset>` — 导出审计日志
+
+```bash
+arrow-lake audit export papers --output audit_trail.json
+```
+
+#### `audit analyze` — 异常检测 (v1.2)
+
+自动运行 z-score 异常检测，识别频率尖峰和操作者异常。
+
+```bash
+arrow-lake audit analyze
+```
+
+输出包含异常类型、严重程度、受影响事件数。
+
+---
+
+### 15. `arrow-lake lineage` — 数据血缘 (v1.2 新增)
+
+#### `lineage record <dataset> <operation>` — 记录血缘事件
+
+```bash
+arrow-lake lineage record sales merge \
+    --sources "raw_sales,cleaned_sales" \
+    --transform-type etl \
+    --actor pipeline
+```
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--sources` | 无 | 逗号分隔的源数据集 |
+| `--transform-type` | 无 | 转换类型描述 |
+| `--actor` | `cli` | 操作者 |
+| `--metadata` | 无 | JSON 格式附加元数据 |
+
+#### `lineage history <dataset>` — 查看血缘历史
+
+```bash
+arrow-lake lineage history sales
+```
+
+#### `lineage query <sql>` — SQL 查询血缘
+
+```bash
+arrow-lake lineage query "SELECT * FROM lineage WHERE dataset_name = 'sales'"
+```
+
+---
+
+### 16. `arrow-lake lifecycle` — Blob 生命周期 (v1.2 新增)
+
+S3/MinIO 对象的存储分层、Glacier 恢复、成本估算。
+
+#### `lifecycle config` — 查看当前配置
+
+```bash
+arrow-lake lifecycle config
+```
+
+输出当前生命周期配置：转换天数、排除前缀、Glacier 检索类型。
+
+#### `lifecycle rules [--prefix]` — 预览规则
+
+```bash
+arrow-lake lifecycle rules
+arrow-lake lifecycle rules --prefix data/archive/
+```
+
+预览将应用的 S3 lifecycle 规则，不实际执行。
+
+#### `lifecycle apply [--prefix]` — 应用规则
+
+```bash
+arrow-lake lifecycle apply
+arrow-lake lifecycle apply --prefix data/archive/
+```
+
+#### `lifecycle status [--prefix]` — 查看存储分层
+
+```bash
+arrow-lake lifecycle status
+arrow-lake lifecycle status --prefix data/
+```
+
+输出每个对象的 key、当前分层 (STANDARD/STANDARD_IA/GLACIER/DEEP_ARCHIVE)、大小。
+
+#### `lifecycle restore <key>` — 恢复 Glacier 对象
+
+```bash
+arrow-lake lifecycle restore data/old-file.parquet --days 7
+arrow-lake lifecycle restore archive/backup.parquet --days 30
+```
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--days` | `7` | 临时副本保留天数 |
+
+#### `lifecycle estimate --size-gb N --target-tier TIER` — 成本估算
+
+```bash
+arrow-lake lifecycle estimate --size-gb 1000 --target-tier STANDARD_IA
+arrow-lake lifecycle estimate --size-gb 500 --target-tier GLACIER
+arrow-lake lifecycle estimate --size-gb 2000 --target-tier DEEP_ARCHIVE
+```
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--size-gb` | — (**必填**) | 数据总大小 (GB) |
+| `--target-tier` | `STANDARD_IA` | 目标分层: `STANDARD_IA`, `GLACIER`, `DEEP_ARCHIVE` |
 
 ---
 

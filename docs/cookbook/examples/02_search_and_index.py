@@ -28,7 +28,7 @@ def _add_vectors(lake: Lake) -> None:
     """生成随机 768 维向量并合并到数据集"""
     rng = np.random.RandomState(42)
     storage = lake._get_storage()
-    ds = storage.open_dataset(DATASET)
+    ds = lake.open_dataset(DATASET)
     n = ds.count_rows()
     vecs = rng.randn(n, DIM).astype(np.float32)
     vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)

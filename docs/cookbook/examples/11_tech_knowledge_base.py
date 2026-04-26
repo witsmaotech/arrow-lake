@@ -25,7 +25,7 @@ DIM = 768
 def _add_vectors(lake: Lake, dataset: str) -> int:
     rng = np.random.RandomState(42)
     storage = lake._get_storage()
-    ds = storage.open_dataset(dataset)
+    ds = lake.open_dataset(dataset)
     n = ds.count_rows()
     vecs = rng.randn(n, DIM).astype(np.float32)
     vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
