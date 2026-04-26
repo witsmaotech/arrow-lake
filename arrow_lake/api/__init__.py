@@ -1,4 +1,4 @@
-"""Arrow Lake REST API package (v1.0.0).
+"""Arrow Lake REST API package (v1.2.0).
 
 Thin FastAPI layer that delegates all data operations to the Lake SDK.
 Every endpoint maps 1:1 to a Lake SDK method.
