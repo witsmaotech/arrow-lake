@@ -17,23 +17,30 @@ from arrow_lake._models import CatalogEntry, CatalogResult
 from arrow_lake._version import __version__
 from arrow_lake.config import ArrowLakeConfig, StorageBackend
 from arrow_lake.exceptions import (
+    ArgoError,
     ArrowLakeError,
     AuditError,
+    BackupError,
     CatalogError,
     DocumentError,
+    DuckDBError,
     EmbeddingError,
     HttpError,
     IngestError,
+    KGError,
     QualityError,
     QueryError,
     RAGError,
     RayRuntimeError,
+    SchemaEvolutionError,
     StorageError,
     ValidationError,
     WorkflowError,
 )
 
 if TYPE_CHECKING:
+    from arrow_lake._models import HealthInfo
+    from arrow_lake.ops.backup import BackupInfo
     from arrow_lake.quality.base import QualityFilterRegistry
     from arrow_lake.quality.models import QualityReport
     from arrow_lake.query.ensemble import EnsembleSearchResult
@@ -45,21 +52,27 @@ if TYPE_CHECKING:
     from arrow_lake.rag.pipeline import RAGPipeline, RAGResponse
 
 __all__ = [
+    "ArgoError",
     "ArrowLakeConfig",
     "ArrowLakeError",
     "AuditError",
+    "BackupError",
+    "BackupInfo",
     "CatalogEntry",
     "CatalogError",
     "CatalogResult",
     "DocumentError",
+    "DuckDBError",
     "EmbeddingError",
     "EnsembleSearchResult",
     "FacetedSearchResult",
     "FullTextSearchResult",
+    "HealthInfo",
     "HttpError",
     "HybridSearchResult",
     "IndexInfo",
     "IngestError",
+    "KGError",
     "Lake",
     "OlapQueryResult",
     "QualityError",
@@ -70,6 +83,8 @@ __all__ = [
     "RAGPipeline",
     "RAGResponse",
     "RayRuntimeError",
+    "SchemaEvolutionError",
+    "StorageBackend",
     "StorageError",
     "ValidationError",
     "VectorSearchBridge",

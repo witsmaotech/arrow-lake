@@ -6,6 +6,8 @@ required by HugeGraph 1.7.0 (NOT ``g.V()``).
 
 from __future__ import annotations
 
+from typing import Any
+
 
 def _gremlin_escape(s: str) -> str:
     """Escape special characters for safe embedding in Gremlin string literals."""
@@ -100,3 +102,128 @@ class GremlinQueries:
             f"{graph_name}.traversal().{entity_pattern}"
             f".repeat(out()).simplePath().times({depth})"
         )
+
+    # ------------------------------------------------------------------
+    # Traverser Templates (REST API equivalents as Gremlin)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def all_shortest_paths(
+        source_id: str,
+        target_id: str,
+        graph_name: str = "hugegraph",
+    ) -> str:
+        """All shortest paths between two vertices."""
+        return (
+            f'{graph_name}.traversal().V("{_gremlin_escape(source_id)}")'
+            f'.repeat(out().simplePath()).until(__.is("{_gremlin_escape(target_id)}"))'
+            f".path()"
+        )
+
+    @staticmethod
+    def weighted_shortest_path(
+        source_id: str,
+        target_id: str,
+        weight_prop: str = "weight",
+        graph_name: str = "hugegraph",
+    ) -> str:
+        """Weighted shortest path (Gremlin approximation)."""
+        return (
+            f'{graph_name}.traversal().V("{_gremlin_escape(source_id)}")'
+            f'.repeat(outE().hasLabel("{_gremlin_escape(weight_prop)}").inV().simplePath())'
+            f'.until(__.is("{_gremlin_escape(target_id)}")).path().by("weight")'
+        )
+
+    @staticmethod
+    def single_source_shortest_path(
+        source_id: str,
+        graph_name: str = "hugegraph",
+    ) -> str:
+        """Single source shortest path to all reachable vertices."""
+        return (
+            f'{graph_name}.traversal().V("{_gremlin_escape(source_id)}")'
+            f".repeat(out().simplePath()).emit().path()"
+        )
+
+    @staticmethod
+    def multi_node_shortest_path(
+        source_ids: list[str],
+        target_ids: list[str],
+        graph_name: str = "hugegraph",
+    ) -> str:
+        """Multi node shortest paths (Gremlin approximation)."""
+        s_ids = ",".join(f'"{_gremlin_escape(s)}"' for s in source_ids)
+        t_ids = ",".join(f'"{_gremlin_escape(t)}"' for t in target_ids)
+        return (
+            f"{graph_name}.traversal().V({s_ids})"
+            f".repeat(out().simplePath()).emit(hasId({t_ids})).path()"
+        )
+
+    @staticmethod
+    def rays(
+        source_id: str,
+        max_depth: int = 5,
+        graph_name: str = "hugegraph",
+    ) -> str:
+        """Rays — non-cyclic paths from source (no return to start)."""
+        return (
+            f'{graph_name}.traversal().V("{_gremlin_escape(source_id)}")'
+            f".repeat(out().simplePath())"
+            f".until(__.loops().is(gt({max_depth - 1})))"
+            f".path()"
+        )
+
+    @staticmethod
+    def rings(
+        source_id: str,
+        max_depth: int = 5,
+        graph_name: str = "hugegraph",
+    ) -> str:
+        """Ring detection — paths from source back to itself."""
+        return (
+            f'{graph_name}.traversal().V("{_gremlin_escape(source_id)}")'
+            f".repeat(out().simplePath())"
+            f'.until(__.is("{_gremlin_escape(source_id)}").and().loops().is(gt(0)))'
+            f".path()"
+        )
+
+    @staticmethod
+    def crosspoints(
+        source_id: str,
+        target_id: str,
+        graph_name: str = "hugegraph",
+    ) -> str:
+        """Crosspoints — vertices on paths between source and target."""
+        return (
+            f'{graph_name}.traversal().V("{_gremlin_escape(source_id)}")'
+            f'.repeat(out().simplePath()).until(__.is("{_gremlin_escape(target_id)}"))'
+            f".path()"
+        )
+
+    @staticmethod
+    def customized_paths(
+        source_id: str,
+        steps: list[dict[str, Any]],
+        graph_name: str = "hugegraph",
+    ) -> str:
+        """Customized multi-step path traversal as Gremlin.
+
+        Each step dict: {direction: str, labels: list[str]}.
+        """
+        parts = [
+            f'{graph_name}.traversal().V("{_gremlin_escape(source_id)}")'
+        ]
+        for step in steps:
+            direction = step.get("direction", "OUT")
+            labels = step.get("labels", [])
+            if direction == "IN":
+                parts.append("in()")
+            elif direction == "BOTH":
+                parts.append("both()")
+            else:
+                parts.append("out()")
+            if labels:
+                label_str = ",".join(f'"{_gremlin_escape(lbl)}"' for lbl in labels)
+                parts.append(f"hasLabel({label_str})")
+        parts.append("path()")
+        return ".".join(parts)

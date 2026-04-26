@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-import numpy as np
+import json
+
 import click
 from rich.table import Table
 
-from arrow_lake.cli import _lake, _print_error, _print_success, console
+from arrow_lake.cli import _get_lake, _print_error, console
 
 
 @click.group()
@@ -16,17 +17,17 @@ def search_group() -> None:
 
 def _get_query_vector(text: str, model_name: str, column: str):
     """Encode text to vector using LocalEmbeddingEncoder."""
+    import pyarrow as pa
+
     from arrow_lake.embed.encoder import LocalEmbeddingEncoder
 
     encoder = LocalEmbeddingEncoder(model_name=model_name)
-    embeddings = encoder.encode_column(
-        __import__("pyarrow").table({"text": [text]}), column="text",
-    )
-    if embeddings.embedding_dim == 0:
+    raw = encoder._load_model().encode([text], normalize_embeddings=True)
+    if raw is None or len(raw) == 0:
         _print_error("Failed to encode query text")
         raise SystemExit(1) from None
 
-    return encoder._load_model().encode([text], normalize_embeddings=True)[0].tolist()
+    return raw[0].tolist()
 
 
 def _format_results(table, result_table, max_rows: int = 10) -> None:
@@ -83,9 +84,7 @@ def search_vector(
     ctx: click.Context, dataset: str, query: str, top_k: int, column: str, model: str,
 ) -> None:
     """Vector similarity search."""
-    base_uri = ctx.obj["base_uri"]
-    config_path = ctx.obj.get("config_path")
-    lake = _lake(base_uri, config_path)
+    lake = _get_lake(ctx)
 
     console.print(f"[dim]Encoding query with {model}...[/dim]", end=" ")
     query_vec = _get_query_vector(query, model, column)
@@ -110,9 +109,7 @@ def search_fts(
     ctx: click.Context, dataset: str, query: str, top_k: int, column: str | None,
 ) -> None:
     """Full-text search (BM25)."""
-    base_uri = ctx.obj["base_uri"]
-    config_path = ctx.obj.get("config_path")
-    lake = _lake(base_uri, config_path)
+    lake = _get_lake(ctx)
 
     try:
         result = lake.text_search(dataset, query, top_k=top_k, fts_column=column)
@@ -136,9 +133,7 @@ def search_hybrid(
     vector_column: str, fts_column: str | None, model: str,
 ) -> None:
     """Hybrid search (vector + full-text RRF fusion)."""
-    base_uri = ctx.obj["base_uri"]
-    config_path = ctx.obj.get("config_path")
-    lake = _lake(base_uri, config_path)
+    lake = _get_lake(ctx)
 
     console.print(f"[dim]Encoding query with {model}...[/dim]", end=" ")
     query_vec = _get_query_vector(query, model, vector_column)
@@ -151,6 +146,95 @@ def search_hybrid(
         )
     except Exception as exc:
         _print_error(f"Hybrid search failed: {exc}")
+        raise SystemExit(1) from None
+
+    _format_results(result, result.table, top_k)
+
+
+@search_group.command("faceted")
+@click.argument("dataset")
+@click.option("--query", required=True, help="Search query text")
+@click.option("--facets", default=None, help="Comma-separated facet columns")
+@click.option("--top-k", default=10, help="Number of results")
+@click.option("--column", default="text_embedding", help="Vector column name")
+@click.option("--model", default="Qwen/Qwen3-Embedding-0.6B", help="Embedding model")
+@click.pass_context
+def search_faceted(
+    ctx: click.Context, dataset: str, query: str, facets: str | None,
+    top_k: int, column: str, model: str,
+) -> None:
+    """Faceted search (vector + facet counts)."""
+    lake = _get_lake(ctx)
+
+    console.print(f"[dim]Encoding query with {model}...[/dim]", end=" ")
+    query_vec = _get_query_vector(query, model, column)
+    console.print("[green]done[/green]")
+
+    facet_cols = [f.strip() for f in facets.split(",")] if facets else None
+
+    try:
+        result = lake.faceted_search(
+            dataset, query_vec,
+            facets=facet_cols,
+            top_k=top_k,
+            vector_column=column,
+        )
+    except Exception as exc:
+        _print_error(f"Faceted search failed: {exc}")
+        raise SystemExit(1) from None
+
+    if hasattr(result, "table"):
+        _format_results(result, result.table, top_k)
+
+    if hasattr(result, "facet_counts") and result.facet_counts:
+        facet_table = Table(title="Facet Counts")
+        facet_table.add_column("Facet", style="cyan")
+        facet_table.add_column("Value")
+        facet_table.add_column("Count", justify="right")
+        for facet_name, buckets in result.facet_counts.items():
+            for bucket in buckets:
+                if isinstance(bucket, dict):
+                    facet_table.add_row(facet_name, str(bucket.get("value", "")), str(bucket.get("count", 0)))
+                elif isinstance(bucket, (tuple, list)):
+                    facet_table.add_row(facet_name, str(bucket[0]), str(bucket[1]))
+        console.print(facet_table)
+
+
+@search_group.command("ensemble")
+@click.argument("dataset")
+@click.option("--query", required=True, help="Search query text")
+@click.option("--columns", required=True, help="Comma-separated embedding columns")
+@click.option("--weights", default=None, help="JSON dict of column weights")
+@click.option("--top-k", default=10, help="Number of results")
+@click.option("--model", default="Qwen/Qwen3-Embedding-0.6B", help="Embedding model")
+@click.pass_context
+def search_ensemble(
+    ctx: click.Context, dataset: str, query: str, columns: str,
+    weights: str | None, top_k: int, model: str,
+) -> None:
+    """Ensemble search across multiple embedding columns."""
+    lake = _get_lake(ctx)
+
+    col_list = [c.strip() for c in columns.split(",")]
+    try:
+        weights_dict = json.loads(weights) if weights else None
+    except json.JSONDecodeError as exc:
+        _print_error(f"Invalid JSON in --weights: {exc}")
+        raise SystemExit(1) from None
+
+    console.print(f"[dim]Encoding query with {model}...[/dim]", end=" ")
+    query_vec = _get_query_vector(query, model, col_list[0])
+    console.print("[green]done[/green]")
+
+    try:
+        result = lake.ensemble_search(
+            dataset, query_vec,
+            columns=col_list,
+            weights=weights_dict,
+            top_k=top_k,
+        )
+    except Exception as exc:
+        _print_error(f"Ensemble search failed: {exc}")
         raise SystemExit(1) from None
 
     _format_results(result, result.table, top_k)

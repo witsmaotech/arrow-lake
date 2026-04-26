@@ -70,6 +70,18 @@ class ContextCitation:
     text_excerpt: str
 
 
+@dataclass(frozen=True)
+class FeedbackEntry:
+    """User feedback on a RAG response turn."""
+
+    session_id: str
+    turn_id: int
+    rating: str
+    flagged_citation_indices: tuple[int, ...]
+    comment: str = ""
+    timestamp: float = 0.0
+
+
 class ContextWindow:
     """Token-budget-aware context window for RAG assembly.
 

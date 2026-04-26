@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from arrow_lake.knowledge_graph.client import HugeGraphClient
     from arrow_lake.knowledge_graph.extractor import EntityExtractor
     from arrow_lake.knowledge_graph.retriever import KGRetriever
+    from arrow_lake.knowledge_graph.vermeer_client import VermeerClient
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,16 @@ class _LakeKGMixin:
 
         return self._get_component("kg_retriever", self._create_kg_retriever)
 
+    def _get_vermeer_client(self) -> VermeerClient | None:
+        """Lazily create and cache a VermeerClient.
+
+        Returns None if KG is not enabled.
+        """
+        if not self._config.hugegraph.enabled:
+            return None
+
+        return self._get_component("vermeer_client", self._create_vermeer_client)
+
     # ------------------------------------------------------------------
     # Component factories
     # ------------------------------------------------------------------
@@ -106,6 +117,11 @@ class _LakeKGMixin:
                 message="Cannot create KGRetriever: KG is not enabled",
             )
         return KGRetriever(client, self._config.hugegraph)
+
+    def _create_vermeer_client(self) -> VermeerClient:
+        from arrow_lake.knowledge_graph.vermeer_client import VermeerClient
+
+        return VermeerClient(self._config.hugegraph)
 
     # ------------------------------------------------------------------
     # Guard
@@ -297,3 +313,249 @@ class _LakeKGMixin:
             )
 
         await client.clear()
+
+    # ------------------------------------------------------------------
+    # Traverser API (8 methods)
+    # ------------------------------------------------------------------
+
+    async def kg_all_shortest_paths(
+        self,
+        source: str,
+        target: str,
+        *,
+        direction: str = "OUT",
+        max_depth: int = 10,
+    ) -> list[dict[str, Any]]:
+        """All shortest paths between source and target vertices."""
+        self._ensure_kg_enabled()
+        client = self._get_kg_client()
+        if client is None:
+            raise KGError(error_code=ErrorCode.KG_QUERY_FAILED, message="KGClient is not available")
+        return await client.traverser_all_shortest_paths(
+            source, target, direction=direction, max_depth=max_depth,
+        )
+
+    async def kg_weighted_shortest_path(
+        self,
+        source: str,
+        target: str,
+        *,
+        direction: str = "OUT",
+        weight_prop: str = "weight",
+        max_degree: int = 10000,
+    ) -> dict[str, Any]:
+        """Weighted shortest path between source and target."""
+        self._ensure_kg_enabled()
+        client = self._get_kg_client()
+        if client is None:
+            raise KGError(error_code=ErrorCode.KG_QUERY_FAILED, message="KGClient is not available")
+        return await client.traverser_weighted_shortest_path(
+            source, target, direction=direction,
+            weight_prop=weight_prop, max_degree=max_degree,
+        )
+
+    async def kg_single_source_shortest_path(
+        self,
+        source: str,
+        *,
+        direction: str = "OUT",
+        weight_prop: str = "weight",
+        max_degree: int = 10000,
+    ) -> dict[str, Any]:
+        """Single source shortest path to all reachable vertices."""
+        self._ensure_kg_enabled()
+        client = self._get_kg_client()
+        if client is None:
+            raise KGError(error_code=ErrorCode.KG_QUERY_FAILED, message="KGClient is not available")
+        return await client.traverser_single_source_shortest_path(
+            source, direction=direction,
+            weight_prop=weight_prop, max_degree=max_degree,
+        )
+
+    async def kg_multi_node_shortest_path(
+        self,
+        sources: list[str],
+        targets: list[str],
+        *,
+        direction: str = "OUT",
+        weight_prop: str = "weight",
+        max_degree: int = 10000,
+    ) -> list[dict[str, Any]]:
+        """Shortest paths between multiple source-target pairs."""
+        self._ensure_kg_enabled()
+        client = self._get_kg_client()
+        if client is None:
+            raise KGError(error_code=ErrorCode.KG_QUERY_FAILED, message="KGClient is not available")
+        return await client.traverser_multi_node_shortest_path(
+            sources, targets, direction=direction,
+            weight_prop=weight_prop, max_degree=max_degree,
+        )
+
+    async def kg_rays(
+        self,
+        source: str,
+        *,
+        direction: str = "OUT",
+        max_depth: int = 5,
+    ) -> list[dict[str, Any]]:
+        """Rays — non-cyclic paths from source."""
+        self._ensure_kg_enabled()
+        client = self._get_kg_client()
+        if client is None:
+            raise KGError(error_code=ErrorCode.KG_QUERY_FAILED, message="KGClient is not available")
+        return await client.traverser_rays(
+            source, direction=direction, max_depth=max_depth,
+        )
+
+    async def kg_rings(
+        self,
+        source: str,
+        *,
+        direction: str = "OUT",
+        max_depth: int = 5,
+    ) -> list[dict[str, Any]]:
+        """Ring detection — cyclic paths from source back to itself."""
+        self._ensure_kg_enabled()
+        client = self._get_kg_client()
+        if client is None:
+            raise KGError(error_code=ErrorCode.KG_QUERY_FAILED, message="KGClient is not available")
+        return await client.traverser_rings(
+            source, direction=direction, max_depth=max_depth,
+        )
+
+    async def kg_crosspoints(
+        self,
+        source: str,
+        target: str,
+        *,
+        direction: str = "OUT",
+        max_depth: int = 5,
+    ) -> list[dict[str, Any]]:
+        """Crosspoints — vertices on paths between source and target."""
+        self._ensure_kg_enabled()
+        client = self._get_kg_client()
+        if client is None:
+            raise KGError(error_code=ErrorCode.KG_QUERY_FAILED, message="KGClient is not available")
+        return await client.traverser_crosspoints(
+            source, target, direction=direction, max_depth=max_depth,
+        )
+
+    async def kg_customized_paths(
+        self,
+        source: str,
+        steps: list[dict[str, Any]],
+        *,
+        with_vertex: bool = True,
+        with_edge: bool = True,
+    ) -> list[dict[str, Any]]:
+        """Customized multi-step path traversal."""
+        self._ensure_kg_enabled()
+        client = self._get_kg_client()
+        if client is None:
+            raise KGError(error_code=ErrorCode.KG_QUERY_FAILED, message="KGClient is not available")
+        return await client.traverser_customized_paths(
+            source, steps, with_vertex=with_vertex, with_edge=with_edge,
+        )
+
+    # ------------------------------------------------------------------
+    # Graph Import / Export (2 methods)
+    # ------------------------------------------------------------------
+
+    async def kg_export_graph(self, *, with_properties: bool = True) -> dict[str, Any]:
+        """Export full graph as JSON dict: {vertices: [...], edges: [...]}."""
+        self._ensure_kg_enabled()
+        client = self._get_kg_client()
+        if client is None:
+            raise KGError(error_code=ErrorCode.KG_QUERY_FAILED, message="KGClient is not available")
+        return await client.export_graph(with_properties=with_properties)
+
+    async def kg_import_graph(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Import graph from JSON dict. Returns {vertices_added, edges_added}."""
+        self._ensure_kg_enabled()
+        client = self._get_kg_client()
+        if client is None:
+            raise KGError(error_code=ErrorCode.KG_QUERY_FAILED, message="KGClient is not available")
+        return await client.import_graph(data)
+
+    # ------------------------------------------------------------------
+    # Vermeer OLAP Algorithms (9 methods)
+    # ------------------------------------------------------------------
+
+    async def kg_pagerank(
+        self,
+        *,
+        iterations: int = 20,
+        damping_factor: float = 0.85,
+    ) -> dict[str, Any]:
+        """PageRank — identify important vertices via Vermeer OLAP."""
+        self._ensure_kg_enabled()
+        client = self._get_vermeer_client()
+        if client is None:
+            raise KGError(error_code=ErrorCode.KG_QUERY_FAILED, message="VermeerClient is not available")
+        return await client.pagerank(
+            iterations=iterations, damping_factor=damping_factor,
+        )
+
+    async def kg_louvain(self, *, resolution: float = 1.0) -> dict[str, Any]:
+        """Louvain community detection via Vermeer OLAP."""
+        self._ensure_kg_enabled()
+        client = self._get_vermeer_client()
+        if client is None:
+            raise KGError(error_code=ErrorCode.KG_QUERY_FAILED, message="VermeerClient is not available")
+        return await client.louvain(resolution=resolution)
+
+    async def kg_label_propagation(self, **params: Any) -> dict[str, Any]:
+        """Label Propagation community detection via Vermeer OLAP."""
+        self._ensure_kg_enabled()
+        client = self._get_vermeer_client()
+        if client is None:
+            raise KGError(error_code=ErrorCode.KG_QUERY_FAILED, message="VermeerClient is not available")
+        return await client.label_propagation(**params)
+
+    async def kg_wcc(self) -> dict[str, Any]:
+        """Weakly Connected Components via Vermeer OLAP."""
+        self._ensure_kg_enabled()
+        client = self._get_vermeer_client()
+        if client is None:
+            raise KGError(error_code=ErrorCode.KG_QUERY_FAILED, message="VermeerClient is not available")
+        return await client.wcc()
+
+    async def kg_triangle_count(self) -> dict[str, Any]:
+        """Triangle Counting via Vermeer OLAP."""
+        self._ensure_kg_enabled()
+        client = self._get_vermeer_client()
+        if client is None:
+            raise KGError(error_code=ErrorCode.KG_QUERY_FAILED, message="VermeerClient is not available")
+        return await client.triangle_count()
+
+    async def kg_degree_centrality(self) -> dict[str, Any]:
+        """Degree Centrality via Vermeer OLAP."""
+        self._ensure_kg_enabled()
+        client = self._get_vermeer_client()
+        if client is None:
+            raise KGError(error_code=ErrorCode.KG_QUERY_FAILED, message="VermeerClient is not available")
+        return await client.degree_centrality()
+
+    async def kg_closeness_centrality(self) -> dict[str, Any]:
+        """Closeness Centrality via Vermeer OLAP."""
+        self._ensure_kg_enabled()
+        client = self._get_vermeer_client()
+        if client is None:
+            raise KGError(error_code=ErrorCode.KG_QUERY_FAILED, message="VermeerClient is not available")
+        return await client.closeness_centrality()
+
+    async def kg_k_core(self, *, k: int = 3) -> dict[str, Any]:
+        """K-Core decomposition via Vermeer OLAP."""
+        self._ensure_kg_enabled()
+        client = self._get_vermeer_client()
+        if client is None:
+            raise KGError(error_code=ErrorCode.KG_QUERY_FAILED, message="VermeerClient is not available")
+        return await client.k_core(k=k)
+
+    async def kg_betweenness_centrality(self) -> dict[str, Any]:
+        """Betweenness Centrality via Vermeer OLAP."""
+        self._ensure_kg_enabled()
+        client = self._get_vermeer_client()
+        if client is None:
+            raise KGError(error_code=ErrorCode.KG_QUERY_FAILED, message="VermeerClient is not available")
+        return await client.betweenness_centrality()

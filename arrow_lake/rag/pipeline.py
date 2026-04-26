@@ -279,3 +279,65 @@ class RAGPipeline:
             llm_usage=llm_response.usage,
             latency_ms=round(elapsed, 1),
         )
+
+    async def batch_query(
+        self,
+        questions: list[str],
+        dataset_name: str,
+        *,
+        top_k: int | None = None,
+        strategy: str | None = None,
+        concurrency: int = 5,
+    ) -> list[RAGResponse]:
+        """Concurrent batch RAG query with semaphore-limited fan-out."""
+        sem = asyncio.Semaphore(concurrency)
+
+        async def _single(idx: int, q: str) -> RAGResponse:
+            async with sem:
+                return await self.query(q, dataset_name, top_k=top_k, strategy=strategy)
+
+        tasks = [_single(i, q) for i, q in enumerate(questions)]
+        return list(await asyncio.gather(*tasks))
+
+    async def batch_query_stream(
+        self,
+        questions: list[str],
+        dataset_name: str,
+        *,
+        top_k: int | None = None,
+        strategy: str | None = None,
+    ) -> AsyncIterator[tuple[int, str]]:
+        """Stream batch: yields (question_index, chunk) interleaved."""
+        sem = asyncio.Semaphore(len(questions))
+
+        async def _stream_single(idx: int, q: str):
+            async with sem:
+                async for chunk in self.query_stream(q, dataset_name, top_k=top_k, strategy=strategy):
+                    yield idx, chunk
+
+        async def _merge():
+            streams = [
+                _stream_single(i, q) for i, q in enumerate(questions)
+            ]
+            task_to_stream: dict[asyncio.Task, Any] = {}
+            pending = set(
+                asyncio.create_task(s.__anext__()) for s in streams
+            )
+            while pending:
+                done, _ = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                for task in done:
+                    try:
+                        idx, chunk = task.result()
+                        stream = task_to_stream.pop(task)
+                        next_task = asyncio.create_task(stream.__anext__())
+                        task_to_stream[next_task] = stream
+                        pending.add(next_task)
+                        yield idx, chunk
+                    except StopAsyncIteration:
+                        pass
+            yield -1, ""  # sentinel
+
+        async for item in _merge():
+            if item[0] == -1:
+                break
+            yield item

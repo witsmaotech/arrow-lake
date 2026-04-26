@@ -211,3 +211,77 @@ class _LakeRAGMixin:
         if pipeline._session_store is None:
             return []
         return pipeline._session_store.get_history(session_id)
+
+    async def rag_batch_query(
+        self,
+        questions: list[str],
+        dataset_name: str,
+        *,
+        top_k: int | None = None,
+        strategy: str | None = None,
+        concurrency: int = 5,
+    ) -> list[RAGResponse]:
+        """Batch RAG query — concurrent fan-out with semaphore-limited parallelism.
+
+        Args:
+            questions: List of user questions.
+            dataset_name: Target Lance dataset.
+            top_k: Documents to retrieve per question.
+            strategy: Retrieval strategy.
+            concurrency: Max parallel queries.
+
+        Returns:
+            List of RAGResponse in the same order as questions.
+        """
+        validate_identifier(dataset_name)
+        pipeline = self._get_rag_pipeline()
+        return await pipeline.batch_query(
+            questions=questions,
+            dataset_name=dataset_name,
+            top_k=top_k,
+            strategy=strategy,
+            concurrency=concurrency,
+        )
+
+    def rag_feedback(
+        self,
+        session_id: str,
+        turn_id: int,
+        rating: str,
+        *,
+        flagged_citations: list[int] | None = None,
+        comment: str = "",
+    ) -> None:
+        """Submit feedback on a RAG response.
+
+        Args:
+            session_id: Session identifier.
+            turn_id: Turn number in the session.
+            rating: "positive", "negative", or "neutral".
+            flagged_citations: Indices of citations to flag as unhelpful.
+            comment: Optional freeform comment.
+        """
+        pipeline = self._get_rag_pipeline()
+        if pipeline._session_store is None:
+            return
+        pipeline._session_store.save_feedback(
+            session_id,
+            turn_id,
+            rating,
+            flagged_citation_indices=tuple(flagged_citations) if flagged_citations else (),
+            comment=comment,
+        )
+
+    def rag_get_feedback(self, session_id: str) -> list[dict]:
+        """Get all feedback for a session."""
+        pipeline = self._get_rag_pipeline()
+        if pipeline._session_store is None:
+            return []
+        return pipeline._session_store.get_feedback(session_id)
+
+    def rag_cleanup_expired_sessions(self) -> int:
+        """Sweep and remove expired session turns. Returns count evicted."""
+        pipeline = self._get_rag_pipeline()
+        if pipeline._session_store is None:
+            return 0
+        return pipeline._session_store.cleanup_expired()

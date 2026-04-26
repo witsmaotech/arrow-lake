@@ -5,7 +5,7 @@ from __future__ import annotations
 import click
 from rich.table import Table
 
-from arrow_lake.cli import _lake, _print_error, _print_success, console
+from arrow_lake.cli import _get_lake, _print_error, _print_success, console
 
 
 @click.group()
@@ -23,9 +23,7 @@ def quality_dedup(
     ctx: click.Context, dataset: str, strategy: str, action: str, threshold: int,
 ) -> None:
     """Run content deduplication on a dataset."""
-    base_uri = ctx.obj["base_uri"]
-    config_path = ctx.obj.get("config_path")
-    lake = _lake(base_uri, config_path)
+    lake = _get_lake(ctx)
 
     console.print(f"[dim]Running {strategy} dedup ({action}) on '{dataset}'...[/dim]")
 
@@ -62,9 +60,7 @@ def quality_filter(
     ctx: click.Context, dataset: str, filters: str, mode: str,
 ) -> None:
     """Run quality filters on a dataset."""
-    base_uri = ctx.obj["base_uri"]
-    config_path = ctx.obj.get("config_path")
-    lake = _lake(base_uri, config_path)
+    lake = _get_lake(ctx)
 
     filter_names = filters
     console.print(f"[dim]Running filters [{filter_names}] ({mode}) on '{dataset}'...[/dim]")

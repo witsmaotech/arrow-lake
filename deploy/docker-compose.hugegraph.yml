@@ -2,7 +2,8 @@
 #
 # Extends base docker-compose.yml with HugeGraph graph database.
 # Usage:
-#   docker compose -f docker-compose.yml -f docker-compose.hugegraph.yml up -d hugegraph
+#   make kg
+#   docker compose -f docker-compose.yml -f docker-compose.hugegraph.yml --profile kg up -d hugegraph
 #
 # Reference: dev_notes/hugegraph_build_skills/batch03/hugegraph-docker-cluster.md
 
@@ -29,12 +30,22 @@ services:
         limits:
           memory: ${HUGEGRAPH_MEMORY_LIMIT:-4G}
           cpus: "${HUGEGRAPH_CPU_LIMIT:-2.0}"
+          pids: 512
+        reservations:
+          memory: 1G
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8080/graphs/arrow_lake_kg/schema"]
       interval: 15s
       timeout: 10s
       retries: 5
       start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"
+        tag: "arrow-lake-hugegraph"
+    stop_grace_period: 30s
 
 volumes:
   hugegraph-data:

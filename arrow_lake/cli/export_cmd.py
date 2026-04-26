@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import click
 
-from arrow_lake.cli import _lake, _print_error, _print_success, console
+from arrow_lake.cli import _get_lake, _print_error, _print_success, console
 
 
 @click.command()
@@ -15,9 +15,7 @@ from arrow_lake.cli import _lake, _print_error, _print_success, console
 @click.pass_context
 def export_cmd(ctx: click.Context, dataset: str, output: str, fmt: str | None, columns: str | None) -> None:
     """Export a dataset to Parquet or CSV."""
-    base_uri = ctx.obj["base_uri"]
-    config_path = ctx.obj.get("config_path")
-    lake = _lake(base_uri, config_path)
+    lake = _get_lake(ctx)
 
     col_list = columns.split(",") if columns else None
 

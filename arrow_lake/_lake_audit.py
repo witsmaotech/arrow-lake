@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from typing import Any
 
 
@@ -101,3 +102,15 @@ class _LakeAuditMixin:
             Dict with export metadata and entries.
         """
         return self._get_audit_trail().export(dataset_name)
+
+    def audit_analyze(self) -> list[dict[str, Any]]:
+        """Run anomaly detection on the audit trail.
+
+        Returns:
+            List of anomaly dicts sorted by severity.
+        """
+        from arrow_lake.workflow.audit_analyzer import AuditAnalyzer
+
+        entries = self._get_audit_trail().query()
+        analyzer = AuditAnalyzer(entries)
+        return [r.__dict__ if hasattr(r, "__dict__") else asdict(r) for r in analyzer.analyze()]

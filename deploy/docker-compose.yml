@@ -35,6 +35,15 @@ x-arrow-lake: &arrow-lake
       max-size: "50m"
       max-file: "5"
       tag: "arrow-lake"
+  read_only: true
+  tmpfs:
+    - /tmp
+    - /app/.cache
+  cap_drop:
+    - ALL
+  cap_add:
+    - NET_BIND_SERVICE
+  stop_grace_period: 30s
 
 x-arrow-lake-env: &arrow-lake-env
   ARROW_LAKE__STORAGE__BASE_URI: "s3://${MINIO_BUCKET:-arrow-lake}"
@@ -57,7 +66,7 @@ services:
   # ---------------------------------------------------------------------------
   api:
     <<: [*arrow-lake]
-    profiles: ["core", "dev", "monitoring"]
+    profiles: ["core", "dev", "monitoring", "gpu"]
     container_name: arrow-lake-api
     ports:
       - "${API_PORT:-8000}:8000"
@@ -75,12 +84,19 @@ services:
         limits:
           memory: ${API_MEMORY_LIMIT:-2G}
           cpus: "${API_CPU_LIMIT:-1.0}"
+          pids: 256
+        reservations:
+          memory: 512M
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 15s
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
 
   # ---------------------------------------------------------------------------
   # MinIO — S3-compatible object storage
@@ -99,23 +115,33 @@ services:
       - minio-data:/data
     networks:
       - arrow-lake-net
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+        tag: "arrow-lake-minio"
     command: server /data --console-address ":9001"
     deploy:
       resources:
         limits:
           memory: ${MINIO_MEMORY_LIMIT:-1G}
           cpus: "${MINIO_CPU_LIMIT:-0.5}"
+          pids: 512
+        reservations:
+          memory: 256M
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
       interval: 10s
       timeout: 5s
       retries: 5
+    stop_grace_period: 15s
 
   # ---------------------------------------------------------------------------
   # MinIO Init — Create default bucket on first start
   # ---------------------------------------------------------------------------
   minio-init:
-    image: minio/mc:latest
+    image: minio/mc:${MINIO_MC_VERSION:-RELEASE.2024-11-07T06-24-52Z}
     container_name: arrow-lake-minio-init
     profiles: ["core", "dev", "gpu", "monitoring"]
     depends_on:
@@ -145,6 +171,7 @@ services:
       ARROW_LAKE__COMPUTE__RAY_ADDRESS: "auto"
     volumes:
       - lake-data:/data/lake
+    shm_size: 256m
     command: >
       ray start
       --head
@@ -163,12 +190,20 @@ services:
         limits:
           memory: ${RAY_HEAD_MEMORY_LIMIT:-4G}
           cpus: "${RAY_HEAD_CPU_LIMIT:-2.0}"
+          pids: 512
+        reservations:
+          memory: 1G
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import ray; ray.init(address='auto', ignore_reinit_error=True); print('ok')\""]
       interval: 15s
       timeout: 10s
       retries: 5
       start_period: 30s
+    stop_grace_period: 60s
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
 
   # ---------------------------------------------------------------------------
   # Ray Worker — Scalable compute workers
@@ -185,11 +220,15 @@ services:
         limits:
           memory: ${RAY_WORKER_MEMORY:-4G}
           cpus: "${RAY_WORKER_CPU_LIMIT:-2.0}"
+          pids: 512
+        reservations:
+          memory: 1G
     environment:
       <<: [*arrow-lake-env]
       ARROW_LAKE__COMPUTE__RAY_ADDRESS: "ray://ray-head:10001"
     volumes:
       - lake-data:/data/lake
+    shm_size: 256m
     command: >
       ray start
       --address=ray-head:6379
@@ -198,13 +237,18 @@ services:
     depends_on:
       ray-head:
         condition: service_healthy
+    stop_grace_period: 60s
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
 
   # ---------------------------------------------------------------------------
-  # Jupyter Lab — Development notebook environment
+  # Jupyter Lab — Development notebook environment (dev profile only)
   # ---------------------------------------------------------------------------
   jupyter:
     <<: [*arrow-lake]
-    profiles: ["dev", "monitoring"]
+    profiles: ["dev"]
     container_name: arrow-lake-jupyter
     ports:
       - "${JUPYTER_PORT:-8888}:8888"
@@ -214,13 +258,14 @@ services:
       ARROW_LAKE__OBSERVABILITY__LOG_LEVEL: "INFO"
     volumes:
       - lake-data:/data/lake
+    shm_size: 128m
     working_dir: /app
     command: >
       jupyter lab
       --ip=0.0.0.0
       --port=8888
       --no-browser
-      --NotebookApp.token=""
+      --NotebookApp.token="${JUPYTER_TOKEN:-}"
       --allow-root
     depends_on:
       ray-head:
@@ -230,12 +275,56 @@ services:
         limits:
           memory: ${JUPYTER_MEMORY_LIMIT:-2G}
           cpus: "${JUPYTER_CPU_LIMIT:-1.0}"
+          pids: 256
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8888/lab')\""]
       interval: 15s
       timeout: 10s
       retries: 5
       start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # TurboOCR — OCR processing service (internal only, no host exposure)
+  # ---------------------------------------------------------------------------
+  turbo-ocr:
+    image: deepdoctection/turbo-ocr:${TURBO_OCR_VERSION:-latest}
+    container_name: arrow-lake-turbo-ocr
+    profiles: ["ocr"]
+    restart: unless-stopped
+    networks:
+      - arrow-lake-net
+    expose:
+      - "8002"
+    volumes:
+      - ocr-cache:/root/.cache
+    environment:
+      OCR_MAX_PAGES: ${OCR_MAX_PAGES:-100}
+      OCR_MAX_FILE_SIZE_MB: ${OCR_MAX_FILE_SIZE_MB:-50}
+      WORKERS: ${OCR_WORKERS:-2}
+    deploy:
+      resources:
+        limits:
+          memory: ${OCR_MEMORY_LIMIT:-2G}
+          cpus: "${OCR_CPU_LIMIT:-1.0}"
+          pids: 64
+        reservations:
+          devices:
+            - driver: nvidia
+              count: ${GPU_COUNT_FOR_OCR:-1}
+              capabilities: ["gpu"]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
+        tag: "arrow-lake-turbo-ocr"
+    stop_grace_period: 30s
 
 # ==============================================================================
 # Networks
@@ -253,4 +342,6 @@ volumes:
   minio-data:
     driver: local
   lake-data:
+    driver: local
+  ocr-cache:
     driver: local

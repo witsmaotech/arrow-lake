@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pyarrow as pa
+
 
 class _LakeLineageMixin:
     """Provides data lineage event recording, history, and SQL querying."""
@@ -61,7 +63,7 @@ class _LakeLineageMixin:
         )
         return store.get_dataset_history(dataset_name)
 
-    def lineage_query(self, sql: str) -> Any:
+    def lineage_query(self, sql: str) -> pa.Table:
         """SQL query over lineage events (Story 8.3).
 
         Args:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -31,3 +32,24 @@ class CatalogResult:
 
     datasets: list[CatalogEntry]
     total: int
+
+
+@dataclass(frozen=True)
+class HealthInfo:
+    """Health status snapshot of the Arrow Lake SDK instance.
+
+    Attributes:
+        status: Overall health ("ok" or "degraded").
+        version: SDK version string.
+        storage_status: Storage accessibility description.
+        storage_ok: Whether storage is accessible.
+        uptime_seconds: Seconds since Lake was initialized.
+        session_pool: DuckDB session pool stats (None if not initialized).
+    """
+
+    status: str
+    version: str
+    storage_status: str
+    storage_ok: bool
+    uptime_seconds: float
+    session_pool: dict[str, Any] | None = None

@@ -38,7 +38,9 @@ COPY flows/ flows/
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv venv .venv \
     && . .venv/bin/activate \
-    && uv pip install --no-cache-dir .
+    && uv pip install --no-cache-dir . \
+    && uv pip install --no-cache-dir jupyterlab ipywidgets \
+    && uv pip install --no-cache-dir modelscope>=1.18
 
 # Replace CPU torch with CUDA 12.4 variant
 RUN --mount=type=cache,target=/root/.cache/uv \

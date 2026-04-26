@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
+
 import click
 from rich.table import Table
 
-from arrow_lake.cli import _lake, _print_error, _print_success, console
+from arrow_lake.cli import _get_lake, _print_error, _print_success, console
 
 
 @click.group()
@@ -18,9 +20,7 @@ def catalog_group() -> None:
 @click.pass_context
 def catalog_list_cmd(ctx: click.Context, as_json: bool) -> None:
     """List all registered datasets."""
-    base_uri = ctx.obj["base_uri"]
-    config_path = ctx.obj.get("config_path")
-    lake = _lake(base_uri, config_path)
+    lake = _get_lake(ctx)
 
     try:
         datasets = lake.list_datasets()
@@ -29,7 +29,7 @@ def catalog_list_cmd(ctx: click.Context, as_json: bool) -> None:
         raise SystemExit(1) from None
 
     if as_json:
-        click.echo({"datasets": datasets})
+        click.echo(json.dumps({"datasets": datasets}, indent=2))
         return
 
     if not datasets:
@@ -51,14 +51,10 @@ def catalog_list_cmd(ctx: click.Context, as_json: bool) -> None:
 @click.pass_context
 def catalog_info_cmd(ctx: click.Context, name: str) -> None:
     """Show details of a dataset."""
-    base_uri = ctx.obj["base_uri"]
-    config_path = ctx.obj.get("config_path")
-    lake = _lake(base_uri, config_path)
+    lake = _get_lake(ctx)
 
     try:
-        if lake._storage is None:
-            lake.list_datasets()
-        table = lake._storage.open_dataset(name)
+        table = lake.open_dataset(name)
     except Exception as exc:
         _print_error(f"Failed to open dataset '{name}': {exc}")
         raise SystemExit(1) from None
@@ -101,9 +97,7 @@ def catalog_delete_cmd(ctx: click.Context, name: str, yes: bool) -> None:
         if not click.confirm(f"Delete dataset '{name}'? This cannot be undone."):
             return
 
-    base_uri = ctx.obj["base_uri"]
-    config_path = ctx.obj.get("config_path")
-    lake = _lake(base_uri, config_path)
+    lake = _get_lake(ctx)
 
     try:
         lake.delete_dataset(name)
@@ -112,3 +106,112 @@ def catalog_delete_cmd(ctx: click.Context, name: str, yes: bool) -> None:
         raise SystemExit(1) from None
 
     _print_success(f"Dataset '{name}' deleted")
+
+
+@catalog_group.command("rename")
+@click.argument("name")
+@click.argument("new_name")
+@click.pass_context
+def catalog_rename(ctx: click.Context, name: str, new_name: str) -> None:
+    """Rename a dataset."""
+    lake = _get_lake(ctx)
+
+    try:
+        lake.rename_dataset(name, new_name)
+    except Exception as exc:
+        _print_error(f"Rename failed: {exc}")
+        raise SystemExit(1) from None
+
+    _print_success(f"Dataset '{name}' -> '{new_name}'")
+
+
+@catalog_group.command("copy")
+@click.argument("name")
+@click.argument("new_name")
+@click.pass_context
+def catalog_copy(ctx: click.Context, name: str, new_name: str) -> None:
+    """Copy a dataset."""
+    lake = _get_lake(ctx)
+
+    try:
+        lake.copy_dataset(name, new_name)
+    except Exception as exc:
+        _print_error(f"Copy failed: {exc}")
+        raise SystemExit(1) from None
+
+    _print_success(f"Dataset '{name}' copied to '{new_name}'")
+
+
+@catalog_group.command("merge")
+@click.option("--sources", required=True, help="Comma-separated source dataset names")
+@click.argument("target")
+@click.pass_context
+def catalog_merge(ctx: click.Context, sources: str, target: str) -> None:
+    """Merge multiple datasets into a target."""
+    source_list = [s.strip() for s in sources.split(",") if s.strip()]
+    if len(source_list) < 2:
+        _print_error("At least 2 source datasets required")
+        raise SystemExit(1) from None
+
+    lake = _get_lake(ctx)
+
+    try:
+        lake.merge_datasets(source_list, target)
+    except Exception as exc:
+        _print_error(f"Merge failed: {exc}")
+        raise SystemExit(1) from None
+
+    _print_success(f"Merged {len(source_list)} datasets -> '{target}'")
+
+
+@catalog_group.command("health")
+@click.pass_context
+def catalog_health(ctx: click.Context) -> None:
+    """Show system health status."""
+    lake = _get_lake(ctx)
+
+    try:
+        info = lake.health()
+    except Exception as exc:
+        _print_error(f"Health check failed: {exc}")
+        raise SystemExit(1) from None
+
+    table = Table(title="System Health")
+    table.add_column("Component", style="cyan")
+    table.add_column("Status")
+    for key, value in info.items() if isinstance(info, dict) else []:
+        table.add_row(key, str(value))
+    if not isinstance(info, dict):
+        table.add_row("status", str(info))
+    console.print(table)
+
+
+@catalog_group.command("inspect")
+@click.argument("name")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+@click.pass_context
+def catalog_inspect(ctx: click.Context, name: str, as_json: bool) -> None:
+    """Show detailed dataset metadata (catalog view)."""
+    lake = _get_lake(ctx)
+
+    try:
+        result = lake.catalog()
+    except Exception as exc:
+        _print_error(f"Catalog query failed: {exc}")
+        raise SystemExit(1) from None
+
+    if as_json:
+        import json
+        click.echo(json.dumps(result, indent=2, default=str))
+        return
+
+    if not result:
+        console.print("[dim]No catalog data found.[/dim]")
+        return
+
+    table = Table(title=f"Catalog: {name}")
+    table.add_column("Property", style="cyan")
+    table.add_column("Value")
+    for key, value in result.items() if isinstance(result, dict) else []:
+        table.add_row(key, str(value))
+    console.print(table)

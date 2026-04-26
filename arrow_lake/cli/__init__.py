@@ -62,6 +62,11 @@ def _lake(base_uri: str, config_path: str | None):
     return Lake(base_uri=base_uri, config=config)
 
 
+def _get_lake(ctx: click.Context):
+    """Create a Lake instance from click context (replaces 3-line boilerplate)."""
+    return _lake(ctx.obj["base_uri"], ctx.obj.get("config_path"))
+
+
 # ---------------------------------------------------------------------------
 # Async runner
 # ---------------------------------------------------------------------------
@@ -323,6 +328,7 @@ def multimodal_demo(base_uri: str, no_cleanup: bool) -> None:
 # ---------------------------------------------------------------------------
 
 from arrow_lake.cli import (  # noqa: E402 — runtime import for lazy loading
+    audit,
     backup,
     catalog,
     config_cmd,
@@ -331,6 +337,8 @@ from arrow_lake.cli import (  # noqa: E402 — runtime import for lazy loading
     index_cmd,
     ingest,
     kg,
+    lifecycle,
+    lineage,
     quality,
     query,
     rag,
@@ -348,4 +356,10 @@ main.add_command(quality.quality_group, name="quality")
 main.add_command(backup.backup_group, name="backup")
 main.add_command(kg.kg_group, name="kg")
 main.add_command(rag.rag_group, name="rag")
+main.add_command(audit.audit_group, name="audit")
+main.add_command(lineage.lineage_group, name="lineage")
+main.add_command(lifecycle.lifecycle_group, name="lifecycle")
 main.add_command(config_cmd.config_group, name="config")
+
+kg.kg_group.add_command(kg.traverser_group, name="traverser")
+kg.kg_group.add_command(kg.algo_group, name="algo")

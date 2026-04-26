@@ -75,6 +75,8 @@ class RAGConfig(BaseModel):
     system_prompt: str = ""
     history_dataset: str = "_rag_sessions"
     enable_citations: bool = True
+    session_ttl_seconds: int = 86400
+    feedback_enabled: bool = True
 
     @field_validator("context_budget_ratio")
     @classmethod
@@ -112,6 +114,8 @@ class HugeGraphConfig(BaseModel):
     build_batch_size: int = 50
     default_traversal_depth: int = 2
     max_traversal_depth: int = 5
+    vermeer_host: str = "localhost"
+    vermeer_port: int = 8081
 
     @field_validator("max_traversal_depth")
     @classmethod

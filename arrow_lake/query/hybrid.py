@@ -85,6 +85,7 @@ class HybridSearchBridge:
         vector_column: str = "text_embedding",
         fts_column: str | None = None,
         where: str | None = None,
+        version: int | None = None,
     ) -> HybridSearchResult:
         """Hybrid search using RRF fusion of vector + FTS results.
 
@@ -163,6 +164,7 @@ class HybridSearchBridge:
                     fts_column,
                     where,
                     effective_top_k,
+                    version=version,
                 )
         else:
             result_table = self._search_via_sub_bridges(
@@ -175,6 +177,7 @@ class HybridSearchBridge:
                 fts_column,
                 where,
                 effective_top_k,
+                version=version,
             )
 
         # Extract scores for result
@@ -284,6 +287,8 @@ class HybridSearchBridge:
         fts_column: str | None,
         where: str | None,
         effective_top_k: int,
+        *,
+        version: int | None = None,
     ) -> pa.Table:
         """Search via VectorSearchBridge + FullTextSearchBridge + RRF fusion."""
         from arrow_lake.query.fts import FullTextSearchBridge
@@ -307,12 +312,14 @@ class HybridSearchBridge:
                 top_k=vector_top_k,
                 vector_column=vector_column,
                 where=where,
+                version=version,
             )
             fts_result = fts_bridge.search(
                 dataset_name,
                 query_text,
                 top_k=fts_top_k,
                 fts_column=fts_column,
+                version=version,
                 where=where,
             )
         except QueryError:

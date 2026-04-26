@@ -13,7 +13,6 @@ Key API differences from local docs:
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import logging
 import re
@@ -296,6 +295,339 @@ class HugeGraphClient:
             )
 
         return resp.json()
+
+    async def traverser_all_shortest_paths(
+        self,
+        source: str,
+        target: str,
+        *,
+        direction: str = "OUT",
+        max_depth: int = 10,
+    ) -> list[dict[str, Any]]:
+        """All shortest paths between source and target.
+
+        POST /graphs/{name}/traversers/allshortestpaths
+        Returns list of path dicts with objects/labels/weights.
+        """
+        body = {
+            "source": source,
+            "target": target,
+            "direction": direction,
+            "max_depth": max_depth,
+        }
+        try:
+            resp = await self._post(
+                f"{self._graph_base}/traversers/allshortestpaths", json_data=body,
+            )
+        except httpx.HTTPError as exc:
+            self._handle_http_error(exc)
+
+        if resp.status_code != 200:
+            raise KGError(
+                error_code=ErrorCode.KG_QUERY_FAILED,
+                message=f"All shortest paths traversal failed: {resp.text}",
+                context={"source": source, "target": target},
+            )
+
+        data = resp.json()
+        return data.get("paths", [])
+
+    async def traverser_weighted_shortest_path(
+        self,
+        source: str,
+        target: str,
+        *,
+        direction: str = "OUT",
+        weight_prop: str = "weight",
+        max_degree: int = 10000,
+    ) -> dict[str, Any]:
+        """Weighted shortest path between source and target.
+
+        POST /graphs/{name}/traversers/weightedshortestpath
+        Returns dict with path and total weight.
+        """
+        body = {
+            "source": source,
+            "target": target,
+            "direction": direction,
+            "weight": weight_prop,
+            "max_degree": max_degree,
+        }
+        try:
+            resp = await self._post(
+                f"{self._graph_base}/traversers/weightedshortestpath",
+                json_data=body,
+            )
+        except httpx.HTTPError as exc:
+            self._handle_http_error(exc)
+
+        if resp.status_code != 200:
+            raise KGError(
+                error_code=ErrorCode.KG_QUERY_FAILED,
+                message=f"Weighted shortest path failed: {resp.text}",
+                context={"source": source, "target": target},
+            )
+
+        return resp.json()
+
+    async def traverser_single_source_shortest_path(
+        self,
+        source: str,
+        *,
+        direction: str = "OUT",
+        weight_prop: str = "weight",
+        max_degree: int = 10000,
+    ) -> dict[str, Any]:
+        """Single source shortest path to all reachable vertices.
+
+        POST /graphs/{name}/traversers/singlesourceshortestpath
+        Returns dict mapping target_id to path info.
+        """
+        body = {
+            "source": source,
+            "direction": direction,
+            "weight": weight_prop,
+            "max_degree": max_degree,
+        }
+        try:
+            resp = await self._post(
+                f"{self._graph_base}/traversers/singlesourceshortestpath",
+                json_data=body,
+            )
+        except httpx.HTTPError as exc:
+            self._handle_http_error(exc)
+
+        if resp.status_code != 200:
+            raise KGError(
+                error_code=ErrorCode.KG_QUERY_FAILED,
+                message=f"Single source shortest path failed: {resp.text}",
+                context={"source": source},
+            )
+
+        return resp.json()
+
+    async def traverser_multi_node_shortest_path(
+        self,
+        sources: list[str],
+        targets: list[str],
+        *,
+        direction: str = "OUT",
+        weight_prop: str = "weight",
+        max_degree: int = 10000,
+    ) -> list[dict[str, Any]]:
+        """Shortest paths between multiple source-target pairs.
+
+        POST /graphs/{name}/traversers/multinodesshortestpath
+        Returns list of path dicts with source/target/path.
+        """
+        body = {
+            "sources": sources,
+            "targets": targets,
+            "direction": direction,
+            "weight": weight_prop,
+            "max_degree": max_degree,
+        }
+        try:
+            resp = await self._post(
+                f"{self._graph_base}/traversers/multinodesshortestpath",
+                json_data=body,
+            )
+        except httpx.HTTPError as exc:
+            self._handle_http_error(exc)
+
+        if resp.status_code != 200:
+            raise KGError(
+                error_code=ErrorCode.KG_QUERY_FAILED,
+                message=f"Multi node shortest path failed: {resp.text}",
+            )
+
+        data = resp.json()
+        return data.get("paths", [])
+
+    async def traverser_rays(
+        self,
+        source: str,
+        *,
+        direction: str = "OUT",
+        max_depth: int = 5,
+    ) -> list[dict[str, Any]]:
+        """Rays traversal — non-cyclic paths from source.
+
+        POST /graphs/{name}/traversers/rays
+        Returns list of ray dicts with labels/objects.
+        """
+        body = {
+            "source": source,
+            "direction": direction,
+            "max_depth": max_depth,
+        }
+        try:
+            resp = await self._post(
+                f"{self._graph_base}/traversers/rays", json_data=body,
+            )
+        except httpx.HTTPError as exc:
+            self._handle_http_error(exc)
+
+        if resp.status_code != 200:
+            raise KGError(
+                error_code=ErrorCode.KG_QUERY_FAILED,
+                message=f"Rays traversal failed: {resp.text}",
+                context={"source": source},
+            )
+
+        data = resp.json()
+        return data.get("rays", [])
+
+    async def traverser_rings(
+        self,
+        source: str,
+        *,
+        direction: str = "OUT",
+        max_depth: int = 5,
+    ) -> list[dict[str, Any]]:
+        """Ring detection — cyclic paths from source back to itself.
+
+        POST /graphs/{name}/traversers/rings
+        Returns list of ring dicts with labels/objects.
+        """
+        body = {
+            "source": source,
+            "direction": direction,
+            "max_depth": max_depth,
+        }
+        try:
+            resp = await self._post(
+                f"{self._graph_base}/traversers/rings", json_data=body,
+            )
+        except httpx.HTTPError as exc:
+            self._handle_http_error(exc)
+
+        if resp.status_code != 200:
+            raise KGError(
+                error_code=ErrorCode.KG_QUERY_FAILED,
+                message=f"Rings traversal failed: {resp.text}",
+                context={"source": source},
+            )
+
+        data = resp.json()
+        return data.get("rings", [])
+
+    async def traverser_crosspoints(
+        self,
+        source: str,
+        target: str,
+        *,
+        direction: str = "OUT",
+        max_depth: int = 5,
+    ) -> list[dict[str, Any]]:
+        """Crosspoints — vertices on paths between source and target.
+
+        POST /graphs/{name}/traversers/crosspoints
+        Returns list of crosspoint dicts with vertex and crossed_paths.
+        """
+        body = {
+            "source": source,
+            "target": target,
+            "direction": direction,
+            "max_depth": max_depth,
+        }
+        try:
+            resp = await self._post(
+                f"{self._graph_base}/traversers/crosspoints", json_data=body,
+            )
+        except httpx.HTTPError as exc:
+            self._handle_http_error(exc)
+
+        if resp.status_code != 200:
+            raise KGError(
+                error_code=ErrorCode.KG_QUERY_FAILED,
+                message=f"Crosspoints traversal failed: {resp.text}",
+                context={"source": source, "target": target},
+            )
+
+        data = resp.json()
+        return data.get("crosspoints", [])
+
+    async def traverser_customized_paths(
+        self,
+        source: str,
+        steps: list[dict[str, Any]],
+        *,
+        with_vertex: bool = True,
+        with_edge: bool = True,
+    ) -> list[dict[str, Any]]:
+        """Customized multi-step path traversal.
+
+        POST /graphs/{name}/traversers/customizedpaths
+        Each step dict: {direction, labels, max_degree, skip_degree}.
+        """
+        body: dict[str, Any] = {
+            "sources": {"ids": [source]},
+            "steps": steps,
+            "with_vertex": with_vertex,
+            "with_edge": with_edge,
+        }
+        try:
+            resp = await self._post(
+                f"{self._graph_base}/traversers/customizedpaths",
+                json_data=body,
+            )
+        except httpx.HTTPError as exc:
+            self._handle_http_error(exc)
+
+        if resp.status_code != 200:
+            raise KGError(
+                error_code=ErrorCode.KG_QUERY_FAILED,
+                message=f"Customized paths traversal failed: {resp.text}",
+            )
+
+        data = resp.json()
+        return data.get("paths", [])
+
+    # ------------------------------------------------------------------
+    # Graph Import / Export
+    # ------------------------------------------------------------------
+
+    async def export_graph(self, *, with_properties: bool = True) -> dict[str, Any]:
+        """Export full graph as JSON dict: {vertices: [...], edges: [...]}."""
+        vertices = []
+        edges = []
+
+        if with_properties:
+            v_result = await self.gremlin(
+                f"{self._config.graph_name}.traversal().V().valueMap().toList()"
+            )
+            vertices = v_result if isinstance(v_result, list) else []
+        else:
+            v_result = await self.gremlin(
+                f"{self._config.graph_name}.traversal().V().id().toList()"
+            )
+            vertices = [{"id": v} for v in (v_result if isinstance(v_result, list) else [])]
+
+        e_result = await self.gremlin(
+            f"{self._config.graph_name}.traversal().E().valueMap("
+            '"label","outV","inV","outVLabel","inVLabel","properties").toList()'
+        )
+        edges = e_result if isinstance(e_result, list) else []
+
+        return {"vertices": vertices, "edges": edges}
+
+    async def import_graph(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Import graph from JSON dict. Returns {vertices_added, edges_added}."""
+        vertex_data = data.get("vertices", [])
+        edge_data = data.get("edges", [])
+
+        vertices_added = 0
+        edges_added = 0
+
+        if vertex_data:
+            ids = await self.add_vertices(vertex_data)
+            vertices_added = len(ids)
+
+        if edge_data:
+            edges_added = await self.add_edges(edge_data)
+
+        return {"vertices_added": vertices_added, "edges_added": edges_added}
 
     # ------------------------------------------------------------------
     # Graph management

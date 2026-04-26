@@ -9,6 +9,7 @@ import pyarrow as pa
 
 if TYPE_CHECKING:
     from arrow_lake.ingest.ingestor import IngestionReport
+    from arrow_lake.quality.dedup import DedupResult
     from arrow_lake.quality.models import QualityReport
 
 
@@ -244,6 +245,96 @@ class _LakeIngestMixin:
                 ingestion_bytes_total.labels(source=source).inc(nbytes)
                 ingestion_duration_seconds.labels(source=source).set(time.monotonic() - t0)
 
+    def upsert(
+        self,
+        dataset_name: str,
+        data: pa.Table,
+        *,
+        on: str = "id",
+    ) -> None:
+        """Upsert rows into a dataset using merge on a key column.
+
+        New rows are inserted; existing rows matching ``on`` are updated.
+
+        Args:
+            dataset_name: Target dataset name.
+            data: PyArrow Table with rows to upsert.
+            on: Column name to use as the merge key (default "id").
+
+        Raises:
+            StorageError: If dataset not found or schema mismatch.
+            TypeError: If data is not a pyarrow.Table.
+        """
+        if not isinstance(data, pa.Table):
+            raise TypeError(f"data must be a pyarrow.Table, got {type(data).__name__}")
+        from arrow_lake.core.metrics import (
+            get_metrics_enabled,
+            ingestion_bytes_total,
+            ingestion_duration_seconds,
+            ingestion_errors_total,
+            ingestion_rows_total,
+        )
+        from arrow_lake.exceptions import StorageError
+
+        source = "upsert"
+        t0 = time.monotonic()
+        rows = data.num_rows
+        nbytes = data.nbytes
+        try:
+            self._get_storage().upsert_dataset(dataset_name, data, on=on)
+        except (StorageError, OSError, ValueError) as exc:
+            if get_metrics_enabled():
+                ingestion_errors_total.labels(source=source, error_type=type(exc).__name__).inc()
+            raise
+        else:
+            if get_metrics_enabled():
+                ingestion_rows_total.labels(source=source).inc(rows)
+                ingestion_bytes_total.labels(source=source).inc(nbytes)
+                ingestion_duration_seconds.labels(source=source).set(time.monotonic() - t0)
+
+    def delete_rows(
+        self,
+        dataset_name: str,
+        where: str,
+    ) -> int:
+        """Delete rows matching a filter expression from a dataset.
+
+        Args:
+            dataset_name: Target dataset name.
+            where: SQL WHERE expression (validated for injection safety).
+
+        Returns:
+            Number of rows deleted.
+
+        Raises:
+            StorageError: If dataset not found or expression is unsafe.
+        """
+        from arrow_lake.core.metrics import _QueryTimer
+
+        with _QueryTimer("delete_rows"):
+            return self._get_storage().delete_rows(dataset_name, where)
+
+    def update_rows(
+        self,
+        dataset_name: str,
+        where: str,
+        values: dict[str, str],
+    ) -> None:
+        """Update rows matching a filter expression with new values.
+
+        Args:
+            dataset_name: Target dataset name.
+            where: SQL WHERE expression (validated for injection safety).
+            values: Dict mapping column names to SQL value expressions.
+
+        Raises:
+            StorageError: If dataset not found or expression is unsafe.
+        """
+        from arrow_lake.core.metrics import _QueryTimer
+
+        with _QueryTimer("update_rows"):
+            self._get_storage().update_rows(dataset_name, where, values)
+
     def quality_filter(
         self,
         dataset_name: str,
@@ -285,7 +376,11 @@ class _LakeIngestMixin:
                 )
             )
 
-        from arrow_lake.core.metrics import _QueryTimer, get_metrics_enabled, processing_quality_rejects_total
+        from arrow_lake.core.metrics import (
+            _QueryTimer,
+            get_metrics_enabled,
+            processing_quality_rejects_total,
+        )
 
         with _QueryTimer("quality_filter"):
             table = self._get_storage().read_dataset(dataset_name)
@@ -304,7 +399,7 @@ class _LakeIngestMixin:
         strategy: str | None = None,
         action: str | None = None,
         perceptual_threshold: int | None = None,
-    ) -> Any:
+    ) -> DedupResult:
         """Run content deduplication on a dataset (Story 4.7).
 
         Delegates to ContentDeduplicator.

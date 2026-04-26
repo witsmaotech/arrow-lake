@@ -6,7 +6,9 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from arrow_lake.query.daft_api import LazyDaftFrame
+    from arrow_lake.query.metadata import MetadataQueryResult
     from arrow_lake.query.olap import OlapQueryResult
+    from arrow_lake.query.export import ExportResult
 
 
 class _LakeQueryMixin:
@@ -16,7 +18,7 @@ class _LakeQueryMixin:
         self,
         dataset_name: str,
         sql: str,
-    ) -> Any:
+    ) -> MetadataQueryResult:
         """Query dataset metadata via SQL.
 
         Delegates to MetadataSearchBridge (Story 3.9).
@@ -184,7 +186,7 @@ class _LakeQueryMixin:
         version: int | None = None,
         compression: str | None = None,
         overwrite: bool = False,
-    ) -> Any:
+    ) -> ExportResult:
         """Export a dataset to Parquet or CSV (Story 5.9).
 
         Delegates to ExportBridge.

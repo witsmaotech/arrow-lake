@@ -12,6 +12,7 @@ services:
   # API — writable source mount for hot-reload
   # ---------------------------------------------------------------------------
   api:
+    read_only: false
     volumes:
       - ../arrow_lake:/app/arrow_lake:ro
       - ../flows:/app/flows:ro
@@ -28,6 +29,7 @@ services:
   # Ray Head — writable source + tests mount
   # ---------------------------------------------------------------------------
   ray-head:
+    read_only: false
     volumes:
       - ../arrow_lake:/app/arrow_lake:ro
       - ../flows:/app/flows:ro
@@ -39,6 +41,7 @@ services:
   # Ray Worker — read-only source mount
   # ---------------------------------------------------------------------------
   ray-worker:
+    read_only: false
     volumes:
       - ../arrow_lake:/app/arrow_lake:ro
       - ../flows:/app/flows:ro
@@ -49,6 +52,7 @@ services:
   # Jupyter — full workspace mount for interactive development
   # ---------------------------------------------------------------------------
   jupyter:
+    read_only: false
     volumes:
       - ../arrow_lake:/app/arrow_lake
       - ../flows:/app/flows

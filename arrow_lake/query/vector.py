@@ -207,6 +207,7 @@ class VectorSearchBridge:
         vector_column: str = _DEFAULT_VECTOR_COLUMN,
         where: str | None = None,
         nprobes: int | None = None,
+        version: int | None = None,
     ) -> VectorSearchResult:
         """Search for similar vectors in a dataset.
 
@@ -246,7 +247,7 @@ class VectorSearchBridge:
         if metric is None:
             metric = self._config.metric.value
 
-        table = self._storage.open_dataset(dataset_name)
+        table = self._storage.open_dataset_versioned(dataset_name, version) if version else self._storage.open_dataset(dataset_name)
 
         # Validate query vector dimension
         schema = table.schema

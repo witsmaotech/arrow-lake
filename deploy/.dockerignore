@@ -37,6 +37,7 @@ tests/
 
 # Documentation
 docs/
+**/docs/
 *.md
 !README.md
 

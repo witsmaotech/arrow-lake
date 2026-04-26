@@ -1,11 +1,29 @@
-"""CLI ingest commands — data ingestion from files, HTTP, images, documents, videos."""
+"""CLI ingest commands — data ingestion, create, append, upsert, row operations."""
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import click
+import pyarrow as pa
 from rich.table import Table
 
-from arrow_lake.cli import _lake, _print_error, _print_success, console
+from arrow_lake.cli import _get_lake, _print_error, _print_success, console
+
+
+def _read_data_file(path: str) -> pa.Table:
+    """Read a data file into a PyArrow Table based on extension."""
+    p = Path(path)
+    ext = p.suffix.lower()
+    if ext == ".csv":
+        import pyarrow.csv as pcsv
+        return pcsv.read_csv(p)
+    elif ext == ".parquet":
+        return pa.read_table(p)
+    elif ext in (".json", ".jsonl"):
+        return pa.read_json(p)
+    else:
+        raise ValueError(f"Unsupported file format: {ext}. Use .csv, .json, .jsonl, or .parquet")
 
 
 @click.group()
@@ -42,9 +60,7 @@ def _show_report(report, label: str) -> None:
 @click.pass_context
 def ingest_files(ctx: click.Context, dataset: str, paths: tuple[str, ...]) -> None:
     """Ingest local files (CSV, JSON, JSONL, Parquet)."""
-    base_uri = ctx.obj["base_uri"]
-    config_path = ctx.obj.get("config_path")
-    lake = _lake(base_uri, config_path)
+    lake = _get_lake(ctx)
 
     try:
         report = lake.ingest(dataset, list(paths))
@@ -61,9 +77,7 @@ def ingest_files(ctx: click.Context, dataset: str, paths: tuple[str, ...]) -> No
 @click.pass_context
 def ingest_http(ctx: click.Context, dataset: str, urls: tuple[str, ...]) -> None:
     """Ingest files from HTTP(S) URLs."""
-    base_uri = ctx.obj["base_uri"]
-    config_path = ctx.obj.get("config_path")
-    lake = _lake(base_uri, config_path)
+    lake = _get_lake(ctx)
 
     try:
         report = lake.ingest_http(dataset, list(urls))
@@ -80,9 +94,7 @@ def ingest_http(ctx: click.Context, dataset: str, urls: tuple[str, ...]) -> None
 @click.pass_context
 def ingest_images(ctx: click.Context, dataset: str, paths: tuple[str, ...]) -> None:
     """Ingest image files with thumbnails and EXIF metadata."""
-    base_uri = ctx.obj["base_uri"]
-    config_path = ctx.obj.get("config_path")
-    lake = _lake(base_uri, config_path)
+    lake = _get_lake(ctx)
 
     try:
         report = lake.ingest_images(dataset, list(paths))
@@ -99,9 +111,7 @@ def ingest_images(ctx: click.Context, dataset: str, paths: tuple[str, ...]) -> N
 @click.pass_context
 def ingest_documents(ctx: click.Context, dataset: str, paths: tuple[str, ...]) -> None:
     """Ingest PDF documents (parse, chunk, write to Lance)."""
-    base_uri = ctx.obj["base_uri"]
-    config_path = ctx.obj.get("config_path")
-    lake = _lake(base_uri, config_path)
+    lake = _get_lake(ctx)
 
     try:
         report = lake.ingest_documents(dataset, list(paths))
@@ -118,9 +128,7 @@ def ingest_documents(ctx: click.Context, dataset: str, paths: tuple[str, ...]) -
 @click.pass_context
 def ingest_videos(ctx: click.Context, dataset: str, paths: tuple[str, ...]) -> None:
     """Ingest video files with keyframe extraction."""
-    base_uri = ctx.obj["base_uri"]
-    config_path = ctx.obj.get("config_path")
-    lake = _lake(base_uri, config_path)
+    lake = _get_lake(ctx)
 
     try:
         report = lake.ingest_videos(dataset, list(paths))
@@ -129,3 +137,124 @@ def ingest_videos(ctx: click.Context, dataset: str, paths: tuple[str, ...]) -> N
         raise SystemExit(1) from None
 
     _show_report(report, f"{len(paths)} video(s) -> {dataset}")
+
+
+@ingest_group.command("create")
+@click.argument("name")
+@click.option("--data", default=None, help="Data file (CSV/JSON/JSONL/Parquet)")
+@click.pass_context
+def ingest_create(ctx: click.Context, name: str, data: str | None) -> None:
+    """Create a new dataset from a data file."""
+    if not data:
+        _print_error("--data is required")
+        raise SystemExit(1) from None
+
+    lake = _get_lake(ctx)
+
+    try:
+        table = _read_data_file(data)
+    except Exception as exc:
+        _print_error(f"Failed to read data file: {exc}")
+        raise SystemExit(1) from None
+
+    try:
+        lake.create_dataset(name, table)
+    except Exception as exc:
+        _print_error(f"Failed to create dataset: {exc}")
+        raise SystemExit(1) from None
+
+    _print_success(f"Dataset '{name}' created ({table.num_rows} rows)")
+
+
+@ingest_group.command("append")
+@click.argument("name")
+@click.option("--data", required=True, help="Data file (CSV/JSON/JSONL/Parquet)")
+@click.pass_context
+def ingest_append(ctx: click.Context, name: str, data: str) -> None:
+    """Append data to an existing dataset."""
+    lake = _get_lake(ctx)
+
+    try:
+        table = _read_data_file(data)
+    except Exception as exc:
+        _print_error(f"Failed to read data file: {exc}")
+        raise SystemExit(1) from None
+
+    try:
+        lake.append_dataset(name, table)
+    except Exception as exc:
+        _print_error(f"Failed to append to dataset: {exc}")
+        raise SystemExit(1) from None
+
+    _print_success(f"Appended {table.num_rows} rows to '{name}'")
+
+
+@ingest_group.command("upsert")
+@click.argument("dataset")
+@click.option("--data", required=True, help="Data file (CSV/JSON/JSONL/Parquet)")
+@click.option("--on", required=True, help="Column name to match on for upsert")
+@click.pass_context
+def ingest_upsert(ctx: click.Context, dataset: str, data: str, on: str) -> None:
+    """Upsert rows into a dataset (insert or update)."""
+    lake = _get_lake(ctx)
+
+    try:
+        table = _read_data_file(data)
+    except Exception as exc:
+        _print_error(f"Failed to read data file: {exc}")
+        raise SystemExit(1) from None
+
+    try:
+        result = lake.upsert(dataset, table, on=on)
+    except Exception as exc:
+        _print_error(f"Upsert failed: {exc}")
+        raise SystemExit(1) from None
+
+    _print_success(f"Upserted {table.num_rows} rows into '{dataset}'")
+    if result:
+        console.print(f"  Result: {result}")
+
+
+@ingest_group.command("delete-rows")
+@click.argument("dataset")
+@click.option("--where", required=True, help="SQL WHERE expression")
+@click.pass_context
+def ingest_delete_rows(ctx: click.Context, dataset: str, where: str) -> None:
+    """Delete rows from a dataset matching a WHERE expression."""
+    lake = _get_lake(ctx)
+
+    try:
+        count = lake.delete_rows(dataset, where)
+    except Exception as exc:
+        _print_error(f"Delete failed: {exc}")
+        raise SystemExit(1) from None
+
+    _print_success(f"Deleted {count} row(s) from '{dataset}'")
+
+
+@ingest_group.command("update-rows")
+@click.argument("dataset")
+@click.option("--where", required=True, help="SQL WHERE expression")
+@click.option("--set", "update_values", required=True, help="JSON dict of column:value pairs")
+@click.pass_context
+def ingest_update_rows(
+    ctx: click.Context, dataset: str, where: str, update_values: str,
+) -> None:
+    """Update rows in a dataset matching a WHERE expression."""
+    import json
+
+    try:
+        values = json.loads(update_values)
+    except json.JSONDecodeError as exc:
+        _print_error(f"Invalid JSON in --set: {exc}")
+        raise SystemExit(1) from None
+
+    lake = _get_lake(ctx)
+
+    try:
+        count = lake.update_rows(dataset, where, values)
+    except Exception as exc:
+        _print_error(f"Update failed: {exc}")
+        raise SystemExit(1) from None
+
+    _print_success(f"Updated {count} row(s) in '{dataset}'")

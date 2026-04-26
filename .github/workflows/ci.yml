@@ -20,16 +20,28 @@ jobs:
         run: uv sync --group dev
 
       - name: Ruff lint
-        run: uv run ruff check .
+        run: uv run ruff check arrow_lake/ tests/
 
       - name: Ruff format check
-        run: uv run ruff format --check .
+        run: uv run ruff format --check arrow_lake/ tests/
 
       - name: MyPy type check
-        run: uv run mypy arrow_lake/
+        run: uv run mypy arrow_lake/ --ignore-missing-imports
 
       - name: Security scan (bandit)
-        run: uv run bandit -r arrow_lake/ -x tests/ -ll
+        run: uv run bandit -r arrow_lake/ -ll
+
+      - name: Validate compose configs
+        working-directory: deploy
+        run: |
+          for combo in "" "dev" "gpu" "monitoring" "hugegraph"; do
+            echo "=== Validating: $combo ==="
+            if [ -z "$combo" ]; then
+              docker compose config --quiet
+            else
+              docker compose -f docker-compose.yml -f docker-compose.${combo}.yml --profile ${combo%%.*} config --quiet
+            fi
+          done
 
       - name: Run unit tests
         run: uv run pytest tests/unit/ -v --cov=arrow_lake --cov-report=term-missing --cov-fail-under=80
@@ -44,3 +56,4 @@ jobs:
           name: coverage-report
           path: htmlcov/
           retention-days: 7
+

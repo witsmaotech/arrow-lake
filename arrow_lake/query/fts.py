@@ -271,6 +271,7 @@ class FullTextSearchBridge:
         top_k: int | None = None,
         fts_column: str | None = None,
         where: str | None = None,
+        version: int | None = None,
     ) -> FullTextSearchResult:
         """Full-text search over a dataset.
 
@@ -308,7 +309,7 @@ class FullTextSearchBridge:
                 message=f"top_k must be >= 1, got {effective_top_k}",
             )
 
-        table = self._storage.open_dataset(dataset_name)
+        table = self._storage.open_dataset_versioned(dataset_name, version) if version else self._storage.open_dataset(dataset_name)
 
         # Determine which column was indexed
         search_column = column

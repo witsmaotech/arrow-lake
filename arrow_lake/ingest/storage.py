@@ -596,6 +596,34 @@ class LanceStorageManager:
         """
         return self._open_lance(self._get_dataset_path(dataset_name))
 
+    def open_dataset_versioned(self, dataset_name: str, version: int) -> Any:
+        """Open a Lance dataset at a specific version.
+
+        Returns a lance.LanceDataset (not lancedb.Table) for versioned
+        search operations. The returned object supports .search() and
+        .to_arrow() like lancedb.Table.
+
+        Args:
+            dataset_name: Dataset name.
+            version: Lance dataset version number.
+
+        Returns:
+            lance.LanceDataset at the specified version.
+
+        Raises:
+            StorageError: If dataset or version not found.
+        """
+        import lance
+
+        lance_uri = self.dataset_uri(dataset_name)
+        try:
+            return lance.dataset(lance_uri, version=version, storage_options=self._storage_options)
+        except (ValueError, OSError) as exc:
+            raise StorageError(
+                error_code=ErrorCode.STORAGE_PATH_NOT_FOUND,
+                message=f"Version {version} not found for dataset '{dataset_name}'",
+            ) from exc
+
     def scan_dataset(
         self,
         name: str,
@@ -640,6 +668,326 @@ class LanceStorageManager:
             batch_size=batch_size,
         )
         return scanner.to_reader()
+
+    def rename_dataset(self, name: str, new_name: str) -> None:
+        """Rename a dataset (copy + delete original).
+
+        Args:
+            name: Current dataset name.
+            new_name: Target dataset name.
+
+        Raises:
+            StorageError: If source not found, target already exists, or names invalid.
+        """
+        self._validate_name(name)
+        self._validate_name(new_name)
+
+        if not self.dataset_exists(name):
+            raise StorageError(
+                error_code=ErrorCode.STORAGE_PATH_NOT_FOUND,
+                message=f"Dataset '{name}' not found",
+            )
+        if self.dataset_exists(new_name):
+            raise StorageError(
+                error_code=ErrorCode.STORAGE_WRITE_FAILED,
+                message=f"Dataset '{new_name}' already exists",
+            )
+
+        data = self.read_dataset(name)
+        self.create_dataset(new_name, data)
+        self.delete_dataset(name)
+
+    def copy_dataset(
+        self,
+        name: str,
+        new_name: str,
+    ) -> None:
+        """Copy a dataset to a new name.
+
+        Args:
+            name: Source dataset name.
+            new_name: Target dataset name.
+
+        Raises:
+            StorageError: If source not found, target already exists, or names invalid.
+        """
+        self._validate_name(name)
+        self._validate_name(new_name)
+
+        if not self.dataset_exists(name):
+            raise StorageError(
+                error_code=ErrorCode.STORAGE_PATH_NOT_FOUND,
+                message=f"Dataset '{name}' not found",
+            )
+        if self.dataset_exists(new_name):
+            raise StorageError(
+                error_code=ErrorCode.STORAGE_WRITE_FAILED,
+                message=f"Dataset '{new_name}' already exists",
+            )
+
+        data = self.read_dataset(name)
+        self.create_dataset(new_name, data)
+
+    def merge_datasets(
+        self,
+        source_names: list[str],
+        target_name: str,
+    ) -> None:
+        """Merge multiple datasets into a single target.
+
+        All sources must have identical schemas.
+
+        Args:
+            source_names: List of source dataset names.
+            target_name: Name for the new merged dataset.
+
+        Raises:
+            StorageError: If any source not found, target exists, or schema mismatch.
+        """
+        self._validate_name(target_name)
+
+        for name in source_names:
+            self._validate_name(name)
+            if not self.dataset_exists(name):
+                raise StorageError(
+                    error_code=ErrorCode.STORAGE_PATH_NOT_FOUND,
+                    message=f"Source dataset '{name}' not found",
+                )
+
+        if self.dataset_exists(target_name):
+            raise StorageError(
+                error_code=ErrorCode.STORAGE_WRITE_FAILED,
+                message=f"Target dataset '{target_name}' already exists",
+            )
+
+        if not source_names:
+            raise StorageError(
+                error_code=ErrorCode.VALIDATION_MISSING_FIELD,
+                message="source_names must not be empty",
+            )
+
+        tables = [self.read_dataset(name) for name in source_names]
+
+        reference_schema = tables[0].schema
+        for i, t in enumerate(tables[1:], start=1):
+            if not t.schema.equals(reference_schema):
+                raise StorageError(
+                    error_code=ErrorCode.INGEST_SCHEMA_MISMATCH,
+                    message=(
+                        f"Schema mismatch: source '{source_names[i]}' "
+                        f"does not match source '{source_names[0]}'"
+                    ),
+                )
+
+        merged = pa.concat_tables(tables)
+        self.create_dataset(target_name, merged)
+
+    def delete_vector_index(
+        self,
+        name: str,
+        index_name: str,
+    ) -> None:
+        """Delete a vector index from a dataset.
+
+        Uses the lance SDK directly because LanceDB does not expose
+        index deletion at the table level.
+
+        Args:
+            name: Dataset name.
+            index_name: Name of the index to delete.
+
+        Raises:
+            StorageError: If dataset or index not found.
+        """
+        self._validate_name(name)
+        import lance
+
+        lance_uri = self.dataset_uri(name)
+        try:
+            ds = lance.dataset(lance_uri, storage_options=self._storage_options)
+            ds.drop_index(index_name)
+        except (ValueError, RuntimeError, OSError) as exc:
+            raise StorageError(
+                error_code=ErrorCode.QUERY_INDEX_NOT_FOUND,
+                message=f"Failed to drop index '{index_name}' on dataset '{name}': {exc}",
+            ) from exc
+
+    def rebuild_vector_index(
+        self,
+        name: str,
+        *,
+        old_index_name: str | None = None,
+        metric: str = "cosine",
+        vector_column: str = "text_embedding",
+        index_type: str = "IVF_PQ",
+        num_partitions: int | None = None,
+        num_sub_vectors: int | None = None,
+    ) -> None:
+        """Rebuild a vector index by dropping the old one and creating a new one.
+
+        Args:
+            name: Dataset name.
+            old_index_name: Name of the existing index to drop (None = auto-detect).
+            metric: Distance metric for the new index.
+            vector_column: Vector column to index.
+            index_type: LanceDB index type.
+            num_partitions: IVF partitions (None = auto).
+            num_sub_vectors: PQ sub-vectors (None = auto).
+
+        Raises:
+            StorageError: If dataset not found or index operations fail.
+        """
+        self._validate_name(name)
+        self._validate_identifier(vector_column, "vector_column")
+
+        if old_index_name is None:
+            table = self._open_lance(self._get_dataset_path(name))
+            try:
+                indices = list(table.list_indices())
+                for idx_config in indices:
+                    cols = idx_config.columns if hasattr(idx_config, "columns") else []
+                    if vector_column in cols:
+                        old_index_name = idx_config.name if hasattr(idx_config, "name") else str(idx_config)
+                        break
+            except (ValueError, RuntimeError, OSError):
+                pass
+
+        if old_index_name is not None:
+            self.delete_vector_index(name, old_index_name)
+
+        table = self._open_lance(self._get_dataset_path(name))
+        create_kwargs: dict[str, Any] = dict(
+            metric=metric,
+            vector_column_name=vector_column,
+            index_type=index_type,
+            replace=False,
+        )
+        if num_partitions is not None:
+            create_kwargs["num_partitions"] = num_partitions
+        if num_sub_vectors is not None:
+            create_kwargs["num_sub_vectors"] = num_sub_vectors
+        try:
+            table.create_index(**create_kwargs)
+        except (ValueError, RuntimeError, OSError) as exc:
+            raise StorageError(
+                error_code=ErrorCode.VECTOR_INDEX_FAILED,
+                message=f"Failed to rebuild index on dataset '{name}': {exc}",
+            ) from exc
+
+    def upsert_dataset(
+        self,
+        name: str,
+        data: pa.Table,
+        *,
+        on: str = "id",
+    ) -> None:
+        """Upsert rows using merge_insert on a key column.
+
+        New rows are inserted; existing rows matching ``on`` are updated.
+        If the dataset does not exist it is created automatically.
+
+        Args:
+            name: Dataset name.
+            data: Arrow table with rows to upsert.
+            on: Column name to use as the merge key.
+
+        Raises:
+            StorageError: If name is invalid or the on-column is not found.
+        """
+        self._validate_name(name)
+        self._validate_identifier(on, "on_column")
+
+        if not self.dataset_exists(name):
+            self.create_dataset(name, data)
+            return
+
+        table = self._open_lance(self._get_dataset_path(name))
+        if on not in table.schema.names:
+            raise StorageError(
+                error_code=ErrorCode.STORAGE_PATH_NOT_FOUND,
+                message=f"Merge key column '{on}' not found in dataset '{name}'",
+            )
+
+        try:
+            table.merge_insert(on=on).when_matched_update_all().when_not_matched_insert_all().execute(data)
+        except (ValueError, RuntimeError, OSError) as exc:
+            raise StorageError(
+                error_code=ErrorCode.STORAGE_WRITE_FAILED,
+                message=f"Upsert failed on dataset '{name}': {exc}",
+            ) from exc
+
+    def delete_rows(
+        self,
+        name: str,
+        where: str,
+    ) -> int:
+        """Delete rows matching a filter expression.
+
+        Args:
+            name: Dataset name.
+            where: SQL WHERE expression (validated for safety).
+
+        Returns:
+            Number of rows deleted.
+
+        Raises:
+            StorageError: If dataset not found or expression is unsafe.
+        """
+        self._validate_name(name)
+        self._validate_sql_expr(where)
+
+        table = self._open_lance(self._get_dataset_path(name))
+        count_before = table.count_rows()
+
+        try:
+            table.delete(where=where)
+        except (ValueError, RuntimeError, OSError) as exc:
+            raise StorageError(
+                error_code=ErrorCode.STORAGE_WRITE_FAILED,
+                message=f"Row deletion failed on dataset '{name}': {exc}",
+            ) from exc
+
+        count_after = table.count_rows()
+        return count_before - count_after
+
+    def update_rows(
+        self,
+        name: str,
+        where: str,
+        values: dict[str, str],
+    ) -> None:
+        """Update rows matching a filter expression with new values.
+
+        Args:
+            name: Dataset name.
+            where: SQL WHERE expression (validated for safety).
+            values: Dict mapping column names to SQL expressions for new values.
+
+        Raises:
+            StorageError: If dataset not found or expression is unsafe.
+        """
+        self._validate_name(name)
+        self._validate_sql_expr(where)
+
+        for col in values:
+            self._validate_identifier(col, "update_column")
+
+        table = self._open_lance(self._get_dataset_path(name))
+
+        for col in values:
+            if col not in table.schema.names:
+                raise StorageError(
+                    error_code=ErrorCode.STORAGE_PATH_NOT_FOUND,
+                    message=f"Column '{col}' not found in dataset '{name}'",
+                )
+
+        try:
+            table.update(where=where, values=values)
+        except (ValueError, RuntimeError, OSError) as exc:
+            raise StorageError(
+                error_code=ErrorCode.STORAGE_WRITE_FAILED,
+                message=f"Row update failed on dataset '{name}': {exc}",
+            ) from exc
 
     def restore_dataset(self, name: str, data: pa.Table) -> None:
         """Delete and recreate a dataset with new data (used for rollback).

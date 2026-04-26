@@ -33,6 +33,7 @@ class _LakeSearchMixin:
         vector_column: str = "text_embedding",
         where: str | None = None,
         nprobes: int | None = None,
+        version: int | None = None,
     ) -> VectorSearchResult:
         """Vector similarity search across ingested data (Story 5.1).
 
@@ -46,6 +47,7 @@ class _LakeSearchMixin:
             vector_column: Name of the vector column.
             where: Optional metadata filter expression.
             nprobes: Number of IVF partitions to probe.
+            version: Dataset version for time-travel query (None = latest).
 
         Returns:
             VectorSearchResult with Arrow table and distance scores.
@@ -73,6 +75,7 @@ class _LakeSearchMixin:
                 vector_column=vector_column,
                 where=where,
                 nprobes=nprobes,
+                version=version,
             )
 
     def create_vector_index(
@@ -130,6 +133,7 @@ class _LakeSearchMixin:
         top_k: int | None = None,
         fts_column: str | None = None,
         where: str | None = None,
+        version: int | None = None,
     ) -> FullTextSearchResult:
         """Full-text search over ingested data (Story 5.2).
 
@@ -155,8 +159,8 @@ class _LakeSearchMixin:
                 **self._bridge_kwargs(),
             ),
         )
-        from arrow_lake.core.metrics import _QueryTimer
         from arrow_lake.api.telemetry import get_tracer
+        from arrow_lake.core.metrics import _QueryTimer
 
         tracer = get_tracer()
         with tracer.start_as_current_span("text_search", attributes={"dataset": dataset_name}):
@@ -167,6 +171,7 @@ class _LakeSearchMixin:
                     top_k=top_k,
                     fts_column=fts_column,
                     where=where,
+                    version=version,
                 )
 
     def create_fts_index(
@@ -207,6 +212,7 @@ class _LakeSearchMixin:
         vector_column: str = "text_embedding",
         fts_column: str | None = None,
         where: str | None = None,
+        version: int | None = None,
     ) -> HybridSearchResult:
         """Hybrid search combining vector similarity + full-text via RRF (Story 5.3).
 
@@ -247,6 +253,7 @@ class _LakeSearchMixin:
                 vector_column=vector_column,
                 fts_column=fts_column,
                 where=where,
+                version=version,
             )
 
     def faceted_search(
@@ -258,6 +265,7 @@ class _LakeSearchMixin:
         top_k: int = 10,
         vector_column: str = "embedding",
         where: str | None = None,
+        version: int | None = None,
     ) -> FacetedSearchResult:
         """Faceted search combining facet counts with vector results (Story 8.1).
 
@@ -295,6 +303,7 @@ class _LakeSearchMixin:
                 top_k=top_k,
                 vector_column=vector_column,
                 where=where,
+                version=version,
             )
 
     def ensemble_search(
@@ -306,6 +315,7 @@ class _LakeSearchMixin:
         weights: dict[str, float] | None = None,
         top_k: int | None = None,
         where: str | None = None,
+        version: int | None = None,
     ) -> EnsembleSearchResult:
         """Multi-model ensemble search via weighted RRF fusion (Story 8.2).
 
@@ -339,4 +349,181 @@ class _LakeSearchMixin:
             weights=weights,
             top_k=top_k,
             where=where,
+            version=version,
         )
+
+    def delete_vector_index(
+        self,
+        dataset_name: str,
+        index_name: str,
+    ) -> None:
+        """Delete a vector index from a dataset.
+
+        Args:
+            dataset_name: Name of the Lance dataset.
+            index_name: Name of the index to delete.
+
+        Raises:
+            StorageError: If dataset or index not found.
+        """
+        self._get_storage().delete_vector_index(dataset_name, index_name)
+
+    def list_vector_indexes(self, dataset_name: str) -> list[IndexInfo]:
+        """List all vector indexes on a dataset.
+
+        Args:
+            dataset_name: Name of the Lance dataset.
+
+        Returns:
+            List of IndexInfo for all vector indexes found.
+        """
+        from arrow_lake.query.vector import VectorSearchBridge
+
+        self._get_component(
+            "vector",
+            lambda: VectorSearchBridge(
+                self._get_storage(),
+                config=self._config.vector,
+                **self._bridge_kwargs(),
+            ),
+        )
+        table = self._get_storage().open_dataset(dataset_name)
+        results: list[IndexInfo] = []
+        try:
+            indices = list(table.list_indices())
+            for idx_config in indices:
+                cols = idx_config.columns if hasattr(idx_config, "columns") else []
+                for col in cols:
+                    info = VectorSearchBridge._get_latest_index_info(table, col)
+                    if info is not None and info not in results:
+                        results.append(info)
+        except (ValueError, RuntimeError, OSError):
+            pass
+        return results
+
+    def get_vector_index_info(
+        self,
+        dataset_name: str,
+        vector_column: str | None = None,
+    ) -> IndexInfo | None:
+        """Get information about the vector index on a dataset.
+
+        Args:
+            dataset_name: Name of the Lance dataset.
+            vector_column: Column to check (None = check default columns).
+
+        Returns:
+            IndexInfo if an index exists, None otherwise.
+        """
+        from arrow_lake.query.vector import VectorSearchBridge
+
+        bridge = self._get_component(
+            "vector",
+            lambda: VectorSearchBridge(
+                self._get_storage(),
+                config=self._config.vector,
+                **self._bridge_kwargs(),
+            ),
+        )
+        return bridge.get_index_info(dataset_name, vector_column=vector_column)
+
+    def rebuild_vector_index(
+        self,
+        dataset_name: str,
+        *,
+        metric: str = "",
+        vector_column: str = "text_embedding",
+        index_type: str = "",
+        num_partitions: int | None = None,
+        num_sub_vectors: int | None = None,
+    ) -> IndexInfo:
+        """Rebuild a vector index on a dataset.
+
+        Drops the existing index and creates a new one.
+
+        Args:
+            dataset_name: Name of the Lance dataset.
+            metric: Distance metric (empty = use config).
+            vector_column: Name of the vector column.
+            index_type: LanceDB index type (empty = use config).
+            num_partitions: IVF partitions (None = auto).
+            num_sub_vectors: PQ sub-vectors (None = auto).
+
+        Returns:
+            IndexInfo for the newly created index.
+        """
+        from arrow_lake.query.vector import VectorSearchBridge
+
+        effective_metric = metric or self._config.vector.metric.value
+        effective_index_type = index_type or self._config.vector.default_index_type.value
+
+        self._get_storage().rebuild_vector_index(
+            dataset_name,
+            metric=effective_metric,
+            vector_column=vector_column,
+            index_type=effective_index_type,
+            num_partitions=num_partitions,
+            num_sub_vectors=num_sub_vectors,
+        )
+
+        bridge = self._get_component(
+            "vector",
+            lambda: VectorSearchBridge(
+                self._get_storage(),
+                config=self._config.vector,
+                **self._bridge_kwargs(),
+            ),
+        )
+        info = bridge.get_index_info(dataset_name, vector_column=vector_column)
+        if info is None:
+            from arrow_lake.exceptions import ErrorCode, QueryError
+
+            raise QueryError(
+                error_code=ErrorCode.VECTOR_INDEX_FAILED,
+                message=f"Index rebuild completed but metadata unavailable for '{dataset_name}'",
+            )
+        return info
+
+    def delete_fts_index(self, dataset_name: str) -> None:
+        """Delete the full-text search index from a dataset.
+
+        Args:
+            dataset_name: Name of the Lance dataset.
+
+        Raises:
+            StorageError: If dataset not found or index deletion fails.
+        """
+        table = self._get_storage().open_dataset(dataset_name)
+        try:
+            indices = list(table.list_indices())
+            for idx_config in indices:
+                idx_name = idx_config.name if hasattr(idx_config, "name") else str(idx_config)
+                if "fts" in idx_name.lower() or "tantivy" in idx_name.lower():
+                    self._get_storage().delete_vector_index(dataset_name, idx_name)
+                    return
+        except (ValueError, RuntimeError, OSError):
+            pass
+
+    def get_fts_index_info(self, dataset_name: str) -> dict[str, Any] | None:
+        """Get information about the full-text search index on a dataset.
+
+        Args:
+            dataset_name: Name of the Lance dataset.
+
+        Returns:
+            Dict with index metadata if an FTS index exists, None otherwise.
+        """
+        table = self._get_storage().open_dataset(dataset_name)
+        try:
+            indices = list(table.list_indices())
+            for idx_config in indices:
+                idx_name = idx_config.name if hasattr(idx_config, "name") else str(idx_config)
+                if "fts" in idx_name.lower() or "tantivy" in idx_name.lower():
+                    return {
+                        "name": idx_name,
+                        "columns": list(idx_config.columns) if hasattr(idx_config, "columns") else [],
+                        "index_type": str(idx_config.index_type) if hasattr(idx_config, "index_type") else "fts",
+                    }
+        except (ValueError, RuntimeError, OSError):
+            pass
+        return None

@@ -6,7 +6,7 @@ global:
 scrape_configs:
   - job_name: "arrow-lake-server"
     static_configs:
-      - targets: ["arrow-lake-ray-head:8000"]
+      - targets: ["arrow-lake-api:8000"]
     metrics_path: "/metrics"
 
   - job_name: "ray-head"

@@ -23,13 +23,16 @@ class SessionStore:
         history_dataset: str = "_rag_sessions",
         max_sessions: int = 10000,
         max_turns_per_session: int = 100,
+        session_ttl_seconds: int = 86400,
     ) -> None:
         self._history_dataset = history_dataset
         self._max_sessions = max_sessions
         self._max_turns_per_session = max_turns_per_session
+        self._session_ttl_seconds = session_ttl_seconds
         self._turns: list[dict] = []
         self._turn_counter: dict[str, int] = {}
         self._session_index: dict[str, list[dict]] = {}
+        self._feedback: list[dict] = []
 
     def save_turn(
         self,
@@ -86,6 +89,10 @@ class SessionStore:
                 self._turn_counter.pop(evict_sid, None)
                 logger.warning("Evicted session %s (max_sessions=%d)", evict_sid, self._max_sessions)
 
+        # Evict turns older than TTL
+        if self._session_ttl_seconds > 0:
+            self._evict_expired(session_id)
+
     def get_history(self, session_id: str) -> list[dict]:
         """Get conversation history for a session, sorted by turn_id."""
         return sorted(
@@ -98,6 +105,75 @@ class SessionStore:
         self._turns = [t for t in self._turns if t["session_id"] != session_id]
         self._turn_counter.pop(session_id, None)
         self._session_index.pop(session_id, None)
+
+    def _evict_expired(self, session_id: str) -> None:
+        """Remove turns older than TTL from a session."""
+        if self._session_ttl_seconds <= 0:
+            return
+        cutoff = time.time() - self._session_ttl_seconds
+        turns = self._session_index.get(session_id, [])
+        if not turns:
+            return
+        expired = [t for t in turns if t["timestamp"] < cutoff]
+        if not expired:
+            return
+        self._turns = [t for t in self._turns if not (
+            t["session_id"] == session_id and t["timestamp"] < cutoff
+        )]
+        self._session_index[session_id] = [t for t in turns if t["timestamp"] >= cutoff]
+        remaining = len(self._session_index[session_id])
+        self._turn_counter[session_id] = remaining
+        if remaining == 0:
+            self._session_index.pop(session_id, None)
+            self._turn_counter.pop(session_id, None)
+        logger.debug(
+            "Evicted %d expired turns from session %s", len(expired), session_id,
+        )
+
+    def cleanup_expired(self) -> int:
+        """Sweep all sessions and remove expired turns. Returns count evicted."""
+        if self._session_ttl_seconds <= 0:
+            return 0
+        cutoff = time.time() - self._session_ttl_seconds
+        before = len(self._turns)
+        self._turns = [t for t in self._turns if t["timestamp"] >= cutoff]
+        evicted = before - len(self._turns)
+        if evicted > 0:
+            for sid in list(self._session_index.keys()):
+                self._session_index[sid] = [
+                    t for t in self._session_index[sid] if t["timestamp"] >= cutoff
+                ]
+                if not self._session_index[sid]:
+                    self._session_index.pop(sid, None)
+                    self._turn_counter.pop(sid, None)
+                else:
+                    self._turn_counter[sid] = len(self._session_index[sid])
+            logger.info("Cleaned up %d expired turns across all sessions", evicted)
+        return evicted
+
+    def save_feedback(
+        self,
+        session_id: str,
+        turn_id: int,
+        rating: str,
+        *,
+        flagged_citation_indices: tuple[int, ...] = (),
+        comment: str = "",
+    ) -> None:
+        """Save user feedback for a specific turn."""
+        entry = {
+            "session_id": session_id,
+            "turn_id": turn_id,
+            "rating": rating,
+            "flagged_citation_indices": list(flagged_citation_indices),
+            "comment": comment,
+            "timestamp": time.time(),
+        }
+        self._feedback.append(entry)
+
+    def get_feedback(self, session_id: str) -> list[dict]:
+        """Get all feedback for a session."""
+        return [f for f in self._feedback if f["session_id"] == session_id]
 
     def list_sessions(self) -> list[dict]:
         """List all unique sessions with their latest turn info."""

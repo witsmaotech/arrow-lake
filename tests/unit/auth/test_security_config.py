@@ -110,8 +110,8 @@ class TestPrometheusScrapeConfig:
                 break
         assert server_job is not None, "arrow-lake-server job not found"
         targets = server_job["static_configs"][0]["targets"]
-        assert any("arrow-lake-ray-head" in t for t in targets), (
-            "Server scrape target should use arrow-lake-ray-head service name"
+        assert any("arrow-lake-api" in t for t in targets), (
+            "Server scrape target should use arrow-lake-api service name"
         )
 
 

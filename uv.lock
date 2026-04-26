@@ -285,13 +285,14 @@ wheels = [
 
 [[package]]
 name = "arrow-lake"
-version = "1.0.0"
+version = "1.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "av" },
     { name = "boto3" },
     { name = "click" },
     { name = "daft" },
+    { name = "datasketch" },
     { name = "duckdb" },
     { name = "fastapi" },
     { name = "httpx" },
@@ -303,6 +304,7 @@ dependencies = [
     { name = "pyarrow" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
+    { name = "pylance" },
     { name = "python-multipart" },
     { name = "ray", extra = ["default"] },
     { name = "respx" },
@@ -383,6 +385,7 @@ requires-dist = [
     { name = "chonkie", marker = "extra == 'chunking-semantic'", specifier = ">=1.0" },
     { name = "click", specifier = ">=8.1" },
     { name = "daft", specifier = "==0.7.8" },
+    { name = "datasketch", specifier = ">=1.6" },
     { name = "duckdb", specifier = "==1.5.2" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.28" },
@@ -407,6 +410,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.10" },
     { name = "pydantic-settings", specifier = ">=2.7" },
     { name = "pyjwt", marker = "extra == 'jwt'", specifier = ">=2.9" },
+    { name = "pylance", specifier = ">=0.21.0" },
     { name = "python-multipart", specifier = ">=0.0.18" },
     { name = "ray", extras = ["default"], specifier = "==2.54.1" },
     { name = "respx", specifier = ">=0.22" },
@@ -1161,6 +1165,19 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/ac/11/8790b8f3d29db6badfa81ae3d2dea0dcd685f4e8dc1084457267da18b339/daft-0.7.8-cp310-abi3-manylinux_2_24_aarch64.whl", hash = "sha256:17ea85fd0c9ca9161dd4ec947482a74f48633de0c14e2f7e8c2f9169b37593dd", size = 55674942, upload-time = "2026-04-08T10:44:04.924Z" },
     { url = "https://files.pythonhosted.org/packages/76/f8/bc635277c497e2fa277e207939f5fc5f092312994f21aa55745e02a7af81/daft-0.7.8-cp310-abi3-manylinux_2_24_x86_64.whl", hash = "sha256:3ba1ad07abc699ef3b280326493cf9ab2d7eddbb4f5a0ceaf3a63127e3254d16", size = 57892242, upload-time = "2026-04-08T10:44:08.518Z" },
     { url = "https://files.pythonhosted.org/packages/42/68/7c87400ba31b23e340b17af551eae191713f835952dfc308953468af5f2f/daft-0.7.8-cp310-abi3-win_amd64.whl", hash = "sha256:d64e745b9c0659c6132d4a0af0bbba9792036b25cfb661d56a62670b3c940bbb", size = 58733284, upload-time = "2026-04-08T10:44:12.103Z" },
+]
+
+[[package]]
+name = "datasketch"
+version = "1.10.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "scipy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/8d/73/8e9014887f9fca2d785777a0a6186813e4fc7faa24f05fc88c6420624891/datasketch-1.10.0.tar.gz", hash = "sha256:d23aea80ce4c40790ca7a40795659848be92ecc43db80942be26f21e81d24714", size = 91699, upload-time = "2026-04-17T23:06:56.388Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ed/e7/a94668082e078099eb0161635649510aa887690767b779fffe4bdc479913/datasketch-1.10.0-py3-none-any.whl", hash = "sha256:303dd90cda0948a21abba3aaefc9f8528fa12b8204edc5e1ae8b1d7b750234e7", size = 99914, upload-time = "2026-04-17T23:06:54.39Z" },
 ]
 
 [[package]]
@@ -3992,6 +4009,24 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/c2/27/a3b6e5bf6ff856d2509292e95c8f57f0df7017cf5394921fc4e4ef40308a/pyjwt-2.12.1.tar.gz", hash = "sha256:c74a7a2adf861c04d002db713dd85f84beb242228e671280bf709d765b03672b", size = 102564, upload-time = "2026-03-13T19:27:37.25Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e5/7a/8dd906bd22e79e47397a61742927f6747fe93242ef86645ee9092e610244/pyjwt-2.12.1-py3-none-any.whl", hash = "sha256:28ca37c070cad8ba8cd9790cd940535d40274d22f80ab87f3ac6a713e6e8454c", size = 29726, upload-time = "2026-03-13T19:27:35.677Z" },
+]
+
+[[package]]
+name = "pylance"
+version = "4.0.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "lance-namespace" },
+    { name = "numpy" },
+    { name = "pyarrow" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/be/85/bb068389faa6cd51fe64f7451b4d455f92551086a6615856bdc552206823/pylance-4.0.1-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:9887930ff174851ef2b0471ad89675cb27b40f20ba048ceb4c09664eea778076", size = 54447317, upload-time = "2026-04-24T18:01:38.839Z" },
+    { url = "https://files.pythonhosted.org/packages/57/46/2c823b6910cc1977905f8c8ea83827f1c2abf1024453ddb2242f1a565b8c/pylance-4.0.1-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:400aa25ee82efd09ed8184f669f1150073c701330c614c63c4ed377b076a79e7", size = 56732089, upload-time = "2026-04-24T18:07:39.1Z" },
+    { url = "https://files.pythonhosted.org/packages/ed/d8/a09f1640c1192d63ce5e85ad6226948fdb7ff43d2ddcd0db8e270df7aa5c/pylance-4.0.1-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:53b64cee1970d273642b70b0a5d337e2421402730dd1d15cbf488924fbcda0c7", size = 60288807, upload-time = "2026-04-24T18:18:57.672Z" },
+    { url = "https://files.pythonhosted.org/packages/ff/a0/6fee0460309af73d46a22488dbff8f341f6463afd520f70afd59c16adeb8/pylance-4.0.1-cp39-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:c8459ffedae783941c73ae0e8cb2d453316b91b2b100c74c3825c44b6f7bd75c", size = 56768062, upload-time = "2026-04-24T18:07:54.339Z" },
+    { url = "https://files.pythonhosted.org/packages/13/e1/80bfb3d7024ac8e904fc0cab2d3338393bf5caa81041fd7cbe80f5c32499/pylance-4.0.1-cp39-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:b467f096079a805f568738548ed72f0951bc9c07a6786c76e1c3052b73e5ae69", size = 60269797, upload-time = "2026-04-24T18:18:11.477Z" },
+    { url = "https://files.pythonhosted.org/packages/30/7c/698a3b1f4f8c8a3a54ec4164762f6d8eb2119416281ffc34744b08d8e596/pylance-4.0.1-cp39-abi3-win_amd64.whl", hash = "sha256:15c1b9d215d9a4cc15538faca192497f97c807128c759a37d28ea0a6780cce1c", size = 65115322, upload-time = "2026-04-24T18:21:24.544Z" },
 ]
 
 [[package]]

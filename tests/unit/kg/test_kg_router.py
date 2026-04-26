@@ -83,7 +83,7 @@ class TestKGBuildEndpoint:
         app = _make_app(lake)
         client = TestClient(app)
         resp = client.post("/api/v2/kg/build", json={"dataset_name": "my_ds"})
-        assert resp.status_code == 503
+        assert resp.status_code == 502
 
 
 # ---------------------------------------------------------------------------

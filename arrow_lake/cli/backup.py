@@ -5,7 +5,7 @@ from __future__ import annotations
 import click
 from rich.table import Table
 
-from arrow_lake.cli import _lake, _print_error, _print_success, console
+from arrow_lake.cli import _get_lake, _print_error, _print_success, console
 
 
 @click.group()
@@ -19,9 +19,7 @@ def backup_group() -> None:
 @click.pass_context
 def backup_create(ctx: click.Context, datasets: tuple[str, ...], backup_id: str | None) -> None:
     """Create a backup of datasets."""
-    base_uri = ctx.obj["base_uri"]
-    config_path = ctx.obj.get("config_path")
-    lake = _lake(base_uri, config_path)
+    lake = _get_lake(ctx)
 
     ds_list = list(datasets) if datasets else None
     console.print("[dim]Creating backup...[/dim]")
@@ -44,9 +42,7 @@ def backup_create(ctx: click.Context, datasets: tuple[str, ...], backup_id: str 
 @click.pass_context
 def backup_list(ctx: click.Context) -> None:
     """List all available backups."""
-    base_uri = ctx.obj["base_uri"]
-    config_path = ctx.obj.get("config_path")
-    lake = _lake(base_uri, config_path)
+    lake = _get_lake(ctx)
 
     try:
         from arrow_lake.ops.backup import BackupManager
@@ -84,9 +80,7 @@ def backup_list(ctx: click.Context) -> None:
 @click.pass_context
 def backup_restore(ctx: click.Context, backup_id: str, datasets: tuple[str, ...]) -> None:
     """Restore a backup."""
-    base_uri = ctx.obj["base_uri"]
-    config_path = ctx.obj.get("config_path")
-    lake = _lake(base_uri, config_path)
+    lake = _get_lake(ctx)
 
     ds_list = list(datasets) if datasets else None
     console.print(f"[dim]Restoring backup {backup_id}...[/dim]")
@@ -107,9 +101,7 @@ def backup_restore(ctx: click.Context, backup_id: str, datasets: tuple[str, ...]
 @click.pass_context
 def backup_delete(ctx: click.Context, backup_id: str) -> None:
     """Delete a backup."""
-    base_uri = ctx.obj["base_uri"]
-    config_path = ctx.obj.get("config_path")
-    lake = _lake(base_uri, config_path)
+    lake = _get_lake(ctx)
 
     if not click.confirm(f"Delete backup '{backup_id}'?"):
         return

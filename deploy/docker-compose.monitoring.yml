@@ -1,6 +1,6 @@
 # Arrow Lake — Monitoring Overlay
 #
-# Prometheus + Grafana for observability.
+# Prometheus + Grafana + Jaeger for observability.
 # Extends: docker-compose.yml
 #
 # Usage:
@@ -9,7 +9,8 @@
 #
 # Access:
 #   Prometheus: http://localhost:${PROMETHEUS_PORT:-9090}
-#   Grafana:    http://localhost:${GRAFANA_PORT:-3000} (admin/admin)
+#   Grafana:    http://localhost:${GRAFANA_PORT:-3000} (see .env for credentials)
+#   Jaeger:     http://localhost:${JAEGER_UI_PORT:-16686}
 
 services:
   # ---------------------------------------------------------------------------
@@ -38,6 +39,7 @@ services:
         limits:
           memory: ${PROMETHEUS_MEMORY_LIMIT:-512M}
           cpus: "${PROMETHEUS_CPU_LIMIT:-0.5}"
+          pids: 64
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:9090/-/healthy || exit 1"]
       interval: 15s
@@ -50,6 +52,7 @@ services:
         max-size: "50m"
         max-file: "5"
         tag: "arrow-lake-prometheus"
+    stop_grace_period: 15s
 
   # ---------------------------------------------------------------------------
   # Grafana — Dashboards and visualization
@@ -76,6 +79,7 @@ services:
         limits:
           memory: ${GRAFANA_MEMORY_LIMIT:-256M}
           cpus: "${GRAFANA_CPU_LIMIT:-0.25}"
+          pids: 64
     depends_on:
       prometheus:
         condition: service_healthy
@@ -91,6 +95,7 @@ services:
         max-size: "50m"
         max-file: "5"
         tag: "arrow-lake-grafana"
+    stop_grace_period: 15s
 
   # ---------------------------------------------------------------------------
   # Jaeger — Distributed tracing (OTLP backend)
@@ -117,6 +122,7 @@ services:
         limits:
           memory: ${JAEGER_MEMORY_LIMIT:-512M}
           cpus: "${JAEGER_CPU_LIMIT:-0.5}"
+          pids: 64
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:16686/ || exit 1"]
       interval: 15s
@@ -129,6 +135,7 @@ services:
         max-size: "50m"
         max-file: "5"
         tag: "arrow-lake-jaeger"
+    stop_grace_period: 15s
 
 # ==============================================================================
 # Volumes
