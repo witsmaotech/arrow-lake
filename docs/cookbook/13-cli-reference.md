@@ -208,7 +208,7 @@ arrow-lake catalog inspect documents --json
 
 ### 3. `arrow-lake ingest` — 数据摄取
 
-支持 5 种数据源的摄取，每种对应一个子命令。
+支持多种数据源的摄取，包括文件、远程 URL、图片、PDF 和视频，另有 create/append/upsert/delete-rows/update-rows 等数据集级操作命令。
 
 #### `ingest files <dataset> <paths...>` — 本地文件摄取
 
@@ -264,7 +264,7 @@ lake.ingest_http("papers", ["https://arxiv.org/papers/2401.00001"])
 自动提取缩略图和 EXIF 元数据。
 
 ```bash
-arrow-lake ingest files photos ./photos/vacation/*.jpg ./photos/portrait/*.png
+arrow-lake ingest images photos ./photos/vacation/*.jpg ./photos/portrait/*.png
 ```
 
 **SDK 等价:**
@@ -301,11 +301,43 @@ arrow-lake ingest videos frames ./videos/lecture.mp4 ./videos/interview.mp4
 lake.ingest_videos("frames", ["./videos/lecture.mp4"])
 ```
 
+#### `ingest create <name> --data <file>` — 从文件创建数据集
+
+```bash
+arrow-lake ingest create sales --data sales_2024.csv
+```
+
+#### `ingest append <name> --data <file>` — 追加数据
+
+```bash
+arrow-lake ingest append sales --data new_records.parquet
+```
+
+#### `ingest upsert <dataset> --data <file> --on <column>` — 更新或插入
+
+```bash
+arrow-lake ingest upsert products --data updated.csv --on product_id
+```
+
+#### `ingest delete-rows <dataset> --where <expr>` — 按 WHERE 删除
+
+```bash
+arrow-lake ingest delete-rows sales --where "year < 2020"
+```
+
+#### `ingest update-rows <dataset> --where <expr> --set <json>` — 按 WHERE 更新
+
+```bash
+arrow-lake ingest update-rows products \
+    --where "category = 'electronics'" \
+    --set '{"price": 99.99}'
+```
+
 ---
 
 ### 4. `arrow-lake search` — 搜索
 
-三种搜索模式，覆盖向量检索、全文检索和混合检索。
+五种搜索模式，覆盖向量检索、全文检索、混合检索、分面搜索和集成搜索。
 
 #### `search vector <dataset>` — 向量相似度搜索
 
@@ -363,7 +395,7 @@ arrow-lake search fts papers \
 |------|--------|------|
 | `--query` | — (**必填**) | 搜索文本 |
 | `--top-k` | `10` | 返回结果数 |
-| `--column` | `text_content` | 全文索引列名 |
+| `--column` | 无（使用配置默认值） | 全文索引列名 |
 
 > 中文文本会自动使用 jieba 分词后再建立索引。
 
@@ -389,8 +421,8 @@ arrow-lake search hybrid papers \
 |------|--------|------|
 | `--query` | — (**必填**) | 搜索文本 |
 | `--top-k` | `10` | 返回结果数 |
-| `--vector-column` | `text_embedding` | 向量列名 |
-| `--fts-column` | `text_content` | 全文索引列名 |
+| `--vector-column` | 无（使用配置默认值） | 向量列名 |
+| `--fts-column` | 无（使用配置默认值） | 全文索引列名 |
 | `--model` | `Qwen/Qwen3-Embedding-0.6B` | 嵌入模型 |
 
 **SDK 等价:**
@@ -462,9 +494,9 @@ arrow-lake index vector papers \
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `--column` | `text_embedding` | 向量列名 |
-| `--metric` | `cosine` | 距离度量: `l2`, `cosine`, `dot` |
-| `--type` | `IVF_PQ` | 索引类型: `IVF_PQ`, `IVF_FLAT`, `IVF_HNSW_PQ` |
+| `--column` | 无（使用配置默认值） | 向量列名 |
+| `--metric` | 无（使用配置默认值） | 距离度量: `l2`, `cosine`, `dot` |
+| `--type` | 无（使用配置默认值） | 索引类型: `IVF_PQ`, `IVF_FLAT`, `IVF_HNSW_PQ` |
 | `--replace/--no-replace` | replace | 是否替换已有索引 |
 
 **SDK 等价:**
@@ -590,8 +622,13 @@ row_count = lake.materialize("sales", sql, view_name="category_summary", ttl_day
 #### `query meta <dataset>` — 数据集元数据查询 (v1.2)
 
 ```bash
-arrow-lake query meta papers
+arrow-lake query meta papers --sql "SELECT * FROM papers LIMIT 5"
 ```
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--sql` | — (**必填**) | 元数据 SQL 查询语句 |
+| `--max-rows` | `100` | 最大显示行数 |
 
 #### `query cleanup-materialized` — 清理过期物化视图 (v1.2)
 
@@ -604,8 +641,13 @@ arrow-lake query cleanup-materialized
 将数据集加载为 Daft DataFrame 并显示。
 
 ```bash
-arrow-lake query daft papers --sql "SELECT * FROM papers LIMIT 10"
+arrow-lake query daft papers --columns id,title --limit 10
 ```
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--columns` | 全部列 | 逗号分隔的列名 |
+| `--limit` | `50` | 最大显示行数 |
 
 ---
 
@@ -823,7 +865,7 @@ arrow-lake kg export --output graph.json
 #### `kg import` — 导入知识图谱
 
 ```bash
-arrow-lake kg import --input graph.json
+arrow-lake kg import graph.json
 ```
 
 #### `kg traverser` — 图遍历算法子组 (v1.2 新增)
@@ -831,32 +873,30 @@ arrow-lake kg import --input graph.json
 8 种遍历算法：
 
 ```bash
-# 最短路径
-arrow-lake kg traverser shortest-path --source v1 --target v2
-
 # 所有最短路径
-arrow-lake kg traverser all-shortest-paths --source v1 --target v2
+arrow-lake kg traverser all-shortest-paths v1 v2
 
 # 加权最短路径
-arrow-lake kg traverser weighted-shortest --source v1 --target v2
+arrow-lake kg traverser weighted-shortest v1 v2
 
 # 单源最短路径
-arrow-lake kg traverser single-source-shortest --source v1
+arrow-lake kg traverser single-source-shortest v1
 
 # 多节点最短路径
-arrow-lake kg traverser multi-node-shortest --sources "v1,v2" --targets "v3,v4"
+arrow-lake kg traverser multi-node-shortest --sources '["v1","v2"]' --targets '["v3","v4"]'
 
 # 射线（非环路径）
-arrow-lake kg traverser rays --source v1 --max-depth 5
+arrow-lake kg traverser rays v1 --max-depth 5
 
 # 环检测
-arrow-lake kg traverser rings --source v1 --max-depth 5
+arrow-lake kg traverser rings v1 --max-depth 5
 
 # 交叉点
-arrow-lake kg traverser crosspoints --source v1 --target v2
+arrow-lake kg traverser crosspoints v1 v2
 
 # 自定义多步遍历
-arrow-lake kg traverser customized --source v1
+arrow-lake kg traverser customized v1 \
+    --steps '[{"labels":["person"],"direction":"OUT"},{"labels":["software"],"direction":"OUT"}]'
 ```
 
 #### `kg algo` — 图 OLAP 算法子组 (v1.2 新增)
@@ -909,8 +949,8 @@ arrow-lake rag query papers \
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
 | `--top-k` | `5` | 检索上下文块数量 |
-| `--strategy` | `hybrid` | 检索策略: `vector`, `fts`, `hybrid` |
-| `--template` | `default_qa` | 提示词模板: `default_qa`, `graph_qa` |
+| `--strategy` | 无（使用配置默认值） | 检索策略: `vector`, `fts`, `hybrid` |
+| `--template` | 无（使用配置默认值） | 提示词模板: `default_qa`, `graph_qa` |
 | `--session-id` | 无 | 会话 ID（用于多轮对话） |
 
 输出示例：
@@ -959,8 +999,15 @@ arrow-lake rag stream papers "什么是 RAG？" --top-k 5
 一次提交多个问题并发查询。
 
 ```bash
-arrow-lake rag batch papers "问题1" "问题2" "问题3" --top-k 5
+arrow-lake rag batch papers --questions '["问题1","问题2","问题3"]' --top-k 5
 ```
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--questions` | — (**必填**) | JSON 数组格式的问题列表 |
+| `--top-k` | `5` | 每个查询的上下文块数量 |
+| `--strategy` | 无 | 检索策略 |
+| `--concurrency` | `5` | 最大并发数 |
 
 #### `rag extract` — 实体抽取 (v1.2)
 
@@ -971,15 +1018,26 @@ arrow-lake rag extract papers --top-k 20
 #### `rag feedback` — 提交反馈 (v1.2)
 
 ```bash
-arrow-lake rag feedback --session-id s1 --turn 0 --rating positive
-arrow-lake rag feedback --session-id s1 --turn 0 --rating negative --comment "回答不够详细"
+arrow-lake rag feedback s1 0 positive
+arrow-lake rag feedback s1 0 negative --comment "回答不够详细"
 ```
+
+| 参数 | 说明 |
+|------|------|
+| `session_id` | (**位置参数**) 会话 ID |
+| `turn_id` | (**位置参数**, int) 轮次编号 |
+| `rating` | (**位置参数**) 评价: `positive`, `negative`, `neutral` |
+| `--comment` | 附加评论 |
 
 #### `rag history` — 查看会话历史 (v1.2)
 
 ```bash
-arrow-lake rag history --session-id s1
+arrow-lake rag history s1
 ```
+
+| 参数 | 说明 |
+|------|------|
+| `session_id` | (**位置参数**) 会话 ID |
 
 #### `rag cleanup-sessions` — 清理过期会话 (v1.2)
 
@@ -990,8 +1048,12 @@ arrow-lake rag cleanup-sessions
 #### `rag get-feedback` — 获取会话反馈 (v1.2)
 
 ```bash
-arrow-lake rag get-feedback --session-id s1
+arrow-lake rag get-feedback s1
 ```
+
+| 参数 | 说明 |
+|------|------|
+| `session_id` | (**位置参数**) 会话 ID |
 
 ---
 
@@ -1672,12 +1734,14 @@ arrow-lake --config prod.yaml --base-uri ./datasets kg build reports
 |------|------|
 | 查看数据集 | `arrow-lake status` |
 | 摄取文件 | `arrow-lake ingest files <ds> <paths...>` |
-| 摄取图片 | `arrow-lake ingest files <ds> <images...>` |
+| 摄取图片 | `arrow-lake ingest images <ds> <images...>` |
 | 摄取 PDF | `arrow-lake ingest docs <ds> <pdfs...>` |
 | 远程摄取 | `arrow-lake ingest http <ds> <urls...>` |
 | 向量搜索 | `arrow-lake search vector <ds> --query <text>` |
 | 全文搜索 | `arrow-lake search fts <ds> --query <text>` |
 | 混合搜索 | `arrow-lake search hybrid <ds> --query <text>` |
+| 分面搜索 | `arrow-lake search faceted <ds> --query <text> --facets <cols>` |
+| 集成搜索 | `arrow-lake search ensemble <ds> --columns <cols> --questions <json>` |
 | 创建向量索引 | `arrow-lake index vector <ds>` |
 | 创建全文索引 | `arrow-lake index fts <ds>` |
 | SQL 查询 | `arrow-lake query sql <ds> --sql <sql>` |
@@ -1691,6 +1755,12 @@ arrow-lake --config prod.yaml --base-uri ./datasets kg build reports
 | 构建知识图谱 | `arrow-lake kg build <ds>` |
 | 图谱查询 | `arrow-lake kg query <gremlin>` |
 | RAG 问答 | `arrow-lake rag query <ds> <question>` |
+| RAG 流式 | `arrow-lake rag stream <ds> <question>` |
+| RAG 批量 | `arrow-lake rag batch <ds> --questions <json>` |
+| 审计记录 | `arrow-lake audit record <event>` |
+| 数据血缘 | `arrow-lake lineage record <ds> <op>` |
+| 生命周期规则 | `arrow-lake lifecycle rules --prefix <prefix>` |
+| 生命周期恢复 | `arrow-lake lifecycle restore <key>` |
 | 生成配置 | `arrow-lake config init --output <file>` |
 | 启动服务 | `arrow-lake serve` |
 | 版本信息 | `arrow-lake version` |
@@ -1734,3 +1804,11 @@ YAML 配置文件 (最高) > 环境变量 (ARROW_LAKE__*) > .env 文件 > 代码
 **Q: 切换存储后端需要改 CLI 命令吗？**
 
 不需要。所有 CLI 命令与存储后端无关，切换只需改配置。
+
+**Q: 很多参数默认值显示"无（使用配置默认值）"是什么意思？**
+
+CLI 的 `--column`、`--metric`、`--strategy` 等参数默认值为 `None`，此时会回退到 YAML 配置文件或 `arrow-lake config show` 中显示的默认值。如需覆盖，通过命令行参数显式指定即可。
+
+**Q: `rag batch` 和 `rag feedback` 为什么用 JSON / 位置参数而不是普通选项？**
+
+`--questions` 接受 JSON 数组以支持任意数量的问题；`rag feedback` 的 session_id、turn_id、rating 使用位置参数是为了简化最常用的反馈提交操作，避免冗长的 `--session-id --turn --rating` 前缀。
