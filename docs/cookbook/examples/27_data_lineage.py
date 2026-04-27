@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import argparse
+
 import shutil
 import sys
 from pathlib import Path
@@ -15,20 +17,24 @@ from pathlib import Path
 from arrow_lake import Lake
 
 DATAS_DIR = Path(__file__).resolve().parent.parent / "datas"
-BASE_URI = "./_tmp_lineage"
+_DEFAULT_BASE_URI = "./_tmp_lineage"
 
 
 def main() -> None:
-    no_cleanup = "--no-cleanup" in sys.argv
+    parser = argparse.ArgumentParser(description="27_data_lineage.py")
+    parser.add_argument("--base-uri", default=_DEFAULT_BASE_URI)
+    parser.add_argument("--no-cleanup", action="store_true")
+    args = parser.parse_args()
+    no_cleanup = args.no_cleanup
     print("=" * 60)
     print("27 数据血缘")
     print("=" * 60)
 
-    base = Path(BASE_URI)
+    base = Path(args.base_uri)
     if base.exists():
         shutil.rmtree(base)
 
-    lake = Lake(base_uri=BASE_URI)
+    lake = Lake(base_uri=args.base_uri)
 
     # STEP 1: 源数据摄取 + 血缘记录
     print("STEP 1: 源数据摄取")
@@ -96,7 +102,7 @@ def main() -> None:
     # STEP 6: 数据集列表
     print("\nSTEP 6: 数据集列表")
     for name in lake.list_datasets():
-        ds = lake._get_storage().open_dataset(name)
+        ds = lake.open_dataset(name)
         print(f"  {name}: {ds.count_rows()} 行")
 
     print("\n  [全部 PASS]")

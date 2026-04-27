@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import argparse
+
 import shutil
 import sys
 from pathlib import Path
@@ -15,20 +17,24 @@ from pathlib import Path
 from arrow_lake import Lake
 
 DATAS_DIR = Path(__file__).resolve().parent.parent / "datas"
-BASE_URI = "./_tmp_sales_funnel"
+_DEFAULT_BASE_URI = "./_tmp_sales_funnel"
 
 
 def main() -> None:
-    no_cleanup = "--no-cleanup" in sys.argv
+    parser = argparse.ArgumentParser(description="15_sales_funnel_analysis.py")
+    parser.add_argument("--base-uri", default=_DEFAULT_BASE_URI)
+    parser.add_argument("--no-cleanup", action="store_true")
+    args = parser.parse_args()
+    no_cleanup = args.no_cleanup
     print("=" * 60)
     print("15 销售漏斗分析")
     print("=" * 60)
 
-    base = Path(BASE_URI)
+    base = Path(args.base_uri)
     if base.exists():
         shutil.rmtree(base)
 
-    lake = Lake(base_uri=BASE_URI)
+    lake = Lake(base_uri=args.base_uri)
 
     # STEP 1
     print("STEP 1: 摄入交易数据")
@@ -100,7 +106,7 @@ def main() -> None:
             "FROM sales GROUP BY 商品类别, 支付方式",
             view_name="category_payment_cross", ttl_days=7)
         print(f"  物化视图: category_payment_cross ({n} 行)")
-    except Exception as e:
+    except (ValueError, RuntimeError) as e:
         print(f"  物化跳过 (DuckLake 未启用): {e}")
     out = base / "funnel_analysis.csv"
     lake.export("sales", str(out), format="csv")

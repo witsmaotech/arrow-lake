@@ -14,8 +14,11 @@ from arrow_lake.api.models.audit import (
     AuditRecordResponse,
     AuditVerifyResponse,
 )
+from arrow_lake.api.utils import run_sync
 
 router = APIRouter(prefix="/api/v1/audit", tags=["audit"])
+
+_AUDIT_TIMEOUT = 60
 
 
 @router.post("/record", response_model=AuditRecordResponse)
@@ -25,7 +28,8 @@ async def audit_record(
     lake=Depends(get_lake),
 ) -> AuditRecordResponse:
     """Record an audit event."""
-    audit_id = lake.audit_record(
+    audit_id = await run_sync(
+        lake.audit_record,
         event_type=req.event_type,
         dataset_name=req.dataset_name,
         actor=req.actor,
@@ -33,6 +37,8 @@ async def audit_record(
         metaflow_run_id=req.metaflow_run_id,
         metaflow_tags=req.metaflow_tags,
         payload=req.payload,
+        timeout=_AUDIT_TIMEOUT,
+        label="audit_record",
     )
     return AuditRecordResponse(audit_id=audit_id)
 
@@ -44,7 +50,10 @@ async def audit_verify(
     lake=Depends(get_lake),
 ) -> AuditVerifyResponse:
     """Verify the integrity of an audit entry."""
-    intact = lake.audit_verify(audit_id)
+    intact = await run_sync(
+        lake.audit_verify, audit_id,
+        timeout=_AUDIT_TIMEOUT, label="audit_verify",
+    )
     return AuditVerifyResponse(intact=intact)
 
 
@@ -58,11 +67,14 @@ async def audit_query(
     lake=Depends(get_lake),
 ) -> AuditQueryResponse:
     """Query audit trail entries with optional filters."""
-    entries = lake.audit_query(
+    entries = await run_sync(
+        lake.audit_query,
         dataset_name=dataset_name,
         start=start,
         end=end,
         event_type=event_type,
+        timeout=_AUDIT_TIMEOUT,
+        label="audit_query",
     )
     serialized: list[dict[str, Any]] = [
         e if isinstance(e, dict) else {"entry": str(e)} for e in entries
@@ -77,5 +89,8 @@ async def audit_export(
     lake=Depends(get_lake),
 ) -> AuditExportResponse:
     """Export audit trail for a dataset."""
-    result = lake.audit_export(dataset_name)
+    result = await run_sync(
+        lake.audit_export, dataset_name,
+        timeout=_AUDIT_TIMEOUT, label="audit_export",
+    )
     return AuditExportResponse(export=result)

@@ -8,13 +8,15 @@
 
 from __future__ import annotations
 
+import argparse
+
 import shutil
 import sys
 from pathlib import Path
 
 from arrow_lake import Lake
 
-BASE_URI = "./_tmp_http_ingest"
+_DEFAULT_BASE_URI = "./_tmp_http_ingest"
 
 # 使用公开数据集 URL (GitHub raw)
 DEMO_URLS = [
@@ -23,16 +25,20 @@ DEMO_URLS = [
 
 
 def main() -> None:
-    no_cleanup = "--no-cleanup" in sys.argv
+    parser = argparse.ArgumentParser(description="29_http_ingest.py")
+    parser.add_argument("--base-uri", default=_DEFAULT_BASE_URI)
+    parser.add_argument("--no-cleanup", action="store_true")
+    args = parser.parse_args()
+    no_cleanup = args.no_cleanup
     print("=" * 60)
     print("29 HTTP 远程摄取")
     print("=" * 60)
 
-    base = Path(BASE_URI)
+    base = Path(args.base_uri)
     if base.exists():
         shutil.rmtree(base)
 
-    lake = Lake(base_uri=BASE_URI)
+    lake = Lake(base_uri=args.base_uri)
 
     # STEP 1: 展示 HTTP 摄取接口
     print("STEP 1: HTTP 摄取接口说明")
@@ -49,7 +55,7 @@ def main() -> None:
         print(f"  摄入: {report.total_rows} 行, {report.total_files} 文件")
         for src in report.sources:
             print(f"    {src.path[:60]}... ({src.row_count} 行)")
-    except Exception as e:
+    except (OSError, ValueError) as e:
         err_type = type(e).__name__
         print(f"  HTTP 摄取失败 [{err_type}]: {e}")
         if "ConnectionError" in err_type or "timeout" in str(e).lower():
@@ -59,7 +65,7 @@ def main() -> None:
     # STEP 3: 查看数据集
     print("\nSTEP 3: 查看数据集")
     for name in lake.list_datasets():
-        ds = lake._get_storage().open_dataset(name)
+        ds = lake.open_dataset(name)
         print(f"  {name}: {ds.count_rows()} 行, {len(ds.schema)} 列")
         for f in ds.schema:
             print(f"    {f.name}: {f.type}")
@@ -71,7 +77,7 @@ def main() -> None:
             result = lake.olap_query(name, f"SELECT COUNT(*) as cnt FROM {name}")
             row = result.table.to_pylist()[0]
             print(f"  [{name}] 总行数: {row['cnt']}")
-        except Exception as e:
+        except (ValueError, RuntimeError) as e:
             print(f"  [{name}] 查询跳过: {e}")
 
     # STEP 5: SSRF 防护演示

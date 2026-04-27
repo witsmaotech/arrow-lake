@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import argparse
+
 import shutil
 import sys
 from pathlib import Path
@@ -15,25 +17,29 @@ from pathlib import Path
 from arrow_lake import Lake
 
 DATAS_DIR = Path(__file__).resolve().parent.parent / "datas"
-BASE_URI = "./_tmp_export_backup"
+_DEFAULT_BASE_URI = "./_tmp_export_backup"
 
 
 def main() -> None:
-    no_cleanup = "--no-cleanup" in sys.argv
+    parser = argparse.ArgumentParser(description="18_export_and_backup_demo.py")
+    parser.add_argument("--base-uri", default=_DEFAULT_BASE_URI)
+    parser.add_argument("--no-cleanup", action="store_true")
+    args = parser.parse_args()
+    no_cleanup = args.no_cleanup
     print("=" * 60)
     print("18 导出与备份完整演示")
     print("=" * 60)
 
-    base = Path(BASE_URI)
+    base = Path(args.base_uri)
     if base.exists():
         shutil.rmtree(base)
 
-    lake = Lake(base_uri=BASE_URI)
+    lake = Lake(base_uri=args.base_uri)
 
     # STEP 1: 创建数据集
     print("STEP 1: 摄入交易数据")
     report = lake.ingest("sales", [str(DATAS_DIR / "transactions" / "sales_2024_cn.csv")])
-    ds = lake._get_storage().open_dataset("sales")
+    ds = lake.open_dataset("sales")
     print(f"  摄入: {report.total_rows} 行, {len(ds.schema)} 列")
 
     # STEP 2: 导出为 Parquet
@@ -66,7 +72,7 @@ def main() -> None:
     try:
         b = lake.backup_create("sales")
         print(f"  备份已创建: {b}")
-    except Exception as e:
+    except (OSError, ValueError) as e:
         print(f"  备份功能: {e}")
 
     # STEP 6: 备份列表
@@ -84,7 +90,7 @@ def main() -> None:
     # STEP 7: 数据集目录
     print("\nSTEP 8: 数据集目录总览")
     for name in lake.list_datasets():
-        ds = lake._get_storage().open_dataset(name)
+        ds = lake.open_dataset(name)
         print(f"  {name}: {ds.count_rows()} 行, {len(ds.schema)} 列")
 
     print("\n  [全部 PASS]")

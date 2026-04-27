@@ -18,9 +18,13 @@ from arrow_lake.api.models.dataset import (
     IngestResponse,
     IngestVideosRequest,
 )
+from arrow_lake.api.utils import run_sync
 from arrow_lake.exceptions import CatalogError, ErrorCode
 
 router = APIRouter(prefix="/api/v1/datasets", tags=["datasets"])
+
+_INGEST_TIMEOUT = 600
+_ADMIN_TIMEOUT = 60
 
 
 @router.post("/{name}/ingest", response_model=IngestResponse, status_code=201)
@@ -32,7 +36,10 @@ async def ingest_files(
     _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> IngestResponse:
     """Ingest local files into a dataset."""
-    report = lake.ingest(name, req.file_paths)
+    report = await run_sync(
+        lake.ingest, name, req.file_paths,
+        timeout=_INGEST_TIMEOUT, label="ingest_files",
+    )
     return IngestResponse.from_report(report)
 
 
@@ -45,7 +52,10 @@ async def ingest_http(
     _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> IngestResponse:
     """Ingest files from HTTP(S) URLs into a dataset."""
-    report = lake.ingest_http(name, req.urls)
+    report = await run_sync(
+        lake.ingest_http, name, req.urls,
+        timeout=_INGEST_TIMEOUT, label="ingest_http",
+    )
     return IngestResponse.from_report(report)
 
 
@@ -58,7 +68,10 @@ async def ingest_images(
     _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> IngestResponse:
     """Ingest image files with thumbnails and EXIF metadata."""
-    report = lake.ingest_images(name, req.file_paths)
+    report = await run_sync(
+        lake.ingest_images, name, req.file_paths,
+        timeout=_INGEST_TIMEOUT, label="ingest_images",
+    )
     return IngestResponse.from_report(report)
 
 
@@ -71,7 +84,10 @@ async def ingest_videos(
     _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> IngestResponse:
     """Ingest video files with keyframe extraction."""
-    report = lake.ingest_videos(name, req.file_paths)
+    report = await run_sync(
+        lake.ingest_videos, name, req.file_paths,
+        timeout=_INGEST_TIMEOUT, label="ingest_videos",
+    )
     return IngestResponse.from_report(report)
 
 
@@ -84,7 +100,10 @@ async def ingest_mixed(
     _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> IngestResponse:
     """Ingest mixed-modality sources (files, URLs, images, videos)."""
-    report = lake.ingest_mixed(name, req.sources)
+    report = await run_sync(
+        lake.ingest_mixed, name, req.sources,
+        timeout=_INGEST_TIMEOUT, label="ingest_mixed",
+    )
     return IngestResponse.from_report(report)
 
 
@@ -97,8 +116,11 @@ async def ingest_documents(
     _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> IngestResponse:
     """Ingest PDF documents: parse → chunk → embed → store."""
-    doc_config = lake._config.document if hasattr(lake, '_config') else None
-    report = lake.ingest_documents(name, req.pdf_paths, doc_config=doc_config)
+    doc_config = lake._config.document if hasattr(lake, "_config") else None
+    report = await run_sync(
+        lake.ingest_documents, name, req.pdf_paths, doc_config=doc_config,
+        timeout=_INGEST_TIMEOUT, label="ingest_documents",
+    )
     return IngestResponse.from_report(report)
 
 
@@ -107,7 +129,7 @@ async def list_datasets(
     lake=Depends(get_lake),
 ) -> DatasetListResponse:
     """List all datasets with metadata."""
-    result = lake.catalog()
+    result = await run_sync(lake.catalog, timeout=_ADMIN_TIMEOUT, label="catalog")
     datasets = [
         DatasetInfo(name=e.name, version=e.version, num_rows=e.num_rows)
         for e in result.datasets
@@ -122,7 +144,7 @@ async def get_dataset(
     lake=Depends(get_lake),
 ) -> DatasetInfo:
     """Get metadata for a specific dataset."""
-    result = lake.catalog()
+    result = await run_sync(lake.catalog, timeout=_ADMIN_TIMEOUT, label="catalog")
     for entry in result.datasets:
         if entry.name == name:
             return DatasetInfo(
@@ -144,5 +166,5 @@ async def delete_dataset(
     _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> MessageResponse:
     """Delete a dataset and all its data."""
-    lake.delete_dataset(name)
+    await run_sync(lake.delete_dataset, name, timeout=_ADMIN_TIMEOUT, label="delete_dataset")
     return MessageResponse(message=f"Dataset '{name}' deleted")

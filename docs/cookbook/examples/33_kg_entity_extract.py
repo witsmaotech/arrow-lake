@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+import argparse
+
 import asyncio
 import shutil
 import sys
@@ -17,20 +19,24 @@ from pathlib import Path
 from arrow_lake import Lake
 
 DATAS_DIR = Path(__file__).resolve().parent.parent / "datas"
-BASE_URI = "./_tmp_entity_extract"
+_DEFAULT_BASE_URI = "./_tmp_entity_extract"
 
 
 async def run_async() -> None:
-    no_cleanup = "--no-cleanup" in sys.argv
+    parser = argparse.ArgumentParser(description="33_kg_entity_extract.py")
+    parser.add_argument("--base-uri", default=_DEFAULT_BASE_URI)
+    parser.add_argument("--no-cleanup", action="store_true")
+    args = parser.parse_args()
+    no_cleanup = args.no_cleanup
     print("=" * 60)
     print("33 实体抽取与关系发现")
     print("=" * 60)
 
-    base = Path(BASE_URI)
+    base = Path(args.base_uri)
     if base.exists():
         shutil.rmtree(base)
 
-    lake = Lake(base_uri=BASE_URI)
+    lake = Lake(base_uri=args.base_uri)
 
     # STEP 1: 摄入知识库
     print("STEP 1: 摄入中文知识库")
@@ -82,7 +88,7 @@ async def run_async() -> None:
 
     # STEP 4: 批量抽取
     print("\nSTEP 4: 批量抽取知识库")
-    ds = lake._get_storage().open_dataset("knowledge_zh")
+    ds = lake.open_dataset("knowledge_zh")
     table = ds.to_arrow()
     text_col = "text_content" if "text_content" in table.column_names else None
     if text_col is None:

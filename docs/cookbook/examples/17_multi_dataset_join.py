@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import argparse
+
 import shutil
 import sys
 from pathlib import Path
@@ -15,20 +17,24 @@ from pathlib import Path
 from arrow_lake import Lake
 
 DATAS_DIR = Path(__file__).resolve().parent.parent / "datas"
-BASE_URI = "./_tmp_multi_join"
+_DEFAULT_BASE_URI = "./_tmp_multi_join"
 
 
 def main() -> None:
-    no_cleanup = "--no-cleanup" in sys.argv
+    parser = argparse.ArgumentParser(description="17_multi_dataset_join.py")
+    parser.add_argument("--base-uri", default=_DEFAULT_BASE_URI)
+    parser.add_argument("--no-cleanup", action="store_true")
+    args = parser.parse_args()
+    no_cleanup = args.no_cleanup
     print("=" * 60)
     print("17 跨数据集关联分析")
     print("=" * 60)
 
-    base = Path(BASE_URI)
+    base = Path(args.base_uri)
     if base.exists():
         shutil.rmtree(base)
 
-    lake = Lake(base_uri=BASE_URI)
+    lake = Lake(base_uri=args.base_uri)
 
     # STEP 1: 分别摄取
     print("STEP 1: 摄取论文 + 知识库")

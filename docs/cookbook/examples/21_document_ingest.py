@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import argparse
+
 import shutil
 import sys
 from pathlib import Path
@@ -15,20 +17,24 @@ from pathlib import Path
 from arrow_lake import Lake
 
 DATAS_DIR = Path(__file__).resolve().parent.parent / "datas"
-BASE_URI = "./_tmp_doc_ingest"
+_DEFAULT_BASE_URI = "./_tmp_doc_ingest"
 
 
 def main() -> None:
-    no_cleanup = "--no-cleanup" in sys.argv
+    parser = argparse.ArgumentParser(description="21_document_ingest.py")
+    parser.add_argument("--base-uri", default=_DEFAULT_BASE_URI)
+    parser.add_argument("--no-cleanup", action="store_true")
+    args = parser.parse_args()
+    no_cleanup = args.no_cleanup
     print("=" * 60)
     print("21 PDF 文档摄取")
     print("=" * 60)
 
-    base = Path(BASE_URI)
+    base = Path(args.base_uri)
     if base.exists():
         shutil.rmtree(base)
 
-    lake = Lake(base_uri=BASE_URI)
+    lake = Lake(base_uri=args.base_uri)
 
     # STEP 1: 查找 PDF 文件
     print("STEP 1: 查找 PDF 文件")
@@ -52,13 +58,13 @@ def main() -> None:
     except ImportError as e:
         print(f"  跳过 (缺少依赖): {e}")
         print("\n  安装指引: pip install kreuzberg")
-    except Exception as e:
+    except (OSError, ValueError) as e:
         print(f"  摄取失败: {e}")
 
     # STEP 3: 查看文档数据集
     print("\nSTEP 3: 查看数据集")
     for name in lake.list_datasets():
-        ds = lake._get_storage().open_dataset(name)
+        ds = lake.open_dataset(name)
         print(f"  {name}: {ds.count_rows()} 行, {len(ds.schema)} 列")
         for f in ds.schema:
             print(f"    - {f.name}: {f.type}")

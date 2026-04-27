@@ -176,8 +176,24 @@ class FacetedSearchBridge:
                     else:
                         table = filtered_reader
         elif source is not None:
-            # Materialize reader to table for slicing
-            table = source.read_all() if hasattr(source, "read_all") else source
+            # Use DuckDB to apply LIMIT without full materialization
+            if self._session_manager is not None:
+                managed = self._session_manager.acquire()
+                try:
+                    managed.conn.register(dataset_name, source)
+                    reader = managed.conn.execute(
+                        f"SELECT * FROM {dataset_name} LIMIT {top_k}"
+                    ).arrow()
+                    table = reader.read_all() if hasattr(reader, "read_all") else reader
+                finally:
+                    managed.release()
+            else:
+                with create_duckdb_session(storage_config=self._storage_config) as conn:
+                    conn.register(dataset_name, source)
+                    reader = conn.execute(
+                        f"SELECT * FROM {dataset_name} LIMIT {top_k}"
+                    ).arrow()
+                    table = reader.read_all() if hasattr(reader, "read_all") else reader
         # else: table already set to empty above
 
         # Limit result to top_k
@@ -294,19 +310,23 @@ class FacetedSearchBridge:
         if cube_table.num_rows == 0:
             return facet_counts
 
-        counts = cube_table.column("count").to_pylist()
+        counts_arr = cube_table.column("count")
+        null_mask = counts_arr.is_null()
         for facet_name in facets:
             if facet_name not in cube_table.column_names:
                 continue
-            values = cube_table.column(facet_name).to_pylist()
+            facet_arr = cube_table.column(facet_name)
             seen: set[str] = set()
-            for i, val in enumerate(values):
+            for i in range(cube_table.num_rows):
+                if null_mask[i].as_py():
+                    continue
+                val = facet_arr[i].as_py()
                 if val is None:
                     continue
                 val_str = str(val)
                 if val_str in seen:
                     continue
                 seen.add(val_str)
-                facet_counts.append(FacetCount(name=facet_name, value=val_str, count=counts[i]))
+                facet_counts.append(FacetCount(name=facet_name, value=val_str, count=counts_arr[i].as_py()))
 
         return facet_counts

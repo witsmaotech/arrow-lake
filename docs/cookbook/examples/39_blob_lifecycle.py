@@ -15,6 +15,8 @@
 
 from __future__ import annotations
 
+import argparse
+
 import shutil
 import sys
 from pathlib import Path
@@ -22,7 +24,7 @@ from pathlib import Path
 from arrow_lake import Lake
 from arrow_lake.config import ArrowLakeConfig, LifecycleConfig
 
-BASE_URI = "./_tmp_lifecycle"
+_DEFAULT_BASE_URI = "./_tmp_lifecycle"
 
 
 def _make_config(endpoint: str = "http://localhost:9000") -> ArrowLakeConfig:
@@ -44,14 +46,17 @@ def _make_config(endpoint: str = "http://localhost:9000") -> ArrowLakeConfig:
 
 
 def main() -> None:
-    no_cleanup = "--no-cleanup" in sys.argv
+    parser = argparse.ArgumentParser(description="Blob lifecycle management demo")
+    parser.add_argument("--base-uri", default=_DEFAULT_BASE_URI)
+    parser.add_argument("--no-cleanup", action="store_true")
+    parser.add_argument("--endpoint", default="http://localhost:9000")
+    args = parser.parse_args()
+    endpoint = args.endpoint
+    no_cleanup = args.no_cleanup
     endpoint = "http://localhost:9000"
-    if "--endpoint" in sys.argv:
-        idx = sys.argv.index("--endpoint")
-        endpoint = sys.argv[idx + 1]
 
     config = _make_config(endpoint)
-    base = Path(BASE_URI)
+    base = Path(args.base_uri)
     if base.exists():
         shutil.rmtree(base)
 
@@ -108,7 +113,7 @@ def main() -> None:
             try:
                 shutil.rmtree(base)
                 print("  清理完成")
-            except Exception:
+            except OSError:
                 pass
 
     print("=" * 60)

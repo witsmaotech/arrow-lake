@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import argparse
+
 import shutil
 import sys
 from pathlib import Path
@@ -17,20 +19,24 @@ import pyarrow as pa
 
 from arrow_lake import Lake
 
-BASE_URI = "./_tmp_catalog"
+_DEFAULT_BASE_URI = "./_tmp_catalog"
 
 
 def main() -> None:
-    no_cleanup = "--no-cleanup" in sys.argv
+    parser = argparse.ArgumentParser(description="08_catalog_management.py")
+    parser.add_argument("--base-uri", default=_DEFAULT_BASE_URI)
+    parser.add_argument("--no-cleanup", action="store_true")
+    args = parser.parse_args()
+    no_cleanup = args.no_cleanup
     print("=" * 60)
     print("08 数据集目录管理")
     print("=" * 60)
 
-    base = Path(BASE_URI)
+    base = Path(args.base_uri)
     if base.exists():
         shutil.rmtree(base)
 
-    lake = Lake(base_uri=BASE_URI)
+    lake = Lake(base_uri=args.base_uri)
 
     # --- STEP 1: 创建数据集 ---
     print("STEP 1: 创建三个数据集")
@@ -52,13 +58,15 @@ def main() -> None:
     datasets = lake.list_datasets()
     for name in datasets:
         print(f"  - {name}")
-    assert len(datasets) == 3
+    if len(datasets) != 3:
+        print(f"  [FAIL] Expected 3 items, got {len(datasets)}")
+        return
     print("  [PASS]\n")
 
     # STEP 3: 查看详情
     print("STEP 3: 数据集详情")
     for name in datasets:
-        ds = lake._get_storage().open_dataset(name)
+        ds = lake.open_dataset(name)
         print(f"  {name}: {ds.count_rows()} 行, {len(ds.schema)} 列")
     print("  [PASS]\n")
 
@@ -73,7 +81,9 @@ def main() -> None:
     print("STEP 5: 删除数据集")
     lake.delete_dataset("orders")
     remaining = lake.list_datasets()
-    assert "orders" not in remaining
+    if "orders" in remaining:
+        print(f"  [FAIL] orders still present: {remaining}")
+        return
     print(f"  已删除 orders, 剩余: {remaining}")
     print("  [PASS]\n")
 

@@ -13,10 +13,12 @@ Thread safety: all public methods are thread-safe.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import threading
 import time
+import weakref
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
@@ -82,6 +84,9 @@ class _ManagedSession:
         self._manager = manager
         self._released = False
         self._created_at = created_at or time.monotonic()
+        self._finalizer = weakref.finalize(
+            self, type(self)._cleanup, self._manager, self._conn, self._created_at
+        )
 
     @property
     def conn(self) -> duckdb.DuckDBPyConnection:
@@ -91,6 +96,7 @@ class _ManagedSession:
         """Return the session to the manager."""
         if not self._released:
             self._released = True
+            self._finalizer.detach()
             self._manager._release_session(self)
 
     def __enter__(self) -> duckdb.DuckDBPyConnection:
@@ -99,12 +105,10 @@ class _ManagedSession:
     def __exit__(self, *args: Any) -> None:
         self.release()
 
-    def __del__(self) -> None:
-        if not self._released:
-            try:
-                self.release()
-            except Exception:
-                pass
+    @staticmethod
+    def _cleanup(manager: Any, conn: Any, created_at: float) -> None:
+        with contextlib.suppress(Exception):
+            manager._return_or_close(conn, manager._health_check(conn) if conn else False, created_at)
 
 
 @dataclass(frozen=True)
@@ -114,6 +118,9 @@ class _IdleConnection:
     conn: duckdb.DuckDBPyConnection
     returned_at: float = field(default_factory=time.monotonic)
     created_at: float = field(default_factory=time.monotonic)
+    configured_memory_mb: int = 0
+    configured_threads: int = 0
+    configured_timeout: float = 0.0
 
 
 class DuckDBSessionManager:
@@ -241,15 +248,25 @@ class DuckDBSessionManager:
 
     def _release_session(self, managed: _ManagedSession) -> None:
         """Release a managed session — return to idle pool or destroy."""
-        conn = managed._conn
-        healthy = self._health_check(conn)
+        healthy = self._health_check(managed._conn)
+        self._return_or_close(managed._conn, healthy, managed._created_at)
 
+    def _return_or_close(
+        self,
+        conn: duckdb.DuckDBPyConnection,
+        healthy: bool,
+        created_at: float,
+    ) -> None:
+        """Return connection to idle pool or close it."""
         if healthy:
             with self._lock:
                 if len(self._idle_pool) < self._max_idle:
                     self._idle_pool.append(_IdleConnection(
                         conn=conn,
-                        created_at=managed._created_at,
+                        created_at=created_at,
+                        configured_memory_mb=self._olap_config.max_query_memory_mb,
+                        configured_threads=os.cpu_count() or 4,
+                        configured_timeout=self._olap_config.query_timeout_seconds,
                     ))
                 else:
                     self._close_conn(conn)
@@ -285,17 +302,21 @@ class DuckDBSessionManager:
                     continue
                 conn = idle.conn
                 created_at = idle.created_at
+                config_changed = (
+                    idle.configured_memory_mb != self._olap_config.max_query_memory_mb
+                    or idle.configured_threads != (os.cpu_count() or 4)
+                    or idle.configured_timeout != self._olap_config.query_timeout_seconds
+                )
 
             if self._health_check(conn):
                 try:
-                    conn.execute("RESET memory_limit")
-                    conn.execute("RESET threads")
-                    conn.execute(f"SET memory_limit='{int(self._olap_config.max_query_memory_mb)}MB';")
-                    conn.execute(f"SET threads={os.cpu_count() or 4};")
-                    try:
-                        conn.execute(f"SET statement_timeout='{int(self._olap_config.query_timeout_seconds)}s';")
-                    except duckdb.CatalogException:
-                        pass
+                    if config_changed:
+                        conn.execute("RESET memory_limit")
+                        conn.execute("RESET threads")
+                        conn.execute(f"SET memory_limit='{int(self._olap_config.max_query_memory_mb)}MB';")
+                        conn.execute(f"SET threads={os.cpu_count() or 4};")
+                        with contextlib.suppress(duckdb.CatalogException):
+                            conn.execute(f"SET statement_timeout='{int(self._olap_config.query_timeout_seconds)}s';")
                     if load_ducklake:
                         conn.execute("INSTALL ducklake; LOAD ducklake;")
                 except duckdb.Error:

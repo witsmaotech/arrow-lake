@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+import argparse
+
 import asyncio
 import shutil
 import sys
@@ -19,25 +21,29 @@ import pyarrow as pa
 from arrow_lake import Lake
 
 DATAS_DIR = Path(__file__).resolve().parent.parent / "datas"
-BASE_URI = "./_tmp_kg_traversal"
+_DEFAULT_BASE_URI = "./_tmp_kg_traversal"
 
 
 async def run_async() -> None:
-    no_cleanup = "--no-cleanup" in sys.argv
+    parser = argparse.ArgumentParser(description="32_kg_traversal.py")
+    parser.add_argument("--base-uri", default=_DEFAULT_BASE_URI)
+    parser.add_argument("--no-cleanup", action="store_true")
+    args = parser.parse_args()
+    no_cleanup = args.no_cleanup
     print("=" * 60)
     print("32 知识图谱遍历与路径分析")
     print("=" * 60)
 
-    base = Path(BASE_URI)
+    base = Path(args.base_uri)
     if base.exists():
         shutil.rmtree(base)
 
-    lake = Lake(base_uri=BASE_URI)
+    lake = Lake(base_uri=args.base_uri)
 
     # STEP 1: 摄入数据 + 构建图谱
     print("STEP 1: 摄入论文数据")
     lake.ingest("papers_zh", [str(DATAS_DIR / "papers" / "metadata_zh.csv")])
-    ds = lake._get_storage().open_dataset("papers_zh")
+    ds = lake.open_dataset("papers_zh")
     print(f"  摄入: {ds.count_rows()} 行")
 
     # STEP 2: 构建知识图谱
@@ -114,7 +120,7 @@ async def run_async() -> None:
         print(f"  '知识图谱' → '向量数据库' 路径:")
         for r in result[:5]:
             print(f"    {r}")
-    except Exception as e:
+    except RuntimeError as e:
         print(f"  最短路径: {e}")
 
     # STEP 7: 子图提取
@@ -126,7 +132,7 @@ async def run_async() -> None:
         print(f"  子图顶点数: {len(subgraph)}")
         for v in subgraph[:5]:
             print(f"    {v}")
-    except Exception as e:
+    except RuntimeError as e:
         print(f"  子图提取: {e}")
 
     # STEP 8: 多实体联合遍历
@@ -137,7 +143,7 @@ async def run_async() -> None:
             ["知识图谱", "向量数据库"], depth=2)
         multi = await lake.kg_query(gq)
         print(f"  联合遍历结果: {len(multi)} 个顶点")
-    except Exception as e:
+    except RuntimeError as e:
         print(f"  联合遍历: {e}")
 
     print("\n  [全部 PASS]")

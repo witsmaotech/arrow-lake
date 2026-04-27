@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import argparse
+
 import shutil
 import sys
 from pathlib import Path
@@ -17,7 +19,7 @@ import pyarrow as pa
 
 from arrow_lake import Lake
 
-BASE_URI = "./_tmp_quality_pipeline"
+_DEFAULT_BASE_URI = "./_tmp_quality_pipeline"
 DATASET = "raw_data"
 DIM = 64
 
@@ -57,16 +59,20 @@ def _make_noisy_table() -> pa.Table:
 
 
 def main() -> None:
-    no_cleanup = "--no-cleanup" in sys.argv
+    parser = argparse.ArgumentParser(description="13_data_quality_pipeline.py")
+    parser.add_argument("--base-uri", default=_DEFAULT_BASE_URI)
+    parser.add_argument("--no-cleanup", action="store_true")
+    args = parser.parse_args()
+    no_cleanup = args.no_cleanup
     print("=" * 60)
     print("13 数据清洗管道")
     print("=" * 60)
 
-    base = Path(BASE_URI)
+    base = Path(args.base_uri)
     if base.exists():
         shutil.rmtree(base)
 
-    lake = Lake(base_uri=BASE_URI)
+    lake = Lake(base_uri=args.base_uri)
 
     # STEP 1: 创建含噪声数据
     print("STEP 1: 创建含噪声的合成数据")
@@ -95,7 +101,7 @@ def main() -> None:
     print("\nSTEP 5: 导出清洗后数据")
     out = base / "cleaned_data.parquet"
     lake.export(DATASET, str(out), format="parquet")
-    ds = lake._get_storage().open_dataset(DATASET)
+    ds = lake.open_dataset(DATASET)
     print(f"  清洗后: {ds.count_rows()} 行 → {out} ({out.stat().st_size // 1024} KB)")
 
     print("\n  [全部 PASS]")

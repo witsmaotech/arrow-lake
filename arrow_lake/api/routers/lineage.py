@@ -13,10 +13,11 @@ from arrow_lake.api.models.lineage import (
     LineageRecordRequest,
     LineageRecordResponse,
 )
+from arrow_lake.api.utils import run_sync
 
 router = APIRouter(prefix="/api/v1/lineage", tags=["lineage"])
 
-_NAME_PATTERN_Q = _NAME_PATTERN  # reuse for Query params
+_LINEAGE_TIMEOUT = 60
 
 
 @router.post("/record", response_model=LineageRecordResponse)
@@ -27,13 +28,13 @@ async def lineage_record_event(
     lake=Depends(get_lake),
 ) -> LineageRecordResponse:
     """Record a lineage event for a dataset."""
-    lake.lineage_record_event(
-        dataset_name,
-        req.operation,
+    await run_sync(
+        lake.lineage_record_event,
+        dataset_name, req.operation,
         source_datasets=req.source_datasets,
         transform_type=req.transform_type,
-        actor=req.actor,
-        metadata=req.metadata,
+        actor=req.actor, metadata=req.metadata,
+        timeout=_LINEAGE_TIMEOUT, label="lineage_record",
     )
     return LineageRecordResponse(
         message=f"Lineage event recorded for dataset '{dataset_name}'"
@@ -47,7 +48,10 @@ async def lineage_history(
     lake=Depends(get_lake),
 ) -> LineageHistoryResponse:
     """Get lineage history for a dataset."""
-    events = lake.lineage_history(dataset_name)
+    events = await run_sync(
+        lake.lineage_history, dataset_name,
+        timeout=_LINEAGE_TIMEOUT, label="lineage_history",
+    )
     serialized = [
         e if isinstance(e, dict) else {"event": str(e)} for e in events
     ]
@@ -64,7 +68,10 @@ async def lineage_query(
     lake=Depends(get_lake),
 ) -> LineageQueryResponse:
     """Query lineage events via SQL."""
-    result = lake.lineage_query(req.sql)
+    result = await run_sync(
+        lake.lineage_query, req.sql,
+        timeout=_LINEAGE_TIMEOUT, label="lineage_query",
+    )
     if hasattr(result, "to_pylist"):
         data = result.to_pylist()
     elif isinstance(result, list):

@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import argparse
+
 import asyncio
 import shutil
 import sys
@@ -17,7 +19,7 @@ from pathlib import Path
 from arrow_lake import Lake
 
 DATAS_DIR = Path(__file__).resolve().parent.parent / "datas"
-BASE_URI = "./_tmp_async"
+_DEFAULT_BASE_URI = "./_tmp_async"
 
 
 async def _run_query(lake: Lake, dataset: str, sql: str, label: str) -> dict:
@@ -30,16 +32,20 @@ async def _run_query(lake: Lake, dataset: str, sql: str, label: str) -> dict:
 
 
 async def run_async() -> None:
-    no_cleanup = "--no-cleanup" in sys.argv
+    parser = argparse.ArgumentParser(description="30_async_query.py")
+    parser.add_argument("--base-uri", default=_DEFAULT_BASE_URI)
+    parser.add_argument("--no-cleanup", action="store_true")
+    args = parser.parse_args()
+    no_cleanup = args.no_cleanup
     print("=" * 60)
     print("30 异步查询")
     print("=" * 60)
 
-    base = Path(BASE_URI)
+    base = Path(args.base_uri)
     if base.exists():
         shutil.rmtree(base)
 
-    lake = Lake(base_uri=BASE_URI)
+    lake = Lake(base_uri=args.base_uri)
 
     # STEP 1: 摄入两个数据集
     print("STEP 1: 摄入数据")

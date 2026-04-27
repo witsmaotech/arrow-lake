@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import argparse
+
 import shutil
 import sys
 from pathlib import Path
@@ -16,20 +18,24 @@ import pyarrow as pa
 
 from arrow_lake import Lake
 
-BASE_URI = "./_tmp_audit"
+_DEFAULT_BASE_URI = "./_tmp_audit"
 
 
 def main() -> None:
-    no_cleanup = "--no-cleanup" in sys.argv
+    parser = argparse.ArgumentParser(description="26_audit_trail.py")
+    parser.add_argument("--base-uri", default=_DEFAULT_BASE_URI)
+    parser.add_argument("--no-cleanup", action="store_true")
+    args = parser.parse_args()
+    no_cleanup = args.no_cleanup
     print("=" * 60)
     print("26 审计日志")
     print("=" * 60)
 
-    base = Path(BASE_URI)
+    base = Path(args.base_uri)
     if base.exists():
         shutil.rmtree(base)
 
-    lake = Lake(base_uri=BASE_URI)
+    lake = Lake(base_uri=args.base_uri)
 
     # STEP 1: 创建数据集并记录审计事件
     print("STEP 1: 创建数据集 + 记录审计事件")
@@ -58,7 +64,7 @@ def main() -> None:
         "id": [f"r_{i}" for i in range(10, 15)],
         "value": list(range(10, 15)),
     })
-    lake._get_storage().append_dataset("test_data", new_table)
+    lake.append_dataset("test_data", new_table)
     aid3 = lake.audit_record("update", "test_data", actor="system",
                               payload={"rows_added": 5})
     print(f"  追加 5 行, 审计 ID: {aid3[:12]}...")
@@ -80,7 +86,7 @@ def main() -> None:
     try:
         valid = lake.audit_verify(aid1)
         print(f"  审计 {aid1[:12]}... 有效性: {valid}")
-    except Exception as e:
+    except (ValueError, RuntimeError) as e:
         print(f"  验证: {e}")
 
     # STEP 6: 导出审计记录
@@ -88,12 +94,12 @@ def main() -> None:
     try:
         export = lake.audit_export("test_data")
         print(f"  导出记录数: {export.get('total', len(export))}")
-    except Exception as e:
+    except (ValueError, RuntimeError) as e:
         print(f"  导出跳过: {e}")
 
     # STEP 7: 数据集最终状态
     print("\nSTEP 7: 数据集状态")
-    ds = lake._get_storage().open_dataset("test_data")
+    ds = lake.open_dataset("test_data")
     print(f"  test_data: {ds.count_rows()} 行")
 
     print("\n  [全部 PASS]")

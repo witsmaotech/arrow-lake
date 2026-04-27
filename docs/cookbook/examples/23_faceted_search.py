@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import argparse
+
 import shutil
 import sys
 from pathlib import Path
@@ -18,7 +20,7 @@ import pyarrow as pa
 from arrow_lake import Lake
 
 DATAS_DIR = Path(__file__).resolve().parent.parent / "datas"
-BASE_URI = "./_tmp_faceted"
+_DEFAULT_BASE_URI = "./_tmp_faceted"
 DIM = 768
 
 
@@ -37,16 +39,20 @@ def _add_vectors(lake: Lake, dataset: str) -> int:
 
 
 def main() -> None:
-    no_cleanup = "--no-cleanup" in sys.argv
+    parser = argparse.ArgumentParser(description="23_faceted_search.py")
+    parser.add_argument("--base-uri", default=_DEFAULT_BASE_URI)
+    parser.add_argument("--no-cleanup", action="store_true")
+    args = parser.parse_args()
+    no_cleanup = args.no_cleanup
     print("=" * 60)
     print("23 分面搜索")
     print("=" * 60)
 
-    base = Path(BASE_URI)
+    base = Path(args.base_uri)
     if base.exists():
         shutil.rmtree(base)
 
-    lake = Lake(base_uri=BASE_URI)
+    lake = Lake(base_uri=args.base_uri)
 
     # STEP 1: 摄取论文数据
     print("STEP 1: 摄入中文论文")
@@ -85,7 +91,7 @@ def main() -> None:
     try:
         result = lake.search("papers_zh", q, top_k=5, vector_column="text_embedding")
         print(f"  结果: {result.row_count} 条 (无分面)")
-    except Exception as e:
+    except (ValueError, RuntimeError) as e:
         print(f"  搜索跳过: {e}")
 
     # STEP 5: OLAP 分类统计

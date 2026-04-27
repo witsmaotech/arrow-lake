@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-
 from fastapi import APIRouter, Depends, Path
 
 from arrow_lake.api.deps import get_lake
@@ -14,6 +12,7 @@ from arrow_lake.api.models.query import (
     OlapQueryRequest,
     OlapQueryResponse,
 )
+from arrow_lake.api.utils import run_sync
 
 router = APIRouter(prefix="/api/v1/datasets", tags=["query"])
 
@@ -28,11 +27,9 @@ async def olap_query(
     lake=Depends(get_lake),
 ) -> OlapQueryResponse:
     """Execute OLAP SQL analytics query via DuckDB."""
-    result = await asyncio.wait_for(
-        asyncio.get_running_loop().run_in_executor(
-            None, lambda: lake.olap_query(name, req.sql, max_rows=req.max_rows),
-        ),
-        timeout=_QUERY_TIMEOUT,
+    result = await run_sync(
+        lake.olap_query, name, req.sql, max_rows=req.max_rows,
+        timeout=_QUERY_TIMEOUT, label="olap_query",
     )
     resp = arrow_table_to_response(
         result.table,
@@ -50,11 +47,9 @@ async def metadata_query(
     lake=Depends(get_lake),
 ) -> OlapQueryResponse:
     """Execute metadata SQL query (semantic alias for olap_query)."""
-    result = await asyncio.wait_for(
-        asyncio.get_running_loop().run_in_executor(
-            None, lambda: lake.sql_query(name, req.sql, max_rows=req.max_rows),
-        ),
-        timeout=_QUERY_TIMEOUT,
+    result = await run_sync(
+        lake.sql_query, name, req.sql, max_rows=req.max_rows,
+        timeout=_QUERY_TIMEOUT, label="metadata_query",
     )
     resp = arrow_table_to_response(
         result.table,
@@ -73,9 +68,9 @@ async def daft_query(
 ) -> DaftQueryResponse:
     """Load dataset via Daft and return as Arrow table."""
     frame = lake.daft_query(name, columns=req.columns)
-    table = await asyncio.wait_for(
-        asyncio.get_running_loop().run_in_executor(None, frame.collect),
-        timeout=_QUERY_TIMEOUT,
+    table = await run_sync(
+        frame.collect,
+        timeout=_QUERY_TIMEOUT, label="daft_query",
     )
     resp = arrow_table_to_response(table, req.format)
     return DaftQueryResponse(**resp)

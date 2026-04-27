@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import argparse
+
 import shutil
 import sys
 from pathlib import Path
@@ -18,7 +20,7 @@ import pyarrow as pa
 from arrow_lake import Lake
 
 DATAS_DIR = Path(__file__).resolve().parent.parent / "datas"
-BASE_URI = "./_tmp_cross_domain"
+_DEFAULT_BASE_URI = "./_tmp_cross_domain"
 DIM = 768
 
 
@@ -52,16 +54,20 @@ def _show_domain(result, domain: str, top: int = 5) -> None:
 
 
 def main() -> None:
-    no_cleanup = "--no-cleanup" in sys.argv
+    parser = argparse.ArgumentParser(description="14_cross_domain_search.py")
+    parser.add_argument("--base-uri", default=_DEFAULT_BASE_URI)
+    parser.add_argument("--no-cleanup", action="store_true")
+    args = parser.parse_args()
+    no_cleanup = args.no_cleanup
     print("=" * 60)
     print("14 跨域混合搜索")
     print("=" * 60)
 
-    base = Path(BASE_URI)
+    base = Path(args.base_uri)
     if base.exists():
         shutil.rmtree(base)
 
-    lake = Lake(base_uri=BASE_URI)
+    lake = Lake(base_uri=args.base_uri)
 
     # STEP 1: 摄取两个域
     print("STEP 1: 摄取论文 + 知识库")
@@ -76,7 +82,7 @@ def main() -> None:
     for ds in ["papers_zh", "knowledge_zh"]:
         try:
             lake.create_vector_index(ds, vector_column="text_embedding")
-        except Exception as e:
+        except (ValueError, RuntimeError) as e:
             print(f"  向量索引跳过 ({ds}): {e}")
         lake.create_fts_index(ds, fts_column="text_content")
     print(f"  共 {n1 + n2} 个向量, 双域双索引已建立")
@@ -115,7 +121,7 @@ def main() -> None:
     for ds_name in ["papers_zh", "knowledge_zh"]:
         out = base / f"{ds_name}_export.parquet"
         lake.export(ds_name, str(out), format="parquet")
-        ds = lake._get_storage().open_dataset(ds_name)
+        ds = lake.open_dataset(ds_name)
         print(f"  {ds_name}: {ds.count_rows()} 行 → {out.name} ({out.stat().st_size // 1024} KB)")
 
     print("\n  [全部 PASS]")

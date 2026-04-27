@@ -3,6 +3,7 @@ insertion, and entity extraction from text chunks."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from dataclasses import dataclass
@@ -153,7 +154,7 @@ class KGBuilder:
             for name in doc_names
         ]
         doc_hg_ids = await self._client.add_vertices(doc_vertices)
-        doc_id_map: dict[str, str] = dict(zip(doc_names, doc_hg_ids))
+        doc_id_map: dict[str, str] = dict(zip(doc_names, doc_hg_ids, strict=True))
 
         # 3. Insert chunk vertices
         chunk_ids = table.column("id").to_pylist()
@@ -173,7 +174,7 @@ class KGBuilder:
             batch = chunk_vertices[i : i + batch_size]
             hg_ids = await self._client.add_vertices(batch)
             all_chunk_hg_ids.extend(hg_ids)
-        chunk_id_map: dict[str, str] = dict(zip(chunk_ids, all_chunk_hg_ids))
+        chunk_id_map: dict[str, str] = dict(zip(chunk_ids, all_chunk_hg_ids, strict=True))
 
         # 4. Insert contains_chunk edges (document -> chunk)
         contains_edges: list[dict[str, Any]] = []
@@ -197,19 +198,27 @@ class KGBuilder:
             for i in range(0, len(next_edges), batch_size):
                 await self._client.add_edges(next_edges[i : i + batch_size])
 
-        # 7. Extract entities and relations from each chunk
+        # 7. Extract entities and relations from each chunk (parallel)
         total_entities = 0
         total_relations = 0
-        for idx, (cid, content) in enumerate(zip(chunk_ids, contents, strict=True)):
-            result = await self._extractor.extract(content, chunk_id=cid)
-            task.processed_chunks = idx + 1
-            total_entities += len(result.entities)
-            total_relations += len(result.relations)
+        semaphore = asyncio.Semaphore(min(self._config.build_batch_size, 4))
+
+        async def _process_chunk(
+            idx: int, cid: str, content: str,
+        ) -> tuple[int, int]:
+            nonlocal total_entities, total_relations
+            async with semaphore:
+                result = await self._extractor.extract(content, chunk_id=cid)
+                task.processed_chunks = idx + 1
+
+            ent_count = len(result.entities)
+            rel_count = len(result.relations)
+            total_entities += ent_count
+            total_relations += rel_count
 
             if not result.entities and not result.relations:
-                continue
+                return ent_count, rel_count
 
-            # 8. Insert entity vertices and capture IDs
             entity_vertices = [
                 {
                     "label": "entity",
@@ -221,10 +230,9 @@ class KGBuilder:
             if entity_vertices:
                 entity_hg_ids = await self._client.add_vertices(entity_vertices)
                 entity_id_map = dict(zip(
-                    [e.name for e in result.entities], entity_hg_ids
+                    [e.name for e in result.entities], entity_hg_ids, strict=True,
                 ))
 
-            # 9. Insert references edges (chunk -> entity)
             ref_edges = [
                 {
                     "label": "references",
@@ -240,10 +248,6 @@ class KGBuilder:
             if ref_edges:
                 await self._client.add_edges(ref_edges)
 
-            # 10. Insert relation edges (entity -> entity)
-            # Use "related_to" as the universal edge label; store the LLM
-            # relation type as a "weight" property (we can't add new properties
-            # to HugeGraph schema dynamically due to async creation issues).
             rel_edges = [
                 {
                     "label": "related_to",
@@ -261,6 +265,13 @@ class KGBuilder:
             ]
             if rel_edges:
                 await self._client.add_edges(rel_edges)
+
+            return ent_count, rel_count
+
+        await asyncio.gather(*(
+            _process_chunk(idx, cid, content)
+            for idx, (cid, content) in enumerate(zip(chunk_ids, contents, strict=True))
+        ))
 
         task.entity_count = total_entities
         task.relation_count = total_relations

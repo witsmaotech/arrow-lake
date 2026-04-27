@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+import argparse
+
 import asyncio
 import shutil
 import sys
@@ -18,25 +20,29 @@ from pathlib import Path
 from arrow_lake import Lake
 
 DATAS_DIR = Path(__file__).resolve().parent.parent / "datas"
-BASE_URI = "./_tmp_kg_build"
+_DEFAULT_BASE_URI = "./_tmp_kg_build"
 
 
 async def run_async() -> None:
-    no_cleanup = "--no-cleanup" in sys.argv
+    parser = argparse.ArgumentParser(description="19_knowledge_graph_build.py")
+    parser.add_argument("--base-uri", default=_DEFAULT_BASE_URI)
+    parser.add_argument("--no-cleanup", action="store_true")
+    args = parser.parse_args()
+    no_cleanup = args.no_cleanup
     print("=" * 60)
     print("19 知识图谱构建与查询")
     print("=" * 60)
 
-    base = Path(BASE_URI)
+    base = Path(args.base_uri)
     if base.exists():
         shutil.rmtree(base)
 
-    lake = Lake(base_uri=BASE_URI)
+    lake = Lake(base_uri=args.base_uri)
 
     # STEP 1: 摄入论文数据
     print("STEP 1: 摄入中文论文数据")
     report = lake.ingest("papers_zh", [str(DATAS_DIR / "papers" / "metadata_zh.csv")])
-    ds = lake._get_storage().open_dataset("papers_zh")
+    ds = lake.open_dataset("papers_zh")
     print(f"  摄入: {report.total_rows} 行, {len(ds.schema)} 列")
 
     # STEP 2: 检查 KG 服务
@@ -61,7 +67,7 @@ async def run_async() -> None:
     try:
         task_id = await lake.kg_build("papers_zh")
         print(f"  构建任务已提交: {task_id}")
-    except Exception as e:
+    except RuntimeError as e:
         print(f"  构建失败: {e}")
         lake.shutdown()
         if not no_cleanup:
@@ -96,7 +102,7 @@ async def run_async() -> None:
         print(f"  '知识图谱' 相关结果: {len(results)} 条")
         for r in results[:5]:
             print(f"    {r}")
-    except Exception as e:
+    except RuntimeError as e:
         print(f"  查询失败: {e}")
 
     # STEP 7: 邻居遍历

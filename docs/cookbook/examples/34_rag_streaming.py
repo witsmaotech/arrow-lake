@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+import argparse
+
 import asyncio
 import shutil
 import sys
@@ -21,7 +23,7 @@ import pyarrow as pa
 from arrow_lake import Lake
 
 DATAS_DIR = Path(__file__).resolve().parent.parent / "datas"
-BASE_URI = "./_tmp_rag_stream"
+_DEFAULT_BASE_URI = "./_tmp_rag_stream"
 DIM = 768
 
 
@@ -40,16 +42,20 @@ def _add_vectors(lake: Lake, dataset: str) -> int:
 
 
 async def run_async() -> None:
-    no_cleanup = "--no-cleanup" in sys.argv
+    parser = argparse.ArgumentParser(description="34_rag_streaming.py")
+    parser.add_argument("--base-uri", default=_DEFAULT_BASE_URI)
+    parser.add_argument("--no-cleanup", action="store_true")
+    args = parser.parse_args()
+    no_cleanup = args.no_cleanup
     print("=" * 60)
     print("34 RAG 流式问答")
     print("=" * 60)
 
-    base = Path(BASE_URI)
+    base = Path(args.base_uri)
     if base.exists():
         shutil.rmtree(base)
 
-    lake = Lake(base_uri=BASE_URI)
+    lake = Lake(base_uri=args.base_uri)
 
     # STEP 1: 摄入 + 建索引
     print("STEP 1: 准备知识库")
@@ -123,7 +129,7 @@ async def run_async() -> None:
             ):
                 print(chunk, end="", flush=True)
             print("\n")
-        except Exception as e:
+        except (ValueError, RuntimeError) as e:
             print(f"\n  多轮失败: {e}")
 
         # STEP 6: 对话历史
@@ -137,7 +143,7 @@ async def run_async() -> None:
                 result = lake.text_search("knowledge_zh", q, top_k=3,
                                           fts_column="text_content")
                 print(f"  '{q}' → {result.row_count} 条")
-            except Exception as e:
+            except (ValueError, RuntimeError) as e:
                 print(f"  '{q}' → {e}")
 
         print("\n  启动指引:")

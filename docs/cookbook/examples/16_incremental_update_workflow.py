@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import argparse
+
 import shutil
 import sys
 from pathlib import Path
@@ -15,26 +17,30 @@ from pathlib import Path
 from arrow_lake import Lake
 
 DATAS_DIR = Path(__file__).resolve().parent.parent / "datas"
-BASE_URI = "./_tmp_incremental"
+_DEFAULT_BASE_URI = "./_tmp_incremental"
 
 
 def main() -> None:
-    no_cleanup = "--no-cleanup" in sys.argv
+    parser = argparse.ArgumentParser(description="16_incremental_update_workflow.py")
+    parser.add_argument("--base-uri", default=_DEFAULT_BASE_URI)
+    parser.add_argument("--no-cleanup", action="store_true")
+    args = parser.parse_args()
+    no_cleanup = args.no_cleanup
     print("=" * 60)
     print("16 增量更新工作流")
     print("=" * 60)
 
-    base = Path(BASE_URI)
+    base = Path(args.base_uri)
     if base.exists():
         shutil.rmtree(base)
 
-    lake = Lake(base_uri=BASE_URI)
+    lake = Lake(base_uri=args.base_uri)
 
     # STEP 1: 第一批入库
     print("STEP 1: 第一批数据入库")
     csv_path = str(DATAS_DIR / "transactions" / "sales_2024.csv")
     r1 = lake.ingest("sales", [csv_path])
-    ds1 = lake._get_storage().open_dataset("sales")
+    ds1 = lake.open_dataset("sales")
     print(f"  第一批: {r1.total_rows} 行")
     print(f"  数据集: {ds1.count_rows()} 行, {len(ds1.schema)} 列")
 
@@ -42,15 +48,15 @@ def main() -> None:
     print("\nSTEP 2: 追加第二批数据 (同文件追加)")
     import pyarrow.csv as pacsv
     batch2 = pacsv.read_csv(csv_path)
-    lake._get_storage().append_dataset("sales", batch2)
-    ds2 = lake._get_storage().open_dataset("sales")
+    lake.append_dataset("sales", batch2)
+    ds2 = lake.open_dataset("sales")
     print(f"  第二批: {batch2.num_rows} 行")
     print(f"  数据集总量: {ds2.count_rows()} 行 (增量 +{batch2.num_rows})")
 
     # STEP 3: 增量前后对比
     print("\nSTEP 3: 数据量变化")
     for name in lake.list_datasets():
-        ds = lake._get_storage().open_dataset(name)
+        ds = lake.open_dataset(name)
         print(f"  {name}: {ds.count_rows()} 行")
 
     # STEP 4: OLAP 验证
@@ -80,7 +86,7 @@ def main() -> None:
     print("\nSTEP 7: 导出增量后完整数据")
     out = base / "sales_incremental.parquet"
     lake.export("sales", str(out), format="parquet")
-    ds_final = lake._get_storage().open_dataset("sales")
+    ds_final = lake.open_dataset("sales")
     print(f"  最终: {ds_final.count_rows()} 行 → {out.name} ({out.stat().st_size // 1024} KB)")
 
     print("\n  [全部 PASS]")

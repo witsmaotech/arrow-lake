@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import argparse
+
 import shutil
 import sys
 from pathlib import Path
@@ -18,7 +20,7 @@ import pyarrow as pa
 from arrow_lake import Lake
 
 DATAS_DIR = Path(__file__).resolve().parent.parent / "datas"
-BASE_URI = "./_tmp_tech_kb"
+_DEFAULT_BASE_URI = "./_tmp_tech_kb"
 DIM = 768
 
 
@@ -52,16 +54,20 @@ def _show(result, top: int = 5) -> None:
 
 
 def main() -> None:
-    no_cleanup = "--no-cleanup" in sys.argv
+    parser = argparse.ArgumentParser(description="11_tech_knowledge_base.py")
+    parser.add_argument("--base-uri", default=_DEFAULT_BASE_URI)
+    parser.add_argument("--no-cleanup", action="store_true")
+    args = parser.parse_args()
+    no_cleanup = args.no_cleanup
     print("=" * 60)
     print("11 技术知识库检索系统")
     print("=" * 60)
 
-    base = Path(BASE_URI)
+    base = Path(args.base_uri)
     if base.exists():
         shutil.rmtree(base)
 
-    lake = Lake(base_uri=BASE_URI)
+    lake = Lake(base_uri=args.base_uri)
 
     # STEP 1
     print("STEP 1: 摄取双语知识库")
@@ -76,7 +82,7 @@ def main() -> None:
     for ds in ["kb_en", "kb_zh"]:
         try:
             lake.create_vector_index(ds, vector_column="text_embedding")
-        except Exception as e:
+        except (ValueError, RuntimeError) as e:
             print(f"  向量索引跳过 ({ds}): {e}")
         lake.create_fts_index(ds, fts_column="text_content")
     print(f"  共 {n1 + n2} 个向量, 双索引已建立")

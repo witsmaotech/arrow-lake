@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import argparse
+
 import shutil
 import sys
 from pathlib import Path
@@ -17,7 +19,7 @@ import pyarrow as pa
 
 from arrow_lake import Lake
 
-BASE_URI = "./_tmp_quality"
+_DEFAULT_BASE_URI = "./_tmp_quality"
 DATASET = "sample_data"
 DIM = 64
 
@@ -50,16 +52,20 @@ def _make_noisy_data() -> pa.Table:
 
 
 def main() -> None:
-    no_cleanup = "--no-cleanup" in sys.argv
+    parser = argparse.ArgumentParser(description="04_quality_and_dedup.py")
+    parser.add_argument("--base-uri", default=_DEFAULT_BASE_URI)
+    parser.add_argument("--no-cleanup", action="store_true")
+    args = parser.parse_args()
+    no_cleanup = args.no_cleanup
     print("=" * 60)
     print("04 数据质量与去重")
     print("=" * 60)
 
-    base = Path(BASE_URI)
+    base = Path(args.base_uri)
     if base.exists():
         shutil.rmtree(base)
 
-    lake = Lake(base_uri=BASE_URI)
+    lake = Lake(base_uri=args.base_uri)
 
     # --- STEP 1: 创建含噪声的数据集 ---
     print("STEP 1: 创建含噪声的合成数据")

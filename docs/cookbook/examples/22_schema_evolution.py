@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import argparse
+
 import shutil
 import sys
 from pathlib import Path
@@ -17,21 +19,25 @@ import pyarrow as pa
 
 from arrow_lake import Lake
 
-BASE_URI = "./_tmp_schema_evo"
+_DEFAULT_BASE_URI = "./_tmp_schema_evo"
 DIM = 128
 
 
 def main() -> None:
-    no_cleanup = "--no-cleanup" in sys.argv
+    parser = argparse.ArgumentParser(description="22_schema_evolution.py")
+    parser.add_argument("--base-uri", default=_DEFAULT_BASE_URI)
+    parser.add_argument("--no-cleanup", action="store_true")
+    args = parser.parse_args()
+    no_cleanup = args.no_cleanup
     print("=" * 60)
     print("22 Schema 演化")
     print("=" * 60)
 
-    base = Path(BASE_URI)
+    base = Path(args.base_uri)
     if base.exists():
         shutil.rmtree(base)
 
-    lake = Lake(base_uri=BASE_URI)
+    lake = Lake(base_uri=args.base_uri)
     storage = lake._get_storage()
 
     # STEP 1: 创建基础数据集
@@ -62,7 +68,7 @@ def main() -> None:
             print(f"    {f.name}: {f.type}")
         v2 = storage.get_version("products")
         print(f"  版本: {v1} → {v2}")
-    except Exception as e:
+    except RuntimeError as e:
         print(f"  跳过: {e}")
 
     # STEP 3: 修改列类型
@@ -73,7 +79,7 @@ def main() -> None:
         for f in ds.schema:
             if f.name == "price":
                 print(f"  price → {f.type}")
-    except Exception as e:
+    except (ValueError, OSError) as e:
         print(f"  跳过: {e}")
 
     # STEP 4: 删除列
@@ -84,7 +90,7 @@ def main() -> None:
         print(f"  删除后: {len(ds.schema)} 列")
         for f in ds.schema:
             print(f"    {f.name}: {f.type}")
-    except Exception as e:
+    except (ValueError, OSError) as e:
         print(f"  跳过: {e}")
 
     # STEP 5: 追加数据后压缩
@@ -103,7 +109,7 @@ def main() -> None:
         stats = storage.compact("products")
         print(f"  压缩完成: version {stats.version_before} → {stats.version_after}")
         print(f"  碎片: {stats.fragments_before} → {stats.fragments_after}")
-    except Exception as e:
+    except RuntimeError as e:
         print(f"  压缩跳过: {e}")
 
     # STEP 6: 数据验证

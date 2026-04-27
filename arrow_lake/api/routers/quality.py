@@ -15,8 +15,11 @@ from arrow_lake.api.models.quality import (
     QualityFilterResponse,
     QualityReportResponse,
 )
+from arrow_lake.api.utils import run_sync
 
 router = APIRouter(prefix="/api/v1/datasets", tags=["quality"])
+
+_QUALITY_TIMEOUT = 300
 
 
 @router.post("/{name}/quality/filter", response_model=QualityFilterResponse)
@@ -27,7 +30,10 @@ async def quality_filter(
     lake=Depends(get_lake),
 ) -> QualityFilterResponse:
     """Run quality filters on a dataset."""
-    report = lake.quality_filter(name, req.active_filters, mode=req.mode)
+    report = await run_sync(
+        lake.quality_filter, name, req.active_filters, mode=req.mode,
+        timeout=_QUALITY_TIMEOUT, label="quality_filter",
+    )
     return QualityFilterResponse(report=asdict(report) if hasattr(report, "__dataclass_fields__") else report)
 
 
@@ -38,7 +44,10 @@ async def quality_report(
     lake=Depends(get_lake),
 ) -> QualityReportResponse:
     """Get quality report for a dataset (runs filters with default config)."""
-    report = lake.quality_filter(name)
+    report = await run_sync(
+        lake.quality_filter, name,
+        timeout=_QUALITY_TIMEOUT, label="quality_report",
+    )
     return QualityReportResponse(report=report.to_json())
 
 
@@ -50,10 +59,10 @@ async def deduplicate(
     lake=Depends(get_lake),
 ) -> DedupResponse:
     """Run content deduplication on a dataset."""
-    report = lake.deduplicate(
-        name,
-        strategy=req.strategy,
-        action=req.action,
+    report = await run_sync(
+        lake.deduplicate, name,
+        strategy=req.strategy, action=req.action,
         perceptual_threshold=req.perceptual_threshold,
+        timeout=_QUALITY_TIMEOUT, label="deduplicate",
     )
     return DedupResponse(report=asdict(report) if hasattr(report, "__dataclass_fields__") else report)

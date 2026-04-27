@@ -17,15 +17,14 @@ from arrow_lake.api.models.embedding import (
     VectorIndexRequest,
     VectorIndexResponse,
 )
+from arrow_lake.api.utils import run_sync
 
 router = APIRouter(prefix="/api/v1/datasets", tags=["embedding"])
 
 embed_router = APIRouter(prefix="/api/v1/embed", tags=["embedding"])
 
-
-# ---------------------------------------------------------------------------
-# Index management
-# ---------------------------------------------------------------------------
+_INDEX_TIMEOUT = 600
+_EMBED_TIMEOUT = 120
 
 
 @router.post(
@@ -39,7 +38,8 @@ async def create_vector_index(
     lake=Depends(get_lake),
 ) -> VectorIndexResponse:
     """Create a vector index on a dataset."""
-    info = lake.create_vector_index(
+    info = await run_sync(
+        lake.create_vector_index,
         name,
         metric=req.metric,
         vector_column=req.vector_column,
@@ -47,6 +47,8 @@ async def create_vector_index(
         num_partitions=req.num_partitions,
         num_sub_vectors=req.num_sub_vectors,
         replace=req.replace,
+        timeout=_INDEX_TIMEOUT,
+        label="create_vector_index",
     )
     return VectorIndexResponse(
         index_info=asdict(info) if hasattr(info, "__dataclass_fields__") else info,
@@ -64,13 +66,13 @@ async def create_fts_index(
     lake=Depends(get_lake),
 ) -> FtsIndexResponse:
     """Create a full-text search index on a dataset."""
-    lake.create_fts_index(name, fts_column=req.fts_column, replace=req.replace)
+    await run_sync(
+        lake.create_fts_index, name,
+        fts_column=req.fts_column, replace=req.replace,
+        timeout=_INDEX_TIMEOUT,
+        label="create_fts_index",
+    )
     return FtsIndexResponse(message=f"FTS index created for dataset '{name}'")
-
-
-# ---------------------------------------------------------------------------
-# Standalone embedding computation
-# ---------------------------------------------------------------------------
 
 
 @embed_router.post("/text", response_model=EmbeddingResponse)
@@ -86,7 +88,10 @@ async def embed_text(req: TextEmbedRequest) -> EmbeddingResponse:
         model_source=req.model_source,
     )
     table = pa.table({"text_content": req.texts})
-    result = encoder.encode_column(table, column="text_content")
+    result = await run_sync(
+        encoder.encode_column, table, column="text_content",
+        timeout=_EMBED_TIMEOUT, label="embed_text",
+    )
 
     if result.embedded_rows == 0 or result.embedding_dim == 0:
         return EmbeddingResponse(
@@ -97,8 +102,11 @@ async def embed_text(req: TextEmbedRequest) -> EmbeddingResponse:
             null_count=result.null_rows,
         )
 
-    model = encoder._load_model()
-    embeddings_list = model.encode(req.texts, normalize_embeddings=True)
+    model = await run_sync(encoder._load_model, timeout=_EMBED_TIMEOUT, label="load_model")
+    embeddings_list = await run_sync(
+        model.encode, req.texts, normalize_embeddings=True,
+        timeout=_EMBED_TIMEOUT, label="model_encode",
+    )
     embeddings = [e.tolist() for e in np.asarray(embeddings_list, dtype=np.float32)]
 
     return EmbeddingResponse(
@@ -119,7 +127,6 @@ async def embed_image(req: ImageEmbedRequest) -> EmbeddingResponse:
 
     from arrow_lake.embed.image_encoder import CLIPImageEncoder
 
-    # Decode base64 images
     image_bytes: list[bytes] = []
     for img_str in req.images:
         if "," in img_str:
@@ -133,9 +140,11 @@ async def embed_image(req: ImageEmbedRequest) -> EmbeddingResponse:
         model_name=req.model,
         model_source=req.model_source,
     )
-    result = encoder.encode(table)
+    result = await run_sync(
+        encoder.encode, table,
+        timeout=_EMBED_TIMEOUT, label="embed_image",
+    )
 
-    # Extract embedding vectors from the result table (encode adds the vector column)
     embeddings: list[list[float]] = []
     col_name = result.vector_column
     if col_name in result.column_names:

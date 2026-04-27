@@ -320,8 +320,8 @@ class VectorSearchBridge:
         # Extract max distance for diagnostics
         max_distance: float | None = None
         if result_table.num_rows > 0 and "_distance" in result_table.column_names:
-            distances = result_table.column("_distance").to_pylist()
-            max_distance = max(distances) if distances else None
+            max_val = pa.compute.max(result_table.column("_distance"))
+            max_distance = max_val.as_py() if max_val.is_valid else None
 
         # M1: Detect actual metric when None was passed
         used_metric = metric

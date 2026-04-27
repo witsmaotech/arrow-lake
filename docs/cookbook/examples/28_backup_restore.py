@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import argparse
+
 import shutil
 import sys
 from pathlib import Path
@@ -15,25 +17,29 @@ from pathlib import Path
 from arrow_lake import Lake
 
 DATAS_DIR = Path(__file__).resolve().parent.parent / "datas"
-BASE_URI = "./_tmp_backup"
+_DEFAULT_BASE_URI = "./_tmp_backup"
 
 
 def main() -> None:
-    no_cleanup = "--no-cleanup" in sys.argv
+    parser = argparse.ArgumentParser(description="28_backup_restore.py")
+    parser.add_argument("--base-uri", default=_DEFAULT_BASE_URI)
+    parser.add_argument("--no-cleanup", action="store_true")
+    args = parser.parse_args()
+    no_cleanup = args.no_cleanup
     print("=" * 60)
     print("28 备份与恢复")
     print("=" * 60)
 
-    base = Path(BASE_URI)
+    base = Path(args.base_uri)
     if base.exists():
         shutil.rmtree(base)
 
-    lake = Lake(base_uri=BASE_URI)
+    lake = Lake(base_uri=args.base_uri)
 
     # STEP 1: 摄入数据
     print("STEP 1: 摄入交易数据")
     r = lake.ingest("sales", [str(DATAS_DIR / "transactions" / "sales_2024_cn.csv")])
-    ds = lake._get_storage().open_dataset("sales")
+    ds = lake.open_dataset("sales")
     original_rows = ds.count_rows()
     print(f"  摄入: {original_rows} 行")
 
@@ -42,7 +48,7 @@ def main() -> None:
     try:
         backup_id = lake.backup_create("sales")
         print(f"  备份 ID: {backup_id}")
-    except Exception as e:
+    except (OSError, ValueError) as e:
         print(f"  备份创建: {e}")
         print("\n  可能需要配置 blob store (S3/MinIO)")
         print("  或 backup 功能未启用, 跳过后续步骤")
@@ -57,7 +63,7 @@ def main() -> None:
         print(f"  备份数量: {len(backups)}")
         for b in backups:
             print(f"    {b}")
-    except Exception as e:
+    except (OSError, ValueError) as e:
         print(f"  列表: {e}")
 
     # STEP 4: 修改数据
@@ -73,8 +79,8 @@ def main() -> None:
         "支付方式": ["cash"],
         "城市": ["test"],
     })
-    lake._get_storage().append_dataset("sales", new_table)
-    ds = lake._get_storage().open_dataset("sales")
+    lake.append_dataset("sales", new_table)
+    ds = lake.open_dataset("sales")
     modified_rows = ds.count_rows()
     print(f"  修改后: {modified_rows} 行 (原 {original_rows})")
 
@@ -82,7 +88,7 @@ def main() -> None:
     print("\nSTEP 5: 恢复备份")
     try:
         lake.backup_restore(backup_id, dataset_names=["sales"])
-        ds = lake._get_storage().open_dataset("sales")
+        ds = lake.open_dataset("sales")
         restored_rows = ds.count_rows()
         print(f"  恢复后: {restored_rows} 行")
         if restored_rows == original_rows:
@@ -97,7 +103,7 @@ def main() -> None:
     try:
         info = lake.backup_get_info(backup_id)
         print(f"  详情: {info}")
-    except Exception as e:
+    except (OSError, ValueError) as e:
         print(f"  详情查询: {e}")
 
     print("\n  [全部 PASS]")

@@ -11,6 +11,8 @@ GraphRAG 自动从问题中提取实体，检索图谱三元组注入上下文�
 
 from __future__ import annotations
 
+import argparse
+
 import asyncio
 import shutil
 import sys
@@ -23,7 +25,7 @@ from arrow_lake import Lake
 from arrow_lake.rag.prompt import PromptRegistry
 
 DATAS_DIR = Path(__file__).resolve().parent.parent / "datas"
-BASE_URI = "./_tmp_graphrag"
+_DEFAULT_BASE_URI = "./_tmp_graphrag"
 DIM = 768
 
 
@@ -42,16 +44,20 @@ def _add_vectors(lake: Lake, dataset: str) -> int:
 
 
 async def run_async() -> None:
-    no_cleanup = "--no-cleanup" in sys.argv
+    parser = argparse.ArgumentParser(description="31_graphrag_qa.py")
+    parser.add_argument("--base-uri", default=_DEFAULT_BASE_URI)
+    parser.add_argument("--no-cleanup", action="store_true")
+    args = parser.parse_args()
+    no_cleanup = args.no_cleanup
     print("=" * 60)
     print("31 GraphRAG 联合问答")
     print("=" * 60)
 
-    base = Path(BASE_URI)
+    base = Path(args.base_uri)
     if base.exists():
         shutil.rmtree(base)
 
-    lake = Lake(base_uri=BASE_URI)
+    lake = Lake(base_uri=args.base_uri)
 
     # STEP 1: 摄入知识库
     print("STEP 1: 摄入中文知识库")
@@ -63,7 +69,7 @@ async def run_async() -> None:
     n = _add_vectors(lake, "knowledge_zh")
     try:
         lake.create_vector_index("knowledge_zh", vector_column="text_embedding")
-    except Exception as e:
+    except (ValueError, RuntimeError) as e:
         print(f"  向量索引跳过: {e}")
     lake.create_fts_index("knowledge_zh", fts_column="text_content")
     print(f"  {n} 个向量, FTS 索引已建立")

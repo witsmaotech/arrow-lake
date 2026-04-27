@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import argparse
+
 import shutil
 import sys
 from pathlib import Path
@@ -15,20 +17,24 @@ from pathlib import Path
 from arrow_lake import Lake
 
 DATAS_DIR = Path(__file__).resolve().parent.parent / "datas"
-BASE_URI = "./_tmp_multimedia"
+_DEFAULT_BASE_URI = "./_tmp_multimedia"
 
 
 def main() -> None:
-    no_cleanup = "--no-cleanup" in sys.argv
+    parser = argparse.ArgumentParser(description="12_multimedia_asset_manager.py")
+    parser.add_argument("--base-uri", default=_DEFAULT_BASE_URI)
+    parser.add_argument("--no-cleanup", action="store_true")
+    args = parser.parse_args()
+    no_cleanup = args.no_cleanup
     print("=" * 60)
     print("12 多媒体资产管理")
     print("=" * 60)
 
-    base = Path(BASE_URI)
+    base = Path(args.base_uri)
     if base.exists():
         shutil.rmtree(base)
 
-    lake = Lake(base_uri=BASE_URI)
+    lake = Lake(base_uri=args.base_uri)
 
     # STEP 1
     print("STEP 1: 摄入图片资产")
@@ -36,7 +42,7 @@ def main() -> None:
     if photos:
         r = lake.ingest_images("photos", [str(p) for p in photos])
         print(f"  摄入 {r.total_rows} 张图片")
-        ds = lake._get_storage().open_dataset("photos")
+        ds = lake.open_dataset("photos")
         schema = ds.schema
         print(f"  列: {[f'{f.name} ({f.type})' for f in schema]}")
     else:
@@ -48,7 +54,7 @@ def main() -> None:
     if videos:
         r = lake.ingest_videos("videos", [str(v) for v in videos])
         print(f"  摄入 {r.total_rows} 个视频")
-        ds = lake._get_storage().open_dataset("videos")
+        ds = lake.open_dataset("videos")
         schema = ds.schema
         print(f"  列: {[f'{f.name} ({f.type})' for f in schema]}")
     else:
@@ -57,7 +63,7 @@ def main() -> None:
     # STEP 3
     print("\nSTEP 3: 数据集总览")
     for name in lake.list_datasets():
-        ds = lake._get_storage().open_dataset(name)
+        ds = lake.open_dataset(name)
         print(f"  {name}: {ds.count_rows()} 行, {len(ds.schema)} 列")
 
     print("\n  [全部 PASS]")

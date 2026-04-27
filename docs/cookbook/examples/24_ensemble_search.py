@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import argparse
+
 import shutil
 import sys
 from pathlib import Path
@@ -17,21 +19,25 @@ import pyarrow as pa
 
 from arrow_lake import Lake
 
-BASE_URI = "./_tmp_ensemble"
+_DEFAULT_BASE_URI = "./_tmp_ensemble"
 DIM = 256
 
 
 def main() -> None:
-    no_cleanup = "--no-cleanup" in sys.argv
+    parser = argparse.ArgumentParser(description="24_ensemble_search.py")
+    parser.add_argument("--base-uri", default=_DEFAULT_BASE_URI)
+    parser.add_argument("--no-cleanup", action="store_true")
+    args = parser.parse_args()
+    no_cleanup = args.no_cleanup
     print("=" * 60)
     print("24 集成搜索")
     print("=" * 60)
 
-    base = Path(BASE_URI)
+    base = Path(args.base_uri)
     if base.exists():
         shutil.rmtree(base)
 
-    lake = Lake(base_uri=BASE_URI)
+    lake = Lake(base_uri=args.base_uri)
 
     # STEP 1: 创建含多向量列的数据集
     print("STEP 1: 创建含双向量列的数据集")
@@ -93,7 +99,7 @@ def main() -> None:
         try:
             result = lake.search("multilingual", q_zh, top_k=3, vector_column=col)
             print(f"  [{col}] {result.row_count} 条结果")
-        except Exception as e:
+        except (ValueError, RuntimeError) as e:
             print(f"  [{col}] 跳过: {e}")
 
     # STEP 4: 均等权重

@@ -19,8 +19,11 @@ from arrow_lake.api.models.search import (
     VectorSearchRequest,
     VectorSearchResponse,
 )
+from arrow_lake.api.utils import run_sync
 
 router = APIRouter(prefix="/api/v1/datasets", tags=["search"])
+
+_SEARCH_TIMEOUT = 300
 
 
 @router.post("/{name}/search/vector", response_model=VectorSearchResponse)
@@ -31,7 +34,8 @@ async def vector_search(
     lake=Depends(get_lake),
 ) -> VectorSearchResponse:
     """Vector similarity search on a dataset."""
-    result = lake.search(
+    result = await run_sync(
+        lake.search,
         name,
         req.query_vector,
         top_k=req.top_k,
@@ -39,6 +43,8 @@ async def vector_search(
         vector_column=req.vector_column,
         where=req.where,
         nprobes=req.nprobes,
+        timeout=_SEARCH_TIMEOUT,
+        label="vector_search",
     )
     resp = arrow_table_to_response(
         result.table,
@@ -61,12 +67,15 @@ async def full_text_search(
     lake=Depends(get_lake),
 ) -> FullTextSearchResponse:
     """Full-text search on a dataset."""
-    result = lake.text_search(
+    result = await run_sync(
+        lake.text_search,
         name,
         req.query,
         top_k=req.top_k,
         fts_column=req.fts_column,
         where=req.where,
+        timeout=_SEARCH_TIMEOUT,
+        label="text_search",
     )
     resp = arrow_table_to_response(
         result.table,
@@ -89,7 +98,8 @@ async def hybrid_search(
     lake=Depends(get_lake),
 ) -> HybridSearchResponse:
     """Hybrid vector + full-text search (RRF fusion)."""
-    result = lake.hybrid_search(
+    result = await run_sync(
+        lake.hybrid_search,
         name,
         req.query_vector,
         req.query_text,
@@ -97,6 +107,8 @@ async def hybrid_search(
         vector_column=req.vector_column,
         fts_column=req.fts_column,
         where=req.where,
+        timeout=_SEARCH_TIMEOUT,
+        label="hybrid_search",
     )
     resp = arrow_table_to_response(
         result.table,
@@ -120,13 +132,16 @@ async def faceted_search(
     lake=Depends(get_lake),
 ) -> FacetedSearchResponse:
     """Vector search with faceted counts."""
-    result = lake.faceted_search(
+    result = await run_sync(
+        lake.faceted_search,
         name,
         req.query_vector,
         facets=req.facets,
         top_k=req.top_k,
         vector_column=req.vector_column,
         where=req.where,
+        timeout=_SEARCH_TIMEOUT,
+        label="faceted_search",
     )
     resp = arrow_table_to_response(
         result.table,
@@ -155,13 +170,16 @@ async def ensemble_search(
     lake=Depends(get_lake),
 ) -> EnsembleSearchResponse:
     """Ensemble multi-column vector search with RRF fusion."""
-    result = lake.ensemble_search(
+    result = await run_sync(
+        lake.ensemble_search,
         name,
         req.query_vector,
         columns=req.columns,
         weights=req.weights,
         top_k=req.top_k,
         where=req.where,
+        timeout=_SEARCH_TIMEOUT,
+        label="ensemble_search",
     )
     resp = arrow_table_to_response(
         result.table,

@@ -9,6 +9,7 @@ Reciprocal Rank Fusion (RRF).
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any
 
@@ -183,8 +184,8 @@ class HybridSearchBridge:
         # Extract scores for result
         max_rrf_score: float | None = None
         if result_table.num_rows > 0 and "_rrf_score" in result_table.column_names:
-            scores = result_table.column("_rrf_score").to_pylist()
-            max_rrf_score = max(scores) if scores else None
+            max_val = pa.compute.max(result_table.column("_rrf_score"))
+            max_rrf_score = max_val.as_py() if max_val.is_valid else None
 
         return HybridSearchResult(
             table=result_table,
@@ -306,22 +307,21 @@ class HybridSearchBridge:
         )
 
         try:
-            vector_result = vector_bridge.search(
-                dataset_name,
-                query_vector,
-                top_k=vector_top_k,
-                vector_column=vector_column,
-                where=where,
-                version=version,
-            )
-            fts_result = fts_bridge.search(
-                dataset_name,
-                query_text,
-                top_k=fts_top_k,
-                fts_column=fts_column,
-                version=version,
-                where=where,
-            )
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                v_future = pool.submit(
+                    vector_bridge.search,
+                    dataset_name, query_vector,
+                    top_k=vector_top_k, vector_column=vector_column,
+                    where=where, version=version,
+                )
+                f_future = pool.submit(
+                    fts_bridge.search,
+                    dataset_name, query_text,
+                    top_k=fts_top_k, fts_column=fts_column,
+                    version=version, where=where,
+                )
+                vector_result = v_future.result()
+                fts_result = f_future.result()
         except QueryError:
             raise
         except (ValueError, RuntimeError) as exc:
@@ -363,39 +363,22 @@ class HybridSearchBridge:
         from collections import defaultdict
 
         rrf_scores: dict[str, float] = defaultdict(float)
-        id_to_row: dict[str, dict[str, Any]] = {}
-
-        def _collect_rows(table: pa.Table) -> None:
-            """Collect rows from a result table into id_to_row."""
-            if table.num_rows == 0 or "id" not in table.column_names:
-                return
-            ids = table.column("id").to_pylist()
-            for i, doc_id in enumerate(ids):
-                id_str = str(doc_id)
-                if id_str not in id_to_row:
-                    # Collect original columns (exclude score columns)
-                    row: dict[str, Any] = {}
-                    for col_name in table.column_names:
-                        if col_name in ("_distance", "_score", "_rrf_score"):
-                            continue
-                        row[col_name] = table.column(col_name)[i].as_py()
-                    id_to_row[id_str] = row
-
-        _collect_rows(vector_table)
-        _collect_rows(fts_table)
 
         # Calculate RRF scores from vector results
         if vector_table.num_rows > 0 and "id" in vector_table.column_names:
-            for rank, doc_id in enumerate(vector_table.column("id").to_pylist()):
+            ids = vector_table.column("id").to_pylist()
+            for rank, doc_id in enumerate(ids):
                 rrf_scores[str(doc_id)] += 1.0 / (rank + 1 + k)
+            del ids
 
         # Calculate RRF scores from FTS results
         if fts_table.num_rows > 0 and "id" in fts_table.column_names:
-            for rank, doc_id in enumerate(fts_table.column("id").to_pylist()):
+            ids = fts_table.column("id").to_pylist()
+            for rank, doc_id in enumerate(ids):
                 rrf_scores[str(doc_id)] += 1.0 / (rank + 1 + k)
+            del ids
 
         if not rrf_scores:
-            # No results from either search
             return pa.table({"_rrf_score": []})
 
         # Sort by descending RRF score and take top_k
@@ -405,22 +388,58 @@ class HybridSearchBridge:
             reverse=True,
         )[:top_k]
 
-        # Build result table
-        col_names = list(next(iter(id_to_row.values())).keys()) if id_to_row else []
-        columns: dict[str, list[Any]] = {name: [] for name in col_names}
-        columns["_rrf_score"] = []
+        # Build a lookup table of id -> row index from concatenated tables
+        # Use vector_table as primary source, fall back to fts_table
+        _score_cols = frozenset({"_distance", "_score", "_rrf_score"})
 
-        for doc_id in sorted_ids:
-            row_data = id_to_row.get(doc_id)
-            if row_data is None:
-                continue
-            for col_name in col_names:
-                columns[col_name].append(row_data[col_name])
-            columns["_rrf_score"].append(rrf_scores[doc_id])
+        def _extract_by_ids(table: pa.Table, wanted: set[str]) -> pa.Table | None:
+            if table.num_rows == 0 or "id" not in table.column_names:
+                return None
+            id_col = table.column("id").to_pylist()
+            id_to_idx: dict[str, int] = {}
+            for i, doc_id in enumerate(id_col):
+                s = str(doc_id)
+                if s in wanted and s not in id_to_idx:
+                    id_to_idx[s] = i
+            del id_col
+            if not id_to_idx:
+                return None
+            indices = sorted(id_to_idx.values())
+            data_cols = [c for c in table.column_names if c not in _score_cols]
+            taken = table.select(data_cols).take(indices)
+            return taken
 
-        # Ensure all list lengths are consistent
-        n = len(columns["_rrf_score"])
-        return pa.table({name: vals[:n] for name, vals in columns.items()})
+        wanted = set(sorted_ids)
+        result = _extract_by_ids(vector_table, wanted)
+        if result is None:
+            result = _extract_by_ids(fts_table, wanted)
+            if result is None:
+                return pa.table({"_rrf_score": []})
+        if result is not None:
+            wanted -= set(str(v) for v in result.column("id").to_pylist())
+
+        if wanted:
+            fts_part = _extract_by_ids(fts_table, wanted)
+            if fts_part is not None:
+                cols = list(result.column_names)
+                result = pa.concat_tables([result, fts_part.select(cols)])
+
+        # Add _rrf_score column
+        result_ids = [str(v) for v in result.column("id").to_pylist()]
+        score_values = [rrf_scores[did] for did in result_ids]
+        result = result.append_column("_rrf_score", pa.array(score_values, type=pa.float32()))
+
+        # Sort by descending _rrf_score
+        sort_indices = pa.compute.sort_indices(
+            result.column("_rrf_score"),
+            sort_keys=[("direction", "descending")],
+        )
+        result = result.take(sort_indices.to_pylist())
+
+        if result.num_rows > top_k:
+            result = result.slice(0, top_k)
+
+        return result
 
     @staticmethod
     def _validate_where_clause(where: str) -> None:

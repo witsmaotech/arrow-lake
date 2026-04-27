@@ -8,6 +8,7 @@ Uses Daft for file reading and LanceStorageManager for writing.
 from __future__ import annotations
 
 import hashlib
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar
@@ -108,11 +109,17 @@ class Ingestor:
         """
         sources: list[IngestionSource] = []
 
-        for file_path in file_paths:
-            path = Path(file_path)
-            file_type = self._detect_file_type(path)
-            table = self._read_file(path, file_type)
-            self._write_table(dataset_name, table, sources, str(path))
+        def _read_one(fp: str) -> tuple[str, pa.Table]:
+            p = Path(fp)
+            ft = self._detect_file_type(p)
+            return fp, self._read_file(p, ft)
+
+        workers = min(len(file_paths), 4)
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            future_list = [pool.submit(_read_one, fp) for fp in file_paths]
+            for future in future_list:
+                file_path, table = future.result()
+                self._write_table(dataset_name, table, sources, file_path)
 
         return self._build_report(sources)
 
@@ -138,11 +145,18 @@ class Ingestor:
         connector = HttpConnector()
         sources: list[IngestionSource] = []
 
-        for url in urls:
+        def _fetch_and_read(url: str) -> tuple[str, pa.Table]:
             result = connector.fetch(url)
             suffix = self._detect_file_type(Path(url))
             table = self._read_bytes(result.content, suffix)
-            self._write_table(dataset_name, table, sources, result.url)
+            return result.url, table
+
+        workers = min(len(urls), 4)
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            future_list = [pool.submit(_fetch_and_read, url) for url in urls]
+            for future in future_list:
+                resolved_url, table = future.result()
+                self._write_table(dataset_name, table, sources, resolved_url)
 
         return self._build_report(sources)
 

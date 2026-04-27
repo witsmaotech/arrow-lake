@@ -234,18 +234,22 @@ class FullTextSearchBridge:
                     offset=offset,
                     limit=_chunk_size,
                 )
-                raw_texts = batch.column(source_column).to_pylist()
+                original_col = batch.column(source_column)
                 segmented = [
                     None if text is None else segment_text(str(text))
-                    for text in raw_texts
+                    for text in original_col.to_pylist()
                 ]
-                new_col = pa.array(segmented, type=pa.string())
-                chunk_table = batch.append_column(segmented_column, new_col)
+                del original_col
+                segmented_col = pa.array(segmented, type=pa.string())
+                del segmented
+                chunk_table = batch.append_column(segmented_column, segmented_col)
+                del batch, segmented_col
                 if first_chunk:
                     lance.write_dataset(chunk_table, uri, mode="overwrite")
                     first_chunk = False
                 else:
                     lance.write_dataset(chunk_table, uri, mode="append")
+                del chunk_table
             # Reopen to validate
             ds = lance.dataset(uri)
 
@@ -340,8 +344,8 @@ class FullTextSearchBridge:
         # Extract max score for diagnostics
         max_score: float | None = None
         if result_table.num_rows > 0 and "_score" in result_table.column_names:
-            scores = result_table.column("_score").to_pylist()
-            max_score = max(scores) if scores else None
+            max_val = pa.compute.max(result_table.column("_score"))
+            max_score = max_val.as_py() if max_val.is_valid else None
 
         return FullTextSearchResult(
             table=result_table,

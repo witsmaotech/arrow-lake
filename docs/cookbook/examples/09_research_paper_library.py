@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+import argparse
+
 import shutil
 import sys
 from pathlib import Path
@@ -19,7 +21,7 @@ import pyarrow as pa
 from arrow_lake import Lake
 
 DATAS_DIR = Path(__file__).resolve().parent.parent / "datas"
-BASE_URI = "./_tmp_paper_library"
+_DEFAULT_BASE_URI = "./_tmp_paper_library"
 DIM = 768
 
 
@@ -38,16 +40,20 @@ def _add_vectors(lake: Lake, dataset: str) -> int:
 
 
 def main() -> None:
-    no_cleanup = "--no-cleanup" in sys.argv
+    parser = argparse.ArgumentParser(description="09_research_paper_library.py")
+    parser.add_argument("--base-uri", default=_DEFAULT_BASE_URI)
+    parser.add_argument("--no-cleanup", action="store_true")
+    args = parser.parse_args()
+    no_cleanup = args.no_cleanup
     print("=" * 60)
     print("09 科研论文知识库")
     print("=" * 60)
 
-    base = Path(BASE_URI)
+    base = Path(args.base_uri)
     if base.exists():
         shutil.rmtree(base)
 
-    lake = Lake(base_uri=BASE_URI)
+    lake = Lake(base_uri=args.base_uri)
 
     # STEP 1: 摄入
     print("STEP 1: 摄入论文数据 (英文 + 中文)")
@@ -66,7 +72,7 @@ def main() -> None:
     for ds in ["papers", "papers_zh"]:
         try:
             lake.create_vector_index(ds, vector_column="text_embedding")
-        except Exception as e:
+        except (ValueError, RuntimeError) as e:
             print(f"  向量索引跳过 ({ds}): {e}")
         lake.create_fts_index(ds, fts_column="text_content")
     print("  双索引已创建")

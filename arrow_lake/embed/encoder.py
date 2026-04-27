@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar
 
 import httpx
 import numpy as np
@@ -175,6 +175,12 @@ class LocalEmbeddingEncoder:
                 normalize_embeddings=True,
             )
             embeddings = np.asarray(embeddings, dtype=np.float32)
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except (ImportError, OSError, RuntimeError):
+                pass
         except (RuntimeError, OSError) as exc:
             raise EmbeddingError(
                 error_code=ErrorCode.EMBEDDING_MODEL_ERROR,
@@ -211,6 +217,8 @@ class ApiEmbeddingEncoder:
         timeout_seconds: Request timeout in seconds.
         max_retries: Maximum retry attempts.
     """
+
+    _fallback_cache: ClassVar[dict[str, LocalEmbeddingEncoder]] = {}
 
     def __init__(
         self,
@@ -317,17 +325,18 @@ class ApiEmbeddingEncoder:
     def _fallback_encode(self, texts: list[str]) -> EmbeddingBatch:
         """Fallback to local encoder when API is unreachable.
 
-        Args:
-            texts: List of text strings to encode.
-
-        Returns:
-            EmbeddingBatch from local encoder.
+        Uses a class-level cache so the model is loaded at most once per
+        fallback model name across all ApiEmbeddingEncoder instances.
         """
         try:
-            local_encoder = LocalEmbeddingEncoder(
-                model_name=self.fallback_model,
-                batch_size=self.batch_size,
-            )
+            cache_key = f"{self.fallback_model}:{self.batch_size}"
+            local_encoder = self._fallback_cache.get(cache_key)
+            if local_encoder is None:
+                local_encoder = LocalEmbeddingEncoder(
+                    model_name=self.fallback_model,
+                    batch_size=self.batch_size,
+                )
+                self._fallback_cache[cache_key] = local_encoder
             model = local_encoder._load_model()
             embeddings = np.asarray(
                 model.encode(texts, normalize_embeddings=True),

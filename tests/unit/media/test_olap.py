@@ -192,7 +192,7 @@ class TestQuery:
         assert isinstance(result, OlapQueryResult)
         assert result.row_count == 10
         assert result.column_count == 4
-        assert result.sql == "SELECT * FROM test_ds"
+        assert result.sql == "SELECT * FROM test_ds LIMIT 100000"
 
     def test_query_group_by(self) -> None:
         """GROUP BY aggregation works."""

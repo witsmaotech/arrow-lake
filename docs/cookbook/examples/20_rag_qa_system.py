@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+import argparse
+
 import asyncio
 import shutil
 import sys
@@ -22,7 +24,7 @@ from arrow_lake import Lake
 from arrow_lake.rag.prompt import PromptRegistry
 
 DATAS_DIR = Path(__file__).resolve().parent.parent / "datas"
-BASE_URI = "./_tmp_rag_qa"
+_DEFAULT_BASE_URI = "./_tmp_rag_qa"
 DIM = 768
 
 
@@ -41,21 +43,25 @@ def _add_vectors(lake: Lake, dataset: str) -> int:
 
 
 async def run_async() -> None:
-    no_cleanup = "--no-cleanup" in sys.argv
+    parser = argparse.ArgumentParser(description="20_rag_qa_system.py")
+    parser.add_argument("--base-uri", default=_DEFAULT_BASE_URI)
+    parser.add_argument("--no-cleanup", action="store_true")
+    args = parser.parse_args()
+    no_cleanup = args.no_cleanup
     print("=" * 60)
     print("20 RAG 问答系统")
     print("=" * 60)
 
-    base = Path(BASE_URI)
+    base = Path(args.base_uri)
     if base.exists():
         shutil.rmtree(base)
 
-    lake = Lake(base_uri=BASE_URI)
+    lake = Lake(base_uri=args.base_uri)
 
     # STEP 1: 摄入知识库
     print("STEP 1: 摄入中文知识库")
     report = lake.ingest("knowledge_zh", [str(DATAS_DIR / "kb" / "knowledge_zh.jsonl")])
-    ds = lake._get_storage().open_dataset("knowledge_zh")
+    ds = lake.open_dataset("knowledge_zh")
     print(f"  摄入: {report.total_rows} 行")
 
     # STEP 2: 建索引
@@ -63,7 +69,7 @@ async def run_async() -> None:
     n = _add_vectors(lake, "knowledge_zh")
     try:
         lake.create_vector_index("knowledge_zh", vector_column="text_embedding")
-    except Exception as e:
+    except (ValueError, RuntimeError) as e:
         print(f"  向量索引跳过: {e}")
     lake.create_fts_index("knowledge_zh", fts_column="text_content")
     print(f"  {n} 个向量, 双索引已建立")

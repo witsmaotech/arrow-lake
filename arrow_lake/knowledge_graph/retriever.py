@@ -6,6 +6,7 @@ triplets suitable for injection into RAG prompts.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 
@@ -88,7 +89,7 @@ class KGRetriever:
         all_triplets: list[GraphTriplet] = []
         vertex_ids: list[str] = []
 
-        for entity_name in entities:
+        async def _retrieve_entity(entity_name: str) -> None:
             query = GremlinQueries.find_entity(
                 entity_name, graph_name=self._config.graph_name
             )
@@ -121,6 +122,10 @@ class KGRetriever:
                             properties=tuple(sorted(n_props.items())),
                         )
                     )
+
+        await asyncio.gather(*(
+            _retrieve_entity(e) for e in entities
+        ))
 
         truncated = tuple(all_triplets[:max_triplets])
         vertex_count = len(vertex_ids)

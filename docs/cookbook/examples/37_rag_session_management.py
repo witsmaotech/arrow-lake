@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+import argparse
+
 import shutil
 import sys
 from pathlib import Path
@@ -16,16 +18,20 @@ from pathlib import Path
 from arrow_lake.rag.session import SessionStore
 from arrow_lake.rag.pipeline import RAGResponse
 
-BASE_URI = "./_tmp_sessions"
+_DEFAULT_BASE_URI = "./_tmp_sessions"
 
 
 def main() -> None:
-    no_cleanup = "--no-cleanup" in sys.argv
+    parser = argparse.ArgumentParser(description="37_rag_session_management.py")
+    parser.add_argument("--base-uri", default=_DEFAULT_BASE_URI)
+    parser.add_argument("--no-cleanup", action="store_true")
+    args = parser.parse_args()
+    no_cleanup = args.no_cleanup
     print("=" * 60)
     print("37 RAG 会话管理")
     print("=" * 60)
 
-    base = Path(BASE_URI)
+    base = Path(args.base_uri)
     if base.exists():
         shutil.rmtree(base)
 

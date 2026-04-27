@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import argparse
+
 import shutil
 import sys
 from pathlib import Path
@@ -15,20 +17,24 @@ from pathlib import Path
 from arrow_lake import Lake
 
 DATAS_DIR = Path(__file__).resolve().parent.parent / "datas"
-BASE_URI = "./_tmp_ecommerce"
+_DEFAULT_BASE_URI = "./_tmp_ecommerce"
 
 
 def main() -> None:
-    no_cleanup = "--no-cleanup" in sys.argv
+    parser = argparse.ArgumentParser(description="10_e_commerce_dashboard.py")
+    parser.add_argument("--base-uri", default=_DEFAULT_BASE_URI)
+    parser.add_argument("--no-cleanup", action="store_true")
+    args = parser.parse_args()
+    no_cleanup = args.no_cleanup
     print("=" * 60)
     print("10 电商数据看板")
     print("=" * 60)
 
-    base = Path(BASE_URI)
+    base = Path(args.base_uri)
     if base.exists():
         shutil.rmtree(base)
 
-    lake = Lake(base_uri=BASE_URI)
+    lake = Lake(base_uri=args.base_uri)
 
     # STEP 1
     print("STEP 1: 摄入交易数据")
@@ -82,7 +88,7 @@ def main() -> None:
             "FROM sales GROUP BY 商品类别",
             view_name="category_monthly", ttl_days=30)
         print(f"  物化视图: category_monthly ({n} 行)")
-    except Exception as e:
+    except (ValueError, RuntimeError) as e:
         print(f"  跳过 (DuckLake 未启用): {e}")
 
     # STEP 7

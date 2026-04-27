@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+import argparse
+
 import shutil
 import sys
 from pathlib import Path
@@ -19,7 +21,7 @@ import pyarrow as pa
 from arrow_lake import Lake
 
 DATAS_DIR = Path(__file__).resolve().parent.parent / "datas"
-BASE_URI = "./_tmp_search_index"
+_DEFAULT_BASE_URI = "./_tmp_search_index"
 DATASET = "knowledge_zh"
 DIM = 768
 
@@ -51,16 +53,20 @@ def _print_results(result, top: int = 5) -> None:
 
 
 def main() -> None:
-    no_cleanup = "--no-cleanup" in sys.argv
+    parser = argparse.ArgumentParser(description="02_search_and_index.py")
+    parser.add_argument("--base-uri", default=_DEFAULT_BASE_URI)
+    parser.add_argument("--no-cleanup", action="store_true")
+    args = parser.parse_args()
+    no_cleanup = args.no_cleanup
     print("=" * 60)
     print("02 搜索与索引")
     print("=" * 60)
 
-    base = Path(BASE_URI)
+    base = Path(args.base_uri)
     if base.exists():
         shutil.rmtree(base)
 
-    lake = Lake(base_uri=BASE_URI)
+    lake = Lake(base_uri=args.base_uri)
 
     # --- STEP 1: 摄入中文知识库 ---
     print("STEP 1: 摄取 JSONL 知识库")
@@ -80,7 +86,7 @@ def main() -> None:
         idx = lake.create_vector_index(DATASET, vector_column="text_embedding",
                                       metric="cosine", index_type="IVF_PQ")
         print(f"  索引类型: {idx.index_type}")
-    except Exception as e:
+    except (ValueError, RuntimeError) as e:
         print(f"  跳过 (数据量不足): {e}")
     print("  [PASS]\n")
 

@@ -507,6 +507,7 @@ class TestApiEmbeddingEncoder:
 
     def test_fallback_encode_import_error_raises(self) -> None:
         """本地回退导入失败时应抛 EmbeddingError。"""
+        ApiEmbeddingEncoder._fallback_cache.clear()
         with patch("arrow_lake.embed.encoder.httpx.Client"):
             enc = ApiEmbeddingEncoder(api_base="https://api.example.com")
 

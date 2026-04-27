@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import argparse
+
 import shutil
 import sys
 from pathlib import Path
@@ -15,21 +17,25 @@ from pathlib import Path
 from arrow_lake import Lake
 
 DATAS_DIR = Path(__file__).resolve().parent.parent / "datas"
-BASE_URI = "./_tmp_txn_analytics"
+_DEFAULT_BASE_URI = "./_tmp_txn_analytics"
 DATASET = "transactions"
 
 
 def main() -> None:
-    no_cleanup = "--no-cleanup" in sys.argv
+    parser = argparse.ArgumentParser(description="07_transaction_analytics.py")
+    parser.add_argument("--base-uri", default=_DEFAULT_BASE_URI)
+    parser.add_argument("--no-cleanup", action="store_true")
+    args = parser.parse_args()
+    no_cleanup = args.no_cleanup
     print("=" * 60)
     print("07 交易数据分析工作流")
     print("=" * 60)
 
-    base = Path(BASE_URI)
+    base = Path(args.base_uri)
     if base.exists():
         shutil.rmtree(base)
 
-    lake = Lake(base_uri=BASE_URI)
+    lake = Lake(base_uri=args.base_uri)
 
     # --- STEP 1: 摄入 ---
     print("STEP 1: 摄入交易数据")
@@ -75,7 +81,7 @@ def main() -> None:
             "FROM transactions GROUP BY 用户编号",
             view_name="user_summary", ttl_days=7)
         print(f"  物化: user_summary ({row_count} 行)")
-    except Exception as e:
+    except (ValueError, RuntimeError) as e:
         print(f"  跳过 (DuckLake 未启用): {e}")
     print("  [PASS]\n")
 

@@ -160,27 +160,26 @@ class OlapSearchBridge:
                 message=f"Failed to read dataset '{dataset_name}': {exc}",
             ) from exc
 
+        # Push LIMIT into SQL to avoid materializing excess rows
+        limited_sql = self._apply_limit(sql, effective_max_rows)
+
         # Execute query with LanceScanAdapter (native) or PyArrow fallback
         with session as conn:
             self._register_dataset(conn, dataset_name, source)
             for name, extra_table in (tables or {}).items():
                 conn.register(name, extra_table)
-            result_reader = conn.execute(sql).arrow()
+            result_reader = conn.execute(limited_sql).arrow()
             # DuckDB may return RecordBatchReader — convert to Table
             if hasattr(result_reader, "read_all"):
                 result_table = result_reader.read_all()
             else:
                 result_table = result_reader
 
-        # Truncate to max_rows
-        if result_table.num_rows > effective_max_rows:
-            result_table = result_table.slice(0, effective_max_rows)
-
         return OlapQueryResult(
             table=result_table,
             row_count=result_table.num_rows,
             column_count=result_table.num_columns,
-            sql=sql,
+            sql=limited_sql,
         )
 
     def materialize(
@@ -387,6 +386,23 @@ class OlapSearchBridge:
                 error_code=ErrorCode.OLAP_QUERY_FAILED,
                 message="Semicolons are not allowed (single statement only)",
             )
+
+    @staticmethod
+    def _apply_limit(sql: str, max_rows: int) -> str:
+        """Append LIMIT to SQL if not already present.
+
+        Avoids materializing rows beyond max_rows in DuckDB.
+        Uses MIN(existing_limit, max_rows) if LIMIT already exists.
+        """
+        import re as _re
+
+        stripped = sql.rstrip().rstrip(";")
+        match = _re.search(r"\bLIMIT\s+(\d+)\s*$", stripped, _re.IGNORECASE)
+        if match:
+            existing = int(match.group(1))
+            effective = min(existing, max_rows)
+            return stripped[: match.start()] + f"LIMIT {effective}"
+        return f"{stripped} LIMIT {max_rows}"
 
 
 def _validate_dataset_name(dataset_name: str) -> None:
