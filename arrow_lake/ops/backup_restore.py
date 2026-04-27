@@ -13,7 +13,7 @@ from typing import Any
 
 import structlog
 
-from arrow_lake.exceptions import StorageError, ErrorCode
+from arrow_lake.exceptions import ErrorCode, StorageError
 
 _log = structlog.get_logger(__name__)
 

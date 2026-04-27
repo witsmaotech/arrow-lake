@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
+from typing import Any
 
 import pyarrow as pa
 
@@ -17,6 +19,8 @@ from arrow_lake.rag.provider import BaseLLMProvider, LLMMessage
 from arrow_lake.rag.session import SessionStore
 
 logger = logging.getLogger(__name__)
+
+PROMPT_INJECTION_RE = re.compile(r"(?i)(ignore previous|ignore above|new instructions?|system prompt)")
 
 # Alias: RAGCitation is the public name, ContextCitation is the internal name.
 RAGCitation = ContextCitation
@@ -86,6 +90,9 @@ class RAGPipeline:
         """Build the message list for the LLM."""
         messages: list[LLMMessage] = []
 
+        def _sanitize(text: str) -> str:
+            return PROMPT_INJECTION_RE.sub("[FILTERED]", text)
+
         # System prompt
         system = self._config.system_prompt
         if system:
@@ -96,9 +103,9 @@ class RAGPipeline:
         template = self._registry.get(template_name)
         if template is None:
             # Fallback to raw context + question
-            prompt = f"Context:\n{context_text}\n\nQuestion: {question}\n\nAnswer:"
+            prompt = f"Context:\n{context_text}\n\nQuestion: {_sanitize(question)}\n\nAnswer:"
         else:
-            prompt = template.render(context=context_text, question=question)
+            prompt = template.render(context=context_text, question=_sanitize(question))
 
         messages.append(LLMMessage(role="user", content=prompt))
         return messages

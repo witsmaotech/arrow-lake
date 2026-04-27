@@ -296,6 +296,10 @@ class BackupManager:
         """Copy a Lance dataset to the backup location. Returns (row_count, file_hashes)."""
         if ".." in dataset_name or "/" in dataset_name or "\\" in dataset_name:
             raise ValueError(f"Invalid dataset name (path traversal): {dataset_name!r}")
+        resolved = (self._lance_base_uri / dataset_name).resolve()
+        base = self._lance_base_uri.resolve()
+        if not str(resolved).startswith(str(base)):
+            raise ValueError(f"Invalid dataset name (path traversal): {dataset_name!r}")
         dataset_path = self._lance_base_uri / dataset_name
         if not dataset_path.is_dir():
             raise FileNotFoundError(f"Dataset not found: {dataset_path}")
@@ -310,8 +314,8 @@ class BackupManager:
             # Stream file in 8MB chunks to limit memory usage
             file_size = item.stat().st_size
             sha = hashlib.sha256()
-            _CHUNK = 8 * 1024 * 1024
-            if file_size <= _CHUNK:
+            _chunk_size = 8 * 1024 * 1024
+            if file_size <= _chunk_size:
                 data = item.read_bytes()
                 sha.update(data)
                 self._blob_store.upload(backup_key, data)
@@ -319,7 +323,7 @@ class BackupManager:
                 chunks: list[bytes] = []
                 with open(item, "rb") as f:
                     while True:
-                        chunk = f.read(_CHUNK)
+                        chunk = f.read(_chunk_size)
                         if not chunk:
                             break
                         sha.update(chunk)

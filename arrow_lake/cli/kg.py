@@ -122,9 +122,8 @@ def kg_neighbors(ctx: click.Context, entity_id: str, depth: int) -> None:
 @click.pass_context
 def kg_delete(ctx: click.Context, yes: bool) -> None:
     """Delete all data from the knowledge graph (irreversible)."""
-    if not yes:
-        if not click.confirm("Delete ALL knowledge graph data? This cannot be undone."):
-            return
+    if not yes and not click.confirm("Delete ALL knowledge graph data? This cannot be undone."):
+        return
 
     lake = _get_lake(ctx)
 

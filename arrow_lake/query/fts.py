@@ -13,7 +13,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-import duckdb
 import pyarrow as pa
 import structlog
 
@@ -209,9 +208,9 @@ class FullTextSearchBridge:
         # Read existing data and segment in chunks to limit memory usage
         ds = lance.dataset(uri)
         row_count = ds.count_rows()
-        _CHUNK_SIZE = 50_000
+        _chunk_size = 50_000
 
-        if row_count <= _CHUNK_SIZE:
+        if row_count <= _chunk_size:
             original = ds.to_table()
             raw_texts = original.column(source_column).to_pylist()
             segmented = [
@@ -225,16 +224,15 @@ class FullTextSearchBridge:
             # Chunked: process in batches, merge via Lance append
             _log.info(
                 "Large dataset (%d rows): segmenting in chunks of %d",
-                row_count, _CHUNK_SIZE,
+                row_count, _chunk_size,
             )
-            import lance.dataset as lance_ds
 
             first_chunk = True
-            for offset in range(0, row_count, _CHUNK_SIZE):
+            for offset in range(0, row_count, _chunk_size):
                 batch = ds.to_table(
                     columns=[source_column],
                     offset=offset,
-                    limit=_CHUNK_SIZE,
+                    limit=_chunk_size,
                 )
                 raw_texts = batch.column(source_column).to_pylist()
                 segmented = [

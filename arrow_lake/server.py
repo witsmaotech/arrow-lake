@@ -28,12 +28,12 @@ warnings.warn(
     stacklevel=2,
 )
 
-import json
-import os
-from typing import Any
-from wsgiref.simple_server import make_server
+import json  # noqa: E402
+import os  # noqa: E402
+from typing import Any  # noqa: E402
+from wsgiref.simple_server import make_server  # noqa: E402
 
-import structlog
+import structlog  # noqa: E402
 
 _log = structlog.get_logger(__name__)
 

@@ -26,7 +26,13 @@ from arrow_lake.config.infra import (
     LifecycleConfig,
     ObservabilityConfig,
 )
-from arrow_lake.config.media import DecodeConfig, EmbeddingConfig, ExportConfig, MediaConfig, QualityConfig
+from arrow_lake.config.media import (
+    DecodeConfig,
+    EmbeddingConfig,
+    ExportConfig,
+    MediaConfig,
+    QualityConfig,
+)
 from arrow_lake.config.olap import OlapConfig
 from arrow_lake.config.rag import HugeGraphConfig, LLMConfig, RAGConfig
 from arrow_lake.config.search import (

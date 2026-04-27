@@ -65,9 +65,8 @@ class _LakeSearchMixin:
         from arrow_lake.api.telemetry import get_tracer
         from arrow_lake.core.metrics import _QueryTimer
 
-        with get_tracer().start_as_current_span("vector_search", attributes={"dataset": dataset_name}):
-            with _QueryTimer("vector_search"):
-                return bridge.search(
+        with get_tracer().start_as_current_span("vector_search", attributes={"dataset": dataset_name}), _QueryTimer("vector_search"):
+            return bridge.search(
                 dataset_name,
                 query_vector,
                 top_k=top_k,
@@ -163,16 +162,15 @@ class _LakeSearchMixin:
         from arrow_lake.core.metrics import _QueryTimer
 
         tracer = get_tracer()
-        with tracer.start_as_current_span("text_search", attributes={"dataset": dataset_name}):
-            with _QueryTimer("text_search"):
-                return bridge.search(
-                    dataset_name,
-                    query,
-                    top_k=top_k,
-                    fts_column=fts_column,
-                    where=where,
-                    version=version,
-                )
+        with tracer.start_as_current_span("text_search", attributes={"dataset": dataset_name}), _QueryTimer("text_search"):
+            return bridge.search(
+                dataset_name,
+                query,
+                top_k=top_k,
+                fts_column=fts_column,
+                where=where,
+                version=version,
+            )
 
     def create_fts_index(
         self,
@@ -243,9 +241,8 @@ class _LakeSearchMixin:
         from arrow_lake.api.telemetry import get_tracer
         from arrow_lake.core.metrics import _QueryTimer
 
-        with get_tracer().start_as_current_span("hybrid_search", attributes={"dataset": dataset_name}):
-            with _QueryTimer("hybrid_search"):
-                return bridge.search(
+        with get_tracer().start_as_current_span("hybrid_search", attributes={"dataset": dataset_name}), _QueryTimer("hybrid_search"):
+            return bridge.search(
                 dataset_name,
                 query_vector,
                 query_text,
@@ -498,6 +495,10 @@ class _LakeSearchMixin:
             indices = list(table.list_indices())
             for idx_config in indices:
                 idx_name = idx_config.name if hasattr(idx_config, "name") else str(idx_config)
+                cols = idx_config.columns if hasattr(idx_config, "columns") else []
+                if cols and any("fts" in c.lower() or "tantivy" in c.lower() for c in cols):
+                    self._get_storage().delete_vector_index(dataset_name, idx_name)
+                    return
                 if "fts" in idx_name.lower() or "tantivy" in idx_name.lower():
                     self._get_storage().delete_vector_index(dataset_name, idx_name)
                     return

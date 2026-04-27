@@ -35,6 +35,8 @@ _BLOCKED_GREMLIN_PATTERNS = (
     "drop(", "eval(", "System.", "java.lang", "inject(",
     "GroovyShell", "ProcessBuilder", "Runtime.", "Exec(",
     "org.apache", "new File(", "Class.forName",
+    "groovy.", "script(", "ExecTransformer",
+    "安全管理器", "AccessController", "doPrivileged",
 )
 
 

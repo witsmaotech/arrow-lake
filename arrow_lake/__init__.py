@@ -87,7 +87,7 @@ __all__ = [
     "StorageBackend",
     "StorageError",
     "ValidationError",
-    "VectorSearchBridge",
+    "VectorSearchResult",
     "VectorSearchResult",
     "WorkflowError",
     "__version__",

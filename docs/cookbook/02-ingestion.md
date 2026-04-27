@@ -17,7 +17,7 @@ lake = Lake(base_uri="./data_lake")
 # Ingest multiple files — the first file creates the dataset, the rest are appended automatically
 report = lake.ingest(
     "sales",
-    ["docs/cookbook/datas/transactions/sales_2024.csv"],
+    ["examples/data/transactions/sales_2024.csv"],
 )
 
 # IngestionReport contains detailed statistics
@@ -76,8 +76,8 @@ lake = Lake(base_uri="./data_lake")
 
 report = lake.ingest_images(
     "photos",
-    ["docs/cookbook/datas/photos/sunset_landscape.jpg",
-     "docs/cookbook/datas/photos/mountain_view.jpg"],
+    ["examples/data/photos/sunset_landscape.jpg",
+     "examples/data/photos/mountain_view.jpg"],
 )
 print(f"Image ingestion: {report.total_rows} rows")
 
@@ -92,8 +92,8 @@ Videos are automatically processed to extract key frames during ingestion.
 ```python
 report = lake.ingest_videos(
     "videos",
-    ["docs/cookbook/datas/videos/lecture_demo.mp4",
-     "docs/cookbook/datas/videos/interview_clip.mp4"],
+    ["examples/data/videos/lecture_demo.mp4",
+     "examples/data/videos/interview_clip.mp4"],
 )
 print(f"Video ingestion: {report.total_rows} rows")
 
@@ -115,10 +115,10 @@ lake = Lake(base_uri="./data_lake")
 report = lake.ingest_mixed(
     "multi_modal_dataset",
     {
-        "files": ["docs/cookbook/datas/transactions/sales_2024.csv"],
+        "files": ["examples/data/transactions/sales_2024.csv"],
         "urls": ["https://example.com/extra_data.csv"],
-        "images": ["docs/cookbook/datas/photos/sunset_landscape.jpg"],
-        "videos": ["docs/cookbook/datas/videos/lecture_demo.mp4"],
+        "images": ["examples/data/photos/sunset_landscape.jpg"],
+        "videos": ["examples/data/videos/lecture_demo.mp4"],
     },
 )
 print(f"Mixed ingestion: {report.total_rows} rows, {report.total_files} files")
@@ -141,8 +141,8 @@ lake = Lake(base_uri="./data_lake")
 # Basic ingestion — Kreuzberg parser + default chunking
 report = lake.ingest_documents(
     "research_papers",
-    ["docs/cookbook/datas/papers/full_text/p001_attention_is_all_you_need.pdf",
-     "docs/cookbook/datas/papers/full_text/p009_clip.pdf"],
+    ["examples/data/papers/full_text/p001_attention_is_all_you_need.pdf",
+     "examples/data/papers/full_text/p009_clip.pdf"],
     doc_config=None,
 )
 print(f"Document ingestion: {report.total_rows} text chunks")
@@ -171,7 +171,7 @@ doc_config = DocumentConfig(
     blob_prefix="documents/",
 )
 
-report = lake.ingest_documents("papers", ["docs/cookbook/datas/papers/full_text/p014_gpt4_technical_report.pdf"], doc_config=doc_config)
+report = lake.ingest_documents("papers", ["examples/data/papers/full_text/p014_gpt4_technical_report.pdf"], doc_config=doc_config)
 ```
 
 Document ingestion pipeline: `PDF → Kreuzberg parse (+ TurboOCR fallback) → BlobStore (optional) → Chunker → Lance persistence`
@@ -299,7 +299,7 @@ from arrow_lake import Lake
 lake = Lake(base_uri="./data_lake")
 
 # Use glob to collect files and batch-ingest them
-csv_files = sorted(Path("docs/cookbook/datas/transactions").glob("**/*.csv"))
+csv_files = sorted(Path("examples/data/transactions").glob("**/*.csv"))
 all_files = [str(f) for f in csv_files]
 
 if all_files:

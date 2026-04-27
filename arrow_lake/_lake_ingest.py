@@ -176,7 +176,11 @@ class _LakeIngestMixin:
             TypeError: If data is not a pyarrow.Table.
         """
         if not isinstance(data, pa.Table):
-            raise TypeError(f"data must be a pyarrow.Table, got {type(data).__name__}")
+            from arrow_lake.exceptions import ErrorCode, ValidationError
+            raise ValidationError(
+                ErrorCode.VALIDATION_TYPE_ERROR,
+                f"data must be a pyarrow.Table, got {type(data).__name__}",
+            )
         from arrow_lake.api.telemetry import get_tracer
         from arrow_lake.core.metrics import (
             catalog_tables_total,
@@ -219,7 +223,11 @@ class _LakeIngestMixin:
             TypeError: If data is not a pyarrow.Table.
         """
         if not isinstance(data, pa.Table):
-            raise TypeError(f"data must be a pyarrow.Table, got {type(data).__name__}")
+            from arrow_lake.exceptions import ErrorCode, ValidationError
+            raise ValidationError(
+                ErrorCode.VALIDATION_TYPE_ERROR,
+                f"data must be a pyarrow.Table, got {type(data).__name__}",
+            )
         from arrow_lake.core.metrics import (
             get_metrics_enabled,
             ingestion_bytes_total,
@@ -266,7 +274,11 @@ class _LakeIngestMixin:
             TypeError: If data is not a pyarrow.Table.
         """
         if not isinstance(data, pa.Table):
-            raise TypeError(f"data must be a pyarrow.Table, got {type(data).__name__}")
+            from arrow_lake.exceptions import ErrorCode, ValidationError
+            raise ValidationError(
+                ErrorCode.VALIDATION_TYPE_ERROR,
+                f"data must be a pyarrow.Table, got {type(data).__name__}",
+            )
         from arrow_lake.core.metrics import (
             get_metrics_enabled,
             ingestion_bytes_total,

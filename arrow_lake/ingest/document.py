@@ -28,7 +28,7 @@ except ImportError:
     extract_file_sync = None  # type: ignore[assignment]
 
 if TYPE_CHECKING:
-    from kreuzberg import ExtractionResult
+    pass
 
 logger = logging.getLogger(__name__)
 

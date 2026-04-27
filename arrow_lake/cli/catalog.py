@@ -93,9 +93,8 @@ def catalog_info_cmd(ctx: click.Context, name: str) -> None:
 @click.pass_context
 def catalog_delete_cmd(ctx: click.Context, name: str, yes: bool) -> None:
     """Delete a dataset."""
-    if not yes:
-        if not click.confirm(f"Delete dataset '{name}'? This cannot be undone."):
-            return
+    if not yes and not click.confirm(f"Delete dataset '{name}'? This cannot be undone."):
+        return
 
     lake = _get_lake(ctx)
 

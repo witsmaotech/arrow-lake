@@ -15,9 +15,10 @@ Metrics can be disabled globally via enable_metrics()/disable_metrics().
 
 from __future__ import annotations
 
-from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram
 import threading
 from typing import Any
+
+from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram
 
 REGISTRY = CollectorRegistry()
 

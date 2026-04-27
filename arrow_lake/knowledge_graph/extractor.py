@@ -176,7 +176,7 @@ class EntityExtractor:
         # Strip markdown code fences
         if stripped.startswith("```"):
             lines = stripped.split("\n")
-            lines = [l for l in lines if not l.strip().startswith("```")]
+            lines = [line for line in lines if not line.strip().startswith("```")]
             stripped = "\n".join(lines).strip()
 
         # Strip leading non-JSON (find first { or [ from the start)

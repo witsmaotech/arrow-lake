@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import click
 
-from arrow_lake.cli import _get_lake, _print_error, _print_success, console
+from arrow_lake.cli import _get_lake, _print_error, _print_success
 
 
 @click.command()

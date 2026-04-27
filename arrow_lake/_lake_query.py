@@ -6,9 +6,9 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from arrow_lake.query.daft_api import LazyDaftFrame
+    from arrow_lake.query.export import ExportResult
     from arrow_lake.query.metadata import MetadataQueryResult
     from arrow_lake.query.olap import OlapQueryResult
-    from arrow_lake.query.export import ExportResult
 
 
 class _LakeQueryMixin:
@@ -81,9 +81,8 @@ class _LakeQueryMixin:
         from arrow_lake.core.metrics import _QueryTimer, get_metrics_enabled, query_results_total
 
         tracer = get_tracer()
-        with tracer.start_as_current_span("olap_query", attributes={"dataset": dataset_name}):
-            with _QueryTimer("olap_query"):
-                result = bridge.query(dataset_name, sql, max_rows=max_rows, tables=tables)
+        with tracer.start_as_current_span("olap_query", attributes={"dataset": dataset_name}), _QueryTimer("olap_query"):
+            result = bridge.query(dataset_name, sql, max_rows=max_rows, tables=tables)
         if get_metrics_enabled():
             query_results_total.labels(query_type="olap_query").inc(result.table.num_rows)
         return result

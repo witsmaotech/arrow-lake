@@ -390,7 +390,6 @@ class BlobStoreManager:
         Raises:
             StorageError: If URL generation fails (BLOB_PRESIGN_FAILED).
         """
-        from botocore.exceptions import ClientError
 
         _validate_blob_key(key)
         if operation not in ("get_object", "put_object"):

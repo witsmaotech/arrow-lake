@@ -17,7 +17,6 @@ def search_group() -> None:
 
 def _get_query_vector(text: str, model_name: str, column: str):
     """Encode text to vector using LocalEmbeddingEncoder."""
-    import pyarrow as pa
 
     from arrow_lake.embed.encoder import LocalEmbeddingEncoder
 

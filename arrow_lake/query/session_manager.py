@@ -270,7 +270,6 @@ class DuckDBSessionManager:
         Returns:
             Tuple of (connection, created_at_timestamp).
         """
-        now = time.monotonic()
         # Try idle pool first
         while True:
             with self._lock:

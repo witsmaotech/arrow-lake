@@ -15,14 +15,13 @@ import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 
+import duckdb
 import ray
 
 from arrow_lake.catalog.connection_pool import (
     _SAFE_IDENTIFIER_RE,
     DuckDBConnectionPool,
 )
-import duckdb
-
 from arrow_lake.exceptions import CatalogError, ErrorCode
 
 _INSERT_SQL = (

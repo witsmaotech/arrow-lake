@@ -27,7 +27,6 @@ from arrow_lake.config._enums import (
     StorageBackend,
     VectorIndexType,
 )
-from arrow_lake.config.document import DocumentConfig
 from arrow_lake.config.api import (
     ApiConfig,
     AuditConfig,
@@ -36,6 +35,7 @@ from arrow_lake.config.api import (
     OpenTelemetryConfig,
     RateLimitConfig,
 )
+from arrow_lake.config.document import DocumentConfig
 from arrow_lake.config.infra import (
     ComputeConfig,
     DaftConfig,
@@ -43,7 +43,7 @@ from arrow_lake.config.infra import (
     LifecycleConfig,
     ObservabilityConfig,
 )
-from arrow_lake.config.main import ArrowLakeConfig, _build_merged_update
+from arrow_lake.config.main import ArrowLakeConfig, _build_merged_update  # noqa: F401
 from arrow_lake.config.media import (
     DecodeConfig,
     EmbeddingConfig,
@@ -63,7 +63,7 @@ from arrow_lake.config.search import (
 from arrow_lake.config.storage import StorageConfig
 from arrow_lake.config.workflow import ArgoConfig, AutoscaleConfig, WorkflowConfig
 
-__all__ = [
+__all__ = [  # noqa: RUF022
     # Top-level config
     "ArrowLakeConfig",
     # Enums

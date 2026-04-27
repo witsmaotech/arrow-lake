@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
@@ -77,7 +79,7 @@ def register_exception_handlers(app) -> None:
     """Register ArrowLakeError exception handler on a FastAPI app."""
 
     # Keys that may contain internal details and should not be exposed.
-    _SENSITIVE_CONTEXT_KEYS = frozenset({"query", "host", "port", "sql", "file_path"})
+    _sensitive_context_keys = frozenset({"query", "host", "port", "sql", "file_path"})
 
     @app.exception_handler(ArrowLakeError)
     async def arrow_lake_error_handler(request: Request, exc: ArrowLakeError):
@@ -86,7 +88,7 @@ def register_exception_handlers(app) -> None:
         if exc.context:
             safe_context = {
                 k: v for k, v in exc.context.items()
-                if k not in _SENSITIVE_CONTEXT_KEYS
+                if k not in _sensitive_context_keys
             }
         return JSONResponse(
             status_code=status,

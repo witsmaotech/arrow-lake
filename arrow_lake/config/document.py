@@ -70,7 +70,7 @@ class DocumentConfig(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def _check_deprecated_fields(self) -> "DocumentConfig":
+    def _check_deprecated_fields(self) -> DocumentConfig:
         if self.marker_cli_path != "marker_single":
             warnings.warn(
                 "marker_cli_path is deprecated — Kreuzberg is now the default parser",

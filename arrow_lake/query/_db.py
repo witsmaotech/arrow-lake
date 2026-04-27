@@ -127,12 +127,24 @@ class DuckDBSession:
         # It does NOT recognize AWS_ENDPOINT_URL_S3 (the AWS SDK standard name),
         # only AWS_ENDPOINT_URL and its aliases.
         # Ref: lancedb/lance rust/lance-io/src/object_store/providers/aws.rs
-        os.environ.setdefault("AWS_ACCESS_KEY_ID", config.s3_access_key)
-        os.environ.setdefault("AWS_SECRET_ACCESS_KEY", config.s3_secret_key)
-        os.environ.setdefault("AWS_REGION", config.s3_region)
-        os.environ.setdefault("AWS_ENDPOINT_URL", config.s3_endpoint)
-        if is_http:
-            os.environ.setdefault("AWS_ALLOW_HTTP", "true")
+        # NOTE: These env vars are required by lance's Rust SDK. We save/restore
+        # to minimize credential exposure to child processes.
+        _env_backup = {
+            k: os.environ.get(k) for k in (
+                "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
+                "AWS_REGION", "AWS_ENDPOINT_URL", "AWS_ALLOW_HTTP",
+            )
+        }
+        try:
+            os.environ["AWS_ACCESS_KEY_ID"] = config.s3_access_key
+            os.environ["AWS_SECRET_ACCESS_KEY"] = config.s3_secret_key
+            os.environ["AWS_REGION"] = config.s3_region
+            os.environ["AWS_ENDPOINT_URL"] = config.s3_endpoint
+            if is_http:
+                os.environ["AWS_ALLOW_HTTP"] = "true"
+            self._s3_env_backup = _env_backup
+        except Exception:
+            pass
 
     def __enter__(self) -> duckdb.DuckDBPyConnection:
         """Create connection, load extensions, configure resources and S3."""
@@ -143,10 +155,17 @@ class DuckDBSession:
         return self._conn
 
     def __exit__(self, *args: object) -> None:
-        """Close the connection."""
+        """Close the connection and restore S3 env vars."""
         if self._conn is not None:
             self._conn.close()
             self._conn = None
+        backup = getattr(self, "_s3_env_backup", None)
+        if backup:
+            for k, v in backup.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
 
 
 def create_duckdb_session(

@@ -7,7 +7,6 @@ and auth (current user, role-based access).
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import datetime, timezone
 from functools import lru_cache
 
 from fastapi import HTTPException, Request

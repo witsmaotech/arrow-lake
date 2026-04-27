@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from arrow_lake.workflow.audit import AuditEntry, AuditTrail
 
 
 class _LakeAuditMixin:
     """Provides audit trail recording, HMAC verification, querying, and export."""
 
-    def _get_audit_trail(self) -> Any:
+    def _get_audit_trail(self) -> AuditTrail:
         """Lazy-init and cache the AuditTrail component."""
         from arrow_lake.workflow.audit import AuditTrail
 
@@ -73,7 +76,7 @@ class _LakeAuditMixin:
         start: str | None = None,
         end: str | None = None,
         event_type: str | None = None,
-    ) -> list[Any]:
+    ) -> list[AuditEntry]:
         """Query audit entries with optional filters (Story 8.4).
 
         Args:
@@ -109,6 +112,21 @@ class _LakeAuditMixin:
         Returns:
             List of anomaly dicts sorted by severity.
         """
+        from arrow_lake.workflow.audit_analyzer import AnomalyRecord
+
+        entries = self._get_audit_trail().query()
+        from arrow_lake.workflow.audit_analyzer import AuditAnalyzer
+
+        analyzer = AuditAnalyzer(entries)
+        results: list[dict[str, Any]] = []
+        for r in analyzer.analyze():
+            if isinstance(r, AnomalyRecord):
+                results.append(asdict(r))
+            elif hasattr(r, "__dict__"):
+                results.append(r.__dict__)
+            else:
+                results.append(asdict(r))
+        return results
         from arrow_lake.workflow.audit_analyzer import AuditAnalyzer
 
         entries = self._get_audit_trail().query()

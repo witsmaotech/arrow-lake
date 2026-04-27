@@ -48,7 +48,7 @@ def segment_text(text: str) -> str:
     try:
         segments = jieba.lcut(text)
         return " ".join(segments)
-    except (ValueError, RuntimeError, UnicodeDecodeError) as exc:
+    except (ValueError, RuntimeError, UnicodeDecodeError):
         _log.warning("jieba segmentation failed, returning original text", exc_info=True)
         return text
 

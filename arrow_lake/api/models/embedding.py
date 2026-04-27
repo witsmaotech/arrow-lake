@@ -64,10 +64,10 @@ class ImageEmbedRequest(BaseModel):
     @field_validator("images")
     @classmethod
     def _validate_image_size(cls, images: list[str]) -> list[str]:
-        _MAX_BASE64_LEN = 27_000_000  # ~20MB decoded
+        _max_base64_len = 27_000_000  # ~20MB decoded
         for i, img in enumerate(images):
-            if len(img) > _MAX_BASE64_LEN:
+            if len(img) > _max_base64_len:
                 raise ValueError(
-                    f"Image at index {i} exceeds maximum size (base64 length {len(img)} > {_MAX_BASE64_LEN})"
+                    f"Image at index {i} exceeds maximum size (base64 length {len(img)} > {_max_base64_len})"
                 )
         return images

@@ -91,6 +91,15 @@ class AuthConfig(BaseModel):
     jwt_refresh_token_days: int = 7
     jwt_issuer: str = "arrow-lake"
 
+    @field_validator("jwt_secret_key")
+    @classmethod
+    def validate_jwt_secret(cls, v: str) -> str:
+        if len(v) > 0 and len(v) < 32:
+            raise ValueError(
+                f"jwt_secret_key must be >= 32 characters for security, got {len(v)}"
+            )
+        return v
+
     @field_validator("jwt_access_token_minutes")
     @classmethod
     def validate_access_minutes(cls, v: int) -> int:

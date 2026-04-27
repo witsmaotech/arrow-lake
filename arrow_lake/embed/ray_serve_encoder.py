@@ -148,15 +148,7 @@ class RayServeEmbeddingEncoder:
                 vector_column=f"{column}_embedding",
             )
         except (ImportError, ConnectionError, OSError, EmbeddingError) as exc:
-            if not fallback_enabled:
-                raise
-            logger.warning(
-                "EMBEDDING_RAY_SERVE_FALLBACK: %s — falling back to local encoder",
-                exc,
-            )
-            return self._fallback_encode(table, column, rows_to_encode=non_null_count)
-        except (ConnectionError, ImportError, TimeoutError, RuntimeError) as exc:
-            if not fallback_enabled:
+            if isinstance(exc, (ImportError, ConnectionError, OSError)) and not fallback_enabled:
                 raise EmbeddingError(
                     error_code=ErrorCode.EMBEDDING_MODEL_ERROR,
                     message=f"Ray Serve encoding failed: {exc}",

@@ -146,7 +146,7 @@ curl -X POST http://localhost:8000/api/v2/auth/refresh \
 curl -X POST http://localhost:8000/api/v1/datasets/docs/ingest \
   -H "X-API-Key: your-secret-api-key-here" \
   -H "Content-Type: application/json" \
-  -d '{"file_paths": ["docs/cookbook/datas/papers/full_text/p001_attention_is_all_you_need.pdf", "docs/cookbook/datas/papers/full_text/p002_bert_pretraining.pdf"]}'
+  -d '{"file_paths": ["examples/data/papers/full_text/p001_attention_is_all_you_need.pdf", "examples/data/papers/full_text/p002_bert_pretraining.pdf"]}'
 # => {"success": true, "dataset_name": "docs", "total_rows": 156, "total_files": 2, ...}
 ```
 
@@ -243,7 +243,7 @@ async def build_kg(dataset: str) -> dict:
 
 
 async def main():
-    result = await ingest_files("docs", ["docs/cookbook/datas/kb/knowledge.jsonl"])
+    result = await ingest_files("docs", ["examples/data/kb/knowledge.jsonl"])
     print(f"Ingestion complete: {result['total_rows']} rows")
 
     results = await vector_search("docs", "vector index types")

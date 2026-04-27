@@ -306,12 +306,12 @@ class Ingestor:
             DocumentError: If document parsing fails.
             IngestError: If dataset write fails.
         """
+        from arrow_lake.exceptions import DocumentError
+        from arrow_lake.exceptions import ErrorCode as DocErrorCode
         from arrow_lake.ingest.chunker import DocumentChunker
         from arrow_lake.ingest.document import DocumentParser
-        from arrow_lake.exceptions import DocumentError, ErrorCode as DocErrorCode
 
         if doc_config is not None:
-            from arrow_lake.config._enums import ChunkStrategy
             chunker = DocumentChunker(
                 strategy=doc_config.chunk_strategy,
                 chunk_size=doc_config.chunk_size,
@@ -347,7 +347,7 @@ class Ingestor:
             blob_key = ""
             if blob_store is not None and (doc_config is None or doc_config.store_raw_pdf):
                 prefix = doc_config.blob_prefix if doc_config else "documents/"
-                safe_stem = pdf_path.stem.replace("/", "_").replace("\\", "_")
+                safe_stem = pdf_path.stem.replace("/", "_").replace("\\", "_").replace("..", "_")
                 blob_key = f"{prefix}{safe_stem}/{pdf_path.name}"
                 try:
                     blob_store.upload(blob_key, pdf_path.read_bytes())

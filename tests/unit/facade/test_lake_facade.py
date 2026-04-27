@@ -235,7 +235,8 @@ class TestLakeCreateDataset:
         assert entry.num_rows == 2
 
     def test_create_dataset_rejects_non_table(self, lake: Lake) -> None:
-        with pytest.raises(TypeError, match="pyarrow.Table"):
+        from arrow_lake.exceptions import ValidationError
+        with pytest.raises(ValidationError, match="pyarrow.Table"):
             lake.create_dataset("bad", [1, 2, 3])  # type: ignore
 
     def test_create_dataset_rejects_existing(self, lake: Lake) -> None:
@@ -263,7 +264,8 @@ class TestLakeAppendDataset:
         assert entry.num_rows == 2
 
     def test_append_dataset_rejects_non_table(self, lake: Lake) -> None:
-        with pytest.raises(TypeError):
+        from arrow_lake.exceptions import ValidationError
+        with pytest.raises(ValidationError):
             lake.append_dataset("missing", "not a table")  # type: ignore
 
     def test_append_dataset_rejects_missing_dataset(self, lake: Lake) -> None:

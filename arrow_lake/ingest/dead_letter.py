@@ -155,8 +155,11 @@ class IngestDeadLetterQueue:
             for line in text.strip().split("\n"):
                 if line.strip():
                     self._items.append(DeadLetterItem.from_dict(json.loads(line)))
-        except (json.JSONDecodeError, ValueError, OSError):
-            pass
+        except (json.JSONDecodeError, ValueError, OSError) as exc:
+            import structlog
+            structlog.get_logger().warning(
+                "dead_letter_load_failed", path=str(self._queue_path), error=str(exc)
+            )
 
     def _append_item(self, item: DeadLetterItem) -> None:
         with open(self._queue_path, "a", encoding="utf-8") as f:

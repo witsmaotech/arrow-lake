@@ -14,7 +14,11 @@ from arrow_lake._version import __version__
 from arrow_lake.api.auth import ApiKeyMiddleware
 from arrow_lake.api.deps import get_config
 from arrow_lake.api.errors import register_exception_handlers
-from arrow_lake.api.middleware import MetricsMiddleware, RequestSizeLimitMiddleware, SecurityHeadersMiddleware
+from arrow_lake.api.middleware import (
+    MetricsMiddleware,
+    RequestSizeLimitMiddleware,
+    SecurityHeadersMiddleware,
+)
 from arrow_lake.api.rate_limit import RateLimitMiddleware
 from arrow_lake.api.routers.admin import router as admin_router
 from arrow_lake.api.routers.audit import router as audit_router

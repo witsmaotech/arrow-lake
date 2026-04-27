@@ -52,7 +52,7 @@ class _LakeAdminMixin:
         """
         return self._get_storage().list_datasets()
 
-    def open_dataset(self, name: str):
+    def open_dataset(self, name: str) -> Any:
         """Open a dataset and return the underlying Lance dataset object.
 
         Args:

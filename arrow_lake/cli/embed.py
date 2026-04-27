@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-
 import click
 import numpy as np
 
@@ -43,20 +41,17 @@ def embed_text(text: str, model: str, source: str) -> None:
 def embed_image(path: str, model: str | None) -> None:
     """Generate embedding vector for an image."""
     try:
-        import pyarrow as pa
+        import pyarrow  # noqa: F401
     except ImportError:
         _print_error("pyarrow is required for image embedding")
         raise SystemExit(1) from None
 
-    console.print(f"[dim]Loading image encoder...[/dim]", end=" ")
+    console.print("[dim]Loading image encoder...[/dim]", end=" ")
 
     try:
         from arrow_lake.embed.encoder import LocalEmbeddingEncoder
 
-        if model:
-            encoder = LocalEmbeddingEncoder(model_name=model)
-        else:
-            encoder = LocalEmbeddingEncoder()
+        encoder = LocalEmbeddingEncoder(model_name=model) if model else LocalEmbeddingEncoder()
         loaded_model = encoder._load_model()
         console.print("[green]done[/green]")
     except Exception as exc:
