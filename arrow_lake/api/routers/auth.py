@@ -33,27 +33,67 @@ def _get_auth_service(request: Request):
 
 
 def _check_api_key(request: Request, config: ArrowLakeConfig) -> None:
-    """Validate API key when auth_mode is 'both'.
+    """Validate authentication for the token exchange endpoint.
 
-    Raises HTTPException 401 if API key is required but missing/invalid.
+    - auth_mode='both': validate API key header.
+    - auth_mode='jwt': validate bootstrap token or existing refresh token.
+    - auth_mode='api_key': reject (use API key directly for API calls).
     """
-    if config.auth.auth_mode != "both":
-        return
-    api_key = config.api.api_key
-    if not api_key:
-        return
-    header_name = config.api.api_key_header
-    provided = request.headers.get(header_name, "")
-    if not hmac.compare_digest(provided, api_key):
-        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+    from arrow_lake.config._enums import AuthMode
+
+    mode = config.auth.auth_mode
+
+    if mode == AuthMode.BOTH:
+        api_key = config.api.api_key
+        if not api_key:
+            return
+        header_name = config.api.api_key_header
+        provided = request.headers.get(header_name, "")
+        if not hmac.compare_digest(provided, api_key):
+            raise HTTPException(status_code=401, detail="Invalid or missing API key")
+
+    elif mode == AuthMode.JWT:
+        # Check for bootstrap token in Authorization header
+        auth_header = request.headers.get("Authorization", "")
+        bootstrap_token = config.auth.jwt_bootstrap_token
+        if bootstrap_token:
+            # Accept as "Bearer <bootstrap_token>"
+            provided = auth_header.removeprefix("Bearer ").strip() if auth_header else ""
+            if hmac.compare_digest(provided, bootstrap_token):
+                return
+        # Also accept a valid refresh token as Bearer token
+        if auth_header.startswith("Bearer "):
+            svc = _get_auth_service(request)
+            try:
+                svc.verify_token(auth_header[7:], require_refresh=True)
+                return
+            except (ValueError, AttributeError):
+                pass
+        raise HTTPException(
+            status_code=401,
+            detail="Provide a valid bootstrap token or refresh token to obtain new JWT",
+        )
+
+    else:
+        # auth_mode='api_key' — allow if api_key is set
+        api_key = config.api.api_key
+        if api_key:
+            header_name = config.api.api_key_header
+            provided = request.headers.get(header_name, "")
+            if hmac.compare_digest(provided, api_key):
+                return
+        # No api_key configured — allow in unauthenticated setups
+        if not api_key and not config.auth.jwt_secret_key:
+            return
 
 
-@router.post("/token", summary="Exchange API key for JWT token pair")
+@router.post("/token", summary="Exchange credentials for JWT token pair")
 async def exchange_token(request: Request) -> TokenPair:
-    """Accept API key, return JWT access + refresh tokens.
+    """Return JWT access + refresh tokens.
 
-    Requires X-API-Key header when auth_mode is "both".
-    When auth_mode is "jwt", any request gets a token (for initial bootstrap).
+    auth_mode='both': requires X-API-Key header.
+    auth_mode='jwt': requires bootstrap token or valid refresh token.
+    auth_mode='api_key': returns 403.
     """
     config: ArrowLakeConfig = get_app_config(request)
     auth_cfg = config.auth

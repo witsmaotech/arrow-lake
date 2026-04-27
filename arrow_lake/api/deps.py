@@ -39,8 +39,7 @@ def get_current_user(request: Request) -> TokenPayload:
     """Return the authenticated user.
 
     Tries request.state.user first.  Falls back to verifying the Bearer
-    token directly via the AuthService singleton (needed because
-    BaseHTTPMiddleware does not propagate request.state in Starlette 1.0.0).
+    token directly via the AuthService singleton.
 
     Raises 401 if no user is set (auth middleware didn't run or was disabled).
     """
@@ -48,7 +47,6 @@ def get_current_user(request: Request) -> TokenPayload:
     if user is not None:
         return user
 
-    # Fallback: verify JWT directly (BaseHTTPMiddleware state propagation)
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Not authenticated")
@@ -75,12 +73,20 @@ def require_role(required_role: Role) -> Callable:
     _hierarchy = {Role.VIEWER: 0, Role.EDITOR: 1, Role.ADMIN: 2}
 
     def _check(request: Request) -> TokenPayload:
+        # If no auth service is configured, allow all (backward compat)
         svc = getattr(request.app.state, "auth_service", None)
         if svc is None:
-            # API Key auth validated by ApiKeyMiddleware — treat as ADMIN.
-            # BaseHTTPMiddleware doesn't propagate request.state, so we
-            # trust that the middleware already rejected invalid keys.
-            return TokenPayload(sub="api-key", role=Role.ADMIN, exp=0, iat=0)
+            return TokenPayload(sub="anonymous", role=Role.ADMIN, exp=0, iat=0)
+
+        user = get_current_user(request)
+        user_level = _hierarchy.get(user.role, -1)
+        required_level = _hierarchy.get(required_role, -1)
+        if user_level < required_level:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Insufficient permissions: requires {required_role.value}",
+            )
+        return user
 
         user = get_current_user(request)
         user_level = _hierarchy.get(user.role, -1)

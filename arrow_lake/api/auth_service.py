@@ -89,8 +89,13 @@ class AuthService:
             permissions=old_payload.permissions,
         )
 
-    def verify_token(self, token: str) -> TokenPayload:
-        """Verify and decode a JWT token. Raises ValueError on failure."""
+    def verify_token(self, token: str, *, require_refresh: bool = False) -> TokenPayload:
+        """Verify and decode a JWT token. Raises ValueError on failure.
+
+        Args:
+            token: JWT string.
+            require_refresh: If True, only accept tokens with refresh-level TTL.
+        """
         if not _JWT_AVAILABLE:
             raise ValueError("PyJWT not installed — cannot verify tokens")
 
@@ -105,6 +110,18 @@ class AuthService:
             raise ValueError("Token expired") from None
         except jwt.InvalidTokenError as exc:
             raise ValueError(f"Invalid token: {exc}") from None
+
+        if require_refresh:
+            now = datetime.now(UTC)
+            exp = data.get("exp", 0)
+            if isinstance(exp, (int, float)):
+                # Refresh tokens have days-long TTL; reject short-lived access tokens
+                created = data.get("iat", now)
+                ttl = exp - (created if isinstance(created, (int, float)) else int(now.timestamp()))
+                if ttl < 3600:  # Less than 1 hour TTL means it's an access token
+                    raise ValueError("Expected refresh token, got access token")
+            else:
+                raise ValueError("Token missing expiry")
 
         # JWT returns exp/iat as integers, convert to datetime for Pydantic
         for key in ("exp", "iat"):

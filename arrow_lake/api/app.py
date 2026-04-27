@@ -11,7 +11,6 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.gzip import GZipMiddleware
 
 from arrow_lake._version import __version__
-from arrow_lake.api.auth import ApiKeyMiddleware
 from arrow_lake.api.deps import get_config
 from arrow_lake.api.errors import register_exception_handlers
 from arrow_lake.api.middleware import (
@@ -179,14 +178,18 @@ def create_app(config: ArrowLakeConfig | None = None) -> FastAPI:
             exempt_paths=config.rate_limit.exempt_paths,
         )
 
-    # API Key middleware (BaseHTTPMiddleware is fine here — no state propagation needed)
+    # API Key middleware (pure ASGI — correctly propagates request.state)
     if config.api.api_key:
-        app.add_middleware(
-            ApiKeyMiddleware,
-            api_key=config.api.api_key,
-            header_name=config.api.api_key_header,
-            docs_enabled=config.api.docs_enabled,
-        )
+        @app.middleware("http")
+        async def api_key_middleware(request, call_next):
+            from arrow_lake.api.auth import api_key_middleware_fn
+            return await api_key_middleware_fn(
+                request, call_next,
+                api_key=config.api.api_key,
+                header_name=config.api.api_key_header,
+                docs_enabled=config.api.docs_enabled,
+                default_role=config.api.api_key_default_role,
+            )
 
     # --- Pure ASGI middleware (registered via @app.middleware) ---
     # These correctly propagate request.state between layers.

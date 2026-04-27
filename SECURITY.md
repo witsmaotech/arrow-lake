@@ -17,7 +17,7 @@ responsibly.
 
 - **API Key**: `X-API-Key` header for service-to-service auth
 - **JWT**: `Authorization: Bearer <token>` for user sessions
-- **Rate Limiting**: Enabled by default via slowapi (configurable)
+- **Rate Limiting**: Enabled by default via built-in RateLimitMiddleware (configurable)
 
 ### Data Protection
 
@@ -27,7 +27,7 @@ responsibly.
 
 ### Transport
 
-- REST API: HTTPS enforced in production (configurable via `api.tls_enabled`)
+- REST API: TLS should be enabled in production via uvicorn (`--ssl-keyfile`/`--ssl-certfile`) or a reverse proxy (nginx/Caddy). See `api.tls_enabled` for configuration flag.
 - CORS: configurable via `api.cors_origins`
 - Request size limits: configurable via `api.max_request_size_mb`
 

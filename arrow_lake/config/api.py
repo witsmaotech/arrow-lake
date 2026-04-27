@@ -53,6 +53,11 @@ class ApiConfig(BaseModel):
         security_headers_enabled: Enable HTTP security response headers.
         content_security_policy: CSP value. Empty = header not set.
         frame_options: X-Frame-Options value (DENY, SAMEORIGIN, or empty to disable).
+        tls_enabled: Whether TLS is enabled. Actual TLS termination should be
+            handled by uvicorn CLI flags or a reverse proxy (nginx/Caddy).
+        ssl_keyfile: Path to TLS private key file.
+        ssl_certfile: Path to TLS certificate file.
+        api_key_default_role: Default role assigned to API key authenticated users.
     """
 
     enabled: bool = False
@@ -70,6 +75,10 @@ class ApiConfig(BaseModel):
     security_headers_enabled: bool = True
     content_security_policy: str = ""
     frame_options: str = "DENY"
+    tls_enabled: bool = False
+    ssl_keyfile: str = ""
+    ssl_certfile: str = ""
+    api_key_default_role: str = "VIEWER"
 
 
 class AuthConfig(BaseModel):
@@ -82,6 +91,10 @@ class AuthConfig(BaseModel):
         jwt_access_token_minutes: Access token 有效期 (分钟).
         jwt_refresh_token_days: Refresh token 有效期 (天).
         jwt_issuer: JWT issuer 声明.
+        jwt_public_key: PEM-encoded public key (RS256/ES256).
+        jwt_private_key: PEM-encoded private key (RS256/ES256).
+        jwt_bootstrap_token: One-time bootstrap token for initial JWT
+            acquisition when auth_mode is "jwt".
     """
 
     auth_mode: AuthMode = AuthMode.API_KEY
@@ -90,6 +103,9 @@ class AuthConfig(BaseModel):
     jwt_access_token_minutes: int = 30
     jwt_refresh_token_days: int = 7
     jwt_issuer: str = "arrow-lake"
+    jwt_public_key: str = ""
+    jwt_private_key: str = ""
+    jwt_bootstrap_token: str = ""
 
     @field_validator("jwt_secret_key")
     @classmethod
