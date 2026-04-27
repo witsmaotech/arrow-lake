@@ -1,4 +1,4 @@
-"""Document chunking strategies — page, paragraph, recursive, semchunk, chonkie.
+"""Document chunking strategies — page, paragraph, recursive, semchunk, chonkie.  # noqa: RUF001
 
 Provides DocumentChunker for splitting extracted document text into
 chunks suitable for embedding and RAG retrieval.
@@ -76,7 +76,7 @@ def _split_recursive(text: str, size: int, overlap: int) -> list[str]:
 
     chunks: list[str] = []
 
-    sentences = re.split(r"(?<=[.!?。！？])\s+", text)
+    sentences = re.split(r"(?<=[.!?。！？])\s+", text)  # noqa: RUF001
     if len(sentences) <= 1:
         words = text.split()
         pos = 0
