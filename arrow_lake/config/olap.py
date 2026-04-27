@@ -19,6 +19,10 @@ class OlapConfig(BaseModel):
             "pyarrow_fallback".
         max_query_memory_mb: Per-query memory limit in MB.
         max_concurrent_queries: Maximum number of concurrent DuckDB queries.
+            Tune based on available RAM: each query reserves max_query_memory_mb.
+            Rule of thumb: max_concurrent_queries * max_query_memory_mb <= 70% of system RAM.
+            Increase for memory-heavy workloads (large joins, aggregations), decrease for
+            latency-sensitive streaming queries.
         query_timeout_seconds: Per-query timeout in seconds.
         ducklake_enabled: Whether DuckLake extension is loaded for materialized
             views and cross-storage joins.

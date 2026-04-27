@@ -40,7 +40,7 @@ class ArrowLakeUser(HttpUser):
         }
         name = f"vector_search_{dataset}"
         self.client.post(
-            f"/api/v2/search/vector",
+            f"/api/v1/search/vector",
             json=payload,
             headers=self._headers(),
             name=name,
@@ -56,7 +56,7 @@ class ArrowLakeUser(HttpUser):
             "dataset_name": "benchmark",
         }
         self.client.post(
-            "/api/v2/search/fts",
+            "/api/v1/search/fts",
             json=payload,
             headers=self._headers(),
             name="fts_search",
@@ -74,7 +74,7 @@ class ArrowLakeUser(HttpUser):
             "alpha": 0.5,
         }
         self.client.post(
-            "/api/v2/search/hybrid",
+            "/api/v1/search/hybrid",
             json=payload,
             headers=self._headers(),
             name="hybrid_search",

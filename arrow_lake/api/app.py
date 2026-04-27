@@ -13,12 +13,6 @@ from starlette.middleware.gzip import GZipMiddleware
 from arrow_lake._version import __version__
 from arrow_lake.api.deps import get_config
 from arrow_lake.api.errors import register_exception_handlers
-from arrow_lake.api.middleware import (
-    MetricsMiddleware,
-    RequestSizeLimitMiddleware,
-    SecurityHeadersMiddleware,
-)
-from arrow_lake.api.rate_limit import RateLimitMiddleware
 from arrow_lake.api.routers.admin import router as admin_router
 from arrow_lake.api.routers.audit import router as audit_router
 from arrow_lake.api.routers.auth import router as auth_router
@@ -46,16 +40,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     lake = Lake(base_uri=config.storage.base_uri, config=config)
     app.state.lake = lake
     yield
-    # Shutdown: close auth service, LLM providers, session managers
-    auth_svc = getattr(app.state, "auth_service", None)
-    if auth_svc is not None:
-        pass  # AuthService has no closeable resources currently
-    # Flush metrics on shutdown if enabled
-    try:
-        from arrow_lake.core.metrics import flush_metrics
-        flush_metrics()
-    except Exception:
-        pass
+    # Shutdown: close Lake instance and all its managed components
+    lake.shutdown()
 
 
 logger = logging.getLogger(__name__)
@@ -152,37 +138,64 @@ def create_app(config: ArrowLakeConfig | None = None) -> FastAPI:
     # GZip compression (Starlette built-in)
     app.add_middleware(GZipMiddleware, minimum_size=1000)
 
+    # --- Pure ASGI middleware (registered via @app.middleware) ---
+    # These correctly propagate request.state between layers.
+
+    from arrow_lake.api.middleware import (
+        correlation_id_middleware_fn,
+        metrics_middleware_fn,
+        request_size_limit_middleware_fn,
+        security_headers_middleware_fn,
+    )
+
     # Prometheus HTTP request duration
-    app.add_middleware(MetricsMiddleware)
+    @app.middleware("http")
+    async def metrics_middleware(request, call_next):
+        return await metrics_middleware_fn(request, call_next)
 
     # Request body size limit
-    app.add_middleware(
-        RequestSizeLimitMiddleware,
-        max_size_bytes=config.api.max_request_size_bytes,
-    )
+    max_size = config.api.max_request_size_bytes
+
+    @app.middleware("http")
+    async def request_size_limit_middleware(request, call_next):
+        return await request_size_limit_middleware_fn(request, call_next, max_size_bytes=max_size)
 
     # Security response headers
     if config.api.security_headers_enabled:
-        app.add_middleware(
-            SecurityHeadersMiddleware,
-            content_security_policy=config.api.content_security_policy,
-            frame_options=config.api.frame_options,
-        )
+        csp = config.api.content_security_policy
+        frame_opts = config.api.frame_options
+
+        @app.middleware("http")
+        async def security_headers_middleware(request, call_next):
+            return await security_headers_middleware_fn(
+                request, call_next,
+                content_security_policy=csp,
+                frame_options=frame_opts,
+            )
 
     # Rate limiting (optional — disabled by default)
     if config.rate_limit.enabled:
-        app.add_middleware(
-            RateLimitMiddleware,
-            rpm=config.rate_limit.default_requests_per_minute,
-            burst=config.rate_limit.default_burst,
-            exempt_paths=config.rate_limit.exempt_paths,
-        )
+        from arrow_lake.api.rate_limit import rate_limit_middleware_fn
 
-    # API Key middleware (pure ASGI — correctly propagates request.state)
+        rl_rpm = config.rate_limit.default_requests_per_minute
+        rl_burst = config.rate_limit.default_burst
+        rl_exempt = config.rate_limit.exempt_paths
+
+        @app.middleware("http")
+        async def rate_limit_middleware(request, call_next):
+            return await rate_limit_middleware_fn(
+                request, call_next,
+                rpm=rl_rpm,
+                burst=rl_burst,
+                exempt_paths=rl_exempt,
+            )
+
+    # API Key middleware
     if config.api.api_key:
+        from arrow_lake.api.auth import api_key_middleware_fn
+
         @app.middleware("http")
         async def api_key_middleware(request, call_next):
-            from arrow_lake.api.auth import api_key_middleware_fn
             return await api_key_middleware_fn(
                 request, call_next,
                 api_key=config.api.api_key,
@@ -191,15 +204,11 @@ def create_app(config: ArrowLakeConfig | None = None) -> FastAPI:
                 default_role=config.api.api_key_default_role,
             )
 
-    # --- Pure ASGI middleware (registered via @app.middleware) ---
-    # These correctly propagate request.state between layers.
-
     # Correlation ID propagation (before auth)
     auto_gen = config.api.auto_generate_request_id
 
     @app.middleware("http")
     async def correlation_id_middleware(request, call_next):
-        from arrow_lake.api.middleware import correlation_id_middleware_fn
         return await correlation_id_middleware_fn(request, call_next, auto_generate=auto_gen)
 
     # JWT authentication
@@ -211,6 +220,8 @@ def create_app(config: ArrowLakeConfig | None = None) -> FastAPI:
         svc = AuthService(
             secret_key=config.auth.jwt_secret_key,
             algorithm=config.auth.jwt_algorithm,
+            public_key=config.auth.jwt_public_key,
+            private_key=config.auth.jwt_private_key,
             access_token_minutes=config.auth.jwt_access_token_minutes,
             refresh_token_days=config.auth.jwt_refresh_token_days,
             issuer=config.auth.jwt_issuer,

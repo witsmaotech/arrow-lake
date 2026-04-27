@@ -67,50 +67,50 @@ class TestKGAPIEndpoints:
         return _create_app_with_kg_disabled()
 
     def test_build_returns_404_when_disabled(self, client: TestClient) -> None:
-        """POST /api/v2/kg/build should return 404 when KG is not enabled."""
+        """POST /api/v1/kg/build should return 404 when KG is not enabled."""
         resp = client.post(
-            "/api/v2/kg/build",
+            "/api/v1/kg/build",
             json={"dataset_name": "documents"},
         )
         assert resp.status_code == 404
 
     def test_build_status_returns_404_when_disabled(self, client: TestClient) -> None:
-        """GET /api/v2/kg/build/{task_id}/status should return 404 when KG is not enabled."""
-        resp = client.get("/api/v2/kg/build/nonexistent-task/status")
+        """GET /api/v1/kg/build/{task_id}/status should return 404 when KG is not enabled."""
+        resp = client.get("/api/v1/kg/build/nonexistent-task/status")
         assert resp.status_code == 404
 
     def test_stats_returns_404_when_disabled(self, client: TestClient) -> None:
-        """GET /api/v2/kg/stats should return 404 when KG is not enabled."""
-        resp = client.get("/api/v2/kg/stats")
+        """GET /api/v1/kg/stats should return 404 when KG is not enabled."""
+        resp = client.get("/api/v1/kg/stats")
         assert resp.status_code == 404
 
     def test_schema_returns_404_when_disabled(self, client: TestClient) -> None:
-        """GET /api/v2/kg/schema should return 404 when KG is not enabled."""
-        resp = client.get("/api/v2/kg/schema")
+        """GET /api/v1/kg/schema should return 404 when KG is not enabled."""
+        resp = client.get("/api/v1/kg/schema")
         assert resp.status_code == 404
 
     def test_query_returns_404_when_disabled(self, client: TestClient) -> None:
-        """POST /api/v2/kg/query should return 404 when KG is not enabled."""
+        """POST /api/v1/kg/query should return 404 when KG is not enabled."""
         resp = client.post(
-            "/api/v2/kg/query",
+            "/api/v1/kg/query",
             json={"gremlin": "g.V()"},
         )
         assert resp.status_code == 404
 
     def test_neighbors_returns_404_when_disabled(self, client: TestClient) -> None:
-        """GET /api/v2/kg/entities/{entity_id}/neighbors should return 404 when KG is not enabled."""
-        resp = client.get("/api/v2/kg/entities/some-entity/neighbors")
+        """GET /api/v1/kg/entities/{entity_id}/neighbors should return 404 when KG is not enabled."""
+        resp = client.get("/api/v1/kg/entities/some-entity/neighbors")
         assert resp.status_code == 404
 
     def test_delete_returns_404_when_disabled(self, client: TestClient) -> None:
-        """DELETE /api/v2/kg/graph should return 404 when KG is not enabled."""
-        resp = client.delete("/api/v2/kg/graph")
+        """DELETE /api/v1/kg/graph should return 404 when KG is not enabled."""
+        resp = client.delete("/api/v1/kg/graph")
         assert resp.status_code == 404
 
     def test_graphrag_returns_404_when_disabled(self, client: TestClient) -> None:
-        """POST /api/v2/kg/query/graphrag should return 404 when KG is not enabled."""
+        """POST /api/v1/kg/query/graphrag should return 404 when KG is not enabled."""
         resp = client.post(
-            "/api/v2/kg/query/graphrag",
+            "/api/v1/kg/query/graphrag",
             json={"question": "What is Python?", "dataset_name": "documents"},
         )
         assert resp.status_code == 404
@@ -118,7 +118,7 @@ class TestKGAPIEndpoints:
     def test_error_detail_includes_disabled_message(self, client: TestClient) -> None:
         """KG error responses should include a descriptive detail message."""
         resp = client.post(
-            "/api/v2/kg/build",
+            "/api/v1/kg/build",
             json={"dataset_name": "documents"},
         )
         assert resp.status_code == 404

@@ -65,30 +65,32 @@ def get_current_user(request: Request) -> TokenPayload:
 def require_role(required_role: Role) -> Callable:
     """Factory that returns a dependency enforcing a minimum role.
 
-    When JWT auth is disabled (no auth_service on app.state),
-    the role check is skipped — all users are treated as having full access.
+    When no auth_service is configured, access is denied by default (403)
+    unless ``config.auth.allow_unauthenticated_access`` is explicitly True.
 
     Role hierarchy: ADMIN > EDITOR > VIEWER.
     """
     _hierarchy = {Role.VIEWER: 0, Role.EDITOR: 1, Role.ADMIN: 2}
 
     def _check(request: Request) -> TokenPayload:
-        # If no auth service is configured, allow all (backward compat)
-        svc = getattr(request.app.state, "auth_service", None)
-        if svc is None:
-            return TokenPayload(sub="anonymous", role=Role.ADMIN, exp=0, iat=0)
+        # Try to get user from middleware (API key or JWT set request.state.user)
+        user = getattr(request.state, "user", None)
 
-        user = get_current_user(request)
-        user_level = _hierarchy.get(user.role, -1)
-        required_level = _hierarchy.get(required_role, -1)
-        if user_level < required_level:
-            raise HTTPException(
-                status_code=403,
-                detail=f"Insufficient permissions: requires {required_role.value}",
-            )
-        return user
+        if user is None:
+            svc = getattr(request.app.state, "auth_service", None)
+            if svc is not None:
+                user = get_current_user(request)
 
-        user = get_current_user(request)
+        if user is None:
+            cfg = getattr(request.app.state, "config", None)
+            allow = getattr(cfg, "auth", None) and cfg.auth.allow_unauthenticated_access
+            if not allow:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Authentication service not configured",
+                )
+            user = TokenPayload(sub="anonymous", role=Role.ADMIN, exp=0, iat=0)
+
         user_level = _hierarchy.get(user.role, -1)
         required_level = _hierarchy.get(required_role, -1)
         if user_level < required_level:

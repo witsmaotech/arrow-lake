@@ -248,6 +248,7 @@ class ApiEmbeddingEncoder:
             headers=headers,
             limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
         )
+        self._cb: Any = None
 
     def encode(self, texts: list[str]) -> EmbeddingBatch:
         """Encode texts via the API.
@@ -261,6 +262,14 @@ class ApiEmbeddingEncoder:
         Raises:
             EmbeddingError: On API error, timeout, or rate limit.
         """
+
+        cb = self._get_circuit_breaker()
+        if not cb.allow_request():
+            raise EmbeddingError(
+                error_code=ErrorCode.EMBEDDING_TIMEOUT,
+                message=f"Embedding API circuit breaker OPEN for {self.api_base}",
+            )
+
         @retry(
             retry=retry_if_exception_type((httpx.TimeoutException, httpx.ConnectError)),
             stop=stop_after_attempt(self.max_retries),
@@ -306,21 +315,32 @@ class ApiEmbeddingEncoder:
             )
 
         try:
-            return _do_encode(texts)
+            result = _do_encode(texts)
+            cb.record_success()
+            return result
         except EmbeddingError:
+            cb.record_failure()
             raise
         except httpx.TimeoutException as exc:
+            cb.record_failure()
             raise EmbeddingError(
                 error_code=ErrorCode.EMBEDDING_TIMEOUT,
                 message=f"Embedding API timed out: {exc}",
             ) from exc
         except httpx.ConnectError as exc:
+            cb.record_failure()
             logger.warning(
                 "Embedding API unreachable at %s, falling back to local encoder: %s",
                 self.api_base,
                 exc,
             )
             return self._fallback_encode(texts)
+
+    def _get_circuit_breaker(self):
+        from arrow_lake.core.circuit_breaker import CircuitBreaker
+        if self._cb is None:
+            self._cb = CircuitBreaker(name="embedding-api")
+        return self._cb
 
     def _fallback_encode(self, texts: list[str]) -> EmbeddingBatch:
         """Fallback to local encoder when API is unreachable.

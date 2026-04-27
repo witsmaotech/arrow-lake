@@ -18,9 +18,10 @@ async def run_sync(
     *args: Any,
     timeout: float = _DEFAULT_TIMEOUT,
     label: str = "",
+    **kwargs: Any,
 ) -> Any:
     loop = asyncio.get_running_loop()
-    coro = loop.run_in_executor(None, partial(func, *args))
+    coro = loop.run_in_executor(None, partial(func, *args, **kwargs))
     try:
         return await asyncio.wait_for(coro, timeout=timeout)
     except TimeoutError:

@@ -58,6 +58,7 @@ async def client(mock_lake_with_catalog: MagicMock) -> AsyncClient:
     from arrow_lake.config import ArrowLakeConfig
     config = ArrowLakeConfig()
     config.api.api_key = "test-key"
+    config.api.api_key_default_role = "ADMIN"
     app = create_app(config)
     app.state.lake = mock_lake_with_catalog
     async with AsyncClient(
@@ -86,7 +87,10 @@ async def test_list_datasets(client: AsyncClient) -> None:
 @pytest.mark.asyncio
 async def test_list_datasets_empty(mock_lake_with_catalog: MagicMock) -> None:
     mock_lake_with_catalog.catalog.return_value = _FakeCatalogResult(datasets=[], total=0)
-    app = create_app()
+    from arrow_lake.config import ArrowLakeConfig
+    config = ArrowLakeConfig()
+    config.api.api_key_default_role = "ADMIN"
+    app = create_app(config)
     app.state.lake = mock_lake_with_catalog
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
@@ -179,12 +183,15 @@ async def test_delete_dataset(client: AsyncClient, mock_lake_with_catalog: Magic
 
 @pytest.mark.asyncio
 async def test_delete_dataset_not_found(mock_lake_with_catalog: MagicMock) -> None:
+    from arrow_lake.config import ArrowLakeConfig
     from arrow_lake.exceptions import CatalogError, ErrorCode
     mock_lake_with_catalog.delete_dataset.side_effect = CatalogError(
         error_code=ErrorCode.CATALOG_DATASET_NOT_FOUND,
         message="Dataset 'nonexistent' not found",
     )
-    app = create_app()
+    config = ArrowLakeConfig()
+    config.auth.allow_unauthenticated_access = True
+    app = create_app(config)
     app.state.lake = mock_lake_with_catalog
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:

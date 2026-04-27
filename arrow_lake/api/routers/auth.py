@@ -10,7 +10,7 @@ from arrow_lake.api.auth_models import Role, TokenPair
 from arrow_lake.api.deps import get_app_config
 from arrow_lake.config import ArrowLakeConfig
 
-router = APIRouter(prefix="/api/v2/auth", tags=["auth"])
+router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
 
 def _get_auth_service(request: Request):
@@ -26,6 +26,8 @@ def _get_auth_service(request: Request):
     return AuthService(
         secret_key=auth_cfg.jwt_secret_key,
         algorithm=auth_cfg.jwt_algorithm,
+        public_key=auth_cfg.jwt_public_key,
+        private_key=auth_cfg.jwt_private_key,
         access_token_minutes=auth_cfg.jwt_access_token_minutes,
         refresh_token_days=auth_cfg.jwt_refresh_token_days,
         issuer=auth_cfg.jwt_issuer,

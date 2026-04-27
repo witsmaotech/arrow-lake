@@ -95,6 +95,9 @@ class AuthConfig(BaseModel):
         jwt_private_key: PEM-encoded private key (RS256/ES256).
         jwt_bootstrap_token: One-time bootstrap token for initial JWT
             acquisition when auth_mode is "jwt".
+        allow_unauthenticated_access: When True and no auth_service is
+            configured, role checks are skipped (dev/test mode).
+            Production deployments should keep this False (default).
     """
 
     auth_mode: AuthMode = AuthMode.API_KEY
@@ -106,6 +109,7 @@ class AuthConfig(BaseModel):
     jwt_public_key: str = ""
     jwt_private_key: str = ""
     jwt_bootstrap_token: str = ""
+    allow_unauthenticated_access: bool = False
 
     @field_validator("jwt_secret_key")
     @classmethod

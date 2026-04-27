@@ -45,7 +45,7 @@ uv sync --extra dedup
 
 ```bash
 uv run python -c "from arrow_lake import Lake; print(f'Arrow Lake {Lake(base_uri=\"./tmp\").version()}')"
-# 输出: Arrow Lake 1.0.0
+# 输出: Arrow Lake 1.2.1
 ```
 
 ### 1.3 基础设施（可选）

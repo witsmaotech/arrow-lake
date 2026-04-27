@@ -27,7 +27,7 @@ pytest.importorskip("pyarrow", reason="pyarrow not installed")
 from httpx import ASGITransport, AsyncClient
 
 from arrow_lake.api.app import create_app
-from arrow_lake.config import ArrowLakeConfig, ApiConfig, StorageConfig
+from arrow_lake.config import ArrowLakeConfig, ApiConfig, AuthConfig, StorageConfig
 from arrow_lake.exceptions import ArrowLakeError, CatalogError, ErrorCode
 
 
@@ -48,13 +48,14 @@ def app_no_auth(lake_base_uri: str) -> Any:
     config = ArrowLakeConfig(
         storage=StorageConfig(backend="local"),
         api=ApiConfig(api_key=""),
+        auth=AuthConfig(allow_unauthenticated_access=True),
     )
 
     # Bypass the lifespan to avoid config.storage.base_uri issue.
     # Instead, create Lake directly and set on app.state.
     from fastapi import FastAPI
 
-    application: FastAPI = create_app()
+    application: FastAPI = create_app(config=config)
     from arrow_lake import Lake
 
     lake = Lake(base_uri=lake_base_uri, config=config)

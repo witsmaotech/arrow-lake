@@ -31,19 +31,23 @@ class AuthService:
     def __init__(
         self,
         *,
-        secret_key: str,
+        secret_key: str = "",
         algorithm: str = "HS256",
+        public_key: str = "",
+        private_key: str = "",
         access_token_minutes: int = 30,
         refresh_token_days: int = 7,
         issuer: str = "arrow-lake",
     ) -> None:
-        if not secret_key and _JWT_AVAILABLE:
-            logger.warning("JWT secret key is empty — tokens will be insecure")
         self._secret_key = secret_key
         self._algorithm = algorithm
+        self._public_key = public_key
+        self._private_key = private_key
         self._access_minutes = access_token_minutes
         self._refresh_days = refresh_token_days
         self._issuer = issuer
+        if _JWT_AVAILABLE:
+            self._validate_config()
 
     def create_access_token(
         self,
@@ -102,7 +106,7 @@ class AuthService:
         try:
             data = jwt.decode(
                 token,
-                self._secret_key,
+                self._verification_key(),
                 algorithms=[self._algorithm],
                 issuer=self._issuer,
             )
@@ -143,6 +147,31 @@ class AuthService:
                 data[key] = int(data[key].timestamp())
         return jwt.encode(
             data,
-            self._secret_key,
+            self._signing_key(),
             algorithm=self._algorithm,
         )
+
+    def _validate_config(self) -> None:
+        """Validate key configuration based on algorithm."""
+        algo = self._algorithm.upper()
+        if algo in ("RS256", "ES256", "PS256"):
+            if not self._private_key or not self._public_key:
+                raise ValueError(
+                    f"Algorithm '{algo}' requires both jwt_public_key and jwt_private_key"
+                )
+        elif algo == "HS256" and not self._secret_key:
+            logger.warning("JWT secret key is empty — tokens will be insecure")
+
+    def _signing_key(self) -> str:
+        """Return the key used for encoding (signing)."""
+        algo = self._algorithm.upper()
+        if algo in ("RS256", "ES256", "PS256"):
+            return self._private_key
+        return self._secret_key
+
+    def _verification_key(self) -> str:
+        """Return the key used for decoding (verification)."""
+        algo = self._algorithm.upper()
+        if algo in ("RS256", "ES256", "PS256"):
+            return self._public_key
+        return self._secret_key

@@ -62,20 +62,20 @@ The authentication mode is controlled by `auth.auth_mode`, which accepts `api_ke
 
 ```bash
 # In "both" mode, exchange an API Key for a JWT token pair
-curl -X POST http://localhost:8000/api/v2/auth/token \
+curl -X POST http://localhost:8000/api/v1/auth/token \
   -H "X-API-Key: your-secret-api-key-here" \
   -H "Content-Type: application/json" \
   -d '{"role": "editor"}'
 # => {"access_token": "eyJ...", "refresh_token": "eyJ...", "token_type": "bearer"}
 
 # Access protected endpoints with a Bearer token
-curl -X POST http://localhost:8000/api/v2/rag/query \
+curl -X POST http://localhost:8000/api/v1/rag/query \
   -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..." \
   -H "Content-Type: application/json" \
   -d '{"question": "...", "dataset_name": "docs"}'
 
 # Refresh the token
-curl -X POST http://localhost:8000/api/v2/auth/refresh \
+curl -X POST http://localhost:8000/api/v1/auth/refresh \
   -H "Content-Type: application/json" \
   -d '{"refresh_token": "eyJ..."}'
 ```
@@ -120,21 +120,21 @@ curl -X POST http://localhost:8000/api/v2/auth/refresh \
 
 | Method | Endpoint                             | Description                 | Role   |
 | ------ | ------------------------------------ | --------------------------- | ------ |
-| `POST` | `/api/v2/rag/query`                  | RAG question answering      | -      |
-| `POST` | `/api/v2/rag/query/stream`           | Streaming RAG               | -      |
-| `POST` | `/api/v2/kg/build`                   | Build the knowledge graph   | ADMIN  |
-| `GET`  | `/api/v2/kg/build/{task_id}/status`  | Build task status           | -      |
-| `POST` | `/api/v2/kg/query`                   | Execute a Gremlin query     | EDITOR |
-| `GET`  | `/api/v2/kg/entities/{id}/neighbors` | Neighbor traversal          | -      |
-| `POST` | `/api/v2/kg/query/graphrag`          | GraphRAG question answering | VIEWER |
+| `POST` | `/api/v1/rag/query`                  | RAG question answering      | -      |
+| `POST` | `/api/v1/rag/query/stream`           | Streaming RAG               | -      |
+| `POST` | `/api/v1/kg/build`                   | Build the knowledge graph   | ADMIN  |
+| `GET`  | `/api/v1/kg/build/{task_id}/status`  | Build task status           | -      |
+| `POST` | `/api/v1/kg/query`                   | Execute a Gremlin query     | EDITOR |
+| `GET`  | `/api/v1/kg/entities/{id}/neighbors` | Neighbor traversal          | -      |
+| `POST` | `/api/v1/kg/query/graphrag`          | GraphRAG question answering | VIEWER |
 
 ### Authentication (v2)
 
 | Method | Endpoint               | Description              |
 | ------ | ---------------------- | ------------------------ |
-| `POST` | `/api/v2/auth/token`   | Exchange API Key for JWT |
-| `POST` | `/api/v2/auth/refresh` | Refresh a token          |
-| `GET`  | `/api/v2/auth/me`      | Current user information |
+| `POST` | `/api/v1/auth/token`   | Exchange API Key for JWT |
+| `POST` | `/api/v1/auth/refresh` | Refresh a token          |
+| `GET`  | `/api/v1/auth/me`      | Current user information |
 
 ***
 
@@ -162,7 +162,7 @@ curl -X POST http://localhost:8000/api/v1/datasets/docs/search/vector \
 ### RAG Question Answering
 
 ```bash
-curl -X POST http://localhost:8000/api/v2/rag/query \
+curl -X POST http://localhost:8000/api/v1/rag/query \
   -H "X-API-Key: your-secret-api-key-here" \
   -H "Content-Type: application/json" \
   -d '{"question": "How does the RAG pipeline work?", "dataset_name": "docs", "top_k": 5, "retrieval_strategy": "hybrid"}'
@@ -171,7 +171,7 @@ curl -X POST http://localhost:8000/api/v2/rag/query \
 ### Build Knowledge Graph
 
 ```bash
-curl -X POST http://localhost:8000/api/v2/kg/build \
+curl -X POST http://localhost:8000/api/v1/kg/build \
   -H "X-API-Key: your-secret-api-key-here" \
   -H "Content-Type: application/json" \
   -d '{"dataset_name": "docs"}'
@@ -213,7 +213,7 @@ async def vector_search(dataset: str, query: str, top_k: int = 5) -> dict:
 async def rag_query(question: str, dataset: str, strategy: str = "hybrid") -> dict:
     async with httpx.AsyncClient(timeout=120) as client:
         resp = await client.post(
-            f"{BASE_URL}/api/v2/rag/query",
+            f"{BASE_URL}/api/v1/rag/query",
             headers=HEADERS,
             json={"question": question, "dataset_name": dataset,
                   "top_k": 5, "retrieval_strategy": strategy},
@@ -225,7 +225,7 @@ async def rag_query(question: str, dataset: str, strategy: str = "hybrid") -> di
 async def build_kg(dataset: str) -> dict:
     async with httpx.AsyncClient(timeout=300) as client:
         resp = await client.post(
-            f"{BASE_URL}/api/v2/kg/build",
+            f"{BASE_URL}/api/v1/kg/build",
             headers=HEADERS, json={"dataset_name": dataset},
         )
         resp.raise_for_status()
@@ -233,7 +233,7 @@ async def build_kg(dataset: str) -> dict:
         for _ in range(60):
             await asyncio.sleep(3)
             resp = await client.get(
-                f"{BASE_URL}/api/v2/kg/build/{task_id}/status",
+                f"{BASE_URL}/api/v1/kg/build/{task_id}/status",
                 headers=HEADERS,
             )
             status = resp.json()

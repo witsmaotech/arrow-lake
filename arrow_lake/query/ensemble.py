@@ -88,6 +88,7 @@ class EnsembleSearchBridge:
         weights: dict[str, float] | None = None,
         top_k: int | None = None,
         where: str | None = None,
+        version: int | None = None,
     ) -> EnsembleSearchResult:
         """Execute ensemble search across multiple embedding columns.
 

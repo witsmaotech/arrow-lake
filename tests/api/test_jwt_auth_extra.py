@@ -8,6 +8,8 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
+pytest.importorskip("jwt")
+
 from arrow_lake.api.app import create_app
 from arrow_lake.api.auth_service import AuthService
 from arrow_lake.api.auth_models import Role
@@ -39,7 +41,7 @@ def jwt_svc() -> AuthService:
 
 @pytest.mark.asyncio
 async def test_expired_refresh_token_rejected(jwt_app: FastAPI, jwt_svc: AuthService) -> None:
-    """POST /api/v2/auth/refresh with an expired refresh token should return 4xx."""
+    """POST /api/v1/auth/refresh with an expired refresh token should return 4xx."""
     from datetime import datetime, timedelta, timezone
     from arrow_lake.api.auth_models import TokenPayload
 
@@ -57,7 +59,7 @@ async def test_expired_refresh_token_rejected(jwt_app: FastAPI, jwt_svc: AuthSer
         base_url="http://test",
     ) as ac:
         resp = await ac.post(
-            "/api/v2/auth/refresh",
+            "/api/v1/auth/refresh",
             json={"refresh_token": expired_token},
         )
         assert resp.status_code in (400, 401)
@@ -70,13 +72,13 @@ async def test_expired_refresh_token_rejected(jwt_app: FastAPI, jwt_svc: AuthSer
 
 @pytest.mark.asyncio
 async def test_refresh_with_missing_token_key(jwt_app: FastAPI) -> None:
-    """POST /api/v2/auth/refresh with {} (no refresh_token) should return 400."""
+    """POST /api/v1/auth/refresh with {} (no refresh_token) should return 400."""
     async with AsyncClient(
         transport=ASGITransport(app=jwt_app),
         base_url="http://test",
     ) as ac:
         resp = await ac.post(
-            "/api/v2/auth/refresh",
+            "/api/v1/auth/refresh",
             json={},
         )
         assert resp.status_code == 400
@@ -91,13 +93,13 @@ async def test_refresh_with_missing_token_key(jwt_app: FastAPI) -> None:
 
 @pytest.mark.asyncio
 async def test_refresh_token_must_be_string(jwt_app: FastAPI) -> None:
-    """POST /api/v2/auth/refresh with a non-string refresh_token should return 400."""
+    """POST /api/v1/auth/refresh with a non-string refresh_token should return 400."""
     async with AsyncClient(
         transport=ASGITransport(app=jwt_app),
         base_url="http://test",
     ) as ac:
         resp = await ac.post(
-            "/api/v2/auth/refresh",
+            "/api/v1/auth/refresh",
             json={"refresh_token": 12345},
         )
         assert resp.status_code == 400
@@ -115,8 +117,8 @@ async def test_options_preflight_bypasses_jwt(jwt_app: FastAPI) -> None:
         transport=ASGITransport(app=jwt_app),
         base_url="http://test",
     ) as ac:
-        # /api/v2/auth/me is a protected endpoint that normally requires JWT.
-        resp = await ac.options("/api/v2/auth/me")
+        # /api/v1/auth/me is a protected endpoint that normally requires JWT.
+        resp = await ac.options("/api/v1/auth/me")
         # OPTIONS should not return 401 — either 200 or a method-not-allowed.
         assert resp.status_code != 401
 
@@ -128,7 +130,7 @@ async def test_options_preflight_bypasses_jwt_on_datasets(jwt_app: FastAPI) -> N
         transport=ASGITransport(app=jwt_app),
         base_url="http://test",
     ) as ac:
-        resp = await ac.options("/api/v2/datasets")
+        resp = await ac.options("/api/v1/datasets")
         assert resp.status_code != 401
 
 
@@ -139,13 +141,13 @@ async def test_options_preflight_bypasses_jwt_on_datasets(jwt_app: FastAPI) -> N
 
 @pytest.mark.asyncio
 async def test_invalid_refresh_token_rejected(jwt_app: FastAPI) -> None:
-    """POST /api/v2/auth/refresh with a completely invalid token string."""
+    """POST /api/v1/auth/refresh with a completely invalid token string."""
     async with AsyncClient(
         transport=ASGITransport(app=jwt_app),
         base_url="http://test",
     ) as ac:
         resp = await ac.post(
-            "/api/v2/auth/refresh",
+            "/api/v1/auth/refresh",
             json={"refresh_token": "this-is-not-a-valid-jwt-token"},
         )
         assert resp.status_code in (400, 401)
@@ -158,13 +160,13 @@ async def test_invalid_refresh_token_rejected(jwt_app: FastAPI) -> None:
 
 @pytest.mark.asyncio
 async def test_refresh_with_non_dict_body(jwt_app: FastAPI) -> None:
-    """POST /api/v2/auth/refresh with a list body should fail gracefully."""
+    """POST /api/v1/auth/refresh with a list body should fail gracefully."""
     async with AsyncClient(
         transport=ASGITransport(app=jwt_app),
         base_url="http://test",
     ) as ac:
         resp = await ac.post(
-            "/api/v2/auth/refresh",
+            "/api/v1/auth/refresh",
             json=[1, 2, 3],
         )
         assert resp.status_code in (400, 422)

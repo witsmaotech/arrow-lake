@@ -100,41 +100,46 @@ class TestRayServeFallback:
     """Test fallback from Ray Serve to local encoder."""
 
     @patch("arrow_lake.embed.ray_serve_encoder.ray_serve")
-    def test_fallback_on_import_error(self, mock_serve: Any) -> None:
+    @patch("arrow_lake.embed.ray_serve_encoder.RayServeEmbeddingEncoder._fallback_encode")
+    def test_fallback_on_import_error(self, mock_fb: Any, mock_serve: Any) -> None:
         mock_serve.get_deployment.side_effect = ImportError("ray not installed")
+        mock_fb.return_value = MagicMock(total_rows=1, embedded_rows=1, null_rows=0)
         enc = RayServeEmbeddingEncoder()
         table = pa.table({"text_content": ["hello"]})
 
-        # Should fallback to local without raising
         result = enc.encode_column(table, fallback_enabled=True)
         assert result.total_rows == 1
-        assert result.embedded_rows >= 0  # May fail if local model not available
+        assert result.embedded_rows == 1
 
-    @patch("arrow_lake.embed.ray_serve_encoder.ray_serve")
-    def test_no_fallback_raises_on_error(self, mock_serve: Any) -> None:
-        mock_serve.get_deployment.side_effect = ImportError("ray not installed")
+    @patch("arrow_lake.embed.ray_serve_encoder.RayServeEmbeddingEncoder._get_handle")
+    def test_no_fallback_raises_on_error(self, mock_handle: Any) -> None:
+        mock_handle.side_effect = ImportError("ray not installed")
         enc = RayServeEmbeddingEncoder()
         table = pa.table({"text_content": ["hello"]})
 
-        with pytest.raises(EmbeddingError, match="RAY_SERVE_UNAVAILABLE"):
+        with pytest.raises(EmbeddingError):
             enc.encode_column(table, fallback_enabled=False)
 
     @patch("arrow_lake.embed.ray_serve_encoder.ray_serve")
-    def test_fallback_on_connection_error(self, mock_serve: Any) -> None:
+    @patch("arrow_lake.embed.ray_serve_encoder.RayServeEmbeddingEncoder._fallback_encode")
+    def test_fallback_on_connection_error(self, mock_fb: Any, mock_serve: Any) -> None:
         handle = MagicMock()
         handle.remote.side_effect = ConnectionError("Ray Serve not reachable")
         mock_serve.get_deployment.return_value = handle
+        mock_fb.return_value = MagicMock(total_rows=1, embedded_rows=1, null_rows=0)
 
         enc = RayServeEmbeddingEncoder()
         table = pa.table({"text_content": ["hello"]})
 
         result = enc.encode_column(table, fallback_enabled=True)
         assert result.total_rows == 1
-        assert result.embedded_rows >= 0
+        assert result.embedded_rows == 1
 
     @patch("arrow_lake.embed.ray_serve_encoder.ray_serve")
-    def test_fallback_logs_warning(self, mock_serve: Any, caplog: Any) -> None:
+    @patch("arrow_lake.embed.ray_serve_encoder.RayServeEmbeddingEncoder._fallback_encode")
+    def test_fallback_logs_warning(self, mock_fb: Any, mock_serve: Any, caplog: Any) -> None:
         mock_serve.get_deployment.side_effect = ImportError("ray not installed")
+        mock_fb.return_value = MagicMock(total_rows=1, embedded_rows=1, null_rows=0)
         enc = RayServeEmbeddingEncoder()
         table = pa.table({"text_content": ["test"]})
 

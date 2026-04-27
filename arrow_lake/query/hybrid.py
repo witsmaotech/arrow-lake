@@ -421,8 +421,8 @@ class HybridSearchBridge:
         if wanted:
             fts_part = _extract_by_ids(fts_table, wanted)
             if fts_part is not None:
-                cols = list(result.column_names)
-                result = pa.concat_tables([result, fts_part.select(cols)])
+                common_cols = list(set(result.column_names) & set(fts_part.column_names))
+                result = pa.concat_tables([result.select(common_cols), fts_part.select(common_cols)])
 
         # Add _rrf_score column
         result_ids = [str(v) for v in result.column("id").to_pylist()]

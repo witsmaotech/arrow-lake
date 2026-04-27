@@ -397,11 +397,14 @@ class OlapSearchBridge:
         import re as _re
 
         stripped = sql.rstrip().rstrip(";")
-        match = _re.search(r"\bLIMIT\s+(\d+)\s*$", stripped, _re.IGNORECASE)
+        match = _re.search(
+            r"\bLIMIT\s+(\d+)(\s+OFFSET\s+\d+)?\s*$", stripped, _re.IGNORECASE,
+        )
         if match:
             existing = int(match.group(1))
             effective = min(existing, max_rows)
-            return stripped[: match.start()] + f"LIMIT {effective}"
+            offset_clause = match.group(2) or ""
+            return stripped[: match.start()] + f"LIMIT {effective}{offset_clause}"
         return f"{stripped} LIMIT {max_rows}"
 
 

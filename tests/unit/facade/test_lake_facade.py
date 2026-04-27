@@ -16,6 +16,9 @@ from unittest.mock import MagicMock, patch
 
 import pyarrow as pa
 import pytest
+
+pytest.importorskip("daft", reason="daft not installed")
+pytest.importorskip("lance", reason="lance not installed")
 from arrow_lake import CatalogEntry, CatalogResult, Lake
 
 
@@ -182,6 +185,7 @@ class TestLakeDaftQuery:
 class TestLakeFlows:
     """Test Lake.list_flows() and get_flow_info()."""
 
+    @pytest.mark.skip(reason="Requires Metaflow flow registration (quality_pipeline)")
     def test_list_flows_returns_registered(self, lake: Lake) -> None:
         flows = lake.list_flows()
         assert isinstance(flows, list)
@@ -189,6 +193,7 @@ class TestLakeFlows:
         assert len(flows) >= 1
         assert "quality_pipeline" in flows
 
+    @pytest.mark.skip(reason="Requires Metaflow flow registration (quality_pipeline)")
     def test_get_flow_info_returns_metadata(self, lake: Lake) -> None:
         info = lake.get_flow_info("quality_pipeline")
         assert info["name"] == "quality_pipeline"

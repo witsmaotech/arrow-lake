@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from arrow_lake.cli import main
+
+lance = pytest.importorskip("lance", reason="lance not installed")
 
 
 class TestCLIDemo:

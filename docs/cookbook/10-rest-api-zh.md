@@ -58,20 +58,20 @@ curl -X GET http://localhost:8000/api/v1/datasets \
 
 ```bash
 # 在 both 模式下，用 API Key 换取 JWT 令牌对
-curl -X POST http://localhost:8000/api/v2/auth/token \
+curl -X POST http://localhost:8000/api/v1/auth/token \
   -H "X-API-Key: your-secret-api-key-here" \
   -H "Content-Type: application/json" \
   -d '{"role": "editor"}'
 # => {"access_token": "eyJ...", "refresh_token": "eyJ...", "token_type": "bearer"}
 
 # 携带 Bearer Token 访问受保护端点
-curl -X POST http://localhost:8000/api/v2/rag/query \
+curl -X POST http://localhost:8000/api/v1/rag/query \
   -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..." \
   -H "Content-Type: application/json" \
   -d '{"question": "...", "dataset_name": "docs"}'
 
 # 刷新令牌
-curl -X POST http://localhost:8000/api/v2/auth/refresh \
+curl -X POST http://localhost:8000/api/v1/auth/refresh \
   -H "Content-Type: application/json" \
   -d '{"refresh_token": "eyJ..."}'
 ```
@@ -116,21 +116,21 @@ curl -X POST http://localhost:8000/api/v2/auth/refresh \
 
 | 方法     | 端点                                   | 说明          | 角色     |
 | ------ | ------------------------------------ | ----------- | ------ |
-| `POST` | `/api/v2/rag/query`                  | RAG 问答      | -      |
-| `POST` | `/api/v2/rag/query/stream`           | 流式 RAG      | -      |
-| `POST` | `/api/v2/kg/build`                   | 构建知识图谱      | ADMIN  |
-| `GET`  | `/api/v2/kg/build/{task_id}/status`  | 构建状态        | -      |
-| `POST` | `/api/v2/kg/query`                   | Gremlin 查询  | EDITOR |
-| `GET`  | `/api/v2/kg/entities/{id}/neighbors` | 邻居遍历        | -      |
-| `POST` | `/api/v2/kg/query/graphrag`          | GraphRAG 问答 | VIEWER |
+| `POST` | `/api/v1/rag/query`                  | RAG 问答      | -      |
+| `POST` | `/api/v1/rag/query/stream`           | 流式 RAG      | -      |
+| `POST` | `/api/v1/kg/build`                   | 构建知识图谱      | ADMIN  |
+| `GET`  | `/api/v1/kg/build/{task_id}/status`  | 构建状态        | -      |
+| `POST` | `/api/v1/kg/query`                   | Gremlin 查询  | EDITOR |
+| `GET`  | `/api/v1/kg/entities/{id}/neighbors` | 邻居遍历        | -      |
+| `POST` | `/api/v1/kg/query/graphrag`          | GraphRAG 问答 | VIEWER |
 
 ### 认证 (v2)
 
 | 方法     | 端点                     | 说明             |
 | ------ | ---------------------- | -------------- |
-| `POST` | `/api/v2/auth/token`   | API Key 换取 JWT |
-| `POST` | `/api/v2/auth/refresh` | 刷新令牌           |
-| `GET`  | `/api/v2/auth/me`      | 当前用户信息         |
+| `POST` | `/api/v1/auth/token`   | API Key 换取 JWT |
+| `POST` | `/api/v1/auth/refresh` | 刷新令牌           |
+| `GET`  | `/api/v1/auth/me`      | 当前用户信息         |
 
 ***
 
@@ -158,7 +158,7 @@ curl -X POST http://localhost:8000/api/v1/datasets/docs/search/vector \
 ### RAG 问答
 
 ```bash
-curl -X POST http://localhost:8000/api/v2/rag/query \
+curl -X POST http://localhost:8000/api/v1/rag/query \
   -H "X-API-Key: your-secret-api-key-here" \
   -H "Content-Type: application/json" \
   -d '{"question": "RAG 管线是如何工作的？", "dataset_name": "docs", "top_k": 5, "retrieval_strategy": "hybrid"}'
@@ -167,7 +167,7 @@ curl -X POST http://localhost:8000/api/v2/rag/query \
 ### 构建知识图谱
 
 ```bash
-curl -X POST http://localhost:8000/api/v2/kg/build \
+curl -X POST http://localhost:8000/api/v1/kg/build \
   -H "X-API-Key: your-secret-api-key-here" \
   -H "Content-Type: application/json" \
   -d '{"dataset_name": "docs"}'
@@ -209,7 +209,7 @@ async def vector_search(dataset: str, query: str, top_k: int = 5) -> dict:
 async def rag_query(question: str, dataset: str, strategy: str = "hybrid") -> dict:
     async with httpx.AsyncClient(timeout=120) as client:
         resp = await client.post(
-            f"{BASE_URL}/api/v2/rag/query",
+            f"{BASE_URL}/api/v1/rag/query",
             headers=HEADERS,
             json={"question": question, "dataset_name": dataset,
                   "top_k": 5, "retrieval_strategy": strategy},
@@ -221,7 +221,7 @@ async def rag_query(question: str, dataset: str, strategy: str = "hybrid") -> di
 async def build_kg(dataset: str) -> dict:
     async with httpx.AsyncClient(timeout=300) as client:
         resp = await client.post(
-            f"{BASE_URL}/api/v2/kg/build",
+            f"{BASE_URL}/api/v1/kg/build",
             headers=HEADERS, json={"dataset_name": dataset},
         )
         resp.raise_for_status()
@@ -229,7 +229,7 @@ async def build_kg(dataset: str) -> dict:
         for _ in range(60):
             await asyncio.sleep(3)
             resp = await client.get(
-                f"{BASE_URL}/api/v2/kg/build/{task_id}/status",
+                f"{BASE_URL}/api/v1/kg/build/{task_id}/status",
                 headers=HEADERS,
             )
             status = resp.json()

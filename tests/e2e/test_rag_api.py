@@ -103,9 +103,9 @@ class TestRAGAPIE2E:
         return _create_app_with_rag()
 
     def test_full_query_flow(self, client: TestClient) -> None:
-        """E2E: POST /api/v2/rag/query returns valid response."""
+        """E2E: POST /api/v1/rag/query returns valid response."""
         resp = client.post(
-            "/api/v2/rag/query",
+            "/api/v1/rag/query",
             json={
                 "question": "Tell me about Python",
                 "dataset_name": "documents",
@@ -124,7 +124,7 @@ class TestRAGAPIE2E:
         """E2E: Query with session_id persists history."""
         # Turn 1
         resp1 = client.post(
-            "/api/v2/rag/query",
+            "/api/v1/rag/query",
             json={
                 "question": "What is Python?",
                 "dataset_name": "documents",
@@ -134,7 +134,7 @@ class TestRAGAPIE2E:
         assert resp1.status_code == 200
 
         # Verify history was saved
-        resp2 = client.get("/api/v2/rag/history/test-session")
+        resp2 = client.get("/api/v1/rag/history/test-session")
         assert resp2.status_code == 200
         history = resp2.json()
         assert history["session_id"] == "test-session"
@@ -142,9 +142,9 @@ class TestRAGAPIE2E:
         assert history["turns"][0]["question"] == "What is Python?"
 
     def test_extract_flow(self, client: TestClient) -> None:
-        """E2E: POST /api/v2/rag/extract returns entity response."""
+        """E2E: POST /api/v1/rag/extract returns entity response."""
         resp = client.post(
-            "/api/v2/rag/extract",
+            "/api/v1/rag/extract",
             json={
                 "dataset_name": "documents",
                 "text_column": "text",
@@ -158,8 +158,8 @@ class TestRAGAPIE2E:
         assert data["retrieval_count"] > 0
 
     def test_templates_endpoint(self, client: TestClient) -> None:
-        """E2E: GET /api/v2/rag/templates returns template list."""
-        resp = client.get("/api/v2/rag/templates")
+        """E2E: GET /api/v1/rag/templates returns template list."""
+        resp = client.get("/api/v1/rag/templates")
         assert resp.status_code == 200
         data = resp.json()
         assert "templates" in data
@@ -171,8 +171,8 @@ class TestRAGAPIE2E:
         assert "summarize" in names
 
     def test_history_nonexistent_session(self, client: TestClient) -> None:
-        """E2E: GET /api/v2/rag/history for nonexistent session returns empty."""
-        resp = client.get("/api/v2/rag/history/nonexistent")
+        """E2E: GET /api/v1/rag/history for nonexistent session returns empty."""
+        resp = client.get("/api/v1/rag/history/nonexistent")
         assert resp.status_code == 200
         data = resp.json()
         assert data["session_id"] == "nonexistent"
@@ -181,24 +181,24 @@ class TestRAGAPIE2E:
     def test_validation_errors(self, client: TestClient) -> None:
         """E2E: Invalid requests return 422."""
         # Missing question
-        resp = client.post("/api/v2/rag/query", json={"dataset_name": "docs"})
+        resp = client.post("/api/v1/rag/query", json={"dataset_name": "docs"})
         assert resp.status_code == 422
 
         # Missing dataset_name
-        resp = client.post("/api/v2/rag/query", json={"question": "Q"})
+        resp = client.post("/api/v1/rag/query", json={"question": "Q"})
         assert resp.status_code == 422
 
         # Empty question
         resp = client.post(
-            "/api/v2/rag/query",
+            "/api/v1/rag/query",
             json={"question": "", "dataset_name": "docs"},
         )
         assert resp.status_code == 422
 
     def test_stream_flow(self, client: TestClient) -> None:
-        """E2E: POST /api/v2/rag/query/stream returns SSE events."""
+        """E2E: POST /api/v1/rag/query/stream returns SSE events."""
         resp = client.post(
-            "/api/v2/rag/query/stream",
+            "/api/v1/rag/query/stream",
             json={
                 "question": "Tell me about Python",
                 "dataset_name": "documents",
@@ -221,7 +221,7 @@ class TestRAGAPIE2E:
 
         for i in range(3):
             resp = client.post(
-                "/api/v2/rag/query",
+                "/api/v1/rag/query",
                 json={
                     "question": f"Question {i}",
                     "dataset_name": "documents",
@@ -231,7 +231,7 @@ class TestRAGAPIE2E:
             assert resp.status_code == 200
 
         # Verify 3 turns
-        resp = client.get(f"/api/v2/rag/history/{session_id}")
+        resp = client.get(f"/api/v1/rag/history/{session_id}")
         assert resp.status_code == 200
         history = resp.json()
         assert len(history["turns"]) == 3

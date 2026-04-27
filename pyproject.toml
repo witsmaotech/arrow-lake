@@ -1,6 +1,6 @@
 [project]
 name = "arrow-lake"
-version = "1.2.0"
+version = "1.2.1"
 description = "Unified multimodal data lakehouse — Lance + Daft + Ray"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -38,7 +38,6 @@ dependencies = [
     "Pillow>=10.4",
     "av>=12.0",
     # Embedding (Stories 4.1, 4.3)
-    "torch>=2.4",
     "sentence-transformers>=3.3",
     # CLI (Story 7.2)
     "click>=8.1",
@@ -65,6 +64,7 @@ dedup = ["imagehash>=4.3"]
 modelscope = ["modelscope>=1.18"]
 otel = ["opentelemetry-api>=1.24", "opentelemetry-sdk>=1.24", "opentelemetry-exporter-otlp-proto-grpc>=1.24"]
 jwt = ["PyJWT>=2.9"]
+gpu = ["torch>=2.4"]
 document = ["kreuzberg>=0.1"]
 chunking-advanced = ["semchunk>=2.0"]
 chunking-semantic = ["chonkie>=1.0", "sentence-transformers>=3.3"]

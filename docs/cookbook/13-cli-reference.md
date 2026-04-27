@@ -54,7 +54,7 @@ arrow-lake version
 ┏━━━━━━━━━━━━┳━━━━━━━━━┓
 ┃ Component  ┃ Version ┃
 ┡━━━━━━━━━━━━╇━━━━━━━━━┩
-│ arrow-lake │ 1.2.0   │
+│ arrow-lake │ 1.2.1   │
 │ python     │ 3.11.9  │
 │ pyarrow    │ 18.1.0  │
 │ duckdb     │ 1.2.1   │

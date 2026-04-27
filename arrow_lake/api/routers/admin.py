@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends
 from arrow_lake.api.auth_models import Role
 from arrow_lake.api.deps import require_role
 
-router = APIRouter(prefix="/api/v2/admin", tags=["admin"])
+router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 
 
 @router.get("/users", summary="List users (admin only)")

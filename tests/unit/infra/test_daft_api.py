@@ -16,6 +16,7 @@ import pyarrow as pa
 import pytest
 
 pytest.importorskip("daft")
+pytest.importorskip("lance", reason="lance not installed")
 
 from arrow_lake.query.daft_api import DaftQueryEngine, LazyDaftFrame
 

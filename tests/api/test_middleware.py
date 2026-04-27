@@ -52,12 +52,14 @@ async def test_oversized_request_rejected(client: AsyncClient) -> None:
     """Requests exceeding max size return 413."""
     # Default max is 100MB, so we'd need to actually send a huge body.
     # Instead, test with a custom app that has a tiny limit.
-    from arrow_lake.api.middleware import RequestSizeLimitMiddleware
-    from arrow_lake.config import ArrowLakeConfig
+    from arrow_lake.api.middleware import request_size_limit_middleware_fn
     from fastapi import FastAPI
 
     tiny_app = FastAPI()
-    tiny_app.add_middleware(RequestSizeLimitMiddleware, max_size_bytes=10)
+
+    @tiny_app.middleware("http")
+    async def size_limit(request, call_next):
+        return await request_size_limit_middleware_fn(request, call_next, max_size_bytes=10)
 
     @tiny_app.post("/test")
     async def test_endpoint() -> dict:

@@ -127,8 +127,3 @@ class _LakeAuditMixin:
             else:
                 results.append(asdict(r))
         return results
-        from arrow_lake.workflow.audit_analyzer import AuditAnalyzer
-
-        entries = self._get_audit_trail().query()
-        analyzer = AuditAnalyzer(entries)
-        return [r.__dict__ if hasattr(r, "__dict__") else asdict(r) for r in analyzer.analyze()]

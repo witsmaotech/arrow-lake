@@ -25,10 +25,10 @@ class TestRateLimitConfig:
     def test_custom_limits(self) -> None:
         config = RateLimitConfig(
             default_requests_per_minute=100,
-            override_per_endpoint={"/api/v2/search": 200},
+            override_per_endpoint={"/api/v1/search": 200},
         )
         assert config.default_requests_per_minute == 100
-        assert config.override_per_endpoint["/api/v2/search"] == 200
+        assert config.override_per_endpoint["/api/v1/search"] == 200
 
     def test_config_integration(self) -> None:
         """RateLimitConfig is accessible via ArrowLakeConfig."""
@@ -49,16 +49,15 @@ class TestRateLimitConfig:
 class TestGetLimiter:
     """Test rate limiter factory function."""
 
-    def test_returns_none_when_disabled(self) -> None:
+    def test_returns_false_when_disabled(self) -> None:
         from arrow_lake.api.rate_limit import get_limiter
 
         result = get_limiter(RateLimitConfig(enabled=False))
-        assert result is None
+        assert result is False
 
-    def test_returns_middleware_when_enabled(self) -> None:
-        from arrow_lake.api.rate_limit import get_limiter, RateLimitMiddleware
+    def test_returns_true_when_enabled(self) -> None:
+        from arrow_lake.api.rate_limit import get_limiter
 
         config = RateLimitConfig(enabled=True, default_requests_per_minute=100)
         result = get_limiter(config)
-        assert result is not None
-        assert isinstance(result, RateLimitMiddleware)
+        assert result is True

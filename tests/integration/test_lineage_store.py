@@ -70,7 +70,7 @@ class TestLineageQueryBridge:
         store.record_event(create_lineage_event("ds_b", "append"))
 
         bridge = LineageQueryBridge(store)
-        result = bridge.query("SELECT * FROM lineage")
+        result = bridge.query("SELECT * FROM _lineage_events")
 
         assert result.num_rows == 2
         dataset_names = result.column("dataset_name").to_pylist()

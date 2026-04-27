@@ -20,7 +20,18 @@ jobs:
         run: uv sync --group dev
 
       - name: Bandit security scan
-        run: uv run bandit -r arrow_lake/ -x tests/ -f json -o bandit-report.json || true
+        run: |
+          uv run bandit -r arrow_lake/ -x tests/ -ll -f json -o bandit-report.json
+          HIGH_COUNT=$(python -c "
+          import json
+          report = json.load(open('bandit-report.json'))
+          issues = [r for r in report.get('results', []) if r.get('issue_severity') in ('HIGH', 'CRITICAL')]
+          print(len(issues))
+          ")
+          if [ "$HIGH_COUNT" -gt 0 ]; then
+            echo "::error::$HIGH_COUNT HIGH/CRITICAL issues found in Bandit scan"
+            exit 1
+          fi
 
       - name: Upload Bandit report
         if: always()
@@ -31,4 +42,4 @@ jobs:
           retention-days: 30
 
       - name: Dependency audit (pip-audit)
-        run: uv run pip-audit || true
+        run: uv run pip-audit

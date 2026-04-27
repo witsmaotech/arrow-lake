@@ -155,10 +155,17 @@ class Lake(
         )
 
     def shutdown(self) -> None:
-        """Gracefully shut down the session manager and release resources."""
-        sm = self._components.get("session_manager")
-        if sm is not None:
-            sm.shutdown()
+        """Gracefully shut down all managed components and release resources."""
+        for key in list(self._components):
+            component = self._components[key]
+            try:
+                if hasattr(component, "shutdown"):
+                    component.shutdown()
+                elif hasattr(component, "close"):
+                    component.close()
+            except Exception:
+                self._logger.warning("Failed to shut down component %s", key, exc_info=True)
+        self._components.clear()
 
     @classmethod
     def from_yaml(cls, path: str, *, base_uri: str | None = None) -> Lake:

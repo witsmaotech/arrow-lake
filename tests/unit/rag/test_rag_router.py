@@ -46,7 +46,7 @@ def _create_client() -> TestClient:
 
 
 # ---------------------------------------------------------------------------
-# POST /api/v2/rag/query
+# POST /api/v1/rag/query
 # ---------------------------------------------------------------------------
 
 
@@ -57,7 +57,7 @@ class TestRAGQueryEndpoint:
 
     def test_query_success(self, client: TestClient) -> None:
         resp = client.post(
-            "/api/v2/rag/query",
+            "/api/v1/rag/query",
             json={"question": "What is AI?", "dataset_name": "docs"},
         )
         assert resp.status_code == 200
@@ -68,7 +68,7 @@ class TestRAGQueryEndpoint:
 
     def test_query_with_options(self, client: TestClient) -> None:
         resp = client.post(
-            "/api/v2/rag/query",
+            "/api/v1/rag/query",
             json={
                 "question": "Q",
                 "dataset_name": "docs",
@@ -81,21 +81,21 @@ class TestRAGQueryEndpoint:
 
     def test_query_missing_question(self, client: TestClient) -> None:
         resp = client.post(
-            "/api/v2/rag/query",
+            "/api/v1/rag/query",
             json={"dataset_name": "docs"},
         )
         assert resp.status_code == 422
 
     def test_query_missing_dataset(self, client: TestClient) -> None:
         resp = client.post(
-            "/api/v2/rag/query",
+            "/api/v1/rag/query",
             json={"question": "Q"},
         )
         assert resp.status_code == 422
 
 
 # ---------------------------------------------------------------------------
-# POST /api/v2/rag/query/stream (SSE)
+# POST /api/v1/rag/query/stream (SSE)
 # ---------------------------------------------------------------------------
 
 
@@ -120,7 +120,7 @@ class TestRAGStreamEndpoint:
 
     def test_stream_returns_sse(self, client: TestClient) -> None:
         resp = client.post(
-            "/api/v2/rag/query/stream",
+            "/api/v1/rag/query/stream",
             json={"question": "What is AI?", "dataset_name": "docs"},
         )
         assert resp.status_code == 200
@@ -133,7 +133,7 @@ class TestRAGStreamEndpoint:
 
     def test_stream_includes_metadata(self, client: TestClient) -> None:
         resp = client.post(
-            "/api/v2/rag/query/stream",
+            "/api/v1/rag/query/stream",
             json={"question": "Q", "dataset_name": "docs", "top_k": 5},
         )
         assert resp.status_code == 200
@@ -158,7 +158,7 @@ class TestRAGStreamEndpoint:
 
         client = TestClient(app)
         resp = client.post(
-            "/api/v2/rag/query/stream",
+            "/api/v1/rag/query/stream",
             json={"question": "Q", "dataset_name": "docs"},
         )
         assert resp.status_code == 200
@@ -184,7 +184,7 @@ class TestRAGStreamEndpoint:
 
         client = TestClient(app)
         resp = client.post(
-            "/api/v2/rag/query/stream",
+            "/api/v1/rag/query/stream",
             json={"question": "Q", "dataset_name": "docs"},
         )
         assert resp.status_code == 200
@@ -194,7 +194,7 @@ class TestRAGStreamEndpoint:
 
 
 # ---------------------------------------------------------------------------
-# POST /api/v2/rag/extract
+# POST /api/v1/rag/extract
 # ---------------------------------------------------------------------------
 
 
@@ -205,7 +205,7 @@ class TestRAGExtractEndpoint:
 
     def test_extract_success(self, client: TestClient) -> None:
         resp = client.post(
-            "/api/v2/rag/extract",
+            "/api/v1/rag/extract",
             json={"dataset_name": "docs"},
         )
         assert resp.status_code == 200
@@ -214,7 +214,7 @@ class TestRAGExtractEndpoint:
 
     def test_extract_with_options(self, client: TestClient) -> None:
         resp = client.post(
-            "/api/v2/rag/extract",
+            "/api/v1/rag/extract",
             json={
                 "dataset_name": "docs",
                 "text_column": "body",
@@ -225,7 +225,7 @@ class TestRAGExtractEndpoint:
 
 
 # ---------------------------------------------------------------------------
-# GET /api/v2/rag/templates
+# GET /api/v1/rag/templates
 # ---------------------------------------------------------------------------
 
 
@@ -235,14 +235,14 @@ class TestRAGTemplatesEndpoint:
         return _create_client()
 
     def test_templates_returns_list(self, client: TestClient) -> None:
-        resp = client.get("/api/v2/rag/templates")
+        resp = client.get("/api/v1/rag/templates")
         assert resp.status_code == 200
         data = resp.json()
         assert "templates" in data
         assert len(data["templates"]) >= 3  # default_qa, entity_extract, summarize
 
     def test_templates_have_required_fields(self, client: TestClient) -> None:
-        resp = client.get("/api/v2/rag/templates")
+        resp = client.get("/api/v1/rag/templates")
         data = resp.json()
         for tmpl in data["templates"]:
             assert "name" in tmpl
@@ -251,7 +251,7 @@ class TestRAGTemplatesEndpoint:
 
 
 # ---------------------------------------------------------------------------
-# GET /api/v2/rag/history/{session_id}
+# GET /api/v1/rag/history/{session_id}
 # ---------------------------------------------------------------------------
 
 
@@ -272,7 +272,7 @@ class TestRAGHistoryEndpoint:
         return TestClient(app)
 
     def test_history_returns_turns(self, client: TestClient) -> None:
-        resp = client.get("/api/v2/rag/history/sess-1")
+        resp = client.get("/api/v1/rag/history/sess-1")
         assert resp.status_code == 200
         data = resp.json()
         assert data["session_id"] == "sess-1"

@@ -55,7 +55,7 @@ async def jwt_auth_middleware_fn(
         return await call_next(request)
 
     # Auth endpoints bypass JWT (they use API key to get JWT)
-    if path.startswith("/api/v2/auth/"):
+    if path.startswith("/api/v1/auth/"):
         return await call_next(request)
 
     # Extract Bearer token

@@ -59,15 +59,18 @@ class TestContextWindow:
         assert window.chunk_count == 1
 
     def test_add_chunk_exceeds_budget(self) -> None:
-        window = ContextWindow(token_budget=5)
-        chunk = ContextChunk(
-            text="This is a very long text that exceeds budget", dataset="docs", row_id="1", score=0.9
-        )
-        result = window.add_chunk(chunk)
-        # Chunk (45 chars = ~11 tokens) exceeds budget (5), but truncation fits
-        assert result is True
-        assert window.chunk_count == 1
-        assert window.token_count <= 5
+        with patch("arrow_lake.rag.context.count_tokens") as mock_count:
+            mock_count.side_effect = lambda t: len(t) // 4
+            window = ContextWindow(token_budget=5)
+            chunk = ContextChunk(
+                text="This is a very long text that exceeds budget",
+                dataset="docs", row_id="1", score=0.9,
+            )
+            result = window.add_chunk(chunk)
+            # heuristic: len(text) // 4 = 49 // 4 = 12 tokens, truncates to budget 5
+            assert result is True
+            assert window.chunk_count == 1
+            assert window.token_count <= 5
 
     def test_add_chunk_zero_budget(self) -> None:
         window = ContextWindow(token_budget=0)

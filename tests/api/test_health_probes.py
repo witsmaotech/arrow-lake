@@ -122,10 +122,15 @@ async def test_health_backward_compat_degraded() -> None:
 @pytest.mark.asyncio
 async def test_health_probes_bypass_auth() -> None:
     """Health probe endpoints should be accessible without API key."""
-    from arrow_lake.api.auth import ApiKeyMiddleware
-
     app = _make_app()
-    app.add_middleware(ApiKeyMiddleware, api_key="test-secret-key")
+    # API key middleware is registered via create_app when api_key is set
+    from arrow_lake.config import ArrowLakeConfig
+
+    cfg = ArrowLakeConfig()
+    cfg.api.enabled = True
+    cfg.api.api_key = "test-secret-key"
+    app = create_app(config=cfg)
+    app.state.lake = MagicMock()
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         resp = await ac.get("/health/live")

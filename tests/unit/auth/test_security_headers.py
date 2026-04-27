@@ -5,6 +5,8 @@ from __future__ import annotations
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+pytest.importorskip("jwt")
+
 from arrow_lake.api.app import create_app
 from arrow_lake.config import ArrowLakeConfig
 
@@ -24,7 +26,7 @@ async def test_security_headers_present_on_api_routes() -> None:
     app = create_app(config=config)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        resp = await ac.post("/api/v2/auth/token")
+        resp = await ac.post("/api/v1/auth/token")
         assert resp.status_code == 200
         assert "x-content-type-options" in resp.headers
         assert resp.headers["x-content-type-options"] == "nosniff"
@@ -39,7 +41,7 @@ async def test_frame_options_default() -> None:
     app = create_app(config=config)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        resp = await ac.post("/api/v2/auth/token")
+        resp = await ac.post("/api/v1/auth/token")
         assert "x-frame-options" in resp.headers
         assert resp.headers["x-frame-options"] == "DENY"
 
@@ -51,7 +53,7 @@ async def test_frame_options_sameorigin() -> None:
     app = create_app(config=config)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        resp = await ac.post("/api/v2/auth/token")
+        resp = await ac.post("/api/v1/auth/token")
         assert resp.headers["x-frame-options"] == "SAMEORIGIN"
 
 
@@ -63,7 +65,7 @@ async def test_csp_custom() -> None:
     app = create_app(config=config)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        resp = await ac.post("/api/v2/auth/token")
+        resp = await ac.post("/api/v1/auth/token")
         assert "content-security-policy" in resp.headers
         assert resp.headers["content-security-policy"] == csp
 
@@ -76,7 +78,7 @@ async def test_csp_empty_not_set() -> None:
     app = create_app(config=config)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        resp = await ac.post("/api/v2/auth/token")
+        resp = await ac.post("/api/v1/auth/token")
         assert "content-security-policy" not in resp.headers
 
 
@@ -87,7 +89,7 @@ async def test_security_headers_disabled() -> None:
     app = create_app(config=config)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        resp = await ac.post("/api/v2/auth/token")
+        resp = await ac.post("/api/v1/auth/token")
         assert "x-content-type-options" not in resp.headers
         assert "referrer-policy" not in resp.headers
 

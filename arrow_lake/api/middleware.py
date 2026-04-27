@@ -6,7 +6,6 @@ import re
 import time
 import uuid
 
-from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
@@ -14,92 +13,79 @@ from starlette.responses import JSONResponse, Response
 _SECURITY_SKIP_PREFIXES: tuple[str, ...] = ("/health", "/metrics")
 
 
-class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
-    """Reject requests whose body exceeds a configured maximum size."""
+async def request_size_limit_middleware_fn(
+    request: Request, call_next, *, max_size_bytes: int = 100 * 1024 * 1024
+) -> Response:
+    """Pure ASGI middleware: reject requests exceeding a configured maximum size."""
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            size = int(content_length)
+            if size > max_size_bytes:
+                return JSONResponse(
+                    status_code=413,
+                    content={
+                        "success": False,
+                        "error": "REQUEST_TOO_LARGE",
+                        "message": (
+                            f"Request body ({size} bytes) exceeds "
+                            f"maximum allowed size ({max_size_bytes} bytes)"
+                        ),
+                    },
+                )
+        except (ValueError, TypeError):
+            pass
 
-    def __init__(self, app, max_size_bytes: int = 100 * 1024 * 1024) -> None:
-        super().__init__(app)
-        self.max_size_bytes = max_size_bytes
-
-    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint):
-        content_length = request.headers.get("content-length")
-        if content_length:
-            try:
-                size = int(content_length)
-                if size > self.max_size_bytes:
-                    return JSONResponse(
-                        status_code=413,
-                        content={
-                            "success": False,
-                            "error": "REQUEST_TOO_LARGE",
-                            "message": (
-                                f"Request body ({size} bytes) exceeds "
-                                f"maximum allowed size ({self.max_size_bytes} bytes)"
-                            ),
-                        },
-                    )
-            except (ValueError, TypeError):
-                pass
-
-        return await call_next(request)
+    return await call_next(request)
 
 
-class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    """Add HTTP security response headers to non-operational paths."""
+async def security_headers_middleware_fn(
+    request: Request,
+    call_next,
+    *,
+    content_security_policy: str = "",
+    frame_options: str = "DENY",
+) -> Response:
+    """Pure ASGI middleware: add HTTP security response headers to non-operational paths."""
+    response = await call_next(request)
 
-    def __init__(
-        self,
-        app,
-        *,
-        content_security_policy: str = "",
-        frame_options: str = "DENY",
-    ) -> None:
-        super().__init__(app)
-        self.content_security_policy = content_security_policy
-        self.frame_options = frame_options
-
-    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint):
-        response = await call_next(request)
-
-        path = request.url.path
-        if any(path.startswith(p) for p in _SECURITY_SKIP_PREFIXES):
-            return response
-
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-        response.headers["X-Request-ID"] = getattr(
-            request.state, "correlation_id", ""
-        ) or ""
-
-        if self.frame_options:
-            response.headers["X-Frame-Options"] = self.frame_options
-
-        if self.content_security_policy:
-            response.headers["Content-Security-Policy"] = self.content_security_policy
-
+    path = request.url.path
+    if any(path.startswith(p) for p in _SECURITY_SKIP_PREFIXES):
         return response
+
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["X-Request-ID"] = getattr(
+        request.state, "correlation_id", ""
+    ) or ""
+
+    if frame_options:
+        response.headers["X-Frame-Options"] = frame_options
+
+    if content_security_policy:
+        response.headers["Content-Security-Policy"] = content_security_policy
+
+    return response
 
 
 _PATH_TEMPLATE_RE = re.compile(r"/[0-9a-f]{8,}-|[0-9]+(?=/|$)")
 
 
-class MetricsMiddleware(BaseHTTPMiddleware):
-    """Record HTTP request duration to Prometheus."""
+async def metrics_middleware_fn(request: Request, call_next) -> Response:
+    """Pure ASGI middleware: record HTTP request duration to Prometheus."""
+    t0 = time.monotonic()
+    response = await call_next(request)
+    from arrow_lake.core.metrics import get_metrics_enabled, http_request_duration_seconds
 
-    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint):
-        t0 = time.monotonic()
-        response = await call_next(request)
-        from arrow_lake.core.metrics import get_metrics_enabled, http_request_duration_seconds
-
-        if get_metrics_enabled():
-            path = _PATH_TEMPLATE_RE.sub("/:id", request.url.path)
-            http_request_duration_seconds.labels(
-                method=request.method,
-                path=path,
-                status_code=str(response.status_code),
-            ).observe(time.monotonic() - t0)
-        return response
+    if get_metrics_enabled():
+        path = _PATH_TEMPLATE_RE.sub("/:id", request.url.path)
+        http_request_duration_seconds.labels(
+            method=request.method,
+            path=path,
+            status_code=str(response.status_code),
+        ).observe(time.monotonic() - t0)
+    return response
 
 
 async def correlation_id_middleware_fn(

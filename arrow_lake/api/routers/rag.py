@@ -27,7 +27,7 @@ from arrow_lake.rag.prompt import PromptRegistry
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/v2/rag", tags=["rag"])
+router = APIRouter(prefix="/api/v1/rag", tags=["rag"])
 
 
 # ---------------------------------------------------------------------------

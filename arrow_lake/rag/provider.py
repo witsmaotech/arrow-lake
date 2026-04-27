@@ -69,6 +69,13 @@ class BaseLLMProvider(ABC):
 
     def __init__(self, config: LLMConfig) -> None:
         self._config = config
+        self._cb: Any = None
+
+    def _circuit_breaker(self):
+        if self._cb is None:
+            from arrow_lake.core.circuit_breaker import CircuitBreaker
+            self._cb = CircuitBreaker(name=f"llm-{self._config.provider.value}")
+        return self._cb
 
     @abstractmethod
     async def generate(self, messages: list[LLMMessage]) -> LLMResponse:
@@ -157,9 +164,18 @@ class OpenAICompatibleProvider(_RetryMixin, BaseLLMProvider):
         return body
 
     async def generate(self, messages: list[LLMMessage]) -> LLMResponse:
+
+        cb = self._circuit_breaker()
+        if not cb.allow_request():
+            raise RAGError(
+                error_code=ErrorCode.RAG_PROVIDER_ERROR,
+                message=f"LLM circuit breaker OPEN for {self._config.provider.value}",
+                context={"provider": self._config.provider.value},
+            )
         try:
             resp = await self._request(self._build_body(messages))
         except httpx.HTTPError as exc:
+            cb.record_failure()
             raise RAGError(
                 error_code=ErrorCode.RAG_PROVIDER_ERROR,
                 message=f"HTTP error calling {self._config.provider.value}: {exc}",
@@ -168,6 +184,7 @@ class OpenAICompatibleProvider(_RetryMixin, BaseLLMProvider):
 
         if resp.status_code != 200:
             error_body = _safe_json_body(resp)
+            cb.record_failure()
             raise RAGError(
                 error_code=ErrorCode.RAG_PROVIDER_ERROR,
                 message=f"Provider returned {resp.status_code}: {error_body}",
@@ -177,6 +194,7 @@ class OpenAICompatibleProvider(_RetryMixin, BaseLLMProvider):
                 },
             )
 
+        cb.record_success()
         data = resp.json()
         choice = data["choices"][0]
         return LLMResponse(

@@ -25,7 +25,7 @@ from arrow_lake.exceptions import KGError
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/v2/kg", tags=["kg"])
+router = APIRouter(prefix="/api/v1/kg", tags=["kg"])
 
 # Forbidden Gremlin operations that must never be accepted from user input.
 _FORBIDDEN_PATTERNS = [".drop()", ".addV(", ".addE(", ".property(", ".remove(", ".delete("]

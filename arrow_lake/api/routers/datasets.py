@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Path
+from fastapi import APIRouter, Depends, Path, Query
 
 from arrow_lake.api.auth_models import Role
 from arrow_lake.api.deps import get_lake, require_role
@@ -127,14 +127,17 @@ async def ingest_documents(
 @router.get("", response_model=DatasetListResponse)
 async def list_datasets(
     lake=Depends(get_lake),
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
 ) -> DatasetListResponse:
-    """List all datasets with metadata."""
+    """List all datasets with metadata. Supports pagination via limit/offset."""
     result = await run_sync(lake.catalog, timeout=_ADMIN_TIMEOUT, label="catalog")
-    datasets = [
+    all_datasets = [
         DatasetInfo(name=e.name, version=e.version, num_rows=e.num_rows)
         for e in result.datasets
     ]
-    return DatasetListResponse(datasets=datasets, total=result.total)
+    page = all_datasets[offset : offset + limit]
+    return DatasetListResponse(datasets=page, total=result.total)
 
 
 @router.get("/{name}", response_model=DatasetInfo)

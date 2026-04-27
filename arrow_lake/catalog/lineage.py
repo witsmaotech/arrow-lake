@@ -248,7 +248,7 @@ class LineageQueryBridge:
         Returns:
             List of LineageEvent representing upstream sources.
         """
-        sql = "SELECT * FROM lineage WHERE source_datasets LIKE ? ORDER BY timestamp"
+        sql = "SELECT * FROM _lineage_events WHERE source_datasets LIKE ? ORDER BY timestamp"
         table = self.query(sql, params=[f'%"{dataset_name}"%'])
         return [LineageStore._row_to_event(table, i) for i in range(table.num_rows)]
 
@@ -265,7 +265,7 @@ class LineageQueryBridge:
             List of LineageEvent representing downstream consumers.
         """
         sql = (
-            "SELECT * FROM lineage "
+            "SELECT * FROM _lineage_events "
             "WHERE dataset_name = ? "
             "AND source_datasets != '[]' "
             "AND source_datasets IS NOT NULL "

@@ -44,4 +44,4 @@ Arrow Lake 数据湖平台实战教程，涵盖数据摄取、搜索、分析、
 
 ## 版本
 
-对应 Arrow Lake v1.2.0
+对应 Arrow Lake v1.2.1

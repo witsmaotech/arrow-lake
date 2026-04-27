@@ -8,6 +8,8 @@ from __future__ import annotations
 import duckdb
 import pytest
 
+pytest.importorskip("lance", reason="lance not installed")
+
 
 class TestLanceExtensionAvailable:
     """Test that lance extension can be installed and loaded."""

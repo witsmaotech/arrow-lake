@@ -109,6 +109,7 @@ class FacetedSearchBridge:
         top_k: int = 10,
         vector_column: str = "embedding",
         where: str | None = None,
+        version: int | None = None,
     ) -> FacetedSearchResult:
         """Execute a faceted search query.
 

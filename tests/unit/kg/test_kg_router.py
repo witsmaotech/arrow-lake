@@ -21,8 +21,14 @@ class MockHugeGraphConfig:
 
 
 @dataclass
+class MockAuthConfig:
+    allow_unauthenticated_access: bool = True
+
+
+@dataclass
 class MockConfig:
     hugegraph: MockHugeGraphConfig = field(default_factory=MockHugeGraphConfig)
+    auth: MockAuthConfig = field(default_factory=MockAuthConfig)
 
 
 @dataclass
@@ -37,12 +43,13 @@ def _make_app(lake: Any) -> Any:
 
     app = FastAPI()
     app.state.lake = lake
+    app.state.config = lake._config
     app.include_router(router)
     return app
 
 
 # ---------------------------------------------------------------------------
-# POST /api/v2/kg/build
+# POST /api/v1/kg/build
 # ---------------------------------------------------------------------------
 
 
@@ -52,7 +59,7 @@ class TestKGBuildEndpoint:
         lake.kg_build = AsyncMock(return_value="task-123")
         app = _make_app(lake)
         client = TestClient(app)
-        resp = client.post("/api/v2/kg/build", json={"dataset_name": "my_ds"})
+        resp = client.post("/api/v1/kg/build", json={"dataset_name": "my_ds"})
         assert resp.status_code == 200
         data = resp.json()
         assert data["task_id"] == "task-123"
@@ -69,7 +76,7 @@ class TestKGBuildEndpoint:
         )
         app = _make_app(lake)
         client = TestClient(app)
-        resp = client.post("/api/v2/kg/build", json={"dataset_name": "my_ds"})
+        resp = client.post("/api/v1/kg/build", json={"dataset_name": "my_ds"})
         assert resp.status_code == 404
 
     def test_build_connection_failed(self) -> None:
@@ -82,12 +89,12 @@ class TestKGBuildEndpoint:
         )
         app = _make_app(lake)
         client = TestClient(app)
-        resp = client.post("/api/v2/kg/build", json={"dataset_name": "my_ds"})
+        resp = client.post("/api/v1/kg/build", json={"dataset_name": "my_ds"})
         assert resp.status_code == 502
 
 
 # ---------------------------------------------------------------------------
-# GET /api/v2/kg/build/{task_id}/status
+# GET /api/v1/kg/build/{task_id}/status
 # ---------------------------------------------------------------------------
 
 
@@ -106,7 +113,7 @@ class TestKGBuildStatusEndpoint:
         })
         app = _make_app(lake)
         client = TestClient(app)
-        resp = client.get("/api/v2/kg/build/t1/status")
+        resp = client.get("/api/v1/kg/build/t1/status")
         assert resp.status_code == 200
         data = resp.json()
         assert data["task_id"] == "t1"
@@ -117,12 +124,12 @@ class TestKGBuildStatusEndpoint:
         lake.kg_build_status = AsyncMock(return_value=None)
         app = _make_app(lake)
         client = TestClient(app)
-        resp = client.get("/api/v2/kg/build/nonexistent/status")
+        resp = client.get("/api/v1/kg/build/nonexistent/status")
         assert resp.status_code == 404
 
 
 # ---------------------------------------------------------------------------
-# GET /api/v2/kg/schema
+# GET /api/v1/kg/schema
 # ---------------------------------------------------------------------------
 
 
@@ -137,7 +144,7 @@ class TestKGSchemaEndpoint:
         lake._get_kg_client = MagicMock(return_value=mock_client)
         app = _make_app(lake)
         client = TestClient(app)
-        resp = client.get("/api/v2/kg/schema")
+        resp = client.get("/api/v1/kg/schema")
         assert resp.status_code == 200
         data = resp.json()
         assert data["vertex_labels"] == ["Person", "Document"]
@@ -148,12 +155,12 @@ class TestKGSchemaEndpoint:
         lake._get_kg_client = MagicMock(return_value=None)
         app = _make_app(lake)
         client = TestClient(app)
-        resp = client.get("/api/v2/kg/schema")
+        resp = client.get("/api/v1/kg/schema")
         assert resp.status_code == 404
 
 
 # ---------------------------------------------------------------------------
-# POST /api/v2/kg/query
+# POST /api/v1/kg/query
 # ---------------------------------------------------------------------------
 
 
@@ -163,7 +170,7 @@ class TestKGQueryEndpoint:
         lake.kg_query = AsyncMock(return_value=[100])
         app = _make_app(lake)
         client = TestClient(app)
-        resp = client.post("/api/v2/kg/query", json={"gremlin": "g.V().count()"})
+        resp = client.post("/api/v1/kg/query", json={"gremlin": "g.V().count()"})
         assert resp.status_code == 200
         data = resp.json()
         assert data["results"] == [100]
@@ -176,12 +183,12 @@ class TestKGQueryEndpoint:
         )
         app = _make_app(lake)
         client = TestClient(app)
-        resp = client.post("/api/v2/kg/query", json={"gremlin": "g.V()"})
+        resp = client.post("/api/v1/kg/query", json={"gremlin": "g.V()"})
         assert resp.status_code == 404
 
 
 # ---------------------------------------------------------------------------
-# GET /api/v2/kg/entities/{entity_id}/neighbors
+# GET /api/v1/kg/entities/{entity_id}/neighbors
 # ---------------------------------------------------------------------------
 
 
@@ -191,7 +198,7 @@ class TestKGNeighborsEndpoint:
         lake.kg_get_neighbors = AsyncMock(return_value=[{"id": "v2"}])
         app = _make_app(lake)
         client = TestClient(app)
-        resp = client.get("/api/v2/kg/entities/v1/neighbors?depth=2")
+        resp = client.get("/api/v1/kg/entities/v1/neighbors?depth=2")
         assert resp.status_code == 200
         data = resp.json()
         assert data["center_id"] == "v1"
@@ -199,7 +206,7 @@ class TestKGNeighborsEndpoint:
 
 
 # ---------------------------------------------------------------------------
-# GET /api/v2/kg/stats
+# GET /api/v1/kg/stats
 # ---------------------------------------------------------------------------
 
 
@@ -209,7 +216,7 @@ class TestKGStatsEndpoint:
         lake.kg_stats = AsyncMock(return_value={"total_vertices": 42, "total_edges": 99})
         app = _make_app(lake)
         client = TestClient(app)
-        resp = client.get("/api/v2/kg/stats")
+        resp = client.get("/api/v1/kg/stats")
         assert resp.status_code == 200
         data = resp.json()
         assert data["total_vertices"] == 42
@@ -217,7 +224,7 @@ class TestKGStatsEndpoint:
 
 
 # ---------------------------------------------------------------------------
-# DELETE /api/v2/kg/graph
+# DELETE /api/v1/kg/graph
 # ---------------------------------------------------------------------------
 
 
@@ -227,13 +234,13 @@ class TestKGDeleteGraphEndpoint:
         lake.kg_delete_graph = AsyncMock(return_value=None)
         app = _make_app(lake)
         client = TestClient(app)
-        resp = client.delete("/api/v2/kg/graph")
+        resp = client.delete("/api/v1/kg/graph")
         assert resp.status_code == 200
         assert resp.json()["status"] == "ok"
 
 
 # ---------------------------------------------------------------------------
-# POST /api/v2/kg/query/graphrag
+# POST /api/v1/kg/query/graphrag
 # ---------------------------------------------------------------------------
 
 
@@ -259,7 +266,7 @@ class TestGraphRAGEndpoint:
         app = _make_app(lake)
         client = TestClient(app)
         resp = client.post(
-            "/api/v2/kg/query/graphrag",
+            "/api/v1/kg/query/graphrag",
             json={"question": "What is the answer?", "dataset_name": "ds"},
         )
         assert resp.status_code == 200

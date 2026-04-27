@@ -191,11 +191,19 @@ class QualityFilterRegistry:
             if current.num_rows == 0:
                 break
 
-        all_rejected = (
-            pa.concat_tables(accumulated_rejected_chunks)
-            if accumulated_rejected_chunks
-            else table.slice(0, 0)
-        )
+        if accumulated_rejected_chunks:
+            base_cols = [
+                c for c in table.column_names if c != "_rejection_reason"
+            ]
+            normalized = []
+            for chunk in accumulated_rejected_chunks:
+                chunk_cols = [
+                    c for c in chunk.column_names if c in base_cols
+                ]
+                normalized.append(chunk.select(chunk_cols))
+            all_rejected = pa.concat_tables(normalized)
+        else:
+            all_rejected = table.slice(0, 0)
         return current, all_rejected, results
 
     @staticmethod
@@ -223,9 +231,17 @@ class QualityFilterRegistry:
             if current.num_rows == 0:
                 break
 
-        all_passed = (
-            pa.concat_tables(accumulated_passed_chunks)
-            if accumulated_passed_chunks
-            else table.slice(0, 0)
-        )
+        if accumulated_passed_chunks:
+            base_cols = [
+                c for c in table.column_names if c != "_rejection_reason"
+            ]
+            normalized = []
+            for chunk in accumulated_passed_chunks:
+                chunk_cols = [
+                    c for c in chunk.column_names if c in base_cols
+                ]
+                normalized.append(chunk.select(chunk_cols))
+            all_passed = pa.concat_tables(normalized)
+        else:
+            all_passed = table.slice(0, 0)
         return all_passed, current, results
