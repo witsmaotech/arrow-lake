@@ -27,7 +27,6 @@ DIM = 768
 
 def _add_vectors(lake: Lake, dataset: str) -> int:
     rng = np.random.RandomState(42)
-    storage = lake._get_storage()
     ds = lake.open_dataset(dataset)
     n = ds.count_rows()
     vecs = rng.randn(n, DIM).astype(np.float32)
@@ -35,7 +34,7 @@ def _add_vectors(lake: Lake, dataset: str) -> int:
     original = ds.to_arrow()
     table = original.append_column(
         "text_embedding", pa.FixedSizeListArray.from_arrays(vecs.ravel(), DIM))
-    storage.restore_dataset(dataset, table)
+    lake.restore_dataset(dataset, table)
     return n
 
 

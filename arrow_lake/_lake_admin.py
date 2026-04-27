@@ -80,6 +80,100 @@ class _LakeAdminMixin:
             if val is not None and val > 0:
                 catalog_tables_total.dec()
 
+    def restore_dataset(self, name: str, data: Any) -> None:
+        """Replace a dataset entirely with new data (delete + recreate).
+
+        Used for schema changes, column additions, and full dataset reloads.
+
+        Args:
+            name: Dataset name.
+            data: Arrow table with the new dataset content.
+
+        Raises:
+            StorageError: If dataset does not exist or write fails.
+        """
+        self._get_storage().restore_dataset(name, data)
+
+    def get_dataset_version(self, name: str) -> int:
+        """Get the current version number of a dataset.
+
+        Args:
+            name: Dataset name.
+
+        Returns:
+            Version number (0-based).
+        """
+        return self._get_storage().get_version(name)
+
+    def list_dataset_versions(self, name: str) -> list[dict[str, Any]]:
+        """List all versions of a dataset.
+
+        Args:
+            name: Dataset name.
+
+        Returns:
+            List of version metadata dicts.
+        """
+        return self._get_storage().list_versions(name)
+
+    def add_column(self, name: str, column_name: str, sql_expr: str) -> None:
+        """Add a computed column to an existing dataset.
+
+        Args:
+            name: Dataset name.
+            column_name: Name of the new column.
+            sql_expr: SQL expression for the column value (e.g. "price * 0.9").
+        """
+        self._get_storage().add_column(name, column_name, sql_expr)
+
+    def alter_column(self, name: str, column_name: str, new_type: Any) -> None:
+        """Change the data type of an existing column.
+
+        Args:
+            name: Dataset name.
+            column_name: Column to modify.
+            new_type: Target PyArrow data type (e.g. pa.float32()).
+        """
+        self._get_storage().alter_column(name, column_name, new_type)
+
+    def drop_column(self, name: str, column_name: str) -> None:
+        """Remove a column from a dataset.
+
+        Args:
+            name: Dataset name.
+            column_name: Column to remove.
+        """
+        self._get_storage().drop_column(name, column_name)
+
+    def compact_dataset(self, name: str) -> Any:
+        """Compact a dataset by merging small fragments.
+
+        Args:
+            name: Dataset name.
+
+        Returns:
+            CompactionStats with before/after file counts and sizes.
+        """
+        return self._get_storage().compact(name)
+
+    def read_dataset(self, name: str, *, columns: list[str] | None = None) -> Any:
+        """Read a dataset as an Arrow table.
+
+        Args:
+            name: Dataset name.
+            columns: Optional column names to read (None = all).
+        """
+        return self._get_storage().read_dataset(name, columns=columns)
+
+    def scan_dataset(self, name: str, **kwargs: Any) -> Any:
+        """Create a Lance dataset scanner for lazy row-by-row reading.
+
+        Args:
+            name: Dataset name.
+            **kwargs: Scanner options (columns, filter, etc.).
+        """
+        return self._get_storage().scan_dataset(name, **kwargs)
+
     def rename_dataset(self, name: str, new_name: str) -> None:
         """Rename a dataset (copy + delete original).
 

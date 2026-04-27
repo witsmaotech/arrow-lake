@@ -7,6 +7,7 @@ Provides a lightweight HTTP server with:
 .. deprecated::
     ``arrow_lake.server`` is deprecated since v0.2.0.
     Use ``uvicorn arrow_lake.api.app:create_app --factory`` instead.
+    Scheduled for removal in v2.0.
 
 Usage as standalone::
 
@@ -22,8 +23,9 @@ from __future__ import annotations
 import warnings
 
 warnings.warn(
-    "arrow_lake.server is deprecated since v0.2.0. "
-    "Use 'uvicorn arrow_lake.api.app:create_app --factory' instead.",
+    "arrow_lake.server is deprecated since v0.2.0 "
+    "Use 'uvicorn arrow_lake.api.app:create_app --factory' instead. "
+    "Scheduled for removal in v2.0.",
     DeprecationWarning,
     stacklevel=2,
 )

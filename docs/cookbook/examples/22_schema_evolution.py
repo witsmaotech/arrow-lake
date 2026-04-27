@@ -38,7 +38,6 @@ def main() -> None:
         shutil.rmtree(base)
 
     lake = Lake(base_uri=args.base_uri)
-    storage = lake._get_storage()
 
     # STEP 1: 创建基础数据集
     print("STEP 1: 创建基础数据集")
@@ -55,18 +54,18 @@ def main() -> None:
     print(f"  初始 schema: {len(ds.schema)} 列")
     for f in ds.schema:
         print(f"    {f.name}: {f.type}")
-    v1 = storage.get_version("products")
+    v1 = lake.get_dataset_version("products")
     print(f"  版本: {v1}")
 
     # STEP 2: 添加计算列
     print("\nSTEP 2: 添加计算列 (discount_price)")
     try:
-        storage.add_column("products", "discount_price", "CAST(price * 0.9 AS DOUBLE)")
+        lake.add_column("products", "discount_price", "CAST(price * 0.9 AS DOUBLE)")
         ds = lake.open_dataset("products")
         print(f"  添加列后: {len(ds.schema)} 列")
         for f in ds.schema:
             print(f"    {f.name}: {f.type}")
-        v2 = storage.get_version("products")
+        v2 = lake.get_dataset_version("products")
         print(f"  版本: {v1} → {v2}")
     except RuntimeError as e:
         print(f"  跳过: {e}")
@@ -74,7 +73,7 @@ def main() -> None:
     # STEP 3: 修改列类型
     print("\nSTEP 3: 修改列类型 (price: float64 → float32)")
     try:
-        storage.alter_column("products", "price", pa.float32())
+        lake.alter_column("products", "price", pa.float32())
         ds = lake.open_dataset("products")
         for f in ds.schema:
             if f.name == "price":
@@ -85,7 +84,7 @@ def main() -> None:
     # STEP 4: 删除列
     print("\nSTEP 4: 删除列 (discount_price)")
     try:
-        storage.drop_column("products", "discount_price")
+        lake.drop_column("products", "discount_price")
         ds = lake.open_dataset("products")
         print(f"  删除后: {len(ds.schema)} 列")
         for f in ds.schema:
@@ -101,12 +100,12 @@ def main() -> None:
         "price": rng.uniform(10, 1000, 10).astype(np.float32).tolist(),
         "category": [f"cat_{i % 4}" for i in range(n, n + 10)],
     })
-    storage.append_dataset("products", new_table)
+    lake.append_dataset("products", new_table)
     ds = lake.open_dataset("products")
     print(f"  追加后: {ds.count_rows()} 行")
 
     try:
-        stats = storage.compact("products")
+        stats = lake.compact_dataset("products")
         print(f"  压缩完成: version {stats.version_before} → {stats.version_after}")
         print(f"  碎片: {stats.fragments_before} → {stats.fragments_after}")
     except RuntimeError as e:

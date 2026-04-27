@@ -88,7 +88,6 @@ __all__ = [
     "StorageError",
     "ValidationError",
     "VectorSearchResult",
-    "VectorSearchResult",
     "WorkflowError",
     "__version__",
 ]
