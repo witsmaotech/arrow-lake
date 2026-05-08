@@ -22,19 +22,24 @@ from arrow_lake import Lake
 DATAS_DIR = Path(__file__).resolve().parent.parent / "datas"
 _DEFAULT_BASE_URI = "./_tmp_faceted"
 DIM = 768
+_DATASETS = ["papers_zh"]
 
 
 def _add_vectors(lake: Lake, dataset: str) -> int:
-    rng = np.random.RandomState(42)
-    ds = lake.open_dataset(dataset)
-    n = ds.count_rows()
-    vecs = rng.randn(n, DIM).astype(np.float32)
-    vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
-    original = ds.to_arrow()
-    table = original.append_column(
-        "text_embedding", pa.FixedSizeListArray.from_arrays(vecs.ravel(), DIM))
-    lake.restore_dataset(dataset, table)
-    return n
+    try:
+        return lake.embed_and_add(dataset)
+    except Exception:
+        import numpy as np
+        rng = np.random.RandomState(42)
+        ds = lake.open_dataset(dataset)
+        n = ds.count_rows()
+        vecs = rng.randn(n, DIM).astype(np.float32)
+        vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
+        vec_table = pa.table({
+            "text_embedding": pa.FixedSizeListArray.from_arrays(vecs.ravel(), DIM),
+        })
+        lake.add_columns_table(dataset, vec_table)
+        return n
 
 
 def main() -> None:
@@ -52,6 +57,13 @@ def main() -> None:
         shutil.rmtree(base)
 
     lake = Lake(base_uri=args.base_uri)
+
+    # 清理后端残留
+    for ds in _DATASETS:
+        try:
+            lake.delete_dataset(ds)
+        except Exception:
+            pass
 
     # STEP 1: 摄取论文数据
     print("STEP 1: 摄入中文论文")
@@ -102,6 +114,11 @@ def main() -> None:
 
     print("\n  [全部 PASS]")
     if not no_cleanup:
+        for ds in _DATASETS:
+            try:
+                lake.delete_dataset(ds)
+            except Exception:
+                pass
         lake.shutdown()
         shutil.rmtree(base, ignore_errors=True)
         print("(已清理)")

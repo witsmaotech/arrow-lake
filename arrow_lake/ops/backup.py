@@ -17,7 +17,7 @@ from typing import Any
 
 import structlog
 
-from arrow_lake.config import StorageConfig
+from arrow_lake.config import StorageBackend, StorageConfig
 from arrow_lake.exceptions import BackupError, ErrorCode, StorageError
 from arrow_lake.ops.backup_restore import BackupRestorer
 from arrow_lake.storage.blob_store import BlobStoreManager
@@ -296,6 +296,11 @@ class BackupManager:
         """Copy a Lance dataset to the backup location. Returns (row_count, file_hashes)."""
         if ".." in dataset_name or "/" in dataset_name or "\\" in dataset_name:
             raise ValueError(f"Invalid dataset name (path traversal): {dataset_name!r}")
+
+        if self._storage_config.backend != StorageBackend.LOCAL:
+            return self._backup_lance_dataset_remote(dataset_name, backup_prefix)
+
+        # --- Local filesystem ---
         resolved = (self._lance_base_uri / dataset_name).resolve()
         base = self._lance_base_uri.resolve()
         if not str(resolved).startswith(str(base)):
@@ -311,7 +316,6 @@ class BackupManager:
                 continue
             rel_path = item.relative_to(dataset_path)
             backup_key = f"{backup_prefix}datasets/{dataset_name}/{rel_path}"
-            # Stream file in 8MB chunks to limit memory usage
             file_size = item.stat().st_size
             sha = hashlib.sha256()
             _chunk_size = 8 * 1024 * 1024
@@ -340,6 +344,54 @@ class BackupManager:
 
         return row_count, file_hashes
 
+    def _s3_dataset_prefix(self, dataset_name: str) -> str:
+        """Compute the S3 key prefix for a Lance dataset."""
+        base = self._storage_config.base_uri
+        if base.startswith("./"):
+            base = base[2:]
+        return f"{base}/{dataset_name}.lance/"
+
+    def _backup_lance_dataset_remote(
+        self, dataset_name: str, backup_prefix: str,
+    ) -> tuple[int, dict[str, str]]:
+        """Copy a Lance dataset from remote (S3/MinIO) to backup via server-side copy."""
+        s3_prefix = self._s3_dataset_prefix(dataset_name)
+
+        row_count = -1
+        file_hashes: dict[str, str] = {}
+        found_any = False
+        continuation_token: str | None = None
+
+        while True:
+            result = self._blob_store.list_blobs(
+                s3_prefix, max_keys=5000, continuation_token=continuation_token,
+            )
+            for key in result.keys:
+                found_any = True
+                rel_path = key[len(s3_prefix):]
+                backup_key = f"{backup_prefix}datasets/{dataset_name}/{rel_path}"
+                self._blob_store.copy(key, backup_key)
+            if not result.truncated:
+                break
+            continuation_token = result.next_token
+            if not result.keys:
+                break
+
+        if not found_any:
+            raise FileNotFoundError(f"Dataset not found in S3: {s3_prefix}")
+
+        try:
+            import lancedb
+            uri = self._storage_config.s3_uri
+            opts = self._storage_config.to_storage_options()
+            db = lancedb.connect(uri, storage_options=opts)
+            table = db.open_table(dataset_name)
+            row_count = table.count_rows()
+        except (ImportError, OSError, RuntimeError):
+            pass
+
+        return row_count, file_hashes
+
     def _backup_blob_prefix(self, src_prefix: str, dest_prefix: str) -> int:
         """Copy all blobs from src_prefix to dest_prefix (handles pagination)."""
         count = 0
@@ -356,7 +408,11 @@ class BackupManager:
         return count
 
     def _get_restorer(self) -> BackupRestorer:
-        return BackupRestorer(blob_store=self._blob_store, lance_base_uri=str(self._lance_base_uri))
+        return BackupRestorer(
+            blob_store=self._blob_store,
+            lance_base_uri=str(self._lance_base_uri),
+            storage_config=self._storage_config,
+        )
 
     def _load_manifest(self, backup_id: str) -> BackupManifest:
         """Load backup manifest. Raises StorageError if not found."""

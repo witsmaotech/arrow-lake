@@ -24,7 +24,11 @@ from arrow_lake import CatalogEntry, CatalogResult, Lake
 
 @pytest.fixture()
 def lake(tmp_path: Path) -> Lake:
-    return Lake(base_uri=str(tmp_path / "lance_data"))
+    from arrow_lake.config import ArrowLakeConfig, StorageConfig, StorageBackend
+
+    cfg = ArrowLakeConfig()
+    cfg.storage = StorageConfig(base_uri=str(tmp_path / "lance_data"), backend=StorageBackend.LOCAL)
+    return Lake(base_uri=str(tmp_path / "lance_data"), config=cfg)
 
 
 class TestLakeIngestDelegation:

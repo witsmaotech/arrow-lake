@@ -29,15 +29,23 @@ def main() -> None:
     no_cleanup = args.no_cleanup
     print("=" * 60)
     print("01 数据摄取入门")
+    print(DATAS_DIR)
     print("=" * 60)
 
-    # 清理旧数据
     base = Path(args.base_uri)
     if base.exists():
         shutil.rmtree(base)
 
     lake = Lake(base_uri=args.base_uri)
     print(f"Arrow Lake v{lake.version()}\n")
+
+    # 清理 MinIO / 后端中的残留数据集
+    _DATASETS = ["transactions", "knowledge", "papers_zh"]
+    for ds in _DATASETS:
+        try:
+            lake.delete_dataset(ds)
+        except Exception:
+            pass
 
     # --- STEP 1: 摄取 CSV ---
     print("STEP 1: 摄取 CSV (英文交易记录)")
@@ -63,21 +71,21 @@ def main() -> None:
     print(f"  摄入: {report.total_rows} 行, {report.total_files} 文件")
     print("  [PASS]\n")
 
-    # --- STEP 4: 列出数据集 ---
-    print("STEP 4: 列出全部数据集")
+    # --- STEP 4: 验证本示例创建的数据集 ---
+    print("STEP 4: 验证数据集")
     datasets = lake.list_datasets()
-    for i, name in enumerate(datasets, 1):
-        print(f"  {i}. {name}")
-    if len(datasets) != 3:
-        print(f"  [FAIL] Expected 3 items, got {len(datasets)}")
+    missing = [d for d in _DATASETS if d not in datasets]
+    if missing:
+        print(f"  [FAIL] Missing: {missing}")
         return
-    print(f"  共 {len(datasets)} 个数据集")
-    print("  [PASS]\n")
+    for d in _DATASETS:
+        print(f"  - {d}")
+    print(f"  [PASS]\n")
 
     # --- STEP 5: 查看数据集详情 ---
     print("STEP 5: 数据集详情")
-    for name in datasets:
-        catalog = lake.catalog()
+    catalog = lake.catalog()
+    for name in _DATASETS:
         if name in catalog.datasets:
             ds = catalog.datasets[name]
             print(f"  {name}: {ds.num_rows} 行, {ds.version} 版")
@@ -85,6 +93,11 @@ def main() -> None:
 
     # 清理
     if not no_cleanup:
+        for ds in _DATASETS:
+            try:
+                lake.delete_dataset(ds)
+            except Exception:
+                pass
         lake.shutdown()
         shutil.rmtree(base, ignore_errors=True)
         print("(已清理临时数据)")

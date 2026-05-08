@@ -18,6 +18,7 @@ from arrow_lake import Lake
 
 DATAS_DIR = Path(__file__).resolve().parent.parent / "datas"
 _DEFAULT_BASE_URI = "./_tmp_multi_join"
+_DATASETS = ["papers_zh", "knowledge_zh"]
 
 
 def main() -> None:
@@ -35,6 +36,13 @@ def main() -> None:
         shutil.rmtree(base)
 
     lake = Lake(base_uri=args.base_uri)
+
+    # 清理后端残留
+    for ds in _DATASETS:
+        try:
+            lake.delete_dataset(ds)
+        except Exception:
+            pass
 
     # STEP 1: 分别摄取
     print("STEP 1: 摄取论文 + 知识库")
@@ -91,12 +99,17 @@ def main() -> None:
     # STEP 5: 导出关联分析
     print("\nSTEP 5: 导出各数据集")
     for ds_name in ["papers_zh", "knowledge_zh"]:
-        out = base / f"{ds_name}_analysis.parquet"
+        out = (base / f"{ds_name}_analysis.parquet").resolve()
         lake.export(ds_name, str(out), format="parquet")
         print(f"  {ds_name} → {out.name} ({out.stat().st_size // 1024} KB)")
 
     print("\n  [全部 PASS]")
     if not no_cleanup:
+        for ds in _DATASETS:
+            try:
+                lake.delete_dataset(ds)
+            except Exception:
+                pass
         lake.shutdown()
         shutil.rmtree(base, ignore_errors=True)
         print("(已清理)")

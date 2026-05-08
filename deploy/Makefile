@@ -36,7 +36,7 @@ ALL_PROFILES = --profile core --profile compute --profile dev --profile gpu --pr
 # Core commands
 # ---------------------------------------------------------------------------
 
-.PHONY: up dev gpu full kg ocr down clean build ps logs env certs shell-api shell-ray shell-jupyter
+.PHONY: up dev gpu full kg ocr down clean build ps logs env certs shell-api shell-ray shell-jupyter test-smoke
 
 up:
 	docker compose $(COMPOSE_FILE) --project-name $(PROJECT_NAME) $(PROFILE_CORE) up -d
@@ -120,6 +120,16 @@ shell-jupyter:
 	docker compose $(COMPOSE_FILE) $(COMPOSE_DEV) $(COMPOSE_MON) --project-name $(PROJECT_NAME) $(PROFILE_DEV) exec jupyter bash
 
 # ---------------------------------------------------------------------------
+# Testing
+# ---------------------------------------------------------------------------
+
+.PHONY: test-smoke
+
+test-smoke:
+	@echo "=== Container Smoke Tests ==="
+	cd .. && .venv/bin/python -m pytest tests/container/ -v --tb=short --timeout=300
+
+# ---------------------------------------------------------------------------
 # Help
 # ---------------------------------------------------------------------------
 
@@ -152,6 +162,8 @@ help:
 	@echo "  make shell-api   Shell into API container"
 	@echo "  make shell-ray   Shell into Ray Head container"
 	@echo "  make shell-jupyter Shell into Jupyter container"
+	@echo ""
+	@echo "  make test-smoke  Run container integration tests (all 60 endpoints)"
 	@echo ""
 	@echo "Variables:"
 	@echo "  COMPOSE_FILE   Base compose file (default: -f docker-compose.yml)"

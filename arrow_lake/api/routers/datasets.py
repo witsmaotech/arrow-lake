@@ -126,6 +126,7 @@ async def ingest_documents(
 
 @router.get("", response_model=DatasetListResponse)
 async def list_datasets(
+    _auth: None = Depends(require_role(Role.VIEWER)),
     lake=Depends(get_lake),
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
@@ -144,6 +145,7 @@ async def list_datasets(
 async def get_dataset(
     name: str = Path(..., pattern=_NAME_PATTERN),
     *,
+    _auth: None = Depends(require_role(Role.VIEWER)),
     lake=Depends(get_lake),
 ) -> DatasetInfo:
     """Get metadata for a specific dataset."""

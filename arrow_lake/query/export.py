@@ -64,6 +64,12 @@ class ExportBridge:
     ) -> None:
         self._storage = storage
         self._config = config
+        default_dir = "/app/exports"
+        raw_dir = getattr(config, "base_dir", default_dir) if config else default_dir
+        if raw_dir == default_dir and not Path(default_dir).parent.exists():
+            import os
+            raw_dir = os.getcwd()
+        self._base_dir = raw_dir
 
     def export(
         self,
@@ -138,7 +144,11 @@ class ExportBridge:
                 error_code=ErrorCode.EXPORT_PATH_INVALID,
                 message=f"Path traversal not allowed in output path: {output_path}",
             )
-        path = output.resolve()
+        base = Path(self._base_dir)
+        if output.is_absolute():
+            path = output
+        else:
+            path = (base / output).resolve()
 
         fmt = self._detect_format(output_path, format)
 
@@ -189,11 +199,11 @@ class ExportBridge:
                 comp = compression or (
                     self._config.parquet_compression if self._config else "snappy"
                 )
-                pq.write_table(export_table, output_path, compression=comp)
+                pq.write_table(export_table, str(path), compression=comp)
             elif fmt == "csv":
                 delimiter = self._config.csv_delimiter if self._config else ","
                 csv.write_csv(
-                    export_table, output_path, write_options=csv.WriteOptions(delimiter=delimiter)
+                    export_table, str(path), write_options=csv.WriteOptions(delimiter=delimiter)
                 )
             else:
                 raise StorageError(
@@ -208,7 +218,7 @@ class ExportBridge:
                 message=f"Failed to export to {output_path}: {exc}",
             ) from exc
 
-        file_size = os.path.getsize(output_path)
+        file_size = os.path.getsize(str(path))
         return ExportResult(
             dataset_name="",
             output_path=str(path),

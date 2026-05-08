@@ -290,6 +290,9 @@ class StorageCRUDMixin:
     def restore_dataset(self, name: str, data: pa.Table) -> None:
         """Delete and recreate a dataset with new data (used for rollback).
 
+        Uses the same cached LanceDB connection for both drop and create
+        to avoid stale metadata on S3/MinIO backends.
+
         Args:
             name: Dataset name.
             data: Arrow table to write.
@@ -298,5 +301,9 @@ class StorageCRUDMixin:
             StorageError: If dataset does not exist or write fails.
         """
         self._validate_name(name)
-        self.delete_dataset(name)
-        self._write_lance(data, self._get_dataset_path(name), mode="create")
+        db = self._get_db()
+        try:
+            db.drop_table(name)
+        except Exception:
+            pass
+        db.create_table(name, data)

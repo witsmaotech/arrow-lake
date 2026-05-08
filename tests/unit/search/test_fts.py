@@ -23,9 +23,10 @@ from arrow_lake.query.fts import FullTextSearchBridge, FullTextSearchResult
 
 
 def _make_mock_storage() -> MagicMock:
-    """Create a mock LanceStorageManager (no dataset_uri → sub-bridge path)."""
+    """Create a mock LanceStorageManager."""
     storage = MagicMock()
-    del storage.dataset_uri
+    storage.dataset_uri.return_value = "/tmp/test.lance"
+    storage.storage_options = None
     return storage
 
 
@@ -190,7 +191,6 @@ class TestCreateIndex:
 
         storage = _make_mock_storage()
         mock_table = _make_mock_lance_table_no_jieba()
-        mock_table.uri = "/tmp/test.lance"
         storage.open_dataset.return_value = mock_table
 
         config = FullTextSearchConfig(tokenizer_type="jieba")
@@ -740,7 +740,6 @@ class TestAddSegmentedColumn:
 
         storage = _make_mock_storage()
         mock_table = _make_mock_lance_table_no_jieba()
-        mock_table.uri = "/tmp/test.lance"
         storage.open_dataset.return_value = mock_table
 
         config = FullTextSearchConfig(tokenizer_type="jieba")
@@ -749,8 +748,8 @@ class TestAddSegmentedColumn:
         with patch.dict("sys.modules", {"lance": mock_lance}):
             bridge.create_index("test_ds")
 
-        # Verify lance.dataset was called with the URI
-        mock_lance.dataset.assert_called_once_with("/tmp/test.lance")
+        # Verify lance.dataset was called with URI and storage_options
+        mock_lance.dataset.assert_called_once_with("/tmp/test.lance", storage_options=None)
         # Verify lance.write_dataset was called
         mock_lance.write_dataset.assert_called_once()
         written_table = mock_lance.write_dataset.call_args[0][0]
@@ -769,7 +768,6 @@ class TestAddSegmentedColumn:
 
         storage = _make_mock_storage()
         mock_table = _make_mock_lance_table_no_jieba()
-        mock_table.uri = "/tmp/test.lance"
         storage.open_dataset.return_value = mock_table
 
         config = FullTextSearchConfig(tokenizer_type="jieba")

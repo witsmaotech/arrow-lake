@@ -435,3 +435,77 @@ class _LakeIngestMixin:
         )
         table = self._get_storage().read_dataset(dataset_name)
         return dedup.deduplicate(table)
+
+    def embed_and_add(
+        self,
+        dataset_name: str,
+        *,
+        text_column: str = "text_content",
+        embedding_column: str = "text_embedding",
+        batch_size: int | None = None,
+    ) -> int:
+        """Encode a text column into embeddings and add them to the dataset.
+
+        Uses the configured embedding backend (local HuggingFace model or
+        OpenAI-compatible API such as Ollama). Adds the embedding column
+        in-place via ``add_columns_table`` (no full dataset rewrite).
+
+        Args:
+            dataset_name: Target dataset name.
+            text_column: Column containing text to encode.
+            embedding_column: Name for the new embedding column.
+            batch_size: Override batch size (None = use config default).
+
+        Returns:
+            Number of rows embedded.
+
+        Raises:
+            StorageError: If dataset not found.
+            EmbeddingError: If encoding fails.
+        """
+        from arrow_lake.config._enums import EmbeddingBackend
+        from arrow_lake.embed.encoder import ApiEmbeddingEncoder, LocalEmbeddingEncoder
+
+        emb_cfg = self._config.embedding
+
+        # Read text column
+        table = self._get_storage().read_dataset(
+            dataset_name, columns=[text_column],
+        )
+        texts = table.column(text_column).to_pylist()
+        n = len(texts)
+
+        effective_batch = batch_size or emb_cfg.batch_size
+
+        # Encode using configured backend
+        if emb_cfg.backend == EmbeddingBackend.OPENAI and emb_cfg.api_base:
+            encoder = ApiEmbeddingEncoder(
+                api_base=emb_cfg.api_base,
+                api_key=emb_cfg.api_key,
+                model_name=emb_cfg.model,
+                batch_size=effective_batch,
+            )
+            all_embeddings: list[list[float]] = []
+            for i in range(0, n, effective_batch):
+                batch = encoder.encode(texts[i : i + effective_batch])
+                all_embeddings.extend(batch.embeddings.tolist())
+            dim = len(all_embeddings[0])
+        else:
+            encoder = LocalEmbeddingEncoder(
+                model_name=emb_cfg.model,
+                batch_size=effective_batch,
+            )
+            result = encoder.encode_column(
+                pa.table({text_column: texts}), column=text_column,
+            )
+            all_embeddings = result.embeddings.tolist()
+            dim = result.embedding_dim
+
+        import numpy as np
+
+        vec_array = pa.FixedSizeListArray.from_arrays(
+            np.array(all_embeddings, dtype=np.float32).ravel(), dim,
+        )
+        vec_table = pa.table({embedding_column: vec_array})
+        self._get_storage().add_columns_table(dataset_name, vec_table)
+        return n

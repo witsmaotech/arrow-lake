@@ -19,6 +19,7 @@ import pyarrow as pa
 from arrow_lake import Lake
 
 _DEFAULT_BASE_URI = "./_tmp_audit"
+_DATASETS = ("test_data",)
 
 
 def main() -> None:
@@ -36,6 +37,13 @@ def main() -> None:
         shutil.rmtree(base)
 
     lake = Lake(base_uri=args.base_uri)
+
+    # 清理 MinIO 后端可能残留的数据集
+    for ds in _DATASETS:
+        try:
+            lake.delete_dataset(ds)
+        except Exception:
+            pass
 
     # STEP 1: 创建数据集并记录审计事件
     print("STEP 1: 创建数据集 + 记录审计事件")
@@ -75,8 +83,8 @@ def main() -> None:
         events = lake.audit_query(dataset_name="test_data")
         print(f"  test_data 相关事件: {len(events)} 条")
         for evt in events:
-            etype = getattr(evt, 'event_type', evt.get('event_type', '?'))
-            actor = getattr(evt, 'actor', evt.get('actor', '?'))
+            etype = getattr(evt, 'event_type', '?')
+            actor = getattr(evt, 'actor', '?')
             print(f"    [{etype}] actor={actor}")
     except Exception as e:
         print(f"  查询跳过: {e}")
@@ -104,6 +112,11 @@ def main() -> None:
 
     print("\n  [全部 PASS]")
     if not no_cleanup:
+        for ds in _DATASETS:
+            try:
+                lake.delete_dataset(ds)
+            except Exception:
+                pass
         lake.shutdown()
         shutil.rmtree(base, ignore_errors=True)
         print("(已清理)")

@@ -246,7 +246,7 @@ def table_to_chunks(
     table: pa.Table,
     dataset_name: str,
     score_column: str | None = None,
-    text_column: str = "text",
+    text_column: str = "text_content",
     row_id_column: str = "row_id",
     metadata_column: str | None = None,
 ) -> list[ContextChunk]:

@@ -6,6 +6,8 @@ Uses PyJWT for encoding/decoding. Gracefully no-ops when PyJWT is not installed.
 from __future__ import annotations
 
 import logging
+import threading
+import uuid
 from datetime import UTC, datetime, timedelta
 
 from arrow_lake.api.auth_models import Role, TokenPayload
@@ -25,7 +27,7 @@ class AuthService:
     """JWT token management service.
 
     Provides methods for creating access/refresh tokens, verifying tokens,
-    and refreshing expired access tokens.
+    refreshing expired access tokens, and revoking tokens.
     """
 
     def __init__(
@@ -46,6 +48,9 @@ class AuthService:
         self._access_minutes = access_token_minutes
         self._refresh_days = refresh_token_days
         self._issuer = issuer
+        self._blacklist: dict[str, float] = {}
+        self._blacklist_lock = threading.Lock()
+        self._blacklist_max_size = 100_000
         if _JWT_AVAILABLE:
             self._validate_config()
 
@@ -64,6 +69,7 @@ class AuthService:
             exp=now + timedelta(minutes=self._access_minutes),
             iat=now,
             iss=self._issuer,
+            jti=uuid.uuid4().hex,
         )
 
     def create_refresh_token(
@@ -81,8 +87,33 @@ class AuthService:
             exp=now + timedelta(days=self._refresh_days),
             iat=now,
             iss=self._issuer,
+            jti=uuid.uuid4().hex,
         )
         return self._encode(payload)
+
+    def revoke_token(self, jti: str) -> None:
+        """Add a token's jti to the blacklist."""
+        now = datetime.now(UTC).timestamp()
+        with self._blacklist_lock:
+            self._blacklist[jti] = now
+            if len(self._blacklist) > self._blacklist_max_size:
+                cutoff = now - (self._refresh_days * 86400 + 3600)
+                self._blacklist = {
+                    k: v for k, v in self._blacklist.items() if v > cutoff
+                }
+
+    def is_revoked(self, jti: str) -> bool:
+        """Check if a token has been revoked."""
+        now = datetime.now(UTC).timestamp()
+        with self._blacklist_lock:
+            entry = self._blacklist.get(jti)
+            if entry is None:
+                return False
+            cutoff = now - (self._refresh_days * 86400 + 3600)
+            if entry < cutoff:
+                del self._blacklist[jti]
+                return False
+            return True
 
     def refresh_access_token(self, refresh_token: str) -> TokenPayload:
         """Verify a refresh token and return a new access token payload."""
@@ -115,14 +146,18 @@ class AuthService:
         except jwt.InvalidTokenError as exc:
             raise ValueError(f"Invalid token: {exc}") from None
 
+        # Check blacklist
+        jti = data.get("jti", "")
+        if jti and self.is_revoked(jti):
+            raise ValueError("Token has been revoked")
+
         if require_refresh:
             now = datetime.now(UTC)
             exp = data.get("exp", 0)
             if isinstance(exp, (int, float)):
-                # Refresh tokens have days-long TTL; reject short-lived access tokens
                 created = data.get("iat", now)
                 ttl = exp - (created if isinstance(created, (int, float)) else int(now.timestamp()))
-                if ttl < 3600:  # Less than 1 hour TTL means it's an access token
+                if ttl < 3600:
                     raise ValueError("Expected refresh token, got access token")
             else:
                 raise ValueError("Token missing expiry")

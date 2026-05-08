@@ -194,7 +194,7 @@ class TestTableToChunks:
         import pyarrow as pa
 
         table = pa.table({
-            "text": ["First document", "Second document"],
+            "text_content": ["First document", "Second document"],
             "row_id": ["doc-1", "doc-2"],
             "_score": [0.95, 0.85],
         })
@@ -212,7 +212,7 @@ class TestTableToChunks:
         import pyarrow as pa
 
         table = pa.table({
-            "text": ["Doc A"],
+            "text_content": ["Doc A"],
             "row_id": ["a"],
         })
 
@@ -224,7 +224,7 @@ class TestTableToChunks:
         import pyarrow as pa
 
         table = pa.table({
-            "text": pa.array([], type=pa.string()),
+            "text_content": pa.array([], type=pa.string()),
             "row_id": pa.array([], type=pa.string()),
         })
 
@@ -236,7 +236,7 @@ class TestTableToChunks:
         import pyarrow as pa
 
         table = pa.table({
-            "text": ["Doc A", "Doc B", "Doc C"],
+            "text_content": ["Doc A", "Doc B", "Doc C"],
             "_score": [0.9, 0.8, 0.7],
         })
 

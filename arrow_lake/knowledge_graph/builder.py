@@ -198,10 +198,12 @@ class KGBuilder:
             for i in range(0, len(next_edges), batch_size):
                 await self._client.add_edges(next_edges[i : i + batch_size])
 
-        # 7. Extract entities and relations from each chunk (parallel)
+        # 7. Extract entities and relations from each chunk (batched)
         total_entities = 0
         total_relations = 0
-        semaphore = asyncio.Semaphore(min(self._config.build_batch_size, 4))
+        concurrency = self._config.build_concurrency
+        batch_delay = self._config.build_batch_delay
+        semaphore = asyncio.Semaphore(concurrency)
 
         async def _process_chunk(
             idx: int, cid: str, content: str,
@@ -268,10 +270,15 @@ class KGBuilder:
 
             return ent_count, rel_count
 
-        await asyncio.gather(*(
-            _process_chunk(idx, cid, content)
-            for idx, (cid, content) in enumerate(zip(chunk_ids, contents, strict=True))
-        ))
+        all_chunks = list(enumerate(zip(chunk_ids, contents, strict=True)))
+        for batch_start in range(0, len(all_chunks), concurrency):
+            batch = all_chunks[batch_start : batch_start + concurrency]
+            await asyncio.gather(*(
+                _process_chunk(idx, cid, content)
+                for idx, (cid, content) in batch
+            ))
+            if batch_delay > 0 and batch_start + concurrency < len(all_chunks):
+                await asyncio.sleep(batch_delay)
 
         task.entity_count = total_entities
         task.relation_count = total_relations

@@ -25,6 +25,7 @@ class TokenPayload(BaseModel):
     exp: datetime
     iat: datetime
     iss: str = "arrow-lake"
+    jti: str = ""
 
 
 class TokenPair(BaseModel):

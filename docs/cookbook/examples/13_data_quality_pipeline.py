@@ -12,6 +12,7 @@ import argparse
 
 import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -21,6 +22,7 @@ from arrow_lake import Lake
 
 _DEFAULT_BASE_URI = "./_tmp_quality_pipeline"
 DATASET = "raw_data"
+_DATASETS = ["raw_data"]
 DIM = 64
 
 
@@ -68,11 +70,22 @@ def main() -> None:
     print("13 数据清洗管道")
     print("=" * 60)
 
-    base = Path(args.base_uri)
-    if base.exists():
-        shutil.rmtree(base)
+    # 使用临时目录避免 /app 权限问题
+    if args.base_uri == _DEFAULT_BASE_URI:
+        base = Path(tempfile.mkdtemp(prefix="quality_pipeline_"))
+    else:
+        base = Path(args.base_uri)
+        if base.exists():
+            shutil.rmtree(base)
 
-    lake = Lake(base_uri=args.base_uri)
+    lake = Lake(base_uri=str(base))
+
+    # 清理后端残留
+    for ds in _DATASETS:
+        try:
+            lake.delete_dataset(ds)
+        except Exception:
+            pass
 
     # STEP 1: 创建含噪声数据
     print("STEP 1: 创建含噪声的合成数据")
@@ -106,6 +119,11 @@ def main() -> None:
 
     print("\n  [全部 PASS]")
     if not no_cleanup:
+        for ds in _DATASETS:
+            try:
+                lake.delete_dataset(ds)
+            except Exception:
+                pass
         lake.shutdown()
         shutil.rmtree(base, ignore_errors=True)
         print("(已清理)")

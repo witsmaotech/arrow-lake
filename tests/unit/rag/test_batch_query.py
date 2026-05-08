@@ -18,7 +18,7 @@ def pipeline() -> RAGPipeline:
         "content": "answer", "usage": {},
     })())
     config = RAGConfig()
-    retriever = lambda q, d, k: pa.table({"text": ["doc"], "_score": [0.9]})
+    retriever = lambda q, d, k: pa.table({"text_content": ["doc"], "_score": [0.9]})
     return RAGPipeline(llm, config, retriever)
 
 

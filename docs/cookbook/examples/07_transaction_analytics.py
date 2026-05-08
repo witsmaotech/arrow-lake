@@ -15,10 +15,12 @@ import sys
 from pathlib import Path
 
 from arrow_lake import Lake
+from arrow_lake.config import ArrowLakeConfig
 
 DATAS_DIR = Path(__file__).resolve().parent.parent / "datas"
 _DEFAULT_BASE_URI = "./_tmp_txn_analytics"
 DATASET = "transactions"
+_DATASETS = [DATASET]
 
 
 def main() -> None:
@@ -35,7 +37,16 @@ def main() -> None:
     if base.exists():
         shutil.rmtree(base)
 
-    lake = Lake(base_uri=args.base_uri)
+    config = ArrowLakeConfig()
+    config.olap.ducklake_enabled = True
+    lake = Lake(base_uri=args.base_uri, config=config)
+
+    # 清理后端残留
+    for ds in _DATASETS:
+        try:
+            lake.delete_dataset(ds)
+        except Exception:
+            pass
 
     # --- STEP 1: 摄入 ---
     print("STEP 1: 摄入交易数据")
@@ -56,7 +67,7 @@ def main() -> None:
          "FROM transactions GROUP BY 商品类别 ORDER BY 总额 DESC"),
         ("城市订单分布",
          "SELECT 城市, COUNT(*) as 订单数, ROUND(SUM(金额),2) as 总额 "
-         "FROM transactions GROUP BY 城市 ORDER BY 总额 DESC"),
+         "FROM transactions GROUP BY 城市 ORDER BY 订单数 DESC"),
         ("支付方式占比",
          "SELECT 支付方式, COUNT(*) as 订单数, ROUND(SUM(金额),2) as 总额 "
          "FROM transactions GROUP BY 支付方式 ORDER BY 总额 DESC"),
@@ -81,18 +92,23 @@ def main() -> None:
             "FROM transactions GROUP BY 用户编号",
             view_name="user_summary", ttl_days=7)
         print(f"  物化: user_summary ({row_count} 行)")
-    except (ValueError, RuntimeError) as e:
+    except Exception as e:
         print(f"  跳过 (DuckLake 未启用): {e}")
     print("  [PASS]\n")
 
     # --- STEP 5: 导出 ---
     print("STEP 5: 导出分析结果")
-    out = base / "transaction_summary.csv"
+    out = (base / "transaction_summary.csv").resolve()
     lake.export(DATASET, str(out), format="csv")
     print(f"  导出: {out} ({out.stat().st_size // 1024} KB)")
     print("  [PASS]\n")
 
     if not no_cleanup:
+        for ds in _DATASETS:
+            try:
+                lake.delete_dataset(ds)
+            except Exception:
+                pass
         lake.shutdown()
         shutil.rmtree(base, ignore_errors=True)
         print("(已清理)")

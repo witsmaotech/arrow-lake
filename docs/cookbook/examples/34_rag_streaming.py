@@ -17,7 +17,6 @@ import sys
 import time
 from pathlib import Path
 
-import numpy as np
 import pyarrow as pa
 
 from arrow_lake import Lake
@@ -26,18 +25,25 @@ DATAS_DIR = Path(__file__).resolve().parent.parent / "datas"
 _DEFAULT_BASE_URI = "./_tmp_rag_stream"
 DIM = 768
 
+# 本脚本创建的所有数据集
+_DATASETS = ["knowledge_zh"]
+
 
 def _add_vectors(lake: Lake, dataset: str) -> int:
-    rng = np.random.RandomState(42)
-    ds = lake.open_dataset(dataset)
-    n = ds.count_rows()
-    vecs = rng.randn(n, DIM).astype(np.float32)
-    vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
-    original = ds.to_arrow()
-    table = original.append_column(
-        "text_embedding", pa.FixedSizeListArray.from_arrays(vecs.ravel(), DIM))
-    lake.restore_dataset(dataset, table)
-    return n
+    try:
+        return lake.embed_and_add(dataset)
+    except Exception:
+        import numpy as np
+        rng = np.random.RandomState(42)
+        ds = lake.open_dataset(dataset)
+        n = ds.count_rows()
+        vecs = rng.randn(n, DIM).astype(np.float32)
+        vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
+        vec_table = pa.table({
+            "text_embedding": pa.FixedSizeListArray.from_arrays(vecs.ravel(), DIM),
+        })
+        lake.add_columns_table(dataset, vec_table)
+        return n
 
 
 async def run_async() -> None:
@@ -55,6 +61,13 @@ async def run_async() -> None:
         shutil.rmtree(base)
 
     lake = Lake(base_uri=args.base_uri)
+
+    # 清理后端残留
+    for ds in _DATASETS:
+        try:
+            lake.delete_dataset(ds)
+        except Exception:
+            pass
 
     # STEP 1: 摄入 + 建索引
     print("STEP 1: 准备知识库")
@@ -151,6 +164,11 @@ async def run_async() -> None:
 
     print("\n  [全部 PASS]")
     if not no_cleanup:
+        for ds in _DATASETS:
+            try:
+                lake.delete_dataset(ds)
+            except Exception:
+                pass
         lake.shutdown()
         shutil.rmtree(base, ignore_errors=True)
         print("(已清理)")

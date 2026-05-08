@@ -72,10 +72,30 @@ class LanceStorageManager(
             else self.base_uri
         )
         self._dataset_locks: dict[str, threading.RLock] = defaultdict(threading.RLock)
+        self._db: Any = None
+        self._db_lock = threading.RLock()
+
+    @property
+    def storage_options(self) -> dict[str, str] | None:
+        """Storage options for lance/boto3, or None for local filesystem."""
+        return self._storage_options
 
     def _dataset_lock(self, name: str) -> threading.RLock:
         """Return a per-dataset reentrant lock for TOCTOU-safe write operations."""
         return self._dataset_locks[name]
+
+    def _get_db(self):
+        """Return a cached LanceDB connection (thread-safe)."""
+        if self._db is None:
+            with self._db_lock:
+                if self._db is None:
+                    import lancedb
+
+                    self._db = lancedb.connect(
+                        self._connect_uri,
+                        storage_options=self._storage_options,
+                    )
+        return self._db
 
     def _get_dataset_path(self, name: str) -> str:
         """Get the logical path for a named dataset (no .lance suffix).
@@ -148,12 +168,7 @@ class LanceStorageManager(
 
     def _write_lance(self, data: pa.Table, path: str, mode: str = "create") -> None:
         """Write data to Lance format via lancedb."""
-        import lancedb
-
-        db = lancedb.connect(
-            self._connect_uri,
-            storage_options=self._storage_options,
-        )
+        db = self._get_db()
 
         if mode == "create":
             db.create_table(Path(path).name, data)
@@ -185,10 +200,7 @@ class LanceStorageManager(
                 message=f"Dataset '{name}' not found",
             )
 
-        db = lancedb.connect(
-            self._connect_uri,
-            storage_options=self._storage_options,
-        )
+        db = self._get_db()
         return db.open_table(name)
 
     def open_dataset(self, dataset_name: str) -> Any:

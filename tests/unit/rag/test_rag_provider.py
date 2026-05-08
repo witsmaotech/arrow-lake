@@ -106,6 +106,11 @@ class TestCreateLLMProvider:
         assert exc_info.value.error_code == ErrorCode.RAG_PROVIDER_ERROR
         assert "API key" in exc_info.value.message
 
+    def test_deepseek_provider(self) -> None:
+        config = LLMConfig(provider=LLMProviderType.DEEPSEEK, api_key="sk-ds-test")
+        provider = create_llm_provider(config)
+        assert isinstance(provider, OpenAICompatibleProvider)
+
 
 # ---------------------------------------------------------------------------
 # OpenAICompatibleProvider — unit tests with mocked httpx
@@ -240,6 +245,78 @@ class TestOpenAICompatibleProvider:
         config = LLMConfig(provider=LLMProviderType.OLLAMA)
         provider = OpenAICompatibleProvider(config)
         assert provider._base_url == "http://localhost:11434/v1"
+
+    @pytest.mark.asyncio
+    async def test_deepseek_default_base_url(self) -> None:
+        config = LLMConfig(provider=LLMProviderType.DEEPSEEK, api_key="sk-ds")
+        provider = OpenAICompatibleProvider(config)
+        assert provider._base_url == "https://api.deepseek.com"
+
+    @pytest.mark.asyncio
+    async def test_deepseek_thinking_disabled_for_simple_query(self) -> None:
+        """Short factual queries should disable thinking mode."""
+        config = LLMConfig(provider=LLMProviderType.DEEPSEEK, api_key="sk-ds")
+        provider = OpenAICompatibleProvider(config)
+        body = provider._build_body([LLMMessage(role="user", content="Hi")])
+        assert body["thinking"] == {"type": "disabled"}
+        assert "reasoning_effort" not in body
+
+    @pytest.mark.asyncio
+    async def test_deepseek_thinking_disabled_for_extraction(self) -> None:
+        """Entity extraction needs strict JSON output — thinking breaks format."""
+        config = LLMConfig(provider=LLMProviderType.DEEPSEEK, api_key="sk-ds")
+        provider = OpenAICompatibleProvider(config)
+        body = provider._build_body([
+            LLMMessage(role="system", content="你是一个专业的中文知识图谱实体关系抽取器"),
+            LLMMessage(role="user", content="OpenAI 发布了 GPT-4，该模型基于 Transformer 架构"),
+        ])
+        assert body["thinking"] == {"type": "disabled"}
+
+    @pytest.mark.asyncio
+    async def test_deepseek_thinking_enabled_for_complex_question(self) -> None:
+        """Complex reasoning questions should enable thinking mode."""
+        config = LLMConfig(provider=LLMProviderType.DEEPSEEK, api_key="sk-ds")
+        provider = OpenAICompatibleProvider(config)
+        body = provider._build_body([
+            LLMMessage(role="user", content="请分析 Transformer 和 RNN 在长文本处理上的优缺点，并解释为什么 Transformer 更适合并行计算"),
+        ])
+        assert body["thinking"] == {"type": "enabled"}
+        assert body["reasoning_effort"] == "high"
+
+    @pytest.mark.asyncio
+    async def test_deepseek_thinking_disabled_for_factual_prefix(self) -> None:
+        """Questions starting with factual prefixes should not enable thinking."""
+        config = LLMConfig(provider=LLMProviderType.DEEPSEEK, api_key="sk-ds")
+        provider = OpenAICompatibleProvider(config)
+        body = provider._build_body([
+            LLMMessage(role="user", content="什么是向量数据库"),
+        ])
+        assert body["thinking"] == {"type": "disabled"}
+
+    @pytest.mark.asyncio
+    async def test_deepseek_handles_reasoning_content(self) -> None:
+        """DeepSeek V4 may return reasoning_content; content field should be used."""
+        config = LLMConfig(provider=LLMProviderType.DEEPSEEK, api_key="sk-ds")
+        provider = OpenAICompatibleProvider(config)
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "Final answer",
+                    "reasoning_content": "Chain of thought...",
+                },
+                "finish_reason": "stop",
+            }],
+            "model": "deepseek-v4-flash",
+        }
+        with patch.object(provider, "_client") as mock_client:
+            mock_client.post = AsyncMock(return_value=mock_response)
+            resp = await provider.generate([LLMMessage(role="user", content="Hi")])
+
+        assert resp.content == "Final answer"
+        assert resp.provider == "deepseek"
 
     @pytest.mark.asyncio
     async def test_custom_base_url(self) -> None:

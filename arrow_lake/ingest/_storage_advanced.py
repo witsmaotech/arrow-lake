@@ -71,6 +71,36 @@ class StorageAdvancedMixin:
         table = self._open_lance(self._get_dataset_path(name))
         table.add_columns({column_name: sql_expr})
 
+    def add_columns_table(self, name: str, columns: pa.Table) -> None:
+        """Add pre-computed columns to a dataset without full rewrite.
+
+        Uses Lance's native ``add_columns`` to append columns in-place,
+        avoiding the cost of reading + rewriting the entire dataset.
+
+        The ``columns`` table must have the same number of rows as the
+        target dataset. Column names must not already exist.
+
+        Args:
+            name: Dataset name.
+            columns: Arrow Table with new columns (row-aligned).
+
+        Raises:
+            StorageError: If dataset not found or column addition fails.
+        """
+        self._validate_name(name)
+        for col_name in columns.column_names:
+            self._validate_identifier(col_name, "add_column")
+        try:
+            import lance as lance_lib
+            uri = self.dataset_uri(name)
+            ds = lance_lib.dataset(uri, storage_options=self._storage_options)
+            ds.add_columns(columns)
+        except (OSError, ValueError, RuntimeError) as exc:
+            raise StorageError(
+                error_code=ErrorCode.STORAGE_WRITE_FAILED,
+                message=f"Failed to add columns to '{name}': {exc}",
+            ) from exc
+
     def alter_column(self, name: str, column_name: str, new_type: pa.DataType) -> None:
         """Change a column's data type.
 

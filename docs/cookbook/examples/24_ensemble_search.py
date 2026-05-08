@@ -20,6 +20,7 @@ import pyarrow as pa
 from arrow_lake import Lake
 
 _DEFAULT_BASE_URI = "./_tmp_ensemble"
+_DATASETS = ("multilingual",)
 DIM = 256
 
 
@@ -38,6 +39,13 @@ def main() -> None:
         shutil.rmtree(base)
 
     lake = Lake(base_uri=args.base_uri)
+
+    # 清理 MinIO 后端可能残留的数据集
+    for ds in _DATASETS:
+        try:
+            lake.delete_dataset(ds)
+        except Exception:
+            pass
 
     # STEP 1: 创建含多向量列的数据集
     print("STEP 1: 创建含双向量列的数据集")
@@ -83,7 +91,7 @@ def main() -> None:
         for i in range(min(5, result.row_count)):
             t = result.table
             score = 0
-            for col in ("_rrf_score", "_score", "_distance"):
+            for col in ("_ensemble_score", "_rrf_score", "_score", "_distance"):
                 if col in t.column_names:
                     val = t.column(col)[i].as_py()
                     if val is not None:
@@ -116,6 +124,11 @@ def main() -> None:
 
     print("\n  [全部 PASS]")
     if not no_cleanup:
+        for ds in _DATASETS:
+            try:
+                lake.delete_dataset(ds)
+            except Exception:
+                pass
         lake.shutdown()
         shutil.rmtree(base, ignore_errors=True)
         print("(已清理)")

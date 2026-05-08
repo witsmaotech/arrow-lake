@@ -165,3 +165,15 @@ async def get_me(request: Request) -> dict:
         "permissions": user.permissions,
         "iss": user.iss,
     }
+
+
+@router.post("/logout", summary="Revoke current token")
+async def logout(request: Request) -> dict:
+    """Revoke the provided JWT token by adding its jti to the blacklist."""
+    from arrow_lake.api.deps import get_current_user
+
+    user = get_current_user(request)
+    if user.jti:
+        svc = _get_auth_service(request)
+        svc.revoke_token(user.jti)
+    return {"message": "Token revoked"}

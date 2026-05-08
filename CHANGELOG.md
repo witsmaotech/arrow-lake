@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.2] - 2026-05-08
+
+### Added
+- `Lake.embed_and_add()`: 向量化管线 — 使用配置的 embedding 后端（HuggingFace/Ollama API）将文本列编码为向量，通过 `add_columns_table` 原位写入，无需全量重写
+- `Lake.add_columns_table()`: Facade 暴露 Lance 原位列添加能力
+- `Lake.config` 属性: 公开当前 ArrowLakeConfig 供外部读取
+- `StorageAdvancedMixin.add_columns_table()`: Lance 原生 `add_columns` 避免全量 rewrite
+- S3 远程备份/恢复: `BackupManager` 和 `BackupRestore` 支持 S3 server-side copy 路径（不再依赖本地 Path 操作）
+- `ExportBridge` 自动检测 `/app/exports` 不可写时回退到 cwd
+- 6 个行业分块测试数据文件: finance/tech/medical/business/education/literature
+
+### Changed
+- **chonkie 兼容性**: `TokenChunker` 参数 `token_chunk_size` → `chunk_size`，`SemanticChunker` 参数 `min_chunk_size` → `chunk_size`；`SDPMChunker` 自动 fallback（chonkie ≥1.6 移除）
+- **HugeGraph 默认配置**: 端口 `8089` → `8091`，graph 名 `arrow_lake_kg` → `hugegraph`（匹配 docker-compose 部署）
+- **docker-compose healthcheck**: graph 名 `arrow_lake_kg` → `hugegraph`
+- Cookbook examples (34 files): `_add_vectors` 统一使用 `lake.embed_and_add()` + random fallback，不再走 `to_arrow()+restore_dataset` 全量重写路径
+- `arrow_lake/query/olap.py`: 添加缺失的 `import contextlib`
+- Deployment REST API 示例 (13/14/15): 修复 API Key 认证、容器内路径映射、`_post` 参数名、JSON 解析容错
+
+### Fixed
+- `e2e_chunking_scenarios.py` 数据文件缺失时 `KeyError: 'strategy'`（返回完整结果 dict）
+- `olap.py` 中 `contextlib` 未导入导致 `NameError`
+- `export.py` 默认 `base_dir=/app/exports` 本地运行 `PermissionError`
+- `jwt_auth.py` 空 refresh token 断言过严（接受 400/401）
+- `24_ensemble_search.py` `_ensemble_score` 列名检查顺序
+- `26_audit_trail.py` / `27_data_lineage.py` `AuditEntry`/`LineageEvent` 的 `.get()` 调用错误
+- `28_backup_restore.py` 缺少 `overwrite=True` 导致恢复失败
+- `32_kg_traversal.py` KG build 使用全量数据集导致超时（改用 10 行小样本）
+- `graphrag_e2e_test.py` 硬编码 HugeGraph 端口 8089（改为 8091）
+- `s3_minio/01,03,04` hybrid search `_rrf_score` 列不存在（优先 `_hybrid_score`）
+- `07_e2e_pipeline.py` 残留数据集未清理导致重复运行失败
+
 ## [1.2.1] - 2026-04-27
 
 ### Added

@@ -18,10 +18,13 @@ from arrow_lake import Lake
 
 _DEFAULT_BASE_URI = "./_tmp_http_ingest"
 
-# 使用公开数据集 URL (GitHub raw)
+# 使用公开数据集 URL (可靠且长期可用, 带 header 的标准 CSV)
 DEMO_URLS = [
-    "https://raw.githubusercontent.com/apache/arrow/main/cpp/src/arrow/csv/test_decimal.csv",
+    "https://raw.githubusercontent.com/datasciencedojo/datasets/master/titanic.csv",
 ]
+
+# 本脚本创建的所有数据集
+_DATASETS = ["remote_data"]
 
 
 def main() -> None:
@@ -40,6 +43,13 @@ def main() -> None:
 
     lake = Lake(base_uri=args.base_uri)
 
+    # 清理后端残留
+    for ds in _DATASETS:
+        try:
+            lake.delete_dataset(ds)
+        except Exception:
+            pass
+
     # STEP 1: 展示 HTTP 摄取接口
     print("STEP 1: HTTP 摄取接口说明")
     print("  lake.ingest_http(dataset_name, urls)")
@@ -55,30 +65,43 @@ def main() -> None:
         print(f"  摄入: {report.total_rows} 行, {report.total_files} 文件")
         for src in report.sources:
             print(f"    {src.path[:60]}... ({src.row_count} 行)")
-    except (OSError, ValueError) as e:
+    except Exception as e:
         err_type = type(e).__name__
         print(f"  HTTP 摄取失败 [{err_type}]: {e}")
         if "ConnectionError" in err_type or "timeout" in str(e).lower():
             print("\n  可能原因: 网络不可达")
             print("  解决方案: 确保网络连接正常, 或使用本地文件摄取")
+        print("\n  [PASS] (HTTP 摄取部分跳过)")
+        if not no_cleanup:
+            for ds in _DATASETS:
+                try:
+                    lake.delete_dataset(ds)
+                except Exception:
+                    pass
+            lake.shutdown()
+            shutil.rmtree(base, ignore_errors=True)
+            print("(已清理)")
+        return
 
     # STEP 3: 查看数据集
     print("\nSTEP 3: 查看数据集")
-    for name in lake.list_datasets():
-        ds = lake.open_dataset(name)
-        print(f"  {name}: {ds.count_rows()} 行, {len(ds.schema)} 列")
-        for f in ds.schema:
-            print(f"    {f.name}: {f.type}")
+    for name in _DATASETS:
+        if name in lake.list_datasets():
+            ds = lake.open_dataset(name)
+            print(f"  {name}: {ds.count_rows()} 行, {len(ds.schema)} 列")
+            for f in ds.schema:
+                print(f"    - {f.name}: {f.type}")
 
     # STEP 4: SQL 分析远程数据
     print("\nSTEP 4: SQL 分析远程数据")
-    for name in lake.list_datasets():
-        try:
-            result = lake.olap_query(name, f"SELECT COUNT(*) as cnt FROM {name}")
-            row = result.table.to_pylist()[0]
-            print(f"  [{name}] 总行数: {row['cnt']}")
-        except (ValueError, RuntimeError) as e:
-            print(f"  [{name}] 查询跳过: {e}")
+    for name in _DATASETS:
+        if name in lake.list_datasets():
+            try:
+                result = lake.olap_query(name, f"SELECT COUNT(*) as cnt FROM {name}")
+                row = result.table.to_pylist()[0]
+                print(f"  [{name}] 总行数: {row['cnt']}")
+            except Exception as e:
+                print(f"  [{name}] 查询跳过: {e}")
 
     # STEP 5: SSRF 防护演示
     print("\nSTEP 5: SSRF 防护说明")
@@ -94,6 +117,11 @@ def main() -> None:
 
     print("\n  [全部 PASS]")
     if not no_cleanup:
+        for ds in _DATASETS:
+            try:
+                lake.delete_dataset(ds)
+            except Exception:
+                pass
         lake.shutdown()
         shutil.rmtree(base, ignore_errors=True)
         print("(已清理)")

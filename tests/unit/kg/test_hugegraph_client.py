@@ -50,7 +50,7 @@ async def test_ping_success(mock_client: HugeGraphClient) -> None:
     mock_client._client.get.return_value = _mock_response(200, {"version": "1.7.0"})
     result = await mock_client.ping()
     assert result is True
-    mock_client._client.get.assert_called_once_with("/versions")
+    mock_client._client.get.assert_called_once_with("/versions", params=None)
 
 
 @pytest.mark.asyncio
@@ -220,12 +220,12 @@ async def test_get_schema(mock_client: HugeGraphClient) -> None:
 @pytest.mark.asyncio
 async def test_get_stats(mock_client: HugeGraphClient) -> None:
     mock_client._client.get.side_effect = [
-        _mock_response(200, {"total": 100}),
-        _mock_response(200, {"total": 200}),
+        _mock_response(200, {"vertices": [{"id": "1:a"}, {"id": "1:b"}]}),
+        _mock_response(200, {"edges": [{"id": "S1>1>>S2"}]}),
     ]
     stats = await mock_client.get_stats()
-    assert stats["total_vertices"] == 100
-    assert stats["total_edges"] == 200
+    assert stats["total_vertices"] == 2
+    assert stats["total_edges"] == 1
 
 
 # ---------------------------------------------------------------------------

@@ -121,7 +121,81 @@ _DEFAULT_BASE_URLS: dict[LLMProviderType, str] = {
     LLMProviderType.OPENAI: "https://api.openai.com/v1",
     LLMProviderType.VLLM: "http://localhost:8000/v1",
     LLMProviderType.OLLAMA: "http://localhost:11434/v1",
+    LLMProviderType.DEEPSEEK: "https://api.deepseek.com",
 }
+
+# Patterns that indicate structured/extract-only tasks where thinking is wasteful.
+# Entity/relation extraction needs strict JSON output — thinking mode causes the
+# model to return natural language instead of JSON, breaking the parser.
+_NO_THINK_SYSTEM_PATTERNS: tuple[str, ...] = (
+    "json", "strict schema", "fixed format",
+    "实体", "entity", "抽取", "extract", "关系抽取",
+    "知识图谱", "knowledge graph", "ner",
+)
+
+# Patterns that signal complex reasoning — worth paying the thinking token cost.
+_COMPLEX_QUESTION_PATTERNS: tuple[str, ...] = (
+    "分析", "为什么", "原因", "原理", "机制", "推导",
+    "比较", "对比", "区别", "差异", "优缺点", "优劣",
+    "推理", "推断", "证明", "解释",
+    "如何实现", "怎样实现", "怎么做",
+    "如果", "假设", "假如", "是否",
+    "评估", "评价", "判断",
+    "步骤", "流程", "过程",
+    "关系", "影响", "关联",
+    "原因是什么", "主要原因",
+    "权衡", "trade-off",
+    "为什么", "理由", "依据",
+)
+
+# Short factual queries that don't benefit from thinking.
+_SIMPLE_QUERY_PREFIXES: tuple[str, ...] = (
+    "什么是", "什么是", "是谁", "是谁", "哪年", "哪个", "多少",
+    "列出", "列举", "介绍", "是什么", "是谁", "叫什么",
+)
+
+
+class _QuestionComplexity:
+    """Heuristic question complexity classifier for DeepSeek thinking mode."""
+
+    @staticmethod
+    def should_think(messages: list[LLMMessage]) -> bool:
+        """Decide whether to enable DeepSeek thinking mode.
+
+        Returns True for complex reasoning tasks, False for simple
+        factual queries.
+        """
+        if not messages:
+            return False
+
+        system_text = " ".join(m.content for m in messages if m.role == "system").lower()
+
+        # Mechanical/formatted output → no thinking
+        if any(p in system_text for p in _NO_THINK_SYSTEM_PATTERNS):
+            return False
+
+
+        # Analyze the last user message (the actual question)
+        user_msgs = [m.content for m in messages if m.role == "user"]
+        if not user_msgs:
+            return False
+
+        question = user_msgs[-1].strip()
+
+        # Very short questions (< 15 chars) → likely simple, skip thinking
+        if len(question) < 15:
+            return False
+
+        # Simple factual prefixes → skip thinking
+        if any(question.startswith(p) for p in _SIMPLE_QUERY_PREFIXES):
+            return False
+
+        # Complex reasoning patterns → enable thinking
+        if any(p in question for p in _COMPLEX_QUESTION_PATTERNS):
+            return True
+
+        # Medium-length questions without clear signals → default off for speed
+        return False
 
 
 class OpenAICompatibleProvider(_RetryMixin, BaseLLMProvider):
@@ -161,6 +235,17 @@ class OpenAICompatibleProvider(_RetryMixin, BaseLLMProvider):
         # producing empty content.  Disable extended thinking for RAG use.
         if self._config.provider == LLMProviderType.OLLAMA:
             body["chat_template_kwargs"] = {"enable_thinking": False}
+        # DeepSeek V4: dynamically enable thinking for complex reasoning
+        # questions, disable for structured extraction tasks.  DeepSeek
+        # V4-flash may return natural language instead of JSON when thinking
+        # is enabled; keep it off for extraction.  response_format=json_object
+        # is too restrictive — the prompt's explicit JSON instruction works
+        # better when thinking is off.
+        if self._config.provider == LLMProviderType.DEEPSEEK:
+            think = _QuestionComplexity.should_think(messages)
+            body["thinking"] = {"type": "enabled" if think else "disabled"}
+            if think:
+                body["reasoning_effort"] = "high"
         return body
 
     async def generate(self, messages: list[LLMMessage]) -> LLMResponse:
@@ -197,8 +282,12 @@ class OpenAICompatibleProvider(_RetryMixin, BaseLLMProvider):
         cb.record_success()
         data = resp.json()
         choice = data["choices"][0]
+        message = choice["message"]
+        # DeepSeek V4 may include reasoning_content in thinking mode;
+        # prefer explicit content field, skip reasoning tokens.
+        content = message.get("content") or ""
         return LLMResponse(
-            content=choice["message"]["content"],
+            content=content,
             model=data.get("model", self._config.model),
             usage=data.get("usage"),
             finish_reason=choice.get("finish_reason"),
@@ -402,7 +491,7 @@ def create_llm_provider(config: LLMConfig) -> BaseLLMProvider:
         RAGError: If the provider type is unsupported.
     """
     match config.provider:
-        case LLMProviderType.OPENAI | LLMProviderType.VLLM | LLMProviderType.OLLAMA:
+        case LLMProviderType.OPENAI | LLMProviderType.VLLM | LLMProviderType.OLLAMA | LLMProviderType.DEEPSEEK:
             return OpenAICompatibleProvider(config)
         case LLMProviderType.ANTHROPIC:
             return AnthropicProvider(config)

@@ -2,9 +2,23 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+import logging
+from urllib.parse import urlparse
+
+from pydantic import BaseModel, model_validator
 
 from arrow_lake.config._enums import StorageBackend
+
+logger = logging.getLogger(__name__)
+
+
+def _is_local_endpoint(endpoint: str) -> bool:
+    """Check if an S3 endpoint points to localhost / 127.x."""
+    try:
+        host = urlparse(endpoint).hostname or ""
+        return host in ("localhost", "127.0.0.1") or host.startswith("127.")
+    except Exception:
+        return False
 
 
 class StorageConfig(BaseModel):
@@ -27,6 +41,27 @@ class StorageConfig(BaseModel):
     s3_secret_key: str = ""
     s3_bucket: str = "arrow-lake"
     s3_region: str = "us-east-1"
+
+    @model_validator(mode="after")
+    def _validate_remote_backend(self) -> StorageConfig:
+        if self.backend == StorageBackend.LOCAL:
+            return self
+        if not self.s3_bucket:
+            raise ValueError(
+                f"s3_bucket is required when backend={self.backend.value}"
+            )
+        if not self.s3_endpoint and self.backend != StorageBackend.S3:
+            raise ValueError(
+                f"s3_endpoint is required when backend={self.backend.value} "
+                f"(only backend=s3 supports empty endpoint for default AWS)"
+            )
+        if not self.s3_access_key or not self.s3_secret_key:
+            if self.backend == StorageBackend.S3:
+                logger.warning(
+                    "S3 credentials are empty for backend=s3 — "
+                    "operations will use default credential chain"
+                )
+        return self
 
     # -- S3 helper methods for lance/boto3 and DuckDB integration --
 

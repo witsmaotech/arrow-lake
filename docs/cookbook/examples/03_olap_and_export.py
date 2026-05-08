@@ -15,11 +15,13 @@ import sys
 from pathlib import Path
 
 from arrow_lake import Lake
+from arrow_lake.config import ArrowLakeConfig
 
 DATAS_DIR = Path(__file__).resolve().parent.parent / "datas"
 _DEFAULT_BASE_URI = "./_tmp_olap_export"
 DATASET = "transactions"
 EXPORT_DIR = Path("./_tmp_olap_export_out")
+_DATASETS = [DATASET]
 
 
 def main() -> None:
@@ -35,9 +37,20 @@ def main() -> None:
     base = Path(args.base_uri)
     if base.exists():
         shutil.rmtree(base)
+    if EXPORT_DIR.exists():
+        shutil.rmtree(EXPORT_DIR)
     EXPORT_DIR.mkdir(parents=True, exist_ok=True)
 
-    lake = Lake(base_uri=args.base_uri)
+    config = ArrowLakeConfig()
+    config.olap.ducklake_enabled = True
+    lake = Lake(base_uri=args.base_uri, config=config)
+
+    # 清理后端残留
+    for ds in _DATASETS:
+        try:
+            lake.delete_dataset(ds)
+        except Exception:
+            pass
 
     # --- STEP 1: 摄入数据 ---
     print("STEP 1: 摄取交易数据")
@@ -75,13 +88,13 @@ def main() -> None:
             "FROM transactions GROUP BY 商品类别",
             view_name="category_summary", ttl_days=7)
         print(f"  物化视图: category_summary ({row_count} 行)")
-    except (ValueError, RuntimeError) as e:
+    except Exception as e:
         print(f"  跳过 (DuckLake 未启用): {e}")
     print("  [PASS]\n")
 
     # --- STEP 5: 导出 Parquet ---
     print("STEP 5: 导出为 Parquet")
-    out_parquet = str(EXPORT_DIR / "transactions.parquet")
+    out_parquet = str((EXPORT_DIR / "transactions.parquet").resolve())
     lake.export(DATASET, out_parquet, format="parquet")
     size_kb = EXPORT_DIR.joinpath("transactions.parquet").stat().st_size // 1024
     print(f"  导出: {out_parquet} ({size_kb} KB)")
@@ -89,7 +102,7 @@ def main() -> None:
 
     # --- STEP 6: 导出 CSV ---
     print("STEP 6: 导出 CSV (指定列)")
-    out_csv = str(EXPORT_DIR / "transactions_summary.csv")
+    out_csv = str((EXPORT_DIR / "transactions_summary.csv").resolve())
     lake.export(DATASET, out_csv, format="csv",
                columns=["时间戳", "订单号", "商品类别", "商品名称", "金额", "城市"])
     size_kb = EXPORT_DIR.joinpath("transactions_summary.csv").stat().st_size // 1024
@@ -97,6 +110,11 @@ def main() -> None:
     print("  [PASS]\n")
 
     if not no_cleanup:
+        for ds in _DATASETS:
+            try:
+                lake.delete_dataset(ds)
+            except Exception:
+                pass
         lake.shutdown()
         shutil.rmtree(base, ignore_errors=True)
         shutil.rmtree(EXPORT_DIR, ignore_errors=True)

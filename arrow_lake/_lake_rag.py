@@ -174,7 +174,7 @@ class _LakeRAGMixin:
         self,
         dataset_name: str,
         *,
-        text_column: str = "text",
+        text_column: str = "text_content",
         top_k: int | None = None,
         template_name: str | None = None,
     ) -> RAGResponse:

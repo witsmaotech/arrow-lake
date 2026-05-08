@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+from arrow_lake.api.auth_models import Role, TokenPayload
 from arrow_lake.exceptions import ErrorCode, KGError
 from arrow_lake.rag.pipeline import RAGCitation, RAGResponse
 from fastapi.testclient import TestClient
@@ -39,11 +40,18 @@ class MockLake:
 def _make_app(lake: Any) -> Any:
     """Create a test FastAPI app with the kg router and a fixed lake."""
     from arrow_lake.api.routers.knowledge_graph import router
-    from fastapi import FastAPI
+    from fastapi import FastAPI, Request
+    from starlette.middleware.base import BaseHTTPMiddleware
 
     app = FastAPI()
     app.state.lake = lake
     app.state.config = lake._config
+
+    @app.middleware("http")
+    async def _inject_user(request: Request, call_next):
+        request.state.user = TokenPayload(sub="test-admin", role=Role.ADMIN, exp=0, iat=0)
+        return await call_next(request)
+
     app.include_router(router)
     return app
 

@@ -144,10 +144,40 @@ class DaftQueryEngine:
 
     Args:
         base_uri: Base URI for Lance dataset storage.
+        storage_config: Optional StorageConfig for S3/MinIO access.
     """
 
-    def __init__(self, base_uri: str | Path) -> None:
+    def __init__(
+        self,
+        base_uri: str | Path,
+        storage_config: Any | None = None,
+    ) -> None:
         self.base_uri = str(base_uri)
+        self._storage_config = storage_config
+        self._io_config: Any = None
+        if storage_config is not None:
+            self._io_config = self._build_io_config(storage_config)
+
+    @staticmethod
+    def _build_io_config(storage_config: Any) -> Any:
+        """Build Daft IOConfig for S3/MinIO access."""
+        from arrow_lake.config import StorageBackend
+
+        if getattr(storage_config, "backend", None) == StorageBackend.LOCAL:
+            return None
+        from daft.io import IOConfig, S3Config
+
+        use_ssl = storage_config.s3_endpoint.startswith("https://")
+        return IOConfig(
+            s3=S3Config(
+                region_name=storage_config.s3_region,
+                endpoint_url=storage_config.s3_endpoint,
+                key_id=storage_config.s3_access_key,
+                access_key=storage_config.s3_secret_key,
+                use_ssl=use_ssl,
+                verify_ssl=use_ssl,
+            )
+        )
 
     def load(
         self,
@@ -173,8 +203,14 @@ class DaftQueryEngine:
                 if not _SAFE_IDENTIFIER_RE.match(col):
                     raise ValueError(f"Invalid column name '{col}'")
 
-        lance_path = str(Path(self.base_uri) / f"{dataset_name}.lance")
-        df = daft.read_lance(lance_path)
+        if self._io_config is not None:
+            lance_path = f"{self._storage_config.s3_uri.rstrip('/')}/{dataset_name}.lance"
+        else:
+            lance_path = str(Path(self.base_uri) / f"{dataset_name}.lance")
+        read_kwargs: dict[str, Any] = {}
+        if self._io_config is not None:
+            read_kwargs["io_config"] = self._io_config
+        df = daft.read_lance(lance_path, **read_kwargs)
         if columns:
             df = df.select(*columns)
         return LazyDaftFrame(df)

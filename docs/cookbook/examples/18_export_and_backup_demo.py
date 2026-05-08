@@ -18,6 +18,7 @@ from arrow_lake import Lake
 
 DATAS_DIR = Path(__file__).resolve().parent.parent / "datas"
 _DEFAULT_BASE_URI = "./_tmp_export_backup"
+_DATASETS = ["sales"]
 
 
 def main() -> None:
@@ -36,6 +37,13 @@ def main() -> None:
 
     lake = Lake(base_uri=args.base_uri)
 
+    # 清理后端残留
+    for ds in _DATASETS:
+        try:
+            lake.delete_dataset(ds)
+        except Exception:
+            pass
+
     # STEP 1: 创建数据集
     print("STEP 1: 摄入交易数据")
     report = lake.ingest("sales", [str(DATAS_DIR / "transactions" / "sales_2024_cn.csv")])
@@ -44,13 +52,13 @@ def main() -> None:
 
     # STEP 2: 导出为 Parquet
     print("\nSTEP 2: 导出 Parquet")
-    out_parquet = base / "sales.parquet"
+    out_parquet = (base / "sales.parquet").resolve()
     lake.export("sales", str(out_parquet), format="parquet")
     print(f"  Parquet: {out_parquet.stat().st_size // 1024} KB")
 
     # STEP 3: 导出为 CSV
     print("\nSTEP 3: 导出 CSV")
-    out_csv = base / "sales.csv"
+    out_csv = (base / "sales.csv").resolve()
     lake.export("sales", str(out_csv), format="csv")
     print(f"  CSV: {out_csv.stat().st_size // 1024} KB")
 
@@ -95,6 +103,11 @@ def main() -> None:
 
     print("\n  [全部 PASS]")
     if not no_cleanup:
+        for ds in _DATASETS:
+            try:
+                lake.delete_dataset(ds)
+            except Exception:
+                pass
         lake.shutdown()
         shutil.rmtree(base, ignore_errors=True)
         print("(已清理)")

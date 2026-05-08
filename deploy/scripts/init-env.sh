@@ -69,6 +69,20 @@ if command -v openssl &>/dev/null; then
     ok "Generated Grafana admin password"
 fi
 
+# --- Generate API key ---
+if command -v openssl &>/dev/null; then
+    API_KEY=$(openssl rand -base64 32 | tr -d '/+=' | head -c 32)
+    sed -i "s|^ARROW_LAKE__API__API_KEY=.*|ARROW_LAKE__API__API_KEY=$API_KEY|" "$ENV_FILE"
+    ok "Generated API key"
+fi
+
+# --- Generate JWT secret key ---
+if command -v openssl &>/dev/null; then
+    JWT_SECRET=$(openssl rand -base64 48 | tr -d '/+=' | head -c 48)
+    sed -i "s|^# ARROW_LAKE__AUTH__JWT_SECRET_KEY=.*|ARROW_LAKE__AUTH__JWT_SECRET_KEY=$JWT_SECRET|" "$ENV_FILE"
+    ok "Generated JWT secret key"
+fi
+
 # --- Summary ---
 echo ""
 info "Environment initialized: $ENV_FILE"

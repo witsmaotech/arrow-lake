@@ -21,6 +21,9 @@ from arrow_lake import Lake
 DATAS_DIR = Path(__file__).resolve().parent.parent / "datas"
 _DEFAULT_BASE_URI = "./_tmp_entity_extract"
 
+# 本脚本创建的所有数据集
+_DATASETS = ["knowledge_zh"]
+
 
 async def run_async() -> None:
     parser = argparse.ArgumentParser(description="33_kg_entity_extract.py")
@@ -37,6 +40,13 @@ async def run_async() -> None:
         shutil.rmtree(base)
 
     lake = Lake(base_uri=args.base_uri)
+
+    # 清理后端残留
+    for ds in _DATASETS:
+        try:
+            lake.delete_dataset(ds)
+        except Exception:
+            pass
 
     # STEP 1: 摄入知识库
     print("STEP 1: 摄入中文知识库")
@@ -67,6 +77,12 @@ async def run_async() -> None:
         print(f"  初始化失败: {e}")
         print("\n  降级: 展示抽取概念和格式")
         _show_extraction_concept()
+        print("\n  [PASS] (LLM 不可用, 降级模式)")
+        for ds in _DATASETS:
+            try:
+                lake.delete_dataset(ds)
+            except Exception:
+                pass
         lake.shutdown()
         shutil.rmtree(base, ignore_errors=True)
         return
@@ -135,6 +151,11 @@ async def run_async() -> None:
 
     print("\n  [全部 PASS]")
     if not no_cleanup:
+        for ds in _DATASETS:
+            try:
+                lake.delete_dataset(ds)
+            except Exception:
+                pass
         lake.shutdown()
         shutil.rmtree(base, ignore_errors=True)
         print("(已清理)")

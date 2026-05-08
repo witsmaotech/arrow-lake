@@ -115,8 +115,6 @@ services:
       - arrow-lake-net
     volumes:
       - jaeger-data:/tmp/jaeger
-    command:
-      - "--collector.otlp.tls.enabled=false"
     deploy:
       resources:
         limits:

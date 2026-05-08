@@ -470,25 +470,35 @@ class Ingestor:
         Raises:
             IngestError: If reading fails.
         """
-        import io
+        import tempfile
 
         import daft
 
         try:
-            buf = io.BytesIO(content)
-            if file_type == "json":
-                df = daft.read_json(buf)  # type: ignore[arg-type]
-            elif file_type == "csv":
-                df = daft.read_csv(buf)  # type: ignore[arg-type]
-            elif file_type == "parquet":
-                buf.seek(0)
-                df = daft.read_parquet(buf)  # type: ignore[arg-type]
-            else:
-                raise IngestError(
-                    error_code=ErrorCode.INGEST_UNSUPPORTED_FORMAT,
-                    message=f"Unsupported file type: {file_type}",
-                )
-            return df.to_arrow()
+            suffix = f".{file_type}"
+            fd, tmp_path = tempfile.mkstemp(suffix=suffix)
+            try:
+                import os
+
+                os.write(fd, content)
+                os.close(fd)
+                if file_type == "json":
+                    df = daft.read_json(tmp_path)
+                elif file_type == "csv":
+                    df = daft.read_csv(tmp_path)
+                elif file_type == "parquet":
+                    df = daft.read_parquet(tmp_path)
+                else:
+                    raise IngestError(
+                        error_code=ErrorCode.INGEST_UNSUPPORTED_FORMAT,
+                        message=f"Unsupported file type: {file_type}",
+                    )
+                return df.to_arrow()
+            finally:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
         except IngestError:
             raise
         except (ImportError, OSError, ValueError) as exc:

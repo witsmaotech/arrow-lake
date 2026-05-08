@@ -62,7 +62,7 @@ class RAGExtractRequest(BaseModel):
         pattern=_NAME_PATTERN,
         description="Target Lance dataset",
     )
-    text_column: str = Field(default="text", description="Column containing text to extract from")
+    text_column: str = Field(default="text_content", description="Column containing text to extract from")
     top_k: int | None = Field(default=None, ge=1, description="Number of documents to process")
     template_name: str | None = Field(default=None, description="Prompt template name")
 

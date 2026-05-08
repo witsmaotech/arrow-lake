@@ -22,6 +22,7 @@ Daft 0.7.8 does not support SQL.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import re
 from dataclasses import dataclass
@@ -30,7 +31,7 @@ from typing import Any
 import duckdb
 import pyarrow as pa
 
-from arrow_lake.config import OlapConfig, StorageConfig
+from arrow_lake.config import OlapConfig, StorageBackend, StorageConfig
 from arrow_lake.exceptions import ErrorCode, QueryError, StorageError
 from arrow_lake.query._db import create_duckdb_session
 from arrow_lake.query.lance_adapter import create_lance_scan_adapter
@@ -306,13 +307,28 @@ class OlapSearchBridge:
             source: Arrow Table or RecordBatchReader from storage.
         """
         if self._config.lance_scan_mode == "pyarrow_fallback":
+            # Clear stale registration from pooled connections
+            with contextlib.suppress(duckdb.Error):
+                conn.execute(f"DROP VIEW IF EXISTS {dataset_name}")
             conn.register(dataset_name, source)
             return
+
+        # Clear any stale VIEW or table function from pooled connections
+        with contextlib.suppress(duckdb.Error):
+            conn.execute(f"DROP VIEW IF EXISTS {dataset_name}")
+        with contextlib.suppress(duckdb.Error):
+            conn.unregister(dataset_name)
 
         # Try native lance scan
         try:
             if hasattr(self._storage, "dataset_uri"):
-                uri = self._storage.dataset_uri(dataset_name)
+                if (
+                    self._storage_config
+                    and self._storage_config.backend != StorageBackend.LOCAL
+                ):
+                    uri = f"{self._storage_config.s3_uri.rstrip('/')}/{dataset_name}.lance"
+                else:
+                    uri = self._storage.dataset_uri(dataset_name)
                 adapter = create_lance_scan_adapter(
                     conn,
                     mode=self._config.lance_scan_mode,

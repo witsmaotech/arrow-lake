@@ -33,10 +33,12 @@ def config() -> HugeGraphConfig:
 def mock_client(config: HugeGraphConfig) -> AsyncMock:
     """Create a mock HugeGraphClient."""
     client = AsyncMock()
-    # gremlin returns list of vertex dicts matching find_entity query
-    client.gremlin.return_value = [
-        {"id": "20001:Alice", "label": "person", "properties": {"name": "Alice"}},
-    ]
+    # get_vertex returns vertex dict when found (label 3 = entity)
+    client.get_vertex.return_value = {
+        "id": "3:Alice",
+        "label": "entity",
+        "properties": {"name": "Alice"},
+    }
     # traverser_kneighbor returns list of neighbor dicts
     client.traverser_kneighbor.return_value = [
         {
@@ -123,10 +125,8 @@ class TestKGRetrieverRetrieve:
         assert result.query_entities == ("Alice",)
         assert result.traversal_depth == 2
         assert len(result.triplets) > 0
-        # Verify gremlin was called with find_entity query
-        mock_client.gremlin.assert_called_once()
-        call_query = mock_client.gremlin.call_args[0][0]
-        assert "eq(" in call_query
+        # Verify get_vertex was called to look up entity
+        mock_client.get_vertex.assert_called()
         # Verify traverser_kneighbor was called
         mock_client.traverser_kneighbor.assert_called_once()
 
@@ -162,17 +162,17 @@ class TestKGRetrieverRetrieve:
     async def test_entity_not_found_skipped(
         self, mock_client: AsyncMock, config: HugeGraphConfig
     ) -> None:
-        # gremlin returns empty for one entity, results for another
+        # get_vertex returns None for "Unknown", vertex dict for "Alice"
         call_count = 0
 
-        async def gremlin_side_effect(query: str) -> list:
+        async def get_vertex_side_effect(vertex_id: str):
             nonlocal call_count
             call_count += 1
-            if call_count == 1:
-                return []  # "Unknown" not found
-            return [{"id": "20001:Alice", "label": "person", "properties": {"name": "Alice"}}]
+            if "Unknown" in vertex_id:
+                return None  # not found for any label prefix
+            return {"id": "3:Alice", "label": "entity", "properties": {"name": "Alice"}}
 
-        mock_client.gremlin.side_effect = gremlin_side_effect
+        mock_client.get_vertex.side_effect = get_vertex_side_effect
         retriever = KGRetriever(mock_client, config)
         result = await retriever.retrieve(
             "query", extracted_entities=["Unknown", "Alice"]

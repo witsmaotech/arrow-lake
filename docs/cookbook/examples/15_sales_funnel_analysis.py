@@ -15,9 +15,11 @@ import sys
 from pathlib import Path
 
 from arrow_lake import Lake
+from arrow_lake.config import ArrowLakeConfig
 
 DATAS_DIR = Path(__file__).resolve().parent.parent / "datas"
 _DEFAULT_BASE_URI = "./_tmp_sales_funnel"
+_DATASETS = ["sales"]
 
 
 def main() -> None:
@@ -34,7 +36,16 @@ def main() -> None:
     if base.exists():
         shutil.rmtree(base)
 
-    lake = Lake(base_uri=args.base_uri)
+    config = ArrowLakeConfig()
+    config.olap.ducklake_enabled = True
+    lake = Lake(base_uri=args.base_uri, config=config)
+
+    # 清理后端残留
+    for ds in _DATASETS:
+        try:
+            lake.delete_dataset(ds)
+        except Exception:
+            pass
 
     # STEP 1
     print("STEP 1: 摄入交易数据")
@@ -106,14 +117,19 @@ def main() -> None:
             "FROM sales GROUP BY 商品类别, 支付方式",
             view_name="category_payment_cross", ttl_days=7)
         print(f"  物化视图: category_payment_cross ({n} 行)")
-    except (ValueError, RuntimeError) as e:
+    except Exception as e:
         print(f"  物化跳过 (DuckLake 未启用): {e}")
-    out = base / "funnel_analysis.csv"
+    out = (base / "funnel_analysis.csv").resolve()
     lake.export("sales", str(out), format="csv")
     print(f"  导出: {out} ({out.stat().st_size // 1024} KB)")
 
     print("\n  [全部 PASS]")
     if not no_cleanup:
+        for ds in _DATASETS:
+            try:
+                lake.delete_dataset(ds)
+            except Exception:
+                pass
         lake.shutdown()
         shutil.rmtree(base, ignore_errors=True)
         print("(已清理)")

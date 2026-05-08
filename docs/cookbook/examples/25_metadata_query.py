@@ -15,9 +15,11 @@ import sys
 from pathlib import Path
 
 from arrow_lake import Lake
+from arrow_lake.exceptions import QueryError
 
 DATAS_DIR = Path(__file__).resolve().parent.parent / "datas"
 _DEFAULT_BASE_URI = "./_tmp_metadata"
+_DATASETS = ["sales"]
 
 
 def main() -> None:
@@ -35,6 +37,13 @@ def main() -> None:
         shutil.rmtree(base)
 
     lake = Lake(base_uri=args.base_uri)
+
+    # 清理后端残留
+    for ds in _DATASETS:
+        try:
+            lake.delete_dataset(ds)
+        except Exception:
+            pass
 
     # STEP 1: 摄入数据
     print("STEP 1: 摄入交易数据")
@@ -73,6 +82,8 @@ def main() -> None:
         try:
             result = lake.olap_query("sales", sql)
             print(f"  [未拦截] {sql}")
+        except QueryError as e:
+            print(f"  [已拦截] {sql} → {e.message}")
         except (ValueError, RuntimeError) as e:
             print(f"  [已拦截] {sql} → {type(e).__name__}")
 
@@ -92,6 +103,11 @@ def main() -> None:
 
     print("\n  [全部 PASS]")
     if not no_cleanup:
+        for ds in _DATASETS:
+            try:
+                lake.delete_dataset(ds)
+            except Exception:
+                pass
         lake.shutdown()
         shutil.rmtree(base, ignore_errors=True)
         print("(已清理)")

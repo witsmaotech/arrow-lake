@@ -92,7 +92,7 @@ class GraphRAGPipeline(RAGPipeline):
             return [e.name for e in result.entities]
         except asyncio.CancelledError:
             raise
-        except (AttributeError, TypeError, ValueError, OSError, RuntimeError):
+        except Exception:
             logger.warning(
                 "Entity extraction from question failed, continuing without entities",
                 exc_info=True,
@@ -123,7 +123,7 @@ class GraphRAGPipeline(RAGPipeline):
             return self._kg_retriever.triplets_to_text(graph_result)
         except asyncio.CancelledError:
             raise
-        except (AttributeError, TypeError, ValueError, OSError, RuntimeError):
+        except Exception:
             logger.warning(
                 "Graph retrieval failed, degrading to vector-only context",
                 exc_info=True,

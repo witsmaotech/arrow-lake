@@ -42,21 +42,23 @@ class TestRequireRoleNoAuthService:
         assert "not configured" in exc_info.value.detail
 
     def test_allow_when_configured(self):
-        """With allow_unauthenticated_access=True, returns anonymous ADMIN."""
-        check = require_role(Role.ADMIN)
+        """With allow_unauthenticated_access=True, returns anonymous VIEWER."""
+        check = require_role(Role.VIEWER)
         request = _mock_request(has_auth_service=False, allow_unauth=True)
 
         result = check(request)
-        assert result.role == Role.ADMIN
+        assert result.role == Role.VIEWER
         assert result.sub == "anonymous"
 
     def test_deny_lower_role_still_denied(self):
-        """Even with allow_unauth, if auth_service is None, behavior is same."""
+        """Even with allow_unauth, anonymous VIEWER cannot access EDITOR endpoints."""
         check = require_role(Role.EDITOR)
         request = _mock_request(has_auth_service=False, allow_unauth=True)
 
-        result = check(request)
-        assert result.role == Role.ADMIN  # anonymous gets ADMIN
+        with pytest.raises(HTTPException) as exc_info:
+            check(request)
+        assert exc_info.value.status_code == 403
+        assert "Insufficient permissions" in exc_info.value.detail
 
 
 class TestRequireRoleWithAuthService:

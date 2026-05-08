@@ -20,6 +20,7 @@ import pyarrow as pa
 from arrow_lake import Lake
 
 _DEFAULT_BASE_URI = "./_tmp_catalog"
+_DATASETS = ["users", "products", "orders"]
 
 
 def main() -> None:
@@ -37,6 +38,13 @@ def main() -> None:
         shutil.rmtree(base)
 
     lake = Lake(base_uri=args.base_uri)
+
+    # 清理后端残留
+    for ds in _DATASETS:
+        try:
+            lake.delete_dataset(ds)
+        except Exception:
+            pass
 
     # --- STEP 1: 创建数据集 ---
     print("STEP 1: 创建三个数据集")
@@ -58,8 +66,9 @@ def main() -> None:
     datasets = lake.list_datasets()
     for name in datasets:
         print(f"  - {name}")
-    if len(datasets) != 3:
-        print(f"  [FAIL] Expected 3 items, got {len(datasets)}")
+    missing = [ds for ds in _DATASETS if ds not in datasets]
+    if missing:
+        print(f"  [FAIL] Expected datasets missing: {missing}")
         return
     print("  [PASS]\n")
 
@@ -72,7 +81,7 @@ def main() -> None:
 
     # --- STEP 4: 导出 ---
     print("STEP 4: 导出数据集")
-    out = base / "orders_export.parquet"
+    out = (base / "orders_export.parquet").resolve()
     lake.export("orders", str(out), format="parquet")
     print(f"  orders → {out} ({out.stat().st_size // 1024} KB)")
     print("  [PASS]\n")
@@ -88,6 +97,11 @@ def main() -> None:
     print("  [PASS]\n")
 
     if not no_cleanup:
+        for ds in _DATASETS:
+            try:
+                lake.delete_dataset(ds)
+            except Exception:
+                pass
         lake.shutdown()
         shutil.rmtree(base, ignore_errors=True)
         print("(已清理)")

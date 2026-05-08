@@ -140,6 +140,40 @@ async def test_extract_filters_by_confidence(mock_llm: object) -> None:
 
 
 # ---------------------------------------------------------------------------
+# extract() filters generic stopwords
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_extract_filters_stopwords(mock_llm: object) -> None:
+    """Generic abstract words are filtered out even if LLM returns them."""
+    mock_llm.generate.return_value = LLMResponse(
+        content=json.dumps({
+            "entities": [
+                {"name": "Transformer", "type": "concept", "confidence": 0.95},
+                {"name": "优化", "type": "concept", "confidence": 0.8},
+                {"name": "分析", "type": "concept", "confidence": 0.7},
+            ],
+            "relations": [
+                {"source": "优化", "target": "分析", "relation": "包含", "confidence": 0.7},
+            ],
+        }),
+        model="test-model",
+        provider="test",
+    )
+    extractor = EntityExtractor(mock_llm, confidence_threshold=0.7)
+    result = await extractor.extract("test text")
+
+    names = [e.name for e in result.entities]
+    assert "Transformer" in names
+    assert "优化" not in names
+    assert "分析" not in names
+    # Relation referencing filtered entity should be dropped
+    sources = [r.source for r in result.relations]
+    assert "优化" not in sources
+
+
+# ---------------------------------------------------------------------------
 # extract() JSON parse failure
 # ---------------------------------------------------------------------------
 
@@ -223,6 +257,11 @@ async def test_extract_with_properties(mock_llm: object) -> None:
         content=json.dumps({
             "entities": [
                 {
+                    "name": "Alice",
+                    "type": "person",
+                    "confidence": 0.95,
+                },
+                {
                     "name": "Event A",
                     "type": "event",
                     "confidence": 0.95,
@@ -245,10 +284,11 @@ async def test_extract_with_properties(mock_llm: object) -> None:
     extractor = EntityExtractor(mock_llm)
     result = await extractor.extract("Alice organized Event A.")
 
-    assert len(result.entities) == 1
-    assert result.entities[0].name == "Event A"
+    assert len(result.entities) == 2
+    assert result.entities[0].name == "Alice"
+    assert result.entities[1].name == "Event A"
     # Properties should be stored as tuple of key-value pairs
-    assert result.entities[0].properties == (("date", "2024-01-01"), ("location", "Beijing"))
+    assert result.entities[1].properties == (("date", "2024-01-01"), ("location", "Beijing"))
 
     assert len(result.relations) == 1
     assert result.relations[0].properties == (("role", "organizer"),)

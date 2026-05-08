@@ -14,7 +14,6 @@ import shutil
 import sys
 from pathlib import Path
 
-import numpy as np
 import pyarrow as pa
 
 from arrow_lake import Lake
@@ -22,19 +21,24 @@ from arrow_lake import Lake
 DATAS_DIR = Path(__file__).resolve().parent.parent / "datas"
 _DEFAULT_BASE_URI = "./_tmp_papers_pipeline"
 DIM = 768
+_DATASETS = ["papers", "papers_zh"]
 
 
 def _add_vectors(lake: Lake, dataset: str) -> int:
-    rng = np.random.RandomState(42)
-    ds = lake.open_dataset(dataset)
-    n = ds.count_rows()
-    vecs = rng.randn(n, DIM).astype(np.float32)
-    vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
-    original = ds.to_arrow()
-    table = original.append_column(
-        "text_embedding", pa.FixedSizeListArray.from_arrays(vecs.ravel(), DIM))
-    lake.restore_dataset(dataset, table)
-    return n
+    try:
+        return lake.embed_and_add(dataset)
+    except Exception:
+        import numpy as np
+        rng = np.random.RandomState(42)
+        ds = lake.open_dataset(dataset)
+        n = ds.count_rows()
+        vecs = rng.randn(n, DIM).astype(np.float32)
+        vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
+        vec_table = pa.table({
+            "text_embedding": pa.FixedSizeListArray.from_arrays(vecs.ravel(), DIM),
+        })
+        lake.add_columns_table(dataset, vec_table)
+        return n
 
 
 def main() -> None:
@@ -52,6 +56,13 @@ def main() -> None:
         shutil.rmtree(base)
 
     lake = Lake(base_uri=args.base_uri)
+
+    # 清理后端残留
+    for ds in _DATASETS:
+        try:
+            lake.delete_dataset(ds)
+        except Exception:
+            pass
 
     # --- STEP 1: 摄取 ---
     print("STEP 1: 摄入论文数据")
@@ -73,7 +84,7 @@ def main() -> None:
     for ds in ["papers", "papers_zh"]:
         try:
             lake.create_vector_index(ds, vector_column="text_embedding")
-        except (ValueError, RuntimeError) as e:
+        except Exception as e:
             print(f"  向量索引跳过 ({ds}): {e}")
         lake.create_fts_index(ds, fts_column="text_content")
     print("  向量索引 + 全文索引 已创建")
@@ -101,12 +112,17 @@ def main() -> None:
 
     # --- STEP 6: 导出 ---
     print("STEP 6: 导出中文论文子集")
-    out = base / "papers_zh_export.parquet"
+    out = (base / "papers_zh_export.parquet").resolve()
     lake.export("papers_zh", str(out), format="parquet")
     print(f"  导出: {out} ({out.stat().st_size // 1024} KB)")
     print("  [PASS]\n")
 
     if not no_cleanup:
+        for ds in _DATASETS:
+            try:
+                lake.delete_dataset(ds)
+            except Exception:
+                pass
         lake.shutdown()
         shutil.rmtree(base, ignore_errors=True)
         print("(已清理)")

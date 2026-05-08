@@ -13,6 +13,7 @@ from typing import Any
 
 import structlog
 
+from arrow_lake.config import StorageBackend
 from arrow_lake.exceptions import ErrorCode, StorageError
 
 _log = structlog.get_logger(__name__)
@@ -32,9 +33,10 @@ class BackupRestorer:
         lance_base_uri: Base URI where Lance datasets live.
     """
 
-    def __init__(self, blob_store: Any, lance_base_uri: str) -> None:
+    def __init__(self, blob_store: Any, lance_base_uri: str, storage_config: Any = None) -> None:
         self._blob_store = blob_store
         self._lance_base_uri = lance_base_uri
+        self._storage_config = storage_config
 
     def restore_lance_dataset(
         self,
@@ -45,8 +47,17 @@ class BackupRestorer:
     ) -> None:
         """Restore a Lance dataset from backup.
 
-        Uses atomic temp-dir + rename to avoid TOCTOU race conditions.
+        Dispatches to local or remote (S3) restore based on storage config.
         """
+        is_remote = (
+            self._storage_config is not None
+            and self._storage_config.backend != StorageBackend.LOCAL
+        )
+        if is_remote:
+            self._restore_lance_dataset_remote(dataset_name, manifest, overwrite=overwrite)
+            return
+
+        # --- Local filesystem restore ---
         from pathlib import Path
 
         dest_path = Path(self._lance_base_uri) / dataset_name
@@ -116,6 +127,65 @@ class BackupRestorer:
             raise StorageError(
                 error_code=ErrorCode.STORAGE_READ_FAILED,
                 message=f"Failed to restore dataset '{dataset_name}': {exc}",
+            ) from exc
+
+    def _restore_lance_dataset_remote(
+        self, dataset_name: str, manifest: Any, *, overwrite: bool = False,
+    ) -> None:
+        """Restore a Lance dataset from backup to remote storage (S3/MinIO)."""
+        base = self._storage_config.base_uri
+        if base.startswith("./"):
+            base = base[2:]
+        dest_prefix = f"{base}/{dataset_name}.lance/"
+
+        if not overwrite:
+            probe = self._blob_store.list_blobs(dest_prefix, max_keys=1)
+            if probe.count > 0:
+                raise StorageError(
+                    error_code=ErrorCode.STORAGE_WRITE_FAILED,
+                    message=f"Dataset '{dataset_name}' already exists. Use overwrite=True.",
+                )
+        else:
+            self._blob_store.delete_prefix(dest_prefix)
+
+        backup_prefix = f"{_BACKUP_PREFIX}{manifest.backup_id}/datasets/{dataset_name}/"
+
+        ds_entry = next((d for d in manifest.datasets if d["name"] == dataset_name), None)
+        expected_hashes: dict[str, str] = ds_entry.get("file_hashes", {}) if ds_entry else {}
+
+        continuation_token: str | None = None
+        try:
+            while True:
+                result = self._blob_store.list_blobs(
+                    backup_prefix, max_keys=5000, continuation_token=continuation_token,
+                )
+                for key in result.keys:
+                    rel_path = key[len(backup_prefix):]
+                    dest_key = f"{dest_prefix}{rel_path}"
+
+                    if expected_hashes and rel_path in expected_hashes:
+                        data = self._blob_store.download(key)
+                        actual_hash = hashlib.sha256(data).hexdigest()
+                        if actual_hash != expected_hashes[rel_path]:
+                            raise StorageError(
+                                error_code=ErrorCode.STORAGE_READ_FAILED,
+                                message=f"Checksum mismatch for '{rel_path}'",
+                            )
+                        self._blob_store.upload(dest_key, data)
+                    else:
+                        self._blob_store.copy(key, dest_key)
+
+                if not result.truncated:
+                    break
+                continuation_token = result.next_token
+                if not result.keys:
+                    break
+        except StorageError:
+            raise
+        except (OSError, RuntimeError) as exc:
+            raise StorageError(
+                error_code=ErrorCode.STORAGE_READ_FAILED,
+                message=f"Failed to restore dataset '{dataset_name}' to S3: {exc}",
             ) from exc
 
     def restore_blob_prefix(self, src_prefix: str, manifest: Any) -> None:

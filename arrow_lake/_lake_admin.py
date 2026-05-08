@@ -126,6 +126,18 @@ class _LakeAdminMixin:
         """
         self._get_storage().add_column(name, column_name, sql_expr)
 
+    def add_columns_table(self, name: str, columns: Any) -> None:
+        """Add pre-computed columns to a dataset without full rewrite.
+
+        Avoids the cost of ``restore_dataset`` (drop + recreate) by using
+        Lance's native in-place column addition.
+
+        Args:
+            name: Dataset name.
+            columns: Arrow Table with new columns (must be row-aligned).
+        """
+        self._get_storage().add_columns_table(name, columns)
+
     def alter_column(self, name: str, column_name: str, new_type: Any) -> None:
         """Change the data type of an existing column.
 

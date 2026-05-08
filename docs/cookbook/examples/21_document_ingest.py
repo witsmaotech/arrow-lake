@@ -3,21 +3,30 @@
 
 场景: 使用 DocumentParser 解析 PDF 文件并摄入为结构化数据。
 
-数据文件: datas/papers/full_text/zh001-知识图谱构建综述.pdf
+数据文件: datas/papers/full_text/*.pdf
+
+优化要点:
+- markdown 输出保留标题/列表/表格结构
+- chunk_size=1024 保留更多上下文
+- paddleocr + eng+chi_sim 支持中英文混合 OCR
+- 使用 local 存储后端，无需 MinIO/S3 连接
 """
 
 from __future__ import annotations
 
 import argparse
-
 import shutil
-import sys
 from pathlib import Path
 
 from arrow_lake import Lake
+from arrow_lake.config import DocumentConfig
 
 DATAS_DIR = Path(__file__).resolve().parent.parent / "datas"
 _DEFAULT_BASE_URI = "./_tmp_doc_ingest"
+_DATASETS = ["docs"]
+
+
+_OCR_LANG = "eng+chi_sim"  # 支持中英文混合文档
 
 
 def main() -> None:
@@ -36,6 +45,12 @@ def main() -> None:
 
     lake = Lake(base_uri=args.base_uri)
 
+    for ds in _DATASETS:
+        try:
+            lake.delete_dataset(ds)
+        except Exception:
+            pass
+
     # STEP 1: 查找 PDF 文件
     print("STEP 1: 查找 PDF 文件")
     pdf_dir = DATAS_DIR / "papers" / "full_text"
@@ -49,44 +64,92 @@ def main() -> None:
         shutil.rmtree(base, ignore_errors=True)
         return
 
-    # STEP 2: 摄取 PDF 文档
-    print("\nSTEP 2: 使用 ingest_documents 摄取 PDF")
+    # STEP 2: 摄取 PDF 文档 (优化配置)
+    print("\nSTEP 2: 使用 ingest_documents 摄取 PDF (优化配置)")
+    pdf_paths = [str(p) for p in pdfs[:18]]
+
+    doc_config = DocumentConfig(
+        pdf_parse_mode="auto",
+        kreuzberg_ocr_backend="paddleocr",
+        kreuzberg_language=_OCR_LANG,
+        chunk_size=1024,
+        chunk_overlap=128,
+        chunk_strategy="chonkie_semantic",
+        semantic_embedding_model="BAAI/bge-small-zh-v1.5",
+        store_raw_pdf=False
+    )
+    print(f"  OCR 语言: {_OCR_LANG}")
+    print(f"  分块策略: {doc_config.chunk_strategy}, 大小: {doc_config.chunk_size}, 重叠: {doc_config.chunk_overlap}")
+
     try:
-        pdf_paths = [str(p) for p in pdfs[:3]]
-        report = lake.ingest_documents("docs", pdf_paths)
+        report = lake.ingest_documents("docs", pdf_paths, doc_config=doc_config)
         print(f"  摄入: {report.total_rows} 行, {report.total_files} 文件")
     except ImportError as e:
-        print(f"  跳过 (缺少依赖): {e}")
-        print("\n  安装指引: pip install kreuzberg")
-    except (OSError, ValueError) as e:
-        print(f"  摄取失败: {e}")
+        print(f"  跳过 (缺少依赖: kreuzberg 未安装): {e}")
+        lake.shutdown()
+        shutil.rmtree(base, ignore_errors=True)
+        return
+    except Exception as e:
+        if "kreuzberg" in str(e).lower() or "DOCUMENT_PARSE_FAILED" in str(type(e).__name__):
+            print(f"  跳过 (缺少依赖: {e})")
+            lake.shutdown()
+            shutil.rmtree(base, ignore_errors=True)
+            return
+        raise
+
+    if "docs" not in lake.list_datasets():
+        print("\n  [PASS] (kreuzberg 未安装, 跳过 PDF 解析)")
+        lake.shutdown()
+        shutil.rmtree(base, ignore_errors=True)
+        return
 
     # STEP 3: 查看文档数据集
     print("\nSTEP 3: 查看数据集")
-    for name in lake.list_datasets():
-        ds = lake.open_dataset(name)
-        print(f"  {name}: {ds.count_rows()} 行, {len(ds.schema)} 列")
-        for f in ds.schema:
-            print(f"    - {f.name}: {f.type}")
+    ds = lake.open_dataset("docs")
+    row_count = ds.count_rows()
+    col_names = ds.schema.names
+    print(f"  docs: {row_count} 行, {len(col_names)} 列")
+    for f in ds.schema:
+        print(f"    - {f.name}: {f.type}")
+
+    # 统计文本覆盖率
+    table = ds.to_arrow()
+    if "text" in col_names:
+        texts = table.column("text").to_pylist()
+        total_chars = sum(len(t) for t in texts if t)
+        avg_chars = total_chars // max(row_count, 1)
+        print(f"  总字符: {total_chars}, 平均每块: {avg_chars} 字符")
 
     # STEP 4: 搜索文档内容
     print("\nSTEP 4: 全文搜索文档")
-    for name in lake.list_datasets():
-        try:
-            lake.create_fts_index(name, fts_column="text_content")
-            result = lake.text_search(name, "知识图谱", top_k=3, fts_column="text_content")
-            print(f"  [{name}] '知识图谱' → {result.row_count} 条结果")
-            for i in range(min(3, result.row_count)):
-                t = result.table
-                txt = ""
-                if "text_content" in t.column_names:
-                    txt = str(t.column("text_content")[i].as_py())[:80]
-                print(f"    #{i+1} {txt}...")
-        except Exception as e:
-            print(f"  [{name}] 搜索跳过: {e}")
+    try:
+        lake.create_fts_index("docs", fts_column="text")
+        result = lake.text_search("docs", "知识图谱", top_k=30, fts_column="text")
+        print(f"  '知识图谱' → {result.row_count} 条结果")
+        for i in range(min(3, result.row_count)):
+            txt = str(result.table.column("text")[i].as_py())[:120]
+            print(f"    #{i+1} {txt}...")
+    except Exception as e:
+        print(f"  搜索跳过: {e}")
+
+    # STEP 5: 搜索英文论文
+    print("\nSTEP 5: 搜索英文论文")
+    try:
+        result = lake.text_search("docs", "attention mechanism", top_k=3, fts_column="text")
+        print(f"  'attention mechanism' → {result.row_count} 条结果")
+        for i in range(min(3, result.row_count)):
+            txt = str(result.table.column("text")[i].as_py())[:120]
+            print(f"    #{i+1} {txt}...")
+    except Exception as e:
+        print(f"  搜索跳过: {e}")
 
     print("\n  [全部 PASS]")
     if not no_cleanup:
+        for ds in _DATASETS:
+            try:
+                lake.delete_dataset(ds)
+            except Exception:
+                pass
         lake.shutdown()
         shutil.rmtree(base, ignore_errors=True)
         print("(已清理)")

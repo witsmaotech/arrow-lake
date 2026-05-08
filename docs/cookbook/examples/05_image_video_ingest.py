@@ -18,6 +18,7 @@ from arrow_lake import Lake
 
 DATAS_DIR = Path(__file__).resolve().parent.parent / "datas"
 _DEFAULT_BASE_URI = "./_tmp_multimedia"
+_DATASETS = ("photos", "videos")
 
 
 def main() -> None:
@@ -35,6 +36,13 @@ def main() -> None:
         shutil.rmtree(base)
 
     lake = Lake(base_uri=args.base_uri)
+
+    # 清理 MinIO 后端可能残留的数据集
+    for ds in _DATASETS:
+        try:
+            lake.delete_dataset(ds)
+        except Exception:
+            pass
 
     # --- STEP 1: 摄入图片 ---
     print("STEP 1: 摄入图片")
@@ -65,6 +73,11 @@ def main() -> None:
     print("  [PASS]\n")
 
     if not no_cleanup:
+        for ds in _DATASETS:
+            try:
+                lake.delete_dataset(ds)
+            except Exception:
+                pass
         lake.shutdown()
         shutil.rmtree(base, ignore_errors=True)
         print("(已清理)")

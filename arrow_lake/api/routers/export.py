@@ -74,6 +74,8 @@ async def download_export(
     """Download an exported file (only available after task completes)."""
     from starlette.responses import FileResponse
 
+    from arrow_lake.api.deps import get_config
+
     task = TaskManager.get_task(task_id)
     if task is None or task.dataset_name != name:
         raise HTTPException(status_code=404, detail="Export task not found")
@@ -82,13 +84,19 @@ async def download_export(
             status_code=400,
             detail=f"Export not completed (status: {task.status})",
         )
-    if not FilePath(task.output_path).exists():
+
+    cfg = get_config()
+    base_dir = getattr(cfg.export, "base_dir", "/app/exports")
+    output = FilePath(task.output_path)
+    file_path = output if output.is_absolute() else FilePath(base_dir) / output
+
+    if not file_path.exists():
         raise HTTPException(status_code=404, detail="Export file not found on disk")
 
     content_type = "text/csv" if task.fmt == "csv" else "application/octet-stream"
-    filename = FilePath(task.output_path).name
+    filename = output.name
     return FileResponse(
-        task.output_path,
+        str(file_path),
         media_type=content_type,
         filename=filename,
     )

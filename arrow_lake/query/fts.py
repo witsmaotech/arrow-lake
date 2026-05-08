@@ -14,11 +14,13 @@ from dataclasses import dataclass
 from typing import Any
 
 import pyarrow as pa
+import pyarrow.compute as pc
 import structlog
 
 from arrow_lake.config import FullTextSearchConfig, StorageConfig
+from arrow_lake.config._enums import StorageBackend
 from arrow_lake.exceptions import ErrorCode, QueryError
-from arrow_lake.query._chinese_tokenizer import segment_query, segment_text
+from arrow_lake.query._chinese_tokenizer import _JIEBA_AVAILABLE, has_cjk, segment_query, segment_text
 
 _log = structlog.get_logger(__name__)
 
@@ -131,6 +133,16 @@ class FullTextSearchBridge:
                 "(DuckDB lance_fts only). Install with: pip install tantivy"
             )
 
+        # Detect CJK content without jieba
+        if self._use_jieba and not _JIEBA_AVAILABLE:
+            sample = table.to_table().column(column).to_pylist()[:100]
+            if any(has_cjk(str(t)) for t in sample if t):
+                _log.warning(
+                    "CJK content detected but jieba is not installed — "
+                    "Chinese text will NOT be tokenized correctly. "
+                    "Install with: pip install jieba"
+                )
+
         index_column = column
         if self._use_jieba:
             # Load jieba user dict if configured
@@ -160,15 +172,28 @@ class FullTextSearchBridge:
             index_column = self._add_segmented_column(table, column, dataset_name)
             table = self._storage.open_dataset(dataset_name)
 
+        # tantivy only supports local filesystem — auto-disable for S3/MinIO/GCS
+        is_local = (
+            self._storage_config is not None
+            and getattr(self._storage_config, "backend", None) == StorageBackend.LOCAL
+        )
+        use_tantivy = _TANTIVY_AVAILABLE and is_local
+        if _TANTIVY_AVAILABLE and not is_local:
+            _log.info(
+                "tantivy requires local filesystem — using lance-index backend "
+                "for %s storage",
+                getattr(self._storage_config, "backend", "remote"),
+            )
+
         fts_kwargs: dict[str, Any] = dict(
             field_names=index_column,
             replace=replace,
-            use_tantivy=_TANTIVY_AVAILABLE,
+            use_tantivy=use_tantivy,
             stem=self._config.stem,
             remove_stop_words=self._config.remove_stop_words,
             lower_case=self._config.lower_case,
         )
-        if _TANTIVY_AVAILABLE:
+        if use_tantivy:
             fts_kwargs["language"] = "Chinese"
 
         try:
@@ -203,15 +228,18 @@ class FullTextSearchBridge:
         import lance
 
         segmented_column = "_fts_segmented"
-        uri = table.uri
+        uri = self._storage.dataset_uri(dataset_name)
+        opts = self._storage.storage_options
 
         # Read existing data and segment in chunks to limit memory usage
-        ds = lance.dataset(uri)
+        ds = lance.dataset(uri, storage_options=opts)
         row_count = ds.count_rows()
         _chunk_size = 50_000
 
         if row_count <= _chunk_size:
             original = ds.to_table()
+            if segmented_column in original.column_names:
+                original = original.drop_columns(segmented_column)
             raw_texts = original.column(source_column).to_pylist()
             segmented = [
                 None if text is None else segment_text(str(text))
@@ -219,7 +247,7 @@ class FullTextSearchBridge:
             ]
             new_col = pa.array(segmented, type=pa.string())
             new_table = original.append_column(segmented_column, new_col)
-            lance.write_dataset(new_table, uri, mode="overwrite")
+            lance.write_dataset(new_table, uri, mode="overwrite", storage_options=opts)
         else:
             # Chunked: process in batches, merge via Lance append
             _log.info(
@@ -245,13 +273,13 @@ class FullTextSearchBridge:
                 chunk_table = batch.append_column(segmented_column, segmented_col)
                 del batch, segmented_col
                 if first_chunk:
-                    lance.write_dataset(chunk_table, uri, mode="overwrite")
+                    lance.write_dataset(chunk_table, uri, mode="overwrite", storage_options=opts)
                     first_chunk = False
                 else:
-                    lance.write_dataset(chunk_table, uri, mode="append")
+                    lance.write_dataset(chunk_table, uri, mode="append", storage_options=opts)
                 del chunk_table
             # Reopen to validate
-            ds = lance.dataset(uri)
+            ds = lance.dataset(uri, storage_options=opts)
 
         _log.info(
             "Added jieba-segmented column '%s' to dataset '%s' (%d rows)",
@@ -344,7 +372,7 @@ class FullTextSearchBridge:
         # Extract max score for diagnostics
         max_score: float | None = None
         if result_table.num_rows > 0 and "_score" in result_table.column_names:
-            max_val = pa.compute.max(result_table.column("_score"))
+            max_val = pc.max(result_table.column("_score"))
             max_score = max_val.as_py() if max_val.is_valid else None
 
         return FullTextSearchResult(

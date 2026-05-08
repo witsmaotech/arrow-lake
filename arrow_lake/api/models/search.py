@@ -24,7 +24,7 @@ class FormatMixin(BaseModel):
 # ---------------------------------------------------------------------------
 
 class VectorSearchRequest(FormatMixin):
-    query_vector: list[float] = Field(..., min_length=1)
+    query_vector: list[float] = Field(..., min_length=1, max_length=8192)
     top_k: int = Field(default=10, ge=1)
     metric: str | None = None
     vector_column: str = "text_embedding"
@@ -68,7 +68,7 @@ class FullTextSearchResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 class HybridSearchRequest(FormatMixin):
-    query_vector: list[float] = Field(..., min_length=1)
+    query_vector: list[float] = Field(..., min_length=1, max_length=8192)
     query_text: str = Field(..., min_length=1)
     top_k: int | None = None
     vector_column: str = "text_embedding"
@@ -97,7 +97,7 @@ class FacetCountItem(BaseModel):
 
 
 class FacetedSearchRequest(FormatMixin):
-    query_vector: list[float] = Field(..., min_length=1)
+    query_vector: list[float] = Field(..., min_length=1, max_length=8192)
     facets: list[str] | None = None
     top_k: int = Field(default=10, ge=1)
     vector_column: str = "embedding"
@@ -121,7 +121,7 @@ class FacetedSearchResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 class EnsembleSearchRequest(FormatMixin):
-    query_vector: list[float] = Field(..., min_length=1)
+    query_vector: list[float] = Field(..., min_length=1, max_length=8192)
     columns: list[str] | None = None
     weights: dict[str, float] | None = None
     top_k: int | None = None

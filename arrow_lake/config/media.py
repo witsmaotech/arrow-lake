@@ -151,6 +151,7 @@ class ExportConfig(BaseModel):
     parquet_compression: str = "snappy"
     csv_delimiter: str = ","
     allow_overwrite: bool = False
+    base_dir: str = "/app/exports"
 
     @field_validator("default_format")
     @classmethod

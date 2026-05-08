@@ -77,11 +77,39 @@ async def create_fts_index(
 
 @embed_router.post("/text", response_model=EmbeddingResponse)
 async def embed_text(req: TextEmbedRequest) -> EmbeddingResponse:
-    """Compute text embeddings using a local model."""
+    """Compute text embeddings using local model or external API."""
     import numpy as np
     import pyarrow as pa
 
-    from arrow_lake.embed.encoder import LocalEmbeddingEncoder
+    from arrow_lake.api.deps import get_config
+    from arrow_lake.config.media import EmbeddingBackend
+    from arrow_lake.embed.encoder import ApiEmbeddingEncoder, LocalEmbeddingEncoder
+
+    cfg = get_config()
+    emb_cfg = cfg.embedding
+
+    if emb_cfg.backend == EmbeddingBackend.OPENAI and emb_cfg.api_base:
+        api_encoder = ApiEmbeddingEncoder(
+            api_base=emb_cfg.api_base,
+            api_key=emb_cfg.api_key,
+            model_name=req.model,
+            batch_size=emb_cfg.batch_size,
+        )
+        batch = await run_sync(
+            api_encoder.encode, req.texts,
+            timeout=_EMBED_TIMEOUT, label="embed_text_api",
+        )
+        embeddings = [e.tolist() for e in batch.embeddings]
+        embedding_dim = len(embeddings[0]) if embeddings else 0
+        null_count = sum(1 for m in batch.null_mask if m)
+
+        return EmbeddingResponse(
+            embeddings=embeddings,
+            embedding_dim=embedding_dim,
+            model=req.model,
+            total=len(req.texts),
+            null_count=null_count,
+        )
 
     encoder = LocalEmbeddingEncoder(
         model_name=req.model,
@@ -124,8 +152,21 @@ async def embed_image(req: ImageEmbedRequest) -> EmbeddingResponse:
     import base64
 
     import pyarrow as pa
+    from fastapi import HTTPException
 
+    from arrow_lake.api.deps import get_config
+    from arrow_lake.config.media import EmbeddingBackend
     from arrow_lake.embed.image_encoder import CLIPImageEncoder
+
+    cfg = get_config()
+    emb_cfg = cfg.embedding
+
+    if emb_cfg.backend == EmbeddingBackend.OPENAI and emb_cfg.api_base:
+        raise HTTPException(
+            status_code=501,
+            detail="Image embedding via external API is not yet supported. "
+            "Set ARROW_LAKE__EMBEDDING__BACKEND=local for image embeddings.",
+        )
 
     image_bytes: list[bytes] = []
     for img_str in req.images:

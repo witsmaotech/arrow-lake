@@ -142,7 +142,6 @@ class DocumentChunker:
         self._similarity_threshold = similarity_threshold
         self._min_chunk_size = min_chunk_size
 
-        self._chonkie_embedding_model: Any = None
         self._chonkie_chunker: Any = None
         self._semchunk_tokenizer: Any = None
 
@@ -197,27 +196,15 @@ class DocumentChunker:
         )
         return None
 
-    def _get_chonkie_embedding(self) -> Any:
-        """Lazily load SentenceTransformer model (cached per instance)."""
-        if self._chonkie_embedding_model is not None:
-            return self._chonkie_embedding_model
-
-        from sentence_transformers import SentenceTransformer
-
-        self._chonkie_embedding_model = SentenceTransformer(self._embedding_model)
-        return self._chonkie_embedding_model
-
     def _chunk_with_semchunk(self, text: str) -> list[str]:
-        """Chunk text using semchunk's hierarchical splitter."""
+        """Chunk text using semchunk hierarchical splitting."""
         import semchunk
 
         tokenizer = self._get_semchunk_tokenizer()
-        return semchunk.chunk(
-            text,
-            chunk_size=self._chunk_size,
-            tokenizer=tokenizer,
-            overlap=self._chunk_overlap,
-        )
+        kwargs: dict[str, Any] = {"chunk_size": self._chunk_size}
+        if tokenizer is not None:
+            kwargs["tokenizer"] = tokenizer
+        return semchunk.chunk(text, **kwargs)
 
     def _chunk_with_chonkie(self, text: str) -> list[str]:
         """Chunk text using the selected chonkie chunker (cached per instance)."""
@@ -226,24 +213,31 @@ class DocumentChunker:
         if self._chonkie_chunker is None:
             if self._strategy == ChunkStrategy.CHONKIE_TOKEN:
                 kwargs: dict[str, Any] = {
-                    "token_chunk_size": self._chunk_size,
-                    "token_overlap": self._chunk_overlap,
+                    "chunk_size": self._chunk_size,
+                    "chunk_overlap": self._chunk_overlap,
                 }
                 if self._tokenizer:
                     kwargs["tokenizer"] = self._tokenizer
                 self._chonkie_chunker = chonkie.TokenChunker(**kwargs)
             elif self._strategy == ChunkStrategy.CHONKIE_SEMANTIC:
                 self._chonkie_chunker = chonkie.SemanticChunker(
-                    embedding_model=self._get_chonkie_embedding(),
+                    embedding_model=self._embedding_model,
                     threshold=self._similarity_threshold,
-                    min_chunk_size=self._min_chunk_size,
+                    chunk_size=self._chunk_size,
                 )
             elif self._strategy == ChunkStrategy.CHONKIE_SDPM:
-                self._chonkie_chunker = chonkie.SDPMChunker(
-                    embedding_model=self._get_chonkie_embedding(),
-                    threshold=self._similarity_threshold,
-                    min_chunk_size=self._min_chunk_size,
-                )
+                if hasattr(chonkie, "SDPMChunker"):
+                    self._chonkie_chunker = chonkie.SDPMChunker(
+                        embedding_model=self._embedding_model,
+                        threshold=self._similarity_threshold,
+                        chunk_size=self._chunk_size,
+                    )
+                else:
+                    self._chonkie_chunker = chonkie.SemanticChunker(
+                        embedding_model=self._embedding_model,
+                        threshold=self._similarity_threshold,
+                        chunk_size=self._chunk_size,
+                    )
 
         result = self._chonkie_chunker.chunk(text)
         return [c.text for c in result]

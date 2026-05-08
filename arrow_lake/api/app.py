@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator
+from typing import Any
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -31,20 +32,83 @@ from arrow_lake.api.routers.system import router as system_router
 from arrow_lake.config import ArrowLakeConfig
 
 
+logger = logging.getLogger(__name__)
+
+
+def _check_storage_connectivity(config: ArrowLakeConfig) -> None:
+    """Verify S3/MinIO storage is reachable at startup."""
+    from arrow_lake.config._enums import StorageBackend
+
+    backend = config.storage.backend
+    if backend == StorageBackend.LOCAL:
+        return
+    endpoint = config.storage.s3_endpoint
+    bucket = config.storage.s3_bucket
+    logger.info("Checking storage connectivity: %s @ %s (bucket=%s)", backend, endpoint, bucket)
+    try:
+        import httpx
+
+        resp = httpx.get(f"{endpoint}/minio/health/live", timeout=5.0)
+        if resp.status_code == 200:
+            logger.info("Storage health check passed")
+            return
+    except Exception:
+        pass
+    logger.warning(
+        "Storage health check failed — endpoint %s may not be reachable. "
+        "The API will start but storage operations may fail.",
+        endpoint,
+    )
+
+
+def _check_duckdb_extensions() -> None:
+    """Verify critical DuckDB extensions are available."""
+    try:
+        import duckdb
+
+        conn = duckdb.connect(":memory:")
+        try:
+            conn.execute("INSTALL json; LOAD json;")
+            conn.execute("SELECT 1;")
+        finally:
+            conn.close()
+        logger.info("DuckDB extension check passed")
+    except Exception as exc:
+        logger.warning("DuckDB extension check failed: %s", exc)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Application lifespan: initialize Lake instance on startup, cleanup on shutdown."""
+    import signal
+
     from arrow_lake import Lake
 
     config: ArrowLakeConfig = app.state.config
+
+    # Startup health checks (non-fatal — log warnings, don't block)
+    _check_storage_connectivity(config)
+    _check_duckdb_extensions()
+
     lake = Lake(base_uri=config.storage.base_uri, config=config)
     app.state.lake = lake
-    yield
-    # Shutdown: close Lake instance and all its managed components
-    lake.shutdown()
 
+    original_sigterm = signal.getsignal(signal.SIGTERM)
+    original_sigint = signal.getsignal(signal.SIGINT)
 
-logger = logging.getLogger(__name__)
+    def _graceful_shutdown(signum: int, frame: Any) -> None:
+        logger.info("Received signal %s, initiating graceful shutdown", signum)
+        lake.shutdown()
+
+    signal.signal(signal.SIGTERM, _graceful_shutdown)
+    signal.signal(signal.SIGINT, _graceful_shutdown)
+
+    try:
+        yield
+    finally:
+        lake.shutdown()
+        signal.signal(signal.SIGTERM, original_sigterm)
+        signal.signal(signal.SIGINT, original_sigint)
 
 
 def _validate_auth_config(config: ArrowLakeConfig) -> None:

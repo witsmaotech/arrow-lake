@@ -9,6 +9,7 @@ from starlette.responses import JSONResponse, PlainTextResponse, Response
 
 from arrow_lake.api.deps import get_app_config
 from arrow_lake.config import ArrowLakeConfig
+from arrow_lake.config.storage import StorageBackend
 
 router = APIRouter(tags=["system"])
 
@@ -24,19 +25,21 @@ def _get_version() -> str:
 
 def _check_storage(config: ArrowLakeConfig) -> tuple[str, bool]:
     """Check storage accessibility. Returns (status_text, is_ok)."""
-    base_uri = config.storage.base_uri
-    if base_uri.startswith("s3://"):
+    storage = config.storage
+    backend = storage.backend
+    if backend != StorageBackend.LOCAL:
         try:
             import urllib.request
 
-            endpoint = config.storage.s3_endpoint
+            endpoint = storage.s3_endpoint
             if endpoint:
                 health_url = endpoint.rstrip("/") + "/minio/health/live"
                 urllib.request.urlopen(health_url, timeout=3)
                 return "accessible", True
             return "no_endpoint_configured", False
-        except ImportError:
+        except Exception:
             return "endpoint_unreachable", False
+    base_uri = storage.base_uri
     if os.path.isdir(base_uri):
         return "accessible", True
     return "not_found", False

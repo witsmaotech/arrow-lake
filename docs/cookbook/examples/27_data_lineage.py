@@ -18,6 +18,7 @@ from arrow_lake import Lake
 
 DATAS_DIR = Path(__file__).resolve().parent.parent / "datas"
 _DEFAULT_BASE_URI = "./_tmp_lineage"
+_DATASETS = ("raw_sales", "clean_sales")
 
 
 def main() -> None:
@@ -35,6 +36,13 @@ def main() -> None:
         shutil.rmtree(base)
 
     lake = Lake(base_uri=args.base_uri)
+
+    # 清理 MinIO 后端可能残留的数据集
+    for ds in _DATASETS:
+        try:
+            lake.delete_dataset(ds)
+        except Exception:
+            pass
 
     # STEP 1: 源数据摄取 + 血缘记录
     print("STEP 1: 源数据摄取")
@@ -73,8 +81,8 @@ def main() -> None:
             history = lake.lineage_history(ds_name)
             print(f"  [{ds_name}] 操作记录: {len(history)} 条")
             for h in history:
-                op = getattr(h, 'operation', h.get('operation', '?'))
-                actor = getattr(h, 'actor', h.get('actor', '?'))
+                op = getattr(h, 'operation', '?')
+                actor = getattr(h, 'actor', '?')
                 print(f"    {op:<12} by {actor}")
         except Exception as e:
             print(f"  [{ds_name}] 查询跳过: {e}")
@@ -83,7 +91,7 @@ def main() -> None:
     print("\nSTEP 5: 血缘链路 (SQL 查询)")
     try:
         lineage_result = lake.lineage_query(
-            "SELECT dataset_name, operation, actor FROM lineage ORDER BY timestamp")
+            "SELECT dataset_name, operation, actor FROM _lineage_events ORDER BY timestamp")
         if hasattr(lineage_result, 'to_pylist'):
             rows = lineage_result.to_pylist()
         elif isinstance(lineage_result, list):
@@ -107,6 +115,11 @@ def main() -> None:
 
     print("\n  [全部 PASS]")
     if not no_cleanup:
+        for ds in _DATASETS:
+            try:
+                lake.delete_dataset(ds)
+            except Exception:
+                pass
         lake.shutdown()
         shutil.rmtree(base, ignore_errors=True)
         print("(已清理)")

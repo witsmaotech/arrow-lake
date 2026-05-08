@@ -21,6 +21,7 @@ from arrow_lake import Lake
 
 _DEFAULT_BASE_URI = "./_tmp_quality"
 DATASET = "sample_data"
+_DATASETS = ("sample_data",)
 DIM = 64
 
 
@@ -67,6 +68,13 @@ def main() -> None:
 
     lake = Lake(base_uri=args.base_uri)
 
+    # 清理 MinIO 后端可能残留的数据集
+    for ds in _DATASETS:
+        try:
+            lake.delete_dataset(ds)
+        except Exception:
+            pass
+
     # --- STEP 1: 创建含噪声的数据集 ---
     print("STEP 1: 创建含噪声的合成数据")
     table = _make_noisy_data()
@@ -97,6 +105,11 @@ def main() -> None:
     print("  [PASS]\n")
 
     if not no_cleanup:
+        for ds in _DATASETS:
+            try:
+                lake.delete_dataset(ds)
+            except Exception:
+                pass
         lake.shutdown()
         shutil.rmtree(base, ignore_errors=True)
         print("(已清理)")

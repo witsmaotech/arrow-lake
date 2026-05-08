@@ -9,11 +9,18 @@ Key API differences from local docs:
 - Traversal source: {graph_name}.traversal() (NOT g.V())
 - Edge fields: outV/outVLabel/inV/inVLabel (NOT source/target)
 - Schema creation returns 202 (async accepted)
+
+HTTP method notes (verified against HugeGraph 1.7.0):
+- POST: kneighbor, paths, customizedpaths (body params)
+- GET:  allshortestpaths, weightedshortestpath, singlesourceshortestpath,
+        rays, rings, crosspoints (JSON-encoded query params)
+- N/A:  multinodesshortestpath (endpoint does not exist)
 """
 
 from __future__ import annotations
 
 import base64
+import json
 import logging
 import re
 from typing import Any
@@ -26,8 +33,8 @@ from arrow_lake.exceptions import ErrorCode, KGError
 
 logger = logging.getLogger(__name__)
 
-# Safe vertex ID pattern: alphanumeric, underscore, hyphen only.
-_SAFE_VERTEX_ID_RE = re.compile(r"^[a-zA-Z0-9_\-:]+$")
+# Safe vertex ID pattern: alphanumeric, CJK, underscore, hyphen, dot, space.
+_SAFE_VERTEX_ID_RE = re.compile(r"^[a-zA-Z0-9_\-一-鿿　-〿＀-￯:.\s]+$")
 
 _DEFAULT_MAX_RETRIES = 3
 
@@ -72,9 +79,9 @@ class HugeGraphClient:
         wait=wait_exponential(multiplier=1, min=1, max=10),
         reraise=True,
     )
-    async def _get(self, path: str) -> httpx.Response:
+    async def _get(self, path: str, *, params: dict[str, Any] | None = None) -> httpx.Response:
         """GET with tenacity retry on transient failures."""
-        return await self._client.get(path)
+        return await self._client.get(path, params=params)
 
     @retry(
         retry=retry_if_exception_type((httpx.TimeoutException, httpx.ConnectError)),
@@ -308,18 +315,18 @@ class HugeGraphClient:
     ) -> list[dict[str, Any]]:
         """All shortest paths between source and target.
 
-        POST /graphs/{name}/traversers/allshortestpaths
+        GET /graphs/{name}/traversers/allshortestpaths
         Returns list of path dicts with objects/labels/weights.
         """
-        body = {
-            "source": source,
-            "target": target,
+        params = {
+            "source": json.dumps(source),
+            "target": json.dumps(target),
             "direction": direction,
-            "max_depth": max_depth,
+            "max_depth": str(max_depth),
         }
         try:
-            resp = await self._post(
-                f"{self._graph_base}/traversers/allshortestpaths", json_data=body,
+            resp = await self._get(
+                f"{self._graph_base}/traversers/allshortestpaths", params=params,
             )
         except httpx.HTTPError as exc:
             self._handle_http_error(exc)
@@ -345,20 +352,20 @@ class HugeGraphClient:
     ) -> dict[str, Any]:
         """Weighted shortest path between source and target.
 
-        POST /graphs/{name}/traversers/weightedshortestpath
+        GET /graphs/{name}/traversers/weightedshortestpath
         Returns dict with path and total weight.
         """
-        body = {
-            "source": source,
-            "target": target,
+        params = {
+            "source": json.dumps(source),
+            "target": json.dumps(target),
             "direction": direction,
             "weight": weight_prop,
-            "max_degree": max_degree,
+            "max_degree": str(max_degree),
         }
         try:
-            resp = await self._post(
+            resp = await self._get(
                 f"{self._graph_base}/traversers/weightedshortestpath",
-                json_data=body,
+                params=params,
             )
         except httpx.HTTPError as exc:
             self._handle_http_error(exc)
@@ -382,19 +389,19 @@ class HugeGraphClient:
     ) -> dict[str, Any]:
         """Single source shortest path to all reachable vertices.
 
-        POST /graphs/{name}/traversers/singlesourceshortestpath
+        GET /graphs/{name}/traversers/singlesourceshortestpath
         Returns dict mapping target_id to path info.
         """
-        body = {
-            "source": source,
+        params = {
+            "source": json.dumps(source),
             "direction": direction,
             "weight": weight_prop,
-            "max_degree": max_degree,
+            "max_degree": str(max_degree),
         }
         try:
-            resp = await self._post(
+            resp = await self._get(
                 f"{self._graph_base}/traversers/singlesourceshortestpath",
-                json_data=body,
+                params=params,
             )
         except httpx.HTTPError as exc:
             self._handle_http_error(exc)
@@ -419,32 +426,15 @@ class HugeGraphClient:
     ) -> list[dict[str, Any]]:
         """Shortest paths between multiple source-target pairs.
 
-        POST /graphs/{name}/traversers/multinodesshortestpath
-        Returns list of path dicts with source/target/path.
+        NOTE: This endpoint does not exist in HugeGraph 1.7.0 REST API.
         """
-        body = {
-            "sources": sources,
-            "targets": targets,
-            "direction": direction,
-            "weight": weight_prop,
-            "max_degree": max_degree,
-        }
-        try:
-            resp = await self._post(
-                f"{self._graph_base}/traversers/multinodesshortestpath",
-                json_data=body,
-            )
-        except httpx.HTTPError as exc:
-            self._handle_http_error(exc)
-
-        if resp.status_code != 200:
-            raise KGError(
-                error_code=ErrorCode.KG_QUERY_FAILED,
-                message=f"Multi node shortest path failed: {resp.text}",
-            )
-
-        data = resp.json()
-        return data.get("paths", [])
+        raise KGError(
+            error_code=ErrorCode.KG_QUERY_FAILED,
+            message=(
+                "multi_node_shortest_path is not supported by HugeGraph 1.7.0. "
+                "Use all_shortest_paths for single pair queries."
+            ),
+        )
 
     async def traverser_rays(
         self,
@@ -455,17 +445,17 @@ class HugeGraphClient:
     ) -> list[dict[str, Any]]:
         """Rays traversal — non-cyclic paths from source.
 
-        POST /graphs/{name}/traversers/rays
+        GET /graphs/{name}/traversers/rays
         Returns list of ray dicts with labels/objects.
         """
-        body = {
-            "source": source,
+        params = {
+            "source": json.dumps(source),
             "direction": direction,
-            "max_depth": max_depth,
+            "max_depth": str(max_depth),
         }
         try:
-            resp = await self._post(
-                f"{self._graph_base}/traversers/rays", json_data=body,
+            resp = await self._get(
+                f"{self._graph_base}/traversers/rays", params=params,
             )
         except httpx.HTTPError as exc:
             self._handle_http_error(exc)
@@ -489,17 +479,17 @@ class HugeGraphClient:
     ) -> list[dict[str, Any]]:
         """Ring detection — cyclic paths from source back to itself.
 
-        POST /graphs/{name}/traversers/rings
+        GET /graphs/{name}/traversers/rings
         Returns list of ring dicts with labels/objects.
         """
-        body = {
-            "source": source,
+        params = {
+            "source": json.dumps(source),
             "direction": direction,
-            "max_depth": max_depth,
+            "max_depth": str(max_depth),
         }
         try:
-            resp = await self._post(
-                f"{self._graph_base}/traversers/rings", json_data=body,
+            resp = await self._get(
+                f"{self._graph_base}/traversers/rings", params=params,
             )
         except httpx.HTTPError as exc:
             self._handle_http_error(exc)
@@ -524,18 +514,18 @@ class HugeGraphClient:
     ) -> list[dict[str, Any]]:
         """Crosspoints — vertices on paths between source and target.
 
-        POST /graphs/{name}/traversers/crosspoints
+        GET /graphs/{name}/traversers/crosspoints
         Returns list of crosspoint dicts with vertex and crossed_paths.
         """
-        body = {
-            "source": source,
-            "target": target,
+        params = {
+            "source": json.dumps(source),
+            "target": json.dumps(target),
             "direction": direction,
-            "max_depth": max_depth,
+            "max_depth": str(max_depth),
         }
         try:
-            resp = await self._post(
-                f"{self._graph_base}/traversers/crosspoints", json_data=body,
+            resp = await self._get(
+                f"{self._graph_base}/traversers/crosspoints", params=params,
             )
         except httpx.HTTPError as exc:
             self._handle_http_error(exc)
@@ -810,19 +800,25 @@ class HugeGraphClient:
     # ------------------------------------------------------------------
 
     async def get_stats(self) -> dict[str, Any]:
-        """Get vertex and edge counts via REST API."""
+        """Get vertex and edge counts via REST API.
+
+        HugeGraph REST API does not return a 'total' field in list responses,
+        so we fetch with a large limit and count the returned items.
+        """
+        v_count = 0
+        e_count = 0
         try:
             v_resp = await self._get(
-                f"{self._graph_base}/graph/vertices?limit=0"
+                f"{self._graph_base}/graph/vertices?limit=100000"
             )
-            v_count = v_resp.json().get("total", 0)
+            v_count = len(v_resp.json().get("vertices", []))
         except (ConnectionError, httpx.HTTPStatusError, KeyError, ValueError):
             v_count = 0
         try:
             e_resp = await self._get(
-                f"{self._graph_base}/graph/edges?limit=0"
+                f"{self._graph_base}/graph/edges?limit=100000"
             )
-            e_count = e_resp.json().get("total", 0)
+            e_count = len(e_resp.json().get("edges", []))
         except (ConnectionError, httpx.HTTPStatusError, KeyError, ValueError):
             e_count = 0
 

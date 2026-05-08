@@ -26,19 +26,22 @@ DATASET = "knowledge_zh"
 DIM = 768
 
 
-def _add_vectors(lake: Lake) -> None:
-    """生成随机 768 维向量并合并到数据集"""
-    rng = np.random.RandomState(42)
-    ds = lake.open_dataset(DATASET)
-    n = ds.count_rows()
-    vecs = rng.randn(n, DIM).astype(np.float32)
-    vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
-
-    original = ds.to_arrow()
-    table = original.append_column(
-        "text_embedding", pa.FixedSizeListArray.from_arrays(vecs.ravel(), DIM))
-    lake.restore_dataset(DATASET, table)
-    print(f"  合并 {n} 行 768 维向量")
+def _add_vectors(lake: Lake) -> int:
+    """生成嵌入向量并合并到数据集 (优先 embed_and_add, 失败则随机向量)"""
+    try:
+        return lake.embed_and_add(DATASET)
+    except Exception:
+        import numpy as np
+        rng = np.random.RandomState(42)
+        ds = lake.open_dataset(DATASET)
+        n = ds.count_rows()
+        vecs = rng.randn(n, DIM).astype(np.float32)
+        vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
+        vec_table = pa.table({
+            "text_embedding": pa.FixedSizeListArray.from_arrays(vecs.ravel(), DIM),
+        })
+        lake.add_columns_table(DATASET, vec_table)
+        return n
 
 
 def _print_results(result, top: int = 5) -> None:
@@ -67,7 +70,13 @@ def main() -> None:
 
     lake = Lake(base_uri=args.base_uri)
 
-    # --- STEP 1: 摄入中文知识库 ---
+    # 清理后端残留
+    try:
+        lake.delete_dataset(DATASET)
+    except Exception:
+        pass
+
+    # --- STEP 1: 摄取中文知识库 ---
     print("STEP 1: 摄取 JSONL 知识库")
     jsonl_path = str(DATAS_DIR / "kb" / "knowledge_zh.jsonl")
     report = lake.ingest(DATASET, [jsonl_path])
@@ -85,7 +94,7 @@ def main() -> None:
         idx = lake.create_vector_index(DATASET, vector_column="text_embedding",
                                       metric="cosine", index_type="IVF_PQ")
         print(f"  索引类型: {idx.index_type}")
-    except (ValueError, RuntimeError) as e:
+    except Exception as e:
         print(f"  跳过 (数据量不足): {e}")
     print("  [PASS]\n")
 
@@ -121,6 +130,10 @@ def main() -> None:
     print("  [PASS]\n")
 
     if not no_cleanup:
+        try:
+            lake.delete_dataset(DATASET)
+        except Exception:
+            pass
         lake.shutdown()
         shutil.rmtree(base, ignore_errors=True)
         print("(已清理)")

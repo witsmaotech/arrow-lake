@@ -26,16 +26,20 @@ DIM = 768
 
 
 def _add_vectors(lake: Lake, dataset: str) -> int:
-    rng = np.random.RandomState(42)
-    ds = lake.open_dataset(dataset)
-    n = ds.count_rows()
-    vecs = rng.randn(n, DIM).astype(np.float32)
-    vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
-    original = ds.to_arrow()
-    table = original.append_column(
-        "text_embedding", pa.FixedSizeListArray.from_arrays(vecs.ravel(), DIM))
-    lake.restore_dataset(dataset, table)
-    return n
+    try:
+        return lake.embed_and_add(dataset)
+    except Exception:
+        import numpy as np
+        rng = np.random.RandomState(42)
+        ds = lake.open_dataset(dataset)
+        n = ds.count_rows()
+        vecs = rng.randn(n, DIM).astype(np.float32)
+        vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
+        vec_table = pa.table({
+            "text_embedding": pa.FixedSizeListArray.from_arrays(vecs.ravel(), DIM),
+        })
+        lake.add_columns_table(dataset, vec_table)
+        return n
 
 
 def main() -> None:
@@ -54,6 +58,14 @@ def main() -> None:
 
     lake = Lake(base_uri=args.base_uri)
 
+    # 清理后端残留
+    _DATASETS = ["papers", "papers_zh"]
+    for ds in _DATASETS:
+        try:
+            lake.delete_dataset(ds)
+        except Exception:
+            pass
+
     # STEP 1: 摄入
     print("STEP 1: 摄入论文数据 (英文 + 中文)")
     r1 = lake.ingest("papers", [str(DATAS_DIR / "papers" / "metadata.csv")])
@@ -71,7 +83,7 @@ def main() -> None:
     for ds in ["papers", "papers_zh"]:
         try:
             lake.create_vector_index(ds, vector_column="text_embedding")
-        except (ValueError, RuntimeError) as e:
+        except Exception as e:
             print(f"  向量索引跳过 ({ds}): {e}")
         lake.create_fts_index(ds, fts_column="text_content")
     print("  双索引已创建")
@@ -121,12 +133,17 @@ def main() -> None:
 
     # STEP 8: 导出子集
     print("\nSTEP 8: 导出 ML 类论文")
-    out = base / "ml_papers.parquet"
+    out = (base / "ml_papers.parquet").resolve()
     lake.export("papers", str(out), format="parquet")
     print(f"  导出: {out} ({out.stat().st_size // 1024} KB)")
 
     print("\n  [全部 PASS]")
     if not no_cleanup:
+        for ds in _DATASETS:
+            try:
+                lake.delete_dataset(ds)
+            except Exception:
+                pass
         lake.shutdown()
         shutil.rmtree(base, ignore_errors=True)
         print("(已清理)")

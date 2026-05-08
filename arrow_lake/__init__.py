@@ -117,10 +117,13 @@ class Lake(
         base_uri: str = "./data",
         config: ArrowLakeConfig | None = None,
     ) -> None:
+        import logging
+
         self._base_uri = base_uri
         self._config = config or ArrowLakeConfig()
         self._storage: Any = None
         self._components: dict[str, Any] = {}
+        self._logger = logging.getLogger(__name__)
 
         import time as _time
 
@@ -134,6 +137,11 @@ class Lake(
         if key not in self._components:
             self._components[key] = factory()
         return self._components[key]
+
+    @property
+    def config(self) -> ArrowLakeConfig:
+        """Return the current Arrow Lake configuration."""
+        return self._config
 
     def get_session_manager(self) -> Any:
         """Get the shared DuckDB session manager (lazy-init).
@@ -156,13 +164,23 @@ class Lake(
 
     def shutdown(self) -> None:
         """Gracefully shut down all managed components and release resources."""
+        import asyncio
+
         for key in list(self._components):
             component = self._components[key]
             try:
                 if hasattr(component, "shutdown"):
                     component.shutdown()
                 elif hasattr(component, "close"):
-                    component.close()
+                    close_method = component.close
+                    if asyncio.iscoroutinefunction(close_method):
+                        try:
+                            loop = asyncio.get_running_loop()
+                            loop.create_task(close_method())
+                        except RuntimeError:
+                            asyncio.run(close_method())
+                    else:
+                        close_method()
             except Exception:
                 self._logger.warning("Failed to shut down component %s", key, exc_info=True)
         self._components.clear()

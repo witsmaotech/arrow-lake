@@ -7,7 +7,9 @@ with optional TurboOCR GPU fallback.
 
 from __future__ import annotations
 
+import contextlib
 import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -17,7 +19,7 @@ from arrow_lake.config.document import DocumentConfig
 from arrow_lake.exceptions import DocumentError, ErrorCode
 
 try:
-    from kreuzberg import ExtractionConfig, OcrConfig, PageConfig, extract_file_sync
+    from kreuzberg import ExtractionConfig, OcrConfig, PageConfig, PdfConfig, extract_file_sync
 
     _KREUZBERG_AVAILABLE = True
 except ImportError:
@@ -25,6 +27,7 @@ except ImportError:
     ExtractionConfig = None  # type: ignore[assignment, misc]
     OcrConfig = None  # type: ignore[assignment, misc]
     PageConfig = None  # type: ignore[assignment, misc]
+    PdfConfig = None  # type: ignore[assignment, misc]
     extract_file_sync = None  # type: ignore[assignment]
 
 if TYPE_CHECKING:
@@ -69,10 +72,13 @@ def _build_extraction_config(cfg: DocumentConfig, mode: PdfParseMode):
             backend=cfg.kreuzberg_ocr_backend,
             language=cfg.kreuzberg_language,
         )
+
     return ExtractionConfig(
         ocr=ocr,
         force_ocr=force_ocr,
         pages=PageConfig(extract_pages=True),
+        output_format="markdown",
+        pdf_options=PdfConfig(extract_images=False, extract_annotations=True),
     )
 
 
@@ -82,7 +88,15 @@ def _result_to_pages(
     """Convert Kreuzberg ExtractionResult to ParsedDocument pages format.
 
     Kreuzberg returns pages as list of dicts: {"page_number": int, "content": str, ...}.
+    Tables are extracted separately and appended to their source pages.
     """
+    tables_by_page: dict[int, list[str]] = {}
+    for table in getattr(result, "tables", None) or []:
+        t_page = getattr(table, "page_number", 0)
+        t_md = getattr(table, "markdown", "") or ""
+        if t_page and t_md:
+            tables_by_page.setdefault(t_page, []).append(t_md)
+
     pages: list[tuple[int, str]] = []
     for page in result.pages or []:
         if isinstance(page, dict):
@@ -93,11 +107,32 @@ def _result_to_pages(
             text = page.strip()
         else:
             continue
+
         if text:
+            extra = tables_by_page.pop(page_num, [])
+            if extra:
+                text = text + "\n\n" + "\n\n".join(extra)
             pages.append((page_num, text))
+
         if max_pages > 0 and len(pages) >= max_pages:
             break
     return tuple(pages)
+
+
+@contextlib.contextmanager
+def _suppress_tesseract_noise():
+    """Suppress tesseract stderr noise from kreuzberg's Rust core.
+
+    Kreuzberg's paddleocr backend may internally invoke tesseract as a
+    fallback, which emits noisy errors when tessdata is missing.
+    """
+    stderr_fd = os.open(os.devnull, os.O_WRONLY)
+    try:
+        os.dup2(stderr_fd, 2)
+        yield
+    finally:
+        os.dup2(stderr_fd, stderr_fd)
+        os.close(stderr_fd)
 
 
 class DocumentParser:
@@ -165,7 +200,8 @@ class DocumentParser:
         cfg = _build_extraction_config(self._config, mode)
 
         try:
-            result = extract_file_sync(str(file_path), config=cfg)  # type: ignore[misc]
+            with _suppress_tesseract_noise():
+                result = extract_file_sync(str(file_path), config=cfg)  # type: ignore[misc]
         except (OSError, ValueError, RuntimeError) as exc:
             raise DocumentError(
                 error_code=ErrorCode.DOCUMENT_PARSE_FAILED,

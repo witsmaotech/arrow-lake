@@ -31,28 +31,69 @@ _JSON_REPAIR_SUFFIXES = [
     '"}\n  ]\n}',
 ]
 
-_ENTITY_EXTRACT_PROMPT = """\
-You are a knowledge graph entity extractor. Analyze the given text and extract \
-entities and relations in JSON format.
+# Generic Chinese words that LLM frequently extracts as entities but are
+# clearly NOT specific proper nouns.  Keep this set minimal — the prompt
+# does the heavy lifting; this is a safety net for the most obvious cases.
+# Only include single/double-character abstract words that never identify
+# a specific entity.
+_GENERIC_ENTITY_STOPWORDS: frozenset[str] = frozenset({
+    "优化", "实践", "方法", "构建", "研究", "综述", "分析",
+    "评估", "实验", "数据", "结果", "问题", "方案", "应用",
+    "场景", "任务", "领域", "理论", "功能", "性能", "效果",
+    "优势", "挑战", "策略", "目标", "条件", "特征",
+    "因素", "标准", "趋势", "发展", "影响", "改进", "提升",
+    "支持", "实现", "集成", "验证", "测试",
+    "核心", "关键", "重要", "主要", "有效", "潜在",
+    "基础", "能力", "水平", "规模", "范围", "程度",
+})
 
-Return ONLY valid JSON with this structure:
+_ENTITY_EXTRACT_PROMPT = """\
+你是一个专业的中文知识图谱实体关系抽取器。从给定的文本中提取实体和关系。
+
+返回 JSON（不要包含其他文字）：
 {
   "entities": [
-    {"name": "entity_name", "type": "person|organization|location|concept|event", "confidence": 0.0-1.0, "properties": {}}
+    {"name": "实体名", "type": "类型", "confidence": 0.0-1.0}
   ],
   "relations": [
-    {"source": "entity_name", "target": "entity_name", "relation": "relation_type", "confidence": 0.0-1.0, "properties": {}}
+    {"source": "实体名", "target": "实体名", "relation": "关系描述", "confidence": 0.0-1.0}
   ]
 }
 
-Rules:
-- "confidence" is optional (defaults to 1.0)
-- "properties" is optional (defaults to empty)
-- "type" for entities should be one of: person, organization, location, concept, event
-- Extract ALL named entities and meaningful relations
-- If no entities or relations are found, return empty arrays
+## 实体类型
+- person: 具体人物名（如"张三"、"李四"）
+- organization: 机构/公司名（如"OpenAI"、"清华大学"）
+- location: 地理位置（如"北京"、"硅谷"）
+- concept: 具体的技术概念/产品名（如"Transformer"、"GPT-4"、"LanceDB"、"向量数据库"）
+- event: 具体事件（如"WWDC 2024"、"AlphaGo 人机大战"）
 
-Text to analyze:
+## 重要过滤规则
+- 不要提取通用词/抽象词作为实体，例如：优化、实践、方法、技术、构建、研究、综述、分析、评估、实验、数据、系统、模型、网络、算法、结果、问题、方案、应用、场景、任务、领域、理论、框架、功能、性能、效果、优势、挑战、策略、目标、条件、环境
+- 不要提取单个汉字或两个字的通用词
+- 实体名必须是文本中明确出现的具体名词或专有名词
+- 只提取文本中实际提到的、有明确指代的实体
+
+## 关系规则
+- 只连接同一段文本中明确有关联的实体
+- relation 用简短的动词短语描述关系，例如："开发了"、"收购了"、"位于"、"属于"
+- 不要为没有明确关联的实体强行创建关系
+- source 和 target 必须是 entities 中已存在的实体名
+
+## 置信度评分标准
+- 0.9-1.0: 文本中明确提到，关系清晰
+- 0.7-0.8: 文本中有提及但关系需要推断
+- <0.7: 不确定，不要输出
+
+## 示例
+输入: "OpenAI 发布了 GPT-4，该模型基于 Transformer 架构，由 Google 团队最初提出。"
+输出:
+{"entities":[{"name":"OpenAI","type":"organization","confidence":0.95},{"name":"GPT-4","type":"concept","confidence":0.95},{"name":"Transformer","type":"concept","confidence":0.95},{"name":"Google","type":"organization","confidence":0.9}],"relations":[{"source":"OpenAI","target":"GPT-4","relation":"发布了","confidence":0.95},{"source":"GPT-4","target":"Transformer","relation":"基于","confidence":0.9},{"source":"Google","target":"Transformer","relation":"最初提出","confidence":0.9}]}
+
+输入: "团队使用 Apache Arrow 进行数据处理。"
+输出:
+{"entities":[{"name":"Apache Arrow","type":"concept","confidence":0.95}],"relations":[]}
+
+待分析文本：
 """
 
 
@@ -241,7 +282,13 @@ class EntityExtractor:
     def _parse_extraction(
         self, data: dict[str, Any], raw_text: str
     ) -> ExtractionResult:
-        """Parse the JSON dict from LLM into ExtractionResult."""
+        """Parse the JSON dict from LLM into ExtractionResult.
+
+        Applies three filtering layers:
+        1. Confidence threshold (LLM-reported score).
+        2. Generic stopword removal (catches words the prompt missed).
+        3. Relation validity (source/target must exist in filtered entities).
+        """
         threshold = self._confidence_threshold
 
         entities: list[ExtractedEntity] = []
@@ -249,26 +296,37 @@ class EntityExtractor:
             confidence = item.get("confidence", 1.0)
             if confidence < threshold:
                 continue
+            name = item.get("name", "").strip()
+            if not name:
+                continue
+            if name in _GENERIC_ENTITY_STOPWORDS:
+                continue
             props = _parse_properties(item.get("properties"))
             entities.append(
                 ExtractedEntity(
-                    name=item["name"],
-                    entity_type=item["type"],
+                    name=name,
+                    entity_type=item.get("type", "concept"),
                     properties=props,
                 )
             )
+
+        valid_names = {e.name for e in entities}
 
         relations: list[ExtractedRelation] = []
         for item in data.get("relations", []):
             confidence = item.get("confidence", 1.0)
             if confidence < threshold:
                 continue
+            source = item.get("source", "")
+            target = item.get("target", "")
+            if source not in valid_names or target not in valid_names:
+                continue
             props = _parse_properties(item.get("properties"))
             relations.append(
                 ExtractedRelation(
-                    source=item["source"],
-                    target=item["target"],
-                    relation_type=item["relation"],
+                    source=source,
+                    target=target,
+                    relation_type=item.get("relation", ""),
                     properties=props,
                 )
             )

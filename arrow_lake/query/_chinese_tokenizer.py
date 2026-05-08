@@ -9,12 +9,15 @@ from __future__ import annotations
 
 import logging
 import re
+import warnings
 
 _log = logging.getLogger(__name__)
 
 _JIEBA_AVAILABLE = False
 try:
-    import jieba
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=".*pkg_resources is deprecated.*")
+        import jieba
 
     _JIEBA_AVAILABLE = True
 except ImportError:
@@ -40,6 +43,13 @@ def segment_text(text: str) -> str:
     is not installed or text contains no CJK characters.
     """
     if not _JIEBA_AVAILABLE or not text or not has_cjk(text):
+        if _JIEBA_AVAILABLE and text and not has_cjk(text):
+            return text
+        if not _JIEBA_AVAILABLE and text and has_cjk(text):
+            _log.warning(
+                "Cannot segment CJK text — jieba is not installed. "
+                "Install with: pip install jieba"
+            )
         return text
 
     # jieba cuts sentence at CJK boundaries and preserves

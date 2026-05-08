@@ -99,19 +99,23 @@ class HugeGraphConfig(BaseModel):
         password: Auth password.
         auto_build_on_ingest: Auto-build KG on data ingestion.
         build_batch_size: Vertices/edges per batch insert.
+        build_concurrency: Max parallel LLM calls during entity extraction.
+        build_batch_delay: Seconds to wait between extraction batches.
         default_traversal_depth: Default hop depth for graph queries.
         max_traversal_depth: Maximum allowed traversal depth.
     """
 
     enabled: bool = False
     host: str = "localhost"
-    port: int = 8089
-    graph_name: str = "arrow_lake_kg"
+    port: int = 8091
+    graph_name: str = "hugegraph"
     timeout_seconds: float = 30.0
     username: str = ""
     password: str = ""
     auto_build_on_ingest: bool = False
     build_batch_size: int = 50
+    build_concurrency: int = 1
+    build_batch_delay: float = 3.0
     default_traversal_depth: int = 2
     max_traversal_depth: int = 5
     vermeer_host: str = "localhost"

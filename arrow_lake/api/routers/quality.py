@@ -7,7 +7,7 @@ from dataclasses import asdict
 from fastapi import APIRouter, Depends, Path
 
 from arrow_lake.api.deps import get_lake
-from arrow_lake.api.models.common import _NAME_PATTERN
+from arrow_lake.api.models.common import _NAME_PATTERN, arrow_table_to_response
 from arrow_lake.api.models.quality import (
     DedupRequest,
     DedupResponse,
@@ -65,4 +65,7 @@ async def deduplicate(
         perceptual_threshold=req.perceptual_threshold,
         timeout=_QUALITY_TIMEOUT, label="deduplicate",
     )
-    return DedupResponse(report=asdict(report) if hasattr(report, "__dataclass_fields__") else report)
+    report_dict = asdict(report) if hasattr(report, "__dataclass_fields__") else report
+    table_resp = arrow_table_to_response(report.table, "json")
+    report_dict["table"] = table_resp
+    return DedupResponse(report=report_dict)

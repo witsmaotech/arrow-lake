@@ -18,6 +18,7 @@ from arrow_lake import Lake
 
 DATAS_DIR = Path(__file__).resolve().parent.parent / "datas"
 _DEFAULT_BASE_URI = "./_tmp_backup"
+_DATASETS = ["sales"]
 
 
 def main() -> None:
@@ -36,6 +37,13 @@ def main() -> None:
 
     lake = Lake(base_uri=args.base_uri)
 
+    # 清理后端残留
+    for ds in _DATASETS:
+        try:
+            lake.delete_dataset(ds)
+        except Exception:
+            pass
+
     # STEP 1: 摄入数据
     print("STEP 1: 摄入交易数据")
     r = lake.ingest("sales", [str(DATAS_DIR / "transactions" / "sales_2024_cn.csv")])
@@ -46,12 +54,21 @@ def main() -> None:
     # STEP 2: 创建备份
     print("\nSTEP 2: 创建备份")
     try:
-        backup_id = lake.backup_create("sales")
+        info = lake.backup_create(dataset_names=["sales"])
+        backup_id = info.backup_id
         print(f"  备份 ID: {backup_id}")
+        print(f"  创建时间: {info.created_at}")
+        print(f"  数据集: {info.datasets}")
     except (OSError, ValueError) as e:
         print(f"  备份创建: {e}")
         print("\n  可能需要配置 blob store (S3/MinIO)")
         print("  或 backup 功能未启用, 跳过后续步骤")
+        if not no_cleanup:
+            for ds in _DATASETS:
+                try:
+                    lake.delete_dataset(ds)
+                except Exception:
+                    pass
         lake.shutdown()
         shutil.rmtree(base, ignore_errors=True)
         return
@@ -62,7 +79,7 @@ def main() -> None:
         backups = lake.backup_list()
         print(f"  备份数量: {len(backups)}")
         for b in backups:
-            print(f"    {b}")
+            print(f"    ID: {b.backup_id}  时间: {b.created_at}  数据集: {b.datasets}  大小: {b.total_size_bytes}")
     except (OSError, ValueError) as e:
         print(f"  列表: {e}")
 
@@ -87,7 +104,7 @@ def main() -> None:
     # STEP 5: 恢复备份
     print("\nSTEP 5: 恢复备份")
     try:
-        lake.backup_restore(backup_id, dataset_names=["sales"])
+        lake.backup_restore(backup_id, dataset_names=["sales"], overwrite=True)
         ds = lake.open_dataset("sales")
         restored_rows = ds.count_rows()
         print(f"  恢复后: {restored_rows} 行")
@@ -98,16 +115,30 @@ def main() -> None:
     except Exception as e:
         print(f"  恢复: {e}")
 
-    # STEP 6: 备份信息
+    # STEP 6: 备份详情 (通过 backup_list 查找)
     print("\nSTEP 6: 备份详情")
     try:
-        info = lake.backup_get_info(backup_id)
-        print(f"  详情: {info}")
+        backups = lake.backup_list()
+        target = next((b for b in backups if b.backup_id == backup_id), None)
+        if target is not None:
+            print(f"  备份 ID:   {target.backup_id}")
+            print(f"  创建时间:  {target.created_at}")
+            print(f"  数据集:    {target.datasets}")
+            print(f"  Blob 前缀: {target.blob_prefixes}")
+            print(f"  总大小:    {target.total_size_bytes} bytes")
+            print(f"  状态:      {target.status}")
+        else:
+            print(f"  未找到备份 {backup_id}")
     except (OSError, ValueError) as e:
         print(f"  详情查询: {e}")
 
     print("\n  [全部 PASS]")
     if not no_cleanup:
+        for ds in _DATASETS:
+            try:
+                lake.delete_dataset(ds)
+            except Exception:
+                pass
         lake.shutdown()
         shutil.rmtree(base, ignore_errors=True)
         print("(已清理)")

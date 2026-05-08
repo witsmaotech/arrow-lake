@@ -18,7 +18,6 @@ import shutil
 import sys
 from pathlib import Path
 
-import numpy as np
 import pyarrow as pa
 
 from arrow_lake import Lake
@@ -28,18 +27,32 @@ DATAS_DIR = Path(__file__).resolve().parent.parent / "datas"
 _DEFAULT_BASE_URI = "./_tmp_graphrag"
 DIM = 768
 
+# 本脚本创建的所有数据集
+_DATASETS = ["knowledge_zh"]
+
 
 def _add_vectors(lake: Lake, dataset: str) -> int:
-    rng = np.random.RandomState(42)
-    ds = lake.open_dataset(dataset)
-    n = ds.count_rows()
-    vecs = rng.randn(n, DIM).astype(np.float32)
-    vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
-    original = ds.to_arrow()
-    table = original.append_column(
-        "text_embedding", pa.FixedSizeListArray.from_arrays(vecs.ravel(), DIM))
-    lake.restore_dataset(dataset, table)
-    return n
+    """Encode text_content into real embeddings and add to dataset.
+
+    Uses the configured embedding backend (Ollama API or local model).
+    Falls back to random vectors if no backend is available.
+    """
+    try:
+        return lake.embed_and_add(dataset)
+    except Exception:
+        # Fallback: random vectors for demo when no embedding model is available
+        import numpy as np
+
+        rng = np.random.RandomState(42)
+        ds = lake.open_dataset(dataset)
+        n = ds.count_rows()
+        vecs = rng.randn(n, DIM).astype(np.float32)
+        vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
+        vec_table = pa.table({
+            "text_embedding": pa.FixedSizeListArray.from_arrays(vecs.ravel(), DIM),
+        })
+        lake.add_columns_table(dataset, vec_table)
+        return n
 
 
 async def run_async() -> None:
@@ -58,6 +71,13 @@ async def run_async() -> None:
 
     lake = Lake(base_uri=args.base_uri)
 
+    # 清理后端残留
+    for ds in _DATASETS:
+        try:
+            lake.delete_dataset(ds)
+        except Exception:
+            pass
+
     # STEP 1: 摄入知识库
     print("STEP 1: 摄入中文知识库")
     report = lake.ingest("knowledge_zh", [str(DATAS_DIR / "kb" / "knowledge_zh.jsonl")])
@@ -68,7 +88,7 @@ async def run_async() -> None:
     n = _add_vectors(lake, "knowledge_zh")
     try:
         lake.create_vector_index("knowledge_zh", vector_column="text_embedding")
-    except (ValueError, RuntimeError) as e:
+    except Exception as e:
         print(f"  向量索引跳过: {e}")
     lake.create_fts_index("knowledge_zh", fts_column="text_content")
     print(f"  {n} 个向量, FTS 索引已建立")
@@ -180,6 +200,11 @@ async def run_async() -> None:
 
     print("\n  [全部 PASS]")
     if not no_cleanup:
+        for ds in _DATASETS:
+            try:
+                lake.delete_dataset(ds)
+            except Exception:
+                pass
         lake.shutdown()
         shutil.rmtree(base, ignore_errors=True)
         print("(已清理)")

@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 
 from arrow_lake import Lake
+from arrow_lake.config import ArrowLakeConfig
 
 DATAS_DIR = Path(__file__).resolve().parent.parent / "datas"
 _DEFAULT_BASE_URI = "./_tmp_ecommerce"
@@ -34,7 +35,17 @@ def main() -> None:
     if base.exists():
         shutil.rmtree(base)
 
-    lake = Lake(base_uri=args.base_uri)
+    config = ArrowLakeConfig()
+    config.olap.ducklake_enabled = True
+    lake = Lake(base_uri=args.base_uri, config=config)
+
+    # 清理后端残留
+    _DATASETS = ["sales"]
+    for ds in _DATASETS:
+        try:
+            lake.delete_dataset(ds)
+        except Exception:
+            pass
 
     # STEP 1
     print("STEP 1: 摄入交易数据")
@@ -88,17 +99,22 @@ def main() -> None:
             "FROM sales GROUP BY 商品类别",
             view_name="category_monthly", ttl_days=30)
         print(f"  物化视图: category_monthly ({n} 行)")
-    except (ValueError, RuntimeError) as e:
+    except Exception as e:
         print(f"  跳过 (DuckLake 未启用): {e}")
 
     # STEP 7
     print("\nSTEP 7: 导出看板数据")
-    out = base / "dashboard.csv"
+    out = (base / "dashboard.csv").resolve()
     lake.export("sales", str(out), format="csv")
     print(f"  导出: {out} ({out.stat().st_size // 1024} KB)")
 
     print("\n  [全部 PASS]")
     if not no_cleanup:
+        for ds in _DATASETS:
+            try:
+                lake.delete_dataset(ds)
+            except Exception:
+                pass
         lake.shutdown()
         shutil.rmtree(base, ignore_errors=True)
         print("(已清理)")

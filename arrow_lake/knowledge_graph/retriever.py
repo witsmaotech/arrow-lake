@@ -12,7 +12,6 @@ from dataclasses import dataclass
 
 from arrow_lake.config import HugeGraphConfig
 from arrow_lake.knowledge_graph.client import HugeGraphClient
-from arrow_lake.knowledge_graph.queries import GremlinQueries
 
 logger = logging.getLogger(__name__)
 
@@ -90,38 +89,43 @@ class KGRetriever:
         vertex_ids: list[str] = []
 
         async def _retrieve_entity(entity_name: str) -> None:
-            query = GremlinQueries.find_entity(
-                entity_name, graph_name=self._config.graph_name
-            )
-            vertices = await self._client.gremlin(query)
-
-            for v in vertices:
-                vid = v.get("id", "")
-                if not vid:
+            vertex = None
+            for label_prefix in ("3", "2", "1", "4"):
+                vid = f"{label_prefix}:{entity_name}"
+                try:
+                    vertex = await self._client.get_vertex(vid)
+                    break
+                except Exception:
                     continue
-                vertex_ids.append(vid)
 
-                neighbors = await self._client.traverser_kneighbor(
-                    source=vid, depth=depth
-                )
+            if vertex is None:
+                logger.debug("Entity not found in HugeGraph: %s", entity_name)
+                return
 
-                v_props = v.get("properties", {})
-                v_name = v_props.get("name", vid)
+            vid = vertex.get("id", "")
+            if not vid:
+                return
+            vertex_ids.append(vid)
+            v_name = entity_name
 
-                for neighbor in neighbors:
-                    n_label = neighbor.get("label", "")
-                    n_props = neighbor.get("properties", {})
-                    n_name = n_props.get("name", neighbor.get("id", ""))
+            neighbors = await self._client.traverser_kneighbor(
+                source=vid, depth=depth
+            )
 
-                    predicate = f"related_to_{n_label}"
-                    all_triplets.append(
-                        GraphTriplet(
-                            subject=v_name,
-                            predicate=predicate,
-                            object_=n_name,
-                            properties=tuple(sorted(n_props.items())),
-                        )
+            for neighbor in neighbors:
+                n_label = neighbor.get("label", "")
+                n_props = neighbor.get("properties", {})
+                n_name = n_props.get("name", neighbor.get("id", ""))
+
+                predicate = f"related_to_{n_label}"
+                all_triplets.append(
+                    GraphTriplet(
+                        subject=v_name,
+                        predicate=predicate,
+                        object_=n_name,
+                        properties=tuple(sorted(n_props.items())),
                     )
+                )
 
         await asyncio.gather(*(
             _retrieve_entity(e) for e in entities

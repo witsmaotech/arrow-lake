@@ -30,10 +30,12 @@ def _mock_rag_response(
 
 
 def _create_client() -> TestClient:
-    """Create a test client with mocked Lake."""
+    """Create a test client with mocked Lake and auth disabled."""
     from arrow_lake.api.app import create_app
 
     config = ArrowLakeConfig()
+    config.api.enabled = False
+    config.api.api_key = ""
     app = create_app(config=config)
 
     # Mock the lake
@@ -105,6 +107,8 @@ class TestRAGStreamEndpoint:
         from arrow_lake.api.app import create_app
 
         config = ArrowLakeConfig()
+        config.api.enabled = False
+        config.api.api_key = ""
         app = create_app(config=config)
 
         mock_lake = MagicMock()
@@ -145,6 +149,8 @@ class TestRAGStreamEndpoint:
         from arrow_lake.api.app import create_app
 
         config = ArrowLakeConfig()
+        config.api.enabled = False
+        config.api.api_key = ""
         app = create_app(config=config)
 
         mock_lake = MagicMock()
@@ -171,6 +177,8 @@ class TestRAGStreamEndpoint:
         from arrow_lake.api.app import create_app
 
         config = ArrowLakeConfig()
+        config.api.enabled = False
+        config.api.api_key = ""
         app = create_app(config=config)
 
         mock_lake = MagicMock()
@@ -261,6 +269,9 @@ class TestRAGHistoryEndpoint:
         from arrow_lake.api.app import create_app
 
         config = ArrowLakeConfig()
+        config.api.enabled = False
+        config.api.api_key = ""
+        config.auth.allow_unauthenticated_access = True
         app = create_app(config=config)
 
         mock_lake = MagicMock()

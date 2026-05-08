@@ -44,8 +44,10 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv venv .venv \
     && . .venv/bin/activate \
     && uv pip install --no-cache-dir . \
+    && uv pip install --no-cache-dir ".[fts]" \
     && uv pip install --no-cache-dir jupyterlab ipywidgets \
-    && uv pip install --no-cache-dir modelscope>=1.18
+    && uv pip install --no-cache-dir modelscope>=1.18 \
+    && uv pip install --no-cache-dir PyJWT
 
 # ==============================================================================
 # Stage 2 — runtime
@@ -79,7 +81,13 @@ USER arrowlake
 COPY --from=builder /build/.venv /app/.venv
 
 # Fix shebangs: builder venv paths (/build/.venv) → runtime (/app/.venv)
-RUN find /app/.venv/bin/ -type f -exec sed -i '1s|^#!/build/.venv/bin/python3|#!/app/.venv/bin/python3|' {} +
+# Must run as root since COPY sets ownership to root
+USER root
+RUN grep -rl '#!/build/.venv/bin/python3' /app/.venv/bin/ 2>/dev/null \
+    | xargs -r sed -i '1s|^#!/build/.venv/bin/python3|#!/app/.venv/bin/python3|' || true
+RUN mkdir -p /app/.duckdb /app/.local/share/jupyter/runtime \
+    && chown -R arrowlake:arrowlake /app/.duckdb /app/.local
+USER arrowlake
 
 # Copy installed package source (for editable-like behavior)
 COPY --from=builder /build/arrow_lake /app/arrow_lake
@@ -94,9 +102,9 @@ ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED="1" \
     PYTHONDONTWRITEBYTECODE="1"
 
-# Install mc (MinIO Client) for health checks
-RUN curl -sL https://dl.min.io/client/mc/release/linux-amd64/mc -o /usr/local/bin/mc \
-    && chmod +x /usr/local/bin/mc
+# Install mc (MinIO Client) for health checks (optional, non-blocking)
+RUN curl -sfL https://dl.min.io/client/mc/release/linux-amd64/mc -o /usr/local/bin/mc \
+    && chmod +x /usr/local/bin/mc || echo "WARN: mc download failed, skipping"
 
 # Default: health/metrics server
 EXPOSE 8000

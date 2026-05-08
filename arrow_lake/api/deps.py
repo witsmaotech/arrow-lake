@@ -89,7 +89,7 @@ def require_role(required_role: Role) -> Callable:
                     status_code=403,
                     detail="Authentication service not configured",
                 )
-            user = TokenPayload(sub="anonymous", role=Role.ADMIN, exp=0, iat=0)
+            user = TokenPayload(sub="anonymous", role=Role.VIEWER, exp=0, iat=0)
 
         user_level = _hierarchy.get(user.role, -1)
         required_level = _hierarchy.get(required_role, -1)

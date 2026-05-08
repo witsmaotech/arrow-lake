@@ -238,10 +238,16 @@ class _LakeQueryMixin:
         Returns:
             LazyDaftFrame for further lazy operations.
         """
+        from arrow_lake.config import StorageBackend
+
         from arrow_lake.query.daft_api import DaftQueryEngine
 
+        sc = self._config.storage
         engine = self._get_component(
             "daft",
-            lambda: DaftQueryEngine(self._base_uri),
+            lambda: DaftQueryEngine(
+                self._base_uri,
+                storage_config=sc if sc.backend != StorageBackend.LOCAL else None,
+            ),
         )
         return engine.load(dataset_name, columns=columns)

@@ -46,7 +46,7 @@ def _make_result_table(texts: list[str], row_ids: list[str], scores: list[float]
         scores = [float(i + 1) / len(texts) for i in range(len(texts))]
 
     return pa.table({
-        "text": texts,
+        "text_content": texts,
         "row_id": row_ids,
         "_score": scores,
     })
@@ -263,7 +263,7 @@ class TestRAGPipeline:
 
         resp = await pipeline.extract_entities(
             dataset_name="docs",
-            text_column="text",
+            text_column="text_content",
         )
 
         assert resp.answer == '{"entities": ["John Smith", "Acme Corp", "New York"]}'
@@ -273,7 +273,7 @@ class TestRAGPipeline:
         import pyarrow as pa
 
         empty_table = pa.table({
-            "text": pa.array([], type=pa.string()),
+            "text_content": pa.array([], type=pa.string()),
             "row_id": pa.array([], type=pa.string()),
         })
         provider = _mock_provider("I don't have enough context.")

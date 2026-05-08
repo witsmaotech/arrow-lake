@@ -18,6 +18,7 @@ from arrow_lake import Lake
 
 DATAS_DIR = Path(__file__).resolve().parent.parent / "datas"
 _DEFAULT_BASE_URI = "./_tmp_incremental"
+_DATASETS = ["sales"]
 
 
 def main() -> None:
@@ -35,6 +36,13 @@ def main() -> None:
         shutil.rmtree(base)
 
     lake = Lake(base_uri=args.base_uri)
+
+    # 清理后端残留
+    for ds in _DATASETS:
+        try:
+            lake.delete_dataset(ds)
+        except Exception:
+            pass
 
     # STEP 1: 第一批入库
     print("STEP 1: 第一批数据入库")
@@ -84,13 +92,18 @@ def main() -> None:
 
     # STEP 7: 导出增量后数据
     print("\nSTEP 7: 导出增量后完整数据")
-    out = base / "sales_incremental.parquet"
+    out = (base / "sales_incremental.parquet").resolve()
     lake.export("sales", str(out), format="parquet")
     ds_final = lake.open_dataset("sales")
     print(f"  最终: {ds_final.count_rows()} 行 → {out.name} ({out.stat().st_size // 1024} KB)")
 
     print("\n  [全部 PASS]")
     if not no_cleanup:
+        for ds in _DATASETS:
+            try:
+                lake.delete_dataset(ds)
+            except Exception:
+                pass
         lake.shutdown()
         shutil.rmtree(base, ignore_errors=True)
         print("(已清理)")

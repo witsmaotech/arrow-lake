@@ -21,6 +21,9 @@ from arrow_lake import Lake
 DATAS_DIR = Path(__file__).resolve().parent.parent / "datas"
 _DEFAULT_BASE_URI = "./_tmp_async"
 
+# 本脚本创建的所有数据集
+_DATASETS = ["kb_zh", "papers_zh"]
+
 
 async def _run_query(lake: Lake, dataset: str, sql: str, label: str) -> dict:
     """单个查询任务"""
@@ -46,6 +49,13 @@ async def run_async() -> None:
         shutil.rmtree(base)
 
     lake = Lake(base_uri=args.base_uri)
+
+    # 清理后端残留
+    for ds in _DATASETS:
+        try:
+            lake.delete_dataset(ds)
+        except Exception:
+            pass
 
     # STEP 1: 摄入两个数据集
     print("STEP 1: 摄入数据")
@@ -96,6 +106,11 @@ async def run_async() -> None:
 
     print("\n  [全部 PASS]")
     if not no_cleanup:
+        for ds in _DATASETS:
+            try:
+                lake.delete_dataset(ds)
+            except Exception:
+                pass
         lake.shutdown()
         shutil.rmtree(base, ignore_errors=True)
         print("(已清理)")

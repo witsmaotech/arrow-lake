@@ -128,7 +128,7 @@ class TestRAGExtractRequest:
     def test_minimal(self) -> None:
         req = RAGExtractRequest(dataset_name="docs")
         assert req.dataset_name == "docs"
-        assert req.text_column == "text"
+        assert req.text_column == "text_content"
         assert req.top_k is None
         assert req.template_name is None
 

@@ -39,6 +39,11 @@ x-arrow-lake: &arrow-lake
   tmpfs:
     - /tmp
     - /app/.cache
+    - /app/.local
+    - /home/arrowlake
+    - /app/exports
+  volumes:
+    - duckdb-data:/app/.duckdb
   cap_drop:
     - ALL
   cap_add:
@@ -46,7 +51,7 @@ x-arrow-lake: &arrow-lake
   stop_grace_period: 30s
 
 x-arrow-lake-env: &arrow-lake-env
-  ARROW_LAKE__STORAGE__BASE_URI: "s3://${MINIO_BUCKET:-arrow-lake}"
+  ARROW_LAKE__STORAGE__BASE_URI: "${MINIO_BUCKET:-arrow-lake}"
   ARROW_LAKE__STORAGE__S3_ENDPOINT: "http://minio:9000"
   ARROW_LAKE__STORAGE__BACKEND: "minio"
   ARROW_LAKE__OBSERVABILITY__METRICS_ENABLED: "true"
@@ -68,6 +73,8 @@ services:
     <<: [*arrow-lake]
     profiles: ["core", "dev", "monitoring", "gpu"]
     container_name: arrow-lake-api
+    command: ["uvicorn", "arrow_lake.api.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+    read_only: false
     ports:
       - "${API_PORT:-8000}:8000"
     environment:
@@ -102,7 +109,7 @@ services:
   # MinIO — S3-compatible object storage
   # ---------------------------------------------------------------------------
   minio:
-    image: minio/minio:${MINIO_VERSION:-RELEASE.2024-11-07T00-52-20Z}
+    image: minio/minio:${MINIO_VERSION:-RELEASE.2025-09-07T16-13-09Z}
     container_name: arrow-lake-minio
     profiles: ["core", "dev", "gpu", "monitoring"]
     restart: unless-stopped
@@ -141,7 +148,7 @@ services:
   # MinIO Init — Create default bucket on first start
   # ---------------------------------------------------------------------------
   minio-init:
-    image: minio/mc:${MINIO_MC_VERSION:-RELEASE.2024-11-07T06-24-52Z}
+    image: minio/mc:${MINIO_MC_VERSION:-latest}
     container_name: arrow-lake-minio-init
     profiles: ["core", "dev", "gpu", "monitoring"]
     depends_on:
@@ -152,8 +159,7 @@ services:
     entrypoint: >
       /bin/sh -c "
       mc alias set local http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin} &&
-      mc mb local/${MINIO_BUCKET:-arrow-lake} --ignore-existing &&
-      mc anonymous set download local/${MINIO_BUCKET:-arrow-lake}
+      mc mb local/${MINIO_BUCKET:-arrow-lake} --ignore-existing
       "
 
   # ---------------------------------------------------------------------------
@@ -164,8 +170,8 @@ services:
     profiles: ["compute", "dev", "gpu", "monitoring"]
     container_name: arrow-lake-ray-head
     ports:
-      - "6378:6379"
-      - "8265:8265"
+      - "${RAY_REDIS_PORT:-6378}:6379"
+      - "${RAY_DASHBOARD_PORT:-8265}:8265"
     environment:
       <<: [*arrow-lake-env]
       ARROW_LAKE__COMPUTE__RAY_ADDRESS: "auto"
@@ -173,7 +179,7 @@ services:
       - lake-data:/data/lake
     shm_size: 256m
     command: >
-      ray start
+      /app/.venv/bin/ray start
       --head
       --port=6379
       --dashboard-host=0.0.0.0
@@ -190,15 +196,15 @@ services:
         limits:
           memory: ${RAY_HEAD_MEMORY_LIMIT:-4G}
           cpus: "${RAY_HEAD_CPU_LIMIT:-2.0}"
-          pids: 512
+          pids: 1024
         reservations:
           memory: 1G
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import ray; ray.init(address='auto', ignore_reinit_error=True); print('ok')\""]
+      test: ["CMD-SHELL", "/app/.venv/bin/ray status --address 127.0.0.1:6379 2>&1 | grep -q 'node' || exit 1"]
       interval: 15s
       timeout: 10s
       retries: 5
-      start_period: 30s
+      start_period: 60s
     stop_grace_period: 60s
     ulimits:
       nofile:
@@ -220,7 +226,7 @@ services:
         limits:
           memory: ${RAY_WORKER_MEMORY:-4G}
           cpus: "${RAY_WORKER_CPU_LIMIT:-2.0}"
-          pids: 512
+          pids: 1024
         reservations:
           memory: 1G
     environment:
@@ -230,7 +236,7 @@ services:
       - lake-data:/data/lake
     shm_size: 256m
     command: >
-      ray start
+      /app/.venv/bin/ray start
       --address=ray-head:6379
       --num-cpus=${RAY_WORKER_CPUS:-2}
       --block
@@ -256,6 +262,8 @@ services:
       <<: [*arrow-lake-env]
       ARROW_LAKE__COMPUTE__RAY_ADDRESS: "ray://ray-head:10001"
       ARROW_LAKE__OBSERVABILITY__LOG_LEVEL: "INFO"
+      JUPYTER_RUNTIME_DIR: "/app/.local/share/jupyter/runtime"
+      JUPYTER_DATA_DIR: "/app/.local/share/jupyter"
     volumes:
       - lake-data:/data/lake
     shm_size: 128m
@@ -326,6 +334,38 @@ services:
         tag: "arrow-lake-turbo-ocr"
     stop_grace_period: 30s
 
+  # ---------------------------------------------------------------------------
+  # HugeGraph — Knowledge Graph database
+  # ---------------------------------------------------------------------------
+  hugegraph:
+    image: hugegraph/hugegraph:${HUGEGRAPH_VERSION:-1.7.0}
+    container_name: arrow-lake-hugegraph
+    restart: unless-stopped
+    environment:
+      HUGEGRAPH_STORAGE_BACKEND: "rocksdb"
+      HUGEGRAPH_GRAPH: "hugegraph"
+    volumes:
+      - hugegraph-data:/var/lib/hugegraph
+    networks:
+      - arrow-lake-net
+    ports:
+      - "${HUGEGRAPH_PORT:-8091}:8080"
+    deploy:
+      resources:
+        limits:
+          memory: ${HUGEGRAPH_MEMORY_LIMIT:-4G}
+          cpus: "${HUGEGRAPH_CPU_LIMIT:-2.0}"
+          pids: 512
+        reservations:
+          memory: 1G
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/graphs/hugegraph/schema"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    stop_grace_period: 30s
+
 # ==============================================================================
 # Networks
 # ==============================================================================
@@ -333,6 +373,9 @@ services:
 networks:
   arrow-lake-net:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/16
 
 # ==============================================================================
 # Volumes
@@ -344,4 +387,8 @@ volumes:
   lake-data:
     driver: local
   ocr-cache:
+    driver: local
+  duckdb-data:
+    driver: local
+  hugegraph-data:
     driver: local
