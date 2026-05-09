@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
-from datetime import datetime, timedelta, timezone
-
 from arrow_lake.api.auth_models import Role, TokenPair, TokenPayload
-
 
 # ---------------------------------------------------------------------------
 # Role StrEnum
@@ -33,7 +32,7 @@ def test_role_from_string() -> None:
 
 
 def test_token_payload_creation() -> None:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     payload = TokenPayload(
         sub="user-123",
         role=Role.ADMIN,
@@ -49,7 +48,7 @@ def test_token_payload_creation() -> None:
 
 
 def test_token_payload_default_issuer() -> None:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     payload = TokenPayload(
         sub="user-1",
         role=Role.VIEWER,
@@ -61,7 +60,7 @@ def test_token_payload_default_issuer() -> None:
 
 def test_token_payload_roundtrip_dict() -> None:
     """TokenPayload can round-trip through dict (used for JWT encode/decode)."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     payload = TokenPayload(
         sub="user-1",
         role=Role.VIEWER,

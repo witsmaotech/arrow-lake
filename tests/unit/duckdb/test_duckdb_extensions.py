@@ -66,9 +66,8 @@ class TestDuckDBSessionLoadsLance:
 
     def test_session_lance_scan_on_real_data(self) -> None:
         """__lance_scan should work on a real Lance dataset via DuckDBSession."""
-        import pyarrow as pa
         import lance
-
+        import pyarrow as pa
         from arrow_lake.query._db import DuckDBSession
 
         # Create a small Lance dataset
@@ -93,9 +92,8 @@ class TestColumnDiscovery:
 
     def test_describe_lance_dataset(self) -> None:
         """DESCRIBE should work on __lance_scan results."""
-        import pyarrow as pa
         import lance
-
+        import pyarrow as pa
         from arrow_lake.query._db import DuckDBSession
 
         table = pa.table({"id": [1, 2], "name": ["alice", "bob"], "score": [3.14, 2.71]})

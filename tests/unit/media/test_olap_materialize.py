@@ -113,25 +113,24 @@ class TestOlapMaterialize:
 
             with patch(
                 "arrow_lake.query.ducklake_workspace.DuckLakeWorkspace"
-            ) as mock_workspace_cls:
-                with patch(
-                    "arrow_lake.query.olap.create_lance_scan_adapter",
-                ) as mock_adapter:
-                    mock_ad = MagicMock()
-                    mock_ad.register_view.return_value = None
-                    mock_adapter.return_value = mock_ad
+            ) as mock_workspace_cls, patch(
+                "arrow_lake.query.olap.create_lance_scan_adapter",
+            ) as mock_adapter:
+                mock_ad = MagicMock()
+                mock_ad.register_view.return_value = None
+                mock_adapter.return_value = mock_ad
 
-                    mock_workspace = MagicMock()
-                    mock_workspace.materialize.return_value = 10
-                    mock_workspace_cls.return_value = mock_workspace
+                mock_workspace = MagicMock()
+                mock_workspace.materialize.return_value = 10
+                mock_workspace_cls.return_value = mock_workspace
 
-                    bridge.materialize(
-                        "my_dataset",
-                        "SELECT count(*) FROM my_dataset",
-                    )
+                bridge.materialize(
+                    "my_dataset",
+                    "SELECT count(*) FROM my_dataset",
+                )
 
-                    call_args = mock_workspace.materialize.call_args
-                    assert call_args[0][2] == "_materialized_my_dataset"
+                call_args = mock_workspace.materialize.call_args
+                assert call_args[0][2] == "_materialized_my_dataset"
 
     def test_cleanup_materialized(self) -> None:
         """Cleanup should delegate to DuckLakeWorkspace.cleanup_expired."""
@@ -145,20 +144,19 @@ class TestOlapMaterialize:
 
             with patch(
                 "arrow_lake.query.ducklake_workspace.DuckLakeWorkspace"
-            ) as mock_workspace_cls:
-                with patch(
-                    "arrow_lake.query.olap.create_lance_scan_adapter",
-                ) as mock_adapter:
-                    mock_ad = MagicMock()
-                    mock_ad.register_view.return_value = None
-                    mock_adapter.return_value = mock_ad
+            ) as mock_workspace_cls, patch(
+                "arrow_lake.query.olap.create_lance_scan_adapter",
+            ) as mock_adapter:
+                mock_ad = MagicMock()
+                mock_ad.register_view.return_value = None
+                mock_adapter.return_value = mock_ad
 
-                    mock_workspace = MagicMock()
-                    mock_workspace.cleanup_expired.return_value = ["old_view"]
-                    mock_workspace_cls.return_value = mock_workspace
+                mock_workspace = MagicMock()
+                mock_workspace.cleanup_expired.return_value = ["old_view"]
+                mock_workspace_cls.return_value = mock_workspace
 
-                    result = bridge.cleanup_materialized(ttl_days=30)
+                result = bridge.cleanup_materialized(ttl_days=30)
 
-                    assert result == ["old_view"]
-                    mock_workspace_cls.assert_called_once_with(ttl_days=30)
-                    mock_workspace.cleanup_expired.assert_called_once_with(mock_conn)
+                assert result == ["old_view"]
+                mock_workspace_cls.assert_called_once_with(ttl_days=30)
+                mock_workspace.cleanup_expired.assert_called_once_with(mock_conn)

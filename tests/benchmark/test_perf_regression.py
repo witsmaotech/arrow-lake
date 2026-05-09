@@ -40,13 +40,12 @@ def _check_regression(baseline: dict, current: dict) -> list[str]:
                     f"{metric_name}: {current_val:.2f} vs baseline {baseline_val:.2f} "
                     f"(+{pct:.1f}%, threshold {threshold * 100:.0f}%)"
                 )
-        elif direction == "higher_better":
-            if current_val < baseline_val * (1 - threshold):
-                pct = ((baseline_val - current_val) / baseline_val) * 100
-                regressions.append(
-                    f"{metric_name}: {current_val:.2f} vs baseline {baseline_val:.2f} "
-                    f"(-{pct:.1f}%, threshold {threshold * 100:.0f}%)"
-                )
+        elif direction == "higher_better" and current_val < baseline_val * (1 - threshold):
+            pct = ((baseline_val - current_val) / baseline_val) * 100
+            regressions.append(
+                f"{metric_name}: {current_val:.2f} vs baseline {baseline_val:.2f} "
+                f"(-{pct:.1f}%, threshold {threshold * 100:.0f}%)"
+            )
     return regressions
 
 

@@ -5,10 +5,9 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
-from httpx import ASGITransport, AsyncClient
-
 from arrow_lake.api.app import create_app
 from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
 
 
 def _make_app() -> FastAPI:

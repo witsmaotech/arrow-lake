@@ -4,7 +4,6 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from arrow_lake._lake_admin import _LakeAdminMixin
 from arrow_lake.config import ArrowLakeConfig
 from arrow_lake.ops.backup import BackupInfo

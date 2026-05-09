@@ -35,6 +35,7 @@ from arrow_lake.config.media import (
 )
 from arrow_lake.config.olap import OlapConfig
 from arrow_lake.config.rag import HugeGraphConfig, LLMConfig, RAGConfig
+from arrow_lake.config.redis import RedisConfig
 from arrow_lake.config.search import (
     EnsembleSearchConfig,
     FacetedSearchConfig,
@@ -78,6 +79,7 @@ _SECTION_TYPES: dict[str, type[BaseModel]] = {
     "auth": AuthConfig,
     "rate_limit": RateLimitConfig,
     "document": DocumentConfig,
+    "redis": RedisConfig,
 }
 
 
@@ -131,6 +133,7 @@ class ArrowLakeConfig(BaseSettings):
     auth: AuthConfig = AuthConfig()
     rate_limit: RateLimitConfig = RateLimitConfig()
     document: DocumentConfig = DocumentConfig()
+    redis: RedisConfig = RedisConfig()
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> ArrowLakeConfig:

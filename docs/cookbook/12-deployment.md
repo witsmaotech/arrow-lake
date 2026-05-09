@@ -327,3 +327,263 @@ helm install arrow-lake deploy/helm/arrow-lake/ \
 # Graceful shutdown
 lake.shutdown()
 ```
+
+***
+
+## 8. Redis Deployment
+
+Redis is required for distributed session coordination when running multiple API replicas
+(HPA, Kubernetes, or multi-instance Docker Compose). It provides:
+
+- **Distributed semaphore** for DuckDB connection pool coordination across pods
+- **JWT token blacklist** shared across API instances
+- Automatic fallback to in-process `threading.Semaphore` when Redis is unavailable
+
+### Docker Compose
+
+Redis is included in the `core`, `dev`, `monitoring`, and `gpu` profiles:
+
+```yaml
+# deploy/docker-compose.yml (excerpt)
+redis:
+  image: redis:7.4
+  container_name: arrow-lake-redis
+  profiles: ["core", "dev", "monitoring", "gpu"]
+  command: >
+    redis-server
+    --maxmemory ${REDIS_MAXMEMORY:-256mb}
+    --maxmemory-policy allkeys-lru
+    --appendonly yes
+  volumes:
+    - redis-data:/data
+  healthcheck:
+    test: ["CMD", "redis-cli", "ping"]
+```
+
+The API server connects to Redis automatically when `redis.enabled` is set in the environment:
+
+```bash
+ARROW_LAKE__REDIS__ENABLED=true
+ARROW_LAKE__REDIS__URL=redis://redis:6379/0
+ARROW_LAKE__REDIS__PASSWORD=${REDIS_PASSWORD:-}
+```
+
+### Helm (Kubernetes)
+
+Redis is configured via `values.yaml`:
+
+```yaml
+# deploy/helm/arrow-lake/values.yaml
+redis:
+  enabled: true
+  url: "redis://redis:6379/0"
+  password: ""  # Set via ARROW_LAKE__REDIS__PASSWORD or a Kubernetes secret
+  ssl: false
+```
+
+For managed Redis services (AWS ElastiCache, Azure Cache for Redis, GCP Memorystore),
+enable TLS and set the endpoint:
+
+```yaml
+redis:
+  enabled: true
+  url: "rediss://primary.xxxxxx.use1.cache.amazonaws.com:6379/0"
+  password: "${REDIS_PASSWORD}"
+  ssl: true
+```
+
+***
+
+## 9. Horizontal Pod Autoscaler (HPA)
+
+Arrow Lake ships with a Kubernetes HPA template that automatically scales API pods based on
+CPU and memory utilization. **HPA requires Redis** for distributed semaphore coordination
+across replicas.
+
+### Enabling HPA
+
+```yaml
+# values.yaml — enable HPA
+apiServer:
+  replicaCount: 2
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+
+redis:
+  enabled: true  # REQUIRED for HPA
+```
+
+```bash
+helm install arrow-lake deploy/helm/arrow-lake/ \
+  --namespace arrow-lake --create-namespace \
+  -f values.yaml
+```
+
+### Scaling Behavior
+
+The HPA template (`deploy/helm/arrow-lake/templates/hpa.yaml`) configures:
+
+| Parameter                     | Default | Description                                      |
+| ----------------------------- | ------- | ------------------------------------------------ |
+| `minReplicas`                 | `2`     | Minimum number of API pods                       |
+| `maxReplicas`                 | `8`     | Maximum number of API pods                       |
+| `targetCPUUtilizationPercentage` | `70` | Scale up when average CPU exceeds this threshold  |
+| `targetMemoryUtilizationPercentage` | `80` | Scale up when average memory exceeds this threshold |
+
+**Scale-down stabilization**: 300 seconds window to prevent thrashing.
+**Scale-up policy**: Adds up to 100% or 2 pods every 60 seconds, whichever is greater.
+
+> **Important**: Without Redis, all API replicas share in-process semaphores independently,
+> which can lead to DuckDB connection pool exhaustion under load. Always enable Redis when
+> using HPA.
+
+***
+
+## 10. CronJob Backup Automation
+
+The Helm chart includes a CronJob template for automated daily backups via the backup REST API.
+
+### Enabling Scheduled Backups
+
+```yaml
+# values.yaml — enable automated backups
+backup:
+  enabled: true
+  schedule: "0 2 * * *"  # Daily at 02:00 UTC
+  image:
+    repository: curlimages/curl
+    tag: "8.12.1"
+  apiKeySecret:
+    name: arrow-lake-api-key
+    key: api-key
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+```
+
+### Creating the API Key Secret
+
+```bash
+kubectl create secret generic arrow-lake-api-key \
+  --namespace arrow-lake \
+  --from-literal=api-key='your-secret-api-key-here'
+```
+
+### How It Works
+
+The CronJob runs a lightweight `curl` container that calls `POST /api/v1/backup/create` with
+`dataset_names: null` (backs up all datasets). Key features:
+
+- **Concurrency policy**: `Forbid` — prevents overlapping backup jobs
+- **Retry**: `backoffLimit: 2` with `restartPolicy: OnFailure`
+- **History**: Retains 3 successful and 1 failed job for debugging
+- **Idempotency**: Each run creates a new timestamped backup; old backups must be pruned separately
+
+### Verifying Backup Jobs
+
+```bash
+# Check CronJob status
+kubectl get cronjob -n arrow-lake
+
+# View recent backup job logs
+kubectl logs -n arrow-lake job/arrow-lake-backup-$(date +%Y%m%d) -c backup
+
+# List backups via API
+curl -s http://localhost:8000/api/v1/backup/list -H "X-API-Key: your-key" | jq
+```
+
+***
+
+## 11. Production Security Checklist
+
+Beyond the general hardening in Section 5, multi-replica and Kubernetes deployments require
+additional security controls.
+
+### Transport Security (TLS)
+
+```yaml
+# values.yaml — TLS termination
+apiServer:
+  env:
+    ARROW_LAKE__API__TLS_ENABLED: "true"
+    ARROW_LAKE__API__TLS_CERT_PATH: "/certs/tls.crt"
+    ARROW_LAKE__API__TLS_KEY_PATH: "/certs/tls.key"
+```
+
+For Kubernetes, use cert-manager with an Ingress resource:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  tls:
+    - hosts: [arrow-lake.example.com]
+      secretName: arrow-lake-tls
+```
+
+### Content Security Policy (CSP)
+
+```yaml
+# config.yaml
+api:
+  security_headers_enabled: true
+  content_security_policy: >
+    default-src 'self';
+    script-src 'self' 'nonce-{REQUEST_ID}';
+    style-src 'self' 'unsafe-inline';
+    img-src 'self' data: https:;
+    frame-ancestors 'none';
+    object-src 'none'
+  frame_options: "DENY"
+```
+
+### Rate Limiting
+
+```yaml
+# config.yaml — production rate limits
+rate_limit:
+  enabled: true
+  default_requests_per_minute: 120
+  default_burst: 20
+```
+
+### Network Policy
+
+The Helm chart ships with a default `NetworkPolicy` that restricts traffic:
+
+```yaml
+# values.yaml
+networkPolicy:
+  enabled: true
+  allowExternal: false  # Only allow intra-namespace traffic
+```
+
+| Direction | Allowed Traffic                             | Port  |
+| --------- | ------------------------------------------- | ----- |
+| Ingress   | Ray pods, Prometheus                        | 8000  |
+| Ingress   | External (if `allowExternal: true`)         | 8000  |
+| Egress    | MinIO / S3 storage endpoint                 | 9000  |
+| Egress    | DNS resolution                              | 53    |
+
+For production, set `allowExternal: false` and use an Ingress controller or service mesh
+to route external traffic.
+
+### Security Summary
+
+| Control                | Docker Compose                          | Kubernetes (Helm)                        |
+| ---------------------- | --------------------------------------- | ---------------------------------------- |
+| **TLS**                | Reverse proxy (nginx/traefik)           | cert-manager + Ingress                   |
+| **CSP**                | `api.content_security_policy`           | `api.content_security_policy`            |
+| **Rate Limiting**      | `rate_limit.enabled: true`              | `rate_limit.enabled: true`               |
+| **Network Isolation**  | Docker bridge networks                  | `networkPolicy.enabled: true`            |
+| **Redis Auth**         | `REDIS_PASSWORD` env var                | Kubernetes secret + `redis.password`     |
+| **API Key**            | `ARROW_LAKE__API__API_KEY`              | Kubernetes secret                        |
+| **JWT**                | `auth.auth_mode: jwt`                   | `auth.auth_mode: jwt`                    |
+| **RBAC**               | 30+ endpoints with role checks          | 30+ endpoints with role checks           |
+| **Audit HMAC**         | `audit.hmac_secret_key`                 | `audit.hmac_secret_key` via secret       |

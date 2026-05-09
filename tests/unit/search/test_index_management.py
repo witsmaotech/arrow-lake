@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from arrow_lake.config import ArrowLakeConfig
 from arrow_lake._lake_search import _LakeSearchMixin
+from arrow_lake.config import ArrowLakeConfig
 
 
 def _make_lake():

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Path, Query
 
-from arrow_lake.api.deps import get_lake
+from arrow_lake.api.auth_models import Role
+from arrow_lake.api.deps import get_lake, require_role
 from arrow_lake.api.models.common import _NAME_PATTERN
 from arrow_lake.api.models.lineage import (
     LineageHistoryResponse,
@@ -26,6 +27,7 @@ async def lineage_record_event(
     *,
     req: LineageRecordRequest,
     lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> LineageRecordResponse:
     """Record a lineage event for a dataset."""
     await run_sync(
@@ -46,6 +48,7 @@ async def lineage_history(
     dataset_name: str = Path(..., pattern=_NAME_PATTERN),
     *,
     lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.VIEWER)),
 ) -> LineageHistoryResponse:
     """Get lineage history for a dataset."""
     events = await run_sync(
@@ -66,6 +69,7 @@ async def lineage_query(
     *,
     req: LineageQueryRequest,
     lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.VIEWER)),
 ) -> LineageQueryResponse:
     """Query lineage events via SQL."""
     result = await run_sync(

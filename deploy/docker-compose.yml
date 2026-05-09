@@ -29,13 +29,13 @@ x-arrow-lake: &arrow-lake
       required: false
   networks:
     - arrow-lake-net
+    - hg-net
   logging:
     driver: json-file
     options:
       max-size: "50m"
       max-file: "5"
       tag: "arrow-lake"
-  read_only: true
   tmpfs:
     - /tmp
     - /app/.cache
@@ -83,8 +83,12 @@ services:
       ARROW_LAKE__API__HOST: "0.0.0.0"
       ARROW_LAKE__API__PORT: "8000"
       ARROW_LAKE__OBSERVABILITY__METRICS_PORT: "8000"
+      ARROW_LAKE__REDIS__URL: "redis://redis:6379/0"
+      ARROW_LAKE__REDIS__PASSWORD: "${REDIS_PASSWORD:-}"
     depends_on:
       minio:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     deploy:
       resources:
@@ -335,36 +339,50 @@ services:
     stop_grace_period: 30s
 
   # ---------------------------------------------------------------------------
-  # HugeGraph — Knowledge Graph database
+  # HugeGraph — Uses external deployment at /home/witshine/wits-projs/hugegraph
+  # The hg-server container is connected to arrow-lake-net via:
+  #   docker network connect arrow-lake_arrow-lake-net hg-server
   # ---------------------------------------------------------------------------
-  hugegraph:
-    image: hugegraph/hugegraph:${HUGEGRAPH_VERSION:-1.7.0}
-    container_name: arrow-lake-hugegraph
+
+  # ---------------------------------------------------------------------------
+  # Redis — Distributed session coordination + JWT blacklist
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:${REDIS_VERSION:-7.4}
+    container_name: arrow-lake-redis
+    profiles: ["core", "dev", "monitoring", "gpu"]
     restart: unless-stopped
-    environment:
-      HUGEGRAPH_STORAGE_BACKEND: "rocksdb"
-      HUGEGRAPH_GRAPH: "hugegraph"
-    volumes:
-      - hugegraph-data:/var/lib/hugegraph
     networks:
       - arrow-lake-net
     ports:
-      - "${HUGEGRAPH_PORT:-8091}:8080"
+      - "${REDIS_PORT:-6380}:6379"
+    command: >
+      redis-server
+      --maxmemory ${REDIS_MAXMEMORY:-256mb}
+      --maxmemory-policy allkeys-lru
+      --appendonly yes
+    volumes:
+      - redis-data:/data
     deploy:
       resources:
         limits:
-          memory: ${HUGEGRAPH_MEMORY_LIMIT:-4G}
-          cpus: "${HUGEGRAPH_CPU_LIMIT:-2.0}"
-          pids: 512
+          memory: ${REDIS_MEMORY_LIMIT:-512M}
+          cpus: "${REDIS_CPU_LIMIT:-0.5}"
+          pids: 256
         reservations:
-          memory: 1G
+          memory: 64M
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8080/graphs/hugegraph/schema"]
-      interval: 15s
-      timeout: 10s
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
       retries: 5
-      start_period: 60s
-    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+        tag: "arrow-lake-redis"
+    stop_grace_period: 10s
 
 # ==============================================================================
 # Networks
@@ -376,6 +394,9 @@ networks:
     ipam:
       config:
         - subnet: 172.30.0.0/16
+  hg-net:
+    external: true
+    name: hugegraph-single_hg-net
 
 # ==============================================================================
 # Volumes
@@ -391,4 +412,6 @@ volumes:
   duckdb-data:
     driver: local
   hugegraph-data:
+    driver: local
+  redis-data:
     driver: local

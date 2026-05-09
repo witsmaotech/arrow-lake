@@ -31,7 +31,7 @@ def _create_app_with_kg_disabled() -> TestClient:
     from arrow_lake.api.app import create_app
 
     config = ArrowLakeConfig()
-    assert config.hugegraph.enabled is False
+    config.hugegraph.enabled = False
 
     app = create_app(config=config)
 
@@ -56,7 +56,7 @@ def _create_app_with_kg_disabled() -> TestClient:
 
     app.state.lake = mock_lake
 
-    return TestClient(app)
+    return TestClient(app, headers={"X-API-Key": "dev-api-key-for-local-testing-only"})
 
 
 class TestKGAPIEndpoints:

@@ -18,7 +18,6 @@ from arrow_lake.embed.encoder import (
 )
 from arrow_lake.exceptions import EmbeddingError, ErrorCode
 
-
 # ---------------------------------------------------------------------------
 # EmbeddingBatch
 # ---------------------------------------------------------------------------
@@ -539,7 +538,6 @@ class TestApiEmbeddingEncoder:
     @patch("arrow_lake.embed.encoder.httpx.Client")
     def test_encode_maintains_input_order(self, mock_client_cls: MagicMock) -> None:
         """API 返回乱序 data 时应按 index 排序保持原始顺序。"""
-        dim = 2
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {

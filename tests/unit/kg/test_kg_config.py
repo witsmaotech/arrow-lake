@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import pytest
-from pydantic import ValidationError
-
 from arrow_lake.config import ArrowLakeConfig, HugeGraphConfig
+from pydantic import ValidationError
 
 
 class TestHugeGraphConfig:
@@ -15,8 +14,8 @@ class TestHugeGraphConfig:
         cfg = HugeGraphConfig()
         assert cfg.enabled is False
         assert cfg.host == "localhost"
-        assert cfg.port == 8089
-        assert cfg.graph_name == "arrow_lake_kg"
+        assert cfg.port == 8091
+        assert cfg.graph_name == "hugegraph"
         assert cfg.timeout_seconds == 30.0
         assert cfg.username == ""
         assert cfg.password == ""

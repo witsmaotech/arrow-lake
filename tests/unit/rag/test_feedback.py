@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from arrow_lake.rag.context import FeedbackEntry
 from arrow_lake.rag.session import SessionStore
 
 

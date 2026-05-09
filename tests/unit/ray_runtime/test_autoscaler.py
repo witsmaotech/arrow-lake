@@ -5,10 +5,8 @@ from __future__ import annotations
 from dataclasses import asdict
 
 import pytest
-
 from arrow_lake.config import AutoscaleConfig
-from arrow_lake.ray_runtime.autoscaler import ScalingDirection, ScalingEvent, GPUAutoscaler
-
+from arrow_lake.ray_runtime.autoscaler import GPUAutoscaler, ScalingDirection, ScalingEvent
 
 # ---------------------------------------------------------------------------
 # ScalingDirection

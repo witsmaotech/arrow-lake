@@ -128,11 +128,12 @@ class TestExportSDKIntegration:
     def test_lake_export_sdk(self, storage: LanceStorageManager, tmp_path: Path) -> None:
         """Lake.export() end-to-end with real Lance storage."""
         from arrow_lake import Lake
+        from arrow_lake.config import ArrowLakeConfig, StorageConfig
 
         _create_sample_dataset(storage, n=5)
         output = str(tmp_path / "sdk_export.parquet")
 
-        lake = Lake(base_uri=storage.base_uri)
+        lake = Lake(base_uri=storage.base_uri, config=ArrowLakeConfig(storage=StorageConfig(backend="local")))
         result = lake.export("export_test", output)
 
         assert result.format == "parquet"

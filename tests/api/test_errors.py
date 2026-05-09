@@ -2,27 +2,26 @@
 
 from __future__ import annotations
 
-import pytest
-from httpx import ASGITransport, AsyncClient
+from unittest.mock import MagicMock
 
+import pytest
 from arrow_lake.api.app import create_app
 from arrow_lake.api.errors import _error_code_to_http_status
 from arrow_lake.exceptions import (
     ArrowLakeError,
-    CatalogError,
     ErrorCode,
-    QueryError,
-    RayRuntimeError,
-    StorageError,
 )
-from unittest.mock import MagicMock
 from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
 
 
 @pytest.mark.asyncio
 async def test_arrowlake_error_returns_mapped_status() -> None:
     """ArrowLakeError should be mapped to the correct HTTP status."""
-    app: FastAPI = create_app()
+    from arrow_lake.config import ArrowLakeConfig
+    config = ArrowLakeConfig()
+    config.api.api_key = "test-error-key"
+    app: FastAPI = create_app(config=config)
     app.state.lake = MagicMock()
 
     @app.get("/test-error")
@@ -32,7 +31,8 @@ async def test_arrowlake_error_returns_mapped_status() -> None:
             message="Dataset 'x' not found",
         )
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test",
+                           headers={"X-API-Key": "test-error-key"}) as ac:
         resp = await ac.get("/test-error")
         assert resp.status_code == 404
         body = resp.json()
@@ -43,18 +43,19 @@ async def test_arrowlake_error_returns_mapped_status() -> None:
 @pytest.mark.asyncio
 async def test_unhandled_exception_returns_500() -> None:
     """Non-ArrowLakeError exceptions should return 500."""
+    from arrow_lake.config import ArrowLakeConfig
     from starlette.exceptions import HTTPException
-
-    app: FastAPI = create_app()
+    config = ArrowLakeConfig()
+    config.api.api_key = "test-error-key"
+    app: FastAPI = create_app(config=config)
     app.state.lake = MagicMock()
 
     @app.get("/test-unhandled")
     async def trigger_unhandled():
-        # Starlette wraps unexpected errors in HTTPException internally.
-        # Use a registered handler via a sub-app pattern.
         raise HTTPException(status_code=500, detail="unexpected")
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test",
+                           headers={"X-API-Key": "test-error-key"}) as ac:
         resp = await ac.get("/test-unhandled")
         assert resp.status_code == 500
 

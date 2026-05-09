@@ -6,11 +6,10 @@ from dataclasses import dataclass
 from unittest.mock import MagicMock
 
 import pytest
-from httpx import ASGITransport, AsyncClient
-
 from arrow_lake.api.app import create_app
 from arrow_lake.api.models.dataset import IngestResponse
 from arrow_lake.exceptions import CatalogError, ErrorCode
+from httpx import ASGITransport, AsyncClient
 
 
 @dataclass(frozen=True)
@@ -89,11 +88,13 @@ async def test_list_datasets_empty(mock_lake_with_catalog: MagicMock) -> None:
     mock_lake_with_catalog.catalog.return_value = _FakeCatalogResult(datasets=[], total=0)
     from arrow_lake.config import ArrowLakeConfig
     config = ArrowLakeConfig()
+    config.api.api_key = "test-key"
     config.api.api_key_default_role = "ADMIN"
     app = create_app(config)
     app.state.lake = mock_lake_with_catalog
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test",
+                           headers={"X-API-Key": "test-key"}) as ac:
         resp = await ac.get("/api/v1/datasets")
         assert resp.status_code == 200
         assert resp.json()["total"] == 0
@@ -184,17 +185,18 @@ async def test_delete_dataset(client: AsyncClient, mock_lake_with_catalog: Magic
 @pytest.mark.asyncio
 async def test_delete_dataset_not_found(mock_lake_with_catalog: MagicMock) -> None:
     from arrow_lake.config import ArrowLakeConfig
-    from arrow_lake.exceptions import CatalogError, ErrorCode
     mock_lake_with_catalog.delete_dataset.side_effect = CatalogError(
         error_code=ErrorCode.CATALOG_DATASET_NOT_FOUND,
         message="Dataset 'nonexistent' not found",
     )
     config = ArrowLakeConfig()
-    config.auth.allow_unauthenticated_access = True
+    config.api.api_key = "test-key"
+    config.api.api_key_default_role = "ADMIN"
     app = create_app(config)
     app.state.lake = mock_lake_with_catalog
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test",
+                           headers={"X-API-Key": "test-key"}) as ac:
         resp = await ac.delete("/api/v1/datasets/nonexistent")
         assert resp.status_code == 404
 

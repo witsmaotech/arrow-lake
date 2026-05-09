@@ -98,6 +98,7 @@ async def restore_backup(
 @router.get("/list", response_model=BackupListResponse)
 async def list_backups(
     config: ArrowLakeConfig = Depends(get_config),
+    _user: dict = Depends(require_role(Role.ADMIN)),
 ) -> BackupListResponse:
     """List all available backups."""
     mgr = _get_backup_mgr(config)

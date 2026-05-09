@@ -117,7 +117,6 @@ class TestV02MigrationPyArrowFallback:
         """PyArrowFallbackAdapter should read v0.2 data correctly."""
         import duckdb
         import lance
-
         from arrow_lake.query.lance_adapter import PyArrowFallbackAdapter
 
         dataset = lance.dataset(v02_lance_dataset)

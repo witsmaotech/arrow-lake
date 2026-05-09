@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator
-from typing import Any
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI
 from starlette.middleware.cors import CORSMiddleware
@@ -30,7 +30,6 @@ from arrow_lake.api.routers.rag import router as rag_router
 from arrow_lake.api.routers.search import router as search_router
 from arrow_lake.api.routers.system import router as system_router
 from arrow_lake.config import ArrowLakeConfig
-
 
 logger = logging.getLogger(__name__)
 
@@ -291,6 +290,28 @@ def create_app(config: ArrowLakeConfig | None = None) -> FastAPI:
             issuer=config.auth.jwt_issuer,
         )
         app.state.auth_service = svc
+
+        # Wire Redis-backed JWT blacklist when available
+        if config.redis.enabled:
+            try:
+                from arrow_lake.query._redis_semaphore import _redis_module
+
+                if _redis_module is not None:
+                    redis_kwargs: dict[str, Any] = {
+                        "max_connections": config.redis.redis_pool_size,
+                        "socket_timeout": 5,
+                    }
+                    if config.redis.password:
+                        redis_kwargs["password"] = config.redis.password
+                    if config.redis.ssl:
+                        redis_kwargs["ssl"] = True
+                    redis_client = _redis_module.Redis.from_url(
+                        config.redis.url, **redis_kwargs
+                    )
+                    redis_client.ping()
+                    svc.set_redis(redis_client)
+            except Exception:
+                pass  # Non-fatal: falls back to in-memory blacklist
 
         @app.middleware("http")
         async def jwt_auth_middleware(request, call_next):

@@ -53,6 +53,7 @@ from arrow_lake.config.media import (
 )
 from arrow_lake.config.olap import OlapConfig
 from arrow_lake.config.rag import HugeGraphConfig, LLMConfig, RAGConfig
+from arrow_lake.config.redis import RedisConfig
 from arrow_lake.config.search import (
     EnsembleSearchConfig,
     FacetedSearchConfig,
@@ -108,6 +109,8 @@ __all__ = [  # noqa: RUF022
     "OpenTelemetryConfig",
     "QualityConfig",
     "RAGConfig",
+    "RateLimitConfig",
+    "RedisConfig",
     "RateLimitConfig",
     "StorageConfig",
     "VectorSearchConfig",

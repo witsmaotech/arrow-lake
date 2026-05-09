@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Path
 
-from arrow_lake.api.deps import get_lake
+from arrow_lake.api.auth_models import Role
+from arrow_lake.api.deps import get_lake, require_role
 from arrow_lake.api.models.common import _NAME_PATTERN, arrow_table_to_response
 from arrow_lake.api.models.search import (
     EnsembleSearchRequest,
@@ -32,6 +33,7 @@ async def vector_search(
     *,
     req: VectorSearchRequest,
     lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.VIEWER)),
 ) -> VectorSearchResponse:
     """Vector similarity search on a dataset."""
     result = await run_sync(
@@ -65,6 +67,7 @@ async def full_text_search(
     *,
     req: FullTextSearchRequest,
     lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.VIEWER)),
 ) -> FullTextSearchResponse:
     """Full-text search on a dataset."""
     result = await run_sync(
@@ -96,6 +99,7 @@ async def hybrid_search(
     *,
     req: HybridSearchRequest,
     lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.VIEWER)),
 ) -> HybridSearchResponse:
     """Hybrid vector + full-text search (RRF fusion)."""
     result = await run_sync(
@@ -130,6 +134,7 @@ async def faceted_search(
     *,
     req: FacetedSearchRequest,
     lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.VIEWER)),
 ) -> FacetedSearchResponse:
     """Vector search with faceted counts."""
     result = await run_sync(
@@ -168,6 +173,7 @@ async def ensemble_search(
     *,
     req: EnsembleSearchRequest,
     lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.VIEWER)),
 ) -> EnsembleSearchResponse:
     """Ensemble multi-column vector search with RRF fusion."""
     result = await run_sync(

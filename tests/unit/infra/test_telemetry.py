@@ -30,7 +30,7 @@ def test_setup_telemetry_enabled_configures_tracer() -> None:
 
     with patch("arrow_lake.api.telemetry._OTEL_AVAILABLE", True):
         with patch("arrow_lake.api.telemetry._configure_tracer") as mock_configure:
-            result = setup_telemetry(mock_config)
+            setup_telemetry(mock_config)
             mock_configure.assert_called_once_with(mock_config)
 
 
@@ -68,5 +68,5 @@ def test_setup_telemetry_instrument_fastapi() -> None:
         with patch("arrow_lake.api.telemetry._configure_tracer"):
             with patch("arrow_lake.api.telemetry._instrument_app") as mock_instrument:
                 app = MagicMock()
-                result = setup_telemetry(mock_config, app=app)
+                setup_telemetry(mock_config, app=app)
                 mock_instrument.assert_called_once_with(app)

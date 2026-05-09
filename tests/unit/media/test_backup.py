@@ -20,12 +20,8 @@ from arrow_lake.ops.backup import (
 
 def _make_config() -> StorageConfig:
     return StorageConfig(
-        backend=StorageBackend.MINIO,
-        s3_endpoint="http://localhost:9000",
-        s3_access_key="test-key",
-        s3_secret_key="test-secret",
-        s3_bucket="test-bucket",
-        s3_region="us-east-1",
+        backend=StorageBackend.LOCAL,
+        base_uri="./data",
     )
 
 
@@ -95,7 +91,7 @@ class TestCreateBackup:
             mock_ds = MagicMock()
             mock_ds.count_rows.return_value = 50
             mock_conn = MagicMock()
-            mock_conn.open_dataset.return_value = mock_ds
+            mock_conn.open_table.return_value = mock_ds
             mock_connect.return_value = mock_conn
 
             info = mgr.create_backup(dataset_names=["my_dataset"], backup_id="test-001")

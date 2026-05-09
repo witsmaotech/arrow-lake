@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 
 import pytest
-from arrow_lake.exceptions import ErrorCode, KGError
 from arrow_lake.knowledge_graph.extractor import (
     EntityExtractor,
     ExtractedEntity,

@@ -6,7 +6,6 @@ import os
 from unittest.mock import patch
 
 import pytest
-from httpx import ASGITransport, AsyncClient
 from arrow_lake.api.app import create_app
 from arrow_lake.config import ArrowLakeConfig
 from arrow_lake.core.metrics import (
@@ -22,6 +21,7 @@ from arrow_lake.core.metrics import (
     query_results_total,
     query_total,
 )
+from httpx import ASGITransport, AsyncClient
 
 
 def _make_config(**env_overrides: str) -> ArrowLakeConfig:

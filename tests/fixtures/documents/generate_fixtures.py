@@ -12,9 +12,7 @@ Usage:
 
 from __future__ import annotations
 
-import csv
 import json
-import os
 from pathlib import Path
 
 FIXTURES_DIR = Path(__file__).parent

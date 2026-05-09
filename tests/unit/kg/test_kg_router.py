@@ -41,7 +41,6 @@ def _make_app(lake: Any) -> Any:
     """Create a test FastAPI app with the kg router and a fixed lake."""
     from arrow_lake.api.routers.knowledge_graph import router
     from fastapi import FastAPI, Request
-    from starlette.middleware.base import BaseHTTPMiddleware
 
     app = FastAPI()
     app.state.lake = lake

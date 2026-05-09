@@ -2,17 +2,26 @@
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import pytest
+from arrow_lake.api.app import create_app
+from arrow_lake.config import ArrowLakeConfig
+from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from arrow_lake.api.app import create_app
-from unittest.mock import MagicMock
-from fastapi import FastAPI
+
+def _make_config() -> ArrowLakeConfig:
+    config = ArrowLakeConfig()
+    config.api.api_key = "test-api-key"
+    config.api.docs_enabled = False
+    return config
 
 
 @pytest.mark.asyncio
 async def test_health_returns_ok() -> None:
-    app: FastAPI = create_app()
+    config = _make_config()
+    app: FastAPI = create_app(config=config)
     app.state.lake = MagicMock()
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
@@ -25,7 +34,8 @@ async def test_health_returns_ok() -> None:
 
 @pytest.mark.asyncio
 async def test_health_includes_version() -> None:
-    app: FastAPI = create_app()
+    config = _make_config()
+    app: FastAPI = create_app(config=config)
     app.state.lake = MagicMock()
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
@@ -37,10 +47,15 @@ async def test_health_includes_version() -> None:
 @pytest.mark.asyncio
 async def test_version_returns_info() -> None:
     """GET /api/v1/version returns version, python, and dependency info."""
-    app: FastAPI = create_app()
+    config = _make_config()
+    app: FastAPI = create_app(config=config)
     app.state.lake = MagicMock()
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"X-API-Key": "test-api-key"},
+    ) as ac:
         resp = await ac.get("/api/v1/version")
         assert resp.status_code == 200
         body = resp.json()

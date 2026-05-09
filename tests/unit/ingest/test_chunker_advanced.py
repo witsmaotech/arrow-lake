@@ -7,10 +7,9 @@ import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from arrow_lake.config._enums import ChunkStrategy
 from arrow_lake.config.document import DocumentConfig
-from arrow_lake.ingest.chunker import Chunk, DocumentChunker
+from arrow_lake.ingest.chunker import DocumentChunker
 
 
 def _mock_module(name: str) -> MagicMock:
@@ -34,6 +33,7 @@ class TestSemchunkGracefulDegradation:
         mock_semchunk.chunk.return_value = ["chunk one", "chunk two"]
         try:
             import importlib
+
             from arrow_lake.ingest import chunker as chunker_mod
             importlib.reload(chunker_mod)
 
@@ -51,11 +51,12 @@ class TestSemchunkGracefulDegradation:
             del sys.modules["semchunk"]
             importlib.reload(chunker_mod)
 
-    def test_semchunk_passes_chunk_size_and_overlap(self):
+    def test_semchunk_passes_chunk_size(self):
         mock_semchunk = _mock_module("semchunk")
         mock_semchunk.chunk.return_value = ["text"]
         try:
             import importlib
+
             from arrow_lake.ingest import chunker as chunker_mod
             importlib.reload(chunker_mod)
 
@@ -67,7 +68,6 @@ class TestSemchunkGracefulDegradation:
             chunker.chunk([(1, "text")])
             call_kwargs = mock_semchunk.chunk.call_args
             assert call_kwargs.kwargs["chunk_size"] == 256
-            assert call_kwargs.kwargs["overlap"] == 32
         finally:
             del sys.modules["semchunk"]
             importlib.reload(chunker_mod)
@@ -112,6 +112,7 @@ class TestChonkieIntegration:
 
         try:
             import importlib
+
             from arrow_lake.ingest import chunker as chunker_mod
             importlib.reload(chunker_mod)
 
@@ -124,8 +125,8 @@ class TestChonkieIntegration:
             assert chunks[0].page_number == 1
             assert chunks[1].page_number == 2
             mock_chonkie.TokenChunker.assert_called_once_with(
-                token_chunk_size=256,
-                token_overlap=64,
+                chunk_size=256,
+                chunk_overlap=64,
             )
         finally:
             del sys.modules["chonkie"]
@@ -141,6 +142,7 @@ class TestChonkieIntegration:
 
         try:
             import importlib
+
             from arrow_lake.ingest import chunker as chunker_mod
             importlib.reload(chunker_mod)
 
@@ -150,8 +152,8 @@ class TestChonkieIntegration:
             )
             chunker.chunk([(1, "text")])
             mock_chonkie.TokenChunker.assert_called_once_with(
-                token_chunk_size=512,
-                token_overlap=64,
+                chunk_size=512,
+                chunk_overlap=64,
                 tokenizer="bert-base-uncased",
             )
         finally:

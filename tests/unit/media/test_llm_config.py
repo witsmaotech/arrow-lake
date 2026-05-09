@@ -165,7 +165,7 @@ class TestConfigIntegration:
         merged = _build_merged_update(base, {"llm": {"provider": "vllm"}})
         assert merged["llm"].provider == "vllm"
         # rag section absent from override — should keep base value
-        assert merged["rag"].enabled is False
+        assert merged["rag"].enabled is True
 
     def test_rag_config_in_section_types(self) -> None:
         from arrow_lake.config import _build_merged_update

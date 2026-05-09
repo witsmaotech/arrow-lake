@@ -21,6 +21,10 @@ spec:
         prometheus.io/port: "8000"
         prometheus.io/path: {{ .Values.observability.metricsPath }}
     spec:
+      {{- if .Values.apiServer.securityContext }}
+      securityContext:
+        {{- toYaml .Values.apiServer.securityContext | nindent 8 }}
+      {{- end }}
       containers:
         - name: api-server
           image: "{{ .Values.apiServer.image.repository }}:{{ .Values.apiServer.image.tag }}"
@@ -52,6 +56,19 @@ spec:
               value: {{ .Values.observability.logLevel | quote }}
             - name: ARROW_LAKE__COMPUTE__RAY_ADDRESS
               value: "{{ include "arrow-lake.fullname" . }}-ray-head-svc:6379"
+            {{- if .Values.redis.enabled }}
+            - name: ARROW_LAKE__REDIS__ENABLED
+              value: "true"
+            - name: ARROW_LAKE__REDIS__URL
+              value: {{ .Values.redis.url | quote }}
+            {{- if .Values.redis.password }}
+            - name: ARROW_LAKE__REDIS__PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "arrow-lake.fullname" . }}-redis-secret
+                  key: password
+            {{- end }}
+            {{- end }}
             {{- range $key, $value := .Values.apiServer.env }}
             - name: {{ $key }}
               value: {{ $value | quote }}
@@ -72,3 +89,27 @@ spec:
             timeoutSeconds: 3
           resources:
             {{- toYaml .Values.apiServer.resources | nindent 12 }}
+          {{- if .Values.apiServer.containerSecurityContext }}
+          securityContext:
+            {{- toYaml .Values.apiServer.containerSecurityContext | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            {{- if .Values.apiServer.tls.enabled }}
+            - name: tls-certs
+              mountPath: /etc/arrow-lake/tls
+              readOnly: true
+            {{- end }}
+      volumes:
+        {{- if .Values.apiServer.tls.enabled }}
+        - name: tls-certs
+          secret:
+            secretName: {{ .Values.apiServer.tls.secretName }}
+        {{- end }}
+      {{- if .Values.apiServer.tolerations }}
+      tolerations:
+        {{- toYaml .Values.apiServer.tolerations | nindent 8 }}
+      {{- end }}
+      {{- if .Values.apiServer.nodeSelector }}
+      nodeSelector:
+        {{- toYaml .Values.apiServer.nodeSelector | nindent 8 }}
+      {{- end }}

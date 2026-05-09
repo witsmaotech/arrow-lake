@@ -8,6 +8,7 @@ event storage and DuckDB for SQL queries over lineage data.
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -200,10 +201,16 @@ class LineageQueryBridge:
 
     Args:
         store: LineageStore instance.
+        session_manager: Optional DuckDBSessionManager for managed connections.
     """
 
-    def __init__(self, store: LineageStore) -> None:
+    def __init__(
+        self,
+        store: LineageStore,
+        session_manager: Any | None = None,
+    ) -> None:
         self._store = store
+        self._session_manager = session_manager
 
     def query(self, sql: str, params: list[str] | None = None) -> pa.Table:
         """Execute a SQL query over lineage events.
@@ -228,12 +235,24 @@ class LineageQueryBridge:
                 schema=_LINEAGE_EVENT_SCHEMA,
             )
 
-        with DuckDBSession() as conn:
-            conn.register(self._store._store_dataset, table)
-            result_reader = conn.execute(sql, params if params else None).arrow()
-            result_table = (
-                result_reader.read_all() if hasattr(result_reader, "read_all") else result_reader
-            )
+        if self._session_manager is not None:
+            with self._session_manager.acquire() as conn:
+                conn.register(self._store._store_dataset, table)
+                result_reader = conn.execute(sql, params if params else None).arrow()
+                result_table = (
+                    result_reader.read_all()
+                    if hasattr(result_reader, "read_all")
+                    else result_reader
+                )
+        else:
+            with DuckDBSession() as conn:
+                conn.register(self._store._store_dataset, table)
+                result_reader = conn.execute(sql, params if params else None).arrow()
+                result_table = (
+                    result_reader.read_all()
+                    if hasattr(result_reader, "read_all")
+                    else result_reader
+                )
 
         return result_table
 
@@ -283,7 +302,10 @@ class LineageQueryBridge:
                 message="SQL query must not be empty",
             )
 
-        stripped = sql.strip().upper()
+        cleaned = re.sub(r"--[^\n]*", "", sql)
+        cleaned = re.sub(r"/\*.*?\*/", "", cleaned, flags=re.DOTALL)
+
+        stripped = cleaned.strip().upper()
         if not stripped.startswith("SELECT"):
             raise CatalogError(
                 error_code=ErrorCode.LINEAGE_QUERY_FAILED,
@@ -297,7 +319,7 @@ class LineageQueryBridge:
                 message=f"Keyword '{match.group()!r}' is not allowed in lineage queries",
             )
 
-        if ";" in sql:
+        if ";" in cleaned:
             raise CatalogError(
                 error_code=ErrorCode.LINEAGE_QUERY_FAILED,
                 message="Semicolons are not allowed in lineage queries",

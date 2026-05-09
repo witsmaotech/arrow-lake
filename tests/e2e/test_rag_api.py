@@ -55,7 +55,7 @@ def _mock_retriever(question: str, dataset_name: str, top_k: int):
     import pyarrow as pa
 
     return pa.table({
-        "text": ["Document about Python programming.", "Python data science guide."],
+        "text_content": ["Document about Python programming.", "Python data science guide."],
         "row_id": ["doc-1", "doc-2"],
         "_score": [0.95, 0.85],
     })
@@ -89,7 +89,7 @@ def _create_app_with_rag() -> TestClient:
     mock_lake.rag_get_history = lambda sid: session_store.get_history(sid)
     app.state.lake = mock_lake
 
-    return TestClient(app)
+    return TestClient(app, headers={"X-API-Key": "dev-api-key-for-local-testing-only"})
 
 
 # ---------------------------------------------------------------------------
@@ -147,7 +147,7 @@ class TestRAGAPIE2E:
             "/api/v1/rag/extract",
             json={
                 "dataset_name": "documents",
-                "text_column": "text",
+                "text_column": "text_content",
                 "top_k": 3,
             },
         )

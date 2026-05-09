@@ -2,25 +2,25 @@
 
 from __future__ import annotations
 
-import pytest
-from httpx import ASGITransport, AsyncClient
 from unittest.mock import MagicMock
 
-from fastapi import FastAPI
-
+import pytest
 from arrow_lake.api.app import create_app
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
 
 
 def _make_app(storage_dir: str | None = None) -> FastAPI:
     """Create a test app with optional storage override."""
-    from arrow_lake.config import ArrowLakeConfig, StorageConfig
+    from arrow_lake.config import ArrowLakeConfig, StorageBackend
 
+    config = ArrowLakeConfig()
+    config.api.api_key = "test-api-key"
+    config.api.docs_enabled = False
+    config.storage.backend = StorageBackend.LOCAL
     if storage_dir is not None:
-        config = ArrowLakeConfig()
-        config.storage = StorageConfig(base_uri=storage_dir)
-        app = create_app(config=config)
-    else:
-        app = create_app()
+        config.storage.base_uri = storage_dir
+    app = create_app(config=config)
     app.state.lake = MagicMock()
     return app
 

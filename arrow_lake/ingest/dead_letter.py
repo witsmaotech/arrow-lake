@@ -17,12 +17,12 @@ import json
 import threading
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
 
-class DLQStatus(str, Enum):
+class DLQStatus(StrEnum):
     PENDING = "pending"
     RETRYING = "retrying"
     RESOLVED = "resolved"

@@ -5,14 +5,16 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
-from httpx import ASGITransport, AsyncClient
 from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
 
 pytest.importorskip("jwt")
 
+from datetime import UTC
+
 from arrow_lake.api.app import create_app
-from arrow_lake.api.auth_service import AuthService
 from arrow_lake.api.auth_models import Role
+from arrow_lake.api.auth_service import AuthService
 from arrow_lake.config import ArrowLakeConfig
 
 SECRET = "test-secret-key-min-32-chars-for-hmac!"
@@ -25,6 +27,7 @@ def jwt_app() -> FastAPI:
     config.auth.auth_mode = "jwt"
     config.auth.jwt_secret_key = SECRET
     config.auth.jwt_bootstrap_token = "test-bootstrap-token"
+    config.api.api_key = ""  # JWT-only mode: disable API key middleware
     app = create_app(config=config)
     app.state.lake = MagicMock()
     return app
@@ -122,10 +125,11 @@ async def test_jwt_health_bypass(jwt_app: FastAPI) -> None:
 @pytest.mark.asyncio
 async def test_jwt_expired_token_rejected(jwt_app: FastAPI, jwt_svc: AuthService) -> None:
     """Expired JWT should be rejected."""
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
+
     from arrow_lake.api.auth_models import TokenPayload
 
-    past = datetime.now(timezone.utc) - timedelta(hours=1)
+    past = datetime.now(UTC) - timedelta(hours=1)
     expired_payload = TokenPayload(
         sub="user-1", role=Role.VIEWER,
         exp=past, iat=past - timedelta(minutes=30),

@@ -135,10 +135,11 @@ class TestArrowLakeConfig:
         assert isinstance(config.compute, ComputeConfig)
         assert isinstance(config.observability, ObservabilityConfig)
 
-    def test_default_storage_values(self) -> None:
+    def test_default_storage_values(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("ARROW_LAKE__STORAGE__S3_ENDPOINT", raising=False)
         config = ArrowLakeConfig()
         assert config.storage.backend == "minio"
-        assert config.storage.s3_endpoint == "http://localhost:9000"
+        assert config.storage.s3_endpoint == "http://127.0.0.1:9000"
 
     def test_default_compute_values(self) -> None:
         config = ArrowLakeConfig()

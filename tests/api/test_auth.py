@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-import pytest
-from httpx import ASGITransport, AsyncClient
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 from arrow_lake.api.app import create_app
 from arrow_lake.api.auth import api_key_middleware_fn
+from httpx import ASGITransport, AsyncClient
 
 
-def _make_app_with_key(api_key: str) -> "FastAPI":
+def _make_app_with_key(api_key: str) -> FastAPI:
     from arrow_lake.config import ArrowLakeConfig
 
     config = ArrowLakeConfig()

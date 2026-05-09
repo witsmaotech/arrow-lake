@@ -8,7 +8,6 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from arrow_lake.config import OlapConfig, StorageBackend, StorageConfig
 from arrow_lake.core.metrics import (
     duckdb_pool_active_sessions,

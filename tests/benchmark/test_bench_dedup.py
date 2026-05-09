@@ -107,7 +107,7 @@ class TestDedupBenchmark:
         def run_incremental() -> None:
             nonlocal seen
             seen = {}
-            for batch_idx in range(10):
+            for _batch_idx in range(10):
                 table = _make_binary_table(n=1_000, dup_rate=0.15)
                 _result, seen = d.deduplicate_incremental(table, existing_sha256=seen)
 

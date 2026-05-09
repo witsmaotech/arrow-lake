@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import os
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from starlette.responses import JSONResponse, PlainTextResponse, Response
 
-from arrow_lake.api.deps import get_app_config
+from arrow_lake.api.auth_models import Role
+from arrow_lake.api.deps import get_app_config, require_role
 from arrow_lake.config import ArrowLakeConfig
 from arrow_lake.config.storage import StorageBackend
 
@@ -51,20 +52,51 @@ async def health_live() -> dict:
     return {"status": "ok"}
 
 
+def _attach_pool_stats(status: dict, request: Request) -> None:
+    """Append DuckDB session pool stats to *status* if available.
+
+    Non-fatal: health endpoint must not fail if session manager is unavailable.
+    """
+    from unittest.mock import MagicMock
+
+    lake = getattr(request.app.state, "lake", None)
+    if lake and not isinstance(lake, MagicMock):
+        try:
+            stats = lake.get_session_manager().get_stats()
+            status["duckdb_pool"] = {
+                "pool_size": stats.pool_size,
+                "active_sessions": stats.active_sessions,
+                "queued_requests": stats.queued_requests,
+                "total_queries": stats.total_queries,
+                "total_errors": stats.total_errors,
+            }
+        except Exception:
+            pass  # Non-fatal: health endpoint must not fail
+
+
 @router.get("/health/ready", summary="Readiness probe")
-async def health_ready(config: ArrowLakeConfig = Depends(get_app_config)) -> Response:
+async def health_ready(
+    request: Request,
+    config: ArrowLakeConfig = Depends(get_app_config),
+) -> Response:
     """Readiness check — verifies storage and dependencies are accessible."""
     status: dict = {"status": "ok", "version": _get_version()}
     storage_text, storage_ok = _check_storage(config)
     status["storage"] = storage_text
     if not storage_ok:
         status["status"] = "degraded"
+    if request is not None:
+        _attach_pool_stats(status, request)
     http_code = 200 if status["status"] == "ok" else 503
+    _attach_pool_stats(status, request)
     return JSONResponse(content=status, status_code=http_code)
 
 
 @router.get("/health", summary="Health check (backward compatible)")
-async def health_check(config: ArrowLakeConfig = Depends(get_app_config)) -> Response:
+async def health_check(
+    request: Request,
+    config: ArrowLakeConfig = Depends(get_app_config),
+) -> Response:
     """Return service health status. Checks storage accessibility.
 
     Kept for backward compatibility. Prefer /health/live and /health/ready.
@@ -74,6 +106,7 @@ async def health_check(config: ArrowLakeConfig = Depends(get_app_config)) -> Res
     status["storage"] = storage_text
     if not storage_ok:
         status["status"] = "degraded"
+    _attach_pool_stats(status, request)
     http_code = 200 if status["status"] == "ok" else 503
     return JSONResponse(content=status, status_code=http_code)
 
@@ -99,7 +132,7 @@ async def metrics() -> Response:
 
 
 @router.get("/api/v1/version", summary="Version and dependencies")
-async def version_info() -> dict:
+async def version_info(_user: dict = Depends(require_role(Role.VIEWER))) -> dict:
     """Return version, Python version, and optional dependency versions."""
     result: dict = {"version": ""}
 

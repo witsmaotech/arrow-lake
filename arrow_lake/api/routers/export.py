@@ -7,7 +7,8 @@ from pathlib import Path as FilePath
 
 from fastapi import APIRouter, Depends, HTTPException, Path
 
-from arrow_lake.api.deps import get_lake
+from arrow_lake.api.auth_models import Role
+from arrow_lake.api.deps import get_lake, require_role
 from arrow_lake.api.models.common import _NAME_PATTERN
 from arrow_lake.api.models.query import ExportRequest, ExportTaskResponse, ExportTaskStatusResponse
 from arrow_lake.api.tasks import TaskManager
@@ -21,6 +22,7 @@ async def export_dataset(
     *,
     req: ExportRequest,
     lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> ExportTaskResponse:
     """Export a dataset to Parquet or CSV (async, returns task_id)."""
     task_id = TaskManager.create_task(name, req.output_path, fmt=req.format or "parquet")
@@ -49,6 +51,7 @@ async def export_dataset(
 async def get_export_status(
     name: str = Path(..., pattern=_NAME_PATTERN),
     task_id: str = Path(...),
+    _user: dict = Depends(require_role(Role.VIEWER)),
 ) -> ExportTaskStatusResponse:
     """Check the status of an async export task."""
     task = TaskManager.get_task(task_id)
@@ -70,6 +73,7 @@ async def get_export_status(
 async def download_export(
     name: str = Path(..., pattern=_NAME_PATTERN),
     task_id: str = Path(...),
+    _user: dict = Depends(require_role(Role.VIEWER)),
 ) -> None:
     """Download an exported file (only available after task completes)."""
     from starlette.responses import FileResponse
@@ -88,7 +92,12 @@ async def download_export(
     cfg = get_config()
     base_dir = getattr(cfg.export, "base_dir", "/app/exports")
     output = FilePath(task.output_path)
-    file_path = output if output.is_absolute() else FilePath(base_dir) / output
+    if output.is_absolute():
+        raise HTTPException(status_code=400, detail="Absolute paths not allowed")
+    base_resolved = FilePath(base_dir).resolve()
+    file_path = (base_resolved / output).resolve()
+    if not file_path.is_relative_to(base_resolved):
+        raise HTTPException(status_code=403, detail="Path escapes base directory")
 
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Export file not found on disk")

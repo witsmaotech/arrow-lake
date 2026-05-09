@@ -145,10 +145,7 @@ class ExportBridge:
                 message=f"Path traversal not allowed in output path: {output_path}",
             )
         base = Path(self._base_dir)
-        if output.is_absolute():
-            path = output
-        else:
-            path = (base / output).resolve()
+        path = output if output.is_absolute() else (base / output).resolve()
 
         fmt = self._detect_format(output_path, format)
 

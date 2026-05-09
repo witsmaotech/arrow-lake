@@ -7,14 +7,15 @@ from pathlib import Path
 import numpy as np
 import pyarrow as pa
 import pytest
-
 from arrow_lake import Lake
+from arrow_lake.config import ArrowLakeConfig, StorageConfig
 
 
 @pytest.fixture()
 def lake(tmp_path: Path) -> Lake:
     """Create a Lake instance with fresh temp storage."""
-    return Lake(base_uri=str(tmp_path / "lake_data"))
+    config = ArrowLakeConfig(storage=StorageConfig(backend="local"))
+    return Lake(base_uri=str(tmp_path / "lake_data"), config=config)
 
 
 @pytest.fixture()

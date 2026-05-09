@@ -5,11 +5,11 @@ M0a Day 2 — TDD RED phase.
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock, patch
+
 import duckdb
 import pyarrow as pa
 import pytest
-from unittest.mock import MagicMock, patch
-
 
 # ---------------------------------------------------------------------------
 # ABC contract
@@ -80,7 +80,6 @@ class TestPyArrowFallbackAdapter:
     def test_scan_returns_record_batch_reader(self) -> None:
         """scan() should return data registered as a DuckDB table."""
         import duckdb
-
         from arrow_lake.query.lance_adapter import PyArrowFallbackAdapter
 
         table = pa.table({"a": [1, 2, 3], "b": ["x", "y", "z"]})
@@ -219,8 +218,7 @@ class TestCreateLanceScanAdapter:
 
     def test_auto_returns_native_when_available(self) -> None:
         """auto mode should return NativeLanceScanAdapter when available."""
-        from arrow_lake.query.lance_adapter import NativeLanceScanAdapter
-        from arrow_lake.query.lance_adapter import create_lance_scan_adapter
+        from arrow_lake.query.lance_adapter import NativeLanceScanAdapter, create_lance_scan_adapter
 
         mock_conn = MagicMock()
         with patch(
@@ -232,8 +230,7 @@ class TestCreateLanceScanAdapter:
 
     def test_native_mode_returns_native(self) -> None:
         """native mode should return NativeLanceScanAdapter."""
-        from arrow_lake.query.lance_adapter import NativeLanceScanAdapter
-        from arrow_lake.query.lance_adapter import create_lance_scan_adapter
+        from arrow_lake.query.lance_adapter import NativeLanceScanAdapter, create_lance_scan_adapter
 
         mock_conn = MagicMock()
         with patch(
@@ -245,8 +242,7 @@ class TestCreateLanceScanAdapter:
 
     def test_pyarrow_fallback_mode(self) -> None:
         """pyarrow_fallback mode should return PyArrowFallbackAdapter."""
-        from arrow_lake.query.lance_adapter import PyArrowFallbackAdapter
-        from arrow_lake.query.lance_adapter import create_lance_scan_adapter
+        from arrow_lake.query.lance_adapter import PyArrowFallbackAdapter, create_lance_scan_adapter
 
         mock_ds = MagicMock()
         adapter = create_lance_scan_adapter(
@@ -256,8 +252,7 @@ class TestCreateLanceScanAdapter:
 
     def test_auto_falls_back_to_pyarrow(self) -> None:
         """auto mode should fall back to PyArrowFallbackAdapter when native fails."""
-        from arrow_lake.query.lance_adapter import PyArrowFallbackAdapter
-        from arrow_lake.query.lance_adapter import create_lance_scan_adapter
+        from arrow_lake.query.lance_adapter import PyArrowFallbackAdapter, create_lance_scan_adapter
 
         mock_conn = MagicMock()
         mock_ds = MagicMock()

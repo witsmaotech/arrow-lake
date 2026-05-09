@@ -14,11 +14,12 @@ from pathlib import Path
 import pyarrow as pa
 import pytest
 from arrow_lake import Lake
+from arrow_lake.config import ArrowLakeConfig, StorageConfig
 
 
 @pytest.fixture()
 def lake(tmp_path: Path) -> Lake:
-    return Lake(base_uri=str(tmp_path / "lance_data"))
+    return Lake(base_uri=str(tmp_path / "lance_data"), config=ArrowLakeConfig(storage=StorageConfig(backend="local")))
 
 
 @pytest.fixture()
@@ -143,7 +144,7 @@ class TestFromYamlEndToEnd:
 
     def test_from_yaml_then_ingest(self, tmp_path: Path, csv_file: str) -> None:
         config_file = tmp_path / "e2e_config.yaml"
-        config_file.write_text("olap:\n  max_result_rows: 5000\n")
+        config_file.write_text("storage:\n  backend: local\nolap:\n  max_result_rows: 5000\n")
         data_dir = tmp_path / "lance_data"
         lake = Lake.from_yaml(str(config_file), base_uri=str(data_dir))
 

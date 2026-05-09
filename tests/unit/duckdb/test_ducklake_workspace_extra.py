@@ -10,12 +10,11 @@ Covers edge cases not in the primary test file:
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import duckdb
 import pytest
 from arrow_lake.query.ducklake_workspace import DuckLakeWorkspace
-
 
 # Unique table names to avoid collisions between tests
 _META_TABLE = "_test_ducklake_meta_extra"

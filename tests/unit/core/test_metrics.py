@@ -5,11 +5,8 @@ from __future__ import annotations
 import threading
 import time
 
-import pytest
-
 from arrow_lake.core.metrics import (
     REGISTRY,
-    _metrics_enabled,
     catalog_queries_total,
     catalog_tables_total,
     disable_metrics,
@@ -100,7 +97,7 @@ class TestQueryTimer:
         # Verify the counter was incremented
         samples = list(query_total.collect())
         assert len(samples) == 1
-        assert samples[0].samples[0].value == 1  # noqa: PLR2004
+        assert samples[0].samples[0].value == 1
 
     def test_timer_respects_disabled_metrics(self):
         from arrow_lake.core.metrics import _QueryTimer

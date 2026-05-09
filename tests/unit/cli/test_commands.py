@@ -17,10 +17,8 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-from click.testing import CliRunner
-
 from arrow_lake.cli import main
-
+from click.testing import CliRunner
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -47,7 +45,7 @@ def mock_lake() -> tuple[MagicMock, MagicMock]:
     may override specific attributes before invoking a command.
     """
     with patch("arrow_lake.Lake") as MockLake, \
-         patch("arrow_lake.ArrowLakeConfig") as MockConfig:
+         patch("arrow_lake.ArrowLakeConfig"):
         lake = MagicMock()
         lake.list_datasets.return_value = ["ds1", "ds2"]
         lake.ingest.return_value = _make_report(rows_ingested=3, dataset_name="ds1")

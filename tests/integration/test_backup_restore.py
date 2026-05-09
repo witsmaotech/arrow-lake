@@ -34,7 +34,7 @@ def _minio_available() -> bool:
 
 def _make_config() -> StorageConfig:
     return StorageConfig(
-        backend=StorageBackend.MINIO,
+        backend=StorageBackend.LOCAL,
         s3_endpoint=os.environ.get("S3_ENDPOINT", "http://localhost:9000"),
         s3_access_key=os.environ.get("S3_ACCESS_KEY", "minioadmin"),
         s3_secret_key=os.environ.get("S3_SECRET_KEY", "minioadmin"),

@@ -112,6 +112,7 @@ class TestDedupIntegration:
     def test_lake_deduplicate_sdk(self, storage: LanceStorageManager) -> None:
         """Lake.deduplicate() end-to-end with real Lance storage."""
         from arrow_lake import Lake
+        from arrow_lake.config import ArrowLakeConfig, StorageConfig
 
         # Create dataset
         img_a = b"image-content-a"
@@ -124,7 +125,7 @@ class TestDedupIntegration:
         )
         storage.create_dataset("dedup_test", table)
 
-        lake = Lake(base_uri=storage.base_uri)
+        lake = Lake(base_uri=storage.base_uri, config=ArrowLakeConfig(storage=StorageConfig(backend="local")))
         result = lake.deduplicate("dedup_test", strategy="exact", action="remove")
 
         assert result.unique_rows == 2

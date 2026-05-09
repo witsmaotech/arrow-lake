@@ -5,9 +5,6 @@ M0a Day 4 — ensures bridge class interfaces don't change during M0 refactoring
 
 from __future__ import annotations
 
-import inspect
-
-
 # Expected bridge class public methods.
 BRIDGE_METHODS: dict[str, list[str]] = {
     "OlapSearchBridge": ["query", "explain"],

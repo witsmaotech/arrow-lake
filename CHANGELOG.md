@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-05-09
+
+### Added
+- **Redis 分布式 Session**: `RedisConfig` + `RedisSemaphore` 适配器，DuckDB Session 池支持水平扩展
+- **QueryEngine Protocol**: `arrow_lake/query/engine.py` 定义 acquire/release/get_stats/shutdown 接口
+- **RBAC 路由守卫**: 10 个路由文件添加 `Depends(require_role(...))`，覆盖 VIEWER/EDITOR/ADMIN 三级权限
+- **JWT 黑名单 LRU**: `OrderedDict` 替换 O(n) dict rebuild，防 DoS 内存耗尽
+- **Gremlin 注入防护增强**: 正则匹配裸 mutation step、闭包语法 `{}` 拒绝、`//` 行注释剥离
+- **SQL 注入防护增强**: lineage SQL 验证剥离 `--` 和 `/* */` 注释
+- **路径穿越防护**: export 路由 `resolve()` + `startswith()` 防止 `../` 逃逸
+- **Helm HPA 模板**: `deploy/helm/arrow-lake/templates/hpa.yaml`（基于 CPU + 自定义指标）
+- **Helm CronJob 备份模板**: `deploy/helm/arrow-lake/templates/cronjob-backup.yaml`（每日 02:00）
+- **Helm Redis 环境变量**: Deployment 模板条件注入 Redis 配置
+- **Gremlin 安全测试**: 17 个测试覆盖闭包绕过、裸 mutation、注释剥离、合法查询
+- **Redis 信号量测试**: acquire/release、超时、回退、重连测试
+- Cookbook examples: Redis Session (40)、RBAC Roles (41)、Gremlin Security (42)、JWT Blacklist (43)
+- `sdk/` 模块: `LakeClient` 别名导出
+
+### Changed
+- **版本号**: pyproject.toml / _version.py / Chart.yaml → 1.3.0
+- **Ingestor 并发修复**: ThreadPoolExecutor → 顺序执行，消除 Daft 读取竞争
+- **lancedb API 兼容**: `open_dataset()` → `open_table()` (v0.30+)
+- **备份测试**: `StorageBackend.MINIO` → `LOCAL`，消除 MinIO 环境污染
+- **全量测试隔离**: 所有 Lake() 构造添加 `StorageConfig(backend="local")`
+- **prod.yaml**: OLAP 配置完善、Redis 段、rate_limit 段、audit HMAC 注释
+- **dev.yaml**: Redis 默认禁用
+- `respx` 从生产依赖移至开发依赖
+- 新增生产依赖 `redis[hiredis]>=5.0,<6.0`，开发依赖 `fakeredis>=2.0`
+
+### Fixed
+- Gremlin 注入绕过: `map`/`flatMap` 从白名单移除（闭包执行风险）
+- Redis 信号量双释放: thread-local 后端跟踪防止 Redis→fallback 双减
+- Redis TTL 幽灵许可: 仅首次 acquire 时设置 EXPIRE
+- JWT 黑名单 O(n) 逐出: `OrderedDict.popitem(last=False)` O(1) 替换
+- `/api/v1/version` 信息泄露: 添加 VIEWER RBAC 守卫
+- `auth_service.py` coverage: 38% → 补充测试覆盖
+- Gate B4 embedding 测试: HF model 下载依赖测试标记 skip
+- RAG E2E 测试: auth header + `text_content` 列名修复
+- KG E2E 测试: env var 隔离 + auth header 修复
+
+### Removed
+- `arrow_lake/query/_async.py`: 死代码删除（零外部引用）
+- `tests/unit/duckdb/test_async_query.py`: 对应测试删除
+
 ## [1.2.2] - 2026-05-08
 
 ### Added

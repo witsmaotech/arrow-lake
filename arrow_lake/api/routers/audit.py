@@ -6,7 +6,8 @@ from typing import Any
 
 from fastapi import APIRouter, Depends
 
-from arrow_lake.api.deps import get_lake
+from arrow_lake.api.auth_models import Role
+from arrow_lake.api.deps import get_lake, require_role
 from arrow_lake.api.models.audit import (
     AuditExportResponse,
     AuditQueryResponse,
@@ -26,6 +27,7 @@ async def audit_record(
     *,
     req: AuditRecordRequest,
     lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> AuditRecordResponse:
     """Record an audit event."""
     audit_id = await run_sync(
@@ -48,6 +50,7 @@ async def audit_verify(
     audit_id: str,
     *,
     lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.VIEWER)),
 ) -> AuditVerifyResponse:
     """Verify the integrity of an audit entry."""
     intact = await run_sync(
@@ -65,6 +68,7 @@ async def audit_query(
     event_type: str | None = None,
     *,
     lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.VIEWER)),
 ) -> AuditQueryResponse:
     """Query audit trail entries with optional filters."""
     entries = await run_sync(
@@ -87,6 +91,7 @@ async def audit_export(
     dataset_name: str,
     *,
     lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.ADMIN)),
 ) -> AuditExportResponse:
     """Export audit trail for a dataset."""
     result = await run_sync(

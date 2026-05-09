@@ -13,7 +13,6 @@ import sys
 import types
 from unittest.mock import MagicMock, patch
 
-import numpy as np
 import pyarrow as pa
 import pytest
 from arrow_lake.embed.encoder import LocalEmbeddingEncoder
@@ -82,7 +81,6 @@ class TestModelScopeSource:
 
     def test_modelscope_calls_snapshot_download(self) -> None:
         """_load_model with model_source='modelscope' should use snapshot_download."""
-        import types
 
         mock_model = MagicMock()
         mock_model.get_sentence_embedding_dimension.return_value = 1024

@@ -78,6 +78,7 @@ async def rag_query(
     *,
     req: RAGQueryRequest,
     lake: Any = Depends(get_lake),
+    _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> RAGQueryResponse:
     """Run a RAG query: retrieve relevant documents and generate an answer."""
     rag_resp = await lake.rag_query(
@@ -96,6 +97,7 @@ async def rag_query_stream(
     *,
     req: RAGQueryRequest,
     lake: Any = Depends(get_lake),
+    _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> StreamingResponse:
     """Stream a RAG query response via Server-Sent Events (SSE)."""
 
@@ -149,6 +151,7 @@ async def rag_extract(
     *,
     req: RAGExtractRequest,
     lake: Any = Depends(get_lake),
+    _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> RAGExtractResponse:
     """Extract entities from a dataset using RAG."""
     rag_resp = await lake.rag_extract(
@@ -161,7 +164,9 @@ async def rag_extract(
 
 
 @router.get("/templates", response_model=RAGTemplatesResponse)
-async def rag_templates() -> RAGTemplatesResponse:
+async def rag_templates(
+    _user: dict = Depends(require_role(Role.VIEWER)),
+) -> RAGTemplatesResponse:
     """List available prompt templates."""
     registry = PromptRegistry()
     templates = []

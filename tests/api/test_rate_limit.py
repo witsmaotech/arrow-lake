@@ -7,8 +7,8 @@ from httpx import ASGITransport, AsyncClient
 
 pytest.importorskip("jwt")
 
-from arrow_lake.config import ArrowLakeConfig, RateLimitConfig
 from arrow_lake.api.app import create_app
+from arrow_lake.config import ArrowLakeConfig, RateLimitConfig
 
 SECRET = "test-secret-key-min-32-chars-for-hmac!"
 
@@ -27,6 +27,7 @@ def reset_rate_limit_counters() -> None:
 def rl_config() -> ArrowLakeConfig:
     """Create a config with rate limiting enabled for testing."""
     config = ArrowLakeConfig()
+    config.api.api_key = "test-rl-key"
     config.auth.jwt_secret_key = SECRET
     config.rate_limit = RateLimitConfig(
         enabled=True,
@@ -82,7 +83,8 @@ async def test_rate_limit_config_accessible(rl_config: ArrowLakeConfig) -> None:
 @pytest.mark.asyncio
 async def test_rate_limit_returns_429(rl_app) -> None:
     """After exceeding the rate limit, should return 429 with Retry-After header."""
-    async with AsyncClient(transport=ASGITransport(app=rl_app), base_url="http://test") as ac:
+    async with AsyncClient(transport=ASGITransport(app=rl_app), base_url="http://test",
+                           headers={"X-API-Key": "test-rl-key"}) as ac:
         # Burn through the rate limit on a non-exempt endpoint
         for _ in range(3):
             resp = await ac.post("/api/v1/auth/token")
@@ -99,7 +101,8 @@ async def test_rate_limit_returns_429(rl_app) -> None:
 @pytest.mark.asyncio
 async def test_rate_limit_headers_present(rl_app) -> None:
     """Rate limit headers should be present on successful responses."""
-    async with AsyncClient(transport=ASGITransport(app=rl_app), base_url="http://test") as ac:
+    async with AsyncClient(transport=ASGITransport(app=rl_app), base_url="http://test",
+                           headers={"X-API-Key": "test-rl-key"}) as ac:
         resp = await ac.post("/api/v1/auth/token")
         assert resp.status_code == 200
         assert "X-RateLimit-Limit" in resp.headers

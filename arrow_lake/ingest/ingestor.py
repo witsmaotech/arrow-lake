@@ -7,6 +7,7 @@ Uses Daft for file reading and LanceStorageManager for writing.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -109,17 +110,11 @@ class Ingestor:
         """
         sources: list[IngestionSource] = []
 
-        def _read_one(fp: str) -> tuple[str, pa.Table]:
+        for fp in file_paths:
             p = Path(fp)
             ft = self._detect_file_type(p)
-            return fp, self._read_file(p, ft)
-
-        workers = min(len(file_paths), 4)
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            future_list = [pool.submit(_read_one, fp) for fp in file_paths]
-            for future in future_list:
-                file_path, table = future.result()
-                self._write_table(dataset_name, table, sources, file_path)
+            table = self._read_file(p, ft)
+            self._write_table(dataset_name, table, sources, fp)
 
         return self._build_report(sources)
 
@@ -495,10 +490,8 @@ class Ingestor:
                     )
                 return df.to_arrow()
             finally:
-                try:
+                with contextlib.suppress(OSError):
                     os.unlink(tmp_path)
-                except OSError:
-                    pass
         except IngestError:
             raise
         except (ImportError, OSError, ValueError) as exc:

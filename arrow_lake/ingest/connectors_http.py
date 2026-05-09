@@ -49,7 +49,7 @@ def _is_safe_hostname(hostname: str) -> bool:
         # Not an IP literal — resolve DNS and check resolved IPs
         try:
             addrs = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
-            for family, _, _, _, sockaddr in addrs:
+            for _family, _, _, _, sockaddr in addrs:
                 ip = ipaddress.ip_address(sockaddr[0])
                 if any(ip in net for net in _PRIVATE_NETWORKS):
                     return False

@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 import threading
 import uuid
+from collections import OrderedDict
 from datetime import UTC, datetime, timedelta
 
 from arrow_lake.api.auth_models import Role, TokenPayload
@@ -48,9 +49,17 @@ class AuthService:
         self._access_minutes = access_token_minutes
         self._refresh_days = refresh_token_days
         self._issuer = issuer
-        self._blacklist: dict[str, float] = {}
+        self._blacklist: OrderedDict[str, float] = OrderedDict()
         self._blacklist_lock = threading.Lock()
         self._blacklist_max_size = 100_000
+        self._redis: object | None = None
+
+        if _JWT_AVAILABLE:
+            self._validate_config()
+
+    def set_redis(self, client: object) -> None:
+        """Set an optional Redis client for persistent blacklist."""
+        self._redis = client
         if _JWT_AVAILABLE:
             self._validate_config()
 
@@ -94,16 +103,25 @@ class AuthService:
     def revoke_token(self, jti: str) -> None:
         """Add a token's jti to the blacklist."""
         now = datetime.now(UTC).timestamp()
+        ttl = self._refresh_days * 86400 + 3600
+        if self._redis is not None:
+            try:
+                self._redis.setex(f"jwt:blacklist:{jti}", ttl, "1")
+            except Exception:
+                logger.warning("Redis blacklist write failed, falling back to in-memory")
         with self._blacklist_lock:
             self._blacklist[jti] = now
-            if len(self._blacklist) > self._blacklist_max_size:
-                cutoff = now - (self._refresh_days * 86400 + 3600)
-                self._blacklist = {
-                    k: v for k, v in self._blacklist.items() if v > cutoff
-                }
+            while len(self._blacklist) > self._blacklist_max_size:
+                self._blacklist.popitem(last=False)
 
     def is_revoked(self, jti: str) -> bool:
         """Check if a token has been revoked."""
+        if self._redis is not None:
+            try:
+                if self._redis.exists(f"jwt:blacklist:{jti}"):
+                    return True
+            except Exception:
+                pass
         now = datetime.now(UTC).timestamp()
         with self._blacklist_lock:
             entry = self._blacklist.get(jti)

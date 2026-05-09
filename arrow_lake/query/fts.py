@@ -20,7 +20,12 @@ import structlog
 from arrow_lake.config import FullTextSearchConfig, StorageConfig
 from arrow_lake.config._enums import StorageBackend
 from arrow_lake.exceptions import ErrorCode, QueryError
-from arrow_lake.query._chinese_tokenizer import _JIEBA_AVAILABLE, has_cjk, segment_query, segment_text
+from arrow_lake.query._chinese_tokenizer import (
+    _JIEBA_AVAILABLE,
+    has_cjk,
+    segment_query,
+    segment_text,
+)
 
 _log = structlog.get_logger(__name__)
 

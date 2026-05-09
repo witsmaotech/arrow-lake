@@ -3,18 +3,20 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pyarrow as pa
 import pytest
 
 pytest.importorskip("lance", reason="lance not installed")
 from arrow_lake import Lake
+from arrow_lake.config import ArrowLakeConfig, StorageBackend
 
 
 @pytest.fixture()
 def lake(tmp_path: Path) -> Lake:
-    return Lake(base_uri=str(tmp_path / "lance_data"))
+    config = ArrowLakeConfig()
+    config.storage.backend = StorageBackend.LOCAL
+    return Lake(base_uri=str(tmp_path / "lance_data"), config=config)
 
 
 @pytest.fixture()

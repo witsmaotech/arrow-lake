@@ -1,6 +1,5 @@
 """Tests for Gremlin injection prevention (Round 4 — C1 fix)."""
 
-import pytest
 
 from arrow_lake.knowledge_graph.client import _BLOCKED_GREMLIN_PATTERNS
 

@@ -4,10 +4,8 @@ from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
-
 from arrow_lake.exceptions import DocumentError, ErrorCode
 from arrow_lake.ingest.ocr import TurboOcrClient, TurboOcrResult, _CircuitBreaker
-
 
 # ---------------------------------------------------------------------------
 # Circuit breaker tests (no HTTP — pure logic)

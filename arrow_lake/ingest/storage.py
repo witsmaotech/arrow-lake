@@ -191,7 +191,6 @@ class LanceStorageManager(
         Raises:
             StorageError: If dataset cannot be opened.
         """
-        import lancedb
 
         name = Path(path).stem
         if not self.dataset_exists(name):

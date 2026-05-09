@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from click.testing import CliRunner
-
 from arrow_lake.cli import main
+from click.testing import CliRunner
 
 
 class TestCLIMultimodalDemo:

@@ -1,6 +1,5 @@
 """Tests for prompt injection sanitization (Round 4 — H4 fix)."""
 
-import pytest
 
 from arrow_lake.rag.pipeline import PROMPT_INJECTION_RE
 

@@ -6,7 +6,8 @@ from dataclasses import asdict
 
 from fastapi import APIRouter, Depends, Path
 
-from arrow_lake.api.deps import get_lake
+from arrow_lake.api.auth_models import Role
+from arrow_lake.api.deps import get_lake, require_role
 from arrow_lake.api.models.common import _NAME_PATTERN
 from arrow_lake.api.models.embedding import (
     EmbeddingResponse,
@@ -36,6 +37,7 @@ async def create_vector_index(
     *,
     req: VectorIndexRequest,
     lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> VectorIndexResponse:
     """Create a vector index on a dataset."""
     info = await run_sync(
@@ -64,6 +66,7 @@ async def create_fts_index(
     *,
     req: FtsIndexRequest,
     lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> FtsIndexResponse:
     """Create a full-text search index on a dataset."""
     await run_sync(
@@ -76,7 +79,10 @@ async def create_fts_index(
 
 
 @embed_router.post("/text", response_model=EmbeddingResponse)
-async def embed_text(req: TextEmbedRequest) -> EmbeddingResponse:
+async def embed_text(
+    req: TextEmbedRequest,
+    _user: dict = Depends(require_role(Role.EDITOR)),
+) -> EmbeddingResponse:
     """Compute text embeddings using local model or external API."""
     import numpy as np
     import pyarrow as pa
@@ -147,7 +153,10 @@ async def embed_text(req: TextEmbedRequest) -> EmbeddingResponse:
 
 
 @embed_router.post("/image", response_model=EmbeddingResponse)
-async def embed_image(req: ImageEmbedRequest) -> EmbeddingResponse:
+async def embed_image(
+    req: ImageEmbedRequest,
+    _user: dict = Depends(require_role(Role.EDITOR)),
+) -> EmbeddingResponse:
     """Compute image embeddings using a CLIP/SigLIP model."""
     import base64
 

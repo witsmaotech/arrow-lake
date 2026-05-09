@@ -1,10 +1,11 @@
 """Tests for upsert, delete_rows, update_rows on LanceStorageManager."""
 from __future__ import annotations
-from unittest.mock import MagicMock, patch
-import pytest
-import pyarrow as pa
 
-from arrow_lake.exceptions import ErrorCode, StorageError
+from unittest.mock import MagicMock, patch
+
+import pyarrow as pa
+import pytest
+from arrow_lake.exceptions import StorageError
 from arrow_lake.ingest.storage import LanceStorageManager
 
 

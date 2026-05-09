@@ -6,6 +6,7 @@ session-scoped test data that is created once and cleaned up after all tests.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import subprocess
@@ -18,12 +19,12 @@ import pytest
 # ---------------------------------------------------------------------------
 
 API_BASE = os.getenv("ARROW_LAKE_API_URL", "http://localhost:8000")
-API_KEY = os.getenv("ARROW_LAKE_API_KEY", "dev-api-key-for-testing")
+API_KEY = os.getenv("ARROW_LAKE_API_KEY", "dev-api-key-for-local-testing-only")
 DATASET_NAME = "smoke-test"
 
 # External services
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://192.168.101.131:11434")
-HUGEGRAPH_URL = os.getenv("HUGEGRAPH_URL", "http://localhost:8091")
+HUGEGRAPH_URL = os.getenv("HUGEGRAPH_URL", "http://localhost:8089")
 
 # Default timeout for API calls (seconds)
 API_TIMEOUT = 60
@@ -160,10 +161,8 @@ def test_data(client: httpx.Client) -> str:
         pytest.fail(f"Failed to write test data to container: {result.stderr.decode()}")
 
     # Clean up any leftover dataset from previous runs
-    try:
+    with contextlib.suppress(Exception):
         client.delete(f"/api/v1/datasets/{DATASET_NAME}")
-    except Exception:
-        pass
 
     # Ingest
     resp = client.post(
@@ -178,10 +177,8 @@ def test_data(client: httpx.Client) -> str:
     yield DATASET_NAME
 
     # Cleanup: delete the dataset
-    try:
+    with contextlib.suppress(Exception):
         client.delete(f"/api/v1/datasets/{DATASET_NAME}")
-    except Exception:
-        pass
 
 
 @pytest.fixture(scope="session")
@@ -225,7 +222,7 @@ def embedded_data(client: httpx.Client, test_data: str) -> str:
     emb_jsonl_path = f"/tmp/{test_data}-embedded.jsonl"
 
     lines = []
-    for row, emb in zip(rows, all_embeddings):
+    for row, emb in zip(rows, all_embeddings, strict=False):
         obj = {
             "text_content": row.get("text_content", ""),
             "source": row.get("source", ""),
@@ -281,10 +278,8 @@ def kg_test_data(client: httpx.Client) -> str:
     jsonl_content = "\n".join(lines)
 
     # Clean up leftover
-    try:
+    with contextlib.suppress(Exception):
         client.delete(f"/api/v1/datasets/{name}")
-    except Exception:
-        pass
 
     result = subprocess.run(
         ["docker", "exec", "-i", container, "sh", "-c", f"cat > {jsonl_path}"],
@@ -304,7 +299,5 @@ def kg_test_data(client: httpx.Client) -> str:
 
     yield name
 
-    try:
+    with contextlib.suppress(Exception):
         client.delete(f"/api/v1/datasets/{name}")
-    except Exception:
-        pass

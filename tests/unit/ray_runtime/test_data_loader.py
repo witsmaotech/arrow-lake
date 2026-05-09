@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import pytest
-
 from arrow_lake.ray_runtime.data_loader import PrefetchConfig
-
 
 # ---------------------------------------------------------------------------
 # PrefetchConfig

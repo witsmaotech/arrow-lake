@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from typing import Any
 
@@ -27,8 +28,43 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/kg", tags=["kg"])
 
-# Forbidden Gremlin operations that must never be accepted from user input.
-_FORBIDDEN_PATTERNS = [".drop()", ".addV(", ".addE(", ".property(", ".remove(", ".delete("]
+# Whitelist of allowed Gremlin traversal steps (read-only, no mutation).
+_ALLOWED_GREMLIN_STEPS = frozenset({
+    "traversal",
+    "V", "E", "has", "hasLabel", "hasId", "hasNot",
+    "out", "in", "both", "outE", "inE", "bothE", "outV", "inV",
+    "values", "valueMap", "elementMap", "properties",
+    "count", "limit", "range", "order", "by",
+    "select", "as", "where", "path", "dedup",
+    "group", "groupCount", "project", "union", "fold",
+    "sum", "mean", "max", "min",
+    "id", "label", "constant",
+    "repeat", "simplePath", "times", "until", "emit", "loops",
+    "cyclicPath", "is", "not", "coin", "sample",
+})
+
+_GREMLIN_STEP_RE = re.compile(r"\.\s*(\w+)\s*\(")
+
+
+_COMMENT_RE = re.compile(r"//[^\n]*|/\*.*?\*/", re.DOTALL)
+
+_FORBIDDEN_BARE_RE = re.compile(
+    r"\.\s*drop\b|\.\s*addV\b|\.\s*addE\b|\.\s*property\b|\.\s*remove\b|\.\s*delete\b",
+    re.IGNORECASE,
+)
+
+
+def _validate_gremlin(query: str) -> None:
+    """Validate that a Gremlin query only uses whitelisted steps."""
+    cleaned = _COMMENT_RE.sub("", query)
+    if "{" in cleaned or "}" in cleaned:
+        raise HTTPException(status_code=400, detail="Closure syntax not allowed in Gremlin queries")
+    if _FORBIDDEN_BARE_RE.search(cleaned):
+        raise HTTPException(status_code=400, detail="Mutation steps are forbidden in Gremlin queries")
+    for match in _GREMLIN_STEP_RE.finditer(cleaned):
+        step = match.group(1)
+        if step not in _ALLOWED_GREMLIN_STEPS:
+            raise HTTPException(status_code=400, detail=f"Forbidden Gremlin step: {step}")
 
 
 # ---------------------------------------------------------------------------
@@ -76,6 +112,7 @@ async def kg_build(
 async def kg_build_status(
     task_id: str,
     lake: Any = Depends(get_lake),
+    _user: dict = Depends(require_role(Role.VIEWER)),
 ) -> KGBuildStatusResponse:
     """Get the status of a KG build task."""
     try:
@@ -99,6 +136,7 @@ async def kg_build_status(
 @router.get("/schema", response_model=KGSchemaResponse)
 async def kg_schema(
     lake: Any = Depends(get_lake),
+    _user: dict = Depends(require_role(Role.VIEWER)),
 ) -> KGSchemaResponse:
     """Get the graph schema (vertex and edge labels)."""
     try:
@@ -122,9 +160,7 @@ async def kg_query(
 ) -> KGQueryResponse:
     """Execute a Gremlin query against the knowledge graph."""
     # Block dangerous mutating operations before forwarding to the graph.
-    for pattern in _FORBIDDEN_PATTERNS:
-        if pattern.lower() in req.gremlin.lower():
-            raise HTTPException(status_code=400, detail=f"Forbidden Gremlin operation: {pattern}")
+    _validate_gremlin(req.gremlin)
 
     try:
         t0 = time.perf_counter()
@@ -140,6 +176,7 @@ async def kg_neighbors(
     entity_id: str,
     depth: int = 1,
     lake: Any = Depends(get_lake),
+    _user: dict = Depends(require_role(Role.VIEWER)),
 ) -> KGNeighborsResponse:
     """Get neighbor vertices of a given entity."""
     if depth > 5:
@@ -158,6 +195,7 @@ async def kg_neighbors(
 @router.get("/stats", response_model=KGStatsResponse)
 async def kg_stats(
     lake: Any = Depends(get_lake),
+    _user: dict = Depends(require_role(Role.VIEWER)),
 ) -> KGStatsResponse:
     """Get knowledge graph statistics."""
     try:

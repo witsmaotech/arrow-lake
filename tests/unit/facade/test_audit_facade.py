@@ -16,7 +16,7 @@ def lake(tmp_path: Path) -> Lake:
 
 class TestAuditRecord:
     def test_audit_record_returns_id(self, lake: Lake) -> None:
-        table = MagicMock()
+        MagicMock()
         with patch("arrow_lake.workflow.audit.AuditTrail") as mock_trail:
             mock_trail.return_value.record.return_value = "audit_123"
             result = lake.audit_record("ingest", dataset_name="ds1", actor="user1")

@@ -43,7 +43,7 @@ def _mock_llm_provider(response_text: str = "Answer") -> MagicMock:
 def _mock_retriever():
     """Return a mock retriever that yields an empty table."""
     table = pa.table({
-        "text": ["Document content"],
+        "text_content": ["Document content"],
         "row_id": ["r1"],
         "_score": [0.9],
     })

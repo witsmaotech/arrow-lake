@@ -6,6 +6,17 @@ from arrow_lake.cli import main
 from click.testing import CliRunner
 
 
+def _make_local_runner(tmp_path):
+    """Create a CliRunner that forces LOCAL storage backend."""
+    import os
+
+    env = dict(os.environ)
+    env["ARROW_LAKE__STORAGE__BACKEND"] = "local"
+    env["ARROW_LAKE__STORAGE__S3_ACCESS_KEY"] = ""
+    env["ARROW_LAKE__STORAGE__S3_SECRET_KEY"] = ""
+    return CliRunner(env=env)
+
+
 class TestCLIHelp:
     """Test CLI help and top-level commands."""
 
@@ -72,7 +83,7 @@ class TestCLIStatus:
     """Test status command (alias for catalog list)."""
 
     def test_status_empty_lake(self, tmp_path) -> None:
-        runner = CliRunner()
+        runner = _make_local_runner(tmp_path)
         result = runner.invoke(main, ["--base-uri", str(tmp_path), "status"])
         assert result.exit_code == 0
         assert "No datasets" in result.output
@@ -85,7 +96,7 @@ class TestCLIStatus:
         table = pa.table({"id": ["1", "2"], "text_content": ["hello", "world"]})
         storage.create_dataset("test_ds", table)
 
-        runner = CliRunner()
+        runner = _make_local_runner(tmp_path)
         result = runner.invoke(main, ["--base-uri", str(tmp_path), "status"])
         assert result.exit_code == 0
         assert "test_ds" in result.output
@@ -95,7 +106,7 @@ class TestCLICatalog:
     """Test catalog commands."""
 
     def test_catalog_list_empty(self, tmp_path) -> None:
-        runner = CliRunner()
+        runner = _make_local_runner(tmp_path)
         result = runner.invoke(main, ["--base-uri", str(tmp_path), "catalog", "list"])
         assert result.exit_code == 0
         assert "No datasets" in result.output
@@ -108,7 +119,7 @@ class TestCLICatalog:
         table = pa.table({"id": ["1", "2"], "text_content": ["hello", "world"]})
         storage.create_dataset("info_ds", table)
 
-        runner = CliRunner()
+        runner = _make_local_runner(tmp_path)
         result = runner.invoke(main, ["--base-uri", str(tmp_path), "catalog", "info", "info_ds"])
         assert result.exit_code == 0
         assert "info_ds" in result.output
@@ -122,8 +133,8 @@ class TestCLICatalog:
         table = pa.table({"id": ["1"], "text_content": ["hello"]})
         storage.create_dataset("del_ds", table)
 
-        runner = CliRunner()
-        result = runner.invoke(main, ["--base-uri", str(tmp_path), "catalog", "delete", "del_ds"], input="n\n")
+        runner = _make_local_runner(tmp_path)
+        runner.invoke(main, ["--base-uri", str(tmp_path), "catalog", "delete", "del_ds"], input="n\n")
         assert "del_ds" in runner.invoke(main, ["--base-uri", str(tmp_path), "catalog", "list"]).output
 
 
@@ -131,7 +142,7 @@ class TestCLIIngest:
     """Test ingest commands."""
 
     def test_ingest_files_missing_source(self, tmp_path) -> None:
-        runner = CliRunner()
+        runner = _make_local_runner(tmp_path)
         result = runner.invoke(
             main,
             ["--base-uri", str(tmp_path), "ingest", "files", "my_data", "/nonexistent/path.csv"],
@@ -142,7 +153,7 @@ class TestCLIIngest:
         source_csv = tmp_path / "source.csv"
         source_csv.write_text("id,text\n1,hello\n2,world\n")
 
-        runner = CliRunner()
+        runner = _make_local_runner(tmp_path)
         result = runner.invoke(
             main,
             ["--base-uri", str(tmp_path), "ingest", "files", "ingested", str(source_csv)],

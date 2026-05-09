@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from prometheus_client import Histogram
-
 from arrow_lake.core.metrics import (
+    REGISTRY,
     auth_requests_total,
     http_request_duration_seconds,
     query_latency_seconds,
-    REGISTRY,
 )
+from prometheus_client import Histogram
 
 
 def test_query_latency_is_histogram() -> None:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import tempfile
 
-from arrow_lake.ingest.dead_letter import DLQStatus, DeadLetterItem, IngestDeadLetterQueue
+from arrow_lake.ingest.dead_letter import DeadLetterItem, DLQStatus, IngestDeadLetterQueue
 
 
 class TestDeadLetterItem:

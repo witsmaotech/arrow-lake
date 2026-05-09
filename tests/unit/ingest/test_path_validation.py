@@ -2,8 +2,6 @@
 
 from pathlib import Path
 
-import pytest
-
 
 def _sanitize_stem(path: Path) -> str:
     """Replicate the inline sanitization logic from Ingestor.ingest_documents."""

@@ -4,8 +4,6 @@ from __future__ import annotations
 import time
 from unittest.mock import MagicMock
 
-import pytest
-
 from arrow_lake._lake_admin import _LakeAdminMixin
 from arrow_lake.config import ArrowLakeConfig
 

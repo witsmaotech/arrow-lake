@@ -6,11 +6,10 @@ from dataclasses import dataclass
 from unittest.mock import MagicMock
 
 import pytest
+from arrow_lake.api.app import create_app
+from arrow_lake.config import ArrowLakeConfig
 from httpx import ASGITransport, AsyncClient
 from pyarrow import Table as PaTable
-
-from arrow_lake.api.app import create_app
-
 
 # ---------------------------------------------------------------------------
 # Fake result types matching SDK dataclass shapes
@@ -108,9 +107,16 @@ def mock_lake() -> MagicMock:
 
 @pytest.fixture
 async def client(mock_lake: MagicMock) -> AsyncClient:
-    app = create_app()
+    config = ArrowLakeConfig()
+    config.api.api_key = "test-api-key"
+    config.api.docs_enabled = False
+    app = create_app(config=config)
     app.state.lake = mock_lake
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"X-API-Key": "test-api-key"},
+    ) as ac:
         yield ac
 
 

@@ -30,12 +30,12 @@ def _mock_rag_response(
 
 
 def _create_client() -> TestClient:
-    """Create a test client with mocked Lake and auth disabled."""
+    """Create a test client with mocked Lake and API key auth."""
     from arrow_lake.api.app import create_app
 
+    _TEST_KEY = "test-api-key-for-rag-tests"
     config = ArrowLakeConfig()
-    config.api.enabled = False
-    config.api.api_key = ""
+    config.api.api_key = _TEST_KEY
     app = create_app(config=config)
 
     # Mock the lake
@@ -44,7 +44,7 @@ def _create_client() -> TestClient:
     mock_lake.rag_extract = AsyncMock(return_value=_mock_rag_response("Entities found"))
     app.state.lake = mock_lake
 
-    return TestClient(app)
+    return TestClient(app, headers={"X-API-Key": _TEST_KEY})
 
 
 # ---------------------------------------------------------------------------
@@ -106,9 +106,9 @@ class TestRAGStreamEndpoint:
     def client(self) -> TestClient:
         from arrow_lake.api.app import create_app
 
+        _KEY = "test-api-key-for-stream"
         config = ArrowLakeConfig()
-        config.api.enabled = False
-        config.api.api_key = ""
+        config.api.api_key = _KEY
         app = create_app(config=config)
 
         mock_lake = MagicMock()
@@ -120,7 +120,7 @@ class TestRAGStreamEndpoint:
         mock_lake.rag_query_stream = mock_stream
         app.state.lake = mock_lake
 
-        return TestClient(app)
+        return TestClient(app, headers={"X-API-Key": _KEY})
 
     def test_stream_returns_sse(self, client: TestClient) -> None:
         resp = client.post(
@@ -148,9 +148,9 @@ class TestRAGStreamEndpoint:
     def test_stream_error_yields_error_event(self) -> None:
         from arrow_lake.api.app import create_app
 
+        _KEY = "test-api-key-for-stream"
         config = ArrowLakeConfig()
-        config.api.enabled = False
-        config.api.api_key = ""
+        config.api.api_key = _KEY
         app = create_app(config=config)
 
         mock_lake = MagicMock()
@@ -162,7 +162,7 @@ class TestRAGStreamEndpoint:
         mock_lake.rag_query_stream = mock_stream_fail
         app.state.lake = mock_lake
 
-        client = TestClient(app)
+        client = TestClient(app, headers={"X-API-Key": _KEY})
         resp = client.post(
             "/api/v1/rag/query/stream",
             json={"question": "Q", "dataset_name": "docs"},
@@ -176,9 +176,9 @@ class TestRAGStreamEndpoint:
     def test_stream_empty_response(self) -> None:
         from arrow_lake.api.app import create_app
 
+        _KEY = "test-api-key-for-stream"
         config = ArrowLakeConfig()
-        config.api.enabled = False
-        config.api.api_key = ""
+        config.api.api_key = _KEY
         app = create_app(config=config)
 
         mock_lake = MagicMock()
@@ -190,7 +190,7 @@ class TestRAGStreamEndpoint:
         mock_lake.rag_query_stream = mock_stream_empty
         app.state.lake = mock_lake
 
-        client = TestClient(app)
+        client = TestClient(app, headers={"X-API-Key": _KEY})
         resp = client.post(
             "/api/v1/rag/query/stream",
             json={"question": "Q", "dataset_name": "docs"},

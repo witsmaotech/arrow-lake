@@ -6,15 +6,13 @@ from unittest.mock import MagicMock, patch
 
 import pyarrow as pa
 import pytest
-
-from arrow_lake.exceptions import ErrorCode, RayRuntimeError
+from arrow_lake.exceptions import RayRuntimeError
 from arrow_lake.ray_runtime.distributed import (
     AutoScaleConfig,
     ProcessingResult,
     _partition_table,
     foreach,
 )
-
 
 # ---------------------------------------------------------------------------
 # ProcessingResult

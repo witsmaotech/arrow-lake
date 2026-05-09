@@ -8,12 +8,8 @@ from __future__ import annotations
 import os
 from unittest.mock import patch
 
-import duckdb
 import pytest
-
 from arrow_lake.exceptions import ArrowLakeError, ErrorCode
-
-
 
 # ---------------------------------------------------------------------------
 # DuckDBSession class-based API
@@ -81,7 +77,7 @@ class TestDuckDBSessionInit:
         from arrow_lake.query._db import DuckDBSession
 
         session = DuckDBSession()
-        with session as conn:
+        with session:
             pass
         # After exit, the session's internal conn should be None
         assert session._conn is None
@@ -107,10 +103,8 @@ class TestExtensionLoading:
                 ErrorCode.LANCE_EXTENSION_ERROR,
                 "Failed to load lance extension: boom",
             ),
-        ):
-            with pytest.raises(ArrowLakeError, match="lance"):
-                with session:
-                    pass
+        ), pytest.raises(ArrowLakeError, match="lance"), session:
+            pass
 
     def test_ducklake_load_failure_raises_arrow_lake_error(self) -> None:
         """If ducklake extension fails to load, should raise ArrowLakeError."""
@@ -124,10 +118,8 @@ class TestExtensionLoading:
                 ErrorCode.DUCKLAKE_EXTENSION_ERROR,
                 "Failed to load ducklake extension: boom",
             ),
-        ):
-            with pytest.raises(ArrowLakeError, match="ducklake"):
-                with session:
-                    pass
+        ), pytest.raises(ArrowLakeError, match="ducklake"), session:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -152,7 +144,7 @@ class TestDuckDBSessionS3Config:
         )
         with DuckDBSession(storage_config=config) as conn:
             result = conn.execute("SELECT current_setting('s3_region')").fetchone()[0]
-            assert "us-east-1" == result
+            assert result == "us-east-1"
 
     def test_s3_config_skipped_when_local(self) -> None:
         """When backend=local, no S3 config should be applied."""
@@ -181,7 +173,7 @@ class TestCreateDuckDBSession:
 
     def test_factory_passes_config(self) -> None:
         """Factory should pass OlapConfig settings through."""
-        from arrow_lake.query._db import DuckDBSession, create_duckdb_session
+        from arrow_lake.query._db import create_duckdb_session
 
         session = create_duckdb_session(max_memory_mb=1024)
         with session as conn:

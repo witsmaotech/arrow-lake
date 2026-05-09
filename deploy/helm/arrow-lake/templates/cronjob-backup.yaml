@@ -1,0 +1,56 @@
+{{- if .Values.backup.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "arrow-lake.fullname" . }}-backup
+  labels:
+    {{- include "arrow-lake.labels" . | nindent 4 }}
+    component: backup
+spec:
+  schedule: {{ .Values.backup.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: {{ .Values.backup.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.backup.failedJobsHistoryLimit }}
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            {{- include "arrow-lake.selectorLabels" . | nindent 12 }}
+            component: backup
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: backup
+              image: "{{ .Values.backup.image.repository }}:{{ .Values.backup.image.tag }}"
+              imagePullPolicy: {{ .Values.backup.image.pullPolicy }}
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  echo "Starting backup at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+                  HTTP_CODE=$(curl -s -o /tmp/backup-response.json -w "%{http_code}" \
+                    -X POST \
+                    -H "X-API-Key: ${BACKUP_API_KEY}" \
+                    -H "Content-Type: application/json" \
+                    -d '{"dataset_names": null}' \
+                    "http://{{ include "arrow-lake.fullname" . }}-api:8000/api/v1/backup/create")
+                  echo "Backup API response: HTTP $HTTP_CODE"
+                  cat /tmp/backup-response.json
+                  if [ "$HTTP_CODE" -ge 400 ]; then
+                    echo "Backup failed with HTTP $HTTP_CODE"
+                    exit 1
+                  fi
+                  echo "Backup completed at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+              env:
+                - name: BACKUP_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.backup.apiKeySecret.name }}
+                      key: {{ .Values.backup.apiKeySecret.key }}
+          {{- with .Values.backup.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}

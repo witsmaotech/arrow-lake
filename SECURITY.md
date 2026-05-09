@@ -16,43 +16,108 @@ responsibly.
 ### Authentication
 
 - **API Key**: `X-API-Key` header for service-to-service auth
-- **JWT**: `Authorization: Bearer <token>` for user sessions
-- **Rate Limiting**: Enabled by default via built-in RateLimitMiddleware (configurable)
+- **JWT**: `Authorization: Bearer <token>` for user sessions, blacklisted tokens persisted to Redis
+- **Rate Limiting**: Per-IP rate limiting with configurable RPM/burst (default 60 RPM)
+
+### Authorization (RBAC)
+
+Three-tier role model enforced on all API endpoints:
+
+| Role | Capabilities |
+|------|-------------|
+| **VIEWER** | Read data, query datasets, search, view stats/schema/lineage |
+| **EDITOR** | Ingest data, create indexes, modify data quality, export |
+| **ADMIN** | Build/delete knowledge graphs, backup/restore, manage users |
+
+Roles are enforced via `Depends(require_role(...))` on 15 router modules covering 40+ endpoints.
+
+### Audit Trail Integrity
+
+- **HMAC-SHA256**: Every audit entry is signed with a server-side secret
+- **Startup enforcement**: `audit.enabled=true` without `hmac_secret_key` raises `ValueError`
+- **Tamper detection**: `POST /api/v1/audit/verify` uses constant-time comparison
+- **Production config**: `audit.hmac_secret_key` must be set via environment variable
 
 ### Data Protection
 
 - S3/MinIO credentials: passed via `ArrowLakeConfig`, never hardcoded
 - JWT secret: minimum 32 bytes, validated at startup
-- SQL injection: centralized validation in `arrow_lake/validation.py`
+- SQL injection: centralized validation with comment stripping (`--`, `/* */`)
+- Path traversal: `resolve()` + `startswith()` guard on all file operations
 
-### Transport
+### Transport Security
 
-- REST API: TLS should be enabled in production via uvicorn (`--ssl-keyfile`/`--ssl-certfile`) or a reverse proxy (nginx/Caddy). See `api.tls_enabled` for configuration flag.
-- CORS: configurable via `api.cors_origins`
+- REST API: TLS configurable via `api.tls_enabled` + Helm TLS volume mount
+- CORS: configurable via `api.cors_origins` (empty = disabled in production)
 - Request size limits: configurable via `api.max_request_size_mb`
+- Security headers: `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Content-Security-Policy`
 
 ## Security Headers (Production)
 
 ```
+Strict-Transport-Security: max-age=31536000; includeSubDomains
 X-Content-Type-Options: nosniff
 X-Frame-Options: DENY
 Referrer-Policy: strict-origin-when-cross-origin
+Content-Security-Policy: default-src 'none'; frame-ancestors 'none'
 ```
+
+## Input Validation
+
+### Gremlin Query Safety
+
+Multi-layer defense against Gremlin/Groovy injection:
+
+1. **Whitelist**: Only read-only traversal steps allowed (V, E, has, out, in, count, etc.)
+2. **Closure blocking**: `{` and `}` characters rejected (prevents Groovy closure execution)
+3. **Bare mutation detection**: Regex blocks `drop`, `addV`, `addE`, `property`, `remove`, `delete` without parentheses
+4. **Comment stripping**: `//` line comments and `/* */` block comments stripped before validation
+5. **Map/flatMap**: Excluded from whitelist (closure execution risk)
+
+### SQL Validation
+
+- Comment stripping (`--` and `/* */`) before validation
+- Dangerous keyword detection (DROP, DELETE, INSERT, UPDATE, ALTER, CREATE)
+- Parameterized queries via DuckDB
+
+### Path Traversal Prevention
+
+- Export endpoint: absolute paths rejected, `resolve()` + `startswith()` bounds check
+- File operations: `os.path.basename` + extension whitelist
 
 ## Dependency Security
 
-Dependencies are audited periodically. To run a security check:
+Dependencies are audited periodically. To run security checks:
 
 ```bash
+# Bandit — Python security linter
+bandit -r arrow_lake/
+
+# pip-audit — known vulnerability database
 pip-audit .
 ```
+
+## Security Checklist (Production)
+
+- [ ] `api.tls_enabled: true` with valid TLS certificate
+- [ ] `audit.hmac_secret_key` set via `ARROW_LAKE__AUDIT__HMAC_SECRET_KEY`
+- [ ] `redis.ssl: true` for distributed session coordination
+- [ ] `rate_limit.enabled: true` with appropriate RPM/burst
+- [ ] `api.docs_enabled: false` (disable Swagger UI)
+- [ ] `api.cors_origins: []` (restrict CORS)
+- [ ] JWT secret ≥ 32 bytes, rotated regularly
+- [ ] API key changed from default `dev-api-key-for-local-testing-only`
+- [ ] NetworkPolicy enabled in Helm values
+- [ ] `securityContext` configured (runAsNonRoot, readOnlyRootFilesystem, drop ALL capabilities)
 
 ## Known Security Considerations
 
 | Component | Risk | Mitigation |
-|-----------|-------|------------|
-| Gremlin queries | Injection | Blocked patterns + parameterized mode |
-| S3 credentials | Exposure | Config-only, never env direct injection |
-| DuckDB SQL | Injection | Centralized validation + LIMIT pushdown |
-| File uploads | Path traversal | `os.path.basename` + whitelist |
+|-----------|------|------------|
+| Gremlin queries | Injection | Whitelist + closure blocking + comment stripping + bare mutation regex |
+| DuckDB SQL | Injection | Comment stripping + keyword blocklist + LIMIT pushdown |
+| File exports | Path traversal | Absolute path rejection + `resolve()` bounds check |
+| JWT tokens | Revocation | Blacklist with Redis persistence + O(1) LRU eviction |
+| S3 credentials | Exposure | Config-only, never hardcoded |
 | RAG prompts | Injection | Input sanitization in pipeline |
+| Audit log | Tampering | HMAC-SHA256 + startup enforcement + constant-time verify |

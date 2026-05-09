@@ -6,7 +6,6 @@ from dataclasses import asdict
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from arrow_lake.ray_runtime.cluster import (
     RayClusterInfo,
     RayResources,
@@ -15,7 +14,6 @@ from arrow_lake.ray_runtime.cluster import (
     initialize_ray,
     shutdown_ray,
 )
-
 
 # ---------------------------------------------------------------------------
 # RayResources

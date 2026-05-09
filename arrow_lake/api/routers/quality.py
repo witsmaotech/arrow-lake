@@ -6,7 +6,8 @@ from dataclasses import asdict
 
 from fastapi import APIRouter, Depends, Path
 
-from arrow_lake.api.deps import get_lake
+from arrow_lake.api.auth_models import Role
+from arrow_lake.api.deps import get_lake, require_role
 from arrow_lake.api.models.common import _NAME_PATTERN, arrow_table_to_response
 from arrow_lake.api.models.quality import (
     DedupRequest,
@@ -28,6 +29,7 @@ async def quality_filter(
     *,
     req: QualityFilterRequest,
     lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> QualityFilterResponse:
     """Run quality filters on a dataset."""
     report = await run_sync(
@@ -42,6 +44,7 @@ async def quality_report(
     name: str = Path(..., pattern=_NAME_PATTERN),
     *,
     lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.VIEWER)),
 ) -> QualityReportResponse:
     """Get quality report for a dataset (runs filters with default config)."""
     report = await run_sync(
@@ -57,6 +60,7 @@ async def deduplicate(
     *,
     req: DedupRequest,
     lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> DedupResponse:
     """Run content deduplication on a dataset."""
     report = await run_sync(

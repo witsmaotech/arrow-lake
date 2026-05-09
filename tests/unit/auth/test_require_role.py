@@ -5,11 +5,9 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
-from fastapi import HTTPException
-from fastapi.testclient import TestClient
-
-from arrow_lake.api.deps import require_role
 from arrow_lake.api.auth_models import Role, TokenPayload
+from arrow_lake.api.deps import require_role
+from fastapi import HTTPException
 
 
 def _mock_request(*, has_auth_service: bool = False, allow_unauth: bool = False):

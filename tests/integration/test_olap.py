@@ -325,8 +325,9 @@ class TestLakeSDK:
         tmp_path: Path,
     ) -> None:
         from arrow_lake import Lake
+        from arrow_lake.config import ArrowLakeConfig, StorageConfig
 
-        lake = Lake(base_uri=str(tmp_path / "lance_data"))
+        lake = Lake(base_uri=str(tmp_path / "lance_data"), config=ArrowLakeConfig(storage=StorageConfig(backend="local")))
         result = lake.olap_query(
             ds_olap, "SELECT category, COUNT(*) as cnt FROM olap_ds GROUP BY category"
         )

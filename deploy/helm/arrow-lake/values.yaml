@@ -3,7 +3,7 @@
 apiServer:
   image:
     repository: arrow-lake
-    tag: latest
+    tag: "1.3.0"
     pullPolicy: IfNotPresent
   replicaCount: 1
   resources:
@@ -18,6 +18,50 @@ apiServer:
   healthPath: "/health"
   healthLivePath: "/health/live"
   healthReadyPath: "/health/ready"
+  # Horizontal Pod Autoscaler — requires Redis for distributed semaphore
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop:
+        - ALL
+  tls:
+    enabled: false
+    secretName: arrow-lake-tls
+  tolerations: []
+  nodeSelector: {}
+
+# Ingress
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts: []
+  #  - host: arrow-lake.example.com
+  #    paths:
+  #      - path: /
+  #        pathType: Prefix
+  tls: []
+  #  - secretName: arrow-lake-tls
+  #    hosts:
+  #      - arrow-lake.example.com
+
+# Pod Disruption Budget
+pdb:
+  enabled: false
+  minAvailable: 1
+  # maxUnavailable: 1
 
 # Ray cluster configuration (delegated to ray-project/ray chart)
 ray:
@@ -48,6 +92,13 @@ storage:
   bucket: "arrow-lake"
   region: "us-east-1"
 
+# Redis — distributed session coordination
+redis:
+  enabled: true
+  url: "redis://redis:6379/0"
+  password: ""  # Set via ARROW_LAKE__REDIS__PASSWORD or secret
+  ssl: false
+
 # Observability
 observability:
   metricsEnabled: "true"
@@ -57,7 +108,7 @@ observability:
 
 # Network policy
 networkPolicy:
-  enabled: false
+  enabled: true
   allowExternal: false
 
 # Prometheus alerting rules
@@ -70,3 +121,25 @@ slo:
   p99_latency_seconds: 5.0
   error_budget_pct: 0.1
   uptime_pct: 99.9
+
+# Automated backups
+backup:
+  enabled: false
+  schedule: "0 2 * * *"  # Daily at 02:00 UTC
+  image:
+    repository: curlimages/curl
+    tag: "8.12.1"
+    pullPolicy: IfNotPresent
+  apiKeySecret:
+    name: arrow-lake-api-key
+    key: api-key
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  tolerations: []
+
+# Secrets — set create=true and values to auto-create the Secret
+secrets:
+  create: false
+  apiKey: ""
+  jwtSecret: ""
+  auditHmacKey: ""

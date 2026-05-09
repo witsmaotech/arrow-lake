@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from arrow_lake.config import RAGConfig
-from arrow_lake.rag.pipeline import RAGPipeline, RAGResponse, RAGCitation
+from arrow_lake.rag.pipeline import RAGPipeline, RAGResponse
 
 
 @pytest.fixture()
@@ -18,7 +18,8 @@ def pipeline() -> RAGPipeline:
         "content": "answer", "usage": {},
     })())
     config = RAGConfig()
-    retriever = lambda q, d, k: pa.table({"text_content": ["doc"], "_score": [0.9]})
+    def retriever(q, d, k):
+        return pa.table({"text_content": ["doc"], "_score": [0.9]})
     return RAGPipeline(llm, config, retriever)
 
 

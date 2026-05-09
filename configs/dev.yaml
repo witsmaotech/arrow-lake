@@ -141,3 +141,15 @@ export:
   parquet_compression: snappy
   csv_delimiter: ","
   allow_overwrite: false
+
+redis:
+  enabled: false
+
+hugegraph:
+  enabled: true
+  host: hg-server
+  port: 8080
+  graph_name: hugegraph
+  timeout_seconds: 30.0
+  build_concurrency: 10
+  build_batch_delay: 1.0

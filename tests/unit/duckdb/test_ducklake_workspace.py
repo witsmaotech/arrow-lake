@@ -5,11 +5,10 @@ M0a Day 3 — TDD RED phase.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
-
-from arrow_lake.exceptions import ArrowLakeError, ErrorCode
+from arrow_lake.exceptions import ArrowLakeError
 
 
 class TestDuckLakeWorkspaceInit:

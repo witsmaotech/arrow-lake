@@ -2,14 +2,23 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
+from arrow_lake.cli import main
 from click.testing import CliRunner
 
-from arrow_lake.cli import main
-
 lance = pytest.importorskip("lance", reason="lance not installed")
+
+
+def _make_local_runner():
+    """Create a CliRunner that forces LOCAL storage backend."""
+    env = dict(os.environ)
+    env["ARROW_LAKE__STORAGE__BACKEND"] = "local"
+    env["ARROW_LAKE__STORAGE__S3_ACCESS_KEY"] = ""
+    env["ARROW_LAKE__STORAGE__S3_SECRET_KEY"] = ""
+    return CliRunner(env=env)
 
 
 class TestCLIDemo:
@@ -22,7 +31,7 @@ class TestCLIDemo:
         assert "demo" in result.output.lower()
 
     def test_demo_runs_successfully(self, tmp_path: Path) -> None:
-        runner = CliRunner()
+        runner = _make_local_runner()
         result = runner.invoke(
             main, ["demo", "--base-uri", str(tmp_path / "demo"), "--no-cleanup"]
         )
@@ -33,7 +42,7 @@ class TestCLIDemo:
 
     def test_demo_no_cleanup_preserves_data(self, tmp_path: Path) -> None:
         demo_dir = tmp_path / "demo_persist"
-        runner = CliRunner()
+        runner = _make_local_runner()
         result = runner.invoke(
             main, ["demo", "--base-uri", str(demo_dir), "--no-cleanup"]
         )

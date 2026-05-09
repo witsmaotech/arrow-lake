@@ -1,17 +1,14 @@
 """Unit tests for document processing pipeline."""
 
-import json
 import sys
-import textwrap
-from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from arrow_lake.config._enums import ChunkStrategy, OcrBackend, PdfParseMode
 from arrow_lake.config.document import DocumentConfig
 from arrow_lake.exceptions import DocumentError, ErrorCode
-from arrow_lake.ingest.chunker import Chunk, DocumentChunker, _split_by_paragraph, _split_recursive
+from arrow_lake.ingest.chunker import DocumentChunker, _split_by_paragraph, _split_recursive
 
 # ---------------------------------------------------------------------------
 # Mock kreuzberg module (not installed in CI / dev)
@@ -32,6 +29,12 @@ class _FakePageConfig:
         self.extract_pages = extract_pages
 
 
+class _FakePdfConfig:
+    def __init__(self, *, extract_images: bool = False, extract_annotations: bool = True):
+        self.extract_images = extract_images
+        self.extract_annotations = extract_annotations
+
+
 class _FakeExtractionConfig:
     def __init__(
         self,
@@ -39,16 +42,21 @@ class _FakeExtractionConfig:
         ocr: _FakeOcrConfig | None = None,
         force_ocr: bool = False,
         pages: _FakePageConfig | None = None,
+        output_format: str = "markdown",
+        pdf_options: Any | None = None,
     ):
         self.ocr = ocr
         self.force_ocr = force_ocr
         self.pages = pages
+        self.output_format = output_format
+        self.pdf_options = pdf_options
 
 
 class _FakeKreuzbergModule:
     ExtractionConfig = _FakeExtractionConfig
     OcrConfig = _FakeOcrConfig
     PageConfig = _FakePageConfig
+    PdfConfig = _FakePdfConfig
     extract_file_sync = MagicMock()
 
 

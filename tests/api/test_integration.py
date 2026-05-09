@@ -24,12 +24,9 @@ import pytest
 pytest.importorskip("lancedb", reason="lancedb not installed")
 pytest.importorskip("pyarrow", reason="pyarrow not installed")
 
-from httpx import ASGITransport, AsyncClient
-
 from arrow_lake.api.app import create_app
-from arrow_lake.config import ArrowLakeConfig, ApiConfig, AuthConfig, StorageConfig
-from arrow_lake.exceptions import ArrowLakeError, CatalogError, ErrorCode
-
+from arrow_lake.config import ApiConfig, ArrowLakeConfig, AuthConfig, StorageConfig
+from httpx import ASGITransport, AsyncClient
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -44,15 +41,13 @@ def lake_base_uri(tmp_path: Path) -> str:
 
 @pytest.fixture()
 def app_no_auth(lake_base_uri: str) -> Any:
-    """Create a real FastAPI app with no API key auth, using tmp_path."""
+    """Create a real FastAPI app with API key auth (ADMIN role), using tmp_path."""
     config = ArrowLakeConfig(
         storage=StorageConfig(backend="local"),
-        api=ApiConfig(api_key=""),
+        api=ApiConfig(api_key="test-int-key", api_key_default_role="ADMIN"),
         auth=AuthConfig(allow_unauthenticated_access=True),
     )
 
-    # Bypass the lifespan to avoid config.storage.base_uri issue.
-    # Instead, create Lake directly and set on app.state.
     from fastapi import FastAPI
 
     application: FastAPI = create_app(config=config)
@@ -108,6 +103,7 @@ async def test_health_returns_valid_response(app_no_auth: Any) -> None:
     """GET /health returns 200 with status and version fields."""
     async with AsyncClient(
         transport=ASGITransport(app=app_no_auth),
+        headers={"X-API-Key": "test-int-key"},
         base_url="http://test",
     ) as ac:
         resp = await ac.get("/health")
@@ -126,6 +122,7 @@ async def test_metrics_returns_prometheus_format(app_no_auth: Any) -> None:
     """GET /metrics returns a string (Prometheus text format or fallback)."""
     async with AsyncClient(
         transport=ASGITransport(app=app_no_auth),
+        headers={"X-API-Key": "test-int-key"},
         base_url="http://test",
     ) as ac:
         resp = await ac.get("/metrics")
@@ -143,6 +140,7 @@ async def test_openapi_spec_available(app_no_auth: Any) -> None:
     """GET /openapi.json returns the OpenAPI schema."""
     async with AsyncClient(
         transport=ASGITransport(app=app_no_auth),
+        headers={"X-API-Key": "test-int-key"},
         base_url="http://test",
     ) as ac:
         resp = await ac.get("/openapi.json")
@@ -164,6 +162,7 @@ async def test_list_datasets_empty(app_no_auth: Any) -> None:
     """GET /api/v1/datasets returns empty list when no datasets exist."""
     async with AsyncClient(
         transport=ASGITransport(app=app_no_auth),
+        headers={"X-API-Key": "test-int-key"},
         base_url="http://test",
     ) as ac:
         resp = await ac.get("/api/v1/datasets")
@@ -180,13 +179,14 @@ async def test_get_nonexistent_dataset_returns_404(app_no_auth: Any) -> None:
     """GET /api/v1/datasets/{name} returns 404 for unknown dataset."""
     async with AsyncClient(
         transport=ASGITransport(app=app_no_auth),
+        headers={"X-API-Key": "test-int-key"},
         base_url="http://test",
     ) as ac:
         resp = await ac.get("/api/v1/datasets/nonexistent_xyz")
         assert resp.status_code == 404
         body = resp.json()
         assert body["success"] is False
-        assert "CATALOG_DATASET_NOT_FOUND" == body["error"]
+        assert body["error"] == "CATALOG_DATASET_NOT_FOUND"
 
 
 @pytest.mark.integration
@@ -195,6 +195,7 @@ async def test_delete_nonexistent_dataset_returns_404(app_no_auth: Any) -> None:
     """DELETE /api/v1/datasets/{name} returns 404 for unknown dataset."""
     async with AsyncClient(
         transport=ASGITransport(app=app_no_auth),
+        headers={"X-API-Key": "test-int-key"},
         base_url="http://test",
     ) as ac:
         resp = await ac.delete("/api/v1/datasets/nonexistent_xyz")
@@ -214,6 +215,7 @@ async def test_ingest_list_get_delete_flow(
 
     async with AsyncClient(
         transport=ASGITransport(app=app_no_auth),
+        headers={"X-API-Key": "test-int-key"},
         base_url="http://test",
     ) as ac:
         # --- Step 1: Ingest a CSV file ---
@@ -267,6 +269,7 @@ async def test_ingest_then_catalog_reflects_correct_row_count(
 
     async with AsyncClient(
         transport=ASGITransport(app=app_no_auth),
+        headers={"X-API-Key": "test-int-key"},
         base_url="http://test",
     ) as ac:
         resp = await ac.post(
@@ -374,6 +377,7 @@ async def test_arrowlake_error_maps_to_http_404(app_no_auth: Any) -> None:
     """CatalogError(CATALOG_DATASET_NOT_FOUND) maps to HTTP 404."""
     async with AsyncClient(
         transport=ASGITransport(app=app_no_auth),
+        headers={"X-API-Key": "test-int-key"},
         base_url="http://test",
     ) as ac:
         resp = await ac.get("/api/v1/datasets/does_not_exist_at_all")
@@ -390,6 +394,7 @@ async def test_error_response_envelope_format(app_no_auth: Any) -> None:
     """ArrowLakeError responses follow the standard error envelope."""
     async with AsyncClient(
         transport=ASGITransport(app=app_no_auth),
+        headers={"X-API-Key": "test-int-key"},
         base_url="http://test",
     ) as ac:
         resp = await ac.get("/api/v1/datasets/missing")
@@ -409,6 +414,7 @@ async def test_validation_error_maps_to_http_422(app_no_auth: Any) -> None:
     """Request with invalid body (Pydantic validation) returns 422."""
     async with AsyncClient(
         transport=ASGITransport(app=app_no_auth),
+        headers={"X-API-Key": "test-int-key"},
         base_url="http://test",
     ) as ac:
         # Empty file_paths should fail Pydantic validation
@@ -425,6 +431,7 @@ async def test_delete_nonexistent_maps_to_404(app_no_auth: Any) -> None:
     """Deleting a nonexistent dataset triggers STORAGE_PATH_NOT_FOUND -> 404."""
     async with AsyncClient(
         transport=ASGITransport(app=app_no_auth),
+        headers={"X-API-Key": "test-int-key"},
         base_url="http://test",
     ) as ac:
         resp = await ac.delete("/api/v1/datasets/no_such_dataset")
@@ -443,25 +450,31 @@ async def test_delete_nonexistent_maps_to_404(app_no_auth: Any) -> None:
 @pytest.mark.anyio
 async def test_isolation_separate_lake_instances(tmp_path: Path) -> None:
     """Two test app instances with different tmp_paths do not share data."""
-    from fastapi import FastAPI
-
     from arrow_lake import Lake
+    from fastapi import FastAPI
 
     # App A
     dir_a = str(tmp_path / "lake_a")
-    app_a: FastAPI = create_app()
-    lake_a = Lake(base_uri=dir_a)
+    cfg_a = ArrowLakeConfig(storage=StorageConfig(backend="local", base_uri=dir_a),
+                            api=ApiConfig(api_key="test-iso-key", api_key_default_role="ADMIN"))
+    app_a: FastAPI = create_app(config=cfg_a)
+    lake_a = Lake(base_uri=dir_a, config=cfg_a)
     app_a.state.lake = lake_a
 
     # App B
     dir_b = str(tmp_path / "lake_b")
-    app_b: FastAPI = create_app()
-    lake_b = Lake(base_uri=dir_b)
+    cfg_b = ArrowLakeConfig(storage=StorageConfig(backend="local", base_uri=dir_b),
+                            api=ApiConfig(api_key="test-iso-key", api_key_default_role="ADMIN"))
+    app_b: FastAPI = create_app(config=cfg_b)
+    lake_b = Lake(base_uri=dir_b, config=cfg_b)
     app_b.state.lake = lake_b
+
+    _iso_headers = {"X-API-Key": "test-iso-key"}
 
     # Verify A starts empty
     async with AsyncClient(
-        transport=ASGITransport(app=app_a), base_url="http://test"
+        transport=ASGITransport(app=app_a), base_url="http://test",
+        headers=_iso_headers,
     ) as ac_a:
         resp_a = await ac_a.get("/api/v1/datasets")
         assert resp_a.status_code == 200
@@ -469,7 +482,8 @@ async def test_isolation_separate_lake_instances(tmp_path: Path) -> None:
 
     # Verify B starts empty
     async with AsyncClient(
-        transport=ASGITransport(app=app_b), base_url="http://test"
+        transport=ASGITransport(app=app_b), base_url="http://test",
+        headers=_iso_headers,
     ) as ac_b:
         resp_b = await ac_b.get("/api/v1/datasets")
         assert resp_b.status_code == 200

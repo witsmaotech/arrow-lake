@@ -1,7 +1,6 @@
 """Tests for JWT secret key validation (Round 4 — H1 fix)."""
 
 import pytest
-
 from arrow_lake.config.api import AuthConfig
 
 

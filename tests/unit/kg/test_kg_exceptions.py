@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import pytest
-
-from arrow_lake.exceptions import ArrowLakeError, ErrorCode, KGError
+from arrow_lake.exceptions import ErrorCode
 
 
 class TestKGErrorCode:

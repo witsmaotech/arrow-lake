@@ -267,8 +267,9 @@ class TestLakeSDK:
         tmp_path: Path,
     ) -> None:
         from arrow_lake import Lake
+        from arrow_lake.config import ArrowLakeConfig, StorageConfig
 
-        lake = Lake(base_uri=str(tmp_path / "lance_data"))
+        lake = Lake(base_uri=str(tmp_path / "lance_data"), config=ArrowLakeConfig(storage=StorageConfig(backend="local")))
         query_vector = _random_vectors(1, seed=300)[0]
         result = lake.hybrid_search(ds_hybrid, query_vector, "machine learning")
 

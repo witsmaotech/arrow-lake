@@ -15,8 +15,7 @@ import time
 import httpx
 import pytest
 
-from tests.container.conftest import require_hugegraph, require_ollama  # noqa: F401
-
+from tests.container.conftest import require_hugegraph, require_ollama
 
 # ---------------------------------------------------------------------------
 # System (5 endpoints)

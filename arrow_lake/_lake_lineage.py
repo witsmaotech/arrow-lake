@@ -78,5 +78,12 @@ class _LakeLineageMixin:
             "lineage",
             lambda: LineageStore(self._get_storage()),
         )
-        bridge = LineageQueryBridge(store)
+
+        def _create_bridge() -> LineageQueryBridge:
+            return LineageQueryBridge(
+                store,
+                session_manager=self.get_session_manager(),
+            )
+
+        bridge = self._get_component("lineage_bridge", _create_bridge)
         return bridge.query(sql)

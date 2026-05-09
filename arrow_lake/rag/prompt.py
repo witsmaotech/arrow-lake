@@ -11,7 +11,7 @@ from jinja2 import Environment, StrictUndefined
 logger = logging.getLogger(__name__)
 
 # Shared environment for all templates
-_ENV = Environment(undefined=StrictUndefined)
+_ENV = Environment(undefined=StrictUndefined, autoescape=True)
 
 
 class PromptType(StrEnum):

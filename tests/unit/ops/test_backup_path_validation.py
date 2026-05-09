@@ -1,19 +1,20 @@
 """Tests for backup path traversal prevention (Round 4 — C3 fix)."""
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
-
 from arrow_lake.ops.backup import BackupManager
 
 
 def _make_manager(tmp_path: Path) -> BackupManager:
+    from arrow_lake.config._enums import StorageBackend
     from arrow_lake.config.storage import StorageConfig
 
     config = MagicMock(spec=StorageConfig)
     config.s3_endpoint = None
     config.s3_bucket = "test-bucket"
+    config.backend = StorageBackend.LOCAL
     return BackupManager(
         storage_config=config,
         lance_base_uri=tmp_path,

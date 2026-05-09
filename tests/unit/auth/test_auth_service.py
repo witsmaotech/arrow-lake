@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import pytest
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
+import pytest
 from arrow_lake.api.auth_models import Role, TokenPayload
 from arrow_lake.api.auth_service import AuthService
 
@@ -85,9 +85,8 @@ def test_verify_wrong_secret(auth_service: AuthService) -> None:
 
 
 def test_verify_expired_token(auth_service: AuthService) -> None:
-    from unittest.mock import patch
 
-    past = datetime.now(timezone.utc) - timedelta(hours=1)
+    past = datetime.now(UTC) - timedelta(hours=1)
     payload = TokenPayload(
         sub="user-1",
         role=Role.VIEWER,
@@ -109,8 +108,8 @@ cryptography = pytest.importorskip("cryptography", reason="cryptography not inst
 @pytest.fixture
 def rsa_keypair():
     """Generate an RSA key pair for RS256 tests."""
-    from cryptography.hazmat.primitives.asymmetric import rsa
     from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
 
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     priv_pem = private_key.private_bytes(
@@ -155,8 +154,8 @@ def test_rs256_refresh_token(rs256_service: AuthService) -> None:
 
 def test_rs256_wrong_public_key(rsa_keypair) -> None:
     """Token signed with one key can't be verified with a different key."""
-    from cryptography.hazmat.primitives.asymmetric import rsa
     from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
 
     priv_pem, pub_pem = rsa_keypair
 

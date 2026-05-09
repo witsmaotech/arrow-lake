@@ -13,13 +13,7 @@ class TestConfigBackwardCompat:
         """ArrowLakeConfig() with no arguments should produce expected defaults."""
         from arrow_lake.config import (
             ArrowLakeConfig,
-            ComputeConfig,
-            FullTextSearchConfig,
-            HybridSearchConfig,
-            ObservabilityConfig,
-            OlapConfig,
             StorageBackend,
-            VectorSearchConfig,
         )
 
         config = ArrowLakeConfig()
@@ -59,14 +53,15 @@ class TestConfigBackwardCompat:
     def test_sub_configs_independently_constructible(self) -> None:
         """Each sub-config should be constructible with no arguments."""
         from arrow_lake.config import (
-            StorageConfig,
             ComputeConfig,
-            ObservabilityConfig,
-            VectorSearchConfig,
             FullTextSearchConfig,
             HybridSearchConfig,
+            ObservabilityConfig,
             OlapConfig,
             QualityConfig,
+            RedisConfig,
+            StorageConfig,
+            VectorSearchConfig,
             WorkflowConfig,
         )
 
@@ -79,6 +74,7 @@ class TestConfigBackwardCompat:
             HybridSearchConfig(),
             OlapConfig(),
             QualityConfig(),
+            RedisConfig(),
             WorkflowConfig(),
         ]
         for cfg in configs:

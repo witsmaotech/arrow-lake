@@ -72,6 +72,7 @@ config.olap       # OlapConfig          — OLAP queries
 config.api        # ApiConfig           — API service
 config.auth       # AuthConfig          — Authentication
 config.rate_limit # RateLimitConfig     — Rate limiting
+config.redis      # RedisConfig         — Redis distributed session
 ```
 
 ***
@@ -288,6 +289,13 @@ fts:
 hybrid:
   rrf_k: 60
   vector_top_k_multiplier: 3
+
+redis:
+  enabled: true
+  url: "redis://redis:6379/0"
+  password: "${REDIS_PASSWORD}"
+  ssl: false
+  redis_pool_size: 10
 ```
 
 ```python
@@ -342,3 +350,80 @@ ARROW_LAKE__EMBEDDING__MODEL=Qwen/Qwen3-Embedding-0.6B
 3. **Container deployments**: Override key settings through `ARROW_LAKE__` environment variables without modifying config files.
 4. **Chinese text**: Set `fts.tokenizer_type = "jieba"` for better Chinese tokenization.
 5. **High-dimensional vectors**: `num_sub_vectors` must be a multiple of 8 and must not exceed the embedding dimension.
+6. **Redis for production**: Enable `redis.enabled = true` when running multiple API replicas (HPA / Kubernetes) so that DuckDB session semaphores are coordinated across pods.
+7. **Redis TLS**: Set `redis.ssl = true` and provide `redis.password` when connecting to a managed Redis service (ElastiCache, Azure Cache, etc.).
+
+***
+
+## 9. Redis Distributed Session Configuration (RedisConfig)
+
+When running Arrow Lake behind multiple API replicas, DuckDB session coordination and JWT token
+blacklisting must be shared across processes. `RedisConfig` enables a Redis-backed distributed
+semaphore that replaces the default `threading.Semaphore`.
+
+When `enabled` is `False` (default), the system falls back to in-process synchronization.
+
+```python
+from arrow_lake.config import RedisConfig
+
+# Local development (in-process semaphore, no Redis needed)
+redis_cfg = RedisConfig()  # enabled=False by default
+
+# Production with Redis
+redis_cfg = RedisConfig(
+    enabled=True,
+    url="redis://redis:6379/0",
+    password="",
+    ssl=False,
+    semaphore_key_prefix="arrow_lake:semaphore:",
+    semaphore_ttl_seconds=300,
+    redis_pool_size=10,
+)
+```
+
+**RedisConfig field reference:**
+
+| Field                   | Type     | Default                                                              | Description                                                         |
+| ----------------------- | -------- | -------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `enabled`               | `bool`   | `False`                                                              | Enable Redis-backed distributed semaphore and JWT blacklist         |
+| `url`                   | `str`    | `"redis://localhost:6379/0"`                                         | Redis connection URL                                                |
+| `password`              | `str`    | `""`                                                                 | Redis authentication password                                       |
+| `ssl`                   | `bool`   | `False`                                                              | Enable TLS for Redis connections                                    |
+| `ssl_cert_reqs`         | `str`    | `"required"`                                                         | SSL certificate verification mode when `ssl=True`                  |
+| `semaphore_key_prefix`  | `str`    | `"arrow_lake:semaphore:"`                                            | Redis key prefix for distributed semaphore counters                 |
+| `semaphore_ttl_seconds` | `int`    | `300` (>= 1)                                                         | TTL for semaphore keys — auto-reclaims stale permits                |
+| `redis_pool_size`       | `int`    | `10` (>= 1)                                                          | Connection pool size for the Redis client                           |
+
+### YAML Configuration
+
+```yaml
+# config.yaml — Redis distributed session coordination
+redis:
+  enabled: true
+  url: "redis://redis:6379/0"
+  password: "${REDIS_PASSWORD}"
+  ssl: false
+  semaphore_key_prefix: "arrow_lake:semaphore:"
+  semaphore_ttl_seconds: 300
+  redis_pool_size: 10
+```
+
+### Environment Variable Overrides
+
+```bash
+# Enable Redis and configure connection
+ARROW_LAKE__REDIS__ENABLED=true
+ARROW_LAKE__REDIS__URL=redis://redis:6379/0
+ARROW_LAKE__REDIS__PASSWORD=your-redis-password
+ARROW_LAKE__REDIS__SSL=false
+ARROW_LAKE__REDIS__SEMAPHORE_KEY_PREFIX=arrow_lake:semaphore:
+ARROW_LAKE__REDIS__SEMAPHORE_TTL_SECONDS=300
+ARROW_LAKE__REDIS__REDIS_POOL_SIZE=10
+```
+
+### How It Works
+
+The `RedisCountingSemaphore` uses Lua scripts for atomic acquire/release operations:
+- **Acquire**: Atomically increments a Redis counter if below `max_permits`; sets TTL to auto-reclaim stale permits.
+- **Release**: Atomically decrements the counter, guarding against underflow.
+- **Fallback**: If Redis becomes unavailable, transparently falls back to `threading.Semaphore` and logs a warning.

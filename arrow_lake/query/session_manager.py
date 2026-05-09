@@ -140,6 +140,7 @@ class DuckDBSessionManager:
         olap_config: OlapConfig,
         storage_config: StorageConfig | None = None,
         *,
+        semaphore: threading.Semaphore | Any | None = None,
         slow_query_threshold_ms: int = 5000,
         idle_timeout_seconds: int = 300,
         max_session_lifetime_seconds: int = 3600,
@@ -151,7 +152,7 @@ class DuckDBSessionManager:
         self._max_session_lifetime_seconds = max_session_lifetime_seconds
 
         max_queries = olap_config.max_concurrent_queries
-        self._semaphore = threading.Semaphore(max_queries)
+        self._semaphore = semaphore or threading.Semaphore(max_queries)
         self._lock = threading.Lock()
 
         # Idle connection pool

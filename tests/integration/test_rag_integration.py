@@ -84,7 +84,7 @@ def _mock_retriever(question: str, dataset_name: str, top_k: int):
 
     texts, row_ids, scores = zip(*matched[:top_k], strict=True)
     return pa.table({
-        "text": list(texts),
+        "text_content": list(texts),
         "row_id": list(row_ids),
         "_score": list(scores),
     })

@@ -44,4 +44,15 @@ Arrow Lake 数据湖平台实战教程，涵盖数据摄取、搜索、分析、
 
 ## 版本
 
-对应 Arrow Lake v1.2.1
+对应 Arrow Lake v1.3.0
+
+## v1.3.0 新特性
+
+| #  | 示例                                                       | 说明                                            |
+| -- | -------------------------------------------------------- | ----------------------------------------------- |
+| 40 | `deployment/40_redis_distributed_session.py`             | Redis 分布式会话：DuckDB 连接池信号量 + JWT 黑名单 |
+| 41 | `security/41_rbac_role_matrix.py`                        | RBAC 角色矩阵：VIEWER / EDITOR / ADMIN 端点权限控制 |
+| 42 | `deployment/42_hpa_autoscaling.py`                       | HPA 自动扩缩容：Kubernetes HorizontalPodAutoscaler |
+| 43 | `admin/43_cronjob_backup.py`                             | CronJob 备份自动化：定时备份 + 历史清理 + 告警     |
+
+> 新增功能：Redis 分布式会话协调、30+ 端点 RBAC 权限控制、Kubernetes HPA 自动扩缩容、CronJob 定时备份、生产安全清单（TLS / CSP / NetworkPolicy）。

@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from unittest.mock import MagicMock
 
+import pyarrow as pa
 import pytest
-from httpx import ASGITransport, AsyncClient
-
 from arrow_lake.api.app import create_app
+from arrow_lake.config import ArrowLakeConfig
+from httpx import ASGITransport, AsyncClient
 
 
 @dataclass(frozen=True)
@@ -25,6 +26,13 @@ class _FakeDedupReport:
     unique_rows: int = 95
     duplicates: int = 5
     strategy: str = "exact"
+    table: pa.Table = field(
+        default_factory=lambda: pa.table({
+            "id": ["1", "2"],
+            "text_content": ["hello", "world"],
+            "_duplicate": [False, True],
+        })
+    )
 
 
 @pytest.fixture
@@ -37,9 +45,16 @@ def mock_lake() -> MagicMock:
 
 @pytest.fixture
 async def client(mock_lake: MagicMock) -> AsyncClient:
-    app = create_app()
+    config = ArrowLakeConfig()
+    config.api.api_key = "test-api-key"
+    config.api.docs_enabled = False
+    app = create_app(config=config)
     app.state.lake = mock_lake
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"X-API-Key": "test-api-key"},
+    ) as ac:
         yield ac
 
 

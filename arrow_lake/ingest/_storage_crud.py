@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 
 import pyarrow as pa
@@ -302,8 +303,6 @@ class StorageCRUDMixin:
         """
         self._validate_name(name)
         db = self._get_db()
-        try:
+        with contextlib.suppress(Exception):
             db.drop_table(name)
-        except Exception:
-            pass
         db.create_table(name, data)

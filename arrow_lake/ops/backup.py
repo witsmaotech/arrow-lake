@@ -7,6 +7,7 @@ and backup listing, info, cleanup, and verification.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import shutil
@@ -140,10 +141,8 @@ class BackupManager:
             self._blob_store.upload(staging_key, manifest_bytes, content_type="application/json")
             self._blob_store.copy(staging_key, final_key)
         finally:
-            try:
+            with contextlib.suppress(StorageError, OSError):
                 self._blob_store.delete(staging_key)
-            except (StorageError, OSError):
-                pass
 
         _log.info(
             "backup_created",
@@ -337,9 +336,10 @@ class BackupManager:
 
         try:
             import lancedb
-            ds = lancedb.connect(str(dataset_path)).open_dataset(dataset_name)
+            conn = lancedb.connect(str(self._lance_base_uri))
+            ds = conn.open_table(dataset_name)
             row_count = ds.count_rows()
-        except (ImportError, OSError, RuntimeError):
+        except (ImportError, OSError, RuntimeError, AttributeError, ValueError):
             row_count = -1
 
         return row_count, file_hashes
@@ -435,10 +435,8 @@ class BackupManager:
         while True:
             result = self._blob_store.list_blobs(prefix, max_keys=5000, continuation_token=continuation_token)
             for key in result.keys:
-                try:
+                with contextlib.suppress(StorageError, OSError):
                     total += self._blob_store.head(key).size_bytes
-                except (StorageError, OSError):
-                    pass
             if not result.truncated or not result.keys:
                 break
             continuation_token = result.next_token

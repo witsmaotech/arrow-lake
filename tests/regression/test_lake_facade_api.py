@@ -9,7 +9,6 @@ import inspect
 
 import pytest
 
-
 # Expected public method signatures for backward compatibility.
 # Format: method_name -> list of required positional parameter names (excl. self).
 LAKE_METHOD_SIGNATURES: dict[str, list[str]] = {

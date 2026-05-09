@@ -239,7 +239,6 @@ class _LakeQueryMixin:
             LazyDaftFrame for further lazy operations.
         """
         from arrow_lake.config import StorageBackend
-
         from arrow_lake.query.daft_api import DaftQueryEngine
 
         sc = self._config.storage

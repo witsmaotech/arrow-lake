@@ -109,12 +109,12 @@ curl -X POST http://localhost:8000/api/v1/auth/refresh \
 
 ### Search (v1)
 
-| Method | Endpoint                                 | Description      |
-| ------ | ---------------------------------------- | ---------------- |
-| `POST` | `/api/v1/datasets/{name}/search/vector`  | Vector search    |
-| `POST` | `/api/v1/datasets/{name}/search/fts`     | Full-text search |
-| `POST` | `/api/v1/datasets/{name}/search/hybrid`  | Hybrid search    |
-| `POST` | `/api/v1/datasets/{name}/search/faceted` | Faceted search   |
+| Method | Endpoint                                 | Description      | Role   |
+| ------ | ---------------------------------------- | ---------------- | ------ |
+| `POST` | `/api/v1/datasets/{name}/search/vector`  | Vector search    | VIEWER |
+| `POST` | `/api/v1/datasets/{name}/search/fts`     | Full-text search | VIEWER |
+| `POST` | `/api/v1/datasets/{name}/search/hybrid`  | Hybrid search    | VIEWER |
+| `POST` | `/api/v1/datasets/{name}/search/faceted` | Faceted search   | VIEWER |
 
 ### RAG & Knowledge Graph (v2)
 
@@ -137,6 +137,38 @@ curl -X POST http://localhost:8000/api/v1/auth/refresh \
 | `GET`  | `/api/v1/auth/me`      | Current user information |
 
 ***
+
+## 4.5 RBAC Role Matrix
+
+Over 30 API endpoints enforce role-based access control via the `require_role()` dependency.
+The role hierarchy is **ADMIN > EDITOR > VIEWER** — each higher role inherits the permissions
+of all roles below it.
+
+### Endpoint Access by Role
+
+| Capability Category          | VIEWER          | EDITOR                          | ADMIN                            |
+| ---------------------------- | --------------- | ------------------------------- | -------------------------------- |
+| **Search & Query**           | search/\*       | (inherits VIEWER)               | (inherits all)                   |
+| **RAG**                      | rag/query/\*    | (inherits VIEWER)               | (inherits all)                   |
+| **GraphRAG**                 | graphrag        | (inherits VIEWER)               | (inherits all)                   |
+| **Data Ingestion**           | -               | ingest/\*, datasets DELETE      | (inherits all)                   |
+| **Embedding**                | -               | embedding/\*                    | (inherits all)                   |
+| **Quality & Dedup**          | -               | quality/\*, dedup/\*            | (inherits all)                   |
+| **Lineage & Audit**          | -               | lineage write                   | audit export                      |
+| **Export**                   | -               | export/\*                       | (inherits all)                   |
+| **Backup**                   | -               | -                               | backup create / restore / delete  |
+| **Knowledge Graph Build**    | -               | kg/query                        | kg/build, admin/\*               |
+| **Dataset ACL Management**   | -               | -                               | grant / revoke dataset access    |
+
+### Quick Reference
+
+- **VIEWER**: `search/*`, `rag/query`, `kg/query/graphrag`, `kg/entities/*/neighbors`, `kg/build/*/status`
+- **EDITOR**: All VIEWER endpoints + `ingest/*`, `datasets/{name} DELETE`, `embedding/*`, `quality/*`, `export/*`, `kg/query`, `lineage write`
+- **ADMIN**: All EDITOR endpoints + `kg/build`, `backup/*`, `admin/*`, `audit/export`, dataset ACL management
+
+The `PermissionChecker` supports per-dataset ACL overrides — an ADMIN can grant a VIEWER write
+access to a specific dataset without changing their global role. See `arrow_lake.api.rbac` for
+the full permission matrix implementation.
 
 ## 5. curl Examples
 

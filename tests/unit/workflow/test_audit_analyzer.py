@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
-from arrow_lake.workflow.audit_analyzer import AuditAnalyzer, AnomalyRecord
+from arrow_lake.workflow.audit_analyzer import AuditAnalyzer
 
 
 def _make_entries(
@@ -13,7 +13,7 @@ def _make_entries(
     hours_ago: float = 0.1,
     off_hours: bool = False,
 ) -> list[dict]:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     entries = []
     for i in range(n):
         if off_hours:
@@ -45,7 +45,7 @@ class TestFrequencyAnomalies:
         assert result == []
 
     def test_spike_detected_with_dense_cluster(self) -> None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         entries = []
         for h in range(1, 49):
             ts = now - timedelta(hours=h)
@@ -86,7 +86,7 @@ class TestActorAnomalies:
 
     def test_detects_imbalanced_actors(self) -> None:
         entries = []
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         for i in range(500):
             entries.append({
                 "audit_id": f"c{i}",

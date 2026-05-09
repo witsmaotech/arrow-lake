@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import pytest
 from arrow_lake.api.auth_models import Role
-from arrow_lake.api.rbac import PermissionChecker, Permission
-
+from arrow_lake.api.rbac import Permission, PermissionChecker
 
 # ---------------------------------------------------------------------------
 # Permission enum

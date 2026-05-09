@@ -340,8 +340,9 @@ class TestLakeSDK:
         tmp_path: Path,
     ) -> None:
         from arrow_lake import Lake
+        from arrow_lake.config import ArrowLakeConfig, StorageConfig
 
-        lake = Lake(base_uri=str(tmp_path / "lance_data"))
+        lake = Lake(base_uri=str(tmp_path / "lance_data"), config=ArrowLakeConfig(storage=StorageConfig(backend="local")))
         query = _random_vectors(1, seed=400)[0]
         result = lake.search(ds_1000, query, top_k=5)
 
@@ -355,8 +356,9 @@ class TestLakeSDK:
         tmp_path: Path,
     ) -> None:
         from arrow_lake import Lake
+        from arrow_lake.config import ArrowLakeConfig, StorageConfig
 
-        lake = Lake(base_uri=str(tmp_path / "lance_data"))
+        lake = Lake(base_uri=str(tmp_path / "lance_data"), config=ArrowLakeConfig(storage=StorageConfig(backend="local")))
         info = lake.create_vector_index(ds_1000, metric="cosine")
 
         assert isinstance(info, IndexInfo)

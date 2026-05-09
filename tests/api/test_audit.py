@@ -5,9 +5,9 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
-from httpx import ASGITransport, AsyncClient
-
 from arrow_lake.api.app import create_app
+from arrow_lake.config import ArrowLakeConfig
+from httpx import ASGITransport, AsyncClient
 
 
 @pytest.fixture
@@ -29,9 +29,16 @@ def mock_lake() -> MagicMock:
 
 @pytest.fixture
 async def client(mock_lake: MagicMock) -> AsyncClient:
-    app = create_app()
+    config = ArrowLakeConfig()
+    config.api.api_key = "test-api-key"
+    config.api.docs_enabled = False
+    app = create_app(config=config)
     app.state.lake = mock_lake
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"X-API-Key": "test-api-key"},
+    ) as ac:
         yield ac
 
 
@@ -145,3 +152,59 @@ async def test_export_audit(client: AsyncClient, mock_lake: MagicMock) -> None:
     assert body["export"]["total_entries"] == 2
 
     mock_lake.audit_export.assert_called_once_with("docs")
+
+
+# ---------------------------------------------------------------------------
+# HMAC enforcement
+# ---------------------------------------------------------------------------
+
+
+def test_audit_enabled_without_hmac_raises_on_startup() -> None:
+    """create_app raises ValueError when audit.enabled=True but no HMAC key."""
+    config = ArrowLakeConfig()
+    config.api.api_key = "test-key"
+    config.api.enabled = True
+    config.audit.enabled = True
+    config.audit.hmac_secret_key = ""
+
+    with pytest.raises(ValueError, match="hmac_secret_key"):
+        create_app(config=config)
+
+
+def test_audit_enabled_with_hmac_starts_successfully() -> None:
+    """create_app succeeds when audit is enabled with HMAC key configured."""
+    config = ArrowLakeConfig()
+    config.api.api_key = "test-key"
+    config.api.enabled = True
+    config.audit.enabled = True
+    config.audit.hmac_secret_key = "a-very-secret-hmac-key-for-testing"
+
+    app = create_app(config=config)
+    assert app is not None
+
+
+@pytest.mark.asyncio
+async def test_verify_tampered_audit(mock_lake: MagicMock) -> None:
+    """Verify endpoint returns intact=False for tampered entries."""
+    mock_lake.audit_verify.return_value = False
+
+    config = ArrowLakeConfig()
+    config.api.api_key = "test-api-key"
+    config.api.docs_enabled = False
+    app = create_app(config=config)
+    app.state.lake = mock_lake
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"X-API-Key": "test-api-key"},
+    ) as ac:
+        resp = await ac.post(
+            "/api/v1/audit/verify?audit_id=tampered-entry",
+            json={},
+        )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["success"] is True
+    assert body["intact"] is False
+    mock_lake.audit_verify.assert_called_once_with("tampered-entry")

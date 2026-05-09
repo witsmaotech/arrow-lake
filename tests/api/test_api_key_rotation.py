@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from arrow_lake.config import ArrowLakeConfig, ApiConfig
+from arrow_lake.config import ApiConfig, ArrowLakeConfig
 
 
 def test_api_key_rotation_days_default() -> None:

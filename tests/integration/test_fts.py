@@ -311,8 +311,9 @@ class TestLakeSDK:
         tmp_path: Path,
     ) -> None:
         from arrow_lake import Lake
+        from arrow_lake.config import ArrowLakeConfig, StorageConfig
 
-        lake = Lake(base_uri=str(tmp_path / "lance_data"))
+        lake = Lake(base_uri=str(tmp_path / "lance_data"), config=ArrowLakeConfig(storage=StorageConfig(backend="local")))
         result = lake.text_search(ds_texts, "machine learning")
 
         assert isinstance(result, FullTextSearchResult)
@@ -325,7 +326,8 @@ class TestLakeSDK:
         tmp_path: Path,
     ) -> None:
         from arrow_lake import Lake
+        from arrow_lake.config import ArrowLakeConfig, StorageConfig
 
-        lake = Lake(base_uri=str(tmp_path / "lance_data"))
+        lake = Lake(base_uri=str(tmp_path / "lance_data"), config=ArrowLakeConfig(storage=StorageConfig(backend="local")))
         # Should not raise
         lake.create_fts_index(ds_texts)
