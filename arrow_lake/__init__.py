@@ -155,14 +155,12 @@ class Lake(
         )
 
     def _create_session_manager(self) -> Any:
-        from arrow_lake.query._redis_semaphore import create_semaphore
         from arrow_lake.query.session_manager import DuckDBSessionManager
 
-        semaphore = create_semaphore(self._config.redis, self._config.olap.max_concurrent_queries)
-        return DuckDBSessionManager(
+        return DuckDBSessionManager.from_config(
             olap_config=self._config.olap,
             storage_config=self._config.storage,
-            semaphore=semaphore,
+            redis_config=self._config.redis,
         )
 
     def shutdown(self) -> None:

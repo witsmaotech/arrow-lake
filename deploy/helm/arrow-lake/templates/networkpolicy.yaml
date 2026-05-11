@@ -44,6 +44,27 @@ spec:
       ports:
         - port: 9000
           protocol: TCP
+    # Allow outbound to Redis (session coordination + JWT blacklist)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - port: 6379
+          protocol: TCP
+    # Allow outbound to HugeGraph (knowledge graph)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - port: 8080
+          protocol: TCP
+    # Allow outbound HTTPS (LLM APIs, external services)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - port: 443
+          protocol: TCP
     # Allow DNS resolution
     - to:
         - ipBlock:

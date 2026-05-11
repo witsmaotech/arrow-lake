@@ -25,7 +25,7 @@ from typing import Any
 
 import duckdb
 
-from arrow_lake.config import OlapConfig, StorageConfig
+from arrow_lake.config import OlapConfig, RedisConfig, StorageConfig
 from arrow_lake.core.metrics import (
     duckdb_pool_active_sessions,
     duckdb_pool_evicted_connections_total,
@@ -169,6 +169,29 @@ class DuckDBSessionManager:
         self._slow_query_count = 0
 
         self._closed = False
+
+    @classmethod
+    def from_config(
+        cls,
+        olap_config: OlapConfig,
+        storage_config: StorageConfig | None = None,
+        redis_config: RedisConfig | None = None,
+        **kwargs: Any,
+    ) -> DuckDBSessionManager:
+        """Factory method: create a manager with the appropriate semaphore.
+
+        When *redis_config* is provided and enabled, uses a distributed
+        Redis-backed semaphore; otherwise falls back to threading.Semaphore.
+        """
+        from arrow_lake.query._redis_semaphore import create_semaphore
+
+        semaphore = create_semaphore(redis_config, olap_config.max_concurrent_queries)
+        return cls(
+            olap_config=olap_config,
+            storage_config=storage_config,
+            semaphore=semaphore,
+            **kwargs,
+        )
 
     @property
     def pool_size(self) -> int:

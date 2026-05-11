@@ -75,6 +75,8 @@ services:
     container_name: arrow-lake-api
     command: ["uvicorn", "arrow_lake.api.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
     read_only: false
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "${API_PORT:-8000}:8000"
     environment:
@@ -85,6 +87,15 @@ services:
       ARROW_LAKE__OBSERVABILITY__METRICS_PORT: "8000"
       ARROW_LAKE__REDIS__URL: "redis://redis:6379/0"
       ARROW_LAKE__REDIS__PASSWORD: "${REDIS_PASSWORD:-}"
+      HTTP_PROXY: "${HTTP_PROXY:-}"
+      HTTPS_PROXY: "${HTTPS_PROXY:-}"
+      http_proxy: "${HTTP_PROXY:-}"
+      https_proxy: "${HTTPS_PROXY:-}"
+      NO_PROXY: "${NO_PROXY:-127.0.0.1,localhost,172.16.0.0/12,10.0.0.0/8,minio,redis,ray-head,jaeger,prometheus,grafana,hg-server}"
+      no_proxy: "${NO_PROXY:-127.0.0.1,localhost,172.16.0.0/12,10.0.0.0/8,minio,redis,ray-head,jaeger,prometheus,grafana,hg-server}"
+      ARROW_LAKE__EMBEDDING__API_BASE: "${OLLAMA_API_BASE:-http://172.19.0.40:11434/v1}"
+      ARROW_LAKE__HUGEGRAPH__HOST: "${HUGEGRAPH_HOST:-hg-server}"
+      ARROW_LAKE__HUGEGRAPH__PORT: "${HUGEGRAPH_PORT:-8080}"
     depends_on:
       minio:
         condition: service_healthy
@@ -343,6 +354,33 @@ services:
   # The hg-server container is connected to arrow-lake-net via:
   #   docker network connect arrow-lake_arrow-lake-net hg-server
   # ---------------------------------------------------------------------------
+
+  # ---------------------------------------------------------------------------
+  # Ollama — External Ollama service reachable via ${OLLAMA_HOST}:${OLLAMA_PORT}
+  # ---------------------------------------------------------------------------
+
+  # ---------------------------------------------------------------------------
+  # Proxy Forward — Host-network socat to expose host proxy (127.0.0.1:7887)
+  # to Docker bridge network at gateway:${PROXY_FORWARD_PORT:-7888}
+  # Only needed when containers require internet access through a host proxy.
+  # ---------------------------------------------------------------------------
+  proxy-forward:
+    image: alpine/socat:${SOCAT_VERSION:-latest}
+    container_name: arrow-lake-proxy-forward
+    profiles: ["core", "dev", "monitoring", "gpu"]
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      http_proxy: ""
+      https_proxy: ""
+    command: TCP-LISTEN:${PROXY_FORWARD_PORT:-7888},fork,reuseaddr TCP:${PROXY_HOST:-127.0.0.1}:${PROXY_PORT:-7887}
+    deploy:
+      resources:
+        limits:
+          memory: 32M
+          cpus: "0.1"
 
   # ---------------------------------------------------------------------------
   # Redis — Distributed session coordination + JWT blacklist
