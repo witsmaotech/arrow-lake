@@ -158,6 +158,7 @@ class DuckDBSessionManager:
         # Idle connection pool
         self._idle_pool: deque[_IdleConnection] = deque()
         self._max_idle = max_queries
+        self._conn_sessions: dict[int, DuckDBSession] = {}  # id(conn) → session
 
         # Statistics
         self._active_count = 0
@@ -361,8 +362,10 @@ class DuckDBSessionManager:
                     storage_config=self._storage_config,
                 )
                 conn = session.__enter__()
+                self._conn_sessions[id(conn)] = session
                 return conn, time.monotonic()
             except duckdb.Error:
+                session.__exit__(None, None, None)
                 if attempt == 0:
                     logger.warning("connection_creation_failed_retrying")
                     continue
@@ -382,9 +385,15 @@ class DuckDBSessionManager:
                     duckdb_pool_total_errors.inc()
             return False
 
-    @staticmethod
-    def _close_conn(conn: duckdb.DuckDBPyConnection) -> None:
-        """Close a DuckDB connection, logging errors."""
+    def _close_conn(self, conn: duckdb.DuckDBPyConnection) -> None:
+        """Close a DuckDB connection and restore S3 env vars if applicable."""
+        session = self._conn_sessions.pop(id(conn), None)
+        if session is not None:
+            try:
+                session.__exit__(None, None, None)
+            except Exception:
+                pass
+            return
         try:
             conn.close()
         except duckdb.Error as exc:

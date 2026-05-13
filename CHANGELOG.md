@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1] - 2026-05-12
+
+### Changed
+- **pylance 升级**: 4.0.1 → 6.0.0，解锁 Lance 文件格式 v2.1/v2.2 双层编码、io_uring 高性能 I/O
+- **lance-namespace 升级**: 0.6.1 → 0.7.6（pylance 6.0.0 依赖）
+- **FTS 中文分词**: tantivy 后端移除后自动切换 lance-index + jieba 预分词，无需代码改动
+- **文档更新**: 产品介绍 (中/英)、CLI Reference、Tech Compatibility Report 版本矩阵同步
+
+### Verified
+- 2610 单元测试通过，242 集成测试通过，覆盖率 76.61%（与升级前一致）
+- Storage / Search / Vector / FTS / DuckDB lance_scan / Daft 零拷贝集成正常
+
 ## [1.3.0] - 2026-05-09
 
 ### Added

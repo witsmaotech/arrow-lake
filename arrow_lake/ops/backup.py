@@ -371,6 +371,12 @@ class BackupManager:
                 rel_path = key[len(s3_prefix):]
                 backup_key = f"{backup_prefix}datasets/{dataset_name}/{rel_path}"
                 self._blob_store.copy(key, backup_key)
+                # Record etag+size for integrity verification without downloading
+                try:
+                    info = self._blob_store.head(backup_key)
+                    file_hashes[rel_path] = f"{info.etag}:{info.size_bytes}"
+                except Exception:
+                    file_hashes[rel_path] = "copy-ok"
             if not result.truncated:
                 break
             continuation_token = result.next_token
@@ -393,14 +399,13 @@ class BackupManager:
         return row_count, file_hashes
 
     def _backup_blob_prefix(self, src_prefix: str, dest_prefix: str) -> int:
-        """Copy all blobs from src_prefix to dest_prefix (handles pagination)."""
+        """Copy all blobs from src_prefix to dest_prefix via server-side copy."""
         count = 0
         continuation_token: str | None = None
         while True:
             result = self._blob_store.list_blobs(src_prefix, max_keys=1000, continuation_token=continuation_token)
             for key in result.keys:
-                data = self._blob_store.download(key)
-                self._blob_store.upload(dest_prefix + key, data)
+                self._blob_store.copy(key, dest_prefix + key)
                 count += 1
             if not result.truncated or not result.keys:
                 break

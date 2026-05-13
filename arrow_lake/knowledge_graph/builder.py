@@ -145,6 +145,29 @@ class KGBuilder:
         if table.num_rows == 0:
             return
 
+        # 1b. Normalize columns — content first (before adding id to avoid
+        # rename collision), then id, document_name, chunk_index
+        if "content" not in table.column_names:
+            text_col = (
+                "text_content"
+                if "text_content" in table.column_names
+                else table.column_names[0]
+            )
+            new_names = ["content" if c == text_col else c for c in table.column_names]
+            table = table.rename_columns(new_names)
+        if "id" not in table.column_names:
+            table = table.add_column(
+                0, "id", pa.array([str(i) for i in range(table.num_rows)])
+            )
+        if "document_name" not in table.column_names:
+            table = table.append_column(
+                "document_name", pa.array([task.dataset_name] * table.num_rows)
+            )
+        if "chunk_index" not in table.column_names:
+            table = table.append_column(
+                "chunk_index", pa.array(list(range(table.num_rows)))
+            )
+
         batch_size = self._config.build_batch_size
 
         # 2. Collect unique documents and insert document vertices
@@ -158,14 +181,18 @@ class KGBuilder:
 
         # 3. Insert chunk vertices
         chunk_ids = table.column("id").to_pylist()
-        contents = table.column("content").to_pylist()
+        contents = [str(c) if c is not None else "" for c in table.column("content").to_pylist()]
         doc_name_col = table.column("document_name").to_pylist()
         chunk_indices = table.column("chunk_index").to_pylist()
 
         chunk_vertices = [
             {
                 "label": "chunk",
-                "properties": {"id": cid, "content": content, "chunk_index": idx},
+                "properties": {
+                    "id": cid,
+                    "content": str(content) if content is not None else "",
+                    "chunk_index": idx,
+                },
             }
             for cid, content, idx in zip(chunk_ids, contents, chunk_indices, strict=True)
         ]
@@ -231,9 +258,12 @@ class KGBuilder:
             entity_id_map: dict[str, str] = {}
             if entity_vertices:
                 entity_hg_ids = await self._client.add_vertices(entity_vertices)
-                entity_id_map = dict(zip(
-                    [e.name for e in result.entities], entity_hg_ids, strict=True,
-                ))
+                # Use (name, type) composite key to avoid losing duplicate-name entities
+                entity_keys = [f"{e.name}::{e.entity_type}" for e in result.entities]
+                entity_id_map_name = dict(zip(entity_keys, entity_hg_ids, strict=True))
+                # Also build name-only map for edge resolution (last wins for duplicates)
+                for e, hg_id in zip(result.entities, entity_hg_ids):
+                    entity_id_map[e.name] = hg_id
 
             ref_edges = [
                 {
@@ -282,6 +312,31 @@ class KGBuilder:
 
         task.entity_count = total_entities
         task.relation_count = total_relations
+
+    @staticmethod
+    def _normalize_table(table: pa.Table, dataset_name: str) -> pa.Table:
+        """Ensure the table has the columns required by the build pipeline."""
+        if "content" not in table.column_names:
+            text_col = (
+                "text_content"
+                if "text_content" in table.column_names
+                else table.column_names[0]
+            )
+            new_names = ["content" if c == text_col else c for c in table.column_names]
+            table = table.rename_columns(new_names)
+        if "id" not in table.column_names:
+            table = table.add_column(
+                0, "id", pa.array([str(i) for i in range(table.num_rows)])
+            )
+        if "document_name" not in table.column_names:
+            table = table.append_column(
+                "document_name", pa.array([dataset_name] * table.num_rows)
+            )
+        if "chunk_index" not in table.column_names:
+            table = table.append_column(
+                "chunk_index", pa.array(list(range(table.num_rows)))
+            )
+        return table
 
     @staticmethod
     def _unique_column_values(table: pa.Table, column: str) -> list[str]:

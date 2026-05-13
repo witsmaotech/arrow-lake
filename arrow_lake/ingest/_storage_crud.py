@@ -133,6 +133,9 @@ class StorageCRUDMixin:
                     message=f"Dataset '{name}' does not exist at {path}",
                 )
             shutil.rmtree(path)
+        # Clean up lock for deleted dataset to prevent unbounded growth
+        with contextlib.suppress(KeyError):
+            del self._dataset_locks[name]
 
     def dataset_exists(self, name: str) -> bool:
         """Check if a dataset exists.
@@ -194,24 +197,25 @@ class StorageCRUDMixin:
         self._validate_name(name)
         self._validate_identifier(on, "on_column")
 
-        if not self.dataset_exists(name):
-            self.create_dataset(name, data)
-            return
+        with self._dataset_lock(name):
+            if not self.dataset_exists(name):
+                self.create_dataset(name, data)
+                return
 
-        table = self._open_lance(self._get_dataset_path(name))
-        if on not in table.schema.names:
-            raise StorageError(
-                error_code=ErrorCode.STORAGE_PATH_NOT_FOUND,
-                message=f"Merge key column '{on}' not found in dataset '{name}'",
-            )
+            table = self._open_lance(self._get_dataset_path(name))
+            if on not in table.schema.names:
+                raise StorageError(
+                    error_code=ErrorCode.STORAGE_PATH_NOT_FOUND,
+                    message=f"Merge key column '{on}' not found in dataset '{name}'",
+                )
 
-        try:
-            table.merge_insert(on=on).when_matched_update_all().when_not_matched_insert_all().execute(data)
-        except (ValueError, RuntimeError, OSError) as exc:
-            raise StorageError(
-                error_code=ErrorCode.STORAGE_WRITE_FAILED,
-                message=f"Upsert failed on dataset '{name}': {exc}",
-            ) from exc
+            try:
+                table.merge_insert(on=on).when_matched_update_all().when_not_matched_insert_all().execute(data)
+            except (ValueError, RuntimeError, OSError) as exc:
+                raise StorageError(
+                    error_code=ErrorCode.STORAGE_WRITE_FAILED,
+                    message=f"Upsert failed on dataset '{name}': {exc}",
+                ) from exc
 
     def delete_rows(
         self,

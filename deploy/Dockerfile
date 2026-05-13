@@ -14,6 +14,10 @@ FROM --platform=$BUILDPLATFORM python:3.12-slim AS builder
 
 ARG TARGETARCH
 
+# Use China apt mirror (Debian trixie)
+RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null \
+    || sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list 2>/dev/null || true
+
 # System dependencies for building Python packages (Daft, Lance, etc.)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
@@ -38,7 +42,15 @@ COPY arrow_lake/ arrow_lake/
 COPY flows/ flows/
 
 # Create virtual environment and install everything (with BuildKit cache)
+# Use China PyPI mirror for faster downloads
+# Unset daemon-injected proxy so uv connects directly to the mirror
 ENV UV_HTTP_TIMEOUT=120
+ENV UV_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
+ENV UV_TRUSTED_HOST=mirrors.aliyun.com
+ENV HTTP_PROXY=""
+ENV HTTPS_PROXY=""
+ENV http_proxy=""
+ENV https_proxy=""
 
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv venv .venv \
@@ -57,6 +69,10 @@ FROM python:3.12-slim AS runtime
 LABEL maintainer="wits@sunpw.dev"
 LABEL description="Arrow Lake — Unified multimodal data lakehouse (Lance + Daft + Ray)"
 LABEL org.opencontainers.image.source="https://github.com/wits-sunpw/arrow-lake"
+
+# Use China apt mirror
+RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null \
+    || sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list 2>/dev/null || true
 
 # Runtime system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \

@@ -254,37 +254,29 @@ class FullTextSearchBridge:
             new_table = original.append_column(segmented_column, new_col)
             lance.write_dataset(new_table, uri, mode="overwrite", storage_options=opts)
         else:
-            # Chunked: process in batches, merge via Lance append
+            # Chunked: read full table, segment in chunks, write once to preserve all columns
             _log.info(
                 "Large dataset (%d rows): segmenting in chunks of %d",
                 row_count, _chunk_size,
             )
 
-            first_chunk = True
-            for offset in range(0, row_count, _chunk_size):
-                batch = ds.to_table(
-                    columns=[source_column],
-                    offset=offset,
-                    limit=_chunk_size,
-                )
-                original_col = batch.column(source_column)
-                segmented = [
-                    None if text is None else segment_text(str(text))
-                    for text in original_col.to_pylist()
-                ]
-                del original_col
-                segmented_col = pa.array(segmented, type=pa.string())
-                del segmented
-                chunk_table = batch.append_column(segmented_column, segmented_col)
-                del batch, segmented_col
-                if first_chunk:
-                    lance.write_dataset(chunk_table, uri, mode="overwrite", storage_options=opts)
-                    first_chunk = False
-                else:
-                    lance.write_dataset(chunk_table, uri, mode="append", storage_options=opts)
-                del chunk_table
-            # Reopen to validate
-            ds = lance.dataset(uri, storage_options=opts)
+            full_table = ds.to_table()
+            if segmented_column in full_table.column_names:
+                full_table = full_table.drop_columns(segmented_column)
+
+            raw_texts = full_table.column(source_column).to_pylist()
+            segmented_values: list[str | None] = [None] * len(raw_texts)
+            for offset in range(0, len(raw_texts), _chunk_size):
+                chunk_texts = raw_texts[offset:offset + _chunk_size]
+                for i, text in enumerate(chunk_texts):
+                    segmented_values[offset + i] = (
+                        None if text is None else segment_text(str(text))
+                    )
+
+            new_col = pa.array(segmented_values, type=pa.string())
+            new_table = full_table.append_column(segmented_column, new_col)
+            lance.write_dataset(new_table, uri, mode="overwrite", storage_options=opts)
+            del full_table, new_table
 
         _log.info(
             "Added jieba-segmented column '%s' to dataset '%s' (%d rows)",

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import re
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -106,14 +107,19 @@ class Ingestor:
             IngestionReport with per-source and total stats.
 
         Raises:
-            IngestError: If ingestion fails.
+            IngestError: If ingestion fails or file_paths is empty.
         """
+        if not file_paths:
+            raise IngestError(
+                error_code=ErrorCode.INGEST_UNSUPPORTED_FORMAT,
+                message="No file paths provided for ingestion",
+            )
+
         sources: list[IngestionSource] = []
 
         for fp in file_paths:
-            p = Path(fp)
-            ft = self._detect_file_type(p)
-            table = self._read_file(p, ft)
+            ft = self._detect_file_type(fp)
+            table = self._read_file(fp, ft)
             self._write_table(dataset_name, table, sources, fp)
 
         return self._build_report(sources)
@@ -142,8 +148,8 @@ class Ingestor:
 
         def _fetch_and_read(url: str) -> tuple[str, pa.Table]:
             result = connector.fetch(url)
-            suffix = self._detect_file_type(Path(url))
-            table = self._read_bytes(result.content, suffix)
+            ft = self._detect_file_type(url)
+            table = self._read_bytes(result.content, ft)
             return result.url, table
 
         workers = min(len(urls), 4)
@@ -356,7 +362,10 @@ class Ingestor:
             blob_key = ""
             if blob_store is not None and (doc_config is None or doc_config.store_raw_pdf):
                 prefix = doc_config.blob_prefix if doc_config else "documents/"
-                safe_stem = pdf_path.stem.replace("/", "_").replace("\\", "_").replace("..", "_")
+                safe_stem = re.sub(r'[/\\:\0]', '_', pdf_path.stem)
+                safe_stem = re.sub(r'\.\.', '_', safe_stem)
+                if not safe_stem:
+                    safe_stem = "doc"
                 blob_key = f"{prefix}{safe_stem}/{pdf_path.name}"
                 try:
                     blob_store.upload(blob_key, pdf_path.read_bytes())
@@ -393,11 +402,11 @@ class Ingestor:
         return self._build_report(sources)
 
     @classmethod
-    def _detect_file_type(cls, path: Path) -> str:
+    def _detect_file_type(cls, path: Path | str) -> str:
         """Detect file type from extension.
 
         Args:
-            path: File path.
+            path: File path (local, S3 URI, or URL).
 
         Returns:
             File type string ('csv', 'json', 'parquet').
@@ -405,21 +414,21 @@ class Ingestor:
         Raises:
             IngestError: If extension is not supported.
         """
-        suffix = path.suffix.lower()
-        file_type = cls._SUPPORTED_EXTENSIONS.get(suffix)
-        if file_type is None:
-            raise IngestError(
-                error_code=ErrorCode.INGEST_UNSUPPORTED_FORMAT,
-                message=f"Unsupported file format '{suffix}' for '{path}'",
-            )
-        return file_type
+        p = str(path).lower()
+        for ext, ft in cls._SUPPORTED_EXTENSIONS.items():
+            if p.endswith(ext):
+                return ft
+        raise IngestError(
+            error_code=ErrorCode.INGEST_UNSUPPORTED_FORMAT,
+            message=f"Unsupported file format for '{path}'",
+        )
 
     @staticmethod
-    def _read_file(path: Path, file_type: str) -> pa.Table:
+    def _read_file(path: Path | str, file_type: str) -> pa.Table:
         """Read a file into an Arrow Table using Daft.
 
         Args:
-            path: File path.
+            path: File path (local or s3:// URI).
             file_type: File type string.
 
         Returns:
@@ -431,12 +440,13 @@ class Ingestor:
         import daft
 
         try:
+            sp = str(path)
             if file_type == "csv":
-                df = daft.read_csv(str(path))
+                df = daft.read_csv(sp)
             elif file_type == "json":
-                df = daft.read_json(str(path))
+                df = daft.read_json(sp)
             elif file_type == "parquet":
-                df = daft.read_parquet(str(path))
+                df = daft.read_parquet(sp)
             else:
                 raise IngestError(
                     error_code=ErrorCode.INGEST_UNSUPPORTED_FORMAT,

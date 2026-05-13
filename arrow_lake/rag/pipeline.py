@@ -323,25 +323,26 @@ class RAGPipeline:
                     yield idx, chunk
 
         async def _merge():
-            streams = [
-                _stream_single(i, q) for i, q in enumerate(questions)
-            ]
+            streams = [_stream_single(i, q) for i, q in enumerate(questions)]
             task_to_stream: dict[asyncio.Task, Any] = {}
-            pending = set(
-                asyncio.create_task(s.__anext__()) for s in streams
-            )
+            pending: set[asyncio.Task] = set()
+            for s in streams:
+                t = asyncio.create_task(s.__anext__())
+                task_to_stream[t] = s
+                pending.add(t)
             while pending:
                 done, _ = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
                 for task in done:
+                    pending.discard(task)
+                    stream = task_to_stream.pop(task)
                     try:
                         idx, chunk = task.result()
-                        stream = task_to_stream.pop(task)
                         next_task = asyncio.create_task(stream.__anext__())
                         task_to_stream[next_task] = stream
                         pending.add(next_task)
                         yield idx, chunk
                     except StopAsyncIteration:
-                        pass
+                        pass  # stream exhausted
             yield -1, ""  # sentinel
 
         async for item in _merge():

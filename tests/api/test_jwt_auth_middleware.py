@@ -190,13 +190,13 @@ class TestAuthEndpointBypass:
         assert response.status_code == 200
 
     @pytest.mark.asyncio
-    async def test_auth_me_bypasses(self) -> None:
+    async def test_auth_me_requires_jwt(self) -> None:
         request = _make_request(path="/api/v1/auth/me")
         call_next = _call_next_ok(request)
         svc = _make_auth_service()
 
         response = await jwt_auth_middleware_fn(request, call_next, auth_service=svc)
-        assert response.status_code == 200
+        assert response.status_code == 401
 
 
 # ===========================================================================

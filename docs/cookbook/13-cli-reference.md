@@ -54,11 +54,11 @@ arrow-lake version
 ┏━━━━━━━━━━━━┳━━━━━━━━━┓
 ┃ Component  ┃ Version ┃
 ┡━━━━━━━━━━━━╇━━━━━━━━━┩
-│ arrow-lake │ 1.2.1   │
+│ arrow-lake │ 1.3.0   │
 │ python     │ 3.11.9  │
-│ pyarrow    │ 18.1.0  │
-│ duckdb     │ 1.2.1   │
-│ lancedb    │ 0.18.0  │
+│ pyarrow    │ 23.0.1  │
+│ duckdb     │ 1.5.2   │
+│ lancedb    │ 0.30.2  │
 └────────────┴─────────┘
 ```
 

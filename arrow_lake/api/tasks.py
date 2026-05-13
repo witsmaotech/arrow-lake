@@ -38,14 +38,24 @@ class TaskManager:
     """In-process export task tracker."""
 
     _tasks: ClassVar[dict[str, ExportTask]] = {}
+    _TASK_TTL_SECONDS = 3600  # Auto-cleanup after 1 hour
 
     @classmethod
-    def create_task(
-        cls,
-        dataset_name: str,
-        output_path: str,
-        fmt: str = "parquet",
-    ) -> str:
+    def _evict_expired(cls) -> None:
+        """Remove completed/failed tasks older than TTL."""
+        now = datetime.now(UTC)
+        expired = [
+            tid for tid, t in cls._tasks.items()
+            if t.status in (TaskStatus.COMPLETED, TaskStatus.FAILED)
+            and t.completed_at
+            and (now - datetime.fromisoformat(t.completed_at)).total_seconds() > cls._TASK_TTL_SECONDS
+        ]
+        for tid in expired:
+            del cls._tasks[tid]
+
+    @classmethod
+    def create_task(cls, dataset_name: str, output_path: str, fmt: str = "parquet") -> str:
+        cls._evict_expired()
         task_id = uuid.uuid4().hex[:16]
         cls._tasks[task_id] = ExportTask(
             task_id=task_id,

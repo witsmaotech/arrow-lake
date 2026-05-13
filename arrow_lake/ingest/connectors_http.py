@@ -6,6 +6,7 @@ Implements the FileConnector protocol from connectors.py.
 
 from __future__ import annotations
 
+import contextlib
 import ipaddress
 from dataclasses import dataclass
 from typing import Any
@@ -24,15 +25,23 @@ from arrow_lake.ingest.connectors import ConnectorResult
 
 # Private IP ranges that should be blocked (SSRF prevention)
 _PRIVATE_NETWORKS = [
-    ipaddress.ip_network("127.0.0.0/8"),  # loopback
-    ipaddress.ip_network("10.0.0.0/8"),  # RFC 1918 class A
-    ipaddress.ip_network("172.16.0.0/12"),  # RFC 1918 class B
-    ipaddress.ip_network("192.168.0.0/16"),  # RFC 1918 class C
-    ipaddress.ip_network("169.254.0.0/16"),  # link-local
-    ipaddress.ip_network("::1/128"),  # IPv6 loopback
-    ipaddress.ip_network("fc00::/7"),  # IPv6 unique local
-    ipaddress.ip_network("fe80::/10"),  # IPv6 link-local
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("169.254.0.0/16"),
+    ipaddress.ip_network("0.0.0.0/8"),
+    ipaddress.ip_network("100.64.0.0/10"),
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("::ffff:0.0.0.0/96"),
+    ipaddress.ip_network("fc00::/7"),
+    ipaddress.ip_network("fe80::/10"),
 ]
+
+
+def _is_private_ip(addr: ipaddress._BaseAddress) -> bool:
+    """Check if an IP address falls in any private/reserved range."""
+    return any(addr in net for net in _PRIVATE_NETWORKS)
 
 
 def _is_safe_hostname(hostname: str) -> bool:
@@ -44,14 +53,14 @@ def _is_safe_hostname(hostname: str) -> bool:
 
     try:
         addr = ipaddress.ip_address(hostname)
-        return not any(addr in net for net in _PRIVATE_NETWORKS)
+        return not _is_private_ip(addr)
     except ValueError:
         # Not an IP literal — resolve DNS and check resolved IPs
         try:
             addrs = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
             for _family, _, _, _, sockaddr in addrs:
                 ip = ipaddress.ip_address(sockaddr[0])
-                if any(ip in net for net in _PRIVATE_NETWORKS):
+                if _is_private_ip(ip):
                     return False
         except (socket.gaierror, OSError):
             pass
@@ -68,11 +77,36 @@ class HttpFetchResult:
     status_code: int
 
 
+class _SSRFSafeTransport(httpx.HTTPTransport):
+    """Transport that validates the resolved IP after connection to prevent DNS rebinding."""
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        resp = super().handle_request(request)
+        stream = getattr(resp, 'stream', None)
+        if stream is not None:
+            conn = getattr(stream, '_connection', None)
+            if conn is not None:
+                sock = getattr(conn, 'sock', None) or getattr(conn, '_sock', None)
+                if sock is not None and hasattr(sock, 'getpeername'):
+                    addr = sock.getpeername()[0]
+                    try:
+                        if _is_private_ip(ipaddress.ip_address(addr)):
+                            resp.close()
+                            raise HttpError(
+                                error_code=ErrorCode.HTTP_FETCH_FAILED,
+                                message=f"Connection to private IP blocked (DNS rebinding): {addr}",
+                            )
+                    except ValueError:
+                        pass
+        return resp
+
+
 class HttpConnector:
     """Fetches files from HTTP(S) URLs.
 
     Features:
     - URL scheme validation (only http/https) for SSRF prevention
+    - DNS-rebinding protection via post-connection IP validation
     - Retry with exponential backoff on transient errors
     - Error mapping: 4xx→HTTP_FETCH_FAILED, 408/504→HTTP_TIMEOUT, 429→HTTP_RATE_LIMITED
 
@@ -89,6 +123,7 @@ class HttpConnector:
         self.timeout_seconds = timeout_seconds
         self.max_retries = max_retries
         self._client = httpx.Client(
+            transport=_SSRFSafeTransport(),
             timeout=timeout_seconds,
             limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
         )
@@ -96,6 +131,10 @@ class HttpConnector:
     def close(self) -> None:
         """Close the underlying HTTP client."""
         self._client.close()
+
+    def __del__(self) -> None:
+        with contextlib.suppress(Exception):
+            self._client.close()
 
     def __enter__(self) -> HttpConnector:
         return self

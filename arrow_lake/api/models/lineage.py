@@ -34,6 +34,11 @@ class LineageQueryRequest(BaseModel):
     def validate_sql_read_only(cls, v: str) -> str:
         from arrow_lake.api.models.common import _BLOCKED_SQL_PREFIXES
 
+        stripped = v.strip()
+        if not stripped.upper().startswith("SELECT"):
+            raise ValueError("Only SELECT queries are allowed")
+        if ";" in stripped.rstrip(";"):
+            raise ValueError("Multi-statement queries are not allowed")
         if _BLOCKED_SQL_PREFIXES.search(v):
             raise ValueError("Only SELECT queries are allowed")
         return v

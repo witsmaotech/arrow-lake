@@ -111,8 +111,13 @@ class AuthService:
                 logger.warning("Redis blacklist write failed, falling back to in-memory")
         with self._blacklist_lock:
             self._blacklist[jti] = now
+            # Evict oldest entries, but only those past their TTL
+            cutoff = now - ttl
             while len(self._blacklist) > self._blacklist_max_size:
-                self._blacklist.popitem(last=False)
+                oldest_jti, oldest_time = next(iter(self._blacklist))
+                if oldest_time >= cutoff:
+                    break  # All remaining entries are within TTL
+                del self._blacklist[oldest_jti]
 
     def is_revoked(self, jti: str) -> bool:
         """Check if a token has been revoked."""

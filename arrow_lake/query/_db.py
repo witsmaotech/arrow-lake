@@ -135,6 +135,7 @@ class DuckDBSession:
                 "AWS_REGION", "AWS_ENDPOINT_URL", "AWS_ALLOW_HTTP",
             )
         }
+        self._s3_env_backup = _env_backup
         try:
             os.environ["AWS_ACCESS_KEY_ID"] = config.s3_access_key
             os.environ["AWS_SECRET_ACCESS_KEY"] = config.s3_secret_key
@@ -142,9 +143,13 @@ class DuckDBSession:
             os.environ["AWS_ENDPOINT_URL"] = config.s3_endpoint
             if is_http:
                 os.environ["AWS_ALLOW_HTTP"] = "true"
-            self._s3_env_backup = _env_backup
         except Exception:
-            pass
+            # Restore on partial failure
+            for k, v in _env_backup.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
 
     def __enter__(self) -> duckdb.DuckDBPyConnection:
         """Create connection, load extensions, configure resources and S3."""

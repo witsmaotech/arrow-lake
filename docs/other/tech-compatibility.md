@@ -19,21 +19,26 @@
 | Package | Version |
 |---------|---------|
 | daft | 0.7.8 |
-| duckdb | 1.5.1 |
+| duckdb | 1.5.2 |
 | metaflow | 2.19.22 |
 | metaflow-ray | 0.1.4 |
 | pyarrow | 23.0.1 |
 | pydantic | 2.12.5 |
 | ray | 2.54.1 |
+| pylance | 6.0.0 |
+| lancedb | 0.30.2 |
+| lance-namespace | 0.7.6 |
 
 ## Recommended Version Pins
 
 ```toml
 # pyproject.toml [project] dependencies
 daft == "0.7.8"
-duckdb == "1.5.1"
+duckdb == "1.5.2"
 metaflow == "2.19.22"
 pyarrow == "23.0.1"
 pydantic == "2.12.5"
 ray == "2.54.1"
+pylance = ">=6.0.0"
+lancedb == "0.30.2"
 ```

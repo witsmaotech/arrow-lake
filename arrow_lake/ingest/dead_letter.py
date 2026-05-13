@@ -152,13 +152,27 @@ class IngestDeadLetterQueue:
             return
         try:
             text = self._queue_path.read_text(encoding="utf-8")
-            for line in text.strip().split("\n"):
-                if line.strip():
-                    self._items.append(DeadLetterItem.from_dict(json.loads(line)))
-        except (json.JSONDecodeError, ValueError, OSError) as exc:
+        except OSError as exc:
             import structlog
             structlog.get_logger().warning(
                 "dead_letter_load_failed", path=str(self._queue_path), error=str(exc)
+            )
+            return
+
+        skipped = 0
+        for line in text.strip().split("\n"):
+            if not line.strip():
+                continue
+            try:
+                self._items.append(DeadLetterItem.from_dict(json.loads(line)))
+            except (json.JSONDecodeError, ValueError):
+                skipped += 1
+        if skipped:
+            import structlog
+            structlog.get_logger().warning(
+                "dead_letter_partial_corruption",
+                path=str(self._queue_path), skipped_lines=skipped,
+                loaded=len(self._items),
             )
 
     def _append_item(self, item: DeadLetterItem) -> None:

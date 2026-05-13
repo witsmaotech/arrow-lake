@@ -2,12 +2,21 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Path, Query
+import os
+import re
+import shutil
+import tempfile
+import uuid
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any
+
+from fastapi import APIRouter, Depends, File, Path, Query, UploadFile
 
 from arrow_lake.api.auth_models import Role
 from arrow_lake.api.deps import get_lake, require_role
 from arrow_lake.api.models.common import _NAME_PATTERN, MessageResponse
 from arrow_lake.api.models.dataset import (
+    CleanupResponse,
     DatasetInfo,
     DatasetListResponse,
     IngestDocumentsRequest,
@@ -17,6 +26,11 @@ from arrow_lake.api.models.dataset import (
     IngestMixedRequest,
     IngestResponse,
     IngestVideosRequest,
+    PresignRequest,
+    PresignResponse,
+    PresignedUpload,
+    UploadResponse,
+    UploadedBlob,
 )
 from arrow_lake.api.utils import run_sync
 from arrow_lake.exceptions import CatalogError, ErrorCode
@@ -25,6 +39,209 @@ router = APIRouter(prefix="/api/v1/datasets", tags=["datasets"])
 
 _INGEST_TIMEOUT = 600
 _ADMIN_TIMEOUT = 60
+_DOWNLOAD_WORKERS = 4
+_MAX_UPLOAD_BYTES = 100 * 1024 * 1024  # 100 MB
+_ALLOWED_CONTENT_PREFIXES = (
+    "text/", "application/", "image/", "video/", "audio/",
+    "multipart/",
+)
+
+_SAFE_FILENAME_RE = re.compile(r"^[a-zA-Z0-9_\-.][a-zA-Z0-9_\-.]*$")
+
+# Extensions that Daft can read directly from S3 URIs.
+_S3_NATIVE_EXTENSIONS = frozenset({".csv", ".json", ".jsonl", ".parquet"})
+
+
+def _sanitize_filename(name: str) -> str:
+    from arrow_lake.api.models.dataset import _check_no_traversal
+
+    stripped = os.path.basename(name)
+    _check_no_traversal(stripped)
+    if not stripped or not _SAFE_FILENAME_RE.match(stripped):
+        raise ValueError(f"Invalid filename: {name!r}")
+    return stripped
+
+
+def _unique_blob_key(dataset_name: str, filename: str) -> str:
+    """Build a collision-resistant blob key: uploads/{ds}/{uuid8}_{filename}."""
+    safe = _sanitize_filename(filename)
+    prefix = uuid.uuid4().hex[:8]
+    return f"uploads/{dataset_name}/{prefix}_{safe}"
+
+
+def _get_blob_store(lake: Any) -> Any:
+    from arrow_lake.storage.blob_store import BlobStoreManager
+
+    return lake._get_component(
+        "blob_store",
+        lambda: BlobStoreManager(config=lake._config.storage),
+    )
+
+
+def _blob_key_to_s3_uri(key: str, lake: Any) -> str:
+    sc = lake._config.storage
+    return f"s3://{sc.s3_bucket}/{key}"
+
+
+def _is_s3_native(key: str) -> bool:
+    ext = os.path.splitext(key)[1].lower()
+    return ext in _S3_NATIVE_EXTENSIONS
+
+
+def _resolve_blob_keys(blob_keys: list[str], lake: Any, tmp_dir: str) -> list[str]:
+    blob_store = _get_blob_store(lake)
+
+    def _download_one(idx_key: tuple[int, str]) -> str:
+        idx, key = idx_key
+        filename = key.rsplit("/", 1)[-1]
+        # Use index prefix to prevent filename collisions
+        dest = os.path.join(tmp_dir, f"{idx:04d}_{filename}")
+        blob_store.download_file(key, dest)
+        if not os.path.exists(dest) or os.path.getsize(dest) == 0:
+            raise IOError(f"Download verification failed for blob key: {key}")
+        return dest
+
+    try:
+        with ThreadPoolExecutor(max_workers=_DOWNLOAD_WORKERS) as pool:
+            return list(pool.map(_download_one, enumerate(blob_keys)))
+    except Exception:
+        # Clean up partial downloads on failure
+        for f in os.listdir(tmp_dir):
+            try:
+                os.remove(os.path.join(tmp_dir, f))
+            except OSError:
+                pass
+        raise
+
+
+def _resolve_blob_keys_smart(
+    blob_keys: list[str],
+    lake: Any,
+    tmp_dir: str,
+) -> tuple[list[str], list[str]]:
+    """Resolve blob_keys to local paths via concurrent download.
+
+    S3-native reads (Daft reading s3:// URIs directly) are deferred until
+    Daft's S3 configuration supports HTTP MinIO endpoints correctly.
+    All blobs are currently downloaded to tmp_dir.
+    """
+    local_paths = _resolve_blob_keys(blob_keys, lake, tmp_dir)
+    return [], local_paths
+
+
+def _resolve_blob_sources(
+    blob_keys: dict[str, list[str]], lake: Any, tmp_dir: str,
+) -> dict[str, list[str]]:
+    resolved: dict[str, list[str]] = {}
+    for modality, keys in blob_keys.items():
+        s3_uris, local_paths = _resolve_blob_keys_smart(keys, lake, tmp_dir)
+        combined = s3_uris + local_paths
+        if combined:
+            resolved[modality] = combined
+    return resolved
+
+
+# ---------------------------------------------------------------------------
+# Upload
+# ---------------------------------------------------------------------------
+
+
+@router.post("/{name}/upload", response_model=UploadResponse, status_code=201)
+async def upload_files(
+    name: str = Path(..., pattern=_NAME_PATTERN),
+    files: list[UploadFile] = File(..., max_length=20),
+    lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.EDITOR)),
+) -> UploadResponse:
+    """Upload files to MinIO for later ingestion (proxy mode).
+
+    For better performance, prefer ``POST /{name}/upload/presign`` which
+    returns presigned URLs for direct-to-MinIO upload.
+    """
+    blob_store = _get_blob_store(lake)
+    uploaded: list[UploadedBlob] = []
+
+    for f in files:
+        # Content-Type validation
+        ct = f.content_type or ""
+        if ct and not ct.startswith(_ALLOWED_CONTENT_PREFIXES):
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=415,
+                detail=f"Unsupported Content-Type '{ct}' for file '{f.filename}'",
+            )
+
+        # Size check: reject oversized uploads before reading into memory
+        content_length = f.size if hasattr(f, "size") and f.size else None
+        if content_length is not None and content_length > _MAX_UPLOAD_BYTES:
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=413,
+                detail=f"File '{f.filename}' too large ({content_length} bytes, max {_MAX_UPLOAD_BYTES})",
+            )
+        data = await f.read()
+        if len(data) > _MAX_UPLOAD_BYTES:
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=413,
+                detail=f"File '{f.filename}' too large ({len(data)} bytes, max {_MAX_UPLOAD_BYTES})",
+            )
+        key = _unique_blob_key(name, f.filename or "unnamed")
+        result = blob_store.upload(key, data, content_type=f.content_type)
+        uploaded.append(
+            UploadedBlob(
+                key=result.key,
+                size_bytes=result.size_bytes,
+                content_type=f.content_type or "",
+            )
+        )
+
+    return UploadResponse(blobs=uploaded)
+
+
+@router.post("/{name}/upload/presign", response_model=PresignResponse)
+async def presign_upload(
+    name: str = Path(..., pattern=_NAME_PATTERN),
+    *,
+    req: PresignRequest,
+    lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.EDITOR)),
+) -> PresignResponse:
+    """Generate presigned PUT URLs for direct-to-MinIO upload.
+
+    Client uploads files directly to MinIO using the returned URLs,
+    then calls an ingest endpoint with the returned blob keys.
+    This avoids routing file data through the API server.
+    """
+    blob_store = _get_blob_store(lake)
+    uploads: list[PresignedUpload] = []
+
+    for filename in req.filenames:
+        key = _unique_blob_key(name, filename)
+        url = blob_store.presigned_url(key, expires_in=3600, operation="put_object")
+        uploads.append(PresignedUpload(key=key, upload_url=url))
+
+    return PresignResponse(uploads=uploads)
+
+
+@router.delete("/{name}/upload/cleanup", response_model=CleanupResponse)
+async def cleanup_uploads(
+    name: str = Path(..., pattern=_NAME_PATTERN),
+    lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.EDITOR)),
+) -> CleanupResponse:
+    """Delete all uploaded blobs for a dataset from MinIO.
+
+    Call after dataset deletion to prevent orphaned uploads from accumulating.
+    """
+    blob_store = _get_blob_store(lake)
+    deleted = blob_store.delete_prefix(f"uploads/{name}/")
+    return CleanupResponse(deleted_count=deleted)
+
+
+# ---------------------------------------------------------------------------
+# Ingest
+# ---------------------------------------------------------------------------
 
 
 @router.post("/{name}/ingest", response_model=IngestResponse, status_code=201)
@@ -36,11 +253,22 @@ async def ingest_files(
     _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> IngestResponse:
     """Ingest local files into a dataset."""
-    report = await run_sync(
-        lake.ingest, name, req.file_paths,
-        timeout=_INGEST_TIMEOUT, label="ingest_files",
-    )
-    return IngestResponse.from_report(report)
+    all_paths = list(req.file_paths)
+    tmp_dir: str | None = None
+    try:
+        if req.blob_keys:
+            tmp_dir = tempfile.mkdtemp(prefix="al_ingest_")
+            s3_uris, local_paths = _resolve_blob_keys_smart(req.blob_keys, lake, tmp_dir)
+            all_paths.extend(s3_uris)
+            all_paths.extend(local_paths)
+        report = await run_sync(
+            lake.ingest, name, all_paths,
+            timeout=_INGEST_TIMEOUT, label="ingest_files",
+        )
+        return IngestResponse.from_report(report)
+    finally:
+        if tmp_dir:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 @router.post("/{name}/ingest/http", response_model=IngestResponse, status_code=201)
@@ -68,11 +296,21 @@ async def ingest_images(
     _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> IngestResponse:
     """Ingest image files with thumbnails and EXIF metadata."""
-    report = await run_sync(
-        lake.ingest_images, name, req.file_paths,
-        timeout=_INGEST_TIMEOUT, label="ingest_images",
-    )
-    return IngestResponse.from_report(report)
+    all_paths = list(req.file_paths)
+    tmp_dir: str | None = None
+    try:
+        if req.blob_keys:
+            tmp_dir = tempfile.mkdtemp(prefix="al_ingest_")
+            # Images always need local paths (Pillow requirement)
+            all_paths.extend(_resolve_blob_keys(req.blob_keys, lake, tmp_dir))
+        report = await run_sync(
+            lake.ingest_images, name, all_paths,
+            timeout=_INGEST_TIMEOUT, label="ingest_images",
+        )
+        return IngestResponse.from_report(report)
+    finally:
+        if tmp_dir:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 @router.post("/{name}/ingest/videos", response_model=IngestResponse, status_code=201)
@@ -84,11 +322,21 @@ async def ingest_videos(
     _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> IngestResponse:
     """Ingest video files with keyframe extraction."""
-    report = await run_sync(
-        lake.ingest_videos, name, req.file_paths,
-        timeout=_INGEST_TIMEOUT, label="ingest_videos",
-    )
-    return IngestResponse.from_report(report)
+    all_paths = list(req.file_paths)
+    tmp_dir: str | None = None
+    try:
+        if req.blob_keys:
+            tmp_dir = tempfile.mkdtemp(prefix="al_ingest_")
+            # Videos always need local paths (av/ffmpeg requirement)
+            all_paths.extend(_resolve_blob_keys(req.blob_keys, lake, tmp_dir))
+        report = await run_sync(
+            lake.ingest_videos, name, all_paths,
+            timeout=_INGEST_TIMEOUT, label="ingest_videos",
+        )
+        return IngestResponse.from_report(report)
+    finally:
+        if tmp_dir:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 @router.post("/{name}/ingest/mixed", response_model=IngestResponse, status_code=201)
@@ -100,11 +348,22 @@ async def ingest_mixed(
     _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> IngestResponse:
     """Ingest mixed-modality sources (files, URLs, images, videos)."""
-    report = await run_sync(
-        lake.ingest_mixed, name, req.sources,
-        timeout=_INGEST_TIMEOUT, label="ingest_mixed",
-    )
-    return IngestResponse.from_report(report)
+    sources = dict(req.sources)
+    tmp_dir: str | None = None
+    try:
+        if req.blob_keys:
+            tmp_dir = tempfile.mkdtemp(prefix="al_ingest_")
+            resolved = _resolve_blob_sources(req.blob_keys, lake, tmp_dir)
+            for modality, paths in resolved.items():
+                sources.setdefault(modality, []).extend(paths)
+        report = await run_sync(
+            lake.ingest_mixed, name, sources,
+            timeout=_INGEST_TIMEOUT, label="ingest_mixed",
+        )
+        return IngestResponse.from_report(report)
+    finally:
+        if tmp_dir:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 @router.post("/{name}/ingest/documents", response_model=IngestResponse, status_code=201)
@@ -116,12 +375,27 @@ async def ingest_documents(
     _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> IngestResponse:
     """Ingest PDF documents: parse → chunk → embed → store."""
-    doc_config = lake._config.document if hasattr(lake, "_config") else None
-    report = await run_sync(
-        lake.ingest_documents, name, req.pdf_paths, doc_config=doc_config,
-        timeout=_INGEST_TIMEOUT, label="ingest_documents",
-    )
-    return IngestResponse.from_report(report)
+    all_paths = list(req.pdf_paths)
+    tmp_dir: str | None = None
+    try:
+        if req.blob_keys:
+            tmp_dir = tempfile.mkdtemp(prefix="al_ingest_")
+            # Documents always need local paths (parser requirement)
+            all_paths.extend(_resolve_blob_keys(req.blob_keys, lake, tmp_dir))
+        doc_config = lake._config.document if hasattr(lake, "_config") else None
+        report = await run_sync(
+            lake.ingest_documents, name, all_paths, doc_config=doc_config,
+            timeout=_INGEST_TIMEOUT, label="ingest_documents",
+        )
+        return IngestResponse.from_report(report)
+    finally:
+        if tmp_dir:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+# Dataset CRUD
+# ---------------------------------------------------------------------------
 
 
 @router.get("", response_model=DatasetListResponse)

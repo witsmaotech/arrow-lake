@@ -191,16 +191,27 @@ class _LakeKGMixin:
             dataset = storage.open_dataset(dataset_name)
             table = dataset.search().to_arrow()
 
-            if "id" not in table.column_names:
-                table = table.add_column(0, "id", pa.array([str(i) for i in range(table.num_rows)]))
+            # Normalize required columns (builder also does this as safety net)
             if "content" not in table.column_names:
-                text_col = "text_content" if "text_content" in table.column_names else table.column_names[0]
+                text_col = (
+                    "text_content"
+                    if "text_content" in table.column_names
+                    else table.column_names[0]
+                )
                 new_names = ["content" if c == text_col else c for c in table.column_names]
                 table = table.rename_columns(new_names)
+            if "id" not in table.column_names:
+                table = table.add_column(
+                    0, "id", pa.array([str(i) for i in range(table.num_rows)])
+                )
             if "document_name" not in table.column_names:
-                table = table.append_column("document_name", pa.array([dataset_name] * table.num_rows))
+                table = table.append_column(
+                    "document_name", pa.array([dataset_name] * table.num_rows)
+                )
             if "chunk_index" not in table.column_names:
-                table = table.append_column("chunk_index", pa.array(list(range(table.num_rows))))
+                table = table.append_column(
+                    "chunk_index", pa.array(list(range(table.num_rows)))
+                )
 
             return await builder.build(dataset_name, table)
 

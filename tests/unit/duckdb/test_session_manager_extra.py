@@ -198,8 +198,10 @@ class TestCloseConnErrorLogging:
         conn = duckdb.connect()
         conn.close()  # DuckDB silently accepts double-close.
 
+        mgr = MagicMock(spec=DuckDBSessionManager)
+        mgr._conn_sessions = {}
         # Must not raise — _close_conn swallows duckdb.Error.
-        DuckDBSessionManager._close_conn(conn)
+        DuckDBSessionManager._close_conn(mgr, conn)
 
     def test_close_conn_logs_warning_on_duckdb_error(self, caplog: pytest.LogCaptureFixture) -> None:
         """_close_conn should log a warning when conn.close() raises duckdb.Error."""
@@ -208,8 +210,11 @@ class TestCloseConnErrorLogging:
         bad_conn = MagicMock()
         bad_conn.close.side_effect = duckdb.Error("simulated close failure")
 
+        mgr = MagicMock(spec=DuckDBSessionManager)
+        mgr._conn_sessions = {}
+
         with caplog.at_level(logging.WARNING, logger="arrow_lake.query.session_manager"):
-            DuckDBSessionManager._close_conn(bad_conn)
+            DuckDBSessionManager._close_conn(mgr, bad_conn)
 
         assert any(
             "Error closing DuckDB connection" in record.message
@@ -223,8 +228,11 @@ class TestCloseConnErrorLogging:
         bad_conn = MagicMock()
         bad_conn.close.side_effect = duckdb.Error("simulated close failure")
 
+        mgr = MagicMock(spec=DuckDBSessionManager)
+        mgr._conn_sessions = {}
+
         # Must not propagate the exception.
-        DuckDBSessionManager._close_conn(bad_conn)
+        DuckDBSessionManager._close_conn(mgr, bad_conn)
 
 
 # ---------------------------------------------------------------------------

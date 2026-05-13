@@ -83,16 +83,22 @@ class CircuitBreaker:
                 )
 
     def allow_request(self) -> bool:
-        state = self.state
-        if state == CircuitState.CLOSED:
-            return True
-        if state == CircuitState.HALF_OPEN:
-            with self._lock:
+        with self._lock:
+            if self._state == CircuitState.CLOSED:
+                return True
+            if self._state == CircuitState.OPEN:
+                if time.monotonic() - self._last_failure_time >= self._recovery_timeout:
+                    self._state = CircuitState.HALF_OPEN
+                    self._half_open_calls = 0
+                    # Fall through to HALF_OPEN check below
+                else:
+                    return False
+            if self._state == CircuitState.HALF_OPEN:
                 if self._half_open_calls < self._half_open_max_calls:
                     self._half_open_calls += 1
                     return True
                 return False
-        return False
+            return False
 
     def __call__(self, fn: Any) -> Any:
         def wrapper(*args: Any, **kwargs: Any) -> Any:

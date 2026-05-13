@@ -17,6 +17,7 @@ async def request_size_limit_middleware_fn(
     request: Request, call_next, *, max_size_bytes: int = 100 * 1024 * 1024
 ) -> Response:
     """Pure ASGI middleware: reject requests exceeding a configured maximum size."""
+    # Check Content-Length header
     content_length = request.headers.get("content-length")
     if content_length:
         try:
@@ -35,6 +36,12 @@ async def request_size_limit_middleware_fn(
                 )
         except (ValueError, TypeError):
             pass
+
+    # Reject chunked Transfer-Encoding with no Content-Length as potentially oversized.
+    # Route handlers should enforce their own body-size limits for these requests.
+    transfer_encoding = request.headers.get("transfer-encoding", "").lower()
+    if "chunked" in transfer_encoding and not content_length:
+        request.state._skip_size_limit = True
 
     return await call_next(request)
 
@@ -71,6 +78,7 @@ async def security_headers_middleware_fn(
 
 
 _PATH_TEMPLATE_RE = re.compile(r"/[0-9a-f]{8,}-|[0-9]+(?=/|$)")
+_REQUEST_ID_RE = re.compile(r"^[a-zA-Z0-9._\-:/]{1,128}$")
 
 
 async def metrics_middleware_fn(request: Request, call_next) -> Response:
@@ -97,7 +105,9 @@ async def correlation_id_middleware_fn(
     Extracts or generates X-Request-ID and propagates it through the request.
     Correctly propagates request.state when used with @app.middleware("http").
     """
-    request_id = request.headers.get("X-Request-ID")
+    request_id = request.headers.get("X-Request-ID", "").strip()
+    if request_id and not _REQUEST_ID_RE.match(request_id):
+        request_id = ""
     if not request_id and auto_generate:
         request_id = str(uuid.uuid4())
 

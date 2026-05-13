@@ -163,10 +163,21 @@ class ArrowLakeConfig(BaseSettings):
         return cls(**merged)
 
 
+def _deep_merge(base: dict, override: dict) -> dict:
+    """Recursively merge override into base, preserving nested defaults."""
+    result = dict(base)
+    for k, v in override.items():
+        if k in result and isinstance(result[k], dict) and isinstance(v, dict):
+            result[k] = _deep_merge(result[k], v)
+        else:
+            result[k] = v
+    return result
+
+
 def _build_merged_update(base: ArrowLakeConfig, yaml_data: dict[str, Any]) -> dict[str, Any]:
     """Deep-merge YAML values onto base config sections.
 
-    For each section present in the YAML, merge its keys into
+    For each section present in the YAML, recursively merge its keys into
     the corresponding base section. Sections absent from YAML
     keep their base (env-inherited) values entirely.
     """
@@ -175,7 +186,7 @@ def _build_merged_update(base: ArrowLakeConfig, yaml_data: dict[str, Any]) -> di
     for section, model_cls in _SECTION_TYPES.items():
         base_dict = getattr(base, section).model_dump()
         if section in yaml_data:
-            base_dict.update(yaml_data[section])
+            base_dict = _deep_merge(base_dict, yaml_data[section])
         result[section] = model_cls(**base_dict)
 
     unrecognized = set(yaml_data) - set(_SECTION_TYPES)

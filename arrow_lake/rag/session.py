@@ -78,16 +78,17 @@ class SessionStore:
 
         # Enforce global session limit — evict oldest sessions
         if len(self._turn_counter) > self._max_sessions:
-            oldest = sorted(
-                (sid, min(t["timestamp"] for t in self._turns if t["session_id"] == sid))
-                for sid in self._turn_counter
-            )
-            while len(self._turn_counter) > self._max_sessions and oldest:
-                evict_sid, _ = oldest.pop(0)
-                self._turns = [t for t in self._turns if t["session_id"] != evict_sid]
-                self._session_index.pop(evict_sid, None)
-                self._turn_counter.pop(evict_sid, None)
-                logger.warning("Evicted session %s (max_sessions=%d)", evict_sid, self._max_sessions)
+            while len(self._turn_counter) > self._max_sessions:
+                # Find session with oldest turn using index (O(n) not O(n*m))
+                oldest_sid = min(
+                    self._turn_counter,
+                    key=lambda sid: self._session_index[sid][0]["timestamp"]
+                    if self._session_index.get(sid) else float("inf"),
+                )
+                self._turns = [t for t in self._turns if t["session_id"] != oldest_sid]
+                self._session_index.pop(oldest_sid, None)
+                self._turn_counter.pop(oldest_sid, None)
+                logger.warning("Evicted session %s (max_sessions=%d)", oldest_sid, self._max_sessions)
 
         # Evict turns older than TTL
         if self._session_ttl_seconds > 0:
