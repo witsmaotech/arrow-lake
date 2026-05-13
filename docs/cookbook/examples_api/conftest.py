@@ -40,13 +40,13 @@ class ArrowLakeClient:
             h["Content-Type"] = content_type
         return h
 
-    def _request(self, method: str, path: str, body: Any = None) -> dict[str, Any]:
+    def _request(self, method: str, path: str, body: Any = None, *, timeout: int = 30) -> dict[str, Any]:
         url = f"{self.base_url}{path}"
         data = json.dumps(body).encode() if body else None
         ct = "application/json" if body else None
         req = Request(url, data=data, headers=self._headers(ct), method=method)
         try:
-            with urlopen(req, timeout=30) as resp:
+            with urlopen(req, timeout=timeout) as resp:
                 raw = resp.read().decode()
                 try:
                     return json.loads(raw) if raw else {"success": True, "status": resp.status}
@@ -352,7 +352,7 @@ class ArrowLakeClient:
 
     def kg_build(self, dataset_name: str, **kwargs: Any) -> dict:
         body: dict[str, Any] = {"dataset_name": dataset_name, **kwargs}
-        return self._request("POST", "/api/v1/kg/build", body)
+        return self._request("POST", "/api/v1/kg/build", body, timeout=600)
 
     def kg_build_status(self, task_id: str) -> dict:
         return self._request("GET", f"/api/v1/kg/build/{task_id}/status")
