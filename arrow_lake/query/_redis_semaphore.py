@@ -103,10 +103,10 @@ return 0
             self._redis.ping()
             self._connected = True
             logger.info("Redis semaphore connected: %s (permits=%d)", redis_url, max_permits)
-        except Exception:
+        except Exception as exc:
             self._connected = False
             self._redis = None
-            logger.warning("Redis unavailable, falling back to threading.Semaphore")
+            logger.warning("Redis unavailable (%s), falling back to threading.Semaphore", exc)
 
         self._fallback = threading.Semaphore(max_permits)
         self._lock = threading.Lock()
@@ -142,7 +142,8 @@ return 0
                     total_permits=self._max_permits,
                     redis_connected=True,
                 )
-            except Exception:
+            except Exception as exc:
+                logger.debug("Redis get_stats failed: %s", exc)
                 return SemaphoreStats(
                     available_permits=self._max_permits,
                     total_permits=self._max_permits,
@@ -171,7 +172,8 @@ return 0
                 )
                 if acquired:
                     return True
-            except Exception:
+            except Exception as exc:
+                logger.debug("Redis eval acquire failed: %s", exc)
                 self._handle_redis_error()
                 return self._fallback_acquire(timeout)
 
@@ -183,9 +185,9 @@ return 0
     def _redis_release(self) -> None:
         try:
             self._redis.eval(self._LUA_RELEASE, 1, self._key)
-        except Exception:
+        except Exception as exc:
+            logger.debug("Redis eval release failed: %s", exc)
             self._handle_redis_error()
-            # Do NOT release fallback — permit was acquired via Redis, not fallback
 
     def _fallback_acquire(self, timeout: float | None) -> bool:
         return self._fallback.acquire(timeout=timeout)
@@ -207,7 +209,7 @@ return 0
                 self._connected = True
             logger.info("Redis semaphore reconnected")
         except Exception:
-            pass
+            logger.debug("Redis reconnect ping failed")
 
 
 def create_semaphore(

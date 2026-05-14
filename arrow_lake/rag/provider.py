@@ -122,6 +122,7 @@ _DEFAULT_BASE_URLS: dict[LLMProviderType, str] = {
     LLMProviderType.VLLM: "http://localhost:8000/v1",
     LLMProviderType.OLLAMA: "http://localhost:11434/v1",
     LLMProviderType.DEEPSEEK: "https://api.deepseek.com",
+    LLMProviderType.ANTHROPIC: "https://api.anthropic.com",
 }
 
 # Patterns that indicate structured/extract-only tasks where thinking is wasteful.
@@ -354,7 +355,9 @@ class AnthropicProvider(_RetryMixin, BaseLLMProvider):
                 context={"provider": "anthropic"},
             )
         self._base_url = (
-            config.api_base if config.api_base else "https://api.anthropic.com"
+            config.api_base
+            if config.api_base
+            else _DEFAULT_BASE_URLS.get(config.provider, "https://api.anthropic.com")
         )
         headers: dict[str, str] = {
             "Content-Type": "application/json",

@@ -9,7 +9,7 @@ import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from starlette.responses import StreamingResponse
 
 from arrow_lake.api.auth_models import Role
@@ -81,14 +81,19 @@ async def rag_query(
     _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> RAGQueryResponse:
     """Run a RAG query: retrieve relevant documents and generate an answer."""
-    rag_resp = await lake.rag_query(
-        question=req.question,
-        dataset_name=req.dataset_name,
-        top_k=req.top_k,
-        strategy=req.retrieval_strategy,
-        template_name=req.template_name,
-        session_id=req.session_id,
-    )
+    try:
+        rag_resp = await lake.rag_query(
+            question=req.question,
+            dataset_name=req.dataset_name,
+            top_k=req.top_k,
+            strategy=req.retrieval_strategy,
+            template_name=req.template_name,
+            session_id=req.session_id,
+        )
+    except (ValueError, LookupError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     return _rag_response_to_api(rag_resp)
 
 
@@ -154,12 +159,17 @@ async def rag_extract(
     _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> RAGExtractResponse:
     """Extract entities from a dataset using RAG."""
-    rag_resp = await lake.rag_extract(
-        dataset_name=req.dataset_name,
-        text_column=req.text_column,
-        top_k=req.top_k,
-        template_name=req.template_name,
-    )
+    try:
+        rag_resp = await lake.rag_extract(
+            dataset_name=req.dataset_name,
+            text_column=req.text_column,
+            top_k=req.top_k,
+            template_name=req.template_name,
+        )
+    except (ValueError, LookupError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     return _extract_response_to_api(rag_resp)
 
 

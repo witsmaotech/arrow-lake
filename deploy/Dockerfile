@@ -88,6 +88,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Create non-root user for security
 RUN groupadd -r arrowlake && useradd -r -g arrowlake -d /app -s /sbin/nologin arrowlake
 
+# Install mc (MinIO Client) for health checks (before USER arrowlake)
+RUN curl -sfL https://dl.min.io/client/mc/release/linux-amd64/mc -o /usr/local/bin/mc \
+    && chmod +x /usr/local/bin/mc || echo "WARN: mc download failed, skipping"
+
 WORKDIR /app
 
 # Run as non-root user
@@ -117,10 +121,6 @@ ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONPATH="/app" \
     PYTHONUNBUFFERED="1" \
     PYTHONDONTWRITEBYTECODE="1"
-
-# Install mc (MinIO Client) for health checks (optional, non-blocking)
-RUN curl -sfL https://dl.min.io/client/mc/release/linux-amd64/mc -o /usr/local/bin/mc \
-    && chmod +x /usr/local/bin/mc || echo "WARN: mc download failed, skipping"
 
 # Default: health/metrics server
 EXPOSE 8000
