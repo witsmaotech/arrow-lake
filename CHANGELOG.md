@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.2] - 2026-05-14
+
+### Fixed
+- **SSRF 防护**: 修复 except ValueError 吞没私有 IP 检查的 bug，HTTP 连接器添加连接后 IP 校验
+- **FTS 索引**: 修复分片覆写丢失非 FTS 列数据（>50K 行时触发）
+- **DuckDB session**: _env_backup 在 try 之前保存，异常时正确恢复 S3 环境变量
+- **RAG batch stream**: task_to_stream 映射在创建时填充
+- **KG builder**: 修复列标准化顺序 bug（content rename 覆盖 id 列）+ datetime 序列化
+- **Circuit breaker**: allow_request 持锁到状态转换完成
+- **DuckDB 连接池**: _close_conn 恢复 S3 环境变量
+- **SQL 注入防护**: lineage 查询添加分号和多语句检查
+- **JWT auth bypass**: 精确匹配替代宽泛 startswith
+
+### Changed
+- **代理配置**: 容器内改用 host.docker.internal:7888 (proxy-forward)，修复外部 API 不可达
+- **备份**: 远程 blob 改用 server-side copy 替代 download→upload
+- **配置合并**: _deep_merge 替代 dict.update 浅合并
+- **限流**: 惰性清理过期计数器
+
+### Added
+- 20 个 API 示例脚本 (docs/cookbook/examples_api/)
+- 46 个 upload/ingest 单元测试
+- Docker compose: AWS env vars + hg-net 外部网络 + Ollama/DeepSeek 可配置
+
+### Verified
+- 3404 测试通过（14 失败均为 LLM 外部服务不可达）
+- KG 构建端到端: 4055 vertices, 8454 edges
+- HugeGraph + DeepSeek LLM + Ollama Embedding 全链路连通
+
 ## [1.3.1] - 2026-05-12
 
 ### Changed
