@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import os
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 from arrow_lake.api.models.dataset import (
     CleanupResponse,
     IngestDocumentsRequest,
@@ -13,9 +13,9 @@ from arrow_lake.api.models.dataset import (
     IngestImagesRequest,
     IngestMixedRequest,
     IngestVideosRequest,
+    PresignedUpload,
     PresignRequest,
     PresignResponse,
-    PresignedUpload,
     UploadedBlob,
     UploadResponse,
 )
@@ -423,8 +423,8 @@ class TestIngestorS3Support:
         assert Ingestor._detect_file_type("/tmp/al_ingest_abc/data.csv") == "csv"
 
     def test_detect_unsupported_raises(self):
-        from arrow_lake.ingest.ingestor import Ingestor
         from arrow_lake.exceptions import IngestError
+        from arrow_lake.ingest.ingestor import Ingestor
         with pytest.raises(IngestError, match="Unsupported"):
             Ingestor._detect_file_type("s3://bucket/file.xyz")
 
@@ -438,8 +438,8 @@ class TestIngestorEmptyPaths:
     """Test that Ingestor.ingest rejects empty file_paths."""
 
     def test_empty_paths_raises(self):
-        from arrow_lake.ingest.ingestor import Ingestor
         from arrow_lake.exceptions import IngestError
+        from arrow_lake.ingest.ingestor import Ingestor
         with pytest.raises(IngestError, match="No file paths"):
             Ingestor(MagicMock()).ingest("ds", [])
 
@@ -448,14 +448,14 @@ class TestSSRFPrevention:
     """Test expanded private network SSRF prevention."""
 
     def test_ipv4_mapped_ipv6_blocked(self):
-        from pydantic import ValidationError
         from arrow_lake.api.models.dataset import IngestHttpRequest
+        from pydantic import ValidationError
         with pytest.raises(ValidationError):
             IngestHttpRequest(urls=["http://[::ffff:127.0.0.1]/secret"])
 
     def test_carrier_grade_nat_blocked(self):
-        from pydantic import ValidationError
         from arrow_lake.api.models.dataset import IngestHttpRequest
+        from pydantic import ValidationError
         with pytest.raises(ValidationError):
             IngestHttpRequest(urls=["http://100.64.0.1/secret"])
 
@@ -497,8 +497,8 @@ class TestContentTypeValidation:
 
     @pytest.mark.asyncio
     async def test_reject_bad_content_type(self):
-        from fastapi import HTTPException
         from arrow_lake.api.routers.datasets import upload_files
+        from fastapi import HTTPException
 
         mock_lake = MagicMock()
         mock_file = MagicMock(spec=["filename", "content_type", "read"])

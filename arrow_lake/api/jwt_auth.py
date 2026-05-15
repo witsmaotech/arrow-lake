@@ -51,9 +51,10 @@ async def jwt_auth_middleware_fn(
         return await call_next(request)
 
     # Doc paths bypass auth only when docs are enabled
-    if docs_enabled:
-        if path in ("/docs", "/redoc", "/openapi.json") or path.startswith(("/docs/", "/redoc/")):
-            return await call_next(request)
+    if docs_enabled and (
+        path in ("/docs", "/redoc", "/openapi.json") or path.startswith(("/docs/", "/redoc/"))
+    ):
+        return await call_next(request)
 
     # Auth endpoints bypass JWT (they use API key to get JWT)
     if path == "/api/v1/auth/token" or path == "/api/v1/auth/refresh":

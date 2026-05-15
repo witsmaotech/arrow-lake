@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from arrow_lake._lake_kg import _LakeKGMixin
 from arrow_lake.config import ArrowLakeConfig, HugeGraphConfig
 from arrow_lake.exceptions import ErrorCode, KGError
@@ -75,21 +74,18 @@ class TestRequireContextManagers:
         return _TestLake(_make_config(enabled=False))
 
     def test_require_kg_client_raises_when_disabled(self, lake: _TestLake) -> None:
-        with pytest.raises(KGError) as exc_info:
-            with lake._require_kg_client():
-                pass
+        with pytest.raises(KGError) as exc_info, lake._require_kg_client():
+            pass
         assert exc_info.value.error_code == ErrorCode.KG_GRAPH_NOT_FOUND
 
     def test_require_kg_builder_raises_when_disabled(self, lake: _TestLake) -> None:
-        with pytest.raises(KGError) as exc_info:
-            with lake._require_kg_builder():
-                pass
+        with pytest.raises(KGError) as exc_info, lake._require_kg_builder():
+            pass
         assert exc_info.value.error_code == ErrorCode.KG_GRAPH_NOT_FOUND
 
     def test_require_vermeer_client_raises_when_disabled(self, lake: _TestLake) -> None:
-        with pytest.raises(KGError) as exc_info:
-            with lake._require_vermeer_client():
-                pass
+        with pytest.raises(KGError) as exc_info, lake._require_vermeer_client():
+            pass
         assert exc_info.value.error_code == ErrorCode.KG_GRAPH_NOT_FOUND
 
     def test_require_kg_client_yields_client_when_enabled(self) -> None:
@@ -200,7 +196,7 @@ class TestKGTraverserMethods:
         lake._components["kg_client"] = mock_client
 
         steps = [{"direction": "OUT", "labels": ["knows"]}]
-        result = await lake.kg_customized_paths("v1", steps, with_vertex=False)
+        await lake.kg_customized_paths("v1", steps, with_vertex=False)
         mock_client.traverser_customized_paths.assert_awaited_once_with(
             "v1", steps, with_vertex=False, with_edge=True,
         )
@@ -234,7 +230,7 @@ class TestKGImportExport:
         mock_client.export_graph = AsyncMock(return_value={"vertices": [], "edges": []})
         lake._components["kg_client"] = mock_client
 
-        result = await lake.kg_export_graph(with_properties=False)
+        await lake.kg_export_graph(with_properties=False)
         mock_client.export_graph.assert_awaited_once_with(with_properties=False)
 
     @pytest.mark.asyncio()
@@ -287,7 +283,7 @@ class TestKGVermeerAlgorithms:
         mock_client.label_propagation = AsyncMock(return_value={"labels": []})
         lake._components["vermeer_client"] = mock_client
 
-        result = await lake.kg_label_propagation(max_iter=20)
+        await lake.kg_label_propagation(max_iter=20)
         mock_client.label_propagation.assert_awaited_once_with(max_iter=20)
 
     @pytest.mark.asyncio()
@@ -333,7 +329,7 @@ class TestKGVermeerAlgorithms:
         mock_client.k_core = AsyncMock(return_value={"core": []})
         lake._components["vermeer_client"] = mock_client
 
-        result = await lake.kg_k_core(k=5)
+        await lake.kg_k_core(k=5)
         mock_client.k_core.assert_awaited_once_with(k=5)
 
     @pytest.mark.asyncio()
@@ -369,8 +365,8 @@ class TestKGBuildStatus:
         mock_task.processed_chunks = 100
         mock_task.entity_count = 50
         mock_task.relation_count = 30
-        mock_task.started_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
-        mock_task.completed_at = datetime(2026, 1, 1, 1, 0, tzinfo=timezone.utc)
+        mock_task.started_at = datetime(2026, 1, 1, tzinfo=UTC)
+        mock_task.completed_at = datetime(2026, 1, 1, 1, 0, tzinfo=UTC)
         mock_task.error = None
         mock_builder.get_task_status.return_value = mock_task
         lake._components["kg_builder"] = mock_builder
@@ -549,7 +545,7 @@ class TestKGFactoryMethods:
             mock_provider_fn.return_value = MagicMock()
             mock_cls.return_value = MagicMock()
 
-            result = lake._create_kg_extractor()
+            lake._create_kg_extractor()
             mock_cls.assert_called_once()
 
     def test_create_kg_builder_raises_when_no_client(self, lake: _TestLake) -> None:
@@ -570,7 +566,7 @@ class TestKGFactoryMethods:
     def test_create_vermeer_client(self, lake: _TestLake) -> None:
         with patch("arrow_lake.knowledge_graph.vermeer_client.VermeerClient") as mock_cls:
             mock_cls.return_value = MagicMock()
-            result = lake._create_vermeer_client()
+            lake._create_vermeer_client()
             mock_cls.assert_called_once_with(lake._config.hugegraph)
 
 

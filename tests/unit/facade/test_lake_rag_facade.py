@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pyarrow as pa
 import pytest
-
 from arrow_lake._lake_rag import _LakeRAGMixin
 from arrow_lake.config import ArrowLakeConfig, HugeGraphConfig, LLMConfig, RAGConfig
 
@@ -92,7 +91,7 @@ class TestGetRAGPipeline:
         with patch("arrow_lake._lake_rag.RAGPipeline") as mock_pipeline_cls:
             mock_pipeline_cls.return_value = MagicMock()
 
-            pipeline = lake._get_rag_pipeline()
+            lake._get_rag_pipeline()
 
             mock_pipeline_cls.assert_called_once()
             call_kwargs = mock_pipeline_cls.call_args.kwargs
@@ -110,7 +109,7 @@ class TestGetRAGPipeline:
             mock_pipeline_cls.return_value = MagicMock()
 
             with patch.object(lake_kg, "_create_graph_rag_pipeline", side_effect=RuntimeError("KG unavailable")):
-                pipeline = lake_kg._get_rag_pipeline()
+                lake_kg._get_rag_pipeline()
 
             mock_pipeline_cls.assert_called()
 
@@ -151,7 +150,7 @@ class TestRagQuery:
         lake._components["rag_pipeline"] = mock_pipeline
 
         with patch("arrow_lake.core.metrics.get_metrics_enabled", return_value=False):
-            result = await lake.rag_query(
+            await lake.rag_query(
                 "What is X?",
                 "test_ds",
                 top_k=10,
@@ -250,7 +249,7 @@ class TestRagExtract:
         mock_pipeline = _mock_rag_pipeline()
         lake._components["rag_pipeline"] = mock_pipeline
 
-        result = await lake.rag_extract(
+        await lake.rag_extract(
             "ds",
             text_column="body",
             top_k=5,
@@ -276,7 +275,7 @@ class TestRagBatchQuery:
         mock_pipeline = _mock_rag_pipeline()
         lake._components["rag_pipeline"] = mock_pipeline
 
-        result = await lake.rag_batch_query(
+        await lake.rag_batch_query(
             ["Q1?", "Q2?"],
             "ds",
             top_k=3,
@@ -384,13 +383,13 @@ class TestCreateGraphRAGPipeline:
         cfg = _make_config(kg_enabled=True)
         lake = _TestLake(config=cfg)
 
-        with patch("arrow_lake.knowledge_graph.client.HugeGraphClient") as mock_client_cls, \
-             patch("arrow_lake.knowledge_graph.extractor.EntityExtractor") as mock_extractor_cls, \
-             patch("arrow_lake.knowledge_graph.retriever.KGRetriever") as mock_retriever_cls, \
+        with patch("arrow_lake.knowledge_graph.client.HugeGraphClient"), \
+             patch("arrow_lake.knowledge_graph.extractor.EntityExtractor"), \
+             patch("arrow_lake.knowledge_graph.retriever.KGRetriever"), \
              patch("arrow_lake.rag.graph_rag.GraphRAGPipeline") as mock_pipeline_cls:
 
             mock_pipeline_cls.return_value = MagicMock()
-            result = lake._create_graph_rag_pipeline(MagicMock())
+            lake._create_graph_rag_pipeline(MagicMock())
 
             mock_pipeline_cls.assert_called_once()
 

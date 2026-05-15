@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path as FilePath
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Path
+from pydantic import BaseModel, Field
 
 from arrow_lake.api.auth_models import Role
 from arrow_lake.api.deps import get_lake, require_role
 from arrow_lake.api.models.common import _NAME_PATTERN
 from arrow_lake.api.models.query import ExportRequest, ExportTaskResponse, ExportTaskStatusResponse
 from arrow_lake.api.tasks import TaskManager
+from arrow_lake.api.utils import run_sync
 
 router = APIRouter(prefix="/api/v1/datasets", tags=["export"])
 
@@ -109,3 +112,39 @@ async def download_export(
         media_type=content_type,
         filename=filename,
     )
+
+
+# ---------------------------------------------------------------------------
+# Daft multi-target export (sync)
+# ---------------------------------------------------------------------------
+
+_SUPPORTED_EXPORT_FORMATS = ("parquet", "csv", "json", "iceberg", "clickhouse")
+
+
+class ExportToRequest(BaseModel):
+    """Request body for Daft multi-target export."""
+
+    target_uri: str = Field(..., min_length=1, description="Target URI")
+    format: str = Field(..., description=f"Export format: {', '.join(_SUPPORTED_EXPORT_FORMATS)}")
+    options: dict[str, Any] | None = Field(default=None, description="Format-specific options")
+
+
+@router.post("/{name}/export-to")
+async def export_to(
+    name: str = Path(..., pattern=_NAME_PATTERN),
+    *,
+    req: ExportToRequest,
+    lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.EDITOR)),
+) -> dict[str, Any]:
+    """Export dataset to an external target via Daft (sync)."""
+    if req.format not in _SUPPORTED_EXPORT_FORMATS:
+        raise HTTPException(400, f"Unsupported format: {req.format}. Use {_SUPPORTED_EXPORT_FORMATS}")
+    kwargs = req.options or {}
+    result = await run_sync(
+        lake.export_to, name,
+        target_uri=req.target_uri, format=req.format,
+        timeout=300, label="export_to",
+        **kwargs,
+    )
+    return {"success": True, **result}

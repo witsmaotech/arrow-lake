@@ -20,6 +20,8 @@ class _LakeIngestMixin:
         self,
         dataset_name: str,
         file_paths: list[str],
+        *,
+        transforms: list[Any] | None = None,
     ) -> IngestionReport:
         """Ingest local files into a Lance dataset (Stories 3.1-3.5).
 
@@ -28,13 +30,210 @@ class _LakeIngestMixin:
         Args:
             dataset_name: Target dataset name.
             file_paths: List of file paths (CSV, JSON, JSONL, Parquet).
+            transforms: Optional list of ``daft.DataFrame -> daft.DataFrame``
+                        callables applied before Arrow conversion.
 
         Returns:
             IngestionReport with per-source and total stats.
         """
         from arrow_lake.ingest.ingestor import Ingestor
 
-        return Ingestor(self._get_storage()).ingest(dataset_name, file_paths)
+        return Ingestor(self._get_storage()).ingest(
+            dataset_name, file_paths, transforms=transforms,
+        )
+
+    def ingest_batch(
+        self,
+        dataset_name: str,
+        file_paths: list[str],
+        *,
+        transforms: list[Any] | None = None,
+    ) -> IngestionReport:
+        """Batch-ingest files of same type via Daft write_lance.
+
+        Delegates to Ingestor.ingest_batch().
+
+        Args:
+            dataset_name: Target dataset name.
+            file_paths: List of file paths to ingest.
+            transforms: Optional Daft transform callables.
+
+        Returns:
+            IngestionReport with per-group stats.
+        """
+        from arrow_lake.ingest.ingestor import Ingestor
+
+        return Ingestor(self._get_storage()).ingest_batch(
+            dataset_name, file_paths, transforms=transforms,
+        )
+
+    def ingest_sql(
+        self,
+        dataset_name: str,
+        *,
+        sql: str,
+        connection_url: str,
+        partition_col: str | None = None,
+        num_partitions: int | None = None,
+        transforms: list[Any] | None = None,
+    ) -> IngestionReport:
+        """Ingest data from a SQL database query.
+
+        Args:
+            dataset_name: Target dataset name.
+            sql: SELECT query to execute.
+            connection_url: SQLAlchemy connection string.
+            partition_col: Optional partition column for parallel reads.
+            num_partitions: Number of read partitions.
+            transforms: Optional Daft transform callables.
+
+        Returns:
+            IngestionReport with stats.
+        """
+        from arrow_lake.ingest.ingestor import Ingestor
+
+        return Ingestor(self._get_storage()).ingest_sql(
+            dataset_name,
+            sql=sql,
+            connection_url=connection_url,
+            partition_col=partition_col,
+            num_partitions=num_partitions,
+            transforms=transforms,
+        )
+
+    def ingest_kafka(
+        self,
+        dataset_name: str,
+        *,
+        bootstrap_servers: str,
+        topics: list[str] | str,
+        start: str = "earliest",
+        end: str = "latest",
+        json_decode: bool = True,
+        transforms: list[Any] | None = None,
+    ) -> IngestionReport:
+        """Ingest messages from Kafka topics.
+
+        Args:
+            dataset_name: Target dataset name.
+            bootstrap_servers: Kafka broker addresses.
+            topics: Topic name(s).
+            start: Start bound.
+            end: End bound.
+            json_decode: Auto-decode JSON values.
+            transforms: Optional Daft transforms.
+
+        Returns:
+            IngestionReport with stats.
+        """
+        from arrow_lake.ingest.ingestor import Ingestor
+
+        return Ingestor(self._get_storage()).ingest_kafka(
+            dataset_name,
+            bootstrap_servers=bootstrap_servers,
+            topics=topics,
+            start=start,
+            end=end,
+            json_decode=json_decode,
+            transforms=transforms,
+        )
+
+    def ingest_iceberg(
+        self,
+        dataset_name: str,
+        *,
+        table_uri: str,
+        transforms: list[Any] | None = None,
+    ) -> IngestionReport:
+        """Ingest data from an Apache Iceberg table."""
+        from arrow_lake.ingest.ingestor import Ingestor
+
+        return Ingestor(self._get_storage()).ingest_iceberg(
+            dataset_name, table_uri=table_uri, transforms=transforms,
+        )
+
+    def ingest_deltalake(
+        self,
+        dataset_name: str,
+        *,
+        table_uri: str,
+        version: int | None = None,
+        transforms: list[Any] | None = None,
+    ) -> IngestionReport:
+        """Ingest data from a Delta Lake table."""
+        from arrow_lake.ingest.ingestor import Ingestor
+
+        return Ingestor(self._get_storage()).ingest_deltalake(
+            dataset_name, table_uri=table_uri, version=version, transforms=transforms,
+        )
+
+    def export_to(
+        self,
+        dataset_name: str,
+        *,
+        target_uri: str,
+        format: str,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """Export a Lance dataset to an external target via Daft write_*.
+
+        Args:
+            dataset_name: Source dataset name.
+            target_uri: Target URI.
+            format: Export format (parquet/csv/json/iceberg/clickhouse).
+            **kwargs: Format-specific options.
+
+        Returns:
+            Dict with export stats.
+        """
+        import daft
+
+        storage = self._get_storage()
+        table = storage.read_dataset(dataset_name)
+        df = daft.from_arrow(table)
+        return storage.export_dataframe(df, target_uri, format, **kwargs)
+
+    def ingest_and_embed(
+        self,
+        dataset_name: str,
+        file_paths: list[str],
+        *,
+        text_column: str = "text_content",
+        embedding_column: str = "text_embedding",
+        transforms: list[Any] | None = None,
+        model: str | None = None,
+        num_partitions: int | None = None,
+    ) -> Any:
+        """Ingest files and generate embeddings in a single Daft pipeline.
+
+        Args:
+            dataset_name: Target dataset name.
+            file_paths: Files to ingest.
+            text_column: Column containing text to embed.
+            embedding_column: Name for the embedding column.
+            transforms: Optional Daft DataFrame transforms.
+            model: Override embedding model (None = use config default).
+            num_partitions: Override partition count (None = use config default).
+
+        Returns:
+            IngestEmbedResult with ingestion and embedding stats.
+        """
+        from arrow_lake.ingest.ingest_embed import IngestEmbedPipeline
+
+        emb_cfg = self._config.embedding
+        pipeline = IngestEmbedPipeline(
+            storage=self._get_storage(),
+            model=model or emb_cfg.model,
+            provider=emb_cfg.daft_provider,
+            num_partitions=num_partitions or emb_cfg.daft_num_partitions,
+        )
+        return pipeline.ingest_and_embed(
+            dataset_name,
+            file_paths,
+            text_column=text_column,
+            embedding_column=embedding_column,
+            transforms=transforms,
+        )
 
     def ingest_http(
         self,
@@ -478,7 +677,19 @@ class _LakeIngestMixin:
         effective_batch = batch_size or emb_cfg.batch_size
 
         # Encode using configured backend
-        if emb_cfg.backend == EmbeddingBackend.OPENAI and emb_cfg.api_base:
+        if emb_cfg.backend == EmbeddingBackend.DAFT:
+            from arrow_lake.embed.daft_encoder import DaftBatchEncoder
+
+            encoder = DaftBatchEncoder(
+                model=emb_cfg.model,
+                provider=emb_cfg.daft_provider,
+                num_partitions=emb_cfg.daft_num_partitions,
+            )
+            all_embeddings_array, dim = encoder.encode_to_vectors(
+                pa.table({text_column: texts}), column=text_column,
+            )
+            all_embeddings = all_embeddings_array.tolist()
+        elif emb_cfg.backend == EmbeddingBackend.OPENAI and emb_cfg.api_base:
             encoder = ApiEmbeddingEncoder(
                 api_base=emb_cfg.api_base,
                 api_key=emb_cfg.api_key,

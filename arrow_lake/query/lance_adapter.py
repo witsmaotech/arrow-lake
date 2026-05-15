@@ -18,6 +18,7 @@ from typing import Any
 import duckdb
 
 from arrow_lake.exceptions import ArrowLakeError, ErrorCode
+from arrow_lake.validation import validate_identifier
 
 logger = logging.getLogger(__name__)
 
@@ -136,7 +137,7 @@ class NativeLanceScanAdapter(LanceScanAdapter):
                 "Native lance scan is not available (lance extension not loaded)",
             )
         conn.execute(
-            f"CREATE OR REPLACE TABLE t AS SELECT * FROM __lance_scan('{_esc(uri)}', explain_verbose := false)"
+            f"CREATE OR REPLACE TABLE t AS SELECT * FROM __lance_scan('{_esc(uri)}', explain_verbose := false)"  # nosec B608
         )
         try:
             yield conn
@@ -153,8 +154,9 @@ class NativeLanceScanAdapter(LanceScanAdapter):
         columns: list[str] | None = None,
     ) -> None:
         """Create a DuckDB VIEW backed by ``__lance_scan()``."""
+        validate_identifier(view_name)
         conn.execute(
-            f"CREATE OR REPLACE VIEW {view_name} AS "
+            f"CREATE OR REPLACE VIEW {view_name} AS "  # nosec B608
             f"SELECT * FROM __lance_scan('{_esc(uri)}', explain_verbose := false)"
         )
 

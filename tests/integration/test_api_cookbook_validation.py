@@ -23,7 +23,6 @@ import json
 import os
 import subprocess
 import sys
-import time
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -140,6 +139,7 @@ class TestPylanceV6Validation:
     def test_fts_index_create_and_search(self):
         """FTS index creation with lance-index backend (no tantivy)."""
         import tempfile
+
         import lancedb
         import pyarrow as pa
 
@@ -157,8 +157,9 @@ class TestPylanceV6Validation:
     def test_vector_index_create_and_search(self):
         """Vector index creation and search with pylance 6.0.0."""
         import tempfile
-        import numpy as np
+
         import lancedb
+        import numpy as np
         import pyarrow as pa
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -184,6 +185,7 @@ class TestPylanceV6Validation:
     def test_duckdb_lance_scan(self):
         """DuckDB can read Lance datasets via __lance_scan()."""
         import tempfile
+
         import duckdb
         import lancedb
         import pyarrow as pa
@@ -235,6 +237,7 @@ class TestPylanceV6Validation:
     def test_lance_write_v2_1_default(self):
         """Verify new data is written in v2.1 format (pylance 6.0.0 default)."""
         import tempfile
+
         import lancedb
         import pyarrow as pa
 

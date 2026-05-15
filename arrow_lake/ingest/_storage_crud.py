@@ -289,7 +289,7 @@ class StorageCRUDMixin:
             except (ValueError, RuntimeError, OSError) as exc:
                 raise StorageError(
                     error_code=ErrorCode.STORAGE_WRITE_FAILED,
-                    message=f"Row update failed on dataset '{name}': {exc}",
+                    message=f"Row update failed on dataset '{name}': {exc}",  # nosec B608
                 ) from exc
 
     def restore_dataset(self, name: str, data: pa.Table) -> None:

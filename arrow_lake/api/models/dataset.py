@@ -42,6 +42,10 @@ class IngestFilesRequest(BaseModel):
 
     file_paths: list[str] = Field(default_factory=list, max_length=100, description="Local file paths to ingest")
     blob_keys: list[str] = Field(default_factory=list, max_length=100, description="MinIO blob keys from prior upload")
+    transforms: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="Optional ETL transforms (JSON spec): rename, select, filter, cast, add_constant",
+    )
 
     @field_validator("file_paths")
     @classmethod
@@ -64,6 +68,42 @@ class IngestFilesRequest(BaseModel):
         if not self.file_paths and not self.blob_keys:
             raise ValueError("At least one of file_paths or blob_keys must be provided")
         return self
+
+
+class IngestSqlRequest(BaseModel):
+    """Request body for SQL database ingestion."""
+
+    sql: str = Field(..., min_length=1, description="SELECT query to execute")
+    connection_url: str = Field(..., min_length=1, description="SQLAlchemy connection string")
+    partition_col: str | None = Field(default=None, description="Column for parallel partitioned reads")
+    num_partitions: int | None = Field(default=None, ge=1, description="Number of read partitions")
+    transforms: list[dict[str, Any]] | None = Field(default=None, description="Optional ETL transforms")
+
+
+class IngestKafkaRequest(BaseModel):
+    """Request body for Kafka ingestion."""
+
+    bootstrap_servers: str = Field(..., min_length=1, description="Kafka bootstrap servers")
+    topics: list[str] = Field(..., min_length=1, max_length=10, description="Kafka topics to read")
+    start: str = Field(default="earliest", description="Start bound: earliest/latest/ISO-8601/offset dict")
+    end: str = Field(default="latest", description="End bound")
+    json_decode: bool = Field(default=True, description="Auto-decode JSON message values")
+    transforms: list[dict[str, Any]] | None = Field(default=None, description="Optional ETL transforms")
+
+
+class IngestIcebergRequest(BaseModel):
+    """Request body for Iceberg table ingestion."""
+
+    table_uri: str = Field(..., min_length=1, description="Iceberg table URI")
+    transforms: list[dict[str, Any]] | None = Field(default=None, description="Optional ETL transforms")
+
+
+class IngestDeltaLakeRequest(BaseModel):
+    """Request body for Delta Lake table ingestion."""
+
+    table_uri: str = Field(..., min_length=1, description="Delta Lake table URI")
+    version: int | None = Field(default=None, ge=1, description="Optional table version to read")
+    transforms: list[dict[str, Any]] | None = Field(default=None, description="Optional ETL transforms")
 
 
 class IngestHttpRequest(BaseModel):

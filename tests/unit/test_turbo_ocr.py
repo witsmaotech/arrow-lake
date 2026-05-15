@@ -24,12 +24,12 @@ class TestCircuitBreaker:
         assert cb.allow() is False
 
     def test_resets_after_timeout(self):
-        cb = _CircuitBreaker(failure_threshold=2, reset_timeout=0.001)
+        cb = _CircuitBreaker(failure_threshold=2, reset_timeout=0.01)
         cb.record_failure()
         cb.record_failure()
         assert cb.allow() is False
         import time
-        time.sleep(0.002)
+        time.sleep(0.05)
         assert cb.allow() is True
 
     def test_success_resets_counter(self):

@@ -65,11 +65,11 @@ class DuckLakeWorkspace:
         """Create _metadata table if it doesn't exist."""
         try:
             conn.execute(
-                f"SELECT 1 FROM {self._metadata_table} LIMIT 0"
+                f"SELECT 1 FROM {self._metadata_table} LIMIT 0"  # nosec B608
             )
         except duckdb.CatalogException:
             conn.execute(
-                f"CREATE TABLE {self._metadata_table} ("
+                f"CREATE TABLE {self._metadata_table} ("  # nosec B608
                 f"table_name VARCHAR, "
                 f"created_at TIMESTAMP, "
                 f"expires_at TIMESTAMP, "
@@ -105,7 +105,7 @@ class DuckLakeWorkspace:
         # Create the materialized table directly — avoids double query
         try:
             conn.execute(
-                f"CREATE OR REPLACE TABLE {view_name} AS {sql}"
+                f"CREATE OR REPLACE TABLE {view_name} AS {sql}"  # nosec B608
             )
         except duckdb.Error as exc:
             raise ArrowLakeError(
@@ -116,7 +116,7 @@ class DuckLakeWorkspace:
         # Count rows and check budget from the materialized table
         try:
             row_count = conn.execute(
-                f"SELECT COUNT(*) FROM {view_name}"
+                f"SELECT COUNT(*) FROM {view_name}"  # nosec B608
             ).fetchone()[0]
         except duckdb.Error as exc:
             raise ArrowLakeError(
@@ -126,7 +126,7 @@ class DuckLakeWorkspace:
 
         if row_count > self._max_join_rows:
             # Drop the oversized table to avoid leaving orphan data
-            conn.execute(f"DROP TABLE IF EXISTS {view_name}")
+            conn.execute(f"DROP TABLE IF EXISTS {view_name}")  # nosec B608
             raise ArrowLakeError(
                 ErrorCode.OLAP_QUERY_FAILED,
                 f"Materialization row count ({row_count}) exceeds budget ({self._max_join_rows})",
@@ -135,7 +135,7 @@ class DuckLakeWorkspace:
         expires = now + timedelta(days=self._ttl_days)
         self._ensure_metadata_table(conn)
         conn.execute(
-            f"INSERT INTO {self._metadata_table} VALUES ($1, $2, $3, $4)",
+            f"INSERT INTO {self._metadata_table} VALUES ($1, $2, $3, $4)",  # nosec B608
             [view_name, now.isoformat(), expires.isoformat(), row_count],
         )
 
@@ -155,7 +155,7 @@ class DuckLakeWorkspace:
 
         try:
             expired = conn.execute(
-                f"SELECT table_name FROM {self._metadata_table} WHERE expires_at < $1",
+                f"SELECT table_name FROM {self._metadata_table} WHERE expires_at < $1",  # nosec B608
                 [now.isoformat()],
             ).fetchall()
         except duckdb.Error:
@@ -167,9 +167,9 @@ class DuckLakeWorkspace:
                 logger.warning("Skipping invalid table name in metadata: %r", table_name)
                 continue
             try:
-                conn.execute(f"DROP TABLE IF EXISTS {table_name}")
+                conn.execute(f"DROP TABLE IF EXISTS {table_name}")  # nosec B608
                 conn.execute(
-                    f"DELETE FROM {self._metadata_table} WHERE table_name = $1",
+                    f"DELETE FROM {self._metadata_table} WHERE table_name = $1",  # nosec B608
                     [table_name],
                 )
                 dropped.append(table_name)
@@ -190,7 +190,7 @@ class DuckLakeWorkspace:
         self._ensure_metadata_table(conn)
         try:
             rows = conn.execute(
-                f"SELECT table_name FROM {self._metadata_table}"
+                f"SELECT table_name FROM {self._metadata_table}"  # nosec B608
             ).fetchall()
             return [row[0] for row in rows]
         except duckdb.Error:

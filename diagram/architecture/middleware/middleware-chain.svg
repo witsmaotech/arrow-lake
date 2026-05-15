@@ -1,0 +1,271 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 1400" width="800" height="1400">
+  <defs>
+    <!-- Arrow marker -->
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#64748b"/>
+    </marker>
+    <!-- Bypass arrow marker -->
+    <marker id="arrowhead-bypass" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#475569"/>
+    </marker>
+    <!-- Subtle grid pattern -->
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5" opacity="0.4"/>
+    </pattern>
+    <!-- Glow filter for active elements -->
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <!-- Shadow filter -->
+    <filter id="shadow" x="-5%" y="-5%" width="110%" height="115%">
+      <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#000000" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="800" height="1400" fill="#0f172a"/>
+  <rect width="800" height="1400" fill="url(#grid)"/>
+
+  <!-- Title -->
+  <text x="400" y="42" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="16" font-weight="700" fill="#e2e8f0" text-anchor="middle">Middleware Chain</text>
+  <text x="400" y="62" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="9" font-weight="400" fill="#64748b" text-anchor="middle">Arrow Lake v1.3.0 — Request Processing Pipeline</text>
+
+  <!-- ============================================ -->
+  <!-- STEP 1: HTTP Request (Start Node - Cyan)     -->
+  <!-- ============================================ -->
+  <rect x="140" y="90" width="260" height="45" rx="22.5" ry="22.5" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="270" y="108" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="11" font-weight="600" fill="#22d3ee" text-anchor="middle">HTTP Request</text>
+  <text x="270" y="124" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="9" font-weight="400" fill="#94a3b8" text-anchor="middle">Incoming API Request</text>
+
+  <!-- Arrow 1→2 -->
+  <line x1="270" y1="135" x2="270" y2="165" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- ============================================ -->
+  <!-- STEP 2: CORS Middleware                       -->
+  <!-- ============================================ -->
+  <rect x="140" y="170" width="260" height="45" rx="6" ry="6" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1.2" filter="url(#shadow)"/>
+  <text x="270" y="188" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="11" font-weight="600" fill="#fbbf24" text-anchor="middle">CORS Middleware</text>
+  <text x="270" y="204" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="9" font-weight="400" fill="#94a3b8" text-anchor="middle">跨域资源共享</text>
+
+  <!-- Arrow 2→3 -->
+  <line x1="270" y1="215" x2="270" y2="245" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- ============================================ -->
+  <!-- STEP 3: Exception Handlers                    -->
+  <!-- ============================================ -->
+  <rect x="140" y="250" width="260" height="45" rx="6" ry="6" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1.2" filter="url(#shadow)"/>
+  <text x="270" y="268" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="11" font-weight="600" fill="#fbbf24" text-anchor="middle">Exception Handlers</text>
+  <text x="270" y="284" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="9" font-weight="400" fill="#94a3b8" text-anchor="middle">全局错误处理</text>
+
+  <!-- Arrow 3→4 -->
+  <line x1="270" y1="295" x2="270" y2="325" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- ============================================ -->
+  <!-- STEP 4: GZip Middleware                       -->
+  <!-- ============================================ -->
+  <rect x="140" y="330" width="260" height="45" rx="6" ry="6" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1.2" filter="url(#shadow)"/>
+  <text x="270" y="348" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="11" font-weight="600" fill="#fbbf24" text-anchor="middle">GZip Middleware</text>
+  <text x="270" y="364" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="9" font-weight="400" fill="#94a3b8" text-anchor="middle">响应压缩 ≥1000 bytes</text>
+
+  <!-- Arrow 4→5 -->
+  <line x1="270" y1="375" x2="270" y2="405" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- ============================================ -->
+  <!-- STEP 5: Metrics Middleware                    -->
+  <!-- ============================================ -->
+  <rect x="140" y="410" width="260" height="45" rx="6" ry="6" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1.2" filter="url(#shadow)"/>
+  <text x="270" y="428" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="11" font-weight="600" fill="#fbbf24" text-anchor="middle">Metrics Middleware</text>
+  <text x="270" y="444" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="9" font-weight="400" fill="#94a3b8" text-anchor="middle">Prometheus HTTP 耗时</text>
+
+  <!-- Arrow 5→6 -->
+  <line x1="270" y1="455" x2="270" y2="485" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- ============================================ -->
+  <!-- STEP 6: Request Size Limit                    -->
+  <!-- ============================================ -->
+  <rect x="140" y="490" width="260" height="45" rx="6" ry="6" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1.2" filter="url(#shadow)"/>
+  <text x="270" y="508" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="11" font-weight="600" fill="#fbbf24" text-anchor="middle">Request Size Limit</text>
+  <text x="270" y="524" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="9" font-weight="400" fill="#94a3b8" text-anchor="middle">max_request_size_bytes</text>
+
+  <!-- Arrow 6→7 -->
+  <line x1="270" y1="535" x2="270" y2="565" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- ============================================ -->
+  <!-- STEP 7: Security Headers (Rose/Alert)         -->
+  <!-- ============================================ -->
+  <rect x="140" y="570" width="260" height="45" rx="6" ry="6" fill="rgba(136,19,55,0.4)" stroke="#fb7185" stroke-width="1.2" filter="url(#shadow)"/>
+  <text x="270" y="588" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="11" font-weight="600" fill="#fb7185" text-anchor="middle">Security Headers</text>
+  <text x="270" y="604" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="9" font-weight="400" fill="#f9a8d4" text-anchor="middle">CSP / HSTS / X-Frame</text>
+
+  <!-- Security Headers Annotation Panel -->
+  <rect x="480" y="530" width="270" height="170" rx="8" ry="8" fill="rgba(136,19,55,0.15)" stroke="#fb7185" stroke-width="0.8" stroke-dasharray="4,3"/>
+  <text x="615" y="552" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="9" font-weight="600" fill="#fb7185" text-anchor="middle">Security Headers List</text>
+  <line x1="500" y1="560" x2="730" y2="560" stroke="#fb7185" stroke-width="0.5" opacity="0.4"/>
+  <text x="500" y="578" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="8" font-weight="400" fill="#f9a8d4">X-Content-Type-Options: nosniff</text>
+  <text x="500" y="594" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="8" font-weight="400" fill="#f9a8d4">Referrer-Policy:</text>
+  <text x="520" y="606" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="8" font-weight="400" fill="#f9a8d4">strict-origin-when-cross-origin</text>
+  <text x="500" y="622" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="8" font-weight="400" fill="#f9a8d4">Strict-Transport-Security:</text>
+  <text x="520" y="634" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="8" font-weight="400" fill="#f9a8d4">max-age=31536000</text>
+  <text x="500" y="650" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="8" font-weight="400" fill="#f9a8d4">Permissions-Policy:</text>
+  <text x="520" y="662" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="8" font-weight="400" fill="#f9a8d4">camera=(), microphone=()</text>
+  <text x="500" y="678" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="8" font-weight="400" fill="#f9a8d4">X-Frame-Options: DENY</text>
+  <text x="500" y="694" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="8" font-weight="400" fill="#64748b">Skips: /health, /metrics</text>
+
+  <!-- Connector line from Step 7 to annotation -->
+  <line x1="400" y1="592" x2="480" y2="592" stroke="#fb7185" stroke-width="0.8" stroke-dasharray="3,3" opacity="0.5"/>
+
+  <!-- Arrow 7→8 -->
+  <line x1="270" y1="615" x2="270" y2="645" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- ============================================ -->
+  <!-- STEP 8: Rate Limiting + Decision Diamond      -->
+  <!-- ============================================ -->
+  <rect x="140" y="650" width="260" height="45" rx="6" ry="6" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1.2" filter="url(#shadow)"/>
+  <!-- Optional badge -->
+  <rect x="345" y="643" width="60" height="14" rx="7" ry="7" fill="rgba(59,130,246,0.3)" stroke="#60a5fa" stroke-width="0.8"/>
+  <text x="375" y="653" font-family="'JetBrains Mono', monospace" font-size="7" font-weight="600" fill="#60a5fa" text-anchor="middle">OPTIONAL</text>
+  <text x="270" y="668" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="11" font-weight="600" fill="#fbbf24" text-anchor="middle">Rate Limiting</text>
+  <text x="270" y="684" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="9" font-weight="400" fill="#94a3b8" text-anchor="middle">Token Bucket 120/min</text>
+
+  <!-- Decision diamond for Rate Limiting -->
+  <g transform="translate(80, 660)">
+    <polygon points="0,-20 35,0 0,20 -35,0" fill="rgba(59,130,246,0.3)" stroke="#60a5fa" stroke-width="1"/>
+    <text x="0" y="2" font-family="'JetBrains Mono', monospace" font-size="7" font-weight="600" fill="#60a5fa" text-anchor="middle">Enabled?</text>
+  </g>
+  <!-- "Yes" label -->
+  <text x="107" y="652" font-family="'JetBrains Mono', monospace" font-size="7" font-weight="400" fill="#4ade80">Yes</text>
+  <!-- "No" bypass arrow -->
+  <line x1="80" y1="640" x2="80" y2="710" stroke="#475569" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrowhead-bypass)"/>
+  <text x="67" y="632" font-family="'JetBrains Mono', monospace" font-size="7" font-weight="400" fill="#94a3b8">No</text>
+  <!-- Connector from diamond to step box -->
+  <line x1="115" y1="660" x2="140" y2="668" stroke="#60a5fa" stroke-width="0.8" stroke-dasharray="3,2"/>
+
+  <!-- Arrow 8→9 -->
+  <line x1="270" y1="695" x2="270" y2="725" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- ============================================ -->
+  <!-- STEP 9: API Key Auth + Decision Diamond       -->
+  <!-- ============================================ -->
+  <rect x="140" y="730" width="260" height="45" rx="6" ry="6" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1.2" filter="url(#shadow)"/>
+  <!-- Optional badge -->
+  <rect x="345" y="723" width="60" height="14" rx="7" ry="7" fill="rgba(59,130,246,0.3)" stroke="#60a5fa" stroke-width="0.8"/>
+  <text x="375" y="733" font-family="'JetBrains Mono', monospace" font-size="7" font-weight="600" fill="#60a5fa" text-anchor="middle">OPTIONAL</text>
+  <text x="270" y="748" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="11" font-weight="600" fill="#fbbf24" text-anchor="middle">API Key Auth</text>
+  <text x="270" y="764" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="9" font-weight="400" fill="#94a3b8" text-anchor="middle">X-API-Key 验证</text>
+
+  <!-- Decision diamond for API Key -->
+  <g transform="translate(80, 740)">
+    <polygon points="0,-20 35,0 0,20 -35,0" fill="rgba(59,130,246,0.3)" stroke="#60a5fa" stroke-width="1"/>
+    <text x="0" y="2" font-family="'JetBrains Mono', monospace" font-size="7" font-weight="600" fill="#60a5fa" text-anchor="middle">Config?</text>
+  </g>
+  <text x="107" y="732" font-family="'JetBrains Mono', monospace" font-size="7" font-weight="400" fill="#4ade80">Yes</text>
+  <line x1="80" y1="720" x2="80" y2="790" stroke="#475569" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrowhead-bypass)"/>
+  <text x="67" y="712" font-family="'JetBrains Mono', monospace" font-size="7" font-weight="400" fill="#94a3b8">No</text>
+  <line x1="115" y1="740" x2="140" y2="748" stroke="#60a5fa" stroke-width="0.8" stroke-dasharray="3,2"/>
+
+  <!-- Arrow 9→10 -->
+  <line x1="270" y1="775" x2="270" y2="805" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- ============================================ -->
+  <!-- STEP 10: Correlation ID                       -->
+  <!-- ============================================ -->
+  <rect x="140" y="810" width="260" height="45" rx="6" ry="6" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1.2" filter="url(#shadow)"/>
+  <text x="270" y="828" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="11" font-weight="600" fill="#fbbf24" text-anchor="middle">Correlation ID</text>
+  <text x="270" y="844" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="9" font-weight="400" fill="#94a3b8" text-anchor="middle">X-Request-ID 请求追踪</text>
+
+  <!-- Arrow 10→11 -->
+  <line x1="270" y1="855" x2="270" y2="885" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- ============================================ -->
+  <!-- STEP 11: JWT Auth (Rose/Alert) + Diamond      -->
+  <!-- ============================================ -->
+  <rect x="140" y="890" width="260" height="45" rx="6" ry="6" fill="rgba(136,19,55,0.4)" stroke="#fb7185" stroke-width="1.2" filter="url(#shadow)"/>
+  <!-- Optional badge -->
+  <rect x="345" y="883" width="60" height="14" rx="7" ry="7" fill="rgba(59,130,246,0.3)" stroke="#60a5fa" stroke-width="0.8"/>
+  <text x="375" y="893" font-family="'JetBrains Mono', monospace" font-size="7" font-weight="600" fill="#60a5fa" text-anchor="middle">OPTIONAL</text>
+  <text x="270" y="908" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="11" font-weight="600" fill="#fb7185" text-anchor="middle">JWT Authentication</text>
+  <text x="270" y="924" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="9" font-weight="400" fill="#f9a8d4" text-anchor="middle">Bearer Token + Redis 黑名单</text>
+
+  <!-- Decision diamond for JWT -->
+  <g transform="translate(80, 900)">
+    <polygon points="0,-20 35,0 0,20 -35,0" fill="rgba(136,19,55,0.3)" stroke="#fb7185" stroke-width="1"/>
+    <text x="0" y="2" font-family="'JetBrains Mono', monospace" font-size="7" font-weight="600" fill="#fb7185" text-anchor="middle">Mode?</text>
+  </g>
+  <text x="107" y="892" font-family="'JetBrains Mono', monospace" font-size="7" font-weight="400" fill="#4ade80">jwt/both</text>
+  <line x1="80" y1="880" x2="80" y2="950" stroke="#475569" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrowhead-bypass)"/>
+  <text x="67" y="872" font-family="'JetBrains Mono', monospace" font-size="7" font-weight="400" fill="#94a3b8">No</text>
+  <line x1="115" y1="900" x2="140" y2="908" stroke="#fb7185" stroke-width="0.8" stroke-dasharray="3,2"/>
+
+  <!-- JWT detail annotation -->
+  <rect x="480" y="878" width="270" height="72" rx="8" ry="8" fill="rgba(136,19,55,0.15)" stroke="#fb7185" stroke-width="0.8" stroke-dasharray="4,3"/>
+  <text x="615" y="898" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="9" font-weight="600" fill="#fb7185" text-anchor="middle">JWT Blacklist Backends</text>
+  <line x1="500" y1="906" x2="730" y2="906" stroke="#fb7185" stroke-width="0.5" opacity="0.4"/>
+  <text x="500" y="920" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="8" font-weight="400" fill="#f9a8d4">Redis (preferred): config.redis.enabled</text>
+  <text x="500" y="934" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="8" font-weight="400" fill="#f9a8d4">In-memory fallback (auto)</text>
+  <text x="500" y="948" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="8" font-weight="400" fill="#64748b">auth_mode: api_key | jwt | both</text>
+
+  <!-- Connector from Step 11 to annotation -->
+  <line x1="400" y1="912" x2="480" y2="912" stroke="#fb7185" stroke-width="0.8" stroke-dasharray="3,3" opacity="0.5"/>
+
+  <!-- Arrow 11→12 -->
+  <line x1="270" y1="935" x2="270" y2="965" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- ============================================ -->
+  <!-- STEP 12: Router Handler (End Node - Blue)     -->
+  <!-- ============================================ -->
+  <rect x="140" y="970" width="260" height="55" rx="8" ry="8" fill="rgba(59,130,246,0.3)" stroke="#60a5fa" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="270" y="990" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="11" font-weight="600" fill="#60a5fa" text-anchor="middle">Router Handler</text>
+  <text x="270" y="1010" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="9" font-weight="400" fill="#93c5fd" text-anchor="middle">Lake API  →  Query Engine</text>
+
+  <!-- ============================================ -->
+  <!-- Legend                                         -->
+  <!-- ============================================ -->
+  <rect x="30" y="1080" width="740" height="150" rx="8" ry="8" fill="rgba(15,23,42,0.8)" stroke="#334155" stroke-width="0.8"/>
+  <text x="400" y="1105" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="10" font-weight="600" fill="#94a3b8" text-anchor="middle">Legend</text>
+  <line x1="60" y1="1115" x2="740" y2="1115" stroke="#334155" stroke-width="0.5"/>
+
+  <!-- Legend items row 1 -->
+  <rect x="60" y="1128" width="30" height="14" rx="7" ry="7" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1"/>
+  <text x="100" y="1139" font-family="'JetBrains Mono', monospace" font-size="8" font-weight="400" fill="#94a3b8">Start / End Node</text>
+
+  <rect x="230" y="1128" width="30" height="14" rx="3" ry="3" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1"/>
+  <text x="270" y="1139" font-family="'JetBrains Mono', monospace" font-size="8" font-weight="400" fill="#94a3b8">Middleware Step</text>
+
+  <rect x="410" y="1128" width="30" height="14" rx="3" ry="3" fill="rgba(136,19,55,0.4)" stroke="#fb7185" stroke-width="1"/>
+  <text x="450" y="1139" font-family="'JetBrains Mono', monospace" font-size="8" font-weight="400" fill="#94a3b8">Security Layer</text>
+
+  <rect x="580" y="1128" width="30" height="14" rx="3" ry="3" fill="rgba(59,130,246,0.3)" stroke="#60a5fa" stroke-width="1"/>
+  <text x="620" y="1139" font-family="'JetBrains Mono', monospace" font-size="8" font-weight="400" fill="#94a3b8">Handler / Highlight</text>
+
+  <!-- Legend items row 2 -->
+  <polygon points="75,1172 90,1162 105,1172 90,1182" fill="rgba(59,130,246,0.3)" stroke="#60a5fa" stroke-width="1"/>
+  <text x="120" y="1176" font-family="'JetBrains Mono', monospace" font-size="8" font-weight="400" fill="#94a3b8">Decision (Optional / Configurable)</text>
+
+  <line x1="380" y1="1172" x2="410" y2="1172" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+  <text x="420" y="1176" font-family="'JetBrains Mono', monospace" font-size="8" font-weight="400" fill="#94a3b8">Execution Flow</text>
+
+  <line x1="560" y1="1172" x2="590" y2="1172" stroke="#475569" stroke-width="1" stroke-dasharray="4,3"/>
+  <text x="600" y="1176" font-family="'JetBrains Mono', monospace" font-size="8" font-weight="400" fill="#94a3b8">Bypass (Disabled)</text>
+
+  <!-- Legend row 3: registration order note -->
+  <text x="400" y="1208" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="7" font-weight="400" fill="#475569" text-anchor="middle">Execution order: Starlette processes middleware in reverse registration order — first registered runs last</text>
+
+  <!-- ============================================ -->
+  <!-- Footer                                        -->
+  <!-- ============================================ -->
+  <text x="400" y="1260" font-family="'JetBrains Mono', monospace" font-size="8" font-weight="400" fill="#334155" text-anchor="middle">arrow_lake.api.app.create_app() — Middleware Registration Order</text>
+
+  <!-- Decorative corner accents -->
+  <line x1="20" y1="20" x2="50" y2="20" stroke="#22d3ee" stroke-width="1" opacity="0.3"/>
+  <line x1="20" y1="20" x2="20" y2="50" stroke="#22d3ee" stroke-width="1" opacity="0.3"/>
+  <line x1="780" y1="20" x2="750" y2="20" stroke="#22d3ee" stroke-width="1" opacity="0.3"/>
+  <line x1="780" y1="20" x2="780" y2="50" stroke="#22d3ee" stroke-width="1" opacity="0.3"/>
+  <line x1="20" y1="1380" x2="50" y2="1380" stroke="#22d3ee" stroke-width="1" opacity="0.3"/>
+  <line x1="20" y1="1380" x2="20" y2="1350" stroke="#22d3ee" stroke-width="1" opacity="0.3"/>
+  <line x1="780" y1="1380" x2="750" y2="1380" stroke="#22d3ee" stroke-width="1" opacity="0.3"/>
+  <line x1="780" y1="1380" x2="780" y2="1350" stroke="#22d3ee" stroke-width="1" opacity="0.3"/>
+</svg>

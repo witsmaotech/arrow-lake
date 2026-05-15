@@ -72,6 +72,7 @@ async def daft_query(
 ) -> DaftQueryResponse:
     """Load dataset via Daft and return as Arrow table."""
     frame = lake.daft_query(name, columns=req.columns)
+    frame = frame.limit(req.limit)
     table = await run_sync(
         frame.collect,
         timeout=_QUERY_TIMEOUT, label="daft_query",

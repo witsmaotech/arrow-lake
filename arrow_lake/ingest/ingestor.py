@@ -96,12 +96,16 @@ class Ingestor:
         self,
         dataset_name: str,
         file_paths: list[str],
+        *,
+        transforms: list[Any] | None = None,
     ) -> IngestionReport:
         """Ingest files into a Lance dataset.
 
         Args:
             dataset_name: Target dataset name.
             file_paths: List of file paths to ingest.
+            transforms: Optional list of ``daft.DataFrame -> daft.DataFrame``
+                        callables applied before Arrow conversion.
 
         Returns:
             IngestionReport with per-source and total stats.
@@ -119,10 +123,262 @@ class Ingestor:
 
         for fp in file_paths:
             ft = self._detect_file_type(fp)
-            table = self._read_file(fp, ft)
+            df = self._read_file_df(fp, ft)
+            if transforms:
+                for t in transforms:
+                    df = t(df)
+            table = df.to_arrow()
             self._write_table(dataset_name, table, sources, fp)
 
         return self._build_report(sources)
+
+    def ingest_batch(
+        self,
+        dataset_name: str,
+        file_paths: list[str],
+        *,
+        transforms: list[Any] | None = None,
+    ) -> IngestionReport:
+        """Batch-ingest files of the same type, writing once via Daft write_lance.
+
+        Groups files by type, reads each group into a single Daft DataFrame,
+        applies transforms, then writes directly to Lance — skipping per-file
+        Arrow conversion.
+
+        Args:
+            dataset_name: Target dataset name.
+            file_paths: List of file paths to ingest.
+            transforms: Optional Daft transform callables.
+
+        Returns:
+            IngestionReport with per-group stats.
+
+        Raises:
+            IngestError: If file_paths is empty or all files are unsupported.
+        """
+        if not file_paths:
+            raise IngestError(
+                error_code=ErrorCode.INGEST_UNSUPPORTED_FORMAT,
+                message="No file paths provided for batch ingestion",
+            )
+
+        sources: list[IngestionSource] = []
+        grouped = self._group_by_type(file_paths)
+
+        for file_type, paths in grouped.items():
+            df = self._read_files_df(paths, file_type)
+            if transforms:
+                for t in transforms:
+                    df = t(df)
+            row_count = df.count().to_arrow()[0].as_py()
+            self._manager.write_lance_from_dataframe(
+                dataset_name, df, mode="create",
+            )
+            sources.append(IngestionSource(
+                path=f"batch:{file_type}",
+                row_count=row_count,
+                file_count=len(paths),
+            ))
+
+        return self._build_report(sources)
+
+    @staticmethod
+    def _group_by_type(file_paths: list[str]) -> dict[str, list[str]]:
+        """Group file paths by their detected type."""
+        groups: dict[str, list[str]] = {}
+        for fp in file_paths:
+            ext = Path(fp).suffix.lower()
+            ft = Ingestor._SUPPORTED_EXTENSIONS.get(ext, "")
+            if not ft:
+                continue
+            groups.setdefault(ft, []).append(fp)
+        return groups
+
+    @staticmethod
+    def _read_files_df(
+        paths: list[str],
+        file_type: str,
+    ) -> Any:
+        """Read multiple files of the same type into a single Daft DataFrame."""
+        import daft
+
+        if file_type == "csv":
+            return daft.read_csv(paths)
+        elif file_type == "json":
+            return daft.read_json(paths)
+        elif file_type == "parquet":
+            return daft.read_parquet(paths)
+        raise IngestError(
+            error_code=ErrorCode.INGEST_UNSUPPORTED_FORMAT,
+            message=f"Batch read unsupported for type: {file_type}",
+        )
+
+    def ingest_sql(
+        self,
+        dataset_name: str,
+        *,
+        sql: str,
+        connection_url: str,
+        partition_col: str | None = None,
+        num_partitions: int | None = None,
+        transforms: list[Any] | None = None,
+    ) -> IngestionReport:
+        """Ingest data from a SQL database query.
+
+        Args:
+            dataset_name: Target dataset name.
+            sql: SELECT query to execute.
+            connection_url: SQLAlchemy connection string.
+            partition_col: Optional partition column for parallel reads.
+            num_partitions: Number of read partitions.
+            transforms: Optional Daft transform callables.
+
+        Returns:
+            IngestionReport with stats.
+
+        Raises:
+            IngestError: If query fails or contains forbidden statements.
+        """
+        from arrow_lake.ingest.connectors_sql import SqlConnector
+
+        connector = SqlConnector(
+            connection_url,
+            partition_col=partition_col,
+            num_partitions=num_partitions,
+        )
+        df = connector.read(sql)
+        if transforms:
+            for t in transforms:
+                df = t(df)
+        row_count = df.count().to_arrow().column(0)[0].as_py()
+        self._manager.write_lance_from_dataframe(dataset_name, df, mode="create")
+
+        sources = [IngestionSource(
+            path=f"sql:{connection_url.split('@')[-1] if '@' in connection_url else connection_url}",
+            row_count=row_count,
+            file_count=1,
+        )]
+        return self._build_report(sources)
+
+    def ingest_kafka(
+        self,
+        dataset_name: str,
+        *,
+        bootstrap_servers: str,
+        topics: list[str] | str,
+        start: str = "earliest",
+        end: str = "latest",
+        json_decode: bool = True,
+        transforms: list[Any] | None = None,
+    ) -> IngestionReport:
+        """Ingest messages from Kafka topics into a Lance dataset.
+
+        Args:
+            dataset_name: Target dataset name.
+            bootstrap_servers: Kafka broker addresses.
+            topics: Topic name(s) to read from.
+            start: Start bound (default "earliest").
+            end: End bound (default "latest").
+            json_decode: Auto-decode JSON message values (default True).
+            transforms: Optional Daft transform callables.
+
+        Returns:
+            IngestionReport with stats.
+        """
+        import daft
+
+        from arrow_lake.ingest.connectors_kafka import KafkaConnector
+
+        connector = KafkaConnector(bootstrap_servers)
+        df = connector.read(topics=topics, start=start, end=end)
+
+        if json_decode:
+            df = df.with_column("value", daft.functions.json_decode(daft.col("value")))
+            # Explode struct columns from JSON
+            value_type = df.schema()["value"].dtype
+            if hasattr(value_type, "fields"):
+                for field_name in value_type.fields:
+                    df = df.with_column(
+                        field_name, daft.col("value")[field_name],
+                    )
+                df = df.exclude("value")
+
+        if transforms:
+            for t in transforms:
+                df = t(df)
+
+        row_count = df.count().to_arrow().column(0)[0].as_py()
+        self._manager.write_lance_from_dataframe(dataset_name, df, mode="create")
+
+        topic_str = topics if isinstance(topics, str) else ",".join(topics)
+        sources = [IngestionSource(
+            path=f"kafka:{topic_str}",
+            row_count=row_count,
+            file_count=1,
+        )]
+        return self._build_report(sources)
+
+    def ingest_iceberg(
+        self,
+        dataset_name: str,
+        *,
+        table_uri: str,
+        transforms: list[Any] | None = None,
+    ) -> IngestionReport:
+        """Ingest data from an Apache Iceberg table.
+
+        Args:
+            dataset_name: Target dataset name.
+            table_uri: Iceberg table URI.
+            transforms: Optional Daft transform callables.
+
+        Returns:
+            IngestionReport with stats.
+        """
+        from arrow_lake.ingest.connectors_lakehouse import IcebergConnector
+
+        connector = IcebergConnector(table_uri)
+        df = connector.read()
+        if transforms:
+            for t in transforms:
+                df = t(df)
+        row_count = df.count().to_arrow().column(0)[0].as_py()
+        self._manager.write_lance_from_dataframe(dataset_name, df, mode="create")
+        return self._build_report([IngestionSource(
+            path=f"iceberg:{table_uri}", row_count=row_count, file_count=1,
+        )])
+
+    def ingest_deltalake(
+        self,
+        dataset_name: str,
+        *,
+        table_uri: str,
+        version: int | None = None,
+        transforms: list[Any] | None = None,
+    ) -> IngestionReport:
+        """Ingest data from a Delta Lake table.
+
+        Args:
+            dataset_name: Target dataset name.
+            table_uri: Delta Lake table URI.
+            version: Optional table version to read.
+            transforms: Optional Daft transform callables.
+
+        Returns:
+            IngestionReport with stats.
+        """
+        from arrow_lake.ingest.connectors_lakehouse import DeltaConnector
+
+        connector = DeltaConnector(table_uri, version=version)
+        df = connector.read()
+        if transforms:
+            for t in transforms:
+                df = t(df)
+        row_count = df.count().to_arrow().column(0)[0].as_py()
+        self._manager.write_lance_from_dataframe(dataset_name, df, mode="create")
+        return self._build_report([IngestionSource(
+            path=f"delta:{table_uri}", row_count=row_count, file_count=1,
+        )])
 
     def ingest_http(
         self,
@@ -290,6 +546,86 @@ class Ingestor:
             total_files=total_files,
         )
 
+    def ingest_join(
+        self,
+        dataset_name: str,
+        *,
+        right_dataset: str,
+        left_on: str,
+        right_on: str | None = None,
+        how: str = "left",
+        transforms: list[Any] | None = None,
+    ) -> IngestionReport:
+        """Join current dataset with another Lance dataset and write result.
+
+        Args:
+            dataset_name: Left dataset (also target for result).
+            right_dataset: Right dataset name.
+            left_on: Join key on the left side.
+            right_on: Join key on the right side (defaults to left_on).
+            how: Join type — "left", "right", "inner", "outer".
+            transforms: Optional transforms after join.
+
+        Returns:
+            IngestionReport with stats.
+        """
+        import daft
+
+        right_on = right_on or left_on
+        left_table = self._manager.read_dataset(dataset_name)
+        right_table = self._manager.read_dataset(right_dataset)
+        left_df = daft.from_arrow(left_table)
+        right_df = daft.from_arrow(right_table)
+
+        df = left_df.join(right_df, left_on=left_on, right_on=right_on, how=how, prefix="right_")
+        if transforms:
+            for t in transforms:
+                df = t(df)
+        row_count = df.count().to_arrow().column(0)[0].as_py()
+        self._manager.write_lance_from_dataframe(
+            f"{dataset_name}_joined", df, mode="create",
+        )
+        return self._build_report([IngestionSource(
+            path=f"join:{dataset_name}+{right_dataset}", row_count=row_count, file_count=1,
+        )])
+
+    def ingest_union(
+        self,
+        dataset_name: str,
+        *,
+        source_datasets: list[str],
+        transforms: list[Any] | None = None,
+    ) -> IngestionReport:
+        """Union multiple Lance datasets and write result.
+
+        Args:
+            dataset_name: Target dataset name for the union result.
+            source_datasets: List of dataset names to union.
+            transforms: Optional transforms after union.
+
+        Returns:
+            IngestionReport with stats.
+        """
+        import daft
+
+        dfs = []
+        for src in source_datasets:
+            table = self._manager.read_dataset(src)
+            dfs.append(daft.from_arrow(table))
+        df = dfs[0]
+        for other in dfs[1:]:
+            df = df.union_all(other)
+
+        if transforms:
+            for t in transforms:
+                df = t(df)
+        row_count = df.count().to_arrow().column(0)[0].as_py()
+        self._manager.write_lance_from_dataframe(dataset_name, df, mode="create")
+        return self._build_report([IngestionSource(
+            path=f"union:{','.join(source_datasets)}", row_count=row_count,
+            file_count=len(source_datasets),
+        )])
+
     def ingest_documents(
         self,
         dataset_name: str,
@@ -424,15 +760,21 @@ class Ingestor:
         )
 
     @staticmethod
-    def _read_file(path: Path | str, file_type: str) -> pa.Table:
-        """Read a file into an Arrow Table using Daft.
+    def _read_file_df(
+        path: Path | str,
+        file_type: str,
+        *,
+        columns: list[str] | None = None,
+    ) -> Any:
+        """Read a file into a Daft DataFrame (lazy, not yet materialized).
 
         Args:
             path: File path (local or s3:// URI).
             file_type: File type string.
+            columns: Optional column subset to read (column pruning).
 
         Returns:
-            Arrow Table with file contents.
+            daft.DataFrame for further lazy operations.
 
         Raises:
             IngestError: If file cannot be read.
@@ -441,18 +783,21 @@ class Ingestor:
 
         try:
             sp = str(path)
+            read_kwargs: dict[str, Any] = {}
+            if columns and file_type in ("csv", "parquet"):
+                read_kwargs["columns"] = columns
+
             if file_type == "csv":
-                df = daft.read_csv(sp)
+                return daft.read_csv(sp, **read_kwargs)
             elif file_type == "json":
-                df = daft.read_json(sp)
+                return daft.read_json(sp)
             elif file_type == "parquet":
-                df = daft.read_parquet(sp)
+                return daft.read_parquet(sp, **read_kwargs)
             else:
                 raise IngestError(
                     error_code=ErrorCode.INGEST_UNSUPPORTED_FORMAT,
                     message=f"Unsupported file type: {file_type}",
                 )
-            return df.to_arrow()
         except IngestError:
             raise
         except (ImportError, OSError, ValueError) as exc:
@@ -460,6 +805,20 @@ class Ingestor:
                 error_code=ErrorCode.INGEST_FILE_NOT_FOUND,
                 message=f"Failed to read '{path}': {exc}",
             ) from exc
+
+    @staticmethod
+    def _read_file(
+        path: Path | str,
+        file_type: str,
+        *,
+        columns: list[str] | None = None,
+    ) -> pa.Table:
+        """Read a file into an Arrow Table using Daft.
+
+        Thin wrapper around ``_read_file_df().to_arrow()``.
+        """
+        df = Ingestor._read_file_df(path, file_type, columns=columns)
+        return df.to_arrow()
 
     @staticmethod
     def _read_bytes(content: bytes, file_type: str) -> pa.Table:

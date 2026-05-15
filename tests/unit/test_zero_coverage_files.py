@@ -12,10 +12,7 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import MagicMock
 
-import pytest
-
 import pyarrow as pa
-
 from arrow_lake._protocols import (
     EmbeddingEncoderProtocol,
     KGClientProtocol,
@@ -24,7 +21,6 @@ from arrow_lake._protocols import (
 from arrow_lake.query._base import SearchBridge
 from arrow_lake.query.engine import QueryEngine
 from arrow_lake.sdk import LakeClient
-
 
 # ---------------------------------------------------------------------------
 # Helpers — concrete classes satisfying each Protocol
@@ -147,7 +143,7 @@ class TestStorageProtocol:
         """A bare MagicMock should NOT satisfy the protocol because
         its attributes are always truthy but the structural check
         verifies the *methods* exist with the right signatures."""
-        mock = MagicMock()
+        MagicMock()
         # MagicMock auto-creates attributes, so isinstance may pass
         # depending on protocol shape.  Just verify a real impl works.
         assert isinstance(_FakeStorage(), StorageProtocol)

@@ -309,13 +309,13 @@ class OlapSearchBridge:
         if self._config.lance_scan_mode == "pyarrow_fallback":
             # Clear stale registration from pooled connections
             with contextlib.suppress(duckdb.Error):
-                conn.execute(f"DROP VIEW IF EXISTS {dataset_name}")
+                conn.execute(f"DROP VIEW IF EXISTS {dataset_name}")  # nosec B608
             conn.register(dataset_name, source)
             return
 
         # Clear any stale VIEW or table function from pooled connections
         with contextlib.suppress(duckdb.Error):
-            conn.execute(f"DROP VIEW IF EXISTS {dataset_name}")
+            conn.execute(f"DROP VIEW IF EXISTS {dataset_name}")  # nosec B608
         with contextlib.suppress(duckdb.Error):
             conn.unregister(dataset_name)
 

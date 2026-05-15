@@ -41,7 +41,7 @@ class TestLakeIngestDelegation:
             mock_ingestor.return_value.ingest.return_value = mock_report
             result = lake.ingest("test_ds", ["/tmp/file.csv"])
             assert result is mock_report
-            mock_ingestor.return_value.ingest.assert_called_once_with("test_ds", ["/tmp/file.csv"])
+            mock_ingestor.return_value.ingest.assert_called_once_with("test_ds", ["/tmp/file.csv"], transforms=None)
 
     def test_ingest_http_delegates(self, lake: Lake) -> None:
         mock_report = MagicMock()
@@ -189,15 +189,11 @@ class TestLakeDaftQuery:
 class TestLakeFlows:
     """Test Lake.list_flows() and get_flow_info()."""
 
-    @pytest.mark.skip(reason="Requires Metaflow flow registration (quality_pipeline)")
     def test_list_flows_returns_registered(self, lake: Lake) -> None:
-        flows = lake.list_flows()
-        assert isinstance(flows, list)
-        # At least quality_pipeline should be available
-        assert len(flows) >= 1
-        assert "quality_pipeline" in flows
+        result = lake.list_flows()
+        assert isinstance(result, list)
+        assert "quality_pipeline" in result
 
-    @pytest.mark.skip(reason="Requires Metaflow flow registration (quality_pipeline)")
     def test_get_flow_info_returns_metadata(self, lake: Lake) -> None:
         info = lake.get_flow_info("quality_pipeline")
         assert info["name"] == "quality_pipeline"

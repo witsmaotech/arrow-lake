@@ -1,0 +1,304 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 900" width="1000" height="900">
+  <defs>
+    <!-- Grid pattern -->
+    <pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse">
+      <path d="M 20 0 L 0 0 0 20" fill="none" stroke="rgba(100,116,139,0.08)" stroke-width="0.5"/>
+    </pattern>
+    <!-- Arrow marker -->
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto" fill="#64748b">
+      <polygon points="0 0, 10 3.5, 0 7"/>
+    </marker>
+    <!-- Arrow marker cyan -->
+    <marker id="arrowhead-cyan" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto" fill="#22d3ee">
+      <polygon points="0 0, 10 3.5, 0 7"/>
+    </marker>
+    <!-- Arrow marker orange -->
+    <marker id="arrowhead-orange" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto" fill="#fb923c">
+      <polygon points="0 0, 10 3.5, 0 7"/>
+    </marker>
+    <!-- Cyan glow -->
+    <filter id="glow-cyan" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feFlood flood-color="#22d3ee" flood-opacity="0.6" result="color"/>
+      <feComposite in="color" in2="blur" operator="in" result="glow"/>
+      <feMerge>
+        <feMergeNode in="glow"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <!-- Emerald glow -->
+    <filter id="glow-emerald" x="-10%" y="-10%" width="120%" height="120%">
+      <feGaussianBlur stdDeviation="2" result="blur"/>
+      <feFlood flood-color="#34d399" flood-opacity="0.3" result="color"/>
+      <feComposite in="color" in2="blur" operator="in" result="glow"/>
+      <feMerge>
+        <feMergeNode in="glow"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1000" height="900" fill="#0f172a"/>
+  <rect width="1000" height="900" fill="url(#grid)"/>
+
+  <!-- Title -->
+  <text x="30" y="42" font-family="'JetBrains Mono','Noto Sans SC','PingFang SC',monospace" font-size="22" font-weight="700" fill="#22d3ee" filter="url(#glow-cyan)">DARMU Compute Stack</text>
+  <text x="30" y="62" font-family="'JetBrains Mono','Noto Sans SC','PingFang SC',monospace" font-size="11" fill="#64748b">Arrow Lake v1.3.0 — 编排 / 查询 / 分布式 统一架构</text>
+
+  <!-- ============================================================ -->
+  <!-- TOP LAYER: Metaflow Workflow Region                           -->
+  <!-- ============================================================ -->
+  <rect x="30" y="80" width="700" height="195" rx="8" ry="8"
+        fill="rgba(6,78,59,0.12)" stroke="#34d399" stroke-width="1.5" stroke-dasharray="8,4"/>
+  <text x="48" y="103" font-family="'JetBrains Mono','Noto Sans SC','PingFang SC',monospace" font-size="11" fill="#34d399" font-weight="600">ORCHESTRATION LAYER</text>
+  <text x="48" y="119" font-family="'JetBrains Mono','Noto Sans SC','PingFang SC',monospace" font-size="9.5" fill="#94a3b8">编排层: 步骤顺序、重试、调度、审计</text>
+
+  <!-- Step 1: Ingest -->
+  <rect x="52" y="138" width="140" height="50" rx="6" ry="6"
+        fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.2"/>
+  <text x="122" y="160" font-family="'JetBrains Mono','Noto Sans SC','PingFang SC',monospace" font-size="12" fill="#e2e8f0" text-anchor="middle" font-weight="600">Ingest</text>
+  <text x="122" y="176" font-family="'JetBrains Mono','Noto Sans SC','PingFang SC',monospace" font-size="9" fill="#94a3b8" text-anchor="middle">@step</text>
+
+  <!-- Arrow 1→2 -->
+  <line x1="192" y1="163" x2="226" y2="163" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrowhead)"/>
+
+  <!-- Step 2: Quality -->
+  <rect x="230" y="138" width="140" height="50" rx="6" ry="6"
+        fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.2"/>
+  <text x="300" y="160" font-family="'JetBrains Mono','Noto Sans SC','PingFang SC',monospace" font-size="12" fill="#e2e8f0" text-anchor="middle" font-weight="600">Quality</text>
+  <text x="300" y="176" font-family="'JetBrains Mono','Noto Sans SC','PingFang SC',monospace" font-size="9" fill="#94a3b8" text-anchor="middle">@step</text>
+
+  <!-- Arrow 2→3 -->
+  <line x1="370" y1="163" x2="404" y2="163" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrowhead)"/>
+
+  <!-- Step 3: Embed -->
+  <rect x="408" y="138" width="140" height="50" rx="6" ry="6"
+        fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.2"/>
+  <text x="478" y="160" font-family="'JetBrains Mono','Noto Sans SC','PingFang SC',monospace" font-size="12" fill="#e2e8f0" text-anchor="middle" font-weight="600">Embed</text>
+  <text x="478" y="176" font-family="'JetBrains Mono','Noto Sans SC','PingFang SC',monospace" font-size="9" fill="#94a3b8" text-anchor="middle">@step</text>
+
+  <!-- Arrow 3→ellipsis -->
+  <line x1="548" y1="163" x2="582" y2="163" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrowhead)"/>
+
+  <!-- Ellipsis -->
+  <text x="608" y="168" font-family="'JetBrains Mono',monospace" font-size="22" fill="#64748b" text-anchor="middle">...</text>
+
+  <!-- Metaflow label -->
+  <text x="60" y="210" font-family="'JetBrains Mono','Noto Sans SC','PingFang SC',monospace" font-size="10" fill="#34d399" opacity="0.7">Metaflow DAG — 版本追踪 / 恢复 / 分支合并</text>
+
+  <!-- ============================================================ -->
+  <!-- DARMU Acronym (right side)                                    -->
+  <!-- ============================================================ -->
+  <rect x="760" y="80" width="220" height="195" rx="8" ry="8"
+        fill="rgba(15,23,42,0.6)" stroke="#334155" stroke-width="1"/>
+  <text x="870" y="110" font-family="'JetBrains Mono','Noto Sans SC','PingFang SC',monospace" font-size="18" fill="#e2e8f0" text-anchor="middle" font-weight="700" letter-spacing="3">
+    <tspan fill="#60a5fa">D</tspan><tspan fill="#e2e8f0">A</tspan><tspan fill="#fb923c">R</tspan><tspan fill="#34d399">M</tspan><tspan fill="#e2e8f0">U</tspan>
+  </text>
+  <line x1="790" y1="122" x2="950" y2="122" stroke="#334155" stroke-width="0.8"/>
+
+  <text x="790" y="145" font-family="'JetBrains Mono',monospace" font-size="11" fill="#60a5fa" font-weight="600">D</text>
+  <text x="802" y="145" font-family="'JetBrains Mono',monospace" font-size="11" fill="#94a3b8">aft</text>
+  <text x="790" y="163" font-family="'JetBrains Mono',monospace" font-size="11" fill="#e2e8f0" font-weight="600">A</text>
+  <text x="802" y="163" font-family="'JetBrains Mono',monospace" font-size="11" fill="#94a3b8">rrow Lake</text>
+  <text x="790" y="181" font-family="'JetBrains Mono',monospace" font-size="11" fill="#fb923c" font-weight="600">R</text>
+  <text x="802" y="181" font-family="'JetBrains Mono',monospace" font-size="11" fill="#94a3b8">ay</text>
+  <text x="790" y="199" font-family="'JetBrains Mono',monospace" font-size="11" fill="#34d399" font-weight="600">M</text>
+  <text x="802" y="199" font-family="'JetBrains Mono',monospace" font-size="11" fill="#94a3b8">etaflow</text>
+  <text x="790" y="217" font-family="'JetBrains Mono',monospace" font-size="11" fill="#e2e8f0" font-weight="600">U</text>
+  <text x="802" y="217" font-family="'JetBrains Mono',monospace" font-size="11" fill="#94a3b8">DuckDB</text>
+
+  <text x="870" y="250" font-family="'JetBrains Mono','Noto Sans SC','PingFang SC',monospace" font-size="9" fill="#64748b" text-anchor="middle">= D(aft) + R(ay) + M(etaflow) + U(DuckDB)</text>
+
+  <!-- ============================================================ -->
+  <!-- MIDDLE LAYER: Lake Facade API                                 -->
+  <!-- ============================================================ -->
+
+  <!-- Arrows: Metaflow steps → Lake Facade -->
+  <line x1="122" y1="188" x2="122" y2="310" stroke="#22d3ee" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrowhead-cyan)"/>
+  <line x1="300" y1="188" x2="300" y2="310" stroke="#22d3ee" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrowhead-cyan)"/>
+  <line x1="478" y1="188" x2="478" y2="310" stroke="#22d3ee" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrowhead-cyan)"/>
+  <line x1="610" y1="175" x2="610" y2="310" stroke="#22d3ee" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrowhead-cyan)"/>
+
+  <!-- Facade bar -->
+  <rect x="50" y="315" width="700" height="70" rx="8" ry="8"
+        fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+  <text x="400" y="345" font-family="'JetBrains Mono','Noto Sans SC','PingFang SC',monospace" font-size="15" fill="#22d3ee" text-anchor="middle" font-weight="700">Lake Facade API</text>
+  <text x="400" y="368" font-family="'JetBrains Mono','Noto Sans SC','PingFang SC',monospace" font-size="10" fill="#94a3b8" text-anchor="middle">统一编程接口 — ingest / query / lineage / quality / rag / export / search</text>
+
+  <!-- Facade label on right -->
+  <rect x="760" y="315" width="220" height="70" rx="8" ry="8"
+        fill="rgba(15,23,42,0.5)" stroke="#334155" stroke-width="0.8"/>
+  <text x="870" y="342" font-family="'JetBrains Mono','Noto Sans SC','PingFang SC',monospace" font-size="10" fill="#22d3ee" text-anchor="middle" font-weight="600">Facade 模式</text>
+  <text x="870" y="358" font-family="'JetBrains Mono','Noto Sans SC','PingFang SC',monospace" font-size="9" fill="#64748b" text-anchor="middle">所有 step 调用同一 API</text>
+  <text x="870" y="374" font-family="'JetBrains Mono','Noto Sans SC','PingFang SC',monospace" font-size="9" fill="#64748b" text-anchor="middle">SDK → HTTP → Engine</text>
+
+  <!-- ============================================================ -->
+  <!-- BOTTOM LAYER: Three Compute Engines                           -->
+  <!-- ============================================================ -->
+
+  <!-- Arrows: Lake Facade → Engines (fork) -->
+  <!-- Center of facade: 400, y=385 -->
+  <!-- Engine centers: 148, 400, 652  -->
+  <line x1="200" y1="385" x2="148" y2="450" stroke="#60a5fa" stroke-width="1.2" marker-end="url(#arrowhead)"/>
+  <line x1="400" y1="385" x2="400" y2="450" stroke="#60a5fa" stroke-width="1.2" marker-end="url(#arrowhead)"/>
+  <line x1="600" y1="385" x2="652" y2="450" stroke="#60a5fa" stroke-width="1.2" marker-end="url(#arrowhead)"/>
+
+  <!-- Engine labels row -->
+  <text x="400" y="440" font-family="'JetBrains Mono','Noto Sans SC','PingFang SC',monospace" font-size="10" fill="#60a5fa" text-anchor="middle" font-weight="600" letter-spacing="2">COMPUTE ENGINES</text>
+
+  <!-- Engine 1: Daft -->
+  <rect x="52" y="455" width="196" height="180" rx="8" ry="8"
+        fill="rgba(59,130,246,0.15)" stroke="#60a5fa" stroke-width="1.5"/>
+  <!-- Header bar -->
+  <rect x="52" y="455" width="196" height="32" rx="8" ry="8"
+        fill="rgba(59,130,246,0.3)" stroke="#60a5fa" stroke-width="1.5"/>
+  <rect x="52" y="475" width="196" height="12" fill="rgba(59,130,246,0.3)"/>
+  <text x="150" y="477" font-family="'JetBrains Mono',monospace" font-size="14" fill="#60a5fa" text-anchor="middle" font-weight="700">Daft</text>
+
+  <text x="66" y="507" font-family="'JetBrains Mono','Noto Sans SC','PingFang SC',monospace" font-size="10" fill="#e2e8f0">
+    <tspan x="66" dy="0">文件读取</tspan>
+    <tspan x="66" dy="18">ETL 转换</tspan>
+    <tspan x="66" dy="18">惰性求值</tspan>
+    <tspan x="66" dy="18">多模态 AI 函数</tspan>
+    <tspan x="66" dy="18">表达式优化器</tspan>
+  </text>
+
+  <!-- Small icon indicator -->
+  <circle cx="232" cy="616" r="3" fill="#60a5fa" opacity="0.5"/>
+  <circle cx="222" cy="616" r="3" fill="#60a5fa" opacity="0.3"/>
+  <circle cx="212" cy="616" r="3" fill="#60a5fa" opacity="0.15"/>
+
+  <!-- Engine 2: DuckDB -->
+  <rect x="268" y="455" width="264" height="180" rx="8" ry="8"
+        fill="rgba(59,130,246,0.15)" stroke="#60a5fa" stroke-width="1.5"/>
+  <!-- Header bar -->
+  <rect x="268" y="455" width="264" height="32" rx="8" ry="8"
+        fill="rgba(59,130,246,0.3)" stroke="#60a5fa" stroke-width="1.5"/>
+  <rect x="268" y="475" width="264" height="12" fill="rgba(59,130,246,0.3)"/>
+  <text x="400" y="477" font-family="'JetBrains Mono',monospace" font-size="14" fill="#60a5fa" text-anchor="middle" font-weight="700">DuckDB</text>
+
+  <text x="282" y="507" font-family="'JetBrains Mono','Noto Sans SC','PingFang SC',monospace" font-size="10" fill="#e2e8f0">
+    <tspan x="282" dy="0">SQL OLAP 引擎</tspan>
+    <tspan x="282" dy="18">向量 FTS 混合搜索</tspan>
+    <tspan x="282" dy="18">Session Pool 管理</tspan>
+    <tspan x="282" dy="18">Redis 信号量限流</tspan>
+    <tspan x="282" dy="18">Parquet / Arrow 原生</tspan>
+  </text>
+
+  <circle cx="514" cy="616" r="3" fill="#60a5fa" opacity="0.5"/>
+  <circle cx="504" cy="616" r="3" fill="#60a5fa" opacity="0.3"/>
+  <circle cx="494" cy="616" r="3" fill="#60a5fa" opacity="0.15"/>
+
+  <!-- Engine 3: Ray -->
+  <rect x="552" y="455" width="196" height="180" rx="8" ry="8"
+        fill="rgba(59,130,246,0.15)" stroke="#60a5fa" stroke-width="1.5"/>
+  <!-- Header bar -->
+  <rect x="552" y="455" width="196" height="32" rx="8" ry="8"
+        fill="rgba(59,130,246,0.3)" stroke="#60a5fa" stroke-width="1.5"/>
+  <rect x="552" y="475" width="196" height="12" fill="rgba(59,130,246,0.3)"/>
+  <text x="650" y="477" font-family="'JetBrains Mono',monospace" font-size="14" fill="#60a5fa" text-anchor="middle" font-weight="700">Ray</text>
+
+  <text x="566" y="507" font-family="'JetBrains Mono','Noto Sans SC','PingFang SC',monospace" font-size="10" fill="#e2e8f0">
+    <tspan x="566" dy="0">分布式 Catalog</tspan>
+    <tspan x="566" dy="18">GPU 批量推理</tspan>
+    <tspan x="566" dy="18">并行 Map/Reduce</tspan>
+    <tspan x="566" dy="18">Actor 状态管理</tspan>
+    <tspan x="566" dy="18">自动弹性伸缩</tspan>
+  </text>
+
+  <circle cx="732" cy="616" r="3" fill="#60a5fa" opacity="0.5"/>
+  <circle cx="722" cy="616" r="3" fill="#60a5fa" opacity="0.3"/>
+  <circle cx="712" cy="616" r="3" fill="#60a5fa" opacity="0.15"/>
+
+  <!-- ============================================================ -->
+  <!-- Metaflow ↔ Ray dashed connection                             -->
+  <!-- ============================================================ -->
+  <path d="M 748 163 Q 780 163 790 200 Q 800 280 790 360 Q 780 420 750 460 Q 720 480 700 500"
+        fill="none" stroke="#34d399" stroke-width="1" stroke-dasharray="5,4" opacity="0.5"/>
+  <text x="795" y="420" font-family="'JetBrains Mono','Noto Sans SC','PingFang SC',monospace" font-size="8.5" fill="#34d399" opacity="0.7" transform="rotate(-70,795,420)">metaflow-ray plugin</text>
+
+  <!-- ============================================================ -->
+  <!-- INFRASTRUCTURE BAR                                            -->
+  <!-- ============================================================ -->
+
+  <!-- Arrows: Engines → Infrastructure -->
+  <line x1="150" y1="635" x2="150" y2="685" stroke="#fb923c" stroke-width="1.2" marker-end="url(#arrowhead-orange)"/>
+  <line x1="400" y1="635" x2="400" y2="685" stroke="#fb923c" stroke-width="1.2" marker-end="url(#arrowhead-orange)"/>
+  <line x1="650" y1="635" x2="650" y2="685" stroke="#fb923c" stroke-width="1.2" marker-end="url(#arrowhead-orange)"/>
+
+  <rect x="50" y="690" width="700" height="55" rx="8" ry="8"
+        fill="rgba(251,146,60,0.15)" stroke="#fb923c" stroke-width="1.5"/>
+  <!-- Inner segments -->
+  <line x1="280" y1="695" x2="280" y2="740" stroke="#fb923c" stroke-width="0.5" opacity="0.3"/>
+  <line x1="520" y1="695" x2="520" y2="740" stroke="#fb923c" stroke-width="0.5" opacity="0.3"/>
+
+  <text x="165" y="722" font-family="'JetBrains Mono','Noto Sans SC','PingFang SC',monospace" font-size="12" fill="#fb923c" text-anchor="middle" font-weight="700">Ray Cluster</text>
+  <text x="400" y="716" font-family="'JetBrains Mono','Noto Sans SC','PingFang SC',monospace" font-size="12" fill="#fb923c" text-anchor="middle" font-weight="700">Redis</text>
+  <text x="400" y="733" font-family="'JetBrains Mono','Noto Sans SC','PingFang SC',monospace" font-size="9" fill="#94a3b8" text-anchor="middle">会话协调 / 信号量</text>
+  <text x="610" y="716" font-family="'JetBrains Mono','Noto Sans SC','PingFang SC',monospace" font-size="12" fill="#fb923c" text-anchor="middle" font-weight="700">MinIO / S3</text>
+  <text x="610" y="733" font-family="'JetBrains Mono','Noto Sans SC','PingFang SC',monospace" font-size="9" fill="#94a3b8" text-anchor="middle">Parquet Storage</text>
+
+  <!-- ============================================================ -->
+  <!-- Data flow annotations (right panel)                           -->
+  <!-- ============================================================ -->
+  <rect x="760" y="455" width="220" height="290" rx="8" ry="8"
+        fill="rgba(15,23,42,0.5)" stroke="#334155" stroke-width="0.8"/>
+  <text x="870" y="480" font-family="'JetBrains Mono','Noto Sans SC','PingFang SC',monospace" font-size="10" fill="#94a3b8" text-anchor="middle" font-weight="600">数据流</text>
+  <line x1="790" y1="490" x2="950" y2="490" stroke="#334155" stroke-width="0.5"/>
+
+  <!-- Flow step 1 -->
+  <circle cx="790" cy="515" r="4" fill="#34d399"/>
+  <text x="802" y="519" font-family="'JetBrains Mono','Noto Sans SC','PingFang SC',monospace" font-size="9" fill="#cbd5e1">Metaflow @step 提交</text>
+
+  <!-- Flow step 2 -->
+  <circle cx="790" cy="542" r="4" fill="#22d3ee"/>
+  <text x="802" y="546" font-family="'JetBrains Mono','Noto Sans SC','PingFang SC',monospace" font-size="9" fill="#cbd5e1">Facade 路由到引擎</text>
+
+  <!-- Flow step 3 -->
+  <circle cx="790" cy="569" r="4" fill="#60a5fa"/>
+  <text x="802" y="573" font-family="'JetBrains Mono','Noto Sans SC','PingFang SC',monospace" font-size="9" fill="#cbd5e1">引擎并行计算</text>
+
+  <!-- Flow step 4 -->
+  <circle cx="790" cy="596" r="4" fill="#fb923c"/>
+  <text x="802" y="600" font-family="'JetBrains Mono','Noto Sans SC','PingFang SC',monospace" font-size="9" fill="#cbd5e1">Redis 协调状态</text>
+
+  <!-- Flow step 5 -->
+  <circle cx="790" cy="623" r="4" fill="#a78bfa"/>
+  <text x="802" y="627" font-family="'JetBrains Mono','Noto Sans SC','PingFang SC',monospace" font-size="9" fill="#cbd5e1">结果写回 Lake</text>
+
+  <!-- Vertical connecting line -->
+  <line x1="790" y1="519" x2="790" y2="623" stroke="#334155" stroke-width="0.8"/>
+
+  <!-- Key insight -->
+  <rect x="775" y="648" width="190" height="80" rx="6" ry="6"
+        fill="rgba(34,211,238,0.05)" stroke="rgba(34,211,238,0.2)" stroke-width="0.8"/>
+  <text x="870" y="668" font-family="'JetBrains Mono','Noto Sans SC','PingFang SC',monospace" font-size="9" fill="#22d3ee" text-anchor="middle" font-weight="600">核心设计原则</text>
+  <text x="870" y="686" font-family="'JetBrains Mono','Noto Sans SC','PingFang SC',monospace" font-size="8.5" fill="#94a3b8" text-anchor="middle">步骤与引擎解耦</text>
+  <text x="870" y="700" font-family="'JetBrains Mono','Noto Sans SC','PingFang SC',monospace" font-size="8.5" fill="#94a3b8" text-anchor="middle">Facade 统一抽象</text>
+  <text x="870" y="714" font-family="'JetBrains Mono','Noto Sans SC','PingFang SC',monospace" font-size="8.5" fill="#94a3b8" text-anchor="middle">引擎可独立替换</text>
+
+  <!-- ============================================================ -->
+  <!-- Footer                                                        -->
+  <!-- ============================================================ -->
+  <text x="500" y="775" font-family="'JetBrains Mono','Noto Sans SC','PingFang SC',monospace" font-size="9" fill="#475569" text-anchor="middle">
+    Arrow Lake v1.3.0 DARMU Compute Stack — 编排(绿) / 查询(蓝) / 接口(青) / 基础设施(橙)
+  </text>
+
+  <!-- Color legend -->
+  <rect x="50" y="790" width="12" height="12" rx="2" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="0.8"/>
+  <text x="68" y="800" font-family="'JetBrains Mono','Noto Sans SC','PingFang SC',monospace" font-size="8" fill="#64748b">Orchestration</text>
+
+  <rect x="160" y="790" width="12" height="12" rx="2" fill="rgba(59,130,246,0.3)" stroke="#60a5fa" stroke-width="0.8"/>
+  <text x="178" y="800" font-family="'JetBrains Mono','Noto Sans SC','PingFang SC',monospace" font-size="8" fill="#64748b">Compute</text>
+
+  <rect x="250" y="790" width="12" height="12" rx="2" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="0.8"/>
+  <text x="268" y="800" font-family="'JetBrains Mono','Noto Sans SC','PingFang SC',monospace" font-size="8" fill="#64748b">Facade</text>
+
+  <rect x="330" y="790" width="12" height="12" rx="2" fill="rgba(251,146,60,0.3)" stroke="#fb923c" stroke-width="0.8"/>
+  <text x="348" y="800" font-family="'JetBrains Mono','Noto Sans SC','PingFang SC',monospace" font-size="8" fill="#64748b">Infrastructure</text>
+
+  <!-- Version badge -->
+  <rect x="850" y="785" width="110" height="20" rx="10" ry="10" fill="rgba(34,211,238,0.1)" stroke="rgba(34,211,238,0.3)" stroke-width="0.8"/>
+  <text x="905" y="799" font-family="'JetBrains Mono',monospace" font-size="9" fill="#22d3ee" text-anchor="middle">v1.3.0-darmu</text>
+</svg>

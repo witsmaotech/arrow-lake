@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Style C — Creative Voltage</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+/* === viewport-base.css === */
+html,body{height:100%;overflow-x:hidden}
+html{scroll-snap-type:y mandatory;scroll-behavior:smooth}
+.slide{width:100vw;height:100vh;height:100dvh;overflow:hidden;scroll-snap-align:start;display:flex;flex-direction:column;position:relative}
+.slide-content{flex:1;display:flex;flex-direction:column;justify-content:center;max-height:100%;overflow:hidden;padding:var(--slide-padding)}
+:root{--title-size:clamp(1.5rem,5vw,4rem);--h2-size:clamp(1.25rem,3.5vw,2.5rem);--h3-size:clamp(1rem,2.5vw,1.75rem);--body-size:clamp(0.75rem,1.5vw,1.125rem);--small-size:clamp(0.65rem,1vw,0.875rem);--slide-padding:clamp(1rem,4vw,4rem);--content-gap:clamp(0.5rem,2vw,2rem);--element-gap:clamp(0.25rem,1vw,1rem)}
+.card,.container,.content-box{max-width:min(90vw,1000px);max-height:min(80vh,700px)}
+@media(max-height:700px){:root{--slide-padding:clamp(0.75rem,3vw,2rem);--content-gap:clamp(0.4rem,1.5vw,1rem);--title-size:clamp(1.25rem,4.5vw,2.5rem);--h2-size:clamp(1rem,3vw,1.75rem)}}
+@media(max-height:600px){:root{--slide-padding:clamp(0.5rem,2.5vw,1.5rem);--content-gap:clamp(0.3rem,1vw,0.75rem);--title-size:clamp(1.1rem,4vw,2rem);--body-size:clamp(0.7rem,1.2vw,0.95rem)}.nav-dots,.keyboard-hint,.decorative{display:none}}
+@media(max-height:500px){:root{--slide-padding:clamp(0.4rem,2vw,1rem);--title-size:clamp(1rem,3.5vw,1.5rem);--h2-size:clamp(0.9rem,2.5vw,1.25rem);--body-size:clamp(0.65rem,1vw,0.85rem)}}
+@media(max-width:600px){:root{--title-size:clamp(1.25rem,7vw,2.5rem)}.grid{grid-template-columns:1fr}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:0.01ms!important;transition-duration:0.2s!important}html{scroll-behavior:auto}}
+
+/* === Creative Voltage Theme === */
+:root {
+  --electric-blue: #0066ff;
+  --dark-deep: #1a1a2e;
+  --neon-yellow: #d4ff00;
+  --white: #ffffff;
+  --text-primary: #ffffff;
+  --text-secondary: #b0b8d1;
+  --font-display: 'Syne', sans-serif;
+  --font-mono: 'Space Mono', monospace;
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: var(--font-mono); background: var(--dark-deep); color: var(--text-primary); }
+
+/* Split panel layout */
+.slide {
+  background: var(--dark-deep);
+  display: flex;
+  overflow: hidden;
+}
+
+/* Left blue panel */
+.blue-panel {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: clamp(35vw, 42vw, 480px);
+  background: var(--electric-blue);
+  z-index: 1;
+}
+.blue-panel::after {
+  content: '';
+  position: absolute;
+  right: -30px;
+  top: 0;
+  bottom: 0;
+  width: 60px;
+  background: linear-gradient(90deg, rgba(0,102,255,0.3), transparent);
+  z-index: 2;
+}
+
+/* Halftone texture on blue panel */
+.halftone {
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(circle, rgba(0,0,0,0.12) 1px, transparent 1px);
+  background-size: 8px 8px;
+  z-index: 1;
+}
+
+/* Neon badge */
+.neon-badge {
+  display: inline-block;
+  padding: 0.3em 1em;
+  background: var(--neon-yellow);
+  color: var(--dark-deep);
+  font-family: var(--font-mono);
+  font-size: clamp(0.6rem, 0.9vw, 0.75rem);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  margin-bottom: 1em;
+  clip-path: polygon(0 0, 95% 0, 100% 30%, 100% 100%, 5% 100%, 0 70%);
+}
+
+/* Main content — right side */
+.slide-content {
+  position: relative;
+  z-index: 3;
+  margin-left: clamp(35vw, 42vw, 480px);
+  padding-left: clamp(2rem, 4vw, 5rem);
+  padding-right: var(--slide-padding);
+  justify-content: center;
+}
+h1 {
+  font-family: var(--font-display);
+  font-size: var(--title-size);
+  font-weight: 800;
+  line-height: 1.05;
+  margin-bottom: 0.5em;
+}
+h1 .accent { color: var(--neon-yellow); }
+.subtitle {
+  font-size: clamp(0.8rem, 1.5vw, 1rem);
+  color: var(--text-secondary);
+  max-width: 460px;
+  line-height: 1.7;
+}
+
+/* Yellow accent line */
+.yellow-line {
+  width: clamp(50px, 8vw, 100px);
+  height: 3px;
+  background: var(--neon-yellow);
+  margin: 0.8em 0;
+}
+
+/* Right corner neon glow */
+.corner-glow {
+  position: absolute;
+  right: -5%;
+  bottom: -10%;
+  width: clamp(200px, 30vw, 400px);
+  height: clamp(200px, 30vw, 400px);
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(212,255,0,0.06) 0%, transparent 70%);
+  z-index: 0;
+}
+
+/* Decorative circuit lines */
+.circuit-line {
+  position: absolute;
+  background: rgba(0,102,255,0.15);
+  z-index: 1;
+}
+.circuit-line.h { height: 1px; width: clamp(40px, 6vw, 80px); right: 10%; top: 20%; }
+.circuit-line.v { width: 1px; height: clamp(40px, 6vw, 80px); right: 13%; top: 20%; }
+.circuit-dot {
+  position: absolute;
+  width: 5px; height: 5px;
+  background: var(--neon-yellow);
+  border-radius: 50%;
+  z-index: 2;
+  right: calc(13% - 2px);
+  top: calc(20% + clamp(40px, 6vw, 80px) - 2px);
+}
+
+/* Blue panel content */
+.panel-content {
+  position: absolute;
+  z-index: 3;
+  bottom: clamp(2rem, 4vh, 4rem);
+  left: clamp(1.5rem, 3vw, 3rem);
+}
+.panel-content .version {
+  font-family: var(--font-mono);
+  font-size: clamp(0.65rem, 1vw, 0.8rem);
+  color: rgba(255,255,255,0.7);
+}
+.panel-content .version strong { color: var(--neon-yellow); }
+
+/* Reveal animations */
+.reveal { opacity: 0; transform: translateX(30px); transition: opacity 0.55s var(--ease-out-expo), transform 0.55s var(--ease-out-expo); }
+.slide.visible .reveal { opacity: 1; transform: translateX(0); }
+.slide.visible .reveal:nth-child(1) { transition-delay: 0.15s; }
+.slide.visible .reveal:nth-child(2) { transition-delay: 0.3s; }
+.slide.visible .reveal:nth-child(3) { transition-delay: 0.45s; }
+.slide.visible .reveal:nth-child(4) { transition-delay: 0.6s; }
+
+.style-label {
+  position: fixed;
+  bottom: 12px; right: 16px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  opacity: 0.5;
+  z-index: 100;
+  font-family: var(--font-mono);
+}
+</style>
+</head>
+<body>
+<section class="slide visible">
+  <div class="blue-panel">
+    <div class="halftone"></div>
+    <div class="panel-content">
+      <span class="version"><strong>v1.2.1</strong> — production ready</span>
+    </div>
+  </div>
+  <div class="corner-glow"></div>
+  <div class="circuit-line h"></div>
+  <div class="circuit-line v"></div>
+  <div class="circuit-dot"></div>
+  <div class="slide-content">
+    <div class="reveal"><span class="neon-badge">Creative Voltage</span></div>
+    <h1 class="reveal"><span class="accent">Arrow Lake</span><br>Data Lakehouse</h1>
+    <div class="yellow-line reveal"></div>
+    <p class="subtitle reveal">Multimodal data, zero-copy performance.<br>From pip install to production in minutes.</p>
+  </div>
+</section>
+<div class="style-label">Style C: Creative Voltage</div>
+<script>
+const obs = new IntersectionObserver(ents => {
+  ents.forEach(en => { if (en.isIntersecting) en.target.classList.add('visible'); });
+}, { threshold: 0.35 });
+document.querySelectorAll('.slide').forEach(s => obs.observe(s));
+</script>
+</body>
+</html>

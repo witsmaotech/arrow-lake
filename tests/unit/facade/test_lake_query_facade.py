@@ -7,7 +7,6 @@ from unittest.mock import MagicMock, patch
 
 import pyarrow as pa
 import pytest
-
 from arrow_lake import Lake
 from arrow_lake.config import ArrowLakeConfig, StorageBackend, StorageConfig
 

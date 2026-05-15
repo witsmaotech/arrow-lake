@@ -69,9 +69,31 @@ class DaftConfig(BaseModel):
 
     Attributes:
         enabled: Whether Daft query engine is available via Lake.daft_query().
+        default_num_partitions: Default number of partitions for Daft operations.
+        target_partition_max_memory_bytes: Memory cap per partition in bytes.
+        read_num_threads: Number of threads for parallel file reads.
+        ingest_use_daft_pipeline: Use Daft DataFrame pipeline for ingestion transforms.
     """
 
     enabled: bool = True
+    default_num_partitions: int = 10
+    target_partition_max_memory_bytes: int = 256 * 1024 * 1024
+    read_num_threads: int = 4
+    ingest_use_daft_pipeline: bool = True
+
+    @field_validator("default_num_partitions", "read_num_threads")
+    @classmethod
+    def validate_positive(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError(f"must be >= 1, got {v}")
+        return v
+
+    @field_validator("target_partition_max_memory_bytes")
+    @classmethod
+    def validate_memory(cls, v: int) -> int:
+        if v < 16 * 1024 * 1024:
+            raise ValueError(f"must be >= 16MB, got {v}")
+        return v
 
 
 class LifecycleConfig(BaseModel):

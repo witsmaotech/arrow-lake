@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Any
 
 import daft
 import pyarrow as pa
@@ -95,6 +96,22 @@ class LazyDaftFrame:
             raise ValueError(f"Invalid join type '{how}'")
         return LazyDaftFrame(self._df.join(other._df, on=on, how=how))  # type: ignore[arg-type]
 
+    def limit(self, n: int) -> LazyDaftFrame:
+        """Limit the number of rows.
+
+        Args:
+            n: Maximum number of rows to return.
+
+        Returns:
+            New LazyDaftFrame with row limit applied.
+
+        Raises:
+            ValueError: If n is not a positive integer.
+        """
+        if n < 1:
+            raise ValueError(f"limit must be >= 1, got {n}")
+        return LazyDaftFrame(self._df.limit(n))
+
     def groupby(self, *columns: str) -> LazyGroupedFrame:
         """Group by columns.
 
@@ -111,6 +128,21 @@ class LazyDaftFrame:
             if not _SAFE_IDENTIFIER_RE.match(col):
                 raise ValueError(f"Invalid column name '{col}'")
         return LazyGroupedFrame(self._df.groupby(*columns))
+
+    def sql(self, query: str) -> LazyDaftFrame:
+        """Execute SQL query against this frame (registered as ``self``).
+
+        Supports CTEs (WITH), window functions (LAG, LEAD, RANK), and
+        complex subqueries that the DuckDB OLAP bridge rejects.
+
+        Args:
+            query: SQL query referencing this frame as ``self``.
+
+        Returns:
+            New LazyDaftFrame with query results.
+        """
+        self._df.create_view("self")
+        return LazyDaftFrame(daft.sql(query))
 
     def collect(self) -> pa.Table:
         """Execute all lazy operations and return Arrow Table.
@@ -145,18 +177,42 @@ class DaftQueryEngine:
     Args:
         base_uri: Base URI for Lance dataset storage.
         storage_config: Optional StorageConfig for S3/MinIO access.
+        daft_config: Optional DaftConfig for performance tuning.
     """
 
     def __init__(
         self,
         base_uri: str | Path,
         storage_config: Any | None = None,
+        daft_config: Any | None = None,
     ) -> None:
         self.base_uri = str(base_uri)
         self._storage_config = storage_config
+        self._daft_config = daft_config
         self._io_config: Any = None
         if storage_config is not None:
             self._io_config = self._build_io_config(storage_config)
+        if daft_config is not None:
+            self._apply_planning_config(daft_config)
+
+    @staticmethod
+    def _apply_planning_config(daft_config: Any) -> None:
+        """Apply Daft planning config from DaftConfig.
+
+        Daft >= 0.4 removed default_num_partitions and target_partition_max_memory_bytes
+        from set_planning_config. We apply them only when available.
+        """
+        import inspect
+
+        sig = inspect.signature(daft.set_planning_config)
+        available = sig.parameters
+        kwargs: dict[str, Any] = {}
+        if "default_num_partitions" in available:
+            kwargs["default_num_partitions"] = daft_config.default_num_partitions
+        if "target_partition_max_memory_bytes" in available:
+            kwargs["target_partition_max_memory_bytes"] = daft_config.target_partition_max_memory_bytes
+        if kwargs:
+            daft.set_planning_config(**kwargs)
 
     @staticmethod
     def _build_io_config(storage_config: Any) -> Any:

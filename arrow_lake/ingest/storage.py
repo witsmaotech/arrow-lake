@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import threading
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -104,6 +105,92 @@ class LanceStorageManager(
         the .lance suffix internally.
         """
         return str(Path(self.base_uri) / name)
+
+    def _get_io_config(self) -> Any:
+        """Build a Daft IOConfig from storage options for S3 operations."""
+        if not self._storage_options:
+            return None
+        from daft import IOConfig
+        from daft.daft import S3Config
+
+        opts = self._storage_options
+        return IOConfig(s3=S3Config(
+            key_id=opts.get("aws_access_key_id", ""),
+            access_key=opts.get("aws_secret_access_key", ""),
+            region_name=opts.get("region", "us-east-1"),
+            endpoint_url=opts.get("endpoint_url", ""),
+        ))
+
+    def write_lance_from_dataframe(
+        self,
+        name: str,
+        df: Any,
+        mode: str = "create",
+    ) -> None:
+        """Write a Daft DataFrame directly to Lance, bypassing Arrow conversion.
+
+        Args:
+            name: Target dataset name.
+            df: Daft DataFrame to write.
+            mode: Write mode — "create", "append", or "overwrite".
+
+        Raises:
+            StorageError: If write fails.
+        """
+        self._validate_name(name)
+        with self._dataset_lock(name):
+            uri = self._get_dataset_path(name)
+            io_config = self._get_io_config()
+            try:
+                df.write_lance(uri, mode=mode, io_config=io_config)
+            except Exception as exc:
+                raise StorageError(
+                    error_code=ErrorCode.STORAGE_WRITE_FAILED,
+                    message=f"Daft write_lance failed for '{name}': {exc}",
+                    context={"name": name, "mode": mode},
+                ) from exc
+
+    def export_dataframe(
+        self,
+        df: Any,
+        target_uri: str,
+        format: str,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """Export a Daft DataFrame to various formats.
+
+        Args:
+            df: Daft DataFrame to export.
+            target_uri: Target URI (path, s3://, etc.).
+            format: Export format — "parquet", "csv", "json", "iceberg", "clickhouse".
+            **kwargs: Format-specific options.
+
+        Returns:
+            Dict with export stats (row_count, format, target_uri).
+
+        Raises:
+            StorageError: If export fails.
+            ValueError: If format is not supported.
+        """
+        writers: dict[str, Callable[..., Any]] = {
+            "parquet": lambda: df.write_parquet(target_uri, io_config=self._get_io_config(), **kwargs),
+            "csv": lambda: df.write_csv(target_uri, io_config=self._get_io_config(), **kwargs),
+            "json": lambda: df.write_json(target_uri, io_config=self._get_io_config(), **kwargs),
+            "iceberg": lambda: df.write_iceberg(target_uri, io_config=self._get_io_config(), **kwargs),
+            "clickhouse": lambda: df.write_clickhouse(target_uri, **kwargs),
+        }
+        if format not in writers:
+            raise ValueError(f"Unsupported export format: {format!r}. Supported: {sorted(writers)}")
+        try:
+            writers[format]()
+            row_count = df.count().to_arrow().column(0)[0].as_py()
+            return {"row_count": row_count, "format": format, "target_uri": target_uri}
+        except Exception as exc:
+            raise StorageError(
+                error_code=ErrorCode.STORAGE_WRITE_FAILED,
+                message=f"Export to {format} failed: {exc}",
+                context={"format": format, "target_uri": target_uri},
+            ) from exc
 
     def _lance_dir(self, name: str) -> Path:
         """Get the filesystem directory for a named dataset (.lance suffix).

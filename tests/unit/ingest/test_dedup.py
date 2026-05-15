@@ -117,7 +117,6 @@ class TestPHash:
         d = ContentDeduplicator()
         assert d._compute_phash(None) == 0
 
-    @pytest.mark.skip(reason="imagehash not installed in CI")
     def test_invalid_bytes_raises_quality_error(self) -> None:
         d = ContentDeduplicator()
         # Non-image bytes should raise QualityError when imagehash is available

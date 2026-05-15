@@ -6,7 +6,6 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from arrow_lake import Lake
 from arrow_lake.config import ArrowLakeConfig, StorageBackend, StorageConfig
 

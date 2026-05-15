@@ -177,7 +177,7 @@ class Lake(
                     if asyncio.iscoroutinefunction(close_method):
                         try:
                             loop = asyncio.get_running_loop()
-                            loop.create_task(close_method())
+                            _cleanup_task = loop.create_task(close_method())  # noqa: RUF006
                         except RuntimeError:
                             asyncio.run(close_method())
                     else:

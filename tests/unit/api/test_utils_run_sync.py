@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
-
 import pytest
-
 from arrow_lake.api.utils import run_sync
 
 
@@ -64,7 +61,7 @@ class TestRunSync:
     @pytest.mark.asyncio
     async def test_default_timeout_is_300(self):
         """Default timeout is 300 seconds."""
-        assert run_sync.__defaults__ is not None or True  # signature check
+        assert True  # signature check
         import inspect
         sig = inspect.signature(run_sync)
         assert sig.parameters["timeout"].default == 300

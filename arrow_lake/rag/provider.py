@@ -192,11 +192,7 @@ class _QuestionComplexity:
             return False
 
         # Complex reasoning patterns → enable thinking
-        if any(p in question for p in _COMPLEX_QUESTION_PATTERNS):
-            return True
-
-        # Medium-length questions without clear signals → default off for speed
-        return False
+        return any(p in question for p in _COMPLEX_QUESTION_PATTERNS)
 
 
 class OpenAICompatibleProvider(_RetryMixin, BaseLLMProvider):

@@ -6,7 +6,6 @@ from unittest.mock import MagicMock, patch
 
 import pyarrow as pa
 import pytest
-
 from arrow_lake._lake_ingest import _LakeIngestMixin
 from arrow_lake.config import ArrowLakeConfig
 from arrow_lake.config._enums import EmbeddingBackend
@@ -58,7 +57,7 @@ class TestIngestDelegation:
 
         result = lake.ingest("ds", ["/tmp/f.csv"])
         assert result is mock_report
-        mock_cls.return_value.ingest.assert_called_once_with("ds", ["/tmp/f.csv"])
+        mock_cls.return_value.ingest.assert_called_once_with("ds", ["/tmp/f.csv"], transforms=None)
 
     @patch("arrow_lake.ingest.ingestor.Ingestor")
     def test_ingest_http_delegates(self, mock_cls: MagicMock, lake: _TestLake) -> None:
@@ -390,7 +389,6 @@ class TestEmbedAndAdd:
 
     def test_embed_api_backend(self, lake: _TestLake) -> None:
         import numpy as np
-
         from arrow_lake.config._enums import EmbeddingBackend
 
         lake._config.embedding.backend = EmbeddingBackend.OPENAI

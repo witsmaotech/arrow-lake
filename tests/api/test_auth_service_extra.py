@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
@@ -246,7 +245,7 @@ class TestValidateConfig:
     def test_hs256_empty_secret_warns(self) -> None:
         """HS256 with empty secret should log a warning, not raise."""
         with patch("arrow_lake.api.auth_service.logger") as mock_logger:
-            svc = _make_svc(secret_key="")
+            _make_svc(secret_key="")
             mock_logger.warning.assert_called()
             assert any("insecure" in str(a) for a in mock_logger.warning.call_args[0])
 

@@ -55,12 +55,11 @@ class StorageConfig(BaseModel):
                 f"s3_endpoint is required when backend={self.backend.value} "
                 f"(only backend=s3 supports empty endpoint for default AWS)"
             )
-        if not self.s3_access_key or not self.s3_secret_key:
-            if self.backend == StorageBackend.S3:
-                logger.warning(
-                    "S3 credentials are empty for backend=s3 — "
-                    "operations will use default credential chain"
-                )
+        if (not self.s3_access_key or not self.s3_secret_key) and self.backend == StorageBackend.S3:
+            logger.warning(
+                "S3 credentials are empty for backend=s3 — "
+                "operations will use default credential chain"
+            )
         return self
 
     # -- S3 helper methods for lance/boto3 and DuckDB integration --

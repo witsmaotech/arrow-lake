@@ -24,6 +24,7 @@ logger = structlog.get_logger(__name__)
 __all__ = ["ExportBridge", "ExportResult"]
 
 _BINARY_COLUMNS = {"image_data", "video_data", "image_thumbnail", "image_preview"}
+_DAFT_EXPORT_THRESHOLD = 50_000
 
 
 @dataclass(frozen=True)
@@ -190,13 +191,16 @@ class ExportBridge:
                     message="No supported columns to export to CSV (all are binary or fixed_size_list)",
                 )
 
-        # Write
+        # Write — use Daft for large Parquet exports, PyArrow otherwise
         try:
             if fmt == "parquet":
                 comp = compression or (
                     self._config.parquet_compression if self._config else "snappy"
                 )
-                pq.write_table(export_table, str(path), compression=comp)
+                if export_table.num_rows >= _DAFT_EXPORT_THRESHOLD:
+                    self._write_parquet_via_daft(export_table, str(path), comp)
+                else:
+                    pq.write_table(export_table, str(path), compression=comp)
             elif fmt == "csv":
                 delimiter = self._config.csv_delimiter if self._config else ","
                 csv.write_csv(
@@ -225,6 +229,16 @@ class ExportBridge:
             file_size_bytes=file_size,
             version=None,
         )
+
+    @staticmethod
+    def _write_parquet_via_daft(table: pa.Table, path: str, compression: str) -> None:
+        """Write a large Arrow table to Parquet via Daft for parallel output."""
+        import daft
+
+        df = daft.from_arrow(table)
+        num_parts = max(1, table.num_rows // 100_000)
+        df = df.repartition(num_parts)
+        df.write_parquet(path, compression=compression)
 
     @staticmethod
     def _detect_format(path: str, explicit: str | None) -> str:

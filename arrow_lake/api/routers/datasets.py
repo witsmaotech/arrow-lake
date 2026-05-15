@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import shutil
@@ -19,18 +20,22 @@ from arrow_lake.api.models.dataset import (
     CleanupResponse,
     DatasetInfo,
     DatasetListResponse,
+    IngestDeltaLakeRequest,
     IngestDocumentsRequest,
     IngestFilesRequest,
     IngestHttpRequest,
+    IngestIcebergRequest,
     IngestImagesRequest,
+    IngestKafkaRequest,
     IngestMixedRequest,
     IngestResponse,
+    IngestSqlRequest,
     IngestVideosRequest,
+    PresignedUpload,
     PresignRequest,
     PresignResponse,
-    PresignedUpload,
-    UploadResponse,
     UploadedBlob,
+    UploadResponse,
 )
 from arrow_lake.api.utils import run_sync
 from arrow_lake.exceptions import CatalogError, ErrorCode
@@ -98,7 +103,7 @@ def _resolve_blob_keys(blob_keys: list[str], lake: Any, tmp_dir: str) -> list[st
         dest = os.path.join(tmp_dir, f"{idx:04d}_{filename}")
         blob_store.download_file(key, dest)
         if not os.path.exists(dest) or os.path.getsize(dest) == 0:
-            raise IOError(f"Download verification failed for blob key: {key}")
+            raise OSError(f"Download verification failed for blob key: {key}")
         return dest
 
     try:
@@ -107,10 +112,8 @@ def _resolve_blob_keys(blob_keys: list[str], lake: Any, tmp_dir: str) -> list[st
     except Exception:
         # Clean up partial downloads on failure
         for f in os.listdir(tmp_dir):
-            try:
+            with contextlib.suppress(OSError):
                 os.remove(os.path.join(tmp_dir, f))
-            except OSError:
-                pass
         raise
 
 
@@ -261,14 +264,113 @@ async def ingest_files(
             s3_uris, local_paths = _resolve_blob_keys_smart(req.blob_keys, lake, tmp_dir)
             all_paths.extend(s3_uris)
             all_paths.extend(local_paths)
+        # Build transforms from JSON spec if provided
+        transforms = None
+        if req.transforms:
+            from arrow_lake.ingest.transforms import build_transforms
+            transforms = build_transforms(req.transforms)
         report = await run_sync(
             lake.ingest, name, all_paths,
             timeout=_INGEST_TIMEOUT, label="ingest_files",
+            transforms=transforms,
         )
         return IngestResponse.from_report(report)
     finally:
         if tmp_dir:
             shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@router.post("/{name}/ingest/sql", response_model=IngestResponse, status_code=201)
+async def ingest_sql(
+    name: str = Path(..., pattern=_NAME_PATTERN),
+    *,
+    req: IngestSqlRequest,
+    lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.EDITOR)),
+) -> IngestResponse:
+    """Ingest data from a SQL database query."""
+    transforms = None
+    if req.transforms:
+        from arrow_lake.ingest.transforms import build_transforms
+        transforms = build_transforms(req.transforms)
+    report = await run_sync(
+        lake.ingest_sql, name,
+        sql=req.sql,
+        connection_url=req.connection_url,
+        partition_col=req.partition_col,
+        num_partitions=req.num_partitions,
+        transforms=transforms,
+        timeout=_INGEST_TIMEOUT, label="ingest_sql",
+    )
+    return IngestResponse.from_report(report)
+
+
+@router.post("/{name}/ingest/kafka", response_model=IngestResponse, status_code=201)
+async def ingest_kafka(
+    name: str = Path(..., pattern=_NAME_PATTERN),
+    *,
+    req: IngestKafkaRequest,
+    lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.EDITOR)),
+) -> IngestResponse:
+    """Ingest messages from Kafka topics."""
+    transforms = None
+    if req.transforms:
+        from arrow_lake.ingest.transforms import build_transforms
+        transforms = build_transforms(req.transforms)
+    report = await run_sync(
+        lake.ingest_kafka, name,
+        bootstrap_servers=req.bootstrap_servers,
+        topics=req.topics,
+        start=req.start,
+        end=req.end,
+        json_decode=req.json_decode,
+        transforms=transforms,
+        timeout=_INGEST_TIMEOUT, label="ingest_kafka",
+    )
+    return IngestResponse.from_report(report)
+
+
+@router.post("/{name}/ingest/iceberg", response_model=IngestResponse, status_code=201)
+async def ingest_iceberg(
+    name: str = Path(..., pattern=_NAME_PATTERN),
+    *,
+    req: IngestIcebergRequest,
+    lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.EDITOR)),
+) -> IngestResponse:
+    """Ingest data from an Apache Iceberg table."""
+    transforms = None
+    if req.transforms:
+        from arrow_lake.ingest.transforms import build_transforms
+        transforms = build_transforms(req.transforms)
+    report = await run_sync(
+        lake.ingest_iceberg, name,
+        table_uri=req.table_uri, transforms=transforms,
+        timeout=_INGEST_TIMEOUT, label="ingest_iceberg",
+    )
+    return IngestResponse.from_report(report)
+
+
+@router.post("/{name}/ingest/deltalake", response_model=IngestResponse, status_code=201)
+async def ingest_deltalake(
+    name: str = Path(..., pattern=_NAME_PATTERN),
+    *,
+    req: IngestDeltaLakeRequest,
+    lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.EDITOR)),
+) -> IngestResponse:
+    """Ingest data from a Delta Lake table."""
+    transforms = None
+    if req.transforms:
+        from arrow_lake.ingest.transforms import build_transforms
+        transforms = build_transforms(req.transforms)
+    report = await run_sync(
+        lake.ingest_deltalake, name,
+        table_uri=req.table_uri, version=req.version, transforms=transforms,
+        timeout=_INGEST_TIMEOUT, label="ingest_deltalake",
+    )
+    return IngestResponse.from_report(report)
 
 
 @router.post("/{name}/ingest/http", response_model=IngestResponse, status_code=201)

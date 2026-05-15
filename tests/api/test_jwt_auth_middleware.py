@@ -9,14 +9,11 @@ import pytest
 
 pytest.importorskip("jwt")
 
-from httpx import ASGITransport, AsyncClient
-from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
-
 from arrow_lake.api.auth_models import Role
 from arrow_lake.api.auth_service import AuthService
 from arrow_lake.api.jwt_auth import jwt_auth_middleware_fn
-from arrow_lake.config import ArrowLakeConfig
+from starlette.requests import Request
+from starlette.responses import JSONResponse, Response
 
 SECRET = "test-secret-key-min-32-chars-for-hmac!"
 

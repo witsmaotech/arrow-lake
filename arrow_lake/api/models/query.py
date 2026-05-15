@@ -41,6 +41,7 @@ class OlapQueryResponse(BaseModel):
 
 class DaftQueryRequest(BaseModel):
     columns: list[str] | None = None
+    limit: int = 10_000
     format: Literal["arrow_ipc", "json"] = "json"
 
 

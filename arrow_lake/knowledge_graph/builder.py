@@ -260,9 +260,9 @@ class KGBuilder:
                 entity_hg_ids = await self._client.add_vertices(entity_vertices)
                 # Use (name, type) composite key to avoid losing duplicate-name entities
                 entity_keys = [f"{e.name}::{e.entity_type}" for e in result.entities]
-                entity_id_map_name = dict(zip(entity_keys, entity_hg_ids, strict=True))
+                dict(zip(entity_keys, entity_hg_ids, strict=True))
                 # Also build name-only map for edge resolution (last wins for duplicates)
-                for e, hg_id in zip(result.entities, entity_hg_ids):
+                for e, hg_id in zip(result.entities, entity_hg_ids, strict=False):
                     entity_id_map[e.name] = hg_id
 
             ref_edges = [

@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Style A — Neon Cyber</title>
+<link rel="preconnect" href="https://api.fontshare.com" crossorigin>
+<link href="https://api.fontshare.com/v2/css?f[]=clash-display@600,700&f[]=satoshi@400,500&display=swap" rel="stylesheet">
+<style>
+/* === viewport-base.css === */
+html,body{height:100%;overflow-x:hidden}
+html{scroll-snap-type:y mandatory;scroll-behavior:smooth}
+.slide{width:100vw;height:100vh;height:100dvh;overflow:hidden;scroll-snap-align:start;display:flex;flex-direction:column;position:relative}
+.slide-content{flex:1;display:flex;flex-direction:column;justify-content:center;max-height:100%;overflow:hidden;padding:var(--slide-padding)}
+:root{--title-size:clamp(1.5rem,5vw,4rem);--h2-size:clamp(1.25rem,3.5vw,2.5rem);--h3-size:clamp(1rem,2.5vw,1.75rem);--body-size:clamp(0.75rem,1.5vw,1.125rem);--small-size:clamp(0.65rem,1vw,0.875rem);--slide-padding:clamp(1rem,4vw,4rem);--content-gap:clamp(0.5rem,2vw,2rem);--element-gap:clamp(0.25rem,1vw,1rem)}
+.card,.container,.content-box{max-width:min(90vw,1000px);max-height:min(80vh,700px)}
+@media(max-height:700px){:root{--slide-padding:clamp(0.75rem,3vw,2rem);--content-gap:clamp(0.4rem,1.5vw,1rem);--title-size:clamp(1.25rem,4.5vw,2.5rem);--h2-size:clamp(1rem,3vw,1.75rem)}}
+@media(max-height:600px){:root{--slide-padding:clamp(0.5rem,2.5vw,1.5rem);--content-gap:clamp(0.3rem,1vw,0.75rem);--title-size:clamp(1.1rem,4vw,2rem);--body-size:clamp(0.7rem,1.2vw,0.95rem)}.nav-dots,.keyboard-hint,.decorative{display:none}}
+@media(max-height:500px){:root{--slide-padding:clamp(0.4rem,2vw,1rem);--title-size:clamp(1rem,3.5vw,1.5rem);--h2-size:clamp(0.9rem,2.5vw,1.25rem);--body-size:clamp(0.65rem,1vw,0.85rem)}}
+@media(max-width:600px){:root{--title-size:clamp(1.25rem,7vw,2.5rem)}.grid{grid-template-columns:1fr}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:0.01ms!important;transition-duration:0.2s!important}html{scroll-behavior:auto}}
+
+/* === Neon Cyber Theme === */
+:root {
+  --bg-deep: #0a0f1c;
+  --bg-gradient: linear-gradient(160deg, #0c1222 0%, #0a0f1c 40%, #0d1a2d 100%);
+  --cyan: #00ffcc;
+  --magenta: #ff00aa;
+  --text-primary: #e2e8f0;
+  --text-secondary: #7a8ba8;
+  --font-display: 'Clash Display', sans-serif;
+  --font-body: 'Satoshi', sans-serif;
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: var(--font-body); background: var(--bg-deep); color: var(--text-primary); }
+.slide { background: var(--bg-gradient); }
+
+/* Grid pattern background */
+.slide::before {
+  content: '';
+  position: absolute; inset: 0;
+  background-image:
+    linear-gradient(rgba(0,255,204,0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,255,204,0.03) 1px, transparent 1px);
+  background-size: 60px 60px;
+  z-index: 0;
+}
+
+/* Floating particles */
+.particle {
+  position: absolute; border-radius: 50%;
+  background: var(--cyan); opacity: 0.15;
+  animation: float-particle 8s ease-in-out infinite;
+}
+.particle:nth-child(1) { width: 4px; height: 4px; left: 15%; top: 25%; animation-delay: 0s; }
+.particle:nth-child(2) { width: 3px; height: 3px; left: 75%; top: 35%; animation-delay: 2s; background: var(--magenta); }
+.particle:nth-child(3) { width: 5px; height: 5px; left: 60%; top: 70%; animation-delay: 4s; }
+.particle:nth-child(4) { width: 3px; height: 3px; left: 25%; top: 80%; animation-delay: 1s; background: var(--magenta); }
+.particle:nth-child(5) { width: 2px; height: 2px; left: 85%; top: 15%; animation-delay: 3s; }
+@keyframes float-particle {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50% { transform: translateY(-20px) scale(1.5); }
+}
+
+/* Neon glow orb */
+.neon-orb {
+  position: absolute;
+  width: clamp(200px, 40vw, 500px);
+  height: clamp(200px, 40vw, 500px);
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(0,255,204,0.08) 0%, transparent 70%);
+  right: -10%; top: -10%;
+  z-index: 0;
+  animation: pulse-orb 6s ease-in-out infinite;
+}
+@keyframes pulse-orb {
+  0%, 100% { transform: scale(1); opacity: 0.6; }
+  50% { transform: scale(1.15); opacity: 1; }
+}
+
+/* Content styling */
+.slide-content { position: relative; z-index: 1; }
+.tag {
+  display: inline-block;
+  padding: 0.3em 1em;
+  border: 1px solid var(--cyan);
+  border-radius: 999px;
+  font-size: var(--small-size);
+  color: var(--cyan);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin-bottom: 1em;
+  box-shadow: 0 0 12px rgba(0,255,204,0.15);
+}
+h1 {
+  font-family: var(--font-display);
+  font-size: var(--title-size);
+  font-weight: 700;
+  line-height: 1.1;
+  margin-bottom: 0.5em;
+}
+h1 .accent { color: var(--cyan); text-shadow: 0 0 30px rgba(0,255,204,0.3); }
+.subtitle {
+  font-size: clamp(0.875rem, 2vw, 1.25rem);
+  color: var(--text-secondary);
+  max-width: 600px;
+  line-height: 1.6;
+}
+
+/* Reveal animations */
+.reveal { opacity: 0; transform: translateY(25px); transition: opacity 0.6s var(--ease-out-expo), transform 0.6s var(--ease-out-expo); }
+.slide.visible .reveal { opacity: 1; transform: translateY(0); }
+.slide.visible .reveal:nth-child(1) { transition-delay: 0.1s; }
+.slide.visible .reveal:nth-child(2) { transition-delay: 0.25s; }
+.slide.visible .reveal:nth-child(3) { transition-delay: 0.4s; }
+.slide.visible .reveal:nth-child(4) { transition-delay: 0.55s; }
+
+/* Neon line decoration */
+.neon-line {
+  width: clamp(60px, 8vw, 120px);
+  height: 2px;
+  background: linear-gradient(90deg, var(--cyan), var(--magenta));
+  box-shadow: 0 0 8px rgba(0,255,204,0.4);
+  margin: 1em 0;
+}
+
+/* Corner decoration */
+.corner-deco {
+  position: absolute;
+  width: 40px; height: 40px;
+  border-color: rgba(0,255,204,0.3);
+  border-style: solid;
+  z-index: 1;
+}
+.corner-deco.tl { top: 5%; left: 5%; border-width: 2px 0 0 2px; }
+.corner-deco.br { bottom: 5%; right: 5%; border-width: 0 2px 2px 0; }
+
+/* Label */
+.style-label {
+  position: fixed;
+  bottom: 12px; right: 16px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  opacity: 0.5;
+  z-index: 100;
+  font-family: var(--font-body);
+}
+</style>
+</head>
+<body>
+<section class="slide visible">
+  <div class="neon-orb"></div>
+  <div class="particle"></div>
+  <div class="particle"></div>
+  <div class="particle"></div>
+  <div class="particle"></div>
+  <div class="particle"></div>
+  <div class="corner-deco tl"></div>
+  <div class="corner-deco br"></div>
+  <div class="slide-content">
+    <div class="reveal"><span class="tag">Neon Cyber</span></div>
+    <h1 class="reveal"><span class="accent">Arrow Lake</span><br>Unified Data Lakehouse</h1>
+    <div class="neon-line reveal"></div>
+    <p class="subtitle reveal">Text, images, audio, vectors — one platform.<br>Zero-copy Arrow performance at scale.</p>
+  </div>
+</section>
+<div class="style-label">Style A: Neon Cyber</div>
+<script>
+const obs = new IntersectionObserver(ents => {
+  ents.forEach(en => { if (en.isIntersecting) en.target.classList.add('visible'); });
+}, { threshold: 0.35 });
+document.querySelectorAll('.slide').forEach(s => obs.observe(s));
+</script>
+</body>
+</html>

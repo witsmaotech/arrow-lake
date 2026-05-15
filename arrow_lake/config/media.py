@@ -41,11 +41,13 @@ class EmbeddingConfig(BaseModel):
         model: HuggingFace model name for local embedding.
         model_source: Model download source — "huggingface" or "modelscope".
         batch_size: Number of texts to embed per batch.
-        backend: Embedding backend — "local", "openai", or "ray_serve".
+        backend: Embedding backend — "local", "openai", "ray_serve", or "daft".
         api_base: Base URL for external embedding API.
         api_key: API key for external embedding API.
         expected_dim: Expected embedding dimension (0 = auto-detect from model).
         validate_dimension: Whether to validate embedding dimension after model load.
+        daft_provider: Daft embed provider when backend is "daft".
+        daft_num_partitions: Number of Daft partitions for parallel embedding.
     """
 
     model: str = "Qwen/Qwen3-Embedding-0.6B"
@@ -56,6 +58,8 @@ class EmbeddingConfig(BaseModel):
     api_key: str = ""
     expected_dim: int = 0
     validate_dimension: bool = True
+    daft_provider: str = "transformers"
+    daft_num_partitions: int = 4
 
     @property
     def known_dimension(self) -> int:

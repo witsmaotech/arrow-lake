@@ -1,0 +1,224 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 1300" width="900" height="1300">
+  <defs>
+    <!-- Background grid pattern -->
+    <pattern id="grid" width="30" height="30" patternUnits="userSpaceOnUse">
+      <path d="M 30 0 L 0 0 0 30" fill="none" stroke="#1e293b" stroke-width="0.5" opacity="0.5"/>
+    </pattern>
+    <!-- Arrowhead marker -->
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto" fill="#64748b">
+      <polygon points="0 0, 10 3.5, 0 7"/>
+    </marker>
+    <!-- Glow filters -->
+    <filter id="glowCyan" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feFlood flood-color="#22d3ee" flood-opacity="0.3"/>
+      <feComposite in2="blur" operator="in"/>
+      <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="glowViolet" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="2" result="blur"/>
+      <feFlood flood-color="#a78bfa" flood-opacity="0.2"/>
+      <feComposite in2="blur" operator="in"/>
+      <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="glowBlue" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="2" result="blur"/>
+      <feFlood flood-color="#60a5fa" flood-opacity="0.2"/>
+      <feComposite in2="blur" operator="in"/>
+      <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="glowEmerald" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="2" result="blur"/>
+      <feFlood flood-color="#34d399" flood-opacity="0.2"/>
+      <feComposite in2="blur" operator="in"/>
+      <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="glowAmber" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="2" result="blur"/>
+      <feFlood flood-color="#fbbf24" flood-opacity="0.2"/>
+      <feComposite in2="blur" operator="in"/>
+      <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="900" height="1300" fill="#0f172a"/>
+  <rect width="900" height="1300" fill="url(#grid)"/>
+
+  <!-- Title -->
+  <text x="450" y="42" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="22" font-weight="700" fill="#e2e8f0" text-anchor="middle" letter-spacing="2">RAG Pipeline</text>
+  <line x1="300" y1="55" x2="600" y2="55" stroke="#334155" stroke-width="1"/>
+
+  <!-- ====== 1. User Question (Start) ====== -->
+  <rect x="325" y="75" width="250" height="48" rx="24" ry="24" fill="rgba(8,145,178,0.25)" stroke="#22d3ee" stroke-width="1.5" filter="url(#glowCyan)"/>
+  <text x="450" y="104" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="14" font-weight="600" fill="#22d3ee" text-anchor="middle">User Question</text>
+
+  <!-- Arrow: Start -> Fork point -->
+  <line x1="450" y1="123" x2="450" y2="155" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- Fork circle -->
+  <circle cx="450" cy="155" r="5" fill="#64748b"/>
+
+  <!-- Fork lines to 3 branches -->
+  <line x1="450" y1="155" x2="150" y2="185" stroke="#64748b" stroke-width="1.5"/>
+  <line x1="450" y1="155" x2="450" y2="185" stroke="#64748b" stroke-width="1.5"/>
+  <line x1="450" y1="155" x2="750" y2="185" stroke="#64748b" stroke-width="1.5"/>
+
+  <!-- ====== 2. Parallel Retrieval ====== -->
+
+  <!-- Branch 1: Vector Search -->
+  <rect x="30" y="190" width="240" height="115" rx="6" ry="6" fill="rgba(59,130,246,0.3)" stroke="#60a5fa" stroke-width="1.2" filter="url(#glowBlue)"/>
+  <text x="150" y="216" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="12" font-weight="600" fill="#60a5fa" text-anchor="middle">lance_vector_search()</text>
+  <line x1="50" y1="226" x2="250" y2="226" stroke="rgba(96,165,250,0.3)" stroke-width="0.8"/>
+  <text x="150" y="248" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="11" fill="#94a3b8" text-anchor="middle">DuckDB SQL</text>
+  <text x="150" y="268" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="10" fill="#64748b" text-anchor="middle">Lance 向量索引 (IVF_PQ / HNSW)</text>
+  <text x="150" y="290" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="9" fill="#475569" text-anchor="middle">cosine / l2 / dot</text>
+
+  <!-- Branch 2: FTS -->
+  <rect x="330" y="190" width="240" height="115" rx="6" ry="6" fill="rgba(59,130,246,0.3)" stroke="#60a5fa" stroke-width="1.2" filter="url(#glowBlue)"/>
+  <text x="450" y="216" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="12" font-weight="600" fill="#60a5fa" text-anchor="middle">lance_fts()</text>
+  <line x1="350" y1="226" x2="550" y2="226" stroke="rgba(96,165,250,0.3)" stroke-width="0.8"/>
+  <text x="450" y="248" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="11" fill="#94a3b8" text-anchor="middle">DuckDB SQL</text>
+  <text x="450" y="268" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="10" fill="#64748b" text-anchor="middle">Lance FTS 索引 (Tantivy)</text>
+  <text x="450" y="290" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="9" fill="#475569" text-anchor="middle">BM25 tokenized query</text>
+
+  <!-- Branch 3: Graph Traversal -->
+  <rect x="630" y="190" width="240" height="115" rx="6" ry="6" fill="rgba(59,130,246,0.3)" stroke="#60a5fa" stroke-width="1.2" filter="url(#glowBlue)"/>
+  <text x="750" y="216" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="12" font-weight="600" fill="#60a5fa" text-anchor="middle">HugeGraph Traversal</text>
+  <line x1="650" y1="226" x2="850" y2="226" stroke="rgba(96,165,250,0.3)" stroke-width="0.8"/>
+  <text x="750" y="248" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="11" fill="#94a3b8" text-anchor="middle">Gremlin API</text>
+  <text x="750" y="268" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="10" fill="#64748b" text-anchor="middle">子图三元组 (Subgraph)</text>
+  <text x="750" y="290" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="9" fill="#475569" text-anchor="middle">entity → relation → entity</text>
+
+  <!-- Arrows from 3 branches to join -->
+  <line x1="150" y1="305" x2="450" y2="340" stroke="#64748b" stroke-width="1.5"/>
+  <line x1="450" y1="305" x2="450" y2="340" stroke="#64748b" stroke-width="1.5"/>
+  <line x1="750" y1="305" x2="450" y2="340" stroke="#64748b" stroke-width="1.5"/>
+
+  <!-- Join circle -->
+  <circle cx="450" cy="345" r="5" fill="#64748b"/>
+
+  <!-- Arrow: Join -> RRF Fusion -->
+  <line x1="450" y1="350" x2="450" y2="375" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- ====== 3. RRF Fusion ====== -->
+  <rect x="300" y="380" width="300" height="70" rx="6" ry="6" fill="rgba(59,130,246,0.3)" stroke="#60a5fa" stroke-width="1.2" filter="url(#glowBlue)"/>
+  <text x="450" y="406" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="13" font-weight="600" fill="#60a5fa" text-anchor="middle">RRF Fusion</text>
+  <text x="450" y="426" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="10" fill="#94a3b8" text-anchor="middle">Reciprocal Rank Fusion</text>
+  <text x="450" y="440" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="9" fill="#475569" text-anchor="middle">Optional: lance_hybrid_search() native RRF</text>
+
+  <!-- Arrow: RRF -> Context Assembly -->
+  <line x1="450" y1="450" x2="450" y2="480" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- ====== 4. Context Assembly ====== -->
+  <rect x="250" y="485" width="400" height="100" rx="6" ry="6" fill="rgba(76,29,149,0.4)" stroke="#a78bfa" stroke-width="1.2" filter="url(#glowViolet)"/>
+  <text x="450" y="511" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="13" font-weight="600" fill="#a78bfa" text-anchor="middle">Context Assembly</text>
+  <line x1="270" y1="520" x2="630" y2="520" stroke="rgba(167,139,250,0.3)" stroke-width="0.8"/>
+  <text x="450" y="540" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="10" fill="#94a3b8" text-anchor="middle">Token Budget Management (ContextWindow)</text>
+  <text x="450" y="558" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="10" fill="#94a3b8" text-anchor="middle">Result Deduplication + Citation Tracking</text>
+  <text x="450" y="576" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="10" fill="#94a3b8" text-anchor="middle">Graph Triplets Merge (GraphRAG)</text>
+
+  <!-- Arrow: Context -> Prompt Rendering -->
+  <line x1="450" y1="585" x2="450" y2="615" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- ====== 5. Prompt Rendering ====== -->
+  <rect x="250" y="620" width="400" height="85" rx="6" ry="6" fill="rgba(76,29,149,0.4)" stroke="#a78bfa" stroke-width="1.2" filter="url(#glowViolet)"/>
+  <text x="450" y="646" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="13" font-weight="600" fill="#a78bfa" text-anchor="middle">Prompt Rendering</text>
+  <line x1="270" y1="655" x2="630" y2="655" stroke="rgba(167,139,250,0.3)" stroke-width="0.8"/>
+  <text x="450" y="675" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="10" fill="#94a3b8" text-anchor="middle">Jinja2 Template + PromptRegistry</text>
+  <text x="450" y="693" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="10" fill="#94a3b8" text-anchor="middle">Prompt injection protection</text>
+
+  <!-- Arrow: Prompt -> Fork for LLM -->
+  <line x1="450" y1="705" x2="450" y2="735" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- ====== 6. LLM Generation ====== -->
+  <rect x="250" y="740" width="400" height="120" rx="6" ry="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.2" filter="url(#glowEmerald)"/>
+  <text x="450" y="766" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="13" font-weight="600" fill="#34d399" text-anchor="middle">LLM Generation</text>
+  <line x1="270" y1="775" x2="630" y2="775" stroke="rgba(52,211,153,0.3)" stroke-width="0.8"/>
+
+  <!-- Sync path -->
+  <text x="350" y="798" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="11" fill="#94a3b8" text-anchor="middle">Sync:</text>
+  <text x="350" y="815" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="10" fill="#64748b" text-anchor="middle">generate() → RAGResponse</text>
+
+  <!-- Stream path -->
+  <text x="560" y="798" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="11" fill="#94a3b8" text-anchor="middle">Stream:</text>
+  <text x="560" y="815" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="10" fill="#64748b" text-anchor="middle">generate_stream() → AsyncIter</text>
+
+  <!-- Divider -->
+  <line x1="450" y1="783" x2="450" y2="825" stroke="rgba(52,211,153,0.2)" stroke-width="0.8" stroke-dasharray="3,3"/>
+
+  <!-- Providers -->
+  <text x="450" y="848" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="9" fill="#475569" text-anchor="middle">OpenAI | Anthropic | vLLM | Ollama</text>
+
+  <!-- Arrow: LLM -> Citation -->
+  <line x1="450" y1="860" x2="450" y2="890" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- ====== 7. Citation Annotation ====== -->
+  <rect x="300" y="895" width="300" height="55" rx="6" ry="6" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1.2" filter="url(#glowAmber)"/>
+  <text x="450" y="920" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="13" font-weight="600" fill="#fbbf24" text-anchor="middle">Citation Annotation</text>
+  <text x="450" y="938" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="10" fill="#94a3b8" text-anchor="middle">source_id → [doc_n] inline refs</text>
+
+  <!-- Arrow: Citation -> RAGResponse -->
+  <line x1="450" y1="950" x2="450" y2="980" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- ====== 8. RAGResponse (End) ====== -->
+  <rect x="200" y="985" width="500" height="155" rx="16" ry="16" fill="rgba(8,145,178,0.2)" stroke="#22d3ee" stroke-width="1.5" filter="url(#glowCyan)"/>
+  <text x="450" y="1012" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="14" font-weight="700" fill="#22d3ee" text-anchor="middle">RAGResponse</text>
+  <line x1="220" y1="1022" x2="680" y2="1022" stroke="rgba(34,211,238,0.25)" stroke-width="0.8"/>
+
+  <!-- Fields -->
+  <text x="320" y="1045" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="10" fill="#94a3b8" text-anchor="end">answer</text>
+  <text x="325" y="1045" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="10" fill="#475569" text-anchor="start">: str</text>
+
+  <text x="320" y="1062" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="10" fill="#94a3b8" text-anchor="end">citations</text>
+  <text x="325" y="1062" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="10" fill="#475569" text-anchor="start">: list[Citation]</text>
+
+  <text x="320" y="1079" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="10" fill="#94a3b8" text-anchor="end">retrieval_count</text>
+  <text x="325" y="1079" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="10" fill="#475569" text-anchor="start">: int</text>
+
+  <text x="320" y="1096" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="10" fill="#94a3b8" text-anchor="end">context_tokens</text>
+  <text x="325" y="1096" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="10" fill="#475569" text-anchor="start">: int</text>
+
+  <text x="320" y="1113" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="10" fill="#94a3b8" text-anchor="end">llm_usage</text>
+  <text x="325" y="1113" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="10" fill="#475569" text-anchor="start">: TokenUsage</text>
+
+  <text x="320" y="1130" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="10" fill="#94a3b8" text-anchor="end">latency_ms</text>
+  <text x="325" y="1130" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="10" fill="#475569" text-anchor="start">: float</text>
+
+  <!-- ====== Legend ====== -->
+  <rect x="30" y="1165" width="840" height="120" rx="8" ry="8" fill="rgba(15,23,42,0.8)" stroke="#1e293b" stroke-width="1"/>
+  <text x="450" y="1188" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="11" font-weight="600" fill="#475569" text-anchor="middle" letter-spacing="1">LEGEND</text>
+
+  <!-- Legend items row 1 -->
+  <rect x="60" y="1200" width="18" height="12" rx="3" fill="rgba(8,145,178,0.25)" stroke="#22d3ee" stroke-width="1"/>
+  <text x="85" y="1211" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="10" fill="#94a3b8">Start / End</text>
+
+  <rect x="230" y="1200" width="18" height="12" rx="3" fill="rgba(59,130,246,0.3)" stroke="#60a5fa" stroke-width="1"/>
+  <text x="255" y="1211" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="10" fill="#94a3b8">Retrieval</text>
+
+  <rect x="400" y="1200" width="18" height="12" rx="3" fill="rgba(76,29,149,0.4)" stroke="#a78bfa" stroke-width="1"/>
+  <text x="425" y="1211" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="10" fill="#94a3b8">Processing</text>
+
+  <rect x="570" y="1200" width="18" height="12" rx="3" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1"/>
+  <text x="595" y="1211" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="10" fill="#94a3b8">Generation</text>
+
+  <rect x="740" y="1200" width="18" height="12" rx="3" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1"/>
+  <text x="765" y="1211" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="10" fill="#94a3b8">Annotation</text>
+
+  <!-- Legend items row 2 -->
+  <text x="60" y="1242" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="9" fill="#475569">Arrow = #64748b</text>
+  <text x="230" y="1242" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="9" fill="#475569">Font: JetBrains Mono</text>
+  <text x="470" y="1242" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="9" fill="#475569">BG: #0f172a</text>
+  <text x="660" y="1242" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="9" fill="#475569">v1.3.0</text>
+
+  <!-- Fork/Join labels -->
+  <text x="425" y="172" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="8" fill="#475569" text-anchor="end">FORK</text>
+  <text x="425" y="360" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="8" fill="#475569" text-anchor="end">JOIN</text>
+
+  <!-- Parallel indicator -->
+  <text x="75" y="178" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="8" fill="#334155" font-style="italic">parallel</text>
+  <text x="820" y="178" font-family="'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', monospace" font-size="8" fill="#334155" font-style="italic" text-anchor="end">parallel</text>
+
+  <!-- Dashed parallel region outline -->
+  <rect x="20" y="175" width="860" height="185" rx="8" ry="8" fill="none" stroke="#334155" stroke-width="0.8" stroke-dasharray="6,4"/>
+</svg>

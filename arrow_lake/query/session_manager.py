@@ -389,10 +389,8 @@ class DuckDBSessionManager:
         """Close a DuckDB connection and restore S3 env vars if applicable."""
         session = self._conn_sessions.pop(id(conn), None)
         if session is not None:
-            try:
+            with contextlib.suppress(Exception):
                 session.__exit__(None, None, None)
-            except Exception:
-                pass
             return
         try:
             conn.close()

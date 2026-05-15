@@ -6,7 +6,6 @@ from unittest.mock import MagicMock, patch
 
 import pyarrow as pa
 import pytest
-
 from arrow_lake._lake_lineage import _LakeLineageMixin
 from arrow_lake.config import ArrowLakeConfig
 

@@ -5,10 +5,8 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
-from click.testing import CliRunner
-
 from arrow_lake.cli import main
-
+from click.testing import CliRunner
 
 # ---------------------------------------------------------------------------
 # Fixtures

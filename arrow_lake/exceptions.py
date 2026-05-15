@@ -191,6 +191,10 @@ class ErrorCode(StrEnum):
     DOCUMENT_UNSUPPORTED_FORMAT = "DOCUMENT_UNSUPPORTED_FORMAT"
     DOCUMENT_TOO_LARGE = "DOCUMENT_TOO_LARGE"
 
+    # Transform errors (Daft repositioning Sprint 1)
+    TRANSFORM_OP_UNKNOWN = "TRANSFORM_OP_UNKNOWN"
+    TRANSFORM_EXECUTION_FAILED = "TRANSFORM_EXECUTION_FAILED"
+
 
 class ArrowLakeError(Exception):
     """Base exception for all Arrow Lake errors.

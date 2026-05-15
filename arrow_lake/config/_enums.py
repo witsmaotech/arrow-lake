@@ -30,6 +30,7 @@ class EmbeddingBackend(StrEnum):
     LOCAL = "local"
     OPENAI = "openai"
     RAY_SERVE = "ray_serve"
+    DAFT = "daft"
 
 
 class ModelSource(StrEnum):

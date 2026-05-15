@@ -3,15 +3,9 @@
 from __future__ import annotations
 
 import signal
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
-from fastapi import FastAPI
-from httpx import ASGITransport, AsyncClient
-
 from arrow_lake.api.app import (
     _check_duckdb_extensions,
     _check_storage_connectivity,
@@ -20,7 +14,7 @@ from arrow_lake.api.app import (
 )
 from arrow_lake.config import ArrowLakeConfig
 from arrow_lake.config._enums import AuthMode, StorageBackend
-
+from fastapi import FastAPI
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -221,7 +215,7 @@ class TestCreateAppTelemetry:
     @patch("arrow_lake.api.telemetry.setup_telemetry")
     def test_telemetry_setup_called_when_enabled(self, mock_setup: MagicMock) -> None:
         config = _make_config(opentelemetry_enabled=True)
-        app = create_app(config=config)
+        create_app(config=config)
         mock_setup.assert_called_once()
 
     def test_telemetry_not_called_when_disabled(self) -> None:

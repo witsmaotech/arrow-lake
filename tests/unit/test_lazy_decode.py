@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import io
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
-from PIL import Image
-
 from arrow_lake.query.lazy_decode import LazyDecodeManager, LazyImageHandle
-
+from PIL import Image
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -114,7 +112,7 @@ class TestLazyDecodeManagerInit:
             "preview": "image_preview",
             "full": "image_data",
         }
-        assert LazyDecodeManager._FIDELITY_COLUMNS == expected
+        assert expected == LazyDecodeManager._FIDELITY_COLUMNS
 
 
 class TestLazyDecodeManagerGetImage:

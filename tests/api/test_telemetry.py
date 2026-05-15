@@ -6,12 +6,8 @@ get_tracer, and the _NoOpTracer / _NoOpSpan fallback classes.
 
 from __future__ import annotations
 
-import logging
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
-
-import pytest
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -174,7 +170,7 @@ class TestConfigureTracerOtelAvailable:
             trace_sample_rate=0.5,
         )
 
-        mock_resource = MagicMock()
+        MagicMock()
         mock_provider = MagicMock()
         mock_exporter = MagicMock()
         mock_batch = MagicMock()
@@ -229,7 +225,6 @@ class TestInstrumentAppImportError:
     def test_warns_on_import_error(self) -> None:
         """When FastAPIInstrumentor cannot be imported, _instrument_app logs a warning."""
         import builtins
-        import importlib as _real_importlib
 
         from arrow_lake.api.telemetry import _instrument_app
 
@@ -327,6 +322,7 @@ class TestGetTracerOtelAvailable:
         try:
             # Reload the module to pick up the mocked import
             import importlib
+
             from arrow_lake.api import telemetry
             importlib.reload(telemetry)
             result = telemetry.get_tracer("my-lib")

@@ -242,11 +242,13 @@ class _LakeQueryMixin:
         from arrow_lake.query.daft_api import DaftQueryEngine
 
         sc = self._config.storage
+        dc = self._config.daft
         engine = self._get_component(
             "daft",
             lambda: DaftQueryEngine(
                 self._base_uri,
                 storage_config=sc if sc.backend != StorageBackend.LOCAL else None,
+                daft_config=dc,
             ),
         )
         return engine.load(dataset_name, columns=columns)

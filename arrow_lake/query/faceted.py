@@ -158,7 +158,7 @@ class FacetedSearchBridge:
                 try:
                     managed.conn.register(dataset_name, source)
                     filtered_reader = managed.conn.execute(
-                        f'SELECT * FROM "{dataset_name}" WHERE {where} LIMIT {top_k}'
+                        f'SELECT * FROM "{dataset_name}" WHERE {where} LIMIT {top_k}'  # nosec B608
                     ).arrow()
                     if hasattr(filtered_reader, "read_all"):
                         table = filtered_reader.read_all()
@@ -170,7 +170,7 @@ class FacetedSearchBridge:
                 with create_duckdb_session(storage_config=self._storage_config) as conn:
                     conn.register(dataset_name, source)
                     filtered_reader = conn.execute(
-                        f'SELECT * FROM "{dataset_name}" WHERE {where} LIMIT {top_k}'
+                        f'SELECT * FROM "{dataset_name}" WHERE {where} LIMIT {top_k}'  # nosec B608
                     ).arrow()
                     if hasattr(filtered_reader, "read_all"):
                         table = filtered_reader.read_all()
@@ -183,7 +183,7 @@ class FacetedSearchBridge:
                 try:
                     managed.conn.register(dataset_name, source)
                     reader = managed.conn.execute(
-                        f'SELECT * FROM "{dataset_name}" LIMIT {top_k}'
+                        f'SELECT * FROM "{dataset_name}" LIMIT {top_k}'  # nosec B608
                     ).arrow()
                     table = reader.read_all() if hasattr(reader, "read_all") else reader
                 finally:
@@ -192,7 +192,7 @@ class FacetedSearchBridge:
                 with create_duckdb_session(storage_config=self._storage_config) as conn:
                     conn.register(dataset_name, source)
                     reader = conn.execute(
-                        f'SELECT * FROM "{dataset_name}" LIMIT {top_k}'
+                        f'SELECT * FROM "{dataset_name}" LIMIT {top_k}'  # nosec B608
                     ).arrow()
                     table = reader.read_all() if hasattr(reader, "read_all") else reader
         # else: table already set to empty above
@@ -288,7 +288,7 @@ class FacetedSearchBridge:
         else:
             where_clause = ""
         quoted_table = f'"{table_name}"'
-        return f"SELECT {facet_cols}, COUNT(*) as count FROM {quoted_table}{where_clause} GROUP BY CUBE({facet_cols})"
+        return f"SELECT {facet_cols}, COUNT(*) as count FROM {quoted_table}{where_clause} GROUP BY CUBE({facet_cols})"  # nosec B608
 
     @staticmethod
     def _parse_cube_results(

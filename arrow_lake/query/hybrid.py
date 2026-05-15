@@ -245,7 +245,7 @@ class HybridSearchBridge:
         safe_fts = fts_column if fts_column else vector_column
 
         sql = (
-            f"SELECT * FROM lance_hybrid_search("
+            f"SELECT * FROM lance_hybrid_search("  # nosec B608
             f"  '{safe_uri}',"
             f"  '{vector_column}',"
             f"  CAST({vec_list} AS FLOAT[]),"

@@ -9,7 +9,6 @@ from __future__ import annotations
 import shutil
 
 import pytest
-
 from arrow_lake.catalog.actor import CatalogActor as _RayWrapped
 from arrow_lake.exceptions import CatalogError, ErrorCode
 
