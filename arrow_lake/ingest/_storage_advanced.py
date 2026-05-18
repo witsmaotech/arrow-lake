@@ -18,6 +18,8 @@ class StorageAdvancedMixin:
     def compact(self, name: str) -> CompactionStats:
         """Compact a dataset by merging small fragment files.
 
+        Also cleans up old versions to reclaim disk space.
+
         Args:
             name: Dataset name.
 
@@ -29,29 +31,35 @@ class StorageAdvancedMixin:
         """
         with self._dataset_lock(name):
             self._validate_name(name)
-            lance_dir = self._lance_dir(name)
 
-            # Count data files before compaction
-            data_dir = lance_dir / "data"
-            data_files_before = len(list(data_dir.glob("*.lance"))) if data_dir.exists() else 0
+            import lance as lance_lib
+
+            # Count fragments before compaction via lance API
+            uri = self.dataset_uri(name) if self._storage_config else str(self._lance_dir(name))
+            ds = lance_lib.dataset(uri, storage_options=self._storage_options)
+            fragments_before = len(ds.get_fragments())
 
             table = self._open_lance(self._get_dataset_path(name))
             version_before = table.version
 
             table.optimize()
 
+            # Cleanup old versions to reclaim disk space
+            table.cleanup_old_versions()
+
             version_after = table.version
 
-            # Count data files after compaction
-            data_files_after = len(list(data_dir.glob("*.lance"))) if data_dir.exists() else 0
+            # Count fragments after compaction
+            ds = lance_lib.dataset(uri, storage_options=self._storage_options)
+            fragments_after = len(ds.get_fragments())
 
             from arrow_lake.ingest.storage import CompactionStats
 
             return CompactionStats(
                 version_before=version_before,
                 version_after=version_after,
-                fragments_before=data_files_before,
-                fragments_after=data_files_after,
+                fragments_before=fragments_before,
+                fragments_after=fragments_after,
             )
 
     def add_column(self, name: str, column_name: str, sql_expr: str) -> None:

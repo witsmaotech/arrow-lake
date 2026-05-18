@@ -42,6 +42,14 @@ class StorageConfig(BaseModel):
     s3_bucket: str = "arrow-lake"
     s3_region: str = "us-east-1"
 
+    # Lance write optimization parameters
+    lance_max_rows_per_file: int = 100_000
+    lance_max_rows_per_group: int = 10_000
+    lance_compression: str = "zstd"
+
+    # Lance read cache (bytes, 0 = disabled)
+    lance_cache_size: int = 0
+
     @model_validator(mode="after")
     def _validate_remote_backend(self) -> StorageConfig:
         if self.backend == StorageBackend.LOCAL:

@@ -75,6 +75,8 @@ class HybridSearchBridge:
         self._lance_scan_mode = lance_scan_mode
         self._config = config or HybridSearchConfig()
         self._session_manager = session_manager
+        self._vector_bridge: Any | None = None
+        self._fts_bridge: Any | None = None
 
     def search(
         self,
@@ -244,6 +246,10 @@ class HybridSearchBridge:
         safe_text = escape_sql_literal(query_text)
         safe_fts = fts_column if fts_column else vector_column
 
+        from arrow_lake.config.search import VectorSearchConfig
+
+        vec_cfg = VectorSearchConfig()
+
         sql = (
             f"SELECT * FROM lance_hybrid_search("  # nosec B608
             f"  '{safe_uri}',"
@@ -254,8 +260,8 @@ class HybridSearchBridge:
             f"  alpha := 0.5,"
             f"  use_index := false,"
             f"  prefilter := false,"
-            f"  refine_factor := 1::BIGINT,"
-            f"  nprobs := 1::BIGINT,"
+            f"  refine_factor := {vec_cfg.refine_factor}::BIGINT,"
+            f"  nprobs := {vec_cfg.nprobes}::BIGINT,"
             f"  oversample_factor := 1,"
             f"  k := {top_k}::BIGINT"
             f") LIMIT {top_k}"
@@ -295,16 +301,20 @@ class HybridSearchBridge:
         from arrow_lake.query.fts import FullTextSearchBridge
         from arrow_lake.query.vector import VectorSearchBridge
 
-        vector_bridge = VectorSearchBridge(
-            self._storage,
-            storage_config=self._storage_config,
-            lance_scan_mode=self._lance_scan_mode,
-        )
-        fts_bridge = FullTextSearchBridge(
-            self._storage,
-            storage_config=self._storage_config,
-            lance_scan_mode=self._lance_scan_mode,
-        )
+        if self._vector_bridge is None:
+            self._vector_bridge = VectorSearchBridge(
+                self._storage,
+                storage_config=self._storage_config,
+                lance_scan_mode=self._lance_scan_mode,
+            )
+        if self._fts_bridge is None:
+            self._fts_bridge = FullTextSearchBridge(
+                self._storage,
+                storage_config=self._storage_config,
+                lance_scan_mode=self._lance_scan_mode,
+            )
+        vector_bridge = self._vector_bridge
+        fts_bridge = self._fts_bridge
 
         try:
             with ThreadPoolExecutor(max_workers=2) as pool:

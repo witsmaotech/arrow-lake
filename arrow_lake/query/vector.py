@@ -116,6 +116,8 @@ class VectorSearchBridge:
         num_sub_vectors: int | None = None,
         num_bits: int | None = None,
         replace: bool = True,
+        m: int | None = None,
+        ef_construction: int | None = None,
     ) -> IndexInfo:
         """Create a vector similarity index on a dataset.
 
@@ -131,6 +133,8 @@ class VectorSearchBridge:
             num_partitions: IVF partitions (None = auto).
             num_sub_vectors: PQ sub-vectors (must be multiple of 8).
             replace: Whether to replace existing index.
+            m: HNSW bi-directional links per node (HNSW/IVF_HNSW_PQ only).
+            ef_construction: HNSW build-time candidate list size.
 
         Returns:
             IndexInfo with index metadata.
@@ -173,15 +177,23 @@ class VectorSearchBridge:
             )
 
         try:
-            table.create_index(
+            create_kwargs: dict[str, Any] = dict(
                 metric=metric,
                 vector_column_name=vector_column,
                 index_type=index_type,
-                num_partitions=num_partitions,
-                num_sub_vectors=effective_sub_vectors,
-                num_bits=effective_num_bits,
                 replace=replace,
             )
+            # IVF-family parameters
+            if index_type.upper() != "HNSW":
+                create_kwargs["num_partitions"] = num_partitions
+                create_kwargs["num_sub_vectors"] = effective_sub_vectors
+                create_kwargs["num_bits"] = effective_num_bits
+            # HNSW parameters
+            if m is not None:
+                create_kwargs["M"] = m
+            if ef_construction is not None:
+                create_kwargs["ef_construction"] = ef_construction
+            table.create_index(**create_kwargs)
         except (ValueError, RuntimeError) as exc:
             raise QueryError(
                 error_code=ErrorCode.VECTOR_INDEX_FAILED,
@@ -400,8 +412,8 @@ class VectorSearchBridge:
             "  explain_verbose := false,",
             f"  use_index := {metric is not None},",
             "  prefilter := false,",
-            "  refine_factor := 1::BIGINT,",
-            f"  nprobs := {(nprobes or 1)}::BIGINT,",
+            f"  refine_factor := {(self._config.refine_factor)}::BIGINT,",
+            f"  nprobs := {(nprobes or self._config.nprobes)}::BIGINT,",
             f"  k := {top_k}::BIGINT",
             ")",
         ]

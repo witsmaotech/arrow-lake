@@ -184,10 +184,11 @@ class TestCreateIndex:
         from arrow_lake.config import FullTextSearchConfig
 
         mock_lance = MagicMock()
-        mock_lance.dataset.return_value.to_table.return_value = pa.table(
-            {"text_content": ["hello 机器学习"]}
-        )
-        mock_lance.dataset.return_value.count_rows.return_value = 1
+        mock_ds = mock_lance.dataset.return_value
+        mock_ds.count_rows.return_value = 1
+        mock_ds.to_batches.return_value = iter([
+            pa.RecordBatch.from_pydict({"text_content": ["hello 机器学习"]}),
+        ])
 
         storage = _make_mock_storage()
         mock_table = _make_mock_lance_table_no_jieba()
@@ -199,8 +200,8 @@ class TestCreateIndex:
         with patch.dict("sys.modules", {"lance": mock_lance}):
             bridge.create_index("test_ds")
 
-        # lance.write_dataset should have been called to add _fts_segmented
-        mock_lance.write_dataset.assert_called_once()
+        # lance add_columns should have been called (not write_dataset)
+        mock_ds.add_columns.assert_called_once()
         # FTS index should be on _fts_segmented column
         call_kwargs = mock_table.create_fts_index.call_args[1]
         assert call_kwargs["field_names"] == "_fts_segmented"
@@ -730,13 +731,15 @@ class TestAddSegmentedColumn:
     """Test _add_segmented_column helper."""
 
     def test_segmented_column_added(self) -> None:
-        """_add_segmented_column reads data, segments, and writes back."""
+        """_add_segmented_column reads data in batches, segments, and uses add_columns."""
         from arrow_lake.config import FullTextSearchConfig
 
         mock_lance = MagicMock()
-        original_table = pa.table({"text_content": ["hello world", "机器学习 基础"]})
-        mock_lance.dataset.return_value.to_table.return_value = original_table
-        mock_lance.dataset.return_value.count_rows.return_value = 2
+        mock_ds = mock_lance.dataset.return_value
+        mock_ds.count_rows.return_value = 2
+        mock_ds.to_batches.return_value = iter([
+            pa.RecordBatch.from_pydict({"text_content": ["hello world", "机器学习 基础"]}),
+        ])
 
         storage = _make_mock_storage()
         mock_table = _make_mock_lance_table_no_jieba()
@@ -750,21 +753,22 @@ class TestAddSegmentedColumn:
 
         # Verify lance.dataset was called with URI and storage_options
         mock_lance.dataset.assert_called_once_with("/tmp/test.lance", storage_options=None)
-        # Verify lance.write_dataset was called
-        mock_lance.write_dataset.assert_called_once()
-        written_table = mock_lance.write_dataset.call_args[0][0]
-        assert "_fts_segmented" in written_table.column_names
-        assert written_table.num_rows == 2
-        assert mock_lance.write_dataset.call_args[0][1] == "/tmp/test.lance"
+        # Verify add_columns was called (not write_dataset)
+        mock_ds.add_columns.assert_called_once()
+        col_table = mock_ds.add_columns.call_args[0][0]
+        assert "_fts_segmented" in col_table.column_names
+        assert col_table.num_rows == 2
 
     def test_none_values_preserved(self) -> None:
         """None values in text column produce None in segmented column."""
         from arrow_lake.config import FullTextSearchConfig
 
         mock_lance = MagicMock()
-        original_table = pa.table({"text_content": [None, "hello"]})
-        mock_lance.dataset.return_value.to_table.return_value = original_table
-        mock_lance.dataset.return_value.count_rows.return_value = 2
+        mock_ds = mock_lance.dataset.return_value
+        mock_ds.count_rows.return_value = 2
+        mock_ds.to_batches.return_value = iter([
+            pa.RecordBatch.from_pydict({"text_content": [None, "hello"]}),
+        ])
 
         storage = _make_mock_storage()
         mock_table = _make_mock_lance_table_no_jieba()
@@ -776,6 +780,6 @@ class TestAddSegmentedColumn:
         with patch.dict("sys.modules", {"lance": mock_lance}):
             bridge.create_index("test_ds")
 
-        written_table = mock_lance.write_dataset.call_args[0][0]
-        seg_col = written_table.column("_fts_segmented").to_pylist()
+        col_table = mock_ds.add_columns.call_args[0][0]
+        seg_col = col_table.column("_fts_segmented").to_pylist()
         assert seg_col[0] is None

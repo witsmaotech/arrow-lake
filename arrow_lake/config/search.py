@@ -29,6 +29,7 @@ class VectorSearchConfig(BaseModel):
     num_bits: int = 8
     nprobes: int = 20
     max_nprobes: int = 256
+    refine_factor: int = 5
 
     @field_validator("default_top_k")
     @classmethod

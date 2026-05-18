@@ -62,6 +62,7 @@ class VectorIndexType(StrEnum):
     IVF_PQ = "IVF_PQ"
     IVF_FLAT = "IVF_FLAT"
     IVF_HNSW_PQ = "IVF_HNSW_PQ"
+    HNSW = "HNSW"
 
 
 class SchemaValidationMode(StrEnum):

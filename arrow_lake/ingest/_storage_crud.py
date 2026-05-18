@@ -78,9 +78,10 @@ class StorageCRUDMixin:
 
         table = self._open_lance(self._get_dataset_path(name))
 
+        arrow_table = table.to_arrow()
         if columns is not None:
-            return table.search().select(columns).to_arrow()
-        return table.search().to_arrow()
+            return arrow_table.select(columns)
+        return arrow_table
 
     def append_dataset(self, name: str, data: pa.Table) -> None:
         """Append data to an existing Lance dataset.
@@ -148,9 +149,7 @@ class StorageCRUDMixin:
         """
         self._validate_name(name)
         if self._storage_config and self._storage_config.backend != StorageBackend.LOCAL:
-            import lancedb
-
-            db = lancedb.connect(self._connect_uri, storage_options=self._storage_options)
+            db = self._get_db()
             result = db.list_tables()
             tables = result.tables if hasattr(result, "tables") else result
             return name in tables
@@ -163,9 +162,7 @@ class StorageCRUDMixin:
             Sorted list of dataset names (without .lance suffix).
         """
         if self._storage_config and self._storage_config.backend != StorageBackend.LOCAL:
-            import lancedb
-
-            db = lancedb.connect(self._connect_uri, storage_options=self._storage_options)
+            db = self._get_db()
             result = db.list_tables()
             tables = result.tables if hasattr(result, "tables") else result
             return sorted(tables)

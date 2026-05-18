@@ -254,14 +254,24 @@ class LanceStorageManager(
             )
 
     def _write_lance(self, data: pa.Table, path: str, mode: str = "create") -> None:
-        """Write data to Lance format via lancedb."""
+        """Write data to Lance format via lancedb.
+
+        Passes write optimization parameters (fragment size, row group size,
+        compression) from StorageConfig when available.
+        """
         db = self._get_db()
+        name = Path(path).name
+
+        write_kwargs: dict[str, Any] = {}
+        if self._storage_config:
+            write_kwargs["max_rows_per_file"] = self._storage_config.lance_max_rows_per_file
+            write_kwargs["max_rows_per_group"] = self._storage_config.lance_max_rows_per_group
 
         if mode == "create":
-            db.create_table(Path(path).name, data)
+            db.create_table(name, data, **write_kwargs)
         elif mode == "append":
-            table = db.open_table(Path(path).name)
-            table.add(data)
+            table = db.open_table(name)
+            table.add(data, **write_kwargs)
 
     def _open_lance(self, path: str) -> Any:
         """Open a Lance dataset via lancedb (latest version only).
@@ -325,8 +335,14 @@ class LanceStorageManager(
         import lance
 
         lance_uri = self.dataset_uri(dataset_name)
+        open_kwargs: dict[str, Any] = {
+            "version": version,
+            "storage_options": self._storage_options,
+        }
+        if self._storage_config and self._storage_config.lance_cache_size > 0:
+            open_kwargs["cache_size"] = self._storage_config.lance_cache_size
         try:
-            return lance.dataset(lance_uri, version=version, storage_options=self._storage_options)
+            return lance.dataset(lance_uri, **open_kwargs)
         except (ValueError, OSError) as exc:
             raise StorageError(
                 error_code=ErrorCode.STORAGE_PATH_NOT_FOUND,
