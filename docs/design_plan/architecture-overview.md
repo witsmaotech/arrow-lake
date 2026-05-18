@@ -1,6 +1,6 @@
 # Arrow Lake 总体架构图
 
-**版本**: v1.3.4 | **日期**: 2026-05-18
+**版本**: v1.3.3 | **日期**: 2026-05-18
 **来源**: [architecture-v1.3.0.md](architecture-v1.3.0.md) + [architecture-v1.0_draft_up.md](architecture-v1.0_draft_up.md)
 
 ---

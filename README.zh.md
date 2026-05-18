@@ -7,7 +7,7 @@
 [![Coverage](https://img.shields.io/badge/coverage-80%25-green)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
 [![Security](https://img.shields.io/badge/bandit-0%20HIGH-success)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
 [![Python](https://img.shields.io/badge/python-3.11+-blue)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
-[![Version](https://img.shields.io/badge/version-1.3.0-blue)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
+[![Version](https://img.shields.io/badge/version-1.3.3-blue)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
 [![License](https://img.shields.io/badge/license-MIT-informational)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
 
 ## 项目概述
