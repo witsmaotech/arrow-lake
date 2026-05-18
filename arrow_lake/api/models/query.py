@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 # ---------------------------------------------------------------------------
 # OLAP / metadata query
@@ -39,10 +39,85 @@ class OlapQueryResponse(BaseModel):
 # Daft query
 # ---------------------------------------------------------------------------
 
+class DaftSortStep(BaseModel):
+    """Sort by a column."""
+    column: str
+    desc: bool = False
+
+
+class DaftFilterStep(BaseModel):
+    """Filter rows by column conditions."""
+    column: str
+    op: Literal["eq", "ne", "gt", "gte", "lt", "lte", "is_null", "is_not_null"]
+    value: Any = None
+
+
+class DaftGroupByStep(BaseModel):
+    """Group by columns then aggregate."""
+    columns: list[str] = Field(..., min_length=1)
+    agg: Literal["sum", "mean", "count", "min", "max", "stddev", "var"] = "sum"
+
+
+class DaftJoinStep(BaseModel):
+    """Join with another dataset."""
+    dataset: str
+    on: str
+    how: Literal["inner", "left", "outer"] = "inner"
+
+
+class DaftSqlStep(BaseModel):
+    """Execute SQL query against current frame (bound as ``self``)."""
+    query: str = Field(..., min_length=1, max_length=10000)
+
+
+class DaftPivotStep(BaseModel):
+    """Pivot column into wide format."""
+    group_by: str
+    pivot_col: str
+    value_col: str
+    agg_fn: Literal["sum", "mean", "count", "min", "max", "first", "last"] = "sum"
+
+
+class DaftExplodeStep(BaseModel):
+    """Explode list column(s) into rows."""
+    columns: list[str] = Field(..., min_length=1)
+
+
+class DaftSampleStep(BaseModel):
+    """Random sample of rows."""
+    fraction: float | None = Field(default=None, gt=0.0, le=1.0)
+    size: int | None = Field(default=None, ge=1)
+    seed: int | None = None
+
+
 class DaftQueryRequest(BaseModel):
+    """Daft DataFrame query with chained operations.
+
+    Operations execute in order: sort → filter → groupby → join → sql →
+    pivot → explode → sample → distinct → select → offset → limit → collect.
+    """
     columns: list[str] | None = None
-    limit: int = 10_000
+    sort: DaftSortStep | None = None
+    filters: list[DaftFilterStep] | None = None
+    groupby: DaftGroupByStep | None = None
+    join: DaftJoinStep | None = None
+    sql: DaftSqlStep | None = None
+    pivot: DaftPivotStep | None = None
+    explode: DaftExplodeStep | None = None
+    sample: DaftSampleStep | None = None
+    distinct: bool = False
+    offset: int | None = Field(default=None, ge=0)
+    limit: int = Field(default=10_000, ge=1)
+    max_rows: int | None = Field(default=None, ge=0)
     format: Literal["arrow_ipc", "json"] = "json"
+
+    @model_validator(mode="after")
+    def validate_sql_keywords(self) -> DaftQueryRequest:
+        if self.sql is not None:
+            from arrow_lake.api.models.common import _BLOCKED_SQL_PREFIXES
+            if _BLOCKED_SQL_PREFIXES.search(self.sql.query):
+                raise ValueError("SQL query contains forbidden write/DDL keywords")
+        return self
 
 
 class DaftQueryResponse(BaseModel):
