@@ -1,0 +1,588 @@
+# Arrow Lake — Production Docker Compose
+#
+# All-in-one production deployment with workflow orchestration.
+#
+# Usage:
+#   docker compose -f docker-compose.prod.yml up -d
+#   docker compose -f docker-compose.prod.yml ps
+#   docker compose -f docker-compose.prod.yml logs -f api
+#
+# Run a Metaflow flow inside the API container:
+#   docker compose -f docker-compose.prod.yml exec api \
+#     /app/.venv/bin/python flows/ingest_flow.py run --source-path /data/input
+#
+# Scale Ray workers:
+#   docker compose -f docker-compose.prod.yml up -d --scale ray-worker=4
+#
+# Required: .env file with secrets (see .env.example)
+# Required: Docker Engine 24+ with Compose V2
+
+# ==============================================================================
+# Shared configuration
+# ==============================================================================
+
+x-arrow-lake: &arrow-lake
+  build:
+    context: ..
+    dockerfile: deploy/Dockerfile
+  image: arrow-lake:latest
+  restart: unless-stopped
+  env_file:
+    - path: ../.env
+      required: false
+  networks:
+    - arrow-lake-net
+  logging:
+    driver: json-file
+    options:
+      max-size: "50m"
+      max-file: "5"
+      tag: "arrow-lake"
+  tmpfs:
+    - /tmp
+    - /app/.cache
+    - /app/.local
+    - /home/arrowlake
+    - /app/exports
+  volumes:
+    - duckdb-data:/app/.duckdb
+  cap_drop:
+    - ALL
+  cap_add:
+    - NET_BIND_SERVICE
+  stop_grace_period: 30s
+
+x-storage-env: &storage-env
+  ARROW_LAKE__STORAGE__BASE_URI: "${MINIO_BUCKET:-arrow-lake}"
+  ARROW_LAKE__STORAGE__S3_ENDPOINT: "http://minio:9000"
+  ARROW_LAKE__STORAGE__S3_BUCKET: "${MINIO_BUCKET:-arrow-lake}"
+  ARROW_LAKE__STORAGE__BACKEND: "minio"
+  ARROW_LAKE__OBSERVABILITY__METRICS_ENABLED: "true"
+  ARROW_LAKE__EMBEDDING__MODEL_SOURCE: "modelscope"
+  AWS_ACCESS_KEY_ID: "${MINIO_ROOT_USER:-minioadmin}"
+  AWS_SECRET_ACCESS_KEY: "${MINIO_ROOT_PASSWORD:-minioadmin}"
+  AWS_ENDPOINT_URL: "http://minio:9000"
+  AWS_REGION: "${AWS_REGION:-us-east-1}"
+
+x-metaflow-env: &metaflow-env
+  METAFLOW_DEFAULT_METADATA: "service"
+  METAFLOW_SERVICE_URL: "http://metaflow-metadata:8080"
+  METAFLOW_DATASTORE: "s3"
+  METAFLOW_DATATOOLS_S3_ROOT: "s3://arrow-lake/metaflow"
+  METAFLOW_S3_ENDPOINT_URL: "http://minio:9000"
+
+# ==============================================================================
+# Services
+# ==============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # API Server
+  # ---------------------------------------------------------------------------
+  api:
+    <<: [*arrow-lake]
+    container_name: arrow-lake-api
+    command: ["uvicorn", "arrow_lake.api.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${API_PORT:-8000}:8000"
+    environment:
+      <<: [*storage-env, *metaflow-env]
+      ARROW_LAKE__API__ENABLED: "true"
+      ARROW_LAKE__API__HOST: "0.0.0.0"
+      ARROW_LAKE__API__PORT: "8000"
+      ARROW_LAKE__OBSERVABILITY__METRICS_PORT: "8000"
+      ARROW_LAKE__OBSERVABILITY__LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+      ARROW_LAKE__REDIS__URL: "redis://redis:6379/0"
+      ARROW_LAKE__REDIS__PASSWORD: "${REDIS_PASSWORD:-}"
+      HTTP_PROXY: "${HTTP_PROXY:-}"
+      HTTPS_PROXY: "${HTTPS_PROXY:-}"
+      http_proxy: "${HTTP_PROXY:-}"
+      https_proxy: "${HTTPS_PROXY:-}"
+      NO_PROXY: "127.0.0.1,localhost,host.docker.internal,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,172.30.0.0/16,minio,redis,ray-head,metaflow-metadata,metaflow-db,prometheus,grafana,jaeger,hg-server"
+      no_proxy: "127.0.0.1,localhost,host.docker.internal,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,172.30.0.0/16,minio,redis,ray-head,metaflow-metadata,metaflow-db,prometheus,grafana,jaeger,hg-server"
+      ARROW_LAKE__EMBEDDING__API_BASE: "${OLLAMA_API_BASE:-http://172.19.0.40:11434/v1}"
+      ARROW_LAKE__HUGEGRAPH__HOST: "${HUGEGRAPH_HOST:-hg-server}"
+      ARROW_LAKE__HUGEGRAPH__PORT: "${HUGEGRAPH_PORT:-8080}"
+    volumes:
+      - duckdb-data:/app/.duckdb
+      - lake-data:/data/lake
+    depends_on:
+      minio:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      metaflow-metadata:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: ${API_MEMORY_LIMIT:-4G}
+          cpus: "${API_CPU_LIMIT:-2.0}"
+          pids: 512
+        reservations:
+          memory: 1G
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+
+  # ---------------------------------------------------------------------------
+  # MinIO — S3-compatible object storage
+  # ---------------------------------------------------------------------------
+  minio:
+    image: minio/minio:${MINIO_VERSION:-RELEASE.2025-09-07T16-13-09Z}
+    container_name: arrow-lake-minio
+    restart: unless-stopped
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes:
+      - minio-data:/data
+    networks:
+      - arrow-lake-net
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+        tag: "arrow-lake-minio"
+    command: server /data --console-address ":9001"
+    deploy:
+      resources:
+        limits:
+          memory: ${MINIO_MEMORY_LIMIT:-2G}
+          cpus: "${MINIO_CPU_LIMIT:-1.0}"
+          pids: 512
+        reservations:
+          memory: 512M
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    stop_grace_period: 15s
+
+  # ---------------------------------------------------------------------------
+  # MinIO Init — Create buckets on first start
+  # ---------------------------------------------------------------------------
+  minio-init:
+    image: minio/mc:${MINIO_MC_VERSION:-latest}
+    container_name: arrow-lake-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks:
+      - arrow-lake-net
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin} &&
+      mc mb local/${MINIO_BUCKET:-arrow-lake} --ignore-existing &&
+      mc mb local/arrow-lake-metaflow --ignore-existing
+      "
+
+  # ---------------------------------------------------------------------------
+  # Redis — Session coordination + JWT blacklist
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:${REDIS_VERSION:-7.4}
+    container_name: arrow-lake-redis
+    restart: unless-stopped
+    networks:
+      - arrow-lake-net
+    ports:
+      - "${REDIS_PORT:-6380}:6379"
+    command: >
+      redis-server
+      --maxmemory ${REDIS_MAXMEMORY:-512mb}
+      --maxmemory-policy allkeys-lru
+      --appendonly yes
+      --requirepass ${REDIS_PASSWORD:-}
+    volumes:
+      - redis-data:/data
+    deploy:
+      resources:
+        limits:
+          memory: ${REDIS_MEMORY_LIMIT:-1G}
+          cpus: "${REDIS_CPU_LIMIT:-0.5}"
+          pids: 256
+        reservations:
+          memory: 128M
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+        tag: "arrow-lake-redis"
+    stop_grace_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # Metaflow PostgreSQL — Metadata backend
+  # ---------------------------------------------------------------------------
+  metaflow-db:
+    image: postgres:${POSTGRES_VERSION:-16-alpine}
+    container_name: arrow-lake-metaflow-db
+    restart: unless-stopped
+    networks:
+      - arrow-lake-net
+    environment:
+      POSTGRES_USER: "${METAFLOW_DB_USER:-metaflow}"
+      POSTGRES_PASSWORD: "${METAFLOW_DB_PASSWORD:-metaflow}"
+      POSTGRES_DB: "metaflow"
+    volumes:
+      - metaflow-db-data:/var/lib/postgresql/data
+    deploy:
+      resources:
+        limits:
+          memory: ${METAFLOW_DB_MEMORY_LIMIT:-512M}
+          cpus: "${METAFLOW_DB_CPU_LIMIT:-1.0}"
+          pids: 128
+        reservations:
+          memory: 128M
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${METAFLOW_DB_USER:-metaflow}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+        tag: "arrow-lake-metaflow-db"
+    stop_grace_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # Metaflow Metadata Service — Run tracking + artifact store
+  # ---------------------------------------------------------------------------
+  metaflow-metadata:
+    image: netflixoss/metaflow_metadata:${METAFLOW_METADATA_VERSION:-latest}
+    container_name: arrow-lake-metaflow-metadata
+    restart: unless-stopped
+    networks:
+      - arrow-lake-net
+    ports:
+      - "${METAFLOW_API_PORT:-8082}:8080"
+    environment:
+      METAFLOW_METADATA_DB_HOST: "metaflow-db"
+      METAFLOW_METADATA_DB_PORT: "5432"
+      METAFLOW_METADATA_DB_USER: "${METAFLOW_DB_USER:-metaflow}"
+      METAFLOW_METADATA_DB_PSWD: "${METAFLOW_DB_PASSWORD:-metaflow}"
+      METAFLOW_METADATA_DB_NAME: "metaflow"
+    depends_on:
+      metaflow-db:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: ${METAFLOW_METADATA_MEMORY_LIMIT:-1G}
+          cpus: "${METAFLOW_METADATA_CPU_LIMIT:-1.0}"
+          pids: 128
+        reservations:
+          memory: 256M
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+        tag: "arrow-lake-metaflow-metadata"
+    stop_grace_period: 15s
+
+  # ---------------------------------------------------------------------------
+  # Metaflow UI — Run history + comparison dashboard
+  # ---------------------------------------------------------------------------
+  metaflow-ui:
+    image: outerbounds/metaflow-ui:${METAFLOW_UI_VERSION:-latest}
+    container_name: arrow-lake-metaflow-ui
+    restart: unless-stopped
+    networks:
+      - arrow-lake-net
+    ports:
+      - "${METAFLOW_UI_PORT:-8083}:3000"
+    environment:
+      METAFLOW_SERVICE_URL: "http://metaflow-metadata:8080"
+    depends_on:
+      metaflow-metadata:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: ${METAFLOW_UI_MEMORY_LIMIT:-512M}
+          cpus: "${METAFLOW_UI_CPU_LIMIT:-0.5}"
+          pids: 64
+        reservations:
+          memory: 128M
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:3000 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+        tag: "arrow-lake-metaflow-ui"
+    stop_grace_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # Ray Head — Compute cluster head node
+  # ---------------------------------------------------------------------------
+  ray-head:
+    <<: [*arrow-lake]
+    container_name: arrow-lake-ray-head
+    ports:
+      - "${RAY_DASHBOARD_PORT:-8265}:8265"
+    environment:
+      <<: [*storage-env]
+      ARROW_LAKE__COMPUTE__RAY_ADDRESS: "auto"
+    volumes:
+      - lake-data:/data/lake
+    shm_size: 256m
+    command: >
+      /app/.venv/bin/ray start
+      --head
+      --port=6379
+      --dashboard-host=0.0.0.0
+      --dashboard-port=8265
+      --num-cpus=${RAY_HEAD_CPUS:-4}
+      --block
+    depends_on:
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    deploy:
+      resources:
+        limits:
+          memory: ${RAY_HEAD_MEMORY_LIMIT:-8G}
+          cpus: "${RAY_HEAD_CPU_LIMIT:-4.0}"
+          pids: 2048
+        reservations:
+          memory: 2G
+    healthcheck:
+      test: ["CMD-SHELL", "/app/.venv/bin/ray status --address 127.0.0.1:6379 2>&1 | grep -q 'node' || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    stop_grace_period: 60s
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+
+  # ---------------------------------------------------------------------------
+  # Ray Worker — Compute workers (scale with --scale ray-worker=N)
+  # ---------------------------------------------------------------------------
+  ray-worker:
+    <<: [*arrow-lake]
+    restart: unless-stopped
+    healthcheck:
+      disable: true
+    deploy:
+      replicas: ${RAY_WORKER_REPLICAS:-2}
+      resources:
+        limits:
+          memory: ${RAY_WORKER_MEMORY:-8G}
+          cpus: "${RAY_WORKER_CPU_LIMIT:-4.0}"
+          pids: 2048
+        reservations:
+          memory: 2G
+    environment:
+      <<: [*storage-env]
+      ARROW_LAKE__COMPUTE__RAY_ADDRESS: "ray://ray-head:10001"
+    volumes:
+      - lake-data:/data/lake
+    shm_size: 256m
+    command: >
+      /app/.venv/bin/ray start
+      --address=ray-head:6379
+      --num-cpus=${RAY_WORKER_CPUS:-4}
+      --block
+    depends_on:
+      ray-head:
+        condition: service_healthy
+    stop_grace_period: 60s
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+
+  # ---------------------------------------------------------------------------
+  # Prometheus — Metrics collection
+  # ---------------------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:${PROMETHEUS_VERSION:-v2.54.1}
+    container_name: arrow-lake-prometheus
+    restart: unless-stopped
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    networks:
+      - arrow-lake-net
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-30d}"
+    deploy:
+      resources:
+        limits:
+          memory: ${PROMETHEUS_MEMORY_LIMIT:-1G}
+          cpus: "${PROMETHEUS_CPU_LIMIT:-1.0}"
+          pids: 64
+        reservations:
+          memory: 256M
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9090/-/healthy || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+        tag: "arrow-lake-prometheus"
+    stop_grace_period: 15s
+
+  # ---------------------------------------------------------------------------
+  # Grafana — Dashboards
+  # ---------------------------------------------------------------------------
+  grafana:
+    image: grafana/grafana:${GRAFANA_VERSION:-11.3.0}
+    container_name: arrow-lake-grafana
+    restart: unless-stopped
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:-admin}"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_ROOT_URL: "%(protocol)s://%(domain)s/"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    networks:
+      - arrow-lake-net
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: ${GRAFANA_MEMORY_LIMIT:-512M}
+          cpus: "${GRAFANA_CPU_LIMIT:-0.5}"
+          pids: 64
+        reservations:
+          memory: 128M
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+        tag: "arrow-lake-grafana"
+    stop_grace_period: 15s
+
+  # ---------------------------------------------------------------------------
+  # Jaeger — Distributed tracing
+  # ---------------------------------------------------------------------------
+  jaeger:
+    image: jaegertracing/all-in-one:${JAEGER_VERSION:-1.62}
+    container_name: arrow-lake-jaeger
+    restart: unless-stopped
+    ports:
+      - "${JAEGER_OTLP_GRPC_PORT:-4317}:4317"
+      - "${JAEGER_OTLP_HTTP_PORT:-4318}:4318"
+      - "${JAEGER_UI_PORT:-16686}:16686"
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    networks:
+      - arrow-lake-net
+    volumes:
+      - jaeger-data:/tmp/jaeger
+    deploy:
+      resources:
+        limits:
+          memory: ${JAEGER_MEMORY_LIMIT:-1G}
+          cpus: "${JAEGER_CPU_LIMIT:-1.0}"
+          pids: 64
+        reservations:
+          memory: 256M
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:16686/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+        tag: "arrow-lake-jaeger"
+    stop_grace_period: 15s
+
+# ==============================================================================
+# Networks
+# ==============================================================================
+
+networks:
+  arrow-lake-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/16
+
+# ==============================================================================
+# Volumes
+# ==============================================================================
+
+volumes:
+  minio-data:
+    driver: local
+  lake-data:
+    driver: local
+  duckdb-data:
+    driver: local
+  redis-data:
+    driver: local
+  metaflow-db-data:
+    driver: local
+  prometheus-data:
+    driver: local
+  grafana-data:
+    driver: local
+  jaeger-data:
+    driver: local

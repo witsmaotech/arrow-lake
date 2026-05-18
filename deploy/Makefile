@@ -7,6 +7,9 @@
 #   make full        # Full stack (all + Prometheus monitoring)
 #   make kg          # Knowledge Graph (HugeGraph)
 #   make ocr         # OCR processing (TurboOCR, requires GPU)
+#   make prod        # Production (all services + Metaflow + monitoring)
+#   make flow-run    # Run a flow in production container
+#   make flow-test   # Run all 4 new flows sequentially
 #   make down        # Stop all services, keep data
 #   make clean       # Stop all services, remove data volumes
 
@@ -16,6 +19,7 @@ COMPOSE_DEV   ?= -f docker-compose.dev.yml
 COMPOSE_GPU    ?= -f docker-compose.gpu.yml
 COMPOSE_KG     ?= -f docker-compose.hugegraph.yml
 COMPOSE_MON    ?= -f docker-compose.monitoring.yml
+COMPOSE_PROD   ?= -f docker-compose.prod.yml
 PROJECT_NAME  ?= arrow-lake
 
 # Profile flags for each mode
@@ -27,7 +31,7 @@ PROFILE_KG     = --profile kg
 PROFILE_OCR    = --profile ocr
 
 # Common Compose invocation with all override files (for down/clean/ps/logs)
-ALL_FILES = $(COMPOSE_FILE) $(COMPOSE_DEV) $(COMPOSE_GPU) $(COMPOSE_KG) $(COMPOSE_MON)
+ALL_FILES = $(COMPOSE_FILE) $(COMPOSE_DEV) $(COMPOSE_GPU) $(COMPOSE_KG) $(COMPOSE_MON) $(COMPOSE_PROD)
 
 # All profiles (for teardown commands)
 ALL_PROFILES = --profile core --profile compute --profile dev --profile gpu --profile kg --profile monitoring --profile ocr
@@ -36,7 +40,12 @@ ALL_PROFILES = --profile core --profile compute --profile dev --profile gpu --pr
 # Core commands
 # ---------------------------------------------------------------------------
 
-.PHONY: up dev gpu full kg ocr down clean build ps logs env certs shell-api shell-ray shell-jupyter test-smoke
+.PHONY: up dev gpu full kg ocr prod down clean build ps logs env certs \
+        shell-api shell-ray shell-jupyter test-smoke flow-run flow-test
+
+FLOW ?= ingest
+ARGS ?=
+PROD_RUNNER ?= api
 
 up:
 	docker compose $(COMPOSE_FILE) --project-name $(PROJECT_NAME) $(PROFILE_CORE) up -d
@@ -55,6 +64,9 @@ kg:
 
 ocr:
 	docker compose $(COMPOSE_FILE) --project-name $(PROJECT_NAME) $(PROFILE_OCR) up -d
+
+prod:
+	docker compose $(COMPOSE_PROD) --project-name $(PROJECT_NAME) up -d
 
 down:
 	docker compose $(ALL_FILES) --project-name $(PROJECT_NAME) $(ALL_PROFILES) down
@@ -97,6 +109,9 @@ logs-ray:
 logs-jupyter:
 	docker compose $(COMPOSE_FILE) $(COMPOSE_DEV) $(COMPOSE_MON) --project-name $(PROJECT_NAME) $(PROFILE_DEV) logs -f jupyter
 
+logs-metaflow:
+	docker compose $(COMPOSE_PROD) --project-name $(PROJECT_NAME) logs -f metaflow-metadata
+
 restart:
 	docker compose $(ALL_FILES) --project-name $(PROJECT_NAME) $(ALL_PROFILES) restart
 
@@ -119,15 +134,41 @@ shell-ray:
 shell-jupyter:
 	docker compose $(COMPOSE_FILE) $(COMPOSE_DEV) $(COMPOSE_MON) --project-name $(PROJECT_NAME) $(PROFILE_DEV) exec jupyter bash
 
+shell-prod:
+	docker compose $(COMPOSE_PROD) --project-name $(PROJECT_NAME) exec api bash
+
 # ---------------------------------------------------------------------------
 # Testing
 # ---------------------------------------------------------------------------
 
-.PHONY: test-smoke
-
 test-smoke:
 	@echo "=== Container Smoke Tests ==="
 	cd .. && .venv/bin/python -m pytest tests/container/ -v --tb=short --timeout=300
+
+# ---------------------------------------------------------------------------
+# Metaflow Flow Execution (production)
+# ---------------------------------------------------------------------------
+
+flow-run:
+	@echo "=== Running $(FLOW) Flow ==="
+	docker compose $(COMPOSE_PROD) --project-name $(PROJECT_NAME) exec $(PROD_RUNNER) \
+		/app/.venv/bin/python flows/$(FLOW)_flow.py run $(ARGS)
+
+flow-test:
+	@echo "=== Running All 4 Flows (production) ==="
+	@echo "--- IngestFlow ---"
+	docker compose $(COMPOSE_PROD) --project-name $(PROJECT_NAME) exec api \
+		/app/.venv/bin/python flows/ingest_flow.py run --source-path /data/input --dataset-name test_metaflow
+	@echo "--- EmbedFlow ---"
+	docker compose $(COMPOSE_PROD) --project-name $(PROJECT_NAME) exec api \
+		/app/.venv/bin/python flows/embed_flow.py run --dataset-name test_metaflow --encoder-type api --shard-size 100
+	@echo "--- KGFlow ---"
+	docker compose $(COMPOSE_PROD) --project-name $(PROJECT_NAME) exec api \
+		/app/.venv/bin/python flows/kg_flow.py run --dataset-name test_metaflow --chunk-size 20
+	@echo "--- BatchRAGFlow ---"
+	docker compose $(COMPOSE_PROD) --project-name $(PROJECT_NAME) exec api \
+		/app/.venv/bin/python flows/batch_rag_flow.py run --dataset-name test_metaflow --questions-file /app/examples/questions.json
+	@echo "=== All Flows Complete ==="
 
 # ---------------------------------------------------------------------------
 # Help
@@ -143,6 +184,7 @@ help:
 	@echo "  make full        Full stack (all + Prometheus monitoring)"
 	@echo "  make kg          Knowledge Graph (HugeGraph)"
 	@echo "  make ocr         OCR processing (TurboOCR, requires GPU)"
+	@echo "  make prod        Production (all + Metaflow + monitoring)"
 	@echo "  make down        Stop all services, keep data"
 	@echo "  make clean       Stop all services, remove data volumes"
 	@echo ""
@@ -155,19 +197,22 @@ help:
 	@echo "  make logs-api    Tail API logs"
 	@echo "  make logs-ray    Tail Ray logs"
 	@echo "  make logs-jupyter Tail Jupyter logs"
+	@echo "  make logs-metaflow Tail Metaflow metadata logs"
 	@echo "  make restart     Restart all services"
 	@echo ""
 	@echo "  make env         Generate .env from .env.example"
 	@echo "  make certs       Generate TLS certificates"
-	@echo "  make shell-api   Shell into API container"
-	@echo "  make shell-ray   Shell into Ray Head container"
-	@echo "  make shell-jupyter Shell into Jupyter container"
+	@echo "  make shell-api   Shell into API container (dev)"
+	@echo "  make shell-ray   Shell into Ray Head container (dev)"
+	@echo "  make shell-jupyter Shell into Jupyter container (dev)"
+	@echo "  make shell-prod  Shell into API container (prod)"
 	@echo ""
-	@echo "  make test-smoke  Run container integration tests (all 60 endpoints)"
+	@echo "  make test-smoke  Run container integration tests"
+	@echo "  make flow-run FLOW=ingest [ARGS='...']  Run a flow (prod)"
+	@echo "  make flow-test   Run all 4 flows (prod)"
 	@echo ""
 	@echo "Variables:"
-	@echo "  COMPOSE_FILE   Base compose file (default: -f docker-compose.yml)"
-	@echo "  COMPOSE_DEV    Dev overlay (default: -f docker-compose.dev.yml)"
-	@echo "  COMPOSE_GPU    GPU overlay (default: -f docker-compose.gpu.yml)"
-	@echo "  COMPOSE_MON    Monitoring overlay (default: -f docker-compose.monitoring.yml)"
+	@echo "  FLOW           Flow name (ingest|embed|kg|batch_rag) default: ingest"
+	@echo "  ARGS           Extra arguments passed to the flow"
+	@echo "  COMPOSE_PROD   Production compose (default: -f docker-compose.prod.yml)"
 	@echo "  PROJECT_NAME   Docker project name (default: arrow-lake)"
