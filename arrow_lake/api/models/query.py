@@ -127,6 +127,7 @@ class DaftQueryResponse(BaseModel):
     column_count: int
     data: str | None = None
     rows: list[dict[str, Any]] | None = None
+    warnings: list[str] = []
 
 
 # ---------------------------------------------------------------------------

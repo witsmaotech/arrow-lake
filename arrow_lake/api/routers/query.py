@@ -149,9 +149,22 @@ async def daft_query(
     lake=Depends(get_lake),
     _user: dict = Depends(require_role(Role.VIEWER)),
 ) -> DaftQueryResponse:
-    """Load dataset via Daft, apply chained operations, return as Arrow table."""
+    """Load dataset via Daft, apply chained operations, return as Arrow table.
+
+    Pre-checks row count to prevent OOM on large datasets.
+    For datasets > 1M rows, use DuckDB OLAP endpoint instead.
+    """
     frame = lake.daft_query(name)
     frame = _apply_pipeline(req, frame)
+
+    try:
+        warnings = await run_sync(
+            frame.check_feasibility,
+            timeout=30, label="daft_row_check",
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     max_rows = req.max_rows if req.max_rows and req.max_rows > 0 else None
     collect_kwargs: dict = {}
     if max_rows is not None:
@@ -162,4 +175,5 @@ async def daft_query(
         **collect_kwargs,
     )
     resp = arrow_table_to_response(table, req.format)
+    resp["warnings"] = warnings
     return DaftQueryResponse(**resp)

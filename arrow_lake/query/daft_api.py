@@ -31,6 +31,8 @@ _SQL_DANGEROUS_RE = re.compile(
 )
 _MAX_SQL_LENGTH = 10_000
 _DEFAULT_COLLECT_MAX_ROWS = 100_000
+_ROW_COUNT_WARN_THRESHOLD = 500_000
+_ROW_COUNT_HARD_LIMIT = 1_000_000
 
 
 class LazyDaftFrame:
@@ -222,6 +224,46 @@ class LazyDaftFrame:
             Number of rows in the DataFrame.
         """
         return self._df.count_rows()
+
+    def check_feasibility(
+        self,
+        warn_threshold: int = _ROW_COUNT_WARN_THRESHOLD,
+        hard_limit: int = _ROW_COUNT_HARD_LIMIT,
+    ) -> list[str]:
+        """Pre-check if the DataFrame is safe to collect.
+
+        Returns a list of warnings. Raises if the row count exceeds
+        the hard limit — caller should route to DuckDB OLAP instead.
+
+        Args:
+            warn_threshold: Log warning above this row count.
+            hard_limit: Raise above this row count.
+
+        Returns:
+            List of warning messages (empty if safe).
+
+        Raises:
+            RuntimeError: If row count exceeds hard_limit.
+        """
+        warnings: list[str] = []
+        try:
+            n = self._df.count_rows()
+        except Exception:
+            return warnings
+
+        if n > hard_limit:
+            raise RuntimeError(
+                f"Dataset has {n:,} rows (limit {hard_limit:,}). "
+                f"Use DuckDB OLAP endpoint (POST /query/olap) for large datasets."
+            )
+        if n > warn_threshold:
+            msg = (
+                f"Dataset has {n:,} rows — consider DuckDB OLAP "
+                f"(POST /query/olap) for better memory efficiency."
+            )
+            logger.warning(msg)
+            warnings.append(msg)
+        return warnings
 
     # ── Reshape ──
 

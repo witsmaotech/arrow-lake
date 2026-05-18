@@ -29,6 +29,7 @@ def _chainable_frame(final_table: PaTable) -> MagicMock:
     """Create a mock LazyDaftFrame that supports chaining every operation."""
     frame = MagicMock()
     frame.collect.return_value = final_table
+    frame.check_feasibility.return_value = []
     frame.column_names = ["id", "count"]
     for method in (
         "select", "filter", "sort", "limit", "offset", "distinct",
@@ -335,6 +336,56 @@ async def test_daft_query_chain_sort_filter_groupby(client: AsyncClient, mock_la
     frame.sort.assert_called_once()
     frame.filter.assert_called_once()
     frame.groupby.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_daft_query_includes_check_feasibility(client: AsyncClient, mock_lake: MagicMock) -> None:
+    resp = await client.post(
+        "/api/v1/datasets/docs/query/daft",
+        json={},
+    )
+    assert resp.status_code == 200
+    frame = mock_lake.daft_query.return_value
+    frame.check_feasibility.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_daft_query_returns_empty_warnings(client: AsyncClient, mock_lake: MagicMock) -> None:
+    resp = await client.post(
+        "/api/v1/datasets/docs/query/daft",
+        json={},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["warnings"] == []
+
+
+@pytest.mark.asyncio
+async def test_daft_query_returns_warnings_from_feasibility(client: AsyncClient, mock_lake: MagicMock) -> None:
+    frame = mock_lake.daft_query.return_value
+    frame.check_feasibility.return_value = ["consider DuckDB OLAP"]
+    resp = await client.post(
+        "/api/v1/datasets/docs/query/daft",
+        json={},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "consider DuckDB OLAP" in body["warnings"]
+
+
+@pytest.mark.asyncio
+async def test_daft_query_hard_limit_returns_422(client: AsyncClient, mock_lake: MagicMock) -> None:
+    frame = mock_lake.daft_query.return_value
+    frame.check_feasibility.side_effect = RuntimeError(
+        "Dataset has 2,000,000 rows. Use DuckDB OLAP"
+    )
+    resp = await client.post(
+        "/api/v1/datasets/docs/query/daft",
+        json={},
+    )
+    assert resp.status_code == 422
+    body = resp.json()
+    assert "DuckDB OLAP" in body["detail"]
 
 
 # ---------------------------------------------------------------------------

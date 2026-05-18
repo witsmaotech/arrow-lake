@@ -437,3 +437,41 @@ class TestErrorSanitization:
         msg = str(exc_info.value)
         assert "missing" in msg
         assert ".lance" not in msg
+
+
+class TestCheckFeasibility:
+    """Test row count pre-check before collect."""
+
+    def test_small_dataset_no_warnings(self, engine: DaftQueryEngine, storage: Any) -> None:
+        frame = engine.load("users")
+        warnings = frame.check_feasibility()
+        assert warnings == []
+
+    def test_warning_threshold_triggers_warning(
+        self, engine: DaftQueryEngine, storage: Any
+    ) -> None:
+        frame = engine.load("users")
+        warnings = frame.check_feasibility(warn_threshold=3, hard_limit=100)
+        assert len(warnings) == 1
+        assert "consider DuckDB OLAP" in warnings[0]
+
+    def test_hard_limit_raises_runtime_error(
+        self, engine: DaftQueryEngine, storage: Any
+    ) -> None:
+        frame = engine.load("users")
+        with pytest.raises(RuntimeError, match="Use DuckDB OLAP"):
+            frame.check_feasibility(warn_threshold=1, hard_limit=2)
+
+    def test_exactly_at_warn_threshold_no_warning(
+        self, engine: DaftQueryEngine, storage: Any
+    ) -> None:
+        frame = engine.load("users")
+        warnings = frame.check_feasibility(warn_threshold=5, hard_limit=100)
+        assert warnings == []
+
+    def test_between_warn_and_hard_has_warning(
+        self, engine: DaftQueryEngine, storage: Any
+    ) -> None:
+        frame = engine.load("users")
+        warnings = frame.check_feasibility(warn_threshold=4, hard_limit=100)
+        assert len(warnings) == 1
