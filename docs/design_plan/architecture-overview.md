@@ -1,6 +1,6 @@
 # Arrow Lake 总体架构图
 
-**版本**: v1.3.0 | **日期**: 2026-05-11
+**版本**: v1.3.4 | **日期**: 2026-05-18
 **来源**: [architecture-v1.3.0.md](architecture-v1.3.0.md) + [architecture-v1.0_draft_up.md](architecture-v1.0_draft_up.md)
 
 ---
@@ -31,16 +31,25 @@
                    |                +---v--+  +--v-----------+
           +--------v---+--------+   |DuckDB|  | LLM Provider  |
           | LanceDB SDK| DuckDB  |   |SQL   |  | OpenAI/vLLM   |
-          | (数据管理层)|(查询    |   |引擎  |  | Ollama        |
+          | (数据管理层)|(OLAP    |   |引擎  |  | Ollama        |
           | 写入/索引   | 分析层) |   |      |  +---------------+
           | Schema演化  |         |   |      |
           | 版本管理    |         |   |      |
           +--------+----+--+--+--+---+------++
                    |     |  |  |           |
-                   |     |  |  +-----------+
-                   |     |  |  |
-          +--------v-----v--v--v--------+
-          |      Lance 数据格式层        |
+                   |     |  |  +-----------+-----+
+                   |     |  |                    |
+                   |     |  +----------+   +-----v----------+
+                   |     |             |   | Daft Query     |
+                   |     |             |   | Engine         |
+                   |     |             |   | (DataFrame     |
+                   |     |             |   |  惰性操作链)    |
+                   |     |             |   | sort/filter/   |
+                   |     |             |   | groupby/sql/   |
+                   |     |             |   | pivot/explode  |
+                   |     |             |   +-----+----------+
+          +--------v-----v--v--v--------+      |
+          |      Lance 数据格式层        |<-----+
           |  列式+向量+FTS+版本管理       |
           +----+-------------------------+
                |
@@ -74,16 +83,19 @@ graph TB
 
     subgraph Engine["引擎层"]
         LanceDB["LanceDB SDK — 数据管理层<br/>写入 · 索引 · Schema演化 · 版本管理"]
-        DuckDB["DuckDB — 查询分析层<br/>OLAP · 向量 · FTS · 混合搜索"]
+        DuckDB["DuckDB — OLAP 查询层<br/>SQL · 向量 · FTS · 混合搜索"]
+        DaftQE["Daft — DataFrame 查询层<br/>惰性操作链 · sort/filter/groupby<br/>pivot/explode/sql · 安全加固"]
         RAG["RAG Engine<br/>检索 + 生成 + GraphRAG"]
         LLM["LLM Provider<br/>OpenAI · vLLM · Ollama"]
     end
 
     MW --> LanceDB
     MW --> DuckDB
+    MW --> DaftQE
     MW --> RAG
     SDK --> LanceDB
     SDK --> DuckDB
+    SDK --> DaftQE
     SDK --> RAG
     CLI --> LanceDB
 
@@ -93,6 +105,7 @@ graph TB
     Lance["Lance 数据格式层<br/>列式+向量+FTS+版本管理"]
     LanceDB --> Lance
     DuckDB --> Lance
+    DaftQE --> Lance
 
     subgraph Infra["存储 & 协调层"]
         Files["Lance Files<br/>列式存储"]
@@ -123,7 +136,8 @@ graph TB
 | **网关层** | FastAPI + Middleware Chain | HTTP 接口、认证、限流、安全头、可观测 |
 | **SDK 层** | Lake facade (8 Mixins) | 统一编程接口，懒初始化组件 |
 | **管理层** | LanceDB SDK | 数据写入 / 索引创建 / Schema 演化 / 版本管理 |
-| **查询层** | DuckDB + Lance 扩展 | OLAP SQL / 向量搜索 / FTS / 混合搜索 / Session Pool |
+| **OLAP 查询层** | DuckDB + Lance 扩展 | SQL OLAP / 向量搜索 / FTS / 混合搜索 / Session Pool |
+| **DataFrame 查询层** | Daft + DaftQueryEngine | 惰性 DataFrame 操作链 / SQL 子查询 / 安全加固 / 行数限制 |
 | **衍生层** | DuckDB + DuckLake 扩展 | ETL 物化 / 可写工作区 / DML |
 | **格式层** | Lance | 列式存储 + 向量索引 + 全文索引 + 版本管理 |
 | **存储层** | MinIO (S3) / 本地 FS | Lance 格式持久化 + 媒体二进制 |
@@ -133,9 +147,9 @@ graph TB
 
 ---
 
-## 二、LanceDB SDK 与 DuckDB 分工
+## 二、LanceDB SDK / DuckDB / Daft 三方分工
 
-**核心原则：LanceDB SDK 负责数据管理（写），DuckDB 负责查询分析（读）。两者互补，非替代。**
+**核心原则：LanceDB SDK 负责数据管理（写），DuckDB 负责 SQL 查询分析（读），Daft 负责 DataFrame 编程式查询（读）。三者互补，各司其职。**
 
 ```text
 LanceDB SDK (数据管理层)
@@ -144,10 +158,16 @@ LanceDB SDK (数据管理层)
 ├── Schema 演化 (add/drop/alter columns) → Lance 文件
 └── 版本管理 (list_versions / tags) → Lance 元数据
 
-DuckDB (查询分析层)
+DuckDB (SQL 查询分析层)
 ├── lance 扩展 → Lance (只读 SSOT: 原始数据、向量、FTS)
 ├── ducklake 扩展 → DuckLake (可写衍生: ETL、物化、工作区)
 └── 原生 SQL → JOIN 跨存储查询
+
+Daft (DataFrame 查询层)
+├── DaftQueryEngine → Lance 数据集加载 (S3/本地)
+├── LazyDaftFrame → 惰性操作链 (sort/filter/groupby/join/sql/pivot/explode/sample)
+├── 安全加固 → 标识符验证 + SQL 黑名单 + collect 行数限制 + 错误脱敏
+└── REST API → POST /api/v1/datasets/{name}/query/daft (链式 pipeline)
 ```
 
 ```mermaid
@@ -160,13 +180,21 @@ graph LR
         W5["list_versions()"]
     end
 
-    subgraph Read["DuckDB — 查询分析层"]
+    subgraph SQLRead["DuckDB — SQL 查询分析层"]
         R1["__lance_scan()"]
         R2["lance_vector_search()"]
         R3["lance_fts()"]
         R4["lance_hybrid_search()"]
         R5["DuckLake DML"]
         R6["跨存储 JOIN"]
+    end
+
+    subgraph DFRead["Daft — DataFrame 查询层"]
+        D1["DaftQueryEngine"]
+        D2["sort / filter / groupby"]
+        D3["sql / pivot / explode"]
+        D4["sample / distinct / offset"]
+        D5["REST API pipeline"]
     end
 
     Lance["Lance 格式层 (SSOT)"]
@@ -182,31 +210,48 @@ graph LR
     Lance --> R4
     Lance --> R5
     Lance --> R6
+    Lance --> D1
+    D1 --> D2
+    D1 --> D3
+    D1 --> D4
+    D2 --> D5
+    D3 --> D5
+    D4 --> D5
 ```
 
 ### 职责矩阵
 
-| 操作类别 | DuckDB lance 扩展 | LanceDB SDK | 说明 |
-| ------- | :---: | :---: | ------- |
-| 创建向量索引 (IVF-PQ) | - | ✓ | `table.create_index()` |
-| 创建 FTS 索引 (BM25) | - | ✓ | `table.create_fts_index()` |
-| 向量搜索 (使用索引) | ✓ | ✓ | DuckDB `lance_vector_search()` |
-| 全文搜索 (使用索引) | ✓ | ✓ | DuckDB `lance_fts()` |
-| 混合搜索 (RRF 融合) | ✓ | ✓ | DuckDB 原生 `lance_hybrid_search()` |
-| OLAP SQL (聚合/JOIN/窗口) | ✓ | - | DuckDB 强项 |
-| 数据写入 (add/optimize) | - | ✓ | `table.add()`, `table.optimize()` |
-| Schema 演化 | - | ✓ | `table.add_columns()` 等 |
-| 版本管理 (list/tags) | - | ✓ | `table.list_versions()` 等 |
-| 跨存储 JOIN (Lance+DuckLake) | ✓ | - | DuckDB 独有能力 |
+| 操作类别 | DuckDB lance 扩展 | LanceDB SDK | Daft | 说明 |
+| ------- | :---: | :---: | :---: | ------- |
+| 创建向量索引 (IVF-PQ) | - | ✓ | - | `table.create_index()` |
+| 创建 FTS 索引 (BM25) | - | ✓ | - | `table.create_fts_index()` |
+| 向量搜索 (使用索引) | ✓ | ✓ | - | DuckDB `lance_vector_search()` |
+| 全文搜索 (使用索引) | ✓ | ✓ | - | DuckDB `lance_fts()` |
+| 混合搜索 (RRF 融合) | ✓ | ✓ | - | DuckDB 原生 `lance_hybrid_search()` |
+| OLAP SQL (聚合/JOIN/窗口) | ✓ | - | - | DuckDB 强项 |
+| 数据写入 (add/optimize) | - | ✓ | - | `table.add()`, `table.optimize()` |
+| Schema 演化 | - | ✓ | - | `table.add_columns()` 等 |
+| 版本管理 (list/tags) | - | ✓ | - | `table.list_versions()` 等 |
+| 跨存储 JOIN (Lance+DuckLake) | ✓ | - | - | DuckDB 独有能力 |
+| DataFrame 编程式查询 | - | - | ✓ | 惰性操作链: sort/filter/groupby/pivot |
+| SQL 子查询 (CTE/窗口函数) | - | - | ✓ | `frame.sql()` — DuckDB 不擅长的复杂子查询 |
+| Ingest 文件读取 (CSV/Parquet/JSON) | - | - | ✓ | Daft 多格式读取 |
+| 多模态数据处理 | - | - | ✓ | 图像/音频/视频 + embed/classify/prompt |
+| 安全标识符验证 | - | - | ✓ | 全方法 `_SAFE_IDENTIFIER_RE` 校验 |
 
 ### 调用关系
 
 ```text
 Ingest 流程:
   数据 → LanceDB SDK (table.add + table.create_index) → Lance 文件
+  文件读取 → Daft (read_csv/read_parquet/read_json) → 数据预处理 → LanceDB SDK
 
-Query 流程:
+SQL Query 流程:
   REST API → DuckDB SQL (lance_vector_search / lance_fts / __lance_scan) → Lance 文件
+
+DataFrame Query 流程:
+  REST API → DaftQueryEngine.load() → LazyDaftFrame (链式操作) → collect() → Arrow Table
+  SDK → lake.daft_query() → sort/filter/groupby/sql/pivot → collect()
 
 管理流程:
   Admin API → LanceDB SDK (schema_evolution / version_management / optimize) → Lance 文件
@@ -235,9 +280,9 @@ Query 流程:
        |
        +---> [MinIO 原始媒体] ← 二进制文件 (非 Lance)
                       |
-                      +------------+------------+
-                                   |
-                          [DuckDB SQL 查询层]
+                      +------------+------------+------------+
+                                   |            |            |
+                          [DuckDB SQL 查询层]  [Daft DataFrame 查询层]
                           ┌──────────────────────┐
                           │ lance 扩展:          │
                           │ · __lance_scan       │ → OLAP SQL
@@ -250,12 +295,20 @@ Query 流程:
                           │ · DML (读写)         │ → 工作区
                           │ · 快照时间旅行         │ → 版本管理
                           └──────────┬───────────┘
+                          ┌──────────────────────┐
+                          │ Daft DataFrame 引擎: │
+                          │ · sort/filter/groupby│ → 编程式查询
+                          │ · sql/pivot/explode  │ → 复杂变换
+                          │ · sample/distinct    │ → 采样去重
+                          │ · 安全加固 + 行数限制  │ → 防注入/DoS
+                          └──────────┬───────────┘
                                      |
                  +───────────────────+───────────────────+
                  |                   |                   |
          [REST API 直查]     [RAG Engine 检索]    [Graph Traversal]
          OLAP/Faceted        |                    [HugeGraph]
          向量/FTS/混合        │                        |
+         Daft DataFrame       │                        |
                             +──┬─────────────+─────────┘
                                │             │
                     +──────────▼───┐  +───────▼──────┐
@@ -289,17 +342,27 @@ flowchart TD
         DuckLakeETL["DuckLake<br/>ETL物化 · DML · 工作区"]
     end
 
+    subgraph DaftQuery["Daft DataFrame 查询层"]
+        DaftLoad["DaftQueryEngine.load()"]
+        DaftOps["sort · filter · groupby · sql<br/>pivot · explode · sample · distinct"]
+        DaftSafe["安全加固: 标识符验证 · SQL黑名单 · 行数限制"]
+        DaftCollect["collect() → Arrow Table"]
+        DaftLoad --> DaftOps --> DaftSafe --> DaftCollect
+    end
+
     LanceLayer --> Scan
     LanceLayer --> VecSearch
     LanceLayer --> FTS
     LanceLayer --> Hybrid
     LanceLayer --> DuckLakeETL
+    LanceLayer --> DaftLoad
 
-    RESTOut["REST API 直查<br/>OLAP · Faceted · 向量 · FTS · 混合"]
+    RESTOut["REST API 直查<br/>OLAP · Faceted · 向量 · FTS · 混合 · DataFrame"]
     Scan --> RESTOut
     VecSearch --> RESTOut
     FTS --> RESTOut
     Hybrid --> RESTOut
+    DaftCollect --> RESTOut
 
     subgraph RAGPipeline["RAG Pipeline"]
         Context["上下文组装<br/>Token预算 · 去重 · 引用"]
@@ -324,7 +387,7 @@ flowchart TD
 
 | 首字母 | 框架 | 职责 | 部署位置 |
 | -------- | ------ | ------ | --------- |
-| **Da** | Daft | DataFrame 引擎，Ingest 文件读取 + 编程式 ETL | 嵌入 API 进程 |
+| **Da** | Daft | DataFrame 查询引擎: 惰性操作链 + 编程式 ETL + Lance 查询 + 安全加固 | 嵌入 API 进程 |
 | **R** | Ray | 分布式计算，CatalogActor + GPU 调度 + 并行 map | Ray Cluster (独立) |
 | **M** | Metaflow | 工作流编排，质量管道 + 端到端 Flow + 调度 | 嵌入 API 进程 |
 | **U** | DuckDB | OLAP SQL + Lance/DuckLake 扩展 + Session Pool | 嵌入 API 进程 |
@@ -371,7 +434,7 @@ flowchart TB
     end
 
     subgraph Frameworks["计算框架"]
-        Daft["Daft<br/>文件读取 · ETL 转换 · 惰性求值"]
+        Daft["Daft<br/>DataFrame查询 · 惰性操作链 · ETL · 安全加固"]
         DuckDBF["DuckDB<br/>SQL OLAP · 向量/FTS · 混合搜索"]
         Ray["Ray<br/>分布式 · Catalog · GPU 推理"]
     end
@@ -695,9 +758,89 @@ flowchart TD
     DML --> Snapshot
 ```
 
----
+### 6E. Daft DataFrame 查询流程 (安全加固)
 
-## 七、部署架构
+```text
+[POST /api/v1/datasets/{name}/query/daft]
+    │
+    v
++--- DaftQueryEngine.load() ----------------------------------+
+|                                                             |
+| 1. 数据集名验证 (_SAFE_IDENTIFIER_RE)                       |
+|    └─ 拒绝: 空/路径穿越/特殊字符                              |
+|                                                             |
+| 2. Lance 数据集加载                                          |
+|    ├─ daft.read_lance(lance_path, io_config)                |
+|    ├─ FileNotFoundError → 脱敏错误消息                       |
+|    └─ RuntimeError → 脱敏错误 + 内部日志                     |
++-------------------------------------------------------------+
+    │
+    v
++--- 链式操作 Pipeline (惰性求值) -----------------------------+
+|                                                             |
+| sort(column, desc)    → 列名验证                            |
+|     ↓                                                       |
+| filter(predicate)     → Daft Expression                     |
+|     ↓                                                       |
+| groupby(cols).agg()   → 列名验证 + 7种聚合函数               |
+|     ↓                                                       |
+| sql(query)            → 空查询拒绝 + 长度上限(10K)           |
+|                        + DDL/DML 关键词黑名单                 |
+|     ↓                                                       |
+| pivot/explode/sample  → 参数验证 + 聚合白名单                |
+|     ↓                                                       |
+| distinct/offset/limit → 边界检查                             |
+|     ↓                                                       |
+| select(columns)       → 列名验证                            |
++-------------------------------------------------------------+
+    │
+    v
++--- collect() → Arrow Table ---------------------------------+
+|                                                             |
+| 1. max_rows 安全上限 (默认 100K)                            |
+|    ├─ 超限 → 截断 + warning 日志                            |
+|    └─ max_rows=0 → 禁用限制                                 |
+|                                                             |
+| 2. 返回 pyarrow.Table                                      |
+|    └─ → arrow_table_to_response() → JSON / Arrow IPC        |
++-------------------------------------------------------------+
+```
+
+```mermaid
+flowchart TD
+    Req["POST /api/v1/datasets/{name}/query/daft"]
+
+    subgraph Load["DaftQueryEngine.load()"]
+        Validate["数据集名验证<br/>_SAFE_IDENTIFIER_RE"]
+        Read["daft.read_lance()"]
+        ErrSanitize["错误脱敏<br/>不暴露路径/凭据"]
+        Validate --> Read
+        Read -->|失败| ErrSanitize
+    end
+
+    subgraph Pipeline["链式操作 Pipeline (惰性求值)"]
+        Sort["sort(column, desc)<br/>列名验证"]
+        Filter["filter(predicate)<br/>Daft Expression"]
+        GroupBy["groupby(cols).agg()<br/>列名验证 + 聚合白名单"]
+        SQL["sql(query)<br/>空查询拒绝 + 长度上限<br/>DDL/DML 黑名单"]
+        Reshape["pivot · explode · sample<br/>参数验证"]
+        Pagination["distinct · offset · limit<br/>边界检查"]
+        Select["select(columns)<br/>列名验证"]
+
+        Sort --> Filter --> GroupBy --> SQL
+        SQL --> Reshape --> Pagination --> Select
+    end
+
+    subgraph Collect["collect() → Arrow Table"]
+        MaxRows["max_rows 安全上限<br/>默认 100K · 超限截断"]
+        Response["→ JSON / Arrow IPC"]
+        MaxRows --> Response
+    end
+
+    Req --> Load
+    Load --> Pipeline
+    Pipeline --> Collect
+```
 
 ### 7A. Docker Compose Profile 矩阵
 
@@ -770,6 +913,7 @@ graph TB
 | **Lance** | 统一数据格式 | SSOT | 生产使用，7 种分块策略 |
 | **LanceDB SDK** | 数据管理层 | 写入+管理 | 完整 CRUD + 版本 + 索引 |
 | **DuckDB** | 查询分析层 | 查询为主 | Session Pool + 资源治理 + lance/ducklake 扩展 |
+| **Daft** | DataFrame 查询层 | 查询+ETL | 惰性操作链 + DaftQueryEngine + 安全加固 + 89 测试覆盖 |
 | **DuckLake** | 可写衍生层 | 完整 DML | DuckDB 扩展加载，ETL 物化 |
 | **MinIO** | S3 存储后端 | 读写 | 生产集成，storage_options 接通 |
 | **Redis** | 分布式协调 | 读写 | 信号量 + JWT 黑名单 |
@@ -822,3 +966,5 @@ flowchart TD
 ---
 
 > 详细设计参见：[architecture-v1.3.0.md](architecture-v1.3.0.md) | [architecture-v1.0_draft_up.md](architecture-v1.0_draft_up.md)
+>
+> **v1.3.4 变更摘要**：Daft 从 Ingest 辅助角色升级为 DataFrame 查询引擎层，新增 DaftQueryEngine / LazyDaftFrame / REST API pipeline，含安全加固（标识符验证 + SQL 黑名单 + collect 行数限制 + 错误脱敏），89 测试覆盖。
