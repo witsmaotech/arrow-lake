@@ -1,6 +1,6 @@
 # Arrow Lake 总体架构图
 
-**版本**: v1.3.3 | **日期**: 2026-05-18
+**版本**: v1.3.4 | **日期**: 2026-05-18
 **来源**: [architecture-v1.3.0.md](architecture-v1.3.0.md) + [architecture-v1.0_draft_up.md](architecture-v1.0_draft_up.md)
 
 ---
@@ -144,6 +144,7 @@ graph TB
 | **协调层** | Redis | 分布式信号量 / JWT 黑名单 / Session 协调 |
 | **图数据库** | HugeGraph (外部) | 知识图谱 / GraphRAG / Gremlin 遍历 |
 | **外部层** | LLM / Ray / OTel | 生成 / 分布式计算 / 可观测 |
+| **编排层** | Metaflow Flows | 工作流编排: 并行/分支/重试/超时/资源/追溯 |
 
 ---
 
@@ -529,6 +530,216 @@ flowchart TB
     Facade --> Ray
     Ray --> RayCluster
     DuckDBF --> RedisCoord
+```
+
+---
+
+## 四B、工作流编排层 (Metaflow)
+
+Metaflow 作为 DARMU 栈中的编排层，管理数据处理的步骤顺序、并行分发、容错重试、资源声明和运行追溯。
+
+### Flow 拓扑总览
+
+```text
+┌─────────────────────────────────────────────────────────────────────┐
+│                     Arrow Lake Metaflow Flows                       │
+│                                                                     │
+│  ┌──────────┐  ┌──────────┐  ┌───────────┐  ┌──────────┐          │
+│  │ Ingest   │  │ Embed    │  │ KG        │  │ BatchRAG │          │
+│  │ Flow     │  │ Flow     │  │ Flow      │  │ Flow     │          │
+│  │          │  │          │  │           │  │          │          │
+│  │ foreach  │  │ foreach  │  │ branch    │  │ foreach  │          │
+│  │ retry    │  │ resources│  │ retry     │  │ timeout  │          │
+│  │ catch    │  │ retry    │  │ catch     │  │ retry    │          │
+│  └────┬─────┘  │ catch    │  │ resources │  │ catch    │          │
+│       │        └────┬─────┘  └─────┬─────┘  └────┬─────┘          │
+│       │             │              │              │                │
+│       ▼             ▼              ▼              ▼                │
+│  ┌──────────────────────────────────────────────────────┐          │
+│  │              Lake Facade / Storage API                │          │
+│  └──────────────────────┬───────────────────────────────┘          │
+│                         │                                          │
+│  ┌──────────────────────┼───────────────────────────────┐          │
+│  │         Metaflow 基础设施                             │          │
+│  │  ArrowLakeFlowSpec · FlowRegistry · StateRollback    │          │
+│  │  RetryCategory · ErrorClassifier · AuditTrail        │          │
+│  │  ScheduleConfig · RunTags · ArgoWorkflowBridge       │          │
+│  │  RunTracker (Client API)                              │          │
+│  └──────────────────────────────────────────────────────┘          │
+│                                                                     │
+│  ┌──────────────────────────────────────────────────────┐          │
+│  │         已有 Flow (v1.3.3 线性管道)                    │          │
+│  │  QualityPipelineFlow · MayaE2EFlow · ScheduledQuality │          │
+│  └──────────────────────────────────────────────────────┘          │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+```mermaid
+flowchart TB
+    subgraph NewFlows["新增 Flow (v1.3.4)"]
+        direction TB
+        IF["IngestFlow<br/>@foreach · @retry · @catch"]
+        EF["EmbedFlow<br/>@foreach · @resources(gpu=1) · @retry · @catch"]
+        KF["KGFlow<br/>branch · @retry · @catch · @resources"]
+        BF["BatchRAGFlow<br/>@foreach · @timeout · @retry · @catch"]
+    end
+
+    subgraph LegacyFlows["已有 Flow (v1.3.3)"]
+        QF["QualityPipelineFlow<br/>start → apply_filters → end"]
+        MF["MayaE2EFlow<br/>start → ingest → quality → embed → search → end"]
+        SF["ScheduledQualityFlow<br/>cron 08:00"]
+    end
+
+    subgraph Infra["Metaflow 基础设施"]
+        Base["ArrowLakeFlowSpec<br/>FlowRegistry"]
+        Retry["RetryCategory<br/>build_metaflow_retry"]
+        Err["ErrorClassifier<br/>catch_handler"]
+        Rollback["StateRollback<br/>CheckpointInfo"]
+        Schedule["ScheduleConfig<br/>build_schedule"]
+        Tags["RunTags<br/>find_failed_runs"]
+        Audit["AuditTrail<br/>HMAC 完整性"]
+        Argo["ArgoWorkflowBridge<br/>generate/validate/deploy"]
+        Tracker["RunTracker<br/>Client API 封装"]
+    end
+
+    subgraph API["Lake Facade / Storage API"]
+        Storage["LanceStorageManager"]
+        Lake["Lake Facade"]
+    end
+
+    NewFlows --> API
+    LegacyFlows --> API
+    NewFlows -.-> Infra
+    LegacyFlows -.-> Infra
+    Infra -.-> API
+```
+
+### 各 Flow 拓扑详情
+
+#### IngestFlow — 并行摄入 + 死信队列
+
+```text
+start (扫描目录)
+  │
+  ├── foreach(files) ──┐
+  │   @retry(3)        │
+  │   @catch           │ N 路并行
+  │   ingest_file      │
+  │                    │
+  ├── foreach(files) ──┤
+  │   ingest_file      │
+  │                    │
+  └── foreach(files) ──┘
+           │
+       join (汇总: success + dead_letter)
+           │
+         end (JSON 报告)
+```
+
+#### EmbedFlow — 分片编码 + GPU 资源管理
+
+```text
+start (加载数据, 分 shard)
+  │
+  ├── foreach(shards) ──┐
+  │   @resources(gpu=1) │
+  │   @retry(2)         │ N 路并行
+  │   @catch            │
+  │   encode_shard      │
+  │                     │
+  ├── foreach(shards) ──┤
+  │   encode_shard      │
+  │                     │
+  └── foreach(shards) ──┘
+           │
+       join (合并 Table → 覆写数据集)
+           │
+         end (JSON 报告)
+```
+
+#### KGFlow — 分支并行 + 条件插入
+
+```text
+start (加载数据, 准备索引)
+  │
+  ├─── extract_entities ──→ join_kg
+  │    @retry(3)                │
+  │    @catch                   │
+  │                             │
+  └─── ensure_schema    ──→ join_kg
+       @resources(8G)           │
+                                  │
+                          insert_vertices
+                          @resources(16G)
+                          @retry(2)
+                          @catch
+                                  │
+                                end
+```
+
+#### BatchRAGFlow — 并行查询 + 超时保护
+
+```text
+start (加载问题列表)
+  │
+  ├── foreach(questions) ──┐
+  │   @retry(3)            │
+  │   @timeout(60s)        │ N 路并行
+  │   @catch               │
+  │   query                │
+  │                        │
+  ├── foreach(questions) ──┤
+  │   query                │
+  │                        │
+  └── foreach(questions) ──┘
+           │
+       join (汇总结果)
+           │
+         end (JSON 报告)
+```
+
+### Metaflow 特性使用矩阵
+
+```text
+                foreach  retry  catch  timeout  resources  branch  Client API
+IngestFlow        ●       ●      ●
+EmbedFlow         ●       ●      ●                ●
+KGFlow                           ●               ●        ●
+BatchRAGFlow      ●       ●      ●      ●
+QualityPipeline                   ●               ●
+ScheduledQuality                  ●
+```
+
+### 基础设施模块一览
+
+| 模块 | 文件 | 职责 |
+| ---- | ---- | ---- |
+| ArrowLakeFlowSpec | `workflow/base.py` | 基类 mixin: _load_config + _auto_tag |
+| FlowRegistry | `workflow/base.py` | Flow 发现与注册表 |
+| RetryCategory | `workflow/retry.py` | 重试分类: TRANSIENT / RESOURCE / SPOT |
+| ErrorClassifier | `workflow/error_handler.py` | 错误分类: TRANSIENT / RESOURCE / VALIDATION / FATAL |
+| StateRollback | `workflow/rollback.py` | Lance 版本 checkpoint + rollback |
+| ScheduleConfig | `workflow/schedule.py` | cron / daily / hourly 调度配置 |
+| RunTags | `workflow/tags.py` | 自动标签生成 + 失败 run 查询 |
+| AuditTrail | `workflow/audit.py` | HMAC 审计日志 |
+| ArgoWorkflowBridge | `workflow/argo.py` | Argo YAML 生成/验证/部署 |
+| RunTracker | `workflow/run_tracker.py` | Client API: run_history / compare_runs |
+
+### 装饰器最佳实践
+
+```text
+推荐装饰器顺序 (从外到内):
+
+@resources(gpu=1, memory=16000)   # 1. 资源声明 — 调度时生效
+@retry(times=3)                    # 2. 重试策略
+@timeout(seconds=300)              # 3. 超时控制
+@catch(var="error")                # 4. 异常捕获 — 兜底
+@step                              # 5. Metaflow step
+def my_step(self):
+    if hasattr(self, "error"):
+        # 容错处理: 分类错误、记录死信、回滚状态
+    else:
+        # 正常处理
 ```
 
 ---
@@ -987,7 +1198,7 @@ graph TB
 
 ## 八、核心组件职责矩阵
 
-| 组件 | 职责 | 读写 | v1.3.0 状态 |
+| 组件 | 职责 | 读写 | v1.3.4 状态 |
 | ------ | ------ | ------ | ------------ |
 | **Lance** | 统一数据格式 | SSOT | 生产使用，7 种分块策略 |
 | **LanceDB SDK** | 数据管理层 | 写入+管理 | 完整 CRUD + 版本 + 索引 |
@@ -1001,6 +1212,8 @@ graph TB
 | **FastAPI** | HTTP 接口 | — | 15 routers，RBAC 三角色，安全头 |
 | **Ray** | 分布式计算 | — | Ray Cluster + GPU Autoscaler |
 | **Prometheus + OTel** | 可观测性 | — | 完整 traces + metrics + 健康检查 |
+| **Metaflow Flows** | 工作流编排 | — | 7 Flows (4 新增): foreach/branch/retry/catch/timeout/resources |
+| **Metaflow 基础设施** | 编排支撑 | — | 10 模块: Registry/Retry/Error/Rollback/Schedule/Tags/Audit/Argo/Tracker |
 
 ---
 
@@ -1046,4 +1259,6 @@ flowchart TD
 
 > 详细设计参见：[architecture-v1.3.0.md](architecture-v1.3.0.md) | [architecture-v1.0_draft_up.md](architecture-v1.0_draft_up.md)
 >
-> **v1.3.4 变更摘要**：Daft 从 Ingest 辅助角色升级为 DataFrame 查询引擎层，新增 DaftQueryEngine / LazyDaftFrame / REST API pipeline，含安全加固（标识符验证 + SQL 黑名单 + collect 行数限制 + 错误脱敏），89 测试覆盖。
+> **v1.3.4 变更摘要**：Metaflow 工作流编排层升级 — 新增 4 个高级特性 Flow (IngestFlow / EmbedFlow / KGFlow / BatchRAGFlow)，使用 @foreach 并行、@branch 分支、@retry 容错、@catch 死信、@timeout 超时、@resources 资源声明。新增 RunTracker (Client API 封装)。原有 3 个线性 Flow 保留。总计 7 Flows + 10 基础设施模块，285 测试覆盖。
+>
+> 详细设计参见：[architecture-v1.3.0.md](architecture-v1.3.0.md) | [architecture-v1.0_draft_up.md](architecture-v1.0_draft_up.md) | [metaflow-optimization-plan.md](../metaflow-optimization-plan.md)

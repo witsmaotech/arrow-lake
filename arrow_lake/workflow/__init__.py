@@ -11,6 +11,7 @@ from arrow_lake.workflow.error_handler import (
 )
 from arrow_lake.workflow.retry import RetryCategory, build_metaflow_retry, retry_with_backoff
 from arrow_lake.workflow.rollback import CheckpointInfo, StateRollback
+from arrow_lake.workflow.run_tracker import RunComparison, RunSummary, RunTracker
 from arrow_lake.workflow.schedule import ScheduleConfig, build_schedule
 from arrow_lake.workflow.tags import RunTags, find_failed_runs, generate_resume_tags
 
@@ -24,7 +25,10 @@ __all__ = [
     "ErrorCategory",
     "FlowRegistry",
     "RetryCategory",
+    "RunComparison",
+    "RunSummary",
     "RunTags",
+    "RunTracker",
     "ScheduleConfig",
     "StateRollback",
     "build_metaflow_retry",

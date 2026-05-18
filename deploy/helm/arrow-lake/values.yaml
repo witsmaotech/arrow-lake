@@ -143,3 +143,104 @@ secrets:
   apiKey: ""
   jwtSecret: ""
   auditHmacKey: ""
+
+# Metaflow workflow orchestration
+metaflow:
+  enabled: false
+  datastore: "s3"
+  datastoreS3Root: "s3://arrow-lake/metaflow"
+  defaultMetadata: "service"
+  serviceUrl: "http://metaflow-metadata:8080"
+  profile: "production"
+  secrets: []
+  nodeSelector: {}
+  tolerations: []
+
+  # CronWorkflow: daily quality check
+  cronQuality:
+    enabled: false
+    schedule: "0 8 * * *"
+    datasetName: "documents"
+    baseUri: "s3://arrow-lake/lake"
+
+  # Per-flow configuration
+  flows:
+    ingest:
+      sourcePath: "/data/input"
+      datasetName: "documents"
+      baseUri: "s3://arrow-lake/lake"
+      resources:
+        requests:
+          cpu: "500m"
+          memory: "1Gi"
+        limits:
+          cpu: "2"
+          memory: "4Gi"
+    embed:
+      datasetName: "documents"
+      baseUri: "s3://arrow-lake/lake"
+      encoderType: "api"
+      shardSize: 500
+      resources:
+        requests:
+          cpu: "1"
+          memory: "4Gi"
+          nvidia.com/gpu: "1"
+        limits:
+          cpu: "4"
+          memory: "16Gi"
+          nvidia.com/gpu: "1"
+    kg:
+      datasetName: "documents"
+      baseUri: "s3://arrow-lake/lake"
+      chunkSize: 20
+      resources:
+        requests:
+          cpu: "500m"
+          memory: "2Gi"
+        limits:
+          cpu: "2"
+          memory: "8Gi"
+    batchRag:
+      questionsFile: "/data/questions.json"
+      datasetName: "documents"
+      baseUri: "s3://arrow-lake/lake"
+      topK: 5
+      resources:
+        requests:
+          cpu: "500m"
+          memory: "1Gi"
+        limits:
+          cpu: "2"
+          memory: "4Gi"
+    qualityPipeline:
+      datasetName: "documents"
+      baseUri: "s3://arrow-lake/lake"
+      resources:
+        requests:
+          cpu: "500m"
+          memory: "1Gi"
+        limits:
+          cpu: "2"
+          memory: "4Gi"
+    mayaE2e:
+      sourcePath: "/data/input"
+      datasetName: "documents"
+      baseUri: "s3://arrow-lake/lake"
+      resources:
+        requests:
+          cpu: "500m"
+          memory: "2Gi"
+        limits:
+          cpu: "2"
+          memory: "8Gi"
+    scheduledQuality:
+      datasetName: "documents"
+      baseUri: "s3://arrow-lake/lake"
+      resources:
+        requests:
+          cpu: "250m"
+          memory: "512Mi"
+        limits:
+          cpu: "1"
+          memory: "2Gi"

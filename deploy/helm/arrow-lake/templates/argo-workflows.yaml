@@ -1,0 +1,307 @@
+{{- if .Values.metaflow.enabled }}
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: {{ include "arrow-lake.fullname" . }}-flows
+  labels:
+    {{- include "arrow-lake.labels" . | nindent 4 }}
+    component: metaflow
+spec:
+  serviceAccountName: {{ include "arrow-lake.fullname" . }}-argo-runner
+  podMetadata:
+    labels:
+      {{- include "arrow-lake.selectorLabels" . | nindent 6 }}
+      component: metaflow
+  podPatch: |
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+  entrypoint: flow-dispatcher
+  arguments:
+    parameters:
+      - name: flow
+        value: "ingest"
+      - name: run-id
+        value: ""
+  templates:
+
+    # -- Dispatcher: selects which flow to run based on the flow parameter --
+    - name: flow-dispatcher
+      inputs:
+        parameters:
+          - name: flow
+          - name: run-id
+      steps:
+        - - name: run-flow
+            templateRef:
+              name: {{ include "arrow-lake.fullname" . }}-flows
+              template: "{{ `{{inputs.parameters.flow}}` }}"
+            arguments:
+              parameters:
+                - name: run-id
+                  value: "{{ `{{inputs.parameters.run-id}}` }}"
+
+    # -- IngestFlow: parallel file ingestion with dead-letter queue --
+    - name: ingest
+      inputs:
+        parameters:
+          - name: run-id
+            value: ""
+          - name: source-path
+            value: "{{ .Values.metaflow.flows.ingest.sourcePath }}"
+          - name: dataset-name
+            value: "{{ .Values.metaflow.flows.ingest.datasetName }}"
+          - name: base-uri
+            value: "{{ .Values.metaflow.flows.ingest.baseUri }}"
+      container:
+        image: "{{ .Values.apiServer.image.repository }}:{{ .Values.apiServer.image.tag }}"
+        command: ["python"]
+        args:
+          - "flows/ingest_flow.py"
+          - "run"
+          - "--source-path"
+          - "{{ `{{inputs.parameters.source-path}}` }}"
+          - "--dataset-name"
+          - "{{ `{{inputs.parameters.dataset-name}}` }}"
+          - "--base-uri"
+          - "{{ `{{inputs.parameters.base-uri}}` }}"
+        envFrom:
+          - configMapRef:
+              name: {{ include "arrow-lake.fullname" . }}-metaflow
+        resources:
+          {{- toYaml .Values.metaflow.flows.ingest.resources | nindent 10 }}
+      {{- with .Values.metaflow.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.metaflow.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+    # -- EmbedFlow: parallel embedding with GPU resource management --
+    - name: embed
+      inputs:
+        parameters:
+          - name: run-id
+            value: ""
+          - name: dataset-name
+            value: "{{ .Values.metaflow.flows.embed.datasetName }}"
+          - name: base-uri
+            value: "{{ .Values.metaflow.flows.embed.baseUri }}"
+          - name: encoder-type
+            value: "{{ .Values.metaflow.flows.embed.encoderType }}"
+          - name: shard-size
+            value: "{{ .Values.metaflow.flows.embed.shardSize | quote }}"
+      container:
+        image: "{{ .Values.apiServer.image.repository }}:{{ .Values.apiServer.image.tag }}"
+        command: ["python"]
+        args:
+          - "flows/embed_flow.py"
+          - "run"
+          - "--dataset-name"
+          - "{{ `{{inputs.parameters.dataset-name}}` }}"
+          - "--base-uri"
+          - "{{ `{{inputs.parameters.base-uri}}` }}"
+          - "--encoder-type"
+          - "{{ `{{inputs.parameters.encoder-type}}` }}"
+          - "--shard-size"
+          - "{{ `{{inputs.parameters.shard-size}}` }}"
+        envFrom:
+          - configMapRef:
+              name: {{ include "arrow-lake.fullname" . }}-metaflow
+        resources:
+          {{- toYaml .Values.metaflow.flows.embed.resources | nindent 10 }}
+      {{- with .Values.metaflow.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+    # -- KGFlow: knowledge graph construction with branch parallelism --
+    - name: kg
+      inputs:
+        parameters:
+          - name: run-id
+            value: ""
+          - name: dataset-name
+            value: "{{ .Values.metaflow.flows.kg.datasetName }}"
+          - name: base-uri
+            value: "{{ .Values.metaflow.flows.kg.baseUri }}"
+          - name: chunk-size
+            value: "{{ .Values.metaflow.flows.kg.chunkSize | quote }}"
+      container:
+        image: "{{ .Values.apiServer.image.repository }}:{{ .Values.apiServer.image.tag }}"
+        command: ["python"]
+        args:
+          - "flows/kg_flow.py"
+          - "run"
+          - "--dataset-name"
+          - "{{ `{{inputs.parameters.dataset-name}}` }}"
+          - "--base-uri"
+          - "{{ `{{inputs.parameters.base-uri}}` }}"
+          - "--chunk-size"
+          - "{{ `{{inputs.parameters.chunk-size}}` }}"
+        envFrom:
+          - configMapRef:
+              name: {{ include "arrow-lake.fullname" . }}-metaflow
+        resources:
+          {{- toYaml .Values.metaflow.flows.kg.resources | nindent 10 }}
+      {{- with .Values.metaflow.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+    # -- BatchRAGFlow: batch RAG queries with error capture --
+    - name: batch-rag
+      inputs:
+        parameters:
+          - name: run-id
+            value: ""
+          - name: questions-file
+            value: "{{ .Values.metaflow.flows.batchRag.questionsFile }}"
+          - name: dataset-name
+            value: "{{ .Values.metaflow.flows.batchRag.datasetName }}"
+          - name: base-uri
+            value: "{{ .Values.metaflow.flows.batchRag.baseUri }}"
+          - name: top-k
+            value: "{{ .Values.metaflow.flows.batchRag.topK | quote }}"
+      container:
+        image: "{{ .Values.apiServer.image.repository }}:{{ .Values.apiServer.image.tag }}"
+        command: ["python"]
+        args:
+          - "flows/batch_rag_flow.py"
+          - "run"
+          - "--questions-file"
+          - "{{ `{{inputs.parameters.questions-file}}` }}"
+          - "--dataset-name"
+          - "{{ `{{inputs.parameters.dataset-name}}` }}"
+          - "--base-uri"
+          - "{{ `{{inputs.parameters.base-uri}}` }}"
+          - "--top-k"
+          - "{{ `{{inputs.parameters.top-k}}` }}"
+        envFrom:
+          - configMapRef:
+              name: {{ include "arrow-lake.fullname" . }}-metaflow
+        resources:
+          {{- toYaml .Values.metaflow.flows.batchRag.resources | nindent 10 }}
+      {{- with .Values.metaflow.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+    # -- QualityPipelineFlow: quality filter pipeline --
+    - name: quality-pipeline
+      inputs:
+        parameters:
+          - name: run-id
+            value: ""
+          - name: dataset-name
+            value: "{{ .Values.metaflow.flows.qualityPipeline.datasetName }}"
+          - name: base-uri
+            value: "{{ .Values.metaflow.flows.qualityPipeline.baseUri }}"
+      container:
+        image: "{{ .Values.apiServer.image.repository }}:{{ .Values.apiServer.image.tag }}"
+        command: ["python"]
+        args:
+          - "flows/quality_pipeline_flow.py"
+          - "run"
+          - "--dataset-name"
+          - "{{ `{{inputs.parameters.dataset-name}}` }}"
+          - "--base-uri"
+          - "{{ `{{inputs.parameters.base-uri}}` }}"
+        envFrom:
+          - configMapRef:
+              name: {{ include "arrow-lake.fullname" . }}-metaflow
+        resources:
+          {{- toYaml .Values.metaflow.flows.qualityPipeline.resources | nindent 10 }}
+
+    # -- MayaE2EFlow: end-to-end demo pipeline --
+    - name: maya-e2e
+      inputs:
+        parameters:
+          - name: run-id
+            value: ""
+          - name: source-path
+            value: "{{ .Values.metaflow.flows.mayaE2e.sourcePath }}"
+          - name: dataset-name
+            value: "{{ .Values.metaflow.flows.mayaE2e.datasetName }}"
+          - name: base-uri
+            value: "{{ .Values.metaflow.flows.mayaE2e.baseUri }}"
+      container:
+        image: "{{ .Values.apiServer.image.repository }}:{{ .Values.apiServer.image.tag }}"
+        command: ["python"]
+        args:
+          - "flows/maya_e2e_flow.py"
+          - "run"
+          - "--source-path"
+          - "{{ `{{inputs.parameters.source-path}}` }}"
+          - "--dataset-name"
+          - "{{ `{{inputs.parameters.dataset-name}}` }}"
+          - "--base-uri"
+          - "{{ `{{inputs.parameters.base-uri}}` }}"
+        envFrom:
+          - configMapRef:
+              name: {{ include "arrow-lake.fullname" . }}-metaflow
+        resources:
+          {{- toYaml .Values.metaflow.flows.mayaE2e.resources | nindent 10 }}
+
+    # -- ScheduledQualityFlow: daily quality check --
+    - name: scheduled-quality
+      inputs:
+        parameters:
+          - name: run-id
+            value: ""
+          - name: dataset-name
+            value: "{{ .Values.metaflow.flows.scheduledQuality.datasetName }}"
+          - name: base-uri
+            value: "{{ .Values.metaflow.flows.scheduledQuality.baseUri }}"
+      container:
+        image: "{{ .Values.apiServer.image.repository }}:{{ .Values.apiServer.image.tag }}"
+        command: ["python"]
+        args:
+          - "flows/scheduled_quality_flow.py"
+          - "run"
+          - "--dataset-name"
+          - "{{ `{{inputs.parameters.dataset-name}}` }}"
+          - "--base-uri"
+          - "{{ `{{inputs.parameters.base-uri}}` }}"
+        envFrom:
+          - configMapRef:
+              name: {{ include "arrow-lake.fullname" . }}-metaflow
+        resources:
+          {{- toYaml .Values.metaflow.flows.scheduledQuality.resources | nindent 10 }}
+
+---
+# CronWorkflow: daily quality check at 08:00 UTC
+{{- if .Values.metaflow.cronQuality.enabled }}
+apiVersion: argoproj.io/v1alpha1
+kind: CronWorkflow
+metadata:
+  name: {{ include "arrow-lake.fullname" . }}-daily-quality
+  labels:
+    {{- include "arrow-lake.labels" . | nindent 4 }}
+    component: metaflow
+spec:
+  schedule: "{{ .Values.metaflow.cronQuality.schedule }}"
+  concurrencyPolicy: "Replace"
+  startingDeadlineSeconds: 300
+  workflowSpec:
+    serviceAccountName: {{ include "arrow-lake.fullname" . }}-argo-runner
+    entrypoint: run-quality
+    templates:
+      - name: run-quality
+        templateRef:
+          name: {{ include "arrow-lake.fullname" . }}-flows
+          template: scheduled-quality
+        arguments:
+          parameters:
+            - name: run-id
+              value: ""
+            - name: dataset-name
+              value: "{{ .Values.metaflow.cronQuality.datasetName }}"
+            - name: base-uri
+              value: "{{ .Values.metaflow.cronQuality.baseUri }}"
+{{- end }}
+{{- end }}

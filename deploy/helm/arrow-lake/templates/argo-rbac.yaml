@@ -1,0 +1,50 @@
+{{- if .Values.metaflow.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "arrow-lake.fullname" . }}-argo-runner
+  labels:
+    {{- include "arrow-lake.labels" . | nindent 4 }}
+    component: metaflow
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "arrow-lake.fullname" . }}-argo-runner
+  labels:
+    {{- include "arrow-lake.labels" . | nindent 4 }}
+    component: metaflow
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "pods/status"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+    resourceNames:
+      {{- range .Values.metaflow.secrets }}
+      - {{ . | quote }}
+      {{- end }}
+  - apiGroups: ["argoproj.io"]
+    resources: ["workflows", "workflows/status"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "arrow-lake.fullname" . }}-argo-runner
+  labels:
+    {{- include "arrow-lake.labels" . | nindent 4 }}
+    component: metaflow
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "arrow-lake.fullname" . }}-argo-runner
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "arrow-lake.fullname" . }}-argo-runner
+    namespace: {{ .Release.Namespace }}
+{{- end }}

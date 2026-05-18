@@ -23,3 +23,9 @@ networkPolicy:
 
 prometheusRules:
   enabled: false
+
+metaflow:
+  enabled: false
+  datastore: "local"
+  datastoreS3Root: "./data/metaflow"
+  defaultMetadata: "local"

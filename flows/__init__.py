@@ -26,6 +26,10 @@ def _register_flows() -> None:
         "quality_pipeline": "flows.quality_pipeline_flow.QualityPipelineFlow",
         "maya_e2e": "flows.maya_e2e_flow.MayaE2EFlow",
         "scheduled_quality": "flows.scheduled_quality_flow.ScheduledQualityFlow",
+        "ingest": "flows.ingest_flow.IngestFlow",
+        "embed": "flows.embed_flow.EmbedFlow",
+        "kg": "flows.kg_flow.KGFlow",
+        "batch_rag": "flows.batch_rag_flow.BatchRAGFlow",
     }
     for name, import_path in _flow_map.items():
         try:
@@ -38,4 +42,12 @@ def _register_flows() -> None:
             logger.warning("Flow '%s' could not be registered (%s)", name, import_path)
 
 
-__all__ = ["MayaE2EFlow", "QualityPipelineFlow", "ScheduledQualityFlow"]
+__all__ = [
+    "BatchRAGFlow",
+    "EmbedFlow",
+    "IngestFlow",
+    "KGFlow",
+    "MayaE2EFlow",
+    "QualityPipelineFlow",
+    "ScheduledQualityFlow",
+]

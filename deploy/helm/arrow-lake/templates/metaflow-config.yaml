@@ -1,0 +1,27 @@
+{{- if .Values.metaflow.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "arrow-lake.fullname" . }}-metaflow
+  labels:
+    {{- include "arrow-lake.labels" . | nindent 4 }}
+    component: metaflow
+data:
+  # Metaflow metadata service
+  METAFLOW_DATASTORE: "{{ .Values.metaflow.datastore }}"
+  METAFLOW_DATATOOLS_S3_ROOT: "{{ .Values.metaflow.datastoreS3Root }}"
+  METAFLOW_DEFAULT_METADATA: "{{ .Values.metaflow.defaultMetadata }}"
+  {{- if eq .Values.metaflow.defaultMetadata "service" }}
+  METAFLOW_SERVICE_URL: "{{ .Values.metaflow.serviceUrl }}"
+  {{- end }}
+  # Arrow Lake storage
+  ARROW_LAKE__STORAGE__S3_ENDPOINT: "{{ .Values.storage.endpoint }}"
+  ARROW_LAKE__STORAGE__S3_BUCKET: "{{ .Values.storage.bucket }}"
+  ARROW_LAKE__STORAGE__S3_REGION: "{{ .Values.storage.region }}"
+  # Observability
+  ARROW_LAKE__OBSERVABILITY__LOG_LEVEL: "{{ .Values.observability.logLevel }}"
+  # Metaflow profile for K8s execution
+  METAFLOW_PROFILE: "{{ .Values.metaflow.profile }}"
+  # K8s-specific: namespace for Argo workflows
+  METAFLOW_KUBERNETES_NAMESPACE: "{{ .Release.Namespace }}"
+{{- end }}
