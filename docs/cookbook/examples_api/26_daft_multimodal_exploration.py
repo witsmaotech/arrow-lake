@@ -191,9 +191,9 @@ def main() -> None:
     if resp.get("success"):
         for r in resp.get("rows", [])[:5]:
             title = str(r.get("title", "?"))[:45]
-            print(f"         id={r.get('id', '?'):12s} "
-                  f"year={r.get('year', '?'):5s} "
-                  f"cat={r.get('category', '?'):15s} "
+            print(f"         id={str(r.get('id', '?')):12s} "
+                  f"year={str(r.get('year', '?')):5s} "
+                  f"cat={str(r.get('category', '?')):15s} "
                   f"title={title}")
         c._pass("论文字段样本")
     else:

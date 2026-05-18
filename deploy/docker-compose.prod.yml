@@ -25,6 +25,7 @@ x-arrow-lake: &arrow-lake
   build:
     context: ..
     dockerfile: deploy/Dockerfile
+    network: host
   image: arrow-lake:latest
   restart: unless-stopped
   env_file:
@@ -65,9 +66,9 @@ x-storage-env: &storage-env
   AWS_REGION: "${AWS_REGION:-us-east-1}"
 
 x-metaflow-env: &metaflow-env
-  METAFLOW_DEFAULT_METADATA: "service"
-  METAFLOW_SERVICE_URL: "http://metaflow-metadata:8080"
-  METAFLOW_DATASTORE: "s3"
+  METAFLOW_DEFAULT_METADATA: "local"
+  METAFLOW_DATASTORE: "local"
+  METAFLOW_DATASTORE_ROOT: "/data/metaflow"
   METAFLOW_DATATOOLS_S3_ROOT: "s3://arrow-lake/metaflow"
   METAFLOW_S3_ENDPOINT_URL: "http://minio:9000"
 
@@ -100,21 +101,27 @@ services:
       HTTPS_PROXY: "${HTTPS_PROXY:-}"
       http_proxy: "${HTTP_PROXY:-}"
       https_proxy: "${HTTPS_PROXY:-}"
-      NO_PROXY: "127.0.0.1,localhost,host.docker.internal,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,172.30.0.0/16,minio,redis,ray-head,metaflow-metadata,metaflow-db,prometheus,grafana,jaeger,hg-server"
-      no_proxy: "127.0.0.1,localhost,host.docker.internal,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,172.30.0.0/16,minio,redis,ray-head,metaflow-metadata,metaflow-db,prometheus,grafana,jaeger,hg-server"
+      NO_PROXY: "127.0.0.1,localhost,host.docker.internal,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,172.30.0.0/16,minio,redis,ray-head,metaflow-metadata,metaflow-db,prometheus,grafana,jaeger,hg-server,hg-pd,hg-store"
+      no_proxy: "127.0.0.1,localhost,host.docker.internal,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,172.30.0.0/16,minio,redis,ray-head,metaflow-metadata,metaflow-db,prometheus,grafana,jaeger,hg-server,hg-pd,hg-store"
       ARROW_LAKE__EMBEDDING__API_BASE: "${OLLAMA_API_BASE:-http://172.19.0.40:11434/v1}"
       ARROW_LAKE__HUGEGRAPH__HOST: "${HUGEGRAPH_HOST:-hg-server}"
       ARROW_LAKE__HUGEGRAPH__PORT: "${HUGEGRAPH_PORT:-8080}"
     volumes:
       - duckdb-data:/app/.duckdb
       - lake-data:/data/lake
+      - metaflow-store:/data/metaflow
     depends_on:
       minio:
         condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
-      metaflow-metadata:
+      volume-init:
+        condition: service_completed_successfully
+      hg-server:
         condition: service_healthy
+        required: false
     deploy:
       resources:
         limits:
@@ -174,6 +181,20 @@ services:
     stop_grace_period: 15s
 
   # ---------------------------------------------------------------------------
+  # Volume Init — Fix named volume permissions for non-root user
+  # ---------------------------------------------------------------------------
+  volume-init:
+    image: alpine:${ALPINE_VERSION:-3.21}
+    container_name: arrow-lake-volume-init
+    restart: "no"
+    networks:
+      - arrow-lake-net
+    volumes:
+      - lake-data:/data/lake
+      - metaflow-store:/data/metaflow
+    command: chown -R 999:999 /data/lake /data/metaflow
+
+  # ---------------------------------------------------------------------------
   # MinIO Init — Create buckets on first start
   # ---------------------------------------------------------------------------
   minio-init:
@@ -207,7 +228,6 @@ services:
       --maxmemory ${REDIS_MAXMEMORY:-512mb}
       --maxmemory-policy allkeys-lru
       --appendonly yes
-      --requirepass ${REDIS_PASSWORD:-}
     volumes:
       - redis-data:/data
     deploy:
@@ -219,7 +239,7 @@ services:
         reservations:
           memory: 128M
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-}", "ping"]
+      test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -229,122 +249,6 @@ services:
         max-size: "20m"
         max-file: "3"
         tag: "arrow-lake-redis"
-    stop_grace_period: 10s
-
-  # ---------------------------------------------------------------------------
-  # Metaflow PostgreSQL — Metadata backend
-  # ---------------------------------------------------------------------------
-  metaflow-db:
-    image: postgres:${POSTGRES_VERSION:-16-alpine}
-    container_name: arrow-lake-metaflow-db
-    restart: unless-stopped
-    networks:
-      - arrow-lake-net
-    environment:
-      POSTGRES_USER: "${METAFLOW_DB_USER:-metaflow}"
-      POSTGRES_PASSWORD: "${METAFLOW_DB_PASSWORD:-metaflow}"
-      POSTGRES_DB: "metaflow"
-    volumes:
-      - metaflow-db-data:/var/lib/postgresql/data
-    deploy:
-      resources:
-        limits:
-          memory: ${METAFLOW_DB_MEMORY_LIMIT:-512M}
-          cpus: "${METAFLOW_DB_CPU_LIMIT:-1.0}"
-          pids: 128
-        reservations:
-          memory: 128M
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${METAFLOW_DB_USER:-metaflow}"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-    logging:
-      driver: json-file
-      options:
-        max-size: "20m"
-        max-file: "3"
-        tag: "arrow-lake-metaflow-db"
-    stop_grace_period: 10s
-
-  # ---------------------------------------------------------------------------
-  # Metaflow Metadata Service — Run tracking + artifact store
-  # ---------------------------------------------------------------------------
-  metaflow-metadata:
-    image: netflixoss/metaflow_metadata:${METAFLOW_METADATA_VERSION:-latest}
-    container_name: arrow-lake-metaflow-metadata
-    restart: unless-stopped
-    networks:
-      - arrow-lake-net
-    ports:
-      - "${METAFLOW_API_PORT:-8082}:8080"
-    environment:
-      METAFLOW_METADATA_DB_HOST: "metaflow-db"
-      METAFLOW_METADATA_DB_PORT: "5432"
-      METAFLOW_METADATA_DB_USER: "${METAFLOW_DB_USER:-metaflow}"
-      METAFLOW_METADATA_DB_PSWD: "${METAFLOW_DB_PASSWORD:-metaflow}"
-      METAFLOW_METADATA_DB_NAME: "metaflow"
-    depends_on:
-      metaflow-db:
-        condition: service_healthy
-    deploy:
-      resources:
-        limits:
-          memory: ${METAFLOW_METADATA_MEMORY_LIMIT:-1G}
-          cpus: "${METAFLOW_METADATA_CPU_LIMIT:-1.0}"
-          pids: 128
-        reservations:
-          memory: 256M
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
-    logging:
-      driver: json-file
-      options:
-        max-size: "50m"
-        max-file: "5"
-        tag: "arrow-lake-metaflow-metadata"
-    stop_grace_period: 15s
-
-  # ---------------------------------------------------------------------------
-  # Metaflow UI — Run history + comparison dashboard
-  # ---------------------------------------------------------------------------
-  metaflow-ui:
-    image: outerbounds/metaflow-ui:${METAFLOW_UI_VERSION:-latest}
-    container_name: arrow-lake-metaflow-ui
-    restart: unless-stopped
-    networks:
-      - arrow-lake-net
-    ports:
-      - "${METAFLOW_UI_PORT:-8083}:3000"
-    environment:
-      METAFLOW_SERVICE_URL: "http://metaflow-metadata:8080"
-    depends_on:
-      metaflow-metadata:
-        condition: service_healthy
-    deploy:
-      resources:
-        limits:
-          memory: ${METAFLOW_UI_MEMORY_LIMIT:-512M}
-          cpus: "${METAFLOW_UI_CPU_LIMIT:-0.5}"
-          pids: 64
-        reservations:
-          memory: 128M
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:3000 || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-    logging:
-      driver: json-file
-      options:
-        max-size: "50m"
-        max-file: "5"
-        tag: "arrow-lake-metaflow-ui"
     stop_grace_period: 10s
 
   # ---------------------------------------------------------------------------
@@ -449,6 +353,7 @@ services:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
       - "--storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-30d}"
+      - "--web.listen-address=0.0.0.0:9090"
     deploy:
       resources:
         limits:
@@ -458,7 +363,7 @@ services:
         reservations:
           memory: 256M
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:9090/-/healthy || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9090/-/healthy 2>/dev/null || nc -z localhost 9090"]
       interval: 15s
       timeout: 5s
       retries: 3
@@ -479,7 +384,7 @@ services:
     container_name: arrow-lake-grafana
     restart: unless-stopped
     ports:
-      - "${GRAFANA_PORT:-3000}:3000"
+      - "${GRAFANA_PORT:-3001}:3000"
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:-admin}"
@@ -502,7 +407,7 @@ services:
         reservations:
           memory: 128M
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health 2>/dev/null || nc -z localhost 3000"]
       interval: 15s
       timeout: 5s
       retries: 3
@@ -541,7 +446,7 @@ services:
         reservations:
           memory: 256M
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:16686/ || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:16686/ 2>/dev/null || nc -z localhost 16686"]
       interval: 15s
       timeout: 5s
       retries: 3
@@ -552,6 +457,84 @@ services:
         max-size: "50m"
         max-file: "5"
         tag: "arrow-lake-jaeger"
+    stop_grace_period: 15s
+
+  # ==============================================================================
+  # HugeGraph — Graph database for Knowledge Graph + GraphRAG
+  # ==============================================================================
+
+  # ---------------------------------------------------------------------------
+  # HugeGraph Server — All-in-one (embedded PD + Store + Server)
+  # ---------------------------------------------------------------------------
+  hg-server:
+    image: hugegraph/hugegraph:${HUGEGRAPH_VERSION:-1.7.0}
+    container_name: arrow-lake-hg-server
+    hostname: hg-server
+    restart: unless-stopped
+    networks:
+      - arrow-lake-net
+    environment:
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      http_proxy: ""
+      https_proxy: ""
+      HUGEGRAPH_STORAGE_BACKEND: "rocksdb"
+      HUGEGRAPH_GRAPH: "hugegraph"
+    ports:
+      - "${HUGEGRAPH_PORT:-8089}:8080"
+    volumes:
+      - hg-server-data:/var/lib/hugegraph
+    deploy:
+      resources:
+        limits:
+          memory: ${HG_SERVER_MEMORY_LIMIT:-4G}
+          cpus: "${HG_SERVER_CPU_LIMIT:-2.0}"
+          pids: 512
+        reservations:
+          memory: 1G
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/graphs/hugegraph/schema"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 90s
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"
+        tag: "arrow-lake-hg-server"
+    stop_grace_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # HugeGraph Hubble — Graph visualization dashboard
+  # ---------------------------------------------------------------------------
+  hg-hubble:
+    image: hugegraph/hubble:${HUGEGRAPH_VERSION:-latest}
+    container_name: arrow-lake-hg-hubble
+    hostname: hubble
+    restart: unless-stopped
+    networks:
+      - arrow-lake-net
+    depends_on:
+      hg-server:
+        condition: service_healthy
+    ports:
+      - "${HG_HUBBLE_PORT:-8088}:8088"
+    deploy:
+      resources:
+        limits:
+          memory: ${HG_HUBBLE_MEMORY_LIMIT:-2G}
+          cpus: "${HG_HUBBLE_CPU_LIMIT:-1.0}"
+          pids: 128
+        reservations:
+          memory: 256M
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+        tag: "arrow-lake-hg-hubble"
     stop_grace_period: 15s
 
 # ==============================================================================
@@ -578,11 +561,13 @@ volumes:
     driver: local
   redis-data:
     driver: local
-  metaflow-db-data:
+  metaflow-store:
     driver: local
   prometheus-data:
     driver: local
   grafana-data:
     driver: local
   jaeger-data:
+    driver: local
+  hg-server-data:
     driver: local
