@@ -62,7 +62,9 @@ class HugeGraphClient:
             ).decode()
             headers["Authorization"] = f"Basic {token}"
 
-        self._client = httpx.AsyncClient(
+        from arrow_lake.core.http import create_async_http_client
+
+        self._client = create_async_http_client(
             base_url=self._base_url,
             headers=headers,
             timeout=httpx.Timeout(config.timeout_seconds),

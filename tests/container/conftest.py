@@ -1,7 +1,12 @@
 """Shared fixtures for container smoke tests.
 
-Detects service availability (API, Ollama, HugeGraph) and provides
-session-scoped test data that is created once and cleaned up after all tests.
+Service endpoints align with docker-compose.prod.yml env vars:
+  - API:      ARROW_LAKE__API__HOST / ARROW_LAKE__API__PORT
+  - Ollama:   ARROW_LAKE__EMBEDDING__API_BASE
+  - HugeGraph: ARROW_LAKE__HUGEGRAPH__HOST / ARROW_LAKE__HUGEGRAPH__PORT
+
+Detects service availability and provides session-scoped test data that
+is created once and cleaned up after all tests.
 """
 
 from __future__ import annotations
@@ -14,22 +19,22 @@ import subprocess
 import httpx
 import pytest
 
+from tests.conftest_services import (
+    API_BASE_URL,
+    API_KEY,
+    OLLAMA_API_BASE,
+    api_reachable,
+    hugegraph_reachable,
+    ollama_reachable,
+)
+
 # ---------------------------------------------------------------------------
-# Configuration (from environment or defaults)
+# Configuration
 # ---------------------------------------------------------------------------
 
-API_BASE = os.getenv("ARROW_LAKE_API_URL", "http://localhost:8000")
-API_KEY = os.getenv("ARROW_LAKE_API_KEY", "dev-api-key-for-local-testing-only")
 DATASET_NAME = "smoke-test"
-
-# External services
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://192.168.101.131:11434")
-HUGEGRAPH_URL = os.getenv("HUGEGRAPH_URL", "http://localhost:8089")
-
-# Default timeout for API calls (seconds)
 API_TIMEOUT = 60
 
-# Test data: 300 rows — enough for vector index (min 256 rows required).
 _SMOKE_ROWS = 300
 _SMOKE_TEXTS = [
     "Machine learning is a subset of artificial intelligence.",
@@ -47,7 +52,6 @@ _SMOKE_SOURCES = ["ai-intro", "lang-intro", "db-intro", "kg-intro", "cv-intro"]
 
 
 def _generate_smoke_jsonl() -> str:
-    """Generate 300-row JSONL string for test data ingestion."""
     lines = []
     for i in range(_SMOKE_ROWS):
         lines.append(json.dumps({
@@ -57,75 +61,26 @@ def _generate_smoke_jsonl() -> str:
         }))
     return "\n".join(lines)
 
+
 # ---------------------------------------------------------------------------
-# Service readiness checks (cached at import time for skip decisions)
+# Service reachability (delegated to shared conftest_services)
 # ---------------------------------------------------------------------------
-
-_api_reachable: bool | None = None
-_ollama_reachable: bool | None = None
-_hugegraph_reachable: bool | None = None
-
-
-def _check_api() -> bool:
-    try:
-        r = httpx.get(f"{API_BASE}/health", timeout=5)
-        return r.status_code in (200, 503)
-    except Exception:
-        return False
-
-
-def _check_ollama() -> bool:
-    try:
-        r = httpx.get(f"{OLLAMA_URL}/api/tags", timeout=5)
-        return r.status_code == 200
-    except Exception:
-        return False
-
-
-def _check_hugegraph() -> bool:
-    try:
-        r = httpx.get(f"{HUGEGRAPH_URL}/graphs", timeout=5)
-        return r.status_code == 200
-    except Exception:
-        return False
-
-
-def api_reachable() -> bool:
-    global _api_reachable
-    if _api_reachable is None:
-        _api_reachable = _check_api()
-    return _api_reachable
-
-
-def ollama_reachable() -> bool:
-    global _ollama_reachable
-    if _ollama_reachable is None:
-        _ollama_reachable = _check_ollama()
-    return _ollama_reachable
-
-
-def hugegraph_reachable() -> bool:
-    global _hugegraph_reachable
-    if _hugegraph_reachable is None:
-        _hugegraph_reachable = _check_hugegraph()
-    return _hugegraph_reachable
-
 
 # Module-level skip: skip ALL container tests if API is not reachable
 pytestmark = pytest.mark.skipif(
     not api_reachable(),
-    reason=f"API not reachable at {API_BASE} (start with: make up)",
+    reason=f"API not reachable at {API_BASE_URL} (start with: docker compose -f deploy/docker-compose.prod.yml up -d)",
 )
 
-# Markers for external services
+# Markers for external services (using shared reachability checks)
 require_ollama = pytest.mark.skipif(
     not ollama_reachable(),
-    reason=f"Ollama not reachable at {OLLAMA_URL}",
+    reason=f"Ollama not reachable at {OLLAMA_API_BASE}",
 )
 
 require_hugegraph = pytest.mark.skipif(
     not hugegraph_reachable(),
-    reason=f"HugeGraph not reachable at {HUGEGRAPH_URL}",
+    reason="HugeGraph not reachable (set ARROW_LAKE__HUGEGRAPH__HOST/PORT)",
 )
 
 # ---------------------------------------------------------------------------
@@ -137,7 +92,7 @@ require_hugegraph = pytest.mark.skipif(
 def client() -> httpx.Client:
     """HTTP client authenticated with API key."""
     return httpx.Client(
-        base_url=API_BASE,
+        base_url=API_BASE_URL,
         headers={"X-API-Key": API_KEY},
         timeout=API_TIMEOUT,
     )
@@ -149,7 +104,6 @@ def test_data(client: httpx.Client) -> str:
     container = "arrow-lake-api"
     jsonl_path = f"/tmp/{DATASET_NAME}.jsonl"
 
-    # Generate JSONL on host and pipe into container via docker exec
     jsonl_content = _generate_smoke_jsonl()
     result = subprocess.run(
         ["docker", "exec", "-i", container, "sh", "-c", f"cat > {jsonl_path}"],
@@ -160,11 +114,9 @@ def test_data(client: httpx.Client) -> str:
     if result.returncode != 0:
         pytest.fail(f"Failed to write test data to container: {result.stderr.decode()}")
 
-    # Clean up any leftover dataset from previous runs
     with contextlib.suppress(Exception):
         client.delete(f"/api/v1/datasets/{DATASET_NAME}")
 
-    # Ingest
     resp = client.post(
         f"/api/v1/datasets/{DATASET_NAME}/ingest",
         json={"file_paths": [jsonl_path]},
@@ -176,20 +128,13 @@ def test_data(client: httpx.Client) -> str:
 
     yield DATASET_NAME
 
-    # Cleanup: delete the dataset
     with contextlib.suppress(Exception):
         client.delete(f"/api/v1/datasets/{DATASET_NAME}")
 
 
 @pytest.fixture(scope="session")
 def embedded_data(client: httpx.Client, test_data: str) -> str:
-    """Generate text_embedding column for the dataset via Ollama embedding API.
-
-    Reads all text_content, batch-embeds via /api/v1/embed/text, then
-    re-ingests with embedding column included.
-    Requires Ollama to be reachable.
-    """
-    # 1. Read all text_content from the dataset
+    """Generate text_embedding column for the dataset via Ollama embedding API."""
     r = client.post(
         f"/api/v1/datasets/{test_data}/query/olap",
         json={"sql": f'SELECT text_content, source, doc_type FROM "{test_data}"', "format": "json"},
@@ -201,7 +146,6 @@ def embedded_data(client: httpx.Client, test_data: str) -> str:
     if not rows:
         pytest.skip("Dataset is empty, nothing to embed")
 
-    # 2. Batch embed via Arrow Lake API
     all_embeddings: list[list[float]] = []
     batch_size = 64
     for i in range(0, len(rows), batch_size):
@@ -217,7 +161,6 @@ def embedded_data(client: httpx.Client, test_data: str) -> str:
             pytest.skip("Embedding API returned empty results")
         all_embeddings.extend(batch_emb)
 
-    # 3. Build JSONL with embeddings and re-ingest
     container = "arrow-lake-api"
     emb_jsonl_path = f"/tmp/{test_data}-embedded.jsonl"
 
@@ -241,7 +184,6 @@ def embedded_data(client: httpx.Client, test_data: str) -> str:
     if result.returncode != 0:
         pytest.skip(f"Failed to write embedded data: {result.stderr.decode()[:100]}")
 
-    # Delete old dataset and re-ingest with embeddings
     client.delete(f"/api/v1/datasets/{test_data}")
 
     resp = client.post(
@@ -277,7 +219,6 @@ def kg_test_data(client: httpx.Client) -> str:
     lines = [json.dumps(row) for row in _KG_ROWS]
     jsonl_content = "\n".join(lines)
 
-    # Clean up leftover
     with contextlib.suppress(Exception):
         client.delete(f"/api/v1/datasets/{name}")
 

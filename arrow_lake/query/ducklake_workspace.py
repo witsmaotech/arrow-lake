@@ -62,14 +62,14 @@ class DuckLakeWorkspace:
         )
 
     def _ensure_metadata_table(self, conn: object) -> None:
-        """Create _metadata table if it doesn't exist."""
+        """Create temp _metadata table if it doesn't exist."""
         try:
             conn.execute(
                 f"SELECT 1 FROM {self._metadata_table} LIMIT 0"  # nosec B608
             )
         except duckdb.CatalogException:
             conn.execute(
-                f"CREATE TABLE {self._metadata_table} ("  # nosec B608
+                f"CREATE TEMP TABLE IF NOT EXISTS {self._metadata_table} ("  # nosec B608
                 f"table_name VARCHAR, "
                 f"created_at TIMESTAMP, "
                 f"expires_at TIMESTAMP, "
@@ -82,15 +82,19 @@ class DuckLakeWorkspace:
         conn: object,
         sql: str,
         view_name: str,
+        *,
+        index_columns: list[str] | None = None,
     ) -> int:
         """Materialize a SQL query result as a DuckLake table.
 
-        Checks row budget before materializing.
+        Checks row budget before materializing. Optionally creates ART indexes
+        on specified columns for faster point lookups.
 
         Args:
             conn: Active DuckDB connection.
             sql: SQL query to materialize.
             view_name: Name for the materialized table.
+            index_columns: Columns to create ART indexes on (None = no indexes).
 
         Returns:
             Number of rows materialized.
@@ -136,8 +140,20 @@ class DuckLakeWorkspace:
         self._ensure_metadata_table(conn)
         conn.execute(
             f"INSERT INTO {self._metadata_table} VALUES ($1, $2, $3, $4)",  # nosec B608
-            [view_name, now.isoformat(), expires.isoformat(), row_count],
+            [view_name, now, expires, row_count],
         )
+
+        # Create ART indexes on requested columns for faster point lookups
+        if index_columns:
+            for col in index_columns:
+                if SAFE_IDENTIFIER_RE.match(col):
+                    idx_name = f"idx_{view_name}_{col}"
+                    try:
+                        conn.execute(
+                            f"CREATE INDEX IF NOT EXISTS {idx_name} ON {view_name}({col})"  # nosec B608
+                        )
+                    except duckdb.Error as exc:
+                        logger.warning("Failed to create index %s on %s: %s", idx_name, view_name, exc)
 
         return row_count
 
@@ -156,7 +172,7 @@ class DuckLakeWorkspace:
         try:
             expired = conn.execute(
                 f"SELECT table_name FROM {self._metadata_table} WHERE expires_at < $1",  # nosec B608
-                [now.isoformat()],
+                [now],
             ).fetchall()
         except duckdb.Error:
             return []

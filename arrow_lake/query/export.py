@@ -195,12 +195,17 @@ class ExportBridge:
         try:
             if fmt == "parquet":
                 comp = compression or (
-                    self._config.parquet_compression if self._config else "snappy"
+                    getattr(self._config, "parquet_compression", None) or "zstd"
                 )
+                row_group_size = getattr(self._config, "parquet_row_group_size", 100_000)
                 if export_table.num_rows >= _DAFT_EXPORT_THRESHOLD:
                     self._write_parquet_via_daft(export_table, str(path), comp)
                 else:
-                    pq.write_table(export_table, str(path), compression=comp)
+                    pq.write_table(
+                        export_table, str(path),
+                        compression=comp,
+                        row_group_size=row_group_size,
+                    )
             elif fmt == "csv":
                 delimiter = self._config.csv_delimiter if self._config else ","
                 csv.write_csv(

@@ -26,7 +26,7 @@ import contextlib
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import duckdb
 import pyarrow as pa
@@ -39,6 +39,9 @@ from arrow_lake.validation import (
     DANGEROUS_SQL_KEYWORDS_RE,
     validate_identifier,
 )
+
+if TYPE_CHECKING:
+    from arrow_lake.query._cache import QueryCache as _QueryCache
 
 _JOIN_KEYWORD_RE = re.compile(
     r"\b(INNER\s+JOIN|LEFT\s+JOIN|RIGHT\s+JOIN|FULL\s+JOIN|CROSS\s+JOIN|"
@@ -98,6 +101,14 @@ class OlapSearchBridge:
         self._config = config or OlapConfig()
         self._storage_config = storage_config
         self._session_manager = session_manager
+        self._cache: _QueryCache | None = None
+        if self._config.query_cache_enabled:
+            from arrow_lake.query._cache import QueryCache as _QC
+
+            self._cache = _QC(
+                max_entries=self._config.query_cache_max_entries,
+                ttl_seconds=self._config.query_cache_ttl_seconds,
+            )
 
     def query(
         self,
@@ -131,6 +142,18 @@ class OlapSearchBridge:
             for name in tables:
                 validate_identifier(name)
 
+        # Check cache
+        limited_sql = self._apply_limit(sql, max_rows if max_rows is not None else self._config.max_result_rows)
+        if self._cache is not None:
+            cached = self._cache.get(dataset_name, limited_sql, tables)
+            if cached is not None:
+                return OlapQueryResult(
+                    table=cached,
+                    row_count=cached.num_rows,
+                    column_count=cached.num_columns,
+                    sql=limited_sql,
+                )
+
         effective_max_rows = max_rows if max_rows is not None else self._config.max_result_rows
 
         # Determine if streaming is safe (RecordBatchReader is single-use,
@@ -161,9 +184,6 @@ class OlapSearchBridge:
                 message=f"Failed to read dataset '{dataset_name}': {exc}",
             ) from exc
 
-        # Push LIMIT into SQL to avoid materializing excess rows
-        limited_sql = self._apply_limit(sql, effective_max_rows)
-
         # Execute query with LanceScanAdapter (native) or PyArrow fallback
         with session as conn:
             self._register_dataset(conn, dataset_name, source)
@@ -175,6 +195,10 @@ class OlapSearchBridge:
                 result_table = result_reader.read_all()
             else:
                 result_table = result_reader
+
+        # Store in cache
+        if self._cache is not None:
+            self._cache.put(dataset_name, limited_sql, result_table, tables)
 
         return OlapQueryResult(
             table=result_table,
@@ -244,7 +268,10 @@ class OlapSearchBridge:
 
         with self._managed_session(load_ducklake=True) as conn:
             self._register_dataset(conn, dataset_name, source)
-            return workspace.materialize(conn, sql, view_name)
+            return workspace.materialize(
+                conn, sql, view_name,
+                index_columns=self._config.ducklake_index_columns or None,
+            )
 
     def cleanup_materialized(self, ttl_days: int | None = None) -> list[str]:
         """Drop expired materialized views.
@@ -292,6 +319,40 @@ class OlapSearchBridge:
         with self._managed_session() as conn:
             self._register_dataset(conn, dataset_name, table)
             result = conn.execute(f"EXPLAIN {sql}").fetchall()
+            explain_lines = [row[0] for row in result if row]
+            return "\n".join(explain_lines)
+
+    def explain_analyze(self, dataset_name: str, sql: str) -> str:
+        """Return DuckDB EXPLAIN ANALYZE output with actual execution stats.
+
+        Unlike ``explain()`` which shows the logical plan, this runs the query
+        and reports real timing, row counts, and bytes spilled per operator.
+
+        Args:
+            dataset_name: Name of the Lance dataset.
+            sql: SQL query string to analyze.
+
+        Returns:
+            DuckDB EXPLAIN ANALYZE output as a string.
+
+        Raises:
+            QueryError: If SQL validation fails or query/analysis fails.
+            ValueError: If dataset name is invalid.
+        """
+        _validate_dataset_name(dataset_name)
+        self._validate_sql(sql)
+
+        try:
+            table = self._storage.read_dataset(dataset_name)
+        except (StorageError, OSError) as exc:
+            raise QueryError(
+                error_code=ErrorCode.OLAP_QUERY_FAILED,
+                message=f"Failed to read dataset '{dataset_name}': {exc}",
+            ) from exc
+
+        with self._managed_session() as conn:
+            self._register_dataset(conn, dataset_name, table)
+            result = conn.execute(f"EXPLAIN ANALYZE {sql}").fetchall()
             explain_lines = [row[0] for row in result if row]
             return "\n".join(explain_lines)
 

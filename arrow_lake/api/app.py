@@ -45,9 +45,10 @@ def _check_storage_connectivity(config: ArrowLakeConfig) -> None:
     bucket = config.storage.s3_bucket
     logger.info("Checking storage connectivity: %s @ %s (bucket=%s)", backend, endpoint, bucket)
     try:
-        import httpx
+        from arrow_lake.core.http import create_http_client
 
-        resp = httpx.get(f"{endpoint}/minio/health/live", timeout=5.0)
+        with create_http_client(timeout=5.0) as client:
+            resp = client.get(f"{endpoint}/minio/health/live")
         if resp.status_code == 200:
             logger.info("Storage health check passed")
             return

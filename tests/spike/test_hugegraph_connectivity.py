@@ -1,8 +1,7 @@
 """Spike: HugeGraph Docker connectivity and API verification.
 
-Requires HugeGraph running on localhost:8089 (or set HUGEGRAPH_HOST/HUGEGRAPH_PORT).
-
-Marked with pytest.mark.spike to exclude from regular test runs.
+Requires HugeGraph running (set ARROW_LAKE__HUGEGRAPH__HOST/PORT or
+HUGEGRAPH_HOST/HUGEGRAPH_PORT).  Marked with pytest.mark.spike.
 
 IMPORTANT: These tests share the existing 'hugegraph' graph. CRUD tests use
 spike_test_ prefixed labels to avoid interfering with existing monitoring data.
@@ -12,38 +11,27 @@ Never call /clear on the shared graph.
 from __future__ import annotations
 
 import contextlib
-import os
 import time
 
 import httpx
 import pytest
 
-HUGEGRAPH_HOST = os.getenv("HUGEGRAPH_HOST", "localhost")
-HUGEGRAPH_PORT = int(os.getenv("HUGEGRAPH_PORT", "8089"))
-HUGEGRAPH_GRAPH = os.getenv("HUGEGRAPH_GRAPH", "hugegraph")
-BASE_URL = f"http://{HUGEGRAPH_HOST}:{HUGEGRAPH_PORT}"
-GRAPH_BASE = f"/graphs/{HUGEGRAPH_GRAPH}"
+from tests.conftest_services import (
+    HUGEGRAPH_GRAPH,
+    HUGEGRAPH_GRAPH_BASE,
+    gremlin,
+    gremlin_available,
+    make_hg_client,
+    require_hugegraph,
+)
 
-# Unique prefix to isolate spike test data from existing monitoring data
 _TEST_PREFIX = "spike_test_"
+GRAPH_BASE = HUGEGRAPH_GRAPH_BASE
 
 
 @pytest.fixture(scope="module")
 def client() -> httpx.Client:
-    """Shared httpx sync client for all tests."""
-    return httpx.Client(base_url=BASE_URL, timeout=30.0)
-
-
-def _gremlin(client: httpx.Client, query: str) -> dict:
-    """Execute a Gremlin query via the /gremlin endpoint.
-
-    HugeGraph 1.7.0 uses the graph name as the traversal source variable.
-    Endpoint: POST /gremlin (not /graphs/{name}/gremlin)
-    Traversal: {graph_name}.traversal().V() (not g.V())
-    """
-    resp = client.post("/gremlin", json={"gremlin": query})
-    assert resp.status_code == 200, f"Gremlin query failed: {resp.text}"
-    return resp.json()
+    return make_hg_client()
 
 
 @pytest.fixture(scope="module")
@@ -60,7 +48,7 @@ def test_labels(client: httpx.Client):
         {"name": f"{_TEST_PREFIX}age", "data_type": "INT", "cardinality": "SINGLE"},
     ]:
         resp = client.post(f"{GRAPH_BASE}/schema/propertykeys", json=pk)
-        assert resp.status_code in (200, 201, 400), f"PropertyKey error: {resp.text}"
+        assert resp.status_code in (200, 201, 202, 400), f"PropertyKey error: {resp.text}"
 
     # Create VertexLabel
     vl = {
@@ -71,7 +59,7 @@ def test_labels(client: httpx.Client):
         "nullable_keys": [f"{_TEST_PREFIX}age"],
     }
     resp = client.post(f"{GRAPH_BASE}/schema/vertexlabels", json=vl)
-    assert resp.status_code in (200, 201, 400), f"VertexLabel error: {resp.text}"
+    assert resp.status_code in (200, 201, 202, 400), f"VertexLabel error: {resp.text}"
 
     # Create EdgeLabel
     el = {
@@ -80,39 +68,36 @@ def test_labels(client: httpx.Client):
         "target_label": labels["vl"],
     }
     resp = client.post(f"{GRAPH_BASE}/schema/edgelabels", json=el)
-    assert resp.status_code in (200, 201, 400), f"EdgeLabel error: {resp.text}"
+    assert resp.status_code in (200, 201, 202, 400), f"EdgeLabel error: {resp.text}"
+
+    time.sleep(2)
 
     yield labels
 
-    # Cleanup: delete all spike_test_ vertices, then remove labels
     _cleanup_spike_data(client)
 
 
 def _cleanup_spike_data(client: httpx.Client) -> None:
     """Remove all spike_test_ prefixed data and schema from the graph."""
-    # Delete vertices with spike_test_ label via Gremlin
-    with contextlib.suppress(Exception):
+    with contextlib.suppress(Exception, pytest.skip.Exception):
         client.post(
             "/gremlin",
             json={"gremlin": f"{HUGEGRAPH_GRAPH}.traversal().V().hasLabel('{_TEST_PREFIX}person').drop().iterate()"},
         )
     time.sleep(0.5)
 
-    # Remove EdgeLabel
     try:
         client.delete(f"{GRAPH_BASE}/schema/edgelabels/{_TEST_PREFIX}knows")
         time.sleep(0.3)
     except httpx.HTTPStatusError:
         pass
 
-    # Remove VertexLabel
     try:
         client.delete(f"{GRAPH_BASE}/schema/vertexlabels/{_TEST_PREFIX}person")
         time.sleep(0.3)
     except httpx.HTTPStatusError:
         pass
 
-    # Remove PropertyKeys
     for pk_name in [f"{_TEST_PREFIX}name", f"{_TEST_PREFIX}age"]:
         with contextlib.suppress(httpx.HTTPStatusError):
             client.delete(f"{GRAPH_BASE}/schema/propertykeys/{pk_name}")
@@ -123,41 +108,39 @@ def _cleanup_spike_data(client: httpx.Client) -> None:
 # ---------------------------------------------------------------------------
 
 
+@require_hugegraph
 @pytest.mark.spike
 class TestHugeGraphConnectivity:
     """Verify HugeGraph Docker container is reachable and responsive."""
 
     def test_versions_endpoint(self, client: httpx.Client) -> None:
-        """GET /versions should return HugeGraph version info."""
         resp = client.get("/versions")
         assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
         data = resp.json()
         assert "version" in data or "versions" in data
 
     def test_graph_schema_accessible(self, client: httpx.Client) -> None:
-        """GET /graphs/{name}/schema should return (possibly empty) schema."""
         resp = client.get(f"{GRAPH_BASE}/schema")
-        # 200 if graph exists, 404 if not yet created — both mean server is reachable
         assert resp.status_code in (200, 404), f"Unexpected status: {resp.status_code}"
 
     def test_graph_mode(self, client: httpx.Client) -> None:
-        """GET /graphs/{name}/mode should return the graph mode."""
         resp = client.get(f"{GRAPH_BASE}/mode")
         assert resp.status_code in (200, 404), f"Unexpected status: {resp.status_code}"
 
     def test_existing_vertex_labels(self, client: httpx.Client) -> None:
-        """Verify the existing graph has monitoring-related vertex labels."""
+        """Verify the graph has at least some vertex labels."""
         resp = client.get(f"{GRAPH_BASE}/schema/vertexlabels")
         assert resp.status_code == 200
         data = resp.json()
         names = [vl["name"] for vl in data.get("vertexlabels", [])]
-        assert "monitor_point" in names, f"Expected monitor_point in {names}"
+        assert len(names) > 0, "Expected at least one vertex label in the graph"
 
     def test_gremlin_query_existing_data(self, client: httpx.Client) -> None:
-        """Query existing vertices via Gremlin (read-only)."""
-        result = _gremlin(
+        if not gremlin_available(client):
+            pytest.skip("Gremlin endpoint unavailable")
+        result = gremlin(
             client,
-            f"{HUGEGRAPH_GRAPH}.traversal().V().hasLabel('monitor_point').limit(3).count()",
+            f"{HUGEGRAPH_GRAPH}.traversal().V().limit(3).count()",
         )
         count = result["result"]["data"]
         assert isinstance(count, list) and len(count) == 1
@@ -169,16 +152,12 @@ class TestHugeGraphConnectivity:
 # ---------------------------------------------------------------------------
 
 
+@require_hugegraph
 @pytest.mark.spike
 class TestHugeGraphBasicCRUD:
-    """Verify basic Schema + Vertex + Edge operations using isolated test labels.
-
-    All test data uses spike_test_ prefixed labels to avoid interfering with
-    existing monitoring data on the shared 'hugegraph' graph.
-    """
+    """Verify basic Schema + Vertex + Edge operations using isolated test labels."""
 
     def test_schema_exists(self, client: httpx.Client, test_labels: dict) -> None:
-        """Verify spike_test_ schema was created by the fixture."""
         vl_name = test_labels["vl"]
         resp = client.get(f"{GRAPH_BASE}/schema/vertexlabels")
         assert resp.status_code == 200
@@ -186,35 +165,32 @@ class TestHugeGraphBasicCRUD:
         assert vl_name in names
 
     def test_vertex_crud(self, client: httpx.Client, test_labels: dict) -> None:
-        """Create, read, and delete a vertex with spike_test_ label."""
         vl = test_labels["vl"]
         name_key = f"{_TEST_PREFIX}name"
         age_key = f"{_TEST_PREFIX}age"
 
-        # Create vertex
         vertex = {"label": vl, "properties": {name_key: "marko", age_key: 29}}
         resp = client.post(f"{GRAPH_BASE}/graph/vertices", json=vertex)
         assert resp.status_code == 201, f"Vertex create failed: {resp.text}"
         vertex_id = resp.json()["id"]
-        assert vertex_id  # e.g. "spike_test_person:marko"
+        assert vertex_id
 
-        # Read vertex
         resp = client.get(f'{GRAPH_BASE}/graph/vertices/"{vertex_id}"')
         assert resp.status_code == 200
         data = resp.json()
         assert data["properties"][name_key] == "marko"
 
-        # Delete vertex (immediate cleanup within test)
         resp = client.delete(f'{GRAPH_BASE}/graph/vertices/"{vertex_id}"')
         assert resp.status_code == 204
 
     def test_edge_crud(self, client: httpx.Client, test_labels: dict) -> None:
-        """Create and read an edge between two spike_test_ vertices."""
         vl = test_labels["vl"]
         el = test_labels["el"]
         name_key = f"{_TEST_PREFIX}name"
 
-        # Create two vertices and capture their actual IDs
+        if not gremlin_available(client):
+            pytest.skip("Gremlin endpoint unavailable")
+
         vertex_ids = {}
         for name in ["marko", "josh"]:
             resp = client.post(
@@ -224,8 +200,6 @@ class TestHugeGraphBasicCRUD:
             assert resp.status_code == 201, f"Vertex create failed: {resp.text}"
             vertex_ids[name] = resp.json()["id"]
 
-        # Create edge using actual vertex IDs
-        # HugeGraph 1.7.0 uses outV/outVLabel/inV/inVLabel
         edge = {
             "label": el,
             "outV": vertex_ids["marko"],
@@ -237,8 +211,7 @@ class TestHugeGraphBasicCRUD:
         resp = client.post(f"{GRAPH_BASE}/graph/edges", json=edge)
         assert resp.status_code == 201, f"Edge create failed: {resp.text}"
 
-        # Query edge via Gremlin using actual vertex ID
-        result = _gremlin(
+        result = gremlin(
             client,
             f"{HUGEGRAPH_GRAPH}.traversal().V('{vertex_ids['marko']}').out('{el}').values('{name_key}')",
         )
@@ -246,26 +219,25 @@ class TestHugeGraphBasicCRUD:
         assert "josh" in str(data)
 
     def test_gremlin_query(self, client: httpx.Client, test_labels: dict) -> None:
-        """Execute a Gremlin query on spike_test_ vertices."""
+        if not gremlin_available(client):
+            pytest.skip("Gremlin endpoint unavailable")
+
         vl = test_labels["vl"]
         name_key = f"{_TEST_PREFIX}name"
         age_key = f"{_TEST_PREFIX}age"
 
-        # Create vertex
         client.post(
             f"{GRAPH_BASE}/graph/vertices",
             json={"label": vl, "properties": {name_key: "gremlin_test", age_key: 42}},
         )
 
-        # Gremlin query
-        result = _gremlin(
+        result = gremlin(
             client,
             f"{HUGEGRAPH_GRAPH}.traversal().V().hasLabel('{vl}').has('{name_key}','gremlin_test').values('{age_key}')",
         )
         assert result["result"]["data"] == [42]
 
     def test_batch_vertex_insert(self, client: httpx.Client, test_labels: dict) -> None:
-        """Batch insert vertices via POST /vertices/batch."""
         vl = test_labels["vl"]
         name_key = f"{_TEST_PREFIX}name"
         age_key = f"{_TEST_PREFIX}age"

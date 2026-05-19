@@ -98,7 +98,7 @@ async def embed_text(
         api_encoder = ApiEmbeddingEncoder(
             api_base=emb_cfg.api_base,
             api_key=emb_cfg.api_key,
-            model_name=req.model,
+            model_name=emb_cfg.model,
             batch_size=emb_cfg.batch_size,
         )
         batch = await run_sync(
@@ -112,7 +112,7 @@ async def embed_text(
         return EmbeddingResponse(
             embeddings=embeddings,
             embedding_dim=embedding_dim,
-            model=req.model,
+            model=emb_cfg.model,
             total=len(req.texts),
             null_count=null_count,
         )

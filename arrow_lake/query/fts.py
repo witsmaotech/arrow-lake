@@ -229,6 +229,9 @@ class FullTextSearchBridge:
         builds the segmented array, then uses lance's add_columns(pa.Table)
         to append the new column without a full dataset rewrite.
 
+        If the column already exists (from a previous index creation), it is
+        dropped first so that ``replace=True`` works correctly.
+
         Returns the name of the new column.
         """
         import lance
@@ -238,6 +241,17 @@ class FullTextSearchBridge:
         opts = self._storage.storage_options
 
         ds = lance.dataset(uri, storage_options=opts)
+
+        # Drop existing segmented column if present (needed for replace)
+        if segmented_column in ds.schema.names:
+            _log.info(
+                "Dropping existing segmented column '%s' for replace",
+                segmented_column,
+            )
+            ds.drop_columns([segmented_column])
+            # Re-open to pick up schema change
+            ds = lance.dataset(uri, storage_options=opts)
+
         row_count = ds.count_rows()
         _log.info("Segmenting column '%s' for %d rows", source_column, row_count)
 

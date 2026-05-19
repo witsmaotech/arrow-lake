@@ -41,7 +41,7 @@ ALL_PROFILES = --profile core --profile compute --profile dev --profile gpu --pr
 # ---------------------------------------------------------------------------
 
 .PHONY: up dev gpu full kg ocr prod down clean build ps logs env certs \
-        shell-api shell-ray shell-jupyter test-smoke flow-run flow-test
+        shell-api shell-ray shell-jupyter test-smoke flow-run flow-test scan backup
 
 FLOW ?= ingest
 ARGS ?=
@@ -170,6 +170,20 @@ flow-test:
 		/app/.venv/bin/python flows/batch_rag_flow.py run --dataset-name test_metaflow --questions-file /app/examples/questions.json
 	@echo "=== All Flows Complete ==="
 
+	# ---------------------------------------------------------------------------
+	# Security & Maintenance
+	# ---------------------------------------------------------------------------
+
+	scan:
+		@echo "=== Scanning arrow-lake:latest for vulnerabilities ==="
+		@docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+			aquasec/trivy:latest image --severity HIGH,CRITICAL --exit-code 1 arrow-lake:latest || \
+			(echo "Vulnerabilities found! Review and fix before deploying." && exit 1)
+
+	backup:
+		@echo "=== Running MinIO backup ==="
+		docker compose $(COMPOSE_PROD) --project-name $(PROJECT_NAME) run --rm minio-backup
+
 # ---------------------------------------------------------------------------
 # Help
 # ---------------------------------------------------------------------------
@@ -210,6 +224,8 @@ help:
 	@echo "  make test-smoke  Run container integration tests"
 	@echo "  make flow-run FLOW=ingest [ARGS='...']  Run a flow (prod)"
 	@echo "  make flow-test   Run all 4 flows (prod)"
+	@echo "  make scan        Scan images for vulnerabilities (trivy)"
+	@echo "  make backup      Run MinIO backup (prod)"
 	@echo ""
 	@echo "Variables:"
 	@echo "  FLOW           Flow name (ingest|embed|kg|batch_rag) default: ingest"

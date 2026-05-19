@@ -1,7 +1,10 @@
-# Prometheus 配置
+# Prometheus configuration for Arrow Lake production
 global:
   scrape_interval: 15s
   evaluation_interval: 15s
+
+rule_files:
+  - "rules/*.yml"
 
 scrape_configs:
   - job_name: "arrow-lake-server"
@@ -18,3 +21,12 @@ scrape_configs:
     static_configs:
       - targets: ["arrow-lake-minio:9000"]
     metrics_path: "/minio/v2/metrics/cluster"
+
+  - job_name: "redis"
+    static_configs:
+      - targets: ["arrow-lake-redis:6379"]
+
+  - job_name: "hugegraph"
+    static_configs:
+      - targets: ["arrow-lake-hg-server:8080"]
+    metrics_path: "/metrics"

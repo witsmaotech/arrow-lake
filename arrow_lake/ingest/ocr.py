@@ -146,10 +146,10 @@ class TurboOcrClient:
         if not self._circuit.allow():
             return False
         try:
-            resp = httpx.get(
-                f"{self._endpoint}/health",
-                timeout=5.0,
-            )
+            from arrow_lake.core.http import create_http_client
+
+            with create_http_client(timeout=5.0) as client:
+                resp = client.get(f"{self._endpoint}/health")
             return resp.status_code == 200
         except (OSError, RuntimeError, httpx.HTTPError):
             return False
@@ -173,14 +173,16 @@ class TurboOcrClient:
                 message="TurboOCR circuit breaker is open — service unavailable",
             )
 
+        from arrow_lake.core.http import create_http_client
+
         last_error: Exception | None = None
         for attempt in range(self._max_retries):
             try:
-                resp = httpx.post(
-                    f"{self._endpoint}/ocr",
-                    files={"file": (filename, pdf_bytes, "application/pdf")},
-                    timeout=self._timeout,
-                )
+                with create_http_client(timeout=self._timeout) as client:
+                    resp = client.post(
+                        f"{self._endpoint}/ocr",
+                        files={"file": (filename, pdf_bytes, "application/pdf")},
+                    )
                 resp.raise_for_status()
                 data = resp.json()
                 self._circuit.record_success()

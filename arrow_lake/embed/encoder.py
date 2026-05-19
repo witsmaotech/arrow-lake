@@ -243,7 +243,9 @@ class ApiEmbeddingEncoder:
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
         self._headers = headers
-        self._client = httpx.Client(
+        from arrow_lake.core.http import create_http_client
+
+        self._client = create_http_client(
             timeout=self.timeout_seconds,
             headers=headers,
             limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),

@@ -97,6 +97,7 @@ class TestOlapMaterialize:
                         mock_conn,
                         "SELECT * FROM test_ds",
                         "my_view",
+                        index_columns=None,
                     )
 
     def test_materialize_auto_generates_view_name(self) -> None:

@@ -208,10 +208,12 @@ class OpenAICompatibleProvider(_RetryMixin, BaseLLMProvider):
             if config.api_base
             else _DEFAULT_BASE_URLS.get(config.provider, "https://api.openai.com/v1")
         )
+        from arrow_lake.core.http import create_async_http_client
+
         headers: dict[str, str] = {"Content-Type": "application/json"}
         if config.api_key:
             headers["Authorization"] = f"Bearer {config.api_key}"
-        self._client = httpx.AsyncClient(
+        self._client = create_async_http_client(
             base_url=self._base_url,
             headers=headers,
             timeout=httpx.Timeout(config.timeout_seconds),
@@ -360,7 +362,9 @@ class AnthropicProvider(_RetryMixin, BaseLLMProvider):
             "x-api-key": config.api_key,
             "anthropic-version": getattr(config, "anthropic_version", self._ANTHROPIC_VERSION),
         }
-        self._client = httpx.AsyncClient(
+        from arrow_lake.core.http import create_async_http_client
+
+        self._client = create_async_http_client(
             base_url=self._base_url,
             headers=headers,
             timeout=httpx.Timeout(config.timeout_seconds),

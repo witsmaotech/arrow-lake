@@ -3,11 +3,11 @@
 Requires an LLM provider (Ollama recommended) configured and accessible.
 Tests F1 score against a 50-sample gold standard. Target: F1 > 0.75.
 
-Optimizations: Few-shot prompt, fuzzy matching, system message.
-Default model: gemma4:26b.
+Service endpoints align with docker-compose.prod.yml:
+  - LLM: ARROW_LAKE__EMBEDDING__API_BASE (Ollama default)
+  - Override: HUGEGRAPH_LLM_PROVIDER, HUGEGRAPH_LLM_MODEL, HUGEGRAPH_LLM_API_BASE
 
 Usage:
-    HUGEGRAPH_LLM_PROVIDER=ollama HUGEGRAPH_LLM_MODEL=gemma4:26b \
     uv run pytest tests/spike/test_entity_extraction_accuracy.py -v -m spike -s
 
 Full benchmark (50 samples):
@@ -26,15 +26,17 @@ import pytest
 from arrow_lake.config import LLMConfig, LLMProviderType
 from arrow_lake.rag.provider import LLMMessage, create_llm_provider
 
-# Gold standard path
+from tests.conftest_services import OLLAMA_API_BASE, ollama_reachable
+
 GOLD_STANDARD_PATH = Path(__file__).parent / "fixtures" / "entity_gold_standard.json"
 
-# LLM configuration
 LLM_PROVIDER = os.getenv("HUGEGRAPH_LLM_PROVIDER", "ollama")
 LLM_MODEL = os.getenv("HUGEGRAPH_LLM_MODEL", "gemma4:26b")
-LLM_API_BASE = os.getenv("HUGEGRAPH_LLM_API_BASE", "http://localhost:11434/v1")
+LLM_API_BASE = os.getenv(
+    "HUGEGRAPH_LLM_API_BASE",
+    OLLAMA_API_BASE,
+)
 
-# Entity extraction prompt - structured JSON output with few-shot examples
 ENTITY_EXTRACT_SYSTEM = """\
 You are an expert entity extractor. Extract ALL named entities from text. \
 Be thorough — do not miss any entities. Use the exact name as it appears in text. \
@@ -53,26 +55,20 @@ Entities: [{{"name": "European Union", "type": "organization"}}, {{"name": "Digi
 Now extract ALL entities from this text:
 {text}"""
 
-# Target accuracy (raised from 0.70 after initial spike pass)
 TARGET_F1 = 0.75
 
 
 def _load_gold_standard() -> list[dict]:
-    """Load the gold standard test cases."""
     with open(GOLD_STANDARD_PATH) as f:
         return json.load(f)
 
 
 def _parse_entities(response: str) -> list[dict]:
-    """Parse entity extraction response into list of {name, type} dicts."""
     text = response.strip()
-
-    # Remove markdown code block wrapper if present
     code_block = re.search(r"```(?:json)?\s*\n?(.*?)```", text, re.DOTALL)
     if code_block:
         text = code_block.group(1).strip()
 
-    # Try to find JSON array
     bracket_start = text.find("[")
     bracket_end = text.rfind("]")
     if bracket_start != -1 and bracket_end != -1:
@@ -93,44 +89,29 @@ def _parse_entities(response: str) -> list[dict]:
 
 
 def _normalize_entity(name: str) -> str:
-    """Normalize entity name for matching."""
-    # Strip common trailing punctuation (both ASCII and CJK)
-    return name.strip().lower().rstrip(".,").rstrip("\uff0c\u3002")
+    return name.strip().lower().rstrip(".,").rstrip("，。")
 
 
 def _fuzzy_match(pred_name: str, exp_name: str) -> bool:
-    """Check if two entity names refer to the same entity.
-
-    Uses exact match, substring containment, and abbreviation expansion.
-    """
     p = _normalize_entity(pred_name)
     e = _normalize_entity(exp_name)
     if not p or not e:
         return False
-    # Exact match
     if p == e:
         return True
-    # Substring containment (one contains the other)
     if p in e or e in p:
         return True
-    # Abbreviation: shorter name is prefix of longer (min 2 chars)
     min_len = min(len(p), len(e))
     return min_len >= 2 and (p[:min_len] == e[:min_len] or p[:min_len] == e)
 
 
 def _calculate_metrics(predicted: list[dict], expected: list[dict]) -> dict:
-    """Calculate precision, recall, and F1 for a single sample.
-
-    Uses fuzzy name matching (substring + abbreviation) to reduce false negatives.
-    Entity types are subjective: e.g., "Apple" could be organization or brand.
-    """
     pred_names = [e["name"] for e in predicted]
     exp_names = [e["name"] for e in expected]
 
     if not pred_names and not exp_names:
         return {"precision": 1.0, "recall": 1.0, "f1": 1.0}
 
-    # Fuzzy matching: each expected entity matches at most one predicted
     matched_exp: set[int] = set()
     matched_pred: set[int] = set()
 
@@ -151,6 +132,17 @@ def _calculate_metrics(predicted: list[dict], expected: list[dict]) -> dict:
     return {"precision": precision, "recall": recall, "f1": f1}
 
 
+def _skip_if_llm_unavailable(exc: Exception) -> None:
+    """Skip test on auth/connection/server errors from LLM provider."""
+    msg = str(exc)
+    if "401" in msg or "UNAUTHORIZED" in msg:
+        pytest.skip(f"LLM provider returned auth error: {msg}")
+    if "ConnectError" in msg or "Connection refused" in msg or "connection" in msg.lower():
+        pytest.skip(f"LLM provider not reachable: {msg}")
+    if "502" in msg or "503" in msg or "504" in msg:
+        pytest.skip(f"LLM provider returned server error: {msg}")
+
+
 @pytest.fixture
 def gold_standard() -> list[dict]:
     return _load_gold_standard()
@@ -158,10 +150,7 @@ def gold_standard() -> list[dict]:
 
 @pytest.fixture
 async def llm_provider():
-    """Create an LLM provider for entity extraction.
-
-    Uses function scope to avoid event loop conflicts with pytest-asyncio.
-    """
+    """Create an LLM provider for entity extraction."""
     config = LLMConfig(
         provider=LLMProviderType(LLM_PROVIDER),
         model=LLM_MODEL,
@@ -184,13 +173,18 @@ class TestEntityExtractionAccuracy:
     @pytest.mark.asyncio
     async def test_llm_available(self, llm_provider) -> None:
         """Verify the LLM provider is accessible."""
-        resp = await llm_provider.generate(
-            [LLMMessage(role="user", content="Reply with just the word OK")]
-        )
+        from arrow_lake.exceptions import RAGError
+
+        try:
+            resp = await llm_provider.generate(
+                [LLMMessage(role="user", content="Reply with just the word OK")]
+            )
+        except RAGError as exc:
+            _skip_if_llm_unavailable(exc)
+            raise
         assert "ok" in resp.content.lower(), f"LLM not responding: {resp.content}"
 
     def _build_messages(self, text: str) -> list[LLMMessage]:
-        """Build messages with system prompt and few-shot user prompt."""
         return [
             LLMMessage(role="system", content=ENTITY_EXTRACT_SYSTEM),
             LLMMessage(role="user", content=ENTITY_EXTRACT_PROMPT.format(text=text)),
@@ -199,12 +193,18 @@ class TestEntityExtractionAccuracy:
     @pytest.mark.asyncio
     async def test_extraction_format(self, llm_provider, gold_standard: list[dict]) -> None:
         """Verify extraction returns parseable JSON for all samples."""
+        from arrow_lake.exceptions import RAGError
+
         samples = gold_standard[:5]
         failures = []
 
         for sample in samples:
             messages = self._build_messages(sample["text"])
-            resp = await llm_provider.generate(messages)
+            try:
+                resp = await llm_provider.generate(messages)
+            except RAGError as exc:
+                _skip_if_llm_unavailable(exc)
+                raise
             entities = _parse_entities(resp.content)
             if not entities:
                 failures.append({
@@ -219,11 +219,9 @@ class TestEntityExtractionAccuracy:
 
     @pytest.mark.asyncio
     async def test_extraction_accuracy(self, llm_provider, gold_standard: list[dict]) -> None:
-        """Extract entities from gold standard and measure F1.
+        """Extract entities from gold standard and measure F1."""
+        from arrow_lake.exceptions import RAGError
 
-        Uses a subset (first 10 samples) for faster benchmarking.
-        Set HUGEGRAPH_FULL_BENCHMARK=1 to run all 50 samples.
-        """
         samples = gold_standard
         full_benchmark = os.getenv("HUGEGRAPH_FULL_BENCHMARK", "0") == "1"
         if not full_benchmark:
@@ -233,13 +231,16 @@ class TestEntityExtractionAccuracy:
 
         for sample in samples:
             messages = self._build_messages(sample["text"])
-            resp = await llm_provider.generate(messages)
+            try:
+                resp = await llm_provider.generate(messages)
+            except RAGError as exc:
+                _skip_if_llm_unavailable(exc)
+                raise
             predicted = _parse_entities(resp.content)
             expected = sample["entities"]
             metrics = _calculate_metrics(predicted, expected)
             all_metrics.append(metrics)
 
-        # Aggregate metrics
         avg_p = sum(m["precision"] for m in all_metrics) / len(all_metrics)
         avg_r = sum(m["recall"] for m in all_metrics) / len(all_metrics)
         avg_f1 = sum(m["f1"] for m in all_metrics) / len(all_metrics)
@@ -253,7 +254,6 @@ class TestEntityExtractionAccuracy:
             "passed": avg_f1 >= TARGET_F1,
         }
 
-        # Report results
         print(f"\n{'='*60}")
         print(f"Entity Extraction Benchmark ({result['samples']} samples)")
         print(f"{'='*60}")

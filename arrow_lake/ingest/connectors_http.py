@@ -122,7 +122,9 @@ class HttpConnector:
     ) -> None:
         self.timeout_seconds = timeout_seconds
         self.max_retries = max_retries
-        self._client = httpx.Client(
+        from arrow_lake.core.http import create_http_client
+
+        self._client = create_http_client(
             transport=_SSRFSafeTransport(),
             timeout=timeout_seconds,
             limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),

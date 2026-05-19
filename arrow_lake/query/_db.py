@@ -9,8 +9,10 @@ Provides a class-based DuckDB session with:
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
+import threading
 
 import duckdb
 
@@ -20,6 +22,11 @@ from arrow_lake.exceptions import ArrowLakeError, ErrorCode
 logger = logging.getLogger(__name__)
 
 __all__ = ["DuckDBSession", "create_duckdb_session"]
+
+# Module-level lock to serialize os.environ modifications for S3 config.
+# Without this, concurrent DuckDBSession.__enter__/__exit__ calls from the
+# session manager's idle pool can race on env var read/write.
+_s3_env_lock = threading.Lock()
 
 
 class DuckDBSession:
@@ -64,6 +71,12 @@ class DuckDBSession:
                 f"Failed to load lance extension: {exc}",
             ) from exc
 
+        # httpfs — required for S3/HTTP access; non-fatal for local-only mode
+        try:
+            conn.execute("INSTALL httpfs; LOAD httpfs;")
+        except duckdb.CatalogException:
+            logger.debug("httpfs extension not available (local-only mode)")
+
         if self._load_ducklake:
             try:
                 conn.execute("INSTALL ducklake; LOAD ducklake;")
@@ -74,10 +87,10 @@ class DuckDBSession:
                 ) from exc
 
     def _configure_resources(self, conn: duckdb.DuckDBPyConnection) -> None:
-        """Set memory limit, threads, and statement timeout.
+        """Set memory limit, threads, statement timeout, and performance tuning.
 
         statement_timeout is only available in DuckDB >= 1.2.0.
-        If unsupported, it is silently skipped.
+        preserve_insertion_order and temp_directory are applied from OlapConfig.
         """
         conn.execute(f"SET memory_limit='{self._max_memory_mb}MB';")
         conn.execute(f"SET threads={self._threads};")
@@ -89,11 +102,25 @@ class DuckDBSession:
                 duckdb.__version__,
             )
 
+        # Performance tuning from OlapConfig
+        if self._olap_config is not None:
+            if not self._olap_config.preserve_insertion_order:
+                conn.execute("SET preserve_insertion_order = false;")
+            if self._olap_config.temp_directory:
+                conn.execute(f"SET temp_directory = '{self._olap_config.temp_directory}';")
+            if self._olap_config.enable_progress_bar:
+                conn.execute("SET enable_progress_bar = true;")
+                conn.execute("SET progress_bar_time = 2000;")
+            if self._olap_config.enable_profiling:
+                with contextlib.suppress(duckdb.CatalogException):
+                    conn.execute("SET profiling_mode = 'detailed';")
+
     def _configure_s3(self, conn: duckdb.DuckDBPyConnection) -> None:
         """Apply S3 configuration from StorageConfig if backend is not LOCAL.
 
-        Sets both DuckDB SET variables (for httpfs) and environment variables
-        (for lance extension's Rust AWS SDK).
+        Applies both CREATE SECRET (for DuckDB httpfs credential management)
+        and SET variables (for current_setting() compatibility and lance SDK).
+        Also sets environment variables for lance extension's Rust AWS SDK.
         """
         if self._storage_config is None:
             return
@@ -101,7 +128,6 @@ class DuckDBSession:
         if config.backend == "local":
             return
 
-        # DuckDB SET doesn't support ? placeholders, so escape single quotes
         def _esc(val: str) -> str:
             return val.replace("'", "''")
 
@@ -113,6 +139,7 @@ class DuckDBSession:
             endpoint = endpoint[len("https://") :]
         is_http = not config.s3_endpoint.startswith("https://")
 
+        # SET variables — needed for current_setting() queries and lance SDK
         conn.execute(f"SET s3_region='{_esc(config.s3_region)}';")
         conn.execute(f"SET s3_endpoint='{_esc(endpoint)}';")
         conn.execute(f"SET s3_access_key_id='{_esc(config.s3_access_key)}';")
@@ -121,35 +148,47 @@ class DuckDBSession:
             conn.execute("SET s3_use_ssl=false;")
             conn.execute("SET s3_url_style='path';")
 
-        # Set environment variables for lance extension's Rust AWS SDK.
-        # The lance DuckDB extension uses object_store::aws::AmazonS3Builder
-        # whose with_env_s3() parses env vars via AmazonS3ConfigKey::from_str().
-        # It does NOT recognize AWS_ENDPOINT_URL_S3 (the AWS SDK standard name),
-        # only AWS_ENDPOINT_URL and its aliases.
-        # Ref: lancedb/lance rust/lance-io/src/object_store/providers/aws.rs
-        # NOTE: These env vars are required by lance's Rust SDK. We save/restore
-        # to minimize credential exposure to child processes.
-        _env_backup = {
-            k: os.environ.get(k) for k in (
-                "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
-                "AWS_REGION", "AWS_ENDPOINT_URL", "AWS_ALLOW_HTTP",
-            )
-        }
-        self._s3_env_backup = _env_backup
+        # CREATE SECRET — preferred credential source for DuckDB httpfs
         try:
-            os.environ["AWS_ACCESS_KEY_ID"] = config.s3_access_key
-            os.environ["AWS_SECRET_ACCESS_KEY"] = config.s3_secret_key
-            os.environ["AWS_REGION"] = config.s3_region
-            os.environ["AWS_ENDPOINT_URL"] = config.s3_endpoint
+            secret_sql = (
+                f"CREATE OR REPLACE SECRET _arrow_lake_s3 ("
+                f"TYPE S3, "
+                f"KEY_ID '{_esc(config.s3_access_key)}', "
+                f"SECRET '{_esc(config.s3_secret_key)}', "
+                f"REGION '{_esc(config.s3_region)}'"
+            )
+            if endpoint:
+                secret_sql += f", ENDPOINT '{_esc(endpoint)}'"
             if is_http:
-                os.environ["AWS_ALLOW_HTTP"] = "true"
-        except Exception:
-            # Restore on partial failure
-            for k, v in _env_backup.items():
-                if v is None:
-                    os.environ.pop(k, None)
-                else:
-                    os.environ[k] = v
+                secret_sql += ", URL_STYLE 'path', USE_SSL false"
+            secret_sql += ")"
+            conn.execute(secret_sql)
+        except (duckdb.ParserException, duckdb.CatalogException):
+            logger.debug("CREATE SECRET not supported in DuckDB %s", duckdb.__version__)
+
+        # Set environment variables for lance extension's Rust AWS SDK.
+        # Thread-safe via module-level lock to prevent races in concurrent
+        # session creation from the connection pool.
+        _env_keys = (
+            "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
+            "AWS_REGION", "AWS_ENDPOINT_URL", "AWS_ALLOW_HTTP",
+        )
+        with _s3_env_lock:
+            _env_backup = {k: os.environ.get(k) for k in _env_keys}
+            self._s3_env_backup = _env_backup
+            try:
+                os.environ["AWS_ACCESS_KEY_ID"] = config.s3_access_key
+                os.environ["AWS_SECRET_ACCESS_KEY"] = config.s3_secret_key
+                os.environ["AWS_REGION"] = config.s3_region
+                os.environ["AWS_ENDPOINT_URL"] = config.s3_endpoint
+                if is_http:
+                    os.environ["AWS_ALLOW_HTTP"] = "true"
+            except Exception:
+                for k, v in _env_backup.items():
+                    if v is None:
+                        os.environ.pop(k, None)
+                    else:
+                        os.environ[k] = v
 
     def __enter__(self) -> duckdb.DuckDBPyConnection:
         """Create connection, load extensions, configure resources and S3."""
@@ -166,11 +205,12 @@ class DuckDBSession:
             self._conn = None
         backup = getattr(self, "_s3_env_backup", None)
         if backup:
-            for k, v in backup.items():
-                if v is None:
-                    os.environ.pop(k, None)
-                else:
-                    os.environ[k] = v
+            with _s3_env_lock:
+                for k, v in backup.items():
+                    if v is None:
+                        os.environ.pop(k, None)
+                    else:
+                        os.environ[k] = v
 
 
 def create_duckdb_session(

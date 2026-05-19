@@ -31,7 +31,9 @@ class VermeerClient:
     def __init__(self, config: HugeGraphConfig) -> None:
         self._base_url = f"http://{config.vermeer_host}:{config.vermeer_port}"
         self._graph_name = config.graph_name
-        self._client = httpx.AsyncClient(
+        from arrow_lake.core.http import create_async_http_client
+
+        self._client = create_async_http_client(
             base_url=self._base_url,
             timeout=httpx.Timeout(config.timeout_seconds),
             http2=False,

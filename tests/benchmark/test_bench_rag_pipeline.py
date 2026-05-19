@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 
+import pyarrow as pa
 import pytest
 from arrow_lake.config import RAGConfig
 from arrow_lake.rag.pipeline import RAGPipeline
@@ -44,26 +45,41 @@ class _MockLLMProvider:
         pass
 
 
-def _mock_retriever(question: str, dataset_name: str, top_k: int) -> list[dict]:
-    """Mock retriever that returns fixed documents."""
+def _mock_retriever(question: str, dataset_name: str, top_k: int) -> pa.Table:
+    """Mock retriever that returns fixed documents as a pyarrow Table."""
+    import pyarrow as pa
+
     docs = [
         {
-            "text": "Machine learning is a subset of artificial intelligence that enables systems to learn from data.",
-            "score": 0.95,
-            "metadata": {"source": "doc_001"},
+            "text_content": "Machine learning is a subset of artificial intelligence that enables systems to learn from data.",
+            "_score": 0.95,
+            "id": "doc_001",
+            "modality": "text",
+            "source": "bench",
         },
         {
-            "text": "Deep learning uses neural networks with multiple layers to model complex patterns in data.",
-            "score": 0.90,
-            "metadata": {"source": "doc_002"},
+            "text_content": "Deep learning uses neural networks with multiple layers to model complex patterns in data.",
+            "_score": 0.90,
+            "id": "doc_002",
+            "modality": "text",
+            "source": "bench",
         },
         {
-            "text": "Natural language processing combines computational linguistics with statistical models.",
-            "score": 0.85,
-            "metadata": {"source": "doc_003"},
+            "text_content": "Natural language processing combines computational linguistics with statistical models.",
+            "_score": 0.85,
+            "id": "doc_003",
+            "modality": "text",
+            "source": "bench",
         },
     ]
-    return docs[:top_k]
+    selected = docs[:top_k]
+    return pa.table({
+        "text_content": [d["text_content"] for d in selected],
+        "_score": [d["_score"] for d in selected],
+        "id": [d["id"] for d in selected],
+        "modality": [d["modality"] for d in selected],
+        "source": [d["source"] for d in selected],
+    })
 
 
 def _make_rag_pipeline(
@@ -76,7 +92,7 @@ def _make_rag_pipeline(
         system_prompt="You are a helpful assistant.",
     )
     return RAGPipeline(
-        llm=llm or _MockLLMProvider(),
+        llm_provider=llm or _MockLLMProvider(),
         retriever=_mock_retriever,
         config=config,
     )
@@ -177,7 +193,7 @@ class TestRAGPipelineBenchmark:
 
     def test_rag_context_assembly(self) -> None:
         """Benchmark: context assembly overhead (no LLM call)."""
-        from arrow_lake.rag.context import ContextCitation, ContextWindow
+        from arrow_lake.rag.context import ContextChunk, ContextWindow
 
         _make_rag_pipeline()
 
@@ -185,22 +201,16 @@ class TestRAGPipelineBenchmark:
 
         # Directly benchmark context window building
         def _build_context() -> None:
-            citations = tuple(
-                ContextCitation(
-                    text="Machine learning enables systems to learn from data using statistical models.",
-                    score=0.95,
-                    source="doc_001",
-                    start_char=0,
-                    end_char=100,
+            window = ContextWindow(token_budget=500, max_chunks=5)
+            for i in range(5):
+                chunk = ContextChunk(
+                    text=f"Machine learning enables systems to learn from data. Chunk {i}.",
+                    dataset="bench_rag",
+                    row_id=f"doc_{i:03d}",
+                    score=0.95 - i * 0.01,
                 )
-                for _ in range(5)
-            )
-            ContextWindow(
-                question="What is ML?",
-                context_chunks=citations,
-                total_tokens=500,
-                top_k=5,
-            )
+                window.add_chunk(chunk)
+            window.assemble()
 
         report.measure(
             "build context window (5 citations)",

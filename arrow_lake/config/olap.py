@@ -43,6 +43,19 @@ class OlapConfig(BaseModel):
     ducklake_ttl_days: int = 7
     ducklake_max_join_rows: int = 1_000_000
 
+    # Performance tuning
+    preserve_insertion_order: bool = False
+    temp_directory: str = ""
+    enable_progress_bar: bool = False
+    enable_profiling: bool = False
+    parquet_row_group_size: int = 100_000
+    ducklake_index_columns: list[str] = []
+
+    # Query result cache
+    query_cache_enabled: bool = False
+    query_cache_ttl_seconds: int = 60
+    query_cache_max_entries: int = 100
+
     @field_validator("lance_scan_mode")
     @classmethod
     def validate_lance_scan_mode(cls, v: str) -> str:

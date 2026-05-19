@@ -15,7 +15,7 @@ import time
 import httpx
 import pytest
 
-from tests.container.conftest import require_hugegraph, require_ollama
+from tests.conftest_services import require_hugegraph, require_ollama
 
 # ---------------------------------------------------------------------------
 # System (5 endpoints)

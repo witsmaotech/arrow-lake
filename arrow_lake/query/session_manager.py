@@ -342,6 +342,17 @@ class DuckDBSessionManager:
                         conn.execute(f"SET threads={os.cpu_count() or 4};")
                         with contextlib.suppress(duckdb.CatalogException):
                             conn.execute(f"SET statement_timeout='{int(self._olap_config.query_timeout_seconds)}s';")
+                        # Re-apply performance tuning
+                        if not self._olap_config.preserve_insertion_order:
+                            conn.execute("SET preserve_insertion_order = false;")
+                        if self._olap_config.temp_directory:
+                            conn.execute(f"SET temp_directory = '{self._olap_config.temp_directory}';")
+                        if self._olap_config.enable_progress_bar:
+                            conn.execute("SET enable_progress_bar = true;")
+                            conn.execute("SET progress_bar_time = 2000;")
+                        if self._olap_config.enable_profiling:
+                            with contextlib.suppress(duckdb.CatalogException):
+                                conn.execute("SET profiling_mode = 'detailed';")
                     if load_ducklake:
                         conn.execute("INSTALL ducklake; LOAD ducklake;")
                 except duckdb.Error:

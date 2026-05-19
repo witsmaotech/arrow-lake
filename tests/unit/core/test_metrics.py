@@ -88,30 +88,37 @@ class TestMetricsRegistration:
 class TestQueryTimer:
     """Test the _QueryTimer context manager."""
 
+    @staticmethod
+    def _get_counter_value() -> float:
+        """Read current query_total counter value."""
+        for family in query_total.collect():
+            for sample in family.samples:
+                if sample.name == "arrow_lake_query_total":
+                    return sample.value
+        return 0.0
+
     def test_timer_records_query(self):
         from arrow_lake.core.metrics import _QueryTimer
+
+        before = self._get_counter_value()
 
         with _QueryTimer(query_type="test"):
             time.sleep(0.01)
 
-        # Verify the counter was incremented
-        samples = list(query_total.collect())
-        assert len(samples) == 1
-        assert samples[0].samples[0].value == 1
+        after = self._get_counter_value()
+        assert after == before + 1
 
     def test_timer_respects_disabled_metrics(self):
         from arrow_lake.core.metrics import _QueryTimer
 
         disable_metrics()
         try:
-            samples_before = list(query_total.collect())
-            initial_val = samples_before[0].samples[0].value if samples_before else 0
+            before = self._get_counter_value()
 
             with _QueryTimer(query_type="test_disabled"):
                 pass
 
-            samples_after = list(query_total.collect())
-            after_val = samples_after[0].samples[0].value if samples_after else 0
-            assert after_val == initial_val
+            after = self._get_counter_value()
+            assert after == before
         finally:
             enable_metrics()
