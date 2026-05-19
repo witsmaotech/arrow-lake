@@ -143,7 +143,7 @@ async def test_ingest_files(client: AsyncClient, mock_lake_with_catalog: MagicMo
     assert body["sources"][0]["path"] == "data.csv"
 
     # Verify Lake.ingest was called with correct args
-    mock_lake_with_catalog.ingest.assert_called_once_with("test", ["data.csv", "data2.json"])
+    mock_lake_with_catalog.ingest.assert_called_once_with("test", ["data.csv", "data2.json"], transforms=None)
 
 
 # ---- POST /api/v1/datasets/{name}/ingest/http ----

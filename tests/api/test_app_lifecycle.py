@@ -60,34 +60,46 @@ class TestCheckStorageConnectivity:
         config.storage.backend = StorageBackend.LOCAL
         _check_storage_connectivity(config)
 
-    @patch("httpx.get")
-    def test_non_local_backend_health_pass(self, mock_get: MagicMock) -> None:
+    @patch("arrow_lake.core.http.create_http_client")
+    def test_non_local_backend_health_pass(self, mock_factory: MagicMock) -> None:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
-        mock_get.return_value = mock_resp
+        mock_client = MagicMock()
+        mock_client.get.return_value = mock_resp
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_factory.return_value = mock_client
         config = _make_config()
         config.storage.backend = StorageBackend.MINIO
         config.storage.s3_endpoint = "http://minio:9000"
         config.storage.s3_bucket = "test-bucket"
         _check_storage_connectivity(config)
-        mock_get.assert_called_once_with(
-            "http://minio:9000/minio/health/live", timeout=5.0,
+        mock_client.get.assert_called_once_with(
+            "http://minio:9000/minio/health/live",
         )
 
-    @patch("httpx.get")
-    def test_non_local_backend_health_non_200(self, mock_get: MagicMock) -> None:
+    @patch("arrow_lake.core.http.create_http_client")
+    def test_non_local_backend_health_non_200(self, mock_factory: MagicMock) -> None:
         mock_resp = MagicMock()
         mock_resp.status_code = 503
-        mock_get.return_value = mock_resp
+        mock_client = MagicMock()
+        mock_client.get.return_value = mock_resp
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_factory.return_value = mock_client
         config = _make_config()
         config.storage.backend = StorageBackend.S3
         config.storage.s3_endpoint = "http://s3:9000"
         config.storage.s3_bucket = "data"
         _check_storage_connectivity(config)
 
-    @patch("httpx.get")
-    def test_non_local_backend_connection_error(self, mock_get: MagicMock) -> None:
-        mock_get.side_effect = Exception("refused")
+    @patch("arrow_lake.core.http.create_http_client")
+    def test_non_local_backend_connection_error(self, mock_factory: MagicMock) -> None:
+        mock_client = MagicMock()
+        mock_client.get.side_effect = Exception("refused")
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_factory.return_value = mock_client
         config = _make_config()
         config.storage.backend = StorageBackend.MINIO
         config.storage.s3_endpoint = "http://unreachable:9000"

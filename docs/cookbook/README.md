@@ -44,9 +44,9 @@ Arrow Lake 数据湖平台实战教程，涵盖数据摄取、搜索、分析、
 
 ## 版本
 
-对应 Arrow Lake v1.3.0
+对应 Arrow Lake v1.3.4
 
-## v1.3.0 新特性
+## v1.3.4 新特性
 
 | #  | 示例                                                       | 说明                                            |
 | -- | -------------------------------------------------------- | ----------------------------------------------- |
@@ -56,3 +56,12 @@ Arrow Lake 数据湖平台实战教程，涵盖数据摄取、搜索、分析、
 | 43 | `admin/43_cronjob_backup.py`                             | CronJob 备份自动化：定时备份 + 历史清理 + 告警     |
 
 > 新增功能：Redis 分布式会话协调、30+ 端点 RBAC 权限控制、Kubernetes HPA 自动扩缩容、CronJob 定时备份、生产安全清单（TLS / CSP / NetworkPolicy）。
+
+### REST API 示例 (examples_api/)
+
+| #  | 示例文件 | 说明 |
+| -- | ------- | ---- |
+| 01-05 | `health_auth_datasets` ~ `embedding_index` | 核心功能：健康检查、认证、摄取、搜索、嵌入 |
+| 06-10 | `rag_pipeline` ~ `multimodal_ingest` | AI 管线：RAG、知识图谱、质量去重、血缘审计、多模态 |
+| 11-20 | `transaction_analytics` ~ `cross_dataset` | 业务场景：交易分析、论文库、知识库、销售漏斗、视频分析等 |
+| 21-32 | `daft_dataframe_basics` ~ `daft_pivot_explode_sample` | Daft DataFrame：基础查询、清洗、关联、时序、SQL、pivot 等 |

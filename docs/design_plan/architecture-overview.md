@@ -1261,4 +1261,12 @@ flowchart TD
 >
 > **v1.3.4 变更摘要**：Metaflow 工作流编排层升级 — 新增 4 个高级特性 Flow (IngestFlow / EmbedFlow / KGFlow / BatchRAGFlow)，使用 @foreach 并行、@branch 分支、@retry 容错、@catch 死信、@timeout 超时、@resources 资源声明。新增 RunTracker (Client API 封装)。原有 3 个线性 Flow 保留。总计 7 Flows + 10 基础设施模块，285 测试覆盖。
 >
+> **v1.3.4 补充变更**：
+> - **DuckDB 查询缓存**: OLAP 层新增 LRU 查询缓存 (`query/_cache.py`)，支持 TTL + max_entries，命中时跳过 SQL 编译与执行
+> - **HTTP 安全工厂**: `core/http.py` 统一 httpx 客户端创建，默认 `trust_env=False`，防止容器内代理泄漏；全部 8 处客户端迁移到工厂
+> - **代理泄漏修复**: `docker-compose.prod.yml` 显式清空 HTTP_PROXY，阻断宿主机代理泄漏到容器；Embedding router 使用配置模型名
+> - **可观测性补全**: Loki + Promtail 日志聚合、Prometheus 告警规则 (`arrow_lake.yml`)、Grafana 多数据源 (Prometheus + Loki)
+> - **生产反向代理**: nginx TLS 终端 + 安全头 (CSP/HSTS/X-Frame) + 速率限制
+> - **数据备份**: MinIO 定时备份脚本 (`backup-minio.sh`) + 保留策略 + CronJob 集成
+>
 > 详细设计参见：[architecture-v1.3.0.md](architecture-v1.3.0.md) | [architecture-v1.0_draft_up.md](architecture-v1.0_draft_up.md) | [metaflow-optimization-plan.md](../metaflow-optimization-plan.md)

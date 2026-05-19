@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.4] - 2026-05-19
+
+### Fixed
+- **代理泄漏全面修复**: 宿主机 HTTP_PROXY 通过 Docker Compose `${HTTP_PROXY:-}` 插值泄漏到容器内，导致所有 httpx 客户端 (embedding/LLM/KG) Connection refused
+- **Embedding 500 错误**: router 使用请求参数默认模型名 (Qwen/Qwen3-Embedding-0.6B) 而非配置模型名，Ollama 返回 404
+
+### Added
+- **httpx 客户端工厂** (`core/http.py`): `create_http_client()` / `create_async_http_client()`，默认 `trust_env=False`，统一管理出站 HTTP 代理策略
+- **DuckDB 查询缓存** (`query/_cache.py`): LRU 缓存层，支持 TTL + max_entries + 线程安全，命中时跳过 SQL 编译与执行
+- **OLAP 性能调优配置**: `query_cache_enabled/ttl/max_entries`、`preserve_insertion_order`、`parquet_row_group_size`、`enable_progress_bar`
+- **Loki + Promtail 日志聚合**: `deploy/monitoring/loki/` + `deploy/monitoring/promtail/`，容器日志集中收集
+- **Prometheus 告警规则**: `deploy/monitoring/prometheus/rules/arrow_lake.yml`，服务健康/API 延迟/错误率告警
+- **nginx TLS 反向代理**: `deploy/nginx/nginx.conf`，安全头 + 速率限制 + 请求大小限制
+- **MinIO 定时备份**: `deploy/scripts/backup-minio.sh`，保留策略 + CronJob 集成
+- **Grafana 多数据源**: Loki datasource 自动配置
+
+### Changed
+- **Docker Compose 代理清空**: `docker-compose.prod.yml` api/ray-head/ray-worker 显式设置 `HTTP_PROXY=""`
+- **NO_PROXY 扩展**: 增加 `172.19.0.0/16`、`loki`、`promtail`
+- **`.env.example` 重构**: 按类别分组 (Docker/存储/计算/监控/安全)，新增 Docker Compose 必需变量
+- **FTS 搜索**: 增加 replace 支持（自动 drop 旧 segmented column 后重建）
+- **会话管理器**: 增加连接池监控指标 (pool_size/active_sessions/queued_requests)
+
 ## [1.3.3] - 2026-05-18
 
 ### Added

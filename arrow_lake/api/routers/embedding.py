@@ -118,8 +118,8 @@ async def embed_text(
         )
 
     encoder = LocalEmbeddingEncoder(
-        model_name=req.model,
-        model_source=req.model_source,
+        model_name=emb_cfg.model,
+        model_source="local",
     )
     table = pa.table({"text_content": req.texts})
     result = await run_sync(
@@ -131,7 +131,7 @@ async def embed_text(
         return EmbeddingResponse(
             embeddings=[],
             embedding_dim=0,
-            model=req.model,
+            model=emb_cfg.model,
             total=result.total_rows,
             null_count=result.null_rows,
         )
@@ -146,7 +146,7 @@ async def embed_text(
     return EmbeddingResponse(
         embeddings=embeddings,
         embedding_dim=result.embedding_dim,
-        model=req.model,
+        model=emb_cfg.model,
         total=result.total_rows,
         null_count=result.null_rows,
     )
@@ -187,8 +187,8 @@ async def embed_image(
 
     table = pa.table({"image": image_bytes})
     encoder = CLIPImageEncoder(
-        model_name=req.model,
-        model_source=req.model_source,
+        model_name=emb_cfg.model,
+        model_source="local",
     )
     result = await run_sync(
         encoder.encode, table,
@@ -205,7 +205,7 @@ async def embed_image(
     return EmbeddingResponse(
         embeddings=embeddings,
         embedding_dim=result.embedding_dim,
-        model=req.model,
+        model=emb_cfg.model,
         total=result.total,
         null_count=result.null_count,
     )
