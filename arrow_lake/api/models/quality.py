@@ -31,3 +31,30 @@ class DedupResponse(BaseModel):
 class QualityReportResponse(BaseModel):
     success: bool = True
     report: dict[str, Any]
+
+
+class RuleDefinitionRequest(BaseModel):
+    name: str = Field(..., min_length=1)
+    column: str = Field(..., min_length=1)
+    check: str = Field(..., pattern=r"^(length|range|regex|duplicate)$")
+    params: dict[str, Any] = {}
+    action: str = Field(default="flag", pattern=r"^(reject|flag|remove)$")
+    message: str = ""
+
+
+class QualityRuleSetRequest(BaseModel):
+    rules: list[RuleDefinitionRequest] = Field(..., min_length=1, max_length=20)
+
+
+class QualityRuleResultItem(BaseModel):
+    rule_name: str
+    action: str
+    affected_count: int
+    message: str
+
+
+class QualityRuleSetResponse(BaseModel):
+    success: bool = True
+    applied_rules: int = 0
+    results: list[QualityRuleResultItem] = []
+    total_affected_rows: int = 0

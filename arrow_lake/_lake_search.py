@@ -133,6 +133,7 @@ class _LakeSearchMixin:
         fts_column: str | None = None,
         where: str | None = None,
         version: int | None = None,
+        offset: int = 0,
     ) -> FullTextSearchResult:
         """Full-text search over ingested data (Story 5.2).
 
@@ -144,6 +145,7 @@ class _LakeSearchMixin:
             top_k: Number of results (None = use config default).
             fts_column: Text column to search (None = use config default).
             where: Optional metadata filter expression.
+            offset: Number of results to skip for pagination.
 
         Returns:
             FullTextSearchResult with Arrow table and _score relevance.
@@ -170,6 +172,7 @@ class _LakeSearchMixin:
                 fts_column=fts_column,
                 where=where,
                 version=version,
+                offset=offset,
             )
 
     def create_fts_index(

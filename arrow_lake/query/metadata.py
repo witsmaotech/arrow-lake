@@ -185,3 +185,66 @@ class MetadataSearchBridge:
             )
 
         conn.register(dataset_name, source)
+
+    def _relational_query(
+        self,
+        dataset_name: str,
+        columns: list[str],
+        where: str | None = None,
+        limit: int = 1000,
+    ) -> pa.Table:
+        """Type-safe Relational API query for simple schema discovery.
+
+        Uses DuckDB's Relational API instead of raw SQL strings to eliminate
+        SQL injection risk. Intended for simple select/filter operations only.
+
+        Args:
+            dataset_name: Name of the Lance dataset to query.
+            columns: Column names to select. Each must match SAFE_IDENTIFIER_RE.
+            where: Optional filter expression (DuckDB SQL WHERE clause syntax).
+            limit: Maximum rows to return (default 1000).
+
+        Returns:
+            PyArrow Table with the query results.
+
+        Raises:
+            QueryError: If dataset not found or query fails.
+            ValueError: If dataset name or column names are invalid.
+        """
+        if not SAFE_IDENTIFIER_RE.match(dataset_name):
+            raise ValueError(f"Invalid dataset name '{dataset_name}'")
+        for col in columns:
+            if not SAFE_IDENTIFIER_RE.match(col):
+                raise ValueError(f"Invalid column name '{col}'")
+
+        try:
+            source = self._storage.scan_dataset(dataset_name)
+        except StorageError as exc:
+            raise QueryError(
+                error_code=ErrorCode.QUERY_NO_RESULTS,
+                message=f"Failed to read dataset '{dataset_name}': {exc}",
+            ) from exc
+
+        if self._session_manager is not None:
+            managed = self._session_manager.acquire()
+            try:
+                self._register_dataset(managed.conn, dataset_name, source)
+                rel = managed.conn.table(dataset_name)
+                rel = rel.select(*columns)
+                if where:
+                    rel = rel.filter(where)
+                rel = rel.limit(limit)
+                result = rel.arrow()
+            finally:
+                managed.release()
+        else:
+            with create_duckdb_session(storage_config=self._storage_config) as conn:
+                self._register_dataset(conn, dataset_name, source)
+                rel = conn.table(dataset_name)
+                rel = rel.select(*columns)
+                if where:
+                    rel = rel.filter(where)
+                rel = rel.limit(limit)
+                result = rel.arrow()
+
+        return result

@@ -51,6 +51,7 @@ class FullTextSearchRequest(FormatMixin):
     top_k: int | None = None
     fts_column: str | None = None
     where: str | None = Field(default=None, max_length=4096)
+    offset: int = Field(default=0, ge=0, description="Number of results to skip for pagination")
 
 
 class FullTextSearchResponse(BaseModel):

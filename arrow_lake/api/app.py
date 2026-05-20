@@ -93,6 +93,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     lake = Lake(base_uri=config.storage.base_uri, config=config)
     app.state.lake = lake
 
+    from arrow_lake.api.rbac import PermissionChecker
+    app.state.checker = PermissionChecker()
+
     original_sigterm = signal.getsignal(signal.SIGTERM)
     original_sigint = signal.getsignal(signal.SIGINT)
 

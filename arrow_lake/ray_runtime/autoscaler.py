@@ -94,6 +94,7 @@ class GPUAutoscaler:
         self._last_activity_time: float = time.time()
         self._current_workers: int = self._config.min_workers
         self._pending_events: list[ScalingEvent] = []
+        self._last_scaling_time: float = 0.0
 
     @property
     def config(self) -> AutoscaleConfig:
@@ -128,16 +129,35 @@ class GPUAutoscaler:
                 reason="autoscaling disabled",
             )
 
-        # Track activity
-        if current_tasks > 0 or queue_depth > 0:
-            self._last_activity_time = time.time()
+        # Cooldown check — suppress rapid scaling flapping
+        if self._in_cooldown():
+            return ScalingEvent(
+                direction=ScalingDirection.NONE,
+                previous_workers=self._current_workers,
+                target_workers=self._current_workers,
+                reason="cooldown period active",
+            )
 
-        # Check idle scale-down
+        # Check idle scale-down BEFORE activity tracking (so the timer isn't reset)
         if current_tasks == 0 and queue_depth == 0 and self._should_scale_down():
             return self._make_scale_down_event(
                 target=self._config.min_workers,
                 reason="idle timeout reached",
             )
+
+        # Scale-down protection: idle timeout reached but tasks still running
+        if queue_depth == 0 and self._should_scale_down():
+            if self._config.scale_down_protection and current_tasks > 0:
+                return ScalingEvent(
+                    direction=ScalingDirection.NONE,
+                    previous_workers=self._current_workers,
+                    target_workers=self._current_workers,
+                    reason="scale-down protection: tasks still running",
+                )
+
+        # Track activity (new work arriving)
+        if current_tasks > 0 or queue_depth > 0:
+            self._last_activity_time = time.time()
 
         # Check scale-up
         if queue_depth > 0:
@@ -171,7 +191,9 @@ class GPUAutoscaler:
             return False
 
         self._log_scaling_event(event)
+        self._persist_event(event)
         self._current_workers = event.target_workers
+        self._last_scaling_time = time.time()
         self._pending_events.append(event)
         return True
 
@@ -258,4 +280,18 @@ class GPUAutoscaler:
             target_replicas=event.target_workers,
             current_replicas=event.previous_workers,
             reason=event.reason,
+        )
+
+    def _in_cooldown(self) -> bool:
+        """Check if the cooldown period since last scaling is still active."""
+        if self._last_scaling_time == 0.0:
+            return False
+        elapsed = time.time() - self._last_scaling_time
+        return elapsed < self._config.cooldown_period
+
+    def _persist_event(self, event: ScalingEvent) -> None:
+        """Persist scaling event for audit and Prometheus scraping."""
+        logger.info(
+            "autoscaling_event_persisted",
+            **json.loads(event.to_json()),
         )

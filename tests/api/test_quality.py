@@ -161,3 +161,245 @@ async def test_quality_report(client: AsyncClient, mock_lake: MagicMock) -> None
     assert body["report"]["passed_rows"] == 90
 
     mock_lake.quality_filter.assert_called_once_with("docs")
+
+
+# ---------------------------------------------------------------------------
+# Quality rules — POST /{name}/quality/rules
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_quality_rules_length_check(client: AsyncClient, mock_lake: MagicMock) -> None:
+    """POST /quality/rules applies length check and returns results."""
+    mock_lake.read_dataset.return_value = pa.table({
+        "text_content": ["hello", "hi", "world", "a"],
+    })
+
+    resp = await client.post(
+        "/api/v1/datasets/docs/quality/rules",
+        json={
+            "rules": [{
+                "name": "reject_short",
+                "column": "text_content",
+                "check": "length",
+                "params": {"min": 3},
+                "action": "reject",
+            }],
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["success"] is True
+    assert body["applied_rules"] == 1
+    assert len(body["results"]) == 1
+    assert body["results"][0]["rule_name"] == "reject_short"
+    assert body["results"][0]["affected_count"] == 2
+    assert body["total_affected_rows"] == 2
+
+    mock_lake.read_dataset.assert_called_once_with("docs")
+
+
+@pytest.mark.asyncio
+async def test_quality_rules_range_check(client: AsyncClient, mock_lake: MagicMock) -> None:
+    mock_lake.read_dataset.return_value = pa.table({
+        "score": [1.0, 5.0, 10.0, 15.0],
+    })
+
+    resp = await client.post(
+        "/api/v1/datasets/docs/quality/rules",
+        json={
+            "rules": [{
+                "name": "score_range",
+                "column": "score",
+                "check": "range",
+                "params": {"min": 0, "max": 10},
+                "action": "flag",
+            }],
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["applied_rules"] == 1
+    assert body["results"][0]["affected_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_quality_rules_duplicate_check(client: AsyncClient, mock_lake: MagicMock) -> None:
+    mock_lake.read_dataset.return_value = pa.table({
+        "text_content": ["hello", "world", "hello"],
+    })
+
+    resp = await client.post(
+        "/api/v1/datasets/docs/quality/rules",
+        json={
+            "rules": [{
+                "name": "dedup",
+                "column": "text_content",
+                "check": "duplicate",
+                "action": "remove",
+            }],
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["results"][0]["affected_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_quality_rules_multiple_rules(client: AsyncClient, mock_lake: MagicMock) -> None:
+    mock_lake.read_dataset.return_value = pa.table({
+        "text_content": ["short", "long enough text"],
+        "score": [5.0, 50.0],
+    })
+
+    resp = await client.post(
+        "/api/v1/datasets/docs/quality/rules",
+        json={
+            "rules": [
+                {
+                    "name": "min_text",
+                    "column": "text_content",
+                    "check": "length",
+                    "params": {"min": 10},
+                    "action": "reject",
+                },
+                {
+                    "name": "max_score",
+                    "column": "score",
+                    "check": "range",
+                    "params": {"max": 20},
+                    "action": "flag",
+                },
+            ],
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["applied_rules"] == 2
+    assert len(body["results"]) == 2
+    assert body["total_affected_rows"] == 2
+
+
+@pytest.mark.asyncio
+async def test_quality_rules_no_violations(client: AsyncClient, mock_lake: MagicMock) -> None:
+    mock_lake.read_dataset.return_value = pa.table({
+        "text_content": ["hello", "world"],
+    })
+
+    resp = await client.post(
+        "/api/v1/datasets/docs/quality/rules",
+        json={
+            "rules": [{
+                "name": "min_len",
+                "column": "text_content",
+                "check": "length",
+                "params": {"min": 3},
+                "action": "reject",
+            }],
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["applied_rules"] == 1
+    assert body["results"] == []
+    assert body["total_affected_rows"] == 0
+
+
+@pytest.mark.asyncio
+async def test_quality_rules_custom_message(client: AsyncClient, mock_lake: MagicMock) -> None:
+    mock_lake.read_dataset.return_value = pa.table({
+        "text_content": ["ab"],
+    })
+
+    resp = await client.post(
+        "/api/v1/datasets/docs/quality/rules",
+        json={
+            "rules": [{
+                "name": "min_len",
+                "column": "text_content",
+                "check": "length",
+                "params": {"min": 5},
+                "action": "flag",
+                "message": "Text too short (min={min} chars)",
+            }],
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "min=5" in body["results"][0]["message"]
+
+
+@pytest.mark.asyncio
+async def test_quality_rules_validation_invalid_check(client: AsyncClient, mock_lake: MagicMock) -> None:
+    resp = await client.post(
+        "/api/v1/datasets/docs/quality/rules",
+        json={
+            "rules": [{
+                "name": "bad",
+                "column": "col",
+                "check": "invalid_type",
+                "action": "flag",
+            }],
+        },
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_quality_rules_validation_invalid_action(client: AsyncClient, mock_lake: MagicMock) -> None:
+    resp = await client.post(
+        "/api/v1/datasets/docs/quality/rules",
+        json={
+            "rules": [{
+                "name": "bad",
+                "column": "col",
+                "check": "length",
+                "action": "destroy",
+            }],
+        },
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_quality_rules_validation_empty_rules(client: AsyncClient, mock_lake: MagicMock) -> None:
+    resp = await client.post(
+        "/api/v1/datasets/docs/quality/rules",
+        json={"rules": []},
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_quality_rules_validation_missing_name(client: AsyncClient, mock_lake: MagicMock) -> None:
+    resp = await client.post(
+        "/api/v1/datasets/docs/quality/rules",
+        json={
+            "rules": [{"column": "col", "check": "length"}],
+        },
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_quality_rules_requires_auth(mock_lake: MagicMock) -> None:
+    config = ArrowLakeConfig()
+    config.api.api_key = "test-api-key"
+    config.api.docs_enabled = False
+    app = create_app(config=config)
+    app.state.lake = mock_lake
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as ac:
+        resp = await ac.post(
+            "/api/v1/datasets/docs/quality/rules",
+            json={
+                "rules": [{
+                    "name": "r1",
+                    "column": "col",
+                    "check": "length",
+                }],
+            },
+        )
+    assert resp.status_code in (401, 403)

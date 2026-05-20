@@ -20,10 +20,8 @@ common:
 query_range:
   results_cache:
     cache:
-      enable_fifocache: true
-      fifocache:
-        max_size_items: 1024
-        validity: 24h
+      memcached:
+        expiration: 24h
 
 schema_config:
   configs:

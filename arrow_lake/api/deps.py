@@ -35,6 +35,19 @@ def get_lake(request: Request):
     return request.app.state.lake
 
 
+def get_checker(request: Request):
+    """Return the PermissionChecker bound to this app.
+
+    Falls back to a new instance when checker is not configured
+    (e.g., in tests that don't set app.state.checker).
+    """
+    checker = getattr(request.app.state, "checker", None)
+    if checker is not None:
+        return checker
+    from arrow_lake.api.rbac import PermissionChecker
+    return PermissionChecker()
+
+
 def get_current_user(request: Request) -> TokenPayload:
     """Return the authenticated user.
 

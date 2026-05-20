@@ -1,6 +1,6 @@
 # Arrow Lake 总体架构图
 
-**版本**: v1.3.4 | **日期**: 2026-05-18
+**版本**: v1.4.0 | **日期**: 2026-05-20
 **来源**: [architecture-v1.3.0.md](architecture-v1.3.0.md) + [architecture-v1.0_draft_up.md](architecture-v1.0_draft_up.md)
 
 ---
@@ -1198,22 +1198,24 @@ graph TB
 
 ## 八、核心组件职责矩阵
 
-| 组件 | 职责 | 读写 | v1.3.4 状态 |
+| 组件 | 职责 | 读写 | v1.4.0 状态 |
 | ------ | ------ | ------ | ------------ |
 | **Lance** | 统一数据格式 | SSOT | 生产使用，7 种分块策略 |
 | **LanceDB SDK** | 数据管理层 | 写入+管理 | 完整 CRUD + 版本 + 索引 |
-| **DuckDB** | 查询分析层 | 查询为主 | Session Pool + 资源治理 + lance/ducklake 扩展 |
-| **Daft** | DataFrame 查询层 | 查询+ETL | 惰性操作链 + DaftQueryEngine + 安全加固 + 89 测试覆盖 |
+| **DuckDB** | 查询分析层 | 查询为主 | Session Pool + 资源治理 + Profiling + 多实例路由 |
+| **Daft** | DataFrame 查询层 | 查询+ETL | 惰性操作链 + DaftQueryEngine + 安全加固 + 原生媒体处理 |
 | **DuckLake** | 可写衍生层 | 完整 DML | DuckDB 扩展加载，ETL 物化 |
 | **MinIO** | S3 存储后端 | 读写 | 生产集成，storage_options 接通 |
-| **Redis** | 分布式协调 | 读写 | 信号量 + JWT 黑名单 |
+| **Redis** | 分布式协调 | 读写 | 信号量 + JWT 黑名单 + 多实例心跳 |
 | **HugeGraph** | 知识图谱 | 读写 | 外部部署，Gremlin 安全加固 |
 | **RAG Engine** | 检索增强生成 | 读写 | 完整 Pipeline + GraphRAG + 流式 |
-| **FastAPI** | HTTP 接口 | — | 15 routers，RBAC 三角色，安全头 |
-| **Ray** | 分布式计算 | — | Ray Cluster + GPU Autoscaler |
+| **FastAPI** | HTTP 接口 | — | 16 routers，RBAC + 行列ACL，OLAP SSE 流式 |
+| **Ray** | 分布式计算 | — | Ray Cluster + GPU Autoscaler (冷却期+缩容保护) |
 | **Prometheus + OTel** | 可观测性 | — | 完整 traces + metrics + 健康检查 |
 | **Metaflow Flows** | 工作流编排 | — | 7 Flows (4 新增): foreach/branch/retry/catch/timeout/resources |
 | **Metaflow 基础设施** | 编排支撑 | — | 10 模块: Registry/Retry/Error/Rollback/Schedule/Tags/Audit/Argo/Tracker |
+| **QualityRuleEngine** | 声明式质量规则 | 读 | 4 checks (length/range/regex/duplicate) + 3 actions (reject/flag/remove) |
+| **PermissionChecker** | RBAC + 行列ACL | 管理 | 数据集 ACL + 行过滤 + 列裁剪，Admin 绕过 |
 
 ---
 
@@ -1270,3 +1272,18 @@ flowchart TD
 > - **数据备份**: MinIO 定时备份脚本 (`backup-minio.sh`) + 保留策略 + CronJob 集成
 >
 > 详细设计参见：[architecture-v1.3.0.md](architecture-v1.3.0.md) | [architecture-v1.0_draft_up.md](architecture-v1.0_draft_up.md) | [metaflow-optimization-plan.md](../metaflow-optimization-plan.md)
+>
+> **v1.4.0 变更摘要**：
+> - **DuckDB Profiling**: `enable_profiling` 配置，`explain_analyze()` 输出每算子耗时/行数/内存峰值
+> - **DuckDB Relational API**: `metadata.py` 新增 `_relational_query()` 类型安全查询（schema discovery）
+> - **大文件拆分**: `ingestor.py` 870→200行拆为 3 个 mixin；`client.py` 838→300行拆为 traversers + import/export
+> - **DuckDB 水平扩展**: 多实例连接池路由 (round-robin) + Redis 信号量协调 + 实例注册/心跳
+> - **GPU Autoscaling**: 冷却期 + 缩容保护 + 扩缩容事件持久化
+> - **Schema 演进**: `SchemaCompatibilityChecker` 类型缩窄/列删除/向量维度检查
+> - **Daft 原生媒体**: 批量图像 decode/resize/encode 迁移到 Daft Rust 实现，感知哈希迁移到 `daft.functions.image_hash()`
+> - **血缘可视化 API**: `GET /lineage/graph/{name}` 完整血缘图 + `POST /lineage/impact` 影响分析 + `GET /lineage/stats` 统计
+> - **质量规则引擎**: 声明式 `QualityRuleEngine`，支持 length/range/regex/duplicate 检查 + reject/flag/remove 动作，从 JSON/YAML/API 加载规则集
+> - **行级/列级 ACL**: `DatasetACL` 数据类，`PUT/GET/DELETE /admin/acl/{dataset}` 管理端点，查询/搜索结果自动列裁剪+行过滤
+> - **FTS 分页**: `offset` 参数全链路支持 (API → facade → FTS bridge → LanceDB `.offset()`)
+> - **OLAP 流式**: `stream=True` 返回 SSE，每事件为 Arrow IPC batch (base64)，`StreamingResult` 支持批量大小配置
+> - **3296+ tests passing, bandit 0 高危**

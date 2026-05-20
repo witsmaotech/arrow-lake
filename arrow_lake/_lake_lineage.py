@@ -87,3 +87,51 @@ class _LakeLineageMixin:
 
         bridge = self._get_component("lineage_bridge", _create_bridge)
         return bridge.query(sql)
+
+    def lineage_graph(self, dataset_name: str, *, max_depth: int = 10) -> dict[str, Any]:
+        """Get the full lineage graph for a dataset.
+
+        Performs bidirectional BFS to discover all connected upstream and
+        downstream datasets through lineage events.
+
+        Args:
+            dataset_name: Starting dataset name.
+            max_depth: Maximum traversal depth.
+
+        Returns:
+            Dict with "nodes", "edges", and "stats" keys.
+        """
+        from arrow_lake.catalog.lineage import LineageQueryBridge, LineageStore
+
+        store = self._get_component(
+            "lineage",
+            lambda: LineageStore(self._get_storage()),
+        )
+
+        def _create_bridge() -> LineageQueryBridge:
+            return LineageQueryBridge(store, session_manager=self.get_session_manager())
+
+        bridge = self._get_component("lineage_bridge", _create_bridge)
+        return bridge.trace_full_graph(dataset_name, max_depth=max_depth)
+
+    def lineage_impact(self, dataset_name: str) -> list[dict[str, Any]]:
+        """Analyze downstream impact of changing a dataset.
+
+        Args:
+            dataset_name: Dataset that would change.
+
+        Returns:
+            List of impacted datasets with depth and operation info.
+        """
+        from arrow_lake.catalog.lineage import LineageQueryBridge, LineageStore
+
+        store = self._get_component(
+            "lineage",
+            lambda: LineageStore(self._get_storage()),
+        )
+
+        def _create_bridge() -> LineageQueryBridge:
+            return LineageQueryBridge(store, session_manager=self.get_session_manager())
+
+        bridge = self._get_component("lineage_bridge", _create_bridge)
+        return bridge.trace_impact(dataset_name)

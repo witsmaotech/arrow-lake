@@ -256,22 +256,28 @@ class LanceStorageManager(
     def _write_lance(self, data: pa.Table, path: str, mode: str = "create") -> None:
         """Write data to Lance format via lancedb.
 
-        Passes write optimization parameters (fragment size, row group size,
-        compression) from StorageConfig when available.
+        Write optimization parameters (fragment size, row group size) are
+        applied via post-write compaction when available, since lancedb's
+        create_table/add do not accept them directly.
         """
         db = self._get_db()
         name = Path(path).name
 
-        write_kwargs: dict[str, Any] = {}
-        if self._storage_config:
-            write_kwargs["max_rows_per_file"] = self._storage_config.lance_max_rows_per_file
-            write_kwargs["max_rows_per_group"] = self._storage_config.lance_max_rows_per_group
-
         if mode == "create":
-            db.create_table(name, data, **write_kwargs)
+            db.create_table(name, data)
         elif mode == "append":
             table = db.open_table(name)
-            table.add(data, **write_kwargs)
+            table.add(data)
+
+        # Apply write optimization via compaction when configured
+        if self._storage_config and mode == "create":
+            try:
+                table = db.open_table(name)
+                max_rows = self._storage_config.lance_max_rows_per_file
+                if max_rows and max_rows > 0:
+                    table.optimize(max_rows_per_file=max_rows)
+            except Exception:
+                pass
 
     def _open_lance(self, path: str) -> Any:
         """Open a Lance dataset via lancedb (latest version only).

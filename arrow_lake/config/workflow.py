@@ -80,6 +80,8 @@ class AutoscaleConfig(BaseModel):
         idle_timeout_seconds: Seconds of inactivity before scale-down.
         spot_preference: Prefer spot instances (0.0=on-demand, 1.0=spot-only).
         gpu_increment: Fractional GPU increment (0.5 = half-GPU steps).
+        cooldown_period: Seconds between consecutive scaling decisions.
+        scale_down_protection: If True, wait for all tasks to finish before scaling down.
     """
 
     enabled: bool = False
@@ -89,6 +91,8 @@ class AutoscaleConfig(BaseModel):
     idle_timeout_seconds: int = 600
     spot_preference: float = 0.8
     gpu_increment: float = 0.5
+    cooldown_period: float = 60.0
+    scale_down_protection: bool = True
 
     @field_validator("max_workers")
     @classmethod

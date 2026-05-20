@@ -328,12 +328,17 @@ class OlapSearchBridge:
         Unlike ``explain()`` which shows the logical plan, this runs the query
         and reports real timing, row counts, and bytes spilled per operator.
 
+        When ``enable_profiling`` is True in OlapConfig, also returns profiling
+        metrics via ``pragma_last_profiling_output()``.
+
         Args:
             dataset_name: Name of the Lance dataset.
             sql: SQL query string to analyze.
 
         Returns:
-            DuckDB EXPLAIN ANALYZE output as a string.
+            DuckDB EXPLAIN ANALYZE output as a string. If profiling is enabled,
+            appended with a ``--- Profiling ---`` section containing per-operator
+            timing, cardinality, and memory metrics.
 
         Raises:
             QueryError: If SQL validation fails or query/analysis fails.
@@ -354,7 +359,52 @@ class OlapSearchBridge:
             self._register_dataset(conn, dataset_name, table)
             result = conn.execute(f"EXPLAIN ANALYZE {sql}").fetchall()
             explain_lines = [row[0] for row in result if row]
+
+            # Append profiling metrics when enabled
+            profiling_section = self._get_profiling_info(conn)
+            if profiling_section:
+                explain_lines.append("")
+                explain_lines.append("--- Profiling ---")
+                explain_lines.append(profiling_section)
+
             return "\n".join(explain_lines)
+
+    @staticmethod
+    def _get_profiling_info(conn: duckdb.DuckDBPyConnection) -> str | None:
+        """Extract profiling output from DuckDB after a query.
+
+        Returns a formatted string with per-operator metrics, or None if
+        profiling is not enabled or no output is available.
+        """
+        try:
+            rows = conn.execute(
+                "SELECT name, elapsed_seconds, cardinality, extra_info "
+                "FROM pragma_last_profiling_output() "
+                "ORDER BY elapsed_seconds DESC",
+            ).fetchall()
+        except (duckdb.CatalogException, duckdb.ParserException):
+            return None
+
+        if not rows:
+            return None
+
+        lines: list[str] = []
+        for name, elapsed, cardinality, extra_info in rows:
+            parts = [f"{name}:"]
+            if elapsed is not None:
+                parts.append(f" {elapsed:.4f}s")
+            if cardinality is not None:
+                parts.append(f" rows={cardinality}")
+            if extra_info:
+                mem = extra_info.get("MemoryUsage", "")
+                spilled = extra_info.get("BytesSpilled", "")
+                if mem:
+                    parts.append(f" mem={mem}")
+                if spilled:
+                    parts.append(f" spilled={spilled}")
+            lines.append("".join(parts))
+
+        return "\n".join(lines)
 
     def _register_dataset(self, conn: Any, dataset_name: str, source: Any) -> None:
         """Register a Lance dataset in DuckDB, preferring native lance scan.

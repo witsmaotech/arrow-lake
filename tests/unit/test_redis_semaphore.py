@@ -1,8 +1,9 @@
-"""Tests for RedisCountingSemaphore and create_semaphore factory."""
+"""Tests for RedisCountingSemaphore, InstanceRegistry, and create_semaphore factory."""
 
 from __future__ import annotations
 
 import threading
+import time
 from unittest.mock import MagicMock, patch
 
 
@@ -158,3 +159,225 @@ class TestRedisCountingSemaphoreWithFakeredis:
                 t.join(timeout=5)
 
             assert len(acquired) == 2
+
+
+# ---------------------------------------------------------------------------
+# InstanceRegistry tests
+# ---------------------------------------------------------------------------
+
+
+class TestCreateInstanceRegistry:
+    """Factory function tests for create_instance_registry."""
+
+    def test_returns_none_when_redis_disabled(self) -> None:
+        from arrow_lake.query._redis_semaphore import create_instance_registry
+
+        cfg = MagicMock(enabled=False)
+        result = create_instance_registry(cfg)
+        assert result is None
+
+    def test_returns_registry_when_enabled(self) -> None:
+        from arrow_lake.query._redis_semaphore import (
+            InstanceRegistry,
+            create_instance_registry,
+        )
+
+        cfg = MagicMock(
+            enabled=True,
+            instance_registry_key="test:instances",
+            url="redis://localhost:6379/0",
+            password="",
+            ssl=False,
+            instance_heartbeat_ttl_seconds=30,
+            redis_pool_size=2,
+        )
+        with patch("arrow_lake.query._redis_semaphore._redis_module") as mock_mod:
+            mock_client = MagicMock()
+            mock_client.ping.return_value = True
+            mock_mod.Redis.from_url.return_value = mock_client
+            registry = create_instance_registry(cfg)
+            assert isinstance(registry, InstanceRegistry)
+
+
+class TestInstanceRegistryStandalone:
+    """Test InstanceRegistry fallback when Redis is unavailable."""
+
+    def test_register_succeeds_without_redis(self) -> None:
+        from arrow_lake.query._redis_semaphore import InstanceRegistry
+
+        with patch("arrow_lake.query._redis_semaphore._redis_module") as mock_mod:
+            mock_mod.Redis.from_url.side_effect = Exception("no redis")
+            reg = InstanceRegistry("test:inst")
+            assert reg.is_connected is False
+            assert reg.register() is True
+
+    def test_discover_count_is_1_without_redis(self) -> None:
+        from arrow_lake.query._redis_semaphore import InstanceRegistry
+
+        with patch("arrow_lake.query._redis_semaphore._redis_module") as mock_mod:
+            mock_mod.Redis.from_url.side_effect = Exception("no redis")
+            reg = InstanceRegistry("test:inst")
+            assert reg.discover_instance_count() == 1
+
+    def test_discover_instances_returns_self_without_redis(self) -> None:
+        from arrow_lake.query._redis_semaphore import InstanceRegistry
+
+        with patch("arrow_lake.query._redis_semaphore._redis_module") as mock_mod:
+            mock_mod.Redis.from_url.side_effect = Exception("no redis")
+            reg = InstanceRegistry("test:inst")
+            instances = reg.discover_instances()
+            assert instances == [reg.instance_id]
+
+    def test_deregister_safe_without_redis(self) -> None:
+        from arrow_lake.query._redis_semaphore import InstanceRegistry
+
+        with patch("arrow_lake.query._redis_semaphore._redis_module") as mock_mod:
+            mock_mod.Redis.from_url.side_effect = Exception("no redis")
+            reg = InstanceRegistry("test:inst")
+            reg.deregister()  # should not raise
+
+
+class TestInstanceRegistryWithRedis:
+    """Test InstanceRegistry with mock Redis."""
+
+    def _make_registry(self) -> tuple:
+        from arrow_lake.query._redis_semaphore import InstanceRegistry
+
+        with patch("arrow_lake.query._redis_semaphore._redis_module") as mock_mod:
+            mock_client = MagicMock()
+            mock_client.ping.return_value = True
+            mock_mod.Redis.from_url.return_value = mock_client
+            reg = InstanceRegistry("test:instances", heartbeat_ttl_seconds=30)
+            return reg, mock_client
+
+    def test_register_adds_to_sorted_set(self) -> None:
+        reg, mock_client = self._make_registry()
+        mock_client.zcard.return_value = 1
+        assert reg.register() is True
+        mock_client.zadd.assert_called_once()
+        call_args = mock_client.zadd.call_args
+        assert call_args[0][0] == "test:instances"
+
+    def test_deregister_removes_from_sorted_set(self) -> None:
+        reg, mock_client = self._make_registry()
+        reg.register()
+        reg.deregister()
+        mock_client.zrem.assert_called_once_with("test:instances", reg.instance_id)
+
+    def test_discover_count_queries_redis(self) -> None:
+        reg, mock_client = self._make_registry()
+        mock_client.zcard.return_value = 3
+        assert reg.discover_instance_count() == 3
+
+    def test_discover_instances_returns_member_list(self) -> None:
+        reg, mock_client = self._make_registry()
+        mock_client.zrange.return_value = [b"abc123", b"def456"]
+        instances = reg.discover_instances()
+        assert instances == ["abc123", "def456"]
+
+    def test_heartbeat_thread_started_on_register(self) -> None:
+        reg, mock_client = self._make_registry()
+        mock_client.zcard.return_value = 1
+        reg.register()
+        assert reg._heartbeat_thread is not None
+        assert reg._heartbeat_thread.is_alive()
+        reg.deregister()
+
+    def test_shutdown_deregisters_and_closes(self) -> None:
+        reg, mock_client = self._make_registry()
+        reg.register()
+        reg.shutdown()
+        mock_client.zrem.assert_called()
+        mock_client.close.assert_called()
+        assert reg.is_connected is False
+
+    def test_prune_expired_called_on_discover(self) -> None:
+        reg, mock_client = self._make_registry()
+        mock_client.zcard.return_value = 2
+        reg.discover_instance_count()
+        mock_client.zremrangebyscore.assert_called_once()
+
+    def test_instance_id_is_unique(self) -> None:
+        reg1, _ = self._make_registry()
+        reg2, _ = self._make_registry()
+        assert reg1.instance_id != reg2.instance_id
+
+
+class TestSessionManagerInstanceRegistry:
+    """Test DuckDBSessionManager integration with InstanceRegistry."""
+
+    def test_from_config_registers_instance(self) -> None:
+        from arrow_lake.config import OlapConfig, RedisConfig
+        from arrow_lake.query.session_manager import DuckDBSessionManager
+
+        redis_cfg = RedisConfig(enabled=False)
+        olap_cfg = OlapConfig()
+        mgr = DuckDBSessionManager.from_config(
+            olap_config=olap_cfg,
+            redis_config=redis_cfg,
+        )
+        stats = mgr.get_stats()
+        assert stats.instance_count == 1
+        assert stats.total_capacity == olap_cfg.max_concurrent_queries
+        mgr.shutdown()
+
+    def test_from_config_with_redis_registers_cluster(self) -> None:
+        from arrow_lake.config import OlapConfig
+        from arrow_lake.query.session_manager import DuckDBSessionManager
+
+        redis_cfg = MagicMock(
+            enabled=True,
+            semaphore_key_prefix="test:",
+            url="redis://localhost:6379/0",
+            password="",
+            ssl=False,
+            semaphore_ttl_seconds=300,
+            redis_pool_size=2,
+            instance_registry_key="test:instances",
+            instance_heartbeat_ttl_seconds=30,
+        )
+
+        with patch("arrow_lake.query._redis_semaphore._redis_module") as mock_mod:
+            mock_client = MagicMock()
+            mock_client.ping.return_value = True
+            mock_client.zcard.return_value = 2
+            mock_mod.Redis.from_url.return_value = mock_client
+
+            mgr = DuckDBSessionManager.from_config(
+                olap_config=OlapConfig(),
+                redis_config=redis_cfg,
+            )
+            stats = mgr.get_stats()
+            assert stats.instance_count == 2
+            assert stats.total_capacity == 2 * OlapConfig().max_concurrent_queries
+            mgr.shutdown()
+
+    def test_shutdown_deregisters_from_cluster(self) -> None:
+        from arrow_lake.config import OlapConfig
+        from arrow_lake.query.session_manager import DuckDBSessionManager
+
+        redis_cfg = MagicMock(
+            enabled=True,
+            semaphore_key_prefix="test:",
+            url="redis://localhost:6379/0",
+            password="",
+            ssl=False,
+            semaphore_ttl_seconds=300,
+            redis_pool_size=2,
+            instance_registry_key="test:instances",
+            instance_heartbeat_ttl_seconds=30,
+        )
+
+        with patch("arrow_lake.query._redis_semaphore._redis_module") as mock_mod:
+            mock_client = MagicMock()
+            mock_client.ping.return_value = True
+            mock_client.zcard.return_value = 1
+            mock_mod.Redis.from_url.return_value = mock_client
+
+            mgr = DuckDBSessionManager.from_config(
+                olap_config=OlapConfig(),
+                redis_config=redis_cfg,
+            )
+            mgr.shutdown()
+            # After shutdown, registry should be cleared
+            assert mgr._instance_registry is None

@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import daft as _daft
 from fastapi import APIRouter, Depends, HTTPException, Path
+from fastapi.responses import StreamingResponse
 
 from arrow_lake.api.auth_models import Role
-from arrow_lake.api.deps import get_lake, require_role
-from arrow_lake.api.models.common import _NAME_PATTERN, arrow_table_to_response
+from arrow_lake.api.deps import get_checker, get_lake, require_role
+from arrow_lake.api.models.common import _NAME_PATTERN, arrow_table_to_ipc_base64, arrow_table_to_response
 from arrow_lake.api.models.query import (
     DaftQueryRequest,
     DaftQueryResponse,
@@ -24,6 +25,21 @@ if TYPE_CHECKING:
 router = APIRouter(prefix="/api/v1/datasets", tags=["query"])
 
 _QUERY_TIMEOUT = 300
+
+
+async def _stream_table(table: Any, batch_size: int = 1000) -> Any:
+    """Yield SSE events, each containing a base64-encoded Arrow IPC batch."""
+    import json
+
+    from arrow_lake.query.streaming import StreamingResult
+
+    streamer = StreamingResult(table, batch_size=batch_size)
+    # First event: schema metadata
+    yield f"data: {json.dumps({'type': 'schema', 'columns': table.column_names, 'row_count': table.num_rows})}\n\n"
+    for batch in streamer:
+        ipc_b64 = arrow_table_to_ipc_base64(batch)
+        yield f"data: {json.dumps({'type': 'batch', 'rows': batch.num_rows, 'data': ipc_b64})}\n\n"
+    yield f"data: {json.dumps({'type': 'done', 'total_rows': table.num_rows})}\n\n"
 
 _FILTER_OPS = {
     "eq": lambda col, val: col == val,
@@ -99,24 +115,34 @@ def _apply_pipeline(req: DaftQueryRequest, frame: LazyDaftFrame) -> LazyDaftFram
     return frame
 
 
-@router.post("/{name}/query/olap", response_model=OlapQueryResponse)
+@router.post("/{name}/query/olap", response_model=None)
 async def olap_query(
     name: str = Path(..., pattern=_NAME_PATTERN),
     *,
     req: OlapQueryRequest,
     lake=Depends(get_lake),
     _user: dict = Depends(require_role(Role.EDITOR)),
-) -> OlapQueryResponse:
-    """Execute OLAP SQL analytics query via DuckDB."""
+    checker=Depends(get_checker),
+) -> OlapQueryResponse | StreamingResponse:
+    """Execute OLAP SQL analytics query via DuckDB.
+
+    When ``stream=True``, returns SSE events with Arrow IPC batches
+    for large result sets (>10,000 rows recommended).
+    """
     result = await run_sync(
         lake.olap_query, name, req.sql, max_rows=req.max_rows,
         timeout=_QUERY_TIMEOUT, label="olap_query",
     )
-    resp = arrow_table_to_response(
-        result.table,
-        req.format,
-        meta={"sql": result.sql},
-    )
+    table = checker.apply_table_filter(result.table, dataset=name, role=_user.role)
+
+    if req.stream:
+        return StreamingResponse(
+            _stream_table(table, req.batch_size),
+            media_type="text/event-stream",
+            headers={"X-Row-Count": str(table.num_rows), "X-SQL": result.sql},
+        )
+
+    resp = arrow_table_to_response(table, req.format, meta={"sql": result.sql})
     return OlapQueryResponse(**resp)
 
 
@@ -127,17 +153,15 @@ async def metadata_query(
     req: OlapQueryRequest,
     lake=Depends(get_lake),
     _user: dict = Depends(require_role(Role.EDITOR)),
+    checker=Depends(get_checker),
 ) -> OlapQueryResponse:
     """Execute metadata SQL query (semantic alias for olap_query)."""
     result = await run_sync(
         lake.sql_query, name, req.sql, max_rows=req.max_rows,
         timeout=_QUERY_TIMEOUT, label="metadata_query",
     )
-    resp = arrow_table_to_response(
-        result.table,
-        req.format,
-        meta={"sql": result.sql},
-    )
+    table = checker.apply_table_filter(result.table, dataset=name, role=_user.role)
+    resp = arrow_table_to_response(table, req.format, meta={"sql": result.sql})
     return OlapQueryResponse(**resp)
 
 
@@ -148,6 +172,7 @@ async def daft_query(
     req: DaftQueryRequest,
     lake=Depends(get_lake),
     _user: dict = Depends(require_role(Role.VIEWER)),
+    checker=Depends(get_checker),
 ) -> DaftQueryResponse:
     """Load dataset via Daft, apply chained operations, return as Arrow table.
 
@@ -174,6 +199,7 @@ async def daft_query(
         timeout=_QUERY_TIMEOUT, label="daft_query",
         **collect_kwargs,
     )
+    table = checker.apply_table_filter(table, dataset=name, role=_user.role)
     resp = arrow_table_to_response(table, req.format)
     resp["warnings"] = warnings
     return DaftQueryResponse(**resp)

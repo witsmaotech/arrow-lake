@@ -86,7 +86,7 @@ def main() -> None:
         for f in ds.schema:
             if f.name == "price":
                 print(f"  price → {f.type}")
-    except (ValueError, OSError) as e:
+    except (ValueError, OSError, Exception) as e:
         print(f"  跳过: {e}")
 
     # STEP 4: 删除列

@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-05-20
+
+### Added — Phase 0: 补债拆分
+- **DuckDB Profiling**: `enable_profiling` 配置，`explain_analyze()` 附加 profiling 输出
+- **DuckDB Relational API**: `metadata.py` 新增 `_relational_query()` 类型安全查询
+- **大文件拆分**: `ingestor.py` (870→200行) 拆为 `_ingest_files/media/sources.py`；`client.py` (838→300行) 拆为 `_traversers/import_export.py`
+- **小修**: `__all__` 重复条目修复，DuckDB 版本兼容检查
+
+### Added — Phase 1: 性能与规模
+- **DuckDB 水平扩展**: 多实例连接池路由 (round-robin)，Redis 信号量协调
+- **GPU Autoscaling**: 冷却期 + 缩容保护 + 扩缩容事件持久化
+- **Schema 演进**: `SchemaCompatibilityChecker` 兼容性检查 + `POST /{name}/schema/migrate` 端点
+- **Daft 原生媒体**: 批量图像/视频处理迁移到 Daft Rust 实现，感知哈希迁移到 `daft.functions.image_hash()`
+
+### Added — Phase 2: 数据治理
+- **血缘可视化 API**: `GET /lineage/graph/{name}`、`POST /lineage/impact`、`GET /lineage/stats`
+- **质量规则引擎**: 声明式 `QualityRuleEngine`，支持 length/range/regex/duplicate 检查 + reject/flag/remove 动作
+- **行级/列级 ACL**: `DatasetACL` 数据类，`PUT/GET/DELETE /admin/acl/{dataset}` 管理端点，查询和搜索结果自动裁剪
+
+### Added — Phase 3: 收尾加固
+- **FTS 真正分页**: `offset` 参数支持全链路（API → facade → FTS bridge → LanceDB）
+- **查询结果流式**: OLAP 端点 `stream=True` 返回 SSE，每事件为 Arrow IPC batch (base64)
+
+### Tests
+- 3296+ tests passing, 0 failures
+- 新增 80 个测试（质量规则 45 + ACL 35 + 流式验证）
+- bandit 安全扫描: 0 高危
+
 ## [1.3.4] - 2026-05-19
 
 ### Fixed

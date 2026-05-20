@@ -72,11 +72,20 @@ class StorageAdvancedMixin:
 
         Raises:
             StorageError: If dataset does not exist or name/column invalid.
+            SchemaMigrationError: If the column already exists.
         """
+        from arrow_lake.ingest.schema import SchemaCompatibilityChecker, SchemaMigrationError
+
         self._validate_name(name)
         self._validate_identifier(column_name, "column_name")
         self._validate_sql_expr(sql_expr)
+
         table = self._open_lance(self._get_dataset_path(name))
+        checker = SchemaCompatibilityChecker(table.schema)
+        issues = checker.check_add_column(column_name, pa.string())
+        if issues:
+            raise SchemaMigrationError("; ".join(issues))
+
         table.add_columns({column_name: sql_expr})
 
     def add_columns_table(self, name: str, columns: pa.Table) -> None:
@@ -119,10 +128,19 @@ class StorageAdvancedMixin:
 
         Raises:
             StorageError: If dataset does not exist or name invalid.
+            SchemaMigrationError: If type change is incompatible.
         """
+        from arrow_lake.ingest.schema import SchemaCompatibilityChecker, SchemaMigrationError
+
         self._validate_name(name)
         self._validate_identifier(column_name, "column_name")
+
         table = self._open_lance(self._get_dataset_path(name))
+        checker = SchemaCompatibilityChecker(table.schema)
+        issues = checker.check_alter_column(column_name, new_type)
+        if issues:
+            raise SchemaMigrationError("; ".join(issues))
+
         table.alter_columns({"path": column_name, "data_type": new_type})
 
     def drop_column(self, name: str, column_name: str) -> None:
@@ -134,10 +152,25 @@ class StorageAdvancedMixin:
 
         Raises:
             StorageError: If dataset does not exist or column not found.
+            SchemaMigrationError: If column has an active vector index.
         """
+        from arrow_lake.ingest.schema import SchemaCompatibilityChecker, SchemaMigrationError
+
         self._validate_name(name)
         self._validate_identifier(column_name, "column_name")
+
         table = self._open_lance(self._get_dataset_path(name))
+        checker = SchemaCompatibilityChecker(table.schema)
+
+        # Check indexed columns from config if available
+        indexed = frozenset()
+        if hasattr(self, "_olap_config") and self._olap_config is not None:
+            indexed = frozenset(getattr(self._olap_config, "ducklake_index_columns", []))
+
+        issues = checker.check_drop_column(column_name, indexed_columns=indexed)
+        if issues:
+            raise SchemaMigrationError("; ".join(issues))
+
         try:
             table.drop_columns([column_name])
         except RuntimeError as exc:

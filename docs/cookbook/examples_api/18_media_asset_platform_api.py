@@ -156,7 +156,7 @@ def main() -> None:
     print("\nSTEP 10: 混合搜索 '深度学习模型优化'")
     embed_resp = c.embed_text(["深度学习模型优化"])
     if embed_resp.get("success"):
-        vec = _first_embedding(embed_resp)
+        vec = first_embedding(embed_resp)
         if vec:
             search = c.search_hybrid(DS_MEDIA, vec, "深度学习模型优化", top_k=5)
             if search.get("success"):

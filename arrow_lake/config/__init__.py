@@ -111,7 +111,6 @@ __all__ = [  # noqa: RUF022
     "RAGConfig",
     "RateLimitConfig",
     "RedisConfig",
-    "RateLimitConfig",
     "StorageConfig",
     "VectorSearchConfig",
     "WorkflowConfig",

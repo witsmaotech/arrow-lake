@@ -293,6 +293,123 @@ class LineageQueryBridge:
         table = self.query(sql, params=[dataset_name])
         return [LineageStore._row_to_event(table, i) for i in range(table.num_rows)]
 
+    def trace_full_graph(self, dataset_name: str, *, max_depth: int = 10) -> dict[str, Any]:
+        """Recursively trace the complete lineage graph around a dataset.
+
+        Performs bidirectional BFS to discover all upstream and downstream
+        nodes connected to the given dataset through lineage events.
+
+        Args:
+            dataset_name: Starting dataset name.
+            max_depth: Maximum traversal depth (default 10).
+
+        Returns:
+            Dict with "nodes", "edges", and "stats" keys.
+        """
+        nodes: dict[str, dict[str, Any]] = {}
+        edges: list[dict[str, Any]] = []
+        visited_edges: set[tuple[str, str, str]] = set()
+
+        # BFS queues: (dataset_name, depth)
+        upstream_queue: list[tuple[str, int]] = [(dataset_name, 0)]
+        downstream_queue: list[tuple[str, int]] = [(dataset_name, 0)]
+        visited_upstream: set[str] = {dataset_name}
+        visited_downstream: set[str] = {dataset_name}
+
+        # Seed node
+        nodes[dataset_name] = {"id": dataset_name, "depth": 0, "type": "target"}
+
+        # Trace upstream
+        while upstream_queue:
+            current, depth = upstream_queue.pop(0)
+            if depth >= max_depth:
+                continue
+            for event in self.trace_upstream(current):
+                for src in event.source_datasets:
+                    if src not in nodes:
+                        nodes[src] = {"id": src, "depth": depth + 1, "type": "source"}
+                    edge_key = (src, event.dataset_name, event.operation)
+                    if edge_key not in visited_edges:
+                        visited_edges.add(edge_key)
+                        edges.append({
+                            "from": src,
+                            "to": event.dataset_name,
+                            "operation": event.operation,
+                            "transform_type": event.transform_type,
+                        })
+                    if src not in visited_upstream:
+                        visited_upstream.add(src)
+                        upstream_queue.append((src, depth + 1))
+
+        # Trace downstream
+        while downstream_queue:
+            current, depth = downstream_queue.pop(0)
+            if depth >= max_depth:
+                continue
+            for event in self.trace_downstream(current):
+                target = event.dataset_name
+                for src in event.source_datasets:
+                    if src not in nodes:
+                        nodes[src] = {"id": src, "depth": depth + 1, "type": "source"}
+                    edge_key = (src, target, event.operation)
+                    if edge_key not in visited_edges:
+                        visited_edges.add(edge_key)
+                        edges.append({
+                            "from": src,
+                            "to": target,
+                            "operation": event.operation,
+                            "transform_type": event.transform_type,
+                        })
+                if target not in nodes:
+                    nodes[target] = {"id": target, "depth": depth + 1, "type": "derived"}
+                if target not in visited_downstream:
+                    visited_downstream.add(target)
+                    downstream_queue.append((target, depth + 1))
+
+        return {
+            "nodes": list(nodes.values()),
+            "edges": edges,
+            "stats": {
+                "total_nodes": len(nodes),
+                "total_edges": len(edges),
+                "max_depth": max((n["depth"] for n in nodes.values()), default=0),
+            },
+        }
+
+    def trace_impact(self, dataset_name: str) -> list[dict[str, Any]]:
+        """Analyze downstream impact of changing a dataset.
+
+        Returns all datasets that would be affected by a change to the
+        given dataset, ordered by dependency depth.
+
+        Args:
+            dataset_name: Dataset that would change.
+
+        Returns:
+            List of dicts with "dataset", "depth", "operation" keys.
+        """
+        impacted: list[dict[str, Any]] = []
+        visited: set[str] = {dataset_name}
+        queue: list[tuple[str, int]] = [(dataset_name, 0)]
+
+        while queue:
+            current, depth = queue.pop(0)
+            downstream_events = self.trace_downstream(current)
+            for event in downstream_events:
+                target = event.dataset_name
+                if target in visited:
+                    continue
+                visited.add(target)
+                impacted.append({
+                    "dataset": target,
+                    "depth": depth + 1,
+                    "operation": event.operation,
+                    "transform_type": event.transform_type,
+                })
+                queue.append((target, depth + 1))
+
+        return impacted
+
     @staticmethod
     def _validate_sql(sql: str) -> None:
         """Validate SQL is SELECT-only with no dangerous patterns."""

@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Path
 
 from arrow_lake.api.auth_models import Role
-from arrow_lake.api.deps import get_lake, require_role
+from arrow_lake.api.deps import get_checker, get_lake, require_role
 from arrow_lake.api.models.common import _NAME_PATTERN, arrow_table_to_response
 from arrow_lake.api.models.search import (
     EnsembleSearchRequest,
@@ -34,6 +34,7 @@ async def vector_search(
     req: VectorSearchRequest,
     lake=Depends(get_lake),
     _user: dict = Depends(require_role(Role.VIEWER)),
+    checker=Depends(get_checker),
 ) -> VectorSearchResponse:
     """Vector similarity search on a dataset."""
     result = await run_sync(
@@ -48,16 +49,13 @@ async def vector_search(
         timeout=_SEARCH_TIMEOUT,
         label="vector_search",
     )
-    resp = arrow_table_to_response(
-        result.table,
-        req.format,
-        meta={
-            "query_vector_dim": result.query_vector_dim,
-            "metric": result.metric,
-            "top_k": result.top_k,
-            "max_distance": result.max_distance,
-        },
-    )
+    table = checker.apply_table_filter(result.table, dataset=name, role=_user.role)
+    resp = arrow_table_to_response(table, req.format, meta={
+        "query_vector_dim": result.query_vector_dim,
+        "metric": result.metric,
+        "top_k": result.top_k,
+        "max_distance": result.max_distance,
+    })
     return VectorSearchResponse(**resp)
 
 
@@ -68,6 +66,7 @@ async def full_text_search(
     req: FullTextSearchRequest,
     lake=Depends(get_lake),
     _user: dict = Depends(require_role(Role.VIEWER)),
+    checker=Depends(get_checker),
 ) -> FullTextSearchResponse:
     """Full-text search on a dataset."""
     result = await run_sync(
@@ -77,19 +76,17 @@ async def full_text_search(
         top_k=req.top_k,
         fts_column=req.fts_column,
         where=req.where,
+        offset=req.offset,
         timeout=_SEARCH_TIMEOUT,
         label="text_search",
     )
-    resp = arrow_table_to_response(
-        result.table,
-        req.format,
-        meta={
-            "query": result.query,
-            "top_k": result.top_k,
-            "fts_column": result.fts_column,
-            "max_score": result.max_score,
-        },
-    )
+    table = checker.apply_table_filter(result.table, dataset=name, role=_user.role)
+    resp = arrow_table_to_response(table, req.format, meta={
+        "query": result.query,
+        "top_k": result.top_k,
+        "fts_column": result.fts_column,
+        "max_score": result.max_score,
+    })
     return FullTextSearchResponse(**resp)
 
 
@@ -100,6 +97,7 @@ async def hybrid_search(
     req: HybridSearchRequest,
     lake=Depends(get_lake),
     _user: dict = Depends(require_role(Role.VIEWER)),
+    checker=Depends(get_checker),
 ) -> HybridSearchResponse:
     """Hybrid vector + full-text search (RRF fusion)."""
     result = await run_sync(
@@ -114,17 +112,14 @@ async def hybrid_search(
         timeout=_SEARCH_TIMEOUT,
         label="hybrid_search",
     )
-    resp = arrow_table_to_response(
-        result.table,
-        req.format,
-        meta={
-            "query_text": result.query_text,
-            "query_vector_dim": result.query_vector_dim,
-            "top_k": result.top_k,
-            "rrf_k": result.rrf_k,
-            "max_rrf_score": result.max_rrf_score,
-        },
-    )
+    table = checker.apply_table_filter(result.table, dataset=name, role=_user.role)
+    resp = arrow_table_to_response(table, req.format, meta={
+        "query_text": result.query_text,
+        "query_vector_dim": result.query_vector_dim,
+        "top_k": result.top_k,
+        "rrf_k": result.rrf_k,
+        "max_rrf_score": result.max_rrf_score,
+    })
     return HybridSearchResponse(**resp)
 
 
@@ -135,6 +130,7 @@ async def faceted_search(
     req: FacetedSearchRequest,
     lake=Depends(get_lake),
     _user: dict = Depends(require_role(Role.VIEWER)),
+    checker=Depends(get_checker),
 ) -> FacetedSearchResponse:
     """Vector search with faceted counts."""
     result = await run_sync(
@@ -148,23 +144,16 @@ async def faceted_search(
         timeout=_SEARCH_TIMEOUT,
         label="faceted_search",
     )
-    resp = arrow_table_to_response(
-        result.table,
-        req.format,
-        meta={
-            "query_vector_dim": result.query_vector_dim,
-            "top_k": result.top_k,
-        },
-    )
+    table = checker.apply_table_filter(result.table, dataset=name, role=_user.role)
+    resp = arrow_table_to_response(table, req.format, meta={
+        "query_vector_dim": result.query_vector_dim,
+        "top_k": result.top_k,
+    })
     facets = [
         FacetCountItem(name=f.name, value=f.value, count=f.count)
         for f in result.facets
     ]
-    return FacetedSearchResponse(
-        **resp,
-        facets=facets,
-        total_facets=result.total_facets,
-    )
+    return FacetedSearchResponse(**resp, facets=facets, total_facets=result.total_facets)
 
 
 @router.post("/{name}/search/ensemble", response_model=EnsembleSearchResponse)
@@ -174,6 +163,7 @@ async def ensemble_search(
     req: EnsembleSearchRequest,
     lake=Depends(get_lake),
     _user: dict = Depends(require_role(Role.VIEWER)),
+    checker=Depends(get_checker),
 ) -> EnsembleSearchResponse:
     """Ensemble multi-column vector search with RRF fusion."""
     result = await run_sync(
@@ -187,14 +177,11 @@ async def ensemble_search(
         timeout=_SEARCH_TIMEOUT,
         label="ensemble_search",
     )
-    resp = arrow_table_to_response(
-        result.table,
-        req.format,
-        meta={
-            "columns_searched": list(result.columns_searched),
-            "fusion_method": result.fusion_method,
-            "top_k": result.top_k,
-            "query_vector_dim": result.query_vector_dim,
-        },
-    )
+    table = checker.apply_table_filter(result.table, dataset=name, role=_user.role)
+    resp = arrow_table_to_response(table, req.format, meta={
+        "columns_searched": list(result.columns_searched),
+        "fusion_method": result.fusion_method,
+        "top_k": result.top_k,
+        "query_vector_dim": result.query_vector_dim,
+    })
     return EnsembleSearchResponse(**resp)

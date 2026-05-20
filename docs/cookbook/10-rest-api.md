@@ -138,7 +138,7 @@ curl -X POST http://localhost:8000/api/v1/auth/refresh \
 
 ***
 
-## 4.5 RBAC Role Matrix
+## 4.5 RBAC Role Matrix (continued)
 
 Over 30 API endpoints enforce role-based access control via the `require_role()` dependency.
 The role hierarchy is **ADMIN > EDITOR > VIEWER** — each higher role inherits the permissions
@@ -179,7 +179,7 @@ curl -X POST http://localhost:8000/api/v1/datasets/docs/ingest \
   -H "X-API-Key: your-secret-api-key-here" \
   -H "Content-Type: application/json" \
   -d '{"file_paths": ["examples/data/papers/full_text/p001_attention_is_all_you_need.pdf", "examples/data/papers/full_text/p002_bert_pretraining.pdf"]}'
-# => {"success": true, "dataset_name": "docs", "total_rows": 156, "total_files": 2, ...}
+# => {"success": true, "total_rows": 156, "total_files": 2, "sources": [...]}
 ```
 
 ### Vector Search
@@ -188,7 +188,7 @@ curl -X POST http://localhost:8000/api/v1/datasets/docs/ingest \
 curl -X POST http://localhost:8000/api/v1/datasets/docs/search/vector \
   -H "X-API-Key: your-secret-api-key-here" \
   -H "Content-Type: application/json" \
-  -d '{"query": "What vector index types does Arrow Lake support?", "top_k": 5}'
+  -d '{"query_vector": [0.1, 0.2, 0.3, ...], "top_k": 5}'
 ```
 
 ### RAG Question Answering
@@ -232,11 +232,11 @@ async def ingest_files(dataset: str, paths: list[str]) -> dict:
         return resp.json()
 
 
-async def vector_search(dataset: str, query: str, top_k: int = 5) -> dict:
+async def vector_search(dataset: str, query_vector: list[float], top_k: int = 5) -> dict:
     async with httpx.AsyncClient(timeout=60) as client:
         resp = await client.post(
             f"{BASE_URL}/api/v1/datasets/{dataset}/search/vector",
-            headers=HEADERS, json={"query": query, "top_k": top_k},
+            headers=HEADERS, json={"query_vector": query_vector, "top_k": top_k},
         )
         resp.raise_for_status()
         return resp.json()
@@ -278,7 +278,7 @@ async def main():
     result = await ingest_files("docs", ["examples/data/kb/knowledge.jsonl"])
     print(f"Ingestion complete: {result['total_rows']} rows")
 
-    results = await vector_search("docs", "vector index types")
+    results = await vector_search("docs", [0.1] * 128)
     for item in results.get("results", [])[:3]:
         print(f"  [{item.get('score', 0):.3f}] {item.get('content', '')[:80]}...")
 
@@ -343,3 +343,103 @@ api:
 Every request automatically receives an `X-Request-ID` header for distributed tracing. Clients
 can also supply their own request ID (set `auto_generate_request_id: false` to disable automatic
 generation).
+
+---
+
+## v1.4.0 New Endpoints
+
+### Lineage Graph API
+
+```bash
+# Get full lineage graph for a dataset
+curl http://localhost:8000/api/v1/lineage/graph/articles \
+  -H "X-API-Key: your-key"
+
+# Impact analysis: what downstream datasets are affected by a change
+curl -X POST http://localhost:8000/api/v1/lineage/impact \
+  -H "X-API-Key: your-key" \
+  -H "Content-Type: application/json" \
+  -d '{"dataset_name": "articles"}'
+
+# Lineage statistics
+curl http://localhost:8000/api/v1/lineage/stats \
+  -H "X-API-Key: your-key"
+```
+
+### Quality Rules API
+
+```bash
+# Apply declarative quality rules to a dataset
+curl -X POST http://localhost:8000/api/v1/datasets/articles/quality/rules \
+  -H "X-API-Key: your-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "rules": [
+      {"name": "min_len", "column": "text_content", "check": "length", "params": {"min": 10}, "action": "reject"},
+      {"name": "no_dupes", "column": "text_content", "check": "duplicate", "action": "remove"},
+      {"name": "score_range", "column": "score", "check": "range", "params": {"min": 0.0, "max": 1.0}, "action": "flag"}
+    ]
+  }'
+
+# Response:
+# {"success": true, "applied_rules": 3, "results": [...], "total_affected_rows": 42}
+```
+
+### Row/Column ACL Admin API
+
+```bash
+# Set column-level ACL (viewer can only see title and summary)
+curl -X PUT http://localhost:8000/api/v1/admin/acl/articles \
+  -H "X-API-Key: admin-key" \
+  -H "Content-Type: application/json" \
+  -d '{"role": "viewer", "visible_columns": ["title", "summary"]}'
+
+# Set row-level ACL (viewer only sees US region data)
+curl -X PUT http://localhost:8000/api/v1/admin/acl/sales \
+  -H "X-API-Key: admin-key" \
+  -H "Content-Type: application/json" \
+  -d '{"role": "viewer", "row_filter": "region == US"}'
+
+# List all ACLs for a dataset
+curl http://localhost:8000/api/v1/admin/acl/articles \
+  -H "X-API-Key: admin-key"
+
+# Delete an ACL
+curl -X DELETE http://localhost:8000/api/v1/admin/acl/articles/viewer \
+  -H "X-API-Key: admin-key"
+```
+
+ACL filtering is automatically applied to all query and search endpoints — no client changes needed.
+
+### FTS Pagination with Offset
+
+```bash
+# Full-text search with offset for pagination
+curl -X POST http://localhost:8000/api/v1/datasets/articles/search/fts \
+  -H "X-API-Key: your-key" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "machine learning", "top_k": 10, "offset": 20}'
+
+# Get results 21-30 for the query "machine learning"
+```
+
+### OLAP Query Streaming (SSE)
+
+For large result sets (>10,000 rows), enable SSE streaming to receive results in batches:
+
+```bash
+# Stream OLAP results as SSE events
+curl -N -X POST http://localhost:8000/api/v1/datasets/sales/query/olap \
+  -H "X-API-Key: your-key" \
+  -H "Content-Type: application/json" \
+  -d '{"sql": "SELECT * FROM sales", "stream": true, "batch_size": 1000}'
+
+# Response is SSE stream:
+# data: {"type": "schema", "columns": [...], "row_count": 50000}
+# data: {"type": "batch", "rows": 1000, "data": "<base64-arrow-ipc>"}
+# data: {"type": "batch", "rows": 1000, "data": "<base64-arrow-ipc>"}
+# ...
+# data: {"type": "done", "total_rows": 50000}
+```
+
+Each `batch` event contains a base64-encoded Arrow IPC stream with `batch_size` rows (default 1000).

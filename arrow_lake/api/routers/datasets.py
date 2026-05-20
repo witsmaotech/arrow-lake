@@ -34,6 +34,10 @@ from arrow_lake.api.models.dataset import (
     PresignedUpload,
     PresignRequest,
     PresignResponse,
+    SchemaMigrationAction,
+    SchemaMigrationIssue,
+    SchemaMigrationRequest,
+    SchemaMigrationResponse,
     UploadedBlob,
     UploadResponse,
 )
@@ -536,6 +540,124 @@ async def get_dataset(
     raise CatalogError(
         error_code=ErrorCode.CATALOG_DATASET_NOT_FOUND,
         message=f"Dataset '{name}' not found",
+    )
+
+
+@router.post("/{name}/schema/migrate", response_model=SchemaMigrationResponse)
+async def migrate_schema(
+    name: str = Path(..., pattern=_NAME_PATTERN),
+    body: SchemaMigrationRequest = ...,
+    *,
+    lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.ADMIN)),
+) -> SchemaMigrationResponse:
+    """Validate and optionally apply schema migration actions.
+
+    With ``dry_run=true`` (default), only validates compatibility.
+    Set ``dry_run=false`` to apply the migration.
+    """
+    import pyarrow as pa
+
+    from arrow_lake.ingest.schema import SchemaCompatibilityChecker, SchemaMigrationError
+
+    # Get current schema
+    catalog = await run_sync(lake.catalog, timeout=_ADMIN_TIMEOUT, label="catalog")
+    dataset_entry = None
+    for entry in catalog.datasets:
+        if entry.name == name:
+            dataset_entry = entry
+            break
+    if dataset_entry is None:
+        raise CatalogError(
+            error_code=ErrorCode.CATALOG_DATASET_NOT_FOUND,
+            message=f"Dataset '{name}' not found",
+        )
+
+    # Read current schema
+    ds = lake._storage.open_dataset(name)
+    current_schema = ds.schema
+    checker = SchemaCompatibilityChecker(current_schema)
+
+    all_issues: list[SchemaMigrationIssue] = []
+
+    # Type mapping for alter_column
+    _TYPE_MAP: dict[str, pa.DataType] = {
+        "int8": pa.int8(), "int16": pa.int16(), "int32": pa.int32(), "int64": pa.int64(),
+        "float32": pa.float32(), "float64": pa.float64(),
+        "string": pa.string(), "binary": pa.binary(), "bool": pa.bool_(),
+    }
+
+    for i, action in enumerate(body.actions):
+        issues: list[str] = []
+        if action.operation == "add_column":
+            col_type = _TYPE_MAP.get(action.new_type, pa.string())
+            issues = checker.check_add_column(action.column_name, col_type)
+        elif action.operation == "alter_column":
+            new_type = _TYPE_MAP.get(action.new_type)
+            if new_type is None:
+                issues = [f"Unknown type '{action.new_type}'"]
+            else:
+                issues = checker.check_alter_column(action.column_name, new_type)
+        elif action.operation == "drop_column":
+            issues = checker.check_drop_column(action.column_name)
+        else:
+            issues = [f"Unknown operation '{action.operation}'"]
+
+        if issues:
+            all_issues.append(SchemaMigrationIssue(
+                action_index=i,
+                column_name=action.column_name,
+                messages=issues,
+            ))
+
+    if all_issues:
+        return SchemaMigrationResponse(
+            success=False,
+            dry_run=body.dry_run,
+            issues=all_issues,
+            applied_count=0,
+        )
+
+    if body.dry_run:
+        return SchemaMigrationResponse(
+            success=True,
+            dry_run=True,
+            issues=[],
+            applied_count=0,
+        )
+
+    # Apply migration
+    applied = 0
+    for action in body.actions:
+        try:
+            if action.operation == "add_column":
+                await run_sync(
+                    lake._storage_advanced.add_column,
+                    name, action.column_name, action.sql_expr,
+                    timeout=_ADMIN_TIMEOUT, label="add_column",
+                )
+            elif action.operation == "alter_column":
+                new_type = _TYPE_MAP[action.new_type]
+                await run_sync(
+                    lake._storage_advanced.alter_column,
+                    name, action.column_name, new_type,
+                    timeout=_ADMIN_TIMEOUT, label="alter_column",
+                )
+            elif action.operation == "drop_column":
+                await run_sync(
+                    lake._storage_advanced.drop_column,
+                    name, action.column_name,
+                    timeout=_ADMIN_TIMEOUT, label="drop_column",
+                )
+            applied += 1
+        except SchemaMigrationError:
+            break
+
+    return SchemaMigrationResponse(
+        success=True,
+        dry_run=False,
+        issues=[],
+        applied_count=applied,
     )
 
 

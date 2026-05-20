@@ -290,6 +290,7 @@ class FullTextSearchBridge:
         fts_column: str | None = None,
         where: str | None = None,
         version: int | None = None,
+        offset: int = 0,
     ) -> FullTextSearchResult:
         """Full-text search over a dataset.
 
@@ -301,6 +302,7 @@ class FullTextSearchBridge:
             top_k: Number of results (None = use config default).
             fts_column: Text column to search (None = use config default).
             where: Optional metadata filter expression.
+            offset: Number of results to skip (pagination).
 
         Returns:
             FullTextSearchResult with Arrow table + _score relevance.
@@ -350,6 +352,7 @@ class FullTextSearchBridge:
             effective_top_k,
             search_column,
             where,
+            offset=offset,
         )
 
         # Remove _fts_segmented from result if present — caller shouldn't see it
@@ -396,6 +399,8 @@ class FullTextSearchBridge:
         top_k: int,
         fts_column: str,
         where: str | None,
+        *,
+        offset: int = 0,
     ) -> pa.Table:
         """Search via LanceDB SDK (original path)."""
         try:
@@ -419,6 +424,8 @@ class FullTextSearchBridge:
         if where is not None:
             query_builder = query_builder.where(where)
 
+        if offset > 0:
+            query_builder = query_builder.offset(offset)
         query_builder = query_builder.limit(top_k)
 
         try:

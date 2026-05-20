@@ -14,6 +14,9 @@ from arrow_lake.api.models.quality import (
     DedupResponse,
     QualityFilterRequest,
     QualityFilterResponse,
+    QualityRuleResultItem,
+    QualityRuleSetRequest,
+    QualityRuleSetResponse,
     QualityReportResponse,
 )
 from arrow_lake.api.utils import run_sync
@@ -73,3 +76,52 @@ async def deduplicate(
     table_resp = arrow_table_to_response(report.table, "json")
     report_dict["table"] = table_resp
     return DedupResponse(report=report_dict)
+
+
+@router.post("/{name}/quality/rules", response_model=QualityRuleSetResponse)
+async def quality_rules(
+    name: str = Path(..., pattern=_NAME_PATTERN),
+    *,
+    req: QualityRuleSetRequest,
+    lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.EDITOR)),
+) -> QualityRuleSetResponse:
+    """Apply declarative quality rules to a dataset.
+
+    Supports length, range, regex, and duplicate checks with
+    reject, flag, or remove actions.
+    """
+    from arrow_lake.quality.rules import QualityRuleEngine, RuleDefinition
+
+    table = await run_sync(
+        lake.read_dataset, name,
+        timeout=_QUALITY_TIMEOUT, label="quality_rules_read",
+    )
+
+    engine = QualityRuleEngine()
+    for rule_req in req.rules:
+        engine.add_rule(RuleDefinition(
+            name=rule_req.name,
+            column=rule_req.column,
+            check=rule_req.check,
+            params=rule_req.params,
+            action=rule_req.action,
+            message=rule_req.message,
+        ))
+
+    results = engine.evaluate(table)
+    total_affected = sum(r.affected_count for r in results)
+
+    return QualityRuleSetResponse(
+        applied_rules=len(engine.rules),
+        results=[
+            QualityRuleResultItem(
+                rule_name=r.rule_name,
+                action=r.action,
+                affected_count=r.affected_count,
+                message=r.message,
+            )
+            for r in results
+        ],
+        total_affected_rows=total_affected,
+    )

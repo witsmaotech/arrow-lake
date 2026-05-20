@@ -16,6 +16,13 @@ import pyarrow as pa
 
 from arrow_lake.ingest.storage import LanceStorageManager
 
+__all__ = [
+    "UNIFIED_SCHEMA",
+    "SchemaCompatibilityChecker",
+    "SchemaMigrationError",
+    "UnifiedTableManager",
+]
+
 
 def _now_timestamp_us() -> int:
     """Return current time in microseconds since epoch."""
@@ -101,6 +108,144 @@ _METADATA_COLUMNS = [
     "created_at",
     "filename",
 ]
+
+
+class SchemaMigrationError(Exception):
+    """Raised when a schema migration is incompatible with existing data."""
+
+
+# Narrowing pairs: (check_source, check_target) → warning
+_NARROWING_CHECKS: list[tuple[t.Any, t.Any]] = [
+    # (is_source_type, is_target_type)
+]
+
+
+def _is_narrowing(old_type: pa.DataType, new_type: pa.DataType) -> bool:
+    """Return True if changing old_type → new_type is a narrowing conversion."""
+    if pa.types.is_int64(old_type) and (
+        pa.types.is_int32(new_type) or pa.types.is_int16(new_type) or pa.types.is_int8(new_type)
+    ):
+        return True
+    if pa.types.is_int32(old_type) and (pa.types.is_int16(new_type) or pa.types.is_int8(new_type)):
+        return True
+    if pa.types.is_float64(old_type) and pa.types.is_float32(new_type):
+        return True
+    return False
+
+
+class SchemaCompatibilityChecker:
+    """Validates schema migration operations for safety.
+
+    Checks:
+    - Column type narrowing: warns if narrowing may lose data (int64 → int32).
+    - Column deletion with index conflict: warns if deleted column has a vector index.
+    - New column default value compatibility.
+    - Vector dimension matching for embedding columns.
+
+    Usage::
+
+        checker = SchemaCompatibilityChecker(current_schema)
+        issues = checker.check_alter_column("age", pa.int32())
+        if issues:
+            raise SchemaMigrationError("; ".join(issues))
+    """
+
+    def __init__(self, current_schema: pa.Schema) -> None:
+        self._schema = current_schema
+
+    @property
+    def schema(self) -> pa.Schema:
+        return self._schema
+
+    def check_add_column(
+        self,
+        column_name: str,
+        column_type: pa.DataType,
+        default_value: Any = None,
+    ) -> list[str]:
+        """Check if adding a column is safe.
+
+        Returns:
+            List of warning/error messages (empty = safe).
+        """
+        issues: list[str] = []
+
+        if column_name in self._schema.names:
+            issues.append(f"Column '{column_name}' already exists")
+
+        if default_value is not None:
+            try:
+                pa.scalar(default_value, type=column_type)
+            except (TypeError, ValueError, pa.ArrowInvalid) as exc:
+                issues.append(
+                    f"Default value {default_value!r} incompatible with {column_type}: {exc}"
+                )
+
+        return issues
+
+    def check_alter_column(
+        self,
+        column_name: str,
+        new_type: pa.DataType,
+    ) -> list[str]:
+        """Check if altering a column type is safe.
+
+        Returns:
+            List of warning/error messages (empty = safe).
+        """
+        issues: list[str] = []
+
+        idx = self._schema.get_field_index(column_name)
+        if idx < 0:
+            issues.append(f"Column '{column_name}' does not exist")
+            return issues
+
+        old_type = self._schema.field(idx).type
+        if old_type == new_type:
+            return issues
+
+        # Check type narrowing
+        if _is_narrowing(old_type, new_type):
+            issues.append(
+                f"Narrowing {old_type} → {new_type} may truncate existing data"
+            )
+
+        # Check vector dimension mismatch
+        if pa.types.is_fixed_size_list(old_type) and pa.types.is_fixed_size_list(new_type):
+            if old_type.list_size != new_type.list_size:
+                issues.append(
+                    f"Vector dimension mismatch: {old_type.list_size} → {new_type.list_size}"
+                )
+
+        return issues
+
+    def check_drop_column(
+        self,
+        column_name: str,
+        indexed_columns: frozenset[str] = frozenset(),
+    ) -> list[str]:
+        """Check if dropping a column is safe.
+
+        Args:
+            column_name: Column to drop.
+            indexed_columns: Set of columns with vector indexes.
+
+        Returns:
+            List of warning/error messages (empty = safe).
+        """
+        issues: list[str] = []
+
+        idx = self._schema.get_field_index(column_name)
+        if idx < 0:
+            issues.append(f"Column '{column_name}' does not exist")
+            return issues
+
+        if column_name in indexed_columns:
+            issues.append(
+                f"Column '{column_name}' has a vector index — drop the index first"
+            )
+
+        return issues
 
 
 class UnifiedTableManager:

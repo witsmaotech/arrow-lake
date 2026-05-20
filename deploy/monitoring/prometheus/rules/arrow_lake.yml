@@ -47,3 +47,23 @@ groups:
         annotations:
           summary: "High rate limit rejection count"
           description: "{{ $value }} requests rejected in 5 minutes."
+
+  - name: arrow_lake_duckdb_pool
+    rules:
+      - alert: DuckDBPoolExhaustion
+        expr: arrow_lake_duckdb_pool_active_sessions / arrow_lake_duckdb_pool_size > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "DuckDB connection pool near exhaustion"
+          description: "Pool utilization is {{ $value | printf \"%.0f\" }}% on {{ $labels.job }}. Consider increasing API_REPLICAS or max_concurrent_queries."
+
+      - alert: DuckDBPoolQueued
+        expr: arrow_lake_duckdb_pool_queued_requests > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "DuckDB queries are queuing"
+          description: "{{ $value }} queries waiting for a DuckDB session on {{ $labels.job }}."

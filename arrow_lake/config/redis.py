@@ -20,3 +20,5 @@ class RedisConfig(BaseModel):
     semaphore_key_prefix: str = "arrow_lake:semaphore:"
     semaphore_ttl_seconds: int = Field(default=300, ge=1)
     redis_pool_size: int = Field(default=10, ge=1)
+    instance_registry_key: str = "arrow_lake:instances"
+    instance_heartbeat_ttl_seconds: int = Field(default=30, ge=5)

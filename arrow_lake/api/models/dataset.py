@@ -394,3 +394,82 @@ class CleanupResponse(BaseModel):
 
     success: bool = True
     deleted_count: int = 0
+
+
+class SchemaMigrationAction(BaseModel):
+    """A single schema migration action."""
+
+    operation: str = Field(description="One of: add_column, alter_column, drop_column")
+    column_name: str = Field(description="Column name to add/alter/drop")
+    sql_expr: str = Field(default="", description="SQL expression for add_column")
+    new_type: str = Field(default="", description="PyArrow type string for alter_column (e.g. 'int32')")
+
+
+class SchemaMigrationRequest(BaseModel):
+    """Request body for schema migration."""
+
+    actions: list[SchemaMigrationAction] = Field(min_length=1, max_length=10)
+    dry_run: bool = Field(default=True, description="If true, only validate without applying")
+
+
+class SchemaMigrationIssue(BaseModel):
+    """A single migration issue."""
+
+    action_index: int
+    column_name: str
+    messages: list[str]
+
+
+class SchemaMigrationResponse(BaseModel):
+    """Response for schema migration."""
+
+    success: bool = True
+    dry_run: bool = True
+    issues: list[SchemaMigrationIssue] = Field(default_factory=list)
+    applied_count: int = 0
+
+
+# ---------------------------------------------------------------------------
+# Row/column ACL
+# ---------------------------------------------------------------------------
+
+
+class SetAclRequest(BaseModel):
+    """Request body for setting row/column ACL on a dataset."""
+
+    role: str = Field(..., pattern=r"^(viewer|editor)$", description="Role to apply ACL to")
+    visible_columns: list[str] = Field(default_factory=list, description="Column whitelist (empty = all)")
+    row_filter: str = Field(default="", description="Simple row filter expression (e.g. 'region == US')")
+
+
+class AclEntry(BaseModel):
+    """A single ACL entry."""
+
+    role: str
+    visible_columns: list[str] = []
+    row_filter: str = ""
+
+
+class AclListResponse(BaseModel):
+    """Response for listing ACLs on a dataset."""
+
+    success: bool = True
+    dataset: str
+    acls: list[AclEntry] = Field(default_factory=list)
+
+
+class AclSetResponse(BaseModel):
+    """Response for setting an ACL."""
+
+    success: bool = True
+    dataset: str
+    role: str
+
+
+class AclDeleteResponse(BaseModel):
+    """Response for deleting an ACL."""
+
+    success: bool = True
+    dataset: str
+    role: str
+    deleted: bool = False

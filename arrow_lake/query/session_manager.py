@@ -57,6 +57,8 @@ class SessionPoolStats:
         total_timeouts: Total connection acquisition timeouts.
         avg_wait_seconds: Average wait time for session acquisition.
         slow_query_count: Queries exceeding slow_query_threshold_ms.
+        instance_count: Number of DuckDB instances in the cluster (1 = standalone).
+        total_capacity: Total capacity across all instances (instance_count * pool_size).
     """
 
     pool_size: int = 0
@@ -67,6 +69,8 @@ class SessionPoolStats:
     total_timeouts: int = 0
     avg_wait_seconds: float = 0.0
     slow_query_count: int = 0
+    instance_count: int = 1
+    total_capacity: int = 0
 
 
 class _ManagedSession:
@@ -144,12 +148,16 @@ class DuckDBSessionManager:
         slow_query_threshold_ms: int = 5000,
         idle_timeout_seconds: int = 300,
         max_session_lifetime_seconds: int = 3600,
+        instance_count: int = 1,
+        **kwargs: Any,
     ) -> None:
         self._olap_config = olap_config
         self._storage_config = storage_config
         self._slow_query_threshold_ms = slow_query_threshold_ms
         self._idle_timeout_seconds = idle_timeout_seconds
         self._max_session_lifetime_seconds = max_session_lifetime_seconds
+        self._instance_count = max(1, instance_count)
+        self._instance_registry: Any = kwargs.get("_instance_registry")
 
         max_queries = olap_config.max_concurrent_queries
         self._semaphore = semaphore or threading.Semaphore(max_queries)
@@ -182,11 +190,23 @@ class DuckDBSessionManager:
         """Factory method: create a manager with the appropriate semaphore.
 
         When *redis_config* is provided and enabled, uses a distributed
-        Redis-backed semaphore; otherwise falls back to threading.Semaphore.
+        Redis-backed semaphore and registers the instance in the cluster
+        registry; otherwise falls back to threading.Semaphore.
         """
-        from arrow_lake.query._redis_semaphore import create_semaphore
+        from arrow_lake.query._redis_semaphore import (
+            InstanceRegistry,
+            create_instance_registry,
+            create_semaphore,
+        )
 
         semaphore = create_semaphore(redis_config, olap_config.max_concurrent_queries)
+        registry = create_instance_registry(redis_config)
+
+        if registry is not None:
+            registry.register()
+            kwargs.setdefault("instance_count", registry.discover_instance_count())
+            kwargs["_instance_registry"] = registry
+
         return cls(
             olap_config=olap_config,
             storage_config=storage_config,
@@ -421,6 +441,7 @@ class DuckDBSessionManager:
         Returns:
             SessionPoolStats snapshot.
         """
+        instance_count = self._resolve_instance_count()
         with self._lock:
             total = self._total_queries
             total_wait = self._total_wait_time
@@ -433,13 +454,15 @@ class DuckDBSessionManager:
                 total_timeouts=self._total_timeouts,
                 avg_wait_seconds=(total_wait / total) if total > 0 else 0.0,
                 slow_query_count=self._slow_query_count,
+                instance_count=instance_count,
+                total_capacity=instance_count * self.pool_size,
             )
 
     def shutdown(self) -> None:
         """Gracefully shut down the session manager.
 
-        Drains the idle pool and prevents new acquisitions.
-        Active sessions will complete naturally.
+        Drains the idle pool, deregisters from the cluster, and prevents
+        new acquisitions.  Active sessions will complete naturally.
         """
         with self._lock:
             self._closed = True
@@ -449,6 +472,11 @@ class DuckDBSessionManager:
         for idle in idle_conns:
             self._close_conn(idle.conn)
 
+        # Deregister from cluster registry
+        if self._instance_registry is not None:
+            self._instance_registry.shutdown()
+            self._instance_registry = None
+
         logger.info(
             "Session manager shut down: queries=%d, errors=%d, timeouts=%d, slow=%d, idle_drained=%d",
             self._total_queries,
@@ -457,3 +485,12 @@ class DuckDBSessionManager:
             self._slow_query_count,
             len(idle_conns),
         )
+
+    def _resolve_instance_count(self) -> int:
+        """Resolve current cluster instance count from registry or local config."""
+        if self._instance_registry is not None:
+            try:
+                return self._instance_registry.discover_instance_count()
+            except Exception:
+                pass
+        return self._instance_count

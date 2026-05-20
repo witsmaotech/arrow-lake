@@ -14,6 +14,8 @@ class OlapQueryRequest(BaseModel):
     sql: str = Field(..., min_length=1, max_length=16384)
     max_rows: int | None = Field(default=None, ge=1, le=1000000)
     format: Literal["arrow_ipc", "json"] = "json"
+    stream: bool = Field(default=False, description="Stream large results as SSE events")
+    batch_size: int = Field(default=1000, ge=100, le=50000, description="Rows per batch when streaming")
 
     @field_validator("sql")
     @classmethod

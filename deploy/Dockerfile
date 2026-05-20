@@ -12,6 +12,14 @@
 # ==============================================================================
 FROM --platform=$BUILDPLATFORM python:3.12-slim AS builder
 
+# Clear any daemon-injected proxy
+ENV HTTP_PROXY=""
+ENV HTTPS_PROXY=""
+ENV http_proxy=""
+ENV https_proxy=""
+ENV no_proxy="*"
+ENV NO_PROXY="*"
+
 ARG TARGETARCH
 
 # System dependencies for building Python packages (Daft, Lance, etc.)
@@ -62,9 +70,18 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # ==============================================================================
 FROM python:3.12-slim AS runtime
 
+# Clear any daemon-injected proxy
+ENV HTTP_PROXY=""
+ENV HTTPS_PROXY=""
+ENV http_proxy=""
+ENV https_proxy=""
+ENV no_proxy="*"
+ENV NO_PROXY="*"
+
 LABEL maintainer="wits@sunpw.dev"
 LABEL description="Arrow Lake — Unified multimodal data lakehouse (Lance + Daft + Ray)"
 LABEL org.opencontainers.image.source="https://github.com/wits-sunpw/arrow-lake"
+LABEL org.opencontainers.image.version="1.4.0"
 
 # Runtime system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -78,7 +95,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user for security
-RUN groupadd -r arrowlake && useradd -r -g arrowlake -d /app -s /sbin/nologin arrowlake
+RUN groupadd -r -g 999 arrowlake && useradd -r -u 999 -g arrowlake -d /app -s /sbin/nologin arrowlake
 
 # Install mc (MinIO Client) for health checks (before USER arrowlake)
 RUN curl -sfL https://dl.min.io/client/mc/release/linux-amd64/mc -o /usr/local/bin/mc \

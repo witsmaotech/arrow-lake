@@ -70,9 +70,9 @@ class TestAddColumn:
 
 class TestAlterColumn:
     def test_alter_column_type(self, populated_lake: Lake) -> None:
-        populated_lake.alter_column("test_ds", "score", pa.float32())
+        populated_lake.alter_column("test_ds", "score", pa.float64())
         result = populated_lake.read_dataset("test_ds", columns=["score"])
-        assert result.schema.field("score").type == pa.float32()
+        assert result.schema.field("score").type == pa.float64()
 
 
 class TestDropColumn:

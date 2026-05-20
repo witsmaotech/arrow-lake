@@ -29,7 +29,7 @@ x-arrow-lake: &arrow-lake
     context: ..
     dockerfile: deploy/Dockerfile
     network: host
-  image: arrow-lake:latest
+  image: arrow-lake:1.4.0
   restart: unless-stopped
   env_file:
     - path: ../.env
@@ -82,11 +82,37 @@ x-metaflow-env: &metaflow-env
 
 services:
   # ---------------------------------------------------------------------------
+  # Proxy Forwarder — WSL2 mirrored mode bridge to Windows host proxy
+  # ---------------------------------------------------------------------------
+  proxy-forwarder:
+    image: alpine:${ALPINE_VERSION:-3.21}
+    container_name: arrow-lake-proxy-forwarder
+    restart: unless-stopped
+    network_mode: host
+    command: ["sh", "-c", "apk add --no-cache socat >/dev/null 2>&1 && echo 'proxy-forwarder: 0.0.0.0:17887 -> 127.0.0.1:${HOST_PROXY_PORT:-7887}' && socat TCP-LISTEN:17887,fork,reuseaddr,bind=0.0.0.0 TCP:127.0.0.1:${HOST_PROXY_PORT:-7887}"]
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+          cpus: "0.1"
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "1"
+    stop_grace_period: 5s
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 17887 || exit 1"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  # ---------------------------------------------------------------------------
   # API Server
   # ---------------------------------------------------------------------------
   api:
     <<: [*arrow-lake]
-    container_name: arrow-lake-api
+    # container_name omitted — required for replicas > 1
     command: ["uvicorn", "arrow_lake.api.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--workers", "4", "--proxy-headers", "--forwarded-allow-ips", "*"]
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -96,18 +122,19 @@ services:
       <<: [*storage-env, *metaflow-env]
       ARROW_LAKE__API__ENABLED: "true"
       ARROW_LAKE__API__HOST: "0.0.0.0"
+      ARROW_LAKE__API__API_KEY: "${ARROW_LAKE__API__API_KEY:-}"
       ARROW_LAKE__API__PORT: "8000"
-      ARROW_LAKE__OBSERVABILITY__METRICS_PORT: "8000"
+      ARROW_LAKE__OBSERVABILITY__METRICS_PORT: "9091"
       ARROW_LAKE__OBSERVABILITY__LOG_LEVEL: "${LOG_LEVEL:-INFO}"
       ARROW_LAKE__REDIS__URL: "redis://:${REDIS_PASSWORD:-redisprod}@redis:6379/0"
       ARROW_LAKE__REDIS__PASSWORD: "${REDIS_PASSWORD:-redisprod}"
       ARROW_LAKE__RATE_LIMIT__ENABLED: "${RATE_LIMIT_ENABLED:-true}"
       ARROW_LAKE__RATE_LIMIT__DEFAULT_REQUESTS_PER_MINUTE: "${RATE_LIMIT_RPM:-60}"
       ARROW_LAKE__RATE_LIMIT__DEFAULT_BURST: "${RATE_LIMIT_BURST:-10}"
-      HTTP_PROXY: ""
-      HTTPS_PROXY: ""
-      http_proxy: ""
-      https_proxy: ""
+      HTTP_PROXY: "http://host.docker.internal:17887"
+      HTTPS_PROXY: "http://host.docker.internal:17887"
+      http_proxy: "http://host.docker.internal:17887"
+      https_proxy: "http://host.docker.internal:17887"
       NO_PROXY: "127.0.0.1,localhost,host.docker.internal,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,172.19.0.0/16,172.30.0.0/16,minio,redis,ray-head,metaflow-metadata,metaflow-db,prometheus,grafana,jaeger,loki,promtail,hg-server,hg-pd,hg-store"
       no_proxy: "127.0.0.1,localhost,host.docker.internal,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,172.19.0.0/16,172.30.0.0/16,minio,redis,ray-head,metaflow-metadata,metaflow-db,prometheus,grafana,jaeger,loki,promtail,hg-server,hg-pd,hg-store"
       ARROW_LAKE__EMBEDDING__API_BASE: "${OLLAMA_API_BASE:-http://172.19.0.40:11434/v1}"
@@ -120,10 +147,13 @@ services:
       ARROW_LAKE__OLAP__QUERY_CACHE_ENABLED: "true"
       ARROW_LAKE__OLAP__QUERY_CACHE_TTL_SECONDS: "120"
       ARROW_LAKE__OLAP__PARQUET_ROW_GROUP_SIZE: "100000"
+      # DuckDB horizontal scaling (v1.4)
+      ARROW_LAKE__OLAP__INSTANCE_COUNT: "${API_REPLICAS:-1}"
     volumes:
       - duckdb-data:/app/.duckdb
       - lake-data:/data/lake
       - metaflow-store:/data/metaflow
+      - /home/witshine/wits-projs/wits-infra-dintellihub/arrow_lake:/app/arrow_lake:ro
     depends_on:
       minio:
         condition: service_healthy
@@ -137,6 +167,7 @@ services:
         condition: service_healthy
         required: false
     deploy:
+      replicas: ${API_REPLICAS:-1}
       resources:
         limits:
           memory: ${API_MEMORY_LIMIT:-4G}
@@ -251,8 +282,9 @@ services:
   # MinIO Init — Create buckets on first start
   # ---------------------------------------------------------------------------
   minio-init:
-    image: minio/mc:${MINIO_MC_VERSION:-RELEASE.2025-08-21T01-31-52Z}
+    image: minio/mc:${MINIO_MC_VERSION:-RELEASE.2025-08-13T08-35-41Z}
     container_name: arrow-lake-minio-init
+    restart: "no"
     depends_on:
       minio:
         condition: service_healthy
@@ -320,10 +352,12 @@ services:
     environment:
       <<: [*storage-env]
       ARROW_LAKE__COMPUTE__RAY_ADDRESS: "auto"
-      HTTP_PROXY: ""
-      HTTPS_PROXY: ""
-      http_proxy: ""
-      https_proxy: ""
+      HTTP_PROXY: "http://host.docker.internal:17887"
+      HTTPS_PROXY: "http://host.docker.internal:17887"
+      http_proxy: "http://host.docker.internal:17887"
+      https_proxy: "http://host.docker.internal:17887"
+      NO_PROXY: "127.0.0.1,localhost,host.docker.internal,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,172.19.0.0/16,172.30.0.0/16,minio,redis,ray-head,metaflow-metadata,metaflow-db,prometheus,grafana,jaeger,loki,promtail,hg-server,hg-pd,hg-store"
+      no_proxy: "127.0.0.1,localhost,host.docker.internal,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,172.19.0.0/16,172.30.0.0/16,minio,redis,ray-head,metaflow-metadata,metaflow-db,prometheus,grafana,jaeger,loki,promtail,hg-server,hg-pd,hg-store"
     volumes:
       - lake-data:/data/lake
     shm_size: 256m
@@ -380,10 +414,12 @@ services:
     environment:
       <<: [*storage-env]
       ARROW_LAKE__COMPUTE__RAY_ADDRESS: "ray://ray-head:10001"
-      HTTP_PROXY: ""
-      HTTPS_PROXY: ""
-      http_proxy: ""
-      https_proxy: ""
+      HTTP_PROXY: "http://host.docker.internal:17887"
+      HTTPS_PROXY: "http://host.docker.internal:17887"
+      http_proxy: "http://host.docker.internal:17887"
+      https_proxy: "http://host.docker.internal:17887"
+      NO_PROXY: "127.0.0.1,localhost,host.docker.internal,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,172.19.0.0/16,172.30.0.0/16,minio,redis,ray-head,metaflow-metadata,metaflow-db,prometheus,grafana,jaeger,loki,promtail,hg-server,hg-pd,hg-store"
+      no_proxy: "127.0.0.1,localhost,host.docker.internal,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,172.19.0.0/16,172.30.0.0/16,minio,redis,ray-head,metaflow-metadata,metaflow-db,prometheus,grafana,jaeger,loki,promtail,hg-server,hg-pd,hg-store"
     volumes:
       - lake-data:/data/lake
     shm_size: 256m
@@ -402,10 +438,48 @@ services:
         hard: 65536
 
   # ---------------------------------------------------------------------------
-  # MinIO Backup — Periodic data backup via mc mirror
+  # Ray Worker (GPU) — GPU-enabled compute workers
   # ---------------------------------------------------------------------------
+  ray-worker-gpu:
+    <<: [*arrow-lake]
+    restart: unless-stopped
+    profiles: ["gpu"]
+    healthcheck:
+      disable: true
+    deploy:
+      replicas: ${RAY_GPU_WORKER_REPLICAS:-1}
+      resources:
+        limits:
+          memory: ${RAY_GPU_WORKER_MEMORY:-8G}
+          cpus: "${RAY_GPU_WORKER_CPU_LIMIT:-4.0}"
+          pids: 2048
+        reservations:
+          memory: 2G
+          devices:
+            - capabilities: ["gpu"]
+              count: ${GPU_COUNT_PER_WORKER:-1}
+    environment:
+      <<: [*storage-env]
+      ARROW_LAKE__COMPUTE__RAY_ADDRESS: "ray://ray-head:10001"
+    volumes:
+      - lake-data:/data/lake
+    shm_size: 256m
+    command: >
+      /app/.venv/bin/ray start
+      --address=ray-head:6379
+      --num-cpus=${RAY_GPU_WORKER_CPUS:-4}
+      --num-gpus=${RAY_GPU_COUNT:-1}
+      --block
+    depends_on:
+      ray-head:
+        condition: service_healthy
+    stop_grace_period: 60s
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
   minio-backup:
-    image: minio/mc:${MINIO_MC_VERSION:-RELEASE.2025-08-21T01-31-52Z}
+    image: minio/mc:${MINIO_MC_VERSION:-RELEASE.2025-08-13T08-35-41Z}
     container_name: arrow-lake-minio-backup
     restart: "no"
     networks:
