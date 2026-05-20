@@ -120,3 +120,4 @@ notebooks
 .ruff_cache
 
 
+deploy/certs/
