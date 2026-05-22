@@ -539,6 +539,7 @@ class DaftQueryEngine:
         base_uri: Base URI for Lance dataset storage.
         storage_config: Optional StorageConfig for S3/MinIO access.
         daft_config: Optional DaftConfig for performance tuning.
+        gravitino_config: Optional GravitinoConfig for federated reads.
     """
 
     def __init__(
@@ -546,10 +547,12 @@ class DaftQueryEngine:
         base_uri: str | Path,
         storage_config: Any | None = None,
         daft_config: Any | None = None,
+        gravitino_config: Any | None = None,
     ) -> None:
         self.base_uri = str(base_uri)
         self._storage_config = storage_config
         self._daft_config = daft_config
+        self._gravitino_config = gravitino_config
         self._io_config: Any = None
         if storage_config is not None:
             self._io_config = self._build_io_config(storage_config)
@@ -596,6 +599,40 @@ class DaftQueryEngine:
                 verify_ssl=use_ssl,
             )
         )
+
+    def read_gravitino_table(self, fqn: str) -> daft.DataFrame:
+        """Read a table from Gravitino Lance REST Catalog by fully qualified name.
+
+        Args:
+            fqn: Fully qualified name (catalog.schema.table).
+
+        Returns:
+            Daft DataFrame for the table.
+
+        Raises:
+            RuntimeError: If Gravitino is not configured or read fails.
+        """
+        if self._gravitino_config is None or not getattr(
+            self._gravitino_config, "enabled", False
+        ):
+            raise RuntimeError("Gravitino is not configured for this engine")
+        try:
+            parts = fqn.split(".")
+            if len(parts) == 3:
+                _, _, table_name = parts
+            else:
+                table_name = parts[-1]
+
+            rest_uri = self._gravitino_config.lance_rest_uri
+            lance_path = f"{rest_uri}/{table_name}.lance"
+
+            read_kwargs: dict[str, Any] = {}
+            if self._io_config is not None:
+                read_kwargs["io_config"] = self._io_config
+            return daft.read_lance(lance_path, **read_kwargs)
+        except Exception as exc:
+            logger.error("Failed to read Gravitino table '%s': %s", fqn, exc)
+            raise RuntimeError(f"Failed to read Gravitino table '{fqn}'") from exc
 
     def load(
         self,

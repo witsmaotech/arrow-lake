@@ -46,6 +46,34 @@ def _check_storage(config: ArrowLakeConfig) -> tuple[str, bool]:
     return "not_found", False
 
 
+def _check_gravitino(uri: str) -> tuple[str, bool]:
+    """Check Gravitino server health. Returns (status_text, is_ok)."""
+    try:
+        import urllib.request
+
+        url = uri.rstrip("/") + "/api/metalakes"
+        urllib.request.urlopen(url, timeout=3)
+        return "healthy", True
+    except Exception:
+        return "unreachable", False
+
+
+def _check_lance_rest(uri: str) -> tuple[str, bool]:
+    """Check Lance REST Catalog health. Returns (status_text, is_ok)."""
+    try:
+        import os
+        import urllib.request
+
+        url = f"{uri.rstrip('/')}/v1/namespace/lance-catalog/list"
+        # Disable proxy for internal service-to-service call
+        handler = urllib.request.ProxyHandler({})
+        opener = urllib.request.build_opener(handler)
+        opener.open(url, timeout=3)
+        return "healthy", True
+    except Exception:
+        return "unreachable", False
+
+
 @router.get("/health/live", summary="Liveness probe")
 async def health_live() -> dict:
     """Lightweight liveness check — returns 200 if process is running."""
@@ -106,6 +134,15 @@ async def health_check(
     status["storage"] = storage_text
     if not storage_ok:
         status["status"] = "degraded"
+
+    # Gravitino health (non-fatal — optional dependency)
+    if config.gravitino.enabled:
+        grav_text, grav_ok = _check_gravitino(config.gravitino.uri)
+        status["gravitino"] = grav_text
+        if config.gravitino.lance_rest_enabled:
+            lr_text, lr_ok = _check_lance_rest(config.gravitino.lance_rest_uri)
+            status["lance_rest"] = lr_text
+
     _attach_pool_stats(status, request)
     http_code = 200 if status["status"] == "ok" else 503
     return JSONResponse(content=status, status_code=http_code)

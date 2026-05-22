@@ -19,6 +19,7 @@ from arrow_lake.config.api import (
     RateLimitConfig,
 )
 from arrow_lake.config.document import DocumentConfig
+from arrow_lake.config.gravitino import GravitinoConfig
 from arrow_lake.config.infra import (
     ComputeConfig,
     DaftConfig,
@@ -80,6 +81,7 @@ _SECTION_TYPES: dict[str, type[BaseModel]] = {
     "rate_limit": RateLimitConfig,
     "document": DocumentConfig,
     "redis": RedisConfig,
+    "gravitino": GravitinoConfig,
 }
 
 
@@ -134,6 +136,7 @@ class ArrowLakeConfig(BaseSettings):
     rate_limit: RateLimitConfig = RateLimitConfig()
     document: DocumentConfig = DocumentConfig()
     redis: RedisConfig = RedisConfig()
+    gravitino: GravitinoConfig = GravitinoConfig()
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> ArrowLakeConfig:

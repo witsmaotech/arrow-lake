@@ -27,13 +27,18 @@ def main() -> None:
     # 1. Health
     print("\nSTEP 1: Health check")
     h = c.health()
-    assert h.get("status") == "ok", f"health failed: {h}"
+    assert h.get("status") in ("ok", "degraded"), f"health failed: {h}"
     assert h.get("storage") == "accessible"
     assert h.get("version"), f"missing version in health response: {h}"
+    # v1.4.1: Gravitino and Lance REST health fields appear when enabled
+    if "gravitino" in h:
+        print(f"         gravitino: {h['gravitino']}")
+    if "lance_rest" in h:
+        print(f"         lance_rest: {h['lance_rest']}")
     c._pass("GET /health")
 
     h2 = c.health_ready()
-    assert h2.get("status") == "ok"
+    assert h2.get("status") in ("ok", "degraded")
     c._pass("GET /health/ready")
 
     # 2. Auth token

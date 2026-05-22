@@ -36,6 +36,11 @@ from arrow_lake.config.api import (
     RateLimitConfig,
 )
 from arrow_lake.config.document import DocumentConfig
+from arrow_lake.config.gravitino import (
+    GravitinoAuthType,
+    GravitinoConfig,
+    GravitinoSyncDirection,
+)
 from arrow_lake.config.infra import (
     ComputeConfig,
     DaftConfig,
@@ -74,6 +79,8 @@ __all__ = [  # noqa: RUF022
     "DistanceMetric",
     "EmbeddingBackend",
     "FilterMode",
+    "GravitinoAuthType",
+    "GravitinoSyncDirection",
     "LLMProviderType",
     "LogLevel",
     "ModelSource",
@@ -97,6 +104,7 @@ __all__ = [  # noqa: RUF022
     "ExportConfig",
     "FacetedSearchConfig",
     "FullTextSearchConfig",
+    "GravitinoConfig",
     "HttpConfig",
     "HugeGraphConfig",
     "HybridSearchConfig",

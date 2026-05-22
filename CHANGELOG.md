@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1] - 2026-05-22
+
+### Added — Gravitino 元数据治理集成
+- **Gravitino Server + Lance REST Catalog**: Docker 部署 (docker-compose profile: gravitino)
+- **GravitinoBridge**: DuckDB ↔ Gravitino 双向同步 (catalog/schema/table 元数据)
+- **GravitinoSyncScheduler**: 后台定时同步任务，接入 FastAPI lifespan 管理
+- **GravitinoRBACBridge**: 权限委托 Gravitino 决策 + 本地 RBAC 降级
+- **GravitinoTagService**: 数据分类标签管理 (sensitive/PII/financial)
+- **GravitinoPolicyService**: 数据保留策略 + 脱敏策略
+- **GravitinoStatsCollector**: DuckDB 统计信息收集 + Gravitino 属性注册
+- **GravitinoModelRegistry**: ML 模型版本化管理 + 热切换
+- **ArrowLakeGravitinoClient**: Python SDK 统一封装
+- **`/metadata/*` API 代理端点**: catalogs / tables / tags / policies / statistics / models
+- **Lineage 自动通知**: Lance 版本变更自动通知 Gravitino
+- **Daft GravitinoCatalog**: 联邦查询支持
+- **健康检查**: gravitino + lance_rest 状态纳入 `/health` 端点
+- **优雅降级**: Gravitino 不可用时 Arrow Lake 核心功能正常运行
+
+### Tests
+- 43 Gravitino 测试 (27 unit + 16 API e2e)
+
+### Fixed
+- Dockerfile runtime 阶段移除不必要的 protobuf-compiler
+- init-gravitino.sh MinIO 凭证参数化 (不再硬编码)
+- gravitino.py Request 命名冲突 (urllib vs fastapi)
+
 ## [1.4.0] - 2026-05-20
 
 ### Added — Phase 0: 补债拆分

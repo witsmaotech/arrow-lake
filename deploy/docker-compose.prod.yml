@@ -29,7 +29,7 @@ x-arrow-lake: &arrow-lake
     context: ..
     dockerfile: deploy/Dockerfile
     network: host
-  image: arrow-lake:1.4.0
+  image: arrow-lake:1.4.1
   restart: unless-stopped
   env_file:
     - path: ../.env
@@ -135,8 +135,8 @@ services:
       HTTPS_PROXY: "http://host.docker.internal:17887"
       http_proxy: "http://host.docker.internal:17887"
       https_proxy: "http://host.docker.internal:17887"
-      NO_PROXY: "127.0.0.1,localhost,host.docker.internal,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,172.19.0.0/16,172.30.0.0/16,minio,redis,ray-head,metaflow-metadata,metaflow-db,prometheus,grafana,jaeger,loki,promtail,hg-server,hg-pd,hg-store"
-      no_proxy: "127.0.0.1,localhost,host.docker.internal,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,172.19.0.0/16,172.30.0.0/16,minio,redis,ray-head,metaflow-metadata,metaflow-db,prometheus,grafana,jaeger,loki,promtail,hg-server,hg-pd,hg-store"
+      NO_PROXY: "127.0.0.1,localhost,host.docker.internal,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,172.19.0.0/16,172.30.0.0/16,minio,redis,ray-head,metaflow-metadata,metaflow-db,prometheus,grafana,jaeger,loki,promtail,hg-server,hg-pd,hg-store,gravitino,lance-rest,arrow-lake-gravitino,arrow-lake-lance-rest"
+      no_proxy: "127.0.0.1,localhost,host.docker.internal,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,172.19.0.0/16,172.30.0.0/16,minio,redis,ray-head,metaflow-metadata,metaflow-db,prometheus,grafana,jaeger,loki,promtail,hg-server,hg-pd,hg-store,gravitino,lance-rest,arrow-lake-gravitino,arrow-lake-lance-rest"
       ARROW_LAKE__EMBEDDING__API_BASE: "${OLLAMA_API_BASE:-http://172.19.0.40:11434/v1}"
       ARROW_LAKE__HUGEGRAPH__HOST: "${HUGEGRAPH_HOST:-hg-server}"
       ARROW_LAKE__HUGEGRAPH__PORT: "${HUGEGRAPH_PORT:-8080}"
@@ -149,6 +149,10 @@ services:
       ARROW_LAKE__OLAP__PARQUET_ROW_GROUP_SIZE: "100000"
       # DuckDB horizontal scaling (v1.4)
       ARROW_LAKE__OLAP__INSTANCE_COUNT: "${API_REPLICAS:-1}"
+      ARROW_LAKE__GRAVITINO__ENABLED: "${GRAVITINO_ENABLED:-true}"
+      ARROW_LAKE__GRAVITINO__URI: "http://arrow-lake-gravitino:8090"
+      ARROW_LAKE__GRAVITINO__METALAKE: "${GRAVITINO_METALAKE:-arrow_lake}"
+      ARROW_LAKE__GRAVITINO__LANCE_REST_URI: "http://arrow-lake-lance-rest:9101/lance"
     volumes:
       - duckdb-data:/app/.duckdb
       - lake-data:/data/lake
@@ -166,6 +170,12 @@ services:
       hg-server:
         condition: service_healthy
         required: false
+      gravitino:
+        condition: service_healthy
+        required: false
+      gravitino-init:
+        condition: service_completed_successfully
+        required: false
     deploy:
       replicas: ${API_REPLICAS:-1}
       resources:
@@ -176,11 +186,11 @@ services:
         reservations:
           memory: 1G
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
+      test: ["CMD-SHELL", "curl -s http://localhost:8000/health | grep -q '\"status\"'"]
       interval: 30s
       timeout: 10s
-      retries: 3
-      start_period: 15s
+      retries: 5
+      start_period: 30s
     ulimits:
       nofile:
         soft: 65536
@@ -356,8 +366,8 @@ services:
       HTTPS_PROXY: "http://host.docker.internal:17887"
       http_proxy: "http://host.docker.internal:17887"
       https_proxy: "http://host.docker.internal:17887"
-      NO_PROXY: "127.0.0.1,localhost,host.docker.internal,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,172.19.0.0/16,172.30.0.0/16,minio,redis,ray-head,metaflow-metadata,metaflow-db,prometheus,grafana,jaeger,loki,promtail,hg-server,hg-pd,hg-store"
-      no_proxy: "127.0.0.1,localhost,host.docker.internal,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,172.19.0.0/16,172.30.0.0/16,minio,redis,ray-head,metaflow-metadata,metaflow-db,prometheus,grafana,jaeger,loki,promtail,hg-server,hg-pd,hg-store"
+      NO_PROXY: "127.0.0.1,localhost,host.docker.internal,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,172.19.0.0/16,172.30.0.0/16,minio,redis,ray-head,metaflow-metadata,metaflow-db,prometheus,grafana,jaeger,loki,promtail,hg-server,hg-pd,hg-store,gravitino,lance-rest,arrow-lake-gravitino,arrow-lake-lance-rest"
+      no_proxy: "127.0.0.1,localhost,host.docker.internal,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,172.19.0.0/16,172.30.0.0/16,minio,redis,ray-head,metaflow-metadata,metaflow-db,prometheus,grafana,jaeger,loki,promtail,hg-server,hg-pd,hg-store,gravitino,lance-rest,arrow-lake-gravitino,arrow-lake-lance-rest"
     volumes:
       - lake-data:/data/lake
     shm_size: 256m
@@ -418,8 +428,8 @@ services:
       HTTPS_PROXY: "http://host.docker.internal:17887"
       http_proxy: "http://host.docker.internal:17887"
       https_proxy: "http://host.docker.internal:17887"
-      NO_PROXY: "127.0.0.1,localhost,host.docker.internal,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,172.19.0.0/16,172.30.0.0/16,minio,redis,ray-head,metaflow-metadata,metaflow-db,prometheus,grafana,jaeger,loki,promtail,hg-server,hg-pd,hg-store"
-      no_proxy: "127.0.0.1,localhost,host.docker.internal,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,172.19.0.0/16,172.30.0.0/16,minio,redis,ray-head,metaflow-metadata,metaflow-db,prometheus,grafana,jaeger,loki,promtail,hg-server,hg-pd,hg-store"
+      NO_PROXY: "127.0.0.1,localhost,host.docker.internal,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,172.19.0.0/16,172.30.0.0/16,minio,redis,ray-head,metaflow-metadata,metaflow-db,prometheus,grafana,jaeger,loki,promtail,hg-server,hg-pd,hg-store,gravitino,lance-rest,arrow-lake-gravitino,arrow-lake-lance-rest"
+      no_proxy: "127.0.0.1,localhost,host.docker.internal,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,172.19.0.0/16,172.30.0.0/16,minio,redis,ray-head,metaflow-metadata,metaflow-db,prometheus,grafana,jaeger,loki,promtail,hg-server,hg-pd,hg-store,gravitino,lance-rest,arrow-lake-gravitino,arrow-lake-lance-rest"
     volumes:
       - lake-data:/data/lake
     shm_size: 256m
@@ -741,6 +751,36 @@ services:
     stop_grace_period: 30s
 
   # ---------------------------------------------------------------------------
+  # HugeGraph Schema Init — Create Arrow Lake KG schema on first start
+  # ---------------------------------------------------------------------------
+  hg-schema-init:
+    image: curlimages/curl:latest
+    container_name: arrow-lake-hg-schema-init
+    restart: "no"
+    networks:
+      - arrow-lake-net
+    depends_on:
+      hg-server:
+        condition: service_healthy
+    entrypoint: ["sh", "/usr/local/bin/init-hugegraph-schema.sh"]
+    environment:
+      HUGEGRAPH_HOST: "hg-server"
+      HUGEGRAPH_PORT: "8080"
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      http_proxy: ""
+      https_proxy: ""
+    volumes:
+      - ./scripts/init-hugegraph-schema.sh:/usr/local/bin/init-hugegraph-schema.sh:ro
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+          cpus: "0.2"
+          pids: 32
+    stop_grace_period: 5s
+
+  # ---------------------------------------------------------------------------
   # HugeGraph Hubble — Graph visualization dashboard
   # ---------------------------------------------------------------------------
   hg-hubble:
@@ -770,6 +810,128 @@ services:
         max-file: "5"
         tag: "arrow-lake-hg-hubble"
     stop_grace_period: 15s
+
+  # ==============================================================================
+  # Gravitino — Metadata federation server
+  # ==============================================================================
+
+  gravitino:
+    image: apache/gravitino:${GRAVITINO_VERSION:-1.2.1-rc2}
+    container_name: arrow-lake-gravitino
+    restart: unless-stopped
+    networks:
+      - arrow-lake-net
+    ports:
+      - "${GRAVITINO_PORT:-8090}:8090"
+    environment:
+      GRAVITINO_AUTHENTICATORS: "simple"
+      GRAVITINO_AUTHORIZATION_ENABLE: "false"
+      GRAVITINO_USE_WEB_V2: "true"
+      AWS_ACCESS_KEY_ID: "${MINIO_ROOT_USER}"
+      AWS_SECRET_ACCESS_KEY: "${MINIO_ROOT_PASSWORD}"
+      AWS_ENDPOINT_URL: "http://minio:9000"
+      AWS_REGION: "${AWS_REGION:-us-east-1}"
+      AWS_ALLOW_HTTP: "true"
+    volumes:
+      - gravitino-data:/root/gravitino/data
+    deploy:
+      resources:
+        limits:
+          memory: ${GRAVITINO_MEMORY_LIMIT:-1G}
+          cpus: "${GRAVITINO_CPU_LIMIT:-1.0}"
+          pids: 512
+        reservations:
+          memory: 256M
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8090/api/metalakes"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+        tag: "arrow-lake-gravitino"
+    stop_grace_period: 15s
+
+  # ---------------------------------------------------------------------------
+  # Lance REST Catalog — RESTful catalog for Lance datasets
+  # ---------------------------------------------------------------------------
+  lance-rest:
+    image: apache/gravitino-lance-rest:${GRAVITINO_VERSION:-1.2.1-rc2}
+    container_name: arrow-lake-lance-rest
+    restart: unless-stopped
+    networks:
+      - arrow-lake-net
+    ports:
+      - "${LANCE_REST_PORT:-9002}:9101"
+    environment:
+      LANCE_REST_GRAVITINO_URI: "http://arrow-lake-gravitino:8090"
+      LANCE_REST_GRAVITINO_METALAKE_NAME: "${GRAVITINO_METALAKE:-arrow_lake}"
+      AWS_ACCESS_KEY_ID: "${MINIO_ROOT_USER}"
+      AWS_SECRET_ACCESS_KEY: "${MINIO_ROOT_PASSWORD}"
+      AWS_ENDPOINT_URL: "http://minio:9000"
+      AWS_REGION: "${AWS_REGION:-us-east-1}"
+    depends_on:
+      gravitino:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: ${LANCE_REST_MEMORY_LIMIT:-512M}
+          cpus: "${LANCE_REST_CPU_LIMIT:-0.5}"
+          pids: 64
+        reservations:
+          memory: 128M
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9101/lance/v1/namespace/lance-catalog/list"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+        tag: "arrow-lake-lance-rest"
+    stop_grace_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # Gravitino Init — Create Metalake + Catalogs + Schemas on first start
+  # ---------------------------------------------------------------------------
+  gravitino-init:
+    image: curlimages/curl:latest
+    container_name: arrow-lake-gravitino-init
+    restart: "no"
+    networks:
+      - arrow-lake-net
+    depends_on:
+      gravitino:
+        condition: service_healthy
+    entrypoint: ["sh", "/usr/local/bin/init-gravitino.sh"]
+    environment:
+      GRAVITINO_URI: "http://arrow-lake-gravitino:8090"
+      GRAVITINO_METALAKE: "${GRAVITINO_METALAKE:-arrow_lake}"
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD}"
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      http_proxy: ""
+      https_proxy: ""
+    volumes:
+      - ./scripts/init-gravitino.sh:/usr/local/bin/init-gravitino.sh:ro
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+          cpus: "0.2"
+          pids: 32
+    stop_grace_period: 5s
 
 # ==============================================================================
 # Networks
@@ -808,4 +970,6 @@ volumes:
   minio-backup-data:
     driver: local
   loki-data:
+    driver: local
+  gravitino-data:
     driver: local

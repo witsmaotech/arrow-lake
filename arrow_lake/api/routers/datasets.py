@@ -11,7 +11,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Path, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Path, Query, Request, UploadFile
 
 from arrow_lake.api.auth_models import Role
 from arrow_lake.api.deps import get_lake, require_role
@@ -49,6 +49,23 @@ router = APIRouter(prefix="/api/v1/datasets", tags=["datasets"])
 _INGEST_TIMEOUT = 600
 _ADMIN_TIMEOUT = 60
 _DOWNLOAD_WORKERS = 4
+
+
+def _register_to_gravitino(request: Request, dataset_name: str, lake: Any) -> None:
+    """Best-effort register dataset as a Gravitino Fileset after ingest."""
+    import structlog
+    log = structlog.get_logger(__name__)
+    bridge = getattr(request.app.state, "gravitino_bridge", None)
+    if bridge is None or not bridge.enabled:
+        return
+    try:
+        location = f"s3a://arrow-lake/{dataset_name}.lance"
+        bridge.register_dataset(dataset_name, location=location)
+        log.info("gravitino_registered", dataset=dataset_name)
+    except Exception as exc:
+        log.warning("gravitino_register_failed", dataset=dataset_name, error=str(exc))
+
+
 _MAX_UPLOAD_BYTES = 100 * 1024 * 1024  # 100 MB
 _ALLOWED_CONTENT_PREFIXES = (
     "text/", "application/", "image/", "video/", "audio/",
@@ -253,6 +270,7 @@ async def cleanup_uploads(
 
 @router.post("/{name}/ingest", response_model=IngestResponse, status_code=201)
 async def ingest_files(
+    request: Request,
     name: str = Path(..., pattern=_NAME_PATTERN),
     *,
     req: IngestFilesRequest,
@@ -278,6 +296,7 @@ async def ingest_files(
             timeout=_INGEST_TIMEOUT, label="ingest_files",
             transforms=transforms,
         )
+        _register_to_gravitino(request, name, lake)
         return IngestResponse.from_report(report)
     finally:
         if tmp_dir:
@@ -286,6 +305,7 @@ async def ingest_files(
 
 @router.post("/{name}/ingest/sql", response_model=IngestResponse, status_code=201)
 async def ingest_sql(
+    request: Request,
     name: str = Path(..., pattern=_NAME_PATTERN),
     *,
     req: IngestSqlRequest,
@@ -306,11 +326,13 @@ async def ingest_sql(
         transforms=transforms,
         timeout=_INGEST_TIMEOUT, label="ingest_sql",
     )
+    _register_to_gravitino(request, name, lake)
     return IngestResponse.from_report(report)
 
 
 @router.post("/{name}/ingest/kafka", response_model=IngestResponse, status_code=201)
 async def ingest_kafka(
+    request: Request,
     name: str = Path(..., pattern=_NAME_PATTERN),
     *,
     req: IngestKafkaRequest,
@@ -332,11 +354,13 @@ async def ingest_kafka(
         transforms=transforms,
         timeout=_INGEST_TIMEOUT, label="ingest_kafka",
     )
+    _register_to_gravitino(request, name, lake)
     return IngestResponse.from_report(report)
 
 
 @router.post("/{name}/ingest/iceberg", response_model=IngestResponse, status_code=201)
 async def ingest_iceberg(
+    request: Request,
     name: str = Path(..., pattern=_NAME_PATTERN),
     *,
     req: IngestIcebergRequest,
@@ -353,11 +377,13 @@ async def ingest_iceberg(
         table_uri=req.table_uri, transforms=transforms,
         timeout=_INGEST_TIMEOUT, label="ingest_iceberg",
     )
+    _register_to_gravitino(request, name, lake)
     return IngestResponse.from_report(report)
 
 
 @router.post("/{name}/ingest/deltalake", response_model=IngestResponse, status_code=201)
 async def ingest_deltalake(
+    request: Request,
     name: str = Path(..., pattern=_NAME_PATTERN),
     *,
     req: IngestDeltaLakeRequest,
@@ -374,11 +400,13 @@ async def ingest_deltalake(
         table_uri=req.table_uri, version=req.version, transforms=transforms,
         timeout=_INGEST_TIMEOUT, label="ingest_deltalake",
     )
+    _register_to_gravitino(request, name, lake)
     return IngestResponse.from_report(report)
 
 
 @router.post("/{name}/ingest/http", response_model=IngestResponse, status_code=201)
 async def ingest_http(
+    request: Request,
     name: str = Path(..., pattern=_NAME_PATTERN),
     *,
     req: IngestHttpRequest,
@@ -390,11 +418,13 @@ async def ingest_http(
         lake.ingest_http, name, req.urls,
         timeout=_INGEST_TIMEOUT, label="ingest_http",
     )
+    _register_to_gravitino(request, name, lake)
     return IngestResponse.from_report(report)
 
 
 @router.post("/{name}/ingest/images", response_model=IngestResponse, status_code=201)
 async def ingest_images(
+    request: Request,
     name: str = Path(..., pattern=_NAME_PATTERN),
     *,
     req: IngestImagesRequest,
@@ -413,6 +443,7 @@ async def ingest_images(
             lake.ingest_images, name, all_paths,
             timeout=_INGEST_TIMEOUT, label="ingest_images",
         )
+        _register_to_gravitino(request, name, lake)
         return IngestResponse.from_report(report)
     finally:
         if tmp_dir:
@@ -421,6 +452,7 @@ async def ingest_images(
 
 @router.post("/{name}/ingest/videos", response_model=IngestResponse, status_code=201)
 async def ingest_videos(
+    request: Request,
     name: str = Path(..., pattern=_NAME_PATTERN),
     *,
     req: IngestVideosRequest,
@@ -439,6 +471,7 @@ async def ingest_videos(
             lake.ingest_videos, name, all_paths,
             timeout=_INGEST_TIMEOUT, label="ingest_videos",
         )
+        _register_to_gravitino(request, name, lake)
         return IngestResponse.from_report(report)
     finally:
         if tmp_dir:
@@ -447,6 +480,7 @@ async def ingest_videos(
 
 @router.post("/{name}/ingest/mixed", response_model=IngestResponse, status_code=201)
 async def ingest_mixed(
+    request: Request,
     name: str = Path(..., pattern=_NAME_PATTERN),
     *,
     req: IngestMixedRequest,
@@ -466,6 +500,7 @@ async def ingest_mixed(
             lake.ingest_mixed, name, sources,
             timeout=_INGEST_TIMEOUT, label="ingest_mixed",
         )
+        _register_to_gravitino(request, name, lake)
         return IngestResponse.from_report(report)
     finally:
         if tmp_dir:
@@ -474,6 +509,7 @@ async def ingest_mixed(
 
 @router.post("/{name}/ingest/documents", response_model=IngestResponse, status_code=201)
 async def ingest_documents(
+    request: Request,
     name: str = Path(..., pattern=_NAME_PATTERN),
     *,
     req: IngestDocumentsRequest,
@@ -493,6 +529,7 @@ async def ingest_documents(
             lake.ingest_documents, name, all_paths, doc_config=doc_config,
             timeout=_INGEST_TIMEOUT, label="ingest_documents",
         )
+        _register_to_gravitino(request, name, lake)
         return IngestResponse.from_report(report)
     finally:
         if tmp_dir:

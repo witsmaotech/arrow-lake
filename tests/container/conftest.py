@@ -35,6 +35,18 @@ from tests.conftest_services import (
 DATASET_NAME = "smoke-test"
 API_TIMEOUT = 60
 
+# Resolve container name: Compose V2 appends -1 when container_name is omitted.
+_container_base = "arrow-lake-api"
+_resolved = subprocess.run(
+    ["docker", "ps", "--format", "{{.Names}}"],
+    capture_output=True, text=True, timeout=10,
+)
+_api_container = _container_base
+for _name in _resolved.stdout.splitlines():
+    if _name.startswith(_container_base):
+        _api_container = _name
+        break
+
 _SMOKE_ROWS = 300
 _SMOKE_TEXTS = [
     "Machine learning is a subset of artificial intelligence.",
@@ -101,7 +113,7 @@ def client() -> httpx.Client:
 @pytest.fixture(scope="session")
 def test_data(client: httpx.Client) -> str:
     """Create a test dataset with 300 rows, yield its name, clean up after session."""
-    container = "arrow-lake-api"
+    container = _api_container
     jsonl_path = f"/tmp/{DATASET_NAME}.jsonl"
 
     jsonl_content = _generate_smoke_jsonl()
@@ -161,7 +173,7 @@ def embedded_data(client: httpx.Client, test_data: str) -> str:
             pytest.skip("Embedding API returned empty results")
         all_embeddings.extend(batch_emb)
 
-    container = "arrow-lake-api"
+    container = _api_container
     emb_jsonl_path = f"/tmp/{test_data}-embedded.jsonl"
 
     lines = []
@@ -200,7 +212,7 @@ def embedded_data(client: httpx.Client, test_data: str) -> str:
 def kg_test_data(client: httpx.Client) -> str:
     """Small dataset (10 rows) for KG build tests to avoid LLM timeout."""
     name = "smoke-test-kg"
-    container = "arrow-lake-api"
+    container = _api_container
     jsonl_path = f"/tmp/{name}.jsonl"
 
     _KG_ROWS = [

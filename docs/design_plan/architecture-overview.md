@@ -1,6 +1,6 @@
 # Arrow Lake 总体架构图
 
-**版本**: v1.4.0 | **日期**: 2026-05-20
+**版本**: v1.4.1 | **日期**: 2026-05-21
 **来源**: [architecture-v1.3.0.md](architecture-v1.3.0.md) + [architecture-v1.0_draft_up.md](architecture-v1.0_draft_up.md)
 
 ---
@@ -143,6 +143,7 @@ graph TB
 | **存储层** | MinIO (S3) / 本地 FS | Lance 格式持久化 + 媒体二进制 |
 | **协调层** | Redis | 分布式信号量 / JWT 黑名单 / Session 协调 |
 | **图数据库** | HugeGraph (外部) | 知识图谱 / GraphRAG / Gremlin 遍历 |
+| **元数据联邦层** | Gravitino (v1.4.1) | 跨数据源统一元数据管理 / 标签治理 / 策略执行 / 统计采集 / RBAC 桥接 |
 | **外部层** | LLM / Ray / OTel | 生成 / 分布式计算 / 可观测 |
 | **编排层** | Metaflow Flows | 工作流编排: 并行/分支/重试/超时/资源/追溯 |
 
@@ -1216,6 +1217,13 @@ graph TB
 | **Metaflow 基础设施** | 编排支撑 | — | 10 模块: Registry/Retry/Error/Rollback/Schedule/Tags/Audit/Argo/Tracker |
 | **QualityRuleEngine** | 声明式质量规则 | 读 | 4 checks (length/range/regex/duplicate) + 3 actions (reject/flag/remove) |
 | **PermissionChecker** | RBAC + 行列ACL | 管理 | 数据集 ACL + 行过滤 + 列裁剪，Admin 绕过 |
+| **GravitinoBridge** | 元数据联邦 | 读写 | Metalake/Catalog/Schema/Table/Fileset CRUD，优雅降级 |
+| **GravitinoTagService** | 标签治理 | 读写 | 跨数据源统一标签管理，实体标签绑定/解绑/批量查询 |
+| **GravitinoPolicyService** | 策略引擎 | 读写 | 数据掩码、行级过滤、数据保留策略 |
+| **GravitinoStatsCollector** | 统计采集 | 读 | 表/列级统计信息（行数、空值率、NDV、极值） |
+| **GravitinoModelRegistry** | 模型注册 | 读写 | ML 模型版本化注册、别名管理 |
+| **GravitinoRBACBridge** | RBAC 桥接 | 管理 | Arrow Lake 角色/权限映射到 Gravitino 权限体系 |
+| **GravitinoSyncScheduler** | 定时同步 | 读写 | 增量/全量元数据同步，冲突检测与合并策略 |
 
 ---
 
@@ -1287,3 +1295,153 @@ flowchart TD
 > - **FTS 分页**: `offset` 参数全链路支持 (API → facade → FTS bridge → LanceDB `.offset()`)
 > - **OLAP 流式**: `stream=True` 返回 SSE，每事件为 Arrow IPC batch (base64)，`StreamingResult` 支持批量大小配置
 > - **3296+ tests passing, bandit 0 高危**
+>
+> **v1.4.1 变更摘要**：
+> - **Gravitino 元数据联邦**: 新增元数据联邦层，集成 Apache Gravitino 实现跨数据源统一元数据管理、标签治理、策略执行、统计采集与 RBAC 桥接
+> - **GravitinoBridge**: 核心桥接组件，封装 Gravitino REST API 交互，提供 Metalake/Catalog/Schema/Table/Fileset 完整 CRUD
+> - **GravitinoTagService**: 标签治理 — 跨数据源统一标签管理，支持实体标签绑定/解绑/批量查询
+> - **GravitinoPolicyService**: 策略引擎 — 数据掩码、行级过滤、数据保留策略的定义与执行
+> - **GravitinoStatsCollector**: 统计采集 — 表/列级统计信息（行数、空值率、NDV、极值）定期采集并持久化
+> - **GravitinoModelRegistry**: 模型注册 — ML 模型版本化注册、别名管理、元数据关联
+> - **GravitinoRBACBridge**: RBAC 桥接 — 将 Arrow Lake 角色/权限映射到 Gravitino 权限体系，实现统一访问控制
+> - **GravitinoSyncScheduler**: 定时同步 — 增量/全量元数据同步调度，支持冲突检测与合并策略
+> - **优雅降级**: Gravitino 不可用时自动降级为本地元数据操作，保证核心功能不受影响
+> - **数据流**: FastAPI Router (`api/routers/gravitino.py`) → GravitinoBridge (`catalog/gravitino_bridge.py`) → Gravitino REST API (:8090)
+> - **存储**: Gravitino Server (gravitino-data volume) + Lance REST Catalog (:9101)
+> - **8 个新增源文件**: gravitino_bridge.py, gravitino_client.py, gravitino_models.py, gravitino_stats.py, gravitino_sync.py, gravitino_policies.py, gravitino_tags.py, config/gravitino.py
+
+---
+
+## 十、元数据联邦层 (Metadata Federation Layer)
+
+**位置**: 位于 API/Facade 层与存储/计算层之间，提供跨数据源的统一元数据管理。
+
+```text
+┌─────────────────────────────────────────────────────────────────┐
+│                    元数据联邦层 (Gravitino Integration)            │
+│                                                                 │
+│  ┌─────────────────┐  ┌──────────────────┐  ┌────────────────┐  │
+│  │ GravitinoBridge │  │ GravitinoTag     │  │ GravitinoPolicy│  │
+│  │ (核心桥接)       │  │ Service (标签治理) │  │ Service (策略)  │  │
+│  │ Metalake/Catalog│  │ 绑定/解绑/批量查询 │  │ 掩码/行过滤/    │  │
+│  │ Schema/Table    │  │                  │  │ 保留策略        │  │
+│  │ Fileset CRUD    │  │                  │  │                │  │
+│  └────────┬────────┘  └────────┬─────────┘  └───────┬────────┘  │
+│           │                    │                     │           │
+│  ┌────────┴────────┐  ┌───────┴──────────┐  ┌──────┴─────────┐  │
+│  │ GravitinoStats  │  │ GravitinoModel   │  │ GravitinoRBAC  │  │
+│  │ Collector       │  │ Registry         │  │ Bridge         │  │
+│  │ (统计采集)       │  │ (模型注册)        │  │ (RBAC 桥接)    │  │
+│  │ 行数/空值/NDV   │  │ 版本化/别名/元数据│  │ 角色权限映射    │  │
+│  └────────┬────────┘  └───────┬──────────┘  └──────┬─────────┘  │
+│           │                    │                     │           │
+│  ┌────────┴────────────────────┴─────────────────────┴────────┐  │
+│  │              GravitinoSyncScheduler (定时同步)               │  │
+│  │         增量/全量同步 · 冲突检测 · 合并策略                     │  │
+│  └──────────────────────────┬─────────────────────────────────┘  │
+│                              │                                   │
+│  ┌──────────────────────────┴─────────────────────────────────┐  │
+│  │              GravitinoClient (HTTP 客户端)                    │  │
+│  │         连接池 · 重试 · 超时 · 认证 (OAuth/Simple)             │  │
+│  └──────────────────────────────────────────────────────────────┘  │
+│                                                                 │
+│  ┌──────────────────────────────────────────────────────────────┐  │
+│  │              优雅降级 (Graceful Degradation)                   │  │
+│  │  Gravitino 不可用 → 自动降级为本地元数据操作                       │  │
+│  │  核心功能不受影响，仅元数据联邦能力暂时不可用                         │  │
+│  └──────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+
+数据流:
+  FastAPI Router (gravitino.py) → GravitinoBridge → Gravitino REST API (:8090)
+                                                    ↳ Lance REST Catalog (:9101)
+
+存储:
+  Gravitino Server → gravitino-data volume (元数据持久化)
+  Lance REST Catalog → Lance 文件系统 (Catalog 元数据)
+
+配置:
+  arrow_lake/config/gravitino.py → GravitinoConfig (url, metalake, auth, sync_interval)
+  deploy/docker-compose.yml → gravitino 服务定义
+  deploy/scripts/init-gravitino.sh → 初始化 Metalake/Catalog/Schema
+```
+
+```mermaid
+graph TB
+    subgraph API["API 层"]
+        Router["FastAPI Router<br/>api/routers/gravitino.py"]
+    end
+
+    subgraph Federation["元数据联邦层"]
+        Bridge["GravitinoBridge<br/>核心桥接 · Metalake/Catalog/Schema/Table CRUD"]
+        Tags["GravitinoTagService<br/>标签治理 · 绑定/解绑/批量查询"]
+        Policy["GravitinoPolicyService<br/>策略引擎 · 掩码/行过滤/保留"]
+        Stats["GravitinoStatsCollector<br/>统计采集 · 行数/空值/NDV/极值"]
+        Model["GravitinoModelRegistry<br/>模型注册 · 版本化/别名"]
+        RBAC["GravitinoRBACBridge<br/>RBAC 桥接 · 角色权限映射"]
+        Sync["GravitinoSyncScheduler<br/>定时同步 · 增量/全量/冲突合并"]
+        Client["GravitinoClient<br/>HTTP 客户端 · 连接池/重试/认证"]
+        Degradation["优雅降级<br/>Gravitino 不可用时本地操作"]
+    end
+
+    subgraph Storage["存储层"]
+        GServer["Gravitino Server :8090<br/>gravitino-data volume"]
+        LRC["Lance REST Catalog :9101"]
+        Lance["Lance 文件系统"]
+    end
+
+    Router --> Bridge
+    Router --> Tags
+    Router --> Policy
+
+    Bridge --> Client
+    Tags --> Client
+    Policy --> Client
+    Stats --> Client
+    Model --> Client
+    RBAC --> Client
+    Sync --> Client
+    Client --> GServer
+    Client --> LRC
+    GServer --> Lance
+    LRC --> Lance
+
+    Client -.->|降级| Degradation
+```
+
+### 元数据联邦层组件职责
+
+| 组件 | 文件 | 职责 |
+| ---- | ---- | ---- |
+| **GravitinoBridge** | `catalog/gravitino_bridge.py` | 核心桥接：Metalake/Catalog/Schema/Table/Fileset 完整 CRUD，统一元数据操作入口 |
+| **GravitinoClient** | `catalog/gravitino_client.py` | HTTP 客户端：连接池管理、自动重试、超时控制、OAuth/Simple 认证 |
+| **GravitinoModelRegistry** | `catalog/gravitino_models.py` | 模型注册：ML 模型版本化注册、别名管理、元数据关联 |
+| **GravitinoStatsCollector** | `catalog/gravitino_stats.py` | 统计采集：表/列级统计信息（行数、空值率、NDV、极值）定期采集 |
+| **GravitinoSyncScheduler** | `catalog/gravitino_sync.py` | 定时同步：增量/全量元数据同步调度，冲突检测与合并策略 |
+| **GravitinoTagService** | `quality/gravitino_tags.py` | 标签治理：跨数据源统一标签管理，实体标签绑定/解绑/批量查询 |
+| **GravitinoPolicyService** | `quality/gravitino_policies.py` | 策略引擎：数据掩码、行级过滤、数据保留策略的定义与执行 |
+| **GravitinoRBACBridge** | `api/routers/gravitino.py` + `api/rbac.py` | RBAC 桥接：Arrow Lake 角色/权限映射到 Gravitino 权限体系 |
+| **GravitinoConfig** | `config/gravitino.py` | 配置管理：Gravitino 连接参数、认证方式、同步间隔等 |
+
+### 降级策略
+
+```text
+正常模式:
+  API Request → GravitinoBridge → Gravitino REST API → 返回元数据
+
+降级模式 (Gravitino 不可用):
+  API Request → GravitinoBridge → 检测连接失败
+    → 记录警告日志
+    → 返回本地缓存元数据 (如有)
+    → 或返回降级响应 (功能受限提示)
+
+恢复:
+  GravitinoSyncScheduler 定期探测 Gravitino 可用性
+  → 恢复后自动触发增量同步，补齐降级期间的元数据变更
+```
+
+---
+
+> 详细设计参见：[architecture-v1.3.0.md](architecture-v1.3.0.md) | [architecture-v1.0_draft_up.md](architecture-v1.0_draft_up.md) | [v1.4-optimization-plan.md](../v1.4-optimization-plan.md)
+>
+> **v1.4.1 详细规划**：[v1.4.1-gravitino-integration-plan.md](../v1.4.1-gravitino-integration-plan.md)

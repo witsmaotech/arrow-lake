@@ -251,3 +251,78 @@ def _apply_row_filter(table: pa.Table, expr: str) -> pa.Table:
     except (pa.ArrowInvalid, TypeError, pa.ArrowNotImplementedError):
         logger.warning("acl_filter_type_mismatch", column=col_name, value=val)
         return table
+
+
+class GravitinoRBACBridge:
+    """Delegate permission checks to Gravitino RBAC.
+
+    Returns None when Gravitino is unavailable, signalling callers
+    to fall back to local RBAC.
+
+    Args:
+        uri: Gravitino REST URI.
+        metalake: Metalake name.
+    """
+
+    _ACTION_TO_PRIVILEGE: dict[str, str] = {
+        "read": "SELECT_TABLE",
+        "write": "INSERT_TABLE",
+        "create": "CREATE_TABLE",
+        "delete": "DELETE_TABLE",
+        "admin": "CREATE_CATALOG",
+    }
+
+    def __init__(self, uri: str, metalake: str) -> None:
+        self._uri = uri
+        self._metalake = metalake
+        self._client: Any = None
+        self._initialized = False
+
+    def _ensure_client(self) -> bool:
+        if self._initialized:
+            return self._client is not None
+        self._initialized = True
+        try:
+            from gravitino.client.gravitino_client import GravitinoClient  # type: ignore[import-untyped]
+
+            self._client = GravitinoClient(
+                uri=self._uri, metalake_name=self._metalake
+            )
+            return True
+        except Exception as exc:
+            logger.warning("gravitino_rbac_client_init_failed", error=str(exc))
+            self._client = None
+            return False
+
+    def check_permission(self, user: str, resource: str, action: str) -> bool | None:
+        """Check if user has permission on resource for action.
+
+        Returns:
+            True if allowed, False if denied, None if Gravitino unavailable.
+        """
+        if not self._ensure_client():
+            return None
+        try:
+            privilege_name = self._ACTION_TO_PRIVILEGE.get(action)
+            if privilege_name is None:
+                logger.warning("gravitino_rbac_unknown_action", action=action)
+                return None
+            metalake = self._client.load_metalake(self._metalake)
+            if metalake is None:
+                return None
+            privs = metalake.supports_authorization().get_authorizations(user)
+            if privs is None:
+                return None
+            return any(
+                getattr(p, "name", lambda: str(p))() == privilege_name
+                for p in privs
+            )
+        except Exception as exc:
+            logger.warning(
+                "gravitino_rbac_check_failed",
+                user=user,
+                resource=resource,
+                action=action,
+                error=str(exc),
+            )
+            return None

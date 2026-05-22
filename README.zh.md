@@ -7,7 +7,7 @@
 [![Coverage](https://img.shields.io/badge/coverage-80%25-green)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
 [![Security](https://img.shields.io/badge/bandit-0%20HIGH-success)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
 [![Python](https://img.shields.io/badge/python-3.11+-blue)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
-[![Version](https://img.shields.io/badge/version-1.3.3-blue)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
+[![Version](https://img.shields.io/badge/version-1.4.1-blue)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
 [![License](https://img.shields.io/badge/license-MIT-informational)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
 
 ## 项目概述
@@ -32,7 +32,8 @@ Arrow Lake 是一个面向多模态数据（文本、图像、音频、视频）
 | **数据血缘** | 全链路 Lineage 追踪 + SQL 查询 |
 | **审计追踪** | HMAC-SHA256 防篡改审计日志 |
 | **安全防护** | RBAC 三级权限、Redis JWT 黑名单、速率限制、Gremlin 注入防御、路径穿越防护 |
-| **REST API** | 40+ 端点，OpenAPI 文档，API Key + JWT 认证，TLS，安全响应头 |
+| **元数据治理** | Gravitino 1.2.1 元数据联邦: DuckDB ↔ Lance Catalog 双向同步、Tags 标签分类、Policies 保留/脱敏策略 |
+| **REST API** | 40+ 端点 + `/metadata/*` 代理端点 (catalogs/tables/tags/policies/statistics/models)，API Key + JWT 认证，TLS，安全响应头 |
 | **分布式** | Redis 分布式信号量、Ray 分布式摄取、GPU 自动伸缩、Helm Chart |
 
 ## 架构
@@ -113,9 +114,10 @@ arrow-lake rag query "什么是RAG？" --dataset docs
 ## 生产部署
 
 ```bash
-# Docker Compose（9 服务，Profile 激活）
+# Docker Compose（11 服务，Profile 激活）
 docker compose -f deploy/docker-compose.yml up -d                # core
 docker compose --profile dev -f deploy/docker-compose.yml up -d  # + Ray + Jupyter
+docker compose --profile gravitino -f deploy/docker-compose.yml up -d  # + Gravitino + Lance REST
 
 # Kubernetes（Helm）
 helm install arrow-lake deploy/helm/arrow-lake/
@@ -147,7 +149,7 @@ pytest tests/ --cov=arrow_lake --cov-report=term-missing
 
 ## 技术栈
 
-LanceDB + Daft + Ray + DuckDB + PyArrow + FastAPI + HugeGraph + Redis + Metaflow
+LanceDB + Daft + Ray + DuckDB + PyArrow + FastAPI + HugeGraph + Redis + Metaflow + Gravitino
 
 | 层 | 技术 | 版本 |
 |---|---|---|
@@ -155,6 +157,7 @@ LanceDB + Daft + Ray + DuckDB + PyArrow + FastAPI + HugeGraph + Redis + Metaflow
 | 向量存储 | LanceDB, Lance | 0.30.2 |
 | OLAP 引擎 | DuckDB | 1.5.2 |
 | 分布式计算 | Ray, Metaflow | 2.54.1, 2.19.22 |
+| 元数据治理 | Gravitino, Lance REST Catalog | 1.2.1 |
 | 知识图谱 | HugeGraph | 1.7.0 |
 | Session / 缓存 | Redis (hiredis) | >=5.0 |
 | 对象存储 | MinIO / S3 / GCS | boto3 >=1.35 |

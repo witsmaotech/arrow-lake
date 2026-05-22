@@ -1,6 +1,6 @@
 [project]
 name = "arrow-lake"
-version = "1.4.0"
+version = "1.4.1"
 description = "Unified multimodal data lakehouse — Lance + Daft + Ray"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -66,6 +66,7 @@ dedup = ["imagehash>=4.3"]
 modelscope = ["modelscope>=1.18"]
 otel = ["opentelemetry-api>=1.24", "opentelemetry-sdk>=1.24", "opentelemetry-exporter-otlp-proto-grpc>=1.24"]
 jwt = ["PyJWT>=2.9"]
+gravitino = ["apache-gravitino>=1.2.1"]
 gpu = ["torch>=2.4"]
 document = ["kreuzberg>=0.1"]
 chunking-advanced = ["semchunk>=2.0"]

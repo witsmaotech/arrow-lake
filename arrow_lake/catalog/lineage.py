@@ -130,12 +130,68 @@ class LineageStore:
                 message=f"Failed to record lineage event: {exc}",
             ) from exc
 
+        if event.lance_version is not None:
+            self._notify_gravitino_version(event)
+
         logger.info(
             "lineage_event_recorded",
             event_id=event.event_id,
             dataset=event.dataset_name,
             operation=event.operation,
         )
+
+    @staticmethod
+    def _notify_gravitino_version(event: LineageEvent) -> None:
+        """Best-effort notify Gravitino Lance REST Catalog about new version."""
+        try:
+            import os
+            from urllib.request import Request, urlopen
+
+            base = os.environ.get("ARROW_LAKE__GRAVITINO__LANCE_REST_URI")
+            if not base:
+                return
+            # Lance REST uses /lance/v1/namespace/{catalog}/table/list etc.
+            # Register table version as a property update via Gravitino REST
+            gravitino_uri = os.environ.get("ARROW_LAKE__GRAVITINO__URI", "")
+            metalake = os.environ.get("ARROW_LAKE__GRAVITINO__METALAKE", "arrow_lake")
+            if not gravitino_uri:
+                return
+
+            import json
+
+            url = (
+                f"{gravitino_uri}/api/metalakes/{metalake}"
+                f"/catalogs/lance-catalog/schemas/arrow_lake"
+                f"/tables/{event.dataset_name}"
+            )
+            body = json.dumps({
+                "updates": [{
+                    "@type": "setProperty",
+                    "property": "lance.latest_version",
+                    "value": str(event.lance_version),
+                }],
+            }).encode()
+            req = Request(
+                url,
+                data=body,
+                headers={
+                    "Accept": "application/vnd.gravitino.v1+json",
+                    "Content-Type": "application/json",
+                },
+                method="PUT",
+            )
+            with urlopen(req, timeout=5) as resp:
+                if resp.status < 300:
+                    logger.debug(
+                        "gravitino_lance_version_notified",
+                        dataset=event.dataset_name,
+                        version=event.lance_version,
+                    )
+        except Exception:
+            logger.debug(
+                "gravitino_lance_version_notify_skipped",
+                dataset=event.dataset_name,
+            )
 
     def get_dataset_history(self, dataset_name: str) -> list[LineageEvent]:
         """Get all lineage events for a dataset.

@@ -12,7 +12,7 @@
 # ==============================================================================
 FROM --platform=$BUILDPLATFORM python:3.12-slim AS builder
 
-# Clear any daemon-injected proxy
+# Clear any daemon-injected proxy — must unset before apt-get
 ENV HTTP_PROXY=""
 ENV HTTPS_PROXY=""
 ENV http_proxy=""
@@ -28,10 +28,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     cmake \
     curl \
     git \
-    libcurl4-openssl-dev \
     libssl-dev \
-    libgrpc++-dev \
-    protobuf-compiler \
     pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
@@ -63,7 +60,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     && uv pip install --no-cache-dir ".[fts]" \
     && uv pip install --no-cache-dir jupyterlab ipywidgets \
     && uv pip install --no-cache-dir modelscope>=1.18 \
-    && uv pip install --no-cache-dir PyJWT
+    && uv pip install --no-cache-dir PyJWT \
+    && uv pip install --no-cache-dir "apache-gravitino>=1.2.1"
 
 # ==============================================================================
 # Stage 2 — runtime
@@ -81,17 +79,15 @@ ENV NO_PROXY="*"
 LABEL maintainer="wits@sunpw.dev"
 LABEL description="Arrow Lake — Unified multimodal data lakehouse (Lance + Daft + Ray)"
 LABEL org.opencontainers.image.source="https://github.com/wits-sunpw/arrow-lake"
-LABEL org.opencontainers.image.version="1.4.0"
+LABEL org.opencontainers.image.version="1.4.1"
 
 # Runtime system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     libcurl4 \
     libgomp1 \
-    libgrpc++1 \
     libssl3 \
     libstdc++6 \
-    protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user for security

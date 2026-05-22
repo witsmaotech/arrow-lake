@@ -7,7 +7,7 @@
 [![Coverage](https://img.shields.io/badge/coverage-80%25-green)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
 [![Security](https://img.shields.io/badge/bandit-0%20HIGH-success)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
 [![Python](https://img.shields.io/badge/python-3.11+-blue)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
-[![Version](https://img.shields.io/badge/version-1.3.4-blue)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
+[![Version](https://img.shields.io/badge/version-1.4.1-blue)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
 [![License](https://img.shields.io/badge/license-MIT-informational)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
 
 ## Install
@@ -67,8 +67,9 @@ Runs a self-contained demo with synthetic data — vector search, SQL analytics,
 | **Data Quality** | Schema validation, null detection, dedup (exact hash + perceptual hash), NeMo Curator |
 | **Lineage & Audit** | Full-chain lineage tracking, HMAC-SHA256 tamper-evident audit trail |
 | **Export** | Parquet / CSV with version selection, column projection, compression |
+| **Metadata Governance** | Gravitino 1.2.1 federation: DuckDB ↔ Lance Catalog bidirectional sync, Tags, Policies, Model Catalog |
 | **Security** | RBAC (VIEWER/EDITOR/ADMIN), JWT blacklist (Redis-backed), rate limiting, Gremlin injection defense, path traversal prevention |
-| **REST API** | 40+ endpoints with OpenAPI docs, API Key + JWT auth, TLS, security headers |
+| **REST API** | 40+ endpoints + `/metadata/*` proxy (catalogs/tables/tags/policies/statistics/models), API Key + JWT auth, TLS, security headers |
 | **Distributed** | Redis distributed semaphore, Ray distributed ingestion, GPU autoscaling, Helm chart |
 
 ## CLI
@@ -103,9 +104,10 @@ lake = Lake("./data")  # local file storage, no MinIO needed
 ## Production Deployment
 
 ```bash
-# Docker Compose (9 services, profile-based activation)
+# Docker Compose (11 services, profile-based activation)
 docker compose -f deploy/docker-compose.yml up -d     # core profile
 docker compose --profile dev -f deploy/docker-compose.yml up -d  # + Ray + Jupyter
+docker compose --profile gravitino -f deploy/docker-compose.yml up -d  # + Gravitino + Lance REST
 
 # Kubernetes (Helm)
 helm install arrow-lake deploy/helm/arrow-lake/
@@ -137,7 +139,7 @@ pytest tests/ --cov=arrow_lake --cov-report=term-missing
 
 ## Tech Stack
 
-LanceDB + Daft + Ray + DuckDB + PyArrow + FastAPI + HugeGraph + Redis + Metaflow
+LanceDB + Daft + Ray + DuckDB + PyArrow + FastAPI + HugeGraph + Redis + Metaflow + Gravitino
 
 | Layer | Technology | Version |
 |-------|-----------|---------|
@@ -145,6 +147,7 @@ LanceDB + Daft + Ray + DuckDB + PyArrow + FastAPI + HugeGraph + Redis + Metaflow
 | Vector Storage | LanceDB, Lance | 0.30.2 |
 | OLAP Engine | DuckDB | 1.5.2 |
 | Distributed Compute | Ray, Metaflow | 2.54.1, 2.19.22 |
+| Metadata Governance | Gravitino, Lance REST Catalog | 1.2.1 |
 | Knowledge Graph | HugeGraph | 1.7.0 |
 | Session / Cache | Redis (hiredis) | >=5.0 |
 | Object Storage | MinIO / S3 / GCS | boto3 >=1.35 |

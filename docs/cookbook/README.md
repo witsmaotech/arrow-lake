@@ -19,6 +19,8 @@ Arrow Lake 数据湖平台实战教程，涵盖数据摄取、搜索、分析、
 | 11 | [数据质量与去重](./11-quality-dedup-zh.md)          | [Quality & Deduplication](./11-quality-dedup.md)      |
 | 12 | [部署与运维](./12-deployment-zh.md)               | [Deployment & Operations](./12-deployment.md)         |
 | 13 | [CLI 完全参考手册](./13-cli-reference.md)          | CLI Complete Reference Manual                         |
+| 14 | [工作流编排](./14-workflow-orchestration.md)       | [Workflow Orchestration](./14-workflow-orchestration.md) |
+| 15 | [Gravitino 元数据治理](./15-gravitino-metadata-zh.md) | [Gravitino Metadata Governance](./15-gravitino-metadata.md) |
 
 ## 学习路径 / Learning Path
 
@@ -44,7 +46,15 @@ Arrow Lake 数据湖平台实战教程，涵盖数据摄取、搜索、分析、
 
 ## 版本
 
-对应 Arrow Lake v1.3.4
+对应 Arrow Lake v1.4.1
+
+## v1.4.1 新特性 — Gravitino 元数据治理
+
+| #  | 文件 | 说明 |
+| -- | ---- | ---- |
+| 15 | `cookbook/15-gravitino-metadata.md` | Gravitino 元数据治理：Metalake/Catalog/Schema 管理、标签治理、策略引擎、统计采集、模型注册、RBAC 桥接、定时同步 |
+
+> 新增功能：Apache Gravitino 元数据联邦集成，实现跨数据源统一元数据管理、标签治理、策略执行、统计采集、ML 模型注册与 RBAC 权限桥接。
 
 ## v1.3.4 新特性
 

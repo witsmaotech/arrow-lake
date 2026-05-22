@@ -14,15 +14,19 @@ from __future__ import annotations
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import duckdb
 import ray
+import structlog
 
 from arrow_lake.catalog.connection_pool import (
     _SAFE_IDENTIFIER_RE,
     DuckDBConnectionPool,
 )
 from arrow_lake.exceptions import CatalogError, ErrorCode
+
+logger = structlog.get_logger(__name__)
 
 _INSERT_SQL = (
     "INSERT INTO catalog_tables (name, schema_json, location, created_at, updated_at, status) "
@@ -57,7 +61,7 @@ class CatalogActor:
         ray.get(handle.register_table.remote(...))
     """
 
-    def __init__(self, max_pool_size: int = 5) -> None:
+    def __init__(self, max_pool_size: int = 5, gravitino_config: Any | None = None) -> None:
         # Use a temp file so all pool connections share the same schema.
         # :memory: connections are isolated per-connection in DuckDB.
         self._db_dir = tempfile.mkdtemp(prefix="catalog_")
@@ -66,6 +70,8 @@ class CatalogActor:
             max_size=max_pool_size,
             database=self._db_path,
         )
+        self._gravitino_config = gravitino_config
+        self._gravitino_bridge: Any | None = None
         self._init_schema()
 
     def _init_schema(self) -> None:
@@ -97,12 +103,34 @@ class CatalogActor:
     def health(self) -> dict[str, object]:
         """Return actor health diagnostics."""
         pool_health = self._pool.health()
-        return {
+        result: dict[str, object] = {
             "status": "healthy" if not self._pool.is_closed() else "unhealthy",
             "pool_size": pool_health.pool_size,
             "active_connections": pool_health.active_connections,
             "idle_connections": pool_health.idle_connections,
         }
+        bridge = self._gravitino_bridge
+        if bridge is not None:
+            grav_status, grav_ok = bridge.health()
+            result["gravitino_status"] = grav_status
+            result["gravitino_ok"] = grav_ok
+        return result
+
+    @property
+    def _bridge(self) -> Any | None:
+        """Lazy-initialize Gravitino bridge from config."""
+        if self._gravitino_bridge is not None:
+            return self._gravitino_bridge
+        if self._gravitino_config is None:
+            return None
+        try:
+            from arrow_lake.catalog.gravitino_bridge import GravitinoBridge
+
+            self._gravitino_bridge = GravitinoBridge(self._gravitino_config)
+            return self._gravitino_bridge
+        except Exception as exc:
+            logger.warning("gravitino_bridge_init_failed", error=str(exc))
+            return None
 
     def register_table(self, name: str, schema_json: str, location: str) -> dict[str, str]:
         """Register a new table in the catalog.
@@ -140,12 +168,36 @@ class CatalogActor:
                 message=f"Failed to register table '{name}': {e}",
             ) from e
 
+        self._register_gravitino(name, schema_json, location)
+
         return {
             "name": name,
             "schema_json": schema_json,
             "location": location,
             "created_at": now,
         }
+
+    def _register_gravitino(self, name: str, schema_json: str, location: str) -> None:
+        """Best-effort register dataset in Gravitino."""
+        bridge = self._bridge
+        if bridge is None:
+            return
+        try:
+            import json
+
+            import pyarrow as pa
+
+            columns = json.loads(schema_json) if isinstance(schema_json, str) else schema_json
+            fields = []
+            for col in columns:
+                col_name = col.get("name", "col") if isinstance(col, dict) else str(col)
+                col_type = col.get("type", "string") if isinstance(col, dict) else "string"
+                pa_type = pa.type_for_alias(col_type)
+                fields.append(pa.field(col_name, pa_type))
+            schema = pa.schema(fields)
+            bridge.register_dataset(name, schema, location)
+        except Exception as exc:
+            logger.warning("gravitino_register_failed", name=name, error=str(exc))
 
     def get_table(self, name: str) -> dict[str, str]:
         """Retrieve a table's metadata by name.
@@ -242,6 +294,13 @@ class CatalogActor:
                 error_code=ErrorCode.CATALOG_CONNECTION_FAILED,
                 message=f"Failed to delete table '{name}': {e}",
             ) from e
+
+        try:
+            bridge = self._bridge
+            if bridge is not None:
+                bridge.deregister_dataset(name)
+        except Exception as exc:
+            logger.warning("gravitino_deregister_failed", name=name, error=str(exc))
 
         if cascade:
             if base_uri is None:

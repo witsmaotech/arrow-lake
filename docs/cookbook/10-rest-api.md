@@ -443,3 +443,231 @@ curl -N -X POST http://localhost:8000/api/v1/datasets/sales/query/olap \
 ```
 
 Each `batch` event contains a base64-encoded Arrow IPC stream with `batch_size` rows (default 1000).
+
+***
+
+## v1.4.1 Gravitino 元数据端点
+
+Arrow Lake integrates with **Apache Gravitino** for centralized metadata governance. When Gravitino is
+enabled (`gravitino.enabled: true` in config), the `/metadata/*` endpoints proxy catalog, table, tag,
+policy, statistics, and model information from the Gravitino metalake.
+
+All metadata endpoints require API key authentication (`X-API-Key` header). When Gravitino is not
+configured, these endpoints return **503 Service Unavailable**.
+
+### Endpoint Reference
+
+| Method   | Endpoint                            | Description                                |
+| -------- | ----------------------------------- | ------------------------------------------ |
+| `GET`    | `/metadata/catalogs`                | List all Gravitino catalogs                |
+| `GET`    | `/metadata/tables`                  | List tables in the Lance catalog           |
+| `GET`    | `/metadata/tables/{name}`           | Get table details (columns, properties)    |
+| `GET`    | `/metadata/tags`                    | List tags (optional `?table=` filter)      |
+| `POST`   | `/metadata/tags`                    | Create a new tag                           |
+| `GET`    | `/metadata/policies`                | List all policies                          |
+| `POST`   | `/metadata/policies/retention`      | Create a data retention policy             |
+| `POST`   | `/metadata/policies/masking`        | Create a column masking policy             |
+| `POST`   | `/metadata/statistics/{name}`       | Collect and register table statistics      |
+| `GET`    | `/metadata/models`                  | List all registered ML models              |
+| `GET`    | `/metadata/models/{name}/versions`  | Get model version info (latest/production) |
+
+### curl Examples
+
+```bash
+# List all catalogs in the Gravitino metalake
+curl http://localhost:8000/metadata/catalogs \
+  -H "X-API-Key: your-key"
+# => {"success": true, "data": [{"name": "lance-catalog"}, {"name": "hive-catalog"}],
+#     "error": null, "metadata": {"total": 2}}
+
+# List tables in the Lance catalog
+curl http://localhost:8000/metadata/tables \
+  -H "X-API-Key: your-key"
+# => {"success": true, "data": [{"name": "articles"}, {"name": "sales"}],
+#     "error": null, "metadata": {"total": 2}}
+
+# Get table details (columns and properties)
+curl http://localhost:8000/metadata/tables/articles \
+  -H "X-API-Key: your-key"
+# => {"success": true, "data": {"name": "articles",
+#     "columns": [{"name": "id", "type": "int"}, ...],
+#     "properties": {"format": "lance", "owner": "data-team"}},
+#     "error": null, "metadata": {}}
+
+# List tags for a specific table
+curl "http://localhost:8000/metadata/tags?table=articles" \
+  -H "X-API-Key: your-key"
+# => {"success": true, "data": [{"name": "sensitive"}, {"name": "pii"}],
+#     "error": null, "metadata": {"total": 2}}
+
+# Create a new tag
+curl -X POST "http://localhost:8000/metadata/tags?body=%7B%22name%22%3A%22sensitive%22%2C%22comment%22%3A%22Contains%20PII%20data%22%7D" \
+  -H "X-API-Key: your-key"
+# => {"success": true, "data": {"name": "sensitive"}, "error": null, "metadata": {}}
+
+# List all policies
+curl http://localhost:8000/metadata/policies \
+  -H "X-API-Key: your-key"
+# => {"success": true, "data": [{"name": "pii_retention"}, {"name": "email_mask"}],
+#     "error": null, "metadata": {"total": 2}}
+
+# Create a retention policy (retain data for 90 days)
+curl -X POST "http://localhost:8000/metadata/policies/retention?body=%7B%22name%22%3A%22log_retention%22%2C%22days%22%3A90%7D" \
+  -H "X-API-Key: your-key"
+# => {"success": true, "data": {"name": "log_retention", "days": 90}, "error": null, "metadata": {}}
+
+# Create a masking policy for specific columns
+curl -X POST "http://localhost:8000/metadata/policies/masking?body=%7B%22name%22%3A%22email_mask%22%2C%22columns%22%3A%5B%22email%22%2C%22phone%22%5D%7D" \
+  -H "X-API-Key: your-key"
+# => {"success": true, "data": {"name": "email_mask", "columns": ["email", "phone"]},
+#     "error": null, "metadata": {}}
+
+# Collect and register statistics for a table
+curl -X POST http://localhost:8000/metadata/statistics/articles \
+  -H "X-API-Key: your-key"
+# => {"success": true, "data": {"row_count": 10000, "columns": 8, ...},
+#     "error": null, "metadata": {}}
+
+# List registered ML models
+curl http://localhost:8000/metadata/models \
+  -H "X-API-Key: your-key"
+# => {"success": true, "data": [{"name": "text-embedder"}, {"name": "image-classifier"}],
+#     "error": null, "metadata": {"total": 2}}
+
+# Get model version details
+curl http://localhost:8000/metadata/models/text-embedder/versions \
+  -H "X-API-Key: your-key"
+# => {"success": true, "data": [
+#       {"version": 3, "uri": "s3://models/text-embedder/v3", "aliases": ["latest"], "tier": "latest"},
+#       {"version": 2, "uri": "s3://models/text-embedder/v2", "aliases": ["production"], "tier": "production"}
+#     ], "error": null, "metadata": {"model": "text-embedder", "total": 2}}
+```
+
+### Python Client Examples
+
+```python
+import httpx
+
+BASE_URL = "http://localhost:8000"
+HEADERS = {"X-API-Key": "your-secret-api-key-here", "Content-Type": "application/json"}
+
+
+def list_metadata_catalogs() -> dict:
+    """List all Gravitino catalogs."""
+    resp = httpx.get(f"{BASE_URL}/metadata/catalogs", headers=HEADERS, timeout=10)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def list_metadata_tables() -> dict:
+    """List tables in the Lance catalog."""
+    resp = httpx.get(f"{BASE_URL}/metadata/tables", headers=HEADERS, timeout=10)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def get_table_detail(name: str) -> dict:
+    """Get table details including columns and properties."""
+    resp = httpx.get(f"{BASE_URL}/metadata/tables/{name}", headers=HEADERS, timeout=10)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def list_tags(table: str | None = None) -> dict:
+    """List tags, optionally filtered by table."""
+    params = {"table": table} if table else {}
+    resp = httpx.get(f"{BASE_URL}/metadata/tags", headers=HEADERS, params=params, timeout=10)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def create_tag(name: str, comment: str = "") -> dict:
+    """Create a new tag in Gravitino."""
+    import json
+    body = json.dumps({"name": name, "comment": comment})
+    resp = httpx.post(
+        f"{BASE_URL}/metadata/tags",
+        headers=HEADERS,
+        params={"body": body},
+        timeout=10,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def list_policies() -> dict:
+    """List all governance policies."""
+    resp = httpx.get(f"{BASE_URL}/metadata/policies", headers=HEADERS, timeout=10)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def create_retention_policy(name: str, days: int = 30) -> dict:
+    """Create a data retention policy."""
+    import json
+    body = json.dumps({"name": name, "days": days})
+    resp = httpx.post(
+        f"{BASE_URL}/metadata/policies/retention",
+        headers=HEADERS,
+        params={"body": body},
+        timeout=10,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def create_masking_policy(name: str, columns: list[str]) -> dict:
+    """Create a column masking policy."""
+    import json
+    body = json.dumps({"name": name, "columns": columns})
+    resp = httpx.post(
+        f"{BASE_URL}/metadata/policies/masking",
+        headers=HEADERS,
+        params={"body": body},
+        timeout=10,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def collect_statistics(table_name: str) -> dict:
+    """Collect and register table statistics."""
+    resp = httpx.post(
+        f"{BASE_URL}/metadata/statistics/{table_name}",
+        headers=HEADERS,
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def list_models() -> dict:
+    """List all registered ML models."""
+    resp = httpx.get(f"{BASE_URL}/metadata/models", headers=HEADERS, timeout=10)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def get_model_versions(model_name: str) -> dict:
+    """Get model version info (latest and production)."""
+    resp = httpx.get(
+        f"{BASE_URL}/metadata/models/{model_name}/versions",
+        headers=HEADERS,
+        timeout=10,
+    )
+    resp.raise_for_status()
+    return resp.json()
+```
+
+### Gravitino Configuration
+
+```yaml
+# config.yaml — enable Gravitino integration
+gravitino:
+  enabled: true
+  uri: "http://localhost:8090"
+  metalake: "arrow_lake"
+  lance_rest_enabled: true
+  lance_rest_uri: "http://localhost:8888"
+  sync_interval_seconds: 300    # Background sync interval
+```

@@ -505,3 +505,131 @@ curl -X DELETE http://localhost:8000/api/v1/admin/acl/articles/viewer -H "X-API-
 - **Admin bypass**: The `admin` role always sees all data, regardless of ACL configuration
 - **No ACL = no filtering**: If no ACL is configured for a role+dataset, results pass through unchanged
 - **Applied automatically**: All query (OLAP/metadata/Daft) and search (vector/FTS/hybrid/faceted/ensemble) endpoints apply ACL
+
+***
+
+## 11. Gravitino Tags & Policies (v1.4.1)
+
+Arrow Lake integrates with **Apache Gravitino** for metadata-driven data governance. The
+`GravitinoTagService` and `GravitinoPolicyService` provide data classification, retention management,
+and column masking — all managed through the REST API or programmatically.
+
+### 11.1 GravitinoTagService — Data Classification
+
+The `GravitinoTagService` wraps the Gravitino Tag API for classifying tables and columns. It degrades
+gracefully when Gravitino is unavailable (returns empty lists instead of errors).
+
+```python
+from arrow_lake.quality.gravitino_tags import GravitinoTagService
+
+tag_svc = GravitinoTagService(config.gravitino)
+
+# Predefined tag constants
+print(GravitinoTagService.SENSITIVE)   # "sensitive"
+print(GravitinoTagService.PII)         # "pii"
+print(GravitinoTagService.FINANCIAL)   # "financial"
+print(GravitinoTagService.EXPIRES_30D) # "expires:30d"
+
+# Create a custom tag
+tag_svc.create_tag("internal_only", comment="Internal use only — not for external sharing")
+
+# Tag a table
+tag_svc.tag_table("hr_data", ["sensitive", "pii"])
+
+# Tag a specific column
+tag_svc.tag_column("hr_data", "ssn", ["pii"])
+
+# List tags for a table
+tags = tag_svc.list_tags("hr_data")
+print(tags)  # ["sensitive", "pii"]
+
+# Find all tables with a given tag
+tables = tag_svc.get_tables_by_tag("pii")
+print(tables)  # ["hr_data", "customer_records"]
+```
+
+#### Predefined Tags
+
+| Constant              | Value           | Purpose                                          |
+| --------------------- | --------------- | ------------------------------------------------ |
+| `SENSITIVE`           | `"sensitive"`   | General sensitive data marker                    |
+| `PII`                 | `"pii"`         | Personally identifiable information              |
+| `FINANCIAL`           | `"financial"`   | Financial or payment-related data                |
+| `EXPIRES_30D`         | `"expires:30d"` | Data that should be purged after 30 days         |
+
+### 11.2 GravitinoPolicyService — Retention & Masking
+
+The `GravitinoPolicyService` manages retention and masking policies for automated data lifecycle
+governance.
+
+```python
+from arrow_lake.quality.gravitino_policies import GravitinoPolicyService
+
+policy_svc = GravitinoPolicyService(config.gravitino)
+
+# Create a retention policy — data retained for 90 days
+policy_svc.create_retention_policy("log_retention", days=90)
+
+# Create a masking policy — redact specified columns
+policy_svc.create_masking_policy("email_mask", columns=["email", "phone"])
+
+# Apply a policy to a table
+policy_svc.apply_policy("email_mask", "customer_data")
+
+# List all policies
+policies = policy_svc.list_policies()
+print(policies)  # ["log_retention", "email_mask"]
+```
+
+### 11.3 REST API for Tag & Policy Management
+
+Tags and policies can also be managed through the `/metadata/*` REST endpoints. All endpoints
+require the `X-API-Key` header and return 503 when Gravitino is not configured.
+
+```bash
+# --- Tags ---
+
+# List tags (optionally filtered by table)
+curl "http://localhost:8000/metadata/tags?table=articles" \
+  -H "X-API-Key: your-key"
+# => {"success": true, "data": [{"name": "sensitive"}], "error": null, "metadata": {"total": 1}}
+
+# Create a tag
+curl -X POST "http://localhost:8000/metadata/tags?body=%7B%22name%22%3A%22pii%22%2C%22comment%22%3A%22PII%20data%22%7D" \
+  -H "X-API-Key: your-key"
+# => {"success": true, "data": {"name": "pii"}, "error": null, "metadata": {}}
+
+# --- Policies ---
+
+# List all policies
+curl http://localhost:8000/metadata/policies \
+  -H "X-API-Key: your-key"
+# => {"success": true, "data": [{"name": "log_retention"}], "error": null, "metadata": {"total": 1}}
+
+# Create a retention policy
+curl -X POST "http://localhost:8000/metadata/policies/retention?body=%7B%22name%22%3A%22log_retention%22%2C%22days%22%3A90%7D" \
+  -H "X-API-Key: your-key"
+# => {"success": true, "data": {"name": "log_retention", "days": 90}, "error": null, "metadata": {}}
+
+# Create a masking policy
+curl -X POST "http://localhost:8000/metadata/policies/masking?body=%7B%22name%22%3A%22email_mask%22%2C%22columns%22%3A%5B%22email%22%5D%7D" \
+  -H "X-API-Key: your-key"
+# => {"success": true, "data": {"name": "email_mask", "columns": ["email"]}, "error": null, "metadata": {}}
+```
+
+### 11.4 Enabling Gravitino
+
+```yaml
+# config.yaml
+gravitino:
+  enabled: true
+  uri: "http://localhost:8090"        # Gravitino server URI
+  metalake: "arrow_lake"              # Metalake name
+  lance_rest_enabled: true            # Enable Lance REST Catalog
+  lance_rest_uri: "http://localhost:8888"
+  sync_interval_seconds: 300          # Background catalog sync interval
+```
+
+When `gravitino.enabled` is `false` (the default), all `/metadata/*` endpoints return 503 and
+the `GravitinoTagService`/`GravitinoPolicyService` constructors complete silently without
+connecting. Existing quality filtering, deduplication, and ACL features are unaffected.

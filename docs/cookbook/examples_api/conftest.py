@@ -414,6 +414,45 @@ class ArrowLakeClient:
         body: dict[str, Any] = {"dataset_name": dataset_name, **kwargs}
         return self._request("POST", "/api/v1/audit/export", body)
 
+    # -- metadata (Gravitino) --
+
+    def metadata_list_catalogs(self) -> dict:
+        return self._request("GET", "/metadata/catalogs")
+
+    def metadata_list_tables(self) -> dict:
+        return self._request("GET", "/metadata/tables")
+
+    def metadata_get_table(self, name: str) -> dict:
+        return self._request("GET", f"/metadata/tables/{name}")
+
+    def metadata_list_tags(self, table: str | None = None) -> dict:
+        path = f"/metadata/tags?table={table}" if table else "/metadata/tags"
+        return self._request("GET", path)
+
+    def metadata_create_tag(self, name: str, comment: str = "") -> dict:
+        body = json.dumps({"name": name, "comment": comment})
+        return self._request("POST", f"/metadata/tags?body={body}")
+
+    def metadata_list_policies(self) -> dict:
+        return self._request("GET", "/metadata/policies")
+
+    def metadata_create_retention_policy(self, name: str, days: int = 30) -> dict:
+        body = json.dumps({"name": name, "days": days})
+        return self._request("POST", f"/metadata/policies/retention?body={body}")
+
+    def metadata_create_masking_policy(self, name: str, columns: list[str]) -> dict:
+        body = json.dumps({"name": name, "columns": columns})
+        return self._request("POST", f"/metadata/policies/masking?body={body}")
+
+    def metadata_collect_statistics(self, table_name: str) -> dict:
+        return self._request("POST", f"/metadata/statistics/{table_name}")
+
+    def metadata_list_models(self) -> dict:
+        return self._request("GET", "/metadata/models")
+
+    def metadata_get_model_versions(self, model_name: str) -> dict:
+        return self._request("GET", f"/metadata/models/{model_name}/versions")
+
     # -- system --
 
     def version(self) -> dict:

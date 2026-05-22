@@ -22,6 +22,7 @@ from arrow_lake.api.routers.datasets import router as datasets_router
 from arrow_lake.api.routers.embedding import embed_router
 from arrow_lake.api.routers.embedding import router as embedding_router
 from arrow_lake.api.routers.export import router as export_router
+from arrow_lake.api.routers.gravitino import router as gravitino_router
 from arrow_lake.api.routers.knowledge_graph import router as kg_router
 from arrow_lake.api.routers.lineage import router as lineage_router
 from arrow_lake.api.routers.quality import router as quality_router
@@ -96,6 +97,32 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from arrow_lake.api.rbac import PermissionChecker
     app.state.checker = PermissionChecker()
 
+    # Gravitino integration (optional — no-op when disabled)
+    gravitino_sync: object | None = None
+    if config.gravitino.enabled:
+        from arrow_lake.catalog.gravitino_bridge import GravitinoBridge
+        from arrow_lake.catalog.gravitino_models import GravitinoModelRegistry
+        from arrow_lake.catalog.gravitino_sync import GravitinoSyncScheduler
+        from arrow_lake.quality.gravitino_tags import GravitinoTagService
+
+        bridge = GravitinoBridge(config.gravitino)
+        app.state.gravitino_bridge = bridge
+        app.state.gravitino_tag_service = GravitinoTagService(config.gravitino)
+        app.state.gravitino_model_registry = GravitinoModelRegistry(config.gravitino)
+
+        # Start background sync using the Lake facade for catalog access
+        gravitino_sync = GravitinoSyncScheduler(
+            bridge=bridge,
+            lake=lake,
+            interval=config.gravitino.sync_interval_seconds,
+        )
+        gravitino_sync.start()
+        logger.info(
+            "gravitino_integration_enabled",
+            uri=config.gravitino.uri,
+            metalake=config.gravitino.metalake,
+        )
+
     original_sigterm = signal.getsignal(signal.SIGTERM)
     original_sigint = signal.getsignal(signal.SIGINT)
 
@@ -109,6 +136,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        if gravitino_sync is not None:
+            gravitino_sync.stop()
         lake.shutdown()
         signal.signal(signal.SIGTERM, original_sigterm)
         signal.signal(signal.SIGINT, original_sigint)
@@ -339,6 +368,10 @@ def create_app(config: ArrowLakeConfig | None = None) -> FastAPI:
     app.include_router(kg_router)
     app.include_router(auth_router)
     app.include_router(admin_router)
+
+    # Gravitino metadata router (always registered; returns 503 when disabled)
+    if config.gravitino.enabled:
+        app.include_router(gravitino_router)
 
     # OpenTelemetry (optional — no-op when disabled or deps not installed)
     if config.opentelemetry.enabled:

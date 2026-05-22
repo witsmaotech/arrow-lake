@@ -108,11 +108,11 @@ services:
     deploy:
       resources:
         limits:
-          memory: ${API_MEMORY_LIMIT:-2G}
-          cpus: "${API_CPU_LIMIT:-1.0}"
-          pids: 256
+          memory: ${API_MEMORY_LIMIT:-8G}
+          cpus: "${API_CPU_LIMIT:-4.0}"
+          pids: 512
         reservations:
-          memory: 512M
+          memory: 1G
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
       interval: 30s
@@ -151,11 +151,11 @@ services:
     deploy:
       resources:
         limits:
-          memory: ${MINIO_MEMORY_LIMIT:-1G}
-          cpus: "${MINIO_CPU_LIMIT:-0.5}"
-          pids: 512
+          memory: ${MINIO_MEMORY_LIMIT:-4G}
+          cpus: "${MINIO_CPU_LIMIT:-2.0}"
+          pids: 1024
         reservations:
-          memory: 256M
+          memory: 512M
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
       interval: 10s
@@ -196,14 +196,14 @@ services:
       ARROW_LAKE__COMPUTE__RAY_ADDRESS: "auto"
     volumes:
       - lake-data:/data/lake
-    shm_size: 256m
+    shm_size: 1g
     command: >
       /app/.venv/bin/ray start
       --head
       --port=6379
       --dashboard-host=0.0.0.0
       --dashboard-port=8265
-      --num-cpus=${RAY_HEAD_CPUS:-2}
+      --num-cpus=${RAY_HEAD_CPUS:-4}
       --block
     depends_on:
       minio:
@@ -213,11 +213,11 @@ services:
     deploy:
       resources:
         limits:
-          memory: ${RAY_HEAD_MEMORY_LIMIT:-4G}
-          cpus: "${RAY_HEAD_CPU_LIMIT:-2.0}"
-          pids: 1024
+          memory: ${RAY_HEAD_MEMORY_LIMIT:-16G}
+          cpus: "${RAY_HEAD_CPU_LIMIT:-4.0}"
+          pids: 2048
         reservations:
-          memory: 1G
+          memory: 2G
     healthcheck:
       test: ["CMD-SHELL", "/app/.venv/bin/ray status --address 127.0.0.1:6379 2>&1 | grep -q 'node' || exit 1"]
       interval: 15s
@@ -243,21 +243,21 @@ services:
       replicas: ${RAY_WORKER_REPLICAS:-1}
       resources:
         limits:
-          memory: ${RAY_WORKER_MEMORY:-4G}
-          cpus: "${RAY_WORKER_CPU_LIMIT:-2.0}"
-          pids: 1024
+          memory: ${RAY_WORKER_MEMORY:-16G}
+          cpus: "${RAY_WORKER_CPU_LIMIT:-4.0}"
+          pids: 2048
         reservations:
-          memory: 1G
+          memory: 2G
     environment:
       <<: [*arrow-lake-env]
       ARROW_LAKE__COMPUTE__RAY_ADDRESS: "ray://ray-head:10001"
     volumes:
       - lake-data:/data/lake
-    shm_size: 256m
+    shm_size: 1g
     command: >
       /app/.venv/bin/ray start
       --address=ray-head:6379
-      --num-cpus=${RAY_WORKER_CPUS:-2}
+      --num-cpus=${RAY_WORKER_CPUS:-4}
       --block
     depends_on:
       ray-head:
@@ -300,9 +300,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: ${JUPYTER_MEMORY_LIMIT:-2G}
-          cpus: "${JUPYTER_CPU_LIMIT:-1.0}"
-          pids: 256
+          memory: ${JUPYTER_MEMORY_LIMIT:-4G}
+          cpus: "${JUPYTER_CPU_LIMIT:-2.0}"
+          pids: 512
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8888/lab')\""]
       interval: 15s
@@ -331,9 +331,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: ${OCR_MEMORY_LIMIT:-2G}
-          cpus: "${OCR_CPU_LIMIT:-1.0}"
-          pids: 64
+          memory: ${OCR_MEMORY_LIMIT:-4G}
+          cpus: "${OCR_CPU_LIMIT:-2.0}"
+          pids: 128
         reservations:
           devices:
             - driver: nvidia
@@ -400,7 +400,7 @@ services:
       - "${REDIS_PORT:-6380}:6379"
     command: >
       redis-server
-      --maxmemory ${REDIS_MAXMEMORY:-256mb}
+      --maxmemory ${REDIS_MAXMEMORY:-1gb}
       --maxmemory-policy allkeys-lru
       --appendonly yes
     volumes:
@@ -408,11 +408,11 @@ services:
     deploy:
       resources:
         limits:
-          memory: ${REDIS_MEMORY_LIMIT:-512M}
-          cpus: "${REDIS_CPU_LIMIT:-0.5}"
+          memory: ${REDIS_MEMORY_LIMIT:-2G}
+          cpus: "${REDIS_CPU_LIMIT:-1.0}"
           pids: 256
         reservations:
-          memory: 64M
+          memory: 256M
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
