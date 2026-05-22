@@ -430,19 +430,22 @@ class ArrowLakeClient:
         return self._request("GET", path)
 
     def metadata_create_tag(self, name: str, comment: str = "") -> dict:
+        from urllib.parse import quote
         body = json.dumps({"name": name, "comment": comment})
-        return self._request("POST", f"/metadata/tags?body={body}")
+        return self._request("POST", f"/metadata/tags?body={quote(body)}")
 
     def metadata_list_policies(self) -> dict:
         return self._request("GET", "/metadata/policies")
 
     def metadata_create_retention_policy(self, name: str, days: int = 30) -> dict:
+        from urllib.parse import quote
         body = json.dumps({"name": name, "days": days})
-        return self._request("POST", f"/metadata/policies/retention?body={body}")
+        return self._request("POST", f"/metadata/policies/retention?body={quote(body)}")
 
     def metadata_create_masking_policy(self, name: str, columns: list[str]) -> dict:
+        from urllib.parse import quote
         body = json.dumps({"name": name, "columns": columns})
-        return self._request("POST", f"/metadata/policies/masking?body={body}")
+        return self._request("POST", f"/metadata/policies/masking?body={quote(body)}")
 
     def metadata_collect_statistics(self, table_name: str) -> dict:
         return self._request("POST", f"/metadata/statistics/{table_name}")
