@@ -125,11 +125,17 @@ class MaskingEngine:
                     policy = detail.get("policy", {})
                     props = policy.get("properties", {})
                     applied_tables = props.get("applied_tables", "")
-                    if applied_tables and dataset in json.loads(applied_tables):
+                    if applied_tables:
+                        tables_list = json.loads(applied_tables)
+                        if not isinstance(tables_list, list) or dataset not in tables_list:
+                            continue
                         columns = json.loads(props.get("masking.columns", props.get("columns", "[]")))
+                        if not isinstance(columns, list):
+                            continue
                         func = props.get("masking.function", "redact")
                         for col in columns:
-                            rules.append(MaskRule(column=col, function=func))
+                            if isinstance(col, str):
+                                rules.append(MaskRule(column=col, function=func))
                 except Exception:
                     logger.debug("masking_engine.policy_detail_failed", name=name)
         except Exception:

@@ -49,6 +49,8 @@ class RetentionEnforcer:
         self._stop.set()
         if self._thread is not None:
             self._thread.join(timeout=15)
+            if self._thread.is_alive():
+                logger.error("retention_enforcer.thread_still_alive")
             self._thread = None
         logger.info("retention_enforcer.stopped")
 
@@ -143,8 +145,11 @@ class RetentionEnforcer:
                     # Get applied tables from policy properties
                     applied_tables = props.get("applied_tables", "")
                     if applied_tables:
-                        for tbl in json.loads(applied_tables):
-                            if days > 0:
+                        tables_list = json.loads(applied_tables)
+                        if not isinstance(tables_list, list):
+                            continue
+                        for tbl in tables_list:
+                            if isinstance(tbl, str) and days > 0:
                                 policies[tbl] = days
                 except Exception:
                     logger.debug("retention_enforcer.policy_detail_failed", name=name)

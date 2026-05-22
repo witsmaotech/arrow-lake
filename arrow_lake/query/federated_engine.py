@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -12,6 +13,12 @@ import structlog
 from arrow_lake.config.gravitino import GravitinoConfig
 
 logger = structlog.get_logger(__name__)
+
+_SAFE_ID = re.compile(r"^[a-zA-Z0-9_-]+$")
+_DANGEROUS_SQL = re.compile(
+    r";\s*(DROP|DELETE|INSERT|UPDATE|ALTER|CREATE|EXEC|EXECUTE|GRANT|REVOKE)\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -42,16 +49,38 @@ class FederatedQueryEngine:
     def __init__(self, config: GravitinoConfig) -> None:
         self._config = config
 
-    def resolve_table(self, fqn: str) -> TableResolution | None:
-        """Resolve a fully qualified name (catalog.schema.table) to table metadata."""
+    @staticmethod
+    def _validate_fqn(fqn: str) -> tuple[str, str, str] | None:
+        """Parse and validate a fully qualified name. Returns (catalog, schema, table) or None."""
         parts = fqn.split(".")
         if len(parts) == 3:
             catalog, schema_name, table = parts
         elif len(parts) == 1:
             catalog, schema_name, table = "lance-catalog", "arrow_lake", parts[0]
         else:
-            logger.warning("federated_engine.invalid_fqn", fqn=fqn)
             return None
+        if not all(_SAFE_ID.match(p) for p in (catalog, schema_name, table)):
+            logger.warning("federated_engine.invalid_identifier", fqn=fqn)
+            return None
+        return catalog, schema_name, table
+
+    @staticmethod
+    def _validate_alias(alias: str) -> bool:
+        """Check alias is a safe SQL identifier."""
+        return bool(_SAFE_ID.match(alias))
+
+    @staticmethod
+    def _validate_sql(sql: str) -> None:
+        """Reject SQL containing dangerous statements after semicolons."""
+        if _DANGEROUS_SQL.search(sql):
+            raise ValueError("SQL contains prohibited statements")
+
+    def resolve_table(self, fqn: str) -> TableResolution | None:
+        """Resolve a fully qualified name (catalog.schema.table) to table metadata."""
+        parsed = self._validate_fqn(fqn)
+        if parsed is None:
+            return None
+        catalog, schema_name, table = parsed
 
         try:
             from urllib.request import Request, urlopen
@@ -139,6 +168,12 @@ class FederatedQueryEngine:
         """
         import duckdb
 
+        # Validate inputs
+        self._validate_sql(join_sql)
+        for fqn, alias in catalog_tables:
+            if not self._validate_alias(alias):
+                raise ValueError(f"Invalid alias: {alias}")
+
         conn = duckdb_conn or duckdb.connect(":memory:")
         try:
             for fqn, alias in catalog_tables:
@@ -146,7 +181,6 @@ class FederatedQueryEngine:
                 if resolution is None:
                     raise ValueError(f"Cannot resolve: {fqn}")
 
-                # Load as Arrow Table via Daft, then register in DuckDB
                 import daft
 
                 location = resolution.location
@@ -158,7 +192,6 @@ class FederatedQueryEngine:
                     df = daft.read_csv(location)
 
                 arrow_tbl = df.to_arrow()
-                # Enforce row limit
                 if arrow_tbl.num_rows > self._config.federated_query_max_rows:
                     arrow_tbl = arrow_tbl.slice(
                         0, self._config.federated_query_max_rows
