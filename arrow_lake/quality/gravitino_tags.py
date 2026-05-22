@@ -73,7 +73,7 @@ class GravitinoTagService:
             return
         with self._lock:
             try:
-                catalog = self._client.load_catalog("arrow_lake_lance")
+                catalog = self._client.load_catalog(self._config.lance_catalog_name)
                 table_obj = catalog.as_table_catalog().load_table("default", table)
                 for tag_name in tags:
                     table_obj.supports_tags().associate_tags([tag_name])
@@ -88,7 +88,7 @@ class GravitinoTagService:
             return
         with self._lock:
             try:
-                catalog = self._client.load_catalog("arrow_lake_lance")
+                catalog = self._client.load_catalog(self._config.lance_catalog_name)
                 table_obj = catalog.as_table_catalog().load_table("default", table)
                 for tag_name in tags:
                     table_obj.supports_tags().associate_column_tags(column, [tag_name])
@@ -110,7 +110,7 @@ class GravitinoTagService:
             return []
         with self._lock:
             try:
-                catalog = self._client.load_catalog("arrow_lake_lance")
+                catalog = self._client.load_catalog(self._config.lance_catalog_name)
                 table_obj = catalog.as_table_catalog().load_table("default", table)
                 tag_objs = table_obj.supports_tags().list_tags()
                 return [t.name() for t in (tag_objs or [])]
@@ -125,7 +125,7 @@ class GravitinoTagService:
             return {}
         with self._lock:
             try:
-                catalog = self._client.load_catalog("arrow_lake_lance")
+                catalog = self._client.load_catalog(self._config.lance_catalog_name)
                 table_obj = catalog.as_table_catalog().load_table("default", table)
                 columns = table_obj.columns()
                 result: dict[str, list[str]] = {}

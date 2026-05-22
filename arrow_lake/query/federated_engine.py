@@ -141,14 +141,14 @@ class FederatedQueryEngine:
         if reader is None:
             raise ValueError(f"Unsupported format: {resolution.format}")
 
+        if not location.startswith(("s3://", "gs://", "file://", "/", "./")):
+            raise ValueError(f"Invalid location: {location}")
+
         if reader == "read_lance":
             return daft.read_lance(location)
         if reader == "read_parquet":
             return daft.read_parquet(location)
-        if reader == "read_csv":
-            return daft.read_csv(location)
-
-        raise ValueError(f"Unknown reader: {reader}")
+        return daft.read_csv(location)
 
     def cross_catalog_query(
         self,
@@ -170,7 +170,7 @@ class FederatedQueryEngine:
 
         # Validate inputs
         self._validate_sql(join_sql)
-        for fqn, alias in catalog_tables:
+        for _fqn, alias in catalog_tables:
             if not self._validate_alias(alias):
                 raise ValueError(f"Invalid alias: {alias}")
 
@@ -195,6 +195,11 @@ class FederatedQueryEngine:
                 if arrow_tbl.num_rows > self._config.federated_query_max_rows:
                     arrow_tbl = arrow_tbl.slice(
                         0, self._config.federated_query_max_rows
+                    )
+                    logger.info(
+                        "federated_engine.rows_limited",
+                        table=fqn,
+                        rows=arrow_tbl.num_rows,
                     )
                 conn.register(alias, arrow_tbl)
 

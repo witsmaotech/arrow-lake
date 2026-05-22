@@ -6,7 +6,7 @@ and PermissionChecker for enforcing access control in API endpoints.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
@@ -187,6 +187,7 @@ class PermissionChecker:
         try:
             return engine.apply_masking(table, dataset=dataset, role=role)
         except Exception:
+            logger.warning("rbac.masking_failed", dataset=dataset, role=role, exc_info=True)
             return table
 
     def set_masking_engine(self, engine: Any) -> None:

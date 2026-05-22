@@ -157,11 +157,10 @@ class LineageStore:
             if not gravitino_uri:
                 return
 
-            import json
-
             url = (
                 f"{gravitino_uri}/api/metalakes/{metalake}"
-                f"/catalogs/lance-catalog/schemas/arrow_lake"
+                f"/catalogs/{os.environ.get('ARROW_LAKE__GRAVITINO__LANCE_CATALOG_NAME', 'lance-catalog')}"
+                f"/schemas/{os.environ.get('ARROW_LAKE__GRAVITINO__LANCE_SCHEMA_NAME', 'arrow_lake')}"
                 f"/tables/{event.dataset_name}"
             )
             body = json.dumps({
@@ -184,12 +183,12 @@ class LineageStore:
                     {
                         "@type": "setProperty",
                         "property": "lineage.sources",
-                        "value": json.dumps(list(event.inputs)) if hasattr(event, "inputs") and event.inputs else "[]",
+                        "value": json.dumps(list(event.source_datasets)) if event.source_datasets else "[]",
                     },
                     {
                         "@type": "setProperty",
                         "property": "lineage.outputs",
-                        "value": json.dumps(list(event.outputs)) if hasattr(event, "outputs") and event.outputs else "[]",
+                        "value": json.dumps([event.dataset_name]),
                     },
                 ],
             }).encode()

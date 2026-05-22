@@ -84,7 +84,11 @@ class TestTurboOcrClient:
             TurboOcrClient(endpoint="http://0.0.0.0:8002")
 
     def test_is_available_unhealthy(self):
-        with patch.object(httpx, "get", side_effect=ConnectionError("refused")):
+        mock_client = MagicMock()
+        mock_client.get.side_effect = ConnectionError("refused")
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+        with patch("arrow_lake.core.http.create_http_client", return_value=mock_client):
             client = TurboOcrClient()
             assert client.is_available() is False
 
@@ -96,6 +100,18 @@ class TestTurboOcrClient:
         client._circuit._last_failure = time.monotonic() + 9999
         assert client.is_available() is False
 
+    @staticmethod
+    def _mock_http_client(response: MagicMock | None = None, side_effect=None):
+        """Create a mock for ``create_http_client`` returning a context-managed client."""
+        mock_client = MagicMock()
+        if side_effect is not None:
+            mock_client.post.side_effect = side_effect
+        else:
+            mock_client.post.return_value = response
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+        return mock_client
+
     def test_ocr_success(self):
         mock_response = MagicMock()
         mock_response.status_code = 200
@@ -105,7 +121,8 @@ class TestTurboOcrClient:
             "page_count": 3,
             "confidence": 0.95,
         }
-        with patch.object(httpx, "post", return_value=mock_response):
+        mock_client = self._mock_http_client(mock_response)
+        with patch("arrow_lake.core.http.create_http_client", return_value=mock_client):
             client = TurboOcrClient()
             result = client.ocr(b"fake pdf bytes", filename="test.pdf")
         assert isinstance(result, TurboOcrResult)
@@ -118,7 +135,8 @@ class TestTurboOcrClient:
         mock_response.status_code = 200
         mock_response.raise_for_status = MagicMock()
         mock_response.json.return_value = {"text": "hello"}
-        with patch.object(httpx, "post", return_value=mock_response):
+        mock_client = self._mock_http_client(mock_response)
+        with patch("arrow_lake.core.http.create_http_client", return_value=mock_client):
             client = TurboOcrClient()
             result = client.ocr(b"pdf", filename="f.pdf")
         assert result.text == "hello"
@@ -126,7 +144,8 @@ class TestTurboOcrClient:
         assert result.confidence == 0.0
 
     def test_ocr_connect_error_retries(self):
-        with patch.object(httpx, "post", side_effect=httpx.ConnectError("refused")):
+        mock_client = self._mock_http_client(side_effect=httpx.ConnectError("refused"))
+        with patch("arrow_lake.core.http.create_http_client", return_value=mock_client):
             client = TurboOcrClient(max_retries=2, retry_base_delay=0.01)
             with pytest.raises(DocumentError) as exc_info:
                 client.ocr(b"fake pdf")
@@ -150,7 +169,8 @@ class TestTurboOcrClient:
         mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
             "Server Error", request=MagicMock(), response=mock_response,
         )
-        with patch.object(httpx, "post", return_value=mock_response):
+        mock_client = self._mock_http_client(mock_response)
+        with patch("arrow_lake.core.http.create_http_client", return_value=mock_client):
             client = TurboOcrClient(max_retries=3)
             with pytest.raises(DocumentError) as exc_info:
                 client.ocr(b"fake pdf")

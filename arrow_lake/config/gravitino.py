@@ -32,6 +32,12 @@ class GravitinoConfig(BaseModel):
     enabled: bool = Field(default=False, description="Enable Gravitino integration")
     uri: str = Field(default="http://gravitino:8090", description="Gravitino REST URI")
     metalake: str = Field(default="arrow_lake", description="Metalake name")
+    lance_catalog_name: str = Field(
+        default="lance-catalog", description="Gravitino catalog name for Lance datasets"
+    )
+    lance_schema_name: str = Field(
+        default="arrow_lake", description="Schema name within Lance catalog"
+    )
 
     # Lance REST Catalog
     lance_rest_uri: str = Field(
@@ -101,5 +107,6 @@ class GravitinoConfig(BaseModel):
 
     # ── v1.4.2: Federated query ──
     federated_query_max_rows: int = Field(
-        default=100_000, ge=1_000, description="Max rows for cross-catalog federated queries"
+        default=100_000, ge=1_000, le=10_000_000,
+        description="Max rows for cross-catalog federated queries",
     )

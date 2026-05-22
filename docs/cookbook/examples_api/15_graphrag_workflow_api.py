@@ -29,6 +29,7 @@ def main() -> None:
 
     c = ArrowLakeClient(BASE_URL, API_KEY)
 
+    kg_available = False
     c.delete_dataset(DS_NAME)
 
     # ── Phase 1: 知识库准备 ──
@@ -65,6 +66,7 @@ def main() -> None:
     print("\nSTEP 3: 发起图谱构建")
     resp = c.kg_build(DS_NAME)
     if resp.get("success"):
+        kg_available = True
         task_id = resp.get("task_id", "")
         c._pass(f"图谱构建任务 — {task_id}")
 
@@ -149,27 +151,32 @@ def main() -> None:
 
     print("\n── Phase 4: GraphRAG vs Vector RAG 对比 ──")
 
-    test_questions = [
-        "Arrow 和 Lance 之间有什么技术关联？",
-        "数据工程中选择向量数据库的关键因素是什么？",
-        "RAG 系统如何与知识图谱结合？",
-    ]
+    if not kg_available:
+        print("  [SKIP] 知识图谱未构建，跳过 RAG 对比")
+    else:
+        test_questions = [
+            "Arrow 和 Lance 之间有什么技术关联？",
+            "数据工程中选择向量数据库的关键因素是什么？",
+            "RAG 系统如何与知识图谱结合？",
+        ]
 
-    for i, q in enumerate(test_questions, 1):
-        print(f"\nSTEP {9 + i}: Q{i}: {q}")
+        for i, q in enumerate(test_questions, 1):
+            print(f"\nSTEP {9 + i}: Q{i}: {q}")
 
-        # Vector RAG
-        rag_resp = c.rag_query(q, DS_NAME, top_k=3)
-        rag_ok = rag_resp.get("success", False)
-        rag_answer = rag_resp.get("answer", "")[:80] if rag_ok else "N/A"
+            # Vector RAG (with extended timeout)
+            rag_resp = c._request("POST", "/api/v1/rag/query",
+                                  {"question": q, "dataset_name": DS_NAME, "top_k": 3},
+                                  timeout=90)
+            rag_ok = rag_resp.get("success", False)
+            rag_answer = rag_resp.get("answer", "")[:80] if rag_ok else "N/A"
 
-        # GraphRAG
-        graph_resp = c.kg_graphrag(q)
-        graph_ok = graph_resp.get("success", False)
-        graph_answer = graph_resp.get("answer", "")[:80] if graph_ok else "N/A"
+            # GraphRAG
+            graph_resp = c.kg_graphrag(q)
+            graph_ok = graph_resp.get("success", False)
+            graph_answer = graph_resp.get("answer", "")[:80] if graph_ok else "N/A"
 
-        print(f"         Vector RAG: {'✓' if rag_ok else '✗'} — {rag_answer}...")
-        print(f"         GraphRAG:   {'✓' if graph_ok else '✗'} — {graph_answer}...")
+            print(f"         Vector RAG: {'✓' if rag_ok else '✗'} — {rag_answer}...")
+            print(f"         GraphRAG:   {'✓' if graph_ok else '✗'} — {graph_answer}...")
 
     c._pass("RAG vs GraphRAG 对比完成")
 
@@ -198,7 +205,7 @@ def main() -> None:
 
     # 审计
     c.audit_record(DS_NAME, "graphrag_workflow",
-                   details={"phases": 5, "kg_build": True})
+                   details={"phases": 5, "kg_build": kg_available})
 
     # 清理
     c.delete_dataset(DS_NAME)

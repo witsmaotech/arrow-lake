@@ -38,12 +38,13 @@ class RetentionEnforcer:
     # ── lifecycle ──
 
     def start(self) -> None:
-        if self._thread is not None:
-            return
-        self._thread = threading.Thread(target=self._run_loop, daemon=True)
-        self._thread.start()
-        logger.info("retention_enforcer.started",
-                     interval=self._config.retention_enforce_interval_seconds)
+        with self._lock:
+            if self._thread is not None:
+                return
+            self._thread = threading.Thread(target=self._run_loop, daemon=True)
+            self._thread.start()
+            logger.info("retention_enforcer.started",
+                         interval=self._config.retention_enforce_interval_seconds)
 
     def stop(self) -> None:
         self._stop.set()
@@ -95,6 +96,9 @@ class RetentionEnforcer:
 
     def _enforce_table(self, table_name: str, days: int, *, dry_run: bool = False) -> int:
         """Clean one table. Returns count of versions removed."""
+        if days <= 0:
+            logger.warning("retention_enforcer.invalid_days", table=table_name, days=days)
+            return 0
         cutoff = timedelta(days=days)
 
         # Version-level cleanup via Lance

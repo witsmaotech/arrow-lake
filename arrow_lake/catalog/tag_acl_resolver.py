@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import threading
 from typing import Any
 
 import structlog
@@ -31,7 +30,6 @@ class TagAwareACLResolver:
         self._config = config
         self._checker = checker
         self._rules = config.tag_access_rules
-        self._lock = threading.Lock()
 
     def sync_tags_to_acls(self) -> int:
         """Read all tables from Gravitino, resolve column tags, inject ACLs into PermissionChecker.
@@ -58,49 +56,51 @@ class TagAwareACLResolver:
 
     def _sync_table(self, table_name: str) -> int:
         """Resolve tags for one table and set ACLs. Returns number of ACL entries set."""
+        from arrow_lake.api.rbac import DatasetACL
+
         column_tags = self._fetch_column_tags(table_name)
         if not column_tags:
             return 0
 
-        # Build role → visible_columns mapping
         schema = self._get_table_schema(table_name)
         if not schema:
             return 0
 
         all_columns = [col["name"] for col in schema]
-        restricted_columns: set[str] = set()
+
+        # Build per-role visible columns based on each role's visibility rules
+        all_roles = {"admin", "editor", "viewer"}
+        restricted_columns: dict[str, set[str]] = {}
 
         for col, tags in column_tags.items():
             for tag in tags:
                 rule = self._rules.get(tag)
                 if rule is None:
                     continue
-                restricted_columns.add(col)
+                visible_to = set(rule.get("visible_to", []))
+                denied_roles = all_roles - visible_to
+                for role in denied_roles:
+                    restricted_columns.setdefault(role, set()).add(col)
 
         if not restricted_columns:
             return 0
 
-        visible = [c for c in all_columns if c not in restricted_columns]
-        roles_needing_filter: set[str] = set()
-
-        # Determine which roles need column filtering
-        for col, tags in column_tags.items():
-            for tag in tags:
-                rule = self._rules.get(tag)
-                if rule:
-                    all_roles = {"admin", "editor", "viewer"}
-                    visible_to = set(rule.get("visible_to", []))
-                    roles_needing_filter.update(all_roles - visible_to)
-
-        for role in roles_needing_filter:
+        count = 0
+        for role, hidden_cols in restricted_columns.items():
+            visible = frozenset(c for c in all_columns if c not in hidden_cols)
             try:
-                self._checker.set_acl(table_name, role,
-                                      visible_columns=visible, row_filter=None)
+                acl = DatasetACL(
+                    dataset=table_name,
+                    role=role,
+                    visible_columns=visible,
+                )
+                self._checker.set_acl(acl)
+                count += 1
             except Exception:
                 logger.debug("tag_acl_resolver.set_acl_failed",
                              table=table_name, role=role)
 
-        return len(roles_needing_filter)
+        return count
 
     def _list_gravitino_tables(self) -> list[str]:
         """List table names from Gravitino REST API."""
@@ -110,7 +110,8 @@ class TagAwareACLResolver:
 
             url = (
                 f"{self._config.uri}/api/metalakes/{self._config.metalake}"
-                f"/catalogs/lance-catalog/schemas/arrow_lake/tables"
+                f"/catalogs/{self._config.lance_catalog_name}"
+                f"/schemas/{self._config.lance_schema_name}/tables"
             )
             req = Request(url)
             req.add_header("Accept", "application/vnd.gravitino.v1+json")
@@ -139,7 +140,8 @@ class TagAwareACLResolver:
 
             url = (
                 f"{self._config.uri}/api/metalakes/{self._config.metalake}"
-                f"/catalogs/lance-catalog/schemas/arrow_lake/tables/{table_name}"
+                f"/catalogs/{self._config.lance_catalog_name}"
+                f"/schemas/{self._config.lance_schema_name}/tables/{table_name}"
             )
             req = Request(url)
             req.add_header("Accept", "application/vnd.gravitino.v1+json")

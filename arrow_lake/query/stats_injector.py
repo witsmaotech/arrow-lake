@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
 import time
 from dataclasses import dataclass
@@ -12,6 +13,8 @@ import structlog
 from arrow_lake.config.gravitino import GravitinoConfig
 
 logger = structlog.get_logger(__name__)
+
+_SAFE_ID = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 
 @dataclass(frozen=True)
@@ -25,7 +28,7 @@ class QueryHints:
     @property
     def is_large(self) -> bool:
         """Whether this table is considered large enough for special routing."""
-        return self.estimated_rows > 0 and self.size_mb > 0
+        return self.estimated_rows >= 1_000_000 or self.size_mb >= 1024.0
 
 
 class StatsInjector:
@@ -90,9 +93,14 @@ class StatsInjector:
         try:
             from urllib.request import Request, urlopen
 
+            if not _SAFE_ID.match(dataset):
+                logger.warning("stats_injector.invalid_dataset", dataset=dataset)
+                return QueryHints()
+
             url = (
                 f"{self._config.uri}/api/metalakes/{self._config.metalake}"
-                f"/catalogs/lance-catalog/schemas/arrow_lake/tables/{dataset}"
+                f"/catalogs/{self._config.lance_catalog_name}"
+                f"/schemas/{self._config.lance_schema_name}/tables/{dataset}"
             )
             req = Request(url)
             req.add_header("Accept", "application/vnd.gravitino.v1+json")

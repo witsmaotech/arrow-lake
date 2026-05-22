@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
+import os
 import threading
 import time
 from dataclasses import dataclass
@@ -34,19 +36,15 @@ class MaskingEngine:
         masked_table = engine.apply_masking(table, dataset="users", role="viewer")
     """
 
-    _MASK_FUNCTIONS = {
-        "redact": "****",
-        "partial": None,
-        "hash": None,
-        "nullify": None,
-    }
-
     def __init__(self, config: GravitinoConfig) -> None:
         self._config = config
         self._lock = threading.Lock()
-        # Cache: {dataset: (rules, timestamp)}
         self._cache: dict[str, tuple[list[MaskRule], float]] = {}
         self._ttl = config.masking_policy_cache_ttl_seconds
+        self._hmac_key = os.environ.get(
+            "ARROW_LAKE__MASKING__HMAC_KEY",
+            "default-dev-key-change-in-prod",
+        ).encode()
 
     # ── public API ──
 
@@ -133,17 +131,17 @@ class MaskingEngine:
                         if not isinstance(columns, list):
                             continue
                         func = props.get("masking.function", "redact")
-                        for col in columns:
-                            if isinstance(col, str):
-                                rules.append(MaskRule(column=col, function=func))
+                        rules.extend(
+                            MaskRule(column=col, function=func)
+                            for col in columns if isinstance(col, str)
+                        )
                 except Exception:
                     logger.debug("masking_engine.policy_detail_failed", name=name)
         except Exception:
             logger.debug("masking_engine.fetch_failed", exc_info=True)
         return rules
 
-    @staticmethod
-    def _mask_column(column: pa.ChunkedArray, function: str) -> pa.ChunkedArray:
+    def _mask_column(self, column: pa.ChunkedArray, function: str) -> pa.ChunkedArray:
         """Apply a masking function to a PyArrow chunked array."""
         if function == "redact":
             return pc.replace_substring_regex(column, pattern=".", replacement="*")
@@ -155,11 +153,10 @@ class MaskingEngine:
             return pa.chunked_array([null_arr])
 
         if function == "hash":
-            # SHA-256 hash of string values
             def _hash_val(val: str | None) -> str | None:
                 if val is None:
                     return None
-                return hashlib.sha256(val.encode()).hexdigest()[:16]
+                return hmac.new(self._hmac_key, val.encode(), hashlib.sha256).hexdigest()[:16]
 
             masked = [_hash_val(v.as_py()) for v in column]
             return pa.chunked_array([pa.array(masked, type=pa.string())])

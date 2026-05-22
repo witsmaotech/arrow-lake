@@ -15,6 +15,7 @@ from pathlib import Path
 import pyarrow as pa
 import pytest
 from arrow_lake.exceptions import StorageError
+from arrow_lake.ingest.schema import SchemaMigrationError
 from arrow_lake.ingest.storage import LanceStorageManager
 
 
@@ -73,11 +74,11 @@ class TestSchemaMigration:
         assert "label" in result.column_names
 
     def test_drop_nonexistent_column_raises(self, tmp_path: Path) -> None:
-        """Dropping a nonexistent column raises StorageError."""
+        """Dropping a nonexistent column raises SchemaMigrationError."""
         manager = LanceStorageManager(base_uri=str(tmp_path))
         manager.create_dataset("mig_test", pa.table({"id": [1]}))
 
-        with pytest.raises(StorageError, match="does not exist"):
+        with pytest.raises(SchemaMigrationError, match="does not exist"):
             manager.drop_column("mig_test", "nonexistent")
 
     def test_add_column_with_int_type(self, tmp_path: Path) -> None:

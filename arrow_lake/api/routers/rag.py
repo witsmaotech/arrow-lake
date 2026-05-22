@@ -81,19 +81,28 @@ async def rag_query(
     _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> RAGQueryResponse:
     """Run a RAG query: retrieve relevant documents and generate an answer."""
+    timeout_secs = float(lake._config.llm.timeout_seconds) + 30
     try:
-        rag_resp = await lake.rag_query(
-            question=req.question,
-            dataset_name=req.dataset_name,
-            top_k=req.top_k,
-            strategy=req.retrieval_strategy,
-            template_name=req.template_name,
-            session_id=req.session_id,
-        )
+        async with asyncio.timeout(timeout_secs):
+            rag_resp = await lake.rag_query(
+                question=req.question,
+                dataset_name=req.dataset_name,
+                top_k=req.top_k,
+                strategy=req.retrieval_strategy,
+                template_name=req.template_name,
+                session_id=req.session_id,
+            )
+    except TimeoutError:
+        raise HTTPException(status_code=504, detail="RAG query timed out — LLM provider may be unavailable")
     except (ValueError, LookupError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except Exception as exc:
+        from arrow_lake.exceptions import RAGError
+        if isinstance(exc, RAGError):
+            raise HTTPException(status_code=502, detail=exc.message) from exc
+        raise
     return _rag_response_to_api(rag_resp)
 
 
@@ -160,16 +169,25 @@ async def rag_extract(
 ) -> RAGExtractResponse:
     """Extract entities from a dataset using RAG."""
     try:
-        rag_resp = await lake.rag_extract(
-            dataset_name=req.dataset_name,
-            text_column=req.text_column,
-            top_k=req.top_k,
-            template_name=req.template_name,
-        )
+        timeout_secs = float(lake._config.llm.timeout_seconds) + 30
+        async with asyncio.timeout(timeout_secs):
+            rag_resp = await lake.rag_extract(
+                dataset_name=req.dataset_name,
+                text_column=req.text_column,
+                top_k=req.top_k,
+                template_name=req.template_name,
+            )
+    except TimeoutError:
+        raise HTTPException(status_code=504, detail="RAG extract timed out — LLM provider may be unavailable")
     except (ValueError, LookupError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except Exception as exc:
+        from arrow_lake.exceptions import RAGError
+        if isinstance(exc, RAGError):
+            raise HTTPException(status_code=502, detail=exc.message) from exc
+        raise
     return _extract_response_to_api(rag_resp)
 
 

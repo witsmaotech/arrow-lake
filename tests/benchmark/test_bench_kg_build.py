@@ -27,6 +27,9 @@ class _MockHugeGraphClient:
         self._schema_created = True
         return {"result": "ok"}
 
+    async def ensure_schema(self, schema: dict[str, Any]) -> None:
+        self._schema_created = True
+
     async def add_vertex(self, label: str, vertex: dict) -> dict:
         self._vertices.setdefault(label, []).append(vertex)
         return {"id": vertex.get("id", f"v{len(self._edges)}")}
@@ -34,6 +37,20 @@ class _MockHugeGraphClient:
     async def add_edge(self, label: str, src: str, tgt: str, props: dict | None = None) -> dict:
         self._edges.append({"label": label, "source": src, "target": tgt, "properties": props or {}})
         return {"id": f"e{len(self._edges)}"}
+
+    async def add_vertices(self, vertices: list[dict[str, Any]]) -> list[str]:
+        ids: list[str] = []
+        for v in vertices:
+            label = v.get("label", "vertex")
+            props = v.get("properties", {})
+            self._vertices.setdefault(label, []).append(props)
+            ids.append(f"v{len(self._edges) + len(ids)}")
+        return ids
+
+    async def add_edges(self, edges: list[dict[str, Any]]) -> int:
+        for e in edges:
+            self._edges.append(e)
+        return len(edges)
 
     async def create_vertex_index(self, label: str, field: str) -> dict:
         self._index_created = True
@@ -44,6 +61,47 @@ class _MockHugeGraphClient:
         return {"result": []}
 
 
+class _MockExtractedEntity:
+    """Mock entity compatible with both dict-style and attribute access."""
+
+    def __init__(self, name: str, entity_type: str, confidence: float = 0.9) -> None:
+        self.name = name
+        self.entity_type = entity_type
+        self.confidence = confidence
+        self._dict = {"name": name, "type": entity_type, "confidence": confidence}
+
+    def __getitem__(self, key: str) -> Any:
+        return self._dict[key]
+
+
+class _MockExtractedRelation:
+    """Mock relation compatible with both dict-style and attribute access."""
+
+    def __init__(self, source: str, target: str, relation: str, confidence: float = 0.8) -> None:
+        self.source = source
+        self.target = target
+        self.relation = relation
+        self.properties = ()
+        self.confidence = confidence
+        self._dict = {"source": source, "target": target, "relation": relation, "confidence": confidence}
+
+    def __getitem__(self, key: str) -> Any:
+        return self._dict[key]
+
+
+class _MockExtractionResult:
+    """Mock extraction result compatible with both dict-style and attribute access."""
+
+    def __init__(self, entities: list, relations: list) -> None:
+        self.entities = tuple(entities)
+        self.relations = tuple(relations)
+        self.raw_text = ""
+        self._dict = {"entities": entities, "relations": relations}
+
+    def __getitem__(self, key: str) -> Any:
+        return self._dict[key]
+
+
 class _MockEntityExtractor:
     """Mock entity extractor that returns deterministic results."""
 
@@ -51,16 +109,18 @@ class _MockEntityExtractor:
         self._entities_per_chunk = entities_per_chunk
         self._relations_per_chunk = relations_per_chunk
 
-    async def extract(self, text: str) -> dict[str, Any]:
+    async def extract(self, text: str, **kwargs: Any) -> _MockExtractionResult:
         entities = [
-            {"name": f"Entity_{i}", "type": "concept", "confidence": 0.9}
+            _MockExtractedEntity(name=f"Entity_{i}", entity_type="concept")
             for i in range(self._entities_per_chunk)
         ]
         relations = [
-            {"source": "Entity_0", "target": f"Entity_{i + 1}", "relation": "related_to", "confidence": 0.8}
+            _MockExtractedRelation(
+                source="Entity_0", target=f"Entity_{i + 1}", relation="related_to",
+            )
             for i in range(min(self._relations_per_chunk, self._entities_per_chunk - 1))
         ]
-        return {"entities": entities, "relations": relations}
+        return _MockExtractionResult(entities, relations)
 
 
 def _make_chunks_table(n_chunks: int, chunk_size: int = 200) -> pa.Table:

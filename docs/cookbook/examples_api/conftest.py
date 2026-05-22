@@ -40,7 +40,7 @@ class ArrowLakeClient:
             h["Content-Type"] = content_type
         return h
 
-    def _request(self, method: str, path: str, body: Any = None, *, timeout: int = 30) -> dict[str, Any]:
+    def _request(self, method: str, path: str, body: Any = None, *, timeout: int = 600) -> dict[str, Any]:
         url = f"{self.base_url}{path}"
         data = json.dumps(body).encode() if body else None
         ct = "application/json" if body else None

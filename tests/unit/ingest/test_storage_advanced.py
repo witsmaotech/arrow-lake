@@ -210,15 +210,14 @@ class TestScanDataset:
         mock_ds = MagicMock()
         mock_ds.scanner.return_value = mock_scanner
 
-        import sys
         fake_lance = MagicMock()
         fake_lance.dataset.return_value = mock_ds
-        sys.modules["lance"] = fake_lance
-        result = mixin.scan_dataset("ds1", filter_expr="age > 20", batch_size=5000)
-        assert result is mock_reader
-        mock_ds.scanner.assert_called_once_with(
-            columns=None, filter="age > 20", batch_size=5000
-        )
+        with patch.dict("sys.modules", {"lance": fake_lance}):
+            result = mixin.scan_dataset("ds1", filter_expr="age > 20", batch_size=5000)
+            assert result is mock_reader
+            mock_ds.scanner.assert_called_once_with(
+                columns=None, filter="age > 20", batch_size=5000
+            )
 
 
 # ---------------------------------------------------------------------------

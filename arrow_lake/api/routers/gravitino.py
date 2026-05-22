@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 from urllib.request import Request as UrlRequest, urlopen
 
@@ -13,6 +14,13 @@ import structlog
 logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/metadata", tags=["metadata"])
+
+_SAFE_ID = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+
+def _validate_id(value: str, label: str = "identifier") -> None:
+    if not _SAFE_ID.match(value):
+        raise HTTPException(status_code=400, detail=f"Invalid {label}: {value}")
 
 
 def _get_bridge(request: Request) -> Any:
@@ -94,6 +102,7 @@ def list_tables(request: Request) -> dict[str, Any]:
 @router.get("/tables/{name}")
 def get_table(name: str, request: Request) -> dict[str, Any]:
     """Get table details including columns and properties."""
+    _validate_id(name, "table name")
     cfg = request.app.state.config.gravitino
     data = _gravitino_get(
         cfg,
@@ -140,8 +149,8 @@ def create_tag(request: Request) -> dict[str, Any]:
     """Create a new tag."""
     try:
         body = json.loads(request.query_params.get("body", "{}"))
-    except Exception:
-        body = {}
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="Invalid JSON in body parameter") from exc
     name = body.get("name", "")
     comment = body.get("comment", "")
     if not name:
@@ -177,7 +186,10 @@ def list_policies(request: Request) -> dict[str, Any]:
 @router.post("/policies/retention")
 def create_retention_policy(request: Request) -> dict[str, Any]:
     """Create a data retention policy."""
-    body = json.loads(request.query_params.get("body", "{}"))
+    try:
+        body = json.loads(request.query_params.get("body", "{}"))
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="Invalid JSON in body parameter") from exc
     name = body.get("name", "")
     days = body.get("days", 30)
     if not name:
@@ -187,7 +199,12 @@ def create_retention_policy(request: Request) -> dict[str, Any]:
 
         svc = GravitinoPolicyService(request.app.state.config.gravitino)
         svc.create_retention_policy(name, days)
-        return {"success": True, "data": {"name": name, "days": days}, "error": None, "metadata": {}}
+        return {
+            "success": True,
+            "data": {"name": name, "days": days},
+            "error": None,
+            "metadata": {},
+        }
     except Exception as exc:
         return {"success": False, "data": None, "error": str(exc), "metadata": {}}
 
@@ -195,7 +212,10 @@ def create_retention_policy(request: Request) -> dict[str, Any]:
 @router.post("/policies/masking")
 def create_masking_policy(request: Request) -> dict[str, Any]:
     """Create a data masking policy."""
-    body = json.loads(request.query_params.get("body", "{}"))
+    try:
+        body = json.loads(request.query_params.get("body", "{}"))
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="Invalid JSON in body parameter") from exc
     name = body.get("name", "")
     columns = body.get("columns", [])
     if not name:
@@ -205,7 +225,12 @@ def create_masking_policy(request: Request) -> dict[str, Any]:
 
         svc = GravitinoPolicyService(request.app.state.config.gravitino)
         svc.create_masking_policy(name, columns)
-        return {"success": True, "data": {"name": name, "columns": columns}, "error": None, "metadata": {}}
+        return {
+            "success": True,
+            "data": {"name": name, "columns": columns},
+            "error": None,
+            "metadata": {},
+        }
     except Exception as exc:
         return {"success": False, "data": None, "error": str(exc), "metadata": {}}
 
@@ -217,6 +242,7 @@ def create_masking_policy(request: Request) -> dict[str, Any]:
 @router.post("/statistics/{name}")
 def collect_stats(name: str, request: Request) -> dict[str, Any]:
     """Collect and register table statistics."""
+    _validate_id(name, "table name")
     try:
         from arrow_lake.catalog.gravitino_stats import GravitinoStatsCollector
 
@@ -253,6 +279,7 @@ def list_models(request: Request) -> dict[str, Any]:
 @router.get("/models/{name}/versions")
 def get_model_versions(name: str, request: Request) -> dict[str, Any]:
     """Get version info for a model."""
+    _validate_id(name, "model name")
     registry = _get_model_registry(request)
     try:
         latest = registry.get_latest_version(name)
@@ -316,6 +343,7 @@ def enforce_policies(request: Request) -> dict[str, Any]:
 @router.get("/lineage/{name}")
 def get_lineage(name: str, request: Request) -> dict[str, Any]:
     """Get lineage information for a table from Gravitino properties."""
+    _validate_id(name, "table name")
     cfg = request.app.state.config.gravitino
     data = _gravitino_get(
         cfg,
@@ -324,14 +352,21 @@ def get_lineage(name: str, request: Request) -> dict[str, Any]:
     if data is None:
         return {"success": False, "data": None, "error": "Table not found", "metadata": {}}
     props = data.get("table", {}).get("properties", {})
-    import json as _json
+    try:
+        sources = json.loads(props.get("lineage.sources", "[]"))
+    except (json.JSONDecodeError, ValueError):
+        sources = []
+    try:
+        outputs = json.loads(props.get("lineage.outputs", "[]"))
+    except (json.JSONDecodeError, ValueError):
+        outputs = []
 
     lineage = {
         "table": name,
         "operation": props.get("lineage.operation"),
         "timestamp": props.get("lineage.timestamp"),
-        "sources": _json.loads(props.get("lineage.sources", "[]")),
-        "outputs": _json.loads(props.get("lineage.outputs", "[]")),
+        "sources": sources,
+        "outputs": outputs,
         "lance_version": props.get("lance.latest_version"),
     }
     return {"success": True, "data": lineage, "error": None, "metadata": {}}
