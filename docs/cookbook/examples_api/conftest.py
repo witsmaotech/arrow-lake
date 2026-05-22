@@ -453,6 +453,18 @@ class ArrowLakeClient:
     def metadata_get_model_versions(self, model_name: str) -> dict:
         return self._request("GET", f"/metadata/models/{model_name}/versions")
 
+    # -- metadata v1.4.2 --
+
+    def metadata_enforce_policies(self, table: str | None = None, dry_run: bool = False) -> dict:
+        path = "/metadata/policies/enforce?"
+        if table:
+            path += f"table={table}&"
+        path += f"dry_run={'true' if dry_run else 'false'}"
+        return self._request("POST", path)
+
+    def metadata_get_lineage(self, table_name: str) -> dict:
+        return self._request("GET", f"/metadata/lineage/{table_name}")
+
     # -- system --
 
     def version(self) -> dict:

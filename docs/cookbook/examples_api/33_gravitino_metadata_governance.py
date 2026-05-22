@@ -211,6 +211,29 @@ def main() -> None:
     n_mod = len(models.get("data", [])) if models.get("success") else 0
     print(f"  Catalogs: {n_cat}  Tables: {n_tbl}  Tags: {n_tag}")
     print(f"  Policies: {n_pol}  Models: {n_mod}")
+
+    # === Phase 7: v1.4.2 Deep Governance ===
+
+    # 12a. Retention enforcement (dry-run)
+    print("\nSTEP 12a: Retention enforcement (dry-run)")
+    enforce = c._request("POST", "/metadata/policies/enforce?dry_run=true")
+    if enforce.get("success"):
+        c._pass(f"POST /policies/enforce?dry_run — cleaned={enforce['data']['tables_cleaned']}")
+    else:
+        print(f"  [INFO] enforce: {enforce.get('detail', enforce.get('error', 'not configured'))}")
+
+    # 12b. Lineage query
+    print("\nSTEP 12b: Lineage query")
+    if target_name:
+        lin = c._request("GET", f"/metadata/lineage/{target_name}")
+        if lin.get("success"):
+            ld = lin.get("data", {})
+            c._pass(f"GET /metadata/lineage/{target_name}")
+            print(f"         op={ld.get('operation')} sources={ld.get('sources')} "
+                  f"outputs={ld.get('outputs')} version={ld.get('lance_version')}")
+        else:
+            print(f"  [INFO] lineage: {lin.get('error', 'not found')}")
+
     print("=" * 60)
     print("API-33  ALL PASSED")
     print("=" * 60)

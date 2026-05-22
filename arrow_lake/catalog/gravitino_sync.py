@@ -25,10 +25,13 @@ def _load_local_entries(lake: Any) -> list[dict[str, Any]]:
 class GravitinoSyncScheduler:
     """Periodic background sync between local catalog and Gravitino.
 
+    Also runs tag-to-ACL sync if a TagAwareACLResolver is provided.
+
     Args:
         bridge: GravitinoBridge instance.
         session_manager: DuckDBSessionManager for reading catalog_tables.
         interval: Sync interval in seconds (minimum 5).
+        tag_acl_resolver: Optional TagAwareACLResolver for tag→ACL sync.
     """
 
     def __init__(
@@ -36,10 +39,12 @@ class GravitinoSyncScheduler:
         bridge: GravitinoBridge,
         lake: Any,
         interval: int = 30,
+        tag_acl_resolver: Any | None = None,
     ) -> None:
         self._bridge = bridge
         self._lake = lake
         self._interval = max(interval, 5)
+        self._tag_acl_resolver = tag_acl_resolver
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -75,4 +80,12 @@ class GravitinoSyncScheduler:
                 )
             except Exception as exc:
                 logger.warning("gravitino_sync_cycle_failed", error=str(exc))
+
+            # Tag→ACL sync (v1.4.2)
+            if self._tag_acl_resolver is not None:
+                try:
+                    self._tag_acl_resolver.sync_tags_to_acls()
+                except Exception as exc:
+                    logger.debug("gravitino_sync_tag_acl_failed", error=str(exc))
+
             self._stop_event.wait(timeout=self._interval)

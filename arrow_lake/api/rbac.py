@@ -157,18 +157,11 @@ class PermissionChecker:
     def apply_table_filter(
         self, table: pa.Table, *, dataset: str, role: str | Role,
     ) -> pa.Table:
-        """Apply row/column ACL filtering to a PyArrow table.
+        """Apply row/column ACL filtering and masking to a PyArrow table.
 
-        Admin role bypasses all filtering.
-        If no ACL is configured for the role+dataset, returns the table unchanged.
-
-        Args:
-            table: Input Arrow table.
-            dataset: Dataset name.
-            role: User role.
-
-        Returns:
-            Filtered Arrow table.
+        Admin role bypasses all filtering and masking.
+        If no ACL is configured for the role+dataset, returns the table unchanged
+        (but masking may still apply if Gravitino masking policies exist).
         """
         role_name = role if isinstance(role, str) else role.value
 
@@ -176,13 +169,29 @@ class PermissionChecker:
             return table
 
         acl = self.get_acl(dataset, role_name)
-        if acl is None:
-            return table
 
         result = table
-        result = self._filter_columns(result, acl)
-        result = self._filter_rows(result, acl)
+        if acl is not None:
+            result = self._filter_columns(result, acl)
+            result = self._filter_rows(result, acl)
+
+        # Apply Gravitino masking policies (v1.4.2)
+        result = self._apply_masking(result, dataset, role_name)
         return result
+
+    def _apply_masking(self, table: pa.Table, dataset: str, role: str) -> pa.Table:
+        """Apply column-level masking from Gravitino policies if engine is available."""
+        engine = getattr(self, "_masking_engine", None)
+        if engine is None:
+            return table
+        try:
+            return engine.apply_masking(table, dataset=dataset, role=role)
+        except Exception:
+            return table
+
+    def set_masking_engine(self, engine: Any) -> None:
+        """Inject the Gravitino MaskingEngine (called during app startup)."""
+        self._masking_engine = engine
 
     @staticmethod
     def _filter_columns(table: pa.Table, acl: DatasetACL) -> pa.Table:

@@ -165,11 +165,33 @@ class LineageStore:
                 f"/tables/{event.dataset_name}"
             )
             body = json.dumps({
-                "updates": [{
-                    "@type": "setProperty",
-                    "property": "lance.latest_version",
-                    "value": str(event.lance_version),
-                }],
+                "updates": [
+                    {
+                        "@type": "setProperty",
+                        "property": "lance.latest_version",
+                        "value": str(event.lance_version),
+                    },
+                    {
+                        "@type": "setProperty",
+                        "property": "lineage.operation",
+                        "value": event.operation,
+                    },
+                    {
+                        "@type": "setProperty",
+                        "property": "lineage.timestamp",
+                        "value": event.timestamp.isoformat() if hasattr(event.timestamp, "isoformat") else str(event.timestamp),
+                    },
+                    {
+                        "@type": "setProperty",
+                        "property": "lineage.sources",
+                        "value": json.dumps(list(event.inputs)) if hasattr(event, "inputs") and event.inputs else "[]",
+                    },
+                    {
+                        "@type": "setProperty",
+                        "property": "lineage.outputs",
+                        "value": json.dumps(list(event.outputs)) if hasattr(event, "outputs") and event.outputs else "[]",
+                    },
+                ],
             }).encode()
             req = Request(
                 url,

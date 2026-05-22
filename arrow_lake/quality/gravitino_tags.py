@@ -118,6 +118,31 @@ class GravitinoTagService:
                 logger.warning("gravitino_list_tags_failed", table=table, error=str(exc))
                 return []
 
+    def list_column_tags(self, table: str) -> dict[str, list[str]]:
+        """List column-level tags for a table. Returns {column_name: [tag_names]}."""
+        metalake = self._get_metalake()
+        if metalake is None:
+            return {}
+        with self._lock:
+            try:
+                catalog = self._client.load_catalog("arrow_lake_lance")
+                table_obj = catalog.as_table_catalog().load_table("default", table)
+                columns = table_obj.columns()
+                result: dict[str, list[str]] = {}
+                for col in (columns or []):
+                    col_name = col.name() if hasattr(col, "name") else str(col)
+                    try:
+                        tag_objs = table_obj.supports_tags().list_column_tags(col_name)
+                        tags = [t.name() for t in (tag_objs or [])]
+                        if tags:
+                            result[col_name] = tags
+                    except Exception:
+                        pass
+                return result
+            except Exception as exc:
+                logger.warning("gravitino_list_column_tags_failed", table=table, error=str(exc))
+                return {}
+
     def get_tables_by_tag(self, tag: str) -> list[str]:
         """Find all tables with a given tag."""
         metalake = self._get_metalake()

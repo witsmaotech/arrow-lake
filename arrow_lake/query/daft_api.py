@@ -601,10 +601,12 @@ class DaftQueryEngine:
         )
 
     def read_gravitino_table(self, fqn: str) -> daft.DataFrame:
-        """Read a table from Gravitino Lance REST Catalog by fully qualified name.
+        """Read a table by FQN using Gravitino metadata to resolve format and location.
+
+        Falls back to direct Lance path construction if metadata resolution fails.
 
         Args:
-            fqn: Fully qualified name (catalog.schema.table).
+            fqn: Fully qualified name (catalog.schema.table) or just table name.
 
         Returns:
             Daft DataFrame for the table.
@@ -616,12 +618,20 @@ class DaftQueryEngine:
             self._gravitino_config, "enabled", False
         ):
             raise RuntimeError("Gravitino is not configured for this engine")
+
+        # Try metadata-driven resolution via FederatedQueryEngine (v1.4.2)
+        try:
+            from arrow_lake.query.federated_engine import FederatedQueryEngine
+
+            engine = FederatedQueryEngine(self._gravitino_config)
+            return engine.load_dataset(fqn)
+        except Exception:
+            pass  # Fall back to direct Lance path
+
+        # Fallback: direct Lance REST path construction
         try:
             parts = fqn.split(".")
-            if len(parts) == 3:
-                _, _, table_name = parts
-            else:
-                table_name = parts[-1]
+            table_name = parts[-1] if parts else fqn
 
             rest_uri = self._gravitino_config.lance_rest_uri
             lance_path = f"{rest_uri}/{table_name}.lance"

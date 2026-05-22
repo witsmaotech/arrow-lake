@@ -280,3 +280,58 @@ def get_model_versions(name: str, request: Request) -> dict[str, Any]:
         }
     except Exception as exc:
         return {"success": False, "data": [], "error": str(exc), "metadata": {}}
+
+
+# ---------------------------------------------------------------------------
+# Policy Enforcement (v1.4.2)
+# ---------------------------------------------------------------------------
+
+@router.post("/policies/enforce")
+def enforce_policies(request: Request) -> dict[str, Any]:
+    """Manually trigger retention policy enforcement."""
+    enforcer = getattr(request.app.state, "retention_enforcer", None)
+    if enforcer is None:
+        raise HTTPException(status_code=503, detail="Retention enforcer not configured")
+    try:
+        dry_run = request.query_params.get("dry_run", "false").lower() == "true"
+        table = request.query_params.get("table")
+        if table:
+            cleaned = enforcer.enforce_table(table, dry_run=dry_run)
+        else:
+            cleaned = enforcer.enforce(dry_run=dry_run)
+        return {
+            "success": True,
+            "data": {"tables_cleaned": cleaned, "dry_run": dry_run},
+            "error": None,
+            "metadata": {},
+        }
+    except Exception as exc:
+        return {"success": False, "data": None, "error": str(exc), "metadata": {}}
+
+
+# ---------------------------------------------------------------------------
+# Lineage (v1.4.2)
+# ---------------------------------------------------------------------------
+
+@router.get("/lineage/{name}")
+def get_lineage(name: str, request: Request) -> dict[str, Any]:
+    """Get lineage information for a table from Gravitino properties."""
+    cfg = request.app.state.config.gravitino
+    data = _gravitino_get(
+        cfg,
+        f"/api/metalakes/{cfg.metalake}/catalogs/lance-catalog/schemas/arrow_lake/tables/{name}",
+    )
+    if data is None:
+        return {"success": False, "data": None, "error": "Table not found", "metadata": {}}
+    props = data.get("table", {}).get("properties", {})
+    import json as _json
+
+    lineage = {
+        "table": name,
+        "operation": props.get("lineage.operation"),
+        "timestamp": props.get("lineage.timestamp"),
+        "sources": _json.loads(props.get("lineage.sources", "[]")),
+        "outputs": _json.loads(props.get("lineage.outputs", "[]")),
+        "lance_version": props.get("lance.latest_version"),
+    }
+    return {"success": True, "data": lineage, "error": None, "metadata": {}}

@@ -99,6 +99,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Gravitino integration (optional — no-op when disabled)
     gravitino_sync: object | None = None
+    retention_enforcer: object | None = None
     if config.gravitino.enabled:
         from arrow_lake.catalog.gravitino_bridge import GravitinoBridge
         from arrow_lake.catalog.gravitino_models import GravitinoModelRegistry
@@ -110,17 +111,60 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.gravitino_tag_service = GravitinoTagService(config.gravitino)
         app.state.gravitino_model_registry = GravitinoModelRegistry(config.gravitino)
 
+        # ── v1.4.2: MaskingEngine ──
+        from arrow_lake.quality.masking_engine import MaskingEngine
+
+        masking_engine = MaskingEngine(config.gravitino)
+        app.state.masking_engine = masking_engine
+        app.state.checker.set_masking_engine(masking_engine)
+
+        # ── v1.4.2: StatsInjector ──
+        from arrow_lake.query.stats_injector import StatsInjector
+
+        app.state.stats_injector = StatsInjector(config.gravitino)
+
+        # ── v1.4.2: ModelResolver ──
+        from arrow_lake.embed.registry_resolver import RegistryModelResolver
+
+        app.state.model_resolver = RegistryModelResolver(config.gravitino)
+
+        # ── v1.4.2: FederatedQueryEngine ──
+        from arrow_lake.query.federated_engine import FederatedQueryEngine
+
+        app.state.federated_engine = FederatedQueryEngine(config.gravitino)
+
+        # ── v1.4.2: TagAwareACLResolver ──
+        tag_acl_resolver = None
+        if config.gravitino.tag_access_rules:
+            from arrow_lake.catalog.tag_acl_resolver import TagAwareACLResolver
+
+            tag_acl_resolver = TagAwareACLResolver(config.gravitino, app.state.checker)
+            app.state.tag_acl_resolver = tag_acl_resolver
+
         # Start background sync using the Lake facade for catalog access
         gravitino_sync = GravitinoSyncScheduler(
             bridge=bridge,
             lake=lake,
             interval=config.gravitino.sync_interval_seconds,
+            tag_acl_resolver=tag_acl_resolver,
         )
         gravitino_sync.start()
+
+        # ── v1.4.2: RetentionEnforcer background thread ──
+        from arrow_lake.quality.retention_enforcer import RetentionEnforcer
+
+        retention_enforcer = RetentionEnforcer(config.gravitino, lake._storage)
+        retention_enforcer.start()
+        app.state.retention_enforcer = retention_enforcer
+
         logger.info(
             "gravitino_integration_enabled",
             uri=config.gravitino.uri,
             metalake=config.gravitino.metalake,
+            masking=True,
+            stats=True,
+            tag_acl=config.gravitino.tag_access_rules != {},
+            retention=True,
         )
 
     original_sigterm = signal.getsignal(signal.SIGTERM)
@@ -138,6 +182,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     finally:
         if gravitino_sync is not None:
             gravitino_sync.stop()
+        if retention_enforcer is not None:
+            retention_enforcer.stop()
         lake.shutdown()
         signal.signal(signal.SIGTERM, original_sigterm)
         signal.signal(signal.SIGINT, original_sigint)

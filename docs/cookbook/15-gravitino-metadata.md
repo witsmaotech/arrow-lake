@@ -739,3 +739,130 @@ result = rbac.check_permission("user@example.com", "articles", "read")
 # Full Gravitino governance workflow (12 steps)
 python docs/cookbook/examples_api/33_gravitino_metadata_governance.py
 ```
+
+***
+
+## v1.4.2 — Deep Governance Integration
+
+> The following capabilities close the governance loop: policies are enforced at query time,
+> statistics drive query routing, model versions are resolved from Gravitino, and lineage is
+> modeled as table properties.
+
+### Retention Policy Enforcement
+
+Retention policies are enforced by a background `RetentionEnforcer` thread that periodically
+reads policies from Gravitino and calls `LanceDataset.cleanup_old_versions()`:
+
+```bash
+# Manual trigger (dry-run first)
+curl -X POST "http://localhost:8000/metadata/policies/enforce?dry_run=true" \
+  -H "X-API-Key: your-key"
+
+# Actual enforcement for a specific table
+curl -X POST "http://localhost:8000/metadata/policies/enforce?table=access_logs" \
+  -H "X-API-Key: your-key"
+```
+
+Configuration: `retention_enforce_interval_seconds: 3600` (default hourly).
+
+### Column-Level Masking at Query Time
+
+When a masking policy is applied to a table, the `MaskingEngine` intercepts query results in
+`apply_table_filter()`. Non-admin roles see masked values automatically:
+
+```python
+# In rbac.py apply_table_filter():
+# 1. Column/row ACL filtering
+# 2. MaskingEngine.apply_masking(table, dataset, role)
+#    - redact: replace all chars with *
+#    - hash: SHA-256 truncated to 16 chars
+#    - partial: keep first/last 2 chars
+#    - nullify: replace with null
+
+# Viewer querying a table with email masking sees:
+# email: "user@test.com" → "*************"
+# name: "Alice" → "Alice" (not masked)
+```
+
+### Tag-Driven Access Control
+
+`TagAwareACLResolver` periodically syncs Gravitino column tags to local ACLs:
+
+```yaml
+# config.yaml
+gravitino:
+  tag_access_rules:
+    pii:       {visible_to: ["admin"]}
+    sensitive: {visible_to: ["admin", "editor"]}
+```
+
+When column `email` is tagged `pii`, non-admin roles automatically have that column excluded
+from query results via the existing `PermissionChecker` pipeline.
+
+### Statistics-Driven Query Routing
+
+`StatsInjector` reads table statistics from Gravitino and provides hints:
+
+```python
+from arrow_lake.query.stats_injector import StatsInjector
+
+injector = StatsInjector(config.gravitino)
+hints = injector.get_hints("large_table")
+# QueryHints(estimated_rows=5_000_000, column_count=12, size_mb=250.0)
+
+if hints.estimated_rows > config.gravitino.stats_auto_route_threshold:
+    # Auto-route to DuckDB OLAP (streaming) instead of Daft (in-memory)
+    pass
+```
+
+### Model Registry Resolution
+
+`RegistryModelResolver` bridges Gravitino Model Catalog to embed/rag modules:
+
+```python
+from arrow_lake.embed.registry_resolver import RegistryModelResolver
+
+resolver = RegistryModelResolver(config.gravitino)
+model_path = resolver.resolve_model_path("text-embedder")
+# → "s3://models/text-embedder/v2" (from Gravitino production version)
+
+# In encoder.py: LocalEmbeddingEncoder can use this instead of hardcoded model_name
+```
+
+### Lineage as Table Properties
+
+Lineage events now write rich metadata to Gravitino table properties:
+
+```bash
+curl http://localhost:8000/metadata/lineage/articles -H "X-API-Key: your-key"
+```
+
+```json
+{
+  "success": true,
+  "data": {
+    "table": "articles",
+    "operation": "ingest",
+    "timestamp": "2026-05-22T10:30:00",
+    "sources": ["raw/articles.csv"],
+    "outputs": ["articles"],
+    "lance_version": "5"
+  }
+}
+```
+
+### Federated Query with Metadata Resolution
+
+`FederatedQueryEngine` resolves table metadata (format, location) from Gravitino before reading:
+
+```python
+from arrow_lake.query.federated_engine import FederatedQueryEngine
+
+engine = FederatedQueryEngine(config.gravitino)
+resolution = engine.resolve_table("hive-catalog.default.orders")
+# → TableResolution(format="parquet", location="s3://warehouse/orders")
+
+df = engine.load_dataset("hive-catalog.default.orders")
+# → daft.read_parquet("s3://warehouse/orders")  (auto-detected from metadata)
+```
+

@@ -29,7 +29,7 @@ x-arrow-lake: &arrow-lake
     context: ..
     dockerfile: deploy/Dockerfile
     network: host
-  image: arrow-lake:1.4.1
+  image: arrow-lake:1.4.2
   restart: unless-stopped
   env_file:
     - path: ../.env

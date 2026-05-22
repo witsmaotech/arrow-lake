@@ -309,8 +309,64 @@ Gravitino RBAC 检查失败时返回 `None`，Arrow Lake 降级到本地 JWT/RBA
 | `POST` | `/metadata/statistics/{name}` | 采集统计 |
 | `GET` | `/metadata/models` | 列出模型 |
 | `GET` | `/metadata/models/{name}/versions` | 模型版本 |
+| `POST` | `/metadata/policies/enforce` | 手动触发保留策略执行 |
+| `GET` | `/metadata/lineage/{name}` | 查询表血缘信息 |
 
 ```bash
 # 完整治理流程（12 步）
 python docs/cookbook/examples_api/33_gravitino_metadata_governance.py
 ```
+
+***
+
+## v1.4.2 — 深度治理闭环
+
+> 以下能力让治理形成闭环：策略在查询时执行、统计驱动查询路由、模型版本从 Gravitino 解析、血缘建模为表属性。
+
+### 保留策略执行
+
+后台 `RetentionEnforcer` 线程周期读取保留策略，调用 `LanceDataset.cleanup_old_versions()` 清理过期版本：
+
+```bash
+# 先 dry-run 查看要清理什么
+curl -X POST "http://localhost:8000/metadata/policies/enforce?dry_run=true" \
+  -H "X-API-Key: your-key"
+```
+
+### 查询时列级脱敏
+
+`MaskingEngine` 在 `apply_table_filter` 中拦截查询结果，非 admin 角色自动看到脱敏值：
+
+- `redact` — 全部替换为 `*`
+- `hash` — SHA-256 截断 16 字符
+- `partial` — 保留首尾 2 字符
+- `nullify` — 替换为 null
+
+### 标签驱动访问控制
+
+`TagAwareACLResolver` 周期将 Gravitino 列级标签同步为本地 ACL：
+
+```yaml
+gravitino:
+  tag_access_rules:
+    pii: {visible_to: ["admin"]}
+    sensitive: {visible_to: ["admin", "editor"]}
+```
+
+列 `email` 被标记 `pii` 后，非 admin 角色查询结果自动排除该列。
+
+### 统计驱动查询路由
+
+`StatsInjector` 从 Gravitino 读取表统计信息，当 `estimated_rows > threshold` 时自动路由到 DuckDB OLAP（流式）而非 Daft（内存）。
+
+### 模型注册中心解析
+
+`RegistryModelResolver` 让 embed/rag 模块从 Gravitino 获取 production 模型路径，而非硬编码配置。缓存过期后自动获取新版本。
+
+### 血缘表属性
+
+血缘事件写入 Gravitino 表属性（operation/timestamp/sources/outputs），通过 `GET /metadata/lineage/{name}` 可查。
+
+### 联邦查询元数据驱动
+
+`FederatedQueryEngine` 从 Gravitino 解析表元数据（格式、位置），自动选择 `daft.read_lance`/`read_parquet`/`read_csv`。

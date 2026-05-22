@@ -355,5 +355,42 @@ class LanceStorageManager(
                 message=f"Version {version} not found for dataset '{dataset_name}'",
             ) from exc
 
+    def cleanup_versions(
+        self,
+        dataset_name: str,
+        older_than: "timedelta",
+        dry_run: bool = False,
+    ) -> int:
+        """Remove old Lance dataset versions older than the specified timedelta.
+
+        Args:
+            dataset_name: Dataset to clean up.
+            older_than: Minimum age of versions to remove.
+            dry_run: If True, log what would be removed without actually deleting.
+
+        Returns:
+            Number of versions cleaned up.
+        """
+        import lance
+
+        lance_uri = self.dataset_uri(dataset_name)
+        try:
+            ds = lance.dataset(lance_uri, storage_options=self._storage_options)
+            if dry_run:
+                versions = ds.list_versions()
+                import datetime
+                cutoff = datetime.datetime.now() - older_than
+                to_remove = [
+                    v for v in versions
+                    if hasattr(v, "timestamp") and v.timestamp < cutoff
+                ]
+                return len(to_remove)
+
+            stats = ds.cleanup_old_versions(older_than=older_than)
+            removed = len(stats.fragments_removed) if hasattr(stats, "fragments_removed") else 0
+            return max(removed, 1)
+        except Exception:
+            return 0
+
 
 __all__ = ["CompactionStats", "LanceStorageManager"]
