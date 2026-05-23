@@ -64,9 +64,10 @@ class Ingestor(_FileIngestMixin, _MediaIngestMixin, _SourceIngestMixin):
         ".parquet": "parquet",
     }
 
-    def __init__(self, manager: Any) -> None:
+    def __init__(self, manager: Any, quality_gate: Any | None = None) -> None:
         self._manager = manager
         self._first_table_seen: dict[str, bool] = {}
+        self._quality_gate = quality_gate
 
     def _write_table(
         self,
@@ -76,6 +77,17 @@ class Ingestor(_FileIngestMixin, _MediaIngestMixin, _SourceIngestMixin):
         source_path: str,
     ) -> None:
         """Write a table to the dataset (create or append) and track the source."""
+        if self._quality_gate is not None:
+            table, result = self._quality_gate.check(table, dataset_name=dataset_name)
+            if result.rejected > 0:
+                import structlog
+                structlog.get_logger(__name__).info(
+                    "quality_gate.rejections",
+                    dataset=dataset_name,
+                    rejected=result.rejected,
+                    reasons=result.rejection_reasons,
+                )
+
         if not self._first_table_seen.get(dataset_name, False):
             self._manager.create_dataset(dataset_name, table)
             self._first_table_seen[dataset_name] = True

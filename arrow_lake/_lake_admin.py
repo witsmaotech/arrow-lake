@@ -16,6 +16,10 @@ if TYPE_CHECKING:
 class _LakeAdminMixin:
     """Provides catalog listing, dataset management, workflow introspection, versioning, backup, and health."""
 
+    def _trace_span(self, name: str, **attrs: Any) -> Any:
+        from arrow_lake.api.telemetry import get_tracer
+        return get_tracer().start_as_current_span(name, attributes=attrs)
+
     def catalog(self) -> CatalogResult:
         """List all datasets with metadata (Story 7.1).
 
@@ -72,7 +76,8 @@ class _LakeAdminMixin:
         Args:
             name: Dataset name to delete.
         """
-        self._get_storage().delete_dataset(name)
+        with self._trace_span("delete_dataset", dataset=name):
+            self._get_storage().delete_dataset(name)
         from arrow_lake.core.metrics import catalog_tables_total, get_metrics_enabled
 
         if get_metrics_enabled():
@@ -166,7 +171,8 @@ class _LakeAdminMixin:
         Returns:
             CompactionStats with before/after file counts and sizes.
         """
-        return self._get_storage().compact(name)
+        with self._trace_span("compact_dataset", dataset=name):
+            return self._get_storage().compact(name)
 
     def read_dataset(self, name: str, *, columns: list[str] | None = None) -> Any:
         """Read a dataset as an Arrow table.
@@ -263,11 +269,12 @@ class _LakeAdminMixin:
             lance_base_uri=self._base_uri,
             blob_store=blob_store,
         )
-        return mgr.create_backup(
-            dataset_names=dataset_names,
-            blob_prefixes=blob_prefixes,
-            backup_id=backup_id,
-        )
+        with self._trace_span("backup_create", datasets=len(dataset_names or [])):
+            return mgr.create_backup(
+                dataset_names=dataset_names,
+                blob_prefixes=blob_prefixes,
+                backup_id=backup_id,
+            )
 
     def backup_restore(
         self,
@@ -301,11 +308,12 @@ class _LakeAdminMixin:
             lance_base_uri=self._base_uri,
             blob_store=blob_store,
         )
-        return mgr.restore_backup(
-            backup_id,
-            dataset_names=dataset_names,
-            blob_prefixes=blob_prefixes,
-            overwrite=overwrite,
+        with self._trace_span("backup_restore", backup_id=backup_id):
+            return mgr.restore_backup(
+                backup_id,
+                dataset_names=dataset_names,
+                blob_prefixes=blob_prefixes,
+                overwrite=overwrite,
         )
 
     def backup_list(self) -> list[BackupInfo]:

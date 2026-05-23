@@ -125,3 +125,51 @@ async def quality_rules(
         ],
         total_affected_rows=total_affected,
     )
+
+
+@router.get("/{name}/quality/profile")
+async def quality_profile(
+    name: str = Path(..., pattern=_NAME_PATTERN),
+    *,
+    lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.VIEWER)),
+) -> dict:
+    """Get quality profile for a dataset — column-level statistics and quality scores."""
+    from arrow_lake.quality.profiler import QualityProfiler
+
+    table = await run_sync(
+        lake.read_dataset, name,
+        timeout=_QUALITY_TIMEOUT, label="quality_profile_read",
+    )
+
+    profiler = QualityProfiler()
+    profile = profiler.profile(table, name)
+
+    columns = []
+    for cp in profile.column_profiles:
+        col_data = {
+            "name": cp.name,
+            "dtype": cp.dtype,
+            "null_count": cp.null_count,
+            "null_percentage": cp.null_percentage,
+            "unique_count": cp.unique_count,
+            "min_value": cp.min_value,
+            "max_value": cp.max_value,
+        }
+        if cp.histogram is not None:
+            col_data["histogram"] = [dict(b) for b in cp.histogram]
+        columns.append(col_data)
+
+    return {
+        "success": True,
+        "data": {
+            "dataset_name": profile.dataset_name,
+            "total_rows": profile.total_rows,
+            "total_columns": profile.total_columns,
+            "overall_quality_score": profile.overall_quality_score,
+            "profiled_at": profile.profiled_at,
+            "columns": columns,
+        },
+        "error": None,
+        "metadata": {},
+    }

@@ -16,6 +16,10 @@ if TYPE_CHECKING:
 class _LakeIngestMixin:
     """Provides data ingestion, dataset management, quality filtering, and dedup."""
 
+    def _trace_span(self, name: str, **attrs: Any) -> Any:
+        from arrow_lake.api.telemetry import get_tracer
+        return get_tracer().start_as_current_span(name, attributes=attrs)
+
     def ingest(
         self,
         dataset_name: str,
@@ -492,7 +496,8 @@ class _LakeIngestMixin:
         rows = data.num_rows
         nbytes = data.nbytes
         try:
-            self._get_storage().upsert_dataset(dataset_name, data, on=on)
+            with self._trace_span("upsert", dataset=dataset_name, rows=rows):
+                self._get_storage().upsert_dataset(dataset_name, data, on=on)
         except (StorageError, OSError, ValueError) as exc:
             if get_metrics_enabled():
                 ingestion_errors_total.labels(source=source, error_type=type(exc).__name__).inc()
@@ -523,7 +528,8 @@ class _LakeIngestMixin:
         from arrow_lake.core.metrics import _QueryTimer
 
         with _QueryTimer("delete_rows"):
-            return self._get_storage().delete_rows(dataset_name, where)
+            with self._trace_span("delete_rows", dataset=dataset_name):
+                return self._get_storage().delete_rows(dataset_name, where)
 
     def update_rows(
         self,
@@ -544,7 +550,8 @@ class _LakeIngestMixin:
         from arrow_lake.core.metrics import _QueryTimer
 
         with _QueryTimer("update_rows"):
-            self._get_storage().update_rows(dataset_name, where, values)
+            with self._trace_span("update_rows", dataset=dataset_name):
+                self._get_storage().update_rows(dataset_name, where, values)
 
     def quality_filter(
         self,

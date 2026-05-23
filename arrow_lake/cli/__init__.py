@@ -339,6 +339,7 @@ from arrow_lake.cli import (  # noqa: E402 — runtime import for lazy loading
     kg,
     lifecycle,
     lineage,
+    maintenance,
     quality,
     query,
     rag,
@@ -360,6 +361,7 @@ main.add_command(audit.audit_group, name="audit")
 main.add_command(lineage.lineage_group, name="lineage")
 main.add_command(lifecycle.lifecycle_group, name="lifecycle")
 main.add_command(config_cmd.config_group, name="config")
+main.add_command(maintenance.maintenance_group, name="maintenance")
 
 kg.kg_group.add_command(kg.traverser_group, name="traverser")
 kg.kg_group.add_command(kg.algo_group, name="algo")

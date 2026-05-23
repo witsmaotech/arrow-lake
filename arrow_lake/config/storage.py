@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, field_validator, model_validator
 
 from arrow_lake.config._enums import StorageBackend
 
@@ -49,6 +49,19 @@ class StorageConfig(BaseModel):
 
     # Lance read cache (bytes, 0 = disabled)
     lance_cache_size: int = 0
+
+    # Automated maintenance
+    maintenance_enabled: bool = False
+    maintenance_interval_seconds: int = 3600
+    compaction_fragment_threshold: int = 20
+    version_retention_days: int = 7
+
+    @field_validator("maintenance_interval_seconds")
+    @classmethod
+    def _validate_maintenance_interval(cls, v: int) -> int:
+        if v < 60:
+            raise ValueError(f"maintenance_interval_seconds must be >= 60, got {v}")
+        return v
 
     @model_validator(mode="after")
     def _validate_remote_backend(self) -> StorageConfig:

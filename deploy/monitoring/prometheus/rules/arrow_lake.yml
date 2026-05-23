@@ -9,6 +9,7 @@ groups:
         annotations:
           summary: "Service {{ $labels.instance }} is down"
           description: "Prometheus target {{ $labels.job }} has been down for 2 minutes."
+          runbook_url: "https://github.com/arrow-lake/runbooks/blob/main/service-down.md"
 
       - alert: HighMemoryUsage
         expr: process_resident_memory_bytes / (1024 * 1024) > 3500
@@ -18,6 +19,7 @@ groups:
         annotations:
           summary: "High memory usage on {{ $labels.job }}"
           description: "Memory usage is {{ $value | printf \"%.0f\" }}MB."
+          runbook_url: "https://github.com/arrow-lake/runbooks/blob/main/high-memory.md"
 
   - name: arrow_lake_api
     rules:
@@ -29,6 +31,7 @@ groups:
         annotations:
           summary: "API error rate above 5%"
           description: "Error rate is {{ $value | printf \"%.2f\" }} on {{ $labels.query_type }}."
+          runbook_url: "https://github.com/arrow-lake/runbooks/blob/main/high-error-rate.md"
 
       - alert: HighLatency
         expr: histogram_quantile(0.95, rate(arrow_lake_query_latency_seconds_bucket[5m])) > 10
@@ -38,6 +41,7 @@ groups:
         annotations:
           summary: "P95 latency above 10s"
           description: "P95 latency is {{ $value | printf \"%.1f\" }}s."
+          runbook_url: "https://github.com/arrow-lake/runbooks/blob/main/high-latency.md"
 
       - alert: RateLimitRejections
         expr: increase(arrow_lake_rate_limit_rejected_total[5m]) > 50
@@ -47,6 +51,7 @@ groups:
         annotations:
           summary: "High rate limit rejection count"
           description: "{{ $value }} requests rejected in 5 minutes."
+          runbook_url: "https://github.com/arrow-lake/runbooks/blob/main/rate-limit.md"
 
   - name: arrow_lake_duckdb_pool
     rules:
@@ -58,6 +63,7 @@ groups:
         annotations:
           summary: "DuckDB connection pool near exhaustion"
           description: "Pool utilization is {{ $value | printf \"%.0f\" }}% on {{ $labels.job }}. Consider increasing API_REPLICAS or max_concurrent_queries."
+          runbook_url: "https://github.com/arrow-lake/runbooks/blob/main/duckdb-pool.md"
 
       - alert: DuckDBPoolQueued
         expr: arrow_lake_duckdb_pool_queued_requests > 0
@@ -67,3 +73,39 @@ groups:
         annotations:
           summary: "DuckDB queries are queuing"
           description: "{{ $value }} queries waiting for a DuckDB session on {{ $labels.job }}."
+          runbook_url: "https://github.com/arrow-lake/runbooks/blob/main/duckdb-pool.md"
+
+  - name: arrow_lake_maintenance
+    rules:
+      - alert: MaintenanceCycleStale
+        expr: time() - arrow_lake_maintenance_last_run_timestamp > 7200
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Maintenance cycle has not run in over 2 hours"
+          description: "Expected interval is 3600s. Last run was {{ $value | printf \"%.0f\" }}s ago. Check maintenance scheduler."
+          runbook_url: "https://github.com/arrow-lake/runbooks/blob/main/maintenance-stale.md"
+
+      - alert: HighCompactionFragmentDelta
+        expr: arrow_lake_maintenance_compaction_fragments_delta > 100
+        for: 5m
+        labels:
+          severity: info
+        annotations:
+          summary: "High fragment reduction in last compaction"
+          description: "Compaction removed {{ $value }} fragments on {{ $labels.dataset }}."
+
+  - name: arrow_lake_quality
+    rules:
+      - alert: HighQualityRejectionRate
+        expr: |
+          rate(arrow_lake_quality_reject_total[10m])
+          / on(dataset) rate(arrow_lake_quality_check_total[10m]) > 0.3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Quality gate rejection rate above 30%"
+          description: "Rejection rate on {{ $labels.dataset }} is {{ $value | printf \"%.0f\" }}%. Check data source quality."
+          runbook_url: "https://github.com/arrow-lake/runbooks/blob/main/high-rejection-rate.md"

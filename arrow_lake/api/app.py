@@ -25,6 +25,7 @@ from arrow_lake.api.routers.export import router as export_router
 from arrow_lake.api.routers.gravitino import router as gravitino_router
 from arrow_lake.api.routers.knowledge_graph import router as kg_router
 from arrow_lake.api.routers.lineage import router as lineage_router
+from arrow_lake.api.routers.maintenance import router as maintenance_router
 from arrow_lake.api.routers.quality import router as quality_router
 from arrow_lake.api.routers.query import router as query_router
 from arrow_lake.api.routers.rag import router as rag_router
@@ -157,6 +158,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         retention_enforcer.start()
         app.state.retention_enforcer = retention_enforcer
 
+    # ── v1.4.3: MaintenanceScheduler ──
+    maintenance_scheduler: object | None = None
+    if config.storage.maintenance_enabled:
+        from arrow_lake.ingest.maintenance_scheduler import MaintenanceScheduler
+
+        maintenance_scheduler = MaintenanceScheduler(
+            storage=lake._storage, config=config.storage,
+        )
+        maintenance_scheduler.start()
+        app.state.maintenance_scheduler = maintenance_scheduler
+
         logger.info(
             "gravitino_integration_enabled",
             uri=config.gravitino.uri,
@@ -184,6 +196,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             gravitino_sync.stop()
         if retention_enforcer is not None:
             retention_enforcer.stop()
+        if maintenance_scheduler is not None:
+            maintenance_scheduler.stop()
         lake.shutdown()
         signal.signal(signal.SIGTERM, original_sigterm)
         signal.signal(signal.SIGINT, original_sigint)
@@ -414,6 +428,7 @@ def create_app(config: ArrowLakeConfig | None = None) -> FastAPI:
     app.include_router(kg_router)
     app.include_router(auth_router)
     app.include_router(admin_router)
+    app.include_router(maintenance_router)
 
     # Gravitino metadata router (always registered; returns 503 when disabled)
     if config.gravitino.enabled:

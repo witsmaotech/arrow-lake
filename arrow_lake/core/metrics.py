@@ -217,6 +217,65 @@ duckdb_pool_evicted_connections_total: Counter = Counter(
     registry=REGISTRY,
 )
 
+# --- v1.4.3: Maintenance Metrics ---
+
+maintenance_compaction_runs_total: Counter = Counter(
+    "arrow_lake_maintenance_compaction_runs_total",
+    "Total number of dataset compaction runs.",
+    registry=REGISTRY,
+    labelnames=["dataset"],
+)
+
+maintenance_vacuum_runs_total: Counter = Counter(
+    "arrow_lake_maintenance_vacuum_runs_total",
+    "Total number of version cleanup runs.",
+    registry=REGISTRY,
+    labelnames=["dataset"],
+)
+
+maintenance_compaction_fragments_delta: Gauge = Gauge(
+    "arrow_lake_maintenance_compaction_fragments_delta",
+    "Change in fragment count from last compaction (before - after).",
+    registry=REGISTRY,
+    labelnames=["dataset"],
+)
+
+maintenance_cycle_duration_seconds: Gauge = Gauge(
+    "arrow_lake_maintenance_cycle_duration_seconds",
+    "Duration of the last maintenance cycle in seconds.",
+    registry=REGISTRY,
+)
+
+maintenance_last_run_timestamp: Gauge = Gauge(
+    "arrow_lake_maintenance_last_run_timestamp",
+    "Unix timestamp of the last maintenance cycle completion.",
+    registry=REGISTRY,
+)
+
+# --- v1.4.3: Quality Gate Metrics ---
+
+quality_check_total: Counter = Counter(
+    "arrow_lake_quality_check_total",
+    "Total number of quality gate checks run.",
+    registry=REGISTRY,
+    labelnames=["dataset"],
+)
+
+quality_reject_total: Counter = Counter(
+    "arrow_lake_quality_reject_total",
+    "Total number of rows rejected by quality gates.",
+    registry=REGISTRY,
+    labelnames=["dataset", "reason"],
+)
+
+quality_score_distribution: Histogram = Histogram(
+    "arrow_lake_quality_score_distribution",
+    "Distribution of quality scores for ingested rows.",
+    registry=REGISTRY,
+    labelnames=["dataset"],
+    buckets=[0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
+)
+
 # --- Metrics toggle (thread-safe via Event) ---
 
 _metrics_enabled = threading.Event()

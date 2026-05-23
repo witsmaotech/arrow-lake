@@ -74,6 +74,28 @@ def _check_lance_rest(uri: str) -> tuple[str, bool]:
         return "unreachable", False
 
 
+def _check_ray(ray_address: str) -> tuple[str, bool]:
+    """Check Ray cluster health. Returns (status_text, is_ok)."""
+    try:
+        import ray
+        if not ray.is_initialized():
+            ray.init(address=ray_address, ignore_reinit_error=True, log_to_driver=False)
+        return "healthy", True
+    except Exception:
+        return "unreachable", False
+
+
+def _check_redis(redis_url: str) -> tuple[str, bool]:
+    """Check Redis connectivity. Returns (status_text, is_ok)."""
+    try:
+        import redis as redis_lib
+        client = redis_lib.from_url(redis_url, socket_timeout=3)
+        client.ping()
+        return "healthy", True
+    except Exception:
+        return "unreachable", False
+
+
 @router.get("/health/live", summary="Liveness probe")
 async def health_live() -> dict:
     """Lightweight liveness check — returns 200 if process is running."""
@@ -113,6 +135,18 @@ async def health_ready(
     status["storage"] = storage_text
     if not storage_ok:
         status["status"] = "degraded"
+
+    # Dependency probes (non-fatal — informational only)
+    if config.gravitino.enabled:
+        grav_text, grav_ok = _check_gravitino(config.gravitino.uri)
+        status["gravitino"] = grav_text
+    if hasattr(config, "compute") and getattr(config.compute, "ray_address", ""):
+        ray_text, _ = _check_ray(config.compute.ray_address)
+        status["ray"] = ray_text
+    if hasattr(config, "redis") and getattr(config.redis, "enabled", False):
+        redis_text, _ = _check_redis(config.redis.url)
+        status["redis"] = redis_text
+
     if request is not None:
         _attach_pool_stats(status, request)
     http_code = 200 if status["status"] == "ok" else 503
