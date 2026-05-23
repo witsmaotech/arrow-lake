@@ -29,7 +29,7 @@ x-arrow-lake: &arrow-lake
     context: ..
     dockerfile: deploy/Dockerfile
     network: host
-  image: arrow-lake:1.4.2
+  image: arrow-lake:1.4.3
   restart: unless-stopped
   env_file:
     - path: ../.env
@@ -135,8 +135,8 @@ services:
       HTTPS_PROXY: "http://host.docker.internal:17887"
       http_proxy: "http://host.docker.internal:17887"
       https_proxy: "http://host.docker.internal:17887"
-      NO_PROXY: "127.0.0.1,localhost,host.docker.internal,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,172.19.0.0/16,172.30.0.0/16,minio,redis,ray-head,metaflow-metadata,metaflow-db,prometheus,grafana,jaeger,loki,promtail,hg-server,hg-pd,hg-store,gravitino,lance-rest,arrow-lake-gravitino,arrow-lake-lance-rest"
-      no_proxy: "127.0.0.1,localhost,host.docker.internal,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,172.19.0.0/16,172.30.0.0/16,minio,redis,ray-head,metaflow-metadata,metaflow-db,prometheus,grafana,jaeger,loki,promtail,hg-server,hg-pd,hg-store,gravitino,lance-rest,arrow-lake-gravitino,arrow-lake-lance-rest"
+      NO_PROXY: "127.0.0.1,localhost,host.docker.internal,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,172.19.0.0/16,172.30.0.0/16,minio,redis,ray-head,metaflow-metadata,metaflow-db,prometheus,grafana,jaeger,loki,promtail,alertmanager,hg-server,hg-pd,hg-store,gravitino,lance-rest,arrow-lake-gravitino,arrow-lake-lance-rest"
+      no_proxy: "127.0.0.1,localhost,host.docker.internal,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,172.19.0.0/16,172.30.0.0/16,minio,redis,ray-head,metaflow-metadata,metaflow-db,prometheus,grafana,jaeger,loki,promtail,alertmanager,hg-server,hg-pd,hg-store,gravitino,lance-rest,arrow-lake-gravitino,arrow-lake-lance-rest"
       ARROW_LAKE__EMBEDDING__API_BASE: "${OLLAMA_API_BASE:-http://172.19.0.40:11434/v1}"
       ARROW_LAKE__HUGEGRAPH__HOST: "${HUGEGRAPH_HOST:-hg-server}"
       ARROW_LAKE__HUGEGRAPH__PORT: "${HUGEGRAPH_PORT:-8080}"
@@ -153,6 +153,16 @@ services:
       ARROW_LAKE__GRAVITINO__URI: "http://arrow-lake-gravitino:8090"
       ARROW_LAKE__GRAVITINO__METALAKE: "${GRAVITINO_METALAKE:-arrow_lake}"
       ARROW_LAKE__GRAVITINO__LANCE_REST_URI: "http://arrow-lake-lance-rest:9101/lance"
+      # v1.4.3: Automated maintenance
+      ARROW_LAKE__STORAGE__MAINTENANCE_ENABLED: "${MAINTENANCE_ENABLED:-true}"
+      ARROW_LAKE__STORAGE__MAINTENANCE_INTERVAL_SECONDS: "${MAINTENANCE_INTERVAL:-3600}"
+      ARROW_LAKE__STORAGE__COMPACTION_FRAGMENT_THRESHOLD: "${COMPACTION_THRESHOLD:-20}"
+      ARROW_LAKE__STORAGE__VERSION_RETENTION_DAYS: "${VERSION_RETENTION_DAYS:-7}"
+      # v1.4.3: OpenTelemetry distributed tracing
+      ARROW_LAKE__OPENTELEMETRY__ENABLED: "${OTEL_ENABLED:-true}"
+      ARROW_LAKE__OPENTELEMETRY__SERVICE_NAME: "arrow-lake"
+      ARROW_LAKE__OPENTELEMETRY__OTEL_ENDPOINT: "http://jaeger:4317"
+      ARROW_LAKE__OPENTELEMETRY__TRACE_SAMPLE_RATE: "${OTEL_SAMPLE_RATE:-0.1}"
     volumes:
       - duckdb-data:/app/.duckdb
       - lake-data:/data/lake
@@ -366,8 +376,8 @@ services:
       HTTPS_PROXY: "http://host.docker.internal:17887"
       http_proxy: "http://host.docker.internal:17887"
       https_proxy: "http://host.docker.internal:17887"
-      NO_PROXY: "127.0.0.1,localhost,host.docker.internal,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,172.19.0.0/16,172.30.0.0/16,minio,redis,ray-head,metaflow-metadata,metaflow-db,prometheus,grafana,jaeger,loki,promtail,hg-server,hg-pd,hg-store,gravitino,lance-rest,arrow-lake-gravitino,arrow-lake-lance-rest"
-      no_proxy: "127.0.0.1,localhost,host.docker.internal,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,172.19.0.0/16,172.30.0.0/16,minio,redis,ray-head,metaflow-metadata,metaflow-db,prometheus,grafana,jaeger,loki,promtail,hg-server,hg-pd,hg-store,gravitino,lance-rest,arrow-lake-gravitino,arrow-lake-lance-rest"
+      NO_PROXY: "127.0.0.1,localhost,host.docker.internal,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,172.19.0.0/16,172.30.0.0/16,minio,redis,ray-head,metaflow-metadata,metaflow-db,prometheus,grafana,jaeger,loki,promtail,alertmanager,hg-server,hg-pd,hg-store,gravitino,lance-rest,arrow-lake-gravitino,arrow-lake-lance-rest"
+      no_proxy: "127.0.0.1,localhost,host.docker.internal,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,172.19.0.0/16,172.30.0.0/16,minio,redis,ray-head,metaflow-metadata,metaflow-db,prometheus,grafana,jaeger,loki,promtail,alertmanager,hg-server,hg-pd,hg-store,gravitino,lance-rest,arrow-lake-gravitino,arrow-lake-lance-rest"
     volumes:
       - lake-data:/data/lake
     shm_size: 256m
@@ -428,8 +438,8 @@ services:
       HTTPS_PROXY: "http://host.docker.internal:17887"
       http_proxy: "http://host.docker.internal:17887"
       https_proxy: "http://host.docker.internal:17887"
-      NO_PROXY: "127.0.0.1,localhost,host.docker.internal,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,172.19.0.0/16,172.30.0.0/16,minio,redis,ray-head,metaflow-metadata,metaflow-db,prometheus,grafana,jaeger,loki,promtail,hg-server,hg-pd,hg-store,gravitino,lance-rest,arrow-lake-gravitino,arrow-lake-lance-rest"
-      no_proxy: "127.0.0.1,localhost,host.docker.internal,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,172.19.0.0/16,172.30.0.0/16,minio,redis,ray-head,metaflow-metadata,metaflow-db,prometheus,grafana,jaeger,loki,promtail,hg-server,hg-pd,hg-store,gravitino,lance-rest,arrow-lake-gravitino,arrow-lake-lance-rest"
+      NO_PROXY: "127.0.0.1,localhost,host.docker.internal,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,172.19.0.0/16,172.30.0.0/16,minio,redis,ray-head,metaflow-metadata,metaflow-db,prometheus,grafana,jaeger,loki,promtail,alertmanager,hg-server,hg-pd,hg-store,gravitino,lance-rest,arrow-lake-gravitino,arrow-lake-lance-rest"
+      no_proxy: "127.0.0.1,localhost,host.docker.internal,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,172.19.0.0/16,172.30.0.0/16,minio,redis,ray-head,metaflow-metadata,metaflow-db,prometheus,grafana,jaeger,loki,promtail,alertmanager,hg-server,hg-pd,hg-store,gravitino,lance-rest,arrow-lake-gravitino,arrow-lake-lance-rest"
     volumes:
       - lake-data:/data/lake
     shm_size: 256m
@@ -533,6 +543,7 @@ services:
       - "--storage.tsdb.path=/prometheus"
       - "--storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-30d}"
       - "--web.listen-address=0.0.0.0:9090"
+      - "--alertmanager.url=http://alertmanager:9093"
     deploy:
       resources:
         limits:
@@ -556,6 +567,42 @@ services:
     stop_grace_period: 15s
 
   # ---------------------------------------------------------------------------
+  # Alertmanager — Alert routing and notifications
+  # ---------------------------------------------------------------------------
+  alertmanager:
+    image: prom/alertmanager:${ALERTMANAGER_VERSION:-v0.27.0}
+    container_name: arrow-lake-alertmanager
+    restart: unless-stopped
+    ports:
+      - "${ALERTMANAGER_PORT:-9094}:9093"
+    volumes:
+      - ./monitoring/prometheus/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    networks:
+      - arrow-lake-net
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--web.listen-address=0.0.0.0:9093"
+    deploy:
+      resources:
+        limits:
+          memory: ${ALERTMANAGER_MEMORY_LIMIT:-256M}
+          cpus: "${ALERTMANAGER_CPU_LIMIT:-0.25}"
+          pids: 32
+        reservations:
+          memory: 64M
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9093/-/healthy 2>/dev/null || nc -z localhost 9093"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+    stop_grace_period: 10s
+
+  # ---------------------------------------------------------------------------
   # Grafana — Dashboards
   # ---------------------------------------------------------------------------
   grafana:
@@ -574,6 +621,7 @@ services:
     volumes:
       - grafana-data:/var/lib/grafana
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../deploy/grafana:/var/lib/grafana/dashboards/arrow-lake:ro
     networks:
       - arrow-lake-net
     depends_on:

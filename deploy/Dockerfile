@@ -61,7 +61,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     && uv pip install --no-cache-dir jupyterlab ipywidgets \
     && uv pip install --no-cache-dir modelscope>=1.18 \
     && uv pip install --no-cache-dir PyJWT \
-    && uv pip install --no-cache-dir "apache-gravitino>=1.2.1"
+    && uv pip install --no-cache-dir "apache-gravitino>=1.2.1" \
+    && uv pip install --no-cache-dir ".[otel]"
 
 # ==============================================================================
 # Stage 2 — runtime
