@@ -217,6 +217,24 @@ duckdb_pool_evicted_connections_total: Counter = Counter(
     registry=REGISTRY,
 )
 
+duckdb_pool_warmup_total: Counter = Counter(
+    "arrow_lake_duckdb_pool_warmup_total",
+    "Total number of DuckDB connections warmed up at startup.",
+    registry=REGISTRY,
+)
+
+duckdb_pool_warmup_errors_total: Counter = Counter(
+    "arrow_lake_duckdb_pool_warmup_errors_total",
+    "Total number of DuckDB warmup connection failures.",
+    registry=REGISTRY,
+)
+
+duckdb_memory_budget_mb: Gauge = Gauge(
+    "arrow_lake_duckdb_memory_budget_mb",
+    "Configured DuckDB memory budget in MB (max_concurrent_queries * max_query_memory_mb).",
+    registry=REGISTRY,
+)
+
 # --- v1.4.3: Maintenance Metrics ---
 
 maintenance_compaction_runs_total: Counter = Counter(

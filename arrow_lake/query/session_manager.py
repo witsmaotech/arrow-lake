@@ -27,6 +27,7 @@ import duckdb
 
 from arrow_lake.config import OlapConfig, RedisConfig, StorageConfig
 from arrow_lake.core.metrics import (
+    duckdb_memory_budget_mb,
     duckdb_pool_active_sessions,
     duckdb_pool_evicted_connections_total,
     duckdb_pool_health_checks_total,
@@ -35,6 +36,8 @@ from arrow_lake.core.metrics import (
     duckdb_pool_total_errors,
     duckdb_pool_total_queries,
     duckdb_pool_total_timeouts,
+    duckdb_pool_warmup_errors_total,
+    duckdb_pool_warmup_total,
     get_metrics_enabled,
 )
 from arrow_lake.query._db import DuckDBSession
@@ -178,6 +181,10 @@ class DuckDBSessionManager:
         self._slow_query_count = 0
 
         self._closed = False
+
+        # Record memory budget metric
+        if get_metrics_enabled():
+            duckdb_memory_budget_mb.set(olap_config.memory_budget_mb())
 
     @classmethod
     def from_config(
@@ -485,6 +492,40 @@ class DuckDBSessionManager:
             self._slow_query_count,
             len(idle_conns),
         )
+
+    def warmup(self, count: int | None = None) -> dict[str, Any]:
+        """Pre-create connections for cold-start optimization.
+
+        Args:
+            count: Number of connections to pre-create. Defaults to the
+                value from OlapConfig.warmup_connections (usually 2).
+
+        Returns:
+            Dict with warmup results: ``{"warmed": int, "errors": int}``.
+        """
+        if count is None:
+            count = min(self._olap_config.warmup_connections, self.pool_size)
+
+        warmed = 0
+        errors = 0
+        for _ in range(count):
+            try:
+                managed = self.acquire()
+                try:
+                    managed.conn.execute("SELECT 1")
+                finally:
+                    managed.release()
+                warmed += 1
+                if get_metrics_enabled():
+                    duckdb_pool_warmup_total.inc()
+            except Exception as exc:
+                errors += 1
+                if get_metrics_enabled():
+                    duckdb_pool_warmup_errors_total.inc()
+                logger.warning("warmup_connection_failed: %s", exc)
+
+        logger.info("Warmed up %d/%d DuckDB connection(s)", warmed, count)
+        return {"warmed": warmed, "errors": errors}
 
     def _resolve_instance_count(self) -> int:
         """Resolve current cluster instance count from registry or local config."""

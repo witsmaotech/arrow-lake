@@ -95,6 +95,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     lake = Lake(base_uri=config.storage.base_uri, config=config)
     app.state.lake = lake
 
+    # Trigger session manager creation (includes auto-warmup)
+    _ = lake.get_session_manager()
+
     from arrow_lake.api.rbac import PermissionChecker
     app.state.checker = PermissionChecker()
 

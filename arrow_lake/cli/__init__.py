@@ -13,6 +13,7 @@ Usage::
 from __future__ import annotations
 
 import json
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -47,6 +48,59 @@ def _json_output(data: dict[str, Any]) -> None:
     click.echo(json.dumps(data, indent=2, default=str))
 
 
+def _get_output_format(ctx: click.Context) -> str:
+    """Read the output format from click context (table/json/csv)."""
+    return ctx.obj.get("format", "table")
+
+
+def _output_table(ctx: click.Context, table: Table, *, data: list[dict[str, Any]] | None = None) -> None:
+    """Output a Rich table or JSON/CSV based on --format flag.
+
+    When *data* is provided it is used directly for JSON/CSV output;
+    otherwise a best-effort extraction from the Rich Table is attempted
+    (columns only — row data requires the *data* parameter).
+    """
+    fmt = _get_output_format(ctx)
+    if fmt == "json":
+        if data:
+            click.echo(json.dumps(data, indent=2, default=str))
+        else:
+            columns = [col.header for col in table.columns]
+            click.echo(json.dumps(columns, indent=2, default=str))
+    elif fmt == "csv":
+        if data:
+            import csv
+            import io
+            buf = io.StringIO()
+            writer = csv.DictWriter(buf, fieldnames=data[0].keys())
+            writer.writeheader()
+            writer.writerows(data)
+            click.echo(buf.getvalue().rstrip())
+        else:
+            console.print(table)
+    else:
+        console.print(table)
+
+
+def _handle_error(exc: Exception, ctx: click.Context) -> None:
+    """Print structured error output based on verbosity level."""
+    from arrow_lake.exceptions import ArrowLakeError
+
+    verbose = ctx.obj.get("verbose", 0)
+    if isinstance(exc, ArrowLakeError):
+        console.print(f"[red]Error:[/red] {exc.message}")
+        if verbose >= 1:
+            console.print(f"[dim]  code: {exc.error_code.value}[/dim]")
+        if verbose >= 2 and exc.context:
+            console.print(f"[dim]  context: {exc.context}[/dim]")
+    else:
+        console.print(f"[red]Error:[/red] {exc}")
+        if verbose >= 1:
+            import traceback
+            traceback.print_exc()
+    raise SystemExit(1) from None
+
+
 # ---------------------------------------------------------------------------
 # Lake factory
 # ---------------------------------------------------------------------------
@@ -63,8 +117,12 @@ def _lake(base_uri: str, config_path: str | None):
 
 
 def _get_lake(ctx: click.Context):
-    """Create a Lake instance from click context (replaces 3-line boilerplate)."""
-    return _lake(ctx.obj["base_uri"], ctx.obj.get("config_path"))
+    """Get or create a cached Lake instance from click context."""
+    if "lake" not in ctx.obj:
+        lake = _lake(ctx.obj["base_uri"], ctx.obj.get("config_path"))
+        ctx.obj["lake"] = lake
+        ctx.call_on_close(lake.shutdown)
+    return ctx.obj["lake"]
 
 
 # ---------------------------------------------------------------------------
@@ -87,13 +145,33 @@ def _run_async(coro: Any) -> Any:
 @click.group()
 @click.option("--base-uri", default="./data/lake", envvar="ARROW_LAKE_BASE_URI", help="Lake base URI")
 @click.option("--config", "config_path", default=None, help="Path to YAML config file")
+@click.option("-v", "--verbose", count=True, help="Increase verbosity (-v, -vv)")
+@click.option("-q", "--quiet", is_flag=True, help="Suppress non-error output")
+@click.option("--format", "output_format", type=click.Choice(["table", "json", "csv"]), default="table", help="Output format")
 @click.version_option(package_name="arrow-lake", message="%(prog)s %(version)s")
 @click.pass_context
-def main(ctx: click.Context, base_uri: str, config_path: str | None) -> None:
+def main(ctx: click.Context, base_uri: str, config_path: str | None, verbose: int, quiet: bool, output_format: str) -> None:
     """Arrow Lake — Unified multimodal data lakehouse CLI."""
     ctx.ensure_object(dict)
     ctx.obj["base_uri"] = base_uri
     ctx.obj["config_path"] = config_path
+    ctx.obj["verbose"] = verbose
+    ctx.obj["quiet"] = quiet
+    ctx.obj["format"] = output_format
+
+    # Register SIGINT handler to ensure lake.shutdown() on Ctrl+C
+    _original_sigint = signal.getsignal(signal.SIGINT)
+
+    def _sigint_handler(sig: int, frame: Any) -> None:
+        lake = ctx.obj.get("lake")
+        if lake:
+            lake.shutdown()
+        if callable(_original_sigint):
+            _original_sigint(sig, frame)
+        else:
+            sys.exit(130)
+
+    signal.signal(signal.SIGINT, _sigint_handler)
 
 
 # ---------------------------------------------------------------------------

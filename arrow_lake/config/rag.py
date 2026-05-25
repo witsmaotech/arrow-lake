@@ -77,6 +77,15 @@ class RAGConfig(BaseModel):
     enable_citations: bool = True
     session_ttl_seconds: int = 86400
     feedback_enabled: bool = True
+    reranker: str = "none"
+    reranker_model: str = "BAAI/bge-reranker-v2-m3"
+    reranker_top_n: int = 10
+    query_transform: str = "none"
+    hyde_max_tokens: int = 256
+    multi_query_variants: int = 3
+    history_injection_enabled: bool = True
+    history_budget_ratio: float = 0.2
+    history_max_turns: int = 6
 
     @field_validator("context_budget_ratio")
     @classmethod

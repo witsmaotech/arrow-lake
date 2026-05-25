@@ -7,7 +7,7 @@ import json
 import click
 from rich.table import Table
 
-from arrow_lake.cli import _get_lake, _print_error, _print_success, console
+from arrow_lake.cli import _get_lake, _get_output_format, _output_table, _print_error, _print_success, console
 
 
 @click.group()
@@ -28,7 +28,7 @@ def catalog_list_cmd(ctx: click.Context, as_json: bool) -> None:
         _print_error(f"Failed to list datasets: {exc}")
         raise SystemExit(1) from None
 
-    if as_json:
+    if as_json or _get_output_format(ctx) == "json":
         click.echo(json.dumps({"datasets": datasets}, indent=2))
         return
 
@@ -43,7 +43,7 @@ def catalog_list_cmd(ctx: click.Context, as_json: bool) -> None:
     for i, name in enumerate(datasets, 1):
         table.add_row(str(i), name)
 
-    console.print(table)
+    _output_table(ctx, table)
 
 
 @catalog_group.command("info")
@@ -83,8 +83,8 @@ def catalog_info_cmd(ctx: click.Context, name: str) -> None:
     for field in schema:
         col_table.add_row(field.name, str(field.type), str(field.nullable))
 
-    console.print(info_table)
-    console.print(col_table)
+    _output_table(ctx, info_table)
+    _output_table(ctx, col_table)
 
 
 @catalog_group.command("delete")
@@ -182,7 +182,7 @@ def catalog_health(ctx: click.Context) -> None:
         table.add_row(key, str(value))
     if not isinstance(info, dict):
         table.add_row("status", str(info))
-    console.print(table)
+    _output_table(ctx, table)
 
 
 @catalog_group.command("inspect")
@@ -199,7 +199,7 @@ def catalog_inspect(ctx: click.Context, name: str, as_json: bool) -> None:
         _print_error(f"Catalog query failed: {exc}")
         raise SystemExit(1) from None
 
-    if as_json:
+    if as_json or _get_output_format(ctx) == "json":
         import json
         click.echo(json.dumps(result, indent=2, default=str))
         return
@@ -213,4 +213,4 @@ def catalog_inspect(ctx: click.Context, name: str, as_json: bool) -> None:
     table.add_column("Value")
     for key, value in result.items() if isinstance(result, dict) else []:
         table.add_row(key, str(value))
-    console.print(table)
+    _output_table(ctx, table)

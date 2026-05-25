@@ -29,7 +29,7 @@ x-arrow-lake: &arrow-lake
     context: ..
     dockerfile: deploy/Dockerfile
     network: host
-  image: arrow-lake:1.4.3
+  image: arrow-lake:1.4.4
   restart: unless-stopped
   env_file:
     - path: ../.env
@@ -147,6 +147,9 @@ services:
       ARROW_LAKE__OLAP__QUERY_CACHE_ENABLED: "true"
       ARROW_LAKE__OLAP__QUERY_CACHE_TTL_SECONDS: "120"
       ARROW_LAKE__OLAP__PARQUET_ROW_GROUP_SIZE: "100000"
+      # DuckDB warmup + memory protection (v1.4.4)
+      ARROW_LAKE__OLAP__WARMUP_ENABLED: "true"
+      ARROW_LAKE__OLAP__WARMUP_CONNECTIONS: "2"
       # DuckDB horizontal scaling (v1.4)
       ARROW_LAKE__OLAP__INSTANCE_COUNT: "${API_REPLICAS:-1}"
       ARROW_LAKE__GRAVITINO__ENABLED: "${GRAVITINO_ENABLED:-true}"
@@ -158,6 +161,16 @@ services:
       ARROW_LAKE__STORAGE__MAINTENANCE_INTERVAL_SECONDS: "${MAINTENANCE_INTERVAL:-3600}"
       ARROW_LAKE__STORAGE__COMPACTION_FRAGMENT_THRESHOLD: "${COMPACTION_THRESHOLD:-20}"
       ARROW_LAKE__STORAGE__VERSION_RETENTION_DAYS: "${VERSION_RETENTION_DAYS:-7}"
+      # v1.4.4: RAG quality (reranking + query transform + multi-turn)
+      ARROW_LAKE__RAG__RERANKER: "${RAG_RERANKER:-none}"
+      ARROW_LAKE__RAG__RERANKER_MODEL: "${RAG_RERANKER_MODEL:-BAAI/bge-reranker-v2-m3}"
+      ARROW_LAKE__RAG__RERANKER_TOP_N: "${RAG_RERANKER_TOP_N:-10}"
+      ARROW_LAKE__RAG__QUERY_TRANSFORM: "${RAG_QUERY_TRANSFORM:-none}"
+      ARROW_LAKE__RAG__HYDE_MAX_TOKENS: "${RAG_HYDE_MAX_TOKENS:-256}"
+      ARROW_LAKE__RAG__MULTI_QUERY_VARIANTS: "${RAG_MULTI_QUERY_VARIANTS:-3}"
+      ARROW_LAKE__RAG__HISTORY_INJECTION_ENABLED: "true"
+      ARROW_LAKE__RAG__HISTORY_BUDGET_RATIO: "0.2"
+      ARROW_LAKE__RAG__HISTORY_MAX_TURNS: "6"
       # v1.4.3: OpenTelemetry distributed tracing
       ARROW_LAKE__OPENTELEMETRY__ENABLED: "${OTEL_ENABLED:-true}"
       ARROW_LAKE__OPENTELEMETRY__SERVICE_NAME: "arrow-lake"

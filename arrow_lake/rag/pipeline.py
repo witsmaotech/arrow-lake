@@ -13,9 +13,11 @@ from typing import Any
 import pyarrow as pa
 
 from arrow_lake.config import RAGConfig
-from arrow_lake.rag.context import ContextCitation, ContextWindow, table_to_chunks
+from arrow_lake.rag.context import ContextCitation, ContextWindow, count_tokens, table_to_chunks
 from arrow_lake.rag.prompt import PromptRegistry
 from arrow_lake.rag.provider import BaseLLMProvider, LLMMessage
+from arrow_lake.rag.reranker import BaseReranker, NoopReranker, create_reranker
+from arrow_lake.rag.query_transform import BaseQueryTransformer, IdentityTransformer, create_query_transformer
 from arrow_lake.rag.session import SessionStore
 
 logger = logging.getLogger(__name__)
@@ -24,6 +26,16 @@ PROMPT_INJECTION_RE = re.compile(r"(?i)(ignore previous|ignore above|new instruc
 
 # Alias: RAGCitation is the public name, ContextCitation is the internal name.
 RAGCitation = ContextCitation
+
+
+@dataclass(frozen=True)
+class LatencyBreakdown:
+    """Per-stage latency breakdown for a RAG query."""
+
+    retrieval_ms: float
+    context_ms: float
+    llm_ms: float
+    total_ms: float
 
 
 @dataclass(frozen=True)
@@ -37,6 +49,7 @@ class RAGResponse:
     llm_usage: dict[str, int] | None = None
     latency_ms: float | None = None
     session_id: str | None = None
+    latency_breakdown: LatencyBreakdown | None = None
 
 
 # Type alias for the retriever callback
@@ -62,6 +75,7 @@ class RAGPipeline:
         context_window_tokens: int = 4096,
         prompt_registry: PromptRegistry | None = None,
         session_store: SessionStore | None = None,
+        reranker: Any | None = None,
     ) -> None:
         self._llm = llm_provider
         self._config = config
@@ -69,6 +83,8 @@ class RAGPipeline:
         self._context_window_tokens = context_window_tokens
         self._registry = prompt_registry or PromptRegistry()
         self._session_store = session_store
+        self._reranker = reranker
+        self._query_transformer: BaseQueryTransformer | None = None
 
     def _build_context_window(self) -> ContextWindow:
         """Create a ContextWindow based on RAG config."""
@@ -86,6 +102,7 @@ class RAGPipeline:
         question: str,
         context_text: str,
         template_name: str | None = None,
+        history: list[dict] | None = None,
     ) -> list[LLMMessage]:
         """Build the message list for the LLM."""
         messages: list[LLMMessage] = []
@@ -97,6 +114,20 @@ class RAGPipeline:
         system = self._config.system_prompt
         if system:
             messages.append(LLMMessage(role="system", content=system))
+
+        # Multi-turn history injection
+        if history and self._config.history_injection_enabled:
+            history_budget = int(self._context_window_tokens * self._config.history_budget_ratio)
+            max_turns = self._config.history_max_turns
+            used_tokens = 0
+            for turn in history[-max_turns:]:
+                q_tokens = count_tokens(turn.get("question", ""))
+                a_tokens = count_tokens(turn.get("answer", ""))
+                if used_tokens + q_tokens + a_tokens > history_budget:
+                    break
+                messages.append(LLMMessage(role="user", content=_sanitize(turn["question"])))
+                messages.append(LLMMessage(role="assistant", content=turn["answer"]))
+                used_tokens += q_tokens + a_tokens
 
         # Get the prompt template
         template_name = template_name or "default_qa"
@@ -137,6 +168,21 @@ class RAGPipeline:
             None, self._retriever, question, dataset_name, top_k
         )
 
+    def _get_query_transformer(self) -> BaseQueryTransformer:
+        """Lazy-init query transformer from config."""
+        if self._query_transformer is None:
+            kind = self._config.query_transform
+            if kind and kind != "none":
+                self._query_transformer = create_query_transformer(
+                    kind,
+                    provider=self._llm,
+                    hyde_max_tokens=self._config.hyde_max_tokens,
+                    multi_query_variants=self._config.multi_query_variants,
+                )
+            else:
+                self._query_transformer = IdentityTransformer()
+        return self._query_transformer
+
     async def _retrieve_and_build_context(
         self,
         question: str,
@@ -144,8 +190,18 @@ class RAGPipeline:
         top_k: int,
         strategy: str | None = None,
     ) -> tuple[ContextWindow, str]:
-        """Retrieve documents and build context window. Returns (window, context_text)."""
-        result_table = await self._retrieve(question, dataset_name, top_k)
+        """Retrieve documents, rerank, and build context window. Returns (window, context_text)."""
+        transformer = self._get_query_transformer()
+        queries = await transformer.transform(question)
+
+        # Parallel retrieval for each query variant, then merge
+        if len(queries) == 1:
+            result_table = await self._retrieve(queries[0], dataset_name, top_k)
+        else:
+            tables = await asyncio.gather(
+                *(self._retrieve(q, dataset_name, top_k) for q in queries)
+            )
+            result_table = self._merge_tables(tables)
 
         score_column = "_rrf_score" if strategy == "hybrid" else "_score"
         if score_column not in result_table.column_names:
@@ -156,12 +212,42 @@ class RAGPipeline:
             dataset_name=dataset_name,
             score_column=score_column,
         )
+
+        # Deduplicate by row_id across query variants
+        chunks = self._deduplicate_chunks(chunks)
+
+        # Rerank before context assembly
+        reranker = self._reranker or NoopReranker()
+        rerank_top_n = self._config.reranker_top_n or top_k
+        chunks = reranker.rerank(question, chunks, rerank_top_n)
+
         window = self._build_context_window()
         for chunk in chunks:
             window.add_chunk(chunk)
+        window.finalize()
 
         context_text = window.assemble() if window.chunk_count > 0 else ""
         return window, context_text
+
+    @staticmethod
+    def _merge_tables(tables: tuple[pa.Table, ...]) -> pa.Table:
+        """Concatenate multiple retrieval result tables."""
+        non_empty = [t for t in tables if t.num_rows > 0]
+        if not non_empty:
+            return tables[0] if tables else pa.table({})
+        if len(non_empty) == 1:
+            return non_empty[0]
+        return pa.concat_tables(non_empty, promote_options="default")
+
+    @staticmethod
+    def _deduplicate_chunks(chunks: list[Any]) -> list[Any]:
+        """Deduplicate chunks by (dataset, row_id), keeping highest score."""
+        seen: dict[tuple[str, str], Any] = {}
+        for chunk in chunks:
+            key = (chunk.dataset, chunk.row_id)
+            if key not in seen or chunk.score > seen[key].score:
+                seen[key] = chunk
+        return list(seen.values())
 
     async def query(
         self,
@@ -178,17 +264,34 @@ class RAGPipeline:
 
         effective_top_k = top_k or self._config.default_top_k
 
-        # 1-2. Retrieve and build context
+        # 0. Load session history for multi-turn
+        history: list[dict] | None = None
+        if session_id and self._session_store and self._config.history_injection_enabled:
+            history = self._session_store.get_history(session_id)
+
+        # 1. Retrieval
         window, context_text = await self._retrieve_and_build_context(
             question, dataset_name, effective_top_k, strategy,
         )
+        t_retrieval = time.perf_counter()
 
-        # 3. Build messages and call LLM
-        messages = self._build_messages(question, context_text, template_name)
+        # 2. Context assembly + message build
+        messages = self._build_messages(question, context_text, template_name, history=history)
+        t_context = time.perf_counter()
+
+        # 3. LLM generation
         llm_response = await self._llm.generate(messages)
+        t_llm = time.perf_counter()
 
-        elapsed = (time.perf_counter() - start) * 1000
+        elapsed = (t_llm - start) * 1000
         citations = self._extract_citations(window)
+
+        breakdown = LatencyBreakdown(
+            retrieval_ms=round((t_retrieval - start) * 1000, 1),
+            context_ms=round((t_context - t_retrieval) * 1000, 1),
+            llm_ms=round((t_llm - t_context) * 1000, 1),
+            total_ms=round(elapsed, 1),
+        )
 
         result = RAGResponse(
             answer=llm_response.content,
@@ -198,6 +301,7 @@ class RAGPipeline:
             llm_usage=llm_response.usage,
             latency_ms=round(elapsed, 1),
             session_id=session_id,
+            latency_breakdown=breakdown,
         )
 
         # Persist turn in session store
@@ -258,6 +362,7 @@ class RAGPipeline:
         window = self._build_context_window()
         for chunk in chunks:
             window.add_chunk(chunk)
+        window.finalize()
 
         # Combine all text for entity extraction
         all_text = "\n\n".join(c.text for c in chunks) if chunks else ""

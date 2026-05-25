@@ -51,6 +51,10 @@ class OlapConfig(BaseModel):
     parquet_row_group_size: int = 100_000
     ducklake_index_columns: list[str] = []
 
+    # Connection warmup
+    warmup_enabled: bool = True
+    warmup_connections: int = 2
+
     # Query result cache
     query_cache_enabled: bool = False
     query_cache_ttl_seconds: int = 60
@@ -70,12 +74,39 @@ class OlapConfig(BaseModel):
         "query_timeout_seconds",
         "ducklake_ttl_days",
         "ducklake_max_join_rows",
+        "warmup_connections",
     )
     @classmethod
     def validate_positive_int(cls, v: int) -> int:
         if v < 1:
             raise ValueError(f"value must be >= 1, got {v}")
         return v
+
+    def memory_budget_mb(self) -> int:
+        """Total memory budget: max_concurrent_queries * max_query_memory_mb."""
+        return self.max_concurrent_queries * self.max_query_memory_mb
+
+    def validate_memory_budget(self, *, total_system_mb: int | None = None) -> str | None:
+        """Validate memory budget fits within system RAM.
+
+        Returns a warning message if the budget exceeds 70% of system RAM,
+        or None if the configuration is safe.
+        """
+        if total_system_mb is None:
+            import os
+
+            total_system_mb = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") // (1024 * 1024)
+
+        budget = self.memory_budget_mb()
+        safe_limit = int(total_system_mb * 0.7)
+        if budget > safe_limit:
+            return (
+                f"DuckDB memory budget ({budget}MB = {self.max_concurrent_queries} queries "
+                f"x {self.max_query_memory_mb}MB) exceeds 70% of system RAM "
+                f"({total_system_mb}MB, safe limit {safe_limit}MB). "
+                f"Reduce max_concurrent_queries or max_query_memory_mb."
+            )
+        return None
 
     @field_validator("max_result_rows")
     @classmethod

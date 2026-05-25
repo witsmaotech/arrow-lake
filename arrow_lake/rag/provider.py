@@ -396,9 +396,17 @@ class AnthropicProvider(_RetryMixin, BaseLLMProvider):
         return body
 
     async def generate(self, messages: list[LLMMessage]) -> LLMResponse:
+        cb = self._circuit_breaker()
+        if not cb.allow_request():
+            raise RAGError(
+                error_code=ErrorCode.RAG_PROVIDER_ERROR,
+                message=f"LLM circuit breaker OPEN for anthropic",
+                context={"provider": "anthropic"},
+            )
         try:
             resp = await self._request(self._build_body(messages))
         except httpx.HTTPError as exc:
+            cb.record_failure()
             raise RAGError(
                 error_code=ErrorCode.RAG_PROVIDER_ERROR,
                 message=f"HTTP error calling Anthropic: {exc}",
@@ -407,11 +415,14 @@ class AnthropicProvider(_RetryMixin, BaseLLMProvider):
 
         if resp.status_code != 200:
             error_body = _safe_json_body(resp)
+            cb.record_failure()
             raise RAGError(
                 error_code=ErrorCode.RAG_PROVIDER_ERROR,
                 message=f"Anthropic returned {resp.status_code}: {error_body}",
                 context={"provider": "anthropic", "status_code": resp.status_code},
             )
+
+        cb.record_success()
 
         data = resp.json()
         # Anthropic returns content as list of blocks
@@ -438,9 +449,17 @@ class AnthropicProvider(_RetryMixin, BaseLLMProvider):
     async def generate_stream(
         self, messages: list[LLMMessage]
     ) -> AsyncIterator[str]:
+        cb = self._circuit_breaker()
+        if not cb.allow_request():
+            raise RAGError(
+                error_code=ErrorCode.RAG_PROVIDER_ERROR,
+                message="LLM circuit breaker OPEN for anthropic (stream)",
+                context={"provider": "anthropic"},
+            )
         try:
             resp = await self._request_no_retry(self._build_body(messages, stream=True))
         except httpx.HTTPError as exc:
+            cb.record_failure()
             raise RAGError(
                 error_code=ErrorCode.RAG_PROVIDER_ERROR,
                 message=f"HTTP error in Anthropic stream: {exc}",
@@ -449,11 +468,14 @@ class AnthropicProvider(_RetryMixin, BaseLLMProvider):
 
         if resp.status_code != 200:
             error_body = _safe_json_body(resp)
+            cb.record_failure()
             raise RAGError(
                 error_code=ErrorCode.RAG_PROVIDER_ERROR,
                 message=f"Anthropic stream returned {resp.status_code}: {error_body}",
                 context={"provider": "anthropic", "status_code": resp.status_code},
             )
+
+        cb.record_success()
 
         async for raw_line in resp.aiter_lines():
             line = raw_line.strip()

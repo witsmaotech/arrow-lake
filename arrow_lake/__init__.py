@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+import warnings
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -118,24 +120,29 @@ class Lake(
         config: ArrowLakeConfig | None = None,
     ) -> None:
         import logging
+        import time as _time
 
         self._base_uri = base_uri
         self._config = config or ArrowLakeConfig()
         self._storage: Any = None
         self._components: dict[str, Any] = {}
+        self._component_lock = threading.Lock()
         self._logger = logging.getLogger(__name__)
+        self._start_time = _time.monotonic()
+        self._shutdown = False
 
-        import time as _time
-
+    def _ensure_uptime_metric(self) -> None:
+        """Lazily set the uptime metric (skipped in pure-local mode)."""
         from arrow_lake.core.metrics import system_uptime_seconds
 
         system_uptime_seconds.set_to_current_time()
-        self._start_time = _time.monotonic()
 
     def _get_component(self, key: str, factory: Callable[[], Any]) -> Any:
-        """Lazy-init and cache a component instance."""
+        """Lazy-init and cache a component instance (thread-safe)."""
         if key not in self._components:
-            self._components[key] = factory()
+            with self._component_lock:
+                if key not in self._components:
+                    self._components[key] = factory()
         return self._components[key]
 
     @property
@@ -157,16 +164,43 @@ class Lake(
     def _create_session_manager(self) -> Any:
         from arrow_lake.query.session_manager import DuckDBSessionManager
 
-        return DuckDBSessionManager.from_config(
-            olap_config=self._config.olap,
+        olap = self._config.olap
+
+        # Validate memory budget before creating the manager
+        warning = olap.validate_memory_budget()
+        if warning:
+            self._logger.warning("memory_budget_warning: %s", warning)
+
+        manager = DuckDBSessionManager.from_config(
+            olap_config=olap,
             storage_config=self._config.storage,
             redis_config=self._config.redis,
         )
+
+        # Automatic warmup for cold-start optimization
+        if olap.warmup_enabled:
+            try:
+                result = manager.warmup()
+                if result.get("errors", 0) > 0:
+                    self._logger.warning(
+                        "duckdb_warmup_partial: warmed=%d, errors=%d",
+                        result.get("warmed", 0),
+                        result["errors"],
+                    )
+            except Exception:
+                self._logger.warning("duckdb_warmup_failed", exc_info=True)
+
+        return manager
 
     def shutdown(self) -> None:
         """Gracefully shut down all managed components and release resources."""
         import asyncio
 
+        if self._shutdown:
+            return
+        self._shutdown = True
+
+        async_tasks: list[Any] = []
         for key in list(self._components):
             component = self._components[key]
             try:
@@ -175,16 +209,41 @@ class Lake(
                 elif hasattr(component, "close"):
                     close_method = component.close
                     if asyncio.iscoroutinefunction(close_method):
-                        try:
-                            loop = asyncio.get_running_loop()
-                            _cleanup_task = loop.create_task(close_method())  # noqa: RUF006
-                        except RuntimeError:
-                            asyncio.run(close_method())
+                        async_tasks.append((key, close_method))
                     else:
                         close_method()
             except Exception:
                 self._logger.warning("Failed to shut down component %s", key, exc_info=True)
+
+        # Await all async cleanup tasks
+        if async_tasks:
+            async def _await_all():
+                for k, fn in async_tasks:
+                    try:
+                        await fn()
+                    except Exception:
+                        self._logger.warning("Failed to async-shut down component %s", k, exc_info=True)
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(_await_all())
+            except RuntimeError:
+                asyncio.run(_await_all())
+
         self._components.clear()
+
+    def __enter__(self) -> Lake:
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        self.shutdown()
+
+    def __del__(self) -> None:
+        if not self._shutdown and self._components:
+            warnings.warn(
+                "Lake instance not shut down — call lake.shutdown() or use 'with Lake(...) as lake:'",
+                ResourceWarning,
+                stacklevel=1,
+            )
 
     @classmethod
     def from_yaml(cls, path: str, *, base_uri: str | None = None) -> Lake:
@@ -199,6 +258,40 @@ class Lake(
         """
         config = ArrowLakeConfig.from_yaml(path)
         return cls(base_uri=base_uri or "./data", config=config)
+
+    def _get_shared_http_client(self) -> Any:
+        """Get a shared synchronous httpx.Client (lazy-init, auto-closed on shutdown).
+
+        Components should use this instead of creating their own clients,
+        reducing connection overhead and enabling proxy config consistency.
+        """
+        return self._get_component(
+            "shared_http_client",
+            lambda: self._create_shared_http_client(),
+        )
+
+    def _get_shared_async_http_client(self) -> Any:
+        """Get a shared httpx.AsyncClient (lazy-init, auto-closed on shutdown)."""
+        return self._get_component(
+            "shared_async_http_client",
+            lambda: self._create_shared_async_http_client(),
+        )
+
+    def _create_shared_http_client(self) -> Any:
+        from arrow_lake.core.http import create_http_client
+
+        return create_http_client(
+            timeout=30.0,
+            limits=dict(max_connections=20, max_keepalive_connections=10),
+        )
+
+    def _create_shared_async_http_client(self) -> Any:
+        from arrow_lake.core.http import create_async_http_client
+
+        return create_async_http_client(
+            timeout=30.0,
+            limits=dict(max_connections=20, max_keepalive_connections=10),
+        )
 
     def _get_storage(self) -> Any:
         """Lazy-init and cache the storage manager."""

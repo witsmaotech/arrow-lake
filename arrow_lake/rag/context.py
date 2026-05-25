@@ -122,7 +122,7 @@ class ContextWindow:
         ]
 
     def add_chunk(self, chunk: ContextChunk, *, skip_dedup: bool = False) -> bool:
-        """Add a chunk to the window.
+        """Add a chunk to the window (collects all, call finalize() to apply budget).
 
         Args:
             chunk: The context chunk to add.
@@ -130,8 +130,7 @@ class ContextWindow:
                 synthetic chunks like graph context).
 
         Returns:
-            True if the chunk was added, False if it was a duplicate
-            or exceeded the budget.
+            True if the chunk was added, False if it was a duplicate.
         """
         # Dedup check
         if not skip_dedup:
@@ -139,40 +138,50 @@ class ContextWindow:
             if key in self._seen:
                 return False
 
-        # Max chunks check
-        if self._max_chunks is not None and self.chunk_count >= self._max_chunks:
-            return False
-
-        # Token budget check
-        chunk_tokens = count_tokens(chunk.text)
-        if self._current_tokens + chunk_tokens > self._token_budget:
-            # Try to fit a truncated version
-            remaining = self._token_budget - self._current_tokens
-            if remaining <= 0:
-                return False
-            # Truncate: estimate chars from remaining tokens (4 chars/token)
-            truncated_text = chunk.text[: remaining * 4]
-            actual_tokens = count_tokens(truncated_text)
-            if actual_tokens > remaining:
-                return False  # heuristic imprecise, skip chunk rather than exceed budget
-            new_chunk = ContextChunk(
-                text=truncated_text,
-                dataset=chunk.dataset,
-                row_id=chunk.row_id,
-                score=chunk.score,
-                metadata=chunk.metadata,
-            )
-            self._chunks.append(new_chunk)
-            if not skip_dedup:
-                self._seen.add((new_chunk.dataset, new_chunk.row_id))
-            self._current_tokens += actual_tokens
-            return True
-
         self._chunks.append(chunk)
         if not skip_dedup:
             self._seen.add((chunk.dataset, chunk.row_id))
-        self._current_tokens += chunk_tokens
         return True
+
+    def finalize(self) -> None:
+        """Sort chunks by score descending, then apply token budget."""
+        if not self._chunks:
+            return
+
+        # Sort by score descending
+        self._chunks.sort(key=lambda c: c.score, reverse=True)
+
+        # Apply token budget in score order
+        trimmed: list[ContextChunk] = []
+        tokens = 0
+        for chunk in self._chunks:
+            chunk_tokens = count_tokens(chunk.text)
+            if tokens + chunk_tokens <= self._token_budget:
+                trimmed.append(chunk)
+                tokens += chunk_tokens
+            else:
+                # Try truncated version at sentence boundary
+                remaining = self._token_budget - tokens
+                if remaining <= 0:
+                    break
+                truncated_text = _truncate_at_sentence(chunk.text, remaining * 4)
+                actual_tokens = count_tokens(truncated_text)
+                if actual_tokens > 0 and actual_tokens <= remaining:
+                    trimmed.append(ContextChunk(
+                        text=truncated_text,
+                        dataset=chunk.dataset,
+                        row_id=chunk.row_id,
+                        score=chunk.score,
+                        metadata=chunk.metadata,
+                    ))
+                    tokens += actual_tokens
+                break  # Budget exhausted
+
+        if self._max_chunks is not None:
+            trimmed = trimmed[:self._max_chunks]
+
+        self._chunks = trimmed
+        self._current_tokens = tokens
 
     def assemble(self) -> str:
         """Render context chunks into a single string with citation markers.
@@ -240,6 +249,18 @@ class ContextWindow:
         self._chunks.clear()
         self._seen.clear()
         self._current_tokens = 0
+
+
+def _truncate_at_sentence(text: str, max_chars: int) -> str:
+    """Truncate text at a sentence boundary, preserving at least 50%."""
+    if len(text) <= max_chars:
+        return text
+    truncated = text[:max_chars]
+    for sep in ("。", "！", "？", ".", "!", "?", "\n", "；", ";"):
+        idx = truncated.rfind(sep)
+        if idx > len(truncated) * 0.5:
+            return truncated[:idx + 1]
+    return truncated
 
 
 def table_to_chunks(
