@@ -6,6 +6,7 @@ from pathlib import Path
 
 import click
 import pyarrow as pa
+from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 
 from arrow_lake.cli import _get_lake, _print_error, _print_success, console
@@ -61,14 +62,31 @@ def _show_report(report, label: str) -> None:
 def ingest_files(ctx: click.Context, dataset: str, paths: tuple[str, ...]) -> None:
     """Ingest local files (CSV, JSON, JSONL, Parquet)."""
     lake = _get_lake(ctx)
+    path_list = list(paths)
 
-    try:
-        report = lake.ingest(dataset, list(paths))
-    except Exception as exc:
-        _print_error(f"Ingest failed: {exc}")
-        raise SystemExit(1) from None
-
-    _show_report(report, f"{len(paths)} file(s) -> {dataset}")
+    if len(path_list) > 3:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task(f"Ingesting {len(path_list)} files...", total=len(path_list))
+            try:
+                for file_path in path_list:
+                    lake.ingest(dataset, [file_path])
+                    progress.advance(task)
+            except Exception as exc:
+                _print_error(f"Ingest failed: {exc}")
+                raise SystemExit(1) from None
+        _print_success(f"Ingested {len(path_list)} file(s) -> {dataset}")
+    else:
+        try:
+            report = lake.ingest(dataset, path_list)
+        except Exception as exc:
+            _print_error(f"Ingest failed: {exc}")
+            raise SystemExit(1) from None
+        _show_report(report, f"{len(path_list)} file(s) -> {dataset}")
 
 
 @ingest_group.command("http")

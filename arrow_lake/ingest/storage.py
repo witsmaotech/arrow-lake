@@ -8,7 +8,6 @@ Integrates with MinIO via Arrow Lake config for S3-compatible storage.
 from __future__ import annotations
 
 import threading
-from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -72,7 +71,8 @@ class LanceStorageManager(
             if storage_config and storage_config.backend != StorageBackend.LOCAL
             else self.base_uri
         )
-        self._dataset_locks: dict[str, threading.RLock] = defaultdict(threading.RLock)
+        self._dataset_locks: dict[str, threading.RLock] = {}
+        self._dataset_lock_max: int = 1024
         self._db: Any = None
         self._db_lock = threading.RLock()
 
@@ -83,6 +83,11 @@ class LanceStorageManager(
 
     def _dataset_lock(self, name: str) -> threading.RLock:
         """Return a per-dataset reentrant lock for TOCTOU-safe write operations."""
+        if name not in self._dataset_locks:
+            if len(self._dataset_locks) >= self._dataset_lock_max:
+                # Evict oldest entry (first key)
+                self._dataset_locks.pop(next(iter(self._dataset_locks)))
+            self._dataset_locks[name] = threading.RLock()
         return self._dataset_locks[name]
 
     def _get_db(self):

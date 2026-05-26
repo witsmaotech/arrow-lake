@@ -311,5 +311,5 @@ uv run mypy arrow_lake/
 | PyArrow | 23.0.1 |
 | Daft | 0.7.8 |
 | Ray | 2.54.1 |
-| DuckDB | 1.5.1 |
-| Pydantic | 2.12.5 |
+| DuckDB | 1.5.2 |
+| Pydantic | >=2.10 |

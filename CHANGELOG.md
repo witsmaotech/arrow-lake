@@ -5,6 +5,74 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.4] - 2026-05-25
+
+### Added — RAG Quality Leap + SDK/CLI High Performance
+- **RAG Reranking Pipeline**: CrossEncoder / LLM / Noop 三种重排策略，`RerankerFactory` 自动选择
+- **Query Transformation**: HyDE (Hypothetical Document Embedding) / MultiQuery / Identity 三种查询改写策略
+- **Multi-turn Conversation**: 对话历史注入 RAG context window，Token 预算管理
+- **Context Window 升级**: Score-based 排序 + `finalize()` 语义化 API
+- **GraphRAG RRF Fusion**: 知识图谱检索结果与向量/全文三路 RRF 融合
+- **CLI Lake Instance Caching**: 命令间复用 Lake 实例，避免重复初始化
+- **CLI Embedding Model Caching**: 搜索命令复用 encoder，消除重复加载延迟
+- **Rich Progress Bars**: 批量文件摄入 (>3 files) 显示进度条 + SIGINT 信号保护
+- **Shared HTTP Connection Pools**: httpx 连接池复用，减少 TCP 握手开销
+- **Lake Context Manager**: `with Lake(...) as lake:` 异步资源清理
+- **Anthropic Circuit Breaker**: LLM 调用熔断保护，避免级联故障
+- **Latency Breakdown Tracking**: RAG 各阶段耗时分解 (retrieval/reranking/generation)
+- **LRU Cache with Limits**: 缓存上限保护，防止内存无限增长
+- **DuckDB Auto-warmup**: 启动时预热连接池 + 内存校验
+- **Structured Error Output**: CLI 错误结构化输出，便于脚本解析
+
+### Changed
+- `pyproject.toml` 版本同步到 1.4.4
+- Thread lock 管理增加 LRU 上限 (max 1024)，防止 dataset locks 内存泄漏
+- RAG context window 行为变更为 score-based 排序
+
+### Tests
+- 更新 RAG context 测试匹配新的 `finalize()` API 语义
+- 更新 score-based ordering 测试期望
+
+## [1.4.3] - 2026-05-23
+
+### Added — Production Readiness: Observability + Auto-Maintenance + Quality Gates
+- **OpenTelemetry 集成**: 分布式链路追踪，gRPC OTLP exporter
+- **Alertmanager 告警**: Prometheus AlertManager 集成，多渠道通知
+- **Auto-Maintenance Scheduler**: 后台定时维护任务（compaction、cleanup、index rebuild）
+- **Quality Gates**: 数据摄入质量门控，验证 schema / null ratio / dedup threshold
+- **docker-compose.prod.yml 升级**: OTel Collector + Alertmanager sidecar
+- **Latency SLO Dashboard**: Grafana SLO 看板，P50/P95/P99 延迟追踪
+
+### Changed
+- Docker Compose prod profile 增加 OTel + Alertmanager 服务
+- 维护任务接入 FastAPI lifespan 管理
+
+### Tests
+- Quality gate 单元测试 + 集成测试
+- Auto-maintenance scheduler 测试
+
+## [1.4.2] - 2026-05-22
+
+### Added — 安全加固 + Gravitino 配置化
+- **FQN 注入防护**: `ValidationMixin` 全局限名验证，拒绝非法字符和路径穿越
+- **SQL 注入防护增强**: 分号 + 多语句检查升级，DDL/DML 关键字黑名单扩展
+- **JSON 反序列化验证**: 外部 JSON payload 深度限制 + 类型白名单
+- **Thread Zombie Detection**: 线程僵尸检测，回收泄漏的工作线程
+- **Gravitino 深度治理**: 配置化 Gravitino 连接参数，支持环境变量覆盖
+
+### Changed
+- Gravitino 配置从硬编码改为 pydantic-settings 管理
+- 安全验证层统一到 `ValidationMixin`，消除分散的校验逻辑
+
+### Fixed
+- Gravitino Docker 初始化脚本 MinIO 凭证参数化
+- 测试套件中环境隔离改进，消除跨测试状态泄漏
+
+### Tests
+- FQN 注入测试 (18 cases)
+- SQL 注入增强测试
+- Thread zombie 检测测试
+
 ## [1.4.1] - 2026-05-22
 
 ### Added — Gravitino 元数据治理集成

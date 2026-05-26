@@ -64,6 +64,23 @@ Content-Security-Policy: default-src 'none'; frame-ancestors 'none'
 
 ## Input Validation
 
+### FQN (Fully Qualified Name) Validation
+
+- `ValidationMixin` provides global FQN validation across all user-facing APIs
+- Rejects illegal characters, path traversal sequences (`..`, `/`, `\`), and null bytes
+- Dataset names, column names, and tag names all pass through FQN validation
+
+### JSON Deserialization Safety
+
+- External JSON payloads are validated with depth limits and type whitelists
+- Prevents prototype pollution and deeply nested structure attacks
+- Applied to all API endpoints accepting JSON request bodies
+
+### Thread Zombie Detection
+
+- Background thread monitor detects and recovers leaked worker threads
+- Prevents resource exhaustion from orphaned threads in long-running processes
+
 ### Gremlin Query Safety
 
 Multi-layer defense against Gremlin/Groovy injection:
@@ -115,9 +132,12 @@ pip-audit .
 | Component | Risk | Mitigation |
 |-----------|------|------------|
 | Gremlin queries | Injection | Whitelist + closure blocking + comment stripping + bare mutation regex |
-| DuckDB SQL | Injection | Comment stripping + keyword blocklist + LIMIT pushdown |
+| DuckDB SQL | Injection | Comment stripping + keyword blocklist + LIMIT pushdown + FQN validation |
+| FQN identifiers | Injection | `ValidationMixin` global validation — rejects illegal chars, path traversal, null bytes |
 | File exports | Path traversal | Absolute path rejection + `resolve()` bounds check |
+| JSON payloads | Deserialization attack | Depth limits + type whitelists on all external JSON |
 | JWT tokens | Revocation | Blacklist with Redis persistence + O(1) LRU eviction |
 | S3 credentials | Exposure | Config-only, never hardcoded |
 | RAG prompts | Injection | Input sanitization in pipeline |
 | Audit log | Tampering | HMAC-SHA256 + startup enforcement + constant-time verify |
+| Worker threads | Resource exhaustion | Zombie thread detection + automatic recovery |

@@ -1,6 +1,6 @@
 # Arrow Lake 总体架构图
 
-**版本**: v1.4.1 | **日期**: 2026-05-21
+**版本**: v1.4.4 | **日期**: 2026-05-26
 **来源**: [architecture-v1.3.0.md](architecture-v1.3.0.md) + [architecture-v1.0_draft_up.md](architecture-v1.0_draft_up.md)
 
 ---
@@ -144,7 +144,8 @@ graph TB
 | **协调层** | Redis | 分布式信号量 / JWT 黑名单 / Session 协调 |
 | **图数据库** | HugeGraph (外部) | 知识图谱 / GraphRAG / Gremlin 遍历 |
 | **元数据联邦层** | Gravitino (v1.4.1) | 跨数据源统一元数据管理 / 标签治理 / 策略执行 / 统计采集 / RBAC 桥接 |
-| **外部层** | LLM / Ray / OTel | 生成 / 分布式计算 / 可观测 |
+| **外部层** | LLM / Ray / OTel / Alertmanager | 生成 / 分布式计算 / 可观测 / 告警 |
+| **RAG 增强层** | Reranker + QueryTransformer (v1.4.4) | CrossEncoder/LLM 重排 + HyDE/MultiQuery 查询改写 + 多轮对话 |
 | **编排层** | Metaflow Flows | 工作流编排: 并行/分支/重试/超时/资源/追溯 |
 
 ---
@@ -322,6 +323,16 @@ DataFrame Query 流程:
                            [LLM Provider]
                            OpenAI/Anthropic/vLLM/Ollama
                                     │
+                  ┌─────────────────▼─────────────────┐
+                  │ Reranker (v1.4.4)                  │
+                  │ CrossEncoder / LLM / Noop          │
+                  └─────────────────┬─────────────────┘
+                                    │
+                  ┌─────────────────▼─────────────────┐
+                  │ Query Transform (v1.4.4)           │
+                  │ HyDE / MultiQuery / Identity       │
+                  └─────────────────┬─────────────────┘
+                                    │
                            [Cited Response]
 ```
 
@@ -367,19 +378,23 @@ flowchart TD
     DaftCollect --> RESTOut
 
     subgraph RAGPipeline["RAG Pipeline"]
-        Context["上下文组装<br/>Token预算 · 去重 · 引用"]
+        QueryTransform["Query Transform<br/>HyDE · MultiQuery · Identity"]
+        Context["上下文组装<br/>Token预算 · 去重 · 引用 · 多轮对话"]
+        Reranker["Reranker<br/>CrossEncoder · LLM · Noop"]
         GraphT["图三元组<br/>子图序列化"]
-        LLM["LLM Provider<br/>OpenAI / vLLM / Ollama"]
+        LLM["LLM Provider<br/>OpenAI / Anthropic / vLLM / Ollama"]
         Response["Cited Response"]
     end
 
+    QueryTransform --> Context
     VecSearch --> Context
     FTS --> Context
     Hybrid --> Context
     HG -->|Gremlin 遍历| GraphT
 
-    Context --> LLM
-    GraphT --> LLM
+    Context --> Reranker
+    GraphT --> Reranker
+    Reranker --> LLM
     LLM --> Response
 ```
 

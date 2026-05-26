@@ -7,7 +7,7 @@
 [![Coverage](https://img.shields.io/badge/coverage-80%25-green)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
 [![Security](https://img.shields.io/badge/bandit-0%20HIGH-success)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
 [![Python](https://img.shields.io/badge/python-3.11+-blue)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
-[![Version](https://img.shields.io/badge/version-1.4.1-blue)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
+[![Version](https://img.shields.io/badge/version-1.4.4-blue)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
 [![License](https://img.shields.io/badge/license-MIT-informational)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
 
 ## Install
@@ -62,13 +62,14 @@ Runs a self-contained demo with synthetic data — vector search, SQL analytics,
 | **SQL Analytics** | DuckDB-powered OLAP: GROUP BY, window functions, JOINs, streaming |
 | **Daft DataFrame** | Lazy evaluation + Ray distributed execution |
 | **Knowledge Graph** | HugeGraph integration: build, Gremlin query, GraphRAG |
-| **RAG Pipeline** | Multi-provider LLM (OpenAI, Anthropic, vLLM, Ollama, DeepSeek), sessions, citations, streaming |
+| **RAG Pipeline** | Multi-provider LLM (OpenAI, Anthropic, vLLM, Ollama, DeepSeek), sessions, citations, streaming, reranking (CrossEncoder/LLM), query transformation (HyDE/MultiQuery), multi-turn conversation |
 | **Document Pipeline** | PDF parse → chunk → embed → Lance, 7 chunking strategies, OCR fallback |
 | **Data Quality** | Schema validation, null detection, dedup (exact hash + perceptual hash), NeMo Curator |
 | **Lineage & Audit** | Full-chain lineage tracking, HMAC-SHA256 tamper-evident audit trail |
 | **Export** | Parquet / CSV with version selection, column projection, compression |
 | **Metadata Governance** | Gravitino 1.2.1 federation: DuckDB ↔ Lance Catalog bidirectional sync, Tags, Policies, Model Catalog |
-| **Security** | RBAC (VIEWER/EDITOR/ADMIN), JWT blacklist (Redis-backed), rate limiting, Gremlin injection defense, path traversal prevention |
+| **Security** | RBAC (VIEWER/EDITOR/ADMIN), JWT blacklist (Redis-backed), rate limiting, Gremlin injection defense, FQN/SQL injection prevention, path traversal prevention |
+| **Observability** | OpenTelemetry tracing, Prometheus + Alertmanager, Grafana dashboards, structlog, latency breakdown tracking |
 | **REST API** | 40+ endpoints + `/metadata/*` proxy (catalogs/tables/tags/policies/statistics/models), API Key + JWT auth, TLS, security headers |
 | **Distributed** | Redis distributed semaphore, Ray distributed ingestion, GPU autoscaling, Helm chart |
 
@@ -156,7 +157,7 @@ LanceDB + Daft + Ray + DuckDB + PyArrow + FastAPI + HugeGraph + Redis + Metaflow
 | Full-Text Search | Tantivy, jieba | >=0.20.0 |
 | Embedding Models | Qwen3-Embedding-0.6B, sentence-transformers | — |
 | Security | PyJWT, HMAC-SHA256 | >=2.9 |
-| Observability | structlog, Prometheus, OpenTelemetry | — |
+| Observability | structlog, Prometheus, OpenTelemetry, Alertmanager | — |
 | Configuration | Pydantic v2, pydantic-settings, PyYAML | >=2.7 |
 
 ## Documentation

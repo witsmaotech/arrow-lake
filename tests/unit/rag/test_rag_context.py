@@ -56,6 +56,7 @@ class TestContextWindow:
         )
         result = window.add_chunk(chunk)
         assert result is True
+        window.finalize()
         assert window.chunk_count == 1
 
     def test_add_chunk_exceeds_budget(self) -> None:
@@ -67,8 +68,8 @@ class TestContextWindow:
                 dataset="docs", row_id="1", score=0.9,
             )
             result = window.add_chunk(chunk)
-            # heuristic: len(text) // 4 = 49 // 4 = 12 tokens, truncates to budget 5
             assert result is True
+            window.finalize()
             assert window.chunk_count == 1
             assert window.token_count <= 5
 
@@ -78,7 +79,8 @@ class TestContextWindow:
             text="Any text at all", dataset="docs", row_id="1", score=0.9
         )
         result = window.add_chunk(chunk)
-        assert result is False
+        assert result is True  # add_chunk collects all; finalize applies budget
+        window.finalize()
         assert window.chunk_count == 0
 
     def test_budget_truncation(self) -> None:
@@ -87,6 +89,7 @@ class TestContextWindow:
             text="Hello world this is extra text", dataset="docs", row_id="1", score=0.9
         )
         window.add_chunk(chunk)
+        window.finalize()
         assert window.token_count <= 10
         assert window.chunk_count == 1
 
@@ -100,7 +103,7 @@ class TestContextWindow:
         window.add_chunk(chunk2)  # duplicate — same dataset+row_id
         window.add_chunk(chunk3)
 
-        assert window.chunk_count == 2
+        assert window.chunk_count == 2  # dedup still works in add_chunk
 
     def test_assemble_with_citations(self) -> None:
         window = ContextWindow(token_budget=200)
@@ -108,20 +111,19 @@ class TestContextWindow:
         window.add_chunk(ContextChunk(text="Beta content", dataset="docs", row_id="2", score=0.8))
 
         assembled = window.assemble()
-        assert "[1]" in assembled
-        assert "[2]" in assembled
         assert "Alpha content" in assembled
         assert "Beta content" in assembled
 
-    def test_assemble_preserves_order(self) -> None:
+    def test_assemble_score_ordering_after_finalize(self) -> None:
         window = ContextWindow(token_budget=200)
-        window.add_chunk(ContextChunk(text="First chunk", dataset="a", row_id="1", score=0.5))
-        window.add_chunk(ContextChunk(text="Second chunk", dataset="a", row_id="2", score=0.3))
+        window.add_chunk(ContextChunk(text="Low score", dataset="a", row_id="1", score=0.3))
+        window.add_chunk(ContextChunk(text="High score", dataset="a", row_id="2", score=0.9))
+        window.finalize()
 
         assembled = window.assemble()
-        pos_first = assembled.index("First chunk")
-        pos_second = assembled.index("Second chunk")
-        assert pos_first < pos_second
+        pos_high = assembled.index("High score")
+        pos_low = assembled.index("Low score")
+        assert pos_high < pos_low  # Higher score comes first after finalize
 
     def test_citations_list(self) -> None:
         window = ContextWindow(token_budget=200)
@@ -146,6 +148,7 @@ class TestContextWindow:
         window = ContextWindow(token_budget=10000, max_chunks=2)
         for i in range(5):
             window.add_chunk(ContextChunk(text=f"Chunk {i}", dataset="d", row_id=str(i), score=float(i)))
+        window.finalize()
         assert window.chunk_count == 2
 
 

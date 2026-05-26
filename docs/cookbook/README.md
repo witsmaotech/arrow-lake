@@ -46,7 +46,34 @@ Arrow Lake 数据湖平台实战教程，涵盖数据摄取、搜索、分析、
 
 ## 版本
 
-对应 Arrow Lake v1.4.1
+对应 Arrow Lake v1.4.4
+
+## v1.4.4 新特性 — RAG Quality Leap
+
+| #  | 说明 |
+| -- | ---- |
+| — | RAG Reranking Pipeline: CrossEncoder / LLM / Noop 三种重排策略 |
+| — | Query Transformation: HyDE / MultiQuery / Identity 查询改写 |
+| — | Multi-turn Conversation: 对话历史注入 + Token 预算管理 |
+| — | CLI High Performance: Lake 实例缓存 + Embedding 缓存 + Rich 进度条 |
+| — | Observability: OpenTelemetry tracing + Latency breakdown tracking |
+
+## v1.4.3 新特性 — Production Readiness
+
+| #  | 说明 |
+| -- | ---- |
+| — | OpenTelemetry 分布式链路追踪集成 |
+| — | Alertmanager 多渠道告警通知 |
+| — | Auto-Maintenance 后台定时维护 |
+| — | Quality Gates 数据摄入质量门控 |
+
+## v1.4.2 新特性 — 安全加固
+
+| #  | 说明 |
+| -- | ---- |
+| — | FQN 注入防护 (`ValidationMixin`) |
+| — | JSON 反序列化深度限制 + 类型白名单 |
+| — | Thread Zombie 僵尸线程检测与回收 |
 
 ## v1.4.1 新特性 — Gravitino 元数据治理
 

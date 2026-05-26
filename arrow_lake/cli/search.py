@@ -15,12 +15,21 @@ def search_group() -> None:
     """Search datasets (vector, full-text, hybrid)."""
 
 
-def _get_query_vector(text: str, model_name: str, column: str):
-    """Encode text to vector using LocalEmbeddingEncoder."""
+_encoder_cache: dict[str, Any] = {}
 
+
+def _get_encoder(model_name: str):
+    """Get or create a cached LocalEmbeddingEncoder."""
     from arrow_lake.embed.encoder import LocalEmbeddingEncoder
 
-    encoder = LocalEmbeddingEncoder(model_name=model_name)
+    if model_name not in _encoder_cache:
+        _encoder_cache[model_name] = LocalEmbeddingEncoder(model_name=model_name)
+    return _encoder_cache[model_name]
+
+
+def _get_query_vector(text: str, model_name: str, column: str):
+    """Encode text to vector using cached LocalEmbeddingEncoder."""
+    encoder = _get_encoder(model_name)
     raw = encoder._load_model().encode([text], normalize_embeddings=True)
     if raw is None or len(raw) == 0:
         _print_error("Failed to encode query text")

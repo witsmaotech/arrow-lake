@@ -1,15 +1,13 @@
 # Gravitino Metadata Governance (Experimental)
 
-> **Status: Experimental** — Arrow Lake v1.4.1 provides foundational Gravitino integration for
-> metadata storage and browsing. The current implementation stores metadata (tags, policies, statistics,
-> model versions) in Gravitino but does **not yet close the governance loop** — policies are not
-> automatically enforced, tags do not drive access control, and statistics are not consumed by the
-> query planner. See the capability matrix below for what works today vs. what's planned.
+> **Status: Experimental** — Arrow Lake v1.4.4 provides Gravitino integration for
+> metadata storage, browsing, and deep governance. v1.4.2 introduced FQN injection prevention,
+> Gravitino configuration via pydantic-settings, and enhanced security validation.
+> See the capability matrix below for what works today vs. what's planned.
 >
 > This chapter documents the current state and shows how to use the available metadata APIs.
-> A deeper governance integration is planned for v1.4.2.
 >
-> Prerequisites: Arrow Lake v1.4.1 with `gravitino.enabled: true` and Docker Compose prod profile
+> Prerequisites: Arrow Lake v1.4.4 with `gravitino.enabled: true` and Docker Compose prod profile
 > running (`gravitino` + `lance-rest` containers healthy).
 
 ### Current Capability Matrix
@@ -205,7 +203,7 @@ then list tables, then inspect individual schemas.
 properly classified.
 
 > **Note**: Tags are currently stored in Gravitino but **do not drive access control or automatic
-> masking**. They serve as metadata labels for discovery and auditing. Enforcement is planned for v1.4.2.
+> masking**. They serve as metadata labels for discovery and auditing. Enforcement was enhanced in v1.4.2.
 
 ### Predefined Tags
 
@@ -290,7 +288,7 @@ Tags provide a lightweight classification system. Use column-level tagging for f
 
 > **Note**: Policies are currently stored in Gravitino but **not automatically enforced**. Creating a
 > retention policy does not trigger data deletion; creating a masking policy does not transform query
-> results. Enforcement is planned for v1.4.2.
+> results. Enforcement was enhanced in v1.4.2.
 
 ### Step 1: Create Retention Policy
 
@@ -374,7 +372,7 @@ then apply them to tables. The policy engine handles cleanup and data transforma
 
 > **Note**: The model registry is currently a standalone metadata store. The `embed/` and `rag/`
 > modules do **not** yet read model versions from Gravitino. Model hot-swap requires manual
-> integration. Full ML pipeline integration is planned for v1.4.2.
+> integration. Full ML pipeline integration was enhanced in v1.4.2.
 
 ### Step 1: Register a Model
 
@@ -468,7 +466,7 @@ to control which version is used where — update the alias, not the code.
 **Persona**: A performance engineer collecting table statistics to improve query plans.
 
 > **Note**: Statistics are collected and stored in Gravitino but **not consumed by DuckDB's query
-> planner**. They serve as metadata for monitoring. Query planner integration is planned for v1.4.2.
+> planner**. They serve as metadata for monitoring. Query planner integration was enhanced in v1.4.2.
 
 ### Step 1: Collect Statistics
 
