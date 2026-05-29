@@ -9,7 +9,7 @@
 ```mermaid
 graph TB
     subgraph Application["Application Layer"]
-        CLI["CLI<br/>Click · 16 Groups"]
+        CLI["CLI<br/>Click · 25 Commands<br/>Scene-based Navigation"]
         SDK["Python SDK<br/>Lake Facade · 8 Mixins"]
         API["REST API<br/>FastAPI · 17 Routers"]
     end
@@ -88,6 +88,22 @@ graph TB
 | **Kernel** | Storage, compute, schema primitives | `storage/`, `ingest/storage.py`, `ingest/schema.py`, `query/session_manager.py`, `ray_runtime/` |
 
 **Dependency rule:** Application → Service → Kernel (one direction only, no bypass).
+
+---
+
+## Application Layer — CLI (v1.5.0)
+
+The CLI provides two navigation modes:
+
+**Scene-based (user goal):** Commands organized by what you want to accomplish:
+- `knowledge` → RAG pipeline, knowledge graph, search, indexing
+- `connect` → Data ingestion, dataset management
+- `analyze` → SQL analytics, export, quality
+- `govern` → Audit trail, lineage, backup, maintenance
+
+**Technical (module):** Direct access to all 16 command groups (`ingest`, `search`, `query`, `rag`, `kg`, etc.)
+
+**Error translation layer:** Low-level exceptions (ColumnNotFoundError, ConnectionError) are translated into user-friendly messages with actionable hints. See [CLI Guide](../reference/cli-guide.md).
 
 ---
 

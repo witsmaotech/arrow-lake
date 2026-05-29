@@ -13,6 +13,7 @@ Usage::
 from __future__ import annotations
 
 import json
+import re
 import signal
 import subprocess
 import sys
@@ -43,9 +44,76 @@ def _print_success(message: str) -> None:
     console.print(f"[green]Success:[/green] {message}")
 
 
+# ---------------------------------------------------------------------------
+# Error translation — user-friendly messages for common exceptions (v1.5.0)
+# ---------------------------------------------------------------------------
+
+_ERROR_HINTS: list[tuple[str, str, str]] = [
+    # (exception_type_pattern, message_template, hint)
+    ("ColumnNotFoundError", "Column '{col}' not found. Available columns: {avail}.", None),
+    ("IndexNotFoundError", "No search index found for dataset '{ds}'.", "Run: arrow-lake index vector {ds}"),
+    ("DatasetNotFoundError", "Dataset '{ds}' does not exist.", "Run: arrow-lake catalog list to see available datasets"),
+    ("ConnectionError", "Cannot connect to {service}.", "Check: docker compose ps {service}"),
+    ("ValueError: Unsupported file format", "File format '{ext}' is not supported.", "Supported: .csv, .json, .jsonl, .parquet, .pdf, .png, .jpg"),
+]
+
+
+def _translate_error(exc: Exception) -> tuple[str, str | None]:
+    """Translate a low-level exception to a user-friendly message + optional hint."""
+    exc_type = type(exc).__name__
+    exc_msg = str(exc)
+
+    for pattern, template, hint in _ERROR_HINTS:
+        if pattern in exc_type or pattern in exc_msg:
+            msg = template
+            if "{col}" in msg and "column" in exc_msg.lower():
+                col_match = re.search(r"['\"](\w+)['\"]", exc_msg)
+                avail_match = re.search(r"\[([^\]]+)\]", exc_msg)
+                msg = msg.format(
+                    col=col_match.group(1) if col_match else "unknown",
+                    avail=avail_match.group(1) if avail_match else "see dataset schema",
+                )
+            elif "{ds}" in msg:
+                ds_match = re.search(r"['\"](\w+)['\"]", exc_msg)
+                msg = msg.format(ds=ds_match.group(1) if ds_match else "dataset")
+                if hint:
+                    hint = hint.format(ds=ds_match.group(1) if ds_match else "DATASET")
+            elif "{service}" in msg:
+                svc = "redis" if "redis" in exc_msg.lower() else "service"
+                msg = msg.format(service=svc)
+                if hint:
+                    hint = hint.format(service=svc)
+            elif "{ext}" in msg:
+                ext_match = re.search(r"\.(\w+)", exc_msg)
+                msg = msg.format(ext=f".{ext_match.group(1)}" if ext_match else "unknown")
+            return msg, hint
+
+    # No specific translation — return original message
+    return f"{exc_type}: {exc_msg}", None
+
+
 def _json_output(data: dict[str, Any]) -> None:
     """Print machine-readable JSON output."""
     click.echo(json.dumps(data, indent=2, default=str))
+
+
+def _install_error_translator() -> None:
+    """Install a global excepthook that translates common errors to user-friendly messages."""
+
+    _original_excepthook = sys.excepthook
+
+    def _friendly_excepthook(exc_type: type, exc_value: BaseException, exc_tb: Any) -> None:
+        # Skip KeyboardInterrupt and SystemExit
+        if issubclass(exc_type, (KeyboardInterrupt, SystemExit)):
+            _original_excepthook(exc_type, exc_value, exc_tb)
+            return
+
+        msg, hint = _translate_error(exc_value)
+        _print_error(msg)
+        if hint:
+            console.print(f"  [dim]Hint: {hint}[/dim]")
+
+    sys.excepthook = _friendly_excepthook
 
 
 def _get_output_format(ctx: click.Context) -> str:
@@ -151,7 +219,22 @@ def _run_async(coro: Any) -> Any:
 @click.version_option(package_name="arrow-lake", message="%(prog)s %(version)s")
 @click.pass_context
 def main(ctx: click.Context, base_uri: str, config_path: str | None, verbose: int, quiet: bool, output_format: str) -> None:
-    """Arrow Lake — Unified multimodal data lakehouse CLI."""
+    """Arrow Lake — Unified multimodal data lakehouse CLI.
+
+    \b
+    Quick Start:
+      arrow-lake demo                    Run interactive demo (~15s)
+      arrow-lake serve                   Start REST API server
+
+    \b
+    By Goal:
+      🔍 search       Find information (vector/FTS/hybrid)
+      📚 knowledge    Build knowledge base (RAG + knowledge graph)
+      🔗 connect      Connect data sources (ingest + import)
+      📊 analyze      Analyze data (SQL OLAP)
+      🛡️  govern      Govern data (RBAC + metadata + audit)
+      ⚙️  admin        Manage system (deploy/monitor/maintain)
+    """
     ctx.ensure_object(dict)
     ctx.obj["base_uri"] = base_uri
     ctx.obj["config_path"] = config_path
@@ -172,6 +255,9 @@ def main(ctx: click.Context, base_uri: str, config_path: str | None, verbose: in
             sys.exit(130)
 
     signal.signal(signal.SIGINT, _sigint_handler)
+
+    # Install global error translator (v1.5.0)
+    _install_error_translator()
 
 
 # ---------------------------------------------------------------------------
@@ -443,3 +529,92 @@ main.add_command(maintenance.maintenance_group, name="maintenance")
 
 kg.kg_group.add_command(kg.traverser_group, name="traverser")
 kg.kg_group.add_command(kg.algo_group, name="algo")
+
+# ---------------------------------------------------------------------------
+# Scene-based aliases — user-goal navigation (v1.5.0)
+# ---------------------------------------------------------------------------
+
+
+@main.command(name="knowledge", hidden=False)
+@click.pass_context
+def _knowledge_alias(ctx: click.Context) -> None:
+    """Build knowledge base — RAG pipeline + knowledge graph.
+
+    \b
+    Common tasks:
+      arrow-lake rag query "your question"     Ask a question (RAG)
+      arrow-lake rag stream "your question"    Stream RAG response
+      arrow-lake kg build                      Build knowledge graph
+      arrow-lake search hybrid <ds> --query    Hybrid search
+      arrow-lake index vector <ds>             Build vector index
+    """
+    console.print("[bold]Knowledge Building Commands:[/bold]\n")
+    console.print("  [cyan]rag[/cyan]       RAG pipeline — query, stream, sessions")
+    console.print("  [cyan]kg[/cyan]        Knowledge graph — build, query, GraphRAG")
+    console.print("  [cyan]search[/cyan]    Search — vector, FTS, hybrid, faceted, ensemble")
+    console.print("  [cyan]index[/cyan]     Index management — vector index, FTS index")
+    console.print("  [cyan]embed[/cyan]     Embedding — text, image")
+    console.print()
+    console.print("[dim]Run any subcommand with --help for details.[/dim]")
+
+
+@main.command(name="connect", hidden=False)
+@click.pass_context
+def _connect_alias(ctx: click.Context) -> None:
+    """Connect data sources — ingest files, API, streams.
+
+    \b
+    Common tasks:
+      arrow-lake ingest files <ds> <paths>...  Ingest files into dataset
+      arrow-lake ingest create <ds> <file>      Create dataset from file
+      arrow-lake catalog list                   List all datasets
+      arrow-lake config show                    Show current configuration
+    """
+    console.print("[bold]Data Connection Commands:[/bold]\n")
+    console.print("  [cyan]ingest[/cyan]    Ingest — files, documents, images, videos")
+    console.print("  [cyan]catalog[/cyan]   Catalog — list, info, delete datasets")
+    console.print("  [cyan]config[/cyan]    Configuration — show, init")
+    console.print()
+    console.print("[dim]Run any subcommand with --help for details.[/dim]")
+
+
+@main.command(name="analyze", hidden=False)
+@click.pass_context
+def _analyze_alias(ctx: click.Context) -> None:
+    """Analyze data — SQL OLAP, export, lifecycle.
+
+    \b
+    Common tasks:
+      arrow-lake query sql <ds> --sql "SELECT"  Run SQL query
+      arrow-lake query daft <ds>                 Daft DataFrame
+      arrow-lake export <ds>                     Export to Parquet/CSV
+      arrow-lake quality dedup <ds>              Deduplicate data
+    """
+    console.print("[bold]Data Analysis Commands:[/bold]\n")
+    console.print("  [cyan]query[/cyan]    Query — SQL, Daft DataFrame, metadata")
+    console.print("  [cyan]export[/cyan]   Export — Parquet, CSV with versioning")
+    console.print("  [cyan]quality[/cyan]  Quality — dedup, filter")
+    console.print("  [cyan]lifecycle[/cyan] Lifecycle — TTL, retention, compaction")
+    console.print()
+    console.print("[dim]Run any subcommand with --help for details.[/dim]")
+
+
+@main.command(name="govern", hidden=False)
+@click.pass_context
+def _govern_alias(ctx: click.Context) -> None:
+    """Govern data — RBAC, metadata, audit, lineage.
+
+    \b
+    Common tasks:
+      arrow-lake audit record                    Record audit entry
+      arrow-lake audit verify                    Verify audit trail
+      arrow-lake lineage record                  Record data lineage
+      arrow-lake maintenance status              Check maintenance status
+    """
+    console.print("[bold]Data Governance Commands:[/bold]\n")
+    console.print("  [cyan]audit[/cyan]       Audit trail — record, verify, query, export")
+    console.print("  [cyan]lineage[/cyan]     Lineage — record, history, query")
+    console.print("  [cyan]backup[/cyan]      Backup — create, restore, list")
+    console.print("  [cyan]maintenance[/cyan] Maintenance — status, run")
+    console.print()
+    console.print("[dim]Run any subcommand with --help for details.[/dim]")
