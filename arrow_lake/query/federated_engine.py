@@ -16,7 +16,7 @@ logger = structlog.get_logger(__name__)
 
 _SAFE_ID = re.compile(r"^[a-zA-Z0-9_-]+$")
 _DANGEROUS_SQL = re.compile(
-    r";\s*(DROP|DELETE|INSERT|UPDATE|ALTER|CREATE|EXEC|EXECUTE|GRANT|REVOKE)\b",
+    r"\b(DROP|DELETE|INSERT|UPDATE|ALTER|CREATE|TRUNCATE|EXEC|EXECUTE|GRANT|REVOKE|UNION|EXCEPT|INTERSECT)\b",
     re.IGNORECASE,
 )
 
@@ -71,9 +71,14 @@ class FederatedQueryEngine:
 
     @staticmethod
     def _validate_sql(sql: str) -> None:
-        """Reject SQL containing dangerous statements after semicolons."""
+        """Reject SQL containing dangerous statements or non-SELECT/WITH starters."""
+        stripped = sql.strip().upper()
+        if not stripped.startswith("SELECT") and not stripped.startswith("WITH"):
+            raise ValueError("Only SELECT/WITH queries are allowed")
         if _DANGEROUS_SQL.search(sql):
             raise ValueError("SQL contains prohibited statements")
+        if ";" in sql.rstrip(";"):
+            raise ValueError("Multi-statement SQL is not allowed")
 
     def resolve_table(self, fqn: str) -> TableResolution | None:
         """Resolve a fully qualified name (catalog.schema.table) to table metadata."""

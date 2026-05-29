@@ -7,9 +7,12 @@ import re
 from typing import Any
 from urllib.request import Request as UrlRequest, urlopen
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 import structlog
+
+from arrow_lake.api.auth_models import Role
+from arrow_lake.api.deps import require_role
 
 logger = structlog.get_logger(__name__)
 
@@ -144,7 +147,7 @@ def list_tags(request: Request) -> dict[str, Any]:
         return {"success": False, "data": [], "error": str(exc), "metadata": {}}
 
 
-@router.post("/tags")
+@router.post("/tags", dependencies=[Depends(require_role(Role.ADMIN))])
 def create_tag(request: Request) -> dict[str, Any]:
     """Create a new tag."""
     try:
@@ -183,7 +186,7 @@ def list_policies(request: Request) -> dict[str, Any]:
     }
 
 
-@router.post("/policies/retention")
+@router.post("/policies/retention", dependencies=[Depends(require_role(Role.ADMIN))])
 def create_retention_policy(request: Request) -> dict[str, Any]:
     """Create a data retention policy."""
     try:
@@ -209,7 +212,7 @@ def create_retention_policy(request: Request) -> dict[str, Any]:
         return {"success": False, "data": None, "error": str(exc), "metadata": {}}
 
 
-@router.post("/policies/masking")
+@router.post("/policies/masking", dependencies=[Depends(require_role(Role.ADMIN))])
 def create_masking_policy(request: Request) -> dict[str, Any]:
     """Create a data masking policy."""
     try:
@@ -239,7 +242,7 @@ def create_masking_policy(request: Request) -> dict[str, Any]:
 # Statistics
 # ---------------------------------------------------------------------------
 
-@router.post("/statistics/{name}")
+@router.post("/statistics/{name}", dependencies=[Depends(require_role(Role.EDITOR))])
 def collect_stats(name: str, request: Request) -> dict[str, Any]:
     """Collect and register table statistics."""
     _validate_id(name, "table name")
@@ -313,7 +316,7 @@ def get_model_versions(name: str, request: Request) -> dict[str, Any]:
 # Policy Enforcement (v1.4.2)
 # ---------------------------------------------------------------------------
 
-@router.post("/policies/enforce")
+@router.post("/policies/enforce", dependencies=[Depends(require_role(Role.ADMIN))])
 def enforce_policies(request: Request) -> dict[str, Any]:
     """Manually trigger retention policy enforcement."""
     enforcer = getattr(request.app.state, "retention_enforcer", None)
@@ -323,6 +326,7 @@ def enforce_policies(request: Request) -> dict[str, Any]:
         dry_run = request.query_params.get("dry_run", "false").lower() == "true"
         table = request.query_params.get("table")
         if table:
+            _validate_id(table, "table name")
             cleaned = enforcer.enforce_table(table, dry_run=dry_run)
         else:
             cleaned = enforcer.enforce(dry_run=dry_run)

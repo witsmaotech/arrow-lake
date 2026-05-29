@@ -43,8 +43,14 @@ class MaskingEngine:
         self._ttl = config.masking_policy_cache_ttl_seconds
         self._hmac_key = os.environ.get(
             "ARROW_LAKE__MASKING__HMAC_KEY",
-            "default-dev-key-change-in-prod",
+            "",
         ).encode()
+        if not self._hmac_key:
+            logger.warning(
+                "masking_engine.hmac_key_missing",
+                msg="ARROW_LAKE__MASKING__HMAC_KEY not set — hash masking is DISABLED. "
+                "Set this environment variable to enable secure hash masking.",
+            )
 
     # ── public API ──
 
@@ -153,6 +159,10 @@ class MaskingEngine:
             return pa.chunked_array([null_arr])
 
         if function == "hash":
+            if not self._hmac_key:
+                logger.warning("masking_engine.hash_fallback_nullify", reason="HMAC key not configured")
+                return self._mask_column(column, "nullify")
+
             def _hash_val(val: str | None) -> str | None:
                 if val is None:
                     return None
