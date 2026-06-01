@@ -1,6 +1,6 @@
 # Architecture — Three-Layer + Dual-Plane
 
-**Version:** v1.5.0 | **Updated:** 2026-05-26
+**Version:** v1.5.2 | **Updated:** 2026-05-26
 
 ---
 
@@ -91,7 +91,7 @@ graph TB
 
 ---
 
-## Application Layer — CLI (v1.5.0)
+## Application Layer — CLI (v1.5.2)
 
 The CLI provides two navigation modes:
 

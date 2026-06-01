@@ -1,6 +1,6 @@
 # SLO Definitions & Dependency Criticality
 
-**Version:** v1.5.0 | **Last Updated:** 2026-05-26
+**Version:** v1.5.2 | **Last Updated:** 2026-05-26
 
 ---
 
@@ -68,7 +68,7 @@
 Redis is the most critical single-point-of-failure. Three-level fallback:
 
 ```
-Level 1: Redis Sentinel (recommended for v1.5.0)
+Level 1: Redis Sentinel (recommended for v1.5.2)
   ├── Primary + 2 replicas
   ├── Automatic failover (< 10s)
   └── Docker Compose profile: redis-sentinel

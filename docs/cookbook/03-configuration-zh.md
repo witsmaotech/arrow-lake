@@ -342,3 +342,76 @@ ARROW_LAKE__EMBEDDING__MODEL=Qwen/Qwen3-Embedding-0.6B
 3. **容器部署**: 通过 `ARROW_LAKE__` 环境变量覆盖关键配置，无需修改配置文件
 4. **中文场景**: 设置 `fts.tokenizer_type = "jieba"` 以获得更好的中文分词效果
 5. **大向量维度**: `num_sub_vectors` 必须是 8 的倍数，且不大于向量维度
+
+***
+
+## 9. Redis 分布式会话配置 (RedisConfig)
+
+当 Arrow Lake 运行在多个 API 副本之后时，DuckDB 会话协调和 JWT Token 黑名单必须在进程间共享。`RedisConfig` 启用基于 Redis 的分布式信号量来替代默认的 `threading.Semaphore`。
+
+当 `enabled` 为 `False`（默认值）时，系统回退到进程内同步。
+
+```python
+from arrow_lake.config import RedisConfig
+
+# 本地开发（进程内信号量，无需 Redis）
+redis_cfg = RedisConfig()  # 默认 enabled=False
+
+# 生产环境使用 Redis
+redis_cfg = RedisConfig(
+    enabled=True,
+    url="redis://redis:6379/0",
+    password="",
+    ssl=False,
+    semaphore_key_prefix="arrow_lake:semaphore:",
+    semaphore_ttl_seconds=300,
+    redis_pool_size=10,
+)
+```
+
+**RedisConfig 字段说明：**
+
+| 字段                     | 类型     | 默认值                                 | 说明                                               |
+| ---------------------- | ------ | ----------------------------------- | ------------------------------------------------ |
+| `enabled`              | `bool` | `False`                             | 启用基于 Redis 的分布式信号量和 JWT 黑名单                      |
+| `url`                  | `str`  | `"redis://localhost:6379/0"`        | Redis 连接 URL                                     |
+| `password`             | `str`  | `""`                                | Redis 认证密码                                       |
+| `ssl`                  | `bool` | `False`                             | 启用 TLS 加密 Redis 连接                               |
+| `ssl_cert_reqs`        | `str`  | `"required"`                        | `ssl=True` 时的 SSL 证书验证模式                         |
+| `semaphore_key_prefix` | `str`  | `"arrow_lake:semaphore:"`           | 分布式信号量计数器的 Redis 键前缀                             |
+| `semaphore_ttl_seconds`| `int`  | `300` (>= 1)                        | 信号量键的 TTL — 自动回收过期的许可                            |
+| `redis_pool_size`      | `int`  | `10` (>= 1)                         | Redis 客户端连接池大小                                   |
+
+### YAML 配置
+
+```yaml
+# config.yaml — Redis 分布式会话协调
+redis:
+  enabled: true
+  url: "redis://redis:6379/0"
+  password: "${REDIS_PASSWORD}"
+  ssl: false
+  semaphore_key_prefix: "arrow_lake:semaphore:"
+  semaphore_ttl_seconds: 300
+  redis_pool_size: 10
+```
+
+### 环境变量覆盖
+
+```bash
+# 启用 Redis 并配置连接
+ARROW_LAKE__REDIS__ENABLED=true
+ARROW_LAKE__REDIS__URL=redis://redis:6379/0
+ARROW_LAKE__REDIS__PASSWORD=your-redis-password
+ARROW_LAKE__REDIS__SSL=false
+ARROW_LAKE__REDIS__SEMAPHORE_KEY_PREFIX=arrow_lake:semaphore:
+ARROW_LAKE__REDIS__SEMAPHORE_TTL_SECONDS=300
+ARROW_LAKE__REDIS__REDIS_POOL_SIZE=10
+```
+
+### 工作原理
+
+`RedisCountingSemaphore` 使用 Lua 脚本实现原子的获取/释放操作：
+- **获取 (Acquire)**：当 Redis 计数器低于 `max_permits` 时，原子递增计数器；设置 TTL 自动回收过期的许可。
+- **释放 (Release)**：原子递减计数器，防止下溢。
+- **回退 (Fallback)**：如果 Redis 不可用，透明回退到 `threading.Semaphore` 并记录警告日志。

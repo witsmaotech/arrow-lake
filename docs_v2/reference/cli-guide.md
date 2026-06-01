@@ -2,7 +2,7 @@
 
 **Maturity:** 🟢 Starter | **Last Updated:** 2026-05-26
 
-Arrow Lake CLI (v1.5.0+) organizes commands by **user goal**, not technical module. Run `arrow-lake --help` to see the full list.
+Arrow Lake CLI (v1.5.2+) organizes commands by **user goal**, not technical module. Run `arrow-lake --help` to see the full list.
 
 ---
 
@@ -33,10 +33,43 @@ arrow-lake knowledge                   # Show knowledge building commands
 arrow-lake rag query "your question"   # Ask a question (RAG)
 arrow-lake rag stream "your question"  # Stream RAG response
 arrow-lake rag history                 # View session history
-arrow-lake kg build                    # Build knowledge graph
-arrow-lake kg query                    # Gremlin query
+arrow-lake kg build <dataset>          # Build knowledge graph from dataset
+arrow-lake kg status <task_id>         # Check KG build status
+arrow-lake kg stats                    # Show knowledge graph statistics
+arrow-lake kg query <gremlin_query>    # Execute a Gremlin query
+arrow-lake kg neighbors <entity_id>    # Get entity neighbors (--depth N)
+arrow-lake kg export [--output FILE]   # Export graph as JSON
+arrow-lake kg import <file_path>       # Import graph from JSON file
+arrow-lake kg delete [--yes]           # Delete all graph data (irreversible)
 arrow-lake index vector <dataset>      # Build vector index
 arrow-lake index fts <dataset>         # Build FTS index
+```
+
+#### kg traverser — Graph traversal algorithms
+
+```bash
+arrow-lake kg traverser all-shortest-paths <source> <target>  # All shortest paths
+arrow-lake kg traverser weighted-shortest <source> <target>   # Weighted shortest path
+arrow-lake kg traverser single-source-shortest <source>       # Single-source shortest path
+arrow-lake kg traverser multi-node-shortest --sources '[...]' --targets '[...]'  # Multi-pair shortest
+arrow-lake kg traverser rays <source>                         # Non-cyclic paths from source
+arrow-lake kg traverser rings <source>                        # Cyclic paths from source
+arrow-lake kg traverser crosspoints <source> <target>         # Vertices on paths between pair
+arrow-lake kg traverser customized <source> --steps '[...]'   # Custom multi-step traversal
+```
+
+#### kg algo — Graph OLAP algorithms (Vermeer)
+
+```bash
+arrow-lake kg algo pagerank                # PageRank importance ranking
+arrow-lake kg algo louvain                 # Louvain community detection
+arrow-lake kg algo label-propagation       # Label Propagation communities
+arrow-lake kg algo wcc                     # Weakly Connected Components
+arrow-lake kg algo triangle-count          # Triangle counting
+arrow-lake kg algo degree-centrality       # Degree centrality
+arrow-lake kg algo closeness-centrality    # Closeness centrality
+arrow-lake kg algo betweenness-centrality  # Betweenness centrality
+arrow-lake kg algo k-core                  # K-core decomposition (--k 3)
 ```
 
 ### 🔗 connect — Connect data sources
@@ -60,6 +93,9 @@ arrow-lake query daft <dataset>        # Daft DataFrame view
 arrow-lake export <dataset>            # Export to Parquet/CSV
 arrow-lake quality dedup <dataset>     # Deduplicate records
 arrow-lake lifecycle status <dataset>  # Check lifecycle policy
+arrow-lake lifecycle estimate --size-gb 100 --target-tier GLACIER  # Cost savings estimate
+arrow-lake lifecycle rules [--prefix PREFIX]    # Preview lifecycle rules
+arrow-lake lifecycle config                     # Show current lifecycle config
 ```
 
 ### 🛡️ govern — Govern data
@@ -98,7 +134,7 @@ All original technical commands remain available:
 
 ---
 
-## Error Messages (v1.5.0)
+## Error Messages (v1.5.2)
 
 The CLI translates common low-level errors into actionable messages:
 

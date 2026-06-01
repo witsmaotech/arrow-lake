@@ -1,8 +1,12 @@
 # Gravitino 元数据治理（实验性）
 
-> **状态：实验性** — v1.4.1 提供基础的 Gravitino 元数据存储和浏览能力。当前实现将元数据（标签、策略、统计、模型版本）存储到 Gravitino，但**尚未形成治理闭环**——策略不会自动执行、标签不驱动访问控制、统计不被查询规划器消费。详见下方能力矩阵。
+> **状态：实验性** — Arrow Lake v1.5.2 提供用于元数据存储、浏览和深度治理的 Gravitino 集成。v1.4.2 引入了 FQN 注入防护、通过 pydantic-settings 配置 Gravitino，以及增强的安全验证。
+> 参见下方能力矩阵，了解当前可用功能与计划功能的对比。
 >
-> 本章记录当前可用功能及 API 用法。深度治理集成计划在 v1.4.2 完成。
+> 本章记录当前状态，并展示如何使用可用的元数据 API。
+>
+> 前提条件：Arrow Lake v1.5.2，`gravitino.enabled: true`，Docker Compose 生产环境 profile
+> 正在运行（`gravitino` + `lance-rest` 容器健康）。
 
 ### 当前能力矩阵
 
@@ -22,32 +26,52 @@
 
 ## 1. 架构概览
 
-Arrow Lake 作为 Gravitino 元数据操作的代理层，客户端调用 `/metadata/*` 端点，由 Arrow Lake 委托给 Gravitino：
+### 代理架构
+
+Arrow Lake 作为 Gravitino 元数据操作的代理层。客户端调用 Arrow Lake API 上的 `/metadata/*` 端点，由 Arrow Lake 通过 REST API 或 Python SDK 委托给 Gravitino：
 
 ```text
 Client → Arrow Lake API (/metadata/*)
-            ├── GravitinoBridge (REST)       ← 目录、表、统计
-            ├── GravitinoTagService (SDK)    ← 标签
-            ├── GravitinoPolicyService (SDK) ← 策略
-            └── GravitinoModelRegistry (SDK) ← 模型
+            ├── GravitinoBridge (REST)       ← catalogs, tables, stats
+            ├── GravitinoTagService (SDK)    ← tags
+            ├── GravitinoPolicyService (SDK) ← policies
+            └── GravitinoModelRegistry (SDK) ← models
                     ↓
             Apache Gravitino Server (:8090)
+            Apache Lance REST Catalog (:9002)
+```
+
+### 元数据层级
+
+```text
+Metalake: arrow-lake
+  ├── Catalog: lance-catalog     (RELATIONAL, lakehouse-generic)
+  │     └── Schema: arrow_lake
+  │           └── Tables: articles, sales, ...
+  ├── Catalog: minio-fileset     (FILESET)
+  │     └── Schema: arrow_lake
+  │           └── Filesets: dataset paths
+  └── Catalog: ml-models         (MODEL)
+        └── Schema: default
+              └── Models: text-embedder, image-classifier, ...
 ```
 
 ### 配置
 
 ```yaml
+# config.yaml
 gravitino:
   enabled: true
   uri: "http://gravitino:8090"
   metalake: "arrow-lake"
   lance_rest_enabled: true
   lance_rest_uri: "http://lance-rest:9002"
+  auth_type: simple
   sync_direction: bidirectional
-  sync_interval_seconds: 30
+  sync_interval_seconds: 30   # 范围: 5–300
 ```
 
-所有 Gravitino 调用均有 `try/except` 保护——Gravitino 不可用时 Arrow Lake 使用本地 DuckDB 目录正常运行。
+所有 Gravitino 调用均包装在 `try/except` 中——Gravitino 不可用时，Arrow Lake 使用本地 DuckDB 目录继续正常运行。
 
 ***
 
@@ -55,25 +79,116 @@ gravitino:
 
 **角色**：新入职数据工程师，探索数据湖中有哪些数据集。
 
+### 步骤 1：检查系统健康
+
 ```bash
-# 健康检查
 curl http://localhost:8000/health -H "X-API-Key: your-key"
-# → {"status":"ok", "gravitino":"healthy", "lance_rest":"healthy"}
-
-# 浏览目录
-curl http://localhost:8000/metadata/catalogs -H "X-API-Key: your-key"
-# → lance-catalog, minio-fileset, ml-models
-
-# 列出表
-curl http://localhost:8000/metadata/tables -H "X-API-Key: your-key"
-# → articles, sales, transactions ...
-
-# 查看表结构
-curl http://localhost:8000/metadata/tables/articles -H "X-API-Key: your-key"
-# → columns: [id:long, title:string, text_content:string, ...]
 ```
 
-**关键收获**：无需预先知道表名，通过 catalogs → tables → detail 逐层探索即可发现完整元数据。
+```json
+{
+  "status": "ok",
+  "version": "1.4.1",
+  "storage": "accessible",
+  "gravitino": "healthy",
+  "lance_rest": "healthy"
+}
+```
+
+当 Gravitino 启用时，健康响应会包含 `gravitino` 和 `lance_rest` 字段。
+
+### 步骤 2：浏览目录
+
+```bash
+curl http://localhost:8000/metadata/catalogs -H "X-API-Key: your-key"
+```
+
+```json
+{
+  "success": true,
+  "data": [
+    {"name": "lance-catalog"},
+    {"name": "minio-fileset"},
+    {"name": "ml-models"}
+  ],
+  "error": null,
+  "metadata": {"total": 3}
+}
+```
+
+三个目录各自服务不同用途：
+- **lance-catalog**：由 Lance 数据集支撑的关系表
+- **minio-fileset**：MinIO 对象的文件级访问
+- **ml-models**：ML 模型版本注册表
+
+### 步骤 3：列出表
+
+```bash
+curl http://localhost:8000/metadata/tables -H "X-API-Key: your-key"
+```
+
+```json
+{
+  "success": true,
+  "data": [
+    {"name": "articles"},
+    {"name": "sales"},
+    {"name": "transactions"}
+  ],
+  "error": null,
+  "metadata": {"total": 3}
+}
+```
+
+### 步骤 4：查看表结构
+
+```bash
+curl http://localhost:8000/metadata/tables/articles -H "X-API-Key: your-key"
+```
+
+```json
+{
+  "success": true,
+  "data": {
+    "name": "articles",
+    "columns": [
+      {"name": "id", "type": "long"},
+      {"name": "title", "type": "string"},
+      {"name": "text_content", "type": "string"},
+      {"name": "text_embedding", "type": "binary"},
+      {"name": "published_at", "type": "timestamp"}
+    ],
+    "properties": {
+      "format": "lance",
+      "owner": "data-team"
+    }
+  },
+  "error": null,
+  "metadata": {}
+}
+```
+
+### Python (httpx)
+
+```python
+import httpx
+
+BASE = "http://localhost:8000"
+H = {"X-API-Key": "your-key"}
+
+# 浏览 catalogs → tables → detail
+for cat in httpx.get(f"{BASE}/metadata/catalogs", headers=H).json()["data"]:
+    print(f"Catalog: {cat['name']}")
+
+for tbl in httpx.get(f"{BASE}/metadata/tables", headers=H).json()["data"]:
+    detail = httpx.get(f"{BASE}/metadata/tables/{tbl['name']}", headers=H).json()
+    cols = detail["data"]["columns"]
+    print(f"  {tbl['name']}: {len(cols)} columns")
+```
+
+### 关键收获
+
+无需预先知道表名即可发现完整的元数据层级——浏览目录、列出表、再查看单个表结构。
 
 ***
 
@@ -81,9 +196,11 @@ curl http://localhost:8000/metadata/tables/articles -H "X-API-Key: your-key"
 
 **角色**：数据管家为 GDPR 合规打标签，确保 PII 列正确分类。
 
-> **注意**：标签当前仅存储在 Gravitino 中，**不驱动访问控制或自动脱敏**。用于发现和审计。执行能力计划在 v1.4.2 实现。
+> **注意**：标签当前存储在 Gravitino 中，但**不驱动访问控制或自动脱敏**。它们作为元数据标签用于发现和审计。执行能力在 v1.4.2 中已增强。
 
-### 预置标签
+### 预定义标签
+
+`GravitinoTagService` 内置常用治理标签：
 
 | 标签 | 用途 |
 |------|------|
@@ -92,57 +209,102 @@ curl http://localhost:8000/metadata/tables/articles -H "X-API-Key: your-key"
 | `financial` | 金融/账单数据 |
 | `expires:30d` | 30 天保留标记 |
 
-### 创建标签 (REST)
+### 步骤 1：创建自定义标签
 
 ```bash
-curl -X POST "http://localhost:8000/metadata/tags?body=%7B%22name%22%3A%22gdpr_subject%22%2C%22comment%22%3A%22GDPR%22%7D" \
+# 创建 GDPR 监管数据的标签
+curl -X POST "http://localhost:8000/metadata/tags?body=%7B%22name%22%3A%22gdpr_subject%22%2C%22comment%22%3A%22Data%20subject%20under%20GDPR%22%7D" \
   -H "X-API-Key: your-key"
 ```
 
-### 关联标签到表/列 (Python SDK)
+### 步骤 2：关联标签到表/列 (Python SDK)
 
-标签关联需要 Python SDK（暂无 REST 端点）：
+标签-表和标签-列关联需要直接使用 Python SDK（暂无 REST 端点）：
 
 ```python
+from arrow_lake.config import GravitinoConfig
 from arrow_lake.quality.gravitino_tags import GravitinoTagService
 
+cfg = GravitinoConfig(enabled=True, uri="http://localhost:8090", metalake="arrow-lake")
 tags = GravitinoTagService(cfg)
+
+# 标记整个表
 tags.tag_table("users", ["pii", "sensitive"])
+
+# 标记特定列
 tags.tag_column("users", "email", ["pii"])
+tags.tag_column("users", "phone", ["pii"])
+
+# 发现所有带有某标签的表
 pii_tables = tags.get_tables_by_tag("pii")
+# → ["users", "customers", ...]
 ```
 
-### 查询标签 (REST)
+### 步骤 3：通过 REST 列出标签
 
 ```bash
+# 列出所有标签
+curl http://localhost:8000/metadata/tags -H "X-API-Key: your-key"
+
+# 列出特定表的标签
 curl "http://localhost:8000/metadata/tags?table=users" -H "X-API-Key: your-key"
-# → [{"name": "pii"}, {"name": "sensitive"}]
 ```
 
-**关键收获**：列级标签实现精细治理（标记 PII 列），表级标签实现粗粒度分类（标记数据域）。
+```json
+{
+  "success": true,
+  "data": [{"name": "pii"}, {"name": "sensitive"}],
+  "error": null,
+  "metadata": {"total": 2}
+}
+```
+
+### 标签治理工作流
+
+```text
+1. 创建标签（定义分类体系）
+2. 标记表/列（应用分类）
+3. 列出每个表的标签（审计分类）
+4. 按标签查询表（发现受管资产）
+```
+
+### 关键收获
+
+标签提供轻量级分类系统。列级标签实现精细治理（如标记 PII 列），表级标签实现粗粒度分类（如"financial"）。
 
 ***
 
 ## 4. 场景 C — 合规策略：保留与脱敏
 
-**角色**：合规官配置数据保留规则和列级脱敏策略。
+**角色**：合规官执行数据保留规则和列级脱敏。
 
-> **注意**：策略当前仅存储在 Gravitino 中，**不自动执行**。创建保留策略不会删除数据，创建脱敏策略不会转换查询结果。执行能力计划在 v1.4.2 实现。
+> **注意**：策略当前存储在 Gravitino 中，但**不自动执行**。创建保留策略不会触发数据删除；创建脱敏策略不会转换查询结果。执行能力在 v1.4.2 中已增强。
+
+### 步骤 1：创建保留策略
 
 ```bash
-# 创建保留策略（90 天）
+# 日志数据仅保留 90 天
 curl -X POST "http://localhost:8000/metadata/policies/retention?body=%7B%22name%22%3A%22log_retention_90d%22%2C%22days%22%3A90%7D" \
   -H "X-API-Key: your-key"
-
-# 创建脱敏策略
-curl -X POST "http://localhost:8000/metadata/policies/masking?body=%7B%22name%22%3A%22email_mask%22%2C%22columns%22%3A%5B%22email%22%2C%22phone%22%5D%7D" \
-  -H "X-API-Key: your-key"
-
-# 列出策略
-curl http://localhost:8000/metadata/policies -H "X-API-Key: your-key"
 ```
 
-应用策略到表（Python SDK）：
+```json
+{"success": true, "data": {"name": "log_retention_90d", "days": 90}, "error": null, "metadata": {}}
+```
+
+### 步骤 2：创建脱敏策略
+
+```bash
+# 脱敏 email 和 phone 列
+curl -X POST "http://localhost:8000/metadata/policies/masking?body=%7B%22name%22%3A%22email_mask%22%2C%22columns%22%3A%5B%22email%22%2C%22phone%22%5D%7D" \
+  -H "X-API-Key: your-key"
+```
+
+```json
+{"success": true, "data": {"name": "email_mask", "columns": ["email", "phone"]}, "error": null, "metadata": {}}
+```
+
+### 步骤 3：应用策略到表 (Python SDK)
 
 ```python
 from arrow_lake.quality.gravitino_policies import GravitinoPolicyService
@@ -152,66 +314,206 @@ svc.apply_policy("log_retention_90d", "access_logs")
 svc.apply_policy("email_mask", "users")
 ```
 
-**关键收获**：策略将治理意图与执行分离——声明式定义规则，再应用到表，策略引擎负责清理和脱敏。
+### 步骤 4：列出所有策略
+
+```bash
+curl http://localhost:8000/metadata/policies -H "X-API-Key: your-key"
+```
+
+```json
+{
+  "success": true,
+  "data": [
+    {"name": "log_retention_90d"},
+    {"name": "email_mask"}
+  ],
+  "error": null,
+  "metadata": {"total": 2}
+}
+```
+
+### 合规检查清单模式
+
+```python
+import httpx
+
+H = {"X-API-Key": "your-key"}
+BASE = "http://localhost:8000"
+
+# 验证所有 PII 表都有脱敏策略
+pii_tables = ["users", "customers", "orders"]
+for table in pii_tables:
+    resp = httpx.get(f"{BASE}/metadata/policies", headers=H).json()
+    has_masking = any("mask" in p["name"] for p in resp.get("data", []))
+    status = "OK" if has_masking else "MISSING"
+    print(f"  {table}: masking policy {status}")
+```
+
+### 关键收获
+
+策略将治理意图与执行分离。声明式定义保留和脱敏规则，再应用到表。策略引擎负责清理和数据转换。
 
 ***
 
 ## 5. 场景 D — ML 模型生命周期管理
 
-**角色**：ML 工程师管理模型版本，实现生产环境热切换。
+**角色**：ML 工程师管理模型版本，用于生产部署。
 
-> **注意**：模型注册表当前是独立的元数据存储，`embed/` 和 `rag/` 模块**未**从 Gravitino 读取模型版本。模型热切换需手动集成。计划在 v1.4.2 完成。
+> **注意**：模型注册表当前是独立的元数据存储。`embed/` 和 `rag/` 模块**尚未**从 Gravitino 读取模型版本。模型热切换需手动集成。完整的 ML 管道集成在 v1.4.2 中已增强。
+
+### 步骤 1：注册模型
 
 ```python
 from arrow_lake.catalog.gravitino_models import GravitinoModelRegistry
 
 registry = GravitinoModelRegistry(cfg)
 
-# 注册模型
-registry.register_model("text-embedder", "文本嵌入模型", {"dimension": "768"})
-
-# 添加版本
-registry.add_version("text-embedder", "s3://models/text-embedder/v1", aliases=["latest"])
-registry.add_version("text-embedder", "s3://models/text-embedder/v2", aliases=["latest"])
-
-# 上线到 production
-registry.add_version("text-embedder", "s3://models/text-embedder/v2", aliases=["production"])
+# 注册新的嵌入模型
+registry.register_model(
+    name="text-embedder",
+    comment="Text embedding model for RAG pipeline",
+    properties={"framework": "sentence-transformers", "dimension": "768"},
+)
 ```
 
-查询版本信息：
+### 步骤 2：添加版本并提升
+
+```python
+# 添加版本 1
+registry.add_version(
+    name="text-embedder",
+    uri="s3://models/text-embedder/v1",
+    aliases=["latest"],
+)
+
+# 添加版本 2（改进模型）
+registry.add_version(
+    name="text-embedder",
+    uri="s3://models/text-embedder/v2",
+    aliases=["latest"],
+)
+
+# 将版本 2 提升到 production
+registry.add_version(
+    name="text-embedder",
+    uri="s3://models/text-embedder/v2",
+    aliases=["production"],
+)
+```
+
+### 步骤 3：通过 REST 查询模型版本
+
+```bash
+curl http://localhost:8000/metadata/models -H "X-API-Key: your-key"
+```
+
+```json
+{"success": true, "data": [{"name": "text-embedder"}], "error": null, "metadata": {"total": 1}}
+```
 
 ```bash
 curl http://localhost:8000/metadata/models/text-embedder/versions -H "X-API-Key: your-key"
-# → [{"version":2, "aliases":["latest"], "tier":"latest"},
-#    {"version":2, "aliases":["production"], "tier":"production"}]
 ```
 
-**热切换**：在 Gravitino 中更新 `production` alias 指向新版本，应用下次启动自动使用新模型。
+```json
+{
+  "success": true,
+  "data": [
+    {"version": 2, "uri": "s3://models/text-embedder/v2", "aliases": ["latest"], "tier": "latest"},
+    {"version": 2, "uri": "s3://models/text-embedder/v2", "aliases": ["production"], "tier": "production"}
+  ],
+  "error": null,
+  "metadata": {"model": "text-embedder", "total": 2}
+}
+```
+
+### 热切换模式
+
+```python
+# 在应用启动代码中：
+latest = registry.get_latest_version("text-embedder")
+prod = registry.get_production_version("text-embedder")
+
+# 使用 production 用于服务，latest 用于金丝雀测试
+serving_uri = prod.uri       # → s3://models/text-embedder/v2
+canary_uri = latest.uri      # → s3://models/text-embedder/v2
+```
+
+热切换方法：在 Gravitino 中更新 `production` alias。下次应用重启时自动使用新版本。
+
+### 关键收获
+
+模型目录将版本管理与服务解耦。使用别名（`latest`、`production`）控制哪个版本用于何处——更新别名，而非代码。
 
 ***
 
 ## 6. 场景 E — 统计信息驱动查询优化
 
-**角色**：性能工程师采集表统计信息，改善查询规划。
+**角色**：性能工程师采集表统计信息，改善查询计划。
 
-> **注意**：统计信息当前存储在 Gravitino 但**不被 DuckDB 查询规划器消费**，仅用于监控。查询规划器集成计划在 v1.4.2 实现。
+> **注意**：统计信息采集并存储在 Gravitino 中，但**不被 DuckDB 查询规划器消费**。它们仅作为监控元数据使用。查询规划器集成在 v1.4.2 中已增强。
+
+### 步骤 1：采集统计信息
 
 ```bash
-# 采集统计信息
 curl -X POST http://localhost:8000/metadata/statistics/articles \
   -H "X-API-Key: your-key"
-# → {"row_count":50000, "column_count":8, "size_mb":125.4, "columns":[...]}
 ```
 
-统计信息以 `stats.*` 前缀存储为 Gravitino 表属性，查询引擎据此优化 join 排序和过滤下推。
+```json
+{
+  "success": true,
+  "data": {
+    "name": "articles",
+    "row_count": 50000,
+    "column_count": 8,
+    "size_mb": 125.4,
+    "columns": [
+      {"name": "id", "type": "long"},
+      {"name": "title", "type": "string"},
+      {"name": "text_content", "type": "string"}
+    ]
+  },
+  "error": null,
+  "metadata": {}
+}
+```
 
-建议在大量摄取后和业务低峰期定期采集。
+### 步骤 2：统计信息内部工作原理
+
+`GravitinoStatsCollector` 对表运行 DuckDB 查询：
+
+```python
+from arrow_lake.catalog.gravitino_stats import GravitinoStatsCollector
+
+collector = GravitinoStatsCollector(cfg)
+stats = collector.collect_table_stats("articles", duckdb_connection)
+# 统计信息以 "stats." 前缀注册为 Gravitino 表属性
+collector.register_stats("articles", stats)
+```
+
+统计信息以表属性形式存储在 Gravitino 中（前缀为 `stats.*`）。查询引擎可据此做出更好的 join 排序和过滤下推决策。
+
+### 定期采集
+
+后台 `GravitinoSyncScheduler` 可配置为定期采集统计信息：
+
+```yaml
+gravitino:
+  sync_interval_seconds: 300   # 每 5 分钟采集统计信息
+```
+
+通过 `CatalogActor` 集成，数据摄取后统计信息采集自动触发。
+
+### 关键收获
+
+统计信息在元数据与查询性能之间架起桥梁。定期采集（特别是在大量摄取后），让查询规划器拥有准确的行数和基数估计。
 
 ***
 
 ## 7. 场景 F — 健康检查与优雅降级
 
-**角色**：SRE 验证 Gravitino 不可用时的系统行为。
+**角色**：SRE 验证 Gravitino 不可用时的系统弹性。
 
 ### 降级矩阵
 
@@ -220,37 +522,104 @@ curl -X POST http://localhost:8000/metadata/statistics/articles \
 | 数据摄取 | 正常 + 同步到 Gravitino | 正常（仅 DuckDB） |
 | 向量/全文搜索 | 正常 | 正常 |
 | OLAP 查询 | 正常 + 联邦查询 | 正常 |
-| `/metadata/*` 端点 | 完整数据 | 503 |
+| `/metadata/*` 端点 | 完整数据 | 503 Service Unavailable |
 | 标签与策略 | 完整 CRUD | 503 或空结果 |
-| 健康检查 | `gravitino: healthy` | `gravitino: unhealthy` |
+| 模型注册表 | 完整 CRUD | 503 |
+| 健康检查 | 显示 `gravitino: healthy` | 显示 `gravitino: unhealthy` |
+
+### 健康检查
+
+```python
+import httpx
+
+resp = httpx.get("http://localhost:8000/health").json()
+if resp.get("gravitino") != "healthy":
+    print("WARNING: Gravitino unavailable — metadata features degraded")
+    print("All core features (ingest, search, query) remain functional.")
+```
+
+### 应用级降级
 
 ```python
 # 安全的元数据访问模式
-resp = client.metadata_get_table(name)
-if resp.get("status") == 503:
-    # 降级到本地 DuckDB 目录
-    detail = client.get_dataset(name)
+def safe_get_table_detail(client: ArrowLakeClient, name: str) -> dict | None:
+    """获取表详情，优雅处理 Gravitino 不可用的情况。"""
+    resp = client.metadata_get_table(name)
+    if resp.get("success"):
+        return resp["data"]
+    if resp.get("status") == 503:
+        print(f"  Gravitino unavailable, using local catalog for {name}")
+        return client.get_dataset(name)  # 降级到 DuckDB
+    return None
 ```
 
-**关键收获**：Arrow Lake 核心功能不依赖 Gravitino——它是增强层，不是硬依赖。
+### 关键收获
+
+Arrow Lake 设计为**优雅降级**：Gravitino 是增强层，不是硬依赖。核心操作始终可用；元数据治理功能在不可用时降级为 503。
 
 ***
 
 ## 8. 后台同步与双向对账
 
-`GravitinoSyncScheduler` 作为守护线程运行在 API 进程中：
+`GravitinoSyncScheduler` 作为后台守护线程运行在 Arrow Lake API 进程中：
 
-- **outbound**：DuckDB 目录 → Gravitino Tables + Filesets
-- **inbound**：Gravitino 外部 Filesets → DuckDB 目录
-- **bidirectional**（默认）：双向同步
+```text
+┌──────────────────────────────────────────────────┐
+│           GravitinoSyncScheduler                  │
+│                                                   │
+│  每隔 sync_interval_seconds 执行:                  │
+│    1. sync_outbound: DuckDB → Gravitino Tables    │
+│       (将本地目录条目推送为 Gravitino               │
+│        tables + filesets)                         │
+│    2. sync_inbound: Gravitino → DuckDB            │
+│       (将外部 filesets 拉入本地目录)                │
+│                                                   │
+│  通过 GravitinoBridge.lock 保证线程安全             │
+└──────────────────────────────────────────────────┘
+```
 
-同步间隔 `sync_interval_seconds` 范围 5–300 秒，默认 30 秒。随 API 进程生命周期启停。
+### 同步方向配置
+
+| 方向 | 行为 |
+|------|------|
+| `outbound` | 仅 DuckDB → Gravitino |
+| `inbound` | 仅 Gravitino → DuckDB |
+| `bidirectional` | 双向同步（默认） |
+
+调度器随 API 服务器生命周期启停（通过 FastAPI `lifespan`）。
+
+### 同步示例
+
+```python
+from arrow_lake.catalog.gravitino_bridge import GravitinoBridge
+
+bridge = GravitinoBridge(cfg)
+
+# 将本地目录推送到 Gravitino
+entries = catalog_actor.list_all()
+synced = bridge.sync_outbound(entries)
+print(f"Synced {synced} tables to Gravitino")
+
+# 从 Gravitino 拉取外部表
+external = bridge.sync_inbound()
+print(f"Discovered {len(external)} external tables")
+```
 
 ***
 
 ## 9. 安全与 RBAC 桥接
 
+### 认证类型
+
+| 类型 | 用途 |
+|------|------|
+| `simple` | 开发/测试（默认） |
+| `oauth` | 使用 OAuth 2.0 提供商的生产环境 |
+| `kerberos` | 企业 Hadoop 环境 |
+
 ### 权限映射
+
+`GravitinoRBACBridge` 将 Arrow Lake 操作映射到 Gravitino 权限：
 
 | Arrow Lake 操作 | Gravitino 权限 |
 |-----------------|---------------|
@@ -260,113 +629,209 @@ if resp.get("status") == 503:
 | `delete` | `DELETE_TABLE` |
 | `admin` | `CREATE_CATALOG` |
 
-Gravitino RBAC 检查失败时返回 `None`，Arrow Lake 降级到本地 JWT/RBAC——确保访问控制始终生效。
+### 降级行为
+
+当 Gravitino RBAC 检查失败时（网络错误、服务宕机），桥接返回 `None`，通知 Arrow Lake 降级到本地 JWT/RBAC 系统。这确保即使在 Gravitino 中断期间，访问控制也始终生效。
+
+```python
+from arrow_lake.api.rbac import GravitinoRBACBridge
+
+rbac = GravitinoRBACBridge(cfg)
+result = rbac.check_permission("user@example.com", "articles", "read")
+# result: True（允许）、False（拒绝）、None（降级到本地 RBAC）
+```
 
 ***
 
-## 10. 最佳实践与常见陷阱
+## 10. 最佳实践与反模式
 
 ### 标签治理
 
-- 命名规范：小写 + 下划线 + 域前缀，如 `pii`、`fin_revenue`
-- 优先列级标签，实现精细治理
-- 定期用 `get_tables_by_tag()` 做合规审计
-- 避免为每列创建标签（标签爆炸）
+| 实践 | 指南 |
+|------|------|
+| 命名 | 小写 + 下划线 + 域前缀：`pii`、`fin_revenue`、`gdpr_subject` |
+| 粒度 | 标记列而非仅标记表——实现精细脱敏 |
+| 发现 | 使用 `get_tables_by_tag()` 做合规审计 |
+| 避免 | 为每列创建标签（标签爆炸） |
 
 ### 策略管理
 
-- 命名规范：`{域}_{类型}_{范围}`，如 `gdpr_retention_90d`
-- 用策略替代 ad-hoc DELETE 做合规
-- 季度审查策略，移除过时规则
+| 实践 | 指南 |
+|------|------|
+| 命名 | `{域}_{类型}_{范围}`：`gdpr_retention_90d`、`fin_mask_email` |
+| 保留 | 用策略替代 ad-hoc DELETE 做合规 |
+| 脱敏 | 在授予分析师访问权限前对 PII 列应用脱敏 |
+| 审查 | 季度审查策略——移除过时规则 |
 
-### 模型管理
+### 模型注册表
 
-- 始终维护 `production` 和 `latest` 别名
-- 热切换：更新 Gravitino 中的 alias，不改代码
-- URI 使用不可变路径（`s3://models/name/v3`，不用 `latest`）
+| 实践 | 指南 |
+|------|------|
+| 别名 | 始终维护 `production` 和 `latest` 别名 |
+| 热切换 | 在 Gravitino 中更新 alias，不在应用代码中更新 |
+| 版本号 | 不复用版本号——始终递增 |
+| URI | 使用不可变 URI（如 `s3://models/name/v3`，而非 `s3://models/name/latest`） |
 
 ### 性能
 
-- 大量摄取后采集统计信息
-- 同步间隔不低于 5 秒
-- 批量操作前检查 Gravitino 健康
-- 客户端设计处理 503 为"功能不可用"，而非需要重试的错误
+| 实践 | 指南 |
+|------|------|
+| 统计信息 | 大量摄取后采集，业务低峰期定期调度 |
+| 同步 | 30 秒默认值足够；不低于 5 秒 |
+| 健康 | 批量操作前检查 Gravitino 健康 |
+| 降级 | 客户端设计为优雅处理 503 |
+
+### 常见反模式
+
+- **跳过健康检查**：批量治理操作前务必验证 Gravitino 可用性。
+- **期望实时同步**：后台同步是最终一致的（5-300 秒延迟）。不要依赖它实现实时一致性。
+- **过度打标签**：过度标记使治理变得更难而非更容易。聚焦于合规相关的分类。
+- **忽略 503 响应**：将 `/metadata/*` 返回的 503 视为"功能不可用"，而非需要重试的错误。
 
 ***
 
 ## 快速参考
 
+### 端点概要
+
 | 方法 | 端点 | 说明 |
 |------|------|------|
-| `GET` | `/metadata/catalogs` | 列出 Catalog |
-| `GET` | `/metadata/tables` | 列出表 |
-| `GET` | `/metadata/tables/{name}` | 表详情 |
-| `GET` | `/metadata/tags` | 列出标签 |
+| `GET` | `/metadata/catalogs` | 列出 Gravitino 目录 |
+| `GET` | `/metadata/tables` | 列出 Lance 目录中的表 |
+| `GET` | `/metadata/tables/{name}` | 表详情（列、属性） |
+| `GET` | `/metadata/tags` | 列出标签（可选 `?table=`） |
 | `POST` | `/metadata/tags` | 创建标签 |
 | `GET` | `/metadata/policies` | 列出策略 |
 | `POST` | `/metadata/policies/retention` | 创建保留策略 |
 | `POST` | `/metadata/policies/masking` | 创建脱敏策略 |
-| `POST` | `/metadata/statistics/{name}` | 采集统计 |
-| `GET` | `/metadata/models` | 列出模型 |
-| `GET` | `/metadata/models/{name}/versions` | 模型版本 |
-| `POST` | `/metadata/policies/enforce` | 手动触发保留策略执行 |
-| `GET` | `/metadata/lineage/{name}` | 查询表血缘信息 |
+| `POST` | `/metadata/statistics/{name}` | 采集表统计信息 |
+| `GET` | `/metadata/models` | 列出 ML 模型 |
+| `GET` | `/metadata/models/{name}/versions` | 模型版本信息 |
+
+### 可运行示例
 
 ```bash
-# 完整治理流程（12 步）
+# 完整 Gravitino 治理流程（12 步）
 python docs/cookbook/examples_api/33_gravitino_metadata_governance.py
 ```
 
 ***
 
-## v1.4.2 — 深度治理闭环
+## v1.4.2 — 深度治理集成
 
-> 以下能力让治理形成闭环：策略在查询时执行、统计驱动查询路由、模型版本从 Gravitino 解析、血缘建模为表属性。
+> 以下能力让治理形成闭环：策略在查询时执行、统计信息驱动查询路由、模型版本从 Gravitino 解析、血缘建模为表属性。
 
 ### 保留策略执行
 
-后台 `RetentionEnforcer` 线程周期读取保留策略，调用 `LanceDataset.cleanup_old_versions()` 清理过期版本：
+保留策略由后台 `RetentionEnforcer` 线程执行，周期读取 Gravitino 中的策略，调用 `LanceDataset.cleanup_old_versions()`：
 
 ```bash
-# 先 dry-run 查看要清理什么
+# 手动触发（先 dry-run）
 curl -X POST "http://localhost:8000/metadata/policies/enforce?dry_run=true" \
+  -H "X-API-Key: your-key"
+
+# 对特定表实际执行
+curl -X POST "http://localhost:8000/metadata/policies/enforce?table=access_logs" \
   -H "X-API-Key: your-key"
 ```
 
+配置：`retention_enforce_interval_seconds: 3600`（默认每小时）。
+
 ### 查询时列级脱敏
 
-`MaskingEngine` 在 `apply_table_filter` 中拦截查询结果，非 admin 角色自动看到脱敏值：
+当脱敏策略应用到表时，`MaskingEngine` 在 `apply_table_filter()` 中拦截查询结果。非 admin 角色自动看到脱敏值：
 
-- `redact` — 全部替换为 `*`
-- `hash` — SHA-256 截断 16 字符
-- `partial` — 保留首尾 2 字符
-- `nullify` — 替换为 null
+```python
+# 在 rbac.py 的 apply_table_filter() 中:
+# 1. 列/行 ACL 过滤
+# 2. MaskingEngine.apply_masking(table, dataset, role)
+#    - redact: 全部替换为 *
+#    - hash: SHA-256 截断到 16 字符
+#    - partial: 保留首尾 2 字符
+#    - nullify: 替换为 null
+
+# Viewer 查询带有 email 脱敏的表时看到:
+# email: "user@test.com" → "*************"
+# name: "Alice" → "Alice"（未脱敏）
+```
 
 ### 标签驱动访问控制
 
 `TagAwareACLResolver` 周期将 Gravitino 列级标签同步为本地 ACL：
 
 ```yaml
+# config.yaml
 gravitino:
   tag_access_rules:
-    pii: {visible_to: ["admin"]}
+    pii:       {visible_to: ["admin"]}
     sensitive: {visible_to: ["admin", "editor"]}
 ```
 
-列 `email` 被标记 `pii` 后，非 admin 角色查询结果自动排除该列。
+当列 `email` 被标记为 `pii` 后，非 admin 角色通过现有 `PermissionChecker` 管道自动从查询结果中排除该列。
 
 ### 统计驱动查询路由
 
-`StatsInjector` 从 Gravitino 读取表统计信息，当 `estimated_rows > threshold` 时自动路由到 DuckDB OLAP（流式）而非 Daft（内存）。
+`StatsInjector` 从 Gravitino 读取表统计信息并提供提示：
+
+```python
+from arrow_lake.query.stats_injector import StatsInjector
+
+injector = StatsInjector(config.gravitino)
+hints = injector.get_hints("large_table")
+# QueryHints(estimated_rows=5_000_000, column_count=12, size_mb=250.0)
+
+if hints.estimated_rows > config.gravitino.stats_auto_route_threshold:
+    # 自动路由到 DuckDB OLAP（流式）而非 Daft（内存）
+    pass
+```
 
 ### 模型注册中心解析
 
-`RegistryModelResolver` 让 embed/rag 模块从 Gravitino 获取 production 模型路径，而非硬编码配置。缓存过期后自动获取新版本。
+`RegistryModelResolver` 将 Gravitino 模型目录桥接到 embed/rag 模块：
+
+```python
+from arrow_lake.embed.registry_resolver import RegistryModelResolver
+
+resolver = RegistryModelResolver(config.gravitino)
+model_path = resolver.resolve_model_path("text-embedder")
+# → "s3://models/text-embedder/v2"（来自 Gravitino production 版本）
+
+# 在 encoder.py 中: LocalEmbeddingEncoder 可使用此路径替代硬编码的 model_name
+```
 
 ### 血缘表属性
 
-血缘事件写入 Gravitino 表属性（operation/timestamp/sources/outputs），通过 `GET /metadata/lineage/{name}` 可查。
+血缘事件现在将丰富的元数据写入 Gravitino 表属性：
+
+```bash
+curl http://localhost:8000/metadata/lineage/articles -H "X-API-Key: your-key"
+```
+
+```json
+{
+  "success": true,
+  "data": {
+    "table": "articles",
+    "operation": "ingest",
+    "timestamp": "2026-05-22T10:30:00",
+    "sources": ["raw/articles.csv"],
+    "outputs": ["articles"],
+    "lance_version": "5"
+  }
+}
+```
 
 ### 联邦查询元数据驱动
 
-`FederatedQueryEngine` 从 Gravitino 解析表元数据（格式、位置），自动选择 `daft.read_lance`/`read_parquet`/`read_csv`。
+`FederatedQueryEngine` 在读取前从 Gravitino 解析表元数据（格式、位置）：
+
+```python
+from arrow_lake.query.federated_engine import FederatedQueryEngine
+
+engine = FederatedQueryEngine(config.gravitino)
+resolution = engine.resolve_table("hive-catalog.default.orders")
+# → TableResolution(format="parquet", location="s3://warehouse/orders")
+
+df = engine.load_dataset("hive-catalog.default.orders")
+# → daft.read_parquet("s3://warehouse/orders")  (从元数据自动检测)
+```

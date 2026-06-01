@@ -1,6 +1,6 @@
 # Architecture — Three-Layer + Dual-Plane
 
-**Version:** v1.5.0 | **Updated:** 2026-05-26
+**Version:** v1.5.2 | **Updated:** 2026-05-26
 
 ---
 

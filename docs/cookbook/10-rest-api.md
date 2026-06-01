@@ -671,3 +671,1007 @@ gravitino:
   lance_rest_uri: "http://localhost:8888"
   sync_interval_seconds: 300    # Background sync interval
 ```
+
+***
+
+## v1.5.x New Endpoints
+
+The following endpoints were added in v1.5.x. They cover audit trail, backup/restore, maintenance,
+system health, file upload, extended ingestion, schema migration, advanced query, lineage extensions,
+knowledge graph extensions, export, and admin ACL management.
+
+### Audit Trail API
+
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| `POST` | `/api/v1/audit/record` | Record an audit event | EDITOR |
+| `POST` | `/api/v1/audit/verify?audit_id=...` | Verify integrity of an audit entry | VIEWER |
+| `GET` | `/api/v1/audit/query` | Query audit trail with filters | VIEWER |
+| `POST` | `/api/v1/audit/export?dataset_name=...` | Export audit trail for a dataset | ADMIN |
+
+#### Record Audit Event
+
+```bash
+curl -X POST http://localhost:8000/api/v1/audit/record \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "event_type": "read",
+    "dataset_name": "users",
+    "actor": "admin",
+    "lance_version": 3,
+    "metaflow_run_id": "run-42",
+    "metaflow_tags": {"team": "data"},
+    "payload": {"rows_affected": 100}
+  }'
+```
+
+**Response:**
+
+```json
+{"success": true, "audit_id": "aud_abc123"}
+```
+
+#### Verify Audit Entry
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/audit/verify?audit_id=aud_abc123" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**Response:**
+
+```json
+{"success": true, "intact": true}
+```
+
+#### Query Audit Trail
+
+```bash
+curl -G http://localhost:8000/api/v1/audit/query \
+  -H "Authorization: Bearer $TOKEN" \
+  --data-urlencode "dataset_name=users" \
+  --data-urlencode "start=2025-01-01" \
+  --data-urlencode "end=2025-12-31" \
+  --data-urlencode "event_type=read"
+```
+
+**Response:**
+
+```json
+{"success": true, "entries": [{"event_type": "read", "actor": "admin", "timestamp": "..."}]}
+```
+
+#### Export Audit Trail
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/audit/export?dataset_name=users" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**Response:**
+
+```json
+{"success": true, "export": {"dataset_name": "users", "entries": [...]}}
+```
+
+### Backup & Restore API
+
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| `POST` | `/api/v1/backup/create` | Create a backup | ADMIN |
+| `POST` | `/api/v1/backup/restore?backup_id=...` | Restore a backup by ID | ADMIN |
+| `GET` | `/api/v1/backup/list` | List all backups | ADMIN |
+| `DELETE` | `/api/v1/backup/{backup_id}` | Delete a backup | ADMIN |
+
+#### Create Backup
+
+```bash
+curl -X POST http://localhost:8000/api/v1/backup/create \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "dataset_names": ["users", "orders"],
+    "blob_prefixes": ["uploads/users/"],
+    "backup_id": "backup-2025-06-01"
+  }'
+```
+
+**Response:**
+
+```json
+{
+  "backup_id": "backup-2025-06-01",
+  "created_at": "2025-06-01T12:00:00Z",
+  "datasets": ["users", "orders"],
+  "blob_prefixes": ["uploads/users/"],
+  "total_size_bytes": 5242880,
+  "status": "completed"
+}
+```
+
+#### Restore Backup
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/backup/restore?backup_id=backup-2025-06-01" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "dataset_names": ["users"],
+    "overwrite": true
+  }'
+```
+
+**Response:**
+
+```json
+{
+  "backup_id": "backup-2025-06-01",
+  "created_at": "2025-06-01T12:00:00Z",
+  "datasets": ["users"],
+  "blob_prefixes": [],
+  "total_size_bytes": 2097152,
+  "status": "restored"
+}
+```
+
+#### List Backups
+
+```bash
+curl http://localhost:8000/api/v1/backup/list \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**Response:**
+
+```json
+{
+  "backups": [
+    {"backup_id": "backup-2025-06-01", "created_at": "...", "datasets": [...], "blob_prefixes": [], "total_size_bytes": 5242880, "status": "completed"}
+  ],
+  "count": 1
+}
+```
+
+#### Delete Backup
+
+```bash
+curl -X DELETE http://localhost:8000/api/v1/backup/backup-2025-06-01 \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**Response:**
+
+```json
+{"message": "Backup 'backup-2025-06-01' deleted"}
+```
+
+### Maintenance API
+
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| `GET` | `/api/v1/admin/maintenance/status` | Get scheduler status | ADMIN |
+| `POST` | `/api/v1/admin/maintenance/run` | Trigger a maintenance cycle | ADMIN |
+
+#### Get Maintenance Status
+
+```bash
+curl http://localhost:8000/api/v1/admin/maintenance/status \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**Response:**
+
+```json
+{
+  "enabled": true,
+  "last_run": "2025-06-01T06:00:00Z",
+  "next_run": "2025-06-01T18:00:00Z",
+  "interval_seconds": 43200,
+  "last_report": {
+    "datasets_compacted": 3,
+    "datasets_cleaned": 5,
+    "total_fragments_before": 120,
+    "total_fragments_after": 45,
+    "total_versions_removed": 80,
+    "duration_seconds": 12.5
+  }
+}
+```
+
+#### Trigger Maintenance Run
+
+```bash
+curl -X POST http://localhost:8000/api/v1/admin/maintenance/run \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "data": {
+    "datasets_compacted": 2,
+    "datasets_cleaned": 1,
+    "total_fragments_before": 40,
+    "total_fragments_after": 15,
+    "total_versions_removed": 25,
+    "duration_seconds": 8.3
+  }
+}
+```
+
+### System & Health API
+
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| `GET` | `/health/live` | Liveness probe | - |
+| `GET` | `/health/ready` | Readiness probe (checks storage + deps) | - |
+| `GET` | `/health` | Health check (backward compatible) | - |
+| `GET` | `/metrics` | Prometheus metrics | - |
+| `GET` | `/api/v1/version` | Version and dependency info | VIEWER |
+
+#### Liveness Probe
+
+```bash
+curl http://localhost:8000/health/live
+```
+
+**Response:**
+
+```json
+{"status": "ok"}
+```
+
+#### Readiness Probe
+
+```bash
+curl http://localhost:8000/health/ready
+```
+
+**Response:**
+
+```json
+{
+  "status": "ok",
+  "version": "1.5.1",
+  "storage": "accessible",
+  "gravitino": "healthy",
+  "duckdb_pool": {"pool_size": 5, "active_sessions": 1, "queued_requests": 0, "total_queries": 142, "total_errors": 0}
+}
+```
+
+#### Version Info
+
+```bash
+curl http://localhost:8000/api/v1/version \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**Response:**
+
+```json
+{
+  "version": "1.5.1",
+  "python": "3.12.4",
+  "fastapi": "0.115.0",
+  "uvicorn": "0.30.0",
+  "pyarrow": "17.0.0",
+  "duckdb": "1.0.0",
+  "daft": "0.3.0",
+  "httpx": "0.27.0"
+}
+```
+
+### File Upload API
+
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| `POST` | `/api/v1/datasets/{name}/upload` | Upload files to MinIO (proxy mode) | EDITOR |
+| `POST` | `/api/v1/datasets/{name}/upload/presign` | Generate presigned PUT URLs | EDITOR |
+| `DELETE` | `/api/v1/datasets/{name}/upload/cleanup` | Delete uploaded blobs for a dataset | EDITOR |
+
+#### Upload Files (Proxy Mode)
+
+```bash
+curl -X POST http://localhost:8000/api/v1/datasets/my-data/upload \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "files=@data.csv" \
+  -F "files=@report.pdf"
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "blobs": [
+    {"key": "uploads/my-data/a1b2c3d4_data.csv", "size_bytes": 4096, "content_type": "text/csv"},
+    {"key": "uploads/my-data/e5f6g7h8_report.pdf", "size_bytes": 20480, "content_type": "application/pdf"}
+  ]
+}
+```
+
+#### Generate Presigned Upload URLs
+
+```bash
+curl -X POST http://localhost:8000/api/v1/datasets/my-data/upload/presign \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"filenames": ["data.csv", "report.pdf"]}'
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "uploads": [
+    {"key": "uploads/my-data/a1b2c3d4_data.csv", "upload_url": "http://minio:9000/arrow-lake/uploads/...?X-Amz-Signature=..."},
+    {"key": "uploads/my-data/e5f6g7h8_report.pdf", "upload_url": "http://minio:9000/arrow-lake/uploads/...?X-Amz-Signature=..."}
+  ]
+}
+```
+
+#### Cleanup Uploaded Blobs
+
+```bash
+curl -X DELETE http://localhost:8000/api/v1/datasets/my-data/upload/cleanup \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**Response:**
+
+```json
+{"success": true, "deleted_count": 3}
+```
+
+### Extended Ingestion Endpoints
+
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| `POST` | `/api/v1/datasets/{name}/ingest/sql` | Ingest from SQL database | EDITOR |
+| `POST` | `/api/v1/datasets/{name}/ingest/kafka` | Ingest from Kafka topics | EDITOR |
+| `POST` | `/api/v1/datasets/{name}/ingest/iceberg` | Ingest from Apache Iceberg | EDITOR |
+| `POST` | `/api/v1/datasets/{name}/ingest/deltalake` | Ingest from Delta Lake | EDITOR |
+| `POST` | `/api/v1/datasets/{name}/ingest/videos` | Ingest video files with keyframes | EDITOR |
+| `POST` | `/api/v1/datasets/{name}/ingest/mixed` | Ingest mixed-modality sources | EDITOR |
+
+#### Ingest from SQL Database
+
+```bash
+curl -X POST http://localhost:8000/api/v1/datasets/orders/ingest/sql \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sql": "SELECT * FROM public.orders WHERE created_at >= '\''2025-01-01'\''",
+    "connection_url": "postgresql://user:pass@db:5432/mydb",
+    "partition_col": "created_at",
+    "num_partitions": 4,
+    "transforms": [{"op": "select", "columns": ["id", "amount", "created_at"]}]
+  }'
+```
+
+**Response:**
+
+```json
+{"success": true, "total_rows": 10000, "total_files": 4, "sources": [{"path": "sql://public.orders", "row_count": 10000, "file_count": 4}]}
+```
+
+#### Ingest from Kafka
+
+```bash
+curl -X POST http://localhost:8000/api/v1/datasets/events/ingest/kafka \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "bootstrap_servers": "kafka:9092",
+    "topics": ["user-events", "order-events"],
+    "start": "earliest",
+    "end": "latest",
+    "json_decode": true
+  }'
+```
+
+**Response:**
+
+```json
+{"success": true, "total_rows": 50000, "total_files": 2, "sources": [{"path": "kafka://user-events", "row_count": 30000, "file_count": 1}]}
+```
+
+#### Ingest from Apache Iceberg
+
+```bash
+curl -X POST http://localhost:8000/api/v1/datasets/iceberg_data/ingest/iceberg \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "table_uri": "s3://warehouse/db.table",
+    "transforms": null
+  }'
+```
+
+**Response:**
+
+```json
+{"success": true, "total_rows": 20000, "total_files": 1, "sources": [{"path": "s3://warehouse/db.table", "row_count": 20000, "file_count": 1}]}
+```
+
+#### Ingest from Delta Lake
+
+```bash
+curl -X POST http://localhost:8000/api/v1/datasets/delta_data/ingest/deltalake \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "table_uri": "s3://delta-lake/sales",
+    "version": 5
+  }'
+```
+
+**Response:**
+
+```json
+{"success": true, "total_rows": 15000, "total_files": 1, "sources": [{"path": "s3://delta-lake/sales", "row_count": 15000, "file_count": 1}]}
+```
+
+#### Ingest Videos
+
+```bash
+curl -X POST http://localhost:8000/api/v1/datasets/video-clips/ingest/videos \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "file_paths": ["videos/intro.mp4", "videos/demo.webm"],
+    "blob_keys": []
+  }'
+```
+
+**Response:**
+
+```json
+{"success": true, "total_rows": 24, "total_files": 2, "sources": [{"path": "videos/intro.mp4", "row_count": 12, "file_count": 1}]}
+```
+
+#### Ingest Mixed-Modality Sources
+
+```bash
+curl -X POST http://localhost:8000/api/v1/datasets/multimodal/ingest/mixed \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sources": {
+      "files": ["data/report.csv"],
+      "urls": ["https://example.com/data.json"],
+      "images": ["images/photo.jpg"],
+      "videos": ["videos/clip.mp4"]
+    },
+    "blob_keys": {}
+  }'
+```
+
+**Response:**
+
+```json
+{"success": true, "total_rows": 120, "total_files": 4, "sources": [{"path": "data/report.csv", "row_count": 100, "file_count": 1}]}
+```
+
+### Schema Migration API
+
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| `POST` | `/api/v1/datasets/{name}/schema/migrate` | Validate/apply schema migration | ADMIN |
+
+#### Migrate Dataset Schema
+
+```bash
+# Dry-run: validate only (default)
+curl -X POST http://localhost:8000/api/v1/datasets/users/schema/migrate \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "actions": [
+      {"operation": "add_column", "column_name": "region", "sql_expr": "\'\''unknown'\''"},
+      {"operation": "alter_column", "column_name": "score", "new_type": "float64"},
+      {"operation": "drop_column", "column_name": "legacy_field"}
+    ],
+    "dry_run": true
+  }'
+```
+
+**Response (dry_run):**
+
+```json
+{"success": true, "dry_run": true, "issues": [], "applied_count": 0}
+```
+
+```bash
+# Apply the migration
+curl -X POST http://localhost:8000/api/v1/datasets/users/schema/migrate \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "actions": [
+      {"operation": "add_column", "column_name": "region", "sql_expr": "\'\''unknown'\''"},
+      {"operation": "alter_column", "column_name": "score", "new_type": "float64"}
+    ],
+    "dry_run": false
+  }'
+```
+
+**Response:**
+
+```json
+{"success": true, "dry_run": false, "issues": [], "applied_count": 2}
+```
+
+### Export API
+
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| `POST` | `/api/v1/datasets/{name}/export` | Export to Parquet/CSV (async) | EDITOR |
+| `GET` | `/api/v1/datasets/{name}/export/{task_id}/status` | Check export task status | VIEWER |
+| `GET` | `/api/v1/datasets/{name}/export/{task_id}/download` | Download exported file | VIEWER |
+| `POST` | `/api/v1/datasets/{name}/export-to` | Export to external target (sync) | EDITOR |
+
+#### Export Dataset (Async)
+
+```bash
+curl -X POST http://localhost:8000/api/v1/datasets/users/export \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "output_path": "users_export.parquet",
+    "format": "parquet",
+    "columns": ["id", "name", "email"],
+    "compression": "zstd",
+    "overwrite": false
+  }'
+```
+
+**Response:**
+
+```json
+{"success": true, "task_id": "exp_abc123", "dataset_name": "users", "status": "pending", "message": "Export task queued"}
+```
+
+#### Check Export Status
+
+```bash
+curl http://localhost:8000/api/v1/datasets/users/export/exp_abc123/status \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**Response:**
+
+```json
+{"success": true, "task_id": "exp_abc123", "status": "completed", "progress": 1.0, "created_at": "2025-06-01T12:00:00Z", "completed_at": "2025-06-01T12:00:05Z", "error": null, "result": {"file_size_bytes": 102400}}
+```
+
+#### Download Exported File
+
+```bash
+curl -O http://localhost:8000/api/v1/datasets/users/export/exp_abc123/download \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Returns the file as a binary download (`application/octet-stream` or `text/csv`).
+
+#### Export to External Target (Sync)
+
+```bash
+curl -X POST http://localhost:8000/api/v1/datasets/users/export-to \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "target_uri": "s3://warehouse/exports/users/",
+    "format": "parquet",
+    "options": {"compression": "zstd"}
+  }'
+```
+
+**Response:**
+
+```json
+{"success": true, "rows_exported": 10000}
+```
+
+Supported export formats: `parquet`, `csv`, `json`, `iceberg`, `clickhouse`.
+
+### Lineage API (Extended)
+
+The lineage endpoints below supplement those documented in the v1.4.0 section.
+
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| `POST` | `/api/v1/lineage/record` | Record a lineage event | EDITOR |
+| `GET` | `/api/v1/lineage/history/{dataset_name}` | Get lineage history | VIEWER |
+| `POST` | `/api/v1/lineage/query` | Query lineage via SQL | VIEWER |
+| `GET` | `/api/v1/lineage/graph/{dataset_name}` | Get lineage graph (json/mermaid/dot) | VIEWER |
+| `POST` | `/api/v1/lineage/impact` | Downstream impact analysis | VIEWER |
+| `GET` | `/api/v1/lineage/stats` | Lineage tracking statistics | VIEWER |
+
+#### Record Lineage Event
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/lineage/record?dataset_name=orders_enriched" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "operation": "transform",
+    "source_datasets": ["orders", "users"],
+    "transform_type": "join",
+    "actor": "etl-pipeline",
+    "metadata": {"pipeline": "daily-enrich"}
+  }'
+```
+
+**Response:**
+
+```json
+{"success": true, "message": "Lineage event recorded for dataset 'orders_enriched'"}
+```
+
+#### Get Lineage History
+
+```bash
+curl http://localhost:8000/api/v1/lineage/history/orders_enriched \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "dataset_name": "orders_enriched",
+  "events": [{"operation": "transform", "source_datasets": ["orders", "users"], "timestamp": "..."}]
+}
+```
+
+#### Query Lineage via SQL
+
+```bash
+curl -X POST http://localhost:8000/api/v1/lineage/query \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"sql": "SELECT * FROM lineage_events WHERE operation = '\''join'\''"}'
+```
+
+**Response:**
+
+```json
+{"success": true, "data": [{"dataset_name": "orders_enriched", "operation": "transform"}]}
+```
+
+#### Get Lineage Graph
+
+```bash
+# JSON format (default)
+curl http://localhost:8000/api/v1/lineage/graph/orders_enriched \
+  -H "Authorization: Bearer $TOKEN"
+
+# Mermaid format
+curl "http://localhost:8000/api/v1/lineage/graph/orders_enriched?format=mermaid&max_depth=5" \
+  -H "Authorization: Bearer $TOKEN"
+
+# Graphviz DOT format
+curl "http://localhost:8000/api/v1/lineage/graph/orders_enriched?format=dot" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**Response (JSON):**
+
+```json
+{
+  "success": true,
+  "dataset_name": "orders_enriched",
+  "nodes": [{"id": "orders", "depth": 0, "type": "source"}, {"id": "orders_enriched", "depth": 1, "type": "target"}],
+  "edges": [{"from": "orders", "to": "orders_enriched", "operation": "transform", "transform_type": "join"}],
+  "stats": {"total_nodes": 3, "total_edges": 2, "max_depth": 2}
+}
+```
+
+Query parameters: `max_depth` (1-20, default 10), `format` (`json`|`mermaid`|`dot`, default `json`).
+
+#### Downstream Impact Analysis
+
+```bash
+curl -X POST http://localhost:8000/api/v1/lineage/impact \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"dataset_name": "orders"}'
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "source_dataset": "orders",
+  "impacted_datasets": [
+    {"dataset": "orders_enriched", "depth": 1, "operation": "transform", "transform_type": "join"},
+    {"dataset": "daily_report", "depth": 2, "operation": "aggregate", "transform_type": "groupby"}
+  ]
+}
+```
+
+#### Lineage Statistics
+
+```bash
+curl http://localhost:8000/api/v1/lineage/stats \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**Response:**
+
+```json
+{"success": true, "total_datasets_tracked": 12, "total_events": 47}
+```
+
+### Knowledge Graph API (Extended)
+
+The following endpoints supplement the KG endpoints documented in Section 4.
+
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| `GET` | `/api/v1/kg/schema` | Get graph schema (vertex/edge labels) | VIEWER |
+| `GET` | `/api/v1/kg/stats` | Get graph statistics | VIEWER |
+| `DELETE` | `/api/v1/kg/graph` | Delete all graph data | ADMIN |
+
+#### Get Graph Schema
+
+```bash
+curl http://localhost:8000/api/v1/kg/schema \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**Response:**
+
+```json
+{"vertex_labels": ["Entity", "Concept", "Document"], "edge_labels": ["RELATED_TO", "MENTIONS", "DERIVED_FROM"]}
+```
+
+#### Get Graph Statistics
+
+```bash
+curl http://localhost:8000/api/v1/kg/stats \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**Response:**
+
+```json
+{"total_vertices": 1024, "total_edges": 3580, "graph_enabled": true}
+```
+
+#### Delete Graph Data
+
+```bash
+curl -X DELETE http://localhost:8000/api/v1/kg/graph \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**Response:**
+
+```json
+{"status": "ok", "message": "Graph data deleted"}
+```
+
+### Query API (OLAP / Metadata / Daft)
+
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| `POST` | `/api/v1/datasets/{name}/query/olap` | OLAP SQL via DuckDB (with SSE streaming) | EDITOR |
+| `POST` | `/api/v1/datasets/{name}/query/metadata` | Metadata SQL query (semantic alias) | EDITOR |
+| `POST` | `/api/v1/datasets/{name}/query/daft` | Daft DataFrame chained operations | VIEWER |
+
+#### OLAP Query
+
+```bash
+curl -X POST http://localhost:8000/api/v1/datasets/sales/query/olap \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sql": "SELECT region, SUM(amount) AS total FROM sales GROUP BY region ORDER BY total DESC",
+    "max_rows": 10000,
+    "format": "json",
+    "stream": false
+  }'
+```
+
+**Response:**
+
+```json
+{"success": true, "format": "json", "row_count": 5, "column_count": 2, "meta": {"sql": "SELECT ..."}, "rows": [{"region": "US", "total": 150000}]}
+```
+
+#### OLAP Query with SSE Streaming
+
+```bash
+curl -N -X POST http://localhost:8000/api/v1/datasets/sales/query/olap \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"sql": "SELECT * FROM sales", "stream": true, "batch_size": 1000}'
+```
+
+Streams SSE events:
+
+```
+data: {"type": "schema", "columns": ["id", "region", "amount"], "row_count": 50000}
+data: {"type": "batch", "rows": 1000, "data": "<base64-arrow-ipc>"}
+data: {"type": "done", "total_rows": 50000}
+```
+
+#### Metadata SQL Query
+
+```bash
+curl -X POST http://localhost:8000/api/v1/datasets/sales/query/metadata \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"sql": "SELECT column_name, data_type FROM information_schema.columns", "format": "json"}'
+```
+
+**Response:**
+
+```json
+{"success": true, "format": "json", "row_count": 8, "column_count": 2, "meta": {"sql": "SELECT ..."}, "rows": [...]}
+```
+
+#### Daft DataFrame Query
+
+```bash
+curl -X POST http://localhost:8000/api/v1/datasets/sales/query/daft \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "columns": ["region", "amount"],
+    "filters": [{"column": "amount", "op": "gt", "value": 100}],
+    "sort": {"column": "amount", "desc": true},
+    "groupby": {"columns": ["region"], "agg": "sum"},
+    "limit": 100,
+    "format": "json"
+  }'
+```
+
+**Response:**
+
+```json
+{"success": true, "format": "json", "row_count": 5, "column_count": 2, "rows": [{"region": "US", "amount": 150000}], "warnings": []}
+```
+
+Supported pipeline operations (applied in order): `sort` -> `filters` -> `groupby` -> `sql` -> `pivot` -> `explode` -> `sample` -> `distinct` -> `columns` -> `offset` -> `limit`.
+
+### Authentication API (Extended)
+
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| `POST` | `/api/v1/auth/token` | Exchange credentials for JWT | - |
+| `POST` | `/api/v1/auth/refresh` | Refresh access token | - |
+| `GET` | `/api/v1/auth/me` | Get current user info | VIEWER |
+| `POST` | `/api/v1/auth/logout` | Revoke current token | VIEWER |
+
+#### Logout / Revoke Token
+
+```bash
+curl -X POST http://localhost:8000/api/v1/auth/logout \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**Response:**
+
+```json
+{"message": "Token revoked"}
+```
+
+### Admin ACL Management (Extended)
+
+The following endpoints supplement the row/column ACL endpoints documented in v1.4.0.
+
+#### Schema-Level ACL
+
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| `PUT` | `/api/v1/admin/acl/schema/{schema_name}` | Set schema-level ACL | ADMIN |
+| `GET` | `/api/v1/admin/acl/schema/{schema_name}` | List schema-level ACLs | ADMIN |
+| `DELETE` | `/api/v1/admin/acl/schema/{schema_name}/{role}` | Delete schema-level ACL | ADMIN |
+
+##### Set Schema-Level ACL
+
+```bash
+curl -X PUT http://localhost:8000/api/v1/admin/acl/schema/analytics \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "role": "viewer",
+    "allowed_actions": ["read", "search"],
+    "denied_actions": ["export", "delete"]
+  }'
+```
+
+**Response:**
+
+```json
+{"schema_name": "analytics", "role": "viewer", "allowed_actions": ["read", "search"], "denied_actions": ["delete", "export"]}
+```
+
+##### List Schema-Level ACLs
+
+```bash
+curl http://localhost:8000/api/v1/admin/acl/schema/analytics \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**Response:**
+
+```json
+{
+  "schema_name": "analytics",
+  "acls": [
+    {"schema_name": "analytics", "role": "viewer", "allowed_actions": ["read", "search"], "denied_actions": ["delete", "export"]}
+  ]
+}
+```
+
+##### Delete Schema-Level ACL
+
+```bash
+curl -X DELETE http://localhost:8000/api/v1/admin/acl/schema/analytics/viewer \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**Response:**
+
+```json
+{"schema_name": "analytics", "role": "viewer", "allowed_actions": [], "denied_actions": []}
+```
+
+#### Explicit Deny Rules
+
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| `PUT` | `/api/v1/admin/deny/{dataset}` | Add explicit deny for an action | ADMIN |
+| `DELETE` | `/api/v1/admin/deny/{dataset}/{action}` | Remove explicit deny | ADMIN |
+| `GET` | `/api/v1/admin/deny/{dataset}` | List denied actions for a dataset | ADMIN |
+
+##### Add Explicit Deny
+
+```bash
+curl -X PUT http://localhost:8000/api/v1/admin/deny/sensitive_data \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"action": "export"}'
+```
+
+**Response:**
+
+```json
+{"dataset": "sensitive_data", "action": "export", "denied": true}
+```
+
+##### Remove Explicit Deny
+
+```bash
+curl -X DELETE http://localhost:8000/api/v1/admin/deny/sensitive_data/export \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**Response:**
+
+```json
+{"dataset": "sensitive_data", "action": "export", "denied": false}
+```
+
+##### List Denied Actions
+
+```bash
+curl http://localhost:8000/api/v1/admin/deny/sensitive_data \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**Response:**
+
+```json
+{"dataset": "sensitive_data", "denied_actions": ["delete", "export"]}
+```

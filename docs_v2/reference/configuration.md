@@ -40,6 +40,7 @@ config = ArrowLakeConfig.from_yaml("configs/prod.yaml")
 | `ensemble` | `EnsembleSearchConfig` | `config/search.py` | Ensemble search config |
 | `olap` | `OlapConfig` | `config/olap.py` | DuckDB OLAP connection settings |
 | `daft` | `DaftConfig` | `config/infra.py` | Daft execution engine settings |
+| `http` | `HttpConfig` | `config/infra.py` | HTTP client timeout and retry |
 | `compute` | `ComputeConfig` | `config/infra.py` | Ray cluster, GPU settings |
 | `media` | `MediaConfig` | `config/media.py` | Media processing (image/video) |
 | `decode` | `DecodeConfig` | `config/media.py` | Video decode settings |
@@ -100,6 +101,10 @@ vector:
   index_type: IVF_PQ
   metric: cosine
   num_partitions: 32
+
+http:
+  timeout_seconds: 30.0
+  max_retries: 3
 
 opentelemetry:
   enabled: true

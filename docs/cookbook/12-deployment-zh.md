@@ -323,3 +323,254 @@ helm install arrow-lake deploy/helm/arrow-lake/ \
 # 优雅关闭
 lake.shutdown()
 ```
+
+***
+
+## 8. Redis 部署
+
+当运行多个 API 副本 (HPA、Kubernetes 或多实例 Docker Compose) 时，Redis 用于分布式会话协调。它提供：
+
+- **分布式信号量**，用于跨 Pod 的 DuckDB 连接池协调
+- **JWT token 黑名单**，在 API 实例间共享
+- Redis 不可用时自动回退到进程内 `threading.Semaphore`
+
+### Docker Compose
+
+Redis 包含在 `core`、`dev`、`monitoring` 和 `gpu` profile 中：
+
+```yaml
+# deploy/docker-compose.yml (节选)
+redis:
+  image: redis:7.4
+  container_name: arrow-lake-redis
+  profiles: ["core", "dev", "monitoring", "gpu"]
+  command: >
+    redis-server
+    --maxmemory ${REDIS_MAXMEMORY:-256mb}
+    --maxmemory-policy allkeys-lru
+    --appendonly yes
+  volumes:
+    - redis-data:/data
+  healthcheck:
+    test: ["CMD", "redis-cli", "ping"]
+```
+
+在环境中设置 `redis.enabled` 后，API 服务器会自动连接 Redis：
+
+```bash
+ARROW_LAKE__REDIS__ENABLED=true
+ARROW_LAKE__REDIS__URL=redis://redis:6379/0
+ARROW_LAKE__REDIS__PASSWORD=${REDIS_PASSWORD:-}
+```
+
+### Helm (Kubernetes)
+
+通过 `values.yaml` 配置 Redis：
+
+```yaml
+# deploy/helm/arrow-lake/values.yaml
+redis:
+  enabled: true
+  url: "redis://redis:6379/0"
+  password: ""  # 通过 ARROW_LAKE__REDIS__PASSWORD 或 Kubernetes secret 设置
+  ssl: false
+```
+
+对于托管 Redis 服务 (AWS ElastiCache、Azure Cache for Redis、GCP Memorystore)，启用 TLS 并设置端点：
+
+```yaml
+redis:
+  enabled: true
+  url: "rediss://primary.xxxxxx.use1.cache.amazonaws.com:6379/0"
+  password: "${REDIS_PASSWORD}"
+  ssl: true
+```
+
+***
+
+## 9. 水平 Pod 自动扩缩容 (HPA)
+
+Arrow Lake 内置 Kubernetes HPA 模板，根据 CPU 和内存利用率自动扩缩 API Pod。**HPA 需要 Redis** 来协调跨副本的分布式信号量。
+
+### 启用 HPA
+
+```yaml
+# values.yaml — 启用 HPA
+apiServer:
+  replicaCount: 2
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+
+redis:
+  enabled: true  # HPA 必需
+```
+
+```bash
+helm install arrow-lake deploy/helm/arrow-lake/ \
+  --namespace arrow-lake --create-namespace \
+  -f values.yaml
+```
+
+### 扩缩容行为
+
+HPA 模板 (`deploy/helm/arrow-lake/templates/hpa.yaml`) 配置：
+
+| 参数                                | 默认值 | 说明                          |
+| --------------------------------- | --- | --------------------------- |
+| `minReplicas`                     | `2` | API Pod 最小数量               |
+| `maxReplicas`                     | `8` | API Pod 最大数量               |
+| `targetCPUUtilizationPercentage`  | `70` | 平均 CPU 超过此阈值时扩容           |
+| `targetMemoryUtilizationPercentage` | `80` | 平均内存超过此阈值时扩容           |
+
+**缩容稳定窗口**：300 秒，防止频繁抖动。
+**扩容策略**：每 60 秒最多增加 100% 或 2 个 Pod，取较大值。
+
+> **重要**：如果不使用 Redis，所有 API 副本将独立使用各自的进程内信号量，可能导致负载下 DuckDB 连接池耗尽。使用 HPA 时务必启用 Redis。
+
+***
+
+## 10. CronJob 备份自动化
+
+Helm chart 包含一个 CronJob 模板，通过备份 REST API 实现每日自动备份。
+
+### 启用定时备份
+
+```yaml
+# values.yaml — 启用自动备份
+backup:
+  enabled: true
+  schedule: "0 2 * * *"  # 每天 02:00 UTC
+  image:
+    repository: curlimages/curl
+    tag: "8.12.1"
+  apiKeySecret:
+    name: arrow-lake-api-key
+    key: api-key
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+```
+
+### 创建 API Key Secret
+
+```bash
+kubectl create secret generic arrow-lake-api-key \
+  --namespace arrow-lake \
+  --from-literal=api-key='your-secret-api-key-here'
+```
+
+### 工作原理
+
+CronJob 运行一个轻量级 `curl` 容器，调用 `POST /api/v1/backup/create`，参数 `dataset_names: null`（备份所有数据集）。关键特性：
+
+- **并发策略**：`Forbid` — 防止备份任务重叠
+- **重试**：`backoffLimit: 2`，`restartPolicy: OnFailure`
+- **历史保留**：保留 3 个成功和 1 个失败的任务供排查
+- **幂等性**：每次运行创建一个带时间戳的新备份；旧备份需单独清理
+
+### 验证备份任务
+
+```bash
+# 查看 CronJob 状态
+kubectl get cronjob -n arrow-lake
+
+# 查看最近的备份任务日志
+kubectl logs -n arrow-lake job/arrow-lake-backup-$(date +%Y%m%d) -c backup
+
+# 通过 API 列出备份
+curl -s http://localhost:8000/api/v1/backup/list -H "X-API-Key: your-key" | jq
+```
+
+***
+
+## 11. 生产安全检查清单
+
+除了第 5 节的通用安全加固，多副本和 Kubernetes 部署还需要额外的安全控制。
+
+### 传输安全 (TLS)
+
+```yaml
+# values.yaml — TLS 终止
+apiServer:
+  env:
+    ARROW_LAKE__API__TLS_ENABLED: "true"
+    ARROW_LAKE__API__TLS_CERT_PATH: "/certs/tls.crt"
+    ARROW_LAKE__API__TLS_KEY_PATH: "/certs/tls.key"
+```
+
+在 Kubernetes 中使用 cert-manager 和 Ingress 资源：
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  tls:
+    - hosts: [arrow-lake.example.com]
+      secretName: arrow-lake-tls
+```
+
+### 内容安全策略 (CSP)
+
+```yaml
+# config.yaml
+api:
+  security_headers_enabled: true
+  content_security_policy: >
+    default-src 'self';
+    script-src 'self' 'nonce-{REQUEST_ID}';
+    style-src 'self' 'unsafe-inline';
+    img-src 'self' data: https:;
+    frame-ancestors 'none';
+    object-src 'none'
+  frame_options: "DENY"
+```
+
+### 速率限制
+
+```yaml
+# config.yaml — 生产环境速率限制
+rate_limit:
+  enabled: true
+  default_requests_per_minute: 120
+  default_burst: 20
+```
+
+### 网络策略
+
+Helm chart 附带默认的 `NetworkPolicy` 限制网络流量：
+
+```yaml
+# values.yaml
+networkPolicy:
+  enabled: true
+  allowExternal: false  # 仅允许同命名空间内流量
+```
+
+| 方向   | 允许的流量                              | 端口   |
+| ---- | --------------------------------- | ---- |
+| 入站   | Ray Pod、Prometheus                | 8000 |
+| 入站   | 外部 (如 `allowExternal: true`)      | 8000 |
+| 出站   | MinIO / S3 存储端点                   | 9000 |
+| 出站   | DNS 解析                            | 53   |
+
+生产环境建议设置 `allowExternal: false`，通过 Ingress 控制器或服务网格路由外部流量。
+
+### 安全措施总结
+
+| 控制项       | Docker Compose                      | Kubernetes (Helm)                      |
+| --------- | ----------------------------------- | -------------------------------------- |
+| **TLS**   | 反向代理 (nginx/traefik)              | cert-manager + Ingress                 |
+| **CSP**   | `api.content_security_policy`       | `api.content_security_policy`          |
+| **速率限制**  | `rate_limit.enabled: true`          | `rate_limit.enabled: true`             |
+| **网络隔离**  | Docker bridge 网络                   | `networkPolicy.enabled: true`          |
+| **Redis 认证** | `REDIS_PASSWORD` 环境变量              | Kubernetes secret + `redis.password`   |
+| **API Key** | `ARROW_LAKE__API__API_KEY`          | Kubernetes secret                      |
+| **JWT**   | `auth.auth_mode: jwt`               | `auth.auth_mode: jwt`                  |
+| **RBAC**  | 30+ 端点带角色检查                        | 30+ 端点带角色检查                            |
+| **审计 HMAC** | `audit.hmac_secret_key`             | 通过 secret 设置 `audit.hmac_secret_key` |

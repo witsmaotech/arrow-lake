@@ -46,7 +46,35 @@ Arrow Lake 数据湖平台实战教程，涵盖数据摄取、搜索、分析、
 
 ## 版本
 
-对应 Arrow Lake v1.4.4
+对应 Arrow Lake v1.5.2
+
+## v1.5.2 新特性 — Security Hardening & Code Quality
+
+| #  | 说明 |
+| -- | ---- |
+| — | JWT 空密钥阻止启动、Kerberos 命令注入消除、SQL 注入参数化 |
+| — | Redis 移除默认密码、所有端口 127.0.0.1 绑定、SSRF 防护 |
+| — | Admin bypass 改用 Role enum、Refresh token 旋转撤销 |
+| — | SQL/Gremlin 注入防护增强、OLAP 端点增加安全校验 |
+| — | 53 项 lint 清理、Bandit HIGH 清零 |
+
+## v1.5.1 新特性 — Security Governance + Lineage
+
+| #  | 说明 |
+| -- | ---- |
+| — | Gravitino Auth Providers: Simple/OAuth2/Kerberos/Null 四种认证 |
+| — | Lineage Hooks: 摄入/搜索/查询自动血缘记录 |
+| — | Schema-level ACL + Deny-first 权限模型 |
+| — | 跨 Catalog 联邦查询下推优化 |
+
+## v1.5.0 新特性 — Platform Systematization
+
+| #  | 说明 |
+| -- | ---- |
+| — | CLI 场景别名: knowledge / connect / search / manage / explore |
+| — | docs_v2 三层文档体系: Data / Knowledge / Compute Plane |
+| — | 架构可视化 + 安全审计 + 术语表 |
+| — | BMAD Agent System 集成 (20+ 产品/架构/开发 Agent) |
 
 ## v1.4.4 新特性 — RAG Quality Leap
 

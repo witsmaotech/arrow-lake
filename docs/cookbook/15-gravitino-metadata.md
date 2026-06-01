@@ -1,13 +1,13 @@
 # Gravitino Metadata Governance (Experimental)
 
-> **Status: Experimental** — Arrow Lake v1.4.4 provides Gravitino integration for
+> **Status: Experimental** — Arrow Lake v1.5.2 provides Gravitino integration for
 > metadata storage, browsing, and deep governance. v1.4.2 introduced FQN injection prevention,
 > Gravitino configuration via pydantic-settings, and enhanced security validation.
 > See the capability matrix below for what works today vs. what's planned.
 >
 > This chapter documents the current state and shows how to use the available metadata APIs.
 >
-> Prerequisites: Arrow Lake v1.4.4 with `gravitino.enabled: true` and Docker Compose prod profile
+> Prerequisites: Arrow Lake v1.5.2 with `gravitino.enabled: true` and Docker Compose prod profile
 > running (`gravitino` + `lance-rest` containers healthy).
 
 ### Current Capability Matrix

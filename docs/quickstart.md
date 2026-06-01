@@ -3,6 +3,12 @@
 ## Installation
 
 ```bash
+# SDK 用户（推荐）
+pip install "arrow-lake"
+
+# 开发者/贡献者
+git clone https://github.com/wits-sunpw/arrow-lake.git
+cd arrow-lake
 uv sync
 ```
 

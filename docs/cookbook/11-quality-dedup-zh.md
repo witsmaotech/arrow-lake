@@ -343,3 +343,272 @@ print(f"失败项：{dlq.stats}")
 * 对于大于 100 万行的数据集，启用 NeMo Curator GPU 加速
 * `perceptual` 策略需要解码图片字节计算 pHash，CPU 消耗较大
 * 设置 `text_max_chars` 可提前过滤超长文本，减少下游处理负担
+
+---
+
+## 9. 质量规则引擎 (v1.4.0)
+
+声明式 `QualityRuleEngine` 用可配置的规则替代硬编码过滤器，支持从 JSON、YAML 或 REST API 加载规则。
+
+### 7.1 编程式用法
+
+```python
+from arrow_lake.quality.rules import QualityRuleEngine, RuleDefinition
+import pyarrow as pa
+
+# 创建包含混合质量数据的表
+table = pa.table({
+    "text_content": ["good article", "hi", "another good one", "x"],
+    "score": [0.9, 0.1, 0.85, 0.05],
+})
+
+# 配置规则
+engine = QualityRuleEngine()
+engine.add_rule(RuleDefinition(
+    name="reject_short_text",
+    column="text_content",
+    check="length",
+    params={"min": 3},
+    action="reject",
+    message="Text too short (min={min} chars)",
+))
+engine.add_rule(RuleDefinition(
+    name="flag_low_score",
+    column="score",
+    check="range",
+    params={"min": 0.5},
+    action="flag",
+))
+engine.add_rule(RuleDefinition(
+    name="dedup_content",
+    column="text_content",
+    check="duplicate",
+    action="remove",
+))
+
+# 评估但不修改数据
+results = engine.evaluate(table)
+for r in results:
+    print(f"{r.rule_name}: {r.affected_count} rows ({r.action}) — {r.message}")
+
+# 应用：移除 reject/remove 行，保留 flag 行
+filtered, results = engine.apply(table)
+print(f"Original: {table.num_rows} rows → Filtered: {filtered.num_rows} rows")
+```
+
+### 7.2 检查类型
+
+| Check | 参数 | 说明 |
+|-------|------|------|
+| `length` | `min`, `max` | 字符串长度范围 |
+| `range` | `min`, `max` | 数值范围 |
+| `regex` | `pattern`, `invert` | 正则匹配 (invert=True 匹配不满足的) |
+| `duplicate` | — | 精确哈希重复检测 |
+
+### 7.3 动作类型
+
+| Action | `evaluate()` 中的效果 | `apply()` 中的效果 |
+|--------|-------------------|-----------------|
+| `reject` | 报告违规数量 | 移除违规行 |
+| `remove` | 报告违规数量 | 移除违规行 (与 reject 相同) |
+| `flag` | 报告违规数量 | 保留行 (仅作标记) |
+
+### 7.4 从 JSON 加载
+
+```json
+{
+  "rules": [
+    {"name": "min_text", "column": "text_content", "check": "length", "params": {"min": 10}, "action": "reject"},
+    {"name": "valid_score", "column": "score", "check": "range", "params": {"min": 0.0, "max": 1.0}, "action": "flag"},
+    {"name": "email_format", "column": "email", "check": "regex", "params": {"pattern": "^.+@.+$", "invert": true}, "action": "reject"},
+    {"name": "dedup", "column": "text_content", "check": "duplicate", "action": "remove"}
+  ]
+}
+```
+
+```python
+engine = QualityRuleEngine()
+engine.load_from_json("rules.json")
+```
+
+### 7.5 REST API
+
+```bash
+# 通过 API 应用规则
+curl -X POST http://localhost:8000/api/v1/datasets/articles/quality/rules \
+  -H "X-API-Key: your-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "rules": [
+      {"name": "min_len", "column": "text_content", "check": "length", "params": {"min": 10}, "action": "reject"},
+      {"name": "no_dupes", "column": "text_content", "check": "duplicate", "action": "remove"}
+    ]
+  }'
+```
+
+---
+
+## 10. 行级/列级访问控制 (v1.4.0)
+
+行级和列级 ACL 限制每个角色在查询和搜索结果中能看到的数据。
+
+### 8.1 设置 ACL 规则
+
+```bash
+# Viewer 只能看到 "title" 和 "summary" 列
+curl -X PUT http://localhost:8000/api/v1/admin/acl/articles \
+  -H "X-API-Key: admin-key" \
+  -H "Content-Type: application/json" \
+  -d '{"role": "viewer", "visible_columns": ["title", "summary"]}'
+
+# Viewer 只能看到 region == US 的行
+curl -X PUT http://localhost:8000/api/v1/admin/acl/sales \
+  -H "X-API-Key: admin-key" \
+  -H "Content-Type: application/json" \
+  -d '{"role": "viewer", "row_filter": "region == US"}'
+
+# 组合：列裁剪 + 行过滤
+curl -X PUT http://localhost:8000/api/v1/admin/acl/hr_data \
+  -H "X-API-Key: admin-key" \
+  -H "Content-Type: application/json" \
+  -d '{"role": "viewer", "visible_columns": ["name", "department"], "row_filter": "department == Engineering"}'
+```
+
+### 8.2 列出和删除 ACL
+
+```bash
+# 列出数据集的所有 ACL
+curl http://localhost:8000/api/v1/admin/acl/articles -H "X-API-Key: admin-key"
+
+# 删除 ACL
+curl -X DELETE http://localhost:8000/api/v1/admin/acl/articles/viewer -H "X-API-Key: admin-key"
+```
+
+### 8.3 工作原理
+
+- **列裁剪**：不可见列在查询/搜索结果序列化之前被移除
+- **行过滤**：使用简单的 `column op value` 表达式 (`==`、`!=`、`<`、`<=`、`>`、`>=`) 过滤结果行
+- **Admin 绕过**：`admin` 角色始终能看到所有数据，不受 ACL 配置影响
+- **无 ACL = 不过滤**：如果某个角色+数据集没有配置 ACL，结果原样返回
+- **自动应用**：所有查询 (OLAP/元数据/Daft) 和搜索 (向量/全文/混合/分面/集成) 端点都会自动应用 ACL
+
+***
+
+## 11. Gravitino 标签与策略 (v1.4.1)
+
+Arrow Lake 集成了 **Apache Gravitino** 实现元数据驱动的数据治理。`GravitinoTagService` 和 `GravitinoPolicyService` 提供数据分类、保留管理和列脱敏功能，可通过 REST API 或编程方式管理。
+
+### 11.1 GravitinoTagService — 数据分类
+
+`GravitinoTagService` 封装了 Gravitino Tag API，用于对表和列进行分类。当 Gravitino 不可用时会优雅降级（返回空列表而非报错）。
+
+```python
+from arrow_lake.quality.gravitino_tags import GravitinoTagService
+
+tag_svc = GravitinoTagService(config.gravitino)
+
+# 预定义标签常量
+print(GravitinoTagService.SENSITIVE)   # "sensitive"
+print(GravitinoTagService.PII)         # "pii"
+print(GravitinoTagService.FINANCIAL)   # "financial"
+print(GravitinoTagService.EXPIRES_30D) # "expires:30d"
+
+# 创建自定义标签
+tag_svc.create_tag("internal_only", comment="Internal use only — not for external sharing")
+
+# 给表打标签
+tag_svc.tag_table("hr_data", ["sensitive", "pii"])
+
+# 给特定列打标签
+tag_svc.tag_column("hr_data", "ssn", ["pii"])
+
+# 列出表的所有标签
+tags = tag_svc.list_tags("hr_data")
+print(tags)  # ["sensitive", "pii"]
+
+# 查找具有特定标签的所有表
+tables = tag_svc.get_tables_by_tag("pii")
+print(tables)  # ["hr_data", "customer_records"]
+```
+
+#### 预定义标签
+
+| 常量                | 值               | 用途                  |
+| ----------------- | --------------- | ------------------- |
+| `SENSITIVE`       | `"sensitive"`   | 通用敏感数据标记            |
+| `PII`             | `"pii"`         | 个人身份信息              |
+| `FINANCIAL`       | `"financial"`   | 金融或支付相关数据           |
+| `EXPIRES_30D`     | `"expires:30d"` | 30 天后应清除的数据         |
+
+### 11.2 GravitinoPolicyService — 保留策略与脱敏
+
+`GravitinoPolicyService` 管理保留策略和脱敏策略，实现自动化的数据生命周期治理。
+
+```python
+from arrow_lake.quality.gravitino_policies import GravitinoPolicyService
+
+policy_svc = GravitinoPolicyService(config.gravitino)
+
+# 创建保留策略 — 数据保留 90 天
+policy_svc.create_retention_policy("log_retention", days=90)
+
+# 创建脱敏策略 — 脱敏指定列
+policy_svc.create_masking_policy("email_mask", columns=["email", "phone"])
+
+# 将策略应用到表
+policy_svc.apply_policy("email_mask", "customer_data")
+
+# 列出所有策略
+policies = policy_svc.list_policies()
+print(policies)  # ["log_retention", "email_mask"]
+```
+
+### 11.3 标签与策略的 REST API
+
+标签和策略也可通过 `/metadata/*` REST 端点管理。所有端点需要 `X-API-Key` 请求头，当 Gravitino 未配置时返回 503。
+
+```bash
+# --- 标签 ---
+
+# 列出标签 (可按表过滤)
+curl "http://localhost:8000/metadata/tags?table=articles" \
+  -H "X-API-Key: your-key"
+# => {"success": true, "data": [{"name": "sensitive"}], "error": null, "metadata": {"total": 1}}
+
+# 创建标签
+curl -X POST "http://localhost:8000/metadata/tags?body=%7B%22name%22%3A%22pii%22%2C%22comment%22%3A%22PII%20data%22%7D" \
+  -H "X-API-Key: your-key"
+# => {"success": true, "data": {"name": "pii"}, "error": null, "metadata": {}}
+
+# --- 策略 ---
+
+# 列出所有策略
+curl http://localhost:8000/metadata/policies \
+  -H "X-API-Key: your-key"
+# => {"success": true, "data": [{"name": "log_retention"}], "error": null, "metadata": {"total": 1}}
+
+# 创建保留策略
+curl -X POST "http://localhost:8000/metadata/policies/retention?body=%7B%22name%22%3A%22log_retention%22%2C%22days%22%3A90%7D" \
+  -H "X-API-Key: your-key"
+# => {"success": true, "data": {"name": "log_retention", "days": 90}, "error": null, "metadata": {}}
+
+# 创建脱敏策略
+curl -X POST "http://localhost:8000/metadata/policies/masking?body=%7B%22name%22%3A%22email_mask%22%2C%22columns%22%3A%5B%22email%22%5D%7D" \
+  -H "X-API-Key: your-key"
+# => {"success": true, "data": {"name": "email_mask", "columns": ["email"]}, "error": null, "metadata": {}}
+```
+
+### 11.4 启用 Gravitino
+
+```yaml
+# config.yaml
+gravitino:
+  enabled: true
+  uri: "http://localhost:8090"        # Gravitino 服务器 URI
+  metalake: "arrow_lake"              # Metalake 名称
+  lance_rest_enabled: true            # 启用 Lance REST Catalog
+  lance_rest_uri: "http://localhost:8888"
+  sync_interval_seconds: 300          # 后台 Catalog 同步间隔
+```
+
+当 `gravitino.enabled` 为 `false` (默认值) 时，所有 `/metadata/*` 端点返回 503，`GravitinoTagService`/`GravitinoPolicyService` 构造函数静默完成，不进行连接。现有的质量过滤、去重和 ACL 功能不受影响。
