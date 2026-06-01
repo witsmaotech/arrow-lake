@@ -107,7 +107,7 @@ class CrossEncoderReranker(BaseReranker):
             return chunks[:top_n]
 
         # Sort by score descending
-        scored = list(zip(chunks, scores.tolist()))
+        scored = list(zip(chunks, scores.tolist(), strict=False))
         scored.sort(key=lambda x: x[1], reverse=True)
 
         # Update chunk scores to reflect reranking

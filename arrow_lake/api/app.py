@@ -105,10 +105,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     gravitino_sync: object | None = None
     retention_enforcer: object | None = None
     if config.gravitino.enabled:
+        from arrow_lake.catalog.gravitino_auth import create_auth_provider
         from arrow_lake.catalog.gravitino_bridge import GravitinoBridge
         from arrow_lake.catalog.gravitino_models import GravitinoModelRegistry
         from arrow_lake.catalog.gravitino_sync import GravitinoSyncScheduler
         from arrow_lake.quality.gravitino_tags import GravitinoTagService
+
+        gravitino_auth = create_auth_provider(config.gravitino)
+        app.state.gravitino_auth_provider = gravitino_auth
+        lake._gravitino_auth_provider = gravitino_auth
 
         bridge = GravitinoBridge(config.gravitino)
         app.state.gravitino_bridge = bridge
@@ -210,7 +215,7 @@ def _validate_auth_config(config: ArrowLakeConfig) -> None:
     """Reject startup when API server is enabled without authentication configured."""
     auth_mode = config.auth.auth_mode
     api_key_set = bool(config.api.api_key)
-    jwt_set = bool(config.auth.jwt_secret_key)
+    jwt_set = bool(config.auth.jwt_secret_key or config.auth.jwt_public_key or config.auth.jwt_private_key)
 
     if auth_mode == "api_key" and not api_key_set:
         raise ValueError(

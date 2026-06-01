@@ -400,7 +400,7 @@ class AnthropicProvider(_RetryMixin, BaseLLMProvider):
         if not cb.allow_request():
             raise RAGError(
                 error_code=ErrorCode.RAG_PROVIDER_ERROR,
-                message=f"LLM circuit breaker OPEN for anthropic",
+                message="LLM circuit breaker OPEN for anthropic",
                 context={"provider": "anthropic"},
             )
         try:

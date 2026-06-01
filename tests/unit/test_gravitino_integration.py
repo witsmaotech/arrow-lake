@@ -195,10 +195,10 @@ class TestGravitinoRBACBridge:
 
         mapping = GravitinoRBACBridge._ACTION_TO_PRIVILEGE
         assert mapping["read"] == "SELECT_TABLE"
-        assert mapping["write"] == "INSERT_TABLE"
+        assert mapping["write"] == "MODIFY_TABLE"
         assert mapping["create"] == "CREATE_TABLE"
-        assert mapping["delete"] == "DELETE_TABLE"
-        assert mapping["admin"] == "CREATE_CATALOG"
+        assert mapping["delete"] == "DROP_TABLE"
+        assert mapping["admin"] == "ALL"
 
     def test_unknown_action_returns_none(self) -> None:
         from arrow_lake.api.rbac import GravitinoRBACBridge

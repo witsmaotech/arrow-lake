@@ -16,6 +16,7 @@ from urllib.request import Request, urlopen
 
 import structlog
 
+from arrow_lake.catalog.gravitino_auth import create_auth_provider
 from arrow_lake.config.gravitino import GravitinoConfig
 
 logger = structlog.get_logger(__name__)
@@ -86,6 +87,7 @@ class GravitinoBridge:
         self._lock = threading.Lock()
         self._base = config.uri.rstrip("/")
         self._metalake = config.metalake
+        self._auth_provider = create_auth_provider(config)
         self._headers = {
             "Accept": "application/vnd.gravitino.v1+json",
             "Content-Type": "application/json",
@@ -99,10 +101,11 @@ class GravitinoBridge:
     def _request(
         self, method: str, path: str, body: dict | None = None
     ) -> dict[str, Any] | None:
-        """Send a request to Gravitino REST API."""
+        """Send an authenticated request to Gravitino REST API."""
         url = f"{self._base}{path}"
         data = json.dumps(body).encode() if body else None
         req = Request(url, data=data, headers=self._headers, method=method)
+        self._auth_provider.authenticate(req)
         try:
             with urlopen(req, timeout=10) as resp:
                 raw = resp.read().decode()

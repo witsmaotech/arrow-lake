@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Path
+from pydantic import BaseModel, Field
 
 from arrow_lake.api.auth_models import Role
 from arrow_lake.api.deps import get_checker, require_role
@@ -14,7 +15,7 @@ from arrow_lake.api.models.dataset import (
     AclSetResponse,
     SetAclRequest,
 )
-from arrow_lake.api.rbac import DatasetACL
+from arrow_lake.api.rbac import DatasetACL, SchemaACL
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 
@@ -84,3 +85,142 @@ async def delete_acl(
     """Delete row/column ACL for a role on a dataset (admin only)."""
     deleted = checker.delete_acl(dataset, role)
     return AclDeleteResponse(dataset=dataset, role=role, deleted=deleted)
+
+
+# ---------------------------------------------------------------------------
+# Schema-level ACL management (v1.5.1)
+# ---------------------------------------------------------------------------
+
+
+class SchemaAclRequest(BaseModel):
+    role: str = Field(..., pattern=r"^(viewer|editor)$")
+    allowed_actions: list[str] = Field(default_factory=list)
+    denied_actions: list[str] = Field(default_factory=list)
+
+
+class SchemaAclResponse(BaseModel):
+    schema_name: str
+    role: str
+    allowed_actions: list[str]
+    denied_actions: list[str]
+
+    model_config = {"populate_by_name": True}
+
+
+class SchemaAclListResponse(BaseModel):
+    schema_name: str
+    acls: list[SchemaAclResponse]
+
+
+class DenyRequest(BaseModel):
+    action: str = Field(..., min_length=1)
+
+
+class DenyResponse(BaseModel):
+    dataset: str
+    action: str
+    denied: bool
+
+
+class DenyListResponse(BaseModel):
+    dataset: str
+    denied_actions: list[str]
+
+
+@router.put("/acl/schema/{schema_name}", response_model=SchemaAclResponse)
+async def set_schema_acl(
+    schema_name: str = Path(..., pattern=_NAME_PATTERN),
+    *,
+    req: SchemaAclRequest,
+    _user: dict = Depends(require_role(Role.ADMIN)),
+    checker=Depends(get_checker),
+) -> SchemaAclResponse:
+    """Set schema-level ACL inherited by all child datasets (admin only)."""
+    acl = SchemaACL(
+        schema=schema_name,
+        role=req.role,
+        allowed_actions=frozenset(req.allowed_actions),
+        denied_actions=frozenset(req.denied_actions),
+    )
+    checker.set_schema_acl(acl)
+    return SchemaAclResponse(
+        schema_name=schema_name,
+        role=req.role,
+        allowed_actions=sorted(req.allowed_actions),
+        denied_actions=sorted(req.denied_actions),
+    )
+
+
+@router.get("/acl/schema/{schema_name}", response_model=SchemaAclListResponse)
+async def list_schema_acls(
+    schema_name: str = Path(..., pattern=_NAME_PATTERN),
+    *,
+    _user: dict = Depends(require_role(Role.ADMIN)),
+    checker=Depends(get_checker),
+) -> SchemaAclListResponse:
+    """List all schema-level ACLs for a schema (admin only)."""
+    acls = checker.list_schema_acls(schema_name)
+    return SchemaAclListResponse(
+        schema_name=schema_name,
+        acls=[
+            SchemaAclResponse(
+                schema_name=a.schema,
+                role=a.role,
+                allowed_actions=sorted(a.allowed_actions),
+                denied_actions=sorted(a.denied_actions),
+            )
+            for a in acls
+        ],
+    )
+
+
+@router.delete("/acl/schema/{schema_name}/{role}", response_model=SchemaAclResponse)
+async def delete_schema_acl(
+    schema_name: str = Path(..., pattern=_NAME_PATTERN),
+    role: str = Path(..., pattern=r"^(viewer|editor)$"),
+    *,
+    _user: dict = Depends(require_role(Role.ADMIN)),
+    checker=Depends(get_checker),
+) -> SchemaAclResponse:
+    """Delete schema-level ACL for a role (admin only)."""
+    checker.delete_schema_acl(schema_name, role)
+    return SchemaAclResponse(
+        schema_name=schema_name, role=role, allowed_actions=[], denied_actions=[],
+    )
+
+
+@router.put("/deny/{dataset}", response_model=DenyResponse)
+async def deny_action(
+    dataset: str = Path(..., pattern=_NAME_PATTERN),
+    *,
+    req: DenyRequest,
+    _user: dict = Depends(require_role(Role.ADMIN)),
+    checker=Depends(get_checker),
+) -> DenyResponse:
+    """Add explicit Deny for an action on a dataset (admin only)."""
+    checker.deny_action(dataset, req.action)
+    return DenyResponse(dataset=dataset, action=req.action, denied=True)
+
+
+@router.delete("/deny/{dataset}/{action}", response_model=DenyResponse)
+async def remove_deny(
+    dataset: str = Path(..., pattern=_NAME_PATTERN),
+    action: str = Path(..., min_length=1),
+    *,
+    _user: dict = Depends(require_role(Role.ADMIN)),
+    checker=Depends(get_checker),
+) -> DenyResponse:
+    """Remove explicit Deny for an action on a dataset (admin only)."""
+    removed = checker.remove_deny(dataset, action)
+    return DenyResponse(dataset=dataset, action=action, denied=not removed)
+
+
+@router.get("/deny/{dataset}", response_model=DenyListResponse)
+async def list_denies(
+    dataset: str = Path(..., pattern=_NAME_PATTERN),
+    *,
+    _user: dict = Depends(require_role(Role.ADMIN)),
+    checker=Depends(get_checker),
+) -> DenyListResponse:
+    """List all denied actions for a dataset (admin only)."""
+    return DenyListResponse(dataset=dataset, denied_actions=sorted(checker.list_denies(dataset)))

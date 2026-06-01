@@ -10,6 +10,16 @@ import pyarrow as pa
 class _LakeLineageMixin:
     """Provides data lineage event recording, history, and SQL querying."""
 
+    def _create_lineage_store(self):
+        """Create a LineageStore and inject auth provider if available."""
+        from arrow_lake.catalog.lineage import LineageStore
+
+        store = LineageStore(self._get_storage())
+        auth = getattr(self, "_gravitino_auth_provider", None)
+        if auth is not None:
+            store.set_auth_provider(auth)
+        return store
+
     def lineage_record_event(
         self,
         dataset_name: str,
@@ -20,21 +30,12 @@ class _LakeLineageMixin:
         actor: str = "system",
         metadata: dict[str, Any] | None = None,
     ) -> None:
-        """Record a lineage event (Story 8.3).
-
-        Args:
-            dataset_name: Target dataset name.
-            operation: Operation type (create/append/transform/delete).
-            source_datasets: Upstream dataset names.
-            transform_type: Transformation type.
-            actor: Who triggered the event.
-            metadata: Additional context.
-        """
-        from arrow_lake.catalog.lineage import LineageStore, create_lineage_event
+        """Record a lineage event (Story 8.3)."""
+        from arrow_lake.catalog.lineage import create_lineage_event
 
         store = self._get_component(
             "lineage",
-            lambda: LineageStore(self._get_storage()),
+            lambda: self._create_lineage_store(),
         )
         event = create_lineage_event(
             dataset_name,
@@ -47,36 +48,21 @@ class _LakeLineageMixin:
         store.record_event(event)
 
     def lineage_history(self, dataset_name: str) -> list[Any]:
-        """Get lineage history for a dataset (Story 8.3).
-
-        Args:
-            dataset_name: Dataset name.
-
-        Returns:
-            List of LineageEvent in chronological order.
-        """
-        from arrow_lake.catalog.lineage import LineageStore
+        """Get lineage history for a dataset (Story 8.3)."""
 
         store = self._get_component(
             "lineage",
-            lambda: LineageStore(self._get_storage()),
+            lambda: self._create_lineage_store(),
         )
         return store.get_dataset_history(dataset_name)
 
     def lineage_query(self, sql: str) -> pa.Table:
-        """SQL query over lineage events (Story 8.3).
-
-        Args:
-            sql: SELECT-only SQL query.
-
-        Returns:
-            Arrow Table with query results.
-        """
-        from arrow_lake.catalog.lineage import LineageQueryBridge, LineageStore
+        """SQL query over lineage events (Story 8.3)."""
+        from arrow_lake.catalog.lineage import LineageQueryBridge
 
         store = self._get_component(
             "lineage",
-            lambda: LineageStore(self._get_storage()),
+            lambda: self._create_lineage_store(),
         )
 
         def _create_bridge() -> LineageQueryBridge:
@@ -89,23 +75,12 @@ class _LakeLineageMixin:
         return bridge.query(sql)
 
     def lineage_graph(self, dataset_name: str, *, max_depth: int = 10) -> dict[str, Any]:
-        """Get the full lineage graph for a dataset.
-
-        Performs bidirectional BFS to discover all connected upstream and
-        downstream datasets through lineage events.
-
-        Args:
-            dataset_name: Starting dataset name.
-            max_depth: Maximum traversal depth.
-
-        Returns:
-            Dict with "nodes", "edges", and "stats" keys.
-        """
-        from arrow_lake.catalog.lineage import LineageQueryBridge, LineageStore
+        """Get the full lineage graph for a dataset."""
+        from arrow_lake.catalog.lineage import LineageQueryBridge
 
         store = self._get_component(
             "lineage",
-            lambda: LineageStore(self._get_storage()),
+            lambda: self._create_lineage_store(),
         )
 
         def _create_bridge() -> LineageQueryBridge:
@@ -115,19 +90,12 @@ class _LakeLineageMixin:
         return bridge.trace_full_graph(dataset_name, max_depth=max_depth)
 
     def lineage_impact(self, dataset_name: str) -> list[dict[str, Any]]:
-        """Analyze downstream impact of changing a dataset.
-
-        Args:
-            dataset_name: Dataset that would change.
-
-        Returns:
-            List of impacted datasets with depth and operation info.
-        """
-        from arrow_lake.catalog.lineage import LineageQueryBridge, LineageStore
+        """Analyze downstream impact of changing a dataset."""
+        from arrow_lake.catalog.lineage import LineageQueryBridge
 
         store = self._get_component(
             "lineage",
-            lambda: LineageStore(self._get_storage()),
+            lambda: self._create_lineage_store(),
         )
 
         def _create_bridge() -> LineageQueryBridge:

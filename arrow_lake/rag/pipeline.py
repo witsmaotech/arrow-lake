@@ -16,8 +16,12 @@ from arrow_lake.config import RAGConfig
 from arrow_lake.rag.context import ContextCitation, ContextWindow, count_tokens, table_to_chunks
 from arrow_lake.rag.prompt import PromptRegistry
 from arrow_lake.rag.provider import BaseLLMProvider, LLMMessage
-from arrow_lake.rag.reranker import BaseReranker, NoopReranker, create_reranker
-from arrow_lake.rag.query_transform import BaseQueryTransformer, IdentityTransformer, create_query_transformer
+from arrow_lake.rag.query_transform import (
+    BaseQueryTransformer,
+    IdentityTransformer,
+    create_query_transformer,
+)
+from arrow_lake.rag.reranker import NoopReranker
 from arrow_lake.rag.session import SessionStore
 
 logger = logging.getLogger(__name__)

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import pyarrow as pa
@@ -58,7 +58,7 @@ class QualityProfiler:
             total_columns=table.num_columns,
             overall_quality_score=overall_score,
             column_profiles=column_profiles,
-            profiled_at=datetime.now(tz=timezone.utc).isoformat(),
+            profiled_at=datetime.now(tz=UTC).isoformat(),
         )
 
     def _profile_column(self, column: pa.ChunkedArray, name: str) -> ColumnProfile:

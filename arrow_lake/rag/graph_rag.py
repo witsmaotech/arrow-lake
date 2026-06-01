@@ -12,7 +12,6 @@ falls back to the parent RAGPipeline.query() (pure vector RAG).
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import logging
 import time
 from typing import TYPE_CHECKING
@@ -38,14 +37,14 @@ class QuestionEntityCache:
         self._max_size = max_size
 
     def get(self, question: str) -> list[str] | None:
-        key = hashlib.md5(question.encode()).hexdigest()
+        key = question
         entry = self._cache.get(key)
         if entry and time.time() - entry[0] < self._ttl:
             return entry[1]
         return None
 
     def set(self, question: str, entities: list[str]) -> None:
-        key = hashlib.md5(question.encode()).hexdigest()
+        key = question
         if len(self._cache) >= self._max_size:
             oldest = min(self._cache, key=lambda k: self._cache[k][0])
             del self._cache[oldest]

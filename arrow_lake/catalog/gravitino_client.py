@@ -42,11 +42,15 @@ class ArrowLakeGravitinoClient:
             return self._client is not None
         self._initialized = True
         try:
-            from gravitino.client.gravitino_admin_client import GravitinoAdminClient  # type: ignore[import-untyped]
-            from gravitino.client.gravitino_client import GravitinoClient  # type: ignore[import-untyped]
+            from gravitino.client.gravitino_admin_client import (
+                GravitinoAdminClient,  # type: ignore[import-untyped]
+            )
+            from gravitino.client.gravitino_client import (
+                GravitinoClient,  # type: ignore[import-untyped]
+            )
 
             self._admin_client = GravitinoAdminClient(uri=self._uri)
-            metalake = self._admin_client.load_metalake(self._metalake)
+            self._admin_client.load_metalake(self._metalake)
             self._client = GravitinoClient(
                 uri=self._uri, metalake_name=self._metalake
             )
@@ -77,8 +81,6 @@ class ArrowLakeGravitinoClient:
         if not self._ensure_initialized():
             return False
         try:
-            from gravitino.dto.catalog_dto import CatalogDTO  # type: ignore[import-untyped]
-            from gravitino.namespace import Namespace  # type: ignore[import-untyped]
 
             self._admin_client.create_catalog(
                 metalake_name=self._metalake,

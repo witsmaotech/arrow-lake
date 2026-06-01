@@ -141,6 +141,9 @@ class AuthService:
     def refresh_access_token(self, refresh_token: str) -> TokenPayload:
         """Verify a refresh token and return a new access token payload."""
         old_payload = self.verify_token(refresh_token)
+        # Revoke the old refresh token to prevent reuse (rotation)
+        if old_payload.jti:
+            self.revoke_token(old_payload.jti)
         return self.create_access_token(
             user_id=old_payload.sub,
             role=old_payload.role,
@@ -218,7 +221,10 @@ class AuthService:
                     f"Algorithm '{algo}' requires both jwt_public_key and jwt_private_key"
                 )
         elif algo == "HS256" and not self._secret_key:
-            logger.warning("JWT secret key is empty — tokens will be insecure")
+            raise ValueError(
+                "JWT secret_key is required for HS256. "
+                "Set ARROW_LAKE__AUTH__JWT_SECRET_KEY environment variable."
+            )
 
     def _signing_key(self) -> str:
         """Return the key used for encoding (signing)."""

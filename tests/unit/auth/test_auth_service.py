@@ -179,9 +179,9 @@ def test_rs256_missing_keys_raises() -> None:
         AuthService(algorithm="RS256")
 
 
-def test_hs256_empty_secret_warns() -> None:
-    svc = AuthService(secret_key="", algorithm="HS256")
-    assert svc._secret_key == ""
+def test_hs256_empty_secret_raises() -> None:
+    with pytest.raises(ValueError, match="secret_key is required"):
+        AuthService(secret_key="", algorithm="HS256")
 
 
 def test_es256_supported(rsa_keypair) -> None:

@@ -23,7 +23,7 @@ from arrow_lake.validation import DANGEROUS_SQL_KEYWORDS_RE
 
 logger = structlog.get_logger(__name__)
 
-__all__ = ["LineageEvent", "LineageQueryBridge", "LineageStore"]
+__all__ = ["ColumnMapping", "LineageEvent", "LineageQueryBridge", "LineageStore"]
 
 _LINEAGE_EVENT_SCHEMA = pa.schema(
     [
@@ -36,6 +36,7 @@ _LINEAGE_EVENT_SCHEMA = pa.schema(
         pa.field("lance_version", pa.int64(), nullable=True),
         pa.field("actor", pa.string(), nullable=True),
         pa.field("metadata", pa.string(), nullable=True),
+        pa.field("column_lineage", pa.string(), nullable=True),
     ]
 )
 
@@ -85,6 +86,23 @@ class LineageEvent:
         )
 
 
+@dataclass(frozen=True)
+class ColumnMapping:
+    """A single column-level lineage mapping.
+
+    Attributes:
+        source_dataset: Upstream dataset name.
+        source_column: Column in the upstream dataset.
+        target_column: Column in the downstream dataset.
+        transform_expr: Transformation expression (empty for direct pass-through).
+    """
+
+    source_dataset: str
+    source_column: str
+    target_column: str
+    transform_expr: str = ""
+
+
 class LineageStore:
     """Persists lineage events to a Lance dataset.
 
@@ -97,17 +115,35 @@ class LineageStore:
         self._storage = storage
         self._store_dataset = store_dataset
         self._initialized = False
+        self._auth_provider: Any = None
 
-    def record_event(self, event: LineageEvent) -> None:
+    def record_event(
+        self,
+        event: LineageEvent,
+        column_lineage: list[ColumnMapping] | None = None,
+    ) -> None:
         """Record a lineage event to the store.
 
         Args:
             event: LineageEvent to persist.
+            column_lineage: Optional column-level mappings.
 
         Raises:
             CatalogError: If writing to Lance fails.
         """
         self._ensure_store()
+
+        col_lineage_json = ""
+        if column_lineage:
+            col_lineage_json = json.dumps([
+                {
+                    "source_dataset": m.source_dataset,
+                    "source_column": m.source_column,
+                    "target_column": m.target_column,
+                    "transform_expr": m.transform_expr,
+                }
+                for m in column_lineage
+            ])
 
         row = {
             "event_id": event.event_id,
@@ -119,6 +155,7 @@ class LineageStore:
             "lance_version": event.lance_version,
             "actor": event.actor,
             "metadata": json.dumps(dict(event.metadata) if event.metadata else {}),
+            "column_lineage": col_lineage_json or None,
         }
         table = pa.table({k: [v] for k, v in row.items()}, schema=_LINEAGE_EVENT_SCHEMA)
 
@@ -133,6 +170,9 @@ class LineageStore:
         if event.lance_version is not None:
             self._notify_gravitino_version(event)
 
+        # Best-effort sync to Gravitino Lineage REST API
+        self._sync_lineage_to_gravitino(event)
+
         logger.info(
             "lineage_event_recorded",
             event_id=event.event_id,
@@ -140,8 +180,11 @@ class LineageStore:
             operation=event.operation,
         )
 
-    @staticmethod
-    def _notify_gravitino_version(event: LineageEvent) -> None:
+    def set_auth_provider(self, provider: Any) -> None:
+        """Set the GravitinoAuthProvider for authenticated REST calls."""
+        self._auth_provider = provider
+
+    def _notify_gravitino_version(self, event: LineageEvent) -> None:
         """Best-effort notify Gravitino Lance REST Catalog about new version."""
         try:
             import os
@@ -201,6 +244,8 @@ class LineageStore:
                 },
                 method="PUT",
             )
+            if self._auth_provider is not None:
+                self._auth_provider.authenticate(req)
             with urlopen(req, timeout=5) as resp:
                 if resp.status < 300:
                     logger.debug(
@@ -209,8 +254,79 @@ class LineageStore:
                         version=event.lance_version,
                     )
         except Exception:
-            logger.debug(
+            logger.warning(
                 "gravitino_lance_version_notify_skipped",
+                dataset=event.dataset_name,
+            )
+
+    def _sync_lineage_to_gravitino(self, event: LineageEvent) -> None:
+        """Best-effort sync lineage to Gravitino Lineage REST API (v0.7+).
+
+        Uses the structured ``/api/metalakes/{name}/lineage`` endpoint
+        when available. Falls back silently if the endpoint is not supported
+        by the target Gravitino version.
+        """
+        try:
+            import os
+            from urllib.request import Request, urlopen
+
+            gravitino_uri = os.environ.get("ARROW_LAKE__GRAVITINO__URI", "")
+            metalake = os.environ.get("ARROW_LAKE__GRAVITINO__METALAKE", "arrow_lake")
+            if not gravitino_uri or not event.source_datasets:
+                return
+
+            catalog = os.environ.get(
+                "ARROW_LAKE__GRAVITINO__LANCE_CATALOG_NAME", "lance-catalog",
+            )
+            schema = os.environ.get(
+                "ARROW_LAKE__GRAVITINO__LANCE_SCHEMA_NAME", "arrow_lake",
+            )
+
+            url = f"{gravitino_uri}/api/metalakes/{metalake}/lineage"
+            payload = json.dumps({
+                "upstream": [
+                    {
+                        "catalog": catalog,
+                        "schema": schema,
+                        "table": src,
+                    }
+                    for src in event.source_datasets
+                ],
+                "downstream": [
+                    {
+                        "catalog": catalog,
+                        "schema": schema,
+                        "table": event.dataset_name,
+                    }
+                ],
+                "transformation": event.transform_type,
+                "properties": {
+                    "operation": event.operation,
+                    "actor": event.actor,
+                    "event_id": event.event_id,
+                },
+            }).encode()
+
+            req = Request(
+                url,
+                data=payload,
+                headers={
+                    "Accept": "application/vnd.gravitino.v1+json",
+                    "Content-Type": "application/json",
+                },
+                method="POST",
+            )
+            if self._auth_provider is not None:
+                self._auth_provider.authenticate(req)
+            with urlopen(req, timeout=5) as resp:
+                if resp.status < 300:
+                    logger.debug(
+                        "gravitino_lineage_synced",
+                        dataset=event.dataset_name,
+                    )
+        except Exception:
+            logger.warning(
+                "gravitino_lineage_sync_skipped",
                 dataset=event.dataset_name,
             )
 

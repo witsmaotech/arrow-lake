@@ -44,7 +44,6 @@ def maintenance_status(ctx: click.Context) -> None:
 @click.pass_context
 def maintenance_run(ctx: click.Context, as_json: bool) -> None:
     """Run a maintenance cycle (compaction + version cleanup)."""
-    from arrow_lake.config.storage import StorageConfig
 
     lake = _get_lake(ctx)
     from arrow_lake.ingest.maintenance_scheduler import MaintenanceScheduler

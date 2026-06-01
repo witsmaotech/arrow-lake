@@ -61,7 +61,6 @@ def _check_gravitino(uri: str) -> tuple[str, bool]:
 def _check_lance_rest(uri: str) -> tuple[str, bool]:
     """Check Lance REST Catalog health. Returns (status_text, is_ok)."""
     try:
-        import os
         import urllib.request
 
         url = f"{uri.rstrip('/')}/v1/namespace/lance-catalog/list"
@@ -138,7 +137,7 @@ async def health_ready(
 
     # Dependency probes (non-fatal — informational only)
     if config.gravitino.enabled:
-        grav_text, grav_ok = _check_gravitino(config.gravitino.uri)
+        grav_text, _grav_ok = _check_gravitino(config.gravitino.uri)
         status["gravitino"] = grav_text
     if hasattr(config, "compute") and getattr(config.compute, "ray_address", ""):
         ray_text, _ = _check_ray(config.compute.ray_address)
@@ -171,10 +170,10 @@ async def health_check(
 
     # Gravitino health (non-fatal — optional dependency)
     if config.gravitino.enabled:
-        grav_text, grav_ok = _check_gravitino(config.gravitino.uri)
+        grav_text, _grav_ok = _check_gravitino(config.gravitino.uri)
         status["gravitino"] = grav_text
         if config.gravitino.lance_rest_enabled:
-            lr_text, lr_ok = _check_lance_rest(config.gravitino.lance_rest_uri)
+            lr_text, _lr_ok = _check_lance_rest(config.gravitino.lance_rest_uri)
             status["lance_rest"] = lr_text
 
     _attach_pool_stats(status, request)

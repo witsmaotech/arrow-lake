@@ -283,7 +283,7 @@ class ImageProcessor:
             daft.functions.encode_image(df["preview_img"], image_format="JPEG"),
         )
         result = df.select("thumbnail", "preview").to_pydict()
-        return list(zip(result["thumbnail"], result["preview"]))
+        return list(zip(result["thumbnail"], result["preview"], strict=False))
 
 
 # ---------------------------------------------------------------------------
@@ -477,7 +477,7 @@ class VideoProcessor:
 
             keyframes = [
                 ExtractedKeyframe(jpeg_bytes=j, timestamp_ms=int(t))
-                for j, t in zip(jpegs[:self.max_keyframes], timestamps[:self.max_keyframes])
+                for j, t in zip(jpegs[:self.max_keyframes], timestamps[:self.max_keyframes], strict=False)
             ]
 
             # Get duration via Daft metadata if available

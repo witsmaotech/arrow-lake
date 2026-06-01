@@ -34,7 +34,6 @@ from arrow_lake.api.models.dataset import (
     PresignedUpload,
     PresignRequest,
     PresignResponse,
-    SchemaMigrationAction,
     SchemaMigrationIssue,
     SchemaMigrationRequest,
     SchemaMigrationResponse,

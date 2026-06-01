@@ -48,20 +48,19 @@ class GravitinoStatsCollector:
             "columns": [],
         }
         try:
-            safe = name.replace("'", "''")
-
-            # Column metadata from information_schema
+            # Column metadata from information_schema (parameterized)
             cols = conn.execute(
-                f"SELECT column_name, data_type "
-                f"FROM information_schema.columns "
-                f"WHERE table_name = '{safe}'"
+                "SELECT column_name, data_type "
+                "FROM information_schema.columns "
+                "WHERE table_name = ?",
+                [name],
             ).fetchall()
             stats["column_count"] = len(cols)
             stats["columns"] = [{"name": c[0], "type": c[1]} for c in cols]
 
             # Row count from the Lance dataset (may fail for external tables)
             try:
-                row = conn.execute(f"SELECT COUNT(*) FROM {safe}").fetchone()
+                row = conn.execute(f'SELECT COUNT(*) FROM "{name}"').fetchone()
                 if row:
                     stats["row_count"] = row[0]
             except Exception:
@@ -70,8 +69,9 @@ class GravitinoStatsCollector:
             # Size estimate from Parquet metadata if available
             try:
                 row = conn.execute(
-                    f"SELECT sum(file_size) / 1024.0 / 1024.0 "
-                    f"FROM parquet_metadata('{safe}/**/*.parquet')"
+                    "SELECT sum(file_size) / 1024.0 / 1024.0 "
+                    "FROM parquet_metadata(?||'/**/*.parquet')",
+                    [name],
                 ).fetchone()
                 if row and row[0]:
                     stats["size_mb"] = round(row[0], 2)

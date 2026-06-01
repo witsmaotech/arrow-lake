@@ -93,7 +93,7 @@ async def rag_query(
                 session_id=req.session_id,
             )
     except TimeoutError:
-        raise HTTPException(status_code=504, detail="RAG query timed out — LLM provider may be unavailable")
+        raise HTTPException(status_code=504, detail="RAG query timed out — LLM provider may be unavailable") from None
     except (ValueError, LookupError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
@@ -178,7 +178,7 @@ async def rag_extract(
                 template_name=req.template_name,
             )
     except TimeoutError:
-        raise HTTPException(status_code=504, detail="RAG extract timed out — LLM provider may be unavailable")
+        raise HTTPException(status_code=504, detail="RAG extract timed out — LLM provider may be unavailable") from None
     except (ValueError, LookupError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:

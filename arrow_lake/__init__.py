@@ -225,7 +225,8 @@ class Lake(
                         self._logger.warning("Failed to async-shut down component %s", k, exc_info=True)
             try:
                 loop = asyncio.get_running_loop()
-                loop.create_task(_await_all())
+                task = loop.create_task(_await_all())
+                task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
             except RuntimeError:
                 asyncio.run(_await_all())
 

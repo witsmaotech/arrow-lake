@@ -6,7 +6,6 @@ and dataset composition (join, union).
 
 from __future__ import annotations
 
-import contextlib
 import hashlib
 import re
 from pathlib import Path

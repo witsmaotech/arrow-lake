@@ -14,10 +14,10 @@ from arrow_lake.api.models.quality import (
     DedupResponse,
     QualityFilterRequest,
     QualityFilterResponse,
+    QualityReportResponse,
     QualityRuleResultItem,
     QualityRuleSetRequest,
     QualityRuleSetResponse,
-    QualityReportResponse,
 )
 from arrow_lake.api.utils import run_sync
 

@@ -18,7 +18,7 @@ import pyarrow as pa
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["QueryCache", "CacheEntry"]
+__all__ = ["CacheEntry", "QueryCache"]
 
 
 @dataclass(frozen=True)

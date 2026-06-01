@@ -10,10 +10,12 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
 import pyarrow as pa
+import structlog
 
 from arrow_lake.config import StorageBackend, StorageConfig
 from arrow_lake.exceptions import ErrorCode, StorageError
@@ -25,6 +27,8 @@ from arrow_lake.validation import DANGEROUS_SQL_KEYWORDS_RE, SAFE_IDENTIFIER_RE
 
 # Backward-compatible alias for internal use
 _SAFE_DATASET_NAME_RE = SAFE_IDENTIFIER_RE
+
+logger = structlog.get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -282,7 +286,7 @@ class LanceStorageManager(
                 if max_rows and max_rows > 0:
                     table.optimize(max_rows_per_file=max_rows)
             except Exception:
-                pass
+                logger.debug("post_write_optimize_skipped", dataset=name, exc_info=True)
 
     def _open_lance(self, path: str) -> Any:
         """Open a Lance dataset via lancedb (latest version only).
@@ -363,7 +367,7 @@ class LanceStorageManager(
     def cleanup_versions(
         self,
         dataset_name: str,
-        older_than: "timedelta",
+        older_than: timedelta,
         dry_run: bool = False,
     ) -> int:
         """Remove old Lance dataset versions older than the specified timedelta.
@@ -395,6 +399,7 @@ class LanceStorageManager(
             removed = len(stats.fragments_removed) if hasattr(stats, "fragments_removed") else 0
             return max(removed, 1)
         except Exception:
+            logger.debug("cleanup_old_versions_failed", dataset=dataset_name, exc_info=True)
             return 0
 
 

@@ -40,7 +40,9 @@ class GravitinoModelRegistry:
 
     def _init_client(self) -> None:
         try:
-            from gravitino.client.gravitino_client import GravitinoClient  # type: ignore[import-untyped]
+            from gravitino.client.gravitino_client import (
+                GravitinoClient,  # type: ignore[import-untyped]
+            )
 
             self._client = GravitinoClient(
                 uri=self._config.uri,

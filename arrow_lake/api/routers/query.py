@@ -10,7 +10,11 @@ from fastapi.responses import StreamingResponse
 
 from arrow_lake.api.auth_models import Role
 from arrow_lake.api.deps import get_checker, get_lake, require_role
-from arrow_lake.api.models.common import _NAME_PATTERN, arrow_table_to_ipc_base64, arrow_table_to_response
+from arrow_lake.api.models.common import (
+    _NAME_PATTERN,
+    arrow_table_to_ipc_base64,
+    arrow_table_to_response,
+)
 from arrow_lake.api.models.query import (
     DaftQueryRequest,
     DaftQueryResponse,
@@ -18,6 +22,7 @@ from arrow_lake.api.models.query import (
     OlapQueryResponse,
 )
 from arrow_lake.api.utils import run_sync
+from arrow_lake.validation import validate_sql_safety
 
 if TYPE_CHECKING:
     from arrow_lake.query.daft_api import LazyDaftFrame
@@ -129,6 +134,7 @@ async def olap_query(
     When ``stream=True``, returns SSE events with Arrow IPC batches
     for large result sets (>10,000 rows recommended).
     """
+    validate_sql_safety(req.sql)
     result = await run_sync(
         lake.olap_query, name, req.sql, max_rows=req.max_rows,
         timeout=_QUERY_TIMEOUT, label="olap_query",

@@ -106,7 +106,7 @@ class MultiQueryTransformer(BaseQueryTransformer):
             ])
             variants = [line.strip() for line in resp.content.strip().split("\n") if line.strip()]
             # Always include the original question
-            return [question] + [v for v in variants if v != question][:self._num_variants]
+            return [question, *[v for v in variants if v != question][:self._num_variants]]
         except Exception:
             logger.warning("Multi-query generation failed, using original query", exc_info=True)
             return [question]

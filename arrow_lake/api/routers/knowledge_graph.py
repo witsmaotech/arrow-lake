@@ -36,7 +36,7 @@ _ALLOWED_GREMLIN_STEPS = frozenset({
     "values", "valueMap", "elementMap", "properties",
     "count", "limit", "range", "order", "by",
     "select", "as", "where", "path", "dedup",
-    "group", "groupCount", "project", "union", "fold",
+    "group", "groupCount", "project", "fold",
     "sum", "mean", "max", "min",
     "id", "label", "constant",
     "repeat", "simplePath", "times", "until", "emit", "loops",

@@ -171,4 +171,5 @@ class IngestEmbedPipeline:
             val = sample.column(emb_col)[0].as_py()
             return len(val) if val is not None else 0
         except Exception:
+            logger.debug("embedding_dim_infer_failed", column=emb_col, exc_info=True)
             return 0

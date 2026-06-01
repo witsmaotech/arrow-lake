@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar
 
 import pyarrow as pa
 import structlog
@@ -40,10 +40,11 @@ class FederatedQueryEngine:
     Supports cross-catalog JOIN by loading into DuckDB for SQL execution.
     """
 
-    _FORMAT_READERS = {
+    _FORMAT_READERS: ClassVar[dict[str, str]] = {
         "lance": "read_lance",
         "parquet": "read_parquet",
         "csv": "read_csv",
+        "iceberg": "read_iceberg",
     }
 
     def __init__(self, config: GravitinoConfig) -> None:
@@ -130,8 +131,18 @@ class FederatedQueryEngine:
             logger.debug("federated_engine.resolve_failed", fqn=fqn, exc_info=True)
             return None
 
-    def load_dataset(self, fqn: str) -> Any:
-        """Load a dataset by FQN using the appropriate Daft reader based on Gravitino metadata."""
+    def load_dataset(self, fqn: str, *, where: str | None = None) -> Any:
+        """Load a dataset by FQN using the appropriate Daft reader based on Gravitino metadata.
+
+        Args:
+            fqn: Fully qualified name (catalog.schema.table or simple table name).
+            where: Optional Daft expression string for predicate pushdown
+                    (e.g. ``"x > 10"``, ``"status = 'active'"``).
+                    Applied via Daft ``.where()`` before materialization.
+
+        Returns:
+            Daft DataFrame, optionally filtered.
+        """
         import daft
 
         resolution = self.resolve_table(fqn)
@@ -150,16 +161,72 @@ class FederatedQueryEngine:
             raise ValueError(f"Invalid location: {location}")
 
         if reader == "read_lance":
-            return daft.read_lance(location)
-        if reader == "read_parquet":
-            return daft.read_parquet(location)
-        return daft.read_csv(location)
+            df = daft.read_lance(location)
+        elif reader == "read_parquet":
+            df = daft.read_parquet(location)
+        elif reader == "read_iceberg":
+            df = daft.read_iceberg(location)
+        else:
+            df = daft.read_csv(location)
+
+        if where:
+            df = df.where(where)
+
+        return df
+
+    @staticmethod
+    def _extract_simple_filters(sql: str) -> dict[str, str]:
+        """Extract simple equality/range filters from a WHERE clause.
+
+        Parses patterns like ``col = value`` and ``col > value`` (AND-combined).
+        Returns a dict of ``{col: expr_string}`` for Daft ``.where()``.
+        Complex expressions (OR, nested parens, functions) are skipped.
+
+        This is best-effort — callers should pass unhandled filters to DuckDB.
+        """
+        # Normalize whitespace
+        sql_upper = " ".join(sql.upper().split())
+
+        # Find WHERE clause
+        where_idx = sql_upper.rfind(" WHERE ")
+        if where_idx == -1:
+            return {}
+
+        where_clause = sql[where_idx + 7:].strip()
+        # Strip trailing ORDER BY / GROUP BY / LIMIT / HAVING
+        for tail in (" ORDER BY ", " GROUP BY ", " LIMIT ", " HAVING "):
+            idx = where_clause.upper().find(tail)
+            if idx != -1:
+                where_clause = where_clause[:idx]
+
+        # Only handle simple AND-combined predicates (no OR, no nested parens)
+        if " OR " in where_clause.upper() or "(" in where_clause:
+            return {}
+
+        filters: dict[str, str] = {}
+        # Match patterns: col op value (op: =, !=, <>, <, >, <=, >=)
+        _FILTER_RE = re.compile(
+            r"(\w+)\s*(=|!=|<>|>=|<=|>|<)\s*"
+            r"('(?:[^'\\]|\\.)*'|\d+(?:\.\d+)?|TRUE|FALSE|NULL)",
+            re.IGNORECASE,
+        )
+        for m in _FILTER_RE.finditer(where_clause):
+            col, op, val = m.group(1), m.group(2), m.group(3)
+            # Skip aliases and SQL keywords
+            if col.upper() in ("AND", "OR", "NOT", "WHERE", "IN", "BETWEEN", "LIKE",
+                               "IS", "NULL", "TRUE", "FALSE", "SELECT", "FROM"):
+                continue
+            filters[col] = f"{col} {op} {val}"
+
+        return filters
 
     def cross_catalog_query(
         self,
         catalog_tables: list[tuple[str, str]],
         join_sql: str,
         duckdb_conn: Any = None,
+        *,
+        pushdown_filters: bool = True,
     ) -> pa.Table:
         """Execute a cross-catalog JOIN by loading tables into DuckDB.
 
@@ -167,6 +234,9 @@ class FederatedQueryEngine:
             catalog_tables: List of (fqn, alias) pairs.
             join_sql: SQL to execute against registered aliases.
             duckdb_conn: Optional existing DuckDB connection.
+            pushdown_filters: When True, extract simple equality/range filters
+                from the WHERE clause and push down via Daft ``.where()`` to
+                reduce I/O before DuckDB materialization.
 
         Returns:
             PyArrow Table with query results.
@@ -179,6 +249,9 @@ class FederatedQueryEngine:
             if not self._validate_alias(alias):
                 raise ValueError(f"Invalid alias: {alias}")
 
+        # Best-effort extract simple filters for pushdown
+        simple_filters = self._extract_simple_filters(join_sql) if pushdown_filters else {}
+
         conn = duckdb_conn or duckdb.connect(":memory:")
         try:
             for fqn, alias in catalog_tables:
@@ -186,15 +259,20 @@ class FederatedQueryEngine:
                 if resolution is None:
                     raise ValueError(f"Cannot resolve: {fqn}")
 
-                import daft
+                # Build pushdown filter for this table's columns
+                table_filter = None
+                if simple_filters and resolution.columns:
+                    col_names = {c["name"] for c in resolution.columns}
+                    matched = {k: v for k, v in simple_filters.items() if k in col_names}
+                    if matched:
+                        table_filter = " AND ".join(matched.values())
+                        logger.debug(
+                            "federated_engine.predicate_pushdown",
+                            table=fqn,
+                            filter=table_filter,
+                        )
 
-                location = resolution.location
-                if resolution.format in ("lance", "lakehouse-generic"):
-                    df = daft.read_lance(location)
-                elif resolution.format == "parquet":
-                    df = daft.read_parquet(location)
-                else:
-                    df = daft.read_csv(location)
+                df = self.load_dataset(fqn, where=table_filter)
 
                 arrow_tbl = df.to_arrow()
                 if arrow_tbl.num_rows > self._config.federated_query_max_rows:

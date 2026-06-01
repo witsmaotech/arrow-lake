@@ -7,9 +7,9 @@ Three actions: reject, flag, remove.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
-import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -167,10 +167,8 @@ class QualityRuleEngine:
         if not msg:
             msg = f"Rule '{rule.name}': {affected} rows violated {rule.check} check on '{rule.column}'"
         else:
-            try:
+            with contextlib.suppress(KeyError, IndexError):
                 msg = msg.format(**rule.params)
-            except (KeyError, IndexError):
-                pass
 
         return RuleResult(
             rule_name=rule.name,

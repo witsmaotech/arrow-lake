@@ -8,14 +8,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import Any, ClassVar
 
 import pyarrow as pa
 import pyarrow.compute as pc
 import structlog
 
-if TYPE_CHECKING:
-    from arrow_lake.api.auth_models import Role
+from arrow_lake.api.auth_models import Role
 
 logger = structlog.get_logger(__name__)
 
@@ -42,7 +41,7 @@ _ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
     "admin": frozenset(Permission),
 }
 
-_ADMIN_ROLE = "admin"
+_ADMIN_ROLE = Role.ADMIN.value
 
 
 @dataclass(frozen=True)
@@ -54,12 +53,31 @@ class DatasetACL:
         role: Role this ACL applies to.
         visible_columns: Columns this role can see (empty = all).
         row_filter: SQL-style WHERE expression for row filtering (empty = all rows).
+        denied_actions: Actions explicitly denied (overrides inherited grants).
     """
 
     dataset: str
     role: str
     visible_columns: frozenset[str] = frozenset()
     row_filter: str = ""
+    denied_actions: frozenset[str] = frozenset()
+
+
+@dataclass(frozen=True)
+class SchemaACL:
+    """Schema-level ACL inherited by all child datasets.
+
+    Attributes:
+        schema: Schema (namespace) name.
+        role: Role this ACL applies to.
+        allowed_actions: Actions granted at schema level.
+        denied_actions: Actions explicitly denied (overrides allowed_actions).
+    """
+
+    schema: str
+    role: str
+    allowed_actions: frozenset[str] = frozenset()
+    denied_actions: frozenset[str] = frozenset()
 
 
 class PermissionChecker:
@@ -74,6 +92,10 @@ class PermissionChecker:
         self._dataset_acls: dict[str, dict[str, set[str]]] = {}
         # dataset -> role -> DatasetACL (row/column level)
         self._row_col_acls: dict[str, dict[str, DatasetACL]] = {}
+        # schema -> role -> SchemaACL (inherited by child datasets)
+        self._schema_acls: dict[str, dict[str, SchemaACL]] = {}
+        # dataset -> set of globally denied actions (any role)
+        self._deny_list: dict[str, set[str]] = {}
 
     def has_permission(self, role: str | Role, perm: str) -> bool:
         """Check if a role has a specific permission."""
@@ -89,17 +111,49 @@ class PermissionChecker:
     def check_dataset_access(
         self, *, role: str | Role, dataset: str, action: str
     ) -> bool:
-        """Check if a role can perform an action on a dataset."""
+        """Check if a role can perform an action on a dataset.
+
+        Evaluation order (Deny-first):
+        1. Admin bypass
+        2. Explicit Deny (per-dataset or per-schema)
+        3. Per-dataset ACL grant
+        4. Schema-level ACL inheritance
+        5. Role-based default (permission matrix)
+        """
         role_name = role if isinstance(role, str) else role.value
 
         if role_name == _ADMIN_ROLE:
             return True
 
+        # 2. Explicit Deny — per-dataset deny list
+        if action in self._deny_list.get(dataset, set()):
+            return False
+
+        # 2b. Explicit Deny — DatasetACL.denied_actions
+        rc_acl = self._row_col_acls.get(dataset, {}).get(role_name)
+        if rc_acl is not None and action in rc_acl.denied_actions:
+            return False
+
+        # 2c. Explicit Deny — SchemaACL.denied_actions
+        schema = self._infer_schema(dataset)
+        if schema:
+            schema_acl = self._schema_acls.get(schema, {}).get(role_name)
+            if schema_acl and action in schema_acl.denied_actions:
+                return False
+
+        # 3. Per-dataset ACL grant
         dataset_acl = self._dataset_acls.get(dataset, {})
         role_grants = dataset_acl.get(role_name)
         if role_grants is not None:
             return action in role_grants
 
+        # 4. Schema-level ACL inheritance
+        if schema:
+            schema_acl = self._schema_acls.get(schema, {}).get(role_name)
+            if schema_acl and action in schema_acl.allowed_actions:
+                return True
+
+        # 5. Role-based default
         full_perm = f"dataset:{action}"
         return self.has_permission(role_name, full_perm)
 
@@ -194,6 +248,69 @@ class PermissionChecker:
         """Inject the Gravitino MaskingEngine (called during app startup)."""
         self._masking_engine = engine
 
+    # ------------------------------------------------------------------
+    # Schema-level ACL management
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _infer_schema(dataset: str) -> str | None:
+        """Infer schema from dataset name. Convention: namespace__dataset → namespace."""
+        if "__" in dataset:
+            return dataset.split("__", 1)[0]
+        return None
+
+    def set_schema_acl(self, acl: SchemaACL) -> None:
+        """Set schema-level ACL inherited by all child datasets."""
+        if acl.schema not in self._schema_acls:
+            self._schema_acls[acl.schema] = {}
+        self._schema_acls[acl.schema][acl.role] = acl
+        logger.info("schema_acl_set", schema=acl.schema, role=acl.role)
+
+    def get_schema_acl(self, schema: str, role: str | Role) -> SchemaACL | None:
+        """Get schema-level ACL for a schema + role."""
+        role_name = role if isinstance(role, str) else role.value
+        return self._schema_acls.get(schema, {}).get(role_name)
+
+    def delete_schema_acl(self, schema: str, role: str | Role) -> bool:
+        """Delete schema-level ACL. Returns True if found."""
+        role_name = role if isinstance(role, str) else role.value
+        acls = self._schema_acls.get(schema)
+        if acls and role_name in acls:
+            del acls[role_name]
+            logger.info("schema_acl_deleted", schema=schema, role=role_name)
+            return True
+        return False
+
+    def list_schema_acls(self, schema: str) -> list[SchemaACL]:
+        """List all schema-level ACLs for a schema."""
+        return list(self._schema_acls.get(schema, {}).values())
+
+    # ------------------------------------------------------------------
+    # Explicit Deny management
+    # ------------------------------------------------------------------
+
+    def deny_action(self, dataset: str, action: str) -> None:
+        """Add an explicit Deny for an action on a dataset."""
+        if dataset not in self._deny_list:
+            self._deny_list[dataset] = set()
+        self._deny_list[dataset].add(action)
+        logger.info("deny_added", dataset=dataset, action=action)
+
+    def remove_deny(self, dataset: str, action: str) -> bool:
+        """Remove an explicit Deny. Returns True if found."""
+        denies = self._deny_list.get(dataset)
+        if denies and action in denies:
+            denies.discard(action)
+            if not denies:
+                del self._deny_list[dataset]
+            logger.info("deny_removed", dataset=dataset, action=action)
+            return True
+        return False
+
+    def list_denies(self, dataset: str) -> set[str]:
+        """List all denied actions for a dataset."""
+        return set(self._deny_list.get(dataset, set()))
+
     @staticmethod
     def _filter_columns(table: pa.Table, acl: DatasetACL) -> pa.Table:
         """Remove columns not in visible_columns whitelist."""
@@ -274,17 +391,28 @@ class GravitinoRBACBridge:
         metalake: Metalake name.
     """
 
-    _ACTION_TO_PRIVILEGE: dict[str, str] = {
+    _ACTION_TO_PRIVILEGE: ClassVar[dict[str, str]] = {
         "read": "SELECT_TABLE",
-        "write": "INSERT_TABLE",
+        "write": "MODIFY_TABLE",
         "create": "CREATE_TABLE",
-        "delete": "DELETE_TABLE",
-        "admin": "CREATE_CATALOG",
+        "delete": "DROP_TABLE",
+        "admin": "ALL",
+        "append": "INSERT_TABLE",
+        "update": "UPDATE_TABLE",
+        "query": "SELECT_TABLE",
+        "export": "SELECT_TABLE",
+        "ingest": "INSERT_TABLE",
+        "schema_create": "CREATE_TABLE",
+        "schema_list": "USAGE",
+        "tag_manage": "USE_CATALOG",
+        "policy_manage": "USE_CATALOG",
+        "stats_collect": "USAGE",
     }
 
-    def __init__(self, uri: str, metalake: str) -> None:
+    def __init__(self, uri: str, metalake: str, auth_provider: Any = None) -> None:
         self._uri = uri
         self._metalake = metalake
+        self._auth_provider = auth_provider
         self._client: Any = None
         self._initialized = False
 
@@ -293,11 +421,16 @@ class GravitinoRBACBridge:
             return self._client is not None
         self._initialized = True
         try:
-            from gravitino.client.gravitino_client import GravitinoClient  # type: ignore[import-untyped]
-
-            self._client = GravitinoClient(
-                uri=self._uri, metalake_name=self._metalake
+            from gravitino.client.gravitino_client import (
+                GravitinoClient,  # type: ignore[import-untyped]
             )
+
+            kwargs: dict[str, Any] = {"uri": self._uri, "metalake_name": self._metalake}
+            if self._auth_provider is not None:
+                headers = self._auth_provider.auth_headers()
+                if headers:
+                    kwargs["request_headers"] = headers
+            self._client = GravitinoClient(**kwargs)
             return True
         except Exception as exc:
             logger.warning("gravitino_rbac_client_init_failed", error=str(exc))
@@ -324,7 +457,7 @@ class GravitinoRBACBridge:
             if privs is None:
                 return None
             return any(
-                getattr(p, "name", lambda: str(p))() == privilege_name
+                getattr(p, "name", lambda p=p: str(p))() == privilege_name
                 for p in privs
             )
         except Exception as exc:

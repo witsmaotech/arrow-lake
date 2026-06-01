@@ -115,7 +115,7 @@ class SchemaMigrationError(Exception):
 
 
 # Narrowing pairs: (check_source, check_target) → warning
-_NARROWING_CHECKS: list[tuple[t.Any, t.Any]] = [
+_NARROWING_CHECKS: list[tuple[Any, Any]] = [
     # (is_source_type, is_target_type)
 ]
 
@@ -128,9 +128,7 @@ def _is_narrowing(old_type: pa.DataType, new_type: pa.DataType) -> bool:
         return True
     if pa.types.is_int32(old_type) and (pa.types.is_int16(new_type) or pa.types.is_int8(new_type)):
         return True
-    if pa.types.is_float64(old_type) and pa.types.is_float32(new_type):
-        return True
-    return False
+    return bool(pa.types.is_float64(old_type) and pa.types.is_float32(new_type))
 
 
 class SchemaCompatibilityChecker:

@@ -52,6 +52,24 @@ class GravitinoConfig(BaseModel):
     auth_type: GravitinoAuthType = Field(
         default=GravitinoAuthType.SIMPLE, description="Authentication type"
     )
+    auth_simple_user: str = Field(
+        default="arrow_lake", description="User identifier for Simple auth"
+    )
+    auth_oauth2_token_url: str = Field(
+        default="", description="OAuth2 token endpoint URL"
+    )
+    auth_oauth2_client_id: str = Field(
+        default="", description="OAuth2 client ID"
+    )
+    auth_oauth2_client_secret: str = Field(
+        default="", description="OAuth2 client secret"
+    )
+    auth_kerberos_principal: str = Field(
+        default="", description="Kerberos principal (e.g. HTTP/gravitino@REALM)"
+    )
+    auth_kerberos_keytab: str = Field(
+        default="", description="Path to Kerberos keytab file"
+    )
 
     # Sync
     sync_direction: GravitinoSyncDirection = Field(

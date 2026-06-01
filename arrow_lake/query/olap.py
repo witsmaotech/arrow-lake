@@ -26,7 +26,7 @@ import contextlib
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import duckdb
 import pyarrow as pa
@@ -154,7 +154,6 @@ class OlapSearchBridge:
                     sql=limited_sql,
                 )
 
-        effective_max_rows = max_rows if max_rows is not None else self._config.max_result_rows
 
         # Determine if streaming is safe (RecordBatchReader is single-use,
         # so queries that reference the same table multiple times need

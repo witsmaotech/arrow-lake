@@ -201,7 +201,6 @@ class DuckDBSessionManager:
         registry; otherwise falls back to threading.Semaphore.
         """
         from arrow_lake.query._redis_semaphore import (
-            InstanceRegistry,
             create_instance_registry,
             create_semaphore,
         )

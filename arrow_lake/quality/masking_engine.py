@@ -8,7 +8,6 @@ import os
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any
 
 import pyarrow as pa
 import pyarrow.compute as pc

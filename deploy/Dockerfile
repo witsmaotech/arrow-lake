@@ -80,7 +80,7 @@ ENV NO_PROXY="*"
 LABEL maintainer="wits@sunpw.dev"
 LABEL description="Arrow Lake — Unified multimodal data lakehouse (Lance + Daft + Ray + GraphRAG)"
 LABEL org.opencontainers.image.source="https://github.com/wits-sunpw/arrow-lake"
-LABEL org.opencontainers.image.version="1.4.4"
+LABEL org.opencontainers.image.version="1.5.1"
 
 # Runtime system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \

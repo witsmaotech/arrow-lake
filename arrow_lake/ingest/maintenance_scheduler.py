@@ -5,7 +5,7 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import structlog
@@ -172,7 +172,7 @@ class MaintenanceScheduler:
     def status(self) -> MaintenanceStatus:
         """Return current scheduler status."""
         last_run_iso = (
-            datetime.fromtimestamp(self._last_run_time, tz=timezone.utc).isoformat()
+            datetime.fromtimestamp(self._last_run_time, tz=UTC).isoformat()
             if self._last_run_time > 0
             else ""
         )
@@ -181,7 +181,7 @@ class MaintenanceScheduler:
             if self._last_run_time > 0
             else time.time() + self._config.maintenance_interval_seconds
         )
-        next_run_iso = datetime.fromtimestamp(next_ts, tz=timezone.utc).isoformat()
+        next_run_iso = datetime.fromtimestamp(next_ts, tz=UTC).isoformat()
         return MaintenanceStatus(
             enabled=True,
             last_run=last_run_iso,

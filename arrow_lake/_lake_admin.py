@@ -381,9 +381,12 @@ class _LakeAdminMixin:
                 endpoint = sc.s3_endpoint
                 if endpoint:
                     health_url = endpoint.rstrip("/") + "/minio/health/live"
-                    urllib.request.urlopen(health_url, timeout=3)
-                    storage_status = "accessible"
-                    storage_ok = True
+                    if not health_url.startswith(("http://", "https://")):
+                        storage_status = "invalid_endpoint_scheme"
+                    else:
+                        urllib.request.urlopen(health_url, timeout=3)
+                        storage_status = "accessible"
+                        storage_ok = True
                 else:
                     storage_status = "no_endpoint_configured"
             except (ImportError, OSError):

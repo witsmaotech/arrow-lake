@@ -7,7 +7,14 @@ import json
 import click
 from rich.table import Table
 
-from arrow_lake.cli import _get_lake, _get_output_format, _output_table, _print_error, _print_success, console
+from arrow_lake.cli import (
+    _get_lake,
+    _get_output_format,
+    _output_table,
+    _print_error,
+    _print_success,
+    console,
+)
 
 
 @click.group()

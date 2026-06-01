@@ -5,11 +5,11 @@ from __future__ import annotations
 import json
 import re
 from typing import Any
-from urllib.request import Request as UrlRequest, urlopen
-
-from fastapi import APIRouter, Depends, HTTPException, Request
+from urllib.request import Request as UrlRequest
+from urllib.request import urlopen
 
 import structlog
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from arrow_lake.api.auth_models import Role
 from arrow_lake.api.deps import require_role
@@ -47,11 +47,18 @@ def _get_model_registry(request: Request) -> Any:
     return reg
 
 
-def _gravitino_get(config: Any, path: str) -> dict[str, Any] | None:
-    """Helper: GET from Gravitino REST API."""
+def _get_auth_provider(request: Request) -> Any:
+    """Get the GravitinoAuthProvider from app state."""
+    return getattr(request.app.state, "gravitino_auth_provider", None)
+
+
+def _gravitino_get(config: Any, path: str, auth_provider: Any = None) -> dict[str, Any] | None:
+    """Helper: GET from Gravitino REST API with auth."""
     url = f"{config.uri}{path}"
     req = UrlRequest(url)
     req.add_header("Accept", "application/vnd.gravitino.v1+json")
+    if auth_provider is not None:
+        auth_provider.authenticate(req)
     try:
         with urlopen(req, timeout=10) as resp:
             return json.loads(resp.read().decode())
@@ -67,7 +74,7 @@ def _gravitino_get(config: Any, path: str) -> dict[str, Any] | None:
 def list_catalogs(request: Request) -> dict[str, Any]:
     """List all catalogs in the Gravitino metalake."""
     cfg = request.app.state.config.gravitino
-    data = _gravitino_get(cfg, f"/api/metalakes/{cfg.metalake}/catalogs")
+    data = _gravitino_get(cfg, f"/api/metalakes/{cfg.metalake}/catalogs", _get_auth_provider(request))
     if data is None:
         return {"success": False, "data": [], "error": "Gravitino unreachable", "metadata": {}}
     identifiers = data.get("identifiers", [])
@@ -90,6 +97,7 @@ def list_tables(request: Request) -> dict[str, Any]:
     data = _gravitino_get(
         cfg,
         f"/api/metalakes/{cfg.metalake}/catalogs/lance-catalog/schemas/arrow_lake/tables",
+        _get_auth_provider(request),
     )
     if data is None:
         return {"success": False, "data": [], "error": "Gravitino unreachable", "metadata": {}}
@@ -110,6 +118,7 @@ def get_table(name: str, request: Request) -> dict[str, Any]:
     data = _gravitino_get(
         cfg,
         f"/api/metalakes/{cfg.metalake}/catalogs/lance-catalog/schemas/arrow_lake/tables/{name}",
+        _get_auth_provider(request),
     )
     if data is None:
         return {"success": False, "data": None, "error": "Table not found", "metadata": {}}
@@ -174,7 +183,7 @@ def create_tag(request: Request) -> dict[str, Any]:
 def list_policies(request: Request) -> dict[str, Any]:
     """List all policies."""
     cfg = request.app.state.config.gravitino
-    data = _gravitino_get(cfg, f"/api/metalakes/{cfg.metalake}/policies")
+    data = _gravitino_get(cfg, f"/api/metalakes/{cfg.metalake}/policies", _get_auth_provider(request))
     if data is None:
         return {"success": False, "data": [], "error": "Gravitino unreachable", "metadata": {}}
     identifiers = data.get("identifiers", [])
@@ -352,6 +361,7 @@ def get_lineage(name: str, request: Request) -> dict[str, Any]:
     data = _gravitino_get(
         cfg,
         f"/api/metalakes/{cfg.metalake}/catalogs/lance-catalog/schemas/arrow_lake/tables/{name}",
+        _get_auth_provider(request),
     )
     if data is None:
         return {"success": False, "data": None, "error": "Table not found", "metadata": {}}
