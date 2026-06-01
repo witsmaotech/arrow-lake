@@ -5,6 +5,66 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.2] - 2026-06-01
+
+### Fixed — Security Hardening & Code Quality
+- **S1**: JWT 空密钥改为 raise ValueError 阻止启动（HS256 必须配置 secret_key）
+- **S2**: Kerberos SPNEGO 改用 gssapi Python API，消除 principal 命令注入
+- **S3**: gravitino_stats SQL 查询改为参数化，消除 table name SQL 注入
+- **S4**: Redis 移除默认密码 `redisprod`，强制 `.env` 配置 `REDIS_PASSWORD`
+- **S5**: Admin bypass 改用 `Role.ADMIN.value`，不再硬编码字符串
+- **S6**: Refresh token 旋转后自动撤销旧 token jti
+- **S7**: OAuth2 token_url 强制 HTTPS scheme
+- **S8**: 异常日志移除 client_secret 泄露风险
+- **S9**: `--forwarded-allow-ips` 从 `*` 改为 Docker 子网 `172.30.0.0/16`
+- **S10-S11**: Docker Compose 所有非 API 端口加 `127.0.0.1` 绑定（MinIO/Redis/Ray/监控 8 个服务）
+- **S12**: urlopen 前校验 URL scheme 防 SSRF
+- **S13**: MD5 缓存键改为字符串直接做 dict key
+- **S14**: SQL blocklist 增加 ATTACH/DETACH/PRAGMA/LOAD/CALL/SET
+- **S15**: Gremlin 白名单移除 `union`（可嵌套绕过）
+- **S16**: OLAP SQL 端点增加 `validate_sql_safety` 校验
+- **S17**: JWT 空 key 在 `app.py` 路径也阻止启动
+
+### Changed — Code Quality
+- `@staticmethod` 中 `self` 引用修复（lineage.py）
+- 4 个 F821 undefined name 修复（lineage.py/search.py/schema.py/storage.py）
+- `create_task` 返回值存储 + done callback 防止 GC 回收
+- 闭包循环变量默认参数绑定（rbac.py）
+- `ClassVar` 注解补全（rbac.py/federated_engine.py）
+- `raise ... from None` 补全（rag.py）
+- `except: pass` 改为 logger 调用（storage.py/ingest_embed.py）
+- Gravitino 失败日志级别 debug→warning（lineage.py）
+- LineageStore 实例缓存（lineage_hooks.py）
+- ruff --fix 清理 53 项 lint 问题（F401/I001）
+
+### Metrics
+- Bandit HIGH: 2 → 0
+- Ruff F821: 6 → 0
+- Ruff F401: 18 → 0
+- Tests: 506/507 passed（1 pre-existing failure）
+
+## [1.5.1] - 2026-05-29
+
+### Added — Security Governance + Lineage v2
+- **Gravitino Auth Providers**: Simple/OAuth2/Kerberos/Null 四种认证策略
+- **Lineage Hooks**: 摄入/搜索/查询自动记录血缘事件
+- **Expanded RBAC**: Schema-level ACL + Deny-first 权限模型 + GravitinoRBACBridge 扩展映射
+- **Federated Pushdown**: 跨 Catalog 联邦查询下推优化
+
+### Changed
+- 权限映射扩展至 15 个 action→privilege 对
+- Lineage 自动通知集成到 record_event 流程
+
+## [1.5.0] - 2026-05-28
+
+### Added — Platform Systematization
+- **Architecture Visualization**: 完整架构图 + 依赖地图 + 术语表
+- **Security Audit**: 全面安全审计报告 + 加固建议
+- **CLI 场景别名**: `knowledge`/`connect`/`search`/`manage`/`explore` 五大场景入口
+- **Documentation v2**: docs_v2/ 三层文档体系（Data/Knowledge/Compute Plane）
+- **BMAD Agent System**: 20+ 产品/架构/开发/设计 Agent 集成
+- **v1.4.5 Security Fixes**: 4 项安全漏洞修复
+
 ## [1.4.4] - 2026-05-25
 
 ### Added — RAG Quality Leap + SDK/CLI High Performance
