@@ -10,6 +10,7 @@ Tests the 4-layer config override system:
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import MagicMock, patch
 
 import pytest
 from arrow_lake.config import (
@@ -1094,3 +1095,47 @@ class TestDaftConfig:
 
         config = ArrowLakeConfig.from_yaml(str(yaml_file))
         assert config.daft.enabled is False
+
+
+class TestDeepMergeRecursive:
+    """Cover L174: result[k] = _deep_merge(result[k], v) — recursive deep merge."""
+
+    def test_nested_dict_merge(self, tmp_path: Any) -> None:
+        """YAML with nested dict keys triggers _deep_merge recursion (L174)."""
+        yaml_content = """
+storage:
+  s3_endpoint: "https://custom.s3.com"
+"""
+        yaml_file = tmp_path / "config.yaml"
+        yaml_file.write_text(yaml_content)
+
+        config = ArrowLakeConfig.from_yaml(str(yaml_file))
+        assert config.storage.s3_endpoint == "https://custom.s3.com"
+
+
+class TestYamlUnrecognizedSections:
+    """Cover L197: warning log for unrecognized YAML sections."""
+
+    def test_unrecognized_sections_logged(self, tmp_path: Any) -> None:
+        """YAML with unknown sections triggers the warning at L197."""
+        import logging
+
+        yaml_content = """
+observability:
+  log_level: DEBUG
+unknown_section:
+  foo: bar
+another_bad:
+  baz: 123
+"""
+        yaml_file = tmp_path / "config.yaml"
+        yaml_file.write_text(yaml_content)
+
+        with patch("arrow_lake.config.main.logging.getLogger") as mock_get_logger:
+            mock_logger = MagicMock()
+            mock_get_logger.return_value = mock_logger
+            config = ArrowLakeConfig.from_yaml(str(yaml_file))
+
+        mock_logger.warning.assert_called_once()
+        msg = mock_logger.warning.call_args[0][1]
+        assert "another_bad" in msg or "unknown_section" in msg

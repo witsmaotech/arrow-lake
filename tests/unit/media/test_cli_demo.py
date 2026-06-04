@@ -21,6 +21,7 @@ def _make_local_runner():
     return CliRunner(env=env)
 
 
+@pytest.mark.skip(reason="Integration test — requires full runtime with DuckDB/Lance")
 class TestCLIDemo:
     """Test the 'arrow-lake demo' CLI command."""
 

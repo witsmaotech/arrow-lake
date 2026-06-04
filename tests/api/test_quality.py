@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pyarrow as pa
 import pytest
@@ -403,3 +403,189 @@ async def test_quality_rules_requires_auth(mock_lake: MagicMock) -> None:
             },
         )
     assert resp.status_code in (401, 403)
+
+
+# ---------------------------------------------------------------------------
+# Quality profile — GET /{name}/quality/profile (lines 130-175)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_quality_profile_with_histogram(client: AsyncClient, mock_lake: MagicMock) -> None:
+    """Profile endpoint returns column stats with histogram for numeric columns."""
+    from dataclasses import dataclass
+    from datetime import UTC, datetime
+
+    @dataclass(frozen=True)
+    class _FakeColumnProfile:
+        name: str
+        dtype: str
+        null_count: int
+        null_percentage: float
+        unique_count: int
+        min_value: object
+        max_value: object
+        histogram: tuple[dict, ...] | None
+
+    @dataclass(frozen=True)
+    class _FakeProfile:
+        dataset_name: str
+        total_rows: int
+        total_columns: int
+        overall_quality_score: float
+        column_profiles: tuple[_FakeColumnProfile, ...]
+        profiled_at: str
+
+    fake_col = _FakeColumnProfile(
+        name="score",
+        dtype="int64",
+        null_count=2,
+        null_percentage=2.0,
+        unique_count=48,
+        min_value=0,
+        max_value=100,
+        histogram=(
+            {"lower": 0.0, "upper": 10.0, "count": 15},
+            {"lower": 10.0, "upper": 20.0, "count": 22},
+        ),
+    )
+    fake_profile = _FakeProfile(
+        dataset_name="docs",
+        total_rows=100,
+        total_columns=1,
+        overall_quality_score=0.98,
+        column_profiles=(fake_col,),
+        profiled_at=datetime.now(tz=UTC).isoformat(),
+    )
+
+    mock_profiler = MagicMock()
+    mock_profiler.profile.return_value = fake_profile
+
+    mock_lake.read_dataset.return_value = pa.table({"score": [10, 20, 30]})
+
+    with patch(
+        "arrow_lake.quality.profiler.QualityProfiler",
+        return_value=mock_profiler,
+    ):
+        resp = await client.get("/api/v1/datasets/docs/quality/profile")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["success"] is True
+    assert body["error"] is None
+    assert body["data"]["dataset_name"] == "docs"
+    assert body["data"]["total_rows"] == 100
+    assert len(body["data"]["columns"]) == 1
+    col = body["data"]["columns"][0]
+    assert col["name"] == "score"
+    assert col["null_count"] == 2
+    assert col["histogram"] == [
+        {"lower": 0.0, "upper": 10.0, "count": 15},
+        {"lower": 10.0, "upper": 20.0, "count": 22},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_quality_profile_without_histogram(client: AsyncClient, mock_lake: MagicMock) -> None:
+    """Profile endpoint omits histogram key for string columns."""
+    from dataclasses import dataclass
+    from datetime import UTC, datetime
+
+    @dataclass(frozen=True)
+    class _FakeColumnProfile:
+        name: str
+        dtype: str
+        null_count: int
+        null_percentage: float
+        unique_count: int
+        min_value: object
+        max_value: object
+        histogram: tuple[dict, ...] | None
+
+    @dataclass(frozen=True)
+    class _FakeProfile:
+        dataset_name: str
+        total_rows: int
+        total_columns: int
+        overall_quality_score: float
+        column_profiles: tuple[_FakeColumnProfile, ...]
+        profiled_at: str
+
+    fake_col = _FakeColumnProfile(
+        name="text_content",
+        dtype="string",
+        null_count=0,
+        null_percentage=0.0,
+        unique_count=80,
+        min_value=None,
+        max_value=None,
+        histogram=None,
+    )
+    fake_profile = _FakeProfile(
+        dataset_name="docs",
+        total_rows=80,
+        total_columns=1,
+        overall_quality_score=1.0,
+        column_profiles=(fake_col,),
+        profiled_at=datetime.now(tz=UTC).isoformat(),
+    )
+
+    mock_profiler = MagicMock()
+    mock_profiler.profile.return_value = fake_profile
+
+    mock_lake.read_dataset.return_value = pa.table({
+        "text_content": ["hello", "world"],
+    })
+
+    with patch(
+        "arrow_lake.quality.profiler.QualityProfiler",
+        return_value=mock_profiler,
+    ):
+        resp = await client.get("/api/v1/datasets/docs/quality/profile")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    col = body["data"]["columns"][0]
+    assert col["name"] == "text_content"
+    assert "histogram" not in col
+
+
+@pytest.mark.asyncio
+async def test_quality_profile_empty_columns(client: AsyncClient, mock_lake: MagicMock) -> None:
+    """Profile endpoint handles empty column list gracefully."""
+    from dataclasses import dataclass
+    from datetime import UTC, datetime
+
+    @dataclass(frozen=True)
+    class _FakeProfile:
+        dataset_name: str
+        total_rows: int
+        total_columns: int
+        overall_quality_score: float
+        column_profiles: tuple
+        profiled_at: str
+
+    fake_profile = _FakeProfile(
+        dataset_name="empty_ds",
+        total_rows=0,
+        total_columns=0,
+        overall_quality_score=0.0,
+        column_profiles=(),
+        profiled_at=datetime.now(tz=UTC).isoformat(),
+    )
+
+    mock_profiler = MagicMock()
+    mock_profiler.profile.return_value = fake_profile
+
+    mock_lake.read_dataset.return_value = pa.table({})
+
+    with patch(
+        "arrow_lake.quality.profiler.QualityProfiler",
+        return_value=mock_profiler,
+    ):
+        resp = await client.get("/api/v1/datasets/empty_ds/quality/profile")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["data"]["total_columns"] == 0
+    assert body["data"]["columns"] == []

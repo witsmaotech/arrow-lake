@@ -18,6 +18,7 @@ def _make_app(storage_dir: str | None = None) -> FastAPI:
     config.api.api_key = "test-api-key"
     config.api.docs_enabled = False
     config.storage.backend = StorageBackend.LOCAL
+    config.compute.ray_address = ""  # avoid Ray connection in tests
     if storage_dir is not None:
         config.storage.base_uri = storage_dir
     app = create_app(config=config)
@@ -129,6 +130,7 @@ async def test_health_probes_bypass_auth() -> None:
     cfg = ArrowLakeConfig()
     cfg.api.enabled = True
     cfg.api.api_key = "test-secret-key"
+    cfg.compute.ray_address = ""
     app = create_app(config=cfg)
     app.state.lake = MagicMock()
 

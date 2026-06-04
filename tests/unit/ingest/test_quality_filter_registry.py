@@ -233,3 +233,46 @@ class TestQualityFilterRegistryApplyAll:
         assert report.total == 10
         assert report.passed == 10
         assert report.rejected == 0
+
+
+class TestApplyAndShortCircuit:
+    """Cover L192: break when current.num_rows == 0 in _apply_and."""
+
+    def test_and_mode_short_circuits_after_total_reject(self) -> None:
+        """First filter rejects all rows -> break at L192, second filter not called."""
+        registry = QualityFilterRegistry()
+        f_reject = _AlwaysRejectFilter()
+        f_pass = _AlwaysPassFilter()
+        registry.register(f_reject)
+        registry.register(f_pass)
+
+        table = _make_table(5)
+        report = registry.apply_all(table, active_filters="always_reject,always_pass")
+
+        # First filter rejects all, break fires, second filter never called
+        assert report.passed == 0
+        assert report.rejected == 5
+        assert f_reject.call_count == 1
+        assert f_pass.call_count == 0
+
+
+class TestApplyOrEmptyPass:
+    """Cover L246: all_passed = table.slice(0, 0) when no filter passes any rows."""
+
+    def test_or_mode_no_filter_passes(self) -> None:
+        """All filters reject -> accumulated_passed_chunks empty -> L246 reached."""
+        registry = QualityFilterRegistry()
+        f1 = _AlwaysRejectFilter()
+        # Second reject filter with a different name
+        class _RejectFilter2:
+            name = "reject2"
+            def filter(self, table: pa.Table) -> tuple[pa.Table, pa.Table]:
+                return table.slice(0, 0), table
+        registry.register(f1)
+        registry.register(_RejectFilter2())
+
+        table = _make_table(4)
+        report = registry.apply_all(table, active_filters="always_reject,reject2", mode="any")
+
+        assert report.passed == 0
+        assert report.rejected == 4

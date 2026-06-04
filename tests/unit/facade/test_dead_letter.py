@@ -89,3 +89,21 @@ class TestDeadLetterWriter:
         expected_fields = {"_rejection_reason", "_filter_name", "_parent_version", "_rejected_at"}
         actual_fields = {f.name for f in DEAD_LETTER_EXTRA_SCHEMA}
         assert expected_fields <= actual_fields
+
+    def test_write_preserves_existing_rejection_reason(self) -> None:
+        """Cover L69-70: when _rejection_reason column already exists, extract and drop it."""
+        storage = self._mock_storage()
+        writer = DeadLetterWriter(storage)
+        table = pa.table({
+            "text": ["bad"],
+            "_rejection_reason": ["too short"],
+        })
+        writer.write("ds", table, "text_length")
+        call_args = storage.write.call_args
+        written_table = call_args[0][1]
+        # The original _rejection_reason values should be preserved
+        reasons = written_table.column("_rejection_reason").to_pylist()
+        assert reasons == ["too short"]
+        # The table should still have all expected extra columns
+        assert "_filter_name" in written_table.column_names
+        assert "_rejected_at" in written_table.column_names

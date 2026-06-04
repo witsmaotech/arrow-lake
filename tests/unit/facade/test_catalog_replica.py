@@ -100,3 +100,17 @@ class TestCatalogReadReplica:
         replica = CatalogReadReplica()
         assert replica.list_tables() == []
         assert replica.is_cache_empty()
+
+    def test_register_table_returns_empty_dict_when_primary_available(self) -> None:
+        """Cover L130: return {} — unreachable normally, reached when primary is available."""
+        replica = CatalogReadReplica()
+        assert replica.primary_available is True
+        result = replica.register_table("new_table", '{"col": "int"}', "./data")
+        assert result == {}
+
+    def test_delete_table_returns_false_when_primary_available(self) -> None:
+        """Cover L139: return False — unreachable normally, reached when primary is available."""
+        replica = CatalogReadReplica()
+        assert replica.primary_available is True
+        result = replica.delete_table("some_table")
+        assert result is False

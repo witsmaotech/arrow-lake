@@ -60,7 +60,9 @@ class GravitinoStatsCollector:
 
             # Row count from the Lance dataset (may fail for external tables)
             try:
-                row = conn.execute(f'SELECT COUNT(*) FROM "{name}"').fetchone()
+                from arrow_lake.validation import validate_identifier
+                validate_identifier(name)
+                row = conn.execute(f'SELECT COUNT(*) FROM "{name}"').fetchone()  # nosec B608: name validated above
                 if row:
                     stats["row_count"] = row[0]
             except Exception:

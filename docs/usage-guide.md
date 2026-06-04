@@ -1,910 +1,1195 @@
-# Arrow Lake 使用指南
+# Arrow Lake Usage Guide
 
-本文档通过实际示例介绍 Arrow Lake 平台的核心功能。
-
----
-
-## 目录
-
-1. [环境准备](#1-环境准备)
-2. [快速上手：10 分钟入门](#2-快速上手10-分钟入门)
-3. [数据集管理](#3-数据集管理)
-4. [SQL 查询](#4-sql-查询)
-5. [向量搜索](#5-向量搜索)
-6. [全文搜索](#6-全文搜索)
-7. [混合搜索](#7-混合搜索)
-8. [内容去重](#8-内容去重)
-9. [数据导出](#9-数据导出)
-10. [版本管理与标签](#10-版本管理与标签)
-11. [数据质量检查](#11-数据质量检查)
-12. [数据血缘](#12-数据血缘)
-13. [审计日志](#13-审计日志)
-14. [配置管理](#14-配置管理)
-15. [CLI 命令行](#15-cli-命令行)
-16. [HTTP 服务](#16-http-服务)
+A practical walkthrough for **Arrow Lake v1.5.2** -- a production-grade multimodal data lakehouse
+built on Lance, DuckDB, Daft, and Ray.
 
 ---
 
-## 1. 环境准备
+## Table of Contents
 
-### 1.1 安装依赖
+1. [Installation](#1-installation)
+2. [Quick Start](#2-quick-start)
+3. [Dataset Management](#3-dataset-management)
+4. [Data Ingestion](#4-data-ingestion)
+5. [Search](#5-search)
+6. [SQL Analytics](#6-sql-analytics)
+7. [RAG Pipeline](#7-rag-pipeline)
+8. [Knowledge Graph](#8-knowledge-graph)
+9. [Data Quality](#9-data-quality)
+10. [Export](#10-export)
+11. [Lineage & Audit](#11-lineage--audit)
+12. [Production Deployment](#12-production-deployment)
+13. [Configuration Reference](#13-configuration-reference)
+14. [CLI Reference](#14-cli-reference)
+
+---
+
+## 1. Installation
+
+### pip (recommended)
 
 ```bash
-# 克隆项目
-git clone <repo-url> && cd wits-infra-dintellihub
-
-# 创建虚拟环境并安装全部依赖
-uv venv && source .venv/bin/activate
-uv sync
-
-# 可选：安装感知哈希去重支持
-uv sync --extra dedup
+pip install arrow-lake
 ```
 
-### 1.2 验证安装
+### From source
 
 ```bash
-uv run python -c "from arrow_lake import Lake; print(f'Arrow Lake {Lake(base_uri=\"./tmp\").version()}')"
-# 输出: Arrow Lake 1.5.2
+git clone https://github.com/wits-sunpw/arrow-lake.git
+cd arrow-lake
+pip install -e ".[all]"
 ```
 
-### 1.3 基础设施（可选）
-
-如需使用 MinIO 对象存储：
+### Docker
 
 ```bash
-docker compose -f deploy/docker-compose.yml up -d
+# Pull the image
+docker pull arrowlake/arrow-lake:latest
+
+# Or build from the repo
+docker build -f deploy/Dockerfile -t arrow-lake .
+```
+
+### Verify
+
+```bash
+arrow-lake --version        # CLI
+python -c "from arrow_lake import Lake; print(Lake().version())"
 ```
 
 ---
 
-## 2. 快速上手：10 分钟入门
+## 2. Quick Start
 
-下面这个例子覆盖了最常用的操作：创建数据集、SQL 查询、去重、导出。
-
-```python
-import pyarrow as pa
-from arrow_lake import Lake
-from arrow_lake.ingest.storage import LanceStorageManager
-
-# --- 初始化 ---
-lake = Lake(base_uri="./my_lake")
-storage = lake._get_storage()
-
-# --- 写入数据 ---
-table = pa.table({
-    "id": ["d001", "d002", "d003", "d004", "d005"],
-    "title": ["机器学习入门", "深度学习实战", "数据分析基础", "机器学习入门", "Python 教程"],
-    "category": ["ml", "dl", "data", "ml", "dev"],  # d001 和 d004 重复
-    "word_count": [5000, 8000, 3000, 5000, 6000],
-})
-
-storage.create_dataset("articles", table)
-print(f"已创建数据集，共 {table.num_rows} 行")
-
-# --- SQL 查询 ---
-result = lake.olap_query(
-    "articles",
-    "SELECT category, COUNT(*) as cnt, AVG(word_count) as avg_words "
-    "FROM articles GROUP BY category ORDER BY cnt DESC",
-)
-for i in range(result.table.num_rows):
-    cat = result.table.column("category")[i].as_py()
-    cnt = result.table.column("cnt")[i].as_py()
-    avg = result.table.column("avg_words")[i].as_py()
-    print(f"  {cat}: {cnt} 篇, 平均字数 {avg:.0f}")
-
-# --- 去重（基于 title） ---
-# 注意：默认基于 image_data 列。对文本列需要先将 title 放到 image_data，
-# 或直接使用底层 ContentDeduplicator
-from arrow_lake.quality.dedup import ContentDeduplicator
-
-ds = storage.read_dataset("articles")
-dedup = ContentDeduplicator(strategy="exact", action="flag")
-# 手动构造 hash 列
-dedup_result = dedup.deduplicate(ds)  # 如果有 image_data 列
-
-# --- 导出 ---
-lake.export("articles", "./output/articles.parquet", overwrite=True)
-print(f"已导出到 ./output/articles.parquet")
-
-# --- 清理 ---
-storage.delete_dataset("articles")
-```
-
----
-
-## 3. 数据集管理
-
-### 3.1 创建数据集
-
-```python
-import pyarrow as pa
-from arrow_lake.ingest.storage import LanceStorageManager
-
-storage = LanceStorageManager(base_uri="./data")
-
-# 基本数据集
-table = pa.table({
-    "id": [1, 2, 3],
-    "name": ["Alice", "Bob", "Carol"],
-    "score": [95.0, 87.5, 92.3],
-})
-storage.create_dataset("users", table)
-```
-
-**命名规则**：数据集名称必须匹配 `^[a-zA-Z_][a-zA-Z0-9_-]*$`（字母或下划线开头，仅含字母、数字、下划线、连字符）。
-
-### 3.2 读取数据
-
-```python
-# 读取全部数据
-table = storage.read_dataset("users")
-print(f"行数: {table.num_rows}, 列: {table.column_names}")
-
-# 读取指定列
-table = storage.read_dataset("users", columns=["id", "name"])
-
-# 读取特定版本
-table = storage.read_dataset("users", version=1)
-```
-
-### 3.3 追加数据
-
-```python
-new_rows = pa.table({
-    "id": [4, 5],
-    "name": ["Dave", "Eve"],
-    "score": [88.0, 91.5],
-})
-storage.append_dataset("users", new_rows)
-```
-
-### 3.4 列操作
-
-```python
-# 添加新列（SQL 表达式）
-storage.add_column("users", "status", "CAST('active' AS VARCHAR)")
-
-# 修改列类型
-import pyarrow as pa
-storage.alter_column("users", "score", pa.float64())
-
-# 删除列
-storage.drop_column("users", "status")
-```
-
-### 3.5 列出和删除
-
-```python
-# 列出所有数据集
-datasets = storage.list_datasets()  # → ["users", "documents"]
-
-# 检查是否存在
-storage.dataset_exists("users")  # → True
-
-# 删除数据集
-storage.delete_dataset("old_dataset")
-```
-
-### 3.6 压缩优化
-
-多次追加后会产生碎片文件，可以合并优化：
-
-```python
-stats = storage.compact("users")
-print(f"版本: {stats.version_before} → {stats.version_after}")
-print(f"文件数: {stats.fragments_before} → {stats.fragments_after}")
-```
-
----
-
-## 4. SQL 查询
-
-Arrow Lake 提供两种 SQL 查询接口，都基于 DuckDB 引擎。
-
-### 4.1 OLAP 查询 (`lake.olap_query`)
-
-适合聚合分析，支持 GROUP BY、HAVING、窗口函数、JOIN。
+Go from zero to first query in under five minutes.
 
 ```python
 from arrow_lake import Lake
-
-lake = Lake(base_uri="./data")
-
-# 基本聚合
-result = lake.olap_query("users",
-    "SELECT category, COUNT(*) as cnt FROM users GROUP BY category")
-print(result.table)
-
-# HAVING 过滤
-result = lake.olap_query("users",
-    "SELECT city, AVG(salary) as avg_sal FROM users "
-    "GROUP BY city HAVING AVG(salary) > 10000")
-
-# 窗口函数
-result = lake.olap_query("users",
-    "SELECT name, department, salary, "
-    "ROW_NUMBER() OVER (PARTITION BY department ORDER BY salary DESC) as dept_rank "
-    "FROM users")
-
-# LIMIT 限制返回行数
-result = lake.olap_query("users",
-    "SELECT * FROM users ORDER BY salary DESC LIMIT 10")
-
-# 限制最大返回行数
-result = lake.olap_query("users",
-    "SELECT * FROM users", max_rows=100)
-```
-
-**重要**：`FROM` 后面的表名必须与数据集名称完全一致。例如数据集叫 `users`，SQL 就是 `FROM users`。
-
-### 4.2 多表 JOIN
-
-```python
-# 自连接
-result = lake.olap_query("orders",
-    "SELECT a.id, b.id as related_id FROM orders a "
-    "JOIN orders b ON a.customer_id = b.customer_id "
-    "WHERE a.id < b.id")
-
-# 关联外部 Arrow 表
 import pyarrow as pa
-extra_table = pa.table({"tag_id": [1, 2], "tag_name": ["vip", "normal"]})
 
-result = lake.olap_query(
-    "users",
-    "SELECT users.name, tags.tag_name FROM users "
-    "JOIN tags ON users.id = tags.tag_id",
-    tables={"tags": extra_table},
-)
+# 1. Initialize (local filesystem by default)
+with Lake("./my_lake") as lake:
+    # 2. Create a dataset from an Arrow Table
+    table = pa.table({
+        "id": [1, 2, 3],
+        "title": ["Neural Networks", "Transformers", "Diffusion Models"],
+        "body": [
+            "A foundational architecture for deep learning...",
+            "Attention is all you need...",
+            "Generating images from noise...",
+        ],
+        "category": ["ml", "ml", "genai"],
+    })
+    lake.create_dataset("articles", table)
+
+    # 3. List what you have
+    print(lake.list_datasets())  # ['articles']
+
+    # 4. Read data back
+    result = lake.read_dataset("articles")
+    print(result.num_rows)  # 3
+
+    # 5. Run an OLAP query
+    olap = lake.olap_query("articles", """
+        SELECT category, COUNT(*) AS cnt
+        FROM articles
+        GROUP BY category
+    """)
+    print(olap.table.to_pandas())
+
+lake.shutdown()  # or use 'with' context manager
 ```
 
-### 4.3 元数据查询 (`lake.query`)
+### Config-driven initialization
+
+For production workloads, use a YAML config file instead of defaults:
 
 ```python
-# 与 olap_query 功能相同，语义别名
-result = lake.query("users",
-    "SELECT department, MIN(salary) as min_sal, MAX(salary) as max_sal "
-    "FROM users GROUP BY department")
-```
-
-### 4.4 SQL 安全限制
-
-- 仅允许 `SELECT` 语句
-- 禁止 `INSERT / UPDATE / DELETE / DROP / ALTER / CREATE / TRUNCATE` 等危险关键字
-- 禁止分号（`;`）
-- 禁止 `UNION / EXCEPT / INTERSECT`
-
-```python
-# 这些会抛出 QueryError:
-lake.olap_query("users", "DROP TABLE users")
-lake.olap_query("users", "SELECT * FROM users; INSERT INTO users VALUES (1)")
+lake = Lake.from_yaml("configs/prod.yaml", base_uri="./lake_data")
 ```
 
 ---
 
-## 5. 向量搜索
+## 3. Dataset Management
 
-### 5.1 创建向量索引
+### Create
 
 ```python
-lake = Lake(base_uri="./data")
-
-# 数据集需要有向量列（FixedSizeList[float] 类型）
-# 先创建数据集
-import numpy as np
 import pyarrow as pa
 
-n, dim = 1000, 128
-rng = np.random.RandomState(42)
-vectors = rng.randn(n, dim).astype(np.float32)
-norms = np.linalg.norm(vectors, axis=1, keepdims=True)
-vectors = vectors / np.where(norms == 0, 1, norms)
-
-table = pa.table({
-    "id": [f"doc_{i:04d}" for i in range(n)],
-    "text_content": [f"Document {i} about AI and data science" for i in range(n)],
-    "category": [f"cat_{i % 10}" for i in range(n)],
-    "text_embedding": pa.FixedSizeListArray.from_arrays(vectors.ravel(), dim),
-})
-
-from arrow_lake.ingest.storage import LanceStorageManager
-storage = lake._get_storage()
-storage.create_dataset("docs", table)
-
-# 创建向量索引
-# num_sub_vectors 必须能整除向量维度 (128 / 8 = 16)
-info = lake.create_vector_index(
-    "docs",
-    vector_column="text_embedding",
-    metric="cosine",           # cosine / l2 / dot
-    num_sub_vectors=8,
-    replace=True,              # 覆盖已有索引
-)
-print(f"索引类型: {info.index_type}, 已索引行: {info.num_indexed_rows}")
+table = pa.table({"name": ["Alice", "Bob"], "age": [30, 25]})
+lake.create_dataset("users", table)
 ```
 
-**配置项说明** (在 `configs/dev.yaml` 的 `vector` 部分)：
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `metric` | cosine | 距离度量 (cosine / l2 / dot) |
-| `default_index_type` | IVF_PQ | 索引类型 |
-| `num_partitions` | 256 | IVF 分区数 |
-| `num_sub_vectors` | 24 | PQ 子向量数 (必须整除向量维度) |
-| `nprobes` | 20 | 搜索时探测的分区数 |
-| `default_top_k` | 10 | 默认返回结果数 |
-
-### 5.2 执行向量搜索
+### Read
 
 ```python
-# 取一个查询向量
-query_vector = vectors[0].tolist()
+# Full table
+table = lake.read_dataset("users")
 
-result = lake.search(
-    "docs",
-    query_vector,
-    top_k=5,
-    vector_column="text_embedding",
+# Specific columns only
+table = lake.read_dataset("users", columns=["name"])
+
+# Lazy scanner for large datasets
+scanner = lake.scan_dataset("users", columns=["name"], filter="age > 25")
+for batch in scanner.to_batch_iter():
+    print(batch.num_rows)
+```
+
+### Update
+
+```python
+# Append new rows
+new_rows = pa.table({"name": ["Carol"], "age": [28]})
+lake.append_dataset("users", new_rows)
+
+# Upsert (insert new, update existing on key column)
+lake.upsert("users", pa.table({"id": [1], "name": ["Alice Updated"]}), on="id")
+
+# Add a computed column
+lake.add_column("users", "age_group",
+    "CASE WHEN age < 30 THEN 'young' ELSE 'senior' END")
+
+# Add pre-computed columns (in-place, no full rewrite)
+vec_table = pa.table({
+    "embedding": pa.array([[0.1, 0.2, 0.3]], type=pa.list_(pa.float32(), 3))
+})
+lake.add_columns_table("users", vec_table)
+
+# Update rows matching a filter
+lake.update_rows("users", where="age > 30", values={"age_group": "'senior'"})
+```
+
+### Delete
+
+```python
+# Delete entire dataset
+lake.delete_dataset("users")
+
+# Delete rows matching a filter
+lake.delete_rows("users", where="age < 25")
+```
+
+### Schema Evolution
+
+```python
+# Alter column type
+lake.alter_column("users", "age", pa.float32())
+
+# Drop a column
+lake.drop_column("users", "temporary_flag")
+
+# Full restore (schema change + data reload)
+lake.restore_dataset("users", new_table)
+```
+
+### Copy, Rename, Merge
+
+```python
+lake.copy_dataset("users", "users_backup")
+lake.rename_dataset("users_backup", "users_archive")
+lake.merge_datasets(["users_jan", "users_feb", "users_mar"], "users_q1")
+```
+
+### Versioning & Time Travel
+
+```python
+current_version = lake.get_dataset_version("articles")  # e.g. 5
+versions = lake.list_dataset_versions("articles")       # list of version dicts
+
+# Search with a specific version
+results = lake.search("articles", query_vector, version=3)
+```
+
+### Catalog
+
+```python
+catalog = lake.catalog()
+for entry in catalog.datasets:
+    print(f"{entry.name}: {entry.num_rows} rows, v{entry.version}")
+
+lake.list_datasets()  # just the names
+```
+
+### Maintenance
+
+```python
+# Compact fragmented files
+stats = lake.compact_dataset("articles")
+```
+
+---
+
+## 4. Data Ingestion
+
+### Files
+
+```python
+# CSV, JSON, JSONL, Parquet
+report = lake.ingest("sales", ["data/jan.csv", "data/feb.parquet"])
+print(report.total_rows, report.total_bytes)
+
+# Batch ingest (same file type, uses Daft write_lance)
+report = lake.ingest_batch("logs", ["log1.jsonl", "log2.jsonl", "log3.jsonl"])
+```
+
+### HTTP URLs
+
+```python
+report = lake.ingest_http("papers", [
+    "https://arxiv.org/pdf/2401.00001.pdf",
+    "https://example.com/data.json",
+])
+```
+
+### Images & Videos
+
+```python
+report = lake.ingest_images("photos", ["img1.jpg", "img2.png"])
+# Extracts thumbnails and EXIF metadata automatically
+
+report = lake.ingest_videos("clips", ["video1.mp4", "video2.webm"])
+# Extracts keyframes automatically
+```
+
+### Mixed Modalities
+
+```python
+report = lake.ingest_mixed("corpus", {
+    "files": ["text.txt", "data.csv"],
+    "urls": ["https://example.com/report.pdf"],
+    "images": ["chart1.png"],
+    "videos": ["demo.mp4"],
+})
+```
+
+### Documents (PDF)
+
+```python
+from arrow_lake.config import DocumentConfig
+
+doc_config = DocumentConfig(
+    chunk_size=512,
+    chunk_overlap=64,
+    ocr_enabled=True,
+)
+
+report = lake.ingest_documents(
+    "knowledge_base",
+    ["manual.pdf", "whitepaper.pdf"],
+    doc_config=doc_config,
+)
+```
+
+### SQL Database
+
+```python
+report = lake.ingest_sql("orders",
+    sql="SELECT * FROM orders WHERE created_at > '2025-01-01'",
+    connection_url="postgresql://user:pass@host:5432/mydb",
+    partition_col="created_at",
+    num_partitions=8,
+)
+```
+
+### Kafka
+
+```python
+report = lake.ingest_kafka("events",
+    bootstrap_servers="kafka:9092",
+    topics=["user_events", "system_events"],
+    start="earliest",
+    end="latest",
+    json_decode=True,
+)
+```
+
+### Apache Iceberg & Delta Lake
+
+```python
+report = lake.ingest_iceberg("analytics",
+    table_uri="s3://warehouse/analytics.db/pageviews")
+report = lake.ingest_deltalake("metrics",
+    table_uri="s3://lake/metrics", version=5)
+```
+
+### Ingest + Embed in One Step
+
+```python
+result = lake.ingest_and_embed("docs", ["doc1.txt", "doc2.txt"],
+    text_column="text_content",
+    embedding_column="text_embedding",
+    model="BAAI/bge-small-en-v1.5",
+)
+print(result.ingestion_stats.total_rows, result.embedding_stats.rows_embedded)
+```
+
+### Add Embeddings to Existing Data
+
+```python
+rows_embedded = lake.embed_and_add("articles",
+    text_column="body",
+    embedding_column="text_embedding",
+    batch_size=64,
+)
+```
+
+---
+
+## 5. Search
+
+### Vector Search
+
+```python
+# Create index first
+index_info = lake.create_vector_index("articles",
     metric="cosine",
-    nprobes=20,
+    vector_column="text_embedding",
+    index_type="IVF_PQ",
 )
 
-# 结果是 VectorSearchResult
-print(f"返回 {result.row_count} 条结果")
-for i in range(result.table.num_rows):
-    doc_id = result.table.column("id")[i].as_py()
-    text = result.table.column("text_content")[i].as_py()
-    distance = result.table.column("_distance")[i].as_py()
-    print(f"  {doc_id} (距离={distance:.4f}): {text}")
-```
-
-### 5.3 带过滤条件的搜索
-
-```python
-result = lake.search(
-    "docs",
-    query_vector,
-    top_k=5,
-    where="category = 'cat_3'",  # 过滤条件
+# Search
+results = lake.search("articles",
+    query_vector=[0.1, 0.2, ...],  # your embedding
+    top_k=10,
+    metric="cosine",
+    where="category = 'ml'",  # optional metadata filter
+    nprobes=10,
 )
+print(results.table.to_pandas())
 ```
 
----
-
-## 6. 全文搜索
-
-### 6.1 创建 FTS 索引
+**Index management:**
 
 ```python
-# 创建全文搜索索引（基于 Tantivy/BM25）
-lake.create_fts_index(
-    "docs",
-    fts_column="text_content",  # 要索引的文本列
-    replace=True,
+lake.list_vector_indexes("articles")
+lake.get_vector_index_info("articles", vector_column="text_embedding")
+lake.rebuild_vector_index("articles", metric="l2")
+lake.delete_vector_index("articles", index_name="idx_text_embedding")
+```
+
+### Full-Text Search
+
+```python
+# Create FTS index
+lake.create_fts_index("articles", fts_column="body")
+
+# Search
+results = lake.text_search("articles", "attention mechanism",
+    top_k=10,
+    where="category = 'ml'",
+    offset=0,  # pagination
 )
+print(results.table.to_pandas())  # columns include _score
 ```
 
-### 6.2 执行全文搜索
+**FTS index management:**
 
 ```python
-result = lake.text_search(
-    "docs",
-    query="data science AI",
-    top_k=5,
-    fts_column="text_content",
-)
-
-# 结果是 FullTextSearchResult
-print(f"返回 {result.row_count} 条结果, 最高分: {result.max_score}")
-for i in range(result.table.num_rows):
-    doc_id = result.table.column("id")[i].as_py()
-    score = result.table.column("_score")[i].as_py()
-    text = result.table.column("text_content")[i].as_py()
-    print(f"  {doc_id} (BM25={score:.4f}): {text}")
+lake.get_fts_index_info("articles")
+lake.delete_fts_index("articles")
 ```
 
----
+### Hybrid Search (RRF Fusion)
 
-## 7. 混合搜索
-
-混合搜索将向量相似度和全文 BM25 分数通过 RRF (Reciprocal Rank Fusion) 融合。
+Combines vector similarity and full-text relevance via Reciprocal Rank Fusion:
 
 ```python
-query_vector = vectors[0].tolist()
-
-result = lake.hybrid_search(
-    "docs",
-    query_vector=query_vector,     # 向量查询
-    query_text="machine learning",  # 文本查询
+results = lake.hybrid_search("articles",
+    query_vector=[0.1, 0.2, ...],
+    query_text="attention mechanism",
     top_k=10,
     vector_column="text_embedding",
-    fts_column="text_content",
-    where="category = 'cat_3'",     # 可选过滤
+    fts_column="body",
+    where="category = 'ml'",
 )
-
-# 结果包含 _rrf_score 融合分
-for i in range(result.table.num_rows):
-    doc_id = result.table.column("id")[i].as_py()
-    rrf = result.table.column("_rrf_score")[i].as_py()
-    print(f"  {doc_id} (RRF={rrf:.6f})")
+print(results.table.to_pandas())  # includes _rrf_score
 ```
 
-**RRF 公式**：`score = 1 / (k + rank)`，其中 `k` 默认为 60（可在 `configs/dev.yaml` 的 `hybrid.rrf_k` 调整）。
+### Faceted Search
 
----
-
-## 8. 内容去重
-
-### 8.1 精确去重（SHA-256）
-
-基于二进制内容的 SHA-256 哈希值进行精确匹配。
+Returns search results alongside facet counts for drill-down:
 
 ```python
-# 准备数据（有重复的 image_data）
-import pyarrow as pa
-
-table = pa.table({
-    "id": ["img_001", "img_002", "img_003", "img_004", "img_005"],
-    "image_data": [
-        b"photo_content_A",  # 唯一
-        b"photo_content_B",  # 唯一
-        b"photo_content_A",  # 重复 img_001
-        b"photo_content_C",  # 唯一
-        b"photo_content_B",  # 重复 img_002
-    ],
-})
-
-storage.create_dataset("images", table)
-
-# 模式 1: 移除重复行
-result = lake.deduplicate("images", strategy="exact", action="remove")
-print(f"总行数: {result.total_rows}")         # 5
-print(f"唯一行: {result.unique_rows}")         # 3 (A, B, C)
-print(f"重复行: {result.duplicates_found}")    # 2
-# result.table 包含去重后的 3 行
-
-# 模式 2: 标记重复行（保留所有行，添加 is_duplicate 列）
-result = lake.deduplicate("images", strategy="exact", action="flag")
-print(f"结果行数: {result.table.num_rows}")   # 5（全部保留）
-flags = result.table.column("is_duplicate").to_pylist()
-print(f"标记: {flags}")  # [False, False, True, False, True]
+results = lake.faceted_search("articles",
+    query_vector=[0.1, 0.2, ...],
+    facets=["category", "year"],
+    top_k=10,
+)
+for row in results.table.to_pylist():
+    print(row["title"], row["_distance"])
+print(results.facet_counts)  # {"category": {"ml": 15, "genai": 8}, ...}
 ```
 
-### 8.2 感知哈希去重（pHash）
+### Ensemble Search (Multi-Model)
 
-用于检测视觉上相似但不完全相同的图片（需要 `imagehash` 库）。
+Searches multiple embedding columns and fuses with weighted RRF:
 
 ```python
-result = lake.deduplicate(
-    "images",
-    strategy="perceptual",
-    action="remove",
-    perceptual_threshold=10,  # Hamming 距离阈值，越小越严格
+results = lake.ensemble_search("articles",
+    query_vector=[0.1, 0.2, ...],
+    columns=["text_embedding", "title_embedding", "image_embedding"],
+    weights={"text_embedding": 1.0, "title_embedding": 0.5, "image_embedding": 0.3},
+    top_k=10,
 )
 ```
 
-### 8.3 组合策略
+---
+
+## 6. SQL Analytics
+
+### OLAP Queries via DuckDB
 
 ```python
-# 先精确去重，再对剩余行做感知去重
-result = lake.deduplicate("images", strategy="both", action="remove")
+result = lake.olap_query("sales", """
+    SELECT
+        product_category,
+        DATE_TRUNC('month', sale_date) AS month,
+        SUM(amount) AS revenue,
+        COUNT(*) AS orders
+    FROM sales
+    WHERE sale_date >= '2025-01-01'
+    GROUP BY 1, 2
+    HAVING revenue > 1000
+    ORDER BY revenue DESC
+    LIMIT 50
+""", max_rows=100)
+print(result.table.to_pandas())
 ```
 
-### 8.4 增量去重（跨批次）
+DuckDB supports: window functions, CTEs, JOINs, subqueries, and the full SQL syntax.
 
-适用于流式数据处理场景——每个新批次去重时参考历史哈希。
+### Metadata Query
 
 ```python
-from arrow_lake.quality.dedup import ContentDeduplicator
+result = lake.query("articles", "SELECT * FROM articles LIMIT 10")
+```
 
-dedup = ContentDeduplicator(strategy="exact", action="remove")
+### JOIN Across Datasets
 
-# 第一批
-batch1 = pa.table({
-    "id": ["a", "b"],
-    "image_data": [b"content_X", b"content_Y"],
-})
-result1, seen_hashes = dedup.deduplicate_incremental(batch1)
-print(f"批次1: {result1.unique_rows} 唯一, {result1.duplicates_found} 重复")
-# seen_hashes: {"sha256_X": "a", "sha256_Y": "b"}
+```python
+result = lake.olap_query("orders", """
+    SELECT o.order_id, c.name, o.amount
+    FROM orders o
+    JOIN customers c ON o.customer_id = c.id
+""", tables={"customers": lake.read_dataset("customers")})
+```
 
-# 第二批（包含与批次1重复的内容）
-batch2 = pa.table({
-    "id": ["c", "d", "e"],
-    "image_data": [b"content_X", b"content_Z", b"content_Y"],
-})
-result2, seen_hashes = dedup.deduplicate_incremental(batch2, existing_sha256=seen_hashes)
-print(f"批次2: {result2.unique_rows} 唯一, {result2.duplicates_found} 重复")
-# 只有 content_Z 是新的
+### Materialized Views
+
+```python
+# Create a persistent materialized view with TTL
+rows = lake.materialize("sales", """
+    SELECT product_category, SUM(amount) AS total
+    FROM sales
+    GROUP BY product_category
+""", view_name="sales_summary", ttl_days=7)
+
+# Clean up expired views
+dropped = lake.cleanup_materialized(ttl_days=7)
+```
+
+### Daft DataFrame API
+
+```python
+import daft
+
+# Load as a lazy Daft frame for chained operations
+frame = lake.daft_query("articles", columns=["title", "category"])
+result = (
+    frame
+    .filter(daft.col("category") == "ml")
+    .select("title")
+    .sort("title")
+    .collect()  # materialize as Arrow Table
+)
 ```
 
 ---
 
-## 9. 数据导出
+## 7. RAG Pipeline
 
-### 9.1 导出到 Parquet
+### Configuration
 
-```python
-# 基本导出
-result = lake.export("docs", "./output/docs.parquet", overwrite=True)
-print(f"格式: {result.format}, 行数: {result.row_count}, 大小: {result.file_size_bytes} bytes")
+Set your LLM provider in config or environment:
 
-# 指定压缩格式
-result = lake.export("docs", "./output/docs_gz.parquet",
-    compression="gzip", overwrite=True)
+```yaml
+# configs/rag.yaml
+llm:
+  provider: openai
+  model: gpt-4o
+  api_key: ${OPENAI_API_KEY}
+  context_window_tokens: 128000
 
-# 支持的压缩格式: snappy, gzip, brotli, zstd, lz4, none
-
-# 导出指定列
-result = lake.export("docs", "./output/docs_subset.parquet",
-    columns=["id", "category"], overwrite=True)
-
-# 导出特定版本
-result = lake.export("docs", "./output/docs_v1.parquet", version=1, overwrite=True)
+rag:
+  default_top_k: 5
+  default_strategy: hybrid
+  chunk_size: 512
+  chunk_overlap: 64
+  reranker_enabled: true
 ```
 
-### 9.2 导出到 CSV
-
-```python
-result = lake.export("docs", "./output/docs.csv", overwrite=True)
-print(f"导出 {result.column_count} 列（二进制列自动排除）")
+```bash
+# Or via environment variables
+export ARROW_LAKE__LLM__PROVIDER=openai
+export ARROW_LAKE__LLM__MODEL=gpt-4o
+export ARROW_LAKE__LLM__API_KEY=sk-...
 ```
 
-**CSV 导出会自动排除以下二进制列**：`image_data`、`video_data`、`image_thumbnail`、`image_preview`，并在日志中记录警告。
-
-### 9.3 直接导出 Arrow 表
-
-不需要经过 Lance 数据集，可以直接导出内存中的 Arrow 表：
+### Query
 
 ```python
-from arrow_lake.query.export import ExportBridge
+import asyncio
 
-bridge = ExportBridge(storage=None)
-table = pa.table({"a": [1, 2, 3], "b": ["x", "y", "z"]})
+async def main():
+    response = await lake.rag_query(
+        "What is attention in transformers?",
+        dataset="articles",
+        top_k=5,
+        strategy="hybrid",       # "fts", "vector", or "hybrid"
+        template_name="default_qa",
+    )
+    print(response.answer)
+    for citation in response.citations:
+        print(f"  [{citation.score:.2f}] {citation.text[:100]}...")
 
-result = bridge.export_table(table, "./output/direct.parquet", overwrite=True)
+asyncio.run(main())
 ```
 
-### 9.4 格式自动检测
+### Streaming
 
-根据文件后缀自动选择格式，无需显式指定 `format` 参数：
+```python
+async for chunk in lake.rag_query_stream(
+    "Explain vector databases",
+    dataset="docs",
+    top_k=5,
+):
+    print(chunk, end="", flush=True)
+```
 
-- `.parquet` → Parquet
-- `.csv` → CSV
+### Session Management
+
+```python
+# Conversations with history
+response = await lake.rag_query("What is deep learning?", dataset="docs",
+    session_id="user-123-session-1")
+
+response = await lake.rag_query("How does backpropagation work?", dataset="docs",
+    session_id="user-123-session-1")  # remembers context
+
+# Get conversation history
+history = lake.rag_get_history("user-123-session-1")
+
+# Submit feedback
+lake.rag_feedback("user-123-session-1", turn_id=1, rating="positive",
+    comment="Clear explanation")
+
+# Get feedback
+feedback = lake.rag_get_feedback("user-123-session-1")
+```
+
+### Batch Queries
+
+```python
+questions = ["What is CNN?", "What is RNN?", "What is GAN?"]
+responses = await lake.rag_batch_query(questions, dataset="docs",
+    top_k=3, concurrency=5)
+```
+
+### Entity Extraction
+
+```python
+response = await lake.rag_extract("articles",
+    text_column="body",
+    top_k=10,
+)
+print(response.answer)  # extracted entities as JSON
+```
+
+### GraphRAG (Knowledge Graph Augmented)
+
+When `hugegraph.enabled=true`, the RAG pipeline automatically augments retrieval
+with knowledge graph context for richer answers:
+
+```yaml
+hugegraph:
+  enabled: true
+  host: "localhost"
+  port: 8081
+  graph: "research_graph"
+  default_traversal_depth: 2
+```
+
+The same `rag_query` call now uses GraphRAG behind the scenes.
 
 ---
 
-## 10. 版本管理与标签
+## 8. Knowledge Graph
 
-Lance 数据集每次写入（创建、追加、修改 schema）都会自动递增版本号。
+Requires `hugegraph.enabled=true` in config. Backed by HugeGraph with
+Gremlin traversal and Vermeer OLAP algorithms.
 
-### 10.1 查看版本
+### Build a Knowledge Graph
 
 ```python
-storage = lake._get_storage()
+import asyncio
 
-# 当前版本
-ver = storage.get_version("docs")
-print(f"当前版本: v{ver}")  # → v1
+async def main():
+    task_id = await lake.kg_build("articles")
+    print(f"Build started: {task_id}")
 
-# 追加数据后版本递增
-storage.append_dataset("docs", new_data)
-ver = storage.get_version("docs")
-print(f"追加后版本: v{ver}")  # → v2
+    # Check progress
+    status = await lake.kg_build_status(task_id)
+    print(f"Status: {status['status']}")
+    print(f"Processed: {status['processed_chunks']}/{status['total_chunks']}")
+    print(f"Entities: {status['entity_count']}, Relations: {status['relation_count']}")
 
-# 查看所有版本历史
-versions = storage.list_versions("docs")
-for v in versions:
-    print(f"  v{v['version']}: {v['timestamp']}")
+asyncio.run(main())
 ```
 
-### 10.2 创建标签
+### Query (Gremlin)
 
 ```python
-# 给当前版本打标签
-storage.create_tag("docs", "release_v1")
-
-# 给指定版本打标签
-storage.create_tag("docs", "snapshot_before_fix", version=3)
-
-# 列出所有标签
-tags = storage.list_tags("docs")
-# → {"release_v1": 2, "snapshot_before_fix": 3}
-
-# 读取标签对应版本的数据
-table = storage.read_at_tag("docs", "release_v1")
-
-# 删除标签
-storage.delete_tag("docs", "snapshot_before_fix")
+results = await lake.kg_query(
+    "g.V().has('name', 'attention').outE('relatedTo').inV()"
+)
+for r in results:
+    print(r)
 ```
 
-### 10.3 版本回滚
+### Traversal
 
 ```python
-# 读取旧版本数据，删除后重建
-old_data = storage.read_dataset("docs", version=1)
-storage.restore_dataset("docs", old_data)
-print(f"回滚完成，版本: v{storage.get_version('docs')}")
+# Neighbor exploration
+neighbors = await lake.kg_get_neighbors("entity:42", depth=2)
+
+# Path algorithms
+paths = await lake.kg_all_shortest_paths("entity:A", "entity:B", max_depth=10)
+wpath = await lake.kg_weighted_shortest_path("entity:A", "entity:B")
+rays = await lake.kg_rays("entity:A", max_depth=5)
+rings = await lake.kg_rings("entity:A", max_depth=5)
+crosspoints = await lake.kg_crosspoints("entity:A", "entity:B")
+custom = await lake.kg_customized_paths("entity:A", steps=[
+    {"label": "relates_to", "direction": "OUT"},
+    {"label": "part_of", "direction": "IN"},
+])
+```
+
+### OLAP Algorithms (Vermeer)
+
+```python
+rank = await lake.kg_pagerank(iterations=20, damping_factor=0.85)
+communities = await lake.kg_louvain(resolution=1.0)
+components = await lake.kg_wcc()
+triangles = await lake.kg_triangle_count()
+degree = await lake.kg_degree_centrality()
+closeness = await lake.kg_closeness_centrality()
+betweenness = await lake.kg_betweenness_centrality()
+core = await lake.kg_k_core(k=3)
+labels = await lake.kg_label_propagation()
+```
+
+### Graph Statistics & Management
+
+```python
+stats = await lake.kg_stats()           # vertex/edge counts
+await lake.kg_delete_graph()            # clear all data (irreversible)
+
+# Export / Import
+graph_data = await lake.kg_export_graph(with_properties=True)
+result = await lake.kg_import_graph(graph_data)
 ```
 
 ---
 
-## 11. 数据质量检查
+## 9. Data Quality
 
-### 11.1 运行质量过滤器
+### Quality Filters
 
 ```python
-result = lake.quality_filter("docs")
-
-# result 是 QualityReport
-print(f"总行数: {result.total_rows}")
-print(f"通过行数: {result.passed_rows}")
-print(f"失败行数: {result.failed_rows}")
+# Run built-in filters (text length, image resolution)
+report = lake.quality_filter("articles",
+    active_filters="text_length_check,image_resolution_check")
+print(f"Accepted: {report.total_accepted}, Rejected: {report.total_rejected}")
+for fr in report.filter_results:
+    print(f"  {fr.filter_name}: passed={fr.passed_count}, rejected={fr.rejected_count}")
 ```
 
-内置过滤器：
-- **TextLengthFilter**: 文本长度检查（`text_min_chars` / `text_max_chars`）
-- **ImageResolutionFilter**: 图片分辨率检查（`image_min_width` / `image_min_height`）
+### Deduplication
 
-配置（`configs/dev.yaml`）：
+```python
+# Exact hash dedup
+result = lake.deduplicate("articles", strategy="exact", action="remove")
+
+# Perceptual hash dedup (for near-duplicate images)
+result = lake.deduplicate("articles", strategy="perceptual", perceptual_threshold=8)
+
+# Combined strategy
+result = lake.deduplicate("articles", strategy="both", action="flag")
+# action="flag" marks duplicates without removing them
+```
+
+### Configuration
 
 ```yaml
 quality:
   enabled: true
-  filter_mode: all          # all = 所有过滤器都要通过, any = 任一通过即可
+  filter_mode: all              # "all" = AND, "any" = OR
+  schema_validation: strict
+  dead_letter_enabled: true    # route rejected rows to dead-letter dataset
   text_min_chars: 1
-  image_min_width: 64
-  image_min_height: 64
-```
-
-### 11.2 指定激活的过滤器
-
-```python
-result = lake.quality_filter("docs", active_filters="TextLengthFilter")
+  text_max_chars: 100000
+  image_min_width: 128
+  image_min_height: 128
+  dedup_enabled: true
+  dedup_strategy: both          # "exact", "perceptual", "both"
+  dedup_action: remove          # "flag" or "remove"
+  dedup_perceptual_threshold: 8
+  active_filters: "text_length_check,image_resolution_check,null_check"
 ```
 
 ---
 
-## 12. 数据血缘
+## 10. Export
 
-记录数据的来源和变换历史，支持 SQL 查询。
-
-### 12.1 记录血缘事件
+### To Parquet or CSV
 
 ```python
-# 记录数据创建事件
-lake.lineage_record_event(
-    "analytics_report",
-    operation="create",
-    source_datasets=["raw_events", "user_profiles"],
-    transform_type="aggregation",
+result = lake.export("articles",
+    output_path="/tmp/articles.parquet",
+    format="parquet",             # or omit (auto-detected from extension)
+    columns=["title", "category"], # optional subset
+    version=3,                    # time travel export
+    compression="snappy",
+    overwrite=True,
+)
+print(result.rows_exported, result.output_path)
+```
+
+### To External Systems
+
+```python
+# Export via Daft to various targets
+result = lake.export_to("articles",
+    target_uri="s3://bucket/exports/articles",
+    format="parquet",
+)
+
+result = lake.export_to("articles",
+    target_uri="postgresql://user:pass@host/db",
+    format="clickhouse",
+)
+```
+
+### Export Audit Trail
+
+```python
+audit_data = lake.audit_export("articles")
+```
+
+---
+
+## 11. Lineage & Audit
+
+### Lineage
+
+```python
+# Record events
+lake.lineage_record_event("articles", "ingest",
+    source_datasets=["raw_articles"],
+    transform_type="clean",
     actor="pipeline_v2",
+    metadata={"rows": 1500},
 )
 
-# 记录数据追加事件
-lake.lineage_record_event(
-    "analytics_report",
-    operation="append",
-    source_datasets=["daily_events"],
-    transform_type="upsert",
-)
+# Query history
+history = lake.lineage_history("articles")
+
+# SQL query over lineage
+lineage_table = lake.lineage_query("""
+    SELECT * FROM lineage
+    WHERE operation = 'ingest'
+    ORDER BY timestamp DESC
+""")
+
+# Full graph
+graph = lake.lineage_graph("articles", max_depth=10)
+
+# Downstream impact analysis
+impacts = lake.lineage_impact("raw_articles")
 ```
 
-### 12.2 查询血缘历史
+### Audit Trail
 
 ```python
-# 获取数据集的全部历史事件
-history = lake.lineage_history("analytics_report")
-for event in history:
-    print(f"  [{event.timestamp}] {event.operation}: sources={event.source_datasets}")
+# Record
+audit_id = lake.audit_record("ingest", dataset_name="articles",
+    actor="system", payload={"rows": 1500})
 
-# 查询上游依赖（谁提供了数据给 analytics_report）
-upstream = lake.lineage_query(
-    "SELECT * FROM lineage WHERE source_datasets LIKE '%analytics_report%'"
-)
-
-# 查询下游消费（谁依赖了 raw_events）
-# （需要使用 LineageQueryBridge.trace_downstream）
-from arrow_lake.catalog.lineage import LineageQueryBridge, LineageStore
-from arrow_lake.ingest.storage import LanceStorageManager
-
-store = LineageStore(LanceStorageManager("./data"))
-bridge = LineageQueryBridge(store)
-downstream = bridge.trace_downstream("raw_events")
-for event in downstream:
-    print(f"  → {event.dataset_name}: {event.operation}")
-```
-
-### 12.3 SQL 查询血缘
-
-```python
-result = lake.lineage_query(
-    "SELECT dataset_name, operation, COUNT(*) as event_count "
-    "FROM lineage GROUP BY dataset_name, operation ORDER BY event_count DESC"
-)
-print(result)
-```
-
----
-
-## 13. 审计日志
-
-### 13.1 记录审计条目
-
-```python
-audit_id = lake.audit_record(
-    event_type="data_export",
-    dataset_name="docs",
-    actor="user_alice",
-    metaflow_run_id="flow_12345",
-    payload={"rows_exported": 1000, "format": "parquet"},
-)
-print(f"审计 ID: {audit_id}")
-```
-
-### 13.2 验证完整性
-
-每个审计条目都带有 HMAC 签名，可以验证是否被篡改。
-
-```python
+# Verify HMAC integrity
 is_valid = lake.audit_verify(audit_id)
-print(f"完整性: {is_valid}")  # True = 未被篡改
-```
 
-**重要**：生产环境必须设置 `ARROW_LAKE__AUDIT__HMAC_SECRET_KEY` 环境变量，否则 HMAC 验证无效（密钥为空时只记录警告）。
-
-### 13.3 查询审计记录
-
-```python
-# 按数据集过滤
-entries = lake.audit_query(dataset_name="docs")
-
-# 按时间范围过滤
+# Query
 entries = lake.audit_query(
-    dataset_name="docs",
-    start="2026-04-01T00:00:00",
-    end="2026-04-15T23:59:59",
+    dataset_name="articles",
+    start="2025-01-01T00:00:00Z",
+    event_type="ingest",
 )
 
-# 按事件类型过滤
-entries = lake.audit_query(event_type="data_export")
-
-# 导出数据集的全部审计记录
-export = lake.audit_export("docs")
+# Anomaly detection
+anomalies = lake.audit_analyze()
 ```
 
 ---
 
-## 14. 配置管理
+## 12. Production Deployment
 
-### 14.1 配置层级
+### Docker Compose (recommended)
 
-Arrow Lake 使用 Pydantic Settings，支持 4 层覆盖（优先级从高到低）：
+The deploy directory includes multiple compose files:
 
-1. 环境变量
-2. `.env` 文件
-3. YAML 配置文件
-4. 代码默认值
+```bash
+# Start the full stack
+docker compose -f deploy/docker-compose.prod.yml up -d
 
-### 14.2 使用 YAML 配置
+# With GPU support
+docker compose -f deploy/docker-compose.gpu.yml up -d
+
+# With HugeGraph for knowledge graphs
+docker compose -f deploy/docker-compose.hugegraph.yml up -d
+
+# With monitoring (Prometheus + Grafana)
+docker compose -f deploy/docker-compose.monitoring.yml up -d
+```
+
+### REST API Server
+
+```bash
+arrow-lake serve --host 0.0.0.0 --port 8000 --config configs/prod.yaml
+```
+
+The REST API provides HTTP endpoints for all SDK operations:
+search, query, ingest, RAG, catalog, health checks, metrics.
+
+### TLS Configuration
+
+```yaml
+# configs/prod.yaml
+api:
+  tls_enabled: true
+  ssl_certfile: "/etc/arrow-lake/tls/tls.crt"
+  ssl_keyfile: "/etc/arrow-lake/tls/tls.key"
+  security_headers_enabled: true
+  content_security_policy: "default-src 'none'; frame-ancestors 'none'"
+  docs_enabled: false
+  cors_origins: []
+```
+
+### Rate Limiting
+
+```yaml
+rate_limit:
+  enabled: true
+  default_requests_per_minute: 120
+  default_burst: 20
+  exempt_paths:
+    - "/health"
+    - "/metrics"
+```
+
+### Health Checks
 
 ```python
-from arrow_lake import Lake, ArrowLakeConfig
-
-# 从 YAML 文件加载配置
-config = ArrowLakeConfig.from_yaml("configs/dev.yaml")
-
-lake = Lake(base_uri="./data", config=config)
+health = lake.health()
+print(health.status)           # "ok" or "degraded"
+print(health.version)          # "1.5.2"
+print(health.storage_status)   # "accessible" or ...
+print(health.uptime_seconds)
+print(health.session_pool)     # DuckDB pool stats
 ```
 
-### 14.3 环境变量覆盖
+### Backup & Restore
 
-```bash
-# 环境变量格式: ARROW_LAKE__{SECTION}__{KEY}
-export ARROW_LAKE__STORAGE__BASE_URI="./data"
-export ARROW_LAKE__VECTOR__DEFAULT_TOP_K=20
-export ARROW_LAKE__QUALITY__DEDUP_STRATEGY="exact"
+```python
+# Create backup
+info = lake.backup_create(dataset_names=["articles", "users"],
+    backup_id="nightly-20250604")
+
+# List backups
+backups = lake.backup_list()
+
+# Restore
+lake.backup_restore("nightly-20250604",
+    dataset_names=["articles"],
+    overwrite=True)
+
+# Delete
+lake.backup_delete("nightly-20250604")
 ```
 
-### 14.4 主要配置项
+### Blob Lifecycle (S3)
 
-| Section | Key | 默认值 | 说明 |
-|---------|-----|--------|------|
-| `vector` | `metric` | cosine | 向量距离度量 |
-| `vector` | `num_sub_vectors` | 24 | PQ 子向量数 |
-| `vector` | `default_top_k` | 10 | 默认返回结果数 |
-| `fts` | `default_top_k` | 10 | 全文搜索默认返回数 |
-| `hybrid` | `rrf_k` | 60 | RRF 融合参数 |
-| `quality` | `dedup_strategy` | exact | 去重策略 |
-| `quality` | `dedup_action` | flag | 去重动作 |
-| `olap` | `max_result_rows` | 100000 | OLAP 最大返回行数 |
-| `export` | `default_format` | parquet | 默认导出格式 |
-| `export` | `parquet_compression` | snappy | Parquet 压缩算法 |
+```python
+# Apply tiering rules (standard -> IA -> Glacier)
+result = lake.lifecycle_apply(prefix="articles/")
 
-完整配置参考 `configs/dev.yaml`。
+# Check current tier status
+status = lake.lifecycle_status(prefix="articles/")
+
+# Restore a Glacier object
+lake.lifecycle_restore("articles/archive/old_data.lance", days=7)
+
+# Estimate cost savings
+estimate = lake.lifecycle_estimate(total_size_gb=500, target_tier="STANDARD_IA")
+
+# Preview rules without applying
+preview = lake.lifecycle_rules(prefix="articles/")
+```
+
+### Observability
+
+```yaml
+observability:
+  metrics_enabled: true
+  metrics_port: 8000
+  metrics_path: "/metrics"
+  log_level: INFO
+```
+
+Prometheus metrics are exposed at `/metrics`:
+- `ingestion_rows_total`, `ingestion_duration_seconds`
+- `query_total`, `query_latency_seconds`, `query_results_total`
+- `catalog_queries_total`, `catalog_tables_total`
+- `processing_quality_rejects_total`
+- `system_uptime_seconds`
 
 ---
 
-## 15. CLI 命令行
+## 13. Configuration Reference
+
+### Precedence (low to high)
+
+1. Code defaults (Pydantic field defaults)
+2. `.env` file (via pydantic-settings)
+3. Environment variables (`ARROW_LAKE__` prefix)
+4. YAML config file (highest priority)
 
 ```bash
-# 查看平台状态
-arrow-lake status
+# Environment variable format: ARROW_LAKE__SECTION__FIELD
+export ARROW_LAKE__STORAGE__BACKEND=s3
+export ARROW_LAKE__STORAGE__S3_BUCKET=my-lake
+export ARROW_LAKE__LLM__PROVIDER=openai
+export ARROW_LAKE__LLM__MODEL=gpt-4o
+```
 
-# 数据摄取
-arrow-lake ingest files my_data data.parquet
+### Config Sections (32)
 
-# 导出
-arrow-lake export my_data --output result.parquet --format parquet
+| Section | Class | Description |
+|---------|-------|-------------|
+| `storage` | `StorageConfig` | Backend type, S3 credentials, base URI |
+| `compute` | `ComputeConfig` | GPU, worker count |
+| `observability` | `ObservabilityConfig` | Metrics, logging, log level |
+| `http` | `HttpConfig` | HTTP client settings |
+| `media` | `MediaConfig` | Media processing defaults |
+| `embedding` | `EmbeddingConfig` | Model, backend (local/openai/daft), batch size |
+| `decode` | `DecodeConfig` | Image/video decode quality |
+| `vector` | `VectorSearchConfig` | Default metric, index type, top_k |
+| `fts` | `FullTextSearchConfig` | FTS column, tokenizer settings |
+| `hybrid` | `HybridSearchConfig` | RRF weights, fusion params |
+| `olap` | `OlapConfig` | DuckDB memory budget, warmup, materialized views |
+| `daft` | `DaftConfig` | Daft execution settings |
+| `quality` | `QualityConfig` | Filters, dedup, schema validation, dead letter |
+| `workflow` | `WorkflowConfig` | Metaflow workflow settings |
+| `argo` | `ArgoConfig` | Argo workflow namespace, timeouts |
+| `autoscale` | `AutoscaleConfig` | Ray autoscaling bounds |
+| `lifecycle` | `LifecycleConfig` | S3 tiering rules, expiration |
+| `faceted` | `FacetedSearchConfig` | Facet computation settings |
+| `ensemble` | `EnsembleSearchConfig` | Multi-model search weights |
+| `lineage` | `LineageConfig` | Lineage tracking settings |
+| `export` | `ExportConfig` | Default export format, compression |
+| `audit` | `AuditConfig` | HMAC key, audit dataset name |
+| `api` | `ApiConfig` | TLS, CORS, security headers, docs |
+| `llm` | `LLMConfig` | Provider, model, API key, context window |
+| `rag` | `RAGConfig` | Top-k, strategy, chunking, reranker |
+| `hugegraph` | `HugeGraphConfig` | HugeGraph host, graph name, traversal depth |
+| `opentelemetry` | `OpenTelemetryConfig` | Distributed tracing settings |
+| `auth` | `AuthConfig` | Authentication mode and settings |
+| `rate_limit` | `RateLimitConfig` | Per-minute limits, burst, exempt paths |
+| `document` | `DocumentConfig` | PDF parsing, OCR, chunking |
+| `redis` | `RedisConfig` | Redis connection for session management |
+| `gravitino` | `GravitinoConfig` | Gravitino metadata catalog integration |
 
-# 查看 CLI 帮助
-arrow-lake --help
+### Example Production YAML
+
+```yaml
+# configs/prod.yaml
+storage:
+  backend: s3
+  s3_bucket: arrow-lake-production
+  s3_region: us-east-1
+
+embedding:
+  backend: openai
+  model: text-embedding-3-small
+  api_key: ${OPENAI_API_KEY}
+
+llm:
+  provider: openai
+  model: gpt-4o
+  api_key: ${OPENAI_API_KEY}
+  context_window_tokens: 128000
+
+vector:
+  metric: cosine
+  default_index_type: IVF_PQ
+  default_top_k: 10
+
+olap:
+  memory_budget_mb: 4096
+  warmup_enabled: true
+  max_result_rows: 10000
+
+quality:
+  enabled: true
+  dedup_strategy: both
+  dead_letter_enabled: true
+
+rag:
+  default_top_k: 5
+  default_strategy: hybrid
+
+hugegraph:
+  enabled: false  # enable for KG features
+
+observability:
+  metrics_enabled: true
+  log_level: WARNING
 ```
 
 ---
 
-## 16. HTTP 服务
+## 14. CLI Reference
 
-Arrow Lake 内置轻量 WSGI 服务，提供健康检查和 Prometheus 指标。
-
-### 16.1 启动服务
+### Common Commands
 
 ```bash
-# 直接启动
-uv run python -m arrow_lake.server --port 8000
+# System
+arrow-lake --version
+arrow-lake status                           # Health + system info
 
-# 使用 gunicorn
-uv run gunicorn arrow_lake.server:app --bind 0.0.0.0:8000
+# Serve
+arrow-lake serve --host 0.0.0.0 --port 8000
+
+# Demo
+arrow-lake demo                             # Interactive walkthrough
+
+# Catalog
+arrow-lake catalog list                     # List all datasets
 ```
 
-### 16.2 端点
-
-| 端点 | 说明 | 响应 |
-|------|------|------|
-| `GET /health` | 健康检查 | JSON `{"status": "ok", "storage": "accessible", ...}` |
-| `GET /metrics` | Prometheus 指标 | Prometheus 文本格式 |
-| 其他路径 | — | 404 Not Found |
+### Ingestion
 
 ```bash
-curl http://localhost:8000/health
-# {"status":"ok","storage":"accessible","catalog":"available"}
-
-curl http://localhost:8000/metrics
-# # HELP arrow_lake_ingestion_rows_total ...
+arrow-lake ingest files <dataset> <path> [<path>...]
+arrow-lake ingest http <dataset> <url> [<url>...]
+arrow-lake ingest images <dataset> <path> [<path>...]
+arrow-lake ingest videos <dataset> <path> [<path>...]
+arrow-lake ingest documents <dataset> <path> [<path>...]
+arrow-lake ingest sql <dataset> --sql "SELECT ..." --connection "postgresql://..."
+arrow-lake ingest kafka <dataset> --bootstrap-servers "host:9092" --topics "events"
 ```
 
-### 16.3 环境变量控制
+### Search
 
 ```bash
-# 自定义存储路径
-export ARROW_LAKE__STORAGE__BASE_URI="/data/lake"
+arrow-lake search vector <dataset> --query "search text" --top-k 10
+arrow-lake search fts <dataset> --query "keyword search" --top-k 10
+arrow-lake search hybrid <dataset> --query "text" --vector-file embeddings.json
+arrow-lake search faceted <dataset> --vector-file embeddings.json --facets "category,year"
+```
 
-# 禁用 metrics 端点
-export ARROW_LAKE__OBSERVABILITY__METRICS_ENABLED=false
+### Query
 
-# 自定义 metrics 路径
-export ARROW_LAKE__OBSERVABILITY__METRICS_PATH="/custom-metrics"
+```bash
+arrow-lake query sql <dataset> --sql "SELECT category, COUNT(*) FROM dataset GROUP BY category"
+```
+
+### Knowledge Graph
+
+```bash
+arrow-lake kg build <dataset>              # Build KG from dataset
+arrow-lake kg status <task-id>             # Check build progress
+arrow-lake kg stats                        # Graph statistics
+arrow-lake kg query "g.V().count()"        # Gremlin query
+```
+
+### RAG
+
+```bash
+arrow-lake rag query "What is deep learning?" --dataset docs --top-k 5
+arrow-lake rag extract --dataset docs --text-column body
+```
+
+### Quality & Maintenance
+
+```bash
+arrow-lake quality filter <dataset> --filters "text_length_check,null_check"
+arrow-lake quality dedup <dataset> --strategy both --action remove
+arrow-lake maintenance compact <dataset>
+```
+
+### Export
+
+```bash
+arrow-lake export <dataset> --output-path /tmp/data.parquet --format parquet
+```
+
+### Lineage & Audit
+
+```bash
+arrow-lake lineage record <dataset> --operation ingest --sources "raw_data"
+arrow-lake lineage history <dataset>
+arrow-lake lineage graph <dataset>
+arrow-lake audit query --dataset <dataset> --event-type ingest
+```
+
+### Backup
+
+```bash
+arrow-lake backup create --datasets "articles,users"
+arrow-lake backup list
+arrow-lake backup restore <backup-id>
+```
+
+### Global Options
+
+```bash
+arrow-lake --config configs/prod.yaml <command>    # Use YAML config
+arrow-lake --json <command>                         # JSON output
+arrow-lake --verbose <command>                      # Verbose logging
 ```
 
 ---
 
-## 附录：数据模型速查
+## Exception Handling
 
-### Arrow Table 常用列名约定
+Arrow Lake uses a typed exception hierarchy for precise error handling:
 
-| 列名 | 类型 | 说明 |
-|------|------|------|
-| `id` | string / int64 | 主键 |
-| `text_content` | string | 文本内容（FTS 索引列） |
-| `text_embedding` | fixed_size_list[float] | 文本向量（搜索列） |
-| `image_data` | binary | 图片二进制数据（去重列） |
-| `image_thumbnail` | binary | 缩略图 |
-| `video_data` | binary | 视频二进制数据 |
-| `category` | string | 分类字段 |
-| `score` | float | 分数 |
-| `is_duplicate` | bool | 去重标记列（flag 模式输出） |
-| `_distance` | float | 向量搜索距离（搜索结果列） |
-| `_score` | float | BM25 相关度（FTS 结果列） |
-| `_rrf_score` | float | RRF 融合分（混合搜索结果列） |
+```python
+from arrow_lake import (
+    ArrowLakeError, StorageError, ValidationError,
+    QueryError, EmbeddingError, RAGError,
+    KGError, QualityError, IngestError,
+)
+
+try:
+    lake.create_dataset("users", table)
+except ValidationError as e:
+    print(f"Invalid data: {e}")
+except StorageError as e:
+    print(f"Storage issue: {e}")
+```
+
+---
+
+*Arrow Lake v1.5.2 | MIT License | [GitHub](https://github.com/wits-sunpw/arrow-lake)*

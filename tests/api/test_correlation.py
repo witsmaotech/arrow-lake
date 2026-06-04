@@ -11,7 +11,11 @@ from httpx import ASGITransport, AsyncClient
 
 
 def _make_app() -> FastAPI:
-    app = create_app()
+    from arrow_lake.config import ArrowLakeConfig
+
+    config = ArrowLakeConfig()
+    config.compute.ray_address = ""  # avoid Ray connection in tests
+    app = create_app(config=config)
     app.state.lake = MagicMock()
     return app
 

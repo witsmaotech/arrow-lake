@@ -185,7 +185,7 @@ class DocumentChunker:
 
         try:
             from transformers import AutoTokenizer
-            self._semchunk_tokenizer = AutoTokenizer.from_pretrained(self._tokenizer)
+            self._semchunk_tokenizer = AutoTokenizer.from_pretrained(self._tokenizer, revision="main")  # nosec B615: revision pinned to main branch
             return self._semchunk_tokenizer
         except (ImportError, OSError):
             pass

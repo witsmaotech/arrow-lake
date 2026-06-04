@@ -420,3 +420,90 @@ class TestNoOpSpan:
             with tracer.start_as_current_span("inner") as inner:
                 assert inner.is_recording is False
                 inner.set_status(MagicMock())
+
+
+# ---------------------------------------------------------------------------
+# Module-level import branches (L23 _OTEL_AVAILABLE = True, L25 pass in except)
+# ---------------------------------------------------------------------------
+
+
+class TestModuleLevelImportBranches:
+    """Cover L24 (_OTEL_AVAILABLE = True) and L25 (except ImportError: pass).
+
+    These lines execute at import time. We reload the telemetry module with
+    manipulated sys.modules to hit both the success and failure branches.
+    """
+
+    def test_otel_available_true_when_imports_succeed(self) -> None:
+        """L24: _OTEL_AVAILABLE = True when opentelemetry imports succeed."""
+        import importlib
+        import sys
+
+        # Ensure opentelemetry modules are present (they may be installed)
+        # We mock them to guarantee the try block succeeds
+        mock_otel = MagicMock()
+        mock_otel.trace = MagicMock()
+        mock_otel.sdk = MagicMock()
+        mock_otel.sdk.resources = MagicMock()
+        mock_otel.sdk.trace = MagicMock()
+        mock_otel.sdk.trace.export = MagicMock()
+        mock_otel.sdk.trace.sampling = MagicMock()
+
+        # Save original modules
+        orig_modules = {}
+        for key in list(sys.modules):
+            if key.startswith("opentelemetry"):
+                orig_modules[key] = sys.modules.pop(key)
+
+        try:
+            sys.modules["opentelemetry"] = mock_otel
+            sys.modules["opentelemetry.trace"] = mock_otel.trace
+            sys.modules["opentelemetry.sdk"] = mock_otel.sdk
+            sys.modules["opentelemetry.sdk.resources"] = mock_otel.sdk.resources
+            sys.modules["opentelemetry.sdk.trace"] = mock_otel.sdk.trace
+            sys.modules["opentelemetry.sdk.trace.export"] = mock_otel.sdk.trace.export
+            sys.modules["opentelemetry.sdk.trace.sampling"] = mock_otel.sdk.trace.sampling
+
+            from arrow_lake.api import telemetry
+            importlib.reload(telemetry)
+            assert telemetry._OTEL_AVAILABLE is True
+        finally:
+            # Restore original modules
+            for key in list(sys.modules):
+                if key.startswith("opentelemetry") and key not in orig_modules:
+                    del sys.modules[key]
+            for key, val in orig_modules.items():
+                sys.modules[key] = val
+            importlib.reload(telemetry)
+
+    def test_otel_import_error_pass(self) -> None:
+        """L25: except ImportError: pass when opentelemetry is not available."""
+        import builtins
+        import importlib
+        import sys
+
+        # Save original modules and __import__
+        orig_modules = {}
+        for key in list(sys.modules):
+            if key.startswith("opentelemetry"):
+                orig_modules[key] = sys.modules.pop(key)
+        real_import = builtins.__import__
+
+        def blocking_import(name, *args, **kwargs):
+            if name.startswith("opentelemetry"):
+                raise ImportError(f"blocked: {name}")
+            return real_import(name, *args, **kwargs)
+
+        try:
+            builtins.__import__ = blocking_import
+            from arrow_lake.api import telemetry
+            importlib.reload(telemetry)
+            assert telemetry._OTEL_AVAILABLE is False
+        finally:
+            builtins.__import__ = real_import
+            for key in list(sys.modules):
+                if key.startswith("opentelemetry") and key not in orig_modules:
+                    del sys.modules[key]
+            for key, val in orig_modules.items():
+                sys.modules[key] = val
+            importlib.reload(telemetry)

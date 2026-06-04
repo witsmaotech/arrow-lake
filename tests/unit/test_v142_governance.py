@@ -115,7 +115,8 @@ class TestMaskingEngine:
     def test_hash_masking(self, table: pa.Table) -> None:
         from arrow_lake.quality.masking_engine import MaskingEngine, MaskRule
 
-        engine = MaskingEngine(_cfg())
+        with patch.dict("os.environ", {"ARROW_LAKE__MASKING__HMAC_KEY": "test-hmac-key-for-unit-tests-!!"}):
+            engine = MaskingEngine(_cfg())
         rules = [MaskRule(column="email", function="hash")]
         with patch.object(engine, "_get_rules", return_value=rules):
             result = engine.apply_masking(table, dataset="users", role="viewer")

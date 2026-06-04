@@ -14,7 +14,9 @@ from arrow_lake.config import ArrowLakeConfig, StorageBackend, StorageConfig
 def lake(tmp_path: Path) -> Lake:
     cfg = ArrowLakeConfig()
     cfg.storage = StorageConfig(base_uri=str(tmp_path / "data"), backend=StorageBackend.LOCAL)
-    return Lake(base_uri=str(tmp_path / "data"), config=cfg)
+    lake = Lake(base_uri=str(tmp_path / "data"), config=cfg)
+    lake._components["session_manager"] = MagicMock()
+    return lake
 
 
 class TestVectorSearch:

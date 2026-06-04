@@ -9,8 +9,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import numpy as np
-import pyarrow as pa
 import pytest
 
 
@@ -31,8 +29,11 @@ def lance_tmp_dir(tmp_path: Path) -> str:
 
 
 @pytest.fixture()
-def sample_table() -> pa.Table:
+def sample_table():
     """Create a small sample Arrow table with text + vector columns."""
+    import numpy as np
+    import pyarrow as pa
+
     rng = np.random.RandomState(42)
     dim = 128
     vectors = rng.randn(10, dim).astype(np.float32)
@@ -52,8 +53,11 @@ def sample_table() -> pa.Table:
 
 
 @pytest.fixture()
-def sample_vector_table() -> pa.Table:
+def sample_vector_table():
     """Create a minimal table with only id + vector columns."""
+    import numpy as np
+    import pyarrow as pa
+
     rng = np.random.RandomState(42)
     dim = 64
     vectors = rng.randn(5, dim).astype(np.float32)
@@ -107,8 +111,10 @@ def lance_scan_adapter(duckdb_session: Any) -> Any:
 
 
 @pytest.fixture()
-def make_table() -> Any:
+def make_table():
     """Create a test table factory with vector + text columns."""
+    import numpy as np
+    import pyarrow as pa
 
     def _make(n: int = 100, dim: int = 128) -> pa.Table:
         rng = np.random.RandomState(42)

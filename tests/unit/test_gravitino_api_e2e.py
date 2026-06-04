@@ -14,6 +14,7 @@ import pytest
 from fastapi import FastAPI
 from starlette.testclient import TestClient
 
+from arrow_lake.api.auth_models import Role, TokenPayload
 from arrow_lake.config.gravitino import GravitinoConfig
 from arrow_lake.api.routers.gravitino import router as gravitino_router
 
@@ -43,6 +44,17 @@ def app_with_gravitino() -> FastAPI:
 
 @pytest.fixture
 def client(app_with_gravitino: FastAPI) -> TestClient:
+    """TestClient with an admin user injected via middleware bypass."""
+    _admin = TokenPayload(sub="test-admin", role=Role.ADMIN, exp=0, iat=0)
+
+    # Inject admin user on every request so require_role passes
+    original_router = app_with_gravitino.router
+
+    @app_with_gravitino.middleware("http")
+    async def inject_admin_user(request, call_next):
+        request.state.user = _admin
+        return await call_next(request)
+
     return TestClient(app_with_gravitino)
 
 
