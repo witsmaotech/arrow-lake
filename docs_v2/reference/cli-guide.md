@@ -2,7 +2,7 @@
 
 **Maturity:** 🟢 Starter | **Last Updated:** 2026-05-26
 
-Arrow Lake CLI (v1.5.2+) organizes commands by **user goal**, not technical module. Run `arrow-lake --help` to see the full list.
+Arrow Lake CLI (v1.5.3+) organizes commands by **user goal**, not technical module. Run `arrow-lake --help` to see the full list.
 
 ---
 

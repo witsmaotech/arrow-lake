@@ -1,6 +1,6 @@
 # SLO Definitions & Dependency Criticality
 
-**Version:** v1.5.2 | **Last Updated:** 2026-05-26
+**Version:** v1.5.3 | **Last Updated:** 2026-06-04
 
 ---
 

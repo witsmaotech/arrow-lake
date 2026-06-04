@@ -2,7 +2,7 @@
 
 **Last Updated:** 2026-05-26
 **Python Version:** 3.11.14
-**Status:** Validated on current codebase (v1.4.4)
+**Status:** Validated on current codebase (v1.5.3)
 
 ---
 

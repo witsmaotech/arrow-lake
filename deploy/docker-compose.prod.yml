@@ -29,7 +29,7 @@ x-arrow-lake: &arrow-lake
     context: ..
     dockerfile: deploy/Dockerfile
     network: host
-  image: arrow-lake:1.5.1
+  image: arrow-lake:1.5.3
   restart: unless-stopped
   env_file:
     - path: ../.env
@@ -85,11 +85,11 @@ services:
   # Proxy Forwarder — WSL2 mirrored mode bridge to Windows host proxy
   # ---------------------------------------------------------------------------
   proxy-forwarder:
-    image: alpine:${ALPINE_VERSION:-3.21}
+    image: alpine/socat:${SOCAT_VERSION:-latest}
     container_name: arrow-lake-proxy-forwarder
     restart: unless-stopped
     network_mode: host
-    command: ["sh", "-c", "apk add --no-cache socat >/dev/null 2>&1 && echo 'proxy-forwarder: 0.0.0.0:17887 -> 127.0.0.1:${HOST_PROXY_PORT:-7887}' && socat TCP-LISTEN:17887,fork,reuseaddr,bind=0.0.0.0 TCP:127.0.0.1:${HOST_PROXY_PORT:-7887}"]
+    command: TCP-LISTEN:17887,fork,reuseaddr,bind=0.0.0.0 TCP:127.0.0.1:${HOST_PROXY_PORT:-7887}
     deploy:
       resources:
         limits:
@@ -184,7 +184,6 @@ services:
       - duckdb-data:/app/.duckdb
       - lake-data:/data/lake
       - metaflow-store:/data/metaflow
-      - /home/witshine/wits-projs/wits-infra-dintellihub/arrow_lake:/app/arrow_lake:ro
     depends_on:
       minio:
         condition: service_healthy
@@ -515,6 +514,10 @@ services:
       nofile:
         soft: 65536
         hard: 65536
+
+  # ---------------------------------------------------------------------------
+  # MinIO Backup — Scheduled bucket backup
+  # ---------------------------------------------------------------------------
   minio-backup:
     image: minio/mc:${MINIO_MC_VERSION:-RELEASE.2025-08-13T08-35-41Z}
     container_name: arrow-lake-minio-backup
@@ -560,7 +563,6 @@ services:
       - "--storage.tsdb.path=/prometheus"
       - "--storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-30d}"
       - "--web.listen-address=0.0.0.0:9090"
-      - "--alertmanager.url=http://alertmanager:9093"
     deploy:
       resources:
         limits:
@@ -627,7 +629,7 @@ services:
     container_name: arrow-lake-grafana
     restart: unless-stopped
     ports:
-      - "${GRAFANA_PORT:-3001}:3000"
+      - "127.0.0.1:${GRAFANA_PORT:-3001}:3000"
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD must be set}"

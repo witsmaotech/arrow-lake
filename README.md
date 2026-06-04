@@ -3,11 +3,11 @@
 > Production-grade multimodal data lakehouse for AI/ML teams.
 > Text, images, audio, vectors, knowledge graphs — one platform.
 
-[![Tests](https://img.shields.io/badge/tests-2872%20passing-brightgreen)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
-[![Coverage](https://img.shields.io/badge/coverage-80%25-green)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
+[![Tests](https://img.shields.io/badge/tests-5325%20passing-brightgreen)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
+[![Coverage](https://img.shields.io/badge/coverage-90%25-brightgreen)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
 [![Security](https://img.shields.io/badge/bandit-0%20HIGH-success)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
 [![Python](https://img.shields.io/badge/python-3.11+-blue)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
-[![Version](https://img.shields.io/badge/version-1.5.2-blue)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
+[![Version](https://img.shields.io/badge/version-1.5.3-blue)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
 [![License](https://img.shields.io/badge/license-MIT-informational)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
 
 ## Install
@@ -127,7 +127,7 @@ Production features:
 ## Testing
 
 ```bash
-# Full suite (2872 tests, 80%+ coverage)
+# Full suite (5325 tests, 90%+ coverage)
 pytest tests/ -q
 
 # By category

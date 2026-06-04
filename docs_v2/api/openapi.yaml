@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: Arrow Lake REST API
   description: Unified multimodal data lakehouse REST API
-  version: 1.5.2
+  version: 1.5.3
 paths:
   /health/live:
     get:

@@ -21,7 +21,7 @@ arrow-lake demo
 
 → [5-Minute Quickstart](../docs/quickstart.md)
 
-## CLI Navigation (v1.5.2)
+## CLI Navigation (v1.5.3)
 
 The CLI organizes commands by user goal:
 

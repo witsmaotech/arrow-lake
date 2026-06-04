@@ -935,7 +935,7 @@ curl http://localhost:8000/health/ready
 ```json
 {
   "status": "ok",
-  "version": "1.5.1",
+  "version": "1.5.3",
   "storage": "accessible",
   "gravitino": "healthy",
   "duckdb_pool": {"pool_size": 5, "active_sessions": 1, "queued_requests": 0, "total_queries": 142, "total_errors": 0}
@@ -953,7 +953,7 @@ curl http://localhost:8000/api/v1/version \
 
 ```json
 {
-  "version": "1.5.1",
+  "version": "1.5.3",
   "python": "3.12.4",
   "fastapi": "0.115.0",
   "uvicorn": "0.30.0",
