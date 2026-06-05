@@ -96,7 +96,7 @@ def main() -> None:
     print("\nSTEP 4: 通过 Lake Facade 透明使用")
     config = ArrowLakeConfig()
     config.redis.enabled = False  # 确保 Redis 降级
-    lake = Lake(base_uri=args.base_uri, config=config)
+    lake = Lake(base_uri=args.base_uri, arrow_lake_config=config)
     print(f"  Lake 实例已创建 (redis.enabled={config.redis.enabled})")
     print("  DuckDB 会话管理自动使用合适信号量")
 

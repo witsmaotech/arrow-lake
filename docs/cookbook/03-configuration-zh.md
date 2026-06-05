@@ -60,18 +60,51 @@ export ARROW_LAKE__VECTOR__METRIC=cosine
 ```python
 config = ArrowLakeConfig()
 
-config.storage    # StorageConfig       — 存储层
-config.llm        # LLMConfig           — LLM 提供商
-config.rag        # RAGConfig           — RAG 流水线
-config.vector     # VectorSearchConfig  — 向量搜索
-config.fts        # FullTextSearchConfig— 全文搜索
-config.hybrid     # HybridSearchConfig  — 混合搜索
-config.embedding  # EmbeddingConfig     — 嵌入模型
-config.quality    # QualityConfig       — 质量过滤
-config.olap       # OlapConfig          — OLAP 查询
-config.api        # ApiConfig           — API 服务
-config.auth       # AuthConfig          — 认证
-config.rate_limit # RateLimitConfig     — 限流
+# --- 核心 ---
+config.storage    # StorageConfig        — 存储层 (local, MinIO, S3, GCS)
+config.compute    # ComputeConfig        — 计算资源
+config.http       # HttpConfig           — HTTP 客户端设置
+config.observability # ObservabilityConfig — 日志和追踪
+
+# --- 搜索 ---
+config.vector     # VectorSearchConfig   — 向量搜索
+config.fts        # FullTextSearchConfig — 全文搜索
+config.hybrid     # HybridSearchConfig   — 混合搜索 (RRF 融合)
+config.faceted    # FacetedSearchConfig  — 分面搜索
+config.ensemble   # EnsembleSearchConfig — 集成搜索
+
+# --- AI / RAG ---
+config.llm        # LLMConfig            — LLM 提供商
+config.rag        # RAGConfig            — RAG 流水线
+config.embedding  # EmbeddingConfig      — 嵌入模型
+config.hugegraph  # HugeGraphConfig      — HugeGraph 知识图谱
+
+# --- 媒体与文档 ---
+config.media      # MediaConfig          — 媒体处理
+config.decode     # DecodeConfig         — 图像解码设置
+config.document   # DocumentConfig       — PDF 解析和分块
+config.export     # ExportConfig         — 导出设置
+
+# --- 数据 ---
+config.olap       # OlapConfig           — OLAP / DuckDB 查询
+config.daft       # DaftConfig           — Daft 计算引擎
+config.quality    # QualityConfig        — 质量过滤
+
+# --- 基础设施 ---
+config.api        # ApiConfig            — API 服务
+config.auth       # AuthConfig           — 认证
+config.rate_limit # RateLimitConfig      — 限流
+config.redis      # RedisConfig          — Redis 分布式会话
+config.workflow   # WorkflowConfig       — 工作流编排
+config.argo       # ArgoConfig           — Argo Workflows 集成
+config.autoscale  # AutoscaleConfig      — 自动扩缩容
+config.lifecycle  # LifecycleConfig      — 数据集生命周期管理
+
+# --- 治理 ---
+config.gravitino  # GravitinoConfig      — Apache Gravitino 元数据目录
+config.lineage    # LineageConfig        — 数据血缘追踪
+config.audit      # AuditConfig          — 审计日志
+config.opentelemetry # OpenTelemetryConfig — OpenTelemetry 追踪
 ```
 
 ***
@@ -168,13 +201,21 @@ vllm_cfg = LLMConfig(
     api_base="http://localhost:8000/v1",
     timeout_seconds=120.0,
 )
+
+# DeepSeek
+deepseek_cfg = LLMConfig(
+    provider=LLMProviderType.DEEPSEEK,
+    model="deepseek-chat",
+    api_key="sk-...",
+    api_base="https://api.deepseek.com/v1",
+)
 ```
 
 **LLMConfig 字段说明：**
 
 | 字段                | 类型              | 默认值                                         | 说明 |
 | ----------------- | --------------- | ------------------------------------------- | -- |
-| `provider`        | `"openai"`      | 后端：`openai`, `anthropic`, `vllm`, `ollama` |    |
+| `provider`        | `"openai"`      | 后端：`openai`, `anthropic`, `vllm`, `ollama`, `deepseek` |    |
 | `model`           | `"gpt-4o-mini"` | 模型名称                                        |    |
 | `api_key`         | `""`            | API 密钥（本地模型可为空）                             |    |
 | `api_base`        | `""`            | 自定义 API 端点                                  |    |
@@ -206,7 +247,7 @@ vector_cfg = VectorSearchConfig(
 | 字段                   | 默认值        | 说明                                        |
 | -------------------- | ---------- | ----------------------------------------- |
 | `metric`             | `"cosine"` | 距离度量：`cosine`, `l2`, `dot`               |
-| `default_index_type` | `"IVF_PQ"` | 索引类型：`IVF_PQ`, `IVF_FLAT`, `IVF_HNSW_PQ` |
+| `default_index_type` | `"IVF_PQ"` | 索引类型：`IVF_PQ`, `IVF_FLAT`, `IVF_HNSW_PQ`, `HNSW` |
 | `default_top_k`      | `10`       | 默认返回结果数                                   |
 | `num_partitions`     | `256`      | IVF 分区数                                   |
 | `num_sub_vectors`    | `24`       | PQ 子向量数 (8 的倍数)                           |
@@ -288,6 +329,13 @@ fts:
 hybrid:
   rrf_k: 60
   vector_top_k_multiplier: 3
+
+redis:
+  enabled: true
+  url: "redis://redis:6379/0"
+  password: "${REDIS_PASSWORD}"
+  ssl: false
+  redis_pool_size: 10
 ```
 
 ```python
@@ -342,6 +390,8 @@ ARROW_LAKE__EMBEDDING__MODEL=Qwen/Qwen3-Embedding-0.6B
 3. **容器部署**: 通过 `ARROW_LAKE__` 环境变量覆盖关键配置，无需修改配置文件
 4. **中文场景**: 设置 `fts.tokenizer_type = "jieba"` 以获得更好的中文分词效果
 5. **大向量维度**: `num_sub_vectors` 必须是 8 的倍数，且不大于向量维度
+6. **生产 Redis**: 运行多个 API 副本时 (HPA / Kubernetes) 启用 `redis.enabled = true`，使 DuckDB 会话信号量跨 Pod 协调
+7. **Redis TLS**: 连接托管 Redis 服务 (ElastiCache、Azure Cache 等) 时设置 `redis.ssl = true` 并提供 `redis.password`
 
 ***
 
@@ -371,16 +421,18 @@ redis_cfg = RedisConfig(
 
 **RedisConfig 字段说明：**
 
-| 字段                     | 类型     | 默认值                                 | 说明                                               |
-| ---------------------- | ------ | ----------------------------------- | ------------------------------------------------ |
-| `enabled`              | `bool` | `False`                             | 启用基于 Redis 的分布式信号量和 JWT 黑名单                      |
-| `url`                  | `str`  | `"redis://localhost:6379/0"`        | Redis 连接 URL                                     |
-| `password`             | `str`  | `""`                                | Redis 认证密码                                       |
-| `ssl`                  | `bool` | `False`                             | 启用 TLS 加密 Redis 连接                               |
-| `ssl_cert_reqs`        | `str`  | `"required"`                        | `ssl=True` 时的 SSL 证书验证模式                         |
-| `semaphore_key_prefix` | `str`  | `"arrow_lake:semaphore:"`           | 分布式信号量计数器的 Redis 键前缀                             |
-| `semaphore_ttl_seconds`| `int`  | `300` (>= 1)                        | 信号量键的 TTL — 自动回收过期的许可                            |
-| `redis_pool_size`      | `int`  | `10` (>= 1)                         | Redis 客户端连接池大小                                   |
+| 字段                          | 类型     | 默认值                          | 说明                                          |
+| --------------------------- | ------ | ---------------------------- | ------------------------------------------- |
+| `enabled`                   | `bool` | `False`                      | 启用基于 Redis 的分布式信号量和 JWT 黑名单                |
+| `url`                       | `str`  | `"redis://localhost:6379/0"` | Redis 连接 URL                                |
+| `password`                  | `str`  | `""`                         | Redis 认证密码                                  |
+| `ssl`                       | `bool` | `False`                      | 启用 TLS 加密 Redis 连接                          |
+| `ssl_cert_reqs`             | `str`  | `"required"`                 | `ssl=True` 时的 SSL 证书验证模式                    |
+| `semaphore_key_prefix`      | `str`  | `"arrow_lake:semaphore:"`    | 分布式信号量计数器的 Redis 键前缀                        |
+| `semaphore_ttl_seconds`     | `int`  | `300` (>= 1)                 | 信号量键的 TTL — 自动回收过期的许可                       |
+| `redis_pool_size`           | `int`  | `10` (>= 1)                  | Redis 客户端连接池大小                              |
+| `instance_registry_key`     | `str`  | `"arrow_lake:instances"`     | 多实例注册的 Redis 键                              |
+| `instance_heartbeat_ttl_seconds` | `int` | `30` (>= 5)                | 实例心跳键的 TTL                                  |
 
 ### YAML 配置
 

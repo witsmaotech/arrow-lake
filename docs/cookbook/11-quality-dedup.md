@@ -180,12 +180,16 @@ result = lake.deduplicate(
 Under the hood, this uses the `imagehash` library to compute `phash` and then compares Hamming
 distances.
 
+> **Dependency note**: Perceptual deduplication requires `imagehash`. Install with `pip install arrow-lake[dedup]`.
+
 ***
 
 ## 5. NeMo Curator Integration (GPU-Accelerated MinHash LSH)
 
 For large-scale text deduplication, Arrow Lake supports GPU-accelerated approximate deduplication
 via NeMo Curator's MinHash LSH implementation.
+
+> **Dependency note**: NeMo Curator integration requires `nemo-curator`. Install with `pip install arrow-lake[nemo-curator]`.
 
 ```python
 from arrow_lake.quality.nemo_curator import NeMoDeduplicator
@@ -364,7 +368,7 @@ print(f"Failed items: {dlq.stats}")
 The declarative `QualityRuleEngine` replaces hard-coded filters with configurable rules
 loaded from JSON, YAML, or the REST API.
 
-### 7.1 Programmatic Usage
+### 9.1 Programmatic Usage
 
 ```python
 from arrow_lake.quality.rules import QualityRuleEngine, RuleDefinition
@@ -410,7 +414,7 @@ filtered, results = engine.apply(table)
 print(f"Original: {table.num_rows} rows → Filtered: {filtered.num_rows} rows")
 ```
 
-### 7.2 Check Types
+### 9.2 Check Types
 
 | Check | Parameters | Description |
 |-------|-----------|-------------|
@@ -419,7 +423,7 @@ print(f"Original: {table.num_rows} rows → Filtered: {filtered.num_rows} rows")
 | `regex` | `pattern`, `invert` | Regex match (invert=True matches non-matching) |
 | `duplicate` | — | Exact hash duplicate detection |
 
-### 7.3 Action Types
+### 9.3 Action Types
 
 | Action | Effect in `evaluate()` | Effect in `apply()` |
 |--------|----------------------|---------------------|
@@ -427,7 +431,7 @@ print(f"Original: {table.num_rows} rows → Filtered: {filtered.num_rows} rows")
 | `remove` | Reports violation count | Removes violating rows (same as reject) |
 | `flag` | Reports violation count | Keeps rows (informational only) |
 
-### 7.4 Load from JSON
+### 9.4 Load from JSON
 
 ```json
 {
@@ -445,7 +449,7 @@ engine = QualityRuleEngine()
 engine.load_from_json("rules.json")
 ```
 
-### 7.5 REST API
+### 9.5 REST API
 
 ```bash
 # Apply rules via API
@@ -466,7 +470,7 @@ curl -X POST http://localhost:8000/api/v1/datasets/articles/quality/rules \
 
 Row and column-level ACL restrict what data each role can see in query and search results.
 
-### 8.1 Setting ACL Rules
+### 10.1 Setting ACL Rules
 
 ```bash
 # Viewer can only see "title" and "summary" columns
@@ -488,7 +492,7 @@ curl -X PUT http://localhost:8000/api/v1/admin/acl/hr_data \
   -d '{"role": "viewer", "visible_columns": ["name", "department"], "row_filter": "department == Engineering"}'
 ```
 
-### 8.2 Listing and Deleting ACL
+### 10.2 Listing and Deleting ACL
 
 ```bash
 # List all ACLs for a dataset
@@ -498,11 +502,11 @@ curl http://localhost:8000/api/v1/admin/acl/articles -H "X-API-Key: admin-key"
 curl -X DELETE http://localhost:8000/api/v1/admin/acl/articles/viewer -H "X-API-Key: admin-key"
 ```
 
-### 8.3 How It Works
+### 10.3 How It Works
 
 - **Column pruning**: Invisible columns are removed from query/search results before response serialization
 - **Row filtering**: Simple `column op value` expressions (`==`, `!=`, `<`, `<=`, `>`, `>=`) filter rows from results
-- **Admin bypass**: The `admin` role always sees all data, regardless of ACL configuration
+- **Admin bypass**: The `admin` role (via Role enum since v1.5.2) always sees all data, regardless of ACL configuration
 - **No ACL = no filtering**: If no ACL is configured for a role+dataset, results pass through unchanged
 - **Applied automatically**: All query (OLAP/metadata/Daft) and search (vector/FTS/hybrid/faceted/ensemble) endpoints apply ACL
 

@@ -74,9 +74,11 @@ def main() -> None:
 
     # STEP 3: 查看详情
     print("STEP 3: 数据集详情")
+    catalog = lake.catalog()
     for name in datasets:
-        ds = lake.open_dataset(name)
-        print(f"  {name}: {ds.count_rows()} 行, {len(ds.schema)} 列")
+        if name in catalog.datasets:
+            ds = catalog.datasets[name]
+            print(f"  {name}: {ds.num_rows} 行")
     print("  [PASS]\n")
 
     # --- STEP 4: 导出 ---

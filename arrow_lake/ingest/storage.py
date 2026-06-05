@@ -402,5 +402,69 @@ class LanceStorageManager(
             logger.debug("cleanup_old_versions_failed", dataset=dataset_name, exc_info=True)
             return 0
 
+    # ------------------------------------------------------------------
+    # Tag operations
+    # ------------------------------------------------------------------
+
+    def create_tag(self, dataset_name: str, tag: str, version: int | None = None) -> None:
+        """Create a named tag for a dataset version.
+
+        Args:
+            dataset_name: Dataset to tag.
+            tag: Tag name (e.g. "clean_baseline", "v1").
+            version: Version to tag. If None, tags the latest version.
+        """
+        self._validate_name(dataset_name)
+        self._validate_identifier(tag, label="tag")
+        ds = self._open_lance(self._get_dataset_path(dataset_name))
+        ver = version if version is not None else ds.version
+        ds.tags.create(tag, ver)
+
+    def read_at_tag(self, dataset_name: str, tag: str) -> pa.Table:
+        """Read dataset data at a specific tag.
+
+        Args:
+            dataset_name: Dataset name.
+            tag: Tag name to read at.
+
+        Returns:
+            Arrow Table with the data at the tagged version.
+        """
+        self._validate_name(dataset_name)
+        self._validate_identifier(tag, label="tag")
+        ds = self._open_lance(self._get_dataset_path(dataset_name))
+        tag_version = ds.tags.get(tag)
+        ds_at = self._open_lance(self._get_dataset_path(dataset_name))
+        ds_at.checkout_version(tag_version)
+        return ds_at.to_arrow()
+
+    def list_tags(self, dataset_name: str) -> dict[str, int]:
+        """List all tags for a dataset.
+
+        Args:
+            dataset_name: Dataset name.
+
+        Returns:
+            Dict mapping tag name -> version number.
+        """
+        self._validate_name(dataset_name)
+        ds = self._open_lance(self._get_dataset_path(dataset_name))
+        try:
+            return ds.tags.list()
+        except Exception:
+            return {}
+
+    def delete_tag(self, dataset_name: str, tag: str) -> None:
+        """Delete a named tag from a dataset.
+
+        Args:
+            dataset_name: Dataset name.
+            tag: Tag name to delete.
+        """
+        self._validate_name(dataset_name)
+        self._validate_identifier(tag, label="tag")
+        ds = self._open_lance(self._get_dataset_path(dataset_name))
+        ds.tags.delete(tag)
+
 
 __all__ = ["CompactionStats", "LanceStorageManager"]

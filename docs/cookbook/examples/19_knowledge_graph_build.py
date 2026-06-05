@@ -47,7 +47,7 @@ async def run_async() -> None:
     config.hugegraph.host = "localhost"
     config.hugegraph.port = 8089
     config.hugegraph.graph_name = "hugegraph"
-    lake = Lake(base_uri=args.base_uri, config=config)
+    lake = Lake(base_uri=args.base_uri, arrow_lake_config=config)
 
     task_id = ""
 
@@ -62,8 +62,7 @@ async def run_async() -> None:
         # STEP 1: 摄入论文数据
         print("STEP 1: 摄入中文论文数据")
         report = lake.ingest("papers_zh", [str(DATAS_DIR / "papers" / "metadata_zh.csv")])
-        ds = lake.open_dataset("papers_zh")
-        print(f"  摄入: {report.total_rows} 行, {len(ds.schema)} 列")
+        print(f"  摄入: {report.total_rows} 行")
 
         # STEP 2: 检查 KG 服务
         print("\nSTEP 2: 检查 HugeGraph 连接")

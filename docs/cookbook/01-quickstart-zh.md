@@ -15,7 +15,7 @@
 
 ```bash
 # 克隆仓库
-git clone https://github.com/your-org/wits-infra-dintellihub.git
+git clone https://github.com/witshine/wits-infra-dintellihub.git
 cd wits-infra-dintellihub
 
 # 使用 uv 安装所有依赖 (推荐)
@@ -35,7 +35,7 @@ arrow-lake version
 # ┌───────────┬──────────┐
 # │ Component │ Version  │
 # ├───────────┼──────────┤
-# │ arrow-lake│ 1.2.1    │
+# │ arrow-lake│ 1.5.3    │
 # │ python    │ 3.12.4   │
 # │ daft      │ 0.7.8    │
 # │ pyarrow   │ 23.0.1   │
@@ -73,6 +73,7 @@ more_data = pa.table({
 lake.append_dataset("users", more_data)
 
 # 4. SQL 查询
+# 注意：SQL 中的表名必须与 dataset 名称一致（"users"）
 result = lake.query("users", "SELECT * FROM users WHERE age > 26")
 print(result.to_pandas())
 
@@ -85,6 +86,7 @@ olap_result = lake.olap_query(
 print(olap_result.table.to_pandas())
 
 # 6. 导出为 Parquet
+# 注意：父目录 "output/" 必须事先存在
 lake.export("users", "output/users.parquet", columns=["name", "age"])
 
 # 7. 查看目录
@@ -94,6 +96,11 @@ for ds in catalog.datasets:
 
 # 8. 清理
 lake.shutdown()
+
+# 提示：使用上下文管理器自动清理
+# with Lake(base_uri="./my_lake") as lake:
+#     lake.create_dataset("users", data)
+#     # ... 退出时自动调用 lake.shutdown()
 ```
 
 ***
@@ -169,7 +176,7 @@ arrow-lake demo --no-cleanup
 Arrow Lake 使用 [Lance](https://lancedb.github.io/lance/) 列式格式存储数据。
 初始化后，`base_uri` 目录结构如下：
 
-```
+```text
 my_lake/                          # base_uri 根目录
 ├── users/                        # dataset 名称
 │   ├── .lance/                   # Lance 元数据目录
@@ -195,7 +202,7 @@ my_lake/                          # base_uri 根目录
 | **dataset**   | 一个 Lance dataset，等价于一张表                   |
 | **version**   | Lance 原生版本控制，每次写入自增                       |
 | **base\_uri** | Lake 存储根目录，支持本地路径或 S3 URI                 |
-| **S3 后端**     | 设为 `s3://bucket/prefix` 即可使用 MinIO/AWS S3 |
+| **S3 后端**     | 设为 `s3://bucket/prefix` 即可使用 MinIO/AWS S3。凭证配置参见 [03-配置系统](./03-configuration-zh.md#3-存储配置-storageconfig)。 |
 
 ***
 
@@ -235,10 +242,17 @@ lake = Lake.from_yaml("config.yaml", base_uri="./production_data")
 完成快速入门后，可以继续探索以下 Cookbook 章节：
 
 * **[02-数据摄取指南](./02-ingestion-zh.md)** — CSV/JSON/Parquet/图像/视频/PDF 多模态摄取
-* **向量搜索** — `lake.search()`, `lake.hybrid_search()`, `lake.faceted_search()`
-* **OLAP 分析** — `lake.olap_query()`, `lake.materialize()`
-* **RAG 问答** — `lake.rag_query()`, `lake.rag_extract()`
-* **REST API** — `arrow-lake serve` 启动后访问 `/docs` 查看完整接口
+* **[04-向量搜索](./04-vector-search-zh.md)** — `lake.search()`, `lake.create_vector_index()`
+* **[05-全文搜索](./05-fulltext-search-zh.md)** — `lake.text_search()`, `lake.create_fts_index()`
+* **[06-混合与分面搜索](./06-hybrid-faceted-zh.md)** — `lake.hybrid_search()`, `lake.faceted_search()`, `lake.ensemble_search()`
+* **[07-OLAP 分析](./07-olap-analytics-zh.md)** — `lake.olap_query()`, `lake.materialize()`, `lake.daft_query()`
+* **[08-RAG 问答管线](./08-rag-pipeline-zh.md)** — `lake.rag_query()`, `lake.rag_extract()`, 流式 RAG
+* **[09-知识图谱](./09-knowledge-graph-zh.md)** — `lake.kg_build()`, `lake.kg_query()`, GraphRAG
+* **[10-REST API 指南](./10-rest-api-zh.md)** — `arrow-lake serve` 启动后完整 HTTP API 参考
+* **[11-数据质量与去重](./11-quality-dedup-zh.md)** — `lake.quality_filter()`, `lake.deduplicate()`
+* **[12-部署与运维](./12-deployment-zh.md)** — Docker、Helm、生产环境检查清单
+* **[13-CLI 参考](./13-cli-reference.md)** — CLI 完全命令参考手册
+* **[15-Gravitino](./15-gravitino-metadata-zh.md)** — Apache Gravitino 元数据治理
 
 ***
 

@@ -26,22 +26,21 @@ DATASET = "knowledge_zh"
 DIM = 768
 
 
-def _add_vectors(lake: Lake) -> int:
-    """生成嵌入向量并合并到数据集 (优先 embed_and_add, 失败则随机向量)"""
-    try:
-        return lake.embed_and_add(DATASET)
-    except Exception:
-        import numpy as np
-        rng = np.random.RandomState(42)
-        ds = lake.open_dataset(DATASET)
-        n = ds.count_rows()
-        vecs = rng.randn(n, DIM).astype(np.float32)
-        vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
-        vec_table = pa.table({
-            "text_embedding": pa.FixedSizeListArray.from_arrays(vecs.ravel(), DIM),
-        })
-        lake.add_columns_table(DATASET, vec_table)
-        return n
+def _add_vectors(lake: Lake, n_rows: int) -> int:
+    """生成随机向量并追加到数据集 (模拟嵌入模型输出)"""
+    rng = np.random.RandomState(42)
+    vecs = rng.randn(n_rows, DIM).astype(np.float32)
+    vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
+    # 构造仅含 text_embedding 列的 Arrow Table
+    vec_table = pa.table({
+        "text_embedding": pa.FixedSizeListArray.from_arrays(vecs.ravel(), DIM),
+    })
+    # 将向量列合并到已有数据集：读取原表，拼接 embedding 列，覆盖写入
+    original = lake.read_dataset(DATASET)
+    combined = original.append_column("text_embedding", vec_table.column("text_embedding"))
+    lake.delete_dataset(DATASET)
+    lake.create_dataset(DATASET, combined)
+    return n_rows
 
 
 def _print_results(result, top: int = 5) -> None:
@@ -85,29 +84,31 @@ def main() -> None:
 
     # --- STEP 2: 追加向量列 ---
     print("STEP 2: 生成并追加向量列 (模拟嵌入模型)")
-    _add_vectors(lake)
+    _add_vectors(lake, report.total_rows)
     print("  [PASS]\n")
 
     # --- STEP 3: 创建向量索引 ---
     print("STEP 3: 创建向量索引 (IVF_PQ)")
     try:
-        idx = lake.create_vector_index(DATASET, vector_column="text_embedding",
-                                      metric="cosine", index_type="IVF_PQ")
+        idx = lake.create_vector_index(DATASET, "text_embedding",
+                                      index_type="ivf_pq", metric="cosine")
         print(f"  索引类型: {idx.index_type}")
+        print("  [PASS]\n")
     except Exception as e:
         print(f"  跳过 (数据量不足): {e}")
-    print("  [PASS]\n")
+        print("  [SKIP]\n")
 
     # --- STEP 4: 创建全文索引 ---
     print("STEP 4: 创建全文索引 (jieba 中文分词)")
-    lake.create_fts_index(DATASET, fts_column="text_content")
+    lake.create_fts_index(DATASET, columns=["text_content"])
     print("  [PASS]\n")
 
     # --- STEP 5: 向量搜索 ---
     print("STEP 5: 向量搜索 — '向量数据库'")
-    rng = np.random.RandomState(42)
-    query_vec = rng.randn(DIM).astype(np.float32).tolist()
-    result = lake.search(DATASET, query_vec, top_k=5, vector_column="text_embedding")
+    # Use the first vector from the actual dataset as the query vector
+    dataset_table = lake.read_dataset(DATASET)
+    query_vec = dataset_table.column("text_embedding")[0].as_py()
+    result = lake.search(DATASET, query_vec, "text_embedding", top_k=5)
     print(f"  结果: {result.row_count} 条")
     _print_results(result)
     print("  [PASS]\n")
@@ -115,16 +116,15 @@ def main() -> None:
     # --- STEP 6: 全文搜索 ---
     print("STEP 6: 全文搜索 — '列式存储 零拷贝'")
     result = lake.text_search(DATASET, "列式存储 零拷贝", top_k=5,
-                              fts_column="text_content")
+                              columns=["text_content"])
     print(f"  结果: {result.row_count} 条")
     _print_results(result)
     print("  [PASS]\n")
 
     # --- STEP 7: 混合搜索 ---
     print("STEP 7: 混合搜索 (RRF 融合) — '内存格式'")
-    result = lake.hybrid_search(DATASET, query_vec, "内存格式", top_k=5,
-                                vector_column="text_embedding",
-                                fts_column="text_content")
+    result = lake.hybrid_search(DATASET, "内存格式", "text_embedding", top_k=5,
+                                fts_columns=["text_content"])
     print(f"  结果: {result.row_count} 条")
     _print_results(result)
     print("  [PASS]\n")

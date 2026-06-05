@@ -1,5 +1,7 @@
 # OLAP Analytics Queries
 
+> Version: 1.5.3
+
 Arrow Lake delivers high-performance OLAP analytics through DuckDB's zero-copy Arrow
 integration, supporting GROUP BY aggregation, window functions, JOINs, and materialized
 views.
@@ -40,7 +42,10 @@ result = lake.olap_query(
 )
 ```
 
-> `sql_query()` is a semantic alias for `olap_query()` -- the two are fully equivalent.
+> **Note**: `Lake.sql_query()` is a lower-level alternative that returns a `pa.Table`
+> directly (without the `OlapQueryResult` wrapper). `Lake.query()` returns a
+> `MetadataQueryResult` for metadata-oriented queries. Use `olap_query()` when you need
+> row/column counts and metadata, and `sql_query()` when you just need the raw Arrow table.
 
 ***
 
@@ -138,13 +143,13 @@ lake = Lake(base_uri="./data", config=config)
 **Creating a materialized view**:
 
 ```python
-rows = lake.materialize(
+view_name = lake.materialize(
     "sales",
     "SELECT category, SUM(amount) as total FROM sales GROUP BY category",
     view_name="category_summary",
     ttl_days=7,
 )
-print(f"Materialized {rows} rows")
+print(f"Materialized view created: {view_name}")
 ```
 
 Parameter reference:
@@ -206,8 +211,14 @@ from arrow_lake import Lake
 
 lake = Lake(base_uri="./data")
 
-# Load as a lazy Daft DataFrame
+# Load as a lazy Daft DataFrame with optional column selection and filtering
 df = lake.daft_query("sales")
+df_filtered = lake.daft_query(
+    "sales",
+    columns=["product", "category", "amount"],
+    filter="amount > 50",
+    limit=1000,
+)
 
 # Chained operations: select -> filter -> sort -> collect
 result = (
@@ -222,9 +233,16 @@ print(result.to_pandas())
 **Grouped aggregation**:
 
 ```python
+import daft
+
 grouped = df.select("category", "amount").groupby("category")
-agg_result = grouped.collect()
-print(agg_result.to_pandas())
+# Apply aggregation expressions to get a concrete result
+agg_result = grouped.agg(
+    daft.col("amount").sum().alias("total"),
+    daft.col("amount").mean().alias("avg_amount"),
+    daft.col("amount").count().alias("count"),
+)
+print(agg_result.collect().to_pandas())
 ```
 
 **Multi-table JOIN**:
@@ -237,6 +255,14 @@ joined = df1.join(df2, on="product_id", how="inner")
 result = joined.collect()
 print(result.to_pandas())
 ```
+
+`daft_query()` parameter reference:
+
+| Parameter  | Type                | Description                       |
+| ---------- | ------------------- | --------------------------------- |
+| `columns`  | `list[str] \| None` | Select only these columns         |
+| `filter`   | `str \| None`       | SQL-style filter expression       |
+| `limit`    | `int \| None`       | Maximum number of rows to return  |
 
 Available `LazyDaftFrame` operations:
 
@@ -254,7 +280,7 @@ Available `LazyDaftFrame` operations:
 ## 8. Exporting Data
 
 `Lake.export()` exports a dataset to Parquet or CSV files with support for column
-selection, version pinning, and compression configuration.
+selection, version pinning, and compression configuration. Returns an `ExportResult`.
 
 ```python
 from arrow_lake import Lake
@@ -263,7 +289,7 @@ lake = Lake(base_uri="./data")
 
 # Export to Parquet (format auto-detected from extension)
 result = lake.export("sales", "output/sales_export.parquet")
-print(f"Export complete: {result}")
+print(f"Export complete: {result}")  # ExportResult with path, format, row_count
 
 # Export specific columns
 result = lake.export(

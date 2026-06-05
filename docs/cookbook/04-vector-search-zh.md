@@ -24,7 +24,7 @@ print(f"已索引行数：{info.num_indexed_rows}")
 # 3. 执行向量搜索
 import numpy as np
 query_vec = np.random.randn(1024).tolist()  # 替换为真实查询向量
-result = lake.search("docs", query_vector=query_vec, top_k=5)
+result = lake.search("docs", query_vec, top_k=5)
 print(f"返回 {result.row_count} 条结果，度量：{result.metric}")
 
 for i in range(result.row_count):
@@ -122,6 +122,25 @@ print(f"覆盖列：{info.columns}")
 
 使用 `lake.search()` 执行向量相似度搜索。双路径策略：优先 DuckDB 原生 `lance_vector_search()`，失败时回退 LanceDB SDK。
 
+### API 签名
+
+```python
+def search(
+    self,
+    dataset_name: str,
+    query_vector: list[float],          # 查询 embedding 向量 (位置参数)
+    *,
+    top_k: int = 10,                    # 返回数量
+    metric: str | None = None,          # 距离度量：cosine / l2 / dot
+    vector_column: str = "text_embedding",  # 向量列名
+    where: str | None = None,           # 元数据过滤表达式
+    nprobes: int | None = None,         # IVF 探测分区数
+    version: int | None = None,         # 数据集版本 (时间旅行查询)
+) -> VectorSearchResult: ...
+```
+
+### 基本用法
+
 ```python
 from arrow_lake import Lake
 import numpy as np
@@ -132,12 +151,12 @@ lake = Lake(base_uri="./data")
 query_vector = np.random.randn(1024).tolist()
 
 # 基础搜索
-result = lake.search("docs", query_vector=query_vector, top_k=5)
+result = lake.search("docs", query_vector, top_k=5)
 
 # 带度量指定
 result = lake.search(
     "docs",
-    query_vector=query_vector,
+    query_vector,
     top_k=10,
     metric="cosine",
     vector_column="text_embedding",
@@ -146,16 +165,19 @@ result = lake.search(
 # 带元数据过滤
 result = lake.search(
     "docs",
-    query_vector=query_vector,
+    query_vector,
     top_k=5,
     where="category = 'tech'",
 )
+
+# 时间旅行查询 (搜索指定数据集版本)
+result = lake.search("docs", query_vector, top_k=5, version=3)
 ```
 
-搜索返回 `VectorSearchResult` (包含 PyArrow Table):
+### 返回类型：VectorSearchResult
 
 ```python
-result = lake.search("docs", query_vector=query_vector, top_k=5)
+result = lake.search("docs", query_vector, top_k=5)
 print(f"返回行数：{result.row_count}, 维度：{result.query_vector_dim}")
 print(f"度量：{result.metric}, 最大距离：{result.max_distance}")
 
@@ -173,16 +195,16 @@ for row in result.table.to_pylist():
 
 ```python
 # 等值过滤
-result = lake.search("docs", query_vector=qv, where="category = 'AI'")
+result = lake.search("docs", qv, where="category = 'AI'")
 
 # 数值范围 + 组合条件
-result = lake.search("docs", query_vector=qv, where="category = 'AI' AND year >= 2023")
+result = lake.search("docs", qv, where="category = 'AI' AND year >= 2023")
 
 # IN 操作
-result = lake.search("docs", query_vector=qv, where="status IN ('published', 'reviewed')")
+result = lake.search("docs", qv, where="status IN ('published', 'reviewed')")
 
 # 字符串匹配
-result = lake.search("docs", query_vector=qv, where="title LIKE '%机器学习%'")
+result = lake.search("docs", qv, where="title LIKE '%机器学习%'")
 ```
 
 > **安全**: Arrow Lake 内部会检查危险 SQL 关键字，但不应将未经净化的用户输入直接拼入 where 表达式。
@@ -236,13 +258,13 @@ config.vector.num_sub_vectors = 24  # 1024 / 24 ≈ 42 维/子向量
 
 ```python
 # 快速搜索（低召回）
-result = lake.search("docs", query_vector=qv, top_k=10, nprobes=5)
+result = lake.search("docs", qv, top_k=10, nprobes=5)
 
 # 平衡模式（默认）
-result = lake.search("docs", query_vector=qv, top_k=10, nprobes=20)
+result = lake.search("docs", qv, top_k=10, nprobes=20)
 
 # 高召回搜索
-result = lake.search("docs", query_vector=qv, top_k=10, nprobes=128)
+result = lake.search("docs", qv, top_k=10, nprobes=128)
 
 # 注意：nprobes 硬上限为 max_nprobes (默认 256)
 ```
@@ -282,27 +304,103 @@ config = VectorSearchConfig(metric=DistanceMetric.DOT)
 
 ***
 
-## 7. 查询索引信息
+## 7. 索引管理
+
+### 7.1 查询索引信息
 
 ```python
 from arrow_lake import Lake
-from arrow_lake.query.vector import VectorSearchBridge
 
 lake = Lake(base_uri="./data")
-info = lake.create_vector_index("docs", metric="cosine")
-print(info)
-# IndexInfo(name='...', index_type='IVF_PQ', distance_type='cosine', ...)
 
-# 通过底层 bridge 查询已有索引
-bridge = VectorSearchBridge(lake._get_storage())
-info = bridge.get_index_info("docs", vector_column="text_embedding")
+# 获取指定向量索引的信息
+info = lake.get_vector_index_info("docs", vector_column="text_embedding")
 if info is None:
     print("没有向量索引，将使用暴力搜索")
+else:
+    print(f"索引：{info.index_type}, 度量：{info.distance_type}")
+    print(f"已索引：{info.num_indexed_rows}, 未索引：{info.num_unindexed_rows}")
+```
+
+### 7.2 列出所有索引
+
+```python
+# 列出数据集上的所有向量索引
+indexes = lake.list_vector_indexes("docs")
+for idx in indexes:
+    print(f"  {idx.index_type} on {idx.columns}, metric={idx.distance_type}")
+```
+
+### 7.3 重建索引
+
+重建会删除已有索引并用更新后的参数创建新索引：
+
+```python
+# 用相同参数重建 (数据变更后使用)
+info = lake.rebuild_vector_index("docs", vector_column="text_embedding")
+
+# 用新参数重建
+info = lake.rebuild_vector_index(
+    "docs",
+    metric="cosine",
+    vector_column="text_embedding",
+    index_type="IVF_PQ",
+    num_partitions=512,
+    num_sub_vectors=32,
+)
+print(f"重建完成：{info.index_type}, {info.num_indexed_rows} 行")
+```
+
+### 7.4 删除索引
+
+```python
+# 按名称删除向量索引
+lake.delete_vector_index("docs", "docs_text_embedding_idx")
+```
+
+### 7.5 FTS 索引管理
+
+```python
+# 删除全文搜索索引
+lake.delete_fts_index("docs")
+
+# 获取 FTS 索引信息
+fts_info = lake.get_fts_index_info("docs")
+if fts_info is not None:
+    print(f"FTS 索引：{fts_info['name']}, 列：{fts_info['columns']}")
 ```
 
 ***
 
-## 8. 完整示例：从零开始的向量搜索
+## 8. REST API
+
+```bash
+# 创建向量索引
+curl -X POST http://localhost:8000/api/v1/datasets/docs/index/vector \
+  -H "Content-Type: application/json" \
+  -d '{"metric": "cosine", "index_type": "IVF_PQ", "vector_column": "text_embedding"}'
+
+# 向量搜索
+curl -X POST http://localhost:8000/api/v1/datasets/docs/search/vector \
+  -H "Content-Type: application/json" \
+  -d '{"query_vector": [0.1, 0.2, ...], "top_k": 10, "metric": "cosine"}'
+
+# 文本 Embedding (通过 API 计算向量)
+curl -X POST http://localhost:8000/api/v1/embed/text \
+  -H "Content-Type: application/json" \
+  -d '{"texts": ["机器学习入门教程", "深度学习指南"]}'
+```
+
+| 端点                            | 方法 | 说明         |
+| ----------------------------- | --- | ---------- |
+| `/{name}/index/vector`        | POST | 创建向量索引    |
+| `/{name}/search/vector`       | POST | 向量相似度搜索   |
+| `/embed/text`                 | POST | 计算文本 embedding |
+| `/embed/image`                | POST | 计算图像 embedding |
+
+***
+
+## 9. 完整示例：从零开始的向量搜索
 
 ```python
 import pyarrow as pa
@@ -336,7 +434,7 @@ print(f"索引创建完成：{info.index_type}, {info.num_indexed_rows} 行")
 
 # 5. 搜索
 query_vec = np.random.randn(1024).tolist()
-result = lake.search("articles", query_vector=query_vec, top_k=3, where="year = 2024")
+result = lake.search("articles", query_vec, top_k=3, where="year = 2024")
 
 # 6. 输出结果
 for row in result.table.to_pylist():

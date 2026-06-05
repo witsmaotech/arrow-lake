@@ -43,7 +43,7 @@ def main() -> None:
 
     config = ArrowLakeConfig()
     config.olap.ducklake_enabled = True
-    lake = Lake(base_uri=args.base_uri, config=config)
+    lake = Lake(base_uri=args.base_uri, arrow_lake_config=config)
 
     # 清理后端残留
     for ds in _DATASETS:
@@ -83,11 +83,11 @@ def main() -> None:
     # --- STEP 4: 物化视图 ---
     print("STEP 4: 创建物化视图 (品类月报)")
     try:
-        row_count = lake.materialize(DATASET,
+        view_id = lake.materialize(DATASET,
             "SELECT 商品类别, COUNT(*) as 订单数, ROUND(SUM(金额),2) as 总额 "
             "FROM transactions GROUP BY 商品类别",
             view_name="category_summary", ttl_days=7)
-        print(f"  物化视图: category_summary ({row_count} 行)")
+        print(f"  物化视图: category_summary (id={view_id})")
     except Exception as e:
         print(f"  跳过 (DuckLake 未启用): {e}")
     print("  [PASS]\n")

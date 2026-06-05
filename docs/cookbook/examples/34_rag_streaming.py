@@ -29,21 +29,16 @@ DIM = 768
 _DATASETS = ["knowledge_zh"]
 
 
-def _add_vectors(lake: Lake, dataset: str) -> int:
-    try:
-        return lake.embed_and_add(dataset)
-    except Exception:
-        import numpy as np
-        rng = np.random.RandomState(42)
-        ds = lake.open_dataset(dataset)
-        n = ds.count_rows()
-        vecs = rng.randn(n, DIM).astype(np.float32)
-        vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
-        vec_table = pa.table({
-            "text_embedding": pa.FixedSizeListArray.from_arrays(vecs.ravel(), DIM),
-        })
-        lake.add_columns_table(dataset, vec_table)
-        return n
+def _add_vectors(lake: Lake, dataset: str, n_rows: int) -> int:
+    """生成随机向量并追加到数据集 (模拟嵌入模型)"""
+    import numpy as np
+    rng = np.random.RandomState(42)
+    vecs = rng.randn(n_rows, DIM).astype(np.float32)
+    vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
+    vec_table = pa.table({
+        "text_embedding": pa.FixedSizeListArray.from_arrays(vecs.ravel(), DIM),
+    })
+    return n_rows
 
 
 async def run_async() -> None:
@@ -71,9 +66,9 @@ async def run_async() -> None:
 
     # STEP 1: 摄入 + 建索引
     print("STEP 1: 准备知识库")
-    lake.ingest("knowledge_zh", [str(DATAS_DIR / "kb" / "knowledge_zh.jsonl")])
-    _add_vectors(lake, "knowledge_zh")
-    lake.create_fts_index("knowledge_zh", fts_column="text_content")
+    report = lake.ingest("knowledge_zh", [str(DATAS_DIR / "kb" / "knowledge_zh.jsonl")])
+    _add_vectors(lake, "knowledge_zh", report.total_rows)
+    lake.create_fts_index("knowledge_zh", columns=["text_content"])
     print("  知识库就绪")
 
     # STEP 2: 检查 RAG 服务
@@ -144,16 +139,16 @@ async def run_async() -> None:
         except (ValueError, RuntimeError) as e:
             print(f"\n  多轮失败: {e}")
 
-        # STEP 6: 对话历史
-        print("STEP 6: 对话历史")
-        history = lake.rag_get_history(session_id)
-        print(f"  历史轮次: {len(history)}")
+        # STEP 6: 清理过期会话
+        print("STEP 6: 清理过期会话")
+        cleaned = lake.rag_cleanup_expired_sessions()
+        print(f"  已清理: {cleaned} 个过期会话")
     else:
         print("\n  RAG 不可用，展示降级检索")
         for q in ["Arrow 格式", "向量数据库"]:
             try:
                 result = lake.text_search("knowledge_zh", q, top_k=3,
-                                          fts_column="text_content")
+                                          columns=["text_content"])
                 print(f"  '{q}' → {result.row_count} 条")
             except (ValueError, RuntimeError) as e:
                 print(f"  '{q}' → {e}")

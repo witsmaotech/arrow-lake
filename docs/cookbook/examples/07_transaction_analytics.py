@@ -39,7 +39,7 @@ def main() -> None:
 
     config = ArrowLakeConfig()
     config.olap.ducklake_enabled = True
-    lake = Lake(base_uri=args.base_uri, config=config)
+    lake = Lake(base_uri=args.base_uri, arrow_lake_config=config)
 
     # 清理后端残留
     for ds in _DATASETS:
@@ -56,7 +56,7 @@ def main() -> None:
 
     # --- STEP 2: 去重 ---
     print("STEP 2: 精确去重")
-    result = lake.deduplicate(DATASET, strategy="exact", action="flag")
+    result = lake.deduplicate(DATASET, strategy="exact", columns=["订单号"], action="delete")
     print(f"  重复订单: {result.duplicates_found}")
     print("  [PASS]\n")
 
@@ -87,11 +87,11 @@ def main() -> None:
     # --- STEP 4: 物化视图 ---
     print("STEP 4: 物化视图 (用户消费汇总)")
     try:
-        row_count = lake.materialize(DATASET,
+        view_id = lake.materialize(DATASET,
             "SELECT 用户编号, COUNT(*) as 订单数, ROUND(SUM(金额),2) as 总消费 "
             "FROM transactions GROUP BY 用户编号",
             view_name="user_summary", ttl_days=7)
-        print(f"  物化: user_summary ({row_count} 行)")
+        print(f"  物化: user_summary (id={view_id})")
     except Exception as e:
         print(f"  跳过 (DuckLake 未启用): {e}")
     print("  [PASS]\n")

@@ -104,8 +104,7 @@ async def run_async() -> None:
 
     # STEP 4: 批量抽取
     print("\nSTEP 4: 批量抽取知识库")
-    ds = lake.open_dataset("knowledge_zh")
-    table = ds.to_arrow()
+    table = lake.query("knowledge_zh", "SELECT * FROM knowledge_zh").table
     text_col = "text_content" if "text_content" in table.column_names else None
     if text_col is None:
         print("  跳过: 无 text_content 列")

@@ -1,5 +1,7 @@
 # OLAP 分析查询
 
+> 版本：1.5.3
+
 Arrow Lake 通过 DuckDB 零拷贝 Arrow 集成提供高性能 OLAP 分析能力，支持
 GROUP BY 聚合、窗口函数、JOIN 以及物化视图。
 
@@ -38,7 +40,9 @@ result = lake.olap_query(
 )
 ```
 
-> `sql_query()` 是 `olap_query()` 的语义别名，两者完全等价。
+> **注意**：`Lake.sql_query()` 是更低层的替代方法，直接返回 `pa.Table`（不包装为
+> `OlapQueryResult`）。`Lake.query()` 返回 `MetadataQueryResult`，用于元数据查询。
+> 需要行/列计数和元数据时使用 `olap_query()`，只需原始 Arrow 表时使用 `sql_query()`。
 
 ***
 
@@ -134,13 +138,13 @@ lake = Lake(base_uri="./data", config=config)
 **创建物化视图**：
 
 ```python
-rows = lake.materialize(
+view_name = lake.materialize(
     "sales",
     "SELECT category, SUM(amount) as total FROM sales GROUP BY category",
     view_name="category_summary",
     ttl_days=7,
 )
-print(f"物化完成，写入 {rows} 行")
+print(f"物化视图已创建：{view_name}")
 ```
 
 参数说明：
@@ -202,8 +206,14 @@ from arrow_lake import Lake
 
 lake = Lake(base_uri="./data")
 
-# 加载为延迟 Daft DataFrame
+# 加载为延迟 Daft DataFrame，支持列选择和过滤
 df = lake.daft_query("sales")
+df_filtered = lake.daft_query(
+    "sales",
+    columns=["product", "category", "amount"],
+    filter="amount > 50",
+    limit=1000,
+)
 
 # 链式操作：选择列 -> 过滤 -> 排序 -> 收集
 result = (
@@ -218,9 +228,16 @@ print(result.to_pandas())
 **分组聚合**：
 
 ```python
+import daft
+
 grouped = df.select("category", "amount").groupby("category")
-agg_result = grouped.collect()
-print(agg_result.to_pandas())
+# 应用聚合表达式获得具体结果
+agg_result = grouped.agg(
+    daft.col("amount").sum().alias("total"),
+    daft.col("amount").mean().alias("avg_amount"),
+    daft.col("amount").count().alias("count"),
+)
+print(agg_result.collect().to_pandas())
 ```
 
 **多表 JOIN**：
@@ -233,6 +250,14 @@ joined = df1.join(df2, on="product_id", how="inner")
 result = joined.collect()
 print(result.to_pandas())
 ```
+
+`daft_query()` 参数说明：
+
+| 参数       | 类型                  | 说明               |
+| ---------- | ------------------- | ---------------- |
+| `columns`  | `list[str] \| None` | 只选择这些列          |
+| `filter`   | `str \| None`       | SQL 风格的过滤表达式    |
+| `limit`    | `int \| None`       | 返回的最大行数         |
 
 `LazyDaftFrame` 支持的操作：
 
@@ -250,7 +275,7 @@ print(result.to_pandas())
 ## 8. 导出数据
 
 `Lake.export()` 将数据集导出为 Parquet 或 CSV 文件，支持列选择、版本指定
-和压缩配置。
+和压缩配置。返回 `ExportResult`。
 
 ```python
 from arrow_lake import Lake
@@ -259,7 +284,7 @@ lake = Lake(base_uri="./data")
 
 # 导出为 Parquet（自动从后缀推断格式）
 result = lake.export("sales", "output/sales_export.parquet")
-print(f"导出完成：{result}")
+print(f"导出完成：{result}")  # ExportResult 包含 path, format, row_count
 
 # 导出指定列
 result = lake.export(

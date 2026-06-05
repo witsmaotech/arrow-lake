@@ -59,14 +59,14 @@ lake.shutdown()
 
 Reciprocal Rank Fusion 在 `HybridSearchBridge._rrf_fuse()` 中实现：
 
-```
+```text
 score(doc) = SUM( 1 / (rank(doc, list_i) + k) )
 ```
 
 * `rank(doc, list_i)`: 文档在第 i 个排序列表中的排名 (从 0 开始)
 * `k`: 平滑常数，默认 60 (论文推荐值)
 
-```
+```text
 向量搜索 top 3:              全文搜索 top 3:
   rank 0: 越野跑鞋              rank 0: 轻量级跑步运动鞋
   rank 1: 登山徒步鞋            rank 1: 儿童减震跑步鞋
@@ -92,13 +92,14 @@ score(doc) = SUM( 1 / (rank(doc, list_i) + k) )
 def hybrid_search(
     self,
     dataset_name: str,
-    query_vector: list[float],          # 查询 embedding 向量
-    query_text: str,                    # 查询文本 (用于 FTS)
+    query_vector: list[float],          # 查询 embedding 向量 (位置参数)
+    query_text: str,                    # 查询文本 (用于 FTS, 位置参数)
     *,
     top_k: int | None = None,           # 返回数量
     vector_column: str = "text_embedding",  # 向量列名
     fts_column: str | None = None,      # FTS 列名
     where: str | None = None,           # 元数据过滤
+    version: int | None = None,         # 数据集版本 (时间旅行查询)
 ) -> HybridSearchResult: ...
 ```
 
@@ -178,12 +179,13 @@ for dim, values in facet_dict.items():
 def faceted_search(
     self,
     dataset_name: str,
-    query_vector: list[float],       # 查询 embedding 向量
+    query_vector: list[float],       # 查询 embedding 向量 (位置参数)
     *,
     facets: list[str] | None = None, # 分面维度列名
     top_k: int = 10,
     vector_column: str = "embedding",
     where: str | None = None,        # 元数据过滤
+    version: int | None = None,      # 数据集版本 (时间旅行查询)
 ) -> FacetedSearchResult: ...
 ```
 
@@ -257,6 +259,7 @@ def ensemble_search(
     weights: dict[str, float] | None = None,# 各列权重
     top_k: int | None = None,               # 返回数量
     where: str | None = None,               # 元数据过滤
+    version: int | None = None,             # 数据集版本 (时间旅行查询)
 ) -> EnsembleSearchResult: ...
 ```
 
@@ -268,7 +271,7 @@ def ensemble_search(
 
 ## 6. 搜索策略选择指南
 
-```
+```text
 需要搜索?
   |
   +-- 精确关键词匹配 ------> text_search()

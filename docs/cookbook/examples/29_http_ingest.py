@@ -85,12 +85,12 @@ def main() -> None:
 
     # STEP 3: 查看数据集
     print("\nSTEP 3: 查看数据集")
+    catalog = lake.catalog()
     for name in _DATASETS:
         if name in lake.list_datasets():
-            ds = lake.open_dataset(name)
-            print(f"  {name}: {ds.count_rows()} 行, {len(ds.schema)} 列")
-            for f in ds.schema:
-                print(f"    - {f.name}: {f.type}")
+            ds = catalog.datasets.get(name)
+            rows = ds.num_rows if ds else "?"
+            print(f"  {name}: {rows} 行")
 
     # STEP 4: SQL 分析远程数据
     print("\nSTEP 4: SQL 分析远程数据")

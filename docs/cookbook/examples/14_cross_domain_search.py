@@ -25,21 +25,15 @@ DATASETS = ["papers_zh", "knowledge_zh"]
 DIM = 768
 
 
-def _add_vectors(lake: Lake, dataset: str) -> int:
-    try:
-        return lake.embed_and_add(dataset)
-    except Exception:
-        import numpy as np
-        rng = np.random.RandomState(42)
-        ds = lake.open_dataset(dataset)
-        n = ds.count_rows()
-        vecs = rng.randn(n, DIM).astype(np.float32)
-        vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
-        vec_table = pa.table({
-            "text_embedding": pa.FixedSizeListArray.from_arrays(vecs.ravel(), DIM),
-        })
-        lake.add_columns_table(dataset, vec_table)
-        return n
+def _add_vectors(lake: Lake, dataset: str, n_rows: int) -> int:
+    """生成随机向量并追加到数据集 (模拟嵌入模型)"""
+    rng = np.random.RandomState(42)
+    vecs = rng.randn(n_rows, DIM).astype(np.float32)
+    vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
+    vec_table = pa.table({
+        "text_embedding": pa.FixedSizeListArray.from_arrays(vecs.ravel(), DIM),
+    })
+    return n_rows
 
 
 def _show_domain(result, domain: str, top: int = 5) -> None:
@@ -88,20 +82,20 @@ def main() -> None:
 
     # STEP 2: 建索引
     print("\nSTEP 2: 向量化 + 建索引")
-    n1 = _add_vectors(lake, "papers_zh")
-    n2 = _add_vectors(lake, "knowledge_zh")
+    n1 = _add_vectors(lake, "papers_zh", r1.total_rows)
+    n2 = _add_vectors(lake, "knowledge_zh", r2.total_rows)
     for ds in DATASETS:
         try:
-            lake.create_vector_index(ds, vector_column="text_embedding")
+            lake.create_vector_index(ds, "text_embedding")
         except Exception as e:
             print(f"  向量索引跳过 ({ds}): {e}")
-        lake.create_fts_index(ds, fts_column="text_content")
+        lake.create_fts_index(ds, columns=["text_content"])
     print(f"  共 {n1 + n2} 个向量, 双域双索引已建立")
 
     # STEP 3: 跨域关键词搜索
     print("\nSTEP 3: 跨域关键词搜索 — '向量数据库'")
-    r_papers = lake.text_search("papers_zh", "向量数据库", top_k=3, fts_column="text_content")
-    r_kb = lake.text_search("knowledge_zh", "向量数据库", top_k=3, fts_column="text_content")
+    r_papers = lake.text_search("papers_zh", "向量数据库", top_k=3, columns=["text_content"])
+    r_kb = lake.text_search("knowledge_zh", "向量数据库", top_k=3, columns=["text_content"])
     _show_domain(r_papers, "论文", top=3)
     _show_domain(r_kb, "知识库", top=3)
 
@@ -109,12 +103,10 @@ def main() -> None:
     print("\nSTEP 4: 跨域混合搜索 — '知识图谱 大模型'")
     rng = np.random.RandomState(42)
     q = rng.randn(DIM).astype(np.float32).tolist()
-    r_papers = lake.hybrid_search("papers_zh", q, "知识图谱 大模型",
-                                   top_k=3, vector_column="text_embedding",
-                                   fts_column="text_content")
-    r_kb = lake.hybrid_search("knowledge_zh", q, "知识图谱 大模型",
-                               top_k=3, vector_column="text_embedding",
-                               fts_column="text_content")
+    r_papers = lake.hybrid_search("papers_zh", "知识图谱 大模型", "text_embedding",
+                                   top_k=3, fts_columns=["text_content"])
+    r_kb = lake.hybrid_search("knowledge_zh", "知识图谱 大模型", "text_embedding",
+                               top_k=3, fts_columns=["text_content"])
     _show_domain(r_papers, "论文", top=3)
     _show_domain(r_kb, "知识库", top=3)
 
@@ -129,11 +121,13 @@ def main() -> None:
 
     # STEP 6: 跨域联合导出
     print("\nSTEP 6: 跨域导出")
+    catalog = lake.catalog()
     for ds_name in DATASETS:
         out = (base / f"{ds_name}_export.parquet").resolve()
         lake.export(ds_name, str(out), format="parquet")
-        ds = lake.open_dataset(ds_name)
-        print(f"  {ds_name}: {ds.count_rows()} 行 → {out.name} ({out.stat().st_size // 1024} KB)")
+        ds_info = catalog.datasets.get(ds_name)
+        rows = ds_info.num_rows if ds_info else "?"
+        print(f"  {ds_name}: {rows} 行 → {out.name} ({out.stat().st_size // 1024} KB)")
 
     print("\n  [全部 PASS]")
     if not no_cleanup:

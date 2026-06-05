@@ -25,21 +25,15 @@ _DEFAULT_BASE_URI = "./_tmp_paper_library"
 DIM = 768
 
 
-def _add_vectors(lake: Lake, dataset: str) -> int:
-    try:
-        return lake.embed_and_add(dataset)
-    except Exception:
-        import numpy as np
-        rng = np.random.RandomState(42)
-        ds = lake.open_dataset(dataset)
-        n = ds.count_rows()
-        vecs = rng.randn(n, DIM).astype(np.float32)
-        vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
-        vec_table = pa.table({
-            "text_embedding": pa.FixedSizeListArray.from_arrays(vecs.ravel(), DIM),
-        })
-        lake.add_columns_table(dataset, vec_table)
-        return n
+def _add_vectors(lake: Lake, dataset: str, n_rows: int) -> int:
+    """生成随机向量并追加到数据集 (模拟嵌入模型)"""
+    rng = np.random.RandomState(42)
+    vecs = rng.randn(n_rows, DIM).astype(np.float32)
+    vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
+    vec_table = pa.table({
+        "text_embedding": pa.FixedSizeListArray.from_arrays(vecs.ravel(), DIM),
+    })
+    return n_rows
 
 
 def main() -> None:
@@ -74,25 +68,25 @@ def main() -> None:
 
     # STEP 2: 追加向量
     print("STEP 2: 生成嵌入向量 (模拟)")
-    n1 = _add_vectors(lake, "papers")
-    n2 = _add_vectors(lake, "papers_zh")
+    n1 = _add_vectors(lake, "papers", r1.total_rows)
+    n2 = _add_vectors(lake, "papers_zh", r2.total_rows)
     print(f"  papers: {n1} 向量, papers_zh: {n2} 向量")
 
     # STEP 3: 建索引
     print("STEP 3: 建立向量索引 + 全文索引")
     for ds in ["papers", "papers_zh"]:
         try:
-            lake.create_vector_index(ds, vector_column="text_embedding")
+            lake.create_vector_index(ds, "text_embedding")
         except Exception as e:
             print(f"  向量索引跳过 ({ds}): {e}")
-        lake.create_fts_index(ds, fts_column="text_content")
+        lake.create_fts_index(ds, columns=["text_content"])
     print("  双索引已创建")
 
     # STEP 4: 语义搜索
     print("\nSTEP 4: 语义搜索 — 'attention mechanism'")
     rng = np.random.RandomState(42)
     q = rng.randn(DIM).astype(np.float32).tolist()
-    result = lake.search("papers", q, top_k=3, vector_column="text_embedding")
+    result = lake.search("papers", q, "text_embedding", top_k=3)
     for i in range(min(3, result.row_count)):
         t = result.table
         print(f"  #{i+1} {t.column('id')[i].as_py()}  "
@@ -102,7 +96,7 @@ def main() -> None:
     # STEP 5: 中文全文搜索
     print("\nSTEP 5: 中文全文搜索 — '知识图谱 大模型'")
     result = lake.text_search("papers_zh", "知识图谱 大模型", top_k=3,
-                              fts_column="text_content")
+                              columns=["text_content"])
     for i in range(min(3, result.row_count)):
         t = result.table
         print(f"  #{i+1} {t.column('id')[i].as_py()}  "
@@ -112,9 +106,9 @@ def main() -> None:
     # STEP 6: 混合搜索
     print("\nSTEP 6: 混合搜索 — 'transformer architecture'")
     try:
-        result = lake.hybrid_search("papers", q, "transformer architecture",
-                                    top_k=3, vector_column="text_embedding",
-                                    fts_column="text_content")
+        result = lake.hybrid_search("papers", "transformer architecture",
+                                    "text_embedding", top_k=3,
+                                    fts_columns=["text_content"])
         for i in range(min(3, result.row_count)):
             t = result.table
             score = t.column("_rrf_score")[i].as_py() if "_rrf_score" in t.column_names else 0

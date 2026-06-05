@@ -53,16 +53,15 @@ def main() -> None:
     })
     lake.create_dataset("test_data", table)
 
-    aid1 = lake.audit_record("ingest", "test_data", actor="admin",
-                              metaflow_run_id="run_001",
-                              payload={"rows": 10})
+    aid1 = lake.audit_record("test_data", "ingest", actor="admin",
+                              metadata={"rows": 10, "run_id": "run_001"})
     print(f"  审计 ID: {aid1[:12]}...")
 
     # STEP 2: 记录查询事件
     print("\nSTEP 2: 记录查询事件")
     result = lake.olap_query("test_data", "SELECT SUM(value) as total FROM test_data")
-    aid2 = lake.audit_record("query", "test_data", actor="user_a",
-                              payload={"sql": "SELECT SUM(value)"})
+    aid2 = lake.audit_record("test_data", "query", actor="user_a",
+                              metadata={"sql": "SELECT SUM(value)"})
     print(f"  查询结果: {result.table.to_pylist()[0]}")
     print(f"  审计 ID: {aid2[:12]}...")
 
@@ -73,8 +72,8 @@ def main() -> None:
         "value": list(range(10, 15)),
     })
     lake.append_dataset("test_data", new_table)
-    aid3 = lake.audit_record("update", "test_data", actor="system",
-                              payload={"rows_added": 5})
+    aid3 = lake.audit_record("test_data", "update", actor="system",
+                              metadata={"rows_added": 5})
     print(f"  追加 5 行, 审计 ID: {aid3[:12]}...")
 
     # STEP 4: 查询审计日志
@@ -89,26 +88,20 @@ def main() -> None:
     except Exception as e:
         print(f"  查询跳过: {e}")
 
-    # STEP 5: 验证审计完整性
-    print("\nSTEP 5: HMAC 完整性验证")
+    # STEP 5: 按演员查询审计日志
+    print("\nSTEP 5: 按演员查询审计日志")
     try:
-        valid = lake.audit_verify(aid1)
-        print(f"  审计 {aid1[:12]}... 有效性: {valid}")
-    except (ValueError, RuntimeError) as e:
-        print(f"  验证: {e}")
+        events = lake.audit_query(actor="admin")
+        print(f"  admin 相关事件: {len(events)} 条")
+    except Exception as e:
+        print(f"  查询跳过: {e}")
 
-    # STEP 6: 导出审计记录
-    print("\nSTEP 6: 导出审计记录")
-    try:
-        export = lake.audit_export("test_data")
-        print(f"  导出记录数: {export.get('total', len(export))}")
-    except (ValueError, RuntimeError) as e:
-        print(f"  导出跳过: {e}")
-
-    # STEP 7: 数据集最终状态
-    print("\nSTEP 7: 数据集状态")
-    ds = lake.open_dataset("test_data")
-    print(f"  test_data: {ds.count_rows()} 行")
+    # STEP 6: 数据集最终状态
+    print("\nSTEP 6: 数据集状态")
+    catalog = lake.catalog()
+    ds = catalog.datasets.get("test_data")
+    rows = ds.num_rows if ds else "?"
+    print(f"  test_data: {rows} 行")
 
     print("\n  [全部 PASS]")
     if not no_cleanup:

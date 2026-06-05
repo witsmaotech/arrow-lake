@@ -238,6 +238,7 @@ audit_id = lake.audit_record(
     actor="pipeline-user",
     lance_version=42,
     metaflow_run_id="mf-20260424-001",
+    metaflow_tags={"env": "prod", "team": "data"},
     payload={"rows": 1000, "source": "s3://raw/"},
 )
 
@@ -254,15 +255,55 @@ entries = lake.audit_query(
 
 # Export a dataset's audit records
 export = lake.audit_export("articles")
+
+# Run anomaly detection on audit trail
+anomalies = lake.audit_analyze()
+for a in anomalies:
+    print(f"{a['severity']}: {a['description']}")
 ```
 
-| Parameter       | Type   | Description                                       |
-| --------------- | ------ | ------------------------------------------------- |
-| `event_type`    | `str`  | Event type (e.g., `data_ingest`, `backup_create`) |
-| `dataset_name`  | `str`  | Associated dataset                                |
-| `actor`         | `str`  | Who performed the action (default: `"system"`)    |
-| `lance_version` | `int`  | Lance version number                              |
-| `payload`       | `dict` | Additional event data                             |
+| Parameter        | Type   | Description                                       |
+| ---------------- | ------ | ------------------------------------------------- |
+| `event_type`     | `str`  | Event type (e.g., `data_ingest`, `backup_create`) |
+| `dataset_name`   | `str`  | Associated dataset                                |
+| `actor`          | `str`  | Who performed the action (default: `"system"`)    |
+| `lance_version`  | `int`  | Lance version number                              |
+| `metaflow_run_id`| `str`  | Associated Metaflow run ID                        |
+| `metaflow_tags`  | `dict` | Associated Metaflow tags                          |
+| `payload`        | `dict` | Additional event data                             |
+
+### Audit REST API
+
+```bash
+# Record an audit event
+curl -X POST http://localhost:8000/api/v1/datasets/articles/audit \
+  -H "X-API-Key: your-key" \
+  -H "Content-Type: application/json" \
+  -d '{"action": "data_ingest", "actor": "pipeline-user"}'
+
+# Query audit entries
+curl "http://localhost:8000/api/v1/datasets/articles/audit?start=2026-04-01T00:00:00Z" \
+  -H "X-API-Key: your-key"
+
+# Verify audit entry integrity
+curl http://localhost:8000/api/v1/audit/{audit_id}/verify -H "X-API-Key: your-key"
+
+# Run anomaly detection
+curl -X POST http://localhost:8000/api/v1/audit/analyze -H "X-API-Key: your-key"
+```
+
+### Audit CLI
+
+```bash
+# Record an audit event
+arrow-lake audit record --dataset articles --action data_ingest --actor pipeline-user
+
+# Query audit log
+arrow-lake audit query --dataset articles --start 2026-04-01 --end 2026-04-30
+
+# Run anomaly analysis
+arrow-lake audit analyze
+```
 
 ***
 
@@ -311,7 +352,7 @@ vector:
 
 ```python
 # Merge fragmented files
-stats = lake._get_storage().compact("articles")
+stats = lake.compact_dataset("articles")
 print(f"Fragments: {stats.fragments_before} -> {stats.fragments_after}")
 ```
 
@@ -587,3 +628,260 @@ to route external traffic.
 | **JWT**                | `auth.auth_mode: jwt`                   | `auth.auth_mode: jwt`                    |
 | **RBAC**               | 30+ endpoints with role checks          | 30+ endpoints with role checks           |
 | **Audit HMAC**         | `audit.hmac_secret_key`                 | `audit.hmac_secret_key` via secret       |
+
+***
+
+## 12. v1.5.2 Security Hardening
+
+Version 1.5.2 introduced critical security fixes across authentication, injection prevention, and
+network binding. All deployments should upgrade to at least this version.
+
+### Security Fixes
+
+| Fix | Description | Impact |
+| --- | ----------- | ------ |
+| JWT empty key block | Server rejects startup if `jwt_secret_key` is empty or default | Prevents unauthenticated JWT token minting |
+| Kerberos command injection | Shell metacharacters in Kerberos principal names are sanitized | Eliminates remote code execution via crafted principals |
+| SQL injection parameterization | All user-supplied SQL parameters use parameterized queries | Prevents SQL injection in OLAP and lineage query endpoints |
+| Redis default password removal | No default password in Docker Compose or Helm values | Forces explicit password configuration in production |
+| 127.0.0.1 binding | Default API bind address changed to localhost only | Reduces attack surface; override with `api.host: 0.0.0.0` for remote access |
+| SSRF protection | URL validation blocks private/internal network addresses | Prevents server-side request forgery via ingest URLs |
+| Admin bypass to Role enum | Hardcoded admin string checks replaced with `Role` enum | Type-safe role checks prevent string comparison bypass |
+| Refresh token rotation | Refresh tokens are single-use and rotated on each use | Stolen refresh tokens cannot be reused |
+
+### Health Endpoints
+
+```bash
+# Liveness check (no dependency checks)
+curl http://localhost:8000/health/live
+
+# Readiness check (verifies storage, Redis if enabled)
+curl http://localhost:8000/health/ready
+
+# Full health report
+curl http://localhost:8000/health -H "X-API-Key: your-key"
+
+# Prometheus metrics
+curl http://localhost:8000/metrics
+```
+
+***
+
+## 13. Data Lineage
+
+Arrow Lake provides built-in data lineage tracking for tracing dataset dependencies and
+downstream impact analysis.
+
+### Python API
+
+```python
+from arrow_lake import Lake
+
+lake = Lake.from_yaml("configs/prod.yaml")
+
+# Record a lineage event
+lake.lineage_record_event(
+    "articles_clean",
+    "transform",
+    source_datasets=["articles_raw"],
+    transform_type="quality_filter",
+    metadata={"rows_removed": 580},
+)
+
+# View lineage history for a dataset
+history = lake.lineage_history("articles_clean")
+for event in history:
+    print(f"{event['operation']} at {event['timestamp']}")
+
+# Query lineage events with SQL
+import pyarrow as pa
+result = lake.lineage_query(
+    "SELECT * FROM lineage WHERE operation = 'transform'"
+)
+
+# Get full lineage graph (upstream + downstream)
+graph = lake.lineage_graph("articles_clean", max_depth=10)
+print(f"Nodes: {len(graph['nodes'])}, Edges: {len(graph['edges'])}")
+
+# Analyze downstream impact of changing a dataset
+impact = lake.lineage_impact("articles_raw")
+for item in impact:
+    print(f"Affected: {item['dataset']}, depth: {item['depth']}")
+```
+
+### Lineage REST API
+
+```bash
+# Record a lineage event
+curl -X POST http://localhost:8000/api/v1/lineage/record \
+  -H "X-API-Key: your-key" \
+  -H "Content-Type: application/json" \
+  -d '{"dataset_name": "articles_clean", "event_type": "transform", "source_datasets": ["articles_raw"]}'
+
+# Get lineage history
+curl http://localhost:8000/api/v1/lineage/history/articles_clean \
+  -H "X-API-Key: your-key"
+
+# Query lineage with SQL
+curl -X POST http://localhost:8000/api/v1/lineage/query \
+  -H "X-API-Key: your-key" \
+  -H "Content-Type: application/json" \
+  -d '{"sql": "SELECT * FROM lineage WHERE operation = '\''transform'\''"}'
+
+# Get lineage graph
+curl http://localhost:8000/api/v1/lineage/graph/articles_clean?max_depth=10 \
+  -H "X-API-Key: your-key"
+
+# Analyze downstream impact
+curl -X POST http://localhost:8000/api/v1/lineage/impact \
+  -H "X-API-Key: your-key" \
+  -H "Content-Type: application/json" \
+  -d '{"dataset_name": "articles_raw"}'
+```
+
+### Lineage CLI
+
+```bash
+# Record a lineage event
+arrow-lake lineage record --dataset articles_clean --operation transform --sources articles_raw
+
+# View lineage history
+arrow-lake lineage history --dataset articles_clean
+
+# Show lineage graph
+arrow-lake lineage graph --dataset articles_clean --max-depth 10
+
+# Analyze downstream impact
+arrow-lake lineage impact --dataset articles_raw
+```
+
+***
+
+## 14. Storage Lifecycle Management
+
+Arrow Lake supports S3 storage tiering with lifecycle rules for automatic transition to
+cost-effective storage classes (e.g., Glacier) and restoration on demand.
+
+### Python API
+
+```python
+from arrow_lake import Lake
+
+lake = Lake.from_yaml("configs/prod.yaml")
+
+# Preview lifecycle rules without applying
+rules = lake.lifecycle_rules(prefix="archive/")
+print(rules)
+
+# Apply lifecycle rules to a bucket prefix
+result = lake.lifecycle_apply(prefix="archive/")
+print(f"Applied: {result}")
+
+# Check storage tier for objects
+tiers = lake.lifecycle_status(prefix="archive/")
+for item in tiers:
+    print(f"{item['key']}: {item['storage_class']}")
+
+# Restore a Glacier-tiered object for temporary access
+lake.lifecycle_restore("archive/old_data.parquet", days=7)
+```
+
+### Lifecycle CLI
+
+```bash
+# Preview lifecycle rules
+arrow-lake lifecycle rules --prefix archive/
+
+# Apply lifecycle rules
+arrow-lake lifecycle apply --prefix archive/
+
+# Check storage tier status
+arrow-lake lifecycle status --prefix archive/
+
+# Restore a Glacier object
+arrow-lake lifecycle restore --key archive/old_data.parquet --days 7
+```
+
+***
+
+## 15. Backup via Lake API
+
+In addition to the low-level `BackupManager` shown in Section 4, backups can be managed directly
+through the `Lake` object:
+
+```python
+from arrow_lake import Lake
+
+lake = Lake.from_yaml("configs/prod.yaml")
+
+# Create a full backup (all datasets)
+info = lake.backup_create()
+print(f"Backup ID: {info.backup_id}")
+
+# Create a partial backup
+info = lake.backup_create(dataset_names=["articles", "photos"])
+
+# Restore a backup
+lake.backup_restore(
+    info.backup_id,
+    dataset_names=["articles"],
+    overwrite=True,
+)
+
+# List all backups
+for b in lake.backup_list():
+    print(f"{b.backup_id} | {b.created_at} | {b.status}")
+
+# Delete a backup
+lake.backup_delete("20260101T000000zabc12345")
+```
+
+### Backup REST API
+
+```bash
+# Create a backup
+curl -X POST http://localhost:8000/api/v1/backup/create \
+  -H "Content-Type: application/json" -H "X-API-Key: your-key" \
+  -d '{"dataset_names": ["articles"]}'
+
+# List backups
+curl http://localhost:8000/api/v1/backup/list -H "X-API-Key: your-key"
+
+# Restore from a backup
+curl -X POST http://localhost:8000/api/v1/backup/restore \
+  -H "Content-Type: application/json" -H "X-API-Key: your-key" \
+  -d '{"backup_id": "20260101T000000zabc12345", "overwrite": true}'
+
+# Delete a backup
+curl -X DELETE http://localhost:8000/api/v1/backup/20260101T000000zabc12345 \
+  -H "X-API-Key: your-key"
+```
+
+### Backup CLI
+
+```bash
+# Create a backup
+arrow-lake backup create --datasets articles,photos
+
+# List backups
+arrow-lake backup list
+
+# Restore a backup
+arrow-lake backup restore --id 20260101T000000zabc12345 --datasets articles
+
+# Delete a backup
+arrow-lake backup delete --id 20260101T000000zabc12345
+```
+
+***
+
+## 16. Maintenance
+
+```bash
+# Run all maintenance tasks
+arrow-lake maintenance
+
+# Quality dedup via CLI
+arrow-lake quality dedup --dataset articles --strategy exact
+arrow-lake quality filter --dataset articles --mode all
+```

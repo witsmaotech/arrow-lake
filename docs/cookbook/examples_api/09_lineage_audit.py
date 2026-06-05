@@ -150,7 +150,7 @@ def main() -> None:
     if audit_id:
         resp = c.audit_verify(audit_id)
         if resp.get("success"):
-            valid = resp.get("valid", resp.get("integrity", False))
+            valid = resp.get("intact", resp.get("valid", False))
             c._pass(f"audit verify — valid={valid}")
         else:
             print(f"  [INFO] {resp.get('error')}: {resp.get('message', '')[:120]}")
@@ -161,19 +161,19 @@ def main() -> None:
     print("\nSTEP 10: Query audit trail")
     resp = c.audit_query()
     if resp.get("success"):
-        events = resp.get("events", resp.get("data", []))
+        events = resp.get("entries", resp.get("events", resp.get("data", [])))
         c._pass(f"audit trail — {len(events)} events")
         for ev in events[:3]:
-            print(f"         action={ev.get('action', '?'):16s} "
+            print(f"         action={ev.get('action', ev.get('event_type', '?')):16s} "
                   f"dataset={ev.get('dataset_name', '?')}")
     else:
         print(f"  [INFO] {resp.get('error')}: {resp.get('message', '')[:120]}")
 
     # 11. Query audit with filters
     print("\nSTEP 11: Query audit (filtered)")
-    resp = c.audit_query(dataset_name=name, action="data_ingest")
+    resp = c.audit_query(dataset_name=name, event_type="data_ingest")
     if resp.get("success"):
-        events = resp.get("events", resp.get("data", []))
+        events = resp.get("entries", resp.get("events", resp.get("data", [])))
         c._pass(f"filtered audit — {len(events)} ingest events")
     else:
         print(f"  [INFO] {resp.get('error')}: {resp.get('message', '')[:120]}")
@@ -182,7 +182,9 @@ def main() -> None:
     print("\nSTEP 12: Export audit trail")
     resp = c.audit_export(name)
     if resp.get("success"):
-        exported = resp.get("exported_count", resp.get("count", 0))
+        exported = resp.get("export", {})
+        if isinstance(exported, dict):
+            exported = exported.get("count", exported.get("exported_count", 0))
         c._pass(f"audit export — {exported} events exported")
     else:
         print(f"  [INFO] {resp.get('error')}: {resp.get('message', '')[:120]}")

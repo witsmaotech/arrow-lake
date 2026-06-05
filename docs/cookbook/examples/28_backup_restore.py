@@ -47,14 +47,13 @@ def main() -> None:
     # STEP 1: 摄入数据
     print("STEP 1: 摄入交易数据")
     r = lake.ingest("sales", [str(DATAS_DIR / "transactions" / "sales_2024_cn.csv")])
-    ds = lake.open_dataset("sales")
-    original_rows = ds.count_rows()
+    original_rows = r.total_rows
     print(f"  摄入: {original_rows} 行")
 
     # STEP 2: 创建备份
     print("\nSTEP 2: 创建备份")
     try:
-        info = lake.backup_create(dataset_names=["sales"])
+        info = lake.backup_create(datasets=["sales"])
         backup_id = info.backup_id
         print(f"  备份 ID: {backup_id}")
         print(f"  创建时间: {info.created_at}")
@@ -97,16 +96,15 @@ def main() -> None:
         "城市": ["test"],
     })
     lake.append_dataset("sales", new_table)
-    ds = lake.open_dataset("sales")
-    modified_rows = ds.count_rows()
-    print(f"  修改后: {modified_rows} 行 (原 {original_rows})")
+    print(f"  修改后: {original_rows + 1} 行 (原 {original_rows})")
 
     # STEP 5: 恢复备份
     print("\nSTEP 5: 恢复备份")
     try:
-        lake.backup_restore(backup_id, dataset_names=["sales"], overwrite=True)
-        ds = lake.open_dataset("sales")
-        restored_rows = ds.count_rows()
+        lake.backup_restore(backup_id, datasets=["sales"], replace=True)
+        catalog = lake.catalog()
+        ds = catalog.datasets.get("sales")
+        restored_rows = ds.num_rows if ds else 0
         print(f"  恢复后: {restored_rows} 行")
         if restored_rows == original_rows:
             print("  恢复验证: PASS (数据回到原始状态)")

@@ -69,7 +69,7 @@ gravitino:
   metalake: "arrow-lake"
   lance_rest_enabled: true
   lance_rest_uri: "http://lance-rest:9002"
-  auth_type: simple
+  auth_type: simple    # simple | oauth | kerberos | null
   sync_direction: bidirectional
   sync_interval_seconds: 30   # range: 5–300
 ```
@@ -92,7 +92,7 @@ curl http://localhost:8000/health -H "X-API-Key: your-key"
 ```json
 {
   "status": "ok",
-  "version": "1.4.1",
+  "version": "1.5.3",
   "storage": "accessible",
   "gravitino": "healthy",
   "lance_rest": "healthy"
@@ -634,6 +634,7 @@ print(f"Discovered {len(external)} external tables")
 | `simple` | Development / testing (default) |
 | `oauth` | Production with OAuth 2.0 provider |
 | `kerberos` | Enterprise Hadoop environments |
+| `null` | No authentication (insecure, testing only) |
 
 ### Permission Mapping
 
@@ -727,9 +728,11 @@ result = rbac.check_permission("user@example.com", "articles", "read")
 | `GET` | `/metadata/policies` | List policies |
 | `POST` | `/metadata/policies/retention` | Create retention policy |
 | `POST` | `/metadata/policies/masking` | Create masking policy |
+| `POST` | `/metadata/policies/enforce` | Enforce retention policy (optional `?dry_run=true`, `?table=`) |
 | `POST` | `/metadata/statistics/{name}` | Collect table statistics |
 | `GET` | `/metadata/models` | List ML models |
 | `GET` | `/metadata/models/{name}/versions` | Model version info |
+| `GET` | `/metadata/lineage/{name}` | Lineage info for a table |
 
 ### Runnable Example
 

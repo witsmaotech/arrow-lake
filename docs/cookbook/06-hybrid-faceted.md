@@ -60,14 +60,14 @@ lake.shutdown()
 
 Reciprocal Rank Fusion is implemented in `HybridSearchBridge._rrf_fuse()`:
 
-```
+```text
 score(doc) = SUM( 1 / (rank(doc, list_i) + k) )
 ```
 
 * `rank(doc, list_i)`: the document's rank in the i-th ranked list (0-indexed)
 * `k`: smoothing constant, default 60 (the value recommended in the original paper)
 
-```
+```text
 Vector search top 3:         Full-text search top 3:
   rank 0: Trail Runners        rank 0: Lightweight Running Shoes
   rank 1: Hiking Boots         rank 1: Kids Cushion Runners
@@ -93,13 +93,14 @@ Vector search top 3:         Full-text search top 3:
 def hybrid_search(
     self,
     dataset_name: str,
-    query_vector: list[float],          # Query embedding vector
-    query_text: str,                    # Query text (for FTS)
+    query_vector: list[float],          # Query embedding vector (positional)
+    query_text: str,                    # Query text for FTS (positional)
     *,
     top_k: int | None = None,           # Number of results
     vector_column: str = "text_embedding",  # Vector column name
     fts_column: str | None = None,      # FTS column name
     where: str | None = None,           # Metadata filter
+    version: int | None = None,         # Dataset version for time-travel queries
 ) -> HybridSearchResult: ...
 ```
 
@@ -183,12 +184,13 @@ for dim, values in facet_dict.items():
 def faceted_search(
     self,
     dataset_name: str,
-    query_vector: list[float],       # Query embedding vector
+    query_vector: list[float],       # Query embedding vector (positional)
     *,
     facets: list[str] | None = None, # Facet dimension column names
     top_k: int = 10,
     vector_column: str = "embedding",
     where: str | None = None,        # Metadata filter
+    version: int | None = None,      # Dataset version for time-travel queries
 ) -> FacetedSearchResult: ...
 ```
 
@@ -263,6 +265,7 @@ def ensemble_search(
     weights: dict[str, float] | None = None,# Per-column weights
     top_k: int | None = None,               # Number of results
     where: str | None = None,               # Metadata filter
+    version: int | None = None,             # Dataset version for time-travel queries
 ) -> EnsembleSearchResult: ...
 ```
 
@@ -275,7 +278,7 @@ Weighted RRF formula: `score(doc) = SUM( weight_i / (rank(doc, list_i) + k) )`
 
 ## 6. Search Strategy Selection Guide
 
-```
+```text
 Need to search?
   |
   +-- Exact keyword match    -----> text_search()

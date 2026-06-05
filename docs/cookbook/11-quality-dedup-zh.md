@@ -171,11 +171,15 @@ result = lake.deduplicate(
 
 底层使用 `imagehash` 库计算 `phash`，然后比较 Hamming 距离。
 
+> **依赖说明**：感知去重需要 `imagehash` 库，通过 `pip install arrow-lake[dedup]` 安装。
+
 ***
 
 ## 5. NeMo Curator 集成 (GPU 加速 MinHash LSH)
 
 对于大规模文本去重，Arrow Lake 支持通过 NeMo Curator 进行 GPU 加速的 MinHash LSH 近似去重。
+
+> **依赖说明**：NeMo Curator 集成需要 `nemo-curator` 库，通过 `pip install arrow-lake[nemo-curator]` 安装。
 
 ```python
 from arrow_lake.quality.nemo_curator import NeMoDeduplicator
@@ -350,7 +354,7 @@ print(f"失败项：{dlq.stats}")
 
 声明式 `QualityRuleEngine` 用可配置的规则替代硬编码过滤器，支持从 JSON、YAML 或 REST API 加载规则。
 
-### 7.1 编程式用法
+### 9.1 编程式用法
 
 ```python
 from arrow_lake.quality.rules import QualityRuleEngine, RuleDefinition
@@ -396,7 +400,7 @@ filtered, results = engine.apply(table)
 print(f"Original: {table.num_rows} rows → Filtered: {filtered.num_rows} rows")
 ```
 
-### 7.2 检查类型
+### 9.2 检查类型
 
 | Check | 参数 | 说明 |
 |-------|------|------|
@@ -405,7 +409,7 @@ print(f"Original: {table.num_rows} rows → Filtered: {filtered.num_rows} rows")
 | `regex` | `pattern`, `invert` | 正则匹配 (invert=True 匹配不满足的) |
 | `duplicate` | — | 精确哈希重复检测 |
 
-### 7.3 动作类型
+### 9.3 动作类型
 
 | Action | `evaluate()` 中的效果 | `apply()` 中的效果 |
 |--------|-------------------|-----------------|
@@ -413,7 +417,7 @@ print(f"Original: {table.num_rows} rows → Filtered: {filtered.num_rows} rows")
 | `remove` | 报告违规数量 | 移除违规行 (与 reject 相同) |
 | `flag` | 报告违规数量 | 保留行 (仅作标记) |
 
-### 7.4 从 JSON 加载
+### 9.4 从 JSON 加载
 
 ```json
 {
@@ -431,7 +435,7 @@ engine = QualityRuleEngine()
 engine.load_from_json("rules.json")
 ```
 
-### 7.5 REST API
+### 9.5 REST API
 
 ```bash
 # 通过 API 应用规则
@@ -452,7 +456,7 @@ curl -X POST http://localhost:8000/api/v1/datasets/articles/quality/rules \
 
 行级和列级 ACL 限制每个角色在查询和搜索结果中能看到的数据。
 
-### 8.1 设置 ACL 规则
+### 10.1 设置 ACL 规则
 
 ```bash
 # Viewer 只能看到 "title" 和 "summary" 列
@@ -474,7 +478,7 @@ curl -X PUT http://localhost:8000/api/v1/admin/acl/hr_data \
   -d '{"role": "viewer", "visible_columns": ["name", "department"], "row_filter": "department == Engineering"}'
 ```
 
-### 8.2 列出和删除 ACL
+### 10.2 列出和删除 ACL
 
 ```bash
 # 列出数据集的所有 ACL
@@ -484,11 +488,11 @@ curl http://localhost:8000/api/v1/admin/acl/articles -H "X-API-Key: admin-key"
 curl -X DELETE http://localhost:8000/api/v1/admin/acl/articles/viewer -H "X-API-Key: admin-key"
 ```
 
-### 8.3 工作原理
+### 10.3 工作原理
 
 - **列裁剪**：不可见列在查询/搜索结果序列化之前被移除
 - **行过滤**：使用简单的 `column op value` 表达式 (`==`、`!=`、`<`、`<=`、`>`、`>=`) 过滤结果行
-- **Admin 绕过**：`admin` 角色始终能看到所有数据，不受 ACL 配置影响
+- **Admin 绕过**：`admin` 角色（v1.5.2 起使用 Role enum）始终能看到所有数据，不受 ACL 配置影响
 - **无 ACL = 不过滤**：如果某个角色+数据集没有配置 ACL，结果原样返回
 - **自动应用**：所有查询 (OLAP/元数据/Daft) 和搜索 (向量/全文/混合/分面/集成) 端点都会自动应用 ACL
 

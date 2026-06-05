@@ -48,24 +48,23 @@ def main() -> None:
     print("STEP 1: 第一批数据入库")
     csv_path = str(DATAS_DIR / "transactions" / "sales_2024.csv")
     r1 = lake.ingest("sales", [csv_path])
-    ds1 = lake.open_dataset("sales")
     print(f"  第一批: {r1.total_rows} 行")
-    print(f"  数据集: {ds1.count_rows()} 行, {len(ds1.schema)} 列")
 
     # STEP 2: 追加第二批 (同一文件再次摄取)
     print("\nSTEP 2: 追加第二批数据 (同文件追加)")
     import pyarrow.csv as pacsv
     batch2 = pacsv.read_csv(csv_path)
     lake.append_dataset("sales", batch2)
-    ds2 = lake.open_dataset("sales")
     print(f"  第二批: {batch2.num_rows} 行")
-    print(f"  数据集总量: {ds2.count_rows()} 行 (增量 +{batch2.num_rows})")
+    print(f"  数据集总量: {r1.total_rows + batch2.num_rows} 行 (增量 +{batch2.num_rows})")
 
     # STEP 3: 增量前后对比
     print("\nSTEP 3: 数据量变化")
+    catalog = lake.catalog()
     for name in lake.list_datasets():
-        ds = lake.open_dataset(name)
-        print(f"  {name}: {ds.count_rows()} 行")
+        ds = catalog.datasets.get(name)
+        rows = ds.num_rows if ds else "?"
+        print(f"  {name}: {rows} 行")
 
     # STEP 4: OLAP 验证
     print("\nSTEP 4: SQL 验证总数据")
@@ -77,12 +76,12 @@ def main() -> None:
 
     # STEP 5: 重建索引 (增量后)
     print("\nSTEP 5: 重建索引 (增量更新后)")
-    lake.create_fts_index("sales", fts_column="product_name")
+    lake.create_fts_index("sales", columns=["product_name"])
     print("  FTS 索引已重建")
 
     # STEP 6: 搜索验证
     print("\nSTEP 6: 搜索验证新增数据可被检索")
-    result = lake.text_search("sales", "Mouse", top_k=3, fts_column="product_name")
+    result = lake.text_search("sales", "Mouse", top_k=3, columns=["product_name"])
     print(f"  搜索 'Mouse': {result.row_count} 条结果")
     for i in range(min(3, result.row_count)):
         t = result.table
@@ -94,8 +93,10 @@ def main() -> None:
     print("\nSTEP 7: 导出增量后完整数据")
     out = (base / "sales_incremental.parquet").resolve()
     lake.export("sales", str(out), format="parquet")
-    ds_final = lake.open_dataset("sales")
-    print(f"  最终: {ds_final.count_rows()} 行 → {out.name} ({out.stat().st_size // 1024} KB)")
+    catalog = lake.catalog()
+    ds_final = catalog.datasets.get("sales")
+    rows = ds_final.num_rows if ds_final else "?"
+    print(f"  最终: {rows} 行 → {out.name} ({out.stat().st_size // 1024} KB)")
 
     print("\n  [全部 PASS]")
     if not no_cleanup:

@@ -1,6 +1,6 @@
 # Arrow Lake CLI 完全参考手册
 
-> 涵盖全部 95+ 命令、参数说明、示例输出与 Python SDK 对应关系。配合 5 个端到端实战场景，从本地开发到 S3/MinIO 生产部署一气呵成。
+> 涵盖全部 100+ 命令、参数说明、示例输出与 Python SDK 对应关系。配合 5 个端到端实战场景，从本地开发到 S3/MinIO 生产部署一气呵成。
 
 **示例数据**: 本教程所有实战场景使用的数据文件位于 [`examples/data/`](datas/README.md) 目录，可直接运行。包含论文元数据 CSV、交易记录 CSV、知识库 JSONL 等真实示例。
 
@@ -18,6 +18,9 @@ arrow-lake --base-uri ./data/lake --config prod.yaml <子命令>
 |------|--------|----------|------|
 | `--base-uri` | `./data/lake` | `ARROW_LAKE_BASE_URI` | 数据湖存储根路径（本地路径或桶内前缀） |
 | `--config` | 无 | — | YAML 配置文件路径 |
+| `--verbose` / `-v` | `0` | — | 增加输出详细程度（可叠加: -v, -vv, -vvv） |
+| `--quiet` / `-q` | 否 | — | 仅显示错误输出 |
+| `--format` | `table` | — | 输出格式: `table`, `json`, `csv` |
 
 > **注意**: 全局选项必须放在子命令**之前**。`arrow-lake --base-uri ./lake status` 正确，`arrow-lake status --base-uri ./lake` 错误。
 
@@ -50,11 +53,11 @@ arrow-lake version
 
 输出示例：
 
-```
+```text
 ┏━━━━━━━━━━━━┳━━━━━━━━━┓
 ┃ Component  ┃ Version ┃
 ┡━━━━━━━━━━━━╇━━━━━━━━━┩
-│ arrow-lake │ 1.3.0   │
+│ arrow-lake │ 1.5.3   │
 │ python     │ 3.11.9  │
 │ pyarrow    │ 23.0.1  │
 │ duckdb     │ 1.5.2   │
@@ -94,7 +97,7 @@ arrow-lake catalog list --json        # JSON 格式输出
 
 输出示例：
 
-```
+```text
 ┏━━━┳━━━━━━━━━━┓
 ┃ # ┃ Name      ┃
 ┡━━━╇━━━━━━━━━━┩
@@ -120,7 +123,7 @@ arrow-lake catalog info papers
 
 输出示例：
 
-```
+```text
 Dataset: papers
 ┏━━━━━━━━━┳━━━━━━━━━━━━━━┓
 ┃ Property ┃ Value          ┃
@@ -227,7 +230,7 @@ arrow-lake ingest files raw_data ./csv/*.csv ./parquet/*.parquet
 
 输出示例：
 
-```
+```text
 Ingestion: 3 file(s) -> sales
 ┏━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
 ┃ Metric          ┃ Value        ┃
@@ -278,7 +281,7 @@ lake.ingest_images("photos", ["./photos/vacation/*.jpg"])
 自动解析 PDF、OCR 识别、文本分块。
 
 ```bash
-arrow-lake ingest docs papers ./papers/report.pdf ./papers/whitepaper.pdf
+arrow-lake ingest documents papers ./papers/report.pdf ./papers/whitepaper.pdf
 ```
 
 **SDK 等价:**
@@ -360,7 +363,7 @@ arrow-lake search vector papers \
 
 输出示例：
 
-```
+```text
 Results (5 rows)
 ┏━━━┳━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┓
 ┃ # ┃ ID                  ┃ Category ┃ Distance ┃ Text     ┃
@@ -537,11 +540,16 @@ arrow-lake index info-vector papers
 arrow-lake index rebuild-vector papers --column text_embedding
 ```
 
-#### `index delete-vector <dataset>` — 删除向量索引 (v1.2)
+#### `index delete-vector <dataset> <index_name>` — 删除向量索引 (v1.2)
 
 ```bash
-arrow-lake index delete-vector papers
+arrow-lake index delete-vector papers text_embedding_idx
 ```
+
+| 参数 | 说明 |
+|------|------|
+| `dataset` | (**位置参数**) 数据集名称 |
+| `index_name` | (**位置参数**) 向量索引名称 |
 
 #### `index info-fts <dataset>` — 查看全文索引信息 (v1.2)
 
@@ -577,7 +585,7 @@ arrow-lake query sql sales \
 
 输出示例：
 
-```
+```text
 Query Result (5 rows)
 ┏━━━━━━━━━━┳━━━━━━┳━━━━━━━━━━━━┓
 ┃ category  ┃ cnt  ┃ avg_amount ┃
@@ -634,7 +642,12 @@ arrow-lake query meta papers --sql "SELECT * FROM papers LIMIT 5"
 
 ```bash
 arrow-lake query cleanup-materialized
+arrow-lake query cleanup-materialized --ttl-days 30
 ```
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--ttl-days` | `7` | 清理超过指定天数的过期物化视图 |
 
 #### `query daft <dataset>` — Daft DataFrame 查询 (v1.2)
 
@@ -692,7 +705,7 @@ arrow-lake embed text "transformer attention mechanism" \
 
 输出示例：
 
-```
+```text
 Loading model Qwen/Qwen3-Embedding-0.6B... done
 Encoding... done
   Dimension: 768
@@ -768,7 +781,7 @@ arrow-lake backup list
 
 输出示例：
 
-```
+```text
 Backups
 ┏━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┓
 ┃ Backup ID           ┃ Created          ┃ Datasets   ┃ Size     ┃
@@ -821,7 +834,7 @@ arrow-lake kg stats
 
 输出示例：
 
-```
+```text
 Knowledge Graph Stats
 ┏━━━━━━━━━━━━━━┳━━━━━━━━━━━┓
 ┃ Metric        ┃ Value      ┃
@@ -899,6 +912,33 @@ arrow-lake kg traverser customized v1 \
     --steps '[{"labels":["person"],"direction":"OUT"},{"labels":["software"],"direction":"OUT"}]'
 ```
 
+**Traverser 子命令参数表：**
+
+| 子命令 | 参数 | 默认值 | 说明 |
+|--------|------|--------|------|
+| `all-shortest-paths` | `--direction` | `OUT` | 遍历方向: `OUT`, `BOTH`, `IN` |
+| | `--max-depth` | `10` | 最大搜索深度 |
+| `weighted-shortest` | `--direction` | `OUT` | 遍历方向: `OUT`, `BOTH`, `IN` |
+| | `--weight-prop` | `weight` | 权重属性名 |
+| | `--max-degree` | `10000` | 最大遍历度数 |
+| `single-source-shortest` | `--direction` | `OUT` | 遍历方向: `OUT`, `BOTH`, `IN` |
+| | `--weight-prop` | `weight` | 权重属性名 |
+| | `--max-degree` | `10000` | 最大遍历度数 |
+| `multi-node-shortest` | `--sources` | — (**必填**) | 源节点 JSON 数组 |
+| | `--targets` | — (**必填**) | 目标节点 JSON 数组 |
+| | `--direction` | `OUT` | 遍历方向 |
+| | `--weight-prop` | `weight` | 权重属性名 |
+| | `--max-degree` | `10000` | 最大遍历度数 |
+| `rays` | `--direction` | `OUT` | 遍历方向: `OUT`, `BOTH`, `IN` |
+| | `--max-depth` | `5` | 最大搜索深度 |
+| `rings` | `--direction` | `OUT` | 遍历方向: `OUT`, `BOTH`, `IN` |
+| | `--max-depth` | `5` | 最大搜索深度 |
+| `crosspoints` | `--direction` | `OUT` | 遍历方向: `OUT`, `BOTH`, `IN` |
+| | `--max-depth` | `10` | 最大搜索深度 |
+| `customized` | `--steps` | — (**必填**) | JSON 格式多步遍历定义 |
+| | `--with-vertex` | 否 | 结果包含顶点信息 |
+| | `--with-edge` | 否 | 结果包含边信息 |
+
 #### `kg algo` — 图 OLAP 算法子组 (v1.2 新增)
 
 9 种算法：
@@ -932,6 +972,20 @@ arrow-lake kg algo k-core --k 3
 arrow-lake kg algo betweenness-centrality
 ```
 
+**Algo 子命令参数表：**
+
+| 子命令 | 参数 | 默认值 | 说明 |
+|--------|------|--------|------|
+| `pagerank` | `--iterations` | `20` | 最大迭代次数 |
+| | `--damping` | `0.85` | 阻尼系数 |
+| `louvain` | `--resolution` | `1.0` | 分辨率参数 |
+| `degree-centrality` | — | — | 无额外参数 |
+| `closeness-centrality` | — | — | 无额外参数 |
+| `betweenness-centrality` | — | — | 无额外参数 |
+| `wcc` | — | — | 无额外参数 |
+| `triangle-count` | — | — | 无额外参数 |
+| `k-core` | `--k` | `3` | K 核心层数 |
+
 ---
 
 ### 12. `arrow-lake rag` — RAG 问答
@@ -952,10 +1006,13 @@ arrow-lake rag query papers \
 | `--strategy` | 无（使用配置默认值） | 检索策略: `vector`, `fts`, `hybrid` |
 | `--template` | 无（使用配置默认值） | 提示词模板: `default_qa`, `graph_qa` |
 | `--session-id` | 无 | 会话 ID（用于多轮对话） |
+| `--max-context-tokens` | `4096` | 最大上下文 token 数 |
+| `--temperature` | `0.7` | 生成温度 |
+| `--use-graph` | 否 | 启用 GraphRAG 增强检索 |
 
 输出示例：
 
-```
+```text
 Running RAG query...
 
 Answer:
@@ -1057,7 +1114,32 @@ arrow-lake rag get-feedback s1
 
 ---
 
-### 13. `arrow-lake config` — 配置管理
+### 13. `arrow-lake maintenance` — 系统维护
+
+#### `maintenance status` — 查看维护调度器状态
+
+```bash
+arrow-lake maintenance status
+```
+
+输出当前维护调度器状态、上次执行时间、下次计划执行时间等信息。
+
+#### `maintenance run` — 执行一次完整维护周期
+
+```bash
+arrow-lake maintenance run
+arrow-lake maintenance run --json    # JSON 格式输出
+```
+
+执行一次完整维护周期，包括数据压缩和版本清理。
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--json` | 否 | 以 JSON 格式输出执行结果 |
+
+---
+
+### 14. `arrow-lake config` — 配置管理
 
 #### `config show` — 显示当前配置
 
@@ -1067,6 +1149,27 @@ arrow-lake --config prod.yaml config show
 ```
 
 输出默认配置的完整 JSON（所有 30 个配置分区）。
+
+#### `config dump` — 导出当前配置
+
+```bash
+arrow-lake config dump
+arrow-lake config dump --output config_backup.json
+```
+
+导出当前生效配置为 JSON 文件，包含所有运行时合并后的值。
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--output` | — | 输出文件路径（不指定则输出到终端） |
+
+#### `config validate <file>` — 验证配置文件
+
+```bash
+arrow-lake config validate prod.yaml
+```
+
+验证 YAML 配置文件的格式和字段合法性，输出验证结果。
 
 #### `config init` — 生成配置模板
 
@@ -1079,7 +1182,7 @@ arrow-lake config init --output prod.yaml  # 自定义文件名
 
 ---
 
-### 14. `arrow-lake audit` — 审计追踪 (v1.2 新增)
+### 15. `arrow-lake audit` — 审计追踪 (v1.2 新增)
 
 完整的审计日志记录、HMAC 完整性验证、异常检测。
 
@@ -1105,7 +1208,7 @@ arrow-lake audit verify audit-20260426-001
 #### `audit query` — 查询审计日志
 
 ```bash
-arrow-lake audit query --dataset papers --start 2026-01-01 --end 2026-04-01
+arrow-lake audit query --dataset papers --start 2026-01-01 --end_time 2026-04-01
 arrow-lake audit query --event-type dataset_ingested
 ```
 
@@ -1113,7 +1216,7 @@ arrow-lake audit query --event-type dataset_ingested
 |------|--------|------|
 | `--dataset` | 无 | 按数据集过滤 |
 | `--start` | 无 | 起始时间 (ISO) |
-| `--end` | 无 | 结束时间 (ISO) |
+| `--end_time` | 无 | 结束时间 (ISO) |
 | `--event-type` | 无 | 按事件类型过滤 |
 
 #### `audit export <dataset>` — 导出审计日志
@@ -1134,7 +1237,7 @@ arrow-lake audit analyze
 
 ---
 
-### 15. `arrow-lake lineage` — 数据血缘 (v1.2 新增)
+### 16. `arrow-lake lineage` — 数据血缘 (v1.2 新增)
 
 #### `lineage record <dataset> <operation>` — 记录血缘事件
 
@@ -1164,9 +1267,14 @@ arrow-lake lineage history sales
 arrow-lake lineage query "SELECT * FROM lineage WHERE dataset_name = 'sales'"
 ```
 
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `sql` | — (**必填**) | SQL 查询语句（位置参数） |
+| `--max-rows` | `100` | 最大返回行数 |
+
 ---
 
-### 16. `arrow-lake lifecycle` — Blob 生命周期 (v1.2 新增)
+### 17. `arrow-lake lifecycle` — Blob 生命周期 (v1.2 新增)
 
 S3/MinIO 对象的存储分层、Glacier 恢复、成本估算。
 
@@ -1229,6 +1337,17 @@ arrow-lake lifecycle estimate --size-gb 2000 --target-tier DEEP_ARCHIVE
 
 ---
 
+### 18. 场景导航别名 (v1.5.0+)
+
+| 别名 | 等效命令组 | 说明 |
+|------|-----------|------|
+| `arrow-lake knowledge` | rag + kg | 知识构建与管理导航 |
+| `arrow-lake connect` | ingest + catalog | 数据连接与摄取导航 |
+| `arrow-lake analyze` | query + search + export | 数据分析与检索导航 |
+| `arrow-lake govern` | audit + lineage + backup + maintenance | 数据治理与运维导航 |
+
+---
+
 ## 第二部分：存储配置
 
 ### 本地存储（默认）
@@ -1248,7 +1367,7 @@ Arrow Lake 支持将数据存储在 S3 或 MinIO 上，CLI 命令**不需要改�
 
 **核心原理**：`--base-uri` 在 S3 模式下是**桶内前缀**，不是完整路径。实际 S3 路径由系统自动拼接：
 
-```
+```text
 实际路径 = s3://{s3_bucket}/{base_uri}/{dataset}.lance
 ```
 
@@ -1417,7 +1536,7 @@ arrow-lake --base-uri ./paper_lake ingest files papers examples/data/papers/meta
 arrow-lake --base-uri ./paper_lake ingest files papers_zh examples/data/papers/metadata_zh.csv
 
 # 摄取 PDF 原文
-arrow-lake --base-uri ./paper_lake ingest docs papers examples/data/papers/full_text/*.pdf
+arrow-lake --base-uri ./paper_lake ingest documents papers examples/data/papers/full_text/*.pdf
 ```
 
 **步骤 2：查看数据集**
@@ -1735,7 +1854,7 @@ arrow-lake --config prod.yaml --base-uri ./datasets kg build reports
 | 查看数据集 | `arrow-lake status` |
 | 摄取文件 | `arrow-lake ingest files <ds> <paths...>` |
 | 摄取图片 | `arrow-lake ingest images <ds> <images...>` |
-| 摄取 PDF | `arrow-lake ingest docs <ds> <pdfs...>` |
+| 摄取 PDF | `arrow-lake ingest documents <ds> <pdfs...>` |
 | 远程摄取 | `arrow-lake ingest http <ds> <urls...>` |
 | 向量搜索 | `arrow-lake search vector <ds> --query <text>` |
 | 全文搜索 | `arrow-lake search fts <ds> --query <text>` |
@@ -1761,13 +1880,16 @@ arrow-lake --config prod.yaml --base-uri ./datasets kg build reports
 | 数据血缘 | `arrow-lake lineage record <ds> <op>` |
 | 生命周期规则 | `arrow-lake lifecycle rules --prefix <prefix>` |
 | 生命周期恢复 | `arrow-lake lifecycle restore <key>` |
+| 系统维护 | `arrow-lake maintenance stats` |
+| 清理过期数据 | `arrow-lake maintenance cleanup` |
+| 数据压缩 | `arrow-lake maintenance compact <ds>` |
 | 生成配置 | `arrow-lake config init --output <file>` |
 | 启动服务 | `arrow-lake serve` |
 | 版本信息 | `arrow-lake version` |
 
 ### B. 配置优先级
 
-```
+```text
 YAML 配置文件 (最高) > 环境变量 (ARROW_LAKE__*) > .env 文件 > 代码默认值
 ```
 

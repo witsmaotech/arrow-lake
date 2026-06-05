@@ -1,5 +1,7 @@
 # 知识图谱与 GraphRAG
 
+> 版本：1.5.3
+
 Arrow Lake 内置知识图谱 (KG) 子系统，通过 LLM 实体抽取将非结构化文本转化为结构化的实体 - 关系图，
 并写入 HugeGraph 图数据库。当 `hugegraph.enabled=True` 时，RAG 管线自动升级为 GraphRAG，
 在向量检索的基础上融合图谱邻居上下文，显著提升多跳推理问题的回答质量。
@@ -121,17 +123,26 @@ print(results)
 ```python
 import asyncio
 
-# 获取实体的一阶邻居
-neighbors_1 = asyncio.run(
-    lake.kg_get_neighbors(entity_id="arrow_lake:entity:42", depth=1)
+# 获取出边方向的一阶邻居
+neighbors_out = asyncio.run(
+    lake.kg_get_neighbors(
+        entity_id="arrow_lake:entity:42",
+        direction="out",
+        depth=1,
+    )
 )
-print(f"一阶邻居数：{len(neighbors_1)}")
-for n in neighbors_1:
+print(f"出边邻居数：{len(neighbors_out)}")
+for n in neighbors_out:
     print(f"  [{n.get('label')}] {n.get('name', n.get('id'))}")
 
-# 获取二阶邻居 — 发现更远距离的关联实体
+# 获取双向二阶邻居，限制返回 200 条
 neighbors_2 = asyncio.run(
-    lake.kg_get_neighbors(entity_id="arrow_lake:entity:42", depth=2)
+    lake.kg_get_neighbors(
+        entity_id="arrow_lake:entity:42",
+        direction="both",
+        depth=2,
+        limit=200,
+    )
 )
 print(f"二阶邻居数：{len(neighbors_2)}")
 ```
@@ -139,14 +150,219 @@ print(f"二阶邻居数：{len(neighbors_2)}")
 参数说明：
 
 * `entity_id` — 起始顶点 ID 字符串
+* `direction` — 边方向：`"out"`、`"in"` 或 `"both"`（默认：`"both"`）
 * `depth` — 遍历跳数，默认 1，最大值受 `max_traversal_depth` 配置约束（默认 5）
+* `limit` — 返回的最大邻居顶点数（默认：100）
 
 底层调用 `HugeGraphClient.traverser_kneighbor()`，
 使用 HugeGraph 的 `/graphs/{name}/traversers/kneighbor` 端点。
 
 ***
 
-## 5. GraphRAG 增强问答
+## 5. 最短路径遍历
+
+Arrow Lake 提供多种最短路径算法，用于查找实体间的路径。
+
+### 所有点最短路径
+
+`Lake.kg_all_shortest_paths()` 查找两个顶点之间的所有最短路径：
+
+```python
+import asyncio
+
+paths = asyncio.run(
+    lake.kg_all_shortest_paths(
+        source="arrow_lake:entity:1",
+        target="arrow_lake:entity:42",
+    )
+)
+for path in paths.get("paths", []):
+    print(" -> ".join(str(v) for v in path))
+```
+
+### 加权最短路径
+
+`Lake.kg_weighted_shortest_path()` 考虑边权重计算最短路径：
+
+```python
+result = asyncio.run(
+    lake.kg_weighted_shortest_path(
+        source="arrow_lake:entity:1",
+        target="arrow_lake:entity:42",
+    )
+)
+print(f"路径：{result.get('path')}")
+print(f"权重：{result.get('weight')}")
+```
+
+### 单源最短路径
+
+`Lake.kg_single_source_shortest_path()` 从一个源点计算到所有可达顶点的最短路径：
+
+```python
+result = asyncio.run(
+    lake.kg_single_source_shortest_path(
+        source="arrow_lake:entity:1",
+    )
+)
+for target, info in result.get("paths", {}).items():
+    print(f"  -> {target}：距离={info.get('distance')}")
+```
+
+***
+
+## 6. 射线与环遍历
+
+### 射线（Rays）
+
+`Lake.kg_rays()` 从源顶点沿指定方向发射所有路径（射线）：
+
+```python
+import asyncio
+
+rays = asyncio.run(
+    lake.kg_rays(
+        source="arrow_lake:entity:1",
+        direction="out",
+        max_depth=3,
+    )
+)
+for ray in rays.get("rays", []):
+    print(" -> ".join(str(v) for v in ray))
+```
+
+### 环（Rings）
+
+`Lake.kg_rings()` 检测从源顶点出发的环形路径：
+
+```python
+rings = asyncio.run(
+    lake.kg_rings(
+        source="arrow_lake:entity:1",
+        direction="out",
+        max_depth=3,
+    )
+)
+for ring in rings.get("rings", []):
+    print("环路：" + " -> ".join(str(v) for v in ring))
+```
+
+### 交叉点（Crosspoints）
+
+`Lake.kg_crosspoints()` 查找两个顶点路径的交汇点：
+
+```python
+crosspoints = asyncio.run(
+    lake.kg_crosspoints(
+        source="arrow_lake:entity:1",
+        target="arrow_lake:entity:42",
+    )
+)
+print(f"交叉点：{crosspoints.get('vertices', [])}")
+```
+
+***
+
+## 7. 图分析
+
+Arrow Lake 提供一套图分析算法，用于衡量中心性、检测社区和分析图结构。
+
+### PageRank
+
+```python
+import asyncio
+
+pr = asyncio.run(lake.kg_pagerank(iterations=20, damping=0.85))
+for vertex, score in sorted(pr.get("scores", {}).items(), key=lambda x: -x[1])[:10]:
+    print(f"  {vertex}: {score:.4f}")
+```
+
+### 社区检测（Louvain）
+
+```python
+communities = asyncio.run(lake.kg_louvain(resolution=1.0))
+print(f"检测到社区数：{communities.get('community_count', 0)}")
+```
+
+### 中心性指标
+
+```python
+# 度中心性 — 每个顶点的直接连接数
+degree = asyncio.run(lake.kg_degree_centrality())
+
+# 接近中心性 — 到所有其他顶点的平均最短路径距离
+closeness = asyncio.run(lake.kg_closeness_centrality())
+
+# 中介中心性 — 顶点出现在最短路径上的频率
+betweenness = asyncio.run(lake.kg_betweenness_centrality())
+```
+
+### 结构分析
+
+```python
+# 弱连通分量
+wcc = asyncio.run(lake.kg_wcc())
+print(f"连通分量数：{wcc.get('component_count', 0)}")
+
+# 三角形计数
+triangles = asyncio.run(lake.kg_triangle_count())
+print(f"三角形数：{triangles.get('triangle_count', 0)}")
+
+# K-Core 分解
+kcore = asyncio.run(lake.kg_k_core(k=3))
+print(f"3-Core 中的顶点数：{kcore.get('vertex_count', 0)}")
+```
+
+图分析 API 汇总：
+
+| 方法                           | 说明               |
+| ---------------------------- | ---------------- |
+| `kg_pagerank(iterations, damping)` | PageRank 排名算法  |
+| `kg_louvain(resolution)`     | Louvain 社区检测    |
+| `kg_degree_centrality()`     | 度中心性            |
+| `kg_closeness_centrality()`  | 接近中心性           |
+| `kg_betweenness_centrality()`| 中介中心性           |
+| `kg_wcc()`                   | 弱连通分量           |
+| `kg_triangle_count()`        | 三角形计数           |
+| `kg_k_core(k)`               | K-Core 分解        |
+
+***
+
+## 8. 导入与导出
+
+### 导出图谱
+
+`Lake.kg_export_graph()` 将所有顶点和边导出为字典，可选包含顶点/边属性：
+
+```python
+import asyncio
+
+data = asyncio.run(lake.kg_export_graph(with_properties=True))
+print(f"已导出 {len(data.get('vertices', []))} 个顶点，{len(data.get('edges', []))} 条边")
+
+# 保存为 JSON 备份
+import json
+with open("graph_backup.json", "w") as f:
+    json.dump(data, f, indent=2)
+```
+
+### 导入图谱
+
+`Lake.kg_import_graph()` 从之前导出的字典恢复图谱：
+
+```python
+import json
+
+with open("graph_backup.json") as f:
+    data = json.load(f)
+
+result = asyncio.run(lake.kg_import_graph(data))
+print(f"导入结果：{result}")
+```
+
+***
+
+## 9. GraphRAG 增强问答
 
 当 `hugegraph.enabled=True` 时，`Lake.rag_query()` 自动创建 `GraphRAGPipeline`
 替代基础 `RAGPipeline`。GraphRAG 管线在回答问题前，先从用户问题中抽取关键实体，
@@ -193,7 +409,7 @@ GraphRAG 管线的工作流程：
 
 ***
 
-## 6. 图谱清理
+## 10. 图谱清理
 
 `Lake.kg_delete_graph()` 清空图谱中的所有顶点和边（包括 schema）。
 此操作不可逆，请谨慎使用。
@@ -219,7 +435,7 @@ print(f"边数：{stats.get('edge_count', 0)}")
 
 ***
 
-## 7. 完整工作流示例
+## 11. 完整工作流示例
 
 以下是一个从数据摄取到 GraphRAG 问答的完整端到端流程：
 
@@ -276,7 +492,7 @@ asyncio.run(main())
 
 ***
 
-## 8. 配置参考
+## 12. 配置参考
 
 `HugeGraphConfig` 完整配置项：
 
@@ -302,7 +518,7 @@ asyncio.run(main())
 
 ***
 
-## 9. 常见问题
+## 13. 常见问题
 
 **Q: 构建任务卡在 pending 状态怎么办？**
 

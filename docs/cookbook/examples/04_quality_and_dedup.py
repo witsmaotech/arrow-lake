@@ -86,20 +86,20 @@ def main() -> None:
 
     # --- STEP 2: 精确去重 ---
     print("STEP 2: 精确去重")
-    result = lake.deduplicate(DATASET, strategy="exact", action="flag")
+    result = lake.deduplicate(DATASET, strategy="exact", columns=["id", "text_content"], action="delete")
     print(f"  重复行数: {result.duplicates_found}")
     print("  [PASS]\n")
 
     # --- STEP 3: 感知去重 ---
     print("STEP 3: 感知去重 (基于向量)")
-    result = lake.deduplicate(DATASET, strategy="perceptual", action="flag",
-                              perceptual_threshold=10)
+    result = lake.deduplicate(DATASET, strategy="simhash", threshold=0.95,
+                              columns=["text_content"], action="delete")
     print(f"  近似重复数: {result.duplicates_found}")
     print("  [PASS]\n")
 
     # --- STEP 4: 质量过滤 ---
     print("STEP 4: 质量过滤 (空值检查)")
-    result = lake.quality_filter(DATASET, active_filters="null_check", mode="all")
+    result = lake.quality_filter(DATASET, filters="null_check", mode="exclude")
     print(f"  通过: {result.passed}")
     print(f"  拒绝: {result.rejected}")
     print("  [PASS]\n")

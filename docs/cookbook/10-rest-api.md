@@ -12,12 +12,16 @@ knowledge graph management. It supports API Key authentication and a dual-mode J
 ## 1. Starting the Server
 
 ```bash
-# Start with default settings (binds to 0.0.0.0:8000)
+# Start with default settings (binds to 127.0.0.1:8000 since v1.5.2)
 arrow-lake serve --host 0.0.0.0 --port 8000
 
 # Start using a YAML configuration file
 arrow-lake serve --config /path/to/config.yaml
 ```
+
+> **Note (v1.5.2)**: The default bind address changed from `0.0.0.0` to `127.0.0.1` for security.
+> To accept remote connections, explicitly set `--host 0.0.0.0` or configure `api.host: "0.0.0.0"`
+> in your YAML config.
 
 Once running, access the Swagger UI at `http://localhost:8000/docs` or the ReDoc at
 `http://localhost:8000/redoc`.
@@ -115,6 +119,7 @@ curl -X POST http://localhost:8000/api/v1/auth/refresh \
 | `POST` | `/api/v1/datasets/{name}/search/fts`     | Full-text search | VIEWER |
 | `POST` | `/api/v1/datasets/{name}/search/hybrid`  | Hybrid search    | VIEWER |
 | `POST` | `/api/v1/datasets/{name}/search/faceted` | Faceted search   | VIEWER |
+| `POST` | `/api/v1/datasets/{name}/search/ensemble` | Ensemble search (vector + FTS + facets) | VIEWER |
 
 ### RAG & Knowledge Graph (v2)
 
@@ -583,12 +588,10 @@ def list_tags(table: str | None = None) -> dict:
 
 def create_tag(name: str, comment: str = "") -> dict:
     """Create a new tag in Gravitino."""
-    import json
-    body = json.dumps({"name": name, "comment": comment})
     resp = httpx.post(
         f"{BASE_URL}/metadata/tags",
         headers=HEADERS,
-        params={"body": body},
+        json={"name": name, "comment": comment},
         timeout=10,
     )
     resp.raise_for_status()
@@ -604,12 +607,10 @@ def list_policies() -> dict:
 
 def create_retention_policy(name: str, days: int = 30) -> dict:
     """Create a data retention policy."""
-    import json
-    body = json.dumps({"name": name, "days": days})
     resp = httpx.post(
         f"{BASE_URL}/metadata/policies/retention",
         headers=HEADERS,
-        params={"body": body},
+        json={"name": name, "days": days},
         timeout=10,
     )
     resp.raise_for_status()
@@ -618,12 +619,10 @@ def create_retention_policy(name: str, days: int = 30) -> dict:
 
 def create_masking_policy(name: str, columns: list[str]) -> dict:
     """Create a column masking policy."""
-    import json
-    body = json.dumps({"name": name, "columns": columns})
     resp = httpx.post(
         f"{BASE_URL}/metadata/policies/masking",
         headers=HEADERS,
-        params={"body": body},
+        json={"name": name, "columns": columns},
         timeout=10,
     )
     resp.raise_for_status()
@@ -1498,7 +1497,7 @@ curl -N -X POST http://localhost:8000/api/v1/datasets/sales/query/olap \
 
 Streams SSE events:
 
-```
+```text
 data: {"type": "schema", "columns": ["id", "region", "amount"], "row_count": 50000}
 data: {"type": "batch", "rows": 1000, "data": "<base64-arrow-ipc>"}
 data: {"type": "done", "total_rows": 50000}
@@ -1675,3 +1674,63 @@ curl http://localhost:8000/api/v1/admin/deny/sensitive_data \
 ```json
 {"dataset": "sensitive_data", "denied_actions": ["delete", "export"]}
 ```
+
+### Storage Lifecycle API
+
+Manage blob storage lifecycle policies (archive, expire, restore).
+
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| `POST` | `/api/v1/lifecycle/apply` | Apply lifecycle rules to a prefix | ADMIN |
+| `GET` | `/api/v1/lifecycle/status` | Check lifecycle status for a prefix | ADMIN |
+| `POST` | `/api/v1/lifecycle/restore` | Restore an archived blob | ADMIN |
+| `GET` | `/api/v1/lifecycle/rules` | List configured lifecycle rules | ADMIN |
+| `POST` | `/api/v1/lifecycle/estimate` | Estimate storage savings | ADMIN |
+
+#### Apply Lifecycle Rules
+
+```bash
+curl -X POST http://localhost:8000/api/v1/lifecycle/apply \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"prefix": "uploads/"}'
+```
+
+**Response:**
+
+```json
+{"success": true, "archived": 15, "expired": 3, "errors": []}
+```
+
+#### Restore Archived Blob
+
+```bash
+curl -X POST http://localhost:8000/api/v1/lifecycle/restore \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"key": "uploads/archive/data.parquet", "days": 7}'
+```
+
+**Response:**
+
+```json
+{"success": true, "key": "uploads/archive/data.parquet", "restore_days": 7, "status": "restoring"}
+```
+
+### v1.5.2 Security Hardening Notes
+
+The following security improvements were applied in v1.5.2:
+
+| Area | Hardening |
+|------|-----------|
+| **JWT** | Empty `jwt_secret_key` now blocks server startup |
+| **Kerberos** | Command injection vectors eliminated in auth provider |
+| **SQL** | All user-facing queries use parameterized execution |
+| **Redis** | Default password removed; must be explicitly configured |
+| **Network** | All ports bind to `127.0.0.1` by default |
+| **SSRF** | URL validation on `ingest_http` and presign endpoints |
+| **Admin** | Role enum replaces string-based admin bypass |
+| **Tokens** | Refresh token rotation with revocation support |
+| **Gremlin** | Input sanitization on `kg_query` endpoint |
+
+These hardening measures are enforced automatically — no configuration changes needed.

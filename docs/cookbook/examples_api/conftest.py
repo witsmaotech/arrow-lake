@@ -303,6 +303,13 @@ class ArrowLakeClient:
     def quality_deduplicate(self, name: str, **kwargs: Any) -> dict:
         return self._request("POST", f"/api/v1/datasets/{name}/quality/deduplicate", kwargs)
 
+    def quality_rules(self, name: str, rules: list[dict], **kwargs: Any) -> dict:
+        body: dict[str, Any] = {"rules": rules, **kwargs}
+        return self._request("POST", f"/api/v1/datasets/{name}/quality/rules", body)
+
+    def quality_profile(self, name: str) -> dict:
+        return self._request("GET", f"/api/v1/datasets/{name}/quality/profile")
+
     # -- backup --
 
     def backup_create(self, datasets: list[str], **kwargs: Any) -> dict:
@@ -383,12 +390,13 @@ class ArrowLakeClient:
                        inputs: list[str] | None = None,
                        outputs: list[str] | None = None,
                        **kwargs: Any) -> dict:
-        body: dict[str, Any] = {"dataset_name": dataset_name, "operation": operation, **kwargs}
+        body: dict[str, Any] = {"operation": operation, **kwargs}
         if inputs:
-            body["inputs"] = inputs
+            body["source_datasets"] = inputs
         if outputs:
             body["outputs"] = outputs
-        return self._request("POST", "/api/v1/lineage/record", body)
+        path = f"/api/v1/lineage/record?dataset_name={dataset_name}"
+        return self._request("POST", path, body)
 
     def lineage_history(self, dataset_name: str) -> dict:
         return self._request("GET", f"/api/v1/lineage/history/{dataset_name}")
@@ -397,22 +405,34 @@ class ArrowLakeClient:
         body: dict[str, Any] = {"sql": sql, **kwargs}
         return self._request("POST", "/api/v1/lineage/query", body)
 
+    def lineage_graph(self, dataset_name: str, **kwargs: Any) -> dict:
+        return self._request("GET", f"/api/v1/lineage/graph/{dataset_name}", kwargs)
+
+    def lineage_impact(self, dataset_name: str, **kwargs: Any) -> dict:
+        body: dict[str, Any] = {"dataset_name": dataset_name, **kwargs}
+        return self._request("POST", "/api/v1/lineage/impact", body)
+
+    def lineage_stats(self) -> dict:
+        return self._request("GET", "/api/v1/lineage/stats")
+
     # -- audit --
 
     def audit_record(self, dataset_name: str, action: str,
                      **kwargs: Any) -> dict:
-        body: dict[str, Any] = {"dataset_name": dataset_name, "action": action, **kwargs}
+        # Map "details" kwarg to "payload" expected by AuditRecordRequest
+        if "details" in kwargs:
+            kwargs["payload"] = kwargs.pop("details")
+        body: dict[str, Any] = {"event_type": action, "dataset_name": dataset_name, **kwargs}
         return self._request("POST", "/api/v1/audit/record", body)
 
     def audit_verify(self, audit_id: str) -> dict:
-        return self._request("POST", "/api/v1/audit/verify", {"audit_id": audit_id})
+        return self._request("POST", f"/api/v1/audit/verify?audit_id={audit_id}")
 
     def audit_query(self, **kwargs: Any) -> dict:
         return self._request("GET", "/api/v1/audit/query", kwargs)
 
     def audit_export(self, dataset_name: str, **kwargs: Any) -> dict:
-        body: dict[str, Any] = {"dataset_name": dataset_name, **kwargs}
-        return self._request("POST", "/api/v1/audit/export", body)
+        return self._request("POST", f"/api/v1/audit/export?dataset_name={dataset_name}")
 
     # -- metadata (Gravitino) --
 

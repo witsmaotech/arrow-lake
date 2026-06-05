@@ -47,8 +47,7 @@ def main() -> None:
     # STEP 1: 创建数据集
     print("STEP 1: 摄入交易数据")
     report = lake.ingest("sales", [str(DATAS_DIR / "transactions" / "sales_2024_cn.csv")])
-    ds = lake.open_dataset("sales")
-    print(f"  摄入: {report.total_rows} 行, {len(ds.schema)} 列")
+    print(f"  摄入: {report.total_rows} 行")
 
     # STEP 2: 导出为 Parquet
     print("\nSTEP 2: 导出 Parquet")
@@ -78,7 +77,7 @@ def main() -> None:
     # STEP 5: 备份
     print("\nSTEP 5: 备份数据集")
     try:
-        b = lake.backup_create("sales")
+        b = lake.backup_create(datasets=["sales"])
         print(f"  备份已创建: {b}")
     except (OSError, ValueError) as e:
         print(f"  备份功能: {e}")
@@ -97,9 +96,11 @@ def main() -> None:
 
     # STEP 7: 数据集目录
     print("\nSTEP 8: 数据集目录总览")
+    catalog = lake.catalog()
     for name in lake.list_datasets():
-        ds = lake.open_dataset(name)
-        print(f"  {name}: {ds.count_rows()} 行, {len(ds.schema)} 列")
+        ds = catalog.datasets.get(name)
+        rows = ds.num_rows if ds else "?"
+        print(f"  {name}: {rows} 行")
 
     print("\n  [全部 PASS]")
     if not no_cleanup:

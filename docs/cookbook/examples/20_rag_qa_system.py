@@ -28,21 +28,17 @@ DIM = 768
 _DATASETS = ["knowledge_zh"]
 
 
-def _add_vectors(lake: Lake, dataset: str) -> int:
-    try:
-        return lake.embed_and_add(dataset)
-    except Exception:
-        import numpy as np
-        rng = np.random.RandomState(42)
-        ds = lake.open_dataset(dataset)
-        n = ds.count_rows()
-        vecs = rng.randn(n, DIM).astype(np.float32)
-        vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
-        vec_table = pa.table({
-            "text_embedding": pa.FixedSizeListArray.from_arrays(vecs.ravel(), DIM),
-        })
-        lake.add_columns_table(dataset, vec_table)
-        return n
+def _add_vectors(lake: Lake, dataset: str, n_rows: int) -> int:
+    """生成随机向量并追加到数据集 (模拟嵌入模型)"""
+    import numpy as np
+    rng = np.random.RandomState(42)
+    vecs = rng.randn(n_rows, DIM).astype(np.float32)
+    vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
+    vec_table = pa.table({
+        "text_embedding": pa.FixedSizeListArray.from_arrays(vecs.ravel(), DIM),
+    })
+    lake.append_dataset(dataset, vec_table)
+    return n_rows
 
 
 async def run_async() -> None:
@@ -71,14 +67,13 @@ async def run_async() -> None:
     # STEP 1: 摄入知识库
     print("STEP 1: 摄入中文知识库")
     report = lake.ingest("knowledge_zh", [str(DATAS_DIR / "kb" / "knowledge_zh.jsonl")])
-    ds = lake.open_dataset("knowledge_zh")
     print(f"  摄入: {report.total_rows} 行")
 
     # STEP 2: 建索引
     print("\nSTEP 2: 生成向量 + 建立索引")
-    n = _add_vectors(lake, "knowledge_zh")
+    n = _add_vectors(lake, "knowledge_zh", report.total_rows)
     try:
-        lake.create_vector_index("knowledge_zh", vector_column="text_embedding")
+        lake.create_vector_index("knowledge_zh", "text_embedding")
     except Exception as e:
         print(f"  向量索引跳过: {e}")
     lake.create_fts_index("knowledge_zh", fts_column="text_content")
@@ -145,15 +140,13 @@ async def run_async() -> None:
             except Exception as e:
                 print(f"  Q{i+1} 失败: {e}")
 
-        # STEP 7: 查看对话历史
-        print("\nSTEP 7: 对话历史")
+        # STEP 7: 清理过期会话
+        print("\nSTEP 7: 清理过期会话")
         try:
-            history = lake.rag_get_history(session_id)
-            print(f"  历史记录: {len(history)} 条")
-            for h in history:
-                print(f"    [{h.get('role', '?')}] {h.get('content', '')[:80]}...")
+            cleaned = lake.rag_cleanup_expired_sessions()
+            print(f"  已清理: {cleaned} 个过期会话")
         except Exception as e:
-            print(f"  历史查询: {e}")
+            print(f"  清理: {e}")
     else:
         print("\n  [RAG 服务不可用，跳过问答步骤]")
         print("\n  启动指引:")
@@ -162,7 +155,7 @@ async def run_async() -> None:
         print("    3. 配置 rag.llm_provider='ollama' 或 'openai'")
         print("    4. 重新运行本示例")
 
-    print("\n  [全部 PASS]")
+    print("\n  [全部 PASS]" if rag_ready else "\n  [部分 PASS — RAG 不可用]")
     if not no_cleanup:
         for ds in _DATASETS:
             try:

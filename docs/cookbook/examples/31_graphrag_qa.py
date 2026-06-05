@@ -31,28 +31,17 @@ DIM = 768
 _DATASETS = ["knowledge_zh"]
 
 
-def _add_vectors(lake: Lake, dataset: str) -> int:
-    """Encode text_content into real embeddings and add to dataset.
-
-    Uses the configured embedding backend (Ollama API or local model).
-    Falls back to random vectors if no backend is available.
-    """
-    try:
-        return lake.embed_and_add(dataset)
-    except Exception:
-        # Fallback: random vectors for demo when no embedding model is available
-        import numpy as np
-
-        rng = np.random.RandomState(42)
-        ds = lake.open_dataset(dataset)
-        n = ds.count_rows()
-        vecs = rng.randn(n, DIM).astype(np.float32)
-        vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
-        vec_table = pa.table({
-            "text_embedding": pa.FixedSizeListArray.from_arrays(vecs.ravel(), DIM),
-        })
-        lake.add_columns_table(dataset, vec_table)
-        return n
+def _add_vectors(lake: Lake, dataset: str, n_rows: int) -> int:
+    """生成随机向量并追加到数据集 (模拟嵌入模型)"""
+    import numpy as np
+    rng = np.random.RandomState(42)
+    vecs = rng.randn(n_rows, DIM).astype(np.float32)
+    vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
+    vec_table = pa.table({
+        "text_embedding": pa.FixedSizeListArray.from_arrays(vecs.ravel(), DIM),
+    })
+    lake.append_dataset(dataset, vec_table)
+    return n_rows
 
 
 async def run_async() -> None:
@@ -85,9 +74,9 @@ async def run_async() -> None:
 
     # STEP 2: 向量化 + 建索引
     print("\nSTEP 2: 向量化 + 建索引")
-    n = _add_vectors(lake, "knowledge_zh")
+    n = _add_vectors(lake, "knowledge_zh", report.total_rows)
     try:
-        lake.create_vector_index("knowledge_zh", vector_column="text_embedding")
+        lake.create_vector_index("knowledge_zh", "text_embedding")
     except Exception as e:
         print(f"  向量索引跳过: {e}")
     lake.create_fts_index("knowledge_zh", fts_column="text_content")
@@ -154,15 +143,18 @@ async def run_async() -> None:
             except Exception as e:
                 print(f"  Q: {q} → 失败: {e}")
 
-        # STEP 6: 对话历史
-        print("\nSTEP 6: 多轮对话历史")
-        history = lake.rag_get_history(session_id)
-        print(f"  历史记录: {len(history)} 轮")
+        # STEP 6: 清理过期会话
+        print("\nSTEP 6: 清理过期会话")
+        try:
+            cleaned = lake.rag_cleanup_expired_sessions()
+            print(f"  已清理: {cleaned} 个过期会话")
+        except Exception as e:
+            print(f"  清理: {e}")
 
         # STEP 7: 实体提取 (RAG extract)
         print("\nSTEP 7: 实体提取 (rag_extract)")
         try:
-            resp = await lake.rag_extract("knowledge_zh", text_column="text_content", top_k=3)
+            resp = await lake.rag_extract("知识图谱和向量数据库的关系", dataset_name="knowledge_zh")
             print(f"  提取结果: {resp.answer[:200]}...")
         except Exception as e:
             print(f"  实体提取: {e}")
@@ -172,7 +164,7 @@ async def run_async() -> None:
         for q in ["向量数据库", "知识图谱", "列式存储"]:
             try:
                 result = lake.text_search("knowledge_zh", q, top_k=3,
-                                          fts_column="text_content")
+                                          columns=["text_content"])
                 print(f"  '{q}' → {result.row_count} 条结果")
                 for i in range(min(3, result.row_count)):
                     t = result.table
@@ -198,7 +190,7 @@ async def run_async() -> None:
     print("    - entity_type_counts()     实体类型统计")
     print("    - traverse_from_entities()  多实体联合遍历")
 
-    print("\n  [全部 PASS]")
+    print("\n  [全部 PASS]" if kg_ok and rag_ok else "\n  [部分 PASS — GraphRAG 不可用]")
     if not no_cleanup:
         for ds in _DATASETS:
             try:

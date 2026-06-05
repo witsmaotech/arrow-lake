@@ -15,7 +15,7 @@
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-org/wits-infra-dintellihub.git
+git clone https://github.com/witshine/wits-infra-dintellihub.git
 cd wits-infra-dintellihub
 
 # Install all dependencies with uv (recommended)
@@ -35,7 +35,7 @@ arrow-lake version
 # ┌───────────┬──────────┐
 # │ Component │ Version  │
 # ├───────────┼──────────┤
-# │ arrow-lake│ 1.2.1    │
+# │ arrow-lake│ 1.5.3    │
 # │ python    │ 3.12.4   │
 # │ daft      │ 0.7.8    │
 # │ pyarrow   │ 23.0.1   │
@@ -73,6 +73,7 @@ more_data = pa.table({
 lake.append_dataset("users", more_data)
 
 # 4. SQL query
+# Note: SQL table name must match the dataset name ("users")
 result = lake.query("users", "SELECT * FROM users WHERE age > 26")
 print(result.to_pandas())
 
@@ -85,6 +86,7 @@ olap_result = lake.olap_query(
 print(olap_result.table.to_pandas())
 
 # 6. Export to Parquet
+# Note: Parent directory "output/" must exist; create it first or use an absolute path.
 lake.export("users", "output/users.parquet", columns=["name", "age"])
 
 # 7. Browse the catalog
@@ -94,6 +96,11 @@ for ds in catalog.datasets:
 
 # 8. Shut down
 lake.shutdown()
+
+# Tip: Use as context manager for automatic cleanup
+# with Lake(base_uri="./my_lake") as lake:
+#     lake.create_dataset("users", data)
+#     # ... lake.shutdown() called automatically on exit
 ```
 
 ***
@@ -169,7 +176,7 @@ arrow-lake demo --no-cleanup
 Arrow Lake uses [Lance](https://lancedb.github.io/lance/) columnar format for storage.
 After initialization, the `base_uri` directory looks like this:
 
-```
+```text
 my_lake/                          # base_uri root
 ├── users/                        # dataset name
 │   ├── .lance/                   # Lance metadata directory
@@ -195,7 +202,7 @@ my_lake/                          # base_uri root
 | **dataset**    | A Lance dataset, equivalent to a table                  |
 | **version**    | Lance-native versioning, auto-incremented on each write |
 | **base\_uri**  | Lake storage root; accepts local paths or S3 URIs       |
-| **S3 backend** | Set to `s3://bucket/prefix` to use MinIO or AWS S3      |
+| **S3 backend** | Set to `s3://bucket/prefix` to use MinIO or AWS S3. See [03-Configuration](./03-configuration.md#3-storage-configuration-storageconfig) for credential setup. |
 
 ***
 
@@ -235,10 +242,17 @@ lake = Lake.from_yaml("config.yaml", base_uri="./production_data")
 After completing the quickstart, explore the rest of the Cookbook:
 
 * **[02-Data Ingestion Guide](./02-ingestion.md)** — Multi-modal ingestion for CSV/JSON/Parquet/images/video/PDF
-* **Vector Search** — `lake.search()`, `lake.hybrid_search()`, `lake.faceted_search()`
-* **OLAP Analytics** — `lake.olap_query()`, `lake.materialize()`
-* **RAG Q\&A** — `lake.rag_query()`, `lake.rag_extract()`
-* **REST API** — After running `arrow-lake serve`, visit `/docs` for the full API reference
+* **[04-Vector Search](./04-vector-search.md)** — `lake.search()`, `lake.create_vector_index()`
+* **[05-Full-Text Search](./05-fulltext-search.md)** — `lake.text_search()`, `lake.create_fts_index()`
+* **[06-Hybrid & Faceted](./06-hybrid-faceted.md)** — `lake.hybrid_search()`, `lake.faceted_search()`, `lake.ensemble_search()`
+* **[07-OLAP Analytics](./07-olap-analytics.md)** — `lake.olap_query()`, `lake.materialize()`, `lake.daft_query()`
+* **[08-RAG Pipeline](./08-rag-pipeline.md)** — `lake.rag_query()`, `lake.rag_extract()`, streaming RAG
+* **[09-Knowledge Graph](./09-knowledge-graph.md)** — `lake.kg_build()`, `lake.kg_query()`, GraphRAG
+* **[10-REST API Guide](./10-rest-api.md)** — Full HTTP API reference after `arrow-lake serve`
+* **[11-Quality & Dedup](./11-quality-dedup.md)** — `lake.quality_filter()`, `lake.deduplicate()`
+* **[12-Deployment](./12-deployment.md)** — Docker, Helm, production checklist
+* **[13-CLI Reference](./13-cli-reference-en.md)** — Complete CLI command manual
+* **[15-Gravitino](./15-gravitino-metadata.md)** — Metadata governance with Apache Gravitino
 
 ***
 

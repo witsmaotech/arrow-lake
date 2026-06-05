@@ -1,5 +1,7 @@
 # RAG Question-Answering Pipeline
 
+> Version: 1.5.3
+
 Arrow Lake includes a built-in RAG (Retrieval-Augmented Generation) pipeline that
 supports multiple retrieval strategies, streaming output, multi-turn conversations,
 and knowledge graph augmentation. It returns a `RAGResponse` containing the answer,
@@ -7,6 +9,48 @@ cited sources, and performance metrics.
 
 > Prerequisites: install the RAG extra with `pip install arrow-lake[rag]`, configure an
 > LLM provider, and ensure the target dataset has a vector index.
+
+***
+
+## 0. Prerequisites: Setting Up Vector Index
+
+RAG queries require a vector index on the target dataset. If you have not yet created one,
+run the following steps before calling `rag_query()`:
+
+```python
+import numpy as np
+import pyarrow as pa
+from arrow_lake import Lake
+
+lake = Lake(base_uri="./data")
+
+# 1. Ingest documents
+report = lake.ingest("docs", ["guide.md"])
+print(f"Ingested {report.total_rows} rows")
+
+# 2. Generate embeddings (replace with your embedding model)
+#    The column name must match what the RAG pipeline expects (default: "text_embedding")
+DIM = 768
+embeddings = np.random.randn(report.total_rows, DIM).astype(np.float32)  # placeholder
+embeddings /= np.linalg.norm(embeddings, axis=1, keepdims=True)
+vec_table = pa.table({
+    "text_embedding": pa.FixedSizeListArray.from_arrays(embeddings.ravel(), DIM),
+})
+lake.append("docs", vec_table)
+
+# 3. Create vector index
+lake.create_vector_index("docs", "text_embedding")
+
+# 4. Optionally create a full-text index for hybrid retrieval
+lake.create_fts_index("docs", fts_column="text_content")
+
+# 5. Now RAG is ready
+import asyncio
+response = asyncio.run(lake.rag_query("What is Arrow Lake?", "docs"))
+```
+
+> **Note**: If no vector index exists, `rag_query()` will fall back to FTS-only retrieval
+> when available, or raise `RAGError` if no retrieval strategy can be applied.
 
 ***
 
@@ -24,6 +68,10 @@ lake = Lake(base_uri="./data")
 response = asyncio.run(
     lake.rag_query("What is the core architecture of Arrow Lake?", "docs")
 )
+
+# If running inside an existing event loop (Jupyter, FastAPI, etc.),
+# use `await` directly instead of asyncio.run():
+#   response = await lake.rag_query("...", "docs")
 
 print(response.answer)
 print(f"Documents retrieved: {response.retrieval_count}")
@@ -208,7 +256,7 @@ budget is exceeded, and stops adding chunks when `max_context_chunks` is reached
 
 ## 6. Prompt Templates
 
-Select a Jinja2 prompt template via the `template_name` parameter.
+Select a Jinja2 prompt template via the `template` parameter.
 
 | Template         | Type    | Description                                                   |
 | ---------------- | ------- | ------------------------------------------------------------- |
@@ -222,9 +270,13 @@ import asyncio
 from arrow_lake import Lake
 lake = Lake(base_uri="./data")
 
-r1 = await lake.rag_query("What security mechanisms exist?", "docs", template_name="default_qa")
-r2 = await lake.rag_query("Component dependency relationships?", "docs", template_name="graph_qa")
-r3 = await lake.rag_extract("docs", template_name="entity_extract")
+r1 = await lake.rag_query("What security mechanisms exist?", "docs", template="default_qa")
+r2 = await lake.rag_query("Component dependency relationships?", "docs", template="graph_qa")
+r3 = await lake.rag_extract(
+    text="Arrow Lake uses Lance format for storage and DuckDB for analytics.",
+    schema={"entities": "list[str]", "relationships": "list[tuple[str,str,str]]"},
+    dataset_name="docs",
+)
 ```
 
 **Listing and registering custom templates**:
@@ -336,7 +388,105 @@ Environment variable override: `ARROW_LAKE__LLM__PROVIDER=openai`,
 
 ***
 
-## 8. Error Handling
+## 8. Batch Queries
+
+`Lake.rag_batch_query()` processes multiple questions in a single call, returning a list
+of `RAGResponse` objects.
+
+```python
+import asyncio
+from arrow_lake import Lake
+
+lake = Lake(base_uri="./data")
+
+
+async def batch_example():
+    requests = [
+        "What is Arrow Lake's storage format?",
+        "How does versioning work?",
+        "What OLAP features are available?",
+    ]
+    results = await lake.rag_batch_query(requests, "docs")
+    for q, r in zip(requests, results):
+        print(f"Q: {q}")
+        print(f"A: {r.answer[:100]}...\n")
+
+
+asyncio.run(batch_example())
+```
+
+***
+
+## 9. Structured Extraction
+
+`Lake.rag_extract()` extracts structured data from free text using a provided schema,
+leveraging the same LLM backend as RAG queries.
+
+```python
+import asyncio
+from arrow_lake import Lake
+
+lake = Lake(base_uri="./data")
+
+
+async def extract_example():
+    text = (
+        "Arrow Lake v1.5.3 was released on 2025-01-15. "
+        "It added knowledge graph support via HugeGraph, "
+        "OLAP analytics powered by DuckDB, and RAG pipeline with hybrid retrieval."
+    )
+    schema = {
+        "product_name": "str",
+        "version": "str",
+        "release_date": "str",
+        "features": "list[str]",
+    }
+    response = await lake.rag_extract(text, schema, dataset_name="docs")
+    print(response.answer)
+
+
+asyncio.run(extract_example())
+```
+
+***
+
+## 10. Feedback & Session Management
+
+### Submitting Feedback
+
+`Lake.rag_feedback()` records user feedback for a specific turn in a session. This is
+useful for collecting ratings to evaluate and improve RAG quality.
+
+```python
+lake.rag_feedback(
+    session_id="user-123-session-abc",
+    turn_id="turn-001",
+    rating=5,              # 1-5 scale
+    comment="Accurate and concise answer",
+)
+```
+
+### Retrieving Feedback
+
+```python
+feedback_list = lake.rag_get_feedback("user-123-session-abc")
+for fb in feedback_list:
+    print(f"Turn {fb['turn_id']}: rating={fb['rating']}, comment={fb.get('comment', '')}")
+```
+
+### Cleaning Up Expired Sessions
+
+`Lake.rag_cleanup_expired_sessions()` removes sessions that have exceeded their TTL,
+returning the number of sessions removed.
+
+```python
+removed = lake.rag_cleanup_expired_sessions()
+print(f"Cleaned up {removed} expired sessions")
+```
+
+***
+
+## 11. Error Handling
 
 ```python
 import asyncio

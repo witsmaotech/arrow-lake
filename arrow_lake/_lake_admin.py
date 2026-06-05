@@ -121,6 +121,55 @@ class _LakeAdminMixin:
         """
         return self._get_storage().list_versions(name)
 
+    # ------------------------------------------------------------------
+    # Tag operations
+    # ------------------------------------------------------------------
+
+    def create_tag(self, dataset_name: str, tag: str, version: int | None = None) -> None:
+        """Create a named tag for a dataset version.
+
+        Tags provide human-readable aliases for specific dataset versions,
+        enabling reproducible queries and data snapshot references.
+
+        Args:
+            dataset_name: Dataset to tag.
+            tag: Tag name (e.g. "clean_baseline", "v1").
+            version: Version to tag. If None, tags the latest version.
+        """
+        self._get_storage().create_tag(dataset_name, tag, version)
+
+    def read_at_tag(self, dataset_name: str, tag: str) -> Any:
+        """Read dataset data at a specific tag.
+
+        Args:
+            dataset_name: Dataset name.
+            tag: Tag name to read at.
+
+        Returns:
+            Arrow Table with the data at the tagged version.
+        """
+        return self._get_storage().read_at_tag(dataset_name, tag)
+
+    def list_tags(self, dataset_name: str) -> dict[str, int]:
+        """List all tags for a dataset.
+
+        Args:
+            dataset_name: Dataset name.
+
+        Returns:
+            Dict mapping tag name to version number.
+        """
+        return self._get_storage().list_tags(dataset_name)
+
+    def delete_tag(self, dataset_name: str, tag: str) -> None:
+        """Delete a named tag from a dataset.
+
+        Args:
+            dataset_name: Dataset name.
+            tag: Tag name to delete.
+        """
+        self._get_storage().delete_tag(dataset_name, tag)
+
     def add_column(self, name: str, column_name: str, sql_expr: str) -> None:
         """Add a computed column to an existing dataset.
 

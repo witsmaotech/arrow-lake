@@ -36,7 +36,11 @@ def main() -> None:
     if base.exists():
         shutil.rmtree(base)
 
-    lake = Lake(base_uri=args.base_uri)
+    try:
+        lake = Lake(base_uri=args.base_uri)
+    except Exception as e:
+        print(f"Failed to initialize Lake: {e}")
+        sys.exit(1)
     print(f"Arrow Lake v{lake.version()}\n")
 
     # 清理 MinIO / 后端中的残留数据集

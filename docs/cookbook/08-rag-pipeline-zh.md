@@ -1,10 +1,53 @@
 # RAG 问答管线
 
+> 版本：1.5.3
+
 Arrow Lake 内置 RAG（检索增强生成）管线，支持多检索策略、流式输出、
 多轮对话和知识图谱增强。返回 `RAGResponse`，包含回答、引用来源和性能指标。
 
 > 前置准备：安装依赖 `pip install arrow-lake[rag]`，配置 LLM 提供商，
 > 并确保目标数据集已嵌入向量索引。
+
+***
+
+## 0. 前置准备：创建向量索引
+
+RAG 查询依赖目标数据集上的向量索引。若尚未创建，请先执行以下步骤：
+
+```python
+import numpy as np
+import pyarrow as pa
+from arrow_lake import Lake
+
+lake = Lake(base_uri="./data")
+
+# 1. 摄入文档
+report = lake.ingest("docs", ["guide.md"])
+print(f"摄入 {report.total_rows} 行")
+
+# 2. 生成嵌入向量（替换为实际嵌入模型）
+#    列名需与 RAG 管线期望的一致（默认：text_embedding）
+DIM = 768
+embeddings = np.random.randn(report.total_rows, DIM).astype(np.float32)  # 占位
+embeddings /= np.linalg.norm(embeddings, axis=1, keepdims=True)
+vec_table = pa.table({
+    "text_embedding": pa.FixedSizeListArray.from_arrays(embeddings.ravel(), DIM),
+})
+lake.append("docs", vec_table)
+
+# 3. 创建向量索引
+lake.create_vector_index("docs", "text_embedding")
+
+# 4. 可选：创建全文索引用于混合检索
+lake.create_fts_index("docs", columns=["text_content"])
+
+# 5. RAG 已就绪
+import asyncio
+response = asyncio.run(lake.rag_query("什么是 Arrow Lake？", "docs"))
+```
+
+> **注意**：若未创建向量索引，`rag_query()` 会回退为纯 FTS 检索（如有），
+> 或在无可用检索策略时抛出 `RAGError`。
 
 ***
 
@@ -21,6 +64,10 @@ lake = Lake(base_uri="./data")
 response = asyncio.run(
     lake.rag_query("什么是 Arrow Lake 的核心架构？", "docs")
 )
+
+# 如果在已有事件循环中运行（Jupyter、FastAPI 等），
+# 直接使用 `await` 代替 asyncio.run()：
+#   response = await lake.rag_query("...", "docs")
 
 print(response.answer)
 print(f"检索文档数：{response.retrieval_count}")
@@ -201,7 +248,7 @@ print(f"检索块数：{response.retrieval_count}")
 
 ## 6. Prompt 模板
 
-通过 `template_name` 参数选择 Jinja2 提示词模板。
+通过 `template` 参数选择 Jinja2 提示词模板。
 
 | 模板名              | 类型      | 说明               |
 | ---------------- | ------- | ---------------- |
@@ -215,9 +262,13 @@ import asyncio
 from arrow_lake import Lake
 lake = Lake(base_uri="./data")
 
-r1 = await lake.rag_query("安全机制有哪些？", "docs", template_name="default_qa")
-r2 = await lake.rag_query("组件依赖关系？", "docs", template_name="graph_qa")
-r3 = await lake.rag_extract("docs", template_name="entity_extract")
+r1 = await lake.rag_query("安全机制有哪些？", "docs", template="default_qa")
+r2 = await lake.rag_query("组件依赖关系？", "docs", template="graph_qa")
+r3 = await lake.rag_extract(
+    text="Arrow Lake 使用 Lance 格式存储，DuckDB 提供分析能力。",
+    schema={"entities": "list[str]", "relationships": "list[tuple[str,str,str]]"},
+    dataset_name="docs",
+)
 ```
 
 **查看和注册自定义模板**：
@@ -327,7 +378,102 @@ lake = Lake.from_yaml("configs/rag.yaml", base_uri="./data")
 
 ***
 
-## 8. 错误处理
+## 8. 批量查询
+
+`Lake.rag_batch_query()` 一次处理多个问题，返回 `RAGResponse` 列表。
+
+```python
+import asyncio
+from arrow_lake import Lake
+
+lake = Lake(base_uri="./data")
+
+
+async def batch_example():
+    requests = [
+        "Arrow Lake 的存储格式是什么？",
+        "版本控制如何工作？",
+        "有哪些 OLAP 功能？",
+    ]
+    results = await lake.rag_batch_query(requests, "docs")
+    for q, r in zip(requests, results):
+        print(f"Q: {q}")
+        print(f"A: {r.answer[:100]}...\n")
+
+
+asyncio.run(batch_example())
+```
+
+***
+
+## 9. 结构化提取
+
+`Lake.rag_extract()` 使用提供的 schema 从自由文本中提取结构化数据，
+复用 RAG 查询的 LLM 后端。
+
+```python
+import asyncio
+from arrow_lake import Lake
+
+lake = Lake(base_uri="./data")
+
+
+async def extract_example():
+    text = (
+        "Arrow Lake v1.5.3 于 2025-01-15 发布。"
+        "新增通过 HugeGraph 的知识图谱支持、"
+        "基于 DuckDB 的 OLAP 分析，以及混合检索的 RAG 管线。"
+    )
+    schema = {
+        "product_name": "str",
+        "version": "str",
+        "release_date": "str",
+        "features": "list[str]",
+    }
+    response = await lake.rag_extract(text, schema, dataset_name="docs")
+    print(response.answer)
+
+
+asyncio.run(extract_example())
+```
+
+***
+
+## 10. 反馈与会话管理
+
+### 提交反馈
+
+`Lake.rag_feedback()` 为会话中的特定轮次记录用户反馈，适用于收集评分以评估和改进 RAG 质量。
+
+```python
+lake.rag_feedback(
+    session_id="user-123-session-abc",
+    turn_id="turn-001",
+    rating=5,              # 1-5 分
+    comment="准确且简洁的回答",
+)
+```
+
+### 查询反馈
+
+```python
+feedback_list = lake.rag_get_feedback("user-123-session-abc")
+for fb in feedback_list:
+    print(f"轮次 {fb['turn_id']}：评分={fb['rating']}，评论={fb.get('comment', '')}")
+```
+
+### 清理过期会话
+
+`Lake.rag_cleanup_expired_sessions()` 清除超过 TTL 的会话，返回清理数量。
+
+```python
+removed = lake.rag_cleanup_expired_sessions()
+print(f"已清理 {removed} 个过期会话")
+```
+
+***
+
+## 11. 错误处理
 
 ```python
 import asyncio

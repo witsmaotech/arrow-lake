@@ -51,8 +51,6 @@ def main() -> None:
     if photos:
         r = lake.ingest_images("photos", [str(p) for p in photos])
         print(f"  摄入 {r.total_rows} 张图片")
-        ds = lake.open_dataset("photos")
-        print(f"  列: {[f'{f.name} ({f.type})' for f in ds.schema]}")
     else:
         print("  跳过: 无图片文件")
 
@@ -62,8 +60,6 @@ def main() -> None:
     if videos:
         r = lake.ingest_videos("videos", [str(v) for v in videos])
         print(f"  摄入 {r.total_rows} 个视频")
-        ds = lake.open_dataset("videos")
-        print(f"  列: {[f'{f.name} ({f.type})' for f in ds.schema]}")
     else:
         print("  跳过: 无视频文件")
 
@@ -141,9 +137,11 @@ def main() -> None:
 
     # STEP 9: 数据集总览
     print("\nSTEP 9: 数据集总览")
+    catalog = lake.catalog()
     for name in lake.list_datasets():
-        ds = lake.open_dataset(name)
-        print(f"  {name}: {ds.count_rows()} 行, {len(ds.schema)} 列")
+        if name in catalog.datasets:
+            ds = catalog.datasets[name]
+            print(f"  {name}: {ds.num_rows} 行")
 
     print("\n  [全部 PASS]")
     if not no_cleanup:

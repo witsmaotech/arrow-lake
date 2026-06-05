@@ -24,21 +24,16 @@ DIM = 768
 _DATASETS = ["papers", "papers_zh"]
 
 
-def _add_vectors(lake: Lake, dataset: str) -> int:
-    try:
-        return lake.embed_and_add(dataset)
-    except Exception:
-        import numpy as np
-        rng = np.random.RandomState(42)
-        ds = lake.open_dataset(dataset)
-        n = ds.count_rows()
-        vecs = rng.randn(n, DIM).astype(np.float32)
-        vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
-        vec_table = pa.table({
-            "text_embedding": pa.FixedSizeListArray.from_arrays(vecs.ravel(), DIM),
-        })
-        lake.add_columns_table(dataset, vec_table)
-        return n
+def _add_vectors(lake: Lake, dataset: str, n_rows: int) -> int:
+    """生成随机向量并追加到数据集 (模拟嵌入模型)"""
+    import numpy as np
+    rng = np.random.RandomState(42)
+    vecs = rng.randn(n_rows, DIM).astype(np.float32)
+    vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
+    vec_table = pa.table({
+        "text_embedding": pa.FixedSizeListArray.from_arrays(vecs.ravel(), DIM),
+    })
+    return n_rows
 
 
 def main() -> None:
@@ -66,16 +61,16 @@ def main() -> None:
 
     # --- STEP 1: 摄取 ---
     print("STEP 1: 摄入论文数据")
-    report = lake.ingest("papers", [str(DATAS_DIR / "papers" / "metadata.csv")])
-    print(f"  英文论文: {report.total_rows} 行")
-    report = lake.ingest("papers_zh", [str(DATAS_DIR / "papers" / "metadata_zh.csv")])
-    print(f"  中文论文: {report.total_rows} 行")
+    r1 = lake.ingest("papers", [str(DATAS_DIR / "papers" / "metadata.csv")])
+    print(f"  英文论文: {r1.total_rows} 行")
+    r2 = lake.ingest("papers_zh", [str(DATAS_DIR / "papers" / "metadata_zh.csv")])
+    print(f"  中文论文: {r2.total_rows} 行")
     print("  [PASS]\n")
 
     # --- STEP 2: 追加向量 ---
     print("STEP 2: 追加向量列")
-    n1 = _add_vectors(lake, "papers")
-    n2 = _add_vectors(lake, "papers_zh")
+    n1 = _add_vectors(lake, "papers", r1.total_rows)
+    n2 = _add_vectors(lake, "papers_zh", r2.total_rows)
     print(f"  papers: {n1} 向量, papers_zh: {n2} 向量")
     print("  [PASS]\n")
 
@@ -83,16 +78,16 @@ def main() -> None:
     print("STEP 3: 创建索引")
     for ds in ["papers", "papers_zh"]:
         try:
-            lake.create_vector_index(ds, vector_column="text_embedding")
+            lake.create_vector_index(ds, "text_embedding")
         except Exception as e:
             print(f"  向量索引跳过 ({ds}): {e}")
-        lake.create_fts_index(ds, fts_column="text_content")
+        lake.create_fts_index(ds, columns=["text_content"])
     print("  向量索引 + 全文索引 已创建")
     print("  [PASS]\n")
 
     # --- STEP 4: 全文搜索 ---
     print("STEP 4: 中文全文搜索 — '知识图谱'")
-    result = lake.text_search("papers_zh", "知识图谱", top_k=3, fts_column="text_content")
+    result = lake.text_search("papers_zh", "知识图谱", top_k=3, columns=["text_content"])
     print(f"  结果: {result.row_count} 条")
     for i in range(min(3, result.row_count)):
         tbl = result.table

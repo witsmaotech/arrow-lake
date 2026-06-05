@@ -1,5 +1,7 @@
 # Knowledge Graph & GraphRAG
 
+> Version: 1.5.3
+
 Arrow Lake includes a built-in Knowledge Graph (KG) subsystem that transforms unstructured text
 into a structured entity-relationship graph through LLM-based entity extraction, writing results
 into HugeGraph. When `hugegraph.enabled=True`, the RAG pipeline automatically upgrades to GraphRAG,
@@ -125,17 +127,26 @@ returning all reachable neighbor vertices. This is the foundation of the GraphRA
 ```python
 import asyncio
 
-# Get 1st-degree neighbors
-neighbors_1 = asyncio.run(
-    lake.kg_get_neighbors(entity_id="arrow_lake:entity:42", depth=1)
+# Get 1st-degree neighbors (outgoing edges only)
+neighbors_out = asyncio.run(
+    lake.kg_get_neighbors(
+        entity_id="arrow_lake:entity:42",
+        direction="out",
+        depth=1,
+    )
 )
-print(f"1st-degree neighbors: {len(neighbors_1)}")
-for n in neighbors_1:
+print(f"Outgoing neighbors: {len(neighbors_out)}")
+for n in neighbors_out:
     print(f"  [{n.get('label')}] {n.get('name', n.get('id'))}")
 
-# Get 2nd-degree neighbors — discover more distant associated entities
+# Get 2nd-degree neighbors in both directions, limited to 200 results
 neighbors_2 = asyncio.run(
-    lake.kg_get_neighbors(entity_id="arrow_lake:entity:42", depth=2)
+    lake.kg_get_neighbors(
+        entity_id="arrow_lake:entity:42",
+        direction="both",
+        depth=2,
+        limit=200,
+    )
 )
 print(f"2nd-degree neighbors: {len(neighbors_2)}")
 ```
@@ -143,14 +154,222 @@ print(f"2nd-degree neighbors: {len(neighbors_2)}")
 Parameter details:
 
 * `entity_id` — Starting vertex ID as a string
+* `direction` — Edge direction: `"out"`, `"in"`, or `"both"` (default: `"both"`)
 * `depth` — Number of traversal hops (default: 1, max governed by `max_traversal_depth`, default 5)
+* `limit` — Maximum number of neighbor vertices to return (default: 100)
 
 Under the hood, this calls `HugeGraphClient.traverser_kneighbor()`, which uses HugeGraph's
 `/graphs/{name}/traversers/kneighbor` endpoint.
 
 ***
 
-## 5. GraphRAG-Enhanced Q\&A
+## 5. Shortest Path Traversal
+
+Arrow Lake provides several shortest-path algorithms for finding routes between entities.
+
+### All Shortest Paths
+
+`Lake.kg_all_shortest_paths()` finds all shortest paths between two vertices:
+
+```python
+import asyncio
+
+paths = asyncio.run(
+    lake.kg_all_shortest_paths(
+        source="arrow_lake:entity:1",
+        target="arrow_lake:entity:42",
+    )
+)
+for path in paths.get("paths", []):
+    print(" -> ".join(str(v) for v in path))
+```
+
+### Weighted Shortest Path
+
+`Lake.kg_weighted_shortest_path()` computes the shortest path considering edge weights:
+
+```python
+result = asyncio.run(
+    lake.kg_weighted_shortest_path(
+        source="arrow_lake:entity:1",
+        target="arrow_lake:entity:42",
+    )
+)
+print(f"Path: {result.get('path')}")
+print(f"Weight: {result.get('weight')}")
+```
+
+### Single-Source Shortest Path
+
+`Lake.kg_single_source_shortest_path()` computes shortest paths from one source to all
+reachable vertices:
+
+```python
+result = asyncio.run(
+    lake.kg_single_source_shortest_path(
+        source="arrow_lake:entity:1",
+    )
+)
+for target, info in result.get("paths", {}).items():
+    print(f"  -> {target}: distance={info.get('distance')}")
+```
+
+***
+
+## 6. Ray & Ring Traversal
+
+### Rays
+
+`Lake.kg_rays()` emits all paths (rays) from a source vertex in the specified direction:
+
+```python
+import asyncio
+
+rays = asyncio.run(
+    lake.kg_rays(
+        source="arrow_lake:entity:1",
+        direction="out",
+        max_depth=3,
+    )
+)
+for ray in rays.get("rays", []):
+    print(" -> ".join(str(v) for v in ray))
+```
+
+### Rings
+
+`Lake.kg_rings()` detects cyclic paths (rings) starting from a source vertex:
+
+```python
+rings = asyncio.run(
+    lake.kg_rings(
+        source="arrow_lake:entity:1",
+        direction="out",
+        max_depth=3,
+    )
+)
+for ring in rings.get("rings", []):
+    print("Cycle: " + " -> ".join(str(v) for v in ring))
+```
+
+### Crosspoints
+
+`Lake.kg_crosspoints()` finds the intersection points between paths from two vertices:
+
+```python
+crosspoints = asyncio.run(
+    lake.kg_crosspoints(
+        source="arrow_lake:entity:1",
+        target="arrow_lake:entity:42",
+    )
+)
+print(f"Crosspoints: {crosspoints.get('vertices', [])}")
+```
+
+***
+
+## 7. Graph Analytics
+
+Arrow Lake exposes a suite of graph analytics algorithms for measuring centrality,
+detecting communities, and analyzing graph structure.
+
+### PageRank
+
+```python
+import asyncio
+
+pr = asyncio.run(lake.kg_pagerank(iterations=20, damping=0.85))
+for vertex, score in sorted(pr.get("scores", {}).items(), key=lambda x: -x[1])[:10]:
+    print(f"  {vertex}: {score:.4f}")
+```
+
+### Community Detection (Louvain)
+
+```python
+communities = asyncio.run(lake.kg_louvain(resolution=1.0))
+print(f"Communities detected: {communities.get('community_count', 0)}")
+```
+
+### Centrality Measures
+
+```python
+# Degree centrality — number of direct connections per vertex
+degree = asyncio.run(lake.kg_degree_centrality())
+
+# Closeness centrality — average shortest-path distance to all others
+closeness = asyncio.run(lake.kg_closeness_centrality())
+
+# Betweenness centrality — how often a vertex lies on shortest paths
+betweenness = asyncio.run(lake.kg_betweenness_centrality())
+```
+
+### Structural Analysis
+
+```python
+# Weakly Connected Components
+wcc = asyncio.run(lake.kg_wcc())
+print(f"Connected components: {wcc.get('component_count', 0)}")
+
+# Triangle Count
+triangles = asyncio.run(lake.kg_triangle_count())
+print(f"Triangles: {triangles.get('triangle_count', 0)}")
+
+# K-Core Decomposition
+kcore = asyncio.run(lake.kg_k_core(k=3))
+print(f"Vertices in 3-core: {kcore.get('vertex_count', 0)}")
+```
+
+Analytics API summary:
+
+| Method                       | Description                                 |
+| ---------------------------- | ------------------------------------------- |
+| `kg_pagerank(iterations, damping)` | PageRank ranking algorithm           |
+| `kg_louvain(resolution)`     | Louvain community detection                |
+| `kg_degree_centrality()`     | Degree centrality per vertex               |
+| `kg_closeness_centrality()`  | Closeness centrality per vertex            |
+| `kg_betweenness_centrality()`| Betweenness centrality per vertex          |
+| `kg_wcc()`                   | Weakly connected components                |
+| `kg_triangle_count()`        | Triangle counting                          |
+| `kg_k_core(k)`               | K-core decomposition                       |
+
+***
+
+## 8. Import & Export
+
+### Exporting the Graph
+
+`Lake.kg_export_graph()` exports all vertices and edges as a dictionary, optionally
+including vertex/edge properties:
+
+```python
+import asyncio
+
+data = asyncio.run(lake.kg_export_graph(with_properties=True))
+print(f"Exported {len(data.get('vertices', []))} vertices, {len(data.get('edges', []))} edges")
+
+# Save to JSON for backup
+import json
+with open("graph_backup.json", "w") as f:
+    json.dump(data, f, indent=2)
+```
+
+### Importing the Graph
+
+`Lake.kg_import_graph()` restores a graph from a previously exported dictionary:
+
+```python
+import json
+
+with open("graph_backup.json") as f:
+    data = json.load(f)
+
+result = asyncio.run(lake.kg_import_graph(data))
+print(f"Imported: {result}")
+```
+
+***
+
+## 9. GraphRAG-Enhanced Q\&A
 
 When `hugegraph.enabled=True`, `Lake.rag_query()` automatically creates a `GraphRAGPipeline`
 instead of the basic `RAGPipeline`. The GraphRAG pipeline extracts key entities from the user's
@@ -199,7 +418,7 @@ standard RAG mode without interrupting service.
 
 ***
 
-## 6. Graph Cleanup
+## 10. Graph Cleanup
 
 `Lake.kg_delete_graph()` removes all vertices and edges (including the schema) from the graph.
 This operation is irreversible — use with caution.
@@ -225,7 +444,7 @@ Under the hood, this calls `HugeGraphClient.clear()`, which executes the followi
 
 ***
 
-## 7. Full Workflow Example
+## 11. Full Workflow Example
 
 Here is a complete end-to-end flow from data ingestion through GraphRAG question answering:
 
@@ -282,7 +501,7 @@ asyncio.run(main())
 
 ***
 
-## 8. Configuration Reference
+## 12. Configuration Reference
 
 Complete configuration options for `HugeGraphConfig`:
 
@@ -308,7 +527,7 @@ Configuration constraints:
 
 ***
 
-## 9. Frequently Asked Questions
+## 13. Frequently Asked Questions
 
 **Q: What should I do if the build task is stuck in `pending` status?**
 

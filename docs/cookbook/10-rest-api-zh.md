@@ -110,7 +110,8 @@ curl -X POST http://localhost:8000/api/v1/auth/refresh \
 | `POST` | `/api/v1/datasets/{name}/search/vector`  | 向量搜索 |
 | `POST` | `/api/v1/datasets/{name}/search/fts`     | 全文搜索 |
 | `POST` | `/api/v1/datasets/{name}/search/hybrid`  | 混合搜索 |
-| `POST` | `/api/v1/datasets/{name}/search/faceted` | 分面搜索 |
+| `POST` | `/api/v1/datasets/{name}/search/faceted`  | 分面搜索                            |
+| `POST` | `/api/v1/datasets/{name}/search/ensemble` | 集成搜索（向量 + FTS + 分面）       |
 
 ### RAG 与知识图谱 (v2)
 
@@ -573,12 +574,10 @@ def list_tags(table: str | None = None) -> dict:
 
 def create_tag(name: str, comment: str = "") -> dict:
     """在 Gravitino 中创建新标签。"""
-    import json
-    body = json.dumps({"name": name, "comment": comment})
     resp = httpx.post(
         f"{BASE_URL}/metadata/tags",
         headers=HEADERS,
-        params={"body": body},
+        json={"name": name, "comment": comment},
         timeout=10,
     )
     resp.raise_for_status()
@@ -594,12 +593,10 @@ def list_policies() -> dict:
 
 def create_retention_policy(name: str, days: int = 30) -> dict:
     """创建数据保留策略。"""
-    import json
-    body = json.dumps({"name": name, "days": days})
     resp = httpx.post(
         f"{BASE_URL}/metadata/policies/retention",
         headers=HEADERS,
-        params={"body": body},
+        json={"name": name, "days": days},
         timeout=10,
     )
     resp.raise_for_status()
@@ -608,12 +605,10 @@ def create_retention_policy(name: str, days: int = 30) -> dict:
 
 def create_masking_policy(name: str, columns: list[str]) -> dict:
     """创建列脱敏策略。"""
-    import json
-    body = json.dumps({"name": name, "columns": columns})
     resp = httpx.post(
         f"{BASE_URL}/metadata/policies/masking",
         headers=HEADERS,
-        params={"body": body},
+        json={"name": name, "columns": columns},
         timeout=10,
     )
     resp.raise_for_status()
@@ -1486,7 +1481,7 @@ curl -N -X POST http://localhost:8000/api/v1/datasets/sales/query/olap \
 
 流式传输 SSE 事件：
 
-```
+```text
 data: {"type": "schema", "columns": ["id", "region", "amount"], "row_count": 50000}
 data: {"type": "batch", "rows": 1000, "data": "<base64-arrow-ipc>"}
 data: {"type": "done", "total_rows": 50000}
@@ -1663,3 +1658,63 @@ curl http://localhost:8000/api/v1/admin/deny/sensitive_data \
 ```json
 {"dataset": "sensitive_data", "denied_actions": ["delete", "export"]}
 ```
+
+### 存储生命周期 API
+
+管理 Blob 存储生命周期策略（归档、过期、恢复）。
+
+| 方法     | 端点                                | 说明                 | 认证    |
+| ------ | --------------------------------- | ------------------ | ----- |
+| `POST` | `/api/v1/lifecycle/apply`         | 对前缀应用生命周期规则       | ADMIN |
+| `GET`  | `/api/v1/lifecycle/status`        | 检查前缀的生命周期状态      | ADMIN |
+| `POST` | `/api/v1/lifecycle/restore`       | 恢复已归档的 Blob      | ADMIN |
+| `GET`  | `/api/v1/lifecycle/rules`         | 列出已配置的生命周期规则     | ADMIN |
+| `POST` | `/api/v1/lifecycle/estimate`      | 估算存储节省量           | ADMIN |
+
+#### 应用生命周期规则
+
+```bash
+curl -X POST http://localhost:8000/api/v1/lifecycle/apply \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"prefix": "uploads/"}'
+```
+
+**响应：**
+
+```json
+{"success": true, "archived": 15, "expired": 3, "errors": []}
+```
+
+#### 恢复已归档的 Blob
+
+```bash
+curl -X POST http://localhost:8000/api/v1/lifecycle/restore \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"key": "uploads/archive/data.parquet", "days": 7}'
+```
+
+**响应：**
+
+```json
+{"success": true, "key": "uploads/archive/data.parquet", "restore_days": 7, "status": "restoring"}
+```
+
+### v1.5.2 安全加固说明
+
+v1.5.2 中应用了以下安全加固措施：
+
+| 领域         | 加固内容                                       |
+| ---------- | ------------------------------------------ |
+| **JWT**    | 空 `jwt_secret_key` 现在会阻止服务器启动            |
+| **Kerberos** | 认证提供程序中的命令注入漏洞已消除                    |
+| **SQL**    | 所有面向用户的查询均使用参数化执行                        |
+| **Redis**  | 移除默认密码；必须显式配置                             |
+| **网络**     | 所有端口默认绑定到 `127.0.0.1`                    |
+| **SSRF**   | `ingest_http` 和预签名端点增加 URL 校验           |
+| **Admin**  | 角色枚举取代基于字符串的管理员绕过                        |
+| **令牌**     | Refresh Token 轮换，支持撤销                     |
+| **Gremlin** | `kg_query` 端点增加输入净化                      |
+
+这些加固措施自动生效，无需配置更改。

@@ -304,6 +304,37 @@ class _LakeKGMixin:
         with self._require_kg_client() as client:
             return await client.get_stats()
 
+    async def kg_graph_exists(self) -> bool:
+        """Check if the configured HugeGraph graph space exists.
+
+        Returns:
+            True if graph exists, False otherwise.
+        """
+        client = self._get_kg_client()
+        if client is None:
+            return False
+        try:
+            return await client.graph_exists()
+        except Exception:
+            return False
+
+    async def kg_ensure_graph(self) -> bool:
+        """Ensure the HugeGraph graph space exists, creating if needed.
+
+        Returns:
+            True if graph was confirmed to exist (pre-existing or newly created).
+        """
+        client = self._get_kg_client()
+        if client is None:
+            return False
+        try:
+            exists = await client.graph_exists()
+            if exists:
+                return True
+            return await client.ensure_graph()
+        except Exception:
+            return False
+
     async def kg_delete_graph(self) -> None:
         """Delete all data from the knowledge graph.
 

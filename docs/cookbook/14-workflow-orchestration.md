@@ -148,7 +148,7 @@ python flows/kg_flow.py run \
 
 Flow topology:
 
-```
+```text
 start → ┬─ extract_entities (try/except) ─→ join → insert_vertices → end
         └─ ensure_schema (@resources)         ─┘
 ```
@@ -355,3 +355,87 @@ _flow_map: dict[str, str] = {
     "my_custom": "flows.my_custom_flow.MyCustomFlow",
 }
 ```
+
+***
+
+## 10. Configuration Reference
+
+### WorkflowConfig
+
+`WorkflowConfig` controls general workflow behavior:
+
+```python
+from arrow_lake.config import WorkflowConfig
+
+wf_config = WorkflowConfig(
+    max_retries=3,               # Maximum retry attempts per step
+    retry_delay_seconds=5,       # Initial retry backoff delay
+    default_shard_size=500,      # Default rows per shard for @foreach
+    dead_letter_enabled=True,    # Capture failed items to dead-letter
+)
+```
+
+### ArgoConfig
+
+`ArgoConfig` controls Argo Workflows integration:
+
+```python
+from arrow_lake.config import ArgoConfig
+
+argo_config = ArgoConfig(
+    namespace="arrow-lake",      # Kubernetes namespace
+    image="arrow-lake:latest",   # Container image
+    service_account="arrow-lake",# ServiceAccount for pods
+    ttl_seconds_after_finished=3600,  # Clean up completed workflows
+    parallelism=10,              # Max parallel steps
+)
+```
+
+### AutoscaleConfig
+
+`AutoscaleConfig` controls dynamic resource scaling:
+
+```python
+from arrow_lake.config import AutoscaleConfig
+
+autoscale_config = AutoscaleConfig(
+    enabled=True,                # Enable autoscaling
+    min_workers=1,               # Minimum parallel workers
+    max_workers=8,               # Maximum parallel workers
+    scale_up_threshold=0.8,      # CPU/memory threshold to scale up
+    scale_down_cooldown=300,     # Seconds before scaling down
+)
+```
+
+***
+
+## 11. FlowRegistry API Reference
+
+Beyond the basic `list_flows()` and `get()` shown earlier, `FlowRegistry` provides:
+
+```python
+from arrow_lake.workflow.base import FlowRegistry
+
+# List all registered flow names
+flow_names = FlowRegistry.list_flows()
+# ['batch_rag', 'embed', 'ingest', 'kg', 'maya_e2e', ...]
+
+# Get detailed info about a specific flow
+info = FlowRegistry.get_flow_info("ingest")
+# FlowInfo(
+#     name="ingest",
+#     class_name="IngestFlow",
+#     module="flows.ingest_flow",
+#     parameters=["source-path", "dataset-name", "base-uri"],
+#     description="Parallel file ingestion with dead-letter queue",
+# )
+
+# Get the flow class for instantiation
+IngestFlow = FlowRegistry.get("ingest")
+```
+
+| Method | Returns | Description |
+| ------ | ------- | ----------- |
+| `list_flows()` | `list[str]` | All registered flow names |
+| `get_flow_info(name)` | `FlowInfo` | Flow metadata (class, module, params, description) |
+| `get(name)` | `type[FlowSpec]` | Flow class for direct instantiation |

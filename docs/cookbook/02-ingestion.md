@@ -1,7 +1,8 @@
 # Data Ingestion Guide
 
 > Arrow Lake supports ingestion from multiple data sources and modalities: local files, remote HTTP
-> downloads, images, videos, PDF documents, and direct writes from Arrow Tables.
+> downloads, SQL databases, Kafka streams, Iceberg/Delta Lake tables, images, videos, PDF documents,
+> and direct writes from Arrow Tables.
 
 ***
 
@@ -38,7 +39,22 @@ for src in report.sources:
 
 ***
 
-## 2. Remote HTTP Ingestion
+## 2. Batch Ingestion
+
+Use `ingest_batch()` for optimized bulk loading of same-type files via Daft `write_lance`:
+
+```python
+report = lake.ingest_batch(
+    "sales",
+    ["examples/data/transactions/sales_2024.csv",
+     "examples/data/transactions/sales_2025.csv"],
+)
+print(f"Batch ingestion: {report.total_rows} rows")
+```
+
+***
+
+## 3. Remote HTTP Ingestion
 
 Download files from HTTP(S) URLs and write them directly into a Lance dataset — no manual download needed.
 
@@ -63,7 +79,63 @@ tenacity-based exponential backoff with auto-retry on 429/5xx errors, and config
 
 ***
 
-## 3. Multi-Modal Ingestion — Images & Video
+## 4. SQL Database Ingestion
+
+Ingest data from external SQL databases via JDBC/SQLAlchemy connection URLs:
+
+```python
+report = lake.ingest_sql(
+    "pg_orders",
+    sql="SELECT * FROM orders WHERE year = 2024",
+    connection_url="postgresql://user:pass@localhost:5432/mydb",
+)
+print(f"SQL ingestion: {report.total_rows} rows")
+# Note: Requires SQLAlchemy + database driver, e.g.:
+#   pip install sqlalchemy psycopg2-binary    # PostgreSQL
+#   pip install sqlalchemy pymysql             # MySQL
+#   pip install sqlalchemy pyodbc              # SQL Server
+```
+
+***
+
+## 5. Kafka Stream Ingestion
+
+Ingest data from Kafka topics in real time:
+
+```python
+report = lake.ingest_kafka(
+    "clickstream",
+    topics=["user_clicks", "page_views"],
+    bootstrap_servers="localhost:9092",
+    group_id="arrow_lake_ingest",
+)
+print(f"Kafka ingestion: {report.total_rows} rows")
+# Note: Requires confluent-kafka: pip install confluent-kafka
+# ingest_kafka() consumes until the consumer reaches the latest offset
+# (i.e. catches up), then returns the IngestionReport.
+```
+
+***
+
+## 6. Iceberg & Delta Lake Ingestion
+
+Read from Apache Iceberg or Delta Lake tables by table URI:
+
+```python
+# Iceberg
+report = lake.ingest_iceberg("iceberg_copy", table_uri="s3://warehouse/db.table")
+# Note: Requires pyiceberg: pip install pyiceberg[pyarrow,s3fs]
+
+# Delta Lake
+report = lake.ingest_deltalake("delta_copy", table_uri="s3://warehouse/delta/table")
+# Note: Requires deltalake: pip install deltalake
+# For S3 URIs, configure credentials via StorageConfig or environment variables
+# (see 03-configuration.md StorageConfig section).
+```
+
+***
+
+## 7. Multi-Modal Ingestion — Images & Video
 
 ### Image Ingestion
 
@@ -102,7 +174,7 @@ print(f"Video ingestion: {report.total_rows} rows")
 
 ***
 
-## 4. Mixed-Modal Ingestion
+## 8. Mixed-Modal Ingestion
 
 Use `ingest_mixed()` to combine different modalities into a single dataset in one call.
 
@@ -129,7 +201,7 @@ Internally, `UnifiedTableManager` creates a unified schema, then calls
 
 ***
 
-## 5. PDF Document Ingestion
+## 9. PDF Document Ingestion
 
 PDFs are parsed into text chunks and written to a Lance dataset, ready for full-text search and RAG.
 
@@ -153,32 +225,38 @@ print(f"Document ingestion: {report.total_rows} text chunks")
 ### Custom Document Configuration
 
 ```python
-from arrow_lake.config.document import DocumentConfig
-from arrow_lake.config._enums import ChunkStrategy
+from arrow_lake.config import DocumentConfig
+from arrow_lake.config import ChunkStrategy, PdfParseMode
 
 doc_config = DocumentConfig(
-    chunk_strategy=ChunkStrategy.SEMANTIC,    # fixed / sentence / semantic
+    chunk_strategy=ChunkStrategy.RECURSIVE,     # page / paragraph / recursive / semchunk
+                                                 # / chonkie_token / chonkie_semantic / chonkie_sdpm
     chunk_size=512,
     chunk_overlap=64,
-    chunk_tokenizer="cl100k_base",
-    semantic_embedding_model="text-embedding-3-small",
+    chunk_tokenizer="",                         # Tokenizer for semchunk (empty = char-based)
+    semantic_embedding_model="",                 # HuggingFace model for chonkie semantic/sdpm
     semantic_similarity_threshold=0.5,
     semantic_min_chunk_size=100,
-    pdf_parse_mode="auto",                    # auto / text_only / ocr
+    pdf_parse_mode=PdfParseMode.AUTO,           # auto / text / ocr
+    ocr_backend="kreuzberg",                    # kreuzberg / turbo_ocr
     ocr_endpoint="http://localhost:8002",
     max_file_size_mb=100,
     store_raw_pdf=True,
     blob_prefix="documents/",
 )
 
-report = lake.ingest_documents("papers", ["examples/data/papers/full_text/p014_gpt4_technical_report.pdf"], doc_config=doc_config)
+report = lake.ingest_documents(
+    "papers",
+    ["examples/data/papers/full_text/p014_gpt4_technical_report.pdf"],
+    doc_config=doc_config,
+)
 ```
 
-Document ingestion pipeline: `PDF → Kreuzberg parse (+ TurboOCR fallback) → BlobStore (optional) → Chunker → Lance persistence`
+Document ingestion pipeline: `PDF -> Kreuzberg parse (+ TurboOCR fallback) -> BlobStore (optional) -> Chunker -> Lance persistence`
 
 ***
 
-## 6. Dead Letter Queue
+## 10. Dead Letter Queue
 
 Failed ingestion files are recorded in `IngestDeadLetterQueue`, with support for retry, resolution, and cleanup.
 
@@ -208,11 +286,11 @@ removed = dlq.purge(resolved=True, permanent=True)
 print(f"Purged {removed} records")
 ```
 
-Status transitions: `pending` → `retrying` → (success) `resolved` | (failure) `pending` | `permanent`
+Status transitions: `pending` -> `retrying` -> (success) `resolved` | (failure) `pending` | `permanent`
 
 ***
 
-## 7. Direct Arrow Table Writes
+## 11. Direct Arrow Table Writes
 
 For programmatic data, you can create or append datasets directly from PyArrow Tables.
 
@@ -247,10 +325,35 @@ new_table = pa.table({
 lake.append_dataset("documents", new_table)
 ```
 
+### Upsert, Delete, Update
+
+```python
+# Upsert — merge rows by key column
+lake.upsert("documents", updated_table, on="id")
+
+# Delete rows matching a condition
+lake.delete_rows("documents", where="category = 'expired'")
+
+# Update specific columns on matching rows
+lake.update_rows("documents", where="id = 'doc_0001'", updates={"category": "reviewed"})
+```
+
+### Export
+
+```python
+from arrow_lake import Lake
+
+lake = Lake(base_uri="./data_lake")
+
+# Export a dataset to Parquet, CSV, or another Lance URI
+result = lake.export_to("documents", target_uri="s3://backup/documents")
+print(f"Exported {result.row_count} rows to {result.target_uri}")
+```
+
 ### Error Handling
 
 ```python
-from arrow_lake.exceptions import StorageError, TypeError
+from arrow_lake.exceptions import StorageError, ValidationError
 
 try:
     lake.create_dataset("existing", data)
@@ -265,7 +368,35 @@ except StorageError:
 
 ***
 
-## 8. Data Quality and Deduplication
+## 12. Embedding and Ingest
+
+Compute vector embeddings and ingest in one step:
+
+```python
+# Ingest data and compute embeddings for a text column
+report = lake.ingest_and_embed(
+    "articles",
+    ["examples/data/articles.json"],
+    embed_column="text_content",
+)
+print(f"Embedded ingestion: {report.total_rows} rows with vectors")
+```
+
+Or add embeddings to an existing dataset:
+
+```python
+# Embed texts and add vectors to an existing dataset
+lake.embed_and_add(
+    "documents",
+    texts=["New document text to embed"],
+    ids=["doc_0200"],
+    metadata=[{"source": "api"}],
+)
+```
+
+***
+
+## 13. Data Quality and Deduplication
 
 ```python
 from arrow_lake import Lake
@@ -290,7 +421,7 @@ dedup_result = lake.deduplicate(
 
 ***
 
-## 9. Ingestion Best Practices
+## 14. Ingestion Best Practices
 
 ```python
 from pathlib import Path
@@ -309,3 +440,31 @@ if all_files:
 
 > **The Ingestor is not thread-safe.** When ingesting into different datasets concurrently,
 > create separate Lake instances. Concurrent writes to the same dataset require external synchronization.
+
+***
+
+## Ingestion API Quick Reference
+
+| Method                  | Purpose                                        |
+| ----------------------- | ---------------------------------------------- |
+| `ingest()`              | Ingest local files (CSV, JSON, JSONL, Parquet) |
+| `ingest_batch()`        | Optimized bulk ingestion of same-type files    |
+| `ingest_http()`         | Download and ingest from HTTP(S) URLs          |
+| `ingest_sql()`          | Ingest from SQL databases                      |
+| `ingest_kafka()`        | Ingest from Kafka topics                       |
+| `ingest_iceberg()`      | Read from Apache Iceberg tables                |
+| `ingest_deltalake()`    | Read from Delta Lake tables                    |
+| `ingest_images()`       | Ingest images with thumbnails and EXIF         |
+| `ingest_videos()`       | Ingest videos with keyframe extraction         |
+| `ingest_mixed()`        | Combine multiple modalities in one call        |
+| `ingest_documents()`    | Parse and chunk PDF documents                  |
+| `ingest_and_embed()`    | Ingest data and compute embeddings             |
+| `embed_and_add()`       | Add embeddings to an existing dataset          |
+| `create_dataset()`      | Create dataset from a PyArrow Table            |
+| `append_dataset()`      | Append rows from a PyArrow Table               |
+| `upsert()`              | Merge rows by key column                       |
+| `delete_rows()`         | Delete rows matching a condition               |
+| `update_rows()`         | Update columns on matching rows                |
+| `export_to()`           | Export dataset to external storage              |
+| `quality_filter()`      | Run quality filters on a dataset               |
+| `deduplicate()`         | Detect and handle duplicate content            |

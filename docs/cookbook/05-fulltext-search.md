@@ -103,6 +103,8 @@ def text_search(
     top_k: int | None = None,      # Number of results (defaults from config)
     fts_column: str | None = None,  # Column name to search
     where: str | None = None,       # Metadata filter expression
+    version: int | None = None,     # Dataset version for time-travel queries
+    offset: int = 0,                # Number of results to skip (pagination)
 ) -> FullTextSearchResult: ...
 ```
 
@@ -244,7 +246,27 @@ The `where` clause is safely validated by `validate_where_clause`, which blocks 
 
 ***
 
-## 8. REST API
+## 8. FTS Index Management
+
+```python
+from arrow_lake import Lake
+
+lake = Lake(base_uri="./data")
+
+# Delete the FTS index
+lake.delete_fts_index("docs")
+
+# Get FTS index information
+info = lake.get_fts_index_info("docs")
+if info is not None:
+    print(f"FTS index: {info['name']}, columns: {info['columns']}")
+else:
+    print("No FTS index found")
+```
+
+***
+
+## 9. REST API
 
 ```bash
 # Create an FTS index
@@ -262,3 +284,4 @@ curl -X POST http://localhost:8000/api/v1/datasets/docs/search/fts \
 | ------------------------- | ----------------------- | ------------------------ |
 | `POST /{name}/index/fts`  | `FtsIndexRequest`       | `FtsIndexResponse`       |
 | `POST /{name}/search/fts` | `FullTextSearchRequest` | `FullTextSearchResponse` |
+| `POST /embed/text`        | `TextEmbedRequest`      | `EmbeddingResponse`      |

@@ -24,7 +24,7 @@ print(f"Indexed rows: {info.num_indexed_rows}")
 # 3. Execute a vector search
 import numpy as np
 query_vec = np.random.randn(1024).tolist()  # Replace with a real query vector
-result = lake.search("docs", query_vector=query_vec, top_k=5)
+result = lake.search("docs", query_vec, top_k=5)
 print(f"Returned {result.row_count} results, metric: {result.metric}")
 
 for i in range(result.row_count):
@@ -122,6 +122,25 @@ print(f"Columns: {info.columns}")
 
 Use `lake.search()` to perform vector similarity search. The system uses a dual-path strategy: it prefers DuckDB's native `lance_vector_search()`, falling back to the LanceDB SDK on failure.
 
+### API Signature
+
+```python
+def search(
+    self,
+    dataset_name: str,
+    query_vector: list[float],          # Query embedding vector (positional)
+    *,
+    top_k: int = 10,                    # Number of results
+    metric: str | None = None,          # Distance metric: cosine / l2 / dot
+    vector_column: str = "text_embedding",  # Vector column name
+    where: str | None = None,           # Metadata filter expression
+    nprobes: int | None = None,         # IVF partitions to probe
+    version: int | None = None,         # Dataset version for time-travel queries
+) -> VectorSearchResult: ...
+```
+
+### Basic Usage
+
 ```python
 from arrow_lake import Lake
 import numpy as np
@@ -132,12 +151,12 @@ lake = Lake(base_uri="./data")
 query_vector = np.random.randn(1024).tolist()
 
 # Basic search
-result = lake.search("docs", query_vector=query_vector, top_k=5)
+result = lake.search("docs", query_vector, top_k=5)
 
-# With explicit metric
+# With explicit metric and column
 result = lake.search(
     "docs",
-    query_vector=query_vector,
+    query_vector,
     top_k=10,
     metric="cosine",
     vector_column="text_embedding",
@@ -146,16 +165,19 @@ result = lake.search(
 # With metadata filtering
 result = lake.search(
     "docs",
-    query_vector=query_vector,
+    query_vector,
     top_k=5,
     where="category = 'tech'",
 )
+
+# Time-travel query (search a specific dataset version)
+result = lake.search("docs", query_vector, top_k=5, version=3)
 ```
 
-Search returns a `VectorSearchResult` (containing a PyArrow Table):
+### Return Type: VectorSearchResult
 
 ```python
-result = lake.search("docs", query_vector=query_vector, top_k=5)
+result = lake.search("docs", query_vector, top_k=5)
 print(f"Rows: {result.row_count}, dimension: {result.query_vector_dim}")
 print(f"Metric: {result.metric}, max distance: {result.max_distance}")
 
@@ -173,16 +195,16 @@ The `where` parameter accepts SQL-style filter expressions that pre-filter metad
 
 ```python
 # Equality filter
-result = lake.search("docs", query_vector=qv, where="category = 'AI'")
+result = lake.search("docs", qv, where="category = 'AI'")
 
 # Numeric range + compound condition
-result = lake.search("docs", query_vector=qv, where="category = 'AI' AND year >= 2023")
+result = lake.search("docs", qv, where="category = 'AI' AND year >= 2023")
 
 # IN operator
-result = lake.search("docs", query_vector=qv, where="status IN ('published', 'reviewed')")
+result = lake.search("docs", qv, where="status IN ('published', 'reviewed')")
 
 # String pattern matching
-result = lake.search("docs", query_vector=qv, where="title LIKE '%machine learning%'")
+result = lake.search("docs", qv, where="title LIKE '%machine learning%'")
 ```
 
 > **Security**: Arrow Lake internally checks for dangerous SQL keywords, but you should never interpolate unsanitized user input directly into `where` expressions.
@@ -236,13 +258,13 @@ config.vector.num_sub_vectors = 24  # 1024 / 24 ~ 42 dims per sub-vector
 
 ```python
 # Fast search (lower recall)
-result = lake.search("docs", query_vector=qv, top_k=10, nprobes=5)
+result = lake.search("docs", qv, top_k=10, nprobes=5)
 
 # Balanced mode (default)
-result = lake.search("docs", query_vector=qv, top_k=10, nprobes=20)
+result = lake.search("docs", qv, top_k=10, nprobes=20)
 
 # High-recall search
-result = lake.search("docs", query_vector=qv, top_k=10, nprobes=128)
+result = lake.search("docs", qv, top_k=10, nprobes=128)
 
 # Note: nprobes is capped at max_nprobes (default 256)
 ```
@@ -282,27 +304,103 @@ Choosing a metric: use `cosine` when unsure (insensitive to vector length); use 
 
 ***
 
-## 7. Querying Index Information
+## 7. Index Management
+
+### 7.1 Query Index Information
 
 ```python
 from arrow_lake import Lake
-from arrow_lake.query.vector import VectorSearchBridge
 
 lake = Lake(base_uri="./data")
-info = lake.create_vector_index("docs", metric="cosine")
-print(info)
-# IndexInfo(name='...', index_type='IVF_PQ', distance_type='cosine', ...)
 
-# Query an existing index via the low-level bridge
-bridge = VectorSearchBridge(lake._get_storage())
-info = bridge.get_index_info("docs", vector_column="text_embedding")
+# Get info for a specific vector index
+info = lake.get_vector_index_info("docs", vector_column="text_embedding")
 if info is None:
     print("No vector index found; brute-force search will be used")
+else:
+    print(f"Index: {info.index_type}, metric: {info.distance_type}")
+    print(f"Indexed: {info.num_indexed_rows}, unindexed: {info.num_unindexed_rows}")
+```
+
+### 7.2 List All Indexes
+
+```python
+# List all vector indexes on a dataset
+indexes = lake.list_vector_indexes("docs")
+for idx in indexes:
+    print(f"  {idx.index_type} on {idx.columns}, metric={idx.distance_type}")
+```
+
+### 7.3 Rebuild an Index
+
+Rebuilding drops the existing index and creates a new one with updated parameters:
+
+```python
+# Rebuild with the same parameters (useful after data changes)
+info = lake.rebuild_vector_index("docs", vector_column="text_embedding")
+
+# Rebuild with new parameters
+info = lake.rebuild_vector_index(
+    "docs",
+    metric="cosine",
+    vector_column="text_embedding",
+    index_type="IVF_PQ",
+    num_partitions=512,
+    num_sub_vectors=32,
+)
+print(f"Rebuilt: {info.index_type}, {info.num_indexed_rows} rows")
+```
+
+### 7.4 Delete an Index
+
+```python
+# Delete a vector index by name
+lake.delete_vector_index("docs", "docs_text_embedding_idx")
+```
+
+### 7.5 FTS Index Management
+
+```python
+# Delete the full-text search index
+lake.delete_fts_index("docs")
+
+# Get FTS index information
+fts_info = lake.get_fts_index_info("docs")
+if fts_info is not None:
+    print(f"FTS index: {fts_info['name']}, columns: {fts_info['columns']}")
 ```
 
 ***
 
-## 8. Complete Example: Vector Search from Scratch
+## 8. REST API
+
+```bash
+# Create a vector index
+curl -X POST http://localhost:8000/api/v1/datasets/docs/index/vector \
+  -H "Content-Type: application/json" \
+  -d '{"metric": "cosine", "index_type": "IVF_PQ", "vector_column": "text_embedding"}'
+
+# Vector search
+curl -X POST http://localhost:8000/api/v1/datasets/docs/search/vector \
+  -H "Content-Type: application/json" \
+  -d '{"query_vector": [0.1, 0.2, ...], "top_k": 10, "metric": "cosine"}'
+
+# Embed text (compute embeddings via the API)
+curl -X POST http://localhost:8000/api/v1/embed/text \
+  -H "Content-Type: application/json" \
+  -d '{"texts": ["machine learning fundamentals", "deep learning guide"]}'
+```
+
+| Endpoint                        | Method | Description           |
+| ------------------------------- | ------ | --------------------- |
+| `/{name}/index/vector`          | POST   | Create a vector index |
+| `/{name}/search/vector`         | POST   | Vector similarity search |
+| `/embed/text`                   | POST   | Compute text embeddings |
+| `/embed/image`                  | POST   | Compute image embeddings |
+
+***
+
+## 9. Complete Example: Vector Search from Scratch
 
 ```python
 import pyarrow as pa
@@ -337,7 +435,7 @@ print(f"Index created: {info.index_type}, {info.num_indexed_rows} rows")
 
 # 5. Search
 query_vec = np.random.randn(1024).tolist()
-result = lake.search("articles", query_vector=query_vec, top_k=3, where="year = 2024")
+result = lake.search("articles", query_vec, top_k=3, where="year = 2024")
 
 # 6. Output results
 for row in result.table.to_pylist():

@@ -52,9 +52,8 @@ async def run_async() -> None:
 
     # STEP 1: 摄入数据 + 构建图谱
     print("STEP 1: 摄入论文数据")
-    lake.ingest("papers_zh", [str(DATAS_DIR / "papers" / "metadata_zh.csv")])
-    ds = lake.open_dataset("papers_zh")
-    print(f"  摄入: {ds.count_rows()} 行")
+    r = lake.ingest("papers_zh", [str(DATAS_DIR / "papers" / "metadata_zh.csv")])
+    print(f"  摄入: {r.total_rows} 行")
 
     # 检查 HugeGraph 可达性
     try:
@@ -73,7 +72,7 @@ async def run_async() -> None:
     if hg_available:
         try:
             # 采样 10 行构建图谱，避免全量 1000 行耗时过长
-            full = lake.read_dataset("papers_zh")
+            full = lake.query("papers_zh", "SELECT * FROM papers_zh LIMIT 10")
             if full.num_rows > 10:
                 sample = full.slice(0, 10).to_pydict()
                 import pyarrow as pa

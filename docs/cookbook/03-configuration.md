@@ -60,19 +60,51 @@ export ARROW_LAKE__VECTOR__METRIC=cosine
 ```python
 config = ArrowLakeConfig()
 
-config.storage    # StorageConfig       — Storage layer
-config.llm        # LLMConfig           — LLM provider
-config.rag        # RAGConfig           — RAG pipeline
-config.vector     # VectorSearchConfig  — Vector search
-config.fts        # FullTextSearchConfig— Full-text search
-config.hybrid     # HybridSearchConfig  — Hybrid search
-config.embedding  # EmbeddingConfig     — Embedding model
-config.quality    # QualityConfig       — Quality filtering
-config.olap       # OlapConfig          — OLAP queries
-config.api        # ApiConfig           — API service
-config.auth       # AuthConfig          — Authentication
-config.rate_limit # RateLimitConfig     — Rate limiting
-config.redis      # RedisConfig         — Redis distributed session
+# --- Core ---
+config.storage    # StorageConfig        — Storage layer (local, MinIO, S3, GCS)
+config.compute    # ComputeConfig        — Compute resources
+config.http       # HttpConfig           — HTTP client settings
+config.observability # ObservabilityConfig — Logging and tracing
+
+# --- Search ---
+config.vector     # VectorSearchConfig   — Vector search
+config.fts        # FullTextSearchConfig — Full-text search
+config.hybrid     # HybridSearchConfig   — Hybrid search (RRF fusion)
+config.faceted    # FacetedSearchConfig  — Faceted search
+config.ensemble   # EnsembleSearchConfig — Ensemble search
+
+# --- AI / RAG ---
+config.llm        # LLMConfig            — LLM provider
+config.rag        # RAGConfig            — RAG pipeline
+config.embedding  # EmbeddingConfig      — Embedding model
+config.hugegraph  # HugeGraphConfig      — HugeGraph knowledge graph
+
+# --- Media & Documents ---
+config.media      # MediaConfig          — Media processing
+config.decode     # DecodeConfig         — Image decode settings
+config.document   # DocumentConfig       — PDF parsing and chunking
+config.export     # ExportConfig         — Export settings
+
+# --- Data ---
+config.olap       # OlapConfig           — OLAP / DuckDB queries
+config.daft       # DaftConfig           — Daft compute engine
+config.quality    # QualityConfig        — Quality filtering
+
+# --- Infrastructure ---
+config.api        # ApiConfig            — API service
+config.auth       # AuthConfig           — Authentication
+config.rate_limit # RateLimitConfig      — Rate limiting
+config.redis      # RedisConfig          — Redis distributed session
+config.workflow   # WorkflowConfig       — Workflow orchestration
+config.argo       # ArgoConfig           — Argo Workflows integration
+config.autoscale  # AutoscaleConfig      — Auto-scaling
+config.lifecycle  # LifecycleConfig      — Dataset lifecycle management
+
+# --- Governance ---
+config.gravitino  # GravitinoConfig      — Apache Gravitino metadata catalog
+config.lineage    # LineageConfig        — Data lineage tracking
+config.audit      # AuditConfig          — Audit logging
+config.opentelemetry # OpenTelemetryConfig — OpenTelemetry tracing
 ```
 
 ***
@@ -169,13 +201,21 @@ vllm_cfg = LLMConfig(
     api_base="http://localhost:8000/v1",
     timeout_seconds=120.0,
 )
+
+# DeepSeek
+deepseek_cfg = LLMConfig(
+    provider=LLMProviderType.DEEPSEEK,
+    model="deepseek-chat",
+    api_key="sk-...",
+    api_base="https://api.deepseek.com/v1",
+)
 ```
 
 **LLMConfig field reference:**
 
 | Field             | Type            | Default                                          | Description |
 | ----------------- | --------------- | ------------------------------------------------ | ----------- |
-| `provider`        | `"openai"`      | Backend: `openai`, `anthropic`, `vllm`, `ollama` |             |
+| `provider`        | `"openai"`      | Backend: `openai`, `anthropic`, `vllm`, `ollama`, `deepseek` |             |
 | `model`           | `"gpt-4o-mini"` | Model name                                       |             |
 | `api_key`         | `""`            | API key (can be empty for local models)          |             |
 | `api_base`        | `""`            | Custom API endpoint                              |             |
@@ -207,7 +247,7 @@ vector_cfg = VectorSearchConfig(
 | Field                | Default    | Description                                     |
 | -------------------- | ---------- | ----------------------------------------------- |
 | `metric`             | `"cosine"` | Distance metric: `cosine`, `l2`, `dot`          |
-| `default_index_type` | `"IVF_PQ"` | Index type: `IVF_PQ`, `IVF_FLAT`, `IVF_HNSW_PQ` |
+| `default_index_type` | `"IVF_PQ"` | Index type: `IVF_PQ`, `IVF_FLAT`, `IVF_HNSW_PQ`, `HNSW` |
 | `default_top_k`      | `10`       | Default number of results to return             |
 | `num_partitions`     | `256`      | Number of IVF partitions                        |
 | `num_sub_vectors`    | `24`       | PQ sub-vectors (must be multiple of 8)          |
@@ -383,16 +423,18 @@ redis_cfg = RedisConfig(
 
 **RedisConfig field reference:**
 
-| Field                   | Type     | Default                                                              | Description                                                         |
-| ----------------------- | -------- | -------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| `enabled`               | `bool`   | `False`                                                              | Enable Redis-backed distributed semaphore and JWT blacklist         |
-| `url`                   | `str`    | `"redis://localhost:6379/0"`                                         | Redis connection URL                                                |
-| `password`              | `str`    | `""`                                                                 | Redis authentication password                                       |
-| `ssl`                   | `bool`   | `False`                                                              | Enable TLS for Redis connections                                    |
-| `ssl_cert_reqs`         | `str`    | `"required"`                                                         | SSL certificate verification mode when `ssl=True`                  |
-| `semaphore_key_prefix`  | `str`    | `"arrow_lake:semaphore:"`                                            | Redis key prefix for distributed semaphore counters                 |
-| `semaphore_ttl_seconds` | `int`    | `300` (>= 1)                                                         | TTL for semaphore keys — auto-reclaims stale permits                |
-| `redis_pool_size`       | `int`    | `10` (>= 1)                                                          | Connection pool size for the Redis client                           |
+| Field                        | Type     | Default                        | Description                                                    |
+| ---------------------------- | -------- | ------------------------------ | -------------------------------------------------------------- |
+| `enabled`                    | `bool`   | `False`                        | Enable Redis-backed distributed semaphore and JWT blacklist    |
+| `url`                        | `str`    | `"redis://localhost:6379/0"`   | Redis connection URL                                           |
+| `password`                   | `str`    | `""`                           | Redis authentication password                                  |
+| `ssl`                        | `bool`   | `False`                        | Enable TLS for Redis connections                               |
+| `ssl_cert_reqs`              | `str`    | `"required"`                   | SSL certificate verification mode when `ssl=True`              |
+| `semaphore_key_prefix`       | `str`    | `"arrow_lake:semaphore:"`      | Redis key prefix for distributed semaphore counters            |
+| `semaphore_ttl_seconds`      | `int`    | `300` (>= 1)                   | TTL for semaphore keys — auto-reclaims stale permits           |
+| `redis_pool_size`            | `int`    | `10` (>= 1)                    | Connection pool size for the Redis client                      |
+| `instance_registry_key`      | `str`    | `"arrow_lake:instances"`       | Redis key for multi-instance registry                          |
+| `instance_heartbeat_ttl_seconds` | `int` | `30` (>= 5)                   | TTL for instance heartbeat keys                                |
 
 ### YAML Configuration
 

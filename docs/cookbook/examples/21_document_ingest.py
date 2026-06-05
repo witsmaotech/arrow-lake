@@ -105,26 +105,16 @@ def main() -> None:
 
     # STEP 3: 查看文档数据集
     print("\nSTEP 3: 查看数据集")
-    ds = lake.open_dataset("docs")
-    row_count = ds.count_rows()
-    col_names = ds.schema.names
-    print(f"  docs: {row_count} 行, {len(col_names)} 列")
-    for f in ds.schema:
-        print(f"    - {f.name}: {f.type}")
-
-    # 统计文本覆盖率
-    table = ds.to_arrow()
-    if "text" in col_names:
-        texts = table.column("text").to_pylist()
-        total_chars = sum(len(t) for t in texts if t)
-        avg_chars = total_chars // max(row_count, 1)
-        print(f"  总字符: {total_chars}, 平均每块: {avg_chars} 字符")
+    catalog = lake.catalog()
+    ds = catalog.datasets.get("docs")
+    row_count = ds.num_rows if ds else 0
+    print(f"  docs: {row_count} 行")
 
     # STEP 4: 搜索文档内容
     print("\nSTEP 4: 全文搜索文档")
     try:
-        lake.create_fts_index("docs", fts_column="text")
-        result = lake.text_search("docs", "知识图谱", top_k=30, fts_column="text")
+        lake.create_fts_index("docs", columns=["text"])
+        result = lake.text_search("docs", "知识图谱", top_k=30, columns=["text"])
         print(f"  '知识图谱' → {result.row_count} 条结果")
         for i in range(min(3, result.row_count)):
             txt = str(result.table.column("text")[i].as_py())[:120]
@@ -135,7 +125,7 @@ def main() -> None:
     # STEP 5: 搜索英文论文
     print("\nSTEP 5: 搜索英文论文")
     try:
-        result = lake.text_search("docs", "attention mechanism", top_k=3, fts_column="text")
+        result = lake.text_search("docs", "attention mechanism", top_k=3, columns=["text"])
         print(f"  'attention mechanism' → {result.row_count} 条结果")
         for i in range(min(3, result.row_count)):
             txt = str(result.table.column("text")[i].as_py())[:120]

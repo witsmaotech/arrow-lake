@@ -49,8 +49,7 @@ def main() -> None:
     lake.ingest("raw_sales", [str(DATAS_DIR / "transactions" / "sales_2024_cn.csv")])
     lake.lineage_record_event("raw_sales", "ingest",
                               source_datasets=["sales_2024_cn.csv"],
-                              actor="etl_pipeline",
-                              metadata={"format": "csv", "rows": 50})
+                              metadata={"format": "csv", "rows": 50, "actor": "etl_pipeline"})
     print("  raw_sales 摄入完成, 血缘已记录")
 
     # STEP 2: 数据清洗 + 血缘记录
@@ -58,9 +57,7 @@ def main() -> None:
     lake.ingest("clean_sales", [str(DATAS_DIR / "transactions" / "sales_2024_cn.csv")])
     lake.lineage_record_event("clean_sales", "transform",
                               source_datasets=["raw_sales"],
-                              transform_type="dedup+filter",
-                              actor="etl_pipeline",
-                              metadata={"removed_nulls": True})
+                              metadata={"transform_type": "dedup+filter", "actor": "etl_pipeline", "removed_nulls": True})
     print("  clean_sales 转换完成, 血缘已记录")
 
     # STEP 3: 聚合视图 + 血缘记录
@@ -69,9 +66,7 @@ def main() -> None:
         "SELECT 商品类别, COUNT(*) as cnt FROM clean_sales GROUP BY 商品类别")
     lake.lineage_record_event("category_report", "aggregate",
                               source_datasets=["clean_sales"],
-                              transform_type="sql_groupby",
-                              actor="analyst",
-                              metadata={"categories": len(result.table.to_pylist())})
+                              metadata={"transform_type": "sql_groupby", "actor": "analyst", "categories": len(result.table.to_pylist())})
     print(f"  聚合完成, 产出 {len(result.table.to_pylist())} 个分类")
 
     # STEP 4: 查看血缘历史
@@ -87,31 +82,28 @@ def main() -> None:
         except Exception as e:
             print(f"  [{ds_name}] 查询跳过: {e}")
 
-    # STEP 5: 血缘链路查询
-    print("\nSTEP 5: 血缘链路 (SQL 查询)")
-    try:
-        lineage_result = lake.lineage_query(
-            "SELECT dataset_name, operation, actor FROM _lineage_events ORDER BY timestamp")
-        if hasattr(lineage_result, 'to_pylist'):
-            rows = lineage_result.to_pylist()
-        elif isinstance(lineage_result, list):
-            rows = lineage_result
-        else:
-            rows = []
-        print(f"  全部血缘记录: {len(rows)} 条")
-        for row in rows[:5]:
-            ds = row.get('dataset_name', '?')
-            op = row.get('operation', '?')
-            actor = row.get('actor', '?')
-            print(f"    {ds:<16} {op:<12} by {actor}")
-    except Exception as e:
-        print(f"  血缘查询: {e}")
+    # STEP 5: 血缘链路汇总
+    print("\nSTEP 5: 血缘链路汇总")
+    all_events = []
+    for ds_name in ["raw_sales", "clean_sales", "category_report"]:
+        try:
+            history = lake.lineage_history(ds_name)
+            all_events.extend(history)
+        except Exception:
+            pass
+    print(f"  全部血缘记录: {len(all_events)} 条")
+    for h in all_events[:5]:
+        op = getattr(h, 'operation', '?')
+        actor = getattr(h, 'actor', '?')
+        print(f"    {op:<12} by {actor}")
 
     # STEP 6: 数据集列表
     print("\nSTEP 6: 数据集列表")
+    catalog = lake.catalog()
     for name in lake.list_datasets():
-        ds = lake.open_dataset(name)
-        print(f"  {name}: {ds.count_rows()} 行")
+        ds = catalog.datasets.get(name)
+        rows = ds.num_rows if ds else "?"
+        print(f"  {name}: {rows} 行")
 
     print("\n  [全部 PASS]")
     if not no_cleanup:

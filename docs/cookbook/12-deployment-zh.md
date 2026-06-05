@@ -235,6 +235,7 @@ audit_id = lake.audit_record(
     actor="pipeline-user",
     lance_version=42,
     metaflow_run_id="mf-20260424-001",
+    metaflow_tags={"env": "prod", "team": "data"},
     payload={"rows": 1000, "source": "s3://raw/"},
 )
 
@@ -251,15 +252,55 @@ entries = lake.audit_query(
 
 # 导出数据集审计记录
 export = lake.audit_export("articles")
+
+# 运行异常检测
+anomalies = lake.audit_analyze()
+for a in anomalies:
+    print(f"{a['severity']}: {a['description']}")
 ```
 
-| 参数              | 类型     | 说明                                      |
-| --------------- | ------ | --------------------------------------- |
-| `event_type`    | `str`  | 事件类型 (如 `data_ingest`, `backup_create`) |
-| `dataset_name`  | `str`  | 关联数据集                                   |
-| `actor`         | `str`  | 操作者 (默认 `"system"`)                     |
-| `lance_version` | `int`  | Lance 版本号                               |
-| `payload`       | `dict` | 附加事件数据                                  |
+| 参数               | 类型     | 说明                                      |
+| ---------------- | ------ | --------------------------------------- |
+| `event_type`     | `str`  | 事件类型 (如 `data_ingest`, `backup_create`) |
+| `dataset_name`   | `str`  | 关联数据集                                   |
+| `actor`          | `str`  | 操作者 (默认 `"system"`)                     |
+| `lance_version`  | `int`  | Lance 版本号                               |
+| `metaflow_run_id`| `str`  | 关联的 Metaflow run ID                    |
+| `metaflow_tags`  | `dict` | 关联的 Metaflow 标签                        |
+| `payload`        | `dict` | 附加事件数据                                  |
+
+### 审计 REST API
+
+```bash
+# 记录审计事件
+curl -X POST http://localhost:8000/api/v1/datasets/articles/audit \
+  -H "X-API-Key: your-key" \
+  -H "Content-Type: application/json" \
+  -d '{"action": "data_ingest", "actor": "pipeline-user"}'
+
+# 查询审计条目
+curl "http://localhost:8000/api/v1/datasets/articles/audit?start=2026-04-01T00:00:00Z" \
+  -H "X-API-Key: your-key"
+
+# 验证审计条目完整性
+curl http://localhost:8000/api/v1/audit/{audit_id}/verify -H "X-API-Key: your-key"
+
+# 运行异常检测
+curl -X POST http://localhost:8000/api/v1/audit/analyze -H "X-API-Key: your-key"
+```
+
+### 审计 CLI
+
+```bash
+# 记录审计事件
+arrow-lake audit record --dataset articles --action data_ingest --actor pipeline-user
+
+# 查询审计日志
+arrow-lake audit query --dataset articles --start 2026-04-01 --end 2026-04-30
+
+# 运行异常分析
+arrow-lake audit analyze
+```
 
 ***
 
@@ -307,7 +348,7 @@ vector:
 
 ```python
 # 合并碎片文件
-stats = lake._get_storage().compact("articles")
+stats = lake.compact_dataset("articles")
 print(f"文件：{stats.fragments_before} -> {stats.fragments_after}")
 ```
 
@@ -574,3 +615,256 @@ networkPolicy:
 | **JWT**   | `auth.auth_mode: jwt`               | `auth.auth_mode: jwt`                  |
 | **RBAC**  | 30+ 端点带角色检查                        | 30+ 端点带角色检查                            |
 | **审计 HMAC** | `audit.hmac_secret_key`             | 通过 secret 设置 `audit.hmac_secret_key` |
+
+***
+
+## 12. v1.5.2 安全加固
+
+v1.5.2 引入了多项关键安全修复，涵盖认证、注入防护和网络绑定。所有部署应至少升级到此版本。
+
+### 安全修复
+
+| 修复项 | 描述 | 影响 |
+| --- | --- | --- |
+| JWT 空密钥阻止 | 服务器在 `jwt_secret_key` 为空或使用默认值时拒绝启动 | 防止未认证 JWT 令牌签发 |
+| Kerberos 命令注入消除 | Kerberos 主体名称中的 shell 元字符被过滤 | 消除通过构造主体名的远程代码执行风险 |
+| SQL 注入参数化 | 所有用户提供的 SQL 参数使用参数化查询 | 防止 OLAP 和 lineage 查询端点的 SQL 注入 |
+| Redis 默认密码移除 | Docker Compose 和 Helm values 中不再设置默认密码 | 强制生产环境显式配置密码 |
+| 127.0.0.1 绑定 | 默认 API 绑定地址改为仅 localhost | 减小攻击面；远程访问需设置 `api.host: 0.0.0.0` |
+| SSRF 防护 | URL 校验阻止私有/内网地址 | 防止通过摄取 URL 实现服务端请求伪造 |
+| Admin bypass 改用 Role enum | 硬编码 admin 字符串检查替换为 `Role` 枚举 | 类型安全的角色检查防止字符串比较绕过 |
+| Refresh token 旋转撤销 | Refresh token 单次使用，每次使用后轮换 | 窃取的 refresh token 无法重复使用 |
+
+### 健康检查端点
+
+```bash
+# 存活检查 (不检查依赖)
+curl http://localhost:8000/health/live
+
+# 就绪检查 (验证存储、Redis 等)
+curl http://localhost:8000/health/ready
+
+# 完整健康报告
+curl http://localhost:8000/health -H "X-API-Key: your-key"
+
+# Prometheus 指标
+curl http://localhost:8000/metrics
+```
+
+***
+
+## 13. 数据血缘
+
+Arrow Lake 提供内置的数据血缘追踪，用于跟踪数据集依赖关系和下游影响分析。
+
+### Python API
+
+```python
+from arrow_lake import Lake
+
+lake = Lake.from_yaml("configs/prod.yaml")
+
+# 记录血缘事件
+lake.lineage_record_event(
+    "articles_clean",
+    "transform",
+    source_datasets=["articles_raw"],
+    transform_type="quality_filter",
+    metadata={"rows_removed": 580},
+)
+
+# 查看数据集的血缘历史
+history = lake.lineage_history("articles_clean")
+for event in history:
+    print(f"{event['operation']} at {event['timestamp']}")
+
+# 用 SQL 查询血缘事件
+import pyarrow as pa
+result = lake.lineage_query(
+    "SELECT * FROM lineage WHERE operation = 'transform'"
+)
+
+# 获取完整血缘图 (上游 + 下游)
+graph = lake.lineage_graph("articles_clean", max_depth=10)
+print(f"节点: {len(graph['nodes'])}, 边: {len(graph['edges'])}")
+
+# 分析变更数据集的下游影响
+impact = lake.lineage_impact("articles_raw")
+for item in impact:
+    print(f"受影响: {item['dataset']}, 深度: {item['depth']}")
+```
+
+### 血缘 REST API
+
+```bash
+# 记录血缘事件
+curl -X POST http://localhost:8000/api/v1/lineage/record \
+  -H "X-API-Key: your-key" \
+  -H "Content-Type: application/json" \
+  -d '{"dataset_name": "articles_clean", "event_type": "transform", "source_datasets": ["articles_raw"]}'
+
+# 获取血缘历史
+curl http://localhost:8000/api/v1/lineage/history/articles_clean \
+  -H "X-API-Key: your-key"
+
+# 用 SQL 查询血缘
+curl -X POST http://localhost:8000/api/v1/lineage/query \
+  -H "X-API-Key: your-key" \
+  -H "Content-Type: application/json" \
+  -d '{"sql": "SELECT * FROM lineage WHERE operation = '\''transform'\''"}'
+
+# 获取血缘图
+curl http://localhost:8000/api/v1/lineage/graph/articles_clean?max_depth=10 \
+  -H "X-API-Key: your-key"
+
+# 分析下游影响
+curl -X POST http://localhost:8000/api/v1/lineage/impact \
+  -H "X-API-Key: your-key" \
+  -H "Content-Type: application/json" \
+  -d '{"dataset_name": "articles_raw"}'
+```
+
+### 血缘 CLI
+
+```bash
+# 记录血缘事件
+arrow-lake lineage record --dataset articles_clean --operation transform --sources articles_raw
+
+# 查看血缘历史
+arrow-lake lineage history --dataset articles_clean
+
+# 显示血缘图
+arrow-lake lineage graph --dataset articles_clean --max-depth 10
+
+# 分析下游影响
+arrow-lake lineage impact --dataset articles_raw
+```
+
+***
+
+## 14. 存储生命周期管理
+
+Arrow Lake 支持 S3 存储分层，通过生命周期规则自动将数据转移到低成本存储类 (如 Glacier)，并按需恢复。
+
+### Python API
+
+```python
+from arrow_lake import Lake
+
+lake = Lake.from_yaml("configs/prod.yaml")
+
+# 预览生命周期规则 (不实际应用)
+rules = lake.lifecycle_rules(prefix="archive/")
+print(rules)
+
+# 应用生命周期规则到桶前缀
+result = lake.lifecycle_apply(prefix="archive/")
+print(f"已应用: {result}")
+
+# 查看对象存储层级
+tiers = lake.lifecycle_status(prefix="archive/")
+for item in tiers:
+    print(f"{item['key']}: {item['storage_class']}")
+
+# 恢复 Glacier 层级的对象 (临时访问)
+lake.lifecycle_restore("archive/old_data.parquet", days=7)
+```
+
+### 生命周期 CLI
+
+```bash
+# 预览生命周期规则
+arrow-lake lifecycle rules --prefix archive/
+
+# 应用生命周期规则
+arrow-lake lifecycle apply --prefix archive/
+
+# 查看存储层级状态
+arrow-lake lifecycle status --prefix archive/
+
+# 恢复 Glacier 对象
+arrow-lake lifecycle restore --key archive/old_data.parquet --days 7
+```
+
+***
+
+## 15. 通过 Lake API 管理备份
+
+除了第 4 节展示的底层 `BackupManager`，备份也可直接通过 `Lake` 对象管理：
+
+```python
+from arrow_lake import Lake
+
+lake = Lake.from_yaml("configs/prod.yaml")
+
+# 创建完整备份 (所有数据集)
+info = lake.backup_create()
+print(f"备份 ID: {info.backup_id}")
+
+# 创建部分备份
+info = lake.backup_create(dataset_names=["articles", "photos"])
+
+# 恢复备份
+lake.backup_restore(
+    info.backup_id,
+    dataset_names=["articles"],
+    overwrite=True,
+)
+
+# 列出所有备份
+for b in lake.backup_list():
+    print(f"{b.backup_id} | {b.created_at} | {b.status}")
+
+# 删除备份
+lake.backup_delete("20260101T000000zabc12345")
+```
+
+### 备份 REST API
+
+```bash
+# 创建备份
+curl -X POST http://localhost:8000/api/v1/backup/create \
+  -H "Content-Type: application/json" -H "X-API-Key: your-key" \
+  -d '{"dataset_names": ["articles"]}'
+
+# 列出备份
+curl http://localhost:8000/api/v1/backup/list -H "X-API-Key: your-key"
+
+# 恢复备份
+curl -X POST http://localhost:8000/api/v1/backup/restore \
+  -H "Content-Type: application/json" -H "X-API-Key: your-key" \
+  -d '{"backup_id": "20260101T000000zabc12345", "overwrite": true}'
+
+# 删除备份
+curl -X DELETE http://localhost:8000/api/v1/backup/20260101T000000zabc12345 \
+  -H "X-API-Key: your-key"
+```
+
+### 备份 CLI
+
+```bash
+# 创建备份
+arrow-lake backup create --datasets articles,photos
+
+# 列出备份
+arrow-lake backup list
+
+# 恢复备份
+arrow-lake backup restore --id 20260101T000000zabc12345 --datasets articles
+
+# 删除备份
+arrow-lake backup delete --id 20260101T000000zabc12345
+```
+
+***
+
+## 16. 维护命令
+
+```bash
+# 运行所有维护任务
+arrow-lake maintenance
+
+# 质量去重 (CLI)
+arrow-lake quality dedup --dataset articles --strategy exact
+arrow-lake quality filter --dataset articles --mode all
+```

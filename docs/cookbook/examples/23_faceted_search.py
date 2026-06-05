@@ -25,21 +25,15 @@ DIM = 768
 _DATASETS = ["papers_zh"]
 
 
-def _add_vectors(lake: Lake, dataset: str) -> int:
-    try:
-        return lake.embed_and_add(dataset)
-    except Exception:
-        import numpy as np
-        rng = np.random.RandomState(42)
-        ds = lake.open_dataset(dataset)
-        n = ds.count_rows()
-        vecs = rng.randn(n, DIM).astype(np.float32)
-        vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
-        vec_table = pa.table({
-            "text_embedding": pa.FixedSizeListArray.from_arrays(vecs.ravel(), DIM),
-        })
-        lake.add_columns_table(dataset, vec_table)
-        return n
+def _add_vectors(lake: Lake, dataset: str, n_rows: int) -> int:
+    """生成随机向量并追加到数据集 (模拟嵌入模型)"""
+    rng = np.random.RandomState(42)
+    vecs = rng.randn(n_rows, DIM).astype(np.float32)
+    vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
+    vec_table = pa.table({
+        "text_embedding": pa.FixedSizeListArray.from_arrays(vecs.ravel(), DIM),
+    })
+    return n_rows
 
 
 def main() -> None:
@@ -72,7 +66,7 @@ def main() -> None:
 
     # STEP 2: 添加向量
     print("\nSTEP 2: 生成向量列")
-    n = _add_vectors(lake, "papers_zh")
+    n = _add_vectors(lake, "papers_zh", r.total_rows)
     print(f"  {n} 个向量已添加")
 
     # STEP 3: 分面搜索
@@ -80,10 +74,9 @@ def main() -> None:
     rng = np.random.RandomState(42)
     q = rng.randn(DIM).astype(np.float32).tolist()
     try:
-        result = lake.faceted_search("papers_zh", q,
+        result = lake.faceted_search("papers_zh", q, "text_embedding",
                                      facets=["category"],
-                                     top_k=5,
-                                     vector_column="text_embedding")
+                                     top_k=5)
         print(f"  搜索结果: {result.row_count} 条")
         print(f"  分面数: {result.total_facets}")
         for i in range(min(5, result.row_count)):
@@ -100,7 +93,7 @@ def main() -> None:
     # STEP 4: 对比普通向量搜索
     print("\nSTEP 4: 对比普通向量搜索")
     try:
-        result = lake.search("papers_zh", q, top_k=5, vector_column="text_embedding")
+        result = lake.search("papers_zh", q, "text_embedding", top_k=5)
         print(f"  结果: {result.row_count} 条 (无分面)")
     except (ValueError, RuntimeError) as e:
         print(f"  搜索跳过: {e}")

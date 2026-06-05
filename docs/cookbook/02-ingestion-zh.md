@@ -1,7 +1,7 @@
 # 数据摄取指南
 
-> Arrow Lake 支持多种数据源和模态的摄取：本地文件、HTTP 远程下载、图像、视频、PDF 文档，
-> 以及直接从 Arrow Table 写入。
+> Arrow Lake 支持多种数据源和模态的摄取：本地文件、HTTP 远程下载、SQL 数据库、Kafka 流、
+> Iceberg/Delta Lake 表、图像、视频、PDF 文档，以及直接从 Arrow Table 写入。
 
 ***
 
@@ -37,7 +37,22 @@ for src in report.sources:
 
 ***
 
-## 2. HTTP 远程摄取
+## 2. 批量摄取
+
+使用 `ingest_batch()` 通过 Daft `write_lance` 优化加载同类型文件：
+
+```python
+report = lake.ingest_batch(
+    "sales",
+    ["examples/data/transactions/sales_2024_cn.csv",
+     "examples/data/transactions/sales_2025_cn.csv"],
+)
+print(f"批量摄取：{report.total_rows} 行")
+```
+
+***
+
+## 3. HTTP 远程摄取
 
 从 HTTP(S) URL 下载文件并直接写入 Lance dataset，无需手动下载。
 
@@ -62,7 +77,62 @@ tenacity 指数退避自动重试 (429/5xx)、可配置超时。
 
 ***
 
-## 3. 多模态摄取 — 图像与视频
+## 4. SQL 数据库摄取
+
+通过 JDBC/SQLAlchemy 连接 URL 从外部 SQL 数据库摄取数据：
+
+```python
+report = lake.ingest_sql(
+    "pg_orders",
+    sql="SELECT * FROM orders WHERE year = 2024",
+    connection_url="postgresql://user:pass@localhost:5432/mydb",
+)
+print(f"SQL 摄取：{report.total_rows} 行")
+# 注意：需要 SQLAlchemy + 数据库驱动，例如：
+#   pip install sqlalchemy psycopg2-binary    # PostgreSQL
+#   pip install sqlalchemy pymysql             # MySQL
+#   pip install sqlalchemy pyodbc              # SQL Server
+```
+
+***
+
+## 5. Kafka 流摄取
+
+实时从 Kafka 主题摄取数据：
+
+```python
+report = lake.ingest_kafka(
+    "clickstream",
+    topics=["user_clicks", "page_views"],
+    bootstrap_servers="localhost:9092",
+    group_id="arrow_lake_ingest",
+)
+print(f"Kafka 摄取：{report.total_rows} 行")
+# 注意：需要 confluent-kafka：pip install confluent-kafka
+# ingest_kafka() 持续消费直到 consumer 到达最新 offset（追平），然后返回 IngestionReport。
+```
+
+***
+
+## 6. Iceberg 与 Delta Lake 摄取
+
+通过表 URI 读取 Apache Iceberg 或 Delta Lake 表：
+
+```python
+# Iceberg
+report = lake.ingest_iceberg("iceberg_copy", table_uri="s3://warehouse/db.table")
+# 注意：需要 pyiceberg：pip install pyiceberg[pyarrow,s3fs]
+
+# Delta Lake
+report = lake.ingest_deltalake("delta_copy", table_uri="s3://warehouse/delta/table")
+# 注意：需要 deltalake：pip install deltalake
+# S3 URI 需要通过 StorageConfig 或环境变量配置凭证
+# (参见 03-configuration-zh.md StorageConfig 章节)。
+```
+
+***
+
+## 7. 多模态摄取 — 图像与视频
 
 ### 图像摄取
 
@@ -101,7 +171,7 @@ print(f"视频摄取：{report.total_rows} 行")
 
 ***
 
-## 4. 混合模态摄取
+## 8. 混合模态摄取
 
 `ingest_mixed()` 将不同模态的数据源统一摄取到同一个 dataset 中。
 
@@ -124,11 +194,11 @@ print(f"混合摄取：{report.total_rows} 行，{report.total_files} 文件")
 ```
 
 内部流程：`UnifiedTableManager` 创建统一 schema，然后依次调用
-`ingest()` → `ingest_http()` → `ingest_images()` → `ingest_videos()`。
+`ingest()` -> `ingest_http()` -> `ingest_images()` -> `ingest_videos()`。
 
 ***
 
-## 5. PDF 文档摄取
+## 9. PDF 文档摄取
 
 将 PDF 解析为文本块 (chunk) 并写入 Lance dataset，供全文搜索和 RAG 使用。
 
@@ -152,32 +222,38 @@ print(f"文档摄取：{report.total_rows} 个文本块")
 ### 自定义文档配置
 
 ```python
-from arrow_lake.config.document import DocumentConfig
-from arrow_lake.config._enums import ChunkStrategy
+from arrow_lake.config import DocumentConfig
+from arrow_lake.config import ChunkStrategy, PdfParseMode
 
 doc_config = DocumentConfig(
-    chunk_strategy=ChunkStrategy.SEMANTIC,    # fixed / sentence / semantic
+    chunk_strategy=ChunkStrategy.RECURSIVE,     # page / paragraph / recursive / semchunk
+                                                 # / chonkie_token / chonkie_semantic / chonkie_sdpm
     chunk_size=512,
     chunk_overlap=64,
-    chunk_tokenizer="cl100k_base",
-    semantic_embedding_model="text-embedding-3-small",
+    chunk_tokenizer="",                         # semchunk 分词器（空 = 字符级）
+    semantic_embedding_model="",                 # chonkie semantic/sdpm 用的 HuggingFace 模型
     semantic_similarity_threshold=0.5,
     semantic_min_chunk_size=100,
-    pdf_parse_mode="auto",                    # auto / text_only / ocr
+    pdf_parse_mode=PdfParseMode.AUTO,           # auto / text / ocr
+    ocr_backend="kreuzberg",                    # kreuzberg / turbo_ocr
     ocr_endpoint="http://localhost:8002",
     max_file_size_mb=100,
     store_raw_pdf=True,
     blob_prefix="documents/",
 )
 
-report = lake.ingest_documents("papers", ["examples/data/papers/full_text/zh001_大语言模型知识图谱构建综述.pdf"], doc_config=doc_config)
+report = lake.ingest_documents(
+    "papers",
+    ["examples/data/papers/full_text/zh001_大语言模型知识图谱构建综述.pdf"],
+    doc_config=doc_config,
+)
 ```
 
-文档摄取流水线：`PDF → Kreuzberg 解析 (+ TurboOCR 回退) → BlobStore (可选) → Chunker 分块 → Lance 持久化`
+文档摄取流水线：`PDF -> Kreuzberg 解析 (+ TurboOCR 回退) -> BlobStore (可选) -> Chunker 分块 -> Lance 持久化`
 
 ***
 
-## 6. 死信队列 (Dead Letter Queue)
+## 10. 死信队列 (Dead Letter Queue)
 
 摄取失败的文件记录到 `IngestDeadLetterQueue`，支持重试、解决和清理。
 
@@ -207,11 +283,11 @@ removed = dlq.purge(resolved=True, permanent=True)
 print(f"已清理 {removed} 条记录")
 ```
 
-状态流转：`pending` → `retrying` → (成功) `resolved` | (失败) `pending` | `permanent`
+状态流转：`pending` -> `retrying` -> (成功) `resolved` | (失败) `pending` | `permanent`
 
 ***
 
-## 7. Arrow Table 直接写入
+## 11. Arrow Table 直接写入
 
 对于程序化数据，可以直接从 PyArrow Table 创建或追加 dataset。
 
@@ -246,10 +322,35 @@ new_table = pa.table({
 lake.append_dataset("documents", new_table)
 ```
 
+### Upsert、删除、更新
+
+```python
+# Upsert — 按键列合并行
+lake.upsert("documents", updated_table, on="id")
+
+# 按条件删除行
+lake.delete_rows("documents", where="category = 'expired'")
+
+# 更新匹配行的指定列
+lake.update_rows("documents", where="id = 'doc_0001'", updates={"category": "reviewed"})
+```
+
+### 导出
+
+```python
+from arrow_lake import Lake
+
+lake = Lake(base_uri="./data_lake")
+
+# 导出 dataset 到 Parquet、CSV 或其他 Lance URI
+result = lake.export_to("documents", target_uri="s3://backup/documents")
+print(f"已导出 {result.row_count} 行到 {result.target_uri}")
+```
+
 ### 错误处理
 
 ```python
-from arrow_lake.exceptions import StorageError, TypeError
+from arrow_lake.exceptions import StorageError, ValidationError
 
 try:
     lake.create_dataset("existing", data)
@@ -264,7 +365,35 @@ except StorageError:
 
 ***
 
-## 8. 数据质量与去重
+## 12. 嵌入与摄取
+
+一步完成向量嵌入计算和摄取：
+
+```python
+# 摄取数据并计算文本列的嵌入
+report = lake.ingest_and_embed(
+    "articles",
+    ["examples/data/articles.json"],
+    embed_column="text_content",
+)
+print(f"嵌入摄取：{report.total_rows} 行含向量")
+```
+
+或向已有 dataset 添加嵌入：
+
+```python
+# 嵌入文本并将向量添加到已有 dataset
+lake.embed_and_add(
+    "documents",
+    texts=["新文档文本内容"],
+    ids=["doc_0200"],
+    metadata=[{"source": "api"}],
+)
+```
+
+***
+
+## 13. 数据质量与去重
 
 ```python
 from arrow_lake import Lake
@@ -289,7 +418,7 @@ dedup_result = lake.deduplicate(
 
 ***
 
-## 9. 摄取最佳实践
+## 14. 摄取最佳实践
 
 ```python
 from pathlib import Path
@@ -308,3 +437,31 @@ if all_files:
 
 > **Ingestor 不是线程安全的**。并发摄取到不同 dataset 时请创建独立实例，
 > 同一 dataset 的并发写入需要外部同步。
+
+***
+
+## 摄取 API 速查表
+
+| 方法                    | 用途                          |
+| --------------------- | --------------------------- |
+| `ingest()`            | 摄取本地文件 (CSV, JSON, JSONL, Parquet) |
+| `ingest_batch()`      | 优化的同类型文件批量摄取                |
+| `ingest_http()`       | 从 HTTP(S) URL 下载并摄取         |
+| `ingest_sql()`        | 从 SQL 数据库摄取                 |
+| `ingest_kafka()`      | 从 Kafka 主题摄取                |
+| `ingest_iceberg()`    | 读取 Apache Iceberg 表         |
+| `ingest_deltalake()`  | 读取 Delta Lake 表             |
+| `ingest_images()`     | 摄取图像 (缩略图 + EXIF)           |
+| `ingest_videos()`     | 摄取视频 (关键帧提取)                |
+| `ingest_mixed()`      | 一次调用组合多种模态                  |
+| `ingest_documents()`  | 解析和分块 PDF 文档                |
+| `ingest_and_embed()`  | 摄取数据并计算嵌入                   |
+| `embed_and_add()`     | 向已有 dataset 添加嵌入            |
+| `create_dataset()`    | 从 PyArrow Table 创建 dataset  |
+| `append_dataset()`    | 从 PyArrow Table 追加行          |
+| `upsert()`            | 按键列合并行                      |
+| `delete_rows()`       | 按条件删除行                      |
+| `update_rows()`       | 更新匹配行的指定列                   |
+| `export_to()`         | 导出 dataset 到外部存储            |
+| `quality_filter()`    | 对 dataset 运行质量过滤器           |
+| `deduplicate()`       | 检测和处理重复内容                   |

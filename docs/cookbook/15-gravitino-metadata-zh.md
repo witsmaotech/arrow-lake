@@ -66,7 +66,7 @@ gravitino:
   metalake: "arrow-lake"
   lance_rest_enabled: true
   lance_rest_uri: "http://lance-rest:9002"
-  auth_type: simple
+  auth_type: simple    # simple | oauth | kerberos | null
   sync_direction: bidirectional
   sync_interval_seconds: 30   # 范围: 5–300
 ```
@@ -88,7 +88,7 @@ curl http://localhost:8000/health -H "X-API-Key: your-key"
 ```json
 {
   "status": "ok",
-  "version": "1.4.1",
+  "version": "1.5.3",
   "storage": "accessible",
   "gravitino": "healthy",
   "lance_rest": "healthy"
@@ -616,6 +616,7 @@ print(f"Discovered {len(external)} external tables")
 | `simple` | 开发/测试（默认） |
 | `oauth` | 使用 OAuth 2.0 提供商的生产环境 |
 | `kerberos` | 企业 Hadoop 环境 |
+| `null` | 无认证（不安全，仅限测试） |
 
 ### 权限映射
 
@@ -704,9 +705,11 @@ result = rbac.check_permission("user@example.com", "articles", "read")
 | `GET` | `/metadata/policies` | 列出策略 |
 | `POST` | `/metadata/policies/retention` | 创建保留策略 |
 | `POST` | `/metadata/policies/masking` | 创建脱敏策略 |
+| `POST` | `/metadata/policies/enforce` | 执行保留策略（可选 `?dry_run=true`、`?table=`） |
 | `POST` | `/metadata/statistics/{name}` | 采集表统计信息 |
 | `GET` | `/metadata/models` | 列出 ML 模型 |
 | `GET` | `/metadata/models/{name}/versions` | 模型版本信息 |
+| `GET` | `/metadata/lineage/{name}` | 表血缘信息 |
 
 ### 可运行示例
 

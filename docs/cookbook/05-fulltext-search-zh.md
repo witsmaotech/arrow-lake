@@ -103,6 +103,8 @@ def text_search(
     top_k: int | None = None,      # 返回数量 (默认来自配置)
     fts_column: str | None = None,  # 搜索列名
     where: str | None = None,       # 元数据过滤表达式
+    version: int | None = None,     # 数据集版本 (时间旅行查询)
+    offset: int = 0,                # 跳过结果数 (分页)
 ) -> FullTextSearchResult: ...
 ```
 
@@ -244,7 +246,27 @@ result = lake.text_search("docs", query="数据分析",
 
 ***
 
-## 8. REST API
+## 8. FTS 索引管理
+
+```python
+from arrow_lake import Lake
+
+lake = Lake(base_uri="./data")
+
+# 删除全文搜索索引
+lake.delete_fts_index("docs")
+
+# 获取 FTS 索引信息
+info = lake.get_fts_index_info("docs")
+if info is not None:
+    print(f"FTS 索引：{info['name']}, 列：{info['columns']}")
+else:
+    print("未找到 FTS 索引")
+```
+
+***
+
+## 9. REST API
 
 ```bash
 # 创建 FTS 索引
@@ -262,3 +284,4 @@ curl -X POST http://localhost:8000/api/v1/datasets/docs/search/fts \
 | ------------------------- | ----------------------- | ------------------------ |
 | `POST /{name}/index/fts`  | `FtsIndexRequest`       | `FtsIndexResponse`       |
 | `POST /{name}/search/fts` | `FullTextSearchRequest` | `FullTextSearchResponse` |
+| `POST /embed/text`        | `TextEmbedRequest`      | `EmbeddingResponse`      |
