@@ -35,6 +35,18 @@ from arrow_lake.config import ArrowLakeConfig
 
 logger = logging.getLogger(__name__)
 
+MIDDLEWARE_PIPELINE = [
+    "correlation_id",
+    "cors",
+    "gzip",
+    "metrics",
+    "request_size_limit",
+    "security_headers",
+    "rate_limit",
+    "api_key",
+    "jwt_auth",
+]
+
 
 def _check_storage_connectivity(config: ArrowLakeConfig) -> None:
     """Verify S3/MinIO storage is reachable at startup."""
@@ -312,6 +324,14 @@ def create_app(config: ArrowLakeConfig | None = None) -> FastAPI:
         security_headers_middleware_fn,
     )
 
+    # Correlation ID propagation — FIRST so all subsequent middleware
+    # (including auth, rate limit) logs carry the request ID.
+    auto_gen = config.api.auto_generate_request_id
+
+    @app.middleware("http")
+    async def correlation_id_middleware(request, call_next):
+        return await correlation_id_middleware_fn(request, call_next, auto_generate=auto_gen)
+
     # Prometheus HTTP request duration
     @app.middleware("http")
     async def metrics_middleware(request, call_next):
@@ -369,13 +389,6 @@ def create_app(config: ArrowLakeConfig | None = None) -> FastAPI:
                 docs_enabled=config.api.docs_enabled,
                 default_role=config.api.api_key_default_role,
             )
-
-    # Correlation ID propagation (before auth)
-    auto_gen = config.api.auto_generate_request_id
-
-    @app.middleware("http")
-    async def correlation_id_middleware(request, call_next):
-        return await correlation_id_middleware_fn(request, call_next, auto_generate=auto_gen)
 
     # JWT authentication
     auth_mode = config.auth.auth_mode

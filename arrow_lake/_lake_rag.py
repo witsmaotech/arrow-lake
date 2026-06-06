@@ -29,14 +29,14 @@ class _LakeRAGMixin:
         from arrow_lake.rag.provider import create_llm_provider
 
         def _factory() -> RAGPipeline:
-            provider = create_llm_provider(self._config.llm)
+            provider = create_llm_provider(self.config.llm)
 
-            if not self._config.hugegraph.enabled:
+            if not self.config.hugegraph.enabled:
                 return RAGPipeline(
                     llm_provider=provider,
-                    config=self._config.rag,
+                    config=self.config.rag,
                     retriever=self._rag_retriever,
-                    context_window_tokens=self._config.llm.context_window_tokens,
+                    context_window_tokens=self.config.llm.context_window_tokens,
                 )
 
             # Attempt GraphRAG pipeline with KG augmentation
@@ -49,9 +49,9 @@ class _LakeRAGMixin:
                 )
                 return RAGPipeline(
                     llm_provider=provider,
-                    config=self._config.rag,
+                    config=self.config.rag,
                     retriever=self._rag_retriever,
-                    context_window_tokens=self._config.llm.context_window_tokens,
+                    context_window_tokens=self.config.llm.context_window_tokens,
                 )
 
         return self._get_component("rag_pipeline", _factory)
@@ -67,19 +67,19 @@ class _LakeRAGMixin:
         from arrow_lake.knowledge_graph.retriever import KGRetriever
         from arrow_lake.rag.graph_rag import GraphRAGPipeline
 
-        kg_client = HugeGraphClient(self._config.hugegraph)
+        kg_client = HugeGraphClient(self.config.hugegraph)
         kg_extractor = EntityExtractor(provider)
-        kg_retriever = KGRetriever(kg_client, self._config.hugegraph)
+        kg_retriever = KGRetriever(kg_client, self.config.hugegraph)
 
         return GraphRAGPipeline(
             llm_provider=provider,
-            config=self._config.rag,
+            config=self.config.rag,
             retriever=self._rag_retriever,
             kg_client=kg_client,
             kg_retriever=kg_retriever,
             kg_extractor=kg_extractor,
-            context_window_tokens=self._config.llm.context_window_tokens,
-            traversal_depth=self._config.hugegraph.default_traversal_depth,
+            context_window_tokens=self.config.llm.context_window_tokens,
+            traversal_depth=self.config.hugegraph.default_traversal_depth,
         )
 
     def _rag_retriever(self, question: str, dataset_name: str, top_k: int) -> Any:

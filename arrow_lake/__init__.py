@@ -9,12 +9,14 @@ from typing import TYPE_CHECKING, Any
 
 from arrow_lake._lake_admin import _LakeAdminMixin
 from arrow_lake._lake_audit import _LakeAuditMixin
+from arrow_lake._lake_base import _LakeBaseMixin
 from arrow_lake._lake_ingest import _LakeIngestMixin
 from arrow_lake._lake_kg import _LakeKGMixin
 from arrow_lake._lake_lineage import _LakeLineageMixin
 from arrow_lake._lake_query import _LakeQueryMixin
 from arrow_lake._lake_rag import _LakeRAGMixin
 from arrow_lake._lake_search import _LakeSearchMixin
+from arrow_lake._protocols import StorageProtocol
 from arrow_lake._models import CatalogEntry, CatalogResult
 from arrow_lake._version import __version__
 from arrow_lake.config import ArrowLakeConfig, StorageBackend
@@ -96,6 +98,7 @@ __all__ = [
 
 
 class Lake(
+    _LakeBaseMixin,
     _LakeIngestMixin,
     _LakeSearchMixin,
     _LakeQueryMixin,
@@ -124,7 +127,7 @@ class Lake(
 
         self._base_uri = base_uri
         self._config = config or ArrowLakeConfig()
-        self._storage: Any = None
+        self._storage: StorageProtocol | None = None
         self._components: dict[str, Any] = {}
         self._component_lock = threading.Lock()
         self._logger = logging.getLogger(__name__)
@@ -206,6 +209,9 @@ class Lake(
             try:
                 if hasattr(component, "shutdown"):
                     component.shutdown()
+                elif hasattr(component, "aclose") and asyncio.iscoroutinefunction(component.aclose):
+                    # Async clients (e.g. httpx.AsyncClient) use aclose()
+                    async_tasks.append((key, component.aclose))
                 elif hasattr(component, "close"):
                     close_method = component.close
                     if asyncio.iscoroutinefunction(close_method):
@@ -294,7 +300,7 @@ class Lake(
             limits=dict(max_connections=20, max_keepalive_connections=10),
         )
 
-    def _get_storage(self) -> Any:
+    def _get_storage(self) -> StorageProtocol:
         """Lazy-init and cache the storage manager."""
         if self._storage is None:
             from arrow_lake.ingest.storage import LanceStorageManager

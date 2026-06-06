@@ -18,6 +18,8 @@ import pyarrow as pa
 
 logger = logging.getLogger(__name__)
 
+_CACHE_VERSION = "v1.6.0"
+
 __all__ = ["CacheEntry", "QueryCache"]
 
 
@@ -73,7 +75,7 @@ class QueryCache:
         Returns:
             Hex digest string.
         """
-        parts = [dataset_name, sql]
+        parts = [_CACHE_VERSION, dataset_name, sql]
         if tables:
             parts.append(",".join(sorted(tables.keys())))
         raw = "|".join(parts)

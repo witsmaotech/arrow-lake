@@ -16,10 +16,6 @@ if TYPE_CHECKING:
 class _LakeAdminMixin:
     """Provides catalog listing, dataset management, workflow introspection, versioning, backup, and health."""
 
-    def _trace_span(self, name: str, **attrs: Any) -> Any:
-        from arrow_lake.api.telemetry import get_tracer
-        return get_tracer().start_as_current_span(name, attributes=attrs)
-
     def catalog(self) -> CatalogResult:
         """List all datasets with metadata (Story 7.1).
 

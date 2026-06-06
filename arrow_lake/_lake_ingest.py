@@ -16,10 +16,6 @@ if TYPE_CHECKING:
 class _LakeIngestMixin:
     """Provides data ingestion, dataset management, quality filtering, and dedup."""
 
-    def _trace_span(self, name: str, **attrs: Any) -> Any:
-        from arrow_lake.api.telemetry import get_tracer
-        return get_tracer().start_as_current_span(name, attributes=attrs)
-
     def ingest(
         self,
         dataset_name: str,

@@ -64,6 +64,8 @@ class GravitinoSyncScheduler:
         self._stop_event.set()
         if self._thread is not None:
             self._thread.join(timeout=self._interval + 5)
+            if self._thread.is_alive():
+                logger.error("Background thread %s did not stop within timeout", self._thread.name)
             self._thread = None
         logger.info("gravitino_sync_stopped")
 

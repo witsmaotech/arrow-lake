@@ -293,7 +293,7 @@ class EntityExtractor:
 
         entities: list[ExtractedEntity] = []
         for item in data.get("entities", []):
-            confidence = item.get("confidence", 1.0)
+            confidence = item.get("confidence", 0.5)
             if confidence < threshold:
                 continue
             name = item.get("name", "").strip()
@@ -314,7 +314,7 @@ class EntityExtractor:
 
         relations: list[ExtractedRelation] = []
         for item in data.get("relations", []):
-            confidence = item.get("confidence", 1.0)
+            confidence = item.get("confidence", 0.5)
             if confidence < threshold:
                 continue
             source = item.get("source", "")

@@ -196,10 +196,12 @@ class AuditTrail:
         stored_hash = table.column("hmac_hash")[idx].as_py()
 
         if not stored_hash:
-            return True  # HMAC disabled (dev mode)
+            logger.warning("Audit HMAC key not configured — integrity check skipped")
+            return False
 
         if not self._hmac_secret:
-            return True  # No secret configured
+            logger.warning("Audit HMAC key not configured — integrity check skipped")
+            return False
 
         entry_dict = {
             "audit_id": table.column("audit_id")[idx].as_py(),

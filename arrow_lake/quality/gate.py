@@ -72,6 +72,9 @@ class IngestionQualityGate:
             schema_rejected = n_schema_rej
             if schema_rejected > 0:
                 reasons.append(f"schema:{schema_rejected}")
+        elif current.num_rows == 0:
+            schema_rejected = total_rows
+            reasons.append("schema:empty_table")
 
         # ── Stage 2: Content filtering ──
         if self._active_filters:

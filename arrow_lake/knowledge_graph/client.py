@@ -77,34 +77,43 @@ class HugeGraphClient(_TraverserMixin, _ImportExportMixin):
     # ------------------------------------------------------------------
 
     @retry(
-        retry=retry_if_exception_type((httpx.TimeoutException, httpx.ConnectError)),
+        retry=retry_if_exception_type((httpx.TimeoutException, httpx.ConnectError, ConnectionResetError)),
         stop=stop_after_attempt(_DEFAULT_MAX_RETRIES),
         wait=wait_exponential(multiplier=1, min=1, max=10),
         reraise=True,
     )
     async def _get(self, path: str, *, params: dict[str, Any] | None = None) -> httpx.Response:
         """GET with tenacity retry on transient failures."""
-        return await self._client.get(path, params=params)
+        resp = await self._client.get(path, params=params)
+        if resp.status_code >= 500:
+            raise httpx.HTTPStatusError(f"Server error {resp.status_code}", request=resp.request, response=resp)
+        return resp
 
     @retry(
-        retry=retry_if_exception_type((httpx.TimeoutException, httpx.ConnectError)),
+        retry=retry_if_exception_type((httpx.TimeoutException, httpx.ConnectError, ConnectionResetError)),
         stop=stop_after_attempt(_DEFAULT_MAX_RETRIES),
         wait=wait_exponential(multiplier=1, min=1, max=10),
         reraise=True,
     )
     async def _post(self, path: str, json_data: Any = None) -> httpx.Response:
         """POST with tenacity retry on transient failures."""
-        return await self._client.post(path, json=json_data)
+        resp = await self._client.post(path, json=json_data)
+        if resp.status_code >= 500:
+            raise httpx.HTTPStatusError(f"Server error {resp.status_code}", request=resp.request, response=resp)
+        return resp
 
     @retry(
-        retry=retry_if_exception_type((httpx.TimeoutException, httpx.ConnectError)),
+        retry=retry_if_exception_type((httpx.TimeoutException, httpx.ConnectError, ConnectionResetError)),
         stop=stop_after_attempt(_DEFAULT_MAX_RETRIES),
         wait=wait_exponential(multiplier=1, min=1, max=10),
         reraise=True,
     )
     async def _delete(self, path: str) -> httpx.Response:
         """DELETE with tenacity retry on transient failures."""
-        return await self._client.delete(path)
+        resp = await self._client.delete(path)
+        if resp.status_code >= 500:
+            raise httpx.HTTPStatusError(f"Server error {resp.status_code}", request=resp.request, response=resp)
+        return resp
 
     def _handle_http_error(self, exc: httpx.HTTPError) -> None:
         """Wrap httpx errors as KGError."""

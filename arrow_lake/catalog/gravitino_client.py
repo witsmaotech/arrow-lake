@@ -40,7 +40,6 @@ class ArrowLakeGravitinoClient:
     def _ensure_initialized(self) -> bool:
         if self._initialized:
             return self._client is not None
-        self._initialized = True
         try:
             from gravitino.client.gravitino_admin_client import (
                 GravitinoAdminClient,  # type: ignore[import-untyped]
@@ -54,6 +53,7 @@ class ArrowLakeGravitinoClient:
             self._client = GravitinoClient(
                 uri=self._uri, metalake_name=self._metalake
             )
+            self._initialized = True
             logger.info(
                 "gravitino_client_initialized",
                 uri=self._uri,

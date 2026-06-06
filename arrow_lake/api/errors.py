@@ -72,6 +72,21 @@ def _error_code_to_http_status(code: ErrorCode) -> int:
         return 403
     if code == ErrorCode.AUTH_API_KEY_ROTATION_REQUIRED:
         return 403
+    # Document pipeline errors
+    if code == ErrorCode.DOCUMENT_UNSUPPORTED_FORMAT:
+        return 400
+    if code == ErrorCode.DOCUMENT_TOO_LARGE:
+        return 413
+    if code in (
+        ErrorCode.DOCUMENT_PARSE_FAILED,
+        ErrorCode.DOCUMENT_OCR_FAILED,
+        ErrorCode.DOCUMENT_CHUNK_FAILED,
+        ErrorCode.DOCUMENT_UPLOAD_FAILED,
+        ErrorCode.TRANSFORM_OP_UNKNOWN,
+        ErrorCode.TRANSFORM_EXECUTION_FAILED,
+        ErrorCode.QUALITY_NEMO_MODEL_ERROR,
+    ):
+        return 422
     return 500
 
 

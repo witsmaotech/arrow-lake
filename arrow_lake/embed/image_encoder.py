@@ -192,7 +192,7 @@ class CLIPImageEncoder:
             values = []
             for row_emb in embeddings:
                 if row_emb is None:
-                    values.extend([0.0] * dim)
+                    values.extend([float('nan')] * dim)
                 else:
                     values.extend(row_emb)
             return pa.FixedSizeListArray.from_arrays(pa.array(values, type=pa.float32()), dim)

@@ -285,6 +285,13 @@ class OpenAICompatibleProvider(_RetryMixin, BaseLLMProvider):
         # DeepSeek V4 may include reasoning_content in thinking mode;
         # prefer explicit content field, skip reasoning tokens.
         content = message.get("content") or ""
+        if not content:
+            logger.warning("LLM returned empty response, retrying...")
+            raise RAGError(
+                error_code=ErrorCode.RAG_PROVIDER_ERROR,
+                message=f"LLM returned empty content for model {self._config.model}",
+                context={"provider": self._config.provider.value, "model": self._config.model},
+            )
         return LLMResponse(
             content=content,
             model=data.get("model", self._config.model),
