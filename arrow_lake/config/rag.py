@@ -94,6 +94,13 @@ class RAGConfig(BaseModel):
             raise ValueError(f"context_budget_ratio must be 0.1-0.95, got {v}")
         return v
 
+    @field_validator("default_top_k")
+    @classmethod
+    def validate_top_k(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError(f"default_top_k must be >= 1, got {v}")
+        return v
+
 
 class HugeGraphConfig(BaseModel):
     """HugeGraph 知识图谱配置 (M3).

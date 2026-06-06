@@ -24,7 +24,9 @@ class StorageCRUDMixin:
         Raises:
             StorageError: If dataset already exists or name is invalid.
         """
-        with self._dataset_lock(name):
+        lock = self._dataset_lock(name)
+        self._acquire_dataset_lock(name)
+        try:
             self._validate_name(name)
             if self.dataset_exists(name):
                 raise StorageError(
@@ -33,6 +35,8 @@ class StorageCRUDMixin:
                 )
             path = self._get_dataset_path(name)
             self._write_lance(data, path, mode="create")
+        finally:
+            lock.release()
 
     def read_dataset(
         self, name: str, version: int | None = None, columns: list[str] | None = None
@@ -93,7 +97,9 @@ class StorageCRUDMixin:
         Raises:
             StorageError: If dataset does not exist or name is invalid.
         """
-        with self._dataset_lock(name):
+        lock = self._dataset_lock(name)
+        self._acquire_dataset_lock(name)
+        try:
             self._validate_name(name)
             path = self._get_dataset_path(name)
             if not self.dataset_exists(name):
@@ -102,6 +108,8 @@ class StorageCRUDMixin:
                     message=f"Dataset '{name}' does not exist, cannot append",
                 )
             self._write_lance(data, path, mode="append")
+        finally:
+            lock.release()
 
     def delete_dataset(self, name: str) -> None:
         """Delete a Lance dataset.
@@ -112,7 +120,9 @@ class StorageCRUDMixin:
         Raises:
             StorageError: If dataset does not exist or name is invalid.
         """
-        with self._dataset_lock(name):
+        lock = self._dataset_lock(name)
+        self._acquire_dataset_lock(name)
+        try:
             self._validate_name(name)
             if self._storage_config and self._storage_config.backend != StorageBackend.LOCAL:
                 import lancedb
@@ -134,6 +144,8 @@ class StorageCRUDMixin:
                     message=f"Dataset '{name}' does not exist at {path}",
                 )
             shutil.rmtree(path)
+        finally:
+            lock.release()
         # Clean up lock for deleted dataset to prevent unbounded growth
         with contextlib.suppress(KeyError):
             del self._dataset_locks[name]
@@ -194,7 +206,9 @@ class StorageCRUDMixin:
         self._validate_name(name)
         self._validate_identifier(on, "on_column")
 
-        with self._dataset_lock(name):
+        lock = self._dataset_lock(name)
+        self._acquire_dataset_lock(name)
+        try:
             if not self.dataset_exists(name):
                 self.create_dataset(name, data)
                 return
@@ -213,6 +227,8 @@ class StorageCRUDMixin:
                     error_code=ErrorCode.STORAGE_WRITE_FAILED,
                     message=f"Upsert failed on dataset '{name}': {exc}",
                 ) from exc
+        finally:
+            lock.release()
 
     def delete_rows(
         self,
@@ -231,7 +247,9 @@ class StorageCRUDMixin:
         Raises:
             StorageError: If dataset not found or expression is unsafe.
         """
-        with self._dataset_lock(name):
+        lock = self._dataset_lock(name)
+        self._acquire_dataset_lock(name)
+        try:
             self._validate_name(name)
             self._validate_sql_expr(where)
 
@@ -248,6 +266,8 @@ class StorageCRUDMixin:
 
             count_after = table.count_rows()
             return count_before - count_after
+        finally:
+            lock.release()
 
     def update_rows(
         self,
@@ -265,7 +285,9 @@ class StorageCRUDMixin:
         Raises:
             StorageError: If dataset not found or expression is unsafe.
         """
-        with self._dataset_lock(name):
+        lock = self._dataset_lock(name)
+        self._acquire_dataset_lock(name)
+        try:
             self._validate_name(name)
             self._validate_sql_expr(where)
 
@@ -288,6 +310,8 @@ class StorageCRUDMixin:
                     error_code=ErrorCode.STORAGE_WRITE_FAILED,
                     message=f"Row update failed on dataset '{name}': {exc}",  # nosec B608
                 ) from exc
+        finally:
+            lock.release()
 
     def restore_dataset(self, name: str, data: pa.Table) -> None:
         """Delete and recreate a dataset with new data (used for rollback).

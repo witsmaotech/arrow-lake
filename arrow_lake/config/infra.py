@@ -39,7 +39,7 @@ class ObservabilityConfig(BaseModel):
     """
 
     metrics_enabled: bool = True
-    metrics_port: int = 8000
+    metrics_port: int = 8001  # Default differs from API port (8000) to avoid conflict
     metrics_path: str = "/metrics"
     log_level: LogLevel = LogLevel.INFO
     correlation_id: str = ""
@@ -62,6 +62,30 @@ class HttpConfig(BaseModel):
 
     timeout_seconds: float = 30.0
     max_retries: int = 3
+
+    @field_validator("timeout_seconds")
+    @classmethod
+    def validate_timeout(cls, v: float) -> float:
+        if v < 1.0:
+            raise ValueError(f"timeout_seconds must be >= 1.0, got {v}")
+        return v
+
+
+class ResourceLimits(BaseModel):
+    """Resource limits for query execution (v1.6.0 Phase 2)."""
+
+    max_query_time_seconds: int = 300
+    max_concurrent_queries: int = 10
+    max_result_rows: int = 1_000_000
+    max_scan_bytes: int = 10_000_000_000
+
+
+class BackpressureConfig(BaseModel):
+    """Ingest backpressure configuration (v1.6.0 Phase 2)."""
+
+    ingest_queue_size: int = 10_000
+    rejection_threshold: float = 0.9
+    retry_max_attempts: int = 3
 
 
 class DaftConfig(BaseModel):

@@ -106,7 +106,7 @@ class TestObservabilityConfig:
 
     def test_default_metrics_port(self) -> None:
         config = ObservabilityConfig()
-        assert config.metrics_port == 8000
+        assert config.metrics_port == 8001  # v1.6.0: changed from 8000 to avoid API port conflict
 
     def test_default_log_level(self) -> None:
         config = ObservabilityConfig()

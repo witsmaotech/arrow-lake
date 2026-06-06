@@ -132,11 +132,17 @@ class BackupRestorer:
     def _restore_lance_dataset_remote(
         self, dataset_name: str, manifest: Any, *, overwrite: bool = False,
     ) -> None:
-        """Restore a Lance dataset from backup to remote storage (S3/MinIO)."""
+        """Restore a Lance dataset from backup to remote storage (S3/MinIO).
+
+        Safe ordering: download+verify to temp prefix first, then delete
+        original and rename temp into place.  If anything fails during
+        download/verify the original data is untouched.
+        """
         base = self._storage_config.base_uri
         if base.startswith("./"):
             base = base[2:]
         dest_prefix = f"{base}/{dataset_name}.lance/"
+        tmp_prefix = f"{base}/.{dataset_name}.lance.restore-{os.getpid()}/"
 
         if not overwrite:
             probe = self._blob_store.list_blobs(dest_prefix, max_keys=1)
@@ -145,23 +151,25 @@ class BackupRestorer:
                     error_code=ErrorCode.STORAGE_WRITE_FAILED,
                     message=f"Dataset '{dataset_name}' already exists. Use overwrite=True.",
                 )
-        else:
-            self._blob_store.delete_prefix(dest_prefix)
 
         backup_prefix = f"{_BACKUP_PREFIX}{manifest.backup_id}/datasets/{dataset_name}/"
 
         ds_entry = next((d for d in manifest.datasets if d["name"] == dataset_name), None)
         expected_hashes: dict[str, str] = ds_entry.get("file_hashes", {}) if ds_entry else {}
 
+        # Phase 1: Download all backup data to a temporary prefix and verify hashes.
         continuation_token: str | None = None
         try:
+            # Clean stale temp if it exists
+            self._blob_store.delete_prefix(tmp_prefix)
+
             while True:
                 result = self._blob_store.list_blobs(
                     backup_prefix, max_keys=5000, continuation_token=continuation_token,
                 )
                 for key in result.keys:
                     rel_path = key[len(backup_prefix):]
-                    dest_key = f"{dest_prefix}{rel_path}"
+                    tmp_key = f"{tmp_prefix}{rel_path}"
 
                     if expected_hashes and rel_path in expected_hashes:
                         data = self._blob_store.download(key)
@@ -171,22 +179,59 @@ class BackupRestorer:
                                 error_code=ErrorCode.STORAGE_READ_FAILED,
                                 message=f"Checksum mismatch for '{rel_path}'",
                             )
-                        self._blob_store.upload(dest_key, data)
+                        self._blob_store.upload(tmp_key, data)
                     else:
-                        self._blob_store.copy(key, dest_key)
+                        self._blob_store.copy(key, tmp_key)
 
                 if not result.truncated:
                     break
                 continuation_token = result.next_token
                 if not result.keys:
                     break
+
+            # Phase 2: Download/verify succeeded — now safe to replace original.
+            if overwrite:
+                self._blob_store.delete_prefix(dest_prefix)
+
+            # Phase 3: Copy from temp to final destination.
+            continuation_token = None
+            while True:
+                result = self._blob_store.list_blobs(
+                    tmp_prefix, max_keys=5000, continuation_token=continuation_token,
+                )
+                for key in result.keys:
+                    rel_path = key[len(tmp_prefix):]
+                    dest_key = f"{dest_prefix}{rel_path}"
+                    self._blob_store.copy(key, dest_key)
+
+                if not result.truncated:
+                    break
+                continuation_token = result.next_token
+                if not result.keys:
+                    break
+
         except StorageError:
+            # Best-effort cleanup of temp prefix on any failure.
+            try:
+                self._blob_store.delete_prefix(tmp_prefix)
+            except Exception:  # noqa: BLE001
+                pass
             raise
         except (OSError, RuntimeError) as exc:
+            try:
+                self._blob_store.delete_prefix(tmp_prefix)
+            except Exception:  # noqa: BLE001
+                pass
             raise StorageError(
                 error_code=ErrorCode.STORAGE_READ_FAILED,
                 message=f"Failed to restore dataset '{dataset_name}' to S3: {exc}",
             ) from exc
+        else:
+            # Cleanup temp prefix after successful restore.
+            try:
+                self._blob_store.delete_prefix(tmp_prefix)
+            except Exception:  # noqa: BLE001
+                _log.warning("remote_restore_tmp_cleanup_failed", tmp_prefix=tmp_prefix)
 
     def restore_blob_prefix(self, src_prefix: str, manifest: Any) -> None:
         """Restore blob data from backup to original prefix (handles pagination)."""

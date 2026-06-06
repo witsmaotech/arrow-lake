@@ -29,7 +29,9 @@ class StorageAdvancedMixin:
         Raises:
             StorageError: If dataset does not exist or name is invalid.
         """
-        with self._dataset_lock(name):
+        lock = self._dataset_lock(name)
+        self._acquire_dataset_lock(name)
+        try:
             self._validate_name(name)
 
             import lance as lance_lib
@@ -61,6 +63,8 @@ class StorageAdvancedMixin:
                 fragments_before=fragments_before,
                 fragments_after=fragments_after,
             )
+        finally:
+            lock.release()
 
     def add_column(self, name: str, column_name: str, sql_expr: str) -> None:
         """Add a new column to a dataset via SQL expression.

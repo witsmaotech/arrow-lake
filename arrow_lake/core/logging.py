@@ -31,6 +31,7 @@ def configure_logging(
         structlog.stdlib.add_log_level,
         structlog.processors.TimeStamper(fmt="iso"),
         structlog.processors.StackInfoRenderer(),
+        structlog.processors.format_exc_info,  # v1.6.0: render exceptions in JSON
         structlog.processors.UnicodeDecoder(),
     ]
 

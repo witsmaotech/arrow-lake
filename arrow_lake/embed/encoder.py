@@ -323,20 +323,36 @@ class ApiEmbeddingEncoder:
         except EmbeddingError:
             cb.record_failure()
             raise
-        except httpx.TimeoutException as exc:
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
             cb.record_failure()
-            raise EmbeddingError(
-                error_code=ErrorCode.EMBEDDING_TIMEOUT,
-                message=f"Embedding API timed out: {exc}",
-            ) from exc
-        except httpx.ConnectError as exc:
-            cb.record_failure()
-            logger.warning(
-                "Embedding API unreachable at %s, falling back to local encoder: %s",
-                self.api_base,
-                exc,
-            )
+            logger.warning("Embedding API unreachable, falling back to local encoder: %s", exc)
             return self._fallback_encode(texts)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code in (429, 502, 503, 504):
+                cb.record_failure()
+                logger.warning("Embedding API error %d, falling back to local encoder", exc.response.status_code)
+                return self._fallback_encode(texts)
+            raise  # 4xx client errors should not fall back
+
+    def encode_batch_sharded(self, texts: list[str], shard_size: int = 100) -> np.ndarray:
+        """Encode texts in shards with fault tolerance for mid-batch failures."""
+        if len(texts) <= shard_size:
+            return self.encode(texts).embeddings
+        results = []
+        for i in range(0, len(texts), shard_size):
+            shard = texts[i : i + shard_size]
+            try:
+                batch = self.encode(shard)
+                results.append(batch.embeddings)
+            except (EmbeddingError, Exception) as exc:
+                logger.error("Embedding shard %d-%d failed: %s", i, i + len(shard), exc)
+                if results:
+                    # Use null marker for failed shard so we don't lose prior results
+                    dim = results[0].shape[1] if results[0].ndim > 1 else 1
+                    results.append(np.full((len(shard), dim), np.nan, dtype=np.float32))
+                    continue
+                raise
+        return np.concatenate(results)
 
     def _get_circuit_breaker(self):
         from arrow_lake.core.circuit_breaker import CircuitBreaker

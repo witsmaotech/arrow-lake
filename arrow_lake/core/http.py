@@ -50,6 +50,8 @@ def _build_proxy_config(target_host: str | None = None) -> httpx.Proxy | dict[st
 
 def create_http_client(**kwargs: Any) -> httpx.Client:
     kwargs.setdefault("trust_env", False)
+    kwargs.setdefault("timeout", httpx.Timeout(30.0, connect=10.0))
+    kwargs.setdefault("limits", httpx.Limits(max_connections=100, max_keepalive_connections=20))
     if "proxy" not in kwargs and "proxies" not in kwargs:
         base = kwargs.get("base_url", "")
         host = _extract_host(base)
@@ -61,6 +63,8 @@ def create_http_client(**kwargs: Any) -> httpx.Client:
 
 def create_async_http_client(**kwargs: Any) -> httpx.AsyncClient:
     kwargs.setdefault("trust_env", False)
+    kwargs.setdefault("timeout", httpx.Timeout(30.0, connect=10.0))
+    kwargs.setdefault("limits", httpx.Limits(max_connections=100, max_keepalive_connections=20))
     if "proxy" not in kwargs and "proxies" not in kwargs:
         base = kwargs.get("base_url", "")
         host = _extract_host(base)

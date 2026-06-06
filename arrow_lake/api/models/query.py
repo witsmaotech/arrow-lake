@@ -119,6 +119,8 @@ class DaftQueryRequest(BaseModel):
             from arrow_lake.api.models.common import _BLOCKED_SQL_PREFIXES
             if _BLOCKED_SQL_PREFIXES.search(self.sql.query):
                 raise ValueError("SQL query contains forbidden write/DDL keywords")
+            from arrow_lake.validation import validate_sql_safety
+            validate_sql_safety(self.sql.query)
         return self
 
 

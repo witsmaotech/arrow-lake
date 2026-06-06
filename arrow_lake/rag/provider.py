@@ -326,8 +326,10 @@ class OpenAICompatibleProvider(_RetryMixin, BaseLLMProvider):
                     content = delta.get("content")
                     if content:
                         yield content
-                except (json.JSONDecodeError, KeyError, IndexError):
-                    continue
+                except (json.JSONDecodeError, KeyError, IndexError) as exc:
+                    logger.warning("SSE parse error from %s: %s", self._config.provider.value, exc)
+                    yield f"[ERROR] Stream interrupted: {exc}"
+                    break
 
     async def close(self) -> None:
         await self._client.aclose()
@@ -491,8 +493,10 @@ class AnthropicProvider(_RetryMixin, BaseLLMProvider):
                             text = delta.get("text", "")
                             if text:
                                 yield text
-                except (json.JSONDecodeError, KeyError, IndexError):
-                    continue
+                except (json.JSONDecodeError, KeyError, IndexError) as exc:
+                    logger.warning("SSE parse error from anthropic: %s", exc)
+                    yield f"[ERROR] Stream interrupted: {exc}"
+                    break
 
     async def close(self) -> None:
         await self._client.aclose()

@@ -229,6 +229,38 @@ duckdb_pool_warmup_errors_total: Counter = Counter(
     registry=REGISTRY,
 )
 
+# ---------------------------------------------------------------------------
+# Circuit Breaker Metrics (v1.6.0 Phase 2)
+# ---------------------------------------------------------------------------
+
+circuit_breaker_state: Gauge = Gauge(
+    "arrow_lake_circuit_breaker_state",
+    "Current circuit breaker state (0=closed, 1=half_open, 2=open).",
+    registry=REGISTRY,
+    labelnames=["name"],
+)
+
+circuit_breaker_failures: Counter = Counter(
+    "arrow_lake_circuit_breaker_failures_total",
+    "Total circuit breaker failures recorded.",
+    registry=REGISTRY,
+    labelnames=["name"],
+)
+
+circuit_breaker_successes: Counter = Counter(
+    "arrow_lake_circuit_breaker_successes_total",
+    "Total circuit breaker successes recorded.",
+    registry=REGISTRY,
+    labelnames=["name"],
+)
+
+circuit_breaker_state_transitions: Counter = Counter(
+    "arrow_lake_circuit_breaker_state_transitions_total",
+    "Total circuit breaker state transitions.",
+    registry=REGISTRY,
+    labelnames=["name", "from_state", "to_state"],
+)
+
 duckdb_memory_budget_mb: Gauge = Gauge(
     "arrow_lake_duckdb_memory_budget_mb",
     "Configured DuckDB memory budget in MB (max_concurrent_queries * max_query_memory_mb).",

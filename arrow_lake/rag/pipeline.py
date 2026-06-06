@@ -23,10 +23,20 @@ from arrow_lake.rag.query_transform import (
 )
 from arrow_lake.rag.reranker import NoopReranker
 from arrow_lake.rag.session import SessionStore
+from arrow_lake.exceptions import ErrorCode, RAGError
 
 logger = logging.getLogger(__name__)
 
-PROMPT_INJECTION_RE = re.compile(r"(?i)(ignore previous|ignore above|new instructions?|system prompt)")
+PROMPT_INJECTION_RE = re.compile(
+    r"(?i)("
+    r"ignore previous|ignore above|ignore all|ignore everything|"
+    r"new instructions?|system prompt|"
+    r"you are now|act as|pretend you are|"
+    r"disregard|override previous|"
+    r"jailbreak|DAN mode|"
+    r"output your instructions|reveal your prompt|repeat the above"
+    r")"
+)
 
 # Alias: RAGCitation is the public name, ContextCitation is the internal name.
 RAGCitation = ContextCitation
@@ -136,11 +146,12 @@ class RAGPipeline:
         # Get the prompt template
         template_name = template_name or "default_qa"
         template = self._registry.get(template_name)
+        safe_context = _sanitize(context_text)
         if template is None:
             # Fallback to raw context + question
-            prompt = f"Context:\n{context_text}\n\nQuestion: {_sanitize(question)}\n\nAnswer:"
+            prompt = f"Context:\n{safe_context}\n\nQuestion: {_sanitize(question)}\n\nAnswer:"
         else:
-            prompt = template.render(context=context_text, question=_sanitize(question))
+            prompt = template.render(context=safe_context, question=_sanitize(question))
 
         messages.append(LLMMessage(role="user", content=prompt))
         return messages
@@ -230,7 +241,14 @@ class RAGPipeline:
             window.add_chunk(chunk)
         window.finalize()
 
-        context_text = window.assemble() if window.chunk_count > 0 else ""
+        if window.chunk_count == 0:
+            raise RAGError(
+                error_code=ErrorCode.RAG_RETRIEVAL_FAILED,
+                message="Retrieval returned no relevant documents for the given query",
+                context={"question": question, "dataset": dataset_name},
+            )
+
+        context_text = window.assemble()
         return window, context_text
 
     @staticmethod

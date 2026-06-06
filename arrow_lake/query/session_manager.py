@@ -390,6 +390,7 @@ class DuckDBSessionManager:
 
         # No usable idle connection — create new (retry once on failure)
         for attempt in range(2):
+            session: DuckDBSession | None = None
             try:
                 session = DuckDBSession(
                     max_memory_mb=self._olap_config.max_query_memory_mb,
@@ -399,10 +400,17 @@ class DuckDBSessionManager:
                     storage_config=self._storage_config,
                 )
                 conn = session.__enter__()
-                self._conn_sessions[id(conn)] = session
-                return conn, time.monotonic()
+                try:
+                    self._conn_sessions[id(conn)] = session
+                    return conn, time.monotonic()
+                except Exception:
+                    # Half-created: connection open but registration failed — clean up
+                    conn.close()
+                    session.__exit__(None, None, None)
+                    raise
             except duckdb.Error:
-                session.__exit__(None, None, None)
+                if session is not None:
+                    session.__exit__(None, None, None)
                 if attempt == 0:
                     logger.warning("connection_creation_failed_retrying")
                     continue

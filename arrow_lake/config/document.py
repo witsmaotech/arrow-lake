@@ -79,6 +79,13 @@ class DocumentConfig(BaseModel):
             )
         return self
 
+    @field_validator("ocr_timeout_seconds")
+    @classmethod
+    def validate_ocr_timeout(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError(f"ocr_timeout_seconds must be >= 1, got {v}")
+        return v
+
     @field_validator("chunk_size")
     @classmethod
     def validate_chunk_size(cls, v: int) -> int:

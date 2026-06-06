@@ -1,7 +1,7 @@
 """Rate limiting middleware for the Arrow Lake REST API.
 
 Provides in-memory sliding-window rate limiting per (IP, path) pair.
-Disabled by default — enable via RateLimitConfig.enabled = True.
+Enabled by default via RateLimitConfig.enabled = True.
 
 Uses a fixed-window counter with asyncio.Lock for thread safety.
 """
@@ -18,6 +18,21 @@ from starlette.responses import JSONResponse, Response
 from arrow_lake.config import RateLimitConfig
 
 _WINDOW_SECONDS = 60.0
+
+
+def _extract_client_ip(request: Request, trusted_proxies: set[str]) -> str:
+    """Extract real client IP from X-Forwarded-For, skipping trusted proxies from right."""
+    xff = request.headers.get("x-forwarded-for", "")
+    if xff:
+        ips = [ip.strip() for ip in xff.split(",") if ip.strip()]
+        # Walk right-to-left, skipping trusted proxies
+        for ip in reversed(ips):
+            if ip not in trusted_proxies:
+                return ip
+        # All IPs are trusted proxies — take leftmost
+        if ips:
+            return ips[0]
+    return request.client.host if request.client else "unknown"
 
 
 class _Counter:
@@ -82,6 +97,7 @@ async def rate_limit_middleware_fn(
     rpm: int = 60,
     burst: int = 10,
     exempt_paths: list[str] | None = None,
+    trusted_proxies: set[str] | None = None,
 ) -> Response:
     """Pure ASGI rate limiting middleware function.
 
@@ -97,7 +113,7 @@ async def rate_limit_middleware_fn(
     if request.method == "OPTIONS":
         return await call_next(request)
 
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = _extract_client_ip(request, trusted_proxies or set())
     key = f"{client_ip}:{path}"
 
     now = time.time()

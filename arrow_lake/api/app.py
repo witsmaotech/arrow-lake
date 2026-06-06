@@ -337,13 +337,14 @@ def create_app(config: ArrowLakeConfig | None = None) -> FastAPI:
                 frame_options=frame_opts,
             )
 
-    # Rate limiting (optional — disabled by default)
+    # Rate limiting (enabled by default via RateLimitConfig.enabled = True)
     if config.rate_limit.enabled:
         from arrow_lake.api.rate_limit import rate_limit_middleware_fn
 
         rl_rpm = config.rate_limit.default_requests_per_minute
         rl_burst = config.rate_limit.default_burst
         rl_exempt = config.rate_limit.exempt_paths
+        rl_trusted_proxies = config.rate_limit.trusted_proxies
 
         @app.middleware("http")
         async def rate_limit_middleware(request, call_next):
@@ -352,6 +353,7 @@ def create_app(config: ArrowLakeConfig | None = None) -> FastAPI:
                 rpm=rl_rpm,
                 burst=rl_burst,
                 exempt_paths=rl_exempt,
+                trusted_proxies=rl_trusted_proxies,
             )
 
     # API Key middleware

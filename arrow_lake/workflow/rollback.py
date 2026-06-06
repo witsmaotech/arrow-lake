@@ -108,50 +108,21 @@ class StateRollback:
                 message=f"No checkpoint found for {dataset_name}",
             )
 
+        tmp_name = f"_rollback_safety_{dataset_name}"
         try:
+            # Create safety copy of the *original* dataset before touching it.
+            self._storage.copy_dataset(dataset_name, tmp_name)
+
             # Read data at checkpoint version to restore it as current
             checkpoint_data = self._storage.read_at_tag(dataset_name, info.tag)
-            logger.warning(
-                "rollback_non_atomic_operation",
+            logger.info(
+                "rollback_safety_copy_created",
                 dataset=dataset_name,
-                message="Rollback involves delete + recreate; a failure between steps may cause data loss",
+                tmp_name=tmp_name,
             )
 
-            # Write to a temp location first as safety net
-            tmp_name = f"_rollback_tmp_{dataset_name}"
-            try:
-                self._storage.create_dataset(tmp_name, checkpoint_data)
-            except (OSError, StorageError) as tmp_exc:
-                raise WorkflowError(
-                    error_code=ErrorCode.WORKFLOW_STATE_ROLLBACK_FAILED,
-                    message=f"Failed to create safety copy for rollback: {tmp_exc}",
-                ) from tmp_exc
-
-            try:
-                # Delete original dataset and recreate with checkpoint data
-                self._storage.restore_dataset(dataset_name, checkpoint_data)
-            except (OSError, StorageError) as write_exc:
-                # Attempt recovery from temp
-                try:
-                    self._storage.create_dataset(dataset_name, checkpoint_data)
-                    logger.info("rollback_recovery_from_temp_succeeded", dataset=dataset_name)
-                except (OSError, StorageError):
-                    logger.error(
-                        "rollback_recovery_failed",
-                        dataset=dataset_name,
-                        tmp_name=tmp_name,
-                        message=f"Data may only exist at temp dataset '{tmp_name}'",
-                    )
-                raise WorkflowError(
-                    error_code=ErrorCode.WORKFLOW_STATE_ROLLBACK_FAILED,
-                    message=f"Rollback write failed for {dataset_name}: {write_exc}",
-                ) from write_exc
-
-            # Clean up temp dataset
-            try:
-                self._storage.delete_dataset(tmp_name)
-            except (OSError, StorageError):
-                logger.warning("rollback_temp_cleanup_failed", tmp_name=tmp_name)
+            # Delete original dataset and recreate with checkpoint data
+            self._storage.restore_dataset(dataset_name, checkpoint_data)
 
             new_version = self._storage.get_version(dataset_name)
             logger.info(
@@ -161,13 +132,32 @@ class StateRollback:
                 to_version=new_version,
             )
             return new_version
-        except WorkflowError:
+        except (OSError, StorageError, WorkflowError):
+            # Attempt recovery from the safety copy
+            try:
+                self._storage.restore_from(tmp_name, dataset_name)
+                logger.info(
+                    "rollback_recovery_from_safety_succeeded",
+                    dataset=dataset_name,
+                )
+            except Exception:
+                logger.error(
+                    "rollback_recovery_failed",
+                    dataset=dataset_name,
+                    tmp_name=tmp_name,
+                    message=f"Data may only exist at safety dataset '{tmp_name}'",
+                )
             raise
-        except (OSError, StorageError) as exc:
-            raise WorkflowError(
-                error_code=ErrorCode.WORKFLOW_STATE_ROLLBACK_FAILED,
-                message=f"Rollback failed for {dataset_name}: {exc}",
-            ) from exc
+        finally:
+            # Always attempt to clean up the safety copy
+            try:
+                self._storage.delete_dataset(tmp_name)
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "rollback_safety_cleanup_failed",
+                    tmp_name=tmp_name,
+                    message="Temp safety dataset not cleaned up",
+                )
 
     def has_checkpoint(self, dataset_name: str) -> bool:
         """Check if a dataset has a checkpoint.

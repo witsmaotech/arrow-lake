@@ -9,9 +9,12 @@ Reciprocal Rank Fusion (RRF).
 
 from __future__ import annotations
 
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 import duckdb
 import pyarrow as pa
@@ -316,29 +319,47 @@ class HybridSearchBridge:
         vector_bridge = self._vector_bridge
         fts_bridge = self._fts_bridge
 
-        try:
-            with ThreadPoolExecutor(max_workers=2) as pool:
-                v_future = pool.submit(
-                    vector_bridge.search,
-                    dataset_name, query_vector,
-                    top_k=vector_top_k, vector_column=vector_column,
-                    where=where, version=version,
-                )
-                f_future = pool.submit(
-                    fts_bridge.search,
-                    dataset_name, query_text,
-                    top_k=fts_top_k, fts_column=fts_column,
-                    version=version, where=where,
-                )
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            v_future = pool.submit(
+                vector_bridge.search,
+                dataset_name, query_vector,
+                top_k=vector_top_k, vector_column=vector_column,
+                where=where, version=version,
+            )
+            f_future = pool.submit(
+                fts_bridge.search,
+                dataset_name, query_text,
+                top_k=fts_top_k, fts_column=fts_column,
+                version=version, where=where,
+            )
+
+            vector_result = None
+            fts_result = None
+            errors: list[str] = []
+
+            try:
                 vector_result = v_future.result()
+            except (QueryError, ValueError, RuntimeError) as exc:
+                logger.warning("Vector search failed in hybrid, degrading: %s", exc)
+                errors.append(f"vector: {exc}")
+
+            try:
                 fts_result = f_future.result()
-        except QueryError:
-            raise
-        except (ValueError, RuntimeError) as exc:
+            except (QueryError, ValueError, RuntimeError) as exc:
+                logger.warning("FTS search failed in hybrid, degrading: %s", exc)
+                errors.append(f"fts: {exc}")
+
+        if vector_result is None and fts_result is None:
             raise QueryError(
                 error_code=ErrorCode.HYBRID_SEARCH_FAILED,
-                message=f"Hybrid search failed on '{dataset_name}': {exc}",
-            ) from exc
+                message=f"Both vector and FTS search failed on '{dataset_name}': {'; '.join(errors)}",
+            )
+
+        # Degraded mode: single result, skip RRF fusion
+        if vector_result is None or fts_result is None:
+            logger.info("Hybrid search degraded to single mode", errors=errors)
+            single = vector_result if vector_result is not None else fts_result
+            return single.table
 
         return self._rrf_fuse(
             vector_result.table,
@@ -375,27 +396,27 @@ class HybridSearchBridge:
         rrf_scores: dict[str, float] = defaultdict(float)
 
         # Calculate RRF scores from vector results
+        # RRF formula: score = 1/(rank + k), rank starts at 1 (Cormack et al., 2009)
         if vector_table.num_rows > 0 and "id" in vector_table.column_names:
             ids = vector_table.column("id").to_pylist()
-            for rank, doc_id in enumerate(ids):
-                rrf_scores[str(doc_id)] += 1.0 / (rank + 1 + k)
+            for rank, doc_id in enumerate(ids, start=1):
+                rrf_scores[str(doc_id)] += 1.0 / (rank + k)
             del ids
 
         # Calculate RRF scores from FTS results
         if fts_table.num_rows > 0 and "id" in fts_table.column_names:
             ids = fts_table.column("id").to_pylist()
-            for rank, doc_id in enumerate(ids):
-                rrf_scores[str(doc_id)] += 1.0 / (rank + 1 + k)
+            for rank, doc_id in enumerate(ids, start=1):
+                rrf_scores[str(doc_id)] += 1.0 / (rank + k)
             del ids
 
         if not rrf_scores:
             return pa.table({"_rrf_score": []})
 
-        # Sort by descending RRF score and take top_k
+        # Sort by descending RRF score, tiebreak by doc_id for determinism
         sorted_ids = sorted(
             rrf_scores.keys(),
-            key=lambda doc_id: rrf_scores[doc_id],
-            reverse=True,
+            key=lambda doc_id: (-rrf_scores[doc_id], doc_id),
         )[:top_k]
 
         # Build a lookup table of id -> row index from concatenated tables

@@ -18,7 +18,7 @@ import pyarrow as pa
 import structlog
 
 from arrow_lake.config import StorageBackend, StorageConfig
-from arrow_lake.exceptions import ErrorCode, StorageError
+from arrow_lake.exceptions import ConcurrencyError, ErrorCode, StorageError
 from arrow_lake.ingest._storage_advanced import StorageAdvancedMixin
 from arrow_lake.ingest._storage_crud import StorageCRUDMixin
 from arrow_lake.ingest._storage_indexing import StorageIndexingMixin
@@ -94,6 +94,32 @@ class LanceStorageManager(
             self._dataset_locks[name] = threading.RLock()
         return self._dataset_locks[name]
 
+    def _acquire_dataset_lock(self, dataset_name: str, timeout: float = 30.0) -> None:
+        """Acquire per-dataset lock with timeout.
+
+        Raises ConcurrencyError on timeout.
+        Must be paired with a ``lock.release()`` in a ``finally`` block.
+        """
+        lock = self._dataset_lock(dataset_name)
+        acquired = lock.acquire(timeout=timeout)
+        if not acquired:
+            raise ConcurrencyError(
+                error_code=ErrorCode.STORAGE_LOCK_TIMEOUT,
+                message=f"Lock acquisition timed out ({timeout}s) for dataset '{dataset_name}'",
+            )
+
+    def cleanup_partial(self, dataset_name: str) -> None:
+        """Remove partially written dataset data after a failed write."""
+        try:
+            dataset_path = self._lance_dir(dataset_name)
+            if dataset_path and dataset_path.exists():
+                import shutil
+
+                shutil.rmtree(dataset_path, ignore_errors=True)
+                logger.warning("Cleaned up partial dataset: %s", dataset_name)
+        except Exception as exc:
+            logger.error("Failed to cleanup partial dataset %s: %s", dataset_name, exc)
+
     def _get_db(self):
         """Return a cached LanceDB connection (thread-safe)."""
         if self._db is None:
@@ -147,7 +173,9 @@ class LanceStorageManager(
             StorageError: If write fails.
         """
         self._validate_name(name)
-        with self._dataset_lock(name):
+        lock = self._dataset_lock(name)
+        self._acquire_dataset_lock(name)
+        try:
             uri = self._get_dataset_path(name)
             io_config = self._get_io_config()
             try:
@@ -158,6 +186,8 @@ class LanceStorageManager(
                     message=f"Daft write_lance failed for '{name}': {exc}",
                     context={"name": name, "mode": mode},
                 ) from exc
+        finally:
+            lock.release()
 
     def export_dataframe(
         self,

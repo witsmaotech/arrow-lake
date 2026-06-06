@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 
 from arrow_lake.config._enums import AuthMode
 
@@ -68,6 +68,13 @@ class ApiConfig(BaseModel):
     cors_origins: list[str] = []
     arrow_ipc_threshold_bytes: int = 10240  # 10 KB
     request_timeout_seconds: float = 300.0
+
+    @field_validator("request_timeout_seconds")
+    @classmethod
+    def validate_request_timeout(cls, v: float) -> float:
+        if v < 1.0:
+            raise ValueError(f"request_timeout_seconds must be >= 1.0, got {v}")
+        return v
     max_request_size_bytes: int = 100 * 1024 * 1024  # 100 MB
     auto_generate_request_id: bool = True
     docs_enabled: bool = True
@@ -134,6 +141,19 @@ class AuthConfig(BaseModel):
             raise ValueError(f"jwt_refresh_token_days must be >= 1, got {v}")
         return v
 
+    @model_validator(mode="after")
+    def validate_jwt_config(self) -> AuthConfig:
+        """Ensure JWT mode has either secret_key (HS256) or key pair (RS256/ES256)."""
+        if self.auth_mode == AuthMode.JWT:
+            has_secret = bool(self.jwt_secret_key)
+            has_key_pair = bool(self.jwt_public_key) and bool(self.jwt_private_key)
+            if not has_secret and not has_key_pair:
+                raise ValueError(
+                    "JWT auth_mode requires either jwt_secret_key (HS256) "
+                    "or both jwt_public_key and jwt_private_key (RS256/ES256)"
+                )
+        return self
+
 
 class RateLimitConfig(BaseModel):
     """速率限制配置 (M5).
@@ -151,6 +171,7 @@ class RateLimitConfig(BaseModel):
     default_burst: int = 10
     override_per_endpoint: dict[str, int] = {}
     exempt_paths: list[str] = ["/health", "/metrics", "/docs", "/openapi.json", "/redoc"]
+    trusted_proxies: set[str] = set()
 
 
 class OpenTelemetryConfig(BaseModel):

@@ -195,6 +195,19 @@ class ErrorCode(StrEnum):
     TRANSFORM_OP_UNKNOWN = "TRANSFORM_OP_UNKNOWN"
     TRANSFORM_EXECUTION_FAILED = "TRANSFORM_EXECUTION_FAILED"
 
+    # Concurrency / resource errors (v1.6.0 Phase 2)
+    STORAGE_LOCK_TIMEOUT = "STORAGE_LOCK_TIMEOUT"
+    CONCURRENT_MODIFICATION = "CONCURRENT_MODIFICATION"
+    RESOURCE_EXHAUSTED = "RESOURCE_EXHAUSTED"
+
+    # Transient / retryable errors (v1.6.0 Phase 2)
+    TRANSIENT_NETWORK_ERROR = "TRANSIENT_NETWORK_ERROR"
+    TRANSIENT_RATE_LIMITED = "TRANSIENT_RATE_LIMITED"
+
+    # Consistency errors (v1.6.0 Phase 2)
+    CACHE_STALE = "CACHE_STALE"
+    METADATA_CONFLICT = "METADATA_CONFLICT"
+
 
 class ArrowLakeError(Exception):
     """Base exception for all Arrow Lake errors.
@@ -295,3 +308,15 @@ class KGError(ArrowLakeError):
 
 class DocumentError(ArrowLakeError):
     """Errors related to document processing, parsing, and ingestion (v1.2)."""
+
+
+class ConcurrencyError(ArrowLakeError):
+    """Concurrent operation conflicts (lock timeout, optimistic lock mismatch)."""
+
+
+class TransientError(ArrowLakeError):
+    """Retryable transient failures (network blip, rate limit 429, temporary resource shortage)."""
+
+
+class ConsistencyError(ArrowLakeError):
+    """Distributed state inconsistency (cache staleness, metadata conflict)."""

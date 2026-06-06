@@ -37,11 +37,28 @@ async def request_size_limit_middleware_fn(
         except (ValueError, TypeError):
             pass
 
-    # Reject chunked Transfer-Encoding with no Content-Length as potentially oversized.
-    # Route handlers should enforce their own body-size limits for these requests.
+    # Chunked Transfer-Encoding without Content-Length: read body and enforce size limit.
     transfer_encoding = request.headers.get("transfer-encoding", "").lower()
     if "chunked" in transfer_encoding and not content_length:
-        request.state._skip_size_limit = True
+        body_size = 0
+        chunks: list[bytes] = []
+        async for chunk in request.stream():
+            body_size += len(chunk)
+            if body_size > max_size_bytes:
+                return JSONResponse(
+                    status_code=413,
+                    content={
+                        "success": False,
+                        "error": "REQUEST_TOO_LARGE",
+                        "message": (
+                            f"Chunked request body ({body_size} bytes) exceeds "
+                            f"maximum allowed size ({max_size_bytes} bytes)"
+                        ),
+                    },
+                )
+            chunks.append(chunk)
+        # Replace the consumed stream so downstream handlers can still read the body
+        request._body = b"".join(chunks)
 
     return await call_next(request)
 

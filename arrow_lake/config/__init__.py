@@ -42,11 +42,13 @@ from arrow_lake.config.gravitino import (
     GravitinoSyncDirection,
 )
 from arrow_lake.config.infra import (
+    BackpressureConfig,
     ComputeConfig,
     DaftConfig,
     HttpConfig,
     LifecycleConfig,
     ObservabilityConfig,
+    ResourceLimits,
 )
 from arrow_lake.config.main import ArrowLakeConfig, _build_merged_update  # noqa: F401
 from arrow_lake.config.media import (
@@ -96,6 +98,7 @@ __all__ = [  # noqa: RUF022
     "AuditConfig",
     "AuthConfig",
     "AutoscaleConfig",
+    "BackpressureConfig",
     "ComputeConfig",
     "DaftConfig",
     "DecodeConfig",
@@ -119,6 +122,7 @@ __all__ = [  # noqa: RUF022
     "RAGConfig",
     "RateLimitConfig",
     "RedisConfig",
+    "ResourceLimits",
     "StorageConfig",
     "VectorSearchConfig",
     "WorkflowConfig",

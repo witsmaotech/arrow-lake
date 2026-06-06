@@ -67,12 +67,15 @@ class CircuitBreaker:
                 logger.info("CircuitBreaker(%s): HALF_OPEN → CLOSED", self._name)
             self._failure_count = 0
             self._half_open_calls = 0
+            self._emit_metrics()
 
     def record_failure(self) -> None:
         with self._lock:
             self._failure_count += 1
             self._last_failure_time = time.monotonic()
             if self._state == CircuitState.HALF_OPEN:
+                # Recover the half-open call slot so another probe can be attempted
+                self._half_open_calls = max(0, self._half_open_calls - 1)
                 self._state = CircuitState.OPEN
                 logger.warning("CircuitBreaker(%s): HALF_OPEN → OPEN", self._name)
             elif self._failure_count >= self._failure_threshold:
@@ -81,6 +84,7 @@ class CircuitBreaker:
                     "CircuitBreaker(%s): CLOSED → OPEN after %d failures",
                     self._name, self._failure_count,
                 )
+            self._emit_metrics()
 
     def allow_request(self) -> bool:
         with self._lock:
@@ -99,6 +103,27 @@ class CircuitBreaker:
                     return True
                 return False
             return False
+
+    def _emit_metrics(self) -> None:
+        """Emit Prometheus metrics for circuit breaker state and failures."""
+        try:
+            from arrow_lake.core.metrics import get_metrics_enabled
+            if not get_metrics_enabled():
+                return
+            from arrow_lake.core.metrics import (
+                circuit_breaker_state,
+                circuit_breaker_failures,
+            )
+            state_val = {
+                CircuitState.CLOSED: 0,
+                CircuitState.HALF_OPEN: 1,
+                CircuitState.OPEN: 2,
+            }.get(self._state, 0)
+            circuit_breaker_state.labels(name=str(self._name)).set(state_val)
+            if self._failure_count > 0:
+                circuit_breaker_failures.labels(name=str(self._name)).inc()
+        except Exception:
+            pass  # Metrics must never break the circuit breaker
 
     def __call__(self, fn: Any) -> Any:
         def wrapper(*args: Any, **kwargs: Any) -> Any:
