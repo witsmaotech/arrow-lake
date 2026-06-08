@@ -12,13 +12,9 @@
 # ==============================================================================
 FROM --platform=$BUILDPLATFORM python:3.12-slim AS builder
 
-# Clear any daemon-injected proxy — must unset before apt-get
-ENV HTTP_PROXY=""
-ENV HTTPS_PROXY=""
-ENV http_proxy=""
-ENV https_proxy=""
-ENV no_proxy="*"
-ENV NO_PROXY="*"
+# NOTE: Do NOT clear proxy ENV here — Docker daemon injects HTTP_PROXY/HTTPS_PROXY
+# via ~/.docker/config.json for apt-get and pip to reach external hosts.
+# We clear them AFTER network-dependent steps complete.
 
 ARG TARGETARCH
 
@@ -33,7 +29,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv for fast dependency management
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+COPY deploy/uv-local /bin/uv
+COPY deploy/uvx-local /bin/uvx
+RUN chmod +x /bin/uv /bin/uvx
 
 WORKDIR /build
 
@@ -47,11 +45,6 @@ COPY flows/ flows/
 ENV UV_HTTP_TIMEOUT=120
 ENV UV_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
 ENV UV_TRUSTED_HOST=mirrors.aliyun.com
-# Unset daemon-injected proxy so uv connects directly to the mirror
-ENV HTTP_PROXY=""
-ENV HTTPS_PROXY=""
-ENV http_proxy=""
-ENV https_proxy=""
 
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv venv .venv \
@@ -64,12 +57,21 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     && uv pip install --no-cache-dir "apache-gravitino>=1.2.1" \
     && uv pip install --no-cache-dir ".[otel]"
 
+# Clear proxy ENV after all network-dependent steps
+ENV HTTP_PROXY=""
+ENV HTTPS_PROXY=""
+ENV http_proxy=""
+ENV https_proxy=""
+ENV no_proxy="*"
+ENV NO_PROXY="*"
+
 # ==============================================================================
 # Stage 2 — runtime
 # ==============================================================================
 FROM python:3.12-slim AS runtime
 
-# Clear any daemon-injected proxy
+# Runtime containers get proxy via docker-compose environment variables,
+# not via image ENV.  Clear daemon-injected proxy so runtime defaults are clean.
 ENV HTTP_PROXY=""
 ENV HTTPS_PROXY=""
 ENV http_proxy=""
@@ -80,9 +82,9 @@ ENV NO_PROXY="*"
 LABEL maintainer="wits@sunpw.dev"
 LABEL description="Arrow Lake — Unified multimodal data lakehouse (Lance + Daft + Ray + GraphRAG)"
 LABEL org.opencontainers.image.source="https://github.com/wits-sunpw/arrow-lake"
-LABEL org.opencontainers.image.version="1.5.3"
+LABEL org.opencontainers.image.version="1.6.0"
 
-# Runtime system dependencies
+# Runtime system dependencies — use build args for proxy if needed
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     libcurl4 \

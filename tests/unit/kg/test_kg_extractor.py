@@ -23,11 +23,11 @@ def mock_llm() -> object:
     llm.generate.return_value = LLMResponse(
         content=json.dumps({
             "entities": [
-                {"name": "Alice", "type": "person"},
-                {"name": "Acme Corp", "type": "organization"},
+                {"name": "Alice", "type": "person", "confidence": 0.95},
+                {"name": "Acme Corp", "type": "organization", "confidence": 0.95},
             ],
             "relations": [
-                {"source": "Alice", "target": "Acme Corp", "relation": "works_at"},
+                {"source": "Alice", "target": "Acme Corp", "relation": "works_at", "confidence": 0.9},
             ],
         }),
         model="test-model",

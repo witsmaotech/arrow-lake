@@ -17,6 +17,8 @@ def _make_lake():
     obj._components = {}
     obj._get_storage = MagicMock()
     obj._get_component = MagicMock()
+    # v1.6.0: backup methods use _trace_span from the main Lake class
+    obj._trace_span = MagicMock()
     return obj
 
 

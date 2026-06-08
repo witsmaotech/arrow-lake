@@ -88,6 +88,7 @@ class TestHybridDegradation:
         with (
             patch("arrow_lake.query.vector.VectorSearchBridge", return_value=mock_vector),
             patch("arrow_lake.query.fts.FullTextSearchBridge", return_value=mock_fts),
+            patch("arrow_lake.query.hybrid.logger"),
         ):
             result = bridge.search("ds", [0.0] * 384, "q", top_k=10)
 
@@ -116,6 +117,7 @@ class TestHybridDegradation:
         with (
             patch("arrow_lake.query.vector.VectorSearchBridge", return_value=mock_vector),
             patch("arrow_lake.query.fts.FullTextSearchBridge", return_value=mock_fts),
+            patch("arrow_lake.query.hybrid.logger"),
         ):
             result = bridge.search("ds", [0.0] * 384, "q", top_k=10)
 

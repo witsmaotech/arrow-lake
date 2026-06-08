@@ -309,8 +309,9 @@ class TestOpenAICompatibleProviderExtra:
             async for chunk in provider.generate_stream([LLMMessage(role="user", content="Hi")]):
                 collected.append(chunk)
 
-        # Bad JSON is skipped, only the good chunk comes through
-        assert collected == ["ok"]
+        # v1.6.0: bad JSON yields [ERROR] and breaks stream
+        assert len(collected) == 1
+        assert "[ERROR]" in collected[0]
 
     @pytest.mark.asyncio
     async def test_generate_stream_skips_empty_lines(self, openai_config: LLMConfig) -> None:
@@ -368,7 +369,7 @@ class TestOpenAICompatibleProviderExtra:
 
     @pytest.mark.asyncio
     async def test_generate_with_empty_content_field(self, openai_config: LLMConfig) -> None:
-        """DeepSeek V4 may return empty content; should default to empty string."""
+        """DeepSeek V4 may return empty content; should raise RAGError."""
         provider = OpenAICompatibleProvider(openai_config)
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -379,9 +380,8 @@ class TestOpenAICompatibleProviderExtra:
 
         with patch.object(provider, "_client") as mock_client:
             mock_client.post = AsyncMock(return_value=mock_resp)
-            resp = await provider.generate([LLMMessage(role="user", content="Hi")])
-
-        assert resp.content == ""
+            with pytest.raises(RAGError, match="empty content"):
+                await provider.generate([LLMMessage(role="user", content="Hi")])
 
     @pytest.mark.asyncio
     async def test_build_body_includes_all_fields(self, openai_config: LLMConfig) -> None:
@@ -677,7 +677,9 @@ class TestAnthropicProviderExtra:
             async for chunk in provider.generate_stream([LLMMessage(role="user", content="Hi")]):
                 collected.append(chunk)
 
-        assert collected == ["ok"]
+        # v1.6.0: bad JSON yields [ERROR] and breaks stream
+        assert len(collected) == 1
+        assert "[ERROR]" in collected[0]
 
     @pytest.mark.asyncio
     async def test_stream_skips_empty_lines(self, anthropic_config: LLMConfig) -> None:

@@ -87,15 +87,15 @@ class TestApiEmbeddingEncoderEncode:
             encoder.encode(["hello"])
             assert exc_info.value.error_code == ErrorCode.EMBEDDING_API_ERROR
 
-    def test_timeout_raises_timeout_error(self) -> None:
+    def test_timeout_falls_back_to_local(self) -> None:
+        """v1.6.0: timeout triggers fallback to local encoder."""
         import httpx
         from arrow_lake.embed.encoder import ApiEmbeddingEncoder
-        from arrow_lake.exceptions import EmbeddingError
 
         encoder = ApiEmbeddingEncoder(api_base="https://api.example.com/v1", api_key="sk-test")
         encoder._client = MagicMock()
         encoder._client.post.side_effect = httpx.TimeoutException("timed out")
 
-        with pytest.raises(EmbeddingError) as exc_info:
-            encoder.encode(["hello"])
-            assert exc_info.value.error_code == ErrorCode.EMBEDDING_TIMEOUT
+        # v1.6.0: timeout falls back to local encoder instead of raising
+        result = encoder.encode(["hello"])
+        assert result.embeddings.shape[0] == 1

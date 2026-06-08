@@ -237,7 +237,7 @@ class TestRaysErrors:
     @pytest.mark.asyncio()
     async def test_non_200_status(self, mock_client: HugeGraphClient) -> None:
         resp = httpx.Response(
-            status_code=500, json={"error": "server"},
+            status_code=422, json={"error": "unprocessable"},
             request=httpx.Request("GET", "http://localhost:8089"),
         )
         mock_client._client.get.return_value = resp
@@ -306,7 +306,7 @@ class TestCustomizedPathsErrors:
     @pytest.mark.asyncio()
     async def test_non_200_status(self, mock_client: HugeGraphClient) -> None:
         resp = httpx.Response(
-            status_code=500, json={"error": "internal"},
+            status_code=422, json={"error": "unprocessable"},
             request=httpx.Request("POST", "http://localhost:8089"),
         )
         mock_client._client.post.return_value = resp
@@ -360,7 +360,7 @@ class TestKneighbor:
     @pytest.mark.asyncio()
     async def test_non_200_status(self, mock_client: HugeGraphClient) -> None:
         resp = httpx.Response(
-            status_code=500, json={"error": "fail"},
+            status_code=422, json={"error": "unprocessable"},
             request=httpx.Request("POST", "http://localhost:8089"),
         )
         mock_client._client.post.return_value = resp

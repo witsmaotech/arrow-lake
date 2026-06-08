@@ -1735,7 +1735,7 @@ GET /health/ready 检查顺序:
 - [v0.2.0 阶段评审报告](phase-review-v0.2.0.md)
 - [ADR-05: DuckDB OLAP Deviation](adr-05-duckdb-olap-deviation.md)
 - [ADR-06: DuckDB OLAP + DuckLake 评估](adr-06-duckdb-olap-and-ducklake-evaluation.md)
-- [v1.0 架构评审纪要](../_bmad-output/implementation-artifacts/reviews/v1.0-architecture-review-2026-04-20.md)
+- [v1.0 架构评审纪要](../review/v1.0-architecture-review-2026-04-20.md)
 
 ---
 

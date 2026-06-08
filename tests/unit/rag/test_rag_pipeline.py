@@ -269,24 +269,25 @@ class TestRAGPipeline:
         assert resp.answer == '{"entities": ["John Smith", "Acme Corp", "New York"]}'
 
     @pytest.mark.asyncio
-    async def test_empty_retrieval_returns_no_context_warning(self, rag_config: RAGConfig) -> None:
+    async def test_empty_retrieval_raises_rag_error(self, rag_config: RAGConfig) -> None:
         import pyarrow as pa
+
+        from arrow_lake.exceptions import ErrorCode, RAGError
 
         empty_table = pa.table({
             "text_content": pa.array([], type=pa.string()),
             "row_id": pa.array([], type=pa.string()),
         })
-        provider = _mock_provider("I don't have enough context.")
 
         pipeline = RAGPipeline(
-            llm_provider=provider,
+            llm_provider=_mock_provider("I don't have enough context."),
             config=rag_config,
             retriever=lambda q, ds, top_k: empty_table,
         )
 
-        result = await pipeline.query(question="Q", dataset_name="docs")
-        assert result.retrieval_count == 0
-        assert result.answer is not None
+        with pytest.raises(RAGError, match="no relevant documents") as exc_info:
+            await pipeline.query(question="Q", dataset_name="docs")
+        assert exc_info.value.error_code == ErrorCode.RAG_RETRIEVAL_FAILED
 
     @pytest.mark.asyncio
     async def test_citations_in_response(self, rag_config: RAGConfig) -> None:

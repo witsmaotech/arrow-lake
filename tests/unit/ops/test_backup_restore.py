@@ -261,14 +261,18 @@ class TestRestoreLanceDatasetRemoteExtended:
         return BackupRestorer(blob_store=blob_store, lance_base_uri=base_uri, storage_config=cfg)
 
     def test_remote_overwrite_deletes_prefix(self, blob_store: MagicMock) -> None:
-        """Covers line 149: overwrite=True calls delete_prefix before restore."""
+        """Covers: overwrite=True deletes original and temp prefix during restore."""
         blob_store.list_blobs.return_value = _FakeListResult(keys=[], count=0)
         manifest = _FakeManifest()
 
         r = self._make_remote_restorer(blob_store)
         r.restore_lance_dataset("ds1", manifest, overwrite=True)
 
-        blob_store.delete_prefix.assert_called_once_with("s3://bucket/ds1.lance/")
+        # delete_prefix called for: temp cleanup, original delete, temp cleanup in finally
+        assert blob_store.delete_prefix.call_count >= 2
+        calls = blob_store.delete_prefix.call_args_list
+        dest_calls = [c for c in calls if "ds1.lance/" in str(c) and ".restore" not in str(c)]
+        assert len(dest_calls) >= 1
 
     def test_remote_already_exists_no_overwrite(self, blob_store: MagicMock) -> None:
         """Covers lines 141-147: remote restore raises when dataset exists and overwrite=False."""
@@ -282,7 +286,7 @@ class TestRestoreLanceDatasetRemoteExtended:
             r.restore_lance_dataset("ds1", manifest, overwrite=False)
 
     def test_remote_copy_path_no_hashes(self, blob_store: MagicMock) -> None:
-        """Covers line 176: when no hashes, uses copy instead of download+upload."""
+        """Covers: when no hashes, copies backup to temp, then temp to final."""
         manifest = _FakeManifest()
         manifest.datasets = [{"name": "cds", "file_hashes": {}}]
 
@@ -294,10 +298,9 @@ class TestRestoreLanceDatasetRemoteExtended:
         r = self._make_remote_restorer(blob_store)
         r.restore_lance_dataset("cds", manifest, overwrite=True)
 
-        blob_store.copy.assert_called_once_with(
-            "backups/test-backup/datasets/cds/data.lance",
-            "s3://bucket/cds.lance/data.lance",
-        )
+        # Phase 1: copy from backup to temp prefix
+        # Phase 3: copy from temp prefix to final destination
+        assert blob_store.copy.call_count == 2
         blob_store.download.assert_not_called()
         blob_store.upload.assert_not_called()
 
@@ -321,7 +324,7 @@ class TestRestoreLanceDatasetRemoteExtended:
             r.restore_lance_dataset("hds", manifest, overwrite=True)
 
     def test_remote_checksum_pass(self, blob_store: MagicMock) -> None:
-        """Covers lines 166-174: remote checksum matches, uses download+upload."""
+        """Covers: remote checksum matches, uploads to temp then copies to final."""
         import hashlib
 
         correct_hash = hashlib.sha256(b"good data").hexdigest()
@@ -337,9 +340,11 @@ class TestRestoreLanceDatasetRemoteExtended:
         r = self._make_remote_restorer(blob_store)
         r.restore_lance_dataset("gds", manifest, overwrite=True)
 
+        # Phase 1: download + verify + upload to temp prefix
         blob_store.download.assert_called_once()
         blob_store.upload.assert_called_once()
-        blob_store.copy.assert_not_called()
+        # Phase 3: copy from temp to final (1 copy call for the file)
+        assert blob_store.copy.call_count >= 1
 
     def test_remote_runtime_error_wrapped(self, blob_store: MagicMock) -> None:
         """Covers lines 185-189: RuntimeError during remote restore wrapped as StorageError."""
@@ -378,34 +383,44 @@ class TestRestoreLanceDatasetRemoteExtended:
             r.restore_lance_dataset("sds", manifest, overwrite=True)
 
     def test_remote_base_uri_strip_dot_slash(self, blob_store: MagicMock) -> None:
-        """Covers lines 137-139: base_uri starting with './' gets stripped."""
+        """Covers: base_uri starting with './' gets stripped in dest prefix."""
         blob_store.list_blobs.return_value = _FakeListResult(keys=[], count=0)
         manifest = _FakeManifest()
 
         r = self._make_remote_restorer(blob_store, base_uri="./bucket/data")
         r.restore_lance_dataset("ds1", manifest, overwrite=True)
 
-        blob_store.delete_prefix.assert_called_once_with("bucket/data/ds1.lance/")
+        # Verify dest prefix uses stripped base (without ./)
+        delete_calls = [str(c) for c in blob_store.delete_prefix.call_args_list]
+        assert any("bucket/data/ds1.lance/" in c for c in delete_calls)
 
     def test_remote_pagination_no_keys_breaks(self, blob_store: MagicMock) -> None:
-        """Covers lines 180-182: remote pagination breaks when truncated but keys empty."""
+        """Covers: remote pagination breaks when truncated but keys empty."""
         manifest = _FakeManifest()
         manifest.datasets = [{"name": "pds", "file_hashes": {}}]
 
         blob_store.list_blobs.side_effect = [
+            # Phase 1: list backup prefix (2 pages)
             _FakeListResult(
                 keys=["backups/test-backup/datasets/pds/file1"],
                 truncated=True,
                 next_token="t1",
             ),
             _FakeListResult(keys=[], truncated=True, next_token="t2"),
+            # Phase 3: list temp prefix (1 page with the copied file)
+            _FakeListResult(
+                keys=[f"s3://bucket/.pds.lance.restore-{__import__('os').getpid()}/file1"],
+                truncated=False,
+            ),
         ]
 
         r = self._make_remote_restorer(blob_store)
         r.restore_lance_dataset("pds", manifest, overwrite=True)
 
-        assert blob_store.list_blobs.call_count == 2
-        blob_store.copy.assert_called_once()
+        # Phase 1: 2 pages, Phase 3: 1 page = 3 total
+        assert blob_store.list_blobs.call_count == 3
+        # Phase 1: 1 copy (backup -> temp), Phase 3: 1 copy (temp -> final)
+        assert blob_store.copy.call_count == 2
 
 
 # ── restore_blob_prefix — additional coverage ──

@@ -25,6 +25,11 @@ class _TestLake(_LakeRAGMixin):
         self._config = config or _make_config()
         self._components: dict[str, object] = {}
 
+    @property
+    def config(self) -> ArrowLakeConfig:
+        """v1.6.0: _lake_rag uses self.config instead of self._config."""
+        return self._config
+
     def _get_component(self, key: str, factory) -> object:
         if key not in self._components:
             self._components[key] = factory()

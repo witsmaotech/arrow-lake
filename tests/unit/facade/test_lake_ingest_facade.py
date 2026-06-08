@@ -27,6 +27,8 @@ class _TestLake(_LakeIngestMixin):
         self._config = config or _make_config()
         self._components: dict[str, object] = {}
         self._storage: MagicMock = MagicMock()
+        # v1.6.0: _trace_span is provided by the main Lake class via telemetry
+        self._trace_span = MagicMock()
 
     def _get_component(self, key: str, factory) -> object:
         if key not in self._components:

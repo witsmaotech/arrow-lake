@@ -205,8 +205,8 @@ class TestVerify:
         trail._initialized = True
         assert trail.verify("abc") is False
 
-    def test_empty_hash_returns_true(self) -> None:
-        """Empty hash means HMAC disabled (dev mode)."""
+    def test_empty_hash_returns_false(self) -> None:
+        """Empty stored HMAC hash cannot be verified — returns False (v1.6.0 strict)."""
         row = _make_audit_row(hmac_hash="")
         table = _make_arrow_table([row])
         storage = _make_mock_storage()
@@ -214,7 +214,7 @@ class TestVerify:
 
         trail = AuditTrail(storage, hmac_secret_key="test-secret")
         trail._initialized = True
-        assert trail.verify("abc") is True
+        assert trail.verify("abc") is False
 
     def test_not_found_returns_false(self) -> None:
         row = _make_audit_row(audit_id="other_id")

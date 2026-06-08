@@ -151,7 +151,7 @@ class TestAuditTrailVerify:
         )
         assert trail.verify("any-id") is False
 
-    def test_verify_no_hmac_key_returns_true(self) -> None:
+    def test_verify_no_hmac_key_returns_false(self) -> None:
         storage = MagicMock()
         storage.dataset_exists.return_value = True
         storage.append_dataset.return_value = None
@@ -159,8 +159,8 @@ class TestAuditTrailVerify:
         trail.record(event_type="create")
         stored_table = storage.append_dataset.call_args[0][1]
         storage.read_dataset.return_value = stored_table
-        # No HMAC key → always returns True (dev mode)
-        assert trail.verify(stored_table.column("audit_id")[0].as_py()) is True
+        # No HMAC key → verification is disabled, returns False
+        assert trail.verify(stored_table.column("audit_id")[0].as_py()) is False
 
 
 class TestAuditTrailQuery:

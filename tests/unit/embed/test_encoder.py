@@ -466,8 +466,8 @@ class TestApiEmbeddingEncoder:
         assert "500" in exc_info.value.message
 
     @patch("arrow_lake.embed.encoder.httpx.Client")
-    def test_encode_timeout_raises(self, mock_client_cls: MagicMock) -> None:
-        """超时应抛 EMBEDDING_TIMEOUT 错误。"""
+    def test_encode_timeout_falls_back_to_local(self, mock_client_cls: MagicMock) -> None:
+        """v1.6.0: timeout triggers fallback to local encoder, no longer raises EmbeddingError."""
         import httpx
 
         mock_client = MagicMock()
@@ -477,10 +477,9 @@ class TestApiEmbeddingEncoder:
         enc = ApiEmbeddingEncoder(
             api_base="https://api.example.com", max_retries=1
         )
-        with pytest.raises(EmbeddingError) as exc_info:
-            enc.encode(["test"])
-
-        assert exc_info.value.error_code == ErrorCode.EMBEDDING_TIMEOUT
+        # v1.6.0: timeout falls back to local encoder instead of raising
+        result = enc.encode(["test"])
+        assert result.embeddings.shape[0] == 1
 
     @patch("arrow_lake.embed.encoder.httpx.Client")
     def test_encode_fallback_on_connect_error(

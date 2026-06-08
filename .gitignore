@@ -105,15 +105,12 @@ ray_cluster*
 .roo/
 
 .claude/
-.bmad-core/
 .roomodes
 web-bundles/
 datas/
 dev_build_notes.md
 
 dev_notes/
-_bmad
-_bmad-output
 graphify-out/
 notebooks
 .metaflow
@@ -121,3 +118,7 @@ notebooks
 
 
 deploy/certs/
+
+# Build artifacts
+deploy/uv-local
+deploy/uvx-local

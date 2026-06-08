@@ -86,8 +86,8 @@ class TestVertexOps:
     async def test_add_vertices_bad_status(self) -> None:
         c = _client()
         mock_resp = MagicMock()
-        mock_resp.status_code = 500
-        mock_resp.text = "server error"
+        mock_resp.status_code = 400
+        mock_resp.text = "bad request"
         c._client.post.return_value = mock_resp
         with pytest.raises(KGError, match="Batch vertex insert"):
             await c.add_vertices([{"label": "person"}])
@@ -146,8 +146,8 @@ class TestEdgeOps:
     async def test_add_edges_bad_status(self) -> None:
         c = _client()
         mock_resp = MagicMock()
-        mock_resp.status_code = 500
-        mock_resp.text = "err"
+        mock_resp.status_code = 400
+        mock_resp.text = "bad request"
         c._client.post.return_value = mock_resp
         with pytest.raises(KGError, match="Batch edge"):
             await c.add_edges([{"label": "knows"}])
@@ -236,6 +236,7 @@ class TestListGraphs:
     async def test_success(self) -> None:
         c = _client()
         mock_resp = MagicMock()
+        mock_resp.status_code = 200
         mock_resp.json.return_value = {"graphs": ["g1", "g2"]}
         c._client.get.return_value = mock_resp
         result = await c.list_graphs()
@@ -314,8 +315,8 @@ class TestEnsureSchema:
         c = _client()
         with patch.object(c, "ensure_graph", return_value=True):
             mock_resp = MagicMock()
-            mock_resp.status_code = 500
-            mock_resp.text = "err"
+            mock_resp.status_code = 403
+            mock_resp.text = "forbidden"
             c._client.post.return_value = mock_resp
             with pytest.raises(KGError, match="PropertyKey"):
                 await c.ensure_schema({
@@ -327,8 +328,8 @@ class TestEnsureSchema:
         c = _client()
         with patch.object(c, "ensure_graph", return_value=True):
             mock_resp = MagicMock()
-            mock_resp.status_code = 500
-            mock_resp.text = "err"
+            mock_resp.status_code = 403
+            mock_resp.text = "forbidden"
             c._client.post.return_value = mock_resp
             with pytest.raises(KGError, match="VertexLabel"):
                 await c.ensure_schema({
@@ -340,8 +341,8 @@ class TestEnsureSchema:
         c = _client()
         with patch.object(c, "ensure_graph", return_value=True):
             mock_resp = MagicMock()
-            mock_resp.status_code = 500
-            mock_resp.text = "err"
+            mock_resp.status_code = 403
+            mock_resp.text = "forbidden"
             c._client.post.return_value = mock_resp
             with pytest.raises(KGError, match="EdgeLabel"):
                 await c.ensure_schema({
@@ -353,8 +354,8 @@ class TestEnsureSchema:
         c = _client()
         with patch.object(c, "ensure_graph", return_value=True):
             mock_resp = MagicMock()
-            mock_resp.status_code = 500
-            mock_resp.text = "err"
+            mock_resp.status_code = 403
+            mock_resp.text = "forbidden"
             c._client.post.return_value = mock_resp
             with pytest.raises(KGError, match="IndexLabel"):
                 await c.ensure_schema({
@@ -393,8 +394,8 @@ class TestGetSchema:
     async def test_bad_status(self) -> None:
         c = _client()
         mock_resp = MagicMock()
-        mock_resp.status_code = 500
-        mock_resp.text = "err"
+        mock_resp.status_code = 400
+        mock_resp.text = "bad request"
         c._client.get.return_value = mock_resp
         with pytest.raises(KGError, match="Failed to get schema"):
             await c.get_schema()
@@ -420,8 +421,10 @@ class TestGetStats:
     async def test_success(self) -> None:
         c = _client()
         v_resp = MagicMock()
+        v_resp.status_code = 200
         v_resp.json.return_value = {"vertices": [{"id": 1}]}
         e_resp = MagicMock()
+        e_resp.status_code = 200
         e_resp.json.return_value = {"edges": [{"id": 1}, {"id": 2}]}
         c._client.get.side_effect = [v_resp, e_resp]
         result = await c.get_stats()

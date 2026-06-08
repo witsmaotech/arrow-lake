@@ -5,6 +5,92 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] - 2026-06-06
+
+### Summary
+
+v1.6.0 聚焦于 **修好已知问题，让现有能力更稳更健壮**。不追新特性，夯实基础。
+
+### Phase 1 — 安全加固 + Bug 修复 + E2E 搜索/RAG
+
+#### Fixed — Bug 修复
+- **C1**: 修复 API server(8000) 与 metrics server(8000) 端口冲突，metrics 默认改为 8001
+- **C2**: JWT auth_mode 跨字段验证缺失，新增 `@model_validator` 确保密钥完整性
+- **C3**: 统一所有 `*_timeout_seconds` 字段 `ge=1` 约束
+- **Q1**: RRF 公式重构为论文标准写法 `enumerate(start=1)`，数学不变但可读性提升
+
+#### Fixed — 安全加固
+- **Q4**: SQL 注入防护补强 — 新增 COMMENT/RENAME/TRUNCATE/MERGE/GRANT 等 DDL 关键字拦截
+- **R1**: Prompt 注入防护扩展 — context text 也执行 sanitize，扩大 injection regex
+- **A2**: Rate limit X-Forwarded-For bypass 修复 — 从右往左跳过可信代理 IP
+- **A3**: Daft SQL 管道调用前也执行 `validate_sql_safety()`
+- **A6**: Chunked encoding 请求也执行请求大小限制
+
+#### Fixed — E2E 搜索/RAG
+- **ER1**: 空检索结果不再送 LLM（防幻觉），抛 `RAG_RETRIEVAL_FAILED`
+- **ER2**: Hybrid search 单路失败时降级到单路搜索（不再全盘失败）
+- **ER3**: SSE 流异常不再静默吞掉，记录并 break（防客户端挂起）
+
+### Phase 2 — 异常体系 + 资源控制 + E2E 可靠性
+
+#### Added — 异常层次
+- 新增 `ConcurrencyError` / `TransientError` / `ConsistencyError` 异常类
+- `ErrorCode` 枚举新增 CACHE/CONCURRENT/METADATA/RESOURCE/TRANSIENT 等分类
+- `errors.py` 补全 DOCUMENT_*/TRANSFORM_*/QUALITY_* HTTP 状态码映射
+
+#### Added — 资源控制
+- 新增 `ResourceLimits` 配置（查询超时、并发限制、结果行数、扫描字节）
+- 新增 `BackpressureConfig` 配置（摄取队列、拒绝阈值、重试次数）
+- 超时级联验证 API > OLAP > LLM 递减
+
+#### Fixed — 基础设施健壮性
+- **CO1**: 熔断器 half-open 竞态修复，失败后恢复计数器
+- **CO2**: 熔断器新增 4 个 Prometheus 指标（state/failures/opens/recoveries）
+- **CO3**: Structlog 添加 `format_exc_info` + `ExceptionRenderer`，JSON 日志异常栈可读
+- **CO4**: HTTP client 工厂添加 timeout/limits/retries 默认值
+- **Q2**: DuckDB session pool 泄漏修复 — 超时后正确释放 semaphore
+- **Q3**: Query cache key 含 version，避免跨版本缓存冲突
+
+#### Fixed — E2E 摄取可靠性
+- **R2**: 嵌入 fallback 扩展 — Timeout/429/502/503/504 也触发 fallback 到本地 encoder
+- **R3**: 失败图像用 null marker 替代零向量（cosine similarity 不再误判为 1.0）
+- **EI1**: 嵌入批处理分片容错 — 大批次按 shard_size 分片，中间失败用 null 占位
+- **EI6**: Lance dataset lock 添加 acquire timeout（30s），防死锁
+
+#### Fixed — 数据安全
+- **W1**: Backup restore 先恢复后删除（原数据安全网）
+- **W2**: Workflow rollback 使用临时数据集（非原子操作安全网）
+- **W3**: Audit HMAC 未配置时 verify() 返回 False（不再静默绕过）
+
+### Phase 3 — 代码质量 + Protocol + E2E 基础设施
+
+#### Changed — 代码质量
+- **3.1**: `self._storage` 类型从 `Any` 改为 `StorageProtocol`，query bridges 依赖注入
+- **3.2**: `_trace_span` 去重到共享基类，`_lake_rag.py` 改用 `self.config` 公开属性
+- **3.3**: API 中间件管道显式声明 `MIDDLEWARE_PIPELINE`，Correlation ID 移至首位
+
+#### Fixed — E2E 基础设施
+- **EF1**: 熔断器集成到 Gravitino/HugeGraph/Redis（`circuit_protected()` 上下文管理器）
+- **EF3**: Error mapping 补齐 — 100% ErrorCode 覆盖 HTTP 状态码
+- **EF5**: 后台线程关闭有 `is_alive()` 验证 + Prometheus 指标
+- **EF7**: HTTP async client 资源泄漏修复 — async shutdown 中正确调 `aclose()`
+
+#### Fixed — 基础设施批量修复
+- Gravitino client init flag 成功后才设 `_initialized=True`
+- Gravitino sync 新增冲突检测（注册前检查是否存在）
+- HugeGraph retry 扩展 — 新增 5xx 和 connection reset
+- Entity extraction confidence 默认从 1.0 改为 0.5
+- Kafka 连接器新增 retry decorator
+- Quality gate 无 schema 时至少执行基本验证
+- LLM 空响应新增 retry 或明确错误
+- DuckDB 连接归还前健康检查
+- Session pool 半创建连接清理
+
+### Testing
+
+- 全量测试 **4818 passed, 0 failed**
+- 测试覆盖率 ≥ 80%
+
 ## [1.5.2] - 2026-06-01
 
 ### Fixed — Security Hardening & Code Quality

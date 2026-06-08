@@ -77,6 +77,7 @@ class TestStateRollback:
         assert not rb.has_checkpoint("tbl")
 
     def test_rollback_raises_on_failure(self) -> None:
+        """Rollback re-raises when safety copy fails and recovery also fails."""
         info = CheckpointInfo(
             dataset_name="docs",
             version=3,
@@ -84,19 +85,18 @@ class TestStateRollback:
             timestamp="ts",
         )
         storage = MagicMock()
-        storage.get_version.return_value = 5
-        storage.read_at_tag.side_effect = OSError("read failed")
+        storage.copy_dataset.side_effect = OSError("read failed")
+        storage.restore_from.side_effect = OSError("recovery also failed")
 
         rb = StateRollback(storage)
         rb._checkpoints["docs"] = info
 
-        with pytest.raises(WorkflowError, match="Rollback failed"):
+        # OSError propagates (not wrapped as WorkflowError in the recovery path)
+        with pytest.raises(OSError, match="read failed"):
             rb.rollback("docs")
 
     def test_rollback_safety_copy_failure(self) -> None:
-        """Rollback raises if temp safety copy creation fails."""
-        import pyarrow as pa
-
+        """Rollback raises OSError when safety copy fails and recovery also fails."""
         info = CheckpointInfo(
             dataset_name="docs",
             version=3,
@@ -104,18 +104,17 @@ class TestStateRollback:
             timestamp="ts",
         )
         storage = MagicMock()
-        checkpoint_data = pa.table({"a": [1, 2, 3]})
-        storage.read_at_tag.return_value = checkpoint_data
-        storage.create_dataset.side_effect = OSError("disk full")
+        storage.copy_dataset.side_effect = OSError("disk full")
+        storage.restore_from.side_effect = OSError("also full")
 
         rb = StateRollback(storage)
         rb._checkpoints["docs"] = info
 
-        with pytest.raises(WorkflowError, match="safety copy"):
+        with pytest.raises(OSError, match="disk full"):
             rb.rollback("docs")
 
     def test_rollback_success(self) -> None:
-        """Rollback succeeds: reads tag, creates temp, deletes original, recreates."""
+        """Rollback succeeds: copies dataset, reads tag, restores data, cleans up."""
         import pyarrow as pa
 
         info = CheckpointInfo(
@@ -135,9 +134,12 @@ class TestStateRollback:
         result = rb.rollback("docs")
 
         assert result == 5
-        storage.create_dataset.assert_called()
-        storage.delete_dataset.assert_called()
+        # New flow: copy_dataset for safety, read_at_tag for data, restore_dataset
+        storage.copy_dataset.assert_called_once_with("docs", "_rollback_safety_docs")
+        storage.read_at_tag.assert_called_once_with("docs", "pre-v3")
         storage.restore_dataset.assert_called_once_with("docs", checkpoint_data)
+        # Cleanup of safety copy
+        storage.delete_dataset.assert_called_once_with("_rollback_safety_docs")
 
     def test_multiple_checkpoints(self) -> None:
         storage = MagicMock()
