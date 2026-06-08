@@ -5,11 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.6.0] - 2026-06-06
+## [1.6.0] - 2026-06-08
 
 ### Summary
 
 v1.6.0 聚焦于 **修好已知问题，让现有能力更稳更健壮**。不追新特性，夯实基础。
+
+### Deployment
+
+- **Dockerfile**: 替换 ghcr.io/astral-sh/uv 远程拉取为本地二进制 COPY，解决网络受限环境构建问题
+- **Dockerfile**: builder 阶段代理清除移至网络操作之后，确保 apt-get/uv 可通过代理访问外网
+- **docker-compose.prod.yml**: 版本号对齐 `arrow-lake:1.6.0`，metrics 端口改为 `9091`（避免与 API 8000 冲突）
+- **Helm Chart**: `appVersion` 和 `version` 对齐至 `1.6.0`
+- **.env**: 新增 `REDIS_PASSWORD`，`METRICS_PORT` 修正为 `8001`，LLM 配置同步
+- **构建产物**: `deploy/uv-local` / `deploy/uvx-local` 加入 `.gitignore`
+- **清理**: 移除 `_bmad-output/` 过期规划文档（已被 `docs/` 下文档替代）
 
 ### Phase 1 — 安全加固 + Bug 修复 + E2E 搜索/RAG
 
