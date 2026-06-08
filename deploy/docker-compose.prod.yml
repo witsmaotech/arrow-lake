@@ -29,6 +29,10 @@ x-arrow-lake: &arrow-lake
     context: ..
     dockerfile: deploy/Dockerfile
     network: host
+    args:
+      HTTP_PROXY: "${BUILD_HTTP_PROXY:-}"
+      HTTPS_PROXY: "${BUILD_HTTPS_PROXY:-}"
+      NO_PROXY: "${BUILD_NO_PROXY:-127.0.0.1,localhost}"
   image: arrow-lake:1.6.0
   restart: unless-stopped
   env_file:
@@ -63,7 +67,6 @@ x-storage-env: &storage-env
   ARROW_LAKE__STORAGE__S3_BUCKET: "${MINIO_BUCKET:-arrow-lake}"
   ARROW_LAKE__STORAGE__BACKEND: "minio"
   ARROW_LAKE__OBSERVABILITY__METRICS_ENABLED: "true"
-  ARROW_LAKE__EMBEDDING__MODEL_SOURCE: "modelscope"
   AWS_ACCESS_KEY_ID: "${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set}"
   AWS_SECRET_ACCESS_KEY: "${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set}"
   AWS_ENDPOINT_URL: "http://minio:9000"
