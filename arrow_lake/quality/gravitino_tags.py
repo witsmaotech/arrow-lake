@@ -1,7 +1,8 @@
 """Gravitino tag service for data governance."""
 
-from gravitino import NameIdentifier
 from __future__ import annotations
+
+from gravitino import NameIdentifier
 
 import threading
 from typing import Any

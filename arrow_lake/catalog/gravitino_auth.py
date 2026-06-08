@@ -36,13 +36,23 @@ class GravitinoAuthProvider:
 
 
 class SimpleAuthProvider(GravitinoAuthProvider):
-    """Simple auth: Base64-encoded user identifier."""
+    """Simple auth: user identity passed to Gravitino SDK only.
+
+    The Gravitino REST server with simple authenticator and
+    authorization_enable=false does NOT accept Authorization: Simple
+    header (401). The user identity is used by the Python SDK
+    internally; for direct REST proxy calls we send no auth header.
+    """
 
     def __init__(self, user: str = "arrow_lake") -> None:
-        self._header = f"Simple {base64.b64encode(user.encode()).decode()}"
+        self._user = user
+
+    @property
+    def user(self) -> str:
+        return self._user
 
     def auth_headers(self) -> dict[str, str]:
-        return {"Authorization": self._header}
+        return {}
 
 
 class OAuth2AuthProvider(GravitinoAuthProvider):
