@@ -1,5 +1,6 @@
 """Gravitino tag service for data governance."""
 
+from gravitino import NameIdentifier
 from __future__ import annotations
 
 import threading
@@ -76,7 +77,7 @@ class GravitinoTagService:
         with self._lock:
             try:
                 catalog = self._client.load_catalog(self._config.lance_catalog_name)
-                table_obj = catalog.as_table_catalog().load_table("default", table)
+                table_obj = catalog.as_table_catalog().load_table(NameIdentifier.of("default", table))
                 for tag_name in tags:
                     table_obj.supports_tags().associate_tags([tag_name])
                 logger.info("gravitino_table_tagged", table=table, tags=tags)
@@ -91,7 +92,7 @@ class GravitinoTagService:
         with self._lock:
             try:
                 catalog = self._client.load_catalog(self._config.lance_catalog_name)
-                table_obj = catalog.as_table_catalog().load_table("default", table)
+                table_obj = catalog.as_table_catalog().load_table(NameIdentifier.of("default", table))
                 for tag_name in tags:
                     table_obj.supports_tags().associate_column_tags(column, [tag_name])
                 logger.info(
@@ -113,7 +114,7 @@ class GravitinoTagService:
         with self._lock:
             try:
                 catalog = self._client.load_catalog(self._config.lance_catalog_name)
-                table_obj = catalog.as_table_catalog().load_table("default", table)
+                table_obj = catalog.as_table_catalog().load_table(NameIdentifier.of("default", table))
                 tag_objs = table_obj.supports_tags().list_tags()
                 return [t.name() for t in (tag_objs or [])]
             except Exception as exc:
@@ -128,7 +129,7 @@ class GravitinoTagService:
         with self._lock:
             try:
                 catalog = self._client.load_catalog(self._config.lance_catalog_name)
-                table_obj = catalog.as_table_catalog().load_table("default", table)
+                table_obj = catalog.as_table_catalog().load_table(NameIdentifier.of("default", table))
                 columns = table_obj.columns()
                 result: dict[str, list[str]] = {}
                 for col in (columns or []):

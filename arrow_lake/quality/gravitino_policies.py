@@ -1,5 +1,6 @@
 """Gravitino policy service for data governance."""
 
+from gravitino import NameIdentifier
 from __future__ import annotations
 
 import threading
@@ -103,7 +104,7 @@ class GravitinoPolicyService:
         with self._lock:
             try:
                 catalog = self._client.load_catalog("arrow_lake_lance")
-                table_obj = catalog.as_table_catalog().load_table("default", table)
+                table_obj = catalog.as_table_catalog().load_table(NameIdentifier.of("default", table))
                 table_obj.supports_policies().associate_policies([policy])
                 logger.info("gravitino_policy_applied", policy=policy, table=table)
             except Exception as exc:

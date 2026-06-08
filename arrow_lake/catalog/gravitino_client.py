@@ -118,8 +118,14 @@ class ArrowLakeGravitinoClient:
         try:
             table = self._client.load_catalog(
                 catalog or self._catalog_name
+            from gravitino import NameIdentifier
+
+            from gravitino import NameIdentifier
+
+            table = self._client.load_catalog(
+                catalog or self._catalog_name
             ).as_table_catalog().load_table(
-                schema or self._schema_name, name
+                NameIdentifier.of(schema or self._schema_name, name)
             )
             cols = tuple(
                 {
