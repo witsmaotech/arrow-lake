@@ -381,7 +381,7 @@ class ArrowLakeClient:
         return self._request("GET", "/api/v1/kg/schema")
 
     def kg_query(self, gremlin: str, **kwargs: Any) -> dict:
-        body: dict[str, Any] = {"query": gremlin, **kwargs}
+        body: dict[str, Any] = {"gremlin": gremlin, **kwargs}
         return self._request("POST", "/api/v1/kg/query", body)
 
     def kg_graphrag(self, question: str, **kwargs: Any) -> dict:
