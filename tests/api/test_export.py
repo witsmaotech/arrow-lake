@@ -261,7 +261,8 @@ class TestDownloadExportCoverage:
 
         TaskManager._tasks["task_x"] = ExportTask(
             task_id="task_x",
-            dataset_name="other_dataset",
+            operation="export",
+                        dataset_name="other_dataset",
             output_path="file.parquet",
             fmt="parquet",
             status=TaskStatus.COMPLETED,
@@ -286,6 +287,7 @@ class TestDownloadExportCoverage:
 
         TaskManager._tasks["task_pending"] = ExportTask(
             task_id="task_pending",
+            operation="export",
             dataset_name="docs",
             output_path="file.parquet",
             fmt="parquet",
@@ -311,6 +313,7 @@ class TestDownloadExportCoverage:
 
         TaskManager._tasks["task_abs"] = ExportTask(
             task_id="task_abs",
+            operation="export",
             dataset_name="docs",
             output_path="/etc/passwd",
             fmt="parquet",
@@ -337,6 +340,7 @@ class TestDownloadExportCoverage:
 
         TaskManager._tasks["task_trav"] = ExportTask(
             task_id="task_trav",
+            operation="export",
             dataset_name="docs",
             output_path="../../etc/passwd",
             fmt="parquet",
@@ -363,6 +367,7 @@ class TestDownloadExportCoverage:
 
         TaskManager._tasks["task_nofile"] = ExportTask(
             task_id="task_nofile",
+            operation="export",
             dataset_name="docs",
             output_path="missing/file.parquet",
             fmt="parquet",
@@ -394,6 +399,7 @@ class TestDownloadExportCoverage:
 
         TaskManager._tasks["task_ok_parquet"] = ExportTask(
             task_id="task_ok_parquet",
+            operation="export",
             dataset_name="docs",
             output_path=rel_path,
             fmt="parquet",
@@ -429,6 +435,7 @@ class TestDownloadExportCoverage:
 
         TaskManager._tasks["task_ok_csv"] = ExportTask(
             task_id="task_ok_csv",
+            operation="export",
             dataset_name="docs",
             output_path=rel_path,
             fmt="csv",

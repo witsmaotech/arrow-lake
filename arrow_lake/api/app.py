@@ -114,6 +114,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from arrow_lake.api.rbac import PermissionChecker
     app.state.checker = PermissionChecker()
 
+    # ── v1.6.2: Redis-backed task state sharing ──
+    from arrow_lake.api.tasks import TaskManager
+
+    TaskManager.init_redis_store(config.redis)
+
     # Gravitino integration (optional — no-op when disabled)
     gravitino_sync: object | None = None
     retention_enforcer: object | None = None
@@ -219,6 +224,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             retention_enforcer.stop()
         if maintenance_scheduler is not None:
             maintenance_scheduler.stop()
+        TaskManager.shutdown_redis_store()
         lake.shutdown()
         signal.signal(signal.SIGTERM, original_sigterm)
         signal.signal(signal.SIGINT, original_sigint)

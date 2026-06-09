@@ -22,3 +22,5 @@ class RedisConfig(BaseModel):
     redis_pool_size: int = Field(default=10, ge=1)
     instance_registry_key: str = "arrow_lake:instances"
     instance_heartbeat_ttl_seconds: int = Field(default=30, ge=5)
+    task_key_prefix: str = "arrow_lake:task:"
+    task_ttl_seconds: int = Field(default=7200, ge=60)

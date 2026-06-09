@@ -23,6 +23,7 @@ class TestTaskManagerEviction:
         old_time = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
         TaskManager._tasks["old"] = ExportTask(
             task_id="old",
+            operation="export",
             dataset_name="ds",
             output_path="/tmp/out",
             fmt="parquet",
@@ -31,6 +32,7 @@ class TestTaskManagerEviction:
         )
         TaskManager._tasks["fresh"] = ExportTask(
             task_id="fresh",
+            operation="export",
             dataset_name="ds",
             output_path="/tmp/out",
             fmt="parquet",
@@ -46,6 +48,7 @@ class TestTaskManagerEviction:
         old_time = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
         TaskManager._tasks["failed_old"] = ExportTask(
             task_id="failed_old",
+            operation="export",
             dataset_name="ds",
             output_path="/tmp/out",
             fmt="parquet",

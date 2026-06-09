@@ -221,6 +221,8 @@ class _LakeKGMixin:
                             "entity_count": kg_task.entity_count,
                             "relation_count": kg_task.relation_count,
                         }
+                    # Sync updated state to Redis for cross-worker visibility
+                    TaskManager._sync_to_redis(tm_task)
 
             asyncio.create_task(_run_build())  # noqa: RUF006
             return task_id
