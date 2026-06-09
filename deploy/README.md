@@ -626,17 +626,25 @@ lsof -i :9000
 ### 凭证
 
 - [ ] `MINIO_ROOT_PASSWORD` 已改为强密码
-- [ ] `ARROW_LAKE__API__API_KEY` 已设置
-- [ ] `ARROW_LAKE__AUTH__JWT_SECRET_KEY` 已设置（如使用 JWT）
+- [ ] `ARROW_LAKE__API__API_KEY` 已设置为强随机值（禁止留空或使用 dev 默认值）
+- [ ] `ARROW_LAKE__AUTH__JWT_SECRET_KEY` 已设置为 32+ 字符随机值（如使用 JWT）
 - [ ] `GRAFANA_ADMIN_PASSWORD` 已修改
+- [ ] `REDIS_PASSWORD` 已设置为强随机值
 - [ ] `.env` 文件未提交到版本控制（已在 `.gitignore` 中）
 
-### 访问控制
+### API 安全
 
+- [ ] `ARROW_LAKE__API__DOCS_ENABLED=false`（关闭 Swagger/OpenAPI 文档暴露）
 - [ ] `ARROW_LAKE__AUTH__AUTH_MODE` 设为 `both` 或 `jwt`
 - [ ] `ARROW_LAKE__RATE_LIMIT__ENABLED=true`
 - [ ] `ARROW_LAKE__API__CORS_ORIGINS` 限制为信任域名
 - [ ] MinIO Console 不暴露公网 (仅 `127.0.0.1:9001`)
+
+> **⚠️ 空密钥 = 无认证**：`ARROW_LAKE__API__API_KEY` 为空时认证中间件被跳过，
+> 所有 API 端点可无密钥访问。生产环境**必须**设置为强随机值：
+> ```bash
+> python3 -c "import secrets; print(secrets.token_urlsafe(32))"
+> ```
 
 ### 网络安全
 
