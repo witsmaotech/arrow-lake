@@ -8,6 +8,7 @@
 """
 
 from __future__ import annotations
+import os
 
 import json
 import sys
@@ -16,8 +17,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from conftest import ArrowLakeClient
 
-BASE_URL = "http://localhost:8000"
-API_KEY = "dev-api-key-for-local-testing-only"
+BASE_URL = os.environ.get("ARROW_LAKE_BASE_URL", "http://localhost:8000")
+API_KEY = os.environ.get("ARROW_LAKE_API_KEY", "dev-api-key-for-local-testing-only")
 
 
 def main() -> None:
@@ -118,6 +119,7 @@ def main() -> None:
     # 9. Streaming RAG (manual SSE parse)
     print("\nSTEP 9: Streaming RAG (SSE)")
     try:
+        import ssl as _ssl
         from urllib.request import Request, urlopen
         body = json.dumps({
             "question": "Explain gradient descent",
@@ -134,7 +136,12 @@ def main() -> None:
             },
             method="POST",
         )
-        with urlopen(req, timeout=30) as resp_stream:
+        _ctx = None
+        if os.environ.get("ARROW_LAKE_SSL_VERIFY", "true").lower() == "false":
+            _ctx = _ssl.create_default_context()
+            _ctx.check_hostname = False
+            _ctx.verify_mode = _ssl.CERT_NONE
+        with urlopen(req, timeout=30, context=_ctx) as resp_stream:
             chunks = 0
             for raw_line in resp_stream:
                 line = raw_line.decode().strip()

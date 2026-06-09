@@ -1,7 +1,11 @@
-# Arrow Lake — Monitoring Overlay
+# Arrow Lake — Monitoring Overlay (Development)
 #
-# Prometheus + Grafana + Jaeger for observability.
-# Extends: docker-compose.yml
+# Lightweight Prometheus + Grafana + Jaeger for development observability.
+# Extends: docker-compose.yml (base)
+#
+# NOTE: docker-compose.prod.yml includes a FULL monitoring stack with
+# additional Loki, Promtail, Alertmanager, and Redis Exporter.
+# This overlay is intentionally minimal for local development.
 #
 # Usage:
 #   make full    # via Makefile (all services + monitoring)

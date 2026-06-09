@@ -70,6 +70,9 @@ ENV NO_PROXY="*"
 # ==============================================================================
 FROM python:3.12-slim AS runtime
 
+ARG VERSION=dev
+ARG TARGETARCH
+
 # Runtime containers get proxy via docker-compose environment variables,
 # not via image ENV.  Clear daemon-injected proxy so runtime defaults are clean.
 ENV HTTP_PROXY=""
@@ -82,7 +85,7 @@ ENV NO_PROXY="*"
 LABEL maintainer="wits@sunpw.dev"
 LABEL description="Arrow Lake — Unified multimodal data lakehouse (Lance + Daft + Ray + GraphRAG)"
 LABEL org.opencontainers.image.source="https://github.com/wits-sunpw/arrow-lake"
-LABEL org.opencontainers.image.version="1.6.0"
+LABEL org.opencontainers.image.version="${VERSION}"
 
 # Runtime system dependencies — use build args for proxy if needed
 RUN apt-get update && apt-get install -y --no-install-recommends \

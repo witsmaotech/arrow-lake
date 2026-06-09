@@ -8,6 +8,7 @@
 """
 
 from __future__ import annotations
+import os
 
 import sys
 from pathlib import Path
@@ -20,8 +21,8 @@ import lance
 import pyarrow.csv as pcsv
 
 DATAS_DIR = Path(__file__).resolve().parent.parent / "datas"
-BASE_URL = "http://localhost:8000"
-API_KEY = "dev-api-key-for-local-testing-only"
+BASE_URL = os.environ.get("ARROW_LAKE_BASE_URL", "http://localhost:8000")
+API_KEY = os.environ.get("ARROW_LAKE_API_KEY", "dev-api-key-for-local-testing-only")
 
 DS_NAME = "cookbook-29-limit-sort-groupby"
 

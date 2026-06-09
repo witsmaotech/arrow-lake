@@ -7,6 +7,7 @@
 """
 
 from __future__ import annotations
+import os
 
 import json
 import sys
@@ -15,8 +16,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from conftest import ArrowLakeClient
 
-BASE_URL = "http://localhost:8000"
-API_KEY = "dev-api-key-for-local-testing-only"
+BASE_URL = os.environ.get("ARROW_LAKE_BASE_URL", "http://localhost:8000")
+API_KEY = os.environ.get("ARROW_LAKE_API_KEY", "dev-api-key-for-local-testing-only")
 DATAS_DIR = Path(__file__).resolve().parent.parent / "datas"
 
 DS_NAME = "rag-kb"
@@ -163,6 +164,7 @@ def main() -> None:
 
     print("\nSTEP 9: SSE 流式问答")
     try:
+        import ssl as _ssl
         from urllib.request import Request, urlopen
         body = json.dumps({
             "question": "解释向量搜索和全文搜索的区别",
@@ -180,8 +182,13 @@ def main() -> None:
             },
             method="POST",
         )
+        _ctx = None
+        if os.environ.get("ARROW_LAKE_SSL_VERIFY", "true").lower() == "false":
+            _ctx = _ssl.create_default_context()
+            _ctx.check_hostname = False
+            _ctx.verify_mode = _ssl.CERT_NONE
         full_answer = ""
-        with urlopen(req, timeout=60) as resp_stream:
+        with urlopen(req, timeout=60, context=_ctx) as resp_stream:
             for raw_line in resp_stream:
                 line = raw_line.decode().strip()
                 if line.startswith("data:"):

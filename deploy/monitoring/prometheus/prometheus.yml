@@ -14,24 +14,26 @@ alerting:
 scrape_configs:
   - job_name: "arrow-lake-server"
     static_configs:
-      - targets: ["arrow-lake-api:8000"]
+      - targets: ["api:8000"]
     metrics_path: "/metrics"
 
   - job_name: "ray-head"
     static_configs:
-      - targets: ["arrow-lake-ray-head:8265"]
+      - targets: ["ray-head:8265"]
     metrics_path: "/metrics"
 
   - job_name: "minio"
     static_configs:
-      - targets: ["arrow-lake-minio:9000"]
+      - targets: ["minio:9000"]
     metrics_path: "/minio/v2/metrics/cluster"
 
+  # Redis metrics via redis_exporter sidecar
   - job_name: "redis"
     static_configs:
-      - targets: ["arrow-lake-redis:6379"]
+      - targets: ["redis-exporter:9121"]
 
-  - job_name: "hugegraph"
-    static_configs:
-      - targets: ["arrow-lake-hg-server:8080"]
-    metrics_path: "/metrics"
+  # HugeGraph does not expose a native /metrics Prometheus endpoint.
+  # Enable only after adding an exporter or custom metrics endpoint.
+  # - job_name: "hugegraph"
+  #   static_configs:
+  #     - targets: ["hg-server:8080"]

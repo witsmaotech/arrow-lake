@@ -16,6 +16,9 @@ services:
     container_name: arrow-lake-hugegraph
     profiles: ["kg", "full"]
     restart: unless-stopped
+    entrypoint: ["/usr/local/bin/entrypoint-hugegraph.sh"]
+    command: ["./docker-entrypoint.sh"]
+    hostname: hg-server
     ports:
       - "${HUGEGRAPH_PORT:-8089}:8080"
     environment:
@@ -23,6 +26,8 @@ services:
       HUGEGRAPH_GRAPH: "arrow_lake_kg"
     volumes:
       - hugegraph-data:/var/lib/hugegraph
+      - ./scripts/entrypoint-hugegraph.sh:/usr/local/bin/entrypoint-hugegraph.sh:ro
+      - ./scripts/fix-hugegraph-gremlin.sh:/usr/local/bin/fix-hugegraph-gremlin.sh:ro
     networks:
       - arrow-lake-net
     deploy:

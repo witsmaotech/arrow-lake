@@ -170,19 +170,19 @@ flow-test:
 		/app/.venv/bin/python flows/batch_rag_flow.py run --dataset-name test_metaflow --questions-file /app/examples/questions.json
 	@echo "=== All Flows Complete ==="
 
-	# ---------------------------------------------------------------------------
-	# Security & Maintenance
-	# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Security & Maintenance
+# ---------------------------------------------------------------------------
 
-	scan:
-		@echo "=== Scanning arrow-lake:latest for vulnerabilities ==="
-		@docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-			aquasec/trivy:latest image --severity HIGH,CRITICAL --exit-code 1 arrow-lake:latest || \
-			(echo "Vulnerabilities found! Review and fix before deploying." && exit 1)
+scan:
+	@echo "=== Scanning arrow-lake:latest for vulnerabilities ==="
+	@docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+		aquasec/trivy:latest image --severity HIGH,CRITICAL --exit-code 1 arrow-lake:latest || \
+		(echo "Vulnerabilities found! Review and fix before deploying." && exit 1)
 
-	backup:
-		@echo "=== Running MinIO backup ==="
-		docker compose $(COMPOSE_PROD) --project-name $(PROJECT_NAME) run --rm minio-backup
+backup:
+	@echo "=== Running MinIO backup ==="
+	docker compose $(COMPOSE_PROD) --project-name $(PROJECT_NAME) run --rm minio-backup
 
 # ---------------------------------------------------------------------------
 # Help

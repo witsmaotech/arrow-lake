@@ -8,6 +8,7 @@
 """
 
 from __future__ import annotations
+import os
 
 import sys
 from pathlib import Path
@@ -21,8 +22,8 @@ import daft
 import lance
 
 DATAS_DIR = Path(__file__).resolve().parent.parent / "datas"
-BASE_URL = "http://localhost:8000"
-API_KEY = "dev-api-key-for-local-testing-only"
+BASE_URL = os.environ.get("ARROW_LAKE_BASE_URL", "http://localhost:8000")
+API_KEY = os.environ.get("ARROW_LAKE_API_KEY", "dev-api-key-for-local-testing-only")
 
 DS_ORDERS = "cookbook-30-orders"
 DS_REGIONS = "cookbook-30-regions"

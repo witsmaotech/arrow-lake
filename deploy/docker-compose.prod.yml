@@ -30,6 +30,7 @@ x-arrow-lake: &arrow-lake
     dockerfile: deploy/Dockerfile
     network: host
     args:
+      VERSION: "1.6.3"
       HTTP_PROXY: "${BUILD_HTTP_PROXY:-}"
       HTTPS_PROXY: "${BUILD_HTTPS_PROXY:-}"
       NO_PROXY: "${BUILD_NO_PROXY:-127.0.0.1,localhost}"
@@ -88,7 +89,7 @@ services:
   # Proxy Forwarder — WSL2 mirrored mode bridge to Windows host proxy
   # ---------------------------------------------------------------------------
   proxy-forwarder:
-    image: alpine/socat:${SOCAT_VERSION:-latest}
+    image: alpine/socat:${SOCAT_VERSION:-1.9.1}
     container_name: arrow-lake-proxy-forwarder
     restart: unless-stopped
     network_mode: host
@@ -140,7 +141,7 @@ services:
       https_proxy: "http://host.docker.internal:17887"
       NO_PROXY: "127.0.0.1,localhost,host.docker.internal,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,172.19.0.0/16,172.30.0.0/16,minio,redis,ray-head,metaflow-metadata,metaflow-db,prometheus,grafana,jaeger,loki,promtail,alertmanager,hg-server,hg-pd,hg-store,gravitino,lance-rest,arrow-lake-gravitino,arrow-lake-lance-rest"
       no_proxy: "127.0.0.1,localhost,host.docker.internal,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,172.19.0.0/16,172.30.0.0/16,minio,redis,ray-head,metaflow-metadata,metaflow-db,prometheus,grafana,jaeger,loki,promtail,alertmanager,hg-server,hg-pd,hg-store,gravitino,lance-rest,arrow-lake-gravitino,arrow-lake-lance-rest"
-      ARROW_LAKE__EMBEDDING__API_BASE: "${OLLAMA_API_BASE:-http://172.19.0.40:11434/v1}"
+      ARROW_LAKE__EMBEDDING__API_BASE: "${OLLAMA_API_BASE:-http://host.docker.internal:11434/v1}"
       ARROW_LAKE__HUGEGRAPH__HOST: "${HUGEGRAPH_HOST:-hg-server}"
       ARROW_LAKE__HUGEGRAPH__PORT: "${HUGEGRAPH_PORT:-8080}"
       # v1.6.1: KG build async performance tuning
@@ -219,10 +220,10 @@ services:
           memory: 1G
     healthcheck:
       test: ["CMD-SHELL", "curl -s http://localhost:8000/health | grep -q '\"status\"'"]
-      interval: 30s
+      interval: 15s
       timeout: 10s
       retries: 5
-      start_period: 30s
+      start_period: 60s
     ulimits:
       nofile:
         soft: 65536
@@ -237,6 +238,14 @@ services:
     restart: unless-stopped
     networks:
       - arrow-lake-net
+    environment:
+      # nginx only talks to internal services — clear proxy to avoid routing upstream through proxy
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      http_proxy: ""
+      https_proxy: ""
+      NO_PROXY: ""
+      no_proxy: ""
     ports:
       - "${HTTPS_PORT:-443}:443"
       - "${HTTP_PORT:-80}:80"
@@ -371,10 +380,11 @@ services:
         reservations:
           memory: 128M
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:?REDIS_PASSWORD must be set}", "ping"]
+      test: ["CMD-SHELL", "REDISCLI_AUTH=$$REDIS_PASSWORD redis-cli ping"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 10s
     logging:
       driver: json-file
       options:
@@ -382,6 +392,41 @@ services:
         max-file: "3"
         tag: "arrow-lake-redis"
     stop_grace_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # Redis Exporter — Prometheus metrics for Redis
+  # ---------------------------------------------------------------------------
+  redis-exporter:
+    image: oliver006/redis_exporter:${REDIS_EXPORTER_VERSION:-v1.62.0}
+    container_name: arrow-lake-redis-exporter
+    restart: unless-stopped
+    networks:
+      - arrow-lake-net
+    environment:
+      REDIS_ADDR: "redis:6379"
+      REDIS_PASSWORD: "${REDIS_PASSWORD:?REDIS_PASSWORD must be set}"
+    depends_on:
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+          cpus: "0.1"
+          pids: 32
+        reservations:
+          memory: 16M
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9121/health || nc -z localhost 9121"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "2"
+    stop_grace_period: 5s
 
   # ---------------------------------------------------------------------------
   # Ray Head — Compute cluster head node
@@ -444,6 +489,8 @@ services:
     restart: unless-stopped
     healthcheck:
       disable: true
+    tmpfs:
+      - /tmp
     deploy:
       replicas: ${RAY_WORKER_REPLICAS:-2}
       resources:
@@ -488,6 +535,8 @@ services:
     profiles: ["gpu"]
     healthcheck:
       disable: true
+    tmpfs:
+      - /tmp
     deploy:
       replicas: ${RAY_GPU_WORKER_REPLICAS:-1}
       resources:
@@ -831,7 +880,7 @@ services:
   # HugeGraph Schema Init — Create Arrow Lake KG schema on first start
   # ---------------------------------------------------------------------------
   hg-schema-init:
-    image: curlimages/curl:latest
+    image: curlimages/curl:${CURL_VERSION:-8.12.1}
     container_name: arrow-lake-hg-schema-init
     restart: "no"
     networks:
@@ -982,7 +1031,7 @@ services:
   # Gravitino Init — Create Metalake + Catalogs + Schemas on first start
   # ---------------------------------------------------------------------------
   gravitino-init:
-    image: curlimages/curl:latest
+    image: curlimages/curl:${CURL_VERSION:-8.12.1}
     container_name: arrow-lake-gravitino-init
     restart: "no"
     networks:

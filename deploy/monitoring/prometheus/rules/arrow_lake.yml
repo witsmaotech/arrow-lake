@@ -109,3 +109,84 @@ groups:
           summary: "Quality gate rejection rate above 30%"
           description: "Rejection rate on {{ $labels.dataset }} is {{ $value | printf \"%.0f\" }}%. Check data source quality."
           runbook_url: "https://github.com/arrow-lake/runbooks/blob/main/high-rejection-rate.md"
+
+  # ── Redis alerts (via redis_exporter) ──────────────────────────────────
+  - name: arrow_lake_redis
+    rules:
+      - alert: RedisMemoryHigh
+        expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis memory usage above 85%"
+          description: "Redis {{ $labels.instance }} is using {{ $value | printf \"%.0f\" }}% of max memory."
+
+      - alert: RedisConnectedClientsHigh
+        expr: redis_connected_clients > 200
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis connected clients above 200"
+          description: "{{ $value }} clients connected to {{ $labels.instance }}."
+
+      - alert: RedisRejectedConnections
+        expr: increase(redis_rejected_connections_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis is rejecting connections"
+          description: "{{ $value }} connections rejected in the last 5 minutes."
+
+  # ── MinIO alerts (via native /minio/v2/metrics/cluster) ────────────────
+  - name: arrow_lake_minio
+    rules:
+      - alert: MinIODiskSpaceLow
+        expr: minio_cluster_disk_free_bytes / minio_cluster_disk_total_bytes < 0.15
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "MinIO disk space below 15%"
+          description: "MinIO {{ $labels.instance }} has {{ $value | printf \"%.0f\" }}% disk remaining."
+
+      - alert: MinIODiskSpaceCritical
+        expr: minio_cluster_disk_free_bytes / minio_cluster_disk_total_bytes < 0.05
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "MinIO disk space below 5%"
+          description: "MinIO {{ $labels.instance }} has only {{ $value | printf \"%.0f\" }}% disk remaining. Immediate action required."
+
+      - alert: MinIONodesOffline
+        expr: minio_cluster_nodes_offline_total > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "MinIO nodes offline"
+          description: "{{ $value }} MinIO node(s) are offline."
+
+  # ── Infrastructure alerts ──────────────────────────────────────────────
+  - name: arrow_lake_infra
+    rules:
+      - alert: ContainerRestartLoop
+        expr: increase(container_restart_count[30m]) > 3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Container {{ $labels.name }} restarting repeatedly"
+          description: "{{ $value }} restarts in 30 minutes. Check container logs."
+
+      - alert: HighCPUUsage
+        expr: rate(process_cpu_seconds_total[5m]) > 0.9
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Sustained high CPU on {{ $labels.job }}"
+          description: "CPU usage above 90% for 10 minutes on {{ $labels.job }}."

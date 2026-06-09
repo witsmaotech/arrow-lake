@@ -1,17 +1,25 @@
 """Shared API client for Arrow Lake Docker Compose integration tests.
 
 Usage:
-    from api_client import ArrowLakeClient
+    from conftest import ArrowLakeClient
 
-    client = ArrowLakeClient("http://localhost:8000", api_key="dev-api-key-for-local-testing-only")
-    datasets = client.list_datasets()
+    # Dev (direct API):
+    client = ArrowLakeClient("http://localhost:8000", api_key="dev-api-key")
+    # Prod (via nginx):
+    client = ArrowLakeClient("https://localhost", api_key="prod-api-key")
+
+    # Or use environment variables (recommended):
+    #   ARROW_LAKE_BASE_URL=https://localhost
+    #   ARROW_LAKE_API_KEY=your-key
 """
 
 from __future__ import annotations
 
 import base64
 import json
+import os
 import mimetypes
+import ssl
 import time
 import uuid
 from pathlib import Path
@@ -23,10 +31,26 @@ from urllib.error import HTTPError
 class ArrowLakeClient:
     """Lightweight REST client — zero external deps (stdlib only)."""
 
-    def __init__(self, base_url: str = "http://localhost:8000", api_key: str = "") -> None:
+    def __init__(
+        self,
+        base_url: str = "http://localhost:8000",
+        api_key: str = "",
+        *,
+        ssl_verify: bool | None = None,
+    ) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self._token: str | None = None
+        # ssl_verify: None = auto (check env ARROW_LAKE_SSL_VERIFY, default True)
+        #             True = verify cert, False = skip (self-signed dev certs only)
+        if ssl_verify is None:
+            ssl_verify = os.environ.get("ARROW_LAKE_SSL_VERIFY", "true").lower() != "false"
+        self._ssl_context: ssl.SSLContext | None = None
+        if not ssl_verify:
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            self._ssl_context = ctx
 
     # -- helpers --
 
@@ -46,7 +70,7 @@ class ArrowLakeClient:
         ct = "application/json" if body else None
         req = Request(url, data=data, headers=self._headers(ct), method=method)
         try:
-            with urlopen(req, timeout=timeout) as resp:
+            with urlopen(req, timeout=timeout, context=self._ssl_context) as resp:
                 raw = resp.read().decode()
                 try:
                     return json.loads(raw) if raw else {"success": True, "status": resp.status}
@@ -94,7 +118,7 @@ class ArrowLakeClient:
             method="POST",
         )
         try:
-            with urlopen(req, timeout=120) as resp:
+            with urlopen(req, timeout=120, context=self._ssl_context) as resp:
                 raw = resp.read().decode()
                 try:
                     return json.loads(raw) if raw else {"success": True}
@@ -141,7 +165,7 @@ class ArrowLakeClient:
                 method="PUT",
             )
             try:
-                urlopen(put_req, timeout=120)
+                urlopen(put_req, timeout=120, context=self._ssl_context)
                 blob_keys.append(upload_info["key"])
             except Exception as e:
                 return {"success": False, "error": f"PUT failed for {p.name}: {e}"}
