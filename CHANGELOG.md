@@ -29,15 +29,26 @@ v1.6.2 聚焦于 **多 Worker 异步任务状态共享** — 通过 Redis 实现
 ### Fixed
 
 - `ExportTask` 测试构造函数缺少 `operation` 参数导致 `TypeError`
+- `docs/cookbook/examples_api/conftest.py` 的 `kg_query` 字段名 `query` → `gremlin`（API 期望）
+
+### Known Issues
+
+- HugeGraph 1.7 all-in-one 模式的 Gremlin 脚本引擎未注册图绑定（`g.V()` 等语法不可用），REST traverser 端点正常
 
 ### Performance
 
 | 场景 | 结果 |
 |------|------|
 | Redis task CRUD (单次) | <1ms |
+| kg_build `_audit_trail` (15 chunks) | 99s |
 | kg_build benchmark (50 chunks, mock LLM) | 0.018ms |
 | API 测试套件 (597 tests) | 87.6s 全部通过 |
-| KG API + E2E tests | 21/21 通过 |
+| KG API + E2E tests (68 tests) | 全部通过 |
+| RAG Query (graphrag-kb, 首次) | 55s (LLM 冷启动) |
+| RAG Query (后续) | 5-18s |
+| GraphRAG Query | 53s |
+| SSE Streaming RAG | 8771 chars |
+| Cookbook 示例 (07/06/14/15) | 4/4 ALL PASSED |
 
 ## [1.6.1] - 2026-06-08
 
