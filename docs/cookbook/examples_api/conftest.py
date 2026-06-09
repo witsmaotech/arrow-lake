@@ -347,7 +347,7 @@ class ArrowLakeClient:
         body: dict[str, Any] = {"dataset_name": dataset_name, **kwargs}
         if entity_types:
             body["entity_types"] = entity_types
-        return self._request("POST", "/api/v1/rag/extract", body)
+        return self._request("POST", "/api/v1/rag/extract", body, timeout=3600)
 
     def rag_templates(self) -> dict:
         return self._request("GET", "/api/v1/rag/templates")
@@ -359,10 +359,23 @@ class ArrowLakeClient:
 
     def kg_build(self, dataset_name: str, **kwargs: Any) -> dict:
         body: dict[str, Any] = {"dataset_name": dataset_name, **kwargs}
-        return self._request("POST", "/api/v1/kg/build", body, timeout=600)
+        return self._request("POST", "/api/v1/kg/build", body, timeout=60)
 
     def kg_build_status(self, task_id: str) -> dict:
         return self._request("GET", f"/api/v1/kg/build/{task_id}/status")
+
+    def wait_for_kg_build(self, task_id: str, timeout: int = 600, poll_interval: float = 3.0) -> dict:
+        """Poll kg_build status until completed/failed or timeout."""
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            resp = self.kg_build_status(task_id)
+            status = resp.get("status", "").upper()
+            if status in ("COMPLETED", "DONE", "SUCCESS"):
+                return resp
+            if status in ("FAILED", "ERROR"):
+                return resp
+            time.sleep(poll_interval)
+        return {"success": False, "error": "TIMEOUT", "task_id": task_id}
 
     def kg_schema(self) -> dict:
         return self._request("GET", "/api/v1/kg/schema")
@@ -507,6 +520,35 @@ class ArrowLakeClient:
             if resp.get("success") is False and "error" in resp:
                 return resp
             time.sleep(2)
+        return {"success": False, "error": "TIMEOUT", "task_id": task_id}
+
+    # -- async tasks (v1.6.1) --
+
+    def ingest_async(self, name: str, file_paths: list[str]) -> dict:
+        return self._ingest_via_upload(name, file_paths, f"/api/v1/datasets/{name}/ingest/async")
+
+    def task_status(self, task_id: str) -> dict:
+        return self._request("GET", f"/api/v1/tasks/{task_id}/status")
+
+    def list_tasks(self, operation: str | None = None, status: str | None = None) -> dict:
+        params: dict[str, str] = {}
+        if operation:
+            params["operation"] = operation
+        if status:
+            params["status"] = status
+        return self._request("GET", "/api/v1/tasks", params)
+
+    def wait_for_task(self, task_id: str, timeout: int = 300, poll_interval: float = 2.0) -> dict:
+        """Poll generic task status until completed/failed or timeout."""
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            resp = self.task_status(task_id)
+            status = resp.get("status", "").lower()
+            if status in ("completed", "done", "success"):
+                return resp
+            if status in ("failed", "error"):
+                return resp
+            time.sleep(poll_interval)
         return {"success": False, "error": "TIMEOUT", "task_id": task_id}
 
     def _pass(self, label: str) -> None:

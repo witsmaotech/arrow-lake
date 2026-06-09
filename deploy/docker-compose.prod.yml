@@ -33,7 +33,7 @@ x-arrow-lake: &arrow-lake
       HTTP_PROXY: "${BUILD_HTTP_PROXY:-}"
       HTTPS_PROXY: "${BUILD_HTTPS_PROXY:-}"
       NO_PROXY: "${BUILD_NO_PROXY:-127.0.0.1,localhost}"
-  image: arrow-lake:1.6.0
+  image: arrow-lake:1.6.1
   restart: unless-stopped
   env_file:
     - path: ../.env
@@ -143,6 +143,9 @@ services:
       ARROW_LAKE__EMBEDDING__API_BASE: "${OLLAMA_API_BASE:-http://172.19.0.40:11434/v1}"
       ARROW_LAKE__HUGEGRAPH__HOST: "${HUGEGRAPH_HOST:-hg-server}"
       ARROW_LAKE__HUGEGRAPH__PORT: "${HUGEGRAPH_PORT:-8080}"
+      # v1.6.1: KG build async performance tuning
+      ARROW_LAKE__HUGEGRAPH__BUILD_CONCURRENCY: "${HUGEGRAPH_BUILD_CONCURRENCY:-3}"
+      ARROW_LAKE__HUGEGRAPH__BUILD_BATCH_DELAY: "${HUGEGRAPH_BUILD_BATCH_DELAY:-0.5}"
       # DuckDB performance tuning (v1.3.4)
       ARROW_LAKE__OLAP__PRESERVE_INSERTION_ORDER: "false"
       ARROW_LAKE__OLAP__TEMP_DIRECTORY: "/tmp/duckdb"

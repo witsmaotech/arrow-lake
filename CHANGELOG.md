@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.1] - 2026-06-08
+
+### Summary
+
+v1.6.1 聚焦于 **消除 API 阻塞操作** — 将重量级同步任务转为 fire-and-forget 异步模式，附带进度追踪。
+
+### Changed
+
+- `kg_build` 不再阻塞 API：拆分为 `prepare_build()` + `execute_build()`，立即返回 task_id
+- `kg_build` 数据准备阶段（LanceDB 加载 + Arrow 列规范化）改用 `run_in_executor` 避免 event loop 阻塞
+- HugeGraph `build_concurrency` 默认值 1 → 3
+- HugeGraph `build_batch_delay` 默认值 3.0s → 0.5s
+- `TaskManager` 泛化为通用后台任务管理器（`ExportTask` 保留为别名）
+
+### Fixed
+
+- **CRITICAL**: `Lake._component_lock` 从 `threading.Lock` 改为 `threading.RLock`，修复嵌套 `_get_component` 调用导致的死锁（`_create_kg_builder` 内部调用 `_get_kg_client` + `_get_kg_extractor` 各自再获取同一把锁）
+
+### Added
+
+- `POST /api/v1/datasets/{name}/ingest/async` — 异步文件摄取 (HTTP 202)
+- `POST /api/v1/backup/create/async` — 异步备份 (HTTP 202)
+- `POST /api/v1/backup/restore/async` — 异步恢复 (HTTP 202)
+- `GET /api/v1/tasks/{task_id}/status` — 统一任务状态查询
+- `GET /api/v1/tasks` — 任务列表（支持过滤）
+- `BackgroundTask` 数据类（替代 `ExportTask`，向后兼容）
+
+### Performance
+
+| 操作 | 旧模式 | 新模式 |
+|------|--------|--------|
+| kg_build (1000 rows) | 阻塞 100+ 分钟 | <1s 返回，后台执行 |
+| ingest (大文件) | 阻塞 600s | <1s 返回，后台执行 |
+| backup/restore | 阻塞 10-30 分钟 | <1s 返回，后台执行 |
+
 ## [1.6.0] - 2026-06-08
 
 ### Summary

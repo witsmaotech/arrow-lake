@@ -28,7 +28,7 @@ async def export_dataset(
     _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> ExportTaskResponse:
     """Export a dataset to Parquet or CSV (async, returns task_id)."""
-    task_id = TaskManager.create_task(name, req.output_path, fmt=req.format or "parquet")
+    task_id = TaskManager.create_export_task(name, req.output_path, fmt=req.format or "parquet")
 
     export_kwargs = {
         "format": req.format,

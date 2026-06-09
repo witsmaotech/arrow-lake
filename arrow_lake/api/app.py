@@ -31,6 +31,7 @@ from arrow_lake.api.routers.query import router as query_router
 from arrow_lake.api.routers.rag import router as rag_router
 from arrow_lake.api.routers.search import router as search_router
 from arrow_lake.api.routers.system import router as system_router
+from arrow_lake.api.routers.async_tasks import router as async_tasks_router
 from arrow_lake.config import ArrowLakeConfig
 
 logger = logging.getLogger(__name__)
@@ -456,6 +457,9 @@ def create_app(config: ArrowLakeConfig | None = None) -> FastAPI:
     # Gravitino metadata router (always registered; returns 503 when disabled)
     if config.gravitino.enabled:
         app.include_router(gravitino_router)
+
+    # Async task endpoints (fire-and-forget for heavy operations)
+    app.include_router(async_tasks_router)
 
     # OpenTelemetry (optional — no-op when disabled or deps not installed)
     if config.opentelemetry.enabled:

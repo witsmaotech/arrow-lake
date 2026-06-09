@@ -130,8 +130,8 @@ class HugeGraphConfig(BaseModel):
     password: str = ""
     auto_build_on_ingest: bool = False
     build_batch_size: int = 50
-    build_concurrency: int = 1
-    build_batch_delay: float = 3.0
+    build_concurrency: int = 3
+    build_batch_delay: float = 0.5
     default_traversal_depth: int = 2
     max_traversal_depth: int = 5
     vermeer_host: str = "localhost"

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
@@ -173,6 +174,10 @@ class _LakeKGMixin:
         Reads text chunks from the specified dataset, extracts entities
         and relations via LLM, and inserts them into HugeGraph.
 
+        The data preparation (load + normalize) runs in a thread executor
+        so it never blocks the uvicorn event loop.  The actual KG build
+        is fire-and-forget via ``asyncio.create_task``.
+
         Args:
             dataset_name: Name of the Lance dataset to build KG from.
 
@@ -184,36 +189,72 @@ class _LakeKGMixin:
         """
         self._ensure_kg_enabled()
 
+        with self._require_kg_builder() as builder:
+            # Sync I/O (LanceDB read + Arrow normalize) in thread pool
+            # to avoid blocking the uvicorn event loop.
+            table = await asyncio.get_running_loop().run_in_executor(
+                None, self._load_kg_table, dataset_name,
+            )
+
+            task_id = await builder.build(dataset_name, table)
+
+            # Fire-and-forget via TaskManager for consistent status tracking.
+            # TaskManager.run_background handles both sync and async callables
+            # and keeps the task status in the same process as the handler,
+            # which avoids the multi-worker state-split issue for the originating
+            # worker.
+            from arrow_lake.api.tasks import TaskManager
+
+            tm_task_id = TaskManager.create_task(
+                "kg_build", dataset_name, detail={"kg_task_id": task_id},
+            )
+
+            async def _run_build() -> None:
+                await TaskManager.run_background(tm_task_id, builder.execute_build, task_id)
+                # Sync final status from KGBuilder task into TaskManager
+                kg_task = builder.get_task_status(task_id)
+                tm_task = TaskManager.get_task(tm_task_id)
+                if kg_task and tm_task:
+                    tm_task.progress = kg_task.processed_chunks / max(kg_task.total_chunks, 1)
+                    if kg_task.entity_count or kg_task.relation_count:
+                        tm_task.detail = {
+                            "entity_count": kg_task.entity_count,
+                            "relation_count": kg_task.relation_count,
+                        }
+
+            asyncio.create_task(_run_build())  # noqa: RUF006
+            return task_id
+
+    def _load_kg_table(self, dataset_name: str):
+        """Synchronous helper: load and normalize a Lance table for KG build."""
         import pyarrow as pa
 
-        with self._require_kg_builder() as builder:
-            storage = self._get_storage()
-            dataset = storage.open_dataset(dataset_name)
-            table = dataset.search().to_arrow()
+        storage = self._get_storage()
+        dataset = storage.open_dataset(dataset_name)
+        table = dataset.search().to_arrow()
 
-            # Normalize required columns (builder also does this as safety net)
-            if "content" not in table.column_names:
-                text_col = (
-                    "text_content"
-                    if "text_content" in table.column_names
-                    else table.column_names[0]
-                )
-                new_names = ["content" if c == text_col else c for c in table.column_names]
-                table = table.rename_columns(new_names)
-            if "id" not in table.column_names:
-                table = table.add_column(
-                    0, "id", pa.array([str(i) for i in range(table.num_rows)])
-                )
-            if "document_name" not in table.column_names:
-                table = table.append_column(
-                    "document_name", pa.array([dataset_name] * table.num_rows)
-                )
-            if "chunk_index" not in table.column_names:
-                table = table.append_column(
-                    "chunk_index", pa.array(list(range(table.num_rows)))
-                )
-
-            return await builder.build(dataset_name, table)
+        # Normalize required columns (builder also does this as safety net)
+        if "content" not in table.column_names:
+            text_col = (
+                "text_content"
+                if "text_content" in table.column_names
+                else table.column_names[0]
+            )
+            new_names = ["content" if c == text_col else c for c in table.column_names]
+            table = table.rename_columns(new_names)
+        if "id" not in table.column_names:
+            table = table.add_column(
+                0, "id", pa.array([str(i) for i in range(table.num_rows)])
+            )
+        if "document_name" not in table.column_names:
+            table = table.append_column(
+                "document_name", pa.array([dataset_name] * table.num_rows)
+            )
+        if "chunk_index" not in table.column_names:
+            table = table.append_column(
+                "chunk_index", pa.array(list(range(table.num_rows)))
+            )
+        return table
 
     async def kg_build_status(self, task_id: str) -> dict[str, Any] | None:
         """Get the status of a KG build task.

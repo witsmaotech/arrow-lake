@@ -82,21 +82,17 @@ class KGBuilder:
         self._extractor = extractor
         self._config = config
         self._tasks: dict[str, KGBuildTask] = {}
+        self._pending_tables: dict[str, pa.Table] = {}
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
     async def build(self, dataset_name: str, chunks_table: pa.Table) -> str:
-        """Build the knowledge graph from a table of chunks.
+        """Prepare a KG build task and return its ID immediately.
 
-        Args:
-            dataset_name: Human-readable name for this dataset/build.
-            chunks_table: PyArrow table with columns: id, content,
-                document_name, chunk_index.
-
-        Returns:
-            Task ID string for tracking progress.
+        The actual build runs in the background via :meth:`execute_build`.
+        Use :meth:`get_task_status` to track progress.
         """
         task_id = str(uuid.uuid4())[:8]
         started = datetime.now(UTC)
@@ -113,9 +109,17 @@ class KGBuilder:
             error=None,
         )
         self._tasks[task_id] = task
+        self._pending_tables[task_id] = chunks_table
+        return task_id
 
+    async def execute_build(self, task_id: str) -> None:
+        """Execute a previously prepared build task in the background."""
+        task = self._tasks.get(task_id)
+        table = self._pending_tables.pop(task_id, None)
+        if task is None or table is None:
+            return
         try:
-            await self._execute_build(task, chunks_table)
+            await self._execute_build(task, table)
             task.status = KGBuildStatus.COMPLETED
         except (RuntimeError, OSError) as exc:
             task.status = KGBuildStatus.FAILED
@@ -123,8 +127,6 @@ class KGBuilder:
             logger.error("KG build %s failed: %s", task_id, exc)
         finally:
             task.completed_at = datetime.now(UTC)
-
-        return task_id
 
     def get_task_status(self, task_id: str) -> KGBuildTask | None:
         """Return the current status of a build task, or None if unknown."""

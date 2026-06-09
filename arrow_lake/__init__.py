@@ -129,7 +129,7 @@ class Lake(
         self._config = config or ArrowLakeConfig()
         self._storage: StorageProtocol | None = None
         self._components: dict[str, Any] = {}
-        self._component_lock = threading.Lock()
+        self._component_lock = threading.RLock()
         self._logger = logging.getLogger(__name__)
         self._start_time = _time.monotonic()
         self._shutdown = False
