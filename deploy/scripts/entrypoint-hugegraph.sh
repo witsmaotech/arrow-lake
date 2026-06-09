@@ -1,16 +1,18 @@
 #!/bin/bash
 # HugeGraph 1.7 all-in-one entrypoint wrapper.
 #
-# Patches gremlin-server.yaml to register graph bindings before the
-# server starts, then delegates to the original entrypoint.
+# Patches the Gremlin init script to register graph traversal bindings
+# before the server starts, then delegates to the original entrypoint.
 #
-# Problem: The all-in-one image ships with `graphs: {}` in
-# gremlin-server.yaml, which means g.V() / graph.V() /
-# hugegraph.traversal() all fail with MissingPropertyException.
+# Problem: The all-in-one image's scripts/empty-sample.groovy does not
+# bind `g` (the default TraversalSource).  The `graphs:` section in
+# gremlin-server.yaml is present but HugeGraph 1.7 registers graphs
+# dynamically AFTER the init script runs, so the `hugegraph` variable
+# is not yet available during script evaluation.
 #
-# Solution: Inject the hugegraph graph binding before startup so
-# the Gremlin script engine registers `g`, `graph`, and
-# `{graph_name}` as traversal source variables.
+# Solution: Use HugeFactory.open() in the init script (same pattern as
+# HugeGraph's own example.groovy) to open the graph and bind both
+# `graph` and `g` to the globals map.
 #
 # Usage in docker-compose:
 #   entrypoint: ["/usr/local/bin/entrypoint-hugegraph.sh"]
@@ -21,29 +23,39 @@ set -euo pipefail
 
 log() { echo "[entrypoint-wrapper] $*"; }
 
-# ── Patch gremlin-server.yaml ────────────────────────────────────────
-CONF="/hugegraph-server/conf/gremlin-server.yaml"
-GRAPH_PROPS="conf/hugegraph.properties"
+# ── Patch Groovy init script with graph bindings ────────────────────
+INIT_SCRIPT="/hugegraph-server/scripts/empty-sample.groovy"
 
-if [ -f "$CONF" ]; then
-    if grep -qE '^graphs:\s*\{\s*\}' "$CONF" 2>/dev/null; then
-        log "Patching gremlin-server.yaml — adding hugegraph graph binding"
-        sed -i "s|^graphs:\s*{\s*}|graphs: {\n  hugegraph: ${GRAPH_PROPS}|" "$CONF"
+if [ -f "$INIT_SCRIPT" ]; then
+    if ! grep -q "HugeFactory.open" "$INIT_SCRIPT" 2>/dev/null; then
+        log "Patching empty-sample.groovy — adding g/graph bindings via HugeFactory"
+        cat >> "$INIT_SCRIPT" <<'GREMLIN'
 
-        if grep -q "hugegraph: ${GRAPH_PROPS}" "$CONF"; then
-            log "Graph binding registered successfully"
+import org.apache.hugegraph.HugeFactory
+
+// Open the hugegraph instance and bind traversal source + graph to globals.
+// NOTE: The `hugegraph` variable from gremlin-server.yaml `graphs:` section
+// is NOT available at init-script evaluation time in HugeGraph 1.7, so we
+// use HugeFactory.open() directly (same pattern as example.groovy).
+graph = HugeFactory.open("conf/graphs/hugegraph.properties")
+globals << [graph: graph, g: graph.traversal()]
+GREMLIN
+        if grep -q "HugeFactory.open" "$INIT_SCRIPT"; then
+            log "Graph bindings (g, graph) registered successfully"
         else
-            log "WARNING: Failed to patch gremlin-server.yaml"
+            log "WARNING: Failed to patch Groovy init script"
         fi
     else
-        log "gremlin-server.yaml already has graph bindings — skipping patch"
+        log "Groovy init script already has HugeFactory bindings — skipping patch"
     fi
 else
-    log "WARNING: ${CONF} not found — skipping Gremlin patch"
+    log "WARNING: ${INIT_SCRIPT} not found — skipping Gremlin patch"
 fi
 
 # ── Delegate to original entrypoint ──────────────────────────────────
-# The original image entrypoint is /hugegraph-server/docker-entrypoint.sh
-# which runs init-store, start-hugegraph, then tail -f /dev/null.
+# Original image: ENTRYPOINT ["/usr/bin/dumb-init", "--"]
+#                 CMD ["./docker-entrypoint.sh"]
+# We replaced ENTRYPOINT with this wrapper, so $@ = ./docker-entrypoint.sh
+# Re-chain through dumb-init for proper PID 1 signal handling.
 log "Starting HugeGraph server..."
-exec "/hugegraph-server/docker-entrypoint.sh" "$@"
+exec /usr/bin/dumb-init -- "$@"

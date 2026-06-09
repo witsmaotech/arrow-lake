@@ -791,6 +791,7 @@ services:
     networks:
       - arrow-lake-net
     entrypoint: ["/usr/local/bin/entrypoint-hugegraph.sh"]
+    command: ["./docker-entrypoint.sh"]
     environment:
       HTTP_PROXY: ""
       HTTPS_PROXY: ""
