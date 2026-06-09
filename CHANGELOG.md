@@ -10,23 +10,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Summary
 
-v1.6.3 修复 HugeGraph 1.7 all-in-one 镜像 Gremlin 脚本引擎图绑定缺失问题，确保 `g.V()` / `graph.V()` / `hugegraph.traversal()` 在容器启动后即可用。
+v1.6.3 修复 HugeGraph Gremlin 绑定问题，并对 deploy 层进行全面安全加固、监控补全、性能优化和示例 nginx 代理兼容。
 
 ### Fixed
 
 - HugeGraph 1.7 all-in-one 镜像 `gremlin-server.yaml` 的 `graphs: {}` 导致 Gremlin 变量未注册 — 通过 entrypoint wrapper 在服务启动前注入图绑定配置
 - `export_graph()` 在 Gremlin 不可用时静默失败 — 添加 REST API 降级路径，当 Gremlin 脚本引擎抛异常时自动切换到 `GET /graphs/{name}/graph/vertices|edges`
+- Redis healthcheck 使用 `redis-cli -a` 暴露密码 — 改为 `REDISCLI_AUTH` 环境变量
+- Prometheus scrape targets 使用 container_name 而非 Docker 服务名 — 统一修正
+- Makefile `scan`/`backup` target 缩进错误导致 make 无法识别
+- Dockerfile 版本标签过时 (1.6.0) — 改为 `ARG VERSION` 动态注入
+- Ollama 嵌入 API 地址硬编码 IP — 改为 `${OLLAMA_API_BASE}` 环境变量
 
 ### Added
 
-- `deploy/scripts/entrypoint-hugegraph.sh` — HugeGraph 容器 entrypoint wrapper，启动前自动 patch `gremlin-server.yaml`
-- `deploy/scripts/fix-hugegraph-gremlin.sh` — 手动修复脚本，用于已运行的容器（无需重启整个服务）
-- `test_export_graph_rest_fallback_*` 单元测试覆盖 REST API 降级路径
+- `deploy/scripts/entrypoint-hugegraph.sh` — HugeGraph 容器 entrypoint wrapper
+- `deploy/scripts/fix-hugegraph-gremlin.sh` — 手动修复脚本
+- `redis-exporter` (oliver006/redis_exporter) 侧车服务 — Prometheus 采集 Redis 指标
+- Redis/MinIO/基础设施 Prometheus 告警规则 (+8 rules)
+- nginx gzip 压缩、CSP 安全头、proxy buffer 调优、SSE 600s 超时
+- `deploy/.env.example` 脱敏环境变量模板
+- 示例脚本 SSL context 支持 (`ARROW_LAKE_SSL_VERIFY` 环境变量)
+- HugeGraph overlay (`docker-compose.hugegraph.yml`) Gremlin fix entrypoint
 
 ### Changed
 
-- `docker-compose.prod.yml` hg-server 服务：覆盖 `entrypoint` 使用 wrapper 脚本，新增两个脚本 volume mount
-- `_import_export.py` 的 `export_graph()` 方法：Gremlin 异常时降级到 REST API 而非直接失败
+- `docker-compose.prod.yml` hg-server 服务：覆盖 `entrypoint` 使用 wrapper 脚本
+- `_import_export.py` 的 `export_graph()` 方法：Gremlin 异常时降级到 REST API
+- 镜像标签固定：socat `:latest` → `1.9.1`，curlimages/curl `:latest` → `8.12.1`
+- API healthcheck: interval 30s→15s, start_period 30s→60s (适配 4 workers)
+- Redis healthcheck: 新增 `start_period: 10s`
+- nginx 服务：清除 proxy 环境变量避免 upstream 路由错误
+- Ray worker/GPU：添加 `tmpfs /tmp`（read_only 模式兼容）
+- 33 个 API 示例: `BASE_URL`/`API_KEY` 改为环境变量读取，支持 nginx HTTPS 代理模式
 
 ### Known Issues
 

@@ -46,7 +46,35 @@ Arrow Lake 数据湖平台实战教程，涵盖数据摄取、搜索、分析、
 
 ## 版本
 
-对应 Arrow Lake v1.5.3
+对应 Arrow Lake v1.6.3
+
+## v1.6.3 新特性 — Deploy Hardening & nginx Proxy
+
+| #  | 说明 |
+| -- | ---- |
+| — | 示例脚本支持 nginx HTTPS 代理模式 (`ARROW_LAKE_BASE_URL` / `ARROW_LAKE_SSL_VERIFY`) |
+| — | HugeGraph Gremlin 绑定修复，`g.V()` 开箱即用 |
+| — | Redis/MinIO/基础设施 Prometheus 告警规则 (+8 rules) |
+| — | nginx gzip + CSP + buffer 性能优化 |
+| — | 镜像标签固定，Redis 密码泄露修复，`.env.example` 脱敏模板 |
+
+## v1.6.2 新特性 — Redis 任务共享
+
+| #  | 说明 |
+| -- | ---- |
+| — | Redis HASH 双写 + 跨 worker 任务状态可见性 |
+
+## v1.6.1 新特性 — 性能修复
+
+| #  | 说明 |
+| -- | ---- |
+| — | threading.RLock 死锁修复 + kg_build fire-and-forget |
+
+## v1.6.0 新特性 — 基础夯实
+
+| #  | 说明 |
+| -- | ---- |
+| — | docker-compose.prod.yml 版本对齐 arrow-lake:1.6.0, metrics 端口 9091 |
 
 ## v1.5.2 新特性 — Security Hardening & Code Quality
 
