@@ -58,9 +58,46 @@ def main() -> None:
         print("  [SKIP] No datasets available")
         return
 
+    # Prefer a dataset with text_content column (needed for GraphRAG FTS)
+    graphrag_name: str | None = None
     target = max(datasets, key=lambda d: d["num_rows"])
     name = target["name"]
+
+    for d in datasets:
+        detail = c.get_dataset(d["name"])
+        cols = [c2["name"] for c2 in detail.get("columns", [])]
+        if "text_content" in cols:
+            graphrag_name = d["name"]
+            break
+
+    # If no dataset has text_content, create a small test one
+    if not graphrag_name:
+        print("\n  [INFO] No dataset with text_content found — creating kg_test_docs")
+        import tempfile, os
+        td = tempfile.mkdtemp()
+        csv_path = os.path.join(td, "kg_docs.csv")
+        with open(csv_path, "w") as f:
+            f.write("text_content\n")
+            f.write("Apache HugeGraph is a graph database supporting Gremlin queries\n")
+            f.write("Knowledge graphs model entities as vertices and edges\n")
+            f.write("GraphRAG combines graph traversal with RAG retrieval\n")
+            f.write("Arrow Lake integrates DuckDB with HugeGraph\n")
+            f.write("Full-text search enables fast keyword retrieval over documents\n")
+        c._request("DELETE", "/api/v1/datasets/kg_test_docs")
+        r = c.ingest_files("kg_test_docs", [csv_path])
+        if r.get("success"):
+            c.create_fts_index("kg_test_docs", "text_content")
+            graphrag_name = "kg_test_docs"
+            print(f"  [INFO] kg_test_docs created with FTS index")
+            # Also use as main dataset if current one is tiny
+            if target["num_rows"] < 5:
+                name = "kg_test_docs"
+        import shutil
+        shutil.rmtree(td, ignore_errors=True)
+
     print(f"\nUsing dataset: {name} ({target['num_rows']} rows)")
+    if graphrag_name:
+        print(f"GraphRAG dataset: {graphrag_name}")
 
     # 1. KG schema
     print("\nSTEP 1: KG schema")
@@ -158,16 +195,22 @@ def main() -> None:
 
     # 10. GraphRAG QA (requires FTS-indexed dataset with text_content)
     print("\nSTEP 10: GraphRAG QA")
-    resp = c.kg_graphrag("What are the key relationships in this dataset?",
-                          dataset_name=name)
-    err = resp.get("error") or resp.get("detail", "")
-    if err and "fts" in str(err).lower():
-        print(f"  [SKIP] GraphRAG — dataset lacks FTS index: {str(err)[:80]}")
+    if graphrag_name:
+        resp = c.kg_graphrag("What is HugeGraph?", dataset_name=graphrag_name)
+        err = resp.get("error") or resp.get("detail", "")
+        if err and "fts" in str(err).lower():
+            print(f"  [SKIP] GraphRAG — FTS error: {str(err)[:80]}")
+            SKIP += 1
+        elif _ok(resp, "GraphRAG"):
+            answer = resp.get("answer", resp.get("results", ""))
+            c._pass(f"GraphRAG answer — {len(str(answer))} chars")
+            print(f"         {str(answer)[:150]}...")
+            citations = resp.get("citations", [])
+            if citations:
+                c._pass(f"citations — {len(citations)} sources")
+    else:
+        print("  [SKIP] GraphRAG — no dataset with text_content available")
         SKIP += 1
-    elif _ok(resp, "GraphRAG"):
-        answer = resp.get("answer", resp.get("results", ""))
-        c._pass(f"GraphRAG answer — {len(str(answer))} chars")
-        print(f"         {str(answer)[:150]}...")
 
     # 11. Stats after build
     print("\nSTEP 11: KG stats (post-build)")
