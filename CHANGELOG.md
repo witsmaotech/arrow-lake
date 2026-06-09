@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+
+
+## [1.6.2] - 2026-06-09
+
+### Summary
+
+v1.6.2 聚焦于 **多 Worker 异步任务状态共享** — 通过 Redis 实现 `TaskManager` 跨进程任务状态可见性，解决多 uvicorn worker 部署时任务状态隔离问题。
+
+### Changed
+
+- `TaskManager` 从纯内存模式升级为 **双写 + 优先读 Redis** 模式：创建/更新时同步写入 Redis HASH，查询时优先从 Redis 读取跨 worker 状态
+- `BackgroundTask` 新增 `to_dict()` / `from_dict()` 序列化方法，支持 Redis HASH 存储和 JSON 字段正确解析
+- `_lake_kg.py` 的 `kg_build` 完成后同步最终状态到 Redis（entity_count, relation_count）
+
+### Added
+
+- `RedisTaskStore` (`arrow_lake/api/_redis_task_store.py`) — Redis HASH 后端任务存储，支持 CRUD + TTL 自动清理 + index SET 索引
+- `RedisConfig.task_key_prefix` 和 `RedisConfig.task_ttl_seconds` 配置项
+- `TaskManager.init_redis_store()` / `shutdown_redis_store()` — 应用生命周期管理
+- 应用启动时自动初始化 Redis task store（`app.py` lifespan）
+
+### Fixed
+
+- `ExportTask` 测试构造函数缺少 `operation` 参数导致 `TypeError`
+
+### Performance
+
+| 场景 | 结果 |
+|------|------|
+| Redis task CRUD (单次) | <1ms |
+| kg_build benchmark (50 chunks, mock LLM) | 0.018ms |
+| API 测试套件 (597 tests) | 87.6s 全部通过 |
+| KG API + E2E tests | 21/21 通过 |
+
 ## [1.6.1] - 2026-06-08
 
 ### Summary
