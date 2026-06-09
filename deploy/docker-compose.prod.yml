@@ -33,7 +33,7 @@ x-arrow-lake: &arrow-lake
       HTTP_PROXY: "${BUILD_HTTP_PROXY:-}"
       HTTPS_PROXY: "${BUILD_HTTPS_PROXY:-}"
       NO_PROXY: "${BUILD_NO_PROXY:-127.0.0.1,localhost}"
-  image: arrow-lake:1.6.2
+  image: arrow-lake:1.6.3
   restart: unless-stopped
   env_file:
     - path: ../.env
@@ -790,6 +790,7 @@ services:
     restart: unless-stopped
     networks:
       - arrow-lake-net
+    entrypoint: ["/usr/local/bin/entrypoint-hugegraph.sh"]
     environment:
       HTTP_PROXY: ""
       HTTPS_PROXY: ""
@@ -801,6 +802,8 @@ services:
       - "127.0.0.1:${HUGEGRAPH_PORT:-8089}:8080"
     volumes:
       - hg-server-data:/var/lib/hugegraph
+      - ./scripts/entrypoint-hugegraph.sh:/usr/local/bin/entrypoint-hugegraph.sh:ro
+      - ./scripts/fix-hugegraph-gremlin.sh:/usr/local/bin/fix-hugegraph-gremlin.sh:ro
     deploy:
       resources:
         limits:

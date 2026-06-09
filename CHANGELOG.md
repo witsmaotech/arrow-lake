@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.6.3] - 2026-06-09
+
+### Summary
+
+v1.6.3 修复 HugeGraph 1.7 all-in-one 镜像 Gremlin 脚本引擎图绑定缺失问题，确保 `g.V()` / `graph.V()` / `hugegraph.traversal()` 在容器启动后即可用。
+
+### Fixed
+
+- HugeGraph 1.7 all-in-one 镜像 `gremlin-server.yaml` 的 `graphs: {}` 导致 Gremlin 变量未注册 — 通过 entrypoint wrapper 在服务启动前注入图绑定配置
+- `export_graph()` 在 Gremlin 不可用时静默失败 — 添加 REST API 降级路径，当 Gremlin 脚本引擎抛异常时自动切换到 `GET /graphs/{name}/graph/vertices|edges`
+
+### Added
+
+- `deploy/scripts/entrypoint-hugegraph.sh` — HugeGraph 容器 entrypoint wrapper，启动前自动 patch `gremlin-server.yaml`
+- `deploy/scripts/fix-hugegraph-gremlin.sh` — 手动修复脚本，用于已运行的容器（无需重启整个服务）
+- `test_export_graph_rest_fallback_*` 单元测试覆盖 REST API 降级路径
+
+### Changed
+
+- `docker-compose.prod.yml` hg-server 服务：覆盖 `entrypoint` 使用 wrapper 脚本，新增两个脚本 volume mount
+- `_import_export.py` 的 `export_graph()` 方法：Gremlin 异常时降级到 REST API 而非直接失败
+
+### Known Issues
+
+- `tests/unit/kg/test_kg_builder.py` 的 7 个异步 builder 测试预先存在失败（与本次修改无关，是 v1.6.1 fire-and-forget 重构后的 mock 同步问题）
+
 
 ## [1.6.2] - 2026-06-09
 
@@ -33,7 +59,7 @@ v1.6.2 聚焦于 **多 Worker 异步任务状态共享** — 通过 Redis 实现
 
 ### Known Issues
 
-- HugeGraph 1.7 all-in-one 模式的 Gremlin 脚本引擎未注册图绑定（`g.V()` 等语法不可用），REST traverser 端点正常
+- ~~HugeGraph 1.7 all-in-one 模式的 Gremlin 脚本引擎未注册图绑定（`g.V()` 等语法不可用），REST traverser 端点正常~~（v1.6.3 已修复）
 
 ### Performance
 
