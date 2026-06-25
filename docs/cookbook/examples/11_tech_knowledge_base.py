@@ -86,15 +86,15 @@ def main() -> None:
     n2 = _add_vectors(lake, "kb_zh", r2.total_rows)
     for ds in ["kb_en", "kb_zh"]:
         try:
-            lake.create_vector_index(ds, "text_embedding")
+            lake.create_vector_index(ds, vector_column="text_embedding")
         except Exception as e:
             print(f"  向量索引跳过 ({ds}): {e}")
-        lake.create_fts_index(ds, columns=["text_content"])
+        lake.create_fts_index(ds, fts_column="text_content")
     print(f"  共 {n1 + n2} 个向量, 双索引已建立")
 
     # STEP 3: 中文分类搜索
     print("\nSTEP 3: 按分类搜索 (算法类)")
-    result = lake.text_search("kb_zh", "向量数据库", top_k=3, columns=["text_content"])
+    result = lake.text_search("kb_zh", "向量数据库", top_k=3, fts_column="text_content")
     print(f"  结果: {result.row_count} 条")
     _show(result)
 
@@ -102,13 +102,14 @@ def main() -> None:
     print("\nSTEP 4: 混合搜索 — '列式存储的优势'")
     rng = np.random.RandomState(42)
     q = rng.randn(DIM).astype(np.float32).tolist()
-    result = lake.hybrid_search("kb_zh", "列式存储的优势", "text_embedding",
-                                top_k=5, fts_columns=["text_content"])
+    result = lake.hybrid_search("kb_zh", q, "列式存储的优势",
+                                top_k=5, vector_column="text_embedding",
+                                fts_column="text_content")
     _show(result)
 
     # STEP 5: 英文搜索
     print("\nSTEP 5: 英文搜索 — 'vector database'")
-    result = lake.text_search("kb_en", "vector database", top_k=3, columns=["text_content"])
+    result = lake.text_search("kb_en", "vector database", top_k=3, fts_column="text_content")
     _show(result)
 
     # STEP 6: SQL 分类统计

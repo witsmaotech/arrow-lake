@@ -78,16 +78,16 @@ def main() -> None:
     print("STEP 3: 创建索引")
     for ds in ["papers", "papers_zh"]:
         try:
-            lake.create_vector_index(ds, "text_embedding")
+            lake.create_vector_index(ds, vector_column="text_embedding")
         except Exception as e:
             print(f"  向量索引跳过 ({ds}): {e}")
-        lake.create_fts_index(ds, columns=["text_content"])
+        lake.create_fts_index(ds, fts_column="text_content")
     print("  向量索引 + 全文索引 已创建")
     print("  [PASS]\n")
 
     # --- STEP 4: 全文搜索 ---
     print("STEP 4: 中文全文搜索 — '知识图谱'")
-    result = lake.text_search("papers_zh", "知识图谱", top_k=3, columns=["text_content"])
+    result = lake.text_search("papers_zh", "知识图谱", top_k=3, fts_column="text_content")
     print(f"  结果: {result.row_count} 条")
     for i in range(min(3, result.row_count)):
         tbl = result.table

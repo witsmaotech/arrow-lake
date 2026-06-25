@@ -44,9 +44,50 @@ Arrow Lake 数据湖平台实战教程，涵盖数据摄取、搜索、分析、
 
 教程中引用的示例数据位于 [`datas/`](./datas/README.md) 目录，包含论文 CSV/PDF、交易记录、知识库 JSONL、示例图片和视频，可直接运行。
 
+## 服务依赖示例（需外部服务）
+
+以下示例依赖外部服务（LLM / HugeGraph / OCR / MinIO）。**在主机 `.venv` 运行前请 export 对应端点**（默认指向 localhost 会失败；api 容器已预配这些端点）。
+
+| 示例 | 依赖 | 需设置的环境变量 |
+|---|---|---|
+| `19_knowledge_graph_build` | LLM + HugeGraph | `ARROW_LAKE__EMBEDDING__API_BASE` + `ARROW_LAKE__HUGEGRAPH__HOST` / `PORT` |
+| `20_rag_qa_system` | LLM + MinIO | `ARROW_LAKE__EMBEDDING__API_BASE` + MinIO 凭证（`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`） |
+| `21_document_ingest` | OCR (paddleocr) | 安装 `pip install paddleocr`，并按需配 PDF/OCR 后端 |
+| `31_graphrag_qa` | LLM 嵌入 | `ARROW_LAKE__EMBEDDING__API_BASE` |
+| `34_rag_streaming` | LLM | `ARROW_LAKE__EMBEDDING__API_BASE` |
+
+主机运行（Ollama 端点按实际改）：
+
+```bash
+export ARROW_LAKE__EMBEDDING__API_BASE="http://10.100.93.100:11434/v1"
+export ARROW_LAKE__HUGEGRAPH__HOST="localhost"
+export ARROW_LAKE__HUGEGRAPH__PORT="8089"
+.venv/bin/python docs/cookbook/examples/19_knowledge_graph_build.py
+```
+
+或在 api 容器内运行（已预配全部服务端点）：
+
+```bash
+docker exec -it deploy-api-1 .venv/bin/python /app/examples/19_knowledge_graph_build.py
+```
+
+> 其余 38 个示例为 self-contained（仅依赖本地 `datas/`），无需外部服务即可直接运行。
+
 ## 版本
 
-对应 Arrow Lake v1.6.3
+对应 Arrow Lake v1.7.0
+
+## v1.7.0 新特性 — Hyper-Extract KG + Doc-Type 路由
+
+| #  | 示例 | 说明 |
+| -- | ---- | ---- |
+| 44 | [`examples/44_kg_doctype_he.py`](./examples/44_kg_doctype_he.py) | 文档类型路由：三层路由（override→gallery→default）+ 别名归一 + LLM 内容推断；he 抽取后端启用 |
+| 45 | [`examples/45_kg_doctype_api.py`](./examples/45_kg_doctype_api.py) | REST API 构建 KG 全流程：摄入→KG→状态→统计；doc_type/he 在 API 模式说明 |
+| — | — | HugeGraph PD 集群模式（运行时多图，每文档独立 KG 隔离） |
+| — | — | A 方案实体双写（通用 `entity` 顶点 + 细分 label）+ 关系路由 |
+| — | — | ingest `doc_type` 贯通：上传 API → facade → Ingestor → chunk → KG builder |
+
+> 新增功能：hyper-extract 抽取后端（精准三元组）、doc_type 三层路由（config override → TemplateGallery 元数据匹配 → default 兜底）+ LLM 内容推断、HugeGraph PD 集群运行时多图隔离、A 方案实体双写。详见 [v1.7.0 方案](../v1.7.0-hyper-extract-kg-extraction-plan.md) 与 [CHANGELOG](../../CHANGELOG.md)。
 
 ## v1.6.3 新特性 — Deploy Hardening & nginx Proxy
 

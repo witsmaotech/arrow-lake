@@ -47,7 +47,7 @@ async def run_async() -> None:
     config.hugegraph.host = "localhost"
     config.hugegraph.port = 8089
     config.hugegraph.graph_name = "hugegraph"
-    lake = Lake(base_uri=args.base_uri, arrow_lake_config=config)
+    lake = Lake(base_uri=args.base_uri, config=config)
 
     task_id = ""
 

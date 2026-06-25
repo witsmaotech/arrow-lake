@@ -53,15 +53,15 @@ def main() -> None:
     })
     lake.create_dataset("test_data", table)
 
-    aid1 = lake.audit_record("test_data", "ingest", actor="admin",
-                              metadata={"rows": 10, "run_id": "run_001"})
+    aid1 = lake.audit_record("ingest", "test_data", actor="admin",
+                              payload={"rows": 10, "run_id": "run_001"})
     print(f"  审计 ID: {aid1[:12]}...")
 
     # STEP 2: 记录查询事件
     print("\nSTEP 2: 记录查询事件")
     result = lake.olap_query("test_data", "SELECT SUM(value) as total FROM test_data")
-    aid2 = lake.audit_record("test_data", "query", actor="user_a",
-                              metadata={"sql": "SELECT SUM(value)"})
+    aid2 = lake.audit_record("query", "test_data", actor="user_a",
+                              payload={"sql": "SELECT SUM(value)"})
     print(f"  查询结果: {result.table.to_pylist()[0]}")
     print(f"  审计 ID: {aid2[:12]}...")
 
@@ -72,8 +72,8 @@ def main() -> None:
         "value": list(range(10, 15)),
     })
     lake.append_dataset("test_data", new_table)
-    aid3 = lake.audit_record("test_data", "update", actor="system",
-                              metadata={"rows_added": 5})
+    aid3 = lake.audit_record("update", "test_data", actor="system",
+                              payload={"rows_added": 5})
     print(f"  追加 5 行, 审计 ID: {aid3[:12]}...")
 
     # STEP 4: 查询审计日志
@@ -99,7 +99,7 @@ def main() -> None:
     # STEP 6: 数据集最终状态
     print("\nSTEP 6: 数据集状态")
     catalog = lake.catalog()
-    ds = catalog.datasets.get("test_data")
+    ds = next((e for e in catalog.datasets if e.name == "test_data"), None)
     rows = ds.num_rows if ds else "?"
     print(f"  test_data: {rows} 行")
 

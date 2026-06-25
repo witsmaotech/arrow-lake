@@ -23,20 +23,22 @@ from arrow_lake.config.gravitino import GravitinoAuthType
 
 
 class TestSimpleAuthProvider:
-    """Test Simple auth: Base64-encoded user identifier."""
+    """Test Simple auth.
+
+    Gravitino's simple authenticator with authorization_enable=false rejects an
+    explicit ``Authorization`` header with 401, so ``SimpleAuthProvider``
+    intentionally returns empty headers and ``authenticate`` does not add one.
+    The user identity is consumed internally by the Python SDK.
+    """
 
     def test_default_user(self) -> None:
         provider = SimpleAuthProvider()
-        headers = provider.auth_headers()
-        assert "Authorization" in headers
-        expected = base64.b64encode(b"arrow_lake").decode()
-        assert headers["Authorization"] == f"Simple {expected}"
+        # Simple deliberately returns no Authorization header
+        assert provider.auth_headers() == {}
 
     def test_custom_user(self) -> None:
         provider = SimpleAuthProvider(user="alice")
-        headers = provider.auth_headers()
-        expected = base64.b64encode(b"alice").decode()
-        assert headers["Authorization"] == f"Simple {expected}"
+        assert provider.auth_headers() == {}
 
     def test_authenticate_adds_header_to_request(self) -> None:
         provider = SimpleAuthProvider(user="bob")
@@ -45,7 +47,8 @@ class TestSimpleAuthProvider:
 
         result = provider.authenticate(req)
 
-        req.add_header.assert_called_once_with("Authorization", provider.auth_headers()["Authorization"])
+        # Simple must NOT set an Authorization header on the request
+        req.add_header.assert_not_called()
         assert result is req
 
 
@@ -205,10 +208,8 @@ class TestAuthHeaderPropagation:
 
         provider.authenticate(req)
 
-        req.add_header.assert_called_once()
-        call_args = req.add_header.call_args[0]
-        assert call_args[0] == "Authorization"
-        assert "Simple" in call_args[1]
+        # Simple auth intentionally does not add any header to the request
+        req.add_header.assert_not_called()
 
     def test_null_authenticate_does_not_add_headers(self) -> None:
         NullAuthProvider._warned = False

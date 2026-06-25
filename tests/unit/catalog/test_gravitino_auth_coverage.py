@@ -347,9 +347,8 @@ class TestCreateAuthProviderExtra:
         config.auth_simple_user = "explicit_user"
         provider = create_auth_provider(config)
         assert isinstance(provider, SimpleAuthProvider)
-        headers = provider.auth_headers()
-        expected = base64.b64encode(b"explicit_user").decode()
-        assert headers["Authorization"] == f"Simple {expected}"
+        # Simple auth deliberately returns empty headers (no Authorization)
+        assert provider.auth_headers() == {}
 
     def test_default_user_from_config(self) -> None:
         config = MagicMock()
@@ -357,9 +356,8 @@ class TestCreateAuthProviderExtra:
         config.auth_type = GravitinoAuthType.SIMPLE
         config.auth_simple_user = "default_arrow_lake"
         provider = create_auth_provider(config)
-        headers = provider.auth_headers()
-        expected = base64.b64encode(b"default_arrow_lake").decode()
-        assert headers["Authorization"] == f"Simple {expected}"
+        assert isinstance(provider, SimpleAuthProvider)
+        assert provider.auth_headers() == {}
 
     def test_authenticate_propagates_to_simple(self) -> None:
         config = MagicMock()
@@ -371,4 +369,5 @@ class TestCreateAuthProviderExtra:
         req = MagicMock()
         result = provider.authenticate(req)
         assert result is req
-        req.add_header.assert_called_once()
+        # Simple auth must NOT add any header to the request
+        req.add_header.assert_not_called()

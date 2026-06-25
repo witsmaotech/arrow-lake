@@ -80,8 +80,9 @@ def main() -> None:
     q_zh = rng_q.randn(DIM).astype(np.float32).tolist()
     try:
         result = lake.ensemble_search(
-            "multilingual", "文档内容", "embedding_zh",
-            fts_columns=["text_content"],
+            "multilingual", q_zh,
+            columns=["embedding_zh", "embedding_en"],
+            weights={"embedding_zh": 0.7, "embedding_en": 0.3},
             top_k=5,
         )
         print(f"  结果: {result.row_count} 条")
@@ -104,7 +105,7 @@ def main() -> None:
     print("\nSTEP 3: 单列搜索对比")
     for col in ("embedding_zh", "embedding_en"):
         try:
-            result = lake.search("multilingual", q_zh, col, top_k=3)
+            result = lake.search("multilingual", q_zh, vector_column=col, top_k=3)
             print(f"  [{col}] {result.row_count} 条结果")
         except (ValueError, RuntimeError) as e:
             print(f"  [{col}] 跳过: {e}")
@@ -113,7 +114,8 @@ def main() -> None:
     print("\nSTEP 4: 均等权重集成搜索")
     try:
         result = lake.ensemble_search(
-            "multilingual", "文档内容", "embedding_zh",
+            "multilingual", q_zh,
+            columns=["embedding_zh", "embedding_en"],
             top_k=3,
         )
         print(f"  结果: {result.row_count} 条 (均等权重)")

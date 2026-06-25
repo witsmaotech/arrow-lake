@@ -86,16 +86,16 @@ def main() -> None:
     n2 = _add_vectors(lake, "knowledge_zh", r2.total_rows)
     for ds in DATASETS:
         try:
-            lake.create_vector_index(ds, "text_embedding")
+            lake.create_vector_index(ds, vector_column="text_embedding")
         except Exception as e:
             print(f"  向量索引跳过 ({ds}): {e}")
-        lake.create_fts_index(ds, columns=["text_content"])
+        lake.create_fts_index(ds, fts_column="text_content")
     print(f"  共 {n1 + n2} 个向量, 双域双索引已建立")
 
     # STEP 3: 跨域关键词搜索
     print("\nSTEP 3: 跨域关键词搜索 — '向量数据库'")
-    r_papers = lake.text_search("papers_zh", "向量数据库", top_k=3, columns=["text_content"])
-    r_kb = lake.text_search("knowledge_zh", "向量数据库", top_k=3, columns=["text_content"])
+    r_papers = lake.text_search("papers_zh", "向量数据库", top_k=3, fts_column="text_content")
+    r_kb = lake.text_search("knowledge_zh", "向量数据库", top_k=3, fts_column="text_content")
     _show_domain(r_papers, "论文", top=3)
     _show_domain(r_kb, "知识库", top=3)
 
@@ -103,10 +103,12 @@ def main() -> None:
     print("\nSTEP 4: 跨域混合搜索 — '知识图谱 大模型'")
     rng = np.random.RandomState(42)
     q = rng.randn(DIM).astype(np.float32).tolist()
-    r_papers = lake.hybrid_search("papers_zh", "知识图谱 大模型", "text_embedding",
-                                   top_k=3, fts_columns=["text_content"])
-    r_kb = lake.hybrid_search("knowledge_zh", "知识图谱 大模型", "text_embedding",
-                               top_k=3, fts_columns=["text_content"])
+    r_papers = lake.hybrid_search("papers_zh", q, "知识图谱 大模型",
+                                   top_k=3, vector_column="text_embedding",
+                                   fts_column="text_content")
+    r_kb = lake.hybrid_search("knowledge_zh", q, "知识图谱 大模型",
+                               top_k=3, vector_column="text_embedding",
+                               fts_column="text_content")
     _show_domain(r_papers, "论文", top=3)
     _show_domain(r_kb, "知识库", top=3)
 
@@ -125,7 +127,7 @@ def main() -> None:
     for ds_name in DATASETS:
         out = (base / f"{ds_name}_export.parquet").resolve()
         lake.export(ds_name, str(out), format="parquet")
-        ds_info = catalog.datasets.get(ds_name)
+        ds_info = next((e for e in catalog.datasets if e.name == ds_name), None)
         rows = ds_info.num_rows if ds_info else "?"
         print(f"  {ds_name}: {rows} 行 → {out.name} ({out.stat().st_size // 1024} KB)")
 

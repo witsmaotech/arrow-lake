@@ -33,6 +33,10 @@ def _add_vectors(lake: Lake, dataset: str, n_rows: int) -> int:
     vec_table = pa.table({
         "text_embedding": pa.FixedSizeListArray.from_arrays(vecs.ravel(), DIM),
     })
+    original = lake.read_dataset(dataset)
+    combined = original.append_column("text_embedding", vec_table.column("text_embedding"))
+    lake.delete_dataset(dataset)
+    lake.create_dataset(dataset, combined)
     return n_rows
 
 
@@ -74,7 +78,8 @@ def main() -> None:
     rng = np.random.RandomState(42)
     q = rng.randn(DIM).astype(np.float32).tolist()
     try:
-        result = lake.faceted_search("papers_zh", q, "text_embedding",
+        result = lake.faceted_search("papers_zh", q,
+                                     vector_column="text_embedding",
                                      facets=["category"],
                                      top_k=5)
         print(f"  搜索结果: {result.row_count} 条")
@@ -93,7 +98,7 @@ def main() -> None:
     # STEP 4: 对比普通向量搜索
     print("\nSTEP 4: 对比普通向量搜索")
     try:
-        result = lake.search("papers_zh", q, "text_embedding", top_k=5)
+        result = lake.search("papers_zh", q, vector_column="text_embedding", top_k=5)
         print(f"  结果: {result.row_count} 条 (无分面)")
     except (ValueError, RuntimeError) as e:
         print(f"  搜索跳过: {e}")

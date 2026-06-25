@@ -33,6 +33,10 @@ def _add_vectors(lake: Lake, dataset: str, n_rows: int) -> int:
     vec_table = pa.table({
         "text_embedding": pa.FixedSizeListArray.from_arrays(vecs.ravel(), DIM),
     })
+    original = lake.read_dataset(dataset)
+    combined = original.append_column("text_embedding", vec_table.column("text_embedding"))
+    lake.delete_dataset(dataset)
+    lake.create_dataset(dataset, combined)
     return n_rows
 
 
@@ -76,17 +80,17 @@ def main() -> None:
     print("STEP 3: 建立向量索引 + 全文索引")
     for ds in ["papers", "papers_zh"]:
         try:
-            lake.create_vector_index(ds, "text_embedding")
+            lake.create_vector_index(ds, vector_column="text_embedding")
         except Exception as e:
             print(f"  向量索引跳过 ({ds}): {e}")
-        lake.create_fts_index(ds, columns=["text_content"])
+        lake.create_fts_index(ds, fts_column="text_content")
     print("  双索引已创建")
 
     # STEP 4: 语义搜索
     print("\nSTEP 4: 语义搜索 — 'attention mechanism'")
     rng = np.random.RandomState(42)
     q = rng.randn(DIM).astype(np.float32).tolist()
-    result = lake.search("papers", q, "text_embedding", top_k=3)
+    result = lake.search("papers", q, vector_column="text_embedding", top_k=3)
     for i in range(min(3, result.row_count)):
         t = result.table
         print(f"  #{i+1} {t.column('id')[i].as_py()}  "
@@ -96,7 +100,7 @@ def main() -> None:
     # STEP 5: 中文全文搜索
     print("\nSTEP 5: 中文全文搜索 — '知识图谱 大模型'")
     result = lake.text_search("papers_zh", "知识图谱 大模型", top_k=3,
-                              columns=["text_content"])
+                              fts_column="text_content")
     for i in range(min(3, result.row_count)):
         t = result.table
         print(f"  #{i+1} {t.column('id')[i].as_py()}  "
@@ -106,9 +110,10 @@ def main() -> None:
     # STEP 6: 混合搜索
     print("\nSTEP 6: 混合搜索 — 'transformer architecture'")
     try:
-        result = lake.hybrid_search("papers", "transformer architecture",
-                                    "text_embedding", top_k=3,
-                                    fts_columns=["text_content"])
+        result = lake.hybrid_search("papers", q, "transformer architecture",
+                                    top_k=3,
+                                    vector_column="text_embedding",
+                                    fts_column="text_content")
         for i in range(min(3, result.row_count)):
             t = result.table
             score = t.column("_rrf_score")[i].as_py() if "_rrf_score" in t.column_names else 0

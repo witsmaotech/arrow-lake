@@ -53,7 +53,7 @@ def main() -> None:
     # STEP 2: 创建备份
     print("\nSTEP 2: 创建备份")
     try:
-        info = lake.backup_create(datasets=["sales"])
+        info = lake.backup_create(dataset_names=["sales"])
         backup_id = info.backup_id
         print(f"  备份 ID: {backup_id}")
         print(f"  创建时间: {info.created_at}")
@@ -101,9 +101,9 @@ def main() -> None:
     # STEP 5: 恢复备份
     print("\nSTEP 5: 恢复备份")
     try:
-        lake.backup_restore(backup_id, datasets=["sales"], replace=True)
+        lake.backup_restore(backup_id, dataset_names=["sales"], overwrite=True)
         catalog = lake.catalog()
-        ds = catalog.datasets.get("sales")
+        ds = next((e for e in catalog.datasets if e.name == "sales"), None)
         restored_rows = ds.num_rows if ds else 0
         print(f"  恢复后: {restored_rows} 行")
         if restored_rows == original_rows:

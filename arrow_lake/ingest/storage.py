@@ -314,7 +314,9 @@ class LanceStorageManager(
                 table = db.open_table(name)
                 max_rows = self._storage_config.lance_max_rows_per_file
                 if max_rows and max_rows > 0:
-                    table.optimize(max_rows_per_file=max_rows)
+                    # v1.7.1: lancedb 0.33 removed max_rows_per_file from optimize();
+                    # default optimize() suffices — fine-grained control via compact_files().
+                    table.optimize()
             except Exception:
                 logger.debug("post_write_optimize_skipped", dataset=name, exc_info=True)
 

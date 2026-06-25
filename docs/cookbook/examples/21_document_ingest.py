@@ -106,15 +106,15 @@ def main() -> None:
     # STEP 3: 查看文档数据集
     print("\nSTEP 3: 查看数据集")
     catalog = lake.catalog()
-    ds = catalog.datasets.get("docs")
+    ds = next((e for e in catalog.datasets if e.name == "docs"), None)
     row_count = ds.num_rows if ds else 0
     print(f"  docs: {row_count} 行")
 
     # STEP 4: 搜索文档内容
     print("\nSTEP 4: 全文搜索文档")
     try:
-        lake.create_fts_index("docs", columns=["text"])
-        result = lake.text_search("docs", "知识图谱", top_k=30, columns=["text"])
+        lake.create_fts_index("docs", fts_column="text")
+        result = lake.text_search("docs", "知识图谱", top_k=30, fts_column="text")
         print(f"  '知识图谱' → {result.row_count} 条结果")
         for i in range(min(3, result.row_count)):
             txt = str(result.table.column("text")[i].as_py())[:120]
@@ -125,7 +125,7 @@ def main() -> None:
     # STEP 5: 搜索英文论文
     print("\nSTEP 5: 搜索英文论文")
     try:
-        result = lake.text_search("docs", "attention mechanism", top_k=3, columns=["text"])
+        result = lake.text_search("docs", "attention mechanism", top_k=3, fts_column="text")
         print(f"  'attention mechanism' → {result.row_count} 条结果")
         for i in range(min(3, result.row_count)):
             txt = str(result.table.column("text")[i].as_py())[:120]

@@ -59,7 +59,7 @@ def main() -> None:
     })
     lake.create_dataset("products", table)
     catalog = lake.catalog()
-    ds = catalog.datasets.get("products")
+    ds = next((e for e in catalog.datasets if e.name == "products"), None)
     print(f"  初始 schema: {ds.num_rows} 行")
     print(f"  版本: {ds.version}")
 
@@ -77,7 +77,7 @@ def main() -> None:
         lake.delete_dataset("products")
         lake.create_dataset("products", new_table)
         catalog = lake.catalog()
-        ds = catalog.datasets.get("products")
+        ds = next((e for e in catalog.datasets if e.name == "products"), None)
         print(f"  添加列后: {ds.num_rows} 行")
     except RuntimeError as e:
         print(f"  跳过: {e}")
@@ -112,7 +112,7 @@ def main() -> None:
     })
     lake.append_dataset("products", append_table)
     catalog = lake.catalog()
-    ds = catalog.datasets.get("products")
+    ds = next((e for e in catalog.datasets if e.name == "products"), None)
     rows = ds.num_rows if ds else "?"
     print(f"  追加后: {rows} 行")
 

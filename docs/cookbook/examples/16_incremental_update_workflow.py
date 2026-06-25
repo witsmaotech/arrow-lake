@@ -62,7 +62,7 @@ def main() -> None:
     print("\nSTEP 3: 数据量变化")
     catalog = lake.catalog()
     for name in lake.list_datasets():
-        ds = catalog.datasets.get(name)
+        ds = next((e for e in catalog.datasets if e.name == name), None)
         rows = ds.num_rows if ds else "?"
         print(f"  {name}: {rows} 行")
 
@@ -76,12 +76,12 @@ def main() -> None:
 
     # STEP 5: 重建索引 (增量后)
     print("\nSTEP 5: 重建索引 (增量更新后)")
-    lake.create_fts_index("sales", columns=["product_name"])
+    lake.create_fts_index("sales", fts_column="product_name")
     print("  FTS 索引已重建")
 
     # STEP 6: 搜索验证
     print("\nSTEP 6: 搜索验证新增数据可被检索")
-    result = lake.text_search("sales", "Mouse", top_k=3, columns=["product_name"])
+    result = lake.text_search("sales", "Mouse", top_k=3, fts_column="product_name")
     print(f"  搜索 'Mouse': {result.row_count} 条结果")
     for i in range(min(3, result.row_count)):
         t = result.table
@@ -94,7 +94,7 @@ def main() -> None:
     out = (base / "sales_incremental.parquet").resolve()
     lake.export("sales", str(out), format="parquet")
     catalog = lake.catalog()
-    ds_final = catalog.datasets.get("sales")
+    ds_final = next((e for e in catalog.datasets if e.name == "sales"), None)
     rows = ds_final.num_rows if ds_final else "?"
     print(f"  最终: {rows} 行 → {out.name} ({out.stat().st_size // 1024} KB)")
 

@@ -88,7 +88,7 @@ def main() -> None:
     catalog = lake.catalog()
     for name in _DATASETS:
         if name in lake.list_datasets():
-            ds = catalog.datasets.get(name)
+            ds = next((e for e in catalog.datasets if e.name == name), None)
             rows = ds.num_rows if ds else "?"
             print(f"  {name}: {rows} 行")
 

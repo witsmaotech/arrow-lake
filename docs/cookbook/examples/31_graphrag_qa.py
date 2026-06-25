@@ -76,7 +76,7 @@ async def run_async() -> None:
     print("\nSTEP 2: 向量化 + 建索引")
     n = _add_vectors(lake, "knowledge_zh", report.total_rows)
     try:
-        lake.create_vector_index("knowledge_zh", "text_embedding")
+        lake.create_vector_index("knowledge_zh", vector_column="text_embedding")
     except Exception as e:
         print(f"  向量索引跳过: {e}")
     lake.create_fts_index("knowledge_zh", fts_column="text_content")

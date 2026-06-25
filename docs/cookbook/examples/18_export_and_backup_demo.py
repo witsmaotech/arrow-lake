@@ -77,7 +77,7 @@ def main() -> None:
     # STEP 5: 备份
     print("\nSTEP 5: 备份数据集")
     try:
-        b = lake.backup_create(datasets=["sales"])
+        b = lake.backup_create(dataset_names=["sales"])
         print(f"  备份已创建: {b}")
     except (OSError, ValueError) as e:
         print(f"  备份功能: {e}")
@@ -98,7 +98,7 @@ def main() -> None:
     print("\nSTEP 8: 数据集目录总览")
     catalog = lake.catalog()
     for name in lake.list_datasets():
-        ds = catalog.datasets.get(name)
+        ds = next((e for e in catalog.datasets if e.name == name), None)
         rows = ds.num_rows if ds else "?"
         print(f"  {name}: {rows} 行")
 

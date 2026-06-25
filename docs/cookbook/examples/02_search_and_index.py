@@ -90,8 +90,8 @@ def main() -> None:
     # --- STEP 3: 创建向量索引 ---
     print("STEP 3: 创建向量索引 (IVF_PQ)")
     try:
-        idx = lake.create_vector_index(DATASET, "text_embedding",
-                                      index_type="ivf_pq", metric="cosine")
+        idx = lake.create_vector_index(DATASET, vector_column="text_embedding",
+                                      index_type="IVF_PQ", metric="cosine")
         print(f"  索引类型: {idx.index_type}")
         print("  [PASS]\n")
     except Exception as e:
@@ -100,7 +100,7 @@ def main() -> None:
 
     # --- STEP 4: 创建全文索引 ---
     print("STEP 4: 创建全文索引 (jieba 中文分词)")
-    lake.create_fts_index(DATASET, columns=["text_content"])
+    lake.create_fts_index(DATASET, fts_column="text_content")
     print("  [PASS]\n")
 
     # --- STEP 5: 向量搜索 ---
@@ -108,7 +108,7 @@ def main() -> None:
     # Use the first vector from the actual dataset as the query vector
     dataset_table = lake.read_dataset(DATASET)
     query_vec = dataset_table.column("text_embedding")[0].as_py()
-    result = lake.search(DATASET, query_vec, "text_embedding", top_k=5)
+    result = lake.search(DATASET, query_vec, vector_column="text_embedding", top_k=5)
     print(f"  结果: {result.row_count} 条")
     _print_results(result)
     print("  [PASS]\n")
@@ -116,15 +116,16 @@ def main() -> None:
     # --- STEP 6: 全文搜索 ---
     print("STEP 6: 全文搜索 — '列式存储 零拷贝'")
     result = lake.text_search(DATASET, "列式存储 零拷贝", top_k=5,
-                              columns=["text_content"])
+                              fts_column="text_content")
     print(f"  结果: {result.row_count} 条")
     _print_results(result)
     print("  [PASS]\n")
 
     # --- STEP 7: 混合搜索 ---
     print("STEP 7: 混合搜索 (RRF 融合) — '内存格式'")
-    result = lake.hybrid_search(DATASET, "内存格式", "text_embedding", top_k=5,
-                                fts_columns=["text_content"])
+    result = lake.hybrid_search(DATASET, query_vec, "内存格式", top_k=5,
+                                vector_column="text_embedding",
+                                fts_column="text_content")
     print(f"  结果: {result.row_count} 条")
     _print_results(result)
     print("  [PASS]\n")

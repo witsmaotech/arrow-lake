@@ -101,7 +101,7 @@ def main() -> None:
     print("\nSTEP 6: 数据集列表")
     catalog = lake.catalog()
     for name in lake.list_datasets():
-        ds = catalog.datasets.get(name)
+        ds = next((e for e in catalog.datasets if e.name == name), None)
         rows = ds.num_rows if ds else "?"
         print(f"  {name}: {rows} 行")
 

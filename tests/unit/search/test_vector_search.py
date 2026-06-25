@@ -109,6 +109,7 @@ def _make_mock_query_builder(result_table: pa.Table | None = None) -> MagicMock:
     builder.limit.return_value = builder
     builder.nprobes.return_value = builder
     builder.distance_type.return_value = builder
+    builder.refine_factor.return_value = builder  # v1.7.1 #5: refine_factor in SDK path
     return builder
 
 
@@ -454,6 +455,7 @@ class TestSearch:
         builder.limit.return_value = builder
         builder.nprobes.return_value = builder
         builder.distance_type.return_value = builder
+        builder.refine_factor.return_value = builder  # v1.7.1 #5
         mock_table.search.return_value = builder
 
         bridge = VectorSearchBridge(storage)

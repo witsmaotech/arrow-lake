@@ -64,7 +64,7 @@ def main() -> None:
     print("39 Blob 生命周期管理")
     print("=" * 60)
 
-    lake = Lake(base_uri=str(base), arrow_lake_config=config)
+    lake = Lake(base_uri=str(base), config=config)
     print(f"  Lake version: {lake.version()}")
     print(f"  Lifecycle enabled: {lake._config.lifecycle.enabled}")
     print(f"  Standard -> IA: {lake._config.lifecycle.standard_to_ia_days} days")

@@ -97,17 +97,17 @@ def main() -> None:
 
     # STEP 2: 质量过滤
     print("\nSTEP 2: 质量过滤 (null_check)")
-    qr = lake.quality_filter(DATASET, filters="null_check", mode="exclude")
+    qr = lake.quality_filter(DATASET, active_filters="null_check", mode="all")
     print(f"  通过: {qr.passed}, 拒绝: {qr.rejected}")
 
     # STEP 3: 精确去重
     print("\nSTEP 3: 精确去重")
-    dr = lake.deduplicate(DATASET, strategy="exact", columns=["id", "text_content"], action="delete")
+    dr = lake.deduplicate(DATASET, strategy="exact", action="remove")
     print(f"  检出重复: {dr.duplicates_found} 行")
 
     # STEP 4: 感知去重
     print("\nSTEP 4: 感知去重")
-    dr = lake.deduplicate(DATASET, strategy="simhash", threshold=0.95, columns=["text_content"], action="delete")
+    dr = lake.deduplicate(DATASET, strategy="perceptual", action="remove")
     print(f"  检出近似重复: {dr.duplicates_found} 行")
 
     # STEP 5: 导出清洗数据
@@ -115,7 +115,7 @@ def main() -> None:
     out = base / "cleaned_data.parquet"
     lake.export(DATASET, str(out), format="parquet")
     catalog = lake.catalog()
-    ds = catalog.datasets.get(DATASET)
+    ds = next((e for e in catalog.datasets if e.name == DATASET), None)
     rows = ds.num_rows if ds else "?"
     print(f"  清洗后: {rows} 行 → {out} ({out.stat().st_size // 1024} KB)")
 

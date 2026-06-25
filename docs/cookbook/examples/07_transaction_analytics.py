@@ -39,7 +39,7 @@ def main() -> None:
 
     config = ArrowLakeConfig()
     config.olap.ducklake_enabled = True
-    lake = Lake(base_uri=args.base_uri, arrow_lake_config=config)
+    lake = Lake(base_uri=args.base_uri, config=config)
 
     # 清理后端残留
     for ds in _DATASETS:
@@ -56,7 +56,7 @@ def main() -> None:
 
     # --- STEP 2: 去重 ---
     print("STEP 2: 精确去重")
-    result = lake.deduplicate(DATASET, strategy="exact", columns=["订单号"], action="delete")
+    result = lake.deduplicate(DATASET, strategy="exact", action="remove")
     print(f"  重复订单: {result.duplicates_found}")
     print("  [PASS]\n")
 

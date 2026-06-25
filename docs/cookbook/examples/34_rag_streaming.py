@@ -68,7 +68,7 @@ async def run_async() -> None:
     print("STEP 1: 准备知识库")
     report = lake.ingest("knowledge_zh", [str(DATAS_DIR / "kb" / "knowledge_zh.jsonl")])
     _add_vectors(lake, "knowledge_zh", report.total_rows)
-    lake.create_fts_index("knowledge_zh", columns=["text_content"])
+    lake.create_fts_index("knowledge_zh", fts_column="text_content")
     print("  知识库就绪")
 
     # STEP 2: 检查 RAG 服务

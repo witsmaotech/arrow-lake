@@ -150,7 +150,7 @@ class TestArrowLakeConfig:
     def test_default_observability_values(self) -> None:
         config = ArrowLakeConfig()
         assert config.observability.metrics_enabled is True
-        assert config.observability.metrics_port == 8000
+        assert config.observability.metrics_port == 8001
         assert config.observability.log_level == "INFO"
 
 

@@ -366,8 +366,27 @@ class LineageStore:
             )
             self._storage.create_dataset(self._store_dataset, empty_table)
             logger.info("lineage_store_created", dataset=self._store_dataset)
+        else:
+            # v1.7.1: migrate legacy table missing the column_lineage field
+            self._migrate_schema()
 
         self._initialized = True
+
+    def _migrate_schema(self) -> None:
+        """Add column_lineage field if missing from a legacy lineage table."""
+        try:
+            existing = self._storage.open_dataset(self._store_dataset)
+            if "column_lineage" not in existing.schema.names:
+                self._storage.add_column(
+                    self._store_dataset, "column_lineage", "CAST(NULL AS STRING)"
+                )
+                logger.info(
+                    "lineage_store_migrated",
+                    dataset=self._store_dataset,
+                    field="column_lineage",
+                )
+        except Exception:
+            logger.debug("lineage_store_migrate_skipped", exc_info=True)
 
     @staticmethod
     def _row_to_event(table: pa.Table, index: int) -> LineageEvent:
