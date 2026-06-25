@@ -124,6 +124,40 @@ class _LakeSearchMixin:
             replace=replace,
         )
 
+    async def search_async(
+        self,
+        dataset_name: str,
+        query_vector: list[float],
+        *,
+        top_k: int | None = None,
+        vector_column: str = "text_embedding",
+        where: str | None = None,
+        nprobes: int | None = None,
+    ) -> Any:
+        """Async vector search (v1.7.1 #9). Delegates to VectorSearchBridge.search_async.
+
+        Incremental async entry point for high-concurrency workloads. See
+        :meth:`VectorSearchBridge.search_async` for pooling/throughput caveats.
+        """
+        from arrow_lake.query.vector import VectorSearchBridge
+
+        bridge = self._get_component(
+            "vector",
+            lambda: VectorSearchBridge(
+                self._get_storage(),
+                config=self._config.vector,
+                **self._bridge_kwargs(),
+            ),
+        )
+        return await bridge.search_async(
+            dataset_name,
+            query_vector,
+            top_k=top_k,
+            vector_column=vector_column,
+            where=where,
+            nprobes=nprobes,
+        )
+
     def text_search(
         self,
         dataset_name: str,
@@ -202,6 +236,58 @@ class _LakeSearchMixin:
             ),
         )
         bridge.create_index(dataset_name, fts_column=fts_column, replace=replace)
+
+    def create_scalar_index(
+        self,
+        dataset_name: str,
+        *,
+        column: str,
+        index_type: str = "BTREE",
+        replace: bool = True,
+        index_name: str | None = None,
+    ) -> None:
+        """Create a scalar index on a column (v1.7.1 #3).
+
+        Delegates to storage. Low-cardinality columns (modality/source/doc_type)
+        benefit from BITMAP; ordered/numeric (created_at/quality_score) from BTREE.
+
+        Args:
+            dataset_name: Name of the Lance dataset.
+            column: Column to index.
+            index_type: Scalar index type (BTREE/BITMAP/ZONEMAP/...).
+            replace: Overwrite existing index on this column.
+            index_name: Optional explicit index name.
+        """
+        self._get_storage().create_scalar_index(
+            dataset_name,
+            column,
+            index_type=index_type,
+            replace=replace,
+            index_name=index_name,
+        )
+
+    def create_facet_indexes(
+        self,
+        dataset_name: str,
+        columns: list[str] | None = None,
+    ) -> dict[str, str]:
+        """Create scalar indexes on facet columns in bulk (v1.7.1 #3).
+
+        Defaults to FacetedSearchConfig.facet_filter_columns + scalar_index_type_map.
+
+        Args:
+            dataset_name: Name of the Lance dataset.
+            columns: Columns to index (None = config facet columns).
+
+        Returns:
+            Mapping of column → status ("created"|"skipped"|"failed").
+        """
+        if columns is None:
+            columns = list(self._config.faceted.facet_filter_columns)
+        type_map = dict(self._config.faceted.scalar_index_type_map)
+        return self._get_storage().create_facet_indexes(
+            dataset_name, columns, type_map=type_map
+        )
 
     def hybrid_search(
         self,

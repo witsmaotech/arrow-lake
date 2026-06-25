@@ -66,6 +66,68 @@ class StorageAdvancedMixin:
         finally:
             lock.release()
 
+    def compact_files(
+        self,
+        name: str,
+        *,
+        target_rows_per_fragment: int = 1_024_000,
+        max_rows_per_group: int | None = None,
+        materialize_deletions: bool = True,
+        num_threads: int | None = None,
+    ) -> CompactionStats:
+        """Fine-grained compaction via lance dataset optimize.compact_files (v1.7.1 #10).
+
+        Unlike :meth:`compact` (which uses ``table.optimize()``), this exposes
+        pylance's ``ds.optimize.compact_files`` for explicit control over fragment
+        sizing — useful for write-heavy datasets where the default merge heuristic
+        is suboptimal.
+
+        Args:
+            name: Dataset name.
+            target_rows_per_fragment: Target row count per output fragment.
+            max_rows_per_group: Max rows per compaction group (None = lance default).
+            materialize_deletions: Whether to materialize soft-deletions.
+            num_threads: Thread count (None = lance default).
+
+        Raises:
+            StorageError: If dataset not found or compaction fails.
+        """
+        lock = self._dataset_lock(name)
+        self._acquire_dataset_lock(name)
+        try:
+            self._validate_name(name)
+            import lance as lance_lib
+
+            uri = self.dataset_uri(name) if self._storage_config else str(self._lance_dir(name))
+            ds = lance_lib.dataset(uri, storage_options=self._storage_options)
+            fragments_before = len(ds.get_fragments())
+            version_before = ds.version
+
+            try:
+                ds.optimize.compact_files(
+                    target_rows_per_fragment=target_rows_per_fragment,
+                    max_rows_per_group=max_rows_per_group,
+                    materialize_deletions=materialize_deletions,
+                    num_threads=num_threads,
+                )
+            except (ValueError, RuntimeError, OSError) as exc:
+                raise StorageError(
+                    error_code=ErrorCode.STORAGE_WRITE_FAILED,
+                    message=f"compact_files failed on '{name}': {exc}",
+                ) from exc
+
+            ds = lance_lib.dataset(uri, storage_options=self._storage_options)
+            from arrow_lake.ingest.storage import CompactionStats
+
+            return CompactionStats(
+                version_before=version_before,
+                version_after=ds.version,
+                fragments_before=fragments_before,
+                fragments_after=len(ds.get_fragments()),
+            )
+        finally:
+            lock.release()
+
     def add_column(self, name: str, column_name: str, sql_expr: str) -> None:
         """Add a new column to a dataset via SQL expression.
 

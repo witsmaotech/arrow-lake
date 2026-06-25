@@ -68,6 +68,53 @@ def index_fts(
     _print_success(f"FTS index created for '{dataset}'")
 
 
+@index_group.command("scalar")
+@click.argument("dataset")
+@click.option("--column", required=True, help="Column to index")
+@click.option("--type", "index_type", default="BTREE", help="Scalar index type (BTREE/BITMAP/ZONEMAP)")
+@click.option("--name", default=None, help="Optional explicit index name")
+@click.option("--replace/--no-replace", default=True, help="Replace existing index")
+@click.pass_context
+def index_scalar(
+    ctx: click.Context, dataset: str, column: str, index_type: str,
+    name: str | None, replace: bool,
+) -> None:
+    """Create a scalar index on a column (accelerates .where() filters)."""
+    lake = _get_lake(ctx)
+    console.print(f"[dim]Creating scalar index on '{column}' for '{dataset}'...[/dim]")
+    try:
+        lake.create_scalar_index(
+            dataset,
+            column=column,
+            index_type=index_type,
+            index_name=name,
+            replace=replace,
+        )
+    except Exception as exc:
+        _print_error(f"Scalar index creation failed: {exc}")
+        raise SystemExit(1) from None
+    _print_success(f"Scalar index ({index_type}) created on '{column}' for '{dataset}'")
+
+
+@index_group.command("facets")
+@click.argument("dataset")
+@click.option("--columns", default=None, help="Comma-separated columns (default: config facet columns)")
+@click.pass_context
+def index_facets(ctx: click.Context, dataset: str, columns: str | None) -> None:
+    """Create scalar indexes on facet columns in bulk."""
+    lake = _get_lake(ctx)
+    cols = [c.strip() for c in columns.split(",")] if columns else None
+    console.print(f"[dim]Creating facet indexes for '{dataset}'...[/dim]")
+    try:
+        results = lake.create_facet_indexes(dataset, columns=cols)
+    except Exception as exc:
+        _print_error(f"Facet index creation failed: {exc}")
+        raise SystemExit(1) from None
+    for col, status in (results or {}).items():
+        console.print(f"  {col}: {status}")
+    _print_success(f"Facet indexes processed for '{dataset}'")
+
+
 @index_group.command("list-vector")
 @click.argument("dataset")
 @click.pass_context

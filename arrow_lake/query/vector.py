@@ -183,12 +183,18 @@ class VectorSearchBridge:
                 index_type=index_type,
                 replace=replace,
             )
-            # IVF-family parameters
-            if index_type.upper() != "HNSW":
+            # IVF-family parameters (v1.7.1 #7: type-aware).
+            # PQ/RQ need sub_vectors+bits; SQ needs bits only; FLAT needs partitions only.
+            itype = index_type.upper()
+            if itype != "HNSW":
                 create_kwargs["num_partitions"] = num_partitions
-                create_kwargs["num_sub_vectors"] = effective_sub_vectors
-                create_kwargs["num_bits"] = effective_num_bits
-            # HNSW parameters
+                if itype in ("IVF_PQ", "IVF_HNSW_PQ", "IVF_RQ"):
+                    create_kwargs["num_sub_vectors"] = effective_sub_vectors
+                    create_kwargs["num_bits"] = effective_num_bits
+                elif itype in ("IVF_SQ", "IVF_HNSW_SQ"):
+                    create_kwargs["num_bits"] = effective_num_bits
+                # IVF_FLAT: num_partitions only
+            # HNSW parameters (pure HNSW and IVF_HNSW_*)
             if m is not None:
                 create_kwargs["M"] = m
             if ef_construction is not None:
@@ -350,6 +356,75 @@ class VectorSearchBridge:
             max_distance=max_distance,
         )
 
+    async def search_async(
+        self,
+        dataset_name: str,
+        query_vector: list[float],
+        *,
+        top_k: int | None = None,
+        vector_column: str = _DEFAULT_VECTOR_COLUMN,
+        where: str | None = None,
+        nprobes: int | None = None,
+    ) -> pa.Table:
+        """Async vector search via lancedb connect_async (v1.7.1 #9).
+
+        Incremental async entry point for high-concurrency workloads. The
+        connection is opened per call (no pooling) — for production throughput,
+        pair with an async connection pool and load-test before relying on it.
+
+        Note on filtering (#6): DuckDB ``lance_vector_search`` has no filter
+        parameter, so prefiltered search goes through the SDK path (here) which
+        honors scalar indexes created via #3.
+
+        Args:
+            dataset_name: Name of the Lance dataset.
+            query_vector: Query embedding vector.
+            top_k: Number of results (None = config default).
+            vector_column: Vector column name.
+            where: Optional metadata filter (validated).
+            nprobes: IVF partitions to probe (None = config).
+
+        Returns:
+            Arrow Table with results and _distance column.
+
+        Raises:
+            QueryError: If storage lacks base uri, vector empty, or search fails.
+        """
+        if not query_vector:
+            raise QueryError(
+                error_code=ErrorCode.VECTOR_INVALID_QUERY,
+                message="Query vector must not be empty",
+            )
+        if where is not None:
+            self._validate_where_clause(where)
+
+        base_uri = getattr(self._storage, "_connect_uri", None)
+        if not base_uri:
+            raise QueryError(
+                error_code=ErrorCode.VECTOR_SEARCH_FAILED,
+                message="async search requires storage._connect_uri",
+            )
+
+        import lancedb
+
+        effective_top_k = top_k if top_k is not None else self._config.default_top_k
+        try:
+            async_db = await lancedb.connect_async(
+                base_uri, storage_options=getattr(self._storage, "_storage_options", None)
+            )
+            table = await async_db.open_table(dataset_name)
+            q = table.search(query_vector, vector_column_name=vector_column).limit(effective_top_k)
+            if where is not None:
+                q = q.where(where)
+            q = q.nprobes(nprobes or self._config.nprobes)
+            q = q.refine_factor(self._config.refine_factor)
+            return await q.to_arrow()
+        except (ValueError, RuntimeError) as exc:
+            raise QueryError(
+                error_code=ErrorCode.VECTOR_SEARCH_FAILED,
+                message=f"Async vector search failed: {exc}",
+            ) from exc
+
     def _search_via_duckdb(
         self,
         dataset_name: str,
@@ -465,6 +540,10 @@ class VectorSearchBridge:
 
         if metric is not None:
             query_builder = query_builder.distance_type(metric)
+
+        # v1.7.1 #5: apply refine_factor (mirror DuckDB path at vector.py:415).
+        # No-op for flat (brute-force) search; improves recall when an IVF index exists.
+        query_builder = query_builder.refine_factor(self._config.refine_factor)
 
         try:
             return query_builder.to_arrow()

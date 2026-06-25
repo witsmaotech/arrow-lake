@@ -60,6 +60,7 @@ class TestErrorCode:
             "CONCURRENT",
             "METADATA",
             "RESOURCE",
+            "SCALAR",
             "TRANSIENT",
         }
         actual_categories = {code.name.split("_")[0] for code in ErrorCode}

@@ -201,6 +201,17 @@ class FullTextSearchBridge:
         if use_tantivy:
             fts_kwargs["language"] = "Chinese"
 
+        # v1.7.1 #11: optional lance native INVERTED index (experimental).
+        if getattr(self._config, "use_inverted", False):
+            try:
+                table.create_scalar_index(index_column, index_type="INVERTED", replace=replace)
+                return
+            except (ValueError, RuntimeError) as exc:
+                raise QueryError(
+                    error_code=ErrorCode.FTS_INDEX_FAILED,
+                    message=f"Failed to create INVERTED index on '{dataset_name}': {exc}",
+                ) from exc
+
         try:
             table.create_fts_index(**fts_kwargs)
         except (ValueError, RuntimeError) as exc:

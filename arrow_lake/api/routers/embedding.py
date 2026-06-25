@@ -11,9 +11,13 @@ from arrow_lake.api.deps import get_lake, require_role
 from arrow_lake.api.models.common import _NAME_PATTERN
 from arrow_lake.api.models.embedding import (
     EmbeddingResponse,
+    FacetsIndexRequest,
+    FacetsIndexResponse,
     FtsIndexRequest,
     FtsIndexResponse,
     ImageEmbedRequest,
+    ScalarIndexRequest,
+    ScalarIndexResponse,
     TextEmbedRequest,
     VectorIndexRequest,
     VectorIndexResponse,
@@ -76,6 +80,55 @@ async def create_fts_index(
         label="create_fts_index",
     )
     return FtsIndexResponse(message=f"FTS index created for dataset '{name}'")
+
+
+@router.post(
+    "/{name}/index/scalar",
+    response_model=ScalarIndexResponse,
+)
+async def create_scalar_index(
+    name: str = Path(..., pattern=_NAME_PATTERN),
+    *,
+    req: ScalarIndexRequest,
+    lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.EDITOR)),
+) -> ScalarIndexResponse:
+    """Create a scalar index on a column (accelerates metadata filtering)."""
+    await run_sync(
+        lake.create_scalar_index,
+        name,
+        column=req.column,
+        index_type=req.index_type,
+        index_name=req.name,
+        replace=req.replace,
+        timeout=_INDEX_TIMEOUT,
+        label="create_scalar_index",
+    )
+    return ScalarIndexResponse(
+        message=f"Scalar index ({req.index_type}) created on '{req.column}' for dataset '{name}'"
+    )
+
+
+@router.post(
+    "/{name}/index/facets",
+    response_model=FacetsIndexResponse,
+)
+async def create_facet_indexes(
+    name: str = Path(..., pattern=_NAME_PATTERN),
+    *,
+    req: FacetsIndexRequest,
+    lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.EDITOR)),
+) -> FacetsIndexResponse:
+    """Create scalar indexes on facet columns in bulk."""
+    results = await run_sync(
+        lake.create_facet_indexes,
+        name,
+        req.columns,
+        timeout=_INDEX_TIMEOUT,
+        label="create_facet_indexes",
+    )
+    return FacetsIndexResponse(results=results or {})
 
 
 @embed_router.post("/text", response_model=EmbeddingResponse)

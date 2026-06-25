@@ -75,6 +75,9 @@ class ErrorCode(StrEnum):
     VECTOR_INDEX_TOO_FEW_ROWS = "VECTOR_INDEX_TOO_FEW_ROWS"
     VECTOR_INVALID_QUERY = "VECTOR_INVALID_QUERY"
 
+    # Scalar index errors (v1.7.1)
+    SCALAR_INDEX_FAILED = "SCALAR_INDEX_FAILED"
+
     # Full-text search errors (Story 5.2)
     FTS_INDEX_FAILED = "FTS_INDEX_FAILED"
     FTS_SEARCH_FAILED = "FTS_SEARCH_FAILED"

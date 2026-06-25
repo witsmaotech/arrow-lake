@@ -67,6 +67,10 @@ class FullTextSearchConfig(BaseModel):
     lower_case: bool = True
     tokenizer_type: str = "jieba"
     jieba_user_dict: str | None = None
+    # v1.7.1 #11: use lance native INVERTED index instead of legacy create_fts_index
+    # (tantivy backend). Experimental: search-side text_search compat with INVERTED
+    # should be validated per dataset before enabling in production.
+    use_inverted: bool = False
 
     @field_validator("default_top_k")
     @classmethod
@@ -122,7 +126,17 @@ class FacetedSearchConfig(BaseModel):
         "source",
         "quality_score",
         "created_at",
+        "doc_type",
     ]
+
+    # v1.7.1: scalar index type per column (low-cardinality → BITMAP, others → BTREE)
+    scalar_index_type_map: dict[str, str] = {
+        "modality": "BITMAP",
+        "source": "BITMAP",
+        "doc_type": "BITMAP",
+        "created_at": "BTREE",
+        "quality_score": "BTREE",
+    }
 
     @field_validator("max_facet_values")
     @classmethod

@@ -399,3 +399,166 @@ class TestRebuildVectorIndex:
             num_partitions=128,
             num_sub_vectors=32,
         )
+
+
+# ---------------------------------------------------------------------------
+# create_scalar_index (v1.7.1 #3)
+# ---------------------------------------------------------------------------
+
+
+class TestCreateScalarIndex:
+    """Tests for StorageIndexingMixin.create_scalar_index."""
+
+    def test_validates_name_and_column(self) -> None:
+        mixin = _make_mixin()
+        mixin._open_lance.return_value = MagicMock()
+
+        mixin.create_scalar_index("my_ds", "modality")
+
+        mixin._validate_name.assert_called_once_with("my_ds")
+        mixin._validate_identifier.assert_called_once_with("modality", "column")
+
+    def test_default_btree_index_type(self) -> None:
+        mixin = _make_mixin()
+        fake_table = MagicMock()
+        mixin._open_lance.return_value = fake_table
+
+        mixin.create_scalar_index("my_ds", "modality")
+
+        fake_table.create_scalar_index.assert_called_once_with(
+            "modality", index_type="BTREE", replace=True
+        )
+
+    def test_custom_index_type_and_replace(self) -> None:
+        mixin = _make_mixin()
+        fake_table = MagicMock()
+        mixin._open_lance.return_value = fake_table
+
+        mixin.create_scalar_index("my_ds", "source", index_type="BITMAP", replace=False)
+
+        fake_table.create_scalar_index.assert_called_once_with(
+            "source", index_type="BITMAP", replace=False
+        )
+
+    def test_index_name_passed_when_given(self) -> None:
+        mixin = _make_mixin()
+        fake_table = MagicMock()
+        mixin._open_lance.return_value = fake_table
+
+        mixin.create_scalar_index("my_ds", "created_at", index_name="ca_idx")
+
+        assert fake_table.create_scalar_index.call_args.kwargs["name"] == "ca_idx"
+
+    def test_index_name_omitted_when_none(self) -> None:
+        mixin = _make_mixin()
+        fake_table = MagicMock()
+        mixin._open_lance.return_value = fake_table
+
+        mixin.create_scalar_index("my_ds", "created_at")
+
+        assert "name" not in fake_table.create_scalar_index.call_args.kwargs
+
+    def test_failure_raises_storage_error(self) -> None:
+        mixin = _make_mixin()
+        fake_table = MagicMock()
+        fake_table.create_scalar_index.side_effect = RuntimeError("boom")
+        mixin._open_lance.return_value = fake_table
+
+        with pytest.raises(StorageError) as exc_info:
+            mixin.create_scalar_index("my_ds", "modality")
+
+        assert exc_info.value.error_code == ErrorCode.SCALAR_INDEX_FAILED
+        assert "my_ds" in exc_info.value.message
+
+
+# ---------------------------------------------------------------------------
+# create_facet_indexes (v1.7.1 #3)
+# ---------------------------------------------------------------------------
+
+
+class TestCreateFacetIndexes:
+    """Tests for StorageIndexingMixin.create_facet_indexes."""
+
+    def test_creates_all_present_columns(self) -> None:
+        mixin = _make_mixin()
+        fake_table = MagicMock()
+        fake_table.schema.names = ["modality", "source", "created_at"]
+        mixin._open_lance.return_value = fake_table
+
+        result = mixin.create_facet_indexes("my_ds", columns=["modality", "source", "created_at"])
+
+        assert result == {"modality": "created", "source": "created", "created_at": "created"}
+        assert fake_table.create_scalar_index.call_count == 3
+
+    def test_skips_missing_columns(self) -> None:
+        mixin = _make_mixin()
+        fake_table = MagicMock()
+        fake_table.schema.names = ["modality"]
+        mixin._open_lance.return_value = fake_table
+
+        result = mixin.create_facet_indexes("my_ds", columns=["modality", "ghost"])
+
+        assert result == {"modality": "created", "ghost": "skipped"}
+        fake_table.create_scalar_index.assert_called_once_with(
+            "modality", index_type="BITMAP", replace=True
+        )
+
+    def test_default_type_map(self) -> None:
+        mixin = _make_mixin()
+        fake_table = MagicMock()
+        fake_table.schema.names = ["modality", "doc_type", "created_at", "quality_score"]
+        mixin._open_lance.return_value = fake_table
+
+        mixin.create_facet_indexes(
+            "my_ds", columns=["modality", "doc_type", "created_at", "quality_score"]
+        )
+
+        calls = {
+            c.args[0]: c.kwargs["index_type"]
+            for c in fake_table.create_scalar_index.call_args_list
+        }
+        assert calls["modality"] == "BITMAP"
+        assert calls["doc_type"] == "BITMAP"
+        assert calls["created_at"] == "BTREE"
+        assert calls["quality_score"] == "BTREE"
+
+    def test_custom_type_map_overrides_default(self) -> None:
+        mixin = _make_mixin()
+        fake_table = MagicMock()
+        fake_table.schema.names = ["modality"]
+        mixin._open_lance.return_value = fake_table
+
+        mixin.create_facet_indexes(
+            "my_ds", columns=["modality"], type_map={"modality": "ZONEMAP"}
+        )
+
+        fake_table.create_scalar_index.assert_called_once_with(
+            "modality", index_type="ZONEMAP", replace=True
+        )
+
+    def test_failure_recorded_not_raised(self) -> None:
+        mixin = _make_mixin()
+        fake_table = MagicMock()
+        fake_table.schema.names = ["modality", "source"]
+
+        def _fake_create(col: str, **_: object) -> None:
+            if col == "source":
+                raise RuntimeError("x")
+
+        fake_table.create_scalar_index.side_effect = _fake_create
+        mixin._open_lance.return_value = fake_table
+
+        result = mixin.create_facet_indexes("my_ds", columns=["modality", "source"])
+
+        assert result["modality"] == "created"
+        assert result["source"] == "failed"
+
+    def test_default_columns_when_none(self) -> None:
+        mixin = _make_mixin()
+        fake_table = MagicMock()
+        fake_table.schema.names = ["modality", "source", "doc_type", "created_at", "quality_score"]
+        mixin._open_lance.return_value = fake_table
+
+        result = mixin.create_facet_indexes("my_ds")
+
+        assert set(result.keys()) == {"modality", "source", "doc_type", "created_at", "quality_score"}

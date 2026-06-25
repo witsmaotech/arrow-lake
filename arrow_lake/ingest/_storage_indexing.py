@@ -104,3 +104,103 @@ class StorageIndexingMixin:
                 error_code=ErrorCode.VECTOR_INDEX_FAILED,
                 message=f"Failed to rebuild index on dataset '{name}': {exc}",
             ) from exc
+
+    # Default columns / type map for create_facet_indexes (v1.7.1 #3).
+    # Low-cardinality columns → BITMAP; ordered/time/numeric → BTREE.
+    _DEFAULT_FACET_COLUMNS: tuple[str, ...] = (
+        "modality",
+        "source",
+        "doc_type",
+        "created_at",
+        "quality_score",
+    )
+    _DEFAULT_SCALAR_TYPE_MAP: dict[str, str] = {
+        "modality": "BITMAP",
+        "source": "BITMAP",
+        "doc_type": "BITMAP",
+        "created_at": "BTREE",
+        "quality_score": "BTREE",
+    }
+
+    def create_scalar_index(
+        self,
+        name: str,
+        column: str,
+        *,
+        index_type: str = "BTREE",
+        replace: bool = True,
+        index_name: str | None = None,
+    ) -> None:
+        """Create a scalar index on a column of a dataset (v1.7.1 #3).
+
+        Args:
+            name: Dataset name.
+            column: Column to index.
+            index_type: Scalar index type (BTREE/BITMAP/ZONEMAP/...).
+            replace: Overwrite an existing index on this column.
+            index_name: Optional explicit index name.
+
+        Raises:
+            StorageError: If dataset/column not found or index creation fails.
+        """
+        self._validate_name(name)
+        self._validate_identifier(column, "column")
+        table = self._open_lance(self._get_dataset_path(name))
+        kwargs: dict[str, Any] = dict(index_type=index_type, replace=replace)
+        if index_name is not None:
+            kwargs["name"] = index_name
+        try:
+            table.create_scalar_index(column, **kwargs)
+        except (ValueError, RuntimeError, OSError) as exc:
+            raise StorageError(
+                error_code=ErrorCode.SCALAR_INDEX_FAILED,
+                message=(
+                    f"Failed to create scalar index on '{column}' "
+                    f"of dataset '{name}': {exc}"
+                ),
+            ) from exc
+
+    def create_facet_indexes(
+        self,
+        name: str,
+        columns: list[str] | None = None,
+        *,
+        type_map: dict[str, str] | None = None,
+    ) -> dict[str, str]:
+        """Create scalar indexes on facet columns in bulk (v1.7.1 #3).
+
+        Missing columns are skipped (not errors). Per-column failures are
+        recorded as "failed" without aborting the batch.
+
+        Args:
+            name: Dataset name.
+            columns: Columns to index (None = default facet set).
+            type_map: Per-column index type override (None = default heuristic).
+
+        Returns:
+            Mapping of column → status ("created"|"skipped"|"failed").
+        """
+        self._validate_name(name)
+        cols = list(columns) if columns is not None else list(self._DEFAULT_FACET_COLUMNS)
+        tmap = dict(self._DEFAULT_SCALAR_TYPE_MAP)
+        if type_map is not None:
+            tmap.update(type_map)
+
+        table = self._open_lance(self._get_dataset_path(name))
+        try:
+            present = set(table.schema.names)
+        except (ValueError, RuntimeError, AttributeError):
+            present = set(cols)
+
+        results: dict[str, str] = {}
+        for col in cols:
+            if col not in present:
+                results[col] = "skipped"
+                continue
+            idx_type = tmap.get(col, "BTREE")
+            try:
+                table.create_scalar_index(col, index_type=idx_type, replace=True)
+                results[col] = "created"
+            except (ValueError, RuntimeError, OSError):
+                results[col] = "failed"
+        return results

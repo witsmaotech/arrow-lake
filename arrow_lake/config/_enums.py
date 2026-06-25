@@ -62,6 +62,9 @@ class VectorIndexType(StrEnum):
     IVF_PQ = "IVF_PQ"
     IVF_FLAT = "IVF_FLAT"
     IVF_HNSW_PQ = "IVF_HNSW_PQ"
+    IVF_HNSW_SQ = "IVF_HNSW_SQ"
+    IVF_SQ = "IVF_SQ"
+    IVF_RQ = "IVF_RQ"
     HNSW = "HNSW"
 
 

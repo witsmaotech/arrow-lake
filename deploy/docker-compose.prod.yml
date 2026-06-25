@@ -34,7 +34,7 @@ x-arrow-lake: &arrow-lake
       HTTP_PROXY: "${BUILD_HTTP_PROXY:-}"
       HTTPS_PROXY: "${BUILD_HTTPS_PROXY:-}"
       NO_PROXY: "${BUILD_NO_PROXY:-127.0.0.1,localhost}"
-  image: arrow-lake:1.7.0
+  image: arrow-lake:1.7.1
   restart: unless-stopped
   env_file:
     - path: ../.env
@@ -72,6 +72,9 @@ x-storage-env: &storage-env
   AWS_SECRET_ACCESS_KEY: "${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set}"
   AWS_ENDPOINT_URL: "http://minio:9000"
   AWS_REGION: "${AWS_REGION:-us-east-1}"
+  # v1.7.1: Lance object-store IO/CPU threads (MinIO S3 throughput)
+  LANCE_IO_THREADS: "${LANCE_IO_THREADS:-64}"
+  LANCE_CPU_THREADS: "${LANCE_CPU_THREADS:-4}"
 
 x-metaflow-env: &metaflow-env
   METAFLOW_DEFAULT_METADATA: "local"
@@ -154,6 +157,8 @@ services:
       ARROW_LAKE__OLAP__QUERY_CACHE_ENABLED: "true"
       ARROW_LAKE__OLAP__QUERY_CACHE_TTL_SECONDS: "120"
       ARROW_LAKE__OLAP__PARQUET_ROW_GROUP_SIZE: "100000"
+      # v1.7.1: DuckDB per-query memory limit (512 → 1024MB), paired with API_MEMORY_LIMIT 4G→8G
+      ARROW_LAKE__OLAP__MAX_QUERY_MEMORY_MB: "${OLAP_MAX_QUERY_MEMORY_MB:-1024}"
       # DuckDB warmup + memory protection (v1.4.4)
       ARROW_LAKE__OLAP__WARMUP_ENABLED: "true"
       ARROW_LAKE__OLAP__WARMUP_CONNECTIONS: "2"
@@ -213,7 +218,7 @@ services:
       replicas: ${API_REPLICAS:-1}
       resources:
         limits:
-          memory: ${API_MEMORY_LIMIT:-4G}
+          memory: ${API_MEMORY_LIMIT:-8G}
           cpus: "${API_CPU_LIMIT:-2.0}"
           pids: 512
         reservations:

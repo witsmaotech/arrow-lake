@@ -64,6 +64,26 @@ class TestCreateFtsIndex:
             MockBridge.return_value.create_index.assert_called_once()
 
 
+class TestCreateScalarIndex:
+    def test_create_scalar_index_delegates(self, lake):
+        with patch.object(lake._get_storage(), "create_scalar_index") as mock:
+            lake.create_scalar_index("ds", column="modality", index_type="BITMAP")
+            mock.assert_called_once()
+            assert mock.call_args.kwargs["index_type"] == "BITMAP"
+
+    def test_create_facet_indexes_delegates_with_config(self, lake):
+        with patch.object(
+            lake._get_storage(),
+            "create_facet_indexes",
+            return_value={"modality": "created"},
+        ) as mock:
+            result = lake.create_facet_indexes("ds")
+            assert result == {"modality": "created"}
+            mock.assert_called_once()
+            args, kwargs = mock.call_args
+            assert "type_map" in kwargs
+
+
 class TestHybridSearch:
     def test_hybrid_search(self, lake):
         with patch("arrow_lake.query.hybrid.HybridSearchBridge") as MockBridge:

@@ -35,6 +35,27 @@ class FtsIndexResponse(BaseModel):
     message: str
 
 
+class ScalarIndexRequest(BaseModel):
+    column: str
+    index_type: str = "BTREE"
+    name: str | None = None
+    replace: bool = True
+
+
+class ScalarIndexResponse(BaseModel):
+    success: bool = True
+    message: str
+
+
+class FacetsIndexRequest(BaseModel):
+    columns: list[str] | None = None
+
+
+class FacetsIndexResponse(BaseModel):
+    success: bool = True
+    results: dict[str, Any] = Field(default_factory=dict)
+
+
 # ---------------------------------------------------------------------------
 # Standalone embedding computation
 # ---------------------------------------------------------------------------
