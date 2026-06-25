@@ -116,11 +116,7 @@ class ArrowLakeGravitinoClient:
         if not self._ensure_initialized():
             return None
         try:
-            table = self._client.load_catalog(
-                catalog or self._catalog_name
-            from gravitino import NameIdentifier
-
-            from gravitino import NameIdentifier
+            from gravitino import NameIdentifier  # gravitino is optional
 
             table = self._client.load_catalog(
                 catalog or self._catalog_name

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, field_validator
 
 from arrow_lake.config._enums import LLMProviderType
@@ -136,6 +138,23 @@ class HugeGraphConfig(BaseModel):
     max_traversal_depth: int = 5
     vermeer_host: str = "localhost"
     vermeer_port: int = 8081
+    # --- v1.7.0 hyper-extract 抽取后端（§4.3）---
+    extractor_backend: Literal["legacy", "he"] = "legacy"
+    # he_default_template MUST be a usable extraction template (the base_* presets
+    # are AutoType base classes, not directly extractable → "Template not found").
+    # general/concept_graph is the safe generic fallback (concepts are universal).
+    he_default_template: str = "general/concept_graph"
+    # Common doc_types → fitting templates; unmapped falls back to he_default_template.
+    # NOTE: only canonical keys here — aliases (e.g. "guide"→"manual", "论文"→"paper")
+    # collapse via normalize_doc_type before lookup, so listing them is redundant.
+    he_doc_type_templates: dict[str, str] = {
+        "paper": "general/concept_graph",
+        "report": "general/doc_structure",
+        "manual": "general/workflow_graph",
+        "biography": "general/biography_graph",
+    }
+    he_language: Literal["zh", "en"] = "zh"
+    he_model: str | None = None
 
     @field_validator("max_traversal_depth")
     @classmethod

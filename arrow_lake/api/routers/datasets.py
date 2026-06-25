@@ -525,7 +525,7 @@ async def ingest_documents(
             all_paths.extend(_resolve_blob_keys(req.blob_keys, lake, tmp_dir))
         doc_config = lake._config.document if hasattr(lake, "_config") else None
         report = await run_sync(
-            lake.ingest_documents, name, all_paths, doc_config=doc_config,
+            lake.ingest_documents, name, all_paths, doc_config=doc_config, doc_type=req.doc_type,
             timeout=_INGEST_TIMEOUT, label="ingest_documents",
         )
         _register_to_gravitino(request, name, lake)

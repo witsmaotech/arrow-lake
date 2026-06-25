@@ -275,7 +275,13 @@ class HugeGraphClient(_TraverserMixin, _ImportExportMixin):
                 resp.text[:200],
             )
             return False
-        except (ConnectionError, httpx.HTTPStatusError, OSError, TimeoutError) as exc:
+        except (
+            ConnectionError,
+            httpx.HTTPStatusError,
+            OSError,
+            TimeoutError,
+            httpx.TimeoutException,
+        ) as exc:
             logger.warning("Failed to create graph '%s': %s", self._config.graph_name, exc)
             return False
 
@@ -295,31 +301,46 @@ class HugeGraphClient(_TraverserMixin, _ImportExportMixin):
     async def clear(self) -> None:
         """Clear all data from the graph (schema + vertices + edges).
 
-        This is equivalent to dropping and re-creating the graph.
+        Equivalent to dropping and re-creating the graph. Tries POST first
+        (older HugeGraph); falls back to DELETE (HugeGraph 1.7 PD mode returns
+        204 No Content on success).
         """
         if not await self.graph_exists():
             return
+        confirm = "I'm sure to delete all data"
+        # Primary path (older HugeGraph): POST .../clear
         try:
             resp = await self._post(
                 f"/graphspaces/DEFAULT/graphs/{self._config.graph_name}/clear",
-                json_data={"confirm_message": "I'm sure to delete all data"},
+                json_data={"confirm_message": confirm},
             )
-            if resp.status_code in (200, 202):
-                logger.info("Graph '%s' cleared", self._config.graph_name)
+            if resp.status_code in (200, 202, 204):
+                logger.info("Graph '%s' cleared (POST)", self._config.graph_name)
                 return
-        except httpx.HTTPError:
-            pass
-        # Fallback: try legacy clear endpoint
+            # Non-success (e.g. 405 in PD mode) — log before falling back so
+            # auth/permission errors (401/403) are not silently masked.
+            logger.debug(
+                "clear POST returned %s; falling back to DELETE", resp.status_code
+            )
+        except httpx.HTTPError as exc:
+            logger.debug("clear POST raised %s; falling back to DELETE", exc)
+        # Fallback path (HugeGraph 1.7 PD mode): DELETE .../clear → 204
         try:
             resp = await self._delete(
                 f"/graphspaces/DEFAULT/graphs/{self._config.graph_name}/clear"
                 "?confirm_message=I'm+sure+to+delete+all+data"
             )
-            if resp.status_code not in (200, 202):
-                raise KGError(
-                    error_code=ErrorCode.KG_QUERY_FAILED,
-                    message=f"Clear graph failed: {resp.text}",
+            if resp.status_code in (200, 202, 204):
+                logger.info(
+                    "Graph '%s' cleared (DELETE %s)",
+                    self._config.graph_name,
+                    resp.status_code,
                 )
+                return
+            raise KGError(
+                error_code=ErrorCode.KG_QUERY_FAILED,
+                message=f"Clear graph failed: {resp.text}",
+            )
         except httpx.HTTPError as exc:
             raise KGError(
                 error_code=ErrorCode.KG_QUERY_FAILED,

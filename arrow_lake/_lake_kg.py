@@ -90,9 +90,36 @@ class _LakeKGMixin:
 
         return HugeGraphClient(self._config.hugegraph)
 
-    def _create_kg_extractor(self) -> EntityExtractor:
-        from arrow_lake.knowledge_graph.extractor import EntityExtractor
+    def _create_kg_extractor(self) -> Any:
         from arrow_lake.rag.provider import create_llm_provider
+
+        hg = self._config.hugegraph
+        if hg.extractor_backend == "he":
+            from arrow_lake.knowledge_graph.doc_type_router import (
+                DocTypeClassifier,
+                DocTypeRouter,
+            )
+            from arrow_lake.knowledge_graph.he_extractor import HyperExtractExtractor
+
+            # P3: classifier infers doc_type from content when the caller omits
+            # it (best-effort, only fires on doc_type=None). Built from the same
+            # LLM config; degrades to no-op if construction fails.
+            try:
+                classifier = DocTypeClassifier.from_llm_config(self._config.llm)
+            except Exception as exc:
+                logger.warning("doc_type classifier disabled: %s", exc)
+                classifier = None
+
+            return HyperExtractExtractor(
+                self._config.llm,
+                doc_type_router=DocTypeRouter(
+                    hg.he_doc_type_templates, hg.he_default_template
+                ),
+                language=hg.he_language,
+                model=hg.he_model,
+                doc_type_classifier=classifier,
+            )
+        from arrow_lake.knowledge_graph.extractor import EntityExtractor
 
         llm_provider = create_llm_provider(self._config.llm)
         return EntityExtractor(llm_provider)

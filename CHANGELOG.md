@@ -6,6 +6,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.7.0] - 2026-06-24
+
+### Summary
+
+v1.7.0 引入 hyper-extract KG 抽取后端 + 文档类型路由 + HugeGraph PD 集群模式（运行时多图），并完成生产就绪化修复与镜像重建部署。
+
+### Added
+
+- **HugeGraph PD 集群模式**（`deploy/docker-compose.prod.yml`）：`hg-pd` + `hg-store` + `hg-server`(hstore backend) 替代 standalone rocksdb，支持**运行时创建多 graph**（每文档独立 KG 隔离）。启动顺序 PD→Store→Server（healthcheck 依赖），hostname + 静态端口。
+- **hyper-extract (he) 抽取后端**（`arrow_lake/knowledge_graph/he_extractor.py`）：`HugeGraphConfig.extractor_backend="he"` 启用；通过 langchain `ChatOpenAI` 驱动 hyperextract 模板，三元组精准度提升。
+- **doc_type 三层路由**（`arrow_lake/knowledge_graph/doc_type_router.py`）：① config override ② `TemplateGallery` 元数据驱动匹配（扫描 hyperextract 全部 preset 的 tags/category/name/description，新模板自动可用）③ default 兜底；`normalize_doc_type` 别名归一化（论文/research_paper→paper 等）；`DocTypeClassifier` LLM 内容推断（doc_type 缺失时从内容识别）；`KNOWN_DOC_TYPES` + `validate_taxonomy()` 单一真相源 + CI 守护。
+- **A 方案实体双写**（`builder.py` + `entity_router.py`）：每个实体写通用 `entity` 顶点 + 细分 label（person/organization/concept/...）；关系路由（同义词→细分边，无→`related_to` 降级）；`relation_type` 属性保留。
+- **ingest doc_type 贯通**：`ingest_documents(doc_type=)` 参数贯通 上传 API → facade → Ingestor → chunk 表 → KG builder。
+- 镜像 `arrow-lake:1.7.0`，新增 `he` pyproject extra（hyperextract + langchain-openai）。
+
+### Changed
+
+- KG builder doc_type 推断上移到**文档级**（显式 doc_type per-chunk 透传；全缺失时一次推断，所有 chunk 共享模板，省 LLM 调用）。
+- he 工厂（`_lake_kg.py`）注入 `DocTypeClassifier`，P3 推断进入生产路径。
+- Dockerfile：builder + runtime 双显式构建代理（WSL2 mirror 模式 buildkit 自动代理不注入）+ apt/PyPI 切 aliyun 镜像 + extras 合并一次解析。
+
+### Fixed
+
+- `client.clear()` PD 模式返回 204 被误判失败（原只认 200/202）→ 加 204；POST fall-through 加日志。
+- `execute_build` 异常处理过窄（只 catch RuntimeError/OSError）→ 拓宽至 Exception（先 re-raise CancelledError），task 不再永久 RUNNING。
+- he 静默失败不可观测 → `KGBuildTask.extraction_failures` 计数 + 非平凡文本空结果 WARNING 日志。
+- `gravitino_client.py:load_table` 语法错误（重复破损片段）。
+- he 默认模板 `general/default_graph` 不存在 → `general/concept_graph`；gallery 排除 `base_*` 不可抽取模板。
+- 双写 `add_vertices` 长度不符静默降级 → 加 WARNING 日志。
+
 ## [1.6.3] - 2026-06-09
 
 ### Summary

@@ -54,6 +54,9 @@ def mock_extractor() -> object:
     from unittest.mock import AsyncMock
 
     extractor = AsyncMock()
+    # A mock extractor has no real doc_type classifier → _infer_doc_type is a
+    # no-op (returns None), so tests asserting doc_type=None behavior hold.
+    extractor._classifier = None
     extractor.extract.return_value = ExtractionResult(
         entities=(
             ExtractedEntity(name="Alice", entity_type="person"),
@@ -125,6 +128,7 @@ async def test_build_basic_flow(
     """build() creates schema, inserts vertices/edges, extracts entities."""
     builder = KGBuilder(mock_client, mock_extractor, config)
     task_id = await builder.build("test_ds", chunks_table)
+    await builder.execute_build(task_id)
 
     # Returns a task ID
     assert isinstance(task_id, str)
@@ -152,7 +156,8 @@ async def test_build_creates_document_and_chunk_vertices(
 ) -> None:
     """build() should insert document vertices and chunk vertices."""
     builder = KGBuilder(mock_client, mock_extractor, config)
-    await builder.build("test_ds", chunks_table)
+    task_id = await builder.build("test_ds", chunks_table)
+    await builder.execute_build(task_id)
 
     # Collect all vertex insert calls
     all_vertex_calls = []
@@ -181,7 +186,8 @@ async def test_build_creates_contains_chunk_edges(
 ) -> None:
     """build() should create contains_chunk edges from document to chunks."""
     builder = KGBuilder(mock_client, mock_extractor, config)
-    await builder.build("test_ds", chunks_table)
+    task_id = await builder.build("test_ds", chunks_table)
+    await builder.execute_build(task_id)
 
     # Collect all edge insert calls
     all_edge_calls = []
@@ -203,7 +209,8 @@ async def test_build_creates_entity_vertices_and_edges(
 ) -> None:
     """build() should create entity vertices and references edges."""
     builder = KGBuilder(mock_client, mock_extractor, config)
-    await builder.build("test_ds", chunks_table)
+    task_id = await builder.build("test_ds", chunks_table)
+    await builder.execute_build(task_id)
 
     all_vertex_calls = []
     for call in mock_client.add_vertices.call_args_list:
@@ -244,6 +251,7 @@ async def test_build_empty_table(
     })
     builder = KGBuilder(mock_client, mock_extractor, config)
     task_id = await builder.build("empty_ds", empty_table)
+    await builder.execute_build(task_id)
 
     assert isinstance(task_id, str)
     mock_client.ensure_schema.assert_awaited_once()
@@ -265,6 +273,7 @@ async def test_get_task_status(
     """get_task_status returns task details after build."""
     builder = KGBuilder(mock_client, mock_extractor, config)
     task_id = await builder.build("test_ds", chunks_table)
+    await builder.execute_build(task_id)
 
     task = builder.get_task_status(task_id)
     assert task is not None
@@ -315,6 +324,7 @@ async def test_build_error_handling(
     builder = KGBuilder(mock_client, mock_extractor, config)
 
     task_id = await builder.build("test_ds", chunks_table)
+    await builder.execute_build(task_id)
     assert isinstance(task_id, str)
 
     task = builder.get_task_status(task_id)
@@ -322,3 +332,184 @@ async def test_build_error_handling(
     assert task.status == KGBuildStatus.FAILED
     assert task.error is not None
     assert "Schema error" in task.error
+
+
+# ---------------------------------------------------------------------------
+# execute_build() path — doc_type passthrough + full chain (v1.7.0 §12.4/§12.8)
+# ---------------------------------------------------------------------------
+# NOTE: build() is fire-and-forget (v1.6.1) — it only stages the task; the
+# actual schema/extract/insert work happens in execute_build(). The build_* tests
+# above pre-date that refactor and assert post-execution state without awaiting
+# execute_build(), so they are expected to fail until back-filled. The tests
+# below exercise the real execute_build() path.
+
+
+@pytest.fixture
+def chunks_table_with_doc_type() -> pa.Table:
+    """Table with a per-ingest doc_type column (v1.7.0 §12.3)."""
+    return pa.table({
+        "id": ["chunk-1", "chunk-2"],
+        "content": ["Alice works at Acme Corp.", "Bob lives in NYC."],
+        # Different documents so no next_chunk edges are generated.
+        "document_name": ["doc1.txt", "doc2.txt"],
+        "chunk_index": [0, 0],
+        "doc_type": ["research_paper", "report"],
+    })
+
+
+@pytest.mark.asyncio
+async def test_execute_build_doc_type_passthrough(
+    mock_client: object,
+    mock_extractor: object,
+    chunks_table_with_doc_type: pa.Table,
+    config: HugeGraphConfig,
+) -> None:
+    """execute_build() forwards each chunk's doc_type to extractor.extract()."""
+    builder = KGBuilder(mock_client, mock_extractor, config)
+    task_id = await builder.build("test_ds", chunks_table_with_doc_type)
+    await builder.execute_build(task_id)
+
+    # extract() called once per chunk, with the chunk's doc_type kwarg.
+    assert mock_extractor.extract.await_count == 2
+    forwarded = [call.kwargs.get("doc_type") for call in mock_extractor.extract.call_args_list]
+    assert forwarded == ["research_paper", "report"]
+
+
+@pytest.mark.asyncio
+async def test_execute_build_missing_doc_type_column(
+    mock_client: object,
+    mock_extractor: object,
+    chunks_table: pa.Table,
+    config: HugeGraphConfig,
+) -> None:
+    """execute_build() tolerates tables without a doc_type column (None)."""
+    builder = KGBuilder(mock_client, mock_extractor, config)
+    task_id = await builder.build("test_ds", chunks_table)  # no doc_type column
+    await builder.execute_build(task_id)
+
+    assert mock_extractor.extract.await_count == 2
+    for call in mock_extractor.extract.call_args_list:
+        assert call.kwargs.get("doc_type") is None
+
+
+@pytest.mark.asyncio
+async def test_execute_build_completes_full_chain(
+    mock_client: object,
+    mock_extractor: object,
+    chunks_table_with_doc_type: pa.Table,
+    config: HugeGraphConfig,
+) -> None:
+    """execute_build() runs the full pipeline and marks the task COMPLETED."""
+    builder = KGBuilder(mock_client, mock_extractor, config)
+    task_id = await builder.build("test_ds", chunks_table_with_doc_type)
+    await builder.execute_build(task_id)
+
+    task = builder.get_task_status(task_id)
+    assert task is not None
+    assert task.status == KGBuildStatus.COMPLETED
+    assert task.processed_chunks == 2
+    assert task.entity_count >= 1
+    assert task.relation_count >= 1
+    assert task.error is None
+
+    # Schema ensured + vertices/edges inserted via the client.
+    mock_client.ensure_schema.assert_awaited_once()
+    assert mock_client.add_vertices.await_count >= 2
+    assert mock_client.add_edges.await_count >= 1
+
+
+# ---------------------------------------------------------------------------
+# v1.7.1 §4.5: entity double-write + relation routing (A strategy)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def typed_extractor() -> object:
+    """Mock extractor returning typed entities + a routable + a fallback relation."""
+    from unittest.mock import AsyncMock
+
+    extractor = AsyncMock()
+    extractor.extract.return_value = ExtractionResult(
+        entities=(
+            ExtractedEntity(name="Alice", entity_type="person"),
+            ExtractedEntity(name="Acme", entity_type="organization"),
+            ExtractedEntity(name="Scheme", entity_type="concept"),  # no typed edge target
+        ),
+        relations=(
+            # person→organization + synonym → belongs_to
+            ExtractedRelation(source="Alice", target="Acme", relation_type="works_at"),
+            # person→concept + no synonym → related_to fallback
+            ExtractedRelation(source="Alice", target="Scheme", relation_type="knows"),
+        ),
+        raw_text="Alice works at Acme and knows Scheme.",
+    )
+    return extractor
+
+
+def _all_vertices(mock_client: object) -> list[dict]:
+    return [v for call in mock_client.add_vertices.call_args_list for v in call[0][0]]
+
+
+def _all_edges(mock_client: object) -> list[dict]:
+    return [e for call in mock_client.add_edges.call_args_list for e in call[0][0]]
+
+
+@pytest.mark.asyncio
+async def test_execute_build_double_writes_typed_vertices(
+    mock_client: object,
+    typed_extractor: object,
+    chunks_table_with_doc_type: pa.Table,
+    config: HugeGraphConfig,
+) -> None:
+    """Recognized entity types produce BOTH an entity vertex and a typed vertex."""
+    builder = KGBuilder(mock_client, typed_extractor, config)
+    task_id = await builder.build("ds", chunks_table_with_doc_type)
+    await builder.execute_build(task_id)
+
+    labels = [v["label"] for v in _all_vertices(mock_client)]
+    # Alice→entity+person, Acme→entity+organization, Scheme→entity+concept
+    assert labels.count("entity") >= 3
+    assert "person" in labels
+    assert "organization" in labels
+    assert "concept" in labels
+
+
+@pytest.mark.asyncio
+async def test_execute_build_routes_typed_edge_on_synonym(
+    mock_client: object,
+    typed_extractor: object,
+    chunks_table_with_doc_type: pa.Table,
+    config: HugeGraphConfig,
+) -> None:
+    """works_at (person→organization) routes to belongs_to on typed vertices."""
+    builder = KGBuilder(mock_client, typed_extractor, config)
+    task_id = await builder.build("ds", chunks_table_with_doc_type)
+    await builder.execute_build(task_id)
+
+    belongs = [e for e in _all_edges(mock_client) if e["label"] == "belongs_to"]
+    assert len(belongs) >= 1
+    b = belongs[0]
+    assert b["outVLabel"] == "person"
+    assert b["inVLabel"] == "organization"
+    assert b["properties"]["relation_type"] == "works_at"
+
+
+@pytest.mark.asyncio
+async def test_execute_build_falls_back_to_related_to_with_relation_type(
+    mock_client: object,
+    typed_extractor: object,
+    chunks_table_with_doc_type: pa.Table,
+    config: HugeGraphConfig,
+) -> None:
+    """knows (person→concept, no synonym) → related_to on entity vertices, relation_type kept."""
+    builder = KGBuilder(mock_client, typed_extractor, config)
+    task_id = await builder.build("ds", chunks_table_with_doc_type)
+    await builder.execute_build(task_id)
+
+    related = [e for e in _all_edges(mock_client) if e["label"] == "related_to"]
+    assert len(related) >= 1
+    r = related[0]
+    assert r["outVLabel"] == "entity"
+    assert r["inVLabel"] == "entity"
+    assert r["properties"]["relation_type"] == "knows"
+    assert r["properties"]["weight"] == 1.0

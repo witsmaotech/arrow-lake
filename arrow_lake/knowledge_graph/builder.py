@@ -15,10 +15,18 @@ import pyarrow as pa
 
 from arrow_lake.config import HugeGraphConfig
 from arrow_lake.knowledge_graph.client import HugeGraphClient
+from arrow_lake.knowledge_graph.entity_router import route_entity_type, route_relation
 from arrow_lake.knowledge_graph.extractor import EntityExtractor
 from arrow_lake.knowledge_graph.schema import ARROW_LAKE_KG_SCHEMA, schema_to_hugegraph_payload
 
 logger = logging.getLogger(__name__)
+
+# edge_label → (source_label, target_label) from the schema, for endpoint
+# resolution in relation routing (v1.7.1 §4.5 double-write strategy).
+_EDGE_ENDPOINTS: dict[str, tuple[str, str]] = {
+    el.name: (el.source_label, el.target_label)
+    for el in ARROW_LAKE_KG_SCHEMA.edge_labels
+}
 
 
 # ---------------------------------------------------------------------------
@@ -49,6 +57,11 @@ class KGBuildTask:
     started_at: datetime | None
     completed_at: datetime | None
     error: str | None
+    # H1: chunks that yielded NO entities/relations despite non-trivial text —
+    # surfaces silent LLM/extractor failures (he backend swallows exceptions to
+    # an empty result) so an operator can distinguish "no entities" from
+    # "extractor was down". Surfaced via get_task_status.
+    extraction_failures: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -121,10 +134,17 @@ class KGBuilder:
         try:
             await self._execute_build(task, table)
             task.status = KGBuildStatus.COMPLETED
-        except (RuntimeError, OSError) as exc:
+        except asyncio.CancelledError:
+            # Cancellation is abnormal — mark FAILED, then propagate (do NOT
+            # swallow; asyncio.CancelledError is BaseException on 3.8+ so a bare
+            # `except Exception` would miss it, but be explicit for safety).
+            task.status = KGBuildStatus.FAILED
+            task.error = "cancelled"
+            raise
+        except Exception as exc:  # noqa: BLE001 — any build error fails the task
             task.status = KGBuildStatus.FAILED
             task.error = str(exc)
-            logger.error("KG build %s failed: %s", task_id, exc)
+            logger.error("KG build %s failed", task_id, exc_info=True)
         finally:
             task.completed_at = datetime.now(UTC)
 
@@ -186,6 +206,11 @@ class KGBuilder:
         contents = [str(c) if c is not None else "" for c in table.column("content").to_pylist()]
         doc_name_col = table.column("document_name").to_pylist()
         chunk_indices = table.column("chunk_index").to_pylist()
+        doc_type_col = (
+            table.column("doc_type").to_pylist()
+            if "doc_type" in table.column_names
+            else [None] * table.num_rows
+        )
 
         chunk_vertices = [
             {
@@ -230,16 +255,17 @@ class KGBuilder:
         # 7. Extract entities and relations from each chunk (batched)
         total_entities = 0
         total_relations = 0
+        extraction_failures = 0  # H1: chunks with empty result on non-trivial text
         concurrency = self._config.build_concurrency
         batch_delay = self._config.build_batch_delay
         semaphore = asyncio.Semaphore(concurrency)
 
         async def _process_chunk(
-            idx: int, cid: str, content: str,
+            idx: int, cid: str, content: str, doc_type: str | None = None,
         ) -> tuple[int, int]:
-            nonlocal total_entities, total_relations
+            nonlocal total_entities, total_relations, extraction_failures
             async with semaphore:
-                result = await self._extractor.extract(content, chunk_id=cid)
+                result = await self._extractor.extract(content, chunk_id=cid, doc_type=doc_type)
                 task.processed_chunks = idx + 1
 
             ent_count = len(result.entities)
@@ -248,8 +274,23 @@ class KGBuilder:
             total_relations += rel_count
 
             if not result.entities and not result.relations:
+                # H1: an empty result on non-trivial text usually means the
+                # extractor/LLM failed silently (he backend degrades exceptions
+                # to empty) — count it so operators can spot LLM outages vs
+                # genuine "document had no entities".
+                if len(content.strip()) > 50:
+                    extraction_failures += 1
+                    logger.warning(
+                        "KG chunk %s yielded no entities (content_len=%d) — "
+                        "possible extractor/LLM failure", cid, len(content)
+                    )
                 return ent_count, rel_count
 
+            # --- Entity double-write (v1.7.1 §4.5): a generic `entity` vertex is
+            # always written (keeps references/related_to edges intact across
+            # the schema's single-type edge endpoints); a typed vertex
+            # (person/organization/location/concept/event) is added too when
+            # route_entity_type recognizes the type, so typed edges can use it.---
             entity_vertices = [
                 {
                     "label": "entity",
@@ -260,12 +301,47 @@ class KGBuilder:
             entity_id_map: dict[str, str] = {}
             if entity_vertices:
                 entity_hg_ids = await self._client.add_vertices(entity_vertices)
-                # Use (name, type) composite key to avoid losing duplicate-name entities
-                entity_keys = [f"{e.name}::{e.entity_type}" for e in result.entities]
-                dict(zip(entity_keys, entity_hg_ids, strict=True))
-                # Also build name-only map for edge resolution (last wins for duplicates)
+                if len(entity_hg_ids) != len(entity_vertices):
+                    logger.warning(
+                        "entity add_vertices returned %d ids for %d vertices — "
+                        "some edges may resolve to stale/missing ids",
+                        len(entity_hg_ids), len(entity_vertices),
+                    )
+                # name-only map for edge resolution (last wins for duplicates)
                 for e, hg_id in zip(result.entities, entity_hg_ids, strict=False):
                     entity_id_map[e.name] = hg_id
+
+            typed_vertices: list[dict[str, Any]] = []
+            typed_keys: list[tuple[str, str]] = []
+            for e in result.entities:
+                label = route_entity_type(e.entity_type)
+                if label is None:
+                    continue
+                props: dict[str, Any] = {"name": e.name}
+                if label == "event" and e.properties:
+                    date_val = dict(e.properties).get("date")
+                    if date_val is not None:
+                        props["date"] = str(date_val)
+                typed_vertices.append({"label": label, "properties": props})
+                typed_keys.append((e.name, label))
+            typed_id_map: dict[tuple[str, str], str] = {}
+            if typed_vertices:
+                typed_hg_ids = await self._client.add_vertices(typed_vertices)
+                if len(typed_hg_ids) != len(typed_vertices):
+                    logger.warning(
+                        "typed add_vertices returned %d ids for %d vertices — "
+                        "some typed edges will degrade to related_to",
+                        len(typed_hg_ids), len(typed_vertices),
+                    )
+                for key, hg_id in zip(typed_keys, typed_hg_ids, strict=False):
+                    typed_id_map[key] = hg_id
+
+            entity_type_map = {e.name: e.entity_type for e in result.entities}
+
+            def _vertex_id(name: str, label: str) -> str | None:
+                if label == "entity":
+                    return entity_id_map.get(name)
+                return typed_id_map.get((name, label))
 
             ref_edges = [
                 {
@@ -282,38 +358,83 @@ class KGBuilder:
             if ref_edges:
                 await self._client.add_edges(ref_edges)
 
-            rel_edges = [
-                {
-                    "label": "related_to",
-                    "outV": entity_id_map[r.source],
-                    "outVLabel": "entity",
-                    "inV": entity_id_map[r.target],
-                    "inVLabel": "entity",
-                    "properties": {
-                        "weight": dict(r.properties).get("weight", 1.0)
-                        if r.properties else 1.0,
-                    },
-                }
-                for r in result.relations
-                if r.source in entity_id_map and r.target in entity_id_map
-            ]
+            # --- Relation routing (v1.7.1 §4.5): route_relation picks a typed
+            # edge label on a synonym hit (endpoints resolved via _EDGE_ENDPOINTS
+            # to the matching typed/generic vertices); otherwise falls back to
+            # related_to on the generic entity vertices. relation_type is always
+            # preserved as an edge property (fixes the prior discard bug). ---
+            rel_edges: list[dict[str, Any]] = []
+            for r in result.relations:
+                if r.source not in entity_id_map or r.target not in entity_id_map:
+                    continue
+                src_type = entity_type_map.get(r.source, "")
+                tgt_type = entity_type_map.get(r.target, "")
+                edge_label = route_relation(src_type, tgt_type, r.relation_type)
+                src_label, tgt_label = _EDGE_ENDPOINTS[edge_label]
+                src_id = _vertex_id(r.source, src_label)
+                tgt_id = _vertex_id(r.target, tgt_label)
+                if src_id is None or tgt_id is None:
+                    # Missing typed endpoint — degrade to related_to on generic vertices.
+                    edge_label = "related_to"
+                    src_label, tgt_label = "entity", "entity"
+                    src_id = entity_id_map[r.source]
+                    tgt_id = entity_id_map[r.target]
+                props: dict[str, Any] = {"relation_type": r.relation_type}
+                if edge_label == "related_to":
+                    props["weight"] = (
+                        dict(r.properties).get("weight", 1.0) if r.properties else 1.0
+                    )
+                rel_edges.append({
+                    "label": edge_label,
+                    "outV": src_id,
+                    "outVLabel": src_label,
+                    "inV": tgt_id,
+                    "inVLabel": tgt_label,
+                    "properties": props,
+                })
             if rel_edges:
                 await self._client.add_edges(rel_edges)
 
             return ent_count, rel_count
 
-        all_chunks = list(enumerate(zip(chunk_ids, contents, strict=True)))
-        for batch_start in range(0, len(all_chunks), concurrency):
-            batch = all_chunks[batch_start : batch_start + concurrency]
+        # doc_type handling: if any chunk carries an explicit doc_type, pass it
+        # through per-chunk (a document may legitimately mix types). Only when
+        # ALL chunks lack doc_type do we infer ONCE (document-level) so every
+        # chunk shares one template — avoids inconsistent schemas across chunks
+        # of the same document + saves LLM calls vs per-chunk inference.
+        if any(d for d in doc_type_col):
+            chunk_doc_types = doc_type_col
+        else:
+            inferred = await self._infer_doc_type(contents)
+            chunk_doc_types = [inferred] * len(chunk_ids)
+
+        for batch_start in range(0, len(chunk_ids), concurrency):
+            batch_end = min(batch_start + concurrency, len(chunk_ids))
             await asyncio.gather(*(
-                _process_chunk(idx, cid, content)
-                for idx, (cid, content) in batch
+                _process_chunk(idx, chunk_ids[idx], contents[idx], chunk_doc_types[idx])
+                for idx in range(batch_start, batch_end)
             ))
-            if batch_delay > 0 and batch_start + concurrency < len(all_chunks):
+            if batch_delay > 0 and batch_end < len(chunk_ids):
                 await asyncio.sleep(batch_delay)
 
         task.entity_count = total_entities
         task.relation_count = total_relations
+        task.extraction_failures = extraction_failures
+
+    async def _infer_doc_type(self, contents: list[str]) -> str | None:
+        """Infer doc_type ONCE from aggregated document content.
+
+        Delegates to the extractor's classifier when present (he backend); returns
+        ``None`` for the legacy backend (no classifier), leaving doc_type unset so
+        the extractor uses its default template.
+        """
+        classifier = getattr(self._extractor, "_classifier", None)
+        if classifier is None:
+            return None
+        aggregated = " ".join(c for c in contents if c)[:1500]
+        if not aggregated.strip():
+            return None
+        return await classifier.classify(aggregated)
 
     @staticmethod
     def _normalize_table(table: pa.Table, dataset_name: str) -> pa.Table:

@@ -282,6 +282,10 @@ class IngestDocumentsRequest(BaseModel):
 
     pdf_paths: list[str] = Field(default_factory=list, max_length=100, description="PDF file paths to ingest")
     blob_keys: list[str] = Field(default_factory=list, max_length=100, description="MinIO blob keys from prior upload")
+    doc_type: str | None = Field(
+        default=None,
+        description="Per-ingest document type for KG extraction routing (v1.7.0, e.g. research_paper, report). None = untyped.",
+    )
 
     @field_validator("pdf_paths")
     @classmethod

@@ -267,3 +267,92 @@ class TestEntityExtractionAccuracy:
             f"F1={result['f1']:.3f} below target {TARGET_F1}. "
             f"P={result['precision']:.3f}, R={result['recall']:.3f}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Production-backend accuracy (v1.7.0 §12.8): legacy vs he extractor.
+# ---------------------------------------------------------------------------
+# The bespoke ENTITY_EXTRACT_* prompt above is a standalone benchmark that
+# bypasses the real extractors. The parametrized test below runs the SAME gold
+# standard through the production extractors used by KGBuilder — legacy
+# EntityExtractor and HyperExtractExtractor (he) — so F1 reflects production
+# code and the two backends are directly comparable. Configure the he backend
+# via HUGEGRAPH_LLM_PROVIDER/MODEL/API_BASE (same env vars as legacy).
+
+
+def _extraction_result_to_entities(result: object) -> list[dict]:
+    """Convert an ExtractionResult to the [{name, type}] shape _calculate_metrics expects."""
+    return [
+        {"name": e.name, "type": e.entity_type}
+        for e in result.entities
+    ]
+
+
+@pytest.fixture
+def legacy_extractor(llm_provider):
+    """Production legacy EntityExtractor (uses the shared llm_provider fixture)."""
+    from arrow_lake.knowledge_graph.extractor import EntityExtractor
+
+    return EntityExtractor(llm_provider)
+
+
+@pytest.fixture
+def he_extractor():
+    """Production HyperExtractExtractor (he backend), default template."""
+    from arrow_lake.knowledge_graph.doc_type_router import DocTypeRouter
+    from arrow_lake.knowledge_graph.he_extractor import HyperExtractExtractor
+
+    cfg = LLMConfig(
+        provider=LLMProviderType(LLM_PROVIDER),
+        model=LLM_MODEL,
+        api_base=LLM_API_BASE,
+        temperature=0.0,
+        max_tokens=2048,
+        timeout_seconds=300.0,
+    )
+    return HyperExtractExtractor(
+        cfg,
+        doc_type_router=DocTypeRouter({}, default_template="general/default_graph"),
+        language="zh",
+    )
+
+
+@pytest.mark.spike
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend", ["legacy", "he"])
+async def test_extraction_accuracy_production(
+    backend,
+    legacy_extractor,
+    he_extractor,
+    gold_standard: list[dict],
+) -> None:
+    """Measure F1 of the production extractor (legacy vs he) on the gold standard."""
+    from arrow_lake.exceptions import RAGError
+
+    extractor = legacy_extractor if backend == "legacy" else he_extractor
+    samples = gold_standard
+    if os.getenv("HUGEGRAPH_FULL_BENCHMARK", "0") != "1":
+        samples = samples[:10]
+
+    all_metrics: list[dict] = []
+    for sample in samples:
+        try:
+            result = await extractor.extract(sample["text"], chunk_id="bench")
+        except RAGError as exc:
+            _skip_if_llm_unavailable(exc)
+            raise
+        predicted = _extraction_result_to_entities(result)
+        all_metrics.append(_calculate_metrics(predicted, sample["entities"]))
+
+    avg_p = sum(m["precision"] for m in all_metrics) / len(all_metrics)
+    avg_r = sum(m["recall"] for m in all_metrics) / len(all_metrics)
+    avg_f1 = sum(m["f1"] for m in all_metrics) / len(all_metrics)
+
+    print(
+        f"\n[{backend}] samples={len(all_metrics)} "
+        f"P={avg_p:.3f} R={avg_r:.3f} F1={avg_f1:.3f} (target {TARGET_F1:.2f})"
+    )
+    assert avg_f1 >= TARGET_F1, (
+        f"[{backend}] F1={avg_f1:.3f} below target {TARGET_F1}. "
+        f"P={avg_p:.3f}, R={avg_r:.3f}"
+    )

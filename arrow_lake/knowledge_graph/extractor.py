@@ -151,7 +151,7 @@ class EntityExtractor:
         self._llm = llm
         self._confidence_threshold = confidence_threshold
 
-    async def extract(self, text: str, *, chunk_id: str = "") -> ExtractionResult:
+    async def extract(self, text: str, *, chunk_id: str = "", doc_type: str | None = None) -> ExtractionResult:
         """Extract entities and relations from a single text chunk.
 
         Args:

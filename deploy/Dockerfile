@@ -46,16 +46,22 @@ ENV UV_HTTP_TIMEOUT=120
 ENV UV_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
 ENV UV_TRUSTED_HOST=mirrors.aliyun.com
 
+# WSL2 mirror-mode build proxy (proxy-forwarder host:17887 → Windows 7887, see
+# memory wsl2-proxy). BuildKit's daemon-proxy auto-injection is NOT reliably
+# applied to RUN steps here, so set it explicitly — uv/pip need it to reach the
+# aliyun PyPI mirror (without it: "Connection refused" on pip downloads).
+ARG BUILD_PROXY="http://127.0.0.1:17887"
+ENV HTTP_PROXY=${BUILD_PROXY}
+ENV HTTPS_PROXY=${BUILD_PROXY}
+ENV http_proxy=${BUILD_PROXY}
+ENV https_proxy=${BUILD_PROXY}
+
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv venv .venv \
     && . .venv/bin/activate \
-    && uv pip install --no-cache-dir . \
-    && uv pip install --no-cache-dir ".[fts]" \
+    && uv pip install --no-cache-dir ".[fts,otel,rag,he]" \
     && uv pip install --no-cache-dir jupyterlab ipywidgets \
-    && uv pip install --no-cache-dir modelscope>=1.18 \
-    && uv pip install --no-cache-dir PyJWT \
-    && uv pip install --no-cache-dir "apache-gravitino>=1.2.1" \
-    && uv pip install --no-cache-dir ".[otel]"
+    && uv pip install --no-cache-dir modelscope>=1.18 PyJWT "apache-gravitino>=1.2.1"
 
 # Clear proxy ENV after all network-dependent steps
 ENV HTTP_PROXY=""
@@ -74,21 +80,34 @@ ARG VERSION=dev
 ARG TARGETARCH
 
 # Runtime containers get proxy via docker-compose environment variables,
-# not via image ENV.  Clear daemon-injected proxy so runtime defaults are clean.
-ENV HTTP_PROXY=""
-ENV HTTPS_PROXY=""
-ENV http_proxy=""
-ENV https_proxy=""
-ENV no_proxy="*"
-ENV NO_PROXY="*"
+# NOTE: the daemon-injected proxy is KEPT here so the runtime apt-get + mc
+# download below can reach external hosts. It is cleared AFTER those network
+# steps (see "Clear proxy ENV" further down) so the final image has clean defaults.
 
 LABEL maintainer="wits@sunpw.dev"
 LABEL description="Arrow Lake — Unified multimodal data lakehouse (Lance + Daft + Ray + GraphRAG)"
 LABEL org.opencontainers.image.source="https://github.com/wits-sunpw/arrow-lake"
 LABEL org.opencontainers.image.version="${VERSION}"
 
-# Runtime system dependencies — use build args for proxy if needed
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# WSL2 mirror-mode build proxy (proxy-forwarder on host:17887 → Windows 7887,
+# see memory wsl2-proxy). network:host build makes 127.0.0.1:17887 reachable.
+# Set EXPLICITLY because BuildKit's auto-proxy is not reliably injected into
+# RUN steps in this env. Override via --build-arg BUILD_PROXY=... for other envs.
+ARG BUILD_PROXY="http://127.0.0.1:17887"
+ENV HTTP_PROXY=${BUILD_PROXY}
+ENV HTTPS_PROXY=${BUILD_PROXY}
+ENV http_proxy=${BUILD_PROXY}
+ENV https_proxy=${BUILD_PROXY}
+
+# Runtime system dependencies. Switch apt to the Aliyun mirror (the WSL2 proxy
+# allows aliyun — same host as the PyPI mirror used in the builder stage) so
+# apt-get update succeeds through the proxy instead of hitting the intercepted
+# deb.debian.org (which returns an HTML auth page → "NOSPLIT" apt error).
+# Handle BOTH apt source formats (DEB822 .sources and legacy sources.list).
+RUN for f in /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list; do \
+        [ -f "$f" ] && sed -i 's|deb.debian.org|mirrors.aliyun.com|g; s|security.debian.org|mirrors.aliyun.com|g' "$f" || true; \
+    done \
+    && apt-get update && apt-get install -y --no-install-recommends \
     curl \
     libcurl4 \
     libgomp1 \
@@ -102,6 +121,15 @@ RUN groupadd -r -g 999 arrowlake && useradd -r -u 999 -g arrowlake -d /app -s /s
 # Install mc (MinIO Client) for health checks (before USER arrowlake)
 RUN curl -sfL https://dl.min.io/client/mc/release/linux-amd64/mc -o /usr/local/bin/mc \
     && chmod +x /usr/local/bin/mc || echo "WARN: mc download failed, skipping"
+
+# Clear proxy ENV AFTER all network steps (apt + mc) so the final runtime image
+# has clean proxy defaults (the running service must not inherit the build proxy).
+ENV HTTP_PROXY=""
+ENV HTTPS_PROXY=""
+ENV http_proxy=""
+ENV https_proxy=""
+ENV no_proxy="*"
+ENV NO_PROXY="*"
 
 WORKDIR /app
 

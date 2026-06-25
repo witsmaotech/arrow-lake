@@ -123,6 +123,8 @@ _DEFAULT_BASE_URLS: dict[LLMProviderType, str] = {
     LLMProviderType.OLLAMA: "http://localhost:11434/v1",
     LLMProviderType.DEEPSEEK: "https://api.deepseek.com",
     LLMProviderType.ANTHROPIC: "https://api.anthropic.com",
+    # ZhipuAI (智谱) OpenAI-compatible endpoint (v1.7.0 §13.3, GLM-4-Plus).
+    LLMProviderType.ZHIPU: "https://open.bigmodel.cn/api/paas/v4",
 }
 
 # Patterns that indicate structured/extract-only tasks where thinking is wasteful.
@@ -527,7 +529,13 @@ def create_llm_provider(config: LLMConfig) -> BaseLLMProvider:
         RAGError: If the provider type is unsupported.
     """
     match config.provider:
-        case LLMProviderType.OPENAI | LLMProviderType.VLLM | LLMProviderType.OLLAMA | LLMProviderType.DEEPSEEK:
+        case (
+            LLMProviderType.OPENAI
+            | LLMProviderType.VLLM
+            | LLMProviderType.OLLAMA
+            | LLMProviderType.DEEPSEEK
+            | LLMProviderType.ZHIPU
+        ):
             return OpenAICompatibleProvider(config)
         case LLMProviderType.ANTHROPIC:
             return AnthropicProvider(config)

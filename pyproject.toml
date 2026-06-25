@@ -1,6 +1,6 @@
 [project]
 name = "arrow-lake"
-version = "1.6.0"
+version = "1.7.0"
 description = "Unified multimodal data lakehouse — Lance + Daft + Ray"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -61,6 +61,10 @@ arrow-lake = "arrow_lake.cli:main"
 jupyter = ["jupyterlab>=4.0", "ipywidgets>=8.0"]
 fts = ["tantivy>=0.20.0", "jieba>=0.42"]
 rag = ["openai>=1.50", "anthropic>=0.40", "jinja2>=3.1"]
+# v1.7.x hyper-extract KG backend (he_extractor + doc_type_router TemplateGallery).
+# Install via the `he` extra (e.g. `uv sync --extra he` or `pip install .[he]`);
+# the Dockerfile must include `he` for the container image to support he backend.
+he = ["hyperextract>=0.3.0", "langchain-openai>=1.3.0"]
 nemo-curator = ["nemo-curator>=0.6"]
 dedup = ["imagehash>=4.3"]
 modelscope = ["modelscope>=1.18"]

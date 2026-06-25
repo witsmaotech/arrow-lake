@@ -322,6 +322,7 @@ class _LakeIngestMixin:
         pdf_paths: list[str],
         *,
         doc_config: Any = None,
+        doc_type: str | None = None,
     ) -> IngestionReport:
         """Ingest PDF documents: parse → chunk → write to Lance dataset.
 
@@ -357,6 +358,7 @@ class _LakeIngestMixin:
         return Ingestor(self._get_storage()).ingest_documents(
             dataset_name, pdf_paths,
             doc_config=doc_config,
+            doc_type=doc_type,
             blob_store=blob_store,
             ocr_client=ocr_client,
         )

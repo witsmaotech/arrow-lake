@@ -97,6 +97,7 @@ class _FileIngestMixin:
         doc_config: Any = None,
         blob_store: Any = None,
         ocr_client: Any = None,
+        doc_type: str | None = None,
     ) -> Any:
         """Ingest PDF documents: parse -> chunk -> write to Lance dataset."""
         from arrow_lake.exceptions import DocumentError
@@ -168,6 +169,7 @@ class _FileIngestMixin:
                 "chunk_index": [c.chunk_index for c in chunks],
                 "document_id": [doc_id] * len(chunks),
                 "blob_key": [blob_key] * len(chunks),
+                "doc_type": [doc_type or ""] * len(chunks),
             }
             table = pa.table(rows)
 

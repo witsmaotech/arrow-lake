@@ -122,3 +122,6 @@ deploy/certs/
 # Build artifacts
 deploy/uv-local
 deploy/uvx-local
+
+# HugeGraph migration backups (local only, do not commit)
+deploy/backups/

@@ -87,6 +87,7 @@ class LLMProviderType(StrEnum):
     VLLM = "vllm"
     OLLAMA = "ollama"
     DEEPSEEK = "deepseek"
+    ZHIPU = "zhipu"
 
 
 class AuthMode(StrEnum):
