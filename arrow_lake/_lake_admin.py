@@ -214,6 +214,26 @@ class _LakeAdminMixin:
         """
         return self._get_storage().read_at_branch(dataset_name, branch)
 
+    def add_blob_column(
+        self, dataset_name: str, column_name: str, blobs: list[bytes]
+    ) -> None:
+        """Append raw binary blobs as a Lance column (v1.8.0 #2 — blob 存储).
+
+        Stores media originals (image / audio / video bytes) in-place in Lance
+        as a native binary column, alongside embeddings — avoiding a separate
+        object store + path reference (多模态一致性 + 省一次 IO). Delegates to
+        ``add_columns_table`` with a ``pa.binary()`` column.
+
+        Args:
+            dataset_name: Target dataset (must already exist).
+            column_name: Name for the blob column.
+            blobs: Raw bytes per row — length MUST equal the dataset row count.
+        """
+        import pyarrow as pa
+
+        table = pa.table({column_name: pa.array(blobs, type=pa.binary())})
+        self._get_storage().add_columns_table(dataset_name, table)
+
     def add_column(self, name: str, column_name: str, sql_expr: str) -> None:
         """Add a computed column to an existing dataset.
 

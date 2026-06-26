@@ -24,13 +24,18 @@ except ImportError:
     pass
 
 # Lindera for Japanese morphological segmentation (v1.8.0 #4 — i18n).
+# Instantiate once at module load — dictionary construction is expensive.
 _LINDERA_AVAILABLE = False
+_LINDERA_TOKENIZER = None
 try:
     from lindera import Tokenizer as _LinderaTokenizer
 
+    _LINDERA_TOKENIZER = _LinderaTokenizer()
     _LINDERA_AVAILABLE = True
 except ImportError:
     pass
+except Exception:  # lindera present but failed to init (dictionary load, etc.)
+    _log.warning("lindera present but failed to initialize", exc_info=True)
 
 _CJK_PATTERN = re.compile(r"[一-鿿㐀-䶿豈-﫿]")
 
@@ -56,27 +61,32 @@ def segment_text(text: str) -> str:
     → jieba; other text preserved as-is. Output is space-joined, suitable for
     lancedb's default space-based tokenizer. Falls back to the original text
     if the relevant segmenter is not installed or fails.
+
+    Note on mixed JP+CN scripts: when kana is present, lindera tokenizes the
+    whole string (including kanji). The same path runs at query time
+    (:func:`segment_query`), so index/query segmentation stays consistent and
+    FTS recall is preserved — a segmentation-quality nuance, not a correctness
+    bug. Pure Chinese (no kana) still routes to jieba.
     """
     if not text:
         return text
 
-    # Japanese (kana) → lindera
+    # Japanese (kana) → lindera (cached instance)
     if has_japanese(text):
-        if not _LINDERA_AVAILABLE:
+        if not _LINDERA_AVAILABLE or _LINDERA_TOKENIZER is None:
             _log.warning(
                 "Cannot segment Japanese text — lindera is not installed. "
                 "Install with: pip install lindera"
             )
             return text
         try:
-            tokenizer = _LinderaTokenizer()
-            tokens = tokenizer.tokenize(text)
+            tokens = _LINDERA_TOKENIZER.tokenize(text)
             return " ".join(
                 getattr(t, "text", None) or getattr(t, "surface", "") or str(t)
                 for t in tokens
             )
-        except (ValueError, RuntimeError, UnicodeDecodeError, TypeError):
-            _log.warning("lindera segmentation failed, returning original text", exc_info=True)
+        except Exception as exc:  # broad: optional segmenter must never break FTS
+            _log.warning("lindera segmentation failed: %s", exc, exc_info=True)
             return text
 
     # Chinese (CJK ideographs) → jieba
@@ -89,8 +99,8 @@ def segment_text(text: str) -> str:
             return text
         try:
             return " ".join(jieba.lcut(text))
-        except (ValueError, RuntimeError, UnicodeDecodeError):
-            _log.warning("jieba segmentation failed, returning original text", exc_info=True)
+        except Exception as exc:  # broad: optional segmenter must never break FTS
+            _log.warning("jieba segmentation failed: %s", exc, exc_info=True)
             return text
 
     return text

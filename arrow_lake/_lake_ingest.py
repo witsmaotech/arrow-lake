@@ -42,6 +42,34 @@ class _LakeIngestMixin:
             dataset_name, file_paths, transforms=transforms,
         )
 
+    def load_hf_dataset(self, repo_id: str, *, table: str | None = None) -> Any:
+        """Load a HuggingFace Lance-format dataset as an Arrow Table (v1.8.0 #8).
+
+        Uses lancedb's ``hf://`` scheme to read lance-format datasets hosted on
+        the HF Hub — useful for evaluation seed data / benchmarks. Returns the
+        named table (or the first one) as an Arrow Table; caller can then
+        ``create_dataset`` to materialize it locally.
+
+        Args:
+            repo_id: HF dataset repo id (e.g. "lance-format/eval-set"), or a
+                full ``hf://datasets/...`` URI.
+            table: Optional table name within the dataset (None = first).
+
+        Returns:
+            Arrow Table with the dataset content.
+
+        Raises:
+            ValueError: If the dataset has no tables.
+        """
+        import lancedb
+
+        uri = repo_id if repo_id.startswith("hf://") else f"hf://datasets/{repo_id}"
+        db = lancedb.connect(uri)
+        names = db.table_names()
+        if not names:
+            raise ValueError(f"No tables found in hf dataset '{repo_id}'")
+        return db.open_table(table or names[0]).to_arrow()
+
     def ingest_batch(
         self,
         dataset_name: str,
