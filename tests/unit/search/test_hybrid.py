@@ -379,3 +379,67 @@ class TestConfigDrivenDefaults:
         assert bridge._config.rrf_k == 60
         assert bridge._config.vector_top_k_multiplier == 3
         assert bridge._config.fts_top_k_multiplier == 3
+
+
+class TestRerankTable:
+    """HybridSearchBridge._rerank_table (v1.8.0 #5 cross-encoder 精排)。"""
+
+    def test_noop_preserves_order(self) -> None:
+        from arrow_lake.config import HybridSearchConfig
+
+        bridge = HybridSearchBridge(
+            storage=_make_mock_storage(),
+            config=HybridSearchConfig(reranker_type="none"),
+        )
+        table = pa.table({"text_content": ["a", "b"], "_rrf_score": [0.5, 0.3]})
+        result = bridge._rerank_table(table, "q", "text_content", 2)
+        # none → NoopReranker，原序 + _rerank_score 列
+        assert result.num_rows == 2
+        assert "_rerank_score" in result.column_names
+        assert result.column("text_content").to_pylist() == ["a", "b"]
+
+    def test_cross_encoder_reorders(self) -> None:
+        from arrow_lake.config import HybridSearchConfig
+
+        bridge = HybridSearchBridge(
+            storage=_make_mock_storage(),
+            config=HybridSearchConfig(reranker_type="cross-encoder"),
+        )
+        mock_reranker = MagicMock()
+
+        def fake_rerank(query, chunks, top_n):
+            return list(reversed(chunks))[:top_n]
+
+        mock_reranker.rerank.side_effect = fake_rerank
+        bridge._reranker = mock_reranker  # 注入，跳过 create_reranker
+
+        table = pa.table({"text_content": ["a", "b"], "_rrf_score": [0.5, 0.3]})
+        result = bridge._rerank_table(table, "query", "text_content", 2)
+
+        assert "_rerank_score" in result.column_names
+        assert result.column("text_content").to_pylist() == ["b", "a"]
+
+    def test_missing_text_column_returns_unchanged(self) -> None:
+        from arrow_lake.config import HybridSearchConfig
+
+        bridge = HybridSearchBridge(
+            storage=_make_mock_storage(),
+            config=HybridSearchConfig(reranker_type="cross-encoder"),
+        )
+        table = pa.table({"other": ["a"], "_rrf_score": [0.5]})
+        result = bridge._rerank_table(table, "q", "text_content", 1)
+        assert result is table
+
+    def test_rerank_failure_returns_original(self) -> None:
+        from arrow_lake.config import HybridSearchConfig
+
+        bridge = HybridSearchBridge(
+            storage=_make_mock_storage(),
+            config=HybridSearchConfig(reranker_type="cross-encoder"),
+        )
+        mock_reranker = MagicMock()
+        mock_reranker.rerank.side_effect = RuntimeError("boom")
+        bridge._reranker = mock_reranker
+        table = pa.table({"text_content": ["a", "b"], "_rrf_score": [0.5, 0.3]})
+        result = bridge._rerank_table(table, "q", "text_content", 2)
+        assert result is table

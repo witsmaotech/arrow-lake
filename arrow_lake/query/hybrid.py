@@ -80,6 +80,7 @@ class HybridSearchBridge:
         self._session_manager = session_manager
         self._vector_bridge: Any | None = None
         self._fts_bridge: Any | None = None
+        self._reranker: Any = None  # 懒加载（v1.8.0 #5 cross-encoder 精排）
 
     def search(
         self,
@@ -192,6 +193,12 @@ class HybridSearchBridge:
             max_val = pa.compute.max(result_table.column("_rrf_score"))
             max_rrf_score = max_val.as_py() if max_val.is_valid else None
 
+        # Rerank (optional, v1.8.0 #5): cross-encoder 精排 RRF 粗排结果
+        if self._config.reranker_type and self._config.reranker_type != "none":
+            result_table = self._rerank_table(
+                result_table, query_text, fts_column or "text_content", effective_top_k
+            )
+
         return HybridSearchResult(
             table=result_table,
             row_count=result_table.num_rows,
@@ -200,6 +207,63 @@ class HybridSearchBridge:
             top_k=effective_top_k,
             rrf_k=self._config.rrf_k,
             max_rrf_score=max_rrf_score,
+        )
+
+    def _rerank_table(
+        self,
+        table: pa.Table,
+        query_text: str,
+        text_column: str,
+        top_k: int,
+    ) -> pa.Table:
+        """Rerank a result table via configured cross-encoder (v1.8.0 #5).
+
+        Converts rows to ``ContextChunk``, reranks, reorders the table, and
+        appends a ``_rerank_score`` column. Returns the original table unchanged
+        if the text column is missing or reranking fails (graceful degradation).
+        """
+        if table.num_rows == 0 or text_column not in table.column_names:
+            return table
+
+        from arrow_lake.rag.context import ContextChunk
+        from arrow_lake.rag.reranker import create_reranker
+
+        if self._reranker is None:
+            self._reranker = create_reranker(
+                self._config.reranker_type,
+                model_name=self._config.reranker_model,
+            )
+
+        texts = table.column(text_column).to_pylist()
+        rrf_scores = (
+            table.column("_rrf_score").to_pylist()
+            if "_rrf_score" in table.column_names
+            else [0.0] * len(texts)
+        )
+        chunks = [
+            ContextChunk(
+                text=str(t) if t is not None else "",
+                dataset="",
+                row_id=str(i),
+                score=float(s),
+                metadata={"row_idx": i},
+            )
+            for i, (t, s) in enumerate(zip(texts, rrf_scores, strict=True))
+        ]
+
+        try:
+            reranked = self._reranker.rerank(query_text, chunks, top_k)
+        except Exception:
+            logger.warning("Rerank failed, returning original order", exc_info=True)
+            return table
+
+        if not reranked:
+            return table
+
+        order = [int(c.metadata.get("row_idx", i)) for i, c in enumerate(reranked)]
+        rerank_scores = [float(c.score) for c in reranked]
+        return table.take(order).append_column(
+            "_rerank_score", pa.array(rerank_scores, type=pa.float32())
         )
 
     def _search_via_duckdb(

@@ -101,6 +101,8 @@ class HybridSearchConfig(BaseModel):
     rrf_k: int = 60
     vector_top_k_multiplier: int = 3
     fts_top_k_multiplier: int = 3
+    reranker_type: str = "none"
+    reranker_model: str = "BAAI/bge-reranker-v2-m3"
 
     @field_validator("default_top_k", "rrf_k", "vector_top_k_multiplier", "fts_top_k_multiplier")
     @classmethod
