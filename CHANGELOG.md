@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [Unreleased] — v1.8.0 第二批
+
+### Added
+
+- **#10 SQL-PGQ 轻图查询**（`arrow_lake/query/olap.py`）：`OlapSearchBridge.graph_query(edges_dataset, start_node, ...)` 用 DuckDB **递归 CTE** 做环安全 BFS 邻居/路径遍历，返回 `depth / node / path`（可选 `cost`）。PGQ（`CREATE PROPERTY GRAPH` / `MATCH`）在此 DuckDB 1.5.2 build 不可用（`pgq` 扩展无法安装，`CREATE PROPERTY GRAPH` 抛 ParserException），递归 CTE 零扩展依赖达成等价轻量图查询，与 HugeGraph 互补（重图→HG，轻查询→DuckDB）。`max_depth` 钳制 [1,10] 防 runaway，`list_contains` 环检测，支持 directed/undirected + 可选权重列。测试 `tests/unit/query/test_olap_graph.py`（11 tests，真 DuckDB 执行）。
+- **#6 CLIP 跨模态 text→image**（`arrow_lake/embed/image_encoder.py`）：`CLIPImageEncoder.encode_text(texts)` 用 CLIP/SigLIP **text tower** 把文本查询编入与 image 相同的嵌入空间，补全跨模态检索缺失的一半（`encode()` 编图、`encode_text()` 编查询 → `lake.search(ds, vec, vector_column="image_embedding")`）。L2 归一化、tokenizer 懒加载缓存、模块级 `AutoTokenizer` 可 patch。cookbook `05_image_video_ingest.py` STEP 4 演示 text→image 跨模态（无模型/无图优雅跳过）。
+
+### Changed
+
+- **#9 DuckLake 物化视图**：经核实 `materialize()` / `cleanup_materialized()` **已实现于 `olap.py`**（非 implementation doc 误标的 `federated_engine.py`），经 `DuckLakeWorkspace` 做 TTL 持久化 + ART index + 行预算。本批仅验证（29 tests 绿）+ 标记 ✅。
+- **#11 Prepared statements**：经核实 DuckLake 元数据表 INSERT/SELECT/DELETE **已全用 `$1..$4` 参数化执行**（`ducklake_workspace.py`）。DuckDB `EXECUTE` 不支持绑定参数（binder 限制），故 PREPARE/EXECUTE 与安全参数绑定不兼容；参数化执行是正确方案（DuckDB 自动缓存计划）。新增回归测试 `tests/unit/duckdb/test_ducklake_prepared.py`（4 tests）守卫参数绑定不变量。
+
 ## [Unreleased] — v1.8.0 第一批
 
 ### Added

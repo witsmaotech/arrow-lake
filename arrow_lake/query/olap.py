@@ -290,6 +290,126 @@ class OlapSearchBridge:
         with self._managed_session(load_ducklake=True) as conn:
             return workspace.cleanup_expired(conn)
 
+    def graph_query(
+        self,
+        edges_dataset: str,
+        *,
+        src_col: str = "src",
+        dst_col: str = "dst",
+        start_node: int | str,
+        max_depth: int = 3,
+        weight_col: str | None = None,
+        directed: bool = True,
+    ) -> OlapQueryResult:
+        """Run a bounded graph traversal over an edges dataset.
+
+        Finds reachable nodes and paths from ``start_node`` using a DuckDB
+        recursive CTE (cycle-safe BFS). PGQ (``CREATE PROPERTY GRAPH`` /
+        ``MATCH``) is unavailable in the bundled DuckDB 1.5.2 build — the
+        ``pgq`` extension is not installable on this platform — so recursive
+        CTE delivers equivalent lightweight neighbor/path traversal with zero
+        extension dependency. This complements HugeGraph for in-process graph
+        queries on edge tables (邻居/路径) without standing up a graph server.
+
+        Args:
+            edges_dataset: Name of the Lance dataset holding edges.
+            src_col: Source node column (default "src").
+            dst_col: Destination node column (default "dst").
+            start_node: Node value to traverse from (int or str).
+            max_depth: Maximum traversal depth; clamped to [1, 10] to bound cost.
+            weight_col: Optional numeric edge column summed along each path as
+                ``cost`` (None = omit cost column).
+            directed: If False, traverse edges in both directions.
+
+        Returns:
+            OlapQueryResult with columns ``depth, node, path`` (plus ``cost``
+            when ``weight_col`` is given). ``path`` is a ``VARCHAR[]`` of node
+            ids from start to the reached node. The start node itself is row 0.
+
+        Raises:
+            QueryError: If dataset read fails or traversal fails.
+            ValueError: If dataset name or column identifiers are invalid.
+        """
+        _validate_dataset_name(edges_dataset)
+        validate_identifier(src_col)
+        validate_identifier(dst_col)
+        if weight_col is not None:
+            validate_identifier(weight_col)
+
+        # Bound max_depth to prevent runaway recursive expansion.
+        clamped_depth = max(1, min(int(max_depth), 10))
+        if clamped_depth != max_depth:
+            logger.warning(
+                "graph_query max_depth %s clamped to %s", max_depth, clamped_depth,
+            )
+
+        # Cast node columns to VARCHAR for uniform typing + array path building.
+        # The edge CTE normalizes src/dst (+ optional weight); undirected adds a
+        # reversed-edge union so traversal treats edges as bidirectional.
+        weight_expr = (
+            f"CAST({weight_col} AS DOUBLE)" if weight_col else "CAST(0.0 AS DOUBLE)"
+        )
+        edge_cte = (
+            f"SELECT CAST({src_col} AS VARCHAR) AS s, "
+            f"CAST({dst_col} AS VARCHAR) AS d, {weight_expr} AS w "
+            f"FROM {edges_dataset}"
+        )
+        if not directed:
+            edge_cte += (
+                f" UNION ALL SELECT CAST({dst_col} AS VARCHAR) AS s, "
+                f"CAST({src_col} AS VARCHAR) AS d, {weight_expr} AS w "
+                f"FROM {edges_dataset}"
+            )
+
+        select_cols = "depth, node, path" + (", cost" if weight_col else "")
+
+        # ``params`` CTE binds $1 exactly once; recursive CTE then references it
+        # via the params relation. Cycle guard via list_contains prevents loops.
+        sql = (
+            f"WITH RECURSIVE "
+            f"params(start) AS (SELECT $1::VARCHAR), "
+            f"edge(s, d, w) AS ({edge_cte}), "
+            f"traverse(depth, node, path, cost) AS ("
+            f"SELECT 0, p.start, [p.start], CAST(0.0 AS DOUBLE) FROM params p "
+            f"UNION ALL "
+            f"SELECT t.depth + 1, e.d, list_append(t.path, e.d), "
+            f"t.cost + COALESCE(e.w, 0.0) "
+            f"FROM traverse t JOIN edge e ON t.node = e.s "
+            f"WHERE t.depth < {clamped_depth} "
+            f"AND NOT list_contains(t.path, e.d)"
+            f") "
+            f"SELECT {select_cols} FROM traverse ORDER BY depth, node"
+        )
+
+        try:
+            source = self._storage.read_dataset(edges_dataset)
+        except (StorageError, OSError) as exc:
+            raise QueryError(
+                error_code=ErrorCode.OLAP_QUERY_FAILED,
+                message=f"Failed to read dataset '{edges_dataset}': {exc}",
+            ) from exc
+
+        with self._managed_session() as conn:
+            self._register_dataset(conn, edges_dataset, source)
+            try:
+                result_reader = conn.execute(sql, [start_node]).arrow()
+            except duckdb.Error as exc:
+                raise QueryError(
+                    error_code=ErrorCode.OLAP_QUERY_FAILED,
+                    message=f"Graph traversal failed on '{edges_dataset}': {exc}",
+                ) from exc
+            if hasattr(result_reader, "read_all"):
+                result_table = result_reader.read_all()
+            else:
+                result_table = result_reader
+
+        return OlapQueryResult(
+            table=result_table,
+            row_count=result_table.num_rows,
+            column_count=result_table.num_columns,
+            sql=sql,
+        )
+
     def explain(self, dataset_name: str, sql: str) -> str:
         """Return DuckDB EXPLAIN output for query optimization analysis.
 

@@ -21,12 +21,15 @@ import structlog
 try:
     from transformers import AutoImageProcessor as _AutoImageProcessor
     from transformers import AutoModel as _AutoModel
+    from transformers import AutoTokenizer as _AutoTokenizer
 
     AutoImageProcessor = _AutoImageProcessor
     AutoModel = _AutoModel
+    AutoTokenizer = _AutoTokenizer
 except ImportError:
     AutoImageProcessor = None  # type: ignore[assignment, misc]
     AutoModel = None  # type: ignore[assignment, misc]
+    AutoTokenizer = None  # type: ignore[assignment, misc]
 
 logger = structlog.get_logger(__name__)
 
@@ -89,6 +92,8 @@ class CLIPImageEncoder:
         self.embedding_dim = _MODEL_DIMENSIONS.get(model_name, 0)
         self._processor: Any = None
         self._model: Any = None
+        self._tokenizer: Any = None
+        self._model_path: str | None = None
 
     def _ensure_loaded(self) -> None:
         """Lazy-load the processor and model."""
@@ -113,6 +118,7 @@ class CLIPImageEncoder:
             model_path = snapshot_download(self.model_name)
         else:
             model_path = self.model_name
+        self._model_path = model_path
         self._processor = AutoImageProcessor.from_pretrained(model_path)
         self._model = AutoModel.from_pretrained(model_path)
 
@@ -218,3 +224,54 @@ class CLIPImageEncoder:
             dim=result.embedding_dim,
         )
         return result
+
+    def encode_text(self, texts: list[str]) -> np.ndarray:
+        """Encode texts into the CLIP/SigLIP shared embedding space (cross-modal).
+
+        Produces L2-normalized text embeddings directly comparable to image
+        embeddings from :meth:`encode` — CLIP/SigLIP project text and images
+        into one shared space, so a text query can retrieve matching images::
+
+            query_vec = clip_encoder.encode_text(["a cat on a sofa"])[0]
+            lake.search("images", query_vec, vector_column="image_embedding")
+
+        This is the missing half of cross-modal retrieval: :meth:`encode`
+        embeds images (image tower), :meth:`encode_text` embeds queries (text
+        tower) into the same space.
+
+        Args:
+            texts: Text strings to encode.
+
+        Returns:
+            ``(len(texts), embedding_dim)`` float32 matrix of L2-normalized
+            text embeddings.
+
+        Raises:
+            ValueError: If texts is empty.
+            ImportError: If transformers/torch are unavailable.
+        """
+        if not texts:
+            raise ValueError("texts must not be empty")
+
+        self._ensure_loaded()
+        import torch
+
+        if AutoTokenizer is None:
+            raise ImportError(
+                "transformers is required for text embedding. "
+                "Install with: uv pip install transformers torch"
+            )
+
+        if self._tokenizer is None:
+            self._tokenizer = AutoTokenizer.from_pretrained(self._model_path)
+
+        inputs = self._tokenizer(
+            texts, padding=True, truncation=True, return_tensors="pt"
+        )
+        with torch.no_grad():
+            text_emb = self._model.get_text_features(**inputs).cpu().numpy()
+
+        # L2 normalize — same space as image embeddings from encode()
+        norms = np.linalg.norm(text_emb, axis=1, keepdims=True)
+        norms = np.clip(norms, 1e-12, None)
+        return (text_emb / norms).astype(np.float32)

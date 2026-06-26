@@ -200,3 +200,97 @@ class TestCLIPImageEncoderEncode:
         assert result.embedded == 0
         # Processor/model should NOT be loaded for empty table
         mock_proc_cls.from_pretrained.assert_not_called()
+
+
+class TestCLIPImageEncoderEncodeText:
+    """Cross-modal text encoding (CLIP/SigLIP text tower → shared space).
+
+    encode_text is the missing half of cross-modal retrieval: encode() embeds
+    images, encode_text() embeds a text query into the same space so it can
+    retrieve matching images via vector.search(vector_column="image_embedding").
+    """
+
+    @staticmethod
+    def _make_text_mocks(dim: int = 512, n: int = 2) -> tuple[MagicMock, MagicMock, MagicMock]:
+        model = MagicMock()
+        emb = np.random.randn(n, dim).astype(np.float32)
+        tensor_mock = MagicMock()
+        tensor_mock.cpu.return_value = tensor_mock
+        tensor_mock.numpy.return_value = emb
+        model.get_text_features.return_value = tensor_mock
+
+        tokenizer = MagicMock()
+        tokenizer.return_value = {"input_ids": [[1, 2]] * n}
+
+        proc = MagicMock()
+        return model, tokenizer, proc
+
+    @patch("arrow_lake.embed.image_encoder.AutoTokenizer")
+    @patch("arrow_lake.embed.image_encoder.AutoImageProcessor")
+    @patch("arrow_lake.embed.image_encoder.AutoModel")
+    def test_encode_text_returns_normalized_vectors(
+        self, mock_model_cls: Any, mock_proc_cls: Any, mock_tok_cls: Any
+    ) -> None:
+        dim = 512
+        model, tokenizer, proc = self._make_text_mocks(dim=dim, n=2)
+        mock_model_cls.from_pretrained.return_value = model
+        mock_proc_cls.from_pretrained.return_value = proc
+        mock_tok_cls.from_pretrained.return_value = tokenizer
+
+        enc = CLIPImageEncoder(model_source="huggingface")
+        result = enc.encode_text(["hello world", "a cat on a sofa"])
+
+        assert result.shape == (2, dim)
+        assert result.dtype == np.float32
+        # L2 normalized: each row has unit norm
+        norms = np.linalg.norm(result, axis=1)
+        assert np.allclose(norms, 1.0, atol=1e-5)
+        model.get_text_features.assert_called_once()
+        tokenizer.assert_called_once()
+
+    @patch("arrow_lake.embed.image_encoder.AutoTokenizer")
+    @patch("arrow_lake.embed.image_encoder.AutoImageProcessor")
+    @patch("arrow_lake.embed.image_encoder.AutoModel")
+    def test_encode_text_empty_raises(
+        self, mock_model_cls: Any, mock_proc_cls: Any, mock_tok_cls: Any
+    ) -> None:
+        enc = CLIPImageEncoder(model_source="huggingface")
+        with pytest.raises(ValueError, match="empty"):
+            enc.encode_text([])
+        # Model not loaded when input is empty
+        mock_model_cls.from_pretrained.assert_not_called()
+
+    @patch("arrow_lake.embed.image_encoder.AutoTokenizer")
+    @patch("arrow_lake.embed.image_encoder.AutoImageProcessor")
+    @patch("arrow_lake.embed.image_encoder.AutoModel")
+    def test_encode_text_tokenizer_cached_across_calls(
+        self, mock_model_cls: Any, mock_proc_cls: Any, mock_tok_cls: Any
+    ) -> None:
+        model, tokenizer, proc = self._make_text_mocks(dim=512, n=1)
+        mock_model_cls.from_pretrained.return_value = model
+        mock_proc_cls.from_pretrained.return_value = proc
+        mock_tok_cls.from_pretrained.return_value = tokenizer
+
+        enc = CLIPImageEncoder(model_source="huggingface")
+        enc.encode_text(["a"])
+        enc.encode_text(["b"])
+        # Tokenizer loaded once (cached on instance), called per encode
+        mock_tok_cls.from_pretrained.assert_called_once()
+        assert tokenizer.call_count == 2
+
+    @patch("arrow_lake.embed.image_encoder.AutoTokenizer")
+    @patch("arrow_lake.embed.image_encoder.AutoImageProcessor")
+    @patch("arrow_lake.embed.image_encoder.AutoModel")
+    def test_encode_text_uses_shared_model(
+        self, mock_model_cls: Any, mock_proc_cls: Any, mock_tok_cls: Any
+    ) -> None:
+        """encode_text reuses the same model instance loaded for encode()."""
+        model, tokenizer, proc = self._make_text_mocks(dim=512, n=1)
+        mock_model_cls.from_pretrained.return_value = model
+        mock_proc_cls.from_pretrained.return_value = proc
+        mock_tok_cls.from_pretrained.return_value = tokenizer
+
+        enc = CLIPImageEncoder(model_source="huggingface")
+        enc.encode_text(["query"])
+        # Same model instance as encode() would use
+        assert enc._model is model

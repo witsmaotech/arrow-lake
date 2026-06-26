@@ -72,6 +72,25 @@ def main() -> None:
         print(f"  {name}")
     print("  [PASS]\n")
 
+    # --- STEP 4: 跨模态检索 (text → image，v1.8.0 #6 CLIP text tower) ---
+    # 用 CLIP 文本塔把查询编入与图像相同的空间，再用 vector_column 搜图像列。
+    # 需要 CLIP 模型 + 已嵌入的 photos 数据集；缺任一则优雅跳过。
+    print("STEP 4: 跨模态检索 (text → image)")
+    try:
+        from arrow_lake.embed.image_encoder import CLIPImageEncoder
+
+        encoder = CLIPImageEncoder(model_source="local")
+        query_vec = encoder.encode_text(["a photo of a cat"])[0].tolist()
+        results = lake.search(
+            "photos", query_vec, vector_column="image_embedding", top_k=3
+        )
+        print(f"  查询: 'a photo of a cat'")
+        print(f"  命中: {results.row_count} 张")
+        print("  [PASS]\n")
+    except Exception as exc:  # 模型未下载 / 无图像嵌入列 / 无 photos 数据集
+        print(f"  跳过跨模态演示 (需 CLIP 模型 + photos 嵌入列): {type(exc).__name__}")
+        print("  [SKIP]\n")
+
     if not no_cleanup:
         for ds in _DATASETS:
             try:
