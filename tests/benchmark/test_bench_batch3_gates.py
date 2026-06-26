@@ -43,7 +43,11 @@ def _make_vector_table(n: int, dim: int = 128, seed: int = 42) -> pa.Table:
 
 
 def _make_clustered_table(
-    n_clusters: int = 20, per_cluster: int = 50, dim: int = 64, seed: int = 7
+    n_clusters: int = 20,
+    per_cluster: int = 50,
+    dim: int = 64,
+    seed: int = 7,
+    noise: float = 0.1,
 ) -> tuple[pa.Table, np.ndarray, int]:
     """Clustered vectors + their centroids.
 
@@ -57,7 +61,7 @@ def _make_clustered_table(
     vecs: list[np.ndarray] = []
     labels: list[int] = []
     for ci, c in enumerate(centroids):
-        pts = c + 0.1 * rng.randn(per_cluster, dim).astype(np.float32)
+        pts = c + noise * rng.randn(per_cluster, dim).astype(np.float32)
         vecs.append(pts)
         labels.extend([ci] * per_cluster)
     X = np.vstack(vecs).astype(np.float32)
@@ -121,7 +125,7 @@ class TestBatch3ConcurrencyGate:
 class TestBatch3IndexBuildScaleGate:
     """#15 gate: 索引构建时长 × 规模 → 单节点天花板（backfill 决策）。"""
 
-    @pytest.mark.parametrize("n", [10_000, 100_000])
+    @pytest.mark.parametrize("n", [10_000, 100_000, 1_000_000])
     def test_index_build_time_at_scale(self, n: int, lance_tmp_dir: str) -> None:
         from arrow_lake.ingest.storage import LanceStorageManager
         from arrow_lake.query.vector import VectorSearchBridge
@@ -139,10 +143,24 @@ class TestBatch3IndexBuildScaleGate:
             repeats=1,
         )
         report.print_summary()
-        per_1m = (elapsed / n) * 1_000_000 if n > 0 else 0.0
+
+        # Search latency at scale (p50/p95 over 20 queries)
+        rng = np.random.RandomState(123)
+        q = rng.randn(128).astype(np.float32)
+        q = q / np.linalg.norm(q)
+        bridge.search(ds, q.tolist(), top_k=10, vector_column="text_embedding")  # warmup
+        stimes: list[float] = []
+        for _ in range(20):
+            t0 = time.perf_counter()
+            bridge.search(ds, q.tolist(), top_k=10, vector_column="text_embedding")
+            stimes.append(time.perf_counter() - t0)
+        stimes.sort()
+        p50_ms = stimes[len(stimes) // 2] * 1000
+        p95_ms = stimes[int(len(stimes) * 0.95)] * 1000
+
         print(
-            f"\n[#15 gate] n={n:>8,}  build={elapsed:6.2f}s  "
-            f"→ projected 1M build ≈ {per_1m:7.1f}s"
+            f"\n[#15 gate] n={n:>9,}  build={elapsed:6.1f}s  "
+            f"search p50={p50_ms:5.1f}ms p95={p95_ms:5.1f}ms"
         )
         assert elapsed > 0
 
@@ -195,3 +213,52 @@ class TestBatch3RecallGate:
         )
         assert 0.0 <= recall_indexed <= 1.0
         assert 0.0 <= recall_bruteforce <= 1.0
+
+    @pytest.mark.parametrize(
+        ("n_clusters", "per_cluster", "noise"),
+        [(20, 50, 0.10), (100, 50, 0.30), (200, 30, 0.50)],
+        ids=["easy", "medium", "hard"],
+    )
+    def test_recall_difficulty_sweep(
+        self, n_clusters: int, per_cluster: int, noise: float, lance_tmp_dir: str
+    ) -> None:
+        """Recall@10 ANN vs brute across difficulty — finds where ANN degrades.
+
+        Easy (well-separated) → ANN ≈ brute. Hard (overlapping) → ANN loses
+        recall vs brute (IVF_PQ quantization). The curve gates #7: a deficit
+        here is an index-quality issue (fix with HNSW / higher nprobes), not
+        a ColBERT use case (ColBERT addresses fine-grained text token match).
+        """
+        from arrow_lake.ingest.storage import LanceStorageManager
+        from arrow_lake.query.vector import VectorSearchBridge
+
+        dim, k = 128, 10
+        table, centroids, _ = _make_clustered_table(
+            n_clusters, per_cluster, dim=dim, noise=noise
+        )
+
+        storage = LanceStorageManager(base_uri=lance_tmp_dir + f"_{int(noise * 100)}")
+        ds = "gate_sweep"
+        storage.create_dataset(ds, table)
+        bridge = VectorSearchBridge(storage)
+        bridge.create_index(ds, vector_column="text_embedding", num_sub_vectors=16)
+        ds_bf = ds + "_bf"
+        storage.create_dataset(ds_bf, table)
+
+        def _recall(b: VectorSearchBridge, name: str) -> float:
+            recs: list[float] = []
+            for ci, c in enumerate(centroids):
+                r = b.search(name, c.tolist(), top_k=k, vector_column="text_embedding")
+                recs.append(
+                    sum(1 for cl in r.table.column("cluster").to_pylist() if cl == ci) / k
+                )
+            return sum(recs) / len(recs)
+
+        ann = _recall(bridge, ds)
+        bf = _recall(bridge, ds_bf)
+        print(
+            f"\n[#7 sweep] clusters={n_clusters:>3} noise={noise:.2f} "
+            f"(n={n_clusters * per_cluster:,}): ANN@{k}={ann:.3f} brute@{k}={bf:.3f} "
+            f"retention={ann / max(bf, 1e-9):.1%}"
+        )
+        assert 0.0 <= ann <= 1.0
