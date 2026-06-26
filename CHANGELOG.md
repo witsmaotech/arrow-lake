@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [Unreleased] — v1.8.0 第三批 🟨（压测驱动 gate 框架）
+
+### Added
+
+- **第三批 gate 框架**（`tests/benchmark/test_bench_batch3_gates.py`）：复用 `BenchmarkReport`，为 #17/#15/#7 三个「压测驱动」项产出数据驱动的 go/no-go。三组 gate：
+  - **#17 async gate**：ThreadPool 并发查询 QPS × worker sweep（1/5/10/20），平台期检测。
+  - **#15 分布式索引 gate**：`create_index` 构建时长 × 规模（10k/100k），投影单节点天花板。
+  - **#7 ColBERT gate**：单向量 ANN recall@k vs 簇结构 ground truth + brute-force 基线（填补现有 `test_bench_quality` 只测 QualityFilter 的召回空白）。
+
+### 压测结论（2026-06-26，本机 WSL2）
+
+- **#17 async → ✅ GO**：并发平台期显著——worker 1→20（20x），QPS 仅 5.8→7.2（1.24x），存在强 GIL/连接池争用，async（仿 v1.7.1 `search_async` 扩 fts/hybrid/faceted）收益确定。
+- **#15 分布式索引 → ⏸ DEFER**：1M 索引构建 ≈ 150s（10k 1.98s / 100k 14.43s 投影），单节点在 ~10M 行内充裕；100M+ 才需 Ray 分布式 backfill（`ray_runtime` 基建已就绪待触发）。
+- **#7 ColBERT → ⏸ DEFER**：合成簇结构数据 recall@50 = 1.000（ANN vs brute-force 100% retention），无召回缺口；框架已就位，待真实细粒度语义数据复测。
+
 ## [Unreleased] — v1.8.0 第二批
 
 ### Added
