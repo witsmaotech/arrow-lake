@@ -34,6 +34,7 @@ def build_transforms(specs: list[dict[str, Any]]) -> list[Callable[[daft.DataFra
         "add_constant": _build_add_constant,
         "classify_text": _build_classify_text,
         "classify_image": _build_classify_image,
+        "decode_image": _build_decode_image,
         "llm_generate": _build_llm_generate,
         "prompt": _build_prompt,
         "deduplicate": _build_deduplicate,
@@ -161,6 +162,32 @@ def _build_classify_image(spec: dict[str, Any]) -> Callable:
         import daft.functions as daft_functions
         return df.with_column(output_column,
             daft_functions.classify_image(daft.col(column), provider=provider, model=model, **kwargs))
+    return _transform
+
+
+def _build_decode_image(spec: dict[str, Any]) -> Callable:
+    """Decode image bytes into an image tensor (v1.8.0 #18 — VLM chain).
+
+    Pairs with ``classify_image`` / ``prompt`` for end-to-end VLM: raw image
+    bytes → decoded image tensor → classification or visual prompt.
+    """
+    column = spec.get("column")
+    if not column:
+        raise ValueError("decode_image requires 'column' field")
+    output_column = spec.get("output_column", f"{column}_decoded")
+    mode = spec.get("mode", "RGB")
+    on_error = spec.get("on_error", "null")
+
+    def _transform(df: daft.DataFrame) -> daft.DataFrame:
+        import daft.functions as daft_functions
+
+        return df.with_column(
+            output_column,
+            daft_functions.decode_image(
+                daft.col(column), on_error=on_error, mode=mode
+            ),
+        )
+
     return _transform
 
 

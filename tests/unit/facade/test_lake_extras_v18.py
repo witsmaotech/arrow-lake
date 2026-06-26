@@ -122,3 +122,28 @@ class TestGravitinoFacade:
         mock_bridge.sync_inbound.assert_called_once()
         mock_bridge.get_table_statistics.assert_called_once_with("ds")
         mock_bridge.health.assert_called_once()
+
+
+class TestDaftFromGravitino:
+    """#14: daft_from_gravitino reads via Daft's Gravitino connector."""
+
+    def test_constructs_config_and_reads(self, tmp_path: str) -> None:
+        from arrow_lake import Lake
+
+        lake = Lake(base_uri=str(tmp_path))
+        with patch("daft.read_table") as mock_read, patch(
+            "daft.io.GravitinoConfig"
+        ) as mock_cfg_cls:
+            mock_cfg = MagicMock()
+            mock_cfg_cls.return_value = mock_cfg
+            mock_df = MagicMock()
+            mock_read.return_value = mock_df
+
+            res = lake.daft_from_gravitino(
+                "cat.schema.tbl", url="http://gv:8090", metalake="ml"
+            )
+            mock_cfg_cls.assert_called_once_with(url="http://gv:8090", metalake="ml")
+            mock_read.assert_called_once_with(
+                "cat.schema.tbl", io_config=mock_cfg
+            )
+            assert res is mock_df

@@ -306,3 +306,26 @@ class _LakeQueryMixin:
             ),
         )
         return engine.load(dataset_name, columns=columns)
+
+    def daft_from_gravitino(
+        self, table_name: str, *, url: str, metalake: str
+    ) -> Any:
+        """Load a Gravitino-registered table as a lazy Daft DataFrame (v1.8.0 #14).
+
+        Reads directly via Daft's Gravitino connector (``daft.io.GravitinoConfig``)
+        — federated queries / metadata straight from Daft, no DuckDB translation.
+        Complements the Gravitino unified catalog (#19).
+
+        Args:
+            table_name: Fully-qualified table (``catalog.schema.table``).
+            url: Gravitino API URL.
+            metalake: Gravitino metalake name.
+
+        Returns:
+            Lazy Daft DataFrame over the Gravitino-registered table.
+        """
+        import daft
+        from daft.io import GravitinoConfig
+
+        config = GravitinoConfig(url=url, metalake=metalake)
+        return daft.read_table(table_name, io_config=config)
