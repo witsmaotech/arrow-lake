@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [Unreleased] — v1.8.0 roadmap 收尾（9 项未纳入三批的独立条目，2026-06-26）
+
+### Added
+
+- **#4 FTS 日文分词**（`_chinese_tokenizer.py`）：加 lindera（日文假名）路由 + 模块级缓存（字典加载贵）+ `except Exception` 加宽。可选分词器，未装优雅降级。
+- **#2 Blob 存储**（`_lake_admin.add_blob_column`）：原地存 image/audio/video bytes 为 Lance binary 列（经 `add_columns_table`），多模态原文 + 嵌入同库。
+- **#8 hf:// 数据集**（`_lake_ingest.load_hf_dataset`）：lancedb `hf://` scheme 读 HF Lance-format 数据集（评测 / 种子），URI 自动前缀，空表 raise。
+- **#12 DuckDB 原生 FTS**（`OlapSearchBridge.fts_search`）：DuckDB `fts` 扩展 BM25（PRAGMA create_fts_index + match_bm25）作 lance_fts 备选 / 对比；物化 temp table 规避 view 限制。`vss` 扩展此 build 不可用（同 pgq）。
+- **#16 Daft 流式写**（`_lake_ingest.write_dataframe`）：暴露 `write_lance_from_dataframe`（Daft lazy，>16x 内存），KG build / 大批量 ingest 用。
+- **#3 行级 lineage**（`_lake_lineage.lineage_record_row`）：Lance row_id 行级溯源（level=row + row_id + source_rows metadata，经现有 lineage store/query/graph）。
+- **#19 Gravitino 统一 catalog facade**（`_lake_admin`）：`gravitino_register/deregister_dataset` / `sync_inbound` / `table_statistics` / `health` —— 三引擎（DuckDB/Daft/lancedb）经 Gravitino 统一 catalog（bridge 已齐全，补 facade 暴露）。
+- **#14 Daft↔Gravitino**（`_lake_query.daft_from_gravitino`）：`daft.io.GravitinoConfig` 直连 Gravitino 表，联邦查询不经 DuckDB 转译（补 #19 的 Daft 侧）。
+- **#18 VLM decode_image**（`transforms._build_decode_image`）：Daft `decode_image` builder，补全 VLM 链（image bytes → 解码 → classify_image/prompt），注册到 `build_transforms`。
+
+### Re-assessed（gate DEFER）
+
+- **#15 分布式索引** / **#7 ColBERT**：经压测 gate（`test_bench_batch3_gates.py` 1M 实测 + recall 难度 sweep）DEFER —— 单节点 21s/1M（1B+ 才需 Ray）；现实 recall 96%（病态下降是 IVF_PQ 量化，修法 HNSW，非 ColBERT 场景）。
+
 ## [Unreleased] — v1.8.0 生产 Review 修复（2026-06-26）
 
 ### Fixed
