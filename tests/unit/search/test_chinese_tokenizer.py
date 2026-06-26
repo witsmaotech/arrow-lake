@@ -9,7 +9,40 @@ import pytest
 
 pytest.importorskip("jieba")
 
-from arrow_lake.query._chinese_tokenizer import has_cjk, segment_query, segment_text
+from arrow_lake.query._chinese_tokenizer import (
+    has_cjk,
+    has_japanese,
+    segment_query,
+    segment_text,
+)
+
+
+class TestHasJapanese:
+    def test_japanese_kana(self) -> None:
+        assert has_japanese("こんにちは") is True  # Hiragana
+
+    def test_japanese_katakana(self) -> None:
+        assert has_japanese("コンニチハ") is True  # Katakana
+
+    def test_chinese_is_not_japanese(self) -> None:
+        # CJK ideographs (Chinese) are not Japanese kana
+        assert has_japanese("机器学习") is False
+
+    def test_english(self) -> None:
+        assert has_japanese("hello world") is False
+
+    def test_segment_japanese_no_lindera_returns_original(self) -> None:
+        # Without lindera installed, Japanese text falls back gracefully
+        from arrow_lake.query._chinese_tokenizer import _LINDERA_AVAILABLE
+
+        text = "こんにちは世界"
+        if not _LINDERA_AVAILABLE:
+            assert segment_text(text) == text
+
+    def test_segment_chinese_still_works(self) -> None:
+        # Japanese routing must not break Chinese (jieba) path
+        out = segment_text("机器学习")
+        assert " " in out  # jieba segmented
 
 
 class TestHasCjk:
