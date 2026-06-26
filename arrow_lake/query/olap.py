@@ -335,6 +335,11 @@ class OlapSearchBridge:
         validate_identifier(dst_col)
         if weight_col is not None:
             validate_identifier(weight_col)
+        if start_node is None:
+            raise QueryError(
+                error_code=ErrorCode.OLAP_QUERY_FAILED,
+                message="start_node must not be None",
+            )
 
         # Bound max_depth to prevent runaway recursive expansion.
         clamped_depth = max(1, min(int(max_depth), 10))

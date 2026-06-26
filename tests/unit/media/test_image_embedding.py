@@ -167,6 +167,14 @@ class TestCLIPImageEncoderEncode:
         assert result.null_count == 0
         assert result.failed == 0
         assert result.embedding_dim == 512
+        # Regression (v1.8.0 P0 fix): encode() must propagate the embedding
+        # column on result.table — previously table.append_column(...) return
+        # was discarded (PyArrow immutable) and the /embed/image endpoint read
+        # nonexistent result.column_names, so the whole image-embedding REST
+        # path was dead (masked by over-mocked tests).
+        assert result.table is not None
+        assert result.vector_column in result.table.column_names
+        assert result.table.column(result.vector_column).to_pylist()[0] is not None
 
     @patch("arrow_lake.embed.image_encoder.AutoImageProcessor")
     @patch("arrow_lake.embed.image_encoder.AutoModel")

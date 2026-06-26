@@ -87,6 +87,60 @@ class _LakeQueryMixin:
             query_results_total.labels(query_type="olap_query").inc(result.table.num_rows)
         return result
 
+    def graph_query(
+        self,
+        edges_dataset: str,
+        *,
+        src_col: str = "src",
+        dst_col: str = "dst",
+        start_node: int | str,
+        max_depth: int = 3,
+        weight_col: str | None = None,
+        directed: bool = True,
+    ) -> OlapQueryResult:
+        """Bounded graph traversal over an edges dataset (v1.8.0 #10).
+
+        Recursive-CTE neighbor/path traversal (cycle-safe BFS). PGQ is
+        unavailable in the bundled DuckDB build, so this uses recursive CTE —
+        complementary to HugeGraph for lightweight in-process graph queries.
+        Delegates to :meth:`OlapSearchBridge.graph_query`.
+
+        Args:
+            edges_dataset: Name of the Lance dataset holding edges.
+            src_col: Source node column (default "src").
+            dst_col: Destination node column (default "dst").
+            start_node: Node value to traverse from.
+            max_depth: Max traversal depth (clamped to [1, 10]).
+            weight_col: Optional numeric column summed along path as ``cost``.
+            directed: If False, traverse edges both directions.
+
+        Returns:
+            OlapQueryResult with columns ``depth, node, path`` (+ ``cost``).
+        """
+        from arrow_lake.query.olap import OlapSearchBridge
+
+        bridge = self._get_component(
+            "olap",
+            lambda: OlapSearchBridge(
+                self._get_storage(),
+                config=self._config.olap,
+                storage_config=self._config.storage,
+                session_manager=self.get_session_manager(),
+            ),
+        )
+        from arrow_lake.core.metrics import _QueryTimer
+
+        with _QueryTimer("graph_query"):
+            return bridge.graph_query(
+                edges_dataset,
+                src_col=src_col,
+                dst_col=dst_col,
+                start_node=start_node,
+                max_depth=max_depth,
+                weight_col=weight_col,
+                directed=directed,
+            )
+
     def sql_query(
         self,
         dataset_name: str,

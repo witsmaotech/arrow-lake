@@ -15,6 +15,7 @@ from arrow_lake.api.models.embedding import (
     FacetsIndexResponse,
     FtsIndexRequest,
     FtsIndexResponse,
+    ClipTextEmbedRequest,
     ImageEmbedRequest,
     ScalarIndexRequest,
     ScalarIndexResponse,
@@ -275,8 +276,9 @@ async def embed_image(
 
     embeddings: list[list[float]] = []
     col_name = result.vector_column
-    if col_name in result.column_names:
-        for val in result.column(col_name).to_pylist():
+    result_table = result.table
+    if result_table is not None and col_name in result_table.column_names:
+        for val in result_table.column(col_name).to_pylist():
             if val is not None:
                 embeddings.append(val)
 
@@ -286,4 +288,36 @@ async def embed_image(
         model=emb_cfg.model,
         total=result.total,
         null_count=result.null_count,
+    )
+
+
+@embed_router.post("/clip-text", response_model=EmbeddingResponse)
+async def embed_clip_text(
+    *,
+    req: ClipTextEmbedRequest,
+    _user: dict = Depends(require_role(Role.EDITOR)),
+) -> EmbeddingResponse:
+    """Encode texts via CLIP/SigLIP text tower for cross-modal retrieval (v1.8.0 #6).
+
+    Returns L2-normalized embeddings in the same space as ``/embed/image`` —
+    pair with vector search on the ``image_embedding`` column (text → image).
+    """
+    from arrow_lake.api.deps import get_config
+    from arrow_lake.embed.image_encoder import CLIPImageEncoder
+
+    get_config()  # ensure config loaded
+    encoder = CLIPImageEncoder(model_name=req.model, model_source=req.model_source)
+    vectors = await run_sync(
+        encoder.encode_text,
+        list(req.texts),
+        timeout=_EMBED_TIMEOUT,
+        label="embed_clip_text",
+    )
+    dim = int(vectors.shape[1]) if vectors.size else 0
+    return EmbeddingResponse(
+        embeddings=[v.tolist() for v in vectors],
+        embedding_dim=dim,
+        model=req.model,
+        total=len(vectors),
+        null_count=0,
     )

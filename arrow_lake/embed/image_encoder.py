@@ -61,6 +61,7 @@ class ImageEmbeddingResult:
     failed: int = 0
     embedding_dim: int = 0
     vector_column: str = "image_embedding"
+    table: Any = None
 
 
 class CLIPImageEncoder:
@@ -191,21 +192,27 @@ class CLIPImageEncoder:
                 for _idx in batch_indices:
                     failed_count += 1
 
-        # Build output column: fixed-size list of float32
-        dim = self.embedding_dim or (len(embeddings[0]) if embeddings[0] else 0)
+        # Build output column: fixed-size list of float32. Dim from config or
+        # first non-None embedding (robust when row 0 failed/was null — the old
+        # `embeddings[0]` check collapsed dim to 0 and silently malformed output).
+        first_non_null = next((e for e in embeddings if e is not None), None)
+        dim = self.embedding_dim or (len(first_non_null) if first_non_null else 0)
 
-        def _make_vector(lst: list[float] | None) -> pa.FixedSizeListArray:
-            values = []
+        if dim > 0:
+            values: list[float] = []
             for row_emb in embeddings:
                 if row_emb is None:
-                    values.extend([float('nan')] * dim)
+                    values.extend([float("nan")] * dim)
                 else:
                     values.extend(row_emb)
-            return pa.FixedSizeListArray.from_arrays(pa.array(values, type=pa.float32()), dim)
-
-        vector_col = _make_vector(embeddings)
-
-        table.append_column(col_name + "_embedding", vector_col)
+            vector_col = pa.FixedSizeListArray.from_arrays(
+                pa.array(values, type=pa.float32()), dim
+            )
+            # PyArrow Tables are immutable — append_column returns a new Table.
+            # Reassign so callers can read the embedding column back via
+            # ImageEmbeddingResult.table (previously the return was discarded
+            # and the computed vectors were lost).
+            table = table.append_column(col_name + "_embedding", vector_col)
 
         result = ImageEmbeddingResult(
             total=table.num_rows,
@@ -214,6 +221,7 @@ class CLIPImageEncoder:
             failed=failed_count,
             embedding_dim=dim,
             vector_column=col_name + "_embedding",
+            table=table,
         )
         logger.info(
             "image_encoder_result",

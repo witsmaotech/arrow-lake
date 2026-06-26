@@ -166,6 +166,54 @@ class _LakeAdminMixin:
         """
         self._get_storage().delete_tag(dataset_name, tag)
 
+    # ------------------------------------------------------------------
+    # Branch operations (v1.8.0 #1 — Git-style data branching)
+    # ------------------------------------------------------------------
+
+    def create_branch(
+        self, dataset_name: str, branch: str, version: int | None = None
+    ) -> None:
+        """Create a named branch at a dataset version (defaults to HEAD).
+
+        Args:
+            dataset_name: Dataset to branch.
+            branch: Branch name (e.g. "experiment", "staging").
+            version: Version to branch from (None = latest/HEAD).
+        """
+        self._get_storage().create_branch(dataset_name, branch, version)
+
+    def list_branches(self, dataset_name: str) -> list[str]:
+        """List all branch names for a dataset.
+
+        Args:
+            dataset_name: Dataset name.
+
+        Returns:
+            List of branch names.
+        """
+        return self._get_storage().list_branches(dataset_name)
+
+    def delete_branch(self, dataset_name: str, branch: str) -> None:
+        """Delete a named branch from a dataset.
+
+        Args:
+            dataset_name: Dataset name.
+            branch: Branch name to delete.
+        """
+        self._get_storage().delete_branch(dataset_name, branch)
+
+    def read_at_branch(self, dataset_name: str, branch: str) -> Any:
+        """Read dataset data at a branch HEAD.
+
+        Args:
+            dataset_name: Dataset name.
+            branch: Branch name to read at.
+
+        Returns:
+            Arrow Table with the branch HEAD data.
+        """
+        return self._get_storage().read_at_branch(dataset_name, branch)
+
     def add_column(self, name: str, column_name: str, sql_expr: str) -> None:
         """Add a computed column to an existing dataset.
 

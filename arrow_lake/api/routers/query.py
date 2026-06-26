@@ -18,6 +18,7 @@ from arrow_lake.api.models.common import (
 from arrow_lake.api.models.query import (
     DaftQueryRequest,
     DaftQueryResponse,
+    GraphQueryRequest,
     OlapQueryRequest,
     OlapQueryResponse,
 )
@@ -165,6 +166,38 @@ async def metadata_query(
     result = await run_sync(
         lake.sql_query, name, req.sql, max_rows=req.max_rows,
         timeout=_QUERY_TIMEOUT, label="metadata_query",
+    )
+    table = checker.apply_table_filter(result.table, dataset=name, role=_user.role)
+    resp = arrow_table_to_response(table, req.format, meta={"sql": result.sql})
+    return OlapQueryResponse(**resp)
+
+
+@router.post("/{name}/query/graph", response_model=OlapQueryResponse)
+async def graph_query(
+    name: str = Path(..., pattern=_NAME_PATTERN),
+    *,
+    req: GraphQueryRequest,
+    lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.VIEWER)),
+    checker=Depends(get_checker),
+) -> OlapQueryResponse:
+    """Bounded graph traversal over the dataset's edges via recursive CTE (v1.8.0 #10).
+
+    PGQ is unavailable in the bundled DuckDB build, so this uses a cycle-safe
+    recursive CTE — complementary to HugeGraph for lightweight neighbor/path
+    queries. Returns ``depth, node, path`` (+ ``cost`` when ``weight_col`` set).
+    """
+    result = await run_sync(
+        lake.graph_query,
+        name,
+        src_col=req.src_col,
+        dst_col=req.dst_col,
+        start_node=req.start_node,
+        max_depth=req.max_depth,
+        weight_col=req.weight_col,
+        directed=req.directed,
+        timeout=_QUERY_TIMEOUT,
+        label="graph_query",
     )
     table = checker.apply_table_filter(result.table, dataset=name, role=_user.role)
     resp = arrow_table_to_response(table, req.format, meta={"sql": result.sql})

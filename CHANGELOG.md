@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [Unreleased] — v1.8.0 生产 Review 修复（2026-06-26）
+
+### Fixed
+
+- **CRITICAL `/api/v1/embed/image` 死链**：`ImageEmbeddingResult` 加 `table` 字段 + `encode()` 重赋 `table = table.append_column(...)`（PyArrow Table 不可变，原返回值丢弃致计算出的向量整体丢失）+ endpoint 改读 `result.table`（原 `result.column_names`/`result.column()` 属性不存在）；`_make_vector` 的 `dim` 改取首个非 None 嵌入（原 `embeddings[0]` 为 None 时 dim 塌缩 0 → 静默畸形输出）。新增非 mock 回归断言（`result.table` 含嵌入列）守卫。
+- **#10 `graph_query`**：`start_node=None` 显式 `QueryError` guard（原抛 DuckDB 晦涩 Binder 错）+ empty-edges / 无出边 边界测试。
+
+### Added（端到端暴露补全）
+
+- **facade**：`lake.graph_query()`（`_lake_query`，#10）、`lake.encode_text_clip()`（`_lake_search`，#6 跨模态 text→image）、`lake.create_branch/list_branches/delete_branch/read_at_branch`（`_lake_admin`，#1 branches 原 SDK-only）。
+- **REST**：`POST /{name}/query/graph`（`routers/query.py` + `GraphQueryRequest` 模型，复用 `OlapQueryResponse`）、`POST /embed/clip-text`（`routers/embedding.py` + `ClipTextEmbedRequest`，复用 `EmbeddingResponse`）。
+
+### Re-assessed（非缺陷，诚实记录）
+
+- **#17 REST async**：REST `/search` 已用 `await run_sync(...)`（线程卸载 = 事件循环非阻塞），与新增的 `*_async` facade（`asyncio.to_thread`）功能等价；`*_async` 服务**直接 async 调用方**，REST 无需改（改了也是 no-op）。
+
 ## [Unreleased] — v1.8.0 第三批 🟨（压测驱动 gate 框架）
 
 ### Added

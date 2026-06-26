@@ -115,3 +115,28 @@ class TestGraphQuery:
         edges = pa.table({"src": [1], "dst": [2]})
         with pytest.raises(ValueError):
             _bridge(edges).graph_query("../etc", start_node=1)
+
+    def test_empty_edges_returns_only_start(self) -> None:
+        # 0-row edges: traversal has nowhere to go → only the start node (depth 0)
+        edges = pa.table(
+            {"src": pa.array([], pa.int32()), "dst": pa.array([], pa.int32())}
+        )
+        res = _bridge(edges).graph_query("edges", start_node=1, max_depth=3)
+        rows = {r["node"]: r["depth"] for r in res.table.to_pylist()}
+        assert rows == {"1": 0}
+
+    def test_start_node_with_no_out_edges(self) -> None:
+        # start=3 has no outgoing edges → only itself
+        edges = pa.table({"src": [1, 2], "dst": [2, 3]})
+        res = _bridge(edges).graph_query("edges", start_node=3, max_depth=3)
+        rows = {r["node"]: r["depth"] for r in res.table.to_pylist()}
+        assert rows == {"3": 0}
+
+    def test_none_start_node_raises(self) -> None:
+        from arrow_lake.exceptions import ErrorCode, QueryError
+
+        edges = pa.table({"src": [1], "dst": [2]})
+        with pytest.raises(QueryError) as exc:
+            _bridge(edges).graph_query("edges", start_node=None)  # type: ignore[arg-type]
+        assert exc.value.error_code == ErrorCode.OLAP_QUERY_FAILED
+        assert "start_node" in exc.value.message

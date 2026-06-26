@@ -158,6 +158,39 @@ class _LakeSearchMixin:
             nprobes=nprobes,
         )
 
+    def encode_text_clip(
+        self,
+        texts: list[str],
+        *,
+        model: str | None = None,
+        model_source: str = "huggingface",
+    ) -> list[list[float]]:
+        """Encode texts via CLIP/SigLIP text tower for cross-modal retrieval (v1.8.0 #6).
+
+        Convenience facade for :meth:`CLIPImageEncoder.encode_text` — produces
+        text embeddings in the same space as image embeddings, so a text query
+        can retrieve images::
+
+            q = lake.encode_text_clip(["a cat"])[0]
+            lake.search("photos", q, vector_column="image_embedding")
+
+        Args:
+            texts: Text strings to encode.
+            model: CLIP/SigLIP model id (None = use embedding config default).
+            model_source: "huggingface" or "modelscope".
+
+        Returns:
+            List of L2-normalized embedding vectors (one per input text).
+        """
+        from arrow_lake.embed.image_encoder import CLIPImageEncoder
+
+        emb_cfg = self._config.embedding
+        encoder = CLIPImageEncoder(
+            model_name=model or emb_cfg.model,
+            model_source=model_source,
+        )
+        return encoder.encode_text(list(texts)).tolist()
+
     def text_search(
         self,
         dataset_name: str,

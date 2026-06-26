@@ -37,6 +37,18 @@ class OlapQueryResponse(BaseModel):
     rows: list[dict[str, Any]] | None = None
 
 
+class GraphQueryRequest(BaseModel):
+    """Request for graph_query — bounded recursive-CTE edge traversal (v1.8.0 #10)."""
+
+    start_node: int | str = Field(..., description="Node id to traverse from")
+    src_col: str = Field(default="src")
+    dst_col: str = Field(default="dst")
+    max_depth: int = Field(default=3, ge=1, le=10)
+    weight_col: str | None = None
+    directed: bool = True
+    format: Literal["arrow_ipc", "json"] = "json"
+
+
 # ---------------------------------------------------------------------------
 # Daft query
 # ---------------------------------------------------------------------------

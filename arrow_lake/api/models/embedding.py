@@ -92,3 +92,11 @@ class ImageEmbedRequest(BaseModel):
                     f"Image at index {i} exceeds maximum size (base64 length {len(img)} > {_max_base64_len})"
                 )
         return images
+
+
+class ClipTextEmbedRequest(BaseModel):
+    """Request for CLIP/SigLIP text encoding — cross-modal image retrieval (v1.8.0 #6)."""
+
+    texts: list[str] = Field(..., min_length=1, max_length=128)
+    model: str = "openai/clip-vit-base-patch32"
+    model_source: str = "huggingface"
