@@ -1,7 +1,8 @@
-"""Tests for v1.8.0 #2 (blob column) + #8 (hf:// dataset) facade additions."""
+"""Tests for v1.8.0 #2 (blob column) + #8 (hf:// dataset) + #16 (streaming) facade additions."""
 
 from __future__ import annotations
 
+import contextlib
 from unittest.mock import MagicMock, patch
 
 import pyarrow as pa
@@ -14,13 +15,34 @@ class TestAddBlobColumn:
     def test_add_blob_column_stores_binary(self, tmp_path: str) -> None:
         from arrow_lake import Lake
 
+        name = "blob_v18_test"
         lake = Lake(base_uri=str(tmp_path))
-        lake.create_dataset("ds", pa.table({"id": [1, 2]}))
-        lake.add_blob_column("ds", "image_bytes", [b"img1", b"img2"])
+        with contextlib.suppress(Exception):
+            lake.delete_dataset(name)
+        lake.create_dataset(name, pa.table({"id": [1, 2]}))
+        lake.add_blob_column(name, "image_bytes", [b"img1", b"img2"])
 
-        tbl = lake.read_dataset("ds")
+        tbl = lake.read_dataset(name)
         assert "image_bytes" in tbl.column_names
         assert tbl.column("image_bytes").to_pylist() == [b"img1", b"img2"]
+
+
+class TestWriteDataFrame:
+    """#16: write_dataframe delegates to LanceStorageManager.write_lance_from_dataframe."""
+
+    def test_write_dataframe_delegates_to_storage(self, tmp_path: str) -> None:
+        from arrow_lake import Lake
+
+        lake = Lake(base_uri=str(tmp_path))
+        storage = lake._get_storage()
+        storage.write_lance_from_dataframe = MagicMock()  # type: ignore[method-assign]
+
+        fake_df = object()
+        lake.write_dataframe("wf_ds", fake_df, mode="overwrite")
+
+        storage.write_lance_from_dataframe.assert_called_once_with(
+            "wf_ds", fake_df, mode="overwrite"
+        )
 
 
 class TestLoadHfDataset:

@@ -70,6 +70,23 @@ class _LakeIngestMixin:
             raise ValueError(f"No tables found in hf dataset '{repo_id}'")
         return db.open_table(table or names[0]).to_arrow()
 
+    def write_dataframe(
+        self, dataset_name: str, df: Any, mode: str = "create"
+    ) -> None:
+        """Write a Daft DataFrame to Lance with streaming (v1.8.0 #16).
+
+        Daft's lazy execution streams the write, so datasets larger than memory
+        (>16x RAM) are handled without materializing — use this for KG build /
+        large-batch ingest. Delegates to ``LanceStorageManager.write_lance_from_dataframe``
+        (``df.write_lance``); prefer over Arrow-materializing paths for huge data.
+
+        Args:
+            dataset_name: Target dataset name.
+            df: Daft DataFrame (lazy) to write.
+            mode: ``"create"`` | ``"append"`` | ``"overwrite"``.
+        """
+        self._get_storage().write_lance_from_dataframe(dataset_name, df, mode=mode)
+
     def ingest_batch(
         self,
         dataset_name: str,
