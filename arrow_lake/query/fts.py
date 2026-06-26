@@ -10,6 +10,7 @@ space-based tokenizer can index and search it correctly.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import Any
 
@@ -384,6 +385,38 @@ class FullTextSearchBridge:
             top_k=effective_top_k,
             fts_column=column,
             max_score=max_score,
+        )
+
+    async def search_async(
+        self,
+        dataset_name: str,
+        query: str,
+        *,
+        top_k: int | None = None,
+        fts_column: str | None = None,
+        where: str | None = None,
+        version: int | None = None,
+        offset: int = 0,
+    ) -> FullTextSearchResult:
+        """Async FTS — non-blocking wrapper (v1.8.0 #17).
+
+        Delegates the sync :meth:`search` to a worker thread via
+        ``asyncio.to_thread`` so async handlers don't block the event loop on
+        a long FTS scan. lancedb's async API has no FTS path (``AsyncTable``
+        lacks ``create_fts_index``), so unlike
+        ``VectorSearchBridge.search_async`` this is a thread offload, not a
+        GIL-free native async path — the value is a non-blocking interface for
+        the FastAPI layer. Same params/return as :meth:`search`.
+        """
+        return await asyncio.to_thread(
+            self.search,
+            dataset_name,
+            query,
+            top_k=top_k,
+            fts_column=fts_column,
+            where=where,
+            version=version,
+            offset=offset,
         )
 
     @staticmethod

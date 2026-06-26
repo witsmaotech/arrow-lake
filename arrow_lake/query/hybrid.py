@@ -9,6 +9,7 @@ Reciprocal Rank Fusion (RRF).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -207,6 +208,40 @@ class HybridSearchBridge:
             top_k=effective_top_k,
             rrf_k=self._config.rrf_k,
             max_rrf_score=max_rrf_score,
+        )
+
+    async def search_async(
+        self,
+        dataset_name: str,
+        query_vector: list[float],
+        query_text: str,
+        *,
+        top_k: int | None = None,
+        vector_column: str = "text_embedding",
+        fts_column: str | None = None,
+        where: str | None = None,
+        version: int | None = None,
+    ) -> HybridSearchResult:
+        """Async hybrid search — non-blocking wrapper (v1.8.0 #17).
+
+        Delegates the sync :meth:`search` to a worker thread via
+        ``asyncio.to_thread`` so async handlers don't block the event loop on
+        a long RRF + rerank pass. lancedb has no native async FTS path
+        (``AsyncTable`` lacks FTS), so the sub-bridge fusion can't be made
+        GIL-free like ``VectorSearchBridge.search_async`` — the value here is a
+        non-blocking async interface for the FastAPI layer under concurrent
+        mixed workloads. Same params/return as :meth:`search`.
+        """
+        return await asyncio.to_thread(
+            self.search,
+            dataset_name,
+            query_vector,
+            query_text,
+            top_k=top_k,
+            vector_column=vector_column,
+            fts_column=fts_column,
+            where=where,
+            version=version,
         )
 
     def _rerank_table(

@@ -12,6 +12,7 @@ M0b migration:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from typing import Any
@@ -208,6 +209,37 @@ class FacetedSearchBridge:
             total_facets=len(facet_list),
             query_vector_dim=len(query_vector),
             top_k=top_k,
+        )
+
+    async def search_async(
+        self,
+        dataset_name: str,
+        query_vector: list[float],
+        *,
+        facets: list[str] | None = None,
+        top_k: int = 10,
+        vector_column: str = "embedding",
+        where: str | None = None,
+        version: int | None = None,
+    ) -> FacetedSearchResult:
+        """Async faceted search — non-blocking wrapper (v1.8.0 #17).
+
+        Delegates the sync :meth:`search` to a worker thread via
+        ``asyncio.to_thread`` so async handlers don't block the event loop on
+        the DuckDB CUBE aggregation. Faceted search has no native async path
+        (aggregations run through DuckDB), so this is a thread offload — the
+        value is a non-blocking interface for the FastAPI layer under
+        concurrent mixed workloads. Same params/return as :meth:`search`.
+        """
+        return await asyncio.to_thread(
+            self.search,
+            dataset_name,
+            query_vector,
+            facets=facets,
+            top_k=top_k,
+            vector_column=vector_column,
+            where=where,
+            version=version,
         )
 
     def _compute_facets(

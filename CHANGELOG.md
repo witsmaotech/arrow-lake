@@ -14,10 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **#17 async gate**：ThreadPool 并发查询 QPS × worker sweep（1/5/10/20），平台期检测。
   - **#15 分布式索引 gate**：`create_index` 构建时长 × 规模（10k/100k），投影单节点天花板。
   - **#7 ColBERT gate**：单向量 ANN recall@k vs 簇结构 ground truth + brute-force 基线（填补现有 `test_bench_quality` 只测 QualityFilter 的召回空白）。
+- **#17 async 接口（压测驱动 GO 后实现）**：`FullTextSearchBridge.search_async` / `HybridSearchBridge.search_async` / `FacetedSearchBridge.search_async`（`asyncio.to_thread` 非阻塞包装）+ facade `text_search_async` / `hybrid_search_async` / `faceted_search_async`。lancedb 无原生 async FTS/聚合路径，故这些是线程卸载（非 GIL-free），价值 = async handler 不阻塞事件循环（vector 仍是原生 `search_async`）。测试 `tests/unit/query/test_async_bridges.py`（5 tests）。
 
 ### 压测结论（2026-06-26，本机 WSL2）
 
-- **#17 async → ✅ GO**：并发平台期显著——worker 1→20（20x），QPS 仅 5.8→7.2（1.24x），存在强 GIL/连接池争用，async（仿 v1.7.1 `search_async` 扩 fts/hybrid/faceted）收益确定。
+- **#17 async → ✅ GO → 已实现**：并发平台期显著——worker 1→20（20x），QPS 仅 5.8→7.2（1.24x）；已给 fts/hybrid/faceted 补 async 包装 + facade 暴露。
 - **#15 分布式索引 → ⏸ DEFER**：1M 索引构建 ≈ 150s（10k 1.98s / 100k 14.43s 投影），单节点在 ~10M 行内充裕；100M+ 才需 Ray 分布式 backfill（`ray_runtime` 基建已就绪待触发）。
 - **#7 ColBERT → ⏸ DEFER**：合成簇结构数据 recall@50 = 1.000（ANN vs brute-force 100% retention），无召回缺口；框架已就位，待真实细粒度语义数据复测。
 

@@ -209,6 +209,50 @@ class _LakeSearchMixin:
                 offset=offset,
             )
 
+    async def text_search_async(
+        self,
+        dataset_name: str,
+        query: str,
+        *,
+        top_k: int | None = None,
+        fts_column: str | None = None,
+        where: str | None = None,
+        version: int | None = None,
+        offset: int = 0,
+    ) -> FullTextSearchResult:
+        """Async full-text search (v1.8.0 #17).
+
+        Delegates to :meth:`FullTextSearchBridge.search_async` — a non-blocking
+        wrapper (``asyncio.to_thread``) since lancedb has no native async FTS
+        path. Keeps the event loop responsive under concurrent async handlers.
+        Same params/return as :meth:`text_search`.
+        """
+        from arrow_lake.query.fts import FullTextSearchBridge
+
+        bridge = self._get_component(
+            "fts",
+            lambda: FullTextSearchBridge(
+                self._get_storage(),
+                config=self._config.fts,
+                **self._bridge_kwargs(),
+            ),
+        )
+        from arrow_lake.api.telemetry import get_tracer
+        from arrow_lake.core.metrics import _QueryTimer
+
+        with get_tracer().start_as_current_span(
+            "text_search_async", attributes={"dataset": dataset_name}
+        ), _QueryTimer("text_search_async"):
+            return await bridge.search_async(
+                dataset_name,
+                query,
+                top_k=top_k,
+                fts_column=fts_column,
+                where=where,
+                version=version,
+                offset=offset,
+            )
+
     def create_fts_index(
         self,
         dataset_name: str,
@@ -342,6 +386,51 @@ class _LakeSearchMixin:
                 version=version,
             )
 
+    async def hybrid_search_async(
+        self,
+        dataset_name: str,
+        query_vector: list[float],
+        query_text: str,
+        *,
+        top_k: int | None = None,
+        vector_column: str = "text_embedding",
+        fts_column: str | None = None,
+        where: str | None = None,
+        version: int | None = None,
+    ) -> HybridSearchResult:
+        """Async hybrid search (v1.8.0 #17).
+
+        Delegates to :meth:`HybridSearchBridge.search_async` — non-blocking
+        wrapper for the RRF + rerank pass. Same params/return as
+        :meth:`hybrid_search`.
+        """
+        from arrow_lake.query.hybrid import HybridSearchBridge
+
+        bridge = self._get_component(
+            "hybrid",
+            lambda: HybridSearchBridge(
+                self._get_storage(),
+                config=self._config.hybrid,
+                **self._bridge_kwargs(),
+            ),
+        )
+        from arrow_lake.api.telemetry import get_tracer
+        from arrow_lake.core.metrics import _QueryTimer
+
+        with get_tracer().start_as_current_span(
+            "hybrid_search_async", attributes={"dataset": dataset_name}
+        ), _QueryTimer("hybrid_search_async"):
+            return await bridge.search_async(
+                dataset_name,
+                query_vector,
+                query_text,
+                top_k=top_k,
+                vector_column=vector_column,
+                fts_column=fts_column,
+                where=where,
+                version=version,
+            )
+
     def faceted_search(
         self,
         dataset_name: str,
@@ -383,6 +472,47 @@ class _LakeSearchMixin:
 
         with _QueryTimer("faceted_search"):
             return bridge.search(
+                dataset_name,
+                query_vector,
+                facets=facets,
+                top_k=top_k,
+                vector_column=vector_column,
+                where=where,
+                version=version,
+            )
+
+    async def faceted_search_async(
+        self,
+        dataset_name: str,
+        query_vector: list[float],
+        *,
+        facets: list[str] | None = None,
+        top_k: int = 10,
+        vector_column: str = "embedding",
+        where: str | None = None,
+        version: int | None = None,
+    ) -> FacetedSearchResult:
+        """Async faceted search (v1.8.0 #17).
+
+        Delegates to :meth:`FacetedSearchBridge.search_async` — non-blocking
+        wrapper for the DuckDB CUBE aggregation. Same params/return as
+        :meth:`faceted_search`.
+        """
+        from arrow_lake.query.faceted import FacetedSearchBridge
+
+        bridge = self._get_component(
+            "faceted",
+            lambda: FacetedSearchBridge(
+                self._get_storage(),
+                config=self._config.faceted,
+                storage_config=self._config.storage,
+                session_manager=self.get_session_manager(),
+            ),
+        )
+        from arrow_lake.core.metrics import _QueryTimer
+
+        with _QueryTimer("faceted_search_async"):
+            return await bridge.search_async(
                 dataset_name,
                 query_vector,
                 facets=facets,
