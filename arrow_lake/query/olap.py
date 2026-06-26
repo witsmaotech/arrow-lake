@@ -415,6 +415,94 @@ class OlapSearchBridge:
             sql=sql,
         )
 
+    def fts_search(
+        self,
+        dataset_name: str,
+        query: str,
+        *,
+        text_column: str = "text_content",
+        top_k: int = 10,
+    ) -> OlapQueryResult:
+        """DuckDB native FTS search (v1.8.0 #12) — alternative to lance_fts.
+
+        Uses the DuckDB ``fts`` extension (PRAGMA create_fts_index + BM25
+        MATCH) as a native alternative to lancedb's FTS for comparison /
+        benchmarking. The ``vss`` extension is NOT installable on this DuckDB
+        build (documented gap, same as PGQ). Requires an ``id`` column.
+
+        Args:
+            dataset_name: Name of the Lance dataset (must have an ``id`` col).
+            query: Search query (BM25 match, bound via ``$1``).
+            text_column: Text column to index/search.
+            top_k: Number of results.
+
+        Returns:
+            OlapQueryResult with matching rows + a ``score`` column.
+
+        Raises:
+            QueryError: If fts extension unavailable, dataset read fails, or
+                the dataset lacks an ``id`` column.
+        """
+        _validate_dataset_name(dataset_name)
+        validate_identifier(text_column)
+
+        try:
+            source = self._storage.read_dataset(dataset_name)
+        except (StorageError, OSError) as exc:
+            raise QueryError(
+                error_code=ErrorCode.OLAP_QUERY_FAILED,
+                message=f"Failed to read dataset '{dataset_name}': {exc}",
+            ) from exc
+
+        if "id" not in source.schema.names:
+            raise QueryError(
+                error_code=ErrorCode.OLAP_QUERY_FAILED,
+                message=f"DuckDB fts requires an 'id' column in '{dataset_name}'",
+            )
+
+        fts_table = f"_fts_{dataset_name}"
+        with self._managed_session() as conn:
+            try:
+                conn.execute("INSTALL fts; LOAD fts;")
+            except duckdb.CatalogException as exc:
+                raise QueryError(
+                    error_code=ErrorCode.OLAP_QUERY_FAILED,
+                    message=f"DuckDB fts extension unavailable: {exc}",
+                ) from exc
+            # Materialize to a temp TABLE — PRAGMA create_fts_index needs a
+            # base table, not the registered Lance view.
+            self._register_dataset(conn, dataset_name, source)
+            conn.execute(f"DROP TABLE IF EXISTS {fts_table};")  # nosec B608
+            conn.execute(
+                f"CREATE TEMP TABLE {fts_table} AS SELECT * FROM {dataset_name};"  # nosec B608
+            )
+            conn.execute(
+                f"PRAGMA create_fts_index('{fts_table}', 'id', '{text_column}', overwrite=1);"
+            )
+            sql = (
+                f"SELECT *, fts_main_{fts_table}.match_bm25(id, $1) AS score "
+                f"FROM {fts_table} WHERE score IS NOT NULL "
+                f"ORDER BY score DESC LIMIT {max(1, int(top_k))}"
+            )
+            try:
+                result_reader = conn.execute(sql, [query]).arrow()
+            except duckdb.Error as exc:
+                raise QueryError(
+                    error_code=ErrorCode.OLAP_QUERY_FAILED,
+                    message=f"DuckDB fts search failed: {exc}",
+                ) from exc
+            if hasattr(result_reader, "read_all"):
+                result_table = result_reader.read_all()
+            else:
+                result_table = result_reader
+
+        return OlapQueryResult(
+            table=result_table,
+            row_count=result_table.num_rows,
+            column_count=result_table.num_columns,
+            sql=sql,
+        )
+
     def explain(self, dataset_name: str, sql: str) -> str:
         """Return DuckDB EXPLAIN output for query optimization analysis.
 
