@@ -1,6 +1,6 @@
 # 知识图谱与 GraphRAG
 
-> 版本：1.5.3
+> 版本：1.7.0
 
 Arrow Lake 内置知识图谱 (KG) 子系统，通过 LLM 实体抽取将非结构化文本转化为结构化的实体 - 关系图，
 并写入 HugeGraph 图数据库。当 `hugegraph.enabled=True` 时，RAG 管线自动升级为 GraphRAG，
@@ -515,6 +515,98 @@ asyncio.run(main())
 * `max_traversal_depth` 取值范围为 1-10
 * `build_batch_size` 必须大于等于 1
 * `timeout_seconds` 必须大于等于 1.0
+
+***
+
+## v1.7.0 更新：文档类型路由 + Hyper-Extract 后端
+
+v1.7.0 为 `kg_build` 增加了可插拔的抽取后端与按文档类型路由的模板选择，显著提升领域文档
+（论文、合同、财报、病历等）的三元组抽取精度。
+
+### 切换到 Hyper-Extract (`he`) 后端
+
+通过 `HugeGraphConfig.extractor_backend` 切换到 hyper-extract 模板抽取：
+
+```python
+from arrow_lake.config import ArrowLakeConfig
+
+config = ArrowLakeConfig()
+config.hugegraph.enabled = True
+config.hugegraph.extractor_backend = "he"            # "graphrag"（默认）| "he"
+config.hugegraph.he_model = "qwen3:30b-a3b"          # 任意 OpenAI 兼容模型
+config.hugegraph.he_default_template = "general/concept_graph"
+```
+
+需安装 `he` 扩展：`pip install "arrow-lake[he]"`。`he` 后端通过 langchain `ChatOpenAI`
+驱动 hyper-extract 模板，三元组精度高于默认的 graphrag 抽取器。
+
+### doc_type 三层路由
+
+当 `extractor_backend="he"` 时，每个文档的 `doc_type` 通过三层路由（`doc_type_router.py`）
+选择 hyper-extract 模板——首次命中即用：
+
+1. **配置覆盖** — `HugeGraphConfig.he_doc_type_templates` 显式映射。
+2. **TemplateGallery 元数据匹配** — 扫描每个 preset 的 `tags` / `category` / `name` /
+   `description`；新增模板自动可用，无需改代码。
+3. **默认兜底** — `HugeGraphConfig.he_default_template`。
+
+```python
+from arrow_lake.knowledge_graph.doc_type_router import (
+    DocTypeRouter, TemplateGallery, normalize_doc_type, validate_taxonomy,
+)
+
+# 别名归一：论文 / research_paper / 白皮书 → 规范名 "paper"
+print(normalize_doc_type("论文"))              # "paper"
+
+# Gallery 按元数据索引所有 hyper-extract preset（自动发现新模板）
+gallery = TemplateGallery.build()
+hit = gallery.match("paper")                  # → 命中 preset（path/tags）或 None
+print(hit.path if hit else "default")
+
+# 三层路由：override > gallery > default
+router = DocTypeRouter(
+    doc_type_templates={"paper": "general/concept_graph"},   # 第 1 层：显式覆盖
+    default_template="general/concept_graph",                # 第 3 层：兜底
+)
+path, source = router.resolve_with_source("论文")
+print(path, source)                           # general/concept_graph 'override'
+```
+
+若完全未传 `doc_type`，`DocTypeClassifier` 会通过 LLM 从内容推断——**每文档仅一次**，
+所有 chunk 共享匹配到的模板，节省 LLM 调用。
+
+### 在摄入时传入 doc_type
+
+`doc_type` 是摄入期属性，流向：上传 API → `Lake` facade → Ingestor → chunk 表 → KG builder：
+
+```python
+# Python SDK
+lake.ingest_documents("papers", ["data/paper.pdf"], doc_type="paper")
+```
+
+> CLI `kg build` **没有** `--doc-type` 参数——请在摄入时设置 `doc_type`。
+
+### A 方案实体双写
+
+每个实体写入通用 `entity` 顶点**外加**细分 label（`person` / `organization` / `concept` / …）。
+关系路由：端点类型有同义词时→细分边，否则降级为通用 `related_to` 边。原始类型保存在
+`relation_type` 属性上，因此通用查询与类型专属查询都能工作：
+
+```python
+# 通用——所有实体
+await lake.kg_query("g.V().hasLabel('entity').limit(10)")
+# 类型专属——仅人物
+await lake.kg_query("g.V().hasLabel('person').limit(10)")
+```
+
+### HugeGraph PD 集群模式
+
+生产部署（`deploy/docker-compose.prod.yml`）以 PD 模式（`hg-pd` + `hg-store` + `hg-server`，
+hstore 后端）替代 standalone rocksdb，支持**运行时创建多图**——每个文档可拥有独立隔离的 KG。
+服务按 PD → Store → Server 顺序启动，由 healthcheck 保障。
+
+> 另见：cookbook [示例 44](examples/44_kg_doctype_he.py)（路由，可离线运行）与
+> [示例 45](examples/45_kg_doctype_api.py)（REST API 构建流程）。
 
 ***
 

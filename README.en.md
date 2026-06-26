@@ -1,13 +1,13 @@
 # Arrow Lake
 
 > Production-grade multimodal data lakehouse for AI/ML teams.
-> Built with Lance + Daft + Ray. 2872 tests, 80%+ coverage, zero high-severity security issues.
+> Built with Lance + Daft + Ray. 6122 tests, 90%+ coverage, zero high-severity security issues.
 
-[![Tests](https://img.shields.io/badge/tests-2872%20passing-brightgreen)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
-[![Coverage](https://img.shields.io/badge/coverage-80%25-green)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
+[![Tests](https://img.shields.io/badge/tests-6122%20passing-brightgreen)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
+[![Coverage](https://img.shields.io/badge/coverage-90%25-brightgreen)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
 [![Security](https://img.shields.io/badge/bandit-0%20HIGH-success)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
 [![Python](https://img.shields.io/badge/python-3.11+-blue)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
-[![Version](https://img.shields.io/badge/version-1.6.0-blue)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
+[![Version](https://img.shields.io/badge/version-1.7.0-blue)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
 [![License](https://img.shields.io/badge/license-MIT-informational)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
 
 ## Overview
@@ -86,7 +86,7 @@ Runs a self-contained demo with synthetic data — vector search, SQL analytics,
 | **Ensemble Search** | Cross-column RRF fusion across multiple embedding columns |
 | **SQL Analytics** | DuckDB-powered OLAP: GROUP BY, window functions, JOINs, streaming |
 | **Daft DataFrame** | Lazy evaluation + Ray distributed execution |
-| **Knowledge Graph** | HugeGraph integration: build, Gremlin query, GraphRAG |
+| **Knowledge Graph** | HugeGraph integration: build, Gremlin query, GraphRAG; v1.7 doc-type routing + hyper-extract extraction backend |
 | **RAG Pipeline** | Multi-provider LLM (OpenAI, Anthropic, vLLM, Ollama, DeepSeek), sessions, citations, streaming |
 | **Document Pipeline** | PDF parse → chunk → embed → Lance, 7 chunking strategies, OCR fallback |
 | **Data Quality** | Schema validation, null detection, dedup (exact hash + perceptual hash), NeMo Curator |
@@ -144,7 +144,7 @@ Production features:
 ## Testing
 
 ```bash
-# Full suite (2872 tests, 80%+ coverage)
+# Full suite (6122 tests, 90%+ coverage)
 pytest tests/ -q
 
 # By category
@@ -179,7 +179,7 @@ LanceDB + Daft + Ray + DuckDB + PyArrow + FastAPI + HugeGraph + Redis + Metaflow
 ## Documentation
 
 - [Usage Guide](docs/usage-guide.md) — comprehensive walkthrough
-- [Cookbook](docs/cookbook/README.md) — 13 chapters + 43 examples (bilingual EN/ZH)
+- [Cookbook](docs/cookbook/README.md) — 15 chapters + 45 examples (bilingual EN/ZH)
 - [Product Introduction](docs/arrow-lake-product-introduction.html) — full product overview
 - [Security Policy](SECURITY.md) — Auth, RBAC, audit, transport security
 - [Contributing](CONTRIBUTING.md) — development setup and coding standards

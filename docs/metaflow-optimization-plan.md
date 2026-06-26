@@ -1,6 +1,6 @@
 # Arrow Lake Metaflow 高级特性落地方案
 
-> 版本: v1.2 | 日期: 2026-05-18 | 状态: **Phase 1-4 已完成**，Phase 5 待部署环境
+> 版本: v1.3 | 日期: 2026-06-25 | 状态: **Phase 1-4 已完成**；Flow 层已接入 `@foreach` / `@resources` / `@retry` / `@timeout`；Phase 5 待部署；`@checkpoint` / `@batch` / `@kubernetes` / `@card` / `@exit_hook` 仍为缺口
 
 ---
 
@@ -8,11 +8,15 @@
 
 ### 1.1 已有能力
 
-| 模块 | 文件 | 行数 | 能力 |
+| 模块 | 文件 | 行数 | 能力（含装饰器） |
 |------|------|------|------|
-| Quality Pipeline Flow | `flows/quality_pipeline_flow.py` | ~60 | start → apply_filters → end |
-| Maya E2E Flow | `flows/maya_e2e_flow.py` | ~270 | start → ingest → quality_filter → embed → search → end |
-| Scheduled Quality Flow | `flows/scheduled_quality_flow.py` | ~95 | start → check_quality → end (cron 08:00) |
+| Quality Pipeline Flow | `flows/quality_pipeline_flow.py` | 59 | start → apply_filters → end（`@step`×3） |
+| Scheduled Quality Flow | `flows/scheduled_quality_flow.py` | 94 | start → check_quality → end，cron 调度（`@step`×3） |
+| Maya E2E Flow | `flows/maya_e2e_flow.py` | 272 | start → ingest → quality → embed → search → end（`@step`×6） |
+| Ingest Flow | `flows/ingest_flow.py` | 124 | 摄取 + **`@foreach` 并行**（`@step`×4 `@foreach`×1） |
+| Embed Flow | `flows/embed_flow.py` | 191 | 嵌入 + foreach 并行 + 资源声明（`@step`×4 `@foreach`×1 `@resources`×1） |
+| KG Flow | `flows/kg_flow.py` | 181 | 知识图谱构建 + 资源声明（`@step`×6 `@resources`×2） |
+| Batch RAG Flow | `flows/batch_rag_flow.py` | 122 | 批量 RAG + foreach + retry/timeout 容错（`@step`×4 `@foreach`×1 `@retry`×1 `@timeout`×1） |
 | Base Mixin | `arrow_lake/workflow/base.py` | ~119 | ArrowLakeFlowSpec + FlowRegistry |
 | Retry | `arrow_lake/workflow/retry.py` | ~87 | build_metaflow_retry + tenacity backoff |
 | Error Handler | `arrow_lake/workflow/error_handler.py` | ~131 | classify_error + catch_handler |
@@ -23,18 +27,24 @@
 | Argo Bridge | `arrow_lake/workflow/argo.py` | ~331 | ArgoWorkflowBridge (generate/validate/deploy) |
 | Workflow Config | `arrow_lake/config/workflow.py` | ~120 | WorkflowConfig + ArgoConfig + AutoscaleConfig |
 
-### 1.2 核心问题
+### 1.2 核心问题（2026-06-25 复盘）
 
-**3 个 Flow 全部是线性管道**（start → step → end），没有任何：
-- `@foreach` — 并行处理
-- `@resources` — GPU/CPU 资源声明
-- `@retry` / `@catch` / `@timeout` — 步骤级容错（基础设施已有 `build_metaflow_retry` 和 `catch_handler`，但 Flow 层完全没用）
-- `branch` / `join` — 条件分支与并行合并
-- `@card` — 可视化报告
-- `@checkpoint` — 断点续跑
-- `Client API` — 运行结果追溯
+**Flow 层已从纯线性管道演进到带并行 + 资源 + 容错**（7 个 Flow，1096 行；`@step`×30 `@foreach`×3 `@resources`×3 `@retry`×1 `@timeout`×1），但仍未覆盖全部高阶特性：
 
-**基础设施已完备但没接入 Flow 层** — retry、error_handler、rollback 都只作为独立模块存在，没有任何 Flow 的 `@step` 使用它们。
+| 特性 | 状态 | 说明 |
+|------|------|------|
+| `@foreach` 并行 | ✅ 已接入 | batch_rag / embed / ingest 各 1 处 |
+| `@resources` 资源声明 | ✅ 已接入 | embed×1、kg×2 |
+| `@retry` / `@timeout` 步骤级容错 | 🟡 部分接入 | 仅 batch_rag（`@retry`×1 `@timeout`×1）；其余 flow 未用 |
+| `branch` / `join` 分支合并 | 🟡 仅 foreach 的 join | 静态分支、条件/递归 step（2.18+）未用 |
+| `@catch` / `@exit_hook` 收尾容错 | ❌ 未用 | 基础设施 `catch_handler` 存在但 Flow 层未接；**`end` 失败会被跳过**，收尾逻辑须用 `@exit_hook` |
+| `@card` 可视化 | ❌ 未用 | — |
+| `@checkpoint` 断点续跑 | ❌ 未用 | 长任务（KG build / 大文件 export / 批量 embed）中途崩溃丢数据；`CheckpointInfo` 基础设施已有但 Flow 层未接 |
+| `@batch` / `@kubernetes` 远程执行 | ❌ 未用 | **runtime-agnostic 上云能力闲置**；`metaflow-ray` 已装但所有 flow 仍本地跑 |
+| Client API 追溯 | 🟡 浅 | `RunTracker` 有 Run/Step，未深度用 Client 查 artifact |
+| Argo 生产调度 | 🟡 桥接就绪未部署 | `ArgoWorkflowBridge` 完成，Phase 5 待落地 |
+
+**两大核心缺口**：① 长任务断点续跑（`@checkpoint`）；② 远程分布式执行（`@batch`/`@kubernetes`）——Metaflow 区别于普通脚本的两大利器尚未在 Flow 层点亮。优先级：`@checkpoint`（防数据丢失）> `@batch`/`@kubernetes`（上云）> `@exit_hook`（修收尾隐患）。
 
 ### 1.3 业务模块现状
 

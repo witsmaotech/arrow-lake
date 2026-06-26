@@ -1,6 +1,6 @@
 # Knowledge Graph & GraphRAG
 
-> Version: 1.5.3
+> Version: 1.7.0
 
 Arrow Lake includes a built-in Knowledge Graph (KG) subsystem that transforms unstructured text
 into a structured entity-relationship graph through LLM-based entity extraction, writing results
@@ -524,6 +524,104 @@ Configuration constraints:
 * `max_traversal_depth` must be between 1 and 10
 * `build_batch_size` must be at least 1
 * `timeout_seconds` must be at least 1.0
+
+***
+
+## v1.7.0 Update: Doc-Type Routing & Hyper-Extract Backend
+
+v1.7.0 adds a pluggable extraction backend and document-type-aware template routing to `kg_build`,
+significantly improving triple precision for domain-specific documents (papers, contracts, financial
+reports, medical records, etc.).
+
+### Switching to the Hyper-Extract (`he`) Backend
+
+Set `HugeGraphConfig.extractor_backend` to route extraction through hyper-extract templates:
+
+```python
+from arrow_lake.config import ArrowLakeConfig
+
+config = ArrowLakeConfig()
+config.hugegraph.enabled = True
+config.hugegraph.extractor_backend = "he"            # "graphrag" (default) | "he"
+config.hugegraph.he_model = "qwen3:30b-a3b"          # any OpenAI-compatible model
+config.hugegraph.he_default_template = "general/concept_graph"
+```
+
+Requires the `he` extra: `pip install "arrow-lake[he]"`. The `he` backend drives hyper-extract
+templates via langchain `ChatOpenAI`, producing higher-precision triples than the default graphrag
+extractor.
+
+### Doc-Type Three-Layer Routing
+
+When `extractor_backend="he"`, each document's `doc_type` selects a hyper-extract template through
+three layers (`doc_type_router.py`) — first match wins:
+
+1. **Config override** — `HugeGraphConfig.he_doc_type_templates` explicit mapping.
+2. **TemplateGallery metadata match** — scans every preset's `tags` / `category` / `name` /
+   `description`; newly added templates are picked up automatically with no code change.
+3. **Default fallback** — `HugeGraphConfig.he_default_template`.
+
+```python
+from arrow_lake.knowledge_graph.doc_type_router import (
+    DocTypeRouter, TemplateGallery, normalize_doc_type, validate_taxonomy,
+)
+
+# Alias folding: 论文 / research_paper / 白皮书 → canonical "paper"
+print(normalize_doc_type("论文"))              # "paper"
+
+# Gallery indexes every hyper-extract preset by metadata (auto-discovers new templates)
+gallery = TemplateGallery.build()
+hit = gallery.match("paper")                  # → matched preset (path/tags) or None
+print(hit.path if hit else "default")
+
+# Three-layer router: override > gallery > default
+router = DocTypeRouter(
+    doc_type_templates={"paper": "general/concept_graph"},   # layer 1: explicit override
+    default_template="general/concept_graph",                # layer 3: fallback
+)
+path, source = router.resolve_with_source("论文")
+print(path, source)                           # general/concept_graph 'override'
+```
+
+If `doc_type` is missing entirely, `DocTypeClassifier` infers it from document content via LLM
+**once per document** — all chunks then share the matched template, saving LLM calls.
+
+### Passing doc_type at Ingest Time
+
+`doc_type` is an ingest-time property; it flows upload API → `Lake` facade → Ingestor → chunk
+table → KG builder:
+
+```python
+# Python SDK
+lake.ingest_documents("papers", ["data/paper.pdf"], doc_type="paper")
+```
+
+> CLI `kg build` has **no** `--doc-type` flag — set `doc_type` when ingesting.
+
+### A-Scheme Entity Dual-Write
+
+Every entity is written as a generic `entity` vertex **plus** a fine-grained label
+(`person` / `organization` / `concept` / …). Relations route to a fine-grained edge when the
+endpoint types have a matching synonym, otherwise fall back to a generic `related_to` edge. The
+original type is preserved on the `relation_type` property, so both generic and type-specific
+queries work:
+
+```python
+# Generic — all entities
+await lake.kg_query("g.V().hasLabel('entity').limit(10)")
+# Type-specific — people only
+await lake.kg_query("g.V().hasLabel('person').limit(10)")
+```
+
+### HugeGraph PD Cluster Mode
+
+The production compose (`deploy/docker-compose.prod.yml`) runs HugeGraph in PD mode
+(`hg-pd` + `hg-store` + `hg-server`, hstore backend) instead of standalone rocksdb, enabling
+**runtime multi-graph creation** — each document can get its own isolated KG. Services start in
+order PD → Store → Server, gated by healthchecks.
+
+> See also: cookbook [example 44](examples/44_kg_doctype_he.py) (routing, offline-runnable) and
+> [example 45](examples/45_kg_doctype_api.py) (REST API build flow).
 
 ***
 

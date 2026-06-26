@@ -1,6 +1,6 @@
 # Arrow Lake Usage Guide
 
-A practical walkthrough for **Arrow Lake v1.6.0** -- a production-grade multimodal data lakehouse
+A practical walkthrough for **Arrow Lake v1.7.0** -- a production-grade multimodal data lakehouse
 built on Lance, DuckDB, Daft, and Ray.
 
 ---

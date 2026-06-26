@@ -3,11 +3,11 @@
 > Lance + Daft + Ray 构建，面向 AI/ML 团队的统一多模态数据湖仓。
 > 文本、图像、音频、向量、知识图谱 — 一个平台全覆盖。
 
-[![Tests](https://img.shields.io/badge/tests-2872%20passing-brightgreen)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
-[![Coverage](https://img.shields.io/badge/coverage-80%25-green)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
+[![Tests](https://img.shields.io/badge/tests-6122%20passing-brightgreen)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
+[![Coverage](https://img.shields.io/badge/coverage-90%25-brightgreen)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
 [![Security](https://img.shields.io/badge/bandit-0%20HIGH-success)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
 [![Python](https://img.shields.io/badge/python-3.11+-blue)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
-[![Version](https://img.shields.io/badge/version-1.6.0-blue)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
+[![Version](https://img.shields.io/badge/version-1.7.0-blue)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
 [![License](https://img.shields.io/badge/license-MIT-informational)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
 
 ## 项目概述
@@ -25,7 +25,7 @@ Arrow Lake 是一个面向多模态数据（文本、图像、音频、视频）
 | **集成搜索** | 跨多向量列的 RRF 融合检索 |
 | **OLAP 分析** | DuckDB SQL：GROUP BY、窗口函数、JOIN、流式执行 |
 | **Daft DataFrame** | 延迟求值 + Ray 分布式执行 |
-| **知识图谱** | HugeGraph 集成：图谱构建、Gremlin 查询、GraphRAG |
+| **知识图谱** | HugeGraph 集成：图谱构建、Gremlin 查询、GraphRAG；v1.7 文档类型路由 + hyper-extract 抽取后端 |
 | **RAG 管线** | 多 LLM Provider（OpenAI, Anthropic, vLLM, Ollama, DeepSeek），会话历史、引用溯源、流式输出 |
 | **文档管线** | PDF → 分块 → 向量化 → Lance，7 种分块策略，OCR 回退 |
 | **数据质量** | Schema 验证、空值检测、去重（精确哈希 + 感知哈希）、NeMo Curator |
@@ -136,7 +136,7 @@ helm install arrow-lake deploy/helm/arrow-lake/
 ## 测试
 
 ```bash
-# 全量测试（2872 tests，80%+ 覆盖率）
+# 全量测试（6122 tests，90%+ 覆盖率）
 pytest tests/ -q
 
 # 分批运行
@@ -171,7 +171,7 @@ LanceDB + Daft + Ray + DuckDB + PyArrow + FastAPI + HugeGraph + Redis + Metaflow
 
 ## 文档
 
-- [Cookbook 教程](docs/cookbook/README.md) — 13 章 + 43 个示例（中英双语）
+- [Cookbook 教程](docs/cookbook/README.md) — 15 章 + 45 个示例（中英双语）
 - [产品介绍](docs/arrow-lake-product-introduction-zh.html) — 完整产品概览
 - [安全策略](SECURITY.md) — 认证、RBAC、审计、传输安全
 - [贡献指南](CONTRIBUTING.md) — 开发环境与编码规范
