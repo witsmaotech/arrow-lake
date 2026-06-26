@@ -234,6 +234,50 @@ class _LakeAdminMixin:
         table = pa.table({column_name: pa.array(blobs, type=pa.binary())})
         self._get_storage().add_columns_table(dataset_name, table)
 
+    # ------------------------------------------------------------------
+    # Gravitino unified catalog (v1.8.0 #19 — three engines via Gravitino)
+    # ------------------------------------------------------------------
+
+    def _get_gravitino_bridge(self) -> Any:
+        from arrow_lake.catalog.gravitino_bridge import GravitinoBridge
+
+        return self._get_component(
+            "gravitino", lambda: GravitinoBridge(self._config.gravitino)
+        )
+
+    def gravitino_register_dataset(
+        self, dataset_name: str, *, location: str = ""
+    ) -> None:
+        """Register a dataset in the Gravitino catalog (v1.8.0 #19).
+
+        Registers as a Gravitino Table (with schema) + Fileset so DuckDB, Daft,
+        and lancedb can all resolve the dataset via Gravitino — unified catalog.
+        """
+        schema = None
+        try:
+            schema = self._get_storage().open_dataset(dataset_name).schema
+        except Exception:
+            schema = None
+        self._get_gravitino_bridge().register_dataset(
+            dataset_name, schema=schema, location=location
+        )
+
+    def gravitino_deregister_dataset(self, dataset_name: str) -> None:
+        """Remove a dataset from the Gravitino catalog (v1.8.0 #19)."""
+        self._get_gravitino_bridge().deregister_dataset(dataset_name)
+
+    def gravitino_sync_inbound(self) -> list[Any]:
+        """Pull external metadata changes from Gravitino (v1.8.0 #19)."""
+        return self._get_gravitino_bridge().sync_inbound()
+
+    def gravitino_table_statistics(self, dataset_name: str) -> Any:
+        """Get table statistics from Gravitino (v1.8.0 #19)."""
+        return self._get_gravitino_bridge().get_table_statistics(dataset_name)
+
+    def gravitino_health(self) -> tuple[str, bool]:
+        """Gravitino catalog health check (v1.8.0 #19)."""
+        return self._get_gravitino_bridge().health()
+
     def add_column(self, name: str, column_name: str, sql_expr: str) -> None:
         """Add a computed column to an existing dataset.
 

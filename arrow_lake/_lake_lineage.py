@@ -47,6 +47,46 @@ class _LakeLineageMixin:
         )
         store.record_event(event)
 
+    def lineage_record_row(
+        self,
+        dataset_name: str,
+        row_id: str | int,
+        *,
+        source_rows: list[dict[str, Any]] | None = None,
+        operation: str = "derive",
+        actor: str = "system",
+    ) -> None:
+        """Record row-level lineage using Lance native row ids (v1.8.0 #3).
+
+        Adds row-level granularity on top of event-level lineage: tracks which
+        source rows (each ``{"dataset": ..., "row_id": ...}``) produced a given
+        output row, enabling precise row-level provenance / 行级溯源. Implemented
+        as a lineage event tagged ``level="row"`` with the row_id + source_rows
+        in metadata, so it flows through the existing lineage store/query/graph.
+
+        Args:
+            dataset_name: Output dataset.
+            row_id: Lance row id of the output row.
+            source_rows: List of ``{"dataset", "row_id"}`` provenance entries.
+            operation: Operation that produced the row (default "derive").
+            actor: Actor (default "system").
+        """
+        self.lineage_record_event(
+            dataset_name,
+            operation,
+            source_datasets=[
+                r["dataset"] for r in (source_rows or []) if "dataset" in r
+            ]
+            or None,
+            transform_type="row_level",
+            actor=actor,
+            metadata={
+                "level": "row",
+                "row_id": str(row_id),
+                "source_rows": source_rows or [],
+            },
+        )
+
     def lineage_history(self, dataset_name: str) -> list[Any]:
         """Get lineage history for a dataset (Story 8.3)."""
 

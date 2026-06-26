@@ -76,3 +76,49 @@ class TestLoadHfDataset:
             mock_connect.assert_called_once_with("hf://datasets/foo/bar")
             mock_db.open_table.assert_called_once_with("train")
             assert res.num_rows == 3
+
+
+class TestLineageRecordRow:
+    """#3: row-level lineage via lineage_record_row."""
+
+    def test_record_row_delegates_with_row_metadata(self, tmp_path: str) -> None:
+        from arrow_lake import Lake
+
+        lake = Lake(base_uri=str(tmp_path))
+        lake.lineage_record_event = MagicMock()  # type: ignore[method-assign]
+
+        lake.lineage_record_row(
+            "ds",
+            42,
+            source_rows=[{"dataset": "src", "row_id": 7}],
+            operation="derive",
+        )
+
+        lake.lineage_record_event.assert_called_once()
+        _args, kwargs = lake.lineage_record_event.call_args
+        assert kwargs["transform_type"] == "row_level"
+        md = kwargs["metadata"]
+        assert md["level"] == "row" and md["row_id"] == "42"
+        assert md["source_rows"] == [{"dataset": "src", "row_id": 7}]
+        assert kwargs["source_datasets"] == ["src"]
+
+
+class TestGravitinoFacade:
+    """#19: Gravitino unified-catalog facade methods delegate to the bridge."""
+
+    def test_gravitino_methods_delegate(self, tmp_path: str) -> None:
+        from arrow_lake import Lake
+
+        lake = Lake(base_uri=str(tmp_path))
+        mock_bridge = MagicMock()
+        lake._get_gravitino_bridge = MagicMock(return_value=mock_bridge)  # type: ignore[method-assign]
+
+        lake.gravitino_deregister_dataset("ds")
+        lake.gravitino_sync_inbound()
+        lake.gravitino_table_statistics("ds")
+        lake.gravitino_health()
+
+        mock_bridge.deregister_dataset.assert_called_once_with("ds")
+        mock_bridge.sync_inbound.assert_called_once()
+        mock_bridge.get_table_statistics.assert_called_once_with("ds")
+        mock_bridge.health.assert_called_once()
