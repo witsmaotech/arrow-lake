@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [Unreleased]
+
+### Added
+
+- v1.8.0 #13: Daft AI 函数端到端补全 —— `LocalEmbeddingEncoder.encode_to_vectors`（对称 `DaftBatchEncoder`，返回向量矩阵）、`DaftBatchEncoder` 加 `expected_dim` 维度校验 + L2 归一化 + `encode(list[str])` 满足 `EmbeddingEncoderProtocol`、`/embed/text` REST 端点 DAFT 分支、PoC benchmark (`examples/benchmark_embed_daft_vs_local.py`)。实测 Daft `embed_text(provider="transformers")` vs Local `SentenceTransformer`：cosine=1.0、dim 1024、speedup 1.14x、调度代码删减 ~120 行。
+
+### Fixed
+
+- `Lake.embed_and_add` LOCAL 分支 `result.embeddings.tolist()` AttributeError（`EmbeddingResult` 无 `embeddings` 字段）—— 改用新增的 `LocalEmbeddingEncoder.encode_to_vectors`。
+
+
 ## [1.7.0] - 2026-06-24
 
 ### Summary

@@ -170,6 +170,31 @@ async def embed_text(
             null_count=null_count,
         )
 
+    if emb_cfg.backend == EmbeddingBackend.DAFT:
+        from arrow_lake.embed.daft_encoder import DaftBatchEncoder
+
+        daft_encoder = DaftBatchEncoder(
+            model=emb_cfg.model,
+            provider=emb_cfg.daft_provider,
+            num_partitions=emb_cfg.daft_num_partitions,
+            expected_dim=emb_cfg.expected_dim,
+        )
+        table = pa.table({"text_content": req.texts})
+        vectors, dim = await run_sync(
+            daft_encoder.encode_to_vectors,
+            table,
+            column="text_content",
+            timeout=_EMBED_TIMEOUT,
+            label="embed_text_daft",
+        )
+        return EmbeddingResponse(
+            embeddings=[v.tolist() for v in vectors],
+            embedding_dim=dim,
+            model=emb_cfg.model,
+            total=len(req.texts),
+            null_count=int(sum(1 for v in vectors if not np.any(v))),
+        )
+
     encoder = LocalEmbeddingEncoder(
         model_name=emb_cfg.model,
         model_source="local",

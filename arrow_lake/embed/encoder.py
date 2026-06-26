@@ -200,6 +200,96 @@ class LocalEmbeddingEncoder:
             vector_column=f"{column}_embedding",
         )
 
+    def encode_to_vectors(
+        self,
+        table: pa.Table,
+        column: str = "text_content",
+    ) -> tuple[np.ndarray, int]:
+        """Encode a text column and return the raw embedding matrix.
+
+        Unlike :meth:`encode_column` (which returns only stats), this returns
+        the actual vectors aligned to the input row order — null rows are
+        zero-filled. Mirrors ``DaftBatchEncoder.encode_to_vectors`` so the two
+        backends are interchangeable in callers that need the vectors (e.g.
+        :meth:`arrow_lake._lake_ingest.LakeIngestor.embed_and_add`).
+
+        Args:
+            table: Arrow table containing the text column.
+            column: Name of the text column to encode.
+
+        Returns:
+            Tuple of (embeddings array of shape (total_rows, dim), dimension).
+
+        Raises:
+            ValueError: If column does not exist in table.
+            EmbeddingError: If model loading or encoding fails, or dimension
+                does not match ``expected_dim``.
+        """
+        if column not in table.column_names:
+            raise ValueError(f"Column '{column}' not found in table")
+
+        total_rows = table.num_rows
+        col = table.column(column)
+        null_mask = col.is_null().to_pylist()
+        raw = col.to_pylist()
+        non_null_texts = [
+            str(v) for v, is_null in zip(raw, null_mask, strict=True) if not is_null
+        ]
+
+        if not non_null_texts:
+            return np.zeros((total_rows, 0), dtype=np.float32), 0
+
+        try:
+            model = self._load_model()
+            embeddings = model.encode(
+                non_null_texts,
+                batch_size=self.batch_size,
+                show_progress_bar=False,
+                normalize_embeddings=True,
+            )
+            embeddings = np.asarray(embeddings, dtype=np.float32)
+            try:
+                import torch
+
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except (ImportError, OSError, RuntimeError):
+                pass
+        except (RuntimeError, OSError) as exc:
+            raise EmbeddingError(
+                error_code=ErrorCode.EMBEDDING_MODEL_ERROR,
+                message=f"Failed to encode texts with '{self.model_name}': {exc}",
+            ) from exc
+
+        from arrow_lake.core.metrics import (
+            get_metrics_enabled,
+            processing_embeddings_total,
+        )
+
+        if get_metrics_enabled():
+            processing_embeddings_total.labels(model=self.model_name).inc(
+                len(non_null_texts)
+            )
+
+        dim = int(embeddings.shape[1])
+        if self._expected_dim > 0 and dim != self._expected_dim:
+            raise EmbeddingError(
+                error_code=ErrorCode.EMBEDDING_MODEL_ERROR,
+                message=(
+                    f"Embedding dimension mismatch: model '{self.model_name}' produces "
+                    f"{dim}D vectors, expected {self._expected_dim}D"
+                ),
+            )
+
+        # 按原行序回填：null 行零向量，保持与输入 table 行对齐
+        vectors = np.zeros((total_rows, dim), dtype=np.float32)
+        idx = 0
+        for i, is_null in enumerate(null_mask):
+            if not is_null:
+                vectors[i] = embeddings[idx]
+                idx += 1
+        return vectors, dim
+
 
 class ApiEmbeddingEncoder:
     """Encodes text via an OpenAI-compatible embedding API.

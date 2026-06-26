@@ -375,18 +375,18 @@ class TestEmbedAndAdd:
         mock_table = pa.table({"text_content": ["hello", "world"]})
         lake._storage.read_dataset.return_value = mock_table
 
-        mock_result = MagicMock()
-        mock_result.embeddings = np.array([[0.1, 0.2], [0.3, 0.4]])
-        mock_result.embedding_dim = 2
-
         with patch("arrow_lake.embed.encoder.LocalEmbeddingEncoder") as mock_encoder_cls:
             mock_encoder = MagicMock()
             mock_encoder_cls.return_value = mock_encoder
-            mock_encoder.encode_column.return_value = mock_result
+            mock_encoder.encode_to_vectors.return_value = (
+                np.array([[0.1, 0.2], [0.3, 0.4]], dtype=np.float32),
+                2,
+            )
 
             result = lake.embed_and_add("ds")
 
             assert result == 2
+            mock_encoder.encode_to_vectors.assert_called_once()
             lake._storage.add_columns_table.assert_called_once()
 
     def test_embed_api_backend(self, lake: _TestLake) -> None:
@@ -412,20 +412,52 @@ class TestEmbedAndAdd:
             assert result == 2
             mock_encoder_cls.assert_called_once()
 
+    def test_embed_daft_backend(self, lake: _TestLake) -> None:
+        """DAFT backend: encode_to_vectors tuple 契约 + expected_dim 传入 + 向量回写。"""
+        import numpy as np
+
+        from arrow_lake.config._enums import EmbeddingBackend
+
+        lake._config.embedding.backend = EmbeddingBackend.DAFT
+        lake._config.embedding.expected_dim = 4
+
+        mock_table = pa.table({"text_content": ["hello", "world"]})
+        lake._storage.read_dataset.return_value = mock_table
+
+        with patch("arrow_lake.embed.daft_encoder.DaftBatchEncoder") as mock_encoder_cls:
+            mock_encoder = MagicMock()
+            mock_encoder_cls.return_value = mock_encoder
+            mock_encoder.encode_to_vectors.return_value = (
+                np.array(
+                    [[0.1, 0.2, 0.3, 0.4], [0.5, 0.6, 0.7, 0.8]], dtype=np.float32
+                ),
+                4,
+            )
+
+            result = lake.embed_and_add("ds")
+
+            assert result == 2
+            # expected_dim 从 config 传入构造器
+            assert mock_encoder_cls.call_args.kwargs.get("expected_dim") == 4
+            # tuple 正确解包：dim 流向 FixedSizeListArray
+            mock_encoder.encode_to_vectors.assert_called_once()
+            lake._storage.add_columns_table.assert_called_once()
+            vec_table = lake._storage.add_columns_table.call_args[0][1]
+            assert "text_embedding" in vec_table.column_names
+
     def test_embed_custom_batch_size(self, lake: _TestLake) -> None:
         import numpy as np
 
         mock_table = pa.table({"text_content": ["a"]})
         lake._storage.read_dataset.return_value = mock_table
 
-        mock_result = MagicMock()
-        mock_result.embeddings = np.array([[0.1, 0.2]])
-        mock_result.embedding_dim = 2
-
         with patch("arrow_lake.embed.encoder.LocalEmbeddingEncoder") as mock_encoder_cls:
             mock_encoder = MagicMock()
             mock_encoder_cls.return_value = mock_encoder
-            mock_encoder.encode_column.return_value = mock_result
+            mock_encoder.encode_to_vectors.return_value = (
+                np.array([[0.1, 0.2]], dtype=np.float32),
+                2,
+            )
 
             lake.embed_and_add("ds", batch_size=32)
 
@@ -439,20 +471,19 @@ class TestEmbedAndAdd:
         mock_table = pa.table({"body": ["text here"]})
         lake._storage.read_dataset.return_value = mock_table
 
-        mock_result = MagicMock()
-        mock_result.embeddings = np.array([[0.1, 0.2]])
-        mock_result.embedding_dim = 2
-
         with patch("arrow_lake.embed.encoder.LocalEmbeddingEncoder") as mock_encoder_cls:
             mock_encoder = MagicMock()
             mock_encoder_cls.return_value = mock_encoder
-            mock_encoder.encode_column.return_value = mock_result
+            mock_encoder.encode_to_vectors.return_value = (
+                np.array([[0.1, 0.2]], dtype=np.float32),
+                2,
+            )
 
             lake.embed_and_add("ds", text_column="body", embedding_column="body_vec")
 
             lake._storage.read_dataset.assert_called_once_with("ds", columns=["body"])
 
-            call_args = mock_encoder.encode_column.call_args
+            call_args = mock_encoder.encode_to_vectors.call_args
             assert call_args.kwargs.get("column") == "body"
 
             add_call_args = lake._storage.add_columns_table.call_args

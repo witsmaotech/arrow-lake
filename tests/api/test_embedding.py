@@ -156,6 +156,46 @@ async def test_embed_text(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_embed_text_daft_backend(client: AsyncClient) -> None:
+    """POST /embed/text with backend=daft routes to DaftBatchEncoder.encode_to_vectors."""
+    from unittest.mock import patch
+
+    import numpy as np
+
+    from arrow_lake.config import ArrowLakeConfig
+    from arrow_lake.config._enums import EmbeddingBackend
+
+    daft_cfg = ArrowLakeConfig()
+    daft_cfg.api.api_key = "test-api-key"
+    daft_cfg.api.docs_enabled = False
+    daft_cfg.embedding.backend = EmbeddingBackend.DAFT
+
+    with (
+        patch("arrow_lake.api.deps.get_config", return_value=daft_cfg),
+        patch("arrow_lake.embed.daft_encoder.DaftBatchEncoder") as MockEncoder,
+    ):
+        mock_encoder = MagicMock()
+        mock_encoder.encode_to_vectors.return_value = (
+            np.array([[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]], dtype=np.float32),
+            3,
+        )
+        MockEncoder.return_value = mock_encoder
+
+        resp = await client.post(
+            "/api/v1/embed/text",
+            json={"texts": ["hello", "world"], "model": "daft-model"},
+        )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["success"] is True
+    assert body["embedding_dim"] == 3
+    assert body["total"] == 2
+    assert len(body["embeddings"]) == 2
+    MockEncoder.return_value.encode_to_vectors.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_embed_text_empty_list_rejected(client: AsyncClient) -> None:
     resp = await client.post(
         "/api/v1/embed/text",

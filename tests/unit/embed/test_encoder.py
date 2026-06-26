@@ -194,6 +194,72 @@ class TestLocalEmbeddingEncoder:
         assert result.embedding_dim == 0
 
     @patch("arrow_lake.core.metrics.get_metrics_enabled", return_value=False)
+    def test_encode_to_vectors_with_nulls(
+        self,
+        _mock_metrics_enabled: MagicMock,
+    ) -> None:
+        """encode_to_vectors 返回 (total_rows, dim) 矩阵，null 行零填充。"""
+        enc = LocalEmbeddingEncoder(batch_size=4)
+        dim = 8
+        mock_model = MagicMock()
+        mock_model.encode.return_value = np.random.rand(2, dim).astype(np.float32)
+        mock_model.get_sentence_embedding_dimension.return_value = dim
+        enc._model = mock_model
+        enc._embedding_dim = dim
+
+        table = _make_table(["hello", None, "world", None])
+        vectors, ret_dim = enc.encode_to_vectors(table, "text_content")
+
+        assert isinstance(vectors, np.ndarray)
+        assert vectors.dtype == np.float32
+        assert vectors.shape == (4, dim)
+        assert ret_dim == dim
+        # null 行（idx 1,3）为零向量，保持行对齐
+        assert np.allclose(vectors[1], 0.0)
+        assert np.allclose(vectors[3], 0.0)
+        # 非 null 行（idx 0,2）来自模型，仅对非 null 文本调用 encode
+        mock_model.encode.assert_called_once()
+        assert mock_model.encode.call_args[0][0] == ["hello", "world"]
+
+    @patch("arrow_lake.core.metrics.get_metrics_enabled", return_value=False)
+    def test_encode_to_vectors_all_valid(
+        self,
+        _mock_metrics_enabled: MagicMock,
+    ) -> None:
+        """全部有效行返回 (total_rows, dim) 矩阵。"""
+        enc = LocalEmbeddingEncoder(batch_size=2)
+        dim = 16
+        mock_model = MagicMock()
+        mock_model.encode.return_value = np.random.rand(3, dim).astype(np.float32)
+        mock_model.get_sentence_embedding_dimension.return_value = dim
+        enc._model = mock_model
+        enc._embedding_dim = dim
+
+        table = _make_table(["alpha", "beta", "gamma"])
+        vectors, ret_dim = enc.encode_to_vectors(table, "text_content")
+        assert vectors.shape == (3, dim)
+        assert ret_dim == dim
+
+    @patch("arrow_lake.core.metrics.get_metrics_enabled", return_value=False)
+    def test_encode_to_vectors_empty(
+        self,
+        _mock_metrics_enabled: MagicMock,
+    ) -> None:
+        """空表返回 (0, 0) 矩阵，不调用模型。"""
+        enc = LocalEmbeddingEncoder()
+        table = _make_table([])
+        vectors, ret_dim = enc.encode_to_vectors(table, "text_content")
+        assert vectors.shape == (0, 0)
+        assert ret_dim == 0
+
+    def test_encode_to_vectors_missing_column(self) -> None:
+        """缺列抛 ValueError。"""
+        enc = LocalEmbeddingEncoder()
+        table = pa.table({"other": ["a"]})
+        with pytest.raises(ValueError, match="not found"):
+            enc.encode_to_vectors(table, "text_content")
+
+    @patch("arrow_lake.core.metrics.get_metrics_enabled", return_value=False)
     def test_encode_column_respects_batch_size(
         self,
         _mock_metrics_enabled: MagicMock,

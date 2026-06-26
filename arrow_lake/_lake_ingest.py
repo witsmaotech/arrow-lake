@@ -689,6 +689,7 @@ class _LakeIngestMixin:
                 model=emb_cfg.model,
                 provider=emb_cfg.daft_provider,
                 num_partitions=emb_cfg.daft_num_partitions,
+                expected_dim=emb_cfg.expected_dim,
             )
             all_embeddings_array, dim = encoder.encode_to_vectors(
                 pa.table({text_column: texts}), column=text_column,
@@ -710,12 +711,12 @@ class _LakeIngestMixin:
             encoder = LocalEmbeddingEncoder(
                 model_name=emb_cfg.model,
                 batch_size=effective_batch,
+                expected_dim=emb_cfg.expected_dim,
             )
-            result = encoder.encode_column(
+            emb_array, dim = encoder.encode_to_vectors(
                 pa.table({text_column: texts}), column=text_column,
             )
-            all_embeddings = result.embeddings.tolist()
-            dim = result.embedding_dim
+            all_embeddings = emb_array.tolist()
 
         import numpy as np
 

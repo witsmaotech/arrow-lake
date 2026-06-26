@@ -32,10 +32,12 @@ class DaftBatchEncoder:
         model: str = "Qwen/Qwen3-Embedding-0.6B",
         provider: str = "transformers",
         num_partitions: int = 4,
+        expected_dim: int = 0,
     ) -> None:
         self._model = model
         self._provider = provider
         self._num_partitions = num_partitions
+        self._expected_dim = expected_dim
 
     def encode_column(
         self,
@@ -90,6 +92,7 @@ class DaftBatchEncoder:
 
             emb_array = result_table.column(emb_col)
             dim = self._infer_dim(emb_array)
+            self._check_dim(dim)
 
             embedded_count = sum(1 for v in emb_array.to_pylist() if v is not None)
             null_count = total_rows - embedded_count
@@ -121,6 +124,9 @@ class DaftBatchEncoder:
         """
         import daft
 
+        if table.num_rows == 0:
+            return np.zeros((0, 0), dtype=np.float32), 0
+
         df = daft.from_arrow(table)
         effective_partitions = min(self._num_partitions, max(1, table.num_rows // 100))
         df = df.into_partitions(effective_partitions)
@@ -131,12 +137,36 @@ class DaftBatchEncoder:
         result_table = df.select(emb_col).to_arrow()
         emb_array = result_table.column(emb_col)
         dim = self._infer_dim(emb_array)
+        self._check_dim(dim)
 
         vectors = np.array(
             [v if v is not None else [0.0] * dim for v in emb_array.to_pylist()],
             dtype=np.float32,
         )
+        # L2 归一化非零行（null 行零向量保持），对称 LocalEmbeddingEncoder 的 normalize_embeddings=True
+        if dim > 0:
+            norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+            nonzero = norms.ravel() > 0
+            vectors[nonzero] = vectors[nonzero] / norms[nonzero]
         return vectors, dim
+
+    def encode(self, texts: list[str]) -> np.ndarray:
+        """Encode a list of texts and return the embedding matrix.
+
+        Satisfies ``EmbeddingEncoderProtocol`` so ``DaftBatchEncoder`` is a
+        drop-in for callers that consume the ``encode(list[str]) -> Any``
+        contract (e.g. alongside ``ApiEmbeddingEncoder.encode``).
+
+        Args:
+            texts: List of text strings to encode.
+
+        Returns:
+            ``np.ndarray`` of shape (len(texts), dim); null/empty rows are
+            zero-filled by :meth:`encode_to_vectors`.
+        """
+        table = pa.table({"text_content": texts})
+        vectors, _ = self.encode_to_vectors(table, column="text_content")
+        return vectors
 
     def _embed_expr(self, column: str) -> Any:
         """Build the Daft embed_text expression."""
@@ -196,6 +226,7 @@ class DaftBatchEncoder:
 
             emb_array = result_table.column(emb_col)
             dim = self._infer_dim(emb_array)
+            self._check_dim(dim)
 
             embedded_count = sum(1 for v in emb_array.to_pylist() if v is not None)
             null_count = total_rows - embedded_count
@@ -224,3 +255,14 @@ class DaftBatchEncoder:
         if hasattr(emb_array, "type") and pa.types.is_fixed_size_list(emb_array.type):
             return emb_array.type.list_size
         return 0
+
+    def _check_dim(self, dim: int) -> None:
+        """Raise EmbeddingError if ``expected_dim`` is set and ``dim`` differs."""
+        if self._expected_dim > 0 and dim != self._expected_dim:
+            raise EmbeddingError(
+                error_code=ErrorCode.EMBEDDING_MODEL_ERROR,
+                message=(
+                    f"Embedding dimension mismatch: model '{self._model}' produces "
+                    f"{dim}D vectors, expected {self._expected_dim}D"
+                ),
+            )
