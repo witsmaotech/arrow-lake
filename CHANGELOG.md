@@ -85,6 +85,27 @@ v1.8.0 稳定版：roadmap **19 项全部落地**（三批 + 9 项收尾），�
 
 - `Lake.embed_and_add` LOCAL 分支 `result.embeddings.tolist()` AttributeError（`EmbeddingResult` 无 `embeddings` 字段）—— 改用新增的 `LocalEmbeddingEncoder.encode_to_vectors`。
 
+## [1.7.1] - 2026-06-25
+
+### Summary
+
+v1.7.1 是 Lance/LanceDB/DuckDB 技术栈的深度调优版本：lancedb 0.30.2→0.33.0、pylance 6.x→7.0.0、DuckDB 1.5.2（已最新线）三件升级 + 存储引擎调优 + 标量索引全量补齐 + 向量原生 async 入口，全部 11 项（#1–#11）完成并运行时验证（5005 passed / 0 failed），镜像 `arrow-lake:1.7.1` 发布。
+
+### Added
+
+- **lancedb 0.33.0 + pylance 7.0.0 升级**：验证 pylance 7.0 写入的 Lance 新格式与 DuckDB core `lance` 扩展（随 1.5.2 绑定）向后兼容——`lance_scan` / `vector_search` / `fts` 40+ 处调用全通。
+- **存储引擎调优（纯 compose，零 Python）**：`LANCE_IO_THREADS=64` / `LANCE_CPU_THREADS=4` 注入 `x-storage-env` anchor → api / ray-head / ray-worker / ray-gpu-worker 4 服务继承；DuckDB `max_query_memory_mb` 512→1024 + `API_MEMORY_LIMIT` 4G→8G（4 workers × 4 并发 × 512MB 已超 4G）。
+- **标量索引全量补齐**：`create_scalar_index` / `create_facet_indexes`（facet 列 modality / source / doc_type / created_at），SDK prefilter 路径补齐（DuckDB `lance_vector_search` 无 filter 参数，由标量索引 + SDK prefilter 覆盖）。
+- **`search_async` 增量入口**（#9）：向量原生 `connect_async` 异步检索，连接池 + 压测验证后上高并发。
+- **`use_inverted` 实验选项**（#11）：lance 原生 INVERTED index 替代 legacy `create_fts_index`，搜索兼容性按数据集验证。
+- **回归 API 表面**：`create_scalar_index` / `create_facet_indexes` / `search_async` 暴露完整契约；cookbook 对齐 + README 服务端点；镜像 `arrow-lake:1.7.1` + tag `v1.7.1` 推送 Gitee。
+
+### Changed
+
+- DuckDB 内存预算校验（`OlapConfig.validate_memory_budget()`）在创建 session manager 前拦截超配。
+
+---
+
 ## [1.7.0] - 2026-06-24
 
 ### Summary
