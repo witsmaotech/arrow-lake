@@ -900,7 +900,7 @@ ArrowLakeError
 | **v1.6.3** | 2026-06-09 | HugeGraph Gremlin 绑定修复（entrypoint wrapper）；`export_graph()` Gremlin→REST 降级；deploy 安全加固（redis-exporter、nginx CSP、`REDISCLI_AUTH`、镜像标签固定） |
 | **v1.7.0** | 2026-06-24 | HugeGraph **PD 集群模式**（运行时多 graph）；**hyper-extract (he)** KG 抽取后端；**doc_type 三层路由**；A 方案实体双写；ingest doc_type 贯通 |
 | **v1.7.1** | 2026-06-25 | lancedb 0.33 + pylance 7.0 + DuckDB 1.5.2 调优；标量索引全量补齐；`search_async` 增量入口；`LANCE_IO_THREADS=64`；内存预算 1024MB+8G；cookbook 对齐；全量 5005 passed |
-| **v1.8.0** | 2026-06-26 | **19 项深度优化**（见 [§16](#16-扩展点与路线图)）：第一批 #13 Daft AI / #5 Reranker / #1 Lance branches；第二批 #6 CLIP encode_text / #10 graph_query CTE / #9 DuckLake 验证 / #11 prepared 验证；第三批 #17 async（压测 GO，已实现）+ 压测 gate 框架 |
+| **v1.8.0** | 2026-06-29 | **roadmap 19 项全部落地**（17 ✅ + 2 ⏸ 压测 DEFER，见 [§16](#16-扩展点与路线图)）：检索精度（#5 Reranker / #6 CLIP）、治理（#1 branches / #9 物化 / #10 轻图 / #2 blob / #3 行级 lineage / #19 Gravitino facade）、性能（#13 Daft AI / #16 流式写 / #17 async）、多模态与联邦（#18 VLM / #14 Daft↔Gravitino / #12 DuckDB FTS / #8 hf:// / #4 日文分词）；+ 生产 Review CRITICAL 修复（`/embed/image` 死链）+ 压测 gate 框架 |
 
 **v1.8.0 实施纪律**（trunk-based，直接提交 `master`，不开 feature 分支——项目约定优先于全局 PR 规则）：每项 TDD（RED→GREEN→REFACTOR）→ 对应 cookbook 跑通 → 全量 pytest 零失败 → CHANGELOG/roadmap/implementation 同步。
 
@@ -922,34 +922,40 @@ ArrowLakeError
 
 ### 16.1 v1.8.0 19 项状态总览
 
+> **19 项全部落地**：17 项 ✅ 实现 + 2 项 ⏸ 压测 DEFER。无 🔜 遗留。
+
 | 批次 | # | 项 | 状态 |
 |---|---|---|---|
 | 🟥 | #13 | Daft AI 函数（embed_text 替代自建调度） | ✅ 完成（cosine=1.0，speedup 1.14x，删减 ~120 行） |
 | 🟥 | #5 | Reranker 接入 hybrid | ✅ 完成（`HybridSearchConfig.reranker_type`） |
-| 🟥 | #1 | Lance dataset branches | ✅ 完成（tags 早有，补 branches；facade/CLI/REST 接入待后续） |
-| 🟧 | #6 | CLIP 跨模态 encode_text | ✅ 完成（text tower 补全文搜图） |
-| 🟧 | #10 | SQL-PGQ 轻图查询 | ✅ 完成（PGQ 不可用→递归 CTE `graph_query`） |
+| 🟥 | #1 | Lance dataset branches | ✅ 完成（tags + branches；facade `create_branch/list_branches/delete_branch/read_at_branch` 已暴露） |
+| 🟧 | #6 | CLIP 跨模态 encode_text | ✅ 完成（text tower；facade `encode_text_clip` + REST `/embed/clip-text`） |
+| 🟧 | #10 | SQL-PGQ 轻图查询 | ✅ 完成（递归 CTE `graph_query`；facade `lake.graph_query()` + REST `/query/graph`；`start_node=None` guard） |
 | 🟧 | #9 | DuckLake 物化视图 | ✅ 核实（已在 `olap.py`，29 tests） |
 | 🟧 | #11 | Prepared statements | ✅ 核实（已 `$1..$4` 参数化，4 tests 守卫） |
 | 🟨 | #17 | 全链路 async | ✅ 完成（压测 GO，fts/hybrid/faceted `search_async`） |
-| 🟨 | #15 | 分布式索引 backfill（Ray） | ⏸ DEFER（单节点 ~10M 行充裕，100M+ 触发） |
-| 🟨 | #7 | ColBERT / colpali | ⏸ DEFER（recall@50=1.000 无缺口，待真实数据） |
-| 🟧 | #2 | Lance blob 存原文 | 🔜 后续（原生 binary 列支持） |
-| 🟧 | #3 | row-level lineage（row_id） | 🔜 后续（叠加事件级） |
-| 🟧 | #4 | FTS 多语言分词（lindera/icu） | 🔜 后续 |
-| 🟧 | #8 | `hf://` 现成数据集 | 🔜 后续 |
-| 🟧 | #12 | DuckDB 原生 fts/vss 扩展 | 🔜 后续 |
-| 🟧 | #14 | Daft ↔ Gravitino 连接器 | 🔜 后续 |
-| 🟧 | #16 | Daft 惰性执行 >16x 内存 | 🔜 后续 |
-| 🟧 | #18 | 多模态统一栈（blob+CLIP+VLM） | 🔜 后续 |
-| 🟧 | #19 | Gravitino 统一 catalog | 🔜 后续 |
+| 🟧 | #2 | Lance blob 存原文 | ✅ 完成（`add_blob_column`，Lance binary 列存 image/audio/video bytes） |
+| 🟧 | #3 | row-level lineage（row_id） | ✅ 完成（`lineage_record_row`，Lance row_id 行级溯源） |
+| 🟧 | #4 | FTS 多语言分词 | ✅ 完成（lindera 日文分词路由 + 模块级缓存 + 优雅降级） |
+| 🟧 | #8 | `hf://` 现成数据集 | ✅ 完成（`load_hf_dataset`，lancedb `hf://` scheme） |
+| 🟧 | #12 | DuckDB 原生 fts/vss | ✅ 完成（`OlapSearchBridge.fts_search` BM25；`vss` 此 build 不可用） |
+| 🟧 | #14 | Daft ↔ Gravitino 连接器 | ✅ 完成（`daft_from_gravitino`，`daft.io.GravitinoConfig` 直连） |
+| 🟧 | #16 | Daft 流式写 >16× 内存 | ✅ 完成（`write_lance_from_dataframe`，Daft lazy） |
+| 🟧 | #18 | VLM decode_image | ✅ 完成（`transforms._build_decode_image`，VLM 链补全） |
+| 🟧 | #19 | Gravitino 统一 catalog facade | ✅ 完成（register/deregister/sync_inbound/table_statistics/health） |
+| 🟨 | #15 | 分布式索引 backfill（Ray） | ⏸ DEFER（单节点 21s/1M，1B+ 行才需 Ray；基建已就绪） |
+| 🟨 | #7 | ColBERT / colpali | ⏸ DEFER（现实 recall 96%；病态下降是 IVF_PQ 量化，修法 HNSW，非 ColBERT 场景） |
 
-### 16.2 最高 ROI 下一步（建议）
+> **生产 Review（2026-06-26）**：1 项 CRITICAL 修复 —— `/api/v1/embed/image` 死链（`ImageEmbeddingResult.table` 字段 + `encode()` 重赋 + endpoint 读 `result.table` + `_make_vector` dim 取首个非 None 嵌入），附非 mock 回归断言守卫。
 
-1. **多模态统一栈（#18 + #2 + VLM）**：项目已有 photos/videos 数据基础，Lance blob 存原文 + CLIP + Daft decode + lancedb 跨模态检索，端到端打通是 v1.8.0 主题。
-2. **Daft prompt KG 抽取（`DaftExtractor`）**：作 `extractor_backend="daft"` 第三选项，与 hyper-extract 并列对比批量结构化抽取价值。
-3. **tags/branches 接 facade/CLI/REST**：v1.8.0 #1 仅补底层，统一接入是后续项。
-4. **DEFER 项复测**：数据规模/真实细粒度语义变化后，用 `tests/benchmark/test_bench_batch3_gates.py` 重跑重评 #15/#7。
+### 16.2 v1.8.0 之后的下一步（建议）
+
+> 17 项已实现，#1/#6/#10 facade + REST 已暴露。剩余演进方向：
+
+1. **Daft prompt KG 抽取（`DaftExtractor`）**：作 `extractor_backend="daft"` 第三选项，与 hyper-extract 并列对比批量结构化抽取价值（v1.8.0 #13 仅覆盖嵌入层，KG 抽取仍走 he）。
+2. **CLI 暴露补全**：facade 已就绪的 `graph_query` / `encode_text_clip` / branches / blob / hf 等能力，补齐对应 `arrow-lake` CLI 子命令（REST 已覆盖核心）。
+3. **HNSW 索引修召回**：#7 压测揭示 IVF_PQ 量化是召回病态根因——对召回敏感场景把向量索引切 / 补 HNSW，比上 ColBERT 更对症。
+4. **DEFER 项复测**：数据规模（1B+ 行）或真实细粒度语义变化后，用 `tests/benchmark/test_bench_batch3_gates.py` 重跑重评 #15（Ray 分布式索引）/ #7。
 
 ### 16.3 扩展点
 

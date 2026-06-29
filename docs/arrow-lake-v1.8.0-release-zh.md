@@ -5,7 +5,7 @@
 
 **Arrow Lake** 是面向 AI/ML 团队的生产级**多模态数据湖仓**。它把向量检索、全文检索、OLAP 分析、RAG 问答与知识图谱收敛到**同一份 Lance 列式底座**之上，通过 Python SDK、REST、CLI 三种入口统一对外。
 
-v1.8.0 是迄今最完整的一个版本：**19 项深度优化**落地，覆盖**检索精度、数据治理、性能并发、多模态**四条主线，全部经压测与回归验证（5000+ 测试零失败）。
+v1.8.0 是迄今最完整的一个版本：**roadmap 19 项全部落地**（17 项实现 + 2 项压测 DEFER），覆盖**检索精度、数据治理、性能并发、多模态与联邦**四条主线，含 1 项生产 Review CRITICAL 修复，全部经压测与回归验证（5000+ 测试零失败）。
 
 ---
 
@@ -73,22 +73,22 @@ flowchart LR
         R9["#9 DuckLake 物化"]:::done
         R10["#10 轻图查询 CTE"]:::done
         R11["#11 prepared 参数化"]:::done
-        R2["#2 Lance blob 原文"]:::next
-        R3["#3 row_id 血缘"]:::next
+        R2["#2 Lance blob 原文"]:::done
+        R3["#3 row_id 血缘"]:::done
     end
     subgraph T3["性能与并发"]
         R13["#13 Daft AI 函数"]:::done
         R17["#17 全链路 async"]:::done
         R15["#15 分布式索引"]:::defer
-        R16["#16 Daft >16x 内存"]:::next
+        R16["#16 Daft >16x 内存"]:::done
     end
     subgraph T4["多模态与联邦"]
-        R18["#18 多模态统一栈"]:::next
-        R14["#14 Daft↔Gravitino"]:::next
-        R19["#19 Gravitino 统一 catalog"]:::next
-        R12["#12 DuckDB fts/vss"]:::next
-        R4["#4 多语言分词"]:::next
-        R8["#8 hf:// 数据集"]:::next
+        R18["#18 多模态统一栈"]:::done
+        R14["#14 Daft↔Gravitino"]:::done
+        R19["#19 Gravitino 统一 catalog"]:::done
+        R12["#12 DuckDB fts/vss"]:::done
+        R4["#4 多语言分词"]:::done
+        R8["#8 hf:// 数据集"]:::done
     end
 
     classDef done fill:#c8e6c9,stroke:#2e7d32,color:#1b5e20
@@ -108,9 +108,17 @@ flowchart LR
 | ✅ | #11 | prepared 参数化 | 元数据表 `$1..$4` 安全参数绑定 |
 | ⏸ | #15 | 分布式索引 backfill | 单节点 ~10M 行内充裕，100M+ 触发 Ray（基建已就绪） |
 | ⏸ | #7 | ColBERT / colpali | recall@50=1.000 无召回缺口，待真实细粒度数据复测 |
-| 🔜 | #2/#3/#4/#8/#12/#14/#16/#18/#19 | blob 原文 · row_id 血缘 · 多语言分词 · hf:// 数据集 · DuckDB fts/vss · Daft↔Gravitino · Daft >16× 内存 · 多模态统一栈 · Gravitino 统一 catalog | 已规划，按价值/成本后续批次推进 |
+| ✅ | #2 | Lance blob 原文 | `add_blob_column` 原地存 image/audio/video bytes，原文 + 嵌入同库 |
+| ✅ | #3 | 行级 lineage | `lineage_record_row`，Lance row_id 行级溯源（叠加事件级） |
+| ✅ | #4 | 日文分词 | lindera 假名分词路由 + 模块级缓存 + 优雅降级 |
+| ✅ | #8 | `hf://` 数据集 | `load_hf_dataset` 读 HF Lance-format（评测 / 种子数据） |
+| ✅ | #12 | DuckDB 原生 FTS | `fts_search` BM25 作 lance_fts 备选；`vss` 此 build 不可用 |
+| ✅ | #14 | Daft↔Gravitino | `daft_from_gravitino` 直连，联邦查询不经 DuckDB 转译 |
+| ✅ | #16 | Daft 流式写 | `write_lance_from_dataframe`，lazy >16× 内存，KG build / 大批量 |
+| ✅ | #18 | VLM decode_image | `decode_image` builder 补全 VLM 链（bytes→解码→classify/prompt） |
+| ✅ | #19 | Gravitino 统一 catalog | facade register/deregister/sync/statistics/health，三引擎经 Gravitino |
 
-> **压测驱动的诚实**：#15（分布式索引）和 #7（ColBERT）不是"做不了"，而是**数据证明现在不该做**——v1.8.0 建了可复用的 gate 框架（`tests/benchmark/test_bench_batch3_gates.py`），规模或数据特征变化后重跑即可重评。不投机，不浪费。
+> **压测驱动的诚实**：#15（分布式索引，单节点 21s/1M，1B+ 行才需 Ray）和 #7（ColBERT）不是"做不了"，而是**数据证明现在不该做**——#7 现实 recall 96%，病态下降源于 IVF_PQ 量化（修法是 HNSW，非 ColBERT 场景）。v1.8.0 建了可复用的 gate 框架（`tests/benchmark/test_bench_batch3_gates.py`），规模或数据特征变化后重跑即可重评。不投机，不浪费。
 
 ---
 
