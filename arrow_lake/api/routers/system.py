@@ -95,6 +95,16 @@ def _check_redis(redis_url: str) -> tuple[str, bool]:
         return "unreachable", False
 
 
+def _is_app_ready(request: Request) -> bool:
+    """Return True once lifespan has finished required startup setup.
+
+    Gates readiness so traffic is not routed to a half-initialized worker
+    (e.g. while Lake / DuckDB session manager are still initializing). The flag
+    is set by ``lifespan`` in ``app.py`` — absent or False means still starting.
+    """
+    return bool(getattr(request.app.state, "ready", False))
+
+
 @router.get("/health/live", summary="Liveness probe")
 async def health_live() -> dict:
     """Lightweight liveness check — returns 200 if process is running."""
@@ -129,6 +139,11 @@ async def health_ready(
     config: ArrowLakeConfig = Depends(get_app_config),
 ) -> Response:
     """Readiness check — verifies storage and dependencies are accessible."""
+    if not _is_app_ready(request):
+        return JSONResponse(
+            content={"status": "starting", "version": _get_version()},
+            status_code=503,
+        )
     status: dict = {"status": "ok", "version": _get_version()}
     storage_text, storage_ok = _check_storage(config)
     status["storage"] = storage_text
@@ -162,6 +177,11 @@ async def health_check(
 
     Kept for backward compatibility. Prefer /health/live and /health/ready.
     """
+    if not _is_app_ready(request):
+        return JSONResponse(
+            content={"status": "starting", "version": _get_version()},
+            status_code=503,
+        )
     status: dict = {"status": "ok", "version": _get_version()}
     storage_text, storage_ok = _check_storage(config)
     status["storage"] = storage_text

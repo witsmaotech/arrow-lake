@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.8.3] - 2026-06-29
+
+### Fixed
+
+- **启动慢 + 生产 HA：readiness 探针此前不反映真实就绪状态**。`/health` 与 `/health/ready` 只 gate 存储，不查 Lake/DuckDB session manager 是否初始化完成；且 prod compose healthcheck 仅 grep `"status"` 键是否存在（`degraded` 也判健康）。修：lifespan 加 `app.state.ready` 标志（required setup 完成才置 True，shutdown 复位），两探针在未就绪时返 503 `"starting"`，`/health/live` 保持纯 liveness；compose healthcheck 改为断言 `"status":"ok"`，`start_period` 60s→120s。这是任何「启动后异步初始化」能安全进行的硬前提。
+- **DuckDB warmup 阻塞启动**：warmup（建 2 个连接 + 扩展 install/load，首启含下载）此前在 lifespan 同步执行、每 worker 各跑一遍。修：`Lake.get_session_manager(skip_warmup=True)` 同步建好 manager，warmup 移到后台 daemon 线程；连接池本就按需懒建，readiness 不再等 warmup。同时移除 lifespan 里两个冗余启动探针（`_check_storage_connectivity`/`_check_duckdb_extensions`，与 readiness 探针/warmup 重复，首启省 1 次扩展下载 + ≤5s）。
+- **fileset 注册每轮重复 POST + rc2 冲突 400 误判**：`GravitinoBridge.register_dataset` 此前每个同步周期对每个 dataset 无条件 POST create-fileset，靠 409 判存在；rc2 server 对冲突返 400（不在 `{409,404}` 吞集）→ 被误判为 "exists" 且永不收敛、spam error 日志。修：新增 `_fileset_exists()`（GET fileset load 端点）+ `self._filesets` 缓存，先查存在再 POST；create 真失败时如实记 `register_failed` 而非 "exists"。table 路径用标准 409，未受影响。
+- **Gravitino client 版本漂移**：`apache-gravitino>=1.2.1`（pyproject + Dockerfile:64 独立 `uv pip install`）无上界，部署构建时拉取最新版可能偏离 server 1.2.1-rc2。修：钉死 `==1.2.1`（与 server 同 minor，即当前已装版本）。
+- **stale 测试**：`test_lake_extras_v18.py::TestDaftFromGravitino` 仍断言 v1.8.1 重构前的旧字段 `GravitinoConfig(url=,metalake=)`，对齐为 `endpoint=/metalake_name=`。
+
+### Summary
+
+v1.8.3 是面向生产高可用的启动性能 + 正确性修复：先补 readiness gate（此前坏掉，半初始化实例会被灌流量），再把 DuckDB warmup 移后台并去冗余探针以加速启动，顺手修 fileset 注册的重复 POST/400 误判与 Gravitino client 版本漂移。受影响测试套件全绿。
+
+---
+
 ## [1.8.2] - 2026-06-29
 
 ### Fixed

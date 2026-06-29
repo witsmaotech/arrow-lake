@@ -224,11 +224,11 @@ services:
         reservations:
           memory: 1G
     healthcheck:
-      test: ["CMD-SHELL", "curl -s http://localhost:8000/health | grep -q '\"status\"'"]
+      test: ["CMD-SHELL", "curl -s http://localhost:8000/health | grep -q '\"status\":\"ok\"'"]
       interval: 15s
       timeout: 10s
       retries: 5
-      start_period: 60s
+      start_period: 120s
     ulimits:
       nofile:
         soft: 65536

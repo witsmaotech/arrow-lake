@@ -142,7 +142,7 @@ class TestDaftFromGravitino:
             res = lake.daft_from_gravitino(
                 "cat.schema.tbl", url="http://gv:8090", metalake="ml"
             )
-            mock_cfg_cls.assert_called_once_with(url="http://gv:8090", metalake="ml")
+            mock_cfg_cls.assert_called_once_with(endpoint="http://gv:8090", metalake_name="ml")
             mock_read.assert_called_once_with(
                 "cat.schema.tbl", io_config=mock_cfg
             )

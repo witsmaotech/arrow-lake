@@ -96,20 +96,42 @@ def _check_duckdb_extensions() -> None:
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Application lifespan: initialize Lake instance on startup, cleanup on shutdown."""
     import signal
+    import threading
 
     from arrow_lake import Lake
 
     config: ArrowLakeConfig = app.state.config
 
-    # Startup health checks (non-fatal — log warnings, don't block)
-    _check_storage_connectivity(config)
-    _check_duckdb_extensions()
+    # Mark not-ready until required startup setup completes; readiness probes
+    # (/health, /health/ready) return 503 while this is False so traffic is not
+    # routed to a half-initialized worker.
+    app.state.ready = False
 
     lake = Lake(base_uri=config.storage.base_uri, config=config)
     app.state.lake = lake
 
-    # Trigger session manager creation (includes auto-warmup)
-    _ = lake.get_session_manager()
+    # Create the session manager WITHOUT blocking on warmup, then run warmup in
+    # a background daemon thread. The pool lazy-creates sessions on demand, so
+    # readiness does not need to wait for warmup; this keeps startup off the
+    # DuckDB extension install/load critical path.
+    session_manager = lake.get_session_manager(skip_warmup=True)
+
+    if getattr(config.olap, "warmup_enabled", False):
+        def _bg_warmup() -> None:
+            try:
+                result = session_manager.warmup()
+                if result.get("errors", 0) > 0:
+                    logger.warning(
+                        "duckdb_warmup_partial: warmed=%d, errors=%d",
+                        result.get("warmed", 0),
+                        result["errors"],
+                    )
+            except Exception:
+                logger.warning("duckdb_warmup_failed", exc_info=True)
+
+        threading.Thread(
+            target=_bg_warmup, name="duckdb-warmup", daemon=True
+        ).start()
 
     from arrow_lake.api.rbac import PermissionChecker
     app.state.checker = PermissionChecker()
@@ -215,9 +237,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     signal.signal(signal.SIGTERM, _graceful_shutdown)
     signal.signal(signal.SIGINT, _graceful_shutdown)
 
+    # Required synchronous setup is complete — flip readiness so probes return 200.
+    app.state.ready = True
     try:
         yield
     finally:
+        # Stop routing traffic to this worker during shutdown.
+        app.state.ready = False
         if gravitino_sync is not None:
             gravitino_sync.stop()
         if retention_enforcer is not None:

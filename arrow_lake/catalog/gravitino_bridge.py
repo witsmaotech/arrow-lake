@@ -93,6 +93,10 @@ class GravitinoBridge:
             "Content-Type": "application/json",
         }
         self._schema_ready = False
+        # Cache of filesets known to exist in the minio-fileset catalog, so we
+        # don't re-POST create-fileset every sync cycle (avoids the perpetual
+        # conflict-400 storm on servers that return 400 instead of 409).
+        self._filesets: set[str] = set()
 
     @property
     def enabled(self) -> bool:
@@ -134,6 +138,35 @@ class GravitinoBridge:
             })
         self._schema_ready = True
 
+    def _fileset_exists(self, name: str) -> bool:
+        """Return True if *name* is registered as a fileset in minio-fileset.
+
+        Uses the fileset load endpoint (GET). 404 ⇒ not present; network errors
+        are treated conservatively as "not present" so creation is retried.
+        """
+        path = (
+            f"/api/metalakes/{self._metalake}"
+            f"/catalogs/{_FILESET_CATALOG}"
+            f"/schemas/{_DEFAULT_SCHEMA}/filesets/{name}"
+        )
+        req = Request(f"{self._base}{path}", headers=self._headers, method="GET")
+        self._auth_provider.authenticate(req)
+        try:
+            with urlopen(req, timeout=10) as resp:
+                return resp.status == 200
+        except HTTPError as e:
+            if e.code == 404:
+                return False
+            logger.warning(
+                "gravitino_fileset_exists_check_failed", name=name, code=e.code
+            )
+            return False
+        except (URLError, OSError) as exc:
+            logger.warning(
+                "gravitino_fileset_exists_check_failed", name=name, error=str(exc)
+            )
+            return False
+
     def register_dataset(
         self, name: str, schema: Any = None, location: str = ""
     ) -> None:
@@ -146,7 +179,15 @@ class GravitinoBridge:
             # 1. Register as Table in lance-catalog (with columns)
             self._register_table(name, schema, location)
 
-            # 2. Register as Fileset in minio-fileset (path tracking)
+            # 2. Register as Fileset in minio-fileset (path tracking).
+            # Check existence first (cache + GET) so we don't re-POST create
+            # every cycle — a server may return 400 (not 409) on conflict,
+            # which previously masqueraded as "exists" and never converged.
+            if name in self._filesets or self._fileset_exists(name):
+                self._filesets.add(name)
+                logger.info("gravitino_fileset_exists", name=name)
+                return
+
             fileset_path = (
                 f"/api/metalakes/{self._metalake}"
                 f"/catalogs/{_FILESET_CATALOG}"
@@ -161,9 +202,12 @@ class GravitinoBridge:
                 "properties": {},
             })
             if result is not None:
+                self._filesets.add(name)
                 logger.info("gravitino_fileset_registered", name=name)
             else:
-                logger.info("gravitino_fileset_exists", name=name)
+                # Create was rejected (e.g. 400/500). Do not claim "exists" —
+                # next cycle re-checks via GET and retries honestly.
+                logger.warning("gravitino_fileset_register_failed", name=name)
 
     def _register_table(
         self, name: str, schema: Any, location: str
@@ -230,6 +274,7 @@ class GravitinoBridge:
                 f"/schemas/{_DEFAULT_SCHEMA}/filesets/{name}"
             )
             self._request("DELETE", fileset_path)
+            self._filesets.discard(name)
             logger.info("gravitino_dataset_deregistered", name=name)
 
     def sync_outbound(self, entries: list[dict[str, Any]]) -> int:

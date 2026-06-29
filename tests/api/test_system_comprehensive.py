@@ -49,6 +49,9 @@ def _make_app(config: ArrowLakeConfig | None = None) -> object:
     cfg = config or _make_config()
     app = create_app(config=cfg)
     app.state.lake = MagicMock()
+    # Simulate lifespan completion: a real worker flips this True once required
+    # startup setup finishes. Tests exercise the ready path.
+    app.state.ready = True
     return app
 
 
@@ -288,6 +291,26 @@ class TestHealthLive:
 
 class TestHealthReady:
     """Tests for readiness probe."""
+
+    @pytest.mark.asyncio
+    async def test_ready_503_while_starting(self, tmp_path: object) -> None:
+        """Before lifespan completes (app.state.ready False), readiness is 503.
+
+        This gates traffic so a half-initialized worker never receives requests.
+        """
+        config = _make_config(
+            storage__backend=StorageBackend.LOCAL,
+            storage__base_uri=str(tmp_path),
+        )
+        app = create_app(config)
+        app.state.lake = MagicMock()
+        # Note: app.state.ready intentionally left unset (simulates startup).
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            resp = await ac.get("/health/ready")
+        assert resp.status_code == 503
+        assert resp.json()["status"] == "starting"
 
     @pytest.mark.asyncio
     async def test_ready_storage_ok(self, tmp_path: object) -> None:

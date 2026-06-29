@@ -62,6 +62,7 @@ class TestMetricsRouting:
         monkeypatch.setenv("ARROW_LAKE__STORAGE__BASE_URI", str(tmp_path))
         config = _make_config()
         app = create_app(config=config)
+        app.state.ready = True  # simulate lifespan completion for the ready path
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             resp = await ac.get("/health")
         assert resp.status_code == 200

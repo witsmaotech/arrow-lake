@@ -153,18 +153,23 @@ class Lake(
         """Return the current Arrow Lake configuration."""
         return self._config
 
-    def get_session_manager(self) -> Any:
+    def get_session_manager(self, skip_warmup: bool = False) -> Any:
         """Get the shared DuckDB session manager (lazy-init).
 
         Bridges use this to acquire managed connections instead of
         creating per-query sessions.
+
+        Args:
+            skip_warmup: When True, create the manager without running the
+                blocking warmup inline (the caller runs warmup separately,
+                e.g. in a background thread). Only affects first creation.
         """
         return self._get_component(
             "session_manager",
-            lambda: self._create_session_manager(),
+            lambda: self._create_session_manager(skip_warmup),
         )
 
-    def _create_session_manager(self) -> Any:
+    def _create_session_manager(self, skip_warmup: bool = False) -> Any:
         from arrow_lake.query.session_manager import DuckDBSessionManager
 
         olap = self._config.olap
@@ -180,8 +185,10 @@ class Lake(
             redis_config=self._config.redis,
         )
 
-        # Automatic warmup for cold-start optimization
-        if olap.warmup_enabled:
+        # Automatic warmup for cold-start optimization. Skipped when the caller
+        # defers warmup to a background thread (the pool lazy-creates sessions
+        # on demand in the meantime).
+        if olap.warmup_enabled and not skip_warmup:
             try:
                 result = manager.warmup()
                 if result.get("errors", 0) > 0:
