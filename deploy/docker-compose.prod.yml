@@ -30,11 +30,11 @@ x-arrow-lake: &arrow-lake
     dockerfile: deploy/Dockerfile
     network: host
     args:
-      VERSION: "1.8.0"
+      VERSION: "1.8.1"
       HTTP_PROXY: "${BUILD_HTTP_PROXY:-}"
       HTTPS_PROXY: "${BUILD_HTTPS_PROXY:-}"
       NO_PROXY: "${BUILD_NO_PROXY:-127.0.0.1,localhost}"
-  image: arrow-lake:1.8.0
+  image: arrow-lake:1.8.1
   restart: unless-stopped
   env_file:
     - path: ../.env
