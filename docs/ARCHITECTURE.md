@@ -1,0 +1,984 @@
+# Arrow Lake — 架构技术文档（Architecture Reference）
+
+> **版本基线**：v1.8.0（开发线，已合并 `master`；`_version.py`/`pyproject.toml` 版本号尚未从 `1.7.1` bump）
+> **文档日期**：2026-06-26
+> **状态**：随主干演进，与代码当前态对齐（已逐项核实 `arrow_lake/` 源码）
+> **语言约定**：沿用本仓库全部技术文档（roadmap / implementation / 各优化 plan / CHANGELOG）的中文惯例。
+
+本文是 Arrow Lake 的**权威技术参考**：覆盖定位、顶层架构、设计模式、分层详解、公共 API、数据流、配置、安全、可观测性、可靠性、性能、部署、异常、版本演进与测试。面向新成员上手、架构评审与后续演进决策。
+
+---
+
+## 目录
+
+1. [项目定位与技术栈](#1-项目定位与技术栈)
+2. [顶层架构总览](#2-顶层架构总览)
+3. [核心设计模式](#3-核心设计模式)
+4. [分层详解](#4-分层详解)
+5. [Lake Facade — 公共 SDK API 全景](#5-lake-facade--公共-sdk-api-全景)
+6. [核心数据流](#6-核心数据流)
+7. [配置体系](#7-配置体系)
+8. [安全架构](#8-安全架构)
+9. [可观测性](#9-可观测性)
+10. [可靠性与优雅降级](#10-可靠性与优雅降级)
+11. [性能架构](#11-性能架构)
+12. [部署架构](#12-部署架构)
+13. [异常体系](#13-异常体系)
+14. [版本演进](#14-版本演进)
+15. [测试与质量保障](#15-测试与质量保障)
+16. [扩展点与路线图](#16-扩展点与路线图)
+17. [术语表](#17-术语表)
+
+---
+
+## 1. 项目定位与技术栈
+
+**Arrow Lake 是一个生产级、统一的多模态数据湖仓（Unified Multimodal Data Lakehouse）。**
+
+它把"存储 / 检索 / 分析 / 智能化"四件事收敛到一个面向 Python SDK、REST、CLI 三种入口的统一 facade 后面，核心命题是：**用一份 Lance 列式湖仓底座，同时承载向量检索（ANN）、全文检索（BM25）、OLAP 分析、RAG 问答与知识图谱（KG）**，并原生支持文本/图像/视频多模态。
+
+### 1.1 DARMU 核心栈
+
+记忆口诀 **DARMU**（Daft + Arrow/Lance + Ray + Metaflow + dUckdb），外加治理与图谱层：
+
+| 层 | 技术 | 版本（`pyproject.toml` 实测 pin） | 角色 |
+|---|---|---|---|
+| 计算层 | **Daft** | `0.7.8` | lazy DataFrame + 内置 AI 函数（embed/prompt/classify）+ 26 连接器 + 多模态 decode |
+| 湖仓格式 | **Lance / pylance** | pylance `>=7.0.0`（v1.7.1 升） | 列式存储 + 向量索引（IVF_PQ/HNSW/SQ/RQ）+ 标量索引（BTree/Bitmap）+ FTS 倒排 + tags/branches |
+| 应用层 | **LanceDB** | `0.33.0`（v1.7.1 升） | 向量库 SDK，Table/Namespace/索引/版本管理 + `search_async` |
+| 分布式 | **Ray** | `2.54.1` | head + worker 集群，KG 构建 / 批计算 /（预留）分布式索引 backfill |
+| 编排 | **Metaflow** | `2.19.22` + `metaflow-ray` `0.1.4` | 工作流编排 + checkpoint + retry/backoff + Argo 桥接 |
+| 引擎层 | **DuckDB** | `1.5.2` | **主力查询路径**（`lance_scan` / `vector_search` / `fts`，40+ 处调用），非 fallback |
+| 物化层 | **DuckLake** | DuckDB 扩展 | 跨存储物化视图（TTL + ART index + 行预算） |
+| 图谱 | **HugeGraph** | 1.7（PD 集群模式） | 知识图谱存储 + Gremlin 遍历；`VermeerClient` 构建 |
+| 治理 | **Apache Gravitino** | — | 统一 catalog + tag-driven ACL + masking + retention |
+| 对象存储 | **MinIO / S3** | `boto3>=1.35` | blob 原文（图像/视频）+ 备份 |
+| 缓存/任务 | **Redis** | `redis[hiredis]>=5.0,<6.0` | 分布式会话 + JWT 黑名单 + 异步任务状态共享 |
+
+### 1.2 设计哲学
+
+- **Facade + Mixin + Bridge + Protocol** 的组合，让一个 `Lake` 对象同时拥有摄取/搜索/查询/RAG/KG/治理/审计的全部能力，但内部按子系统懒加载、按能力桥接。
+- **优雅降级是一等公民**：Ray 不可用→本地、NeMo Curator 不可用→CPU MinHash、KG 不可用→Vector RAG、Gremlin 不可用→REST API。系统能在不完整基础设施下持续服务。
+- **配置驱动、四层覆盖**：代码默认 < `.env` < 环境变量 < YAML，34 个子配置覆盖每一个子系统。
+- **压测驱动、不做投机性优化**：v1.8.0 用 gate 框架对 async / 分布式索引 / ColBERT 逐项裁决，数据证明该做才做（见 [§16](#16-扩展点与路线图)）。
+
+---
+
+## 2. 顶层架构总览
+
+Arrow Lake 采用**严格五层架构**：请求自上而下穿越 **① 接入 → ② 能力 → ③ 计算 → ④ 存储引擎 → ⑤ 持久化**，**治理 / 可观测 / 安全**作为横切面贯穿全部层级。每层只依赖其直接下一层；横切面经 hook / 中间件作用于各层，不进入主调用链。节点对齐 v1.8.0 现状。
+
+### 2.1 分层视图（五层 + 横切面）
+
+> 下图用**粗箭头 `==>` 强制纵向层级**，每层一种色带，横切面（⟂）置于右侧贯穿。
+
+```mermaid
+flowchart TD
+    classDef l1 fill:#e3f2fd,stroke:#1565c0,color:#0d47a1
+    classDef l2 fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
+    classDef l3 fill:#fff3e0,stroke:#ef6c00,color:#e65100
+    classDef l4 fill:#f3e5f5,stroke:#6a1b9a,color:#4a148c
+    classDef l5 fill:#efebe9,stroke:#4e342e,color:#3e2723
+    classDef cc fill:#fce4ec,stroke:#c2185b,color:#880e4f
+
+    subgraph L1["① 接入层 · Entry"]
+      direction LR
+      SDK["Python SDK<br/><b>Lake</b> facade · 9 mixin"]:::l1
+      REST["REST API<br/>FastAPI · 106 routes · RBAC/限流"]:::l1
+      CLI["CLI<br/>arrow-lake · 16 命令组"]:::l1
+    end
+    subgraph L2["② 能力层 · Capabilities"]
+      direction LR
+      INGEST["📥 摄取<br/>parse→chunk→embed→quality"]:::l2
+      QUERY["🔍 查询<br/>8 Bridges · ANN/FTS/Hybrid/OLAP"]:::l2
+      INTEL["🧠 智能<br/>RAG · GraphRAG · KG"]:::l2
+    end
+    subgraph L3["③ 计算与嵌入 · Compute"]
+      direction LR
+      DAFT["Daft DataFrame<br/>AI 函数 · 多模态 decode"]:::l3
+      RAY["Ray 集群<br/>head + worker + GPU"]:::l3
+      EMB["嵌入<br/>Local·Daft·CLIP·RayServe"]:::l3
+    end
+    subgraph L4["④ 存储引擎 · Engines"]
+      direction LR
+      LANCE["LanceDB 0.33 / Lance v2<br/>向量·标量·FTS·tags·blob"]:::l4
+      DUCK["DuckDB 1.5.2<br/>lance_scan · vector_search · fts"]:::l4
+      DLAKE["DuckLake<br/>物化视图 (TTL+ART)"]:::l4
+    end
+    subgraph L5["⑤ 持久化 · Persistence"]
+      direction LR
+      MINIO[("MinIO / S3<br/>blob · 备份")]:::l5
+      REDIS[("Redis<br/>会话 · 任务 · JWT")]:::l5
+      HG[("HugeGraph PD<br/>知识图谱")]:::l5
+    end
+    subgraph CC["⟂ 横切面 · Cross-Cutting（治理 · 可观测 · 安全）"]
+      direction LR
+      GRAV["Gravitino<br/>catalog · tag→ACL · masking"]:::cc
+      OBS["structlog · Prometheus · OpenTelemetry"]:::cc
+      SEC["JWT · RBAC · HMAC 审计 · 限流"]:::cc
+    end
+
+    %% 严格自上而下穿越（粗箭头 = 主调用链 / 分层骨架）
+    L1 ==> L2 ==> L3 ==> L4 ==> L5
+    %% 横切面贯穿能力层与引擎层（虚线 = 非主链）
+    CC -. 治理/观测/安全 .-> L2
+    CC -.-> L4
+    %% 知识图谱旁路：能力层直达持久化
+    INTEL -. 图谱查询 .-> HG
+```
+
+**层级职责**（每层一行，对应上图色带）：
+
+| 层 | 职责 | 关键组件 |
+|---|---|---|
+| ① 接入 | 三入口归一到 facade；认证 / 限流 / 路由 | `Lake` facade · FastAPI（18 routers / 106 routes）· CLI |
+| ② 能力 | 业务能力：把数据写进去、查出来、问答 | 摄取 · 查询（8 Bridge）· 智能（RAG / KG） |
+| ③ 计算 | 批处理 / 分布式 / 嵌入 | Daft · Ray · 嵌入器（Local / Daft / CLIP） |
+| ④ 存储引擎 | 向量 / 标量 / FTS / 物化的执行 | LanceDB · DuckDB · DuckLake |
+| ⑤ 持久化 | 字节级落地 | MinIO / S3 · Redis · HugeGraph |
+| ⟂ 横切面 | 贯穿各层 | Gravitino 治理 · 可观测 · 安全 |
+
+> **分层依赖规则**：每层只依赖其直接下一层；横切面经 hook / 中间件作用，不参与主调用链；知识图谱是能力层直达持久化的唯一旁路。
+
+### 2.2 一次检索请求的层级穿越
+
+下图自上而下追踪一次 `POST /search` 穿越五层、结果再自下而上回传的完整路径，印证分层与依赖方向：
+
+```mermaid
+flowchart TD
+    A["客户端<br/>POST /api/v1/search"]:::l1
+    B["① 接入层<br/>Auth → RBAC → 限流 → 路由"]:::l1
+    C["② 能力层<br/>Lake.search() → VectorSearchBridge"]:::l2
+    D["③ 计算层<br/>嵌入查询向量 (CLIP / Local)"]:::l3
+    E["④ 存储引擎<br/>DuckDB vector_search + 标量索引"]:::l4
+    F["⑤ 持久化<br/>Lance ANN · MinIO blob"]:::l5
+
+    A --> B --> C --> D --> E --> F
+    F -. 命中行 + 距离 .-> E
+    E -. OlapQueryResult .-> C
+    C -. JSON 响应 .-> A
+
+    classDef l1 fill:#e3f2fd,stroke:#1565c0,color:#0d47a1
+    classDef l2 fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
+    classDef l3 fill:#fff3e0,stroke:#ef6c00,color:#e65100
+    classDef l4 fill:#f3e5f5,stroke:#6a1b9a,color:#4a148c
+    classDef l5 fill:#efebe9,stroke:#4e342e,color:#3e2723
+```
+
+### 2.3 多模态主数据流（项目核心命题）
+
+```text
+File/HTTP/URL → 多模态处理(OCR / Daft decode_image·audio·video)
+             → 嵌入(文本 bge-m3 / 图像 CLIP text+image tower)
+             → Lance 多模态向量列 + blob 原文
+             → 跨模态检索(文搜图 / 图搜图 / 图搜文)
+```
+
+---
+
+## 3. 核心设计模式
+
+### 3.1 Facade + Mixin（统一入口）
+
+`Lake`（`arrow_lake/__init__.py`）多重继承 **9 个 mixin**，对外是单一对象，对内按子系统切分文件：
+
+```python
+class Lake(
+    _LakeBaseMixin,      # 基础: 组件懒加载 / 共享 httpx / shutdown
+    _LakeIngestMixin,    # 摄取: create_dataset / ingest_* / upsert / 质量
+    _LakeSearchMixin,    # 搜索: search / text_search / hybrid / 索引管理
+    _LakeQueryMixin,     # 查询: olap_query / materialize / export
+    _LakeAdminMixin,     # 管理: 数据集 / 版本 / 标签 / Schema 演化 / 备份 / health
+    _LakeLineageMixin,   # 血缘追踪
+    _LakeAuditMixin,     # HMAC-SHA256 审计
+    _LakeRAGMixin,       # RAG: rag_query / stream / batch / extract (全 async)
+    _LakeKGMixin,        # KG: kg_build(fire-and-forget) / kg_query / 最短路径 (全 async)
+): ...
+```
+
+> **文件级拆分**：每个 mixin 是 `_lake_*.py`（如 `_lake_ingest.py` 24KB、`_lake_search.py` 25KB、`_lake_kg.py` 22KB）。`Lake` 类本身只持有 `_base_uri / _config / _storage / _components / _component_lock`。
+
+### 3.2 懒加载 + 线程安全组件缓存
+
+```python
+def _get_component(self, key: str, factory: Callable[[], Any]) -> Any:
+    if key not in self._components:
+        with self._component_lock:               # threading.RLock（v1.6.1 从 Lock 改 RLock）
+            if key not in self._components:      # double-checked locking
+                self._components[key] = factory()
+    return self._components[key]
+```
+
+- **为什么 RLock**：嵌套 `_get_component` 调用（组件 A 的工厂内部又请求组件 B）在普通 `Lock` 下会死锁；v1.6.1 修复。
+- 组件包括：`session_manager`（DuckDB 会话池）、`shared_http_client` / `shared_async_http_client`（复用 httpx 连接）、存储管理器等。
+- `shutdown()` 遍历 `_components`，对 `shutdown()` / `aclose()` / `close()`（同步或异步）统一回收；未 shutdown 会通过 `__del__` 发 `ResourceWarning`。
+
+### 3.3 Bridge 模式（查询能力可插拔）
+
+查询层每个能力是独立 Bridge 类，共享 DuckDB 会话但各自封装语义：
+
+| Bridge | 文件 | 能力 |
+|---|---|---|
+| `VectorSearchBridge` | `query/vector.py` | 向量 ANN + `search_async` + 跨列（`vector_column`）+ 跨模态 |
+| `FullTextSearchBridge` | `query/fts.py` | Tantivy BM25 + jieba 中文 + `search_async` |
+| `HybridSearchBridge` | `query/hybrid.py` | RRF 融合 + **Reranker 精排**（v1.8.0 #5）+ `search_async` |
+| `FacetedSearchBridge` | `query/faceted.py` | 标量索引分面 + `search_async` |
+| `EnsembleSearchBridge` | `query/ensemble.py` | 跨列 RRF 集成 |
+| `OlapSearchBridge` | `query/olap.py` | DuckDB SQL + Daft + `graph_query`（递归 CTE 轻图）+ 物化 |
+| `MetadataSearchBridge` | `query/metadata.py` | 标量元数据过滤 |
+| `ExportBridge` | `query/export.py` | parquet/csv/json 导出 |
+
+> Bridges 通过 `lake.get_session_manager()` 获取**受管连接**，而非每次查询新建 session。
+
+### 3.4 Protocol（结构化鸭子类型）
+
+`arrow_lake/_protocols.py` 定义跨层契约：
+
+- `StorageProtocol` —— 存储后端抽象（本地 / S3 / MinIO）
+- `SearchBridge` —— 查询桥接统一接口
+- `QualityFilter` —— 质量过滤器协议（`quality/` 下有 Registry + 3-stage gate）
+- `EmbeddingEncoderProtocol` —— 嵌入器协议（`encode(list[str])`，v1.8.0 #13 让 Daft 也满足此协议）
+
+### 3.5 优雅降级矩阵（Reliability）
+
+| 场景 | 主路径 | 降级路径 | 触发点 |
+|---|---|---|---|
+| 分布式计算 | Ray head+worker | 本地 Python 执行 | Ray 不可连 |
+| 去重 | NeMo Curator (GPU) | CPU MinHash（`datasketch`） | GPU/NeMo 缺失 |
+| 知识图谱问答 | HugeGraph GraphRAG | Vector RAG | KG 未构建 |
+| 图导出 | Gremlin `g.V()/g.E()` | REST API `GET /graphs/.../vertices\|edges` | Gremlin 引擎异常（v1.6.3） |
+| 嵌入 | RayServe | Local SentenceTransformer | Serve 未起 |
+| 跨模态 | CLIP text+image | 单模态 | 无图像模型 |
+| 混合精排 | cross-encoder reranker | RRF 粗排原表 | 缺 text 列 / rerank 异常（v1.8.0 #5） |
+
+### 3.6 配置四层覆盖
+
+```
+代码默认 (Pydantic field default)
+   ↓ 被覆盖
+.env 文件 (pydantic-settings)
+   ↓ 被覆盖
+环境变量 (ARROW_LAKE__ 前缀, __ 作为层级分隔符)
+   ↓ 被覆盖（最高优先级）
+YAML 配置文件 (ArrowLakeConfig.from_yaml)
+```
+
+注入链实例：`main.py` env_nested_delimiter(`__`) → `OlapConfig` → `DuckDBSessionManager.from_config()` → 每个 DuckDB session。详见 [§7](#7-配置体系)。
+
+---
+
+## 4. 分层详解
+
+### 4.1 API 接入层
+
+**工厂**：`arrow_lake/api/app.py`（`create_app()` 工厂模式，`uvicorn arrow_lake.api.app:create_app --factory`）。
+
+**规模**（已核实）：**18 个 router 文件 / 106 个路由处理器**。
+
+| Router | 文件 | 职责 |
+|---|---|---|
+| `datasets` | `datasets.py` (24KB) | 数据集 CRUD / Schema 演化 / 版本 / 标签 / 分支 |
+| `search` | `search.py` | 向量/全文/混合/分面/集成检索 |
+| `query` | `query.py` | OLAP SQL / Daft 查询 / 图查询 |
+| `embedding` | `embedding.py` | `/embed/text`（LOCAL + DAFT 分支）/ `/embed/image` |
+| `rag` | `rag.py` | RAG 问答 / 流式 / 批量 / 反馈 / 历史 |
+| `knowledge_graph` | `knowledge_graph.py` | `kg_build` / `kg_query` / 最短路径 / 邻居 |
+| `admin` | `admin.py` | 管理 / health / version / lifecycle |
+| `async_tasks` | `async_tasks.py` | 异步任务状态轮询（v1.6.1） |
+| `auth` | `auth.py` | 登录 / token / API Key |
+| `audit` | `audit.py` | HMAC 审计日志查询 |
+| `backup` | `backup.py` | 备份创建/恢复（含 async） |
+| `export` | `export.py` | 数据导出 |
+| `gravitino` | `gravitino.py` (14KB) | catalog / tag / ACL / masking |
+| `lineage` | `lineage.py` | 血缘图查询 |
+| `maintenance` | `maintenance.py` | 版本清理 / 紧凑 |
+| `quality` | `quality.py` | 质量过滤 / 去重 |
+| `system` | `system.py` | 系统信息 / 配置 / 健康 |
+
+**横切组件**（`arrow_lake/api/`）：
+
+- **认证** `auth_service.py` + `jwt_auth.py`：API Key（HMAC compare）+ JWT（HS256/RS256/ES256）+ Redis 黑名单（TTL）
+- **授权** `rbac.py` (17KB)：RBAC 三级（ADMIN > EDITOR > VIEWER）+ `DatasetACL`（行/列级）+ `SchemaACL`
+- **限流** `rate_limit.py`：slowapi 滑动窗口，per `IP:path`
+- **中间件** `middleware.py`：安全头 / 请求 ID / CORS
+- **异步任务** `tasks.py` (12KB) + `_redis_task_store.py`：`TaskManager`，任务状态 Redis HASH 双写（v1.6.2，跨 worker 可见）
+- **遥测** `telemetry.py` + `errors.py`：OpenTelemetry + 统一错误信封
+- **依赖注入** `deps.py`：FastAPI Depends 提供 `Lake` 单例、当前用户、ACL 解析
+
+> **注意**：`arrow_lake/server.py` 是 v0.2.0 前的遗留 WSGI health 端点，**已废弃**，v2.0 移除。生产用 FastAPI 工厂。
+
+### 4.2 摄取层（Ingestion）
+
+`arrow_lake/ingest/` —— 数据进入湖仓的唯一通道。
+
+```
+连接器(connectors_*) → 文档/媒体解析 → 切块(chunker) → 嵌入(embed) → 写入(storage) → 质量(quality)
+                                                          ↑                ↑
+                                                     Daft/Local/CLIP    Lance + blob
+```
+
+**关键组件**：
+
+| 文件 | 职责 |
+|---|---|
+| `storage.py` (16KB) | `LanceStorageManager` —— Lance 写入主入口，实现 `StorageProtocol` |
+| `_storage_crud.py` / `_storage_advanced.py` / `_storage_indexing.py` / `_storage_versioning.py` | CRUD / upsert / 索引 / 版本(tags+branches，拆分自大类) |
+| `ingestor.py` | `Ingestor` 编排器，返回 `IngestionReport` |
+| `document.py` | `DocumentParser`（Kreuzberg 后端）+ PDF parse mode |
+| `chunker.py` | **7 种切块策略**（`ChunkStrategy` enum：fixed/semantic/sentence/word/recursive/...；含 `_chunk_with_semchunk`） |
+| `media.py` (16KB) | 图像/视频/音频摄取，blob 路径引用 |
+| `ocr.py` | OCR（paddle / kreuzberg 后端，`OcrBackend` enum） |
+| `schema.py` (13KB) | Schema 校验 + 演化（`SchemaValidationMode`） |
+| `transforms.py` | 摄取期变换（`transforms=` 参数） |
+| `ingest_embed.py` | `ingest_and_embed` 端到端 |
+| `dead_letter.py` | 失败记录死信队列 |
+| `maintenance_scheduler.py` | 版本清理 / compact 调度 |
+| `connectors*.py` | File / HTTP / SQL / Kafka / Iceberg / DeltaLake 多源连接器 |
+
+**质量与去重**（`arrow_lake/quality/`）：`QualityFilter` protocol + Registry + **3-stage gate** → `QualityReport`；`deduplicate()` → `DedupResult`（MinHash 近似 + 感知 hash 图像去重）。
+
+**数据集命名**：正则 `^[a-zA-Z_][a-zA-Z0-9_-]*$`（`_validate_name`）。
+
+> v1.8.0 #1 已补 **Lance dataset branches**：`create_branch` / `list_branches` / `delete_branch` / `read_at_branch`（经 raw `lance.dataset(uri)`，因 `lancedb.LanceTable` 无 branch API，仅 tags/version）。绕过 lance 7.0.0 重名 bug（`list_branches` 预检查）。
+
+### 4.3 存储层（Storage）
+
+```
+┌─────────────────────────────────────────────┐
+│  Gravitino (统一 catalog: tag→ACL/masking)   │
+├─────────────────────────────────────────────┤
+│  LanceDB 0.33 应用层 (Table/Namespace/索引)  │
+├─────────────────────────────────────────────┤
+│  Lance v2 格式层                              │
+│   · 向量: IVF_PQ / HNSW / IVF_SQ / IVF_RQ    │
+│   · 标量: BTree / Bitmap (v1.7.1 全量补齐)    │
+│   · FTS: Tantivy 倒排 + jieba                 │
+│   · 多模态: 多向量列 + binary blob            │
+│   · 版本: tags / branches / row_id           │
+├─────────────────────────────────────────────┤
+│  对象存储: 本地 FS / S3 / MinIO (blob 原文)   │
+└─────────────────────────────────────────────┘
+        ↑ lance_scan / vector_search / fts
+┌─────────────────────────────────────────────┐
+│  DuckDB 1.5.2 (主力查询引擎)                  │
+│   + DuckLake 物化视图 (TTL + ART + 行预算)    │
+└─────────────────────────────────────────────┘
+```
+
+**关键事实**：
+
+- **DuckDB 是主力查询路径**，不是 fallback。`lance_scan` / `vector_search` / `fts` 在代码中有 **40+ 处调用**。升级 pylance 时头号风险即在此：pylance 7.0 可能写 Lance v2.2/v3，而 DuckDB core `lance` 扩展可能只认 v2.1 → `lance_scan` 全断（v1.7.1 已验证兼容）。
+- **Lance tags/branches**：tags 全链路已就绪（create/list/delete/read_at_tag），v1.8.0 #1 补 branches。支持 A/B、回滚、可复现训练。
+- **标量索引**：v1.7.1 前全项目 `create_scalar_index=0`，facet 列（modality/source/doc_type/created_at）缺索引；现已全量补齐 + SDK prefilter 路径。
+- **FTS**：默认 Tantivy 倒排 + jieba 中文分词；`use_inverted` 为实验选项；v1.8.0 路线图含 DuckDB 原生 fts/vss 备选（#12）。
+
+### 4.4 查询层（Query）
+
+`arrow_lake/query/` —— 8 个 Bridge（见 [§3.3](#33-bridge-模式查询能力可插拔)）+ 会话管理 + 缓存 + 物化。
+
+| 文件 | 职责 |
+|---|---|
+| `session_manager.py` (20KB) | `DuckDBSessionManager` —— 受管连接池 + 信号量并发控制 + warmup |
+| `_redis_semaphore.py` (14KB) | 跨 worker 分布式信号量（Redis） |
+| `vector.py` (24KB) | 向量 ANN + `search_async`（原生 `connect_async`）+ 索引管理 |
+| `fts.py` (17KB) | 全文检索 + 中文分词 + `search_async`（v1.8.0 #17，`asyncio.to_thread`） |
+| `hybrid.py` (21KB) | RRF 融合 + **Reranker**（v1.8.0 #5）+ `search_async` |
+| `faceted.py` (13KB) | 标量分面 + `search_async` |
+| `olap.py` (25KB) | OLAP SQL + `materialize()`/`cleanup_materialized()` + **`graph_query()`**（v1.8.0 #10） |
+| `ensemble.py` | 跨列 RRF 集成检索 |
+| `metadata.py` | 元数据/标量过滤 |
+| `daft_api.py` (24KB) | Daft 查询后端 |
+| `ducklake_workspace.py` | DuckLake 物化工作区（TTL + ART index + 行预算 + `$1..$4` 参数化） |
+| `federated_engine.py` | 联邦查询引擎 |
+| `_cache.py` | 查询结果缓存 |
+| `export.py` | 导出 bridge |
+| `lazy_decode.py` / `streaming.py` | 延迟解码 / 流式结果 |
+
+**v1.8.0 查询层三大增强**（已核实源码）：
+
+1. **#5 Reranker 接入 hybrid**：`HybridSearchConfig` 加 `reranker_type`（默认 `none`，向后兼容）/ `reranker_model`（默认 `BAAI/bge-reranker-v2-m3`）；`HybridSearchBridge.search()` 末尾 `_rerank_table`：行 → `ContextChunk` → cross-encoder rerank → `take` 重排 + 追加 `_rerank_score` 列。缺 text 列 / 异常优雅降级。
+2. **#10 轻图查询**：PGQ（`CREATE PROPERTY GRAPH`/`MATCH`）在此 DuckDB 1.5.2 build **不可用**（`pgq` 扩展无法安装，ParserException），改用 `OlapSearchBridge.graph_query()` **递归 CTE** 实现环安全 BFS 邻居/路径遍历（`list_contains` 环检测，`max_depth` 钳 [1,10]，directed/undirected + 可选权重）。与 HugeGraph 互补：重图→HG，轻查询→DuckDB。
+3. **#17 全链路 async**：lancedb 无原生 async FTS/聚合路径，故给 fts/hybrid/faceted 补 `search_async`（`asyncio.to_thread` 线程卸载，非 GIL-free）；价值 = async handler 不阻塞事件循环（vector 仍是原生 `search_async`）。压测驱动 GO 后落地（worker 1→20 仅 5.8→7.2 QPS，并发平台期显著）。
+
+### 4.5 嵌入层（Embedding）
+
+`arrow_lake/embed/` —— 文本 + 图像 + 跨模态。
+
+| 文件 | 嵌入器 | 说明 |
+|---|---|---|
+| `encoder.py` (17KB) | `LocalEmbeddingEncoder` | SentenceTransformer，v1.8.0 #13 加 `encode_to_vectors`（返回向量矩阵，null 行零填充） |
+| `daft_encoder.py` (9KB) | `DaftBatchEncoder` | Daft `embed_text(provider="transformers")`，v1.8.0 #13 加 `expected_dim` 校验 + L2 归一化 + `encode(list[str])` 满足 `EmbeddingEncoderProtocol` |
+| `image_encoder.py` (10KB) | `CLIPImageEncoder` | `encode()` 编图、v1.8.0 #6 新增 `encode_text()` 编查询（CLIP/SigLIP **text tower**）→ 补全跨模态 text→image |
+| `ray_serve_encoder.py` | RayServe 远程嵌入 | Ray Serve 承载，不可用降级 Local |
+| `registry_resolver.py` | 模型注册解析 | 模型名 → 后端路由 |
+
+**v1.8.0 #13 PoC 实测**（`Qwen/Qwen3-Embedding-0.6B`，n=50）：
+- Daft `embed_text` vs Local `SentenceTransformer`：**cosine(mean)=1.0000**（语义等价）、dim 1024 ✓、**speedup 1.14x**
+- 代码足迹：Daft 调度 ~30 行 vs Local 手写 ~150 行（删减 ~120 行 lazy-load/GPU/batch/normalize/retry）
+- **结论**：Daft 内置 AI 函数（自动批处理/限流/重试/背压）可完全替代自建嵌入调度。
+
+> 注：KG 抽取的 `he_extractor.py` 保留 hyper-extract（领域模板 + AutoGraph），**不**用 Daft prompt 替换——Daft `prompt()` 是 DataFrame 列表达式，无法注入 Template 的 `llm_client`。Daft prompt KG 抽取拆为独立后续项 `DaftExtractor`。
+
+### 4.6 智能层（Intelligence：RAG + KG）
+
+#### RAG（`arrow_lake/rag/`）
+
+| 文件 | 职责 |
+|---|---|
+| `pipeline.py` (16KB) | `RAGPipeline` 主编排，返回 `RAGResponse`（含 citation） |
+| `provider.py` (20KB) | **5 LLM provider**：OpenAI 兼容 / Anthropic / Ollama / vLLM / 自定义；`LLMProviderType` enum |
+| `reranker.py` | reranker 体系：`BaseReranker` / `NoopReranker` / `CrossEncoderReranker` / `LLMReranker` + `create_reranker` 工厂（接 `ContextChunk`） |
+| `query_transform.py` | **HyDE** + multi-query 查询改写 |
+| `graph_rag.py` (11KB) | GraphRAG（经 KG retriever） |
+| `context.py` (10KB) | `ContextChunk` + 上下文组装 |
+| `session.py` | 多轮会话存储（Redis） |
+| `prompt.py` | 提示模板 |
+
+> facade RAG 方法**全 async**：`await rag_query(...)` / `rag_query_stream(...)` / `rag_batch_query(...)` / `rag_extract(...)`。
+
+#### 知识图谱（`arrow_lake/knowledge_graph/`）
+
+| 文件 | 职责 |
+|---|---|
+| `client.py` (18KB) | `HugeGraphClient` —— Gremlin 查询 + REST 降级（v1.6.3） |
+| `builder.py` (21KB) | `KGBuilder` —— 三元组抽取 + **A 方案实体双写**（通用 `entity` + 细分 label） |
+| `retriever.py` | `KGRetriever` —— GraphRAG 检索 |
+| `extractor.py` (12KB) | `EntityExtractor` —— 基础实体抽取 |
+| `he_extractor.py` (8KB) | **hyper-extract (he) 后端**（v1.7.0）：langchain `ChatOpenAI` + 领域模板，三元组精准度提升 |
+| `doc_type_router.py` (18KB) | **doc_type 三层路由**（v1.7.0，见下） |
+| `entity_router.py` | 关系路由（同义词→细分边，无→`related_to` 降级） |
+| `vermeer_client.py` (9KB) | `VermeerClient` —— KG 构建 |
+| `_traversers.py` (11KB) | 最短路径 / 邻居 / rays / rings 遍历 |
+| `_import_export.py` | 图导入导出（Gremlin→REST 降级） |
+| `schema.py` / `queries.py` | 图 schema + Gremlin 查询模板 |
+
+**v1.7.0 KG 三大特性**：
+
+1. **doc_type 三层路由**：① config override ② `TemplateGallery` 元数据驱动匹配（扫描 hyperextract 全部 preset 的 tags/category/name/description，**新模板自动可用**）③ default 兜底；`normalize_doc_type` 别名归一化；`DocTypeClassifier` LLM 内容推断；`KNOWN_DOC_TYPES` + `validate_taxonomy()` 单一真相源 + CI 守护。
+2. **hyper-extract (he) 抽取后端**：`HugeGraphConfig.extractor_backend="he"` 启用。
+3. **A 方案实体双写**：每个实体写通用 `entity` 顶点 + 细分 label（person/organization/concept/...）。
+
+**HugeGraph PD 集群模式**（v1.7.0）：`hg-pd` + `hg-store` + `hg-server`（hstore backend）替代 standalone rocksdb，支持**运行时创建多 graph**（每文档独立 KG 隔离）。启动顺序 PD→Store→Server（healthcheck 依赖）。
+
+**kg_build 是 fire-and-forget**（v1.6.1）：`await kg_build(dataset_name) -> str` 返回 `task_id`，**不阻塞**；`await kg_build_status(task_id)` 查状态。
+
+### 4.7 目录与治理层（Catalog & Governance）
+
+`arrow_lake/catalog/` —— 以 Gravitino 为中枢的元数据治理。
+
+| 文件 | 职责 |
+|---|---|
+| `gravitino_bridge.py` (10KB) | `GravitinoBridge` —— 主桥接 |
+| `gravitino_client.py` | Gravitino REST 客户端 |
+| `lineage.py` (25KB) | **事件级血缘 store** + 查询（`LineageConfig`） |
+| `lineage_hooks.py` | 摄取/查询自动埋点 |
+| `tag_acl_resolver.py` | **tag → ACL** 解析 |
+| `gravitino_auth.py` | Gravitino 认证（`GravitinoAuthType`） |
+| `gravitino_sync.py` | 双向同步（`GravitinoSyncDirection`） |
+| `gravitino_stats.py` / `gravitino_models.py` | 统计 + 数据模型 |
+| `connection_pool.py` | 连接池 |
+| `actor.py` (14KB) | Actor 模型任务 |
+| `replica.py` | 副本 |
+
+**治理能力**：tag-driven ACL、masking engine（脱敏）、retention enforcement（保留期）。`MaskingEngine` + `RegistryModelResolver`（图中可观测）。
+
+### 4.8 编排与运行时（Workflow & Runtime）
+
+- **`arrow_lake/workflow/`**：Metaflow 编排 + **Argo bridge**（`ArgoConfig`，`ArgoError`）+ retry/backoff + checkpoint + autoscale（`AutoscaleConfig`）。
+- **`arrow_lake/ray_runtime/`**：Ray head + worker（+ GPU worker）集群 + autoscaler。`LANCE_IO_THREADS=64` / `LANCE_CPU_THREADS=4` 注入（v1.7.1，4 服务继承）。
+- **`arrow_lake/ops/`**：backup / restore（`BackupInfo`）。
+
+---
+
+## 5. Lake Facade — 公共 SDK API 全景
+
+`Lake("./data")` 或 `Lake.from_yaml("config.yaml")`。以下为已核实的方法族（按 mixin 分组）。
+
+> ⚠️ **RAG / KG 方法多为 async，必须 `await`。`kg_build` 是 fire-and-forget 返回 `task_id`。**
+
+### 5.1 搜索（`_lake_search.py`，全同步 + v1.8.0 async 补齐）
+
+```python
+# 向量 ANN
+lake.search(dataset_name, query_vector, *, top_k=10, metric=None,
+            vector_column="text_embedding", where=None)
+# 全文 BM25
+lake.text_search(dataset_name, query, *, top_k=None, fts_column=None, where=None)
+# RRF 混合（需同时传 vector + text）
+lake.hybrid_search(dataset_name, query_vector, query_text, *,
+                   top_k=None, vector_column=..., fts_column=...)
+# 分面 / 跨列集成
+lake.faceted_search(...); lake.ensemble_search(...)
+# v1.8.0 #17 async 非阻塞包装
+await lake.text_search_async(...); await lake.hybrid_search_async(...)
+await lake.faceted_search_async(...)
+```
+
+**索引管理**：`create_vector_index` / `create_fts_index` / `create_scalar_index` / `create_facet_indexes` / `list_vector_indexes` / `rebuild_vector_index` / `delete_vector_index` / `delete_fts_index` / `get_vector_index_info`。
+
+### 5.2 查询（`_lake_query.py`，全同步）
+
+```python
+lake.olap_query(dataset_name, sql, *, max_rows=None, tables=None)  # → OlapQueryResult（无 params，用 tables 传额外表）
+lake.sql_query(...)              # olap_query 语义别名
+lake.materialize(...); lake.cleanup_materialized(ttl_days=None)    # DuckLake 物化
+lake.export(...); lake.daft_query(...)
+```
+
+### 5.3 摄取（`_lake_ingest.py`，全同步）
+
+```python
+lake.create_dataset(name, data: pa.Table)                 # 主写入入口
+lake.ingest(dataset_name, file_paths, *, transforms=None) # → IngestionReport
+lake.ingest_and_embed(...)                                # 端到端
+# 多源
+lake.ingest_sql / ingest_kafka / ingest_iceberg / ingest_deltalake
+lake.ingest_http / ingest_images / ingest_videos / ingest_mixed / ingest_documents
+# 写入
+lake.append_dataset / upsert(dataset_name, data, *, on="id")
+lake.update_rows(dataset_name, where, values) / delete_rows
+# 质量
+lake.quality_filter(dataset_name, active_filters="", *, mode="all")  # → QualityReport
+lake.deduplicate(dataset_name, *, strategy=None, action=None,
+                 perceptual_threshold=None)                          # → DedupResult
+```
+
+### 5.4 RAG（`_lake_rag.py`，全 async）
+
+```python
+await lake.rag_query(question, dataset_name, *, top_k=None, strategy=None, template_name=None)
+await lake.rag_query_stream(...) / await lake.rag_batch_query(...) / await lake.rag_extract(...)
+lake.rag_get_history(session_id); lake.rag_feedback(...); lake.rag_cleanup_expired_sessions()
+```
+
+### 5.5 知识图谱（`_lake_kg.py`，全 async）
+
+```python
+await lake.kg_build(dataset_name) -> str          # fire-and-forget，返回 task_id
+await lake.kg_build_status(task_id)
+await lake.kg_query(query, *, traversal_depth=None)
+# 邻居/统计
+lake.kg_get_neighbors / kg_stats / kg_graph_exists / kg_ensure_graph / kg_delete_graph
+# 路径遍历
+lake.kg_all_shortest_paths / kg_weighted_shortest_path / kg_single_source_shortest_path
+lake.kg_multi_node_shortest_path / kg_rays / kg_rings
+```
+
+### 5.6 管理（`_lake_admin.py`，全同步）
+
+```python
+# 数据集
+lake.list_datasets / open_dataset / read_dataset / scan_dataset
+lake.delete_dataset / rename_dataset / copy_dataset / merge_datasets
+# 版本/标签/分支
+lake.get_dataset_version / list_dataset_versions
+lake.create_tag / read_at_tag / list_tags / delete_tag
+lake.create_branch / list_branches / delete_branch / read_at_branch      # v1.8.0 #1
+# Schema 演化
+lake.add_column / add_columns_table / alter_column / drop_column / compact_dataset
+# 备份
+lake.backup_create / backup_restore / backup_list / backup_delete
+# 系统
+lake.health() -> HealthInfo; lake.version(); lake.lifecycle_apply(prefix="")
+# Metaflow
+lake.list_flows / get_flow_info
+```
+
+### 5.7 其他
+
+- `_lake_lineage.py`：血缘追踪
+- `_lake_audit.py`：HMAC-SHA256 tamper-evident 审计
+
+**三个入口点**：
+
+| 入口 | 用法 |
+|---|---|
+| Python SDK | `Lake` facade（`arrow_lake/__init__.py`） |
+| REST API | FastAPI 工厂（`arrow_lake/api/app.py`）`uvicorn arrow_lake.api.app:create_app --factory` |
+| CLI | Click（`arrow_lake/cli/__init__.py`）`arrow-lake` 命令组（16 组：audit/backup/catalog/config/embed/export/index/ingest/kg/lifecycle/lineage/maintenance/quality/query/rag/search） |
+
+---
+
+## 6. 核心数据流
+
+### 6.1 文档摄取 + 嵌入 + KG 构建（端到端）
+
+```mermaid
+sequenceDiagram
+    participant U as Client
+    participant API as FastAPI
+    participant LK as Lake facade
+    participant IN as Ingestor
+    participant CH as Chunker
+    participant EM as Embedder
+    participant ST as LanceStorage
+    participant T as TaskManager(Redis)
+    participant KG as KGBuilder
+
+    U->>API: POST /ingest/documents (doc_type=)
+    API->>LK: ingest_documents(...)
+    LK->>IN: orchestrate
+    IN->>IN: DocumentParser.parse (Kreuzberg)
+    IN->>CH: chunk (7 策略, doc_type 透传)
+    IN->>EM: embed (Daft/Local/CLIP)
+    IN->>ST: create_dataset / append (Lance + blob)
+    ST-->>IN: IngestionReport
+    IN-->>LK: report
+    LK-->>API: 201 + report
+    Note over U,KG: KG 构建（异步，fire-and-forget）
+    U->>API: POST /kg/build {dataset}
+    API->>LK: await kg_build(dataset)
+    LK->>T: enqueue task → task_id
+    T-->>LK: task_id
+    LK-->>API: 202 task_id
+    API-->>U: 202 task_id
+    T->>KG: execute_build (he/extractor → HugeGraph PD)
+    U->>API: GET /tasks/{id}/status
+    API->>T: 查询 (Redis HASH, 跨 worker 可见)
+    T-->>API: SUCCESS/FAILED
+```
+
+### 6.2 混合检索 + Reranker（v1.8.0 #5）
+
+```mermaid
+sequenceDiagram
+    participant U
+    participant HS as HybridSearchBridge
+    participant VS as VectorBridge
+    participant FTS as FTSBridge
+    participant RR as Reranker
+    participant D as DuckDB (lance_scan)
+
+    U->>HS: hybrid_search(vec, text)
+    par 并行召回
+        HS->>VS: vector ANN
+        VS->>D: vector_search
+        HS->>FTS: BM25
+        FTS->>D: lance fts
+    end
+    HS->>HS: RRF 融合粗排
+    HS->>RR: 行→ContextChunk→cross-encoder
+    alt rerank 成功
+        RR-->>HS: take(top_k) + _rerank_score
+    else 缺 text 列 / 异常
+        RR-->>HS: 优雅降级返回 RRF 原表
+    end
+    HS-->>U: HybridSearchResult
+```
+
+### 6.3 跨模态检索（文搜图，v1.8.0 #6）
+
+```
+query text → CLIPImageEncoder.encode_text() [text tower, L2 norm]
+           → lake.search(ds, vec, vector_column="image_embedding")
+           → Lance 多模态向量列 → 命中图像（blob 在 Lance binary 列 / MinIO）
+```
+
+### 6.4 RAG 问答（含 GraphRAG 降级）
+
+```
+question → query_transform (HyDE/multi-query)
+         → 检索（KG 存在? GraphRAG : Vector Hybrid）
+         → context 组装 + citation
+         → LLM provider (OpenAI/Anthropic/Ollama/vLLM)
+         → RAGResponse (含引用)
+         → session 落 Redis（多轮）
+```
+
+---
+
+## 7. 配置体系
+
+`ArrowLakeConfig`（`config/main.py`）是根，组合 **34 个子配置**（已核实 `config/__init__.py`）。
+
+### 7.1 子配置清单（按域）
+
+| 域 | 子配置 |
+|---|---|
+| **API/横切** | `ApiConfig` · `AuthConfig` · `AuditConfig` · `RateLimitConfig` · `LineageConfig` · `OpenTelemetryConfig` |
+| **存储** | `StorageConfig`（`StorageBackend`: LOCAL/S3/MINIO） |
+| **查询** | `OlapConfig` · `VectorSearchConfig` · `FullTextSearchConfig` · `HybridSearchConfig` · `FacetedSearchConfig` · `EnsembleSearchConfig` |
+| **摄取/媒体** | `DocumentConfig` · `MediaConfig` · `DecodeConfig` · `EmbeddingConfig` · `ExportConfig` · `QualityConfig` |
+| **智能** | `RAGConfig` · `LLMConfig` · `HugeGraphConfig` |
+| **治理** | `GravitinoConfig`（+ `GravitinoAuthType` · `GravitinoSyncDirection`） |
+| **运行时** | `ComputeConfig` · `DaftConfig` · `WorkflowConfig` · `ArgoConfig` · `AutoscaleConfig` · `BackpressureConfig` · `LifecycleConfig` · `ResourceLimits` |
+| **基础设施** | `RedisConfig` · `HttpConfig` · `ObservabilityConfig` |
+
+### 7.2 关键 enum（`config/_enums.py`）
+
+`AuthMode` · `ChunkStrategy` · `DecodeQuality` · `DistanceMetric` · `EmbeddingBackend` · `FilterMode` · `LLMProviderType` · `LogLevel` · `ModelSource` · `OcrBackend` · `PdfParseMode` · `SchemaValidationMode` · `StorageBackend` · `VectorIndexType`。
+
+### 7.3 四层覆盖 + 注入链
+
+```
+代码默认 < .env < 环境变量(ARROW_LAKE__ 前缀, __ 分层) < YAML(from_yaml)
+```
+
+注入链实例（v1.7.1 实测）：
+```
+main.py: env_nested_delimiter="__"
+  → OlapConfig.max_query_memory_mb (512→1024) / API_MEMORY_LIMIT (4G→8G)
+  → DuckDBSessionManager.from_config(olap_config, storage_config, redis_config)
+  → 每个 DuckDB session (memory budget 校验)
+```
+
+> **内存预算校验**：`OlapConfig.validate_memory_budget()` 在创建 session manager 前校验（4 workers × 4 并发 × 512MB 已超 4G → v1.7.1 调到 1024MB + 8G）。
+
+### 7.4 v1.7.1 关键调优注入（`x-storage-env` anchor）
+
+`LANCE_IO_THREADS=64` / `LANCE_CPU_THREADS=4` → api / ray-head / ray-worker / ray-gpu-worker 4 服务继承（纯 compose，零 Python 代码）。
+
+---
+
+## 8. 安全架构
+
+### 8.1 认证（AuthN）
+
+- **API Key**：HMAC compare（非常量比较，防时序攻击）
+- **JWT**：HS256 / RS256 / ES256
+- **JWT 黑名单**：Redis + TTL（登出即失效，分布式生效）
+- Gravitino：Simple / OAuth / Kerberos / Custom（`GravitinoAuthType`）
+
+### 8.2 授权（AuthZ）
+
+- **RBAC 三级**：ADMIN > EDITOR > VIEWER（`api/rbac.py` 17KB）
+- **细粒度 ACL**：`DatasetACL`（行/列级）+ `SchemaACL`
+- **tag-driven ACL**：Gravitino tag → ACL（`tag_acl_resolver.py`）
+
+### 8.3 注入防护
+
+- **SQL 注入**：危险关键字 regex 拦截 + **参数化执行**（DuckLake 元数据表全 `$1..$4`，v1.8.0 #11 守卫）
+- **Gremlin 注入**：防御性参数化
+- **路径遍历**：数据集名正则 + 路径净化
+
+### 8.4 审计与脱敏
+
+- **HMAC-SHA256 tamper-evident 审计**（`_lake_audit.py`）：日志不可篡改，可验证
+- **Masking engine**（Gravitino）：`MaskingEngine` + `RegistryModelResolver`，字段级脱敏
+- **Retention enforcement**：保留期强制
+
+### 8.5 传输与限流
+
+- **限流**：slowapi 滑动窗口 per `IP:path`
+- **安全头**：CSP / HSTS / X-Frame-Options / nosniff（nginx + middleware）
+- **HTTPS**：nginx 代理 + cert（`deploy/certs/`、`gen-certs.sh`），`ARROW_LAKE_SSL_VERIFY` 控制
+- **secret 管理**：`deploy/.env.example` 脱敏模板；`REDISCLI_AUTH` 替代 `-a` 暴露密码（v1.6.3）
+
+### 8.6 v1.5.2 安全加固基线
+
+8 CRITICAL + 13 HIGH 已修复（见 CHANGELOG / `project_v152_security` 记忆），构成当前安全底盘。
+
+---
+
+## 9. 可观测性
+
+| 维度 | 实现 |
+|---|---|
+| **结构化日志** | structlog JSON（`core/logging.py`），`LogLevel` enum |
+| **指标** | Prometheus（`core/metrics.py` 10KB），`/metrics` 端点；含 `system_uptime_seconds`（懒设置） |
+| **链路追踪** | OpenTelemetry（`OpenTelemetryConfig` + `api/telemetry.py`） |
+| **熔断** | `core/circuit_breaker.py` —— 防止级联故障 |
+| **健康检查** | `health() → HealthInfo`；API healthcheck interval 15s / start_period 60s（4 workers） |
+| **Redis 指标** | `redis-exporter` 侧车（v1.6.3） |
+| **Grafana** | `deploy/grafana/` 预置面板 |
+| **告警** | Prometheus alert rules（Redis/MinIO/基础设施 +8 rules，v1.6.3） |
+
+**WSL2 代理**：`core/http.py` 的 httpx client 统一处理 WSL2 mirrored 模式代理。
+
+---
+
+## 10. 可靠性与优雅降级
+
+### 10.1 降级矩阵（详见 [§3.5](#35-优雅降级矩阵reliability)）
+
+### 10.2 异步任务可靠性
+
+- **fire-and-forget kg_build**（v1.6.1）：拆 `prepare_build` + `execute_build`，`TaskManager` 泛化；task 不再永久 RUNNING（`execute_build` 异常处理拓宽至 Exception，先 re-raise CancelledError）。
+- **Redis 任务双写**（v1.6.2）：`TaskManager` 写 Redis HASH + `RedisTaskStore` + `RedisConfig.task_key_prefix/task_ttl_seconds`；`BackgroundTask.to_dict()/from_dict()` —— 跨 worker 任务状态可见。
+- **HTTP 重试**：`tenacity` + 熔断。
+
+### 10.3 组件生命周期
+
+`Lake.shutdown()` 统一回收：`shutdown()` / `aclose()`（async httpx）/ `close()`（同步或异步），未 shutdown 则 `__del__` 发 `ResourceWarning`。推荐 `with Lake(...) as lake:`。
+
+---
+
+## 11. 性能架构
+
+| 机制 | 位置 | 说明 |
+|---|---|---|
+| **RLock 组件缓存** | `_get_component` | v1.6.1 修复嵌套死锁 |
+| **DuckDB 会话池 + 信号量** | `session_manager.py` + `_redis_semaphore.py` | 受管连接 + 跨 worker 分布式信号量限并发 |
+| **冷启动 warmup** | `_create_session_manager` | `OlapConfig.warmup_enabled` 自动预热 |
+| **查询缓存** | `_cache.py` | 重复查询命中 |
+| **物化视图** | DuckLake `materialize()` | TTL + ART index + 行预算 |
+| **Lance IO 并发** | `LANCE_IO_THREADS=64` | v1.7.1 注入 |
+| **内存预算** | `max_query_memory_mb=1024` + `API_MEMORY_LIMIT=8G` | v1.7.1 调优 |
+| **标量索引** | `create_scalar_index` / `create_facet_indexes` | v1.7.1 全量补齐 facet 列 |
+| **Daft 内置 AI 函数** | `embed_text` | 自动批处理/限流/重试/背压，speedup 1.14x（v1.8.0 #13） |
+| **向量原生 async** | `search_async`（`connect_async`） | v1.7.1 增量入口 |
+| **线程卸载 async** | fts/hybrid/faceted `search_async`（`asyncio.to_thread`） | v1.8.0 #17，事件循环不阻塞 |
+
+**压测驱动决策**（v1.8.0 gate 框架）：async 因并发平台期显著（GO，已实现）；分布式索引单节点 ~10M 行内充裕（DEFER）；ColBERT recall@50=1.000 无召回缺口（DEFER）。
+
+---
+
+## 12. 部署架构
+
+`deploy/` —— 全套容器化 + K8s。
+
+### 12.1 服务拓扑（`docker-compose.prod.yml` 42KB）
+
+| 服务组 | 服务 |
+|---|---|
+| **核心** | `api`（4 workers）· `nginx`（HTTPS 代理 + gzip + CSP + SSE 600s） |
+| **存储** | `minio`（S3）· `redis`（会话/任务/JWT 黑名单）+ `redis-exporter` |
+| **计算** | `ray-head` · `ray-worker` · `ray-gpu-worker`（`tmpfs /tmp` 兼容 read_only） |
+| **图谱** | `hg-pd` + `hg-store` + `hg-server`（PD 集群，v1.7.0） |
+| **治理** | `gravitino`（`init-gravitino.sh`） |
+| **模型** | `ollama`（承载 Embed/LLM/VLM）· 可选 vLLM |
+| **监控** | `prometheus` · `grafana` · `alertmanager`（monitoring overlay） |
+
+### 12.2 Compose profiles / overlays
+
+| 文件 | 用途 |
+|---|---|
+| `docker-compose.yml` | 基础（profile: core/dev/gravitino） |
+| `docker-compose.prod.yml` | 生产（42KB，全服务 + 安全加固 + 镜像标签固定） |
+| `docker-compose.dev.yml` | 开发 |
+| `docker-compose.gpu.yml` | GPU worker |
+| `docker-compose.hugegraph.yml` | HugeGraph overlay（Gremlin fix entrypoint） |
+| `docker-compose.monitoring.yml` | Prometheus/Grafana/Alertmanager |
+
+### 12.3 关键脚本（`deploy/scripts/`）
+
+`entrypoint-hugegraph.sh`（Gremlin 绑定注入，v1.6.3）· `fix-hugegraph-gremlin.sh` · `init-gravitino.sh` · `init-hugegraph-schema.sh` · `backup-minio.sh` · `gen-certs.sh` · `init-env.sh`。
+
+### 12.4 Kubernetes
+
+`deploy/helm/arrow-lake/`：`Chart.yaml` + `values.yaml`（生产）+ `values-dev.yaml`（开发）+ `templates/`。
+
+### 12.5 镜像构建
+
+`Dockerfile`（builder + runtime 双显式构建代理，WSL2 mirror 模式 buildkit 自动代理不注入 → 手动注入；apt/PyPI 切 aliyun 镜像；extras 合并一次解析）+ `Dockerfile.gpu`。当前生产镜像 `arrow-lake:1.7.1`。
+
+> **WSL2 部署经验**：mirrored 模式 Docker 容器外网代理三件套；Gitee push 经 Windows 互操作（gitee:22 blocked）。
+
+---
+
+## 13. 异常体系
+
+`ArrowLakeError`（根）→ 17 个领域异常（已在 `__init__.py` 导出）：
+
+```
+ArrowLakeError
+├── StorageError            ├── RAGError
+├── QueryError              ├── KGError
+├── IngestError             ├── DocumentError
+├── CatalogError            ├── DuckDBError
+├── RayRuntimeError         ├── ArgoError
+├── ValidationError         ├── BackupError
+├── HttpError               ├── SchemaEvolutionError
+├── EmbeddingError          ├── AuditError
+├── QualityError            └── WorkflowError
+```
+
+`ErrorCode` enum 含 **200+ 错误码**。API 层经 `errors.py` 统一封装为错误信封（success/status/data/error/metadata）。
+
+---
+
+## 14. 版本演进
+
+> 完整记录见 `CHANGELOG.md`。以下为架构级里程碑。
+
+| 版本 | 日期 | 架构里程碑 |
+|---|---|---|
+| **v1.5.2** | — | 安全加固基线（8 CRITICAL + 13 HIGH）+ 测试全覆盖冲刺（69 新测试文件） |
+| **v1.6.0** | — | Lake facade + 9 mixin 成型；Metaflow 编排；catalog/lineage |
+| **v1.6.1** | — | `_component_lock` Lock→RLock（死锁修复）；`kg_build` fire-and-forget；`TaskManager` 泛化；异步 API（`/ingest/async`、`/tasks`） |
+| **v1.6.2** | — | `TaskManager` Redis HASH 双写（跨 worker 状态共享）+ `RedisTaskStore` |
+| **v1.6.3** | 2026-06-09 | HugeGraph Gremlin 绑定修复（entrypoint wrapper）；`export_graph()` Gremlin→REST 降级；deploy 安全加固（redis-exporter、nginx CSP、`REDISCLI_AUTH`、镜像标签固定） |
+| **v1.7.0** | 2026-06-24 | HugeGraph **PD 集群模式**（运行时多 graph）；**hyper-extract (he)** KG 抽取后端；**doc_type 三层路由**；A 方案实体双写；ingest doc_type 贯通 |
+| **v1.7.1** | 2026-06-25 | lancedb 0.33 + pylance 7.0 + DuckDB 1.5.2 调优；标量索引全量补齐；`search_async` 增量入口；`LANCE_IO_THREADS=64`；内存预算 1024MB+8G；cookbook 对齐；全量 5005 passed |
+| **v1.8.0** | 2026-06-26 | **19 项深度优化**（见 [§16](#16-扩展点与路线图)）：第一批 #13 Daft AI / #5 Reranker / #1 Lance branches；第二批 #6 CLIP encode_text / #10 graph_query CTE / #9 DuckLake 验证 / #11 prepared 验证；第三批 #17 async（压测 GO，已实现）+ 压测 gate 框架 |
+
+**v1.8.0 实施纪律**（trunk-based，直接提交 `master`，不开 feature 分支——项目约定优先于全局 PR 规则）：每项 TDD（RED→GREEN→REFACTOR）→ 对应 cookbook 跑通 → 全量 pytest 零失败 → CHANGELOG/roadmap/implementation 同步。
+
+---
+
+## 15. 测试与质量保障
+
+- **规模**：**424 个测试文件**（unit / integration / e2e / benchmark 四类），全量 **5005+ passed**（v1.7.1 基线，v1.8.0 各批回归零失败）。
+- **框架**：pytest（`-q --tb=line --no-header`，失败 `-x`）。
+- **环境**：统一 `.venv/bin/python3`。
+- **基准**：`tests/benchmark/`（scale / quality / perf-regression / **batch3 gates**）；`BenchmarkReport` 可复用。
+- **覆盖**：unit 7043 节点 / integration 457 / e2e 80 / benchmark 173（codebase-memory 图谱统计）。
+- **cookbook**：`docs/cookbook/`（15 章，中英双语）+ `examples/`（含 API 示例、benchmark、busitests）—— 作为端到端回归套件。
+- **CI 守护**：`KNOWN_DOC_TYPES` + `validate_taxonomy()` 单一真相源。
+
+---
+
+## 16. 扩展点与路线图
+
+### 16.1 v1.8.0 19 项状态总览
+
+| 批次 | # | 项 | 状态 |
+|---|---|---|---|
+| 🟥 | #13 | Daft AI 函数（embed_text 替代自建调度） | ✅ 完成（cosine=1.0，speedup 1.14x，删减 ~120 行） |
+| 🟥 | #5 | Reranker 接入 hybrid | ✅ 完成（`HybridSearchConfig.reranker_type`） |
+| 🟥 | #1 | Lance dataset branches | ✅ 完成（tags 早有，补 branches；facade/CLI/REST 接入待后续） |
+| 🟧 | #6 | CLIP 跨模态 encode_text | ✅ 完成（text tower 补全文搜图） |
+| 🟧 | #10 | SQL-PGQ 轻图查询 | ✅ 完成（PGQ 不可用→递归 CTE `graph_query`） |
+| 🟧 | #9 | DuckLake 物化视图 | ✅ 核实（已在 `olap.py`，29 tests） |
+| 🟧 | #11 | Prepared statements | ✅ 核实（已 `$1..$4` 参数化，4 tests 守卫） |
+| 🟨 | #17 | 全链路 async | ✅ 完成（压测 GO，fts/hybrid/faceted `search_async`） |
+| 🟨 | #15 | 分布式索引 backfill（Ray） | ⏸ DEFER（单节点 ~10M 行充裕，100M+ 触发） |
+| 🟨 | #7 | ColBERT / colpali | ⏸ DEFER（recall@50=1.000 无缺口，待真实数据） |
+| 🟧 | #2 | Lance blob 存原文 | 🔜 后续（原生 binary 列支持） |
+| 🟧 | #3 | row-level lineage（row_id） | 🔜 后续（叠加事件级） |
+| 🟧 | #4 | FTS 多语言分词（lindera/icu） | 🔜 后续 |
+| 🟧 | #8 | `hf://` 现成数据集 | 🔜 后续 |
+| 🟧 | #12 | DuckDB 原生 fts/vss 扩展 | 🔜 后续 |
+| 🟧 | #14 | Daft ↔ Gravitino 连接器 | 🔜 后续 |
+| 🟧 | #16 | Daft 惰性执行 >16x 内存 | 🔜 后续 |
+| 🟧 | #18 | 多模态统一栈（blob+CLIP+VLM） | 🔜 后续 |
+| 🟧 | #19 | Gravitino 统一 catalog | 🔜 后续 |
+
+### 16.2 最高 ROI 下一步（建议）
+
+1. **多模态统一栈（#18 + #2 + VLM）**：项目已有 photos/videos 数据基础，Lance blob 存原文 + CLIP + Daft decode + lancedb 跨模态检索，端到端打通是 v1.8.0 主题。
+2. **Daft prompt KG 抽取（`DaftExtractor`）**：作 `extractor_backend="daft"` 第三选项，与 hyper-extract 并列对比批量结构化抽取价值。
+3. **tags/branches 接 facade/CLI/REST**：v1.8.0 #1 仅补底层，统一接入是后续项。
+4. **DEFER 项复测**：数据规模/真实细粒度语义变化后，用 `tests/benchmark/test_bench_batch3_gates.py` 重跑重评 #15/#7。
+
+### 16.3 扩展点
+
+- **新嵌入后端**：实现 `EmbeddingEncoderProtocol.encode(list[str])` 即可（参照 `DaftBatchEncoder` v1.8.0 改法）。
+- **新查询 Bridge**：参照 `query/_base.py` + 现有 8 bridge，经 `get_session_manager()` 取连接。
+- **新 KG 抽取后端**：`HugeGraphConfig.extractor_backend` 加选项（参照 he / 未来 daft）。
+- **新质量过滤器**：实现 `QualityFilter` protocol + 注册到 Registry。
+- **新 catalog**：Gravitino 14 种 catalog 类型（关系型/湖仓/文件/消息/模型）。
+
+---
+
+## 17. 术语表
+
+| 术语 | 含义 |
+|---|---|
+| **DARMU** | Daft + Arrow/Lance + Ray + Metaflow + dUckdb 核心栈 |
+| **Facade + Mixin** | `Lake` 单对象 + 9 个能力 mixin 的组合模式 |
+| **Bridge** | 查询层每个能力（向量/全文/混合/...）的独立桥接类 |
+| **fire-and-forget** | `kg_build` 立即返回 task_id，后台执行（v1.6.1） |
+| **PD 集群** | HugeGraph PD(Placement Driver) + Store + Server，运行时多 graph（v1.7.0） |
+| **doc_type 三层路由** | config override → TemplateGallery 元数据匹配 → default（v1.7.0） |
+| **he (hyper-extract)** | 领域模板 + AutoGraph 的 KG 抽取后端（v1.7.0） |
+| **A 方案实体双写** | 通用 `entity` 顶点 + 细分 label 双写（v1.7.0） |
+| **DuckLake 物化** | 跨存储物化视图，TTL + ART index + 行预算 |
+| **graph_query** | OlapSearchBridge 递归 CTE 轻图查询（PGQ 替代，v1.8.0 #10） |
+| **4 层配置覆盖** | 代码默认 < .env < 环境变量 < YAML |
+| **压测 gate** | 数据驱动 go/no-go 决策框架（v1.8.0 第三批） |
+| **trunk-based** | 直接提交 master，不开 feature 分支（本项目约定） |
+
+---
+
+**文档维护**：随版本演进更新；架构级变更须同步本文 + `CHANGELOG.md` + 对应 roadmap/implementation。源码核实优先于记忆——本文所有方法签名、文件路径、版本事实均已对齐 `arrow_lake/` 当前主干（v1.8.0）。

@@ -6,7 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [Unreleased] — v1.8.0 roadmap 收尾（9 项未纳入三批的独立条目，2026-06-26）
+## [1.8.0] - 2026-06-29
+
+### Summary
+
+v1.8.0 稳定版：roadmap **19 项全部落地**（三批 + 9 项收尾），覆盖**检索精度**（Reranker 精排、CLIP 跨模态）、**数据治理**（Lance tags/branches、DuckLake 物化、DuckDB 轻图查询、blob 存储、行级 lineage、Gravitino 统一 catalog facade）、**性能并发**（Daft 内置 AI 函数、全链路 async、Daft 流式写 >16× 内存）、**多模态与联邦**（VLM decode_image、Daft↔Gravitino、DuckDB 原生 FTS、`hf://` 数据集、日文分词）；含 1 项生产 Review CRITICAL 修复（`/embed/image` 死链）；压测 gate 裁决分布式索引 / ColBERT 为 DEFER。lancedb 0.33 + pylance 7.0 + DuckDB 1.5.2 全栈升级。全量 5000+ 测试零失败。
+
+### Roadmap 收尾（9 项独立条目，2026-06-26）
 
 ### Added
 
@@ -24,7 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **#15 分布式索引** / **#7 ColBERT**：经压测 gate（`test_bench_batch3_gates.py` 1M 实测 + recall 难度 sweep）DEFER —— 单节点 21s/1M（1B+ 才需 Ray）；现实 recall 96%（病态下降是 IVF_PQ 量化，修法 HNSW，非 ColBERT 场景）。
 
-## [Unreleased] — v1.8.0 生产 Review 修复（2026-06-26）
+### 生产 Review 修复（2026-06-26）
 
 ### Fixed
 
@@ -40,7 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **#17 REST async**：REST `/search` 已用 `await run_sync(...)`（线程卸载 = 事件循环非阻塞），与新增的 `*_async` facade（`asyncio.to_thread`）功能等价；`*_async` 服务**直接 async 调用方**，REST 无需改（改了也是 no-op）。
 
-## [Unreleased] — v1.8.0 第三批 🟨（压测驱动 gate 框架）
+### 第三批 🟨（压测驱动 gate 框架）
 
 ### Added
 
@@ -56,7 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **#15 分布式索引 → ⏸ DEFER**：1M 索引构建 ≈ 150s（10k 1.98s / 100k 14.43s 投影），单节点在 ~10M 行内充裕；100M+ 才需 Ray 分布式 backfill（`ray_runtime` 基建已就绪待触发）。
 - **#7 ColBERT → ⏸ DEFER**：合成簇结构数据 recall@50 = 1.000（ANN vs brute-force 100% retention），无召回缺口；框架已就位，待真实细粒度语义数据复测。
 
-## [Unreleased] — v1.8.0 第二批
+### 第二批
 
 ### Added
 
@@ -68,7 +74,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **#9 DuckLake 物化视图**：经核实 `materialize()` / `cleanup_materialized()` **已实现于 `olap.py`**（非 implementation doc 误标的 `federated_engine.py`），经 `DuckLakeWorkspace` 做 TTL 持久化 + ART index + 行预算。本批仅验证（29 tests 绿）+ 标记 ✅。
 - **#11 Prepared statements**：经核实 DuckLake 元数据表 INSERT/SELECT/DELETE **已全用 `$1..$4` 参数化执行**（`ducklake_workspace.py`）。DuckDB `EXECUTE` 不支持绑定参数（binder 限制），故 PREPARE/EXECUTE 与安全参数绑定不兼容；参数化执行是正确方案（DuckDB 自动缓存计划）。新增回归测试 `tests/unit/duckdb/test_ducklake_prepared.py`（4 tests）守卫参数绑定不变量。
 
-## [Unreleased] — v1.8.0 第一批
+### 第一批
 
 ### Added
 
