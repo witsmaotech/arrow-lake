@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.8.1] - 2026-06-29
+
+### Fixed
+
+- **`write_lance_from_dataframe`（#16）写入丢失**：Daft `df.write_lance(...)` 是 lazy sink，原调用丢弃返回值、未 `.collect()` → 写入从不执行；且写入路径用 `_get_dataset_path`（无 `.lance` 后缀）与 lancedb 表名解析（`<name>.lance`）错配 → 即使写入也读不回。修：`.collect()` 触发执行 + 改用 `_lance_dir(name)`（带 `.lance`）作为写入 URI。现已 `list_datasets` 可见、`read_dataset` 可读。
+- **`daft_from_gravitino`（#14）TypeError**：facade 把 `url=` / `metalake=` 传给 `daft.io.GravitinoConfig`，而该 PyO3 类字段为 `endpoint` / `metalake_name` → `TypeError: unexpected keyword argument 'url'`。修：`GravitinoConfig(endpoint=url, metalake_name=metalake)`。
+- **cookbook VLM 示例 spec 格式**：`build_transforms` 每个 spec 须 `{"op": "decode_image", "column": ...}`（含 `op` 键），非 `{"decode_image": {...}}`。
+
+### Summary
+
+v1.8.1 是 v1.8.0 的 bug 修复小版本：修两个 v1.8.0 cookbook 实跑暴露的 facade bug（Daft 流式写丢失、Daft↔Gravitino 配置字段名）+ 一个示例 spec 格式问题。三项均经本地实测验证。
+
+---
+
 ## [1.8.0] - 2026-06-29
 
 ### Summary

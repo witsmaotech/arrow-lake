@@ -327,5 +327,5 @@ class _LakeQueryMixin:
         import daft
         from daft.io import GravitinoConfig
 
-        config = GravitinoConfig(url=url, metalake=metalake)
+        config = GravitinoConfig(endpoint=url, metalake_name=metalake)
         return daft.read_table(table_name, io_config=config)

@@ -176,10 +176,10 @@ class LanceStorageManager(
         lock = self._dataset_lock(name)
         self._acquire_dataset_lock(name)
         try:
-            uri = self._get_dataset_path(name)
+            uri = str(self._lance_dir(name))  # <base>/<name>.lance — Daft 写入需完整路径（lancedb 按 .lance 解析）
             io_config = self._get_io_config()
             try:
-                df.write_lance(uri, mode=mode, io_config=io_config)
+                df.write_lance(uri, mode=mode, io_config=io_config).collect()
             except Exception as exc:
                 raise StorageError(
                     error_code=ErrorCode.STORAGE_WRITE_FAILED,

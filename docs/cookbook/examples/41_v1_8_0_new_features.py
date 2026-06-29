@@ -120,7 +120,7 @@ def demo_vlm_decode(lake: Lake) -> None:
         from arrow_lake.ingest import transforms as T
 
         # build_transforms 签名是 list[dict]（每个 dict 一个变换 spec）
-        transforms = T.build_transforms([{"decode_image": {"column": "image_bytes"}}])
+        transforms = T.build_transforms([{"op": "decode_image", "column": "image_bytes"}])
         print(f"    ✓ 构造 {len(transforms)} 个变换（decode_image）")
         # 真正 apply 到一个含 image_bytes 的 Daft DataFrame
         df = daft.from_pydict({"id": [1], "image_bytes": [b"\x89PNG\r\n\x1a\n" + b"\x00" * 32]})
