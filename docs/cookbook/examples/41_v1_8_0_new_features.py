@@ -116,17 +116,21 @@ def demo_hf_dataset(lake: Lake) -> None:
 def demo_vlm_decode(lake: Lake) -> None:
     print("\n[5] decode_image 变换（#18）—— VLM 链：image bytes → 解码 → classify/prompt")
     try:
+        import daft
         from arrow_lake.ingest import transforms as T
 
-        builder = getattr(T, "_build_decode_image", None)  # v1.8.0 #18 注册的 builder
-        if builder is None:
-            print("    [SKIP] 此 build 未注册 _build_decode_image")
-            return
-        print("    ✓ _build_decode_image builder 已注册（v1.8.0 #18）")
-        print('    → 用法: lake.ingest("ds", files, transforms={"decode_image": {"column": "image_bytes"}})')
-        print("      摄取期自动: image bytes → 解码 → 后续 classify_image / prompt")
+        # build_transforms 签名是 list[dict]（每个 dict 一个变换 spec）
+        transforms = T.build_transforms([{"decode_image": {"column": "image_bytes"}}])
+        print(f"    ✓ 构造 {len(transforms)} 个变换（decode_image）")
+        # 真正 apply 到一个含 image_bytes 的 Daft DataFrame
+        df = daft.from_pydict({"id": [1], "image_bytes": [b"\x89PNG\r\n\x1a\n" + b"\x00" * 32]})
+        for t in transforms:
+            df = t(df)
+        df = df.collect()
+        print(f"    ✓ decode_image 已 apply + collect，结果列: {df.column_names}")
+        print("    → 真实图像配合 classify_image / prompt 完成理解；lake.ingest(..., transforms=[...]) 摄取期自动解码")
     except Exception as e:
-        print(f"    [SKIP] {type(e).__name__}: {e}")
+        print(f"    [SKIP] {type(e).__name__}: {str(e)[:90]}")
 
 
 # --------------------------------------------------------------------------- #
