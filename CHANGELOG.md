@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.8.2] - 2026-06-29
+
+### Fixed
+
+- **export download 跨 worker 500**：`BackgroundTask.to_dict` 未序列化 `output_path`/`fmt`，`from_dict` 未还原 → 多 worker 部署下跨 worker 的 download 请求从 Redis 取回 task 时 `output_path=""` → `FilePath("").resolve()` 异常路径 → 500。修：`to_dict`/`from_dict` 补全两字段 round-trip。同 worker 读本地内存有值不受影响，故仅跨 worker download 受损。round-trip 单元实测通过。
+
+---
+
 ## [1.8.1] - 2026-06-29
 
 ### Fixed

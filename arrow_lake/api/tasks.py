@@ -66,6 +66,10 @@ class BackgroundTask:
             d["result"] = self.result
         if self.detail:
             d["detail"] = self.detail
+        if self.output_path:
+            d["output_path"] = self.output_path
+        if self.fmt:
+            d["fmt"] = self.fmt
         return d
 
     @classmethod
@@ -98,6 +102,8 @@ class BackgroundTask:
             error=data.get("error") or None,
             result=result,
             detail=detail or {},
+            output_path=data.get("output_path", ""),
+            fmt=data.get("fmt", ""),
         )
 
 
