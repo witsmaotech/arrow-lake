@@ -13,11 +13,14 @@ class ComputeConfig(BaseModel):
     Attributes:
         gpu_enabled: Whether GPU acceleration is available.
         ray_address: Ray cluster address ('auto' for local cluster).
+        ray_dashboard_url: Ray dashboard base URL for health probing
+            (e.g. ``http://ray-head:8265``). Empty ⇒ Ray probe skipped.
         num_workers: Number of Ray worker processes.
     """
 
     gpu_enabled: bool = False
     ray_address: str = "auto"
+    ray_dashboard_url: str = ""
     num_workers: int = 2
 
     @field_validator("num_workers")

@@ -73,15 +73,26 @@ def _check_lance_rest(uri: str) -> tuple[str, bool]:
         return "unreachable", False
 
 
-def _check_ray(ray_address: str) -> tuple[str, bool]:
-    """Check Ray cluster health. Returns (status_text, is_ok)."""
+def _check_ray(dashboard_url: str) -> tuple[str, bool]:
+    """Check Ray cluster health via the dashboard HTTP API.
+
+    Lightweight and side-effect free: a single GET to the dashboard's
+    ``/api/version`` endpoint. Avoids ``ray.init()`` (which starts a driver in
+    this process, is slow, and fails when Ray isn't local to the API container).
+    """
+    if not dashboard_url:
+        return ("not_configured", False)
     try:
-        import ray
-        if not ray.is_initialized():
-            ray.init(address=ray_address, ignore_reinit_error=True, log_to_driver=False)
-        return "healthy", True
+        import urllib.request
+
+        url = dashboard_url.rstrip("/") + "/api/version"
+        # Internal service-to-service call — bypass any outbound proxy.
+        handler = urllib.request.ProxyHandler({})
+        opener = urllib.request.build_opener(handler)
+        opener.open(url, timeout=3)
+        return ("healthy", True)
     except Exception:
-        return "unreachable", False
+        return ("unreachable", False)
 
 
 def _check_redis(redis_url: str) -> tuple[str, bool]:
@@ -154,8 +165,8 @@ async def health_ready(
     if config.gravitino.enabled:
         grav_text, _grav_ok = _check_gravitino(config.gravitino.uri)
         status["gravitino"] = grav_text
-    if hasattr(config, "compute") and getattr(config.compute, "ray_address", ""):
-        ray_text, _ = _check_ray(config.compute.ray_address)
+    if hasattr(config, "compute") and getattr(config.compute, "ray_dashboard_url", ""):
+        ray_text, _ = _check_ray(config.compute.ray_dashboard_url)
         status["ray"] = ray_text
     if hasattr(config, "redis") and getattr(config.redis, "enabled", False):
         redis_text, _ = _check_redis(config.redis.url)

@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.8.4] - 2026-06-30
+
+### Fixed
+
+- **Ray readiness 探针误报 `unreachable`**：`/health/ready` 的 `_check_ray` 此前用 `ray.init(address=...)`——在 API 容器里既重（起 driver）又会因 `ray_address="auto"`（API 默认值，prod 未覆盖）找不到本地 Ray 而恒失败，导致 Ray head 明明 healthy 却报 unreachable。修：`_check_ray` 改为对 Ray dashboard 做轻量 HTTP GET `/api/version`（无副作用、不走外网代理）；新增 `ComputeConfig.ray_dashboard_url`（默认空=跳过探针），prod compose API 显式设 `ARROW_LAKE__COMPUTE__RAY_DASHBOARD_URL=http://ray-head:8265`。非 fatal，不影响 readiness 总体判定。`ray_address` 语义/计算路径未动（`server.py` 对 `"auto"` 的跳过逻辑保留）。
+
+---
+
 ## [1.8.3] - 2026-06-29
 
 ### Fixed

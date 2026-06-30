@@ -216,22 +216,30 @@ class TestCheckLanceRest:
 
 
 class TestCheckRay:
-    """Tests for _check_ray helper."""
+    """Tests for _check_ray helper (lightweight dashboard HTTP probe)."""
+
+    def test_not_configured_when_empty(self) -> None:
+        text, ok = _check_ray("")
+        assert text == "not_configured"
+        assert ok is False
 
     def test_reachable(self) -> None:
-        mock_ray = MagicMock()
-        mock_ray.is_initialized.return_value = False
-        with patch.dict(sys.modules, {"ray": mock_ray}):
-            text, ok = _check_ray("auto")
+        mock_opener = MagicMock()
+        mock_opener.open.return_value = MagicMock()
+        with patch("urllib.request.build_opener", return_value=mock_opener):
+            text, ok = _check_ray("http://ray-head:8265")
         assert text == "healthy"
         assert ok is True
-        mock_ray.init.assert_called_once()
+        mock_opener.open.assert_called_once()
+        # Probes the dashboard /api/version endpoint.
+        called_url = mock_opener.open.call_args[0][0]
+        assert called_url.endswith("/api/version")
 
     def test_unreachable(self) -> None:
-        mock_ray = MagicMock()
-        mock_ray.is_initialized.side_effect = Exception("no ray")
-        with patch.dict(sys.modules, {"ray": mock_ray}):
-            text, ok = _check_ray("auto")
+        mock_opener = MagicMock()
+        mock_opener.open.side_effect = OSError("refused")
+        with patch("urllib.request.build_opener", return_value=mock_opener):
+            text, ok = _check_ray("http://ray-head:8265")
         assert text == "unreachable"
         assert ok is False
 
@@ -368,10 +376,11 @@ class TestHealthReady:
             storage__base_uri="/tmp/__nonexistent_ready_ray__",
         )
         config.compute.ray_address = "auto"
+        config.compute.ray_dashboard_url = "http://ray-head:8265"
         app = _make_app(config)
-        mock_ray = MagicMock()
-        mock_ray.is_initialized.side_effect = Exception("no ray")
-        with patch.dict(sys.modules, {"ray": mock_ray}):
+        mock_opener = MagicMock()
+        mock_opener.open.side_effect = OSError("refused")
+        with patch("urllib.request.build_opener", return_value=mock_opener):
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as ac:
