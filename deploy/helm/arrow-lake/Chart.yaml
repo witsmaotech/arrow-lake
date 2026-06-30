@@ -2,8 +2,8 @@ apiVersion: v2
 name: arrow-lake
 description: Arrow Lake multimodal data lakehouse
 type: application
-version: 1.8.5
-appVersion: "1.8.5"
+version: 1.8.6
+appVersion: "1.8.6"
 maintainers:
   - name: wits
 keywords:

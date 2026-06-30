@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.8.6] - 2026-06-30
+
+### Added
+
+- **按 lake 路径分图隔离（per-dataset HugeGraph isolation）**：每个 Lance dataset 映射到**独立 HugeGraph 图** `kg_{dataset}`（此前所有 KG 数据写入单个 `hugegraph` 图，仅靠 `document_name` 属性区分来源 → 无逻辑隔离、删 dataset 不清图、单图索引随数据量线性膨胀）。新增 `_naming.py` graph_name 派生（含合法化 + 单测 15 例）；client 层 `graph_name` 参数化 + REST `find_vertices_by_property` + `drop_graph`（DELETE 端点 + 就绪竞态 `_wait_graph_ready`）。
+- **facade 全 traverser 按 dataset 图隔离**：8 个 traverser（kneighbor/kout/shortest_paths 等）+ stats/neighbors/graph_exists/ensure/delete 加可选 `dataset_name`（缺省回退默认图，backward compat）；新增 `kg_drop_graph`。
+- **builder 自动隔离**：`_execute_build` 派生 graph_name 并透传全部写入点；`kg_build` 按 dataset 自动落到独立图，调用方无感。
+- **删 dataset = 删图（drop-on-delete hook）**：`_lake_admin.delete_dataset` 接 `_drop_dataset_kg_graph_best_effort`（sync/async 双上下文桥接），删 Lance dataset 时 best-effort 清理对应 KG 图，杜绝残留。
+- **迁移脚本** `scripts/migrate-kg-per-dataset.py`（idempotent，把存量单图数据按 dataset 拆迁到各自 `kg_{dataset}` 图）。
+- **CLI `--dataset` 便利项**：`kg stats` / `kg neighbors` + 4 traverser（all-shortest-paths / weighted / single-source / multi-node）加 `--dataset` flag。
+
+### Changed
+
+- **retriever 检索适配**：`retrieve()` 加 `dataset_name`，透传 graph_name 到 `get_vertex` + `traverser_kneighbor`（实测已用 REST 构造 ID，非 gremlin find_entity）。
+- **`queries.py` `find_entity` 标记 deprecated**（功能由 client `find_vertices_by_property` 接替）。
+
+### Notes
+
+- Phase 1（分图核心）+ Phase 2（检索适配 + 删除 hook + 迁移）均完成并合入 master；420+ kg 单元测试绿，无回归；live 两图隔离性（ga=1/gb=0）+ drop 验证通过。
+- 剩余 **非阻塞 minor**（留作后续）：rays/rings/crosspoints/customized traverser 的 CLI flag + API router dataset query param。facade 8 traverser 已全部支持 `dataset_name`，此处仅便利暴露。详见 `docs/v1.8.6-per-dataset-kg-isolation-plan.md` §12。
+
+
 ## [1.8.5] - 2026-06-30
 
 ### Fixed
