@@ -61,7 +61,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     && . .venv/bin/activate \
     && uv pip install --no-cache-dir ".[fts,otel,rag,he]" \
     && uv pip install --no-cache-dir jupyterlab ipywidgets \
-    && uv pip install --no-cache-dir modelscope>=1.18 PyJWT "apache-gravitino==1.2.1"
+    && uv pip install --no-cache-dir modelscope>=1.18 PyJWT "apache-gravitino==1.2.1" "boto3==1.43.0" "botocore==1.43.0"
 
 # Clear proxy ENV after all network-dependent steps
 ENV HTTP_PROXY=""

@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.8.5] - 2026-06-30
+
+### Fixed
+
+- **文件上传端点 500（boto3/botocore 版本错配）**：`BlobStoreManager.__init__` 的 `import boto3` 抛 `ImportError: cannot import name 'DocumentModifiedShape' from 'botocore.docs.utils'` → presigned/multipart 上传端点全 500 → 客户端 `_ingest_via_upload` 回退到「传路径」（容器读不到宿主机文件 → `INGEST_FILE_NOT_FOUND`）。根因：Dockerfile 分两步 `uv pip install`，第二步装 modelscope 时 aiobotocore 要求 `botocore<1.43.1`，把 botocore 降到 1.43.0 但 boto3 仍 1.43.36 → 环境不一致。修：第二步 install 钉死匹配对 `boto3==1.43.0 botocore==1.43.0`（同时满足 boto3 自身与 aiobotocore）。实测镜像内 `import boto3`+`BlobStoreManager` OK，multipart 代理上传成功，cookbook examples_api 11/16/19/21–28 共 11 个此前失败的示例全部转绿。
+
+---
+
 ## [1.8.4] - 2026-06-30
 
 ### Fixed
