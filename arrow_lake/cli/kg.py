@@ -154,12 +154,13 @@ def traverser_group() -> None:
 @click.argument("target")
 @click.option("--direction", default="OUT", type=click.Choice(["OUT", "BOTH", "IN"]))
 @click.option("--max-depth", default=10, type=int)
+@click.option("--dataset", default=None, help="Lake path — scope to the kg_{dataset} graph")
 @click.pass_context
-def traverser_all_shortest_paths(ctx: click.Context, source: str, target: str, direction: str, max_depth: int) -> None:
+def traverser_all_shortest_paths(ctx: click.Context, source: str, target: str, direction: str, max_depth: int, dataset: str | None) -> None:
     """Find all shortest paths between two vertices."""
     lake = _get_lake(ctx)
     try:
-        results = _run_async(lake.kg_all_shortest_paths(source, target, direction=direction, max_depth=max_depth))
+        results = _run_async(lake.kg_all_shortest_paths(source, target, direction=direction, max_depth=max_depth, dataset_name=dataset))
     except Exception as exc:
         _print_error(f"Traverser failed: {exc}")
         raise SystemExit(1) from None
@@ -172,12 +173,13 @@ def traverser_all_shortest_paths(ctx: click.Context, source: str, target: str, d
 @click.option("--direction", default="OUT", type=click.Choice(["OUT", "BOTH", "IN"]))
 @click.option("--weight-prop", default="weight", help="Edge weight property")
 @click.option("--max-degree", default=10000, type=int)
+@click.option("--dataset", default=None, help="Lake path — scope to the kg_{dataset} graph")
 @click.pass_context
-def traverser_weighted_shortest(ctx: click.Context, source: str, target: str, direction: str, weight_prop: str, max_degree: int) -> None:
+def traverser_weighted_shortest(ctx: click.Context, source: str, target: str, direction: str, weight_prop: str, max_degree: int, dataset: str | None) -> None:
     """Weighted shortest path between two vertices."""
     lake = _get_lake(ctx)
     try:
-        result = _run_async(lake.kg_weighted_shortest_path(source, target, direction=direction, weight_prop=weight_prop, max_degree=max_degree))
+        result = _run_async(lake.kg_weighted_shortest_path(source, target, direction=direction, weight_prop=weight_prop, max_degree=max_degree, dataset_name=dataset))
     except Exception as exc:
         _print_error(f"Traverser failed: {exc}")
         raise SystemExit(1) from None
@@ -189,12 +191,13 @@ def traverser_weighted_shortest(ctx: click.Context, source: str, target: str, di
 @click.option("--direction", default="OUT", type=click.Choice(["OUT", "BOTH", "IN"]))
 @click.option("--weight-prop", default="weight")
 @click.option("--max-degree", default=10000, type=int)
+@click.option("--dataset", default=None, help="Lake path — scope to the kg_{dataset} graph")
 @click.pass_context
-def traverser_single_source_shortest(ctx: click.Context, source: str, direction: str, weight_prop: str, max_degree: int) -> None:
+def traverser_single_source_shortest(ctx: click.Context, source: str, direction: str, weight_prop: str, max_degree: int, dataset: str | None) -> None:
     """Single source shortest path to all reachable vertices."""
     lake = _get_lake(ctx)
     try:
-        result = _run_async(lake.kg_single_source_shortest_path(source, direction=direction, weight_prop=weight_prop, max_degree=max_degree))
+        result = _run_async(lake.kg_single_source_shortest_path(source, direction=direction, weight_prop=weight_prop, max_degree=max_degree, dataset_name=dataset))
     except Exception as exc:
         _print_error(f"Traverser failed: {exc}")
         raise SystemExit(1) from None
@@ -207,8 +210,9 @@ def traverser_single_source_shortest(ctx: click.Context, source: str, direction:
 @click.option("--direction", default="OUT", type=click.Choice(["OUT", "BOTH", "IN"]))
 @click.option("--weight-prop", default="weight")
 @click.option("--max-degree", default=10000, type=int)
+@click.option("--dataset", default=None, help="Lake path — scope to the kg_{dataset} graph")
 @click.pass_context
-def traverser_multi_node_shortest(ctx: click.Context, sources: str, targets: str, direction: str, weight_prop: str, max_degree: int) -> None:
+def traverser_multi_node_shortest(ctx: click.Context, sources: str, targets: str, direction: str, weight_prop: str, max_degree: int, dataset: str | None) -> None:
     """Shortest paths between multiple source-target pairs."""
     try:
         src_list = json.loads(sources)
@@ -219,7 +223,7 @@ def traverser_multi_node_shortest(ctx: click.Context, sources: str, targets: str
 
     lake = _get_lake(ctx)
     try:
-        results = _run_async(lake.kg_multi_node_shortest_path(src_list, tgt_list, direction=direction, weight_prop=weight_prop, max_degree=max_degree))
+        results = _run_async(lake.kg_multi_node_shortest_path(src_list, tgt_list, direction=direction, weight_prop=weight_prop, max_degree=max_degree, dataset_name=dataset))
     except Exception as exc:
         _print_error(f"Traverser failed: {exc}")
         raise SystemExit(1) from None
