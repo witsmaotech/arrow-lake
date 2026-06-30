@@ -91,6 +91,31 @@ services:
   # ---------------------------------------------------------------------------
   # Proxy Forwarder — WSL2 mirrored mode bridge to Windows host proxy
   # ---------------------------------------------------------------------------
+  # Ollama relay — expose host's 127.0.0.1-only Ollama to the bridge network
+  # via host.docker.internal:11534 (mirrors proxy-forwarder pattern).
+  ollama-relay:
+    image: alpine/socat:${SOCAT_VERSION:-1.9.1}
+    container_name: arrow-lake-ollama-relay
+    restart: unless-stopped
+    network_mode: host
+    command: TCP-LISTEN:11534,fork,reuseaddr,bind=0.0.0.0 TCP:127.0.0.1:11434
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+          cpus: "0.1"
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "1"
+    stop_grace_period: 5s
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 11534 || exit 1"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
   proxy-forwarder:
     image: alpine/socat:${SOCAT_VERSION:-1.9.1}
     container_name: arrow-lake-proxy-forwarder
@@ -135,6 +160,10 @@ services:
       ARROW_LAKE__OBSERVABILITY__LOG_LEVEL: "${LOG_LEVEL:-INFO}"
       ARROW_LAKE__REDIS__URL: "redis://:${REDIS_PASSWORD:?REDIS_PASSWORD must be set}@redis:6379/0"
       ARROW_LAKE__COMPUTE__RAY_DASHBOARD_URL: "http://ray-head:8265"
+      # LLM backend → local Ollama (via ollama-relay) for KG extraction / RAG
+      ARROW_LAKE__LLM__PROVIDER: "ollama"
+      ARROW_LAKE__LLM__MODEL: "qwen3.5:9b"
+      ARROW_LAKE__LLM__API_BASE: "http://host.docker.internal:11534"
       ARROW_LAKE__REDIS__PASSWORD: "${REDIS_PASSWORD:?REDIS_PASSWORD must be set}"
       ARROW_LAKE__RATE_LIMIT__ENABLED: "${RATE_LIMIT_ENABLED:-true}"
       ARROW_LAKE__RATE_LIMIT__DEFAULT_REQUESTS_PER_MINUTE: "${RATE_LIMIT_RPM:-60}"
