@@ -481,11 +481,13 @@ class _LakeKGMixin:
         *,
         direction: str = "OUT",
         max_depth: int = 10,
+        dataset_name: str | None = None,
     ) -> list[dict[str, Any]]:
         """All shortest paths between source and target vertices."""
+        g = graph_name_for(dataset_name) if dataset_name else None
         with self._require_kg_client() as client:
             return await client.traverser_all_shortest_paths(
-                source, target, direction=direction, max_depth=max_depth,
+                source, target, direction=direction, max_depth=max_depth, graph_name=g,
             )
 
     async def kg_weighted_shortest_path(
@@ -496,12 +498,14 @@ class _LakeKGMixin:
         direction: str = "OUT",
         weight_prop: str = "weight",
         max_degree: int = 10000,
+        dataset_name: str | None = None,
     ) -> dict[str, Any]:
         """Weighted shortest path between source and target."""
+        g = graph_name_for(dataset_name) if dataset_name else None
         with self._require_kg_client() as client:
             return await client.traverser_weighted_shortest_path(
                 source, target, direction=direction,
-                weight_prop=weight_prop, max_degree=max_degree,
+                weight_prop=weight_prop, max_degree=max_degree, graph_name=g,
             )
 
     async def kg_single_source_shortest_path(
@@ -511,12 +515,14 @@ class _LakeKGMixin:
         direction: str = "OUT",
         weight_prop: str = "weight",
         max_degree: int = 10000,
+        dataset_name: str | None = None,
     ) -> dict[str, Any]:
         """Single source shortest path to all reachable vertices."""
+        g = graph_name_for(dataset_name) if dataset_name else None
         with self._require_kg_client() as client:
             return await client.traverser_single_source_shortest_path(
                 source, direction=direction,
-                weight_prop=weight_prop, max_degree=max_degree,
+                weight_prop=weight_prop, max_degree=max_degree, graph_name=g,
             )
 
     async def kg_multi_node_shortest_path(
@@ -527,12 +533,14 @@ class _LakeKGMixin:
         direction: str = "OUT",
         weight_prop: str = "weight",
         max_degree: int = 10000,
+        dataset_name: str | None = None,
     ) -> list[dict[str, Any]]:
         """Shortest paths between multiple source-target pairs."""
+        g = graph_name_for(dataset_name) if dataset_name else None
         with self._require_kg_client() as client:
             return await client.traverser_multi_node_shortest_path(
                 sources, targets, direction=direction,
-                weight_prop=weight_prop, max_degree=max_degree,
+                weight_prop=weight_prop, max_degree=max_degree, graph_name=g,
             )
 
     async def kg_rays(
@@ -541,11 +549,13 @@ class _LakeKGMixin:
         *,
         direction: str = "OUT",
         max_depth: int = 5,
+        dataset_name: str | None = None,
     ) -> list[dict[str, Any]]:
         """Rays — non-cyclic paths from source."""
+        g = graph_name_for(dataset_name) if dataset_name else None
         with self._require_kg_client() as client:
             return await client.traverser_rays(
-                source, direction=direction, max_depth=max_depth,
+                source, direction=direction, max_depth=max_depth, graph_name=g,
             )
 
     async def kg_rings(
@@ -554,11 +564,13 @@ class _LakeKGMixin:
         *,
         direction: str = "OUT",
         max_depth: int = 5,
+        dataset_name: str | None = None,
     ) -> list[dict[str, Any]]:
         """Ring detection — cyclic paths from source back to itself."""
+        g = graph_name_for(dataset_name) if dataset_name else None
         with self._require_kg_client() as client:
             return await client.traverser_rings(
-                source, direction=direction, max_depth=max_depth,
+                source, direction=direction, max_depth=max_depth, graph_name=g,
             )
 
     async def kg_crosspoints(
@@ -568,11 +580,13 @@ class _LakeKGMixin:
         *,
         direction: str = "OUT",
         max_depth: int = 5,
+        dataset_name: str | None = None,
     ) -> list[dict[str, Any]]:
         """Crosspoints — vertices on paths between source and target."""
+        g = graph_name_for(dataset_name) if dataset_name else None
         with self._require_kg_client() as client:
             return await client.traverser_crosspoints(
-                source, target, direction=direction, max_depth=max_depth,
+                source, target, direction=direction, max_depth=max_depth, graph_name=g,
             )
 
     async def kg_customized_paths(
@@ -582,11 +596,13 @@ class _LakeKGMixin:
         *,
         with_vertex: bool = True,
         with_edge: bool = True,
+        dataset_name: str | None = None,
     ) -> list[dict[str, Any]]:
         """Customized multi-step path traversal."""
+        g = graph_name_for(dataset_name) if dataset_name else None
         with self._require_kg_client() as client:
             return await client.traverser_customized_paths(
-                source, steps, with_vertex=with_vertex, with_edge=with_edge,
+                source, steps, with_vertex=with_vertex, with_edge=with_edge, graph_name=g,
             )
 
     # ------------------------------------------------------------------

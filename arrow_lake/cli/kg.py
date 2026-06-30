@@ -55,13 +55,14 @@ def kg_status(ctx: click.Context, task_id: str) -> None:
 
 
 @kg_group.command("stats")
+@click.option("--dataset", default=None, help="Lake path — scope to the kg_{dataset} graph")
 @click.pass_context
-def kg_stats(ctx: click.Context) -> None:
+def kg_stats(ctx: click.Context, dataset: str | None) -> None:
     """Show knowledge graph statistics."""
     lake = _get_lake(ctx)
 
     try:
-        stats = _run_async(lake.kg_stats())
+        stats = _run_async(lake.kg_stats(dataset_name=dataset))
     except Exception as exc:
         _print_error(f"Failed to get stats: {exc}")
         raise SystemExit(1) from None
@@ -99,13 +100,16 @@ def kg_query(ctx: click.Context, gremlin_query: str) -> None:
 @kg_group.command("neighbors")
 @click.argument("entity_id")
 @click.option("--depth", default=1, help="Traversal depth")
+@click.option("--dataset", default=None, help="Lake path — scope to the kg_{dataset} graph")
 @click.pass_context
-def kg_neighbors(ctx: click.Context, entity_id: str, depth: int) -> None:
+def kg_neighbors(ctx: click.Context, entity_id: str, depth: int, dataset: str | None) -> None:
     """Get neighbors of an entity in the knowledge graph."""
     lake = _get_lake(ctx)
 
     try:
-        neighbors = _run_async(lake.kg_get_neighbors(entity_id, depth=depth))
+        neighbors = _run_async(
+            lake.kg_get_neighbors(entity_id, depth=depth, dataset_name=dataset)
+        )
     except Exception as exc:
         _print_error(f"Failed to get neighbors: {exc}")
         raise SystemExit(1) from None
