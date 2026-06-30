@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 from arrow_lake.config import HugeGraphConfig
 from arrow_lake.knowledge_graph.client import HugeGraphClient
+from arrow_lake.knowledge_graph._naming import graph_name_for
 
 logger = logging.getLogger(__name__)
 
@@ -56,17 +57,24 @@ class KGRetriever:
         extracted_entities: list[str] | None = None,
         traversal_depth: int | None = None,
         max_triplets: int = 50,
+        dataset_name: str | None = None,
     ) -> GraphRetrievalResult:
         """Retrieve relevant subgraph triplets for a given question.
 
         Steps:
         1. If no entities extracted, return empty result.
-        2. For each entity, run ``find_entity`` to locate vertex IDs.
+        2. For each entity, locate the vertex via REST ``get_vertex``.
         3. For found vertices, run ``traverser_kneighbor`` to get neighbors.
         4. Build triplets from neighbor data.
         5. Truncate to ``max_triplets``.
+
+        Args:
+            dataset_name: Optional lake path — scopes retrieval to ``kg_{ds}``.
+                When omitted, the configured default graph is used.
         """
         del question  # question is context for upstream logging / future use
+        # v1.8.6: per-dataset graph isolation
+        g = graph_name_for(dataset_name) if dataset_name else None
 
         entities = extracted_entities if extracted_entities is not None else []
         if not entities:
@@ -93,7 +101,7 @@ class KGRetriever:
             for label_prefix in ("3", "2", "1", "4"):
                 vid = f"{label_prefix}:{entity_name}"
                 try:
-                    vertex = await self._client.get_vertex(vid)
+                    vertex = await self._client.get_vertex(vid, graph_name=g)
                     break
                 except Exception:
                     continue
@@ -109,7 +117,7 @@ class KGRetriever:
             v_name = entity_name
 
             neighbors = await self._client.traverser_kneighbor(
-                source=vid, depth=depth
+                source=vid, depth=depth, graph_name=g
             )
 
             for neighbor in neighbors:

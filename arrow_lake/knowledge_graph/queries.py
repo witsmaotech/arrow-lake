@@ -2,6 +2,12 @@
 
 All queries use the ``{graph_name}.traversal()`` traversal source format
 required by HugeGraph 1.7.0 (NOT ``g.V()``).
+
+v1.8.6: These templates only resolve against the startup-bound default graph
+(``hugegraph``) — dynamically created per-dataset graphs are not gremlin-
+queryable by name. For per-dataset lookups use
+``HugeGraphClient.find_vertices_by_property`` (REST) instead. ``find_entity``
+below is retained for the legacy default-graph / arbitrary-gremlin path.
 """
 
 from __future__ import annotations

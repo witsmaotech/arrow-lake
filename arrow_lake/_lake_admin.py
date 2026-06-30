@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 from typing import TYPE_CHECKING, Any
 
 from arrow_lake.exceptions import StorageError
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from arrow_lake._models import CatalogResult, HealthInfo
@@ -74,12 +77,42 @@ class _LakeAdminMixin:
         """
         with self._trace_span("delete_dataset", dataset=name):
             self._get_storage().delete_dataset(name)
+        # v1.8.6: best-effort drop of the dataset's isolated KG graph so
+        # "delete dataset" also reclaims its kg_{name} graph.
+        self._drop_dataset_kg_graph_best_effort(name)
         from arrow_lake.core.metrics import catalog_tables_total, get_metrics_enabled
 
         if get_metrics_enabled():
             val = catalog_tables_total._value.get()
             if val is not None and val > 0:
                 catalog_tables_total.dec()
+
+    def _drop_dataset_kg_graph_best_effort(self, name: str) -> None:
+        """v1.8.6: best-effort drop of the ``kg_{name}`` graph on dataset delete.
+
+        Bridges sync (CLI) and async (API) call contexts. A missing graph or
+        KG-disabled is a no-op; never raises — dataset deletion must not fail
+        because the KG graph drop failed.
+        """
+        try:
+            client = self._get_kg_client()  # None when KG disabled (no raise)
+        except Exception:
+            return
+        if client is None:
+            return
+        try:
+            import asyncio
+            from arrow_lake.knowledge_graph._naming import graph_name_for
+            coro = client.drop_graph(graph_name_for(name))
+            try:
+                asyncio.get_running_loop()  # raises RuntimeError if no loop
+                asyncio.ensure_future(coro)  # async ctx: fire-and-forget
+            except RuntimeError:
+                asyncio.run(coro)  # sync ctx: run to completion
+        except Exception:
+            logger.warning(
+                "best-effort KG graph drop failed for dataset %s", name, exc_info=True
+            )
 
     def restore_dataset(self, name: str, data: Any) -> None:
         """Replace a dataset entirely with new data (delete + recreate).

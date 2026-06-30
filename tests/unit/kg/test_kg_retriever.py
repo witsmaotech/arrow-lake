@@ -165,7 +165,7 @@ class TestKGRetrieverRetrieve:
         # get_vertex returns None for "Unknown", vertex dict for "Alice"
         call_count = 0
 
-        async def get_vertex_side_effect(vertex_id: str):
+        async def get_vertex_side_effect(vertex_id: str, **kwargs):
             nonlocal call_count
             call_count += 1
             if "Unknown" in vertex_id:
