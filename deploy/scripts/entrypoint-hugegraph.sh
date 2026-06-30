@@ -52,6 +52,50 @@ else
     log "WARNING: ${INIT_SCRIPT} not found — skipping Gremlin patch"
 fi
 
+# ── Bind graph under its name for {graph_name}.traversal() queries ───
+# queries.py and _import_export.py issue gremlin as `hugegraph.traversal()...`
+# (HugeGraph's documented convention). gremlin-server.yaml's `graphs:` section
+# would normally bind the name as a global, but HugeGraph 1.7 registers graphs
+# AFTER the init script runs, so the `hugegraph` global is never bound server-
+# side → every such query fails with MissingPropertyException. Alias the
+# already-opened `graph` (set by the block above) under its name here.
+if [ -f "$INIT_SCRIPT" ] && ! grep -q "arrow-lake-name-bind" "$INIT_SCRIPT" 2>/dev/null; then
+    log "Binding graph under name 'hugegraph' for {graph_name}.traversal() queries"
+    cat >> "$INIT_SCRIPT" <<'GREMLIN'
+
+// arrow-lake-name-bind: alias the opened graph under its name so that
+// hugegraph.traversal() queries resolve (queries.py / _import_export.py).
+globals << [hugegraph: graph]
+GREMLIN
+else
+    [ -f "$INIT_SCRIPT" ] && log "Graph name binding already present — skipping"
+fi
+
+# ── Wait for store gRPC readiness (defensive) ────────────────────────
+# docker-entrypoint.sh → wait-partition.sh (in the image) only polls the
+# store REST endpoint (/v1/partitions on :8520), which can report healthy
+# before the gRPC data port :8500 is accepting sessions. Starting the
+# server in that window triggers a multi-hour "Connection refused
+# hg-store:8500" retry storm in the store gRPC client. Gate startup on the
+# gRPC port itself. Override via SKIP_STORE_GRPC_WAIT=1 to disable.
+STORE_GRPC_HOST="${HG_STORE_GRPC_HOST:-hg-store}"
+STORE_GRPC_PORT="${HG_STORE_GRPC_PORT:-8500}"
+if [ -z "${SKIP_STORE_GRPC_WAIT:-}" ]; then
+    log "Waiting for store gRPC ${STORE_GRPC_HOST}:${STORE_GRPC_PORT} ..."
+    _grpc_ready=0
+    for _i in $(seq 1 60); do
+        if timeout 2 bash -c "echo > /dev/tcp/${STORE_GRPC_HOST}/${STORE_GRPC_PORT}" 2>/dev/null; then
+            _grpc_ready=1
+            log "Store gRPC ready (after ${_i} attempt(s))"
+            break
+        fi
+        sleep 2
+    done
+    if [ "$_grpc_ready" != "1" ]; then
+        log "WARNING: store gRPC ${STORE_GRPC_HOST}:${STORE_GRPC_PORT} not ready after 120s — proceeding anyway"
+    fi
+fi
+
 # ── Delegate to original entrypoint ──────────────────────────────────
 # Original image: ENTRYPOINT ["/usr/bin/dumb-init", "--"]
 #                 CMD ["./docker-entrypoint.sh"]
