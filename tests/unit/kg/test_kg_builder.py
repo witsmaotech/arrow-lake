@@ -37,10 +37,10 @@ def mock_client() -> object:
     client = AsyncMock()
     client.ensure_schema = AsyncMock()
 
-    def _fake_add_vertices(vertices):
+    def _fake_add_vertices(vertices, **kwargs):
         return [f"hg-{i}" for i in range(len(vertices))]
 
-    def _fake_add_edges(edges):
+    def _fake_add_edges(edges, **kwargs):
         return len(edges)
 
     client.add_vertices = AsyncMock(side_effect=_fake_add_vertices)
@@ -133,9 +133,11 @@ async def test_build_basic_flow(
     # Returns a task ID
     assert isinstance(task_id, str)
 
-    # Schema should be ensured
+    # Schema should be ensured on the per-dataset graph (v1.8.6 isolation)
     expected_schema = schema_to_hugegraph_payload(ARROW_LAKE_KG_SCHEMA)
-    mock_client.ensure_schema.assert_awaited_once_with(expected_schema)
+    mock_client.ensure_schema.assert_awaited_once_with(
+        expected_schema, graph_name="kg_test_ds"
+    )
 
     # Vertices should be inserted (documents + chunks + entities per chunk)
     assert mock_client.add_vertices.await_count >= 2
@@ -302,8 +304,8 @@ def builder_no_build(config: HugeGraphConfig) -> KGBuilder:
 
     mock_client = AsyncMock()
     mock_extractor = AsyncMock()
-    mock_client.add_vertices = AsyncMock(side_effect=lambda v: [f"hg-{i}" for i in range(len(v))])
-    mock_client.add_edges = AsyncMock(side_effect=lambda e: len(e))
+    mock_client.add_vertices = AsyncMock(side_effect=lambda v, **kw: [f"hg-{i}" for i in range(len(v))])
+    mock_client.add_edges = AsyncMock(side_effect=lambda e, **kw: len(e))
     return KGBuilder(mock_client, mock_extractor, config)
 
 

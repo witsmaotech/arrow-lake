@@ -35,6 +35,7 @@ class _TraverserMixin:
         direction: str = "OUT",
         max_degree: int = 10000,
         limit: int = 100,
+        graph_name: str | None = None,
     ) -> list[dict[str, Any]]:
         """K-neighbor traversal via POST /traversers/kneighbor.
 
@@ -50,7 +51,7 @@ class _TraverserMixin:
         }
         try:
             resp = await self._post(
-                f"{self._graph_base}/traversers/kneighbor", json_data=body
+                f"{self._graph_base_for(graph_name)}/traversers/kneighbor", json_data=body
             )
         except httpx.HTTPError as exc:
             self._handle_http_error(exc)
@@ -77,6 +78,7 @@ class _TraverserMixin:
         max_depth: int = 10,
         direction: str = "OUT",
         limit: int = 10,
+        graph_name: str | None = None,
     ) -> dict[str, Any]:
         """All paths between source and target via POST /traversers/paths.
 
@@ -91,7 +93,7 @@ class _TraverserMixin:
         }
         try:
             resp = await self._post(
-                f"{self._graph_base}/traversers/paths", json_data=body
+                f"{self._graph_base_for(graph_name)}/traversers/paths", json_data=body
             )
         except httpx.HTTPError as exc:
             self._handle_http_error(exc)
@@ -112,6 +114,7 @@ class _TraverserMixin:
         *,
         direction: str = "OUT",
         max_depth: int = 10,
+        graph_name: str | None = None,
     ) -> list[dict[str, Any]]:
         """All shortest paths between source and target.
 
@@ -126,7 +129,7 @@ class _TraverserMixin:
         }
         try:
             resp = await self._get(
-                f"{self._graph_base}/traversers/allshortestpaths", params=params,
+                f"{self._graph_base_for(graph_name)}/traversers/allshortestpaths", params=params,
             )
         except httpx.HTTPError as exc:
             self._handle_http_error(exc)
@@ -149,6 +152,7 @@ class _TraverserMixin:
         direction: str = "OUT",
         weight_prop: str = "weight",
         max_degree: int = 10000,
+        graph_name: str | None = None,
     ) -> dict[str, Any]:
         """Weighted shortest path between source and target.
 
@@ -164,7 +168,7 @@ class _TraverserMixin:
         }
         try:
             resp = await self._get(
-                f"{self._graph_base}/traversers/weightedshortestpath",
+                f"{self._graph_base_for(graph_name)}/traversers/weightedshortestpath",
                 params=params,
             )
         except httpx.HTTPError as exc:
@@ -186,6 +190,7 @@ class _TraverserMixin:
         direction: str = "OUT",
         weight_prop: str = "weight",
         max_degree: int = 10000,
+        graph_name: str | None = None,
     ) -> dict[str, Any]:
         """Single source shortest path to all reachable vertices.
 
@@ -200,7 +205,7 @@ class _TraverserMixin:
         }
         try:
             resp = await self._get(
-                f"{self._graph_base}/traversers/singlesourceshortestpath",
+                f"{self._graph_base_for(graph_name)}/traversers/singlesourceshortestpath",
                 params=params,
             )
         except httpx.HTTPError as exc:
@@ -242,6 +247,7 @@ class _TraverserMixin:
         *,
         direction: str = "OUT",
         max_depth: int = 5,
+        graph_name: str | None = None,
     ) -> list[dict[str, Any]]:
         """Rays traversal -- non-cyclic paths from source.
 
@@ -255,7 +261,7 @@ class _TraverserMixin:
         }
         try:
             resp = await self._get(
-                f"{self._graph_base}/traversers/rays", params=params,
+                f"{self._graph_base_for(graph_name)}/traversers/rays", params=params,
             )
         except httpx.HTTPError as exc:
             self._handle_http_error(exc)
@@ -276,6 +282,7 @@ class _TraverserMixin:
         *,
         direction: str = "OUT",
         max_depth: int = 5,
+        graph_name: str | None = None,
     ) -> list[dict[str, Any]]:
         """Ring detection -- cyclic paths from source back to itself.
 
@@ -289,7 +296,7 @@ class _TraverserMixin:
         }
         try:
             resp = await self._get(
-                f"{self._graph_base}/traversers/rings", params=params,
+                f"{self._graph_base_for(graph_name)}/traversers/rings", params=params,
             )
         except httpx.HTTPError as exc:
             self._handle_http_error(exc)
@@ -311,6 +318,7 @@ class _TraverserMixin:
         *,
         direction: str = "OUT",
         max_depth: int = 5,
+        graph_name: str | None = None,
     ) -> list[dict[str, Any]]:
         """Crosspoints -- vertices on paths between source and target.
 
@@ -325,7 +333,7 @@ class _TraverserMixin:
         }
         try:
             resp = await self._get(
-                f"{self._graph_base}/traversers/crosspoints", params=params,
+                f"{self._graph_base_for(graph_name)}/traversers/crosspoints", params=params,
             )
         except httpx.HTTPError as exc:
             self._handle_http_error(exc)
@@ -347,6 +355,7 @@ class _TraverserMixin:
         *,
         with_vertex: bool = True,
         with_edge: bool = True,
+        graph_name: str | None = None,
     ) -> list[dict[str, Any]]:
         """Customized multi-step path traversal.
 
@@ -361,7 +370,7 @@ class _TraverserMixin:
         }
         try:
             resp = await self._post(
-                f"{self._graph_base}/traversers/customizedpaths",
+                f"{self._graph_base_for(graph_name)}/traversers/customizedpaths",
                 json_data=body,
             )
         except httpx.HTTPError as exc:

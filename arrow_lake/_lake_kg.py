@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
 from arrow_lake.exceptions import ErrorCode, KGError
+from arrow_lake.knowledge_graph._naming import graph_name_for
 
 if TYPE_CHECKING:
     from arrow_lake.knowledge_graph.builder import KGBuilder
@@ -163,6 +164,10 @@ class _LakeKGMixin:
                 error_code=ErrorCode.KG_GRAPH_NOT_FOUND,
                 message="Knowledge graph is not enabled. Set hugegraph.enabled=true in config.",
             )
+
+    def _dataset_graph(self, dataset_name: str) -> str:
+        """Map a lake path (dataset name) to its isolated HugeGraph name."""
+        return graph_name_for(dataset_name)
 
     @contextmanager
     def _require_kg_client(self, label: str = "KGClient"):
@@ -345,12 +350,15 @@ class _LakeKGMixin:
         self,
         entity_id: str,
         depth: int = 1,
+        dataset_name: str | None = None,
     ) -> list[dict[str, Any]]:
         """Get neighbor vertices of a given entity.
 
         Args:
             entity_id: Vertex ID to start traversal from.
             depth: Traversal depth (number of hops).
+            dataset_name: Optional lake path — scopes traversal to ``kg_{ds}``.
+                When omitted, the configured default graph is used.
 
         Returns:
             List of neighbor vertex dicts.
@@ -360,10 +368,17 @@ class _LakeKGMixin:
         """
         with self._require_kg_client() as client:
             depth = min(depth, self._config.hugegraph.max_traversal_depth)
-            return await client.traverser_kneighbor(source=entity_id, depth=depth)
+            g = graph_name_for(dataset_name) if dataset_name else None
+            return await client.traverser_kneighbor(
+                source=entity_id, depth=depth, graph_name=g
+            )
 
-    async def kg_stats(self) -> dict[str, Any]:
+    async def kg_stats(self, dataset_name: str | None = None) -> dict[str, Any]:
         """Get knowledge graph statistics.
+
+        Args:
+            dataset_name: Optional lake path — scopes counts to ``kg_{ds}``.
+                When omitted, the configured default graph is used.
 
         Returns:
             Dict with vertex and edge counts.
@@ -372,10 +387,15 @@ class _LakeKGMixin:
             KGError: If KG is not enabled.
         """
         with self._require_kg_client() as client:
-            return await client.get_stats()
+            g = graph_name_for(dataset_name) if dataset_name else None
+            return await client.get_stats(graph_name=g)
 
-    async def kg_graph_exists(self) -> bool:
+    async def kg_graph_exists(self, dataset_name: str | None = None) -> bool:
         """Check if the configured HugeGraph graph space exists.
+
+        Args:
+            dataset_name: Optional lake path — checks ``kg_{ds}`` instead of
+                the configured default graph.
 
         Returns:
             True if graph exists, False otherwise.
@@ -384,12 +404,16 @@ class _LakeKGMixin:
         if client is None:
             return False
         try:
-            return await client.graph_exists()
+            g = graph_name_for(dataset_name) if dataset_name else None
+            return await client.graph_exists(graph_name=g)
         except Exception:
             return False
 
-    async def kg_ensure_graph(self) -> bool:
+    async def kg_ensure_graph(self, dataset_name: str | None = None) -> bool:
         """Ensure the HugeGraph graph space exists, creating if needed.
+
+        Args:
+            dataset_name: Optional lake path — ensures ``kg_{ds}``.
 
         Returns:
             True if graph was confirmed to exist (pre-existing or newly created).
@@ -398,15 +422,19 @@ class _LakeKGMixin:
         if client is None:
             return False
         try:
-            exists = await client.graph_exists()
+            g = graph_name_for(dataset_name) if dataset_name else None
+            exists = await client.graph_exists(graph_name=g)
             if exists:
                 return True
-            return await client.ensure_graph()
+            return await client.ensure_graph(graph_name=g)
         except Exception:
             return False
 
-    async def kg_delete_graph(self) -> None:
-        """Delete all data from the knowledge graph.
+    async def kg_delete_graph(self, dataset_name: str | None = None) -> None:
+        """Delete all data from the knowledge graph (clears data, keeps shell).
+
+        Args:
+            dataset_name: Optional lake path — clears ``kg_{ds}``.
 
         Use with caution -- this operation is irreversible.
 
@@ -414,7 +442,33 @@ class _LakeKGMixin:
             KGError: If KG is not enabled or deletion fails.
         """
         with self._require_kg_client() as client:
-            await client.clear()
+            g = graph_name_for(dataset_name) if dataset_name else None
+            await client.clear(graph_name=g)
+
+    async def kg_drop_graph(self, dataset_name: str) -> None:
+        """Drop a dataset's isolated graph entirely (data + schema + shell).
+
+        Idempotent: a missing graph is logged and not an error. Used for
+        drop-on-dataset-delete (wired into ``Lake.delete_dataset``).
+
+        Args:
+            dataset_name: Lake path whose ``kg_{ds}`` graph should be dropped.
+
+        Raises:
+            KGError: If KG is not enabled.
+        """
+        self._ensure_kg_enabled()
+        client = self._get_kg_client()
+        if client is None:
+            return
+        g = graph_name_for(dataset_name)
+        try:
+            await client.drop_graph(g)
+            logger.info("Dropped graph '%s' for dataset '%s'", g, dataset_name)
+        except Exception as exc:  # noqa: BLE001 — best-effort cleanup
+            logger.warning(
+                "Drop graph '%s' failed (best-effort): %s", g, exc
+            )
 
     # ------------------------------------------------------------------
     # Traverser API (8 methods)

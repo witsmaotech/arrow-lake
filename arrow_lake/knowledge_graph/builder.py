@@ -17,6 +17,7 @@ from arrow_lake.config import HugeGraphConfig
 from arrow_lake.knowledge_graph.client import HugeGraphClient
 from arrow_lake.knowledge_graph.entity_router import route_entity_type, route_relation
 from arrow_lake.knowledge_graph.extractor import EntityExtractor
+from arrow_lake.knowledge_graph._naming import graph_name_for
 from arrow_lake.knowledge_graph.schema import ARROW_LAKE_KG_SCHEMA, schema_to_hugegraph_payload
 
 logger = logging.getLogger(__name__)
@@ -160,9 +161,11 @@ class KGBuilder:
         self, task: KGBuildTask, table: pa.Table
     ) -> None:
         """Run the full build pipeline."""
+        # v1.8.6: per-dataset graph isolation — every write targets kg_{dataset}.
+        graph_name = graph_name_for(task.dataset_name)
         # 1. Ensure schema (also creates graph if needed)
         schema_payload = schema_to_hugegraph_payload(ARROW_LAKE_KG_SCHEMA)
-        await self._client.ensure_schema(schema_payload)
+        await self._client.ensure_schema(schema_payload, graph_name=graph_name)
 
         if table.num_rows == 0:
             return
@@ -198,7 +201,7 @@ class KGBuilder:
             {"label": "document", "properties": {"id": name, "name": name}}
             for name in doc_names
         ]
-        doc_hg_ids = await self._client.add_vertices(doc_vertices)
+        doc_hg_ids = await self._client.add_vertices(doc_vertices, graph_name=graph_name)
         doc_id_map: dict[str, str] = dict(zip(doc_names, doc_hg_ids, strict=True))
 
         # 3. Insert chunk vertices
@@ -226,7 +229,7 @@ class KGBuilder:
         all_chunk_hg_ids: list[str] = []
         for i in range(0, len(chunk_vertices), batch_size):
             batch = chunk_vertices[i : i + batch_size]
-            hg_ids = await self._client.add_vertices(batch)
+            hg_ids = await self._client.add_vertices(batch, graph_name=graph_name)
             all_chunk_hg_ids.extend(hg_ids)
         chunk_id_map: dict[str, str] = dict(zip(chunk_ids, all_chunk_hg_ids, strict=True))
 
@@ -242,7 +245,7 @@ class KGBuilder:
                 "properties": {},
             })
         for i in range(0, len(contains_edges), batch_size):
-            await self._client.add_edges(contains_edges[i : i + batch_size])
+            await self._client.add_edges(contains_edges[i : i + batch_size], graph_name=graph_name)
 
         # 5. Insert next_chunk edges (sequential chunks in same doc)
         next_edges = self._build_next_chunk_edges_hg(
@@ -250,7 +253,7 @@ class KGBuilder:
         )
         if next_edges:
             for i in range(0, len(next_edges), batch_size):
-                await self._client.add_edges(next_edges[i : i + batch_size])
+                await self._client.add_edges(next_edges[i : i + batch_size], graph_name=graph_name)
 
         # 7. Extract entities and relations from each chunk (batched)
         total_entities = 0
@@ -300,7 +303,7 @@ class KGBuilder:
             ]
             entity_id_map: dict[str, str] = {}
             if entity_vertices:
-                entity_hg_ids = await self._client.add_vertices(entity_vertices)
+                entity_hg_ids = await self._client.add_vertices(entity_vertices, graph_name=graph_name)
                 if len(entity_hg_ids) != len(entity_vertices):
                     logger.warning(
                         "entity add_vertices returned %d ids for %d vertices — "
@@ -326,7 +329,7 @@ class KGBuilder:
                 typed_keys.append((e.name, label))
             typed_id_map: dict[tuple[str, str], str] = {}
             if typed_vertices:
-                typed_hg_ids = await self._client.add_vertices(typed_vertices)
+                typed_hg_ids = await self._client.add_vertices(typed_vertices, graph_name=graph_name)
                 if len(typed_hg_ids) != len(typed_vertices):
                     logger.warning(
                         "typed add_vertices returned %d ids for %d vertices — "
@@ -356,7 +359,7 @@ class KGBuilder:
                 if e.name in entity_id_map
             ]
             if ref_edges:
-                await self._client.add_edges(ref_edges)
+                await self._client.add_edges(ref_edges, graph_name=graph_name)
 
             # --- Relation routing (v1.7.1 §4.5): route_relation picks a typed
             # edge label on a synonym hit (endpoints resolved via _EDGE_ENDPOINTS
@@ -393,7 +396,7 @@ class KGBuilder:
                     "properties": props,
                 })
             if rel_edges:
-                await self._client.add_edges(rel_edges)
+                await self._client.add_edges(rel_edges, graph_name=graph_name)
 
             return ent_count, rel_count
 

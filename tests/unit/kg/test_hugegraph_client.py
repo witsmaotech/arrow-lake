@@ -292,3 +292,96 @@ async def test_connection_error_raises_kg_error(mock_client: HugeGraphClient) ->
     with pytest.raises(KGError) as exc_info:
         await mock_client.gremlin("test.traversal().V()")
     assert exc_info.value.error_code == ErrorCode.KG_CONNECTION_FAILED
+
+
+# ---------------------------------------------------------------------------
+# Per-dataset graph isolation (v1.8.6)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_find_vertices_by_property_returns_matches(
+    mock_client: HugeGraphClient,
+) -> None:
+    # Arrange
+    mock_client._client.get.return_value = _mock_response(
+        200, {"vertices": [{"id": "3:Python", "label": "entity"}]}
+    )
+    # Act
+    result = await mock_client.find_vertices_by_property(
+        "entity", {"name": "Python"}, graph_name="kg_ds_a"
+    )
+    # Assert — hit the per-dataset graph URL with label + properties params
+    mock_client._client.get.assert_called_once()
+    call = mock_client._client.get.call_args
+    assert call.args[0] == "/graphs/kg_ds_a/graph/vertices"
+    assert call.kwargs["params"]["label"] == "entity"
+    assert '"name": "Python"' in call.kwargs["params"]["properties"]
+    assert result == [{"id": "3:Python", "label": "entity"}]
+
+
+@pytest.mark.asyncio
+async def test_find_vertices_by_property_404_returns_empty(
+    mock_client: HugeGraphClient,
+) -> None:
+    # Arrange — unbuilt dataset graph → 404 → empty (not an error)
+    mock_client._client.get.return_value = _mock_response(404, {})
+    # Act
+    result = await mock_client.find_vertices_by_property(
+        "entity", {"name": "X"}, graph_name="kg_missing"
+    )
+    # Assert
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_drop_graph_success(mock_client: HugeGraphClient) -> None:
+    # Arrange
+    mock_client._client.delete.return_value = _mock_response(204, {})
+    # Act
+    ok = await mock_client.drop_graph("kg_ds_a")
+    # Assert — DELETE with drop confirm message
+    mock_client._client.delete.assert_called_once()
+    url = mock_client._client.delete.call_args.args[0]
+    assert url.startswith("/graphspaces/DEFAULT/graphs/kg_ds_a")
+    assert "drop+the+graph" in url
+    assert ok is True
+
+
+@pytest.mark.asyncio
+async def test_drop_graph_failure_raises(mock_client: HugeGraphClient) -> None:
+    # Arrange — non-success status
+    mock_client._client.delete.return_value = _mock_response(400, {})
+    # Act / Assert
+    with pytest.raises(KGError):
+        await mock_client.drop_graph("kg_ds_a")
+
+
+@pytest.mark.asyncio
+async def test_add_vertices_uses_overridden_graph_name(
+    mock_client: HugeGraphClient,
+) -> None:
+    # Arrange — per-dataset graph_name must land in the URL, not the config default
+    mock_client._client.post.return_value = _mock_response(201, ["1:ok"])
+    # Act
+    await mock_client.add_vertices(
+        [{"label": "entity", "properties": {"name": "x"}}], graph_name="kg_ds_a"
+    )
+    # Assert
+    url = mock_client._client.post.call_args.args[0]
+    assert url == "/graphs/kg_ds_a/graph/vertices/batch"
+
+
+@pytest.mark.asyncio
+async def test_ensure_graph_uses_overridden_name(mock_client: HugeGraphClient) -> None:
+    # Arrange — list_graphs empty → create with the overridden name
+    mock_client._client.get.return_value = _mock_response(200, {"graphs": []})
+    mock_client._client.post.return_value = _mock_response(201, {})
+    # Act
+    ok = await mock_client.ensure_graph(graph_name="kg_ds_a")
+    # Assert — creation POST targets kg_ds_a and store field uses it
+    create_call = mock_client._client.post.call_args
+    assert "/graphspaces/DEFAULT/graphs/kg_ds_a" in create_call.args[0]
+    assert create_call.kwargs["json"]["store"] == "kg_ds_a"
+    assert ok is True
+

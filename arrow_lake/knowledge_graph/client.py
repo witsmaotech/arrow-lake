@@ -19,7 +19,9 @@ HTTP method notes (verified against HugeGraph 1.7.0):
 
 from __future__ import annotations
 
+import asyncio
 import base64
+import json
 import logging
 import re
 from typing import Any
@@ -75,6 +77,40 @@ class HugeGraphClient(_TraverserMixin, _ImportExportMixin):
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _graph_base_for(self, graph_name: str | None) -> str:
+        """Return ``/graphs/{name}`` for the given graph.
+
+        Falls back to the configured default ``graph_name`` when None, so
+        existing callers (single-graph mode) keep their behavior. Per-dataset
+        isolation passes the derived ``kg_{dataset}`` name here.
+        """
+        name = graph_name or self._config.graph_name
+        return f"/graphs/{name}"
+
+    async def _wait_graph_ready(
+        self, name: str, *, attempts: int = 30, delay: float = 0.5
+    ) -> None:
+        """Poll a newly created graph's schema endpoint until it responds.
+
+        HugeGraph 1.7 PD creates the graph asynchronously; the hstore backend
+        needs a brief moment before it accepts schema writes. Without this,
+        ``ensure_schema`` immediately after ``ensure_graph`` can 500 on a
+        brand-new per-dataset graph.
+        """
+        for _ in range(attempts):
+            try:
+                resp = await self._client.get(f"/graphs/{name}/schema")
+                if resp.status_code == 200:
+                    return
+            except httpx.HTTPError:
+                pass
+            await asyncio.sleep(delay)
+        logger.warning(
+            "Graph '%s' schema endpoint not ready after %.1fs — proceeding",
+            name,
+            attempts * delay,
+        )
 
     @retry(
         retry=retry_if_exception_type((httpx.TimeoutException, httpx.ConnectError, ConnectionResetError)),
@@ -173,11 +209,14 @@ class HugeGraphClient(_TraverserMixin, _ImportExportMixin):
     # Vertex operations
     # ------------------------------------------------------------------
 
-    async def add_vertices(self, vertices: list[dict[str, Any]]) -> list[str]:
+    async def add_vertices(
+        self, vertices: list[dict[str, Any]], *, graph_name: str | None = None
+    ) -> list[str]:
         """Batch insert vertices. Returns list of created vertex IDs."""
         try:
             resp = await self._post(
-                f"{self._graph_base}/graph/vertices/batch", json_data=vertices
+                f"{self._graph_base_for(graph_name)}/graph/vertices/batch",
+                json_data=vertices,
             )
         except httpx.HTTPError as exc:
             self._handle_http_error(exc)
@@ -192,14 +231,16 @@ class HugeGraphClient(_TraverserMixin, _ImportExportMixin):
         ids = resp.json()
         return ids if isinstance(ids, list) else []
 
-    async def get_vertex(self, vertex_id: str) -> dict[str, Any] | None:
+    async def get_vertex(
+        self, vertex_id: str, *, graph_name: str | None = None
+    ) -> dict[str, Any] | None:
         """Get a vertex by ID. Returns None if not found."""
         if not _SAFE_VERTEX_ID_RE.match(vertex_id):
             logger.warning("Rejected unsafe vertex_id: %r", vertex_id)
             return None
         try:
             resp = await self._get(
-                f'{self._graph_base}/graph/vertices/"{vertex_id}"'
+                f'{self._graph_base_for(graph_name)}/graph/vertices/"{vertex_id}"'
             )
         except httpx.HTTPError:
             return None
@@ -210,18 +251,59 @@ class HugeGraphClient(_TraverserMixin, _ImportExportMixin):
             return None
         return resp.json()
 
+    async def find_vertices_by_property(
+        self,
+        label: str,
+        properties: dict[str, Any],
+        *,
+        graph_name: str | None = None,
+        limit: int = 1000,
+    ) -> list[dict[str, Any]]:
+        """Find vertices by label + property values via REST.
+
+        ``GET /graphs/{name}/graph/vertices?label=..&properties={..}``.
+        Replaces the gremlin ``find_entity`` query so it works on dynamically
+        created per-dataset graphs (which are not gremlin-bound). Returns the
+        matching ``vertices`` list (empty if none / graph missing).
+        """
+        params = {
+            "label": label,
+            "properties": json.dumps(properties),
+            "limit": str(limit),
+        }
+        try:
+            resp = await self._get(
+                f"{self._graph_base_for(graph_name)}/graph/vertices",
+                params=params,
+            )
+        except httpx.HTTPError as exc:
+            self._handle_http_error(exc)
+
+        if resp.status_code == 404:
+            return []  # graph or vertex not found → treat as empty
+        if resp.status_code != 200:
+            raise KGError(
+                error_code=ErrorCode.KG_QUERY_FAILED,
+                message=f"find_vertices_by_property failed: {resp.text}",
+                context={"label": label, "status_code": resp.status_code},
+            )
+        return resp.json().get("vertices", [])
+
     # ------------------------------------------------------------------
     # Edge operations
     # ------------------------------------------------------------------
 
-    async def add_edges(self, edges: list[dict[str, Any]]) -> int:
+    async def add_edges(
+        self, edges: list[dict[str, Any]], *, graph_name: str | None = None
+    ) -> int:
         """Batch insert edges. Returns count of inserted edges.
 
         Each edge must include: label, outV, outVLabel, inV, inVLabel, properties.
         """
         try:
             resp = await self._post(
-                f"{self._graph_base}/graph/edges/batch", json_data=edges
+                f"{self._graph_base_for(graph_name)}/graph/edges/batch",
+                json_data=edges,
             )
         except httpx.HTTPError as exc:
             self._handle_http_error(exc)
@@ -240,16 +322,17 @@ class HugeGraphClient(_TraverserMixin, _ImportExportMixin):
     # Graph management
     # ------------------------------------------------------------------
 
-    async def ensure_graph(self) -> bool:
+    async def ensure_graph(self, *, graph_name: str | None = None) -> bool:
         """Create the graph if it doesn't already exist.
 
         Returns True if graph exists (or was created), False if creation
         failed.
         """
+        name = graph_name or self._config.graph_name
         try:
             graphs = await self.list_graphs()
-            if self._config.graph_name in graphs:
-                logger.debug("Graph '%s' already exists", self._config.graph_name)
+            if name in graphs:
+                logger.debug("Graph '%s' already exists", name)
                 return True
         except (ConnectionError, httpx.HTTPStatusError, OSError):
             pass
@@ -259,15 +342,16 @@ class HugeGraphClient(_TraverserMixin, _ImportExportMixin):
                 "gremlin.graph": "org.apache.hugegraph.HugeFactory",
                 "backend": "hstore",
                 "serializer": "binary",
-                "store": self._config.graph_name,
+                "store": name,
                 "task.scheduler_type": "distributed",
             }
             resp = await self._post(
-                f"/graphspaces/DEFAULT/graphs/{self._config.graph_name}",
+                f"/graphspaces/DEFAULT/graphs/{name}",
                 json_data=body,
             )
             if resp.status_code in (200, 201, 202):
-                logger.info("Created graph '%s'", self._config.graph_name)
+                logger.info("Created graph '%s'", name)
+                await self._wait_graph_ready(name)
                 return True
             logger.warning(
                 "Graph creation returned %d: %s",
@@ -282,7 +366,7 @@ class HugeGraphClient(_TraverserMixin, _ImportExportMixin):
             TimeoutError,
             httpx.TimeoutException,
         ) as exc:
-            logger.warning("Failed to create graph '%s': %s", self._config.graph_name, exc)
+            logger.warning("Failed to create graph '%s': %s", name, exc)
             return False
 
     async def list_graphs(self) -> list[str]:
@@ -290,28 +374,30 @@ class HugeGraphClient(_TraverserMixin, _ImportExportMixin):
         resp = await self._get("/graphs")
         return resp.json().get("graphs", [])
 
-    async def graph_exists(self) -> bool:
+    async def graph_exists(self, *, graph_name: str | None = None) -> bool:
         """Check if the configured graph exists."""
+        name = graph_name or self._config.graph_name
         try:
             graphs = await self.list_graphs()
-            return self._config.graph_name in graphs
+            return name in graphs
         except (ConnectionError, httpx.HTTPStatusError, OSError):
             return False
 
-    async def clear(self) -> None:
+    async def clear(self, *, graph_name: str | None = None) -> None:
         """Clear all data from the graph (schema + vertices + edges).
 
         Equivalent to dropping and re-creating the graph. Tries POST first
         (older HugeGraph); falls back to DELETE (HugeGraph 1.7 PD mode returns
         204 No Content on success).
         """
-        if not await self.graph_exists():
+        name = graph_name or self._config.graph_name
+        if not await self.graph_exists(graph_name=name):
             return
         confirm = "I'm sure to delete all data"
         # Primary path (older HugeGraph): POST .../clear
         try:
             resp = await self._post(
-                f"/graphspaces/DEFAULT/graphs/{self._config.graph_name}/clear",
+                f"/graphspaces/DEFAULT/graphs/{name}/clear",
                 json_data={"confirm_message": confirm},
             )
             if resp.status_code in (200, 202, 204):
@@ -327,13 +413,13 @@ class HugeGraphClient(_TraverserMixin, _ImportExportMixin):
         # Fallback path (HugeGraph 1.7 PD mode): DELETE .../clear → 204
         try:
             resp = await self._delete(
-                f"/graphspaces/DEFAULT/graphs/{self._config.graph_name}/clear"
+                f"/graphspaces/DEFAULT/graphs/{name}/clear"
                 "?confirm_message=I'm+sure+to+delete+all+data"
             )
             if resp.status_code in (200, 202, 204):
                 logger.info(
                     "Graph '%s' cleared (DELETE %s)",
-                    self._config.graph_name,
+                    name,
                     resp.status_code,
                 )
                 return
@@ -347,11 +433,37 @@ class HugeGraphClient(_TraverserMixin, _ImportExportMixin):
                 message=f"Failed to clear graph: {exc}",
             ) from exc
 
+    async def drop_graph(self, graph_name: str) -> bool:
+        """Drop a graph entirely (data + schema + graph shell).
+
+        ``DELETE /graphspaces/DEFAULT/graphs/{name}?confirm_message=..``.
+        Distinct from ``clear()`` which only empties data but leaves the graph
+        shell. Used for drop-on-dataset-delete. Returns True on success;
+        raises ``KGError`` on unexpected failure (caller wraps for idempotency).
+        """
+        try:
+            resp = await self._delete(
+                f"/graphspaces/DEFAULT/graphs/{graph_name}"
+                "?confirm_message=I'm+sure+to+drop+the+graph"
+            )
+        except httpx.HTTPError as exc:
+            self._handle_http_error(exc)
+
+        if resp.status_code in (200, 202, 204):
+            return True
+        raise KGError(
+            error_code=ErrorCode.KG_QUERY_FAILED,
+            message=f"Drop graph '{graph_name}' failed: {resp.text}",
+            context={"graph_name": graph_name, "status_code": resp.status_code},
+        )
+
     # ------------------------------------------------------------------
     # Schema operations
     # ------------------------------------------------------------------
 
-    async def ensure_schema(self, schema: dict[str, Any]) -> None:
+    async def ensure_schema(
+        self, schema: dict[str, Any], *, graph_name: str | None = None
+    ) -> None:
         """Create the graph if needed, then create schema elements in dependency order.
 
         Schema dict must contain:
@@ -362,8 +474,8 @@ class HugeGraphClient(_TraverserMixin, _ImportExportMixin):
 
         Ignores 400 errors (element already exists) and accepts 202 (async).
         """
-        await self.ensure_graph()
-        base = self._graph_base + "/schema"
+        await self.ensure_graph(graph_name=graph_name)
+        base = self._graph_base_for(graph_name) + "/schema"
 
         # PropertyKeys -- must be created before vertex/edge labels reference them
         for pk in schema.get("property_keys", []):
@@ -417,10 +529,10 @@ class HugeGraphClient(_TraverserMixin, _ImportExportMixin):
             except KGError:
                 raise
 
-    async def get_schema(self) -> dict[str, Any]:
+    async def get_schema(self, *, graph_name: str | None = None) -> dict[str, Any]:
         """Get the current graph schema (vertex labels + edge labels)."""
         try:
-            resp = await self._get(f"{self._graph_base}/schema")
+            resp = await self._get(f"{self._graph_base_for(graph_name)}/schema")
         except httpx.HTTPError as exc:
             self._handle_http_error(exc)
 
@@ -435,24 +547,25 @@ class HugeGraphClient(_TraverserMixin, _ImportExportMixin):
     # Statistics
     # ------------------------------------------------------------------
 
-    async def get_stats(self) -> dict[str, Any]:
+    async def get_stats(self, *, graph_name: str | None = None) -> dict[str, Any]:
         """Get vertex and edge counts via REST API.
 
         HugeGraph REST API does not return a 'total' field in list responses,
         so we fetch with a large limit and count the returned items.
         """
+        base = self._graph_base_for(graph_name)
         v_count = 0
         e_count = 0
         try:
             v_resp = await self._get(
-                f"{self._graph_base}/graph/vertices?limit=100000"
+                f"{base}/graph/vertices?limit=100000"
             )
             v_count = len(v_resp.json().get("vertices", []))
         except (ConnectionError, httpx.HTTPStatusError, KeyError, ValueError):
             v_count = 0
         try:
             e_resp = await self._get(
-                f"{self._graph_base}/graph/edges?limit=100000"
+                f"{base}/graph/edges?limit=100000"
             )
             e_count = len(e_resp.json().get("edges", []))
         except (ConnectionError, httpx.HTTPStatusError, KeyError, ValueError):
