@@ -107,3 +107,29 @@ async def test_traverser_denied_dataset_returns_403() -> None:
             checker=_Checker(allow=False),
         )
     assert exc.value.status_code == 403
+
+
+def test_customized_step_rejects_bad_direction() -> None:
+    """Customized traverser steps validate the direction enum (→ HTTP 422)."""
+    from pydantic import ValidationError
+
+    from arrow_lake.api.routers.knowledge_graph import _CustomizedReq
+
+    with pytest.raises(ValidationError):
+        _CustomizedReq(source="1:a", steps=[{"direction": "BOGUS", "labels": ["knows"]}])
+    # valid direction is accepted
+    _CustomizedReq(source="1:a", steps=[{"direction": "OUT", "labels": ["knows"]}])
+
+
+def test_multi_node_rejects_oversized_lists() -> None:
+    """Multi-node traverser caps sources/targets at 100 (DoS bound, → HTTP 422)."""
+    from pydantic import ValidationError
+
+    from arrow_lake.api.routers.knowledge_graph import _MultiNodeReq
+
+    with pytest.raises(ValidationError):
+        _MultiNodeReq(sources=["x"] * 101, targets=["y"])
+    with pytest.raises(ValidationError):
+        _MultiNodeReq(sources=["x"], targets=["y"] * 101)
+    # boundary: exactly 100 is accepted
+    _MultiNodeReq(sources=["x"] * 100, targets=["y"] * 100)
