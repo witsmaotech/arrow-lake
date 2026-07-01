@@ -92,3 +92,18 @@ async def test_kg_neighbors_no_dataset_skips_acl() -> None:
         checker=_Checker(allow=False),
     )
     assert resp.neighbors == []
+
+
+@pytest.mark.asyncio()
+async def test_traverser_denied_dataset_returns_403() -> None:
+    """All 8 traverser endpoints share _enforce_read_acl; verify via rays."""
+    from arrow_lake.api.routers.knowledge_graph import _SimpleTraverseReq, traverse_rays
+
+    with pytest.raises(HTTPException) as exc:
+        await traverse_rays(
+            _SimpleTraverseReq(source="1:a", dataset="secret"),
+            lake=_Lake(),
+            _user=_User(),
+            checker=_Checker(allow=False),
+        )
+    assert exc.value.status_code == 403

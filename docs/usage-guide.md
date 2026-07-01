@@ -700,6 +700,36 @@ graph_data = await lake.kg_export_graph(with_properties=True)
 result = await lake.kg_import_graph(graph_data)
 ```
 
+### Per-dataset isolation (v1.8.6)
+
+Each Lance dataset maps to its **own** HugeGraph graph `kg_{dataset}` — data is
+fully isolated across datasets, and dropping a dataset clears only its graph.
+
+```python
+# SDK: pass dataset_name to scope any KG op to kg_{dataset}
+stats = await lake.kg_stats(dataset_name="articles")
+nbrs  = await lake.kg_get_neighbors("entity:42", depth=2, dataset_name="articles")
+paths = await lake.kg_all_shortest_paths("A", "B", dataset_name="articles")
+await lake.kg_delete_graph(dataset_name="articles")   # clear only kg_articles
+# kg_build always auto-isolates per dataset — no arg needed
+```
+
+```bash
+# CLI: --dataset scopes stats / neighbors / delete + all 8 traversers
+alake kg stats --dataset articles
+alake kg neighbors entity:42 --dataset articles
+alake kg traverser all-shortest-paths A B --dataset articles
+alake kg delete --yes --dataset articles      # clear only kg_articles
+```
+
+```bash
+# REST: ?dataset= query param (per-dataset ACL enforced on read/delete)
+GET    /api/v1/kg/stats?dataset=articles
+GET    /api/v1/kg/entities/{id}/neighbors?dataset=articles
+DELETE /api/v1/kg/graph?dataset=articles                              # ADMIN
+POST   /api/v1/kg/traversers/rays   {"source":"A","dataset":"articles"}  # +7 more
+```
+
 ---
 
 ## 9. Data Quality

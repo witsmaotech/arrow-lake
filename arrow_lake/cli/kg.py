@@ -123,21 +123,23 @@ def kg_neighbors(ctx: click.Context, entity_id: str, depth: int, dataset: str | 
 
 @kg_group.command("delete")
 @click.option("--yes", is_flag=True, help="Skip confirmation")
+@click.option("--dataset", default=None, help="Lake path — clear only the kg_{dataset} graph (omit → default graph)")
 @click.pass_context
-def kg_delete(ctx: click.Context, yes: bool) -> None:
+def kg_delete(ctx: click.Context, yes: bool, dataset: str | None) -> None:
     """Delete all data from the knowledge graph (irreversible)."""
-    if not yes and not click.confirm("Delete ALL knowledge graph data? This cannot be undone."):
+    target = f"dataset '{dataset}' graph (kg_{dataset})" if dataset else "default knowledge graph"
+    if not yes and not click.confirm(f"Delete {target}? This cannot be undone."):
         return
 
     lake = _get_lake(ctx)
 
     try:
-        _run_async(lake.kg_delete_graph())
+        _run_async(lake.kg_delete_graph(dataset_name=dataset))
     except Exception as exc:
         _print_error(f"KG deletion failed: {exc}")
         raise SystemExit(1) from None
 
-    _print_success("Knowledge graph deleted")
+    _print_success(f"{target} cleared")
 
 
 # ------------------------------------------------------------------

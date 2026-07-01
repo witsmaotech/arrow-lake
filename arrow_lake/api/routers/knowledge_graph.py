@@ -8,6 +8,7 @@ import time
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 
 from arrow_lake.api.auth_models import Role
 from arrow_lake.api.deps import get_checker, get_lake, require_role
@@ -231,12 +232,18 @@ async def kg_stats(
 
 @router.delete("/graph", dependencies=[Depends(require_role(Role.ADMIN))])
 async def kg_delete_graph(
+    dataset: str | None = None,
     lake: Any = Depends(get_lake),
 ) -> dict[str, str]:
-    """Delete all data from the knowledge graph."""
+    """Delete all data from the knowledge graph.
+
+    ``dataset`` (lake path) clears only the ``kg_{dataset}`` graph;
+    omitted → default graph. ADMIN-only (admin bypasses per-dataset ACL).
+    """
     try:
-        await lake.kg_delete_graph()
-        return {"status": "ok", "message": "Graph data deleted"}
+        await lake.kg_delete_graph(dataset_name=dataset)
+        target = f"dataset '{dataset}' graph" if dataset else "default graph"
+        return {"status": "ok", "message": f"{target} cleared"}
     except KGError as exc:
         raise HTTPException(status_code=_kg_error_to_status(exc), detail=exc.message) from exc
 
@@ -270,6 +277,200 @@ async def graphrag_query(
             "context_tokens": rag_resp.context_tokens,
             "latency_ms": rag_resp.latency_ms,
         }
+    except KGError as exc:
+        raise HTTPException(status_code=_kg_error_to_status(exc), detail=exc.message) from exc
+
+
+# ---------------------------------------------------------------------------
+# Traversers (path-finding) — v1.8.6: per-dataset scoped, ACL-gated
+# ---------------------------------------------------------------------------
+
+
+def _enforce_read_acl(checker, _user, dataset: str | None) -> None:
+    """Raise 403 if the user lacks read access on the scoped dataset."""
+    if dataset is not None and not checker.check_dataset_access(
+        role=_user.role, dataset=dataset, action="read"
+    ):
+        raise HTTPException(status_code=403, detail=f"Read access to dataset '{dataset}' denied")
+
+
+class _SimpleTraverseReq(BaseModel):
+    source: str
+    direction: str = "OUT"
+    max_depth: int = 5
+    dataset: str | None = None
+
+
+class _PathTraverseReq(BaseModel):
+    source: str
+    target: str
+    direction: str = "OUT"
+    max_depth: int = 10
+    dataset: str | None = None
+
+
+class _WeightedReq(BaseModel):
+    source: str
+    target: str
+    direction: str = "OUT"
+    weight_prop: str = "weight"
+    max_degree: int = 10000
+    dataset: str | None = None
+
+
+class _SingleSourceReq(BaseModel):
+    source: str
+    direction: str = "OUT"
+    weight_prop: str = "weight"
+    max_degree: int = 10000
+    dataset: str | None = None
+
+
+class _MultiNodeReq(BaseModel):
+    sources: list[str]
+    targets: list[str]
+    direction: str = "OUT"
+    weight_prop: str = "weight"
+    max_degree: int = 10000
+    dataset: str | None = None
+
+
+class _CustomizedReq(BaseModel):
+    source: str
+    steps: list[dict[str, Any]]
+    with_vertex: bool = True
+    with_edge: bool = True
+    dataset: str | None = None
+
+
+@router.post("/traversers/rays")
+async def traverse_rays(
+    req: _SimpleTraverseReq,
+    lake: Any = Depends(get_lake),
+    _user: dict = Depends(require_role(Role.VIEWER)),
+    checker=Depends(get_checker),
+) -> dict[str, Any]:
+    """Rays — non-cyclic paths from source. ``dataset`` scopes to ``kg_{dataset}``."""
+    _enforce_read_acl(checker, _user, req.dataset)
+    try:
+        return {"results": await lake.kg_rays(
+            req.source, direction=req.direction, max_depth=req.max_depth, dataset_name=req.dataset)}
+    except KGError as exc:
+        raise HTTPException(status_code=_kg_error_to_status(exc), detail=exc.message) from exc
+
+
+@router.post("/traversers/rings")
+async def traverse_rings(
+    req: _SimpleTraverseReq,
+    lake: Any = Depends(get_lake),
+    _user: dict = Depends(require_role(Role.VIEWER)),
+    checker=Depends(get_checker),
+) -> dict[str, Any]:
+    """Rings — cyclic paths from source back to itself."""
+    _enforce_read_acl(checker, _user, req.dataset)
+    try:
+        return {"results": await lake.kg_rings(
+            req.source, direction=req.direction, max_depth=req.max_depth, dataset_name=req.dataset)}
+    except KGError as exc:
+        raise HTTPException(status_code=_kg_error_to_status(exc), detail=exc.message) from exc
+
+
+@router.post("/traversers/crosspoints")
+async def traverse_crosspoints(
+    req: _PathTraverseReq,
+    lake: Any = Depends(get_lake),
+    _user: dict = Depends(require_role(Role.VIEWER)),
+    checker=Depends(get_checker),
+) -> dict[str, Any]:
+    """Crosspoints — vertices on paths between source and target."""
+    _enforce_read_acl(checker, _user, req.dataset)
+    try:
+        return {"results": await lake.kg_crosspoints(
+            req.source, req.target, direction=req.direction, max_depth=req.max_depth, dataset_name=req.dataset)}
+    except KGError as exc:
+        raise HTTPException(status_code=_kg_error_to_status(exc), detail=exc.message) from exc
+
+
+@router.post("/traversers/all-shortest-paths")
+async def traverse_all_shortest_paths(
+    req: _PathTraverseReq,
+    lake: Any = Depends(get_lake),
+    _user: dict = Depends(require_role(Role.VIEWER)),
+    checker=Depends(get_checker),
+) -> dict[str, Any]:
+    """All shortest paths between source and target."""
+    _enforce_read_acl(checker, _user, req.dataset)
+    try:
+        return {"results": await lake.kg_all_shortest_paths(
+            req.source, req.target, direction=req.direction, max_depth=req.max_depth, dataset_name=req.dataset)}
+    except KGError as exc:
+        raise HTTPException(status_code=_kg_error_to_status(exc), detail=exc.message) from exc
+
+
+@router.post("/traversers/weighted-shortest")
+async def traverse_weighted_shortest(
+    req: _WeightedReq,
+    lake: Any = Depends(get_lake),
+    _user: dict = Depends(require_role(Role.VIEWER)),
+    checker=Depends(get_checker),
+) -> dict[str, Any]:
+    """Weighted shortest path between source and target."""
+    _enforce_read_acl(checker, _user, req.dataset)
+    try:
+        return {"result": await lake.kg_weighted_shortest_path(
+            req.source, req.target, direction=req.direction, weight_prop=req.weight_prop,
+            max_degree=req.max_degree, dataset_name=req.dataset)}
+    except KGError as exc:
+        raise HTTPException(status_code=_kg_error_to_status(exc), detail=exc.message) from exc
+
+
+@router.post("/traversers/single-source")
+async def traverse_single_source(
+    req: _SingleSourceReq,
+    lake: Any = Depends(get_lake),
+    _user: dict = Depends(require_role(Role.VIEWER)),
+    checker=Depends(get_checker),
+) -> dict[str, Any]:
+    """Single-source shortest path to all reachable vertices."""
+    _enforce_read_acl(checker, _user, req.dataset)
+    try:
+        return {"result": await lake.kg_single_source_shortest_path(
+            req.source, direction=req.direction, weight_prop=req.weight_prop,
+            max_degree=req.max_degree, dataset_name=req.dataset)}
+    except KGError as exc:
+        raise HTTPException(status_code=_kg_error_to_status(exc), detail=exc.message) from exc
+
+
+@router.post("/traversers/multi-node")
+async def traverse_multi_node(
+    req: _MultiNodeReq,
+    lake: Any = Depends(get_lake),
+    _user: dict = Depends(require_role(Role.VIEWER)),
+    checker=Depends(get_checker),
+) -> dict[str, Any]:
+    """Multi-node shortest paths between source and target sets."""
+    _enforce_read_acl(checker, _user, req.dataset)
+    try:
+        return {"results": await lake.kg_multi_node_shortest_path(
+            req.sources, req.targets, direction=req.direction, weight_prop=req.weight_prop,
+            max_degree=req.max_degree, dataset_name=req.dataset)}
+    except KGError as exc:
+        raise HTTPException(status_code=_kg_error_to_status(exc), detail=exc.message) from exc
+
+
+@router.post("/traversers/customized")
+async def traverse_customized(
+    req: _CustomizedReq,
+    lake: Any = Depends(get_lake),
+    _user: dict = Depends(require_role(Role.VIEWER)),
+    checker=Depends(get_checker),
+) -> dict[str, Any]:
+    """Customized multi-step path traversal."""
+    _enforce_read_acl(checker, _user, req.dataset)
+    try:
+        return {"results": await lake.kg_customized_paths(
+            req.source, req.steps, with_vertex=req.with_vertex, with_edge=req.with_edge,
+            dataset_name=req.dataset)}
     except KGError as exc:
         raise HTTPException(status_code=_kg_error_to_status(exc), detail=exc.message) from exc
 

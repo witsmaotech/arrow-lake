@@ -127,11 +127,21 @@ curl -X POST http://localhost:8000/api/v1/auth/refresh \
 | ------ | ------------------------------------ | --------------------------- | ------ |
 | `POST` | `/api/v1/rag/query`                  | RAG question answering      | -      |
 | `POST` | `/api/v1/rag/query/stream`           | Streaming RAG               | -      |
-| `POST` | `/api/v1/kg/build`                   | Build the knowledge graph   | ADMIN  |
+| `POST` | `/api/v1/kg/build`                   | Build the knowledge graph (auto per-dataset) | ADMIN  |
 | `GET`  | `/api/v1/kg/build/{task_id}/status`  | Build task status           | -      |
 | `POST` | `/api/v1/kg/query`                   | Execute a Gremlin query     | EDITOR |
-| `GET`  | `/api/v1/kg/entities/{id}/neighbors` | Neighbor traversal          | -      |
+| `GET`  | `/api/v1/kg/entities/{id}/neighbors` | Neighbor traversal (`?dataset=`) | VIEWER |
+| `GET`  | `/api/v1/kg/stats`                   | Graph statistics (`?dataset=`) | VIEWER |
+| `DELETE` | `/api/v1/kg/graph`                 | Clear graph data (`?dataset=`) | ADMIN |
 | `POST` | `/api/v1/kg/query/graphrag`          | GraphRAG question answering | VIEWER |
+| `POST` | `/api/v1/kg/traversers/rays`         | Rays — non-cyclic paths (`dataset` in body) | VIEWER |
+| `POST` | `/api/v1/kg/traversers/rings`        | Rings — cyclic paths        | VIEWER |
+| `POST` | `/api/v1/kg/traversers/crosspoints`  | Crosspoints between pair    | VIEWER |
+| `POST` | `/api/v1/kg/traversers/all-shortest-paths` | All shortest paths    | VIEWER |
+| `POST` | `/api/v1/kg/traversers/weighted-shortest`  | Weighted shortest path | VIEWER |
+| `POST` | `/api/v1/kg/traversers/single-source`      | Single-source shortest | VIEWER |
+| `POST` | `/api/v1/kg/traversers/multi-node`         | Multi-node shortest    | VIEWER |
+| `POST` | `/api/v1/kg/traversers/customized`         | Customized multi-step  | VIEWER |
 
 ### Authentication (v2)
 
