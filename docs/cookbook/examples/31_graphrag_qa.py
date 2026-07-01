@@ -32,15 +32,24 @@ _DATASETS = ["knowledge_zh"]
 
 
 def _add_vectors(lake: Lake, dataset: str, n_rows: int) -> int:
-    """生成随机向量并追加到数据集 (模拟嵌入模型)"""
+    """生成随机向量并作为新列加到数据集 (模拟嵌入模型)。
+
+    Lance 7.0 的 append_dataset 要求 schema 匹配、不允许新列；这里要给已有行
+    加一个向量列，改用 read → append_column → restore（restore_dataset 专为
+    schema 变更/加列设计，接收 Arrow table）。
+    """
     import numpy as np
     rng = np.random.RandomState(42)
     vecs = rng.randn(n_rows, DIM).astype(np.float32)
     vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
-    vec_table = pa.table({
-        "text_embedding": pa.FixedSizeListArray.from_arrays(vecs.ravel(), DIM),
-    })
-    lake.append_dataset(dataset, vec_table)
+    vec_arr = pa.FixedSizeListArray.from_arrays(vecs.ravel(), DIM)
+    table = lake.read_dataset(dataset)
+    if hasattr(table, "to_arrow"):       # LanceTable
+        table = table.to_arrow()
+    elif hasattr(table, "to_pyarrow"):   # daft / duckdb result
+        table = table.to_pyarrow()
+    combined = table.append_column("text_embedding", vec_arr)
+    lake.restore_dataset(dataset, combined)
     return n_rows
 
 
