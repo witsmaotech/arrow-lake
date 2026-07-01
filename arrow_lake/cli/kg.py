@@ -234,12 +234,13 @@ def traverser_multi_node_shortest(ctx: click.Context, sources: str, targets: str
 @click.argument("source")
 @click.option("--direction", default="OUT", type=click.Choice(["OUT", "BOTH", "IN"]))
 @click.option("--max-depth", default=5, type=int)
+@click.option("--dataset", default=None, help="Lake path — scope to the kg_{dataset} graph")
 @click.pass_context
-def traverser_rays(ctx: click.Context, source: str, direction: str, max_depth: int) -> None:
+def traverser_rays(ctx: click.Context, source: str, direction: str, max_depth: int, dataset: str | None) -> None:
     """Rays — non-cyclic paths from a source vertex."""
     lake = _get_lake(ctx)
     try:
-        results = _run_async(lake.kg_rays(source, direction=direction, max_depth=max_depth))
+        results = _run_async(lake.kg_rays(source, direction=direction, max_depth=max_depth, dataset_name=dataset))
     except Exception as exc:
         _print_error(f"Traverser failed: {exc}")
         raise SystemExit(1) from None
@@ -250,12 +251,13 @@ def traverser_rays(ctx: click.Context, source: str, direction: str, max_depth: i
 @click.argument("source")
 @click.option("--direction", default="OUT", type=click.Choice(["OUT", "BOTH", "IN"]))
 @click.option("--max-depth", default=5, type=int)
+@click.option("--dataset", default=None, help="Lake path — scope to the kg_{dataset} graph")
 @click.pass_context
-def traverser_rings(ctx: click.Context, source: str, direction: str, max_depth: int) -> None:
+def traverser_rings(ctx: click.Context, source: str, direction: str, max_depth: int, dataset: str | None) -> None:
     """Rings — cyclic paths from source back to itself."""
     lake = _get_lake(ctx)
     try:
-        results = _run_async(lake.kg_rings(source, direction=direction, max_depth=max_depth))
+        results = _run_async(lake.kg_rings(source, direction=direction, max_depth=max_depth, dataset_name=dataset))
     except Exception as exc:
         _print_error(f"Traverser failed: {exc}")
         raise SystemExit(1) from None
@@ -267,12 +269,13 @@ def traverser_rings(ctx: click.Context, source: str, direction: str, max_depth: 
 @click.argument("target")
 @click.option("--direction", default="OUT", type=click.Choice(["OUT", "BOTH", "IN"]))
 @click.option("--max-depth", default=5, type=int)
+@click.option("--dataset", default=None, help="Lake path — scope to the kg_{dataset} graph")
 @click.pass_context
-def traverser_crosspoints(ctx: click.Context, source: str, target: str, direction: str, max_depth: int) -> None:
+def traverser_crosspoints(ctx: click.Context, source: str, target: str, direction: str, max_depth: int, dataset: str | None) -> None:
     """Crosspoints — vertices on paths between source and target."""
     lake = _get_lake(ctx)
     try:
-        results = _run_async(lake.kg_crosspoints(source, target, direction=direction, max_depth=max_depth))
+        results = _run_async(lake.kg_crosspoints(source, target, direction=direction, max_depth=max_depth, dataset_name=dataset))
     except Exception as exc:
         _print_error(f"Traverser failed: {exc}")
         raise SystemExit(1) from None
@@ -284,8 +287,9 @@ def traverser_crosspoints(ctx: click.Context, source: str, target: str, directio
 @click.option("--steps", required=True, help="JSON array of step dicts [{labels, direction, properties}]")
 @click.option("--with-vertex/--no-with-vertex", default=True)
 @click.option("--with-edge/--no-with-edge", default=True)
+@click.option("--dataset", default=None, help="Lake path — scope to the kg_{dataset} graph")
 @click.pass_context
-def traverser_customized(ctx: click.Context, source: str, steps: str, with_vertex: bool, with_edge: bool) -> None:
+def traverser_customized(ctx: click.Context, source: str, steps: str, with_vertex: bool, with_edge: bool, dataset: str | None) -> None:
     """Customized multi-step path traversal."""
     try:
         steps_list = json.loads(steps)
@@ -295,7 +299,7 @@ def traverser_customized(ctx: click.Context, source: str, steps: str, with_verte
 
     lake = _get_lake(ctx)
     try:
-        results = _run_async(lake.kg_customized_paths(source, steps_list, with_vertex=with_vertex, with_edge=with_edge))
+        results = _run_async(lake.kg_customized_paths(source, steps_list, with_vertex=with_vertex, with_edge=with_edge, dataset_name=dataset))
     except Exception as exc:
         _print_error(f"Traverser failed: {exc}")
         raise SystemExit(1) from None

@@ -175,14 +175,19 @@ async def kg_query(
 async def kg_neighbors(
     entity_id: str,
     depth: int = 1,
+    dataset: str | None = None,
     lake: Any = Depends(get_lake),
     _user: dict = Depends(require_role(Role.VIEWER)),
 ) -> KGNeighborsResponse:
-    """Get neighbor vertices of a given entity."""
+    """Get neighbor vertices of a given entity.
+
+    ``dataset`` (lake path) scopes the query to the ``kg_{dataset}`` graph;
+    omitted → default graph.
+    """
     if depth > 5:
         raise HTTPException(status_code=400, detail=f"Depth too large: {depth} (max 5)")
     try:
-        neighbors = await lake.kg_get_neighbors(entity_id, depth=depth)
+        neighbors = await lake.kg_get_neighbors(entity_id, depth=depth, dataset_name=dataset)
         return KGNeighborsResponse(
             center_id=entity_id,
             neighbors=neighbors,
@@ -194,12 +199,17 @@ async def kg_neighbors(
 
 @router.get("/stats", response_model=KGStatsResponse)
 async def kg_stats(
+    dataset: str | None = None,
     lake: Any = Depends(get_lake),
     _user: dict = Depends(require_role(Role.VIEWER)),
 ) -> KGStatsResponse:
-    """Get knowledge graph statistics."""
+    """Get knowledge graph statistics.
+
+    ``dataset`` (lake path) scopes counts to the ``kg_{dataset}`` graph;
+    omitted → default graph.
+    """
     try:
-        stats = await lake.kg_stats()
+        stats = await lake.kg_stats(dataset_name=dataset)
         return KGStatsResponse(
             total_vertices=stats.get("total_vertices", 0),
             total_edges=stats.get("total_edges", 0),

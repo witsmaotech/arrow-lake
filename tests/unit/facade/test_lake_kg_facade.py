@@ -129,7 +129,7 @@ class TestKGTraverserMethods:
         result = await lake.kg_all_shortest_paths("v1", "v2", max_depth=5)
         assert result == [{"path": "v1->v2"}]
         mock_client.traverser_all_shortest_paths.assert_awaited_once_with(
-            "v1", "v2", direction="OUT", max_depth=5,
+            "v1", "v2", direction="OUT", max_depth=5, graph_name=None,
         )
 
     @pytest.mark.asyncio()
@@ -198,7 +198,7 @@ class TestKGTraverserMethods:
         steps = [{"direction": "OUT", "labels": ["knows"]}]
         await lake.kg_customized_paths("v1", steps, with_vertex=False)
         mock_client.traverser_customized_paths.assert_awaited_once_with(
-            "v1", steps, with_vertex=False, with_edge=True,
+            "v1", steps, with_vertex=False, with_edge=True, graph_name=None,
         )
 
 
