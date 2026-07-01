@@ -10,7 +10,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 
 from arrow_lake.api.auth_models import Role
-from arrow_lake.api.deps import get_lake, require_role
+from arrow_lake.api.deps import get_checker, get_lake, require_role
 from arrow_lake.api.models.knowledge_graph import (
     GraphRAGQueryRequest,
     KGBuildRequest,
@@ -178,14 +178,19 @@ async def kg_neighbors(
     dataset: str | None = None,
     lake: Any = Depends(get_lake),
     _user: dict = Depends(require_role(Role.VIEWER)),
+    checker=Depends(get_checker),
 ) -> KGNeighborsResponse:
     """Get neighbor vertices of a given entity.
 
     ``dataset`` (lake path) scopes the query to the ``kg_{dataset}`` graph;
-    omitted → default graph.
+    omitted → default graph. Per-dataset ACL is enforced when ``dataset`` is set.
     """
     if depth > 5:
         raise HTTPException(status_code=400, detail=f"Depth too large: {depth} (max 5)")
+    if dataset is not None and not checker.check_dataset_access(
+        role=_user.role, dataset=dataset, action="read"
+    ):
+        raise HTTPException(status_code=403, detail=f"Read access to dataset '{dataset}' denied")
     try:
         neighbors = await lake.kg_get_neighbors(entity_id, depth=depth, dataset_name=dataset)
         return KGNeighborsResponse(
@@ -202,12 +207,17 @@ async def kg_stats(
     dataset: str | None = None,
     lake: Any = Depends(get_lake),
     _user: dict = Depends(require_role(Role.VIEWER)),
+    checker=Depends(get_checker),
 ) -> KGStatsResponse:
     """Get knowledge graph statistics.
 
     ``dataset`` (lake path) scopes counts to the ``kg_{dataset}`` graph;
-    omitted → default graph.
+    omitted → default graph. Per-dataset ACL is enforced when ``dataset`` is set.
     """
+    if dataset is not None and not checker.check_dataset_access(
+        role=_user.role, dataset=dataset, action="read"
+    ):
+        raise HTTPException(status_code=403, detail=f"Read access to dataset '{dataset}' denied")
     try:
         stats = await lake.kg_stats(dataset_name=dataset)
         return KGStatsResponse(
