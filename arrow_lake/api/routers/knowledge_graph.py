@@ -5,10 +5,10 @@ from __future__ import annotations
 import logging
 import re
 import time
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from arrow_lake.api.auth_models import Role
 from arrow_lake.api.deps import get_checker, get_lake, require_role
@@ -287,7 +287,14 @@ async def graphrag_query(
 
 
 def _enforce_read_acl(checker, _user, dataset: str | None) -> None:
-    """Raise 403 if the user lacks read access on the scoped dataset."""
+    """Raise 403 if the user lacks read access on the scoped dataset.
+
+    When ``dataset`` is None the request targets the legacy default graph
+    (``hugegraph``), whose access stays role-gated (VIEWER) — the pre-v1.8.6
+    behavior preserved for backward compat, consistent with ``kg_stats`` /
+    ``kg_neighbors`` / ``kg_query``. Per-dataset ACL applies only to the v1.8.6
+    ``kg_{dataset}`` graphs (the new isolation surface).
+    """
     if dataset is not None and not checker.check_dataset_access(
         role=_user.role, dataset=dataset, action="read"
     ):
@@ -327,17 +334,31 @@ class _SingleSourceReq(BaseModel):
 
 
 class _MultiNodeReq(BaseModel):
-    sources: list[str]
-    targets: list[str]
+    sources: list[str] = Field(max_length=100)
+    targets: list[str] = Field(max_length=100)
     direction: str = "OUT"
     weight_prop: str = "weight"
     max_degree: int = 10000
     dataset: str | None = None
 
 
+class _TraverseStep(BaseModel):
+    """One step of a customized traversal — validated, HugeGraph-compatible.
+
+    Extra fields allowed (HugeGraph accepts ``degree``/``sample``/etc.) but the
+    security-relevant ones are typed and bounded.
+    """
+    model_config = ConfigDict(extra="allow")
+    direction: Literal["OUT", "IN", "BOTH"] = "OUT"
+    labels: list[str] = Field(default_factory=list, max_length=50)
+    max_degree: int | None = Field(default=None, ge=0, le=100000)
+    skip_degree: int | None = Field(default=None, ge=0)
+    properties: dict[str, Any] = Field(default_factory=dict)
+
+
 class _CustomizedReq(BaseModel):
     source: str
-    steps: list[dict[str, Any]]
+    steps: list[_TraverseStep] = Field(max_length=20)
     with_vertex: bool = True
     with_edge: bool = True
     dataset: str | None = None
@@ -467,9 +488,10 @@ async def traverse_customized(
 ) -> dict[str, Any]:
     """Customized multi-step path traversal."""
     _enforce_read_acl(checker, _user, req.dataset)
+    steps = [s.model_dump(exclude_none=True) for s in req.steps]
     try:
         return {"results": await lake.kg_customized_paths(
-            req.source, req.steps, with_vertex=req.with_vertex, with_edge=req.with_edge,
+            req.source, steps, with_vertex=req.with_vertex, with_edge=req.with_edge,
             dataset_name=req.dataset)}
     except KGError as exc:
         raise HTTPException(status_code=_kg_error_to_status(exc), detail=exc.message) from exc
