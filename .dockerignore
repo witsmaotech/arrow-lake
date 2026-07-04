@@ -37,6 +37,7 @@ tests/
 
 # Documentation
 docs/
+!docs/cookbook/datas/papers/full_text/p001_attention_is_all_you_need.pdf
 *.md
 !README.md
 
