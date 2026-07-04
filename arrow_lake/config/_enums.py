@@ -106,6 +106,25 @@ class OcrBackend(StrEnum):
 
     KREUZBERG = "kreuzberg"
     TURBO_OCR = "turbo_ocr"
+    DOCLING = "docling"
+
+
+class DoclingOcrEngine(StrEnum):
+    """Docling sidecar OCR engine selection.
+
+    See ADR docs/docling-ocr-migration-adr.md §4 for the auto-switch matrix:
+      auto      → 中文/默认 rapidocr, 多语言 easyocr, 英文 tesseract
+      rapidocr  → PaddleOCR PP-OCRv4 模型 (ONNX 轻量, 中文最优; #3569 强制中文)
+      easyocr   → 多语言 (显式 lang 列表可控)
+      tesseract → 英文最优
+      none      → 不做 OCR (文字版 PDF 走文本层, 最快)
+    """
+
+    AUTO = "auto"
+    RAPIDOCR = "rapidocr"
+    EASYOCR = "easyocr"
+    TESSERACT = "tesseract"
+    NONE = "none"
 
 
 class PdfParseMode(StrEnum):

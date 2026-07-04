@@ -30,6 +30,27 @@ except ImportError:
     PdfConfig = None  # type: ignore[assignment, misc]
     extract_file_sync = None  # type: ignore[assignment]
 
+try:
+    from docling.document_converter import DocumentConverter, PdfFormatOption
+    from docling.datamodel.base_models import InputFormat
+    from docling.datamodel.pipeline_options import (
+        EasyOcrOptions,
+        PdfPipelineOptions,
+        RapidOcrOptions,
+        TesseractOcrOptions,
+    )
+
+    _DOCLING_AVAILABLE = True
+except ImportError:
+    _DOCLING_AVAILABLE = False
+    DocumentConverter = None  # type: ignore[assignment]
+    PdfFormatOption = None  # type: ignore[assignment]
+    InputFormat = None  # type: ignore[assignment]
+    PdfPipelineOptions = None  # type: ignore[assignment]
+    RapidOcrOptions = None  # type: ignore[assignment]
+    EasyOcrOptions = None  # type: ignore[assignment]
+    TesseractOcrOptions = None  # type: ignore[assignment]
+
 if TYPE_CHECKING:
     pass
 
@@ -153,6 +174,7 @@ class DocumentParser:
 
     def __init__(self, config: DocumentConfig | None = None) -> None:
         self._config = config or DocumentConfig()
+        self._docling_converter: Any = None  # 懒加载单例（Docling DocumentConverter，模型只载入一次）
 
     def parse(
         self,
@@ -183,6 +205,9 @@ class DocumentParser:
 
         if self._config.ocr_backend == OcrBackend.TURBO_OCR:
             return self._parse_turbo_ocr_primary(file_path, ocr_client, effective_max)
+
+        if self._config.ocr_backend == OcrBackend.DOCLING:
+            return self._parse_docling(file_path, effective_max)
 
         return self._parse_kreuzberg(file_path, effective_max)
 
@@ -224,6 +249,91 @@ class DocumentParser:
             page_count=len(pages),
             backend="kreuzberg",
         )
+
+    def _get_docling_converter(self) -> Any:
+        """懒加载 Docling DocumentConverter 单例（模型只载入一次，进程内复用）。"""
+        if self._docling_converter is not None:
+            return self._docling_converter
+        if not _DOCLING_AVAILABLE:
+            raise DocumentError(
+                error_code=ErrorCode.DOCUMENT_PARSE_FAILED,
+                message="docling package is not installed. Install with: pip install arrow-lake[docling]",
+            )
+        engine, langs = self._resolve_docling_ocr()
+        pipeline = self._build_docling_pipeline(engine, langs)
+        # docling 2.x: format_options 必须用 InputFormat → PdfFormatOption（不能用 dict）
+        self._docling_converter = DocumentConverter(
+            format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline)}
+        )
+        return self._docling_converter
+
+    def _parse_docling(
+        self, file_path: Path, max_pages: int,
+    ) -> ParsedDocument:
+        """Parse via Docling Python SDK（库内嵌，多格式 + 可插拔 OCR）。
+
+        多格式（PDF/Office/HTML/图片/邮件）+ OCR（rapidocr 中文 / easyocr 多语言 /
+        tesseract 英文）。详见 ADR docs/docling-ocr-migration-adr.md。
+        """
+        converter = self._get_docling_converter()
+        try:
+            result = converter.convert(str(file_path))
+        except Exception as exc:
+            raise DocumentError(
+                error_code=ErrorCode.DOCUMENT_PARSE_FAILED,
+                message=f"Docling failed to parse '{file_path}': {exc}",
+            ) from exc
+
+        doc = result.document
+        md = doc.export_to_markdown() or ""
+        if not md:
+            raise DocumentError(
+                error_code=ErrorCode.DOCUMENT_PARSE_FAILED,
+                message=f"Docling returned empty content for '{file_path}'",
+            )
+
+        # Docling 输出全文 Markdown（含版面/表格/阅读顺序）；保留整块，
+        # 后续 chunking 阶段（chunk_size/strategy）负责切分。
+        return ParsedDocument(
+            text=md,
+            pages=((1, md),),
+            page_count=1,
+            backend="docling",
+        )
+
+    def _resolve_docling_ocr(self) -> tuple[str, list[str]]:
+        """自动选择 docling OCR 引擎：中文→rapidocr，多语言→easyocr，默认 rapidocr。
+
+        rapidocr 用 PaddleOCR PP-OCRv4 模型，#3569 在纯中文场景强制中文模型正合适；
+        显式指定非中文语言时切 easyocr（多语言可控）。
+        """
+        from arrow_lake.config._enums import DoclingOcrEngine
+
+        cfg = self._config
+        engine = cfg.docling_ocr_engine
+        if engine != DoclingOcrEngine.AUTO:
+            return engine.value, list(cfg.docling_ocr_languages)
+        langs = cfg.docling_ocr_languages
+        if langs and "ch_sim" not in langs:
+            return DoclingOcrEngine.EASYOCR.value, list(langs)
+        return DoclingOcrEngine.RAPIDOCR.value, list(langs) or ["ch_sim"]
+
+    @staticmethod
+    def _build_docling_pipeline(engine: str, langs: list[str]) -> Any:
+        """构造 Docling PdfPipelineOptions（OCR 引擎切换）。返回 None 则用默认。"""
+        if not _DOCLING_AVAILABLE:
+            return None
+        if engine == "none":
+            return PdfPipelineOptions(do_ocr=False)
+        if engine == "rapidocr":
+            ocr = RapidOcrOptions()
+        elif engine == "easyocr":
+            ocr = EasyOcrOptions(lang=langs or ["ch_sim", "en"])
+        elif engine == "tesseract":
+            ocr = TesseractOcrOptions(lang=langs or ["eng"])
+        else:
+            ocr = RapidOcrOptions()
+        return PdfPipelineOptions(do_ocr=True, ocr_options=ocr)
 
     def _parse_turbo_ocr_primary(
         self, file_path: Path, ocr_client: Any, max_pages: int,

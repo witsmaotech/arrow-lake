@@ -59,7 +59,7 @@ ENV https_proxy=${BUILD_PROXY}
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv venv .venv \
     && . .venv/bin/activate \
-    && uv pip install --no-cache-dir ".[fts,otel,rag,he]" \
+    && uv pip install --no-cache-dir ".[fts,otel,rag,he,document,docling,chunking-full,dedup,nemo-curator,gpu]" \
     && uv pip install --no-cache-dir jupyterlab ipywidgets \
     && uv pip install --no-cache-dir modelscope>=1.18 PyJWT "apache-gravitino==1.2.1" "boto3==1.43.0" "botocore==1.43.0"
 
@@ -113,6 +113,20 @@ RUN for f in /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list; do \
     libgomp1 \
     libssl3 \
     libstdc++6 \
+    libgl1 \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender1 \
+    libxcb1 \
+    libxft2 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxfixes3 \
+    libxrandr2 \
+    libxi6 \
+    libxtst6 \
+    libfontconfig1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user for security

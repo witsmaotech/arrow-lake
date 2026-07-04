@@ -8,7 +8,7 @@ from typing import Any
 
 from pydantic import BaseModel, field_validator, model_validator
 
-from arrow_lake.config._enums import ChunkStrategy, OcrBackend, PdfParseMode
+from arrow_lake.config._enums import ChunkStrategy, DoclingOcrEngine, OcrBackend, PdfParseMode
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +48,11 @@ class DocumentConfig(BaseModel):
     kreuzberg_ocr_backend: str = "paddleocr"
     kreuzberg_language: str = "eng"
     kreuzberg_force_ocr: bool = False
+    # Docling backend (ocr_backend="docling") — Python SDK 库内嵌，
+    # 支持 PDF/Office/HTML/图片/邮件多格式 + rapidocr/easyocr/tesseract OCR 切换。
+    # 详见 docs/docling-ocr-migration-adr.md
+    docling_ocr_engine: DoclingOcrEngine = DoclingOcrEngine.AUTO
+    docling_ocr_languages: list[str] = []
     chunk_strategy: ChunkStrategy = ChunkStrategy.RECURSIVE
     chunk_size: int = 512
     chunk_overlap: int = 64
