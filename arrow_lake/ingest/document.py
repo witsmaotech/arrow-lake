@@ -301,6 +301,13 @@ class DocumentParser:
 
         doc = result.document
         md = doc.export_to_markdown() or ""
+        # 置信度评估（docling v2.34+: mean_grade / low_grade），用于摄入质量门控
+        conf = getattr(result, "confidence", None)
+        if conf is not None:
+            logger.info(
+                "docling confidence file=%s mean_grade=%s low_grade=%s",
+                file_path, getattr(conf, "mean_grade", None), getattr(conf, "low_grade", None),
+            )
         if not md:
             raise DocumentError(
                 error_code=ErrorCode.DOCUMENT_PARSE_FAILED,
@@ -335,20 +342,31 @@ class DocumentParser:
 
     @staticmethod
     def _build_docling_pipeline(engine: str, langs: list[str]) -> Any:
-        """构造 Docling PdfPipelineOptions（OCR 引擎切换）。返回 None 则用默认。"""
+        """构造 Docling PdfPipelineOptions（OCR 引擎切换 + 表格识别优化）。
+
+        表格：TableFormerMode.ACCURATE + do_cell_matching=False，
+        针对中文工程文档多列表格（目录/投资表）防 cell 错误合并。
+        """
         if not _DOCLING_AVAILABLE:
             return None
-        if engine == "none":
-            return PdfPipelineOptions(do_ocr=False)
-        if engine == "rapidocr":
-            ocr = RapidOcrOptions()
-        elif engine == "easyocr":
+        # OCR 引擎选择（auto 默认 rapidocr）
+        if engine == "easyocr":
             ocr = EasyOcrOptions(lang=langs or ["ch_sim", "en"])
         elif engine == "tesseract":
             ocr = TesseractOcrOptions(lang=langs or ["eng"])
-        else:
+        else:  # rapidocr / auto / none（none 仍保留 ocr_options 默认，由 do_ocr=False 关闭）
             ocr = RapidOcrOptions()
-        return PdfPipelineOptions(do_ocr=True, ocr_options=ocr)
+        pipeline = PdfPipelineOptions(
+            do_ocr=(engine != "none"), ocr_options=ocr, do_table_structure=True,
+        )
+        # 表格识别优化（中文多列防错并）
+        try:
+            from docling.datamodel.pipeline_options import TableFormerMode
+            pipeline.table_structure_options.mode = TableFormerMode.ACCURATE
+            pipeline.table_structure_options.do_cell_matching = False
+        except Exception as e:
+            logger.debug("TableFormerMode config skipped: %s", e)
+        return pipeline
 
     def _parse_turbo_ocr_primary(
         self, file_path: Path, ocr_client: Any, max_pages: int,
