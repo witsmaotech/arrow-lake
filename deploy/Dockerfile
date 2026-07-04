@@ -63,6 +63,12 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     && uv pip install --no-cache-dir jupyterlab ipywidgets \
     && uv pip install --no-cache-dir modelscope>=1.18 PyJWT "apache-gravitino==1.2.1" "boto3==1.43.0" "botocore==1.43.0"
 
+# 预取 docling 模型(layout DocLayNet + table TableFormer + OCR)到镜像，
+# 运行时 DOCLING_ARTIFACTS_PATH 离线可用(气隙部署 + 冷启动 <10s，无需运行时 HF 下载)
+ENV DOCLING_ARTIFACTS_PATH=/build/.docling-artifacts
+RUN . .venv/bin/activate && mkdir -p /build/.docling-artifacts \
+    && (docling-tools models download 2>&1 || echo "WARN: docling models prefetch skipped (will fall back to HF_HOME at runtime)")
+
 # Clear proxy ENV after all network-dependent steps
 ENV HTTP_PROXY=""
 ENV HTTPS_PROXY=""
@@ -153,6 +159,9 @@ USER arrowlake
 # Copy virtual environment from builder
 COPY --from=builder /build/.venv /app/.venv
 
+# docling 预取模型(builder 阶段下载，随镜像分发；运行时 DOCLING_ARTIFACTS_PATH 离线可用)
+COPY --chown=arrowlake:arrowlake --from=builder /build/.docling-artifacts /app/.docling-artifacts
+
 # Fix shebangs: builder venv paths (/build/.venv) → runtime (/app/.venv)
 # Must run as root since COPY sets ownership to root
 USER root
@@ -173,7 +182,8 @@ COPY examples/ /app/examples/
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONPATH="/app" \
     PYTHONUNBUFFERED="1" \
-    PYTHONDONTWRITEBYTECODE="1"
+    PYTHONDONTWRITEBYTECODE="1" \
+    DOCLING_ARTIFACTS_PATH="/app/.docling-artifacts"
 
 # Default: health/metrics server
 EXPOSE 8000

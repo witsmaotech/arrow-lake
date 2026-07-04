@@ -31,7 +31,11 @@ except ImportError:
     extract_file_sync = None  # type: ignore[assignment]
 
 try:
-    from docling.document_converter import DocumentConverter, PdfFormatOption
+    from docling.document_converter import (
+        DocumentConverter,
+        ImageFormatOption,
+        PdfFormatOption,
+    )
     from docling.datamodel.base_models import InputFormat
     from docling.datamodel.pipeline_options import (
         EasyOcrOptions,
@@ -45,6 +49,7 @@ except ImportError:
     _DOCLING_AVAILABLE = False
     DocumentConverter = None  # type: ignore[assignment]
     PdfFormatOption = None  # type: ignore[assignment]
+    ImageFormatOption = None  # type: ignore[assignment]
     InputFormat = None  # type: ignore[assignment]
     PdfPipelineOptions = None  # type: ignore[assignment]
     RapidOcrOptions = None  # type: ignore[assignment]
@@ -261,9 +266,19 @@ class DocumentParser:
             )
         engine, langs = self._resolve_docling_ocr()
         pipeline = self._build_docling_pipeline(engine, langs)
-        # docling 2.x: format_options 必须用 InputFormat → PdfFormatOption（不能用 dict）
+        # 多格式默认首选：PDF/IMAGE 用配好的 pipeline(OCR)，
+        # DOCX/PPTX/XLSX/HTML/MD/ASCIIDOC 用默认 SimplePipeline（无需 layout 模型，快）
+        allowed = [
+            getattr(InputFormat, n) for n in (
+                "PDF", "DOCX", "PPTX", "XLSX", "HTML", "IMAGE", "MD", "ASCIIDOC",
+            ) if getattr(InputFormat, n, None) is not None
+        ]
         self._docling_converter = DocumentConverter(
-            format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline)}
+            allowed_formats=allowed,
+            format_options={
+                InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline),
+                InputFormat.IMAGE: ImageFormatOption(pipeline_options=pipeline),
+            },
         )
         return self._docling_converter
 
