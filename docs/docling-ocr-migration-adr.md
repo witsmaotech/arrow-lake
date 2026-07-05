@@ -291,6 +291,38 @@ RUN uv pip install --no-cache-dir ".[fts,otel,rag,he]"
 
 ---
 
+## 10. P2 进阶能力（VlmPipeline + HybridChunker）— 已实现
+
+**状态**：2026-07-05 落地（commit `feat(docling): P2 VlmPipeline + HybridChunker`）。
+
+### 10.1 VlmPipeline（GraniteDocling，复杂版面/扫描件）
+
+- **配置**：`DocumentConfig.docling_pipeline_type`（`DoclingPipelineType.STANDARD|VLM`）+
+  `docling_vlm_preset`（默认 `granite_docling` = 258M DocTags 模型）。
+- **运行时**：本地 `TransformersVlmEngineOptions`（零额外基础设施）。VLM 与标准流水线互斥，
+  选中时独占 PDF/IMAGE 的 `pipeline_cls=VlmPipeline`。模型经 HF_HOME 持久卷加载（同 P0 离线路径）。
+- **取舍**：CPU 上 ~100s/页（慢但可用），有 GPU 则快。生产高吞吐可后续切远程 API（vLLM/Ollama），
+  仅改 `engine_options`——GraniteDocling 的 Ollama gguf 官方仍 TBA，现实远程路径是 vLLM。
+
+### 10.2 HybridChunker（结构感知分块）
+
+- **配置**：`ChunkStrategy.DOCLING_HYBRID` + `docling_chunk_tokenizer`（默认 `BAAI/bge-m3`，与嵌入对齐）。
+- **契约**：`ParsedDocument.docling_doc` 透传 `DoclingDocument` 对象（仅 docling 后端）；
+  `DocumentChunker.chunk(pages, *, docling_doc=)` 在 DOCLING_HYBRID 时直接吃 DoclingDocument，
+  用 `HybridChunker.chunk(dl_doc=)` 做结构感知切分，`contextualize()` 输出带标题/题注的增强文本。
+- **降级**：缺 DoclingDocument（非 docling 后端）→ 回退 RECURSIVE；docling extra 未装 → `_validate_strategy` 降级 RECURSIVE。
+- **结构感知 chunk 无单一页码** → `page_number=0`（metadata-only 约定）。
+
+### 10.3 测试
+
+`tests/unit/ingest/test_docling_p2.py` 17 例：配置默认值、VLM builder preset/engine 装配、
+VLM converter 用 VlmPipeline 作 pipeline_cls、HybridChunker dispatch + 降级。回归 723 测试全绿。
+注意：`test_chunker_advanced.py` 用 `importlib.reload(chunker_mod)` 会重建 `Chunk` 类，测试中
+`isinstance` 须读 `chunker_mod.Chunk`（模块字典当前值），不能用收集期 from-import 的旧引用。
+
+---
+
 ## 决策记录
 
 - **2026-07-03**: 基于 v1.8.6 端到端测试 + MinerU/Docling/xberg 横向评估（GitHub 数据 + Context7 + WebSearch），选定 Docling + RapidOCR/EasyOCR/Tesseract 方案。MinerU 因 AGPL-3.0 许可排除（除非采购商业许可）。xberg 因 v1 成熟度暂不选。paddleocr 直接集成因 paddlepaddle 安装复杂度排除，改用 RapidOCR（同模型轻量推理）。
+- **2026-07-05**: P2 落地——VlmPipeline 选本地 Transformers（匹配 P0 离线风格，远程 API 留作后续）；HybridChunker 用 `ParsedDocument.docling_doc` 透传 DoclingDocument（最小契约改动，外科手术式接入现有 parse→chunk 链路）。

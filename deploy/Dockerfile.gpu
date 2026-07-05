@@ -35,12 +35,13 @@ COPY arrow_lake/ arrow_lake/
 COPY flows/ flows/
 
 # Create venv and install all dependencies (with BuildKit cache)
+# Full extras（含 docling）— 与 CPU Dockerfile 对齐；gpu extra 此处不加（下方换 cu124 torch）
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv venv .venv \
     && . .venv/bin/activate \
-    && uv pip install --no-cache-dir . \
+    && uv pip install --no-cache-dir ".[fts,otel,rag,he,document,docling,chunking-full,dedup]" \
     && uv pip install --no-cache-dir jupyterlab ipywidgets \
-    && uv pip install --no-cache-dir modelscope>=1.18
+    && uv pip install --no-cache-dir modelscope>=1.18 PyJWT "apache-gravitino==1.2.1" "boto3==1.43.0" "botocore==1.43.0"
 
 # Replace CPU torch with CUDA 12.4 variant
 RUN --mount=type=cache,target=/root/.cache/uv \
@@ -61,12 +62,27 @@ LABEL org.opencontainers.image.source="https://github.com/wits-sunpw/arrow-lake"
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 # Runtime system dependencies (Ubuntu packages)
+# 含 docling/opencv 运行时依赖（libgl1 等），与 CPU Dockerfile 对齐
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     libcurl4-openssl-dev \
     libgomp1 \
     libgrpc++1 \
     libssl3 \
+    libgl1 \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender1 \
+    libxcb1 \
+    libxft2 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxfixes3 \
+    libxrandr2 \
+    libxi6 \
+    libxtst6 \
+    libfontconfig1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Install standalone Python 3.12 via uv (reliable across all base images)
@@ -105,7 +121,8 @@ ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE="1" \
     NVIDIA_VISIBLE_DEVICES="all" \
     NVIDIA_DRIVER_CAPABILITIES="compute,utility" \
-    ARROW_LAKE__COMPUTE__GPU_ENABLED="true"
+    ARROW_LAKE__COMPUTE__GPU_ENABLED="true" \
+    HF_HOME="/app/.docling-cache"
 
 # Install mc (MinIO Client) for health checks
 RUN curl -sL https://dl.min.io/client/mc/release/linux-amd64/mc -o /usr/local/bin/mc \
