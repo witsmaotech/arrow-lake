@@ -42,7 +42,11 @@ try:
         PdfPipelineOptions,
         RapidOcrOptions,
         TesseractOcrOptions,
+        VlmConvertOptions,
+        VlmPipelineOptions,
     )
+    from docling.datamodel.vlm_engine_options import TransformersVlmEngineOptions
+    from docling.pipeline.vlm_pipeline import VlmPipeline
 
     _DOCLING_AVAILABLE = True
 except ImportError:
@@ -55,6 +59,10 @@ except ImportError:
     RapidOcrOptions = None  # type: ignore[assignment]
     EasyOcrOptions = None  # type: ignore[assignment]
     TesseractOcrOptions = None  # type: ignore[assignment]
+    VlmPipelineOptions = None  # type: ignore[assignment]
+    VlmConvertOptions = None  # type: ignore[assignment]
+    TransformersVlmEngineOptions = None  # type: ignore[assignment]
+    VlmPipeline = None  # type: ignore[assignment]
 
 if TYPE_CHECKING:
     pass
@@ -74,6 +82,8 @@ class ParsedDocument:
         page_count: Total pages.
         backend: Which parser was used.
         blob_key: S3/MinIO key where raw file was stored (empty if not stored).
+        docling_doc: DoclingDocument 对象（仅 backend="docling" 时），
+            供 HybridChunker 等结构感知分块器消费；其他后端为 None。
     """
 
     text: str
@@ -81,6 +91,7 @@ class ParsedDocument:
     page_count: int
     backend: str
     blob_key: str = ""
+    docling_doc: Any = None
 
 
 def _build_extraction_config(cfg: DocumentConfig, mode: PdfParseMode):
@@ -264,6 +275,25 @@ class DocumentParser:
                 error_code=ErrorCode.DOCUMENT_PARSE_FAILED,
                 message="docling package is not installed. Install with: pip install arrow-lake[docling]",
             )
+        from arrow_lake.config._enums import DoclingPipelineType
+
+        # VLM 流水线（GraniteDocling）：端到端视觉模型，复杂版面/扫描件/公式。
+        # 与标准流水线互斥——VLM 独占 PDF/IMAGE 的 pipeline_cls。
+        if self._config.docling_pipeline_type == DoclingPipelineType.VLM:
+            pdf_option = PdfFormatOption(
+                pipeline_cls=VlmPipeline,
+                pipeline_options=self._build_docling_vlm_pipeline(),
+            )
+            self._docling_converter = DocumentConverter(
+                allowed_formats=[InputFormat.PDF, InputFormat.IMAGE],
+                format_options={
+                    InputFormat.PDF: pdf_option,
+                    InputFormat.IMAGE: pdf_option,
+                },
+            )
+            return self._docling_converter
+
+        # 标准流水线：布局 + OCR + 表格识别
         engine, langs = self._resolve_docling_ocr()
         pipeline = self._build_docling_pipeline(engine, langs)
         # 多格式默认首选：PDF/IMAGE 用配好的 pipeline(OCR)，
@@ -281,6 +311,17 @@ class DocumentParser:
             },
         )
         return self._docling_converter
+
+    def _build_docling_vlm_pipeline(self) -> Any:
+        """构造 Docling VlmPipelineOptions（GraniteDocling 端到端视觉模型，本地 Transformers）。
+
+        preset 默认 granite_docling（258M，DocTags 输出）；模型从 HF_HOME 卷加载，
+        CPU 可跑（慢，~100s/页），有 GPU 则快。换 preset/runt­ime 见 ADR §P2。
+        """
+        preset = self._config.docling_vlm_preset or "granite_docling"
+        engine = TransformersVlmEngineOptions()
+        vlm_options = VlmConvertOptions.from_preset(preset, engine_options=engine)
+        return VlmPipelineOptions(vlm_options=vlm_options)
 
     def _parse_docling(
         self, file_path: Path, max_pages: int,
@@ -316,11 +357,13 @@ class DocumentParser:
 
         # Docling 输出全文 Markdown（含版面/表格/阅读顺序）；保留整块，
         # 后续 chunking 阶段（chunk_size/strategy）负责切分。
+        # docling_doc 透传 DoclingDocument 对象，供 HybridChunker 结构感知分块消费。
         return ParsedDocument(
             text=md,
             pages=((1, md),),
             page_count=1,
             backend="docling",
+            docling_doc=doc,
         )
 
     def _resolve_docling_ocr(self) -> tuple[str, list[str]]:

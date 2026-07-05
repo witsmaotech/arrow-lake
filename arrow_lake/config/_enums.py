@@ -127,6 +127,18 @@ class DoclingOcrEngine(StrEnum):
     NONE = "none"
 
 
+class DoclingPipelineType(StrEnum):
+    """Docling PDF pipeline type (ocr_backend="docling").
+
+    STANDARD → StandardPdfPipeline: 布局 + OCR + 表格识别（默认，文字版/常规 PDF）
+    VLM      → VlmPipeline: 单个视觉语言模型端到端转换整页（GraniteDocling 258M），
+               适合复杂版面/扫描件/公式。详见 ADR docs/docling-ocr-migration-adr.md §P2。
+    """
+
+    STANDARD = "standard"
+    VLM = "vlm"
+
+
 class PdfParseMode(StrEnum):
     """PDF parsing modes."""
 
@@ -145,3 +157,4 @@ class ChunkStrategy(StrEnum):
     CHONKIE_TOKEN = "chonkie_token"
     CHONKIE_SEMANTIC = "chonkie_semantic"
     CHONKIE_SDPM = "chonkie_sdpm"
+    DOCLING_HYBRID = "docling_hybrid"

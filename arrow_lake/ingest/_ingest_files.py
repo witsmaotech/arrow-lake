@@ -115,6 +115,7 @@ class _FileIngestMixin:
                 embedding_model=doc_config.semantic_embedding_model,
                 similarity_threshold=doc_config.semantic_similarity_threshold,
                 min_chunk_size=doc_config.semantic_min_chunk_size,
+                docling_chunk_tokenizer=doc_config.docling_chunk_tokenizer,
             )
             parser = DocumentParser(doc_config)
         else:
@@ -152,7 +153,10 @@ class _FileIngestMixin:
                         message=f"Failed to upload '{pdf_path}' to blob store: {exc}",
                     ) from exc
 
-            chunks = chunker.chunk(list(parsed.pages))
+            chunks = chunker.chunk(
+                list(parsed.pages),
+                docling_doc=getattr(parsed, "docling_doc", None),
+            )
 
             if not chunks:
                 sources.append(IngestionSource(

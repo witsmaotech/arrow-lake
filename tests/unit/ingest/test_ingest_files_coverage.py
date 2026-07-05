@@ -191,6 +191,7 @@ class TestIngestDocuments:
         doc_config.semantic_embedding_model = None
         doc_config.semantic_similarity_threshold = 0.8
         doc_config.semantic_min_chunk_size = 100
+        doc_config.docling_chunk_tokenizer = "BAAI/bge-m3"
         doc_config.max_file_size_mb = 100
         doc_config.store_raw_pdf = True
         doc_config.blob_prefix = "docs/"
@@ -209,6 +210,7 @@ class TestIngestDocuments:
             strategy="fixed", chunk_size=500, chunk_overlap=50,
             tokenizer=None, embedding_model=None,
             similarity_threshold=0.8, min_chunk_size=100,
+            docling_chunk_tokenizer="BAAI/bge-m3",
         )
 
     @patch("arrow_lake.ingest.chunker.DocumentChunker")

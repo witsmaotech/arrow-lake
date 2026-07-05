@@ -8,7 +8,13 @@ from typing import Any
 
 from pydantic import BaseModel, field_validator, model_validator
 
-from arrow_lake.config._enums import ChunkStrategy, DoclingOcrEngine, OcrBackend, PdfParseMode
+from arrow_lake.config._enums import (
+    ChunkStrategy,
+    DoclingOcrEngine,
+    DoclingPipelineType,
+    OcrBackend,
+    PdfParseMode,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +59,13 @@ class DocumentConfig(BaseModel):
     # 详见 docs/docling-ocr-migration-adr.md
     docling_ocr_engine: DoclingOcrEngine = DoclingOcrEngine.AUTO
     docling_ocr_languages: list[str] = []
+    # Docling PDF 流水线类型：standard(布局+OCR+表格) / vlm(GraniteDocling 端到端视觉模型)。
+    # VLM 适合复杂版面/扫描件/公式；本地 Transformers 运行时，模型下载到 HF_HOME 卷。
+    docling_pipeline_type: DoclingPipelineType = DoclingPipelineType.STANDARD
+    # VLM preset 名（VlmConvertOptions.from_preset）；默认 granite_docling = 258M DocTags 模型。
+    docling_vlm_preset: str = "granite_docling"
+    # HybridChunker 分词器（chunk_strategy="docling_hybrid" 时用）；与嵌入模型对齐 → 默认 bge-m3。
+    docling_chunk_tokenizer: str = "BAAI/bge-m3"
     chunk_strategy: ChunkStrategy = ChunkStrategy.RECURSIVE
     chunk_size: int = 512
     chunk_overlap: int = 64

@@ -11,6 +11,7 @@ Strategies:
 - CHONKIE_TOKEN: token-based splitting via chonkie (optional dep)
 - CHONKIE_SEMANTIC: embedding-similarity splitting via chonkie (optional dep)
 - CHONKIE_SDPM: semantic double-pass merge via chonkie (optional dep)
+- DOCLING_HYBRID: docling 结构感知分块（HybridChunker，吃 DoclingDocument；需 docling extra）
 """
 
 from __future__ import annotations
@@ -38,6 +39,14 @@ _CHONKIE_AVAILABLE = False
 try:
     import chonkie  # noqa: F401
     _CHONKIE_AVAILABLE = True
+except ImportError:
+    pass
+
+# HybridChunker 来自 docling 主包（docling.chunking），仅在安装 docling extra 时可用。
+_DOCLING_CHUNK_AVAILABLE = False
+try:
+    from docling.chunking import HybridChunker  # noqa: F401
+    _DOCLING_CHUNK_AVAILABLE = True
 except ImportError:
     pass
 
@@ -115,6 +124,8 @@ class DocumentChunker:
         embedding_model: HuggingFace model for chonkie semantic/sdpm chunkers.
         similarity_threshold: Similarity threshold for chonkie semantic splitting.
         min_chunk_size: Minimum chunk size for chonkie SDPM merge phase.
+        docling_chunk_tokenizer: HuggingFace model id for HybridChunker tokenizer
+            (default "BAAI/bge-m3" — 与嵌入模型对齐；仅 DOCLING_HYBRID 策略使用)。
     """
 
     _CHONKIE_STRATEGIES = frozenset({
@@ -133,6 +144,7 @@ class DocumentChunker:
         embedding_model: str = "",
         similarity_threshold: float = 0.5,
         min_chunk_size: int = 100,
+        docling_chunk_tokenizer: str = "BAAI/bge-m3",
     ) -> None:
         self._strategy = strategy
         self._chunk_size = chunk_size
@@ -141,9 +153,11 @@ class DocumentChunker:
         self._embedding_model = embedding_model
         self._similarity_threshold = similarity_threshold
         self._min_chunk_size = min_chunk_size
+        self._docling_chunk_tokenizer = docling_chunk_tokenizer
 
         self._chonkie_chunker: Any = None
         self._semchunk_tokenizer: Any = None
+        self._docling_hybrid_chunker: Any = None
 
         self._validate_strategy()
 
@@ -170,6 +184,12 @@ class DocumentChunker:
                 self._strategy.value,
             )
             self._strategy = ChunkStrategy.CHONKIE_TOKEN
+        elif self._strategy == ChunkStrategy.DOCLING_HYBRID and not _DOCLING_CHUNK_AVAILABLE:
+            logger.warning(
+                "docling HybridChunker not installed, falling back to RECURSIVE. "
+                "Install with: pip install arrow-lake[docling]"
+            )
+            self._strategy = ChunkStrategy.RECURSIVE
 
     def _get_semchunk_tokenizer(self) -> Any:
         """Lazily resolve semchunk tokenizer (tiktoken > HuggingFace > None)."""
@@ -242,13 +262,82 @@ class DocumentChunker:
         result = self._chonkie_chunker.chunk(text)
         return [c.text for c in result]
 
-    def chunk(self, pages: list[tuple[int, str]]) -> list[Chunk]:
+    def _get_docling_hybrid_chunker(self, docling_doc: Any) -> Any:
+        """懒加载 docling HybridChunker（按 docling_doc 重建，因为 serializer 绑定文档）。"""
+        from docling.chunking import HybridChunker
+        from docling_core.transforms.chunker.tokenizer.huggingface import HuggingFaceTokenizer
+        from transformers import AutoTokenizer
+
+        tokenizer = HuggingFaceTokenizer(
+            tokenizer=AutoTokenizer.from_pretrained(self._docling_chunk_tokenizer),
+        )
+        return HybridChunker(tokenizer=tokenizer, merge_peers=True)
+
+    def _chunk_with_docling_hybrid(self, docling_doc: Any) -> list[str]:
+        """用 docling HybridChunker 对 DoclingDocument 做结构感知分块。
+
+        HybridChunker 先按文档结构（标题/段落/列表/表格）切粗块，再做
+        tokenization-aware 细化与过小块合并。contextualize() 返回带标题/题注
+        上下文的增强文本（这才是要嵌入的文本）。
+        """
+        chunker = self._get_docling_hybrid_chunker(docling_doc)
+        raw = list(chunker.chunk(dl_doc=docling_doc))
+        return [chunker.contextualize(chunk=c) for c in raw]
+
+    def _chunk_docling_hybrid(
+        self, docling_doc: Any, pages: list[tuple[int, str]],
+    ) -> list[Chunk]:
+        """DOCLING_HYBRID 分发：有 DoclingDocument 走结构感知；无则降级 RECURSIVE。"""
+        if docling_doc is None:
+            logger.warning(
+                "docling_hybrid strategy got no DoclingDocument (backend != docling?), "
+                "degrading to RECURSIVE on extracted text",
+            )
+            fallback: list[Chunk] = []
+            idx = 0
+            for page_num, page_text in pages:
+                if not page_text or not page_text.strip():
+                    continue
+                for part in _split_recursive(page_text, self._chunk_size, self._chunk_overlap):
+                    if part.strip():
+                        fallback.append(Chunk(text=part, page_number=page_num, chunk_index=idx))
+                        idx += 1
+            return fallback
+
+        try:
+            parts = self._chunk_with_docling_hybrid(docling_doc)
+        except (ImportError, OSError, ValueError, RuntimeError) as exc:
+            raise DocumentError(
+                error_code=ErrorCode.DOCUMENT_CHUNK_FAILED,
+                message=f"docling HybridChunker failed: {exc}",
+            ) from exc
+
+        chunks: list[Chunk] = []
+        for idx, part in enumerate(parts):
+            if part and part.strip():
+                # 结构感知 chunk 无单一页码（可能跨页/跨节），用 0 表示 metadata-only
+                chunks.append(Chunk(text=part, page_number=0, chunk_index=idx))
+        logger.debug(
+            "docling_hybrid_chunked doc_items=%s chunks=%d",
+            getattr(docling_doc, "num_items", "?"), len(chunks),
+        )
+        return chunks
+
+    def chunk(
+        self,
+        pages: list[tuple[int, str]],
+        *,
+        docling_doc: Any = None,
+    ) -> list[Chunk]:
         """Chunk document pages into embedding-ready pieces.
 
         Each page is chunked independently to preserve page_number attribution.
 
         Args:
             pages: List of (page_number, page_text) tuples.
+            docling_doc: DoclingDocument 对象（仅 DOCLING_HYBRID 策略消费）。
+                由 docling 后端解析时透传；其他后端为 None。若策略为
+                DOCLING_HYBRID 但未提供，降级为对 pages 文本做 RECURSIVE 切分。
 
         Returns:
             List of Chunk instances with sequential indices.
@@ -256,6 +345,10 @@ class DocumentChunker:
         Raises:
             DocumentError: If chunking fails unexpectedly.
         """
+        # DOCLING_HYBRID 走结构感知路径，忽略 pages 分页（直接吃 DoclingDocument）
+        if self._strategy == ChunkStrategy.DOCLING_HYBRID:
+            return self._chunk_docling_hybrid(docling_doc, pages)
+
         chunks: list[Chunk] = []
         idx = 0
 
