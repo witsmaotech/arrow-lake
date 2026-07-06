@@ -48,50 +48,55 @@ _GENERIC_ENTITY_STOPWORDS: frozenset[str] = frozenset({
 })
 
 _ENTITY_EXTRACT_PROMPT = """\
-你是一个专业的中文知识图谱实体关系抽取器。从给定的文本中提取实体和关系。
+你是一位资深的中文知识图谱抽取专家。任务：从给定文本抽取高质量实体与关系，构建结构化知识图。
 
-返回 JSON（不要包含其他文字）：
+## 输出格式（仅输出纯 JSON，禁止 markdown 代码围栏 / 解释 / 前后缀文字）
 {
   "entities": [
-    {"name": "实体名", "type": "类型", "confidence": 0.0-1.0}
+    {"name": "实体名", "type": "类型", "description": "一句话说明", "properties": {"k": "v"}, "confidence": 0.0-1.0}
   ],
   "relations": [
-    {"source": "实体名", "target": "实体名", "relation": "关系描述", "confidence": 0.0-1.0}
+    {"source": "实体名", "target": "实体名", "relation": "关系类型", "confidence": 0.0-1.0}
   ]
 }
 
-## 实体类型
-- person: 具体人物名（如"张三"、"李四"）
-- organization: 机构/公司名（如"OpenAI"、"清华大学"）
-- location: 地理位置（如"北京"、"硅谷"）
-- concept: 具体的技术概念/产品名（如"Transformer"、"GPT-4"、"LanceDB"、"向量数据库"）
-- event: 具体事件（如"WWDC 2024"、"AlphaGo 人机大战"）
+## 实体类型（受控词表，选最贴切的一个）
+- person：具体人名
+- organization：机构/公司/部门
+- location：地点/区域
+- project：工程项目/建设工程/方案（如"芜湖市城市生命线安全工程一期"）
+- subsystem：子系统/专项模块（如"燃气安全监测系统"、"桥梁监测系统"）
+- facility：设施/设备/传感器（如"燃气泄漏传感器"、"应变计"）
+- technology：技术/方法/产品/平台（如"物联网平台"、"边缘计算"、"Apache Arrow"）
+- standard：标准/规范/政策/法规（如"GB 50028"）
+- metric：指标/参数/阈值（如"报警阈值"）
+- event：具体事件/事故
+- time：时间/阶段（如"2022年2月"、"一期"）
+- concept：其他具体专有名词/技术概念
 
-## 重要过滤规则
-- 不要提取通用词/抽象词作为实体，例如：优化、实践、方法、技术、构建、研究、综述、分析、评估、实验、数据、系统、模型、网络、算法、结果、问题、方案、应用、场景、任务、领域、理论、框架、功能、性能、效果、优势、挑战、策略、目标、条件、环境
-- 不要提取单个汉字或两个字的通用词
-- 实体名必须是文本中明确出现的具体名词或专有名词
-- 只提取文本中实际提到的、有明确指代的实体
+## 关系类型（优先用受控动词短语；描述不下再用更具体的，保持简短）
+建设/建造、包含/组成、采用/使用、负责/主管、监管/管理、位于/所在、监测、联动/协同、发生在、属于、影响、导致、提出/发布、集成/接入、开发了、基于
 
-## 关系规则
-- 只连接同一段文本中明确有关联的实体
-- relation 用简短的动词短语描述关系，例如："开发了"、"收购了"、"位于"、"属于"
-- 不要为没有明确关联的实体强行创建关系
-- source 和 target 必须是 entities 中已存在的实体名
-
-## 置信度评分标准
-- 0.9-1.0: 文本中明确提到，关系清晰
-- 0.7-0.8: 文本中有提及但关系需要推断
-- <0.7: 不确定，不要输出
+## 抽取规则（严格遵守）
+1. 只抽文本**明确陈述**的实体/关系，禁止用常识/推理脑补。
+2. 实体名须为文本中**原样出现**的具体名词/专有名词。**禁止**通用抽象词（系统、工程、技术、方法、数据、模型、平台、应用、建设、管理、优化、研究、方案、问题、目标、效果、性能、功能、需求、能力、体系、框架、措施、内容、工作、方面、领域、方向、阶段、原则 等），除非是专有名词的一部分。
+3. **去重**：同一实体只抽一次，选文本中最完整的名称；不同指代不重复抽取。
+4. **properties**：提取该实体在文本中的关键属性（数量/规模/位置/时间/指标值等），无则 {}。
+5. 关系必须**同段文本内有明确关联**；source/target 须是 entities 中已存在的实体名；禁止凭共现强行连边。
+6. 置信度：明确陈述 0.9-1.0；轻度推断 0.7-0.8；<0.7 不输出。
 
 ## 示例
+输入: "芜湖市城市生命线安全工程一期覆盖燃气、桥梁、供水、排水四个专项，采用物联网感知设备实时监测，2022年2月编制完成。"
+输出:
+{"entities":[{"name":"芜湖市城市生命线安全工程一期","type":"project","description":"芜湖市城市生命线安全工程一期","properties":{"编制时间":"2022年2月","专项数":"4"},"confidence":0.95},{"name":"燃气专项","type":"subsystem","description":"燃气安全监测专项","properties":{},"confidence":0.9},{"name":"桥梁专项","type":"subsystem","properties":{},"confidence":0.9},{"name":"供水专项","type":"subsystem","properties":{},"confidence":0.9},{"name":"排水专项","type":"subsystem","properties":{},"confidence":0.9},{"name":"物联网感知设备","type":"technology","description":"实时监测用传感设备","properties":{},"confidence":0.9}],"relations":[{"source":"芜湖市城市生命线安全工程一期","target":"燃气专项","relation":"包含","confidence":0.95},{"source":"芜湖市城市生命线安全工程一期","target":"桥梁专项","relation":"包含","confidence":0.95},{"source":"芜湖市城市生命线安全工程一期","target":"物联网感知设备","relation":"采用","confidence":0.9}]}
+
 输入: "OpenAI 发布了 GPT-4，该模型基于 Transformer 架构，由 Google 团队最初提出。"
 输出:
-{"entities":[{"name":"OpenAI","type":"organization","confidence":0.95},{"name":"GPT-4","type":"concept","confidence":0.95},{"name":"Transformer","type":"concept","confidence":0.95},{"name":"Google","type":"organization","confidence":0.9}],"relations":[{"source":"OpenAI","target":"GPT-4","relation":"发布了","confidence":0.95},{"source":"GPT-4","target":"Transformer","relation":"基于","confidence":0.9},{"source":"Google","target":"Transformer","relation":"最初提出","confidence":0.9}]}
+{"entities":[{"name":"OpenAI","type":"organization","properties":{},"confidence":0.95},{"name":"GPT-4","type":"technology","description":"OpenAI发布的大模型","properties":{},"confidence":0.95},{"name":"Transformer","type":"technology","description":"模型架构","properties":{},"confidence":0.95},{"name":"Google","type":"organization","properties":{},"confidence":0.9}],"relations":[{"source":"OpenAI","target":"GPT-4","relation":"发布了","confidence":0.95},{"source":"GPT-4","target":"Transformer","relation":"基于","confidence":0.9},{"source":"Google","target":"Transformer","relation":"提出","confidence":0.9}]}
 
 输入: "团队使用 Apache Arrow 进行数据处理。"
 输出:
-{"entities":[{"name":"Apache Arrow","type":"concept","confidence":0.95}],"relations":[]}
+{"entities":[{"name":"Apache Arrow","type":"technology","description":"数据处理列式格式","properties":{},"confidence":0.95}],"relations":[]}
 
 待分析文本：
 """
