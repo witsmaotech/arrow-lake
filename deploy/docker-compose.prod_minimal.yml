@@ -185,6 +185,9 @@ services:
       ARROW_LAKE__EMBEDDING__API_BASE: "${OLLAMA_API_BASE:-http://host.docker.internal:11434/v1}"
       ARROW_LAKE__HUGEGRAPH__HOST: "${HUGEGRAPH_HOST:-hg-server}"
       ARROW_LAKE__HUGEGRAPH__PORT: "${HUGEGRAPH_PORT:-8080}"
+      # HugeGraph 1.7+ auth（动态建图/per-dataset KG 必需）：admin / HG_SERVER_PASSWORD
+      ARROW_LAKE__HUGEGRAPH__USERNAME: "${HUGEGRAPH_USERNAME:-admin}"
+      ARROW_LAKE__HUGEGRAPH__PASSWORD: "${HUGEGRAPH_PASSWORD:-pa}"
       # v1.6.1: KG build async performance tuning
       ARROW_LAKE__HUGEGRAPH__BUILD_CONCURRENCY: "${HUGEGRAPH_BUILD_CONCURRENCY:-3}"
       ARROW_LAKE__HUGEGRAPH__BUILD_BATCH_DELAY: "${HUGEGRAPH_BUILD_BATCH_DELAY:-0.5}"
@@ -570,6 +573,8 @@ services:
       HG_SERVER_PD_PEERS: "hg-pd:8686"
       STORE_REST: "hg-store:8520"
       HUGEGRAPH_GRAPH: "hugegraph"
+      # HugeGraph 1.7+ 动态建图(graphspace/per-dataset KG)必须开 auth：设 PASSWORD → enable-auth.sh 建管理员(admin/PASSWORD)
+      PASSWORD: "${HG_SERVER_PASSWORD:-pa}"
       # minimal 下压低 JVM 堆以适配 2.5G cgroup
       JAVA_OPTS: "-Xms512m -Xmx1536m"
     ports:
@@ -592,7 +597,7 @@ services:
         reservations:
           memory: 1G
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8080/graphs/hugegraph/schema"]
+      test: ["CMD", "curl", "-sf", "-u", "admin:${HG_SERVER_PASSWORD:-pa}", "http://localhost:8080/graphs/hugegraph/schema"]
       interval: 15s
       timeout: 10s
       retries: 10

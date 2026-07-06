@@ -287,6 +287,18 @@ def table_to_chunks(
     if table.num_rows == 0:
         return []
 
+    # 自动探测文本列：显式 text_column 缺失时回退常见列名
+    # （兼容 jsonl 摄入的 text_content / docling 摄入的 text 等）
+    if text_column not in table.column_names:
+        for _alt in ("text", "content", "page_content", "text_content"):
+            if _alt in table.column_names:
+                text_column = _alt
+                break
+        else:
+            raise KeyError(
+                f"文本列 '{text_column}' 不在 {dataset_name} schema "
+                f"(已有列: {table.column_names})"
+            )
     texts = table.column(text_column).to_pylist()
     if row_id_column in table.column_names:
         row_ids = table.column(row_id_column).to_pylist()
