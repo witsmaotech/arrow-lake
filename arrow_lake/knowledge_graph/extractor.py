@@ -173,14 +173,30 @@ class EntityExtractor:
             LLMMessage(role="user", content=stripped),
         ]
 
-        try:
-            response = await self._llm.generate(messages)
-        except (RuntimeError, ValueError) as exc:
-            raise KGError(
-                error_code=ErrorCode.KG_EXTRACT_FAILED,
-                message=f"LLM call failed for chunk {chunk_id}: {exc}",
-                context={"chunk_id": chunk_id},
-            ) from exc
+        # Retry+指数退避：瞬时错误（429 限流 / empty content / 网络抖动）重试，
+        # 避免单 chunk 失败拖垮整批 kg_build。重试耗尽则 skip 该 chunk（不入图）。
+        response = None
+        last_exc: Exception | None = None
+        for attempt in range(4):  # 1 次初始 + 3 次重试
+            try:
+                response = await self._llm.generate(messages)
+                break
+            except Exception as exc:  # RAGError(429/empty) / RuntimeError / ValueError / httpx
+                last_exc = exc
+                if attempt >= 3:
+                    break
+                delay = min(2.0 * (2 ** attempt), 30.0)  # 2s, 4s, 8s 退避
+                logger.warning(
+                    "kg_extract_retry chunk=%s attempt=%d/3 sleep=%.1fs err=%s",
+                    chunk_id, attempt + 1, delay, str(exc)[:120],
+                )
+                await asyncio.sleep(delay)
+        if response is None:
+            logger.warning(
+                "kg_extract_giveup chunk=%s retries=3 err=%s — skipping chunk",
+                chunk_id, str(last_exc)[:120],
+            )
+            return ExtractionResult(entities=(), relations=(), raw_text=text)
 
         try:
             data = json.loads(response.content)
