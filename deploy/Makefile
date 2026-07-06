@@ -8,6 +8,7 @@
 #   make kg          # Knowledge Graph (HugeGraph)
 #   make ocr         # OCR processing (TurboOCR, requires GPU)
 #   make prod        # Production (all services + Metaflow + monitoring)
+#   make prod-minimal # Minimal prod (core+KG+Gravitino, no Ray/monitoring) — dev-server friendly
 #   make flow-run    # Run a flow in production container
 #   make flow-test   # Run all 4 new flows sequentially
 #   make down        # Stop all services, keep data
@@ -19,7 +20,8 @@ COMPOSE_DEV   ?= -f docker-compose.dev.yml
 COMPOSE_GPU    ?= -f docker-compose.gpu.yml
 COMPOSE_KG     ?= -f docker-compose.hugegraph.yml
 COMPOSE_MON    ?= -f docker-compose.monitoring.yml
-COMPOSE_PROD   ?= -f docker-compose.prod.yml
+COMPOSE_PROD        ?= -f docker-compose.prod.yml
+COMPOSE_PROD_MINIMAL ?= -f docker-compose.prod_minimal.yml
 PROJECT_NAME  ?= arrow-lake
 
 # Profile flags for each mode
@@ -31,7 +33,7 @@ PROFILE_KG     = --profile kg
 PROFILE_OCR    = --profile ocr
 
 # Common Compose invocation with all override files (for down/clean/ps/logs)
-ALL_FILES = $(COMPOSE_FILE) $(COMPOSE_DEV) $(COMPOSE_GPU) $(COMPOSE_KG) $(COMPOSE_MON) $(COMPOSE_PROD)
+ALL_FILES = $(COMPOSE_FILE) $(COMPOSE_DEV) $(COMPOSE_GPU) $(COMPOSE_KG) $(COMPOSE_MON) $(COMPOSE_PROD) $(COMPOSE_PROD_MINIMAL)
 
 # All profiles (for teardown commands)
 ALL_PROFILES = --profile core --profile compute --profile dev --profile gpu --profile kg --profile monitoring --profile ocr
@@ -40,7 +42,7 @@ ALL_PROFILES = --profile core --profile compute --profile dev --profile gpu --pr
 # Core commands
 # ---------------------------------------------------------------------------
 
-.PHONY: up dev gpu full kg ocr prod down clean build ps logs env certs \
+.PHONY: up dev gpu full kg ocr prod prod-minimal prod-minimal-build down clean build ps logs env certs \
         shell-api shell-ray shell-jupyter test-smoke flow-run flow-test scan backup
 
 FLOW ?= ingest
@@ -67,6 +69,14 @@ ocr:
 
 prod:
 	docker compose $(COMPOSE_PROD) --project-name $(PROJECT_NAME) up -d
+
+# Minimal production stack (core + KG + Gravitino; no Ray/monitoring/Hubble).
+# Build the shared arrow-lake image (BuildKit shared-tag quirk → build api only).
+prod-minimal-build:
+	docker compose $(COMPOSE_PROD_MINIMAL) --project-name $(PROJECT_NAME) build api
+
+prod-minimal:
+	docker compose $(COMPOSE_PROD_MINIMAL) --project-name $(PROJECT_NAME) up -d
 
 down:
 	docker compose $(ALL_FILES) --project-name $(PROJECT_NAME) $(ALL_PROFILES) down
