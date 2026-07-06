@@ -355,13 +355,38 @@ class DocumentParser:
                 message=f"Docling returned empty content for '{file_path}'",
             )
 
-        # Docling 输出全文 Markdown（含版面/表格/阅读顺序）；保留整块，
-        # 后续 chunking 阶段（chunk_size/strategy）负责切分。
+        # 按真实页码拆分（item.prov[0].page_no）。此前把整篇 markdown 塞进 page 1，
+        # 导致 max_pages 无法切片、chunk 的 page_number 全为 1。
+        pages_map: dict[int, list[str]] = {}
+        for item in getattr(doc, "texts", None) or []:
+            provs = getattr(item, "prov", None) or []
+            page_no = provs[0].page_no if provs else (len(pages_map) + 1)
+            txt = getattr(item, "text", None) or ""
+            if txt:
+                pages_map.setdefault(page_no, []).append(txt)
+        for tbl in getattr(doc, "tables", None) or []:
+            provs = getattr(tbl, "prov", None) or []
+            page_no = provs[0].page_no if provs else (len(pages_map) + 1)
+            try:
+                tmd = tbl.export_to_markdown(doc=doc) if callable(getattr(tbl, "export_to_markdown", None)) else ""
+            except Exception:
+                tmd = ""
+            if tmd:
+                pages_map.setdefault(page_no, []).append(tmd)
+        pages: list[tuple[int, str]] = []
+        for page_no, parts in sorted(pages_map.items(), key=lambda kv: kv[0]):
+            page_text = "\n\n".join(parts).strip()
+            if page_text:
+                pages.append((page_no, page_text))
+                if max_pages > 0 and len(pages) >= max_pages:
+                    break
+        if not pages:  # 拆页失败兜底：退回整篇，不丢数据
+            pages = [(1, md)]
         # docling_doc 透传 DoclingDocument 对象，供 HybridChunker 结构感知分块消费。
         return ParsedDocument(
             text=md,
-            pages=((1, md),),
-            page_count=1,
+            pages=tuple(pages),
+            page_count=len(pages),
             backend="docling",
             docling_doc=doc,
         )
@@ -409,6 +434,16 @@ class DocumentParser:
             pipeline.table_structure_options.do_cell_matching = False
         except Exception as e:
             logger.debug("TableFormerMode config skipped: %s", e)
+        # 硬件加速：有 CUDA 时显式用 GPU（layout-heron + TableFormer 提速约一个数量级）；
+        # 否则交由 docling AUTO 选 CPU/MPS。CPU 镜像无 GPU 时安全回退。
+        try:
+            import torch
+            from docling.datamodel.accelerator_options import AcceleratorDevice, AcceleratorOptions
+            device = AcceleratorDevice.CUDA if torch.cuda.is_available() else AcceleratorDevice.AUTO
+            pipeline.accelerator_options = AcceleratorOptions(device=device)
+            logger.info("docling_accelerator device=%s", device.value)
+        except Exception as e:
+            logger.debug("docling accelerator config skipped: %s", e)
         return pipeline
 
     def _parse_turbo_ocr_primary(

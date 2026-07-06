@@ -100,7 +100,7 @@ def main() -> int:
     # 抽样文本确认质量
     sample_text = ""
     try:
-        tbl = lake.read_table(args.dataset)
+        tbl = lake.read_dataset(args.dataset)
         if tbl.num_rows > 0:
             sample_text = str(tbl.column(TEXT_COL)[0])[:200]
             print(f"[STEP1] sample: {sample_text[:80]}…")
