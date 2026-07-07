@@ -1,23 +1,22 @@
 """Tests for catalog/gravitino_bridge.py — bidirectional Gravitino sync.
 
 Covers: type mapping, register/deregister, sync out/inbound, health,
-HTTP error handling, thread safety, schema building.
+HTTP error handling (table REST), SDK error translation (fileset/schema).
 """
 
 from __future__ import annotations
 
 import json
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pyarrow as pa
 import pytest
-
 from arrow_lake.catalog.gravitino_bridge import (
     GravitinoBridge,
-    SyncResult,
+    GravitinoRequestError,
+    GravitinoTransientError,
     _arrow_type_to_gravitino,
 )
-
 
 # ---------------------------------------------------------------------------
 # _arrow_type_to_gravitino
@@ -57,8 +56,23 @@ class TestArrowTypeToGravitino:
     def test_timestamp(self) -> None:
         assert _arrow_type_to_gravitino(pa.timestamp("us")) == "timestamp"
 
-    def test_unknown_type_falls_back_to_string(self) -> None:
-        assert _arrow_type_to_gravitino(pa.list_(pa.int32())) == "string"
+    def test_decimal128(self) -> None:
+        assert _arrow_type_to_gravitino(pa.decimal128(10, 2)) == "decimal(10,2)"
+
+    def test_decimal256_clamps_precision_to_38(self) -> None:
+        # Gravitino caps decimal precision at 38; decimal256 is clamped down.
+        assert _arrow_type_to_gravitino(pa.decimal256(76, 5)) == "decimal(38,5)"
+
+    def test_timestamp_with_timezone(self) -> None:
+        assert _arrow_type_to_gravitino(pa.timestamp("us", tz="UTC")) == "timestamp_tz"
+
+    def test_compound_type_falls_back_with_warning(self) -> None:
+        from structlog.testing import capture_logs
+
+        with capture_logs() as logs:
+            result = _arrow_type_to_gravitino(pa.list_(pa.int32()))
+        assert result == "string"
+        assert any(log.get("event") == "gravitino_type_unmapped" for log in logs)
 
     def test_large_string(self) -> None:
         assert _arrow_type_to_gravitino(pa.large_string()) == "string"
@@ -96,6 +110,24 @@ def _mock_urlopen_return(data: dict | None = None, status: int = 200) -> MagicMo
     return cm
 
 
+def _make_sdk_mocks() -> tuple[MagicMock, MagicMock, MagicMock]:
+    """Build a mock SDK client with schema + fileset catalog chains.
+
+    load_catalog() returns one shared catalog mock regardless of name, so
+    both lance-catalog and minio-fileset route through the same
+    schema_catalog / fileset_catalog mocks (sufficient for the bridge's
+    usage pattern). Returns (client, schema_catalog, fileset_catalog).
+    """
+    client = MagicMock()
+    catalog = MagicMock()
+    schema_cat = MagicMock()
+    fileset_cat = MagicMock()
+    catalog.as_schema_catalog.return_value = schema_cat
+    catalog.as_fileset_catalog.return_value = fileset_cat
+    client.load_catalog.return_value = catalog
+    return client, schema_cat, fileset_cat
+
+
 # ---------------------------------------------------------------------------
 # __init__ and enabled
 # ---------------------------------------------------------------------------
@@ -118,7 +150,7 @@ class TestBridgeInit:
 
 
 # ---------------------------------------------------------------------------
-# _request
+# _request (table REST path — P1 reliability contract)
 # ---------------------------------------------------------------------------
 
 
@@ -172,7 +204,7 @@ class TestRequest:
 
         assert result is None
 
-    def test_500_returns_none(self) -> None:
+    def test_500_raises_transient_after_retry(self) -> None:
         from urllib.error import HTTPError
 
         with patch("arrow_lake.catalog.gravitino_bridge.create_auth_provider"):
@@ -180,11 +212,27 @@ class TestRequest:
 
         with patch("arrow_lake.catalog.gravitino_bridge.urlopen") as mock_urlopen:
             mock_urlopen.side_effect = HTTPError("url", 500, "Error", {}, None)
-            result = bridge._request("GET", "/api/test")
+            with pytest.raises(GravitinoTransientError):
+                bridge._request("GET", "/api/test")
 
-        assert result is None
+        # Transient 5xx is retried; urlopen is hit more than once.
+        assert mock_urlopen.call_count >= 2
 
-    def test_url_error_returns_none(self) -> None:
+    def test_400_raises_non_transient_no_retry(self) -> None:
+        from urllib.error import HTTPError
+
+        with patch("arrow_lake.catalog.gravitino_bridge.create_auth_provider"):
+            bridge = GravitinoBridge(_make_config())
+
+        with patch("arrow_lake.catalog.gravitino_bridge.urlopen") as mock_urlopen:
+            mock_urlopen.side_effect = HTTPError("url", 400, "Bad Request", {}, None)
+            with pytest.raises(GravitinoRequestError):
+                bridge._request("POST", "/api/test", {"name": "x"})
+
+        # 4xx client errors are not retried.
+        assert mock_urlopen.call_count == 1
+
+    def test_url_error_raises_transient(self) -> None:
         from urllib.error import URLError
 
         with patch("arrow_lake.catalog.gravitino_bridge.create_auth_provider"):
@@ -192,9 +240,8 @@ class TestRequest:
 
         with patch("arrow_lake.catalog.gravitino_bridge.urlopen") as mock_urlopen:
             mock_urlopen.side_effect = URLError("connection refused")
-            result = bridge._request("GET", "/api/test")
-
-        assert result is None
+            with pytest.raises(GravitinoTransientError):
+                bridge._request("GET", "/api/test")
 
 
 # ---------------------------------------------------------------------------
@@ -234,115 +281,94 @@ class TestBuildColumns:
 
 
 # ---------------------------------------------------------------------------
-# register_dataset
+# register_dataset (table REST + fileset SDK)
 # ---------------------------------------------------------------------------
 
 
 class TestRegisterDataset:
-    """Register dataset as Table + Fileset."""
+    """Register dataset as Table (REST) + Fileset (SDK)."""
 
     def test_registers_table_and_fileset(self) -> None:
         with patch("arrow_lake.catalog.gravitino_bridge.create_auth_provider"):
             bridge = GravitinoBridge(_make_config())
+        client, _schema_cat, fileset_cat = _make_sdk_mocks()
 
-        with patch.object(bridge, "_request", return_value={"code": 0}) as mock_req, \
-             patch.object(bridge, "_fileset_exists", return_value=False):
+        with patch.object(bridge, "_ensure_client", return_value=client), \
+             patch.object(bridge, "_request", return_value={"code": 0}) as mock_req:
             bridge.register_dataset("docs")
 
-        # Should call _request at least 3 times: _ensure_schema (2) + table (1) + fileset (1)
-        assert mock_req.call_count >= 3
+        # Table POST via _request
+        assert any(
+            c[0][0] == "POST" and "tables" in c[0][1] for c in mock_req.call_args_list
+        )
+        # Fileset create via SDK
+        fileset_cat.create_multiple_location_fileset.assert_called_once()
 
-    def test_skips_fileset_post_when_already_exists(self) -> None:
-        """Existing fileset (cache or GET) must not trigger a create POST."""
+    def test_fileset_already_exists_is_idempotent(self) -> None:
+        """SDK AlreadyExistsException → no-op (logs 'exists'), not a failure."""
+        from gravitino.exceptions.base import AlreadyExistsException
+
         with patch("arrow_lake.catalog.gravitino_bridge.create_auth_provider"):
             bridge = GravitinoBridge(_make_config())
+        client, _schema_cat, fileset_cat = _make_sdk_mocks()
+        fileset_cat.create_multiple_location_fileset.side_effect = (
+            AlreadyExistsException("exists")
+        )
 
-        with patch.object(bridge, "_request", return_value={"code": 0}) as mock_req, \
-             patch.object(bridge, "_fileset_exists", return_value=True):
-            bridge.register_dataset("docs")
-
-        # No POST to the filesets collection path (only schema+table POSTs remain).
-        fileset_posts = [
-            c for c in mock_req.call_args_list
-            if c[0][0] == "POST" and "/filesets" in c[0][1]
-        ]
-        assert fileset_posts == []
-        assert "docs" in bridge._filesets
+        with patch.object(bridge, "_ensure_client", return_value=client), \
+             patch.object(bridge, "_request", return_value={"code": 0}):
+            bridge.register_dataset("docs")  # must not raise
 
     def test_fileset_create_failure_is_not_misclassified_as_exists(self) -> None:
-        """A rejected create (None/400) logs register_failed, not 'exists'."""
+        """A 4xx RESTException is caught + logged as register_failed."""
+        from gravitino.exceptions.base import RESTException
+
         with patch("arrow_lake.catalog.gravitino_bridge.create_auth_provider"):
             bridge = GravitinoBridge(_make_config())
+        client, _schema_cat, fileset_cat = _make_sdk_mocks()
+        fileset_cat.create_multiple_location_fileset.side_effect = RESTException("400")
 
-        with patch.object(bridge, "_request", return_value=None), \
-             patch.object(bridge, "_fileset_exists", return_value=False):
-            bridge.register_dataset("docs")
-
-        # Not cached as existing — next cycle re-checks via GET and retries.
-        assert "docs" not in bridge._filesets
+        with patch.object(bridge, "_ensure_client", return_value=client), \
+             patch.object(bridge, "_request", return_value={"code": 0}):
+            bridge.register_dataset("docs")  # GravitinoRequestError caught
 
     def test_uses_default_location_when_empty(self) -> None:
         with patch("arrow_lake.catalog.gravitino_bridge.create_auth_provider"):
             bridge = GravitinoBridge(_make_config())
+        client, _schema_cat, fileset_cat = _make_sdk_mocks()
 
-        with patch.object(bridge, "_request", return_value={"code": 0}) as mock_req, \
-             patch.object(bridge, "_fileset_exists", return_value=False):
-            bridge.register_dataset("my_ds", location="")
+        with patch.object(bridge, "_ensure_client", return_value=client), \
+             patch.object(bridge, "_request", return_value={"code": 0}):
+            bridge.register_dataset("ds", location="")
 
-        # Find the table registration call and check location
-        for c in mock_req.call_args_list:
-            if c[0][0] == "POST" and "tables" in c[0][1]:
-                body = c[1].get("body") or c[0][2] if len(c[0]) > 2 else None
-                if body is None:
-                    body = c.kwargs.get("body")
+        # storage_locations (4th positional arg) gets the default s3 path.
+        args = fileset_cat.create_multiple_location_fileset.call_args
+        assert args[0][3] == {"default": "s3://arrow-lake/ds.lance"}
 
     def test_uses_provided_location(self) -> None:
         with patch("arrow_lake.catalog.gravitino_bridge.create_auth_provider"):
             bridge = GravitinoBridge(_make_config())
+        client, _schema_cat, fileset_cat = _make_sdk_mocks()
 
-        with patch.object(bridge, "_request", return_value={"code": 0}), \
-             patch.object(bridge, "_fileset_exists", return_value=False):
+        with patch.object(bridge, "_ensure_client", return_value=client), \
+             patch.object(bridge, "_request", return_value={"code": 0}):
             bridge.register_dataset("ds", location="s3a://bucket/path")
 
+        args = fileset_cat.create_multiple_location_fileset.call_args
+        assert args[0][3] == {"default": "s3://bucket/path"}
 
-# ---------------------------------------------------------------------------
-# _fileset_exists
-# ---------------------------------------------------------------------------
-
-
-class TestFilesetExists:
-    """GET-based existence check for the minio-fileset fileset."""
-
-    def test_200_means_exists(self) -> None:
+    def test_skips_fileset_when_sdk_client_unavailable(self) -> None:
         with patch("arrow_lake.catalog.gravitino_bridge.create_auth_provider"):
             bridge = GravitinoBridge(_make_config())
 
-        with patch("arrow_lake.catalog.gravitino_bridge.urlopen") as mock_urlopen:
-            mock_cm = _mock_urlopen_return({"fileset": {}})
-            mock_cm.status = 200
-            mock_urlopen.return_value = mock_cm
-            assert bridge._fileset_exists("docs") is True
+        with patch.object(bridge, "_ensure_client", return_value=None), \
+             patch.object(bridge, "_request", return_value={"code": 0}) as mock_req:
+            bridge.register_dataset("docs")
 
-    def test_404_means_missing(self) -> None:
-        from urllib.error import HTTPError
-
-        with patch("arrow_lake.catalog.gravitino_bridge.create_auth_provider"):
-            bridge = GravitinoBridge(_make_config())
-
-        with patch("arrow_lake.catalog.gravitino_bridge.urlopen") as mock_urlopen:
-            mock_urlopen.side_effect = HTTPError("u", 404, "NotFound", {}, None)
-            assert bridge._fileset_exists("docs") is False
-
-    def test_network_error_treated_as_missing(self) -> None:
-        from urllib.error import URLError
-
-        with patch("arrow_lake.catalog.gravitino_bridge.create_auth_provider"):
-            bridge = GravitinoBridge(_make_config())
-
-        with patch("arrow_lake.catalog.gravitino_bridge.urlopen") as mock_urlopen:
-            mock_urlopen.side_effect = URLError("refused")
-            # Conservative: not present ⇒ creation will be retried.
-            assert bridge._fileset_exists("docs") is False
+        # Table still registered via REST; fileset skipped (no SDK client).
+        assert any(
+            c[0][0] == "POST" and "tables" in c[0][1] for c in mock_req.call_args_list
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -351,18 +377,33 @@ class TestFilesetExists:
 
 
 class TestDeregisterDataset:
-    """Remove dataset from Gravitino (table + fileset)."""
+    """Remove dataset from Gravitino (table REST + fileset SDK)."""
 
     def test_sends_delete_for_table_and_fileset(self) -> None:
         with patch("arrow_lake.catalog.gravitino_bridge.create_auth_provider"):
             bridge = GravitinoBridge(_make_config())
+        client, _schema_cat, fileset_cat = _make_sdk_mocks()
 
-        with patch.object(bridge, "_request", return_value=None) as mock_req:
+        with patch.object(bridge, "_ensure_client", return_value=client), \
+             patch.object(bridge, "_request", return_value=None) as mock_req:
             bridge.deregister_dataset("docs")
 
-        assert mock_req.call_count == 2
-        methods = [c[0][0] for c in mock_req.call_args_list]
-        assert methods == ["DELETE", "DELETE"]
+        # Table DELETE via _request (fileset drop is via SDK).
+        assert mock_req.call_count == 1
+        assert mock_req.call_args[0][0] == "DELETE"
+        fileset_cat.drop_fileset.assert_called_once()
+
+    def test_deregister_fileset_idempotent_when_missing(self) -> None:
+        from gravitino.exceptions.base import NotFoundException
+
+        with patch("arrow_lake.catalog.gravitino_bridge.create_auth_provider"):
+            bridge = GravitinoBridge(_make_config())
+        client, _schema_cat, fileset_cat = _make_sdk_mocks()
+        fileset_cat.drop_fileset.side_effect = NotFoundException("missing")
+
+        with patch.object(bridge, "_ensure_client", return_value=client), \
+             patch.object(bridge, "_request", return_value=None):
+            bridge.deregister_dataset("docs")  # must not raise
 
 
 # ---------------------------------------------------------------------------
@@ -403,74 +444,83 @@ class TestSyncOutbound:
 
 
 # ---------------------------------------------------------------------------
-# sync_inbound
+# sync_inbound (SDK list_filesets)
 # ---------------------------------------------------------------------------
 
 
 class TestSyncInbound:
-    """Pull filesets from Gravitino."""
+    """Pull filesets from Gravitino via SDK."""
 
     def test_returns_entries(self) -> None:
         with patch("arrow_lake.catalog.gravitino_bridge.create_auth_provider"):
             bridge = GravitinoBridge(_make_config())
+        client, _schema_cat, fileset_cat = _make_sdk_mocks()
+        id1, id2 = MagicMock(), MagicMock()
+        id1.name.return_value = "ds1"
+        id2.name.return_value = "ds2"
+        fileset_cat.list_filesets.return_value = [id1, id2]
 
-        mock_resp = {
-            "identifiers": [
-                {"name": "ds1"},
-                {"name": "ds2"},
-            ],
-        }
-        with patch.object(bridge, "_request", return_value=mock_resp):
+        with patch.object(bridge, "_ensure_client", return_value=client):
             entries = bridge.sync_inbound()
 
         assert len(entries) == 2
         assert entries[0]["name"] == "ds1"
         assert "minio-fileset" in entries[0]["location"]
 
-    def test_returns_empty_on_no_identifiers(self) -> None:
+    def test_returns_empty_when_no_filesets(self) -> None:
+        with patch("arrow_lake.catalog.gravitino_bridge.create_auth_provider"):
+            bridge = GravitinoBridge(_make_config())
+        client, _schema_cat, fileset_cat = _make_sdk_mocks()
+        fileset_cat.list_filesets.return_value = []
+
+        with patch.object(bridge, "_ensure_client", return_value=client):
+            assert bridge.sync_inbound() == []
+
+    def test_returns_empty_when_client_unavailable(self) -> None:
         with patch("arrow_lake.catalog.gravitino_bridge.create_auth_provider"):
             bridge = GravitinoBridge(_make_config())
 
-        with patch.object(bridge, "_request", return_value=None):
-            entries = bridge.sync_inbound()
-
-        assert entries == []
+        with patch.object(bridge, "_ensure_client", return_value=None):
+            assert bridge.sync_inbound() == []
 
 
 # ---------------------------------------------------------------------------
-# get_table_statistics
+# get_table_statistics (SDK load_fileset)
 # ---------------------------------------------------------------------------
 
 
 class TestGetTableStatistics:
-    """Fetch fileset details from Gravitino."""
+    """Fetch fileset details from Gravitino via SDK."""
 
     def test_returns_statistics(self) -> None:
         with patch("arrow_lake.catalog.gravitino_bridge.create_auth_provider"):
             bridge = GravitinoBridge(_make_config())
+        client, _schema_cat, fileset_cat = _make_sdk_mocks()
+        fs = MagicMock()
+        fs.name.return_value = "docs"
+        fs.fileset_type.return_value = "MANAGED"
+        fs.properties.return_value = {"format": "lance"}
+        fileset_cat.load_fileset.return_value = fs
 
-        mock_resp = {
-            "fileset": {
-                "name": "docs",
-                "type": "MANAGED",
-                "properties": {"format": "lance"},
-            },
-        }
-        with patch.object(bridge, "_request", return_value=mock_resp):
+        with patch.object(bridge, "_ensure_client", return_value=client):
             stats = bridge.get_table_statistics("docs")
 
-        assert stats is not None
-        assert stats["name"] == "docs"
-        assert stats["type"] == "MANAGED"
+        assert stats == {
+            "name": "docs",
+            "type": "MANAGED",
+            "properties": {"format": "lance"},
+        }
 
     def test_returns_none_when_not_found(self) -> None:
+        from gravitino.exceptions.base import NotFoundException
+
         with patch("arrow_lake.catalog.gravitino_bridge.create_auth_provider"):
             bridge = GravitinoBridge(_make_config())
+        client, _schema_cat, fileset_cat = _make_sdk_mocks()
+        fileset_cat.load_fileset.side_effect = NotFoundException("missing")
 
-        with patch.object(bridge, "_request", return_value=None):
-            stats = bridge.get_table_statistics("missing")
-
-        assert stats is None
+        with patch.object(bridge, "_ensure_client", return_value=client):
+            assert bridge.get_table_statistics("missing") is None
 
 
 # ---------------------------------------------------------------------------
@@ -479,7 +529,7 @@ class TestGetTableStatistics:
 
 
 class TestHealth:
-    """Check Gravitino connectivity."""
+    """Check Gravitino connectivity (table REST path)."""
 
     def test_healthy(self) -> None:
         with patch("arrow_lake.catalog.gravitino_bridge.create_auth_provider"):
@@ -513,30 +563,43 @@ class TestHealth:
 
 
 # ---------------------------------------------------------------------------
-# _ensure_schema — idempotent
+# _ensure_schema (SDK create_schema, idempotent)
 # ---------------------------------------------------------------------------
 
 
 class TestEnsureSchema:
-    """Schema creation is idempotent."""
+    """Schema creation is idempotent via SDK."""
 
-    def test_calls_request_on_first_call(self) -> None:
+    def test_creates_schema_in_both_catalogs(self) -> None:
         with patch("arrow_lake.catalog.gravitino_bridge.create_auth_provider"):
             bridge = GravitinoBridge(_make_config())
+        client, schema_cat, _fileset_cat = _make_sdk_mocks()
 
-        with patch.object(bridge, "_request", return_value=None) as mock_req:
+        with patch.object(bridge, "_ensure_client", return_value=client):
             bridge._ensure_schema()
 
-        # Should POST for both lance-catalog and minio-fileset
-        assert mock_req.call_count == 2
+        # create_schema called for both lance-catalog and minio-fileset.
+        assert schema_cat.create_schema.call_count == 2
 
     def test_skips_on_subsequent_calls(self) -> None:
         with patch("arrow_lake.catalog.gravitino_bridge.create_auth_provider"):
             bridge = GravitinoBridge(_make_config())
+        client, schema_cat, _fileset_cat = _make_sdk_mocks()
 
-        with patch.object(bridge, "_request", return_value=None) as mock_req:
+        with patch.object(bridge, "_ensure_client", return_value=client):
             bridge._ensure_schema()
             bridge._ensure_schema()
 
-        # Only 2 calls despite 2 invocations
-        assert mock_req.call_count == 2
+        # Only 2 calls despite 2 invocations (schema_ready guard).
+        assert schema_cat.create_schema.call_count == 2
+
+    def test_schema_already_exists_is_idempotent(self) -> None:
+        from gravitino.exceptions.base import SchemaAlreadyExistsException
+
+        with patch("arrow_lake.catalog.gravitino_bridge.create_auth_provider"):
+            bridge = GravitinoBridge(_make_config())
+        client, schema_cat, _fileset_cat = _make_sdk_mocks()
+        schema_cat.create_schema.side_effect = SchemaAlreadyExistsException("exists")
+
+        with patch.object(bridge, "_ensure_client", return_value=client):
+            bridge._ensure_schema()  # must not raise

@@ -3,15 +3,11 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pyarrow as pa
 import pytest
-
 from arrow_lake.config.gravitino import GravitinoConfig
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -105,14 +101,18 @@ class TestGravitinoBridge:
         count = bridge.sync_outbound(entries)
         assert count == 2
 
-    @patch("arrow_lake.catalog.gravitino_bridge.GravitinoBridge._request")
-    def test_sync_inbound(self, mock_request: MagicMock, gravitino_config: GravitinoConfig) -> None:
+    @patch("arrow_lake.catalog.gravitino_bridge.GravitinoBridge._ensure_client")
+    def test_sync_inbound(self, mock_ensure: MagicMock, gravitino_config: GravitinoConfig) -> None:
         from arrow_lake.catalog.gravitino_bridge import GravitinoBridge
 
-        mock_request.return_value = {
-            "code": 0,
-            "identifiers": [{"name": "t1", "namespace": ["arrow_lake", "lance-catalog", "arrow_lake"]}],
-        }
+        ident = MagicMock()
+        ident.name.return_value = "t1"
+        catalog = MagicMock()
+        catalog.as_fileset_catalog.return_value.list_filesets.return_value = [ident]
+        client = MagicMock()
+        client.load_catalog.return_value = catalog
+        mock_ensure.return_value = client
+
         bridge = GravitinoBridge(gravitino_config)
         entries = bridge.sync_inbound()
         assert len(entries) == 1
