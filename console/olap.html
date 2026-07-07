@@ -51,9 +51,11 @@
 </main>
 </div>
 
-<!-- apache-arrow (dynamic import in stream.js, only when stream=true) -->
+<!-- apache-arrow (dynamic import in stream.js, only when stream=true).
+     Pin to exact version to mitigate supply-chain version-redirect attacks.
+     Full vendoring (no CDN) tracked in vendor/README.md + design doc ADR-6. -->
 <script type="importmap">
-{"imports":{"apache-arrow":"https://esm.sh/apache-arrow@18.11.0"}}
+{"imports":{"apache-arrow":"https://esm.sh/apache-arrow@21.1.0"}}
 </script>
 <script src="assets/console-layout.js"></script>
 <script type="module">

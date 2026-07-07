@@ -19,9 +19,14 @@ export async function initWorksheet() {
   // 1. Load datasets
   try {
     const list = await request("GET", "/datasets?limit=500");
-    dsSel.innerHTML = list.datasets
-      .map(d => `<option value="${d.name}">${d.name} · ${(d.num_rows || 0).toLocaleString()} 行</option>`)
-      .join("");
+    // createElement + textContent: d.name 来自后端,防御性防注入(后端虽有 _NAME_PATTERN,纵深防御)
+    dsSel.textContent = "";
+    for (const d of list.datasets) {
+      const opt = document.createElement("option");
+      opt.value = d.name;
+      opt.textContent = `${d.name} · ${(d.num_rows || 0).toLocaleString()} 行`;
+      dsSel.appendChild(opt);
+    }
     if (list.datasets.length) dsSel.value = list.datasets[0].name;
   } catch (e) {
     toast(`加载数据集失败: ${e.message}`, "danger");
