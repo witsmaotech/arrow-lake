@@ -501,7 +501,9 @@ def create_app(config: ArrowLakeConfig | None = None) -> FastAPI:
 
     from starlette.staticfiles import StaticFiles
 
-    _console_dir = Path(__file__).resolve().parent.parent / "console"
+    # app.py 位于 <repo>/arrow_lake/api/app.py(镜像内 /app/arrow_lake/api/app.py);
+    # console 在 <repo>/console(镜像内 /app/console)→ 向上 3 级(parents[2])。
+    _console_dir = Path(__file__).resolve().parents[2] / "console"
     if _console_dir.is_dir():
         app.mount("/console", StaticFiles(directory=str(_console_dir), html=True), name="console")
 
