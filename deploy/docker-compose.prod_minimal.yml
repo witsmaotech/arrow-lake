@@ -443,115 +443,26 @@ services:
     stop_grace_period: 10s
 
   # ==============================================================================
-  # HugeGraph — 知识图谱后端 (PD 集群模式: pd + store + server)
+  # HugeGraph — 知识图谱后端 (rocksdb 单机模式: server only)
   # ==============================================================================
+  # NOTE: PD (hg-pd) + Store (hg-store) services removed — see hg-server header
+  # for why rocksdb single-node replaces the PD/hstore cluster (1.7.0 graphspace
+  # multi-graph NPE). To revert to PD, restore those two service blocks and the
+  # hg-pd-data / hg-store-data volumes, then set HG_SERVER_BACKEND=hstore.
 
   # ---------------------------------------------------------------------------
-  # HugeGraph PD — Placement Driver (集群协调)
+  # HugeGraph Server — Graph API (single-node, rocksdb backend)
   # ---------------------------------------------------------------------------
-  hg-pd:
-    image: hugegraph/pd:${HUGEGRAPH_VERSION:-1.7.0}
-    container_name: arrow-lake-hg-pd
-    hostname: hg-pd
-    restart: unless-stopped
-    networks:
-      - arrow-lake-net
-    environment:
-      HTTP_PROXY: ""
-      HTTPS_PROXY: ""
-      http_proxy: ""
-      https_proxy: ""
-      # Mirror the proven hugegraph-single cluster config: hostnames (DNS
-      # resolves on the bridge net) + INITIAL_STORE_LIST uses the store gRPC
-      # port (8500), NOT the raft port — PD activates the store over gRPC.
-      HG_PD_GRPC_HOST: "hg-pd"
-      HG_PD_GRPC_PORT: "8686"
-      HG_PD_REST_PORT: "8620"
-      HG_PD_RAFT_ADDRESS: "hg-pd:8610"
-      HG_PD_RAFT_PEERS_LIST: "hg-pd:8610"
-      HG_PD_INITIAL_STORE_LIST: "hg-store:8500"
-      HG_PD_DATA_PATH: "/hugegraph-pd/pd_data"
-    ports:
-      - "127.0.0.1:${HG_PD_REST_PORT:-8620}:8620"
-      - "127.0.0.1:${HG_PD_GRPC_PORT:-8686}:8686"
-    volumes:
-      - hg-pd-data:/hugegraph-pd/pd_data
-    deploy:
-      resources:
-        limits:
-          memory: ${HG_PD_MEMORY_LIMIT:-2G}
-          cpus: "${HG_PD_CPU_LIMIT:-1.0}"
-        reservations:
-          memory: 256M
-    healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8620/v1/health >/dev/null || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 15
-      start_period: 30s
-    logging:
-      driver: json-file
-      options:
-        max-size: "50m"
-        max-file: "3"
-        tag: "arrow-lake-hg-pd"
-    stop_grace_period: 15s
-
-  # ---------------------------------------------------------------------------
-  # HugeGraph Store — Distributed storage node (Raft replicated)
-  # ---------------------------------------------------------------------------
-  hg-store:
-    image: hugegraph/store:${HUGEGRAPH_VERSION:-1.7.0}
-    container_name: arrow-lake-hg-store
-    hostname: hg-store
-    restart: unless-stopped
-    networks:
-      - arrow-lake-net
-    environment:
-      HTTP_PROXY: ""
-      HTTPS_PROXY: ""
-      http_proxy: ""
-      https_proxy: ""
-      HG_STORE_PD_ADDRESS: "hg-pd:8686"
-      HG_STORE_GRPC_HOST: "hg-store"
-      HG_STORE_GRPC_PORT: "8500"
-      HG_STORE_REST_PORT: "8520"
-      HG_STORE_RAFT_ADDRESS: "hg-store:8510"
-      HG_STORE_DATA_PATH: "/hugegraph-store/storage"
-      # minimal 下压低 JVM 堆以适配 2G cgroup (calc_xmx 否则会按宿主内存推导导致 OOM)
-      JAVA_OPTS: "-Xms512m -Xmx1280m"
-    ports:
-      - "127.0.0.1:${HG_STORE_GRPC_PORT:-8500}:8500"
-      - "127.0.0.1:${HG_STORE_REST_PORT:-8520}:8520"
-    volumes:
-      - hg-store-data:/hugegraph-store/storage
-    depends_on:
-      hg-pd:
-        condition: service_healthy
-    deploy:
-      resources:
-        limits:
-          memory: ${HG_STORE_MEMORY_LIMIT:-2G}
-          cpus: "${HG_STORE_CPU_LIMIT:-1.0}"
-        reservations:
-          memory: 512M
-    healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8520/v1/health >/dev/null || exit 1"]
-      interval: 15s
-      timeout: 10s
-      retries: 40
-      start_period: 120s
-    logging:
-      driver: json-file
-      options:
-        max-size: "50m"
-        max-file: "3"
-        tag: "arrow-lake-hg-store"
-    stop_grace_period: 20s
-
-  # ---------------------------------------------------------------------------
-  # HugeGraph Server — Graph API (PD cluster mode, hstore backend)
-  # ---------------------------------------------------------------------------
+  # v1.8.6 per-dataset isolation runs on the rocksdb single-node backend.
+  # Rationale: HugeGraph 1.7.0 PD/hstore mode (graphspaces) has an unfixed
+  # server bug — GraphManager.isExistedGraphNickname NPEs when creating a
+  # graph once any other graph already exists — so multi-graph isolation is
+  # impossible on hstore/PD in 1.7.0. rocksdb gives a real per-graph store
+  # directory (true isolation), fast graph creation, and no PD task overhead.
+  # Loss vs PD cluster: no HA / horizontal scaling. The PD/store services and
+  # their volumes were removed when this switched off the hstore backend.
+  # To revert to PD: restore HG_SERVER_BACKEND=hstore + HG_SERVER_PD_PEERS,
+  # SKIP_STORE_GRPC_WAIT, and the hg-pd/hg-store services.
   hg-server:
     image: hugegraph/hugegraph:${HUGEGRAPH_VERSION:-1.7.0}
     container_name: arrow-lake-hg-server
@@ -566,14 +477,12 @@ services:
       HTTPS_PROXY: ""
       http_proxy: ""
       https_proxy: ""
-      # v1.7.x: PD cluster mode — hstore backend + PD peers.
-      # STORE_REST is consumed by docker-entrypoint.sh wait-partition.sh
-      # (polls the store REST endpoint for partitionCount>=1 before start).
-      HG_SERVER_BACKEND: "hstore"
-      HG_SERVER_PD_PEERS: "hg-pd:8686"
-      STORE_REST: "hg-store:8520"
+      # rocksdb single-node backend: each graph gets its own rocksdb store
+      # directory → true per-dataset isolation. No PD, no store gRPC.
+      HG_SERVER_BACKEND: "rocksdb"
+      SKIP_STORE_GRPC_WAIT: "1"
       HUGEGRAPH_GRAPH: "hugegraph"
-      # HugeGraph 1.7+ 动态建图(graphspace/per-dataset KG)必须开 auth：设 PASSWORD → enable-auth.sh 建管理员(admin/PASSWORD)
+      # HugeGraph 1.7+ 动态建图(per-dataset KG)必须开 auth：设 PASSWORD → enable-auth.sh 建管理员(admin/PASSWORD)
       PASSWORD: "${HG_SERVER_PASSWORD:-pa}"
       # minimal 下压低 JVM 堆以适配 2.5G cgroup
       JAVA_OPTS: "-Xms512m -Xmx1536m"
@@ -583,11 +492,6 @@ services:
       - hg-server-data:/var/lib/hugegraph
       - ./scripts/entrypoint-hugegraph.sh:/usr/local/bin/entrypoint-hugegraph.sh:ro
       - ./scripts/fix-hugegraph-gremlin.sh:/usr/local/bin/fix-hugegraph-gremlin.sh:ro
-    depends_on:
-      hg-pd:
-        condition: service_healthy
-      hg-store:
-        condition: service_healthy
     deploy:
       resources:
         limits:
@@ -601,8 +505,8 @@ services:
       interval: 15s
       timeout: 10s
       retries: 10
-      # PD mode: covers wait-partition.sh (up to 120s) + server init
-      start_period: 180s
+      # rocksdb single-node: no wait-partition.sh, init is fast.
+      start_period: 60s
     logging:
       driver: json-file
       options:
@@ -792,10 +696,6 @@ volumes:
   docling-cache:
     driver: local
   hg-server-data:
-    driver: local
-  hg-pd-data:
-    driver: local
-  hg-store-data:
     driver: local
   gravitino-data:
     driver: local

@@ -56,6 +56,13 @@ class KGSchemaResponse(BaseModel):
 class KGQueryRequest(BaseModel):
     gremlin: str = Field(..., min_length=1, max_length=10000, description="Gremlin query string")
     timeout_seconds: float = Field(default=30.0, ge=1.0, le=300.0)
+    dataset: str | None = Field(
+        default=None,
+        description="Lake dataset name — scope the query to the kg_{dataset} graph. "
+        "When set, a leading `g.` traversal source is rewritten to "
+        "`kg_{dataset}.traversal()` so the query reads the per-dataset graph "
+        "instead of the default. Omit only when querying the default graph.",
+    )
 
 
 class KGQueryResponse(BaseModel):

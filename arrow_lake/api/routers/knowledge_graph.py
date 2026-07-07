@@ -158,14 +158,18 @@ async def kg_query(
     *,
     req: KGQueryRequest,
     lake: Any = Depends(get_lake),
+    _user: dict = Depends(require_role(Role.VIEWER)),
+    checker=Depends(get_checker),
 ) -> KGQueryResponse:
     """Execute a Gremlin query against the knowledge graph."""
     # Block dangerous mutating operations before forwarding to the graph.
     _validate_gremlin(req.gremlin)
+    # Per-dataset ACL when a dataset is scoped (matches kg_neighbors / kg_stats).
+    _enforce_read_acl(checker, _user, req.dataset)
 
     try:
         t0 = time.perf_counter()
-        results = await lake.kg_query(req.gremlin)
+        results = await lake.kg_query(req.gremlin, dataset_name=req.dataset)
         elapsed_ms = (time.perf_counter() - t0) * 1000
         return KGQueryResponse(results=results, execution_time_ms=elapsed_ms)
     except KGError as exc:

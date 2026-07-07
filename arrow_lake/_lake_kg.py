@@ -20,6 +20,22 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _scope_gremlin_to_graph(query: str, graph: str) -> str:
+    """Rewrite a raw Gremlin query to target a specific graph.
+
+    HugeGraph 1.7 binds one TraversalSource per graph as ``{graph}.traversal()``.
+    Cookbook / verification queries use the default source ``g`` (e.g.
+    ``g.V().groupCount().by(label)``), which reads the configured DEFAULT graph —
+    not the per-dataset ``kg_{dataset}`` graph where ``kg_build`` writes. This
+    rewrites a leading ``g.`` to ``{graph}.traversal().`` so the query hits the
+    intended graph. Queries already scoped (``{name}.traversal()``) or using any
+    other source are passed through unchanged.
+    """
+    import re
+
+    return re.sub(r"^\s*g\.", f"{graph}.traversal().", query.lstrip())
+
+
 class _LakeKGMixin:
     """Knowledge graph operations mixin for Lake class.
 
@@ -330,12 +346,27 @@ class _LakeKGMixin:
         query: str,
         *,
         traversal_depth: int | None = None,
+        dataset_name: str | None = None,
     ) -> list[dict[str, Any]]:
         """Execute a Gremlin query against the knowledge graph.
 
         Args:
             query: Gremlin query string.
             traversal_depth: Optional traversal depth limit.
+            dataset_name: Optional lake dataset — when set, a leading ``g.``
+                traversal source is rewritten to ``kg_{dataset}.traversal()``
+                so the query reads the per-dataset graph (where ``kg_build``
+                writes) instead of the configured default graph. Without this,
+                a bare ``g.V()`` reads the default graph and silently returns
+                empty / stale results on isolated per-dataset deployments.
+
+                Note: HugeGraph 1.7.0 does NOT auto-bind dynamically-created
+                graphs as Gremlin traversal sources, so a per-dataset raw
+                Gremlin query raises ``MissingPropertyException`` until the
+                graph is bound server-side. For per-dataset reads prefer the
+                REST-backed methods (``kg_stats``, ``kg_find_entities``,
+                ``kg_get_neighbors``) which are graph-scoped and work without
+                binding. ``kg_query`` is the power-user Gremlin escape hatch.
 
         Returns:
             List of query result dicts.
@@ -344,6 +375,8 @@ class _LakeKGMixin:
             KGError: If KG is not enabled or query fails.
         """
         with self._require_kg_client() as client:
+            if dataset_name:
+                query = _scope_gremlin_to_graph(query, graph_name_for(dataset_name))
             return await client.gremlin(query)
 
     async def kg_get_neighbors(

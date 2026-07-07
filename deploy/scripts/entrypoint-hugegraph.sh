@@ -96,6 +96,36 @@ if [ -z "${SKIP_STORE_GRPC_WAIT:-}" ]; then
     fi
 fi
 
+# ── PD mode at the REST layer — only for the hstore/PD backend ────────
+# The image's docker-entrypoint.sh wires HG_SERVER_BACKEND → `backend` and
+# HG_SERVER_PD_PEERS → `pd.peers` into hugegraph.properties, but does NOT
+# touch rest-server.properties `usePD`. Behavior depends on the backend:
+#
+#  • hstore + PD cluster: `usePD=true` is MANDATORY in HugeGraph 1.7 for
+#    graphspaces / PD mode. Without it the REST server runs standalone and
+#    per-dataset graphs created via /graphspaces/DEFAULT/graphs/{name} all
+#    collapse onto ONE shared store (v1.8.6 isolation silently broken).
+#
+#  • rocksdb single-node: graphspaces PD mode is NOT used; per-graph
+#    isolation comes from rocksdb's per-graph store directories. usePD must
+#    be OFF (the REST standalone path is the correct one here).
+REST_CONF="/hugegraph-server/conf/rest-server.properties"
+if [ -f "$REST_CONF" ]; then
+    if [ "${HG_SERVER_BACKEND:-}" = "hstore" ]; then
+        if ! grep -qE "^usePD=true" "$REST_CONF"; then
+            log "hstore backend → enabling PD mode (usePD=true) in rest-server.properties"
+            sed -i "s|^[#[:space:]]*usePD=.*|usePD=true|" "$REST_CONF" 2>/dev/null || true
+            grep -qE "^usePD=true" "$REST_CONF" || echo "usePD=true" >> "$REST_CONF"
+        fi
+    else
+        # rocksdb (or any non-PD backend): make sure PD mode is OFF.
+        if grep -qE "^usePD=true" "$REST_CONF"; then
+            log "${HG_SERVER_BACKEND:-rocksdb} backend → disabling PD mode in rest-server.properties"
+            sed -i "s|^usePD=true|# usePD=true|" "$REST_CONF" 2>/dev/null || true
+        fi
+    fi
+fi
+
 # ── Delegate to original entrypoint ──────────────────────────────────
 # Original image: ENTRYPOINT ["/usr/bin/dumb-init", "--"]
 #                 CMD ["./docker-entrypoint.sh"]

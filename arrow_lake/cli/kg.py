@@ -79,13 +79,14 @@ def kg_stats(ctx: click.Context, dataset: str | None) -> None:
 
 @kg_group.command("query")
 @click.argument("gremlin_query")
+@click.option("--dataset", default=None, help="Lake dataset — scope the query to the kg_{dataset} graph")
 @click.pass_context
-def kg_query(ctx: click.Context, gremlin_query: str) -> None:
+def kg_query(ctx: click.Context, gremlin_query: str, dataset: str | None) -> None:
     """Execute a Gremlin query against the knowledge graph."""
     lake = _get_lake(ctx)
 
     try:
-        results = _run_async(lake.kg_query(gremlin_query))
+        results = _run_async(lake.kg_query(gremlin_query, dataset_name=dataset))
     except Exception as exc:
         _print_error(f"KG query failed: {exc}")
         raise SystemExit(1) from None

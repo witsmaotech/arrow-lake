@@ -338,13 +338,31 @@ class HugeGraphClient(_TraverserMixin, _ImportExportMixin):
             pass
 
         try:
+            # Backend + scheduler + factory must match the deployment.
+            #  • gremlin.graph: HugeFactoryAuthProxy because auth is enabled
+            #    (matches the working default graph; the bare HugeFactory fails
+            #    to instantiate under auth).
+            #  • scheduler: hstore/PD uses `distributed`; rocksdb single-node
+            #    uses `local`.
+            #  • rocksdb: each graph MUST get its own data_path — otherwise every
+            #    graph collides on the default `rocksdb-data/data/` directory and
+            #    the 2nd+ graph fails with a RocksDB lock conflict
+            #    ("lock hold by current process ... No locks available").
+            backend = getattr(self._config, "backend", "rocksdb") or "rocksdb"
             body: dict[str, Any] = {
-                "gremlin.graph": "org.apache.hugegraph.HugeFactory",
-                "backend": "hstore",
+                "gremlin.graph": "org.apache.hugegraph.auth.HugeFactoryAuthProxy",
+                "backend": backend,
                 "serializer": "binary",
                 "store": name,
-                "task.scheduler_type": "distributed",
+                "task.scheduler_type": "distributed" if backend == "hstore" else "local",
             }
+            if backend == "rocksdb":
+                root = (
+                    getattr(self._config, "rocksdb_data_path", "/var/lib/hugegraph")
+                    or "/var/lib/hugegraph"
+                )
+                body["rocksdb.data_path"] = f"{root}/graphs/{name}"
+                body["rocksdb.wal_path"] = f"{root}/graphs/{name}"
             resp = await self._post(
                 f"/graphspaces/DEFAULT/graphs/{name}",
                 json_data=body,
@@ -370,9 +388,24 @@ class HugeGraphClient(_TraverserMixin, _ImportExportMixin):
             return False
 
     async def list_graphs(self) -> list[str]:
-        """List all graphs in the HugeGraph instance."""
+        """List all graphs in the HugeGraph instance.
+
+        In PD mode (``usePD=true``), the flat ``GET /graphs`` endpoint returns
+        empty because graphs are managed per-graphspace; fall back to the
+        DEFAULT graphspace listing so existence checks (``ensure_graph`` /
+        ``graph_exists``) keep working.
+        """
         resp = await self._get("/graphs")
-        return resp.json().get("graphs", [])
+        graphs = resp.json().get("graphs", [])
+        if graphs:
+            return graphs
+        try:
+            gs_resp = await self._get("/graphspaces/DEFAULT/graphs")
+            if gs_resp.status_code == 200:
+                return gs_resp.json().get("graphs", [])
+        except (httpx.HTTPError, ValueError):
+            pass
+        return []
 
     async def graph_exists(self, *, graph_name: str | None = None) -> bool:
         """Check if the configured graph exists."""

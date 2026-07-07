@@ -127,6 +127,11 @@ class HugeGraphConfig(BaseModel):
     host: str = "localhost"
     port: int = 8091
     graph_name: str = "hugegraph"
+    # Storage backend — must match the HugeGraph server deployment. rocksdb
+    # (single-node, default) gives true per-graph store isolation; hstore is the
+    # PD-cluster distributed backend. ``ensure_graph`` creates per-dataset graphs
+    # with this backend (and the matching task scheduler).
+    backend: str = "rocksdb"
     timeout_seconds: float = 30.0
     username: str = ""
     password: str = ""
