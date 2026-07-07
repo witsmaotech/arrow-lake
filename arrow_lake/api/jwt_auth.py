@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 _JWT_PUBLIC_PREFIXES: tuple[str, ...] = (
     "/health",
     "/metrics",
+    "/console",  # SQL Worksheet static frontend (login.html / assets must load pre-auth)
 )
 
 # Doc path prefixes that bypass JWT only when docs are enabled.
