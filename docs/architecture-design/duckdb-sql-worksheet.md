@@ -2,7 +2,9 @@
 
 > **版本基线**:v1.8.6([`arrow_lake/_version.py`](../../arrow_lake/_version.py)、容器实测)
 > **文档日期**:2026-07-07
-> **状态**:设计已评审,待实施(Phase 0a 产物)
+> **状态**:已实施(commit `3855b20` + 安全修复 `4039da3`/`a1b2c3d`)。
+>
+> **⚠️ 实施修订(2026-07-07)**:为消除 apache-arrow CDN 供应链依赖(安全审查 HIGH→MEDIUM 反复标记),**前端移除 stream 模式**,仅保留非流式 JSON(`format=json`,`max_rows` 上限 1,000,000 + CSV 导出)。本文 §3.4 / §4 / ADR-5 / ADR-6 中关于 SSE 流式与 apache-arrow 的描述为"后端能力 + 原设计记录",**前端 MVP 不使用**;后端 `_stream_table`(`query.py:36`)仍可供其他客户端调用。后续如需在前端启用 stream,须先用 Node+esbuild 把 apache-arrow 本地 vendor 化(importmap 指向 `./vendor/`),不得直接走 CDN。
 > **语言约定**:中文正文、英文图注(技术图惯例 + 渲染稳定)
 > **关联计划**:`~/.claude/plans/lively-orbiting-rossum.md`(执行级计划)、前端原型 [`docs/frontend-prototype/olap.html`](../frontend-prototype/olap.html)
 
