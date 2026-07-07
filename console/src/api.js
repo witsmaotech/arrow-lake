@@ -1,5 +1,5 @@
-// API client: Bearer injection + 401 auto-refresh + error normalization
-import { getAccessToken, getRefreshToken, setTokens, clearTokens, API_BASE } from "./auth.js";
+// API client: 双层 auth header(BOTH 模式)+ 401 auto-refresh + 错误归一
+import { getAccessToken, getRefreshToken, setTokens, clearTokens, getApiKey, API_BASE } from "./auth.js";
 
 export { API_BASE };
 
@@ -26,11 +26,18 @@ async function doRefresh() {
   return tok.access_token;
 }
 
-export async function request(method, path, { body, headers, signal } = {}) {
-  const tok = getAccessToken();
+// BOTH 模式:同时带 Authorization Bearer(jwt 层)和 X-API-Key(api_key 层)
+function withAuth(headers) {
   const h = { "Content-Type": "application/json", ...(headers || {}) };
+  const tok = getAccessToken();
   if (tok) h["Authorization"] = `Bearer ${tok}`;
-  const opt = { method, headers: h, signal };
+  const ak = getApiKey();
+  if (ak) h["X-API-Key"] = ak;
+  return h;
+}
+
+export async function request(method, path, { body, headers, signal } = {}) {
+  const opt = { method, headers: withAuth(headers), signal };
   if (body !== undefined) opt.body = JSON.stringify(body);
 
   let r;
@@ -50,10 +57,7 @@ export async function request(method, path, { body, headers, signal } = {}) {
       clearTokens();
       throw e;
     }
-    const tok2 = getAccessToken();
-    const h2 = { "Content-Type": "application/json", ...(headers || {}) };
-    if (tok2) h2["Authorization"] = `Bearer ${tok2}`;
-    const opt2 = { method, headers: h2, signal };
+    const opt2 = { method, headers: withAuth(headers), signal };
     if (body !== undefined) opt2.body = JSON.stringify(body);
     r = await fetch(`${API_BASE}${path}`, opt2);
   }

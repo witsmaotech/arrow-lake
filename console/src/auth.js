@@ -1,8 +1,10 @@
-// Token management: login (X-API-Key in BOTH mode) / refresh / logout
+// Token + API Key management.
+// auth_mode=BOTH 注册 api_key middleware(查 X-API-Key)和 jwt middleware(查 Authorization Bearer)。
+// 前端须同时带两个 header 才能通过两层。login 时存 API Key,api.js 每个请求带上。
 const K_ACCESS = "al_access";
 const K_REFRESH = "al_refresh";
+const K_APIKEY = "al_apikey";
 
-// Dev (5180) → API on 8000; Prod (same origin /console) → relative /api/v1
 function isDev() {
   const o = location.origin;
   return o.startsWith("http://localhost:5180") || o.startsWith("http://127.0.0.1:5180");
@@ -11,6 +13,7 @@ export const API_BASE = isDev() ? "http://127.0.0.1:8000/api/v1" : "/api/v1";
 
 export function getAccessToken() { return localStorage.getItem(K_ACCESS); }
 export function getRefreshToken() { return localStorage.getItem(K_REFRESH); }
+export function getApiKey() { return localStorage.getItem(K_APIKEY); }
 export function setTokens(access, refresh) {
   if (access) localStorage.setItem(K_ACCESS, access);
   if (refresh) localStorage.setItem(K_REFRESH, refresh);
@@ -18,6 +21,7 @@ export function setTokens(access, refresh) {
 export function clearTokens() {
   localStorage.removeItem(K_ACCESS);
   localStorage.removeItem(K_REFRESH);
+  localStorage.removeItem(K_APIKEY);
 }
 export function isLoggedIn() { return !!getAccessToken(); }
 
@@ -34,6 +38,7 @@ export async function login(apiKey) {
   }
   const tok = await r.json();
   setTokens(tok.access_token, tok.refresh_token);
+  localStorage.setItem(K_APIKEY, apiKey); // 后续请求也带 X-API-Key(BOTH 双层 auth)
   return tok;
 }
 
@@ -41,7 +46,7 @@ export async function logout() {
   try {
     await fetch(`${API_BASE}/auth/logout`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${getAccessToken()}` },
+      headers: { Authorization: `Bearer ${getAccessToken()}`, "X-API-Key": getApiKey() || "" },
     });
   } catch (_) {}
   clearTokens();
