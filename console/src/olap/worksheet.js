@@ -1,4 +1,5 @@
 // SQL Worksheet controller: dataset select / run / history / EXPLAIN (non-streaming JSON).
+// dataset 名统一加双引号(DuckDB 标识符引用),兼容含 "-" 等特殊字符的 dataset(如 api-test)。
 // stream 模式已于 2026-07-07 移除(消除 apache-arrow CDN 供应链依赖)。
 import { request, ApiError } from "../api.js";
 import { createEditor } from "./editor.js";
@@ -7,6 +8,9 @@ import { toast } from "../ui/toast.js";
 
 const HIST_KEY = "al-sql-history";
 const HIST_MAX = 20;
+
+// DuckDB 标识符引用:name → "name"(含双引号,转义内部双引号)
+const q = (name) => `"${String(name).replace(/"/g, '""')}"`;
 
 function loadHistory() {
   try { return JSON.parse(localStorage.getItem(HIST_KEY)) || []; } catch { return []; }
@@ -28,6 +32,9 @@ export async function initWorksheet() {
   const historySel = document.getElementById("historySel");
   const resultHost = document.getElementById("result");
 
+  // 模板:含 <dataset> 占位符,run 时替换为 "实际名"
+  const tpl = (name) => `SELECT *\nFROM ${name ? q(name) : "<dataset>"}\nLIMIT 100;`;
+
   // 1. Load datasets
   try {
     const list = await request("GET", "/datasets?limit=500");
@@ -45,8 +52,7 @@ export async function initWorksheet() {
   }
 
   // 2. Editor
-  const initial = localStorage.getItem("al-last-sql") ||
-    `SELECT *\nFROM ${dsSel.value || "<dataset>"}\nLIMIT 100;`;
+  const initial = localStorage.getItem("al-last-sql") || tpl(dsSel.value);
   const editor = createEditor(editorMount, { onRun: run, initial });
   renderHistory();
 
@@ -65,7 +71,7 @@ export async function initWorksheet() {
     });
   }
 
-  // 核心:执行一条 SQL(非流式 JSON),复用 RBAC + SELECT 校验 + 行级 ACL
+  // 核心执行(非流式 JSON),复用 RBAC + SELECT 校验 + 行级 ACL
   async function execute(sql, label) {
     const ds = dsSel.value;
     if (!ds) { toast("请先选择数据集", "warn"); return null; }
@@ -86,8 +92,11 @@ export async function initWorksheet() {
     }
   }
 
+  // 替换 <dataset> 占位符为 "实际名"(带引号,兼容 api-test 等含 - 的名字)
+  const fillSql = () => editor.value.replace(/<dataset>/g, q(dsSel.value)).trim();
+
   async function run() {
-    const sql = editor.value.replace(/<dataset>/g, dsSel.value).trim();
+    const sql = fillSql();
     const resp = await execute(sql);
     if (resp && resp.success) {
       saveHistory(sql);
@@ -98,7 +107,7 @@ export async function initWorksheet() {
 
   // EXPLAIN: DuckDB 计划(EXPLAIN 不在 _BLOCKED_SQL_PREFIXES,放行)
   async function runExplain() {
-    const inner = editor.value.replace(/<dataset>/g, dsSel.value).replace(/;\s*$/, "").trim();
+    const inner = fillSql().replace(/;\s*$/, "");
     if (!inner) { toast("请先输入要 EXPLAIN 的 SQL", "warn"); return; }
     await execute(`EXPLAIN ${inner}`, "EXPLAIN");
   }
@@ -127,14 +136,14 @@ export async function initWorksheet() {
     }
   });
   dsSel.addEventListener("change", () => {
-    editor.value = `SELECT *\nFROM ${dsSel.value}\nLIMIT 100;`;
+    editor.value = tpl(dsSel.value);
     toast(`已切换到 ${dsSel.value}`, "info", 1500);
   });
   apiBtn?.addEventListener("click", () => {
     const ds = dsSel.value || "<name>";
-    const sql = editor.value.replace(/<dataset>/g, ds);
+    const sql = fillSql();
     window.openApi("OLAP SQL · query/olap",
-      `curl -X POST $API/api/v1/datasets/${ds}/query/olap \\\n  -H "Authorization: Bearer $TOKEN" \\\n  -d '{"sql": "${sql.replace(/\n/g, " ")}", "format": "json", "max_rows": 1000}'`,
+      `curl -X POST $API/api/v1/datasets/${ds}/query/olap \\\n  -H "Authorization: Bearer $TOKEN" \\\n  -H "X-API-Key: $KEY" \\\n  -d '{"sql": "${sql.replace(/\n/g, " ").replace(/"/g, '\\"')}", "format": "json", "max_rows": 1000}'`,
       `lake.olap_query("${ds}", """${sql}""", max_rows=1000)`);
   });
 }
