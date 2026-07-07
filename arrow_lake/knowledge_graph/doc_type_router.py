@@ -382,7 +382,12 @@ class DocTypeClassifier:
         async def _complete(system: str, user: str) -> str:
             from arrow_lake.rag.provider import LLMMessage  # local import
 
-            resp = await provider.complete([LLMMessage(system=system), LLMMessage(user=user)])
+            # 修(2026-07-07)：provider 只有 .generate()（BaseLLMProvider 无 .complete()）；
+            # LLMMessage 是 @dataclass(role, content)，不是 system=/user= kwargs。
+            resp = await provider.generate([
+                LLMMessage(role="system", content=system),
+                LLMMessage(role="user", content=user),
+            ])
             return resp.content
 
         return cls(_complete)
@@ -411,9 +416,10 @@ class DocTypeClassifier:
         )
         try:
             raw = (await self._llm_complete(system, user)).strip().lower()
-        except (TimeoutError, RuntimeError, OSError, ValueError) as exc:
-            # Narrow best-effort catch: network/LLM/parse errors → None. Never
-            # masks KeyboardInterrupt / asyncio.CancelledError (BaseException).
+        except (TimeoutError, RuntimeError, OSError, ValueError, AttributeError, TypeError) as exc:
+            # Best-effort catch: network/LLM/parse errors → None. AttributeError/
+            # TypeError 防止 provider 接口不匹配等静默 bug 炸调用方。Never masks
+            # KeyboardInterrupt / asyncio.CancelledError (BaseException).
             logger.warning("doc_type classification LLM call failed: %s", exc)
             return None
 
@@ -433,3 +439,34 @@ class DocTypeClassifier:
                 return nt
         logger.debug("doc_type classifier returned unknown label (raw=%r)", raw)
         return None
+
+    def classify_sync(self, text: str) -> str | None:
+        """Sync adapter for :meth:`classify` — for the sync ingest path.
+
+        Handles both no-running-loop (plain ``asyncio.run``) and running-loop
+        (FastAPI async context) cases: the latter runs the coro in a worker
+        thread with its own loop to avoid "loop already running" errors.
+        Best-effort: never raises (degrades to None on any failure).
+        """
+        import asyncio
+        import concurrent.futures
+
+        async def _safe() -> str | None:
+            try:
+                return await self.classify(text)
+            except Exception as exc:  # noqa: BLE001 — best-effort, mirror classify()
+                logger.warning("doc_type classification failed: %s", exc)
+                return None
+
+        try:
+            asyncio.get_running_loop()
+            running = True
+        except RuntimeError:
+            running = False
+
+        if not running:
+            return asyncio.run(_safe())
+        # Running loop present (e.g. inside an async API handler) — run in a
+        # worker thread with a fresh loop.
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+            return ex.submit(asyncio.run, _safe()).result()

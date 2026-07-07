@@ -139,7 +139,9 @@ class HugeGraphConfig(BaseModel):
     vermeer_host: str = "localhost"
     vermeer_port: int = 8081
     # --- v1.7.0 hyper-extract 抽取后端（§4.3）---
-    extractor_backend: Literal["legacy", "he"] = "legacy"
+    # hyper-extract 为默认 KG 抽取组件（结构化模板 + doc_type 路由，质量优于 legacy 通用 prompt）。
+    # legacy 通用 LLM 抽取器作为回退保留。
+    extractor_backend: Literal["legacy", "he"] = "he"
     # he_default_template MUST be a usable extraction template (the base_* presets
     # are AutoType base classes, not directly extractable → "Template not found").
     # general/concept_graph is the safe generic fallback (concepts are universal).
@@ -149,7 +151,9 @@ class HugeGraphConfig(BaseModel):
     # collapse via normalize_doc_type before lookup, so listing them is redundant.
     he_doc_type_templates: dict[str, str] = {
         "paper": "general/concept_graph",
-        "report": "general/doc_structure",
+        # report 改用 concept_graph：实测 doc_structure 在 granite4.1:8b + 建设方案类
+        # 文档抽 0 实体，concept_graph 抽 8（高质量）。doc_structure 模板质量待后续单独调优。
+        "report": "general/concept_graph",
         "manual": "general/workflow_graph",
         "biography": "general/biography_graph",
     }

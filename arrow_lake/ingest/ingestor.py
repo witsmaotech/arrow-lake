@@ -64,10 +64,18 @@ class Ingestor(_FileIngestMixin, _MediaIngestMixin, _SourceIngestMixin):
         ".parquet": "parquet",
     }
 
-    def __init__(self, manager: Any, quality_gate: Any | None = None) -> None:
+    def __init__(
+        self,
+        manager: Any,
+        quality_gate: Any | None = None,
+        doc_type_classifier: Any | None = None,
+    ) -> None:
         self._manager = manager
         self._first_table_seen: dict[str, bool] = {}
         self._quality_gate = quality_gate
+        # v1.7: shared DocTypeClassifier for ingest-time doc_type auto-discrimination
+        # (None → feature off; doc_type column stays "", KG-build-time inference 兜底).
+        self._doc_type_classifier = doc_type_classifier
 
     def _write_table(
         self,

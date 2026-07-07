@@ -167,13 +167,28 @@ class _FileIngestMixin:
                 continue
 
             doc_id = hashlib.sha256(str(pdf_path.resolve()).encode()).hexdigest()[:16]
+            # v1.7: resolve per-file doc_type — explicit (caller) > auto-classify > "".
+            resolved_doc_type = doc_type or ""
+            if not resolved_doc_type and self._doc_type_classifier is not None:
+                try:
+                    inferred = self._doc_type_classifier.classify_sync(
+                        getattr(parsed, "text", "") or ""
+                    )
+                    if inferred:
+                        resolved_doc_type = inferred
+                except Exception as exc:  # noqa: BLE001 — best-effort, never block ingest
+                    import structlog
+                    structlog.get_logger(__name__).warning(
+                        "ingest.doc_type_classify_failed",
+                        path=str(pdf_path), err=str(exc)[:120],
+                    )
             rows = {
                 "text": [c.text for c in chunks],
                 "page_number": [c.page_number for c in chunks],
                 "chunk_index": [c.chunk_index for c in chunks],
                 "document_id": [doc_id] * len(chunks),
                 "blob_key": [blob_key] * len(chunks),
-                "doc_type": [doc_type or ""] * len(chunks),
+                "doc_type": [resolved_doc_type] * len(chunks),
             }
             table = pa.table(rows)
 

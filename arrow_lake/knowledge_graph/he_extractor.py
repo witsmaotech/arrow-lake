@@ -86,6 +86,10 @@ class HyperExtractExtractor:
         self._classifier = doc_type_classifier
         self._template_cache: dict[str, Any] = {}
         self._doc_type_cache: dict[str, str | None] = {}  # content digest → inferred doc_type
+        # langchain ChatOpenAI client (thread-safe, reused across parses). A fresh
+        # hyper-extract KA is created per parse to avoid AutoGraph accumulating
+        # mutable state (data/indexes) across many chunks → corrupted/empty output.
+        self._chat_client: Any = None
         # §12.6.① langchain-openai 1.3.x does not propagate ChatOpenAI(api_key=...)
         # to the underlying openai client, so OPENAI_API_KEY must be in the env.
         # Only set when absent (setdefault semantics) and log when an existing
@@ -97,26 +101,42 @@ class HyperExtractExtractor:
         elif _existing != _want:
             logger.debug("OPENAI_API_KEY already set; not overridden by this extractor")
 
-    def _get_template(self, template_path: str) -> Any:
-        """Return a cached hyper-extract KA instance for ``template_path``."""
-        if template_path not in self._template_cache:
-            from hyperextract import Template
+    def _get_chat_client(self) -> Any:
+        """Return a cached langchain ChatOpenAI client (thread-safe; reused
+        across parses). A fresh hyper-extract KA is created per parse via
+        :meth:`_parse_fresh` to avoid the AutoGraph accumulating mutable state
+        (``data``/indexes) across many chunks, which corrupts output after N calls.
+        """
+        if self._chat_client is None:
             from langchain_openai import ChatOpenAI
 
-            chat = ChatOpenAI(
+            self._chat_client = ChatOpenAI(
                 model=self._model or self._llm_config.model,
                 api_key=self._llm_config.api_key or "dummy",
                 base_url=self._llm_config.api_base or None,
                 temperature=0,
-                max_tokens=2048,
+                # §12.6 修正：hyper-extract 走结构化输出(.parse() + response_format)，
+                # 不能用 chat_template_kwargs 关 thinking（.parse() 拒绝未知 kwarg）。
+                # thinking 模型需把 max_tokens 撑大让 thinking+结构化输出都装下，否则返空。
+                max_tokens=8192,
             )
-            self._template_cache[template_path] = Template.create(
-                template_path,
-                self._language,
-                llm_client=chat,
-                embedder=None,
-            )
-        return self._template_cache[template_path]
+        return self._chat_client
+
+    def _parse_fresh(self, template_path: str, text: str) -> Any:
+        """Create a ONE-SHOT hyper-extract KA and parse ``text``.
+
+        Each call builds a fresh ``Template.create(...)`` (reusing the cached
+        langchain client) so no mutable AutoGraph state persists between chunks.
+        """
+        from hyperextract import Template
+
+        ka = Template.create(
+            template_path,
+            self._language,
+            llm_client=self._get_chat_client(),
+            embedder=None,
+        )
+        return ka.parse(text)
 
     async def _infer_doc_type(self, text: str) -> str | None:
         """Classify doc_type from ``text`` (cached by a stable content digest).
@@ -151,10 +171,8 @@ class HyperExtractExtractor:
 
         template_path = self._router.resolve(doc_type)
         try:
-            ka = self._get_template(template_path)
-            # hyper-extract ``parse`` is sync with internal concurrency; wrap
-            # to avoid blocking the event loop.
-            result = await asyncio.to_thread(ka.parse, stripped)
+            # Fresh KA per parse (no shared mutable state across chunks).
+            result = await asyncio.to_thread(self._parse_fresh, template_path, stripped)
         except Exception as exc:
             logger.warning(
                 "hyper-extract parse failed for chunk %s (template=%s): %s",

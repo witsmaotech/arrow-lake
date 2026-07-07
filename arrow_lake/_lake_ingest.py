@@ -400,7 +400,23 @@ class _LakeIngestMixin:
             lambda: TurboOcrClient(endpoint=ocr_endpoint),
         )
 
-        return Ingestor(self._get_storage()).ingest_documents(
+        # v1.7: build a doc_type classifier so ingest can auto-discriminate the
+        # document type per-file (only used when caller did NOT pass doc_type —
+        # explicit doc_type wins). Failure is non-fatal → None → column stays "".
+        doc_type_classifier = None
+        if not doc_type:
+            try:
+                from arrow_lake.knowledge_graph.doc_type_router import DocTypeClassifier
+                doc_type_classifier = DocTypeClassifier.from_llm_config(self._config.llm)
+            except Exception as exc:  # noqa: BLE001 — best-effort
+                import structlog
+                structlog.get_logger(__name__).warning(
+                    "ingest.doc_type_classifier_disabled", err=str(exc)[:150],
+                )
+
+        return Ingestor(
+            self._get_storage(), doc_type_classifier=doc_type_classifier,
+        ).ingest_documents(
             dataset_name, pdf_paths,
             doc_config=doc_config,
             doc_type=doc_type,
