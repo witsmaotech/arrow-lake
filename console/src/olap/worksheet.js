@@ -92,8 +92,15 @@ export async function initWorksheet() {
     }
   }
 
-  // 替换 <dataset> 占位符为 "实际名"(带引号,兼容 api-test 等含 - 的名字)
-  const fillSql = () => editor.value.replace(/<dataset>/g, q(dsSel.value)).trim();
+  // 替换 <dataset> 占位符为 "实际名"(带引号,兼容 api-test 等含 - 的名字);
+  // 规范化(DuckDB 单语句 execute 要求):取首个分号前的单句 + 去结尾分号 + trim。
+  // 否则后端 conn.execute 对结尾/多分号裸 500(无 JSON detail)。
+  const fillSql = () =>
+    editor.value
+      .replace(/<dataset>/g, q(dsSel.value))
+      .split(/;\s*\n|;\s*(?=\w)/)[0]   // 多语句 → 取首句(保留语句内分号,如字符串字面量极少见)
+      .replace(/;\s*$/, "")            // 去结尾分号
+      .trim();
 
   async function run() {
     const sql = fillSql();
