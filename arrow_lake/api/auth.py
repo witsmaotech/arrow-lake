@@ -35,6 +35,10 @@ async def api_key_middleware_fn(
     """Pure ASGI API key middleware — correctly propagates request.state."""
     path = request.url.path
 
+    # Static frontend prefix bypasses auth (login.html / assets load pre-auth).
+    if path.startswith("/console"):
+        return await call_next(request)
+
     if not api_key:
         if path in _PUBLIC_PATHS or request.method == "OPTIONS" or path == "/metrics":
             return await call_next(request)

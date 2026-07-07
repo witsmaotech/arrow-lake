@@ -43,6 +43,9 @@ docs/
 
 # Node / JS artifacts
 node_modules/
+console/package.json
+console/package-lock.json
+console/node_modules/
 
 # OS files
 .DS_Store
