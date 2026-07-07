@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>登录 · Arrow Lake Console</title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/tokens.css"/>
+<link rel="stylesheet" href="assets/app.css"/>
+<link rel="stylesheet" href="assets/console.css"/>
+</head>
+<body>
+<div class="login-wrap">
+  <form class="login-card" id="loginForm">
+    <div class="brand">
+      <i class="placeholder" data-ic="olap" style="color:var(--teal-bright)"></i>
+      <span><div class="brand-name">Arrow Lake</div><div class="brand-sub">SQL Worksheet</div></span>
+    </div>
+    <h1>登录控制台</h1>
+    <div class="sub">DuckDB OLAP · 走产品 RBAC / SELECT 校验 / 行级 ACL</div>
+
+    <div class="field">
+      <label>API Key <span style="color:var(--danger)">*</span></label>
+      <input class="input mono" id="apiKey" type="password" placeholder="al_xxx..." autocomplete="current-password" autofocus/>
+    </div>
+
+    <button class="btn btn-primary" type="submit" style="width:100%;justify-content:center">
+      <i class="placeholder" data-ic="key"></i> 登录
+    </button>
+
+    <div class="muted" style="font-size:.72rem;margin-top:var(--s4);text-align:center;line-height:1.6">
+      auth_mode=BOTH:以 <code class="mono">X-API-Key</code> 换 JWT。<br/>
+      Token 存 localStorage,请求自动带 <code class="mono">Authorization: Bearer</code>。
+    </div>
+  </form>
+</div>
+
+<script src="assets/console-layout.js"></script>
+<script type="module">
+import { login, isLoggedIn } from "./src/auth.js";
+import { toast } from "./src/ui/toast.js";
+
+if (isLoggedIn()) location.href = "olap.html";
+
+const form = document.getElementById("loginForm");
+const key = document.getElementById("apiKey");
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const v = key.value.trim();
+  if (!v) { toast("请输入 API Key", "warn"); key.focus(); return; }
+  const btn = form.querySelector('button[type="submit"]');
+  btn.disabled = true; btn.textContent = "登录中…";
+  try {
+    await login(v);
+    location.href = "olap.html";
+  } catch (err) {
+    toast("登录失败: " + err.message, "danger", 5000);
+    key.focus(); key.select();
+  } finally {
+    btn.disabled = false; btn.textContent = "登录";
+  }
+});
+</script>
+</body>
+</html>

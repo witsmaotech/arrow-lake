@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>SQL Worksheet · Arrow Lake Console</title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/tokens.css"/>
+<link rel="stylesheet" href="assets/app.css"/>
+<link rel="stylesheet" href="assets/console.css"/>
+</head>
+<body>
+<div id="app">
+<main class="main">
+  <div class="page">
+    <div class="h-sec between">
+      <div>
+        <h1>SQL Worksheet</h1>
+        <div class="desc">DuckDB OLAP · <span class="mono">POST /datasets/&#123;name&#125;/query/olap</span> · 走 RBAC + SELECT 校验 + 行级 ACL</div>
+      </div>
+      <div class="flex"><span class="lamp ok"><i></i>会话池 · 内存治理</span></div>
+    </div>
+
+    <div class="panel flush">
+      <div class="panel-h">
+        <i class="placeholder" data-ic="olap"></i><h3>查询</h3>
+        <span class="actions">
+          <label class="muted" style="font-size:.78rem">数据集</label>
+          <select class="select" id="dsSel" style="min-width:200px"></select>
+          <span class="tag info">SELECT 只读</span>
+          <button class="btn btn-ghost btn-sm" id="apiBtn"><i class="placeholder" data-ic="code"></i> API</button>
+          <button class="btn btn-primary btn-sm" id="runBtn"><i class="placeholder" data-ic="play"></i> 运行 ⌘⏎</button>
+        </span>
+      </div>
+      <div id="editor"></div>
+      <div class="qopts">
+        <label><input type="checkbox" id="streamChk"/> stream <span class="muted">(SSE 流式 · ≥10k 行推荐)</span></label>
+        <label>batch_size <input class="input mono" id="batchSize" value="1000" style="width:80px"/></label>
+        <label>max_rows <input class="input mono" id="maxRows" value="1000000" style="width:100px"/></label>
+      </div>
+    </div>
+
+    <div class="panel flush">
+      <div class="panel-h">
+        <i class="placeholder" data-ic="database"></i><h3>结果</h3>
+        <span class="sub" id="meta">未运行</span>
+      </div>
+      <div id="result"><div class="empty">在上方输入 SQL,按 <b>运行 ⌘⏎</b> 执行。</div></div>
+    </div>
+  </div>
+</main>
+</div>
+
+<!-- apache-arrow (dynamic import in stream.js, only when stream=true) -->
+<script type="importmap">
+{"imports":{"apache-arrow":"https://esm.sh/apache-arrow@18.11.0"}}
+</script>
+<script src="assets/console-layout.js"></script>
+<script type="module">
+import { isLoggedIn } from "./src/auth.js";
+import { initWorksheet } from "./src/olap/worksheet.js";
+
+if (!isLoggedIn()) {
+  location.replace("login.html");
+} else {
+  renderShell({ active: "olap", crumb: "<b>SQL Worksheet</b>" });
+  applyIcons();
+  initWorksheet();
+}
+</script>
+</body>
+</html>

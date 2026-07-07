@@ -493,6 +493,18 @@ def create_app(config: ArrowLakeConfig | None = None) -> FastAPI:
     # Async task endpoints (fire-and-forget for heavy operations)
     app.include_router(async_tasks_router)
 
+    # Arrow Lake Console — SQL Worksheet static frontend (same-origin mount).
+    # Serves console/{login,olap,index}.html; pages call /api/v1/.../query/olap
+    # (RBAC + validate_sql_safety + row-level ACL). See
+    # docs/architecture-design/duckdb-sql-worksheet.md.
+    from pathlib import Path
+
+    from starlette.staticfiles import StaticFiles
+
+    _console_dir = Path(__file__).resolve().parent.parent / "console"
+    if _console_dir.is_dir():
+        app.mount("/console", StaticFiles(directory=str(_console_dir), html=True), name="console")
+
     # OpenTelemetry (optional — no-op when disabled or deps not installed)
     if config.opentelemetry.enabled:
         from arrow_lake.api.telemetry import setup_telemetry

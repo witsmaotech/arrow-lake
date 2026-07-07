@@ -170,7 +170,7 @@ class RateLimitConfig(BaseModel):
     default_requests_per_minute: int = 60
     default_burst: int = 10
     override_per_endpoint: dict[str, int] = {}
-    exempt_paths: list[str] = ["/health", "/metrics", "/docs", "/openapi.json", "/redoc"]
+    exempt_paths: list[str] = ["/health", "/metrics", "/docs", "/openapi.json", "/redoc", "/console"]
     trusted_proxies: set[str] = set()
 
 
