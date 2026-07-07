@@ -1,16 +1,31 @@
-// SQL Worksheet controller: dataset select / run (non-streaming JSON only).
+// SQL Worksheet controller: dataset select / run / history / EXPLAIN (non-streaming JSON).
 // stream 模式已于 2026-07-07 移除(消除 apache-arrow CDN 供应链依赖)。
 import { request, ApiError } from "../api.js";
 import { createEditor } from "./editor.js";
 import { renderResult, renderError } from "./results.js";
 import { toast } from "../ui/toast.js";
 
+const HIST_KEY = "al-sql-history";
+const HIST_MAX = 20;
+
+function loadHistory() {
+  try { return JSON.parse(localStorage.getItem(HIST_KEY)) || []; } catch { return []; }
+}
+function saveHistory(sql) {
+  const s = sql.trim(); if (!s) return;
+  let h = loadHistory().filter(x => x !== s);
+  h.unshift(s);
+  localStorage.setItem(HIST_KEY, JSON.stringify(h.slice(0, HIST_MAX)));
+}
+
 export async function initWorksheet() {
   const dsSel = document.getElementById("dsSel");
   const editorMount = document.getElementById("editor");
   const runBtn = document.getElementById("runBtn");
+  const explainBtn = document.getElementById("explainBtn");
   const apiBtn = document.getElementById("apiBtn");
   const maxRowsInp = document.getElementById("maxRows");
+  const historySel = document.getElementById("historySel");
   const resultHost = document.getElementById("result");
 
   // 1. Load datasets
@@ -33,27 +48,59 @@ export async function initWorksheet() {
   const initial = localStorage.getItem("al-last-sql") ||
     `SELECT *\nFROM ${dsSel.value || "<dataset>"}\nLIMIT 100;`;
   const editor = createEditor(editorMount, { onRun: run, initial });
+  renderHistory();
 
-  async function run() {
+  function renderHistory() {
+    if (!historySel) return;
+    const h = loadHistory();
+    historySel.textContent = "";
+    const ph = document.createElement("option");
+    ph.value = ""; ph.textContent = `📋 历史 (${h.length})`;
+    historySel.appendChild(ph);
+    h.forEach((s, i) => {
+      const o = document.createElement("option");
+      o.value = String(i);
+      o.textContent = s.replace(/\s+/g, " ").slice(0, 64);
+      historySel.appendChild(o);
+    });
+  }
+
+  // 核心:执行一条 SQL(非流式 JSON),复用 RBAC + SELECT 校验 + 行级 ACL
+  async function execute(sql, label) {
     const ds = dsSel.value;
-    const sql = editor.value.replace(/<dataset>/g, ds).trim();
-    if (!sql) { toast("请输入 SQL", "warn"); return; }
-    if (!ds) { toast("请先选择数据集", "warn"); return; }
-    localStorage.setItem("al-last-sql", editor.value);
-
+    if (!ds) { toast("请先选择数据集", "warn"); return null; }
+    if (!sql.trim()) { toast("请输入 SQL", "warn"); return null; }
     const max_rows = parseInt(maxRowsInp.value) || undefined;
-    runBtn.disabled = true; runBtn.dataset.label = runBtn.innerHTML; runBtn.innerHTML = "运行中…";
-
+    runBtn.disabled = true; runBtn.dataset.label = runBtn.innerHTML; runBtn.innerHTML = `${label || "运行"}…`;
     const t0 = performance.now();
     try {
       const resp = await request("POST", `/datasets/${encodeURIComponent(ds)}/query/olap`,
         { body: { sql, format: "json", max_rows } });
       renderResult(resultHost, resp, Math.round(performance.now() - t0));
+      return resp;
     } catch (e) {
       handleError(e);
+      return null;
     } finally {
       runBtn.disabled = false; runBtn.innerHTML = runBtn.dataset.label;
     }
+  }
+
+  async function run() {
+    const sql = editor.value.replace(/<dataset>/g, dsSel.value).trim();
+    const resp = await execute(sql);
+    if (resp && resp.success) {
+      saveHistory(sql);
+      renderHistory();
+      localStorage.setItem("al-last-sql", editor.value);
+    }
+  }
+
+  // EXPLAIN: DuckDB 计划(EXPLAIN 不在 _BLOCKED_SQL_PREFIXES,放行)
+  async function runExplain() {
+    const inner = editor.value.replace(/<dataset>/g, dsSel.value).replace(/;\s*$/, "").trim();
+    if (!inner) { toast("请先输入要 EXPLAIN 的 SQL", "warn"); return; }
+    await execute(`EXPLAIN ${inner}`, "EXPLAIN");
   }
 
   function handleError(e) {
@@ -70,6 +117,15 @@ export async function initWorksheet() {
 
   // 3. Wire UI
   runBtn.addEventListener("click", run);
+  explainBtn?.addEventListener("click", runExplain);
+  historySel?.addEventListener("change", () => {
+    const h = loadHistory();
+    const idx = parseInt(historySel.value);
+    if (!isNaN(idx) && h[idx] !== undefined) {
+      editor.value = h[idx];
+      historySel.value = "";
+    }
+  });
   dsSel.addEventListener("change", () => {
     editor.value = `SELECT *\nFROM ${dsSel.value}\nLIMIT 100;`;
     toast(`已切换到 ${dsSel.value}`, "info", 1500);

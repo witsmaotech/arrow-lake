@@ -27,7 +27,9 @@
         <span class="actions">
           <label class="muted" style="font-size:.78rem">数据集</label>
           <select class="select" id="dsSel" style="min-width:200px"></select>
+          <select class="select" id="historySel" style="max-width:180px" title="查询历史(localStorage)"></select>
           <span class="tag info">SELECT 只读</span>
+          <button class="btn btn-ghost btn-sm" id="explainBtn"><i class="placeholder" data-ic="olap"></i> EXPLAIN</button>
           <button class="btn btn-ghost btn-sm" id="apiBtn"><i class="placeholder" data-ic="code"></i> API</button>
           <button class="btn btn-primary btn-sm" id="runBtn"><i class="placeholder" data-ic="play"></i> 运行 ⌘⏎</button>
         </span>
@@ -51,6 +53,7 @@
 </main>
 </div>
 
+<script src="vendor/codemirror.bundle.js"></script>
 <script src="assets/console-layout.js"></script>
 <script type="module">
 import { isLoggedIn } from "./src/auth.js";

@@ -172,6 +172,9 @@ COPY --from=builder /build/flows /app/flows
 # Copy examples for testing / demos
 COPY examples/ /app/examples/
 
+# Copy SQL Worksheet console (static frontend, served at /console via app.py StaticFiles mount)
+COPY console/ /app/console/
+
 # Activate venv in PATH
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONPATH="/app" \

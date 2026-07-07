@@ -24,6 +24,12 @@
   white-space:pre;overflow:auto;tab-size:2}
 .editor-ta::selection{background:rgba(20,184,166,.28)}
 
+/* —— CodeMirror 6 容器(本地 vendor)—— */
+.editor-cm{height:220px;overflow:auto;background:var(--ink-950);border-left:3px solid var(--teal)}
+.editor-cm .cm-editor{height:100%}
+.editor-cm .cm-scroller{font-family:var(--font-mono);line-height:1.7}
+.editor-cm :focus,.editor-cm .cm-editor.cm-focused{outline:none}
+
 /* —— 结果区 —— */
 .result-meta{display:flex;align-items:center;gap:var(--s3);padding:8px var(--card-pad);
   border-top:1px solid var(--line-soft);font-size:.8125rem;color:var(--fg-md)}
