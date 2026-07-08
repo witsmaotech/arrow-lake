@@ -8,31 +8,72 @@
 <link rel="stylesheet" href="assets/tokens.css"/>
 <link rel="stylesheet" href="assets/app.css"/>
 <link rel="stylesheet" href="assets/console.css"/>
+<style>
+  /* 复用原型 login 双栏样式 */
+  .login-bg{min-height:100vh;display:grid;grid-template-columns:1.1fr .9fr}
+  .login-art{position:relative;padding:var(--s7);display:flex;flex-direction:column;justify-content:space-between;background:
+    radial-gradient(700px 400px at 20% 10%,rgba(20,184,166,.18),transparent 60%),
+    radial-gradient(600px 400px at 80% 90%,rgba(56,189,248,.12),transparent 60%),var(--ink-950);overflow:hidden;border-right:1px solid var(--line)}
+  .login-art:before{content:"";position:absolute;inset:0;background-image:linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px);background-size:32px 32px;-webkit-mask-image:radial-gradient(500px 400px at 30% 40%,#000,transparent);mask-image:radial-gradient(500px 400px at 30% 40%,#000,transparent)}
+  .login-form{display:grid;place-items:center;padding:var(--s6)}
+  .login-card{width:min(380px,92vw)}
+  .toggles{display:flex;gap:2px;background:var(--ink-850);border:1px solid var(--line);border-radius:var(--r-md);padding:3px;margin-bottom:var(--s4)}
+  .toggles button{flex:1;padding:7px;border:none;background:none;color:var(--fg-lo);font-size:.8rem;font-weight:600;cursor:pointer;border-radius:5px;font-family:inherit}
+  .toggles button.active{background:var(--ink-700);color:var(--fg-hi)}
+  .telem{display:flex;gap:var(--s4);align-items:center;font-family:var(--font-mono);font-size:.7rem;color:var(--fg-lo)}
+  .telem .item{display:inline-flex;gap:6px;align-items:center}
+  .telem .dot{width:7px;height:7px;border-radius:50%;background:var(--ok);display:inline-block}
+  @media(max-width:860px){.login-bg{grid-template-columns:1fr}.login-art{display:none}}
+</style>
 </head>
 <body>
-<div class="login-wrap">
-  <form class="login-card" id="loginForm">
-    <div class="brand">
-      <i class="placeholder" data-ic="olap" style="color:var(--teal-bright)"></i>
-      <span><div class="brand-name">Arrow Lake</div><div class="brand-sub">SQL Worksheet</div></span>
+<div class="login-bg">
+  <div class="login-art">
+    <a class="brand" href="index.html" style="text-decoration:none;display:flex;gap:10px;align-items:center">
+      <span class="brand-mark">AL</span>
+      <span><b class="brand-name" style="color:var(--fg-hi)">Arrow Lake</b><div class="brand-sub">console · SQL Worksheet</div></span>
+    </a>
+    <div style="position:relative">
+      <span class="tag teal"><span style="width:7px;height:7px;border-radius:50%;background:var(--ok);display:inline-block"></span> 走产品 OLAP · RBAC + ACL</span>
+      <h1 style="font-size:clamp(1.8rem,1.2rem+1.4vw,2.8rem);font-weight:800;line-height:1.1;margin:var(--s4) 0;letter-spacing:-.02em">DuckDB SQL<br/><span style="background:linear-gradient(120deg,var(--teal-bright),var(--info));-webkit-background-clip:text;background-clip:text;color:transparent">Worksheet 控制台</span></h1>
+      <p class="muted" style="max-width:46ch">X-API-Key 换 JWT(auth_mode=BOTH)· 走 RBAC + SELECT 校验 + 行级 ACL · 双层 auth(X-API-Key + Bearer)。</p>
     </div>
-    <h1>登录控制台</h1>
-    <div class="sub">DuckDB OLAP · 走产品 RBAC / SELECT 校验 / 行级 ACL</div>
-
-    <div class="field">
-      <label>API Key <span style="color:var(--danger)">*</span></label>
-      <input class="input mono" id="apiKey" type="password" placeholder="al_xxx..." autocomplete="current-password" autofocus/>
+    <div class="telem" style="position:relative">
+      <span class="item"><span class="dot"></span>API 在线</span><span class="item">DuckDB OLAP</span><span class="item">Lance 湖仓</span><span class="item" style="margin-left:auto">RBAC 三档</span>
     </div>
+  </div>
+  <div class="login-form">
+    <div class="login-card">
+      <h2 style="margin:0 0 var(--s2)">登录控制台</h2>
+      <p class="muted" style="margin:0 0 var(--s4);font-size:.85rem">API Key → 换 JWT(用户名密码登录规划中,见 B 设计文档)</p>
+      <div class="toggles">
+        <button class="active" id="tabKey" type="button">API Key</button>
+        <button id="tabPwd" type="button">用户名 / 密码</button>
+      </div>
 
-    <button class="btn btn-primary" type="submit" style="width:100%;justify-content:center">
-      <i class="placeholder" data-ic="key"></i> 登录
-    </button>
+      <!-- API Key 表单(实际工作)-->
+      <form id="formKey" class="col">
+        <div class="field">
+          <label>API Key <span style="color:var(--danger)">*</span></label>
+          <input class="input mono" id="apiKey" type="password" placeholder="al_xxx..." autocomplete="current-password" autofocus/>
+        </div>
+        <button class="btn btn-primary" type="submit" style="width:100%;justify-content:center" id="loginBtn">
+          <i class="placeholder" data-ic="key"></i> 登录
+        </button>
+      </form>
 
-    <div class="muted" style="font-size:.72rem;margin-top:var(--s4);text-align:center;line-height:1.6">
-      auth_mode=BOTH:以 <code class="mono">X-API-Key</code> 换 JWT。<br/>
-      Token 存 localStorage,请求自动带 <code class="mono">Authorization: Bearer</code>。
+      <!-- 用户名密码(占位,B 实现后启用)-->
+      <form id="formPwd" class="col hidden">
+        <div class="field"><label>用户名</label><input class="input" placeholder="sysop" autocomplete="username" disabled/></div>
+        <div class="field"><label>密码</label><input class="input" type="password" placeholder="••••••••" autocomplete="current-password" disabled/></div>
+        <button class="btn btn-primary" type="submit" style="width:100%;justify-content:center" disabled>登录(规划中)</button>
+        <p class="muted" style="font-size:.72rem;margin-top:var(--s2)">用户名密码登录待后端用户体系就绪(见 <code>docs/architecture-design/rbac-user-system.md</code>)。</p>
+      </form>
+
+      <div class="divider"></div>
+      <div class="flex between" style="font-size:.72rem;color:var(--fg-lo)"><span>JWT HS256</span><span>Bearer + X-API-Key</span><span>SELECT 只读</span></div>
     </div>
-  </form>
+  </div>
 </div>
 
 <script src="assets/console-layout.js"></script>
@@ -42,23 +83,30 @@ import { toast } from "./src/ui/toast.js";
 
 if (isLoggedIn()) location.href = "olap.html";
 
-const form = document.getElementById("loginForm");
-const key = document.getElementById("apiKey");
+const $ = (s) => document.querySelector(s);
+const tabKey = $("#tabKey"), tabPwd = $("#tabPwd");
+const formKey = $("#formKey"), formPwd = $("#formPwd");
+
+tabKey.onclick = () => {
+  tabKey.classList.add("active"); tabPwd.classList.remove("active");
+  formKey.classList.remove("hidden"); formPwd.classList.add("hidden");
+};
+tabPwd.onclick = () => {
+  tabPwd.classList.add("active"); tabKey.classList.remove("active");
+  formPwd.classList.remove("hidden"); formKey.classList.add("hidden");
+  toast("用户名密码登录规划中(B),暂用 API Key", "info", 2500);
+};
+
+const form = $("#formKey"), key = $("#apiKey");
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
   const v = key.value.trim();
   if (!v) { toast("请输入 API Key", "warn"); key.focus(); return; }
-  const btn = form.querySelector('button[type="submit"]');
+  const btn = $("#loginBtn");
   btn.disabled = true; btn.textContent = "登录中…";
-  try {
-    await login(v);
-    location.href = "olap.html";
-  } catch (err) {
-    toast("登录失败: " + err.message, "danger", 5000);
-    key.focus(); key.select();
-  } finally {
-    btn.disabled = false; btn.textContent = "登录";
-  }
+  try { await login(v); location.href = "olap.html"; }
+  catch (err) { toast("登录失败: " + err.message, "danger", 5000); key.focus(); key.select(); }
+  finally { btn.disabled = false; btn.innerHTML = '<i class="placeholder" data-ic="key"></i> 登录'; }
 });
 </script>
 </body>
