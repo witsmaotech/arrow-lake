@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>用户与 RBAC · Arrow Lake</title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/tokens.css"/><link rel="stylesheet" href="assets/app.css"/>
+</head>
+<body>
+<div id="app"><main class="main"><div class="page">
+  <div class="h-sec between">
+    <div><h1>用户与 RBAC</h1><div class="desc">三档角色（VIEWER/EDITOR/ADMIN）覆盖全部 106 routes · 细粒度 ACL · <span class="mono">admin/{users,acl/{dataset},acl/schema,deny}</span></div></div>
+    <div class="flex"><span class="tag danger">ADMIN ONLY</span><button class="btn btn-primary btn-sm" onclick="openApi('授权','curl -X PUT $API/api/v1/admin/acl/papers -d \'{\"role\":\"editor\",\"allow\":\"write\"}\']','lake.admin.set_acl(\"papers\", role=\"editor\", allow=\"write\")')"><i class="placeholder" data-ic="plus"></i> 授权</button></div>
+  </div>
+
+  <div class="tabs" id="at"><button class="tab active" data-t="users">用户</button><button class="tab" data-t="dataset">DatasetACL</button><button class="tab" data-t="schema">SchemaACL</button><button class="tab" data-t="deny">Deny 规则</button></div>
+
+  <div id="pUsers" class="panel flush"><div class="panel-h"><i class="placeholder" data-ic="admin"></i><h3>用户 · 12</h3><div class="actions"><button class="btn btn-ghost btn-sm"><i class="placeholder" data-ic="plus"></i> 邀请</button></div></div>
+    <div class="tbl-scroll"><table class="tbl"><thead><tr><th>用户</th><th>角色</th><th>API Key</th><th>JWT</th><th class="num">上次登录</th><th>2FA</th></tr></thead><tbody>
+    ${[['alice','ADMIN','✓','active','14:02','on'],['bob','EDITOR','✓','active','14:01','on'],['carol','EDITOR','✓','revoked','13:40','off'],['dave','VIEWER','✓','active','13:38','off'],['eve','VIEWER','—','active','昨天','off']].map(u=>`<tr><td><span class="avatar" style="width:22px;height:22px;font-size:.6rem;display:inline-grid;vertical-align:middle;margin-right:6px">${u[0][0].toUpperCase()}</span>${u[0]}</td><td><span class="tag ${u[1]==='ADMIN'?'danger':u[1]==='EDITOR'?'amber':'info'}">${u[1]}</span></td><td class="mono">${u[2]}</td><td><span class="lamp ${u[3]==='active'?'ok':'danger'}"><i></i>${u[3]}</span></td><td class="num mono">${u[4]}</td><td>${u[5]==='on'?'<span class="tag ok">on</span>':'<span class="tag">off</span>'}</td></tr>`).join('')}
+    </tbody></table></div>
+  </div>
+
+  <div id="pDataset" class="panel flush hidden"><div class="panel-h"><i class="placeholder" data-ic="database"></i><h3>DatasetACL · 行/列级</h3></div>
+    <div class="tbl-scroll"><table class="tbl"><thead><tr><th>主体</th><th>数据集</th><th>读</th><th>写</th><th>删</th><th>列脱敏</th><th>来源</th></tr></thead><tbody>
+    ${[['role:viewer','*（默认）','✓','✕','✕','—','builtin'],['role:editor','papers','✓','✓','✕','—','policy'],['team:research','papers','✓','✓','✕','source_url','policy'],['user:alice','product_photos','✓','✓','✓','—','explicit']].map(r=>`<tr><td class="mono">${r[0]}</td><td>${r[1]}</td><td>${ok(r[2])}</td><td>${ok(r[3])}</td><td>${ok(r[4])}</td><td>${r[5]==='—'?'<span class="muted">—</span>':`<span class="tag amber">${r[5]}</span>`}</td><td><span class="tag">${r[6]}</span></td></tr>`).join('')}
+    </tbody></table></div>
+  </div>
+
+  <div id="pSchema" class="panel flush hidden"><div class="panel-h"><i class="placeholder" data-ic="scale"></i><h3>SchemaACL · 数据库/schema 级</h3></div>
+    <div class="tbl-scroll"><table class="tbl"><thead><tr><th>Schema</th><th>主体</th><th>create</th><th>alter</th><th>drop</th></tr></thead><tbody>
+    ${[['lakehouse','role:admin','✓','✓','✓'],['lakehouse','role:editor','✓','✓','✕'],['archive','role:viewer','✓','✕','✕']].map(r=>`<tr><td class="mono">${r[0]}</td><td class="mono">${r[1]}</td><td>${ok(r[2])}</td><td>${ok(r[3])}</td><td>${ok(r[4])}</td></tr>`).join('')}
+    </tbody></table></div></div>
+
+  <div id="pDeny" class="panel flush hidden"><div class="panel-h"><i class="placeholder" data-ic="warn"></i><h3>Deny 规则 · 显式拒绝（优先于 allow）</h3><div class="actions"><button class="btn btn-ghost btn-sm"><i class="placeholder" data-ic="plus"></i> 加 deny</button></div></div>
+    <div class="tbl-scroll"><table class="tbl"><thead><tr><th>主体</th><th>数据集</th><th>拒绝动作</th><th>原因</th><th></th></tr></thead><tbody>
+    ${[['role:viewer','regulations','delete','机密文件','danger'],['user:eve','papers','export, delete','离职交接','danger'],['team:temp','*','write','临时团队','amber']].map(r=>`<tr><td class="mono">${r[0]}</td><td>${r[1]}</td><td><span class="tag danger">${r[2]}</span></td><td class="muted">${r[3]}</td><td><button class="btn btn-icon btn-ghost btn-sm" title="移除">${''}</button></td></tr>`).join('')}
+    </tbody></table></div>
+    <script>document.querySelectorAll('#pDeny .btn-icon').forEach(b=>b.innerHTML=window.icon('close'))</script>
+  </div>
+</div></main></div>
+<script src="assets/layout.js"></script>
+<script>
+const {renderShell,icon}=window;
+renderShell({active:'admin',crumb:'<b>用户与 RBAC</b>'});
+function ok(v){return v==='✓'?`<span class="lamp ok"><i></i></span>`:`<span class="lamp"><i style="background:var(--fg-lo);box-shadow:none"></i></span>`}
+function $(s){return document.querySelector(s)}
+$('#at').addEventListener('click',e=>{const b=e.target.closest('.tab');if(!b)return;$$('.tab').forEach(t=>t.classList.remove('active'));b.classList.add('active');['users','dataset','schema','deny'].forEach(t=>{$('#p'+t.charAt(0).toUpperCase()+t.slice(1)).classList.toggle('hidden',t!==b.dataset.t)})});
+function $$(s){return[...document.querySelectorAll(s)]}
+</script>
+</body>
+</html>

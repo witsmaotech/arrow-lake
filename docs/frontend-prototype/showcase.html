@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Arrow Lake · 旗舰展示 · 三张王牌 + 架构全景</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/tokens.css"/>
+<link rel="stylesheet" href="assets/app.css"/>
+<link rel="stylesheet" href="assets/showcase.css"/>
+</head>
+<body class="sc">
+
+<!-- ============ NAV ============ -->
+<nav class="sc-nav">
+  <a class="sc-brand" href="index.html"><span class="sc-mark">AL</span><span><b>Arrow Lake</b><span class="sc-sub">旗舰展示</span></span></a>
+  <div class="sc-nav-links">
+    <a href="#arch">架构全景</a>
+    <a href="#cards">三张王牌</a>
+    <a href="#ver">版本演进</a>
+  </div>
+  <div class="sc-nav-cta">
+    <a class="btn btn-ghost btn-sm" href="narrative.html">叙事版</a>
+    <a class="btn btn-primary btn-sm" href="dashboard.html">控制台 →</a>
+  </div>
+</nav>
+
+<!-- ============ HERO ============ -->
+<header class="sc-hero">
+  <div class="sc-hero-bg"></div>
+  <div class="sc-hero-in">
+    <span class="tag teal"><span class="dot-ok"></span> v1.8.6 · 11 个版本沉淀 · MIT</span>
+    <h1>一个湖仓<br/>装下全部<span class="accent">检索 · 分析 · 智能</span></h1>
+    <p class="sc-lede">五层架构 · 六能力柱 · 三入口（SDK / REST 106 routes / CLI）。下面是它的<b>全景架构</b>和三张可反复把玩的<b>王牌交互</b>。</p>
+    <div class="sc-hero-stats">
+      <div><b>9.4M</b><span>向量行</span></div>
+      <div><b>0.04s</b><span>p50 检索</span></div>
+      <div><b>106</b><span>REST routes</span></div>
+      <div><b>6,283</b><span>测试</span></div>
+      <div><b>11</b><span>版本</span></div>
+    </div>
+  </div>
+</header>
+
+<!-- ============ 架构全景（整体能力展示）============ -->
+<section id="arch" class="sc-section">
+  <div class="sc-sec-head">
+    <span class="tag info">架构全景</span>
+    <h2>五层贯穿，治理横切<span class="muted">—— 请求自上而下穿越①接入→②能力→③计算→④引擎→⑤持久化</span></h2>
+  </div>
+
+  <!-- 五层堆叠图 -->
+  <div class="arch-stack" id="archStack"></div>
+
+  <!-- 六能力柱 -->
+  <div class="sc-sec-sub">六能力柱 · 每条都是一等公民</div>
+  <div class="cap-grid" id="capGrid"></div>
+</section>
+
+<!-- ============ 三张王牌 ============ -->
+<section id="cards" class="sc-section">
+  <div class="sc-sec-head">
+    <span class="tag amber">三张王牌</span>
+    <h2>可反复把玩的深度交互<span class="muted">—— 不贪全，把最有冲击力的做到极致</span></h2>
+  </div>
+
+  <!-- 王牌 1 · 检索宇宙 -->
+  <article class="ace" id="ace-search">
+    <div class="ace-head">
+      <span class="ace-num">①</span>
+      <div>
+        <h3>检索宇宙 <span class="muted">· 向量空间 2D 投影 + 实时漏斗</span></h3>
+        <p class="ace-desc">输入一个查询，看 9.4M 向量如何被 IVF_PQ 剪到 10。候选点云向 query 聚拢，漏斗层层收窄。</p>
+      </div>
+      <span class="vchip">v1.7.1 IVF_PQ</span><span class="vchip">v1.8.0 Reranker</span>
+    </div>
+    <div class="ace-body">
+      <div class="ace-ctrl">
+        <label class="ctrl-label">查询（先经 Qwen3 嵌入成 1024 维）</label>
+        <div class="query-presets" id="sq-presets"></div>
+        <div class="ctrl-label" style="margin-top:14px">检索漏斗 · 实时剪枝</div>
+        <div class="funnel-list" id="sq-funnel"></div>
+        <div class="ctrl-label" style="margin-top:14px">模式</div>
+        <div class="mode-tabs" id="sq-modes">
+          <button class="mode on" data-m="vector">向量</button>
+          <button class="mode" data-m="hybrid">混合</button>
+          <button class="mode" data-m="multimodal">多模态 CLIP</button>
+        </div>
+      </div>
+      <div class="ace-viz"><canvas id="sq-canvas"></canvas>
+        <div class="viz-legend" id="sq-legend"></div>
+      </div>
+    </div>
+  </article>
+
+  <!-- 王牌 2 · 湖仓时间机器 -->
+  <article class="ace" id="ace-time">
+    <div class="ace-head">
+      <span class="ace-num">②</span>
+      <div>
+        <h3>湖仓时间机器 <span class="muted">· Lance 版本 timeline + 两版 diff</span></h3>
+        <p class="ace-desc">每次写入都是一次快照。拖动 timeline 看版本演进，diff 两个版本看哪些行变了。</p>
+      </div>
+      <span class="vchip">v1.8.0 Lance branches</span><span class="vchip">v1.6.0 lineage</span>
+    </div>
+    <div class="ace-body ace-body-col">
+      <div class="timeline-row">
+        <span class="tl-end">v1.5.2</span>
+        <input type="range" id="tm-slider" min="0" max="6" value="6" step="1" class="tl-slider"/>
+        <span class="tl-end">v1.8.6</span>
+        <span class="tl-cur" id="tm-cur">v1.8.6</span>
+      </div>
+      <div class="diff-pair">
+        <div class="diff-col diff-old">
+          <div class="diff-h">基线 · <span id="tm-old-ver">v1.5.2</span></div>
+          <div class="diff-rows" id="tm-old"></div>
+        </div>
+        <div class="diff-arrow">→</div>
+        <div class="diff-col diff-new">
+          <div class="diff-h">目标 · <span id="tm-new-ver">v1.8.6</span></div>
+          <div class="diff-rows" id="tm-new"></div>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <!-- 王牌 3 · 知识图谱探索 -->
+  <article class="ace" id="ace-kg">
+    <div class="ace-head">
+      <span class="ace-num">③</span>
+      <div>
+        <h3>知识图谱探索 <span class="muted">· per-dataset 分图 + GraphRAG 子图</span></h3>
+        <p class="ace-desc">每个 dataset 一张独立图。切换数据集、问 GraphRAG 问题、拖拽节点看关系——KG 是五层里唯一旁路。</p>
+      </div>
+      <span class="vchip">v1.7.0 hyper-extract</span><span class="vchip">v1.8.6 分图+ACL</span>
+    </div>
+    <div class="ace-body">
+      <div class="ace-ctrl">
+        <label class="ctrl-label">数据集（per-dataset 独立分图）</label>
+        <div class="ds-tabs" id="kg-ds">
+          <button class="ds on" data-ds="papers">kg_papers</button>
+          <button class="ds" data-ds="finance">kg_finance</button>
+        </div>
+        <div class="ctrl-label" style="margin-top:14px">GraphRAG 查询</div>
+        <div class="query-presets" id="kg-presets"></div>
+        <div class="ctrl-label" style="margin-top:14px">traverser（8 种 · REST 暴露）</div>
+        <div class="trav-tabs" id="kg-trav">
+          <button class="trav on" data-t="neighbors">邻居</button>
+          <button class="trav" data-t="shortest">最短路径</button>
+          <button class="trav" data-t="kneighbor">K-hop</button>
+        </div>
+        <div class="kg-stat" id="kg-stat">点击节点看关系 · 拖拽节点重排</div>
+      </div>
+      <div class="ace-viz"><svg id="kg-svg" preserveAspectRatio="xMidYMid meet"></svg></div>
+    </div>
+  </article>
+</section>
+
+<!-- ============ 版本演进 ============ -->
+<section id="ver" class="sc-section">
+  <div class="sc-sec-head">
+    <span class="tag amber">版本演进</span>
+    <h2>11 个版本，一个湖仓的进化史</h2>
+  </div>
+  <div class="ver-axis" id="ver-axis"></div>
+</section>
+
+<footer class="sc-foot">
+  <div><b>Arrow Lake</b> · 多模态数据湖仓 · v1.8.6 · <span class="mono muted">旗舰展示</span></div>
+  <div class="muted">CDN: d3 · mock 数据 · 可离线</div>
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js" integrity="sha384-CjloA8y00+1SDAUkjs099PVfnY2KmDC2BZnws9kh8D/lX1s46w6EPhpXdqMfjK6i" crossorigin="anonymous"></script>
+<script src="assets/showcase.js"></script>
+</body>
+</html>

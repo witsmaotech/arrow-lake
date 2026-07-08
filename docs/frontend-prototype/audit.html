@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>审计追踪 · Arrow Lake</title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/tokens.css"/><link rel="stylesheet" href="assets/app.css"/>
+</head>
+<body>
+<div id="app"><main class="main"><div class="page">
+  <div class="h-sec between">
+    <div><h1>审计追踪</h1><div class="desc">HMAC-SHA256 防篡改 · <span class="mono">audit/{record,verify,query,export}</span> · 每个状态转换可独立验证</div></div>
+    <div class="flex"><button class="btn btn-line btn-sm" onclick="verifyAll()" id="verifyBtn"><i class="placeholder" data-ic="audit"></i> 校验完整性</button><button class="btn btn-ghost btn-sm" onclick="openApi('导出','curl -X POST $API/api/v1/audit/export -d \'{\"from\":\"2026-07\"}\']','lake.audit.export(from_=\"2026-07\")')"><i class="placeholder" data-ic="file"></i> 导出</button></div>
+  </div>
+
+  <!-- integrity banner -->
+  <div class="panel" id="banner"><div class="panel-b flex between">
+    <div class="flex" style="gap:12px"><span class="lamp ok pulse"><i></i></span><div><b style="font-size:.95rem">链完整 · 4,182 条事件全部通过 HMAC 校验</b><div class="muted mono" style="font-size:.72rem">上次校验 14:30 · 链头 a3f…91e · 无篡改</div></div></div>
+    <div class="flex" style="gap:var(--s5)">
+      <div><div class="muted" style="font-size:var(--fs-cap)">事件</div><b class="readout" style="font-size:1.25rem">4,182</b></div>
+      <div><div class="muted" style="font-size:var(--fs-cap)">校验通过</div><b class="readout" style="font-size:1.25rem;color:var(--ok)">100%</b></div>
+      <div><div class="muted" style="font-size:var(--fs-cap)">篡改</div><b class="readout" style="font-size:1.25rem;color:var(--ok)">0</b></div>
+    </div>
+  </div></div>
+
+  <div class="panel flush">
+    <div class="panel-h"><i class="placeholder" data-ic="audit"></i><h3>事件流</h3>
+      <div class="actions">
+        <select class="select"><option>全部动作</option><option>ingest</option><option>search</option><option>kg_build</option><option>delete</option><option>auth</option></select>
+        <select class="select"><option>全部数据集</option><option>papers</option><option>regulations</option></select>
+        <input class="input mono" placeholder="from… to…" style="width:160px"/>
+        <button class="btn btn-ghost btn-sm"><i class="placeholder" data-ic="search"></i></button>
+      </div>
+    </div>
+    <div style="overflow-x:auto"><table class="tbl"><thead><tr><th>HMAC</th><th>动作</th><th>主体</th><th>数据集</th><th>详情</th><th class="num">时间</th><th>校验</th></tr></thead><tbody id="rows"></tbody></table></div>
+    <div class="panel-h" style="border-top:1px solid var(--line-soft)"><span class="muted mono">显示 8 / 4,182</span><div class="actions"><button class="btn btn-ghost btn-sm">加载更多</button></div></div>
+  </div>
+</div></main></div>
+<script src="assets/layout.js"></script>
+<script>
+const {renderShell,icon}=window;
+renderShell({active:'audit',crumb:'<b>审计追踪</b>'});
+const $=s=>document.querySelector(s);
+const EV=[
+['7f2a…b91c','ingest','user:alice','papers','写入 1,204 行','14:02:18'],
+['3d8e…0a22','search','user:bob','papers','hybrid · top_k=10','14:01:55'],
+['a3f1…91e0','kg_build','user:sysop','regulations','fire-and-forget task','13:58:02'],
+['c601…77bd','rag/query','user:alice','papers','session #1284','13:55:41'],
+['9b4c…3e08','delete','user:carol','old_logs','drop-on-delete → kg_old_logs','13:40:12'],
+['e2a7…5f90','auth','user:dave','—','JWT 签发','13:38:00'],
+['1f8d…c44a','export','user:bob','papers','parquet 2.1GB','13:22:44'],
+['5c0e…aa19','schema_migrate','user:sysop','papers','+ image_embedding 列','12:30:08'],
+];
+const act={ingest:'teal',search:'info',kg_build:'amber',delete:'danger','rag/query':'teal',auth:'',export:'info',schema_migrate:'info'};
+$('#rows').innerHTML=EV.map(e=>`<tr><td class="mono" style="font-size:.7rem;color:var(--fg-lo)">${e[0]}</td><td><span class="tag ${act[e[1]]||''}">${e[1]}</span></td><td class="mono" style="font-size:.72rem">${e[2]}</td><td>${e[3]==='—'?'<span class="muted">—</span>':`<a href="dataset-detail.html" style="color:var(--teal-bright)">${e[3]}</a>`}</td><td class="muted" style="font-size:.78rem">${e[4]}</td><td class="num mono" style="font-size:.72rem">${e[5]}</td><td><span class="lamp ok"><i></i>✓</span></td></tr>`).join('');
+function verifyAll(){const b=$('#banner');b.querySelector('.lamp').className='lamp warn pulse';b.querySelector('b').textContent='校验中… 逐条重算 HMAC-SHA256';setTimeout(()=>{b.querySelector('.lamp').className='lamp ok pulse';b.querySelector('b').textContent='链完整 · 4,182 条事件全部通过 HMAC 校验'},1200)}
+</script>
+</body>
+</html>

@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>检索 Playground · Arrow Lake</title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/tokens.css"/><link rel="stylesheet" href="assets/app.css"/>
+</head>
+<body>
+<div id="app">
+<main class="main">
+  <div class="page">
+    <div class="h-sec between">
+      <div><h1>检索 Playground</h1><div class="desc">五种检索 · 切换只需一个参数 · <span class="mono">POST /datasets/{name}/search/{mode}</span></div></div>
+      <div class="flex"><span class="lamp ok pulse"><i></i>papers · 184K 行 · 已建索引</span><button class="btn btn-ghost btn-sm" onclick="openApi('混合检索','curl -X POST $API/api/v1/datasets/papers/search/hybrid -d @q.json','lake.search(\"papers\", query_vector=emb, query_text=q, top_k=10)')"><i class="placeholder" data-ic="code"></i> API</button></div>
+    </div>
+
+    <div class="flex wrap" id="modes"></div>
+
+    <div class="grid cols-3-fr">
+      <!-- left: params (per-mode) -->
+      <div class="panel flush" style="height:fit-content">
+        <div class="panel-h"><i class="placeholder" data-ic="filter"></i><h3>参数 · <span id="modeLabel">hybrid</span></h3></div>
+        <div class="panel-b col" id="params"></div>
+      </div>
+      <!-- center: results -->
+      <div class="col">
+        <div class="panel flush">
+          <div class="panel-h"><i class="placeholder" data-ic="search"></i><h3>结果</h3><span class="sub" id="meta">点击"检索"运行</span><div class="actions"><button class="btn btn-ghost btn-sm"><i class="placeholder" data-ic="sort"></i> 按分数</button></div></div>
+          <div id="res"></div>
+        </div>
+        <div class="panel" id="facetPanel"><div class="panel-h"><i class="placeholder" data-ic="filter"></i><h3>分面计数 · <span class="muted mono" style="font-size:.7rem">FacetedSearchResponse.facets</span></h3></div><div class="panel-b" id="facets"></div></div>
+      </div>
+    </div>
+  </div>
+</main>
+</div>
+<script src="assets/layout.js"></script>
+<script>
+const {renderShell,icon}=window;
+renderShell({active:'search',crumb:'<b>检索 Playground</b>'});
+const $=s=>document.querySelector(s);
+const MODES=[['hybrid','混合 RRF（推荐）'],['vector','向量 ANN'],['fts','全文 BM25'],['faceted','分面'],['ensemble','跨列集成']];
+const NEEDS_VEC=['hybrid','vector','faceted','ensemble'];
+let curMode='hybrid';
+$('#modes').innerHTML=MODES.map(m=>`<button class="tag ${m[0]===curMode?'teal':''}" style="cursor:pointer;padding:8px 14px" data-m="${m[0]}" onclick="setMode('${m[0]}')">${m[1]}</button>`).join('');
+
+const FIELDS={
+hybrid:()=>`${qtext(true)}${embedStep()}
+  ${infoRow('query_vector *','由上方 query_text 经 Qwen3 嵌入 → 1024-dim float[]（同一文本同时喂 BM25）','info')}
+  ${sel('vector_column','向量列','text_embedding | image_embedding')}
+  ${sel('fts_column','全文列','text | title')}
+  ${num('top_k','10')}${where()}`,
+vector:()=>`${qtext(true)}${embedStep()}
+  ${infoRow('query_vector *','由上方 query_text 经 Qwen3 嵌入 → 1024-dim float[]','info')}
+  ${sel('vector_column','向量列','text_embedding')}
+  ${num('nprobes','20','探测簇数 · 召回/速度旋钮')}
+  ${sel('metric','度量','cosine | L2 | dot')}
+  ${num('top_k','10')}${where()}`,
+fts:()=>`${qtext(false)}
+  ${sel('fts_column','全文列','text')}
+  ${num('top_k','10')}${num('offset','0','分页跳过')}
+  ${where()}`,
+faceted:()=>`${qtext(true)}${embedStep()}
+  ${infoRow('query_vector *','由上方 query_text 经 Qwen3 嵌入 → 1024-dim','info')}
+  ${field('facets','要分面的列（多选）','doc_type, year, source','teal',true)}
+  ${sel('vector_column','向量列','embedding')}
+  ${num('top_k','10')}${where()}`+`<div class="muted" style="font-size:.72rem">返回体会带 <code class="mono">facets[]</code> 计数</div>`,
+ensemble:()=>`${qtext(true)}${embedStep()}
+  ${infoRow('query_vector *','由上方 query_text 经 Qwen3 嵌入 → 1024-dim','info')}
+  ${field('columns','跨列融合（多向量列）','text_embedding, image_embedding','teal',true)}
+  ${field('weights','列权重','text_embedding:0.7, image_embedding:0.3','amber')}
+  ${num('top_k','10')}${where()}`+`<div class="muted" style="font-size:.72rem">跨列 RRF 融合多嵌入</div>`,
+};
+function qtext(needsVec){return `<div class="field"><label>查询文本 ${needsVec?'<span class="tag info" style="font-size:.6rem">→ 嵌入</span>':'<span class="tag" style="font-size:.6rem">直接 BM25</span>'}</label><textarea class="input mono" rows="2" id="q">高效注意力机制 sparse attention</textarea></div>`}
+function embedStep(){return `<div class="embed-step"><div class="flex between"><span class="flex" style="gap:8px"><span class="lamp ok pulse"><i></i>embed</span><span class="mono muted" style="font-size:.72rem">text → Qwen3-Embedding 0.6B → 1024-dim float[]</span></span><span class="tag teal">~8ms</span></div></div>`}
+function field(label,ph,val,tone,req){return `<div class="field"><label>${label} ${req?'<span style="color:var(--danger)">*</span>':''}</label><input class="input mono" value="${val}" placeholder="${ph}"/></div>`}
+function infoRow(label,text,tone){return `<div class="field"><label>${label}</label><div class="readonly-pill ${tone||''}">${text}</div></div>`}
+function sel(label,name,opts){const os=String(opts).split('|').map(o=>o.trim());return `<div class="field"><label>${label}</label><select class="select">${os.map(o=>`<option>${o}</option>`).join('')}</select><div class="muted" style="font-size:.68rem;margin-top:3px">${name}</div></div>`}
+function num(label,v,hint){return `<div class="field"><label>${label}</label><input class="input mono" value="${v}" type="number"/>${hint?`<div class="muted" style="font-size:.68rem">${hint}</div>`:''}</div>`}
+function where(){return `<div class="field"><label>where（下推 Lance 谓词）</label><textarea class="input mono" rows="2">doc_type = 'paper' AND quality_score > 0.7</textarea></div>`}
+
+function setMode(m){curMode=m;$('#modeLabel').textContent=m;$$('.tag[data-m]').forEach(t=>t.classList.toggle('teal',t.dataset.m===m));renderParams();$('#facetPanel').style.display=m==='faceted'?'':'none';renderResults()}
+function renderParams(){$('#params').innerHTML=FIELDS[curMode]()+`<button class="btn btn-primary" onclick="run()"><i class="placeholder" data-ic="search"></i> 检索</button>`;applyIcons($('#params'))}
+
+const DATA={
+hybrid:[[0.94,'Sparse Transformer：稀疏注意力 O(n√n)','paper·p3',0.91,0.74],[0.89,'Longformer：滑动窗口+全局 token','paper·p7',0.86,0.71],[0.82,'Linformer：低秩近似自注意力','paper·p1',0.80,0.66]],
+vector:[[0.96,'Dense 近邻 · Sparse Transformer','paper·p3'],[0.93,'Dense · Longformer','paper·p7'],[0.91,'Dense · Reformer','paper·p9']],
+fts:[[0.77,'BM25 · "sparse attention" 命中 12 次','paper·p3'],[0.68,'BM25 · "efficient attention" 命中 8 次','paper·p1']],
+faceted:[[0.90,'paper · 2024 · q=0.94','paper'],[0.88,'paper · 2024','paper'],[0.85,'report · 2023','report']],
+ensemble:[[0.93,'集成 · text_emb(0.9)+img_emb(0.6)','paper·p3'],[0.86,'集成 · 双塔融合','paper·p7']],
+};
+function renderResults(){
+  const m=curMode,rows=DATA[m]||[];
+  $('#res').innerHTML=rows.length?rows.map((r,i)=>{
+    let tags=[];
+    if(m==='hybrid')tags=[['vector',r[3],'teal'],['bm25',r[4],'amber'],['RRF',r[0].toFixed(2),'info']];
+    else if(m==='vector')tags=[['cosine',r[0].toFixed(2),'teal']];
+    else if(m==='fts')tags=[['bm25',r[0].toFixed(2),'amber']];
+    else if(m==='faceted')tags=[['facet',r[0].toFixed(2),'info']];
+    else if(m==='ensemble')tags=[['ensemble',r[0].toFixed(2),'info'],['text_emb',0.9,'teal'],['img_emb',0.6,'info']];
+    const meta=r[2]||'';
+    return `<div class="res"><div class="flex between"><div class="flex" style="gap:10px"><span class="res-rank readout">#${i+1}</span><div><div style="font-weight:600;color:var(--fg-hi)">${r[1]}</div><span class="muted mono" style="font-size:.7rem">${meta}</span></div></div><div class="flex" style="gap:8px"><span class="bar" style="width:70px"><i style="width:${r[0]*100}%;background:var(--teal-bright)"></i></span><b class="readout">${r[0].toFixed(2)}</b></div></div><div class="flex wrap" style="margin-top:8px">${tags.map(t=>`<span class="tag ${t[2]}">${t[0]} ${t[1]}</span>`).join('')}</div></div>`;
+  }).join(''):`<div class="empty">无结果</div>`;
+}
+function run(){const m=$('#meta');m.textContent='嵌入查询 → 召回 → 融合…';setTimeout(()=>{m.textContent=`${(DATA[curMode]||[]).length} 行 · ${(20+Math.random()*40|0)}ms · 流式`;renderResults()},700)}
+function $$(s){return[...document.querySelectorAll(s)]}
+$('#facets').innerHTML=`<div class="grid g-3">
+  ${[['DOC_TYPE',[['paper',7],['report',2],['patent',1]]],['YEAR',[['2024',5],['2023',3],['2022',2]]],['QUALITY',[['0.9+',6],['0.8-0.9',3],['<0.8',1]]]].map(f=>`<div><div class="muted" style="font-size:var(--fs-cap);margin-bottom:6px">${f[0]}</div>${f[1].map(x=>`<div class="flex between" style="margin-bottom:4px"><span class="mono" style="font-size:.75rem">${x[0]}</span><span class="tag">${x[1]}</span></div>`).join('')}</div>`).join('')}
+</div>`;
+renderParams();renderResults();
+</script>
+<style>.res{padding:var(--s4) var(--card-pad);border-bottom:1px solid var(--line-soft)}.res:hover{background:rgba(255,255,255,.015)}.res-rank{color:var(--fg-lo);width:24px}
+.embed-step{padding:10px 12px;border:1px dashed var(--line-strong);border-radius:var(--r-md);background:var(--ink-900);margin:4px 0}
+.readonly-pill{font-family:var(--font-mono);font-size:.75rem;color:var(--fg-md);background:var(--ink-900);border:1px solid var(--line);border-left:3px solid var(--teal);border-radius:var(--r-md);padding:8px 10px;line-height:1.5}
+.readonly-pill.info{border-left-color:var(--info)}.readonly-pill.amber{border-left-color:var(--warn)}.readonly-pill.teal{border-left-color:var(--teal)}</style>
+</body>
+</html>

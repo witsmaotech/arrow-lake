@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>嵌入与索引 · Arrow Lake</title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/tokens.css"/><link rel="stylesheet" href="assets/app.css"/>
+</head>
+<body>
+<div id="app"><main class="main"><div class="page">
+  <div class="h-sec between">
+    <div><h1>嵌入与索引</h1><div class="desc">检索的前置条件 · <span class="mono">embed/* · index create/delete</span> · 无索引则检索不可用</div></div>
+    <div class="flex"><select class="select"><option>papers</option><option>regulations</option><option>product_photos</option></select><button class="btn btn-primary btn-sm" onclick="openApi('建向量索引','curl -X POST $API/api/v1/datasets/papers/search/vector -d \'{\"vector_index\":\"IVF_PQ\"}\'','lake.index.create(\"papers\", \"IVF_PQ\", vector_column=\"text_embedding\")')"><i class="placeholder" data-ic="plus"></i> 新建索引</button></div>
+  </div>
+
+  <div class="grid cols-2-1">
+    <div class="panel flush">
+      <div class="panel-h"><i class="placeholder" data-ic="database"></i><h3>索引 · papers</h3><span class="sub">VectorIndex / FtsIndex / ScalarIndex / FacetsIndex</span></div>
+      <div style="overflow-x:auto"><table class="tbl"><thead><tr><th>列</th><th>索引类型</th><th>参数</th><th>状态</th><th></th></tr></thead><tbody id="idx"></tbody></table></div>
+    </div>
+    <div class="panel">
+      <div class="panel-h"><i class="placeholder" data-ic="embed"></i><h3>嵌入模型</h3></div>
+      <div class="panel-b col">
+        ${''}
+        <div class="flex between"><span class="flex" style="gap:8px"><span class="tag teal">text</span><b>Qwen3-Embedding 0.6B</b></span><span class="muted mono" style="font-size:.7rem">1024d</span></div>
+        <div class="flex between"><span class="flex" style="gap:8px"><span class="tag info">image</span><b>CLIP ViT-B/32</b></span><span class="muted mono" style="font-size:.7rem">512d</span></div>
+        <div class="flex between"><span class="flex" style="gap:8px"><span class="tag">local</span><b>sentence-transformers</b></span><span class="muted mono" style="font-size:.7rem">768d</span></div>
+        <div class="flex between"><span class="flex" style="gap:8px"><span class="tag amber">mm</span><b>Qwen3-VL-Embedding</b></span><span class="muted mono" style="font-size:.7rem">text+img</span></div>
+        <div class="divider"></div>
+        <button class="btn btn-line btn-sm" onclick="openApi('模型信息','curl -s $API/api/v1/embed/model-info','lake.embed.model_info()')"><i class="placeholder" data-ic="code"></i> embed/model-info</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid g-3">
+    <div class="panel"><div class="panel-h"><i class="placeholder" data-ic="embed"></i><h3>文本嵌入</h3><div class="actions"><span class="tag teal">embed/text</span></div></div><div class="panel-b col">
+      <textarea class="input mono" rows="3">高效注意力机制 sparse attention</textarea>
+      <div class="flex between"><span class="muted mono" style="font-size:.7rem">→ 1024-dim float[]</span><button class="btn btn-teal btn-sm">生成</button></div>
+    </div></div>
+    <div class="panel"><div class="panel-h"><i class="placeholder" data-ic="image"></i><h3>图像嵌入</h3><div class="actions"><span class="tag info">embed/image</span></div></div><div class="panel-b col">
+      <div class="dropzone"><i class="placeholder" data-ic="image" style="width:28px;height:28px;color:var(--fg-lo)"></i><div class="muted" style="font-size:.75rem;margin-top:6px">拖入图像 · CLIP 512d</div></div>
+      <button class="btn btn-teal btn-sm">嵌入</button>
+    </div></div>
+    <div class="panel"><div class="panel-h"><i class="placeholder" data-ic="plus"></i><h3>追加向量列</h3><div class="actions"><span class="tag amber">embed/add</span></div></div><div class="panel-b col">
+      <select class="select"><option>新增 text_embedding (Qwen3)</option><option>新增 image_embedding (CLIP)</option></select>
+      <div class="muted" style="font-size:.72rem">用 restore_dataset 落盘新向量列（非 append）</div>
+      <button class="btn btn-primary btn-sm">追加列</button>
+    </div></div>
+  </div>
+</div></main></div>
+<script src="assets/layout.js"></script>
+<script>
+const {renderShell,icon}=window;
+renderShell({active:'embeddings',crumb:'<b>嵌入与索引</b>'});
+const $=s=>document.querySelector(s);
+const IDX=[
+['text_embedding','VectorIndex · IVF_PQ','num_sub_vectors=32 · nprobes=20','ok'],
+['text','FtsIndex · Tantivy','tokenizer=jieba','ok'],
+['doc_type','ScalarIndex · BITMAP','','ok'],
+['quality_score','ScalarIndex · BTREE','','ok'],
+['created_at','ScalarIndex · BTREE','','ok'],
+['image_embedding','VectorIndex · IVF_FLAT','nprobes=10','warn'],
+['source_url','FacetsIndex','','warn'],
+];
+$('#idx').innerHTML=IDX.map(r=>`<tr><td class="mono">${r[0]}</td><td><span class="tag ${r[1].includes('Vector')?'teal':r[1].includes('Fts')?'amber':'info'}">${r[1]}</span></td><td class="muted mono" style="font-size:.7rem">${r[2]||'—'}</td><td><span class="lamp ${r[3]} ${r[3]==='ok'?'pulse':''}"><i></i>${r[3]==='ok'?'就绪':'建议重建'}</span></td><td><button class="btn btn-icon btn-ghost btn-sm" title="重建">${icon('refresh')}</button><button class="btn btn-icon btn-ghost btn-sm" title="删除">${icon('close')}</button></td></tr>`).join('');
+</script>
+<style>.dropzone{border:1px dashed var(--line-strong);border-radius:var(--r-md);padding:var(--s5);text-align:center;display:grid;place-items:center;margin-bottom:var(--s3)}</style>
+</body>
+</html>

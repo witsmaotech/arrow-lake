@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>OLAP 分析 · Arrow Lake</title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/tokens.css"/><link rel="stylesheet" href="assets/app.css"/>
+</head>
+<body>
+<div id="app">
+<main class="main">
+  <div class="page">
+    <div class="h-sec between">
+      <div><h1>OLAP 分析</h1><div class="desc">DuckDB SQL · Daft DataFrame · SQL-PGQ 图查询 · <span class="mono">query/{olap,daft,graph,metadata}</span></div></div>
+      <div class="flex"><select class="select" id="engineSel"><option>query/olap · DuckDB (lance_scan)</option><option>query/daft · 分布式</option><option>query/graph · SQL-PGQ</option></select><span class="lamp ok"><i></i>会话池 · 内存/并发治理</span></div>
+    </div>
+
+    <div class="tabs" id="qtabs">
+      <button class="tab active" data-q="sql">SQL · query/olap</button>
+      <button class="tab" data-q="graph">图查询 · query/graph</button>
+      <button class="tab" data-q="daft">Daft DataFrame</button>
+      <button class="tab" data-q="mv">物化视图 · DuckLake</button>
+    </div>
+
+    <!-- SQL -->
+    <div id="qsql" class="col">
+      <div class="panel flush">
+        <div class="panel-h"><i class="placeholder" data-ic="olap"></i><h3>查询</h3>
+          <span class="actions"><select class="select" style="width:130px"><option>papers</option><option>regulations</option><option>transactions</option></select>
+          <span class="tag info">SELECT 只读</span>
+          <button class="btn btn-ghost btn-sm" onclick="openApi('OLAP SQL','curl -X POST $API/api/v1/datasets/papers/query/olap -d \'{\"sql\":\"SELECT ...\",\"stream\":true}\']','lake.olap_query(\"papers\", \"SELECT ...\", stream=True)')"><i class="placeholder" data-ic="code"></i> API</button>
+          <button class="btn btn-ghost btn-sm">EXPLAIN</button>
+          <button class="btn btn-primary btn-sm" onclick="runQ()"><i class="placeholder" data-ic="play"></i> 运行 ⌘⏎</button></span></div>
+        <div class="sqleditor" contenteditable="true" id="sql">SELECT doc_type,
+       DATE_TRUNC('month', created_at) AS month,
+       COUNT(*) AS docs,
+       ROUND(AVG(quality_score), 3) AS avg_q
+FROM papers
+WHERE created_at &gt;= '2024-01-01'
+GROUP BY doc_type, month
+ORDER BY doc_type, month;</div>
+        <div class="panel-h" style="border-top:1px solid var(--line-soft)">
+          <div class="flex" style="gap:var(--s3)">
+            <label class="flex" style="gap:6px;font-size:.78rem;color:var(--fg-md)"><input type="checkbox" id="streamChk" checked/> stream <span class="muted">(SSE 流式)</span></label>
+            <div class="field" style="flex-direction:row;align-items:center;gap:6px"><span class="muted" style="font-size:.78rem">batch_size</span><input class="input mono" value="1000" style="width:80px"/></div>
+            <div class="field" style="flex-direction:row;align-items:center;gap:6px"><span class="muted" style="font-size:.78rem">max_rows</span><input class="input mono" value="1000000" style="width:100px"/></div>
+          </div>
+        </div>
+      </div>
+      <div class="panel flush">
+        <div class="panel-h"><i class="placeholder" data-ic="database"></i><h3>结果</h3><span class="sub" id="meta">14 行 · 38ms · 流式 RecordBatchReader</span><div class="actions"><button class="btn btn-ghost btn-sm"><i class="placeholder" data-ic="file"></i> 导出 CSV</button></div></div>
+        <div style="overflow-x:auto"><table class="tbl" id="restbl"></table></div>
+      </div>
+    </div>
+
+    <!-- Graph query (SQL-PGQ) -->
+    <div id="qgraph" class="hidden col">
+      <div class="grid cols-2-1">
+        <div class="panel flush">
+          <div class="panel-h"><i class="placeholder" data-ic="tree"></i><h3>图查询参数 · GraphQueryRequest</h3><span class="sub">有界递归 CTE 边遍历 (v1.8.0 #10)</span></div>
+          <div class="panel-b col">
+            <div class="field"><label>start_node <span style="color:var(--danger)">*</span></label><input class="input mono" value="42" placeholder="节点 id（int 或 str）"/></div>
+            <div class="grid g-2">
+              <div class="field"><label>src_col</label><input class="input mono" value="src"/></div>
+              <div class="field"><label>dst_col</label><input class="input mono" value="dst"/></div>
+            </div>
+            <div class="grid g-2">
+              <div class="field"><label>max_depth (1-10)</label><input class="input mono" value="3" type="number" min="1" max="10"/></div>
+              <div class="field"><label>weight_col <span class="muted">(可选)</span></label><input class="input mono" placeholder="如 weight"/></div>
+            </div>
+            <label class="flex" style="gap:6px;font-size:.8rem;color:var(--fg-md)"><input type="checkbox" checked/> directed (有向遍历)</label>
+            <button class="btn btn-primary" onclick="runGraph()"><i class="placeholder" data-ic="play"></i> 遍历 · POST query/graph</button>
+            <div class="muted" style="font-size:.72rem">在 edges 表上做有界递归 CTE，防止无限游走（max_depth ≤ 10）。</div>
+          </div>
+        </div>
+        <div class="col">
+          <div class="panel"><div class="panel-h"><i class="placeholder" data-ic="kg"></i><h3>遍历结果 · 路径</h3><span class="sub" id="gmeta">0 条路径</span></div>
+            <div class="panel-b" id="gpaths"></div>
+          </div>
+          <div class="panel"><div class="panel-h"><i class="placeholder" data-ic="code"></i><h3>等价 SQL</h3></div>
+            <pre class="codeblk">WITH RECURSIVE reach AS (
+  SELECT dst, 1 AS d, CONCAT(src,'->',dst) AS path
+  FROM edges WHERE src = 42
+  UNION ALL
+  SELECT e.dst, r.d+1, CONCAT(r.path,'->',e.dst)
+  FROM edges e JOIN reach r ON e.src = r.dst
+  WHERE r.d &lt; 3
+) SELECT * FROM reach;</pre>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Daft -->
+    <div id="qdaft" class="hidden col">
+      <div class="panel"><div class="panel-h"><i class="placeholder" data-ic="olap"></i><h3>Daft DataFrame（懒求值 · 可 Ray 分布式）</h3></div>
+        <pre class="codeblk">import daft
+df = daft.read_lance("s3://lake/papers")
+df = (df.where(df["doc_type"] == "paper")
+        .select(df["title"], df["quality_score"])
+        .sort(df["quality_score"], desc=True)
+        .collect())  # 懒求值，collect() 时才执行</pre>
+        <div class="panel-b">链式算子：sort → filter → groupby → join → sql → pivot → explode → sample。支持多模态 decode（URL→图像→AI 函数）与 Ray 分布式。</div>
+      </div>
+    </div>
+
+    <!-- Materialized views (SQL-driven via olap) -->
+    <div id="qmv" class="hidden col">
+      <div class="panel"><div class="panel-h"><i class="placeholder" data-ic="scale"></i><h3>物化视图 · DuckLake</h3><span class="actions"><span class="tag info">经 query/olap SQL 管理</span></div></div>
+        <div class="panel-b">
+          <div class="muted" style="font-size:.8rem;margin-bottom:8px">物化视图通过 <code class="mono">query/olap</code> 执行 SQL 创建/刷新（<code class="mono">CREATE MATERIALIZED VIEW</code>），DuckLake 跨存储 JOIN（Lance + MinIO parquet）物化成可查视图。无独立 MV REST 端点。</div>
+          <pre class="codeblk">-- 跨存储：Lance 表 JOIN MinIO 的 parquet，物化成视图
+CREATE MATERIALIZED VIEW mv_monthly_quality AS
+SELECT doc_type, DATE_TRUNC('month', created_at) AS month,
+       AVG(quality_score) AS avg_q
+FROM papers
+GROUP BY doc_type, month
+WITH TTL = '7d', ART = 'incremental';</pre>
+        </div>
+      </div>
+      <div class="panel flush"><div class="panel-h"><i class="placeholder" data-ic="database"></i><h3>已有视图</h3></div>
+        <table class="tbl"><thead><tr><th>视图</th><th>定义</th><th>TTL</th><th>刷新</th><th>状态</th><th class="num">上次</th></tr></thead><tbody>
+        ${[['mv_monthly_quality','GROUP BY doc_type, month','7d','incremental','ok','14:00'],['mv_kg_degree','JOIN kg_papers 度分布','1h','incremental','ok','14:30'],['mv_cross_source','Lance JOIN MinIO parquet','24h','full','warn','昨天'],['mv_top_entities','ORDER BY degree DESC','1h','incremental','ok','14:30']].map(r=>`<tr><td class="mono">${r[0]}</td><td class="muted mono" style="font-size:.72rem">${r[1]}</td><td><span class="tag">${r[2]}</span></td><td><span class="tag info">${r[3]}</span></td><td><span class="lamp ${r[4]}"><i></i></span></td><td class="num mono">${r[5]}</td></tr>`).join('')}
+        </tbody></table>
+      </div>
+    </div>
+  </div>
+</main>
+</div>
+<script src="assets/layout.js"></script>
+<script>
+const {renderShell,icon}=window;
+renderShell({active:'olap',crumb:'<b>OLAP 分析</b>'});
+function $(s){return document.querySelector(s)}
+const rows=[['paper','2024-06',1240,0.882],['paper','2024-07',980,0.901],['paper','2024-08',1102,0.876],['report','2024-06',142,0.794],['report','2024-07',88,0.812],['patent','2024-06',54,0.701],['patent','2024-07',62,0.723]];
+$('#restbl').outerHTML||0; // noop
+$('#qsql').querySelector('#restbl').innerHTML=`<thead><tr><th>doc_type</th><th>month</th><th class="num">docs</th><th class="num">avg_q</th></tr></thead><tbody>${rows.map(r=>`<tr><td><span class="tag ${r[0]==='paper'?'teal':r[0]==='patent'?'amber':'info'}">${r[0]}</span></td><td class="mono">${r[1]}</td><td class="num">${r[2].toLocaleString()}</td><td class="num">${r[3]}</td></tr>`).join('')}</tbody>`;
+function runQ(){const m=$('#meta');m.textContent='运行中… SELECT 校验通过';setTimeout(()=>m.textContent='14 行 · 38ms · 流式 RecordBatchReader',700)}
+function runGraph(){const m=$('#gmeta');m.textContent='遍历中…';const paths=[[42,'paper:Sparse_Attention','paper:Longformer'],['paper:Sparse_Attention','paper:Big_Bird'],['paper:Longformer','paper:Performer'],['paper:Big_Bird','author:MIT'],['author:MIT','org:CSAIL']];setTimeout(()=>{m.textContent=paths.length+' 条路径 · max_depth=3';$('#gpaths').innerHTML=paths.map((p,i)=>`<div class="flex between" style="padding:6px 0;border-bottom:1px solid var(--line-soft)"><span class="mono" style="font-size:.78rem"><b style="color:var(--teal-bright)">${p[0]}</b> → ${p[1]}${p[2]?' → <span style="color:var(--fg-hi)">'+p[2]+'</span>':''}</span><span class="tag">d${i+1}</span></div>`).join('')},700)}
+$('#qtabs').addEventListener('click',e=>{const b=e.target.closest('.tab');if(!b)return;$$('.tab').forEach(t=>t.classList.remove('active'));b.classList.add('active');['sql','graph','daft','mv'].forEach(t=>$('#q'+t).classList.toggle('hidden',t!==b.dataset.q))});
+document.addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key==='Enter'&&!$('#qsql').classList.contains('hidden')){e.preventDefault();runQ()}});
+function $$(s){return[...document.querySelectorAll(s)]}
+</script>
+<style>.sqleditor{font-family:var(--font-mono);font-size:.8125rem;line-height:1.7;background:var(--ink-950);color:var(--fg-hi);padding:var(--s4) var(--card-pad);min-height:140px;white-space:pre;overflow:auto;border-left:3px solid var(--teal)}.sqleditor:focus{outline:none;box-shadow:inset 0 0 0 1px var(--teal)}.codeblk{margin:0;background:var(--ink-950);border:1px solid var(--line);border-radius:0;padding:var(--s4) var(--card-pad);font-family:var(--font-mono);font-size:.78rem;color:var(--fg-md);line-height:1.7;white-space:pre}</style>
+</body>
+</html>

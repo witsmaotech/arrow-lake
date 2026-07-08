@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>数据摄入 · Arrow Lake</title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/tokens.css"/><link rel="stylesheet" href="assets/app.css"/>
+<style>.src{cursor:pointer;text-align:left;transition:var(--dur-1)}.src:hover{transform:translateY(-2px);box-shadow:var(--shadow-3)}.src.sel{border-color:var(--teal);box-shadow:0 0 0 1px var(--teal),var(--shadow-2)}.src.sel .ic-wrap{background:var(--teal)!important;color:var(--ink-950)!important}.step{display:flex;align-items:center;gap:8px;font-size:.78rem;color:var(--fg-lo)}.step b{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;background:var(--ink-700);color:var(--fg-hi);font-family:var(--font-mono);font-size:.72rem}.step.active b{background:var(--teal);color:var(--ink-950)}.step.done b{background:var(--ok);color:var(--ink-950)}.flow-node{flex:1;text-align:center;padding:8px;border:1px solid var(--line);border-radius:var(--r-md);font-size:.72rem}.flow-node b{display:block;color:var(--teal-bright);font-family:var(--font-mono);font-size:.8rem}</style>
+</head>
+<body>
+<div id="app"><main class="main"><div class="page">
+  <div class="h-sec between">
+    <div><h1>数据摄入</h1><div class="desc">11 种来源 · <span class="mono">POST /datasets/{name}/ingest/{type}</span> · 同步返回 report，KG 异步 fire-and-forget</div></div>
+    <div class="flex"><button class="btn btn-ghost btn-sm" onclick="openApi('摄入文档','curl -X POST $API/api/v1/datasets/papers/ingest/documents -d @body.json','lake.ingest(\"papers\", paths=[...], document_mode=True)')"><i class="placeholder" data-ic="code"></i> API</button></div>
+  </div>
+
+  <!-- flow strip -->
+  <div class="panel"><div class="panel-b flex between wrap" style="gap:6px">
+    <div class="flow-node"><b>parse</b>解析/OCR</div>→
+    <div class="flow-node"><b>chunk</b>7 策略分块</div>→
+    <div class="flow-node"><b>embed</b>多模型嵌入</div>→
+    <div class="flow-node"><b>quality</b>校验/去重</div>→
+    <div class="flow-node"><b>lance</b>Lance + blob</div>
+    <div class="flow-node" style="border-color:var(--amber);color:var(--warn)"><b style="color:var(--warn)">kg *</b>异步建图</div>
+  </div></div>
+
+  <!-- steps -->
+  <div class="flex wrap" style="gap:var(--s5)">
+    <div class="step done"><b>✓</b> 选择来源</div>
+    <div class="step active"><b>2</b> 配置参数</div>
+    <div class="step"><b>3</b> 确认运行</div>
+  </div>
+
+  <div class="panel flush">
+    <div class="panel-h"><i class="placeholder" data-ic="ingest"></i><h3>① 选择来源 · 11 种</h3><span class="actions"><span class="tag" id="curSrc">documents</span></div></div>
+    <div class="panel-b"><div class="grid g-6" id="sources"></div></div>
+  </div>
+  <div class="panel flush">
+    <div class="panel-h"><i class="placeholder" data-ic="filter"></i><h3>② 配置 · <span id="srcLabel">文档</span></h3><span class="actions"><span class="tag info" id="endpt">ingest/documents</span></div></div>
+    <div class="panel-b col" id="cfg"></div>
+  </div>
+
+  <!-- common + run -->
+  <div class="panel">
+    <div class="panel-h"><i class="placeholder" data-ic="database"></i><h3>③ 目标与运行</h3></div>
+    <div class="panel-b">
+      <div class="grid g-3">
+        <div class="field"><label>目标数据集</label><select class="select"><option>新建（自动命名）</option><option>papers</option><option>regulations</option><option>knowledge_base</option></select></div>
+        <div class="field"><label>schema 模式</label><select class="select"><option>strict（拒绝非法记录）</option><option>lenient（尽力解析）</option></select></div>
+        <div class="field"><label>死信队列</label><select class="select"><option>启用（带错误上下文）</option><option>关闭</option></select></div>
+      </div>
+      <div class="flex between wrap" style="margin-top:var(--s4)">
+        <div class="flex wrap" style="gap:6px"><span class="tag teal">同步返回 IngestionReport</span><span class="tag amber">KG 异步 fire-and-forget</span><span class="tag info">Schema 校验</span><span class="tag">HMAC 审计</span></div>
+        <div class="flex"><button class="btn btn-ghost">预览 (DRY RUN)</button><button class="btn btn-primary" onclick="alert('原型：启动摄入 → 同步 report + 异步 task_id (KG)')"><i class="placeholder" data-ic="play"></i> 开始摄入</button></div>
+      </div>
+    </div></div>
+
+  <!-- recent -->
+  <div class="panel flush"><div class="panel-h"><i class="placeholder" data-ic="tasks"></i><h3>最近摄入</h3><span class="actions"><a class="btn btn-ghost btn-sm" href="tasks.html">全部任务 →</a></div></div>
+    <div class="tbl-scroll"><table class="tbl"><thead><tr><th>task_id</th><th>来源</th><th>数据集</th><th>记录</th><th>状态</th><th class="num">耗时</th></tr></thead><tbody>
+    ${[['task_8a3f','documents','papers','1,204','warn','00:42'],['task_2f6c','documents','reviews','880','ok','02:14'],['task_c392','sql','transactions','50,000','ok','04:17'],['task_4e27','images','papers','12,440','ok','06:03']].map(t=>`<tr><td class="mono" style="font-size:.75rem"><a href="tasks.html" style="color:var(--fg-hi)">${t[0]}</a></td><td><span class="tag">${t[1]}</span></td><td><a href="dataset-detail.html" style="color:var(--teal-bright)">${t[2]}</a></td><td class="mono">${t[3]}</td><td><span class="lamp ${t[4]} ${t[4]==='warn'?'pulse':''}"><i></i>${t[4]==='warn'?'运行':'完成'}</span></td><td class="num mono">${t[5]}</td></tr>`).join('')}
+    </tbody></table></div>
+  </div>
+</div></main></div>
+<script src="assets/layout.js"></script>
+<script>
+const {renderShell,icon}=window;
+renderShell({active:'ingest',crumb:'<b>数据摄入</b>'});
+const $=s=>document.querySelector(s);
+const SRC=[['documents','文档','PDF/DOCX · OCR','file'],['images','图像','缩略图+降采样','image'],['videos','视频','关键帧','video'],['mixed','混合','多模态','quality'],['sql','SQL','JDBC 拉取','database'],['http','HTTP','API 流式','cloud'],['kafka','Kafka','流式订阅','refresh'],['iceberg','Iceberg','表迁移','database'],['deltalake','DeltaLake','表迁移','database'],['url','URL','远程抓取','cloud'],['file','文件系统','本地/挂载','file']];
+const LABEL={documents:'文档',images:'图像',videos:'视频',mixed:'混合',sql:'SQL',http:'HTTP',kafka:'Kafka',iceberg:'Iceberg',deltalake:'DeltaLake',url:'URL',file:'文件系统'};
+let cur='documents';
+const f=(label,val,hint)=>`<div class="field"><label>${label}</label><input class="input mono" value="${val}"/>${hint?`<div class="muted" style="font-size:.68rem;margin-top:3px">${hint}</div>`:''}</div>`;
+const sel=(label,opts)=>`<div class="field"><label>${label}</label><select class="select">${opts.map(o=>`<option>${o}</option>`).join('')}</select></div>`;
+const TEXT_EXTRA=()=>`<div class="grid g-2" style="margin-top:var(--s3)">${sel('分块策略',['Chonkie Semantic','Page','Paragraph','Recursive','Semchunk','Chonkie Token','Chonkie SDPM'])} ${sel('嵌入模型',['Qwen3-Embedding 0.6B','CLIP','sentence-transformers'])}</div><label class="flex" style="gap:6px;margin-top:var(--s3);font-size:.8rem;color:var(--fg-md)"><input type="checkbox" checked/> 摄入后异步建 KG（fire-and-forget）</label>`;
+const FORM={
+documents:()=>`<div class="grid g-2">${f('文件/目录','data/papers/*.pdf','glob 或路径')} ${sel('doc_type 路由',['auto','paper','report','patent','policy'])}</div><div class="grid g-2" style="margin-top:var(--s3)">${sel('OCR 后端',['Kreuzberg (PaddleOCR)','Tesseract','EasyOCR','Docling (RapidOCR)'])} ${sel('num_sub_vectors',['32 (1024d)','64','16'])}</div><label class="flex" style="gap:6px;margin-top:var(--s3);font-size:.8rem;color:var(--fg-md)"><input type="checkbox" checked/> 扫描页走 OCR</label>${TEXT_EXTRA()}`,
+images:()=>`<div class="grid g-3">${f('glob','photos/*.jpg, *.png')} ${f('缩略图分辨率','256')} ${f('降采样阈值','1024 px','大图嵌入前降采样')}</div>`,
+videos:()=>`<div class="grid g-3">${f('glob','videos/*.mp4')} ${f('关键帧间隔','5 s')} ${sel('嵌入模型',['CLIP (关键帧)'])}</div>`,
+mixed:()=>`<div class="grid g-3">${f('文本 glob','docs/*.md, *.pdf')} ${f('图像 glob','img/*.jpg')} ${f('视频 glob','vid/*.mp4')}</div>${TEXT_EXTRA()}`,
+sql:()=>`<div class="grid g-2">${f('JDBC 连接','postgresql://host:5432/db')} ${f('SQL','SELECT id, content FROM records')}</div><div class="muted" style="font-size:.72rem;margin-top:8px">拉取结构化数据 · 文本列可选分块/嵌入</div>`,
+http:()=>`<div class="grid g-3">${f('URL','https://api.example.com/data')} ${sel('方法',['GET','POST'])} ${f('JSON 路径','$.results[*]')}</div><div class="grid g-2" style="margin-top:var(--s3)">${f('分页','?page={n}')} ${f('认证 Header','Authorization: Bearer …')}</div>`,
+kafka:()=>`<div class="grid g-3">${f('brokers','host:9092')} ${f('topic','events')} ${f('group_id','arrow-lake-consumer')}</div><div class="grid g-2" style="margin-top:var(--s3)">${sel('offset',['latest','earliest'])} ${f('反序列化','json')}</div>`,
+iceberg:()=>`<div class="grid g-3">${f('catalog','glue')} ${f('namespace','analytics')} ${f('表标识','analytics.events')}</div>`,
+deltalake:()=>`<div class="grid g-2">${f('表路径','s3://bucket/delta/events')} ${f('版本','latest')}</div>`,
+url:()=>`<div class="grid g-2">${f('URL 列表','https://a.com/1.pdf, https://b.com/2.pdf')} ${sel('内容类型',['auto-detect','文档','图像','视频'])}</div>${TEXT_EXTRA()}`,
+file:()=>`<div class="grid g-2">${f('路径/glob','/data/uploads/**')} ${sel('递归',['是','否'])}</div>${TEXT_EXTRA()}`,
+};
+function setSrc(s){cur=s;$('#curSrc').textContent=s;$('#srcLabel').textContent=LABEL[s];$('#endpt').textContent='ingest/'+s;renderCfg();$$('.src').forEach(c=>c.classList.toggle('sel',c.dataset.s===s))}
+function renderCfg(){$('#cfg').innerHTML=FORM[cur]?FORM[cur]():'<div class="muted">通用参数</div>'}
+$('#sources').innerHTML=SRC.map(s=>`<button class="src panel ${s[0]==='documents'?'sel':''}" data-s="${s[0]}" onclick="setSrc('${s[0]}')" style="color:var(--fg-hi)"><div class="panel-b flex" style="gap:10px"><span class="ic-wrap" style="width:32px;height:32px;border-radius:8px;background:var(--teal-soft);color:var(--teal-bright);display:grid;place-items:center;flex-shrink:0">${icon(s[3])}</span><div><div style="font-weight:600;font-size:.82rem">${s[0]}</div><div class="muted" style="font-size:.68rem">${s[2]}</div></div></div></button>`).join('');
+renderCfg();
+function $$(s){return[...document.querySelectorAll(s)]}
+</script>
+</body>
+</html>

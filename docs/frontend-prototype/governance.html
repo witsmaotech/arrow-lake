@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>元数据治理 · Arrow Lake</title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/tokens.css"/><link rel="stylesheet" href="assets/app.css"/>
+</head>
+<body>
+<div id="app"><main class="main"><div class="page">
+  <div class="h-sec between">
+    <div><h1>元数据治理</h1><div class="desc">Apache Gravitino · 统一 catalog · <span class="mono">tag→ACL · 动态脱敏 · 保留策略 · 联邦查询</span></div></div>
+    <div class="flex"><span class="lamp ok pulse"><i></i>Gravitino 在线</span><span class="tag">ADMIN</span><button class="btn btn-primary btn-sm" onclick="openApi('强制策略','curl -X POST $API/metadata/policies/enforce -d \'{...}\']','lake.gravitino.policies_enforce()')"><i class="placeholder" data-ic="scale"></i> enforce</button></div>
+  </div>
+
+  <div class="grid" style="grid-template-columns:240px 1fr;gap:var(--s4);align-items:start">
+    <!-- catalog tree -->
+    <div class="panel flush"><div class="panel-h"><i class="placeholder" data-ic="tree"></i><h3>Catalog</h3></div>
+      <div id="tree"></div>
+    </div>
+
+    <div class="col">
+      <!-- tag → ACL -->
+      <div class="panel flush"><div class="panel-h"><i class="placeholder" data-ic="tag"></i><h3>资产 · <span style="color:var(--teal-bright)">papers</span> · tag → ACL</h3><span class="actions"><button class="btn btn-ghost btn-sm" onclick="openApi('打标','curl -X POST $API/metadata/tags -d \'{\"entity\":\"papers\",\"tag\":\"pii\"}\'','lake.gravitino.tag(\"papers\",\"pii\")')"><i class="placeholder" data-ic="plus"></i> 打标</button></div></div>
+        <div style="overflow-x:auto"><table class="tbl"><thead><tr><th>资产</th><th>类型</th><th>标签</th><th>读</th><th>写</th><th>脱敏列</th><th>保留</th></tr></thead><tbody>
+        ${[['papers','dataset','research, public','✓','role-based','—','—'],['papers.source_url','column','pii','✓','✕','masking','—'],['regulations','dataset','confidential, pii','✓','✕','—','7y'],['transactions.amount','column','financial','✓','✕','masking','90d'],['product_photos','dataset','public','✓','role-based','—','—']].map(r=>`<tr><td class="mono">${r[0]}</td><td><span class="tag">${r[1]}</span></td><td>${r[2].split(', ').map(t=>`<span class="tag ${t==='pii'?'amber':t==='confidential'?'info':'teal'}">${t}</span>`).join(' ')}</td><td>${r[3]}</td><td>${r[4]}</td><td>${r[5]==='—'?'<span class="muted">—</span>':`<span class="tag amber">${r[5]}</span>`}</td><td>${r[6]==='—'?'<span class="muted">—</span>':`<span class="tag">${r[6]}</span>`}</td></tr>`).join('')}
+        </tbody></table></div>
+      </div>
+
+      <div class="grid g-2">
+        <!-- policies -->
+        <div class="panel"><div class="panel-h"><i class="placeholder" data-ic="scale"></i><h3>策略</h3><span class="actions"><button class="btn btn-ghost btn-sm"><i class="placeholder" data-ic="plus"></i></button></div></div><div class="panel-b col">
+          <div class="muted" style="font-size:var(--fs-cap)">RETENTION · /policies/retention</div>
+          ${[['confidential','7y · 自动归档'],['financial','90d · 后删除']].map(p=>`<div class="flex between"><span class="mono" style="font-size:.78rem">${p[0]}</span><span class="tag">${p[1]}</span></div>`).join('')}
+          <div class="divider"></div>
+          <div class="muted" style="font-size:var(--fs-cap)">MASKING · /policies/masking</div>
+          ${[['pii','email/phone → 哈希'],['financial','amount → 分桶']].map(p=>`<div class="flex between"><span class="mono" style="font-size:.78rem">${p[0]}</span><span class="tag amber">${p[1]}</span></div>`).join('')}
+        </div></div>
+        <!-- stats / models -->
+        <div class="col">
+          <div class="panel"><div class="panel-h"><i class="placeholder" data-ic="gauge"></i><h3>统计 · papers</h3><div class="actions"><button class="btn btn-ghost btn-sm" onclick="openApi('统计','curl -X POST $API/metadata/statistics/papers','lake.gravitino.statistics(\"papers\")')"><i class="placeholder" data-ic="refresh"></i></button></div></div><div class="panel-b grid g-2">
+            <div><div class="muted" style="font-size:var(--fs-cap)">行数</div><b class="readout" style="font-size:1.15rem">184,203</b></div>
+            <div><div class="muted" style="font-size:var(--fs-cap)">大小</div><b class="readout" style="font-size:1.15rem">12.4 GB</b></div>
+            <div><div class="muted" style="font-size:var(--fs-cap)">列</div><b class="readout" style="font-size:1.15rem">12</b></div>
+            <div><div class="muted" style="font-size:var(--fs-cap)">分区</div><b class="readout" style="font-size:1.15rem">32</b></div>
+          </div></div>
+          <div class="panel"><div class="panel-h"><i class="placeholder" data-ic="embed"></i><h3>模型版本</h3></div><div class="panel-b">
+            ${[['Qwen3-Embedding','0.6B · v3'],['CLIP ViT-B/32','512d · v2']].map(m=>`<div class="flex between" style="margin:4px 0"><span class="mono" style="font-size:.78rem">${m[0]}</span><span class="tag">${m[1]}</span></div>`).join('')}
+          </div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div></main></div>
+<script src="assets/layout.js"></script>
+<script>
+const {renderShell,icon}=window;
+renderShell({active:'governance',crumb:'<b>元数据治理</b>'});
+const TREE=[
+['lakehouse','Lance','teal',1,[['papers','dataset',2],['regulations','dataset',2],['knowledge_base','dataset',2],['product_photos','dataset',2]]],
+['lakehouse','HugeGraph','info',1,[['kg_papers','graph',2],['kg_regulations','graph',2]]],
+['lakehouse','Object Store','amber',1,[['blob/papers/','prefix',2],['backup/','prefix',2]]],
+];
+const $=s=>document.querySelector(s);
+$('#tree').innerHTML=TREE.map(t=>`<div style="padding:6px var(--card-pad)"><div class="flex" style="gap:6px">${icon('chevronD')}<span class="tag ${t[2]}">${t[1]}</span><span class="muted mono" style="font-size:.72rem">${t[0]}</span></div>${t[4].map(c=>`<a href="${c[1]==='dataset'?'dataset-detail.html':c[1]==='graph'?'kg.html':'#'}" style="display:block;padding:4px 0 4px 28px;color:var(--fg-md);font-size:.8rem;text-decoration:none" onmouseover="this.style.color='var(--teal-bright)'" onmouseout="this.style.color='var(--fg-md)'">${icon(c[1]==='dataset'?'database':c[1]==='graph'?'kg':'file')} ${c[0]}</a>`).join('')}</div>`).join('');
+</script>
+</body>
+</html>
