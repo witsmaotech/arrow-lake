@@ -142,9 +142,15 @@ class _FileIngestMixin:
                 prefix = doc_config.blob_prefix if doc_config else "documents/"
                 safe_stem = re.sub(r'[/\\:\0]', '_', pdf_path.stem)
                 safe_stem = re.sub(r'\.\.', '_', safe_stem)
+                # Sanitize to the blob-allowed charset (alphanumeric, dots, hyphens,
+                # underscores). CJK / other non-ASCII in filenames (e.g.
+                # "5.芜湖市...pdf") would otherwise fail _BLOB_SEGMENT_RE and break
+                # ingest; replace such chars with '_' so the key stays ASCII-safe.
+                safe_stem = re.sub(r'[^a-zA-Z0-9._-]', '_', safe_stem)
                 if not safe_stem:
                     safe_stem = "doc"
-                blob_key = f"{prefix}{safe_stem}/{pdf_path.name}"
+                safe_name = re.sub(r'[^a-zA-Z0-9._-]', '_', pdf_path.name)
+                blob_key = f"{prefix}{safe_stem}/{safe_name}"
                 try:
                     blob_store.upload(blob_key, pdf_path.read_bytes())
                 except OSError as exc:
