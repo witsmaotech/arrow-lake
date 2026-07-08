@@ -233,7 +233,8 @@ class TestVlmPipelineBuilder:
         assert fmt[_FakeInputFormat.PDF].pipeline_options == "std-pipe"
 
     def test_docling_unavailable_raises(self, monkeypatch):
-        # Arrange — _DOCLING_AVAILABLE=False（真实 dev 环境），不走 patch fixture
+        # Arrange — 显式置 _DOCLING_AVAILABLE=False（不依赖运行时是否真装了 docling）
+        monkeypatch.setattr(document_mod, "_DOCLING_AVAILABLE", False)
         from arrow_lake.ingest.document import DocumentError, DocumentParser
         parser = DocumentParser(DocumentConfig(docling_pipeline_type="vlm"))
         # Act / Assert

@@ -67,8 +67,15 @@ def extractor(llm_config: SimpleNamespace, router: DocTypeRouter) -> HyperExtrac
 
 
 def _wire_template(extractor: HyperExtractExtractor, ka: SimpleNamespace) -> None:
-    """Bypass real Template.create by stubbing _get_template."""
-    extractor._get_template = lambda path: ka  # type: ignore[method-assign]
+    """Bypass real Template.create by stubbing _parse_fresh (returns parse result).
+
+    v1.8.7: he_extractor renamed/centralized parsing into ``_parse_fresh(path,
+    text) -> ka.parse(text)``. The old ``_get_template`` stub no longer wired in,
+    so Template.create ran for real against the (intentionally non-existent)
+    ``general/default_graph`` fixture default and returned empty. Stub the actual
+    method so the adapter conversion logic is what's under test.
+    """
+    extractor._parse_fresh = lambda template_path, text: ka.parse(text)  # type: ignore[method-assign]
 
 
 # ---------------------------------------------------------------------------
@@ -201,7 +208,7 @@ async def test_extract_routes_to_template_by_doc_type(
     extractor: HyperExtractExtractor,
 ) -> None:
     seen: list[str] = []
-    extractor._get_template = lambda path: seen.append(path) or _ka([], [])  # type: ignore[method-assign]
+    extractor._parse_fresh = lambda template_path, text: seen.append(template_path) or _ka([], []).parse(text)  # type: ignore[method-assign]
 
     await extractor.extract("text", doc_type="research_paper")
     await extractor.extract("text", doc_type="resume")

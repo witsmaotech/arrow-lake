@@ -540,13 +540,16 @@ class TestKGFactoryMethods:
         return _TestLake(_make_config(enabled=True))
 
     def test_create_kg_extractor(self, lake: _TestLake) -> None:
-        with patch("arrow_lake.rag.provider.create_llm_provider") as mock_provider_fn, \
-             patch("arrow_lake.knowledge_graph.extractor.EntityExtractor") as mock_cls:
-            mock_provider_fn.return_value = MagicMock()
-            mock_cls.return_value = MagicMock()
+        # v1.8.7: default extractor_backend is now "he", so _create_kg_extractor
+        # builds HyperExtractExtractor (not legacy EntityExtractor). Mock the he
+        # path's two construction sites and assert the extractor is instantiated.
+        with patch("arrow_lake.knowledge_graph.he_extractor.HyperExtractExtractor") as mock_he, \
+             patch("arrow_lake.knowledge_graph.doc_type_router.DocTypeClassifier") as mock_cls:
+            mock_cls.from_llm_config.return_value = MagicMock()
+            mock_he.return_value = MagicMock()
 
             lake._create_kg_extractor()
-            mock_cls.assert_called_once()
+            mock_he.assert_called_once()
 
     def test_create_kg_builder_raises_when_no_client(self, lake: _TestLake) -> None:
         # Override _get_kg_client to return None

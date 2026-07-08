@@ -175,9 +175,10 @@ class _FileIngestMixin:
             doc_id = hashlib.sha256(str(pdf_path.resolve()).encode()).hexdigest()[:16]
             # v1.7: resolve per-file doc_type — explicit (caller) > auto-classify > "".
             resolved_doc_type = doc_type or ""
-            if not resolved_doc_type and self._doc_type_classifier is not None:
+            _classifier = getattr(self, "_doc_type_classifier", None)
+            if not resolved_doc_type and _classifier is not None:
                 try:
-                    inferred = self._doc_type_classifier.classify_sync(
+                    inferred = _classifier.classify_sync(
                         getattr(parsed, "text", "") or ""
                     )
                     if inferred:

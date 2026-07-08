@@ -217,14 +217,23 @@ class DocumentChunker:
         return None
 
     def _chunk_with_semchunk(self, text: str) -> list[str]:
-        """Chunk text using semchunk hierarchical splitting."""
+        """Chunk text using semchunk hierarchical splitting.
+
+        semchunk>=2.0 changed the signature: the ``tokenizer=`` kwarg was replaced
+        by a required positional ``token_counter: Callable[[str], int]``. Build one
+        from the resolved tokenizer (tiktoken ``Encoding`` → ``.encode``; HuggingFace
+        → ``__call__``), falling back to a char counter when no tokenizer resolved.
+        """
         import semchunk
 
         tokenizer = self._get_semchunk_tokenizer()
-        kwargs: dict[str, Any] = {"chunk_size": self._chunk_size}
-        if tokenizer is not None:
-            kwargs["tokenizer"] = tokenizer
-        return semchunk.chunk(text, **kwargs)
+        if tokenizer is None:
+            token_counter = len
+        elif hasattr(tokenizer, "encode"):  # tiktoken Encoding
+            token_counter = lambda s: len(tokenizer.encode(s))
+        else:  # HuggingFace transformers tokenizer
+            token_counter = lambda s: len(tokenizer(s)["input_ids"])
+        return semchunk.chunk(text, chunk_size=self._chunk_size, token_counter=token_counter)
 
     def _chunk_with_chonkie(self, text: str) -> list[str]:
         """Chunk text using the selected chonkie chunker (cached per instance)."""

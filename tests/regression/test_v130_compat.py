@@ -39,10 +39,14 @@ class TestV130Compat:
         assert cfg.password == ""
         assert cfg.ssl is False
 
-    def test_redis_config_in_arrow_lake_config(self) -> None:
+    def test_redis_config_in_arrow_lake_config(self, monkeypatch) -> None:
         """ArrowLakeConfig must include redis with sensible defaults."""
+        # 隔离本地 .env 覆盖：ArrowLakeConfig 是 pydantic-settings，env_file=".env"
+        # 会读文件（monkeypatch.delenv 只清 os.environ，挡不住文件读取），故显式
+        # 禁用 env_file + 清 os.environ，仅测代码层默认值。
+        monkeypatch.delenv("ARROW_LAKE__REDIS__ENABLED", raising=False)
         from arrow_lake.config import ArrowLakeConfig
 
-        config = ArrowLakeConfig()
+        config = ArrowLakeConfig(_env_file=None)
         assert config.redis.enabled is False
 
