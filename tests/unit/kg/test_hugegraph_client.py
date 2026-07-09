@@ -8,7 +8,7 @@ import httpx
 import pytest
 from arrow_lake.config import HugeGraphConfig
 from arrow_lake.exceptions import ErrorCode, KGError
-from arrow_lake.knowledge_graph.client import HugeGraphClient
+from arrow_lake.knowledge_graph.client import HugeGraphClient, _DEFAULT_MAX_RETRIES
 
 
 @pytest.fixture
@@ -128,6 +128,74 @@ async def test_add_edges(mock_client: HugeGraphClient) -> None:
     assert count == 1
     call_args = mock_client._client.post.call_args
     assert "/graph/edges/batch" in call_args[0][0]
+
+
+# ---------------------------------------------------------------------------
+# 5xx server errors: exponential backoff retry (P0.1)
+#
+# HugeGraph returns 5xx with "too busy to write" when rocksdb write throughput
+# saturates. Such responses must be retried with backoff (not crash the build),
+# while genuine 4xx client errors must NOT be retried.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_add_vertices_retries_on_server_error(mock_client: HugeGraphClient) -> None:
+    """A transient 5xx (e.g. 'too busy to write') is retried, then succeeds."""
+    vertices = [{"label": "person", "properties": {"name": "Alice"}}]
+    mock_client._client.post.side_effect = [
+        _mock_response(503, {}),  # "too busy to write" → retry
+        _mock_response(201, ["id1"]),  # success on retry
+    ]
+    ids = await mock_client.add_vertices(vertices)
+    assert ids == ["id1"]
+    assert mock_client._client.post.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_add_vertices_raises_after_retries_exhausted(
+    mock_client: HugeGraphClient,
+) -> None:
+    """Persistent 5xx exhausts retries, then surfaces as KGError(KG_CONNECTION_FAILED)."""
+    vertices = [{"label": "person", "properties": {"name": "Alice"}}]
+    mock_client._client.post.return_value = _mock_response(503, {})
+    with pytest.raises(KGError) as exc_info:
+        await mock_client.add_vertices(vertices)
+    assert exc_info.value.error_code == ErrorCode.KG_CONNECTION_FAILED
+    assert mock_client._client.post.call_count == _DEFAULT_MAX_RETRIES  # initial + 2 retries
+
+
+@pytest.mark.asyncio
+async def test_add_edges_retries_on_server_error(mock_client: HugeGraphClient) -> None:
+    """add_edges also retries transient 5xx, then succeeds."""
+    edges = [
+        {
+            "label": "knows",
+            "outV": "1:Alice",
+            "outVLabel": "person",
+            "inV": "2:Bob",
+            "inVLabel": "person",
+            "properties": {},
+        },
+    ]
+    mock_client._client.post.side_effect = [
+        _mock_response(500, {}),
+        _mock_response(201, ["edge1"]),
+    ]
+    count = await mock_client.add_edges(edges)
+    assert count == 1
+    assert mock_client._client.post.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_client_error_not_retried(mock_client: HugeGraphClient) -> None:
+    """4xx is NOT retried (only 5xx); surfaces the add_vertices status check immediately."""
+    vertices = [{"label": "person", "properties": {"name": "Alice"}}]
+    mock_client._client.post.return_value = _mock_response(400, {})
+    with pytest.raises(KGError) as exc_info:
+        await mock_client.add_vertices(vertices)
+    assert exc_info.value.error_code == ErrorCode.KG_BUILD_FAILED
+    assert mock_client._client.post.call_count == 1  # no retry
 
 
 # ---------------------------------------------------------------------------

@@ -262,6 +262,10 @@ class KGBuilder:
         concurrency = self._config.build_concurrency
         batch_delay = self._config.build_batch_delay
         semaphore = asyncio.Semaphore(concurrency)
+        # Write-side gate, separate from the extraction semaphore above.
+        # HugeGraph rocksdb is the write bottleneck; bounding concurrent
+        # batch inserts prevents saturating it into "too busy to write".
+        write_sem = asyncio.Semaphore(self._config.write_concurrency)
 
         async def _process_chunk(
             idx: int, cid: str, content: str, doc_type: str | None = None,
@@ -303,7 +307,8 @@ class KGBuilder:
             ]
             entity_id_map: dict[str, str] = {}
             if entity_vertices:
-                entity_hg_ids = await self._client.add_vertices(entity_vertices, graph_name=graph_name)
+                async with write_sem:
+                    entity_hg_ids = await self._client.add_vertices(entity_vertices, graph_name=graph_name)
                 if len(entity_hg_ids) != len(entity_vertices):
                     logger.warning(
                         "entity add_vertices returned %d ids for %d vertices — "
@@ -329,7 +334,8 @@ class KGBuilder:
                 typed_keys.append((e.name, label))
             typed_id_map: dict[tuple[str, str], str] = {}
             if typed_vertices:
-                typed_hg_ids = await self._client.add_vertices(typed_vertices, graph_name=graph_name)
+                async with write_sem:
+                    typed_hg_ids = await self._client.add_vertices(typed_vertices, graph_name=graph_name)
                 if len(typed_hg_ids) != len(typed_vertices):
                     logger.warning(
                         "typed add_vertices returned %d ids for %d vertices — "
@@ -359,7 +365,8 @@ class KGBuilder:
                 if e.name in entity_id_map
             ]
             if ref_edges:
-                await self._client.add_edges(ref_edges, graph_name=graph_name)
+                async with write_sem:
+                    await self._client.add_edges(ref_edges, graph_name=graph_name)
 
             # --- Relation routing (v1.7.1 §4.5): route_relation picks a typed
             # edge label on a synonym hit (endpoints resolved via _EDGE_ENDPOINTS
@@ -396,7 +403,8 @@ class KGBuilder:
                     "properties": props,
                 })
             if rel_edges:
-                await self._client.add_edges(rel_edges, graph_name=graph_name)
+                async with write_sem:
+                    await self._client.add_edges(rel_edges, graph_name=graph_name)
 
             return ent_count, rel_count
 

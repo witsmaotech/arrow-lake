@@ -21,6 +21,8 @@ class TestHugeGraphConfig:
         assert cfg.password == ""
         assert cfg.auto_build_on_ingest is False
         assert cfg.build_batch_size == 50
+        assert cfg.build_concurrency == 3
+        assert cfg.write_concurrency == 2
         assert cfg.default_traversal_depth == 2
         assert cfg.max_traversal_depth == 5
 
@@ -45,6 +47,14 @@ class TestHugeGraphConfig:
     def test_build_batch_size_zero_rejected(self) -> None:
         with pytest.raises(ValidationError, match="build_batch_size"):
             HugeGraphConfig(build_batch_size=0)
+
+    def test_write_concurrency_zero_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="write_concurrency"):
+            HugeGraphConfig(write_concurrency=0)
+
+    def test_write_concurrency_valid(self) -> None:
+        cfg = HugeGraphConfig(write_concurrency=4)
+        assert cfg.write_concurrency == 4
 
     def test_timeout_minimum(self) -> None:
         cfg = HugeGraphConfig(timeout_seconds=1.0)

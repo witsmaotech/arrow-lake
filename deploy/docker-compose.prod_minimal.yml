@@ -41,7 +41,7 @@ x-arrow-lake: &arrow-lake
       HTTP_PROXY: "${BUILD_HTTP_PROXY:-}"
       HTTPS_PROXY: "${BUILD_HTTPS_PROXY:-}"
       NO_PROXY: "${BUILD_NO_PROXY:-127.0.0.1,localhost}"
-  image: arrow-lake:1.8.6
+  image: arrow-lake:1.8.7
   restart: unless-stopped
   env_file:
     - path: ../.env
@@ -484,8 +484,9 @@ services:
       HUGEGRAPH_GRAPH: "hugegraph"
       # HugeGraph 1.7+ 动态建图(per-dataset KG)必须开 auth：设 PASSWORD → enable-auth.sh 建管理员(admin/PASSWORD)
       PASSWORD: "${HG_SERVER_PASSWORD:-pa}"
-      # minimal 下压低 JVM 堆以适配 2.5G cgroup
-      JAVA_OPTS: "-Xms512m -Xmx1536m"
+      # JVM 堆匹配下方 cgroup 内存（4G），留 ~2G 给 rocksdb block cache/off-heap。
+      # G1GC 降低大堆下的暂停（kg_build 持续写入时 GC 压力大）。
+      JAVA_OPTS: "-Xms1g -Xmx2g -XX:+UseG1GC -XX:MaxGCPauseMillis=200"
     ports:
       - "127.0.0.1:${HUGEGRAPH_PORT:-8089}:8080"
     volumes:
@@ -495,8 +496,8 @@ services:
     deploy:
       resources:
         limits:
-          memory: ${HG_SERVER_MEMORY_LIMIT:-2560M}
-          cpus: "${HG_SERVER_CPU_LIMIT:-1.0}"
+          memory: ${HG_SERVER_MEMORY_LIMIT:-4096M}
+          cpus: "${HG_SERVER_CPU_LIMIT:-2.0}"
           pids: 512
         reservations:
           memory: 1G
@@ -514,6 +515,37 @@ services:
         max-file: "5"
         tag: "arrow-lake-hg-server"
     stop_grace_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # HugeGraph Hubble — Graph visualization web UI (port 8088)
+  # ---------------------------------------------------------------------------
+  hg-hubble:
+    image: hugegraph/hubble:${HG_HUBBLE_VERSION:-1.7.0}
+    container_name: arrow-lake-hg-hubble
+    hostname: hubble
+    restart: unless-stopped
+    networks:
+      - arrow-lake-net
+    depends_on:
+      hg-server:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${HG_HUBBLE_PORT:-8088}:8088"
+    deploy:
+      resources:
+        limits:
+          memory: ${HG_HUBBLE_MEMORY_LIMIT:-2G}
+          cpus: "${HG_HUBBLE_CPU_LIMIT:-1.0}"
+          pids: 128
+        reservations:
+          memory: 256M
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+        tag: "arrow-lake-hg-hubble"
+    stop_grace_period: 15s
 
   # ---------------------------------------------------------------------------
   # HugeGraph Schema Init — Create Arrow Lake KG schema on first start

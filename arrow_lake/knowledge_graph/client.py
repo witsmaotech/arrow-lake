@@ -41,6 +41,18 @@ _SAFE_VERTEX_ID_RE = re.compile(r"^[a-zA-Z0-9_\-一-鿿　-〿＀-￯:.\s]+$")
 
 _DEFAULT_MAX_RETRIES = 3
 
+# Exceptions eligible for tenacity retry in _get/_post/_delete. NOTE:
+# httpx.HTTPStatusError is included because those helpers raise it ONLY on
+# status >= 500 (4xx is returned to the caller unchecked), so adding the type
+# here retries transient 5xx (e.g. HugeGraph "too busy to write" under rocksdb
+# write saturation) without ever retrying 4xx client errors.
+_RETRYABLE_EXCEPTIONS = (
+    httpx.TimeoutException,
+    httpx.ConnectError,
+    ConnectionResetError,  # builtin; httpx raises this on a reset TCP connection
+    httpx.HTTPStatusError,
+)
+
 _BLOCKED_GREMLIN_PATTERNS = (
     "drop(", "eval(", "System.", "java.lang", "inject(",
     "GroovyShell", "ProcessBuilder", "Runtime.", "Exec(",
@@ -113,7 +125,7 @@ class HugeGraphClient(_TraverserMixin, _ImportExportMixin):
         )
 
     @retry(
-        retry=retry_if_exception_type((httpx.TimeoutException, httpx.ConnectError, ConnectionResetError)),
+        retry=retry_if_exception_type(_RETRYABLE_EXCEPTIONS),
         stop=stop_after_attempt(_DEFAULT_MAX_RETRIES),
         wait=wait_exponential(multiplier=1, min=1, max=10),
         reraise=True,
@@ -126,7 +138,7 @@ class HugeGraphClient(_TraverserMixin, _ImportExportMixin):
         return resp
 
     @retry(
-        retry=retry_if_exception_type((httpx.TimeoutException, httpx.ConnectError, ConnectionResetError)),
+        retry=retry_if_exception_type(_RETRYABLE_EXCEPTIONS),
         stop=stop_after_attempt(_DEFAULT_MAX_RETRIES),
         wait=wait_exponential(multiplier=1, min=1, max=10),
         reraise=True,
@@ -139,7 +151,7 @@ class HugeGraphClient(_TraverserMixin, _ImportExportMixin):
         return resp
 
     @retry(
-        retry=retry_if_exception_type((httpx.TimeoutException, httpx.ConnectError, ConnectionResetError)),
+        retry=retry_if_exception_type(_RETRYABLE_EXCEPTIONS),
         stop=stop_after_attempt(_DEFAULT_MAX_RETRIES),
         wait=wait_exponential(multiplier=1, min=1, max=10),
         reraise=True,

@@ -138,6 +138,10 @@ class HugeGraphConfig(BaseModel):
     auto_build_on_ingest: bool = False
     build_batch_size: int = 50
     build_concurrency: int = 3
+    # Write-side semaphore for batch inserts, SEPARATE from build_concurrency
+    # (which gates LLM extraction). HugeGraph rocksdb is the write bottleneck,
+    # so this defaults lower to avoid saturating it into "too busy to write".
+    write_concurrency: int = 2
     build_batch_delay: float = 0.5
     default_traversal_depth: int = 2
     max_traversal_depth: int = 5
@@ -177,6 +181,13 @@ class HugeGraphConfig(BaseModel):
     def validate_batch_size(cls, v: int) -> int:
         if v < 1:
             raise ValueError(f"build_batch_size must be >= 1, got {v}")
+        return v
+
+    @field_validator("write_concurrency")
+    @classmethod
+    def validate_write_concurrency(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError(f"write_concurrency must be >= 1, got {v}")
         return v
 
     @field_validator("timeout_seconds")

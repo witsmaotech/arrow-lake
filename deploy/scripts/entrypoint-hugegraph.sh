@@ -126,6 +126,41 @@ if [ -f "$REST_CONF" ]; then
     fi
 fi
 
+# ── RocksDB write-path tuning + JVM heap ──────────────────────────────
+# Mitigate "too busy to write" under sustained bulk load (kg_build): give
+# rocksdb larger memtables, more bg compaction/flush threads, and raise the
+# level0 stop-writes trigger so compaction has runway to keep up. All knobs
+# are env-overridable; defaults target a 6G/4cpu container. NOTE: properties
+# values must be bare (no inline '#') — java properties treats '# ...' as part
+# of the value, so comments live here in the script, not on the value lines.
+HG_CONF="/hugegraph-server/conf/graphs/hugegraph.properties"
+apply_rocksdb () {  # <key> <value> — replace existing line, else append
+    local key="$1" val="$2"
+    [ -z "$val" ] && return
+    if [ -f "$HG_CONF" ] && grep -qE "^[#[:space:]]*${key}=" "$HG_CONF"; then
+        sed -i "s|^[#[:space:]]*${key}=.*|${key}=${val}|" "$HG_CONF" 2>/dev/null || true
+    else
+        echo "${key}=${val}" >> "$HG_CONF"
+    fi
+}
+# write_buffer_size = 128MB memtable; max_write_buffer_number=4 memtables before stall
+apply_rocksdb "rocksdb.write_buffer_size"              "${HG_ROCKSDB_WRITE_BUFFER_SIZE:-134217728}"
+apply_rocksdb "rocksdb.max_write_buffer_number"        "${HG_ROCKSDB_MAX_WRITE_BUFFER_NUMBER:-4}"
+# more compaction/flush threads (needs CPU — see compose HUGEGRAPH_CPU_LIMIT)
+apply_rocksdb "rocksdb.max_background_compaction"      "${HG_ROCKSDB_MAX_BG_COMPACTION:-4}"
+apply_rocksdb "rocksdb.max_background_flushes"         "${HG_ROCKSDB_MAX_BG_FLUSHES:-2}"
+# raise level0 stall/stop thresholds so compaction has runway (verify these
+# keys exist in HugeGraph 1.7 RocksDBOptions; if unknown, they're ignored)
+apply_rocksdb "rocksdb.level0_slowdown_writes_trigger" "${HG_ROCKSDB_LEVEL0_SLOWDOWN:-36}"
+apply_rocksdb "rocksdb.level0_stop_writes_trigger"     "${HG_ROCKSDB_LEVEL0_STOP:-72}"
+log "rocksdb write-path tuning applied to $HG_CONF"
+
+# NOTE: JVM heap is managed in docker-compose (JAVA_OPTS env, set per deployment
+# in the hg-server service — e.g. prod_minimal.yml) so it stays in sync with the
+# cgroup memory limit. Do NOT export JAVA_OPTS here: ${JAVA_OPTS:-default} would
+# pass through the compose value and silently drop the GC flags this script
+# intended to add, while a hard override would desync heap from the cgroup.
+
 # ── Delegate to original entrypoint ──────────────────────────────────
 # Original image: ENTRYPOINT ["/usr/bin/dumb-init", "--"]
 #                 CMD ["./docker-entrypoint.sh"]
