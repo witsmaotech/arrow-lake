@@ -70,7 +70,17 @@ def _http_reachable(url: str, path: str = "/", timeout: float = 5.0) -> bool:
 
 
 def hugegraph_reachable() -> bool:
-    return _http_reachable(HUGEGRAPH_BASE_URL, f"/graphs/{HUGEGRAPH_GRAPH}/schema")
+    # Require a 200, not just <500. HugeGraph with auth enabled returns 401
+    # to the unauthenticated ``make_hg_client`` used by tests; a 401 means
+    # "service up but test client has no credentials" → treat as unreachable
+    # so ``require_hugegraph`` skips instead of every request failing 401.
+    try:
+        r = httpx.get(
+            f"{HUGEGRAPH_BASE_URL}/graphs/{HUGEGRAPH_GRAPH}/schema", timeout=5.0
+        )
+        return r.status_code == 200
+    except Exception:
+        return False
 
 
 def ollama_reachable() -> bool:
