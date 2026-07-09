@@ -17,11 +17,17 @@ from arrow_lake.api.models.knowledge_graph import (
     KGBuildRequest,
     KGBuildResponse,
     KGBuildStatusResponse,
+    KGDocType,
+    KGDocTypesResponse,
     KGNeighborsResponse,
     KGQueryRequest,
     KGQueryResponse,
     KGSchemaResponse,
     KGStatsResponse,
+    KGTemplateDetail,
+    KGTemplateDetailResponse,
+    KGTemplateSummary,
+    KGTemplatesResponse,
 )
 from arrow_lake.exceptions import KGError
 
@@ -232,6 +238,49 @@ async def kg_stats(
         )
     except KGError as exc:
         raise HTTPException(status_code=_kg_error_to_status(exc), detail=exc.message) from exc
+
+
+@router.get("/doc-types", response_model=KGDocTypesResponse)
+async def kg_doc_types(
+    lake: Any = Depends(get_lake),
+    _user: dict = Depends(require_role(Role.VIEWER)),
+) -> KGDocTypesResponse:
+    """List canonical doc_types with aliases, description, and the template each
+    auto-resolves to. Use to pick the right ``doc_type`` for ingest and bypass
+    the classifier. Read-only metadata — does not require HugeGraph.
+    """
+    items = await lake.kg_list_doc_types()
+    return KGDocTypesResponse(doc_types=[KGDocType(**i) for i in items])
+
+
+@router.get("/templates", response_model=KGTemplatesResponse)
+async def kg_templates(
+    category: str | None = None,
+    lake: Any = Depends(get_lake),
+    _user: dict = Depends(require_role(Role.VIEWER)),
+) -> KGTemplatesResponse:
+    """List hyper-extract preset templates, optionally filtered by category.
+    ``is_high_risk`` flags hypergraph templates (auto-avoided unless forced)."""
+    items = await lake.kg_list_templates(category=category)
+    return KGTemplatesResponse(
+        templates=[KGTemplateSummary(**i) for i in items], count=len(items)
+    )
+
+
+@router.get("/templates/{template_path:path}", response_model=KGTemplateDetailResponse)
+async def kg_template_detail(
+    template_path: str,
+    lake: Any = Depends(get_lake),
+    _user: dict = Depends(require_role(Role.VIEWER)),
+) -> KGTemplateDetailResponse:
+    """Full detail for one template (e.g. ``general/concept_graph``) — output
+    fields, guideline, and risk flag. The ``:path`` converter accepts the slash
+    in the template path. 404 if not found."""
+    try:
+        detail = await lake.kg_describe_template(template_path)
+    except KGError as exc:
+        raise HTTPException(status_code=_kg_error_to_status(exc), detail=exc.message) from exc
+    return KGTemplateDetailResponse(template=KGTemplateDetail(**detail))
 
 
 @router.delete("/graph", dependencies=[Depends(require_role(Role.ADMIN))])

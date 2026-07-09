@@ -103,3 +103,57 @@ class GraphRAGQueryRequest(BaseModel):
     top_k: int = Field(default=5, ge=1, le=50)
     traversal_depth: int = Field(default=2, ge=1, le=10)
     graph_weight: float = Field(default=0.3, ge=0.0, le=1.0)
+
+
+# ---------------------------------------------------------------------------
+# doc_type / template metadata (v1.8.8)
+# ---------------------------------------------------------------------------
+
+
+class KGDocType(BaseModel):
+    doc_type: str
+    description: str
+    aliases: list[str]
+    resolved_template: str = Field(description="Template this doc_type resolves to")
+    resolution: str = Field(
+        description="Match source: override | gallery | degraded | default"
+    )
+
+
+class KGDocTypesResponse(BaseModel):
+    doc_types: list[KGDocType]
+
+
+class KGTemplateSummary(BaseModel):
+    path: str
+    category: str
+    name: str
+    type: str
+    tags: list[str]
+    is_high_risk: bool
+    description_zh: str
+    description_en: str
+
+
+class KGTemplatesResponse(BaseModel):
+    templates: list[KGTemplateSummary]
+    count: int
+
+
+class KGTemplateDetail(BaseModel):
+    path: str
+    category: str
+    name: str
+    type: str
+    tags: list[str]
+    is_high_risk: bool
+    description_zh: str
+    description_en: str
+    entity_fields: list[str]
+    relation_fields: list[str]
+    guideline_zh: str
+    guideline_en: str
+
+
+class KGTemplateDetailResponse(BaseModel):
+    template: KGTemplateDetail

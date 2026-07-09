@@ -423,6 +423,71 @@ class _LakeKGMixin:
             g = graph_name_for(dataset_name) if dataset_name else None
             return await client.get_stats(graph_name=g)
 
+    # ------------------------------------------------------------------
+    # doc_type / template metadata (v1.8.8) — pure metadata, no KG client
+    # ------------------------------------------------------------------
+
+    async def kg_list_doc_types(self) -> list[dict[str, Any]]:
+        """List the canonical doc_types with aliases, description, and the
+        template they auto-resolve to.
+
+        Read-only metadata (shared hyper-extract template gallery + doc_type
+        taxonomy); does NOT require HugeGraph. Use it to discover the right
+        ``doc_type`` to pass ``ingest_documents`` and bypass the classifier.
+        """
+        from arrow_lake.knowledge_graph.doc_type_router import (
+            DOC_TYPE_ALIASES,
+            DOC_TYPE_DESCRIPTIONS,
+            DocTypeRouter,
+        )
+
+        hg = self._config.hugegraph
+        router = DocTypeRouter(hg.he_doc_type_templates, hg.he_default_template)
+        out: list[dict[str, Any]] = []
+        for doc_type in DOC_TYPE_DESCRIPTIONS:  # canonical order
+            path, source = router.resolve_with_source(doc_type)
+            out.append(
+                {
+                    "doc_type": doc_type,
+                    "description": DOC_TYPE_DESCRIPTIONS[doc_type],
+                    "aliases": list(DOC_TYPE_ALIASES.get(doc_type, ())),
+                    "resolved_template": path,
+                    "resolution": source,
+                }
+            )
+        return out
+
+    async def kg_list_templates(self, category: str | None = None) -> list[dict[str, Any]]:
+        """List hyper-extract preset templates (optionally filtered by category).
+
+        Each entry is a :meth:`TemplateInfo.to_summary` dict. Read-only; does
+        not require HugeGraph.
+        """
+        from arrow_lake.knowledge_graph.doc_type_router import get_template_gallery
+
+        templates = get_template_gallery().templates
+        if category:
+            cat = category.strip().lower()
+            templates = [t for t in templates if t.category == cat]
+        return [t.to_summary() for t in templates]
+
+    async def kg_describe_template(self, path: str) -> dict[str, Any]:
+        """Return the full detail for template ``path`` (e.g.
+        ``general/concept_graph``).
+
+        Raises:
+            KGError: If the template is not found (``KG_GRAPH_NOT_FOUND`` → HTTP 404).
+        """
+        from arrow_lake.knowledge_graph.doc_type_router import get_template_gallery
+
+        detail = get_template_gallery().describe(path)
+        if detail is None:
+            raise KGError(
+                error_code=ErrorCode.KG_GRAPH_NOT_FOUND,
+                message=f"hyper-extract template not found: {path!r}",
+            )
+        return detail
+
     async def kg_graph_exists(self, dataset_name: str | None = None) -> bool:
         """Check if the configured HugeGraph graph space exists.
 

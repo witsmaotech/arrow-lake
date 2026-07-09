@@ -166,7 +166,13 @@ class HyperExtractExtractor:
             return ExtractionResult(entities=(), relations=(), raw_text=text)
 
         # P3: infer doc_type from content when the caller did not supply one.
-        if doc_type is None and self._classifier is not None:
+        # Skip inference for very short chunks (e.g. TOC page-number lines like
+        # ".... | 1") — the LLM misclassifies these to unrelated domain templates
+        # (observed: tcm/formula_composition), whose hypergraph parse then raises
+        # IndexError. Real content chunks are >= 80 chars; shorter ones fall
+        # through to the default template (and the fallback below still catches
+        # any parse failure).
+        if doc_type is None and self._classifier is not None and len(stripped) >= 80:
             doc_type = await self._infer_doc_type(stripped)
 
         template_path = self._router.resolve(doc_type)
@@ -174,13 +180,34 @@ class HyperExtractExtractor:
             # Fresh KA per parse (no shared mutable state across chunks).
             result = await asyncio.to_thread(self._parse_fresh, template_path, stripped)
         except Exception as exc:
-            logger.warning(
-                "hyper-extract parse failed for chunk %s (template=%s): %s",
-                chunk_id,
-                template_path,
-                exc,
-            )
-            return ExtractionResult(entities=(), relations=(), raw_text=text)
+            # Fallback: a doc_type-routed template can fail on sparse/atypical
+            # content (e.g. hypergraph templates raise IndexError in
+            # hyperextract.types.hypergraph.merge_batch_data when a partial
+            # nodes list is empty). Retry with the default template before
+            # yielding empty — otherwise one misrouted chunk zeroes the KG.
+            default_path = self._router.default_template()
+            if template_path != default_path:
+                logger.warning(
+                    "hyper-extract parse failed for chunk %s (template=%s): %s "
+                    "— retrying with default %s",
+                    chunk_id, template_path, exc, default_path,
+                )
+                try:
+                    result = await asyncio.to_thread(
+                        self._parse_fresh, default_path, stripped
+                    )
+                except Exception as exc2:
+                    logger.warning(
+                        "hyper-extract default parse also failed for chunk %s: %s",
+                        chunk_id, exc2,
+                    )
+                    return ExtractionResult(entities=(), relations=(), raw_text=text)
+            else:
+                logger.warning(
+                    "hyper-extract parse failed for chunk %s (template=%s): %s",
+                    chunk_id, template_path, exc,
+                )
+                return ExtractionResult(entities=(), relations=(), raw_text=text)
 
         nodes = getattr(result, "nodes", None) or []
         edges = getattr(result, "edges", None) or []

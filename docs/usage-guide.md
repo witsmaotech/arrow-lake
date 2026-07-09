@@ -647,6 +647,62 @@ async def main():
 asyncio.run(main())
 ```
 
+### Document Types & Templates (doc_type routing)
+
+KG extraction is driven by **hyper-extract templates** (29 presets across 6
+categories). Each chunk's `doc_type` resolves to one template through a
+three-layer router (first hit wins):
+
+1. **Explicit override** — `HugeGraphConfig.he_doc_type_templates` (operator
+   control; highest priority).
+2. **Auto match** — if no `doc_type` is passed, a classifier infers one from the
+   document content, then the gallery matches it by tag/category/name/description.
+3. **Default** — `HugeGraphConfig.he_default_template` (`general/concept_graph`).
+
+**Recommendation:** pass `doc_type` explicitly at ingest for any known document
+kind. This bypasses the classifier (which judges the whole document once and can
+misroute), and is the single most effective lever for extraction quality.
+
+```python
+# Explicit doc_type → routes to the right template, no classifier guess
+await lake.ingest_documents(files=["report.pdf"], doc_type="report")
+await lake.ingest_documents(files=["paper.pdf"], doc_type="paper")
+```
+
+**Discover available templates** before you ingest — the gallery is exposed at
+all three layers:
+
+```python
+# SDK
+doc_types = await lake.kg_list_doc_types()        # 10 canonical doc_types
+templates = await lake.kg_list_templates()        # all presets
+templates = await lake.kg_list_templates(category="tcm")
+detail    = await lake.kg_describe_template("general/concept_graph")
+```
+
+```bash
+# CLI
+alake kg list-doc-types
+alake kg list-templates
+alake kg list-templates --category finance
+alake kg describe-template general/concept_graph
+```
+
+```bash
+# REST (Viewer role)
+curl 127.0.0.1:8000/api/v1/kg/doc-types
+curl 127.0.0.1:8000/api/v1/kg/templates
+curl 127.0.0.1:8000/api/v1/kg/templates/general/concept_graph
+```
+
+> ⚠️ **High-risk templates:** the four `hypergraph` presets
+> (`tcm/formula_composition`, `tcm/syndrome_reasoning`, `medicine/treatment_map`,
+> `legal/contract_obligation`) crash or yield **0 entities** on sparse/atypical
+> content. The auto layer **degrades** them to the default
+> (`resolve_with_source` returns `resolution="degraded"`), so a misclassified
+> chunk never zeroes the build. Explicit overrides still reach them if an
+> operator forces one via `he_doc_type_templates`.
+
 ### Query (Gremlin)
 
 ```python

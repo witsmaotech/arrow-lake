@@ -280,3 +280,80 @@ class TestGraphRAGEndpoint:
         data = resp.json()
         assert data["answer"] == "The answer is 42."
         assert len(data["citations"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/kg/doc-types | /templates | /templates/{path}  (v1.8.8)
+# ---------------------------------------------------------------------------
+
+
+class TestKGDocTypeMetadataEndpoints:
+    def _doc_type(self) -> dict[str, Any]:
+        return {
+            "doc_type": "paper",
+            "description": "academic / technical paper",
+            "aliases": ["article", "论文"],
+            "resolved_template": "general/concept_graph",
+            "resolution": "gallery",
+        }
+
+    def _summary(self) -> dict[str, Any]:
+        return {
+            "path": "general/concept_graph",
+            "category": "general",
+            "name": "concept_graph",
+            "type": "graph",
+            "tags": ["general", "concept"],
+            "is_high_risk": False,
+            "description_zh": "概念关系图",
+            "description_en": "Concept Graph",
+        }
+
+    def _detail(self) -> dict[str, Any]:
+        return {
+            **self._summary(),
+            "entity_fields": ["name", "type"],
+            "relation_fields": ["source", "target"],
+            "guideline_zh": "你是知识图谱专家",
+            "guideline_en": "You are a KG expert",
+        }
+
+    def test_doc_types_ok(self) -> None:
+        lake = MockLake()
+        lake.kg_list_doc_types = AsyncMock(return_value=[self._doc_type()])
+        client = TestClient(_make_app(lake))
+        resp = client.get("/api/v1/kg/doc-types")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["doc_types"][0]["doc_type"] == "paper"
+        assert data["doc_types"][0]["resolution"] == "gallery"
+
+    def test_templates_ok_with_count(self) -> None:
+        lake = MockLake()
+        lake.kg_list_templates = AsyncMock(return_value=[self._summary()])
+        client = TestClient(_make_app(lake))
+        resp = client.get("/api/v1/kg/templates")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["count"] == 1
+        assert data["templates"][0]["path"] == "general/concept_graph"
+
+    def test_template_detail_ok(self) -> None:
+        lake = MockLake()
+        lake.kg_describe_template = AsyncMock(return_value=self._detail())
+        client = TestClient(_make_app(lake))
+        # path with a slash — :path converter must accept it
+        resp = client.get("/api/v1/kg/templates/general/concept_graph")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["template"]["path"] == "general/concept_graph"
+        assert data["template"]["entity_fields"] == ["name", "type"]
+
+    def test_template_detail_not_found(self) -> None:
+        lake = MockLake()
+        lake.kg_describe_template = AsyncMock(
+            side_effect=KGError(ErrorCode.KG_GRAPH_NOT_FOUND, "not found")
+        )
+        client = TestClient(_make_app(lake))
+        resp = client.get("/api/v1/kg/templates/no/such")
+        assert resp.status_code == 404

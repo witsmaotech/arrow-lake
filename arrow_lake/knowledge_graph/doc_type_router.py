@@ -82,14 +82,63 @@ def normalize_doc_type(raw: str | None) -> str | None:
 
 @dataclass(frozen=True)
 class TemplateInfo:
-    """One hyper-extract preset template with its metadata."""
+    """One hyper-extract preset template with its metadata.
+
+    The structured detail fields (``description_zh`` / ``description_en`` /
+    ``entity_fields`` / ``relation_fields`` / ``guideline_*``) feed the
+    ``list-templates`` / ``describe-template`` surface so users can see what a
+    template extracts and pick the right ``doc_type`` explicitly — avoiding
+    classifier misroutes (see :meth:`DocTypeRouter.resolve_with_source`).
+    """
 
     path: str  # e.g. "general/concept_graph"
     category: str  # e.g. "general"
     name: str  # e.g. "concept_graph"
-    type: str  # e.g. "graph"
+    type: str  # e.g. "graph" | "model" | "hypergraph"
     tags: tuple[str, ...]
     description: str  # flattened zh+en text for keyword matching
+    description_zh: str = ""  # structured zh description (for display)
+    description_en: str = ""  # structured en description (for display)
+    entity_fields: tuple[str, ...] = ()  # output.entities.fields[].name
+    relation_fields: tuple[str, ...] = ()  # output.relations.fields[].name
+    guideline_zh: str = ""  # flattened guideline.target.zh (role summary)
+    guideline_en: str = ""  # flattened guideline.target.en (role summary)
+
+    @property
+    def is_high_risk(self) -> bool:
+        """True if this template type is known to crash / yield 0 entities on
+        sparse or atypical content.
+
+        ``hypergraph`` presets raise ``IndexError`` in
+        ``hyperextract.types.hypergraph`` when a partial nodes list is empty,
+        so auto-routed doc_types degrade away from them (:meth:`DocTypeRouter.
+        resolve_with_source`); explicit operator overrides keep them. The
+        CLI/REST surface uses this flag as a warning marker.
+        """
+        return self.type == "hypergraph"
+
+    def to_summary(self) -> dict:
+        """Compact dict for ``list-templates`` (no field lists)."""
+        return {
+            "path": self.path,
+            "category": self.category,
+            "name": self.name,
+            "type": self.type,
+            "tags": list(self.tags),
+            "is_high_risk": self.is_high_risk,
+            "description_zh": self.description_zh,
+            "description_en": self.description_en,
+        }
+
+    def to_detail(self) -> dict:
+        """Full dict for ``describe-template`` (adds entity/relation fields and guideline)."""
+        return {
+            **self.to_summary(),
+            "entity_fields": list(self.entity_fields),
+            "relation_fields": list(self.relation_fields),
+            "guideline_zh": self.guideline_zh,
+            "guideline_en": self.guideline_en,
+        }
 
 
 # Splits on any run of non-alphanumeric OR underscore (template names are
@@ -170,6 +219,22 @@ class TemplateGallery:
                     continue
                 tags = tuple(str(t).lower() for t in data.get("tags", []) if t)
                 desc = _flatten_description(data.get("description", "")).lower()
+                desc_zh, desc_en = _bilingual_texts(data.get("description"))
+                output = data.get("output")
+                if isinstance(output, dict):
+                    entity_fields = _field_names(output.get("entities"))
+                    relation_fields = _field_names(output.get("relations"))
+                    # model-type templates use a flat ``output.fields`` (no
+                    # entity/relation split) — capture those as entity_fields so
+                    # the describe surface still shows what the template outputs.
+                    if not entity_fields and not relation_fields:
+                        entity_fields = _field_names(output)
+                else:
+                    entity_fields = relation_fields = ()
+                guideline = data.get("guideline")
+                gl_zh, gl_en = _bilingual_texts(
+                    guideline.get("target") if isinstance(guideline, dict) else None
+                )
                 infos.append(
                     TemplateInfo(
                         path=f"{category}/{name}",
@@ -178,6 +243,12 @@ class TemplateGallery:
                         type=str(data.get("type", "")).lower(),
                         tags=tags,
                         description=desc,
+                        description_zh=desc_zh,
+                        description_en=desc_en,
+                        entity_fields=entity_fields,
+                        relation_fields=relation_fields,
+                        guideline_zh=gl_zh,
+                        guideline_en=gl_en,
                     )
                 )
         return cls(templates=infos)
@@ -219,6 +290,20 @@ class TemplateGallery:
 
         return None
 
+    def get(self, path: str) -> TemplateInfo | None:
+        """Return the template with ``path`` (e.g. ``general/concept_graph``),
+        or ``None`` if not indexed."""
+        for t in self.templates:
+            if t.path == path:
+                return t
+        return None
+
+    def describe(self, path: str) -> dict | None:
+        """Full detail dict for ``path`` (``TemplateInfo.to_detail``), or
+        ``None`` if not indexed. Used by the Lake facade / REST describe endpoint."""
+        t = self.get(path)
+        return t.to_detail() if t is not None else None
+
 
 def _flatten_description(desc: object) -> str:
     """Flatten a template description (str / dict / list) to one string."""
@@ -231,6 +316,41 @@ def _flatten_description(desc: object) -> str:
     return str(desc or "")
 
 
+def _field_names(node: object) -> tuple[str, ...]:
+    """Extract ``name``s from a yaml ``entities``/``relations`` node.
+
+    The node shape is ``{description: {...}, fields: [{name, type, ...}, ...]}``.
+    Returns an empty tuple for missing/malformed nodes.
+    """
+    if not isinstance(node, dict):
+        return ()
+    fields = node.get("fields")
+    if not isinstance(fields, list):
+        return ()
+    return tuple(
+        str(f["name"]).lower()
+        for f in fields
+        if isinstance(f, dict) and f.get("name")
+    )
+
+
+def _bilingual_texts(node: object) -> tuple[str, str]:
+    """Flatten a ``{zh, en}`` bilingual node to ``(zh_text, en_text)``.
+
+    Each side may be a string or a list (e.g. ``rules_for_entities``); lists are
+    joined with spaces. Missing sides collapse to ``""``.
+    """
+    if not isinstance(node, dict):
+        return "", ""
+
+    def _flat(v: object) -> str:
+        if isinstance(v, list):
+            return " ".join(str(x) for x in v if x)
+        return str(v or "").strip()
+
+    return _flat(node.get("zh")), _flat(node.get("en"))
+
+
 @lru_cache(maxsize=1)
 def _shared_gallery() -> TemplateGallery:
     """Module-level shared gallery (built once, cached)."""
@@ -240,6 +360,11 @@ def _shared_gallery() -> TemplateGallery:
 def reset_gallery_cache() -> None:
     """Clear the shared gallery cache (dev/test helper for preset hot-reload)."""
     _shared_gallery.cache_clear()
+
+
+def get_template_gallery() -> TemplateGallery:
+    """Public accessor for the shared gallery (Lake facade / REST / CLI)."""
+    return _shared_gallery()
 
 
 # --- router -----------------------------------------------------------------
@@ -278,10 +403,28 @@ class DocTypeRouter:
         path, _source = self.resolve_with_source(doc_type)
         return path
 
+    def default_template(self) -> str:
+        """Return the fallback template path.
+
+        Used by :class:`HyperExtractExtractor` when a doc_type-routed template
+        fails to parse (e.g. hypergraph templates raise ``IndexError`` on
+        sparse content) — retry with the default before yielding an empty
+        result, so one misrouted chunk doesn't zero the whole KG build.
+        """
+        return self._default
+
     def resolve_with_source(self, doc_type: str | None) -> tuple[str, str]:
         """Like :meth:`resolve` but also returns the match source for observability.
 
-        Source is one of: ``"override"``, ``"gallery"``, ``"default"``.
+        Source is one of:
+
+        - ``"override"``  — explicit ``he_doc_type_templates`` entry (operator).
+        - ``"gallery"``   — metadata-driven match (auto / classifier).
+        - ``"degraded"``  — auto match landed on a high-risk template
+          (``hypergraph``), so fell back to the default to avoid a known crash /
+          0-entity result. Only the *auto* layer degrades; explicit overrides to
+          high-risk templates are preserved.
+        - ``"default"``   — no match, fell back to ``he_default_template``.
         """
         nt = normalize_doc_type(doc_type)
         if nt:
@@ -289,6 +432,19 @@ class DocTypeRouter:
                 return self._overrides[nt], "override"
             hit = self._gallery.match(nt)
             if hit is not None:
+                if hit.is_high_risk:
+                    # hypergraph templates crash (IndexError) or yield 0 entities
+                    # on sparse/atypical content (hyperextract/types/hypergraph).
+                    # Auto-routed doc_types must not land here — degrade to the
+                    # default. Explicit overrides (above) are NOT affected: an
+                    # operator can still force a high-risk template via
+                    # he_doc_type_templates.
+                    logger.info(
+                        "doc_type %r auto-matched high-risk %s template %s; "
+                        "degrading to default %s",
+                        nt, hit.type, hit.path, self._default,
+                    )
+                    return self._default, "degraded"
                 return hit.path, "gallery"
         return self._default, "default"
 

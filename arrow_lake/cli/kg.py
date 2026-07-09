@@ -77,6 +77,102 @@ def kg_stats(ctx: click.Context, dataset: str | None) -> None:
     console.print(table)
 
 
+@kg_group.command("list-doc-types")
+@click.pass_context
+def kg_list_doc_types(ctx: click.Context) -> None:
+    """List canonical doc_types, aliases, and their auto-resolved template.
+
+    Use this to pick the right ``doc_type`` for ``ingest`` and bypass the
+    content classifier (recommended for known document kinds).
+    """
+    lake = _get_lake(ctx)
+    try:
+        items = _run_async(lake.kg_list_doc_types())
+    except Exception as exc:
+        _print_error(f"Failed to list doc_types: {exc}")
+        raise SystemExit(1) from None
+
+    table = Table(title="Document Types (doc_type)")
+    table.add_column("doc_type", style="cyan")
+    table.add_column("description")
+    table.add_column("aliases", style="dim")
+    table.add_column("resolved template", style="green")
+    table.add_column("source", style="dim")
+    for it in items:
+        table.add_row(
+            it["doc_type"],
+            it["description"],
+            ", ".join(it["aliases"]) or "-",
+            it["resolved_template"],
+            it["resolution"],
+        )
+    console.print(table)
+
+
+@kg_group.command("list-templates")
+@click.option("--category", default=None, help="Filter by category (tcm/finance/general/...)")
+@click.pass_context
+def kg_list_templates(ctx: click.Context, category: str | None) -> None:
+    """List hyper-extract preset templates.
+
+    Templates marked with a warning are high-risk (hypergraph) — they crash or
+    yield 0 entities on sparse content and are auto-avoided unless an operator
+    forces them via he_doc_type_templates.
+    """
+    lake = _get_lake(ctx)
+    try:
+        items = _run_async(lake.kg_list_templates(category=category))
+    except Exception as exc:
+        _print_error(f"Failed to list templates: {exc}")
+        raise SystemExit(1) from None
+
+    if not items:
+        _print_error(f"No templates found for category '{category}'")
+        raise SystemExit(1) from None
+
+    table = Table(title=f"Hyper-Extract Templates ({len(items)})")
+    table.add_column("path", style="cyan")
+    table.add_column("type")
+    table.add_column("risk")
+    table.add_column("description")
+    for it in items:
+        risk = "[red]⚠ hypergraph[/red]" if it["is_high_risk"] else "-"
+        table.add_row(
+            it["path"], it["type"], risk,
+            it["description_zh"] or it["description_en"],
+        )
+    console.print(table)
+
+
+@kg_group.command("describe-template")
+@click.argument("path")
+@click.pass_context
+def kg_describe_template(ctx: click.Context, path: str) -> None:
+    """Show full detail for a template (e.g. general/concept_graph)."""
+    lake = _get_lake(ctx)
+    try:
+        d = _run_async(lake.kg_describe_template(path))
+    except Exception as exc:
+        _print_error(f"Failed to describe template '{path}': {exc}")
+        raise SystemExit(1) from None
+
+    console.print(
+        f"[bold cyan]{d['path']}[/bold cyan]  [dim]({d['category']} / {d['type']})[/dim]"
+    )
+    if d["is_high_risk"]:
+        console.print("[red]⚠ high-risk: hypergraph template (auto-avoided unless forced)[/red]")
+    if d["description_zh"]:
+        console.print(d["description_zh"])
+    if d["description_en"]:
+        console.print(f"[dim]{d['description_en']}[/dim]")
+    if d["entity_fields"]:
+        console.print(f"[green]entity fields:[/green] {', '.join(d['entity_fields'])}")
+    if d["relation_fields"]:
+        console.print(f"[green]relation fields:[/green] {', '.join(d['relation_fields'])}")
+    if d["guideline_zh"]:
+        console.print(f"[dim]guideline: {d['guideline_zh']}[/dim]")
+
+
 @kg_group.command("query")
 @click.argument("gremlin_query")
 @click.option("--dataset", default=None, help="Lake dataset — scope the query to the kg_{dataset} graph")

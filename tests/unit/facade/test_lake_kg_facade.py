@@ -62,6 +62,69 @@ class TestKGComponentAccessorsDisabled:
 
 
 # ---------------------------------------------------------------------------
+# doc_type / template metadata (v1.8.8) — pure metadata, no KG client
+# ---------------------------------------------------------------------------
+
+
+class TestKGDocTypeMetadata:
+    """kg_list_doc_types / kg_list_templates / kg_describe_template.
+
+    Pure metadata queries over the shared template gallery + doc_type taxonomy;
+    they work even with HugeGraph disabled (no client touched).
+    """
+
+    @pytest.fixture()
+    def lake(self) -> _TestLake:
+        return _TestLake(_make_config(enabled=False))
+
+    @pytest.mark.asyncio()
+    async def test_list_doc_types_shape(self, lake: _TestLake) -> None:
+        items = await lake.kg_list_doc_types()
+        assert len(items) == 10  # canonical doc_types
+        keys = {i["doc_type"] for i in items}
+        assert {"paper", "report", "general", "tcm", "legal"} <= keys
+        first = items[0]
+        assert set(first) == {
+            "doc_type", "description", "aliases",
+            "resolved_template", "resolution",
+        }
+        assert first["resolution"] in {"override", "gallery", "degraded", "default"}
+
+    @pytest.mark.asyncio()
+    async def test_list_doc_types_general_not_degraded(self, lake: _TestLake) -> None:
+        items = {i["doc_type"]: i for i in await lake.kg_list_doc_types()}
+        # "general" must resolve to a graph template, never a high-risk one
+        assert items["general"]["resolution"] != "degraded"
+
+    @pytest.mark.asyncio()
+    async def test_list_templates_all(self, lake: _TestLake) -> None:
+        items = await lake.kg_list_templates()
+        assert len(items) >= 26
+        first = items[0]
+        assert {
+            "path", "category", "name", "type", "tags",
+            "is_high_risk", "description_zh", "description_en",
+        } <= set(first)
+
+    @pytest.mark.asyncio()
+    async def test_list_templates_category_filter(self, lake: _TestLake) -> None:
+        items = await lake.kg_list_templates(category="tcm")
+        assert items and all(i["category"] == "tcm" for i in items)
+
+    @pytest.mark.asyncio()
+    async def test_describe_template_hit(self, lake: _TestLake) -> None:
+        d = await lake.kg_describe_template("general/concept_graph")
+        assert d["path"] == "general/concept_graph"
+        assert d["entity_fields"] and "relation_fields" in d
+
+    @pytest.mark.asyncio()
+    async def test_describe_template_miss_raises(self, lake: _TestLake) -> None:
+        with pytest.raises(KGError) as exc_info:
+            await lake.kg_describe_template("no/such-template")
+        assert exc_info.value.error_code == ErrorCode.KG_GRAPH_NOT_FOUND
+
+
+# ---------------------------------------------------------------------------
 # _require_kg_client / _require_kg_builder / _require_vermeer_client context managers
 # ---------------------------------------------------------------------------
 

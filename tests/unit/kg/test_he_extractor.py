@@ -261,6 +261,29 @@ async def test_extract_degrades_on_parse_failure(
 
 
 @pytest.mark.asyncio
+async def test_extract_retries_default_when_routed_template_fails(
+    extractor: HyperExtractExtractor,
+) -> None:
+    """A doc_type-routed template that fails to parse (e.g. hypergraph
+    ``IndexError`` on sparse content) is retried with the default template
+    before yielding empty — one misrouted chunk must not zero the KG build."""
+    default_path = extractor._router.default_template()  # general/default_graph
+    good = _ka([_node("Alice", "Person")], [])
+
+    def _parse(template_path: str, text: str):
+        if template_path == default_path:
+            return good.parse(text)
+        raise RuntimeError("hypergraph IndexError on sparse content")
+
+    extractor._parse_fresh = _parse  # type: ignore[method-assign]
+
+    # research_paper → "academic/paper" (non-default) fails → retries default
+    result = await extractor.extract("text", doc_type="research_paper", chunk_id="c1")
+    assert len(result.entities) == 1
+    assert result.entities[0].name == "Alice"
+
+
+@pytest.mark.asyncio
 async def test_extract_degrades_on_template_resolution_failure(
     extractor: HyperExtractExtractor,
 ) -> None:
