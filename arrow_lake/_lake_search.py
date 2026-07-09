@@ -136,8 +136,9 @@ class _LakeSearchMixin:
     ) -> Any:
         """Async vector search (v1.7.1 #9). Delegates to VectorSearchBridge.search_async.
 
-        Incremental async entry point for high-concurrency workloads. See
-        :meth:`VectorSearchBridge.search_async` for pooling/throughput caveats.
+        Async entry point for high-concurrency workloads. Connection/table
+        handles are pooled process-wide (v1.8.x #1, ``async_conn_pool.py``);
+        load-test before relying on it for peak throughput.
         """
         from arrow_lake.query.vector import VectorSearchBridge
 

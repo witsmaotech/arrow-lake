@@ -43,6 +43,12 @@ class StorageIndexingMixin:
                 message=f"Failed to drop index '{index_name}' on dataset '{name}': {exc}",
             ) from exc
 
+        # Drop pooled AsyncTable handle (#1): the cached view still references
+        # the dropped index.
+        from arrow_lake.query.async_conn_pool import invalidate_async_table
+
+        invalidate_async_table(name, getattr(self, "_connect_uri", None))
+
     def rebuild_vector_index(
         self,
         name: str,
@@ -104,6 +110,12 @@ class StorageIndexingMixin:
                 error_code=ErrorCode.VECTOR_INDEX_FAILED,
                 message=f"Failed to rebuild index on dataset '{name}': {exc}",
             ) from exc
+
+        # Drop pooled AsyncTable handle (#1): its cached view predates the
+        # index rebuild and may serve stale results.
+        from arrow_lake.query.async_conn_pool import invalidate_async_table
+
+        invalidate_async_table(name, getattr(self, "_connect_uri", None))
 
     # Default columns / type map for create_facet_indexes (v1.7.1 #3).
     # Low-cardinality columns → BITMAP; ordered/time/numeric → BTREE.

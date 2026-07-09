@@ -369,8 +369,10 @@ class VectorSearchBridge:
         """Async vector search via lancedb connect_async (v1.7.1 #9).
 
         Incremental async entry point for high-concurrency workloads. The
-        connection is opened per call (no pooling) — for production throughput,
-        pair with an async connection pool and load-test before relying on it.
+        AsyncConnection and AsyncTable handles are pooled process-wide via
+        ``async_conn_pool`` (v1.8.x #1), eliminating per-call connect overhead.
+        Schema/index-changing ops must call ``invalidate_async_table`` to drop
+        stale handles.
 
         Note on filtering (#6): DuckDB ``lance_vector_search`` has no filter
         parameter, so prefiltered search goes through the SDK path (here) which
@@ -405,15 +407,17 @@ class VectorSearchBridge:
                 message="async search requires storage._connect_uri",
             )
 
-        import lancedb
+        from arrow_lake.query.async_conn_pool import get_async_table
 
         effective_top_k = top_k if top_k is not None else self._config.default_top_k
         try:
-            async_db = await lancedb.connect_async(
-                base_uri, storage_options=getattr(self._storage, "_storage_options", None)
+            table = await get_async_table(
+                base_uri,
+                dataset_name,
+                getattr(self._storage, "_storage_options", None),
             )
-            table = await async_db.open_table(dataset_name)
-            q = table.search(query_vector, vector_column_name=vector_column).limit(effective_top_k)
+            q = await table.search(query_vector, vector_column_name=vector_column)
+            q = q.limit(effective_top_k)
             if where is not None:
                 q = q.where(where)
             q = q.nprobes(nprobes or self._config.nprobes)
