@@ -1,5 +1,18 @@
 """Knowledge graph builder -- orchestrates schema creation, vertex/edge
-insertion, and entity extraction from text chunks."""
+insertion, and entity extraction from text chunks.
+
+Two extraction granularities (``HugeGraphConfig.he_kg_granularity``):
+
+- ``"chunk"``   -- per-chunk: each chunk extracted independently (fresh KA per
+                  chunk) and inserted. Legacy path; ``KGBuilder._process_chunk``.
+- ``"dataset"`` -- per-dataset: ONE hyper-extract KA fed all chunks via
+                  ``feed_text`` (LLM.BALANCED cross-chunk merge), then inserted
+                  as a whole + dumped to ``<ka_base_dir>/<dataset>/ka/``.
+                  ``KGBuilder._execute_build`` dataset branch → ``_insert_kg``.
+
+Both paths share ``_insert_kg`` for vertex/edge insertion (entity + typed
+vertices, references, routed relations).
+"""
 
 from __future__ import annotations
 
@@ -9,6 +22,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
+from pathlib import Path
 from typing import Any
 
 import pyarrow as pa
@@ -16,7 +30,7 @@ import pyarrow as pa
 from arrow_lake.config import HugeGraphConfig
 from arrow_lake.knowledge_graph.client import HugeGraphClient
 from arrow_lake.knowledge_graph.entity_router import route_entity_type, route_relation
-from arrow_lake.knowledge_graph.extractor import EntityExtractor
+from arrow_lake.knowledge_graph.extractor import EntityExtractor, ExtractionResult
 from arrow_lake.knowledge_graph._naming import graph_name_for
 from arrow_lake.knowledge_graph.schema import ARROW_LAKE_KG_SCHEMA, schema_to_hugegraph_payload
 
@@ -77,13 +91,16 @@ class KGBuilder:
     1. Ensure graph schema (idempotent).
     2. Insert document + chunk vertices.
     3. Insert ``contains_chunk`` / ``next_chunk`` edges.
-    4. Extract entities/relations from each chunk via LLM.
-    5. Insert entity vertices and ``references`` / relationship edges.
+    4. Extract entities/relations — per-dataset (one KA, feed_text) or
+       per-chunk (legacy) — and insert via :meth:`_insert_kg`.
 
     Args:
         client: HugeGraph REST client.
         extractor: Entity extractor (LLM-backed).
         config: HugeGraph configuration.
+        ka_base_dir: base dir for per-dataset KA dumps (``<base>/<dataset>/ka/``).
+            Required for ``he_kg_granularity="dataset"``; ``None`` forces the
+            per-chunk path.
     """
 
     def __init__(
@@ -91,10 +108,13 @@ class KGBuilder:
         client: HugeGraphClient,
         extractor: EntityExtractor,
         config: HugeGraphConfig,
+        *,
+        ka_base_dir: str | Path | None = None,
     ) -> None:
         self._client = client
         self._extractor = extractor
         self._config = config
+        self._ka_base_dir = Path(ka_base_dir) if ka_base_dir else None
         self._tasks: dict[str, KGBuildTask] = {}
         self._pending_tables: dict[str, pa.Table] = {}
 
@@ -255,182 +275,262 @@ class KGBuilder:
             for i in range(0, len(next_edges), batch_size):
                 await self._client.add_edges(next_edges[i : i + batch_size], graph_name=graph_name)
 
-        # 7. Extract entities and relations from each chunk (batched)
+        # 6. doc_type handling (shared by both granularities).
+        # If any chunk carries an explicit doc_type, use them per-chunk (chunk
+        # path) and take the first non-empty as the dataset-level template
+        # (dataset path). Only when ALL chunks lack doc_type do we infer ONCE
+        # (document-level) so every chunk shares one template.
+        if any(d for d in doc_type_col):
+            chunk_doc_types = doc_type_col
+            dataset_doc_type = next((d for d in doc_type_col if d), None)
+        else:
+            dataset_doc_type = await self._infer_doc_type(contents)
+            chunk_doc_types = [dataset_doc_type] * len(chunk_ids)
+
+        # 7. Extract + insert.
         total_entities = 0
         total_relations = 0
-        extraction_failures = 0  # H1: chunks with empty result on non-trivial text
+        extraction_failures = 0  # H1: chunks (or dataset) with empty result
         concurrency = self._config.build_concurrency
         batch_delay = self._config.build_batch_delay
         semaphore = asyncio.Semaphore(concurrency)
         # Write-side gate, separate from the extraction semaphore above.
-        # HugeGraph rocksdb is the write bottleneck; bounding concurrent
-        # batch inserts prevents saturating it into "too busy to write".
         write_sem = asyncio.Semaphore(self._config.write_concurrency)
 
-        async def _process_chunk(
-            idx: int, cid: str, content: str, doc_type: str | None = None,
-        ) -> tuple[int, int]:
-            nonlocal total_entities, total_relations, extraction_failures
-            async with semaphore:
-                result = await self._extractor.extract(content, chunk_id=cid, doc_type=doc_type)
-                task.processed_chunks = idx + 1
+        use_dataset_path = (
+            getattr(self._extractor, "_kg_granularity", "chunk") == "dataset"
+            and hasattr(self._extractor, "build_dataset_ka")
+            and self._ka_base_dir is not None
+        )
 
-            ent_count = len(result.entities)
-            rel_count = len(result.relations)
-            total_entities += ent_count
-            total_relations += rel_count
-
+        if use_dataset_path:
+            # --- v1.8.8 per-dataset: ONE KA, feed_text all chunks ---
+            template_path = self._extractor._router.resolve(dataset_doc_type)
+            ka_dir = self._ka_base_dir / task.dataset_name / "ka"
+            dataset_ka = await self._extractor.build_dataset_ka(
+                template_path,
+                list(zip(chunk_ids, contents, strict=True)),
+                ka_dir,
+            )
+            result = dataset_ka.result
+            total_entities = len(result.entities)
+            total_relations = len(result.relations)
+            task.processed_chunks = len(chunk_ids)
             if not result.entities and not result.relations:
-                # H1: an empty result on non-trivial text usually means the
-                # extractor/LLM failed silently (he backend degrades exceptions
-                # to empty) — count it so operators can spot LLM outages vs
-                # genuine "document had no entities".
-                if len(content.strip()) > 50:
-                    extraction_failures += 1
-                    logger.warning(
-                        "KG chunk %s yielded no entities (content_len=%d) — "
-                        "possible extractor/LLM failure", cid, len(content)
-                    )
+                extraction_failures += 1
+                logger.warning(
+                    "KG dataset KA yielded no entities for %s (chunks=%d) — "
+                    "possible extractor/LLM failure",
+                    task.dataset_name, len(chunk_ids),
+                )
+            else:
+                await self._insert_kg(
+                    result,
+                    graph_name,
+                    chunk_id_map,
+                    entity_chunks=dataset_ka.entity_chunks,
+                    write_sem=write_sem,
+                )
+        else:
+            # --- per-chunk: fresh KA.parse() per chunk (legacy path) ---
+            async def _process_chunk(
+                idx: int, cid: str, content: str, doc_type: str | None = None,
+            ) -> tuple[int, int]:
+                nonlocal total_entities, total_relations, extraction_failures
+                async with semaphore:
+                    result = await self._extractor.extract(content, chunk_id=cid, doc_type=doc_type)
+                    task.processed_chunks = idx + 1
+
+                ent_count = len(result.entities)
+                rel_count = len(result.relations)
+                total_entities += ent_count
+                total_relations += rel_count
+
+                if not result.entities and not result.relations:
+                    # H1: an empty result on non-trivial text usually means the
+                    # extractor/LLM failed silently.
+                    if len(content.strip()) > 50:
+                        extraction_failures += 1
+                        logger.warning(
+                            "KG chunk %s yielded no entities (content_len=%d) — "
+                            "possible extractor/LLM failure", cid, len(content)
+                        )
+                    return ent_count, rel_count
+
+                await self._insert_kg(
+                    result,
+                    graph_name,
+                    chunk_id_map,
+                    owning_chunk_id=cid,
+                    write_sem=write_sem,
+                )
                 return ent_count, rel_count
 
-            # --- Entity double-write (v1.7.1 §4.5): a generic `entity` vertex is
-            # always written (keeps references/related_to edges intact across
-            # the schema's single-type edge endpoints); a typed vertex
-            # (person/organization/location/concept/event) is added too when
-            # route_entity_type recognizes the type, so typed edges can use it.---
-            entity_vertices = [
-                {
-                    "label": "entity",
-                    "properties": {"name": e.name, "type": e.entity_type},
-                }
-                for e in result.entities
-            ]
-            entity_id_map: dict[str, str] = {}
-            if entity_vertices:
-                async with write_sem:
-                    entity_hg_ids = await self._client.add_vertices(entity_vertices, graph_name=graph_name)
-                if len(entity_hg_ids) != len(entity_vertices):
-                    logger.warning(
-                        "entity add_vertices returned %d ids for %d vertices — "
-                        "some edges may resolve to stale/missing ids",
-                        len(entity_hg_ids), len(entity_vertices),
-                    )
-                # name-only map for edge resolution (last wins for duplicates)
-                for e, hg_id in zip(result.entities, entity_hg_ids, strict=False):
-                    entity_id_map[e.name] = hg_id
-
-            typed_vertices: list[dict[str, Any]] = []
-            typed_keys: list[tuple[str, str]] = []
-            for e in result.entities:
-                label = route_entity_type(e.entity_type)
-                if label is None:
-                    continue
-                props: dict[str, Any] = {"name": e.name}
-                if label == "event" and e.properties:
-                    date_val = dict(e.properties).get("date")
-                    if date_val is not None:
-                        props["date"] = str(date_val)
-                typed_vertices.append({"label": label, "properties": props})
-                typed_keys.append((e.name, label))
-            typed_id_map: dict[tuple[str, str], str] = {}
-            if typed_vertices:
-                async with write_sem:
-                    typed_hg_ids = await self._client.add_vertices(typed_vertices, graph_name=graph_name)
-                if len(typed_hg_ids) != len(typed_vertices):
-                    logger.warning(
-                        "typed add_vertices returned %d ids for %d vertices — "
-                        "some typed edges will degrade to related_to",
-                        len(typed_hg_ids), len(typed_vertices),
-                    )
-                for key, hg_id in zip(typed_keys, typed_hg_ids, strict=False):
-                    typed_id_map[key] = hg_id
-
-            entity_type_map = {e.name: e.entity_type for e in result.entities}
-
-            def _vertex_id(name: str, label: str) -> str | None:
-                if label == "entity":
-                    return entity_id_map.get(name)
-                return typed_id_map.get((name, label))
-
-            ref_edges = [
-                {
-                    "label": "references",
-                    "outV": chunk_id_map[cid],
-                    "outVLabel": "chunk",
-                    "inV": entity_id_map[e.name],
-                    "inVLabel": "entity",
-                    "properties": {},
-                }
-                for e in result.entities
-                if e.name in entity_id_map
-            ]
-            if ref_edges:
-                async with write_sem:
-                    await self._client.add_edges(ref_edges, graph_name=graph_name)
-
-            # --- Relation routing (v1.7.1 §4.5): route_relation picks a typed
-            # edge label on a synonym hit (endpoints resolved via _EDGE_ENDPOINTS
-            # to the matching typed/generic vertices); otherwise falls back to
-            # related_to on the generic entity vertices. relation_type is always
-            # preserved as an edge property (fixes the prior discard bug). ---
-            rel_edges: list[dict[str, Any]] = []
-            for r in result.relations:
-                if r.source not in entity_id_map or r.target not in entity_id_map:
-                    continue
-                src_type = entity_type_map.get(r.source, "")
-                tgt_type = entity_type_map.get(r.target, "")
-                edge_label = route_relation(src_type, tgt_type, r.relation_type)
-                src_label, tgt_label = _EDGE_ENDPOINTS[edge_label]
-                src_id = _vertex_id(r.source, src_label)
-                tgt_id = _vertex_id(r.target, tgt_label)
-                if src_id is None or tgt_id is None:
-                    # Missing typed endpoint — degrade to related_to on generic vertices.
-                    edge_label = "related_to"
-                    src_label, tgt_label = "entity", "entity"
-                    src_id = entity_id_map[r.source]
-                    tgt_id = entity_id_map[r.target]
-                props: dict[str, Any] = {"relation_type": r.relation_type}
-                if edge_label == "related_to":
-                    props["weight"] = (
-                        dict(r.properties).get("weight", 1.0) if r.properties else 1.0
-                    )
-                rel_edges.append({
-                    "label": edge_label,
-                    "outV": src_id,
-                    "outVLabel": src_label,
-                    "inV": tgt_id,
-                    "inVLabel": tgt_label,
-                    "properties": props,
-                })
-            if rel_edges:
-                async with write_sem:
-                    await self._client.add_edges(rel_edges, graph_name=graph_name)
-
-            return ent_count, rel_count
-
-        # doc_type handling: if any chunk carries an explicit doc_type, pass it
-        # through per-chunk (a document may legitimately mix types). Only when
-        # ALL chunks lack doc_type do we infer ONCE (document-level) so every
-        # chunk shares one template — avoids inconsistent schemas across chunks
-        # of the same document + saves LLM calls vs per-chunk inference.
-        if any(d for d in doc_type_col):
-            chunk_doc_types = doc_type_col
-        else:
-            inferred = await self._infer_doc_type(contents)
-            chunk_doc_types = [inferred] * len(chunk_ids)
-
-        for batch_start in range(0, len(chunk_ids), concurrency):
-            batch_end = min(batch_start + concurrency, len(chunk_ids))
-            await asyncio.gather(*(
-                _process_chunk(idx, chunk_ids[idx], contents[idx], chunk_doc_types[idx])
-                for idx in range(batch_start, batch_end)
-            ))
-            if batch_delay > 0 and batch_end < len(chunk_ids):
-                await asyncio.sleep(batch_delay)
+            for batch_start in range(0, len(chunk_ids), concurrency):
+                batch_end = min(batch_start + concurrency, len(chunk_ids))
+                await asyncio.gather(*(
+                    _process_chunk(idx, chunk_ids[idx], contents[idx], chunk_doc_types[idx])
+                    for idx in range(batch_start, batch_end)
+                ))
+                if batch_delay > 0 and batch_end < len(chunk_ids):
+                    await asyncio.sleep(batch_delay)
 
         task.entity_count = total_entities
         task.relation_count = total_relations
         task.extraction_failures = extraction_failures
+
+    async def _insert_kg(
+        self,
+        result: ExtractionResult,
+        graph_name: str,
+        chunk_id_map: dict[str, str],
+        *,
+        entity_chunks: dict[str, list[str]] | None = None,
+        owning_chunk_id: str | None = None,
+        write_sem: asyncio.Semaphore | None = None,
+    ) -> None:
+        """Insert one ExtractionResult's entities + relations into HugeGraph.
+
+        Shared by the per-chunk path (``owning_chunk_id``) and the per-dataset
+        path (``entity_chunks`` = name → [chunk_id] provenance). Builds entity +
+        typed vertices, ``references(chunk→entity)`` edges, and routed relation
+        edges (degrading to ``related_to`` when a typed endpoint is missing).
+
+        Args:
+            result: extracted entities/relations to insert.
+            graph_name: target per-dataset graph (``kg_{dataset}``).
+            chunk_id_map: logical chunk id → HugeGraph vertex id.
+            entity_chunks: dataset-level provenance (name → [chunk_id]); each
+                entity gets one ``references`` edge per owning chunk.
+            owning_chunk_id: per-chunk owner (single ``references`` edge each).
+            write_sem: write-side gate; defaults to a fresh semaphore.
+        """
+        if write_sem is None:
+            write_sem = asyncio.Semaphore(self._config.write_concurrency)
+
+        # --- Entity double-write (v1.7.1 §4.5): a generic `entity` vertex is
+        # always written (keeps references/related_to edges intact across
+        # the schema's single-type edge endpoints); a typed vertex
+        # (person/organization/location/concept/event) is added too when
+        # route_entity_type recognizes the type, so typed edges can use it.---
+        entity_vertices = [
+            {
+                "label": "entity",
+                "properties": {"name": e.name, "type": e.entity_type},
+            }
+            for e in result.entities
+        ]
+        entity_id_map: dict[str, str] = {}
+        if entity_vertices:
+            async with write_sem:
+                entity_hg_ids = await self._client.add_vertices(entity_vertices, graph_name=graph_name)
+            if len(entity_hg_ids) != len(entity_vertices):
+                logger.warning(
+                    "entity add_vertices returned %d ids for %d vertices — "
+                    "some edges may resolve to stale/missing ids",
+                    len(entity_hg_ids), len(entity_vertices),
+                )
+            # name-only map for edge resolution (last wins for duplicates)
+            for e, hg_id in zip(result.entities, entity_hg_ids, strict=False):
+                entity_id_map[e.name] = hg_id
+
+        typed_vertices: list[dict[str, Any]] = []
+        typed_keys: list[tuple[str, str]] = []
+        for e in result.entities:
+            label = route_entity_type(e.entity_type)
+            if label is None:
+                continue
+            props: dict[str, Any] = {"name": e.name}
+            if label == "event" and e.properties:
+                date_val = dict(e.properties).get("date")
+                if date_val is not None:
+                    props["date"] = str(date_val)
+            typed_vertices.append({"label": label, "properties": props})
+            typed_keys.append((e.name, label))
+        typed_id_map: dict[tuple[str, str], str] = {}
+        if typed_vertices:
+            async with write_sem:
+                typed_hg_ids = await self._client.add_vertices(typed_vertices, graph_name=graph_name)
+            if len(typed_hg_ids) != len(typed_vertices):
+                logger.warning(
+                    "typed add_vertices returned %d ids for %d vertices — "
+                    "some typed edges will degrade to related_to",
+                    len(typed_hg_ids), len(typed_vertices),
+                )
+            for key, hg_id in zip(typed_keys, typed_hg_ids, strict=False):
+                typed_id_map[key] = hg_id
+
+        entity_type_map = {e.name: e.entity_type for e in result.entities}
+
+        def _vertex_id(name: str, label: str) -> str | None:
+            if label == "entity":
+                return entity_id_map.get(name)
+            return typed_id_map.get((name, label))
+
+        # --- references(chunk→entity) edges ---
+        # per-dataset: expand entity_chunks[name] → one edge per owning chunk;
+        # per-chunk:   single owning chunk.
+        if entity_chunks is not None:
+            owner_lists: dict[str, list[str]] = entity_chunks
+        elif owning_chunk_id is not None:
+            owner_lists = {e.name: [owning_chunk_id] for e in result.entities}
+        else:
+            owner_lists = {}
+        ref_edges: list[dict[str, Any]] = []
+        for e in result.entities:
+            if e.name not in entity_id_map:
+                continue
+            for cid in owner_lists.get(e.name, []):
+                if cid in chunk_id_map:
+                    ref_edges.append({
+                        "label": "references",
+                        "outV": chunk_id_map[cid],
+                        "outVLabel": "chunk",
+                        "inV": entity_id_map[e.name],
+                        "inVLabel": "entity",
+                        "properties": {},
+                    })
+        if ref_edges:
+            async with write_sem:
+                await self._client.add_edges(ref_edges, graph_name=graph_name)
+
+        # --- Relation routing (v1.7.1 §4.5): route_relation picks a typed
+        # edge label on a synonym hit (endpoints resolved via _EDGE_ENDPOINTS
+        # to the matching typed/generic vertices); otherwise falls back to
+        # related_to on the generic entity vertices. relation_type is always
+        # preserved as an edge property (fixes the prior discard bug). ---
+        rel_edges: list[dict[str, Any]] = []
+        for r in result.relations:
+            if r.source not in entity_id_map or r.target not in entity_id_map:
+                continue
+            src_type = entity_type_map.get(r.source, "")
+            tgt_type = entity_type_map.get(r.target, "")
+            edge_label = route_relation(src_type, tgt_type, r.relation_type)
+            src_label, tgt_label = _EDGE_ENDPOINTS[edge_label]
+            src_id = _vertex_id(r.source, src_label)
+            tgt_id = _vertex_id(r.target, tgt_label)
+            if src_id is None or tgt_id is None:
+                # Missing typed endpoint — degrade to related_to on generic vertices.
+                edge_label = "related_to"
+                src_label, tgt_label = "entity", "entity"
+                src_id = entity_id_map[r.source]
+                tgt_id = entity_id_map[r.target]
+            props = {"relation_type": r.relation_type}
+            if edge_label == "related_to":
+                props["weight"] = (
+                    dict(r.properties).get("weight", 1.0) if r.properties else 1.0
+                )
+            rel_edges.append({
+                "label": edge_label,
+                "outV": src_id,
+                "outVLabel": src_label,
+                "inV": tgt_id,
+                "inVLabel": tgt_label,
+                "properties": props,
+            })
+        if rel_edges:
+            async with write_sem:
+                await self._client.add_edges(rel_edges, graph_name=graph_name)
 
     async def _infer_doc_type(self, contents: list[str]) -> str | None:
         """Infer doc_type ONCE from aggregated document content.
