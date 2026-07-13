@@ -168,6 +168,11 @@ class HugeGraphConfig(BaseModel):
     }
     he_language: Literal["zh", "en"] = "zh"
     he_model: str | None = None
+    # v1.8.8 per-dataset KA 抽取粒度（见 docs/v1.8.8-kg-per-dataset-ka-plan.md）。
+    # "dataset" = 整 dataset 一个 KA，chunk 逐个 feed_text，激活跨 chunk LLM.BALANCED
+    #   合并 + build_index + dump 落盘（默认，解决 per-chunk fresh KA 并发 0 实体根因）。
+    # "chunk"   = 旧 per-chunk fresh KA.parse() 路径，保留作对照/降级。
+    he_kg_granularity: Literal["chunk", "dataset"] = "dataset"
 
     @field_validator("max_traversal_depth")
     @classmethod
