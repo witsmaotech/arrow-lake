@@ -1,11 +1,22 @@
-"""hyper-extract backed entity extractor (v1.7.0 §4.1).
+"""hyper-extract backed entity extractor (v1.7.0 §4.1, v1.8.8 per-dataset KA).
 
-Adapter that implements the same ``async extract() -> ExtractionResult``
-contract as :class:`EntityExtractor`, so :class:`KGBuilder` is unaware of the
-backend swap (driven by ``HugeGraphConfig.extractor_backend``).
+Implements the same ``async extract() -> ExtractionResult`` contract as
+:class:`EntityExtractor`, so :class:`KGBuilder` is unaware of the backend swap
+(driven by ``HugeGraphConfig.extractor_backend``).
 
-Pipeline: doc_type → template (DocTypeRouter) → ``Template.create().parse()``
+Two granularities (``HugeGraphConfig.he_kg_granularity``):
+
+- ``"chunk"``   — per-chunk fresh ``Template.create().parse()`` (legacy path,
+                  kept for fallback/parity). ``extract`` / ``extract_batch``.
+- ``"dataset"`` — per-dataset ONE KA, chunks fed via ``feed_text`` so the
+                  AutoGraph LLM.BALANCED merger fuses cross-chunk entities,
+                  then ``build_index`` + ``dump`` to ``<base>/<ds>/ka/``.
+                  ``build_dataset_ka`` → :class:`DatasetKA`.
+
+Pipeline (per-chunk): doc_type → template (DocTypeRouter) → ``parse()``
 → AutoGraph ``nodes``/``edges`` → :class:`ExtractionResult`.
+Pipeline (per-dataset): template → ``feed_text`` loop → ``build_index`` →
+``dump`` → merged :class:`ExtractionResult` + name→[chunk_id] provenance.
 
 Implementation notes (§12.6):
 - §12.6.①  ``ChatOpenAI(api_key=...)`` does not propagate to the underlying
@@ -21,6 +32,8 @@ import asyncio
 import hashlib
 import logging
 import os
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from arrow_lake.knowledge_graph.doc_type_router import (
@@ -64,10 +77,32 @@ def _normalize_type(raw: Any) -> str:
     return _TYPE_NORMALIZE.get(key, "concept")
 
 
+@dataclass(frozen=True)
+class DatasetKA:
+    """Result of a per-dataset KA build (feed_text + build_index + dump).
+
+    Attributes:
+        ka: the hyper-extract AutoGraph instance with merged nodes/edges and a
+            built FAISS index, state dumped to ``ka_dir``.
+        ka_dir: directory holding ``data.json`` / ``metadata.json`` / ``index/``.
+        entity_chunks: ``name → [chunk_id]`` provenance rebuilt by name-diff
+            across ``feed_text`` calls — a chunk "owns" an entity if the name is
+            present in ``ka.nodes`` after feeding that chunk. Used by
+            :class:`KGBuilder` to build ``references(chunk→entity)`` edges.
+        result: the merged :class:`ExtractionResult` for KG insertion.
+    """
+
+    ka: Any
+    ka_dir: Path
+    entity_chunks: dict[str, list[str]]
+    result: ExtractionResult
+
+
 class HyperExtractExtractor:
     """Entity extractor backed by hyper-extract (AutoGraph).
 
-    Implements the same ``extract()`` contract as :class:`EntityExtractor`.
+    Implements the same ``extract()`` contract as :class:`EntityExtractor`, and
+    additionally exposes ``build_dataset_ka`` for per-dataset granularity.
     """
 
     def __init__(
@@ -78,12 +113,18 @@ class HyperExtractExtractor:
         language: str = "zh",
         model: str | None = None,
         doc_type_classifier: DocTypeClassifier | None = None,
+        embedder: Any = None,
+        kg_granularity: str = "dataset",
     ) -> None:
         self._llm_config = llm_config
         self._router = doc_type_router
         self._language = language
         self._model = model
         self._classifier = doc_type_classifier
+        # v1.8.8: langchain Embeddings (_LakeEmbedderAdapter) for build_index.
+        # None = parse-only (old behaviour); required for dataset granularity.
+        self._embedder = embedder
+        self._kg_granularity = kg_granularity
         self._template_cache: dict[str, Any] = {}
         self._doc_type_cache: dict[str, str | None] = {}  # content digest → inferred doc_type
         # langchain ChatOpenAI client (thread-safe, reused across parses). A fresh
@@ -104,7 +145,7 @@ class HyperExtractExtractor:
     def _get_chat_client(self) -> Any:
         """Return a cached langchain ChatOpenAI client (thread-safe; reused
         across parses). A fresh hyper-extract KA is created per parse via
-        :meth:`_parse_fresh` to avoid the AutoGraph accumulating mutable state
+        :meth:`_create_ka` to avoid the AutoGraph accumulating mutable state
         (``data``/indexes) across many chunks, which corrupts output after N calls.
         """
         if self._chat_client is None:
@@ -122,21 +163,75 @@ class HyperExtractExtractor:
             )
         return self._chat_client
 
-    def _parse_fresh(self, template_path: str, text: str) -> Any:
-        """Create a ONE-SHOT hyper-extract KA and parse ``text``.
+    def _create_ka(self, template_path: str) -> Any:
+        """Create a fresh hyper-extract KA with this extractor's llm + embedder.
 
-        Each call builds a fresh ``Template.create(...)`` (reusing the cached
-        langchain client) so no mutable AutoGraph state persists between chunks.
+        AutoGraph's default node/edge merger is ``MergeStrategy.LLM.BALANCED``
+        (``hyperextract/types/graph.py:164-167``), so ``feed_text`` activates
+        cross-chunk LLM field-merging out of the box — no explicit merger kwarg
+        needed. ``embedder`` (a langchain ``Embeddings`` via
+        ``_LakeEmbedderAdapter``) enables ``build_index``; ``None`` keeps the
+        old parse-only behaviour (per-chunk granularity without index).
         """
         from hyperextract import Template
 
-        ka = Template.create(
+        return Template.create(
             template_path,
             self._language,
             llm_client=self._get_chat_client(),
-            embedder=None,
+            embedder=self._embedder,
         )
-        return ka.parse(text)
+
+    def _parse_fresh(self, template_path: str, text: str) -> Any:
+        """Create a ONE-SHOT hyper-extract KA and parse ``text``.
+
+        Each call builds a fresh KA (reusing the cached langchain client) so no
+        mutable AutoGraph state persists between chunks (per-chunk granularity).
+        """
+        return self._create_ka(template_path).parse(text)
+
+    @staticmethod
+    def _ka_to_extraction_result(ka: Any, raw_text: str = "") -> ExtractionResult:
+        """Convert a hyper-extract KA (``nodes``/``edges``) to an ExtractionResult.
+
+        Applies the same §11.3 stopword filter + endpoint validity as legacy
+        ``EntityExtractor``, so the per-chunk (``parse``) and per-dataset
+        (``feed_text``) paths share one conversion.
+        """
+        nodes = getattr(ka, "nodes", None) or []
+        edges = getattr(ka, "edges", None) or []
+
+        # nodes → entities (+ §11.3 stopword filter)
+        entities: list[ExtractedEntity] = []
+        name_set: set[str] = set()
+        for n in nodes:
+            name = getattr(n, "name", None)
+            name = str(name).strip() if name else ""
+            if not name or name in _GENERIC_ENTITY_STOPWORDS:
+                continue
+            entity_type = _normalize_type(getattr(n, "type", None))
+            entities.append(ExtractedEntity(name=name, entity_type=entity_type))
+            name_set.add(name)
+
+        # edges → relations (+ §11.3 endpoint validity)
+        relations: list[ExtractedRelation] = []
+        for e in edges:
+            source = str(getattr(e, "source", "") or "").strip()
+            target = str(getattr(e, "target", "") or "").strip()
+            if not source or not target:
+                continue
+            if source not in name_set or target not in name_set:
+                continue
+            rel_type = str(getattr(e, "type", "") or "related_to") or "related_to"
+            relations.append(
+                ExtractedRelation(source=source, target=target, relation_type=rel_type)
+            )
+
+        return ExtractionResult(
+            entities=tuple(entities),
+            relations=tuple(relations),
+            raw_text=raw_text,
+        )
 
     async def _infer_doc_type(self, text: str) -> str | None:
         """Classify doc_type from ``text`` (cached by a stable content digest).
@@ -155,7 +250,7 @@ class HyperExtractExtractor:
     async def extract(
         self, text: str, *, chunk_id: str = "", doc_type: str | None = None
     ) -> ExtractionResult:
-        """Extract entities/relations from ``text`` via hyper-extract.
+        """Extract entities/relations from ``text`` via hyper-extract (per-chunk).
 
         Gracefully degrades to an empty result on any failure (matching
         legacy ``EntityExtractor`` behavior). ``chunk_id`` is accepted for
@@ -209,45 +304,117 @@ class HyperExtractExtractor:
                 )
                 return ExtractionResult(entities=(), relations=(), raw_text=text)
 
-        nodes = getattr(result, "nodes", None) or []
-        edges = getattr(result, "edges", None) or []
+        return self._ka_to_extraction_result(result, text)
 
-        # nodes → entities (+ §11.3 stopword filter)
-        entities: list[ExtractedEntity] = []
-        name_set: set[str] = set()
-        for n in nodes:
-            name = getattr(n, "name", None)
-            name = str(name).strip() if name else ""
-            if not name or name in _GENERIC_ENTITY_STOPWORDS:
-                continue
-            entity_type = _normalize_type(getattr(n, "type", None))
-            entities.append(ExtractedEntity(name=name, entity_type=entity_type))
-            name_set.add(name)
+    async def build_dataset_ka(
+        self,
+        template_path: str,
+        chunks: list[tuple[str, str]],
+        ka_dir: Path,
+        *,
+        checkpoint_every: int = 20,
+    ) -> DatasetKA:
+        """Build ONE per-dataset KA: ``feed_text`` all chunks → ``build_index`` → ``dump``.
 
-        # edges → relations (+ §11.3 endpoint validity)
-        relations: list[ExtractedRelation] = []
-        for e in edges:
-            source = str(getattr(e, "source", "") or "").strip()
-            target = str(getattr(e, "target", "") or "").strip()
-            if not source or not target:
+        Activates hyper-extract's cross-chunk LLM.BALANCED merge that the
+        per-chunk fresh-KA path bypasses, then dumps the merged KA to
+        ``ka_dir`` (``data.json`` + ``metadata.json`` + FAISS ``index/``) so it
+        can be reloaded later via ``he search/talk`` / MCP.
+
+        Provenance (``entity_chunks``) is rebuilt by name-diff around each
+        ``feed_text`` call: a chunk owns every entity name present in
+        ``ka.nodes`` after feeding it. This matches ``node_key_extractor``'s
+        exact-name bucketing (no alias fusion — same semantics as per-chunk,
+        no regression).
+
+        Error handling: a single chunk feed failure is SKIPPED (counted), never
+        retried with another template — the per-dataset KA must keep ONE
+        template or its schema tears. The lone exception is a FIRST-chunk
+        failure with an empty KA, which means the template itself is unusable:
+        rebuild the KA with the default template and continue.
+
+        Args:
+            template_path: hyper-extract template path (caller-resolved doc_type).
+            chunks: list of ``(chunk_id, text)`` to feed, in order.
+            ka_dir: directory to dump into (created if needed).
+            checkpoint_every: dump every N chunks (crash protection, §9
+                large-corpus mode). 0 disables.
+
+        Returns:
+            :class:`DatasetKA` with the merged KA, dump dir, name→[chunk_id]
+            provenance, and the merged ExtractionResult.
+        """
+        ka = self._create_ka(template_path)
+        ka_dir = Path(ka_dir)
+        entity_chunks: dict[str, list[str]] = {}
+        failures = 0
+
+        for i, (cid, text) in enumerate(chunks):
+            stripped = (text or "").strip()
+            if not stripped:
                 continue
-            if source not in name_set or target not in name_set:
+            before = {getattr(n, "name", "") for n in (getattr(ka, "nodes", None) or [])}
+            try:
+                await asyncio.to_thread(ka.feed_text, stripped)
+            except Exception as exc:
+                failures += 1
+                logger.warning(
+                    "build_dataset_ka feed_text failed chunk %s (%d/%d), skipped: %s",
+                    cid, i + 1, len(chunks), str(exc)[:160],
+                )
+                # First-chunk failure on an empty KA ⇒ template unusable:
+                # rebuild with default and keep going (one-time, not per-chunk).
+                if i == 0 and not (getattr(ka, "nodes", None) or []):
+                    default_path = self._router.default_template()
+                    if template_path != default_path:
+                        logger.warning(
+                            "first-chunk failure on template %s; rebuilding KA with default %s",
+                            template_path, default_path,
+                        )
+                        template_path = default_path
+                        ka = self._create_ka(default_path)
                 continue
-            rel_type = str(getattr(e, "type", "") or "related_to") or "related_to"
-            relations.append(
-                ExtractedRelation(source=source, target=target, relation_type=rel_type)
+            after = {getattr(n, "name", "") for n in (getattr(ka, "nodes", None) or [])}
+            # Record only NEW names this chunk introduced (first-appearance
+            # provenance). LLM.BALANCED never removes a name, so each name is
+            # attributed to exactly the chunk where it first appeared — keeps
+            # references(chunk→entity) edges precise, not inflated.
+            for name in (after - before):
+                if name:
+                    entity_chunks.setdefault(name, []).append(cid)
+            # checkpoint (§9 large-corpus crash protection)
+            if checkpoint_every and (i + 1) % checkpoint_every == 0:
+                try:
+                    await asyncio.to_thread(ka.dump, ka_dir)
+                    logger.info(
+                        "build_dataset_ka checkpoint at chunk %d/%d → %s",
+                        i + 1, len(chunks), ka_dir,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "build_dataset_ka checkpoint dump failed: %s", str(exc)[:160]
+                    )
+
+        if failures:
+            logger.info(
+                "build_dataset_ka done: %d/%d chunks skipped (template=%s)",
+                failures, len(chunks), template_path,
             )
 
-        return ExtractionResult(
-            entities=tuple(entities),
-            relations=tuple(relations),
-            raw_text=text,
+        # feed_text invalidates the index (omem clear_index); rebuild once, then dump.
+        if not ka.empty():
+            await asyncio.to_thread(ka.build_index)
+        await asyncio.to_thread(ka.dump, ka_dir)
+
+        result = self._ka_to_extraction_result(ka)
+        return DatasetKA(
+            ka=ka, ka_dir=ka_dir, entity_chunks=entity_chunks, result=result
         )
 
     async def extract_batch(
         self, chunks: list[tuple[str, str]], doc_type: str | None = None
     ) -> list[ExtractionResult]:
-        """Extract from multiple chunks concurrently (contract parity).
+        """Extract from multiple chunks concurrently (per-chunk granularity).
 
         Concurrency is delegated to hyper-extract's internal ``max_workers``
         (inside ``parse``); here we only fan out the awaitable per chunk.
