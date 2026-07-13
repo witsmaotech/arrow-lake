@@ -102,11 +102,42 @@ _ENTITY_EXTRACT_PROMPT = """\
 """
 
 
+def _hashable(value: Any) -> Any:
+    """Coerce to a hashable form: list→tuple, dict→sorted tuple of items (recursive).
+
+    LLMs occasionally emit list/dict property values (e.g. {"专项": ["燃气","桥梁"]}),
+    which would make a frozen ExtractedEntity/Relation unhashable and crash dedup
+    ("unhashable type: 'list'").
+    """
+    if isinstance(value, list):
+        return tuple(_hashable(v) for v in value)
+    if isinstance(value, dict):
+        return tuple(sorted((str(k), _hashable(v)) for k, v in value.items()))
+    return value
+
+
 def _parse_properties(raw: dict[str, Any] | None) -> tuple[tuple[str, Any], ...]:
-    """Convert a properties dict to a tuple of key-value pairs."""
+    """Convert a properties dict to a tuple of hashable key-value pairs."""
     if not raw:
         return ()
-    return tuple(sorted(raw.items()))
+    items = [(_hashable(k), _hashable(v)) for k, v in raw.items()]
+    items.sort(key=lambda kv: str(kv[0]))
+    return tuple(items)
+
+
+def _scalar(value: Any, default: str = "") -> str:
+    """Coerce an LLM-returned scalar field to a single string.
+
+    LLMs occasionally emit a list where a string is expected (e.g. ``"type":
+    ["facility","equipment"]``). A list field would make the frozen
+    ExtractedEntity/Relation unhashable and crash dedup ("unhashable type:
+    'list'"). Take the first non-empty element (or join) and stringify.
+    """
+    if isinstance(value, list):
+        value = next((x for x in value if x), default)
+    if value is None:
+        return default
+    return str(value).strip()
 
 
 @dataclass(frozen=True)
@@ -314,10 +345,12 @@ class EntityExtractor:
 
         entities: list[ExtractedEntity] = []
         for item in data.get("entities", []):
+            if not isinstance(item, dict):
+                continue
             confidence = item.get("confidence", 0.5)
             if confidence < threshold:
                 continue
-            name = item.get("name", "").strip()
+            name = _scalar(item.get("name", ""))
             if not name:
                 continue
             if name in _GENERIC_ENTITY_STOPWORDS:
@@ -326,7 +359,7 @@ class EntityExtractor:
             entities.append(
                 ExtractedEntity(
                     name=name,
-                    entity_type=item.get("type", "concept"),
+                    entity_type=_scalar(item.get("type", "concept"), "concept"),
                     properties=props,
                 )
             )
@@ -335,11 +368,13 @@ class EntityExtractor:
 
         relations: list[ExtractedRelation] = []
         for item in data.get("relations", []):
+            if not isinstance(item, dict):
+                continue
             confidence = item.get("confidence", 0.5)
             if confidence < threshold:
                 continue
-            source = item.get("source", "")
-            target = item.get("target", "")
+            source = _scalar(item.get("source", ""))
+            target = _scalar(item.get("target", ""))
             if source not in valid_names or target not in valid_names:
                 continue
             props = _parse_properties(item.get("properties"))
@@ -347,7 +382,7 @@ class EntityExtractor:
                 ExtractedRelation(
                     source=source,
                     target=target,
-                    relation_type=item.get("relation", ""),
+                    relation_type=_scalar(item.get("relation", "")),
                     properties=props,
                 )
             )
