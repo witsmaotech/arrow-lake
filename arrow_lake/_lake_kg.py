@@ -107,6 +107,42 @@ class _LakeKGMixin:
 
         return HugeGraphClient(self._config.hugegraph)
 
+    def _get_kg_embedder(self) -> Any:
+        return self._get_component("kg_embedder", self._create_kg_embedder)
+
+    def _create_kg_embedder(self) -> Any:
+        """Build a langchain ``Embeddings`` over the project encoder (singleton).
+
+        Mirrors :meth:`LakeIngestor.embed_and_add`'s three-branch construction
+        (DAFT / OPENAI / LOCAL) over ``ArrowLakeConfig.embedding``, then wraps
+        it in :class:`_LakeEmbedderAdapter` so hyper-extract's
+        ``Template.create(embedder=...)`` can build a FAISS index. RAY_SERVE
+        degrades to LOCAL. Lazy single instance via ``_get_component``.
+        """
+        from arrow_lake.config._enums import EmbeddingBackend
+        from arrow_lake.embed.encoder import ApiEmbeddingEncoder, LocalEmbeddingEncoder
+        from arrow_lake.knowledge_graph._he_embedder import _LakeEmbedderAdapter
+
+        cfg = self._config.embedding
+        if cfg.backend == EmbeddingBackend.OPENAI and cfg.api_base:
+            enc = ApiEmbeddingEncoder(
+                api_base=cfg.api_base, api_key=cfg.api_key,
+                model_name=cfg.model, batch_size=cfg.batch_size,
+            )
+        elif cfg.backend == EmbeddingBackend.DAFT:
+            from arrow_lake.embed.daft_encoder import DaftBatchEncoder
+
+            enc = DaftBatchEncoder(
+                model=cfg.model, provider=cfg.daft_provider,
+                num_partitions=cfg.daft_num_partitions, expected_dim=cfg.expected_dim,
+            )
+        else:  # LOCAL / RAY_SERVE (degrade to LOCAL)
+            enc = LocalEmbeddingEncoder(
+                model_name=cfg.model, batch_size=cfg.batch_size,
+                expected_dim=cfg.expected_dim,
+            )
+        return _LakeEmbedderAdapter(enc)
+
     def _create_kg_extractor(self) -> Any:
         from arrow_lake.rag.provider import create_llm_provider
 
@@ -135,6 +171,8 @@ class _LakeKGMixin:
                 language=hg.he_language,
                 model=hg.he_model,
                 doc_type_classifier=classifier,
+                embedder=self._get_kg_embedder(),
+                kg_granularity=hg.he_kg_granularity,
             )
         from arrow_lake.knowledge_graph.extractor import EntityExtractor
 
@@ -151,7 +189,12 @@ class _LakeKGMixin:
                 error_code=ErrorCode.KG_GRAPH_NOT_FOUND,
                 message="Cannot create KGBuilder: KG is not enabled",
             )
-        return KGBuilder(client, extractor, self._config.hugegraph)
+        return KGBuilder(
+            client,
+            extractor,
+            self._config.hugegraph,
+            ka_base_dir=getattr(self, "_base_uri", None),
+        )
 
     def _create_kg_retriever(self) -> KGRetriever:
         from arrow_lake.knowledge_graph.retriever import KGRetriever
