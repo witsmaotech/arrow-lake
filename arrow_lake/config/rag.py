@@ -173,6 +173,12 @@ class HugeGraphConfig(BaseModel):
     #   合并 + build_index + dump 落盘（默认，解决 per-chunk fresh KA 并发 0 实体根因）。
     # "chunk"   = 旧 per-chunk fresh KA.parse() 路径，保留作对照/降级。
     he_kg_granularity: Literal["chunk", "dataset"] = "dataset"
+    # Local filesystem root for per-dataset KA dumps (<root>/<dataset>/ka/).
+    # MUST be a local path — hyper-extract's ``ka.dump`` writes data.json /
+    # metadata.json / index/ to the filesystem, NOT to minio/s3. The storage
+    # ``base_uri`` is a bucket name ("arrow-lake") and must NOT be used here.
+    # Defaults to /data/ka (same volume as metaflow in the deploy compose).
+    he_ka_base_dir: str = "/data/ka"
 
     @field_validator("max_traversal_depth")
     @classmethod

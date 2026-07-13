@@ -346,6 +346,7 @@ class HyperExtractExtractor:
         """
         ka = self._create_ka(template_path)
         ka_dir = Path(ka_dir)
+        ka_dir.mkdir(parents=True, exist_ok=True)
         entity_chunks: dict[str, list[str]] = {}
         failures = 0
 
