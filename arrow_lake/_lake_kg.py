@@ -193,7 +193,7 @@ class _LakeKGMixin:
             client,
             extractor,
             self._config.hugegraph,
-            ka_base_dir=hg.he_ka_base_dir,
+            ka_base_dir=self._config.hugegraph.he_ka_base_dir,
         )
 
     def _create_kg_retriever(self) -> KGRetriever:
