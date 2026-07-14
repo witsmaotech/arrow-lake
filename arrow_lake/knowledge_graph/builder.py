@@ -416,7 +416,11 @@ class KGBuilder:
         entity_vertices = [
             {
                 "label": "entity",
-                "properties": {"name": e.name, "type": e.entity_type},
+                "properties": {
+                    "name": e.name,
+                    "type": e.entity_type,
+                    "definition": dict(e.properties).get("definition", ""),
+                },
             }
             for e in result.entities
         ]
@@ -515,7 +519,10 @@ class KGBuilder:
                 src_label, tgt_label = "entity", "entity"
                 src_id = entity_id_map[r.source]
                 tgt_id = entity_id_map[r.target]
-            props = {"relation_type": r.relation_type}
+            props = {
+                "relation_type": r.relation_type,
+                "description": dict(r.properties).get("description", ""),
+            }
             if edge_label == "related_to":
                 props["weight"] = (
                     dict(r.properties).get("weight", 1.0) if r.properties else 1.0

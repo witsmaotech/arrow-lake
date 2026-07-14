@@ -149,18 +149,38 @@ class HyperExtractExtractor:
         (``data``/indexes) across many chunks, which corrupts output after N calls.
         """
         if self._chat_client is None:
-            from langchain_openai import ChatOpenAI
+            api_base = self._llm_config.api_base or ""
+            model = self._model or self._llm_config.model or ""
+            # 阿里百炼(aliyuncs MaaS):走 hyper-extract 官方 create_client,而非直连
+            # langchain ChatOpenAI。原因:① 直连 ChatOpenAI 在 hyperextract 包 import 后
+            # api_key 传递异常(openai.OpenAIError: Missing credentials,import 副作用);
+            # ② create_client 正确处理 bailian provider 配置 + json_schema 模型选型
+            # (qwen-turbo/plus 等支持 json_schema,避开 qwen-max / qwen3.7-max 系
+            # json_object-only 的 "messages must contain json" 400,见 hyper-extract
+            # providers 文档 Issue #24);③ qwen-turbo 非思考 → feed_text 快(实测 7.7s/
+            # chunk vs thinking 模型 8min 无 checkpoint)。embedder 仍用项目的
+            # _LakeEmbedderAdapter(忽略 create_client 自带的 emb)。
+            if "aliyuncs" in api_base:
+                from hyperextract import create_client
 
-            self._chat_client = ChatOpenAI(
-                model=self._model or self._llm_config.model,
-                api_key=self._llm_config.api_key or "dummy",
-                base_url=self._llm_config.api_base or None,
-                temperature=0,
-                # §12.6 修正：hyper-extract 走结构化输出(.parse() + response_format)，
-                # 不能用 chat_template_kwargs 关 thinking（.parse() 拒绝未知 kwarg）。
-                # thinking 模型需把 max_tokens 撑大让 thinking+结构化输出都装下，否则返空。
-                max_tokens=8192,
-            )
+                llm, _emb = create_client(
+                    f"bailian:{model}@{api_base}",
+                    api_key=self._llm_config.api_key or "dummy",
+                )
+                self._chat_client = llm
+            else:
+                from langchain_openai import ChatOpenAI
+
+                self._chat_client = ChatOpenAI(
+                    model=model,
+                    api_key=self._llm_config.api_key or "dummy",
+                    base_url=self._llm_config.api_base or None,
+                    temperature=0,
+                    # §12.6 修正：hyper-extract 走结构化输出(.parse() + response_format)，
+                    # 不能用 chat_template_kwargs 关 thinking（.parse() 拒绝未知 kwarg）。
+                    # thinking 模型需把 max_tokens 撑大让 thinking+结构化输出都装下，否则返空。
+                    max_tokens=8192,
+                )
         return self._chat_client
 
     def _create_ka(self, template_path: str) -> Any:
@@ -202,6 +222,10 @@ class HyperExtractExtractor:
         edges = getattr(ka, "edges", None) or []
 
         # nodes → entities (+ §11.3 stopword filter)
+        # entity_type keeps the LLM-extracted RAW type (Chinese 概念/属性/架构
+        # 组件/...). Do NOT call _normalize_type here — it collapsed every type
+        # to "concept" (dict has only English keys) and erased the 81-way type
+        # info. route_entity_type does typed-vertex routing on this raw value.
         entities: list[ExtractedEntity] = []
         name_set: set[str] = set()
         for n in nodes:
@@ -209,8 +233,11 @@ class HyperExtractExtractor:
             name = str(name).strip() if name else ""
             if not name or name in _GENERIC_ENTITY_STOPWORDS:
                 continue
-            entity_type = _normalize_type(getattr(n, "type", None))
-            entities.append(ExtractedEntity(name=name, entity_type=entity_type))
+            entity_type = str(getattr(n, "type", "") or "").strip() or "未知"
+            definition = str(getattr(n, "definition", "") or "").strip()
+            props = (("definition", definition),) if definition else ()
+            entities.append(ExtractedEntity(
+                name=name, entity_type=entity_type, properties=props))
             name_set.add(name)
 
         # edges → relations (+ §11.3 endpoint validity)
@@ -223,8 +250,11 @@ class HyperExtractExtractor:
             if source not in name_set or target not in name_set:
                 continue
             rel_type = str(getattr(e, "type", "") or "related_to") or "related_to"
+            description = str(getattr(e, "description", "") or "").strip()
+            props = (("description", description),) if description else ()
             relations.append(
-                ExtractedRelation(source=source, target=target, relation_type=rel_type)
+                ExtractedRelation(source=source, target=target,
+                                  relation_type=rel_type, properties=props)
             )
 
         return ExtractionResult(

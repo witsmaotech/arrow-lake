@@ -34,14 +34,21 @@ class RelationRoute:
     edge_label: str
 
 
-# entity_type → typed vertex label. Unmapped types stay on the generic
-# ``entity`` label only (no typed double-write).
+# entity_type → typed vertex label. Unmapped types (incl. all concept-like
+# types: 概念/核心概念/属性/架构组件/...) stay on the generic ``entity`` label
+# only — NO typed double-write. This eliminates the prior 418-isolated-concept
+# -vertex problem where every concept_graph entity was also written to a
+# ``concept`` vertex that no edge ever referenced.
+#
+# Only structurally-distinct types (person/org/location/event) get a typed
+# vertex, so typed edges (belongs_to/located_in/...) have real endpoints.
+# CJK aliases are recognized since LLM-extracted types are Chinese by default.
 _ENTITY_TYPE_LABELS: dict[str, str] = {
-    "person": "person",
-    "organization": "organization",
-    "location": "location",
-    "concept": "concept",
-    "event": "event",
+    "person": "person", "人物": "person", "人": "person",
+    "organization": "organization", "组织": "organization",
+    "机构": "organization", "公司": "organization", "单位": "organization",
+    "location": "location", "地点": "location", "位置": "location", "地方": "location",
+    "event": "event", "事件": "event",
 }
 
 
