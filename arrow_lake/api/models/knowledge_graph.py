@@ -157,6 +157,21 @@ class KGRebuildIndexRequest(BaseModel):
     )
 
 
+class KGExportObsidianRequest(BaseModel):
+    dataset: str = Field(
+        ...,
+        min_length=1,
+        max_length=256,
+        pattern=r"^[a-zA-Z0-9_-]+$",
+        description="Lake dataset whose KA to export as an Obsidian vault.",
+    )
+    vault_name: str = Field(default="Knowledge Vault", max_length=128)
+    overwrite: bool = Field(
+        default=False,
+        description="Overwrite an existing vault at the server-derived export dir.",
+    )
+
+
 # ---------------------------------------------------------------------------
 # doc_type / template metadata (v1.8.8)
 # ---------------------------------------------------------------------------

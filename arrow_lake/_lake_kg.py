@@ -607,6 +607,44 @@ class _LakeKGMixin:
         extractor = self._get_he_extractor_or_raise()
         return await asyncio.to_thread(extractor.rebuild_ka_index, dataset_name)
 
+    async def kg_export_obsidian(
+        self,
+        dataset_name: str,
+        out_dir: str | None = None,
+        *,
+        vault_name: str = "Knowledge Vault",
+        overwrite: bool = False,
+    ) -> dict[str, Any]:
+        """[#5] Export a dataset's KA as an Obsidian vault (Markdown + wikilinks).
+
+        Writes one ``.md`` note per node (fields as YAML front-matter) and every
+        edge as an ``[[wikilink]]``; open the folder in Obsidian to roam the
+        extracted graph. Requires ``extractor_backend=he`` + an existing KA dump.
+
+        ``out_dir`` defaults to ``he_ka_base_dir/{dataset}/obsidian/`` (server-
+        controlled) to avoid path-traversal from caller input. Callers may pass
+        an explicit absolute path for programmatic use.
+
+        Args:
+            dataset_name: Lake dataset whose KA to export.
+            out_dir: Destination vault dir (default: server KA dir + ``obsidian/``).
+            vault_name: Title for the generated index note.
+            overwrite: Overwrite an existing vault at ``out_dir``.
+
+        Raises:
+            KGError: If KG is disabled or the extractor is not ``he``.
+            FileNotFoundError: If no KA dump exists for ``dataset_name``.
+        """
+        from pathlib import Path
+
+        extractor = self._get_he_extractor_or_raise()
+        if out_dir is None:
+            out_dir = str(Path(self._config.hugegraph.he_ka_base_dir) / dataset_name / "obsidian")
+        return await asyncio.to_thread(
+            extractor.export_ka_obsidian, dataset_name, out_dir,
+            vault_name=vault_name, overwrite=overwrite,
+        )
+
     # ------------------------------------------------------------------
     # doc_type / template metadata (v1.8.8) — pure metadata, no KG client
     # ------------------------------------------------------------------

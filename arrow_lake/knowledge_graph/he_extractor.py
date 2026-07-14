@@ -329,9 +329,9 @@ class HyperExtractExtractor:
         """
         ka_dir = self._ka_dir_for(dataset_name)
         if not (ka_dir / "data.json").is_file():
+            logger.warning("no KA dump for dataset %r at %s", dataset_name, ka_dir)
             raise FileNotFoundError(
-                f"no KA dump for dataset {dataset_name!r} at {ka_dir} — "
-                f"run kg_build first"
+                f"no KA dump for dataset {dataset_name!r} — run kg_build first"
             )
         ka = self.load_ka_for_query(dataset_name)
         ka.build_index()  # force rebuild (bypasses _ensure_ka_index's "already loaded" guard)
@@ -344,6 +344,46 @@ class HyperExtractExtractor:
             "node_count": len(nodes),
             "edge_count": len(edges),
             "ka_dir": str(ka_dir),
+        }
+
+    def export_ka_obsidian(
+        self, dataset_name: str, out_dir: Any, *,
+        vault_name: str = "Knowledge Vault", overwrite: bool = False,
+    ) -> dict[str, Any]:
+        """[#5] Export a dataset's KA as an Obsidian vault (Markdown notes + wikilinks).
+
+        One ``.md`` note per node (fields as YAML front-matter), every edge
+        rendered as an ``[[wikilink]]`` under its source note. Open the resulting
+        folder in Obsidian to roam the extracted graph in graph view. Only Graph-
+       系 KA (concept_graph / domain templates) have relations — Record 系
+        (list/set/model) export notes without links.
+
+        Args:
+            dataset_name: Lake dataset whose KA to export (must have a dump).
+            out_dir: Destination vault directory (created if absent).
+            vault_name: Title for the generated index note.
+            overwrite: Overwrite an existing vault at ``out_dir``.
+
+        Raises ``FileNotFoundError`` if no KA dump exists for ``dataset_name``.
+        """
+        ka_dir = self._ka_dir_for(dataset_name)
+        if not (ka_dir / "data.json").is_file():
+            logger.warning("no KA dump for dataset %r at %s", dataset_name, ka_dir)
+            raise FileNotFoundError(
+                f"no KA dump for dataset {dataset_name!r} — run kg_build first"
+            )
+        ka = self.load_ka_for_query(dataset_name)
+        vault = ka.export_obsidian(
+            out_dir, vault_name=vault_name, overwrite=overwrite,
+        )
+        nodes = getattr(getattr(ka, "_node_memory", None), "items", None) or []
+        edges = getattr(getattr(ka, "_edge_memory", None), "items", None) or []
+        return {
+            "dataset": dataset_name,
+            "vault_path": str(vault),
+            "node_count": len(nodes),
+            "edge_count": len(edges),
+            "vault_name": vault_name,
         }
 
     def _parse_fresh(self, template_path: str, text: str) -> Any:

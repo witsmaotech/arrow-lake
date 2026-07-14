@@ -264,3 +264,22 @@ class TestKGEnabled:
         ext.rebuild_ka_index.assert_called_once_with("ds")
         assert result["index_rebuilt"] is True
         assert result["node_count"] == 7
+
+    @pytest.mark.asyncio()
+    async def test_kg_export_obsidian_delegates(self, lake: _TestLake) -> None:
+        """[#5] kg_export_obsidian delegates to extractor.export_ka_obsidian."""
+        ext = MagicMock()
+        ext.search_ka = MagicMock(return_value=([], []))  # marks as he extractor
+        ext.export_ka_obsidian = MagicMock(return_value={
+            "dataset": "ds", "vault_path": "/tmp/ka/ds/obsidian",
+            "node_count": 5, "edge_count": 8, "vault_name": "Knowledge Vault",
+        })
+        lake._components["kg_extractor"] = ext
+
+        result = await lake.kg_export_obsidian("ds", overwrite=True)
+        # default out_dir is server-derived (he_ka_base_dir/ds/obsidian)
+        args, kwargs = ext.export_ka_obsidian.call_args
+        assert args[0] == "ds"
+        assert "obsidian" in args[1]
+        assert kwargs["overwrite"] is True
+        assert result["node_count"] == 5

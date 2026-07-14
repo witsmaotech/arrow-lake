@@ -424,3 +424,38 @@ def test_rebuild_ka_index_raises_when_no_dump(
     with _pytest.raises(FileNotFoundError):
         extractor.rebuild_ka_index("ds")
 
+
+def test_export_ka_obsidian_loads_and_exports(
+    extractor: HyperExtractExtractor, tmp_path: SimpleNamespace,
+) -> None:
+    """[#5] export loads the dump, calls export_obsidian, returns vault path."""
+    ka_dir = tmp_path / "ds" / "ka"
+    ka_dir.mkdir(parents=True)
+    (ka_dir / "data.json").write_text("{}", encoding="utf-8")
+    extractor._ka_dir_for = lambda ds: ka_dir  # type: ignore[method-assign]
+    out_dir = tmp_path / "vault"
+    node = SimpleNamespace(name="聚合根", type="concept")
+    ka = _mock_ka(nodes=[node], has_index=True)
+    exported = []
+    ka.export_obsidian = lambda d, **kw: exported.append(d) or d  # type: ignore[method-assign]
+    extractor.load_ka_for_query = lambda ds: ka  # type: ignore[method-assign]
+
+    result = extractor.export_ka_obsidian("ds", out_dir, vault_name="V", overwrite=True)
+    assert result["vault_path"] == str(out_dir)
+    assert result["node_count"] == 1
+    assert exported and exported[0] == out_dir
+
+
+def test_export_ka_obsidian_raises_when_no_dump(
+    extractor: HyperExtractExtractor, tmp_path: SimpleNamespace,
+) -> None:
+    import pytest as _pytest
+    extractor._ka_dir_for = lambda ds: tmp_path / "nodump"  # type: ignore[method-assign]
+    with _pytest.raises(FileNotFoundError):
+        extractor.export_ka_obsidian("ds", tmp_path / "vault")
+    # error message must NOT leak the filesystem path (security: sanitized)
+    try:
+        extractor.export_ka_obsidian("ds", tmp_path / "vault")
+    except FileNotFoundError as e:
+        assert str(tmp_path) not in str(e)
+

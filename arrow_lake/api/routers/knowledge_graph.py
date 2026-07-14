@@ -21,6 +21,7 @@ from arrow_lake.api.models.knowledge_graph import (
     KGChatResponse,
     KGDocType,
     KGRebuildIndexRequest,
+    KGExportObsidianRequest,
     KGDocTypesResponse,
     KGNeighborsResponse,
     KGQueryRequest,
@@ -302,24 +303,47 @@ async def kg_ask(
         raise HTTPException(status_code=_kg_error_to_status(exc), detail=exc.message) from exc
 
 
-@router.post("/rebuild-index")
+@router.post("/rebuild-index", dependencies=[Depends(require_role(Role.ADMIN))])
 async def kg_rebuild_index(
     *,
     req: KGRebuildIndexRequest,
     lake: Any = Depends(get_lake),
-    _user: dict = Depends(require_role(Role.EDITOR)),
-    checker=Depends(get_checker),
 ) -> dict[str, Any]:
     """[#7] Rebuild a dataset's KA FAISS index from its dump (no LLM re-extract).
 
     Lightweight index-only refresh — cheaper than ``kg_build``. Use when the
     index is stale/corrupt or the embedder changed. Requires
-    ``extractor_backend=he`` and an existing KA dump. EDITOR+ (mutates the dump);
-    per-dataset read ACL still enforced.
+    ``extractor_backend=he`` and an existing KA dump. ADMIN-only — mutates the
+    KA dump, same privilege level as ``/kg/build``.
+    """
+    try:
+        return await lake.kg_rebuild_index(req.dataset)
+    except KGError as exc:
+        raise HTTPException(status_code=_kg_error_to_status(exc), detail=exc.message) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/export-obsidian")
+async def kg_export_obsidian(
+    *,
+    req: KGExportObsidianRequest,
+    lake: Any = Depends(get_lake),
+    _user: dict = Depends(require_role(Role.VIEWER)),
+    checker=Depends(get_checker),
+) -> dict[str, Any]:
+    """[#5] Export a dataset's KA as an Obsidian vault (Markdown notes + wikilinks).
+
+    One ``.md`` per node (YAML front-matter), edges as ``[[wikilinks]]``; open
+    the folder in Obsidian to roam the graph. Requires ``extractor_backend=he``
+    + an existing KA dump. VIEWER+ (read of the dataset's KA); the export dir is
+    server-derived (``he_ka_base_dir/{dataset}/obsidian/``) — no caller path.
     """
     _enforce_read_acl(checker, _user, req.dataset)
     try:
-        return await lake.kg_rebuild_index(req.dataset)
+        return await lake.kg_export_obsidian(
+            req.dataset, vault_name=req.vault_name, overwrite=req.overwrite,
+        )
     except KGError as exc:
         raise HTTPException(status_code=_kg_error_to_status(exc), detail=exc.message) from exc
     except FileNotFoundError as exc:
