@@ -173,6 +173,7 @@ class _LakeKGMixin:
                 doc_type_classifier=classifier,
                 embedder=self._get_kg_embedder(),
                 kg_granularity=hg.he_kg_granularity,
+                hugegraph_config=hg,
             )
         from arrow_lake.knowledge_graph.extractor import EntityExtractor
 

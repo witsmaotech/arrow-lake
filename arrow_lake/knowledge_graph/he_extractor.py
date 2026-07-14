@@ -115,8 +115,14 @@ class HyperExtractExtractor:
         doc_type_classifier: DocTypeClassifier | None = None,
         embedder: Any = None,
         kg_granularity: str = "dataset",
+        hugegraph_config: Any = None,
     ) -> None:
         self._llm_config = llm_config
+        # [#10/#2] HugeGraphConfig for he_chunk_size / he_ka_base_dir. Passed
+        # explicitly by _create_kg_extractor (previously relied on external
+        # monkey-patching of _config, which broke the search/chat path that
+        # instantiates the extractor without going through KGBuilder).
+        self._hugegraph_config = hugegraph_config
         self._router = doc_type_router
         self._language = language
         self._model = model
@@ -195,7 +201,7 @@ class HyperExtractExtractor:
         """
         from hyperextract import Template
 
-        cfg = self._config.hugegraph
+        cfg = self._hugegraph_config
         return Template.create(
             template_path,
             self._language,
@@ -209,7 +215,7 @@ class HyperExtractExtractor:
     def _ka_dir_for(self, dataset_name: str) -> Any:
         """[#2] Resolve the per-dataset KA dump dir (``he_ka_base_dir/{ds}/ka``)."""
         from pathlib import Path
-        return Path(self._config.hugegraph.he_ka_base_dir) / dataset_name / "ka"
+        return Path(self._hugegraph_config.he_ka_base_dir) / dataset_name / "ka"
 
     def load_ka_for_query(self, dataset_name: str) -> Any:
         """[#2] Load a dumped per-dataset KA for search/chat.
