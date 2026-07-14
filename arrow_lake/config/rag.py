@@ -165,6 +165,13 @@ class HugeGraphConfig(BaseModel):
         "report": "general/concept_graph",
         "manual": "general/workflow_graph",
         "biography": "general/biography_graph",
+        # [#9] 多领域项目模板 (arrow_lake/knowledge_graph/templates/*.yaml) —
+        # tight type/relation 枚举 + 必填定义，避免 general/concept_graph 的自由类型 +
+        # optional description 导致的 0% 描述 + 80+ 类型。override 优先于 gallery 自动匹配。
+        "medicine": "medical_concept_graph",
+        "legal": "legal_concept_graph",
+        "finance": "finance_concept_graph",
+        "ddd": "ddd_concept_graph",
     }
     he_language: Literal["zh", "en"] = "zh"
     he_model: str | None = None

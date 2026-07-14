@@ -1,0 +1,88 @@
+language: [zh, en]
+name: medical_concept_graph
+type: graph
+tags: [medical, medicine, clinical, healthcare, concept, 病历]
+description:
+  zh: '医疗/临床概念图 — 从病历、临床指南、医学文献提取医学概念与关系（general/concept_graph 的医疗领域特化：type/relation 严格枚举）'
+  en: 'Medical/clinical concept graph — extract medical concepts and relations from clinical records/guidelines/literature (domain-specialized concept_graph with strict type/relation enums)'
+
+output:
+  description:
+    zh: '医疗文档中的核心医学概念及其临床关联'
+    en: 'Core medical concepts and their clinical associations in healthcare docs'
+  entities:
+    description:
+      zh: '文档中的医学概念'
+      en: 'Medical concepts in the document'
+    fields:
+      - name: name
+        type: str
+        description: { zh: '概念名称', en: 'Concept name' }
+        required: true
+      - name: type
+        type: str
+        description:
+          zh: '按医学性质必须是以下之一：疾病(诊断/病症)/症状(临床表现)/药物(药品/制剂)/检查(检验/影像)/治疗(疗法/手术/方案)/解剖(器官/部位)/病因(病原/诱因)/指标(生理/化验值)。禁止"概念"等笼统值，必须选最具体匹配。'
+          en: 'Type by medical nature, MUST be one of: disease(diagnosis)/symptom(clinical sign)/drug(medication)/examination(test/imaging)/treatment(therapy/surgery)/anatomy(organ/site)/cause(pathogen/trigger)/indicator(physio/lab value). Generic "concept" forbidden; pick the most specific match.'
+        required: true
+      - name: definition
+        type: str
+        description: { zh: '概念的简要定义', en: 'Brief concept definition' }
+        required: false
+  relations:
+    description:
+      zh: '医学概念之间的临床关联'
+      en: 'Clinical associations between medical concepts'
+    fields:
+      - name: source
+        type: str
+        description: { zh: '源概念名称', en: 'Source concept name' }
+        required: true
+      - name: target
+        type: str
+        description: { zh: '目标概念名称', en: 'Target concept name' }
+        required: true
+      - name: type
+        type: str
+        description:
+          zh: '关系类型，必须是以下之一：导致/治疗/缓解/禁忌/位于/并发/诱发/属于。禁止自创其他值或混用英文。'
+          en: 'Relation type, MUST be one of: causes/treats/relieves/contraindicated_with/located_in/complicates/induces/is_a. Other values forbidden.'
+        required: true
+      - name: description
+        type: str
+        description: { zh: '关系说明', en: 'Relation description' }
+        required: false
+
+guideline:
+  target:
+    zh: '你是一位医学知识图谱专家，擅长从病历、临床指南、医学文献中提取疾病、症状、药物、检查、治疗等概念及其临床关联。'
+    en: 'You are a medical knowledge graph expert skilled at extracting diseases, symptoms, drugs, examinations, treatments and their clinical associations from clinical records, guidelines, and literature.'
+  rules_for_entities:
+    zh:
+      - '提取文档中明确定义的医学概念'
+      - '概念名称应使用规范医学术语'
+      - '同一概念在全文中保持命名一致'
+      - 'type 必须按医学性质选最具体匹配（疾病/症状/药物/检查/治疗/解剖/病因/指标），严禁用"概念"笼统归类'
+    en:
+      - 'Extract medical concepts explicitly defined in the document'
+      - 'Concept names should use standard medical terminology'
+      - 'Maintain consistent naming for the same concept throughout'
+      - 'type must be the most specific match by medical nature; generic "concept" is forbidden'
+  rules_for_relations:
+    zh:
+      - 'type 必须严格使用 description 列出的枚举值之一（导致/治疗/缓解/禁忌/位于/并发/诱发/属于），禁止自创或混用英文'
+      - '优先提取文档中明确说明的临床关系'
+      - '不要创建隐含的常识性关联，仅提取文档中明确说明的关系'
+    en:
+      - 'type must be one of the enumerated values in the description; no custom values'
+      - 'Prioritize explicitly stated clinical relationships'
+      - 'Do not create implicit common-sense associations, only extract explicitly stated relationships'
+
+identifiers:
+  entity_id: name
+  relation_id: '{source}|{type}|{target}'
+  relation_members: { source: source, target: target }
+
+display:
+  entity_label: '{name}'
+  relation_label: '{type}'

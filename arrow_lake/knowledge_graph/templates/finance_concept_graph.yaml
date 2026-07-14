@@ -1,0 +1,88 @@
+language: [zh, en]
+name: finance_concept_graph
+type: graph
+tags: [finance, financial, earnings, investment, concept, 金融, 财报]
+description:
+  zh: '金融/财报概念图 — 从财报、研报、金融文档提取金融概念与关系（general/concept_graph 的金融领域特化：type/relation 严格枚举）'
+  en: 'Finance/earnings concept graph — extract financial concepts and relations from earnings reports, research, financial docs (domain-specialized concept_graph with strict type/relation enums)'
+
+output:
+  description:
+    zh: '金融文档中的核心金融概念及其市场关联'
+    en: 'Core financial concepts and their market associations in finance docs'
+  entities:
+    description:
+      zh: '文档中的金融概念'
+      en: 'Financial concepts in the document'
+    fields:
+      - name: name
+        type: str
+        description: { zh: '概念名称', en: 'Concept name' }
+        required: true
+      - name: type
+        type: str
+        description:
+          zh: '按金融性质必须是以下之一：指标(财务/市场指标)/产品(金融产品/工具)/机构(银行/公司/交易所)/风险(风险类型)/资产(资产类别)/交易(交易类型/行为)/政策(监管/法规)/事件(市场事件)。禁止"概念"等笼统值，必须选最具体匹配。'
+          en: 'Type by financial nature, MUST be one of: indicator(financial/market metric)/product(financial product/instrument)/institution(bank/firm/exchange)/risk(risk type)/asset(asset class)/transaction(trade/action)/policy(regulation/rule)/event(market event). Generic "concept" forbidden; pick the most specific match.'
+        required: true
+      - name: definition
+        type: str
+        description: { zh: '概念的简要定义', en: 'Brief concept definition' }
+        required: false
+  relations:
+    description:
+      zh: '金融概念之间的市场关联'
+      en: 'Market associations between financial concepts'
+    fields:
+      - name: source
+        type: str
+        description: { zh: '源概念名称', en: 'Source concept name' }
+        required: true
+      - name: target
+        type: str
+        description: { zh: '目标概念名称', en: 'Target concept name' }
+        required: true
+      - name: type
+        type: str
+        description:
+          zh: '关系类型，必须是以下之一：影响/属于/导致/构成/投资/持有/相关/反映。禁止自创其他值或混用英文。'
+          en: 'Relation type, MUST be one of: affects/is_a/causes/composed_of/invests_in/holds/related_to/reflects. Other values forbidden.'
+        required: true
+      - name: description
+        type: str
+        description: { zh: '关系说明', en: 'Relation description' }
+        required: false
+
+guideline:
+  target:
+    zh: '你是一位金融知识图谱专家，擅长从财报、研报、金融文档中提取财务指标、金融产品、机构、风险、资产等概念及其市场关联。'
+    en: 'You are a finance knowledge graph expert skilled at extracting indicators, products, institutions, risks, assets and their market associations from financial documents.'
+  rules_for_entities:
+    zh:
+      - '提取文档中明确表述的金融概念'
+      - '概念名称应使用规范金融术语'
+      - '同一概念在全文中保持命名一致'
+      - 'type 必须按金融性质选最具体匹配（指标/产品/机构/风险/资产/交易/政策/事件），严禁用"概念"笼统归类'
+    en:
+      - 'Extract financial concepts explicitly expressed in the document'
+      - 'Concept names should use standard financial terminology'
+      - 'Maintain consistent naming for the same concept throughout'
+      - 'type must be the most specific match by financial nature; generic "concept" is forbidden'
+  rules_for_relations:
+    zh:
+      - 'type 必须严格使用 description 列出的枚举值之一（影响/属于/导致/构成/投资/持有/相关/反映），禁止自创或混用英文'
+      - '优先提取文档中明确说明的金融关系'
+      - '不要创建隐含的常识性关联，仅提取文档中明确说明的关系'
+    en:
+      - 'type must be one of the enumerated values in the description; no custom values'
+      - 'Prioritize explicitly stated financial relationships'
+      - 'Do not create implicit common-sense associations, only extract explicitly stated relationships'
+
+identifiers:
+  entity_id: name
+  relation_id: '{source}|{type}|{target}'
+  relation_members: { source: source, target: target }
+
+display:
+  entity_label: '{name}'
+  relation_label: '{type}'

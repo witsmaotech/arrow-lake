@@ -449,6 +449,24 @@ class DocTypeRouter:
             self._overrides[nt] = v
         self._default = default_template
         self._gallery = gallery if gallery is not None else _shared_gallery()
+        # [#9] name → absolute path for project templates (registered by file
+        # path, not a 'category/name' preset path). Lets he_doc_type_templates
+        # override values name a project template by bare name (e.g.
+        # "medical_concept_graph") instead of a machine-specific absolute path.
+        self._project_name_to_path: dict[str, str] = {
+            t.name: t.path for t in self._gallery.templates
+            if getattr(t, "category", "") == "project" and t.path
+        }
+
+    def _resolve_override_path(self, value: str) -> str:
+        """Resolve an override value to a loadable template path.
+
+        Project templates live at absolute file paths; allow overrides to name
+        them by bare name. Preset paths and existing file paths pass through.
+        """
+        if not value or os.path.isfile(value):
+            return value
+        return self._project_name_to_path.get(value.strip().lower(), value)
 
     def resolve(self, doc_type: str | None) -> str:
         """Return the template path for ``doc_type`` (normalized first)."""
@@ -481,7 +499,7 @@ class DocTypeRouter:
         nt = normalize_doc_type(doc_type)
         if nt:
             if nt in self._overrides:
-                return self._overrides[nt], "override"
+                return self._resolve_override_path(self._overrides[nt]), "override"
             hit = self._gallery.match(nt)
             if hit is not None:
                 if hit.is_high_risk:
