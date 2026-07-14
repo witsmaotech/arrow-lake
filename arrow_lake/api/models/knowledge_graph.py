@@ -174,7 +174,11 @@ class KGExportObsidianRequest(BaseModel):
 
 class KARollbackRequest(BaseModel):
     dataset: str = Field(..., min_length=1, max_length=256, pattern=r"^[a-zA-Z0-9_-]+$")
-    version: str = Field(..., min_length=1, max_length=64, description="Archived version id (from list-ka-versions).")
+    version: str = Field(
+        ..., min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_-]+$",
+        description="Archived version id (from list-ka-versions). Restricted to path-safe chars "
+                    "(defense-in-depth: rollback also requires the id to exist in the manifest).",
+    )
 
 
 class KAPruneRequest(BaseModel):
