@@ -315,6 +315,37 @@ class HyperExtractExtractor:
         self._ensure_ka_index(ka, dataset_name)
         return ka.chat(question, top_k=top_k)
 
+    def rebuild_ka_index(self, dataset_name: str) -> dict[str, Any]:
+        """[#7] Rebuild a dataset's KA FAISS index from its dump — no LLM re-extract.
+
+        Loads the dumped KA (data + whatever index), force-rebuilds the FAISS
+        index over the current nodes/edges, and persists it back to the dump.
+        Far cheaper than a full ``kg_build`` (no LLM extraction): use it when the
+        index is stale/corrupt, the embedder changed, or the dump predates
+        ``build_index``. arrow_lake has no incremental feed path — ``kg_build`` is
+        a full re-extract — so this is the lightweight index-only refresh.
+
+        Raises ``FileNotFoundError`` if no KA dump exists for ``dataset_name``.
+        """
+        ka_dir = self._ka_dir_for(dataset_name)
+        if not (ka_dir / "data.json").is_file():
+            raise FileNotFoundError(
+                f"no KA dump for dataset {dataset_name!r} at {ka_dir} — "
+                f"run kg_build first"
+            )
+        ka = self.load_ka_for_query(dataset_name)
+        ka.build_index()  # force rebuild (bypasses _ensure_ka_index's "already loaded" guard)
+        ka.dump(ka_dir)
+        nodes = getattr(getattr(ka, "_node_memory", None), "items", None) or []
+        edges = getattr(getattr(ka, "_edge_memory", None), "items", None) or []
+        return {
+            "dataset": dataset_name,
+            "index_rebuilt": True,
+            "node_count": len(nodes),
+            "edge_count": len(edges),
+            "ka_dir": str(ka_dir),
+        }
+
     def _parse_fresh(self, template_path: str, text: str) -> Any:
         """Create a ONE-SHOT hyper-extract KA and parse ``text``.
 

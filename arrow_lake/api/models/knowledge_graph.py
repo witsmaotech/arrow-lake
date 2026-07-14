@@ -147,6 +147,16 @@ class KGChatResponse(BaseModel):
     retrieval_count: int
 
 
+class KGRebuildIndexRequest(BaseModel):
+    dataset: str = Field(
+        ...,
+        min_length=1,
+        max_length=256,
+        pattern=r"^[a-zA-Z0-9_-]+$",
+        description="Lake dataset whose KA FAISS index to rebuild (must have a KA dump).",
+    )
+
+
 # ---------------------------------------------------------------------------
 # doc_type / template metadata (v1.8.8)
 # ---------------------------------------------------------------------------

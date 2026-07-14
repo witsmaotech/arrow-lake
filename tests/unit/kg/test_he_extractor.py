@@ -330,16 +330,16 @@ async def test_extract_batch_empty_input_returns_empty_list(
 # ---------------------------------------------------------------------------
 
 
-def _mem(has_index: bool) -> SimpleNamespace:
-    """A stand-in for hyper-extract OMem exposing has_index()."""
-    return SimpleNamespace(has_index=lambda: has_index)
+def _mem(has_index: bool, items=None) -> SimpleNamespace:
+    """A stand-in for hyper-extract OMem exposing has_index() + items."""
+    return SimpleNamespace(has_index=lambda: has_index, items=items or [])
 
 
 def _mock_ka(*, nodes=None, edges=None, has_index: bool = True) -> SimpleNamespace:
     """A stand-in for a loaded hyper-extract AutoGraph."""
     return SimpleNamespace(
-        _node_memory=_mem(has_index),
-        _edge_memory=_mem(has_index),
+        _node_memory=_mem(has_index, nodes),
+        _edge_memory=_mem(has_index, edges),
         build_index=lambda *a, **k: None,
         search=lambda query, top_k=5: (nodes or [], edges or []),
         chat=lambda question, top_k=5: SimpleNamespace(
@@ -393,3 +393,34 @@ def test_chat_ka_delegates_to_loaded_ka(
     resp = extractor.chat_ka("jd_ddd", "什么是聚合根", top_k=5)
     assert resp.content == "answer"
     assert resp.additional_kwargs["retrieved_items"] == [node]
+
+
+def test_rebuild_ka_index_loads_builds_dumps(
+    extractor: HyperExtractExtractor, tmp_path: SimpleNamespace,
+) -> None:
+    """[#7] rebuild loads the dump, force-rebuilds the index, and dumps back."""
+    import os
+    ka_dir = tmp_path / "ds" / "ka"
+    ka_dir.mkdir(parents=True)
+    (ka_dir / "data.json").write_text("{}", encoding="utf-8")  # dump exists
+    extractor._ka_dir_for = lambda ds: ka_dir  # type: ignore[method-assign]
+    node = SimpleNamespace(name="x", type="concept")
+    dumped = []
+    ka = _mock_ka(nodes=[node], has_index=False)
+    ka.dump = lambda d: dumped.append(str(d))  # type: ignore[method-assign]
+    extractor.load_ka_for_query = lambda ds: ka  # type: ignore[method-assign]
+
+    result = extractor.rebuild_ka_index("ds")
+    assert result["index_rebuilt"] is True
+    assert result["node_count"] == 1
+    assert dumped and dumped[0] == str(ka_dir)  # dumped back to same dir
+
+
+def test_rebuild_ka_index_raises_when_no_dump(
+    extractor: HyperExtractExtractor, tmp_path: SimpleNamespace,
+) -> None:
+    import pytest as _pytest
+    extractor._ka_dir_for = lambda ds: tmp_path / "nodump"  # type: ignore[method-assign]
+    with _pytest.raises(FileNotFoundError):
+        extractor.rebuild_ka_index("ds")
+

@@ -248,3 +248,19 @@ class TestKGEnabled:
         with pytest.raises(KGError) as exc_info:
             await lake.kg_chat("ds", "q")
         assert exc_info.value.error_code == ErrorCode.KG_QUERY_FAILED
+
+    @pytest.mark.asyncio()
+    async def test_kg_rebuild_index_delegates(self, lake: _TestLake) -> None:
+        """[#7] kg_rebuild_index delegates to extractor.rebuild_ka_index."""
+        ext = MagicMock()
+        ext.search_ka = MagicMock(return_value=([], []))  # marks as he extractor
+        ext.rebuild_ka_index = MagicMock(return_value={
+            "dataset": "ds", "index_rebuilt": True, "node_count": 7, "edge_count": 9,
+            "ka_dir": "/tmp/ka/ds/ka",
+        })
+        lake._components["kg_extractor"] = ext
+
+        result = await lake.kg_rebuild_index("ds")
+        ext.rebuild_ka_index.assert_called_once_with("ds")
+        assert result["index_rebuilt"] is True
+        assert result["node_count"] == 7

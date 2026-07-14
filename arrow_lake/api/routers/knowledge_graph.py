@@ -20,6 +20,7 @@ from arrow_lake.api.models.knowledge_graph import (
     KGChatRequest,
     KGChatResponse,
     KGDocType,
+    KGRebuildIndexRequest,
     KGDocTypesResponse,
     KGNeighborsResponse,
     KGQueryRequest,
@@ -299,6 +300,30 @@ async def kg_ask(
         )
     except KGError as exc:
         raise HTTPException(status_code=_kg_error_to_status(exc), detail=exc.message) from exc
+
+
+@router.post("/rebuild-index")
+async def kg_rebuild_index(
+    *,
+    req: KGRebuildIndexRequest,
+    lake: Any = Depends(get_lake),
+    _user: dict = Depends(require_role(Role.EDITOR)),
+    checker=Depends(get_checker),
+) -> dict[str, Any]:
+    """[#7] Rebuild a dataset's KA FAISS index from its dump (no LLM re-extract).
+
+    Lightweight index-only refresh — cheaper than ``kg_build``. Use when the
+    index is stale/corrupt or the embedder changed. Requires
+    ``extractor_backend=he`` and an existing KA dump. EDITOR+ (mutates the dump);
+    per-dataset read ACL still enforced.
+    """
+    _enforce_read_acl(checker, _user, req.dataset)
+    try:
+        return await lake.kg_rebuild_index(req.dataset)
+    except KGError as exc:
+        raise HTTPException(status_code=_kg_error_to_status(exc), detail=exc.message) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/doc-types", response_model=KGDocTypesResponse)

@@ -587,6 +587,26 @@ class _LakeKGMixin:
             "retrieval_count": len(retrieved or []),
         }
 
+    async def kg_rebuild_index(self, dataset_name: str) -> dict[str, Any]:
+        """[#7] Rebuild a dataset's KA FAISS index from its dump (no LLM re-extract).
+
+        Lightweight index-only refresh — cheaper than ``kg_build`` (no extraction).
+        Use when the index is stale/corrupt or the embedder changed. Requires
+        ``extractor_backend=he`` and an existing KA dump (i.e. ``kg_build`` ran).
+
+        Args:
+            dataset_name: Lake dataset whose KA index to rebuild.
+
+        Returns:
+            Dict with ``index_rebuilt``, node/edge counts, and the KA dump dir.
+
+        Raises:
+            KGError: If KG is disabled or the extractor is not ``he``.
+            FileNotFoundError: If no KA dump exists for ``dataset_name``.
+        """
+        extractor = self._get_he_extractor_or_raise()
+        return await asyncio.to_thread(extractor.rebuild_ka_index, dataset_name)
+
     # ------------------------------------------------------------------
     # doc_type / template metadata (v1.8.8) — pure metadata, no KG client
     # ------------------------------------------------------------------
