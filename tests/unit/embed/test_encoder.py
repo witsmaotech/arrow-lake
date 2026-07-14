@@ -643,7 +643,12 @@ class TestApiEmbeddingEncoder:
 
         mock_client.post.assert_called_once()
         call_args = mock_client.post.call_args
-        assert call_args[0][0] == "https://api.example.com/embeddings"
+        # ApiEmbeddingEncoder uses create_http_client(base_url=api_base) and
+        # posts the RELATIVE "/embeddings" path — httpx joins it with base_url
+        # at request time. So the POST arg is the relative path; the join target
+        # is enc.api_base (verified separately).
+        assert call_args[0][0] == "/embeddings"
+        assert enc.api_base == "https://api.example.com"
         payload = call_args[1]["json"]
         assert payload["model"] == "custom-model"
         assert payload["input"] == ["hello"]
