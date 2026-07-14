@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from arrow_lake._lake_kg import _LakeKGMixin
@@ -87,6 +88,18 @@ class TestKGDisabled:
             await lake.kg_build_status("task-123")
         assert exc_info.value.error_code == ErrorCode.KG_GRAPH_NOT_FOUND
 
+    @pytest.mark.asyncio()
+    async def test_kg_search_raises(self, lake: _TestLake) -> None:
+        with pytest.raises(KGError) as exc_info:
+            await lake.kg_search("ds", "q")
+        assert exc_info.value.error_code == ErrorCode.KG_GRAPH_NOT_FOUND
+
+    @pytest.mark.asyncio()
+    async def test_kg_chat_raises(self, lake: _TestLake) -> None:
+        with pytest.raises(KGError) as exc_info:
+            await lake.kg_chat("ds", "q")
+        assert exc_info.value.error_code == ErrorCode.KG_GRAPH_NOT_FOUND
+
 
 # ---------------------------------------------------------------------------
 # Tests: KG enabled -- basic flow with mocks
@@ -167,3 +180,71 @@ class TestKGEnabled:
 
         call_kwargs = mock_client.traverser_kneighbor.call_args
         assert call_kwargs.kwargs.get("depth") == max_depth
+
+    # ------------------------------------------------------------------
+    # [#2] KA semantic search / RAG chat (hyper-extract)
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio()
+    async def test_kg_search_delegates_and_serializes(self, lake: _TestLake) -> None:
+        """kg_search delegates to extractor.search_ka and serializes nodes/edges."""
+        node = SimpleNamespace(type="concept", name="聚合根", definition="一致性边界")
+        edge = SimpleNamespace(type="contains", source="聚合根", target="实体")
+        ext = MagicMock()
+        ext.search_ka = MagicMock(return_value=([node], [edge]))
+        lake._components["kg_extractor"] = ext
+
+        result = await lake.kg_search("jd_ddd", "聚合根是什么", top_k=5)
+        ext.search_ka.assert_called_once_with("jd_ddd", "聚合根是什么", 5)
+        assert result["node_count"] == 1 and result["edge_count"] == 1
+        assert result["nodes"][0]["name"] == "聚合根"
+        assert result["edges"][0]["type"] == "contains"
+
+    @pytest.mark.asyncio()
+    async def test_kg_search_clamps_top_k(self, lake: _TestLake) -> None:
+        """top_k is clamped to [1, 50]."""
+        ext = MagicMock()
+        ext.search_ka = MagicMock(return_value=([], []))
+        lake._components["kg_extractor"] = ext
+
+        await lake.kg_search("ds", "q", top_k=9999)
+        assert ext.search_ka.call_args.args[2] == 50  # clamped to max
+        await lake.kg_search("ds", "q", top_k=0)
+        assert ext.search_ka.call_args.args[2] == 1  # clamped to min
+
+    @pytest.mark.asyncio()
+    async def test_kg_chat_delegates(self, lake: _TestLake) -> None:
+        """kg_chat delegates to extractor.chat_ka and extracts answer + retrieved."""
+        retrieved = [SimpleNamespace(name="聚合根")]
+        resp = SimpleNamespace(
+            content="聚合根是数据修改的一致性边界。",
+            additional_kwargs={"retrieved_items": retrieved},
+        )
+        ext = MagicMock()
+        ext.chat_ka = MagicMock(return_value=resp)
+        lake._components["kg_extractor"] = ext
+
+        result = await lake.kg_chat("jd_ddd", "什么是聚合根", top_k=5)
+        ext.chat_ka.assert_called_once_with("jd_ddd", "什么是聚合根", 5)
+        assert "聚合根" in result["answer"]
+        assert result["retrieval_count"] == 1
+        assert result["retrieved_items"][0]["name"] == "聚合根"
+
+    @pytest.mark.asyncio()
+    async def test_kg_search_raises_when_legacy_extractor(self, lake: _TestLake) -> None:
+        """Legacy EntityExtractor (no search_ka) → KGError, not AttributeError."""
+        ext = MagicMock(spec=[])  # no attributes at all → hasattr(search_ka)=False
+        lake._components["kg_extractor"] = ext
+
+        with pytest.raises(KGError) as exc_info:
+            await lake.kg_search("ds", "q")
+        assert exc_info.value.error_code == ErrorCode.KG_QUERY_FAILED
+
+    @pytest.mark.asyncio()
+    async def test_kg_chat_raises_when_legacy_extractor(self, lake: _TestLake) -> None:
+        ext = MagicMock(spec=[])
+        lake._components["kg_extractor"] = ext
+
+        with pytest.raises(KGError) as exc_info:
+            await lake.kg_chat("ds", "q")
+        assert exc_info.value.error_code == ErrorCode.KG_QUERY_FAILED

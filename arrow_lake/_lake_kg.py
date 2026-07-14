@@ -36,6 +36,25 @@ def _scope_gremlin_to_graph(query: str, graph: str) -> str:
     return re.sub(r"^\s*g\.", f"{graph}.traversal().", query.lstrip())
 
 
+def _serialize_ka_item(item: Any) -> dict[str, Any]:
+    """Serialize a hyper-extract KA node/edge into a plain dict for JSON transport.
+
+    hyper-extract returns pydantic ``NodeSchema``/``EdgeSchema`` instances whose
+    fields depend on the template; ``.model_dump()`` covers them. Falls back to
+    ``__dict__`` for dataclasses / plain objects.
+    """
+    if isinstance(item, dict):
+        return item
+    if hasattr(item, "model_dump"):  # pydantic v2
+        try:
+            return item.model_dump()
+        except Exception:  # noqa: BLE001 — fall through to alternatives
+            pass
+    if hasattr(item, "__dict__"):
+        return {k: v for k, v in vars(item).items() if not k.startswith("_")}
+    return {"value": str(item)}
+
+
 class _LakeKGMixin:
     """Knowledge graph operations mixin for Lake class.
 
@@ -466,6 +485,106 @@ class _LakeKGMixin:
         with self._require_kg_client() as client:
             g = graph_name_for(dataset_name) if dataset_name else None
             return await client.get_stats(graph_name=g)
+
+    # ------------------------------------------------------------------
+    # [#2] KA semantic search / RAG chat (hyper-extract, v1.8.8)
+    # ------------------------------------------------------------------
+
+    def _get_he_extractor_or_raise(self) -> Any:
+        """Return the hyper-extract extractor, or raise if unsupported.
+
+        ``search_ka``/``chat_ka`` are only on ``HyperExtractExtractor``
+        (``extractor_backend=he``). The legacy ``EntityExtractor`` lacks them.
+        """
+        self._ensure_kg_enabled()
+        extractor = self._get_kg_extractor()
+        if extractor is None or not hasattr(extractor, "search_ka"):
+            raise KGError(
+                error_code=ErrorCode.KG_QUERY_FAILED,
+                message="KA semantic search/RAG requires extractor_backend=he",
+            )
+        return extractor
+
+    async def kg_search(
+        self,
+        dataset_name: str,
+        query: str,
+        *,
+        top_k: int = 5,
+    ) -> dict[str, Any]:
+        """[#2] Semantic search over a dataset's Knowledge Abstract (KA).
+
+        Retrieves entities (nodes) and relations (edges) whose names /
+        definitions are semantically similar to ``query``, via the FAISS index
+        built on the hyper-extract KA dump (``he_ka_base_dir/{ds}/ka``). This is
+        recall-by-meaning — complementary to ``kg_get_neighbors`` / Gremlin,
+        which recall by graph-edge hops. Requires ``extractor_backend=he``.
+
+        Args:
+            dataset_name: Lake dataset whose KA to search.
+            query: Natural-language search query.
+            top_k: Top-K nodes and edges to retrieve (1-50).
+
+        Returns:
+            Dict with ``nodes``, ``edges`` (serialized), and their counts.
+
+        Raises:
+            KGError: If KG is disabled, the extractor is not ``he``, or the KA
+                dump is missing / search fails.
+        """
+        top_k = max(1, min(int(top_k), 50))
+        extractor = self._get_he_extractor_or_raise()
+        nodes, edges = await asyncio.to_thread(
+            extractor.search_ka, dataset_name, query, top_k
+        )
+        nodes = nodes or []
+        edges = edges or []
+        return {
+            "nodes": [_serialize_ka_item(n) for n in nodes],
+            "edges": [_serialize_ka_item(e) for e in edges],
+            "node_count": len(nodes),
+            "edge_count": len(edges),
+        }
+
+    async def kg_chat(
+        self,
+        dataset_name: str,
+        question: str,
+        *,
+        top_k: int = 5,
+    ) -> dict[str, Any]:
+        """[#2] RAG Q&A over a dataset's Knowledge Abstract (KA).
+
+        Retrieves the top-K semantically-relevant nodes/edges and generates an
+        answer with the configured LLM. Returns the answer plus the retrieved
+        source items for citation. Requires ``extractor_backend=he``.
+
+        Args:
+            dataset_name: Lake dataset whose KA to query.
+            question: Natural-language question.
+            top_k: Top-K nodes and edges fed as RAG context (1-50).
+
+        Returns:
+            Dict with ``answer``, ``retrieved_items`` (serialized), and count.
+
+        Raises:
+            KGError: If KG is disabled, the extractor is not ``he``, or the KA
+                dump is missing / chat fails.
+        """
+        top_k = max(1, min(int(top_k), 50))
+        extractor = self._get_he_extractor_or_raise()
+        resp = await asyncio.to_thread(
+            extractor.chat_ka, dataset_name, question, top_k
+        )
+        answer = getattr(resp, "content", "") or ""
+        retrieved = (
+            getattr(resp, "additional_kwargs", {}) or {}
+        ).get("retrieved_items", [])
+        return {
+            "answer": answer,
+            "retrieved_items": [_serialize_ka_item(it) for it in (retrieved or [])],
+            "retrieval_count": len(retrieved or []),
+        }
 
     # ------------------------------------------------------------------
     # doc_type / template metadata (v1.8.8) — pure metadata, no KG client

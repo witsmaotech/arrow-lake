@@ -240,31 +240,50 @@ class HyperExtractExtractor:
         ka.load(ka_dir)
         return ka
 
+    def _ensure_ka_index(self, ka: Any, dataset_name: str) -> None:
+        """[#2] Build the KA FAISS index only when the loaded KA lacks one.
+
+        ``ka.load(ka_dir)`` already restores the index from the dump's
+        ``index/`` subdir when present (hyper-extract ``base.load``). Rebuilding
+        unconditionally wastes ~60s per query for large graphs, so we check the
+        in-memory index state and build only when missing (e.g. the dump had no
+        index, or index load failed). Errors are logged, not swallowed.
+        """
+        try:
+            need = not (
+                getattr(ka, "_node_memory", None) is not None and ka._node_memory.has_index()
+                and getattr(ka, "_edge_memory", None) is not None and ka._edge_memory.has_index()
+            )
+        except AttributeError:
+            need = True
+        if need:
+            try:
+                ka.build_index()
+            except Exception as exc:  # noqa: BLE001 — degrade to no-index (search will raise clearly)
+                logger.warning(
+                    "KA build_index failed for '%s' (search/chat will be unavailable): %s",
+                    dataset_name, exc,
+                )
+
     def search_ka(self, dataset_name: str, query: str, top_k: int = 5) -> tuple:
-        """[#2] Semantic search over a dataset's KA: load → build_index → search.
+        """[#2] Semantic search over a dataset's KA: load → ensure index → search.
 
         Returns ``(nodes, edges)`` (hyper-extract ``AutoGraph.search`` result).
         Enables definition-based semantic recall that HugeGraph's keyword/graph
         traversal cannot do.
         """
         ka = self.load_ka_for_query(dataset_name)
-        try:
-            ka.build_index()
-        except Exception:
-            pass  # index may already be loaded from the dump
+        self._ensure_ka_index(ka, dataset_name)
         return ka.search(query, top_k=top_k)
 
     def chat_ka(self, dataset_name: str, question: str, top_k: int = 5) -> Any:
-        """[#2] RAG Q&A over a dataset's KA: load → build_index → chat.
+        """[#2] RAG Q&A over a dataset's KA: load → ensure index → chat.
 
         Returns a langchain ``AIMessage`` (``.content`` = answer,
         ``.additional_kwargs['retrieved_items']`` = source nodes/edges).
         """
         ka = self.load_ka_for_query(dataset_name)
-        try:
-            ka.build_index()
-        except Exception:
-            pass
+        self._ensure_ka_index(ka, dataset_name)
         return ka.chat(question, top_k=top_k)
 
     def _parse_fresh(self, template_path: str, text: str) -> Any:

@@ -17,12 +17,16 @@ from arrow_lake.api.models.knowledge_graph import (
     KGBuildRequest,
     KGBuildResponse,
     KGBuildStatusResponse,
+    KGChatRequest,
+    KGChatResponse,
     KGDocType,
     KGDocTypesResponse,
     KGNeighborsResponse,
     KGQueryRequest,
     KGQueryResponse,
     KGSchemaResponse,
+    KGSearchRequest,
+    KGSearchResponse,
     KGStatsResponse,
     KGTemplateDetail,
     KGTemplateDetailResponse,
@@ -235,6 +239,63 @@ async def kg_stats(
             total_vertices=stats.get("total_vertices", 0),
             total_edges=stats.get("total_edges", 0),
             graph_enabled=True,
+        )
+    except KGError as exc:
+        raise HTTPException(status_code=_kg_error_to_status(exc), detail=exc.message) from exc
+
+
+@router.post("/search", response_model=KGSearchResponse)
+async def kg_search(
+    *,
+    req: KGSearchRequest,
+    lake: Any = Depends(get_lake),
+    _user: dict = Depends(require_role(Role.VIEWER)),
+    checker=Depends(get_checker),
+) -> KGSearchResponse:
+    """[#2] Semantic search over a dataset's Knowledge Abstract (KA).
+
+    Recall entities/relations by meaning (FAISS over node definitions) —
+    complementary to Gremlin / neighbor traversal. Requires
+    ``extractor_backend=he``. ``dataset`` scopes to the ``kg_{dataset}`` KA
+    dump; per-dataset read ACL is enforced.
+    """
+    _enforce_read_acl(checker, _user, req.dataset)
+    try:
+        t0 = time.perf_counter()
+        result = await lake.kg_search(req.dataset, req.query, top_k=req.top_k)
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        return KGSearchResponse(
+            nodes=result["nodes"],
+            edges=result["edges"],
+            node_count=result["node_count"],
+            edge_count=result["edge_count"],
+        )
+    except KGError as exc:
+        raise HTTPException(status_code=_kg_error_to_status(exc), detail=exc.message) from exc
+
+
+@router.post("/ask", response_model=KGChatResponse)
+async def kg_ask(
+    *,
+    req: KGChatRequest,
+    lake: Any = Depends(get_lake),
+    _user: dict = Depends(require_role(Role.VIEWER)),
+    checker=Depends(get_checker),
+) -> KGChatResponse:
+    """[#2] RAG Q&A over a dataset's Knowledge Abstract (KA).
+
+    Retrieves the top-K semantically-relevant nodes/edges and generates an
+    answer with the configured LLM. Requires ``extractor_backend=he``.
+    ``dataset`` scopes to the ``kg_{dataset}`` KA dump; per-dataset read ACL
+    is enforced.
+    """
+    _enforce_read_acl(checker, _user, req.dataset)
+    try:
+        result = await lake.kg_chat(req.dataset, req.question, top_k=req.top_k)
+        return KGChatResponse(
+            answer=result["answer"],
+            retrieved_items=result["retrieved_items"],
+            retrieval_count=result["retrieval_count"],
         )
     except KGError as exc:
         raise HTTPException(status_code=_kg_error_to_status(exc), detail=exc.message) from exc

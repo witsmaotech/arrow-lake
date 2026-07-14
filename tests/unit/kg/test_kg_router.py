@@ -357,3 +357,52 @@ class TestKGDocTypeMetadataEndpoints:
         client = TestClient(_make_app(lake))
         resp = client.get("/api/v1/kg/templates/no/such")
         assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/kg/search  +  POST /api/v1/kg/ask  (v1.8.8 [#2] KA RAG)
+# ---------------------------------------------------------------------------
+
+
+class TestKGSearchEndpoint:
+    def test_search_success(self) -> None:
+        lake = MockLake()
+        lake.kg_search = AsyncMock(return_value={
+            "nodes": [{"type": "concept", "name": "聚合根"}],
+            "edges": [],
+            "node_count": 1,
+            "edge_count": 0,
+        })
+        client = TestClient(_make_app(lake))
+        resp = client.post("/api/v1/kg/search", json={"dataset": "jd_ddd", "query": "聚合根", "top_k": 5})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["node_count"] == 1
+        assert data["nodes"][0]["name"] == "聚合根"
+        lake.kg_search.assert_awaited_once_with("jd_ddd", "聚合根", top_k=5)
+
+    def test_search_kg_not_enabled(self) -> None:
+        lake = MockLake()
+        lake.kg_search = AsyncMock(
+            side_effect=KGError(ErrorCode.KG_QUERY_FAILED, "requires extractor_backend=he")
+        )
+        client = TestClient(_make_app(lake))
+        resp = client.post("/api/v1/kg/search", json={"dataset": "ds", "query": "q"})
+        assert resp.status_code == 500  # KG_QUERY_FAILED → 500
+
+
+class TestKGAskEndpoint:
+    def test_ask_success(self) -> None:
+        lake = MockLake()
+        lake.kg_chat = AsyncMock(return_value={
+            "answer": "聚合根是一致性边界。",
+            "retrieved_items": [{"name": "聚合根"}],
+            "retrieval_count": 1,
+        })
+        client = TestClient(_make_app(lake))
+        resp = client.post("/api/v1/kg/ask", json={"dataset": "jd_ddd", "question": "什么是聚合根"})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "聚合根" in data["answer"]
+        assert data["retrieval_count"] == 1
+        lake.kg_chat.assert_awaited_once_with("jd_ddd", "什么是聚合根", top_k=5)

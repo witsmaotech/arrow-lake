@@ -323,3 +323,73 @@ async def test_extract_batch_empty_input_returns_empty_list(
     extractor: HyperExtractExtractor,
 ) -> None:
     assert await extractor.extract_batch([]) == []
+
+
+# ---------------------------------------------------------------------------
+# [#2] search_ka / chat_ka / _ensure_ka_index
+# ---------------------------------------------------------------------------
+
+
+def _mem(has_index: bool) -> SimpleNamespace:
+    """A stand-in for hyper-extract OMem exposing has_index()."""
+    return SimpleNamespace(has_index=lambda: has_index)
+
+
+def _mock_ka(*, nodes=None, edges=None, has_index: bool = True) -> SimpleNamespace:
+    """A stand-in for a loaded hyper-extract AutoGraph."""
+    return SimpleNamespace(
+        _node_memory=_mem(has_index),
+        _edge_memory=_mem(has_index),
+        build_index=lambda *a, **k: None,
+        search=lambda query, top_k=5: (nodes or [], edges or []),
+        chat=lambda question, top_k=5: SimpleNamespace(
+            content="answer",
+            additional_kwargs={"retrieved_items": nodes or []},
+        ),
+    )
+
+
+def test_ensure_ka_index_skips_when_index_present(
+    extractor: HyperExtractExtractor,
+) -> None:
+    """load() restores the index from the dump → build_index must NOT run."""
+    ka = _mock_ka(has_index=True)
+    calls = []
+    ka.build_index = lambda *a, **k: calls.append(1)
+    extractor._ensure_ka_index(ka, "ds")
+    assert calls == []  # skipped — index already loaded
+
+
+def test_ensure_ka_index_builds_when_missing(
+    extractor: HyperExtractExtractor,
+) -> None:
+    """No index after load → build_index runs once."""
+    ka = _mock_ka(has_index=False)
+    calls = []
+    ka.build_index = lambda *a, **k: calls.append(1)
+    extractor._ensure_ka_index(ka, "ds")
+    assert calls == [1]
+
+
+def test_search_ka_delegates_to_loaded_ka(
+    extractor: HyperExtractExtractor,
+) -> None:
+    node = SimpleNamespace(name="聚合根", type="concept")
+    ka = _mock_ka(nodes=[node], edges=[], has_index=True)
+    extractor.load_ka_for_query = lambda ds: ka  # type: ignore[method-assign]
+
+    nodes, edges = extractor.search_ka("jd_ddd", "聚合根", top_k=5)
+    assert nodes == [node]
+    assert edges == []
+
+
+def test_chat_ka_delegates_to_loaded_ka(
+    extractor: HyperExtractExtractor,
+) -> None:
+    node = SimpleNamespace(name="聚合根", type="concept")
+    ka = _mock_ka(nodes=[node], has_index=True)
+    extractor.load_ka_for_query = lambda ds: ka  # type: ignore[method-assign]
+
+    resp = extractor.chat_ka("jd_ddd", "什么是聚合根", top_k=5)
+    assert resp.content == "answer"
+    assert resp.additional_kwargs["retrieved_items"] == [node]

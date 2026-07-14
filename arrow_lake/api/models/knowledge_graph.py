@@ -106,6 +106,48 @@ class GraphRAGQueryRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# [#2] KA Semantic Search / RAG Chat (v1.8.8 — hyper-extract)
+# ---------------------------------------------------------------------------
+
+
+class KGSearchRequest(BaseModel):
+    dataset: str = Field(
+        ...,
+        min_length=1,
+        max_length=256,
+        pattern=r"^[a-zA-Z0-9_-]+$",
+        description="Lake dataset whose KA to search (the kg_{dataset} graph's KA dump).",
+    )
+    query: str = Field(..., min_length=1, max_length=2000, description="Natural-language search query")
+    top_k: int = Field(default=5, ge=1, le=50, description="Top-K nodes and edges to retrieve")
+
+
+class KGSearchResponse(BaseModel):
+    nodes: list[dict[str, Any]]
+    edges: list[dict[str, Any]]
+    node_count: int
+    edge_count: int
+
+
+class KGChatRequest(BaseModel):
+    dataset: str = Field(
+        ...,
+        min_length=1,
+        max_length=256,
+        pattern=r"^[a-zA-Z0-9_-]+$",
+        description="Lake dataset whose KA to query.",
+    )
+    question: str = Field(..., min_length=1, max_length=5000, description="Natural-language question")
+    top_k: int = Field(default=5, ge=1, le=50, description="Top-K nodes and edges fed as RAG context")
+
+
+class KGChatResponse(BaseModel):
+    answer: str
+    retrieved_items: list[dict[str, Any]]
+    retrieval_count: int
+
+
+# ---------------------------------------------------------------------------
 # doc_type / template metadata (v1.8.8)
 # ---------------------------------------------------------------------------
 
