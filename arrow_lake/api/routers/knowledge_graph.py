@@ -22,6 +22,8 @@ from arrow_lake.api.models.knowledge_graph import (
     KGDocType,
     KGRebuildIndexRequest,
     KGExportObsidianRequest,
+    KAPruneRequest,
+    KARollbackRequest,
     KGDocTypesResponse,
     KGNeighborsResponse,
     KGQueryRequest,
@@ -348,6 +350,54 @@ async def kg_export_obsidian(
         raise HTTPException(status_code=_kg_error_to_status(exc), detail=exc.message) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/ka-versions/{dataset}")
+async def kg_list_ka_versions(
+    dataset: str,
+    lake: Any = Depends(get_lake),
+    _user: dict = Depends(require_role(Role.VIEWER)),
+    checker=Depends(get_checker),
+) -> dict[str, Any]:
+    """[#11] List archived KA versions for a dataset (newest first). VIEWER+ read ACL."""
+    _enforce_read_acl(checker, _user, dataset)
+    try:
+        versions = await lake.kg_list_ka_versions(dataset)
+        return {"dataset": dataset, "versions": versions, "count": len(versions)}
+    except KGError as exc:
+        raise HTTPException(status_code=_kg_error_to_status(exc), detail=exc.message) from exc
+
+
+@router.post("/ka-rollback", dependencies=[Depends(require_role(Role.ADMIN))])
+async def kg_rollback_ka(
+    *,
+    req: KARollbackRequest,
+    lake: Any = Depends(get_lake),
+) -> dict[str, Any]:
+    """[#11] Restore a dataset's KA dump to a prior archived version.
+
+    ADMIN-only — mutates the active dump (current is archived first, so rollback
+    is reversible). Use ``list-ka-versions`` to find the ``version`` id.
+    """
+    try:
+        return await lake.kg_rollback_ka(req.dataset, req.version)
+    except KGError as exc:
+        raise HTTPException(status_code=_kg_error_to_status(exc), detail=exc.message) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/ka-prune", dependencies=[Depends(require_role(Role.ADMIN))])
+async def kg_prune_ka_versions(
+    *,
+    req: KAPruneRequest,
+    lake: Any = Depends(get_lake),
+) -> dict[str, Any]:
+    """[#11] Prune archived KA versions, keeping the newest ``keep``. ADMIN-only."""
+    try:
+        return await lake.kg_prune_ka_versions(req.dataset, keep=req.keep)
+    except KGError as exc:
+        raise HTTPException(status_code=_kg_error_to_status(exc), detail=exc.message) from exc
 
 
 @router.get("/doc-types", response_model=KGDocTypesResponse)

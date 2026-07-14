@@ -312,6 +312,18 @@ class KGBuilder:
                 dataset_doc_type, _sample, None,
             )
             ka_dir = self._ka_base_dir / task.dataset_name / "ka"
+            # [#11] Archive the current dump (if any) before overwrite so a
+            # regressive/failed rebuild can be rolled back. Then prune to the
+            # configured max versions to bound disk usage.
+            try:
+                from arrow_lake.knowledge_graph import ka_versioning
+                ka_versioning.archive_current(self._ka_base_dir, task.dataset_name)
+                _max = getattr(self._config, "he_ka_max_versions", 0) or 0
+                if _max > 0:
+                    ka_versioning.prune(self._ka_base_dir, task.dataset_name, keep=_max)
+            except Exception as exc:  # noqa: BLE001 — versioning is best-effort
+                logger.warning("KA versioning archive/prune failed for %s: %s",
+                               task.dataset_name, exc)
             dataset_ka = await self._extractor.build_dataset_ka(
                 template_path,
                 list(zip(chunk_ids, contents, strict=True)),

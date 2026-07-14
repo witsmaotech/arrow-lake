@@ -646,6 +646,45 @@ class _LakeKGMixin:
         )
 
     # ------------------------------------------------------------------
+    # [#11] KA dump versioning (archive is automatic on kg_build)
+    # ------------------------------------------------------------------
+
+    def _ka_versioning_base(self) -> Any:
+        from pathlib import Path
+
+        return Path(self._config.hugegraph.he_ka_base_dir)
+
+    async def kg_list_ka_versions(self, dataset_name: str) -> list[dict[str, Any]]:
+        """[#11] List archived KA versions for a dataset (newest first)."""
+        from arrow_lake.knowledge_graph import ka_versioning
+
+        self._ensure_kg_enabled()
+        return await asyncio.to_thread(
+            ka_versioning.list_versions, self._ka_versioning_base(), dataset_name,
+        )
+
+    async def kg_rollback_ka(self, dataset_name: str, version: str) -> dict[str, Any]:
+        """[#11] Restore a dataset's KA dump to a prior archived version.
+
+        The current active dump is archived first, so rollback is reversible.
+        """
+        from arrow_lake.knowledge_graph import ka_versioning
+
+        self._ensure_kg_enabled()
+        return await asyncio.to_thread(
+            ka_versioning.rollback, self._ka_versioning_base(), dataset_name, version,
+        )
+
+    async def kg_prune_ka_versions(self, dataset_name: str, keep: int = 5) -> dict[str, Any]:
+        """[#11] Prune archived KA versions, keeping the newest ``keep``."""
+        from arrow_lake.knowledge_graph import ka_versioning
+
+        self._ensure_kg_enabled()
+        return await asyncio.to_thread(
+            ka_versioning.prune, self._ka_versioning_base(), dataset_name, keep,
+        )
+
+    # ------------------------------------------------------------------
     # doc_type / template metadata (v1.8.8) — pure metadata, no KG client
     # ------------------------------------------------------------------
 

@@ -172,6 +172,16 @@ class KGExportObsidianRequest(BaseModel):
     )
 
 
+class KARollbackRequest(BaseModel):
+    dataset: str = Field(..., min_length=1, max_length=256, pattern=r"^[a-zA-Z0-9_-]+$")
+    version: str = Field(..., min_length=1, max_length=64, description="Archived version id (from list-ka-versions).")
+
+
+class KAPruneRequest(BaseModel):
+    dataset: str = Field(..., min_length=1, max_length=256, pattern=r"^[a-zA-Z0-9_-]+$")
+    keep: int = Field(default=5, ge=0, le=1000, description="Number of newest versions to keep.")
+
+
 # ---------------------------------------------------------------------------
 # doc_type / template metadata (v1.8.8)
 # ---------------------------------------------------------------------------
