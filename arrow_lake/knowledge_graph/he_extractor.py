@@ -214,8 +214,42 @@ class HyperExtractExtractor:
         """
         return self._create_ka(template_path).parse(text)
 
+    def _get_type_enum(self, template_path: str) -> list[str] | None:
+        """[#3] Extract the legal entity-type enum from a template's YAML
+        (the type field description's ``之一：A/B/C`` clause). Returns ``None``
+        when the template has no strict enum (generic concept_graph) — in that
+        case no post-filtering is applied. Cached per template_path so each
+        chunk reuses the parsed enum without re-reading the YAML."""
+        cache = self.__dict__.setdefault("_type_enum_cache", {})
+        if template_path in cache:
+            return cache[template_path]
+        import os
+        import re as _re
+        import hyperextract
+        yml = template_path if os.path.isfile(template_path) else os.path.join(
+            os.path.dirname(hyperextract.__file__), "templates", "presets",
+            template_path + ".yaml")
+        enum: list[str] | None = None
+        if os.path.isfile(yml):
+            try:
+                import yaml as _yaml
+                data = _yaml.safe_load(open(yml, encoding="utf-8"))
+                fields = ((data.get("output") or {}).get("entities") or {}).get("fields", [])
+                tf = next((f for f in fields if isinstance(f, dict) and f.get("name") == "type"), None)
+                if tf:
+                    desc = tf.get("description", {})
+                    dz = desc.get("zh", "") if isinstance(desc, dict) else str(desc or "")
+                    dz_clean = _re.sub(r"（[^）]*）|\([^)]*\)", "", dz)  # strip (说明) so '/' inside doesn't break split
+                    m = _re.search(r"之一[：:]\s*([^。]+)", dz_clean)
+                    if m:
+                        enum = [t.strip() for t in _re.split(r"[/、]", m.group(1)) if t.strip()]
+            except Exception:
+                enum = None
+        cache[template_path] = enum
+        return enum
+
     @staticmethod
-    def _ka_to_extraction_result(ka: Any, raw_text: str = "") -> ExtractionResult:
+    def _ka_to_extraction_result(ka: Any, raw_text: str = "", valid_types: list[str] | None = None) -> ExtractionResult:
         """Convert a hyper-extract KA (``nodes``/``edges``) to an ExtractionResult.
 
         Applies the same §11.3 stopword filter + endpoint validity as legacy
@@ -241,6 +275,12 @@ class HyperExtractExtractor:
             if not name or len(name) <= 1 or name in _GENERIC_ENTITY_STOPWORDS:
                 continue
             entity_type = str(getattr(n, "type", "") or "").strip() or "未知"
+            # [#3] type post-filter: LLM occasionally (~5%) emits a type outside
+            # the template's strict enum (e.g. "概念" after we removed it). Snap
+            # non-enum types to "实体" (most generic in the enum) so the graph's
+            # type distribution stays within the template's vocabulary.
+            if valid_types and entity_type != "未知" and entity_type not in valid_types:
+                entity_type = "实体" if "实体" in valid_types else valid_types[0]
             definition = str(getattr(n, "definition", "") or "").strip()
             props = (("definition", definition),) if definition else ()
             entities.append(ExtractedEntity(
@@ -308,6 +348,7 @@ class HyperExtractExtractor:
             doc_type = await self._infer_doc_type(stripped)
 
         template_path = self._router.resolve(doc_type)
+        self._current_type_enum = self._get_type_enum(template_path)
         try:
             # Fresh KA per parse (no shared mutable state across chunks).
             result = await asyncio.to_thread(self._parse_fresh, template_path, stripped)
@@ -341,7 +382,8 @@ class HyperExtractExtractor:
                 )
                 return ExtractionResult(entities=(), relations=(), raw_text=text)
 
-        return self._ka_to_extraction_result(result, text)
+        return self._ka_to_extraction_result(
+            result, text, valid_types=getattr(self, "_current_type_enum", None))
 
     async def build_dataset_ka(
         self,
