@@ -195,11 +195,15 @@ class HyperExtractExtractor:
         """
         from hyperextract import Template
 
+        cfg = self._config.hugegraph
         return Template.create(
             template_path,
             self._language,
             llm_client=self._get_chat_client(),
             embedder=self._embedder,
+            chunk_size=cfg.he_chunk_size,
+            chunk_overlap=cfg.he_chunk_overlap,
+            max_workers=cfg.he_max_workers,
         )
 
     def _parse_fresh(self, template_path: str, text: str) -> Any:

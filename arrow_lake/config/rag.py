@@ -179,6 +179,11 @@ class HugeGraphConfig(BaseModel):
     # ``base_uri`` is a bucket name ("arrow-lake") and must NOT be used here.
     # Defaults to /data/ka (same volume as metaflow in the deploy compose).
     he_ka_base_dir: str = "/data/ka"
+    # hyper-extract chunking / concurrency tuning (#10) — passed through to
+    # Template.create → AutoGraph.__init__. Defaults match hyper-extract.
+    he_chunk_size: int = 2048
+    he_chunk_overlap: int = 256
+    he_max_workers: int = 10
 
     @field_validator("max_traversal_depth")
     @classmethod
