@@ -83,8 +83,10 @@ class TestBuildDatasetKa:
         assert isinstance(dka.result, ExtractionResult)
 
     def test_provenance_records_first_appearance_chunk(self, tmp_path):
-        # Arrange — B appears in c0 and c1; first appearance is c0 only
-        fake = _FakeKA(per_chunk_names=[{"A", "B"}, {"B", "C"}, {"D"}])
+        # Arrange — ent_b appears in c0 and c1; first appearance is c0 only.
+        # Names are multi-char: _ka_to_extraction_result filters len<=1 names
+        # (e3b4f09 single-char LLM-noise filter), so single letters would drop.
+        fake = _FakeKA(per_chunk_names=[{"ent_a", "ent_b"}, {"ent_b", "ent_c"}, {"ent_d"}])
         ext = _make_extractor(fake)
         chunks = [("c0", "t0"), ("c1", "t1"), ("c2", "t2")]
 
@@ -92,12 +94,12 @@ class TestBuildDatasetKa:
             ext.build_dataset_ka("tpl", chunks, tmp_path / "ka", checkpoint_every=0)
         )
 
-        # first-appearance: A→c0, B→c0 (NOT c1), C→c1, D→c2
-        assert dka.entity_chunks["A"] == ["c0"]
-        assert dka.entity_chunks["B"] == ["c0"]
-        assert dka.entity_chunks["C"] == ["c1"]
-        assert dka.entity_chunks["D"] == ["c2"]
-        assert {e.name for e in dka.result.entities} == {"A", "B", "C", "D"}
+        # first-appearance: ent_a→c0, ent_b→c0 (NOT c1), ent_c→c1, ent_d→c2
+        assert dka.entity_chunks["ent_a"] == ["c0"]
+        assert dka.entity_chunks["ent_b"] == ["c0"]
+        assert dka.entity_chunks["ent_c"] == ["c1"]
+        assert dka.entity_chunks["ent_d"] == ["c2"]
+        assert {e.name for e in dka.result.entities} == {"ent_a", "ent_b", "ent_c", "ent_d"}
 
     def test_empty_chunks_are_skipped(self, tmp_path):
         fake = _FakeKA(per_chunk_names=[{"A"}, {"B"}])
@@ -111,8 +113,9 @@ class TestBuildDatasetKa:
         assert fake.feed_count == 2                # c1/c2 (empty) skipped
 
     def test_failed_feed_is_skipped_and_loop_continues(self, tmp_path):
-        # fail_on={1} → c1 feed raises; A(c0) and C(c2) still extracted, B(c1) lost
-        fake = _FakeKA(per_chunk_names=[{"A"}, {"B"}, {"C"}], fail_on={1})
+        # fail_on={1} → c1 feed raises; ent_a(c0) and ent_c(c2) still extracted,
+        # ent_b(c1) lost. Multi-char names (single-char filtered, see above).
+        fake = _FakeKA(per_chunk_names=[{"ent_a"}, {"ent_b"}, {"ent_c"}], fail_on={1})
         ext = _make_extractor(fake)
         chunks = [("c0", "t0"), ("c1", "t1"), ("c2", "t2")]
 
@@ -122,8 +125,8 @@ class TestBuildDatasetKa:
 
         assert fake.feed_count == 2                # c1 failed, not counted
         names = {e.name for e in dka.result.entities}
-        assert "A" in names and "C" in names
-        assert "B" not in names                    # B's chunk (c1) failed
+        assert "ent_a" in names and "ent_c" in names
+        assert "ent_b" not in names                # ent_b's chunk (c1) failed
 
     def test_checkpoint_dumps_at_interval_plus_final(self, tmp_path):
         fake = _FakeKA(per_chunk_names=[{"A"}, {"B"}, {"C"}])

@@ -562,7 +562,13 @@ def validate_taxonomy(gallery: TemplateGallery | None = None) -> list[str]:
                 f"classifier label {label!r} has no alias entry in DOC_TYPE_ALIASES"
             )
     cats = {t.category for t in gallery.templates}
+    # 'project' is a template-source marker (project-local vs hyper-extract
+    # preset), not a doc_type — project templates route via explicit override
+    # (he_doc_type_templates), so it is expected + not drift.
+    _non_doc_type_categories = frozenset({"project"})
     for cat in sorted(cats):
+        if cat in _non_doc_type_categories:
+            continue
         if cat not in KNOWN_DOC_TYPES:
             warnings.append(
                 f"gallery category {cat!r} not in KNOWN_DOC_TYPES (will only match via explicit override)"

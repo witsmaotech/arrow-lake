@@ -469,11 +469,14 @@ async def test_execute_build_double_writes_typed_vertices(
     await builder.execute_build(task_id)
 
     labels = [v["label"] for v in _all_vertices(mock_client)]
-    # Alice→entity+person, Acme→entity+organization, Scheme→entity+concept
+    # Alice→entity+person, Acme→entity+organization (typed double-write kept for
+    # concrete types). Scheme→entity only: 662075b removed the concept double-
+    # write (concept was an over-broad generic sink causing 双写孤岛), so no
+    # 'concept' typed vertex is produced.
     assert labels.count("entity") >= 3
     assert "person" in labels
     assert "organization" in labels
-    assert "concept" in labels
+    assert "concept" not in labels
 
 
 @pytest.mark.asyncio

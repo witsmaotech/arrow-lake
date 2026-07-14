@@ -135,7 +135,10 @@ async def test_extract_converts_nodes_to_entities_with_type_normalization(
 
     assert isinstance(result, ExtractionResult)
     assert [e.name for e in result.entities] == ["Alice", "Acme"]
-    assert [e.entity_type for e in result.entities] == ["person", "organization"]
+    # entity_type keeps the LLM-extracted RAW type — _ka_to_extraction_result
+    # intentionally does NOT call _normalize_type (it collapsed every Chinese
+    # type to "concept"; see its inline comment). So English types stay as-is.
+    assert [e.entity_type for e in result.entities] == ["Person", "Organization"]
     assert result.raw_text == "Alice works at Acme"
 
 

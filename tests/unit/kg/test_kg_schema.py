@@ -106,7 +106,9 @@ def test_arrow_lake_kg_schema_structure() -> None:
 
     # Property keys must cover all vertex/edge properties
     assert len(schema.property_keys) > 0
-    assert len(schema.index_labels) > 0
+    # index_labels intentionally empty (e3b4f09 removed the redundant
+    # primary_key index); verify it stays empty rather than re-appearing.
+    assert len(schema.index_labels) == 0
 
 
 # ---------------------------------------------------------------------------
