@@ -396,6 +396,23 @@ class HugeGraphClient(_TraverserMixin, _ImportExportMixin):
             TimeoutError,
             httpx.TimeoutException,
         ) as exc:
+            # Graph creation is slow (rocksdb data_path init + schema). The
+            # POST often times out client-side even though the server created
+            # the graph — re-verify before declaring failure to avoid a
+            # false-negative WARNING (seen recurring: build proceeds fine on
+            # the next schema POST, but the log scares). Mirrors the top-of-
+            # method existence check.
+            try:
+                graphs = await self.list_graphs()
+                if name in graphs:
+                    logger.info(
+                        "Graph '%s' created (verified after slow/failed POST: %s)",
+                        name,
+                        exc,
+                    )
+                    return True
+            except (ConnectionError, httpx.HTTPStatusError, OSError):
+                pass
             logger.warning("Failed to create graph '%s': %s", name, exc)
             return False
 

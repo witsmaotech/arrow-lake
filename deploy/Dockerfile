@@ -59,9 +59,9 @@ ENV https_proxy=${BUILD_PROXY}
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv venv .venv \
     && . .venv/bin/activate \
-    && uv pip install --no-cache-dir ".[fts,otel,rag,he,document,docling,chunking-full,dedup,nemo-curator,gpu]" \
-    && uv pip install --no-cache-dir jupyterlab ipywidgets \
-    && uv pip install --no-cache-dir modelscope>=1.18 PyJWT "apache-gravitino==1.2.1" "boto3==1.43.0" "botocore==1.43.0"
+    && uv pip install ".[fts,otel,rag,he,document,docling,chunking-full,dedup,nemo-curator,gpu]" \
+    && uv pip install jupyterlab ipywidgets \
+    && uv pip install modelscope>=1.18 PyJWT "apache-gravitino==1.2.1" "boto3==1.43.0" "botocore==1.43.0"
 
 # docling 模型运行时经 HF_HOME 持久卷下载(compose docling-cache 卷)，首次下载后复用
 # 放弃镜像内预取: 构建容器下载 HF 模型受网络/代理限制(SSL/限流)，运行时卷兜底已验证可用且构建快

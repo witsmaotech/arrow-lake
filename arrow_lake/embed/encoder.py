@@ -336,6 +336,7 @@ class ApiEmbeddingEncoder:
         from arrow_lake.core.http import create_http_client
 
         self._client = create_http_client(
+            base_url=self.api_base,
             timeout=self.timeout_seconds,
             headers=headers,
             limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
@@ -370,7 +371,7 @@ class ApiEmbeddingEncoder:
         )
         def _do_encode(texts_to_encode: list[str]) -> EmbeddingBatch:
             response = self._client.post(
-                f"{self.api_base}/embeddings",
+                "/embeddings",
                 json={
                     "model": self.model_name,
                     "input": texts_to_encode,

@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 500" font-family="DejaVu Sans, Arial, sans-serif"><defs>
+<linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0b1220"/><stop offset="1" stop-color="#0f172a"/></linearGradient>
+<marker id="m-cyan" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#22d3ee"/></marker>
+<marker id="m-emer" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#34d399"/></marker>
+<marker id="m-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#fbbf24"/></marker>
+<marker id="m-violet" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#a78bfa"/></marker>
+<marker id="m-rose" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#fb7185"/></marker>
+<marker id="m-slate" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#60a5fa"/></marker>
+</defs>
+<rect x="0" y="0" width="1180" height="500" fill="url(#bg)"/>
+<text x="60" y="60" font-size="26" font-weight="800" letter-spacing="1.5" fill="#f8fafc">KG BUILD  ·  ASYNC</text>
+<rect x="60" y="70" width="110" height="3" fill="#fb7185"/>
+<text x="60" y="98" font-size="12.5" fill="#94a3b8">kg_build() returns task_id immediately; Ray worker builds via Vermeer -&gt; HugeGraph</text>
+<rect x="40" y="150" width="150" height="80" rx="10" fill="#1e293b" stroke="#34d399" stroke-width="1.6"/>
+<rect x="40" y="162" width="3" height="56" rx="1.5" fill="#34d399"/>
+<text x="56" y="172" font-size="9.5" font-weight="700" letter-spacing="1.3" fill="#34d399">CLIENT</text>
+<text x="56" y="194" font-size="14" font-weight="700" fill="#f8fafc">Client</text>
+<text x="56" y="212" font-size="10.5" fill="#94a3b8">kg_build(ds)</text>
+<rect x="240" y="150" width="170" height="80" rx="10" fill="#1e293b" stroke="#22d3ee" stroke-width="1.6"/>
+<rect x="240" y="162" width="3" height="56" rx="1.5" fill="#22d3ee"/>
+<text x="256" y="172" font-size="9.5" font-weight="700" letter-spacing="1.3" fill="#22d3ee">FACADE</text>
+<text x="256" y="194" font-size="14" font-weight="700" fill="#f8fafc">Lake.kg_build</text>
+<text x="256" y="212" font-size="10.5" fill="#94a3b8">async entry</text>
+<rect x="470" y="150" width="190" height="80" rx="10" fill="#1e293b" stroke="#60a5fa" stroke-width="1.6"/>
+<rect x="470" y="162" width="3" height="56" rx="1.5" fill="#60a5fa"/>
+<text x="486" y="172" font-size="9.5" font-weight="700" letter-spacing="1.3" fill="#60a5fa">TASK</text>
+<text x="486" y="194" font-size="14" font-weight="700" fill="#f8fafc">TaskManager</text>
+<text x="486" y="212" font-size="10.5" fill="#94a3b8">Redis HASH</text>
+<rect x="150" y="330" width="170" height="80" rx="10" fill="#1e293b" stroke="#fbbf24" stroke-width="1.6"/>
+<rect x="150" y="342" width="3" height="56" rx="1.5" fill="#fbbf24"/>
+<text x="166" y="352" font-size="9.5" font-weight="700" letter-spacing="1.3" fill="#fbbf24">SCAN</text>
+<text x="166" y="374" font-size="14" font-weight="700" fill="#f8fafc">Scan Dataset</text>
+<text x="166" y="392" font-size="10.5" fill="#94a3b8">Lance rows</text>
+<rect x="380" y="330" width="200" height="80" rx="10" fill="#1e293b" stroke="#fbbf24" stroke-width="1.6"/>
+<rect x="380" y="342" width="3" height="56" rx="1.5" fill="#fbbf24"/>
+<text x="396" y="352" font-size="9.5" font-weight="700" letter-spacing="1.3" fill="#fbbf24">EXTRACT</text>
+<text x="396" y="374" font-size="14" font-weight="700" fill="#f8fafc">Entity / Relation</text>
+<text x="396" y="392" font-size="10.5" fill="#94a3b8">LLM qwen2.5</text>
+<rect x="640" y="330" width="170" height="80" rx="10" fill="#1e293b" stroke="#a78bfa" stroke-width="1.6"/>
+<rect x="640" y="342" width="3" height="56" rx="1.5" fill="#a78bfa"/>
+<text x="656" y="352" font-size="9.5" font-weight="700" letter-spacing="1.3" fill="#a78bfa">BUILD</text>
+<text x="656" y="374" font-size="14" font-weight="700" fill="#f8fafc">Vermeer</text>
+<text x="656" y="392" font-size="10.5" fill="#94a3b8">parallel graph</text>
+<rect x="870" y="330" width="170" height="80" rx="10" fill="#1e293b" stroke="#fb7185" stroke-width="1.6"/>
+<rect x="870" y="342" width="3" height="56" rx="1.5" fill="#fb7185"/>
+<text x="886" y="352" font-size="9.5" font-weight="700" letter-spacing="1.3" fill="#fb7185">STORE</text>
+<text x="886" y="374" font-size="14" font-weight="700" fill="#f8fafc">HugeGraph</text>
+<text x="886" y="392" font-size="10.5" fill="#94a3b8">Gremlin</text>
+<line x1="190" y1="190" x2="238" y2="190" stroke="#22d3ee" stroke-width="2.2" stroke-linecap="round" marker-end="url(#m-cyan)"/>
+<text x="214.0" y="182.0" font-size="10" font-weight="600" fill="#22d3ee" text-anchor="middle">kg_build(ds)</text>
+<line x1="410" y1="190" x2="468" y2="190" stroke="#22d3ee" stroke-width="2.2" stroke-linecap="round" marker-end="url(#m-cyan)"/>
+<path d="M 565,150 L 565,80 L 115,80 L 115,150" fill="none" stroke="#60a5fa" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="5,3" marker-end="url(#m-slate)"/>
+<text x="340" y="74" font-size="11" font-weight="600" fill="#60a5fa" text-anchor="middle">task_id (immediate, non-blocking)</text>
+<path d="M 565,230 L 565,270 L 235,270 L 235,330" fill="none" stroke="#fbbf24" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#m-amber)"/>
+<text x="380" y="262" font-size="10.5" font-weight="600" fill="#fbbf24">dispatch</text>
+<line x1="320" y1="370" x2="378" y2="370" stroke="#22d3ee" stroke-width="2.2" stroke-linecap="round" marker-end="url(#m-cyan)"/>
+<line x1="580" y1="370" x2="638" y2="370" stroke="#22d3ee" stroke-width="2.2" stroke-linecap="round" marker-end="url(#m-cyan)"/>
+<line x1="810" y1="370" x2="868" y2="370" stroke="#fb7185" stroke-width="2.0" stroke-linecap="round" stroke-dasharray="5,3" marker-end="url(#m-rose)"/>
+<text x="839.0" y="362.0" font-size="10" font-weight="600" fill="#fb7185" text-anchor="middle">write</text>
+<path d="M 955,330 L 955,290 L 565,290 L 565,230" fill="none" stroke="#60a5fa" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="5,3" marker-end="url(#m-slate)"/>
+<text x="760" y="282" font-size="10.5" font-weight="600" fill="#60a5fa">status: DONE / FAILED</text>
+</svg>

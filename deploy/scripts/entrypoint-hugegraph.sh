@@ -155,6 +155,32 @@ apply_rocksdb "rocksdb.level0_slowdown_writes_trigger" "${HG_ROCKSDB_LEVEL0_SLOW
 apply_rocksdb "rocksdb.level0_stop_writes_trigger"     "${HG_ROCKSDB_LEVEL0_STOP:-72}"
 log "rocksdb write-path tuning applied to $HG_CONF"
 
+# ── Clean orphan per-dataset graph backends (ghost graphs) ───────────
+# HugeGraph rocksdb single-node: dropping/clearing a dynamic per-dataset
+# graph — or a create that 500'd mid-init — can leave a backend dir under
+# /var/lib/hugegraph/graphs/ AFTER the in-memory GraphManager (and sometimes
+# the conf/graphs/{name}.properties registration) is gone. On the next
+# hg-server start the manager doesn't know the graph, but the orphan rocksdb
+# dir blocks re-creation (ensure_graph POST → 500 conflict — recurring
+# "Failed to create graph" in kg_build). Scan at every startup and remove any
+# backend dir whose graph is not registered (no matching .properties).
+# Override: SKIP_ORPHAN_GRAPH_CLEANUP=1 disables.
+GRAPHS_BACKEND_DIR="${HG_GRAPHS_BACKEND_DIR:-/var/lib/hugegraph/graphs}"
+GRAPHS_CONF_DIR="${HG_GRAPHS_CONF_DIR:-/hugegraph-server/conf/graphs}"
+if [ -z "${SKIP_ORPHAN_GRAPH_CLEANUP:-}" ] && [ -d "$GRAPHS_BACKEND_DIR" ] && [ -d "$GRAPHS_CONF_DIR" ]; then
+    _orphans=0
+    for _dir in "$GRAPHS_BACKEND_DIR"/*/; do
+        [ -d "$_dir" ] || continue
+        _name="$(basename "$_dir")"
+        if [ ! -f "$GRAPHS_CONF_DIR/${_name}.properties" ]; then
+            log "Removing orphan graph backend '${_name}' (no conf/${_name}.properties) — ghost-graph cleanup"
+            rm -rf "${_dir%/}"
+            _orphans=$((_orphans + 1))
+        fi
+    done
+    [ "$_orphans" -gt 0 ] && log "Removed ${_orphans} orphan graph backend(s)"
+fi
+
 # NOTE: JVM heap is managed in docker-compose (JAVA_OPTS env, set per deployment
 # in the hg-server service — e.g. prod_minimal.yml) so it stays in sync with the
 # cgroup memory limit. Do NOT export JAVA_OPTS here: ${JAVA_OPTS:-default} would

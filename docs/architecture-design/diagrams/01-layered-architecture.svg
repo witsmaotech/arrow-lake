@@ -1,0 +1,130 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 820" font-family="DejaVu Sans, Arial, sans-serif"><defs>
+<linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0b1220"/><stop offset="1" stop-color="#0f172a"/></linearGradient>
+<marker id="m-cyan" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#22d3ee"/></marker>
+<marker id="m-emer" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#34d399"/></marker>
+<marker id="m-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#fbbf24"/></marker>
+<marker id="m-violet" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#a78bfa"/></marker>
+<marker id="m-rose" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#fb7185"/></marker>
+<marker id="m-slate" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#60a5fa"/></marker>
+</defs>
+<rect x="0" y="0" width="1280" height="820" fill="url(#bg)"/>
+<text x="60" y="62" font-size="30" font-weight="800" letter-spacing="2" fill="#f8fafc">ARROW LAKE</text>
+<rect x="60" y="74" width="120" height="3" fill="#22d3ee"/>
+<text x="60" y="100" font-size="13" fill="#22d3ee">v1.8.6 · Multimodal Data Lakehouse</text>
+<text x="60" y="120" font-size="12" fill="#94a3b8">Layered Architecture — request flow descends five tiers; governance spans all.</text>
+<rect x="100" y="150" width="940" height="118" rx="12" fill="#243349" fill-opacity="0.32" stroke="#1c2740" stroke-width="1"/>
+<rect x="100" y="150" width="4" height="118" fill="#22d3ee"/>
+<text x="122" y="190" font-size="22" font-weight="800" fill="#22d3ee">01</text>
+<text x="122" y="212" font-size="11" font-weight="700" letter-spacing="1.2" fill="#f8fafc">ENTRY</text>
+<rect x="230" y="170" width="240" height="78" rx="10" fill="#1e293b" stroke="#22d3ee" stroke-width="1.6"/>
+<rect x="230" y="182" width="3" height="54" rx="1.5" fill="#22d3ee"/>
+<text x="246" y="192" font-size="9.5" font-weight="700" letter-spacing="1.3" fill="#22d3ee">SDK</text>
+<text x="246" y="214" font-size="14" font-weight="700" fill="#f8fafc">Python · Lake facade</text>
+<text x="246" y="232" font-size="10.5" fill="#94a3b8">9 mixin</text>
+<rect x="510" y="170" width="240" height="78" rx="10" fill="#1e293b" stroke="#22d3ee" stroke-width="1.6"/>
+<rect x="510" y="182" width="3" height="54" rx="1.5" fill="#22d3ee"/>
+<text x="526" y="192" font-size="9.5" font-weight="700" letter-spacing="1.3" fill="#22d3ee">REST</text>
+<text x="526" y="214" font-size="14" font-weight="700" fill="#f8fafc">FastAPI</text>
+<text x="526" y="232" font-size="10.5" fill="#94a3b8">106 routes · RBAC</text>
+<rect x="790" y="170" width="240" height="78" rx="10" fill="#1e293b" stroke="#22d3ee" stroke-width="1.6"/>
+<rect x="790" y="182" width="3" height="54" rx="1.5" fill="#22d3ee"/>
+<text x="806" y="192" font-size="9.5" font-weight="700" letter-spacing="1.3" fill="#22d3ee">CLI</text>
+<text x="806" y="214" font-size="14" font-weight="700" fill="#f8fafc">arrow-lake</text>
+<text x="806" y="232" font-size="10.5" fill="#94a3b8">16 groups</text>
+<rect x="100" y="278" width="940" height="118" rx="12" fill="#243349" fill-opacity="0.32" stroke="#1c2740" stroke-width="1"/>
+<rect x="100" y="278" width="4" height="118" fill="#34d399"/>
+<text x="122" y="318" font-size="22" font-weight="800" fill="#34d399">02</text>
+<text x="122" y="340" font-size="11" font-weight="700" letter-spacing="1.2" fill="#f8fafc">CAPABILITIES</text>
+<rect x="230" y="298" width="240" height="78" rx="10" fill="#1e293b" stroke="#34d399" stroke-width="1.6"/>
+<rect x="230" y="310" width="3" height="54" rx="1.5" fill="#34d399"/>
+<text x="246" y="320" font-size="9.5" font-weight="700" letter-spacing="1.3" fill="#34d399">INGEST</text>
+<text x="246" y="342" font-size="14" font-weight="700" fill="#f8fafc">write-in path</text>
+<text x="246" y="360" font-size="10.5" fill="#94a3b8">parse · chunk · embed</text>
+<rect x="510" y="298" width="240" height="78" rx="10" fill="#1e293b" stroke="#34d399" stroke-width="1.6"/>
+<rect x="510" y="310" width="3" height="54" rx="1.5" fill="#34d399"/>
+<text x="526" y="320" font-size="9.5" font-weight="700" letter-spacing="1.3" fill="#34d399">QUERY</text>
+<text x="526" y="342" font-size="14" font-weight="700" fill="#f8fafc">read path</text>
+<text x="526" y="360" font-size="10.5" fill="#94a3b8">8 bridges · ANN/FTS</text>
+<rect x="790" y="298" width="240" height="78" rx="10" fill="#1e293b" stroke="#34d399" stroke-width="1.6"/>
+<rect x="790" y="310" width="3" height="54" rx="1.5" fill="#34d399"/>
+<text x="806" y="320" font-size="9.5" font-weight="700" letter-spacing="1.3" fill="#34d399">INTEL</text>
+<text x="806" y="342" font-size="14" font-weight="700" fill="#f8fafc">RAG · GraphRAG</text>
+<text x="806" y="360" font-size="10.5" fill="#94a3b8">knowledge graph</text>
+<rect x="100" y="406" width="940" height="118" rx="12" fill="#243349" fill-opacity="0.32" stroke="#1c2740" stroke-width="1"/>
+<rect x="100" y="406" width="4" height="118" fill="#fbbf24"/>
+<text x="122" y="446" font-size="22" font-weight="800" fill="#fbbf24">03</text>
+<text x="122" y="468" font-size="11" font-weight="700" letter-spacing="1.2" fill="#f8fafc">COMPUTE</text>
+<rect x="230" y="426" width="240" height="78" rx="10" fill="#1e293b" stroke="#fbbf24" stroke-width="1.6"/>
+<rect x="230" y="438" width="3" height="54" rx="1.5" fill="#fbbf24"/>
+<text x="246" y="448" font-size="9.5" font-weight="700" letter-spacing="1.3" fill="#fbbf24">DAFT</text>
+<text x="246" y="470" font-size="14" font-weight="700" fill="#f8fafc">lazy DataFrame</text>
+<text x="246" y="488" font-size="10.5" fill="#94a3b8">AI fn · multimodal</text>
+<rect x="510" y="426" width="240" height="78" rx="10" fill="#1e293b" stroke="#fbbf24" stroke-width="1.6"/>
+<rect x="510" y="438" width="3" height="54" rx="1.5" fill="#fbbf24"/>
+<text x="526" y="448" font-size="9.5" font-weight="700" letter-spacing="1.3" fill="#fbbf24">RAY</text>
+<text x="526" y="470" font-size="14" font-weight="700" fill="#f8fafc">distributed</text>
+<text x="526" y="488" font-size="10.5" fill="#94a3b8">head · worker · GPU</text>
+<rect x="790" y="426" width="240" height="78" rx="10" fill="#1e293b" stroke="#fbbf24" stroke-width="1.6"/>
+<rect x="790" y="438" width="3" height="54" rx="1.5" fill="#fbbf24"/>
+<text x="806" y="448" font-size="9.5" font-weight="700" letter-spacing="1.3" fill="#fbbf24">EMBED</text>
+<text x="806" y="470" font-size="14" font-weight="700" fill="#f8fafc">vectorize</text>
+<text x="806" y="488" font-size="10.5" fill="#94a3b8">bge-m3 · CLIP</text>
+<rect x="100" y="534" width="940" height="118" rx="12" fill="#243349" fill-opacity="0.32" stroke="#1c2740" stroke-width="1"/>
+<rect x="100" y="534" width="4" height="118" fill="#a78bfa"/>
+<text x="122" y="574" font-size="22" font-weight="800" fill="#a78bfa">04</text>
+<text x="122" y="596" font-size="11" font-weight="700" letter-spacing="1.2" fill="#f8fafc">ENGINES</text>
+<rect x="230" y="554" width="240" height="78" rx="10" fill="#1e293b" stroke="#a78bfa" stroke-width="1.6"/>
+<rect x="230" y="566" width="3" height="54" rx="1.5" fill="#a78bfa"/>
+<text x="246" y="576" font-size="9.5" font-weight="700" letter-spacing="1.3" fill="#a78bfa">LANCEDB</text>
+<text x="246" y="598" font-size="14" font-weight="700" fill="#f8fafc">vector · scalar · FTS</text>
+<text x="246" y="616" font-size="10.5" fill="#94a3b8">tags · branches</text>
+<rect x="510" y="554" width="240" height="78" rx="10" fill="#1e293b" stroke="#a78bfa" stroke-width="1.6"/>
+<rect x="510" y="566" width="3" height="54" rx="1.5" fill="#a78bfa"/>
+<text x="526" y="576" font-size="9.5" font-weight="700" letter-spacing="1.3" fill="#a78bfa">DUCKDB</text>
+<text x="526" y="598" font-size="14" font-weight="700" fill="#f8fafc">query engine</text>
+<text x="526" y="616" font-size="10.5" fill="#94a3b8">lance_scan · vector_search</text>
+<rect x="790" y="554" width="240" height="78" rx="10" fill="#1e293b" stroke="#a78bfa" stroke-width="1.6"/>
+<rect x="790" y="566" width="3" height="54" rx="1.5" fill="#a78bfa"/>
+<text x="806" y="576" font-size="9.5" font-weight="700" letter-spacing="1.3" fill="#a78bfa">DUCKLAKE</text>
+<text x="806" y="598" font-size="14" font-weight="700" fill="#f8fafc">materialized view</text>
+<text x="806" y="616" font-size="10.5" fill="#94a3b8">TTL · ART index</text>
+<rect x="100" y="662" width="940" height="118" rx="12" fill="#243349" fill-opacity="0.32" stroke="#1c2740" stroke-width="1"/>
+<rect x="100" y="662" width="4" height="118" fill="#fb7185"/>
+<text x="122" y="702" font-size="22" font-weight="800" fill="#fb7185">05</text>
+<text x="122" y="724" font-size="11" font-weight="700" letter-spacing="1.2" fill="#f8fafc">PERSISTENCE</text>
+<rect x="230" y="682" width="240" height="78" rx="10" fill="#1e293b" stroke="#fb7185" stroke-width="1.6"/>
+<rect x="230" y="694" width="3" height="54" rx="1.5" fill="#fb7185"/>
+<text x="246" y="704" font-size="9.5" font-weight="700" letter-spacing="1.3" fill="#fb7185">MINIO/S3</text>
+<text x="246" y="726" font-size="14" font-weight="700" fill="#f8fafc">blob raw</text>
+<text x="246" y="744" font-size="10.5" fill="#94a3b8">image · video · backup</text>
+<rect x="510" y="682" width="240" height="78" rx="10" fill="#1e293b" stroke="#fb7185" stroke-width="1.6"/>
+<rect x="510" y="694" width="3" height="54" rx="1.5" fill="#fb7185"/>
+<text x="526" y="704" font-size="9.5" font-weight="700" letter-spacing="1.3" fill="#fb7185">REDIS</text>
+<text x="526" y="726" font-size="14" font-weight="700" fill="#f8fafc">hot state</text>
+<text x="526" y="744" font-size="10.5" fill="#94a3b8">session · task · JWT</text>
+<rect x="790" y="682" width="240" height="78" rx="10" fill="#1e293b" stroke="#fb7185" stroke-width="1.6"/>
+<rect x="790" y="694" width="3" height="54" rx="1.5" fill="#fb7185"/>
+<text x="806" y="704" font-size="9.5" font-weight="700" letter-spacing="1.3" fill="#fb7185">HUGEGRAPH</text>
+<text x="806" y="726" font-size="14" font-weight="700" fill="#f8fafc">graph store</text>
+<text x="806" y="744" font-size="10.5" fill="#94a3b8">Gremlin · Vermeer</text>
+<line x1="78" y1="180" x2="78" y2="760" stroke="#22d3ee" stroke-width="2.5" marker-end="url(#m-cyan)"/>
+<line x1="78" y1="209" x2="94" y2="209" stroke="#22d3ee" stroke-width="1.4" stroke-opacity="0.65"/>
+<line x1="78" y1="337" x2="94" y2="337" stroke="#34d399" stroke-width="1.4" stroke-opacity="0.65"/>
+<line x1="78" y1="465" x2="94" y2="465" stroke="#fbbf24" stroke-width="1.4" stroke-opacity="0.65"/>
+<line x1="78" y1="593" x2="94" y2="593" stroke="#a78bfa" stroke-width="1.4" stroke-opacity="0.65"/>
+<line x1="78" y1="721" x2="94" y2="721" stroke="#fb7185" stroke-width="1.4" stroke-opacity="0.65"/>
+<rect x="1060" y="150" width="160" height="630" rx="12" fill="#243349" fill-opacity="0.28" stroke="#60a5fa" stroke-width="1" stroke-dasharray="4,4"/>
+<text x="1140.0" y="172" font-size="10" font-weight="700" letter-spacing="1.3" fill="#60a5fa" text-anchor="middle">CROSS-CUTTING</text>
+<rect x="1072" y="190.0" width="136" height="92" rx="9" fill="#1e293b" stroke="#60a5fa" stroke-width="1.3"/>
+<text x="1140.0" y="226.0" font-size="11" font-weight="700" fill="#f8fafc" text-anchor="middle">GRAVITINO</text>
+<text x="1140.0" y="250.0" font-size="9.5" fill="#94a3b8" text-anchor="middle">catalog · tag-&gt;ACL</text>
+<rect x="1072" y="439.0" width="136" height="92" rx="9" fill="#1e293b" stroke="#60a5fa" stroke-width="1.3"/>
+<text x="1140.0" y="475.0" font-size="11" font-weight="700" fill="#f8fafc" text-anchor="middle">OBSERVABILITY</text>
+<text x="1140.0" y="499.0" font-size="9.5" fill="#94a3b8" text-anchor="middle">logs · metrics</text>
+<rect x="1072" y="688.0" width="136" height="92" rx="9" fill="#1e293b" stroke="#60a5fa" stroke-width="1.3"/>
+<text x="1140.0" y="724.0" font-size="11" font-weight="700" fill="#f8fafc" text-anchor="middle">SECURITY</text>
+<text x="1140.0" y="748.0" font-size="9.5" fill="#94a3b8" text-anchor="middle">auth · RBAC · audit</text>
+<line x1="1060" y1="337" x2="1046" y2="337" stroke="#60a5fa" stroke-width="1.2" stroke-dasharray="3,3" stroke-opacity="0.6"/>
+<line x1="1060" y1="593" x2="1046" y2="593" stroke="#60a5fa" stroke-width="1.2" stroke-dasharray="3,3" stroke-opacity="0.6"/>
+<text x="60" y="796" font-size="11" fill="#64748b">spine = main call chain  ·  dashed = cross-cutting spans  ·  each tier color-coded</text>
+</svg>

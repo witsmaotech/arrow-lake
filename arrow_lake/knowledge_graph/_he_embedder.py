@@ -36,8 +36,17 @@ class _LakeEmbedderAdapter(Embeddings):
         enc = self._encoder
         # ApiEmbeddingEncoder.encode(list[str]) -> EmbeddingBatch
         if hasattr(enc, "encode"):
-            batch = enc.encode(texts)
-            return np.asarray(batch.embeddings, dtype=np.float32).tolist()
+            # 按 enc.batch_size 分块:云 embedder(如百炼 text-embedding-v3)常限 batch
+            # ≤10;ApiEmbeddingEncoder.encode 不内部分块,而 build_index 的
+            # FAISS.from_texts 一次传所有节点名 → 超限 400(EMBEDDING_API_ERROR)。
+            # ingest 流程外部已按 batch 切,但 KA build_index 走 langchain Embeddings
+            # 协议不过那里,故在此分块。
+            bs = int(getattr(enc, "batch_size", 0) or 0) or len(texts)
+            out: list[list[float]] = []
+            for i in range(0, len(texts), bs):
+                batch = enc.encode(texts[i : i + bs])
+                out.extend(np.asarray(batch.embeddings, dtype=np.float32).tolist())
+            return out
         # LocalEmbeddingEncoder / DaftBatchEncoder.encode_to_vectors(table, col)
         if hasattr(enc, "encode_to_vectors"):
             import pyarrow as pa

@@ -1,0 +1,127 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1300 680" font-family="DejaVu Sans, Arial, sans-serif"><defs>
+<linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0b1220"/><stop offset="1" stop-color="#0f172a"/></linearGradient>
+<marker id="m-cyan" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#22d3ee"/></marker>
+<marker id="m-emer" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#34d399"/></marker>
+<marker id="m-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#fbbf24"/></marker>
+<marker id="m-violet" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#a78bfa"/></marker>
+<marker id="m-rose" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#fb7185"/></marker>
+<marker id="m-slate" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#60a5fa"/></marker>
+</defs>
+<rect x="0" y="0" width="1300" height="680" fill="url(#bg)"/>
+<text x="60" y="60" font-size="26" font-weight="800" letter-spacing="1.5" fill="#f8fafc">DEPLOYMENT</text>
+<rect x="60" y="70" width="110" height="3" fill="#60a5fa"/>
+<text x="60" y="98" font-size="12.5" fill="#94a3b8">Docker Compose · image arrow-lake:1.8.6  —  edge -&gt; app -&gt; compute/storage | KG+LLM | observability</text>
+<rect x="40" y="130" width="280" height="260" rx="12" fill="#243349" fill-opacity="0.22" stroke="#22d3ee" stroke-width="1.2" stroke-dasharray="5,4"/>
+<rect x="40" y="130" width="4" height="260" fill="#22d3ee"/>
+<text x="56" y="154" font-size="10" font-weight="700" letter-spacing="1.2" fill="#22d3ee">EDGE</text>
+<rect x="350" y="130" width="280" height="260" rx="12" fill="#243349" fill-opacity="0.22" stroke="#34d399" stroke-width="1.2" stroke-dasharray="5,4"/>
+<rect x="350" y="130" width="4" height="260" fill="#34d399"/>
+<text x="366" y="154" font-size="10" font-weight="700" letter-spacing="1.2" fill="#34d399">APPLICATION</text>
+<rect x="660" y="130" width="280" height="260" rx="12" fill="#243349" fill-opacity="0.22" stroke="#fbbf24" stroke-width="1.2" stroke-dasharray="5,4"/>
+<rect x="660" y="130" width="4" height="260" fill="#fbbf24"/>
+<text x="676" y="154" font-size="10" font-weight="700" letter-spacing="1.2" fill="#fbbf24">COMPUTE</text>
+<rect x="970" y="130" width="290" height="260" rx="12" fill="#243349" fill-opacity="0.22" stroke="#fb7185" stroke-width="1.2" stroke-dasharray="5,4"/>
+<rect x="970" y="130" width="4" height="260" fill="#fb7185"/>
+<text x="986" y="154" font-size="10" font-weight="700" letter-spacing="1.2" fill="#fb7185">STORAGE</text>
+<rect x="40" y="420" width="620" height="210" rx="12" fill="#243349" fill-opacity="0.22" stroke="#a78bfa" stroke-width="1.2" stroke-dasharray="5,4"/>
+<rect x="40" y="420" width="4" height="210" fill="#a78bfa"/>
+<text x="56" y="444" font-size="10" font-weight="700" letter-spacing="1.2" fill="#a78bfa">KNOWLEDGE GRAPH + LLM</text>
+<rect x="700" y="420" width="560" height="210" rx="12" fill="#243349" fill-opacity="0.22" stroke="#60a5fa" stroke-width="1.2" stroke-dasharray="5,4"/>
+<rect x="700" y="420" width="4" height="210" fill="#60a5fa"/>
+<text x="716" y="444" font-size="10" font-weight="700" letter-spacing="1.2" fill="#60a5fa">OBSERVABILITY</text>
+<rect x="60" y="180" width="240" height="58" rx="10" fill="#1e293b" stroke="#22d3ee" stroke-width="1.6"/>
+<rect x="60" y="192" width="3" height="34" rx="1.5" fill="#22d3ee"/>
+<text x="76" y="202" font-size="9.5" font-weight="700" letter-spacing="1.3" fill="#22d3ee">PROXY</text>
+<text x="76" y="224" font-size="14" font-weight="700" fill="#f8fafc">nginx</text>
+<text x="76" y="242" font-size="10.5" fill="#94a3b8">TLS · 127.0.0.1</text>
+<rect x="60" y="252" width="240" height="58" rx="10" fill="#1e293b" stroke="#22d3ee" stroke-width="1.6"/>
+<rect x="60" y="264" width="3" height="34" rx="1.5" fill="#22d3ee"/>
+<text x="76" y="274" font-size="9.5" font-weight="700" letter-spacing="1.3" fill="#22d3ee">EGRESS</text>
+<text x="76" y="296" font-size="14" font-weight="700" fill="#f8fafc">proxy-forwarder</text>
+<text x="76" y="314" font-size="10.5" fill="#94a3b8">WSL2 outbound</text>
+<rect x="370" y="165" width="240" height="58" rx="10" fill="#1e293b" stroke="#34d399" stroke-width="1.6"/>
+<rect x="370" y="177" width="3" height="34" rx="1.5" fill="#34d399"/>
+<text x="386" y="187" font-size="9.5" font-weight="700" letter-spacing="1.3" fill="#34d399">API</text>
+<text x="386" y="209" font-size="14" font-weight="700" fill="#f8fafc">api (FastAPI)</text>
+<text x="386" y="227" font-size="10.5" fill="#94a3b8">:8000 · RBAC</text>
+<rect x="370" y="235" width="240" height="58" rx="10" fill="#1e293b" stroke="#34d399" stroke-width="1.6"/>
+<rect x="370" y="247" width="3" height="34" rx="1.5" fill="#34d399"/>
+<text x="386" y="257" font-size="9.5" font-weight="700" letter-spacing="1.3" fill="#34d399">CACHE</text>
+<text x="386" y="279" font-size="14" font-weight="700" fill="#f8fafc">redis</text>
+<text x="386" y="297" font-size="10.5" fill="#94a3b8">session · task · JWT</text>
+<rect x="370" y="305" width="240" height="58" rx="10" fill="#1e293b" stroke="#34d399" stroke-width="1.6"/>
+<rect x="370" y="317" width="3" height="34" rx="1.5" fill="#34d399"/>
+<text x="386" y="327" font-size="9.5" font-weight="700" letter-spacing="1.3" fill="#34d399">EXPORT</text>
+<text x="386" y="349" font-size="14" font-weight="700" fill="#f8fafc">redis-exporter</text>
+<text x="386" y="367" font-size="10.5" fill="#94a3b8">metrics</text>
+<rect x="680" y="165" width="240" height="58" rx="10" fill="#1e293b" stroke="#fbbf24" stroke-width="1.6"/>
+<rect x="680" y="177" width="3" height="34" rx="1.5" fill="#fbbf24"/>
+<text x="696" y="187" font-size="9.5" font-weight="700" letter-spacing="1.3" fill="#fbbf24">HEAD</text>
+<text x="696" y="209" font-size="14" font-weight="700" fill="#f8fafc">ray-head</text>
+<text x="696" y="227" font-size="10.5" fill="#94a3b8">coordinator</text>
+<rect x="680" y="235" width="240" height="58" rx="10" fill="#1e293b" stroke="#fbbf24" stroke-width="1.6"/>
+<rect x="680" y="247" width="3" height="34" rx="1.5" fill="#fbbf24"/>
+<text x="696" y="257" font-size="9.5" font-weight="700" letter-spacing="1.3" fill="#fbbf24">WORKER</text>
+<text x="696" y="279" font-size="14" font-weight="700" fill="#f8fafc">ray-worker</text>
+<text x="696" y="297" font-size="10.5" fill="#94a3b8">KG build · embed</text>
+<rect x="680" y="305" width="240" height="58" rx="10" fill="#1e293b" stroke="#fbbf24" stroke-width="1.6"/>
+<rect x="680" y="317" width="3" height="34" rx="1.5" fill="#fbbf24"/>
+<text x="696" y="327" font-size="9.5" font-weight="700" letter-spacing="1.3" fill="#fbbf24">GPU</text>
+<text x="696" y="349" font-size="14" font-weight="700" fill="#f8fafc">ray-worker-gpu</text>
+<text x="696" y="367" font-size="10.5" fill="#94a3b8">CLIP · heavy</text>
+<rect x="990" y="180" width="250" height="58" rx="10" fill="#1e293b" stroke="#fb7185" stroke-width="1.6"/>
+<rect x="990" y="192" width="3" height="34" rx="1.5" fill="#fb7185"/>
+<text x="1006" y="202" font-size="9.5" font-weight="700" letter-spacing="1.3" fill="#fb7185">BLOB</text>
+<text x="1006" y="224" font-size="14" font-weight="700" fill="#f8fafc">minio</text>
+<text x="1006" y="242" font-size="10.5" fill="#94a3b8">S3 raw + backup</text>
+<rect x="990" y="252" width="250" height="58" rx="10" fill="#1e293b" stroke="#fb7185" stroke-width="1.6"/>
+<rect x="990" y="264" width="3" height="34" rx="1.5" fill="#fb7185"/>
+<text x="1006" y="274" font-size="9.5" font-weight="700" letter-spacing="1.3" fill="#fb7185">INIT</text>
+<text x="1006" y="296" font-size="14" font-weight="700" fill="#f8fafc">minio-init</text>
+<text x="1006" y="314" font-size="10.5" fill="#94a3b8">buckets · volumes</text>
+<rect x="990" y="324" width="250" height="58" rx="10" fill="#1e293b" stroke="#fb7185" stroke-width="1.6"/>
+<rect x="990" y="336" width="3" height="34" rx="1.5" fill="#fb7185"/>
+<text x="1006" y="346" font-size="9.5" font-weight="700" letter-spacing="1.3" fill="#fb7185">BKUP</text>
+<text x="1006" y="368" font-size="14" font-weight="700" fill="#f8fafc">minio-backup</text>
+<text x="1006" y="386" font-size="10.5" fill="#94a3b8">scheduled</text>
+<rect x="70" y="470" width="270" height="76" rx="10" fill="#1e293b" stroke="#a78bfa" stroke-width="1.6"/>
+<rect x="70" y="482" width="3" height="52" rx="1.5" fill="#a78bfa"/>
+<text x="86" y="492" font-size="9.5" font-weight="700" letter-spacing="1.3" fill="#a78bfa">GRAPH</text>
+<text x="86" y="514" font-size="14" font-weight="700" fill="#f8fafc">hugegraph (PD)</text>
+<text x="86" y="532" font-size="10.5" fill="#94a3b8">Gremlin · REST fallback</text>
+<rect x="380" y="470" width="270" height="76" rx="10" fill="#1e293b" stroke="#a78bfa" stroke-width="1.6"/>
+<rect x="380" y="482" width="3" height="52" rx="1.5" fill="#a78bfa"/>
+<text x="396" y="492" font-size="9.5" font-weight="700" letter-spacing="1.3" fill="#a78bfa">LLM</text>
+<text x="396" y="514" font-size="14" font-weight="700" fill="#f8fafc">ollama-relay</text>
+<text x="396" y="532" font-size="10.5" fill="#94a3b8">qwen2.5 + bge-m3</text>
+<rect x="720" y="460" width="245" height="58" rx="10" fill="#1e293b" stroke="#60a5fa" stroke-width="1.6"/>
+<rect x="720" y="472" width="3" height="34" rx="1.5" fill="#60a5fa"/>
+<text x="736" y="482" font-size="9.5" font-weight="700" letter-spacing="1.3" fill="#60a5fa">METRIC</text>
+<text x="736" y="504" font-size="14" font-weight="700" fill="#f8fafc">prometheus</text>
+<text x="736" y="522" font-size="10.5" fill="#94a3b8">scrape · alert</text>
+<rect x="985" y="460" width="245" height="58" rx="10" fill="#1e293b" stroke="#60a5fa" stroke-width="1.6"/>
+<rect x="985" y="472" width="3" height="34" rx="1.5" fill="#60a5fa"/>
+<text x="1001" y="482" font-size="9.5" font-weight="700" letter-spacing="1.3" fill="#60a5fa">DASH</text>
+<text x="1001" y="504" font-size="14" font-weight="700" fill="#f8fafc">grafana</text>
+<text x="1001" y="522" font-size="10.5" fill="#94a3b8">dashboards</text>
+<rect x="720" y="535" width="245" height="58" rx="10" fill="#1e293b" stroke="#60a5fa" stroke-width="1.6"/>
+<rect x="720" y="547" width="3" height="34" rx="1.5" fill="#60a5fa"/>
+<text x="736" y="557" font-size="9.5" font-weight="700" letter-spacing="1.3" fill="#60a5fa">TRACE</text>
+<text x="736" y="579" font-size="14" font-weight="700" fill="#f8fafc">jaeger</text>
+<text x="736" y="597" font-size="10.5" fill="#94a3b8">OTel traces</text>
+<rect x="985" y="535" width="245" height="58" rx="10" fill="#1e293b" stroke="#60a5fa" stroke-width="1.6"/>
+<rect x="985" y="547" width="3" height="34" rx="1.5" fill="#60a5fa"/>
+<text x="1001" y="557" font-size="9.5" font-weight="700" letter-spacing="1.3" fill="#60a5fa">LOG</text>
+<text x="1001" y="579" font-size="14" font-weight="700" fill="#f8fafc">loki + alertmgr</text>
+<text x="1001" y="597" font-size="10.5" fill="#94a3b8">logs · alerts</text>
+<line x1="300" y1="209" x2="368" y2="194" stroke="#22d3ee" stroke-width="2.2" stroke-linecap="round" marker-end="url(#m-cyan)"/>
+<line x1="610" y1="194" x2="678" y2="194" stroke="#fbbf24" stroke-width="2.0" stroke-linecap="round" marker-end="url(#m-amber)"/>
+<text x="644.0" y="186.0" font-size="10" font-weight="600" fill="#fbbf24" text-anchor="middle">ray tasks</text>
+<line x1="920" y1="264" x2="988" y2="209" stroke="#fb7185" stroke-width="1.8" stroke-linecap="round" stroke-dasharray="5,3" marker-end="url(#m-rose)"/>
+<text x="954.0" y="228.5" font-size="10" font-weight="600" fill="#fb7185" text-anchor="middle">blob write</text>
+<path d="M 490,345 L 490,400 L 205,400 L 205,470" fill="none" stroke="#a78bfa" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#m-violet)"/>
+<text x="350" y="394" font-size="10" font-weight="600" fill="#a78bfa">graph query</text>
+<path d="M 490,345 L 490,405 L 515,405 L 515,470" fill="none" stroke="#a78bfa" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#m-violet)"/>
+<text x="540" y="400" font-size="10" font-weight="600" fill="#a78bfa">LLM call</text>
+<text x="60" y="658" font-size="11" fill="#64748b">all zones emit metrics / logs / traces -> observability  ·  read-only containers · cap_drop · health-gated rolling update</text>
+</svg>

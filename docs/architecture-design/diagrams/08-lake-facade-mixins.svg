@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 760" font-family="DejaVu Sans, Arial, sans-serif"><defs>
+<linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0b1220"/><stop offset="1" stop-color="#0f172a"/></linearGradient>
+<marker id="m-cyan" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#22d3ee"/></marker>
+<marker id="m-emer" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#34d399"/></marker>
+<marker id="m-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#fbbf24"/></marker>
+<marker id="m-violet" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#a78bfa"/></marker>
+<marker id="m-rose" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#fb7185"/></marker>
+<marker id="m-slate" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#60a5fa"/></marker>
+</defs>
+<rect x="0" y="0" width="1120" height="760" fill="url(#bg)"/>
+<text x="60" y="60" font-size="26" font-weight="800" letter-spacing="1.5" fill="#f8fafc">LAKE FACADE</text>
+<rect x="60" y="70" width="110" height="3" fill="#22d3ee"/>
+<text x="60" y="98" font-size="12.5" fill="#94a3b8">one class · nine mixins · lazy components + RLock</text>
+<rect x="40" y="130" width="300" height="560" rx="14" fill="#1e293b" stroke="#22d3ee" stroke-width="2"/>
+<rect x="40" y="130" width="300" height="46" rx="14" fill="#22d3ee" fill-opacity="0.18"/>
+<text x="58" y="160" font-size="17" font-weight="800" fill="#22d3ee">class Lake</text>
+<text x="60" y="206" font-size="12" fill="#94a3b8">· _base_uri</text>
+<text x="60" y="232" font-size="12" fill="#94a3b8">· _config : ArrowLakeConfig</text>
+<text x="60" y="258" font-size="12" fill="#94a3b8">· _storage : StorageProtocol</text>
+<text x="60" y="284" font-size="12" fill="#94a3b8">· _components : dict</text>
+<text x="60" y="310" font-size="12" fill="#94a3b8">· _component_lock : RLock</text>
+<line x1="60" y1="350" x2="320" y2="350" stroke="#1c2740"/>
+<text x="58" y="376" font-size="12" font-weight="700" fill="#f8fafc">entry points</text>
+<text x="60" y="402" font-size="12" fill="#f8fafc">Lake(uri)</text>
+<text x="60" y="428" font-size="12" fill="#f8fafc">Lake.from_yaml(path)</text>
+<text x="60" y="454" font-size="12" fill="#f8fafc">health() · version() · shutdown()</text>
+<rect x="460" y="130" width="600" height="54" rx="9" fill="#1e293b" stroke="#22d3ee" stroke-width="1.6"/>
+<text x="476" y="152" font-size="12.5" font-weight="700" fill="#22d3ee">_LakeBaseMixin</text>
+<text x="476" y="172" font-size="10.5" fill="#94a3b8">lazy _get_component · shared httpx · shutdown</text>
+<line x1="460" y1="157" x2="342" y2="157" stroke="#22d3ee" stroke-width="1.3" stroke-dasharray="4,3" stroke-opacity="0.55" marker-end="url(#m-cyan)"/>
+<rect x="460" y="193" width="600" height="54" rx="9" fill="#1e293b" stroke="#34d399" stroke-width="1.6"/>
+<text x="476" y="215" font-size="12.5" font-weight="700" fill="#34d399">_LakeIngestMixin</text>
+<text x="476" y="235" font-size="10.5" fill="#94a3b8">create_dataset · ingest_* · upsert · quality</text>
+<line x1="460" y1="220" x2="342" y2="220" stroke="#34d399" stroke-width="1.3" stroke-dasharray="4,3" stroke-opacity="0.55" marker-end="url(#m-emer)"/>
+<rect x="460" y="256" width="600" height="54" rx="9" fill="#1e293b" stroke="#34d399" stroke-width="1.6"/>
+<text x="476" y="278" font-size="12.5" font-weight="700" fill="#34d399">_LakeSearchMixin</text>
+<text x="476" y="298" font-size="10.5" fill="#94a3b8">search · text_search · hybrid · create_*_index</text>
+<line x1="460" y1="283" x2="342" y2="283" stroke="#34d399" stroke-width="1.3" stroke-dasharray="4,3" stroke-opacity="0.55" marker-end="url(#m-emer)"/>
+<rect x="460" y="319" width="600" height="54" rx="9" fill="#1e293b" stroke="#fbbf24" stroke-width="1.6"/>
+<text x="476" y="341" font-size="12.5" font-weight="700" fill="#fbbf24">_LakeQueryMixin</text>
+<text x="476" y="361" font-size="10.5" fill="#94a3b8">olap_query · materialize · export · daft_query</text>
+<line x1="460" y1="346" x2="342" y2="346" stroke="#fbbf24" stroke-width="1.3" stroke-dasharray="4,3" stroke-opacity="0.55" marker-end="url(#m-amber)"/>
+<rect x="460" y="382" width="600" height="54" rx="9" fill="#1e293b" stroke="#fbbf24" stroke-width="1.6"/>
+<text x="476" y="404" font-size="12.5" font-weight="700" fill="#fbbf24">_LakeAdminMixin</text>
+<text x="476" y="424" font-size="10.5" fill="#94a3b8">list/open/delete · tags · schema evolve · backup</text>
+<line x1="460" y1="409" x2="342" y2="409" stroke="#fbbf24" stroke-width="1.3" stroke-dasharray="4,3" stroke-opacity="0.55" marker-end="url(#m-amber)"/>
+<rect x="460" y="445" width="600" height="54" rx="9" fill="#1e293b" stroke="#a78bfa" stroke-width="1.6"/>
+<text x="476" y="467" font-size="12.5" font-weight="700" fill="#a78bfa">_LakeLineageMixin</text>
+<text x="476" y="487" font-size="10.5" fill="#94a3b8">record lineage · trace query</text>
+<line x1="460" y1="472" x2="342" y2="472" stroke="#a78bfa" stroke-width="1.3" stroke-dasharray="4,3" stroke-opacity="0.55" marker-end="url(#m-violet)"/>
+<rect x="460" y="508" width="600" height="54" rx="9" fill="#1e293b" stroke="#a78bfa" stroke-width="1.6"/>
+<text x="476" y="530" font-size="12.5" font-weight="700" fill="#a78bfa">_LakeAuditMixin</text>
+<text x="476" y="550" font-size="10.5" fill="#94a3b8">HMAC-SHA256 audit · tamper-evident log</text>
+<line x1="460" y1="535" x2="342" y2="535" stroke="#a78bfa" stroke-width="1.3" stroke-dasharray="4,3" stroke-opacity="0.55" marker-end="url(#m-violet)"/>
+<rect x="460" y="571" width="600" height="54" rx="9" fill="#1e293b" stroke="#fb7185" stroke-width="1.6"/>
+<text x="476" y="593" font-size="12.5" font-weight="700" fill="#fb7185">_LakeRAGMixin</text>
+<text x="476" y="613" font-size="10.5" fill="#94a3b8">await rag_query · stream · batch · extract</text>
+<line x1="460" y1="598" x2="342" y2="598" stroke="#fb7185" stroke-width="1.3" stroke-dasharray="4,3" stroke-opacity="0.55" marker-end="url(#m-rose)"/>
+<rect x="460" y="634" width="600" height="54" rx="9" fill="#1e293b" stroke="#fb7185" stroke-width="1.6"/>
+<text x="476" y="656" font-size="12.5" font-weight="700" fill="#fb7185">_LakeKGMixin</text>
+<text x="476" y="676" font-size="10.5" fill="#94a3b8">await kg_build(fire-forget) · kg_query · paths</text>
+<line x1="460" y1="661" x2="342" y2="661" stroke="#fb7185" stroke-width="1.3" stroke-dasharray="4,3" stroke-opacity="0.55" marker-end="url(#m-rose)"/>
+<text x="60" y="738" font-size="11" fill="#64748b">dashed = inherits into Lake  ·  RAG / KG are async (await)  ·  RLock allows reentrant nested component loading</text></svg>
