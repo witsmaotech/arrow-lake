@@ -146,14 +146,11 @@ ARROW_LAKE_KG_SCHEMA = GraphSchema(
         EdgeLabelDef("participates_in", "person", "event", ("relation_type", "description")),
         EdgeLabelDef("depicts", "event", "entity", ("relation_type", "description")),
     ),
-    index_labels=(
-        IndexLabelDef("document_id_idx", "VERTEX_LABEL", "document", "SECONDARY", ("id",)),
-        IndexLabelDef("chunk_id_idx", "VERTEX_LABEL", "chunk", "SECONDARY", ("id",)),
-        IndexLabelDef("entity_name_idx", "VERTEX_LABEL", "entity", "SECONDARY", ("name",)),
-        IndexLabelDef("person_name_idx", "VERTEX_LABEL", "person", "SECONDARY", ("name",)),
-        IndexLabelDef("org_name_idx", "VERTEX_LABEL", "organization", "SECONDARY", ("name",)),
-        IndexLabelDef("location_name_idx", "VERTEX_LABEL", "location", "SECONDARY", ("name",)),
-        IndexLabelDef("concept_name_idx", "VERTEX_LABEL", "concept", "SECONDARY", ("name",)),
-        IndexLabelDef("event_name_idx", "VERTEX_LABEL", "event", "SECONDARY", ("name",)),
-    ),
+    # Index labels removed: all 8 were SECONDARY on PRIMARY_KEY fields (name/id),
+    # which HugeGraph rejects — "No need to build index on properties containing
+    # all primary keys" (primary keys are auto-indexed). name/id lookups remain
+    # efficient via the built-in primary-key index. Previously caused 8x HTTP 400
+    # at every graph creation. Add SECONDARY indexes on NON-primary-key fields
+    # (e.g. entity.type) only if range/equality filtering on them is needed.
+    index_labels=(),
 )

@@ -231,7 +231,10 @@ class HyperExtractExtractor:
         for n in nodes:
             name = getattr(n, "name", None)
             name = str(name).strip() if name else ""
-            if not name or name in _GENERIC_ENTITY_STOPWORDS:
+            # filter single-char names (e/int-style LLM noise like "e", "tp"
+            # fragments) + generic stopwords. 2-3 char acronyms (DO/PO/API/DDD)
+            # are legitimate DDD terms — kept.
+            if not name or len(name) <= 1 or name in _GENERIC_ENTITY_STOPWORDS:
                 continue
             entity_type = str(getattr(n, "type", "") or "").strip() or "未知"
             definition = str(getattr(n, "definition", "") or "").strip()
