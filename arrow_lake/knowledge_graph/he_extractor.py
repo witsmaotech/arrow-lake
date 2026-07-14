@@ -206,6 +206,61 @@ class HyperExtractExtractor:
             max_workers=cfg.he_max_workers,
         )
 
+    def _ka_dir_for(self, dataset_name: str) -> Any:
+        """[#2] Resolve the per-dataset KA dump dir (``he_ka_base_dir/{ds}/ka``)."""
+        from pathlib import Path
+        return Path(self._config.hugegraph.he_ka_base_dir) / dataset_name / "ka"
+
+    def load_ka_for_query(self, dataset_name: str) -> Any:
+        """[#2] Load a dumped per-dataset KA for search/chat.
+
+        Reads the template from ``metadata.json`` (falling back to the default
+        template), builds a fresh KA with this extractor's llm+embedder via
+        :meth:`_create_ka`, then ``ka.load(ka_dir)`` to restore data + FAISS
+        index. ``Template.load`` does not exist in this hyper-extract version,
+        so we create-then-load.
+        """
+        import json
+        ka_dir = self._ka_dir_for(dataset_name)
+        template = self._router.default_template()
+        meta_path = ka_dir / "metadata.json"
+        if meta_path.is_file():
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                template = meta.get("template") or template
+            except Exception:
+                pass
+        ka = self._create_ka(template)
+        ka.load(ka_dir)
+        return ka
+
+    def search_ka(self, dataset_name: str, query: str, top_k: int = 5) -> tuple:
+        """[#2] Semantic search over a dataset's KA: load → build_index → search.
+
+        Returns ``(nodes, edges)`` (hyper-extract ``AutoGraph.search`` result).
+        Enables definition-based semantic recall that HugeGraph's keyword/graph
+        traversal cannot do.
+        """
+        ka = self.load_ka_for_query(dataset_name)
+        try:
+            ka.build_index()
+        except Exception:
+            pass  # index may already be loaded from the dump
+        return ka.search(query, top_k=top_k)
+
+    def chat_ka(self, dataset_name: str, question: str, top_k: int = 5) -> Any:
+        """[#2] RAG Q&A over a dataset's KA: load → build_index → chat.
+
+        Returns a langchain ``AIMessage`` (``.content`` = answer,
+        ``.additional_kwargs['retrieved_items']`` = source nodes/edges).
+        """
+        ka = self.load_ka_for_query(dataset_name)
+        try:
+            ka.build_index()
+        except Exception:
+            pass
+        return ka.chat(question, top_k=top_k)
+
     def _parse_fresh(self, template_path: str, text: str) -> Any:
         """Create a ONE-SHOT hyper-extract KA and parse ``text``.
 
