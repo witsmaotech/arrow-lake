@@ -116,6 +116,7 @@ class HyperExtractExtractor:
         embedder: Any = None,
         kg_granularity: str = "dataset",
         hugegraph_config: Any = None,
+        template_type: str | None = None,
     ) -> None:
         self._llm_config = llm_config
         # [#10/#2] HugeGraphConfig for he_chunk_size / he_ka_base_dir. Passed
@@ -131,6 +132,15 @@ class HyperExtractExtractor:
         # None = parse-only (old behaviour); required for dataset granularity.
         self._embedder = embedder
         self._kg_granularity = kg_granularity
+        # [#1] TemplateTypeSelector — structural Auto-Type axis, orthogonal to
+        # doc_type. ``template_type`` is an optional config default (e.g.
+        # he_template_type=temporal_graph); per-call extract(template_type=)
+        # overrides it. None → DocTypeRouter drives selection (unchanged).
+        from arrow_lake.knowledge_graph.template_type_selector import (
+            TemplateTypeSelector,
+        )
+        self._type_selector = TemplateTypeSelector()
+        self._default_template_type = template_type
         self._template_cache: dict[str, Any] = {}
         self._doc_type_cache: dict[str, str | None] = {}  # content digest → inferred doc_type
         # langchain ChatOpenAI client (thread-safe, reused across parses). A fresh
@@ -188,6 +198,25 @@ class HyperExtractExtractor:
                     max_tokens=8192,
                 )
         return self._chat_client
+
+    def _resolve_template(
+        self, doc_type: str | None, content: str, template_type: str | None,
+    ) -> str:
+        """[#1] Resolve the hyper-extract template path.
+
+        Priority: per-call ``template_type`` > config default ``template_type``
+        > :class:`TemplateTypeSelector` temporal heuristic > ``DocTypeRouter``.
+        The selector returns None to defer; DocTypeRouter then maps doc_type →
+        template (graph default), preserving pre-#1 behavior when no type is
+        requested and no temporal signal is present.
+        """
+        tt = template_type or self._default_template_type
+        selected = self._type_selector.select(
+            template_type=tt, doc_type=doc_type, content=content,
+        )
+        if selected:
+            return selected
+        return self._router.resolve(doc_type)
 
     def _create_ka(self, template_path: str) -> Any:
         """Create a fresh hyper-extract KA with this extractor's llm + embedder.
@@ -405,13 +434,19 @@ class HyperExtractExtractor:
         return self._doc_type_cache[key]
 
     async def extract(
-        self, text: str, *, chunk_id: str = "", doc_type: str | None = None
+        self, text: str, *, chunk_id: str = "", doc_type: str | None = None,
+        template_type: str | None = None,
     ) -> ExtractionResult:
         """Extract entities/relations from ``text`` via hyper-extract (per-chunk).
 
         Gracefully degrades to an empty result on any failure (matching
         legacy ``EntityExtractor`` behavior). ``chunk_id`` is accepted for
         contract symmetry and used only for logging.
+
+        [#1] ``template_type`` (one of graph/temporal_graph/hypergraph/list/set/
+        model) overrides doc_type routing to pick a template of that Auto-Type.
+        When None, the temporal heuristic may auto-pick temporal_graph; otherwise
+        doc_type drives selection via DocTypeRouter (unchanged).
         """
         stripped = text.strip()
         if not stripped:
@@ -427,7 +462,7 @@ class HyperExtractExtractor:
         if doc_type is None and self._classifier is not None and len(stripped) >= 80:
             doc_type = await self._infer_doc_type(stripped)
 
-        template_path = self._router.resolve(doc_type)
+        template_path = self._resolve_template(doc_type, stripped, template_type)
         self._current_type_enum = self._get_type_enum(template_path)
         try:
             # Fresh KA per parse (no shared mutable state across chunks).

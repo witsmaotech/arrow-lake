@@ -184,6 +184,14 @@ class HugeGraphConfig(BaseModel):
     he_chunk_size: int = 2048
     he_chunk_overlap: int = 256
     he_max_workers: int = 10
+    # [#1] Optional structural Auto-Type override (orthogonal to doc_type):
+    # one of graph/temporal_graph/hypergraph/list/set/model. When set, the
+    # TemplateTypeSelector picks that Auto-Type's template instead of doc_type
+    # routing (hypergraph is opt-in + warned — high-risk on sparse content).
+    # None = doc_type drives selection (DocTypeRouter); temporal heuristic may
+    # still auto-pick temporal_graph on event-heavy content. See
+    # template_type_selector.py.
+    he_template_type: str | None = None
 
     @field_validator("max_traversal_depth")
     @classmethod

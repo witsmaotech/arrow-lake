@@ -305,7 +305,12 @@ class KGBuilder:
 
         if use_dataset_path:
             # --- v1.8.8 per-dataset: ONE KA, feed_text all chunks ---
-            template_path = self._extractor._router.resolve(dataset_doc_type)
+            # [#1] route via TemplateTypeSelector (config he_template_type +
+            # temporal heuristic) when set, else DocTypeRouter as before.
+            _sample = next((c for c in contents if c), "")
+            template_path = self._extractor._resolve_template(
+                dataset_doc_type, _sample, None,
+            )
             ka_dir = self._ka_base_dir / task.dataset_name / "ka"
             dataset_ka = await self._extractor.build_dataset_ka(
                 template_path,
