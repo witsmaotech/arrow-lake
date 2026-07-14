@@ -1,0 +1,90 @@
+language: [zh, en]
+name: ddd_concept_graph
+type: graph
+tags: [ddd, architecture, software, concept, domain_driven_design]
+description:
+  zh: 'DDD/软件架构概念图 — 从领域驱动设计、软件架构文档提取概念与关系（general/concept_graph 的 DDD 领域特化：type/relation 严格枚举）'
+  en: 'DDD/software-architecture concept graph — extract concepts and relations from DDD/architecture docs (domain-specialized concept_graph with strict type/relation enums)'
+
+output:
+  description:
+    zh: 'DDD/软件架构文档中的概念及其层级与语义关联'
+    en: 'Concepts and their hierarchy/semantic associations in DDD/architecture docs'
+  entities:
+    description:
+      zh: '文档中的核心概念'
+      en: 'Core concepts in the document'
+    fields:
+      - name: name
+        type: str
+        description: { zh: '概念名称', en: 'Concept name' }
+        required: true
+      - name: type
+        type: str
+        description:
+          zh: '按概念性质必须是以下之一：实体(具体对象/组件/系统)/属性(特征/指标)/方法(技术/做法)/架构(结构/模式/风格)/原则(准则/规范)/过程(流程/步骤)/角色(参与方)/关系(关联类型)。禁止"概念"等笼统值，必须选最具体匹配。'
+          en: 'Type by concept nature, MUST be one of: entity(object/component/system)/property(feature/metric)/method(technique/practice)/architecture(structure/pattern/style)/principle(rule/standard)/process(flow/steps)/role(participant)/relation(association). Generic "concept" forbidden; pick the most specific match.'
+        required: true
+      - name: definition
+        type: str
+        description: { zh: '概念的简要定义', en: 'Brief concept definition' }
+        required: false
+  relations:
+    description:
+      zh: '概念之间的层级关系和语义关联'
+      en: 'Hierarchy and semantic associations between concepts'
+    fields:
+      - name: source
+        type: str
+        description: { zh: '源概念名称', en: 'Source concept name' }
+        required: true
+      - name: target
+        type: str
+        description: { zh: '目标概念名称', en: 'Target concept name' }
+        required: true
+      - name: type
+        type: str
+        description:
+          zh: '关系类型，必须是以下之一：属于/包含/导致/相关/对立/示例/扩展/依赖/组成/实现。禁止自创其他值或混用英文。'
+          en: 'Relation type, MUST be one of: is_a/part_of/causes/related_to/opposite/example_of/extends/depends_on/composed_of/implements. Other values forbidden.'
+        required: true
+      - name: description
+        type: str
+        description: { zh: '关系说明', en: 'Relation description' }
+        required: false
+
+guideline:
+  target:
+    zh: '你是一位知识图谱专家，擅长从领域驱动设计(DDD)、软件架构文档中提取概念之间的层级关系和语义关联。'
+    en: 'You are a knowledge graph expert skilled at extracting concept hierarchy and semantic associations from DDD and software architecture documents.'
+  rules_for_entities:
+    zh:
+      - '提取文档中定义的核心概念'
+      - '概念名称应使用规范术语'
+      - '同一概念在全文中保持命名一致'
+      - '仅提取文本中明确表达的概念'
+      - 'type 必须按概念性质选最具体匹配（实体/属性/方法/架构/原则/过程/角色/关系），严禁用"概念"笼统归类'
+    en:
+      - 'Extract core concepts defined in the document'
+      - 'Concept names should use standard terminology'
+      - 'Maintain consistent naming for the same concept throughout the text'
+      - 'Only extract concepts explicitly expressed in the text'
+      - 'type must be the most specific match by nature; generic "concept" is forbidden'
+  rules_for_relations:
+    zh:
+      - 'type 必须严格使用 description 列出的枚举值之一（属于/包含/导致/相关/对立/示例/扩展/依赖/组成/实现），禁止自创或混用英文'
+      - '优先提取文档中明确定义的关系'
+      - '不要创建隐含的常识性关联，仅提取文档中明确说明的关系'
+    en:
+      - 'type must be one of the enumerated values in the description; no custom values'
+      - 'Prioritize explicitly defined relationships in the document'
+      - 'Do not create implicit common-sense associations, only extract explicitly stated relationships'
+
+identifiers:
+  entity_id: name
+  relation_id: '{source}|{type}|{target}'
+  relation_members: { source: source, target: target }
+
+display:
+  entity_label: '{name}'
+  relation_label: '{type}'

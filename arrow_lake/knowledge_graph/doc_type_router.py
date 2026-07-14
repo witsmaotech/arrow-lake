@@ -27,6 +27,7 @@ import os
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from functools import lru_cache
 
 logger = logging.getLogger(__name__)
@@ -351,10 +352,61 @@ def _bilingual_texts(node: object) -> tuple[str, str]:
     return _flat(node.get("zh")), _flat(node.get("en"))
 
 
+_PROJECT_TEMPLATES_DIR = Path(__file__).parent / "templates"
+
+
+def _merge_project_templates(gallery: TemplateGallery) -> None:
+    """Append project-local templates (arrow_lake/knowledge_graph/templates/*.yaml)
+    to the gallery. Project templates use their ABSOLUTE FILE PATH as
+    TemplateInfo.path so Template.create() loads them directly (vs preset
+    'category/name' paths). Keeps domain specializations in the project tree
+    (git-tracked) instead of mutating the hyperextract dependency."""
+    if not _PROJECT_TEMPLATES_DIR.is_dir():
+        return
+    import yaml
+    for yml in sorted(_PROJECT_TEMPLATES_DIR.glob("*.yaml")):
+        try:
+            with open(yml, encoding="utf-8") as fh:
+                data = yaml.safe_load(fh)
+        except (OSError, yaml.YAMLError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        tags = tuple(str(t).lower() for t in data.get("tags", []) if t)
+        desc_zh, desc_en = _bilingual_texts(data.get("description"))
+        output = data.get("output")
+        entity_fields = relation_fields = ()
+        if isinstance(output, dict):
+            entity_fields = _field_names(output.get("entities"))
+            relation_fields = _field_names(output.get("relations"))
+            if not entity_fields and not relation_fields:
+                entity_fields = _field_names(output)
+        guideline = data.get("guideline")
+        gl_zh, gl_en = _bilingual_texts(
+            guideline.get("target") if isinstance(guideline, dict) else None)
+        gallery.templates.append(TemplateInfo(
+            path=str(yml.resolve()),
+            category="project",
+            name=str(data.get("name", yml.stem)).lower(),
+            type=str(data.get("type", "")).lower(),
+            tags=tags,
+            description=_flatten_description(data.get("description")).lower(),
+            description_zh=desc_zh,
+            description_en=desc_en,
+            entity_fields=entity_fields,
+            relation_fields=relation_fields,
+            guideline_zh=gl_zh,
+            guideline_en=gl_en,
+        ))
+
+
 @lru_cache(maxsize=1)
 def _shared_gallery() -> TemplateGallery:
-    """Module-level shared gallery (built once, cached)."""
-    return TemplateGallery.build()
+    """Module-level shared gallery: hyper-extract presets + project-local
+    templates (arrow_lake/knowledge_graph/templates/). Built once, cached."""
+    gallery = TemplateGallery.build()
+    _merge_project_templates(gallery)
+    return gallery
 
 
 def reset_gallery_cache() -> None:
