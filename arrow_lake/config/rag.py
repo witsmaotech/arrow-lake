@@ -79,8 +79,9 @@ class RAGConfig(BaseModel):
     enable_citations: bool = True
     session_ttl_seconds: int = 86400
     feedback_enabled: bool = True
-    reranker: str = "none"
-    reranker_model: str = "BAAI/bge-reranker-v2-m3"
+    reranker: str = "ollama"
+    reranker_model: str = "dengcao/Qwen3-Reranker-0.6B:F16"
+    reranker_base_url: str = ""
     reranker_top_n: int = 10
     query_transform: str = "none"
     hyde_max_tokens: int = 256
