@@ -20,6 +20,21 @@ from arrow_lake.rag.context import ContextChunk
 logger = logging.getLogger(__name__)
 
 
+def _sanitize_prompt_text(text: str) -> str:
+    """Strip obvious prompt-injection phrases before interpolating into a prompt.
+
+    Reuses ``arrow_lake.rag.pipeline.PROMPT_INJECTION_RE`` (lazy import avoids the
+    reranker↔pipeline circular import). Best-effort: on any failure returns the
+    raw text so reranking never breaks.
+    """
+    try:
+        from arrow_lake.rag.pipeline import PROMPT_INJECTION_RE
+
+        return PROMPT_INJECTION_RE.sub("[FILTERED]", text or "")
+    except Exception:  # noqa: BLE001 — never block reranking on sanitization
+        return text or ""
+
+
 class BaseReranker(ABC):
     """Abstract base class for rerankers."""
 
@@ -160,7 +175,10 @@ class LLMReranker(BaseReranker):
         to_score = chunks[:self._max_chunks]
 
         async def _score_one(chunk: ContextChunk) -> tuple[ContextChunk, float]:
-            prompt = self._SCORE_PROMPT.format(query=query, text=chunk.text[:1000])
+            prompt = self._SCORE_PROMPT.format(
+                query=_sanitize_prompt_text(query),
+                text=_sanitize_prompt_text(chunk.text[:1000]),
+            )
             try:
                 resp = await self._provider.generate([
                     LLMMessage(role="user", content=prompt),
@@ -231,8 +249,23 @@ class OllamaReranker(BaseReranker):
         timeout: float = 30.0,
         api_key: str | None = None,
     ) -> None:
+        from urllib.parse import urlparse
+
         self._model = model_name
-        self._base_url = (base_url or "").rstrip("/")
+        base = (base_url or "").rstrip("/")
+        # SSRF defense-in-depth. base_url is admin-config-controlled (env /
+        # derived from embedding.api_base), not user input, so the classic
+        # user-driven SSRF vector does not apply. We still reject dangerous
+        # non-http(s) schemes (file://, gopher://, dict://, …). Private IP
+        # ranges are INTENTIONALLY allowed: the ollama reranker endpoint is
+        # internal by design (127.0.0.1 / host.docker.internal), so blocking
+        # _PRIVATE_NETWORKS would break the legitimate feature.
+        scheme = urlparse(base).scheme.lower()
+        if base and scheme not in ("http", "https"):
+            raise ValueError(
+                f"OllamaReranker base_url must use http(s) scheme, got {scheme!r}"
+            )
+        self._base_url = base
         self._max_chunks = max_chunks
         self._timeout = timeout
         self._api_key = api_key
@@ -287,8 +320,8 @@ class OllamaReranker(BaseReranker):
                             "role": "user",
                             "content": (
                                 "<Instruct>: Given a query, retrieve the relevant passages\n"
-                                f"<Query>: {query}\n"
-                                f"<Document>: {chunk.text[:1000]}"
+                                f"<Query>: {_sanitize_prompt_text(query)}\n"
+                                f"<Document>: {_sanitize_prompt_text(chunk.text[:1000])}"
                             ),
                         },
                     ],
