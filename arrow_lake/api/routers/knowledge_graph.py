@@ -113,7 +113,7 @@ async def kg_build(
 ) -> KGBuildResponse:
     """Build a knowledge graph from a dataset."""
     try:
-        task_id = await lake.kg_build(req.dataset_name)
+        task_id = await lake.kg_build(req.dataset_name, incremental=req.incremental)
         return KGBuildResponse(
             task_id=task_id,
             status="pending",

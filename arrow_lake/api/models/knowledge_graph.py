@@ -19,6 +19,16 @@ class KGBuildRequest(BaseModel):
         pattern=r"^[a-zA-Z0-9_-]+$",
         description="Name of the Lance dataset to build KG from",
     )
+    incremental: bool = Field(
+        default=False,
+        description=(
+            "Incremental build: feed only NEW chunks (not already in the KA's "
+            "fed_chunks) into the existing KA and upsert their entities/edges. "
+            "Falls back to a full rebuild when no KA dump exists or the template "
+            "changed. Use after appending data; use full rebuild after "
+            "re-ingest/delete or a template change."
+        ),
+    )
 
 
 class KGBuildResponse(BaseModel):
