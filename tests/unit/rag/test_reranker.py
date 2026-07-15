@@ -75,7 +75,7 @@ class TestLLMParseScore:
         assert LLMReranker._parse_score("7") == 7.0
 
     def test_digit_in_sentence(self) -> None:
-        # _parse_score reads reversed, so last digit in "Rating: 9" is '9'
+        # _parse_score parses the FIRST integer: "Rating: 9" → 9
         assert LLMReranker._parse_score("Rating: 9") == 9.0
 
     def test_no_digits_returns_default(self) -> None:
@@ -85,10 +85,16 @@ class TestLLMParseScore:
         assert LLMReranker._parse_score("0") == 1.0
 
     def test_greater_than_ten_clamped(self) -> None:
-        assert LLMReranker._parse_score("42") == 2.0  # last digit '2'
+        # First integer 42 → clamped to 10 (previously scanned last digit '2' → 2)
+        assert LLMReranker._parse_score("42") == 10.0
 
-    def test_negative_ignored_takes_last_digit(self) -> None:
+    def test_negative_ignored_takes_first_digit(self) -> None:
         assert LLMReranker._parse_score("-3") == 3.0
+
+    def test_score_ten_not_inverted(self) -> None:
+        # Regression: old reversed-single-digit logic mapped "10" → 0 → 1.
+        assert LLMReranker._parse_score("10") == 10.0
+        assert LLMReranker._parse_score("Rating: 10") == 10.0
 
 
 # ===========================================================================
@@ -128,6 +134,34 @@ class TestLLMRerankerAsync:
 
 
 # ===========================================================================
+# _LakeRAGMixin._build_reranker wiring (Defect A: rag.reranker was dead config)
+# ===========================================================================
+
+
+class TestBuildRerankerWiring:
+    def _mixin(self, reranker: str, model: str = "BAAI/bge-reranker-v2-m3"):
+        from arrow_lake._lake_rag import _LakeRAGMixin
+
+        m = object.__new__(_LakeRAGMixin)
+        rag = MagicMock(reranker=reranker, reranker_model=model)
+        m.config = MagicMock(rag=rag)
+        return m
+
+    def test_none_returns_noop(self) -> None:
+        assert isinstance(self._mixin("none")._build_reranker(MagicMock()), NoopReranker)
+
+    def test_llm_returns_llm_reranker(self) -> None:
+        from arrow_lake.rag.reranker import LLMReranker as _LLMR
+
+        assert isinstance(self._mixin("llm")._build_reranker(MagicMock()), _LLMR)
+
+    def test_cross_encoder_returns_cross_encoder(self) -> None:
+        from arrow_lake.rag.reranker import CrossEncoderReranker as _CER
+
+        assert isinstance(self._mixin("cross-encoder")._build_reranker(MagicMock()), _CER)
+
+
+# ===========================================================================
 # create_reranker factory
 # ===========================================================================
 
@@ -153,3 +187,76 @@ class TestCreateReranker:
 
     def test_unknown_kind_fallback(self) -> None:
         assert isinstance(create_reranker("unknown"), NoopReranker)
+
+    def test_ollama_kind(self) -> None:
+        from arrow_lake.rag.reranker import OllamaReranker
+
+        r = create_reranker("ollama", base_url="http://localhost:11434", model_name="m")
+        assert isinstance(r, OllamaReranker)
+
+    def test_ollama_kind_without_base_url_fallback(self) -> None:
+        assert isinstance(create_reranker("ollama", base_url=""), NoopReranker)
+
+
+# ===========================================================================
+# OllamaReranker (Qwen3-Reranker yes/no judge)
+# ===========================================================================
+
+
+class TestOllamaReranker:
+    @pytest.mark.asyncio
+    async def test_no_base_url_passthrough(self) -> None:
+        from arrow_lake.rag.reranker import OllamaReranker
+
+        r = OllamaReranker("m", base_url="")
+        chunks = [_chunk("a"), _chunk("b")]
+        assert await r.rerank("q", chunks, top_n=2) == chunks
+
+    @pytest.mark.asyncio
+    async def test_empty_chunks(self) -> None:
+        from arrow_lake.rag.reranker import OllamaReranker
+
+        r = OllamaReranker("m", base_url="http://x")
+        assert await r.rerank("q", [], top_n=5) == []
+
+    @pytest.mark.asyncio
+    async def test_yes_ranks_above_no(self) -> None:
+        from arrow_lake.rag.reranker import OllamaReranker
+
+        r = OllamaReranker("m", base_url="http://x")
+        # "bad" chunk has higher retrieval score but reranker says "no" → sinks.
+        chunks = [_chunk("good match", score=0.1), _chunk("bad mismatch", score=0.9)]
+        client = MagicMock()
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=False)
+        probe = MagicMock(status_code=200)
+        client.get = AsyncMock(return_value=probe)
+
+        def post(url, json=None):
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.raise_for_status = lambda: None
+            doc = json["messages"][1]["content"]
+            resp.json.return_value = {"message": {"content": "yes" if "good match" in doc else "no"}}
+            return resp
+
+        client.post = AsyncMock(side_effect=post)
+        with patch("httpx.AsyncClient", return_value=client):
+            out = await r.rerank("q", chunks, top_n=2)
+        assert out[0].text == "good match"
+        assert out[0].metadata["rerank_score"] == 1.0
+        assert out[1].metadata["rerank_score"] == 0.0
+
+    @pytest.mark.asyncio
+    async def test_unavailable_passthrough(self) -> None:
+        from arrow_lake.rag.reranker import OllamaReranker
+
+        r = OllamaReranker("m", base_url="http://x")
+        chunks = [_chunk("a"), _chunk("b")]
+        client = MagicMock()
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=False)
+        client.get = AsyncMock(side_effect=RuntimeError("conn refused"))  # probe fails
+        with patch("httpx.AsyncClient", return_value=client):
+            out = await r.rerank("q", chunks, top_n=2)
+        assert out == chunks  # latched unavailable → passthrough

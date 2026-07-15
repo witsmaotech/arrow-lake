@@ -231,10 +231,14 @@ class RAGPipeline:
         # Deduplicate by row_id across query variants
         chunks = self._deduplicate_chunks(chunks)
 
-        # Rerank before context assembly
+        # Rerank before context assembly. Rerankers may be sync (Noop,
+        # CrossEncoder) or async (LLMReranker) — await the coroutine case.
         reranker = self._reranker or NoopReranker()
         rerank_top_n = self._config.reranker_top_n or top_k
-        chunks = reranker.rerank(question, chunks, rerank_top_n)
+        _ranked = reranker.rerank(question, chunks, rerank_top_n)
+        if asyncio.iscoroutine(_ranked):
+            _ranked = await _ranked
+        chunks = _ranked
 
         window = self._build_context_window()
         for chunk in chunks:

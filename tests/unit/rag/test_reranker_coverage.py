@@ -111,7 +111,8 @@ class TestParseScore:
         assert LLMReranker._parse_score("no digits here") == 5.0
 
     def test_clamps_max(self) -> None:
-        assert LLMReranker._parse_score("15") == 5.0  # '5' from '15' reversed
+        # First integer 15 → clamped to 10 (previously '5' from reversed '15')
+        assert LLMReranker._parse_score("15") == 10.0
 
     def test_clamps_min(self) -> None:
         assert LLMReranker._parse_score("0") == 1.0

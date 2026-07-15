@@ -30,6 +30,7 @@ class _LakeRAGMixin:
 
         def _factory() -> RAGPipeline:
             provider = create_llm_provider(self.config.llm)
+            reranker = self._build_reranker(provider)
 
             if not self.config.hugegraph.enabled:
                 return RAGPipeline(
@@ -37,11 +38,12 @@ class _LakeRAGMixin:
                     config=self.config.rag,
                     retriever=self._rag_retriever,
                     context_window_tokens=self.config.llm.context_window_tokens,
+                    reranker=reranker,
                 )
 
             # Attempt GraphRAG pipeline with KG augmentation
             try:
-                return self._create_graph_rag_pipeline(provider)
+                return self._create_graph_rag_pipeline(provider, reranker=reranker)
             except (OSError, ValueError, RuntimeError, ConnectionError):
                 logger.warning(
                     "Failed to create GraphRAGPipeline, falling back to RAGPipeline",
@@ -52,11 +54,12 @@ class _LakeRAGMixin:
                     config=self.config.rag,
                     retriever=self._rag_retriever,
                     context_window_tokens=self.config.llm.context_window_tokens,
+                    reranker=reranker,
                 )
 
         return self._get_component("rag_pipeline", _factory)
 
-    def _create_graph_rag_pipeline(self, provider: Any) -> RAGPipeline:
+    def _create_graph_rag_pipeline(self, provider: Any, reranker: Any = None) -> RAGPipeline:
         """Create a GraphRAGPipeline with KG components.
 
         Raises:
@@ -80,6 +83,30 @@ class _LakeRAGMixin:
             kg_extractor=kg_extractor,
             context_window_tokens=self.config.llm.context_window_tokens,
             traversal_depth=self.config.hugegraph.default_traversal_depth,
+            reranker=reranker,
+        )
+
+    def _build_reranker(self, provider: Any) -> Any:
+        """Build a reranker from RAG config ('none' → Noop, zero overhead).
+
+        Wired here so ``config.rag.reranker`` actually takes effect on the RAG
+        pipeline. Previously this config was dead — the pipeline was always
+        built without a reranker and silently used NoopReranker. For the ollama
+        kind, ``base_url`` defaults to the embedding api_base (same ollama
+        instance) when ``reranker_base_url`` is unset.
+        """
+        from arrow_lake.rag.reranker import create_reranker
+
+        rag_cfg = self.config.rag
+        base_url = getattr(rag_cfg, "reranker_base_url", "")
+        if not base_url:
+            emb_base = getattr(self.config.embedding, "api_base", "") or ""
+            base_url = emb_base[:-3] if emb_base.endswith("/v1") else emb_base
+        return create_reranker(
+            rag_cfg.reranker,
+            model_name=rag_cfg.reranker_model,
+            provider=provider,
+            base_url=base_url,
         )
 
     def _rag_retriever(self, question: str, dataset_name: str, top_k: int) -> Any:
