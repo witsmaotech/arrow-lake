@@ -515,7 +515,11 @@ async def ingest_documents(
     lake=Depends(get_lake),
     _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> IngestResponse:
-    """Ingest PDF documents: parse → chunk → embed → store."""
+    """Ingest documents: parse → chunk → embed → store.
+
+    Accepts any format the parser (kreuzberg) supports — PDF, markdown, plain
+    text, HTML, Office docs (see ``_DOCUMENT_EXTENSIONS``).
+    """
     all_paths = list(req.pdf_paths)
     tmp_dir: str | None = None
     try:

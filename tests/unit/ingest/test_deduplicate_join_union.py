@@ -55,6 +55,7 @@ class TestIngestJoin:
         mock_from.side_effect = [mock_left_df, mock_right_df]
 
         mock_manager = MagicMock()
+        mock_manager.dataset_exists.return_value = False
         mock_manager.read_dataset.side_effect = [
             MagicMock(num_rows=100),  # left table
             MagicMock(num_rows=80),   # right table
@@ -84,6 +85,7 @@ class TestIngestUnion:
         mock_from.side_effect = [mock_df1, mock_df2]
 
         mock_manager = MagicMock()
+        mock_manager.dataset_exists.return_value = False
         mock_manager.read_dataset.side_effect = [
             MagicMock(num_rows=100),
             MagicMock(num_rows=100),

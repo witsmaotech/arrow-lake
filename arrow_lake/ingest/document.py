@@ -153,6 +153,15 @@ def _result_to_pages(
 
         if max_pages > 0 and len(pages) >= max_pages:
             break
+
+    # Non-paginated formats (markdown, plain text, HTML, EPUB, ...): kreuzberg
+    # returns the whole text in ``result.content`` with an empty ``result.pages``
+    # list. Synthesize a single page so the chunker sees the text instead of
+    # silently dropping the document as zero chunks.
+    if not pages:
+        content = (getattr(result, "content", "") or "").strip()
+        if content:
+            pages.append((1, content))
     return tuple(pages)
 
 

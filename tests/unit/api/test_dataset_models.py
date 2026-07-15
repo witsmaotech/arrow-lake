@@ -69,3 +69,26 @@ class TestIngestDocumentsRequestValidation:
     def test_blob_key_must_start_with_uploads(self) -> None:
         with pytest.raises(ValueError, match="uploads/"):
             IngestDocumentsRequest(blob_keys=["docs/file.pdf"])
+
+    def test_markdown_blob_key_accepted(self) -> None:
+        # Non-PDF document formats the parser supports must be accepted.
+        req = IngestDocumentsRequest(blob_keys=["uploads/ds/notes.md"])
+        assert req.blob_keys == ["uploads/ds/notes.md"]
+
+    def test_multiple_document_extensions_accepted(self) -> None:
+        req = IngestDocumentsRequest(blob_keys=[
+            "uploads/ds/a.txt",
+            "uploads/ds/b.docx",
+            "uploads/ds/c.html",
+            "uploads/ds/d.rst",
+            "uploads/ds/e.pdf",
+        ])
+        assert len(req.blob_keys) == 5
+
+    def test_non_document_extension_rejected(self) -> None:
+        with pytest.raises(ValueError, match="supported document type"):
+            IngestDocumentsRequest(blob_keys=["uploads/ds/data.csv"])
+
+    def test_executable_path_rejected(self) -> None:
+        with pytest.raises(ValueError, match="Unsupported document type"):
+            IngestDocumentsRequest(pdf_paths=["evil.exe"])

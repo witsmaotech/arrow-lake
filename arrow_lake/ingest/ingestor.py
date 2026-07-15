@@ -96,11 +96,18 @@ class Ingestor(_FileIngestMixin, _MediaIngestMixin, _SourceIngestMixin):
                     reasons=result.rejection_reasons,
                 )
 
-        if not self._first_table_seen.get(dataset_name, False):
-            self._manager.create_dataset(dataset_name, table)
-            self._first_table_seen[dataset_name] = True
-        else:
+        # Decide create vs append by STORAGE state, not just this Ingestor's
+        # history. ``_first_table_seen`` only tracks writes within one Ingestor
+        # lifetime, so a fresh Ingestor appending to a dataset created by an
+        # earlier request would wrongly try ``create_dataset`` and fail with
+        # "already exists". Checking storage existence makes append-across-
+        # requests work (the incremental file-input case).
+        already_exists = self._manager.dataset_exists(dataset_name)
+        if already_exists or self._first_table_seen.get(dataset_name, False):
             self._manager.append_dataset(dataset_name, table)
+        else:
+            self._manager.create_dataset(dataset_name, table)
+        self._first_table_seen[dataset_name] = True
 
         sources.append(IngestionSource(
             path=source_path,

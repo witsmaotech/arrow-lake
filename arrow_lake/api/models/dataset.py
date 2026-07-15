@@ -18,6 +18,19 @@ def _check_no_traversal(value: str) -> None:
     if ".." in decoded:
         raise ValueError(f"Path traversal not allowed: {value!r}")
 
+
+# Document formats the parser (kreuzberg) can parse to text → chunk for KG.
+# The /ingest/documents endpoint accepts any of these, mirroring the parser's
+# actual capability (PDF + markdown/text/HTML/Office). Keep in sync with
+# ``arrow_lake.ingest.document.DocumentParser``.
+_DOCUMENT_EXTENSIONS: frozenset[str] = frozenset({
+    ".pdf",
+    ".md", ".markdown", ".txt", ".text", ".rst", ".org", ".tex",
+    ".docx", ".doc", ".odt", ".rtf",
+    ".html", ".htm", ".epub",
+    ".pptx", ".ppt", ".xlsx", ".xls",
+})
+
 # Private IP ranges for SSRF prevention (shared with connectors_http.py).
 _PRIVATE_NETWORKS = [
     ipaddress.ip_network("127.0.0.0/8"),
@@ -278,9 +291,14 @@ class IngestMixedRequest(BaseModel):
 
 
 class IngestDocumentsRequest(BaseModel):
-    """Request body for PDF document ingestion."""
+    """Request body for document ingestion (PDF, markdown, text, Office, ...).
 
-    pdf_paths: list[str] = Field(default_factory=list, max_length=100, description="PDF file paths to ingest")
+    Any format the parser (kreuzberg) can turn into text is accepted; see
+    ``_DOCUMENT_EXTENSIONS``. The field is named ``pdf_paths`` for backward
+    compatibility but is not limited to PDF.
+    """
+
+    pdf_paths: list[str] = Field(default_factory=list, max_length=100, description="Document file paths to ingest (PDF, markdown, text, Office, ...)")
     blob_keys: list[str] = Field(default_factory=list, max_length=100, description="MinIO blob keys from prior upload")
     doc_type: str | None = Field(
         default=None,
@@ -294,8 +312,11 @@ class IngestDocumentsRequest(BaseModel):
             _check_no_traversal(p)
             if p.startswith("/"):
                 raise ValueError(f"Absolute paths not allowed: {p!r}")
-            if not p.lower().endswith(".pdf"):
-                raise ValueError(f"Not a PDF file: {p!r}")
+            if not p.lower().endswith(tuple(_DOCUMENT_EXTENSIONS)):
+                raise ValueError(
+                    f"Unsupported document type: {p!r}. "
+                    f"Allowed extensions: {sorted(_DOCUMENT_EXTENSIONS)}"
+                )
         return paths
 
     @field_validator("blob_keys")
@@ -306,8 +327,11 @@ class IngestDocumentsRequest(BaseModel):
             if not k.startswith("uploads/"):
                 raise ValueError(f"Blob key must start with 'uploads/': {k!r}")
             filename = k.rsplit("/", 1)[-1]
-            if not filename.lower().endswith(".pdf"):
-                raise ValueError(f"Document blob key must reference a PDF: {k!r}")
+            if not filename.lower().endswith(tuple(_DOCUMENT_EXTENSIONS)):
+                raise ValueError(
+                    f"Document blob key must reference a supported document type: {k!r}. "
+                    f"Allowed extensions: {sorted(_DOCUMENT_EXTENSIONS)}"
+                )
         return keys
 
     @model_validator(mode="after")

@@ -348,6 +348,26 @@ class TestResultToPages:
         assert pages[0] == (1, "Content")
         assert pages[1] == (4, "More")
 
+    def test_empty_pages_falls_back_to_content(self):
+        # Non-paginated formats (markdown/txt/html/epub) return text in
+        # .content with empty .pages → synthesize one page, not drop the doc.
+        from arrow_lake.ingest.document import _result_to_pages
+        result = MagicMock()
+        result.pages = []
+        result.tables = []
+        result.content = "Whole document as one blob of text"
+        pages = _result_to_pages(result, max_pages=0)
+        assert pages == ((1, "Whole document as one blob of text"),)
+
+    def test_empty_pages_empty_content_yields_nothing(self):
+        from arrow_lake.ingest.document import _result_to_pages
+        result = MagicMock()
+        result.pages = []
+        result.tables = []
+        result.content = "   "
+        pages = _result_to_pages(result, max_pages=0)
+        assert pages == ()
+
 
 class TestDocumentParser:
     @patch("arrow_lake.ingest.document.extract_file_sync")

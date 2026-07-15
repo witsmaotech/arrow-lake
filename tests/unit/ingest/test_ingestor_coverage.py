@@ -15,7 +15,11 @@ from arrow_lake.ingest.ingestor import IngestionReport, IngestionSource, Ingesto
 
 @pytest.fixture
 def mock_manager() -> MagicMock:
-    return MagicMock()
+    mgr = MagicMock()
+    # dataset_exists returns a real bool (default MagicMock is truthy, which
+    # would flip _write_table's create-vs-append decision).
+    mgr.dataset_exists.return_value = False
+    return mgr
 
 
 @pytest.fixture
@@ -132,6 +136,21 @@ class TestWriteTable:
         ingestor._manager.create_dataset.assert_called_once()
         ingestor._manager.append_dataset.assert_called_once()
         assert len(sources) == 2
+
+    def test_appends_when_dataset_already_exists_in_storage(self, mock_manager: MagicMock) -> None:
+        # Regression: a fresh Ingestor appending to a dataset created by an
+        # earlier request must APPEND (storage says it exists), not try to
+        # create and fail with "already exists". This is the incremental
+        # file-input case.
+        mock_manager.dataset_exists.return_value = True
+        ing = Ingestor(mock_manager)
+        table = pa.table({"x": [1]})
+        sources: list[IngestionSource] = []
+
+        ing._write_table("ds", table, sources, "/a.csv")
+
+        ing._manager.append_dataset.assert_called_once_with("ds", table)
+        ing._manager.create_dataset.assert_not_called()
 
     def test_quality_gate_check_called(self, mock_manager: MagicMock) -> None:
         gate = MagicMock()

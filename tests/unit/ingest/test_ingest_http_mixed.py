@@ -274,6 +274,7 @@ class TestIngestorHttpIngest:
         from arrow_lake.ingest.ingestor import Ingestor
 
         mock_manager = MagicMock()
+        mock_manager.dataset_exists.return_value = False
         ingestor = Ingestor(manager=mock_manager)
 
         mock_result = MagicMock()
@@ -301,6 +302,7 @@ class TestIngestorHttpIngest:
         from arrow_lake.ingest.ingestor import Ingestor
 
         mock_manager = MagicMock()
+        mock_manager.dataset_exists.return_value = False
         ingestor = Ingestor(manager=mock_manager)
 
         mock_result1 = MagicMock()
@@ -341,6 +343,7 @@ class TestIngestorImageIngest:
         from arrow_lake.ingest.media import ImageMetadata, ProcessedImage
 
         mock_manager = MagicMock()
+        mock_manager.dataset_exists.return_value = False
         ingestor = Ingestor(manager=mock_manager)
 
         img_path = tmp_path / "test.png"
@@ -372,6 +375,7 @@ class TestIngestorImageIngest:
         from arrow_lake.ingest.media import ImageMetadata, ProcessedImage
 
         mock_manager = MagicMock()
+        mock_manager.dataset_exists.return_value = False
         ingestor = Ingestor(manager=mock_manager)
 
         paths = [str(tmp_path / f"img{i}.png") for i in range(3)]
@@ -404,6 +408,7 @@ class TestIngestorVideoIngest:
         from arrow_lake.ingest.media import ExtractedKeyframe, VideoIngestResult
 
         mock_manager = MagicMock()
+        mock_manager.dataset_exists.return_value = False
         ingestor = Ingestor(manager=mock_manager)
 
         vid_path = tmp_path / "test.mp4"
@@ -434,6 +439,7 @@ class TestIngestorVideoIngest:
         from arrow_lake.ingest.media import VideoIngestResult
 
         mock_manager = MagicMock()
+        mock_manager.dataset_exists.return_value = False
         ingestor = Ingestor(manager=mock_manager)
 
         vid_path = tmp_path / "empty.mp4"
@@ -465,6 +471,7 @@ class TestIngestorMixed:
         from arrow_lake.ingest.ingestor import Ingestor
 
         mock_manager = MagicMock()
+        mock_manager.dataset_exists.return_value = False
         ingestor = Ingestor(manager=mock_manager)
 
         with patch.object(
@@ -484,6 +491,7 @@ class TestIngestorMixed:
         from arrow_lake.ingest.ingestor import Ingestor
 
         mock_manager = MagicMock()
+        mock_manager.dataset_exists.return_value = False
         ingestor = Ingestor(manager=mock_manager)
 
         with (
@@ -541,6 +549,7 @@ class TestIngestorMixed:
         from arrow_lake.ingest.ingestor import Ingestor
 
         mock_manager = MagicMock()
+        mock_manager.dataset_exists.return_value = False
         ingestor = Ingestor(manager=mock_manager)
 
         with patch("arrow_lake.ingest.schema.UnifiedTableManager"):
