@@ -56,10 +56,17 @@ TYPE_DEFAULTS: dict[str, str] = {
 HIGH_RISK_TYPES: frozenset[str] = frozenset({"hypergraph"})
 
 # Signals in content/doc_type suggesting a temporal structure (→ temporal_graph).
+#
+# CONSERVATIVE on purpose: a false positive routes to a temporal_graph template
+# whose ``parse_identifiers`` crashes (TypeError) when no ``time_field`` is set,
+# killing the whole kg_build. Earlier the list included generic words like
+# 事件 / 流程 / 阶段 / 顺序 / 工序 / 先后 — these appear in nearly every technical
+# doc (e.g. DDD: domain *events*, business *processes*) and caused the build to
+# crash on the JD DDD corpus. Only unambiguous timeline indicators remain; if a
+# caller genuinely wants temporal structure they can pin ``template_type``.
 _TEMPORAL_SIGNALS: tuple[str, ...] = (
-    "时间线", "时间轴", "事件流", "事件", "流程", "工序", "先后", "阶段",
-    "顺序", "传记", "生平", "履历", "历程", "日程", "里程碑", "时间顺序",
-    "timeline", "workflow", "event", "sequence", "chronolog", "biography",
+    "时间线", "时间轴", "时间顺序", "时间序列", "历程", "生平", "履历", "传记",
+    "里程碑", "timeline", "chronolog",
 )
 
 

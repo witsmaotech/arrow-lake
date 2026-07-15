@@ -280,7 +280,7 @@ class _LakeKGMixin:
     # Public API
     # ------------------------------------------------------------------
 
-    async def kg_build(self, dataset_name: str) -> str:
+    async def kg_build(self, dataset_name: str, *, incremental: bool = False) -> str:
         """Build a knowledge graph from a dataset.
 
         Reads text chunks from the specified dataset, extracts entities
@@ -308,7 +308,7 @@ class _LakeKGMixin:
                 None, self._load_kg_table, dataset_name,
             )
 
-            task_id = await builder.build(dataset_name, table)
+            task_id = await builder.build(dataset_name, table, incremental=incremental)
 
             # Fire-and-forget via TaskManager for consistent status tracking.
             # TaskManager.run_background handles both sync and async callables
@@ -578,9 +578,13 @@ class _LakeKGMixin:
             extractor.chat_ka, dataset_name, question, top_k
         )
         answer = getattr(resp, "content", "") or ""
-        retrieved = (
-            getattr(resp, "additional_kwargs", {}) or {}
-        ).get("retrieved_items", [])
+        # hyper-extract's ka.chat() populates ``retrieved_nodes`` /
+        # ``retrieved_edges`` (not ``retrieved_items``); merge both so the
+        # response reports what actually grounded the answer.
+        ak = getattr(resp, "additional_kwargs", {}) or {}
+        retrieved = ak.get("retrieved_items") or [
+            *ak.get("retrieved_nodes", []), *ak.get("retrieved_edges", []),
+        ]
         return {
             "answer": answer,
             "retrieved_items": [_serialize_ka_item(it) for it in (retrieved or [])],

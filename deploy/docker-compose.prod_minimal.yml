@@ -55,7 +55,7 @@ x-arrow-lake: &arrow-lake
       max-file: "5"
       tag: "arrow-lake"
   tmpfs:
-    - /tmp
+    - /tmp:rw,nosuid,nodev,exec   # relax docker default noexec: kreuzberg pdfium native lib must be mmap-able
     - /app/.cache
     - /app/.local
     - /home/arrowlake
@@ -199,6 +199,20 @@ services:
       # v1.8.8 per-dataset KA dump 根目录。read_only 容器只能写挂载卷 → 必须用 /data/lake/ka
       # (lake-data 卷),不能默认 /data/ka(根 FS 只读,Errno 30)。
       ARROW_LAKE__HUGEGRAPH__HE_KA_BASE_DIR: "/data/lake/ka"
+      # [#KG-LLM-split] RAG 问答 (ka.chat 生成回答) 用旗舰模型, 与抽取分离
+      # (抽取 feed_text 默认走上面全局 LLM ministral-3:3b)。设 DASHSCOPE_API_KEY 后启用;
+      # 注释整个块 → 问答回退全局 llm (ministral)。百炼 dashscope 经上面 HTTP_PROXY 出网。
+      ARROW_LAKE__HUGEGRAPH__HE_QA_LLM__PROVIDER: "openai"
+      ARROW_LAKE__HUGEGRAPH__HE_QA_LLM__API_BASE: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+      ARROW_LAKE__HUGEGRAPH__HE_QA_LLM__API_KEY: "${DASHSCOPE_API_KEY:-}"
+      ARROW_LAKE__HUGEGRAPH__HE_QA_LLM__MODEL: "qwen3-max"
+      # 候选问答模型 (替换 MODEL 行即换): qwen-max / deepseek-v3 / 本地 qwen3.5:27b
+      #   (本地: API_BASE=http://host.docker.internal:11534/v1, API_KEY=ollama)
+      # 抽取换百炼轻量 (取消注释, 同 API_BASE/API_KEY):
+      # ARROW_LAKE__HUGEGRAPH__HE_EXTRACT_LLM__PROVIDER: "openai"
+      # ARROW_LAKE__HUGEGRAPH__HE_EXTRACT_LLM__API_BASE: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+      # ARROW_LAKE__HUGEGRAPH__HE_EXTRACT_LLM__API_KEY: "${DASHSCOPE_API_KEY:-}"
+      # ARROW_LAKE__HUGEGRAPH__HE_EXTRACT_LLM__MODEL: "qwen-turbo"
       # DuckDB performance tuning (v1.3.4)
       ARROW_LAKE__OLAP__PRESERVE_INSERTION_ORDER: "false"
       ARROW_LAKE__OLAP__TEMP_DIRECTORY: "/tmp/duckdb"

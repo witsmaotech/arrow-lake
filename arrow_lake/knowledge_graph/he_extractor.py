@@ -39,6 +39,7 @@ from typing import Any
 from arrow_lake.knowledge_graph.doc_type_router import (
     DocTypeClassifier,
     DocTypeRouter,
+    _PROJECT_TEMPLATES_DIR,
 )
 from arrow_lake.knowledge_graph.extractor import (
     _GENERIC_ENTITY_STOPWORDS,
@@ -127,6 +128,14 @@ class HyperExtractExtractor:
         self._router = doc_type_router
         self._language = language
         self._model = model
+        # [#KG-LLM-split] 两阶段独立 LLM（None → 回退全局 llm_config，向后兼容）。
+        # 抽取 (feed_text) 用 _extract_llm_cfg；问答 (ka.chat) 用 _qa_llm_cfg。
+        self._extract_llm_cfg = (
+            getattr(hugegraph_config, "he_extract_llm", None) or llm_config
+        )
+        self._qa_llm_cfg = (
+            getattr(hugegraph_config, "he_qa_llm", None) or llm_config
+        )
         self._classifier = doc_type_classifier
         # v1.8.8: langchain Embeddings (_LakeEmbedderAdapter) for build_index.
         # None = parse-only (old behaviour); required for dataset granularity.
@@ -143,61 +152,91 @@ class HyperExtractExtractor:
         self._default_template_type = template_type
         self._template_cache: dict[str, Any] = {}
         self._doc_type_cache: dict[str, str | None] = {}  # content digest → inferred doc_type
-        # langchain ChatOpenAI client (thread-safe, reused across parses). A fresh
+        # langchain ChatOpenAI clients (thread-safe, reused across parses). A fresh
         # hyper-extract KA is created per parse to avoid AutoGraph accumulating
         # mutable state (data/indexes) across many chunks → corrupted/empty output.
-        self._chat_client: Any = None
+        # [#KG-LLM-split] separate cached clients for extract (build) vs qa (chat).
+        self._extract_client: Any = None
+        self._qa_client: Any = None
         # §12.6.① langchain-openai 1.3.x does not propagate ChatOpenAI(api_key=...)
         # to the underlying openai client, so OPENAI_API_KEY must be in the env.
         # Only set when absent (setdefault semantics) and log when an existing
         # DIFFERENT key wins, so a second extractor with another key is not silent.
+        # Seeded from the EXTRACT config (build runs first / most frequent). The QA
+        # client, if it uses 百炼 (aliyuncs), goes through hyperextract.create_client
+        # which carries its own key and does not depend on this env var.
         _existing = os.environ.get("OPENAI_API_KEY")
-        _want = llm_config.api_key or "dummy"
+        _want = self._extract_llm_cfg.api_key or "dummy"
         if _existing is None:
             os.environ["OPENAI_API_KEY"] = _want
         elif _existing != _want:
             logger.debug("OPENAI_API_KEY already set; not overridden by this extractor")
 
-    def _get_chat_client(self) -> Any:
-        """Return a cached langchain ChatOpenAI client (thread-safe; reused
-        across parses). A fresh hyper-extract KA is created per parse via
-        :meth:`_create_ka` to avoid the AutoGraph accumulating mutable state
-        (``data``/indexes) across many chunks, which corrupts output after N calls.
+    def _build_client(self, cfg: Any, model: str) -> Any:
+        """Build a langchain chat client from an LLMConfig + model name.
+
+        Routes 百炼 (aliyuncs MaaS) through hyper-extract's official
+        ``create_client`` instead of a direct langchain ChatOpenAI: ① direct
+        ChatOpenAI has an api_key propagation bug once hyperextract is imported
+        (openai.OpenAIError: Missing credentials); ② create_client handles the
+        bailian provider config; ③ non-thinking models (qwen-turbo) make feed_text
+        fast (~7.7s/chunk vs 8min for thinking models). The structured-output
+        (``.parse()`` / json_schema) binding is applied by hyper-extract's template
+        at EXTRACTION time (feed_text), NOT here — the returned client is a plain
+        generator usable for both extraction and chat.
         """
-        if self._chat_client is None:
-            api_base = self._llm_config.api_base or ""
-            model = self._model or self._llm_config.model or ""
-            # 阿里百炼(aliyuncs MaaS):走 hyper-extract 官方 create_client,而非直连
-            # langchain ChatOpenAI。原因:① 直连 ChatOpenAI 在 hyperextract 包 import 后
-            # api_key 传递异常(openai.OpenAIError: Missing credentials,import 副作用);
-            # ② create_client 正确处理 bailian provider 配置 + json_schema 模型选型
-            # (qwen-turbo/plus 等支持 json_schema,避开 qwen-max / qwen3.7-max 系
-            # json_object-only 的 "messages must contain json" 400,见 hyper-extract
-            # providers 文档 Issue #24);③ qwen-turbo 非思考 → feed_text 快(实测 7.7s/
-            # chunk vs thinking 模型 8min 无 checkpoint)。embedder 仍用项目的
-            # _LakeEmbedderAdapter(忽略 create_client 自带的 emb)。
-            if "aliyuncs" in api_base:
-                from hyperextract import create_client
+        api_base = cfg.api_base or ""
+        if "aliyuncs" in api_base:
+            from hyperextract import create_client
 
-                llm, _emb = create_client(
-                    f"bailian:{model}@{api_base}",
-                    api_key=self._llm_config.api_key or "dummy",
-                )
-                self._chat_client = llm
+            llm, _emb = create_client(
+                f"bailian:{model}@{api_base}",
+                api_key=cfg.api_key or "dummy",
+            )
+            return llm
+        from langchain_openai import ChatOpenAI
+
+        return ChatOpenAI(
+            model=model,
+            api_key=cfg.api_key or "dummy",
+            base_url=cfg.api_base or None,
+            temperature=0,
+            # hyper-extract 抽取走结构化输出(.parse()); thinking 模型需撑大 max_tokens
+            # 让 thinking + 结构化输出都装下,否则返空。
+            max_tokens=8192,
+        )
+
+    def _get_extract_client(self) -> Any:
+        """Cached LLM client for the EXTRACTION phase (kg_build / feed_text).
+
+        Uses ``he_extract_llm`` if set, else the global llm (+ ``he_model`` name
+        override). A fresh KA is created per parse via :meth:`_create_ka` to avoid
+        the AutoGraph accumulating mutable state across many chunks.
+        """
+        if self._extract_client is None:
+            model = self._model or self._extract_llm_cfg.model or ""
+            self._extract_client = self._build_client(self._extract_llm_cfg, model)
+        return self._extract_client
+
+    def _get_qa_client(self) -> Any:
+        """Cached LLM client for the Q&A phase (ka.chat generative answer).
+
+        Uses ``he_qa_llm`` if set, else the global llm. When QA and extract share
+        the same underlying config (both unset → global llm), the extract client
+        is reused so a single global llm still serves both phases (backward compat).
+        """
+        if self._qa_client is None:
+            if self._qa_llm_cfg is self._extract_llm_cfg:
+                self._qa_client = self._get_extract_client()
             else:
-                from langchain_openai import ChatOpenAI
-
-                self._chat_client = ChatOpenAI(
-                    model=model,
-                    api_key=self._llm_config.api_key or "dummy",
-                    base_url=self._llm_config.api_base or None,
-                    temperature=0,
-                    # §12.6 修正：hyper-extract 走结构化输出(.parse() + response_format)，
-                    # 不能用 chat_template_kwargs 关 thinking（.parse() 拒绝未知 kwarg）。
-                    # thinking 模型需把 max_tokens 撑大让 thinking+结构化输出都装下，否则返空。
-                    max_tokens=8192,
+                self._qa_client = self._build_client(
+                    self._qa_llm_cfg, self._qa_llm_cfg.model or ""
                 )
-        return self._chat_client
+        return self._qa_client
+
+    def _get_chat_client(self) -> Any:
+        """Backward-compat alias for the extraction-phase client."""
+        return self._get_extract_client()
 
     def _resolve_template(
         self, doc_type: str | None, content: str, template_type: str | None,
@@ -218,8 +257,13 @@ class HyperExtractExtractor:
             return selected
         return self._router.resolve(doc_type)
 
-    def _create_ka(self, template_path: str) -> Any:
-        """Create a fresh hyper-extract KA with this extractor's llm + embedder.
+    def _create_ka(self, template_path: str, *, llm_client: Any = None) -> Any:
+        """Create a fresh hyper-extract KA with the given llm + this embedder.
+
+        ``llm_client`` selects the phase: extraction callers pass the extract
+        client (default), query callers (``load_ka_for_query``) pass the QA
+        client so ``ka.chat`` generates with the flagship model while the dump's
+        extracted data/index (built by the lightweight extract model) is reused.
 
         AutoGraph's default node/edge merger is ``MergeStrategy.LLM.BALANCED``
         (``hyperextract/types/graph.py:164-167``), so ``feed_text`` activates
@@ -234,7 +278,7 @@ class HyperExtractExtractor:
         return Template.create(
             template_path,
             self._language,
-            llm_client=self._get_chat_client(),
+            llm_client=llm_client or self._get_extract_client(),
             embedder=self._embedder,
             chunk_size=cfg.he_chunk_size,
             chunk_overlap=cfg.he_chunk_overlap,
@@ -242,9 +286,15 @@ class HyperExtractExtractor:
         )
 
     def _ka_dir_for(self, dataset_name: str) -> Any:
-        """[#2] Resolve the per-dataset KA dump dir (``he_ka_base_dir/{ds}/ka``)."""
+        """[#2] Resolve the per-dataset KA dump dir.
+
+        Uses :func:`artifact_key_for` so the KA dir stays in lockstep with the
+        HugeGraph graph name (``kg_{artifact_key}``) — same source, can't diverge.
+        For canonical names (e.g. ``jd_ddd``) this equals the raw dataset name.
+        """
         from pathlib import Path
-        return Path(self._hugegraph_config.he_ka_base_dir) / dataset_name / "ka"
+        from arrow_lake.knowledge_graph._naming import artifact_key_for
+        return Path(self._hugegraph_config.he_ka_base_dir) / artifact_key_for(dataset_name) / "ka"
 
     def load_ka_for_query(self, dataset_name: str) -> Any:
         """[#2] Load a dumped per-dataset KA for search/chat.
@@ -265,7 +315,17 @@ class HyperExtractExtractor:
                 template = meta.get("template") or template
             except Exception:
                 pass
-        ka = self._create_ka(template)
+        # metadata stores the template STEM (e.g. "ddd_concept_graph"); hyper-
+        # extract's factory only recognises gallery preset paths ("general/…")
+        # or full file paths. Project-local templates must be resolved back to
+        # their full path or Template.create raises "Template not found".
+        if template and "/" not in template and not template.endswith(".yaml"):
+            candidate = _PROJECT_TEMPLATES_DIR / f"{template}.yaml"
+            if candidate.is_file():
+                template = str(candidate)
+        # [#KG-LLM-split] query path uses the QA (flagship) client so ka.chat
+        # generates answers with a stronger model than the lightweight extractor.
+        ka = self._create_ka(template, llm_client=self._get_qa_client())
         ka.load(ka_dir)
         return ka
 
@@ -578,6 +638,7 @@ class HyperExtractExtractor:
         ka_dir: Path,
         *,
         checkpoint_every: int = 20,
+        incremental: bool = False,
     ) -> DatasetKA:
         """Build ONE per-dataset KA: ``feed_text`` all chunks → ``build_index`` → ``dump``.
 
@@ -609,13 +670,54 @@ class HyperExtractExtractor:
             :class:`DatasetKA` with the merged KA, dump dir, name→[chunk_id]
             provenance, and the merged ExtractionResult.
         """
-        ka = self._create_ka(template_path)
         ka_dir = Path(ka_dir)
         ka_dir.mkdir(parents=True, exist_ok=True)
         entity_chunks: dict[str, list[str]] = {}
         failures = 0
 
-        for i, (cid, text) in enumerate(chunks):
+        # [#incremental] When an existing dump is present + the template matches
+        # + the caller asked incremental: load the KA and feed ONLY new chunks
+        # (chunk_id not in fed_chunks). fed_chunks is a sidecar file (hyper-
+        # extract owns metadata.json). chunk_id = str row-index is stable for
+        # APPEND (the incremental use case); re-ingest or a template change must
+        # go through a full rebuild (clear + rebuild). A template mismatch or a
+        # missing/corrupt fed_chunks falls back to a full feed (correct, safe).
+        import json as _json
+        fed_path = ka_dir / "fed_chunks.json"
+        prev_fed: set[str] = set()
+        can_incremental = False
+        if incremental and (ka_dir / "data.json").is_file():
+            try:
+                meta = _json.loads((ka_dir / "metadata.json").read_text("utf-8"))
+                prev_stem = (meta.get("template") or "").strip()
+                can_incremental = prev_stem == Path(template_path).stem
+                if can_incremental and fed_path.is_file():
+                    prev_fed = set(_json.loads(fed_path.read_text("utf-8")))
+            except Exception as exc:  # noqa: BLE001 — fall back to full feed
+                logger.warning("incremental KA prep failed (%s): full feed", str(exc)[:120])
+                can_incremental = False
+
+        ka = self._create_ka(template_path)
+        if can_incremental:
+            try:
+                await asyncio.to_thread(ka.load, ka_dir)
+            except Exception as exc:  # noqa: BLE001 — corrupt/unreadable dump
+                logger.warning("incremental KA load failed (%s): full feed", str(exc)[:120])
+                ka = self._create_ka(template_path)
+                can_incremental = False
+                prev_fed = set()
+
+        chunks_to_feed = (
+            [(cid, text) for cid, text in chunks if cid not in prev_fed]
+            if can_incremental else list(chunks)
+        )
+        if can_incremental:
+            logger.info(
+                "incremental KA: %d total chunks, %d new (already fed=%d)",
+                len(chunks), len(chunks_to_feed), len(prev_fed),
+            )
+
+        for i, (cid, text) in enumerate(chunks_to_feed):
             stripped = (text or "").strip()
             if not stripped:
                 continue
@@ -626,7 +728,7 @@ class HyperExtractExtractor:
                 failures += 1
                 logger.warning(
                     "build_dataset_ka feed_text failed chunk %s (%d/%d), skipped: %s",
-                    cid, i + 1, len(chunks), str(exc)[:160],
+                    cid, i + 1, len(chunks_to_feed), str(exc)[:160],
                 )
                 # First-chunk failure on an empty KA ⇒ template unusable:
                 # rebuild with default and keep going (one-time, not per-chunk).
@@ -654,7 +756,7 @@ class HyperExtractExtractor:
                     await asyncio.to_thread(ka.dump, ka_dir)
                     logger.info(
                         "build_dataset_ka checkpoint at chunk %d/%d → %s",
-                        i + 1, len(chunks), ka_dir,
+                        i + 1, len(chunks_to_feed), ka_dir,
                     )
                 except Exception as exc:
                     logger.warning(
@@ -664,13 +766,22 @@ class HyperExtractExtractor:
         if failures:
             logger.info(
                 "build_dataset_ka done: %d/%d chunks skipped (template=%s)",
-                failures, len(chunks), template_path,
+                failures, len(chunks_to_feed), template_path,
             )
 
         # feed_text invalidates the index (omem clear_index); rebuild once, then dump.
         if not ka.empty():
             await asyncio.to_thread(ka.build_index)
         await asyncio.to_thread(ka.dump, ka_dir)
+
+        # [#incremental] persist the full set of fed chunk_ids so the next
+        # incremental build can diff. Best-effort: a missing sidecar just means
+        # the next build re-feeds everything (correct, not lossy).
+        try:
+            all_fed = sorted(prev_fed | {cid for cid, _ in chunks_to_feed})
+            fed_path.write_text(_json.dumps(all_fed), "utf-8")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("fed_chunks sidecar write failed: %s", str(exc)[:120])
 
         result = self._ka_to_extraction_result(ka)
         return DatasetKA(

@@ -122,11 +122,18 @@ class KGBuilder:
     # Public API
     # ------------------------------------------------------------------
 
-    async def build(self, dataset_name: str, chunks_table: pa.Table) -> str:
+    async def build(
+        self, dataset_name: str, chunks_table: pa.Table, *,
+        incremental: bool = False,
+    ) -> str:
         """Prepare a KG build task and return its ID immediately.
 
         The actual build runs in the background via :meth:`execute_build`.
         Use :meth:`get_task_status` to track progress.
+
+        ``incremental``: feed only NEW chunks (not in the KA's fed_chunks) into
+        the existing KA + upsert their entities/edges (idempotent). Falls back to
+        a full rebuild when no dump exists or the template changed.
         """
         task_id = str(uuid.uuid4())[:8]
         started = datetime.now(UTC)
@@ -143,17 +150,18 @@ class KGBuilder:
             error=None,
         )
         self._tasks[task_id] = task
-        self._pending_tables[task_id] = chunks_table
+        self._pending_tables[task_id] = (chunks_table, incremental)
         return task_id
 
     async def execute_build(self, task_id: str) -> None:
         """Execute a previously prepared build task in the background."""
         task = self._tasks.get(task_id)
-        table = self._pending_tables.pop(task_id, None)
-        if task is None or table is None:
+        pending = self._pending_tables.pop(task_id, None)
+        if task is None or pending is None:
             return
+        table, incremental = pending
         try:
-            await self._execute_build(task, table)
+            await self._execute_build(task, table, incremental=incremental)
             task.status = KGBuildStatus.COMPLETED
         except asyncio.CancelledError:
             # Cancellation is abnormal — mark FAILED, then propagate (do NOT
@@ -178,9 +186,15 @@ class KGBuilder:
     # ------------------------------------------------------------------
 
     async def _execute_build(
-        self, task: KGBuildTask, table: pa.Table
+        self, task: KGBuildTask, table: pa.Table, *, incremental: bool = False,
     ) -> None:
-        """Run the full build pipeline."""
+        """Run the full build pipeline.
+
+        ``incremental``: feed only new chunks into the existing KA (KG insert is
+        idempotent upsert by primary key, so re-inserting the merged result is
+        safe). Falls back to a full rebuild inside build_dataset_ka when no dump
+        exists or the template changed.
+        """
         # v1.8.6: per-dataset graph isolation — every write targets kg_{dataset}.
         graph_name = graph_name_for(task.dataset_name)
         # 1. Ensure schema (also creates graph if needed)
@@ -311,7 +325,10 @@ class KGBuilder:
             template_path = self._extractor._resolve_template(
                 dataset_doc_type, _sample, None,
             )
-            ka_dir = self._ka_base_dir / task.dataset_name / "ka"
+            # [#naming] use artifact_key_for so the build-time KA dir matches
+            # the query-time dir (he_extractor._ka_dir_for) and the graph name.
+            from arrow_lake.knowledge_graph._naming import artifact_key_for
+            ka_dir = self._ka_base_dir / artifact_key_for(task.dataset_name) / "ka"
             # [#11] Archive the current dump (if any) before overwrite so a
             # regressive/failed rebuild can be rolled back. Then prune to the
             # configured max versions to bound disk usage.
@@ -328,6 +345,7 @@ class KGBuilder:
                 template_path,
                 list(zip(chunk_ids, contents, strict=True)),
                 ka_dir,
+                incremental=incremental,
             )
             result = dataset_ka.result
             total_entities = len(result.entities)

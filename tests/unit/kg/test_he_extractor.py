@@ -8,6 +8,7 @@ relation endpoint validity, doc_type routing, and graceful degradation.
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -461,4 +462,208 @@ def test_export_ka_obsidian_raises_when_no_dump(
         extractor.export_ka_obsidian("ds", tmp_path / "vault")
     except FileNotFoundError as e:
         assert str(tmp_path) not in str(e)
+
+
+# ---------------------------------------------------------------------------
+# [#KG-LLM-split] dual LLM config (extraction vs Q&A)
+# ---------------------------------------------------------------------------
+
+
+def _hg_config(*, extract=None, qa=None) -> SimpleNamespace:
+    """HugeGraphConfig stand-in carrying the two phase LLM configs."""
+    return SimpleNamespace(
+        he_extract_llm=extract, he_qa_llm=qa,
+        he_chunk_size=2048, he_chunk_overlap=256, he_max_workers=10,
+    )
+
+
+def test_qa_client_uses_qa_config_when_set(
+    llm_config: SimpleNamespace, router: DocTypeRouter,
+) -> None:
+    """load_ka_for_query's QA client uses he_qa_llm; extraction uses the global llm."""
+    qa_cfg = SimpleNamespace(
+        api_key="qa-key", model="deepseek-v3",
+        api_base="https://dashscope.aliyuncs.com/compatible-mode/v1",
+    )
+    ex = HyperExtractExtractor(
+        llm_config, doc_type_router=router, language="zh",
+        hugegraph_config=_hg_config(qa=qa_cfg),
+    )
+    built: list[tuple] = []
+    ex._build_client = lambda cfg, model: built.append((cfg, model)) or SimpleNamespace()  # type: ignore[method-assign]
+
+    ex._get_extract_client()
+    ex._get_qa_client()
+
+    assert len(built) == 2
+    extract_cfg, extract_model = built[0]
+    qa_cfg_used, qa_model = built[1]
+    # extraction falls back to the global llm_config (+ its model)
+    assert extract_cfg is llm_config
+    assert extract_model == llm_config.model
+    # Q&A uses the dedicated flagship config
+    assert qa_cfg_used is qa_cfg
+    assert qa_model == "deepseek-v3"
+
+
+def test_qa_client_falls_back_to_extract_when_unset(
+    llm_config: SimpleNamespace, router: DocTypeRouter,
+) -> None:
+    """No overrides → QA shares the extract client (single global llm, backward compat)."""
+    ex = HyperExtractExtractor(
+        llm_config, doc_type_router=router, language="zh",
+        hugegraph_config=_hg_config(),  # both None
+    )
+    built: list[str] = []
+    ex._build_client = lambda cfg, model: built.append(model) or SimpleNamespace()  # type: ignore[method-assign]
+
+    c_extract = ex._get_extract_client()
+    c_qa = ex._get_qa_client()
+
+    assert len(built) == 1          # one client built, shared by both phases
+    assert c_qa is c_extract
+
+
+# ---------------------------------------------------------------------------
+# [#incremental] build_dataset_ka incremental feed (Task 2)
+# ---------------------------------------------------------------------------
+
+
+class _FakeNode:
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+
+class _FakeKA:
+    """Records feed_text calls; persists node names across dump/load."""
+
+    def __init__(self, template_path: str) -> None:
+        self._stem = Path(template_path).stem
+        self._names: list[str] = []
+        self.fed_texts: list[str] = []  # feed_text calls this run (load doesn't count)
+
+    @property
+    def nodes(self) -> list[_FakeNode]:
+        return [_FakeNode(n) for n in self._names]
+
+    def feed_text(self, text: str) -> None:
+        self.fed_texts.append(text)
+        nm = (text or "").strip().split()[0] if (text or "").strip() else "x"
+        if nm not in self._names:
+            self._names.append(nm)
+
+    def dump(self, ka_dir: Path) -> None:
+        import json as _json
+        ka_dir.mkdir(parents=True, exist_ok=True)
+        (ka_dir / "data.json").write_text("{}")
+        (ka_dir / "metadata.json").write_text(
+            _json.dumps({"template": self._stem, "lang": "zh", "type": "graph"})
+        )
+        (ka_dir / "_fake_nodes.json").write_text(_json.dumps(self._names))
+
+    def load(self, ka_dir: Path) -> None:
+        import json as _json
+        p = ka_dir / "_fake_nodes.json"
+        if p.is_file():
+            self._names = list(_json.loads(p.read_text("utf-8")))
+
+    def build_index(self) -> None:
+        pass
+
+    def empty(self) -> bool:
+        return len(self._names) == 0
+
+
+def _incremental_extractor(
+    llm_config: SimpleNamespace, router: DocTypeRouter,
+) -> HyperExtractExtractor:
+    """Extractor with _create_ka + _ka_to_extraction_result stubbed (no LLM).
+
+    Captures every KA created so tests can inspect what was fed.
+    """
+    import json as _json
+    ex = HyperExtractExtractor(llm_config, doc_type_router=router, language="zh")
+    created: list[_FakeKA] = []
+
+    def _create(tpl: str, **kw: object) -> _FakeKA:
+        ka = _FakeKA(tpl)
+        created.append(ka)
+        return ka
+
+    ex._create_ka = _create  # type: ignore[method-assign]
+    ex._ka_to_extraction_result = lambda ka: ExtractionResult(  # type: ignore[method-assign]
+        entities=tuple(), relations=tuple(), raw_text="",
+    )
+    ex.created_kas = created  # type: ignore[attr-defined]
+    return ex
+
+
+@pytest.mark.asyncio
+async def test_build_dataset_ka_full_writes_fed_chunks(
+    llm_config: SimpleNamespace, router: DocTypeRouter, tmp_path,
+) -> None:
+    """A full build records every chunk_id in fed_chunks.json."""
+    import json as _json
+    ex = _incremental_extractor(llm_config, router)
+    ka_dir = tmp_path / "ka"
+    await ex.build_dataset_ka(
+        "general/concept_graph",
+        [("0", "alpha"), ("1", "beta")], ka_dir,
+    )
+    fed = _json.loads((ka_dir / "fed_chunks.json").read_text("utf-8"))
+    assert fed == ["0", "1"]
+    # the full build fed both chunks
+    assert ex.created_kas[-1].fed_texts == ["alpha", "beta"]
+
+
+@pytest.mark.asyncio
+async def test_build_dataset_ka_incremental_feeds_only_new(
+    llm_config: SimpleNamespace, router: DocTypeRouter, tmp_path,
+) -> None:
+    """Incremental build loads the existing KA and feeds ONLY new chunks."""
+    import json as _json
+    ex = _incremental_extractor(llm_config, router)
+    ka_dir = tmp_path / "ka"
+    await ex.build_dataset_ka(
+        "general/concept_graph", [("0", "alpha"), ("1", "beta")], ka_dir,
+    )
+    # incremental: chunks 0,1 already fed + new chunk 2
+    await ex.build_dataset_ka(
+        "general/concept_graph",
+        [("0", "alpha"), ("1", "beta"), ("2", "gamma")], ka_dir,
+        incremental=True,
+    )
+    fed = _json.loads((ka_dir / "fed_chunks.json").read_text("utf-8"))
+    assert fed == ["0", "1", "2"]                       # all tracked
+    assert ex.created_kas[-1].fed_texts == ["gamma"]    # ONLY the new chunk fed
+
+
+@pytest.mark.asyncio
+async def test_build_dataset_ka_incremental_template_mismatch_full_feed(
+    llm_config: SimpleNamespace, router: DocTypeRouter, tmp_path,
+) -> None:
+    """A template change must force a full feed (schema-tear guard)."""
+    import json as _json
+    ex = _incremental_extractor(llm_config, router)
+    ka_dir = tmp_path / "ka"
+    await ex.build_dataset_ka(
+        "general/concept_graph", [("0", "alpha"), ("1", "beta")], ka_dir,
+    )
+    # simulate a routing/template change: metadata now names a different template
+    meta = _json.loads((ka_dir / "metadata.json").read_text("utf-8"))
+    meta["template"] = "workflow_graph"
+    (ka_dir / "metadata.json").write_text(_json.dumps(meta))
+    # incremental with the (now mismatched) original template → full feed fallback
+    await ex.build_dataset_ka(
+        "general/concept_graph",
+        [("0", "alpha"), ("1", "beta"), ("2", "gamma")], ka_dir,
+        incremental=True,
+    )
+    # full feed → all 3 chunks fed (not just the new "gamma")
+    assert ex.created_kas[-1].fed_texts == ["alpha", "beta", "gamma"]
+    fed = _json.loads((ka_dir / "fed_chunks.json").read_text("utf-8"))
+    assert fed == ["0", "1", "2"]
+
+
+
 

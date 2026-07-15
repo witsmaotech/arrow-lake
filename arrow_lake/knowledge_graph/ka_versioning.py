@@ -43,7 +43,10 @@ _DUMP_MEMBERS = ("data.json", "metadata.json", "index")
 
 
 def _ka_dir(base_dir: Path, dataset_name: str) -> Path:
-    return Path(base_dir) / dataset_name / "ka"
+    # [#naming] artifact_key_for = the graph-name stem — KA dir and HugeGraph
+    # graph (kg_{stem}) share one source. Canonical names (jd_ddd) unchanged.
+    from arrow_lake.knowledge_graph._naming import artifact_key_for
+    return Path(base_dir) / artifact_key_for(dataset_name) / "ka"
 
 
 def _versions_dir(ka_dir: Path) -> Path:

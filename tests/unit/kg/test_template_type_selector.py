@@ -36,12 +36,23 @@ def test_unknown_type_defers_to_none() -> None:
 
 def test_temporal_heuristic_picks_temporal_graph() -> None:
     sel = TemplateTypeSelector()
-    # temporal signal in content → temporal_graph (no type pinned)
-    assert sel.select(content="系统的事件流和阶段顺序如下") == TYPE_DEFAULTS["temporal_graph"]
+    # unambiguous temporal signal in content → temporal_graph (no type pinned)
+    assert sel.select(content="项目的时间线和里程碑历程") == TYPE_DEFAULTS["temporal_graph"]
     # temporal signal in doc_type → temporal_graph
-    assert sel.select(doc_type="biography") == TYPE_DEFAULTS["temporal_graph"]
+    assert sel.select(doc_type="timeline") == TYPE_DEFAULTS["temporal_graph"]
     # english signal
     assert sel.select(content="chronological timeline of events") == TYPE_DEFAULTS["temporal_graph"]
+
+
+def test_generic_words_do_not_trigger_temporal() -> None:
+    """Regression: generic technical words (事件/流程/阶段/顺序) must NOT route
+    to temporal_graph — they appear in nearly every domain doc (e.g. DDD domain
+    events, business processes) and previously crashed kg_build by routing to a
+    temporal template that lacks a time_field."""
+    sel = TemplateTypeSelector()
+    assert sel.select(content="领域事件与业务流程的设计阶段和顺序") is None
+    assert sel.select(content="event-driven workflow sequence") is None
+    assert sel.select(doc_type="ddd") is None
 
 
 def test_no_signal_no_type_defers() -> None:

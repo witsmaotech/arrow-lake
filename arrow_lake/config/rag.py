@@ -175,6 +175,17 @@ class HugeGraphConfig(BaseModel):
     }
     he_language: Literal["zh", "en"] = "zh"
     he_model: str | None = None
+    # [#KG-LLM-split] 两阶段独立 LLM（None → 回退全局 llm，向后兼容）。
+    # KG 流程 LLM 用于关注点不同的两阶段：
+    #   - 抽取构建 (kg_build → feed_text)：需 json_schema 约束 + 高吞吐 + 低成本 → 轻量
+    #     模型够用 (ministral-3:3b / 百炼 qwen-turbo)。
+    #   - RAG 问答 (load_ka_for_query → ka.chat 生成)：需强推理 + 中文生成 → 旗舰更合适
+    #     (deepseek-v3 / qwen-max / qwen3.5:27b)。
+    # he_extract_llm: 抽取阶段完整 LLM 配置。None → 全局 llm（he_model 名覆盖仍生效）。
+    # he_qa_llm: 问答阶段完整 LLM 配置。None → 全局 llm。设成旗舰可显著提升回答质量。
+    # 优先级：he_extract_llm(全配置) > he_model(仅名) > 全局 llm。
+    he_extract_llm: LLMConfig | None = None
+    he_qa_llm: LLMConfig | None = None
     # v1.8.8 per-dataset KA 抽取粒度（见 docs/v1.8.8-kg-per-dataset-ka-plan.md）。
     # "dataset" = 整 dataset 一个 KA，chunk 逐个 feed_text，激活跨 chunk LLM.BALANCED
     #   合并 + build_index + dump 落盘（默认，解决 per-chunk fresh KA 并发 0 实体根因）。
