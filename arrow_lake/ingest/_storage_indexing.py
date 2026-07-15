@@ -119,12 +119,17 @@ class StorageIndexingMixin:
 
     # Default columns / type map for create_facet_indexes (v1.7.1 #3).
     # Low-cardinality columns → BITMAP; ordered/time/numeric → BTREE.
+    # [#P3] chunk_index / document_id added: common WHERE filters on ingested
+    # tables (chunk range scans, doc-level equality). Missing columns are skipped
+    # by create_facet_indexes, so non-ingest tables are unaffected.
     _DEFAULT_FACET_COLUMNS: tuple[str, ...] = (
         "modality",
         "source",
         "doc_type",
         "created_at",
         "quality_score",
+        "chunk_index",
+        "document_id",
     )
     _DEFAULT_SCALAR_TYPE_MAP: dict[str, str] = {
         "modality": "BITMAP",
@@ -132,6 +137,8 @@ class StorageIndexingMixin:
         "doc_type": "BITMAP",
         "created_at": "BTREE",
         "quality_score": "BTREE",
+        "chunk_index": "BTREE",
+        "document_id": "BTREE",
     }
 
     def create_scalar_index(

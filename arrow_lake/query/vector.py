@@ -32,6 +32,23 @@ _DEFAULT_EMBEDDING_DIM = 384
 _log = structlog.get_logger(__name__)
 
 
+def _auto_sub_vectors(dim: int) -> int:
+    """Pick a num_sub_vectors (multiple of 8, divides dim) for PQ/RQ.
+
+    Targets ~dim//32 sub-vectors (a good compression/recall balance), rounded
+    to a multiple of 8 that evenly divides ``dim``. Falls back to 8, which
+    divides any dim that is itself a multiple of 8 (true for common embedding
+    dims: 384/768/1024/2560). Used by [#P5/P8] dim-aware index creation.
+    """
+    if dim <= 0:
+        return 8
+    target = max(8, dim // 32)
+    nsv = (target // 8) * 8 or 8
+    while nsv > 8 and dim % nsv != 0:
+        nsv -= 8
+    return nsv if dim % nsv == 0 else 8
+
+
 @dataclass(frozen=True)
 class VectorSearchResult:
     """Result of a vector similarity search.
@@ -175,6 +192,23 @@ class VectorSearchBridge:
                 error_code=ErrorCode.VECTOR_SEARCH_FAILED,
                 message=f"Column '{vector_column}' not found in dataset '{dataset_name}'",
             )
+
+        # [#P5/P8] dim-aware num_sub_vectors for PQ/RQ: validate against the
+        # actual vector dim and auto-correct (with warning) if it does not
+        # divide evenly. A wrong value (e.g. config default 24 vs dim 1024)
+        # would otherwise raise an opaque lancedb error at index build. We
+        # correct instead of failing so an embedding-model change (dim shift)
+        # never breaks index creation.
+        itype = index_type.upper()
+        if itype in ("IVF_PQ", "IVF_HNSW_PQ", "IVF_RQ"):
+            dim = self._get_vector_dimension(schema, vector_column)
+            if dim and effective_sub_vectors and dim % effective_sub_vectors != 0:
+                fixed = _auto_sub_vectors(dim)
+                _log.warning(
+                    "num_sub_vectors %d does not divide dim %d for '%s'; using %d",
+                    effective_sub_vectors, dim, dataset_name, fixed,
+                )
+                effective_sub_vectors = fixed
 
         try:
             create_kwargs: dict[str, Any] = dict(

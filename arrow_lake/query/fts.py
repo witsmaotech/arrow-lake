@@ -201,6 +201,10 @@ class FullTextSearchBridge:
         )
         if use_tantivy:
             fts_kwargs["language"] = "Chinese"
+        # [#P6] Store token positions → enables exact phrase queries (quoted
+        # searches). Opt-in (default False) since it enlarges the index.
+        if self._config.with_position:
+            fts_kwargs["with_position"] = True
 
         # v1.7.1 #11: optional lance native INVERTED index (experimental).
         if getattr(self._config, "use_inverted", False):

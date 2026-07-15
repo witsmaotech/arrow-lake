@@ -306,6 +306,7 @@ class LanceStorageManager(
             db.create_table(name, data)
         elif mode == "append":
             table = db.open_table(name)
+            self._delete_documents_before_append(table, data)
             table.add(data)
 
         # Apply write optimization via compaction when configured
@@ -319,6 +320,32 @@ class LanceStorageManager(
                     table.optimize()
             except Exception:
                 logger.debug("post_write_optimize_skipped", dataset=name, exc_info=True)
+
+    def _delete_documents_before_append(self, table: Any, data: pa.Table) -> None:
+        """Document-level idempotency for re-ingest.
+
+        If the incoming table carries a ``document_id`` column (ingest path),
+        delete the existing rows for those document ids BEFORE appending, so
+        re-ingesting a document REPLACES its chunks instead of producing
+        duplicates. No-op for tables without ``document_id`` (non-ingest appends).
+
+        document_id is a sha256 hex hash (see Ingestor.ingest_documents), so it is
+        alphanumeric; we guard against non-alphanumeric values defensively before
+        interpolating into the Lance filter. Failures are logged and swallowed — a
+        missed delete only risks duplicate rows, never data loss, so it must not
+        block the append.
+        """
+        if "document_id" not in data.column_names:
+            return
+        try:
+            doc_ids = data.column("document_id").to_pylist()
+            unique_ids = sorted({str(d) for d in doc_ids if d})
+            if not unique_ids or not all(d.isalnum() for d in unique_ids):
+                return
+            in_list = ",".join(f"'{d}'" for d in unique_ids)
+            table.delete(f"document_id IN ({in_list})")
+        except Exception:
+            logger.debug("append_idempotent_delete_skipped", exc_info=True)
 
     def _open_lance(self, path: str) -> Any:
         """Open a Lance dataset via lancedb (latest version only).

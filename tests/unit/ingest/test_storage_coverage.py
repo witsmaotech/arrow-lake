@@ -33,6 +33,50 @@ def _mgr(**kw: object) -> LanceStorageManager:
     return LanceStorageManager(base_uri=cfg.base_uri, storage_config=cfg, **kw)
 
 
+def _local_mgr(tmp_path) -> LanceStorageManager:
+    """A real local-filesystem manager (no S3 mocks) for write-path tests."""
+    return LanceStorageManager(base_uri=str(tmp_path))
+
+
+class TestAppendDocumentIdempotency:
+    """[#P1] Re-ingesting a document REPLACES its chunks, not duplicates."""
+
+    def _rows(self, doc_id: str, n: int) -> "pa.table":  # type: ignore[name-defined]
+        import pyarrow as pa
+        return pa.table({
+            "text": [f"c{i}" for i in range(n)],
+            "document_id": [doc_id] * n,
+            "chunk_index": list(range(n)),
+            "page_number": [1] * n,
+            "doc_type": ["x"] * n,
+        })
+
+    def test_reingest_same_doc_replaces_not_duplicates(self, tmp_path) -> None:
+        m = _local_mgr(tmp_path)
+        m.create_dataset("ds", self._rows("aaa", 3))
+        m.append_dataset("ds", self._rows("bbb", 2))
+        assert m.open_dataset("ds").count_rows() == 5
+        # Re-ingest doc 'aaa' (same id, 3 chunks) → must stay 5, not 8.
+        m.append_dataset("ds", self._rows("aaa", 3))
+        assert m.open_dataset("ds").count_rows() == 5
+
+    def test_reingest_with_more_chunks_replaces(self, tmp_path) -> None:
+        m = _local_mgr(tmp_path)
+        m.create_dataset("ds", self._rows("aaa", 3))
+        m.append_dataset("ds", self._rows("bbb", 2))
+        # doc 'aaa' grows 3→4 chunks → replace: total 6, not 9.
+        m.append_dataset("ds", self._rows("aaa", 4))
+        assert m.open_dataset("ds").count_rows() == 6
+
+    def test_append_without_document_id_is_plain_append(self, tmp_path) -> None:
+        import pyarrow as pa
+        m = _local_mgr(tmp_path)
+        m.create_dataset("ds", pa.table({"x": [1, 2]}))
+        # No document_id column → idempotent delete is a no-op, plain append.
+        m.append_dataset("ds", pa.table({"x": [3, 4]}))
+        assert m.open_dataset("ds").count_rows() == 4
+
+
 # ---------------------------------------------------------------------------
 # __init__ / storage_options / _get_io_config
 # ---------------------------------------------------------------------------

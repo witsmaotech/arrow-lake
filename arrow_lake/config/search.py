@@ -58,6 +58,9 @@ class FullTextSearchConfig(BaseModel):
         tokenizer_type: Tokenization strategy — "default" (lancedb built-in)
             or "jieba" (jieba CJK segmentation, recommended for Chinese).
         jieba_user_dict: Path to jieba custom dictionary file.
+        with_position: Store token positions in the FTS index (enables exact
+            phrase queries, e.g. quoted ``"机器学习"``). Increases index size;
+            off by default.
     """
 
     default_top_k: int = 10
@@ -67,6 +70,9 @@ class FullTextSearchConfig(BaseModel):
     lower_case: bool = True
     tokenizer_type: str = "jieba"
     jieba_user_dict: str | None = None
+    # [#P6] Store token positions → enables phrase queries (quoted searches).
+    # Off by default (larger index); enable per deployment that needs phrases.
+    with_position: bool = False
     # v1.7.1 #11: use lance native INVERTED index instead of legacy create_fts_index
     # (tantivy backend). Experimental: search-side text_search compat with INVERTED
     # should be validated per dataset before enabling in production.
