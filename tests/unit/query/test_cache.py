@@ -48,9 +48,10 @@ class TestQueryCacheMakeKey:
         k2 = QueryCache.make_key("ds", "SELECT 1", tables={"b": None})
         assert k1 != k2
 
-    def test_returns_hex_digest(self) -> None:
-        key = QueryCache.make_key("ds", "SELECT 1")
-        assert len(key) == 64  # SHA-256 hex digest
+    def test_key_embeds_dataset_prefix(self) -> None:
+        # [#step2-B] key embeds dataset as a scannable prefix (for invalidate_dataset)
+        key = QueryCache.make_key("myds", "SELECT 1")
+        assert "myds" in key
 
 
 class TestQueryCacheGetPut:
@@ -137,3 +138,42 @@ class TestQueryCacheClear:
         cache.get("ds", "SELECT 1")
         cache.clear()
         assert cache.stats()["hits"] == 0
+
+
+class TestQueryCacheInvalidateDataset:
+    def test_invalidates_only_target_dataset(self) -> None:
+        cache = QueryCache(max_entries=10)
+        cache.put("dsA", "SELECT 1", _table())
+        cache.put("dsA", "SELECT 2", _table())
+        cache.put("dsB", "SELECT 1", _table())
+        removed = cache.invalidate_dataset("dsA")
+        assert removed == 2
+        assert cache.get("dsA", "SELECT 1") is None
+        assert cache.get("dsA", "SELECT 2") is None
+        assert cache.get("dsB", "SELECT 1") is not None  # other dataset untouched
+
+    def test_invalidate_dataset_missing_returns_zero(self) -> None:
+        assert QueryCache(max_entries=10).invalidate_dataset("none") == 0
+
+
+class TestFtsNullSegmentedDetect:
+    """[#step2-A] FTS must detect NULL _fts_segmented (appended rows) to trigger re-index."""
+
+    def _bridge(self):
+        from unittest.mock import MagicMock
+
+        from arrow_lake.query.fts import FullTextSearchBridge
+
+        return FullTextSearchBridge(MagicMock())  # default config, cheap init
+
+    def test_detects_nulls(self) -> None:
+        t = pa.table({"_fts_segmented": [None, "a b", None]})
+        assert self._bridge()._has_null_segmented(t) is True
+
+    def test_no_nulls(self) -> None:
+        t = pa.table({"_fts_segmented": ["a b", "c d"]})
+        assert self._bridge()._has_null_segmented(t) is False
+
+    def test_missing_column_returns_false(self) -> None:
+        t = pa.table({"x": [1, 2]})
+        assert self._bridge()._has_null_segmented(t) is False

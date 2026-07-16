@@ -233,6 +233,18 @@ class FullTextSearchBridge:
             seg_note,
         )
 
+    def _has_null_segmented(self, table: Any) -> bool:
+        """True if the ``_fts_segmented`` column has any NULL (un-segmented rows).
+
+        Uses Arrow's ``null_count`` (metadata, no value scan) so it stays cheap on
+        large datasets.
+        """
+        try:
+            t = table.to_table(columns=["_fts_segmented"]) if hasattr(table, "to_table") else table
+            return t.column("_fts_segmented").null_count > 0
+        except Exception:
+            return False
+
     def _add_segmented_column(
         self,
         table: Any,
@@ -346,6 +358,29 @@ class FullTextSearchBridge:
             )
 
         table = self._storage.open_dataset_versioned(dataset_name, version) if version else self._storage.open_dataset(dataset_name)
+
+        # [#step2-A] Appended rows since the FTS index was created have NULL
+        # _fts_segmented → FTS silently misses them. Detect (Arrow null_count is
+        # metadata-cheap) and re-create the index so new content is searchable.
+        if (
+            self._use_jieba
+            and "_fts_segmented" in table.schema.names
+            and self._has_null_segmented(table)
+        ):
+            _log.info(
+                "FTS: NULL _fts_segmented on '%s' (appended rows) — re-creating index",
+                dataset_name,
+            )
+            try:
+                self.create_index(dataset_name, fts_column=column, replace=True)
+                table = (
+                    self._storage.open_dataset_versioned(dataset_name, version)
+                    if version else self._storage.open_dataset(dataset_name)
+                )
+            except Exception as exc:
+                _log.warning(
+                    "FTS index refresh failed for '%s': %s", dataset_name, str(exc)[:120],
+                )
 
         # Determine which column was indexed
         search_column = column

@@ -50,19 +50,27 @@ _ADMIN_TIMEOUT = 60
 _DOWNLOAD_WORKERS = 4
 
 
-def _register_to_gravitino(request: Request, dataset_name: str, lake: Any) -> None:
-    """Best-effort register dataset as a Gravitino Fileset after ingest."""
+def _after_ingest_hooks(request: Request, dataset_name: str, lake: Any) -> None:
+    """Best-effort post-ingest actions: Gravitino Fileset registration + [#step2-B]
+    query-cache invalidation so appended rows are visible to subsequent queries."""
     import structlog
     log = structlog.get_logger(__name__)
+    # 1) Gravitino Fileset registration
     bridge = getattr(request.app.state, "gravitino_bridge", None)
-    if bridge is None or not bridge.enabled:
-        return
-    try:
-        location = f"s3a://arrow-lake/{dataset_name}.lance"
-        bridge.register_dataset(dataset_name, location=location)
-        log.info("gravitino_registered", dataset=dataset_name)
-    except Exception as exc:
-        log.warning("gravitino_register_failed", dataset=dataset_name, error=str(exc))
+    if bridge is not None and bridge.enabled:
+        try:
+            location = f"s3a://arrow-lake/{dataset_name}.lance"
+            bridge.register_dataset(dataset_name, location=location)
+            log.info("gravitino_registered", dataset=dataset_name)
+        except Exception as exc:
+            log.warning("gravitino_register_failed", dataset=dataset_name, error=str(exc))
+    # 2) [#step2-B] Invalidate cached OLAP/facet results (append changes results)
+    invalidate = getattr(lake, "invalidate_query_cache", None)
+    if callable(invalidate):
+        try:
+            invalidate(dataset_name)
+        except Exception as exc:
+            log.warning("query_cache_invalidate_failed", dataset=dataset_name, error=str(exc))
 
 
 _MAX_UPLOAD_BYTES = 100 * 1024 * 1024  # 100 MB
@@ -295,7 +303,7 @@ async def ingest_files(
             timeout=_INGEST_TIMEOUT, label="ingest_files",
             transforms=transforms,
         )
-        _register_to_gravitino(request, name, lake)
+        _after_ingest_hooks(request, name, lake)
         return IngestResponse.from_report(report)
     finally:
         if tmp_dir:
@@ -325,7 +333,7 @@ async def ingest_sql(
         transforms=transforms,
         timeout=_INGEST_TIMEOUT, label="ingest_sql",
     )
-    _register_to_gravitino(request, name, lake)
+    _after_ingest_hooks(request, name, lake)
     return IngestResponse.from_report(report)
 
 
@@ -353,7 +361,7 @@ async def ingest_kafka(
         transforms=transforms,
         timeout=_INGEST_TIMEOUT, label="ingest_kafka",
     )
-    _register_to_gravitino(request, name, lake)
+    _after_ingest_hooks(request, name, lake)
     return IngestResponse.from_report(report)
 
 
@@ -376,7 +384,7 @@ async def ingest_iceberg(
         table_uri=req.table_uri, transforms=transforms,
         timeout=_INGEST_TIMEOUT, label="ingest_iceberg",
     )
-    _register_to_gravitino(request, name, lake)
+    _after_ingest_hooks(request, name, lake)
     return IngestResponse.from_report(report)
 
 
@@ -399,7 +407,7 @@ async def ingest_deltalake(
         table_uri=req.table_uri, version=req.version, transforms=transforms,
         timeout=_INGEST_TIMEOUT, label="ingest_deltalake",
     )
-    _register_to_gravitino(request, name, lake)
+    _after_ingest_hooks(request, name, lake)
     return IngestResponse.from_report(report)
 
 
@@ -417,7 +425,7 @@ async def ingest_http(
         lake.ingest_http, name, req.urls,
         timeout=_INGEST_TIMEOUT, label="ingest_http",
     )
-    _register_to_gravitino(request, name, lake)
+    _after_ingest_hooks(request, name, lake)
     return IngestResponse.from_report(report)
 
 
@@ -442,7 +450,7 @@ async def ingest_images(
             lake.ingest_images, name, all_paths,
             timeout=_INGEST_TIMEOUT, label="ingest_images",
         )
-        _register_to_gravitino(request, name, lake)
+        _after_ingest_hooks(request, name, lake)
         return IngestResponse.from_report(report)
     finally:
         if tmp_dir:
@@ -470,7 +478,7 @@ async def ingest_videos(
             lake.ingest_videos, name, all_paths,
             timeout=_INGEST_TIMEOUT, label="ingest_videos",
         )
-        _register_to_gravitino(request, name, lake)
+        _after_ingest_hooks(request, name, lake)
         return IngestResponse.from_report(report)
     finally:
         if tmp_dir:
@@ -499,7 +507,7 @@ async def ingest_mixed(
             lake.ingest_mixed, name, sources,
             timeout=_INGEST_TIMEOUT, label="ingest_mixed",
         )
-        _register_to_gravitino(request, name, lake)
+        _after_ingest_hooks(request, name, lake)
         return IngestResponse.from_report(report)
     finally:
         if tmp_dir:
@@ -532,7 +540,7 @@ async def ingest_documents(
             lake.ingest_documents, name, all_paths, doc_config=doc_config, doc_type=req.doc_type,
             timeout=_INGEST_TIMEOUT, label="ingest_documents",
         )
-        _register_to_gravitino(request, name, lake)
+        _after_ingest_hooks(request, name, lake)
         return IngestResponse.from_report(report)
     finally:
         if tmp_dir:

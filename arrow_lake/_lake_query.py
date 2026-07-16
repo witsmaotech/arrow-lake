@@ -87,6 +87,25 @@ class _LakeQueryMixin:
             query_results_total.labels(query_type="olap_query").inc(result.table.num_rows)
         return result
 
+    def invalidate_query_cache(self, dataset_name: str) -> None:
+        """Drop cached OLAP results for a dataset after it's mutated (ingest/append).
+
+        [#step2-B] Called from the post-ingest hook so appended rows are visible to
+        subsequent OLAP queries within the TTL. Best-effort: no-ops if the OLAP
+        bridge / cache hasn't been instantiated yet (no query has run).
+        """
+        import logging
+
+        try:
+            bridge = getattr(self, "_components", {}).get("olap")
+            cache = getattr(bridge, "_cache", None) if bridge else None
+            if cache is not None:
+                cache.invalidate_dataset(dataset_name)
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "invalidate_query_cache failed for %s", dataset_name, exc_info=True,
+            )
+
     def graph_query(
         self,
         edges_dataset: str,

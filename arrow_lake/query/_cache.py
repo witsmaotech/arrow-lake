@@ -79,7 +79,10 @@ class QueryCache:
         if tables:
             parts.append(",".join(sorted(tables.keys())))
         raw = "|".join(parts)
-        return hashlib.sha256(raw.encode()).hexdigest()
+        digest = hashlib.sha256(raw.encode()).hexdigest()
+        # Embed dataset as a scannable prefix so invalidate_dataset() can drop all
+        # entries for one dataset (after ingest/append) without a full cache flush.
+        return f"{_CACHE_VERSION}:{dataset_name}:{digest}"
 
     def get(
         self,
@@ -161,6 +164,19 @@ class QueryCache:
         key = self.make_key(dataset_name, sql, tables)
         with self._lock:
             return self._entries.pop(key, None) is not None
+
+    def invalidate_dataset(self, dataset_name: str) -> int:
+        """Drop ALL cached entries for a dataset (call on ingest/append/mutate).
+
+        Returns the number of entries removed. O(n) over the cache (n is small,
+        bounded by max_entries).
+        """
+        prefix = f"{_CACHE_VERSION}:{dataset_name}:"
+        with self._lock:
+            stale = [k for k in self._entries if k.startswith(prefix)]
+            for k in stale:
+                self._entries.pop(k, None)
+            return len(stale)
 
     def clear(self) -> int:
         """Clear all cached entries.
