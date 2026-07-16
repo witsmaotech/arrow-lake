@@ -17,7 +17,6 @@ from arrow_lake.knowledge_graph.doc_type_router import DocTypeRouter
 from arrow_lake.knowledge_graph.extractor import ExtractionResult
 from arrow_lake.knowledge_graph.he_extractor import (
     HyperExtractExtractor,
-    _normalize_type,
 )
 
 
@@ -77,29 +76,6 @@ def _wire_template(extractor: HyperExtractExtractor, ka: SimpleNamespace) -> Non
     method so the adapter conversion logic is what's under test.
     """
     extractor._parse_fresh = lambda template_path, text: ka.parse(text)  # type: ignore[method-assign]
-
-
-# ---------------------------------------------------------------------------
-# _normalize_type
-# ---------------------------------------------------------------------------
-
-
-def test_normalize_type_maps_known_english_types() -> None:
-    assert _normalize_type("Person") == "person"
-    assert _normalize_type("organization") == "organization"
-    assert _normalize_type("Organisation") == "organization"
-    assert _normalize_type("Company") == "organization"
-    assert _normalize_type("Model") == "concept"
-    assert _normalize_type("Technology") == "concept"
-    assert _normalize_type("Framework") == "concept"
-    assert _normalize_type("Place") == "location"
-    assert _normalize_type("Incident") == "event"
-
-
-def test_normalize_type_unknown_falls_back_to_concept() -> None:
-    assert _normalize_type("WackyType") == "concept"
-    assert _normalize_type(None) == "concept"
-    assert _normalize_type("") == "concept"
 
 
 # ---------------------------------------------------------------------------
@@ -229,8 +205,9 @@ async def test_extract_converts_nodes_to_entities_with_type_normalization(
     assert isinstance(result, ExtractionResult)
     assert [e.name for e in result.entities] == ["Alice", "Acme"]
     # entity_type keeps the LLM-extracted RAW type — _ka_to_extraction_result
-    # intentionally does NOT call _normalize_type (it collapsed every Chinese
-    # type to "concept"; see its inline comment). So English types stay as-is.
+    # intentionally does NOT collapse types to a small label set (an English-only
+    # normalize map collapsed every Chinese type to "concept"; see its inline
+    # comment). So English types stay as-is.
     assert [e.entity_type for e in result.entities] == ["Person", "Organization"]
     assert result.raw_text == "Alice works at Acme"
 

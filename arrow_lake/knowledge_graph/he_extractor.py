@@ -50,33 +50,6 @@ from arrow_lake.knowledge_graph.extractor import (
 
 logger = logging.getLogger(__name__)
 
-# §12.6.② type 归一化：预置模板英文 type → HugeGraph vertex label
-_TYPE_NORMALIZE: dict[str, str] = {
-    "person": "person",
-    "organization": "organization",
-    "organisation": "organization",
-    "company": "organization",
-    "location": "location",
-    "place": "location",
-    "concept": "concept",
-    "model": "concept",
-    "technology": "concept",
-    "product": "concept",
-    "tool": "concept",
-    "architecture": "concept",
-    "framework": "concept",
-    "algorithm": "concept",
-    "method": "concept",
-    "event": "event",
-    "incident": "event",
-}
-
-
-def _normalize_type(raw: Any) -> str:
-    """Map a hyper-extract node type to a HugeGraph vertex label."""
-    key = str(raw or "concept").strip().lower()
-    return _TYPE_NORMALIZE.get(key, "concept")
-
 
 @dataclass(frozen=True)
 class DatasetKA:
@@ -510,9 +483,9 @@ class HyperExtractExtractor:
 
         # nodes → entities (+ §11.3 stopword filter)
         # entity_type keeps the LLM-extracted RAW type (Chinese 概念/属性/架构
-        # 组件/...). Do NOT call _normalize_type here — it collapsed every type
-        # to "concept" (dict has only English keys) and erased the 81-way type
-        # info. route_entity_type does typed-vertex routing on this raw value.
+        # 组件/...). We deliberately do NOT collapse the raw type to a small
+        # label set here (an English-only normalize map erased the 81-way type
+        # info). route_entity_type does typed-vertex routing on this raw value.
         entities: list[ExtractedEntity] = []
         name_set: set[str] = set()
         for n in nodes:
