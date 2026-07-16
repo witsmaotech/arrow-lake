@@ -369,6 +369,31 @@ class TestResultToPages:
         assert pages == ()
 
 
+class TestSuppressTesseractNoise:
+    def test_restores_stderr_after_context(self, tmp_path) -> None:
+        # Regression: the old restore was os.dup2(fd, fd) — a POSIX no-op that
+        # never restored fd 2, so stderr was permanently sent to /dev/null.
+        import os
+
+        from arrow_lake.ingest.document import _suppress_tesseract_noise
+
+        sentinel = tmp_path / "err.log"
+        fd = os.open(str(sentinel), os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
+        saved = os.dup(2)
+        os.dup2(fd, 2)  # fd 2 → sentinel
+        try:
+            with _suppress_tesseract_noise():
+                os.write(2, b"INSIDE\n")  # suppressed → /dev/null
+            os.write(2, b"AFTER\n")  # restored → sentinel
+        finally:
+            os.dup2(saved, 2)
+            os.close(saved)
+            os.close(fd)
+        content = sentinel.read_bytes()
+        assert b"AFTER\n" in content  # restored write reached sentinel
+        assert b"INSIDE\n" not in content  # suppressed write did not
+
+
 class TestDocumentParser:
     @patch("arrow_lake.ingest.document.extract_file_sync")
     def test_parse_text_mode(self, mock_extract, tmp_path):

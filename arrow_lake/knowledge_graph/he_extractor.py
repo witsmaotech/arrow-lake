@@ -466,9 +466,17 @@ class HyperExtractExtractor:
         import os
         import re as _re
         import hyperextract
-        yml = template_path if os.path.isfile(template_path) else os.path.join(
-            os.path.dirname(hyperextract.__file__), "templates", "presets",
-            template_path + ".yaml")
+        # Resolve like _create_ka: project-local bare stem first (templates/),
+        # then gallery presets. Without this, project templates (ddd/medical/…
+        # and the strict concept_graph default) were looked up only under the
+        # gallery presets dir → never found → enum None → no type post-filter.
+        if os.path.isfile(template_path):
+            yml = template_path
+        else:
+            cand = _PROJECT_TEMPLATES_DIR / f"{template_path}.yaml"
+            yml = str(cand) if cand.is_file() else os.path.join(
+                os.path.dirname(hyperextract.__file__), "templates", "presets",
+                template_path + ".yaml")
         enum: list[str] | None = None
         if os.path.isfile(yml):
             try:
@@ -594,7 +602,10 @@ class HyperExtractExtractor:
             doc_type = await self._infer_doc_type(stripped)
 
         template_path = self._resolve_template(doc_type, stripped, template_type)
-        self._current_type_enum = self._get_type_enum(template_path)
+        # [#racefix] keep the type enum LOCAL, not on self: extract() runs under
+        # extract_batch's asyncio.gather, and a self attribute is clobbered by
+        # overlapping coroutines (chunk A filtered by chunk B's enum).
+        type_enum = self._get_type_enum(template_path)
         try:
             # Fresh KA per parse (no shared mutable state across chunks).
             result = await asyncio.to_thread(self._parse_fresh, template_path, stripped)
@@ -615,6 +626,7 @@ class HyperExtractExtractor:
                     result = await asyncio.to_thread(
                         self._parse_fresh, default_path, stripped
                     )
+                    type_enum = self._get_type_enum(default_path)
                 except Exception as exc2:
                     logger.warning(
                         "hyper-extract default parse also failed for chunk %s: %s",
@@ -629,7 +641,7 @@ class HyperExtractExtractor:
                 return ExtractionResult(entities=(), relations=(), raw_text=text)
 
         return self._ka_to_extraction_result(
-            result, text, valid_types=getattr(self, "_current_type_enum", None))
+            result, text, valid_types=type_enum)
 
     async def build_dataset_ka(
         self,

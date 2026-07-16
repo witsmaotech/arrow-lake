@@ -154,16 +154,18 @@ class HugeGraphConfig(BaseModel):
     extractor_backend: Literal["legacy", "he"] = "he"
     # he_default_template MUST be a usable extraction template (the base_* presets
     # are AutoType base classes, not directly extractable → "Template not found").
-    # general/concept_graph is the safe generic fallback (concepts are universal).
-    he_default_template: str = "general/concept_graph"
+    # Project-local concept_graph (strict type/relation enum + required
+    # definition) — NOT the gallery general/concept_graph (free type → 80+ type
+    # noise + 0% description). See arrow_lake/knowledge_graph/templates/.
+    he_default_template: str = "concept_graph"
     # Common doc_types → fitting templates; unmapped falls back to he_default_template.
     # NOTE: only canonical keys here — aliases (e.g. "guide"→"manual", "论文"→"paper")
     # collapse via normalize_doc_type before lookup, so listing them is redundant.
     he_doc_type_templates: dict[str, str] = {
-        "paper": "general/concept_graph",
+        "paper": "concept_graph",
         # report 改用 concept_graph：实测 doc_structure 在 granite4.1:8b + 建设方案类
         # 文档抽 0 实体，concept_graph 抽 8（高质量）。doc_structure 模板质量待后续单独调优。
-        "report": "general/concept_graph",
+        "report": "concept_graph",
         "manual": "general/workflow_graph",
         "biography": "general/biography_graph",
         # [#9] 多领域项目模板 (arrow_lake/knowledge_graph/templates/*.yaml) —

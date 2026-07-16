@@ -172,13 +172,20 @@ def _suppress_tesseract_noise():
     Kreuzberg's paddleocr backend may internally invoke tesseract as a
     fallback, which emits noisy errors when tessdata is missing.
     """
-    stderr_fd = os.open(os.devnull, os.O_WRONLY)
+    # Save the real stderr (fd 2) BEFORE redirecting, then restore it in the
+    # finally. The previous restore was os.dup2(fd, fd) — a POSIX no-op — and
+    # never saved fd 2, so the process stderr was permanently sent to /dev/null
+    # after the first parse (silent loss of all tracebacks / subprocess errors
+    # in the long-running API container).
+    saved_stderr = os.dup(2)
+    devnull = os.open(os.devnull, os.O_WRONLY)
     try:
-        os.dup2(stderr_fd, 2)
+        os.dup2(devnull, 2)
         yield
     finally:
-        os.dup2(stderr_fd, stderr_fd)
-        os.close(stderr_fd)
+        os.dup2(saved_stderr, 2)
+        os.close(devnull)
+        os.close(saved_stderr)
 
 
 class DocumentParser:

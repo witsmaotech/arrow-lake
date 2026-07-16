@@ -120,6 +120,58 @@ def test_router_falls_back_to_default_for_unmapped_or_empty() -> None:
 
 
 # ---------------------------------------------------------------------------
+# P0#2: strict default concept_graph template
+# ---------------------------------------------------------------------------
+
+
+def test_default_template_is_strict_project_concept_graph() -> None:
+    from arrow_lake.config.rag import HugeGraphConfig
+
+    cfg = HugeGraphConfig()
+    assert cfg.he_default_template == "concept_graph"
+    assert cfg.he_doc_type_templates["paper"] == "concept_graph"
+    assert cfg.he_doc_type_templates["report"] == "concept_graph"
+
+
+def test_project_concept_graph_template_is_strict() -> None:
+    import yaml
+
+    from arrow_lake.knowledge_graph.he_extractor import _PROJECT_TEMPLATES_DIR
+
+    data = yaml.safe_load((_PROJECT_TEMPLATES_DIR / "concept_graph.yaml").read_text("utf-8"))
+    fields = data["output"]["entities"]["fields"]
+    type_field = next(f for f in fields if f["name"] == "type")
+    zh = type_field["description"]["zh"]
+    assert "之一：" in zh or "之一:" in zh  # strict enum clause (parsed by _get_type_enum)
+    def_field = next(f for f in fields if f["name"] == "definition")
+    assert def_field["required"] is True  # kills 0%-description coverage
+
+
+def test_get_type_enum_resolves_project_templates(extractor) -> None:
+    # [#resolution] project-local bare stems must resolve to the project YAML
+    # (was gallery-presets-only → None → type post-filter silently never fired).
+    enum = extractor._get_type_enum("concept_graph")
+    assert enum is not None and len(enum) > 0
+    assert "实体" in enum
+    assert extractor._get_type_enum("ddd_concept_graph") is not None  # other project templates too
+
+
+# ---------------------------------------------------------------------------
+# P0#3: type-enum race — must stay local, not on self
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_extract_does_not_leak_type_enum_to_instance(extractor) -> None:
+    ka = SimpleNamespace(nodes=[], edges=[], parse=lambda text: None)
+    _wire_template(extractor, ka)
+    await extractor.extract("some document content text here", chunk_id="c1")
+    # [#racefix] the type enum was written to self._current_type_enum and read
+    # back after an await — clobbered under extract_batch's gather. Must be local.
+    assert not hasattr(extractor, "_current_type_enum")
+
+
+# ---------------------------------------------------------------------------
 # extract(): nodes → entities
 # ---------------------------------------------------------------------------
 
