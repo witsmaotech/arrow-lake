@@ -170,6 +170,16 @@ class TestFtsNullSegmentedDetect:
         t = pa.table({"_fts_segmented": [None, "a b", None]})
         assert self._bridge()._has_null_segmented(t) is True
 
+    def test_detects_nulls_lancedb_table(self) -> None:
+        # Live path: open_dataset returns a LanceDB Table (.to_arrow, no .column)
+        from unittest.mock import MagicMock
+
+        lancedb_table = MagicMock()
+        lancedb_table.to_arrow.return_value = pa.table({"_fts_segmented": [None, "a b"]})
+        assert self._bridge()._has_null_segmented(lancedb_table) is True
+        lancedb_table.to_arrow.return_value = pa.table({"_fts_segmented": ["a b", "c"]})
+        assert self._bridge()._has_null_segmented(lancedb_table) is False
+
     def test_no_nulls(self) -> None:
         t = pa.table({"_fts_segmented": ["a b", "c d"]})
         assert self._bridge()._has_null_segmented(t) is False

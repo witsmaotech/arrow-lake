@@ -236,12 +236,23 @@ class FullTextSearchBridge:
     def _has_null_segmented(self, table: Any) -> bool:
         """True if the ``_fts_segmented`` column has any NULL (un-segmented rows).
 
-        Uses Arrow's ``null_count`` (metadata, no value scan) so it stays cheap on
-        large datasets.
+        ``open_dataset`` returns a LanceDB ``Table`` (``.to_arrow()``, no
+        ``.column()``); tests/lance datasets expose ``.to_table()`` / ``.column()``.
+        Handle all three. Uses Arrow's ``null_count`` (metadata) once materialized.
         """
         try:
-            t = table.to_table(columns=["_fts_segmented"]) if hasattr(table, "to_table") else table
-            return t.column("_fts_segmented").null_count > 0
+            col = None
+            if hasattr(table, "to_arrow"):  # LanceDB Table (live path)
+                try:
+                    arrow = table.to_arrow(columns=["_fts_segmented"])
+                except Exception:
+                    arrow = table.to_arrow()
+                col = arrow.column("_fts_segmented")
+            elif hasattr(table, "to_table"):  # lance dataset
+                col = table.to_table(columns=["_fts_segmented"]).column("_fts_segmented")
+            elif hasattr(table, "column"):  # pyarrow Table (tests)
+                col = table.column("_fts_segmented")
+            return bool(col is not None and col.null_count > 0)
         except Exception:
             return False
 
