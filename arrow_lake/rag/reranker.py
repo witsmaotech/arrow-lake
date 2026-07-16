@@ -253,6 +253,13 @@ class OllamaReranker(BaseReranker):
 
         self._model = model_name
         base = (base_url or "").rstrip("/")
+        # OllamaReranker calls NATIVE ollama paths (/api/tags probe + /api/chat
+        # scoring) which live at the ollama ROOT, not under the OpenAI-compat
+        # /v1. base_url is typically derived from embedding.api_base (which
+        # carries /v1); strip a trailing /v1 so probe/scoring URLs resolve —
+        # otherwise /v1/api/tags → 404 → silent passthrough (Noop). [v1.8.9 E2E]
+        if base.endswith("/v1"):
+            base = base[:-3]
         # SSRF defense-in-depth. base_url is admin-config-controlled (env /
         # derived from embedding.api_base), not user input, so the classic
         # user-driven SSRF vector does not apply. We still reject dangerous

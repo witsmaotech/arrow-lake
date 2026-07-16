@@ -219,6 +219,19 @@ class TestOllamaReranker:
         r = OllamaReranker("m", base_url="http://x")
         assert await r.rerank("q", [], top_n=5) == []
 
+    def test_base_url_strips_v1_suffix(self) -> None:
+        """base_url is derived from embedding.api_base (carries /v1), but
+        OllamaReranker calls NATIVE ollama paths (/api/tags, /api/chat) at the
+        root. A trailing /v1 must be stripped or the probe hits /v1/api/tags →
+        404 → silent Noop (v1.8.9 E2E-found production bug)."""
+        from arrow_lake.rag.reranker import OllamaReranker
+
+        assert OllamaReranker("m", base_url="http://h:11434/v1")._base_url == "http://h:11434"
+        assert OllamaReranker("m", base_url="http://h:11434/v1/")._base_url == "http://h:11434"
+        assert OllamaReranker("m", base_url="http://h:11434")._base_url == "http://h:11434"
+        # unrelated path suffixes are left intact
+        assert OllamaReranker("m", base_url="http://h:11434/ollama")._base_url == "http://h:11434/ollama"
+
     @pytest.mark.asyncio
     async def test_yes_ranks_above_no(self) -> None:
         from arrow_lake.rag.reranker import OllamaReranker
