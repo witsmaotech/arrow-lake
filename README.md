@@ -62,7 +62,7 @@ Runs a self-contained demo with synthetic data — vector search, SQL analytics,
 | **SQL Analytics** | DuckDB-powered OLAP: GROUP BY, window functions, JOINs, streaming |
 | **Daft DataFrame** | Lazy evaluation + Ray distributed execution |
 | **Knowledge Graph** | HugeGraph integration: build, Gremlin query, GraphRAG; v1.7 doc-type routing + hyper-extract extraction backend |
-| **RAG Pipeline** | Multi-provider LLM (OpenAI, Anthropic, vLLM, Ollama, DeepSeek), sessions, citations, streaming, reranking (CrossEncoder/LLM), query transformation (HyDE/MultiQuery), multi-turn conversation |
+| **RAG Pipeline** | Multi-provider LLM (OpenAI, Anthropic, vLLM, Ollama, DeepSeek), sessions, citations, streaming, reranking (CrossEncoder/LLM/Ollama — default Ollama Qwen3-Reranker), query transformation (HyDE/MultiQuery), multi-turn conversation |
 | **Document Pipeline** | PDF parse → chunk → embed → Lance, 7 chunking strategies, OCR fallback |
 | **Data Quality** | Schema validation, null detection, dedup (exact hash + perceptual hash), NeMo Curator |
 | **Lineage & Audit** | Full-chain lineage tracking, HMAC-SHA256 tamper-evident audit trail |

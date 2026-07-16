@@ -6,6 +6,58 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.8.9] - 2026-07-16
+
+自 v1.8.8 以来 17 commits / 46 文件（+2258/−233）。详见 `docs/arrow-lake-v1.8.9-release-zh.md`。
+
+### Added
+- **RAG `OllamaReranker`**（`rag/reranker.py`）：Qwen3-Reranker yes/no judge；设为**默认 reranker**（`RAGConfig.reranker="ollama"`，`reranker_model="dengcao/Qwen3-Reranker-0.6B:F16"`）。此前 `_lake_rag` 未传 reranker → 恒 `Noop`。
+- **KG 双阶段 LLM**：`HugeGraphConfig.he_extract_llm`（抽取，默认 ministral）/ `he_qa_llm`（问答，默认 deepseek-v3@百炼）独立配置。
+- **增量 KA/KG**：`build_dataset_ka` 增量模式（fed_chunks 内容哈希 sidecar，只喂新 chunk）；REST + CLI `--incremental` 暴露；KA 版本管理（archive/list/rollback/prune）。
+- **`/ingest/documents` 多格式 + append**：放开全部 kreuzberg 文档类型（非仅 PDF）+ 追加到已存数据集。
+
+### Changed
+- **KG 默认模板改 strict**：default/paper/report 指向项目本地 `concept_graph.yaml`（type/relation 枚举 + definition required），弃 gallery `general/concept_graph` 自由类型。实测定义覆盖 **0%→100%**、类型 80+→干净枚举。
+- **`max_tokens` 走 config**：`he_extractor._build_client` 用 `cfg.max_tokens`（原硬编码 8192 致 `ARROW_LAKE__LLM__MAX_TOKENS` env 对 KG 抽取失效）。
+- **docling `DocumentConverter` 进程级单例**（按 config 签名 key + 每 converter RLock）：避免每请求重载模型 10-30s。
+- **IVF `nprobes` clamp**：`_resolve_nprobes` 限幅到 `[1, min(max_nprobes, num_partitions)]`，`max_nprobes` 配置生效（原为死配置）。
+
+### Fixed
+- **P0 stderr 永久泄漏**（`_suppress_tesseract_noise` dup2 no-op 致首解析后 stderr 永久→/dev/null）。
+- **P0 type-enum 竞态**（`_current_type_enum` 在 gather 下被并发覆盖 → 局部化）。
+- **reranker 三连缺陷**：死配置 / LLMReranker async-sync 错配崩溃 / `_parse_score` 反转；+ SSRF scheme 校验 + prompt-injection 过滤。
+- **append 漏刷新派生结构**：FTS jieba 分词 + OLAP/facets 查询缓存 ingest 失效；FTS `_has_null_segmented` 兼容 LanceDB Table API。
+- **内容哈希**：doc_id 用内容哈希（非路径）+ fed_chunks 内容哈希增量 + 解析内容哈希 LRU 缓存。
+- **`feed_text` 退避重试**：防大语料 LLM 瞬时失败静默丢 chunk。
+- **向量 SQL `query_vector` finite-float 校验**（闭裸插值）。
+- **KA 归档跳过可重建的 `index/`**（省盘；查询路径 `_ensure_ka_index` 缺失自重建）。
+
+### Removed
+- **`_normalize_type` 死代码**（生产从未调用；dict 仅英文 key 会塌缩中文 type）。
+
+
+## [1.8.8] - 2026-07-13
+
+### Added
+- **KG per-dataset KA 抽取**：dataset 下所有 chunk `feed_text` 进同一 KA，激活跨 chunk 合并/去重/悬空边裁剪；KA 产物落盘 `<base>/<ds>/ka/`。详见 `docs/v1.8.8-kg-per-dataset-ka-plan.md`。
+- **KG doc_type 三层路由强化 + hyper-extract 模板暴露**（REST `list-doc-types`/`list-templates`/`describe-template`）；`he_kg_granularity`（dataset/chunk）。
+- **per-dataset 动态图 `kg_{ds}` 隔离**深化 + IDOR ACL gate。
+
+### Fixed
+- 容器 E2E 四连 bug（compose ollama 端口 / `he_ka_base_dir` 只读卷 / encoder base_url 致 NO_PROXY 失效 / KA metadata stem）。
+
+
+## [1.8.7] - 2026-07-10
+
+### Added
+- **Docling 全栈**：docling 库内嵌替代 kreuzberg（多格式 + RapidOCR 中文/EasyOCR 多语言），P0/P1/P2 全完成；详见 `docs/docling-ocr-migration-adr.md`。
+- **Console SQL Worksheet**（Web UI）：DuckDB SQL 走 `/query/olap` 复用 RBAC。
+- **旗舰展示前端**（`console/showcase.html`）：架构全景五层 + 三王牌检索宇宙/湖仓时间机器/KG 探索。
+- **KG 加固**：HugeGraph 写入吞吐优化（rocksdb 参数 + 退避）+ gremlin 遍历源绑定修复。
+
+详见 `docs/arrow-lake-v1.8.7-release-zh.md`。
+
+
 ## [1.8.6] - 2026-06-30
 
 ### Added

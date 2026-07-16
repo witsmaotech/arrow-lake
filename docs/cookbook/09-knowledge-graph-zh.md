@@ -534,7 +534,7 @@ config = ArrowLakeConfig()
 config.hugegraph.enabled = True
 config.hugegraph.extractor_backend = "he"            # "graphrag"（默认）| "he"
 config.hugegraph.he_model = "qwen3:30b-a3b"          # 任意 OpenAI 兼容模型
-config.hugegraph.he_default_template = "general/concept_graph"
+config.hugegraph.he_default_template = "concept_graph"  # v1.8.9 默认：项目本地 strict 模板（type/relation 枚举 + 必填 definition）。勿设 "general/concept_graph"——该 gallery preset 的 definition 可选，会产出噪声自由类型实体（定义覆盖 0%）。
 ```
 
 需安装 `he` 扩展：`pip install "arrow-lake[he]"`。`he` 后端通过 langchain `ChatOpenAI`

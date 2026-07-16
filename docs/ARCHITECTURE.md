@@ -427,7 +427,7 @@ YAML 配置文件 (ArrowLakeConfig.from_yaml)
 |---|---|
 | `pipeline.py` (16KB) | `RAGPipeline` 主编排，返回 `RAGResponse`（含 citation） |
 | `provider.py` (20KB) | **5 LLM provider**：OpenAI 兼容 / Anthropic / Ollama / vLLM / 自定义；`LLMProviderType` enum |
-| `reranker.py` | reranker 体系：`BaseReranker` / `NoopReranker` / `CrossEncoderReranker` / `LLMReranker` + `create_reranker` 工厂（接 `ContextChunk`） |
+| `reranker.py` | reranker 体系：`BaseReranker` / `NoopReranker` / `CrossEncoderReranker` / `LLMReranker` / `OllamaReranker`（v1.8.9，Qwen3-Reranker yes/no judge，**默认**）+ `create_reranker` 工厂（接 `ContextChunk`）；LLMReranker 带 SSRF scheme 校验 + prompt-injection 过滤 |
 | `query_transform.py` | **HyDE** + multi-query 查询改写 |
 | `graph_rag.py` (11KB) | GraphRAG（经 KG retriever） |
 | `context.py` (10KB) | `ContextChunk` + 上下文组装 |
@@ -901,6 +901,10 @@ ArrowLakeError
 | **v1.7.0** | 2026-06-24 | HugeGraph **PD 集群模式**（运行时多 graph）；**hyper-extract (he)** KG 抽取后端；**doc_type 三层路由**；A 方案实体双写；ingest doc_type 贯通 |
 | **v1.7.1** | 2026-06-25 | lancedb 0.33 + pylance 7.0 + DuckDB 1.5.2 调优；标量索引全量补齐；`search_async` 增量入口；`LANCE_IO_THREADS=64`；内存预算 1024MB+8G；cookbook 对齐；全量 5005 passed |
 | **v1.8.0** | 2026-06-29 | **roadmap 19 项全部落地**（17 ✅ + 2 ⏸ 压测 DEFER，见 [§16](#16-扩展点与路线图)）：检索精度（#5 Reranker / #6 CLIP）、治理（#1 branches / #9 物化 / #10 轻图 / #2 blob / #3 行级 lineage / #19 Gravitino facade）、性能（#13 Daft AI / #16 流式写 / #17 async）、多模态与联邦（#18 VLM / #14 Daft↔Gravitino / #12 DuckDB FTS / #8 hf:// / #4 日文分词）；+ 生产 Review CRITICAL 修复（`/embed/image` 死链）+ 压测 gate 框架 |
+| **v1.8.6** | 2026-06-30 | **per-dataset HugeGraph 隔离**（`kg_{ds}` 动态图 + drop-on-delete hook + 迁移脚本）；facade 8 traverser + stats/neighbors 按 dataset 图隔离；CLI `--dataset` |
+| **v1.8.7** | 2026-07-10 | **Docling 全栈**（库内嵌替代 kreuzberg，多格式 + RapidOCR/EasyOCR）；**Console SQL Worksheet**（DuckDB SQL 走 `/query/olap`）；旗舰展示前端；HugeGraph 写入吞吐优化 + gremlin 绑定修复 |
+| **v1.8.8** | 2026-07-13 | **KG per-dataset KA**（dataset 下 chunk `feed_text` 进同一 KA，激活跨 chunk 合并/去重/裁剪 + 落盘）；**doc_type 三层路由强化** + hyper-extract 模板暴露（REST `list-doc-types`/`list-templates`/`describe-template`）；`he_kg_granularity` |
+| **v1.8.9** | 2026-07-16 | **RAG reranker 回归可用**（新增 `OllamaReranker` 并设默认，修死配置/async-sync/评分反转 + SSRF/prompt-injection 加固）；**KG 双阶段 LLM**（`he_extract_llm`/`he_qa_llm`）+ **增量 KA/KG** + KA 版本管理；`/ingest/documents` 多格式 + append；审计 **P0 三连**（stderr 泄漏 / KG 默认模板 strict：定义 0%→100% / type-enum 竞态）+ Step2（append 刷派生结构 + 缓存失效）+ Step3（内容哈希三连）+ Step4-B（feed_text 退避）+ P2（max_tokens 走 config / 向量校验 / docling 进程级单例 / nprobes clamp）；移除 `_normalize_type` 死代码。详见 `docs/arrow-lake-v1.8.9-release-zh.md` |
 
 **v1.8.0 实施纪律**（trunk-based，直接提交 `master`，不开 feature 分支——项目约定优先于全局 PR 规则）：每项 TDD（RED→GREEN→REFACTOR）→ 对应 cookbook 跑通 → 全量 pytest 零失败 → CHANGELOG/roadmap/implementation 同步。
 

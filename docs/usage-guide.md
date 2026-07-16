@@ -657,7 +657,7 @@ three-layer router (first hit wins):
    control; highest priority).
 2. **Auto match** — if no `doc_type` is passed, a classifier infers one from the
    document content, then the gallery matches it by tag/category/name/description.
-3. **Default** — `HugeGraphConfig.he_default_template` (`general/concept_graph`).
+3. **Default** — `HugeGraphConfig.he_default_template` (`concept_graph`, the project-local strict template at `arrow_lake/knowledge_graph/templates/concept_graph.yaml` with a fixed type/relation enum + **required `definition`**; v1.8.9 default/paper/report switched here from the gallery `general/concept_graph` preset, which left `definition` optional and produced noisy free-typed entities — definition coverage went 0%→100%).
 
 **Recommendation:** pass `doc_type` explicitly at ingest for any known document
 kind. This bypasses the classifier (which judges the whole document once and can

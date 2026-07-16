@@ -544,7 +544,7 @@ config = ArrowLakeConfig()
 config.hugegraph.enabled = True
 config.hugegraph.extractor_backend = "he"            # "graphrag" (default) | "he"
 config.hugegraph.he_model = "qwen3:30b-a3b"          # any OpenAI-compatible model
-config.hugegraph.he_default_template = "general/concept_graph"
+config.hugegraph.he_default_template = "concept_graph"  # v1.8.9 default: project-local strict template (type/relation enum + required definition). Do NOT set "general/concept_graph" — that gallery preset leaves definition optional and yields noisy free-typed entities (0% definition coverage).
 ```
 
 Requires the `he` extra: `pip install "arrow-lake[he]"`. The `he` backend drives hyper-extract
