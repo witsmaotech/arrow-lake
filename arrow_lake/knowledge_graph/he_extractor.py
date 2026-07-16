@@ -643,6 +643,34 @@ class HyperExtractExtractor:
         return self._ka_to_extraction_result(
             result, text, valid_types=type_enum)
 
+    @staticmethod
+    def _is_transient_feed_error(exc: Exception) -> bool:
+        """Heuristic: is a feed_text (LLM) failure worth retrying?"""
+        msg = str(exc).lower()
+        return any(k in msg for k in (
+            "timeout", "timed out", "connection", "connect", "eof", "reset",
+            "502", "503", "504", "overloaded", "rate limit", "retry", "unavailable",
+        ))
+
+    def _feed_with_retry(self, ka: Any, text: str, *, attempts: int = 3) -> None:
+        """[#step4-B] feed_text with bounded retry+backoff on transient LLM errors.
+
+        Hard failures (template/schema/4xx) raise on attempt 1 (no retry).
+        Transient (timeout/5xx/conn) retries with 1s, 2s backoff. Prevents silent
+        chunk loss on a rate-limit spike over a large corpus.
+        """
+        import time
+
+        for attempt in range(attempts):
+            try:
+                ka.feed_text(text)
+                return
+            except Exception as exc:
+                if attempt < attempts - 1 and self._is_transient_feed_error(exc):
+                    time.sleep(1.0 * (2 ** attempt))  # 1s, 2s
+                    continue
+                raise
+
     async def build_dataset_ka(
         self,
         template_path: str,
@@ -747,7 +775,7 @@ class HyperExtractExtractor:
                 continue
             before = {getattr(n, "name", "") for n in (getattr(ka, "nodes", None) or [])}
             try:
-                await asyncio.to_thread(ka.feed_text, stripped)
+                await asyncio.to_thread(self._feed_with_retry, ka, stripped)
             except Exception as exc:
                 failures += 1
                 logger.warning(

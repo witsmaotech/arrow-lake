@@ -749,5 +749,48 @@ async def test_build_dataset_ka_incremental_refeeds_changed_content(
     assert ex.created_kas[-1].fed_texts == ["beta-CHANGED"]
 
 
+class TestFeedRetry:
+    """[#step4-B] feed_text retry/backoff on transient LLM errors."""
+
+    def _ex(self):
+        return HyperExtractExtractor(
+            SimpleNamespace(api_key="k", model="m", api_base="http://x/v1"),
+            doc_type_router=None, language="zh",
+        )
+
+    def test_is_transient_classification(self) -> None:
+        assert HyperExtractExtractor._is_transient_feed_error(RuntimeError("connection reset by peer"))
+        assert HyperExtractExtractor._is_transient_feed_error(TimeoutError("request timed out"))
+        assert HyperExtractExtractor._is_transient_feed_error(Exception("HTTP 503 unavailable"))
+        assert not HyperExtractExtractor._is_transient_feed_error(ValueError("messages must contain json"))
+        assert not HyperExtractExtractor._is_transient_feed_error(KeyError("schema"))
+
+    def test_retries_transient_then_succeeds(self) -> None:
+        ex = self._ex()
+        calls = [0]
+
+        def flaky(text):
+            calls[0] += 1
+            if calls[0] < 2:
+                raise RuntimeError("connection timeout")
+
+        ka = SimpleNamespace(feed_text=flaky)
+        ex._feed_with_retry(ka, "t", attempts=3)  # 2nd attempt succeeds
+        assert calls[0] == 2
+
+    def test_raises_hard_immediately_no_retry(self) -> None:
+        ex = self._ex()
+        calls = [0]
+
+        def hard(text):
+            calls[0] += 1
+            raise ValueError("schema mismatch")
+
+        ka = SimpleNamespace(feed_text=hard)
+        with pytest.raises(ValueError):
+            ex._feed_with_retry(ka, "t", attempts=3)
+        assert calls[0] == 1  # no retry on hard error
+
+
 
 
