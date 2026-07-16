@@ -188,6 +188,33 @@ def _suppress_tesseract_noise():
         os.close(saved_stderr)
 
 
+# [#step3-B] Process-level parse cache: identical file content + identical parse
+# config → reuse the ParsedDocument (avoids re-parse + re-OCR on re-ingest of an
+# unchanged file). Bounded LRU (count) so memory stays capped. ParsedDocument is
+# treated as immutable (downstream reads pages/text, never mutates).
+import threading as _threading
+from collections import OrderedDict as _OrderedDict
+
+_PARSE_CACHE: _OrderedDict = _OrderedDict()
+_PARSE_CACHE_MAX = 32
+_PARSE_CACHE_LOCK = _threading.Lock()
+
+
+def _parse_cache_get(key):
+    with _PARSE_CACHE_LOCK:
+        v = _PARSE_CACHE.get(key)
+        if v is not None:
+            _PARSE_CACHE.move_to_end(key)
+        return v
+
+
+def _parse_cache_put(key, value):
+    with _PARSE_CACHE_LOCK:
+        _PARSE_CACHE[key] = value
+        while len(_PARSE_CACHE) > _PARSE_CACHE_MAX:
+            _PARSE_CACHE.popitem(last=False)
+
+
 class DocumentParser:
     """Document parser using Kreuzberg with optional TurboOCR fallback.
 
@@ -235,13 +262,28 @@ class DocumentParser:
 
         effective_max = max_pages or self._config.max_pages
 
+        # [#step3-B] parse cache: identical content + config → reuse ParsedDocument
+        import hashlib
+        _obe = self._config.ocr_backend
+        cache_key = (
+            hashlib.sha256(file_path.read_bytes()).hexdigest(),
+            getattr(_obe, "value", str(_obe)),
+            str(self._config.pdf_parse_mode),
+            effective_max,
+        )
+        _cached = _parse_cache_get(cache_key)
+        if _cached is not None:
+            return _cached
+
         if self._config.ocr_backend == OcrBackend.TURBO_OCR:
-            return self._parse_turbo_ocr_primary(file_path, ocr_client, effective_max)
+            result = self._parse_turbo_ocr_primary(file_path, ocr_client, effective_max)
+        elif self._config.ocr_backend == OcrBackend.DOCLING:
+            result = self._parse_docling(file_path, effective_max)
+        else:
+            result = self._parse_kreuzberg(file_path, effective_max)
 
-        if self._config.ocr_backend == OcrBackend.DOCLING:
-            return self._parse_docling(file_path, effective_max)
-
-        return self._parse_kreuzberg(file_path, effective_max)
+        _parse_cache_put(cache_key, result)
+        return result
 
     def _parse_kreuzberg(
         self, file_path: Path, max_pages: int,

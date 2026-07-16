@@ -10,6 +10,13 @@ from arrow_lake.config.document import DocumentConfig
 from arrow_lake.exceptions import DocumentError, ErrorCode
 from arrow_lake.ingest.chunker import DocumentChunker, _split_by_paragraph, _split_recursive
 
+
+@pytest.fixture(autouse=True)
+def _clear_parse_cache():
+    """[#step3-B] isolate the process-level parse cache between tests."""
+    from arrow_lake.ingest.document import _PARSE_CACHE
+    _PARSE_CACHE.clear()
+
 # ---------------------------------------------------------------------------
 # Mock kreuzberg module (not installed in CI / dev)
 # ---------------------------------------------------------------------------
@@ -392,6 +399,44 @@ class TestSuppressTesseractNoise:
         content = sentinel.read_bytes()
         assert b"AFTER\n" in content  # restored write reached sentinel
         assert b"INSIDE\n" not in content  # suppressed write did not
+
+
+class TestParseCache:
+    """[#step3-B] identical content + config → cached; different content → miss."""
+
+    def test_same_content_cached(self, tmp_path) -> None:
+        from unittest.mock import MagicMock
+
+        from arrow_lake.ingest.document import DocumentParser, _PARSE_CACHE
+
+        _PARSE_CACHE.clear()
+        p = DocumentParser()
+        f = tmp_path / "a.pdf"
+        f.write_bytes(b"%PDF same content")
+        calls = [0]
+        sentinel = MagicMock(name="parsed")
+        p._parse_kreuzberg = lambda fp, mp: calls.__setitem__(0, calls[0] + 1) or sentinel  # type: ignore[method-assign]
+        r1 = p.parse(f)
+        r2 = p.parse(f)  # cache hit
+        assert calls[0] == 1
+        assert r1 is r2 is sentinel
+
+    def test_different_content_misses(self, tmp_path) -> None:
+        from unittest.mock import MagicMock
+
+        from arrow_lake.ingest.document import DocumentParser, _PARSE_CACHE
+
+        _PARSE_CACHE.clear()
+        p = DocumentParser()
+        f1 = tmp_path / "a.pdf"
+        f1.write_bytes(b"content A")
+        f2 = tmp_path / "b.pdf"
+        f2.write_bytes(b"content B")
+        calls = [0]
+        p._parse_kreuzberg = lambda fp, mp: calls.__setitem__(0, calls[0] + 1) or MagicMock()  # type: ignore[method-assign]
+        p.parse(f1)
+        p.parse(f2)  # different content → miss → re-parse
+        assert calls[0] == 2
 
 
 class TestDocumentParser:
