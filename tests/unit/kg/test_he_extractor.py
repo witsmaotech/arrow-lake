@@ -156,6 +156,18 @@ def test_get_type_enum_resolves_project_templates(extractor) -> None:
     assert extractor._get_type_enum("ddd_concept_graph") is not None  # other project templates too
 
 
+def test_ka_to_extraction_result_snaps_non_enum_type() -> None:
+    # The dataset path (build_dataset_ka) now passes valid_types, so a noisy
+    # compound LLM type (e.g. "实体/方法") snaps into the enum → 实体.
+    ka = SimpleNamespace(
+        nodes=[SimpleNamespace(name="FooBar", type="实体/方法", definition="d")],
+        edges=[],
+    )
+    out = HyperExtractExtractor._ka_to_extraction_result(
+        ka, valid_types=["实体", "属性", "方法", "过程", "角色", "事件", "组织"])
+    assert out.entities[0].entity_type == "实体"  # snapped into the enum
+
+
 # ---------------------------------------------------------------------------
 # P0#3: type-enum race — must stay local, not on self
 # ---------------------------------------------------------------------------
@@ -643,7 +655,7 @@ def _incremental_extractor(
         return ka
 
     ex._create_ka = _create  # type: ignore[method-assign]
-    ex._ka_to_extraction_result = lambda ka: ExtractionResult(  # type: ignore[method-assign]
+    ex._ka_to_extraction_result = lambda ka, valid_types=None: ExtractionResult(  # type: ignore[method-assign]
         entities=tuple(), relations=tuple(), raw_text="",
     )
     ex.created_kas = created  # type: ignore[attr-defined]

@@ -795,7 +795,11 @@ class HyperExtractExtractor:
         except Exception as exc:  # noqa: BLE001
             logger.warning("fed_chunks sidecar write failed: %s", str(exc)[:120])
 
-        result = self._ka_to_extraction_result(ka)
+        # Pass the resolved type enum so the dataset path (default granularity)
+        # also gets type post-filtering — previously only the per-chunk path did,
+        # so non-enum LLM noise (e.g. "实体/方法") flowed straight into HugeGraph.
+        result = self._ka_to_extraction_result(
+            ka, valid_types=self._get_type_enum(template_path))
         return DatasetKA(
             ka=ka, ka_dir=ka_dir, entity_chunks=entity_chunks, result=result
         )
