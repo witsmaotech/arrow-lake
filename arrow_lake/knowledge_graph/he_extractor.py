@@ -696,7 +696,11 @@ class HyperExtractExtractor:
         # missing/corrupt fed_chunks falls back to a full feed (correct, safe).
         import json as _json
         fed_path = ka_dir / "fed_chunks.json"
-        prev_fed: set[str] = set()
+        def _chunk_hash(t: str) -> str:
+            import hashlib
+            return hashlib.sha1((t or "").encode("utf-8", "replace")).hexdigest()[:16]
+
+        prev_fed_map: dict[str, str] = {}  # [#step3-C] {chunk_id: content_hash}
         can_incremental = False
         if incremental and (ka_dir / "data.json").is_file():
             try:
@@ -704,7 +708,14 @@ class HyperExtractExtractor:
                 prev_stem = (meta.get("template") or "").strip()
                 can_incremental = prev_stem == Path(template_path).stem
                 if can_incremental and fed_path.is_file():
-                    prev_fed = set(_json.loads(fed_path.read_text("utf-8")))
+                    raw = _json.loads(fed_path.read_text("utf-8"))
+                    # backward-compat: legacy fed_chunks.json was list[str] of ids
+                    # (no hash) → fed-with-unknown-hash so the content check
+                    # re-feeds once, then hashes are established.
+                    if isinstance(raw, dict):
+                        prev_fed_map = {str(k): str(v) for k, v in raw.items()}
+                    elif isinstance(raw, list):
+                        prev_fed_map = {str(c): "" for c in raw}
             except Exception as exc:  # noqa: BLE001 — fall back to full feed
                 logger.warning("incremental KA prep failed (%s): full feed", str(exc)[:120])
                 can_incremental = False
@@ -717,16 +728,17 @@ class HyperExtractExtractor:
                 logger.warning("incremental KA load failed (%s): full feed", str(exc)[:120])
                 ka = self._create_ka(template_path)
                 can_incremental = False
-                prev_fed = set()
+                prev_fed_map = {}
 
         chunks_to_feed = (
-            [(cid, text) for cid, text in chunks if cid not in prev_fed]
+            [(cid, text) for cid, text in chunks
+             if prev_fed_map.get(cid, "") != _chunk_hash(text)]
             if can_incremental else list(chunks)
         )
         if can_incremental:
             logger.info(
                 "incremental KA: %d total chunks, %d new (already fed=%d)",
-                len(chunks), len(chunks_to_feed), len(prev_fed),
+                len(chunks), len(chunks_to_feed), len(prev_fed_map),
             )
 
         for i, (cid, text) in enumerate(chunks_to_feed):
@@ -790,8 +802,11 @@ class HyperExtractExtractor:
         # incremental build can diff. Best-effort: a missing sidecar just means
         # the next build re-feeds everything (correct, not lossy).
         try:
-            all_fed = sorted(prev_fed | {cid for cid, _ in chunks_to_feed})
-            fed_path.write_text(_json.dumps(all_fed), "utf-8")
+            all_fed_map = {
+                **prev_fed_map,
+                **{cid: _chunk_hash(text) for cid, text in chunks_to_feed},
+            }
+            fed_path.write_text(_json.dumps(all_fed_map), "utf-8")
         except Exception as exc:  # noqa: BLE001
             logger.warning("fed_chunks sidecar write failed: %s", str(exc)[:120])
 

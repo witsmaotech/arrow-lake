@@ -172,7 +172,9 @@ class _FileIngestMixin:
                 ))
                 continue
 
-            doc_id = hashlib.sha256(str(pdf_path.resolve()).encode()).hexdigest()[:16]
+            # [#step3-A] doc_id from file CONTENT (not path): rename/repath no
+            # longer creates duplicate rows; in-place content edit is detectable.
+            doc_id = hashlib.sha256(pdf_path.read_bytes()).hexdigest()[:16]
             # v1.7: resolve per-file doc_type — explicit (caller) > auto-classify > "".
             resolved_doc_type = doc_type or ""
             _classifier = getattr(self, "_doc_type_classifier", None)

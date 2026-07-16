@@ -675,7 +675,7 @@ async def test_build_dataset_ka_full_writes_fed_chunks(
         [("0", "alpha"), ("1", "beta")], ka_dir,
     )
     fed = _json.loads((ka_dir / "fed_chunks.json").read_text("utf-8"))
-    assert fed == ["0", "1"]
+    assert list(fed.keys()) == ["0", "1"]  # [#step3-C] dict {cid: hash}
     # the full build fed both chunks
     assert ex.created_kas[-1].fed_texts == ["alpha", "beta"]
 
@@ -698,7 +698,7 @@ async def test_build_dataset_ka_incremental_feeds_only_new(
         incremental=True,
     )
     fed = _json.loads((ka_dir / "fed_chunks.json").read_text("utf-8"))
-    assert fed == ["0", "1", "2"]                       # all tracked
+    assert list(fed.keys()) == ["0", "1", "2"]           # all tracked
     assert ex.created_kas[-1].fed_texts == ["gamma"]    # ONLY the new chunk fed
 
 
@@ -726,7 +726,27 @@ async def test_build_dataset_ka_incremental_template_mismatch_full_feed(
     # full feed → all 3 chunks fed (not just the new "gamma")
     assert ex.created_kas[-1].fed_texts == ["alpha", "beta", "gamma"]
     fed = _json.loads((ka_dir / "fed_chunks.json").read_text("utf-8"))
-    assert fed == ["0", "1", "2"]
+    assert list(fed.keys()) == ["0", "1", "2"]
+
+
+@pytest.mark.asyncio
+async def test_build_dataset_ka_incremental_refeeds_changed_content(
+    llm_config: SimpleNamespace, router: DocTypeRouter, tmp_path,
+) -> None:
+    """[#step3-C] Incremental re-feeds a chunk whose TEXT changed (same id)."""
+    ex = _incremental_extractor(llm_config, router)
+    ka_dir = tmp_path / "ka"
+    await ex.build_dataset_ka(
+        "general/concept_graph", [("0", "alpha"), ("1", "beta")], ka_dir,
+    )
+    # chunk "1" content changed (beta → beta-CHANGED), same chunk_id
+    await ex.build_dataset_ka(
+        "general/concept_graph",
+        [("0", "alpha"), ("1", "beta-CHANGED")], ka_dir,
+        incremental=True,
+    )
+    # chunk 0 unchanged (skip), chunk 1 changed → re-fed
+    assert ex.created_kas[-1].fed_texts == ["beta-CHANGED"]
 
 
 

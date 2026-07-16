@@ -321,7 +321,7 @@ class TestIngestDocuments:
         host._write_table = capture_write
         host.ingest_documents("ds", [str(pdf)])
 
-        expected_id = hashlib.sha256(str(pdf.resolve()).encode()).hexdigest()[:16]
+        expected_id = hashlib.sha256(pdf.read_bytes()).hexdigest()[:16]  # [#step3-A] content-based
         assert written_tables[0].column("document_id")[0].as_py() == expected_id
 
     @patch("arrow_lake.ingest.chunker.DocumentChunker")
