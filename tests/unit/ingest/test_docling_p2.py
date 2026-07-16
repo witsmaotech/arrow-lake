@@ -160,6 +160,9 @@ def docling_patched(monkeypatch: pytest.MonkeyPatch):
     _FakeVlmConvertOpts.last_preset = None
     _FakeVlmConvertOpts.last_engine = None
     _FakeDocumentConverter.last_kwargs.clear()
+    # [#audit] converter is now a process-level cache; clear it so each test
+    # rebuilds (otherwise a prior test's fake converter is reused → stale kwargs).
+    document_mod._DOCLING_CONVERTERS.clear()
 
     # VlmPipeline sentinel — pipeline_cls is captured by reference
     vlm_pipeline_cls = types.SimpleNamespace(name="VlmPipeline")
@@ -207,7 +210,7 @@ class TestVlmPipelineBuilder:
         from arrow_lake.ingest.document import DocumentParser
         parser = DocumentParser(DocumentConfig(docling_pipeline_type="vlm"))
         # Act
-        converter = parser._get_docling_converter()
+        converter, _convert_lock = parser._get_docling_converter()
         # Assert — PDF 的 PdfFormatOption 用了 VlmPipeline 作为 pipeline_cls
         assert isinstance(converter, _FakeDocumentConverter)
         fmt = _FakeDocumentConverter.last_kwargs["format_options"]

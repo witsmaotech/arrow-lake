@@ -49,6 +49,76 @@ def _auto_sub_vectors(dim: int) -> int:
     return nsv if dim % nsv == 0 else 8
 
 
+def _validate_query_vector(query_vector: Any) -> list[float]:
+    """Validate ``query_vector`` is a non-empty sequence of finite floats.
+
+    Returns the coerced list of floats. Raises ``QueryError(VECTOR_INVALID_QUERY)``
+    on any non-sequence / empty / non-numeric / non-finite element.
+
+    The DuckDB ``lance_vector_search`` path interpolates the vector into SQL via
+    ``str(v)``; without this guard a malformed element (string / NaN / inf) would
+    either break the query or reach SQL unescaped. All other interpolations in
+    that builder are already bounded (uri escaped, column validated, ints clamped)
+    — the vector was the only unvalidated one (audit P2).
+    """
+    try:
+        length = len(query_vector)  # type: ignore[arg-type]
+    except TypeError as exc:
+        raise QueryError(
+            error_code=ErrorCode.VECTOR_INVALID_QUERY,
+            message=f"query_vector must be a sequence of floats, got {type(query_vector).__name__}",
+        ) from exc
+    if length == 0:
+        raise QueryError(
+            error_code=ErrorCode.VECTOR_INVALID_QUERY,
+            message="query_vector must be non-empty",
+        )
+    coerced: list[float] = []
+    for i, v in enumerate(query_vector):
+        try:
+            fv = float(v)  # type: ignore[arg-type]
+        except (TypeError, ValueError) as exc:
+            raise QueryError(
+                error_code=ErrorCode.VECTOR_INVALID_QUERY,
+                message=f"query_vector element {i} is not numeric: {v!r}",
+            ) from exc
+        if not math.isfinite(fv):
+            raise QueryError(
+                error_code=ErrorCode.VECTOR_INVALID_QUERY,
+                message=f"query_vector element {i} is not finite: {fv}",
+            )
+        coerced.append(fv)
+    return coerced
+
+
+def _resolve_nprobes(
+    requested: int | None,
+    num_partitions: int,
+    cfg: VectorSearchConfig,
+) -> int:
+    """Resolve nprobes to a safe, config-bounded value (audit P2).
+
+    IVF nprobes was a fixed ``cfg.nprobes`` regardless of how many partitions the
+    index actually has or the configured ceiling. This clamps:
+
+    * ``requested`` (``None`` → ``cfg.nprobes``) to ``[1, ceiling]``;
+    * ``cfg.max_nprobes`` is enforced as the ceiling (previously a dead field);
+    * ``num_partitions`` is the hard cap — probing more partitions than exist is
+      wasted work the engine clamps anyway.
+
+    True size-proportional scaling (raise nprobes for large datasets toward
+    ``max_nprobes``) needs the row count at query time + a recall benchmark, and
+    is intentionally left out: this helper never *increases* nprobes above what
+    caller/config asked for, so it carries no recall-regression risk.
+    """
+    base = cfg.nprobes if requested is None else requested
+    if num_partitions and num_partitions > 0:
+        ceiling = min(cfg.max_nprobes, num_partitions)
+    else:
+        ceiling = cfg.max_nprobes
+    return max(1, min(int(base), ceiling))
+
+
 @dataclass(frozen=True)
 class VectorSearchResult:
     """Result of a vector similarity search.
@@ -454,7 +524,7 @@ class VectorSearchBridge:
             q = q.limit(effective_top_k)
             if where is not None:
                 q = q.where(where)
-            q = q.nprobes(nprobes or self._config.nprobes)
+            q = q.nprobes(_resolve_nprobes(nprobes, self._config.num_partitions, self._config))
             q = q.refine_factor(self._config.refine_factor)
             return await q.to_arrow()
         except (ValueError, RuntimeError) as exc:
@@ -513,7 +583,10 @@ class VectorSearchBridge:
             )
 
         uri = self._storage.dataset_uri(dataset_name)
-        vec_list = "[" + ", ".join(str(v) for v in query_vector) + "]"
+        # Validate the vector before SQL interpolation (all-finite floats); it is
+        # the only unvalidated interpolation in this builder (audit P2).
+        vec = _validate_query_vector(query_vector)
+        vec_list = "[" + ", ".join(repr(v) for v in vec) + "]"
         from arrow_lake.validation import escape_sql_literal
         safe_uri = escape_sql_literal(uri)
 
@@ -526,7 +599,7 @@ class VectorSearchBridge:
             f"  use_index := {metric is not None},",
             "  prefilter := false,",
             f"  refine_factor := {(self._config.refine_factor)}::BIGINT,",
-            f"  nprobs := {(nprobes or self._config.nprobes)}::BIGINT,",
+            f"  nprobs := {_resolve_nprobes(nprobes, self._config.num_partitions, self._config)}::BIGINT,",
             f"  k := {top_k}::BIGINT",
             ")",
         ]

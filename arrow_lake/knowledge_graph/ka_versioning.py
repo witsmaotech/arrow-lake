@@ -87,9 +87,18 @@ def _count_nodes_edges(data_json: Path) -> tuple[int, int]:
 
 
 def _copy_dump(src_dir: Path, dst_dir: Path) -> None:
-    """Copy the active dump members (data.json/metadata.json/index) into dst_dir."""
+    """Copy the active dump members (data.json/metadata.json) into dst_dir.
+
+    The ``index/`` FAISS dir is deliberately excluded — it is fully rebuildable
+    from ``data.json`` (``_ensure_ka_index`` rebuilds on load when the on-disk
+    index is missing), so archiving it on every version only wastes disk (the
+    bulk of a dump; audit P2). Both archive and rollback use this helper, so a
+    rolled-back active dump rebuilds its index on the next search/chat.
+    """
     dst_dir.mkdir(parents=True, exist_ok=True)
     for member in _DUMP_MEMBERS:
+        if member == "index":
+            continue  # rebuildable from data.json; not archived to save disk
         s = src_dir / member
         d = dst_dir / member
         if not s.exists():

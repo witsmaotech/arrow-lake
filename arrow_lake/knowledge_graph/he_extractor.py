@@ -202,8 +202,9 @@ class HyperExtractExtractor:
             base_url=cfg.api_base or None,
             temperature=0,
             # hyper-extract 抽取走结构化输出(.parse()); thinking 模型需撑大 max_tokens
-            # 让 thinking + 结构化输出都装下,否则返空。
-            max_tokens=8192,
+            # 让 thinking + 结构化输出都装下,否则返空。走 cfg.max_tokens(默认 2048,
+            # 生产用 ARROW_LAKE__LLM__MAX_TOKENS=8192 覆盖),避免硬编码让 env 失效。
+            max_tokens=getattr(cfg, "max_tokens", 8192),
         )
 
     def _get_extract_client(self) -> Any:

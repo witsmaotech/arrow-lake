@@ -62,6 +62,24 @@ def test_rollback_unknown_version_raises(base: Path) -> None:
         kv.rollback(base, "ds", "nonexistent")
 
 
+def test_archive_excludes_rebuildable_index(base: Path) -> None:
+    """audit P2: archived versions skip the rebuildable FAISS ``index/`` dir.
+
+    The index is rebuilt on load by ``_ensure_ka_index`` when missing, so it need
+    not be archived — copying it on every version wastes disk (the bulk of a dump).
+    data.json + metadata.json are still archived.
+    """
+    _make_active(base, "ds", nodes=3)
+    kv.archive_current(base, "ds")
+    versions_dir = base / "ds" / "ka" / "versions"
+    v_dirs = [p for p in versions_dir.iterdir() if p.is_dir()]
+    assert len(v_dirs) == 1
+    v_dir = v_dirs[0]
+    assert (v_dir / "data.json").is_file()       # data preserved
+    assert (v_dir / "metadata.json").is_file()   # metadata preserved
+    assert not (v_dir / "index").exists()        # index NOT archived (rebuildable)
+
+
 def test_prune_keeps_newest(base: Path) -> None:
     for n in (1, 2, 3, 4):
         _make_active(base, "ds", nodes=n)

@@ -215,6 +215,18 @@ def _parse_cache_put(key, value):
             _PARSE_CACHE.popitem(last=False)
 
 
+# [#audit-P1/P2] Process-level Docling DocumentConverter cache. DocumentParser is
+# recreated per ingest request, so an instance-level converter reloaded the
+# layout/table/OCR models on every request (10-30s). Keyed by a config signature
+# → the (expensive) converter is built once per distinct config and shared. Each
+# entry carries its own RLock guarding ``convert()``: Docling inference is not
+# guaranteed thread-safe, and the router serves concurrent ingests from a thread
+# pool, so parses on the SAME converter are serialized (different converters still
+# run in parallel). Unbounded — distinct configs per process are few.
+_DOCLING_CONVERTERS: dict[tuple, tuple[Any, _threading.RLock]] = {}
+_DOCLING_BUILD_LOCK = _threading.Lock()
+
+
 class DocumentParser:
     """Document parser using Kreuzberg with optional TurboOCR fallback.
 
@@ -233,7 +245,8 @@ class DocumentParser:
 
     def __init__(self, config: DocumentConfig | None = None) -> None:
         self._config = config or DocumentConfig()
-        self._docling_converter: Any = None  # 懒加载单例（Docling DocumentConverter，模型只载入一次）
+        # Docling DocumentConverter is now a process-level singleton keyed by
+        # config signature (see _get_docling_converter); no instance cache.
 
     def parse(
         self,
@@ -324,15 +337,28 @@ class DocumentParser:
             backend="kreuzberg",
         )
 
-    def _get_docling_converter(self) -> Any:
-        """懒加载 Docling DocumentConverter 单例（模型只载入一次，进程内复用）。"""
-        if self._docling_converter is not None:
-            return self._docling_converter
-        if not _DOCLING_AVAILABLE:
-            raise DocumentError(
-                error_code=ErrorCode.DOCUMENT_PARSE_FAILED,
-                message="docling package is not installed. Install with: pip install arrow-lake[docling]",
-            )
+    def _docling_signature(self) -> tuple:
+        """Hashable signature of the config fields that affect the converter.
+
+        Two configs with the same signature share one DocumentConverter (and its
+        loaded models); a differing field yields a separate converter.
+        """
+        cfg = self._config
+        langs = getattr(cfg, "docling_ocr_languages", None) or []
+        return (
+            str(getattr(cfg, "docling_pipeline_type", None)),
+            str(getattr(cfg, "docling_vlm_preset", None)),
+            str(getattr(cfg, "docling_ocr_engine", None)),
+            tuple(str(x) for x in langs),
+        )
+
+    def _build_docling_converter(self) -> Any:
+        """Construct a fresh Docling DocumentConverter (expensive — loads models).
+
+        Called at most once per distinct config signature (see
+        ``_get_docling_converter``); callers must never invoke this directly to
+        avoid reloading layout/table/OCR models on every request.
+        """
         from arrow_lake.config._enums import DoclingPipelineType
 
         # VLM 流水线（GraniteDocling）：端到端视觉模型，复杂版面/扫描件/公式。
@@ -342,14 +368,13 @@ class DocumentParser:
                 pipeline_cls=VlmPipeline,
                 pipeline_options=self._build_docling_vlm_pipeline(),
             )
-            self._docling_converter = DocumentConverter(
+            return DocumentConverter(
                 allowed_formats=[InputFormat.PDF, InputFormat.IMAGE],
                 format_options={
                     InputFormat.PDF: pdf_option,
                     InputFormat.IMAGE: pdf_option,
                 },
             )
-            return self._docling_converter
 
         # 标准流水线：布局 + OCR + 表格识别
         engine, langs = self._resolve_docling_ocr()
@@ -361,14 +386,41 @@ class DocumentParser:
                 "PDF", "DOCX", "PPTX", "XLSX", "HTML", "IMAGE", "MD", "ASCIIDOC",
             ) if getattr(InputFormat, n, None) is not None
         ]
-        self._docling_converter = DocumentConverter(
+        return DocumentConverter(
             allowed_formats=allowed,
             format_options={
                 InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline),
                 InputFormat.IMAGE: ImageFormatOption(pipeline_options=pipeline),
             },
         )
-        return self._docling_converter
+
+    def _get_docling_converter(self) -> tuple[Any, _threading.RLock]:
+        """Return the process-shared ``(converter, convert_lock)`` for this config.
+
+        The converter (with its loaded models) is built once per distinct config
+        signature and cached at module level — DocumentParser is recreated per
+        ingest request, so an instance attribute would reload the models every
+        time. The returned RLock guards ``converter.convert()`` for thread-safety
+        under concurrent ingest (Docling inference is not re-entrant).
+        """
+        if not _DOCLING_AVAILABLE:
+            raise DocumentError(
+                error_code=ErrorCode.DOCUMENT_PARSE_FAILED,
+                message="docling package is not installed. Install with: pip install arrow-lake[docling]",
+            )
+        sig = self._docling_signature()
+        cached = _DOCLING_CONVERTERS.get(sig)
+        if cached is not None:
+            return cached
+        # Double-checked locking: build is expensive (model load), serialize it.
+        with _DOCLING_BUILD_LOCK:
+            cached = _DOCLING_CONVERTERS.get(sig)
+            if cached is not None:
+                return cached
+            converter = self._build_docling_converter()
+            entry = (converter, _threading.RLock())
+            _DOCLING_CONVERTERS[sig] = entry
+            return entry
 
     def _build_docling_vlm_pipeline(self) -> Any:
         """构造 Docling VlmPipelineOptions（GraniteDocling 端到端视觉模型，本地 Transformers）。
@@ -389,9 +441,13 @@ class DocumentParser:
         多格式（PDF/Office/HTML/图片/邮件）+ OCR（rapidocr 中文 / easyocr 多语言 /
         tesseract 英文）。详见 ADR docs/docling-ocr-migration-adr.md。
         """
-        converter = self._get_docling_converter()
+        converter, convert_lock = self._get_docling_converter()
         try:
-            result = converter.convert(str(file_path))
+            # Serialize convert() per-converter: Docling inference (layout/OCR/
+            # table models) is not guaranteed thread-safe, and the router serves
+            # concurrent ingests from a thread pool sharing this converter.
+            with convert_lock:
+                result = converter.convert(str(file_path))
         except Exception as exc:
             raise DocumentError(
                 error_code=ErrorCode.DOCUMENT_PARSE_FAILED,

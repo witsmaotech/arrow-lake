@@ -103,6 +103,34 @@ def test_normalize_type_unknown_falls_back_to_concept() -> None:
 
 
 # ---------------------------------------------------------------------------
+# _build_client — max_tokens must flow from LLMConfig (audit: was hardcoded 8192,
+# so ARROW_LAKE__LLM__MAX_TOKENS env had NO effect on KG extraction).
+# ---------------------------------------------------------------------------
+
+
+def test_build_client_langchain_uses_config_max_tokens(
+    monkeypatch: pytest.MonkeyPatch, extractor: HyperExtractExtractor,
+) -> None:
+    """The langchain ChatOpenAI path must honor ``cfg.max_tokens``."""
+    langchain_openai = pytest.importorskip("langchain_openai")
+    captured: dict = {}
+
+    class _FakeChat:  # stand-in for ChatOpenAI
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+    monkeypatch.setattr(langchain_openai, "ChatOpenAI", _FakeChat)
+
+    cfg = SimpleNamespace(
+        api_key="k",
+        api_base="http://localhost:11434/v1",  # no "aliyuncs" → langchain branch
+        max_tokens=4096,
+    )
+    extractor._build_client(cfg, "qwen3")
+    assert captured.get("max_tokens") == 4096
+
+
+# ---------------------------------------------------------------------------
 # DocTypeRouter
 # ---------------------------------------------------------------------------
 
