@@ -96,6 +96,11 @@ class FacetedSearchBridge:
         self._config = config or FacetedSearchConfig()
         self._storage_config = storage_config
         self._session_manager = session_manager
+        # [#step2-C] facet counts depend only on (dataset, facet_cols, where) —
+        # NOT the query vector — so they're highly cacheable. DuckDB CUBE
+        # full-scans each call; this cache avoids recompute on repeated queries.
+        self._facet_cache: dict[str, tuple[list, float]] = {}
+        self._facet_cache_ttl: float = 60.0
 
     @property
     def config(self) -> FacetedSearchConfig:
@@ -138,8 +143,8 @@ class FacetedSearchBridge:
             if not SAFE_IDENTIFIER_RE.match(col):
                 raise ValueError(f"Invalid facet column name '{col}'")
 
-        # Compute facet counts
-        facet_list = self._compute_facets(dataset_name, facet_columns, where)
+        # Compute facet counts (cached — vector-independent)
+        facet_list = self._cached_compute_facets(dataset_name, facet_columns, where)
 
         # Stream dataset for result table
         try:
@@ -241,6 +246,32 @@ class FacetedSearchBridge:
             where=where,
             version=version,
         )
+
+    def _cached_compute_facets(
+        self,
+        dataset_name: str,
+        facet_columns: list[str],
+        where: str | None,
+    ) -> list[FacetCount]:
+        """[#step2-C] TTL cache around _compute_facets (vector-independent)."""
+        import time
+
+        key = f"{dataset_name}|{','.join(facet_columns)}|{where or ''}"
+        now = time.monotonic()
+        hit = self._facet_cache.get(key)
+        if hit is not None and (now - hit[1]) < self._facet_cache_ttl:
+            return hit[0]
+        facets = self._compute_facets(dataset_name, facet_columns, where)
+        self._facet_cache[key] = (facets, now)
+        return facets
+
+    def invalidate_dataset(self, dataset_name: str) -> int:
+        """Drop cached facet counts for a dataset (call on ingest/append)."""
+        prefix = f"{dataset_name}|"
+        stale = [k for k in self._facet_cache if k.startswith(prefix)]
+        for k in stale:
+            self._facet_cache.pop(k, None)
+        return len(stale)
 
     def _compute_facets(
         self,

@@ -187,3 +187,37 @@ class TestFtsNullSegmentedDetect:
     def test_missing_column_returns_false(self) -> None:
         t = pa.table({"x": [1, 2]})
         assert self._bridge()._has_null_segmented(t) is False
+
+
+class TestFacetCache:
+    """[#step2-C] facet counts (vector-independent) cached + invalidatable."""
+
+    def _bridge(self):
+        from unittest.mock import MagicMock
+
+        from arrow_lake.query.faceted import FacetedSearchBridge
+
+        return FacetedSearchBridge(MagicMock())
+
+    def test_cache_hit_within_ttl(self) -> None:
+        b = self._bridge()
+        calls = [0]
+
+        def fake(ds, cols, where):
+            calls[0] += 1
+            return ["facetA"]
+
+        b._compute_facets = fake  # type: ignore[method-assign]
+        b._cached_compute_facets("ds", ["c1"], None)
+        b._cached_compute_facets("ds", ["c1"], None)  # cache hit
+        assert calls[0] == 1
+
+    def test_invalidate_dataset_clears_cache(self) -> None:
+        b = self._bridge()
+        b._compute_facets = lambda ds, cols, where: ["x"]  # type: ignore[method-assign]
+        b._cached_compute_facets("ds", ["c1"], None)
+        assert b.invalidate_dataset("ds") == 1
+        calls = [0]
+        b._compute_facets = lambda ds, cols, where: calls.__setitem__(0, calls[0] + 1) or ["y"]  # type: ignore[method-assign]
+        b._cached_compute_facets("ds", ["c1"], None)  # recompute after invalidate
+        assert calls[0] == 1

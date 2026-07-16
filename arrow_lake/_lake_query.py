@@ -97,10 +97,16 @@ class _LakeQueryMixin:
         import logging
 
         try:
-            bridge = getattr(self, "_components", {}).get("olap")
-            cache = getattr(bridge, "_cache", None) if bridge else None
+            comps = getattr(self, "_components", {})
+            olap = comps.get("olap")
+            cache = getattr(olap, "_cache", None) if olap else None
             if cache is not None:
                 cache.invalidate_dataset(dataset_name)
+            # [#step2-C] also drop cached facet counts for this dataset
+            facet_bridge = comps.get("faceted")
+            facet_inv = getattr(facet_bridge, "invalidate_dataset", None) if facet_bridge else None
+            if callable(facet_inv):
+                facet_inv(dataset_name)
         except Exception:
             logging.getLogger(__name__).warning(
                 "invalidate_query_cache failed for %s", dataset_name, exc_info=True,
