@@ -37,6 +37,13 @@ class SystemDBConfig(BaseModel):
     # fail_soft (catalog/tasks/rag: log + degrade)
     fail_mode: str = "fail_close"
 
+    # v1.9.0 availability: when sqld is unreachable at runtime, serve the
+    # last-cached RBAC decision instead of denying (bounded staleness). The
+    # role-permission matrix is warmed at startup, so role-based checks keep
+    # working through an outage; only ACL *mutations* fail. Set False for
+    # strict fail-close (deny-all on store error).
+    serve_stale_on_error: bool = True
+
     # Empty = package default (arrow_lake/system_db/migrations).
     migrations_dir: str = ""
 

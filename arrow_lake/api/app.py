@@ -156,9 +156,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
         Migrator(sys_db, config.system_db.migrations_dir or None).run()
         rbac_store = RbacStore(
-            sys_db, cache_ttl=config.system_db.acl_cache_ttl_seconds
+            sys_db,
+            cache_ttl=config.system_db.acl_cache_ttl_seconds,
+            serve_stale=config.system_db.serve_stale_on_error,
         )
         rbac_store.seed_role_permissions(_ROLE_PERMISSIONS)
+        # Warm the role-permission cache so role-based checks survive a sqld
+        # outage via the serve-stale fallback (last-known decision served).
+        for role in _ROLE_PERMISSIONS:
+            rbac_store.get_role_permissions(role)
         identity_store = IdentityStore(sys_db)
         app.state.checker.set_system_store(rbac_store)
         app.state.system_db = sys_db

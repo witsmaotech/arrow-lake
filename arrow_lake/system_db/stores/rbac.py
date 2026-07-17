@@ -45,9 +45,40 @@ class RbacStore:
 
     fail_mode = FailMode.FAIL_CLOSE
 
-    def __init__(self, db: SystemDB, *, cache_ttl: float = 5.0) -> None:
+    def __init__(
+        self, db: SystemDB, *, cache_ttl: float = 5.0, serve_stale: bool = True
+    ) -> None:
         self._db = db
         self._cache = TTLCache(cache_ttl)
+        # v1.9.0 availability: on store error, serve the last-cached decision
+        # (bounded staleness) instead of denying every request. The role matrix
+        # is warmed at startup, so role-based checks survive a sqld outage.
+        self._serve_stale = serve_stale
+
+    def _safe_read(self, cache_key: str, fn: Any, default: Any) -> Any:
+        """Cache → DB → stale-fallback read.
+
+        On DB error: if ``serve_stale`` and a prior value is cached, return it
+        (bounded staleness, logged); otherwise return ``default`` (empty → the
+        caller's role-default → deny). Never raises to the caller.
+        """
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            return cached
+        try:
+            out = fn()
+        except Exception:
+            if self._serve_stale:
+                stale = self._cache.get_stale(cache_key)
+                if stale is not None:
+                    logger.warning(
+                        "rbac.serving_stale_after_store_error", key=cache_key
+                    )
+                    return stale
+            logger.warning("rbac.store_read_failed", key=cache_key, exc_info=True)
+            return default
+        self._cache.set(cache_key, out)
+        return out
 
     # ------------------------------------------------------------------
     # role → permission matrix (seeded at startup)
@@ -70,30 +101,29 @@ class RbacStore:
         return int(after) - int(before)
 
     def get_role_permissions(self, role: str) -> frozenset[str]:
-        cur = self._db.execute(
-            "SELECT permission FROM role_permissions WHERE role = ?", (role,)
-        )
-        rows = cur.fetchall() if cur is not None else []
-        return frozenset(r[0] for r in rows)
+        def _read() -> frozenset[str]:
+            cur = self._db.execute(
+                "SELECT permission FROM role_permissions WHERE role = ?", (role,)
+            )
+            rows = cur.fetchall() if cur is not None else []
+            return frozenset(r[0] for r in rows)
+        return self._safe_read(f"role_perms:{role}", _read, frozenset())
 
     # ------------------------------------------------------------------
     # dataset → role → action grants  (_dataset_acls)
     # ------------------------------------------------------------------
     def get_dataset_grants(self, dataset: str) -> dict[str, set[str]]:
-        cache_key = f"grants:{dataset}"
-        cached = self._cache.get(cache_key)
-        if cached is not None:
-            return cached
-        cur = self._db.execute(
-            "SELECT role, action FROM dataset_acl_grants WHERE dataset_name = ?",
-            (dataset,),
-        )
-        rows = cur.fetchall() if cur is not None else []
-        out: dict[str, set[str]] = {}
-        for role, action in rows:
-            out.setdefault(role, set()).add(action)
-        self._cache.set(cache_key, out)
-        return out
+        def _read() -> dict[str, set[str]]:
+            cur = self._db.execute(
+                "SELECT role, action FROM dataset_acl_grants WHERE dataset_name = ?",
+                (dataset,),
+            )
+            rows = cur.fetchall() if cur is not None else []
+            out: dict[str, set[str]] = {}
+            for role, action in rows:
+                out.setdefault(role, set()).add(action)
+            return out
+        return self._safe_read(f"grants:{dataset}", _read, {})
 
     def grant_dataset_access(self, dataset: str, role: str, action: str) -> None:
         with self._db.with_write() as db:
@@ -148,28 +178,24 @@ class RbacStore:
         return None
 
     def list_row_col_acls(self, dataset: str) -> list[dict[str, Any]]:
-        cache_key = f"rowcol:{dataset}"
-        cached = self._cache.get(cache_key)
-        if cached is not None:
-            return cached
-        cur = self._db.execute(
-            "SELECT role, visible_columns, row_filter, denied_actions "
-            "FROM dataset_row_col_acls WHERE dataset_name = ?",
-            (dataset,),
-        )
-        rows = cur.fetchall() if cur is not None else []
-        out = [
-            {
-                "dataset": dataset,
-                "role": role,
-                "visible_columns": frozenset(_loads_array(vc)),
-                "row_filter": rf or "",
-                "denied_actions": frozenset(_loads_array(da)),
-            }
-            for role, vc, rf, da in rows
-        ]
-        self._cache.set(cache_key, out)
-        return out
+        def _read() -> list[dict[str, Any]]:
+            cur = self._db.execute(
+                "SELECT role, visible_columns, row_filter, denied_actions "
+                "FROM dataset_row_col_acls WHERE dataset_name = ?",
+                (dataset,),
+            )
+            rows = cur.fetchall() if cur is not None else []
+            return [
+                {
+                    "dataset": dataset,
+                    "role": role,
+                    "visible_columns": frozenset(_loads_array(vc)),
+                    "row_filter": rf or "",
+                    "denied_actions": frozenset(_loads_array(da)),
+                }
+                for role, vc, rf, da in rows
+            ]
+        return self._safe_read(f"rowcol:{dataset}", _read, [])
 
     def delete_row_col_acl(self, dataset: str, role: str) -> bool:
         with self._db.with_write() as db:
@@ -214,27 +240,23 @@ class RbacStore:
         return None
 
     def list_schema_acls(self, schema: str) -> list[dict[str, Any]]:
-        cache_key = f"schema:{schema}"
-        cached = self._cache.get(cache_key)
-        if cached is not None:
-            return cached
-        cur = self._db.execute(
-            "SELECT role, allowed_actions, denied_actions "
-            "FROM schema_acls WHERE schema_name = ?",
-            (schema,),
-        )
-        rows = cur.fetchall() if cur is not None else []
-        out = [
-            {
-                "schema": schema,
-                "role": role,
-                "allowed_actions": frozenset(_loads_array(aa)),
-                "denied_actions": frozenset(_loads_array(da)),
-            }
-            for role, aa, da in rows
-        ]
-        self._cache.set(cache_key, out)
-        return out
+        def _read() -> list[dict[str, Any]]:
+            cur = self._db.execute(
+                "SELECT role, allowed_actions, denied_actions "
+                "FROM schema_acls WHERE schema_name = ?",
+                (schema,),
+            )
+            rows = cur.fetchall() if cur is not None else []
+            return [
+                {
+                    "schema": schema,
+                    "role": role,
+                    "allowed_actions": frozenset(_loads_array(aa)),
+                    "denied_actions": frozenset(_loads_array(da)),
+                }
+                for role, aa, da in rows
+            ]
+        return self._safe_read(f"schema:{schema}", _read, [])
 
     def delete_schema_acl(self, schema: str, role: str) -> bool:
         with self._db.with_write() as db:
@@ -250,17 +272,13 @@ class RbacStore:
     # deny-list  (_deny_list)
     # ------------------------------------------------------------------
     def list_denies(self, dataset: str) -> set[str]:
-        cache_key = f"deny:{dataset}"
-        cached = self._cache.get(cache_key)
-        if cached is not None:
-            return cached
-        cur = self._db.execute(
-            "SELECT action FROM acl_denies WHERE dataset_name = ?", (dataset,)
-        )
-        rows = cur.fetchall() if cur is not None else []
-        out = {r[0] for r in rows}
-        self._cache.set(cache_key, out)
-        return out
+        def _read() -> set[str]:
+            cur = self._db.execute(
+                "SELECT action FROM acl_denies WHERE dataset_name = ?", (dataset,)
+            )
+            rows = cur.fetchall() if cur is not None else []
+            return {r[0] for r in rows}
+        return self._safe_read(f"deny:{dataset}", _read, set())
 
     def deny_action(self, dataset: str, action: str, reason: str = "") -> None:
         with self._db.with_write() as db:

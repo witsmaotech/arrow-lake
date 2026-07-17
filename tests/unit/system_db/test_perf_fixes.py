@@ -10,6 +10,9 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from arrow_lake._lake_lineage import _LakeLineageMixin
+from arrow_lake.api.rbac import _ROLE_PERMISSIONS
+from arrow_lake.system_db import Migrator, SystemDB
+from arrow_lake.system_db.stores import RbacStore
 from arrow_lake.system_db.stores.identity import (
     LAST_USED_THROTTLE_SECONDS,
     _should_update_last_used,
@@ -61,3 +64,36 @@ class TestAsyncLineageWorker:
         # metadata carries source_paths
         rec = next(r for r in lake.recorded if r[0] == "ds1")
         assert rec[3]["source_paths"] == ["f.csv"]
+
+
+def _raise(*_a, **_k):
+    raise RuntimeError("sqld down")
+
+
+class TestRbacServeStale:
+    def test_serves_last_known_on_store_error(self) -> None:
+        db = SystemDB(":memory:")
+        Migrator(db).run()
+        store = RbacStore(db, cache_ttl=0.01, serve_stale=True)
+        store.seed_role_permissions(_ROLE_PERMISSIONS)
+        assert "admin:manage" in store.get_role_permissions("admin")
+        time.sleep(0.02)  # TTL expires; entry lingers for get_stale
+        store._db.execute = _raise  # simulate sqld outage
+        stale = store.get_role_permissions("admin")
+        assert "admin:manage" in stale  # served stale, not denied
+
+    def test_strict_deny_when_never_cached(self) -> None:
+        db = SystemDB(":memory:")
+        Migrator(db).run()
+        store = RbacStore(db, cache_ttl=60, serve_stale=True)
+        store._db.execute = _raise  # outage before any read of 'ghost'
+        assert store.get_role_permissions("ghost") == frozenset()  # deny
+
+    def test_strict_fail_close_when_disabled(self) -> None:
+        db = SystemDB(":memory:")
+        Migrator(db).run()
+        store = RbacStore(db, cache_ttl=60, serve_stale=False)
+        store.get_role_permissions("admin")  # warm
+        store._db.execute = _raise
+        assert store.get_role_permissions("admin") == frozenset()  # deny, no stale
+

@@ -67,9 +67,21 @@ class TTLCache:
                 return None
             ts, value = entry
             if time.monotonic() - ts > self._ttl:
-                self._entries.pop(key, None)
+                # Expired: leave the entry in place so get_stale() can still
+                # serve it as a degradation fallback during a store outage.
                 return None
             return value
+
+    def get_stale(self, key: str) -> Any | None:
+        """Return the last-cached value for *key* regardless of TTL.
+
+        Used as a degradation fallback when the backing store is unreachable:
+        serve the last-known auth decision (bounded staleness) rather than
+        denying every request. Returns None if the key was never cached.
+        """
+        with self._lock:
+            entry = self._entries.get(key)
+            return entry[1] if entry is not None else None
 
     def set(self, key: str, value: Any) -> None:
         if self._ttl <= 0:
