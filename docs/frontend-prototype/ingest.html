@@ -57,9 +57,7 @@
 
   <!-- recent -->
   <div class="panel flush"><div class="panel-h"><i class="placeholder" data-ic="tasks"></i><h3>最近摄入</h3><span class="actions"><a class="btn btn-ghost btn-sm" href="tasks.html">全部任务 →</a></div></div>
-    <div class="tbl-scroll"><table class="tbl"><thead><tr><th>task_id</th><th>来源</th><th>数据集</th><th>记录</th><th>状态</th><th class="num">耗时</th></tr></thead><tbody>
-    ${[['task_8a3f','documents','papers','1,204','warn','00:42'],['task_2f6c','documents','reviews','880','ok','02:14'],['task_c392','sql','transactions','50,000','ok','04:17'],['task_4e27','images','papers','12,440','ok','06:03']].map(t=>`<tr><td class="mono" style="font-size:.75rem"><a href="tasks.html" style="color:var(--fg-hi)">${t[0]}</a></td><td><span class="tag">${t[1]}</span></td><td><a href="dataset-detail.html" style="color:var(--teal-bright)">${t[2]}</a></td><td class="mono">${t[3]}</td><td><span class="lamp ${t[4]} ${t[4]==='warn'?'pulse':''}"><i></i>${t[4]==='warn'?'运行':'完成'}</span></td><td class="num mono">${t[5]}</td></tr>`).join('')}
-    </tbody></table></div>
+    <div class="tbl-scroll"><table class="tbl"><thead><tr><th>task_id</th><th>来源</th><th>数据集</th><th>记录</th><th>状态</th><th class="num">耗时</th></tr></thead><tbody id="recentRows"></tbody></table></div>
   </div>
 </div></main></div>
 <script src="assets/layout.js"></script>
@@ -90,6 +88,7 @@ function setSrc(s){cur=s;$('#curSrc').textContent=s;$('#srcLabel').textContent=L
 function renderCfg(){$('#cfg').innerHTML=FORM[cur]?FORM[cur]():'<div class="muted">通用参数</div>'}
 $('#sources').innerHTML=SRC.map(s=>`<button class="src panel ${s[0]==='documents'?'sel':''}" data-s="${s[0]}" onclick="setSrc('${s[0]}')" style="color:var(--fg-hi)"><div class="panel-b flex" style="gap:10px"><span class="ic-wrap" style="width:32px;height:32px;border-radius:8px;background:var(--teal-soft);color:var(--teal-bright);display:grid;place-items:center;flex-shrink:0">${icon(s[3])}</span><div><div style="font-weight:600;font-size:.82rem">${s[0]}</div><div class="muted" style="font-size:.68rem">${s[2]}</div></div></div></button>`).join('');
 renderCfg();
+$('#recentRows').innerHTML=[['task_8a3f','documents','papers','1,204','warn','00:42'],['task_2f6c','documents','reviews','880','ok','02:14'],['task_c392','sql','transactions','50,000','ok','04:17'],['task_4e27','images','papers','12,440','ok','06:03']].map(t=>`<tr><td class="mono" style="font-size:.75rem"><a href="tasks.html" style="color:var(--fg-hi)">${t[0]}</a></td><td><span class="tag">${t[1]}</span></td><td><a href="dataset-detail.html" style="color:var(--teal-bright)">${t[2]}</a></td><td class="mono">${t[3]}</td><td><span class="lamp ${t[4]} ${t[4]==='warn'?'pulse':''}"><i></i>${t[4]==='warn'?'运行':'完成'}</span></td><td class="num mono">${t[5]}</td></tr>`).join('');
 function $$(s){return[...document.querySelectorAll(s)]}
 </script>
 </body>
