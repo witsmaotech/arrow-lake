@@ -9,53 +9,103 @@
 <body>
 <div id="app"><main class="main"><div class="page">
   <div class="h-sec between">
-    <div><h1>数据血缘</h1><div class="desc">源到汇全链路 · <span class="mono">lineage/{graph,history,impact,stats,query}</span></div></div>
-    <div class="flex"><select class="select"><option>全湖仓</option><option>papers</option><option>regulations</option></select><span class="tag ok"><span class="lamp ok"><i></i></span>HMAC ✓ 防篡改</span></div>
+    <div>
+      <h1>数据血缘</h1>
+      <div class="desc">源到汇全链路 · <span class="mono">lineage/{graph,history,impact,stats,query}</span></div>
+    </div>
+    <div class="flex">
+      <select class="select" id="dsSel"><option>全湖仓</option><option>papers</option><option>regulations</option><option>wuhu_report</option><option>jd_ddd</option></select>
+      <span class="tag ok"><span class="lamp ok"><i></i></span>HMAC ✓ 防篡改</span>
+      <button class="btn btn-ghost btn-sm" onclick="openApi('血缘图','curl -s $API/api/v1/lineage/graph/papers','lake.lineage.graph(\"papers\")')"><i class="placeholder" data-ic="code"></i> API</button>
+    </div>
   </div>
 
-  <div class="panel"><div class="panel-h"><i class="placeholder" data-ic="lineage"></i><h3>跨数据集血缘 DAG</h3><div class="actions"><button class="btn btn-ghost btn-sm" onclick="openApi('血缘图','curl -s $API/api/v1/lineage/graph/papers','lake.lineage.graph(\"papers\")')"><i class="placeholder" data-ic="code"></i> API</button></div></div>
-    <div class="panel-b"><svg viewBox="0 0 1000 320" width="100%" height="320">
-      <defs><marker id="arrL" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0 0L6 3L0 6z" fill="var(--teal)"/></marker></defs>
-      <g stroke="var(--teal)" stroke-width="1.5" fill="none" marker-end="url(#arrL)">
-        <path d="M60 60 H200"/><path d="M60 160 H200"/><path d="M60 260 H200"/>
-        <path d="M320 60 H460"/><path d="M320 160 H460"/>
-        <path d="M580 110 H720"/><path d="M580 210 H720"/>
-        <path d="M840 160 H940"/>
-      </g>
-      <g stroke="var(--line-strong)" stroke-width="1" stroke-dasharray="4 3" fill="none" marker-end="url(#arrL)"><path d="M580 110 H720 V210"/></g>
-      ${node(40,60,'PDF 源','info','#13303f')}${node(40,160,'Kafka','info','#13303f')}${node(40,260,'HTTP','info','#13303f')}
-      ${node(260,60,'chunk','teal','var(--teal-soft)')}${node(260,160,'chunk','teal','var(--teal-soft)')}
-      ${node(520,110,'text_emb','amber','#3a2a14')}${node(520,210,'image_emb','amber','#3a2a14')}
-      ${node(780,160,'papers','ok','#0f2a18')}${node(960,160,'kg_papers','info','#13303f')}
-      <g font-family="var(--font-mono)" font-size="9" fill="var(--fg-lo)"><text x="100" y="52">摄取</text><text x="360" y="52">分块</text><text x="620" y="102">嵌入</text><text x="840" y="150">建图</text></g>
-    </svg></div>
+  <!-- v1.9.0 全链路写入 banner -->
+  <div class="telem">
+    <span class="item"><span class="dot"></span><b>v1.9.0</b> 血缘全链路写入</span>
+    <span class="item">12 ingest 变体 + create/append <b>全部记录</b></span>
+    <span class="item warn">异步队列 <b>10000</b> · daemon worker</span>
+    <span class="item">Lance SoT · 失败可回填</span>
+    <span class="item"><span class="lamp ok"><i></i></span>LineageIndexStore 在线</span>
+  </div>
+
+  <div class="panel">
+    <div class="panel-h"><i class="placeholder" data-ic="lineage"></i><h3>跨数据集血缘 DAG</h3><span class="sub">lineage/graph</span></div>
+    <div class="panel-b"><div id="dag"></div></div>
   </div>
 
   <div class="grid cols-2-1">
-    <div class="panel flush"><div class="panel-h"><i class="placeholder" data-ic="tasks"></i><h3>血缘历史</h3></div>
-      <div class="tbl-scroll"><table class="tbl"><thead><tr><th>事件</th><th>数据集</th><th>操作</th><th class="num">时间</th></tr></thead><tbody>
-      ${[['row_0042 写入','papers','ingest','14:02'],['schema 迁移','papers','migrate','12:30'],['kg_papers 建图','papers','kg_build','11:58'],['image_emb 加列','product_photos','embed_add','昨天'],['报告导出','regulations','export','昨天']].map(r=>`<tr><td class="mono">${r[0]}</td><td><a href="dataset-detail.html" style="color:var(--teal-bright)">${r[1]}</a></td><td><span class="tag">${r[2]}</span></td><td class="num mono">${r[3]}</td></tr>`).join('')}
-      </tbody></table></div>
+    <div class="panel flush">
+      <div class="panel-h"><i class="placeholder" data-ic="tasks"></i><h3>血缘历史</h3><span class="sub">lineage/history · 全写入路径</span></div>
+      <div class="tbl-scroll"><table class="tbl">
+        <thead><tr><th>事件</th><th>数据集</th><th>操作</th><th>来源</th><th class="num">时间</th></tr></thead>
+        <tbody id="histRows"></tbody>
+      </table></div>
     </div>
     <div class="col">
       <div class="panel"><div class="panel-h"><i class="placeholder" data-ic="warn"></i><h3>影响分析</h3></div><div class="panel-b">
         <div class="muted" style="font-size:.75rem;margin-bottom:6px">若 <code class="mono">papers.text_embedding</code> 变更：</div>
-        ${[['papers · 检索','warn'],['kg_papers · GraphRAG','warn'],['RAG 会话 #1284','info'],['导出任务 papers_20260704','info']].map(x=>`<div class="flex between" style="margin:4px 0"><span>${x[0]}</span><span class="tag ${x[1]}">受影响</span></div>`).join('')}
+        <div id="impactRows"></div>
       </div></div>
       <div class="panel"><div class="panel-h"><i class="placeholder" data-ic="scale"></i><h3>统计</h3></div><div class="panel-b grid g-2">
-        <div><div class="muted" style="font-size:var(--fs-cap)">节点</div><b class="readout" style="font-size:1.25rem">1,842</b></div>
-        <div><div class="muted" style="font-size:var(--fs-cap)">边</div><b class="readout" style="font-size:1.25rem">5,210</b></div>
+        <div><div class="muted" style="font-size:var(--fs-cap)">节点</div><b class="readout" style="font-size:1.25rem" id="stNodes">1,842</b></div>
+        <div><div class="muted" style="font-size:var(--fs-cap)">边</div><b class="readout" style="font-size:1.25rem" id="stEdges">5,210</b></div>
         <div><div class="muted" style="font-size:var(--fs-cap)">链路</div><b class="readout" style="font-size:1.25rem">312</b></div>
         <div><div class="muted" style="font-size:var(--fs-cap)">最长链</div><b class="readout" style="font-size:1.25rem">7 跳</b></div>
       </div></div>
     </div>
   </div>
 </div></main></div>
+
 <script src="assets/layout.js"></script>
 <script>
 const {renderShell}=window;
-renderShell({active:'lineage',crumb:'<b>数据血缘</b>'});
-function node(x,y,label,tone,bg){const cls={info:'var(--info)',teal:'var(--teal-bright)',amber:'var(--warn)',ok:'var(--ok)'}[tone];const w=label.length*8+24;return `<g><rect x="${x-w/2}" y="${y-14}" width="${w}" height="28" rx="7" fill="${bg}" stroke="${cls}" stroke-width="1.5"/><text x="${x}" y="${y+4}" text-anchor="middle" font-family="var(--font-mono)" font-size="11" fill="${cls}">${label}</text></g>`}
+renderShell({active:'lineage',crumb:'<a href="dashboard.html">控制台</a> <span class="sep">/</span> <b>数据血缘</b>'});
+const $=s=>document.querySelector(s);
+
+// DAG (rendered via JS so node() actually executes)
+function node(x,y,label,tone,bg){
+  const cls={info:'var(--info)',teal:'var(--teal-bright)',amber:'var(--warn)',ok:'var(--ok)'}[tone];
+  const w=label.length*8+28;
+  return `<g><rect x="${x-w/2}" y="${y-14}" width="${w}" height="28" rx="7" fill="${bg}" stroke="${cls}" stroke-width="1.5"/><text x="${x}" y="${y+4}" text-anchor="middle" font-family="var(--font-mono)" font-size="11" fill="${cls}">${label}</text></g>`;
+}
+$('#dag').innerHTML=`<svg viewBox="0 0 1000 320" width="100%" height="320">
+  <defs><marker id="arrL" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0 0L6 3L0 6z" fill="var(--teal)"/></marker></defs>
+  <g stroke="var(--teal)" stroke-width="1.5" fill="none" marker-end="url(#arrL)">
+    <path d="M60 60 H200"/><path d="M60 160 H200"/><path d="M60 260 H200"/>
+    <path d="M320 60 H460"/><path d="M320 160 H460"/>
+    <path d="M580 110 H720"/><path d="M580 210 H720"/>
+    <path d="M840 160 H940"/>
+  </g>
+  <g stroke="var(--line-strong)" stroke-width="1" stroke-dasharray="4 3" fill="none" marker-end="url(#arrL)"><path d="M580 110 H720 V210"/></g>
+  ${node(40,60,'PDF 源','info','#13303f')}${node(40,160,'Kafka','info','#13303f')}${node(40,260,'HTTP','info','#13303f')}
+  ${node(260,60,'chunk','teal','var(--teal-soft)')}${node(260,160,'chunk','teal','var(--teal-soft)')}
+  ${node(520,110,'text_emb','amber','#3a2a14')}${node(520,210,'image_emb','amber','#3a2a14')}
+  ${node(780,160,'papers','ok','#0f2a18')}${node(960,160,'kg_papers','info','#13303f')}
+  <g font-family="var(--font-mono)" font-size="9" fill="var(--fg-lo)"><text x="100" y="52">摄取</text><text x="360" y="52">分块</text><text x="620" y="102">嵌入</text><text x="840" y="150">建图</text></g>
+</svg>`;
+
+// 血缘历史（含 v1.9.0 全写入路径：12 ingest 变体 + create/append）
+const H=[
+ ['row_0042 写入','papers','ingest_documents','documents','14:02'],
+ ['append 412 行','wuhu_report','append_dataset','documents','13:55'],
+ ['schema 迁移 v3','papers','migrate','schema_changelog','12:30'],
+ ['kg_papers 建图','papers','kg_build','kg','11:58'],
+ ['create_dataset','jd_ddd','create','facade','11:40'],
+ ['image_emb 加列','product_photos','add_columns_table','embed','昨天'],
+ ['ingest_sql 批量','transactions','ingest_sql','sql','昨天'],
+ ['报告导出','regulations','export','export','昨天'],
+];
+$('#histRows').innerHTML=H.map(r=>`<tr>
+  <td class="mono">${r[0]}</td>
+  <td><a href="dataset-detail.html" style="color:var(--teal-bright)">${r[1]}</a></td>
+  <td><span class="tag ${r[2].startsWith('kg')?'amber':r[2]==='export'?'info':'teal'}">${r[2]}</span></td>
+  <td class="mono muted" style="font-size:.72rem">${r[3]}</td>
+  <td class="num mono">${r[4]}</td>
+</tr>`).join('');
+
+// 影响分析
+$('#impactRows').innerHTML=[['papers · 检索','warn'],['kg_papers · GraphRAG','warn'],['RAG 会话 #1284','info'],['导出任务 papers_20260704','info']].map(x=>`<div class="flex between" style="margin:4px 0"><span>${x[0]}</span><span class="tag ${x[1]}">受影响</span></div>`).join('');
 </script>
 </body>
 </html>

@@ -9,45 +9,47 @@
 <body>
 <div id="app"><main class="main"><div class="page">
   <div class="h-sec between">
-    <div><h1>元数据治理</h1><div class="desc">Apache Gravitino · 统一 catalog · <span class="mono">tag→ACL · 动态脱敏 · 保留策略 · 联邦查询</span></div></div>
-    <div class="flex"><span class="lamp ok pulse"><i></i>Gravitino 在线</span><span class="tag">ADMIN</span><button class="btn btn-primary btn-sm" onclick="openApi('强制策略','curl -X POST $API/metadata/policies/enforce -d \'{...}\']','lake.gravitino.policies_enforce()')"><i class="placeholder" data-ic="scale"></i> enforce</button></div>
+    <div><h1>元数据治理</h1><div class="desc">Apache Gravitino catalog · <span class="mono">tag→ACL · 动态脱敏 · 保留策略</span> + <span class="mono">v1.9.0 治理活动落库</span>（schema/maintenance/schedule/config 变更日志）</div></div>
+    <div class="flex"><span class="lamp ok pulse"><i></i>Gravitino 在线</span><span class="tag">ADMIN</span><button class="btn btn-primary btn-sm" onclick="openApi('强制策略','curl -X POST $API/metadata/policies/enforce -d \'{...}\'','lake.gravitino.policies_enforce()')"><i class="placeholder" data-ic="scale"></i> enforce</button></div>
   </div>
 
   <div class="grid" style="grid-template-columns:240px 1fr;gap:var(--s4);align-items:start">
-    <!-- catalog tree -->
-    <div class="panel flush"><div class="panel-h"><i class="placeholder" data-ic="tree"></i><h3>Catalog</h3></div>
-      <div id="tree"></div>
-    </div>
+    <div class="panel flush"><div class="panel-h"><i class="placeholder" data-ic="tree"></i><h3>Catalog</h3></div><div id="tree"></div></div>
 
     <div class="col">
-      <!-- tag → ACL -->
-      <div class="panel flush"><div class="panel-h"><i class="placeholder" data-ic="tag"></i><h3>资产 · <span style="color:var(--teal-bright)">papers</span> · tag → ACL</h3><span class="actions"><button class="btn btn-ghost btn-sm" onclick="openApi('打标','curl -X POST $API/metadata/tags -d \'{\"entity\":\"papers\",\"tag\":\"pii\"}\'','lake.gravitino.tag(\"papers\",\"pii\")')"><i class="placeholder" data-ic="plus"></i> 打标</button></div></div>
-        <div style="overflow-x:auto"><table class="tbl"><thead><tr><th>资产</th><th>类型</th><th>标签</th><th>读</th><th>写</th><th>脱敏列</th><th>保留</th></tr></thead><tbody>
-        ${[['papers','dataset','research, public','✓','role-based','—','—'],['papers.source_url','column','pii','✓','✕','masking','—'],['regulations','dataset','confidential, pii','✓','✕','—','7y'],['transactions.amount','column','financial','✓','✕','masking','90d'],['product_photos','dataset','public','✓','role-based','—','—']].map(r=>`<tr><td class="mono">${r[0]}</td><td><span class="tag">${r[1]}</span></td><td>${r[2].split(', ').map(t=>`<span class="tag ${t==='pii'?'amber':t==='confidential'?'info':'teal'}">${t}</span>`).join(' ')}</td><td>${r[3]}</td><td>${r[4]}</td><td>${r[5]==='—'?'<span class="muted">—</span>':`<span class="tag amber">${r[5]}</span>`}</td><td>${r[6]==='—'?'<span class="muted">—</span>':`<span class="tag">${r[6]}</span>`}</td></tr>`).join('')}
-        </tbody></table></div>
+      <div class="panel flush"><div class="panel-h"><i class="placeholder" data-ic="tag"></i><h3>资产 · <span style="color:var(--teal-bright)">papers</span> · tag → ACL</h3><span class="actions"><button class="btn btn-ghost btn-sm" onclick="openApi('打标','curl -X POST $API/metadata/tags -d \'{\"entity\":\"papers\",\"tag\":\"pii\"}\'','lake.gravitino.tag(\"papers\",\"pii\")')"><i class="placeholder" data-ic="plus"></i> 打标</button></span></div>
+        <div class="tbl-scroll"><table class="tbl"><thead><tr><th>资产</th><th>类型</th><th>标签</th><th>读</th><th>写</th><th>脱敏列</th><th>保留</th></tr></thead><tbody id="aclRows"></tbody></table></div>
       </div>
 
       <div class="grid g-2">
-        <!-- policies -->
-        <div class="panel"><div class="panel-h"><i class="placeholder" data-ic="scale"></i><h3>策略</h3><span class="actions"><button class="btn btn-ghost btn-sm"><i class="placeholder" data-ic="plus"></i></button></div></div><div class="panel-b col">
+        <div class="panel"><div class="panel-h"><i class="placeholder" data-ic="scale"></i><h3>策略</h3></div><div class="panel-b col">
           <div class="muted" style="font-size:var(--fs-cap)">RETENTION · /policies/retention</div>
-          ${[['confidential','7y · 自动归档'],['financial','90d · 后删除']].map(p=>`<div class="flex between"><span class="mono" style="font-size:.78rem">${p[0]}</span><span class="tag">${p[1]}</span></div>`).join('')}
+          <div id="retRows"></div>
           <div class="divider"></div>
           <div class="muted" style="font-size:var(--fs-cap)">MASKING · /policies/masking</div>
-          ${[['pii','email/phone → 哈希'],['financial','amount → 分桶']].map(p=>`<div class="flex between"><span class="mono" style="font-size:.78rem">${p[0]}</span><span class="tag amber">${p[1]}</span></div>`).join('')}
+          <div id="maskRows"></div>
         </div></div>
-        <!-- stats / models -->
         <div class="col">
-          <div class="panel"><div class="panel-h"><i class="placeholder" data-ic="gauge"></i><h3>统计 · papers</h3><div class="actions"><button class="btn btn-ghost btn-sm" onclick="openApi('统计','curl -X POST $API/metadata/statistics/papers','lake.gravitino.statistics(\"papers\")')"><i class="placeholder" data-ic="refresh"></i></button></div></div><div class="panel-b grid g-2">
+          <div class="panel"><div class="panel-h"><i class="placeholder" data-ic="gauge"></i><h3>统计 · papers</h3></div><div class="panel-b grid g-2">
             <div><div class="muted" style="font-size:var(--fs-cap)">行数</div><b class="readout" style="font-size:1.15rem">184,203</b></div>
             <div><div class="muted" style="font-size:var(--fs-cap)">大小</div><b class="readout" style="font-size:1.15rem">12.4 GB</b></div>
             <div><div class="muted" style="font-size:var(--fs-cap)">列</div><b class="readout" style="font-size:1.15rem">12</b></div>
             <div><div class="muted" style="font-size:var(--fs-cap)">分区</div><b class="readout" style="font-size:1.15rem">32</b></div>
           </div></div>
-          <div class="panel"><div class="panel-h"><i class="placeholder" data-ic="embed"></i><h3>模型版本</h3></div><div class="panel-b">
-            ${[['Qwen3-Embedding','0.6B · v3'],['CLIP ViT-B/32','512d · v2']].map(m=>`<div class="flex between" style="margin:4px 0"><span class="mono" style="font-size:.78rem">${m[0]}</span><span class="tag">${m[1]}</span></div>`).join('')}
-          </div></div>
+          <div class="panel"><div class="panel-h"><i class="placeholder" data-ic="embed"></i><h3>模型版本</h3></div><div class="panel-b" id="modelRows"></div></div>
         </div>
+      </div>
+
+      <!-- v1.9.0 治理活动日志 (GovernanceStore) -->
+      <div class="panel flush">
+        <div class="panel-h"><i class="placeholder" data-ic="audit"></i><h3>治理活动日志</h3><span class="sub">GovernanceStore · 持久化（schema_changelog / maintenance_runs / schedules / config_changelog）</span></div>
+        <div class="tabs" id="govTabs" style="padding:0 var(--card-pad);border-bottom:1px solid var(--line-soft)">
+          <button class="tab active" data-t="schema">Schema 变更</button>
+          <button class="tab" data-t="maint">维护运行</button>
+          <button class="tab" data-t="sched">调度</button>
+          <button class="tab" data-t="config">配置变更</button>
+        </div>
+        <div class="tbl-scroll"><table class="tbl"><thead id="govHead"></thead><tbody id="govRows"></tbody></table></div>
       </div>
     </div>
   </div>
@@ -55,14 +57,65 @@
 <script src="assets/layout.js"></script>
 <script>
 const {renderShell,icon}=window;
-renderShell({active:'governance',crumb:'<b>元数据治理</b>'});
+renderShell({active:'governance',crumb:'<a href="dashboard.html">控制台</a> <span class="sep">/</span> <b>元数据治理</b>'});
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+
+// catalog tree
 const TREE=[
-['lakehouse','Lance','teal',1,[['papers','dataset',2],['regulations','dataset',2],['knowledge_base','dataset',2],['product_photos','dataset',2]]],
-['lakehouse','HugeGraph','info',1,[['kg_papers','graph',2],['kg_regulations','graph',2]]],
-['lakehouse','Object Store','amber',1,[['blob/papers/','prefix',2],['backup/','prefix',2]]],
+ ['lakehouse','Lance','teal',[['papers','dataset'],['regulations','dataset'],['knowledge_base','dataset'],['product_photos','dataset']]],
+ ['lakehouse','HugeGraph','info',[['kg_papers','graph'],['kg_regulations','graph']]],
+ ['lakehouse','Object Store','amber',[['blob/papers/','prefix'],['backup/','prefix']]],
 ];
-const $=s=>document.querySelector(s);
-$('#tree').innerHTML=TREE.map(t=>`<div style="padding:6px var(--card-pad)"><div class="flex" style="gap:6px">${icon('chevronD')}<span class="tag ${t[2]}">${t[1]}</span><span class="muted mono" style="font-size:.72rem">${t[0]}</span></div>${t[4].map(c=>`<a href="${c[1]==='dataset'?'dataset-detail.html':c[1]==='graph'?'kg.html':'#'}" style="display:block;padding:4px 0 4px 28px;color:var(--fg-md);font-size:.8rem;text-decoration:none" onmouseover="this.style.color='var(--teal-bright)'" onmouseout="this.style.color='var(--fg-md)'">${icon(c[1]==='dataset'?'database':c[1]==='graph'?'kg':'file')} ${c[0]}</a>`).join('')}</div>`).join('');
+$('#tree').innerHTML=TREE.map(t=>`<div style="padding:6px var(--card-pad)"><div class="flex" style="gap:6px">${icon('chevronD')}<span class="tag ${t[2]}">${t[1]}</span><span class="muted mono" style="font-size:.72rem">${t[0]}</span></div>${t[3].map(c=>`<a href="${c[1]==='dataset'?'dataset-detail.html':c[1]==='graph'?'kg.html':'#'}" style="display:block;padding:4px 0 4px 28px;color:var(--fg-md);font-size:.8rem;text-decoration:none">${icon(c[1]==='dataset'?'database':c[1]==='graph'?'kg':'file')} ${c[0]}</a>`).join('')}</div>`).join('');
+
+// tag → ACL
+$('#aclRows').innerHTML=[['papers','dataset','research, public','✓','role-based','—','—'],['papers.source_url','column','pii','✓','✕','masking','—'],['regulations','dataset','confidential, pii','✓','✕','—','7y'],['transactions.amount','column','financial','✓','✕','masking','90d'],['product_photos','dataset','public','✓','role-based','—','—']].map(r=>`<tr>
+  <td class="mono">${r[0]}</td><td><span class="tag">${r[1]}</span></td>
+  <td>${r[2].split(', ').map(t=>`<span class="tag ${t==='pii'?'amber':t==='confidential'?'info':'teal'}">${t}</span>`).join(' ')}</td>
+  <td>${r[3]}</td><td>${r[4]}</td>
+  <td>${r[5]==='—'?'<span class="muted">—</span>':`<span class="tag amber">${r[5]}</span>`}</td>
+  <td>${r[6]==='—'?'<span class="muted">—</span>':`<span class="tag">${r[6]}</span>`}</td></tr>`).join('');
+
+// policies
+$('#retRows').innerHTML=[['confidential','7y · 自动归档'],['financial','90d · 后删除']].map(p=>`<div class="flex between"><span class="mono" style="font-size:.78rem">${p[0]}</span><span class="tag">${p[1]}</span></div>`).join('');
+$('#maskRows').innerHTML=[['pii','email/phone → 哈希'],['financial','amount → 分桶']].map(p=>`<div class="flex between"><span class="mono" style="font-size:.78rem">${p[0]}</span><span class="tag amber">${p[1]}</span></div>`).join('');
+// models
+$('#modelRows').innerHTML=[['Qwen3-Embedding','0.6B · v3'],['CLIP ViT-B/32','512d · v2']].map(m=>`<div class="flex between" style="margin:4px 0"><span class="mono" style="font-size:.78rem">${m[0]}</span><span class="tag">${m[1]}</span></div>`).join('');
+
+// 治理活动日志（GovernanceStore 四类）
+const GOV={
+ schema:{head:['数据集','操作','列变更','由','时间'],rows:[
+   ['papers','add_column','+text_embedding','sysop','12:30'],
+   ['papers','alter_column','source_url → string','sysop','昨天'],
+   ['transactions','drop_column','-legacy_id','alice','2 天前'],
+   ['wuhu_report','add_columns_table','+text_embedding','sysop','07-13'],
+ ]},
+ maint:{head:['运行','类型','范围','状态','耗时','时间'],rows:[
+   ['opt_lance_42','索引重建','product_photos','ok','4m12s','03:00'],
+   ['prune_ka_7','KA 版本清理','jd_ddd','ok','0m22s','昨天'],
+   ['vacuum_v3','Lance vacuum','全湖仓','ok','12m08s','昨天'],
+   ['reindex_fts','FTS 重建','papers','warn','1m30s · 进行中','14:02'],
+ ]},
+ sched:{head:['调度','cron','下次','启用'],rows:[
+   ['Lance vacuum','0 3 * * *','明天 03:00','on'],
+   ['KA prune (keep=5)','0 4 * * 1','周一 04:00','on'],
+   ['备份增量','*/6 * * *','18:00','on'],
+   ['统计收集','0 * * * *','15:00','off'],
+ ]},
+ config:{head:['键','旧值 → 新值','由','时间'],rows:[
+   ['rag.reranker','noop → ollama','sysop','07-16'],
+   ['he_default_template','general/concept_graph → concept_graph','sysop','07-16'],
+   ['ingest.max_file_size_mb','100 → 250','alice','07-14'],
+   ['llm.max_tokens','(硬编码) → cfg.max_tokens','sysop','07-16'],
+ ]},
+};
+function renderGov(k){
+  const g=GOV[k];
+  $('#govHead').innerHTML=`<tr>${g.head.map((h,i)=>`<th class="${i>=g.head.length-1?'num':''}">${h}</th>`).join('')}</tr>`;
+  $('#govRows').innerHTML=g.rows.map(r=>`<tr>${r.map((c,i)=>{const isLast=i===r.length-1;const mono=typeof c==='string'&&/[a-z_]+\./.test(c)&&i<2;return `<td class="${isLast?'num':''} ${mono?'mono':''}" ${typeof c==='string'&&c.startsWith('+')?'style="color:var(--ok)"':typeof c==='string'&&c.startsWith('-')?'style="color:var(--danger)"':''}>${c}</td>`}).join('')}</tr>`).join('');
+}
+renderGov('schema');
+$('#govTabs').addEventListener('click',e=>{const b=e.target.closest('.tab');if(!b)return;$$('.tab',$('#govTabs')).forEach(t=>t.classList.remove('active'));b.classList.add('active');renderGov(b.dataset.t)});
 </script>
 </body>
 </html>

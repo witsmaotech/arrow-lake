@@ -30,12 +30,33 @@
     <div class="flex" style="gap:6px"><span class="tag info">最近 24h</span></div>
   </div></div>
 
-  <!-- table -->
-  <div class="panel flush">
-    <div class="panel-h"><i class="placeholder" data-ic="tasks"></i><h3>任务列表</h3><span class="sub">16 条 · 跨 worker 可见</span></div>
+  <div class="tabs" id="taskTabs">
+    <button class="tab active" data-t="active">活跃任务 <span class="nav-badge">3</span></button>
+    <button class="tab" data-t="history">历史</button>
+    <button class="tab" data-t="dlq">死信队列 <span class="nav-badge" style="background:var(--danger-soft);color:var(--danger)">2</span></button>
+  </div>
+
+  <div id="pActive" class="panel flush">
+    <div class="panel-h"><i class="placeholder" data-ic="tasks"></i><h3>活跃任务</h3><span class="sub">PENDING+RUNNING · 跨 worker · Redis HASH 共享</span></div>
     <div class="tbl-scroll"><table class="tbl">
       <thead><tr><th>task_id</th><th>类型</th><th>数据集</th><th>状态</th><th>进度</th><th class="num">耗时</th><th class="num">创建</th><th>worker</th><th></th></tr></thead>
       <tbody id="rows"></tbody>
+    </table></div>
+  </div>
+
+  <div id="pHistory" class="panel flush hidden">
+    <div class="panel-h"><i class="placeholder" data-ic="check"></i><h3>任务历史</h3><span class="sub">task_history · 完成/失败持久化（超 Redis 2h TTL 回退历史）</span></div>
+    <div class="tbl-scroll"><table class="tbl">
+      <thead><tr><th>task_id</th><th>类型</th><th>数据集</th><th>结果</th><th class="num">耗时</th><th class="num">完成于</th><th>worker</th></tr></thead>
+      <tbody id="histRows"></tbody>
+    </table></div>
+  </div>
+
+  <div id="pDlq" class="panel flush hidden">
+    <div class="panel-h"><i class="placeholder" data-ic="warn"></i><h3>摄入死信队列</h3><span class="sub">ingest_dlq · 失败摄入归档 · 可重试/丢弃</span><div class="actions"><button class="btn btn-ghost btn-sm"><i class="placeholder" data-ic="refresh"></i> 全部重试</button></div></div>
+    <div class="tbl-scroll"><table class="tbl">
+      <thead><tr><th>dlq_id</th><th>数据集</th><th>原因</th><th class="num">重试</th><th class="num">入队</th><th></th></tr></thead>
+      <tbody id="dlqRows"></tbody>
     </table></div>
   </div>
 </div></main></div>
@@ -74,6 +95,48 @@ $('#rows').innerHTML=T.map(t=>`<tr>
 <td><button class="btn btn-icon btn-ghost btn-sm" title="详情" onclick="alert('原型：GET /tasks/${t[0]}/status')"></button></td>
 </tr>`).join('');
 document.querySelectorAll('#rows .btn-icon').forEach(b=>b.innerHTML=icon('doc'));
+
+// 任务历史（task_history：完成/失败持久化）
+$('#histRows').innerHTML=[
+ ['task_9d11','嵌入','knowledge_base','ok','03:21','12:04','w-1'],
+ ['task_44a8','去重','training','ok','05:48','11:58','w-3'],
+ ['task_b73d','索引','product_photos','failed','00:31','11:20','w-1'],
+ ['task_e801','KG 构建','papers','ok','08:42','10:12','w-1'],
+ ['task_c392','摄取','transactions','ok','04:17','09:20','w-2'],
+ ['task_915a','KG 构建','reviews','failed','00:44','昨天','w-1'],
+ ['task_3d8b','导出','training','ok','12:18','昨天','w-3'],
+ ['task_a27c','摄取','promos','ok','09:30','2天前','w-2'],
+].map(t=>`<tr>
+  <td class="mono" style="font-size:.75rem">${t[0]}</td>
+  <td><span class="tag">${t[1]}</span></td>
+  <td><a href="dataset-detail.html" style="color:var(--teal-bright)">${t[2]}</a></td>
+  <td><span class="lamp ${t[3]}"><i></i>${t[3]==='ok'?'完成':'失败'}</span></td>
+  <td class="num mono">${t[4]}</td>
+  <td class="num mono">${t[5]}</td>
+  <td class="mono muted" style="font-size:.72rem">${t[6]}</td>
+</tr>`).join('');
+
+// 摄入死信队列（ingest_dlq：可重试/丢弃）
+$('#dlqRows').innerHTML=[
+ ['dlq_7a1f','regulations','DOCUMENT_TOO_LARGE (523MB > 250MB)',2,'11:20'],
+ ['dlq_3c84','papers','OCR timeout · pdfium crash',0,'10:42'],
+].map(d=>`<tr>
+  <td class="mono" style="font-size:.75rem">${d[0]}</td>
+  <td><a href="dataset-detail.html" style="color:var(--teal-bright)">${d[1]}</a></td>
+  <td class="muted">${d[2]}</td>
+  <td class="num mono">${d[3]}</td>
+  <td class="num mono">${d[4]}</td>
+  <td class="right">
+    <button class="btn btn-icon btn-ghost btn-sm" title="重试">${icon('refresh')}</button>
+    <button class="btn btn-icon btn-ghost btn-sm" title="丢弃">${icon('close')}</button>
+  </td>
+</tr>`).join('');
+
+// tab 切换（活跃/历史/死信）
+const TASK_TABS=['active','history','dlq'];
+$('#taskTabs').addEventListener('click',e=>{const b=e.target.closest('.tab');if(!b)return;
+  document.querySelectorAll('#taskTabs .tab').forEach(t=>t.classList.remove('active'));b.classList.add('active');
+  TASK_TABS.forEach(k=>$('#p'+k.charAt(0).toUpperCase()+k.slice(1)).classList.toggle('hidden',k!==b.dataset.t))});
 </script>
 </body>
 </html>
