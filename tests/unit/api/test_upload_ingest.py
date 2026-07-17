@@ -95,7 +95,9 @@ class TestIngestDocumentsRequestBlobKeys:
         assert req.blob_keys == ["uploads/ds/paper.pdf"]
 
     def test_blob_keys_non_pdf_rejected(self):
-        with pytest.raises(ValueError, match="must reference a PDF"):
+        # v1.8.9: /ingest/documents accepts all kreuzberg doc types (not just PDF);
+        # .csv is still rejected but the message now lists supported extensions.
+        with pytest.raises(ValueError, match="supported document type"):
             IngestDocumentsRequest(blob_keys=["uploads/ds/file.csv"])
 
     def test_neither_source_raises(self):
