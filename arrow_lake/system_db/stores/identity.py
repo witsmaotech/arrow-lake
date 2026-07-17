@@ -28,6 +28,27 @@ logger = structlog.get_logger(__name__)
 
 TOKEN_PREFIX = "al_"  # arrow-lake personal token
 
+# Throttle window for last_used_at updates: writing it on every authenticated
+# request would serialize all API calls through the single-writer DB. Only
+# refresh when staler than this (the value is read in the same SELECT, so the
+# check is free).
+LAST_USED_THROTTLE_SECONDS = 60
+
+
+def _should_update_last_used(last_used_at: str | None) -> bool:
+    """True when last_used_at is missing or staler than the throttle window."""
+    if not last_used_at:
+        return True
+    try:
+        from datetime import datetime, timezone
+
+        last = datetime.fromisoformat(last_used_at)
+        if last.tzinfo is None:
+            last = last.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - last).total_seconds() > LAST_USED_THROTTLE_SECONDS
+    except (ValueError, TypeError):
+        return True
+
 
 def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
@@ -152,7 +173,7 @@ class IdentityStore:
         token_hash = _hash_token(plaintext)
         cur = self._db.execute(
             "SELECT pt.id, pt.user_id, pt.token_hash, pt.scopes, pt.expires_at, "
-            "pt.revoked_at, u.username, u.role, u.is_active "
+            "pt.revoked_at, pt.last_used_at, u.username, u.role, u.is_active "
             "FROM personal_tokens pt JOIN users u ON u.id = pt.user_id "
             "WHERE pt.token_hash = ?",
             (token_hash,),
@@ -161,7 +182,7 @@ class IdentityStore:
         if row is None:
             return None
         (tid, uid, stored_hash, scopes_json, expires_at, revoked_at,
-         username, role, is_active) = row
+         last_used_at, username, role, is_active) = row
         # constant-time confirmation (defense-in-depth over the index lookup)
         if not hmac.compare_digest(stored_hash, token_hash):
             return None
@@ -178,16 +199,18 @@ class IdentityStore:
             except ValueError:
                 logger.warning("identity_token_bad_expiry", expires_at=expires_at)
 
-        # fire-and-forget last_used_at update
-        try:
-            with self._db.with_write() as db:
-                db.execute(
-                    "UPDATE personal_tokens SET last_used_at = datetime('now') "
-                    "WHERE id = ?",
-                    (tid,),
-                )
-        except SystemDBError:
-            pass
+        # Throttled last_used_at update: only write when staler than the window
+        # so high-frequency authenticated requests don't all hit the writer.
+        if _should_update_last_used(last_used_at):
+            try:
+                with self._db.with_write() as db:
+                    db.execute(
+                        "UPDATE personal_tokens SET last_used_at = datetime('now') "
+                        "WHERE id = ?",
+                        (tid,),
+                    )
+            except SystemDBError:
+                pass
 
         import json
 

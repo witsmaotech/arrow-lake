@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
+import queue
+import threading
 from typing import Any
 
 import pyarrow as pa
+
+# v1.9.0 async lineage capture: bounded queue + daemon worker per Lake so the
+# Lance _lineage_events append + index write never blocks the ingest path.
+_LINEAGE_INIT_LOCK = threading.Lock()
+_LINEAGE_QUEUE_MAXSIZE = 10000
 
 
 class _LakeLineageMixin:
@@ -33,23 +40,56 @@ class _LakeLineageMixin:
         transform_type: str = "ingest",
         operation: str = "append",
     ) -> None:
-        """v1.9.0 fire-and-forget lineage capture after a successful ingest variant.
+        """v1.9.0 async fire-and-forget lineage capture after a successful ingest.
 
-        Centralizes the ingest→lineage event→adjacency-index pipeline so every
-        ingest variant records consistently. Best-effort: never blocks ingest.
+        Enqueues onto a bounded background worker so the Lance _lineage_events
+        append + index write never adds latency to the ingest path. Best-effort:
+        a full queue drops the event (lineage is reconstructable from Lance).
         """
         try:
-            self.lineage_record_event(
-                dataset_name, operation,
-                source_datasets=[],
-                transform_type=transform_type,
-                metadata={
-                    "source_paths": list(source_paths or []),
-                    **(source_descriptor or {}),
-                },
+            self._get_lineage_queue().put_nowait(
+                (dataset_name, operation, list(source_paths or []),
+                 dict(source_descriptor or {}), transform_type)
             )
-        except Exception:  # noqa: BLE001 — lineage is best-effort
+        except Exception:  # noqa: BLE001 — queue full / unavailable → drop
             pass
+
+    def _get_lineage_queue(self) -> Any:
+        """Lazy-init one bounded queue + daemon worker per Lake instance."""
+        q = getattr(self, "_lineage_queue", None)
+        if q is not None:
+            return q
+        with _LINEAGE_INIT_LOCK:
+            q = getattr(self, "_lineage_queue", None)
+            if q is not None:
+                return q
+            q = queue.Queue(maxsize=_LINEAGE_QUEUE_MAXSIZE)
+            self._lineage_queue = q
+            worker = threading.Thread(
+                target=self._lineage_worker, name="lineage-async", daemon=True
+            )
+            worker.start()
+            return q
+
+    def _lineage_worker(self) -> None:
+        """Drain the lineage queue; record each event best-effort."""
+        q = self._lineage_queue
+        while True:
+            try:
+                dataset_name, operation, source_paths, source_descriptor, transform_type = q.get()
+            except Exception:  # noqa: BLE001
+                break
+            try:
+                self.lineage_record_event(
+                    dataset_name, operation,
+                    source_datasets=[],
+                    transform_type=transform_type,
+                    metadata={"source_paths": source_paths, **source_descriptor},
+                )
+            except Exception:  # noqa: BLE001 — best-effort
+                pass
+            finally:
+                q.task_done()
 
     def lineage_record_event(
         self,
