@@ -192,7 +192,7 @@ class _FileIngestMixin:
                         path=str(pdf_path), err=str(exc)[:120],
                     )
             rows = {
-                "text": [c.text for c in chunks],
+                "text_content": [c.text for c in chunks],
                 "page_number": [c.page_number for c in chunks],
                 "chunk_index": [c.chunk_index for c in chunks],
                 "document_id": [doc_id] * len(chunks),
@@ -202,6 +202,21 @@ class _FileIngestMixin:
             table = pa.table(rows)
 
             self._write_table(dataset_name, table, sources, str(pdf_path))
+
+        # [#v1.8.9-E2E] Embed text_content → text_embedding so the dataset is
+        # immediately searchable via vector / hybrid / RAG. Previously this path
+        # wrote only `text` (FTS wanted text_content) and never embedded (vector
+        # wanted text_embedding) → documents were invisible to retrieval. Renamed
+        # the column above + best-effort embed here. Ingest still succeeds (FTS
+        # over text_content works) if the embedder is unavailable.
+        try:
+            self.embed_and_add(dataset_name)
+        except Exception as exc:  # noqa: BLE001 — never block ingest on embedding
+            import structlog
+            structlog.get_logger(__name__).warning(
+                "ingest.embed_after_documents_failed",
+                dataset=dataset_name, err=str(exc)[:160],
+            )
 
         return self._build_report(sources)
 
