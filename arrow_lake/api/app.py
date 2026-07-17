@@ -188,6 +188,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         lake._rag_session_store = app.state.rag_session_store
         # Activate the lineage adjacency index in the Lake facade's LineageStore.
         lake._lineage_index_store = app.state.lineage_index_store
+        # Activate governance history (schema changes; maintenance wired separately).
+        lake._governance_store = app.state.governance_store
         # Wire TaskManager durable history (Redis still holds real-time state)
         from arrow_lake.api.tasks import TaskManager
 
@@ -276,6 +278,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         maintenance_scheduler = MaintenanceScheduler(
             storage=lake._storage, config=config.storage,
+            governance_store=getattr(app.state, "governance_store", None),
         )
         maintenance_scheduler.start()
         app.state.maintenance_scheduler = maintenance_scheduler

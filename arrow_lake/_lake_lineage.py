@@ -24,6 +24,33 @@ class _LakeLineageMixin:
             store.set_lineage_index(index)
         return store
 
+    def _lineage_after_ingest(
+        self,
+        dataset_name: str,
+        *,
+        source_paths: list[str] | None = None,
+        source_descriptor: dict[str, Any] | None = None,
+        transform_type: str = "ingest",
+        operation: str = "append",
+    ) -> None:
+        """v1.9.0 fire-and-forget lineage capture after a successful ingest variant.
+
+        Centralizes the ingest→lineage event→adjacency-index pipeline so every
+        ingest variant records consistently. Best-effort: never blocks ingest.
+        """
+        try:
+            self.lineage_record_event(
+                dataset_name, operation,
+                source_datasets=[],
+                transform_type=transform_type,
+                metadata={
+                    "source_paths": list(source_paths or []),
+                    **(source_descriptor or {}),
+                },
+            )
+        except Exception:  # noqa: BLE001 — lineage is best-effort
+            pass
+
     def lineage_record_event(
         self,
         dataset_name: str,

@@ -41,22 +41,7 @@ class _LakeIngestMixin:
         report = Ingestor(self._get_storage()).ingest(
             dataset_name, file_paths, transforms=transforms,
         )
-
-        # v1.9.0: fire-and-forget lineage capture. Activates the ingest→lineage
-        # event→adjacency-index pipeline (previously lineage was never recorded:
-        # lineage_record_event / auto_record_ingest had zero callers). The
-        # facade method uses the indexed LineageStore, so this also seeds the
-        # libSQL adjacency index. Failure here never blocks ingest.
-        try:
-            self.lineage_record_event(
-                dataset_name, "append",
-                source_datasets=[],
-                transform_type="ingest",
-                metadata={"source_files": list(file_paths)},
-            )
-        except Exception:  # noqa: BLE001 — lineage is best-effort
-            pass
-
+        self._lineage_after_ingest(dataset_name, source_paths=file_paths)
         return report
 
     def load_hf_dataset(self, repo_id: str, *, table: str | None = None) -> Any:
@@ -125,9 +110,11 @@ class _LakeIngestMixin:
         """
         from arrow_lake.ingest.ingestor import Ingestor
 
-        return Ingestor(self._get_storage()).ingest_batch(
+        report = Ingestor(self._get_storage()).ingest_batch(
             dataset_name, file_paths, transforms=transforms,
         )
+        self._lineage_after_ingest(dataset_name, source_paths=file_paths)
+        return report
 
     def ingest_sql(
         self,
@@ -154,7 +141,7 @@ class _LakeIngestMixin:
         """
         from arrow_lake.ingest.ingestor import Ingestor
 
-        return Ingestor(self._get_storage()).ingest_sql(
+        report = Ingestor(self._get_storage()).ingest_sql(
             dataset_name,
             sql=sql,
             connection_url=connection_url,
@@ -162,6 +149,10 @@ class _LakeIngestMixin:
             num_partitions=num_partitions,
             transforms=transforms,
         )
+        self._lineage_after_ingest(
+            dataset_name, source_descriptor={"sql": sql, "connection_url": connection_url},
+        )
+        return report
 
     def ingest_kafka(
         self,
@@ -190,7 +181,7 @@ class _LakeIngestMixin:
         """
         from arrow_lake.ingest.ingestor import Ingestor
 
-        return Ingestor(self._get_storage()).ingest_kafka(
+        report = Ingestor(self._get_storage()).ingest_kafka(
             dataset_name,
             bootstrap_servers=bootstrap_servers,
             topics=topics,
@@ -199,6 +190,12 @@ class _LakeIngestMixin:
             json_decode=json_decode,
             transforms=transforms,
         )
+        topics_list = [topics] if isinstance(topics, str) else list(topics)
+        self._lineage_after_ingest(
+            dataset_name, source_descriptor={"kafka_topics": topics_list},
+            transform_type="ingest_kafka",
+        )
+        return report
 
     def ingest_iceberg(
         self,
@@ -210,9 +207,14 @@ class _LakeIngestMixin:
         """Ingest data from an Apache Iceberg table."""
         from arrow_lake.ingest.ingestor import Ingestor
 
-        return Ingestor(self._get_storage()).ingest_iceberg(
+        report = Ingestor(self._get_storage()).ingest_iceberg(
             dataset_name, table_uri=table_uri, transforms=transforms,
         )
+        self._lineage_after_ingest(
+            dataset_name, source_descriptor={"iceberg_table": table_uri},
+            transform_type="ingest_iceberg",
+        )
+        return report
 
     def ingest_deltalake(
         self,
@@ -225,9 +227,14 @@ class _LakeIngestMixin:
         """Ingest data from a Delta Lake table."""
         from arrow_lake.ingest.ingestor import Ingestor
 
-        return Ingestor(self._get_storage()).ingest_deltalake(
+        report = Ingestor(self._get_storage()).ingest_deltalake(
             dataset_name, table_uri=table_uri, version=version, transforms=transforms,
         )
+        self._lineage_after_ingest(
+            dataset_name, source_descriptor={"delta_table": table_uri},
+            transform_type="ingest_deltalake",
+        )
+        return report
 
     def export_to(
         self,
@@ -289,13 +296,17 @@ class _LakeIngestMixin:
             provider=emb_cfg.daft_provider,
             num_partitions=num_partitions or emb_cfg.daft_num_partitions,
         )
-        return pipeline.ingest_and_embed(
+        result = pipeline.ingest_and_embed(
             dataset_name,
             file_paths,
             text_column=text_column,
             embedding_column=embedding_column,
             transforms=transforms,
         )
+        self._lineage_after_ingest(
+            dataset_name, source_paths=file_paths, transform_type="ingest_and_embed",
+        )
+        return result
 
     def ingest_http(
         self,
@@ -315,7 +326,9 @@ class _LakeIngestMixin:
         """
         from arrow_lake.ingest.ingestor import Ingestor
 
-        return Ingestor(self._get_storage()).ingest_http(dataset_name, urls)
+        report = Ingestor(self._get_storage()).ingest_http(dataset_name, urls)
+        self._lineage_after_ingest(dataset_name, source_paths=urls, transform_type="ingest_http")
+        return report
 
     def ingest_images(
         self,
@@ -335,7 +348,9 @@ class _LakeIngestMixin:
         """
         from arrow_lake.ingest.ingestor import Ingestor
 
-        return Ingestor(self._get_storage()).ingest_images(dataset_name, image_paths)
+        report = Ingestor(self._get_storage()).ingest_images(dataset_name, image_paths)
+        self._lineage_after_ingest(dataset_name, source_paths=image_paths, transform_type="ingest_images")
+        return report
 
     def ingest_videos(
         self,
@@ -355,7 +370,9 @@ class _LakeIngestMixin:
         """
         from arrow_lake.ingest.ingestor import Ingestor
 
-        return Ingestor(self._get_storage()).ingest_videos(dataset_name, video_paths)
+        report = Ingestor(self._get_storage()).ingest_videos(dataset_name, video_paths)
+        self._lineage_after_ingest(dataset_name, source_paths=video_paths, transform_type="ingest_videos")
+        return report
 
     def ingest_mixed(
         self,
@@ -376,7 +393,12 @@ class _LakeIngestMixin:
         """
         from arrow_lake.ingest.ingestor import Ingestor
 
-        return Ingestor(self._get_storage()).ingest_mixed(dataset_name, sources)
+        report = Ingestor(self._get_storage()).ingest_mixed(dataset_name, sources)
+        self._lineage_after_ingest(
+            dataset_name, source_descriptor={"modalities": {k: len(v) for k, v in sources.items()}},
+            transform_type="ingest_mixed",
+        )
+        return report
 
     def ingest_documents(
         self,
@@ -431,7 +453,7 @@ class _LakeIngestMixin:
                     "ingest.doc_type_classifier_disabled", err=str(exc)[:150],
                 )
 
-        return Ingestor(
+        report = Ingestor(
             self._get_storage(), doc_type_classifier=doc_type_classifier,
         ).ingest_documents(
             dataset_name, pdf_paths,
@@ -440,6 +462,12 @@ class _LakeIngestMixin:
             blob_store=blob_store,
             ocr_client=ocr_client,
         )
+        self._lineage_after_ingest(
+            dataset_name, source_paths=pdf_paths,
+            source_descriptor={"doc_type": doc_type} if doc_type else None,
+            transform_type="ingest_documents",
+        )
+        return report
 
     def create_dataset(self, name: str, data: pa.Table) -> None:
         """Create a new dataset from an Arrow Table.
@@ -489,6 +517,7 @@ class _LakeIngestMixin:
                 ingestion_bytes_total.labels(source=source).inc(nbytes)
                 ingestion_duration_seconds.labels(source=source).set(time.monotonic() - t0)
                 catalog_tables_total.inc()
+            self._lineage_after_ingest(name, transform_type="create", operation="create")
 
     def append_dataset(self, name: str, data: pa.Table) -> None:
         """Append rows to an existing dataset from an Arrow Table.
@@ -531,6 +560,7 @@ class _LakeIngestMixin:
                 ingestion_rows_total.labels(source=source).inc(rows)
                 ingestion_bytes_total.labels(source=source).inc(nbytes)
                 ingestion_duration_seconds.labels(source=source).set(time.monotonic() - t0)
+            self._lineage_after_ingest(name, transform_type="append", operation="append")
 
     def upsert(
         self,

@@ -45,9 +45,18 @@ class MaintenanceScheduler:
     GravitinoSyncScheduler.
     """
 
-    def __init__(self, storage: Any, config: StorageConfig) -> None:
+    def __init__(
+        self,
+        storage: Any,
+        config: StorageConfig,
+        *,
+        governance_store: Any = None,
+    ) -> None:
         self._storage = storage
         self._config = config
+        # v1.9.0: optional GovernanceStore — records each cycle durably
+        # (replaces the in-memory-only _last_report history).
+        self._governance_store = governance_store
         self._stop = threading.Event()
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
@@ -167,6 +176,19 @@ class MaintenanceScheduler:
         self._last_run_time = time.time()
         maintenance_cycle_duration_seconds.set(elapsed)
         maintenance_last_run_timestamp.set(time.time())
+
+        # v1.9.0: durable maintenance-run history (fail-soft).
+        if self._governance_store is not None:
+            try:
+                from dataclasses import asdict
+
+                self._governance_store.record_maintenance_run(
+                    "compaction_cleanup",
+                    "ok",
+                    report=asdict(report),
+                )
+            except Exception:
+                logger.warning("maintenance_scheduler.governance_record_failed", exc_info=True)
         return report
 
     def status(self) -> MaintenanceStatus:

@@ -153,6 +153,17 @@ class StorageAdvancedMixin:
             raise SchemaMigrationError("; ".join(issues))
 
         table.add_columns({column_name: sql_expr})
+        self._record_schema_change(name, "add_column", {"column": column_name, "sql_expr": sql_expr})
+
+    def _record_schema_change(self, name: str, change_type: str, details: dict) -> None:
+        """v1.9.0: record a dataset schema change to the governance store (fail-soft)."""
+        store = getattr(self, "_governance_store", None)
+        if store is None:
+            return
+        try:
+            store.record_schema_change(name, change_type, details=details)
+        except Exception:  # noqa: BLE001 — governance is best-effort
+            pass
 
     def add_columns_table(self, name: str, columns: pa.Table) -> None:
         """Add pre-computed columns to a dataset without full rewrite.
@@ -183,6 +194,7 @@ class StorageAdvancedMixin:
                 error_code=ErrorCode.STORAGE_WRITE_FAILED,
                 message=f"Failed to add columns to '{name}': {exc}",
             ) from exc
+        self._record_schema_change(name, "add_columns", {"columns": list(columns.column_names)})
 
     def alter_column(self, name: str, column_name: str, new_type: pa.DataType) -> None:
         """Change a column's data type.
@@ -208,6 +220,7 @@ class StorageAdvancedMixin:
             raise SchemaMigrationError("; ".join(issues))
 
         table.alter_columns({"path": column_name, "data_type": new_type})
+        self._record_schema_change(name, "type_change", {"column": column_name, "new_type": str(new_type)})
 
     def drop_column(self, name: str, column_name: str) -> None:
         """Remove a column from a dataset.
@@ -247,6 +260,7 @@ class StorageAdvancedMixin:
                     message=(f"Column '{column_name}' does not exist in dataset '{name}'"),
                 ) from exc
             raise
+        self._record_schema_change(name, "drop_column", {"column": column_name})
 
     def scan_dataset(
         self,
