@@ -18,6 +18,10 @@ class _LakeLineageMixin:
         auth = getattr(self, "_gravitino_auth_provider", None)
         if auth is not None:
             store.set_auth_provider(auth)
+        # v1.9.0: inject the libSQL lineage adjacency index when enabled.
+        index = getattr(self, "_lineage_index_store", None)
+        if index is not None:
+            store.set_lineage_index(index)
         return store
 
     def lineage_record_event(

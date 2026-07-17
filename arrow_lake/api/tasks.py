@@ -120,6 +120,9 @@ class TaskManager:
 
     _tasks: ClassVar[dict[str, BackgroundTask]] = {}
     _redis_store: ClassVar[RedisTaskStore | None] = None
+    # v1.9.0: durable history store (TaskHistoryStore | None). When set,
+    # completed/failed tasks are recorded beyond the Redis TTL.
+    _history_store: ClassVar[Any] = None
     _TASK_TTL_SECONDS = 7200  # Auto-cleanup after 2 hours
 
     # ------------------------------------------------------------------
@@ -148,6 +151,25 @@ class TaskManager:
         if cls._redis_store is not None:
             cls._redis_store.shutdown()
             cls._redis_store = None
+
+    @classmethod
+    def init_history_store(cls, store: Any) -> None:
+        """v1.9.0: enable durable task-history persistence (libSQL)."""
+        cls._history_store = store
+        if store is not None:
+            logger.info("TaskManager: history store enabled")
+
+    @classmethod
+    def _persist_history(cls, task: BackgroundTask) -> None:
+        """Record completed/failed tasks into the durable history store."""
+        if cls._history_store is None:
+            return
+        if task.status not in (TaskStatus.COMPLETED, TaskStatus.FAILED):
+            return
+        try:
+            cls._history_store.record(task.to_dict())
+        except Exception as exc:  # noqa: BLE001 — fail-soft: history is best-effort
+            logger.warning("TaskManager: history persist failed for %s: %s", task.task_id, exc)
 
     # ------------------------------------------------------------------
     # Housekeeping
@@ -217,7 +239,16 @@ class TaskManager:
                 cls._tasks[task_id] = bt
                 return bt
 
-        # 3. Fall back to local (completed/failed)
+        # 3. v1.9.0: durable history (completed/failed tasks beyond Redis 2h TTL)
+        if cls._history_store is not None and local is None:
+            try:
+                hist = cls._history_store.get(task_id)
+            except Exception:  # noqa: BLE001
+                hist = None
+            if hist is not None:
+                return BackgroundTask.from_dict(hist)
+
+        # 4. Fall back to local (completed/failed)
         return local
 
     @classmethod
@@ -302,6 +333,7 @@ class TaskManager:
             logger.error("Background task %s (%s) failed: %s", task_id, task.operation, exc)
         finally:
             cls._sync_to_redis(task)
+            cls._persist_history(task)
 
     # ------------------------------------------------------------------
     # Legacy export wrapper (backward compat)
@@ -344,3 +376,4 @@ class TaskManager:
             task.error = str(exc)
         finally:
             cls._sync_to_redis(task)
+            cls._persist_history(task)

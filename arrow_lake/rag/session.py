@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import asdict
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,12 @@ class SessionStore:
         max_sessions: int = 10000,
         max_turns_per_session: int = 100,
         session_ttl_seconds: int = 86400,
+        *,
+        session_store: Any = None,
     ) -> None:
+        # v1.9.0: when a libSQL RagSessionStore is supplied it is the durable
+        # source of truth (the vestigial history_dataset param is superseded).
+        self._store = session_store
         self._history_dataset = history_dataset
         self._max_sessions = max_sessions
         self._max_turns_per_session = max_turns_per_session
@@ -41,6 +47,9 @@ class SessionStore:
         response: object,
     ) -> None:
         """Save a conversation turn."""
+        if self._store is not None:
+            self._store.save_turn(session_id, question, response)
+            return
         # Enforce per-session turn limit
         if self._turn_counter.get(session_id, 0) >= self._max_turns_per_session:
             logger.warning(
@@ -96,6 +105,8 @@ class SessionStore:
 
     def get_history(self, session_id: str) -> list[dict]:
         """Get conversation history for a session, sorted by turn_id."""
+        if self._store is not None:
+            return self._store.get_history(session_id)
         return sorted(
             self._session_index.get(session_id, []),
             key=lambda t: t["turn_id"],
@@ -103,6 +114,9 @@ class SessionStore:
 
     def delete_session(self, session_id: str) -> None:
         """Delete all turns for a session."""
+        if self._store is not None:
+            self._store.delete_session(session_id)
+            return
         self._turns = [t for t in self._turns if t["session_id"] != session_id]
         self._turn_counter.pop(session_id, None)
         self._session_index.pop(session_id, None)
@@ -133,6 +147,8 @@ class SessionStore:
 
     def cleanup_expired(self) -> int:
         """Sweep all sessions and remove expired turns. Returns count evicted."""
+        if self._store is not None:
+            return self._store.cleanup_expired(self._session_ttl_seconds)
         if self._session_ttl_seconds <= 0:
             return 0
         cutoff = time.time() - self._session_ttl_seconds
@@ -162,6 +178,13 @@ class SessionStore:
         comment: str = "",
     ) -> None:
         """Save user feedback for a specific turn."""
+        if self._store is not None:
+            self._store.save_feedback(
+                session_id, turn_id, rating,
+                flagged_citation_indices=flagged_citation_indices,
+                comment=comment,
+            )
+            return
         entry = {
             "session_id": session_id,
             "turn_id": turn_id,
@@ -174,10 +197,14 @@ class SessionStore:
 
     def get_feedback(self, session_id: str) -> list[dict]:
         """Get all feedback for a session."""
+        if self._store is not None:
+            return self._store.get_feedback(session_id)
         return [f for f in self._feedback if f["session_id"] == session_id]
 
     def list_sessions(self) -> list[dict]:
         """List all unique sessions with their latest turn info."""
+        if self._store is not None:
+            return self._store.list_sessions()
         sessions: dict[str, dict] = {}
         for turn in self._turns:
             sid = turn["session_id"]

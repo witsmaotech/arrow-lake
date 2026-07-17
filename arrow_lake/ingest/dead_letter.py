@@ -67,14 +67,29 @@ class IngestDeadLetterQueue:
     Thread-safe: all public methods acquire an internal lock.
     """
 
-    def __init__(self, base_dir: str | Path = "./data", queue_file: str = "ingest_dlq.jsonl") -> None:
-        self._queue_path = Path(base_dir) / queue_file
-        self._queue_path.parent.mkdir(parents=True, exist_ok=True)
+    def __init__(
+        self,
+        base_dir: str | Path = "./data",
+        queue_file: str = "ingest_dlq.jsonl",
+        *,
+        dlq_store: Any = None,
+    ) -> None:
+        # v1.9.0: when a libSQL IngestDLQStore is supplied it is the source of
+        # truth (shared across workers); the JSONL file path is unused.
+        self._store = dlq_store
         self._items: list[DeadLetterItem] = []
         self._lock = threading.Lock()
+        if dlq_store is not None:
+            self._queue_path = None  # type: ignore[assignment]
+            return
+        self._queue_path = Path(base_dir) / queue_file
+        self._queue_path.parent.mkdir(parents=True, exist_ok=True)
         self._load()
 
     def add(self, file_path: str, error: str, *, dataset: str = "", metadata: dict[str, Any] | None = None) -> None:
+        if self._store is not None:
+            self._store.add(file_path, error, dataset=dataset, metadata=metadata)
+            return None
         item = DeadLetterItem(
             file_path=file_path,
             error=error,
@@ -86,7 +101,9 @@ class IngestDeadLetterQueue:
             self._append_item(item)
         return None
 
-    def retry(self, file_path: str) -> bool:
+    def retry(self, file_path: str, *, dataset: str = "") -> bool:
+        if self._store is not None:
+            return self._store.retry(file_path, dataset=dataset)
         with self._lock:
             for item in self._items:
                 if item.file_path == file_path and item.can_retry:
@@ -97,7 +114,9 @@ class IngestDeadLetterQueue:
                     return True
             return False
 
-    def resolve(self, file_path: str) -> bool:
+    def resolve(self, file_path: str, *, dataset: str = "") -> bool:
+        if self._store is not None:
+            return self._store.resolve(file_path, dataset=dataset)
         with self._lock:
             for item in self._items:
                 if item.file_path == file_path and item.status != DLQStatus.RESOLVED.value:
@@ -106,7 +125,9 @@ class IngestDeadLetterQueue:
                     return True
             return False
 
-    def mark_permanent(self, file_path: str, *, reason: str = "") -> bool:
+    def mark_permanent(self, file_path: str, *, reason: str = "", dataset: str = "") -> bool:
+        if self._store is not None:
+            return self._store.mark_permanent(file_path, dataset=dataset, reason=reason)
         with self._lock:
             for item in self._items:
                 if item.file_path == file_path:
@@ -118,6 +139,9 @@ class IngestDeadLetterQueue:
             return False
 
     def list_items(self, *, status: str | None = None, dataset: str | None = None) -> list[DeadLetterItem]:
+        if self._store is not None:
+            rows = self._store.list_items(status=status, dataset=dataset)
+            return [DeadLetterItem.from_dict(r) for r in rows]
         with self._lock:
             items = self._items
             if status:
@@ -127,6 +151,8 @@ class IngestDeadLetterQueue:
             return items
 
     def purge(self, *, resolved: bool = False, permanent: bool = False) -> int:
+        if self._store is not None:
+            return self._store.purge(resolved=resolved, permanent=permanent)
         with self._lock:
             before = len(self._items)
             if resolved:
@@ -140,6 +166,8 @@ class IngestDeadLetterQueue:
 
     @property
     def stats(self) -> dict[str, int]:
+        if self._store is not None:
+            return self._store.stats
         with self._lock:
             counts: dict[str, int] = {}
             for item in self._items:

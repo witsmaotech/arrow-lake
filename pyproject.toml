@@ -50,6 +50,8 @@ dependencies = [
 
     # Distributed session & JWT blacklist (v1.3.0)
     "redis[hiredis]>=5.0,<6.0",
+    # Control-plane DB: RBAC / identity / catalog / lineage index (v1.9.0)
+    "libsql>=0.1",
     # Deduplication (NeMo Curator MinHash fallback)
     "datasketch>=1.6",
 ]

@@ -87,7 +87,11 @@ class PermissionChecker:
     Interface designed for trivial upgrade to database-backed store.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, rbac_store: Any = None) -> None:
+        # v1.9.0: optional RbacStore (libSQL) — when present it is the source of
+        # truth for the four ACL dicts below (which then only serve as the
+        # in-memory fallback for deployments with system_db disabled).
+        self._store = rbac_store
         # dataset -> role -> set of granted actions
         self._dataset_acls: dict[str, dict[str, set[str]]] = {}
         # dataset -> role -> DatasetACL (row/column level)
@@ -97,16 +101,94 @@ class PermissionChecker:
         # dataset -> set of globally denied actions (any role)
         self._deny_list: dict[str, set[str]] = {}
 
+    def set_system_store(self, store: Any) -> None:
+        """Inject the RbacStore (libSQL). Called from app lifespan when system_db is enabled."""
+        self._store = store
+
+    # ------------------------------------------------------------------
+    # Store-backed read helpers.
+    #
+    # Fail-close semantics: when the store is present but a read raises,
+    # we log and return an empty result. The empty result propagates so
+    # that ``has_permission`` → False and ``check_dataset_access`` → deny
+    # (no grants, no ACL, role-default with empty perms). I.e. an
+    # unreachable control-plane DB denies rather than silently allows.
+    # ------------------------------------------------------------------
+    def _role_perms(self, role_name: str) -> frozenset[str]:
+        if self._store is not None:
+            try:
+                return self._store.get_role_permissions(role_name)
+            except Exception:
+                logger.warning("rbac.store_role_read_failed", role=role_name, exc_info=True)
+                return frozenset()
+        return _ROLE_PERMISSIONS.get(role_name, frozenset())
+
+    def _get_dataset_grant(
+        self, dataset: str, role_name: str
+    ) -> set[str] | None:
+        if self._store is not None:
+            try:
+                return self._store.get_dataset_grants(dataset).get(role_name)
+            except Exception:
+                logger.warning("rbac.store_grant_read_failed", dataset=dataset, exc_info=True)
+                return None
+        return self._dataset_acls.get(dataset, {}).get(role_name)
+
+    def _get_row_col_acl(
+        self, dataset: str, role_name: str
+    ) -> DatasetACL | None:
+        if self._store is not None:
+            try:
+                d = self._store.get_row_col_acl(dataset, role_name)
+            except Exception:
+                logger.warning("rbac.store_rowcol_read_failed", dataset=dataset, exc_info=True)
+                return None
+            if d is None:
+                return None
+            return DatasetACL(
+                dataset=d["dataset"], role=d["role"],
+                visible_columns=d["visible_columns"],
+                row_filter=d["row_filter"],
+                denied_actions=d["denied_actions"],
+            )
+        return self._row_col_acls.get(dataset, {}).get(role_name)
+
+    def _get_schema_acl(
+        self, schema: str, role_name: str
+    ) -> SchemaACL | None:
+        if self._store is not None:
+            try:
+                d = self._store.get_schema_acl(schema, role_name)
+            except Exception:
+                logger.warning("rbac.store_schema_read_failed", schema=schema, exc_info=True)
+                return None
+            if d is None:
+                return None
+            return SchemaACL(
+                schema=d["schema"], role=d["role"],
+                allowed_actions=d["allowed_actions"],
+                denied_actions=d["denied_actions"],
+            )
+        return self._schema_acls.get(schema, {}).get(role_name)
+
+    def _get_denies(self, dataset: str) -> set[str]:
+        if self._store is not None:
+            try:
+                return self._store.list_denies(dataset)
+            except Exception:
+                logger.warning("rbac.store_deny_read_failed", dataset=dataset, exc_info=True)
+                return set()
+        return self._deny_list.get(dataset, set())
+
     def has_permission(self, role: str | Role, perm: str) -> bool:
         """Check if a role has a specific permission."""
         role_name = role if isinstance(role, str) else role.value
-        perms = _ROLE_PERMISSIONS.get(role_name, frozenset())
-        return perm in perms
+        return perm in self._role_perms(role_name)
 
     def get_permissions(self, role: str | Role) -> frozenset[str]:
         """Return all permissions for a role."""
         role_name = role if isinstance(role, str) else role.value
-        return _ROLE_PERMISSIONS.get(role_name, frozenset())
+        return self._role_perms(role_name)
 
     def check_dataset_access(
         self, *, role: str | Role, dataset: str, action: str
@@ -126,30 +208,29 @@ class PermissionChecker:
             return True
 
         # 2. Explicit Deny — per-dataset deny list
-        if action in self._deny_list.get(dataset, set()):
+        if action in self._get_denies(dataset):
             return False
 
         # 2b. Explicit Deny — DatasetACL.denied_actions
-        rc_acl = self._row_col_acls.get(dataset, {}).get(role_name)
+        rc_acl = self._get_row_col_acl(dataset, role_name)
         if rc_acl is not None and action in rc_acl.denied_actions:
             return False
 
         # 2c. Explicit Deny — SchemaACL.denied_actions
         schema = self._infer_schema(dataset)
         if schema:
-            schema_acl = self._schema_acls.get(schema, {}).get(role_name)
+            schema_acl = self._get_schema_acl(schema, role_name)
             if schema_acl and action in schema_acl.denied_actions:
                 return False
 
         # 3. Per-dataset ACL grant
-        dataset_acl = self._dataset_acls.get(dataset, {})
-        role_grants = dataset_acl.get(role_name)
+        role_grants = self._get_dataset_grant(dataset, role_name)
         if role_grants is not None:
             return action in role_grants
 
         # 4. Schema-level ACL inheritance
         if schema:
-            schema_acl = self._schema_acls.get(schema, {}).get(role_name)
+            schema_acl = self._get_schema_acl(schema, role_name)
             if schema_acl and action in schema_acl.allowed_actions:
                 return True
 
@@ -162,6 +243,9 @@ class PermissionChecker:
     ) -> None:
         """Grant a role a specific action on a dataset."""
         role_name = role if isinstance(role, str) else role.value
+        if self._store is not None:
+            self._store.grant_dataset_access(dataset, role_name, action)
+            return
         if dataset not in self._dataset_acls:
             self._dataset_acls[dataset] = {}
         if role_name not in self._dataset_acls[dataset]:
@@ -171,6 +255,9 @@ class PermissionChecker:
     def revoke_dataset_access(self, dataset: str, role: str | Role) -> None:
         """Revoke all actions for a role on a dataset."""
         role_name = role if isinstance(role, str) else role.value
+        if self._store is not None:
+            self._store.revoke_dataset_access(dataset, role_name)
+            return
         if dataset in self._dataset_acls and role_name in self._dataset_acls[dataset]:
             del self._dataset_acls[dataset][role_name]
 
@@ -180,23 +267,48 @@ class PermissionChecker:
 
     def set_acl(self, acl: DatasetACL) -> None:
         """Set row/column ACL for a dataset + role."""
-        if acl.dataset not in self._row_col_acls:
-            self._row_col_acls[acl.dataset] = {}
-        self._row_col_acls[acl.dataset][acl.role] = acl
+        if self._store is not None:
+            self._store.set_row_col_acl(
+                acl.dataset, acl.role,
+                visible_columns=sorted(acl.visible_columns),
+                row_filter=acl.row_filter,
+                denied_actions=sorted(acl.denied_actions),
+            )
+        else:
+            if acl.dataset not in self._row_col_acls:
+                self._row_col_acls[acl.dataset] = {}
+            self._row_col_acls[acl.dataset][acl.role] = acl
         logger.info("acl_set", dataset=acl.dataset, role=acl.role)
 
     def get_acl(self, dataset: str, role: str | Role) -> DatasetACL | None:
         """Get row/column ACL for a dataset + role."""
         role_name = role if isinstance(role, str) else role.value
-        return self._row_col_acls.get(dataset, {}).get(role_name)
+        return self._get_row_col_acl(dataset, role_name)
 
     def list_acls(self, dataset: str) -> list[DatasetACL]:
         """List all row/column ACLs for a dataset."""
+        if self._store is not None:
+            try:
+                rows = self._store.list_row_col_acls(dataset)
+            except Exception:
+                logger.warning("rbac.store_list_rowcol_failed", dataset=dataset, exc_info=True)
+                return []
+            return [
+                DatasetACL(
+                    dataset=r["dataset"], role=r["role"],
+                    visible_columns=r["visible_columns"],
+                    row_filter=r["row_filter"],
+                    denied_actions=r["denied_actions"],
+                )
+                for r in rows
+            ]
         return list(self._row_col_acls.get(dataset, {}).values())
 
     def delete_acl(self, dataset: str, role: str | Role) -> bool:
         """Delete row/column ACL for a dataset + role. Returns True if found."""
         role_name = role if isinstance(role, str) else role.value
+        if self._store is not None:
+            return self._store.delete_row_col_acl(dataset, role_name)
         acls = self._row_col_acls.get(dataset)
         if acls and role_name in acls:
             del acls[role_name]
@@ -261,19 +373,28 @@ class PermissionChecker:
 
     def set_schema_acl(self, acl: SchemaACL) -> None:
         """Set schema-level ACL inherited by all child datasets."""
-        if acl.schema not in self._schema_acls:
-            self._schema_acls[acl.schema] = {}
-        self._schema_acls[acl.schema][acl.role] = acl
+        if self._store is not None:
+            self._store.set_schema_acl(
+                acl.schema, acl.role,
+                allowed_actions=sorted(acl.allowed_actions),
+                denied_actions=sorted(acl.denied_actions),
+            )
+        else:
+            if acl.schema not in self._schema_acls:
+                self._schema_acls[acl.schema] = {}
+            self._schema_acls[acl.schema][acl.role] = acl
         logger.info("schema_acl_set", schema=acl.schema, role=acl.role)
 
     def get_schema_acl(self, schema: str, role: str | Role) -> SchemaACL | None:
         """Get schema-level ACL for a schema + role."""
         role_name = role if isinstance(role, str) else role.value
-        return self._schema_acls.get(schema, {}).get(role_name)
+        return self._get_schema_acl(schema, role_name)
 
     def delete_schema_acl(self, schema: str, role: str | Role) -> bool:
         """Delete schema-level ACL. Returns True if found."""
         role_name = role if isinstance(role, str) else role.value
+        if self._store is not None:
+            return self._store.delete_schema_acl(schema, role_name)
         acls = self._schema_acls.get(schema)
         if acls and role_name in acls:
             del acls[role_name]
@@ -283,6 +404,20 @@ class PermissionChecker:
 
     def list_schema_acls(self, schema: str) -> list[SchemaACL]:
         """List all schema-level ACLs for a schema."""
+        if self._store is not None:
+            try:
+                rows = self._store.list_schema_acls(schema)
+            except Exception:
+                logger.warning("rbac.store_list_schema_failed", schema=schema, exc_info=True)
+                return []
+            return [
+                SchemaACL(
+                    schema=r["schema"], role=r["role"],
+                    allowed_actions=r["allowed_actions"],
+                    denied_actions=r["denied_actions"],
+                )
+                for r in rows
+            ]
         return list(self._schema_acls.get(schema, {}).values())
 
     # ------------------------------------------------------------------
@@ -291,6 +426,10 @@ class PermissionChecker:
 
     def deny_action(self, dataset: str, action: str) -> None:
         """Add an explicit Deny for an action on a dataset."""
+        if self._store is not None:
+            self._store.deny_action(dataset, action)
+            logger.info("deny_added", dataset=dataset, action=action)
+            return
         if dataset not in self._deny_list:
             self._deny_list[dataset] = set()
         self._deny_list[dataset].add(action)
@@ -298,6 +437,8 @@ class PermissionChecker:
 
     def remove_deny(self, dataset: str, action: str) -> bool:
         """Remove an explicit Deny. Returns True if found."""
+        if self._store is not None:
+            return self._store.remove_deny(dataset, action)
         denies = self._deny_list.get(dataset)
         if denies and action in denies:
             denies.discard(action)
@@ -309,7 +450,7 @@ class PermissionChecker:
 
     def list_denies(self, dataset: str) -> set[str]:
         """List all denied actions for a dataset."""
-        return set(self._deny_list.get(dataset, set()))
+        return set(self._get_denies(dataset))
 
     @staticmethod
     def _filter_columns(table: pa.Table, acl: DatasetACL) -> pa.Table:

@@ -37,6 +37,7 @@ from arrow_lake.config.media import (
 from arrow_lake.config.olap import OlapConfig
 from arrow_lake.config.rag import HugeGraphConfig, LLMConfig, RAGConfig
 from arrow_lake.config.redis import RedisConfig
+from arrow_lake.config.system_db import SystemDBConfig
 from arrow_lake.config.search import (
     EnsembleSearchConfig,
     FacetedSearchConfig,
@@ -81,6 +82,7 @@ _SECTION_TYPES: dict[str, type[BaseModel]] = {
     "rate_limit": RateLimitConfig,
     "document": DocumentConfig,
     "redis": RedisConfig,
+    "system_db": SystemDBConfig,
     "gravitino": GravitinoConfig,
 }
 
@@ -136,6 +138,7 @@ class ArrowLakeConfig(BaseSettings):
     rate_limit: RateLimitConfig = RateLimitConfig()
     document: DocumentConfig = DocumentConfig()
     redis: RedisConfig = RedisConfig()
+    system_db: SystemDBConfig = SystemDBConfig()
     gravitino: GravitinoConfig = GravitinoConfig()
 
     @classmethod

@@ -39,6 +39,7 @@ class _LakeRAGMixin:
                     retriever=self._rag_retriever,
                     context_window_tokens=self.config.llm.context_window_tokens,
                     reranker=reranker,
+                    session_store=self._build_session_store(),
                 )
 
             # Attempt GraphRAG pipeline with KG augmentation
@@ -55,6 +56,7 @@ class _LakeRAGMixin:
                     retriever=self._rag_retriever,
                     context_window_tokens=self.config.llm.context_window_tokens,
                     reranker=reranker,
+                    session_store=self._build_session_store(),
                 )
 
         return self._get_component("rag_pipeline", _factory)
@@ -84,7 +86,19 @@ class _LakeRAGMixin:
             context_window_tokens=self.config.llm.context_window_tokens,
             traversal_depth=self.config.hugegraph.default_traversal_depth,
             reranker=reranker,
+            session_store=self._build_session_store(),
         )
+
+    def _build_session_store(self) -> Any:
+        """v1.9.0: wrap the libSQL RagSessionStore (set on the facade at
+        startup) in a SessionStore. Returns None when system_db is disabled
+        → pipeline keeps the in-memory default."""
+        store = getattr(self, "_rag_session_store", None)
+        if store is None:
+            return None
+        from arrow_lake.rag.session import SessionStore
+
+        return SessionStore(session_store=store)
 
     def _build_reranker(self, provider: Any) -> Any:
         """Build a reranker from RAG config ('none' → Noop, zero overhead).

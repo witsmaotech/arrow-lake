@@ -39,6 +39,36 @@ async def api_key_middleware_fn(
     if path.startswith("/console"):
         return await call_next(request)
 
+    # v1.9.0: personal API token (libSQL identity_store).
+    # Resolve BEFORE the shared-api_key gate so per-user tokens work even
+    # when no global api_key is configured. The store is read lazily from
+    # app.state (set by lifespan at startup, not available at middleware
+    # registration time). A miss falls through to the shared-api_key path,
+    # which still serves as the bootstrap/admin escape hatch.
+    identity_store = getattr(request.app.state, "identity_store", None)
+    if identity_store is not None:
+        token = request.headers.get(header_name, "")
+        if token:
+            try:
+                resolved = identity_store.validate_token(token)
+            except Exception:  # noqa: BLE001 — fail-close handled by caller
+                resolved = None
+            if resolved is not None:
+                from arrow_lake.api.auth_models import Role, TokenPayload
+
+                role_name = str(resolved.get("role", "viewer")).upper()
+                role = (
+                    Role[role_name] if role_name in Role.__members__ else Role.VIEWER
+                )
+                request.state.user = TokenPayload(
+                    sub=str(resolved.get("username", "token")),
+                    role=role,
+                    exp=0,
+                    iat=0,
+                )
+                request.state.user_id = resolved.get("user_id")
+                return await call_next(request)
+
     if not api_key:
         if path in _PUBLIC_PATHS or request.method == "OPTIONS" or path == "/metrics":
             return await call_next(request)

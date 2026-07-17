@@ -136,6 +136,69 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from arrow_lake.api.rbac import PermissionChecker
     app.state.checker = PermissionChecker()
 
+    # ── v1.9.0: system_db (libSQL) — unified control-plane persistence ──
+    # RBAC / identity / (later) catalog / tasks / lineage index. When enabled,
+    # build the connection, run migrations, seed the role matrix, and inject the
+    # stores into the domain objects. Disabled → original in-memory behavior.
+    sys_db = None
+    if getattr(config.system_db, "enabled", False):
+        from arrow_lake.api.rbac import _ROLE_PERMISSIONS
+        from arrow_lake.system_db import Migrator, SystemDB
+        from arrow_lake.system_db.stores import IdentityStore, RbacStore
+
+        # SystemDB.__init__ raises SystemDBError on connect failure → lifespan
+        # fails fast (fail-close: no control-plane DB, no authenticated API).
+        sys_db = SystemDB(
+            config.system_db.url,
+            auth_token=config.system_db.auth_token,
+            connect_timeout_seconds=config.system_db.connect_timeout_seconds,
+        )
+        Migrator(sys_db, config.system_db.migrations_dir or None).run()
+        rbac_store = RbacStore(
+            sys_db, cache_ttl=config.system_db.acl_cache_ttl_seconds
+        )
+        rbac_store.seed_role_permissions(_ROLE_PERMISSIONS)
+        identity_store = IdentityStore(sys_db)
+        app.state.checker.set_system_store(rbac_store)
+        app.state.system_db = sys_db
+        app.state.rbac_store = rbac_store
+        app.state.identity_store = identity_store
+
+        # P1 stores: durable task history (fully wired), catalog / DLQ /
+        # RAG-session stores (instantiated on app.state; their facade
+        # construction-site injection is a follow-up).
+        from arrow_lake.system_db.stores import (
+            CatalogStore,
+            IngestDLQStore,
+            RagSessionStore,
+            TaskHistoryStore,
+        )
+
+        task_history_store = TaskHistoryStore(sys_db)
+        app.state.catalog_store = CatalogStore(sys_db)
+        app.state.ingest_dlq_store = IngestDLQStore(sys_db)
+        app.state.rag_session_store = RagSessionStore(sys_db)
+        app.state.task_history_store = task_history_store
+        # v1.9.0 P2: lineage adjacency index + governance history.
+        from arrow_lake.system_db.stores import GovernanceStore, LineageIndexStore
+
+        app.state.lineage_index_store = LineageIndexStore(sys_db)
+        app.state.governance_store = GovernanceStore(sys_db)
+        # Activate RAG-session persistence in the Lake facade's RAG pipeline.
+        lake._rag_session_store = app.state.rag_session_store
+        # Activate the lineage adjacency index in the Lake facade's LineageStore.
+        lake._lineage_index_store = app.state.lineage_index_store
+        # Wire TaskManager durable history (Redis still holds real-time state)
+        from arrow_lake.api.tasks import TaskManager
+
+        TaskManager.init_history_store(task_history_store)
+
+        logger.info(
+            "system_db_enabled",
+            url=config.system_db.url,
+            fail_mode=config.system_db.fail_mode,
+        )
+
     # ── v1.6.2: Redis-backed task state sharing ──
     from arrow_lake.api.tasks import TaskManager
 
@@ -250,6 +313,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             retention_enforcer.stop()
         if maintenance_scheduler is not None:
             maintenance_scheduler.stop()
+        if sys_db is not None:
+            sys_db.close()
         TaskManager.shutdown_redis_store()
         lake.shutdown()
         signal.signal(signal.SIGTERM, original_sigterm)
@@ -409,8 +474,11 @@ def create_app(config: ArrowLakeConfig | None = None) -> FastAPI:
                 trusted_proxies=rl_trusted_proxies,
             )
 
-    # API Key middleware
-    if config.api.api_key:
+    # API Key middleware — registered when a shared api_key is configured OR
+    # when the v1.9.0 system_db is enabled (personal-token auth path). The
+    # middleware resolves personal tokens first (v1.9.0), then falls back to
+    # the shared api_key (bootstrap/admin escape hatch).
+    if config.api.api_key or getattr(config.system_db, "enabled", False):
         from arrow_lake.api.auth import api_key_middleware_fn
 
         @app.middleware("http")

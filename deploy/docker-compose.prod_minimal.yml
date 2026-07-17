@@ -147,6 +147,24 @@ services:
       retries: 3
 
   # ---------------------------------------------------------------------------
+  # System DB (libSQL / Turso sqld) — v1.9.0 control-plane persistence
+  # RBAC / identity / personal tokens (P0) + catalog / tasks / lineage index
+  # (P1+). Singleton — all 4 API workers share one DB over the internal net.
+  # Disabled by default (config.system_db.enabled=false); the api only connects
+  # when enabled, so depends_on is soft (service_started). sqld is distroless
+  # (no shell) → no healthcheck; api lifespan retries connect for 30s.
+  # ---------------------------------------------------------------------------
+  system-db:
+    image: ghcr.io/tursodatabase/libsql-server:${LIBSQL_VERSION:-latest}
+    container_name: arrow-lake-system-db
+    restart: unless-stopped
+    volumes:
+      - system-db-data:/var/lib/sqld
+    command: ["sqld", "--http-listen-addr", "0.0.0.0:8080"]
+    networks:
+      - arrow-lake-net
+
+  # ---------------------------------------------------------------------------
   # API Server
   # ---------------------------------------------------------------------------
   api:
@@ -257,6 +275,11 @@ services:
       ARROW_LAKE__GRAVITINO__FEDERATED_QUERY_MAX_ROWS: "${GRAVITINO_QUERY_MAX_ROWS:-100000}"
       # Docling 模型缓存持久化（layout DocLayNet + table TableFormer + OCR，首次下载后随卷复用）
       HF_HOME: "/app/.docling-cache"
+      # v1.9.0: system_db (libSQL) control-plane DB — off by default; flip in .env
+      ARROW_LAKE__SYSTEM_DB__ENABLED: "${SYSTEM_DB_ENABLED:-false}"
+      ARROW_LAKE__SYSTEM_DB__URL: "${SYSTEM_DB_URL:-http://system-db:8080}"
+      ARROW_LAKE__SYSTEM_DB__AUTH_TOKEN: "${SYSTEM_DB_AUTH_TOKEN:-}"
+      ARROW_LAKE__SYSTEM_DB__CONNECT_TIMEOUT_SECONDS: "${SYSTEM_DB_CONNECT_TIMEOUT:-30}"
     volumes:
       - duckdb-data:/app/.duckdb
       - lake-data:/data/lake
@@ -279,6 +302,9 @@ services:
         required: false
       gravitino-init:
         condition: service_completed_successfully
+        required: false
+      system-db:
+        condition: service_started
         required: false
     deploy:
       replicas: ${API_REPLICAS:-1}
@@ -752,4 +778,6 @@ volumes:
   hg-server-data:
     driver: local
   gravitino-data:
+    driver: local
+  system-db-data:
     driver: local

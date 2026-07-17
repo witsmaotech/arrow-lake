@@ -117,6 +117,15 @@ class LineageStore:
         self._initialized = False
         self._auth_provider: Any = None
 
+    def set_lineage_index(self, index: Any) -> None:
+        """v1.9.0: inject a libSQL LineageIndexStore for fast adjacency queries.
+
+        When set, recorded events are also indexed as (source→target) edges so
+        upstream/downstream traversal uses indexed range scans instead of
+        ``LIKE`` over Lance. Lance remains the source of truth (fail-backfill).
+        """
+        self._lineage_index = index
+
     def record_event(
         self,
         event: LineageEvent,
@@ -172,6 +181,24 @@ class LineageStore:
 
         # Best-effort sync to Gravitino Lineage REST API
         self._sync_lineage_to_gravitino(event)
+
+        # v1.9.0: best-effort index into the libSQL adjacency table. Lance is
+        # the source of truth, so an index miss is non-fatal (fail-backfill).
+        index = getattr(self, "_lineage_index", None)
+        if index is not None:
+            try:
+                index.index_event(
+                    event_id=event.event_id,
+                    target=event.dataset_name,
+                    sources=list(event.source_datasets),
+                    operation=event.operation,
+                    transform_type=event.transform_type,
+                    actor=event.actor,
+                    lance_version=event.lance_version or "",
+                    occurred_at=event.timestamp,
+                )
+            except Exception:  # noqa: BLE001 — fail-backfill
+                pass
 
         logger.info(
             "lineage_event_recorded",
