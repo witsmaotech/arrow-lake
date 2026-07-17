@@ -280,6 +280,9 @@ services:
       ARROW_LAKE__SYSTEM_DB__URL: "${SYSTEM_DB_URL:-http://system-db:8080}"
       ARROW_LAKE__SYSTEM_DB__AUTH_TOKEN: "${SYSTEM_DB_AUTH_TOKEN:-}"
       ARROW_LAKE__SYSTEM_DB__CONNECT_TIMEOUT_SECONDS: "${SYSTEM_DB_CONNECT_TIMEOUT:-30}"
+      # ⚠️ FAIL-OPEN opt-in: true → sqld 宕机时 RBAC 读从缓存授权(可能 honor 宕机期间撤销的权限)。
+      # 默认 false(secure fail-close)。HA 部署显式设 true 接受该 tradeoff。
+      ARROW_LAKE__SYSTEM_DB__SERVE_STALE_ON_ERROR: "${SYSTEM_DB_SERVE_STALE_ON_ERROR:-false}"
     volumes:
       - duckdb-data:/app/.duckdb
       - lake-data:/data/lake
