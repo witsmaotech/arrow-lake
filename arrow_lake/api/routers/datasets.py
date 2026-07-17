@@ -551,6 +551,16 @@ async def ingest_documents(
             structlog.get_logger(__name__).warning(
                 "ingest.embed_after_documents_failed", dataset=name, err=str(exc)[:160],
             )
+        # [#v1.8.9-E2E] Build the FTS index so rag/query (FTS-default retriever)
+        # returns results on a freshly-ingested dataset. Without this the retriever
+        # finds no index → "no relevant documents". Best-effort (like embed above).
+        try:
+            await run_sync(lake.create_fts_index, name, timeout=_INGEST_TIMEOUT, label="create_fts_index")
+        except Exception as exc:  # noqa: BLE001 — never fail ingest on FTS index
+            import structlog
+            structlog.get_logger(__name__).warning(
+                "ingest.create_fts_index_failed", dataset=name, err=str(exc)[:160],
+            )
         _after_ingest_hooks(request, name, lake)
         return IngestResponse.from_report(report)
     finally:
