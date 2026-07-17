@@ -12,7 +12,7 @@
   <div class="page" style="height:calc(100vh - var(--header-h) - var(--s5)*2);grid-template-rows:auto auto 1fr">
     <div class="h-sec between">
       <div><h1>RAG 问答</h1><div class="desc">引用追踪 · 多 Provider 流式 · 会话持久化</div></div>
-      <div class="flex"><select class="select"><option>papers</option><option>regulations</option><option>knowledge_base</option></select><span class="lamp ok pulse"><i></i>会话落 Redis</span></div>
+      <div class="flex"><select class="select"><option>papers</option><option>regulations</option><option>knowledge_base</option></select><span class="tag teal" title="v1.8.9 默认 reranker（OllamaReranker · Qwen3-Reranker yes/no judge）"><i class="placeholder" data-ic="gauge"></i> reranker: ollama</span><span class="lamp ok pulse"><i></i>会话持久（跨重启 · RagSessionStore）</span></div>
     </div>
 
     <!-- mode switch: two real endpoints -->
@@ -73,14 +73,14 @@ function renderChat(){$('#chat').innerHTML=`
 
 // real citation fields: chunk_index, dataset, row_id, score, text_excerpt
 function renderCites(){$('#cites').innerHTML=[
-[1,'papers','row_0042',0.89,'Longformer 用滑动窗口 + 少量全局 token 兼顾局部与长程依赖…'],
-[2,'papers','row_0118',0.82,'Linformer 将 N×N 注意力矩阵投影到低秩空间，复杂度降至线性…'],
-[3,'papers','row_0503',0.76,'Big Bird 证明随机+窗口+全局是 Turing 完备的通用近似器…'],
-[4,'papers','row_0331',0.71,'Performer 用随机特征（FAVOR+）无偏近似 Softmax…'],
-].map(c=>`<a class="cite-card" href="dataset-detail.html"><div class="flex between"><span class="tag teal">[${c[0]}]</span><span class="muted mono" style="font-size:.65rem">${c[1]} · ${c[2]} · ${c[3].toFixed(2)}</span></div><div style="margin-top:6px;color:var(--fg-md);font-size:.78rem;line-height:1.5">${c[4]}</div></a>`).join('')
+[1,'papers','row_0042',0.89,1.0,'Longformer 用滑动窗口 + 少量全局 token 兼顾局部与长程依赖…'],
+[2,'papers','row_0118',0.82,1.0,'Linformer 将 N×N 注意力矩阵投影到低秩空间，复杂度降至线性…'],
+[3,'papers','row_0503',0.76,0.0,'Big Bird 证明随机+窗口+全局是 Turing 完备的通用近似器…'],
+[4,'papers','row_0331',0.71,0.0,'Performer 用随机特征（FAVOR+）无偏近似 Softmax…'],
+].map(c=>`<a class="cite-card" href="dataset-detail.html"><div class="flex between"><span class="tag teal">[${c[0]}]</span><span class="muted mono" style="font-size:.65rem">${c[1]} · ${c[2]} · retr ${c[3].toFixed(2)} · rerank ${c[4]===1?'<b style="color:var(--ok)">✓</b>':'<b style="color:var(--fg-lo)">✗</b>'}</span></div><div style="margin-top:6px;color:var(--fg-md);font-size:.78rem;line-height:1.5;${c[4]===0?'opacity:.55':''}">${c[5]}</div></a>`).join('')
 + (md==='graph'?`<a class="cite-card" href="kg.html"><div class="flex between"><span class="tag amber">[KG]</span><span class="muted mono" style="font-size:.65rem">kg_papers · 子图 5 实体</span></div><div style="margin-top:6px;color:var(--fg-md);font-size:.78rem">method 簇：Sparse Attention ↔ {Longformer, Big Bird, Linformer, Performer}</div></a>`:'');}
 
-function send(){const m=$('#msg').value;if(!m)return;const c=$('#chat');c.insertAdjacentHTML('beforeend',`<div class="msg user"><div class="bubble">${m}</div></div><div class="msg ai"><div class="avatar">AI</div><div class="bubble"><span class="muted">[${md==='rag'?'retrieval → '+$('#modeParams select').value.replace('retrieval: ',''):'GraphRAG · 检索子图'}]</span> 生成中…</div></div>`);$('#msg').value='';c.scrollTop=c.scrollHeight;const bubbles=c.querySelectorAll('.msg.ai .bubble');const last=bubbles[bubbles.length-1];setTimeout(()=>{last.innerHTML=`基于检索到的上下文<sup class="cite">[1]</sup>，与已有文献结论一致<sup class="cite">[2]</sup>。${md==='graph'?'<b>图谱</b>关系也支持这一推断<sup class="cite">[KG]</sup>。':''}`;c.scrollTop=c.scrollHeight},900)}
+function send(){const m=$('#msg').value;if(!m)return;const c=$('#chat');c.insertAdjacentHTML('beforeend',`<div class="msg user"><div class="bubble">${m}</div></div><div class="msg ai"><div class="avatar">AI</div><div class="bubble"><span class="muted">[${md==='rag'?'retrieve → rerank(ollama) → generate':'GraphRAG · 检索子图 → rerank'}]</span> 生成中…</div></div>`);$('#msg').value='';c.scrollTop=c.scrollHeight;const bubbles=c.querySelectorAll('.msg.ai .bubble');const last=bubbles[bubbles.length-1];setTimeout(()=>{last.innerHTML=`基于检索到的上下文<sup class="cite">[1]</sup>，与已有文献结论一致<sup class="cite">[2]</sup>。${md==='graph'?'<b>图谱</b>关系也支持这一推断<sup class="cite">[KG]</sup>。':''}`;c.scrollTop=c.scrollHeight},900)}
 $('#msg').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}});
 renderParams();renderChat();renderCites();
 function $$(s){return[...document.querySelectorAll(s)]}

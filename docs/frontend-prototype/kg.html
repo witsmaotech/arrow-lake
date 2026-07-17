@@ -46,13 +46,49 @@
       <div class="col">
         <div class="panel"><div class="panel-h"><i class="placeholder" data-ic="dot"></i><h3>选中 · Sparse Attention</h3></div><div class="panel-b col">
           <span class="tag amber">method</span>
-          <table class="tbl"><tbody>${[['id','m:1042'],['度','12'],['引用','48'],['机构','MIT, Google']].map(r=>`<tr><td class="muted">${r[0]}</td><td class="mono" style="font-size:.75rem">${r[1]}</td></tr>`).join('')}</tbody></table>
+          <table class="tbl"><tbody id="selRows"></tbody></table>
         </div></div>
         <div class="panel"><div class="panel-h"><i class="placeholder" data-ic="sparkle"></i><h3>GraphRAG 试询</h3></div><div class="panel-b col">
           <textarea class="input mono" rows="2">哪些方法依赖稀疏注意力？</textarea>
           <button class="btn btn-line btn-sm">检索子图 → 喂 LLM</button>
           <div class="muted" style="font-size:.75rem">已从 kg_papers 抽取候选实体：<span class="tag">Sparse Attention</span> <span class="tag">method</span></div>
         </div></div>
+      </div>
+    </div>
+
+    <!-- v1.9.0 KG 构建 · 模板 · 双 LLM · 版本 -->
+    <div class="grid cols-2-1">
+      <div class="panel">
+        <div class="panel-h"><i class="placeholder" data-ic="sparkle"></i><h3>KG 构建 · 模板 · 双 LLM</h3><span class="sub">kg/build · list-doc-types · list-templates</span>
+          <div class="actions"><label class="switch" title="增量 KA（仅喂新 chunk）"><input type="checkbox" checked><i></i></label><button class="btn btn-primary btn-sm" onclick="openApi('KG 构建（增量）','curl -X POST $API/api/v1/kg/build -d \'{\"dataset_name\":\"papers\",\"incremental\":true}\'','lake.kg_build(\"papers\", incremental=True)')"><i class="placeholder" data-ic="play"></i> 构建</button></div></div>
+        <div class="panel-b grid g-2">
+          <div class="field">
+            <label>doc_type 模板（strict concept_graph 默认）</label>
+            <select class="select">
+              <option>concept_graph（默认 · type 枚举 + definition required）</option>
+              <option>ddd_concept_graph</option>
+              <option>medical_concept_graph</option>
+              <option>temporal_graph</option>
+              <option>hypergraph</option>
+            </select>
+            <div class="muted" style="font-size:.68rem;margin-top:4px">v1.8.9：default/paper/report 改 strict → 定义覆盖 0%→<b style="color:var(--ok)">100%</b></div>
+          </div>
+          <div class="field">
+            <label>抽取粒度</label>
+            <select class="select"><option>dataset（整集一个 KA）</option><option>chunk（大集 >500 切分）</option></select>
+            <div class="muted" style="font-size:.68rem;margin-top:4px">he_kg_granularity · fed_text 跨 chunk 合并/去重</div>
+          </div>
+          <div class="panel" style="grid-column:1/-1;background:var(--ink-900)">
+            <div class="panel-b grid g-2">
+              <div><div class="muted" style="font-size:var(--fs-cap)">抽取 LLM · he_extract_llm</div><b class="readout" style="font-size:.95rem">ministral-3:3b</b><div class="muted" style="font-size:.68rem">轻量 · 结构化输出(.parse())</div></div>
+              <div><div class="muted" style="font-size:var(--fs-cap)">问答 LLM · he_qa_llm</div><b class="readout" style="font-size:.95rem">deepseek-v3@百炼</b><div class="muted" style="font-size:.68rem">强推理 · 中文生成</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="panel flush">
+        <div class="panel-h"><i class="placeholder" data-ic="refresh"></i><h3>KA 版本</h3><span class="sub">archive / rollback / prune</span></div>
+        <div class="panel-b" id="kaVer" style="padding:0"></div>
       </div>
     </div>
   </div>
@@ -90,9 +126,26 @@ $('#graph').innerHTML=`<svg viewBox="0 0 620 380" width="100%" height="380" styl
   <defs><pattern id="g" width="32" height="32" patternUnits="userSpaceOnUse"><path d="M32 0H0V32" fill="none" stroke="rgba(255,255,255,.02)"/></pattern></defs>
   <rect width="620" height="380" fill="url(#g)"/>
   ${E.map(e=>{const a=N[e[0]],b=N[e[1]];return `<g><line x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}" stroke="${e[0]===0||e[0]===1?'var(--teal)':'var(--line-strong)'}" stroke-width="${e[0]===0||e[0]===1?1.6:1}" ${e[0]===2?'stroke-dasharray="4 3"':''}/><text x="${(a[0]+b[0])/2}" y="${(a[1]+b[1])/2-4}" text-anchor="middle" font-family="var(--font-mono)" font-size="8" fill="var(--fg-lo)">${e[2]}</text></g>`}).join('')}
-  ${N.map((n,i)=>{const[c,bg]=colorOf[n[3]];const lines=n[2].split('\n');const r=Math.min(40,Math.max(22,Math.max(...lines.map(l=>l.length))*3.4+12));return `<g class="gn" style="cursor:pointer"><circle cx="${n[0]}" cy="${n[1]}" r="${r}" fill="${bg}" stroke="${c}" stroke-width="${i<2?2.5:1.5}" opacity="${i<2?1:.9}"/>${lines.map((l,j)=>`<text x="${n[0]}" y="${n[1]+4+(j-(lines.length-1)/2)*11}" text-anchor="middle" font-family="var(--font-mono)" font-size="${r>32?10:9}" fill="${c}">${l}</text>`).join('')}</g>`}).join('')}
+  ${N.map((n,i)=>{const[c,bg]=colorOf[n[4]];const lines=n[2].split('\n');const r=Math.min(40,Math.max(22,Math.max(...lines.map(l=>l.length))*3.4+12));return `<g class="gn" style="cursor:pointer"><circle cx="${n[0]}" cy="${n[1]}" r="${r}" fill="${bg}" stroke="${c}" stroke-width="${i<2?2.5:1.5}" opacity="${i<2?1:.9}"/>${lines.map((l,j)=>`<text x="${n[0]}" y="${n[1]+4+(j-(lines.length-1)/2)*11}" text-anchor="middle" font-family="var(--font-mono)" font-size="${r>32?10:9}" fill="${c}">${l}</text>`).join('')}</g>`}).join('')}
 </svg>`;
 function $$(s){return[...document.querySelectorAll(s)]}
+
+// 选中实体详情
+$('#selRows').innerHTML=[['id','m:1042'],['label','method'],['度','12'],['引用','48'],['机构','MIT, Google'],['definition','滑动窗口+全局token的稀疏注意力…']].map(r=>`<tr><td class="muted">${r[0]}</td><td class="mono" style="font-size:.75rem">${r[1]}</td></tr>`).join('');
+
+// KA 版本管理（archive/list/rollback/prune）
+$('#kaVer').innerHTML=[
+ ['v20260717t0912','活跃','726 顶点 / 1388 边','3h 前','ok',true],
+ ['v20260716t1410','归档','692 / 1310','昨天','info',false],
+ ['v20260715t0830','归档','650 / 1240','2 天前','info',false],
+ ['v20260713t1204','归档','512 / 980','4 天前','info',false],
+].map((v,i)=>`<div style="display:flex;gap:var(--s3);padding:var(--s3) var(--card-pad);border-bottom:1px solid var(--line-soft);align-items:center">
+  <span class="lamp ${v[4]}"><i></i></span>
+  <div class="grow"><b class="mono" style="font-size:.78rem">${v[0]}</b> <span class="tag ${v[4]==='ok'?'ok':'info'}" style="margin-left:4px">${v[1]}</span><div class="muted mono" style="font-size:.68rem;margin-top:2px">${v[2]}</div></div>
+  <span class="muted mono" style="font-size:.68rem">${v[3]}</span>
+  ${v[1]==='活跃'?'':`<button class="btn btn-icon btn-ghost btn-sm" title="回滚到此版本">${icon('refresh')}</button>`}
+</div>`).join('') + `<div style="padding:var(--s3) var(--card-pad)"><button class="btn btn-line btn-sm">prune（保留最近 5 版）</button> <span class="muted" style="font-size:.68rem">v1.8.9：归档跳过可重建的 FAISS index/ · 省盘</span></div>`;
+
 </script>
 </body>
 </html>
