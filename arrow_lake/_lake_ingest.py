@@ -38,9 +38,26 @@ class _LakeIngestMixin:
         """
         from arrow_lake.ingest.ingestor import Ingestor
 
-        return Ingestor(self._get_storage()).ingest(
+        report = Ingestor(self._get_storage()).ingest(
             dataset_name, file_paths, transforms=transforms,
         )
+
+        # v1.9.0: fire-and-forget lineage capture. Activates the ingest→lineage
+        # event→adjacency-index pipeline (previously lineage was never recorded:
+        # lineage_record_event / auto_record_ingest had zero callers). The
+        # facade method uses the indexed LineageStore, so this also seeds the
+        # libSQL adjacency index. Failure here never blocks ingest.
+        try:
+            self.lineage_record_event(
+                dataset_name, "append",
+                source_datasets=[],
+                transform_type="ingest",
+                metadata={"source_files": list(file_paths)},
+            )
+        except Exception:  # noqa: BLE001 — lineage is best-effort
+            pass
+
+        return report
 
     def load_hf_dataset(self, repo_id: str, *, table: str | None = None) -> Any:
         """Load a HuggingFace Lance-format dataset as an Arrow Table (v1.8.0 #8).
