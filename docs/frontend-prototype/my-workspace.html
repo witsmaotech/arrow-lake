@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>我的工作区 · Arrow Lake</title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/tokens.css"/><link rel="stylesheet" href="assets/app.css"/>
+</head>
+<body>
+<div id="app"><main class="main"><div class="page">
+
+  <div class="h-sec between">
+    <div>
+      <h1>我的工作区</h1>
+      <div class="desc">个人空间 · 按 <span class="mono">personal_token</span> 鉴权持久化 · <span class="mono">/api/v1/me/{saved-queries,dashboards,favorites,preferences,notifications}</span></div>
+    </div>
+    <div class="flex">
+      <span class="tag teal"><i class="placeholder" data-ic="key"></i> al_xxxx · sysop</span>
+      <button class="btn btn-primary btn-sm" onclick="openApi('保存当前查询为收藏','curl -X POST $API/api/v1/me/saved-queries -H \"Authorization: Bearer al_xxxx\" -d \'{\"name\":\"皖企 TOP10 营收\",\"type\":\"sql\",\"dataset\":\"wuhu_report\",\"body\":\"SELECT ...\"}\'','lake.me.save_query(name=\"皖企 TOP10 营收\", type=\"sql\", dataset=\"wuhu_report\", body=sql)')"><i class="placeholder" data-ic="plus"></i> 收藏当前</button>
+    </div>
+  </div>
+
+  <!-- KPI -->
+  <div class="kpi-row">
+    <div class="panel kpi"><div class="label">收藏查询</div><div class="val readout">8</div><div class="delta up">+2 本周</div></div>
+    <div class="panel kpi"><div class="label">我的仪表盘</div><div class="val readout">3</div><div class="delta muted">2 已分享</div></div>
+    <div class="panel kpi"><div class="label">收藏数据集</div><div class="val readout">12</div><div class="delta muted">跨 4 域</div></div>
+    <div class="panel kpi"><div class="label">未读通知</div><div class="val readout" style="color:var(--warn)">3</div><div class="delta down">1 失败</div></div>
+  </div>
+
+  <div class="tabs" id="wsTabs">
+    <button class="tab active" data-t="queries">收藏查询</button>
+    <button class="tab" data-t="dashboards">我的仪表盘</button>
+    <button class="tab" data-t="favorites">收藏</button>
+    <button class="tab" data-t="preferences">偏好</button>
+    <button class="tab" data-t="notifications">通知 <span class="usermenu-badge" style="background:var(--amber-soft);color:var(--amber-bright)">3</span></button>
+  </div>
+
+  <!-- 收藏查询 -->
+  <div id="pQueries" class="panel flush">
+    <div class="panel-h"><i class="placeholder" data-ic="olap"></i><h3>收藏查询 · 8</h3><div class="actions">
+      <button class="btn btn-ghost btn-sm"><i class="placeholder" data-ic="filter"></i> 筛选</button>
+      <button class="btn btn-ghost btn-sm"><i class="placeholder" data-ic="play"></i> 批量运行</button>
+    </div></div>
+    <div class="tbl-scroll"><table class="tbl">
+      <thead><tr><th>名称</th><th>类型</th><th>数据集</th><th class="num">最近运行</th><th></th></tr></thead>
+      <tbody id="qryRows"></tbody>
+    </table></div>
+  </div>
+
+  <!-- 我的仪表盘 -->
+  <div id="pDashboards" class="panel flush hidden">
+    <div class="panel-h"><i class="placeholder" data-ic="dashboard"></i><h3>我的仪表盘 · 3</h3><div class="actions"><button class="btn btn-ghost btn-sm"><i class="placeholder" data-ic="plus"></i> 新建仪表盘</button></div></div>
+    <div class="panel-b"><div class="grid g-3" id="dashCards"></div></div>
+  </div>
+
+  <!-- 收藏 -->
+  <div id="pFavorites" class="panel flush hidden">
+    <div class="panel-h"><i class="placeholder" data-ic="database"></i><h3>收藏 · 12</h3><div class="actions"><button class="btn btn-ghost btn-sm"><i class="placeholder" data-ic="sort"></i> 按最近</button></div></div>
+    <div class="tbl-scroll"><table class="tbl">
+      <thead><tr><th>名称</th><th>类型</th><th>域</th><th class="num">行数</th><th></th></tr></thead>
+      <tbody id="favRows"></tbody>
+    </table></div>
+  </div>
+
+  <!-- 偏好 -->
+  <div id="pPreferences" class="panel hidden">
+    <div class="panel-h"><i class="placeholder" data-ic="gauge"></i><h3>偏好设置</h3><span class="sub">/me/preferences</span></div>
+    <div class="panel-b">
+      <div class="grid g-2">
+        <div class="field">
+          <label>默认数据集</label>
+          <select class="select"><option>wuhu_report</option><option>jd_ddd</option><option>p0_cloud</option></select>
+        </div>
+        <div class="field">
+          <label>默认检索策略</label>
+          <select class="select"><option>hybrid（FTS+向量+rerank）</option><option>vector</option><option>fts</option></select>
+        </div>
+        <div class="field">
+          <label>表格每页行数</label>
+          <select class="select"><option>20</option><option selected>50</option><option>100</option></select>
+        </div>
+        <div class="field">
+          <label>主题</label>
+          <select class="select"><option selected>深空墨（Mission Control）</option><option>跟随系统</option></select>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div class="col" style="gap:var(--s2)">
+        <div class="flex between"><span><b>摄入完成通知</b><div class="muted" style="font-size:.7rem">数据集摄入成功时推送</div></span><label class="switch"><input type="checkbox" checked><i></i></label></div>
+        <div class="flex between"><span><b>KG 构建完成通知</b><div class="muted" style="font-size:.7rem">知识图谱构建/增量完成</div></span><label class="switch"><input type="checkbox" checked><i></i></label></div>
+        <div class="flex between"><span><b>任务失败通知</b><div class="muted" style="font-size:.7rem">异步任务失败（含 DLQ 入队）</div></span><label class="switch"><input type="checkbox" checked><i></i></label></div>
+        <div class="flex between"><span><b>每周摘要</b><div class="muted" style="font-size:.7rem">每周一汇总个人活动</div></span><label class="switch"><input type="checkbox"><i></i></label></div>
+      </div>
+      <div class="flex" style="margin-top:var(--s5);gap:var(--s2)">
+        <button class="btn btn-primary btn-sm" onclick="openApi('保存偏好','curl -X PUT $API/api/v1/me/preferences -H \"Authorization: Bearer al_xxxx\" -d \'{\"default_dataset\":\"wuhu_report\",\"page_size\":50}\'','lake.me.update_preferences(default_dataset=\"wuhu_report\", page_size=50)')"><i class="placeholder" data-ic="check"></i> 保存</button>
+        <button class="btn btn-ghost btn-sm">还原默认</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 通知 -->
+  <div id="pNotifications" class="panel flush hidden">
+    <div class="panel-h"><i class="placeholder" data-ic="bell"></i><h3>通知 · 3 未读</h3><div class="actions"><button class="btn btn-ghost btn-sm" onclick="this.textContent='已全部标记已读'">全部标记已读</button></div></div>
+    <div class="panel-b"><div class="col" id="notifList" style="gap:0"></div></div>
+  </div>
+
+</div></main></div>
+
+<style>
+.switch{position:relative;display:inline-flex;cursor:pointer}
+.switch input{position:absolute;opacity:0;width:0;height:0}
+.switch i{width:38px;height:22px;border-radius:99px;background:var(--ink-700);border:1px solid var(--line);position:relative;transition:background var(--dur-2)}
+.switch i::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:var(--fg-md);transition:transform var(--dur-2) var(--ease)}
+.switch input:checked+i{background:var(--teal);border-color:var(--teal)}
+.switch input:checked+i::after{transform:translateX(16px);background:var(--ink-950)}
+.switch input:focus-visible+i{box-shadow:var(--ring)}
+.dash-card .wdg{display:flex;align-items:center;gap:var(--s2);padding:var(--s2) 0;border-top:1px solid var(--line-soft)}
+.dash-card .wdg:first-of-type{border-top:none}
+.notif{display:flex;gap:var(--s3);padding:var(--s3) var(--s4);border-radius:var(--r-md);align-items:flex-start}
+.notif:hover{background:var(--ink-850)}
+.notif.unread{background:var(--teal-soft)}
+.notif .nic{width:32px;height:32px;border-radius:var(--r-md);display:grid;place-items:center;flex-shrink:0;background:var(--ink-800);border:1px solid var(--line)}
+.notif .nic .ic{width:16px;height:16px}
+.notif.danger .nic{background:var(--danger-soft);border-color:rgba(239,68,68,.3)}
+.notif.danger .nic .ic{color:var(--danger)}
+.notif.ok .nic{background:var(--ok-soft);border-color:rgba(34,197,94,.3)}
+.notif.ok .nic .ic{color:var(--ok)}
+.notif .nt{font-size:var(--fs-body)}
+.notif .nt b{font-weight:600}
+.notif .nm{font-size:.7rem;color:var(--fg-lo);margin-top:2px}
+.notif .dot{width:7px;height:7px;border-radius:50%;background:var(--teal-bright);margin-top:6px;flex-shrink:0}
+</style>
+
+<script src="assets/layout.js"></script>
+<script>
+const {renderShell,icon,sparkline}=window;
+renderShell({active:'',crumb:'<a href="dashboard.html">控制台</a> <span class="sep">/</span> <b>我的工作区</b>'});
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+
+// 收藏查询
+const Q=[
+ ['皖企 TOP10 营收','sql','wuhu_report','2h 前','teal','pinned'],
+ ['检索"白鳍豚保护"','search','p0_cloud','昨天','info',''],
+ ['RAG "DDD 核心概念"','rag','jd_ddd','3 天前','amber',''],
+ ['wuhu 季度增长率','sql','wuhu_report','5 天前','teal',''],
+ ['检索"向量索引"','search','embeddings','1 周前','info',''],
+];
+$('#qryRows').innerHTML=Q.map(q=>`<tr>
+  <td><div class="flex" style="gap:6px">${q[5]==='pinned'?`<span title="已置顶" style="color:var(--amber-bright)">${icon('tag','pinned')}</span>`:''}<b>${q[0]}</b></div></td>
+  <td><span class="tag ${q[4]==='amber'?'amber':q[4]==='info'?'info':'teal'}">${q[1]}</span></td>
+  <td class="mono">${q[2]}</td>
+  <td class="num mono">${q[3]}</td>
+  <td class="right"><button class="btn btn-icon btn-ghost btn-sm" title="运行">${icon('play')}</button>
+    <button class="btn btn-icon btn-ghost btn-sm" title="编辑">${icon('doc')}</button>
+    <button class="btn btn-icon btn-ghost btn-sm" title="删除">${icon('close')}</button></td>
+</tr>`).join('');
+
+// 仪表盘卡片
+const D=[
+ ['营收监控', 'wuhu_report', [12,18,15,22,28,25,31], '8 widget · 上次编辑 1h 前', true],
+ ['检索质量', 'p0_cloud', [3,5,4,7,6,8,9], '6 widget · 分享给 research', false],
+ ['KG 健康', 'jd_ddd', [40,38,42,45,44,48,50], '5 widget · 自动刷新', false],
+];
+$('#dashCards').innerHTML=D.map(d=>`<div class="panel dash-card">
+  <div class="panel-b">
+    <div class="flex between"><div><b>${d[0]}</b><div class="muted mono" style="font-size:.65rem">${d[1]}</div></div>${d[4]?`<span class="tag amber"><span class="lamp ok"><i></i></span>live</span>`:''}</div>
+    <div style="margin:var(--s3) 0">${sparkline(d[2],220,40)}</div>
+    <div class="muted" style="font-size:.7rem">${d[3]}</div>
+  </div>
+</div>`).join('');
+
+// 收藏
+const F=[
+ ['wuhu_report','数据集','报告','12,302','teal'],['jd_ddd','数据集','DDD','69','teal'],
+ ['p0_cloud','数据集','云原生','3','info'],['wuhu_q3_growth','SQL 视图','报告','—','info'],
+ ['kg_papers','知识图谱','论文','1,840','amber'],['产品截图.png','文档','图像','—',''],
+];
+$('#favRows').innerHTML=F.map(f=>`<tr>
+  <td><b>${f[0]}</b></td>
+  <td><span class="tag">${f[1]}</span></td>
+  <td class="mono muted">${f[2]}</td>
+  <td class="num mono">${f[3]}</td>
+  <td class="right"><button class="btn btn-icon btn-ghost btn-sm" title="打开">${icon('arrowR')}</button></td>
+</tr>`).join('');
+
+// 通知
+const N=[
+ ['ok','check','摄入完成','数据集 <b>wuhu_report</b> 增量摄入 412 行 · 已自动建 FTS 索引 + 嵌入','2 分钟前',true],
+ ['danger','warn','任务失败','KG 构建 <b>kg_jd_ddd</b> 失败 · 已入死信队列（可重试）','14 分钟前',true],
+ ['','bell','系统','v1.9.0 已发布 · 控制面库（libSQL）上线，个人工作区可用','1 小时前',true],
+ ['','doc','血缘','<b>p0_cloud</b> 的血缘链路已记录（12 ingest 路径全写入）','昨天',false],
+ ['ok','check','KG 增量完成','<b>jd_ddd</b> 增量 KA 完成 · 新增 14 实体','昨天',false],
+];
+$('#notifList').innerHTML=N.map(n=>`<div class="notif ${n[0]} ${n[5]?'unread':''}">
+  <div class="nic">${icon(n[1])}</div>
+  <div class="grow"><div class="nt">${n[2]} · <span class="muted">${n[3]}</span></div><div class="nm mono">${n[4]}</div></div>
+  ${n[5]?'<div class="dot"></div>':''}
+</div>`).join('');
+
+// tab toggle (deep-link by hash)
+function showTab(t){
+  $$('#wsTabs .tab').forEach(x=>x.classList.toggle('active',x.dataset.t===t));
+  ['queries','dashboards','favorites','preferences','notifications'].forEach(k=>{
+    $('#p'+k.charAt(0).toUpperCase()+k.slice(1)).classList.toggle('hidden',k!==t);
+  });
+}
+$('#wsTabs').addEventListener('click',e=>{const b=e.target.closest('.tab');if(b){showTab(b.dataset.t);history.replaceState(null,'',b.dataset.t==='queries'?'#':'#'+b.dataset.t)}});
+const hash=location.hash.slice(1); if(hash && ['preferences','notifications','favorites','dashboards'].includes(hash)) showTab(hash);
+</script>
+</body>
+</html>

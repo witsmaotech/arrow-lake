@@ -13,40 +13,83 @@
     <div class="flex"><span class="tag danger">ADMIN ONLY</span><button class="btn btn-primary btn-sm" onclick="openApi('授权','curl -X PUT $API/api/v1/admin/acl/papers -d \'{\"role\":\"editor\",\"allow\":\"write\"}\']','lake.admin.set_acl(\"papers\", role=\"editor\", allow=\"write\")')"><i class="placeholder" data-ic="plus"></i> 授权</button></div>
   </div>
 
-  <div class="tabs" id="at"><button class="tab active" data-t="users">用户</button><button class="tab" data-t="dataset">DatasetACL</button><button class="tab" data-t="schema">SchemaACL</button><button class="tab" data-t="deny">Deny 规则</button></div>
+  <div class="tabs" id="at"><button class="tab active" data-t="users">用户</button><button class="tab" data-t="tokens">Personal Tokens</button><button class="tab" data-t="roles">角色 RBAC</button><button class="tab" data-t="dataset">DatasetACL</button><button class="tab" data-t="schema">SchemaACL</button><button class="tab" data-t="deny">Deny 规则</button></div>
 
-  <div id="pUsers" class="panel flush"><div class="panel-h"><i class="placeholder" data-ic="admin"></i><h3>用户 · 12</h3><div class="actions"><button class="btn btn-ghost btn-sm"><i class="placeholder" data-ic="plus"></i> 邀请</button></div></div>
-    <div class="tbl-scroll"><table class="tbl"><thead><tr><th>用户</th><th>角色</th><th>API Key</th><th>JWT</th><th class="num">上次登录</th><th>2FA</th></tr></thead><tbody>
-    ${[['alice','ADMIN','✓','active','14:02','on'],['bob','EDITOR','✓','active','14:01','on'],['carol','EDITOR','✓','revoked','13:40','off'],['dave','VIEWER','✓','active','13:38','off'],['eve','VIEWER','—','active','昨天','off']].map(u=>`<tr><td><span class="avatar" style="width:22px;height:22px;font-size:.6rem;display:inline-grid;vertical-align:middle;margin-right:6px">${u[0][0].toUpperCase()}</span>${u[0]}</td><td><span class="tag ${u[1]==='ADMIN'?'danger':u[1]==='EDITOR'?'amber':'info'}">${u[1]}</span></td><td class="mono">${u[2]}</td><td><span class="lamp ${u[3]==='active'?'ok':'danger'}"><i></i>${u[3]}</span></td><td class="num mono">${u[4]}</td><td>${u[5]==='on'?'<span class="tag ok">on</span>':'<span class="tag">off</span>'}</td></tr>`).join('')}
-    </tbody></table></div>
+  <div id="pUsers" class="panel flush"><div class="panel-h"><i class="placeholder" data-ic="admin"></i><h3>用户 · 12</h3><span class="sub">IdentityStore · users 表</span><div class="actions"><button class="btn btn-ghost btn-sm"><i class="placeholder" data-ic="plus"></i> 邀请用户</button></div></div>
+    <div class="tbl-scroll"><table class="tbl"><thead><tr><th>用户</th><th>角色</th><th>Personal Tokens</th><th class="num">上次登录</th><th>2FA</th><th></th></tr></thead><tbody id="userRows"></tbody></table></div>
+  </div>
+
+  <div id="pTokens" class="panel flush hidden"><div class="panel-h"><i class="placeholder" data-ic="key"></i><h3>Personal Tokens · 7 活跃</h3><span class="sub">al_ 前缀 · sha256 存储 · 撤销/过期 · last_used 节流 60s</span><div class="actions"><button class="btn btn-primary btn-sm" onclick="openApi('签发 Personal Token','curl -X POST $API/api/v1/admin/users/alice/tokens -H \"Authorization: Bearer al_admin\" -d \'{\"name\":\"ci-pipeline\",\"expires_in_days\":90}\"'','lake.admin.create_token(\"alice\", name=\"ci-pipeline\", expires_in_days=90)')"><i class="placeholder" data-ic="plus"></i> 签发</button></div></div>
+    <div class="tbl-scroll"><table class="tbl"><thead><tr><th>Token</th><th>属主</th><th>名称</th><th>作用域</th><th class="num">最近使用</th><th>过期</th><th></th></tr></thead><tbody id="tokenRows"></tbody></table></div>
+  </div>
+
+  <div id="pRoles" class="panel flush hidden"><div class="panel-h"><i class="placeholder" data-ic="scale"></i><h3>角色 · RBAC</h3><span class="sub">三档覆盖全部 106 routes · RbacStore 持久化（有则路由，无则内存回退）</span></div>
+    <div class="tbl-scroll"><table class="tbl"><thead><tr><th>角色</th><th class="num">成员</th><th>读</th><th>写</th><th>删</th><th>管理</th><th>说明</th></tr></thead><tbody id="roleRows"></tbody></table></div>
   </div>
 
   <div id="pDataset" class="panel flush hidden"><div class="panel-h"><i class="placeholder" data-ic="database"></i><h3>DatasetACL · 行/列级</h3></div>
-    <div class="tbl-scroll"><table class="tbl"><thead><tr><th>主体</th><th>数据集</th><th>读</th><th>写</th><th>删</th><th>列脱敏</th><th>来源</th></tr></thead><tbody>
-    ${[['role:viewer','*（默认）','✓','✕','✕','—','builtin'],['role:editor','papers','✓','✓','✕','—','policy'],['team:research','papers','✓','✓','✕','source_url','policy'],['user:alice','product_photos','✓','✓','✓','—','explicit']].map(r=>`<tr><td class="mono">${r[0]}</td><td>${r[1]}</td><td>${ok(r[2])}</td><td>${ok(r[3])}</td><td>${ok(r[4])}</td><td>${r[5]==='—'?'<span class="muted">—</span>':`<span class="tag amber">${r[5]}</span>`}</td><td><span class="tag">${r[6]}</span></td></tr>`).join('')}
-    </tbody></table></div>
+    <div class="tbl-scroll"><table class="tbl"><thead><tr><th>主体</th><th>数据集</th><th>读</th><th>写</th><th>删</th><th>列脱敏</th><th>来源</th></tr></thead><tbody id="aclRows"></tbody></table></div>
   </div>
 
   <div id="pSchema" class="panel flush hidden"><div class="panel-h"><i class="placeholder" data-ic="scale"></i><h3>SchemaACL · 数据库/schema 级</h3></div>
-    <div class="tbl-scroll"><table class="tbl"><thead><tr><th>Schema</th><th>主体</th><th>create</th><th>alter</th><th>drop</th></tr></thead><tbody>
-    ${[['lakehouse','role:admin','✓','✓','✓'],['lakehouse','role:editor','✓','✓','✕'],['archive','role:viewer','✓','✕','✕']].map(r=>`<tr><td class="mono">${r[0]}</td><td class="mono">${r[1]}</td><td>${ok(r[2])}</td><td>${ok(r[3])}</td><td>${ok(r[4])}</td></tr>`).join('')}
-    </tbody></table></div></div>
+    <div class="tbl-scroll"><table class="tbl"><thead><tr><th>Schema</th><th>主体</th><th>create</th><th>alter</th><th>drop</th></tr></thead><tbody id="schemaRows"></tbody></table></div></div>
 
   <div id="pDeny" class="panel flush hidden"><div class="panel-h"><i class="placeholder" data-ic="warn"></i><h3>Deny 规则 · 显式拒绝（优先于 allow）</h3><div class="actions"><button class="btn btn-ghost btn-sm"><i class="placeholder" data-ic="plus"></i> 加 deny</button></div></div>
-    <div class="tbl-scroll"><table class="tbl"><thead><tr><th>主体</th><th>数据集</th><th>拒绝动作</th><th>原因</th><th></th></tr></thead><tbody>
-    ${[['role:viewer','regulations','delete','机密文件','danger'],['user:eve','papers','export, delete','离职交接','danger'],['team:temp','*','write','临时团队','amber']].map(r=>`<tr><td class="mono">${r[0]}</td><td>${r[1]}</td><td><span class="tag danger">${r[2]}</span></td><td class="muted">${r[3]}</td><td><button class="btn btn-icon btn-ghost btn-sm" title="移除">${''}</button></td></tr>`).join('')}
-    </tbody></table></div>
-    <script>document.querySelectorAll('#pDeny .btn-icon').forEach(b=>b.innerHTML=window.icon('close'))</script>
+    <div class="tbl-scroll"><table class="tbl"><thead><tr><th>主体</th><th>数据集</th><th>拒绝动作</th><th>原因</th><th></th></tr></thead><tbody id="denyRows"></tbody></table></div>
   </div>
 </div></main></div>
 <script src="assets/layout.js"></script>
 <script>
 const {renderShell,icon}=window;
-renderShell({active:'admin',crumb:'<b>用户与 RBAC</b>'});
-function ok(v){return v==='✓'?`<span class="lamp ok"><i></i></span>`:`<span class="lamp"><i style="background:var(--fg-lo);box-shadow:none"></i></span>`}
-function $(s){return document.querySelector(s)}
-$('#at').addEventListener('click',e=>{const b=e.target.closest('.tab');if(!b)return;$$('.tab').forEach(t=>t.classList.remove('active'));b.classList.add('active');['users','dataset','schema','deny'].forEach(t=>{$('#p'+t.charAt(0).toUpperCase()+t.slice(1)).classList.toggle('hidden',t!==b.dataset.t)})});
-function $$(s){return[...document.querySelectorAll(s)]}
+renderShell({active:'admin',crumb:'<a href="dashboard.html">控制台</a> <span class="sep">/</span> <b>用户与 RBAC</b>'});
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+const ok=v=>v==='✓'?`<span class="lamp ok"><i></i></span>`:`<span class="lamp"><i style="background:var(--fg-lo);box-shadow:none"></i></span>`;
+const av=(c,s='')=>`<span class="avatar" style="width:22px;height:22px;font-size:.6rem;display:inline-grid;vertical-align:middle;margin-right:6px;${s}">${c}</span>`;
+
+// 用户表（+ Personal Tokens 列）
+$('#userRows').innerHTML=[['alice','ADMIN',3,'2h 前','14:02','on'],['bob','EDITOR',1,'14:01','14:01','on'],['carol','EDITOR',0,'—','13:40','off'],['dave','VIEWER',2,'昨天','13:38','off'],['eve','VIEWER',1,'3 天前','昨天','off']].map(u=>`<tr>
+  <td>${av(u[0][0].toUpperCase())}<b>${u[0]}</b></td>
+  <td><span class="tag ${u[1]==='ADMIN'?'danger':u[1]==='EDITOR'?'amber':'info'}">${u[1]}</span></td>
+  <td>${u[2]>0?`<span class="lamp ok"><i></i></span> <span class="mono">${u[2]} 个</span> <span class="muted mono" style="font-size:.7rem">· ${u[3]}</span>`:'<span class="muted">无</span>'}</td>
+  <td class="num mono">${u[4]}</td>
+  <td>${u[5]==='on'?'<span class="tag ok">on</span>':'<span class="tag">off</span>'}</td>
+  <td class="right"><button class="btn btn-icon btn-ghost btn-sm" title="管理令牌" data-go="tokens">${icon('key')}</button></td>
+</tr>`).join('');
+
+// Personal Tokens
+$('#tokenRows').innerHTML=[['al_8f3a…c2e1','alice','ci-pipeline','ingest, query','12 分钟前','88 天','active'],['al_2b7c…9d44','alice','laptop-local','*','2h 前','29 天','active'],['al_a19e…0f33','bob','notebook','query','昨天','12 天','active'],['al_7710…4e8a','dave','read-only-api','query','3 天前','45 天','active'],['al_cc02…dead','carol','old-cli','—','—','已过期','revoked']].map(t=>`<tr>
+  <td class="mono">${t[0]}</td><td>${av(t[1][0].toUpperCase())}${t[1]}</td><td>${t[2]}</td>
+  <td>${t[3]==='*'?'<span class="tag amber">*</span>':`<span class="tag">${t[3]}</span>`}</td>
+  <td class="num mono">${t[4]}</td>
+  <td>${t[6]==='active'?`<span class="tag ok">${t[5]}</span>`:`<span class="tag danger">${t[5]}</span>`}</td>
+  <td class="right">${t[6]==='active'?`<button class="btn btn-icon btn-ghost btn-sm" title="撤销">${icon('close')}</button>`:''}</td>
+</tr>`).join('');
+
+// 角色 RBAC
+$('#roleRows').innerHTML=[['ADMIN',2,'✓','✓','✓','✓','全权 + 用户/令牌/RBAC 管理'],['EDITOR',4,'✓','✓','✕','✕','摄入/查询/构建 KG · 不可管理用户'],['VIEWER',6,'✓','✕','✕','✕','只读检索 / OLAP / RAG 问答']].map(r=>`<tr>
+  <td><span class="tag ${r[0]==='ADMIN'?'danger':r[0]==='EDITOR'?'amber':'info'}">${r[0]}</span></td>
+  <td class="num mono">${r[1]}</td><td>${ok(r[2])}</td><td>${ok(r[3])}</td><td>${ok(r[4])}</td><td>${ok(r[5])}</td>
+  <td class="muted">${r[6]}</td></tr>`).join('');
+
+// DatasetACL
+$('#aclRows').innerHTML=[['role:viewer','*（默认）','✓','✕','✕','—','builtin'],['role:editor','papers','✓','✓','✕','—','policy'],['team:research','papers','✓','✓','✕','source_url','policy'],['user:alice','product_photos','✓','✓','✓','—','explicit']].map(r=>`<tr>
+  <td class="mono">${r[0]}</td><td>${r[1]}</td><td>${ok(r[2])}</td><td>${ok(r[3])}</td><td>${ok(r[4])}</td>
+  <td>${r[5]==='—'?'<span class="muted">—</span>':`<span class="tag amber">${r[5]}</span>`}</td><td><span class="tag">${r[6]}</span></td></tr>`).join('');
+
+// SchemaACL
+$('#schemaRows').innerHTML=[['lakehouse','role:admin','✓','✓','✓'],['lakehouse','role:editor','✓','✓','✕'],['archive','role:viewer','✓','✕','✕']].map(r=>`<tr>
+  <td class="mono">${r[0]}</td><td class="mono">${r[1]}</td><td>${ok(r[2])}</td><td>${ok(r[3])}</td><td>${ok(r[4])}</td></tr>`).join('');
+
+// Deny
+$('#denyRows').innerHTML=[['role:viewer','regulations','delete','机密文件'],['user:eve','papers','export, delete','离职交接'],['team:temp','*','write','临时团队']].map(r=>`<tr>
+  <td class="mono">${r[0]}</td><td>${r[1]}</td><td><span class="tag danger">${r[2]}</span></td><td class="muted">${r[3]}</td>
+  <td class="right"><button class="btn btn-icon btn-ghost btn-sm" title="移除">${icon('close')}</button></td></tr>`).join('');
+
+// tab toggle（含 tokens/roles）+ 用户行 → tokens 深跳
+const TABS=['users','tokens','roles','dataset','schema','deny'];
+function showTab(t){$$('.tab').forEach(x=>x.classList.toggle('active',x.dataset.t===t));TABS.forEach(k=>$('#p'+k.charAt(0).toUpperCase()+k.slice(1)).classList.toggle('hidden',k!==t))}
+$('#at').addEventListener('click',e=>{const b=e.target.closest('.tab');if(b)showTab(b.dataset.t)});
+$('#userRows').addEventListener('click',e=>{const b=e.target.closest('[data-go]');if(b)showTab(b.dataset.go)});
 </script>
 </body>
 </html>

@@ -103,7 +103,7 @@ function renderShell({active,crumb}){
     </a>`).join('')).join('');
   const sidebar = `
   <aside class="sidebar">
-    <a class="brand" href="index.html">${icon('dashboard')}<span><div class="brand-name">Arrow Lake</div><div class="brand-sub">console v1.8.6</div></span></a>
+    <a class="brand" href="index.html">${icon('dashboard')}<span><div class="brand-name">Arrow Lake</div><div class="brand-sub">console v1.9.0</div></span></a>
     <nav class="nav">${navHtml}</nav>
     <div style="padding:var(--s3) var(--s4);border-top:1px solid var(--line-soft)">
       <div class="lamp ok pulse" style="margin-bottom:6px"><i></i>所有系统正常</div>
@@ -125,7 +125,19 @@ function renderShell({active,crumb}){
       <span class="dep" title="MinIO 在线"><span class="lamp"></span>S3</span>
     </div>
     <button class="btn btn-icon btn-ghost" aria-label="通知" style="position:relative">${icon('bell')}<span style="position:absolute;top:4px;right:4px;width:7px;height:7px;border-radius:50%;background:var(--warn)"></span></button>
-    <div class="user" id="userMenu"><span class="avatar">SY</span><span class="meta"><b>sysop</b><span>ADMIN</span></span></div>
+    <div class="userwrap" id="userWrap">
+      <button class="user" id="userMenu" aria-haspopup="menu" aria-expanded="false" aria-label="账户菜单">
+        <span class="avatar">SY</span><span class="meta"><b>sysop</b><span>ADMIN</span></span>${icon('chevronD','tiny')}
+      </button>
+      <div class="usermenu" id="userDrop" role="menu">
+        <div class="usermenu-h"><span class="avatar" style="width:28px;height:28px;font-size:.7rem">SY</span><div><b>sysop</b><div class="muted mono" style="font-size:.65rem">sysop@arrow-lake · ADMIN</div></div></div>
+        <a class="usermenu-item" href="my-workspace.html" role="menuitem">${icon('dashboard')}<span>我的工作区</span></a>
+        <a class="usermenu-item" href="my-workspace.html#preferences" role="menuitem">${icon('gauge')}<span>偏好设置</span></a>
+        <a class="usermenu-item" href="my-workspace.html#notifications" role="menuitem">${icon('bell')}<span>通知</span><span class="usermenu-badge">3</span></a>
+        <div class="usermenu-sep"></div>
+        <a class="usermenu-item" href="login.html" role="menuitem">${icon('logout')}<span>登出</span></a>
+      </div>
+    </div>
   </header>`;
   const root = $('#app'); if(!root) return;
   root.className = 'app'+(collapsed?' collapsed':'');
@@ -135,6 +147,29 @@ function renderShell({active,crumb}){
     const c = document.body.closest('#app') || $('#app');
     c.classList.toggle('collapsed'); localStorage.setItem('al-collapse',c.classList.contains('collapsed')?'1':'0');
   });
+  // [#v1.9.0] topbar avatar dropdown → My Workspace / preferences / notifications / logout
+  if(!$('#alShellStyle')){document.head.insertAdjacentHTML('beforeend',`<style id="alShellStyle">
+    .userwrap{position:relative}
+    .userwrap .user{background:transparent;border:0;font:inherit;color:inherit}
+    .user .ic.tiny{width:14px;height:14px;color:var(--fg-lo);margin-left:2px}
+    .usermenu{position:absolute;top:calc(100% + 8px);right:0;min-width:252px;background:var(--ink-800);border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:var(--shadow-3);padding:var(--s2);z-index:60;opacity:0;visibility:hidden;transform:translateY(-6px);transition:opacity var(--dur-2) var(--ease),transform var(--dur-2) var(--ease)}
+    .usermenu.open{opacity:1;visibility:visible;transform:none}
+    .usermenu-h{display:flex;gap:var(--s3);align-items:center;padding:var(--s2) var(--s3) var(--s3);border-bottom:1px solid var(--line-soft);margin-bottom:var(--s2)}
+    .usermenu-item{display:flex;align-items:center;gap:var(--s3);padding:var(--s2) var(--s3);border-radius:var(--r-md);color:var(--fg-md);font-size:var(--fs-body);text-decoration:none;min-height:36px;font-weight:500}
+    .usermenu-item:hover{background:var(--ink-750);color:var(--fg-hi);text-decoration:none}
+    .usermenu-item .ic{color:var(--fg-lo)}
+    .usermenu-item:hover .ic{color:var(--teal-bright)}
+    .usermenu-badge{margin-left:auto;background:var(--amber-soft);color:var(--amber-bright);font-family:var(--font-mono);font-size:var(--fs-cap);padding:1px 8px;border-radius:99px;font-weight:600}
+    .usermenu-sep{height:1px;background:var(--line-soft);margin:var(--s2) 0}
+    @media(pointer:coarse){.usermenu-item{min-height:44px}}
+    @media(max-width:860px){.usermenu{right:auto;left:0}}
+  </style>`)}
+  const um=$('#userMenu'),ud=$('#userDrop'),uw=$('#userWrap');
+  if(um&&ud&&uw){
+    um.addEventListener('click',e=>{e.stopPropagation();const o=ud.classList.toggle('open');um.setAttribute('aria-expanded',o?'true':'false')});
+    document.addEventListener('click',e=>{if(ud.classList.contains('open')&&!uw.contains(e.target)){ud.classList.remove('open');um.setAttribute('aria-expanded','false')}});
+    document.addEventListener('keydown',e=>{if(e.key==='Escape'&&ud.classList.contains('open')){ud.classList.remove('open');um.setAttribute('aria-expanded','false');um.focus()}});
+  }
   // command palette (lightweight)
   $('#cmdk')?.addEventListener('click',openPalette);
   $('#cmdk')?.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();openPalette()}});
