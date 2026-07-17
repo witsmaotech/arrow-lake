@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Path
+from fastapi import APIRouter, Depends, Path, Request
 from pydantic import BaseModel, Field
 
 from arrow_lake.api.auth_models import Role
@@ -22,10 +22,18 @@ router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 
 @router.get("/users", summary="List users (admin only)")
 async def list_users(
+    request: Request,
     _user: dict = Depends(require_role(Role.ADMIN)),
 ) -> dict:
-    """List registered users. Currently returns placeholder."""
-    return {"users": [], "message": "User management not yet implemented"}
+    """List registered users (v1.9.0: backed by the libSQL identity store)."""
+    store = getattr(request.app.state, "identity_store", None)
+    if store is None:
+        return {"users": [], "message": "User management requires system_db enabled"}
+    try:
+        users = store.list_users()
+    except Exception:  # noqa: BLE001 — fail-soft
+        return {"users": [], "message": "User store unavailable"}
+    return {"users": users, "count": len(users)}
 
 
 # ---------------------------------------------------------------------------

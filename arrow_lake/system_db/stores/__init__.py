@@ -21,6 +21,7 @@ from arrow_lake.system_db.stores.lineage_index import LineageIndexStore
 from arrow_lake.system_db.stores.rag_session import RagSessionStore
 from arrow_lake.system_db.stores.rbac import RbacStore
 from arrow_lake.system_db.stores.task_history import TaskHistoryStore
+from arrow_lake.system_db.stores.user_state import UserStateStore
 
 __all__ = [
     "CatalogStore",
@@ -33,4 +34,5 @@ __all__ = [
     "RbacStore",
     "TaskHistoryStore",
     "TTLCache",
+    "UserStateStore",
 ]

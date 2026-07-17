@@ -31,6 +31,7 @@ from arrow_lake.api.routers.query import router as query_router
 from arrow_lake.api.routers.rag import router as rag_router
 from arrow_lake.api.routers.search import router as search_router
 from arrow_lake.api.routers.system import router as system_router
+from arrow_lake.api.routers.user_state import router as user_state_router
 from arrow_lake.api.routers.async_tasks import router as async_tasks_router
 from arrow_lake.config import ArrowLakeConfig
 
@@ -184,6 +185,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         app.state.lineage_index_store = LineageIndexStore(sys_db)
         app.state.governance_store = GovernanceStore(sys_db)
+        from arrow_lake.system_db.stores import UserStateStore
+
+        app.state.user_state_store = UserStateStore(sys_db)
         # Activate RAG-session persistence in the Lake facade's RAG pipeline.
         lake._rag_session_store = app.state.rag_session_store
         # Activate the lineage adjacency index in the Lake facade's LineageStore.
@@ -563,6 +567,9 @@ def create_app(config: ArrowLakeConfig | None = None) -> FastAPI:
 
     # Async task endpoints (fire-and-forget for heavy operations)
     app.include_router(async_tasks_router)
+
+    # v1.9.0 P3: per-user state (saved queries / notifications / preferences)
+    app.include_router(user_state_router)
 
     # Arrow Lake Console — SQL Worksheet static frontend (same-origin mount).
     # Serves console/{login,olap,index}.html; pages call /api/v1/.../query/olap
