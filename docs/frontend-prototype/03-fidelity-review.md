@@ -135,3 +135,16 @@
 - **覆盖层**：治理/审计/RBAC/备份/索引 五个能力域缺独立页，与产品"安全治理是一等公民"的定位不符。
 
 修完 §4 的 P0（3 项）+ P1（4 页），即可从"高保真演示"升级为"可对接真实 API 的可用控制台"。
+
+## 6. v1.9.0 扩展（阶段 A–D，2026-07-17）
+
+按 `04-v190-extension-plan.md` 把原型从 v1.8.6 基线扩展到 v1.9.0，覆盖控制面（libSQL）+ v1.8.7–1.8.9 能力。**新页 1 + 扩展 9 页**，全部经 playwright 像素校验（渲染 / `${` 泄漏=0 / 0 pageerror）：
+
+- **A** — 新增 `my-workspace.html`（/me/*）；`admin.html` +Personal Tokens/角色 RBAC；顶栏头像下拉（layout.js）。
+- **B** — `governance.html` +治理活动日志 4 子表；`tasks.html` +历史/死信；`lineage.html` 全链路写入 banner。
+- **C** — `system.html` +控制面 SystemDB 面板（v1.9.0）；`kg.html` +双 LLM/增量/版本/模板（修预存图渲染崩溃）；`rag.html` +reranker/持久会话。
+- **D** — `ingest.html` 多格式+auto-embed/FTS 标注；`dashboard.html` 探活加控制面层；`showcase.html` 版本轴→v1.9.0（11→15）；README 刷新。
+
+**顺带修复的预存缺陷**：admin/governance/lineage/ingest 多页用了 `${[...].map()}` 模板字面量直写 HTML body（浏览器不求值，渲染为字面量文本）→ 全部改 JS innerHTML；kg.html 图渲染 `colorOf[n[3]]` 用 type 缺键致 `undefined 不可迭代` 中断整脚本 → 改 `n[4]` colorKey。
+
+**待重审**：新页（my-workspace）与扩展段（tokens/roles/治理日志/DLQ/控制面）的 View API 路由需对齐真实后端（部分为 v1.9.0 规划路由，落地后核对）；showcase 时间机器王牌的版本 diff 数据仍止于 v1.8.6（仅版本演进轴扩到 v1.9.0）。

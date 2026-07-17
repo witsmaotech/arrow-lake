@@ -1,7 +1,7 @@
 # Arrow Lake Console · 企业级前端原型
 
 > 由 `/ui-ux-pro-max` 驱动设计系统 · 自包含可离线运行 · 双击任一 HTML 即开
-> 产品：Arrow Lake 多模态数据湖仓 v1.8.6 · 2026-07-04
+> 产品：Arrow Lake 多模态数据湖仓 v1.9.0 · 2026-07-17
 
 一套**企业级可用**的 Web 控制台原型，把湖仓的全部能力（摄入 / 检索 / OLAP / RAG / 知识图谱 / 治理）变成可点可看的界面。**零外部依赖**（除 Google Fonts），纯 HTML/CSS/原生 JS + 手绘 SVG 图表，离线可跑。
 
@@ -33,7 +33,8 @@ python3 -m http.server 5180
 |---|---|---|
 | `index.html` | 产品主张 · 五层架构 · 六能力柱 | — |
 | `login.html` | JWT / API Key 认证 | `auth/token` · `auth/me` |
-| `dashboard.html` | 总览 · 五层探活 · 降级徽章 · 任务 · 指标 | `health` · `version` · `tasks` · `maintenance/status` |
+| `my-workspace.html` | 个人工作区（收藏查询/仪表盘/收藏/偏好/通知） | `me/{saved-queries,dashboards,favorites,preferences,notifications}` |
+| `dashboard.html` | 总览 · 五层探活（+控制面） · 降级徽章 · 任务 · 指标 | `health` · `version` · `tasks` · `maintenance/status` |
 | `datasets.html` | catalog · 11 种摄入来源（**按来源切换真实表单**） | `datasets` · `datasets/{n}/ingest/*` |
 | `dataset-detail.html` | **10-Tab 工作区**（+索引 Tab：检索前置条件） | `datasets/{n}` · `search/*` · `kg/*` · `quality/*` · `lineage/*` · `admin/acl/{n}` |
 | `embeddings.html` | 嵌入生成（text/image/clip）+ **索引管理** | `embed/*` · `index create/delete` |
@@ -86,20 +87,34 @@ python3 -m http.server 5180
 
 ```
 docs/frontend-prototype/
-├── README.md            # 本文件
-├── design-system.md     # 设计系统裁决
-├── index.html           # 落地页（公开）
-├── login.html           # 登录
-├── dashboard.html       # 总览
-├── datasets.html        # 数据集目录 + 摄入
-├── dataset-detail.html  # ★ 9-Tab 数据集工作区
-├── search.html          # 检索 Playground
-├── rag.html             # RAG 问答
-├── kg.html              # 知识图谱浏览器
-├── olap.html            # OLAP SQL 分析
+├── README.md                  # 本文件
+├── design-system.md           # 设计系统裁决
+├── 03-fidelity-review.md      # 保真度审计
+├── 04-v190-extension-plan.md  # v1.9.0 扩展规划（阶段 A→D）
+├── index.html                 # 落地页（公开）
+├── login.html                 # 登录
+├── dashboard.html             # 总览（五层探活 + 控制面层）
+├── my-workspace.html          # ★ 我的工作区（/me/* · v1.9.0）
+├── datasets.html              # 数据集目录 + 摄入
+├── dataset-detail.html        # ★ 9-Tab 数据集工作区
+├── ingest.html                # 数据摄入（11 来源 · 多格式 + auto-embed/FTS）
+├── embeddings.html            # 嵌入与索引
+├── search.html                # 检索 Playground
+├── rag.html                   # RAG 问答（reranker · 持久会话）
+├── kg.html                    # 知识图谱（双 LLM · 增量 · 版本 · 模板）
+├── olap.html                  # OLAP SQL 分析
+├── lineage.html               # 数据血缘（v1.9.0 全链路写入）
+├── audit.html                 # 审计追踪
+├── governance.html            # 元数据治理 + 治理活动日志
+├── backup.html                # 备份恢复
+├── tasks.html                 # 异步任务（活跃 / 历史 / 死信）
+├── system.html                # 系统健康（+ 控制面 SystemDB）
+├── admin.html                 # 用户与 RBAC（Personal Tokens · 角色）
+├── showcase.html              # 旗舰展示（架构全景 + 三王牌）
+├── narrative.html             # 双线叙事（搁置）
 └── assets/
-    ├── tokens.css       # 设计 token（真值源）
-    ├── app.css          # 组件库
-    ├── layout.js        # 骨架 / 图标 / 图表 / 命令面板 / View API
-    └── landing.css      # 落地页专用样式
+    ├── tokens.css             # 设计 token（真值源）
+    ├── app.css                # 组件库
+    ├── layout.js              # 骨架 / 图标 / 图表 / 命令面板 / View API / 顶栏头像
+    └── landing.css            # 落地页专用样式
 ```

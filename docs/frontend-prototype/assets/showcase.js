@@ -26,7 +26,8 @@ const VERSIONS = [
   ['v1.5.2', '安全基线 8C+13H'], ['v1.6.0', 'Lake facade+9 mixin'], ['v1.6.1', '死锁修复+异步'],
   ['v1.6.2', 'Redis 任务共享'], ['v1.6.3', '优雅降级'], ['v1.7.0', 'hyper-extract KG'],
   ['v1.7.1', 'lancedb0.33 调优'], ['v1.8.0', 'Reranker/CLIP/branches'], ['v1.8.3', 'HA readiness'],
-  ['v1.8.5', '上传修复'], ['v1.8.6', 'per-dataset 分图'],
+  ['v1.8.5', '上传修复'], ['v1.8.6', 'per-dataset 分图'], ['v1.8.7', 'Docling+SQL Worksheet'],
+  ['v1.8.8', 'per-dataset KA 抽取'], ['v1.8.9', 'Reranker 回归+双 LLM'], ['v1.9.0', '控制面 libSQL'],
 ];
 
 // —— 架构渲染 ——

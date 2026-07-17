@@ -88,14 +88,14 @@ $('#depthRail').innerHTML=`<div class="flex between" style="margin-bottom:8px"><
 </div>
 <div class="muted mono" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.07em;margin:2px 0 8px">各层健康</div>
 <div class="grid g-3">
-  ${[['接入','REST · 106 routes','ok'],['能力','检索/RAG/KG 正常','ok'],['计算','Ray worker#2 重启中','warn'],['引擎','Lance · DuckDB','ok'],['持久化','MinIO · Redis · HugeGraph','ok'],['KG 旁路','Gremlin→REST 降级','partial']]
+  ${[['接入','REST · 106 routes','ok'],['能力','检索/RAG/KG 正常','ok'],['计算','Ray worker#2 重启中','warn'],['引擎','Lance · DuckDB','ok'],['持久化','MinIO · Redis · HugeGraph','ok'],['控制面','libSQL · SystemDB V004','ok'],['KG 旁路','Gremlin→REST 降级','partial']]
   .map(d=>`<div><div class="lamp ${d[2]} ${d[2]==='warn'||d[2]==='ok'?'pulse':''}"><i></i>${d[0]}</div><div class="muted" style="font-size:.7rem;margin-top:4px">${d[1]}</div></div>`).join('')}
 </div>`;
 
 $('#depsDetail').innerHTML=[
 ['Ray','2 worker / 1 head','ok','在线'],['HugeGraph','kg_{dataset} 48 图','ok','在线'],
 ['Gremlin','绑定失败 → REST 回退','warn','降级'],['MinIO','9.2 TB / 41% 满','ok','在线'],
-['Redis','session+task+黑名单','ok','在线'],['Ollama','qwen2.5:14b','ok','在线'],
+['Redis','session+task+黑名单','ok','在线'],['Ollama','qwen2.5:14b','ok','在线'],['SystemDB','libSQL · V004 · 控制面','ok','在线'],
 ].map(d=>`<div class="flex between"><span class="lamp ${d[2]}"><i></i><b style="color:var(--fg-hi);font-family:var(--font-ui)">${d[0]}</b> <span class="muted" style="font-family:var(--font-mono);font-size:.7rem">${d[1]}</span></span><span class="tag ${d[2]==='ok'?'ok':'amber'}">${d[3]}</span></div>`).join('');
 
 const qps=[],p99=[];for(let i=0;i<40;i++){qps.push(900+Math.round(Math.sin(i/3)*300+Math.random()*200));p99.push(200+Math.round(Math.cos(i/4)*120+Math.random()*80))}
