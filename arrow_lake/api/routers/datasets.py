@@ -540,6 +540,17 @@ async def ingest_documents(
             lake.ingest_documents, name, all_paths, doc_config=doc_config, doc_type=req.doc_type,
             timeout=_INGEST_TIMEOUT, label="ingest_documents",
         )
+        # [#v1.8.9-E2E] The documents path writes text_content but not embeddings;
+        # embed now so the dataset is vector / hybrid / RAG searchable (previously
+        # such datasets were invisible to retrieval). Best-effort: ingest already
+        # succeeded (FTS over text_content works) if the embedder is unavailable.
+        try:
+            await run_sync(lake.embed_and_add, name, timeout=_INGEST_TIMEOUT, label="embed_documents")
+        except Exception as exc:  # noqa: BLE001 — never fail ingest on embedding
+            import structlog
+            structlog.get_logger(__name__).warning(
+                "ingest.embed_after_documents_failed", dataset=name, err=str(exc)[:160],
+            )
         _after_ingest_hooks(request, name, lake)
         return IngestResponse.from_report(report)
     finally:
