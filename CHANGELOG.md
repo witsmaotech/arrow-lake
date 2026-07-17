@@ -6,6 +6,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.9.0] - 2026-07-17
+
+**Turso/libSQL 统一控制面库**。引入 libSQL 作控制面统一基础数据库，接管需事务/关系/持久一致的系统级结构化数据，数据面(Lance/DuckDB/HugeGraph/MinIO)完全不动。默认 `system_db.enabled=false` 渐进 opt-in。详见 `docs/v1.9.0-turso-system-db-plan.md`。
+
+### Added — 控制面库 (`arrow_lake/system_db/`)
+- **SystemDB** 单例(libsql + 连接重试 + health probe + 写 RLock)+ 轻量 **migration runner**(V001-V004 顺序 SQL，无 alembic)。
+- **10 个 store**：RbacStore / IdentityStore(personal_tokens) / CatalogStore / TaskHistoryStore / IngestDLQStore / RagSessionStore / LineageIndexStore / GovernanceStore / UserStateStore + TTLCache + FailMode。
+- **P0 RBAC + 身份持久化**：PermissionChecker 持可选 RbacStore（有则路由、无则原内存字典 fallback，零行为变化）；`users` + `personal_tokens`（al_ 前缀 / sha256 / hmac.compare_digest / 撤销 / 过期）；auth 中间件懒解析 personal_token，miss 回落全局 api_key（bootstrap 逃生通道）。
+- **P1 catalog/任务/DLQ/RAG**：TaskManager 加法式历史持久化（完成/失败→`task_history`，get_task 超 Redis 2h TTL 回退历史）；IngestDeadLetterQueue / SessionStore DI-ready（store 优先 + 原 fallback）。
+- **P2 血缘索引 + 治理**：LineageIndexStore 接入 `LineageStore.record_event`（fail-backfill，Lance 仍 SoT）；GovernanceStore（schema_changelog / maintenance_runs / schedules / config_changelog）。
+- **P3 用户态**：UserStateStore（saved_queries / dashboards / favorites / user_preferences / notifications）；admin `/users` 接 IdentityStore（不再"未实现"）；新路由 `/api/v1/me/*`（按 personal_token user_id 鉴权）。
+- **compose `system-db` 服务**（`ghcr.io/tursodatabase/libsql-server`）+ 卷 + api depends_on + `ARROW_LAKE__SYSTEM_DB__*` env。pyproject 加 `libsql>=0.1`。
+
+### Changed — domain 接线（全链路真生效）
+- **血缘全写入路径**：Lake 全部写入经 `_lineage_after_ingest` helper 记血缘 —— 12 ingest 变体 + create_dataset + append_dataset（此前 lineage 全仓零调用，从未记录）。
+- **治理域**：maintenance_scheduler 记 `maintenance_runs`；`_storage_advanced` 的 add_column/add_columns_table/alter_column/drop_column 记 `schema_changelog`（此前 schema 变更无落库）。
+- **RAG session 注入 RAGPipeline**（`_lake_rag._build_session_store`）：RAG 对话跨重启持久激活。
+
+### Fixed — review 修复
+- **P1 [HIGH] `validate_token` last_used_at 节流**：此前每次有效 token 鉴权同步写 DB → 高频 API 经单写串行成瓶颈；现仅当陈旧 >60s 才更新（读已在同一 SELECT）。
+- **P2 [MEDIUM] 血缘记录异步化**：`_lineage_after_ingest` 入有界队列（10000）+ daemon worker，此前同步 Lance append 阻塞 ingest（批量 ingest 显著延迟）；满则丢（可从 Lance 重建）。
+- **stdlib logging 不吃 structlog 风格 kwargs** → 新代码全用 structlog（项目约定）。
+
+### Security
+- review 确认：SQL 注入（全 `?` 参数化）/ user_state IDOR（全 `WHERE user_id=?` + 可信中间件）/ password_hash 泄露（SELECT 排除）/ fail-close（tokens-only 部署 sqld 宕机→401；混合部署→api_key + default_role 特权下降）全过。线程安全实测 libsql 内部串行化（8 线程并发 0 错误）。
+
+### 测试
+- system_db 包 67 新测（connection/migrator/9 store + 集成 + 降级 + review 修复）；全量回归零失败（system_db + rbac + auth）。
+
+### Deferred（低价值/高风险/需新功能）
+- CatalogActor（Ray，prod_minimal 砍 Ray 故休眠）；lineage_hooks（`auto_record_ingest` 已被 facade 路径替代）；Gravitino 对账表；CDC 缓存失效；多副本。
+
+
 ## [1.8.9] - 2026-07-16
 
 自 v1.8.8 以来 17 commits / 46 文件（+2258/−233）。详见 `docs/arrow-lake-v1.8.9-release-zh.md`。
