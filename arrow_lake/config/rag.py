@@ -89,6 +89,10 @@ class RAGConfig(BaseModel):
     history_injection_enabled: bool = True
     history_budget_ratio: float = 0.2
     history_max_turns: int = 6
+    # [#RAG-QA-split] RAG 问答生成专用 LLM。None → 回退全局 llm。
+    # 抽取/重排仍走全局轻量 llm;问答设旗舰(qwen-max@百炼)可显著提升回答质量 +
+    # 不依赖本地 ollama(避免其卡死导致 RAG 超时)。
+    qa_llm: LLMConfig | None = None
 
     @field_validator("context_budget_ratio")
     @classmethod

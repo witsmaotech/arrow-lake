@@ -30,11 +30,19 @@ class _LakeRAGMixin:
 
         def _factory() -> RAGPipeline:
             provider = create_llm_provider(self.config.llm)
+            # [#RAG-QA-split] generation uses a capable QA model (config.rag.qa_llm,
+            # e.g. qwen-max@百炼) when configured; reranker + KG extraction stay on
+            # the lightweight global llm. Falls back to global when qa_llm is None.
+            gen_provider = (
+                create_llm_provider(self.config.rag.qa_llm)
+                if self.config.rag.qa_llm is not None
+                else provider
+            )
             reranker = self._build_reranker(provider)
 
             if not self.config.hugegraph.enabled:
                 return RAGPipeline(
-                    llm_provider=provider,
+                    llm_provider=gen_provider,
                     config=self.config.rag,
                     retriever=self._rag_retriever,
                     context_window_tokens=self.config.llm.context_window_tokens,
@@ -44,14 +52,14 @@ class _LakeRAGMixin:
 
             # Attempt GraphRAG pipeline with KG augmentation
             try:
-                return self._create_graph_rag_pipeline(provider, reranker=reranker)
+                return self._create_graph_rag_pipeline(provider, gen_provider, reranker=reranker)
             except (OSError, ValueError, RuntimeError, ConnectionError):
                 logger.warning(
                     "Failed to create GraphRAGPipeline, falling back to RAGPipeline",
                     exc_info=True,
                 )
                 return RAGPipeline(
-                    llm_provider=provider,
+                    llm_provider=gen_provider,
                     config=self.config.rag,
                     retriever=self._rag_retriever,
                     context_window_tokens=self.config.llm.context_window_tokens,
@@ -61,7 +69,7 @@ class _LakeRAGMixin:
 
         return self._get_component("rag_pipeline", _factory)
 
-    def _create_graph_rag_pipeline(self, provider: Any, reranker: Any = None) -> RAGPipeline:
+    def _create_graph_rag_pipeline(self, provider: Any, gen_provider: Any = None, reranker: Any = None) -> RAGPipeline:
         """Create a GraphRAGPipeline with KG components.
 
         Raises:
@@ -77,7 +85,7 @@ class _LakeRAGMixin:
         kg_retriever = KGRetriever(kg_client, self.config.hugegraph)
 
         return GraphRAGPipeline(
-            llm_provider=provider,
+            llm_provider=gen_provider or provider,  # generation: capable qa_llm (falls back to global)
             config=self.config.rag,
             retriever=self._rag_retriever,
             kg_client=kg_client,
