@@ -109,6 +109,25 @@ class IdentityStore:
             (username,),
         )
 
+    def get_user_with_credentials(self, username: str) -> dict[str, Any] | None:
+        """Return user row including password_hash (for login verification)."""
+        cur = self._db.execute(
+            "SELECT id, username, email, role, is_active, password_hash "
+            "FROM users WHERE username = ?",
+            (username,),
+        )
+        row = cur.fetchone() if cur is not None else None
+        if row is None:
+            return None
+        return {
+            "id": row[0],
+            "username": row[1],
+            "email": row[2],
+            "role": row[3],
+            "is_active": bool(row[4]),
+            "password_hash": row[5],
+        }
+
     def list_users(self) -> list[dict[str, Any]]:
         cur = self._db.execute(
             "SELECT id, username, email, role, is_active, created_at, updated_at "

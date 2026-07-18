@@ -62,12 +62,12 @@
         </button>
       </form>
 
-      <!-- 用户名密码(占位,B 实现后启用)-->
+      <!-- 用户名密码(v1.9.1:接 /auth/login → libSQL IdentityStore pbkdf2 验证)-->
       <form id="formPwd" class="col hidden">
-        <div class="field"><label>用户名</label><input class="input" placeholder="sysop" autocomplete="username" disabled/></div>
-        <div class="field"><label>密码</label><input class="input" type="password" placeholder="••••••••" autocomplete="current-password" disabled/></div>
-        <button class="btn btn-primary" type="submit" style="width:100%;justify-content:center" disabled>登录(规划中)</button>
-        <p class="muted" style="font-size:.72rem;margin-top:var(--s2)">用户名密码登录待后端用户体系就绪(见 <code>docs/architecture-design/rbac-user-system.md</code>)。</p>
+        <div class="field"><label>用户名</label><input class="input" id="username" placeholder="sysop" autocomplete="username"/></div>
+        <div class="field"><label>密码</label><input class="input" id="password" type="password" placeholder="••••••••" autocomplete="current-password"/></div>
+        <button class="btn btn-primary" type="submit" style="width:100%;justify-content:center" id="loginPwdBtn"><i class="placeholder" data-ic="key"></i> 登录</button>
+        <p class="muted" style="font-size:.72rem;margin-top:var(--s2)">用户名密码 → libSQL IdentityStore(pbkdf2)→ JWT pair。</p>
       </form>
 
       <div class="divider"></div>
@@ -94,8 +94,27 @@ tabKey.onclick = () => {
 tabPwd.onclick = () => {
   tabPwd.classList.add("active"); tabKey.classList.remove("active");
   formPwd.classList.remove("hidden"); formKey.classList.add("hidden");
-  toast("用户名密码登录规划中(B),暂用 API Key", "info", 2500);
 };
+
+// v1.9.1 用户名密码登录
+$("#formPwd").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const u = $("#username").value.trim(), p = $("#password").value;
+  if (!u || !p) { toast("请输入用户名和密码", "warn"); return; }
+  const btn = $("#loginPwdBtn");
+  btn.disabled = true; btn.textContent = "登录中…";
+  try {
+    const { loginWithPassword } = await import("./src/auth.js");
+    await loginWithPassword(u, p);
+    location.href = "olap.html";
+  } catch (err) {
+    toast("登录失败: " + err.message, "danger", 5000);
+    $("#password").focus();
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="placeholder" data-ic="key"></i> 登录';
+  }
+});
 
 const form = $("#formKey"), key = $("#apiKey");
 form.addEventListener("submit", async (e) => {

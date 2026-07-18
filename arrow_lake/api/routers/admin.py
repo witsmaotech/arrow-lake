@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Path, Request
+from fastapi import APIRouter, Depends, HTTPException, Path, Request
 from pydantic import BaseModel, Field
 
 from arrow_lake.api.auth_models import Role
@@ -34,6 +34,38 @@ async def list_users(
     except Exception:  # noqa: BLE001 — fail-soft
         return {"users": [], "message": "User store unavailable"}
     return {"users": users, "count": len(users)}
+
+
+class CreateUserRequest(BaseModel):
+    username: str = Field(..., pattern=_NAME_PATTERN)
+    email: str | None = None
+    role: str = Field("viewer", pattern=r"^(admin|editor|viewer)$")
+    password: str = Field(..., min_length=8)
+
+
+@router.post("/users", summary="Create user (admin only)")
+async def create_user(
+    request: Request,
+    *,
+    req: CreateUserRequest,
+    _user: dict = Depends(require_role(Role.ADMIN)),
+) -> dict:
+    """Create a user with a password (v1.9.1: pbkdf2-hashed, stored in libSQL)."""
+    store = getattr(request.app.state, "identity_store", None)
+    if store is None:
+        raise HTTPException(status_code=503, detail="User management requires system_db enabled")
+    from arrow_lake.api.passwords import hash_password
+
+    try:
+        uid = store.create_user(
+            req.username,
+            email=req.email,
+            role=req.role,
+            password_hash=hash_password(req.password),
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=409, detail=f"Could not create user: {exc}") from exc
+    return {"id": uid, "username": req.username, "email": req.email, "role": req.role}
 
 
 # ---------------------------------------------------------------------------

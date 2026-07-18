@@ -34,8 +34,14 @@ window.icon = icon;
 
 /* —— Nav(model:console 当前只有 OLAP 接真,其余规划中灰显)—— */
 const NAV = [
+  { group: "数据", items: [
+    { id: "datasets", label: "数据集", ic: "database", href: "datasets.html" },
+  ] },
   { group: "智能", items: [
     { id: "olap", label: "SQL Worksheet", ic: "olap", href: "olap.html" },
+  ] },
+  { group: "管理", items: [
+    { id: "tasks", label: "异步任务", ic: "dashboard", href: "tasks.html" },
   ] },
 ];
 

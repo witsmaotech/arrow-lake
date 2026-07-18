@@ -7,7 +7,9 @@ const K_APIKEY = "al_apikey";
 
 function isDev() {
   const o = location.origin;
-  return o.startsWith("http://localhost:5180") || o.startsWith("http://127.0.0.1:5180");
+  // dev: 5180 (prototype) / 5189 (console) on localhost or 127.0.0.1
+  return o.startsWith("http://localhost:5180") || o.startsWith("http://127.0.0.1:5180")
+      || o.startsWith("http://localhost:5189") || o.startsWith("http://127.0.0.1:5189");
 }
 export const API_BASE = isDev() ? "http://127.0.0.1:8000/api/v1" : "/api/v1";
 
@@ -39,6 +41,24 @@ export async function login(apiKey) {
   const tok = await r.json();
   setTokens(tok.access_token, tok.refresh_token);
   localStorage.setItem(K_APIKEY, apiKey); // 后续请求也带 X-API-Key(BOTH 双层 auth)
+  return tok;
+}
+
+// v1.9.1: username + password → /auth/login(libSQL IdentityStore pbkdf2 验证)
+export async function loginWithPassword(username, password) {
+  const r = await fetch(`${API_BASE}/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+  if (!r.ok) {
+    let d = "登录失败";
+    try { const j = await r.json(); d = j.detail || d; } catch (_) {}
+    throw new Error(`${r.status}: ${d}`);
+  }
+  const tok = await r.json();
+  setTokens(tok.access_token, tok.refresh_token);
+  localStorage.removeItem(K_APIKEY); // 密码登录无 api_key;后续请求只带 Bearer(jwt 层)
   return tok;
 }
 

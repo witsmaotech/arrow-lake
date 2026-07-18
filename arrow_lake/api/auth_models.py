@@ -34,3 +34,10 @@ class TokenPair(BaseModel):
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
+
+
+class LoginRequest(BaseModel):
+    """Username + password credentials for /auth/login."""
+
+    username: str
+    password: str

@@ -171,6 +171,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.rbac_store = rbac_store
         app.state.identity_store = identity_store
 
+        # AuthService for JWT verification — get_current_user reads
+        # app.state.auth_service (Bearer fallback path; without this, password
+        # login issues a JWT but downstream /tasks, /me etc. return 403).
+        from arrow_lake.api.auth_service import AuthService
+
+        auth_cfg = config.auth
+        app.state.auth_service = AuthService(
+            secret_key=auth_cfg.jwt_secret_key,
+            algorithm=auth_cfg.jwt_algorithm,
+            public_key=auth_cfg.jwt_public_key,
+            private_key=auth_cfg.jwt_private_key,
+            access_token_minutes=auth_cfg.jwt_access_token_minutes,
+            refresh_token_days=auth_cfg.jwt_refresh_token_days,
+            issuer=auth_cfg.jwt_issuer,
+        )
+
         # P1 stores: durable task history (fully wired), catalog / DLQ /
         # RAG-session stores (instantiated on app.state; their facade
         # construction-site injection is a follow-up).

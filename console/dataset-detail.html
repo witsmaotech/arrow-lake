@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>数据集详情 · Arrow Lake Console</title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/tokens.css"/>
+<link rel="stylesheet" href="assets/app.css"/>
+<link rel="stylesheet" href="assets/console.css"/>
+</head>
+<body>
+<div id="app">
+<main class="main"><div class="page">
+  <div class="h-sec between">
+    <div><h1 id="title">数据集</h1><div class="desc" id="meta">加载中…</div></div>
+    <div class="flex"><a class="btn btn-primary btn-sm" id="ingestBtn" href="ingest.html"><i class="placeholder" data-ic="plus"></i> 追加摄入</a></div>
+  </div>
+  <div class="panel"><div class="panel-b" id="body"></div></div>
+</div></main>
+</div>
+<script src="assets/console-layout.js"></script>
+<script type="module">
+import { request } from "./src/api.js";
+import { isLoggedIn } from "./src/auth.js";
+
+if (!isLoggedIn()) location.href = "login.html";
+const { renderShell, icon } = window;
+renderShell({ active: "datasets", crumb: '<a href="datasets.html">数据集</a> › <b id="crumbDs">—</b>' });
+const $ = (s) => document.querySelector(s);
+const ds = new URL(location.href).searchParams.get("ds");
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+if (!ds) {
+  $("#body").innerHTML = `<div class="muted" style="padding:28px;text-align:center">未指定数据集(<code>?ds=name</code>)— <a href="datasets.html" style="color:var(--teal-bright)">返回列表</a></div>`;
+} else {
+  $("#ingestBtn").href = `ingest.html?ds=${encodeURIComponent(ds)}`;
+  $("#crumbDs").textContent = ds;
+  (async () => {
+    try {
+      const d = await request("GET", `/datasets/${encodeURIComponent(ds)}`);
+      $("#title").textContent = d.name;
+      $("#meta").textContent = `v${d.version} · ${(d.num_rows ?? 0).toLocaleString()} 行`;
+      $("#body").innerHTML = `
+        <div class="grid g-3">
+          <div class="kpi"><div class="label">数据集</div><div class="val" style="font-size:1.05rem">${esc(d.name)}</div></div>
+          <div class="kpi"><div class="label">行数</div><div class="val">${(d.num_rows ?? 0).toLocaleString()}</div></div>
+          <div class="kpi"><div class="label">版本</div><div class="val">${d.version ?? "—"}</div></div>
+        </div>
+        <div class="divider" style="margin:var(--s4) 0"></div>
+        <div class="flex" style="gap:8px;flex-wrap:wrap">
+          <a class="btn btn-ghost btn-sm" href="ingest.html?ds=${encodeURIComponent(d.name)}">${icon("plus")} 追加摄入</a>
+          <a class="btn btn-ghost btn-sm" href="tasks.html">${icon("dashboard")} 任务</a>
+          <span class="tag info">后续 Tab(分批接):Schema / 质量 / 血缘 / 索引 / 检索</span>
+        </div>`;
+    } catch (e) {
+      const msg = e?.detail || e?.message || String(e);
+      $("#body").innerHTML = `<div style="color:var(--danger);padding:24px">加载失败:${esc(msg)}</div>`;
+      $("#meta").textContent = "加载失败";
+    }
+  })();
+}
+</script>
+</body>
+</html>

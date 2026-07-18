@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>数据摄入 · Arrow Lake Console</title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/tokens.css"/>
+<link rel="stylesheet" href="assets/app.css"/>
+<link rel="stylesheet" href="assets/console.css"/>
+</head>
+<body>
+<div id="app">
+<main class="main"><div class="page">
+  <div class="h-sec between">
+    <div><h1>数据摄入</h1><div class="desc">POST /datasets/{name}/ingest/{type} · 同步 report + 异步任务</div></div>
+  </div>
+  <div class="panel"><div class="panel-b">
+    <div class="grid g-2">
+      <div class="field"><label>目标数据集</label><input class="input mono" id="ds" placeholder="my_dataset"/></div>
+      <div class="field"><label>来源</label><select class="select" id="src"></select></div>
+    </div>
+    <div id="fields" style="margin-top:var(--s3)"></div>
+    <div class="flex between" style="margin-top:var(--s4)">
+      <div class="flex"><button class="btn btn-primary" id="submit"><i class="placeholder" data-ic="plus"></i> 开始摄入</button></div>
+      <span class="tag info" id="endpt">POST /datasets/{name}/ingest/documents</span>
+    </div>
+  </div></div>
+  <div class="panel flush hidden" id="resultPanel">
+    <div class="panel-h"><i class="placeholder" data-ic="check"></i><h3>摄入结果</h3></div>
+    <div class="panel-b" id="result"></div>
+  </div>
+</div></main>
+</div>
+<script src="assets/console-layout.js"></script>
+<script type="module">
+import { request } from "./src/api.js";
+import { isLoggedIn } from "./src/auth.js";
+import { toast } from "./src/ui/toast.js";
+import { watchTask } from "./src/task.js";
+
+if (!isLoggedIn()) location.href = "login.html";
+const { renderShell } = window;
+renderShell({ active: "datasets", crumb: '<a href="datasets.html">数据集</a> › <b>摄入</b>' });
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+const dsParam = new URL(location.href).searchParams.get("ds");
+if (dsParam) $("#ds").value = dsParam;
+
+const SOURCES = ["documents", "sql", "kafka", "iceberg", "deltalake", "http", "images", "videos", "mixed"];
+$("#src").innerHTML = SOURCES.map((s) => `<option ${s === "documents" ? "selected" : ""}>${s}</option>`).join("");
+
+function renderFields() {
+  const src = $("#src").value;
+  $("#endpt").textContent = `POST /datasets/{name}/ingest/${src}`;
+  if (src === "documents") {
+    $("#fields").innerHTML = `
+      <div class="field"><label>文件路径(pdf_paths,逗号分隔;kreuzberg 全格式)</label><input class="input mono" id="paths" placeholder="/data/lake/docs/report.pdf, /data/lake/docs/notes.md"/></div>
+      <div class="field"><label>doc_type(KG 抽取路由,可选)</label><input class="input mono" id="docType" placeholder="research_paper / report / 留空=untyped"/></div>
+      <div class="muted" style="font-size:.72rem">v1.8.9:auto-embed(text_embedding)+ 自动建 FTS 索引 + 写 text_content 标准schema</div>`;
+  } else {
+    $("#fields").innerHTML = `<div class="muted" style="padding:12px">「${src}」表单待补(端点 <code>/ingest/${src}</code>);当前 demo 走 documents。</div>`;
+  }
+}
+$("#src").addEventListener("change", renderFields);
+renderFields();
+
+$("#submit").addEventListener("click", async () => {
+  const ds = $("#ds").value.trim();
+  if (!ds) { toast("请输入目标数据集名", "warn"); return; }
+  const src = $("#src").value;
+  const btn = $("#submit");
+  btn.disabled = true; btn.textContent = "摄入中…";
+  try {
+    let body = {};
+    if (src === "documents") {
+      const paths = $("#paths").value.split(",").map((s) => s.trim()).filter(Boolean);
+      const dt = $("#docType").value.trim();
+      body = { pdf_paths: paths, doc_type: dt || null };
+    }
+    const res = await request("POST", `/datasets/${encodeURIComponent(ds)}/ingest/${src}`, { body });
+    $("#resultPanel").classList.remove("hidden");
+    $("#result").innerHTML = `<pre style="white-space:pre-wrap;background:var(--ink-950);border:1px solid var(--line);border-radius:var(--r-md);padding:var(--s4);font-family:var(--font-mono);font-size:.78rem;color:var(--fg-md);margin:0">${esc(JSON.stringify(res, null, 2))}</pre>`;
+    toast("摄入已提交", "ok");
+    const tid = res?.task_id || res?.task?.task_id;
+    if (tid) {
+      watchTask(tid, (t) => {
+        toast(`任务 ${String(t.task_id).slice(0, 8)}: ${t.status} ${Math.round(t.progress || 0)}%`, /FAIL|ERROR/.test(t.status || "") ? "warn" : "ok");
+      });
+    }
+  } catch (e) {
+    const msg = e?.detail || e?.message || String(e);
+    toast("摄入失败: " + msg, "danger", 5000);
+    $("#resultPanel").classList.remove("hidden");
+    $("#result").innerHTML = `<div style="color:var(--danger);padding:12px">${esc(msg)}</div>`;
+  } finally {
+    btn.disabled = false; btn.innerHTML = '<i class="placeholder" data-ic="plus"></i> 开始摄入';
+  }
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>异步任务 · Arrow Lake Console</title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/tokens.css"/>
+<link rel="stylesheet" href="assets/app.css"/>
+<link rel="stylesheet" href="assets/console.css"/>
+</head>
+<body>
+<div id="app">
+<main class="main"><div class="page">
+  <div class="h-sec between">
+    <div><h1>异步任务</h1><div class="desc">摄取 / KG 构建 / 嵌入 / 导出 · <span class="mono">GET /api/v1/tasks</span> · 实时轮询</div></div>
+    <div class="flex"><button class="btn btn-ghost btn-sm" id="apiBtn"><i class="placeholder" data-ic="code"></i> API</button></div>
+  </div>
+
+  <div class="panel"><div class="panel-b kpi-row" id="kpis"></div></div>
+
+  <div class="tabs" id="tt">
+    <button class="tab active" data-t="active">活跃任务 <span class="nav-badge" id="bActive">0</span></button>
+    <button class="tab" data-t="history">历史</button>
+  </div>
+
+  <div id="pActive" class="panel flush">
+    <div class="panel-h"><i class="placeholder" data-ic="dashboard"></i><h3>活跃任务</h3><span class="sub">PENDING + RUNNING · 实时刷新</span><span class="actions"><span class="lamp ok pulse"><i></i>live</span></span></div>
+    <div class="tbl-scroll"><table class="tbl">
+      <thead><tr><th>task_id</th><th>类型</th><th>数据集</th><th>状态</th><th>进度</th><th class="num">耗时</th><th class="num">创建</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table></div>
+  </div>
+
+  <div id="pHistory" class="panel flush hidden">
+    <div class="panel-h"><i class="placeholder" data-ic="check"></i><h3>任务历史</h3><span class="sub">终态(COMPLETED / FAILED)· 最近 50 条</span></div>
+    <div class="tbl-scroll"><table class="tbl">
+      <thead><tr><th>task_id</th><th>类型</th><th>数据集</th><th>结果</th><th class="num">耗时</th><th class="num">完成于</th></tr></thead>
+      <tbody id="histRows"></tbody>
+    </table></div>
+  </div>
+</div></main>
+</div>
+
+<script src="assets/console-layout.js"></script>
+<script type="module">
+import { request, API_BASE } from "./src/api.js";
+import { isLoggedIn } from "./src/auth.js";
+import { streamTasks } from "./src/task.js";
+import { toast } from "./src/ui/toast.js";
+
+if (!isLoggedIn()) location.href = "login.html";
+
+const { renderShell, icon } = window;
+renderShell({ active: "tasks", crumb: "<b>异步任务</b>" });
+const $ = (s) => document.querySelector(s);
+const $$ = (s) => [...document.querySelectorAll(s)];
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+const STATUS = {
+  PENDING:   { lamp: "",       pulse: false, label: "待定",   cls: "" },
+  RUNNING:   { lamp: "amber",  pulse: true,  label: "运行中", cls: "amber" },
+  COMPLETED: { lamp: "ok",     pulse: false, label: "完成",   cls: "" },
+  SUCCESS:   { lamp: "ok",     pulse: false, label: "完成",   cls: "" },
+  FAILED:    { lamp: "danger", pulse: false, label: "失败",   cls: "danger" },
+  ERROR:     { lamp: "danger", pulse: false, label: "错误",   cls: "danger" },
+};
+const st = (s) => STATUS[s] || { lamp: "", pulse: false, label: s || "—", cls: "" };
+const isTerm = (s) => /COMPLETED|SUCCESS|FAILED|ERROR|CANCELL/i.test(s || "");
+const fmtDur = (t) => {
+  if (!t?.created_at) return "—";
+  const a = new Date(t.created_at).getTime();
+  const b = t.completed_at ? new Date(t.completed_at).getTime() : Date.now();
+  const s = Math.max(0, Math.round((b - a) / 1000));
+  return s >= 60 ? `${Math.floor(s / 60)}m${s % 60}s` : `${s}s`;
+};
+
+function render(all) {
+  const active = all.filter((t) => !isTerm(t.status));
+  const hist = all.filter((t) => isTerm(t.status)).slice(0, 50);
+  $("#bActive").textContent = active.length;
+  const run = active.filter((t) => t.status === "RUNNING").length;
+  const pend = active.filter((t) => t.status === "PENDING").length;
+  const fail = hist.filter((t) => /FAIL|ERROR/.test(t.status)).length;
+  const done = hist.length - fail;
+  $("#kpis").innerHTML = [
+    ["运行中", run + pend, "warn", "PENDING+RUNNING"],
+    ["已完成", done, "ok", "本批终态"],
+    ["失败", fail, "danger", "需关注"],
+  ].map(([l, v, c, d]) => `<div class="kpi"><div class="label">${l}</div><div class="val" style="color:var(--${c === "warn" ? "warn" : c === "ok" ? "ok" : "danger"})">${v}</div><div class="delta">${d}</div></div>`).join("");
+
+  const rowActive = (t) => {
+    const s = st(t.status); const pct = Math.round(t.progress || 0);
+    return `<tr>
+      <td class="mono" style="font-size:.75rem" title="${esc(t.task_id)}">${esc(t.task_id)}</td>
+      <td><span class="tag">${esc(t.operation || "—")}</span></td>
+      <td><a href="datasets.html?ds=${encodeURIComponent(t.dataset_name || "")}" style="color:var(--teal-bright)">${esc(t.dataset_name || "—")}</a></td>
+      <td><span class="lamp ${s.lamp} ${s.pulse ? "pulse" : ""}"><i></i>${s.label}</span></td>
+      <td><div class="flex" style="gap:8px"><span class="bar ${s.cls}" style="flex:1;max-width:140px"><i style="width:${pct}%"></i></span><span class="pct">${pct}%</span></div></td>
+      <td class="num mono">${fmtDur(t)}</td>
+      <td class="num mono">${esc(t.created_at || "—")}</td>
+    </tr>`;
+  };
+  const rowHist = (t) => {
+    const s = st(t.status);
+    return `<tr>
+      <td class="mono" style="font-size:.75rem">${esc(t.task_id)}</td>
+      <td><span class="tag">${esc(t.operation || "—")}</span></td>
+      <td><a href="datasets.html?ds=${encodeURIComponent(t.dataset_name || "")}" style="color:var(--teal-bright)">${esc(t.dataset_name || "—")}</a></td>
+      <td><span class="lamp ${s.lamp}"><i></i>${s.label}</span></td>
+      <td class="num mono">${fmtDur(t)}</td>
+      <td class="num mono">${esc(t.completed_at || "—")}</td>
+    </tr>`;
+  };
+  $("#rows").innerHTML = active.length ? active.map(rowActive).join("") : `<tr><td colspan="7" class="muted" style="padding:28px;text-align:center">无活跃任务</td></tr>`;
+  $("#histRows").innerHTML = hist.length ? hist.map(rowHist).join("") : `<tr><td colspan="6" class="muted" style="padding:28px;text-align:center">无历史</td></tr>`;
+}
+
+async function load() {
+  try {
+    const data = await request("GET", "/tasks");
+    render(data?.tasks || []);
+  } catch (e) {
+    const msg = e?.detail || e?.message || String(e);
+    $("#rows").innerHTML = `<tr><td colspan="7" style="padding:28px;text-align:center;color:var(--danger)">加载失败:${esc(msg)}<br/><button class="btn btn-ghost btn-sm" id="retry" style="margin-top:10px">重试</button></td></tr>`;
+    $("#retry")?.addEventListener("click", load);
+    toast("任务加载失败:" + msg, "warn", 4000);
+  }
+}
+
+streamTasks((tasks) => render(tasks)); // 实时轮询刷新
+load();
+
+$("#tt").addEventListener("click", (e) => {
+  const b = e.target.closest(".tab"); if (!b) return;
+  $$("#tt .tab").forEach((t) => t.classList.remove("active"));
+  b.classList.add("active");
+  $("#pActive").classList.toggle("hidden", b.dataset.t !== "active");
+  $("#pHistory").classList.toggle("hidden", b.dataset.t !== "history");
+});
+
+$("#apiBtn")?.addEventListener("click", () => window.openApi(
+  "异步任务",
+  `curl -s $API/api/v1/tasks -H "Authorization: Bearer $JWT" -H "X-API-Key: $KEY"`,
+  "lake.tasks.list()"
+));
+</script>
+</body>
+</html>

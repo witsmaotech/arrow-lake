@@ -6,7 +6,7 @@ import hmac
 
 from fastapi import APIRouter, HTTPException, Request
 
-from arrow_lake.api.auth_models import Role, TokenPair
+from arrow_lake.api.auth_models import LoginRequest, Role, TokenPair
 from arrow_lake.api.deps import get_app_config
 from arrow_lake.config import ArrowLakeConfig
 
@@ -117,6 +117,33 @@ async def exchange_token(request: Request) -> TokenPair:
         access_token=svc._encode(payload),
         refresh_token=refresh,
     )
+
+
+@router.post("/login", summary="Login with username + password")
+async def login_with_password(request: Request, creds: LoginRequest) -> TokenPair:
+    """Verify username/password against the libSQL identity store, return JWT pair."""
+    store = getattr(request.app.state, "identity_store", None)
+    if store is None:
+        raise HTTPException(status_code=503, detail="User auth requires system_db enabled")
+    user = store.get_user_with_credentials(creds.username)
+    from arrow_lake.api.passwords import verify_password
+
+    if (
+        not user
+        or not user.get("is_active")
+        or not verify_password(creds.password, user.get("password_hash"))
+    ):
+        raise HTTPException(status_code=401, detail="用户名或密码错误")
+    try:
+        role = Role(user["role"])
+    except ValueError:
+        role = Role.VIEWER
+    svc = _get_auth_service(request)
+    payload = svc.create_access_token(user_id=str(user["id"]), role=role)
+    refresh = svc.create_refresh_token(
+        user_id=str(user["id"]), role=role, permissions=payload.permissions
+    )
+    return TokenPair(access_token=svc._encode(payload), refresh_token=refresh)
 
 
 @router.post("/refresh", summary="Refresh access token")
