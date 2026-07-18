@@ -40,7 +40,8 @@
   white-space:pre-wrap;word-break:break-word}
 
 /* —— Toast —— */
-#toast-host{position:fixed;bottom:20px;right:20px;z-index:200;display:flex;flex-direction:column;gap:8px}
+#toast-host{position:fixed;top:calc(var(--header-h,56px) + 16px);right:20px;z-index:200;display:flex;flex-direction:column;gap:8px;max-height:calc(100vh - var(--header-h,56px) - 32px);overflow:auto;pointer-events:none}
+#toast-host .toast{pointer-events:auto}
 .toast{min-width:240px;max-width:420px;padding:10px 14px;border-radius:var(--r-md);
   background:var(--ink-700);border:1px solid var(--line);color:var(--fg-hi);font-size:.8125rem;
   box-shadow:var(--shadow-2);opacity:0;transform:translateY(8px);transition:all var(--dur-2) var(--ease)}
