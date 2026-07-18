@@ -113,6 +113,7 @@
 import { request } from "./src/api.js";
 import { isLoggedIn } from "./src/auth.js";
 import { toast } from "./src/ui/toast.js";
+import { confirmDialog } from "./src/ui/modal.js";
 import { watchTask } from "./src/task.js";
 
 if (!isLoggedIn()) location.href = "login.html";
@@ -205,7 +206,7 @@ async function loadIndexes() {
     </div>`).join("") : '<div class="muted" style="padding:16px">无索引 — 用上方表单建一个</div>';
     $("#indexes").querySelectorAll("[data-drop]").forEach(b => b.addEventListener("click", async () => {
       const iname = b.dataset.drop;
-      if (!confirm(`删除索引「${iname}」?`)) return;
+      if (!(await confirmDialog({ title: "删除索引", message: `删除索引「${iname}」?该操作不可恢复。`, danger: true, confirmText: "删除" }))) return;
       try { await request("DELETE", `/datasets/${encodeURIComponent(name)}/index/${encodeURIComponent(iname)}`); toast("索引已删除", "ok"); loadAll(); }
       catch (e) { toast("删除失败:" + (e?.detail || e?.message || e), "danger"); }
     }));
