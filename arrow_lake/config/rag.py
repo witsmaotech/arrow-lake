@@ -89,9 +89,11 @@ class RAGConfig(BaseModel):
     history_injection_enabled: bool = True
     history_budget_ratio: float = 0.2
     history_max_turns: int = 6
-    # [#RAG-QA-split] RAG 问答生成专用 LLM。None → 回退全局 llm。
-    # 抽取/重排仍走全局轻量 llm;问答设旗舰(qwen-max@百炼)可显著提升回答质量 +
-    # 不依赖本地 ollama(避免其卡死导致 RAG 超时)。
+    # [#RAG-LLM-split] RAG 两阶段独立 LLM(对称,镜像 KG 的 he_extract_llm/he_qa_llm)。
+    #   extract_llm: 抽取/重排阶段(默认走全局轻量 llm;设了可用百炼 qwen-turbo 等)。
+    #   qa_llm:      问答生成阶段(设旗舰 qwen-max@百炼 可显著提质量 + 不依赖本地 ollama)。
+    # 任一为 None → 回退全局 llm。两者独立。
+    extract_llm: LLMConfig | None = None
     qa_llm: LLMConfig | None = None
 
     @field_validator("context_budget_ratio")

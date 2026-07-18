@@ -29,10 +29,11 @@ class _LakeRAGMixin:
         from arrow_lake.rag.provider import create_llm_provider
 
         def _factory() -> RAGPipeline:
-            provider = create_llm_provider(self.config.llm)
-            # [#RAG-QA-split] generation uses a capable QA model (config.rag.qa_llm,
-            # e.g. qwen-max@百炼) when configured; reranker + KG extraction stay on
-            # the lightweight global llm. Falls back to global when qa_llm is None.
+            # extract/reranker LLM: config.rag.extract_llm → global llm (lightweight default).
+            provider = create_llm_provider(self.config.rag.extract_llm or self.config.llm)
+            # [#RAG-LLM-split] generation uses a capable QA model (config.rag.qa_llm,
+            # e.g. qwen-max@百炼); reranker + KG extraction stay on `provider`. Falls
+            # back to `provider` when qa_llm is None.
             gen_provider = (
                 create_llm_provider(self.config.rag.qa_llm)
                 if self.config.rag.qa_llm is not None

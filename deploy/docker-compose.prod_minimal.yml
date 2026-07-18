@@ -230,6 +230,12 @@ services:
       ARROW_LAKE__RAG__QA_LLM__API_BASE: "https://dashscope.aliyuncs.com/compatible-mode/v1"
       ARROW_LAKE__RAG__QA_LLM__API_KEY: "${DASHSCOPE_API_KEY:-}"
       ARROW_LAKE__RAG__QA_LLM__MODEL: "qwen3-max"
+      # [#RAG-LLM-split] RAG 抽取/重排 LLM(可选;默认回退全局轻量 llm/ministral)。
+      # 想让 RAG 抽取也走百炼轻量(qwen-turbo)时取消注释:
+      # ARROW_LAKE__RAG__EXTRACT_LLM__PROVIDER: "openai"
+      # ARROW_LAKE__RAG__EXTRACT_LLM__API_BASE: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+      # ARROW_LAKE__RAG__EXTRACT_LLM__API_KEY: "${DASHSCOPE_API_KEY:-}"
+      # ARROW_LAKE__RAG__EXTRACT_LLM__MODEL: "qwen-turbo"
       # 候选问答模型 (替换 MODEL 行即换): qwen-max / deepseek-v3 / 本地 qwen3.5:27b
       #   (本地: API_BASE=http://host.docker.internal:11534/v1, API_KEY=ollama)
       # 抽取换百炼轻量 (取消注释, 同 API_BASE/API_KEY):
