@@ -15,7 +15,18 @@
   .turn{margin-bottom:var(--s4)}
   .bubble{padding:12px 14px;border-radius:var(--r-md);font-size:.88rem;line-height:1.6;white-space:pre-wrap;word-break:break-word}
   .bubble.q{background:var(--ink-850);border:1px solid var(--line-soft);margin-left:60px}
-  .bubble.a{background:var(--ink-900);border:1px solid var(--teal-soft,var(--line));color:var(--fg-hi)}
+  .bubble.a{background:var(--ink-900);border:1px solid var(--teal-soft,var(--line));color:var(--fg-hi);white-space:normal}
+  .bubble.a.md h1,.bubble.a.md h2,.bubble.a.md h3,.bubble.a.md h4{margin:.5em 0 .2em;color:var(--fg-hi);line-height:1.3}
+  .bubble.a.md h1{font-size:1.05rem}.bubble.a.md h2{font-size:1rem}.bubble.a.md h3{font-size:.92rem}.bubble.a.md h4{font-size:.84rem}
+  .bubble.a.md p{margin:.35em 0}
+  .bubble.a.md ul,.bubble.a.md ol{margin:.35em 0 .35em 1.4em}
+  .bubble.a.md li{margin:.12em 0}
+  .bubble.a.md code{font-family:var(--font-mono);font-size:.78rem;background:var(--ink-950);padding:1px 5px;border-radius:var(--r-sm);border:1px solid var(--line-soft)}
+  .bubble.a.md pre{background:var(--ink-950);border:1px solid var(--line);border-radius:var(--r-sm);padding:8px;overflow:auto;margin:.4em 0}
+  .bubble.a.md pre code{background:none;border:none;padding:0}
+  .bubble.a.md strong{font-weight:600}
+  .bubble.a.md em{color:var(--fg-md)}
+  .bubble.a.md blockquote{border-left:3px solid var(--teal-soft,var(--line));padding-left:10px;margin:.4em 0;color:var(--fg-md)}
   .turn-role{font-size:.7rem;color:var(--fg-lo);margin-bottom:4px;font-family:var(--font-mono)}
   .cites{margin-top:8px;display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:8px}
   .cite{border:1px solid var(--line-soft);border-radius:var(--r-sm);padding:8px 10px;background:var(--ink-950)}
@@ -132,6 +143,33 @@ async function loadHistory() {
   } catch (_) { /* 历史失败静默 */ }
 }
 
+// 极简 markdown 渲染(escape-first → XSS 安全,无外部依赖/CDN):
+// 支持 ```代码块```、`行内代码`、# 标题、-/* 列表、N. 有序列表、**粗体**、*斜体*、段落。
+function renderMd(src) {
+  if (!src) return "(无回答)";
+  let s = esc(src);
+  const blocks = [], inls = [];
+  s = s.replace(/```[^\n`]*\n?([\s\S]*?)```/g, (_m, c) => { blocks.push(c.replace(/\n$/, "")); return `\x00B${blocks.length - 1}\x00`; });
+  s = s.replace(/`([^`\n]+)`/g, (_m, c) => { inls.push(c); return `\x00I${inls.length - 1}\x00`; });
+  const out = [];
+  for (let g of s.split(/\n{2,}/)) {
+    g = g.replace(/^\n+|\n+$/g, "");
+    if (!g) continue;
+    if (g.startsWith("\x00B") && g.endsWith("\x00")) { out.push(`<pre class="md-pre"><code>${blocks[+g.slice(2, -1)]}</code></pre>`); continue; }
+    const h = g.match(/^(#{1,4})\s+(.*)/);
+    if (h && !g.includes("\n")) { out.push(`<h${h[1].length + 1} class="md-h">${h[2]}</h${h[1].length + 1}>`); continue; }
+    const lines = g.split("\n");
+    if (lines.every(l => /^\s*[-*+]\s+/.test(l))) { out.push(`<ul class="md-ul">${lines.map(l => `<li>${l.replace(/^\s*[-*+]\s+/, "")}</li>`).join("")}</ul>`); continue; }
+    if (lines.every(l => /^\s*\d+[.)]\s+/.test(l))) { out.push(`<ol class="md-ol">${lines.map(l => `<li>${l.replace(/^\s*\d+[.)]\s+/, "")}</li>`).join("")}</ol>`); continue; }
+    out.push(`<p class="md-p">${g.replace(/\n/g, "<br>")}</p>`);
+  }
+  let html = out.join("");
+  html = html.replace(/\x00I(\d+)\x00/g, (_m, i) => `<code class="md-code">${inls[+i]}</code>`);
+  html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  html = html.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>");
+  return html || "(无回答)";
+}
+
 function renderThread() {
   if (!turns.length) { $("#thread").innerHTML = '<div class="empty">选数据集 → 提问开始(答案来自真实 LLM,引用来自检索+重排)</div>'; renderSessionTag(); return; }
   $("#thread").innerHTML = turns.map((t, i) => `
@@ -139,7 +177,7 @@ function renderThread() {
       <div class="turn-role">YOU</div>
       <div class="bubble q">${esc(t.q)}</div>
       <div class="turn-role" style="margin-top:10px">ASSISTANT</div>
-      <div class="bubble a">${esc(t.a || "(无回答)")}</div>
+      <div class="bubble a md">${renderMd(t.a)}</div>
       ${t.citations?.length ? `<div class="cites">${t.citations.map((c, j) => `
         <div class="cite">
           <div class="cite-head"><span class="cite-score">#${j + 1} · ${typeof c.score === "number" ? c.score.toFixed(3) : esc(c.score ?? "—")}</span><span class="cite-meta">chunk ${esc(c.chunk_index)} · ${esc(c.row_id)}</span></div>
