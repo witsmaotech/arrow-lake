@@ -238,11 +238,11 @@ services:
       # ARROW_LAKE__RAG__EXTRACT_LLM__MODEL: "qwen-turbo"
       # 候选问答模型 (替换 MODEL 行即换): qwen-max / deepseek-v3 / 本地 qwen3.5:27b
       #   (本地: API_BASE=http://host.docker.internal:11534/v1, API_KEY=ollama)
-      # 抽取换百炼轻量 (取消注释, 同 API_BASE/API_KEY):
-      # ARROW_LAKE__HUGEGRAPH__HE_EXTRACT_LLM__PROVIDER: "openai"
-      # ARROW_LAKE__HUGEGRAPH__HE_EXTRACT_LLM__API_BASE: "https://dashscope.aliyuncs.com/compatible-mode/v1"
-      # ARROW_LAKE__HUGEGRAPH__HE_EXTRACT_LLM__API_KEY: "${DASHSCOPE_API_KEY:-}"
-      # ARROW_LAKE__HUGEGRAPH__HE_EXTRACT_LLM__MODEL: "qwen-turbo"
+      # 抽取换百炼轻量 (启用:KG 抽取走云端 qwen-turbo,不依赖本地 ollama,json_schema 约束解码):
+      ARROW_LAKE__HUGEGRAPH__HE_EXTRACT_LLM__PROVIDER: "openai"
+      ARROW_LAKE__HUGEGRAPH__HE_EXTRACT_LLM__API_BASE: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+      ARROW_LAKE__HUGEGRAPH__HE_EXTRACT_LLM__API_KEY: "${DASHSCOPE_API_KEY:-}"
+      ARROW_LAKE__HUGEGRAPH__HE_EXTRACT_LLM__MODEL: "qwen-turbo"
       # DuckDB performance tuning (v1.3.4)
       ARROW_LAKE__OLAP__PRESERVE_INSERTION_ORDER: "false"
       ARROW_LAKE__OLAP__TEMP_DIRECTORY: "/tmp/duckdb"
