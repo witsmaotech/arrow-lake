@@ -130,9 +130,12 @@ $("#modeTabs").addEventListener("click", (e) => {
 async function loadDatasets() {
   try {
     const data = await request("GET", "/datasets");
-    const list = data?.datasets || [];
+    const all = data?.datasets || [];
+    // 只列可检索的:有 FTS/向量索引;系统表/图片表无索引 → 过滤掉
+    const searchable = all.filter(d => d.has_vector_index || d.has_fts_index);
     const preset = new URL(location.href).searchParams.get("ds");
-    $("#ds").innerHTML = `<option value="">— 选择数据集 —</option>` + list.map(d => `<option value="${esc(d.name)}"${d.name === preset ? " selected" : ""}>${esc(d.name)} (${(d.num_rows ?? 0).toLocaleString()} 行)</option>`).join("");
+    const tag = (d) => (d.has_vector_index && d.has_fts_index) ? "向量+FTS" : d.has_vector_index ? "向量" : "FTS";
+    $("#ds").innerHTML = `<option value="">— 选择数据集(${searchable.length}/${all.length} 可检索)—</option>` + searchable.map(d => `<option value="${esc(d.name)}"${d.name === preset ? " selected" : ""}>${esc(d.name)} · ${tag(d)} · ${(d.num_rows ?? 0).toLocaleString()} 行</option>`).join("");
     if ($("#ds").value) loadMeta();
   } catch (e) { toast("数据集列表加载失败:" + (e?.detail || e?.message || e), "warn"); }
 }

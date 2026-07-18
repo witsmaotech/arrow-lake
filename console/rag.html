@@ -79,9 +79,13 @@ function curDs() { return $("#ds").value; }
 async function loadDatasets() {
   try {
     const data = await request("GET", "/datasets");
-    const list = data?.datasets || [];
+    const all = data?.datasets || [];
+    // 只列可 RAG 的:有检索索引(FTS/向量)+ 即有文本可检索;系统表/图片表无索引 → 过滤掉
+    const raggable = all.filter(d => d.has_vector_index || d.has_fts_index);
     const preset = new URL(location.href).searchParams.get("ds");
-    $("#ds").innerHTML = `<option value="">— 选择数据集 —</option>` + list.map(d => `<option value="${esc(d.name)}"${d.name === preset ? " selected" : ""}>${esc(d.name)}</option>`).join("");
+    const tag = (d) => (d.has_vector_index && d.has_fts_index) ? "向量+FTS" : d.has_vector_index ? "向量" : "FTS";
+    $("#ds").innerHTML = `<option value="">— 选择数据集(${raggable.length}/${all.length} 可 RAG)—</option>` + raggable.map(d => `<option value="${esc(d.name)}"${d.name === preset ? " selected" : ""}>${esc(d.name)} · ${tag(d)}</option>`).join("");
+    if (preset && !raggable.some(d => d.name === preset)) toast(`数据集「${preset}」无检索索引,不可 RAG(已过滤)`, "warn", 4000);
     restoreSession();
   } catch (e) { toast("数据集列表加载失败:" + (e?.detail || e?.message || e), "warn"); }
 }
