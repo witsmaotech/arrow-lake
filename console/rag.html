@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>RAG · Arrow Lake Console</title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/tokens.css"/>
+<link rel="stylesheet" href="assets/app.css"/>
+<link rel="stylesheet" href="assets/console.css"/>
+<style>
+  .cfg-bar{display:flex;gap:10px;flex-wrap:wrap;align-items:end;padding:12px 14px;background:var(--ink-900);border:1px solid var(--line-soft);border-radius:var(--r-md)}
+  .cfg-bar .field{margin:0;min-width:0}
+  .cfg-bar select,.cfg-bar input{height:34px}
+  .thread{max-height:60vh;overflow:auto;padding:4px 2px}
+  .turn{margin-bottom:var(--s4)}
+  .bubble{padding:12px 14px;border-radius:var(--r-md);font-size:.88rem;line-height:1.6;white-space:pre-wrap;word-break:break-word}
+  .bubble.q{background:var(--ink-850);border:1px solid var(--line-soft);margin-left:60px}
+  .bubble.a{background:var(--ink-900);border:1px solid var(--teal-soft,var(--line));color:var(--fg-hi)}
+  .turn-role{font-size:.7rem;color:var(--fg-lo);margin-bottom:4px;font-family:var(--font-mono)}
+  .cites{margin-top:8px;display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:8px}
+  .cite{border:1px solid var(--line-soft);border-radius:var(--r-sm);padding:8px 10px;background:var(--ink-950)}
+  .cite-head{display:flex;gap:8px;align-items:center;margin-bottom:4px}
+  .cite-score{font-family:var(--font-mono);font-size:.68rem;padding:1px 6px;border-radius:var(--r-sm);background:var(--ink-900);color:var(--teal-bright);border:1px solid var(--line-soft)}
+  .cite-meta{font-family:var(--font-mono);font-size:.66rem;color:var(--fg-lo)}
+  .cite-text{font-size:.74rem;color:var(--fg-md);line-height:1.5;max-height:80px;overflow:auto}
+  .stat{font-family:var(--font-mono);font-size:.7rem;color:var(--fg-lo);margin-top:6px}
+  .empty{padding:40px 0;text-align:center;color:var(--fg-lo)}
+</style>
+</head>
+<body>
+<div id="app">
+<main class="main"><div class="page">
+  <div class="h-sec between">
+    <div><h1>RAG 问答</h1><div class="desc">检索 → 重排 → LLM 答 + 引用 · 持久会话跨刷新续接</div></div>
+    <div class="flex" style="gap:8px;align-items:center">
+      <span class="tag info" id="sessTag" style="font-family:var(--font-mono)">无会话</span>
+      <button class="btn btn-ghost btn-sm" id="newSess">新会话</button>
+    </div>
+  </div>
+
+  <div class="cfg-bar">
+    <div class="field" style="flex:1.4"><label>数据集</label><select class="select" id="ds"></select></div>
+    <div class="field" style="flex:1.2"><label>检索策略</label><select class="select" id="strategy"><option value="">默认</option><option value="fts">FTS</option><option value="vector">向量</option><option value="hybrid">混合</option></select></div>
+    <div class="field" style="flex:1.4"><label>模板</label><select class="select" id="template"><option value="">默认</option></select></div>
+    <div class="field" style="flex:.5"><label>top_k</label><input class="input mono" id="topK" type="number" min="1" value="6"/></div>
+  </div>
+
+  <div class="panel flush" style="margin-top:var(--s4)">
+    <div class="panel-h"><i class="placeholder" data-ic="search"></i><h3>会话</h3><span class="sub" id="turnMeta">—</span></div>
+    <div class="panel-b">
+      <div class="thread" id="thread"><div class="empty">选数据集 → 提问开始(答案来自真实 LLM,引用来自检索+重排)</div></div>
+      <div class="flex" style="gap:8px;margin-top:var(--s3)">
+        <input class="input" id="question" placeholder="针对该数据集提问…" style="flex:1"/>
+        <button class="btn btn-primary btn-sm" id="askBtn">提问</button>
+      </div>
+    </div>
+  </div>
+</div></main>
+</div>
+
+<script src="assets/console-layout.js"></script>
+<script type="module">
+import { request } from "./src/api.js";
+import { isLoggedIn } from "./src/auth.js";
+import { toast } from "./src/ui/toast.js";
+
+if (!isLoggedIn()) location.href = "login.html";
+const { renderShell } = window;
+renderShell({ active: "rag", crumb: '<b>RAG</b>' });
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+const SESS_KEY = "al_rag_session";
+let turns = [];
+let session = null; // {session_id, ds}
+
+function curDs() { return $("#ds").value; }
+
+async function loadDatasets() {
+  try {
+    const data = await request("GET", "/datasets");
+    const list = data?.datasets || [];
+    const preset = new URL(location.href).searchParams.get("ds");
+    $("#ds").innerHTML = `<option value="">— 选择数据集 —</option>` + list.map(d => `<option value="${esc(d.name)}"${d.name === preset ? " selected" : ""}>${esc(d.name)}</option>`).join("");
+    restoreSession();
+  } catch (e) { toast("数据集列表加载失败:" + (e?.detail || e?.message || e), "warn"); }
+}
+async function loadTemplates() {
+  try {
+    const r = await request("GET", "/rag/templates");
+    const ts = r?.templates || [];
+    $("#template").innerHTML = `<option value="">默认</option>` + ts.map(t => `<option value="${esc(t.name)}" title="${esc(t.description)}">${esc(t.name)} · ${esc(t.type)}</option>`).join("");
+  } catch (_) { /* 模板可选,失败不阻塞 */ }
+}
+
+function restoreSession() {
+  try { session = JSON.parse(localStorage.getItem(SESS_KEY) || "null"); } catch (_) { session = null; }
+  if (session && session.ds && session.session_id) {
+    if (curDs() && session.ds !== curDs()) session = null; // 数据集不匹配则丢弃
+    if (session) { $("#ds").value = session.ds; loadHistory(); }
+  }
+  renderSessionTag();
+}
+function renderSessionTag() {
+  $("#sessTag").textContent = session?.session_id ? `会话 ${session.session_id.slice(0, 8)} · ${turns.length} 轮` : "无会话";
+  $("#turnMeta").textContent = `${turns.length} 轮`;
+}
+function saveSession() {
+  if (session) localStorage.setItem(SESS_KEY, JSON.stringify(session));
+  else localStorage.removeItem(SESS_KEY);
+  renderSessionTag();
+}
+$("#newSess").addEventListener("click", () => { session = null; turns = []; saveSession(); renderThread(); toast("已开新会话", "ok"); });
+$("#ds").addEventListener("change", () => { session = null; turns = []; saveSession(); renderThread(); }); // 切数据集重置会话
+
+async function loadHistory() {
+  if (!session?.session_id) return;
+  try {
+    const r = await request("GET", `/rag/history?session_id=${encodeURIComponent(session.session_id)}`);
+    turns = (r?.turns || []).map(t => ({
+      q: t.question || t.q || "",
+      a: t.answer || t.a || "",
+      citations: t.citations || [],
+      retrieval_count: t.retrieval_count,
+      latency_ms: t.latency_ms,
+    }));
+    renderThread();
+  } catch (_) { /* 历史失败静默 */ }
+}
+
+function renderThread() {
+  if (!turns.length) { $("#thread").innerHTML = '<div class="empty">选数据集 → 提问开始(答案来自真实 LLM,引用来自检索+重排)</div>'; renderSessionTag(); return; }
+  $("#thread").innerHTML = turns.map((t, i) => `
+    <div class="turn">
+      <div class="turn-role">YOU</div>
+      <div class="bubble q">${esc(t.q)}</div>
+      <div class="turn-role" style="margin-top:10px">ASSISTANT</div>
+      <div class="bubble a">${esc(t.a || "(无回答)")}</div>
+      ${t.citations?.length ? `<div class="cites">${t.citations.map((c, j) => `
+        <div class="cite">
+          <div class="cite-head"><span class="cite-score">#${j + 1} · ${typeof c.score === "number" ? c.score.toFixed(3) : esc(c.score ?? "—")}</span><span class="cite-meta">chunk ${esc(c.chunk_index)} · ${esc(c.row_id)}</span></div>
+          <div class="cite-text">${esc((c.text_excerpt || "").slice(0, 240))}</div>
+        </div>`).join("")}</div>` : ""}
+      <div class="stat">检索 ${t.retrieval_count ?? (t.citations?.length || 0)} 条${t.latency_ms ? ` · ${(t.latency_ms / 1000).toFixed(2)}s` : ""}</div>
+    </div>`).join("");
+  $("#thread").scrollTop = $("#thread").scrollHeight;
+  renderSessionTag();
+}
+
+$("#askBtn").addEventListener("click", ask);
+$("#question").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(); } });
+
+async function ask() {
+  const ds = curDs(); if (!ds) return toast("先选数据集", "warn");
+  const question = $("#question").value.trim(); if (!question) return toast("输入问题", "warn");
+  const btn = $("#askBtn"); btn.disabled = true; btn.textContent = "检索+生成中…";
+  // 占位:先显示用户问题 + "思考中"
+  turns.push({ q: question, a: "…", citations: [], retrieval_count: 0, pending: true });
+  $("#question").value = "";
+  renderThread();
+  try {
+    const body = {
+      question, dataset_name: ds,
+      retrieval_strategy: $("#strategy").value || null,
+      template_name: $("#template").value || null,
+      top_k: parseInt($("#topK").value, 10) || null,
+      session_id: session?.session_id || null,
+    };
+    const r = await request("POST", "/rag/query", { body });
+    const last = turns[turns.length - 1];
+    last.a = r.answer || "(无回答)";
+    last.citations = r.citations || [];
+    last.retrieval_count = r.retrieval_count;
+    last.latency_ms = r.latency_ms;
+    last.pending = false;
+    if (r.session_id) { session = { session_id: r.session_id, ds }; saveSession(); }
+    renderThread();
+  } catch (e) {
+    const last = turns[turns.length - 1];
+    last.a = "❌ 失败:" + (e?.detail || e?.message || String(e));
+    last.pending = false;
+    renderThread();
+    toast("RAG 查询失败", "danger");
+  } finally { btn.disabled = false; btn.textContent = "提问"; }
+}
+
+loadDatasets(); loadTemplates();
+window.applyIcons && applyIcons(document);
+</script>
+</body>
+</html>
