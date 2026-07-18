@@ -118,20 +118,22 @@ async function loadSchema() {
   } catch (_) { $("#schemaPanel").style.display = "none"; }
 }
 
-// 建 KG(异步,专用 status 端点轮询)
+// 建 KG(异步,专用 status 端点轮询;按钮全程 disabled 直到完成/失败/超时)
+function resetBuildBtn() { const b = $("#buildBtn"); b.disabled = false; b.textContent = "建 KG"; }
 $("#buildBtn").addEventListener("click", async () => {
   const name = curDs(); if (!name) return toast("先选数据集", "warn");
   if (!confirm(`对「${name}」建/重建 KG?异步抽取,大 dataset 耗时长。`)) return;
-  const btn = $("#buildBtn"); btn.disabled = true; $("#buildStatus").textContent = "提交中…";
+  const btn = $("#buildBtn"); btn.disabled = true; btn.textContent = "构建中…"; $("#buildStatus").textContent = "提交中…";
+  let tid;
   try {
     const r = await request("POST", "/kg/build", { body: { dataset_name: name } });
-    const tid = r.task_id || r.id;
-    if (!tid) { $("#buildStatus").textContent = "已提交(无 task_id,稍后刷新统计)"; setTimeout(loadAll, 5000); return; }
+    tid = r.task_id || r.id;
+    if (!tid) { $("#buildStatus").textContent = "已提交(无 task_id,5s 后刷新统计)"; setTimeout(() => { resetBuildBtn(); loadAll(); }, 5000); return; }
     $("#buildStatus").innerHTML = `任务 <span class="mono">${esc(tid.slice(0, 8))}</span> 运行中… <a href="tasks.html" style="color:var(--teal-bright)">队列</a>`;
     toast("KG 构建已提交", "ok");
-    pollBuild(tid);
-  } catch (e) { $("#buildStatus").textContent = ""; toast("提交失败:" + (e?.detail || e?.message || e), "danger"); }
-  finally { btn.disabled = false; }
+  } catch (e) { $("#buildStatus").textContent = ""; resetBuildBtn(); toast("提交失败:" + (e?.detail || e?.message || e), "danger"); return; }
+  // 按钮保持 disabled;pollBuild 在完成/失败/超时时才 resetBuildBtn
+  pollBuild(tid);
 });
 function pollBuild(tid) {
   let n = 0;
@@ -141,10 +143,10 @@ function pollBuild(tid) {
       const s = await request("GET", `/kg/build/${encodeURIComponent(tid)}/status`);
       const st = s.status || s.state || "";
       $("#buildStatus").innerHTML = `任务 <span class="mono">${esc(tid.slice(0, 8))}</span>:${esc(st)}`;
-      if (/COMPLETED|SUCCESS|DONE/i.test(st)) { clearInterval(t); toast("KG 构建完成", "ok"); $("#buildStatus").textContent = "完成"; loadAll(); }
-      else if (/FAIL|ERROR/i.test(st)) { clearInterval(t); toast("KG 构建失败:" + (s.error || st), "danger"); $("#buildStatus").textContent = "失败"; }
+      if (/COMPLETED|SUCCESS|DONE/i.test(st)) { clearInterval(t); toast("KG 构建完成", "ok"); $("#buildStatus").textContent = "完成"; resetBuildBtn(); loadAll(); }
+      else if (/FAIL|ERROR/i.test(st)) { clearInterval(t); toast("KG 构建失败:" + (s.error || st), "danger"); $("#buildStatus").textContent = "失败"; resetBuildBtn(); }
     } catch (_) {}
-    if (n > 120) { clearInterval(t); $("#buildStatus").textContent = "轮询超时,请手动刷新"; }
+    if (n > 120) { clearInterval(t); $("#buildStatus").textContent = "轮询超时,请手动刷新"; resetBuildBtn(); }
   }, 4000);
 }
 
