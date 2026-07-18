@@ -181,7 +181,8 @@ async function ask() {
     renderThread();
   } catch (e) {
     const last = turns[turns.length - 1];
-    last.a = "❌ 失败:" + (e?.detail || e?.message || String(e));
+    const msg = String(e?.detail || e?.message || e).slice(0, 200);
+    last.a = "❌ 查询失败:" + msg;
     last.pending = false;
     renderThread();
     toast("RAG 查询失败", "danger");
