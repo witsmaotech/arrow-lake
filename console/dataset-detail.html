@@ -7,6 +7,13 @@
 <link rel="stylesheet" href="assets/tokens.css"/>
 <link rel="stylesheet" href="assets/app.css"/>
 <link rel="stylesheet" href="assets/console.css"/>
+<style>
+  .schema-chip{display:inline-block;font-family:var(--font-mono);font-size:.72rem;padding:2px 8px;border:1px solid var(--teal-soft,var(--line));border-radius:var(--r-sm);background:var(--ink-900);color:var(--teal-bright);margin:0 4px 4px 0}
+  .preview-wrap{overflow:auto;max-height:600px;border:1px solid var(--line-soft);border-radius:var(--r-sm)}
+  .preview-wrap table{margin:0}
+  .preview-wrap td{max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.74rem}
+  .preview-wrap th{position:sticky;top:0;background:var(--ink-850);z-index:1;font-size:.7rem}
+</style>
 </head>
 <body>
 <div id="app">
@@ -16,8 +23,17 @@
     <div class="flex"><a class="btn btn-primary btn-sm" id="ingestBtn" href="ingest.html"><i class="placeholder" data-ic="plus"></i> 追加摄入</a></div>
   </div>
   <div class="panel"><div class="panel-b" id="body"></div></div>
+  <div class="panel flush" id="schemaPanel" style="margin-top:var(--s4);display:none">
+    <div class="panel-h"><i class="placeholder" data-ic="code"></i><h3>Schema(字段)</h3><span class="sub" id="schemaMeta">—</span></div>
+    <div class="panel-b" id="schema"></div>
+  </div>
+  <div class="panel flush" id="previewPanel" style="margin-top:var(--s4)">
+    <div class="panel-h"><i class="placeholder" data-ic="database"></i><h3>前 100 行预览</h3><span class="sub" id="previewMeta">—</span></div>
+    <div class="panel-b" id="preview"></div>
+  </div>
 </div></main>
 </div>
+
 <script src="assets/console-layout.js"></script>
 <script type="module">
 import { request } from "./src/api.js";
@@ -29,13 +45,22 @@ renderShell({ active: "datasets", crumb: '<a href="datasets.html">数据集</a> 
 const $ = (s) => document.querySelector(s);
 const ds = new URL(location.href).searchParams.get("ds");
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const fmtCell = (v) => {
+  if (v == null) return '<span class="muted">—</span>';
+  const s = typeof v === "object" ? JSON.stringify(v) : String(v);
+  return s.length > 120 ? esc(s.slice(0, 120)) + '<span class="muted">…</span>' : esc(s);
+};
+const fmtSize = (b) => { if (b == null || isNaN(b)) return "—"; const u = ["B", "KB", "MB", "GB", "TB"]; let i = 0, n = Number(b); while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; } return `${n.toFixed(n < 10 && i > 0 ? 1 : 0)} ${u[i]}`; };
+const fmtDate = (s) => { if (!s) return "—"; const d = new Date(s); if (isNaN(d)) return String(s).slice(0, 16); const p = (n) => String(n).padStart(2, "0"); return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
 
 if (!ds) {
-  $("#body").innerHTML = `<div class="muted" style="padding:28px;text-align:center">未指定数据集(<code>?ds=name</code>)— <a href="datasets.html" style="color:var(--teal-bright)">返回列表</a></div>`;
+  $("#body").innerHTML = '<div class="muted" style="padding:28px;text-align:center">未指定数据集(<code>?ds=name</code>)— <a href="datasets.html" style="color:var(--teal-bright)">返回列表</a></div>';
 } else {
   $("#ingestBtn").href = `ingest.html?ds=${encodeURIComponent(ds)}`;
   $("#crumbDs").textContent = ds;
+
   (async () => {
+    // 1) 元数据
     try {
       const d = await request("GET", `/datasets/${encodeURIComponent(ds)}`);
       $("#title").textContent = d.name;
@@ -44,18 +69,57 @@ if (!ds) {
         <div class="grid g-3">
           <div class="kpi"><div class="label">数据集</div><div class="val" style="font-size:1.05rem">${esc(d.name)}</div></div>
           <div class="kpi"><div class="label">行数</div><div class="val">${(d.num_rows ?? 0).toLocaleString()}</div></div>
+          <div class="kpi"><div class="label">大小</div><div class="val">${fmtSize(d.size_bytes)}</div></div>
           <div class="kpi"><div class="label">版本</div><div class="val">${d.version ?? "—"}</div></div>
+          <div class="kpi"><div class="label">创建</div><div class="val" style="font-size:.95rem">${fmtDate(d.created_at)}</div></div>
+          <div class="kpi"><div class="label">更新</div><div class="val" style="font-size:.95rem">${fmtDate(d.updated_at)}</div></div>
         </div>
         <div class="divider" style="margin:var(--s4) 0"></div>
         <div class="flex" style="gap:8px;flex-wrap:wrap">
           <a class="btn btn-ghost btn-sm" href="ingest.html?ds=${encodeURIComponent(d.name)}">${icon("plus")} 追加摄入</a>
           <a class="btn btn-ghost btn-sm" href="tasks.html">${icon("dashboard")} 任务</a>
-          <span class="tag info">后续 Tab(分批接):Schema / 质量 / 血缘 / 索引 / 检索</span>
+          <a class="btn btn-ghost btn-sm" href="datasets.html">${icon("arrowR")} 返回列表</a>
         </div>`;
     } catch (e) {
-      const msg = e?.detail || e?.message || String(e);
-      $("#body").innerHTML = `<div style="color:var(--danger);padding:24px">加载失败:${esc(msg)}</div>`;
+      $("#body").innerHTML = `<div style="color:var(--danger);padding:24px">元数据加载失败:${esc(e?.detail || e?.message || e)}</div>`;
       $("#meta").textContent = "加载失败";
+    }
+
+    // 1.5) 真实 schema(字段名 + Arrow 类型,从 Lance schema 直读,空数据集也有)
+    try {
+      const s = await request("GET", `/datasets/${encodeURIComponent(ds)}/schema`);
+      const fields = s?.fields || [];
+      if (fields.length) {
+        $("#schemaPanel").style.display = "";
+        $("#schemaMeta").textContent = `${fields.length} 个字段`;
+        $("#schema").innerHTML = fields.map((f) => `<span class="schema-chip" title="${esc(f.type)}${f.nullable ? "" : " · NOT NULL"}">${esc(f.name)}<span style="color:var(--fg-lo)"> : ${esc(f.type)}</span></span>`).join("");
+      }
+    } catch (_) { /* schema 取失败不阻塞预览 */ }
+
+    // 2) 前 100 行预览(POST /query/olap SELECT * LIMIT 100)
+    $("#preview").innerHTML = '<div class="muted" style="padding:20px;text-align:center">加载前 100 行…</div>';
+    try {
+      const res = await request("POST", `/datasets/${encodeURIComponent(ds)}/query/olap`, {
+        body: { sql: `SELECT * FROM "${ds}" LIMIT 100` },
+      });
+      const rows = res?.rows || [];
+      const cols = rows.length ? Object.keys(rows[0]) : [];
+      $("#previewMeta").textContent = `${res?.row_count ?? rows.length} 行 · ${res?.column_count ?? cols.length} 列`;
+      if (!rows.length) {
+        $("#preview").innerHTML = '<div class="muted" style="padding:24px;text-align:center">数据集为空(无行)</div>';
+      } else {
+        // 表
+        const head = cols.map((c) => `<th>${esc(c)}</th>`).join("");
+        const body = rows.map((r) => `<tr>${cols.map((c) => {
+          const raw = r[c];
+          const title = typeof raw === "object" ? JSON.stringify(raw) : String(raw ?? "");
+          return `<td title="${esc(title)}">${fmtCell(raw)}</td>`;
+        }).join("")}</tr>`).join("");
+        $("#preview").innerHTML = `<div class="preview-wrap"><table class="tbl"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+      }
+    } catch (e) {
+      const msg = e?.detail || e?.message || String(e);
+      $("#preview").innerHTML = `<div style="color:var(--danger);padding:16px">预览失败:${esc(msg)}<br/><span class="muted" style="font-size:.72rem">可能:数据集无表结构 / SQL 安全校验拒 / 列名特殊;可在 OLAP Worksheet 手写 SQL</span></div>`;
     }
   })();
 }

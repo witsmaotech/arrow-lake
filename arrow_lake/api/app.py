@@ -426,17 +426,22 @@ def create_app(config: ArrowLakeConfig | None = None) -> FastAPI:
     if config.api.enabled:
         _validate_auth_config(config)
 
-    # CORS — restrict methods and headers to safe defaults
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=config.api.cors_origins,
-        allow_credentials=False,
-        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        allow_headers=["Authorization", "Content-Type", "X-API-Key", "X-Request-ID"],
-    )
+    # NOTE: CORS is registered at the END of this function (after all
+    # @app.middleware) so it sits at the OUTERMOST layer. Registering it here
+    # (early) made it an inner layer — inner auth 401 responses had no
+    # Allow-Origin, which the browser masked as a CORS error.
 
     # Exception handlers (before middleware to catch errors)
     register_exception_handlers(app)
+
+    # Catch-all for unhandled exceptions is registered LATER as an HTTP
+    # middleware (see catch_unhandled_errors_middleware below), NOT via
+    # @app.exception_handler(Exception). FastAPI routes an Exception handler
+    # into ServerErrorMiddleware, which sits ABOVE all user middleware
+    # (including CORS) — so its 500 responses bypass CORS and the browser
+    # masks the real error as "No CORS header". The middleware form runs
+    # BELOW the CORS layer (CORS is added last → outermost), so the 500
+    # JSONResponse it returns flows back through CORS and gets Allow-Origin.
 
     # GZip compression (Starlette built-in)
     app.add_middleware(GZipMiddleware, minimum_size=1000)
@@ -565,6 +570,45 @@ def create_app(config: ArrowLakeConfig | None = None) -> FastAPI:
                 request, call_next, auth_service=svc,
                 docs_enabled=config.api.docs_enabled,
             )
+
+    # Catch-all for unhandled exceptions — registered as HTTP middleware so it
+    # sits BELOW the CORS layer added next (CORS is added last → outermost).
+    # Returning a JSONResponse here (instead of letting the exception escape
+    # to ServerErrorMiddleware, which is ABOVE CORS) means the 500 response
+    # flows back through CORS and carries Access-Control-Allow-Origin — so the
+    # browser shows the real 500 instead of masking it as "No CORS header".
+    @app.middleware("http")
+    async def catch_unhandled_errors_middleware(request, call_next):  # noqa: ANN001
+        try:
+            return await call_next(request)
+        except Exception as exc:  # noqa: BLE001 — log + normalize to JSON 500
+            import structlog
+            from starlette.responses import JSONResponse
+
+            structlog.get_logger(__name__).exception(
+                "unhandled_error", error=str(exc)[:200], path=request.url.path,
+            )
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "success": False,
+                    "error": "INTERNAL_ERROR",
+                    "message": "Internal server error",
+                },
+            )
+
+    # CORS — registered LAST so it's the OUTERMOST middleware. Starlette puts
+    # later-registered middleware on the outside; this way every response
+    # (including 401/422/500 from inner auth / rate-limit layers) gets
+    # Access-Control-Allow-Origin attached — otherwise the browser masks real
+    # errors as "No CORS header".
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=config.api.cors_origins,
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "X-API-Key", "X-Request-ID"],
+    )
 
     app.include_router(system_router)
     app.include_router(datasets_router)

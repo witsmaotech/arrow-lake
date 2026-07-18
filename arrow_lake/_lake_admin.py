@@ -11,6 +11,13 @@ from arrow_lake.exceptions import StorageError
 
 logger = logging.getLogger(__name__)
 
+# Short-TTL cache for catalog() — /datasets opens every dataset on each call
+# (count_rows + list_versions + list_indices). This avoids re-doing that work
+# within a few seconds. Stale window ≤ _CATALOG_CACHE_TTL; bumped through on
+# next call. Invalidation is time-based (ingest/delete settle within TTL).
+_CATALOG_CACHE_TTL: float = 5.0
+_CATALOG_CACHE: dict[str, Any] = {"ts": 0.0, "result": None}
+
 if TYPE_CHECKING:
     from arrow_lake._models import CatalogResult, HealthInfo
     from arrow_lake.ops.backup import BackupInfo
@@ -31,21 +38,103 @@ class _LakeAdminMixin:
             catalog_queries_total.inc()
         from arrow_lake._models import CatalogEntry, CatalogResult
 
+        cached = _CATALOG_CACHE["result"]
+        if cached is not None and (time.monotonic() - _CATALOG_CACHE["ts"]) < _CATALOG_CACHE_TTL:
+            return cached
+
         storage = self._get_storage()
         names = storage.list_datasets()
         entries: list[CatalogEntry] = []
         for name in names:
+            ds = None
+            num_rows = 0
             try:
                 ds = storage.open_dataset(name)
                 num_rows = ds.count_rows()
             except (StorageError, OSError):
-                num_rows = 0
+                ds = None
             try:
                 version = storage.get_version(name)
             except (StorageError, OSError):
                 version = 0
-            entries.append(CatalogEntry(name=name, version=version, num_rows=num_rows))
-        return CatalogResult(datasets=entries, total=len(entries))
+            num_columns = 0
+            vector_dim: int | None = None
+            has_vector = False
+            has_fts = False
+            size_bytes: int | None = None
+            created_at: str | None = None
+            updated_at: str | None = None
+            if ds is not None:
+                # The dataset is already opened for count_rows above; pull the
+                # cheap extended metadata from the same handle (schema, indices,
+                # size) so the catalog table can show columns / vector dim /
+                # index status / size without extra opens.
+                try:
+                    import pyarrow as pa
+
+                    schema = ds.schema
+                    num_columns = len(schema)
+                    for field in schema:
+                        if pa.types.is_fixed_size_list(field.type):
+                            vector_dim = int(field.type.list_size)
+                            break
+                except Exception:  # noqa: BLE001
+                    pass
+                try:
+                    for idx in ds.list_indices() or []:
+                        if isinstance(idx, dict):
+                            t = str(idx.get("type") or idx.get("index_type") or "")
+                            cols = idx.get("columns") or []
+                        else:
+                            t = str(getattr(idx, "type", None) or getattr(idx, "index_type", None) or "")
+                            cols = getattr(idx, "columns", None) or []
+                        tu = t.upper()
+                        cols_s = " ".join(str(c).lower() for c in cols)
+                        if "FTS" in tu or "BM25" in tu or "INVERT" in tu or "fts" in cols_s:
+                            has_fts = True
+                        elif "VECTOR" in tu or "IVF" in tu or "HNSW" in tu:
+                            has_vector = True
+                except Exception:  # noqa: BLE001
+                    pass
+                # LanceTable.list_versions() → [{"version","timestamp"(datetime),
+                # "metadata": {"total_files_size"(str), ...}}]. One call gives us
+                # initial-ingest time (v1), last-write time (latest version), and
+                # the on-disk size (latest version's total_files_size). The
+                # LanceTable wrapper lacks .versions()/.size_in_bytes(), so this
+                # is the right entry point.
+                try:
+                    vs = ds.list_versions() or []
+                    if vs:
+                        # Single pass for v1 (created) + latest (updated): avoid
+                        # sorting the whole version list just to read both ends.
+                        first = last = vs[0]
+                        for v in vs[1:]:
+                            vv = v.get("version", 0)
+                            if vv < first.get("version", 0):
+                                first = v
+                            if vv > last.get("version", 0):
+                                last = v
+                        c, u = first.get("timestamp"), last.get("timestamp")
+                        if c is not None:
+                            created_at = c.isoformat() if hasattr(c, "isoformat") else str(c)
+                        if u is not None:
+                            updated_at = u.isoformat() if hasattr(u, "isoformat") else str(u)
+                        meta = last.get("metadata") or {}
+                        sz = meta.get("total_files_size")
+                        if sz is not None:
+                            size_bytes = int(sz)
+                except Exception:  # noqa: BLE001
+                    pass
+            entries.append(CatalogEntry(
+                name=name, version=version, num_rows=num_rows,
+                num_columns=num_columns, vector_dim=vector_dim,
+                has_vector_index=has_vector, has_fts_index=has_fts, size_bytes=size_bytes,
+                created_at=created_at, updated_at=updated_at,
+            ))
+        result = CatalogResult(datasets=entries, total=len(entries))
+        _CATALOG_CACHE["ts"] = time.monotonic()
+        _CATALOG_CACHE["result"] = result
+        return result
 
     def list_datasets(self) -> list[str]:
         """List all dataset names.

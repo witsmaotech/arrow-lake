@@ -1,0 +1,42 @@
+# 前后端联调 override:bind-mount 宿主 arrow_lake/ 源码进容器 + uvicorn --reload。
+# 改 Python 源码秒级热重载,无需 rebuild 镜像;依赖/环境/代理/其它容器全保持不变。
+# 前端 console/ 仍走宿主 5189(python3 -m http.server 5189 --directory console)。
+#
+# 用法:
+#   docker compose --project-directory deploy -p arrow-lake \
+#     -f deploy/docker-compose.prod_minimal.yml \
+#     -f deploy/docker-compose.dev.override.yml up -d api
+#
+# 联调结束、要出镜像时,去掉本 override 重 build:
+#   docker compose --project-directory deploy -p arrow-lake \
+#     -f deploy/docker-compose.prod_minimal.yml build api && \
+#   docker compose --project-directory deploy -p arrow-lake \
+#     -f deploy/docker-compose.prod_minimal.yml up -d api
+#
+# 注:
+# - PYTHONPATH=/app 让 import arrow_lake 走挂载源码(/app/arrow_lake)而非镜像内
+#   site-packages 的安装副本(Dockerfile 是非 editable install)。
+# - --reload 与 --workers 互斥,故 dev 用单 worker。
+# - bind mount 绕过容器 read_only,Python __pycache__ 可写入挂载目录。
+services:
+  api:
+    command:
+      - uvicorn
+      - arrow_lake.api.app:create_app
+      - --factory
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --reload
+      - --reload-dir
+      - /app/arrow_lake
+      - --proxy-headers
+      - --forwarded-allow-ips
+      - 172.30.0.0/16
+    environment:
+      PYTHONPATH: /app
+    volumes:
+      - type: bind
+        source: ../arrow_lake
+        target: /app/arrow_lake

@@ -88,9 +88,11 @@ function render(all) {
     ["失败", fail, "danger", "需关注"],
   ].map(([l, v, c, d]) => `<div class="kpi"><div class="label">${l}</div><div class="val" style="color:var(--${c === "warn" ? "warn" : c === "ok" ? "ok" : "danger"})">${v}</div><div class="delta">${d}</div></div>`).join("");
 
+  const focusId = new URL(location.href).searchParams.get("task");
+  const hl = (t) => (focusId && t.task_id === focusId) ? ' style="background:var(--ink-900);box-shadow:inset 3px 0 0 var(--teal-bright)"' : "";
   const rowActive = (t) => {
     const s = st(t.status); const pct = Math.round(t.progress || 0);
-    return `<tr>
+    return `<tr${hl(t)}>
       <td class="mono" style="font-size:.75rem" title="${esc(t.task_id)}">${esc(t.task_id)}</td>
       <td><span class="tag">${esc(t.operation || "—")}</span></td>
       <td><a href="datasets.html?ds=${encodeURIComponent(t.dataset_name || "")}" style="color:var(--teal-bright)">${esc(t.dataset_name || "—")}</a></td>
@@ -102,7 +104,7 @@ function render(all) {
   };
   const rowHist = (t) => {
     const s = st(t.status);
-    return `<tr>
+    return `<tr${hl(t)}>
       <td class="mono" style="font-size:.75rem">${esc(t.task_id)}</td>
       <td><span class="tag">${esc(t.operation || "—")}</span></td>
       <td><a href="datasets.html?ds=${encodeURIComponent(t.dataset_name || "")}" style="color:var(--teal-bright)">${esc(t.dataset_name || "—")}</a></td>

@@ -31,6 +31,8 @@ from arrow_lake.api.models.dataset import (
     IngestResponse,
     IngestSqlRequest,
     IngestVideosRequest,
+    SchemaField,
+    SchemaResponse,
     PresignedUpload,
     PresignRequest,
     PresignResponse,
@@ -50,13 +52,13 @@ _ADMIN_TIMEOUT = 60
 _DOWNLOAD_WORKERS = 4
 
 
-def _after_ingest_hooks(request: Request, dataset_name: str, lake: Any) -> None:
+def _after_ingest_hooks(app_state: Any, dataset_name: str, lake: Any) -> None:
     """Best-effort post-ingest actions: Gravitino Fileset registration + [#step2-B]
     query-cache invalidation so appended rows are visible to subsequent queries."""
     import structlog
     log = structlog.get_logger(__name__)
     # 1) Gravitino Fileset registration
-    bridge = getattr(request.app.state, "gravitino_bridge", None)
+    bridge = getattr(app_state, "gravitino_bridge", None)
     if bridge is not None and bridge.enabled:
         try:
             location = f"s3a://arrow-lake/{dataset_name}.lance"
@@ -79,7 +81,13 @@ _ALLOWED_CONTENT_PREFIXES = (
     "multipart/",
 )
 
-_SAFE_FILENAME_RE = re.compile(r"^[a-zA-Z0-9_\-.][a-zA-Z0-9_\-.]*$")
+# Filenames are only a readable suffix on the blob key — `_unique_blob_key`
+# already prepends a uuid8 prefix for collision resistance, so here we just need
+# a path-safe identifier. Collapses any run of chars outside [A-Za-z0-9._-]
+# (spaces, parentheses, commas, …) into a single '_' instead of rejecting the
+# upload outright (a strict allow-list 500'd on perfectly normal filenames like
+# "Attention Is All You Need.pdf").
+_UNSAFE_FILENAME_CHAR_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
 # Extensions that Daft can read directly from S3 URIs.
 _S3_NATIVE_EXTENSIONS = frozenset({".csv", ".json", ".jsonl", ".parquet"})
@@ -90,9 +98,12 @@ def _sanitize_filename(name: str) -> str:
 
     stripped = os.path.basename(name)
     _check_no_traversal(stripped)
-    if not stripped or not _SAFE_FILENAME_RE.match(stripped):
+    if not stripped:
+        raise ValueError(f"Empty filename: {name!r}")
+    safe = _UNSAFE_FILENAME_CHAR_RE.sub("_", stripped).strip("_")
+    if not safe:
         raise ValueError(f"Invalid filename: {name!r}")
-    return stripped
+    return safe
 
 
 def _unique_blob_key(dataset_name: str, filename: str) -> str:
@@ -303,7 +314,7 @@ async def ingest_files(
             timeout=_INGEST_TIMEOUT, label="ingest_files",
             transforms=transforms,
         )
-        _after_ingest_hooks(request, name, lake)
+        _after_ingest_hooks(request.app.state, name, lake)
         return IngestResponse.from_report(report)
     finally:
         if tmp_dir:
@@ -450,7 +461,7 @@ async def ingest_images(
             lake.ingest_images, name, all_paths,
             timeout=_INGEST_TIMEOUT, label="ingest_images",
         )
-        _after_ingest_hooks(request, name, lake)
+        _after_ingest_hooks(request.app.state, name, lake)
         return IngestResponse.from_report(report)
     finally:
         if tmp_dir:
@@ -478,7 +489,7 @@ async def ingest_videos(
             lake.ingest_videos, name, all_paths,
             timeout=_INGEST_TIMEOUT, label="ingest_videos",
         )
-        _after_ingest_hooks(request, name, lake)
+        _after_ingest_hooks(request.app.state, name, lake)
         return IngestResponse.from_report(report)
     finally:
         if tmp_dir:
@@ -507,7 +518,7 @@ async def ingest_mixed(
             lake.ingest_mixed, name, sources,
             timeout=_INGEST_TIMEOUT, label="ingest_mixed",
         )
-        _after_ingest_hooks(request, name, lake)
+        _after_ingest_hooks(request.app.state, name, lake)
         return IngestResponse.from_report(report)
     finally:
         if tmp_dir:
@@ -561,7 +572,7 @@ async def ingest_documents(
             structlog.get_logger(__name__).warning(
                 "ingest.create_fts_index_failed", dataset=name, err=str(exc)[:160],
             )
-        _after_ingest_hooks(request, name, lake)
+        _after_ingest_hooks(request.app.state, name, lake)
         return IngestResponse.from_report(report)
     finally:
         if tmp_dir:
@@ -583,7 +594,12 @@ async def list_datasets(
     """List all datasets with metadata. Supports pagination via limit/offset."""
     result = await run_sync(lake.catalog, timeout=_ADMIN_TIMEOUT, label="catalog")
     all_datasets = [
-        DatasetInfo(name=e.name, version=e.version, num_rows=e.num_rows)
+        DatasetInfo(
+            name=e.name, version=e.version, num_rows=e.num_rows,
+            num_columns=e.num_columns, vector_dim=e.vector_dim,
+            has_vector_index=e.has_vector_index, has_fts_index=e.has_fts_index,
+            size_bytes=e.size_bytes, created_at=e.created_at, updated_at=e.updated_at,
+        )
         for e in result.datasets
     ]
     page = all_datasets[offset : offset + limit]
@@ -605,11 +621,41 @@ async def get_dataset(
                 name=entry.name,
                 version=entry.version,
                 num_rows=entry.num_rows,
+                num_columns=entry.num_columns,
+                vector_dim=entry.vector_dim,
+                has_vector_index=entry.has_vector_index,
+                has_fts_index=entry.has_fts_index,
+                size_bytes=entry.size_bytes,
+                created_at=entry.created_at,
+                updated_at=entry.updated_at,
             )
     raise CatalogError(
         error_code=ErrorCode.CATALOG_DATASET_NOT_FOUND,
         message=f"Dataset '{name}' not found",
     )
+
+
+@router.get("/{name}/schema", response_model=SchemaResponse)
+async def get_dataset_schema(
+    name: str = Path(..., pattern=_NAME_PATTERN),
+    *,
+    _auth: None = Depends(require_role(Role.VIEWER)),
+    lake=Depends(get_lake),
+) -> SchemaResponse:
+    """Return the dataset's authoritative field schema (name + Arrow type).
+
+    Unlike inferring columns from a preview row, this reads the Lance schema
+    directly — so it's correct for empty datasets and carries field types.
+    """
+    def _read() -> list[dict[str, Any]]:
+        schema = lake.open_dataset(name).schema
+        return [
+            {"name": f.name, "type": str(f.type), "nullable": bool(f.nullable)}
+            for f in schema
+        ]
+
+    fields = await run_sync(_read, timeout=_ADMIN_TIMEOUT, label="schema")
+    return SchemaResponse(name=name, fields=[SchemaField(**f) for f in fields])
 
 
 @router.post("/{name}/schema/migrate", response_model=SchemaMigrationResponse)
@@ -701,20 +747,20 @@ async def migrate_schema(
         try:
             if action.operation == "add_column":
                 await run_sync(
-                    lake._storage_advanced.add_column,
+                    lake.add_column,
                     name, action.column_name, action.sql_expr,
                     timeout=_ADMIN_TIMEOUT, label="add_column",
                 )
             elif action.operation == "alter_column":
                 new_type = _TYPE_MAP[action.new_type]
                 await run_sync(
-                    lake._storage_advanced.alter_column,
+                    lake.alter_column,
                     name, action.column_name, new_type,
                     timeout=_ADMIN_TIMEOUT, label="alter_column",
                 )
             elif action.operation == "drop_column":
                 await run_sync(
-                    lake._storage_advanced.drop_column,
+                    lake.drop_column,
                     name, action.column_name,
                     timeout=_ADMIN_TIMEOUT, label="drop_column",
                 )

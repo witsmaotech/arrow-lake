@@ -14,11 +14,26 @@ class CatalogEntry:
         name: Dataset name.
         version: Current Lance dataset version.
         num_rows: Number of rows in the dataset.
+        num_columns: Number of top-level columns in the schema.
+        vector_dim: Dimensionality of the embedding column (None if no vector col).
+        has_vector_index: Whether an ANN vector index exists.
+        has_fts_index: Whether a BM25 / FTS index exists.
+        size_bytes: On-disk size in bytes (None if not cheaply available).
     """
 
     name: str
     version: int
     num_rows: int
+    # Extended metadata (optional; populated by the storage layer when cheap to
+    # compute — see _LakeAdmin.catalog). Defaults keep backward compatibility
+    # for callers constructing only the 3 base fields.
+    num_columns: int = 0
+    vector_dim: int | None = None
+    has_vector_index: bool = False
+    has_fts_index: bool = False
+    size_bytes: int | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
 
 
 @dataclass(frozen=True)

@@ -351,6 +351,13 @@ class DatasetInfo(BaseModel):
     name: str
     version: int = 0
     num_rows: int = 0
+    num_columns: int = 0
+    vector_dim: int | None = None
+    has_vector_index: bool = False
+    has_fts_index: bool = False
+    size_bytes: int | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
 
 
 class DatasetListResponse(BaseModel):
@@ -358,6 +365,22 @@ class DatasetListResponse(BaseModel):
 
     success: bool = True
     datasets: list[DatasetInfo] = Field(default_factory=list)
+
+
+class SchemaField(BaseModel):
+    """A single field in a dataset's authoritative schema."""
+
+    name: str
+    type: str
+    nullable: bool = True
+
+
+class SchemaResponse(BaseModel):
+    """Authoritative field schema for a dataset (name + Arrow type)."""
+
+    success: bool = True
+    name: str
+    fields: list[SchemaField] = Field(default_factory=list)
     total: int = 0
 
 

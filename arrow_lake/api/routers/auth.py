@@ -148,16 +148,33 @@ async def login_with_password(request: Request, creds: LoginRequest) -> TokenPai
 
 @router.post("/refresh", summary="Refresh access token")
 async def refresh_token(request: Request) -> TokenPair:
-    """Accept a refresh token in JSON body, return a new token pair."""
-    content_length = request.headers.get("content-length", "")
-    if content_length:
+    """Accept a refresh token and return a new token pair.
+
+    The refresh token may be sent either as a ``Bearer`` token (the console's
+    preferred form — see ``console/src/api.js`` ``doRefresh``) or in the JSON
+    body as ``{"refresh_token": "..."}``. Both are accepted so the endpoint is
+    reachable without a valid access token or API key (the whole point of a
+    refresh is that the access token has expired).
+    """
+    refresh_token = ""
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        refresh_token = auth_header[len("Bearer "):].strip()
+
+    if not refresh_token:
+        content_length = request.headers.get("content-length", "")
+        if content_length:
+            try:
+                if int(content_length) > 10_240:
+                    raise HTTPException(status_code=413, detail="Request body too large")
+            except ValueError:
+                pass
         try:
-            if int(content_length) > 10_240:
-                raise HTTPException(status_code=413, detail="Request body too large")
-        except ValueError:
-            pass
-    body = await request.json()
-    refresh_token = body.get("refresh_token") if isinstance(body, dict) else None
+            body = await request.json()
+        except Exception:  # noqa: BLE001 — empty/non-JSON body → 400, not 500
+            body = None
+        refresh_token = body.get("refresh_token") if isinstance(body, dict) else ""
+
     if not refresh_token or not isinstance(refresh_token, str):
         raise HTTPException(status_code=400, detail="refresh_token is required and must be a string")
     svc = _get_auth_service(request)

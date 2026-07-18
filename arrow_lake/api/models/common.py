@@ -52,6 +52,29 @@ def arrow_table_to_ipc_base64(table: pa.Table) -> str:
     return base64.b64encode(sink.getvalue().to_pybytes()).decode()
 
 
+def _json_safe_row(row: Any) -> Any:
+    """Make a ``table.to_pylist()`` row JSON-serializable.
+
+    PyArrow returns Python ``bytes`` for binary/varbinary columns (image_data,
+    thumbnails, video frames, …). FastAPI's ``jsonable_encoder`` decodes bytes
+    as UTF-8, which raises ``UnicodeDecodeError`` on raw media bytes (e.g. JPEG
+    ``0xff``) and turns the whole OLAP response into a 500. Replace bytes with
+    a compact placeholder; bulk binary retrieval should use ``format=arrow_ipc``
+    or the export endpoint instead.
+    """
+
+    def _scrub(v: Any) -> Any:
+        if isinstance(v, (bytes, bytearray)):
+            return f"<binary {len(v)} bytes>"
+        if isinstance(v, list):
+            return [_scrub(x) for x in v]
+        if isinstance(v, dict):
+            return {k: _scrub(x) for k, x in v.items()}
+        return v
+
+    return _scrub(row)
+
+
 def arrow_table_to_response(
     table: pa.Table,
     fmt: Literal["arrow_ipc", "json"],
@@ -77,5 +100,5 @@ def arrow_table_to_response(
     if fmt == "arrow_ipc":
         base["data"] = arrow_table_to_ipc_base64(table)
     else:
-        base["rows"] = table.to_pylist()
+        base["rows"] = [_json_safe_row(r) for r in table.to_pylist()]
     return base

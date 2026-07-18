@@ -18,7 +18,7 @@
   <div class="panel flush">
     <div class="panel-h"><i class="placeholder" data-ic="search"></i><h3>数据集</h3><span class="sub" id="cnt">—</span><span class="actions"><button class="btn btn-ghost btn-sm" id="refresh"><i class="placeholder" data-ic="refresh"></i></button></span></div>
     <div style="overflow-x:auto"><table class="tbl">
-      <thead><tr><th>数据集</th><th class="num">行数</th><th class="num">版本</th><th></th></tr></thead>
+      <thead><tr><th>数据集</th><th class="num">行数</th><th class="num">大小</th><th>列 / 向量</th><th>索引</th><th class="num">版本</th><th>创建</th><th>更新</th><th></th></tr></thead>
       <tbody id="rows"></tbody>
     </table></div>
   </div>
@@ -36,21 +36,44 @@ renderShell({ active: "datasets", crumb: "<b>数据集</b>" });
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
+const fmtSize = (b) => {
+  if (b == null || isNaN(b)) return "—";
+  const u = ["B", "KB", "MB", "GB", "TB"];
+  let i = 0, n = Number(b);
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return `${n.toFixed(n < 10 && i > 0 ? 1 : 0)} ${u[i]}`;
+};
+const fmtDate = (s) => {
+  if (!s) return "—";
+  const d = new Date(s);
+  if (isNaN(d)) return String(s).slice(0, 16);
+  const p = (n) => String(n).padStart(2, "0");
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+};
 async function load() {
-  $("#rows").innerHTML = `<tr><td colspan="4" class="muted" style="padding:28px;text-align:center">加载中…</td></tr>`;
+  $("#rows").innerHTML = `<tr><td colspan="9" class="muted" style="padding:28px;text-align:center">加载中…</td></tr>`;
   try {
     const data = await request("GET", "/datasets");
     const list = data?.datasets || [];
     $("#cnt").textContent = `${list.length} 个`;
-    $("#rows").innerHTML = list.length ? list.map((d) => `<tr>
+    $("#rows").innerHTML = list.length ? list.map((d) => {
+      const idx = `${d.has_vector_index ? '<span class="tag teal">向量</span>' : ""}${d.has_fts_index ? '<span class="tag info">FTS</span>' : ""}` || '<span class="muted">—</span>';
+      const cols = `${d.num_columns ?? 0} 列${d.vector_dim ? ` · <span class="mono" style="color:var(--teal-bright)">${d.vector_dim}d</span>` : ""}`;
+      return `<tr>
       <td><a href="dataset-detail.html?ds=${encodeURIComponent(d.name)}" style="color:var(--fg-hi);font-weight:600">${icon("database")} ${esc(d.name)}</a></td>
       <td class="num">${(d.num_rows ?? 0).toLocaleString()}</td>
+      <td class="num mono">${fmtSize(d.size_bytes)}</td>
+      <td>${cols}</td>
+      <td>${idx}</td>
       <td class="num mono">${d.version ?? "—"}</td>
+      <td class="num mono" style="color:var(--fg-lo)">${fmtDate(d.created_at)}</td>
+      <td class="num mono" style="color:var(--fg-lo)">${fmtDate(d.updated_at)}</td>
       <td><a href="dataset-detail.html?ds=${encodeURIComponent(d.name)}" class="btn btn-icon btn-ghost btn-sm" aria-label="进入">${icon("arrowR")}</a></td>
-    </tr>`).join("") : `<tr><td colspan="4" class="muted" style="padding:28px;text-align:center">无数据集 — 去 <a href="ingest.html" style="color:var(--teal-bright)">摄入</a></td></tr>`;
+    </tr>`;
+    }).join("") : `<tr><td colspan="9" class="muted" style="padding:28px;text-align:center">无数据集 — 去 <a href="ingest.html" style="color:var(--teal-bright)">摄入</a></td></tr>`;
   } catch (e) {
     const msg = e?.detail || e?.message || String(e);
-    $("#rows").innerHTML = `<tr><td colspan="4" style="padding:28px;text-align:center;color:var(--danger)">加载失败:${esc(msg)}<br/><button class="btn btn-ghost btn-sm" id="retry" style="margin-top:10px">重试</button></td></tr>`;
+    $("#rows").innerHTML = `<tr><td colspan="9" style="padding:28px;text-align:center;color:var(--danger)">加载失败:${esc(msg)}<br/><button class="btn btn-ghost btn-sm" id="retry" style="margin-top:10px">重试</button></td></tr>`;
     $("#retry")?.addEventListener("click", load);
     toast("数据集加载失败:" + msg, "warn", 4000);
   }

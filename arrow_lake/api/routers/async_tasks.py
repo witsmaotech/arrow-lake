@@ -11,7 +11,7 @@ import asyncio
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Path
+from fastapi import APIRouter, Depends, HTTPException, Path, Request
 from pydantic import BaseModel, Field
 
 from arrow_lake.api.auth_models import Role
@@ -140,6 +140,97 @@ async def ingest_files_async(
     return AsyncTaskResponse(
         task_id=task_id, operation="ingest",
         message=f"Async ingest started for dataset '{name}'",
+    )
+
+
+class AsyncDocumentsIngestRequest(BaseModel):
+    """Request body for async documents ingest (parse → chunk → embed → FTS)."""
+
+    pdf_paths: list[str] = Field(default_factory=list)
+    blob_keys: list[str] = Field(default_factory=list)
+    doc_type: str | None = None
+
+
+def _bg_ingest_documents(
+    app_state: Any,
+    name: str,
+    pdf_paths: list[str],
+    blob_keys: list[str],
+    doc_type: str | None,
+    lake: Any,
+) -> Any:
+    """Background worker for the full documents ingest flow.
+
+    Mirrors the synchronous ``/ingest/documents`` (resolve blobs → parse/chunk
+    → embed → FTS → after-hooks) but runs in the executor via
+    ``TaskManager.run_background`` so the request returns immediately. The
+    tmp_dir lifetime is scoped to THIS task (not the request handler) so the
+    downloaded blob files survive after the 202 response is sent.
+    """
+    import shutil
+    import tempfile
+
+    from arrow_lake.api.routers.datasets import _after_ingest_hooks, _resolve_blob_keys
+
+    log = logging.getLogger(__name__)
+    tmp_dir: str | None = None
+    try:
+        all_paths = list(pdf_paths)
+        if blob_keys:
+            tmp_dir = tempfile.mkdtemp(prefix="al_ingest_")
+            all_paths.extend(_resolve_blob_keys(blob_keys, lake, tmp_dir))
+        doc_config = lake._config.document if hasattr(lake, "_config") else None
+        report = lake.ingest_documents(
+            name, all_paths, doc_config=doc_config, doc_type=doc_type
+        )
+        # Best-effort post-steps (mirror sync endpoint): never fail the task on
+        # embedding / FTS index errors — text_content + FTS still work without them.
+        for step_fn, label in (
+            (getattr(lake, "embed_and_add", None), "embed_documents"),
+            (getattr(lake, "create_fts_index", None), "create_fts_index"),
+        ):
+            if callable(step_fn):
+                try:
+                    step_fn(name)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("ingest.post_step_failed", dataset=name, step=label, err=str(exc)[:160])
+        _after_ingest_hooks(app_state, name, lake)
+        return report
+    finally:
+        if tmp_dir:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@router.post(
+    "/datasets/{name}/ingest/documents/async",
+    response_model=AsyncTaskResponse,
+    status_code=202,
+)
+async def ingest_documents_async(
+    name: str = Path(..., pattern=r"^[a-zA-Z0-9_][a-zA-Z0-9_.-]*$"),
+    *,
+    req: AsyncDocumentsIngestRequest,
+    request: Request,
+    lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.EDITOR)),
+) -> AsyncTaskResponse:
+    """Async documents ingest — returns task_id immediately (HTTP 202).
+
+    Same flow as the synchronous ``/ingest/documents`` (parse → chunk → embed →
+    FTS) but runs in the background so the client doesn't hold the connection
+    open for the full ingest. Poll via ``GET /api/v1/tasks/{task_id}/status``
+    or watch on the tasks queue page (``tasks.html?task=<task_id>``).
+    """
+    task_id = TaskManager.create_task("ingest_documents", name)
+    asyncio.create_task(  # noqa: RUF006
+        TaskManager.run_background(
+            task_id, _bg_ingest_documents,
+            request.app.state, name, req.pdf_paths, req.blob_keys, req.doc_type, lake,
+        )
+    )
+    return AsyncTaskResponse(
+        task_id=task_id, operation="ingest_documents",
+        message=f"Async documents ingest started for dataset '{name}'",
     )
 
 
