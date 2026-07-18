@@ -110,7 +110,7 @@ class OAuth2AuthProvider(GravitinoAuthProvider):
             self._expires_at = time.time() + data.get("expires_in", 3600)
             logger.debug("gravitino_oauth2_token_refreshed")
         except Exception:
-            logger.error("gravitino_oauth2_token_failed", url=self._token_url)
+            logger.error("gravitino_oauth2_token_failed: token_url=%s", self._token_url)
             raise
 
 
