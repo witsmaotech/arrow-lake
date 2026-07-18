@@ -20,13 +20,21 @@ except ImportError:
 
 @lru_cache(maxsize=16)
 def _get_encoding(model: str) -> tiktoken.Encoding | None:
-    """Get cached tiktoken encoding for a model."""
+    """Get cached tiktoken encoding for a model (None → heuristic fallback)."""
     if not _has_tiktoken:
         return None
     try:
-        return tiktoken.encoding_for_model(model)
-    except (KeyError, ValueError):
-        return tiktoken.get_encoding("cl100k_base")
+        try:
+            return tiktoken.encoding_for_model(model)
+        except (KeyError, ValueError):
+            return tiktoken.get_encoding("cl100k_base")
+    except Exception:  # noqa: BLE001 — offline / download failure (tiktoken pulls
+        # BPE vocab from openaipublic.blob.core.windows.net on first use; the
+        # container often can't reach it behind the proxy → SSLError/ConnectionError).
+        # Counting tokens is only for context budgeting — fall back to heuristic
+        # rather than crashing the whole RAG query with a 500.
+        logger.warning("tiktoken encoding unavailable (offline?), using heuristic token count", exc_info=True)
+        return None
 
 
 def count_tokens(text: str, model: str = "gpt-4o-mini") -> int:
