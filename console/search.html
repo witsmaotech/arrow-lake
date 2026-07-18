@@ -164,11 +164,13 @@ async function loadSchema() {
     $("#schemaPanel").style.display = "";
     $("#schemaMeta").textContent = `${schemaFields.length} 字段 · 向量 ${vecCols().length} · 文本 ${txtCols().length} · 标量 ${scalarCols().length}`;
     $("#schema").innerHTML = schemaFields.map(f => `<span class="schema-chip ${isVec(f.type) ? "vec" : isTxt(f.type) ? "txt" : ""}" title="${esc(f.type)}">${esc(f.name)} <span style="color:var(--fg-lo)">: ${esc(f.type)}</span></span>`).join("");
-    // 填充下拉/复选
+    // 填充下拉/复选(精确匹配:只列真实向量/文本列,无则占位,不回落到全部列)
     const vc = vecCols(); const tc = txtCols(); const sc = scalarCols();
-    const opt = (arr, def) => (arr.length ? arr : (schemaFields.map(f => f.name))).map(c => `<option value="${esc(c)}"${c === def ? " selected" : ""}>${esc(c)}</option>`).join("");
-    $("#vCol").innerHTML = opt(vc, "text_embedding");
-    $("#fCol").innerHTML = `<option value="">(默认)</option>` + opt(tc, tc[0] || "text");
+    const opt = (arr, def) => arr.length
+      ? arr.map(c => `<option value="${esc(c)}"${c === def ? " selected" : ""}>${esc(c)}</option>`).join("")
+      : `<option value="">(无)</option>`;
+    $("#vCol").innerHTML = opt(vc, vc[0] || "");
+    $("#fCol").innerHTML = `<option value="">(默认)</option>` + opt(tc, tc[0] || "");
     $("#facetsGrid").innerHTML = sc.length ? sc.map(c => `<label><input type="checkbox" value="${esc(c)}"/> ${esc(c)}</label>`).join("") : '<span class="muted" style="font-size:.74rem">无标量列</span>';
     $("#colsGrid").innerHTML = (vc.length ? vc : []).map(c => `<label><input type="checkbox" value="${esc(c)}" ${c === "text_embedding" ? "checked" : ""}/> ${esc(c)}</label>`).join("") || '<span class="muted" style="font-size:.74rem">无向量列</span>';
     // where 列名点击插入

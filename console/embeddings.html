@@ -175,8 +175,8 @@ async function loadSchema() {
     const txtCols = fields.filter(f => /string|utf8|large_string/i.test(f.type)).map(f => f.name);
     const allCols = fields.map(f => f.name);
     const opt = (arr, def) => arr.length ? arr.map(c => `<option value="${esc(c)}"${c === def ? " selected" : ""}>${esc(c)}</option>`).join("") : `<option value="">(无)</option>`;
-    $("#vCol").innerHTML = opt(vecCols.length ? vecCols : allCols, "text_embedding");
-    $("#fCol").innerHTML = opt(txtCols.length ? txtCols : allCols, txtCols[0] || "text");
+    $("#vCol").innerHTML = opt(vecCols, vecCols[0] || "");
+    $("#fCol").innerHTML = opt(txtCols, txtCols[0] || "text");
     $("#sCol").innerHTML = opt(allCols);
   } catch (_) { /* schema 失败不阻塞 */ }
 }
