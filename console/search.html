@@ -17,19 +17,41 @@
   .hit-score{font-family:var(--font-mono);font-size:.72rem;padding:2px 8px;border-radius:var(--r-sm);background:var(--ink-900);color:var(--teal-bright);border:1px solid var(--line-soft)}
   .hit-text{font-size:.85rem;color:var(--fg-md);line-height:1.55;max-height:120px;overflow:auto}
   .hit-meta{font-family:var(--font-mono);font-size:.68rem;color:var(--fg-lo);margin-top:6px}
+  .schema-chip{display:inline-block;font-family:var(--font-mono);font-size:.72rem;padding:2px 8px;border:1px solid var(--line-soft);border-radius:var(--r-sm);background:var(--ink-900);margin:0 4px 4px 0;cursor:default}
+  .schema-chip.vec{border-color:var(--teal-soft,var(--line));color:var(--teal-bright)}
+  .schema-chip.txt{color:var(--fg-hi)}
+  .chip-btn{cursor:pointer}
+  .chip-btn:hover{border-color:var(--teal-bright);color:var(--teal-bright)}
+  .idx-row{display:flex;gap:8px;align-items:center;padding:4px 0;font-size:.74rem}
+  .check-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:6px;margin-top:6px}
+  .check-grid label{display:flex;gap:6px;align-items:center;font-size:.78rem;padding:4px 8px;border:1px solid var(--line-soft);border-radius:var(--r-sm);cursor:pointer}
+  .check-grid label:hover{border-color:var(--teal-bright)}
 </style>
 </head>
 <body>
 <div id="app">
 <main class="main"><div class="page">
   <div class="h-sec between">
-    <div><h1>检索</h1><div class="desc">向量 / FTS / 混合 / Facets / Ensemble · 非 FTS 模式自动先把查询文本嵌入(POST /embed/text)</div></div>
+    <div><h1>检索</h1><div class="desc">向量 / FTS / 混合 / Facets / Ensemble · 选数据集后自动加载 schema,列名按类型推导成下拉/复选</div></div>
     <div class="flex" style="gap:8px;align-items:center">
-      <select class="select" id="ds" style="min-width:200px"></select>
+      <select class="select" id="ds" style="min-width:220px"></select>
     </div>
   </div>
 
-  <div class="panel flush">
+  <!-- 元数据:状态 + schema + 现有索引 -->
+  <div class="panel"><div class="panel-b" id="meta"><div class="muted" style="padding:16px">选择数据集后加载元数据…</div></div></div>
+  <div class="panel flush" id="schemaPanel" style="margin-top:var(--s4);display:none">
+    <div class="panel-h"><i class="placeholder" data-ic="code"></i><h3>Schema(字段)</h3><span class="sub" id="schemaMeta">—</span></div>
+    <div class="panel-b" id="schema"></div>
+  </div>
+  <div class="panel flush" id="idxPanel" style="margin-top:var(--s4);display:none">
+    <div class="panel-h"><i class="placeholder" data-ic="search"></i><h3>现有索引</h3><span class="sub" id="idxMeta">—</span></div>
+    <div class="panel-b" id="indexes"></div>
+  </div>
+
+  <!-- 检索表单 -->
+  <div class="panel flush" style="margin-top:var(--s4)">
+    <div class="panel-h"><i class="placeholder" data-ic="search"></i><h3>检索</h3></div>
     <div class="panel-b">
       <div class="tabs" id="modeTabs">
         <div class="tab active" data-mode="vector">向量</div>
@@ -46,17 +68,29 @@
       </div>
       <div class="grid g-3" style="margin-top:var(--s3)">
         <div class="field"><label>top_k</label><input class="input mono" id="topK" type="number" min="1" value="10"/></div>
-        <div class="field"><label>vector_column(向量类模式)</label><input class="input mono" id="vCol" value="text_embedding"/></div>
-        <div class="field"><label>fts_column(FTS/混合)</label><input class="input mono" id="fCol" placeholder="留空=默认 text_content"/></div>
-        <div class="field" id="facetsField" style="display:none"><label>facets 列(逗号分隔)</label><input class="input mono" id="facets" placeholder="category, year"/></div>
-        <div class="field" id="columnsField" style="display:none"><label>ensemble columns(逗号分隔)</label><input class="input mono" id="cols" placeholder="text_embedding"/></div>
-        <div class="field"><label>where 过滤(SQL,可选)</label><input class="input mono" id="where" placeholder="year > 2020"/></div>
+        <div class="field" id="vColField"><label>vector_column(向量列)</label><select class="select" id="vCol"></select></div>
+        <div class="field" id="fColField" style="display:none"><label>fts_column(文本列)</label><select class="select" id="fCol"><option value="">(默认)</option></select></div>
+      </div>
+
+      <div class="field" id="facetsField" style="display:none;margin-top:var(--s3)">
+        <label>facets 列(标量列,勾选用于分面过滤)</label>
+        <div class="check-grid" id="facetsGrid"><span class="muted" style="font-size:.74rem">选择数据集后列出标量列…</span></div>
+      </div>
+      <div class="field" id="columnsField" style="display:none;margin-top:var(--s3)">
+        <label>ensemble 向量列(多列加权融合)</label>
+        <div class="check-grid" id="colsGrid"><span class="muted" style="font-size:.74rem">选择数据集后列取向量列…</span></div>
+      </div>
+
+      <div class="field" style="margin-top:var(--s3)"><label>where 过滤(SQL,可选 · 点列名插入)</label>
+        <input class="input mono" id="where" placeholder="例:year > 2020 AND category = 'x'"/>
+        <div id="whereCols" style="margin-top:6px"></div>
       </div>
     </div>
   </div>
 
+  <!-- 结果 -->
   <div class="panel flush" style="margin-top:var(--s4)">
-    <div class="panel-h"><i class="placeholder" data-ic="search"></i><h3>结果</h3><span class="sub" id="resMeta">—</span></div>
+    <div class="panel-h"><i class="placeholder" data-ic="database"></i><h3>结果</h3><span class="sub" id="resMeta">—</span></div>
     <div class="panel-b" id="results"><div class="muted" style="padding:20px;text-align:center">输入查询开始检索</div></div>
   </div>
 </div></main>
@@ -75,12 +109,22 @@ const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 let mode = "vector";
+let schemaFields = [];
+
+const isVec = (t) => /list|fixed_size/i.test(t);
+const isTxt = (t) => /string|utf8|large_string/i.test(t);
+const vecCols = () => schemaFields.filter(f => isVec(f.type)).map(f => f.name);
+const txtCols = () => schemaFields.filter(f => isTxt(f.type)).map(f => f.name);
+const scalarCols = () => schemaFields.filter(f => !isVec(f.type) && !isTxt(f.type)).map(f => f.name);
+
 $("#modeTabs").addEventListener("click", (e) => {
   const t = e.target.closest(".tab"); if (!t) return;
   $("#modeTabs").querySelectorAll(".tab").forEach(x => x.classList.toggle("active", x === t));
   mode = t.dataset.mode;
   $("#facetsField").style.display = mode === "faceted" ? "" : "none";
   $("#columnsField").style.display = mode === "ensemble" ? "" : "none";
+  $("#vColField").style.display = mode === "fts" ? "none" : "";
+  $("#fColField").style.display = (mode === "fts" || mode === "hybrid") ? "" : "none";
 });
 
 async function loadDatasets() {
@@ -88,8 +132,64 @@ async function loadDatasets() {
     const data = await request("GET", "/datasets");
     const list = data?.datasets || [];
     const preset = new URL(location.href).searchParams.get("ds");
-    $("#ds").innerHTML = `<option value="">— 选择数据集 —</option>` + list.map(d => `<option value="${esc(d.name)}"${d.name === preset ? " selected" : ""}>${esc(d.name)}</option>`).join("");
+    $("#ds").innerHTML = `<option value="">— 选择数据集 —</option>` + list.map(d => `<option value="${esc(d.name)}"${d.name === preset ? " selected" : ""}>${esc(d.name)} (${(d.num_rows ?? 0).toLocaleString()} 行)</option>`).join("");
+    if ($("#ds").value) loadMeta();
   } catch (e) { toast("数据集列表加载失败:" + (e?.detail || e?.message || e), "warn"); }
+}
+$("#ds").addEventListener("change", loadMeta);
+
+async function loadMeta() {
+  const name = $("#ds").value;
+  if (!name) { $("#meta").innerHTML = '<div class="muted" style="padding:16px">选择数据集后加载元数据…</div>'; $("#schemaPanel").style.display = "none"; $("#idxPanel").style.display = "none"; return; }
+  $("#meta").innerHTML = '<div class="muted" style="padding:16px">加载中…</div>';
+  // 1) 状态
+  try {
+    const d = await request("GET", `/datasets/${encodeURIComponent(name)}`);
+    const warn = (ok, yes, no) => `<span style="color:${ok ? "var(--ok)" : "var(--warn)"}">${ok ? yes : no}</span>`;
+    $("#meta").innerHTML = `<div class="grid g-4">
+      <div class="kpi"><div class="label">行数</div><div class="val">${(d.num_rows ?? 0).toLocaleString()}</div></div>
+      <div class="kpi"><div class="label">列数</div><div class="val">${d.num_columns ?? "—"}</div></div>
+      <div class="kpi"><div class="label">向量索引</div><div class="val" style="font-size:.9rem">${warn(d.has_vector_index, "✓ 已建", "✗ 未建")}</div></div>
+      <div class="kpi"><div class="label">FTS 索引</div><div class="val" style="font-size:.9rem">${warn(d.has_fts_index, "✓ 已建", "✗ 未建")}</div></div>
+    </div>${(!d.has_vector_index && !d.has_fts_index) ? `<div class="muted" style="font-size:.74rem;margin-top:8px">提示:该数据集尚无检索索引,结果可能为空 — 去 <a href="embeddings.html?ds=${encodeURIComponent(name)}" style="color:var(--teal-bright)">embeddings</a> 建一个</div>` : ""}`;
+  } catch (e) { $("#meta").innerHTML = `<div style="color:var(--danger);padding:12px">元数据加载失败:${esc(e?.detail || e?.message || e)}</div>`; }
+  loadSchema(); loadIndexes();
+}
+
+async function loadSchema() {
+  const name = $("#ds").value; if (!name) return;
+  try {
+    const s = await request("GET", `/datasets/${encodeURIComponent(name)}/schema`);
+    schemaFields = s?.fields || [];
+    $("#schemaPanel").style.display = "";
+    $("#schemaMeta").textContent = `${schemaFields.length} 字段 · 向量 ${vecCols().length} · 文本 ${txtCols().length} · 标量 ${scalarCols().length}`;
+    $("#schema").innerHTML = schemaFields.map(f => `<span class="schema-chip ${isVec(f.type) ? "vec" : isTxt(f.type) ? "txt" : ""}" title="${esc(f.type)}">${esc(f.name)} <span style="color:var(--fg-lo)">: ${esc(f.type)}</span></span>`).join("");
+    // 填充下拉/复选
+    const vc = vecCols(); const tc = txtCols(); const sc = scalarCols();
+    const opt = (arr, def) => (arr.length ? arr : (schemaFields.map(f => f.name))).map(c => `<option value="${esc(c)}"${c === def ? " selected" : ""}>${esc(c)}</option>`).join("");
+    $("#vCol").innerHTML = opt(vc, "text_embedding");
+    $("#fCol").innerHTML = `<option value="">(默认)</option>` + opt(tc, tc[0] || "text");
+    $("#facetsGrid").innerHTML = sc.length ? sc.map(c => `<label><input type="checkbox" value="${esc(c)}"/> ${esc(c)}</label>`).join("") : '<span class="muted" style="font-size:.74rem">无标量列</span>';
+    $("#colsGrid").innerHTML = (vc.length ? vc : []).map(c => `<label><input type="checkbox" value="${esc(c)}" ${c === "text_embedding" ? "checked" : ""}/> ${esc(c)}</label>`).join("") || '<span class="muted" style="font-size:.74rem">无向量列</span>';
+    // where 列名点击插入
+    $("#whereCols").innerHTML = schemaFields.map(f => `<span class="schema-chip chip-btn" data-col="${esc(f.name)}">${esc(f.name)}</span>`).join("");
+    $("#whereCols").querySelectorAll("[data-col]").forEach(el => el.addEventListener("click", () => {
+      const w = $("#where");
+      w.value = (w.value.trim() ? w.value.trim() + " " : "") + el.dataset.col + " ";
+      w.focus();
+    }));
+  } catch (_) { /* schema 失败不阻塞检索 */ }
+}
+
+async function loadIndexes() {
+  const name = $("#ds").value; if (!name) { $("#idxPanel").style.display = "none"; return; }
+  try {
+    const r = await request("GET", `/datasets/${encodeURIComponent(name)}/index`);
+    const idx = r?.indices || [];
+    $("#idxPanel").style.display = "";
+    $("#idxMeta").textContent = `${idx.length} 个`;
+    $("#indexes").innerHTML = idx.length ? idx.map(i => `<div class="idx-row"><span class="tag teal">${esc(i.type || "index")}</span><span class="mono" style="color:var(--fg-hi)">${esc(i.name || "(无名)")}</span><span class="muted">列: ${esc((i.columns || []).join(", ") || "—")}</span></div>`).join("") : '<div class="muted" style="font-size:.74rem;padding:6px 0">无索引</div>';
+  } catch (_) { $("#idxPanel").style.display = "none"; }
 }
 
 async function embedQuery(text) {
@@ -102,21 +202,14 @@ async function embedQuery(text) {
 function renderHits(res, scoreKey) {
   const rows = res?.rows || [];
   $("#resMeta").textContent = `${res?.row_count ?? rows.length} 命中 · ${res?.column_count ?? 0} 列`;
-  if (!rows.length) {
-    $("#results").innerHTML = `<div class="muted" style="padding:24px;text-align:center">无命中 — 换个查询;或确认数据集已建对应索引(<a href="embeddings.html" style="color:var(--teal-bright">去建索引</a>)</div>`;
-    return;
-  }
+  if (!rows.length) { $("#results").innerHTML = `<div class="muted" style="padding:24px;text-align:center">无命中 — 换查询或确认已建对应索引(<a href="embeddings.html" style="color:var(--teal-bright">去建索引</a>)</div>`; return; }
   const textKeys = ["text", "text_content", "content", "title", "chunk", "body", "name"];
   $("#results").innerHTML = rows.map((r) => {
     const score = r[scoreKey] ?? r["_score"] ?? r["_distance"] ?? r["score"] ?? r["distance"];
     const tk = textKeys.find(k => r[k] != null);
     const snippet = tk ? String(r[tk]) : JSON.stringify(Object.entries(r).filter(([k]) => !k.startsWith("_")).slice(0, 4));
     const meta = Object.entries(r).filter(([k]) => !k.startsWith("_") && !textKeys.includes(k)).slice(0, 4).map(([k, v]) => `${k}=${typeof v === "object" ? "…" : String(v).slice(0, 30)}`).join(" · ");
-    return `<div class="hit">
-      <div class="hit-head"><span class="hit-score">${scoreKey}: ${score?.toFixed?.(4) ?? esc(score ?? "—")}</span></div>
-      <div class="hit-text">${esc(snippet.length > 400 ? snippet.slice(0, 400) + "…" : snippet)}</div>
-      ${meta ? `<div class="hit-meta">${esc(meta)}</div>` : ""}
-    </div>`;
+    return `<div class="hit"><div class="hit-head"><span class="hit-score">${scoreKey}: ${score?.toFixed?.(4) ?? esc(score ?? "—")}</span></div><div class="hit-text">${esc(snippet.length > 400 ? snippet.slice(0, 400) + "…" : snippet)}</div>${meta ? `<div class="hit-meta">${esc(meta)}</div>` : ""}</div>`;
   }).join("");
 }
 
@@ -125,8 +218,8 @@ $("#searchBtn").addEventListener("click", async () => {
   const query = $("#query").value.trim(); if (!query) return toast("输入查询", "warn");
   const top_k = parseInt($("#topK").value, 10) || 10;
   const where = $("#where").value.trim() || null;
-  const vCol = $("#vCol").value.trim() || "text_embedding";
-  const fCol = $("#fCol").value.trim() || null;
+  const vCol = $("#vCol").value || "text_embedding";
+  const fCol = $("#fCol").value || null;
   const btn = $("#searchBtn"); btn.disabled = true; btn.textContent = "检索中…";
   $("#results").innerHTML = '<div class="muted" style="padding:20px;text-align:center">检索中…</div>';
   try {
@@ -135,20 +228,17 @@ $("#searchBtn").addEventListener("click", async () => {
       res = await request("POST", `/datasets/${encodeURIComponent(name)}/search/fts`, { body: { query, top_k, fts_column: fCol, where } });
       scoreKey = "_score";
     } else {
-      // 向量类模式:先嵌入查询文本
-      if (mode === "vector" || mode === "hybrid" || mode === "faceted" || mode === "ensemble") {
-        $("#results").innerHTML = '<div class="muted" style="padding:20px;text-align:center">嵌入查询中…</div>';
-      }
+      if (mode !== "fts") $("#results").innerHTML = '<div class="muted" style="padding:20px;text-align:center">嵌入查询中…</div>';
       const qv = await embedQuery(query);
       if (mode === "vector") {
         res = await request("POST", `/datasets/${encodeURIComponent(name)}/search/vector`, { body: { query_vector: qv, top_k, vector_column: vCol, where } });
       } else if (mode === "hybrid") {
         res = await request("POST", `/datasets/${encodeURIComponent(name)}/search/hybrid`, { body: { query_vector: qv, query_text: query, top_k, vector_column: vCol, fts_column: fCol, where } });
       } else if (mode === "faceted") {
-        const facets = $("#facets").value.split(",").map(s => s.trim()).filter(Boolean);
+        const facets = [...$("#facetsGrid").querySelectorAll("input:checked")].map(c => c.value);
         res = await request("POST", `/datasets/${encodeURIComponent(name)}/search/faceted`, { body: { query_vector: qv, facets: facets.length ? facets : null, top_k, vector_column: vCol, where } });
-      } else { // ensemble
-        const cols = $("#cols").value.split(",").map(s => s.trim()).filter(Boolean);
+      } else {
+        const cols = [...$("#colsGrid").querySelectorAll("input:checked")].map(c => c.value);
         res = await request("POST", `/datasets/${encodeURIComponent(name)}/search/ensemble`, { body: { query_vector: qv, columns: cols.length ? cols : null, top_k, where } });
       }
     }
@@ -156,7 +246,7 @@ $("#searchBtn").addEventListener("click", async () => {
   } catch (e) {
     const msg = e?.detail || e?.message || String(e);
     $("#resMeta").textContent = "失败";
-    $("#results").innerHTML = `<div style="color:var(--danger);padding:16px">检索失败:${esc(msg)}<br/><span class="muted" style="font-size:.72rem">常见:未建索引 → 去 <a href="embeddings.html" style="color:var(--teal-bright">embeddings</a> 建;embedding 后端未配置。</span></div>`;
+    $("#results").innerHTML = `<div style="color:var(--danger);padding:16px">检索失败:${esc(msg)}<br/><span class="muted" style="font-size:.72rem">常见:未建索引 → 去 <a href="embeddings.html" style="color:var(--teal-bright">embeddings</a> 建;embedding 后端未配置;where 语法错。</span></div>`;
   } finally { btn.disabled = false; btn.textContent = "检索"; }
 });
 
