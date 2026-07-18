@@ -101,6 +101,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     from arrow_lake import Lake
 
+    import logging
+    import sys
+    # [#KG-0entity-debug] Surface ONLY he_extractor's stdlib DEBUG logs. he_extractor
+    # uses logging.getLogger + positional args (kwarg-free → safe to lower). We do NOT
+    # lower the whole arrow_lake tree: the structlog-kwarg loggers (system_db url=/
+    # version=, rbac key=, …) crash stdlib _log if emitted below WARNING. Targeting the
+    # single logger avoids that while showing he_extractor feed/parse/entity activity.
+    _root = logging.getLogger()
+    if not any(getattr(_h, "_al_dbg", False) for _h in _root.handlers):
+        _h = logging.StreamHandler(sys.stdout)
+        _h.setLevel(logging.DEBUG)
+        _h.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
+        _h._al_dbg = True
+        _root.addHandler(_h)
+    logging.getLogger("arrow_lake.knowledge_graph.he_extractor").setLevel(logging.DEBUG)
+
     config: ArrowLakeConfig = app.state.config
 
     # Mark not-ready until required startup setup completes; readiness probes
