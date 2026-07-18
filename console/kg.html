@@ -142,12 +142,19 @@ function pollBuild(tid) {
     n++;
     try {
       const s = await request("GET", `/kg/build/${encodeURIComponent(tid)}/status`);
-      const st = s.status || s.state || "";
-      $("#buildStatus").innerHTML = `任务 <span class="mono">${esc(tid.slice(0, 8))}</span>:${esc(st)}`;
-      if (/COMPLETED|SUCCESS|DONE/i.test(st)) { clearInterval(t); toast("KG 构建完成", "ok"); $("#buildStatus").textContent = "完成"; resetBuildBtn(); loadAll(); }
-      else if (/FAIL|ERROR/i.test(st)) { clearInterval(t); toast("KG 构建失败:" + (s.error || st), "danger"); $("#buildStatus").textContent = "失败"; resetBuildBtn(); }
+      const st = String(s.status || s.state || "");
+      const prog = (s.total_chunks || s.processed_chunks || s.entity_count || s.relation_count)
+        ? ` · chunk ${s.processed_chunks ?? 0}/${s.total_chunks ?? 0} · 实体 ${s.entity_count ?? 0} · 关系 ${s.relation_count ?? 0}` : "";
+      $("#buildStatus").innerHTML = `任务 <span class="mono">${esc(tid.slice(0, 8))}</span>:${esc(st)}${esc(prog)}`;
+      if (/COMPLETED|SUCCESS|DONE|FINISH/i.test(st)) {
+        clearInterval(t); toast("KG 构建完成,刷新统计…", "ok"); $("#buildStatus").textContent = "完成"; resetBuildBtn();
+        loadAll();                   // 立即刷新统计/Schema
+        setTimeout(loadAll, 2500);   // 再刷一次(HugeGraph 提交/统计可能有延迟)
+      } else if (/FAIL|ERROR/i.test(st)) {
+        clearInterval(t); toast("KG 构建失败:" + (s.error || st), "danger"); $("#buildStatus").textContent = "失败"; resetBuildBtn();
+      }
     } catch (_) {}
-    if (n > 120) { clearInterval(t); $("#buildStatus").textContent = "轮询超时,请手动刷新"; resetBuildBtn(); }
+    if (n > 150) { clearInterval(t); $("#buildStatus").textContent = "轮询超时,请手动刷新"; resetBuildBtn(); }
   }, 4000);
 }
 
