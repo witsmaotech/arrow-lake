@@ -72,7 +72,7 @@ if (!isLoggedIn()) location.href = "login.html";
 const { renderShell } = window;
 renderShell({ active: "search", crumb: '<a href="datasets.html">数据集</a> › <b>检索</b>' });
 const $ = (s) => document.querySelector(s);
-const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 let mode = "vector";
 $("#modeTabs").addEventListener("click", (e) => {

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Path
 
@@ -31,6 +32,12 @@ from arrow_lake.api.utils import run_sync
 router = APIRouter(prefix="/api/v1/datasets", tags=["embedding"])
 
 embed_router = APIRouter(prefix="/api/v1/embed", tags=["embedding"])
+
+logger = logging.getLogger(__name__)
+
+# Index names: Lance auto-names like "<col>_idx" / "_fts_segmented_idx"; reject
+# path traversal / injection chars. Same strictness as dataset _NAME_PATTERN.
+_INDEX_NAME_PATTERN = r"^[a-zA-Z0-9_-]{1,128}$"
 
 _INDEX_TIMEOUT = 600
 _EMBED_TIMEOUT = 120
@@ -156,7 +163,7 @@ async def list_indices(
 )
 async def drop_index(
     name: str = Path(..., pattern=_NAME_PATTERN),
-    index_name: str = Path(...),
+    index_name: str = Path(..., pattern=_INDEX_NAME_PATTERN),
     *,
     _user: dict = Depends(require_role(Role.EDITOR)),
     lake=Depends(get_lake),
@@ -164,8 +171,11 @@ async def drop_index(
     """Drop an index by name."""
     try:
         await run_sync(lake.drop_index, name, index_name, timeout=_INDEX_TIMEOUT, label="drop_index")
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=404, detail=f"Drop failed: {exc}") from exc
+    except Exception as exc:  # noqa: BLE001 — log server-side, return generic message (no detail leak)
+        logger.warning("drop_index_failed", extra={"dataset": name, "index": index_name, "err": str(exc)[:160]})
+        msg = str(exc).lower()
+        status = 404 if any(k in msg for k in ("not found", "no such", "does not exist")) else 500
+        raise HTTPException(status_code=status, detail=f"Failed to drop index '{index_name}'") from exc
     return DropIndexResponse(name=name, index_name=index_name, message=f"Index '{index_name}' dropped")
 
 
