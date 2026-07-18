@@ -42,6 +42,7 @@ const NAV = [
   { group: "智能", items: [
     { id: "olap", label: "SQL Worksheet", ic: "olap", href: "olap.html" },
     { id: "rag", label: "RAG 问答", ic: "search", href: "rag.html" },
+    { id: "kg", label: "知识图谱", ic: "code", href: "kg.html" },
   ] },
   { group: "管理", items: [
     { id: "tasks", label: "异步任务", ic: "dashboard", href: "tasks.html" },

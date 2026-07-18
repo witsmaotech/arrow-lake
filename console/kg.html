@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>知识图谱 · Arrow Lake Console</title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/tokens.css"/>
+<link rel="stylesheet" href="assets/app.css"/>
+<link rel="stylesheet" href="assets/console.css"/>
+<style>
+  .bubble{padding:12px 14px;border-radius:var(--r-md);font-size:.88rem;line-height:1.6;white-space:pre-wrap;word-break:break-word}
+  .bubble.q{background:var(--ink-850);border:1px solid var(--line-soft);margin-left:60px}
+  .bubble.a{background:var(--ink-900);border:1px solid var(--teal-soft,var(--line));color:var(--fg-hi);white-space:normal}
+  .bubble.a.md h1,.bubble.a.md h2,.bubble.a.md h3,.bubble.a.md h4{margin:.5em 0 .2em;color:var(--fg-hi);line-height:1.3}
+  .bubble.a.md h2{font-size:1rem}.bubble.a.md h3{font-size:.92rem}.bubble.a.md h4{font-size:.84rem}
+  .bubble.a.md p{margin:.35em 0}.bubble.a.md ul,.bubble.a.md ol{margin:.35em 0 .35em 1.4em}.bubble.a.md li{margin:.12em 0}
+  .bubble.a.md code{font-family:var(--font-mono);font-size:.78rem;background:var(--ink-950);padding:1px 5px;border-radius:var(--r-sm);border:1px solid var(--line-soft)}
+  .bubble.a.md pre{background:var(--ink-950);border:1px solid var(--line);border-radius:var(--r-sm);padding:8px;overflow:auto;margin:.4em 0}
+  .bubble.a.md pre code{background:none;border:none;padding:0}.bubble.a.md strong{font-weight:600}
+  .schema-chip{display:inline-block;font-family:var(--font-mono);font-size:.72rem;padding:2px 8px;border:1px solid var(--line-soft);border-radius:var(--r-sm);background:var(--ink-900);margin:0 4px 4px 0}
+  .schema-chip.v{color:var(--teal-bright)}.schema-chip.e{color:var(--fg-hi)}
+  .cite{border:1px solid var(--line-soft);border-radius:var(--r-sm);padding:6px 8px;background:var(--ink-950);font-size:.74rem;color:var(--fg-md);margin-top:4px}
+  .stat{font-family:var(--font-mono);font-size:.7rem;color:var(--fg-lo)}
+</style>
+</head>
+<body>
+<div id="app">
+<main class="main"><div class="page">
+  <div class="h-sec between">
+    <div><h1>知识图谱 (GraphRAG)</h1><div class="desc">per-dataset KG · 统计/Schema/建图/图问答 · <a href="rag.html" style="color:var(--teal-bright)">普通 RAG →</a></div></div>
+    <div class="flex" style="gap:8px;align-items:center">
+      <select class="select" id="ds" style="min-width:200px"></select>
+      <button class="btn btn-ghost btn-sm" id="refresh"><i class="placeholder" data-ic="refresh"></i></button>
+    </div>
+  </div>
+
+  <div class="panel"><div class="panel-b" id="stats"><div class="muted" style="padding:16px">选择数据集后加载…</div></div></div>
+
+  <div class="panel flush" id="schemaPanel" style="margin-top:var(--s4);display:none">
+    <div class="panel-h"><i class="placeholder" data-ic="code"></i><h3>Schema(顶点/边类型)</h3><span class="sub" id="schemaMeta">—</span></div>
+    <div class="panel-b" id="schema"></div>
+  </div>
+
+  <div class="panel flush" style="margin-top:var(--s4)">
+    <div class="panel-h"><i class="placeholder" data-ic="plus"></i><h3>建 / 重建 KG</h3></div>
+    <div class="panel-b">
+      <div class="muted" style="font-size:.78rem;margin-bottom:8px">对当前数据集抽取实体/关系建图(异步,ADMIN;走全局轻量 LLM 抽取)。大 dataset 耗时较长,完成后自动刷新统计。</div>
+      <div class="flex" style="gap:8px"><button class="btn btn-primary btn-sm" id="buildBtn">建 KG</button><span id="buildStatus" class="muted" style="font-size:.74rem"></span></div>
+    </div>
+  </div>
+
+  <div class="panel flush" style="margin-top:var(--s4)">
+    <div class="panel-h"><i class="placeholder" data-ic="search"></i><h3>图问答(KG-RAG)</h3><span class="sub">POST /kg/ask · 走 he_qa_llm(qwen-max)</span></div>
+    <div class="panel-b">
+      <div id="thread"><div class="muted" style="padding:16px;text-align:center">先建 KG 再提问(基于图的实体/关系作答)</div></div>
+      <div class="flex" style="gap:8px;margin-top:var(--s3)">
+        <input class="input" id="question" placeholder="针对该数据集的知识图谱提问…" style="flex:1"/>
+        <button class="btn btn-primary btn-sm" id="askBtn">提问</button>
+      </div>
+    </div>
+  </div>
+</div></main>
+</div>
+
+<script src="assets/console-layout.js"></script>
+<script type="module">
+import { request } from "./src/api.js";
+import { isLoggedIn } from "./src/auth.js";
+import { toast } from "./src/ui/toast.js";
+
+if (!isLoggedIn()) location.href = "login.html";
+const { renderShell } = window;
+renderShell({ active: "kg", crumb: '<b>知识图谱</b>' });
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+function curDs() { return $("#ds").value; }
+
+async function loadDatasets() {
+  try {
+    const data = await request("GET", "/datasets");
+    const list = data?.datasets || [];
+    const preset = new URL(location.href).searchParams.get("ds");
+    $("#ds").innerHTML = `<option value="">— 选择数据集 —</option>` + list.map(d => `<option value="${esc(d.name)}"${d.name === preset ? " selected" : ""}>${esc(d.name)}</option>`).join("");
+    if (curDs()) loadAll();
+  } catch (e) { toast("数据集列表加载失败:" + (e?.detail || e?.message || e), "warn"); }
+}
+$("#ds").addEventListener("change", loadAll);
+$("#refresh").addEventListener("click", loadAll);
+
+async function loadAll() {
+  const name = curDs();
+  if (!name) { $("#stats").innerHTML = '<div class="muted" style="padding:16px">选择数据集后加载…</div>'; $("#schemaPanel").style.display = "none"; return; }
+  $("#stats").innerHTML = '<div class="muted" style="padding:16px">加载中…</div>';
+  let s;
+  try { s = await request("GET", `/kg/stats?dataset_name=${encodeURIComponent(name)}`); }
+  catch (e) { $("#stats").innerHTML = `<div style="color:var(--danger);padding:12px">统计加载失败:${esc(e?.detail || e?.message || e)}</div>`; return; }
+  const v = s.total_vertices ?? 0, e = s.total_edges ?? 0;
+  $("#stats").innerHTML = `<div class="grid g-4">
+    <div class="kpi"><div class="label">图状态</div><div class="val" style="font-size:.9rem;color:${s.graph_enabled ? "var(--ok)" : "var(--fg-lo)"}">${s.graph_enabled ? "✓ 启用" : "—"}</div></div>
+    <div class="kpi"><div class="label">顶点</div><div class="val">${v.toLocaleString()}</div></div>
+    <div class="kpi"><div class="label">边</div><div class="val">${e.toLocaleString()}</div></div>
+    <div class="kpi"><div class="label">密度</div><div class="val" style="font-size:.9rem">${v ? (e / v).toFixed(2) : "—"} 边/顶点</div></div>
+  </div>${(!v && s.graph_enabled) ? `<div class="muted" style="font-size:.74rem;margin-top:8px">图为空(0 实体)— 点下方「建 KG」抽取,或该数据集抽取得到 0 实体(换 doc_type/模板或更大模型)</div>` : ""}`;
+  loadSchema();
+}
+async function loadSchema() {
+  const name = curDs(); if (!name) return;
+  try {
+    const s = await request("GET", `/kg/schema?dataset_name=${encodeURIComponent(name)}`);
+    const vs = s.vertex_labels || [], es = s.edge_labels || [];
+    $("#schemaPanel").style.display = "";
+    $("#schemaMeta").textContent = `${vs.length} 顶点类型 · ${es.length} 边类型`;
+    $("#schema").innerHTML = (vs.length || es.length) ? `<div style="margin-bottom:6px"><span class="muted" style="font-size:.72rem">顶点:</span>${vs.map(x => `<span class="schema-chip v">${esc(x)}</span>`).join("")}</div><div><span class="muted" style="font-size:.72rem">边:</span>${es.map(x => `<span class="schema-chip e">${esc(x)}</span>`).join("")}</div>` : '<div class="muted" style="font-size:.74rem;padding:4px 0">图为空,无 schema</div>';
+  } catch (_) { $("#schemaPanel").style.display = "none"; }
+}
+
+// 建 KG(异步,专用 status 端点轮询)
+$("#buildBtn").addEventListener("click", async () => {
+  const name = curDs(); if (!name) return toast("先选数据集", "warn");
+  if (!confirm(`对「${name}」建/重建 KG?异步抽取,大 dataset 耗时长。`)) return;
+  const btn = $("#buildBtn"); btn.disabled = true; $("#buildStatus").textContent = "提交中…";
+  try {
+    const r = await request("POST", "/kg/build", { body: { dataset_name: name } });
+    const tid = r.task_id || r.id;
+    if (!tid) { $("#buildStatus").textContent = "已提交(无 task_id,稍后刷新统计)"; setTimeout(loadAll, 5000); return; }
+    $("#buildStatus").innerHTML = `任务 <span class="mono">${esc(tid.slice(0, 8))}</span> 运行中… <a href="tasks.html" style="color:var(--teal-bright)">队列</a>`;
+    toast("KG 构建已提交", "ok");
+    pollBuild(tid);
+  } catch (e) { $("#buildStatus").textContent = ""; toast("提交失败:" + (e?.detail || e?.message || e), "danger"); }
+  finally { btn.disabled = false; }
+});
+function pollBuild(tid) {
+  let n = 0;
+  const t = setInterval(async () => {
+    n++;
+    try {
+      const s = await request("GET", `/kg/build/${encodeURIComponent(tid)}/status`);
+      const st = s.status || s.state || "";
+      $("#buildStatus").innerHTML = `任务 <span class="mono">${esc(tid.slice(0, 8))}</span>:${esc(st)}`;
+      if (/COMPLETED|SUCCESS|DONE/i.test(st)) { clearInterval(t); toast("KG 构建完成", "ok"); $("#buildStatus").textContent = "完成"; loadAll(); }
+      else if (/FAIL|ERROR/i.test(st)) { clearInterval(t); toast("KG 构建失败:" + (s.error || st), "danger"); $("#buildStatus").textContent = "失败"; }
+    } catch (_) {}
+    if (n > 120) { clearInterval(t); $("#buildStatus").textContent = "轮询超时,请手动刷新"; }
+  }, 4000);
+}
+
+// 极简 markdown 渲染(同 rag.html,escape-first,XSS 安全)
+function renderMd(src) {
+  if (!src) return "(无回答)";
+  let s = esc(src);
+  const blocks = [], inls = [];
+  s = s.replace(/```[^\n`]*\n?([\s\S]*?)```/g, (_m, c) => { blocks.push(c.replace(/\n$/, "")); return `\x00B${blocks.length - 1}\x00`; });
+  s = s.replace(/`([^`\n]+)`/g, (_m, c) => { inls.push(c); return `\x00I${inls.length - 1}\x00`; });
+  const out = [];
+  for (let g of s.split(/\n{2,}/)) {
+    g = g.replace(/^\n+|\n+$/g, ""); if (!g) continue;
+    if (g.startsWith("\x00B") && g.endsWith("\x00")) { out.push(`<pre><code>${blocks[+g.slice(2, -1)]}</code></pre>`); continue; }
+    const h = g.match(/^(#{1,4})\s+(.*)/);
+    if (h && !g.includes("\n")) { out.push(`<h${h[1].length + 1}>${h[2]}</h${h[1].length + 1}>`); continue; }
+    const lines = g.split("\n");
+    if (lines.every(l => /^\s*[-*+]\s+/.test(l))) { out.push(`<ul>${lines.map(l => `<li>${l.replace(/^\s*[-*+]\s+/, "")}</li>`).join("")}</ul>`); continue; }
+    if (lines.every(l => /^\s*\d+[.)]\s+/.test(l))) { out.push(`<ol>${lines.map(l => `<li>${l.replace(/^\s*\d+[.)]\s+/, "")}</li>`).join("")}</ol>`); continue; }
+    out.push(`<p>${g.replace(/\n/g, "<br>")}</p>`);
+  }
+  let html = out.join("");
+  html = html.replace(/\x00I(\d+)\x00/g, (_m, i) => `<code>${inls[+i]}</code>`);
+  html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>").replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>");
+  return html || "(无回答)";
+}
+
+const turns = [];
+function renderThread() {
+  if (!turns.length) { $("#thread").innerHTML = '<div class="muted" style="padding:16px;text-align:center">先建 KG 再提问(基于图的实体/关系作答)</div>'; return; }
+  $("#thread").innerHTML = turns.map(t => `
+    <div style="margin-bottom:var(--s3)">
+      <div class="muted" style="font-size:.7rem;font-family:var(--font-mono);margin-bottom:4px">YOU</div>
+      <div class="bubble q">${esc(t.q)}</div>
+      <div class="muted" style="font-size:.7rem;font-family:var(--font-mono);margin:10px 0 4px">ASSISTANT</div>
+      <div class="bubble a md">${renderMd(t.a)}</div>
+      ${t.citations?.length ? t.citations.map((c, i) => `<div class="cite">#${i + 1} ${esc(c.name || c.id || c.entity || "")} <span class="muted">${esc((c.type || c.label || "") + (c.score != null ? " · " + (typeof c.score === "number" ? c.score.toFixed(3) : c.score) : ""))}</span></div>`).join("") : ""}
+      <div class="stat">检索 ${t.retrieval_count ?? (t.citations?.length || 0)} 条${t.latency_ms ? ` · ${(t.latency_ms / 1000).toFixed(2)}s` : ""}</div>
+    </div>`).join("");
+}
+$("#askBtn").addEventListener("click", ask);
+$("#question").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(); } });
+async function ask() {
+  const name = curDs(); if (!name) return toast("先选数据集", "warn");
+  const q = $("#question").value.trim(); if (!q) return toast("输入问题", "warn");
+  const btn = $("#askBtn"); btn.disabled = true; btn.textContent = "图检索+生成中…";
+  turns.push({ q, a: "…", citations: [], retrieval_count: 0 }); $("#question").value = ""; renderThread();
+  try {
+    const r = await request("POST", "/kg/ask", { body: { dataset_name: name, question: q } });
+    const last = turns[turns.length - 1];
+    last.a = r.answer || "(无回答)"; last.citations = r.citations || []; last.retrieval_count = r.retrieval_count;
+    renderThread();
+  } catch (e) {
+    const last = turns[turns.length - 1];
+    last.a = "❌ 查询失败:" + String(e?.detail || e?.message || e).slice(0, 200);
+    renderThread(); toast("KG 问答失败", "danger");
+  } finally { btn.disabled = false; btn.textContent = "提问"; }
+}
+
+loadDatasets();
+window.applyIcons && applyIcons(document);
+</script>
+</body>
+</html>
