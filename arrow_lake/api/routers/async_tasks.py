@@ -235,6 +235,94 @@ async def ingest_documents_async(
 
 
 # ---------------------------------------------------------------------------
+# Async index creation
+# ---------------------------------------------------------------------------
+
+
+class AsyncVectorIndexRequest(BaseModel):
+    """Request body for async vector index creation."""
+
+    metric: str = ""
+    vector_column: str = "text_embedding"
+    index_type: str = ""
+    num_partitions: int | None = None
+    num_sub_vectors: int | None = None
+    replace: bool = True
+
+
+class AsyncFtsIndexRequest(BaseModel):
+    """Request body for async FTS index creation."""
+
+    fts_column: str | None = None
+    replace: bool = True
+
+
+def _bg_create_vector_index(lake: Any, name: str, **kwargs: Any) -> Any:
+    return lake.create_vector_index(name, **kwargs)
+
+
+def _bg_create_fts_index(lake: Any, name: str, **kwargs: Any) -> None:
+    lake.create_fts_index(name, **kwargs)
+
+
+@router.post(
+    "/datasets/{name}/index/vector/async",
+    response_model=AsyncTaskResponse,
+    status_code=202,
+)
+async def create_vector_index_async(
+    name: str = Path(..., pattern=r"^[a-zA-Z0-9_][a-zA-Z0-9_.-]*$"),
+    *,
+    req: AsyncVectorIndexRequest,
+    lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.EDITOR)),
+) -> AsyncTaskResponse:
+    """Async vector index creation — returns task_id immediately (HTTP 202).
+
+    Vector index builds (IVF_PQ/HNSW) can run minutes on large datasets; this
+    avoids blocking the client. Poll via /tasks/{task_id}/status.
+    """
+    task_id = TaskManager.create_task("create_vector_index", name)
+    asyncio.create_task(  # noqa: RUF006
+        TaskManager.run_background(
+            task_id, _bg_create_vector_index, lake, name,
+            metric=req.metric, vector_column=req.vector_column, index_type=req.index_type,
+            num_partitions=req.num_partitions, num_sub_vectors=req.num_sub_vectors, replace=req.replace,
+        )
+    )
+    return AsyncTaskResponse(
+        task_id=task_id, operation="create_vector_index",
+        message=f"Async vector index build started for dataset '{name}'",
+    )
+
+
+@router.post(
+    "/datasets/{name}/index/fts/async",
+    response_model=AsyncTaskResponse,
+    status_code=202,
+)
+async def create_fts_index_async(
+    name: str = Path(..., pattern=r"^[a-zA-Z0-9_][a-zA-Z0-9_.-]*$"),
+    *,
+    req: AsyncFtsIndexRequest,
+    lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.EDITOR)),
+) -> AsyncTaskResponse:
+    """Async FTS index creation — returns task_id immediately (HTTP 202)."""
+    task_id = TaskManager.create_task("create_fts_index", name)
+    asyncio.create_task(  # noqa: RUF006
+        TaskManager.run_background(
+            task_id, _bg_create_fts_index, lake, name,
+            fts_column=req.fts_column, replace=req.replace,
+        )
+    )
+    return AsyncTaskResponse(
+        task_id=task_id, operation="create_fts_index",
+        message=f"Async FTS index build started for dataset '{name}'",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Async backup
 # ---------------------------------------------------------------------------
 

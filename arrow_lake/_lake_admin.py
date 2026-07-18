@@ -136,6 +136,30 @@ class _LakeAdminMixin:
         _CATALOG_CACHE["result"] = result
         return result
 
+    def list_indices(self, dataset_name: str) -> list[dict[str, Any]]:
+        """List indexes on a dataset as [{name, type, columns}].
+
+        Normalizes Lance's IndexMetadata (dict or object form) for the API.
+        """
+        ds = self._get_storage().open_dataset(dataset_name)
+        out: list[dict[str, Any]] = []
+        for idx in ds.list_indices() or []:
+            if isinstance(idx, dict):
+                name = idx.get("name")
+                t = idx.get("type") or idx.get("index_type")
+                cols = idx.get("columns") or []
+            else:
+                name = getattr(idx, "name", None)
+                t = getattr(idx, "type", None) or getattr(idx, "index_type", None)
+                cols = getattr(idx, "columns", None) or []
+            out.append({"name": name, "type": str(t or ""), "columns": list(cols)})
+        return out
+
+    def drop_index(self, dataset_name: str, index_name: str) -> None:
+        """Drop an index by name (LanceTable.drop_index)."""
+        ds = self._get_storage().open_dataset(dataset_name)
+        ds.drop_index(index_name)
+
     def list_datasets(self) -> list[str]:
         """List all dataset names.
 

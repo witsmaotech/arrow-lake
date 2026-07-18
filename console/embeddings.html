@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>索引/嵌入 · Arrow Lake Console</title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/tokens.css"/>
+<link rel="stylesheet" href="assets/app.css"/>
+<link rel="stylesheet" href="assets/console.css"/>
+<style>
+  .tabs{display:flex;gap:4px;border-bottom:1px solid var(--line-soft);margin-bottom:var(--s3)}
+  .tab{padding:8px 14px;font-size:.82rem;color:var(--fg-md);border-bottom:2px solid transparent;cursor:pointer;border-radius:var(--r-sm) var(--r-sm) 0 0}
+  .tab.active{color:var(--teal-bright);border-bottom-color:var(--teal-bright);font-weight:600}
+  .tab:hover{background:var(--ink-900)}
+  .tab-panel{display:none}
+  .tab-panel.active{display:block}
+  .schema-chip{display:inline-block;font-family:var(--font-mono);font-size:.72rem;padding:2px 8px;border:1px solid var(--line-soft);border-radius:var(--r-sm);background:var(--ink-900);margin:0 4px 4px 0}
+  .schema-chip.vec{border-color:var(--teal-soft,var(--line));color:var(--teal-bright)}
+  .schema-chip.txt{color:var(--fg-hi)}
+  .idx-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line-soft)}
+  .idx-row:last-child{border-bottom:none}
+  .vec-preview{font-family:var(--font-mono);font-size:.72rem;color:var(--fg-md);word-break:break-all;background:var(--ink-950);border:1px solid var(--line);border-radius:var(--r-sm);padding:10px;max-height:160px;overflow:auto}
+</style>
+</head>
+<body>
+<div id="app">
+<main class="main"><div class="page">
+  <div class="h-sec between">
+    <div><h1>索引 / 嵌入</h1><div class="desc">建检索索引(向量 / FTS / 标量 / Facets)+ 嵌入试算 · <a href="search.html" style="color:var(--teal-bright)">去检索 →</a></div></div>
+    <div class="flex" style="gap:8px;align-items:center">
+      <select class="select" id="ds" style="min-width:200px"></select>
+      <button class="btn btn-ghost btn-sm" id="refresh"><i class="placeholder" data-ic="refresh"></i></button>
+    </div>
+  </div>
+
+  <div class="panel"><div class="panel-b" id="status"><div class="muted" style="padding:20px">选择一个数据集…</div></div></div>
+
+  <div id="taskLinks" style="margin-top:var(--s4)"></div>
+
+  <div class="panel flush" id="schemaPanel" style="margin-top:var(--s4);display:none">
+    <div class="panel-h"><i class="placeholder" data-ic="code"></i><h3>Schema</h3><span class="sub" id="schemaMeta">—</span></div>
+    <div class="panel-b" id="schema"></div>
+  </div>
+
+  <div class="panel flush" style="margin-top:var(--s4)">
+    <div class="panel-h"><i class="placeholder" data-ic="search"></i><h3>现有索引</h3><span class="sub" id="idxMeta">—</span><span class="actions"><button class="btn btn-ghost btn-sm" id="reloadIdx">刷新</button></span></div>
+    <div class="panel-b" id="indexes"><div class="muted" style="padding:16px">选择数据集后加载…</div></div>
+  </div>
+
+  <div class="panel flush" style="margin-top:var(--s4)">
+    <div class="panel-h"><i class="placeholder" data-ic="plus"></i><h3>建索引</h3></div>
+    <div class="panel-b">
+      <div class="tabs" id="buildTabs">
+        <div class="tab active" data-tab="vector">向量(异步)</div>
+        <div class="tab" data-tab="fts">FTS(异步)</div>
+        <div class="tab" data-tab="scalar">标量</div>
+        <div class="tab" data-tab="facets">Facets</div>
+      </div>
+
+      <div class="tab-panel active" data-panel="vector">
+        <div class="grid g-2">
+          <div class="field"><label>向量列</label><select class="select" id="vCol"></select></div>
+          <div class="field"><label>metric(距离,留空=默认)</label><select class="select" id="vMetric"><option value="">默认</option><option value="L2">L2</option><option value="cosine">cosine</option><option value="dot">dot</option></select></div>
+          <div class="field"><label>index_type(留空=默认 IVF_PQ)</label><select class="select" id="vType"><option value="">默认</option><option value="IVF_PQ">IVF_PQ</option><option value="IVF_FLAT">IVF_FLAT</option><option value="IVF_HNSW_PQ">IVF_HNSW_PQ</option><option value="IVF_HNSW_SQ">IVF_HNSW_SQ</option><option value="HNSW">HNSW</option></select></div>
+          <div class="field"><label>num_partitions(IVF 聚类数,留空=自动)</label><input class="input mono" id="vPart" type="number" min="1" placeholder="自动"/></div>
+          <div class="field"><label>num_sub_vectors(PQ 子向量数,留空=自动)</label><input class="input mono" id="vSub" type="number" min="1" placeholder="自动"/></div>
+          <div class="field" style="display:flex;align-items:end;gap:8px"><label class="flex" style="gap:6px;font-size:.8rem;cursor:pointer"><input type="checkbox" id="vReplace" checked/> replace(覆盖已有)</label></div>
+        </div>
+        <div class="flex" style="margin-top:var(--s3);gap:8px"><button class="btn btn-primary btn-sm" id="buildVec">建向量索引</button><span class="muted" style="font-size:.72rem">异步:大数据集不阻塞,提交后在任务队列跟踪</span></div>
+      </div>
+
+      <div class="tab-panel" data-panel="fts">
+        <div class="grid g-2">
+          <div class="field"><label>FTS 文本列</label><select class="select" id="fCol"></select></div>
+          <div class="field" style="display:flex;align-items:end;gap:8px"><label class="flex" style="gap:6px;font-size:.8rem;cursor:pointer"><input type="checkbox" id="fReplace" checked/> replace</label></div>
+        </div>
+        <div class="flex" style="margin-top:var(--s3);gap:8px"><button class="btn btn-primary btn-sm" id="buildFts">建 FTS 索引</button><span class="muted" style="font-size:.72rem">异步</span></div>
+      </div>
+
+      <div class="tab-panel" data-panel="scalar">
+        <div class="grid g-2">
+          <div class="field"><label>列</label><select class="select" id="sCol"></select></div>
+          <div class="field"><label>index_type</label><select class="select" id="sType"><option value="BTREE">BTREE</option><option value="BITMAP">BITMAP</option></select></div>
+          <div class="field" style="display:flex;align-items:end;gap:8px"><label class="flex" style="gap:6px;font-size:.8rem;cursor:pointer"><input type="checkbox" id="sReplace" checked/> replace</label></div>
+        </div>
+        <div class="flex" style="margin-top:var(--s3)"><button class="btn btn-primary btn-sm" id="buildScalar">建标量索引</button></div>
+      </div>
+
+      <div class="tab-panel" data-panel="facets">
+        <div class="field"><label>批量标量列(逗号分隔,加速 facet 过滤)</label><input class="input mono" id="facCols" placeholder="category, source, year"/></div>
+        <div class="flex" style="margin-top:var(--s3)"><button class="btn btn-primary btn-sm" id="buildFacets">建 Facets 索引</button></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel flush" style="margin-top:var(--s4)">
+    <div class="panel-h"><i class="placeholder" data-ic="vector"></i><h3>嵌入试算</h3><span class="sub">POST /embed/text</span></div>
+    <div class="panel-b">
+      <div class="field"><label>文本</label><textarea class="input" id="embText" rows="2" placeholder="输入一段文本,看它的向量维度 + 前 5 维"></textarea></div>
+      <div class="flex" style="margin-top:var(--s2);gap:8px"><button class="btn btn-primary btn-sm" id="embBtn">计算嵌入</button><span id="embMeta" class="muted" style="font-size:.74rem"></span></div>
+      <div id="embOut" style="margin-top:var(--s3)"></div>
+    </div>
+  </div>
+
+</div></main>
+</div>
+
+<script src="assets/console-layout.js"></script>
+<script type="module">
+import { request } from "./src/api.js";
+import { isLoggedIn } from "./src/auth.js";
+import { toast } from "./src/ui/toast.js";
+import { watchTask } from "./src/task.js";
+
+if (!isLoggedIn()) location.href = "login.html";
+const { renderShell, icon } = window;
+renderShell({ active: "embeddings", crumb: '<a href="datasets.html">数据集</a> › <b>索引/嵌入</b>' });
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+// tabs
+$("#buildTabs").addEventListener("click", (e) => {
+  const t = e.target.closest(".tab"); if (!t) return;
+  $("#buildTabs").querySelectorAll(".tab").forEach(x => x.classList.toggle("active", x === t));
+  document.querySelectorAll(".tab-panel").forEach(p => p.classList.toggle("active", p.dataset.panel === t.dataset.tab));
+});
+
+// dataset 选择 + 加载
+function curDs() { return $("#ds").value; }
+
+async function loadDatasets() {
+  try {
+    const data = await request("GET", "/datasets");
+    const list = data?.datasets || [];
+    const preset = new URL(location.href).searchParams.get("ds");
+    $("#ds").innerHTML = `<option value="">— 选择数据集 —</option>` + list.map(d => `<option value="${esc(d.name)}">${esc(d.name)} (${(d.num_rows ?? 0).toLocaleString()} 行)</option>`).join("");
+    if (preset && list.some(d => d.name === preset)) $("#ds").value = preset;
+    if (curDs()) loadAll();
+  } catch (e) { toast("数据集列表加载失败:" + (e?.detail || e?.message || e), "warn"); }
+}
+$("#ds").addEventListener("change", () => loadAll());
+$("#refresh").addEventListener("click", loadAll);
+$("#reloadIdx").addEventListener("click", loadIndexes);
+
+async function loadAll() {
+  const name = curDs();
+  if (!name) { $("#status").innerHTML = '<div class="muted" style="padding:20px">选择一个数据集…</div>'; $("#schemaPanel").style.display = "none"; $("#indexes").innerHTML = '<div class="muted" style="padding:16px">选择数据集后加载…</div>'; return; }
+  $("#status").innerHTML = '<div class="muted" style="padding:20px">加载中…</div>';
+  try {
+    const d = await request("GET", `/datasets/${encodeURIComponent(name)}`);
+    $("#status").innerHTML = `<div class="grid g-4">
+      <div class="kpi"><div class="label">行数</div><div class="val">${(d.num_rows ?? 0).toLocaleString()}</div></div>
+      <div class="kpi"><div class="label">列数</div><div class="val">${d.num_columns ?? "—"}</div></div>
+      <div class="kpi"><div class="label">向量索引</div><div class="val" style="color:${d.has_vector_index ? "var(--ok)" : "var(--fg-lo)"}">${d.has_vector_index ? "✓ 已建" : "—"}</div></div>
+      <div class="kpi"><div class="label">FTS 索引</div><div class="val" style="color:${d.has_fts_index ? "var(--ok)" : "var(--fg-lo)"}">${d.has_fts_index ? "✓ 已建" : "—"}</div></div>
+    </div>`;
+  } catch (e) { $("#status").innerHTML = `<div style="color:var(--danger);padding:16px">加载失败:${esc(e?.detail || e?.message || e)}</div>`; }
+  loadSchema(); loadIndexes();
+}
+
+async function loadSchema() {
+  const name = curDs(); if (!name) return;
+  try {
+    const s = await request("GET", `/datasets/${encodeURIComponent(name)}/schema`);
+    const fields = s?.fields || [];
+    $("#schemaPanel").style.display = "";
+    $("#schemaMeta").textContent = `${fields.length} 字段`;
+    $("#schema").innerHTML = fields.map(f => {
+      const isVec = /list|fixed_size/i.test(f.type);
+      const isTxt = /string|utf8|large_string/i.test(f.type);
+      return `<span class="schema-chip ${isVec ? "vec" : isTxt ? "txt" : ""}" title="${esc(f.type)}">${esc(f.name)} <span style="color:var(--fg-lo)">: ${esc(f.type)}</span></span>`;
+    }).join("");
+    // populate column selects
+    const vecCols = fields.filter(f => /list|fixed_size/i.test(f.type)).map(f => f.name);
+    const txtCols = fields.filter(f => /string|utf8|large_string/i.test(f.type)).map(f => f.name);
+    const allCols = fields.map(f => f.name);
+    const opt = (arr, def) => arr.length ? arr.map(c => `<option value="${esc(c)}"${c === def ? " selected" : ""}>${esc(c)}</option>`).join("") : `<option value="">(无)</option>`;
+    $("#vCol").innerHTML = opt(vecCols.length ? vecCols : allCols, "text_embedding");
+    $("#fCol").innerHTML = opt(txtCols.length ? txtCols : allCols, txtCols[0] || "text");
+    $("#sCol").innerHTML = opt(allCols);
+  } catch (_) { /* schema 失败不阻塞 */ }
+}
+
+async function loadIndexes() {
+  const name = curDs(); if (!name) { $("#indexes").innerHTML = '<div class="muted" style="padding:16px">选择数据集后加载…</div>'; return; }
+  $("#indexes").innerHTML = '<div class="muted" style="padding:16px">加载中…</div>';
+  try {
+    const r = await request("GET", `/datasets/${encodeURIComponent(name)}/index`);
+    const idx = r?.indices || [];
+    $("#idxMeta").textContent = `${idx.length} 个`;
+    $("#indexes").innerHTML = idx.length ? idx.map(i => `<div class="idx-row">
+      <span class="tag teal">${esc(i.type || "index")}</span>
+      <span class="mono" style="font-size:.8rem;color:var(--fg-hi)">${esc(i.name || "(无名)")}</span>
+      <span class="muted" style="font-size:.72rem">列: ${esc((i.columns || []).join(", ") || "—")}</span>
+      <span style="flex:1"></span>
+      <button class="btn btn-ghost btn-sm btn-danger-ghost" data-drop="${esc(i.name)}">删</button>
+    </div>`).join("") : '<div class="muted" style="padding:16px">无索引 — 用上方表单建一个</div>';
+    $("#indexes").querySelectorAll("[data-drop]").forEach(b => b.addEventListener("click", async () => {
+      const iname = b.dataset.drop;
+      if (!confirm(`删除索引「${iname}」?`)) return;
+      try { await request("DELETE", `/datasets/${encodeURIComponent(name)}/index/${encodeURIComponent(iname)}`); toast("索引已删除", "ok"); loadAll(); }
+      catch (e) { toast("删除失败:" + (e?.detail || e?.message || e), "danger"); }
+    }));
+  } catch (e) { $("#indexes").innerHTML = `<div style="color:var(--danger);padding:16px">加载失败:${esc(e?.detail || e?.message || e)}</div>`; }
+}
+
+// 建索引
+function numOrNull(v) { const n = parseInt(v, 10); return Number.isFinite(n) && n > 0 ? n : null; }
+function taskLink(tid) { return `<a href="tasks.html?task=${encodeURIComponent(tid)}" style="color:var(--teal-bright)">任务 ${esc(tid.slice(0, 8))} →</a>`; }
+function onAsyncTask(tid, okMsg) {
+  toast(okMsg, "ok");
+  $("#taskLinks").innerHTML = `<div class="panel" style="padding:10px;font-size:.82rem">异步任务已提交 · ${taskLink(tid)}</div>`;
+  watchTask(tid, (t) => {
+    toast(`任务 ${tid.slice(0, 8)}: ${t.status}`, /FAIL|ERROR/.test(t.status || "") ? "danger" : "ok");
+    if (/COMPLETED|SUCCESS/.test(t.status || "")) setTimeout(loadAll, 800);
+  });
+}
+
+$("#buildVec").addEventListener("click", async () => {
+  const name = curDs(); if (!name) return toast("先选数据集", "warn");
+  const body = { vector_column: $("#vCol").value, metric: $("#vMetric").value, index_type: $("#vType").value, num_partitions: numOrNull($("#vPart").value), num_sub_vectors: numOrNull($("#vSub").value), replace: $("#vReplace").checked };
+  const btn = $("#buildVec"); btn.disabled = true;
+  try {
+    const r = await request("POST", `/datasets/${encodeURIComponent(name)}/index/vector/async`, { body });
+    onAsyncTask(r.task_id, "向量索引构建已提交(异步)");
+  } catch (e) { toast("提交失败:" + (e?.detail || e?.message || e), "danger"); }
+  finally { btn.disabled = false; }
+});
+$("#buildFts").addEventListener("click", async () => {
+  const name = curDs(); if (!name) return toast("先选数据集", "warn");
+  const body = { fts_column: $("#fCol").value || null, replace: $("#fReplace").checked };
+  const btn = $("#buildFts"); btn.disabled = true;
+  try {
+    const r = await request("POST", `/datasets/${encodeURIComponent(name)}/index/fts/async`, { body });
+    onAsyncTask(r.task_id, "FTS 索引构建已提交(异步)");
+  } catch (e) { toast("提交失败:" + (e?.detail || e?.message || e), "danger"); }
+  finally { btn.disabled = false; }
+});
+$("#buildScalar").addEventListener("click", async () => {
+  const name = curDs(); if (!name) return toast("先选数据集", "warn");
+  const btn = $("#buildScalar"); btn.disabled = true; btn.textContent = "构建中…";
+  try {
+    const r = await request("POST", `/datasets/${encodeURIComponent(name)}/index/scalar`, { body: { column: $("#sCol").value, index_type: $("#sType").value, replace: $("#sReplace").checked } });
+    toast(r.message || "标量索引已建", "ok"); loadAll();
+  } catch (e) { toast("构建失败:" + (e?.detail || e?.message || e), "danger"); }
+  finally { btn.disabled = false; btn.textContent = "建标量索引"; }
+});
+$("#buildFacets").addEventListener("click", async () => {
+  const name = curDs(); if (!name) return toast("先选数据集", "warn");
+  const cols = $("#facCols").value.split(",").map(s => s.trim()).filter(Boolean);
+  if (!cols.length) return toast("填至少一列", "warn");
+  const btn = $("#buildFacets"); btn.disabled = true; btn.textContent = "构建中…";
+  try {
+    const r = await request("POST", `/datasets/${encodeURIComponent(name)}/index/facets`, { body: { columns: cols } });
+    toast(`Facets 索引已建(${Object.keys(r.results || {}).length} 列)`, "ok"); loadAll();
+  } catch (e) { toast("构建失败:" + (e?.detail || e?.message || e), "danger"); }
+  finally { btn.disabled = false; btn.textContent = "建 Facets 索引"; }
+});
+
+// 嵌入试算
+$("#embBtn").addEventListener("click", async () => {
+  const text = $("#embText").value.trim();
+  if (!text) return toast("输入文本", "warn");
+  const btn = $("#embBtn"); btn.disabled = true;
+  $("#embMeta").textContent = "计算中…"; $("#embOut").innerHTML = "";
+  try {
+    const r = await request("POST", "/embed/text", { body: { texts: [text] } });
+    const vec = (r.embeddings || [])[0] || [];
+    $("#embMeta").textContent = `维度 ${r.embedding_dim ?? vec.length} · ${vec.length} 值 · 模型 ${r.model || "—"}`;
+    $("#embOut").innerHTML = `<div class="muted" style="font-size:.72rem;margin-bottom:4px">前 5 维</div><div class="vec-preview">${esc(vec.slice(0, 5).map(v => v.toFixed(4)).join(",  "))}${vec.length > 5 ? ", …" : ""}</div>`;
+  } catch (e) { $("#embMeta").textContent = ""; $("#embOut").innerHTML = `<div style="color:var(--danger);font-size:.8rem">${esc(e?.detail || e?.message || e)}</div>`; }
+  finally { btn.disabled = false; }
+});
+
+loadDatasets();
+window.applyIcons && applyIcons(document);
+</script>
+</body>
+</html>

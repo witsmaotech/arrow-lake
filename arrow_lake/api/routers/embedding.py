@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from dataclasses import asdict
 
-from fastapi import APIRouter, Depends, Path
+from fastapi import APIRouter, Depends, HTTPException, Path
 
 from arrow_lake.api.auth_models import Role
 from arrow_lake.api.deps import get_lake, require_role
 from arrow_lake.api.models.common import _NAME_PATTERN
 from arrow_lake.api.models.embedding import (
+    DropIndexResponse,
     EmbeddingResponse,
     FacetsIndexRequest,
     FacetsIndexResponse,
@@ -17,6 +18,8 @@ from arrow_lake.api.models.embedding import (
     FtsIndexResponse,
     ClipTextEmbedRequest,
     ImageEmbedRequest,
+    IndexInfo,
+    ListIndicesResponse,
     ScalarIndexRequest,
     ScalarIndexResponse,
     TextEmbedRequest,
@@ -130,6 +133,40 @@ async def create_facet_indexes(
         label="create_facet_indexes",
     )
     return FacetsIndexResponse(results=results or {})
+
+
+@router.get(
+    "/{name}/index",
+    response_model=ListIndicesResponse,
+)
+async def list_indices(
+    name: str = Path(..., pattern=_NAME_PATTERN),
+    *,
+    _user: dict = Depends(require_role(Role.VIEWER)),
+    lake=Depends(get_lake),
+) -> ListIndicesResponse:
+    """List indexes on a dataset (name / type / columns)."""
+    items = await run_sync(lake.list_indices, name, timeout=_INDEX_TIMEOUT, label="list_indices")
+    return ListIndicesResponse(name=name, indices=[IndexInfo(**i) for i in items])
+
+
+@router.delete(
+    "/{name}/index/{index_name}",
+    response_model=DropIndexResponse,
+)
+async def drop_index(
+    name: str = Path(..., pattern=_NAME_PATTERN),
+    index_name: str = Path(...),
+    *,
+    _user: dict = Depends(require_role(Role.EDITOR)),
+    lake=Depends(get_lake),
+) -> DropIndexResponse:
+    """Drop an index by name."""
+    try:
+        await run_sync(lake.drop_index, name, index_name, timeout=_INDEX_TIMEOUT, label="drop_index")
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=404, detail=f"Drop failed: {exc}") from exc
+    return DropIndexResponse(name=name, index_name=index_name, message=f"Index '{index_name}' dropped")
 
 
 @embed_router.post("/text", response_model=EmbeddingResponse)

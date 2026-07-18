@@ -56,6 +56,27 @@ class FacetsIndexResponse(BaseModel):
     results: dict[str, Any] = Field(default_factory=dict)
 
 
+class IndexInfo(BaseModel):
+    """A single index on a dataset (normalized from LanceTable.list_indices)."""
+
+    name: str | None = None
+    type: str = ""
+    columns: list[str] = Field(default_factory=list)
+
+
+class ListIndicesResponse(BaseModel):
+    success: bool = True
+    name: str
+    indices: list[IndexInfo] = Field(default_factory=list)
+
+
+class DropIndexResponse(BaseModel):
+    success: bool = True
+    name: str
+    index_name: str
+    message: str = ""
+
+
 # ---------------------------------------------------------------------------
 # Standalone embedding computation
 # ---------------------------------------------------------------------------
