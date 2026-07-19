@@ -160,18 +160,19 @@ class HugeGraphConfig(BaseModel):
     extractor_backend: Literal["legacy", "he"] = "he"
     # he_default_template MUST be a usable extraction template (the base_* presets
     # are AutoType base classes, not directly extractable → "Template not found").
-    # Project-local concept_graph (strict type/relation enum + required
-    # definition) — NOT the gallery general/concept_graph (free type → 80+ type
-    # noise + 0% description). See arrow_lake/knowledge_graph/templates/.
-    he_default_template: str = "concept_graph"
+    # Project-local entity_graph (default general extraction: concrete entities +
+    # explicit/implicit relations, strict type/relation enum + required
+    # definition + concise naming). concept_graph reserved for taxonomy/concept
+    # content. See arrow_lake/knowledge_graph/templates/.
+    he_default_template: str = "entity_graph"
     # Common doc_types → fitting templates; unmapped falls back to he_default_template.
     # NOTE: only canonical keys here — aliases (e.g. "guide"→"manual", "论文"→"paper")
     # collapse via normalize_doc_type before lookup, so listing them is redundant.
     he_doc_type_templates: dict[str, str] = {
-        "paper": "concept_graph",
-        # report 改用 concept_graph：实测 doc_structure 在 granite4.1:8b + 建设方案类
-        # 文档抽 0 实体，concept_graph 抽 8（高质量）。doc_structure 模板质量待后续单独调优。
-        "report": "concept_graph",
+        # paper/report(含 tech/技术/技术文档 alias)→ entity_graph(通用实体抽取);
+        # concept_graph 仅留给 concept/taxonomy 场景(走 tag 匹配/default)。
+        "paper": "entity_graph",
+        "report": "entity_graph",
         "manual": "general/workflow_graph",
         "biography": "general/biography_graph",
         # [#9] 多领域项目模板 (arrow_lake/knowledge_graph/templates/*.yaml) —
@@ -180,7 +181,6 @@ class HugeGraphConfig(BaseModel):
         "medicine": "medical_concept_graph",
         "legal": "legal_concept_graph",
         "finance": "finance_concept_graph",
-        "ddd": "ddd_concept_graph",
     }
     he_language: Literal["zh", "en"] = "zh"
     he_model: str | None = None

@@ -5,6 +5,44 @@
 <title>总览 · Arrow Lake Console</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="assets/tokens.css"/><link rel="stylesheet" href="assets/app.css"/>
+<style>
+/* A1 指挥中心 — hero 焦点 + 密集 KPI + 不对称主区 */
+.hero{display:grid;grid-template-columns:300px 1fr;gap:var(--s4);align-items:stretch}
+.hero-status{display:flex;flex-direction:column;justify-content:center;gap:var(--s2);padding:var(--s5) var(--s5);background:radial-gradient(120% 120% at 0 0,rgba(20,184,166,.10),transparent 60%),linear-gradient(180deg,var(--ink-850),var(--ink-900));border:1px solid var(--line);border-radius:var(--r-lg)}
+.hero-status .pulse-ring{width:14px;height:14px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 4px var(--ok-soft);animation:pulse 2s var(--ease) infinite}
+.hero-status .big{font-family:var(--font-mono);font-size:2.4rem;font-weight:700;letter-spacing:-.03em;line-height:1;color:var(--fg-hi)}
+.hero-status .vitals{display:grid;grid-template-columns:1fr 1fr;gap:var(--s2) var(--s4);margin-top:var(--s3)}
+.hero-status .vitals .v-label{font-size:var(--fs-cap);color:var(--fg-lo);text-transform:uppercase;letter-spacing:.07em}
+.hero-status .vitals .v-val{font-family:var(--font-mono);font-size:1rem;font-weight:600;color:var(--fg-hi)}
+.kpi-strip{display:grid;grid-template-columns:repeat(8,1fr);gap:var(--grid-gap)}
+.kpi-strip .kpi{padding:var(--s3) var(--card-pad)}
+.kpi-strip .kpi .val{font-size:1.25rem}
+.feed{display:flex;flex-direction:column}
+.feed-item{display:flex;gap:var(--s3);padding:9px var(--card-pad);border-bottom:1px solid var(--line-soft);align-items:flex-start;font-size:.78rem}
+.feed-item:last-child{border-bottom:none}
+.feed-item .fic{width:26px;height:26px;border-radius:var(--r-sm);display:grid;place-items:center;flex-shrink:0;background:var(--ink-800);border:1px solid var(--line)}
+.feed-item .fic .ic{width:14px;height:14px}
+.feed-item.ok .fic{background:var(--ok-soft);border-color:rgba(34,197,94,.3)}.feed-item.ok .fic .ic{color:var(--ok)}
+.feed-item.amber .fic{background:var(--amber-soft);border-color:rgba(245,158,11,.3)}.feed-item.amber .fic .ic{color:var(--warn)}
+.feed-item.info .fic{background:var(--info-soft);border-color:rgba(56,189,248,.3)}.feed-item.info .fic .ic{color:var(--info)}
+.feed-item .ft{color:var(--fg-md);line-height:1.45;flex:1;min-width:0}
+.feed-item .ft b{color:var(--fg-hi);font-weight:600}
+.feed-item .ft .mono{font-size:.72rem}
+.feed-item .ftime{font-family:var(--font-mono);font-size:.65rem;color:var(--fg-lo);flex-shrink:0;white-space:nowrap}
+.feed-item.live::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--teal-bright);box-shadow:0 0 8px var(--teal-bright);flex-shrink:0;margin-top:6px;animation:pulse 1.6s infinite}
+.qrow{display:flex;gap:var(--s2);padding:8px var(--card-pad);border-bottom:1px solid var(--line-soft);align-items:center;font-size:.76rem}
+.qrow:last-child{border-bottom:none}
+.qrow .qtag{font-family:var(--font-mono);font-size:.62rem;padding:1px 6px;border-radius:4px;flex-shrink:0}
+.qrow .qtxt{color:var(--fg-md);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.qrow .qtxt b{color:var(--fg-hi)}
+.gauge-row{display:flex;flex-direction:column;gap:var(--s3)}
+.evlog{font-family:var(--font-mono);font-size:.72rem;line-height:1.7;color:var(--fg-md)}
+.evlog .t{color:var(--fg-lo);margin-right:6px}
+.evlog .ok{color:var(--ok)}.evlog .warn{color:var(--warn)}.evlog .info{color:var(--info)}
+.scn{height:1px;background:var(--line-soft);margin:var(--s2) 0}
+@media(max-width:1100px){.hero{grid-template-columns:1fr}.kpi-strip{grid-template-columns:repeat(4,1fr)}}
+@media(max-width:860px){.kpi-strip{grid-template-columns:repeat(2,1fr)}}
+</style>
 </head>
 <body>
 <div id="app">
@@ -13,108 +51,137 @@
     <div class="telem" id="telem"></div>
 
     <div class="h-sec between">
-      <div><h1>总览</h1><div class="desc">湖仓实时态势 · <span class="mono">2026-07-04 14:32 UTC+8</span></div></div>
+      <div><h1>总览</h1><div class="desc">湖仓实时态势 · <span class="mono">指挥中心 · v1.9.0</span></div></div>
       <div class="flex">
-        <button class="btn btn-ghost btn-sm" onclick="openApi('健康检查 + 版本','curl -s $API/health\\ncurl -s $API/api/v1/version','from arrow_lake import Lake\\nlake = Lake.from_yaml(\"prod.yaml\")\\nprint(lake.health())')"><i class="placeholder" data-ic="code"></i> API</button>
-        <a class="btn btn-primary btn-sm" href="datasets.html#ingest"><i class="placeholder" data-ic="plus"></i> 新摄入任务</a>
+        <button class="btn btn-ghost btn-sm" onclick="openApi('健康 + 版本','curl -s $API/health\\ncurl -s $API/api/v1/version','lake.health()')"><i class="placeholder" data-ic="code"></i> API</button>
+        <a class="btn btn-primary btn-sm" href="datasets.html#ingest"><i class="placeholder" data-ic="plus"></i> 新摄入</a>
       </div>
     </div>
 
-    <div class="panel"><div class="panel-b kpi-row" id="kpis"></div></div>
-
-    <div class="grid cols-2-1">
-      <div class="panel">
-        <div class="panel-h"><i class="placeholder" data-ic="pulse"></i><h3>请求深度 · 五层探活</h3><span class="sub">每层健康灯</span><div class="actions"><span class="lamp ok pulse"><i></i>穿层正常</span></div></div>
-        <div class="panel-b" id="depthRail"></div>
+    <!-- HERO 焦点 -->
+    <div class="hero">
+      <div class="hero-status">
+        <div class="flex" style="gap:10px;align-items:center"><span class="pulse-ring"></span><span class="tag ok">湖仓健康</span></div>
+        <div class="big">healthy</div>
+        <div class="muted mono" style="font-size:.72rem">5 层探活通过 · 控制面 SystemDB ✓</div>
+        <div class="vitals">
+          <div><div class="v-label">p50 延迟</div><div class="v-val">42 ms</div></div>
+          <div><div class="v-label">p99 延迟</div><div class="v-val" style="color:var(--warn)">318 ms</div></div>
+          <div><div class="v-label">错误率</div><div class="v-val" style="color:var(--ok)">0.03%</div></div>
+          <div><div class="v-label">QPS</div><div class="v-val" style="color:var(--teal-bright)">1,284</div></div>
+        </div>
       </div>
-      <div class="panel">
-        <div class="panel-h"><i class="placeholder" data-ic="server"></i><h3>依赖与降级</h3></div>
-        <div class="panel-b col" id="depsDetail"></div>
-      </div>
-    </div>
-
-    <div class="grid cols-2-1">
-      <div class="panel">
-        <div class="panel-h"><i class="placeholder" data-ic="gauge"></i><h3>查询吞吐与延迟</h3><span class="actions"><span class="tag teal">QPS</span><span class="tag amber">p99 ms</span></div></div>
-        <div class="panel-b"><div id="qpsChart"></div><div class="grid g-3" style="margin-top:var(--s4)"><div class="muted">峰值 <b class="readout" style="color:var(--teal-bright)">1,842</b></div><div class="muted">p50 <b class="readout">42ms</b></div><div class="muted">错误率 <b class="readout" style="color:var(--ok)">0.03%</b></div></div></div>
-      </div>
-      <div class="panel">
-        <div class="panel-h"><i class="placeholder" data-ic="quality"></i><h3>检索分布</h3></div>
-        <div class="panel-b flex" style="gap:var(--s5)"><div id="searchDonut"></div><div class="col grow" id="searchLegend"></div></div>
+      <div class="panel" style="display:flex;flex-direction:column">
+        <div class="panel-h"><i class="placeholder" data-ic="pulse"></i><h3>查询吞吐与延迟</h3><span class="actions"><span class="tag teal">QPS</span><span class="tag amber">p99</span><span class="muted mono" style="font-size:.65rem">近 40 分钟</span></span></div>
+        <div class="panel-b" style="flex:1"><div id="qpsChart"></div></div>
       </div>
     </div>
 
-    <div class="grid cols-2-1">
-      <div class="panel">
-        <div class="panel-h"><i class="placeholder" data-ic="tasks"></i><h3>异步任务</h3><span class="sub">实时统计 · 点卡片查看详情</span><div class="actions"><a class="btn btn-ghost btn-sm" href="tasks.html">全部任务 →</a></div></div>
-        <div class="panel-b">
-          <div class="grid g-4">
-            <a class="kpi" href="tasks.html" style="text-decoration:none;color:var(--fg-hi);border:1px solid var(--line);border-radius:var(--r-md);cursor:pointer"><div class="label">运行中</div><div class="val" style="color:var(--warn)">3</div><div class="delta">PENDING+RUNNING</div></a>
-            <a class="kpi" href="tasks.html" style="text-decoration:none;color:var(--fg-hi);border:1px solid var(--line);border-radius:var(--r-md);cursor:pointer"><div class="label">今日完成</div><div class="val" style="color:var(--ok)">12</div><div class="delta up">+4 ↑</div></a>
-            <a class="kpi" href="tasks.html" style="text-decoration:none;color:var(--fg-hi);border:1px solid var(--line);border-radius:var(--r-md);cursor:pointer"><div class="label">失败</div><div class="val" style="color:var(--danger)">1</div><div class="delta">需重试</div></a>
-            <a class="kpi" href="tasks.html" style="text-decoration:none;color:var(--fg-hi);border:1px solid var(--line);border-radius:var(--r-md);cursor:pointer"><div class="label">平均耗时</div><div class="val">2m18s</div><div class="delta">p50</div></a>
+    <!-- KPI×8 密集条 -->
+    <div class="panel"><div class="panel-b kpi-strip" id="kpis"></div></div>
+
+    <!-- 不对称主区：左宽（活动流 + 最近查询）/ 右窄（资源 + 系统事件 + 五层轨） -->
+    <div class="grid" style="grid-template-columns:1.6fr 1fr;gap:var(--s4);align-items:start">
+      <div class="col">
+        <div class="panel flush">
+          <div class="panel-h"><i class="placeholder" data-ic="pulse"></i><h3>实时活动流</h3><span class="sub">摄入 · 检索 · KG · 血缘 · 嵌入</span><div class="actions"><span class="lamp ok pulse"><i></i>live</span></div></div>
+          <div class="feed" id="feed"></div>
+        </div>
+        <div class="panel flush">
+          <div class="panel-h"><i class="placeholder" data-ic="search"></i><h3>最近查询</h3><span class="sub">SQL · RAG · 检索 · KG</span><div class="actions"><a class="btn btn-ghost btn-sm" href="my-workspace.html">收藏查询 →</a></div></div>
+          <div id="queries"></div>
+        </div>
+      </div>
+
+      <div class="col">
+        <div class="panel">
+          <div class="panel-h"><i class="placeholder" data-ic="server"></i><h3>资源仪表</h3></div>
+          <div class="panel-b gauge-row" id="gauges"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-h"><i class="placeholder" data-ic="audit"></i><h3>系统事件</h3></div>
+          <div class="panel-b evlog" id="evlog"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-h"><i class="placeholder" data-ic="pulse"></i><h3>五层探活</h3><span class="sub">请求穿层</span></div>
+          <div class="panel-b">
+            <div class="rail" style="margin-bottom:var(--s3)" id="depthRail"></div>
+            <div class="grid g-2" id="layerHealth"></div>
           </div>
         </div>
       </div>
-      <div class="panel"><div class="panel-h"><i class="placeholder" data-ic="command"></i><h3>快捷动作</h3></div><div class="panel-b col" id="quick" style="gap:var(--s2)"></div></div>
     </div>
   </div>
 </main>
 </div>
 <script src="assets/layout.js"></script>
 <script>
-const {renderShell,icon,areachart,donut,openApi}=window;
+const {renderShell,icon}=window;
 renderShell({active:'dashboard',crumb:'<b>总览</b>'});
+const $=s=>document.querySelector(s);
 
 $('#telem').innerHTML=`
   <span class="item"><span class="dot"></span>QPS <b>1,284</b></span>
-  <span class="item">p50 <b>42ms</b></span>
-  <span class="item warn">p99 <b>318ms</b></span>
-  <span class="item">负载 <b>0.84</b></span>
-  <span class="item">在线任务 <b>3</b></span>
-  <span class="item">GPU <b>2×A100</b></span>
+  <span class="item">p50 <b>42ms</b></span><span class="item warn">p99 <b>318ms</b></span>
+  <span class="item">负载 <b>0.84</b></span><span class="item">向量 <b>9.4M</b></span>
+  <span class="item">在线任务 <b>3</b></span><span class="item">GPU <b>2×A100</b></span>
   <span class="item" style="margin-left:auto">集群 <b style="color:var(--ok)">healthy</b></span>`;
 
-function $(s){return document.querySelector(s)}
-
+// KPI×8
 $('#kpis').innerHTML=[
-['数据集','48','+3 ↑','up'],['向量行','9.4M','+128K ↑','up'],['RAG 会话','1,205','+86 ↑','up'],['KG 实体','342K','—',''],
+ ['数据集','48','+3 ↑','up'],['向量行','9.4M','+128K ↑','up'],['嵌入 QPS','246','+18 ↑','up'],
+ ['KG 实体','342K','—',''],['血缘事件','1.2M','+4.2K ↑','up'],['RAG 会话','1,205','+86 ↑','up'],
+ ['运行任务','3','PENDING+RUNNING','warn'],['存储','9.2TB','41% 满',''],
 ].map(k=>`<div class="kpi"><div class="label">${k[0]}</div><div class="val">${k[1]}</div><div class="delta ${k[3]}">${k[2]}</div></div>`).join('');
 
-$('#depthRail').innerHTML=`<div class="flex between" style="margin-bottom:8px"><span class="muted mono" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.07em">实时请求 · RAG #1284 穿层</span><span class="tag amber">当前 ③ 计算 · 嵌入推理</span></div>
-<div class="rail" style="margin-bottom:var(--s4)">
-  ${[['①','接入','done'],['②','能力','done'],['③','计算','active'],['④','引擎',''],['⑤','持久化','']].map(s=>`<div class="seg ${s[2]}">${s[0]}<b>${s[1]}</b></div>`).join('')}
-  <div class="seg done" style="border-left:1px dashed var(--line-strong)"><b>KG</b>旁路</div>
-</div>
-<div class="muted mono" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.07em;margin:2px 0 8px">各层健康</div>
-<div class="grid g-3">
-  ${[['接入','REST · 106 routes','ok'],['能力','检索/RAG/KG 正常','ok'],['计算','Ray worker#2 重启中','warn'],['引擎','Lance · DuckDB','ok'],['持久化','MinIO · Redis · HugeGraph','ok'],['控制面','libSQL · SystemDB V004','ok'],['KG 旁路','Gremlin→REST 降级','partial']]
-  .map(d=>`<div><div class="lamp ${d[2]} ${d[2]==='warn'||d[2]==='ok'?'pulse':''}"><i></i>${d[0]}</div><div class="muted" style="font-size:.7rem;margin-top:4px">${d[1]}</div></div>`).join('')}
-</div>`;
-
-$('#depsDetail').innerHTML=[
-['Ray','2 worker / 1 head','ok','在线'],['HugeGraph','kg_{dataset} 48 图','ok','在线'],
-['Gremlin','绑定失败 → REST 回退','warn','降级'],['MinIO','9.2 TB / 41% 满','ok','在线'],
-['Redis','session+task+黑名单','ok','在线'],['Ollama','qwen2.5:14b','ok','在线'],['SystemDB','libSQL · V004 · 控制面','ok','在线'],
-].map(d=>`<div class="flex between"><span class="lamp ${d[2]}"><i></i><b style="color:var(--fg-hi);font-family:var(--font-ui)">${d[0]}</b> <span class="muted" style="font-family:var(--font-mono);font-size:.7rem">${d[1]}</span></span><span class="tag ${d[2]==='ok'?'ok':'amber'}">${d[3]}</span></div>`).join('');
-
+// HERO 主图：QPS 面积 + p99 虚线
 const qps=[],p99=[];for(let i=0;i<40;i++){qps.push(900+Math.round(Math.sin(i/3)*300+Math.random()*200));p99.push(200+Math.round(Math.cos(i/4)*120+Math.random()*80))}
-const W=640,H=150,norm=a=>{const mx=Math.max(...a),mn=Math.min(...a),r=mx-mn||1;return a.map((v,i)=>[(i/(a.length-1))*W,H-((v-mn)/r)*(H-18)-9])};
+const W=640,H=170,norm=a=>{const mx=Math.max(...a),mn=Math.min(...a),r=mx-mn||1;return a.map((v,i)=>[(i/(a.length-1))*W,H-((v-mn)/r)*(H-18)-9])};
 const qp=norm(qps),pp=norm(p99),pth=a=>a.map(p=>p[0].toFixed(1)+','+p[1].toFixed(1)).join(' ');
 let grid='';for(let i=1;i<4;i++){const gy=(H/4)*i;grid+=`<line x1="0" y1="${gy}" x2="${W}" y2="${gy}" stroke="var(--line-soft)" stroke-width="1"/>`}
-$('#qpsChart').innerHTML=`<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="none"><defs><linearGradient id="ag" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="var(--teal-bright)" stop-opacity=".32"/><stop offset="100%" stop-color="var(--teal-bright)" stop-opacity="0"/></linearGradient></defs>${grid}<polygon points="0,${H} ${pth(qp)} ${W},${H}" fill="url(#ag)"/><polyline points="${pth(qp)}" fill="none" stroke="var(--teal-bright)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><polyline points="${pth(pp)}" fill="none" stroke="var(--warn)" stroke-width="1.5" stroke-dasharray="4 3" stroke-linecap="round"/></svg>`;
+$('#qpsChart').innerHTML=`<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="none"><defs><linearGradient id="ag" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="var(--teal-bright)" stop-opacity=".32"/><stop offset="100%" stop-color="var(--teal-bright)" stop-opacity="0"/></linearGradient></defs>${grid}<polygon points="0,${H} ${pth(qp)} ${W},${H}" fill="url(#ag)"/><polyline points="${pth(qp)}" fill="none" stroke="var(--teal-bright)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><polyline points="${pth(pp)}" fill="none" stroke="var(--warn)" stroke-width="1.5" stroke-dasharray="4 3" stroke-linecap="round"/></svg>`;
 
-const dist=[['向量 ANN',52,'var(--teal-bright)'],['混合 RRF',28,'var(--warn)'],['全文 BM25',14,'var(--info)'],['集成',6,'var(--c4)']];
-const r=46,c=2*Math.PI*r;let off=0;
-$('#searchDonut').innerHTML=`<svg viewBox="0 0 120 120" width="130" height="130">${dist.map(d=>{const len=c*d[1]/100;const seg=`<circle cx="60" cy="60" r="${r}" fill="none" stroke="${d[2]}" stroke-width="10" stroke-dasharray="${len} ${c-len}" stroke-dashoffset="${-off}" transform="rotate(-90 60 60)"/>`;off+=len;return seg}).join('')}<text x="60" y="56" text-anchor="middle" font-family="var(--font-mono)" font-size="16" fill="var(--fg-hi)" font-weight="600">9.4M</text><text x="60" y="74" text-anchor="middle" font-family="var(--font-mono)" font-size="9" fill="var(--fg-lo)">检索/日</text></svg>`;
-$('#searchLegend').innerHTML=dist.map(d=>`<div class="flex between"><span class="flex" style="gap:6px"><span style="width:9px;height:9px;border-radius:3px;background:${d[2]}"></span>${d[0]}</span><b class="readout">${d[1]}%</b></div>`).join('');
+// 实时活动流
+$('#feed').innerHTML=[
+ ['ok','ingest','<b>wuhu_report</b> 增量摄入 <span class="mono">+412 行</span> · 已建 FTS+嵌入','14:32','live'],
+ ['info','search','检索 <b>"白鳍豚保护"</b> → <span class="mono">8 命中</span> (hybrid+rerank)','14:31',''],
+ ['ok','kg','<b>kg_jd_ddd</b> 增量 KA · <span class="mono">+14 实体</span>','14:30',''],
+ ['amber','rag','RAG <b>"DDD 核心概念"</b> · retrieval_count=10','14:29',''],
+ ['info','lineage','血缘记录 <b>append_dataset</b> (wuhu_report)','14:28',''],
+ ['ok','embed','嵌入批量 <span class="mono">1,204 行</span> · qwen3-embedding','14:27',''],
+ ['info','olap','SQL <b>wuhu_report</b> 聚合 · 12ms','14:25',''],
+].map(e=>`<div class="feed-item ${e[0]} ${e[4]}"><div class="fic">${icon(e[1])}</div><div class="ft">${e[2]}</div><span class="ftime">${e[3]}</span></div>`).join('');
 
-$('#taskRows')&&$('#taskRows').remove&&0;
+// 最近查询
+$('#queries').innerHTML=[
+ ['teal','SQL','SELECT 区域,SUM(营收) FROM wuhu_report GROUP BY 区域'],
+ ['amber','RAG','Sparse Attention 之后又出现了哪些改进？'],
+ ['info','检索','向量索引 IVF vs HNSW 召回对比'],
+ ['teal','KG','哪些方法依赖稀疏注意力？'],
+].map(q=>`<div class="qrow"><span class="qtag ${q[0]==='teal'?'tag teal':q[0]==='amber'?'tag amber':'tag info'}">${q[1]}</span><span class="qtxt"><b>${q[2]}</b></span></div>`).join('');
 
-$('#quick').innerHTML=[
-['ingest','摄入数据','datasets.html'],['search','发起检索','search.html'],
-['rag','问 RAG','rag.html'],['kg','建知识图谱','kg.html'],
-].map(q=>`<a href="${q[2]}" class="flex" style="padding:9px var(--s3);border:1px solid var(--line);border-radius:var(--r-md);color:var(--fg-hi);text-decoration:none;gap:10px;align-items:center;font-size:.85rem"><span style="color:var(--teal-bright)">${icon(q[0])}</span><span class="grow" style="font-weight:600">${q[1]}</span>${icon('arrowR')}</a>`).join('');
+// 资源仪表
+$('#gauges').innerHTML=[
+ ['CPU','0.84 / 8','42','amber'],['内存','12.4 / 32 GB','39',''],
+ ['GPU','2×A100 · 61%','61','amber'],['磁盘','412 GB / 1 TB','41',''],
+].map(g=>`<div><div class="flex between"><span class="muted" style="font-size:var(--fs-cap)">${g[0]}</span><b class="readout" style="font-size:.85rem">${g[1]}</b></div><div class="bar ${g[3]}" style="margin-top:5px"><i style="width:${g[2]}%"></i></div></div>`).join('');
+
+// 系统事件日志
+$('#evlog').innerHTML=[
+ ['14:30','ok','SystemDB 迁移 V004 ✓'],
+ ['14:15','warn','Gremlin → REST 降级'],
+ ['13:40','warn','Ray worker#2 重启中'],
+ ['12:00','ok','备份增量完成'],
+ ['11:58','info','kg_jd_ddd 建图'],
+ ['09:00','ok','v1.9.0 发布'],
+].map(e=>`<div><span class="t">${e[0]}</span><span class="${e[1]}">${e[2]}</span></div>`).join('');
+
+// 五层探活轨
+$('#depthRail').innerHTML=[['①','接入','done'],['②','能力','done'],['③','计算','active'],['④','引擎',''],['⑤','持久化','']].map(s=>`<div class="seg ${s[2]}">${s[0]}<b>${s[1]}</b></div>`).join('')+'<div class="seg done" style="border-left:1px dashed var(--line-strong)"><b>KG</b>旁路</div>';
+$('#layerHealth').innerHTML=[
+ ['接入','REST 106 routes','ok'],['能力','检索/RAG/KG','ok'],['计算','Ray#2 重启','warn'],
+ ['引擎','Lance·DuckDB','ok'],['持久化','MinIO·Redis·HG','ok'],['控制面','libSQL V004','ok'],
+].map(d=>`<div><div class="lamp ${d[2]} ${d[2]==='ok'?'pulse':''}"><i></i>${d[0]}</div><div class="muted" style="font-size:.65rem;margin-top:3px">${d[1]}</div></div>`).join('');
 </script>
 </body>
 </html>

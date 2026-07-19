@@ -27,6 +27,10 @@
     <div class="panel-h"><i class="placeholder" data-ic="code"></i><h3>Schema(字段)</h3><span class="sub" id="schemaMeta">—</span></div>
     <div class="panel-b" id="schema"></div>
   </div>
+  <div class="panel flush" id="kgPanel" style="margin-top:var(--s4);display:none">
+    <div class="panel-h"><i class="placeholder" data-ic="share-nodes"></i><h3>知识图谱(KG)</h3><span class="sub" id="kgMeta">—</span></div>
+    <div class="panel-b" id="kg"></div>
+  </div>
   <div class="panel flush" id="previewPanel" style="margin-top:var(--s4)">
     <div class="panel-h"><i class="placeholder" data-ic="database"></i><h3>前 100 行预览</h3><span class="sub" id="previewMeta">—</span></div>
     <div class="panel-b" id="preview"></div>
@@ -95,6 +99,21 @@ if (!ds) {
         $("#schema").innerHTML = fields.map((f) => `<span class="schema-chip" title="${esc(f.type)}${f.nullable ? "" : " · NOT NULL"}">${esc(f.name)}<span style="color:var(--fg-lo)"> : ${esc(f.type)}</span></span>`).join("");
       }
     } catch (_) { /* schema 取失败不阻塞预览 */ }
+
+    // 1.6) 知识图谱统计 + 入口(KG 未启用则隐藏面板)
+    try {
+      const s = await request("GET", `/kg/stats?dataset=${encodeURIComponent(ds)}`);
+      $("#kgPanel").style.display = "";
+      const v = s.total_vertices ?? 0, e = s.total_edges ?? 0;
+      $("#kgMeta").textContent = v ? `${v} 顶点 · ${e} 边` : "未构建";
+      $("#kg").innerHTML = v
+        ? `<div class="flex" style="gap:12px;align-items:center;flex-wrap:wrap">
+             <div class="kpi" style="padding:8px 14px"><div class="label">顶点</div><div class="val">${v.toLocaleString()}</div></div>
+             <div class="kpi" style="padding:8px 14px"><div class="label">边</div><div class="val">${e.toLocaleString()}</div></div>
+             <a class="btn btn-primary btn-sm" href="kg.html?ds=${encodeURIComponent(ds)}">查看图谱 →</a>
+           </div>`
+        : `<div class="muted" style="font-size:.82rem;padding:4px 0">该数据集尚未构建知识图谱(0 实体)。<a class="btn btn-ghost btn-sm" href="kg.html?ds=${encodeURIComponent(ds)}" style="margin-left:8px">去构建 →</a></div>`;
+    } catch (_) { /* KG 未启用,隐藏 */ }
 
     // 2) 前 100 行预览(POST /query/olap SELECT * LIMIT 100)
     $("#preview").innerHTML = '<div class="muted" style="padding:20px;text-align:center">加载前 100 行…</div>';

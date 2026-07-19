@@ -88,17 +88,45 @@ class SystemDB:
 
     # ------------------------------------------------------------------
     # DB-API pass-through (read path; safe without the write lock)
+    # v1.9.0: auto-reconnect on a dead/stale connection. libsql http
+    # connections can be closed server-side after long idle periods; without
+    # this every control-plane query silently fails once the cached
+    # connection dies (only RbacStore's serve_stale masks the failure, so
+    # identity/token/task-history/user-state all break). Rebuild once, retry.
+    def _reconnect(self) -> None:
+        try:
+            self._conn.close()
+        except Exception:  # noqa: BLE001
+            pass
+        self._conn = self._connect_with_retry()
+
     def execute(self, sql: str, params: tuple = ()) -> Any:
-        return self._conn.execute(sql, params)
+        try:
+            return self._conn.execute(sql, params)
+        except Exception:
+            self._reconnect()
+            return self._conn.execute(sql, params)
 
     def executemany(self, sql: str, params: list[tuple]) -> Any:
-        return self._conn.executemany(sql, params)
+        try:
+            return self._conn.executemany(sql, params)
+        except Exception:
+            self._reconnect()
+            return self._conn.executemany(sql, params)
 
     def executescript(self, sql: str) -> Any:
-        return self._conn.executescript(sql)
+        try:
+            return self._conn.executescript(sql)
+        except Exception:
+            self._reconnect()
+            return self._conn.executescript(sql)
 
     def commit(self) -> None:
-        self._conn.commit()
+        try:
+            self._conn.commit()
+        except Exception:
+            self._reconnect()
+            self._conn.commit()
 
     def with_write(self) -> "_WriteGuard":
         """Serialize a write transaction through a process-local RLock."""

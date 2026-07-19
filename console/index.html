@@ -6,12 +6,78 @@
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="assets/tokens.css"/>
 <link rel="stylesheet" href="assets/app.css"/>
+<link rel="stylesheet" href="assets/console.css"/>
+<style>
+  .shortcut{display:block;padding:14px 16px;border:1px solid var(--line-soft);border-radius:var(--r-md);background:var(--ink-900);text-decoration:none;transition:border-color .15s,transform .15s}
+  .shortcut:hover{border-color:var(--teal-bright);transform:translateY(-1px)}
+  .shortcut .t{display:flex;align-items:center;gap:8px;margin-bottom:4px;color:var(--fg-hi);font-weight:600}
+  .shortcut .d{font-size:.76rem;color:var(--fg-lo)}
+</style>
 </head>
 <body>
-<div class="login-wrap"><div class="brand"><span class="brand-name">Arrow Lake Console</span></div></div>
+<div id="app">
+<main class="main"><div class="page">
+  <div class="h-sec between">
+    <div><h1>控制台概览</h1><div class="desc">Arrow Lake · 数据湖 / 检索 / 知识图谱 统一控制台</div></div>
+  </div>
+
+  <div class="panel"><div class="panel-b" id="kpis"><div class="muted" style="padding:16px">加载概览…</div></div></div>
+
+  <div class="panel flush" style="margin-top:var(--s4)">
+    <div class="panel-h"><i class="placeholder" data-ic="grid"></i><h3>快捷入口</h3></div>
+    <div class="panel-b" id="shortcuts"></div>
+  </div>
+</div></main>
+</div>
+
+<script src="assets/console-layout.js"></script>
 <script type="module">
+import { request } from "./src/api.js";
 import { isLoggedIn } from "./src/auth.js";
-location.replace(isLoggedIn() ? "olap.html" : "login.html");
+
+if (!isLoggedIn()) location.replace("login.html");
+const { renderShell } = window;
+renderShell({ active: "", crumb: "<b>概览</b>" });
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "");
+
+(async () => {
+  // 概览 KPI
+  try {
+    const d = await request("GET", "/datasets");
+    const all = Array.isArray(d) ? d : (d?.datasets || []);
+    const kg = all.filter((x) => x.has_kg).length;
+    const fts = all.filter((x) => x.has_fts_index).length;
+    const vec = all.filter((x) => x.has_vector_index).length;
+    $("#kpis").innerHTML = `<div class="grid g-4">
+      <div class="kpi"><div class="label">数据集</div><div class="val">${all.length}</div></div>
+      <div class="kpi"><div class="label">已建 KG</div><div class="val">${kg}</div></div>
+      <div class="kpi"><div class="label">FTS 索引</div><div class="val">${fts}</div></div>
+      <div class="kpi"><div class="label">向量索引</div><div class="val">${vec}</div></div>
+    </div>`;
+  } catch (e) {
+    $("#kpis").innerHTML = `<div style="color:var(--danger);padding:12px">概览加载失败:${esc(e?.detail || e?.message || e)}</div>`;
+  }
+
+  // 快捷入口
+  const links = [
+    ["datasets.html", "database", "数据集", "浏览 / 管理数据集"],
+    ["olap.html", "olap", "SQL Worksheet", "DuckDB OLAP 查询"],
+    ["search.html", "search", "检索", "FTS / 向量 / 混合检索"],
+    ["rag.html", "chat", "RAG 问答", "检索增强生成"],
+    ["kg.html", "share-nodes", "知识图谱", "KG 构建 / 可视化 / 问答"],
+    ["ingest.html", "plus", "摄入", "文件 / API / 流摄入"],
+    ["embeddings.html", "vector", "嵌入与索引", "建向量 / FTS 索引"],
+    ["tasks.html", "dashboard", "任务", "异步任务队列"],
+  ];
+  $("#shortcuts").innerHTML = `<div class="grid g-4">${links.map(([href, ic, t, d]) => `
+    <a class="shortcut" href="${href}">
+      <div class="t"><i class="placeholder" data-ic="${ic}"></i>${esc(t)}</div>
+      <div class="d">${esc(d)}</div>
+    </a>`).join("")}</div>`;
+  window.applyIcons && applyIcons(document);
+})();
+window.applyIcons && applyIcons(document);
 </script>
 </body>
 </html>

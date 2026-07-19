@@ -49,6 +49,34 @@ source docs/cookbook/examples_busi3/env.sh
 
 强制重建 dataset: `run_all.sh --rebuild` 或 `01_ingest_jd.py --force`。
 
+## HugeGraph 图查询示例
+
+见 [`hugegraph-query-examples.md`](./hugegraph-query-examples.md) —— 针对 `kg_jd_ddd` 的图查询由浅入深
+（REST + Traversers L1~L4、Gremlin 参考、性能要点），含「`g` 绑定空默认图、per-dataset 走 REST」实测避坑。
+
+## RAG 检索与问答示例
+
+见 [`rag-examples.md`](./rag-examples.md) —— RAG 由浅入深（向量/FTS/Hybrid 检索 L1 → RAG 问答 L2 →
+召回质量+reranker L3 → 引用/会话/抽取/流式 L4），含 RAGConfig 全字段、两条 RAG 路径分工、
+`/rag/query` 字段名(`question`/`dataset_name`)与 `/kg/ask`(`dataset`)差异、`text_content` 列 mismatch 避坑。
+
+## 全量端到端仪表盘（v1.8.9）
+
+`dashboard.html` 是 jd_ddd 的**全量端到端仪表盘**（参考 `examples_busi2/dashboard.html`），
+沿真实 E2E 管线落地 v1.8.9 核心能力，自包含（cytoscape 内联、无 CDN、离线可看、双击即开）。
+
+```bash
+source docs/cookbook/examples_busi3/env.sh
+export HTTPS_PROXY=http://127.0.0.1:7887          # 百炼(dashscope)须走代理
+export ARROW_LAKE__API_KEY=dev-api-key-for-local-testing-only
+.venv/bin/python3 docs/cookbook/examples_busi3/build_dashboard.py   # 读 live facade+REST+results → 重生成 dashboard.html
+```
+
+仪表盘内容：8 指标（66 块/26 页/KG 726 顶点·1388 边/407 实体/488 关系/10.1min/4 题）·
+流水线（多格式摄入→嵌入→KG双LLM→检索reranker→治理）· DuckDB 检索分析 · per-dataset KG 子图 ·
+RAG 问答（reranker 真生效）· RAG-vs-图查询对比 · v1.8.9 能力深潜（reranker/双LLM/增量KA/strict模板/多格式）·
+KA 版本管理 · 架构/缺陷/性能审计（P0三连/Step2-4/P2）· 升级部署备注。
+
 ## 文件
 
 | 文件 | 作用 |

@@ -65,7 +65,7 @@ def test_kg_build(dataset_name: str = "knowledge_base", timeout: int = 300):
     t0 = time.time()
 
     try:
-        r = _post(f"/api/v1/kg/build", {"dataset_name": dataset_name})
+        r = _post(f"/api/v1/kg/build", {"dataset": dataset_name})
     except Exception as e:
         print(f"[KG_BUILD] Build request failed: {e}")
         print("[KG_BUILD] Dataset may not exist — listing datasets for alternatives:")
@@ -75,7 +75,7 @@ def test_kg_build(dataset_name: str = "knowledge_base", timeout: int = 300):
         if ds:
             dataset_name = ds[0]["name"]
             print(f"[KG_BUILD] Retrying with '{dataset_name}'...")
-            r = _post(f"/api/v1/kg/build", {"dataset_name": dataset_name})
+            r = _post(f"/api/v1/kg/build", {"dataset": dataset_name})
         else:
             print("[KG_BUILD] No datasets available — skipping kg_build")
             return False

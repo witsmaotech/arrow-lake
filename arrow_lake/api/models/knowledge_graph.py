@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 
 class KGBuildRequest(BaseModel):
-    dataset_name: str = Field(
+    dataset: str = Field(
         ...,
         min_length=1,
         max_length=256,
@@ -46,6 +46,35 @@ class KGBuildStatusResponse(BaseModel):
     entity_count: int = 0
     relation_count: int = 0
     error: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Graph visualization (vertices + edges, capped)
+# ---------------------------------------------------------------------------
+
+
+class KGGraphNode(BaseModel):
+    id: str
+    label: str
+    name: str = ""
+    type: str = ""
+    definition: str = ""
+
+
+class KGGraphEdge(BaseModel):
+    id: str = ""
+    source: str
+    target: str
+    label: str = ""
+    relation_type: str = ""
+
+
+class KGGraphResponse(BaseModel):
+    nodes: list[KGGraphNode]
+    edges: list[KGGraphEdge]
+    vertex_count: int
+    edge_count: int
+    truncated: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -109,7 +138,7 @@ class KGStatsResponse(BaseModel):
 
 class GraphRAGQueryRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=5000, description="User question")
-    dataset_name: str = Field(..., min_length=1, max_length=256, description="Target dataset")
+    dataset: str = Field(..., min_length=1, max_length=256, description="Target dataset")
     top_k: int = Field(default=5, ge=1, le=50)
     traversal_depth: int = Field(default=2, ge=1, le=10)
     graph_weight: float = Field(default=0.3, ge=0.0, le=1.0)

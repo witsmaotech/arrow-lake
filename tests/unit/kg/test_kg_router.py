@@ -66,7 +66,7 @@ class TestKGBuildEndpoint:
         lake.kg_build = AsyncMock(return_value="task-123")
         app = _make_app(lake)
         client = TestClient(app)
-        resp = client.post("/api/v1/kg/build", json={"dataset_name": "my_ds"})
+        resp = client.post("/api/v1/kg/build", json={"dataset": "my_ds"})
         assert resp.status_code == 200
         data = resp.json()
         assert data["task_id"] == "task-123"
@@ -83,7 +83,7 @@ class TestKGBuildEndpoint:
         )
         app = _make_app(lake)
         client = TestClient(app)
-        resp = client.post("/api/v1/kg/build", json={"dataset_name": "my_ds"})
+        resp = client.post("/api/v1/kg/build", json={"dataset": "my_ds"})
         assert resp.status_code == 404
 
     def test_build_connection_failed(self) -> None:
@@ -96,7 +96,7 @@ class TestKGBuildEndpoint:
         )
         app = _make_app(lake)
         client = TestClient(app)
-        resp = client.post("/api/v1/kg/build", json={"dataset_name": "my_ds"})
+        resp = client.post("/api/v1/kg/build", json={"dataset": "my_ds"})
         assert resp.status_code == 502
 
 
@@ -274,7 +274,7 @@ class TestGraphRAGEndpoint:
         client = TestClient(app)
         resp = client.post(
             "/api/v1/kg/query/graphrag",
-            json={"question": "What is the answer?", "dataset_name": "ds"},
+            json={"question": "What is the answer?", "dataset": "ds"},
         )
         assert resp.status_code == 200
         data = resp.json()

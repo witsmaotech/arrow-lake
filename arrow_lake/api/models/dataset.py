@@ -355,6 +355,7 @@ class DatasetInfo(BaseModel):
     vector_dim: int | None = None
     has_vector_index: bool = False
     has_fts_index: bool = False
+    has_kg: bool = False
     size_bytes: int | None = None
     created_at: str | None = None
     updated_at: str | None = None

@@ -549,7 +549,7 @@ class TestKG:
             with httpx.Client(base_url=client.base_url, headers=client.headers, timeout=180) as c:
                 r = c.post(
                     "/api/v1/kg/build",
-                    json={"dataset_name": kg_test_data},
+                    json={"dataset": kg_test_data},
                 )
         except httpx.ReadTimeout:
             pytest.skip("KG build timed out (HugeGraph slow)")
@@ -566,7 +566,7 @@ class TestKG:
             with httpx.Client(base_url=client.base_url, headers=client.headers, timeout=180) as c:
                 br = c.post(
                     "/api/v1/kg/build",
-                    json={"dataset_name": kg_test_data},
+                    json={"dataset": kg_test_data},
                 )
         except httpx.ReadTimeout:
             pytest.skip("KG build timed out (HugeGraph slow)")
@@ -601,7 +601,7 @@ class TestKG:
             with httpx.Client(base_url=client.base_url, headers=client.headers, timeout=180) as c:
                 r = c.post(
                     "/api/v1/kg/query/graphrag",
-                    json={"question": "test", "dataset_name": kg_test_data},
+                    json={"question": "test", "dataset": kg_test_data},
                 )
         except httpx.ReadTimeout:
             pytest.skip("KG GraphRAG timed out")

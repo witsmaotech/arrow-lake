@@ -70,7 +70,7 @@ class TestKGAPIEndpoints:
         """POST /api/v1/kg/build should return 404 when KG is not enabled."""
         resp = client.post(
             "/api/v1/kg/build",
-            json={"dataset_name": "documents"},
+            json={"dataset": "documents"},
         )
         assert resp.status_code == 404
 
@@ -111,7 +111,7 @@ class TestKGAPIEndpoints:
         """POST /api/v1/kg/query/graphrag should return 404 when KG is not enabled."""
         resp = client.post(
             "/api/v1/kg/query/graphrag",
-            json={"question": "What is Python?", "dataset_name": "documents"},
+            json={"question": "What is Python?", "dataset": "documents"},
         )
         assert resp.status_code == 404
 
@@ -119,7 +119,7 @@ class TestKGAPIEndpoints:
         """KG error responses should include a descriptive detail message."""
         resp = client.post(
             "/api/v1/kg/build",
-            json={"dataset_name": "documents"},
+            json={"dataset": "documents"},
         )
         assert resp.status_code == 404
         data = resp.json()

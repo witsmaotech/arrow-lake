@@ -67,6 +67,41 @@ class TestSystemDBConnection:
         with pytest.raises(SystemDBError):
             SystemDB("http://127.0.0.1:1", connect_timeout_seconds=0.2)
 
+    def test_execute_reconnects_on_dead_connection(self) -> None:
+        """bug1 fix: a stale/dead cached connection auto-reconnects.
+
+        libSQL http connections die after long idle; without reconnect every
+        control-plane query silently fails (only RbacStore's serve_stale masks
+        it). ``execute`` must rebuild the connection once and retry so that
+        identity/token/task/user-state keep working without an api restart.
+        """
+        db = SystemDB(":memory:")
+        reconnects = {"n": 0}
+        real_connect = db._connect_with_retry
+
+        def counting_connect():
+            reconnects["n"] += 1
+            return real_connect()
+
+        class _DeadConn:
+            def execute(self, *a, **k):
+                raise RuntimeError("connection reset by peer")
+
+            def commit(self):
+                raise RuntimeError("connection reset by peer")
+
+            def close(self):
+                pass
+
+        db._connect_with_retry = counting_connect
+        db._conn = _DeadConn()  # cached connection is dead
+
+        # execute: dead.execute raises → _reconnect (counting_connect) → fresh → ok
+        row = db.execute("SELECT 1").fetchone()
+        assert row[0] == 1
+        assert reconnects["n"] == 1
+        db.close()
+
 
 class TestMigrator:
     def test_creates_rbac_tables(self, db: SystemDB) -> None:

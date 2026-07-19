@@ -13,19 +13,25 @@
     <div class="flex"><span class="lamp ok pulse"><i></i>LIVE</span><span class="lamp ok"><i></i>READY</span><button class="btn btn-ghost btn-sm" onclick="openApi('健康检查','curl -s $API/health/ready','lake.system.health()')"><i class="placeholder" data-ic="code"></i> API</button></div>
   </div>
 
-  <div class="grid g-3">
-    <div class="panel"><div class="panel-h"><i class="placeholder" data-ic="dot"></i><h3>Liveness</h3><span class="actions"><span class="tag ok">200</span></div></div><div class="panel-b">
-      <div class="flex between"><span class="lamp ok pulse"><i></i>进程存活</span><span class="mono muted" style="font-size:.7rem">uptime 14d 3h</span></div>
-      <div class="muted" style="font-size:.72rem;margin-top:6px"><span class="mono">GET /health/live</span> · 每 10s</div>
-    </div></div>
-    <div class="panel"><div class="panel-h"><i class="placeholder" data-ic="check"></i><h3>Readiness</h3><span class="actions"><span class="tag ok">200</span></div></div><div class="panel-b">
-      <div class="flex between"><span class="lamp ok pulse"><i></i>可接收流量</span><span class="mono muted" style="font-size:.7rem">warmup ✓</span></div>
-      <div class="muted" style="font-size:.72rem;margin-top:6px">门控：存储+Redis+DuckDB+<b style="color:var(--teal-bright)">SystemDB</b> warmup</div>
-    </div></div>
-    <div class="panel"><div class="panel-h"><i class="placeholder" data-ic="gauge"></i><h3>版本</h3></div></div><div class="panel-b">
-      <div class="flex between"><b class="readout" style="font-size:1rem">v1.9.0</b><span class="tag teal">tag v1.9.0</span></div>
-      <div class="muted mono" style="font-size:.7rem;margin-top:6px">控制面 libSQL 上线 · 2026-07-17</div>
-    </div></div>
+  <!-- HERO 焦点：系统健康大读数 -->
+  <div class="panel">
+    <div class="panel-b" style="display:grid;grid-template-columns:1fr auto;gap:var(--s5);align-items:center;padding:var(--s5) var(--s5);background:radial-gradient(120% 120% at 0 0,rgba(20,184,166,.10),transparent 60%),linear-gradient(180deg,var(--ink-850),var(--ink-900))">
+      <div>
+        <div class="flex" style="gap:10px;align-items:center;margin-bottom:var(--s2)">
+          <span style="width:14px;height:14px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 4px var(--ok-soft);animation:pulse 2s var(--ease) infinite"></span>
+          <span class="tag ok">LIVE</span><span class="tag ok">READY</span>
+          <span class="muted mono" style="font-size:.72rem">uptime 14d 3h · 每 10s 探活</span>
+        </div>
+        <div style="font-family:var(--font-mono);font-size:2.2rem;font-weight:700;letter-spacing:-.03em;line-height:1;color:var(--fg-hi)">all systems healthy</div>
+        <div class="muted mono" style="font-size:.72rem;margin-top:8px">v1.9.0 · 控制面 libSQL · 12 依赖就绪 · 门控 存储+Redis+DuckDB+<b style="color:var(--teal-bright)">SystemDB</b> warmup · <span class="mono">/health/{live,ready}</span></div>
+      </div>
+      <div class="grid g-2" style="gap:var(--s3) var(--s5);min-width:300px">
+        <div><div class="muted" style="font-size:var(--fs-cap);text-transform:uppercase;letter-spacing:.07em">p50 延迟</div><b class="readout" style="font-size:1.15rem">42 ms</b></div>
+        <div><div class="muted" style="font-size:var(--fs-cap);text-transform:uppercase;letter-spacing:.07em">错误率</div><b class="readout" style="font-size:1.15rem;color:var(--ok)">0.03%</b></div>
+        <div><div class="muted" style="font-size:var(--fs-cap);text-transform:uppercase;letter-spacing:.07em">在线 worker</div><b class="readout" style="font-size:1.15rem">4 / 4</b></div>
+        <div><div class="muted" style="font-size:var(--fs-cap);text-transform:uppercase;letter-spacing:.07em">SystemDB</div><b class="readout" style="font-size:1.15rem;color:var(--ok)">V004 ✓</b></div>
+      </div>
+    </div>
   </div>
 
   <!-- v1.9.0 控制面 SystemDB -->
@@ -54,24 +60,24 @@
     </div>
   </div></div>
 
-  <div class="grid cols-2-1">
-    <div class="panel flush">
-      <div class="panel-h"><i class="placeholder" data-ic="pulse"></i><h3>关键指标 · Prometheus</h3><span class="actions"><a class="btn btn-ghost btn-sm" href="#">Grafana ↗</a></div></div>
-      <div class="tbl-scroll"><table class="tbl"><thead><tr><th>指标</th><th class="num">值</th><th class="num">p99</th><th>趋势</th></tr></thead><tbody id="metricRows"></tbody></table></div>
-    </div>
-    <div class="col">
-      <div class="panel"><div class="panel-h"><i class="placeholder" data-ic="refresh"></i><h3>维护任务</h3><span class="actions"><span class="tag">ADMIN</span></div></div><div class="panel-b col">
-        <div class="flex between"><span class="lamp ok"><i></i>状态</span><b class="readout">IDLE</b></div>
-        <div class="flex between"><span class="muted">上次</span><span class="mono muted" style="font-size:.75rem">02:00 · VACUUM+ANALYZE</span></div>
-        <div class="flex between"><span class="muted">下次</span><span class="mono muted" style="font-size:.75rem">明天 02:00</span></div>
-        <button class="btn btn-primary btn-sm" onclick="alert('原型：POST /maintenance/run')"><i class="placeholder" data-ic="play"></i> 手动运行</button>
-      </div></div>
-      <div class="panel"><div class="panel-h"><i class="placeholder" data-ic="audit"></i><h3>降级状态</h3></div><div class="panel-b col" id="degRows"></div></div>
-    </div>
+  <!-- 关键指标（全宽，给指标名 + sparkline 足够空间） -->
+  <div class="panel flush">
+    <div class="panel-h"><i class="placeholder" data-ic="pulse"></i><h3>关键指标 · Prometheus</h3><span class="actions"><a class="btn btn-ghost btn-sm" href="#">Grafana ↗</a></div></div>
+    <div class="tbl-scroll"><table class="tbl"><colgroup><col><col style="width:110px"><col style="width:110px"><col style="width:140px"><col style="width:90px"></colgroup><thead><tr><th>指标</th><th class="num">值</th><th class="num">p99</th><th>7d 趋势</th><th>状态</th></tr></thead><tbody id="metricRows"></tbody></table></div>
+  </div>
+
+  <div class="grid g-2">
+    <div class="panel"><div class="panel-h"><i class="placeholder" data-ic="refresh"></i><h3>维护任务</h3><span class="actions"><span class="tag">ADMIN</span></div></div><div class="panel-b col">
+      <div class="flex between"><span class="lamp ok"><i></i>状态</span><b class="readout">IDLE</b></div>
+      <div class="flex between"><span class="muted">上次</span><span class="mono muted" style="font-size:.75rem">02:00 · VACUUM+ANALYZE</span></div>
+      <div class="flex between"><span class="muted">下次</span><span class="mono muted" style="font-size:.75rem">明天 02:00</span></div>
+      <button class="btn btn-primary btn-sm" onclick="alert('原型：POST /maintenance/run')"><i class="placeholder" data-ic="play"></i> 手动运行</button>
+    </div></div>
+    <div class="panel"><div class="panel-h"><i class="placeholder" data-ic="audit"></i><h3>降级状态</h3></div><div class="panel-b col" id="degRows"></div></div>
   </div>
 
   <div class="panel flush"><div class="panel-h"><i class="placeholder" data-ic="database"></i><h3>依赖版本矩阵 · /api/v1/version</h3></div>
-    <div class="tbl-scroll"><table class="tbl"><thead><tr><th>组件</th><th>版本</th><th>用途</th><th>状态</th></tr></thead><tbody id="depRows"></tbody></table></div>
+    <div class="tbl-scroll"><table class="tbl"><colgroup><col style="width:180px"><col style="width:110px"><col><col style="width:150px"></colgroup><thead><tr><th>组件</th><th>版本</th><th>用途</th><th>状态</th></tr></thead><tbody id="depRows"></tbody></table></div>
   </div>
 </div></main></div>
 <script src="assets/layout.js"></script>
@@ -80,8 +86,10 @@ renderShell({active:'system',crumb:'<a href="dashboard.html">控制台</a> <span
 const $=s=>document.querySelector(s);
 // 10 stores
 $('#stores').innerHTML=['RbacStore','IdentityStore','CatalogStore','TaskHistoryStore','IngestDLQStore','RagSessionStore','LineageIndexStore','GovernanceStore','UserStateStore','TTLCache'].map(s=>`<span class="tag teal" style="font-size:.68rem">${s}</span>`).join('');
-// metrics
-$('#metricRows').innerHTML=[['http_requests_total','1.28M / min','—','up'],['http_request_duration_seconds','42 ms','318 ms','up'],['search_duration_seconds','38 ms','204 ms','flat'],['rag_query_duration_seconds','1.8 s','4.2 s','up'],['kg_build_duration_seconds','12 m','38 m','down'],['ingest_records_total','128K / min','—','up'],['task_queue_depth','3','12','flat'],['system_db_query_seconds','2 ms','9 ms','flat']].map(m=>`<tr><td class="mono" style="font-size:.72rem">${m[0]}</td><td class="num mono">${m[1]}</td><td class="num mono">${m[2]}</td><td><span class="tag ${m[3]==='up'?'teal':m[3]==='down'?'amber':'info'}">${m[3]}</span></td></tr>`).join('');
+// metrics（+ sparkline 7d 趋势迷你图）
+const spk=(trend,n=14)=>{const a=[];let v=50;for(let i=0;i<n;i++){v+=(trend==='up'?1.4:trend==='down'?-1.4:0)*1.5+Math.sin(i/1.6)*3;a.push(Math.max(8,Math.min(92,v)))}return a};
+const SPKC={up:'var(--teal-bright)',down:'var(--warn)',flat:'var(--info)'};
+$('#metricRows').innerHTML=[['http_requests_total','1.28M / min','—','up'],['http_request_duration_seconds','42 ms','318 ms','up'],['search_duration_seconds','38 ms','204 ms','flat'],['rag_query_duration_seconds','1.8 s','4.2 s','up'],['kg_build_duration_seconds','12 m','38 m','down'],['ingest_records_total','128K / min','—','up'],['task_queue_depth','3','12','flat'],['system_db_query_seconds','2 ms','9 ms','flat']].map(m=>`<tr><td class="mono" style="font-size:.72rem;white-space:nowrap">${m[0]}</td><td class="num mono">${m[1]}</td><td class="num mono">${m[2]}</td><td>${window.sparkline(spk(m[3]),96,24,SPKC[m[3]])}</td><td><span class="tag ${m[3]==='up'?'teal':m[3]==='down'?'amber':'info'}">${m[3]}</span></td></tr>`).join('');
 // degradation
 $('#degRows').innerHTML=[['Gremlin','绑定失败 → REST 回退','warn'],['Ray worker#2','重启中','warn'],['其他依赖','在线','ok']].map(d=>`<div class="flex between"><span class="lamp ${d[2]}"><i></i>${d[0]}</span><span class="muted mono" style="font-size:.7rem">${d[1]}</span></div>`).join('');
 // deps (v1.9.0 + libSQL)

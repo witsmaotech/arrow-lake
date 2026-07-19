@@ -18,7 +18,7 @@
   <div class="panel flush">
     <div class="panel-h"><i class="placeholder" data-ic="search"></i><h3>数据集</h3><span class="sub" id="cnt">—</span><span class="actions"><button class="btn btn-ghost btn-sm" id="refresh"><i class="placeholder" data-ic="refresh"></i></button></span></div>
     <div style="overflow-x:auto"><table class="tbl">
-      <thead><tr><th>数据集</th><th class="num">行数</th><th class="num">大小</th><th>列 / 向量</th><th>索引</th><th class="num">版本</th><th>创建</th><th>更新</th><th></th></tr></thead>
+      <thead><tr><th>数据集</th><th class="num">行数</th><th class="num">大小</th><th>列 / 向量</th><th>索引</th><th>KG</th><th class="num">版本</th><th>创建</th><th>更新</th><th></th></tr></thead>
       <tbody id="rows"></tbody>
     </table></div>
   </div>
@@ -51,7 +51,7 @@ const fmtDate = (s) => {
   return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 };
 async function load() {
-  $("#rows").innerHTML = `<tr><td colspan="9" class="muted" style="padding:28px;text-align:center">加载中…</td></tr>`;
+  $("#rows").innerHTML = `<tr><td colspan="10" class="muted" style="padding:28px;text-align:center">加载中…</td></tr>`;
   try {
     const data = await request("GET", "/datasets");
     const list = data?.datasets || [];
@@ -65,15 +65,16 @@ async function load() {
       <td class="num mono">${fmtSize(d.size_bytes)}</td>
       <td>${cols}</td>
       <td>${idx}</td>
+      <td>${d.has_kg ? `<a href="kg.html?ds=${encodeURIComponent(d.name)}" class="tag teal" title="查看知识图谱">KG</a>` : '<span class="muted">—</span>'}</td>
       <td class="num mono">${d.version ?? "—"}</td>
       <td class="num mono" style="color:var(--fg-lo)">${fmtDate(d.created_at)}</td>
       <td class="num mono" style="color:var(--fg-lo)">${fmtDate(d.updated_at)}</td>
       <td><a href="dataset-detail.html?ds=${encodeURIComponent(d.name)}" class="btn btn-icon btn-ghost btn-sm" aria-label="进入">${icon("arrowR")}</a></td>
     </tr>`;
-    }).join("") : `<tr><td colspan="9" class="muted" style="padding:28px;text-align:center">无数据集 — 去 <a href="ingest.html" style="color:var(--teal-bright)">摄入</a></td></tr>`;
+    }).join("") : `<tr><td colspan="10" class="muted" style="padding:28px;text-align:center">无数据集 — 去 <a href="ingest.html" style="color:var(--teal-bright)">摄入</a></td></tr>`;
   } catch (e) {
     const msg = e?.detail || e?.message || String(e);
-    $("#rows").innerHTML = `<tr><td colspan="9" style="padding:28px;text-align:center;color:var(--danger)">加载失败:${esc(msg)}<br/><button class="btn btn-ghost btn-sm" id="retry" style="margin-top:10px">重试</button></td></tr>`;
+    $("#rows").innerHTML = `<tr><td colspan="10" style="padding:28px;text-align:center;color:var(--danger)">加载失败:${esc(msg)}<br/><button class="btn btn-ghost btn-sm" id="retry" style="margin-top:10px">重试</button></td></tr>`;
     $("#retry")?.addEventListener("click", load);
     toast("数据集加载失败:" + msg, "warn", 4000);
   }

@@ -29,6 +29,7 @@ from arrow_lake.api.models.knowledge_graph import (
     KGQueryRequest,
     KGQueryResponse,
     KGSchemaResponse,
+    KGGraphResponse,
     KGSearchRequest,
     KGSearchResponse,
     KGStatsResponse,
@@ -38,6 +39,7 @@ from arrow_lake.api.models.knowledge_graph import (
     KGTemplatesResponse,
 )
 from arrow_lake.exceptions import KGError
+from arrow_lake.knowledge_graph._naming import graph_name_for
 
 logger = logging.getLogger(__name__)
 
@@ -113,11 +115,11 @@ async def kg_build(
 ) -> KGBuildResponse:
     """Build a knowledge graph from a dataset."""
     try:
-        task_id = await lake.kg_build(req.dataset_name, incremental=req.incremental)
+        task_id = await lake.kg_build(req.dataset, incremental=req.incremental)
         return KGBuildResponse(
             task_id=task_id,
             status="pending",
-            message=f"KG build started for dataset '{req.dataset_name}'",
+            message=f"KG build started for dataset '{req.dataset}'",
         )
     except KGError as exc:
         raise HTTPException(status_code=_kg_error_to_status(exc), detail=exc.message) from exc
@@ -150,15 +152,26 @@ async def kg_build_status(
 
 @router.get("/schema", response_model=KGSchemaResponse)
 async def kg_schema(
+    dataset: str | None = None,
     lake: Any = Depends(get_lake),
     _user: dict = Depends(require_role(Role.VIEWER)),
+    checker=Depends(get_checker),
 ) -> KGSchemaResponse:
-    """Get the graph schema (vertex and edge labels)."""
+    """Get the graph schema (vertex and edge labels).
+
+    ``dataset`` (lake path) scopes schema to the ``kg_{dataset}`` graph;
+    omitted → default graph. Per-dataset ACL is enforced when ``dataset`` is set.
+    """
+    if dataset is not None and not checker.check_dataset_access(
+        role=_user.role, dataset=dataset, action="read"
+    ):
+        raise HTTPException(status_code=403, detail=f"Read access to dataset '{dataset}' denied")
     try:
         client = lake._get_kg_client()
         if client is None:
             raise HTTPException(status_code=404, detail="Knowledge graph is not enabled")
-        schema = await client.get_schema()
+        g = graph_name_for(dataset) if dataset else None
+        schema = await client.get_schema(graph_name=g)
         return KGSchemaResponse(
             vertex_labels=_extract_label_names(schema, "vertexlabels"),
             edge_labels=_extract_label_names(schema, "edgelabels"),
@@ -244,6 +257,29 @@ async def kg_stats(
             total_edges=stats.get("total_edges", 0),
             graph_enabled=True,
         )
+    except KGError as exc:
+        raise HTTPException(status_code=_kg_error_to_status(exc), detail=exc.message) from exc
+
+
+@router.get("/graph", response_model=KGGraphResponse)
+async def kg_graph(
+    dataset: str,
+    limit: int = 300,
+    lake: Any = Depends(get_lake),
+    _user: dict = Depends(require_role(Role.VIEWER)),
+    checker=Depends(get_checker),
+) -> KGGraphResponse:
+    """Get graph vertices + edges for visualization (capped at ``limit``).
+
+    ``dataset`` (lake path, required) scopes to the ``kg_{dataset}`` graph.
+    Edges whose endpoints fall outside the returned vertex set are dropped so
+    the visualization never references missing nodes. Per-dataset ACL enforced.
+    """
+    if not checker.check_dataset_access(role=_user.role, dataset=dataset, action="read"):
+        raise HTTPException(status_code=403, detail=f"Read access to dataset '{dataset}' denied")
+    try:
+        data = await lake.kg_get_graph(dataset, limit=min(max(limit, 1), 1000))
+        return KGGraphResponse(**data)
     except KGError as exc:
         raise HTTPException(status_code=_kg_error_to_status(exc), detail=exc.message) from exc
 
@@ -471,7 +507,7 @@ async def graphrag_query(
     try:
         rag_resp = await lake.rag_query(
             question=req.question,
-            dataset_name=req.dataset_name,
+            dataset_name=req.dataset,
             top_k=req.top_k,
         )
         return {

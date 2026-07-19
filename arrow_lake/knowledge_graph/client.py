@@ -638,6 +638,31 @@ class HugeGraphClient(_TraverserMixin, _ImportExportMixin):
             "total_edges": e_count,
         }
 
+    async def get_graph_snapshot(
+        self, *, graph_name: str | None = None, limit: int = 300
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Return raw vertices + edges (capped) for graph visualization.
+
+        Fetches ``limit + 1`` vertices so the caller can detect truncation;
+        edges fetch uses a larger cap (``limit * 5``) since edges are filtered
+        client-side to only those whose endpoints are both in the vertex set.
+        Best-effort: transient REST errors return an empty list for that side.
+        """
+        base = self._graph_base_for(graph_name)
+        vertices: list[dict[str, Any]] = []
+        edges: list[dict[str, Any]] = []
+        try:
+            v_resp = await self._get(f"{base}/graph/vertices?limit={limit + 1}")
+            vertices = v_resp.json().get("vertices", [])
+        except (ConnectionError, httpx.HTTPStatusError, KeyError, ValueError):
+            vertices = []
+        try:
+            e_resp = await self._get(f"{base}/graph/edges?limit={int(limit) * 5 + 1}")
+            edges = e_resp.json().get("edges", [])
+        except (ConnectionError, httpx.HTTPStatusError, KeyError, ValueError):
+            edges = []
+        return vertices, edges
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------

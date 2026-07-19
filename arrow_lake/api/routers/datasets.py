@@ -593,11 +593,22 @@ async def list_datasets(
 ) -> DatasetListResponse:
     """List all datasets with metadata. Supports pagination via limit/offset."""
     result = await run_sync(lake.catalog, timeout=_ADMIN_TIMEOUT, label="catalog")
+    # 一次扫描 KA base 得到已构建 KG 的数据集集合(避免前端 N 次 /kg/stats)
+    from pathlib import Path
+    from arrow_lake.knowledge_graph._naming import artifact_key_for
+    ka_base = getattr(lake.config.hugegraph, "he_ka_base_dir", None)
+    ka_keys: set[str] = set()
+    if ka_base and Path(ka_base).is_dir():
+        ka_keys = {
+            d.name for d in Path(ka_base).iterdir()
+            if d.is_dir() and (d / "ka" / "data.json").is_file()
+        }
     all_datasets = [
         DatasetInfo(
             name=e.name, version=e.version, num_rows=e.num_rows,
             num_columns=e.num_columns, vector_dim=e.vector_dim,
             has_vector_index=e.has_vector_index, has_fts_index=e.has_fts_index,
+            has_kg=artifact_key_for(e.name) in ka_keys,
             size_bytes=e.size_bytes, created_at=e.created_at, updated_at=e.updated_at,
         )
         for e in result.datasets

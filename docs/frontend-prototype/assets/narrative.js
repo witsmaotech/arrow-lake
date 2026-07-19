@@ -18,6 +18,10 @@ const VERSIONS = [
   ['v1.8.3', 'HA readiness'],
   ['v1.8.5', '上传修复'],
   ['v1.8.6', 'per-dataset 分图'],
+  ['v1.8.7', 'Docling+SQL Worksheet'],
+  ['v1.8.8', 'per-dataset KA'],
+  ['v1.8.9', 'Reranker+双LLM'],
+  ['v1.9.0', '控制面 libSQL'],
 ];
 
 // 请求深度 → 双轨光标位置（%）· 对应五层架构

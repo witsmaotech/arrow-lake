@@ -1,10 +1,10 @@
 language: [zh, en]
 name: concept_graph
 type: graph
-tags: [general, concept, knowledge, taxonomy]
+tags: [concept, taxonomy]
 description:
-  zh: '通用概念关系图模板 — 从论文/报告/百科/技术文档提取概念与关系。general/concept_graph 的项目本地严格版：type/relation 严格枚举 + definition 必填，杜绝自由类型噪声与 0% 描述。'
-  en: 'General concept-graph template — extract concepts and relations from papers/reports/encyclopedias/tech docs. Project-local strict version of general/concept_graph: strict type/relation enums + required definition, eliminating free-type noise and 0% description coverage.'
+  zh: '概念关系图模板 — 从论文/报告/百科提取概念与分类关系(概念/分类学/taxonomy 场景)。general/concept_graph 的项目本地严格版:type/relation 严格枚举 + definition 必填。通用技术/业务文档请用 entity_graph。'
+  en: 'Concept-graph template — extract concepts and taxonomic relations from papers/reports/encyclopedias (conceptual/taxonomy content). Project-local strict version of general/concept_graph: strict type/relation enums + required definition. For general tech/business docs use entity_graph.'
 
 output:
   description:

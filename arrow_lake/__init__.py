@@ -324,4 +324,11 @@ class Lake(
                 self._base_uri,
                 storage_config=sc if has_real_creds else None,
             )
+            # v1.9.0: inject governance_store so StorageAdvancedMixin records
+            # add/alter/drop-column events to schema_changelog. Lake's
+            # _governance_store is set in lifespan before any ingest/migrate,
+            # so this activates schema-change history on first storage use.
+            _gs = getattr(self, "_governance_store", None)
+            if _gs is not None:
+                self._storage._governance_store = _gs
         return self._storage

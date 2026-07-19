@@ -93,14 +93,21 @@
     <div class="panel-h"><i class="placeholder" data-ic="database"></i><h3>结果</h3><span class="sub" id="resMeta">—</span></div>
     <div class="panel-b" id="results"><div class="muted" style="padding:20px;text-align:center">输入查询开始检索</div></div>
   </div>
+
+  <div class="panel flush" id="kgSubPanel" style="margin-top:var(--s4);display:none">
+    <div class="panel-h"><i class="placeholder" data-ic="share-nodes"></i><h3>相关实体子图(KG)</h3><span class="sub" id="kgSubMeta">—</span></div>
+    <div class="panel-b"><div id="kgSub" style="height:320px;border:1px solid var(--line-soft);border-radius:var(--r-md);background:var(--ink-900)"></div></div>
+  </div>
 </div></main>
 </div>
 
 <script src="assets/console-layout.js"></script>
+<script src="vendor/vis-network.bundle.min.js"></script>
 <script type="module">
 import { request } from "./src/api.js";
 import { isLoggedIn } from "./src/auth.js";
 import { toast } from "./src/ui/toast.js";
+import { renderKgSubgraph } from "./src/kg-subgraph.js";
 
 if (!isLoggedIn()) location.href = "login.html";
 const { renderShell } = window;
@@ -248,6 +255,11 @@ $("#searchBtn").addEventListener("click", async () => {
       }
     }
     renderHits(res, scoreKey);
+    if (name && query) {
+      $("#kgSubPanel").style.display = "";
+      $("#kgSubMeta").textContent = "基于查询的实体子图";
+      renderKgSubgraph($("#kgSub"), { dataset: name, query, limit: 30 });
+    }
   } catch (e) {
     const msg = e?.detail || e?.message || String(e);
     $("#resMeta").textContent = "失败";

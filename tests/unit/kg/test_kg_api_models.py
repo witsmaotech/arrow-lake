@@ -23,24 +23,24 @@ from pydantic import ValidationError
 
 class TestKGBuildRequest:
     def test_valid(self) -> None:
-        req = KGBuildRequest(dataset_name="my-dataset_01")
-        assert req.dataset_name == "my-dataset_01"
+        req = KGBuildRequest(dataset="my-dataset_01")
+        assert req.dataset == "my-dataset_01"
 
     def test_empty_name_rejected(self) -> None:
         with pytest.raises(ValidationError):
-            KGBuildRequest(dataset_name="")
+            KGBuildRequest(dataset="")
 
     def test_invalid_chars_rejected(self) -> None:
         with pytest.raises(ValidationError):
-            KGBuildRequest(dataset_name="has spaces")
+            KGBuildRequest(dataset="has spaces")
 
     def test_max_length(self) -> None:
         with pytest.raises(ValidationError):
-            KGBuildRequest(dataset_name="a" * 257)
+            KGBuildRequest(dataset="a" * 257)
 
     def test_pattern_allows_hyphen_and_underscore(self) -> None:
-        req = KGBuildRequest(dataset_name="my_dataset-v2")
-        assert req.dataset_name == "my_dataset-v2"
+        req = KGBuildRequest(dataset="my_dataset-v2")
+        assert req.dataset == "my_dataset-v2"
 
 
 # ---------------------------------------------------------------------------
@@ -132,22 +132,22 @@ class TestKGQueryResponse:
 
 class TestGraphRAGQueryRequest:
     def test_valid(self) -> None:
-        req = GraphRAGQueryRequest(question="What is X?", dataset_name="ds")
+        req = GraphRAGQueryRequest(question="What is X?", dataset="ds")
         assert req.top_k == 5
         assert req.traversal_depth == 2
         assert req.graph_weight == 0.3
 
     def test_custom_params(self) -> None:
         req = GraphRAGQueryRequest(
-            question="test", dataset_name="ds", top_k=10, traversal_depth=3, graph_weight=0.7,
+            question="test", dataset="ds", top_k=10, traversal_depth=3, graph_weight=0.7,
         )
         assert req.top_k == 10
         assert req.graph_weight == 0.7
 
     def test_empty_question_rejected(self) -> None:
         with pytest.raises(ValidationError):
-            GraphRAGQueryRequest(question="", dataset_name="ds")
+            GraphRAGQueryRequest(question="", dataset="ds")
 
     def test_graph_weight_bounds(self) -> None:
         with pytest.raises(ValidationError):
-            GraphRAGQueryRequest(question="q", dataset_name="ds", graph_weight=1.5)
+            GraphRAGQueryRequest(question="q", dataset="ds", graph_weight=1.5)

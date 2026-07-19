@@ -1,0 +1,92 @@
+language: [zh, en]
+name: entity_graph
+type: graph
+tags: [general, entity, default, knowledge]
+description:
+  zh: '通用实体关系图模板(默认抽取方式)— 从论文/报告/百科/技术文档/业务材料提取具体实体及其显式与隐式关系,构建能真实反映文章主旨与业务逻辑的关系网络。严格版:type/relation 严格枚举 + definition 必填 + 简洁命名,杜绝自由类型噪声、长描述短语与 0% 描述。概念性/分类学场景请用 concept_graph。'
+  en: 'General entity-relation graph template (default extraction) — extract concrete entities and their explicit + implicit relations from papers/reports/encyclopedias/tech docs/business materials, building a network that faithfully reflects the article thesis and business logic. Strict version: strict type/relation enums + required definition + concise naming. Use concept_graph for purely conceptual/taxonomy content.'
+
+output:
+  description:
+    zh: '实体之间的显式与隐式语义关系网络,刻画文章主旨与业务逻辑。'
+    en: 'Network of explicit and implicit semantic relations among entities, depicting the article thesis and business logic.'
+  entities:
+    description:
+      zh: '文档中明确提到的具体实体(对象/系统/产品/技术/算法实例/机构/人物/事件等),体现文章主旨与业务核心。'
+      en: 'Concrete entities explicitly mentioned in the document (objects/systems/products/technologies/algorithm instances/organizations/people/events, etc.) that carry the article thesis and business core.'
+    fields:
+      - name: name
+        type: str
+        description: { zh: '实体名称 — 必须简洁规范,禁止括号说明/解释性后缀/长描述短语;有括号或别名时取主名,别名可记入 definition。', en: 'Entity name — must be concise and canonical; no parenthetical glosses/explanatory suffixes/long descriptive phrases; use the main name when aliases/parentheses exist.' }
+        required: true
+      - name: type
+        type: str
+        description:
+          zh: '按实体性质选最具体的类型,必须是以下之一:系统(完整系统/平台/框架,如"向量数据库")/算法(算法或算法族,如 ANN/IVF/HNSW/PQ)/模型(具体模型名,如 Qwen3-Reranker)/组件(系统组成模块,如重排器/编码器)/应用(应用场景或用法,如语义搜索/RAG)/产品(具体产品名)/数据(数据形态,如向量/索引/特征)/方法(技术/做法/工具)/过程(流程/步骤/阶段)/事件(发生的事情)/角色(参与方/人员)/组织(团体/部门/公司)/属性(特征/指标/参数)/概念(抽象概念)/实体(其他具体对象,无法归入上述时用)。禁止"其他/未知"等笼统值。'
+          en: 'Pick the MOST SPECIFIC type by nature, MUST be one of: system(platform/framework, e.g. vector database)/algorithm(algorithm family, e.g. ANN/IVF/HNSW/PQ)/model(specific model, e.g. Qwen3-Reranker)/component(system module, e.g. reranker/encoder)/application(use-case, e.g. semantic search/RAG)/product(specific product)/data(data form, e.g. vector/index)/method(technique/practice/tool)/process(flow/steps/stage)/event(occurrence)/role(participant/person)/organization(group/company)/property(feature/metric)/concept(abstract concept)/entity(other concrete object, fallback). Generic "other/unknown" forbidden.'
+        required: true
+      - name: definition
+        type: str
+        description: { zh: '实体的简要定义(必填,一句话说明该实体是什么/做什么及其在文章主旨中的角色)。', en: 'Brief entity definition (required; one sentence on what it is/does and its role in the article thesis).' }
+        required: true
+  relations:
+    description:
+      zh: '实体之间的显式与隐式语义关系,共同刻画文章的主旨与业务逻辑。'
+      en: 'Explicit and implicit semantic relations among entities, together depicting the article thesis and business logic.'
+    fields:
+      - name: source
+        type: str
+        description: { zh: '源实体名称(必须对应已提取实体)', en: 'Source entity name (must match an extracted entity)' }
+        required: true
+      - name: target
+        type: str
+        description: { zh: '目标实体名称(必须对应已提取实体)', en: 'Target entity name (must match an extracted entity)' }
+        required: true
+      - name: type
+        type: str
+        description:
+          zh: '关系类型,必须是以下之一:属于/包含/导致/相关/对立/示例/扩展/依赖/组成/实现。禁止自创其他值或混用英文。'
+          en: 'Relation type, MUST be one of: is_a/part_of/causes/related_to/opposite/example_of/extends/depends_on/composed_of/implements. Other values forbidden.'
+        required: true
+      - name: description
+        type: str
+        description: { zh: '关系说明(隐式关系必须在此写明推断依据)', en: 'Relation description (implicit relations MUST state the inference basis here)' }
+        required: false
+
+guideline:
+  target:
+    zh: '你是一位知识图谱专家,擅长从各类文档中提取具体实体及其显式与隐式关系,构建能真实反映文章主旨与业务逻辑的关系网络。'
+    en: 'You are a knowledge graph expert skilled at extracting concrete entities and their explicit + implicit relations, building a network that faithfully reflects the article thesis and business logic.'
+  rules_for_entities:
+    zh:
+      - '提取文档中明确提到的具体实体,体现文章主旨与业务核心;优先具体命名实体(产品/系统/技术/算法实例/机构/人物),抽象类目词(如"向量数据库")仅在文档以其为独立主体展开讨论时才提取'
+      - '实体名必须简洁规范:禁止括号说明、解释性后缀、长描述短语(如"X(中文解释)"、"基于Y的Z器");有括号/别名取主名;长技术名优先用文档给出的缩写主名(如"ANN"而非"近似最近邻搜索(ANN)算法")'
+      - '同一实体全文命名一致;不提取纯代词、泛称或无独立指代意义的词'
+      - 'type 必须选最具体匹配(系统/算法/模型/组件/应用/产品/数据/方法/过程/事件/角色/组织/属性/概念/实体),严禁"其他/未知"等笼统值'
+      - 'definition 必填:一句话说明该实体是什么/做什么及在主旨中的角色,不可留空'
+    en:
+      - 'Extract concrete entities explicitly mentioned that carry the thesis and business core; prefer specific named entities (products/systems/technologies/algorithm instances/organizations/people); abstract category words only when the document develops them as an independent subject'
+      - 'Entity names must be concise and canonical: no parenthetical glosses/explanatory suffixes/long descriptive phrases; use the main name; for long technical names prefer the abbreviation the document gives (e.g. "ANN" over "approximate nearest neighbor (ANN) algorithm")'
+      - 'Keep naming consistent throughout; do not extract pure pronouns, generic terms, or phrases without independent referential meaning'
+      - 'type must be the most specific match by nature; generic "concept" is forbidden'
+      - 'definition is required: one sentence on what it is/does and its role in the thesis, never empty'
+  rules_for_relations:
+    zh:
+      - 'type 必须严格使用枚举值之一(属于/包含/导致/相关/对立/示例/扩展/依赖/组成/实现),禁止自创或混用英文'
+      - '优先提取文档明确陈述的关系;并补充可从文章上下文、业务逻辑、技术/组织架构合理推断的隐式关系(必须在 description 写明推断依据)'
+      - '所有关系应服务于刻画文章主旨与业务逻辑;禁止与主旨无关的泛常识关联或臆造'
+      - '关系两端必须对应已提取的实体;同一对实体有多种关系可分别记录'
+    en:
+      - 'type must be one of the enumerated values; no custom values'
+      - 'Prioritize relations explicitly stated in the document; also add implicit relations reasonably inferred from context, business logic, or technical/organizational architecture (description MUST state the inference basis)'
+      - 'All relations should serve to depict the article thesis and business logic; no off-topic common-sense associations or fabrication'
+      - 'Both endpoints must match extracted entities; multiple distinct relations between the same pair may be recorded separately'
+
+identifiers:
+  entity_id: name
+  relation_id: '{source}|{type}|{target}'
+  relation_members: { source: source, target: target }
+
+display:
+  entity_label: '{name}'
+  relation_label: '{type}'

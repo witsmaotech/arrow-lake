@@ -301,6 +301,26 @@ class _LakeKGMixin:
         """
         self._ensure_kg_enabled()
 
+        # 入口校验:数据集必须存在。避免孤儿/已删数据集(只剩 KA dump)让
+        # rebuild 卡死在 RUNNING —— Lance open_dataset 在某些损坏状态下不抛
+        # 而是挂起,导致 fire-and-forget task 永不结束。这里用 catalog 预检。
+        try:
+            from arrow_lake.api.tasks import run_sync, _ADMIN_TIMEOUT
+            _cat = await run_sync(self.catalog, timeout=_ADMIN_TIMEOUT, label="catalog")
+            if dataset_name not in {e.name for e in _cat.datasets}:
+                raise KGError(
+                    error_code=ErrorCode.KG_BUILD_FAILED,
+                    message=(
+                        f"Dataset '{dataset_name}' not found — cannot build KG. "
+                        f"It may have been deleted while a KA dump still exists (orphan)."
+                    ),
+                )
+        except KGError:
+            raise
+        except Exception:
+            # catalog 查询本身失败时不阻塞,_load_kg_table 会再兜底。
+            pass
+
         with self._require_kg_builder() as builder:
             # Sync I/O (LanceDB read + Arrow normalize) in thread pool
             # to avoid blocking the uvicorn event loop.
@@ -486,6 +506,61 @@ class _LakeKGMixin:
         with self._require_kg_client() as client:
             g = graph_name_for(dataset_name) if dataset_name else None
             return await client.get_stats(graph_name=g)
+
+    async def kg_get_graph(
+        self, dataset_name: str, *, limit: int = 300
+    ) -> dict[str, Any]:
+        """Get graph vertices + edges for visualization (capped at ``limit``).
+
+        Returns a dict with ``nodes``/``edges`` (edges filtered to whose
+        endpoints are both in the returned vertex set), counts, and a
+        ``truncated`` flag set when the graph has more vertices than ``limit``.
+        Empty graph → empty lists (no error).
+        """
+        with self._require_kg_client() as client:
+            g = graph_name_for(dataset_name)
+            vertices, edges = await client.get_graph_snapshot(
+                graph_name=g, limit=limit
+            )
+        truncated = len(vertices) > limit
+        vertices = vertices[:limit]
+        vertex_ids = {v.get("id") for v in vertices}
+
+        def _prop(v: dict[str, Any], key: str) -> str:
+            props = v.get("properties") or {}
+            val = props.get(key, "") if isinstance(props, dict) else ""
+            return "" if val is None else str(val)
+
+        nodes = [
+            {
+                "id": str(v.get("id")),
+                "label": str(v.get("label", "")),
+                "name": _prop(v, "name") or str(v.get("label", "")),
+                "type": _prop(v, "type") or str(v.get("label", "")),
+                "definition": _prop(v, "definition"),
+            }
+            for v in vertices
+        ]
+        edges_out: list[dict[str, Any]] = []
+        for e in edges:
+            src, tgt = e.get("outV"), e.get("inV")
+            if src in vertex_ids and tgt in vertex_ids:
+                eprops = e.get("properties") or {}
+                rtype = eprops.get("relation_type", "") if isinstance(eprops, dict) else ""
+                edges_out.append({
+                    "id": str(e.get("id", "")),
+                    "source": str(src),
+                    "target": str(tgt),
+                    "label": str(e.get("label", "")),
+                    "relation_type": "" if rtype is None else str(rtype),
+                })
+        return {
+            "nodes": nodes,
+            "edges": edges_out,
+            "vertex_count": len(nodes),
+            "edge_count": len(edges_out),
+            "truncated": truncated,
+        }
 
     # ------------------------------------------------------------------
     # [#2] KA semantic search / RAG chat (hyper-extract, v1.8.8)

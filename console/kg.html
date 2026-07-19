@@ -37,13 +37,19 @@
   <div class="panel"><div class="panel-b" id="stats"><div class="muted" style="padding:16px">选择数据集后加载…</div></div></div>
 
   <div class="panel flush" id="schemaPanel" style="margin-top:var(--s4);display:none">
-    <div class="panel-h"><i class="placeholder" data-ic="code"></i><h3>Schema(顶点/边类型)</h3><span class="sub" id="schemaMeta">—</span></div>
-    <div class="panel-b" id="schema"></div>
+    <div class="panel-h" id="schemaToggle" style="cursor:pointer;user-select:none"><i class="placeholder" data-ic="code"></i><h3>Schema(顶点/边类型)</h3><span class="sub" id="schemaMeta">—</span><span class="sub toggle-mark" style="margin-left:auto">▾</span></div>
+    <div class="panel-b" id="schemaBody">
+      <div id="schema"></div>
+      <div style="margin-top:var(--s3)">
+        <div id="kgGraphMeta" class="muted" style="font-size:.74rem;margin-bottom:6px"></div>
+        <div id="kgGraph" style="height:440px;border:1px solid var(--line-soft);border-radius:var(--r-md);background:var(--ink-900)"></div>
+      </div>
+    </div>
   </div>
 
   <div class="panel flush" style="margin-top:var(--s4)">
-    <div class="panel-h"><i class="placeholder" data-ic="plus"></i><h3>建 / 重建 KG</h3></div>
-    <div class="panel-b">
+    <div class="panel-h" id="buildToggle" style="cursor:pointer;user-select:none"><i class="placeholder" data-ic="plus"></i><h3>建 / 重建 KG</h3><span class="sub toggle-mark" style="margin-left:auto">▸</span></div>
+    <div class="panel-b" id="buildBody" style="display:none">
       <div class="muted" style="font-size:.78rem;margin-bottom:8px">对当前数据集抽取实体/关系建图(异步,ADMIN;走全局轻量 LLM 抽取)。大 dataset 耗时较长,完成后自动刷新统计。</div>
       <div class="flex" style="gap:8px"><button class="btn btn-primary btn-sm" id="buildBtn">建 KG</button><span id="buildStatus" class="muted" style="font-size:.74rem"></span></div>
     </div>
@@ -63,6 +69,7 @@
 </div>
 
 <script src="assets/console-layout.js"></script>
+<script src="vendor/vis-network.bundle.min.js"></script>
 <script type="module">
 import { request } from "./src/api.js";
 import { isLoggedIn } from "./src/auth.js";
@@ -97,7 +104,7 @@ async function loadAll() {
   if (!name) { $("#stats").innerHTML = '<div class="muted" style="padding:16px">选择数据集后加载…</div>'; $("#schemaPanel").style.display = "none"; return; }
   $("#stats").innerHTML = '<div class="muted" style="padding:16px">加载中…</div>';
   let s;
-  try { s = await request("GET", `/kg/stats?dataset_name=${encodeURIComponent(name)}`); }
+  try { s = await request("GET", `/kg/stats?dataset=${encodeURIComponent(name)}`); }
   catch (e) { $("#stats").innerHTML = `<div style="color:var(--danger);padding:12px">统计加载失败:${esc(e?.detail || e?.message || e)}</div>`; return; }
   const v = s.total_vertices ?? 0, e = s.total_edges ?? 0;
   $("#stats").innerHTML = `<div class="grid g-4">
@@ -107,17 +114,92 @@ async function loadAll() {
     <div class="kpi"><div class="label">密度</div><div class="val" style="font-size:.9rem">${v ? (e / v).toFixed(2) : "—"} 边/顶点</div></div>
   </div>${(!v && s.graph_enabled) ? `<div class="muted" style="font-size:.74rem;margin-top:8px">图为空(0 实体)— 点下方「建 KG」抽取,或该数据集抽取得到 0 实体(换 doc_type/模板或更大模型)</div>` : ""}`;
   loadSchema();
+  loadGraph();
+  setBuildOpen(!v);
 }
 async function loadSchema() {
   const name = curDs(); if (!name) return;
   try {
-    const s = await request("GET", `/kg/schema?dataset_name=${encodeURIComponent(name)}`);
+    const s = await request("GET", `/kg/schema?dataset=${encodeURIComponent(name)}`);
     const vs = s.vertex_labels || [], es = s.edge_labels || [];
     $("#schemaPanel").style.display = "";
     $("#schemaMeta").textContent = `${vs.length} 顶点类型 · ${es.length} 边类型`;
     $("#schema").innerHTML = (vs.length || es.length) ? `<div style="margin-bottom:6px"><span class="muted" style="font-size:.72rem">顶点:</span>${vs.map(x => `<span class="schema-chip v">${esc(x)}</span>`).join("")}</div><div><span class="muted" style="font-size:.72rem">边:</span>${es.map(x => `<span class="schema-chip e">${esc(x)}</span>`).join("")}</div>` : '<div class="muted" style="font-size:.74rem;padding:4px 0">图为空,无 schema</div>';
   } catch (_) { $("#schemaPanel").style.display = "none"; }
 }
+
+// Schema 面板可折叠 + 图可视化(vis-network,本地 vendor bundle)
+function setSchemaOpen(open) {
+  $("#schemaBody").style.display = open ? "" : "none";
+  $("#schemaToggle").querySelector(".toggle-mark").textContent = open ? "▾" : "▸";
+}
+$("#schemaToggle").addEventListener("click", () => setSchemaOpen($("#schemaBody").style.display === "none"));
+
+let kgNetwork = null;
+async function loadGraph() {
+  const name = curDs(); if (!name) return;
+  const meta = $("#kgGraphMeta"), cont = $("#kgGraph");
+  const V = window.vis;
+  if (!V) { meta.textContent = "图库未加载(vis-network)"; return; }
+  meta.textContent = "加载图…";
+  let r;
+  try { r = await request("GET", `/kg/graph?dataset=${encodeURIComponent(name)}&limit=300`); }
+  catch (e) {
+    const emsg = Array.isArray(e?.detail) ? e.detail.map(x => x?.msg || "").join("; ") : (e?.detail || e?.message || e);
+    meta.innerHTML = `<span style="color:var(--danger)">图加载失败:${esc(emsg)}</span>`; return;
+  }
+  if (kgNetwork) { kgNetwork.destroy(); kgNetwork = null; }
+  // 隐藏结构节点 document/chunk:它们是度数最高的 hub(每个 chunk 经 references
+  // 连到所有 entity),力导向会把 chunk 推到中心、把图压成星型,淹没真实的
+  // entity-entity 关系结构。references 边(chunk→entity)因 chunk 被过滤而自动
+  // 消失,只保留实体间的关系边(related_to/part_of/...)。溯源走邻居查询。
+  const STRUCTURE = new Set(["document", "chunk"]);
+  const ns = (r.nodes || []).filter(n => !STRUCTURE.has(n.label)).map(n => ({
+    id: n.id, group: n.type || n.label,
+    label: n.name && n.name !== n.label ? n.name : (n.name || n.label),
+    title: `${n.name || n.label} [${n.label}]${n.type && n.type !== n.label ? " · " + n.type : ""}${n.definition ? "\n" + n.definition : ""}`,
+  }));
+  const keepIds = new Set(ns.map(n => n.id));
+  const es = (r.edges || []).filter(e => keepIds.has(e.source) && keepIds.has(e.target)).map((e, i) => ({
+    id: e.id || ("e" + i), from: e.source, to: e.target,
+    label: e.relation_type || "", arrows: "to",
+    font: { size: 9, color: "#64748b", strokeWidth: 0 },
+  }));
+  if (!ns.length) { meta.textContent = "无实体节点(已隐藏 document/chunk)— 先建 KG 抽取实体"; cont.innerHTML = ""; return; }
+  meta.innerHTML = `${ns.length} 实体节点 · ${es.length} 关系边${r.truncated ? ` · <span style="color:var(--warn)">仅显示前 300(数据集更大)</span>` : ""}`;
+  kgNetwork = new V.Network(cont, { nodes: new V.DataSet(ns), edges: new V.DataSet(es) }, {
+    height: "100%", width: "100%", autoResize: true,
+    layout: { improvedLayout: ns.length <= 150 },
+    physics: { stabilization: { iterations: 200 }, barnesHut: { gravitationalConstant: -8000, springLength: 110 } },
+    nodes: { shape: "dot", size: 14, font: { size: 13, color: "#e2e8f0" }, borderWidth: 2 },
+    edges: { color: { color: "#475569", opacity: 0.55 }, smooth: { type: "continuous" }, selectionWidth: 2 },
+    groups: {
+      系统: { color: { background: "#60a5fa", border: "#2563eb" } },
+      算法: { color: { background: "#a78bfa", border: "#7c3aed" } },
+      模型: { color: { background: "#f472b6", border: "#db2777" } },
+      组件: { color: { background: "#fbbf24", border: "#d97706" } },
+      应用: { color: { background: "#34d399", border: "#059669" } },
+      数据: { color: { background: "#22d3ee", border: "#0891b2" } },
+      方法: { color: { background: "#fb923c", border: "#ea580c" } },
+      过程: { color: { background: "#94a3b8", border: "#475569" } },
+      事件: { color: { background: "#f87171", border: "#dc2626" } },
+      组织: { color: { background: "#c084fc", border: "#9333ea" } },
+      角色: { color: { background: "#a3e635", border: "#65a30d" } },
+      产品: { color: { background: "#2dd4bf", border: "#0d9488" } },
+      属性: { color: { background: "#cbd5e1", border: "#64748b" } },
+      概念: { color: { background: "#e879f9", border: "#a21caf" } },
+      entity: { color: { background: "#2dd4bf", border: "#0d9488" } },
+    },
+    interaction: { hover: true, tooltipDelay: 120, navigationButtons: false },
+  });
+}
+
+// 建/重建 KG:默认折叠(顶点=0 时自动展开引导首次构建,有数据时收起)
+function setBuildOpen(open) {
+  $("#buildBody").style.display = open ? "" : "none";
+  $("#buildToggle").querySelector(".toggle-mark").textContent = open ? "▾" : "▸";
+}
+$("#buildToggle").addEventListener("click", () => setBuildOpen($("#buildBody").style.display === "none"));
 
 // 建 KG(异步,专用 status 端点轮询;按钮全程 disabled 直到完成/失败/超时)
 function resetBuildBtn() { const b = $("#buildBtn"); b.disabled = false; b.textContent = "建 KG"; }
@@ -127,7 +209,7 @@ $("#buildBtn").addEventListener("click", async () => {
   const btn = $("#buildBtn"); btn.disabled = true; btn.textContent = "构建中…"; $("#buildStatus").textContent = "提交中…";
   let tid;
   try {
-    const r = await request("POST", "/kg/build", { body: { dataset_name: name } });
+    const r = await request("POST", "/kg/build", { body: { dataset: name } });
     tid = r.task_id || r.id;
     if (!tid) { $("#buildStatus").textContent = "已提交(无 task_id,5s 后刷新统计)"; setTimeout(() => { resetBuildBtn(); loadAll(); }, 5000); return; }
     $("#buildStatus").innerHTML = `任务 <span class="mono">${esc(tid.slice(0, 8))}</span> 运行中… <a href="tasks.html" style="color:var(--teal-bright)">队列</a>`;
@@ -203,13 +285,14 @@ async function ask() {
   const btn = $("#askBtn"); btn.disabled = true; btn.textContent = "图检索+生成中…";
   turns.push({ q, a: "…", citations: [], retrieval_count: 0 }); $("#question").value = ""; renderThread();
   try {
-    const r = await request("POST", "/kg/ask", { body: { dataset_name: name, question: q } });
+    const r = await request("POST", "/kg/ask", { body: { dataset: name, question: q } });
     const last = turns[turns.length - 1];
     last.a = r.answer || "(无回答)"; last.citations = r.citations || []; last.retrieval_count = r.retrieval_count;
     renderThread();
   } catch (e) {
     const last = turns[turns.length - 1];
-    last.a = "❌ 查询失败:" + String(e?.detail || e?.message || e).slice(0, 200);
+    const d = e?.detail; const emsg = Array.isArray(d) ? d.map(x => x?.msg || JSON.stringify(x)).join("; ") : (d || e?.message || e);
+    last.a = "❌ 查询失败:" + String(emsg).slice(0, 200);
     renderThread(); toast("KG 问答失败", "danger");
   } finally { btn.disabled = false; btn.textContent = "提问"; }
 }

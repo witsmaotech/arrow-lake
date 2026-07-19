@@ -270,7 +270,7 @@ class GraphRAGPipeline(RAGPipeline):
             # Build response
             elapsed = (time.monotonic() - t0) * 1000
             citations = self._extract_citations(window)
-            return RAGResponse(
+            response = RAGResponse(
                 answer=llm_response.content,
                 citations=citations,
                 retrieval_count=window.chunk_count,
@@ -279,6 +279,15 @@ class GraphRAGPipeline(RAGPipeline):
                 latency_ms=round(elapsed, 1),
                 session_id=session_id,
             )
+            # Persist turn in session store (parity with base RAGPipeline).
+            # v1.9.0: the GraphRAG path previously returned without saving,
+            # so RAG sessions were never durable when hugegraph was enabled.
+            if self._session_store and session_id:
+                try:
+                    self._session_store.save_turn(session_id, question, response)
+                except Exception:  # noqa: BLE001 — best-effort persistence
+                    logger.warning("rag_session_save_failed", exc_info=True)
+            return response
 
         except asyncio.CancelledError:
             raise
