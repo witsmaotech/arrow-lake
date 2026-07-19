@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>我的工作区 · Arrow Lake Console</title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/tokens.css"/>
+<link rel="stylesheet" href="assets/app.css"/>
+<link rel="stylesheet" href="assets/console.css"/>
+<style>
+  .field{display:flex;flex-direction:column;gap:4px;font-size:.74rem;color:var(--fg-lo);text-transform:uppercase;letter-spacing:.04em}
+  .field .input,.field .select{text-transform:none;letter-spacing:0}
+  .tk-row{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:end}
+  .item-card{border:1px solid var(--line-soft);border-radius:var(--r-md);padding:12px 14px;margin-bottom:10px;background:var(--ink-900)}
+  .item-card .row1{display:flex;align-items:center;gap:10px;margin-bottom:4px}
+  .item-card .meta{font-size:.78rem;color:var(--fg-lo)}
+  .jsonblk{background:var(--ink-950);border:1px solid var(--line);border-radius:var(--r-md);padding:10px;font-family:var(--font-mono);font-size:.78rem;color:var(--fg-md);white-space:pre-wrap;word-break:break-all;max-height:320px;overflow:auto}
+</style>
+</head>
+<body>
+<div id="app">
+<main class="main"><div class="page">
+  <div class="h-sec between">
+    <div><h1>我的工作区</h1><div class="desc">收藏查询 / 通知 / 偏好 / 仪表盘 / 收藏 · <span class="mono">/api/v1/me/*</span> · 需 personal token</div></div>
+    <div class="flex"><span class="lamp" id="tokLamp"><i></i>未连接</span></div>
+  </div>
+
+  <!-- personal token 区 -->
+  <div class="panel flush">
+    <div class="panel-h"><i class="placeholder" data-ic="key"></i><h3>个人 Token</h3><span class="sub">/me/* 走 X-API-Key(personal token)</span></div>
+    <div class="panel-b">
+      <div class="tk-row">
+        <label class="field">personal token(<span class="mono">al_…</span>,在管理后台给自己发,复制粘贴到此)
+          <input class="input mono" id="ptoken" placeholder="al_xxxxxxxxxxxxxxxx" autocomplete="off"></label>
+        <button class="btn btn-primary btn-sm" id="tokSave"><i class="placeholder" data-ic="check"></i> 保存并验证</button>
+      </div>
+      <div class="muted" style="font-size:.76rem;margin-top:8px">没有 token?去 <a href="admin.html" style="color:var(--teal-bright)">管理后台</a> → 找到自己的用户行 →「发token」→ 复制明文回来粘贴。token 仅存本机 localStorage。</div>
+    </div>
+  </div>
+
+  <div class="tabs" id="tt">
+    <button class="tab active" data-t="queries">收藏查询</button>
+    <button class="tab" data-t="notif">通知 <span class="nav-badge" id="bUnread" style="display:none">0</span></button>
+    <button class="tab" data-t="pref">偏好</button>
+    <button class="tab" data-t="dash">仪表盘</button>
+    <button class="tab" data-t="fav">收藏</button>
+  </div>
+
+  <!-- 收藏查询 -->
+  <div id="pQueries" class="panel flush">
+    <div class="panel-h"><i class="placeholder" data-ic="search"></i><h3>收藏查询</h3><span class="sub" id="qCnt">—</span>
+      <span class="actions"><button class="btn btn-ghost btn-sm" id="qRefresh"><i class="placeholder" data-ic="refresh"></i></button></span></div>
+    <div class="panel-b"><div id="qList"></div></div>
+  </div>
+
+  <!-- 通知 -->
+  <div id="pNotif" class="panel flush hidden">
+    <div class="panel-h"><i class="placeholder" data-ic="bell"></i><h3>通知</h3><span class="sub" id="nCnt">—</span>
+      <span class="actions"><button class="btn btn-ghost btn-sm" id="nReadAll">全部已读</button></span></div>
+    <div class="panel-b"><div id="nList"></div></div>
+  </div>
+
+  <!-- 偏好 -->
+  <div id="pPref" class="panel flush hidden">
+    <div class="panel-h"><i class="placeholder" data-ic="dashboard"></i><h3>偏好</h3><span class="sub">JSON · 自由键值</span>
+      <span class="actions"><button class="btn btn-primary btn-sm" id="pSave"><i class="placeholder" data-ic="check"></i> 保存</button></span></div>
+    <div class="panel-b">
+      <div class="muted" style="font-size:.76rem;margin-bottom:6px">编辑 JSON 后点「保存」(PUT /me/preferences)</div>
+      <textarea class="input mono" id="pEditor" style="width:100%;min-height:200px;font-size:.8rem" placeholder='{ "theme": "dark", "pageSize": 50 }'></textarea>
+    </div>
+  </div>
+
+  <!-- 仪表盘 -->
+  <div id="pDash" class="panel flush hidden">
+    <div class="panel-h"><i class="placeholder" data-ic="dashboard"></i><h3>我的仪表盘</h3><span class="sub" id="dCnt">—</span></div>
+    <div class="panel-b"><div id="dList"></div></div>
+  </div>
+
+  <!-- 收藏 -->
+  <div id="pFav" class="panel flush hidden">
+    <div class="panel-h"><i class="placeholder" data-ic="database"></i><h3>收藏</h3><span class="sub" id="fCnt">—</span></div>
+    <div class="panel-b">
+      <div id="fList"></div>
+      <div style="margin-top:14px;border-top:1px solid var(--line-soft);padding-top:12px">
+        <div class="muted" style="font-size:.74rem;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">添加收藏</div>
+        <div class="tk-row" style="grid-template-columns:auto 1fr auto">
+          <select class="select" id="fType"><option value="dataset">dataset</option><option value="query">query</option></select>
+          <input class="input mono" id="fId" placeholder="target_id(数据集名 / 查询 id)">
+          <button class="btn btn-primary btn-sm" id="fAdd"><i class="placeholder" data-ic="plus"></i> 添加</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div></main>
+</div>
+
+<script src="assets/console-layout.js"></script>
+<script type="module">
+import { request, API_BASE } from "./src/api.js";
+import { isLoggedIn } from "./src/auth.js";
+import { toast } from "./src/ui/toast.js";
+import { confirmDialog } from "./src/ui/modal.js";
+
+if (!isLoggedIn()) location.href = "login.html";
+const { renderShell, icon } = window;
+renderShell({ active: "my-workspace", crumb: "<b>我的工作区</b>" });
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const fmtDate = (s) => { if (!s) return "—"; const d = new Date(s); if (isNaN(d)) return String(s).slice(0, 16);
+  const p = (n) => String(n).padStart(2, "0"); return `${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
+const errMsg = (e) => e?.detail || e?.message || String(e);
+const PKEY = "al_ptoken";
+let PTOKEN = localStorage.getItem(PKEY) || "";
+
+/* meRequest: /me/* 走 X-API-Key(personal token),不是 JWT Bearer */
+async function meRequest(method, path, body) {
+  if (!PTOKEN) throw { detail: "请先配置 personal token" };
+  let r;
+  try {
+    r = await fetch(`${API_BASE}${path}`, {
+      method, headers: { "Content-Type": "application/json", "X-API-Key": PTOKEN },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+  } catch { throw { detail: "网络错误(后端不可达?)" }; }
+  if (!r.ok) { let d = r.statusText; try { const j = await r.json(); d = j.detail || d; } catch (_) {} throw { status: r.status, detail: d }; }
+  return r.json();
+}
+
+/* token 保存 + 验证 */
+async function saveToken(silent = false) {
+  const v = $("#ptoken").value.trim();
+  if (v) { PTOKEN = v; localStorage.setItem(PKEY, v); }
+  if (!PTOKEN) { setLamp("warn", "未配置"); if (!silent) toast("请输入 token", "warn"); return false; }
+  try {
+    await meRequest("GET", "/me/preferences");
+    setLamp("ok", "已连接");
+    if (!silent) toast("token 有效", "ok");
+    loadAll();
+    return true;
+  } catch (e) {
+    setLamp("danger", "无效");
+    if (!silent) toast("token 无效:" + errMsg(e), "danger", 5000);
+    return false;
+  }
+}
+function setLamp(kind, txt) { $("#tokLamp").className = `lamp ${kind}`; $("#tokLamp").innerHTML = `<i></i>${esc(txt)}`; }
+$("#tokSave").addEventListener("click", () => saveToken());
+
+/* ---------- 收藏查询 ---------- */
+async function loadQueries() {
+  $("#qList").innerHTML = `<div class="muted" style="padding:20px;text-align:center">加载中…</div>`;
+  try {
+    const d = await meRequest("GET", "/me/saved-queries");
+    const list = d.queries || [];
+    $("#qCnt").textContent = `${list.length} 条`;
+    $("#qList").innerHTML = list.length ? list.map((q) => `<div class="item-card">
+      <div class="row1"><span class="tag ${q.query_type === "rag" ? "teal" : q.query_type === "search" ? "info" : ""}">${esc(q.query_type || "sql")}</span>
+        <b>${esc(q.name)}</b>${q.is_public ? '<span class="tag ok">公开</span>' : ""}
+        <button class="btn btn-ghost btn-sm" data-del-q="${q.id}" style="margin-left:auto">删除</button></div>
+      <div class="meta">${q.dataset ? `<span class="mono">${esc(q.dataset)}</span> · ` : ""}<span class="mono">${esc((q.query_text || "").slice(0, 120))}${(q.query_text||"").length > 120 ? "…" : ""}</span></div>
+      <div class="meta">${fmtDate(q.created_at)}</div>
+    </div>`).join("") : `<div class="muted" style="padding:20px;text-align:center">无收藏查询(从检索 / RAG / SQL 页「收藏」流入)</div>`;
+  } catch (e) { $("#qList").innerHTML = errBox(errMsg(e), loadQueries); }
+}
+$("#qRefresh")?.addEventListener("click", loadQueries);
+
+/* ---------- 通知 ---------- */
+async function loadNotif() {
+  $("#nList").innerHTML = `<div class="muted" style="padding:20px;text-align:center">加载中…</div>`;
+  try {
+    const d = await meRequest("GET", "/me/notifications?limit=50");
+    const list = d.notifications || [];
+    const unread = d.unread_count || 0;
+    $("#nCnt").textContent = `${list.length} 条 · ${unread} 未读`;
+    $("#bUnread").style.display = unread ? "inline-block" : "none"; $("#bUnread").textContent = unread;
+    $("#nList").innerHTML = list.length ? list.map((n) => `<div class="item-card" ${n.read ? 'style="opacity:.6"' : ""}>
+      <div class="row1">${n.read ? "" : '<span class="tag amber">未读</span>'}<span class="tag">${esc(n.kind || "info")}</span>
+        ${n.read ? "" : `<button class="btn btn-ghost btn-sm" data-read-n="${n.id}" style="margin-left:auto">标记已读</button>`}</div>
+      <div class="meta">${esc(n.message)}</div><div class="meta">${fmtDate(n.created_at)}</div>
+    </div>`).join("") : `<div class="muted" style="padding:20px;text-align:center">无通知</div>`;
+  } catch (e) { $("#nList").innerHTML = errBox(errMsg(e), loadNotif); }
+}
+$("#nReadAll")?.addEventListener("click", async () => {
+  try { const r = await meRequest("POST", "/me/notifications/read"); toast(`已标记 ${r.marked_read || 0} 条`, "ok"); loadNotif(); }
+  catch (e) { toast("失败:" + errMsg(e), "danger"); }
+});
+
+/* ---------- 偏好 ---------- */
+async function loadPref() {
+  try {
+    const d = await meRequest("GET", "/me/preferences");
+    $("#pEditor").value = JSON.stringify(d.preferences || {}, null, 2);
+  } catch (e) { $("#pEditor").value = ""; toast("偏好加载失败:" + errMsg(e), "warn"); }
+}
+$("#pSave")?.addEventListener("click", async () => {
+  let pref; try { pref = JSON.parse($("#pEditor").value || "{}"); }
+  catch { return toast("JSON 格式错误", "warn"); }
+  try { const r = await meRequest("PUT", "/me/preferences", { preferences: pref }); $("#pEditor").value = JSON.stringify(r.preferences || {}, null, 2); toast("偏好已保存", "ok"); }
+  catch (e) { toast("保存失败:" + errMsg(e), "danger"); }
+});
+
+/* ---------- 仪表盘 ---------- */
+async function loadDash() {
+  $("#dList").innerHTML = `<div class="muted" style="padding:20px;text-align:center">加载中…</div>`;
+  try {
+    const d = await meRequest("GET", "/me/dashboards");
+    const list = d.dashboards || [];
+    $("#dCnt").textContent = `${list.length} 个`;
+    $("#dList").innerHTML = list.length ? list.map((db) => `<div class="item-card">
+      <div class="row1"><b>${esc(db.name)}</b>
+        <button class="btn btn-ghost btn-sm" data-del-d="${db.id}" style="margin-left:auto">删除</button></div>
+      <div class="meta">${fmtDate(db.created_at)} · layout ${(db.layout ? Object.keys(db.layout).length : 0)} 键</div>
+    </div>`).join("") : `<div class="muted" style="padding:20px;text-align:center">无仪表盘</div>`;
+  } catch (e) { $("#dList").innerHTML = errBox(errMsg(e), loadDash); }
+}
+
+/* ---------- 收藏 ---------- */
+async function loadFav() {
+  $("#fList").innerHTML = `<div class="muted" style="padding:20px;text-align:center">加载中…</div>`;
+  try {
+    const d = await meRequest("GET", "/me/favorites");
+    const list = d.favorites || [];
+    $("#fCnt").textContent = `${list.length} 个`;
+    $("#fList").innerHTML = list.length ? list.map((f) => `<div class="item-card">
+      <div class="row1"><span class="tag ${f.target_type === "dataset" ? "teal" : "info"}">${esc(f.target_type)}</span>
+        <span class="mono">${esc(f.target_id)}</span>
+        <button class="btn btn-ghost btn-sm" data-del-f-type="${esc(f.target_type)}" data-del-f-id="${esc(f.target_id)}" style="margin-left:auto">移除</button></div>
+      <div class="meta">${fmtDate(f.created_at)}</div>
+    </div>`).join("") : `<div class="muted" style="padding:20px;text-align:center">无收藏</div>`;
+  } catch (e) { $("#fList").innerHTML = errBox(errMsg(e), loadFav); }
+}
+$("#fAdd")?.addEventListener("click", async () => {
+  const target_type = $("#fType").value, target_id = $("#fId").value.trim();
+  if (!target_id) return toast("请填 target_id", "warn");
+  try { await meRequest("POST", "/me/favorites", { target_type, target_id }); toast("已收藏", "ok"); $("#fId").value = ""; loadFav(); }
+  catch (e) { toast("收藏失败:" + errMsg(e), "danger"); }
+});
+
+/* ---------- 事件委托(删除/标记已读) ---------- */
+document.addEventListener("click", async (e) => {
+  const t = e.target;
+  const dq = t.closest("[data-del-q]"); const dn = t.closest("[data-read-n]");
+  const dd = t.closest("[data-del-d]"); const df = t.closest("[data-del-f-type]");
+  if (dq) {
+    if (!(await confirmDialog({ title: "删除收藏查询", danger: true, confirmText: "删除" }))) return;
+    try { await meRequest("DELETE", `/me/saved-queries/${dq.dataset.delQ}`); toast("已删除", "ok"); loadQueries(); } catch (er) { toast(errMsg(er), "danger"); }
+  } else if (dn) {
+    try { await meRequest("POST", `/me/notifications/read?notification_id=${dn.dataset.readN}`); toast("已标记", "ok"); loadNotif(); } catch (er) { toast(errMsg(er), "danger"); }
+  } else if (dd) {
+    if (!(await confirmDialog({ title: "删除仪表盘", danger: true, confirmText: "删除" }))) return;
+    try { await meRequest("DELETE", `/me/dashboards/${dd.dataset.delD}`); toast("已删除", "ok"); loadDash(); } catch (er) { toast(errMsg(er), "danger"); }
+  } else if (df) {
+    const ty = df.dataset.delFType, id = df.dataset.delFId;
+    try { await meRequest("DELETE", `/me/favorites/${encodeURIComponent(ty)}/${encodeURIComponent(id)}`); toast("已移除", "ok"); loadFav(); } catch (er) { toast(errMsg(er), "danger"); }
+  }
+});
+
+function errBox(msg, retry) {
+  const id = "err" + Math.random().toString(36).slice(2, 7);
+  setTimeout(() => $("#" + id)?.addEventListener("click", retry), 0);
+  return `<div style="padding:20px;text-align:center;color:var(--danger)">${esc(msg)}<br/><button class="btn btn-ghost btn-sm" id="${id}" style="margin-top:10px">重试</button></div>`;
+}
+
+function loadAll() { loadQueries(); loadNotif(); loadPref(); loadDash(); loadFav(); }
+
+/* ---------- tab 切换 ---------- */
+$("#tt").addEventListener("click", (e) => {
+  const b = e.target.closest(".tab"); if (!b) return;
+  [...$("#tt").querySelectorAll(".tab")].forEach((x) => x.classList.remove("active"));
+  b.classList.add("active");
+  ["queries","notif","pref","dash","fav"].forEach((t) => $(`#p${t.charAt(0).toUpperCase()+t.slice(1)}`).classList.toggle("hidden", b.dataset.t !== t));
+});
+
+/* ---------- 初始化 ---------- */
+if (PTOKEN) { $("#ptoken").value = PTOKEN; saveToken(true); }
+else { setLamp("warn", "未配置"); $("#qList").innerHTML = `<div class="muted" style="padding:20px;text-align:center">请在上方配置 personal token 后加载。</div>`; }
+window.applyIcons && applyIcons(document);
+</script>
+</body>
+</html>

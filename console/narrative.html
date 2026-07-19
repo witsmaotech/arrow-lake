@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Arrow Lake · 一条请求的旅程</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/tokens.css"/>
+<link rel="stylesheet" href="assets/app.css"/>
+<link rel="stylesheet" href="assets/narrative.css"/>
+</head>
+<body class="mc">
+
+<!-- ============ MISSION CONTROL · TOP BAR ============ -->
+<header class="mc-top">
+  <a class="mc-brand" href="index.html"><span class="mc-brand-mark">AL</span><span><b>Arrow Lake</b><span class="mc-brand-sub">mission control</span></span></a>
+  <div class="mc-dualrail" aria-label="双轨进度">
+    <div class="mc-rail" id="reqRail">
+      <div class="mc-rail-label">请求深度 <span class="mc-rail-val" id="reqRailVal">①接入</span></div>
+      <div class="mc-rail-track"><div class="mc-rail-segs" id="reqRailSegs"></div><div class="mc-rail-cursor" id="reqCursor"></div></div>
+    </div>
+    <div class="mc-rail" id="verRail">
+      <div class="mc-rail-label">版本里程碑 <span class="mc-rail-val" id="verRailVal">v1.6.0</span></div>
+      <div class="mc-rail-track"><div class="mc-rail-segs" id="verRailSegs"></div><div class="mc-rail-cursor mc-amber" id="verCursor"></div></div>
+    </div>
+  </div>
+  <div class="mc-top-cta">
+    <a class="btn btn-ghost btn-sm" href="index.html">← 返回主页</a>
+    <a class="btn btn-primary btn-sm" href="index.html">打开控制台</a>
+  </div>
+</header>
+
+<!-- ============ SCROLLYTELLING SHELL ============ -->
+<main class="mc-shell">
+
+  <!-- LEFT · 请求旅程叙事（滚动流） -->
+  <div class="mc-left" id="mcLeft">
+
+    <section class="step is-active" data-step="0" data-viz="hero" data-req="hero" data-vers="v1.6.0">
+      <span class="step-tag teal">HERO · 一个请求的旅程</span>
+      <h1 class="step-h1">552 页 PDF，<br/><span class="accent">attention 的核心结论</span>是什么？</h1>
+      <p class="step-lede">跟随这条请求，自上而下穿越 Arrow Lake 五层湖仓——每经过一层，看它如何被处理。右侧是这条请求背后的 <b>11 个版本</b> 沉淀。</p>
+      <div class="step-meta mono">dataset · <b>kg_papers</b> &nbsp;|&nbsp; mode · <b>graphrag</b> &nbsp;|&nbsp; top_k · <b>10</b></div>
+      <div class="scroll-hint">向下滚动开始旅程 ↓</div>
+    </section>
+
+    <section class="step" data-step="1" data-viz="entry" data-req="①接入" data-vers="v1.6.0">
+      <span class="step-tag info">① 接入层 · ENTRY</span>
+      <h2 class="step-h2">一条提问，<span class="hi">三个入口</span>任选</h2>
+      <p class="step-lede">同一份 Lake facade，对外是 Python SDK、REST(106 routes)、CLI 三种面孔。点右侧标签切换——请求体完全等价。</p>
+      <details class="tech"><summary>&lt;/&gt; 技术细节</summary><div class="tech-body">
+        <b>Lake facade · 9 mixin</b>（v1.6.0）：摄入/检索/OLAP/RAG/KG/质量/治理/管理/任务，统一门面。REST 经 FastAPI 覆盖 106 端点，CLI 16 命令组。三入口共享同一套 Pydantic 模型，行为一致。
+      </div></details>
+      <div class="vchips"><span class="vchip">v1.6.0 facade+9mixin</span></div>
+    </section>
+
+    <section class="step" data-step="2" data-viz="vecspace" data-req="②能力·检索" data-vers="v1.7.1|v1.8.0">
+      <span class="step-tag teal">② 能力层 · 向量检索</span>
+      <h2 class="step-h2">9.4M 向量里，<span class="hi">0.04 秒</span>找出最相似的 10 段</h2>
+      <p class="step-lede">提问先经 Qwen3 嵌入成 1024 维向量。看右图——query 落入向量空间，候选点云向它聚拢。每一颗点，是一段被切碎的文档。</p>
+      <details class="tech"><summary>&lt;/&gt; 技术细节</summary><div class="tech-body">
+        <b>IVF_PQ 索引</b>（v1.7.1 lancedb 0.33 + pylance 7.0）：nprobes=12 探测最近簇，PQ 量化压缩内存 8×。<b>Reranker</b>（v1.8.0）在 hybrid bridge 内自动重排，无需 per-query 开关。标量索引全量补齐，where 过滤下推 Lance 层。
+      </div></details>
+      <div class="vchips"><span class="vchip">v1.7.1 标量索引</span><span class="vchip">v1.8.0 Reranker</span></div>
+    </section>
+
+    <section class="step" data-step="3" data-viz="funnel" data-req="②能力·检索" data-vers="v1.7.1">
+      <span class="step-tag teal">② 能力层 · 检索漏斗</span>
+      <h2 class="step-h2">从 9.4M 到 10，<span class="hi">每一步都在剪枝</span></h2>
+      <p class="step-lede">向量检索不是一次比较，是一串漏斗。看候选如何在 IVF 探测、PQ 量化、rerank、top_k 里逐层缩减——精度与速度的权衡可视化。</p>
+      <details class="tech"><summary>&lt;/&gt; 技术细节</summary><div class="tech-body">
+        全量 9,432,881 行 → IVF nprobes 命中 12 簇共 ~141k 行 → PQ 近似排序取前 2,000 → Reranker 精排 → top_k=10。谓词下推让 where 在 Lance 层先过滤，零拷贝读取只物化匹配行。
+      </div></details>
+      <div class="vchips"><span class="vchip">v1.7.1 pylance7.0</span></div>
+    </section>
+
+    <section class="step" data-step="4" data-viz="modal" data-req="②能力·检索" data-vers="v1.8.0">
+      <span class="step-tag teal">② 能力层 · 多模态</span>
+      <h2 class="step-h2">不止文字——<span class="hi">图、音频、视频</span>一锅找</h2>
+      <p class="step-lede">CLIP 把图像和文本嵌入同一空间。用一句话搜论文里的图表、用一帧搜视频片段、用波形搜音频——相似度热力告诉你多像。</p>
+      <details class="tech"><summary>&lt;/&gt; 技术细节</summary><div class="tech-body">
+        <b>CLIP 嵌入</b>（v1.8.0 #6）：image 与 text 共享 512 维空间，跨模态检索走 vector_column='clip'。多模态卡片墙复用 search/vector 接口，只是 vector_column 不同。
+      </div></details>
+      <div class="vchips"><span class="vchip">v1.8.0 CLIP</span></div>
+    </section>
+
+    <section class="step" data-step="5" data-viz="kg" data-req="②能力·KG旁路" data-vers="v1.7.0|v1.8.6">
+      <span class="step-tag amber">②→⑤ KG 旁路 · GRAPHRAG</span>
+      <h2 class="step-h2">不只找相似——<span class="hi">懂关系</span></h2>
+      <p class="step-lede">知识图谱是五层里唯一的旁路：能力层直达持久化。GraphRAG 拉出 attention 相关子图，论文→方法→数据集的关系网比纯文本更结构化。</p>
+      <details class="tech"><summary>&lt;/&gt; 技术细节</summary><div class="tech-body">
+        <b>per-dataset 分图</b>（v1.8.6）：每个 dataset 独立图 <code>kg_{dataset}</code>，删数据集即清图零残留。<code>kg_papers</code> 与 <code>kg_finance</code> 物理隔离。<b>hyper-extract</b>（v1.7.0）+ doc_type 三层路由自动建图。8 traverser 全 REST 暴露，per-dataset ACL 防 IDOR。
+      </div></details>
+      <div class="vchips"><span class="vchip">v1.7.0 hyper-extract</span><span class="vchip">v1.8.6 分图+ACL</span></div>
+    </section>
+
+    <section class="step" data-step="6" data-viz="daft" data-req="③计算" data-vers="v1.8.0">
+      <span class="step-tag info">③ 计算层 · COMPUTE</span>
+      <h2 class="step-h2">URL 进，<span class="hi">结构化出</span></h2>
+      <p class="step-lede">Daft 分布式 DataFrame 跑批推理：下载→解码→CLIP 嵌入→质量评分→落盘，全流水线。Ray 集群横向扩展，单机也能回退本地。</p>
+      <details class="tech"><summary>&lt;/&gt; 技术细节</summary><div class="tech-body">
+        <b>Daft AI</b>（v1.8.0 #13）：DataFrame 原生多模态列（image/audio/video），<code>daft.read_parquet</code> → <code>.decode_image()</code> → <code>.ai.embed()</code> 链式。Ray 不可用时 set_runner 本地，<b>优雅降级</b>。
+      </div></details>
+      <div class="vchips"><span class="vchip">v1.8.0 Daft AI</span></div>
+    </section>
+
+    <section class="step" data-step="7" data-viz="sql" data-req="④引擎" data-vers="v1.7.1|v1.8.0">
+      <span class="step-tag info">④ 引擎层 · ENGINES</span>
+      <h2 class="step-h2">SQL 一句话，<span class="hi">9.4M 行零拷贝</span>算完</h2>
+      <p class="step-lede">DuckDB 直接读 Lance 列式，不导入、不复制。看查询计划树——每个算子的行数与耗时，谓词在 Lance 层下推，只物化匹配行。</p>
+      <details class="tech"><summary>&lt;/&gt; 技术细节</summary><div class="tech-body">
+        <b>DuckDB 1.5.2</b>（v1.7.1）+ <b>SQL-PGQ</b>（v1.8.0 #10）：图模式查询直接在 DuckDB 里跑。<b>DuckLake 物化视图</b>（v1.8.0 #9）跨存储 JOIN。Arrow RecordBatch 流式返回，超内存数据集也能跑。
+      </div></details>
+      <div class="vchips"><span class="vchip">v1.7.1 DuckDB1.5.2</span><span class="vchip">v1.8.0 SQL-PGQ</span></div>
+    </section>
+
+    <section class="step" data-step="8" data-viz="version" data-req="⑤持久化" data-vers="v1.6.0|v1.8.0">
+      <span class="step-tag violet">⑤ 持久化 · PERSISTENCE</span>
+      <h2 class="step-h2">每次写入都是一次快照——<span class="hi">时光可倒流</span></h2>
+      <p class="step-lede">Lance 列式天然多版本。拖动右侧 timeline，回到任意版本看快照，diff 两个版本看哪些行变了。血缘 DAG 追踪每个表的来龙去脉。</p>
+      <details class="tech"><summary>&lt;/&gt; 技术细节</summary><div class="tech-body">
+        <b>Lance branches</b>（v1.8.0 #1）：表级分支与标签，git 风格版本管理。<b>行级 lineage</b>（v1.8.0 #3）+ catalog/lineage（v1.6.0）跨数据集 DAG。MinIO/S3 存原始，Redis 存会话，HugeGraph 存 <code>kg_{ds}</code>。
+      </div></details>
+      <div class="vchips"><span class="vchip">v1.6.0 lineage</span><span class="vchip">v1.8.0 branches</span></div>
+    </section>
+
+    <section class="step" data-step="9" data-viz="answer" data-req="①接入·回" data-vers="v1.8.0">
+      <span class="step-tag teal">回 · 带引用的答案</span>
+      <h2 class="step-h2">每句话，<span class="hi">都能溯源</span></h2>
+      <p class="step-lede">请求穿完五层回到接入层，LLM 把检索结果组装成答案。每条论断挂着 chunk 编号、行号、相似度分数——鼠标悬停看原文片段。</p>
+      <details class="tech"><summary>&lt;/&gt; 技术细节</summary><div class="tech-body">
+        <b>RAG 引用追踪</b>（v1.8.0）：每条论断链回源 chunk[42] §3.2，含 row_id / score / text_excerpt。多 Provider 流式（OpenAI/Anthropic/Ollama/vLLM），retrieval_strategy=hybrid 自动重排。
+      </div></details>
+      <div class="vchips"><span class="vchip">v1.8.0 引用溯源</span></div>
+    </section>
+
+    <section class="step" data-step="10" data-viz="cross" data-req="⟂横切面" data-vers="v1.5.2|v1.6.3|v1.8.3">
+      <span class="step-tag ok">⟂ 横切面 · 治理/安全/降级</span>
+      <h2 class="step-h2">从第一天起，<span class="hi">就是生产级</span></h2>
+      <p class="step-lede">请求穿层的同时，治理/可观测/安全作为横切面贯穿全程。关掉 Ray、关掉 KG、关掉 Gremlin——看系统如何优雅降级继续服务。HMAC 审计让每个事件防篡改。</p>
+      <details class="tech"><summary>&lt;/&gt; 技术细节</summary><div class="tech-body">
+        <b>安全基线</b>（v1.5.2：8 CRITICAL + 13 HIGH）· <b>优雅降级</b>（v1.6.3：Gremlin→REST）· <b>HA</b>（v1.8.3：readiness gate + warmup 后台化）。HMAC-SHA256 审计，verify 校验完整性红绿灯。RBAC + JWT + per-dataset ACL。
+      </div></details>
+      <div class="vchips"><span class="vchip">v1.5.2 安全</span><span class="vchip">v1.6.3 降级</span><span class="vchip">v1.8.3 HA</span></div>
+    </section>
+
+    <section class="step" data-step="11" data-viz="finale" data-req="全景" data-vers="v1.5.2|v1.6.0|v1.6.1|v1.6.2|v1.6.3|v1.7.0|v1.7.1|v1.8.0|v1.8.3|v1.8.5|v1.8.6|v1.8.7|v1.8.8|v1.8.9|v1.9.0">
+      <span class="step-tag amber">收束 · 15 个版本的沉淀</span>
+      <h2 class="step-h2">这条请求能跑通，<span class="hi">是 15 个版本</span>打磨的结果</h2>
+      <p class="step-lede">从 v1.5.2 的安全基线，经 v1.8.6 的 per-dataset 分图，到 v1.9.0 的控制面 libSQL——下方时间轴是这条请求背后完整的进化史。点任一节点，看它给旅程带来了什么。</p>
+      <div class="vchips"><span class="vchip">v1.5.2 → v1.9.0</span><span class="vchip">15 里程碑</span></div>
+    </section>
+
+  </div>
+
+  <!-- CENTER · 舞台（sticky）= 左·五层管道整体地图 + 右·当前层特写 -->
+  <div class="mc-viz" id="mcViz">
+    <aside class="lake-map">
+      <div class="map-h">五层湖仓 · 请求旅程</div>
+      <div class="layers">
+        <div class="layer" data-layer="L1"><span class="ln">①</span><div class="li"><b>接入层</b><small>SDK·REST·CLI</small></div><em class="lv">v1.6.0</em></div>
+        <div class="layer" data-layer="L2"><span class="ln">②</span><div class="li"><b>能力层</b><small>检索·KG·RAG</small></div><em class="lv">v1.7→8</em></div>
+        <div class="layer" data-layer="L3"><span class="ln">③</span><div class="li"><b>计算层</b><small>Daft·Ray</small></div><em class="lv">v1.8</em></div>
+        <div class="layer" data-layer="L4"><span class="ln">④</span><div class="li"><b>引擎层</b><small>Lance·DuckDB</small></div><em class="lv">v1.7→8</em></div>
+        <div class="layer" data-layer="L5"><span class="ln">⑤</span><div class="li"><b>持久化</b><small>MinIO·HugeGraph</small></div><em class="lv">v1.6→8</em></div>
+        <div class="flow"><div class="flow-particle" id="flowParticle"></div></div>
+      </div>
+      <div class="crosscut" data-layer="CC"><span class="ln">⟂</span><div class="li"><b>横切面</b><small>治理·安全·降级</small></div></div>
+      <div class="map-foot" id="mapFoot">请求在 · 入口</div>
+    </aside>
+    <div class="lake-detail" id="lakeDetail">
+      <div class="viz-card" data-viz="hero"></div>
+      <div class="viz-card" data-viz="entry"></div>
+      <div class="viz-card" data-viz="vecspace"><canvas id="vecCanvas"></canvas><div class="viz-legend" id="vecLegend"></div></div>
+      <div class="viz-card" data-viz="funnel"></div>
+      <div class="viz-card" data-viz="modal"></div>
+      <div class="viz-card" data-viz="kg"><svg id="kgSvg"></svg></div>
+      <div class="viz-card" data-viz="daft"></div>
+      <div class="viz-card" data-viz="sql"></div>
+      <div class="viz-card" data-viz="version"></div>
+      <div class="viz-card" data-viz="answer"></div>
+      <div class="viz-card" data-viz="cross"></div>
+      <div class="viz-card" data-viz="finale"></div>
+    </div>
+  </div>
+
+  <!-- RIGHT · 版本演进轴（sticky） -->
+  <aside class="mc-rail" id="mcRail">
+    <div class="rail-h">版本演进 <span class="muted">v1.5.2→v1.9.0</span></div>
+    <ol class="rail-list" id="railList"></ol>
+    <div class="rail-foot">点节点跳转章节</div>
+  </aside>
+
+</main>
+
+<!-- ============ FINALE · 版本全景时间轴 ============ -->
+<section class="mc-finale" id="mcFinale">
+  <div class="finale-head">
+    <span class="tag amber">VERSION HISTORY</span>
+    <h2>一个湖仓的进化史</h2>
+    <p class="muted">11 个架构里程碑 · 6,283 测试 · 50,000 行代码 · MIT 许可</p>
+  </div>
+  <div class="finale-axis" id="finaleAxis"></div>
+</section>
+
+<footer class="mc-foot">
+  <div><b>Arrow Lake</b> · 多模态数据湖仓 · v1.9.0 · <span class="mono muted">一条请求的旅程</span></div>
+  <div class="muted">本页为旗舰叙事原型 · CDN: GSAP + d3 · mock 数据</div>
+</footer>
+
+<!-- CDN: GSAP + ScrollTrigger (scrollytelling 同步引擎) · SRI 校验 -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js" integrity="sha384-g4NTh/Iv5PPU4xPyhEWqPcwtNXOvdaDI8LLnyYfyNZOjKJeYQyjzQ9X5275eBjpt" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js" integrity="sha384-Z3REaz79l2IaAZqJsSABtTbhjgOUYyV3p90XNnAPCSHg3EMTz1fouunq9WZRtj3d" crossorigin="anonymous"></script>
+<!-- CDN: d3 (KG 力导向图) · SRI 校验 -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js" integrity="sha384-CjloA8y00+1SDAUkjs099PVfnY2KmDC2BZnws9kh8D/lX1s46w6EPhpXdqMfjK6i" crossorigin="anonymous"></script>
+<script src="assets/narrative.js"></script>
+<script src="assets/narrative-viz.js"></script>
+</body>
+</html>

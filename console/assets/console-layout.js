@@ -41,11 +41,13 @@ const NAV = [
     { id: "search", label: "检索", ic: "search", href: "search.html" },
   ] },
   { group: "智能", items: [
-    { id: "olap", label: "SQL Worksheet", ic: "olap", href: "olap.html" },
+    { id: "olap", label: "深度分析", ic: "olap", href: "olap.html" },
     { id: "rag", label: "RAG 问答", ic: "search", href: "rag.html" },
   ] },
   { group: "管理", items: [
     { id: "tasks", label: "异步任务", ic: "dashboard", href: "tasks.html" },
+    { id: "admin", label: "管理后台", ic: "key", href: "admin.html" },
+    { id: "my-workspace", label: "我的工作区", ic: "bell", href: "my-workspace.html" },
   ] },
 ];
 
@@ -67,7 +69,7 @@ function renderShell({ active, crumb } = {}) {
     </a>`).join("")).join("");
   const sidebar = `
   <aside class="sidebar">
-    <a class="brand" href="olap.html">${icon("dashboard")}<span><div class="brand-name">Arrow Lake</div><div class="brand-sub">console · SQL</div></span></a>
+    <a class="brand" href="dashboard.html">${icon("dashboard")}<span><div class="brand-name">Arrow Lake</div><div class="brand-sub">数据湖仓</div></span></a>
     <nav class="nav">${navHtml}</nav>
     <div style="padding:var(--s3) var(--s4);border-top:1px solid var(--line-soft)">
       <div class="lamp ok pulse" style="margin-bottom:6px"><i></i>湖仓在线</div>
@@ -77,7 +79,7 @@ function renderShell({ active, crumb } = {}) {
   const header = `
   <header class="header">
     <button class="btn btn-icon btn-ghost" id="navToggle" aria-label="折叠侧栏">${icon("menu")}</button>
-    <div class="crumb">${crumb || "SQL Worksheet"}</div>
+    <div class="crumb">${crumb || "深度分析"}</div>
     <div class="h-spacer"></div>
     <button class="btn btn-ghost btn-sm" id="logoutBtn" title="登出">${icon("logout")} 登出</button>
     <div class="user"><span class="avatar">${initials}</span><span class="meta"><b>${u.user_id}</b><span>${u.role}</span></span></div>

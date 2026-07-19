@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>总览 · Arrow Lake Console</title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/tokens.css"/>
+<link rel="stylesheet" href="assets/app.css"/>
+<link rel="stylesheet" href="assets/console.css"/>
+<style>
+  .hero-status{display:flex;flex-direction:column;justify-content:center;gap:var(--s2);padding:var(--s5);background:radial-gradient(120% 120% at 0 0,rgba(20,184,166,.10),transparent 60%),linear-gradient(180deg,var(--ink-850),var(--ink-900));border:1px solid var(--line);border-radius:var(--r-lg)}
+  .hero-status .pulse-ring{width:14px;height:14px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 4px var(--ok-soft);animation:pulse 2s var(--ease) infinite}
+  .hero-status .big{font-family:var(--font-mono);font-size:2.2rem;font-weight:700;letter-spacing:-.03em;line-height:1;color:var(--fg-hi)}
+  .hero-status .vitals{display:grid;grid-template-columns:repeat(4,1fr);gap:var(--s2) var(--s4);margin-top:var(--s3)}
+  .hero-status .vitals .v-label{font-size:var(--fs-cap);color:var(--fg-lo);text-transform:uppercase;letter-spacing:.07em}
+  .hero-status .vitals .v-val{font-family:var(--font-mono);font-size:1rem;font-weight:600;color:var(--fg-hi)}
+  .kpi-strip{display:grid;grid-template-columns:repeat(8,1fr);gap:var(--grid-gap)}
+  .kpi-strip .kpi{padding:var(--s3) var(--card-pad)}
+  .kpi-strip .kpi .val{font-size:1.25rem}
+  .feed{display:flex;flex-direction:column}
+  .feed-item{display:flex;gap:var(--s3);padding:9px var(--card-pad);border-bottom:1px solid var(--line-soft);align-items:flex-start;font-size:.78rem}
+  .feed-item:last-child{border-bottom:none}
+  .feed-item .fic{width:26px;height:26px;border-radius:var(--r-sm);display:grid;place-items:center;flex-shrink:0;background:var(--ink-800);border:1px solid var(--line);color:var(--fg-md)}
+  .feed-item.ok .fic{background:var(--ok-soft);border-color:rgba(34,197,94,.3);color:var(--ok)}
+  .feed-item.amber .fic{background:var(--amber-soft);border-color:rgba(245,158,11,.3);color:var(--warn)}
+  .feed-item.info .fic{background:var(--info-soft);border-color:rgba(56,189,248,.3);color:var(--info)}
+  .feed-item .ft{color:var(--fg-md);line-height:1.45;flex:1;min-width:0}
+  .feed-item .ft b{color:var(--fg-hi);font-weight:600}
+  .feed-item .ftime{font-family:var(--font-mono);font-size:.65rem;color:var(--fg-lo);flex-shrink:0;white-space:nowrap}
+  @media(max-width:1100px){.kpi-strip{grid-template-columns:repeat(4,1fr)}.hero-status .vitals{grid-template-columns:repeat(2,1fr)}}
+  @media(max-width:860px){.kpi-strip{grid-template-columns:repeat(2,1fr)}body .grid[data-mr]{grid-template-columns:1fr !important}}
+</style>
+</head>
+<body>
+<div id="app">
+<main class="main"><div class="page">
+  <div class="telem" id="telem"><span class="item muted">加载实时态势…</span></div>
+
+  <div class="h-sec between">
+    <div><h1>总览</h1><div class="desc">湖仓实时态势 · <span class="mono">指挥中心</span> · 登录后落地页</div></div>
+    <div class="flex"><a class="btn btn-ghost btn-sm" href="showcase.html"><i class="placeholder" data-ic="dashboard"></i> 旗舰展示</a><a class="btn btn-primary btn-sm" href="ingest.html"><i class="placeholder" data-ic="plus"></i> 新摄入</a></div>
+  </div>
+
+  <div class="hero-status">
+    <div class="flex" style="gap:10px;align-items:center"><span class="pulse-ring"></span><span class="tag ok" id="healthTag">湖仓健康</span></div>
+    <div class="big" id="healthBig">…</div>
+    <div class="muted mono" style="font-size:.72rem" id="healthSub">探活中…</div>
+    <div class="vitals" id="vitals"></div>
+  </div>
+
+  <div class="panel"><div class="panel-b kpi-strip" id="kpis"><div class="muted" style="grid-column:1/-1;padding:14px">加载 KPI…</div></div></div>
+
+  <div class="grid" data-mr style="grid-template-columns:1.6fr 1fr;gap:var(--s4);align-items:start">
+    <div class="panel flush">
+      <div class="panel-h"><i class="placeholder" data-ic="bell"></i><h3>实时活动流</h3><span class="sub">近期异步任务</span><div class="actions"><span class="lamp ok pulse"><i></i>live</span></div></div>
+      <div class="feed" id="feed"><div class="muted" style="padding:14px">加载…</div></div>
+    </div>
+    <div class="panel">
+      <div class="panel-h"><i class="placeholder" data-ic="bell"></i><h3>五层探活</h3><span class="sub">请求穿层</span></div>
+      <div class="panel-b"><div class="rail" style="margin-bottom:var(--s3)" id="depthRail"></div><div class="grid g-2" id="layerHealth"><div class="muted">加载…</div></div></div>
+    </div>
+  </div>
+</div></main>
+</div>
+
+<script src="assets/console-layout.js"></script>
+<script type="module">
+import { request, API_BASE } from "./src/api.js";
+import { isLoggedIn } from "./src/auth.js";
+if (!isLoggedIn()) location.href = "login.html";
+const { renderShell, icon } = window;
+renderShell({ active: "", crumb: "<b>总览</b>" });
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const fmt = (n) => Number(n || 0).toLocaleString();
+
+/* ---------- health(根 /health)---------- */
+async function loadHealth() {
+  try {
+    const r = await fetch(API_BASE.replace("/api/v1", "") + "/health");
+    const h = r.ok ? await r.json() : {};
+    $("#healthBig").textContent = h.status || "unknown";
+    $("#healthBig").style.color = h.status === "ok" ? "var(--ok)" : "var(--warn)";
+    $("#healthTag").textContent = h.status === "ok" ? "湖仓健康" : "降级";
+    $("#healthSub").textContent = `v${h.version || "?"} · 存储 ${h.storage || "?"} · gravitino ${h.gravitino || "?"} · lance-rest ${h.lance_rest || "?"}`;
+    $("#vitals").innerHTML = [
+      ["DuckDB 池", h.duckdb_pool?.pool_size ?? "—"], ["活跃会话", h.duckdb_pool?.active_sessions ?? 0],
+      ["排队请求", h.duckdb_pool?.queued_requests ?? 0], ["总查询", h.duckdb_pool?.total_queries ?? "—"],
+    ].map(([l, v]) => `<div><div class="v-label">${l}</div><div class="v-val">${esc(v)}</div></div>`).join("");
+    $("#telem").innerHTML = `<span class="item"><span class="dot"></span>状态 <b style="color:var(--ok)">${esc(h.status || "?")}</b></span><span class="item">版本 <b>v${esc(h.version || "?")}</b></span><span class="item">DuckDB 池 <b>${h.duckdb_pool?.pool_size ?? "?"}</b></span><span class="item">总查询 <b>${h.duckdb_pool?.total_queries ?? "?"}</b></span><span class="item" style="margin-left:auto">存储 <b>${esc(h.storage || "?")}</b></span>`;
+    $("#depthRail").innerHTML = [["①","接入","done"],["②","能力","done"],["③","计算","done"],["④","引擎","done"],["⑤","持久化","done"]].map(s => `<div class="seg ${s[2]}">${s[0]}<b>${s[1]}</b></div>`).join("") + '<div class="seg done" style="border-left:1px dashed var(--line-strong)"><b>KG</b>旁路</div>';
+    const g = h.gravitino === "healthy", l = h.lance_rest === "healthy";
+    $("#layerHealth").innerHTML = [
+      ["接入", "REST · auth BOTH", "ok"], ["能力", "检索/RAG/KG", "ok"],
+      ["计算", `DuckDB 池 ${h.duckdb_pool?.pool_size ?? "?"}`, "ok"],
+      ["引擎", `Lance-rest ${l ? "ok" : "down"}`, l ? "ok" : "warn"],
+      ["持久化", `Gravitino ${g ? "ok" : "down"}`, g ? "ok" : "warn"],
+      ["控制面", "libSQL SystemDB", "ok"],
+    ].map(d => `<div><div class="lamp ${d[2]} ${d[2] === "ok" ? "pulse" : ""}"><i></i>${d[0]}</div><div class="muted" style="font-size:.65rem;margin-top:3px">${d[1]}</div></div>`).join("");
+  } catch (e) {
+    $("#healthBig").textContent = "不可达"; $("#healthBig").style.color = "var(--danger)";
+    $("#healthSub").textContent = "后端不可达(检查 api 容器)";
+  }
+}
+
+/* ---------- KPI(/datasets 真数据)---------- */
+async function loadKpi() {
+  try {
+    const d = await request("GET", "/datasets");
+    const all = d?.datasets || [];
+    const kg = all.filter(x => x.has_kg).length;
+    const fts = all.filter(x => x.has_fts_index).length;
+    const vec = all.filter(x => x.has_vector_index).length;
+    const rows = all.reduce((s, x) => s + (x.num_rows || 0), 0);
+    $("#kpis").innerHTML = [
+      ["数据集", fmt(all.length), "catalog", ""], ["总行数", fmt(rows), "全数据集", ""],
+      ["向量索引", fmt(vec), "数据集", vec ? "up" : ""], ["FTS 索引", fmt(fts), "数据集", fts ? "up" : ""],
+      ["已建 KG", fmt(kg), "数据集", kg ? "up" : ""], ["入口", "SDK/REST/CLI", "三入口", ""],
+      ["版本", d?.version ?? "—", "catalog", ""], ["健康", "live", "见上方", "up"],
+    ].map(k => `<div class="kpi"><div class="label">${k[0]}</div><div class="val">${k[1]}</div><div class="delta ${k[3]}">${k[2]}</div></div>`).join("");
+  } catch (e) {
+    $("#kpis").innerHTML = `<div class="muted" style="grid-column:1/-1;padding:14px;color:var(--danger)">KPI 加载失败:${esc(e?.detail || e?.message || e)}</div>`;
+  }
+}
+
+/* ---------- 活动流(/tasks 真数据)---------- */
+async function loadFeed() {
+  try {
+    const d = await request("GET", "/tasks");
+    const all = (d?.tasks || []).slice(0, 10);
+    const IC = { ingest: "database", embed: "code", kg_build: "code", search: "search", rag: "search", olap: "olap", export: "file" };
+    $("#feed").innerHTML = all.length ? all.map(t => {
+      const term = /FAIL|ERROR/i.test(t.status || "");
+      const cls = term ? "amber" : /RUNNING/i.test(t.status || "") ? "ok" : "info";
+      return `<div class="feed-item ${cls}"><div class="fic">${icon(IC[t.operation] || "dashboard")}</div><div class="ft"><b>${esc(t.operation || "task")}</b> · <span class="mono">${esc(t.dataset_name || "—")}</span> · ${esc(t.status || "—")}${t.progress ? ` ${Math.round(t.progress)}%` : ""}</div><span class="ftime">${esc((t.created_at || "").slice(11, 16))}</span></div>`;
+    }).join("") : `<div class="muted" style="padding:14px">无近期任务</div>`;
+  } catch (e) {
+    $("#feed").innerHTML = `<div class="muted" style="padding:14px;color:var(--danger)">活动流加载失败</div>`;
+  }
+}
+
+loadHealth(); loadKpi(); loadFeed();
+window.applyIcons && applyIcons(document);
+</script>
+</body>
+</html>

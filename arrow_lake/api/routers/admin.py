@@ -69,6 +69,144 @@ async def create_user(
 
 
 # ---------------------------------------------------------------------------
+# Roles catalog + user update/deactivate (v1.9.1)
+# ---------------------------------------------------------------------------
+@router.get("/roles", summary="List roles + permissions (admin only)")
+async def list_roles(
+    _user: dict = Depends(require_role(Role.ADMIN)),
+) -> dict:
+    """Static role catalog (admin > editor > viewer) + permission matrix."""
+    return {
+        "roles": [
+            {"name": "admin", "level": 2, "permissions": ["dataset:read", "dataset:write", "dataset:delete", "admin:manage"]},
+            {"name": "editor", "level": 1, "permissions": ["dataset:read", "dataset:write", "dataset:delete"]},
+            {"name": "viewer", "level": 0, "permissions": ["dataset:read"]},
+        ]
+    }
+
+
+class UpdateUserRequest(BaseModel):
+    email: str | None = None
+    role: str | None = Field(None, pattern=r"^(admin|editor|viewer)$")
+    password: str | None = Field(None, min_length=8)
+    is_active: bool | None = None
+
+
+@router.put("/users/{user_id}", summary="Update user fields (admin only)")
+async def update_user(
+    user_id: int = Path(..., ge=1),
+    *,
+    req: UpdateUserRequest,
+    request: Request,
+    _user: dict = Depends(require_role(Role.ADMIN)),
+) -> dict:
+    """Patch-selectable user fields (email/role/password/is_active)."""
+    store = getattr(request.app.state, "identity_store", None)
+    if store is None:
+        raise HTTPException(status_code=503, detail="User management requires system_db enabled")
+    password_hash = None
+    if req.password is not None:
+        from arrow_lake.api.passwords import hash_password
+
+        password_hash = hash_password(req.password)
+    if password_hash is None and req.email is None and req.role is None and req.is_active is None:
+        raise HTTPException(status_code=422, detail="No fields to update")
+    try:
+        ok = store.update_user(
+            user_id,
+            email=req.email,
+            role=req.role,
+            password_hash=password_hash,
+            is_active=req.is_active,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=409, detail=f"Could not update user: {exc}") from exc
+    if not ok:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"id": user_id, "updated": True}
+
+
+@router.delete("/users/{user_id}", summary="Deactivate user (soft delete, admin only)")
+async def deactivate_user(
+    user_id: int = Path(..., ge=1),
+    *,
+    request: Request,
+    _user: dict = Depends(require_role(Role.ADMIN)),
+) -> dict:
+    """Soft-delete: set is_active=False. Tokens auto-invalidate (inactive user blocks auth)."""
+    store = getattr(request.app.state, "identity_store", None)
+    if store is None:
+        raise HTTPException(status_code=503, detail="User management requires system_db enabled")
+    store.set_user_active(user_id, False)
+    return {"id": user_id, "deactivated": True}
+
+
+# ---------------------------------------------------------------------------
+# Personal tokens (admin manages on behalf of a user) — v1.9.1
+# ---------------------------------------------------------------------------
+class CreateTokenRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+    scopes: list[str] = Field(default_factory=list)
+    expires_at: str | None = None
+
+
+@router.post("/users/{user_id}/tokens", summary="Issue a personal token (admin only)")
+async def issue_token(
+    user_id: int = Path(..., ge=1),
+    *,
+    req: CreateTokenRequest,
+    request: Request,
+    _user: dict = Depends(require_role(Role.ADMIN)),
+) -> dict:
+    """Issue a personal API token. The plaintext token is returned EXACTLY ONCE."""
+    store = getattr(request.app.state, "identity_store", None)
+    if store is None:
+        raise HTTPException(status_code=503, detail="User management requires system_db enabled")
+    try:
+        plaintext, rec = store.create_token(
+            user_id, name=req.name, scopes=req.scopes or None, expires_at=req.expires_at,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=409, detail=f"Could not issue token: {exc}") from exc
+    return {
+        "token": plaintext,
+        "id": rec["id"],
+        "name": rec["name"],
+        "token_prefix": rec["token_prefix"],
+        "scopes": rec["scopes"],
+        "expires_at": rec["expires_at"],
+    }
+
+
+@router.get("/users/{user_id}/tokens", summary="List a user's tokens (admin only)")
+async def list_user_tokens(
+    user_id: int = Path(..., ge=1),
+    *,
+    request: Request,
+    _user: dict = Depends(require_role(Role.ADMIN)),
+) -> dict:
+    store = getattr(request.app.state, "identity_store", None)
+    if store is None:
+        raise HTTPException(status_code=503, detail="User management requires system_db enabled")
+    return {"tokens": store.list_tokens(user_id)}
+
+
+@router.delete("/users/{user_id}/tokens/{token_id}", summary="Revoke a token (admin only)")
+async def revoke_user_token(
+    user_id: int = Path(..., ge=1),
+    token_id: int = Path(..., ge=1),
+    *,
+    request: Request,
+    _user: dict = Depends(require_role(Role.ADMIN)),
+) -> dict:
+    store = getattr(request.app.state, "identity_store", None)
+    if store is None:
+        raise HTTPException(status_code=503, detail="User management requires system_db enabled")
+    revoked = store.revoke_token(token_id)
+    return {"id": token_id, "revoked": revoked}
+
+
+# ---------------------------------------------------------------------------
 # Row/column ACL management
 # ---------------------------------------------------------------------------
 

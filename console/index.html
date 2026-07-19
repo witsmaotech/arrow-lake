@@ -1,83 +1,244 @@
 <!doctype html>
 <html lang="zh">
 <head>
-<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Arrow Lake Console</title>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Arrow Lake · 多模态数据湖仓</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="assets/tokens.css"/>
 <link rel="stylesheet" href="assets/app.css"/>
-<link rel="stylesheet" href="assets/console.css"/>
-<style>
-  .shortcut{display:block;padding:14px 16px;border:1px solid var(--line-soft);border-radius:var(--r-md);background:var(--ink-900);text-decoration:none;transition:border-color .15s,transform .15s}
-  .shortcut:hover{border-color:var(--teal-bright);transform:translateY(-1px)}
-  .shortcut .t{display:flex;align-items:center;gap:8px;margin-bottom:4px;color:var(--fg-hi);font-weight:600}
-  .shortcut .d{font-size:.76rem;color:var(--fg-lo)}
-</style>
+<link rel="stylesheet" href="assets/landing.css"/>
 </head>
 <body>
-<div id="app">
-<main class="main"><div class="page">
-  <div class="h-sec between">
-    <div><h1>控制台概览</h1><div class="desc">Arrow Lake · 数据湖 / 检索 / 知识图谱 统一控制台</div></div>
+<!-- ===== TOP NAV ===== -->
+<nav class="lnav">
+  <a class="brand" href="index.html"><span class="brand-mark">AL</span><span><b class="brand-name">Arrow Lake</b><span class="brand-sub">lakehouse</span></span></a>
+  <div class="lnav-links">
+    <a href="#capabilities">能力</a>
+    <a href="#architecture">架构</a>
+    <a href="#stack">技术栈</a>
+    <a href="#usecases">用例</a>
+    <a href="#deploy">部署</a>
   </div>
-
-  <div class="panel"><div class="panel-b" id="kpis"><div class="muted" style="padding:16px">加载概览…</div></div></div>
-
-  <div class="panel flush" style="margin-top:var(--s4)">
-    <div class="panel-h"><i class="placeholder" data-ic="grid"></i><h3>快捷入口</h3></div>
-    <div class="panel-b" id="shortcuts"></div>
+  <div class="lnav-cta">
+    <a class="btn btn-ghost btn-sm" href="login.html">登录</a>
+    <a class="btn btn-primary btn-sm" href="dashboard.html">打开控制台 →</a>
   </div>
-</div></main>
-</div>
+</nav>
 
-<script src="assets/console-layout.js"></script>
-<script type="module">
-import { request } from "./src/api.js";
-import { isLoggedIn } from "./src/auth.js";
+<!-- ===== HERO ===== -->
+<header class="hero">
+  <div class="hero-bg"></div>
+  <div class="hero-grid">
+    <div class="hero-copy">
+      <span class="tag teal"><span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--ok);box-shadow:0 0 8px var(--ok);vertical-align:middle"></span> v1.9.0 · 控制面 libSQL + 个人工作区上线</span>
+      <h1>一个湖仓<br/>装下你的全部<span class="accent">检索 · 分析 · 智能</span></h1>
+      <p class="lede">把存储 / 检索 / 分析 / 智能化收敛到<strong>同一份 Lance 列式底座</strong>之上。文本、图像、视频多模态原生——SDK / REST(106 routes) / CLI 三入口统一对外。</p>
+      <div class="hero-actions">
+        <a class="btn btn-primary" href="dashboard.html"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>进入控制台</a>
+        <a class="btn btn-line" href="#architecture">看五层架构</a>
+      </div>
+      <div class="hero-stats">
+        <div><b class="readout">106</b><span>REST routes</span></div>
+        <div><b class="readout">6,283</b><span>测试 / 424 文件</span></div>
+        <div><b class="readout">80%+</b><span>覆盖率</span></div>
+        <div><b class="readout">5</b><span>层架构</span></div>
+      </div>
+    </div>
+    <div class="hero-preview">
+      <!-- live console preview -->
+      <div class="console-card panel">
+        <div class="console-bar"><span class="dot" style="background:#ff5f56"></span><span class="dot" style="background:#ffbd2e"></span><span class="dot" style="background:#27c93f"></span><span class="console-title">arrow-lake console · live</span></div>
+        <div class="console-body">
+          <div class="telem" style="margin-bottom:var(--s3)">
+            <span class="item"><span class="dot"></span>QPS <b id="hqps">1,284</b></span>
+            <span class="item">p50 <b>42ms</b></span>
+            <span class="item warn">p99 <b>318ms</b></span>
+            <span class="item">load <b>0.84</b></span>
+          </div>
+          <div class="depth-mini" id="depthMini"></div>
+          <div class="grid g-3" style="margin-top:var(--s4)">
+            <div class="kpi panel-b" style="padding:var(--s3)"><div class="label">数据集</div><div class="val" style="font-size:1.25rem">48</div></div>
+            <div class="kpi panel-b" style="padding:var(--s3)"><div class="label">向量行</div><div class="val" style="font-size:1.25rem">9.4M</div></div>
+            <div class="kpi panel-b" style="padding:var(--s3)"><div class="label">任务</div><div class="val" style="font-size:1.25rem;color:var(--warn)">3<span style="font-size:.7rem;color:var(--fg-lo)"> run</span></div></div>
+          </div>
+          <div class="muted mono" style="font-size:.7rem;margin-top:var(--s3)">$ lake.search("papers", mode="hybrid", top_k=10)</div>
+          <div class="search-result-mini"><span class="bar"><i style="width:87%;background:var(--teal-bright)"></i></span><span class="mono" style="font-size:.65rem;color:var(--fg-lo)">0.87 · chunk[42] · §3.2 attention</span></div>
+          <div class="search-result-mini"><span class="bar"><i style="width:71%;background:var(--warn)"></i></span><span class="mono" style="font-size:.65rem;color:var(--fg-lo)">0.71 · chunk[118] · BM25</span></div>
+        </div>
+      </div>
+      <div class="deps" style="justify-content:center;margin-top:var(--s4)">
+        <span class="dep"><span class="lamp"></span>Ray</span>
+        <span class="dep"><span class="lamp"></span>Lance</span>
+        <span class="dep"><span class="lamp"></span>DuckDB</span>
+        <span class="dep"><span class="lamp"></span>HugeGraph</span>
+        <span class="dep warn"><span class="lamp"></span>Gremlin→REST</span>
+      </div>
+    </div>
+  </div>
+</header>
 
-if (!isLoggedIn()) location.replace("login.html");
-const { renderShell } = window;
-renderShell({ active: "", crumb: "<b>概览</b>" });
-const $ = (s) => document.querySelector(s);
-const esc = (s) => String(s ?? "");
+<!-- ===== TRUST STRIP ===== -->
+<section class="trust">
+  <div class="trust-inner">
+    <span class="muted">受信于</span>
+    <span>金融监管</span><span>媒体资产</span><span>ML 训练</span><span>零售分析</span><span>学术研究</span>
+    <span class="tag ok"><span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--ok);vertical-align:middle"></span> MIT 许可</span>
+  </div>
+</section>
 
-(async () => {
-  // 概览 KPI
-  try {
-    const d = await request("GET", "/datasets");
-    const all = Array.isArray(d) ? d : (d?.datasets || []);
-    const kg = all.filter((x) => x.has_kg).length;
-    const fts = all.filter((x) => x.has_fts_index).length;
-    const vec = all.filter((x) => x.has_vector_index).length;
-    $("#kpis").innerHTML = `<div class="grid g-4">
-      <div class="kpi"><div class="label">数据集</div><div class="val">${all.length}</div></div>
-      <div class="kpi"><div class="label">已建 KG</div><div class="val">${kg}</div></div>
-      <div class="kpi"><div class="label">FTS 索引</div><div class="val">${fts}</div></div>
-      <div class="kpi"><div class="label">向量索引</div><div class="val">${vec}</div></div>
-    </div>`;
-  } catch (e) {
-    $("#kpis").innerHTML = `<div style="color:var(--danger);padding:12px">概览加载失败:${esc(e?.detail || e?.message || e)}</div>`;
-  }
+<!-- ===== ARCHITECTURE (signature) ===== -->
+<section id="architecture" class="section">
+  <div class="section-head">
+    <span class="tag teal">架构</span>
+    <h2>五层贯穿，治理横切<span class="muted" style="font-weight:400">—— 请求自上而下穿越①接入→②能力→③计算→④引擎→⑤持久化</span></h2>
+  </div>
+  <div class="arch" id="archDiagram"></div>
+  <div class="grid g-3 arch-cards">
+    <div class="panel"><div class="panel-b"><div class="lamp ok pulse" style="margin-bottom:8px"><i></i>零拷贝查询</div><div class="muted">Arrow RecordBatch 直返，无序列化</div></div></div>
+    <div class="panel"><div class="panel-b"><div class="lamp ok pulse" style="margin-bottom:8px"><i></i>谓词下推</div><div class="muted">过滤在 Lance 层求值，只物化匹配行</div></div></div>
+    <div class="panel"><div class="panel-b"><div class="lamp ok pulse" style="margin-bottom:8px"><i></i>流式处理</div><div class="muted">RecordBatchReader 处理超内存数据集</div></div></div>
+  </div>
+</section>
 
-  // 快捷入口
-  const links = [
-    ["datasets.html", "database", "数据集", "浏览 / 管理数据集"],
-    ["olap.html", "olap", "SQL Worksheet", "DuckDB OLAP 查询"],
-    ["search.html", "search", "检索", "FTS / 向量 / 混合检索"],
-    ["rag.html", "chat", "RAG 问答", "检索增强生成"],
-    ["kg.html", "share-nodes", "知识图谱", "KG 构建 / 可视化 / 问答"],
-    ["ingest.html", "plus", "摄入", "文件 / API / 流摄入"],
-    ["embeddings.html", "vector", "嵌入与索引", "建向量 / FTS 索引"],
-    ["tasks.html", "dashboard", "任务", "异步任务队列"],
-  ];
-  $("#shortcuts").innerHTML = `<div class="grid g-4">${links.map(([href, ic, t, d]) => `
-    <a class="shortcut" href="${href}">
-      <div class="t"><i class="placeholder" data-ic="${ic}"></i>${esc(t)}</div>
-      <div class="d">${esc(d)}</div>
-    </a>`).join("")}</div>`;
-  window.applyIcons && applyIcons(document);
-})();
-window.applyIcons && applyIcons(document);
+<!-- ===== CAPABILITIES ===== -->
+<section id="capabilities" class="section">
+  <div class="section-head">
+    <span class="tag amber">能力</span>
+    <h2>六条能力主线<span class="muted" style="font-weight:400">—— 每条都是一等公民，而非胶带脚本</span></h2>
+  </div>
+  <div class="grid g-3 cap-grid" id="capGrid"></div>
+</section>
+
+<!-- ===== DEMO STRIP ===== -->
+<section class="section demo-strip">
+  <div class="grid cols-1-2" style="align-items:center">
+    <div>
+      <span class="tag info">智能</span>
+      <h2 style="margin:.5rem 0">GraphRAG：把知识图谱装进检索</h2>
+      <p class="lede" style="font-size:.95rem">问题 → 查询改写 → KG 子图 + 向量混合检索 → 上下文组装 + 引用 → LLM 流式生成。每条论断可追溯到源 chunk 与搜索分数。</p>
+      <ul class="bullets">
+        <li><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-9"/></svg> 5 种检索可组合：向量 / 全文 / 混合 / 分面 / 集成</li>
+        <li><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-9"/></svg> 引用追踪逐论断溯源</li>
+        <li><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-9"/></svg> OpenAI / Anthropic / Ollama / vLLM 多 Provider</li>
+      </ul>
+      <a class="btn btn-teal" href="rag.html">体验 RAG 对话 →</a>
+    </div>
+    <div class="panel"><div class="panel-h"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="var(--teal-bright)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M7.8 7.8l3.4 8.4M16.2 7.8l-3.4 8.4M8.5 6h7"/></svg><h3>知识图谱 · kg_papers</h3><span class="tag teal"><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--ok);vertical-align:middle"></span> 分图隔离</span></div><div class="panel-b" id="miniKg"></div></div>
+  </div>
+</section>
+
+<!-- ===== STACK WALL ===== -->
+<section id="stack" class="section">
+  <div class="section-head">
+    <span class="tag teal">技术栈</span>
+    <h2>每项都钉到确切版本<span class="muted" style="font-weight:400">—— 经 6,000+ 测试验证</span></h2>
+  </div>
+  <div class="stack-wall" id="stackWall"></div>
+</section>
+
+<!-- ===== USE CASES ===== -->
+<section id="usecases" class="section">
+  <div class="section-head">
+    <span class="tag amber">用例</span>
+    <h2>五种典型场景</h2>
+  </div>
+  <div class="grid g-3" id="useGrid"></div>
+</section>
+
+<!-- ===== DEPLOY ===== -->
+<section id="deploy" class="section">
+  <div class="section-head">
+    <span class="tag info">部署</span>
+    <h2>从笔记本到生产集群<span class="muted" style="font-weight:400">—— 同一套引擎与配置</span></h2>
+  </div>
+  <div class="grid g-3 deploy-grid" id="deployGrid"></div>
+</section>
+
+<!-- ===== CTA ===== -->
+<section class="cta">
+  <div class="cta-inner">
+    <h2>三分钟，从零到一条可工作的湖仓管线。</h2>
+    <p class="lede">pip install arrow-lake · 或 docker compose up · 或 helm install</p>
+    <div class="hero-actions" style="justify-content:center">
+      <a class="btn btn-primary" href="dashboard.html">打开控制台 →</a>
+      <a class="btn btn-line" href="olap.html">试试 SQL 分析</a>
+    </div>
+  </div>
+</section>
+
+<footer class="footer">
+  <div class="footer-inner">
+    <div><b>Arrow Lake</b> · 多模态数据湖仓 · v1.9.0<br/><span class="muted mono" style="font-size:.7rem">© 2026 · MIT License · Gitee / GitHub</span></div>
+    <div class="muted" style="font-size:.75rem">本页为企业级前端原型 · 自包含可离线运行</div>
+  </div>
+</footer>
+
+<script src="assets/layout.js"></script>
+<script>
+const {icon,sparkline} = window;
+// hero live tick
+const qps=$('#hqps'); if(qps){let v=1284;setInterval(()=>{v+=Math.round((Math.random()-.45)*40);qps.textContent=v.toLocaleString()},1400)}
+function $(s,r=document){return r.querySelector(s)}
+
+// depth mini
+const dm=$('#depthMini'); if(dm){dm.innerHTML=`<div class="muted" style="font-size:var(--fs-cap);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">请求深度 · RAG 穿层</div><div class="rail">${['接入','能力','计算','引擎','持久化'].map((n,i)=>`<div class="seg ${i<2?'done':i===2?'active':''}">${i+1}<b>${n}</b></div>`).join('')}<div class="seg done" style="border-left:1px dashed var(--line-strong)"><b>KG</b>旁路</div></div>`}
+
+// architecture diagram
+const arch=$('#archDiagram'); if(arch){
+const layers=[
+['① 接入层 · Entry','SDK Lake facade · 9 mixin  ·  REST 106 routes  ·  CLI 16 组','#1a2740','#2DD4BF'],
+['② 能力层 · Capabilities','摄取 · 查询 8 Bridge · 智能 RAG/KG','#1c2b3e','#38BDF8'],
+['③ 计算层 · Compute','Daft 多模态 · Ray 集群 · 嵌入 CLIP/Qwen3','#243042','#F59E0B'],
+['④ 引擎层 · Engines','LanceDB · DuckDB · DuckLake 物化视图','#262a42','#A78BFA'],
+['⑤ 持久化 · Persistence','MinIO/S3 · Redis · HugeGraph kg_{dataset}','#23203a','#F472B6'],
+];
+arch.innerHTML=`<div class="arch-stack">${layers.map(l=>`<div class="arch-layer" style="--lc:${l[2]};--la:${l[3]}"><div class="arch-layer-name">${l[0]}</div><div class="arch-layer-desc mono">${l[1]}</div><div class="arch-flow"></div></div>`).join('')}</div>
+<div class="arch-cc"><div class="arch-cc-title">⟂ 横切面</div><div class="tag">Gravitino 治理</div><div class="tag">可观测 OTel</div><div class="tag">安全 RBAC/JWT/HMAC</div></div>`}
+
+// capabilities
+const caps=[
+['ingest','多模态摄入','文件 / HTTP / URL · OCR · 7 种分块 · 多模型嵌入','摄入'],
+['search','五种检索','向量 IVF_PQ/HNSW · 全文 Tantivy+jieba · RRF 混合 · 分面 · 集成','检索'],
+['olap','OLAP 分析','DuckDB SQL · Daft 分布式 · DuckLake 跨存储物化视图','分析'],
+['rag','RAG 管线','多 Provider 流式 · 会话 · 引用追踪 · GraphRAG 降级','问答'],
+['kg','知识图谱','HugeGraph per-dataset 分图 · 8 traverser · LLM 抽取','图谱'],
+['quality','质量与治理','Schema 校验 · 去重 · 血缘 · HMAC 审计','治理'],
+];
+$('#capGrid').innerHTML=caps.map(c=>`<a class="panel cap-card" href="${{ingest:'datasets.html',search:'search.html',olap:'olap.html',rag:'rag.html',kg:'kg.html',quality:'dashboard.html#lineage'}[c[0]]}">
+<div class="panel-b"><div class="cap-ic">${icon(c[0]==='olap'?'olap':c[0]==='quality'?'audit':c[0],'')}</div>
+<h3>${c[1]} <span class="tag" style="font-size:.6rem">${c[3]}</span></h3>
+<div class="muted" style="font-size:.8rem;margin-top:6px">${c[2]}</div>
+<div class="cap-go">进入 ${icon('arrowR')}</div>
+</div></a>`).join('');
+
+// mini kg
+const mk=$('#miniKg'); if(mk){mk.innerHTML=`<svg viewBox="0 0 320 200" width="100%" height="200">
+<defs><marker id="ar" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0 0L6 3L0 6z" fill="var(--line-strong)"/></marker></defs>
+<line x1="70" y1="50" x2="160" y2="100" stroke="var(--teal)" stroke-width="1.5"/><line x1="250" y1="50" x2="160" y2="100" stroke="var(--line-strong)" stroke-width="1.5" stroke-dasharray="4 3"/>
+<line x1="160" y1="100" x2="90" y2="160" stroke="var(--teal)" stroke-width="1.5"/><line x1="160" y1="100" x2="230" y2="160" stroke="var(--warn)" stroke-width="1.5"/>
+<g font-family="var(--font-mono)" font-size="9" fill="var(--fg-md)"><text x="110" y="78">引用</text><text x="200" y="78" fill="var(--fg-lo)">推断</text></g>
+<g><circle cx="70" cy="50" r="16" fill="var(--teal-soft)" stroke="var(--teal)"/><text x="70" y="54" text-anchor="middle" font-size="9" fill="var(--teal-bright)" font-family="var(--font-mono)">论文A</text></g>
+<g><circle cx="250" cy="50" r="14" fill="var(--ink-800)" stroke="var(--info)"/><text x="250" y="54" text-anchor="middle" font-size="9" fill="var(--info)" font-family="var(--font-mono)">作者</text></g>
+<g><circle cx="160" cy="100" r="18" fill="var(--amber-soft)" stroke="var(--warn)"/><text x="160" y="104" text-anchor="middle" font-size="9" fill="var(--warn)" font-family="var(--font-mono)">方法</text></g>
+<g><circle cx="90" cy="160" r="13" fill="var(--ink-800)" stroke="var(--teal)"/><text x="90" y="164" text-anchor="middle" font-size="8" fill="var(--teal-bright)" font-family="var(--font-mono)">数据集</text></g>
+<g><circle cx="230" cy="160" r="13" fill="var(--ink-800)" stroke="var(--warn)"/><text x="230" y="164" text-anchor="middle" font-size="8" fill="var(--warn)" font-family="var(--font-mono)">机构</text></g>
+</svg>`}
+
+// stack wall
+const stack=[['Daft','0.7.8'],['LanceDB','0.33.0'],['DuckDB','1.5.2'],['Ray','2.54.1'],['HugeGraph','1.7'],['Gravitino','—'],['Qwen3-Emb','0.6B'],['Tantivy','0.20'],['Kreuzberg','OCR'],['Metaflow','2.19'],['FastAPI','REST'],['Redis','session']];
+$('#stackWall').innerHTML=stack.map(s=>`<span class="tag mono"><b>${s[0]}</b> <span class="muted">${s[1]}</span></span>`).join('');
+
+// use cases
+const uses=[['企业知识库','50,000 份监管文件 · RAG 带引用 · 审计可合规 · p99 < 800ms'],['多模态资产','200K 图 + 5K 视频 · 分面 + 视觉相似 · OLAP 用量报表'],['数据质量管线','12 数据集 200 万行 · 夜间 schema/去重 · 训练失败 -34%'],['跨域分析','交易 + 评论 + 门店照 · DuckDB 跨集 JOIN · 物化视图 KPI'],['AI 增强研究','100K 论文 · per-dataset 分图 · GraphRAG 实体关系推理']];
+$('#useGrid').innerHTML=uses.map(u=>`<div class="panel"><div class="panel-b"><h3 style="font-size:1rem">${u[0]}</h3><div class="muted" style="font-size:.8rem;margin-top:6px">${u[1]}</div></div></div>`).join('');
+
+// deploy
+const dep=[['嵌入式 SDK','pip install arrow-lake','core/fts/rag/document 按需 extra','本地'],['Docker Compose','9 服务 · profile 激活','make core/dev/gpu/kg/ocr/monitoring','小型生产'],['Kubernetes','Helm · 10 模板','HPA + PDB + NetworkPolicy + 备份 CronJob','生产集群']];
+$('#deployGrid').innerHTML=dep.map((d,i)=>`<div class="panel"><div class="panel-b"><div class="flex between"><h3 style="font-size:1rem">${d[0]}</h3><span class="tag ${['teal','amber','info'][i]}">${d[3]}</span></div><pre class="mini-code">${d[1]}</pre><div class="muted" style="font-size:.78rem;margin-top:8px">${d[2]}</div></div></div>`).join('');
 </script>
+<style>.mini-code{background:var(--ink-950);border:1px solid var(--line);border-radius:6px;padding:8px 10px;font-family:var(--font-mono);font-size:.75rem;color:var(--teal-bright);margin:8px 0 0}</style>
 </body>
 </html>

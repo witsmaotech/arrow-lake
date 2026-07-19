@@ -8,6 +8,7 @@ import { toast } from "../ui/toast.js";
 
 const HIST_KEY = "al-sql-history";
 const HIST_MAX = 20;
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 // DuckDB 标识符引用:name → "name"(含双引号,转义内部双引号)
 const q = (name) => `"${String(name).replace(/"/g, '""')}"`;
@@ -54,7 +55,31 @@ export async function initWorksheet() {
   // 2. Editor
   const initial = localStorage.getItem("al-last-sql") || tpl(dsSel.value);
   const editor = createEditor(editorMount, { onRun: run, initial });
+  const schemaList = document.getElementById("schemaList");
+  async function loadSchema() {
+    const ds = dsSel.value;
+    if (!ds || !schemaList) return;
+    schemaList.innerHTML = `<div class="muted" style="padding:8px;font-size:.75rem">加载 schema…</div>`;
+    try {
+      const s = await request("GET", `/datasets/${encodeURIComponent(ds)}/schema`);
+      const fields = s.fields || [];
+      schemaList.innerHTML = (fields.length
+        ? `<div class="muted" style="padding:6px 8px;font-size:.68rem;text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--line-soft)">${fields.length} 字段 · 点击插入编辑器</div>` +
+          fields.map((f) => `<div class="schema-col" data-col="${encodeURIComponent(f.name)}" title="${esc(f.type)} · ${f.nullable ? "nullable" : "not null"} · 点击插入"><span class="sc-name">${esc(f.name)}</span><span class="sc-type">${esc(f.type)}</span></div>`).join("")
+        : `<div class="muted" style="padding:12px;text-align:center">无字段</div>`);
+      schemaList.querySelectorAll(".schema-col").forEach((el) => {
+        el.addEventListener("click", () => {
+          const col = decodeURIComponent(el.dataset.col);
+          editor.insert(col);
+          toast(`已插入 ${col}`, "info", 1200);
+        });
+      });
+    } catch (e) {
+      schemaList.innerHTML = `<div class="muted" style="padding:8px;color:var(--danger);font-size:.75rem">schema 加载失败</div>`;
+    }
+  }
   renderHistory();
+  loadSchema();
 
   function renderHistory() {
     if (!historySel) return;
@@ -145,6 +170,7 @@ export async function initWorksheet() {
   dsSel.addEventListener("change", () => {
     editor.value = tpl(dsSel.value);
     toast(`已切换到 ${dsSel.value}`, "info", 1500);
+    loadSchema();
   });
   apiBtn?.addEventListener("click", () => {
     const ds = dsSel.value || "<name>";

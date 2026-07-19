@@ -63,6 +63,7 @@
       <div class="flex" style="gap:8px;margin-top:var(--s3)">
         <input class="input" id="question" placeholder="针对该数据集提问…" style="flex:1"/>
         <button class="btn btn-primary btn-sm" id="askBtn">提问</button>
+        <button class="btn btn-ghost btn-sm" data-fav="rag" title="收藏到我的工作区(需 personal token)">收藏</button>
       </div>
     </div>
   </div>
@@ -81,6 +82,7 @@ import { request } from "./src/api.js";
 import { isLoggedIn } from "./src/auth.js";
 import { toast } from "./src/ui/toast.js";
 import { renderKgSubgraph } from "./src/kg-subgraph.js";
+import "./src/favorite.js";  // [data-fav] 自动绑收藏入口
 
 if (!isLoggedIn()) location.href = "login.html";
 const { renderShell } = window;

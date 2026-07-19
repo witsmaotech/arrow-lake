@@ -65,6 +65,19 @@
       </div>
     </div>
   </div>
+
+  <!-- 实体遍历(方案A:遍历 KG 实体关系图,非表 src/dst;复用 /kg/graph 数据前端 BFS)-->
+  <div class="panel flush" style="margin-top:var(--s4)">
+    <div class="panel-h"><i class="placeholder" data-ic="search"></i><h3>实体遍历 · KG 子图</h3><span class="sub">从起点实体 BFS N 跳 · 找邻居关系(related_to/part_of/...) · 复用 /kg/graph</span></div>
+    <div class="panel-b" style="padding:14px">
+      <div class="fg"><label>起点实体 <span style="color:var(--danger)">*</span></label><select class="input mono" id="gStart"><option value="">— 先选数据集加载实体 —</option></select></div>
+      <div class="fg" style="grid-template-columns:1fr 1fr"><div><label>跳数 (1-3)</label><input class="input mono" id="gDepth" type="number" value="2" min="1" max="3"></div><div><label>关系过滤(可选)</label><select class="input mono" id="gRel"><option value="">全部关系</option></select></div></div>
+      <button class="btn btn-primary btn-sm" id="gRun"><i class="placeholder" data-ic="play"></i> 遍历邻居</button>
+      <div class="muted" style="font-size:.72rem;margin-top:10px">选起点实体 + 跳数,前端 BFS 遍历 KG 关系(不查后端),找 N 跳邻居子图。结果高亮在上方图可视化。</div>
+      <div class="sub" id="gMeta" style="margin-top:12px">未遍历</div>
+      <div id="gPaths" style="max-height:280px;overflow:auto;margin-top:6px"><div class="muted" style="padding:10px">选起点实体后点「遍历邻居」</div></div>
+    </div>
+  </div>
 </div></main>
 </div>
 
@@ -88,8 +101,8 @@ async function loadDatasets() {
   try {
     const data = await request("GET", "/datasets");
     const all = data?.datasets || [];
-    // 只列可建 KG 的:有文本内容(FTS/向量索引 → 文档类);系统表(_audit/_lineage)、图片表(只 binary)无文本 → 过滤
-    const kgable = all.filter(d => d.has_fts_index || d.has_vector_index);
+    // 只列可建 KG 的:有文本内容(FTS/向量索引 → 文档类)或已有 KG;系统表(_audit/_lineage)、图片表(只 binary)无文本 → 过滤
+    const kgable = all.filter(d => d.has_fts_index || d.has_vector_index || d.has_kg);
     const preset = new URL(location.href).searchParams.get("ds");
     $("#ds").innerHTML = `<option value="">— 选择数据集(${kgable.length}/${all.length} 可建 KG)—</option>` + kgable.map(d => `<option value="${esc(d.name)}"${d.name === preset ? " selected" : ""}>${esc(d.name)}</option>`).join("");
     if (preset && !kgable.some(d => d.name === preset)) toast(`数据集「${preset}」无文本内容,不可建 KG(已过滤)`, "warn", 4000);
@@ -135,7 +148,7 @@ function setSchemaOpen(open) {
 }
 $("#schemaToggle").addEventListener("click", () => setSchemaOpen($("#schemaBody").style.display === "none"));
 
-let kgNetwork = null;
+let kgNetwork = null, kgNodes = null, kgEdges = null;
 async function loadGraph() {
   const name = curDs(); if (!name) return;
   const meta = $("#kgGraphMeta"), cont = $("#kgGraph");
@@ -167,7 +180,9 @@ async function loadGraph() {
   }));
   if (!ns.length) { meta.textContent = "无实体节点(已隐藏 document/chunk)— 先建 KG 抽取实体"; cont.innerHTML = ""; return; }
   meta.innerHTML = `${ns.length} 实体节点 · ${es.length} 关系边${r.truncated ? ` · <span style="color:var(--warn)">仅显示前 300(数据集更大)</span>` : ""}`;
-  kgNetwork = new V.Network(cont, { nodes: new V.DataSet(ns), edges: new V.DataSet(es) }, {
+  kgNodes = new V.DataSet(ns);
+  kgEdges = new V.DataSet(es);
+  kgNetwork = new V.Network(cont, { nodes: kgNodes, edges: kgEdges }, {
     height: "100%", width: "100%", autoResize: true,
     layout: { improvedLayout: ns.length <= 150 },
     physics: { stabilization: { iterations: 200 }, barnesHut: { gravitationalConstant: -8000, springLength: 110 } },
@@ -192,7 +207,65 @@ async function loadGraph() {
     },
     interaction: { hover: true, tooltipDelay: 120, navigationButtons: false },
   });
+  // 联动(反向):点 vis 节点 → 高亮结果里含该节点的关系行 + 滚动到位
+  kgNetwork.on("click", (params) => {
+    const nid = params.nodes?.[0]; if (!nid) return;
+    const rows = document.querySelectorAll("#gPaths .path-row");
+    let first = null;
+    rows.forEach((r) => { const hit = r.dataset.from === nid || r.dataset.to === nid; r.classList.toggle("hl", hit); if (hit && !first) first = r; });
+    if (first) first.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  });
+  // 填充实实体遍历下拉(方案A:起点=实体节点; 关系类型=去重)
+  const _entSel = $("#gStart"), _relSel = $("#gRel");
+  if (_entSel) _entSel.innerHTML = `<option value="">— 选起点实体 (${ns.length}) —</option>` + ns.map((n) => `<option value="${esc(n.id)}">${esc(n.label)}</option>`).join("");
+  if (_relSel) { const _rels = [...new Set(es.map((e) => e.label).filter(Boolean))].sort(); _relSel.innerHTML = `<option value="">全部关系</option>` + _rels.map((r) => `<option value="${esc(r)}">${esc(r)}</option>`).join(""); }
 }
+
+// ---------- 实体遍历(方案A:BFS 遍历 KG 实体关系,复用 /kg/graph 数据,不查后端)----------
+function entityTraverse() {
+  const startId = $("#gStart").value;
+  if (!startId) return toast("请选起点实体", "warn");
+  if (!kgEdges || !kgNodes) return toast("KG 未加载,先选数据集等待图渲染", "warn");
+  const depth = Math.min(3, Math.max(1, parseInt($("#gDepth").value) || 2));
+  const relFilter = $("#gRel").value;
+  const allEdges = kgEdges.get();
+  // BFS:N 跳邻居 + 路径边
+  const visited = new Set([startId]);
+  let frontier = [startId];
+  const pathEdges = [];
+  for (let d = 0; d < depth; d++) {
+    const next = [];
+    for (const id of frontier) {
+      for (const e of allEdges) {
+        if (e.from !== id) continue;
+        if (relFilter && e.label !== relFilter) continue;
+        pathEdges.push(e);
+        if (!visited.has(e.to)) { visited.add(e.to); next.push(e.to); }
+      }
+    }
+    if (!next.length) break;
+    frontier = next;
+  }
+  const startNode = kgNodes.get(startId);
+  $("#gMeta").textContent = `起点「${startNode?.label || startId}」· ${depth} 跳 → ${visited.size} 实体 · ${pathEdges.length} 关系`;
+  $("#gPaths").innerHTML = pathEdges.length ? pathEdges.map((e) => {
+    const from = kgNodes.get(e.from)?.label || e.from;
+    const to = kgNodes.get(e.to)?.label || e.to;
+    return `<div class="path-row" data-from="${esc(e.from)}" data-to="${esc(e.to)}"><span class="node">${esc(from)}</span><span class="tag">${esc(e.label || "→")}</span><span class="node">${esc(to)}</span></div>`;
+  }).join("") : `<div class="muted" style="padding:10px">该实体无邻居关系(叶子节点或关系被过滤)</div>`;
+  // 联动(正向):点结果行 → vis 高亮该边两端节点 + focus 聚焦
+  $("#gPaths").querySelectorAll(".path-row").forEach((row) => {
+    row.addEventListener("click", () => {
+      $("#gPaths").querySelectorAll(".path-row.hl").forEach((r) => r.classList.remove("hl"));
+      row.classList.add("hl");
+      try { kgNetwork?.selectNodes([row.dataset.from, row.dataset.to]); kgNetwork?.focus(row.dataset.from, { scale: 1.3, animation: { duration: 400, easingFunction: "easeInOutQuad" } }); } catch (_) {}
+    });
+  });
+  // 高亮子图(上方图可视化)——遍历后默认全选 N 跳
+  try { kgNetwork?.selectNodes?.([...visited]); } catch (_) {}
+  toast(`遍历完成:${visited.size} 实体 · ${pathEdges.length} 关系`, "ok", 2500);
+}
+$("#gRun").addEventListener("click", entityTraverse);
 
 // 建/重建 KG:默认折叠(顶点=0 时自动展开引导首次构建,有数据时收起)
 function setBuildOpen(open) {

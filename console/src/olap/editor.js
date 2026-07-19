@@ -46,6 +46,7 @@ function cmEditor(mount, CM, { onRun, initial }) {
   return {
     get value() { return view.state.doc.toString(); },
     set value(v) { view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: v } }); view.focus(); },
+    insert(text) { const h = view.state.selection.main.head; view.dispatch({ changes: { from: h, insert: text }, selection: { anchor: h + text.length } }); view.focus(); },
     focus() { view.focus(); },
   };
 }
@@ -79,6 +80,7 @@ function textareaEditor(mount, { onRun, initial }) {
   return {
     get value() { return ta.value; },
     set value(v) { ta.value = v; updateGutter(); },
+    insert(text) { const s = ta.selectionStart, en = ta.selectionEnd; ta.value = ta.value.slice(0, s) + text + ta.value.slice(en); ta.selectionStart = ta.selectionEnd = s + text.length; updateGutter(); ta.focus(); },
     focus() { ta.focus(); },
   };
 }

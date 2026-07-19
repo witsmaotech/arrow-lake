@@ -591,8 +591,15 @@ async def list_datasets(
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
 ) -> DatasetListResponse:
-    """List all datasets with metadata. Supports pagination via limit/offset."""
+    """List all datasets with metadata. Supports pagination via limit/offset.
+
+    System tables (``_``-prefixed, e.g. ``_audit_trail`` / ``_lineage_events``)
+    are visible to ADMIN only; other roles get them filtered out.
+    """
     result = await run_sync(lake.catalog, timeout=_ADMIN_TIMEOUT, label="catalog")
+    # require_role 返回当前 user(TokenPayload);系统表(_ 前缀)仅 admin 可见
+    is_admin = _auth is not None and getattr(_auth, "role", None) == Role.ADMIN
+    visible = [e for e in result.datasets if is_admin or not e.name.startswith("_")]
     # 一次扫描 KA base 得到已构建 KG 的数据集集合(避免前端 N 次 /kg/stats)
     from pathlib import Path
     from arrow_lake.knowledge_graph._naming import artifact_key_for
@@ -611,10 +618,10 @@ async def list_datasets(
             has_kg=artifact_key_for(e.name) in ka_keys,
             size_bytes=e.size_bytes, created_at=e.created_at, updated_at=e.updated_at,
         )
-        for e in result.datasets
+        for e in visible
     ]
     page = all_datasets[offset : offset + limit]
-    return DatasetListResponse(datasets=page, total=result.total)
+    return DatasetListResponse(datasets=page, total=len(visible))
 
 
 @router.get("/{name}", response_model=DatasetInfo)

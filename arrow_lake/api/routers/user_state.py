@@ -149,3 +149,84 @@ async def set_preferences(
     uid = _user_id(request)
     store.set_preferences(uid, body.preferences)
     return {"preferences": store.get_preferences(uid)}
+
+
+# --------------------------------------------------------------------------- #
+# Dashboards (v1.9.1)
+# --------------------------------------------------------------------------- #
+class SaveDashboardRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+    layout: dict[str, Any] = Field(default_factory=dict)
+
+
+@router.post("/dashboards", summary="Save a dashboard layout")
+async def save_dashboard(
+    body: SaveDashboardRequest,
+    request: Request,
+    _u: dict = Depends(require_role(Role.VIEWER)),
+) -> dict:
+    store = _store(request)
+    uid = _user_id(request)
+    return {"id": store.save_dashboard(uid, body.name, body.layout)}
+
+
+@router.get("/dashboards", summary="List the current user's dashboards")
+async def list_dashboards(
+    request: Request,
+    _u: dict = Depends(require_role(Role.VIEWER)),
+) -> dict:
+    store = _store(request)
+    uid = _user_id(request)
+    return {"dashboards": store.list_dashboards(uid)}
+
+
+@router.delete("/dashboards/{dashboard_id}", summary="Delete a dashboard")
+async def delete_dashboard(
+    request: Request,
+    dashboard_id: int = Path(..., ge=1),
+    _u: dict = Depends(require_role(Role.VIEWER)),
+) -> dict:
+    store = _store(request)
+    uid = _user_id(request)
+    return {"deleted": store.delete_dashboard(uid, dashboard_id)}
+
+
+# --------------------------------------------------------------------------- #
+# Favorites (v1.9.1)
+# --------------------------------------------------------------------------- #
+class AddFavoriteRequest(BaseModel):
+    target_type: str = Field(..., pattern=r"^(dataset|query)$")
+    target_id: str = Field(..., min_length=1, max_length=200)
+
+
+@router.post("/favorites", summary="Add a favorite (idempotent)")
+async def add_favorite(
+    body: AddFavoriteRequest,
+    request: Request,
+    _u: dict = Depends(require_role(Role.VIEWER)),
+) -> dict:
+    store = _store(request)
+    uid = _user_id(request)
+    return {"added": store.add_favorite(uid, body.target_type, body.target_id)}
+
+
+@router.get("/favorites", summary="List the current user's favorites")
+async def list_favorites(
+    request: Request,
+    _u: dict = Depends(require_role(Role.VIEWER)),
+) -> dict:
+    store = _store(request)
+    uid = _user_id(request)
+    return {"favorites": store.list_favorites(uid)}
+
+
+@router.delete("/favorites/{target_type}/{target_id}", summary="Remove a favorite")
+async def remove_favorite(
+    request: Request,
+    target_type: str = Path(..., pattern=r"^(dataset|query)$"),
+    target_id: str = Path(..., min_length=1, max_length=200),
+    _u: dict = Depends(require_role(Role.VIEWER)),
+) -> dict:
+    store = _store(request)
+    uid = _user_id(request)
+    return {"removed": store.remove_favorite(uid, target_type, target_id)}

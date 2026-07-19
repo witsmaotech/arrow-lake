@@ -21,6 +21,7 @@
   <div class="tabs" id="tt">
     <button class="tab active" data-t="active">活跃任务 <span class="nav-badge" id="bActive">0</span></button>
     <button class="tab" data-t="history">历史</button>
+    <button class="tab" data-t="failed">失败 <span class="nav-badge" id="bFailed" style="display:none">0</span></button>
   </div>
 
   <div id="pActive" class="panel flush">
@@ -36,6 +37,14 @@
     <div class="tbl-scroll"><table class="tbl">
       <thead><tr><th>task_id</th><th>类型</th><th>数据集</th><th>结果</th><th class="num">耗时</th><th class="num">完成于</th></tr></thead>
       <tbody id="histRows"></tbody>
+    </table></div>
+  </div>
+
+  <div id="pFailed" class="panel flush hidden">
+    <div class="panel-h"><i class="placeholder" data-ic="close"></i><h3>失败任务</h3><span class="sub">FAILED / ERROR · 含错误详情(后端任务系统为终态,无 DLQ 重试机制)</span></div>
+    <div class="tbl-scroll"><table class="tbl">
+      <thead><tr><th>task_id</th><th>类型</th><th>数据集</th><th>状态</th><th>错误</th><th class="num">创建</th></tr></thead>
+      <tbody id="failRows"></tbody>
     </table></div>
   </div>
 </div></main>
@@ -81,6 +90,9 @@ function render(all) {
   const run = active.filter((t) => t.status === "RUNNING").length;
   const pend = active.filter((t) => t.status === "PENDING").length;
   const fail = hist.filter((t) => /FAIL|ERROR/.test(t.status)).length;
+  const failed = hist.filter((t) => /FAIL|ERROR/.test(t.status));
+  $("#bFailed").style.display = failed.length ? "inline-block" : "none";
+  $("#bFailed").textContent = failed.length;
   const done = hist.length - fail;
   $("#kpis").innerHTML = [
     ["运行中", run + pend, "warn", "PENDING+RUNNING"],
@@ -115,6 +127,18 @@ function render(all) {
   };
   $("#rows").innerHTML = active.length ? active.map(rowActive).join("") : `<tr><td colspan="7" class="muted" style="padding:28px;text-align:center">无活跃任务</td></tr>`;
   $("#histRows").innerHTML = hist.length ? hist.map(rowHist).join("") : `<tr><td colspan="6" class="muted" style="padding:28px;text-align:center">无历史</td></tr>`;
+  const rowFailed = (t) => {
+    const s = st(t.status);
+    return `<tr${hl(t)}>
+      <td class="mono" style="font-size:.75rem">${esc(t.task_id)}</td>
+      <td><span class="tag">${esc(t.operation || "—")}</span></td>
+      <td><a href="datasets.html?ds=${encodeURIComponent(t.dataset_name || "")}" style="color:var(--teal-bright)">${esc(t.dataset_name || "—")}</a></td>
+      <td><span class="lamp ${s.lamp}"><i></i>${s.label}</span></td>
+      <td class="muted" style="font-size:.74rem;max-width:440px;word-break:break-all">${esc(t.error || t.message || "—")}</td>
+      <td class="num mono">${esc(t.created_at || "—")}</td>
+    </tr>`;
+  };
+  $("#failRows").innerHTML = failed.length ? failed.map(rowFailed).join("") : `<tr><td colspan="6" class="muted" style="padding:28px;text-align:center">无失败任务</td></tr>`;
 }
 
 async function load() {
@@ -138,6 +162,7 @@ $("#tt").addEventListener("click", (e) => {
   b.classList.add("active");
   $("#pActive").classList.toggle("hidden", b.dataset.t !== "active");
   $("#pHistory").classList.toggle("hidden", b.dataset.t !== "history");
+  $("#pFailed").classList.toggle("hidden", b.dataset.t !== "failed");
 });
 
 $("#apiBtn")?.addEventListener("click", () => window.openApi(

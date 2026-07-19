@@ -144,6 +144,44 @@ class IdentityStore:
                 (1 if is_active else 0, user_id),
             )
 
+    def update_user(
+        self,
+        user_id: int,
+        *,
+        email: str | None = None,
+        role: str | None = None,
+        password_hash: str | None = None,
+        is_active: bool | None = None,
+    ) -> bool:
+        """Patch-selectable user fields. Returns True if a row was updated.
+
+        Only fields explicitly passed are written; updated_at is refreshed.
+        """
+        fields: list[str] = []
+        params: list[Any] = []
+        if email is not None:
+            fields.append("email = ?")
+            params.append(email)
+        if role is not None:
+            fields.append("role = ?")
+            params.append(role)
+        if password_hash is not None:
+            fields.append("password_hash = ?")
+            params.append(password_hash)
+        if is_active is not None:
+            fields.append("is_active = ?")
+            params.append(1 if is_active else 0)
+        if not fields:
+            return False  # nothing to update
+        fields.append("updated_at = datetime('now')")
+        params.append(user_id)
+        with self._db.with_write() as db:
+            cur = db.execute(
+                f"UPDATE users SET {', '.join(fields)} WHERE id = ?",
+                tuple(params),
+            )
+            return cur is not None and cur.rowcount > 0
+
     # ------------------------------------------------------------------
     # personal tokens
     # ------------------------------------------------------------------

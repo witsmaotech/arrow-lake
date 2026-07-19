@@ -31,12 +31,12 @@
   <div class="login-art">
     <a class="brand" href="index.html" style="text-decoration:none;display:flex;gap:10px;align-items:center">
       <span class="brand-mark">AL</span>
-      <span><b class="brand-name" style="color:var(--fg-hi)">Arrow Lake</b><div class="brand-sub">console · SQL Worksheet</div></span>
+      <span><b class="brand-name" style="color:var(--fg-hi)">Arrow Lake</b><div class="brand-sub">数据湖仓控制台</div></span>
     </a>
     <div style="position:relative">
       <span class="tag teal"><span style="width:7px;height:7px;border-radius:50%;background:var(--ok);display:inline-block"></span> 走产品 OLAP · RBAC + ACL</span>
-      <h1 style="font-size:clamp(1.8rem,1.2rem+1.4vw,2.8rem);font-weight:800;line-height:1.1;margin:var(--s4) 0;letter-spacing:-.02em">DuckDB SQL<br/><span style="background:linear-gradient(120deg,var(--teal-bright),var(--info));-webkit-background-clip:text;background-clip:text;color:transparent">Worksheet 控制台</span></h1>
-      <p class="muted" style="max-width:46ch">X-API-Key 换 JWT(auth_mode=BOTH)· 走 RBAC + SELECT 校验 + 行级 ACL · 双层 auth(X-API-Key + Bearer)。</p>
+      <h1 style="font-size:clamp(1.8rem,1.2rem+1.4vw,2.8rem);font-weight:800;line-height:1.1;margin:var(--s4) 0;letter-spacing:-.02em">一个湖仓<br/><span style="background:linear-gradient(120deg,var(--teal-bright),var(--info));-webkit-background-clip:text;background-clip:text;color:transparent">装下检索 · 分析 · 智能</span></h1>
+      <p class="muted" style="max-width:46ch">文本 / 图像 / 视频多模态原生 · 向量检索 + RAG + 知识图谱 · RBAC 三档角色 + 行级 ACL。</p>
     </div>
     <div class="telem" style="position:relative">
       <span class="item"><span class="dot"></span>API 在线</span><span class="item">DuckDB OLAP</span><span class="item">Lance 湖仓</span><span class="item" style="margin-left:auto">RBAC 三档</span>
@@ -45,33 +45,35 @@
   <div class="login-form">
     <div class="login-card">
       <h2 style="margin:0 0 var(--s2)">登录控制台</h2>
-      <p class="muted" style="margin:0 0 var(--s4);font-size:.85rem">API Key → 换 JWT(用户名密码登录规划中,见 B 设计文档)</p>
+      <p class="muted" style="margin:0 0 var(--s4);font-size:.85rem">用户名密码 → libSQL IdentityStore → JWT pair(API Key 作应急 / 开发)</p>
       <div class="toggles">
-        <button class="active" id="tabKey" type="button">API Key</button>
-        <button id="tabPwd" type="button">用户名 / 密码</button>
+        <button id="tabKey" type="button">API Key</button>
+        <button class="active" id="tabPwd" type="button">用户名 / 密码</button>
       </div>
 
-      <!-- API Key 表单(实际工作)-->
-      <form id="formKey" class="col">
+      <!-- API Key 表单(应急 / 开发)-->
+      <form id="formKey" class="col hidden">
         <div class="field">
           <label>API Key <span style="color:var(--danger)">*</span></label>
-          <input class="input mono" id="apiKey" type="password" placeholder="al_xxx..." autocomplete="current-password" autofocus/>
+          <input class="input mono" id="apiKey" type="password" placeholder="al_xxx..." autocomplete="current-password"/>
         </div>
         <button class="btn btn-primary" type="submit" style="width:100%;justify-content:center" id="loginBtn">
           <i class="placeholder" data-ic="key"></i> 登录
         </button>
       </form>
 
-      <!-- 用户名密码(v1.9.1:接 /auth/login → libSQL IdentityStore pbkdf2 验证)-->
-      <form id="formPwd" class="col hidden">
-        <div class="field"><label>用户名</label><input class="input" id="username" placeholder="sysop" autocomplete="username"/></div>
+      <!-- 用户名密码(默认 · v1.9.1:接 /auth/login → libSQL IdentityStore pbkdf2 验证)-->
+      <form id="formPwd" class="col">
+        <div class="field"><label>用户名</label><input class="input" id="username" placeholder="sysop" autocomplete="username" autofocus/></div>
         <div class="field"><label>密码</label><input class="input" id="password" type="password" placeholder="••••••••" autocomplete="current-password"/></div>
+        <div class="field"><label>验证码 <span class="muted" style="font-weight:400;text-transform:none;letter-spacing:0">(<span id="capQ" class="mono">—</span> = ?)</span></label><input class="input" id="captcha" inputmode="numeric" placeholder="计算结果" autocomplete="off"/></div>
         <button class="btn btn-primary" type="submit" style="width:100%;justify-content:center" id="loginPwdBtn"><i class="placeholder" data-ic="key"></i> 登录</button>
         <p class="muted" style="font-size:.72rem;margin-top:var(--s2)">用户名密码 → libSQL IdentityStore(pbkdf2)→ JWT pair。</p>
       </form>
 
       <div class="divider"></div>
       <div class="flex between" style="font-size:.72rem;color:var(--fg-lo)"><span>JWT HS256</span><span>Bearer + X-API-Key</span><span>SELECT 只读</span></div>
+      <a href="showcase.html" style="display:block;text-align:center;margin-top:var(--s4);font-size:.82rem;color:var(--fg-lo);text-decoration:none">→ 先看 <span style="color:var(--teal-bright);font-weight:600">旗舰展示</span>(免登录 · 架构全景 + 三张王牌)</a>
     </div>
   </div>
 </div>
@@ -81,7 +83,7 @@
 import { login, isLoggedIn } from "./src/auth.js";
 import { toast } from "./src/ui/toast.js";
 
-if (isLoggedIn()) location.href = "olap.html";
+if (isLoggedIn()) location.href = "dashboard.html";
 
 const $ = (s) => document.querySelector(s);
 const tabKey = $("#tabKey"), tabPwd = $("#tabPwd");
@@ -96,17 +98,29 @@ tabPwd.onclick = () => {
   formPwd.classList.remove("hidden"); formKey.classList.add("hidden");
 };
 
+// 算术验证码(纯前端,防简单机器人/暴力登录)
+let _capAns = 0;
+function newCaptcha() {
+  const a = 1 + Math.floor(Math.random() * 9), b = 1 + Math.floor(Math.random() * 9);
+  const plus = Math.random() < 0.5;
+  _capAns = plus ? a + b : a - b;
+  $("#capQ").textContent = `${a} ${plus ? "+" : "−"} ${b}`;
+  $("#captcha").value = "";
+}
+newCaptcha();
+
 // v1.9.1 用户名密码登录
 $("#formPwd").addEventListener("submit", async (e) => {
   e.preventDefault();
   const u = $("#username").value.trim(), p = $("#password").value;
   if (!u || !p) { toast("请输入用户名和密码", "warn"); return; }
+  if (parseInt($("#captcha").value, 10) !== _capAns) { toast("验证码错误,请重算", "warn"); newCaptcha(); $("#captcha").focus(); return; }
   const btn = $("#loginPwdBtn");
   btn.disabled = true; btn.textContent = "登录中…";
   try {
     const { loginWithPassword } = await import("./src/auth.js");
     await loginWithPassword(u, p);
-    location.href = "olap.html";
+    location.href = "dashboard.html";
   } catch (err) {
     toast("登录失败: " + err.message, "danger", 5000);
     $("#password").focus();
@@ -123,7 +137,7 @@ form.addEventListener("submit", async (e) => {
   if (!v) { toast("请输入 API Key", "warn"); key.focus(); return; }
   const btn = $("#loginBtn");
   btn.disabled = true; btn.textContent = "登录中…";
-  try { await login(v); location.href = "olap.html"; }
+  try { await login(v); location.href = "dashboard.html"; }
   catch (err) { toast("登录失败: " + err.message, "danger", 5000); key.focus(); key.select(); }
   finally { btn.disabled = false; btn.innerHTML = '<i class="placeholder" data-ic="key"></i> 登录'; }
 });

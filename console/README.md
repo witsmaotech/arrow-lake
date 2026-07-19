@@ -1,8 +1,9 @@
-# Arrow Lake Console · SQL Worksheet
+# Arrow Lake Console
 
-DuckDB SQL Web 界面,集成进 Arrow Lake 湖仓。**走产品已有的 OLAP 端点**,完全复用 RBAC / SELECT 安全校验 / 行级 ACL。
+Arrow Lake 数据湖 / 检索 / 知识图谱统一控制台(v1.9.1)。原生 JS + ES 模块,**零构建、零运行时依赖**。核心页接真实 `/api/v1`,双轨:数据智能轨(数据集→摄入→索引→检索→RAG/KG)+ 管理治理轨(用户/ACL/deny/任务)。
 
-设计文档:`docs/architecture-design/duckdb-sql-worksheet.md`
+- 规划:`docs/v1.9.1-frontend-core-impl-plan.md`
+- SQL Worksheet 设计:`docs/architecture-design/duckdb-sql-worksheet.md`
 
 ## 为什么不用现成 DuckDB UI
 
@@ -16,20 +17,46 @@ DuckDB SQL Web 界面,集成进 Arrow Lake 湖仓。**走产品已有的 OLAP �
 
 ```
 console/
-├── index.html            # 入口路由(已登录→olap,未登录→login)
-├── login.html            # X-API-Key 换 JWT(auth_mode=BOTH)
-├── olap.html             # ★ SQL Worksheet 主页
+├── index.html            # 概览 KPI + 快捷入口
+├── login.html            # 鉴权入口(密码登录 / X-API-Key,auth_mode=BOTH)
+├── datasets.html         # 数据集 catalog(★)
+├── dataset-detail.html   # 数据集工作区(★)
+├── ingest.html           # 摄入(documents 异步任务)(★)
+├── embeddings.html       # 嵌入 / 索引管理(★)
+├── search.html           # 检索(向量/FTS/混合/Facets/Ensemble)(★)
+├── rag.html              # RAG 问答 + 引用 + 持久会话(★)
+├── kg.html               # 知识图谱 GraphRAG(★)
+├── olap.html             # SQL Worksheet(DuckDB OLAP)(★)
+├── tasks.html            # 异步任务列表 / 状态流转(★)
+├── admin.html            # 管理后台(用户 / dataset ACL / schema ACL / deny)(★)
 ├── assets/
-│   ├── tokens.css        # 设计真值源(复制自 prototype)
-│   ├── app.css           # 组件库(复制自 prototype)
-│   ├── console.css       # 增量样式(editor/table/toast/login)
-│   └── console-layout.js # 精简 shell + icon + API 抽屉
+│   ├── tokens.css / app.css / console.css   # 设计系统(复制自 prototype + 增量)
+│   └── console-layout.js                    # shell + icon + NAV + API 抽屉
 └── src/                  # ES module(零构建)
-    ├── auth.js           # token 存取 + login/logout
-    ├── api.js            # fetch 封装 + 401 自动 refresh
-    ├── ui/{toast,table}.js
-    └── olap/{editor,results,worksheet}.js
+    ├── api.js / auth.js / task.js           # fetch 客户端 / 鉴权 / 任务轮询
+    ├── kg-subgraph.js                       # KG 子图渲染
+    ├── ui/{toast,modal,table}.js            # 反馈原语(toast / confirm / 表格)
+    └── olap/{editor,results,worksheet}.js   # SQL Worksheet
 ```
+
+★ = 真跑通(接真实 `/api/v1`)。audit/governance/backup/system/lineage/showcase/narrative 暂为 prototype 演示页,未接入。
+
+## 页面状态(v1.9.1)
+
+| 页 | 状态 | 主要端点 |
+|---|---|---|
+| login / index | ✅ 真跑通 | `/auth/login` `/auth/token` `/datasets` |
+| datasets / dataset-detail | ✅ | `/datasets` `/datasets/{name}` |
+| ingest | ✅ | `/datasets/{name}/ingest/documents/async` |
+| embeddings | ✅ | `/datasets/{name}/index/*` `/embed/*` |
+| search | ✅ | `/datasets/{name}/search/{mode}` `/embed/text` |
+| rag | ✅ | `/rag/query` `/rag/templates` `/rag/sessions` |
+| kg | ✅ | `/kg/build` `/kg/query/graphrag` `/kg/stats` |
+| olap | ✅ | `/datasets/{name}/query/olap` |
+| tasks | ✅ | `/tasks` `/tasks/history` |
+| admin | ✅ | `/admin/users` `/admin/roles` `/admin/acl/*` `/admin/deny/*` `/admin/users/{id}/tokens`(批A+ 全功能) |
+| my-workspace | ✅ | `/me/*`(personal token X-API-Key;5 区 收藏查询/通知/偏好/仪表盘/收藏) |
+| showcase / narrative | 🎨 展示 | 架构全景·三张王牌 / 双线叙事(prototype 移植,d3+gsap mock,不走 renderShell) |
 
 ## 开发模式
 
@@ -49,10 +76,11 @@ python3 -m http.server 5189   # ⚠️ 5180 常被占用,用 5189
 
 ## 用法
 
-1. 登录:输入产品 API Key(`X-API-Key` 换 JWT)
-2. 选数据集(自动从 `/datasets` 拉取)
-3. 输入 SELECT 语句 → `⌘/Ctrl+Enter` 运行
-4. 结果:JSON 渲染(前 1 万行)+ CSV 导出全部;`max_rows` 最高 1,000,000
+1. 登录:`login.html` 密码登录(libSQL/JWT),或 `X-API-Key` 换 JWT
+2. 概览:`index.html` 看数据集 / KG / 索引 KPI + 快捷入口
+3. 数据轨:datasets → 工作区 → 摄入(异步任务)→ 建索引 → 检索 → RAG / KG
+4. 管理轨:`admin`(用户 / ACL / deny)、`tasks`(异步任务流转)
+5. SQL:`olap` 选数据集,SELECT + `⌘/Ctrl+Enter` 运行(前 1 万行渲染 + CSV 导出;`max_rows` 上限 1,000,000)
 
 ## 安全
 

@@ -1,0 +1,464 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>管理后台 · Arrow Lake Console</title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/tokens.css"/>
+<link rel="stylesheet" href="assets/app.css"/>
+<link rel="stylesheet" href="assets/console.css"/>
+<style>
+  .form-grid{display:grid;gap:10px;align-items:end;margin-bottom:14px}
+  .form-grid.g5{grid-template-columns:repeat(4,1fr) auto}
+  .form-grid.g3{grid-template-columns:1fr 1fr auto}
+  .field{display:flex;flex-direction:column;gap:4px;font-size:.74rem;color:var(--fg-lo);text-transform:uppercase;letter-spacing:.04em}
+  .field .input,.field .select{text-transform:none;letter-spacing:0}
+  .chk-group{display:flex;flex-wrap:wrap;gap:10px 16px}
+  .chk-group label{display:flex;align-items:center;gap:6px;font-size:.8rem;color:var(--fg-md);cursor:pointer}
+  .acl-card{border:1px solid var(--line-soft);border-radius:var(--r-md);padding:12px 14px;margin-bottom:10px;background:var(--ink-900)}
+  .acl-card .row1{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+  .acl-card .meta{font-size:.78rem;color:var(--fg-lo)}
+  .chips{display:flex;flex-wrap:wrap;gap:6px}
+  .gap-note{margin-top:14px;padding:10px 12px;border:1px dashed var(--line-soft);border-radius:var(--r-md);font-size:.76rem;color:var(--fg-lo);background:var(--ink-950)}
+  @media(max-width:860px){.form-grid.g5,.form-grid.g3{grid-template-columns:1fr 1fr}}
+</style>
+</head>
+<body>
+<div id="app">
+<main class="main"><div class="page">
+  <div class="h-sec between">
+    <div><h1>管理后台</h1><div class="desc">用户 · dataset ACL · schema ACL · deny · <span class="mono">/api/v1/admin/*</span> · 需 ADMIN 角色</div></div>
+    <div class="flex"><span class="lamp ok"><i></i>同步写操作</span></div>
+  </div>
+
+  <div class="tabs" id="tt">
+    <button class="tab active" data-t="users">用户</button>
+    <button class="tab" data-t="acl">dataset ACL</button>
+    <button class="tab" data-t="schema">schema ACL</button>
+    <button class="tab" data-t="deny">deny</button>
+  </div>
+
+  <!-- Tab 1: 用户 -->
+  <div id="pUsers" class="panel flush">
+    <div class="panel-h"><i class="placeholder" data-ic="key"></i><h3>用户</h3><span class="sub" id="userCnt">—</span></div>
+    <div class="panel-b">
+      <div class="form-grid g5">
+        <label class="field">用户名<input class="input" id="nuUser" placeholder="user_name" autocomplete="off"></label>
+        <label class="field">邮箱(可选)<input class="input" id="nuEmail" placeholder="a@b.com" autocomplete="off"></label>
+        <label class="field">角色<select class="select" id="nuRole"><option value="viewer">viewer</option><option value="editor">editor</option><option value="admin">admin</option></select></label>
+        <label class="field">密码(≥8)<input class="input" id="nuPass" type="password" placeholder="********" autocomplete="new-password"></label>
+        <button class="btn btn-primary btn-sm" id="nuBtn"><i class="placeholder" data-ic="plus"></i> 建用户</button>
+      </div>
+      <div class="tbl-scroll"><table class="tbl">
+        <thead><tr><th class="num">id</th><th>用户名</th><th>邮箱</th><th>角色</th><th>状态</th><th class="num">创建</th><th>操作</th></tr></thead>
+        <tbody id="userRows"></tbody>
+      </table></div>
+      <div class="gap-note">「停用」= <strong>软删</strong>(personal token 自动失效);编辑支持角色 / 邮箱 / 密码 / 状态。发的 token 用于 <span class="mono">/me/*</span>(my-workspace 下轮接入)。</div>
+    </div>
+  </div>
+
+  <!-- Tab 2: dataset ACL -->
+  <div id="pAcl" class="panel flush hidden">
+    <div class="panel-h"><i class="placeholder" data-ic="database"></i><h3>dataset ACL</h3>
+      <span class="actions">
+        <label class="muted" style="font-size:.78rem">数据集</label>
+        <select class="select" id="aclDs" style="min-width:200px"></select>
+      </span>
+    </div>
+    <div class="panel-b">
+      <div class="muted" style="font-size:.76rem;margin-bottom:8px">现有 ACL(role 只限 viewer/editor;admin 自动全权,后端对其短路)</div>
+      <div id="aclList"></div>
+      <div style="margin-top:18px;border-top:1px solid var(--line-soft);padding-top:14px">
+        <div class="muted" style="font-size:.74rem;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">新增 / 覆盖 ACL</div>
+        <div class="form-grid g3">
+          <label class="field">角色<select class="select" id="aclRole"><option value="viewer">viewer</option><option value="editor">editor</option></select></label>
+          <label class="field">行过滤 row_filter(SQL,可空)<input class="input mono" id="aclRow" placeholder='例:region == "US"'></label>
+        </div>
+        <label class="field" style="margin-bottom:6px">可见列 visible_columns(逗号分隔,空=全部可见)</label>
+        <input class="input mono" id="aclCols" placeholder="id, title, body" style="margin-bottom:10px">
+        <button class="btn btn-primary btn-sm" id="aclBtn"><i class="placeholder" data-ic="plus"></i> 写入 ACL</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tab 3: schema ACL -->
+  <div id="pSchema" class="panel flush hidden">
+    <div class="panel-h"><i class="placeholder" data-ic="code"></i><h3>schema ACL</h3>
+      <span class="actions">
+        <input class="input mono" id="schemaName" placeholder="schema 名" style="min-width:160px">
+        <button class="btn btn-ghost btn-sm" id="schemaQuery"><i class="placeholder" data-ic="search"></i> 查询</button>
+      </span>
+    </div>
+    <div class="panel-b">
+      <div id="schemaAclList" class="muted" style="padding:16px;text-align:center">输入 schema 名(如 <span class="mono">default</span>)后点「查询」。</div>
+      <div style="margin-top:18px;border-top:1px solid var(--line-soft);padding-top:14px">
+        <div class="muted" style="font-size:.74rem;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">新增 / 覆盖 schema ACL</div>
+        <div class="form-grid g3" style="margin-bottom:12px">
+          <label class="field">角色<select class="select" id="scRole"><option value="viewer">viewer</option><option value="editor">editor</option></select></label>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px">
+          <div><div class="muted" style="font-size:.74rem;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">allowed_actions</div><div class="chk-group" id="scAllow"></div></div>
+          <div><div class="muted" style="font-size:.74rem;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">denied_actions(覆盖 allowed)</div><div class="chk-group" id="scDeny"></div></div>
+        </div>
+        <button class="btn btn-primary btn-sm" id="scBtn" style="margin-top:12px"><i class="placeholder" data-ic="plus"></i> 写入 schema ACL</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tab 4: deny -->
+  <div id="pDeny" class="panel flush hidden">
+    <div class="panel-h"><i class="placeholder" data-ic="close"></i><h3>deny</h3>
+      <span class="actions">
+        <label class="muted" style="font-size:.78rem">数据集</label>
+        <select class="select" id="denyDs" style="min-width:200px"></select>
+      </span>
+    </div>
+    <div class="panel-b">
+      <div class="muted" style="font-size:.76rem;margin-bottom:8px">拒绝动作(显式 deny,优先级最高)</div>
+      <div id="denyList"></div>
+      <div style="margin-top:18px;border-top:1px solid var(--line-soft);padding-top:14px">
+        <div class="muted" style="font-size:.74rem;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">新增 deny</div>
+        <div class="chk-group" id="denyChk" style="margin-bottom:10px"></div>
+        <button class="btn btn-primary btn-sm" id="denyBtn"><i class="placeholder" data-ic="plus"></i> 写入 deny</button>
+      </div>
+    </div>
+  </div>
+</div></main>
+</div>
+
+<script src="assets/console-layout.js"></script>
+<script type="module">
+import { request } from "./src/api.js";
+import { isLoggedIn } from "./src/auth.js";
+import { toast } from "./src/ui/toast.js";
+import { confirmDialog } from "./src/ui/modal.js";
+
+if (!isLoggedIn()) location.href = "login.html";
+const { renderShell, icon } = window;
+renderShell({ active: "admin", crumb: "<b>管理后台</b>" });
+const $ = (s) => document.querySelector(s);
+const $$ = (s) => [...document.querySelectorAll(s)];
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const NAME_RE = /^[a-zA-Z0-9_-]{1,128}$/;
+const PERMS = ["dataset:read", "dataset:write", "dataset:delete", "admin:manage"];
+const fmtDate = (s) => { if (!s) return "—"; const d = new Date(s); if (isNaN(d)) return String(s).slice(0, 16);
+  const p = (n) => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
+const errMsg = (e) => { const m = e?.detail; if (Array.isArray(m)) return m.map((x) => x?.msg || JSON.stringify(x)).join("; "); return m || e?.message || String(e); };
+const chkBoxes = (hostId, checked = []) => { $(hostId).innerHTML = PERMS.map((p) =>
+  `<label><input type="checkbox" value="${p}" ${checked.includes(p) ? "checked" : ""}> <span class="mono">${p}</span></label>`).join(""); };
+const readChk = (hostId) => $$(`${hostId} input:checked`).map((c) => c.value);
+let USERS = [];
+const ROLES = ["admin", "editor", "viewer"];
+const closeModal = () => { const o = document.querySelector(".modal-overlay.dynamic"); if (o) o.remove(); };
+function showModal(title, bodyHtml) {
+  closeModal();
+  const o = document.createElement("div");
+  o.className = "modal-overlay dynamic show";
+  o.innerHTML = `<div class="modal-card" role="dialog" aria-modal="true" style="max-width:560px">
+    <div class="modal-title" style="display:flex;align-items:center;justify-content:space-between;gap:12px">${esc(title)}
+      <button class="btn btn-icon btn-ghost" data-modal-close>${icon("close")}</button></div>
+    <div class="modal-body" style="margin-top:12px;max-height:70vh;overflow-y:auto">${bodyHtml}</div></div>`;
+  o.addEventListener("click", (e) => { if (e.target === o || e.target.closest("[data-modal-close]")) closeModal(); });
+  document.body.appendChild(o);
+  applyIcons(o);
+  return o;
+}
+
+/* ---------- Tab 1: 用户 ---------- */
+async function loadUsers() {
+  $("#userRows").innerHTML = `<tr><td colspan="7" class="muted" style="padding:28px;text-align:center">加载中…</td></tr>`;
+  try {
+    const d = await request("GET", "/admin/users");
+    const list = d?.users || [];
+    USERS = list;
+    $("#userCnt").textContent = `${list.length} 个`;
+    if (d?.message && !list.length) {
+      $("#userRows").innerHTML = `<tr><td colspan="7" class="muted" style="padding:28px;text-align:center">${esc(d.message)}</td></tr>`;
+      return;
+    }
+    $("#userRows").innerHTML = list.length ? list.map((u) => `<tr>
+      <td class="num mono">${u.id ?? "—"}</td>
+      <td><b>${esc(u.username)}</b></td>
+      <td class="muted">${esc(u.email || "—")}</td>
+      <td><span class="tag ${u.role === "admin" ? "amber" : u.role === "editor" ? "teal" : "info"}">${esc(u.role || "—")}</span></td>
+      <td>${u.is_active === false ? '<span class="lamp warn"><i></i>停用</span>' : '<span class="lamp ok"><i></i>活跃</span>'}</td>
+      <td class="num mono" style="color:var(--fg-lo)">${fmtDate(u.created_at)}</td>
+      <td style="white-space:nowrap">
+        <button class="btn btn-ghost btn-sm" data-edit="${u.id}" title="编辑(角色/邮箱/密码/状态)">编辑</button>
+        <button class="btn btn-ghost btn-sm" data-toggle="${u.id}" title="${u.is_active === false ? "启用" : "停用(软删,token 失效)"}">${u.is_active === false ? "启用" : "停用"}</button>
+        <button class="btn btn-ghost btn-sm" data-tok-new="${u.id}" title="发 personal token(明文仅显示一次)">发token</button>
+        <button class="btn btn-ghost btn-sm" data-tok-list="${u.id}" title="查看 / 撤销 token">token</button>
+      </td>
+    </tr>`).join("") : `<tr><td colspan="7" class="muted" style="padding:28px;text-align:center">无用户</td></tr>`;
+  } catch (e) {
+    $("#userRows").innerHTML = `<tr><td colspan="7" style="padding:28px;text-align:center;color:var(--danger)">加载失败:${esc(errMsg(e))}<br/><button class="btn btn-ghost btn-sm" id="uRetry" style="margin-top:10px">重试</button></td></tr>`;
+    $("#uRetry")?.addEventListener("click", loadUsers);
+    toast("用户列表加载失败:" + errMsg(e), "warn", 4000);
+  }
+}
+$("#nuBtn").addEventListener("click", async () => {
+  const username = $("#nuUser").value.trim();
+  const email = $("#nuEmail").value.trim() || null;
+  const role = $("#nuRole").value;
+  const password = $("#nuPass").value;
+  if (!NAME_RE.test(username)) return toast("用户名仅允许字母/数字/_/-,1-128 位", "warn");
+  if (password.length < 8) return toast("密码至少 8 位", "warn");
+  const btn = $("#nuBtn"); btn.disabled = true; btn.textContent = "提交中…";
+  try {
+    await request("POST", "/admin/users", { body: { username, email, role, password } });
+    toast(`用户 ${username} 已创建(role=${role})`, "ok");
+    $("#nuUser").value = ""; $("#nuEmail").value = ""; $("#nuPass").value = "";
+    loadUsers();
+  } catch (e) {
+    toast("建用户失败:" + errMsg(e), "danger", 5000);
+  } finally {
+    btn.disabled = false; btn.innerHTML = `${icon("plus")} 建用户`;
+  }
+});
+
+/* ---------- 用户操作:编辑 / 停用·启用 / 发token / token 列表 ---------- */
+async function editUser(uid) {
+  const u = USERS.find((x) => String(x.id) === String(uid));
+  if (!u) return toast("用户不存在(刷新列表)", "warn");
+  const body = `<label class="field">角色<select class="select" id="edRole">${ROLES.map((r) => `<option value="${r}" ${u.role === r ? "selected" : ""}>${r}</option>`).join("")}</select></label>
+    <label class="field" style="margin-top:10px">邮箱<input class="input" id="edEmail" value="${esc(u.email || "")}"></label>
+    <label class="field" style="margin-top:10px">状态<select class="select" id="edActive"><option value="1" ${u.is_active !== false ? "selected" : ""}>活跃</option><option value="0" ${u.is_active === false ? "selected" : ""}>停用</option></select></label>
+    <label class="field" style="margin-top:10px">新密码(可选 · ≥8 · 留空不改)<input class="input" id="edPass" type="password" placeholder="********"></label>
+    <button class="btn btn-primary btn-sm" id="edSave" style="margin-top:14px">保存</button>`;
+  showModal(`编辑用户 · ${esc(u.username)}`, body);
+  $("#edSave").addEventListener("click", async () => {
+    const payload = { role: $("#edRole").value, email: $("#edEmail").value.trim() || null, is_active: $("#edActive").value === "1" };
+    const pw = $("#edPass").value;
+    if (pw) { if (pw.length < 8) return toast("密码至少 8 位", "warn"); payload.password = pw; }
+    try { await request("PUT", `/admin/users/${uid}`, { body: payload }); toast("用户已更新", "ok"); closeModal(); loadUsers(); }
+    catch (e) { toast("更新失败:" + errMsg(e), "danger"); }
+  });
+}
+
+async function toggleUser(uid) {
+  const u = USERS.find((x) => String(x.id) === String(uid));
+  if (!u) return;
+  const deactivate = u.is_active !== false;
+  if (!(await confirmDialog({ title: deactivate ? "停用用户" : "启用用户", message: `${deactivate ? "停用" : "启用"}「${u.username}」?${deactivate ? "(软删,token 自动失效)" : ""}`, danger: deactivate, confirmText: deactivate ? "停用" : "启用" }))) return;
+  try {
+    if (deactivate) await request("DELETE", `/admin/users/${uid}`);
+    else await request("PUT", `/admin/users/${uid}`, { body: { is_active: true } });
+    toast(`用户已${deactivate ? "停用" : "启用"}`, "ok"); loadUsers();
+  } catch (e) { toast("操作失败:" + errMsg(e), "danger"); }
+}
+
+async function issueToken(uid) {
+  const u = USERS.find((x) => String(x.id) === String(uid));
+  const body = `<label class="field">名称<input class="input" id="tkName" placeholder="如 ci / laptop" value="console"></label>
+    <div style="margin-top:10px"><div class="muted" style="font-size:.74rem;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">scopes</div>
+    <div class="chk-group" id="tkScopes">${PERMS.map((p) => `<label><input type="checkbox" value="${p}" checked> <span class="mono">${p}</span></label>`).join("")}</div></div>
+    <button class="btn btn-primary btn-sm" id="tkCreate" style="margin-top:14px">发放 token</button>`;
+  showModal(`发 token · ${esc(u?.username || uid)}`, body);
+  $("#tkCreate").addEventListener("click", async () => {
+    const name = $("#tkName").value.trim();
+    if (!name) return toast("请填名称", "warn");
+    const scopes = $$("#tkScopes input:checked").map((c) => c.value);
+    const btn = $("#tkCreate"); btn.disabled = true; btn.textContent = "生成中…";
+    try {
+      const r = await request("POST", `/admin/users/${uid}/tokens`, { body: { name, scopes } });
+      showModal(`✓ token 已发放 · ${esc(name)}`, `<div style="border:1px solid var(--warn);background:var(--ink-950);padding:12px;border-radius:var(--r-md);margin-bottom:12px;font-size:.8rem;color:var(--warn)">⚠ 明文仅此一次,关闭后不可再见(store 只存 sha256)。</div>
+        <div class="muted" style="font-size:.74rem;margin-bottom:6px">token(prefix <span class="mono">${esc(r.token_prefix)}</span>)</div>
+        <textarea class="input mono" readonly style="width:100%;min-height:64px;font-size:.8rem">${esc(r.token)}</textarea>
+        <div class="flex" style="gap:8px;margin-top:10px"><button class="btn btn-primary btn-sm" id="tkCopy">${icon("copy")} 复制</button></div>`);
+      $("#tkCopy")?.addEventListener("click", () => { navigator.clipboard?.writeText(r.token); toast("已复制到剪贴板", "ok"); });
+      loadUsers();
+    } catch (e) { toast("发 token 失败:" + errMsg(e), "danger"); closeModal(); }
+  });
+}
+
+async function listTokens(uid) {
+  const u = USERS.find((x) => String(x.id) === String(uid));
+  showModal(`token 列表 · ${esc(u?.username || uid)}`, `<div class="muted" style="padding:16px;text-align:center">加载中…</div>`);
+  const body = document.querySelector(".modal-overlay.dynamic .modal-body");
+  try {
+    const d = await request("GET", `/admin/users/${uid}/tokens`);
+    const toks = d?.tokens || [];
+    body.innerHTML = toks.length ? toks.map((t) => `<div class="acl-card">
+      <div class="row1"><span class="mono">${esc(t.token_prefix)}…</span> <span class="muted">${esc(t.name)}</span>
+        ${t.revoked_at ? '<span class="tag warn">已撤销</span>' : '<span class="tag ok">活跃</span>'}
+        ${t.revoked_at ? "" : `<button class="btn btn-ghost btn-sm" data-revoke="${t.id}" data-uid="${uid}" style="margin-left:auto">撤销</button>`}</div>
+      <div class="meta">scopes: ${(t.scopes || []).join(", ") || "—"} · 创建 ${fmtDate(t.created_at)}${t.expires_at ? ` · 过期 ${esc(t.expires_at)}` : ""}</div>
+    </div>`).join("") : `<div class="muted" style="padding:16px;text-align:center">无 token</div>`;
+    applyIcons(document.querySelector(".modal-overlay.dynamic"));
+  } catch (e) {
+    body.innerHTML = `<div style="color:var(--danger);padding:12px">加载失败:${esc(errMsg(e))}</div>`;
+  }
+}
+
+/* ---------- 数据集下拉(Tab2 + Tab4 共用) ---------- */
+async function loadDatasets() {
+  const fill = (sel) => { sel.innerHTML = `<option value="">— 选择数据集 —</option>`; };
+  fill($("#aclDs")); fill($("#denyDs"));
+  try {
+    const d = await request("GET", "/datasets");
+    const list = d?.datasets || [];
+    const opts = list.map((x) => `<option value="${esc(x.name)}">${esc(x.name)}</option>`).join("");
+    $("#aclDs").innerHTML = `<option value="">— 选择 (${list.length}) —</option>${opts}`;
+    $("#denyDs").innerHTML = `<option value="">— 选择 (${list.length}) —</option>${opts}`;
+  } catch (e) { /* 下拉失败不阻塞,change 时再报 */ }
+}
+
+/* ---------- Tab 2: dataset ACL ---------- */
+async function loadAcl(ds) {
+  if (!ds) { $("#aclList").innerHTML = `<div class="muted" style="padding:16px;text-align:center">请选择数据集。</div>`; return; }
+  $("#aclList").innerHTML = `<div class="muted" style="padding:16px;text-align:center">加载中…</div>`;
+  try {
+    const d = await request("GET", `/admin/acl/${encodeURIComponent(ds)}`);
+    const acls = d?.acls || [];
+    $("#aclList").innerHTML = acls.length ? acls.map((a) => `<div class="acl-card">
+      <div class="row1"><span class="tag ${a.role === "editor" ? "teal" : "info"}">${esc(a.role)}</span>
+        <button class="btn btn-ghost btn-sm" data-del-acl="${esc(a.role)}" style="margin-left:auto">删除</button></div>
+      <div class="meta">可见列: ${(a.visible_columns && a.visible_columns.length) ? `<span class="chips">${a.visible_columns.map((c) => `<span class="tag">${esc(c)}</span>`).join("")}</span>` : '<span class="mono">全部</span>'}</div>
+      ${a.row_filter ? `<div class="meta">行过滤: <span class="mono" style="color:var(--teal-bright)">${esc(a.row_filter)}</span></div>` : ""}
+    </div>`).join("") : `<div class="muted" style="padding:16px;text-align:center">该数据集无 ACL(所有 role 走默认)。</div>`;
+  } catch (e) {
+    $("#aclList").innerHTML = `<div style="padding:16px;color:var(--danger)">加载失败:${esc(errMsg(e))} <button class="btn btn-ghost btn-sm" id="aclRetry">重试</button></div>`;
+    $("#aclRetry")?.addEventListener("click", () => loadAcl(ds));
+  }
+}
+$("#aclDs").addEventListener("change", (e) => loadAcl(e.target.value));
+$("#aclBtn").addEventListener("click", async () => {
+  const ds = $("#aclDs").value; if (!ds) return toast("请先选择数据集", "warn");
+  const role = $("#aclRole").value;
+  const visible_columns = $("#aclCols").value.split(",").map((s) => s.trim()).filter(Boolean);
+  const row_filter = $("#aclRow").value.trim();
+  const btn = $("#aclBtn"); btn.disabled = true; btn.textContent = "提交中…";
+  try {
+    await request("PUT", `/admin/acl/${encodeURIComponent(ds)}`, { body: { role, visible_columns, row_filter } });
+    toast(`ACL 已写入(${ds} / ${role})`, "ok");
+    $("#aclCols").value = ""; $("#aclRow").value = "";
+    loadAcl(ds);
+  } catch (e) { toast("ACL 写入失败:" + errMsg(e), "danger", 5000); }
+  finally { btn.disabled = false; btn.innerHTML = `${icon("plus")} 写入 ACL`; }
+});
+
+/* ---------- Tab 3: schema ACL ---------- */
+chkBoxes("#scAllow"); chkBoxes("#scDeny");
+async function loadSchemaAcl(name) {
+  if (!name) { $("#schemaAclList").innerHTML = `<div class="muted" style="padding:16px;text-align:center">输入 schema 名后点「查询」。</div>`; return; }
+  $("#schemaAclList").innerHTML = `<div class="muted" style="padding:16px;text-align:center">加载中…</div>`;
+  try {
+    const d = await request("GET", `/admin/acl/schema/${encodeURIComponent(name)}`);
+    const acls = d?.acls || [];
+    $("#schemaAclList").innerHTML = acls.length ? acls.map((a) => `<div class="acl-card">
+      <div class="row1"><span class="tag ${a.role === "editor" ? "teal" : "info"}">${esc(a.role)}</span>
+        <button class="btn btn-ghost btn-sm" data-del-sc="${esc(a.role)}" style="margin-left:auto">删除</button></div>
+      <div class="meta">allowed: ${(a.allowed_actions && a.allowed_actions.length) ? a.allowed_actions.map((x) => `<span class="tag">${esc(x)}</span>`).join("") : '<span class="mono">—</span>'}</div>
+      <div class="meta">denied: ${(a.denied_actions && a.denied_actions.length) ? a.denied_actions.map((x) => `<span class="tag amber">${esc(x)}</span>`).join("") : '<span class="mono">—</span>'}</div>
+    </div>`).join("") : `<div class="muted" style="padding:16px;text-align:center">该 schema 无 ACL。</div>`;
+  } catch (e) {
+    $("#schemaAclList").innerHTML = `<div style="padding:16px;color:var(--danger)">加载失败:${esc(errMsg(e))}</div>`;
+  }
+}
+$("#schemaQuery").addEventListener("click", () => {
+  const n = $("#schemaName").value.trim();
+  if (!NAME_RE.test(n)) return toast("schema 名仅允许字母/数字/_/-,1-128 位", "warn");
+  loadSchemaAcl(n);
+});
+$("#scBtn").addEventListener("click", async () => {
+  const name = $("#schemaName").value.trim();
+  if (!NAME_RE.test(name)) return toast("请先填写合法 schema 名", "warn");
+  const role = $("#scRole").value;
+  const allowed_actions = readChk("#scAllow");
+  const denied_actions = readChk("#scDeny");
+  const btn = $("#scBtn"); btn.disabled = true; btn.textContent = "提交中…";
+  try {
+    await request("PUT", `/admin/acl/schema/${encodeURIComponent(name)}`, { body: { role, allowed_actions, denied_actions } });
+    toast(`schema ACL 已写入(${name} / ${role})`, "ok");
+    loadSchemaAcl(name);
+  } catch (e) { toast("schema ACL 写入失败:" + errMsg(e), "danger", 5000); }
+  finally { btn.disabled = false; btn.innerHTML = `${icon("plus")} 写入 schema ACL`; }
+});
+
+/* ---------- Tab 4: deny ---------- */
+chkBoxes("#denyChk");
+async function loadDeny(ds) {
+  if (!ds) { $("#denyList").innerHTML = `<div class="muted" style="padding:16px;text-align:center">请选择数据集。</div>`; return; }
+  $("#denyList").innerHTML = `<div class="muted" style="padding:16px;text-align:center">加载中…</div>`;
+  try {
+    const d = await request("GET", `/admin/deny/${encodeURIComponent(ds)}`);
+    const acts = d?.denied_actions || [];
+    $("#denyList").innerHTML = acts.length ? `<div class="chips">${acts.map((a) => `<span class="tag amber" style="padding:6px 10px">${esc(a)} <button data-del-deny="${encodeURIComponent(a)}" style="background:none;border:none;color:var(--fg-hi);cursor:pointer;margin-left:6px;line-height:1">×</button></span>`).join("")}</div>`
+      : `<div class="muted" style="padding:16px;text-align:center">该数据集无 deny 规则。</div>`;
+  } catch (e) {
+    $("#denyList").innerHTML = `<div style="padding:16px;color:var(--danger)">加载失败:${esc(errMsg(e))}</div>`;
+  }
+}
+$("#denyDs").addEventListener("change", (e) => loadDeny(e.target.value));
+$("#denyBtn").addEventListener("click", async () => {
+  const ds = $("#denyDs").value; if (!ds) return toast("请先选择数据集", "warn");
+  const acts = readChk("#denyChk");
+  if (!acts.length) return toast("请勾选至少一个 action", "warn");
+  const btn = $("#denyBtn"); btn.disabled = true; btn.textContent = "提交中…";
+  try {
+    for (const action of acts) { await request("PUT", `/admin/deny/${encodeURIComponent(ds)}`, { body: { action } }); }
+    toast(`deny 已写入(${ds} · ${acts.length} 条)`, "ok");
+    loadDeny(ds);
+  } catch (e) { toast("deny 写入失败:" + errMsg(e), "danger", 5000); }
+  finally { btn.disabled = false; btn.innerHTML = `${icon("plus")} 写入 deny`; }
+});
+
+/* ---------- 删除(事件委托) ---------- */
+document.addEventListener("click", async (e) => {
+  const t = e.target;
+  const edit = t.closest("[data-edit]");
+  const toggle = t.closest("[data-toggle]");
+  const tokNew = t.closest("[data-tok-new]");
+  const tokList = t.closest("[data-tok-list]");
+  const revoke = t.closest("[data-revoke]");
+  if (edit) { editUser(edit.dataset.edit); return; }
+  if (toggle) { toggleUser(toggle.dataset.toggle); return; }
+  if (tokNew) { issueToken(tokNew.dataset.tokNew); return; }
+  if (tokList) { listTokens(tokList.dataset.tokList); return; }
+  if (revoke) {
+    const tid = revoke.dataset.revoke; const ruid = revoke.dataset.uid;
+    if (!(await confirmDialog({ title: "撤销 token", message: "撤销该 token?调用方立即失效。", danger: true, confirmText: "撤销" }))) return;
+    try { await request("DELETE", `/admin/users/${ruid}/tokens/${tid}`); toast("token 已撤销", "ok"); listTokens(ruid); }
+    catch (e2) { toast("撤销失败:" + errMsg(e2), "danger"); }
+    return;
+  }
+  const delAcl = t.closest("[data-del-acl]");
+  const delSc = t.closest("[data-del-sc]");
+  const delDeny = t.closest("[data-del-deny]");
+  if (!delAcl && !delSc && !delDeny) return;
+  if (delAcl) {
+    const role = delAcl.dataset.delAcl; const ds = $("#aclDs").value;
+    if (!(await confirmDialog({ title: "删除 dataset ACL", message: `删除 ${ds} 的 ${role} ACL?`, danger: true, confirmText: "删除" }))) return;
+    try { await request("DELETE", `/admin/acl/${encodeURIComponent(ds)}/${encodeURIComponent(role)}`); toast("ACL 已删除", "ok"); loadAcl(ds); }
+    catch (e2) { toast("删除失败:" + errMsg(e2), "danger"); }
+  } else if (delSc) {
+    const role = delSc.dataset.delSc; const name = $("#schemaName").value.trim();
+    if (!(await confirmDialog({ title: "删除 schema ACL", message: `删除 ${name} 的 ${role} ACL?`, danger: true, confirmText: "删除" }))) return;
+    try { await request("DELETE", `/admin/acl/schema/${encodeURIComponent(name)}/${encodeURIComponent(role)}`); toast("schema ACL 已删除", "ok"); loadSchemaAcl(name); }
+    catch (e2) { toast("删除失败:" + errMsg(e2), "danger"); }
+  } else if (delDeny) {
+    const action = decodeURIComponent(delDeny.dataset.delDeny); const ds = $("#denyDs").value;
+    if (!(await confirmDialog({ title: "删除 deny", message: `删除 ${ds} 的 deny「${action}」?`, danger: true, confirmText: "删除" }))) return;
+    try { await request("DELETE", `/admin/deny/${encodeURIComponent(ds)}/${encodeURIComponent(action)}`); toast("deny 已删除", "ok"); loadDeny(ds); }
+    catch (e2) { toast("删除失败:" + errMsg(e2), "danger"); }
+  }
+});
+
+/* ---------- Tab 切换 ---------- */
+$("#tt").addEventListener("click", (e) => {
+  const b = e.target.closest(".tab"); if (!b) return;
+  [...$("#tt").querySelectorAll(".tab")].forEach((x) => x.classList.remove("active"));
+  b.classList.add("active");
+  $("#pUsers").classList.toggle("hidden", b.dataset.t !== "users");
+  $("#pAcl").classList.toggle("hidden", b.dataset.t !== "acl");
+  $("#pSchema").classList.toggle("hidden", b.dataset.t !== "schema");
+  $("#pDeny").classList.toggle("hidden", b.dataset.t !== "deny");
+});
+
+/* ---------- 初始化 ---------- */
+loadUsers();
+loadDatasets();
+window.applyIcons && applyIcons(document);
+</script>
+</body>
+</html>

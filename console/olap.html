@@ -3,68 +3,207 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>SQL Worksheet · Arrow Lake Console</title>
+<title>深度分析 · Arrow Lake Console</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="assets/tokens.css"/>
 <link rel="stylesheet" href="assets/app.css"/>
 <link rel="stylesheet" href="assets/console.css"/>
+<style>
+  .olap-layout{display:grid;grid-template-columns:264px 1fr;gap:var(--s4);align-items:start}
+  .olap-side{position:sticky;top:14px;max-height:calc(100vh - 90px);overflow:auto}
+  .olap-side .side-head{padding:8px 10px;border-bottom:1px solid var(--line-soft)}
+  .olap-side .side-head .select{width:100%}
+  .schema-col{display:flex;justify-content:space-between;gap:8px;padding:6px 10px;border-bottom:1px solid var(--line-soft);cursor:pointer;font-size:.78rem;transition:background .12s}
+  .schema-col:hover{background:var(--ink-800)}
+  .schema-col .sc-name{color:var(--fg-hi);font-family:var(--font-mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .schema-col .sc-type{color:var(--fg-lo);font-size:.66rem;font-family:var(--font-mono);flex-shrink:0}
+  .mode-tabs{display:flex;gap:2px;background:var(--ink-850);border:1px solid var(--line-soft);border-radius:var(--r-md);padding:3px;margin-bottom:var(--s3)}
+  .mode-tabs .mtab{flex:1;padding:7px;border:none;background:none;color:var(--fg-lo);font-size:.78rem;font-weight:600;cursor:pointer;border-radius:5px;font-family:inherit}
+  .mode-tabs .mtab.active{background:var(--ink-700);color:var(--fg-hi)}
+  .fg{display:grid;gap:8px;margin-bottom:10px}
+  .fg label{font-size:.7rem;color:var(--fg-lo);text-transform:uppercase;letter-spacing:.04em}
+  .path-row{display:flex;gap:6px;align-items:center;padding:6px 10px;border-bottom:1px solid var(--line-soft);font-family:var(--font-mono);font-size:.76rem}
+  .path-row .arrow{color:var(--teal-bright)}
+  .path-row .node{color:var(--fg-hi)}
+  .chain-step{border:1px solid var(--line-soft);border-radius:var(--r-md);padding:10px;margin-bottom:8px;background:var(--ink-900);display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center}
+  .chain-step .step-kind{font-family:var(--font-mono);font-size:.7rem;padding:3px 8px;border-radius:4px;background:var(--teal-soft,var(--ink-800));color:var(--teal-bright);text-transform:uppercase}
+  .codeblk{background:var(--ink-950);border:1px solid var(--line);border-radius:var(--r-md);padding:10px;font-family:var(--font-mono);font-size:.74rem;color:var(--fg-md);white-space:pre-wrap;line-height:1.6;overflow:auto;max-height:240px}
+  .res-tbl{width:100%;border-collapse:collapse;font-size:.78rem}
+  .res-tbl th{text-align:left;padding:7px 10px;background:var(--ink-850);color:var(--fg-lo);font-weight:600;border-bottom:1px solid var(--line);font-size:.7rem}
+  .res-tbl td{padding:7px 10px;border-bottom:1px solid var(--line-soft);color:var(--fg-md)}
+  .res-tbl td.mono{font-family:var(--font-mono);font-size:.74rem}
+  @media(max-width:1024px){.olap-layout{grid-template-columns:1fr}.olap-side{position:static;max-height:none}.grid-2c{grid-template-columns:1fr !important}}
+</style>
 </head>
 <body>
 <div id="app">
-<main class="main">
-  <div class="page">
-    <div class="h-sec between">
-      <div>
-        <h1>SQL Worksheet</h1>
-        <div class="desc">DuckDB OLAP · <span class="mono">POST /datasets/&#123;name&#125;/query/olap</span> · 走 RBAC + SELECT 校验 + 行级 ACL</div>
-      </div>
-      <div class="flex"><span class="lamp ok"><i></i>会话池 · 内存治理</span></div>
+<main class="main"><div class="page">
+  <div class="h-sec between">
+    <div>
+      <h1>深度分析</h1>
+      <div class="desc">DuckDB SQL · Daft DataFrame · <span class="mono">query/{olap,daft}</span> · RBAC + 行级 ACL · MV 模板</div>
     </div>
-
-    <div class="panel flush">
-      <div class="panel-h">
-        <i class="placeholder" data-ic="olap"></i><h3>查询</h3>
-        <span class="actions">
-          <label class="muted" style="font-size:.78rem">数据集</label>
-          <select class="select" id="dsSel" style="min-width:200px"></select>
-          <select class="select" id="historySel" style="max-width:180px" title="查询历史(localStorage)"></select>
-          <span class="tag info">SELECT 只读</span>
-          <button class="btn btn-ghost btn-sm" id="explainBtn"><i class="placeholder" data-ic="olap"></i> EXPLAIN</button>
-          <button class="btn btn-ghost btn-sm" id="apiBtn"><i class="placeholder" data-ic="code"></i> API</button>
-          <button class="btn btn-primary btn-sm" id="runBtn"><i class="placeholder" data-ic="play"></i> 运行 ⌘⏎</button>
-        </span>
-      </div>
-      <div id="editor"></div>
-      <div class="qopts">
-        <label>max_rows <span class="muted">(单次返回上限)</span>
-          <input class="input mono" id="maxRows" value="1000000" style="width:100px"/></label>
-        <span class="muted" style="font-size:.72rem">非流式 JSON · 后端上限 1,000,000 · 前端渲染前 1 万行 + CSV 导出全部</span>
-      </div>
-    </div>
-
-    <div class="panel flush">
-      <div class="panel-h">
-        <i class="placeholder" data-ic="database"></i><h3>结果</h3>
-        <span class="sub" id="meta">未运行</span>
-      </div>
-      <div id="result"><div class="empty">在上方输入 SQL,按 <b>运行 ⌘⏎</b> 执行。</div></div>
+    <div class="flex">
+      <button class="btn btn-ghost btn-sm" id="explainBtn"><i class="placeholder" data-ic="olap"></i> EXPLAIN</button>
+      <button class="btn btn-ghost btn-sm" id="apiBtn"><i class="placeholder" data-ic="code"></i> API</button>
+      <button class="btn btn-ghost btn-sm" id="mvTplBtn" title="插入 CREATE MATERIALIZED VIEW 模板"><i class="placeholder" data-ic="database"></i> MV 模板</button>
+      <button class="btn btn-primary btn-sm" id="runBtn"><i class="placeholder" data-ic="play"></i> 运行 ⌘⏎</button>
     </div>
   </div>
-</main>
+
+  <div class="mode-tabs" id="modeTabs" style="margin-bottom:var(--s4)">
+    <button class="mtab active" data-m="sql">SQL 分析</button>
+    <button class="mtab" data-m="daft">Daft DataFrame</button>
+  </div>
+
+  <div class="olap-layout">
+    <!-- Schema 侧栏 -->
+    <aside class="panel flush olap-side">
+      <div class="panel-h"><i class="placeholder" data-ic="database"></i><h3>Schema</h3></div>
+      <div class="side-head">
+        <label class="muted" style="font-size:.68rem;text-transform:uppercase;letter-spacing:.05em">数据集</label>
+        <select class="select" id="dsSel" style="margin-top:4px"></select>
+        <select class="select" id="historySel" style="margin-top:6px;font-size:.74rem" title="查询历史"></select>
+      </div>
+      <div id="schemaList"><div class="muted" style="padding:10px;font-size:.75rem">加载数据集后显示字段…</div></div>
+    </aside>
+
+    <!-- 主区 -->
+    <div class="olap-main">
+      <!-- SQL mode -->
+      <div id="mSql">
+        <div class="panel flush">
+          <div id="editor"></div>
+          <div class="qopts">
+            <label>max_rows <input class="input mono" id="maxRows" value="1000000" style="width:100px"/></label>
+            <span class="muted" style="font-size:.72rem">非流式 JSON · 后端上限 1,000,000 · 前端渲染前 1 万行 + CSV</span>
+          </div>
+        </div>
+        <div class="panel flush">
+          <div class="panel-h"><i class="placeholder" data-ic="database"></i><h3>结果</h3><span class="sub" id="meta">未运行</span></div>
+          <div id="result"><div class="empty">输入 SQL,按 <b>运行 ⌘⏎</b>。</div></div>
+        </div>
+      </div>
+
+      <!-- Daft mode -->
+      <div id="mDaft" class="hidden">
+        <div class="panel flush">
+          <div class="panel-h"><i class="placeholder" data-ic="olap"></i><h3>Daft 链式管道</h3><span class="sub">POST /query/daft · 惰性求值 · 可 Ray 分布式</span>
+            <span class="actions"><button class="btn btn-ghost btn-sm" id="dAddFilter">+ filter</button><button class="btn btn-ghost btn-sm" id="dAddSort">+ sort</button></span></div>
+          <div class="panel-b" style="padding:14px">
+            <div id="dChain"></div>
+            <div class="fg" style="grid-template-columns:1fr 1fr;margin-top:8px">
+              <div><label>select 列(逗号分隔,空=全部)</label><input class="input mono" id="dCols" placeholder="title, score"></div>
+              <div><label>limit</label><input class="input mono" id="dLimit" value="100"></div>
+            </div>
+            <button class="btn btn-primary btn-sm" id="dRun" style="margin-top:8px"><i class="placeholder" data-ic="play"></i> collect() · POST query/daft</button>
+            <div class="muted" style="font-size:.72rem;margin-top:8px">Daft 在 Lance 上做惰性 DataFrame;链式 sort→filter→select→limit,collect() 触发。多模态/AI 函数/UDF 走 Daft Python(见数据准备原型)。</div>
+          </div>
+        </div>
+        <div class="grid grid-2c" style="grid-template-columns:1fr 1fr;gap:var(--s4);margin-top:var(--s3)">
+          <div class="panel flush"><div class="panel-h"><i class="placeholder" data-ic="code"></i><h3>等价 Python</h3></div><pre class="codeblk" id="dPy">df = daft.read_lance("{ds}")\n# 添加步骤…\ndf.collect()</pre></div>
+          <div class="panel flush"><div class="panel-h"><i class="placeholder" data-ic="database"></i><h3>结果</h3><span class="sub" id="dMeta">—</span></div><div id="dResult" style="max-height:240px;overflow:auto"><div class="muted" style="padding:14px">collect 后显示</div></div></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div></main>
 </div>
 
 <script src="vendor/codemirror.bundle.js"></script>
 <script src="assets/console-layout.js"></script>
 <script type="module">
 import { isLoggedIn } from "./src/auth.js";
+import { request, API_BASE } from "./src/api.js";
 import { initWorksheet } from "./src/olap/worksheet.js";
+import { toast } from "./src/ui/toast.js";
 
-if (!isLoggedIn()) {
-  location.replace("login.html");
-} else {
-  renderShell({ active: "olap", crumb: "<b>SQL Worksheet</b>" });
+if (!isLoggedIn()) { location.replace("login.html"); }
+else {
+  const { renderShell, icon } = window;
+  renderShell({ active: "olap", crumb: "<b>深度分析</b>" });
   applyIcons();
   initWorksheet();
+
+  const $ = (s) => document.querySelector(s);
+  const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const errMsg = (e) => { const m = e?.detail; return Array.isArray(m) ? m.map((x) => x?.msg || x).join("; ") : (m || e?.message || String(e)); };
+
+  // ---------- mode tab + engineSel 联动 ----------
+  function setMode(m) {
+    document.querySelectorAll("#modeTabs .mtab").forEach((t) => t.classList.toggle("active", t.dataset.m === m));
+    ["Sql", "Daft"].forEach((n) => $(`#m${n}`).classList.toggle("hidden", `m${n}`.toLowerCase().slice(1) !== m));
+  }
+  $("#modeTabs").addEventListener("click", (e) => { const b = e.target.closest(".mtab"); if (b) setMode(b.dataset.m); });
+
+  // ---------- MV 模板(原"物化视图"tab 降级为 SQL 内模板按钮)----------
+  $("#mvTplBtn")?.addEventListener("click", () => {
+    const ds = $("#dsSel").value || "{ds}";
+    const sql = `-- 跨存储物化视图:DuckLake 按月聚合
+CREATE MATERIALIZED VIEW mv_monthly_quality AS
+SELECT doc_type, DATE_TRUNC('month', created_at) AS month,
+       COUNT(*) AS docs, AVG(quality_score) AS avg_q
+FROM "${ds}"
+GROUP BY doc_type, month;
+
+-- 查询物化视图(走 /query/olap)
+SELECT * FROM mv_monthly_quality ORDER BY month DESC;`;
+    setMode("sql");
+    try { const p = navigator.clipboard?.writeText(sql); if (p && p.catch) p.catch(() => {}); } catch (_) {}
+    toast("MV 模板已复制 → 粘贴到 SQL 编辑器运行", "ok", 4000);
+  });
+
+  // ---------- Daft 链式 ----------
+  let dSteps = [];
+  function renderChain() {
+    $("#dChain").innerHTML = dSteps.length ? dSteps.map((s, i) => `<div class="chain-step"><span class="step-kind">${s.kind}</span><span class="mono" style="font-size:.76rem;color:var(--fg-md)">${esc(s.desc)}</span><button class="btn btn-ghost btn-sm" data-del="${i}">×</button></div>`).join("") : `<div class="muted" style="font-size:.78rem;padding:6px">无可选步骤(直接 select+limit)</div>`;
+    $("#dChain").querySelectorAll("[data-del]").forEach((b) => b.addEventListener("click", () => { dSteps.splice(parseInt(b.dataset.del), 1); renderChain(); updPy(); }));
+    updPy();
+  }
+  function updPy() {
+    const ds = $("#dsSel").value || "{ds}";
+    let py = `df = daft.read_lance("${ds}")`;
+    dSteps.forEach((s) => { py += "\n" + s.py; });
+    if ($("#dCols").value.trim()) py += `\n   .select(${$("#dCols").value.split(",").map((c) => `"${c.trim()}"`).join(", ")})`;
+    py += `\n   .limit(${parseInt($("#dLimit").value) || 100})\n   .collect()`;
+    $("#dPy").textContent = py;
+  }
+  $("#dAddFilter").addEventListener("click", () => {
+    const col = prompt("filter 列名(如 score):"); if (!col) return;
+    const op = prompt("操作符(eq/ne/gt/gte/lt/lte/is_null/is_not_null):", "gt") || "gt";
+    const val = prompt("值(数字/字符串,is_null 留空):", "0");
+    dSteps.push({ kind: "filter", desc: `${col} ${op} ${val}`, py: `   .where(daft.col("${col}") ${op === "eq" ? "==" : op === "ne" ? "!=" : op} ${isNaN(Number(val)) ? `"${val}"` : Number(val)})` });
+    renderChain();
+  });
+  $("#dAddSort").addEventListener("click", () => {
+    const col = prompt("sort 列名:"); if (!col) return;
+    const desc = confirm("降序?"); dSteps.push({ kind: "sort", desc: `${col} ${desc ? "DESC" : "ASC"}`, py: `   .sort("${col}", desc=${desc})` });
+    renderChain();
+  });
+  function runDaft() {
+    const ds = $("#dsSel").value; if (!ds) return toast("请先选择数据集", "warn");
+    const body = { limit: parseInt($("#dLimit").value) || 100, format: "json" };
+    const cols = $("#dCols").value.split(",").map((c) => c.trim()).filter(Boolean);
+    if (cols.length) body.columns = cols;
+    body.filters = []; body.sort = null;
+    dSteps.forEach((s) => {
+      if (s.kind === "filter") { const m = s.desc.match(/(\S+)\s(\S+)\s(.+)/); if (m) body.filters.push({ column: m[1], op: m[2], value: isNaN(Number(m[3])) ? m[3] : Number(m[3]) }); }
+      else if (s.kind === "sort") { const m = s.desc.match(/(\S+)\s(DESC|ASC)/); if (m) body.sort = { column: m[1], desc: m[2] === "DESC" }; }
+    });
+    if (!body.filters.length) delete body.filters;
+    $("#dMeta").textContent = "collect 中…";
+    request("POST", `/datasets/${encodeURIComponent(ds)}/query/daft`, { body })
+      .then((r) => {
+        const rows = r.rows || []; const cols2 = rows.length ? Object.keys(rows[0]) : [];
+        $("#dMeta").textContent = `${r.row_count ?? rows.length} 行 · ${r.column_count ?? cols2.length} 列${r.warnings?.length ? " · ⚠ " + r.warnings.length + " 警告" : ""}`;
+        $("#dResult").innerHTML = rows.length ? `<table class="res-tbl"><thead><tr>${cols2.map((c) => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>${rows.slice(0, 200).map((row) => `<tr>${cols2.map((c) => `<td class="mono">${esc(row[c] ?? "")}</td>`).join("")}</tr>`).join("")}</tbody></table>` : `<div class="muted" style="padding:14px">无结果</div>`;
+      })
+      .catch((e) => { $("#dMeta").textContent = "失败"; $("#dResult").innerHTML = `<div style="padding:14px;color:var(--danger)">${esc(errMsg(e))}</div>`; toast("Daft 查询失败:" + errMsg(e), "danger", 5000); });
+  }
+  $("#dRun").addEventListener("click", runDaft);
+  $("#dCols").addEventListener("input", updPy); $("#dLimit").addEventListener("input", updPy);
+  renderChain();
 }
 </script>
 </body>

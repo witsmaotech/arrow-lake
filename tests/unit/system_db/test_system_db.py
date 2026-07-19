@@ -247,6 +247,26 @@ class TestIdentityStore:
         assert stored == _hash_token(plaintext)
         assert plaintext not in stored
 
+    def test_update_user(self, identity: IdentityStore) -> None:
+        from arrow_lake.api.passwords import hash_password
+
+        uid = identity.create_user(
+            "carol", role="viewer", password_hash=hash_password("oldpass123")
+        )
+        # patch role + email + is_active
+        assert identity.update_user(uid, role="editor", email="c@x.io", is_active=False) is True
+        users = {u["username"]: u for u in identity.list_users()}
+        assert users["carol"]["role"] == "editor"
+        assert users["carol"]["email"] == "c@x.io"
+        assert users["carol"]["is_active"] is False
+        # patch password (pbkdf2 uses random salt → only assert it changed)
+        old_hash = identity.get_user_with_credentials("carol")["password_hash"]
+        assert identity.update_user(uid, password_hash=hash_password("newpass456")) is True
+        new_hash = identity.get_user_with_credentials("carol")["password_hash"]
+        assert new_hash != old_hash
+        # no-op (no fields) → False
+        assert identity.update_user(uid) is False
+
 
 # --------------------------------------------------------------------------- #
 # PermissionChecker — store-backed integration + fallback regression
