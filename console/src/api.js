@@ -13,6 +13,8 @@ export class ApiError extends Error {
 }
 
 let refreshing = null;
+let lastRefresh = 0;
+const REFRESH_COOLDOWN = 5000;
 async function doRefresh() {
   const rt = getRefreshToken();
   if (!rt) throw new ApiError(401, "无 refresh token,请重新登录");
@@ -47,12 +49,13 @@ export async function request(method, path, { body, headers, signal } = {}) {
     throw new ApiError(0, e.message || "网络错误(后端不可达?)");
   }
 
-  // 401 → refresh once, retry
-  if (r.status === 401 && getRefreshToken() && !path.startsWith("/auth/")) {
+  // 401 → refresh once, retry(cooldown 防并发重试期间重复 refresh)
+  if (r.status === 401 && getRefreshToken() && !path.startsWith("/auth/") && Date.now() - lastRefresh > REFRESH_COOLDOWN) {
     try {
       refreshing = refreshing || doRefresh();
       await refreshing;
       refreshing = null;
+      lastRefresh = Date.now();
     } catch (e) {
       clearTokens();
       throw e;
@@ -60,6 +63,7 @@ export async function request(method, path, { body, headers, signal } = {}) {
     const opt2 = { method, headers: withAuth(headers), signal };
     if (body !== undefined) opt2.body = JSON.stringify(body);
     r = await fetch(`${API_BASE}${path}`, opt2);
+    if (r.status === 401) { clearTokens(); throw new ApiError(401, "刷新后仍 401,请重新登录"); }
   }
 
   if (!r.ok) {

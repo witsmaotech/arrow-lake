@@ -169,17 +169,22 @@ async function init() {
   } catch (e) { toastSafe("加载数据集失败: " + (e.detail || e.message), "danger"); }
 }
 
+let dsGen = 0;
 async function selectDataset(name) {
+  const my = ++dsGen;
   state.current = name;
   try {
     const p = await loadProfile(name);
+    if (my !== dsGen) return;  // 被更新的选择取代,丢弃过期 profile
     state.textCols = p.textCols;
     state.profile = p;
     renderKpis(p, $("#kpis"));
   } catch (e) {
+    if (my !== dsGen) return;
     $("#kpis").innerHTML = `<div class="muted" style="grid-column:1/-1;padding:14px;color:var(--danger)">质量画像加载失败: ${esc(e.detail || e.message)}</div>`;
     state.textCols = ["text_content"];
   }
+  if (my !== dsGen) return;
   renderOpList($("#opList"), state.textCols, (op) => pickOp(op));
   pickOp(state.op);
 }
@@ -241,7 +246,7 @@ $("#runBtn").addEventListener("click", async () => {
       onProgress: (p, txt) => { $("#runBar").style.width = (p * 100) + "%"; $("#runPct").textContent = Math.round(p * 100) + "%"; if (txt) $("#runStatus").textContent = txt; },
       onResult: renderRunResult,
       onTask: (taskId, opName) => {
-        $("#rTask").innerHTML = `<a href="tasks.html?task=${encodeURIComponent(taskId)}" style="color:var(--teal-bright)">${String(taskId).slice(0,8)}</a>`;
+        $("#rTask").innerHTML = `<a href="tasks.html?task=${encodeURIComponent(taskId)}" style="color:var(--teal-bright)">${esc(String(taskId).slice(0,8))}</a>`;
         toastSafe(`${opName} 已提交为异步任务`, "ok");
       },
       currentRows: state.profile ? state.profile.total_rows : null,

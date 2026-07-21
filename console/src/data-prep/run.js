@@ -28,23 +28,28 @@ export async function runSubmit(ds, op, formEl, hooks) {
   }
 }
 
-function pollTask(taskId, op, hooks) {
+function pollTask(taskId, op, hooks, timeoutMs = 10 * 60 * 1000) {
   return new Promise((resolve, reject) => {
     let done = false;
+    let timer;
     const unsub = watchTask(taskId, (t) => {
       if (done) return;
       const p = parseFloat(t.progress) || 0;
       hooks.onProgress?.(p, t.status);
       if (/COMPLETED|SUCCESS/i.test(t.status || "")) {
-        done = true; unsub();
+        done = true; clearTimeout(timer); unsub();
         hooks.onProgress?.(1, "完成");
         hooks.onResult?.(normalizeResult(t.result, op));
         resolve();
       } else if (/FAILED|ERROR|CANCELL/i.test(t.status || "")) {
-        done = true; unsub();
+        done = true; clearTimeout(timer); unsub();
         reject(new Error(t.error || t.status || "任务失败"));
       }
     });
+    timer = setTimeout(() => {
+      if (done) return; done = true; unsub();
+      reject(new Error("任务超时(10min 未结束)"));
+    }, timeoutMs);
   });
 }
 
