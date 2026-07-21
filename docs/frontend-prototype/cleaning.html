@@ -115,7 +115,7 @@
 <script src="assets/layout.js"></script>
 <script>
 const { renderShell, icon } = window;
-renderShell({ active: "", crumb: '<b>数据准备</b> · 原型' });
+renderShell({ active: "cleaning", crumb: '<b>数据准备</b> · 原型' });
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 $("#telem").innerHTML = `<span class="item"><span class="dot"></span>引擎 <b>Daft 0.7</b></span><span class="item">模式 <b>惰性 DataFrame</b></span><span class="item">分布式 <b>Native → Ray</b></span><span class="item" style="margin-left:auto">原型 · mock 数据</span>`;

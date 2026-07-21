@@ -76,6 +76,7 @@ const NAV = [
   {group:'数据',items:[
     {id:'datasets',label:'数据集',ic:'database',href:'datasets.html'},
     {id:'ingest',label:'数据摄入',ic:'ingest',href:'ingest.html'},
+    {id:'cleaning',label:'数据准备',ic:'filter',href:'cleaning.html'},
     {id:'embeddings',label:'嵌入与索引',ic:'embed',href:'embeddings.html'},
   ]},
   {group:'智能',items:[

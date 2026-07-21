@@ -168,21 +168,27 @@ function renderFields() {
   uploadedBlobs = []; pickedFiles = []; // 切换来源重置
   if (src === "documents") {
     $("#fields").innerHTML = renderUploadHTML(DOC_ACCEPT, "PDF · MD/TXT · HTML · DOCX/DOC · PPTX · XLSX/XLS · EPUB · RTF · ODT/ODS/ODP")
-      + `<div class="field" style="margin-top:var(--s3)"><label>doc_type(KG 抽取路由 · 可选)</label><select class="select" id="docType">
-          <option value="">未指定(untyped)</option>
-          <option value="research_paper">研究论文(research_paper)</option>
-          <option value="report">报告(report)</option>
-          <option value="policy">政策法规(policy)</option>
-          <option value="patent">专利(patent)</option>
-          <option value="manual">手册 / 说明(manual)</option>
-          <option value="legal_contract">法律合同(legal_contract)</option>
-          <option value="financial_report">财报(financial_report)</option>
-          <option value="medical_record">病历(medical_record)</option>
-          <option value="technical_spec">技术规格(technical_spec)</option>
-        </select></div>
+      + `<div class="grid g-2" style="margin-top:var(--s3)">
+          <div class="field"><label>文件格式 <span class="muted" style="font-weight:400">(限定上传类型)</span></label><select class="select" id="fileFmt">${[["","自动识别(全部 14 种)"],[".pdf","PDF"],[".docx,.doc","Word(docx/doc)"],[".pptx,.ppt","PowerPoint(pptx/ppt)"],[".xlsx,.xls","Excel(xlsx/xls)"],[".md,.markdown","Markdown(md)"],[".txt","文本(txt)"],[".html,.htm","HTML"],[".epub","EPUB"],[".rtf","RTF"],[".odt","ODT"],[".ods","ODS"],[".odp","ODP"]].map(([v,t])=>`<option value="${v}">${t}</option>`).join("")}</select></div>
+          <div class="field"><label>doc_type <span class="muted" style="font-weight:400">(KG 抽取路由 · 可选)</span></label><select class="select" id="docType">
+            <option value="">未指定(untyped)</option>
+            <option value="research_paper">研究论文(research_paper)</option>
+            <option value="report">报告(report)</option>
+            <option value="policy">政策法规(policy)</option>
+            <option value="patent">专利(patent)</option>
+            <option value="manual">手册 / 说明(manual)</option>
+            <option value="legal_contract">法律合同(legal_contract)</option>
+            <option value="financial_report">财报(financial_report)</option>
+            <option value="medical_record">病历(medical_record)</option>
+            <option value="technical_spec">技术规格(technical_spec)</option>
+          </select></div>
+        </div>
         <div class="muted" style="font-size:.7rem;margin-top:var(--s3)">v1.8.9 端点自动:解析 → chunk → <b>embed</b> → <b>FTS 索引</b></div>`;
     window.applyIcons && applyIcons($("#fields"));
     bindUpload();
+    // 文件格式下拉 → 动态限定上传 accept(选 PDF 则只收 .pdf;默认全部)
+    const _fmt = $("#fileFmt"), _fi = $("#fileInput");
+    if (_fmt && _fi) _fmt.addEventListener("change", () => { _fi.accept = _fmt.value || DOC_ACCEPT; });
   } else if (src === "images") {
     $("#fields").innerHTML = renderUploadHTML(IMG_ACCEPT, "JPG · PNG · WEBP · GIF · BMP · TIFF(任意 image/*)")
       + `<div class="muted" style="font-size:.7rem;margin-top:var(--s3)">上传文件即可;缩略图 + CLIP embed(可选)</div>`;
