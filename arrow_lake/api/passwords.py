@@ -21,8 +21,13 @@ def hash_password(password: str) -> str:
     return f"{ALGO}${ITERATIONS}${base64.b64encode(salt).decode()}${base64.b64encode(dk).decode()}"
 
 
+_DUMMY_HASH = hash_password("arrow-lake-dummy-verify")
+
+
 def verify_password(password: str, stored: str | None) -> bool:
     if not stored:
+        # Equalize timing with the real path to avoid user enumeration via response time.
+        verify_password(password, _DUMMY_HASH)
         return False
     try:
         algo, iters, salt_b64, hash_b64 = stored.split("$", 3)

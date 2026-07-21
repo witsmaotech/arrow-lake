@@ -64,7 +64,7 @@ async def create_user(
             password_hash=hash_password(req.password),
         )
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=409, detail=f"Could not create user: {exc}") from exc
+        raise HTTPException(status_code=409, detail="Could not create user (conflict or invalid input)") from exc
     return {"id": uid, "username": req.username, "email": req.email, "role": req.role}
 
 
@@ -120,7 +120,7 @@ async def update_user(
             is_active=req.is_active,
         )
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=409, detail=f"Could not update user: {exc}") from exc
+        raise HTTPException(status_code=409, detail="Could not update user (conflict or invalid input)") from exc
     if not ok:
         raise HTTPException(status_code=404, detail="User not found")
     return {"id": user_id, "updated": True}
@@ -167,7 +167,7 @@ async def issue_token(
             user_id, name=req.name, scopes=req.scopes or None, expires_at=req.expires_at,
         )
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=409, detail=f"Could not issue token: {exc}") from exc
+        raise HTTPException(status_code=409, detail="Could not issue token (conflict or invalid input)") from exc
     return {
         "token": plaintext,
         "id": rec["id"],

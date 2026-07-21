@@ -73,8 +73,8 @@ class LlmLabelRequest(BaseModel):
     new_column: str
     prompt_template: str  # must contain {text}
     model: str | None = None
-    max_rows: int | None = None
-    concurrency: int = 8
+    max_rows: int | None = Field(default=None, ge=1, le=10000)
+    concurrency: int = Field(default=8, ge=1, le=32)
 
 
 class ExtractFieldDef(BaseModel):
@@ -91,8 +91,8 @@ class ExtractRequest(BaseModel):
     column: str
     fields: list[ExtractFieldDef] = Field(..., min_length=1, max_length=20)
     model: str | None = None
-    max_rows: int | None = None
-    concurrency: int = 8
+    max_rows: int | None = Field(default=None, ge=1, le=10000)
+    concurrency: int = Field(default=8, ge=1, le=32)
 
 
 class PrepTaskResponse(BaseModel):
