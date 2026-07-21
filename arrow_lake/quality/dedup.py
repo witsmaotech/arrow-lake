@@ -67,10 +67,14 @@ class ContentDeduplicator:
     - ``both``: Exact first, then perceptual on remaining unique rows.
 
     Args:
-        strategy: Dedup strategy ("exact", "perceptual", "both").
+        strategy: Dedup strategy ("exact", "perceptual", "both", "minhash").
         action: What to do with duplicates ("flag" keeps them with a marker,
                "remove" excludes them from the result).
         perceptual_threshold: Maximum Hamming distance for perceptual duplicates.
+        text_column: Column to hash for ``minhash`` (required for that strategy).
+        ngram_size: Character n-gram size for MinHash shingling.
+        num_hashes: Number of MinHash permutations (``num_perm``).
+        threshold: Jaccard similarity threshold (0.0–1.0) for near-duplicate.
     """
 
     def __init__(
@@ -78,14 +82,27 @@ class ContentDeduplicator:
         strategy: str = "exact",
         action: str = "flag",
         perceptual_threshold: int = 10,
+        *,
+        text_column: str | None = None,
+        ngram_size: int = 5,
+        num_hashes: int = 128,
+        threshold: float = 0.8,
     ) -> None:
-        if strategy not in ("exact", "perceptual", "both"):
-            raise ValueError(f"strategy must be 'exact', 'perceptual', or 'both', got {strategy!r}")
+        if strategy not in ("exact", "perceptual", "both", "minhash"):
+            raise ValueError(
+                f"strategy must be 'exact', 'perceptual', 'both', or 'minhash', got {strategy!r}"
+            )
+        if strategy == "minhash" and not text_column:
+            raise ValueError("strategy='minhash' requires a text_column")
         if action not in ("flag", "remove"):
             raise ValueError(f"action must be 'flag' or 'remove', got {action!r}")
         self._strategy = strategy
         self._action = action
         self._perceptual_threshold = perceptual_threshold
+        self._text_column = text_column
+        self._ngram_size = ngram_size
+        self._num_hashes = num_hashes
+        self._threshold = threshold
 
     @property
     def name(self) -> str:
@@ -110,6 +127,10 @@ class ContentDeduplicator:
                 action=self._action,
                 table=table,
             )
+
+        # MinHash LSH semantic dedup — isolated path (CPU datasketch, no GPU gate).
+        if self._strategy == "minhash":
+            return self._deduplicate_minhash(table)
 
         # Compute hashes
         sha256_col = self._compute_sha256_column(table)
@@ -150,6 +171,75 @@ class ContentDeduplicator:
             action=self._action,
             table=result_table,
         )
+
+    # ------------------------------------------------------------------
+    # Internal: MinHash LSH (semantic / near-duplicate text dedup)
+    # ------------------------------------------------------------------
+
+    def _deduplicate_minhash(self, table: pa.Table) -> DedupResult:
+        """Near-duplicate text dedup via MinHash + LSH (CPU datasketch).
+
+        Keeps the first occurrence of each near-duplicate cluster. ``flag``
+        adds an ``is_duplicate`` column; ``remove`` returns unique rows only.
+        Rows whose text is missing or shorter than ``ngram_size`` are kept.
+        """
+        flags = self._compute_minhash_flags(table)
+        total = table.num_rows
+        duplicates = sum(1 for f in flags if f)
+        unique_count = total - duplicates
+
+        if self._action == "flag":
+            result_table = table.append_column(
+                pa.field("is_duplicate", pa.bool_(), nullable=False),
+                pa.array(flags, type=pa.bool_()),
+            )
+        else:  # remove
+            keep = [i for i, f in enumerate(flags) if not f]
+            result_table = table.take(keep) if keep else table.slice(0, 0)
+
+        return DedupResult(
+            total_rows=total,
+            unique_rows=unique_count,
+            duplicates_found=duplicates,
+            strategy="minhash",
+            action=self._action,
+            table=result_table,
+        )
+
+    def _compute_minhash_flags(self, table: pa.Table) -> list[bool]:
+        """Return a per-row ``is_duplicate`` flag list using MinHash LSH.
+
+        First occurrence wins: a row is flagged only if an earlier kept row
+        exceeds the Jaccard ``threshold``. Missing text column → no flags.
+        """
+        if not self._text_column or self._text_column not in table.column_names:
+            return [False] * table.num_rows
+
+        try:
+            from datasketch import MinHash, MinHashLSH
+        except ImportError as exc:  # pragma: no cover - datasketch is a dep
+            raise QualityError(
+                error_code=ErrorCode.DEDUP_HASH_COMPUTATION_FAILED,
+                message="datasketch is required for minhash dedup",
+            ) from exc
+
+        texts = table.column(self._text_column).to_pylist()
+        lsh = MinHashLSH(threshold=self._threshold, num_perm=self._num_hashes)
+
+        flags: list[bool] = []
+        for text in texts:
+            if not isinstance(text, str) or len(text) < self._ngram_size:
+                flags.append(False)  # too short / null → keep as unique
+                continue
+            mh = MinHash(num_perm=self._num_hashes)
+            for start in range(len(text) - self._ngram_size + 1):
+                mh.update(text[start : start + self._ngram_size].encode("utf-8"))
+            if lsh.query(mh):
+                flags.append(True)
+            else:
+                lsh.insert(str(len(flags)), mh)
+                flags.append(False)
+        return flags
 
     def deduplicate_incremental(
         self,

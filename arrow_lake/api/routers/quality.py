@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import asdict
 
-from fastapi import APIRouter, Depends, Path
+from fastapi import APIRouter, Depends, Path, Request
 
 from arrow_lake.api.auth_models import Role
 from arrow_lake.api.deps import get_lake, require_role
@@ -12,6 +13,9 @@ from arrow_lake.api.models.common import _NAME_PATTERN, arrow_table_to_response
 from arrow_lake.api.models.quality import (
     DedupRequest,
     DedupResponse,
+    ExtractRequest,
+    LlmLabelRequest,
+    PrepTaskResponse,
     QualityFilterRequest,
     QualityFilterResponse,
     QualityReportResponse,
@@ -19,7 +23,20 @@ from arrow_lake.api.models.quality import (
     QualityRuleSetRequest,
     QualityRuleSetResponse,
 )
+from arrow_lake.api.tasks import TaskManager
 from arrow_lake.api.utils import run_sync
+from arrow_lake.quality.llm_enrich import extract_fields, label_column
+
+# Strong references for fire-and-forget background tasks so the asyncio GC
+# does not silently cancel them mid-run (cf. kg_build fire-forget lesson).
+_BG_TASKS: set[asyncio.Task] = set()
+
+
+def _spawn(coro) -> None:
+    """Schedule a background coroutine, keeping a strong ref until it completes."""
+    t = asyncio.create_task(coro)
+    _BG_TASKS.add(t)
+    t.add_done_callback(_BG_TASKS.discard)
 
 router = APIRouter(prefix="/api/v1/datasets", tags=["quality"])
 
@@ -70,6 +87,7 @@ async def deduplicate(
         lake.deduplicate, name,
         strategy=req.strategy, action=req.action,
         perceptual_threshold=req.perceptual_threshold,
+        text_column=req.text_column,
         timeout=_QUALITY_TIMEOUT, label="deduplicate",
     )
     report_dict = asdict(report) if hasattr(report, "__dataclass_fields__") else report
@@ -173,3 +191,86 @@ async def quality_profile(
         "error": None,
         "metadata": {},
     }
+
+
+# ---------------------------------------------------------------------------
+# Data-prep enrichment (LLM labeling & structured extraction) — async
+# ---------------------------------------------------------------------------
+
+_LLM_DEFAULT_MAX_ROWS = 5000
+
+
+@router.post(
+    "/{name}/quality/llm_label",
+    response_model=PrepTaskResponse,
+    status_code=202,
+)
+async def llm_label(
+    request: Request,  # noqa: ARG001 — present for symmetry / future app-state hooks
+    name: str = Path(..., pattern=_NAME_PATTERN),
+    *,
+    req: LlmLabelRequest,
+    lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.EDITOR)),
+) -> PrepTaskResponse:
+    """Batch-LLM label a text column into a new column (async task).
+
+    Renders ``prompt_template`` (with ``{text}``) per row, writes results to
+    ``new_column`` via native Lance column add. Poll ``GET /tasks/{task_id}/status``.
+    """
+    task_id = TaskManager.create_task(
+        "llm_label", name,
+        detail={"column": req.column, "new_column": req.new_column},
+    )
+    _spawn(
+        TaskManager.run_background(
+            task_id, label_column, lake, name,
+            req.column, req.new_column, req.prompt_template,
+            model=req.model,
+            max_rows=req.max_rows or _LLM_DEFAULT_MAX_ROWS,
+            concurrency=req.concurrency,
+        )
+    )
+    return PrepTaskResponse(
+        task_id=task_id,
+        operation="llm_label",
+        message=f"LLM labeling started: '{name}.{req.column}' → '{req.new_column}'",
+    )
+
+
+@router.post(
+    "/{name}/quality/extract",
+    response_model=PrepTaskResponse,
+    status_code=202,
+)
+async def extract(
+    request: Request,  # noqa: ARG001
+    name: str = Path(..., pattern=_NAME_PATTERN),
+    *,
+    req: ExtractRequest,
+    lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.EDITOR)),
+) -> PrepTaskResponse:
+    """Batch structured extraction from a text column → multiple columns (async).
+
+    Each field in ``fields`` becomes a new string column. Poll task status.
+    """
+    field_dicts = [f.model_dump() for f in req.fields]
+    task_id = TaskManager.create_task(
+        "extract", name,
+        detail={"column": req.column, "fields": [f["name"] for f in field_dicts]},
+    )
+    _spawn(
+        TaskManager.run_background(
+            task_id, extract_fields, lake, name,
+            req.column, field_dicts,
+            model=req.model,
+            max_rows=req.max_rows or _LLM_DEFAULT_MAX_ROWS,
+            concurrency=req.concurrency,
+        )
+    )
+    return PrepTaskResponse(
+        task_id=task_id,
+        operation="extract",
+        message=f"Structured extraction started on '{name}.{req.column}' ({len(field_dicts)} fields)",
+    )

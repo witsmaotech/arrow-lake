@@ -114,7 +114,7 @@ async def test_deduplicate(client: AsyncClient, mock_lake: MagicMock) -> None:
     assert body["report"]["duplicates"] == 5
 
     mock_lake.deduplicate.assert_called_once_with(
-        "docs", strategy="exact", action="flag", perceptual_threshold=None
+        "docs", strategy="exact", action="flag", perceptual_threshold=None, text_column=None
     )
 
 
@@ -126,7 +126,7 @@ async def test_deduplicate_perceptual(client: AsyncClient, mock_lake: MagicMock)
     )
     assert resp.status_code == 200
     mock_lake.deduplicate.assert_called_once_with(
-        "docs", strategy="perceptual", action="remove", perceptual_threshold=15
+        "docs", strategy="perceptual", action="remove", perceptual_threshold=15, text_column=None
     )
 
 

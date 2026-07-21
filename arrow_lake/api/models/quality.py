@@ -21,6 +21,7 @@ class DedupRequest(BaseModel):
     strategy: str | None = None
     action: str | None = None
     perceptual_threshold: int | None = None
+    text_column: str | None = None
 
 
 class DedupResponse(BaseModel):
@@ -58,3 +59,45 @@ class QualityRuleSetResponse(BaseModel):
     applied_rules: int = 0
     results: list[QualityRuleResultItem] = []
     total_affected_rows: int = 0
+
+
+# ---------------------------------------------------------------------------
+# Data-prep enrichment (LLM labeling & structured extraction) — async tasks
+# ---------------------------------------------------------------------------
+
+
+class LlmLabelRequest(BaseModel):
+    """Batch-LLM labeling: render ``prompt_template`` per row, write a new column."""
+
+    column: str
+    new_column: str
+    prompt_template: str  # must contain {text}
+    model: str | None = None
+    max_rows: int | None = None
+    concurrency: int = 8
+
+
+class ExtractFieldDef(BaseModel):
+    """One field to extract from text (stored as string)."""
+
+    name: str
+    type: str = "string"
+    description: str = ""
+
+
+class ExtractRequest(BaseModel):
+    """Batch structured extraction: text column → multiple new columns."""
+
+    column: str
+    fields: list[ExtractFieldDef] = Field(..., min_length=1, max_length=20)
+    model: str | None = None
+    max_rows: int | None = None
+    concurrency: int = 8
+
+
+class PrepTaskResponse(BaseModel):
+    """Acknowledgement for an async data-prep operation."""
+
+    task_id: str
+    operation: str
+    message: str = ""
