@@ -206,8 +206,10 @@ async function loadIndexes() {
   } catch (_) { $("#idxPanel").style.display = "none"; }
 }
 
-async function embedQuery(text) {
-  const r = await request("POST", "/embed/text", { body: { texts: [text] } });
+async function embedQuery(text, vCol) {
+  // image_embedding 列用 CLIP 跨模态文本塔(与图像同空间,支持文本搜图);普通向量列用 text embed
+  const isClip = vCol && /image_embedding|clip/i.test(vCol);
+  const r = await request("POST", isClip ? "/embed/clip-text" : "/embed/text", { body: { texts: [text] } });
   const vec = (r.embeddings || [])[0];
   if (!vec || !vec.length) throw new Error("嵌入返回空(检查 embedding 后端)");
   return vec;
@@ -243,7 +245,7 @@ $("#searchBtn").addEventListener("click", async () => {
       scoreKey = "_score";
     } else {
       if (mode !== "fts") $("#results").innerHTML = '<div class="muted" style="padding:20px;text-align:center">嵌入查询中…</div>';
-      const qv = await embedQuery(query);
+      const qv = await embedQuery(query, vCol);
       if (mode === "vector") {
         res = await request("POST", `/datasets/${encodeURIComponent(name)}/search/vector`, { body: { query_vector: qv, top_k, vector_column: vCol, where } });
       } else if (mode === "hybrid") {

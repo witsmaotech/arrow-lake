@@ -291,7 +291,9 @@ class CLIPImageEncoder:
             texts, padding=True, truncation=True, return_tensors="pt"
         )
         with torch.no_grad():
-            text_emb = self._model.get_text_features(**inputs).cpu().numpy()
+            _tout = self._model.get_text_features(**inputs)
+            _temb = _tout.pooler_output if hasattr(_tout, "pooler_output") and _tout.pooler_output is not None else _tout
+            text_emb = (_temb.detach() if hasattr(_temb, "detach") else _temb).cpu().numpy()
 
         # L2 normalize — same space as image embeddings from encode()
         norms = np.linalg.norm(text_emb, axis=1, keepdims=True)
