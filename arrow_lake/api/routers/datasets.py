@@ -462,6 +462,11 @@ async def ingest_images(
             lake.ingest_images, name, all_paths,
             timeout=_INGEST_TIMEOUT, label="ingest_images",
         )
+        # 自动 CLIP embed(图像语义检索;模型不可用 → 静默跳过,不阻塞摄入,图已落库可后续手动 embed)
+        try:
+            await run_sync(lake.embed_media, name, image_column="image_data", timeout=_INGEST_TIMEOUT, label="embed_images")
+        except Exception:
+            pass
         _after_ingest_hooks(request.app.state, name, lake)
         return IngestResponse.from_report(report)
     finally:
@@ -490,6 +495,11 @@ async def ingest_videos(
             lake.ingest_videos, name, all_paths,
             timeout=_INGEST_TIMEOUT, label="ingest_videos",
         )
+        # 自动 CLIP embed 关键帧(视频语义检索;模型不可用 → 静默跳过)
+        try:
+            await run_sync(lake.embed_media, name, image_column="video_data", timeout=_INGEST_TIMEOUT, label="embed_videos")
+        except Exception:
+            pass
         _after_ingest_hooks(request.app.state, name, lake)
         return IngestResponse.from_report(report)
     finally:

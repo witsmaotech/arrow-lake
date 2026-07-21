@@ -81,16 +81,17 @@ class CLIPImageEncoder:
 
     def __init__(
         self,
-        model_name: str = "openai/clip-vit-base-patch32",
-        model_source: str = "modelscope",
+        model_name: str | None = None,
+        model_source: str | None = None,
         batch_size: int = 32,
         image_column: str = "image",
     ) -> None:
-        self.model_name = model_name
-        self.model_source = model_source
+        import os
+        self.model_name = model_name or os.environ.get("CLIP_MODEL_NAME", "openai/clip-vit-base-patch32")
+        self.model_source = model_source or os.environ.get("CLIP_MODEL_SOURCE", "huggingface")
         self.batch_size = batch_size
         self.image_column = image_column
-        self.embedding_dim = _MODEL_DIMENSIONS.get(model_name, 0)
+        self.embedding_dim = _MODEL_DIMENSIONS.get(self.model_name, 0)
         self._processor: Any = None
         self._model: Any = None
         self._tokenizer: Any = None
@@ -118,7 +119,9 @@ class CLIPImageEncoder:
 
             model_path = snapshot_download(self.model_name)
         else:
-            model_path = self.model_name
+            from huggingface_hub import snapshot_download as _hf_snapshot
+
+            model_path = _hf_snapshot(self.model_name)
         self._model_path = model_path
         self._processor = AutoImageProcessor.from_pretrained(model_path)
         self._model = AutoModel.from_pretrained(model_path)
@@ -165,14 +168,25 @@ class CLIPImageEncoder:
         embedded_count = 0
         failed_count = 0
 
+        from PIL import Image
+        import io as _io
+
         for batch_start in range(0, len(valid_indices), self.batch_size):
             batch_indices = valid_indices[batch_start : batch_start + self.batch_size]
-            batch_images = [img_col[i].as_py() for i in batch_indices]
+            raw_images = [img_col[i].as_py() for i in batch_indices]
+            # transformers ≥5.x image processor 不自动解码 bytes → 转 PIL Image
+            batch_images = [
+                b if not isinstance(b, (bytes, bytearray))
+                else Image.open(_io.BytesIO(b)).convert("RGB")
+                for b in raw_images
+            ]
 
             try:
                 inputs = self._processor(images=batch_images, return_tensors="pt")
-                outputs = self._model(**inputs)
-                batch_embeddings = outputs.image_embeds.cpu().numpy()
+                _out = self._model.get_image_features(**inputs)
+                # transformers ≥5.x 返回 BaseModelOutputWithPooling(pooler_output=投影后嵌入);旧版返 tensor
+                _emb = _out.pooler_output if hasattr(_out, "pooler_output") and _out.pooler_output is not None else _out
+                batch_embeddings = _emb.detach().cpu().numpy()
 
                 # L2 normalize
                 norms = np.linalg.norm(batch_embeddings, axis=1, keepdims=True)

@@ -36,7 +36,13 @@ services:
       - 172.30.0.0/16
     environment:
       PYTHONPATH: /app
+      HF_HUB_CACHE: /hf-hub
+      HF_HUB_OFFLINE: "1"
     volumes:
       - type: bind
         source: ../arrow_lake
         target: /app/arrow_lake
+      - type: bind
+        source: /home/witshine/.cache/huggingface/hub/models--openai--clip-vit-base-patch32
+        target: /hf-hub/models--openai--clip-vit-base-patch32
+        read_only: true

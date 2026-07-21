@@ -191,12 +191,12 @@ function renderFields() {
     if (_fmt && _fi) _fmt.addEventListener("change", () => { _fi.accept = _fmt.value || DOC_ACCEPT; });
   } else if (src === "images") {
     $("#fields").innerHTML = renderUploadHTML(IMG_ACCEPT, "JPG · PNG · WEBP · GIF · BMP · TIFF(任意 image/*)")
-      + `<div class="muted" style="font-size:.7rem;margin-top:var(--s3)">存原图 + 缩略图 + EXIF 元数据(不向量化;CLIP embed 待模型就绪)</div>`;
+      + `<div class="muted" style="font-size:.7rem;margin-top:var(--s3)">存原图 + 缩略图 + EXIF;自动 CLIP embed(image_embedding 512d,支持以图搜图/文本搜图)</div>`;
     window.applyIcons && applyIcons($("#fields"));
     bindUpload();
   } else if (src === "videos") {
     $("#fields").innerHTML = renderUploadHTML(VID_ACCEPT, "MP4 · MOV · WEBM · AVI · MKV(任意 video/*)")
-      + `<div class="muted" style="font-size:.7rem;margin-top:var(--s3)">关键帧抽取 + 存原视频(不向量化;CLIP embed 待模型就绪)</div>`;
+      + `<div class="muted" style="font-size:.7rem;margin-top:var(--s3)">关键帧抽取;自动 CLIP embed(关键帧 image_embedding,支持视频语义检索)</div>`;
     window.applyIcons && applyIcons($("#fields"));
     bindUpload();
   } else if (src === "csv" || src === "parquet" || src === "json") {

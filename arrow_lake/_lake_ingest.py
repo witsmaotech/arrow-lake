@@ -723,6 +723,7 @@ class _LakeIngestMixin:
         strategy: str | None = None,
         action: str | None = None,
         perceptual_threshold: int | None = None,
+        text_column: str | None = None,
     ) -> DedupResult:
         """Run content deduplication on a dataset (Story 4.7).
 
@@ -730,9 +731,10 @@ class _LakeIngestMixin:
 
         Args:
             dataset_name: Name of the Lance dataset.
-            strategy: "exact", "perceptual", or "both" (None = use config).
+            strategy: "exact", "perceptual", "both", or "minhash" (None = use config).
             action: "flag" or "remove" (None = use config).
             perceptual_threshold: pHash Hamming distance (None = use config).
+            text_column: Required for strategy="minhash" (semantic text dedup).
 
         Returns:
             DedupResult with dedup statistics and processed table.
@@ -744,6 +746,7 @@ class _LakeIngestMixin:
             strategy=strategy or config.dedup_strategy,
             action=action or config.dedup_action,
             perceptual_threshold=perceptual_threshold or config.dedup_perceptual_threshold,
+            text_column=text_column,
         )
         table = self._get_storage().read_dataset(dataset_name)
         return dedup.deduplicate(table)
@@ -834,3 +837,26 @@ class _LakeIngestMixin:
         vec_table = pa.table({embedding_column: vec_array})
         self._get_storage().add_columns_table(dataset_name, vec_table)
         return n
+
+    def embed_media(
+        self,
+        dataset_name: str,
+        *,
+        image_column: str,
+        embedding_column: str = "image_embedding",
+    ) -> int:
+        """Encode an image/video-bytes column via CLIP/SigLIP, add embedding in-place.
+
+        Uses CLIPImageEncoder (model configurable via CLIP_MODEL_SOURCE /
+        CLIP_MODEL_NAME env; defaults to openai/clip-vit-base-patch32 via HF cache).
+        Mirrors embed_and_add: read column → encode → add_columns_table (no rewrite).
+        """
+        from arrow_lake.embed.image_encoder import CLIPImageEncoder
+
+        encoder = CLIPImageEncoder(image_column=image_column)
+        table = self._get_storage().read_dataset(dataset_name, columns=[image_column])
+        result = encoder.encode(table)
+        if result.embedding_dim > 0 and result.table is not None:
+            vec_table = pa.table({embedding_column: result.table.column(result.vector_column)})
+            self._get_storage().add_columns_table(dataset_name, vec_table)
+        return result.embedded
