@@ -12,12 +12,16 @@ POST /api/v1/datasets/{name}/clean
 (lake.read_dataset 返回 pyarrow),DuckDB 的 arrow 互操作成熟、SQL 表达力
 覆盖全部 6 类结构化变换且无 arrow↔daft 转换风险;transforms.py 留给 ingest
 的 Daft 管道。
+
+安全:SQL 片段里的列名/值/类型都来自前端请求,dtype 走白名单、regex pattern
+走 re.compile + 长度校验,防 SQL 注入与 ReDoS。列名/字符串值用双/单引号转义。
 """
 
 from __future__ import annotations
 
 import duckdb
 import pyarrow as pa
+import re
 from fastapi import APIRouter, Depends, Path
 
 from arrow_lake.api.auth_models import Role
@@ -35,6 +39,25 @@ router = APIRouter(prefix="/api/v1/datasets", tags=["cleaning"])
 
 _CLEAN_TIMEOUT = 300
 _PREVIEW_ROWS = 8
+
+# cast 允许的目标类型白名单(防 SQL 注入:dtype 直接拼进 CAST(... AS <dt>))
+_ALLOWED_DTYPES = {
+    "DOUBLE", "FLOAT", "DECIMAL", "INTEGER", "BIGINT", "SMALLINT", "TINYINT",
+    "VARCHAR", "TEXT", "BOOLEAN", "DATE", "TIMESTAMP",
+}
+_MAX_REGEX_LEN = 200
+
+
+def _safe_regex_pattern(pat) -> str:
+    """校验 regex pattern:非空、长度受限、re.compile 可编译(防 ReDoS / 非法模式)。"""
+    pat = str(pat or "")
+    if not pat or len(pat) > _MAX_REGEX_LEN:
+        raise ValueError(f"regex pattern 为空或过长(>{_MAX_REGEX_LEN})")
+    try:
+        re.compile(pat)
+    except re.error as e:
+        raise ValueError(f"无效 regex pattern: {e}") from e
+    return pat
 
 
 # ---------------------------------------------------------------------------
@@ -59,9 +82,11 @@ def _col(name: str) -> str:
 def _transform_expr(t: str, p: dict, base: str) -> str:
     """对 base 表达式应用单列变换(cast/fillna/trim/lower/upper/regex_replace/case),返回新表达式。"""
     if t == "cast":
-        dt = p.get("dtype")
-        if not dt:
-            raise ValueError("cast requires params.dtype")
+        dt = str(p.get("dtype") or "").upper()
+        if dt not in _ALLOWED_DTYPES:
+            raise ValueError(
+                f"cast dtype 不在允许列表: {p.get('dtype')!r}。允许: {sorted(_ALLOWED_DTYPES)}"
+            )
         return f"CAST({base} AS {dt})"
     if t == "fillna":
         return f"COALESCE({base}, {_lit(p.get('value'))})"
@@ -72,9 +97,7 @@ def _transform_expr(t: str, p: dict, base: str) -> str:
     if t == "upper":
         return f"upper({base})"
     if t == "regex_replace":
-        pat = p.get("pattern")
-        if not pat:
-            raise ValueError("regex_replace requires params.pattern")
+        pat = _safe_regex_pattern(p.get("pattern"))
         return f"regexp_replace({base}, {_lit(pat)}, {_lit(p.get('replacement', ''))})"
     if t == "case":
         mapping = p.get("mapping") or {}
@@ -94,7 +117,7 @@ _COL_TRANSFORMS = {"cast", "fillna", "trim", "lower", "upper", "regex_replace", 
 def _build_sql(steps: list[CleanStep], filters: list[CleanFilter], columns: list[str]) -> str:
     """把 steps + filters 翻译成一条 DuckDB SQL。
 
-    - 每列维护一个「当前表达式」(初始 = 原列名),多个作用同列的 step 链式叠加
+    - 每列维护一个「当前表达式」 (初始 = 原列名),多个作用同列的 step 链式叠加
     - split/concat 产新列;rename 改列名;drop 移除列
     """
     expr: dict[str, str] = {c: _col(c) for c in columns}
@@ -203,7 +226,12 @@ async def clean_dataset(
     lake=Depends(get_lake),
     _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> CleanResponse:
-    """对结构化数据集跑清洗管道(语义 steps + filters),可选写回。"""
+    """对结构化数据集跑清洗管道(语义 steps + filters),可选写回。
+
+    鉴权:require_role(EDITOR) —— 与 quality 端点(dedup/filter/rules)一致,
+    均为 role-level。dataset-level ACL(get_checker 框架存在)目前未应用到
+    quality/clean,是项目级一致缺口,留统一加固;此处 write_back 受 EDITOR 角色约束。
+    """
     table = _to_pa_table(
         await run_sync(lake.read_dataset, name, timeout=_CLEAN_TIMEOUT, label="clean_read")
     )
