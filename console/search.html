@@ -225,7 +225,9 @@ function renderHits(res, scoreKey) {
     const tk = textKeys.find(k => r[k] != null);
     const snippet = tk ? String(r[tk]) : JSON.stringify(Object.entries(r).filter(([k]) => !k.startsWith("_")).slice(0, 4));
     const meta = Object.entries(r).filter(([k]) => !k.startsWith("_") && !textKeys.includes(k)).slice(0, 4).map(([k, v]) => `${k}=${typeof v === "object" ? "…" : String(v).slice(0, 30)}`).join(" · ");
-    return `<div class="hit"><div class="hit-head"><span class="hit-score">${scoreKey}: ${score?.toFixed?.(4) ?? esc(score ?? "—")}</span></div><div class="hit-text">${esc(snippet.length > 400 ? snippet.slice(0, 400) + "…" : snippet)}</div>${meta ? `<div class="hit-meta">${esc(meta)}</div>` : ""}</div>`;
+    const _imgCol = ["image_thumbnail","image_preview","video_data","image_data"].find(k => r[k] && typeof r[k] === "string");
+    const _thumb = _imgCol ? `<img src="data:image/jpeg;base64,${r[_imgCol]}" alt="" style="max-width:140px;max-height:100px;border-radius:var(--r-sm);border:1px solid var(--line-soft);margin:4px 0;display:block">` : "";
+    return `<div class="hit"><div class="hit-head"><span class="hit-score">${scoreKey}: ${score?.toFixed?.(4) ?? esc(score ?? "—")}</span></div>${_thumb}<div class="hit-text">${esc(snippet.length > 400 ? snippet.slice(0, 400) + "…" : snippet)}</div>${meta ? `<div class="hit-meta">${esc(meta)}</div>` : ""}</div>`;
   }).join("");
 }
 
