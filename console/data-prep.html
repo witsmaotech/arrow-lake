@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>数据准备 · Arrow Lake Console</title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/tokens.css"/>
+<link rel="stylesheet" href="assets/app.css"/>
+<link rel="stylesheet" href="assets/console.css"/>
+<style>
+  /* 文档型 hero —— 刻意区别于通用页面:文档图标 + 双色强调 + 流程胶囊 */
+  .prep-hero{
+    display:flex;gap:var(--s5);align-items:center;padding:var(--s5);
+    background:
+      radial-gradient(120% 140% at 0% 0%,rgba(20,184,166,.12),transparent 55%),
+      radial-gradient(90% 120% at 100% 100%,rgba(217,119,6,.10),transparent 60%),
+      linear-gradient(180deg,var(--ink-850),var(--ink-900));
+    border:1px solid var(--line);border-radius:var(--r-lg);position:relative;overflow:hidden;
+  }
+  .prep-hero .doc-ic{
+    width:56px;height:56px;border-radius:var(--r-md);flex-shrink:0;display:grid;place-items:center;
+    background:linear-gradient(135deg,var(--teal),var(--info));color:var(--ink-950);box-shadow:var(--shadow-2);
+  }
+  .prep-hero .doc-ic svg{width:30px;height:30px}
+  .prep-hero h1{margin:0;font-size:1.5rem;font-weight:700;letter-spacing:-.01em}
+  .prep-hero .tagline{color:var(--fg-md);font-size:.82rem;margin-top:4px;line-height:1.5}
+  .prep-hero .tagline b{color:var(--teal-bright)}
+  .prep-hero .flow{display:flex;align-items:center;gap:6px;margin-top:10px;flex-wrap:wrap}
+  .prep-hero .flow .chip{font-family:var(--font-mono);font-size:.68rem;padding:3px 9px;border-radius:99px;background:var(--ink-800);border:1px solid var(--line);color:var(--fg-md)}
+  .prep-hero .flow .arr{color:var(--fg-lo);font-size:.7rem}
+  .prep-hero .engines{display:flex;flex-direction:column;gap:6px;align-items:flex-end;flex-shrink:0}
+
+  .prep-layout{display:grid;grid-template-columns:280px 1fr;gap:var(--s4);align-items:start}
+  .prep-side{position:sticky;top:14px;display:flex;flex-direction:column;gap:var(--s3)}
+  .op-btn{display:flex;align-items:center;gap:10px;padding:11px 12px;border:1px solid var(--line-soft);border-radius:var(--r-md);background:var(--ink-900);cursor:pointer;font-size:.85rem;color:var(--fg-md);transition:all .14s;text-align:left;width:100%;font-family:inherit}
+  .op-btn:hover{border-color:var(--teal-bright);color:var(--fg-hi)}
+  .op-btn.active{border-color:var(--teal-bright);background:rgba(20,184,166,.08);color:var(--fg-hi)}
+  .op-btn .op-ic{width:30px;height:30px;border-radius:var(--r-sm);display:grid;place-items:center;background:var(--ink-800);flex-shrink:0;color:var(--teal-bright)}
+  .op-btn .op-ic svg{width:16px;height:16px}
+  .op-btn .op-t{font-weight:600;display:block}
+  .op-btn .op-s{font-size:.68rem;color:var(--fg-lo);display:block;margin-top:2px;line-height:1.35}
+  .cfg-row{display:grid;gap:8px;margin-bottom:12px}
+  .cfg-row label{font-size:.7rem;color:var(--fg-lo);text-transform:uppercase;letter-spacing:.04em;font-weight:600}
+  .preview-tbl{width:100%;border-collapse:collapse;font-size:.76rem}
+  .preview-tbl th{text-align:left;padding:8px 10px;background:var(--ink-850);color:var(--fg-lo);font-weight:600;border-bottom:1px solid var(--line);font-size:.68rem;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap}
+  .preview-tbl td{padding:8px 10px;border-bottom:1px solid var(--line-soft);color:var(--fg-md);vertical-align:top;max-width:420px;word-break:break-word}
+  .preview-tbl td.mono{font-family:var(--font-mono);font-size:.72rem}
+  .bar-track{height:8px;background:var(--ink-850);border-radius:4px;overflow:hidden;flex:1}
+  .bar-track>i{display:block;height:100%;background:linear-gradient(90deg,var(--teal-bright),var(--info));width:0;transition:width .3s}
+  .resm{display:grid;grid-template-columns:repeat(4,1fr);gap:var(--s2);margin-top:14px}
+  .resm .kpi{padding:10px 12px;border:1px solid var(--line-soft);border-radius:var(--r-md);background:var(--ink-900)}
+  .resm .kpi .label{font-size:.64rem;color:var(--fg-lo);text-transform:uppercase;letter-spacing:.05em}
+  .resm .kpi .val{font-size:1.05rem;font-weight:700;color:var(--fg-hi);font-family:var(--font-mono)}
+  .field-mini{display:flex;gap:6px;align-items:center;margin-bottom:6px}
+  .field-mini .x{flex:1}
+  .field-mini button{flex-shrink:0}
+  @media(max-width:1024px){.prep-layout{grid-template-columns:1fr}.prep-side{position:static}}
+</style>
+</head>
+<body>
+<div id="app">
+<main class="main"><div class="page">
+  <div class="telem" id="telem"></div>
+
+  <!-- 文档型 hero(突出) -->
+  <div class="prep-hero">
+    <div class="doc-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h4"/></svg></div>
+    <div style="flex:1;min-width:0">
+      <h1>文档型数据准备</h1>
+      <div class="tagline">摄入后 → <b>清洗 / 规则 / 去重 / 标注 / 抽取</b> → 再检索 · RAG · 知识图谱。专为<b>文档型语料</b>而建,文本列一等公民。</div>
+      <div class="flow">
+        <span class="chip">质量画像</span><span class="arr">›</span>
+        <span class="chip">规则 / 规整</span><span class="arr">›</span>
+        <span class="chip">去重</span><span class="arr">›</span>
+        <span class="chip">LLM 标注 / 抽取</span><span class="arr">›</span>
+        <span class="chip" style="color:var(--teal-bright);border-color:rgba(45,212,191,.4)">可检索</span>
+      </div>
+    </div>
+    <div class="engines">
+      <span class="lamp ok pulse"><i></i>Daft 引擎</span>
+      <span class="lamp partial"><i></i>LLM 富化</span>
+      <span class="muted mono" style="font-size:.66rem">惰性执行 · 本地→Ray</span>
+    </div>
+  </div>
+
+  <!-- 数据源 + 质量画像 KPI -->
+  <div class="panel">
+    <div class="panel-h"><i class="placeholder" data-ic="database"></i><h3>数据源 · 质量画像</h3>
+      <span class="actions"><select class="select" id="dsSelect" style="min-width:240px"></select></span>
+    </div>
+    <div class="panel-b kpi-strip" id="kpis" style="grid-template-columns:repeat(5,1fr)">
+      <div class="muted" style="grid-column:1/-1;padding:14px">选择数据集以加载质量画像…</div>
+    </div>
+  </div>
+
+  <div class="prep-layout">
+    <!-- 操作侧栏 -->
+    <aside class="prep-side">
+      <div class="panel flush">
+        <div class="panel-h"><i class="placeholder" data-ic="olap"></i><h3>操作步骤</h3></div>
+        <div class="panel-b" id="opList" style="padding:8px;display:flex;flex-direction:column;gap:6px"></div>
+      </div>
+    </aside>
+
+    <!-- 主区:配置 + 预览 + 运行 -->
+    <div class="col">
+      <div class="panel flush">
+        <div class="panel-h"><i class="placeholder" data-ic="code"></i><h3 id="opTitle">—</h3><span class="sub" id="opSub">—</span></div>
+        <div class="panel-b" id="cfgArea" style="padding:14px"></div>
+      </div>
+
+      <div class="flex" style="gap:8px;margin-top:var(--s3)">
+        <button class="btn btn-ghost btn-sm" id="previewBtn"><i class="placeholder" data-ic="search"></i> 预览(前 8 行)</button>
+        <button class="btn btn-primary btn-sm" id="runBtn"><i class="placeholder" data-ic="play"></i> 运行</button>
+        <span class="muted mono" style="font-size:.7rem;align-self:center" id="endpt">—</span>
+      </div>
+
+      <div class="panel flush" style="margin-top:var(--s3)">
+        <div class="panel-h"><i class="placeholder" data-ic="search"></i><h3>预览</h3><span class="actions"><span class="muted mono" style="font-size:.7rem" id="previewMeta">待预览</span></span></div>
+        <div class="tbl-scroll" style="max-height:360px"><table class="preview-tbl" id="previewTbl"></table></div>
+      </div>
+
+      <div class="panel flush" style="margin-top:var(--s3)">
+        <div class="panel-h"><i class="placeholder" data-ic="play"></i><h3>运行结果</h3><span class="actions"><span class="muted mono" style="font-size:.7rem" id="runStatus">待运行</span></span></div>
+        <div class="panel-b" style="padding:14px">
+          <div class="flex" style="gap:10px;align-items:center;margin-bottom:12px"><div class="bar-track"><i id="runBar"></i></div><span class="mono" id="runPct" style="font-size:.74rem;color:var(--fg-lo);min-width:40px">0%</span></div>
+          <div class="resm">
+            <div class="kpi"><div class="label">输入</div><div class="val" id="rIn">—</div></div>
+            <div class="kpi"><div class="label">影响</div><div class="val" id="rImpact">—</div></div>
+            <div class="kpi"><div class="label">输出</div><div class="val" id="rOut">—</div></div>
+            <div class="kpi"><div class="label">任务</div><div class="val" id="rTask" style="font-size:.78rem">—</div></div>
+          </div>
+          <div id="runDetail" style="margin-top:12px"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div></main>
+</div>
+
+<script src="assets/console-layout.js"></script>
+<script type="module">
+import { isLoggedIn } from "./src/auth.js";
+import { loadDatasets, loadProfile, renderKpis } from "./src/data-prep/profile.js";
+import { OPS, renderOpList, icon } from "./src/data-prep/ops.js";
+import { runPreview, runSubmit } from "./src/data-prep/run.js";
+
+if (!isLoggedIn()) location.href = "login.html";
+const { renderShell } = window;
+renderShell({ active: "data-prep", crumb: '<a href="datasets.html">数据集</a> › <b>数据准备</b>' });
+const $ = (s) => document.querySelector(s);
+window.applyIcons && applyIcons(document);
+
+$("#telem").innerHTML = `<span class="item"><span class="dot"></span>数据准备 <b>文档型</b></span><span class="item">引擎 <b>Daft + LLM</b></span><span class="item">模式 <b>预览 → 提交</b></span><span class="item" style="margin-left:auto">质量 / 规则 / 规整 / 去重 / 标注 / 抽取</span>`;
+
+const state = { current: null, textCols: [], op: OPS[0] };
+
+async function init() {
+  try {
+    const datasets = await loadDatasets();
+    if (!datasets.length) {
+      $("#dsSelect").innerHTML = '<option>（暂无数据集,先去摄入）</option>';
+      return;
+    }
+    $("#dsSelect").innerHTML = datasets
+      .map((d) => `<option value="${esc(d.name)}">${esc(d.name)} · ${d.num_rows ?? 0} 行</option>`).join("");
+    $("#dsSelect").onchange = (e) => selectDataset(e.target.value);
+    await selectDataset(datasets[0].name);
+  } catch (e) { toastSafe("加载数据集失败: " + (e.detail || e.message), "danger"); }
+}
+
+async function selectDataset(name) {
+  state.current = name;
+  try {
+    const p = await loadProfile(name);
+    state.textCols = p.textCols;
+    state.profile = p;
+    renderKpis(p, $("#kpis"));
+  } catch (e) {
+    $("#kpis").innerHTML = `<div class="muted" style="grid-column:1/-1;padding:14px;color:var(--danger)">质量画像加载失败: ${esc(e.detail || e.message)}</div>`;
+    state.textCols = ["text_content"];
+  }
+  renderOpList($("#opList"), state.textCols, (op) => pickOp(op));
+  pickOp(state.op);
+}
+
+function pickOp(op) {
+  state.op = op;
+  $("#opTitle").textContent = op.label;
+  $("#opSub").textContent = op.desc;
+  $("#endpt").textContent = op.endpint;
+  $("#cfgArea").innerHTML = op.render(state.textCols, state.current);
+  window.applyIcons && applyIcons($("#cfgArea"));
+  // bind dynamic field add/remove for extract
+  bindFieldRows();
+  $("#previewTbl").innerHTML = "";
+  $("#previewMeta").textContent = "待预览";
+  resetRun();
+}
+
+function resetRun() {
+  $("#runBar").style.width = "0%"; $("#runPct").textContent = "0%";
+  $("#runStatus").textContent = "待运行";
+  $("#rIn").textContent = state.profile ? state.profile.total_rows ?? "—" : "—";
+  $("#rImpact").textContent = "—"; $("#rOut").textContent = "—"; $("#rTask").textContent = "—";
+  $("#runDetail").innerHTML = "";
+}
+
+function bindFieldRows() {
+  const addBtn = $("#addFieldBtn");
+  if (!addBtn) return;
+  const wrap = $("#extractFields");
+  const tmpl = () => `<div class="field-mini"><input class="input field-mini-x x" data-f="name" placeholder="字段名(如 日期)"><select class="select" data-f="type" style="max-width:110px"><option>string</option><option>number</option><option>integer</option><option>boolean</option></select><input class="input x" data-f="desc" placeholder="说明(可选)" style="max-width:180px"></div>`;
+  addBtn.onclick = () => { wrap.insertAdjacentHTML("beforeend", tmpl()); };
+  wrap.querySelectorAll("[data-remove-row]").forEach((b) => b.remove());
+}
+
+$("#previewBtn").addEventListener("click", async () => {
+  if (!state.current) return;
+  $("#previewBtn").disabled = true;
+  try {
+    const { head, rows, meta } = await runPreview(state.current, state.op, $("#cfgArea"));
+    renderPreviewTbl(head, rows);
+    $("#previewMeta").textContent = meta;
+  } catch (e) { toastSafe("预览失败: " + (e.detail || e.message), "warn"); }
+  finally { $("#previewBtn").disabled = false; }
+});
+
+function renderPreviewTbl(head, rows) {
+  if (!rows.length) { $("#previewTbl").innerHTML = `<thead><tr><th>${head.map(esc).join("</th><th>")}</tr></thead><tbody><tr><td colspan="${head.length}" class="muted" style="padding:14px">无数据</td></tr></tbody>`; return; }
+  $("#previewTbl").innerHTML = `<thead><tr>${head.map((h) => `<th>${esc(h)}</th>`).join("")}</tr></thead><tbody>${
+    rows.map((r) => `<tr>${head.map((h) => `<td>${r[h] == null ? "" : esc(String(r[h]))}</td>`).join("")}</tr>`).join("")}</tbody>`;
+}
+
+$("#runBtn").addEventListener("click", async () => {
+  if (!state.current) return;
+  if (!confirm(`${state.op.label}:将对该数据集执行写操作,确认?`)) return;
+  $("#runBtn").disabled = true; $("#runStatus").textContent = "提交中…";
+  try {
+    await runSubmit(state.current, state.op, $("#cfgArea"), {
+      onProgress: (p, txt) => { $("#runBar").style.width = (p * 100) + "%"; $("#runPct").textContent = Math.round(p * 100) + "%"; if (txt) $("#runStatus").textContent = txt; },
+      onResult: renderRunResult,
+      onTask: (taskId, opName) => {
+        $("#rTask").innerHTML = `<a href="tasks.html?task=${encodeURIComponent(taskId)}" style="color:var(--teal-bright)">${String(taskId).slice(0,8)}</a>`;
+        toastSafe(`${opName} 已提交为异步任务`, "ok");
+      },
+      currentRows: state.profile ? state.profile.total_rows : null,
+    });
+  } catch (e) {
+    $("#runStatus").textContent = "失败";
+    toastSafe("运行失败: " + (e.detail || e.message), "danger", 5000);
+  } finally { $("#runBtn").disabled = false; }
+});
+
+function renderRunResult(r) {
+  $("#runBar").style.width = "100%"; $("#runPct").textContent = "100%";
+  $("#runStatus").textContent = "完成 ✓";
+  if (r.input_rows != null) $("#rIn").textContent = r.input_rows;
+  if (r.affected != null) $("#rImpact").textContent = r.affected;
+  if (r.output != null) $("#rOut").textContent = r.output;
+  if (r.detail) $("#runDetail").innerHTML = `<pre style="white-space:pre-wrap;background:var(--ink-950);border:1px solid var(--line);border-radius:var(--r-md);padding:10px;font-family:var(--font-mono);font-size:.72rem;color:var(--fg-md);margin:0;max-height:240px;overflow:auto">${esc(typeof r.detail === "string" ? r.detail : JSON.stringify(r.detail, null, 2))}</pre>`;
+}
+
+function esc(s) { return String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+function toastSafe(msg, type, ms) { if (window.toast) toast(msg, type, ms); else console.warn(type, msg); }
+
+init();
+</script>
+</body>
+</html>

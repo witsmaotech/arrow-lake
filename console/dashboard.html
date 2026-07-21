@@ -50,6 +50,17 @@
 
   <div class="panel"><div class="panel-b kpi-strip" id="kpis"><div class="muted" style="grid-column:1/-1;padding:14px">加载 KPI…</div></div></div>
 
+  <a href="data-prep.html" style="display:flex;gap:16px;align-items:center;padding:18px 20px;background:radial-gradient(120% 140% at 0% 0%,rgba(20,184,166,.12),transparent 55%),linear-gradient(180deg,var(--ink-850),var(--ink-900));border:1px solid var(--line);border-radius:var(--r-lg);text-decoration:none;margin-bottom:var(--s4);transition:border-color .2s" onmouseover="this.style.borderColor='var(--teal)'" onmouseout="this.style.borderColor='var(--line)'">
+    <div style="width:48px;height:48px;border-radius:var(--r-md);display:grid;place-items:center;background:linear-gradient(135deg,var(--teal),var(--info));color:var(--ink-950);flex-shrink:0;box-shadow:var(--shadow-2)">
+      <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:26px;height:26px"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h4"/></svg>
+    </div>
+    <div style="flex:1;min-width:0">
+      <div style="display:flex;align-items:center;gap:8px"><b style="font-size:1rem;color:var(--fg-hi)">文档型数据准备</b><span class="tag teal">新</span></div>
+      <div style="color:var(--fg-md);font-size:.8rem;margin-top:3px;line-height:1.5">摄入后 → <b style="color:var(--teal-bright)">清洗 / 规则 / 去重 / LLM 标注与抽取</b> → 可检索。专为文档语料而建,文本列一等公民。</div>
+    </div>
+    <div style="color:var(--teal-bright);font-size:.82rem;font-weight:600;flex-shrink:0">进入 →</div>
+  </a>
+
   <div class="grid" data-mr style="grid-template-columns:1.6fr 1fr;gap:var(--s4);align-items:start">
     <div class="panel flush">
       <div class="panel-h"><i class="placeholder" data-ic="bell"></i><h3>实时活动流</h3><span class="sub">近期异步任务</span><div class="actions"><span class="lamp ok pulse"><i></i>live</span></div></div>
