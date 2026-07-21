@@ -5,10 +5,10 @@
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Arrow Lake · 旗舰展示 · 首页 + 三王牌</title>
 <link rel="icon" href="data:,"/>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js" integrity="sha384-CjloA8y00+1SDAUkjs099PVfnY2KmDC2BZnws9kh8D/lX1s46w6EPhpXdqMfjK6i" crossorigin="anonymous"></script>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<!-- d3 CDN 移除:当前代理对 cdnjs ERR_CONNECTION_CLOSED,同步 script 阻塞渲染。
+     showcase.js initKG 有 if(!window.d3) return guard,KG 子图安全降级空(①检索宇宙 ②时间机器 不依赖 d3,正常)。
+     代理恢复可达 cdnjs 时,加回 <script src="...d3.min.js"></script> 即恢复 KG③。 -->
+<!-- Google Fonts 移除:代理对 fonts.googleapis/gstatic ERR_CONNECTION_CLOSED,render-blocking css 拖慢首屏。降级系统字体(app.css fallback)。代理恢复后可加回。 -->
 <link rel="stylesheet" href="assets/tokens.css"/>
 <link rel="stylesheet" href="assets/app.css"/>
 <link rel="stylesheet" href="assets/landing.css"/>
