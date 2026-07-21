@@ -1,3 +1,4 @@
+(function(){
 /* ============================================================
    Arrow Lake · 旗舰展示 · 三张王牌交互 + 架构/版本渲染
    依赖: d3 (王牌③ KG; 可选) · 所有数据为硬编码 mock 常量
@@ -260,6 +261,8 @@ function initKG() {
 
 // —— boot ——
 document.addEventListener('DOMContentLoaded', () => {
-  renderArch(); renderCaps(); renderVer();
+  // 新 showcase(首页骨架):架构全景/六能力/版本演进由首页 layout.js + 内联渲染,
+  // showcase.js 仅负责三王牌(检索宇宙 / 时间机器 / KG 探索)
   SearchCosmos.init(); TimeMachine.init(); initKG();
 });
+})();
