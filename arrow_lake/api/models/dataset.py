@@ -359,6 +359,13 @@ class DatasetInfo(BaseModel):
     size_bytes: int | None = None
     created_at: str | None = None
     updated_at: str | None = None
+    description: str | None = None
+
+
+class DatasetDescriptionRequest(BaseModel):
+    """Set a human-readable description for a dataset (console)."""
+
+    description: str = ""
 
 
 class DatasetListResponse(BaseModel):

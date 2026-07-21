@@ -26,7 +26,11 @@
   <div class="panel"><div class="panel-b">
     <div class="grid g-2">
       <div class="field"><label>目标数据集</label><input class="input mono" id="ds" placeholder="my_dataset"/></div>
-      <div class="field"><label>来源</label><select class="select" id="src"></select></div>
+      <div class="field"><label>说明介绍 <span class="muted" style="font-weight:400">(可选 · 数据集描述)</span></label><input class="input" id="desc" placeholder="如:JD 招聘岗位数据 / 某业务报表"/></div>
+    </div>
+    <div class="grid g-2" style="margin-top:var(--s3)">
+      <div class="field"><label>来源大类</label><select class="select" id="srcCat"><option value="file">📁 文件(上传)</option><option value="daft">🔗 daft(数据源)</option></select></div>
+      <div class="field"><label>具体类型</label><select class="select" id="src"></select></div>
     </div>
     <div id="fields" style="margin-top:var(--s3)"></div>
     <div class="flex between" style="margin-top:var(--s4)">
@@ -65,8 +69,17 @@ if (dsParam) $("#ds").value = dsParam;
 
 let uploadedBlobs = [];
 let pickedFiles = [];
-const SOURCES = ["documents", "sql", "clickhouse", "kafka", "iceberg", "deltalake", "http", "images", "videos", "mixed"];
-$("#src").innerHTML = SOURCES.map((s) => `<option ${s === "documents" ? "selected" : ""}>${s}</option>`).join("");
+const BY_CAT = {
+  file: [["documents", "文档(PDF/Word/Markdown…)"], ["images", "图像"], ["videos", "视频"]],
+  daft: [["csv", "CSV"], ["parquet", "Parquet"], ["json", "JSON / JSONL"], ["sql", "SQL 数据库"], ["clickhouse", "ClickHouse"], ["iceberg", "Iceberg"], ["deltalake", "Delta Lake"], ["kafka", "Kafka"], ["http", "HTTP 文件"], ["mixed", "多模态混合"]],
+};
+function fillSrc(cat) {
+  $("#src").innerHTML = BY_CAT[cat].map(([v, t]) => `<option value="${v}">${t}</option>`).join("");
+  renderFields();
+}
+$("#srcCat").addEventListener("change", (e) => fillSrc(e.target.value));
+$("#src").addEventListener("change", renderFields);
+fillSrc("file");
 
 // 上传文件到 MinIO(multipart)→ blobs[]
 async function uploadFiles(name, files) {
@@ -150,7 +163,8 @@ function bindUpload() {
 
 function renderFields() {
   const src = $("#src").value;
-  $("#endpt").textContent = `POST /datasets/{name}/ingest/${src}`;
+  const _ep = src === "clickhouse" ? "sql" : (["csv", "parquet", "json"].includes(src) ? "" : src);
+  $("#endpt").textContent = `POST /datasets/{name}/ingest${_ep ? "/" + _ep : ""}`;
   uploadedBlobs = []; pickedFiles = []; // 切换来源重置
   if (src === "documents") {
     $("#fields").innerHTML = renderUploadHTML(DOC_ACCEPT, "PDF · MD/TXT · HTML · DOCX/DOC · PPTX · XLSX/XLS · EPUB · RTF · ODT/ODS/ODP")
@@ -177,6 +191,12 @@ function renderFields() {
   } else if (src === "videos") {
     $("#fields").innerHTML = renderUploadHTML(VID_ACCEPT, "MP4 · MOV · WEBM · AVI · MKV(任意 video/*)")
       + `<div class="muted" style="font-size:.7rem;margin-top:var(--s3)">上传文件即可;关键帧抽取 + CLIP embed(可选)</div>`;
+    window.applyIcons && applyIcons($("#fields"));
+    bindUpload();
+  } else if (src === "csv" || src === "parquet" || src === "json") {
+    const acc = src === "csv" ? ".csv" : src === "parquet" ? ".parquet" : ".json,.jsonl,.ndjson";
+    $("#fields").innerHTML = renderUploadHTML(acc, `${src.toUpperCase()} 文件 · 多选 / 拖拽`)
+      + `<div class="muted" style="font-size:.7rem;margin-top:var(--s3)">结构化数据:上传后走 <code>daft.read_${src}</code> → Lance(同步 <code>/ingest</code>)。不自动 embed;如需检索,摄入后到「索引/嵌入」建向量/FTS。</div>`;
     window.applyIcons && applyIcons($("#fields"));
     bindUpload();
   } else if (src === "sql") {
@@ -225,8 +245,7 @@ function renderFields() {
   }
 }
 
-$("#src").addEventListener("change", renderFields);
-renderFields();
+// 来源下拉已改两级(srcCat → src),绑定在上方 fillSrc
 
 $("#submit").addEventListener("click", async () => {
   const ds = $("#ds").value.trim();
@@ -268,7 +287,7 @@ $("#submit").addEventListener("click", async () => {
     if (src === "documents") {
       if (!blobKeys.length) { toast("请先上传文件", "warn"); return; }
       body = { pdf_paths: [], blob_keys: blobKeys, doc_type: $("#docType").value.trim() || null };
-    } else if (src === "images" || src === "videos") {
+    } else if (src === "images" || src === "videos" || src === "csv" || src === "parquet" || src === "json") {
       if (!blobKeys.length) { toast("请先上传文件", "warn"); return; }
       body = { file_paths: [], blob_keys: blobKeys };
     } else if (src === "sql" || src === "clickhouse") {
@@ -304,12 +323,18 @@ $("#submit").addEventListener("click", async () => {
     } else {
       toast(`「${src}」无表单`, "warn"); return;
     }
-    const ep = src === "clickhouse" ? "sql" : src; // clickhouse 复用 /ingest/sql(daft read_sql)
+    const ep = src === "clickhouse" ? "sql" : (["csv", "parquet", "json"].includes(src) ? "" : src); // clickhouse 复用 /ingest/sql;csv/parquet/json 复用通用 /ingest
     // documents 走异步端点:立即返回 task_id,避免长耗时摄入阻塞浏览器
     const url = src === "documents"
       ? `/datasets/${encodeURIComponent(ds)}/ingest/documents/async`
-      : `/datasets/${encodeURIComponent(ds)}/ingest/${ep}`;
+      : `/datasets/${encodeURIComponent(ds)}/ingest${ep ? "/" + ep : ""}`;
     const res = await request("POST", url, { body });
+    // 说明介绍:摄入成功后写入(独立端点,失败不阻塞摄入结果)
+    const desc = $("#desc").value.trim();
+    if (desc) {
+      try { await request("PUT", `/datasets/${encodeURIComponent(ds)}/description`, { body: { description: desc } }); }
+      catch (_) { /* 描述写入失败不阻塞 */ }
+    }
     $("#resultPanel").classList.remove("hidden");
     const tid = res?.task_id || res?.task?.task_id;
     if (src === "documents" && tid) {

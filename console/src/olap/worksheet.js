@@ -107,9 +107,14 @@ export async function initWorksheet() {
     try {
       const resp = await request("POST", `/datasets/${encodeURIComponent(ds)}/query/olap`,
         { body: { sql, format: "json", max_rows } });
-      renderResult(resultHost, resp, Math.round(performance.now() - t0));
+      const ms = Math.round(performance.now() - t0);
+      renderResult(resultHost, resp, ms);
+      const m = document.getElementById("meta");
+      if (m) m.textContent = resp.success ? `${(resp.row_count ?? 0).toLocaleString()} 行 · ${resp.column_count ?? 0} 列 · ${ms}ms` : "查询失败";
       return resp;
     } catch (e) {
+      const m = document.getElementById("meta");
+      if (m) m.textContent = "错误";
       handleError(e);
       return null;
     } finally {

@@ -68,6 +68,7 @@ class AuthService:
         user_id: str,
         role: Role = Role.VIEWER,
         permissions: list[str] | None = None,
+        username: str | None = None,
     ) -> TokenPayload:
         """Create a TokenPayload for an access token."""
         now = datetime.now(UTC)
@@ -79,6 +80,7 @@ class AuthService:
             iat=now,
             iss=self._issuer,
             jti=uuid.uuid4().hex,
+            username=username,
         )
 
     def create_refresh_token(
@@ -86,6 +88,7 @@ class AuthService:
         user_id: str,
         role: Role = Role.VIEWER,
         permissions: list[str] | None = None,
+        username: str | None = None,
     ) -> str:
         """Create and encode a refresh token."""
         now = datetime.now(UTC)
@@ -97,6 +100,7 @@ class AuthService:
             iat=now,
             iss=self._issuer,
             jti=uuid.uuid4().hex,
+            username=username,
         )
         return self._encode(payload)
 

@@ -139,9 +139,9 @@ async def login_with_password(request: Request, creds: LoginRequest) -> TokenPai
     except ValueError:
         role = Role.VIEWER
     svc = _get_auth_service(request)
-    payload = svc.create_access_token(user_id=str(user["id"]), role=role)
+    payload = svc.create_access_token(user_id=str(user["id"]), role=role, username=user.get("username"))
     refresh = svc.create_refresh_token(
-        user_id=str(user["id"]), role=role, permissions=payload.permissions
+        user_id=str(user["id"]), role=role, permissions=payload.permissions, username=user.get("username")
     )
     return TokenPair(access_token=svc._encode(payload), refresh_token=refresh)
 
@@ -188,6 +188,7 @@ async def refresh_token(request: Request) -> TokenPair:
         user_id=new_payload.sub,
         role=new_payload.role,
         permissions=new_payload.permissions,
+        username=new_payload.username,
     )
 
     return TokenPair(
@@ -208,6 +209,7 @@ async def get_me(request: Request) -> dict:
         "role": user.role.value,
         "permissions": user.permissions,
         "iss": user.iss,
+        "username": user.username,
     }
 
 

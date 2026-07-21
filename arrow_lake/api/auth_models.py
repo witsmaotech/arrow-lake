@@ -26,6 +26,7 @@ class TokenPayload(BaseModel):
     iat: datetime
     iss: str = "arrow-lake"
     jti: str = ""
+    username: str | None = None
 
 
 class TokenPair(BaseModel):

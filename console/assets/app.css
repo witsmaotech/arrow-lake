@@ -136,7 +136,7 @@ svg.ic{display:inline-block}
 .path-row .arrow{color:#64748b}
 .tbl-wrap .tbl{width:max-content;min-width:100%}
 .tbl th{text-align:left;font-size:var(--fs-cap);text-transform:uppercase;letter-spacing:.07em;color:var(--fg-lo);font-weight:600;padding:9px var(--s3);border-bottom:1px solid var(--line);white-space:nowrap}
-.tbl td{padding:8px var(--s3);border-bottom:1px solid var(--line-soft);color:var(--fg-md);vertical-align:middle;line-height:1.45;word-break:break-word}
+.tbl td{padding:8px var(--s3);border-bottom:1px solid var(--line-soft);color:var(--fg-md);vertical-align:middle;line-height:1.45;word-break:break-word;max-width:480px}
 .tbl tr:hover td{background:rgba(255,255,255,.015)}
 .tbl td.num,.tbl th.num{text-align:right;font-family:var(--font-mono);font-variant-numeric:tabular-nums;color:var(--fg-hi)}
 .tbl td.mono{font-family:var(--font-mono);font-size:.75rem}

@@ -18,6 +18,7 @@ from arrow_lake.api.deps import get_lake, require_role
 from arrow_lake.api.models.common import _NAME_PATTERN, MessageResponse
 from arrow_lake.api.models.dataset import (
     CleanupResponse,
+    DatasetDescriptionRequest,
     DatasetInfo,
     DatasetListResponse,
     IngestDeltaLakeRequest,
@@ -584,6 +585,47 @@ async def ingest_documents(
 # ---------------------------------------------------------------------------
 
 
+# —— Dataset description(轻量 JSON store;本地可信原型,生产化迁 system_db)——
+_DESC_PATH = os.path.join(
+    os.environ.get("ARROW_LAKE__LAKE__DATA_DIR", "/data/lake"),
+    ".console", "dataset_descriptions.json",
+)
+
+
+def _read_desc_map() -> dict[str, str]:
+    import json
+    try:
+        with open(_DESC_PATH, encoding="utf-8") as fh:
+            data = json.load(fh)
+        return {str(k): str(v) for k, v in data.items()} if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_desc(name: str, description: str) -> None:
+    import json
+    m = _read_desc_map()
+    m[name] = (description or "").strip()
+    try:
+        os.makedirs(os.path.dirname(_DESC_PATH), exist_ok=True)
+        with open(_DESC_PATH, "w", encoding="utf-8") as fh:
+            json.dump(m, fh, ensure_ascii=False, indent=2)
+    except OSError:
+        pass  # 只读 FS → 静默(不阻塞摄入)
+
+
+@router.put("/{name}/description", response_model=MessageResponse, summary="Set dataset description (console)")
+async def set_dataset_description(
+    name: str = Path(..., pattern=_NAME_PATTERN),
+    *,
+    req: DatasetDescriptionRequest,
+    _user: dict = Depends(require_role(Role.EDITOR)),
+) -> MessageResponse:
+    """Set/update a human-readable description for a dataset (local JSON store)."""
+    _save_desc(name, req.description)
+    return MessageResponse(message=f"description updated for {name}")
+
+
 @router.get("", response_model=DatasetListResponse)
 async def list_datasets(
     _auth: None = Depends(require_role(Role.VIEWER)),
@@ -610,6 +652,7 @@ async def list_datasets(
             d.name for d in Path(ka_base).iterdir()
             if d.is_dir() and (d / "ka" / "data.json").is_file()
         }
+    desc_map = _read_desc_map()
     all_datasets = [
         DatasetInfo(
             name=e.name, version=e.version, num_rows=e.num_rows,
@@ -617,6 +660,7 @@ async def list_datasets(
             has_vector_index=e.has_vector_index, has_fts_index=e.has_fts_index,
             has_kg=artifact_key_for(e.name) in ka_keys,
             size_bytes=e.size_bytes, created_at=e.created_at, updated_at=e.updated_at,
+            description=desc_map.get(e.name),
         )
         for e in visible
     ]
@@ -646,6 +690,7 @@ async def get_dataset(
                 size_bytes=entry.size_bytes,
                 created_at=entry.created_at,
                 updated_at=entry.updated_at,
+                description=_read_desc_map().get(entry.name),
             )
     raise CatalogError(
         error_code=ErrorCode.CATALOG_DATASET_NOT_FOUND,

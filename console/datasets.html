@@ -18,9 +18,10 @@
   <div class="panel flush">
     <div class="panel-h"><i class="placeholder" data-ic="search"></i><h3>数据集</h3><span class="sub" id="cnt">—</span><span class="actions"><button class="btn btn-ghost btn-sm" id="refresh"><i class="placeholder" data-ic="refresh"></i></button></span></div>
     <div style="overflow-x:auto"><table class="tbl">
-      <thead><tr><th>数据集</th><th class="num">行数</th><th class="num">大小</th><th>列 / 向量</th><th>索引</th><th>KG</th><th class="num">版本</th><th>创建</th><th>更新</th><th></th></tr></thead>
+      <thead><tr><th>数据集</th><th>描述</th><th class="num">行数</th><th class="num">大小</th><th>列 / 向量</th><th>索引</th><th>KG</th><th class="num">版本</th><th>创建</th><th>更新</th><th></th></tr></thead>
       <tbody id="rows"></tbody>
     </table></div>
+    <div id="pager" class="flex" style="gap:10px;align-items:center;padding:10px 14px;border-top:1px solid var(--line-soft);justify-content:flex-end"></div>
   </div>
 </div></main>
 </div>
@@ -50,31 +51,65 @@ const fmtDate = (s) => {
   const p = (n) => String(n).padStart(2, "0");
   return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 };
+const STATE = { all: [], page: 1, pageSize: 10 };
+// 描述:优先人工 description(ingest 时填),否则基于元数据自动摘要
+function descOf(d) {
+  if (d.description && d.description.trim()) return d.description.trim();
+  const tags = [];
+  if (d.has_kg) tags.push("知识图谱");
+  if (d.has_vector_index && d.has_fts_index) tags.push("RAG 检索");
+  else if (d.has_vector_index) tags.push("向量检索");
+  else if (d.has_fts_index) tags.push("全文检索");
+  if (!tags.length) tags.push(d.name.startsWith("_") ? "系统表" : "分析表");
+  const parts = [`${(d.num_rows ?? 0).toLocaleString()} 行`];
+  if (d.vector_dim) parts.push(`${d.vector_dim}d`);
+  return tags.join(" + ") + " · " + parts.join(" · ");
+}
+function rowOf(d) {
+  const idx = `${d.has_vector_index ? '<span class="tag teal">向量</span>' : ""}${d.has_fts_index ? '<span class="tag info">FTS</span>' : ""}` || '<span class="muted">—</span>';
+  const cols = `${d.num_columns ?? 0} 列${d.vector_dim ? ` · <span class="mono" style="color:var(--teal-bright)">${d.vector_dim}d</span>` : ""}`;
+  return `<tr>
+    <td><a href="dataset-detail.html?ds=${encodeURIComponent(d.name)}" style="color:var(--fg-hi);font-weight:600">${icon("database")} ${esc(d.name)}</a></td>
+    <td style="color:var(--fg-lo);font-size:.78rem">${esc(descOf(d))}</td>
+    <td class="num">${(d.num_rows ?? 0).toLocaleString()}</td>
+    <td class="num mono">${fmtSize(d.size_bytes)}</td>
+    <td>${cols}</td>
+    <td>${idx}</td>
+    <td>${d.has_kg ? `<a href="kg.html?ds=${encodeURIComponent(d.name)}" class="tag teal" title="查看知识图谱">KG</a>` : '<span class="muted">—</span>'}</td>
+    <td class="num mono">${d.version ?? "—"}</td>
+    <td class="num mono" style="color:var(--fg-lo)">${fmtDate(d.created_at)}</td>
+    <td class="num mono" style="color:var(--fg-lo)">${fmtDate(d.updated_at)}</td>
+    <td><a href="dataset-detail.html?ds=${encodeURIComponent(d.name)}" class="btn btn-icon btn-ghost btn-sm" aria-label="进入">${icon("arrowR")}</a></td>
+  </tr>`;
+}
+function renderPage() {
+  const all = STATE.all, total = all.length, ps = STATE.pageSize;
+  const totalPages = Math.max(1, Math.ceil(total / ps));
+  if (STATE.page > totalPages) STATE.page = totalPages;
+  const start = (STATE.page - 1) * ps;
+  const page = all.slice(start, start + ps);
+  $("#cnt").textContent = `${total} 个`;
+  $("#rows").innerHTML = total ? page.map(rowOf).join("") : `<tr><td colspan="11" class="muted" style="padding:28px;text-align:center">无数据集 — 去 <a href="ingest.html" style="color:var(--teal-bright)">摄入</a></td></tr>`;
+  const p = STATE.page;
+  $("#pager").innerHTML = total ? `
+    <span class="muted" style="font-size:.78rem">第 ${p}/${totalPages} 页 · 共 ${total}</span>
+    <button class="btn btn-ghost btn-sm" data-go="${p - 1}" ${p <= 1 ? "disabled" : ""}>‹ 上一页</button>
+    <button class="btn btn-ghost btn-sm" data-go="${p + 1}" ${p >= totalPages ? "disabled" : ""}>下一页 ›</button>
+    <select class="select" id="pageSizeSel" style="width:auto;font-size:.78rem">${[10, 20, 50].map((n) => `<option value="${n}"${n === ps ? " selected" : ""}>${n} / 页</option>`).join("")}</select>` : "";
+  $("#pager").querySelectorAll("[data-go]").forEach((b) => { if (!b.disabled) b.addEventListener("click", () => { STATE.page = +b.dataset.go; renderPage(); }); });
+  const sel = $("#pageSizeSel"); if (sel) sel.addEventListener("change", () => { STATE.pageSize = +sel.value; STATE.page = 1; renderPage(); });
+}
 async function load() {
-  $("#rows").innerHTML = `<tr><td colspan="10" class="muted" style="padding:28px;text-align:center">加载中…</td></tr>`;
+  $("#rows").innerHTML = `<tr><td colspan="11" class="muted" style="padding:28px;text-align:center">加载中…</td></tr>`;
+  $("#pager").innerHTML = "";
   try {
-    const data = await request("GET", "/datasets");
-    const list = data?.datasets || [];
-    $("#cnt").textContent = `${list.length} 个`;
-    $("#rows").innerHTML = list.length ? list.map((d) => {
-      const idx = `${d.has_vector_index ? '<span class="tag teal">向量</span>' : ""}${d.has_fts_index ? '<span class="tag info">FTS</span>' : ""}` || '<span class="muted">—</span>';
-      const cols = `${d.num_columns ?? 0} 列${d.vector_dim ? ` · <span class="mono" style="color:var(--teal-bright)">${d.vector_dim}d</span>` : ""}`;
-      return `<tr>
-      <td><a href="dataset-detail.html?ds=${encodeURIComponent(d.name)}" style="color:var(--fg-hi);font-weight:600">${icon("database")} ${esc(d.name)}</a></td>
-      <td class="num">${(d.num_rows ?? 0).toLocaleString()}</td>
-      <td class="num mono">${fmtSize(d.size_bytes)}</td>
-      <td>${cols}</td>
-      <td>${idx}</td>
-      <td>${d.has_kg ? `<a href="kg.html?ds=${encodeURIComponent(d.name)}" class="tag teal" title="查看知识图谱">KG</a>` : '<span class="muted">—</span>'}</td>
-      <td class="num mono">${d.version ?? "—"}</td>
-      <td class="num mono" style="color:var(--fg-lo)">${fmtDate(d.created_at)}</td>
-      <td class="num mono" style="color:var(--fg-lo)">${fmtDate(d.updated_at)}</td>
-      <td><a href="dataset-detail.html?ds=${encodeURIComponent(d.name)}" class="btn btn-icon btn-ghost btn-sm" aria-label="进入">${icon("arrowR")}</a></td>
-    </tr>`;
-    }).join("") : `<tr><td colspan="10" class="muted" style="padding:28px;text-align:center">无数据集 — 去 <a href="ingest.html" style="color:var(--teal-bright)">摄入</a></td></tr>`;
+    const data = await request("GET", "/datasets?limit=1000");
+    STATE.all = data?.datasets || [];
+    STATE.page = 1;
+    renderPage();
   } catch (e) {
     const msg = e?.detail || e?.message || String(e);
-    $("#rows").innerHTML = `<tr><td colspan="10" style="padding:28px;text-align:center;color:var(--danger)">加载失败:${esc(msg)}<br/><button class="btn btn-ghost btn-sm" id="retry" style="margin-top:10px">重试</button></td></tr>`;
+    $("#rows").innerHTML = `<tr><td colspan="11" style="padding:28px;text-align:center;color:var(--danger)">加载失败:${esc(msg)}<br/><button class="btn btn-ghost btn-sm" id="retry" style="margin-top:10px">重试</button></td></tr>`;
     $("#retry")?.addEventListener("click", load);
     toast("数据集加载失败:" + msg, "warn", 4000);
   }

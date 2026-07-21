@@ -54,7 +54,7 @@ const NAV = [
 function decodeUser(tok) {
   try {
     const payload = JSON.parse(atob((tok || "").split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
-    return { user_id: payload.user_id || "user", role: (payload.role || "EDITOR").toUpperCase() };
+    return { user_id: payload.username || payload.sub || payload.user_id || "user", role: (payload.role || "EDITOR").toUpperCase() };
   } catch (_) { return { user_id: "user", role: "EDITOR" }; }
 }
 
