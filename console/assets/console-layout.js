@@ -36,6 +36,8 @@ window.icon = icon;
 const NAV = [
   { group: "数据", items: [
     { id: "datasets", label: "数据集", ic: "database", href: "datasets.html" },
+    { id: "data-prep", label: "数据准备", ic: "file", href: "data-prep.html" },
+    { id: "tidy", label: "清洗整理", ic: "olap", href: "tidy.html" },
     { id: "embeddings", label: "索引/嵌入", ic: "code", href: "embeddings.html" },
     { id: "search", label: "检索", ic: "search", href: "search.html" },
   ] },

@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>清洗整理 · Arrow Lake(结构化数据管道原型)</title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/tokens.css"/>
+<link rel="stylesheet" href="assets/app.css"/>
+<style>
+  .prep-layout{display:grid;grid-template-columns:300px 1fr;gap:var(--s4);align-items:start}
+  .prep-side{position:sticky;top:14px;display:flex;flex-direction:column;gap:var(--s3)}
+  .op-btn{display:flex;align-items:center;gap:10px;padding:11px 14px;border:1px solid var(--line-soft);border-radius:var(--r-md);background:var(--ink-900);cursor:pointer;font-size:.85rem;color:var(--fg-md);transition:all .14s;text-align:left;width:100%;font-family:inherit;position:relative}
+  .op-btn:hover{border-color:var(--teal-bright);color:var(--fg-hi)}
+  .op-btn.active{border-color:var(--teal-bright);background:rgba(20,184,166,.08);color:var(--fg-hi)}
+  .op-btn.enabled::after{content:"";position:absolute;top:11px;right:13px;width:8px;height:8px;border-radius:50%;background:var(--teal-bright);box-shadow:0 0 8px var(--teal-bright)}
+  .op-btn .op-ic{width:30px;height:30px;border-radius:var(--r-sm);display:grid;place-items:center;background:var(--ink-800);flex-shrink:0;color:var(--teal-bright);cursor:pointer}
+  .op-btn .op-ic:hover{background:var(--teal-bright);color:var(--ink-950)}
+  .op-btn .op-t{font-weight:600;display:block}
+  .op-btn .op-s{font-size:.7rem;color:var(--fg-lo);display:block;margin-top:2px}
+  .cfg-row{display:grid;gap:8px;margin-bottom:12px}
+  .cfg-row label{font-size:.72rem;color:var(--fg-lo);text-transform:uppercase;letter-spacing:.04em}
+  .preview-tbl{width:100%;border-collapse:collapse;font-size:.76rem}
+  .preview-tbl th{text-align:left;padding:8px 10px;background:var(--ink-850);color:var(--fg-lo);font-weight:600;border-bottom:1px solid var(--line);font-size:.7rem;text-transform:uppercase;letter-spacing:.04em}
+  .preview-tbl td{padding:8px 10px;border-bottom:1px solid var(--line-soft);color:var(--fg-md);vertical-align:top}
+  .preview-tbl tr.del{background:rgba(239,68,68,.06)}
+  .tag-pos{color:var(--ok)}.tag-neg{color:var(--danger)}.tag-warn{color:var(--warn)}.tag-neu{color:var(--fg-lo)}
+  .bar-track{height:8px;background:var(--ink-850);border-radius:4px;overflow:hidden;flex:1}
+  .bar-track>i{display:block;height:100%;background:linear-gradient(90deg,var(--teal-bright),var(--info));width:0;transition:width .3s}
+  .cap-card{border:1px solid var(--line-soft);border-radius:var(--r-md);padding:12px;background:var(--ink-900)}
+  .cap-card h4{margin:0 0 6px;font-size:.82rem;color:var(--fg-hi)}
+  .cap-card p{margin:0;font-size:.74rem;color:var(--fg-lo);line-height:1.5}
+  .resm{display:grid;grid-template-columns:repeat(4,1fr);gap:var(--s2);margin-top:14px}
+  .resm .kpi{padding:10px 12px;border:1px solid var(--line-soft);border-radius:var(--r-md);background:var(--ink-900)}
+  .resm .kpi .label{font-size:.66rem;color:var(--fg-lo);text-transform:uppercase;letter-spacing:.05em}
+  .resm .kpi .val{font-size:1.1rem;font-weight:700;color:var(--fg-hi);font-family:var(--font-mono)}
+  .pipe-line{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:12px;padding-top:12px;border-top:1px dashed var(--line-soft);font-size:.72rem}
+  .pipe-line .node{padding:3px 10px;border:1px solid var(--teal-bright);border-radius:99px;background:rgba(20,184,166,.08);color:var(--teal-bright);font-family:var(--font-mono)}
+  .pipe-line .node.sink{border-color:var(--warn);color:var(--warn);background:rgba(245,158,11,.08)}
+  .pipe-line .arrow{color:var(--fg-lo)}
+  .pipe-line .empty{color:var(--fg-lo);font-style:italic}
+  @media(max-width:1024px){.prep-layout{grid-template-columns:1fr}.prep-side{position:static}}
+</style>
+</head>
+<body>
+<div id="app">
+<main class="main"><div class="page">
+  <div class="telem" id="telem"></div>
+  <div class="h-sec between">
+    <div><h1>清洗整理</h1><div class="desc">新摄入的 <b>结构化数据</b> → <b>画像诊断</b> · 类型规整 / 缺失值 / 去重行 / 异常值 / 列操作 / 值映射 / 标准化 · <b>规则校验</b> · <b>过滤收紧</b> → <b>更新写回</b>(版本化 · 增量)</div></div>
+    <div class="flex">
+      <label class="flex" style="gap:6px;align-items:center;font-size:.78rem;color:var(--fg-md);cursor:pointer;margin-right:4px"><input type="checkbox" id="incOnly" checked style="accent-color:var(--teal-bright)"> 仅新摄入</label>
+      <button class="btn btn-ghost btn-sm"><i class="placeholder" data-ic="code"></i> 等价代码</button>
+      <button class="btn btn-primary btn-sm" id="runBtn"><i class="placeholder" data-ic="play"></i> 运行管道</button>
+    </div>
+  </div>
+
+  <div class="prep-layout">
+    <aside class="prep-side">
+      <div class="panel flush">
+        <div class="panel-h"><i class="placeholder" data-ic="database"></i><h3>数据源</h3></div>
+        <div class="panel-b" style="padding:12px">
+          <select class="select" style="width:100%;margin-bottom:8px">
+            <option>orders_raw · 1,204 行 · 6 列</option>
+            <option>customer_leads · 8,432 行 · 9 列</option>
+            <option>sensor_logs · 52,310 行 · 5 列</option>
+          </select>
+          <div class="muted" style="font-size:.7rem;line-height:1.5">选中:orders_raw · Lance 列式 · order_id / order_date / amount / customer / status / region · v3</div>
+        </div>
+      </div>
+      <div class="panel flush">
+        <div class="panel-h"><i class="placeholder" data-ic="filter"></i><h3>清洗算子</h3><span class="sub">点图标启用 · 点行配置</span></div>
+        <div class="panel-b" style="padding:8px;display:flex;flex-direction:column;gap:6px" id="opList"></div>
+      </div>
+    </aside>
+
+    <div class="col">
+      <div class="panel flush">
+        <div class="panel-h"><i class="placeholder" data-ic="olap"></i><h3 id="opTitle">类型规整配置</h3><span class="sub" id="opSub">字符串 → 日期/数字/布尔</span></div>
+        <div class="panel-b" id="cfgArea" style="padding:14px"></div>
+        <div class="panel-b" style="padding:0 14px 14px"><div class="pipe-line" id="pipeLine"></div></div>
+      </div>
+
+      <div class="panel flush" style="margin-top:var(--s4)">
+        <div class="panel-h"><i class="placeholder" data-ic="search"></i><h3>预览(前 8 行 · 绿=改动 · 红=删除)</h3><span class="actions"><span class="muted mono" style="font-size:.7rem" id="previewMeta">影响 0 行</span></span></div>
+        <div style="overflow-x:auto"><table class="preview-tbl" id="previewTbl"></table></div>
+      </div>
+
+      <div class="panel flush" style="margin-top:var(--s4)">
+        <div class="panel-h"><i class="placeholder" data-ic="play"></i><h3>运行 · 更新写回</h3><span class="actions"><span class="muted mono" style="font-size:.7rem" id="runStatus">待运行</span></span></div>
+        <div class="panel-b" style="padding:14px">
+          <div class="flex" style="gap:10px;align-items:center;margin-bottom:12px"><div class="bar-track"><i id="runBar"></i></div><span class="mono" id="runPct" style="font-size:.74rem;color:var(--fg-lo);min-width:40px">0%</span></div>
+          <div class="resm">
+            <div class="kpi"><div class="label">输入</div><div class="val">1,204</div></div>
+            <div class="kpi"><div class="label">处理</div><div class="val" id="rProc">0</div></div>
+            <div class="kpi"><div class="label">影响</div><div class="val" id="rImpact">0</div></div>
+            <div class="kpi"><div class="label">输出</div><div class="val" id="rOut">—</div></div>
+          </div>
+          <div class="muted" style="font-size:.72rem;margin-top:12px">运行完成后写回 <code>orders_raw</code>,版本 +1;勾选「仅新摄入」时只更新增量行,历史版本保留可回滚。</div>
+        </div>
+      </div>
+
+      <div class="grid g-3" style="margin-top:var(--s4)">
+        <div class="cap-card"><h4>① 结构化优先</h4><p>面向表格型数据(SQL / CSV / 数据库摄入):列类型、缺失、重复行、离群点、枚举一致性——结构化清洗的主场。</p></div>
+        <div class="cap-card"><h4>② 管道可编排</h4><p>多算子串联,顺序敏感(先规整类型 → 再去重 → 再过滤异常)。惰性构建计划,collect 触发,每步可预览 diff。</p></div>
+        <div class="cap-card"><h4>③ 更新可回滚</h4><p>写回走数据集版本化,清洗前后均为可用版本;增量模式只动新摄入行,不污染历史。</p></div>
+      </div>
+    </div>
+  </div>
+</div></main>
+</div>
+
+<script src="assets/layout.js"></script>
+<script>
+const { renderShell, icon } = window;
+renderShell({ active: "tidy", crumb: '<b>清洗整理</b> · 原型' });
+const $ = (s) => document.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const esc = (s) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+$("#telem").innerHTML = `<span class="item"><span class="dot"></span>引擎 <b>Daft</b></span><span class="item">数据 <b>结构化</b></span><span class="item">写回 <b>版本化 · 增量</b></span><span class="item" style="margin-left:auto">原型 · mock 数据</span>`;
+
+const OPS = {
+  cast: {
+    title: "类型规整配置", sub: "字符串 → 日期/数字/布尔",
+    cfg: `<div class="cfg-row" style="grid-template-columns:1fr 1fr"><div><label>目标列</label><select class="select"><option>order_date</option><option>amount</option></select></div>
+      <div><label>目标类型</label><select class="select"><option>date (YYYY-MM-DD)</option><option>number</option><option>boolean</option></select></div></div>
+      <div class="cfg-row"><label>源格式(可自动推断)</label><input class="input mono" value="yyyy/m/d | dd-MMM-yyyy | yyyyMMdd"></div>
+      <div class="muted" style="font-size:.74rem">把杂乱字符串日期/金额统一成强类型,后续聚合、排序、异常检测才能正确执行。</div>`,
+    head: ["order_id", "order_date(原始)", "order_date(规整)"],
+    rows: [
+      ["A1001", "2024/3/15", '<span class="tag-pos">2024-03-15</span>'],
+      ["A1002", "15-Mar-2024", '<span class="tag-pos">2024-03-15</span>'],
+      ["A1003", "20240308", '<span class="tag-pos">2024-03-08</span>'],
+      ["A1004", "2024/4/1", '<span class="tag-pos">2024-04-01</span>'],
+      ["A1005", "not-a-date", '<span class="tag-neg">解析失败 → 空</span>'],
+      ["A1006", "2024/2/29", '<span class="tag-pos">2024-02-29</span>'],
+      ["A1007", "31/12/2024", '<span class="tag-warn">歧义 → 按 DMY</span>'],
+      ["A1008", "2024/5/20", '<span class="tag-pos">2024-05-20</span>'],
+    ],
+    del: [], impact: 1204, out: "+强类型列",
+  },
+  missing: {
+    title: "缺失值处理配置", sub: "填充或删除空值",
+    cfg: `<div class="cfg-row"><label>目标列</label><select class="select"><option>amount</option><option>customer</option></select></div>
+      <div class="cfg-row" style="grid-template-columns:1fr 1fr"><div><label>策略</label><select class="select"><option>填充均值</option><option>填充默认值</option><option>前/后向填充</option><option>删除该行</option></select></div>
+      <div><label>默认值</label><input class="input mono" value="0.00"></div></div>
+      <div class="muted" style="font-size:.74rem">缺失值会破坏聚合、嵌入、去重。结构化数据优先「填均值」或「标记 + 保留」,删行是最后手段。</div>`,
+    head: ["order_id", "amount(原始)", "amount(填充)"],
+    rows: [
+      ["A1001", "128.00", "128.00"],
+      ["A1002", "—", '<span class="tag-pos">187.50 ← 均值</span>'],
+      ["A1003", "45.00", "45.00"],
+      ["A1004", "210.00", "210.00"],
+      ["A1005", "—", '<span class="tag-pos">187.50 ← 均值</span>'],
+      ["A1006", "332.00", "332.00"],
+      ["A1007", "—", '<span class="tag-pos">187.50 ← 均值</span>'],
+      ["A1008", "99.00", "99.00"],
+    ],
+    del: [], impact: 3, out: "0 删行",
+  },
+  dedup: {
+    title: "去重行配置", sub: "按主键 / 全行 exact",
+    cfg: `<div class="cfg-row"><label>判定依据</label><select class="select"><option>order_id(主键)</option><option>全行完全相同</option><option>order_id + customer</option></select></div>
+      <div class="cfg-row" style="grid-template-columns:1fr 1fr"><div><label>保留</label><select class="select"><option>首条(最早)</option><option>末条</option></select></div>
+      <div><label>重复处理</label><select class="select"><option>删除</option><option>标记 is_dup 列</option></select></div></div>
+      <div class="muted" style="font-size:.74rem">重复主键会导致 JOIN / 更新异常。按主键去重保留首条,重复行标红删除。</div>`,
+    head: ["order_id", "amount", "customer", "判定"],
+    rows: [
+      ["A1001", "128.00", "芜湖科技", '<span class="tag-neu">保留</span>'],
+      ["A1002", "45.00", "合肥贸易", '<span class="tag-neu">保留</span>'],
+      ["A1002", "45.00", "合肥贸易", '<span class="tag-neg">⚠ 重复 → 删</span>'],
+      ["A1003", "210.00", "南京制造", '<span class="tag-neu">保留</span>'],
+      ["A1004", "99.00", "芜湖科技", '<span class="tag-neu">保留</span>'],
+      ["A1004", "99.00", "芜湖科技", '<span class="tag-neg">⚠ 重复 → 删</span>'],
+      ["A1005", "332.00", "杭州互联", '<span class="tag-neu">保留</span>'],
+      ["A1006", "76.00", "合肥贸易", '<span class="tag-neu">保留</span>'],
+    ],
+    del: [2, 5], impact: 2, out: "1,202 行",
+  },
+  outlier: {
+    title: "异常值过滤配置", sub: "范围 / IQR / Z-score",
+    cfg: `<div class="cfg-row" style="grid-template-columns:1fr 1fr"><div><label>目标列</label><select class="select"><option>amount</option></select></div>
+      <div><label>规则</label><select class="select"><option>IQR 离群点(1.5×)</option><option>固定范围</option><option>Z-score > 3</option></select></div></div>
+      <div class="cfg-row"><label>动作</label><select class="select"><option>标记 amount_flag 列</option><option>删除该行</option><option>截断到边界</option></select></div>
+      <div class="muted" style="font-size:.74rem">离群点扭曲均值与模型训练。IQR 法对偏态分布稳健;先标记复查,确认后再删。</div>`,
+    head: ["order_id", "amount", "判定"],
+    rows: [
+      ["A1001", "128.00", '<span class="tag-neu">正常</span>'],
+      ["A1002", "45.00", '<span class="tag-neu">正常</span>'],
+      ["A1003", "9,999.00", '<span class="tag-neg">⚠ IQR 离群</span>'],
+      ["A1004", "210.00", '<span class="tag-neu">正常</span>'],
+      ["A1005", "12,450.00", '<span class="tag-neg">⚠ IQR 离群</span>'],
+      ["A1006", "332.00", '<span class="tag-neu">正常</span>'],
+      ["A1007", "76.00", '<span class="tag-neu">正常</span>'],
+      ["A1008", "15,800.00", '<span class="tag-neg">⚠ IQR 离群</span>'],
+    ],
+    del: [2, 4, 7], impact: 3, out: "+amount_flag",
+  },
+  column: {
+    title: "列操作配置", sub: "重命名 / 拆分 / 合并 / 派生",
+    cfg: `<div class="cfg-row"><label>操作</label><select class="select"><option>拆分列</option><option>合并列</option><option>重命名</option><option>派生计算</option><option>删除列</option></select></div>
+      <div class="cfg-row"><label>源列</label><input class="input mono" value="customer"></div>
+      <div class="cfg-row" style="grid-template-columns:1fr 1fr"><div><label>分隔符</label><input class="input mono" value=" / "></div>
+      <div><label>新列</label><input class="input mono" value="contact, company"></div></div>
+      <div class="muted" style="font-size:.74rem">把「张三 / 芜湖科技」拆成 contact + company 两列,便于按公司聚合分析。</div>`,
+    head: ["order_id", "customer(原始)", "contact", "company"],
+    rows: [
+      ["A1001", "张三 / 芜湖科技", "张三", '<span class="tag-pos">芜湖科技</span>'],
+      ["A1002", "李四 / 合肥贸易", "李四", '<span class="tag-pos">合肥贸易</span>'],
+      ["A1003", "王五 / 南京制造", "王五", '<span class="tag-pos">南京制造</span>'],
+      ["A1004", "赵六 / 芜湖科技", "赵六", '<span class="tag-pos">芜湖科技</span>'],
+      ["A1005", "(无)", "—", "—"],
+      ["A1006", "钱七 / 杭州互联", "钱七", '<span class="tag-pos">杭州互联</span>'],
+      ["A1007", "孙八 / 合肥贸易", "孙八", '<span class="tag-pos">合肥贸易</span>'],
+      ["A1008", "周九 / 芜湖科技", "周九", '<span class="tag-pos">芜湖科技</span>'],
+    ],
+    del: [], impact: 1204, out: "+contact, +company",
+  },
+  map: {
+    title: "值映射替换配置", sub: "枚举统一 / 纠错",
+    cfg: `<div class="cfg-row"><label>目标列</label><select class="select"><option>status</option><option>region</option></select></div>
+      <div class="cfg-row"><label>映射表(原值 → 新值)</label><textarea class="input mono" style="min-height:84px">已发货 → shipped
+SHIPPED → shipped
+已发货  → shipped
+pendig → pending
+已完成 → completed</textarea></div>
+      <div class="muted" style="font-size:.74rem">同一语义的不同写法(中英 / 大小写 / 错别字 / 多余空格)统一成枚举,下游筛选与统计才准确。</div>`,
+    head: ["order_id", "status(原始)", "status(统一)"],
+    rows: [
+      ["A1001", "已发货", '<span class="tag-pos">shipped</span>'],
+      ["A1002", "SHIPPED", '<span class="tag-pos">shipped</span>'],
+      ["A1003", "pendig", '<span class="tag-warn">pending ← 纠错</span>'],
+      ["A1004", "已发货", '<span class="tag-pos">shipped</span>'],
+      ["A1005", "已完成", '<span class="tag-pos">completed</span>'],
+      ["A1006", "shipped", "shipped"],
+      ["A1007", "已完成", '<span class="tag-pos">completed</span>'],
+      ["A1008", "pendig", '<span class="tag-warn">pending ← 纠错</span>'],
+    ],
+    del: [], impact: 6, out: "枚举 = 3",
+  },
+  normalize: {
+    title: "标准化配置", sub: "大小写 / 单位 / 格式",
+    cfg: `<div class="cfg-row"><label>目标列</label><select class="select"><option>region</option><option>phone</option></select></div>
+      <div class="cfg-row"><label>规则</label><select class="select" multiple style="min-height:88px"><option>✓ 去首尾空白</option><option>✓ 全角→半角(NFKC)</option><option>✓ 统一大小写</option><option>✓ 单位归一(万→元)</option></select></div>
+      <div class="muted" style="font-size:.74rem">「华东 」「華東」「华东」应是同一个值。文本归一后再 group by,类别才不会爆炸。</div>`,
+    head: ["order_id", "region(原始)", "region(标准化)"],
+    rows: [
+      ["A1001", "华东 ", '<span class="tag-pos">华东</span>'],
+      ["A1002", " 華東", '<span class="tag-pos">华东</span>'],
+      ["A1003", "华北", '<span class="tag-pos">华北</span>'],
+      ["A1004", "华东", '<span class="tag-pos">华东</span>'],
+      ["A1005", "华南 ", '<span class="tag-pos">华南</span>'],
+      ["A1006", "華東", '<span class="tag-pos">华东</span>'],
+      ["A1007", "华北  ", '<span class="tag-pos">华北</span>'],
+      ["A1008", "华中", '<span class="tag-pos">华中</span>'],
+    ],
+    del: [], impact: 8, out: "类别稳定",
+  },
+  profile: {
+    title: "数据画像配置", sub: "先诊断再清洗",
+    cfg: `<div class="cfg-row"><label>画像范围</label><select class="select"><option>全表(6 列)</option><option>选列</option></select></div>
+      <div class="cfg-row"><label>统计维度</label><select class="select" multiple style="min-height:96px"><option>✓ 缺失率</option><option>✓ 唯一值(基数)</option><option>✓ 类型推断</option><option>✓ 数值分布(min/max/均值)</option><option>✓ 异常标记</option></select></div>
+      <div class="muted" style="font-size:.74rem">不修改数据,只产出每列质量摘要:哪里脏、脏多少。据此决定下面挂哪些清洗算子。对应 <code>GET /quality/profile</code>。</div>`,
+    head: ["列", "推断类型", "缺失率", "唯一值", "示例", "质量标记"],
+    rows: [
+      ["order_id", "string", "0%", "1,204", "A1001", '<span class="tag-pos">干净</span>'],
+      ["order_date", "string", "0%", "1,180", "2024/3/15", '<span class="tag-warn">格式不一</span>'],
+      ["amount", "string", "0.25%", "1,190", "128.00", '<span class="tag-neg">类型错 + 3 离群</span>'],
+      ["customer", "string", "0.4%", "380", "张三 / 芜湖科技", '<span class="tag-warn">待拆分</span>'],
+      ["status", "string", "0%", "7", "shipped", '<span class="tag-neg">枚举膨胀(应 3)</span>'],
+      ["region", "string", "0%", "12", "华东", '<span class="tag-warn">大小写/全角</span>'],
+    ],
+    del: [], impact: 1204, out: "6 列画像",
+  },
+  validate: {
+    title: "规则校验配置", sub: "断言式质检",
+    cfg: `<div class="cfg-row"><label>校验规则(断言)</label><textarea class="input mono" style="min-height:96px">amount IS NOT NULL AND amount > 0
+amount < 100000
+status IN ('pending','shipped','completed','cancelled')
+order_date IS PARSEABLE AS date
+customer IS NOT NULL</textarea></div>
+      <div class="cfg-row"><label>违反动作</label><select class="select"><option>标记 invalid_flags 列</option><option>隔离到坏行表</option><option>删除</option></select></div>
+      <div class="muted" style="font-size:.74rem">每行跑断言,违反的行标红/隔离。比异常值更通用:类型、范围、枚举、完整性都能断言。对应 <code>POST /quality/rules</code>。</div>`,
+    head: ["order_id", "amount", "status", "违反"],
+    rows: [
+      ["A1001", "128.00", "shipped", '<span class="tag-pos">✓ 通过</span>'],
+      ["A1002", "-45.00", "pending", '<span class="tag-neg">⚠ amount&gt;0</span>'],
+      ["A1003", "99,999.00", "shipped", '<span class="tag-neg">⚠ amount&lt;100000</span>'],
+      ["A1004", "210.00", "已发货", '<span class="tag-neg">⚠ status 枚举</span>'],
+      ["A1005", "—", "pending", '<span class="tag-neg">⚠ amount 非空</span>'],
+      ["A1006", "332.00", "completed", '<span class="tag-pos">✓ 通过</span>'],
+      ["A1007", "76.00", "pendig", '<span class="tag-neg">⚠ status 枚举</span>'],
+      ["A1008", "15,800.00", "shipped", '<span class="tag-neg">⚠ amount&lt;100000</span>'],
+    ],
+    del: [], impact: 6, out: "+invalid_flags",
+  },
+  filter: {
+    title: "过滤行配置", sub: "按条件删行",
+    cfg: `<div class="cfg-row"><label>过滤条件(满足则删)</label><textarea class="input mono" style="min-height:84px">status = 'cancelled'
+amount <= 0
+order_date IS NULL</textarea></div>
+      <div class="cfg-row" style="grid-template-columns:1fr 1fr"><div><label>组合</label><select class="select"><option>OR(任一满足删)</option><option>AND(全部满足删)</option></select></div>
+      <div><label>动作</label><select class="select"><option>删除</option><option>移到 quarantine 表</option></select></div></div>
+      <div class="muted" style="font-size:.74rem">清洗末端收紧:删掉取消单、负金额、无日期的脏行。被删行标红。对应 <code>POST /quality/filter</code>。</div>`,
+    head: ["order_id", "amount", "status", "判定"],
+    rows: [
+      ["A1001", "128.00", "shipped", '<span class="tag-neu">保留</span>'],
+      ["A1002", "-45.00", "pending", '<span class="tag-neg">⚠ amount≤0 → 删</span>'],
+      ["A1003", "99,999.00", "cancelled", '<span class="tag-neg">⚠ status=cancelled → 删</span>'],
+      ["A1004", "210.00", "shipped", '<span class="tag-neu">保留</span>'],
+      ["A1005", "—", "pending", '<span class="tag-neg">⚠ date 空 → 删</span>'],
+      ["A1006", "332.00", "completed", '<span class="tag-neu">保留</span>'],
+      ["A1007", "76.00", "cancelled", '<span class="tag-neg">⚠ status=cancelled → 删</span>'],
+      ["A1008", "15,800.00", "shipped", '<span class="tag-neu">保留</span>'],
+    ],
+    del: [1, 2, 4, 6], impact: 4, out: "删 4 行",
+  },
+};
+
+const ORDER = ["profile", "cast", "missing", "dedup", "outlier", "column", "map", "normalize", "validate", "filter"];
+const LABELS = { profile: "数据画像", cast: "类型规整", missing: "缺失值", dedup: "去重行", outlier: "异常值", column: "列操作", map: "值映射", normalize: "标准化", validate: "规则校验", filter: "过滤行" };
+const IC = { profile: "gauge", cast: "olap", missing: "warn", dedup: "copy", outlier: "pulse", column: "tree", map: "tag", normalize: "sparkle", validate: "quality", filter: "filter" };
+const enabled = new Set(["profile", "cast", "dedup", "outlier"]);
+let active = "profile";
+
+function renderOpList() {
+  $("#opList").innerHTML = ORDER.map(k => `<button class="op-btn ${k === active ? "active" : ""} ${enabled.has(k) ? "enabled" : ""}" data-op="${k}"><span class="op-ic">${icon(IC[k])}</span><span><span class="op-t">${LABELS[k]}</span><span class="op-s">${OPS[k].sub}</span></span></button>`).join("");
+  $$("#opList .op-btn").forEach(b => b.addEventListener("click", () => { active = b.dataset.op; renderOpList(); renderOp(active); }));
+}
+
+function renderOp(key) {
+  const op = OPS[key];
+  $("#opTitle").textContent = op.title;
+  $("#opSub").textContent = op.sub;
+  $("#cfgArea").innerHTML = op.cfg;
+  $("#previewTbl").innerHTML = `<thead><tr>${op.head.map(h => `<th>${esc(h)}</th>`).join("")}</tr></thead><tbody>${op.rows.map((r, i) => `<tr class="${op.del.includes(i) ? "del" : ""}">${r.map(c => `<td>${c}</td>`).join("")}</tr>`).join("")}</tbody>`;
+  $("#previewMeta").textContent = `影响 ${op.impact.toLocaleString()} 行`;
+  $("#rImpact").textContent = op.impact.toLocaleString();
+  $("#rOut").textContent = op.out;
+  $("#rProc").textContent = "0"; $("#runBar").style.width = "0%"; $("#runPct").textContent = "0%";
+  $("#runStatus").textContent = "待运行";
+  renderPipe();
+}
+
+function renderPipe() {
+  const nodes = ORDER.filter(k => enabled.has(k));
+  $("#pipeLine").innerHTML = nodes.length
+    ? `<span class="muted">流水线:</span>` + nodes.map((k, i) => `<span class="node">${LABELS[k]}</span>${i < nodes.length - 1 ? '<span class="arrow">→</span>' : ''}`).join("") + `<span class="arrow">→</span><span class="node sink">更新写回</span>`
+    : `<span class="empty">未启用任何算子 —— 点左侧算子图标启用</span>`;
+}
+
+// 点算子图标区 = 切换启用/禁用(不切换配置选中)
+document.addEventListener("click", e => {
+  const ic = e.target.closest(".op-btn .op-ic");
+  if (!ic) return;
+  e.stopPropagation();
+  const k = ic.closest(".op-btn").dataset.op;
+  if (enabled.has(k)) enabled.delete(k); else enabled.add(k);
+  renderOpList(); renderPipe();
+});
+
+$("#runBtn").addEventListener("click", () => {
+  if (enabled.size === 0) { window.toast && toast("请先启用至少一个算子", "warn"); return; }
+  $("#runStatus").textContent = "运行中(collect 触发)…";
+  let p = 0;
+  const t = setInterval(() => {
+    p = Math.min(100, p + 6 + Math.random() * 8);
+    $("#runBar").style.width = p + "%"; $("#runPct").textContent = Math.round(p) + "%";
+    $("#rProc").textContent = Math.round(1204 * p / 100).toLocaleString();
+    if (p >= 100) {
+      clearInterval(t);
+      const inc = $("#incOnly").checked;
+      $("#runStatus").textContent = "完成 ✓ 已写回";
+      $("#rOut").textContent = inc ? "v4 · +87 行" : "v4 · 1,204 行";
+      window.toast && toast(`管道完成 · 已写回 orders_raw ${inc ? "(增量 +87 行)" : "(全量)"} · 版本 v4`, "ok");
+    }
+  }, 200);
+});
+
+renderOpList();
+renderOp("profile");
+</script>
+</body>
+</html>
