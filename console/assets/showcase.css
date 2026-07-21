@@ -60,32 +60,32 @@
 .sc-sec-sub{font-size:.66rem; color:var(--fg-lo); font-family:var(--font-mono); text-transform:uppercase; letter-spacing:.1em; margin:var(--s5) 0 var(--s3); text-align:center}
 
 /* —— 架构五层堆叠 —— */
-.arch-stack{display:grid; grid-template-columns:1fr 184px; gap:12px; align-items:stretch}
-.arch-main{display:flex; flex-direction:column; gap:6px}
-.arch-side{
+.sc-arch-stack{display:grid; grid-template-columns:1fr 184px; gap:12px; align-items:stretch}
+.sc-arch-main{display:flex; flex-direction:column; gap:6px}
+.sc-arch-side{
   border:1px dashed var(--ok); border-radius:var(--r-md); padding:14px 12px 30px;
   background:linear-gradient(180deg, rgba(34,197,94,.07), rgba(34,197,94,.02));
   display:flex; flex-direction:column; gap:9px; position:relative;
 }
-.arch-side-h{font-family:var(--font-mono); font-size:.72rem; color:var(--ok); font-weight:700; text-align:center; padding-bottom:8px; border-bottom:1px solid rgba(34,197,94,.3); margin-bottom:2px}
-.arch-side-i b{display:block; font-size:.74rem; color:var(--fg-hi)}
-.arch-side-i small{font-size:.58rem; color:var(--fg-lo); font-family:var(--font-mono); line-height:1.35}
-.arch-side-tag{position:absolute; bottom:8px; left:0; right:0; text-align:center; font-size:.54rem; font-family:var(--font-mono); color:var(--amber)}
-.arch-layer{
+.sc-arch-side-h{font-family:var(--font-mono); font-size:.72rem; color:var(--ok); font-weight:700; text-align:center; padding-bottom:8px; border-bottom:1px solid rgba(34,197,94,.3); margin-bottom:2px}
+.sc-arch-side-i b{display:block; font-size:.74rem; color:var(--fg-hi)}
+.sc-arch-side-i small{font-size:.58rem; color:var(--fg-lo); font-family:var(--font-mono); line-height:1.35}
+.sc-arch-side-tag{position:absolute; bottom:8px; left:0; right:0; text-align:center; font-size:.54rem; font-family:var(--font-mono); color:var(--amber)}
+.sc-arch-layer{
   display:grid; grid-template-columns:48px 1fr auto; gap:14px; align-items:center;
   padding:12px 16px; border-radius:var(--r-md); position:relative;
   border:1px solid var(--line); background:var(--ink-900); transition:all .3s var(--ease);
 }
-.arch-layer:hover{transform:translateX(4px); border-color:var(--teal)}
-.arch-ln{font-family:var(--font-mono); font-size:1.2rem; font-weight:800; width:40px; height:40px; display:grid; place-items:center; border-radius:8px; background:var(--ink-800)}
-.arch-info b{display:block; font-size:.92rem; color:var(--fg-hi)}
-.arch-info small{font-size:.72rem; color:var(--fg-md); font-family:var(--font-mono)}
-.arch-tag{font-size:.58rem; font-family:var(--font-mono); color:var(--amber); border:1px solid rgba(217,119,6,.4); background:var(--amber-soft); padding:2px 7px; border-radius:10px}
-.arch-cross{
+.sc-arch-layer:hover{transform:translateX(4px); border-color:var(--teal)}
+.sc-arch-ln{font-family:var(--font-mono); font-size:1.2rem; font-weight:800; width:40px; height:40px; display:grid; place-items:center; border-radius:8px; background:var(--ink-800)}
+.sc-arch-info b{display:block; font-size:.92rem; color:var(--fg-hi)}
+.sc-arch-info small{font-size:.72rem; color:var(--fg-md); font-family:var(--font-mono)}
+.sc-arch-tag{font-size:.58rem; font-family:var(--font-mono); color:var(--amber); border:1px solid rgba(217,119,6,.4); background:var(--amber-soft); padding:2px 7px; border-radius:10px}
+.sc-arch-cross{
   margin-top:6px; padding:10px 16px; border:1px dashed var(--ok); border-radius:var(--r-md);
   display:grid; grid-template-columns:48px 1fr; gap:14px; align-items:center; background:rgba(34,197,94,.04);
 }
-.arch-cross .arch-ln{color:var(--ok)}
+.sc-arch-cross .arch-ln{color:var(--ok)}
 
 /* —— 六能力柱 —— */
 .cap-grid{display:grid; grid-template-columns:repeat(3,1fr); gap:10px}
