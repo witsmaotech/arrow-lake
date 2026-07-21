@@ -67,7 +67,7 @@ def _get_provider(lake: Any, provider: Any, model: str | None) -> Any:
         raise RuntimeError("lake has no LLM config and no provider was injected")
     if model:
         try:
-            llm_config.model = model
+            llm_config = llm_config.model_copy(update={"model": model})
         except Exception:  # noqa: BLE001 — best-effort override
             pass
     return create_llm_provider(llm_config)

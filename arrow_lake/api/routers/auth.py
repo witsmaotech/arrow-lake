@@ -77,16 +77,17 @@ def _check_api_key(request: Request, config: ArrowLakeConfig) -> None:
         )
 
     else:
-        # auth_mode='api_key' — allow if api_key is set
+        # auth_mode='api_key' — fail-closed: key must match when configured
         api_key = config.api.api_key
-        if api_key:
-            header_name = config.api.api_key_header
-            provided = request.headers.get(header_name, "")
-            if hmac.compare_digest(provided, api_key):
+        if not api_key:
+            # unauthenticated setup (no api_key AND no jwt secret) — allow
+            if not config.auth.jwt_secret_key:
                 return
-        # No api_key configured — allow in unauthenticated setups
-        if not api_key and not config.auth.jwt_secret_key:
-            return
+            raise HTTPException(status_code=500, detail="api_key mode requires api_key to be configured")
+        header_name = config.api.api_key_header
+        provided = request.headers.get(header_name, "")
+        if not hmac.compare_digest(provided, api_key):
+            raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 
 @router.post("/token", summary="Exchange credentials for JWT token pair")
