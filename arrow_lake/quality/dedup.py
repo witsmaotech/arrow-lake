@@ -480,11 +480,11 @@ class ContentDeduplicator:
                 continue
             bucket_key = h & bucket_mask
             bucket = buckets.get(bucket_key, [])
-            is_dup = any(self._hamming_distance(h, existing_h) < threshold for _, existing_h in bucket)
+            is_dup = any(self._hamming_distance(h, existing_h) <= threshold for _, existing_h in bucket)
             # Also check adjacent bucket for hashes near boundary
             if not is_dup and bucket_key != 0:
                 adj_bucket = buckets.get(bucket_key - (1 << (64 - bucket_bits)), [])
-                is_dup = any(self._hamming_distance(h, existing_h) < threshold for _, existing_h in adj_bucket)
+                is_dup = any(self._hamming_distance(h, existing_h) <= threshold for _, existing_h in adj_bucket)
             if not is_dup:
                 bucket.append((_i, h))
                 buckets[bucket_key] = bucket
@@ -527,7 +527,7 @@ class ContentDeduplicator:
                 continue
             is_dup = False
             for existing_h in seen:
-                if self._hamming_distance(h, existing_h) < threshold:
+                if self._hamming_distance(h, existing_h) <= threshold:
                     is_dup = True
                     break
             if not is_dup:
