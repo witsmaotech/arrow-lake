@@ -603,12 +603,14 @@ def _read_desc_map() -> dict[str, str]:
 
 
 def _save_desc(name: str, description: str) -> None:
+    import fcntl
     import json
     m = _read_desc_map()
     m[name] = (description or "").strip()
     try:
         os.makedirs(os.path.dirname(_DESC_PATH), exist_ok=True)
         with open(_DESC_PATH, "w", encoding="utf-8") as fh:
+            fcntl.flock(fh, fcntl.LOCK_EX)
             json.dump(m, fh, ensure_ascii=False, indent=2)
     except OSError:
         pass  # 只读 FS → 静默(不阻塞摄入)
@@ -619,9 +621,17 @@ async def set_dataset_description(
     name: str = Path(..., pattern=_NAME_PATTERN),
     *,
     req: DatasetDescriptionRequest,
+    lake=Depends(get_lake),
     _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> MessageResponse:
     """Set/update a human-readable description for a dataset (local JSON store)."""
+    # 验证数据集存在(防给不存在的数据集写描述污染 store)
+    result = await run_sync(lake.catalog, timeout=_ADMIN_TIMEOUT, label="catalog")
+    if not any(e.name == name for e in result.datasets):
+        raise CatalogError(
+            error_code=ErrorCode.CATALOG_DATASET_NOT_FOUND,
+            message=f"Dataset '{name}' not found",
+        )
     _save_desc(name, req.description)
     return MessageResponse(message=f"description updated for {name}")
 

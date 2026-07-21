@@ -365,7 +365,7 @@ class DatasetInfo(BaseModel):
 class DatasetDescriptionRequest(BaseModel):
     """Set a human-readable description for a dataset (console)."""
 
-    description: str = ""
+    description: str = Field(default="", max_length=1000)
 
 
 class DatasetListResponse(BaseModel):
