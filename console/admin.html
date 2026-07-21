@@ -144,6 +144,7 @@ const PERMS = ["dataset:read", "dataset:write", "dataset:delete", "admin:manage"
 const fmtDate = (s) => { if (!s) return "—"; const d = new Date(s); if (isNaN(d)) return String(s).slice(0, 16);
   const p = (n) => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
 const errMsg = (e) => { const m = e?.detail; if (Array.isArray(m)) return m.map((x) => x?.msg || JSON.stringify(x)).join("; "); return m || e?.message || String(e); };
+const friendlyErr = (e) => { const raw = errMsg(e); if (/email/i.test(raw) && /unique|already|exist|占用|重复|冲突/i.test(raw)) return "该邮箱已被其他用户占用"; if (/username/i.test(raw) && /unique|already|exist|占用|重复|冲突/i.test(raw)) return "该用户名已存在"; return raw; };
 const chkBoxes = (hostId, checked = []) => { $(hostId).innerHTML = PERMS.map((p) =>
   `<label><input type="checkbox" value="${p}" ${checked.includes(p) ? "checked" : ""}> <span class="mono">${p}</span></label>`).join(""); };
 const readChk = (hostId) => $$(`${hostId} input:checked`).map((c) => c.value);
@@ -210,7 +211,7 @@ $("#nuBtn").addEventListener("click", async () => {
     $("#nuUser").value = ""; $("#nuEmail").value = ""; $("#nuPass").value = "";
     loadUsers();
   } catch (e) {
-    toast("建用户失败:" + errMsg(e), "danger", 5000);
+    toast("建用户失败:" + friendlyErr(e), "danger", 5000);
   } finally {
     btn.disabled = false; btn.innerHTML = `${icon("plus")} 建用户`;
   }
@@ -231,7 +232,7 @@ async function editUser(uid) {
     const pw = $("#edPass").value;
     if (pw) { if (pw.length < 8) return toast("密码至少 8 位", "warn"); payload.password = pw; }
     try { await request("PUT", `/admin/users/${uid}`, { body: payload }); toast("用户已更新", "ok"); closeModal(); loadUsers(); }
-    catch (e) { toast("更新失败:" + errMsg(e), "danger"); }
+    catch (e) { toast("更新失败:" + friendlyErr(e), "danger"); }
   });
 }
 

@@ -5,6 +5,14 @@
    ============================================================ */
 (function () {
 "use strict";
+
+/* favicon: 用空 data URI 消除浏览器 /favicon.ico 404 噪声(showcase/narrative 不引本脚本,接受其展示页噪声) */
+if (document.head && !document.querySelector('link[rel="icon"]')) {
+  const fav = document.createElement('link');
+  fav.rel = 'icon'; fav.href = 'data:,';
+  document.head.appendChild(fav);
+}
+
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 
