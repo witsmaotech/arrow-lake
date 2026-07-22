@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hmac
 import logging
 import time
@@ -10,37 +11,54 @@ from fastapi import APIRouter, HTTPException, Request
 
 from arrow_lake.api.auth_models import LoginRequest, Role, TokenPair
 from arrow_lake.api.deps import get_app_config
+from arrow_lake.api.rate_limit import _extract_client_ip
 from arrow_lake.config import ArrowLakeConfig
 
 logger = logging.getLogger(__name__)
 
-# v1.9.1: per-(username, client_ip) login failure lockout(防分布式撞库;单进程内存)
+# v1.9.1: per-(username, client_ip) login failure lockout(防撞库;单进程内存,
+# 多 worker 部署需迁 Redis/system_db follow-up)
 _LOGIN_FAILURES: dict[str, list[float]] = {}
 _LOGIN_FAIL_LIMIT = 10
 _LOGIN_LOCKOUT_SECONDS = 900  # 15min
+_LOGIN_EVICT_INTERVAL = 120.0
+_login_lock = asyncio.Lock()
+_last_login_evict = 0.0
 
 
 def _client_ip(request: Request) -> str:
-    xff = request.headers.get("x-forwarded-for", "")
-    if xff:
-        return xff.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
+    # 复用 rate_limit 的 trusted-proxy-aware 提取(右起跳过可信代理,防 XFF leftmost 伪造绕 lockout)
+    return _extract_client_ip(request, set())
 
 
-def _check_login_lockout(username: str, ip: str) -> None:
+def _evict_stale_login_failures(now: float) -> None:
+    global _last_login_evict
+    if now - _last_login_evict < _LOGIN_EVICT_INTERVAL:
+        return
+    _last_login_evict = now
+    cutoff = now - _LOGIN_LOCKOUT_SECONDS
+    stale = [k for k, v in _LOGIN_FAILURES.items() if not v or max(v) < cutoff]
+    for k in stale:
+        del _LOGIN_FAILURES[k]
+
+
+async def _check_login_lockout(username: str, ip: str) -> None:
     key = f"{username}:{ip}"
     now = time.time()
-    fails = [t for t in _LOGIN_FAILURES.get(key, []) if t > now - _LOGIN_LOCKOUT_SECONDS]
-    if len(fails) >= _LOGIN_FAIL_LIMIT:
-        logger.warning("login_locked username=%s ip=%s failures=%d", username, ip, len(fails))
-        raise HTTPException(status_code=429, detail="Too many login failures, try later")
+    async with _login_lock:  # 原子:防 check/record 间并发 race
+        _evict_stale_login_failures(now)
+        fails = [t for t in _LOGIN_FAILURES.get(key, []) if t > now - _LOGIN_LOCKOUT_SECONDS]
+        if len(fails) >= _LOGIN_FAIL_LIMIT:
+            logger.warning("login_locked ip=%s failures=%d", ip, len(fails))
+            raise HTTPException(status_code=429, detail="Too many login failures, try later")
 
 
-def _record_login_failure(username: str, ip: str) -> None:
+async def _record_login_failure(username: str, ip: str) -> None:
     key = f"{username}:{ip}"
     now = time.time()
-    _LOGIN_FAILURES.setdefault(key, []).append(now)
-    _LOGIN_FAILURES[key] = [t for t in _LOGIN_FAILURES[key] if t > now - _LOGIN_LOCKOUT_SECONDS]
+    async with _login_lock:
+        fails = [t for t in _LOGIN_FAILURES.get(key, []) if t > now - _LOGIN_LOCKOUT_SECONDS]
+        _LOGIN_FAILURES[key] = fails + [now]
 
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
@@ -160,7 +178,7 @@ async def login_with_password(request: Request, creds: LoginRequest) -> TokenPai
     if store is None:
         raise HTTPException(status_code=503, detail="User auth requires system_db enabled")
     ip = _client_ip(request)
-    _check_login_lockout(creds.username, ip)
+    await _check_login_lockout(creds.username, ip)
     user = store.get_user_with_credentials(creds.username)
     from arrow_lake.api.passwords import verify_password
 
@@ -169,8 +187,8 @@ async def login_with_password(request: Request, creds: LoginRequest) -> TokenPai
         or not user.get("is_active")
         or not verify_password(creds.password, user.get("password_hash"))
     ):
-        _record_login_failure(creds.username, ip)
-        logger.warning("login_failed username=%s ip=%s", creds.username, ip)
+        await _record_login_failure(creds.username, ip)
+        logger.warning("login_failed ip=%s", ip)
         raise HTTPException(status_code=401, detail="用户名或密码错误")
     try:
         role = Role(user["role"])
