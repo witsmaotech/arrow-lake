@@ -3,12 +3,45 @@
 from __future__ import annotations
 
 import hmac
+import logging
+import time
 
 from fastapi import APIRouter, HTTPException, Request
 
 from arrow_lake.api.auth_models import LoginRequest, Role, TokenPair
 from arrow_lake.api.deps import get_app_config
 from arrow_lake.config import ArrowLakeConfig
+
+logger = logging.getLogger(__name__)
+
+# v1.9.1: per-(username, client_ip) login failure lockout(防分布式撞库;单进程内存)
+_LOGIN_FAILURES: dict[str, list[float]] = {}
+_LOGIN_FAIL_LIMIT = 10
+_LOGIN_LOCKOUT_SECONDS = 900  # 15min
+
+
+def _client_ip(request: Request) -> str:
+    xff = request.headers.get("x-forwarded-for", "")
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _check_login_lockout(username: str, ip: str) -> None:
+    key = f"{username}:{ip}"
+    now = time.time()
+    fails = [t for t in _LOGIN_FAILURES.get(key, []) if t > now - _LOGIN_LOCKOUT_SECONDS]
+    if len(fails) >= _LOGIN_FAIL_LIMIT:
+        logger.warning("login_locked username=%s ip=%s failures=%d", username, ip, len(fails))
+        raise HTTPException(status_code=429, detail="Too many login failures, try later")
+
+
+def _record_login_failure(username: str, ip: str) -> None:
+    key = f"{username}:{ip}"
+    now = time.time()
+    _LOGIN_FAILURES.setdefault(key, []).append(now)
+    _LOGIN_FAILURES[key] = [t for t in _LOGIN_FAILURES[key] if t > now - _LOGIN_LOCKOUT_SECONDS]
+
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
@@ -126,6 +159,8 @@ async def login_with_password(request: Request, creds: LoginRequest) -> TokenPai
     store = getattr(request.app.state, "identity_store", None)
     if store is None:
         raise HTTPException(status_code=503, detail="User auth requires system_db enabled")
+    ip = _client_ip(request)
+    _check_login_lockout(creds.username, ip)
     user = store.get_user_with_credentials(creds.username)
     from arrow_lake.api.passwords import verify_password
 
@@ -134,6 +169,8 @@ async def login_with_password(request: Request, creds: LoginRequest) -> TokenPai
         or not user.get("is_active")
         or not verify_password(creds.password, user.get("password_hash"))
     ):
+        _record_login_failure(creds.username, ip)
+        logger.warning("login_failed username=%s ip=%s", creds.username, ip)
         raise HTTPException(status_code=401, detail="用户名或密码错误")
     try:
         role = Role(user["role"])
@@ -144,6 +181,7 @@ async def login_with_password(request: Request, creds: LoginRequest) -> TokenPai
     refresh = svc.create_refresh_token(
         user_id=str(user["id"]), role=role, permissions=payload.permissions, username=user.get("username")
     )
+    logger.info("login_success user_id=%s username=%s ip=%s", user["id"], creds.username, ip)
     return TokenPair(access_token=svc._encode(payload), refresh_token=refresh)
 
 

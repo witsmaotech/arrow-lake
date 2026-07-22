@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Path, Request
 from pydantic import BaseModel, Field
 
@@ -16,6 +18,8 @@ from arrow_lake.api.models.dataset import (
     SetAclRequest,
 )
 from arrow_lake.api.rbac import DatasetACL, SchemaACL
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 
@@ -65,6 +69,7 @@ async def create_user(
         )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=409, detail="Could not create user (conflict or invalid input)") from exc
+    logger.info("user_created id=%s username=%s role=%s actor=%s", uid, req.username, req.role, getattr(_user, "sub", "?"))
     return {"id": uid, "username": req.username, "email": req.email, "role": req.role}
 
 
@@ -138,6 +143,7 @@ async def deactivate_user(
     if store is None:
         raise HTTPException(status_code=503, detail="User management requires system_db enabled")
     store.set_user_active(user_id, False)
+    logger.info("user_deactivated id=%s actor=%s", user_id, getattr(_user, "sub", "?"))
     return {"id": user_id, "deactivated": True}
 
 
@@ -168,6 +174,7 @@ async def issue_token(
         )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=409, detail="Could not issue token (conflict or invalid input)") from exc
+    logger.info("personal_token_issued user_id=%s name=%s actor=%s", user_id, req.name, getattr(_user, "sub", "?"))
     return {
         "token": plaintext,
         "id": rec["id"],
