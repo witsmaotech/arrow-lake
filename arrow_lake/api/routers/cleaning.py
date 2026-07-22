@@ -22,7 +22,7 @@ from __future__ import annotations
 import duckdb
 import pyarrow as pa
 import re
-from fastapi import APIRouter, Depends, Path
+from fastapi import APIRouter, Depends, Path, Request
 
 from arrow_lake.api.auth_models import Role
 from arrow_lake.api.deps import authorize_dataset, get_lake, require_role

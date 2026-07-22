@@ -45,6 +45,7 @@ _QUALITY_TIMEOUT = 300
 
 @router.post("/{name}/quality/filter", response_model=QualityFilterResponse)
 async def quality_filter(
+    request: Request,
     name: str = Path(..., pattern=_NAME_PATTERN),
     *,
     req: QualityFilterRequest,
@@ -52,6 +53,7 @@ async def quality_filter(
     _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> QualityFilterResponse:
     """Run quality filters on a dataset."""
+    authorize_dataset(request, name)
     report = await run_sync(
         lake.quality_filter, name, req.active_filters, mode=req.mode,
         timeout=_QUALITY_TIMEOUT, label="quality_filter",
@@ -61,12 +63,14 @@ async def quality_filter(
 
 @router.get("/{name}/quality/report", response_model=QualityReportResponse)
 async def quality_report(
+    request: Request,
     name: str = Path(..., pattern=_NAME_PATTERN),
     *,
     lake=Depends(get_lake),
     _user: dict = Depends(require_role(Role.VIEWER)),
 ) -> QualityReportResponse:
     """Get quality report for a dataset (runs filters with default config)."""
+    authorize_dataset(request, name)
     report = await run_sync(
         lake.quality_filter, name,
         timeout=_QUALITY_TIMEOUT, label="quality_report",
@@ -76,6 +80,7 @@ async def quality_report(
 
 @router.post("/{name}/quality/deduplicate", response_model=DedupResponse)
 async def deduplicate(
+    request: Request,
     name: str = Path(..., pattern=_NAME_PATTERN),
     *,
     req: DedupRequest,
@@ -83,6 +88,7 @@ async def deduplicate(
     _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> DedupResponse:
     """Run content deduplication on a dataset."""
+    authorize_dataset(request, name, write=True)
     report = await run_sync(
         lake.deduplicate, name,
         strategy=req.strategy, action=req.action,
@@ -98,6 +104,7 @@ async def deduplicate(
 
 @router.post("/{name}/quality/rules", response_model=QualityRuleSetResponse)
 async def quality_rules(
+    request: Request,
     name: str = Path(..., pattern=_NAME_PATTERN),
     *,
     req: QualityRuleSetRequest,
@@ -111,6 +118,7 @@ async def quality_rules(
     """
     from arrow_lake.quality.rules import QualityRuleEngine, RuleDefinition
 
+    authorize_dataset(request, name, write=True)
     table = await run_sync(
         lake.read_dataset, name,
         timeout=_QUALITY_TIMEOUT, label="quality_rules_read",
@@ -147,6 +155,7 @@ async def quality_rules(
 
 @router.get("/{name}/quality/profile")
 async def quality_profile(
+    request: Request,
     name: str = Path(..., pattern=_NAME_PATTERN),
     *,
     lake=Depends(get_lake),
@@ -155,6 +164,7 @@ async def quality_profile(
     """Get quality profile for a dataset — column-level statistics and quality scores."""
     from arrow_lake.quality.profiler import QualityProfiler
 
+    authorize_dataset(request, name)
     table = await run_sync(
         lake.read_dataset, name,
         timeout=_QUALITY_TIMEOUT, label="quality_profile_read",
