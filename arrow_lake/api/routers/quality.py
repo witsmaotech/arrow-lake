@@ -8,7 +8,7 @@ from dataclasses import asdict
 from fastapi import APIRouter, Depends, Path, Request
 
 from arrow_lake.api.auth_models import Role
-from arrow_lake.api.deps import get_lake, require_role
+from arrow_lake.api.deps import authorize_dataset, get_lake, require_role
 from arrow_lake.api.models.common import _NAME_PATTERN, arrow_table_to_response
 from arrow_lake.api.models.quality import (
     DedupRequest,
@@ -218,6 +218,7 @@ async def llm_label(
     Renders ``prompt_template`` (with ``{text}``) per row, writes results to
     ``new_column`` via native Lance column add. Poll ``GET /tasks/{task_id}/status``.
     """
+    authorize_dataset(request, name, write=True)
     task_id = TaskManager.create_task(
         "llm_label", name,
         detail={"column": req.column, "new_column": req.new_column},
@@ -255,6 +256,7 @@ async def extract(
 
     Each field in ``fields`` becomes a new string column. Poll task status.
     """
+    authorize_dataset(request, name, write=True)
     field_dicts = [f.model_dump() for f in req.fields]
     task_id = TaskManager.create_task(
         "extract", name,

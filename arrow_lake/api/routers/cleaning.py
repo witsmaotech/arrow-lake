@@ -25,7 +25,7 @@ import re
 from fastapi import APIRouter, Depends, Path
 
 from arrow_lake.api.auth_models import Role
-from arrow_lake.api.deps import get_lake, require_role
+from arrow_lake.api.deps import authorize_dataset, get_lake, require_role
 from arrow_lake.api.models.cleaning import (
     CleanFilter,
     CleanRequest,
@@ -220,6 +220,7 @@ def _to_pa_table(tbl) -> pa.Table:
 
 @router.post("/{name}/clean", response_model=CleanResponse)
 async def clean_dataset(
+    request: Request,
     name: str = Path(..., pattern=_NAME_PATTERN),
     *,
     req: CleanRequest,
@@ -232,6 +233,7 @@ async def clean_dataset(
     均为 role-level。dataset-level ACL(get_checker 框架存在)目前未应用到
     quality/clean,是项目级一致缺口,留统一加固;此处 write_back 受 EDITOR 角色约束。
     """
+    authorize_dataset(request, name, write=bool(req.write_back))
     table = _to_pa_table(
         await run_sync(lake.read_dataset, name, timeout=_CLEAN_TIMEOUT, label="clean_read")
     )

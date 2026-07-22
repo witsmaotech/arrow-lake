@@ -75,6 +75,21 @@ def get_current_user(request: Request) -> TokenPayload:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
 
 
+def authorize_dataset(request: Request, name: str, *, write: bool = False) -> None:
+    """Enforce dataset-level ACL on top of role-level require_role (v1.9.1 security).
+
+    Raises 403 if the user's role lacks read (always) or write (when write=True)
+    access to ``name``. Note: actual row/column filter application at the
+    lake.read_dataset layer (passing the user through) is a separate follow-up.
+    """
+    user = getattr(request.state, "user", None) or get_current_user(request)
+    checker = get_checker(request)
+    if not checker.check_dataset_access(role=user.role, dataset=name, action="read"):
+        raise HTTPException(status_code=403, detail=f"No read access to dataset '{name}'")
+    if write and not checker.check_dataset_access(role=user.role, dataset=name, action="write"):
+        raise HTTPException(status_code=403, detail=f"No write access to dataset '{name}'")
+
+
 def require_role(required_role: Role) -> Callable:
     """Factory that returns a dependency enforcing a minimum role.
 
