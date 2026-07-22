@@ -80,6 +80,20 @@ def _check_size(n: int, max_rows: int) -> None:
         )
 
 
+def _verify_row_count_unchanged(lake: Any, name: str, expected_n: int) -> None:
+    """Re-read row count; abort if dataset changed during enrich.
+
+    read→compute→add_columns 期间若有 ingest append,行数变化会导致新列行错位
+    (label[i] 附到 row i+offset)。校验不一致即 abort,防数据损坏。
+    """
+    current = lake.read_dataset(name).num_rows
+    if current != expected_n:
+        raise RuntimeError(
+            f"dataset {name!r} changed during enrich ({expected_n}→{current} rows); "
+            "abort to avoid column misalignment — re-run after ingest settles."
+        )
+
+
 async def _map_with_limit(sem: asyncio.Semaphore, fn: Any, items: list[Any]) -> list[Any]:
     async def bound(x: Any) -> Any:
         async with sem:
@@ -130,6 +144,7 @@ async def label_column(
 
     results = await _map_with_limit(sem, label_one, texts)
     succeeded = sum(1 for r in results if r != "")
+    _verify_row_count_unchanged(lake, name, n)
     lake.add_columns_table(name, pa.table({new_column: pa.array(results, type=pa.string())}))
 
     sample = [{column: texts[i], new_column: results[i]} for i in range(min(5, n))]
@@ -192,6 +207,7 @@ async def extract_fields(
     rows = await _map_with_limit(sem, extract_one, texts)
     succeeded = sum(1 for d in rows if any(d.values()))
     cols = pa.table({fn: pa.array([d[fn] for d in rows], type=pa.string()) for fn in field_names})
+    _verify_row_count_unchanged(lake, name, n)
     lake.add_columns_table(name, cols)
 
     sample = [{column: texts[i], **rows[i]} for i in range(min(5, n))]
