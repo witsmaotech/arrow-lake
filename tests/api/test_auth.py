@@ -29,6 +29,7 @@ def _mock_request(path: str = "/api/v1/datasets/test", method: str = "GET", head
     request.method = method
     request.headers.get = lambda k, d="": (headers or {}).get(k, d)
     request.state = MagicMock()
+    request.app.state.identity_store = None  # 显式无 identity_store(避免 MagicMock 自动 mock 触发 token 分支)
     return request
 
 

@@ -36,7 +36,7 @@ async def api_key_middleware_fn(
     path = request.url.path
 
     # Static frontend prefix bypasses auth (login.html / assets load pre-auth).
-    if path.startswith("/console"):
+    if path.startswith("/console") and "/api/" not in path:
         return await call_next(request)
 
     # v1.9.0: personal API token (libSQL identity_store).
@@ -56,10 +56,13 @@ async def api_key_middleware_fn(
             if resolved is not None:
                 from arrow_lake.api.auth_models import Role, TokenPayload
 
-                role_name = str(resolved.get("role", "viewer")).upper()
-                role = (
-                    Role[role_name] if role_name in Role.__members__ else Role.VIEWER
-                )
+                role_name = str(resolved.get("role", "")).upper()
+                if role_name not in Role.__members__:
+                    return JSONResponse(
+                        status_code=401,
+                        content={"success": False, "error": "UNAUTHORIZED", "message": "Invalid token role"},
+                    )
+                role = Role[role_name]
                 request.state.user = TokenPayload(
                     sub=str(resolved.get("username", "token")),
                     role=role,
