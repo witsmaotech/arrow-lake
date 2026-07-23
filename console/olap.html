@@ -313,7 +313,9 @@ SELECT * FROM mv_monthly_quality ORDER BY month DESC;`;
     request("POST", "/materialized/cleanup").then((r) => { toast(`已清理 ${r.count || 0} 个`, "ok"); loadMv(); }).catch((e) => mvDegraded(errMsg(e)));
   });
   $("#mvCreate").addEventListener("click", createMv);
-  loadMv();
+  // 懒加载:不在页面加载时自动 fetch(ducklake 关时避免每次开页 503 污染 console);
+  // 用户点「刷新」才触发。ducklake 开时点刷新即见列表。
+  $("#mvList").innerHTML = `<div class="muted" style="padding:10px;font-size:.8rem">点击右上「刷新」加载物化视图列表</div>`;
   renderChain();
 }
 </script>
