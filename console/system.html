@@ -31,8 +31,19 @@
   </div>
 
   <div class="panel flush">
-    <div class="panel-h"><i class="placeholder" data-ic="search"></i><h3>关键指标</h3><span class="sub">Prometheus · /metrics</span><span class="actions"><span class="lamp ok pulse"><i></i>live</span></span></div>
+    <div class="panel-h"><i class="placeholder" data-ic="search"></i><h3>关键指标</h3><span class="sub">Prometheus · /metrics</span><span class="actions"><span class="lamp ok pulse"><i></i>live · 10s 自动刷新</span></span></div>
     <div class="panel-b" id="metrics"><div class="muted" style="padding:14px">加载…</div></div>
+  </div>
+
+  <div class="grid g-2">
+    <div class="panel flush">
+      <div class="panel-h"><i class="placeholder" data-ic="database"></i><h3>DuckDB 池 / 熔断器</h3><span class="sub">慢查询 · 超时 · 错误 · 驱逐 · 内存 · 熔断</span></div>
+      <div class="panel-b" id="deep"><div class="muted" style="padding:14px">加载…</div></div>
+    </div>
+    <div class="panel flush">
+      <div class="panel-h"><i class="placeholder" data-ic="bell"></i><h3>活跃任务</h3><span class="sub">GET /async_tasks/tasks · running/pending</span></div>
+      <div class="panel-b" id="tasks"><div class="muted" style="padding:14px">加载…</div></div>
+    </div>
   </div>
 </div></main>
 </div>
@@ -133,8 +144,46 @@ async function loadMetrics() {
   }
 }
 
-function loadAll() { loadHealth(); loadVersion(); loadMetrics(); }
+/* ---------- 深度指标:DuckDB 池 / 熔断器(/metrics 深挖)---------- */
+async function loadDeep() {
+  try {
+    const r = await fetch(ROOT + "/metrics"); const m = r.ok ? await r.text() : "";
+    const pick = (re) => { const ma = m.match(re); return ma ? Number(ma[1]) : 0; };
+    const slow = pick(/arrow_lake_duckdb_pool_slow_queries_total\s+([\d.]+)/);
+    const to = pick(/arrow_lake_duckdb_pool_total_timeouts_total\s+([\d.]+)/);
+    const err = pick(/arrow_lake_duckdb_pool_total_errors_total\s+([\d.]+)/);
+    const ev = pick(/arrow_lake_duckdb_pool_evicted_connections_total\s+([\d.]+)/);
+    const mem = pick(/arrow_lake_duckdb_memory_budget_mb\s+([\d.]+)/);
+    const cOpen = pick(/arrow_lake_circuit_breaker_state\{[^}]*state="open"[^}]*\}\s+([\d.]+)/);
+    const cFail = pick(/arrow_lake_circuit_breaker_failures_total\s+([\d.]+)/);
+    $("#deep").innerHTML = `<div class="grid g-3">
+      <div class="kpi"><div class="label">慢查询</div><div class="val">${slow}</div><div class="delta">pool</div></div>
+      <div class="kpi"><div class="label">超时</div><div class="val">${to}</div><div class="delta">pool</div></div>
+      <div class="kpi"><div class="label">池错误</div><div class="val" style="color:${err ? "var(--warn)" : "var(--fg-hi)"}">${err}</div><div class="delta">pool</div></div>
+      <div class="kpi"><div class="label">驱逐连接</div><div class="val">${ev}</div><div class="delta">pool</div></div>
+      <div class="kpi"><div class="label">内存预算</div><div class="val">${mem}</div><div class="delta">MB</div></div>
+      <div class="kpi"><div class="label">熔断</div><div class="val" style="color:${cOpen ? "var(--danger)" : "var(--ok)"}">${cOpen ? "开(open)" : "闭(closed)"}</div><div class="delta">失败 ${cFail}</div></div>
+    </div>`;
+  } catch (e) { $("#deep").innerHTML = `<div class="muted">深度指标加载失败:${esc(e?.message || e)}</div>`; }
+}
+
+/* ---------- 活跃任务(GET /async_tasks/tasks)---------- */
+async function loadTasks() {
+  try {
+    const r = await request("GET", "/async_tasks/tasks?limit=20");
+    const list = Array.isArray(r) ? r : (r?.tasks || r?.items || []);
+    const active = list.filter(t => /running|pending|started/i.test(t?.status || ""));
+    $("#tasks").innerHTML = active.length
+      ? `<div class="tbl-scroll"><table class="tbl"><thead><tr><th>任务ID</th><th>类型</th><th>状态</th><th>进度</th></tr></thead><tbody>${
+        active.map(t => `<tr><td class="mono">${esc(String(t.task_id || t.id || "").slice(0, 8))}</td><td>${esc(t.type || t.task_type || "—")}</td><td><span class="tag ${/running/i.test(t.status || "") ? "teal" : "info"}">${esc(t.status || "—")}</span></td><td class="mono">${esc(t.progress ?? t.percent ?? "—")}</td></tr>`).join("")
+      }</tbody></table></div>`
+      : `<div class="muted" style="padding:14px">无活跃任务(running/pending)</div>`;
+  } catch (e) { $("#tasks").innerHTML = `<div class="muted">活跃任务加载失败:${esc(e?.detail || e?.message || e)}<br/><span style="font-size:.72rem">需登录</span></div>`; }
+}
+
+function loadAll() { loadHealth(); loadVersion(); loadMetrics(); loadDeep(); loadTasks(); }
 loadAll();
+setInterval(() => { loadHealth(); loadMetrics(); loadDeep(); loadTasks(); }, 10000);
 window.applyIcons && applyIcons(document);
 
 $("#refresh").addEventListener("click", () => { loadAll(); toast("已刷新运维态势", "ok", 2000); });
