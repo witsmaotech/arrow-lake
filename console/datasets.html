@@ -29,6 +29,7 @@
 <script type="module">
 import { request } from "./src/api.js";
 import { isLoggedIn } from "./src/auth.js";
+import { runExport } from "./src/export.js";
 import { toast } from "./src/ui/toast.js";
 
 if (!isLoggedIn()) location.href = "login.html";
@@ -36,6 +37,24 @@ const { renderShell, icon } = window;
 renderShell({ active: "datasets", crumb: "<b>数据集</b>" });
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+// 导出需 EDITOR(/datasets/{n}/export role=EDITOR)
+const canEdit = (() => {
+  try {
+    const tok = localStorage.getItem("al_access") || "";
+    const payload = JSON.parse(atob(tok.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+    return ["EDITOR", "ADMIN"].includes(String(payload.role || "EDITOR").toUpperCase());
+  } catch (_) { return false; }
+})();
+async function doExport(name, btn) {
+  try {
+    toast(`导出 ${name}(parquet) 已提交,后台异步处理…`, "info");
+    if (btn) btn.disabled = true;
+    await runExport(name, { format: "parquet" });
+    toast(`导出完成:${name}.parquet`, "ok");
+  } catch (e) {
+    toast("导出失败:" + (e?.detail || e?.message || e), "warn", 5000);
+  } finally { if (btn) btn.disabled = false; }
+}
 
 const fmtSize = (b) => {
   if (b == null || isNaN(b)) return "—";
@@ -79,7 +98,7 @@ function rowOf(d) {
     <td class="num mono">${d.version ?? "—"}</td>
     <td class="num mono" style="color:var(--fg-lo)">${fmtDate(d.created_at)}</td>
     <td class="num mono" style="color:var(--fg-lo)">${fmtDate(d.updated_at)}</td>
-    <td><a href="dataset-detail.html?ds=${encodeURIComponent(d.name)}" class="btn btn-icon btn-ghost btn-sm" aria-label="进入">${icon("arrowR")}</a></td>
+    <td style="white-space:nowrap">${canEdit ? `<button class="btn btn-icon btn-ghost btn-sm" data-export="${esc(d.name)}" title="异步导出 Parquet(202 任务 + 下载)">⬇</button>` : ""}<a href="dataset-detail.html?ds=${encodeURIComponent(d.name)}" class="btn btn-icon btn-ghost btn-sm" aria-label="进入">${icon("arrowR")}</a></td>
   </tr>`;
 }
 function renderPage() {
@@ -98,6 +117,7 @@ function renderPage() {
     <select class="select" id="pageSizeSel" style="width:auto;font-size:.78rem">${[10, 20, 50].map((n) => `<option value="${n}"${n === ps ? " selected" : ""}>${n} / 页</option>`).join("")}</select>` : "";
   $("#pager").querySelectorAll("[data-go]").forEach((b) => { if (!b.disabled) b.addEventListener("click", () => { STATE.page = +b.dataset.go; renderPage(); }); });
   const sel = $("#pageSizeSel"); if (sel) sel.addEventListener("change", () => { STATE.pageSize = +sel.value; STATE.page = 1; renderPage(); });
+  $("#rows").querySelectorAll("[data-export]").forEach((b) => b.addEventListener("click", () => doExport(b.dataset.export, b)));
 }
 async function load() {
   $("#rows").innerHTML = `<tr><td colspan="11" class="muted" style="padding:28px;text-align:center">加载中…</td></tr>`;

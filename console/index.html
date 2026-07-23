@@ -193,13 +193,14 @@ arch.innerHTML=`<div class="arch-stack">${layers.map(l=>`<div class="arch-layer"
 const caps=[
 ['ingest','多模态摄入','文件 / HTTP / URL · OCR · 7 种分块 · 多模型嵌入','摄入'],
 ['search','五种检索','向量 IVF_PQ/HNSW · 全文 Tantivy+jieba · RRF 混合 · 分面 · 集成','检索'],
+['image','图像检索','CLIP 以图搜图 · 文搜图 · OpenCLIP 512d 跨模态嵌入','多模态'],
 ['olap','OLAP 分析','DuckDB SQL · Daft 分布式 · DuckLake 跨存储物化视图','分析'],
 ['rag','RAG 管线','多 Provider 流式 · 会话 · 引用追踪 · GraphRAG 降级','问答'],
 ['kg','知识图谱','HugeGraph per-dataset 分图 · 8 traverser · LLM 抽取','图谱'],
 ['quality','质量与治理','Schema 校验 · 去重 · 血缘 · HMAC 审计','治理'],
 ];
-$('#capGrid').innerHTML=caps.map(c=>`<a class="panel cap-card" href="${{ingest:'datasets.html',search:'search.html',olap:'olap.html',rag:'rag.html',kg:'kg.html',quality:'dashboard.html#lineage'}[c[0]]}">
-<div class="panel-b"><div class="cap-ic">${icon(c[0]==='olap'?'olap':c[0]==='quality'?'audit':c[0],'')}</div>
+$('#capGrid').innerHTML=caps.map(c=>`<a class="panel cap-card" href="${{ingest:'datasets.html',search:'search.html',image:'search.html?mode=image',olap:'olap.html',rag:'rag.html',kg:'kg.html',quality:'dashboard.html#lineage'}[c[0]]}">
+<div class="panel-b"><div class="cap-ic">${icon(c[0]==='olap'?'olap':c[0]==='quality'?'audit':c[0]==='image'?'file':c[0],'')}</div>
 <h3>${c[1]} <span class="tag" style="font-size:.6rem">${c[3]}</span></h3>
 <div class="muted" style="font-size:.8rem;margin-top:6px">${c[2]}</div>
 <div class="cap-go">进入 ${icon('arrowR')}</div>

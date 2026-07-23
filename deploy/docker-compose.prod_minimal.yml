@@ -183,6 +183,8 @@ services:
       ARROW_LAKE__API__PORT: "8000"
       ARROW_LAKE__OBSERVABILITY__METRICS_PORT: "9091"
       ARROW_LAKE__OBSERVABILITY__LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+      # 异步导出落盘:read-only 根 FS 下 /app/exports 是瞬态 tmpfs,指到持久可写卷 /data/lake/exports
+      ARROW_LAKE__EXPORT__BASE_DIR: "${ARROW_LAKE__EXPORT__BASE_DIR:-/data/lake/exports}"
       ARROW_LAKE__REDIS__URL: "redis://:${REDIS_PASSWORD:?REDIS_PASSWORD must be set}@redis:6379/0"
       # Ray 集群已在 minimal 中移除 → RAY_ADDRESS=auto 回退本地计算
       ARROW_LAKE__COMPUTE__RAY_DASHBOARD_URL: "http://ray-head:8265"

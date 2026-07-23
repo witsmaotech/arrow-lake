@@ -29,7 +29,11 @@
 <main class="main"><div class="page">
   <div class="h-sec between">
     <div><h1 id="title">数据集</h1><div class="desc" id="meta">加载中…</div></div>
-    <div class="flex"><a class="btn btn-primary btn-sm" id="ingestBtn" href="ingest.html"><i class="placeholder" data-ic="plus"></i> 追加摄入</a></div>
+    <div class="flex">
+      <button class="btn btn-ghost btn-sm" id="exportPq" title="异步导出整数据集为 Parquet(202 任务 + 下载)" style="display:none">⬇ Parquet</button>
+      <button class="btn btn-ghost btn-sm" id="exportCsv" title="异步导出整数据集为 CSV(202 任务 + 下载)" style="display:none">⬇ CSV</button>
+      <a class="btn btn-primary btn-sm" id="ingestBtn" href="ingest.html"><i class="placeholder" data-ic="plus"></i> 追加摄入</a>
+    </div>
   </div>
 
   <!-- Tab 切换器(概览 / 血缘 / 版本)-->
@@ -86,6 +90,8 @@
 <script type="module">
 import { request } from "./src/api.js";
 import { isLoggedIn } from "./src/auth.js";
+import { runExport } from "./src/export.js";
+import { toast } from "./src/ui/toast.js";
 
 if (!isLoggedIn()) location.href = "login.html";
 const { renderShell, icon } = window;
@@ -107,6 +113,29 @@ const isAdmin = (() => {
     return String(payload.role || "EDITOR").toUpperCase() === "ADMIN";
   } catch (_) { return false; }
 })();
+// 导出需 EDITOR(/datasets/{n}/export role=EDITOR);与 isAdmin 同款 JWT 解码
+const canEdit = (() => {
+  try {
+    const tok = localStorage.getItem("al_access") || "";
+    const payload = JSON.parse(atob(tok.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+    return ["EDITOR", "ADMIN"].includes(String(payload.role || "EDITOR").toUpperCase());
+  } catch (_) { return false; }
+})();
+async function doExport(format) {
+  if (!ds) return toast("未指定数据集", "warn");
+  const btn = format === "csv" ? $("#exportCsv") : $("#exportPq");
+  try {
+    toast(`导出 ${ds}(${format}) 已提交,后台异步处理…`, "info");
+    if (btn) btn.disabled = true;
+    await runExport(ds, { format });
+    toast(`导出完成:${ds}.${format}`, "ok");
+  } catch (e) {
+    toast("导出失败:" + (e?.detail || e?.message || e), "warn", 5000);
+  } finally { if (btn) btn.disabled = false; }
+}
+if (canEdit) { $("#exportPq").style.display = ""; $("#exportCsv").style.display = ""; }
+$("#exportPq")?.addEventListener("click", () => doExport("parquet"));
+$("#exportCsv")?.addEventListener("click", () => doExport("csv"));
 
 /* ---------- Tab 切换 ---------- */
 let lineageLoaded = false, versionLoaded = false;

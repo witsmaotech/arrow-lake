@@ -35,13 +35,14 @@
     <div><h1>检索</h1><div class="desc">向量 / FTS / 混合 / Facets / Ensemble · 选数据集后自动加载 schema,列名按类型推导成下拉/复选</div></div>
     <div class="flex" style="gap:8px;align-items:center">
       <select class="select" id="ds" style="min-width:220px"></select>
+      <button class="btn btn-ghost btn-sm" id="dsExport" title="异步导出当前数据集为 Parquet(202 任务 + 下载)" style="display:none">⬇ 导出</button>
     </div>
   </div>
 
   <!-- 元数据:状态 + schema + 现有索引 -->
   <div class="panel"><div class="panel-b" id="meta"><div class="muted" style="padding:16px">选择数据集后加载元数据…</div></div></div>
   <div class="panel flush" id="schemaPanel" style="margin-top:var(--s4);display:none">
-    <div class="panel-h"><i class="placeholder" data-ic="code"></i><h3>Schema(字段)</h3><span class="sub" id="schemaMeta">—</span></div>
+    <div class="panel-h"><i class="placeholder" data-ic="code"></i><h3>Schema(字段)</h3><span class="sub" id="schemaMeta">—</span><span class="sub" id="dsIndicator"></span></div>
     <div class="panel-b" id="schema"></div>
   </div>
   <div class="panel flush" id="idxPanel" style="margin-top:var(--s4);display:none">
@@ -65,6 +66,16 @@
           <input class="input" id="query" placeholder="输入查询(向量/混合/Facets/Ensemble 会先嵌入)"/>
           <button class="btn btn-primary btn-sm" id="searchBtn">检索</button>
           <button class="btn btn-ghost btn-sm" data-fav="search" title="收藏到我的工作区(需 personal token)">收藏</button>
+        </div>
+      </div>
+
+      <!-- 以图搜图:仅 image_embedding 数据集 + EDITOR 显隐 -->
+      <div class="field" id="imageQueryField" style="display:none;margin-top:var(--s3)">
+        <label>以图搜图(上传图片 → CLIP 图像向量 → 检索 image_embedding · 需 EDITOR + 本地 embedding 后端)</label>
+        <div class="flex" style="gap:8px;align-items:center;flex-wrap:wrap">
+          <input class="input" id="imageFile" type="file" accept="image/*" style="max-width:280px"/>
+          <img id="imagePreview" alt="" style="max-width:96px;max-height:72px;border-radius:var(--r-sm);border:1px solid var(--line-soft);display:none;background:var(--ink-900)"/>
+          <button class="btn btn-teal btn-sm" id="imageSearchBtn" type="button">🖼️ 以图搜图</button>
         </div>
       </div>
       <div class="grid g-3" style="margin-top:var(--s3)">
@@ -107,18 +118,32 @@
 <script type="module">
 import { request } from "./src/api.js";
 import { isLoggedIn } from "./src/auth.js";
+import { runExport } from "./src/export.js";
 import { toast } from "./src/ui/toast.js";
 import { renderKgSubgraph } from "./src/kg-subgraph.js";
 import "./src/favorite.js";  // [data-fav] 自动绑收藏入口
 
 if (!isLoggedIn()) location.href = "login.html";
 const { renderShell } = window;
-renderShell({ active: "search", crumb: '<a href="datasets.html">数据集</a> › <b>检索</b>' });
+const isImageMode = new URL(location.href).searchParams.get("mode") === "image";
+renderShell({ active: isImageMode ? "image-search" : "search", crumb: '<a href="datasets.html">数据集</a> › <b>' + (isImageMode ? "图像检索" : "检索") + "</b>" });
+if (isImageMode) { document.querySelector("h1").textContent = "图像检索"; }
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
+// role 从 JWT payload 解(/embed/image 需 EDITOR,与 console-layout.js / audit.html 同款)
+function userRole() {
+  try {
+    const tok = localStorage.getItem("al_access"); if (!tok) return "viewer";
+    const p = JSON.parse(atob(tok.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+    return String(p.role || "viewer").toLowerCase();
+  } catch (_) { return "viewer"; }
+}
+const canEdit = () => ["editor", "admin"].includes(userRole());
+
 let mode = "vector";
 let schemaFields = [];
+let imageVecCol = null;  // image_embedding 列名(检测到则显以图搜图区)
 
 const isVec = (t) => /fixed_size_list/i.test(t);
 const isTxt = (t) => /string|utf8|large_string/i.test(t);
@@ -185,6 +210,10 @@ async function loadSchema() {
     $("#fCol").innerHTML = `<option value="">(默认)</option>` + opt(tc, tc[0] || "");
     $("#facetsGrid").innerHTML = sc.length ? sc.map(c => `<label><input type="checkbox" value="${esc(c)}"/> ${esc(c)}</label>`).join("") : '<span class="muted" style="font-size:.74rem">无标量列</span>';
     $("#colsGrid").innerHTML = (vc.length ? vc : []).map(c => `<label><input type="checkbox" value="${esc(c)}" ${c === "text_embedding" ? "checked" : ""}/> ${esc(c)}</label>`).join("") || '<span class="muted" style="font-size:.74rem">无向量列</span>';
+    // 图像数据集:含 image_embedding 向量列 → 显徽标 + 以图搜图区(EDITOR)
+    imageVecCol = vc.find(c => /image_embedding/i.test(c)) || null;
+    $("#dsIndicator").innerHTML = imageVecCol ? '<span class="tag teal">🖼️ 图像数据集</span>' : "";
+    $("#imageQueryField").style.display = (imageVecCol && canEdit()) ? "" : "none";
     // where 列名点击插入
     $("#whereCols").innerHTML = schemaFields.map(f => `<span class="schema-chip chip-btn" data-col="${esc(f.name)}">${esc(f.name)}</span>`).join("");
     $("#whereCols").querySelectorAll("[data-col]").forEach(el => el.addEventListener("click", () => {
@@ -215,6 +244,52 @@ async function embedQuery(text, vCol) {
   return vec;
 }
 
+// 以图搜图:FileReader → base64 → POST /embed/image {images:[b64]} → CLIP 图像向量(512 维)
+async function embedImage(file) {
+  const b64 = await new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => { const s = String(fr.result || ""); const i = s.indexOf(","); resolve(i >= 0 ? s.slice(i + 1) : s); };
+    fr.onerror = () => reject(new Error("读取图片失败"));
+    fr.readAsDataURL(file);
+  });
+  const r = await request("POST", "/embed/image", { body: { images: [b64] } });
+  const vec = (r.embeddings || [])[0];
+  if (!vec || !vec.length) throw new Error("图像嵌入返回空(需 EMBEDDING__BACKEND=local,OPENAI 后端返 501)");
+  return vec;
+}
+
+// 文件选择 → 本地预览
+$("#imageFile").addEventListener("change", (e) => {
+  const f = e.target.files[0]; const prev = $("#imagePreview");
+  if (f) {
+    const url = URL.createObjectURL(f);
+    prev.src = url; prev.style.display = "";
+    prev.onload = () => URL.revokeObjectURL(url);
+  } else { prev.style.display = "none"; prev.removeAttribute("src"); }
+});
+
+// 以图搜图按钮
+$("#imageSearchBtn").addEventListener("click", async () => {
+  const name = $("#ds").value; if (!name) return toast("先选数据集", "warn");
+  const file = $("#imageFile").files[0]; if (!file) return toast("先选择一张图片", "warn");
+  const vCol = imageVecCol || $("#vCol").value || "image_embedding";
+  const top_k = parseInt($("#topK").value, 10) || 10;
+  const where = $("#where").value.trim() || null;
+  const btn = $("#imageSearchBtn"); btn.disabled = true; btn.textContent = "嵌入中…";
+  $("#results").innerHTML = '<div class="muted" style="padding:20px;text-align:center">图像嵌入中(CLIP)…</div>';
+  try {
+    const qv = await embedImage(file);
+    btn.textContent = "检索中…";
+    const res = await request("POST", `/datasets/${encodeURIComponent(name)}/search/vector`, { body: { query_vector: qv, top_k, vector_column: vCol, where } });
+    renderHits(res, "_distance");
+    $("#query").value = "[以图搜图]";
+  } catch (e) {
+    const msg = e?.detail || e?.message || String(e);
+    $("#resMeta").textContent = "失败";
+    $("#results").innerHTML = `<div style="color:var(--danger);padding:16px">以图搜图失败:${esc(msg)}<br/><span class="muted" style="font-size:.72rem">/embed/image 需 EMBEDDING__BACKEND=local(OPENAI 后端返 501);确认数据集有 image_embedding 索引(去 <a href="embeddings.html?ds=${encodeURIComponent(name)}" style="color:var(--teal-bright)">embeddings</a> 建)。</span></div>`;
+  } finally { btn.disabled = false; btn.textContent = "🖼️ 以图搜图"; }
+});
+
 function renderHits(res, scoreKey) {
   const rows = res?.rows || [];
   $("#resMeta").textContent = `${res?.row_count ?? rows.length} 命中 · ${res?.column_count ?? 0} 列`;
@@ -225,8 +300,16 @@ function renderHits(res, scoreKey) {
     const tk = textKeys.find(k => r[k] != null);
     const snippet = tk ? String(r[tk]) : JSON.stringify(Object.entries(r).filter(([k]) => !k.startsWith("_")).slice(0, 4));
     const meta = Object.entries(r).filter(([k]) => !k.startsWith("_") && !textKeys.includes(k)).slice(0, 4).map(([k, v]) => `${k}=${typeof v === "object" ? "…" : String(v).slice(0, 30)}`).join(" · ");
-    const _imgCol = ["image_thumbnail","image_preview","video_data","image_data"].find(k => r[k] && typeof r[k] === "string");
-    const _thumb = _imgCol ? `<img src="data:image/jpeg;base64,${r[_imgCol]}" alt="" style="max-width:140px;max-height:100px;border-radius:var(--r-sm);border:1px solid var(--line-soft);margin:4px 0;display:block">` : "";
+    const _imgCols = ["image_thumbnail","image_preview","thumbnail","preview","image_data","video_data","image"];
+    const _imgCol = _imgCols.find(k => {
+      const v = r[k];
+      if (typeof v !== "string" || !v) return false;
+      if (/^<binary \d+ bytes>$/.test(v.trim())) return false;  // JSON 格式 binary 被占位,无法直渲
+      return true;
+    });
+    const _iv = _imgCol ? r[_imgCol].trim() : "";
+    const _src = _iv && (/^data:|^https?:\/\//i.test(_iv) ? _iv : "data:image/jpeg;base64," + _iv);
+    const _thumb = _src ? `<img src="${esc(_src)}" alt="" style="max-width:140px;max-height:100px;border-radius:var(--r-sm);border:1px solid var(--line-soft);margin:4px 0;display:block">` : "";
     return `<div class="hit"><div class="hit-head"><span class="hit-score">${scoreKey}: ${score?.toFixed?.(4) ?? esc(score ?? "—")}</span></div>${_thumb}<div class="hit-text">${esc(snippet.length > 400 ? snippet.slice(0, 400) + "…" : snippet)}</div>${meta ? `<div class="hit-meta">${esc(meta)}</div>` : ""}</div>`;
   }).join("");
 }
@@ -272,6 +355,22 @@ $("#searchBtn").addEventListener("click", async () => {
     $("#results").innerHTML = `<div style="color:var(--danger);padding:16px">检索失败:${esc(msg)}<br/><span class="muted" style="font-size:.72rem">常见:未建索引 → 去 <a href="embeddings.html" style="color:var(--teal-bright">embeddings</a> 建;embedding 后端未配置;where 语法错。</span></div>`;
   } finally { btn.disabled = false; btn.textContent = "检索"; }
 });
+
+// 导出当前数据集(EDITOR)
+async function doDsExport() {
+  const name = $("#ds").value; if (!name) return toast("先选数据集", "warn");
+  const btn = $("#dsExport");
+  try {
+    toast(`导出 ${name}(parquet) 已提交,后台异步处理…`, "info");
+    btn.disabled = true;
+    await runExport(name, { format: "parquet" });
+    toast(`导出完成:${name}.parquet`, "ok");
+  } catch (e) {
+    toast("导出失败:" + (e?.detail || e?.message || e), "warn", 5000);
+  } finally { btn.disabled = false; }
+}
+if (canEdit()) $("#dsExport").style.display = "";
+$("#dsExport").addEventListener("click", doDsExport);
 
 loadDatasets();
 window.applyIcons && applyIcons(document);
