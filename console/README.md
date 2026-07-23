@@ -1,6 +1,6 @@
 # Arrow Lake Console
 
-Arrow Lake 数据湖 / 检索 / 知识图谱统一控制台(v1.9.1)。原生 JS + ES 模块,**零构建、零运行时依赖**。核心页接真实 `/api/v1`,双轨:数据智能轨(数据集→摄入→索引→检索→RAG/KG)+ 管理治理轨(用户/ACL/deny/任务)。
+Arrow Lake 数据湖 / 检索 / 知识图谱统一控制台(v1.9.2)。原生 JS + ES 模块,**零构建、零运行时依赖**。核心页接真实 `/api/v1`,双轨:数据智能轨(数据集→摄入→索引→检索→RAG/KG)+ 管理治理轨(用户/ACL/deny/任务)。
 
 - 规划:`docs/v1.9.1-frontend-core-impl-plan.md`
 - SQL Worksheet 设计:`docs/architecture-design/duckdb-sql-worksheet.md`
@@ -41,7 +41,7 @@ console/
 
 ★ = 真跑通(接真实 `/api/v1`)。audit/governance/backup/system/lineage/showcase/narrative 暂为 prototype 演示页,未接入。
 
-## 页面状态(v1.9.1)
+## 页面状态(v1.9.2)
 
 | 页 | 状态 | 主要端点 |
 |---|---|---|
