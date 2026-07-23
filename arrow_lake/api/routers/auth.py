@@ -11,6 +11,12 @@ from fastapi import APIRouter, HTTPException, Request
 
 from arrow_lake.api.auth_models import LoginRequest, Role, TokenPair
 from arrow_lake.api.deps import get_app_config
+from arrow_lake.api._security_log import (
+    LOGIN_FAILURE,
+    LOGIN_SUCCESS,
+    LOGOUT,
+    log_security_event,
+)
 from arrow_lake.api.rate_limit import _extract_client_ip
 from arrow_lake.config import ArrowLakeConfig
 
@@ -189,6 +195,11 @@ async def login_with_password(request: Request, creds: LoginRequest) -> TokenPai
     ):
         await _record_login_failure(creds.username, ip)
         logger.warning("login_failed ip=%s", ip)
+        await log_security_event(
+            LOGIN_FAILURE, creds.username,
+            lake=getattr(request.app.state, "lake", None),
+            detail={"ip": ip},
+        )
         raise HTTPException(status_code=401, detail="用户名或密码错误")
     try:
         role = Role(user["role"])
@@ -200,6 +211,11 @@ async def login_with_password(request: Request, creds: LoginRequest) -> TokenPai
         user_id=str(user["id"]), role=role, permissions=payload.permissions, username=user.get("username")
     )
     logger.info("login_success user_id=%s username=%s ip=%s", user["id"], creds.username, ip)
+    await log_security_event(
+        LOGIN_SUCCESS, creds.username,
+        lake=getattr(request.app.state, "lake", None),
+        detail={"user_id": user["id"], "ip": ip, "role": role.value},
+    )
     return TokenPair(access_token=svc._encode(payload), refresh_token=refresh)
 
 
@@ -279,4 +295,8 @@ async def logout(request: Request) -> dict:
     if user.jti:
         svc = _get_auth_service(request)
         svc.revoke_token(user.jti)
+    await log_security_event(
+        LOGOUT, getattr(user, "username", None) or getattr(user, "sub", "?") or "unknown",
+        lake=getattr(request.app.state, "lake", None),
+    )
     return {"message": "Token revoked"}

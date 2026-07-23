@@ -9,6 +9,18 @@ from pydantic import BaseModel, Field
 
 from arrow_lake.api.auth_models import Role
 from arrow_lake.api.deps import get_checker, require_role
+from arrow_lake.api._security_log import (
+    ACL_GRANTED,
+    ACL_REVOKED,
+    DENY_ADDED,
+    ROLE_CHANGED,
+    TOKEN_ISSUED,
+    TOKEN_REVOKED,
+    USER_CREATED,
+    USER_DEACTIVATED,
+    actor_of,
+    log_security_event,
+)
 from arrow_lake.api.models.common import _NAME_PATTERN
 from arrow_lake.api.models.dataset import (
     AclDeleteResponse,
@@ -70,6 +82,11 @@ async def create_user(
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=409, detail="Could not create user (conflict or invalid input)") from exc
     logger.info("user_created id=%s username=%s role=%s actor=%s", uid, req.username, req.role, getattr(_user, "sub", "?"))
+    await log_security_event(
+        USER_CREATED, actor_of(_user),
+        lake=getattr(request.app.state, "lake", None),
+        detail={"user_id": uid, "username": req.username, "role": req.role},
+    )
     return {"id": uid, "username": req.username, "email": req.email, "role": req.role}
 
 
@@ -128,6 +145,12 @@ async def update_user(
         raise HTTPException(status_code=409, detail="Could not update user (conflict or invalid input)") from exc
     if not ok:
         raise HTTPException(status_code=404, detail="User not found")
+    if req.role is not None:
+        await log_security_event(
+            ROLE_CHANGED, actor_of(_user),
+            lake=getattr(request.app.state, "lake", None),
+            detail={"target_user_id": user_id, "new_role": req.role},
+        )
     return {"id": user_id, "updated": True}
 
 
@@ -144,6 +167,11 @@ async def deactivate_user(
         raise HTTPException(status_code=503, detail="User management requires system_db enabled")
     store.set_user_active(user_id, False)
     logger.info("user_deactivated id=%s actor=%s", user_id, getattr(_user, "sub", "?"))
+    await log_security_event(
+        USER_DEACTIVATED, actor_of(_user),
+        lake=getattr(request.app.state, "lake", None),
+        detail={"target_user_id": user_id},
+    )
     return {"id": user_id, "deactivated": True}
 
 
@@ -175,6 +203,11 @@ async def issue_token(
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=409, detail="Could not issue token (conflict or invalid input)") from exc
     logger.info("personal_token_issued user_id=%s name=%s actor=%s", user_id, req.name, getattr(_user, "sub", "?"))
+    await log_security_event(
+        TOKEN_ISSUED, actor_of(_user),
+        lake=getattr(request.app.state, "lake", None),
+        detail={"target_user_id": user_id, "token_name": req.name},
+    )
     return {
         "token": plaintext,
         "id": rec["id"],
@@ -210,6 +243,11 @@ async def revoke_user_token(
     if store is None:
         raise HTTPException(status_code=503, detail="User management requires system_db enabled")
     revoked = store.revoke_token(token_id)
+    await log_security_event(
+        TOKEN_REVOKED, actor_of(_user),
+        lake=getattr(request.app.state, "lake", None),
+        detail={"target_user_id": user_id, "token_id": token_id},
+    )
     return {"id": token_id, "revoked": revoked}
 
 
@@ -223,6 +261,7 @@ async def set_acl(
     dataset: str = Path(..., pattern=_NAME_PATTERN),
     *,
     req: SetAclRequest,
+    request: Request,
     _user: dict = Depends(require_role(Role.ADMIN)),
     checker=Depends(get_checker),
 ) -> AclSetResponse:
@@ -234,6 +273,12 @@ async def set_acl(
         row_filter=req.row_filter,
     )
     checker.set_acl(acl)
+    await log_security_event(
+        ACL_GRANTED, actor_of(_user),
+        lake=getattr(request.app.state, "lake", None),
+        dataset_name=dataset,
+        detail={"role": req.role},
+    )
     return AclSetResponse(dataset=dataset, role=req.role)
 
 
@@ -264,11 +309,18 @@ async def delete_acl(
     dataset: str = Path(..., pattern=_NAME_PATTERN),
     role: str = Path(..., pattern=r"^(viewer|editor)$"),
     *,
+    request: Request,
     _user: dict = Depends(require_role(Role.ADMIN)),
     checker=Depends(get_checker),
 ) -> AclDeleteResponse:
     """Delete row/column ACL for a role on a dataset (admin only)."""
     deleted = checker.delete_acl(dataset, role)
+    await log_security_event(
+        ACL_REVOKED, actor_of(_user),
+        lake=getattr(request.app.state, "lake", None),
+        dataset_name=dataset,
+        detail={"role": role, "deleted": deleted},
+    )
     return AclDeleteResponse(dataset=dataset, role=role, deleted=deleted)
 
 
@@ -379,11 +431,18 @@ async def deny_action(
     dataset: str = Path(..., pattern=_NAME_PATTERN),
     *,
     req: DenyRequest,
+    request: Request,
     _user: dict = Depends(require_role(Role.ADMIN)),
     checker=Depends(get_checker),
 ) -> DenyResponse:
     """Add explicit Deny for an action on a dataset (admin only)."""
     checker.deny_action(dataset, req.action)
+    await log_security_event(
+        DENY_ADDED, actor_of(_user),
+        lake=getattr(request.app.state, "lake", None),
+        dataset_name=dataset,
+        detail={"action": req.action},
+    )
     return DenyResponse(dataset=dataset, action=req.action, denied=True)
 
 
