@@ -1,8 +1,8 @@
 # Arrow Lake — 架构设计技术文档
 
-> **版本基线**：v1.8.6（[`arrow_lake/_version.py`](../../arrow_lake/_version.py)、`pyproject.toml` 实测）
-> **文档日期**：2026-07-05
-> **状态**：随主干演进，与代码当前态对齐
+> **版本基线**：v1.9.2（[`arrow_lake/_version.py`](../../arrow_lake/_version.py)；`pyproject.toml` 尚待 bump 对齐）
+> **文档日期**：2026-07-23
+> **状态**：随主干演进，与代码当前态对齐。v1.9.0 起**控制面库（libSQL/Turso `system_db`）**落地（接管 RBAC/identity/personal_token/catalog/任务/lineage/RAG 会话/governance，**数据面零改动**），**console** 运维/合规/治理前端完备（v1.9.1–v1.9.2）；本文已纳入（见 §1.2、§2.6、§6.4）。
 > **语言约定**：中文正文、英文图注（技术图惯例 + 渲染稳定）
 
 本文是 Arrow Lake 的**完备架构设计文档**：以 8 张 Midnight Blueprint 设计图为视觉骨架，覆盖定位、顶层架构、五层详解、模块全景、核心业务流程、横切关注点、运维与演进。每一层、每一个模块、每一条核心流程都有独立章节；核心流程章指路 `cookbook` 实战与各版本实现方案/ADR/优化 plan，不重复造轮子。
@@ -98,7 +98,9 @@ Arrow Lake 是一个**生产级、统一的多模态数据湖仓（Unified Multi
 | 图谱 | **HugeGraph** | 知识图谱存储 + Gremlin 遍历；Vermeer 构建 | — |
 | 治理 | **Apache Gravitino** | 统一 catalog + tag-driven ACL + masking + retention | [`v1.4.1-gravitino-integration-plan.md`](../v1.4.1-gravitino-integration-plan.md)、[`v1.4.2-gravitino-governance-deep-plan.md`](../v1.4.2-gravitino-governance-deep-plan.md) |
 | 对象存储 | **MinIO / S3** | blob 原文 + 备份 | — |
-| 缓存/任务 | **Redis** | 分布式会话 + JWT 黑名单 + 异步任务跨 worker 共享 | [`v1.6.0-plan.md`](../v1.6.0-plan.md)、[`v1.6.1_performance_plan.md`](../v1.6.1_performance_plan.md) |
+| 缓存/任务 | **Redis** | 分布式会话 + JWT 黑名单 + 异步任务跨 worker 共享 + rate_limit/login lockout（v1.9.2） | [`v1.6.0-plan.md`](../v1.6.0-plan.md)、[`v1.6.1_performance_plan.md`](../v1.6.1_performance_plan.md) |
+| **控制面** | **libSQL / Turso（sqld）** | **v1.9.0 控制面库**：RBAC / identity / personal_token / catalog 注册 / 任务历史 / lineage 索引 / RAG 会话 / governance；**数据面不触碰**；opt-in + fail_close/fail_soft | [`v1.9.0-turso-system-db-plan.md`](../v1.9.0-turso-system-db-plan.md) |
+| 前端 | **Console** | v1.9.1 运维/合规/治理 Web 控制台（原生 JS + ES module，同源 mount `/console`，复用 REST + RBAC） | [`v1.9.1-frontend-core-impl-plan.md`](../v1.9.1-frontend-core-impl-plan.md) |
 
 > **关键澄清**：DuckDB 是**主力查询路径**而非 fallback。`olap_query` / `vector_search` / `fts` 全部由 DuckDB 执行（40+ 处调用），LanceDB 提供 Table/索引/版本管理 API。DuckLake 在其上提供物化视图。三者分工见 ADR-06（[DuckDB OLAP + DuckLake 评估](../design_plan/adr-06-duckdb-olap-and-ducklake-evaluation.md)）与 ADR-07（[DuckDB 高可用](../design_plan/adr-07-duckdb-high-availability.md)）。
 
@@ -119,12 +121,12 @@ Arrow Lake 采用**严格五层架构**：请求自上而下穿越 **① 接入 
 
 | 层 | 职责 | 关键组件 |
 |---|---|---|
-| ① 接入 | 三入口归一；认证 / 限流 / 路由 | `Lake` facade · FastAPI（106 routes）· CLI（16 命令组） |
+| ① 接入 | 四入口归一；认证 / 限流 / 路由 | `Lake` facade · FastAPI（**159 routes · 20 routers**）· CLI（16 命令组）· **Console**（v1.9.1） |
 | ② 能力 | 业务能力：写进去、查出来、问答 | 摄取 · 查询（8 Bridge）· 智能（RAG / KG） |
 | ③ 计算 | 批处理 / 分布式 / 嵌入 | Daft · Ray · 嵌入器（Local / Daft / CLIP / RayServe） |
 | ④ 存储引擎 | 向量 / 标量 / FTS / 物化的执行 | LanceDB · DuckDB · DuckLake |
-| ⑤ 持久化 | 字节级落地 | MinIO / S3 · Redis · HugeGraph |
-| ⟂ 横切面 | 贯穿各层 | Gravitino 治理 · 可观测 · 安全 |
+| ⑤ 持久化 | 字节级落地（数据面） | MinIO / S3 · Redis · HugeGraph |
+| ⟂ 横切面 | 贯穿各层；**控制面状态由 system_db 持久化**（v1.9.0） | Gravitino 治理 · 可观测 · 安全（RBAC/identity/audit/lineage/governance 走 libSQL） |
 
 ---
 
@@ -139,7 +141,7 @@ Arrow Lake 采用**严格五层架构**：请求自上而下穿越 **① 接入 
 **三入口**：
 
 - **Python SDK** —— `Lake` facade（[`arrow_lake/__init__.py`](../../arrow_lake/__init__.py)）。`Lake("./data")` 或 `Lake.from_yaml("config.yaml")` 构造；持有 `_base_uri / _config / _storage / _components / _component_lock` 五个字段，其余能力全部 mixin 组合（见 §3.0 图 8）。
-- **REST API** —— FastAPI 工厂（[`arrow_lake/api/app.py`](../../arrow_lake/api/app.py)），`uvicorn arrow_lake.api.app:create_app --factory`。106 routes / 18 routers，统一响应信封（success / data / error / meta）。
+- **REST API** —— FastAPI 工厂（[`arrow_lake/api/app.py`](../../arrow_lake/api/app.py)），`uvicorn arrow_lake.api.app:create_app --factory`。159 routes / 20 routers，统一响应信封（success / data / error / meta）。
 - **CLI** —— Click + Rich（`arrow_lake/cli/`），`arrow-lake` 命令组，16 group（audit/backup/catalog/config/embed/export/index/ingest/kg/lifecycle/lineage/maintenance/quality/query/rag/search）。
 
 **请求穿越**（REST）：`AuthN（API Key HMAC / JWT）→ AuthZ（RBAC + DatasetACL）→ 限流（滑动窗口 per IP:path）→ 路由 → 能力层`。SDK / CLI 直接调 facade，不经过 HTTP 中间件，但仍受配置层 RBAC 约束（`DatasetACL` 行/列级）。
@@ -194,7 +196,8 @@ Arrow Lake 采用**严格五层架构**：请求自上而下穿越 **① 接入 
 
 - **治理（Gravitino）** —— 统一 catalog，**tag-driven ACL**（打标签即授权/脱敏），masking engine，retention enforcement。作用于能力层与引擎层。
 - **可观测** —— `structlog` 结构化 JSON 日志 + Prometheus 指标 + OpenTelemetry 分布式追踪（Jaeger）+ Loki 日志聚合。
-- **安全** —— AuthN/AuthZ、注入防御、HMAC 审计、限流。经 FastAPI 中间件 + facade hook 作用。
+- **安全** —— AuthN/AuthZ、注入防御、HMAC 审计、限流（v1.9.2 rate_limit+login lockout 迁 Redis，多 worker fail-open）。经 FastAPI 中间件 + facade hook 作用。
+- **控制面持久化（system_db，v1.9.0）** —— 横切面的"记忆层"：RBAC / identity / personal_token / catalog 注册 / 任务历史 / lineage 索引 / RAG 会话 / governance 由 **libSQL / Turso（sqld）** 统一持久化；**数据面（Lance / DuckDB / HugeGraph / MinIO）完全不触碰**。opt-in（`enabled` 默认 false，渐进启用）+ fail_close（RBAC/identity，库挂拒非 admin）/ fail_soft（catalog/tasks/rag，记日志降级）双模；`arrow_lake/system_db/` 10 个 store + 启动迁移 V001–V004。设计见 [`v1.9.0-turso-system-db-plan.md`](../v1.9.0-turso-system-db-plan.md)。
 
 横切面的深入讨论见 §5。
 
@@ -237,7 +240,7 @@ Arrow Lake 采用**严格五层架构**：请求自上而下穿越 **① 接入 
 
 ### [`api/`](../../arrow_lake/api/) —— REST API
 
-- **职责**：FastAPI 工厂，106 routes / 18 routers，统一响应信封，Auth + RBAC + 限流。
+- **职责**：FastAPI 工厂，159 routes / 20 routers，统一响应信封，Auth + RBAC + 限流。
 - **关键文件**：`app.py`（工厂）、`_auth.py`、`_rbac.py`、`_middleware.py`、各 router（`routers/`）。
 - **公共 API**：HTTP 端点；`create_app()` 工厂。
 - **依赖**：调用 `Lake` facade。被 `cli/` 复用同一套 schema。
@@ -610,7 +613,11 @@ ArrowLakeError → StorageError, QueryError, IngestError, CatalogError,
 | **v1.7.x** | hyper-extract KG 抽取引擎；Lance/DuckDB 栈优化（Daft AI / Reranker / Lance branches / DuckLake 物化视图） | [`v1.7.0-hyper-extract-kg-extraction-plan.md`](../v1.7.0-hyper-extract-kg-extraction-plan.md)、[`v1.7.1-lance-duckdb-stack-optimization-plan.md`](../v1.7.1-lance-duckdb-stack-optimization-plan.md) |
 | **v1.8.0** | 19 项优化；gate 框架按压测裁决 async / 分布式索引 / ColBERT；CLIP 跨模态 | [`v1.8.0-roadmap.md`](../v1.8.0-roadmap.md)、[`v1.8.0-implementation.md`](../v1.8.0-implementation.md)、[`arrow-lake-v1.8.0-release-zh.md`](../arrow-lake-v1.8.0-release-zh.md) |
 | **v1.8.3** | 启动 HA 修复（readiness gate / warmup 后台化 / fileset 400 / Gravitino 钉版本） | — |
-| **v1.8.6**（当前） | **per-dataset KG 分图隔离 + IDOR ACL gate + CLI/API 收尾** | [`v1.8.6-per-dataset-kg-isolation-plan.md`](../v1.8.6-per-dataset-kg-isolation-plan.md)、[`arrow-lake-v1.8.6-product-introduction-zh.md`](../arrow-lake-v1.8.6-product-introduction-zh.md) |
+| **v1.8.6** | **per-dataset KG 分图隔离 + IDOR ACL gate + CLI/API 收尾** | [`v1.8.6-per-dataset-kg-isolation-plan.md`](../v1.8.6-per-dataset-kg-isolation-plan.md)、[`arrow-lake-v1.8.6-product-introduction-zh.md`](../arrow-lake-v1.8.6-product-introduction-zh.md) |
+| **v1.8.7–v1.8.9** | Docling 全栈替代 kreuzberg；Console SQL Worksheet；KG per-dataset KA + doc_type 路由 + 双 LLM（`he_extract_llm`/`he_qa_llm`）；**OllamaReranker 设默认**；审计 P0 三连 + Step2-4 + P2 | [`arrow-lake-v1.8.7-release-zh.md`](../arrow-lake-v1.8.7-release-zh.md)、[`arrow-lake-v1.8.9-release-zh.md`](../arrow-lake-v1.8.9-release-zh.md) |
+| **v1.9.0** | **Turso（libSQL）控制面库**（`system_db/`，10 store）：接管 RBAC/identity/personal_token/catalog/任务/lineage/RAG 会话/governance，**数据面零改动**；opt-in + fail_close/fail_soft；personal_token + list_users + fail-close(401) | [`v1.9.0-turso-system-db-plan.md`](../v1.9.0-turso-system-db-plan.md) |
+| **v1.9.1** | **console 核心界面**（原生 JS + ES module）：admin 全功能 + my-workspace 5 区；personal token 走 `X-API-Key`；dev.override 秒级热重载 | [`v1.9.1-frontend-core-impl-plan.md`](../v1.9.1-frontend-core-impl-plan.md) | |
+| **v1.9.2**（当前） | **console 完备化 + 质量深化**：运维（system/audit/governance/maintenance）+ 合规（audit `asdict`+分页）+ 治理（admin 分页/ACL/deny）；kg.html Schema·遍历合并 + combobox + 图前 3000；**rate_limit 迁 Redis**、**kg_build fire-forget 持强引用**（治 GC 卡死）；conftest autouse 清理 + KG 模板收紧 CI | [`v1.9.2-impl-plan.md`](../v1.9.2-impl-plan.md)、[`v1.9.2-roadmap.md`](../v1.9.2-roadmap.md) |
 
 完整流水见 [`CHANGELOG.md`](../../CHANGELOG.md)。
 

@@ -2,7 +2,7 @@
 
 **Production-Grade Multimodal Data Lakehouse for AI/ML Teams**
 
-Arrow Lake unifies Lance columnar storage, Daft DataFrame processing, and Ray distributed compute into a single Python-native platform — so you can ingest documents, images, and unstructured data; search it with vector, full-text, and hybrid queries; analyze it with OLAP SQL; and feed it directly into RAG pipelines and knowledge graphs, all without leaving one architecture. MIT licensed, built for Python 3.11+, with roughly 28,000 lines of production code, 2,872 tests, and 80%+ coverage out of the box.
+Arrow Lake unifies Lance columnar storage, Daft DataFrame processing, and Ray distributed compute into a single Python-native platform — so you can ingest documents, images, and unstructured data; search it with vector, full-text, and hybrid queries; analyze it with OLAP SQL; and feed it directly into RAG pipelines and knowledge graphs, all without leaving one architecture. MIT licensed, built for Python 3.11+, with roughly 28,000 lines of production code, 5,005+ tests (v1.9.2), and 80%+ coverage out of the box. Since v1.9.0 a **libSQL/Turso control-plane database** unifies RBAC, identity, personal tokens, audit, lineage, and task state (data plane untouched, opt-in), and a built-in **web console (v1.9.1)** covers operations, compliance, and governance.
 
 ---
 
@@ -236,7 +236,7 @@ GPU autoscaling integration supports both scale-to-zero for idle periods and fra
 
 ## Technology Stack
 
-Arrow Lake is built on a carefully curated stack of best-in-class open-source technologies, each chosen for production reliability, performance at scale, and community maturity. Every dependency is pinned to an exact version, validated across 2,800+ tests, and continuously scanned for security vulnerabilities.
+Arrow Lake is built on a carefully curated stack of best-in-class open-source technologies, each chosen for production reliability, performance at scale, and community maturity. Every dependency is pinned to an exact version, validated across 5,000+ tests, and continuously scanned for security vulnerabilities.
 
 | Layer | Technology | Version | Purpose |
 |-------|-----------|---------|---------|
@@ -250,8 +250,10 @@ Arrow Lake is built on a carefully curated stack of best-in-class open-source te
 | **API Framework** | FastAPI | >=0.115 | High-performance async REST API |
 | | Uvicorn | >=0.34 | ASGI server with HTTP/1.1 and WebSocket |
 | | slowapi | >=0.1.9 | Request rate limiting middleware |
+| **Web Console** | Console (vanilla JS + ES modules) | v1.9.1 | Operations / compliance / governance web console, same-origin mount `/console`, reuses REST + RBAC |
 | **Object Storage** | boto3 | >=1.35 | S3-compatible storage (MinIO, AWS S3, GCS) |
-| **Session Coordination** | Redis (hiredis) | >=5.0, <6.0 | Distributed session, JWT blacklist, semaphore |
+| **Session Coordination** | Redis (hiredis) | >=5.0, <6.0 | Distributed session, JWT blacklist, semaphore, rate_limit/login lockout (v1.9.2) |
+| **Control Plane** | libSQL / Turso (sqld) | latest (v1.9.0) | Control-plane relational DB: RBAC / identity / personal tokens / catalog registry / task history / lineage index / RAG sessions; **data plane untouched**; opt-in |
 | **Knowledge Graph** | HugeGraph | 1.7.0 | Property graph database with Gremlin traversal |
 | **Embedding Models** | Qwen3-Embedding | 0.6B | Default text embedding (ModelScope/Ollama) |
 | | Qwen3-VL-Embedding | — | Multimodal (text + image) embedding |

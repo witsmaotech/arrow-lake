@@ -2,7 +2,7 @@
 
 **面向 AI/ML 团队的生产级多模态数据湖仓（Data Lakehouse）**
 
-Arrow Lake 将 Lance 列式存储、Daft DataFrame 处理和 Ray 分布式计算统一为一个 Python 原生平台 —— 你可以在同一架构内完成文档、图像和非结构化数据的摄入，通过向量搜索（Vector Search）、全文搜索（Full-Text Search）和混合搜索（Hybrid Search）进行检索，使用 OLAP SQL 进行分析，并将数据直接送入 RAG 管线和知识图谱。采用 MIT 许可证，基于 Python 3.11+ 构建，拥有约 28,000 行生产代码、2,872 个测试用例，开箱即用覆盖率超过 80%。
+Arrow Lake 将 Lance 列式存储、Daft DataFrame 处理和 Ray 分布式计算统一为一个 Python 原生平台 —— 你可以在同一架构内完成文档、图像和非结构化数据的摄入，通过向量搜索（Vector Search）、全文搜索（Full-Text Search）和混合搜索（Hybrid Search）进行检索，使用 OLAP SQL 进行分析，并将数据直接送入 RAG 管线和知识图谱。采用 MIT 许可证，基于 Python 3.11+ 构建，拥有约 28,000 行生产代码、5,005+ 个测试用例（v1.9.2），开箱即用覆盖率超过 80%。自 v1.9.0 起以 **libSQL/Turso 控制面库**统一承载 RBAC、身份、personal token、审计、血缘、任务等控制面状态（数据面零改动、opt-in），并内置覆盖运维/合规/治理的 **Web 控制台（console，v1.9.1）**。
 
 ---
 
@@ -236,7 +236,7 @@ GPU 自动扩缩集成支持空闲时段的缩放到零（Scale-to-Zero）和成
 
 ## 技术栈
 
-Arrow Lake 构建在一个精心策划的顶级开源技术栈之上，每个组件都因生产可靠性、大规模性能和社区成熟度而被选用。每个依赖都锁定到精确版本，经过 2,800+ 个测试的验证，并持续进行安全漏洞扫描。
+Arrow Lake 构建在一个精心策划的顶级开源技术栈之上，每个组件都因生产可靠性、大规模性能和社区成熟度而被选用。每个依赖都锁定到精确版本，经过 5,000+ 个测试的验证，并持续进行安全漏洞扫描。
 
 | 层级 | 技术 | 版本 | 用途 |
 |-------|-----------|---------|---------|
@@ -250,8 +250,10 @@ Arrow Lake 构建在一个精心策划的顶级开源技术栈之上，每个组
 | **API 框架** | FastAPI | >=0.115 | 高性能异步 REST API |
 | | Uvicorn | >=0.34 | 支持 HTTP/1.1 和 WebSocket 的 ASGI 服务器 |
 | | slowapi | >=0.1.9 | 请求速率限制中间件 |
+| **前端控制台** | Console（原生 JS + ES module） | v1.9.1 | 运维/合规/治理 Web 控制台，同源 mount `/console`，复用 REST + RBAC |
 | **对象存储** | boto3 | >=1.35 | S3 兼容存储（MinIO、AWS S3、GCS） |
-| **会话协调** | Redis (hiredis) | >=5.0, <6.0 | 分布式会话、JWT 黑名单、信号量 |
+| **会话协调** | Redis (hiredis) | >=5.0, <6.0 | 分布式会话、JWT 黑名单、信号量、rate_limit/login lockout（v1.9.2） |
+| **控制面库** | libSQL / Turso (sqld) | latest（v1.9.0） | 控制面关系库：RBAC / 身份 / personal token / catalog 注册 / 任务历史 / 血缘索引 / RAG 会话；**数据面不触碰**；opt-in |
 | **知识图谱** | HugeGraph | 1.7.0 | 支持 Gremlin 遍历的属性图数据库 |
 | **嵌入模型** | Qwen3-Embedding | 0.6B | 默认文本嵌入（ModelScope/Ollama） |
 | | Qwen3-VL-Embedding | — | 多模态（文本 + 图像）嵌入 |
