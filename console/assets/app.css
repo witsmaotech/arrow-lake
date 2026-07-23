@@ -229,3 +229,30 @@ svg.ic{display:inline-block}
 .page>*{animation:al-fade-up var(--dur-3) var(--ease) both}
 @keyframes al-fade-up{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
 @media (prefers-reduced-motion:reduce){.page>*{animation:none}.kpi:hover,.panel.interactive:hover,.nav-item:hover,.tag:hover{transform:none}}
+
+/* === v1.9.1 交互增强:骨架/btn loading/空态/聚焦 === */
+.skeleton{background:linear-gradient(90deg,var(--ink-850) 25%,var(--ink-800) 50%,var(--ink-850) 75%);background-size:200% 100%;animation:al-shimmer 1.4s infinite;border-radius:var(--r-md)}
+.skeleton.line{height:12px;margin-bottom:6px}
+.skeleton.line.short{width:60%}
+@keyframes al-shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+.btn.loading{pointer-events:none;color:transparent!important;position:relative;opacity:.85}
+.btn.loading::after{content:"";position:absolute;width:14px;height:14px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:al-spin .6s linear infinite;left:50%;top:50%;margin:-7px 0 0 -7px}
+@keyframes al-spin{to{transform:rotate(360deg)}}
+.empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:var(--s3);padding:var(--s7) var(--s5)}
+.empty .ic{width:44px;height:44px;opacity:.3;margin-bottom:var(--s2)}
+.empty .empty-title{font-size:var(--fs-h3);color:var(--fg-md);font-weight:600}
+.empty .empty-hint{font-size:.78rem;color:var(--fg-lo);max-width:360px;text-align:center}
+.panel{transition:box-shadow var(--dur-2) var(--ease),border-color var(--dur-2) var(--ease)}
+.panel:focus-within{box-shadow:var(--shadow-3),0 0 0 2px var(--teal-soft);border-color:var(--line-strong)}
+.input::placeholder,.select::placeholder,textarea.input::placeholder{color:var(--fg-lo);opacity:.7}
+@media (prefers-reduced-motion:reduce){.skeleton,.btn.loading::after{animation:none}.skeleton{background:var(--ink-800)}}
+
+/* === v1.9.1 IA 增强:section 节奏/标题层次/分隔 === */
+.page{gap:var(--s5)}
+.h-sec{margin-bottom:var(--s3)}
+.h-sec .desc{margin-top:4px;display:block}
+.section-divider{height:1px;background:linear-gradient(90deg,transparent,var(--line) 20%,var(--line) 80%,transparent);margin:var(--s5) 0;border:none}
+.panel-h h3 .ic{width:16px;height:16px;opacity:.85}
+.tabs{margin-bottom:var(--s4)}
+.kpi-row + .section-divider{margin:var(--s4) 0}
+.panel-h{background:linear-gradient(180deg,rgba(255,255,255,.015),transparent)}
