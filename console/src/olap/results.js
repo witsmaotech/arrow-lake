@@ -114,7 +114,7 @@ export function renderResult(host, resp, elapsedMs) {
     if (!fmt) return;
     if (fmt === "parquet") {
       if (!dataset) { toast("无数据集上下文,无法导出 Parquet", "warn"); return; }
-      await exportDatasetParquet(dataset, columns);
+      await exportDatasetParquet(dataset);
     } else {
       exportResult(fmt, columns, rows);
     }
@@ -149,14 +149,14 @@ function exportResult(fmt, columns, rows) {
   toast(`已导出 ${rows.length.toLocaleString()} 行 → ${ext.toUpperCase()}`, "ok", 2500);
 }
 
-async function exportDatasetParquet(dataset, columns) {
-  // 导出整个数据集(可按当前结果列过滤);服务端异步,走 202 任务。
-  const ok = confirm(`导出数据集「${dataset}」为 Parquet?\n(异步任务,完成后自动下载。按当前结果列过滤)`);
+async function exportDatasetParquet(dataset) {
+  // 导出整个数据集(不按结果列过滤 —— 结果列可能是聚合别名如 COUNT(*)→c,
+  // 数据集上不存在,传 columns 会报 'Field "c" does not exist in schema' 而失败)。
+  const ok = confirm(`导出数据集「${dataset}」为 Parquet?\n(异步任务,导出整个数据集,完成后自动下载)`);
   if (!ok) return;
   try {
     await runExport(dataset, {
       format: "parquet",
-      columns,
       onProgress: (st) => toast(`导出中… ${Math.round((st.progress || 0) * 100)}%`, "info", 1500),
     });
     toast("Parquet 导出完成,已下载", "ok", 3000);
