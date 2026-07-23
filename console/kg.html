@@ -95,10 +95,7 @@
       <div class="fg" id="tStartFg"><label>起点实体 <span style="color:var(--danger)">*</span></label><select class="input mono" id="gStart"><option value="">— 先选数据集加载实体 —</option></select></div>
       <div class="fg" id="tTargetFg" style="display:none"><label>终点实体 <span style="color:var(--danger)">*</span></label><select class="input mono" id="gTarget"><option value="">— 选终点实体 —</option></select></div>
       <div class="fg" id="tMultiFg" style="display:none"><label>多节点源(逗号分隔实体名/id)</label><input class="input mono" id="tMultiSrc" placeholder="实体A, 实体B"><label style="margin-top:6px">多节点目标</label><input class="input mono" id="tMultiDst" placeholder="实体C, 实体D"></div>
-      <div class="fg" style="grid-template-columns:1fr 1fr" id="tDepthFg">
-        <div><label>最大深度</label><input class="input mono" id="gDepth" type="number" value="2" min="1" max="10"></div>
-        <div><label>关系过滤(可选 · 点 Schema 边类型联动)</label><select class="input mono" id="gRel"><option value="">全部关系</option></select></div>
-      </div>
+      <div class="fg" id="tDepthFg"><label>最大深度</label><input class="input mono" id="gDepth" type="number" value="2" min="1" max="10"></div>
       <div class="flex" style="gap:8px;margin-top:4px;align-items:center">
         <button class="btn btn-primary btn-sm" id="gRun"><i class="placeholder" data-ic="play"></i> 执行遍历</button>
         <button class="btn btn-ghost btn-sm" id="gReset"><i class="placeholder" data-ic="refresh"></i> 重置为完整图</button>
@@ -182,7 +179,7 @@ async function loadSchema() {
         const l = chip.dataset.elabel;
         const isActive = chip.classList.toggle("active");
         $("#schema").querySelectorAll(".schema-chip[data-elabel]").forEach((c) => { if (c !== chip) c.classList.remove("active"); });
-        $("#gRel").value = isActive ? l : "";
+        highlightEdgesByLabel(isActive ? l : "");
       });
     });
   } catch (_) { $("#schemaPanel").style.display = "none"; }
@@ -264,11 +261,10 @@ async function loadGraph() {
     rows.forEach((r) => { const hit = (r.dataset.ids || "").split(",").includes(nidStr); r.classList.toggle("hl", hit); if (hit && !first) first = r; });
     if (first) first.scrollIntoView({ block: "nearest", behavior: "smooth" });
   });
-  // 填充遍历起点/终点下拉(实体节点)+ 关系类型去重;data-vtype 供 Schema 联动过滤
-  const _entSel = $("#gStart"), _tgtSel = $("#gTarget"), _relSel = $("#gRel");
+  // 填充遍历起点/终点下拉(实体节点);data-vtype 供 Schema 联动过滤
+  const _entSel = $("#gStart"), _tgtSel = $("#gTarget");
   if (_entSel) _entSel.innerHTML = `<option value="">— 选起点实体 (${ns.length}) —</option>` + ns.map((n) => `<option value="${esc(n.id)}" data-vtype="${esc(n.vtype || "")}">${esc(n.label)}</option>`).join("");
   if (_tgtSel) _tgtSel.innerHTML = `<option value="">— 选终点实体 (${ns.length}) —</option>` + ns.map((n) => `<option value="${esc(n.id)}">${esc(n.label)}</option>`).join("");
-  if (_relSel) { const _rels = [...new Set(es.map((e) => e.label).filter(Boolean))].sort(); _relSel.innerHTML = `<option value="">全部关系</option>` + _rels.map((r) => `<option value="${esc(r)}">${esc(r)}</option>`).join(""); }
 }
 
 // ---------- 图遍历工作台(后端 HugeGraph traversers 代理;替换原前端 BFS)----------
@@ -282,6 +278,16 @@ function filterStartByType(type) {
   const cur = sel.value;
   sel.innerHTML = `<option value="">— 选起点实体 (${filtered.length}/${all.length}) —</option>` + filtered.map((n) => `<option value="${esc(n.id)}" data-vtype="${esc(n.vtype || "")}">${esc(n.label)}</option>`).join("");
   if (cur && filtered.some((n) => n.id === cur)) sel.value = cur;
+}
+
+// Schema 联动:边类型 chip → vis 高亮该关系类型的边(其他淡化);后端 traverser 不支持关系过滤故走本地视觉
+function highlightEdgesByLabel(label) {
+  if (!kgEdges) return;
+  const updates = kgEdges.get().map((e) => ({
+    id: e.id,
+    color: { color: !label || e.label === label ? "#38bdf8" : "#334155", opacity: !label ? 0.55 : (e.label === label ? 0.95 : 0.12) },
+  }));
+  kgEdges.update(updates);
 }
 
 // 遍历模式 → 显隐字段(起/终点/深度/方向/多节点)
