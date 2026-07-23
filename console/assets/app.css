@@ -211,3 +211,21 @@ svg.ic{display:inline-block}
 @media (max-width:1100px){.kpi-row{grid-template-columns:repeat(2,1fr)}.cols-3-fr{grid-template-columns:1fr}}
 @media (max-width:860px){.app{grid-template-columns:1fr;grid-template-areas:"header" "main"}.sidebar{display:none}.search-global{display:none}.deps{display:none}}
 @media (pointer:coarse){.btn-icon,.nav-item{min-height:44px;min-width:44px}}
+
+/* === v1.9.1 视觉精修:hover/层次/入场动画(全局,核心页自动提升)== */
+.kpi{transition:transform var(--dur-2) var(--ease),box-shadow var(--dur-2) var(--ease),border-color var(--dur-2) var(--ease);border:1px solid transparent;border-radius:var(--r-md)}
+.kpi:hover{transform:translateY(-2px);box-shadow:var(--shadow-2);border-color:var(--teal)}
+.panel.interactive{transition:transform var(--dur-2) var(--ease),box-shadow var(--dur-2) var(--ease),border-color var(--dur-2) var(--ease)}
+.panel.interactive:hover{transform:translateY(-2px);box-shadow:var(--shadow-3);border-color:var(--line-strong)}
+.btn:hover{transform:translateY(-1px)}
+.btn:active{transform:translateY(0) scale(.98)}
+.btn-primary:hover,.btn-teal:hover{box-shadow:var(--shadow-2)}
+.tbl tbody tr{transition:background var(--dur-1) var(--ease)}
+.tbl tbody tr:hover td{background:var(--ink-800)}
+.tag{transition:transform var(--dur-1) var(--ease)}
+.tag:hover{transform:translateY(-1px)}
+.nav-item{transition:background var(--dur-1) var(--ease),color var(--dur-1) var(--ease),transform var(--dur-1) var(--ease)}
+.nav-item:hover{transform:translateX(2px)}
+.page>*{animation:al-fade-up var(--dur-3) var(--ease) both}
+@keyframes al-fade-up{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){.page>*{animation:none}.kpi:hover,.panel.interactive:hover,.nav-item:hover,.tag:hover{transform:none}}
