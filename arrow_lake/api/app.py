@@ -582,6 +582,16 @@ def create_app(config: ArrowLakeConfig | None = None) -> FastAPI:
             except Exception:
                 pass  # Non-fatal: falls back to in-memory blacklist
 
+        # v1.9.2 批5: Redis-backed rate_limit + login lockout (multi-worker)
+        try:
+            from arrow_lake.api._redis_rate_limit import create_rate_limiter
+
+            rl = create_rate_limiter(config.redis)
+            if rl is not None:
+                app.state.redis_rate_limiter = rl
+        except Exception:
+            pass  # Non-fatal: rate_limit falls back to in-memory
+
         @app.middleware("http")
         async def jwt_auth_middleware(request, call_next):
             return await jwt_auth_middleware_fn(

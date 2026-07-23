@@ -48,7 +48,19 @@ def _evict_stale_login_failures(now: float) -> None:
         del _LOGIN_FAILURES[k]
 
 
-async def _check_login_lockout(username: str, ip: str) -> None:
+async def _check_login_lockout(username: str, ip: str, request: Request | None = None) -> None:
+    # v1.9.2 批5: prefer Redis (multi-worker); fall back to in-memory.
+    rl = getattr(request.app.state, "redis_rate_limiter", None) if request is not None else None
+    if rl is not None:
+        res = rl.check_login(username, ip)
+        if res is not None:
+            locked, n = res
+            if locked:
+                logger.warning("login_locked ip=%s failures=%d", ip, n)
+                raise HTTPException(status_code=429, detail="Too many login failures, try later")
+            return
+        # res is None → Redis hiccup → fall through to in-memory
+
     key = f"{username}:{ip}"
     now = time.time()
     async with _login_lock:  # 原子:防 check/record 间并发 race
@@ -59,12 +71,31 @@ async def _check_login_lockout(username: str, ip: str) -> None:
             raise HTTPException(status_code=429, detail="Too many login failures, try later")
 
 
-async def _record_login_failure(username: str, ip: str) -> None:
+async def _record_login_failure(username: str, ip: str, request: Request | None = None) -> None:
+    # v1.9.2 批5: prefer Redis; fall back to in-memory.
+    rl = getattr(request.app.state, "redis_rate_limiter", None) if request is not None else None
+    if rl is not None:
+        res = rl.check_login(username, ip)  # ensure limiter still connected
+        if res is not None:
+            rl.record_login_failure(username, ip)
+            return
+        # res is None → Redis hiccup → fall through
+
     key = f"{username}:{ip}"
     now = time.time()
     async with _login_lock:
         fails = [t for t in _LOGIN_FAILURES.get(key, []) if t > now - _LOGIN_LOCKOUT_SECONDS]
         _LOGIN_FAILURES[key] = fails + [now]
+
+
+async def _reset_login_failures(username: str, ip: str, request: Request | None = None) -> None:
+    """Clear login failures on successful login (Redis + in-memory best-effort)."""
+    rl = getattr(request.app.state, "redis_rate_limiter", None) if request is not None else None
+    if rl is not None:
+        rl.reset_login(username, ip)
+    key = f"{username}:{ip}"
+    async with _login_lock:
+        _LOGIN_FAILURES.pop(key, None)
 
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
@@ -184,7 +215,7 @@ async def login_with_password(request: Request, creds: LoginRequest) -> TokenPai
     if store is None:
         raise HTTPException(status_code=503, detail="User auth requires system_db enabled")
     ip = _client_ip(request)
-    await _check_login_lockout(creds.username, ip)
+    await _check_login_lockout(creds.username, ip, request)
     user = store.get_user_with_credentials(creds.username)
     from arrow_lake.api.passwords import verify_password
 
@@ -193,7 +224,7 @@ async def login_with_password(request: Request, creds: LoginRequest) -> TokenPai
         or not user.get("is_active")
         or not verify_password(creds.password, user.get("password_hash"))
     ):
-        await _record_login_failure(creds.username, ip)
+        await _record_login_failure(creds.username, ip, request)
         logger.warning("login_failed ip=%s", ip)
         await log_security_event(
             LOGIN_FAILURE, creds.username,
@@ -210,6 +241,8 @@ async def login_with_password(request: Request, creds: LoginRequest) -> TokenPai
     refresh = svc.create_refresh_token(
         user_id=str(user["id"]), role=role, permissions=payload.permissions, username=user.get("username")
     )
+    # v1.9.2 批5: clear failures on success (Redis + in-memory best-effort)
+    await _reset_login_failures(creds.username, ip, request)
     logger.info("login_success user_id=%s username=%s ip=%s", user["id"], creds.username, ip)
     await log_security_event(
         LOGIN_SUCCESS, creds.username,

@@ -102,7 +102,11 @@ async def rate_limit_middleware_fn(
     """Pure ASGI rate limiting middleware function.
 
     Apply rate limits per (client IP, path) pair.
-    Uses in-memory fixed-window counters — suitable for single-process deployments.
+
+    v1.9.2 批5: prefer Redis-backed counter (``app.state.redis_rate_limiter``)
+    for multi-worker correctness; fall back to the in-memory ``_Counter`` when
+    Redis is unavailable or returns None (fail-open). Thresholds/window match
+    v1.9.1 (60s window, rpm requests/minute).
     """
     path = request.url.path
     exempt_prefixes = tuple(exempt_paths or [])
@@ -117,6 +121,33 @@ async def rate_limit_middleware_fn(
     key = f"{client_ip}:{path}"
 
     now = time.time()
+
+    # ── Redis path (multi-worker) ──
+    rl = getattr(request.app.state, "redis_rate_limiter", None)
+    if rl is not None:
+        res = rl.hit(client_ip, path, limit=rpm, window=int(_WINDOW_SECONDS))
+        if res is not None:
+            allowed, remaining, retry_after = res
+            if not allowed:
+                from arrow_lake.core.metrics import rate_limit_rejected_total
+
+                rate_limit_rejected_total.labels(endpoint=path, path=path).inc()
+                return JSONResponse(
+                    status_code=429,
+                    content={
+                        "success": False,
+                        "error": "RATE_LIMIT_EXCEEDED",
+                        "message": "Too many requests. Please retry later.",
+                    },
+                    headers={"Retry-After": str(max(1, retry_after))},
+                )
+            response = await call_next(request)
+            response.headers["X-RateLimit-Limit"] = str(rpm)
+            response.headers["X-RateLimit-Remaining"] = str(remaining)
+            return response
+        # res is None → Redis hiccup → fall through to in-memory
+
+    # ── In-memory fallback (single-process) ──
     _evict_stale_counters(now)
     counter = _counters[key]
 

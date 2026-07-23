@@ -24,3 +24,6 @@ class RedisConfig(BaseModel):
     instance_heartbeat_ttl_seconds: int = Field(default=30, ge=5)
     task_key_prefix: str = "arrow_lake:task:"
     task_ttl_seconds: int = Field(default=7200, ge=60)
+    # v1.9.2 批5: rate_limit + login lockout (多 worker 分布式共享)
+    rate_limit_key_prefix: str = "arrow_lake:rl:"
+    rate_limit_login_bucket: str = "login"
