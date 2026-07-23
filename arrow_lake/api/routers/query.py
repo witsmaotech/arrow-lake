@@ -19,6 +19,8 @@ from arrow_lake.api.models.query import (
     DaftQueryRequest,
     DaftQueryResponse,
     GraphQueryRequest,
+    MaterializeRequest,
+    MaterializeResponse,
     OlapQueryRequest,
     OlapQueryResponse,
 )
@@ -242,3 +244,40 @@ async def daft_query(
     resp = arrow_table_to_response(table, req.format)
     resp["warnings"] = warnings
     return DaftQueryResponse(**resp)
+
+
+@router.post("/{name}/materialize", response_model=MaterializeResponse)
+async def materialize_view(
+    name: str = Path(..., pattern=_NAME_PATTERN),
+    *,
+    req: MaterializeRequest,
+    lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.ADMIN)),
+) -> MaterializeResponse:
+    """Materialize a SELECT result as a DuckLake table (ADMIN).
+
+    Internal ``CREATE TABLE`` bypasses user-SQL screening, so the view name is
+    whitelist-validated (model pattern) and the endpoint is ADMIN-gated.
+    Returns 503 when ``ducklake_enabled=False``.
+    """
+    from datetime import UTC, datetime
+
+    from arrow_lake.exceptions import ArrowLakeError, QueryError
+
+    ttl_days = max(1, round(req.ttl_hours / 24)) if req.ttl_hours is not None else None
+    try:
+        row_count = await run_sync(
+            lake.materialize, name, req.sql,
+            view_name=req.view_name, ttl_days=ttl_days,
+            timeout=_QUERY_TIMEOUT, label="materialize",
+        )
+    except (QueryError, ArrowLakeError) as exc:
+        msg = str(exc)
+        raise HTTPException(
+            status_code=503 if "not enabled" in msg else 400, detail=msg,
+        ) from exc
+    return MaterializeResponse(
+        view_name=req.view_name,
+        row_count=row_count,
+        materialized_at=datetime.now(UTC).isoformat(),
+    )

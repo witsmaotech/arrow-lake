@@ -254,6 +254,40 @@ class _LakeQueryMixin:
         )
         return bridge.cleanup_materialized(ttl_days=ttl_days)
 
+    def list_materialized(self) -> list[dict]:
+        """List materialized DuckLake views with lifecycle metadata.
+
+        Returns:
+            List of ``{view_name, created_at, expires_at, row_count}``.
+        """
+        from arrow_lake.query.olap import OlapSearchBridge
+
+        bridge = self._get_component(
+            "olap",
+            lambda: OlapSearchBridge(
+                self._get_storage(),
+                config=self._config.olap,
+                storage_config=self._config.storage,
+                session_manager=self.get_session_manager(),
+            ),
+        )
+        return bridge.list_materialized()
+
+    def drop_materialized(self, view_name: str) -> bool:
+        """Drop a single materialized DuckLake view by name."""
+        from arrow_lake.query.olap import OlapSearchBridge
+
+        bridge = self._get_component(
+            "olap",
+            lambda: OlapSearchBridge(
+                self._get_storage(),
+                config=self._config.olap,
+                storage_config=self._config.storage,
+                session_manager=self.get_session_manager(),
+            ),
+        )
+        return bridge.drop_materialized(view_name)
+
     def export(
         self,
         dataset_name: str,

@@ -34,6 +34,18 @@
   .res-tbl td{padding:7px 10px;border-bottom:1px solid var(--line-soft);color:var(--fg-md)}
   .res-tbl td.mono{font-family:var(--font-mono);font-size:.74rem}
   @media(max-width:1024px){.olap-layout{grid-template-columns:1fr}.olap-side{position:static;max-height:none}.grid-2c{grid-template-columns:1fr !important}}
+  /* v1.9.2 批6:结果消费 UI(导出/图表/统计)+ Pivot 助手 */
+  .result-tools{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:8px 0 10px;border-bottom:1px solid var(--line-soft);margin-bottom:10px}
+  .rt-group{display:flex;align-items:center;gap:6px;font-size:.66rem;color:var(--fg-lo);text-transform:uppercase;letter-spacing:.05em;font-weight:600}
+  .rt-ico{font-size:.9rem;text-transform:none}
+  .rt-sel{height:30px;padding:0 8px;font-size:.76rem;width:auto;min-width:118px}
+  .chart-host{margin-bottom:12px;padding:14px;background:var(--ink-900);border:1px solid var(--line-soft);border-radius:var(--r-md);overflow-x:auto}
+  .chart-host svg{max-width:680px;margin:0 auto;display:block}
+  .stat-host{margin-bottom:14px}
+  .stat-host .tag{display:inline-block;padding:1px 6px;border-radius:4px;background:var(--teal-soft);color:var(--teal-bright);text-transform:lowercase;font-weight:600}
+  .pivot-card{margin-top:12px;padding:12px;border:1px dashed var(--line);border-radius:var(--r-md);background:var(--ink-900)}
+  .pivot-card .pg{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:8px 0 10px}
+  @media(max-width:768px){.pivot-card .pg{grid-template-columns:repeat(2,1fr)}}
 </style>
 </head>
 <body>
@@ -45,6 +57,7 @@
       <div class="desc">DuckDB SQL · Daft DataFrame · <span class="mono">query/{olap,daft}</span> · RBAC + 行级 ACL · MV 模板</div>
     </div>
     <div class="flex">
+      <button class="btn btn-ghost btn-sm" id="summarBtn" title="SUMMARIZE 全表质量概览(每列 min/max/avg/std/分位数/null%)"><i class="placeholder" data-ic="vector"></i> SUMMARIZE</button>
       <button class="btn btn-ghost btn-sm" id="explainBtn"><i class="placeholder" data-ic="olap"></i> EXPLAIN</button>
       <button class="btn btn-ghost btn-sm" id="apiBtn"><i class="placeholder" data-ic="code"></i> API</button>
       <button class="btn btn-ghost btn-sm" id="mvTplBtn" title="插入 CREATE MATERIALIZED VIEW 模板"><i class="placeholder" data-ic="database"></i> MV 模板</button>
@@ -84,6 +97,20 @@
           <div class="panel-h"><i class="placeholder" data-ic="database"></i><h3>结果</h3><span class="sub" id="meta">未运行</span></div>
           <div id="result"><div class="empty">输入 SQL,按 <b>运行 ⌘⏎</b>。</div></div>
         </div>
+        <!-- v1.9.2 批6-P2:DuckLake 物化视图管理 -->
+        <div class="panel flush">
+          <div class="panel-h"><i class="placeholder" data-ic="database"></i><h3>物化视图</h3><span class="sub" id="mvMeta">DuckLake MV · TTL 管理</span>
+            <span class="actions"><button class="btn btn-ghost btn-sm" id="mvRefresh">刷新</button><button class="btn btn-ghost btn-sm" id="mvCleanup">清理过期</button></span></div>
+          <div class="panel-b" style="padding:12px">
+            <div class="fg" style="grid-template-columns:1fr 130px auto;align-items:end;gap:10px">
+              <div><label>视图名([a-zA-Z_][a-zA-Z0-9_]*)</label><input class="input mono" id="mvName" placeholder="mv_sales_by_region"/></div>
+              <div><label>TTL 小时</label><input class="input mono" id="mvTtl" value="168"/></div>
+              <div><button class="btn btn-primary btn-sm" id="mvCreate">物化当前 SQL</button></div>
+            </div>
+            <div class="muted" style="font-size:.7rem;margin-top:6px">把编辑器当前的 SELECT 物化为 DuckLake 表(POST /datasets/{ds}/materialize,ADMIN)。ducklake 关闭时面板降级为 503 提示。</div>
+            <div id="mvList" style="margin-top:10px"></div>
+          </div>
+        </div>
       </div>
 
       <!-- Daft mode -->
@@ -100,6 +127,19 @@
             <button class="btn btn-primary btn-sm" id="dRun" style="margin-top:8px"><i class="placeholder" data-ic="play"></i> collect() · POST query/daft</button>
             <div class="muted" style="font-size:.72rem;margin-top:8px">Daft 在 Lance 上做惰性 DataFrame;链式 sort→filter→select→limit,collect() 触发。多模态/AI 函数/UDF 走 Daft Python(见数据准备原型)。</div>
           </div>
+        </div>
+        <div class="pivot-card">
+          <div class="h-sec" style="padding:0;align-items:center">
+            <div style="font-size:.82rem;font-weight:600;color:var(--fg-hi)">🔀 Pivot 助手</div>
+            <span class="muted" style="font-size:.68rem">行维 × 列维 → 宽表 · POST /query/daft(DaftDataFrame.pivot)</span>
+          </div>
+          <div class="pg">
+            <div><label>group_by(行维)</label><select class="select" id="pvGroup"></select></div>
+            <div><label>pivot_col(列维)</label><select class="select" id="pvPivot"></select></div>
+            <div><label>value_col(度量)</label><select class="select" id="pvValue"></select></div>
+            <div><label>agg_fn</label><select class="select" id="pvAgg"><option>sum</option><option>mean</option><option>count</option><option>min</option><option>max</option><option>first</option><option>last</option></select></div>
+          </div>
+          <div class="flex"><button class="btn btn-primary btn-sm" id="pvRun"><i class="placeholder" data-ic="play"></i> 运行 Pivot</button><span class="muted" style="font-size:.68rem;align-self:center">结果落到下方 Daft 结果区</span></div>
         </div>
         <div class="grid grid-2c" style="grid-template-columns:1fr 1fr;gap:var(--s4);margin-top:var(--s3)">
           <div class="panel flush"><div class="panel-h"><i class="placeholder" data-ic="code"></i><h3>等价 Python</h3></div><pre class="codeblk" id="dPy">df = daft.read_lance("{ds}")\n# 添加步骤…\ndf.collect()</pre></div>
@@ -182,6 +222,11 @@ SELECT * FROM mv_monthly_quality ORDER BY month DESC;`;
     const desc = confirm("降序?"); dSteps.push({ kind: "sort", desc: `${col} ${desc ? "DESC" : "ASC"}`, py: `   .sort("${col}", desc=${desc})` });
     renderChain();
   });
+  function renderDaftResult(r) {
+    const rows = r.rows || []; const cols2 = rows.length ? Object.keys(rows[0]) : [];
+    $("#dMeta").textContent = `${r.row_count ?? rows.length} 行 · ${r.column_count ?? cols2.length} 列${r.warnings?.length ? " · ⚠ " + r.warnings.length + " 警告" : ""}`;
+    $("#dResult").innerHTML = rows.length ? `<table class="res-tbl"><thead><tr>${cols2.map((c) => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>${rows.slice(0, 200).map((row) => `<tr>${cols2.map((c) => `<td class="mono">${esc(row[c] ?? "")}</td>`).join("")}</tr>`).join("")}</tbody></table>` : `<div class="muted" style="padding:14px">无结果</div>`;
+  }
   function runDaft() {
     const ds = $("#dsSel").value; if (!ds) return toast("请先选择数据集", "warn");
     const body = { limit: parseInt($("#dLimit").value) || 100, format: "json" };
@@ -195,15 +240,73 @@ SELECT * FROM mv_monthly_quality ORDER BY month DESC;`;
     if (!body.filters.length) delete body.filters;
     $("#dMeta").textContent = "collect 中…";
     request("POST", `/datasets/${encodeURIComponent(ds)}/query/daft`, { body })
-      .then((r) => {
-        const rows = r.rows || []; const cols2 = rows.length ? Object.keys(rows[0]) : [];
-        $("#dMeta").textContent = `${r.row_count ?? rows.length} 行 · ${r.column_count ?? cols2.length} 列${r.warnings?.length ? " · ⚠ " + r.warnings.length + " 警告" : ""}`;
-        $("#dResult").innerHTML = rows.length ? `<table class="res-tbl"><thead><tr>${cols2.map((c) => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>${rows.slice(0, 200).map((row) => `<tr>${cols2.map((c) => `<td class="mono">${esc(row[c] ?? "")}</td>`).join("")}</tr>`).join("")}</tbody></table>` : `<div class="muted" style="padding:14px">无结果</div>`;
-      })
+      .then(renderDaftResult)
       .catch((e) => { $("#dMeta").textContent = "失败"; $("#dResult").innerHTML = `<div style="padding:14px;color:var(--danger)">${esc(errMsg(e))}</div>`; toast("Daft 查询失败:" + errMsg(e), "danger", 5000); });
+  }
+  // Pivot 助手:加载 schema 列填充 + 运行(group_by/pivot_col/value_col/agg_fn → /query/daft)
+  function loadPivotCols() {
+    const ds = $("#dsSel").value; if (!ds) return;
+    request("GET", `/datasets/${encodeURIComponent(ds)}/schema`).then((s) => {
+      const fields = (s.fields || []).map((f) => f.name);
+      ["#pvGroup", "#pvPivot", "#pvValue"].forEach((sel) => { const el = $(sel); el.innerHTML = fields.map((f) => `<option>${esc(f)}</option>`).join(""); });
+    }).catch(() => {});
+  }
+  function runPivot() {
+    const ds = $("#dsSel").value; if (!ds) return toast("请先选择数据集", "warn");
+    const group_by = $("#pvGroup").value, pivot_col = $("#pvPivot").value, value_col = $("#pvValue").value;
+    if (!group_by || !pivot_col || !value_col) return toast("Pivot 需选齐 行维/列维/度量", "warn");
+    const body = { pivot: { group_by, pivot_col, value_col, agg_fn: $("#pvAgg").value }, limit: parseInt($("#dLimit").value) || 100, format: "json" };
+    $("#dMeta").textContent = "pivot 中…";
+    request("POST", `/datasets/${encodeURIComponent(ds)}/query/daft`, { body })
+      .then(renderDaftResult)
+      .catch((e) => { $("#dMeta").textContent = "失败"; $("#dResult").innerHTML = `<div style="padding:14px;color:var(--danger)">${esc(errMsg(e))}</div>`; toast("Pivot 失败:" + errMsg(e), "danger", 5000); });
   }
   $("#dRun").addEventListener("click", runDaft);
   $("#dCols").addEventListener("input", updPy); $("#dLimit").addEventListener("input", updPy);
+  $("#pvRun").addEventListener("click", runPivot);
+  $("#dsSel").addEventListener("change", loadPivotCols);
+  loadPivotCols();
+  // ---------- 物化视图(P2:DuckLake MV 管理,ducklake 关闭时 503 降级)----------
+  function mvDegraded(msg) {
+    $("#mvMeta").textContent = "降级";
+    $("#mvList").innerHTML = `<div class="muted" style="padding:10px;font-size:.8rem;color:var(--warn)">⚠ ${esc(msg)}<br><span style="font-size:.72rem">后端 <code class="mono">ducklake_enabled=False</code>(默认),需在 deploy/.env 开启 <code class="mono">ARROW_LAKE__OLAP__DUCKLAKE_ENABLED=true</code> + rebuild 容器。</span></div>`;
+  }
+  function loadMv() {
+    request("GET", "/materialized").then((r) => {
+      const views = r.views || [];
+      $("#mvMeta").textContent = `${views.length} 个视图`;
+      $("#mvList").innerHTML = views.length
+        ? `<table class="res-tbl"><thead><tr><th>视图名</th><th class="num">行数</th><th>创建</th><th>过期</th><th></th></tr></thead><tbody>${views.map((v) => `<tr><td class="mono">${esc(v.view_name)}</td><td class="mono num">${(v.row_count ?? 0).toLocaleString()}</td><td class="mono">${esc((v.created_at || "").slice(0, 19))}</td><td class="mono">${esc((v.expires_at || "").slice(0, 19))}</td><td><button class="btn btn-ghost btn-sm" data-mvdel="${esc(v.view_name)}">删除</button></td></tr>`).join("")}</tbody></table>`
+        : `<div class="muted" style="padding:10px;font-size:.8rem">无物化视图(物化当前 SQL 创建)</div>`;
+      $("#mvList").querySelectorAll("[data-mvdel]").forEach((b) => b.addEventListener("click", () => dropMv(b.dataset.mvdel)));
+    }).catch((e) => mvDegraded(errMsg(e)));
+  }
+  function dropMv(name) {
+    if (!confirm(`删除物化视图「${name}」?`)) return;
+    request("DELETE", `/materialized/${encodeURIComponent(name)}`).then(() => { toast(`已删除 ${name}`, "ok"); loadMv(); }).catch((e) => toast("删除失败:" + errMsg(e), "danger", 5000));
+  }
+  function createMv() {
+    const ds = window.__olapDataset ? window.__olapDataset() : $("#dsSel").value;
+    if (!ds) return toast("请先选择数据集", "warn");
+    const name = $("#mvName").value.trim();
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) return toast("视图名非法(仅字母/数字/下划线,字母或下划线开头)", "warn");
+    const sql = (window.__olapGetSql && window.__olapGetSql()) || "";
+    if (!sql.trim()) return toast("编辑器无有效 SQL", "warn");
+    const ttl = parseInt($("#mvTtl").value) || undefined;
+    const body = { sql, view_name: name };
+    if (ttl) body.ttl_hours = ttl;
+    $("#mvMeta").textContent = "物化中…";
+    request("POST", `/datasets/${encodeURIComponent(ds)}/materialize`, { body })
+      .then((r) => { toast(`物化成功:${r.view_name} · ${r.row_count.toLocaleString()} 行`, "ok"); $("#mvName").value = ""; loadMv(); })
+      .catch((e) => { mvDegraded(errMsg(e)); toast("物化失败:" + errMsg(e), "danger", 5000); });
+  }
+  $("#mvRefresh").addEventListener("click", loadMv);
+  $("#mvCleanup").addEventListener("click", () => {
+    if (!confirm("清理所有过期(TTL)物化视图?")) return;
+    request("POST", "/materialized/cleanup").then((r) => { toast(`已清理 ${r.count || 0} 个`, "ok"); loadMv(); }).catch((e) => mvDegraded(errMsg(e)));
+  });
+  $("#mvCreate").addEventListener("click", createMv);
+  loadMv();
   renderChain();
 }
 </script>

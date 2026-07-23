@@ -290,6 +290,48 @@ class OlapSearchBridge:
         with self._managed_session(load_ducklake=True) as conn:
             return workspace.cleanup_expired(conn)
 
+    def list_materialized(self) -> list[dict]:
+        """List materialized DuckLake views with lifecycle metadata.
+
+        Returns:
+            List of ``{view_name, created_at, expires_at, row_count}``.
+
+        Note:
+            Requires ``ducklake_enabled=True``; metadata is TEMP/session-scoped
+            (see ``DuckLakeWorkspace.list_views``).
+        """
+        if not self._config.ducklake_enabled:
+            raise QueryError(
+                error_code=ErrorCode.OLAP_QUERY_FAILED,
+                message="DuckLake materialization is not enabled (ducklake_enabled=False)",
+            )
+        from arrow_lake.query.ducklake_workspace import DuckLakeWorkspace
+
+        workspace = DuckLakeWorkspace(ttl_days=self._config.ducklake_ttl_days)
+        with self._managed_session(load_ducklake=True) as conn:
+            return workspace.list_views(conn)
+
+    def drop_materialized(self, view_name: str) -> bool:
+        """Drop a single materialized view by name.
+
+        Args:
+            view_name: Safe SQL identifier (validated).
+
+        Raises:
+            QueryError: If ducklake not enabled.
+        """
+        if not self._config.ducklake_enabled:
+            raise QueryError(
+                error_code=ErrorCode.OLAP_QUERY_FAILED,
+                message="DuckLake materialization is not enabled (ducklake_enabled=False)",
+            )
+        validate_identifier(view_name)
+        from arrow_lake.query.ducklake_workspace import DuckLakeWorkspace
+
+        workspace = DuckLakeWorkspace(ttl_days=self._config.ducklake_ttl_days)
+        with self._managed_session(load_ducklake=True) as conn:
+            return workspace.drop_view(conn, view_name)
+
     def graph_query(
         self,
         edges_dataset: str,

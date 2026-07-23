@@ -51,6 +51,8 @@ export async function initWorksheet() {
   } catch (e) {
     toast(`加载数据集失败: ${e.message}`, "danger");
   }
+  // 结果宿主记下当前数据集名(供 results.js 的 Parquet 导出 / SUMMARIZE 复用)
+  resultHost.dataset.ds = dsSel.value;
 
   // 2. Editor
   const initial = localStorage.getItem("al-last-sql") || tpl(dsSel.value);
@@ -149,6 +151,15 @@ export async function initWorksheet() {
     await execute(`EXPLAIN ${inner}`, "EXPLAIN");
   }
 
+  // SUMMARIZE 概览:全表每列质量(min/max/avg/std/分位数/null%)。
+  // bridge._validate_sql 要求 SELECT 前缀 → 用子查询 SELECT * FROM (SUMMARIZE "ds") 包装;
+  // _apply_limit 追加 LIMIT 到外层 SELECT,合法。(实测 8 列统计通过)
+  async function runSummarize() {
+    const ds = dsSel.value;
+    if (!ds) { toast("请先选择数据集", "warn"); return; }
+    await execute(`SELECT * FROM (SUMMARIZE ${q(ds)})`, "SUMMARIZE");
+  }
+
   function handleError(e) {
     if (e instanceof ApiError && e.status === 401) {
       toast("未授权或登录过期,请重新登录", "danger");
@@ -164,6 +175,10 @@ export async function initWorksheet() {
   // 3. Wire UI
   runBtn.addEventListener("click", run);
   explainBtn?.addEventListener("click", runExplain);
+  document.getElementById("summarBtn")?.addEventListener("click", runSummarize);
+  // 暴露当前 SQL getter 给物化视图面板(olap.html 内联脚本用)
+  window.__olapGetSql = fillSql;
+  window.__olapDataset = () => dsSel.value;
   historySel?.addEventListener("change", () => {
     const h = loadHistory();
     const idx = parseInt(historySel.value);

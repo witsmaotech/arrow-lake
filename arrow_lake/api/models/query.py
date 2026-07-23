@@ -204,3 +204,48 @@ class ExportTaskStatusResponse(BaseModel):
     completed_at: str | None = None
     error: str | None = None
     result: dict[str, Any] | None = None
+
+
+# ---------------------------------------------------------------------------
+# DuckLake materialized views (v1.9.2 批6-P2)
+# ---------------------------------------------------------------------------
+
+# 视图名白名单:内部 CREATE TABLE {view_name} 绕过用户 SQL 屏蔽 → 必须严格守卫防注入。
+_MV_NAME_RE = r"^[a-zA-Z_][a-zA-Z0-9_]{0,62}$"
+
+
+class MaterializeRequest(BaseModel):
+    """Materialize a SELECT result as a DuckLake table (ADMIN only)."""
+
+    sql: str = Field(..., min_length=1, max_length=16384)
+    view_name: str = Field(..., pattern=_MV_NAME_RE, description="SQL-safe 视图名 [a-zA-Z_][a-zA-Z0-9_]*")
+    ttl_hours: int | None = Field(default=None, ge=1, le=24 * 30, description="TTL 小时(None=用配置默认天)")
+
+    @field_validator("sql")
+    @classmethod
+    def validate_sql_read_only(cls, v: str) -> str:
+        from arrow_lake.api.models.common import _BLOCKED_SQL_PREFIXES
+
+        if _BLOCKED_SQL_PREFIXES.search(v):
+            raise ValueError("Only SELECT queries are allowed for materialization")
+        return v
+
+
+class MaterializeResponse(BaseModel):
+    success: bool = True
+    view_name: str
+    row_count: int
+    materialized_at: str
+
+
+class MaterializedView(BaseModel):
+    view_name: str
+    created_at: str | None = None
+    expires_at: str | None = None
+    row_count: int | None = None
+
+
+class MaterializeListResponse(BaseModel):
+    success: bool = True
+    views: list[MaterializedView]
+    count: int

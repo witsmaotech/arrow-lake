@@ -211,3 +211,55 @@ class DuckLakeWorkspace:
             return [row[0] for row in rows]
         except duckdb.Error:
             return []
+
+    def list_views(self, conn: object) -> list[dict]:
+        """List materialized views with lifecycle metadata.
+
+        Args:
+            conn: Active DuckDB connection.
+
+        Returns:
+            List of dicts: ``{table_name, created_at, expires_at, row_count}``.
+
+        Note:
+            The ``_metadata`` table is TEMP (session-scoped) — across fresh
+            sessions this returns ``[]`` even if DuckLake tables persist on
+            the pooled connection. Cross-session durability requires a
+            persistent DuckLake catalog (not configured by default).
+        """
+        self._ensure_metadata_table(conn)
+        try:
+            rows = conn.execute(
+                f"SELECT table_name, created_at, expires_at, row_count "  # nosec B608
+                f"FROM {self._metadata_table} ORDER BY created_at DESC"
+            ).fetchall()
+        except duckdb.Error:
+            return []
+        out: list[dict] = []
+        for name, created, expires, rc in rows:
+            out.append({
+                "view_name": name,
+                "created_at": created.isoformat() if hasattr(created, "isoformat") else str(created),
+                "expires_at": expires.isoformat() if hasattr(expires, "isoformat") else str(expires),
+                "row_count": rc,
+            })
+        return out
+
+    def drop_view(self, conn: object, view_name: str) -> bool:
+        """Drop a single materialized view by name (safe identifier validated).
+
+        Returns:
+            True if dropped, False if not found.
+        """
+        validate_identifier(view_name)
+        self._ensure_metadata_table(conn)
+        try:
+            conn.execute(f"DROP TABLE IF EXISTS {view_name}")  # nosec B608
+            conn.execute(
+                f"DELETE FROM {self._metadata_table} WHERE table_name = $1",  # nosec B608
+                [view_name],
+            )
+            return True
+        except duckdb.Error as exc:
+            logger.warning("Failed to drop materialized view %s: %s", view_name, exc)
+            return False
