@@ -51,17 +51,10 @@
 <body>
 <div id="app">
 <main class="main"><div class="page">
-  <div class="h-sec between">
+  <div class="h-sec">
     <div>
       <h1>深度分析</h1>
       <div class="desc">DuckDB SQL · Daft DataFrame · <span class="mono">query/{olap,daft}</span> · RBAC + 行级 ACL · MV 模板</div>
-    </div>
-    <div class="flex">
-      <button class="btn btn-ghost btn-sm" id="summarBtn" title="SUMMARIZE 全表质量概览(每列 min/max/avg/std/分位数/null%)"><i class="placeholder" data-ic="vector"></i> SUMMARIZE</button>
-      <button class="btn btn-ghost btn-sm" id="explainBtn"><i class="placeholder" data-ic="olap"></i> EXPLAIN</button>
-      <button class="btn btn-ghost btn-sm" id="apiBtn"><i class="placeholder" data-ic="code"></i> API</button>
-      <button class="btn btn-ghost btn-sm" id="mvTplBtn" title="插入 CREATE MATERIALIZED VIEW 模板"><i class="placeholder" data-ic="database"></i> MV 模板</button>
-      <button class="btn btn-primary btn-sm" id="runBtn"><i class="placeholder" data-ic="play"></i> 运行 ⌘⏎</button>
     </div>
   </div>
 
@@ -87,6 +80,13 @@
       <!-- SQL mode -->
       <div id="mSql">
         <div class="panel flush">
+          <div class="panel-h" style="padding:8px 12px;flex-wrap:wrap;gap:var(--s2)"><span class="sub">SQL 编辑器 · DuckDB</span><span class="actions">
+            <button class="btn btn-ghost btn-sm" id="summarBtn" title="SUMMARIZE 全表质量概览(每列 min/max/avg/std/分位数/null%)"><i class="placeholder" data-ic="vector"></i> SUMMARIZE</button>
+            <button class="btn btn-ghost btn-sm" id="explainBtn"><i class="placeholder" data-ic="olap"></i> EXPLAIN</button>
+            <button class="btn btn-ghost btn-sm" id="apiBtn"><i class="placeholder" data-ic="code"></i> API</button>
+            <button class="btn btn-ghost btn-sm" id="mvTplBtn" title="插入 CREATE MATERIALIZED VIEW 模板"><i class="placeholder" data-ic="database"></i> MV 模板</button>
+            <button class="btn btn-primary btn-sm" id="runBtn"><i class="placeholder" data-ic="play"></i> 运行 ⌘⏎</button>
+          </span></div>
           <div id="editor"></div>
           <div class="qopts">
             <label>max_rows <input class="input mono" id="maxRows" value="1000000" style="width:100px"/></label>
