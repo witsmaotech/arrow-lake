@@ -1,6 +1,6 @@
 # Arrow Lake — 架构设计技术文档
 
-> **版本基线**：v1.9.2（[`arrow_lake/_version.py`](../../arrow_lake/_version.py)；`pyproject.toml` 尚待 bump 对齐）
+> **版本基线**：v1.9.2（[`arrow_lake/_version.py`](../../arrow_lake/_version.py) = `pyproject.toml` = 1.9.2）
 > **文档日期**：2026-07-23
 > **状态**：随主干演进，与代码当前态对齐。v1.9.0 起**控制面库（libSQL/Turso `system_db`）**落地（接管 RBAC/identity/personal_token/catalog/任务/lineage/RAG 会话/governance，**数据面零改动**），**console** 运维/合规/治理前端完备（v1.9.1–v1.9.2）；本文已纳入（见 §1.2、§2.6、§6.4）。
 > **语言约定**：中文正文、英文图注（技术图惯例 + 渲染稳定）

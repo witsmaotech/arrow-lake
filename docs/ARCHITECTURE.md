@@ -1,6 +1,6 @@
 # Arrow Lake — 架构技术文档（Architecture Reference）
 
-> **版本基线**：v1.9.2（已合并 `master`；`arrow_lake/_version.py=1.9.2`，`pyproject.toml` 尚待 bump 对齐）
+> **版本基线**：v1.9.2（已合并 `master`；`arrow_lake/_version.py` = `pyproject.toml` = 1.9.2）
 > **文档日期**：2026-07-23
 > **状态**：随主干演进，与代码当前态对齐（已逐项核实 `arrow_lake/` 源码）。v1.9.0 起**控制面库（libSQL / Turso）**已落地接管 RBAC/身份/personal_token/catalog/任务/RAG 会话/血缘索引（见 [§4.9](#49-控制面system_db)），console 运维/合规/治理前端已完备（见 [§12.2](#122-compose-profiles--overlays)）。
 > **v1.9.2 增量**（相对 v1.8.0）：① v1.9.0 Turso 控制面 ② v1.9.1 console 核心（admin/my-workspace + personal token）③ v1.9.2 console 完备化（运维/合规/治理）+ 质量深化（kg_build fire-forget GC fix / redis rate_limit+login lockout / KG 模板收紧）④ v1.8.8-v1.8.9 KG per-dataset KA + 双 LLM + OllamaReranker 默认。详见 [§14](#14-版本演进)。
