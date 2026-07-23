@@ -80,8 +80,9 @@ async def audit_query(
         timeout=_AUDIT_TIMEOUT,
         label="audit_query",
     )
+    from dataclasses import asdict
     serialized: list[dict[str, Any]] = [
-        e if isinstance(e, dict) else {"entry": str(e)} for e in entries
+        e if isinstance(e, dict) else asdict(e) for e in entries
     ]
     return AuditQueryResponse(entries=serialized)
 
