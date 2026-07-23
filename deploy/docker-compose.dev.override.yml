@@ -1,6 +1,6 @@
 # 前后端联调 override:bind-mount 宿主 arrow_lake/ 源码进容器 + uvicorn --reload。
 # 改 Python 源码秒级热重载,无需 rebuild 镜像;依赖/环境/代理/其它容器全保持不变。
-# 前端 console/ 仍走宿主 5189(python3 -m http.server 5189 --directory console)。
+# 前端 console/ 也 bind-mount 进 /app/console(StaticFiles 即时读,改 console/*.html|css|js 刷新浏览器即生效,免 rebuild)。
 #
 # 用法:
 #   docker compose --project-directory deploy -p arrow-lake \
@@ -42,6 +42,10 @@ services:
       - type: bind
         source: ../arrow_lake
         target: /app/arrow_lake
+      - type: bind
+        source: ../console
+        target: /app/console
+        read_only: true
       - type: bind
         source: /home/witshine/.cache/huggingface/hub/models--openai--clip-vit-base-patch32
         target: /hf-hub/models--openai--clip-vit-base-patch32
