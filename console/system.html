@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>系统运维 · Arrow Lake Console</title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/tokens.css"/>
+<link rel="stylesheet" href="assets/app.css"/>
+<link rel="stylesheet" href="assets/console.css"/>
+</head>
+<body>
+<div id="app">
+<main class="main"><div class="page">
+  <div class="h-sec between">
+    <div><h1>系统运维</h1><div class="desc">健康 / 版本 / 依赖 / 关键指标 · <span class="mono">GET /health · /metrics</span></div></div>
+    <div class="flex"><button class="btn btn-ghost btn-sm" id="apiBtn"><i class="placeholder" data-ic="code"></i> API</button><button class="btn btn-primary btn-sm" id="refresh"><i class="placeholder" data-ic="dashboard"></i> 刷新</button></div>
+  </div>
+
+  <div class="panel"><div class="panel-b kpi-row" id="kpis"><div class="muted" style="padding:14px">加载健康态势…</div></div></div>
+
+  <div class="grid g-2">
+    <div class="panel flush">
+      <div class="panel-h"><i class="placeholder" data-ic="database"></i><h3>健康状态</h3><span class="sub">存储 · Gravitino · Lance REST · DuckDB 池</span></div>
+      <div class="panel-b" id="health"><div class="muted" style="padding:14px">加载…</div></div>
+    </div>
+    <div class="panel flush">
+      <div class="panel-h"><i class="placeholder" data-ic="dashboard"></i><h3>版本与依赖</h3><span class="sub">GET /api/v1/version · 需 VIEWER+</span></div>
+      <div class="panel-b" id="version"><div class="muted" style="padding:14px">加载…</div></div>
+    </div>
+  </div>
+
+  <div class="panel flush">
+    <div class="panel-h"><i class="placeholder" data-ic="search"></i><h3>关键指标</h3><span class="sub">Prometheus · /metrics</span><span class="actions"><span class="lamp ok pulse"><i></i>live</span></span></div>
+    <div class="panel-b" id="metrics"><div class="muted" style="padding:14px">加载…</div></div>
+  </div>
+</div></main>
+</div>
+
+<script src="assets/console-layout.js"></script>
+<script type="module">
+import { request, API_BASE } from "./src/api.js";
+import { isLoggedIn } from "./src/auth.js";
+import { toast } from "./src/ui/toast.js";
+
+if (!isLoggedIn()) location.href = "login.html";
+
+const { renderShell, icon } = window;
+renderShell({ active: "system", crumb: "<b>系统运维</b>" });
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const ROOT = API_BASE.replace("/api/v1", "");
+
+function lamp(ok, txt) {
+  return `<span class="lamp ${ok ? "ok" : "warn"}${ok ? " pulse" : ""}"><i></i>${esc(txt)}</span>`;
+}
+
+/* ---------- /health (public, raw fetch like dashboard.html) ---------- */
+async function loadHealth() {
+  try {
+    const r = await fetch(ROOT + "/health");
+    const h = r.ok ? await r.json() : {};
+    const store = h.storage === "accessible";
+    const grav = h.gravitino === "healthy";
+    const lance = h.lance_rest === "healthy";
+    const allOk = h.status === "ok";
+    $("#kpis").innerHTML = [
+      ["状态", h.status || "unknown", allOk, "整体"],
+      ["存储", h.storage || "?", store, "MinIO/S3"],
+      ["Gravitino", h.gravitino || "?", grav, "元数据"],
+      ["Lance REST", h.lance_rest || "?", lance, "REST catalog"],
+    ].map(([l, v, ok, d]) => `<div class="kpi interactive"><div class="label">${esc(l)}</div><div class="val" style="font-size:1rem">${lamp(ok, v)}</div><div class="delta">${esc(d)}</div></div>`).join("");
+    const dp = h.duckdb_pool || {};
+    $("#health").innerHTML = `<div class="grid g-2">
+      <div><div class="lamp ${store ? "ok" : "warn"} pulse"><i></i>存储</div><div class="muted mono" style="font-size:.72rem;margin-top:4px">${esc(h.storage)}</div></div>
+      <div><div class="lamp ${grav ? "ok" : "warn"} pulse"><i></i>Gravitino</div><div class="muted mono" style="font-size:.72rem;margin-top:4px">${esc(h.gravitino)}</div></div>
+      <div><div class="lamp ${lance ? "ok" : "warn"} pulse"><i></i>Lance REST</div><div class="muted mono" style="font-size:.72rem;margin-top:4px">${esc(h.lance_rest)}</div></div>
+      <div><div class="lamp ok pulse"><i></i>DuckDB 池</div><div class="muted mono" style="font-size:.72rem;margin-top:4px">池 <b>${esc(dp.pool_size ?? "?")}</b> · 活跃 <b>${esc(dp.active_sessions ?? 0)}</b> · 排队 <b>${esc(dp.queued_requests ?? 0)}</b> · 总查询 <b>${esc(dp.total_queries ?? 0)}</b></div></div>
+    </div>`;
+  } catch (e) {
+    $("#kpis").innerHTML = `<div class="muted" style="grid-column:1/-1;padding:14px;color:var(--danger)">健康检查失败:${esc(e?.detail || e?.message || e)}(后端不可达)</div>`;
+    $("#health").innerHTML = `<div class="muted" style="color:var(--danger)">/health 不可达 · 检查 api 容器</div>`;
+  }
+}
+
+/* ---------- /api/v1/version (VIEWER+) ---------- */
+async function loadVersion() {
+  try {
+    const v = await request("GET", "/version");
+    const deps = v.dependencies || v.deps || [];
+    const depHtml = Array.isArray(deps) && deps.length
+      ? `<div class="flex wrap" style="gap:6px;margin-top:10px">${deps.map(d => {
+          const name = typeof d === "string" ? d : (d.name || d.package || "?");
+          const ver = typeof d === "string" ? "" : (d.version || "");
+          return `<span class="tag mono"><b>${esc(name)}</b>${ver ? ` <span class="muted">${esc(ver)}</span>` : ""}</span>`;
+        }).join("")}</div>`
+      : `<div class="muted mono" style="font-size:.72rem;margin-top:6px">无依赖清单</div>`;
+    $("#version").innerHTML = `<div><b class="mono" style="font-size:1.1rem;color:var(--teal-bright)">Arrow Lake ${esc(v.version || "?")}</b></div>
+      ${v.commit || v.build ? `<div class="muted mono" style="font-size:.7rem;margin-top:3px">${esc(v.commit || v.build)}${v.build_date ? ` · ${esc(v.build_date)}` : ""}</div>` : ""}
+      ${depHtml}`;
+  } catch (e) {
+    $("#version").innerHTML = `<div class="muted">版本信息加载失败:${esc(e?.detail || e?.message || e)}<br/><span style="font-size:.72rem">需 VIEWER+ 登录</span></div>`;
+  }
+}
+
+/* ---------- /metrics (public Prometheus text) ---------- */
+async function loadMetrics() {
+  try {
+    const r = await fetch(ROOT + "/metrics");
+    const m = r.ok ? await r.text() : "";
+    // 真实 metric 名(arrow_lake_ 前缀)
+    const pick = (re) => { const ma = m.match(re); return ma ? Number(ma[1]).toLocaleString() : "0"; };
+    const uptime = pick(/arrow_lake_system_uptime_seconds\s+([\d.]+)/);
+    const tables = pick(/arrow_lake_catalog_tables_total\s+([\d.]+)/);
+    const catQ = pick(/arrow_lake_catalog_queries_total\s+([\d.]+)/);
+    const ingRows = pick(/arrow_lake_ingestion_rows_total\s+([\d.]+)/);
+    const ingErr = pick(/arrow_lake_ingestion_errors_total\s+([\d.]+)/);
+    const embeds = pick(/arrow_lake_processing_embeddings_total\s+([\d.]+)/);
+    const active = pick(/arrow_lake_processing_active_tasks\s+([\d.]+)/);
+    const queries = pick(/arrow_lake_query_total\{[^}]*\}\s+([\d.]+)/);
+    $("#metrics").innerHTML = `<div class="grid g-4">
+      <div class="kpi"><div class="label">运行时长</div><div class="val">${uptime}s</div><div class="delta">uptime</div></div>
+      <div class="kpi"><div class="label">catalog 表</div><div class="val">${tables}</div><div class="delta">注册</div></div>
+      <div class="kpi"><div class="label">catalog 查询</div><div class="val">${catQ}</div><div class="delta">累计</div></div>
+      <div class="kpi"><div class="label">OLAP 查询</div><div class="val">${queries}</div><div class="delta">query_total</div></div>
+      <div class="kpi"><div class="label">摄取行数</div><div class="val">${ingRows}</div><div class="delta">累计</div></div>
+      <div class="kpi"><div class="label">摄取错误</div><div class="val" style="color:${ingErr === "0" ? "var(--fg-hi)" : "var(--warn)"}">${ingErr}</div><div class="delta">累计</div></div>
+      <div class="kpi"><div class="label">嵌入生成</div><div class="val">${embeds}</div><div class="delta">累计</div></div>
+      <div class="kpi"><div class="label">活跃任务</div><div class="val" style="color:${active === "0" ? "var(--fg-hi)" : "var(--warn)"}">${active}</div><div class="delta">实时</div></div>
+    </div>`;
+  } catch (e) {
+    $("#metrics").innerHTML = `<div class="muted">/metrics 不可达:${esc(e?.message || e)}</div>`;
+  }
+}
+
+function loadAll() { loadHealth(); loadVersion(); loadMetrics(); }
+loadAll();
+window.applyIcons && applyIcons(document);
+
+$("#refresh").addEventListener("click", () => { loadAll(); toast("已刷新运维态势", "ok", 2000); });
+$("#apiBtn").addEventListener("click", () => window.openApi(
+  "系统运维",
+  `curl -s $API/health | jq .\ncurl -s $API/metrics | grep arrow_lake_\ncurl -s $API/api/v1/version -H "Authorization: Bearer $JWT" -H "X-API-Key: $KEY"`,
+  "lake.health()  # /health 公开\\nlake.metrics()  # /metrics 公开"
+));
+</script>
+</body>
+</html>

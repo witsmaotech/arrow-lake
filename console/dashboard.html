@@ -61,6 +61,19 @@
     <div style="color:var(--teal-bright);font-size:.82rem;font-weight:600;flex-shrink:0">进入 →</div>
   </a>
 
+  <div class="grid g-2" style="margin-bottom:var(--s4)">
+    <a href="system.html" style="display:flex;gap:14px;align-items:center;padding:14px 18px;background:linear-gradient(180deg,var(--ink-850),var(--ink-900));border:1px solid var(--line);border-radius:var(--r-lg);text-decoration:none;transition:border-color .2s" onmouseover="this.style.borderColor='var(--info)'" onmouseout="this.style.borderColor='var(--line)'">
+      <div style="width:40px;height:40px;border-radius:var(--r-sm);display:grid;place-items:center;background:var(--info-soft);border:1px solid rgba(56,189,248,.3);color:var(--info);flex-shrink:0"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg></div>
+      <div style="flex:1;min-width:0"><b style="font-size:.95rem;color:var(--fg-hi)">系统运维</b><div style="color:var(--fg-md);font-size:.76rem;margin-top:2px">健康 / 版本 / 依赖 / Prometheus 指标</div></div>
+      <div style="color:var(--info);font-size:.78rem;font-weight:600;flex-shrink:0">→</div>
+    </a>
+    <a href="audit.html" style="display:flex;gap:14px;align-items:center;padding:14px 18px;background:linear-gradient(180deg,var(--ink-850),var(--ink-900));border:1px solid var(--line);border-radius:var(--r-lg);text-decoration:none;transition:border-color .2s" onmouseover="this.style.borderColor='var(--warn)'" onmouseout="this.style.borderColor='var(--line)'">
+      <div style="width:40px;height:40px;border-radius:var(--r-sm);display:grid;place-items:center;background:var(--amber-soft);border:1px solid rgba(245,158,11,.3);color:var(--warn);flex-shrink:0"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6z"/><path d="M10 19a2 2 0 0 0 4 0"/></svg></div>
+      <div style="flex:1;min-width:0"><b style="font-size:.95rem;color:var(--fg-hi)">审计日志</b><div style="color:var(--fg-md);font-size:.76rem;margin-top:2px">谁 · 何时 · 对什么 · 做了什么 · HMAC 完整性</div></div>
+      <div style="color:var(--warn);font-size:.78rem;font-weight:600;flex-shrink:0">→</div>
+    </a>
+  </div>
+
   <div class="grid" data-mr style="grid-template-columns:1.6fr 1fr;gap:var(--s4);align-items:start">
     <div class="panel flush">
       <div class="panel-h"><i class="placeholder" data-ic="bell"></i><h3>实时活动流</h3><span class="sub">近期异步任务</span><div class="actions"><span class="lamp ok pulse"><i></i>live</span></div></div>

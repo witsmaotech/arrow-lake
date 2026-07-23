@@ -59,6 +59,12 @@ const NAV = [
     { id: "admin", label: "管理后台", ic: "key", href: "admin.html" },
     { id: "my-workspace", label: "我的工作区", ic: "bell", href: "my-workspace.html" },
   ] },
+  { group: "运维", items: [
+    { id: "system", label: "系统运维", ic: "dashboard", href: "system.html" },
+  ] },
+  { group: "合规", items: [
+    { id: "audit", label: "审计日志", ic: "bell", href: "audit.html" },
+  ] },
 ];
 
 function decodeUser(tok) {
