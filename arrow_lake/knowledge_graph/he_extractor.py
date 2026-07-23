@@ -470,8 +470,52 @@ class HyperExtractExtractor:
         cache[template_path] = enum
         return enum
 
+    def _get_relation_enum(self, template_path: str) -> list[str] | None:
+        """[#relation-snap] Extract the legal relation-type enum from a
+        template's YAML (the relation ``type`` field description's
+        ``之一：A/B/C`` clause). Mirrors ``_get_type_enum`` but reads
+        ``output.relations.fields[name=type]``. Returns ``None`` when the
+        template has no strict relation enum (no post-filter applied).
+
+        Context (memory issue_kg_mapping_layer_fix): after the type enum was
+        snapped to ~11 values, relation_type stayed noisy (186 distinct
+        values) because LLMs emit English/synonym variants not in the enum.
+        This parser + the snap in ``_ka_to_extraction_result`` collapse that
+        noise into the template's declared vocabulary."""
+        cache = self.__dict__.setdefault("_relation_enum_cache", {})
+        if template_path in cache:
+            return cache[template_path]
+        import os
+        import re as _re
+        import hyperextract
+        if os.path.isfile(template_path):
+            yml = template_path
+        else:
+            cand = _PROJECT_TEMPLATES_DIR / f"{template_path}.yaml"
+            yml = str(cand) if cand.is_file() else os.path.join(
+                os.path.dirname(hyperextract.__file__), "templates", "presets",
+                template_path + ".yaml")
+        enum: list[str] | None = None
+        if os.path.isfile(yml):
+            try:
+                import yaml as _yaml
+                data = _yaml.safe_load(open(yml, encoding="utf-8"))
+                fields = ((data.get("output") or {}).get("relations") or {}).get("fields", [])
+                tf = next((f for f in fields if isinstance(f, dict) and f.get("name") == "type"), None)
+                if tf:
+                    desc = tf.get("description", {})
+                    dz = desc.get("zh", "") if isinstance(desc, dict) else str(desc or "")
+                    dz_clean = _re.sub(r"（[^）]*）|\([^)]*\)", "", dz)
+                    m = _re.search(r"之一[：:]\s*([^。]+)", dz_clean)
+                    if m:
+                        enum = [t.strip() for t in _re.split(r"[/、]", m.group(1)) if t.strip()]
+            except Exception:
+                enum = None
+        cache[template_path] = enum
+        return enum
+
     @staticmethod
-    def _ka_to_extraction_result(ka: Any, raw_text: str = "", valid_types: list[str] | None = None) -> ExtractionResult:
+    def _ka_to_extraction_result(ka: Any, raw_text: str = "", valid_types: list[str] | None = None, valid_relations: list[str] | None = None) -> ExtractionResult:
         """Convert a hyper-extract KA (``nodes``/``edges``) to an ExtractionResult.
 
         Applies the same §11.3 stopword filter + endpoint validity as legacy
@@ -519,6 +563,12 @@ class HyperExtractExtractor:
             if source not in name_set or target not in name_set:
                 continue
             rel_type = str(getattr(e, "type", "") or "related_to") or "related_to"
+            # [#relation-snap] collapse non-enum relation types (English
+            # variants / synonyms like "related_to"/"is_a") into the template's
+            # declared vocabulary. Prefer a generic "相关" if present, else the
+            # first enum member; same defensive shape as the type snap above.
+            if valid_relations and rel_type not in valid_relations:
+                rel_type = "相关" if "相关" in valid_relations else valid_relations[0]
             description = str(getattr(e, "description", "") or "").strip()
             props = (("description", description),) if description else ()
             relations.append(
@@ -580,6 +630,7 @@ class HyperExtractExtractor:
         # extract_batch's asyncio.gather, and a self attribute is clobbered by
         # overlapping coroutines (chunk A filtered by chunk B's enum).
         type_enum = self._get_type_enum(template_path)
+        relation_enum = self._get_relation_enum(template_path)
         try:
             # Fresh KA per parse (no shared mutable state across chunks).
             result = await asyncio.to_thread(self._parse_fresh, template_path, stripped)
@@ -601,6 +652,7 @@ class HyperExtractExtractor:
                         self._parse_fresh, default_path, stripped
                     )
                     type_enum = self._get_type_enum(default_path)
+                    relation_enum = self._get_relation_enum(default_path)
                 except Exception as exc2:
                     logger.warning(
                         "hyper-extract default parse also failed for chunk %s: %s",
@@ -615,7 +667,7 @@ class HyperExtractExtractor:
                 return ExtractionResult(entities=(), relations=(), raw_text=text)
 
         return self._ka_to_extraction_result(
-            result, text, valid_types=type_enum)
+            result, text, valid_types=type_enum, valid_relations=relation_enum)
 
     @staticmethod
     def _is_transient_feed_error(exc: Exception) -> bool:
@@ -812,11 +864,13 @@ class HyperExtractExtractor:
         except Exception as exc:  # noqa: BLE001
             logger.warning("fed_chunks sidecar write failed: %s", str(exc)[:120])
 
-        # Pass the resolved type enum so the dataset path (default granularity)
-        # also gets type post-filtering — previously only the per-chunk path did,
-        # so non-enum LLM noise (e.g. "实体/方法") flowed straight into HugeGraph.
+        # Pass the resolved type/relation enums so the dataset path (default
+        # granularity) also gets post-filtering — previously only the per-chunk
+        # path did, so non-enum LLM noise (entity "实体/方法"; relation English
+        # variants) flowed straight into HugeGraph.
         result = self._ka_to_extraction_result(
-            ka, valid_types=self._get_type_enum(template_path))
+            ka, valid_types=self._get_type_enum(template_path),
+            valid_relations=self._get_relation_enum(template_path))
         return DatasetKA(
             ka=ka, ka_dir=ka_dir, entity_chunks=entity_chunks, result=result
         )
