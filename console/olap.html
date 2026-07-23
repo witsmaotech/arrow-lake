@@ -131,7 +131,7 @@
         <div class="pivot-card">
           <div class="h-sec" style="padding:0;align-items:center">
             <div style="font-size:.82rem;font-weight:600;color:var(--fg-hi)">🔀 Pivot 助手</div>
-            <span class="muted" style="font-size:.68rem">行维 × 列维 → 宽表 · POST /query/daft(DaftDataFrame.pivot)</span>
+            <span class="muted" style="font-size:.68rem">行维 × 列维 → 宽表 · DuckDB PIVOT(/query/olap,绕开 Daft pivot bug)</span>
           </div>
           <div class="pg">
             <div><label>group_by(行维)</label><select class="select" id="pvGroup"></select></div>
@@ -252,12 +252,19 @@ SELECT * FROM mv_monthly_quality ORDER BY month DESC;`;
     }).catch(() => {});
   }
   function runPivot() {
-    const ds = $("#dsSel").value; if (!ds) return toast("请先选择数据集", "warn");
+    const ds = window.__olapDataset ? window.__olapDataset() : $("#dsSel").value;
+    if (!ds) return toast("请先选择数据集", "warn");
     const group_by = $("#pvGroup").value, pivot_col = $("#pvPivot").value, value_col = $("#pvValue").value;
     if (!group_by || !pivot_col || !value_col) return toast("Pivot 需选齐 行维/列维/度量", "warn");
-    const body = { pivot: { group_by, pivot_col, value_col, agg_fn: $("#pvAgg").value }, limit: parseInt($("#dLimit").value) || 100, format: "json" };
-    $("#dMeta").textContent = "pivot 中…";
-    request("POST", `/datasets/${encodeURIComponent(ds)}/query/daft`, { body })
+    // 走 DuckDB PIVOT(/query/olap)而非 Daft frame.pivot —— Daft 0.7.8 pivot 多分区
+    // 类型推断不一致(值列一处 uint64 一处 large_string → schema 冲突 500)。DuckDB PIVOT 成熟稳定。
+    // olap 端点要求 SELECT 前缀 → 子查询 SELECT * FROM (PIVOT ...) 包装。
+    const aggSql = $("#pvAgg").value === "mean" ? "avg" : $("#pvAgg").value; // DuckDB 用 avg
+    const q = (n) => `"${String(n).replace(/"/g, '""')}"`;
+    const limit = parseInt($("#dLimit").value) || 100;
+    const sql = `SELECT * FROM (PIVOT ${q(ds)} ON ${q(pivot_col)} USING ${aggSql}(${q(value_col)}) GROUP BY ${q(group_by)}) LIMIT ${limit}`;
+    $("#dMeta").textContent = "pivot 中…(DuckDB)";
+    request("POST", `/datasets/${encodeURIComponent(ds)}/query/olap`, { body: { sql, format: "json", max_rows: limit } })
       .then(renderDaftResult)
       .catch((e) => { $("#dMeta").textContent = "失败"; $("#dResult").innerHTML = `<div style="padding:14px;color:var(--danger)">${esc(errMsg(e))}</div>`; toast("Pivot 失败:" + errMsg(e), "danger", 5000); });
   }
