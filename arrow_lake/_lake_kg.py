@@ -19,6 +19,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Strong references for fire-and-forget KG build tasks. Without this set,
+# ``asyncio.create_task(_run_build())`` has no owner and the task gets garbage-
+# collected mid-flight on long (large-dataset) builds — silently killing the
+# build with zero logs (see memory: issue_kg_build_fire_forget_gc). The standard
+# asyncio fix is to keep a module-level set + discard via add_done_callback.
+_kg_bg_tasks: set[asyncio.Task] = set()
+
 
 def _scope_gremlin_to_graph(query: str, graph: str) -> str:
     """Rewrite a raw Gremlin query to target a specific graph.
@@ -356,7 +363,11 @@ class _LakeKGMixin:
                     # Sync updated state to Redis for cross-worker visibility
                     TaskManager._sync_to_redis(tm_task)
 
-            asyncio.create_task(_run_build())  # noqa: RUF006
+            build_task = asyncio.create_task(_run_build())
+            # Hold a strong reference so the GC cannot reclaim this task while
+            # it is still pending (the classic asyncio fire-and-forget trap).
+            _kg_bg_tasks.add(build_task)
+            build_task.add_done_callback(_kg_bg_tasks.discard)
             return task_id
 
     def _load_kg_table(self, dataset_name: str):
