@@ -21,6 +21,11 @@
   .schema-chip.v{color:var(--teal-bright)}.schema-chip.e{color:var(--fg-hi)}
   .schema-chip:hover{background:var(--ink-850);border-color:var(--teal-bright)}
   .schema-chip.active{background:var(--ink-850);border-color:var(--teal-bright);color:var(--teal-bright)!important}
+  .combo{position:relative}
+  .combo-list{position:absolute;left:0;right:0;top:100%;z-index:50;display:none;max-height:260px;overflow-y:auto;background:var(--ink-850);border:1px solid var(--line);border-radius:var(--r-sm);margin-top:2px;box-shadow:0 8px 24px rgba(0,0,0,.45)}
+  .combo-opt{padding:5px 10px;font-size:.78rem;cursor:pointer;font-family:var(--font-mono);color:var(--fg-mid);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .combo-opt:hover{background:var(--ink-700);color:var(--teal-bright)}
+  .combo-more{padding:6px;text-align:center;font-size:.7rem;color:var(--fg-lo);background:var(--ink-900);position:sticky;bottom:0}
   .mode-tag{font-family:var(--font-mono);font-size:.68rem;padding:1px 6px;border-radius:var(--r-sm);background:var(--ink-900);color:var(--fg-md)}
   .trav-hint{font-size:.72rem;color:var(--fg-lo);margin-top:10px;line-height:1.5}
   .ring-row .tag{color:var(--danger)!important;border-color:var(--danger)!important}
@@ -42,9 +47,37 @@
   <div class="panel"><div class="panel-b" id="stats"><div class="muted" style="padding:16px">选择数据集后加载…</div></div></div>
 
   <div class="panel flush" id="schemaPanel" style="margin-top:var(--s4);display:none">
-    <div class="panel-h" id="schemaToggle" style="cursor:pointer;user-select:none"><i class="placeholder" data-ic="code"></i><h3>Schema(顶点/边类型)</h3><span class="sub" id="schemaMeta">—</span><span class="sub toggle-mark" style="margin-left:auto">▾</span></div>
+    <div class="panel-h" id="schemaToggle" style="cursor:pointer;user-select:none"><i class="placeholder" data-ic="code"></i><h3>Schema · 图遍历</h3><span class="sub" id="schemaMeta">—</span><span class="sub toggle-mark" style="margin-left:auto">▾</span></div>
     <div class="panel-b" id="schemaBody">
       <div id="schema"></div>
+      <div class="fg" style="grid-template-columns:1fr 1fr;margin-top:var(--s3)">
+        <div><label>遍历模式</label><select class="input mono" id="tMode">
+          <option value="kneighbor">K-neighbor · N 跳邻居</option>
+          <option value="all-shortest-paths">最短路径 · 两实体间</option>
+          <option value="rings">环检测 · 回环路径</option>
+          <option value="crosspoints">交叉点 · 共同可达</option>
+          <option value="rays">射线 · 非环展开</option>
+          <option value="single-source">单源最短 · 到所有可达</option>
+          <option value="weighted-shortest">加权最短 · 按权重</option>
+          <option value="multi-node" disabled>多节点 · 集合间最短(后端 1.7.0 暂不支持)</option>
+        </select></div>
+        <div id="tDirFg"><label>方向</label><select class="input mono" id="tDir">
+          <option value="OUT">OUT · 出边</option>
+          <option value="IN">IN · 入边</option>
+          <option value="BOTH">BOTH · 双向</option>
+        </select></div>
+      </div>
+      <div class="fg" id="tStartFg"><label>起点实体 <span style="color:var(--danger)">*</span></label><div class="combo"><input class="input mono" id="gStart" placeholder="— 输入关键词筛选起点实体 —" autocomplete="off"><div class="combo-list" id="gStartList"></div></div></div>
+      <div class="fg" id="tTargetFg" style="display:none"><label>终点实体 <span style="color:var(--danger)">*</span></label><div class="combo"><input class="input mono" id="gTarget" placeholder="— 输入关键词筛选终点实体 —" autocomplete="off"><div class="combo-list" id="gTargetList"></div></div></div>
+      <div class="fg" id="tMultiFg" style="display:none"><label>多节点源(逗号分隔实体名/id)</label><input class="input mono" id="tMultiSrc" placeholder="实体A, 实体B"><label style="margin-top:6px">多节点目标</label><input class="input mono" id="tMultiDst" placeholder="实体C, 实体D"></div>
+      <div class="fg" id="tDepthFg"><label>最大深度</label><input class="input mono" id="gDepth" type="number" value="2" min="1" max="10"></div>
+      <div class="flex" style="gap:8px;margin-top:4px;align-items:center">
+        <button class="btn btn-primary btn-sm" id="gRun"><i class="placeholder" data-ic="play"></i> 执行遍历</button>
+        <button class="btn btn-ghost btn-sm" id="gReset"><i class="placeholder" data-ic="refresh"></i> 重置为完整图</button>
+        <span id="gMeta" class="sub" style="margin-left:auto">未遍历</span>
+      </div>
+      <div class="trav-hint" id="tHint">选起点实体 + 模式,调后端 HugeGraph traverser,返回子图/路径 → vis-network 重渲(起点高亮 · 路径着色 · 环标红)。</div>
+      <div id="gPaths" style="max-height:280px;overflow:auto;margin-top:6px"><div class="muted" style="padding:10px">选起点实体 + 遍历模式后点「执行遍历」</div></div>
       <div style="margin-top:var(--s3)">
         <div id="kgGraphMeta" class="muted" style="font-size:.74rem;margin-bottom:6px"></div>
         <div id="kgGraph" style="height:440px;border:1px solid var(--line-soft);border-radius:var(--r-md);background:var(--ink-900)"></div>
@@ -68,41 +101,6 @@
         <input class="input" id="question" placeholder="针对该数据集的知识图谱提问…" style="flex:1"/>
         <button class="btn btn-primary btn-sm" id="askBtn">提问</button>
       </div>
-    </div>
-  </div>
-
-  <!-- 图遍历工作台(HugeGraph Traversers:8 种遍历模式,后端 REST 代理;替换原前端 BFS)-->
-  <div class="panel flush" style="margin-top:var(--s4)">
-    <div class="panel-h"><i class="placeholder" data-ic="search"></i><h3>图遍历 · HugeGraph Traversers</h3><span class="sub">8 种遍历 · K-neighbor/最短/环/交叉点/单源/多节点/射线/加权 · 后端 traversers/* 代理</span></div>
-    <div class="panel-b" style="padding:14px">
-      <div class="fg" style="grid-template-columns:1fr 1fr">
-        <div><label>遍历模式</label><select class="input mono" id="tMode">
-          <option value="kneighbor">K-neighbor · N 跳邻居</option>
-          <option value="all-shortest-paths">最短路径 · 两实体间</option>
-          <option value="rings">环检测 · 回环路径</option>
-          <option value="crosspoints">交叉点 · 共同可达</option>
-          <option value="rays">射线 · 非环展开</option>
-          <option value="single-source">单源最短 · 到所有可达</option>
-          <option value="weighted-shortest">加权最短 · 按权重</option>
-          <option value="multi-node" disabled>多节点 · 集合间最短(后端 1.7.0 暂不支持)</option>
-        </select></div>
-        <div id="tDirFg"><label>方向</label><select class="input mono" id="tDir">
-          <option value="OUT">OUT · 出边</option>
-          <option value="IN">IN · 入边</option>
-          <option value="BOTH">BOTH · 双向</option>
-        </select></div>
-      </div>
-      <div class="fg" id="tStartFg"><label>起点实体 <span style="color:var(--danger)">*</span></label><select class="input mono" id="gStart"><option value="">— 先选数据集加载实体 —</option></select></div>
-      <div class="fg" id="tTargetFg" style="display:none"><label>终点实体 <span style="color:var(--danger)">*</span></label><select class="input mono" id="gTarget"><option value="">— 选终点实体 —</option></select></div>
-      <div class="fg" id="tMultiFg" style="display:none"><label>多节点源(逗号分隔实体名/id)</label><input class="input mono" id="tMultiSrc" placeholder="实体A, 实体B"><label style="margin-top:6px">多节点目标</label><input class="input mono" id="tMultiDst" placeholder="实体C, 实体D"></div>
-      <div class="fg" id="tDepthFg"><label>最大深度</label><input class="input mono" id="gDepth" type="number" value="2" min="1" max="10"></div>
-      <div class="flex" style="gap:8px;margin-top:4px;align-items:center">
-        <button class="btn btn-primary btn-sm" id="gRun"><i class="placeholder" data-ic="play"></i> 执行遍历</button>
-        <button class="btn btn-ghost btn-sm" id="gReset"><i class="placeholder" data-ic="refresh"></i> 重置为完整图</button>
-        <span id="gMeta" class="sub" style="margin-left:auto">未遍历</span>
-      </div>
-      <div class="trav-hint" id="tHint">选起点实体 + 模式,调后端 HugeGraph traverser,返回子图/路径 → vis-network 重渲(起点高亮 · 路径着色 · 环标红)。</div>
-      <div id="gPaths" style="max-height:280px;overflow:auto;margin-top:6px"><div class="muted" style="padding:10px">选起点实体 + 遍历模式后点「执行遍历」</div></div>
     </div>
   </div>
 </div></main>
@@ -154,7 +152,7 @@ async function loadAll() {
     <div class="kpi"><div class="label">密度</div><div class="val" style="font-size:.9rem">${v ? (e / v).toFixed(2) : "—"} 边/顶点</div></div>
   </div>${(!v && s.graph_enabled) ? `<div class="muted" style="font-size:.74rem;margin-top:8px">图为空(0 实体)— 点下方「建 KG」抽取,或该数据集抽取得到 0 实体(换 doc_type/模板或更大模型)</div>` : ""}`;
   loadSchema();
-  loadGraph();
+  loadGraph(v);
   setBuildOpen(!v);
 }
 async function loadSchema() {
@@ -193,14 +191,14 @@ function setSchemaOpen(open) {
 $("#schemaToggle").addEventListener("click", () => setSchemaOpen($("#schemaBody").style.display === "none"));
 
 let kgNetwork = null, kgNodes = null, kgEdges = null;
-async function loadGraph() {
+async function loadGraph(totalV = 0) {
   const name = curDs(); if (!name) return;
   const meta = $("#kgGraphMeta"), cont = $("#kgGraph");
   const V = window.vis;
   if (!V) { meta.textContent = "图库未加载(vis-network)"; return; }
   meta.textContent = "加载图…";
   let r;
-  try { r = await request("GET", `/kg/graph?dataset=${encodeURIComponent(name)}&limit=300`); }
+  try { r = await request("GET", `/kg/graph?dataset=${encodeURIComponent(name)}&limit=3000`); }
   catch (e) {
     const emsg = Array.isArray(e?.detail) ? e.detail.map(x => x?.msg || "").join("; ") : (e?.detail || e?.message || e);
     meta.innerHTML = `<span style="color:var(--danger)">图加载失败:${esc(emsg)}</span>`; return;
@@ -223,10 +221,10 @@ async function loadGraph() {
     font: { size: 9, color: "#64748b", strokeWidth: 0 },
   }));
   if (!ns.length) { meta.textContent = "无实体节点(已隐藏 document/chunk)— 先建 KG 抽取实体"; cont.innerHTML = ""; return; }
-  meta.innerHTML = `${ns.length} 实体节点 · ${es.length} 关系边${r.truncated ? ` · <span style="color:var(--warn)">仅显示前 300(数据集更大)</span>` : ""}`;
+  meta.innerHTML = `${ns.length} 实体节点 · ${es.length} 关系边${(totalV > 3000 || r.truncated) ? ` · <span style="color:var(--warn)">数据集共 ${totalV.toLocaleString()} 顶点,仅显示前 3000(数据集更大)</span>` : ""}`;
   kgNodes = new V.DataSet(ns);
   kgEdges = new V.DataSet(es);
-  fullSnapshot = { nodes: ns, edges: es }; // 快照完整 300 图(遍历后重置恢复)
+  fullSnapshot = { nodes: ns, edges: es }; // 快照完整 3000 图(遍历后重置恢复)
   kgNetwork = new V.Network(cont, { nodes: kgNodes, edges: kgEdges }, {
     height: "100%", width: "100%", autoResize: true,
     layout: { improvedLayout: ns.length <= 150 },
@@ -261,24 +259,61 @@ async function loadGraph() {
     rows.forEach((r) => { const hit = (r.dataset.ids || "").split(",").includes(nidStr); r.classList.toggle("hl", hit); if (hit && !first) first = r; });
     if (first) first.scrollIntoView({ block: "nearest", behavior: "smooth" });
   });
-  // 填充遍历起点/终点下拉(实体节点);data-vtype 供 Schema 联动过滤
-  const _entSel = $("#gStart"), _tgtSel = $("#gTarget");
-  if (_entSel) _entSel.innerHTML = `<option value="">— 选起点实体 (${ns.length}) —</option>` + ns.map((n) => `<option value="${esc(n.id)}" data-vtype="${esc(n.vtype || "")}">${esc(n.label)}</option>`).join("");
-  if (_tgtSel) _tgtSel.innerHTML = `<option value="">— 选终点实体 (${ns.length}) —</option>` + ns.map((n) => `<option value="${esc(n.id)}">${esc(n.label)}</option>`).join("");
+  // 填充遍历起点/终点下拉(实体节点);vtype 供 Schema 联动过滤
+  gStartCombo.setData(ns.map((n) => ({ id: n.id, label: n.label, vtype: n.vtype || "" })));
+  gTargetCombo.setData(ns.map((n) => ({ id: n.id, label: n.label })));
 }
 
 // ---------- 图遍历工作台(后端 HugeGraph traversers 代理;替换原前端 BFS)----------
-let fullSnapshot = null; // 完整 300 图快照(遍历后重置用)
+let fullSnapshot = null; // 完整 3000 图快照(遍历后重置用)
 
 // Schema 联动:按顶点类型过滤起点下拉(vtype = HugeGraph vertex label)
 function filterStartByType(type) {
-  const sel = $("#gStart"); if (!sel || !fullSnapshot) return;
-  const all = fullSnapshot.nodes;
-  const filtered = type ? all.filter((n) => n.vtype === type) : all;
-  const cur = sel.value;
-  sel.innerHTML = `<option value="">— 选起点实体 (${filtered.length}/${all.length}) —</option>` + filtered.map((n) => `<option value="${esc(n.id)}" data-vtype="${esc(n.vtype || "")}">${esc(n.label)}</option>`).join("");
-  if (cur && filtered.some((n) => n.id === cur)) sel.value = cur;
+  if (!fullSnapshot) return;
+  gStartCombo.filterByType(type);
 }
+
+// 通用可搜索分页下拉(combobox):输入模糊过滤 + 滚动分页(每页 50,避免千条 option 卡顿)
+function makeCombo(inputId, listId) {
+  const inp = $("#" + inputId), list = $("#" + listId);
+  let all = [], filtered = [], shown = 0; const PAGE = 50;
+  inp.dataset.id = "";
+  function render() {
+    list.innerHTML = filtered.slice(0, shown).map((it, i) =>
+      `<div class="combo-opt" data-idx="${i}">${esc(it.label)}</div>`).join("") +
+      (filtered.length ? `<div class="combo-more" data-more="${shown < filtered.length ? 1 : 0}">${shown < filtered.length ? `显示 ${shown} / ${filtered.length} · 点击或滚动加载更多 ↓` : `共 ${filtered.length} 条`}</div>` : "");
+  }
+  function apply(q, base) {
+    filtered = base || all;
+    q = (q || "").trim().toLowerCase();
+    if (q) filtered = filtered.filter((it) => it.label.toLowerCase().includes(q));
+    shown = Math.min(PAGE, filtered.length);
+    render(); list.style.display = filtered.length ? "block" : "none";
+  }
+  inp.addEventListener("focus", () => { if (all.length) apply(inp.value); });
+  inp.addEventListener("input", () => { inp.dataset.id = ""; apply(inp.value); });
+  list.addEventListener("click", (e) => {
+    if (e.target.closest("[data-more='1']")) { shown = Math.min(shown + PAGE, filtered.length); render(); return; }
+    const opt = e.target.closest(".combo-opt"); if (!opt) return;
+    const it = filtered[+opt.dataset.idx];
+    inp.value = it.label; inp.dataset.id = it.id; list.style.display = "none";
+  });
+  list.addEventListener("scroll", () => {
+    if (shown < filtered.length && list.scrollTop + list.clientHeight >= list.scrollHeight - 6) {
+      shown = Math.min(shown + PAGE, filtered.length); render();
+    }
+  });
+  document.addEventListener("click", (e) => {
+    if (e.target !== inp && !list.contains(e.target)) list.style.display = "none";
+  });
+  return {
+    setData(items) { all = items; inp.value = ""; inp.dataset.id = ""; apply(""); },
+    filterByType(type) { apply(inp.value, type ? all.filter((n) => n.vtype === type) : all); },
+    getId() { return inp.dataset.id || ""; },
+  };
+}
+const gStartCombo = makeCombo("gStart", "gStartList");
+const gTargetCombo = makeCombo("gTarget", "gTargetList");
 
 // Schema 联动:边类型 chip → vis 高亮该关系类型的边(其他淡化);后端 traverser 不支持关系过滤故走本地视觉
 function highlightEdgesByLabel(label) {
@@ -381,7 +416,7 @@ async function runTraverse() {
   const mode = $("#tMode").value, f = MODE_FIELDS[mode];
   const dir = $("#tDir").value;
   const depth = Math.min(10, Math.max(1, parseInt($("#gDepth").value) || 2));
-  const startId = $("#gStart").value, targetId = $("#gTarget").value;
+  const startId = gStartCombo.getId(), targetId = gTargetCombo.getId();
   if (f.start && !startId) return toast("请选起点实体", "warn");
   if (f.target && !targetId) return toast("请选终点实体", "warn");
   const idMap = new Map((fullSnapshot?.nodes || []).map((n) => [String(n.id), n]));
@@ -436,7 +471,7 @@ async function runTraverse() {
 }
 $("#gRun").addEventListener("click", runTraverse);
 
-// 重置为完整 300 图(从快照恢复)
+// 重置为完整 3000 图(从快照恢复)
 $("#gReset").addEventListener("click", () => {
   if (!fullSnapshot || !kgNetwork) return;
   kgNodes.clear(); kgNodes.add(fullSnapshot.nodes);

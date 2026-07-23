@@ -53,6 +53,7 @@
         <thead><tr><th class="num">id</th><th>用户名</th><th>邮箱</th><th>角色</th><th>状态</th><th class="num">创建</th><th>操作</th></tr></thead>
         <tbody id="userRows"></tbody>
       </table></div>
+      <div id="userPager"></div>
       <div class="gap-note">「停用」= <strong>软删</strong>(personal token 自动失效);编辑支持角色 / 邮箱 / 密码 / 状态。发的 token 用于 <span class="mono">/me/*</span>(my-workspace 下轮接入)。</div>
     </div>
   </div>
@@ -175,9 +176,25 @@ async function loadUsers() {
     $("#userCnt").textContent = `${list.length} 个`;
     if (d?.message && !list.length) {
       $("#userRows").innerHTML = `<tr><td colspan="7" class="muted" style="padding:28px;text-align:center">${esc(d.message)}</td></tr>`;
+      $("#userPager").innerHTML = "";
       return;
     }
-    $("#userRows").innerHTML = list.length ? list.map((u) => `<tr>
+    _uPage = 1; renderUserRows();
+  } catch (e) {
+    $("#userRows").innerHTML = `<tr><td colspan="7" style="padding:28px;text-align:center;color:var(--danger)">加载失败:${esc(errMsg(e))}<br/><button class="btn btn-ghost btn-sm" id="uRetry" style="margin-top:10px">重试</button></td></tr>`;
+    $("#uRetry")?.addEventListener("click", loadUsers);
+    toast("用户列表加载失败:" + errMsg(e), "warn", 4000);
+  }
+}
+// 用户表分页(每页 20;行操作按钮走事件委托,翻页重渲安全)
+let _uPage = 1; const _U_SIZE = 20;
+function renderUserRows() {
+  const list = USERS || [];
+  if (!list.length) { $("#userRows").innerHTML = `<tr><td colspan="7" class="muted" style="padding:28px;text-align:center">无用户</td></tr>`; $("#userPager").innerHTML = ""; return; }
+  const total = list.length, pages = Math.ceil(total / _U_SIZE);
+  if (_uPage > pages) _uPage = 1;
+  const slice = list.slice((_uPage - 1) * _U_SIZE, _uPage * _U_SIZE);
+  $("#userRows").innerHTML = slice.map((u) => `<tr>
       <td class="num mono">${u.id ?? "—"}</td>
       <td><b>${esc(u.username)}</b></td>
       <td class="muted">${esc(u.email || "—")}</td>
@@ -190,13 +207,16 @@ async function loadUsers() {
         <button class="btn btn-ghost btn-sm" data-tok-new="${u.id}" title="发 personal token(明文仅显示一次)">发token</button>
         <button class="btn btn-ghost btn-sm" data-tok-list="${u.id}" title="查看 / 撤销 token">token</button>
       </td>
-    </tr>`).join("") : `<tr><td colspan="7" class="muted" style="padding:28px;text-align:center">无用户</td></tr>`;
-  } catch (e) {
-    $("#userRows").innerHTML = `<tr><td colspan="7" style="padding:28px;text-align:center;color:var(--danger)">加载失败:${esc(errMsg(e))}<br/><button class="btn btn-ghost btn-sm" id="uRetry" style="margin-top:10px">重试</button></td></tr>`;
-    $("#uRetry")?.addEventListener("click", loadUsers);
-    toast("用户列表加载失败:" + errMsg(e), "warn", 4000);
-  }
+    </tr>`).join("");
+  $("#userPager").innerHTML = pages > 1 ? `<div style="display:flex;gap:8px;align-items:center;justify-content:center;padding:10px;font-size:.78rem"><button class="btn btn-ghost btn-sm" data-upg="prev" ${_uPage <= 1 ? "disabled" : ""}>‹ 上一页</button><span class="muted">第 ${_uPage} / ${pages} 页 · 共 ${total}</span><button class="btn btn-ghost btn-sm" data-upg="next" ${_uPage >= pages ? "disabled" : ""}>下一页 ›</button></div>` : "";
 }
+$("#userPager").addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-upg]"); if (!btn) return;
+  const pages = Math.ceil((USERS || []).length / _U_SIZE);
+  if (btn.dataset.upg === "prev" && _uPage > 1) _uPage--;
+  else if (btn.dataset.upg === "next" && _uPage < pages) _uPage++;
+  renderUserRows();
+});
 $("#nuBtn").addEventListener("click", async () => {
   const username = $("#nuUser").value.trim();
   const email = $("#nuEmail").value.trim() || null;
