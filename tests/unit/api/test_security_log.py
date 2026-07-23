@@ -8,11 +8,9 @@ Locks in two design contracts from plan §5 Review B4:
 
 from __future__ import annotations
 
-import asyncio
 from types import SimpleNamespace
 
 import pytest
-
 from arrow_lake.api._security_log import (
     LOGIN_SUCCESS,
     actor_of,
@@ -43,7 +41,7 @@ async def test_persists_via_audit_record_with_actor_and_payload():
     )
 
     assert len(lake.calls) == 1
-    event_type, dataset, actor, kw = lake.calls[0]
+    event_type, _dataset, actor, kw = lake.calls[0]
     assert event_type == LOGIN_SUCCESS
     assert actor == "alice"
     payload = kw["payload"]

@@ -84,5 +84,5 @@ async def log_security_event(
             actor=actor,
             payload=payload,
         )
-    except Exception as exc:  # noqa: BLE001 — audit must never break the request
+    except Exception as exc:
         logger.warning("security_event audit_record failed: %s", str(exc)[:160])

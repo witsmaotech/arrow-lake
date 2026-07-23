@@ -187,9 +187,7 @@ def reset_global_state():
                 "_global_pool",
             ):
                 _pool = getattr(_mod, _pool_name, None)
-                if isinstance(_pool, dict):
-                    _pool.clear()
-                elif isinstance(_pool, list):
+                if isinstance(_pool, (dict, list)):
                     _pool.clear()
         except Exception:
             pass
