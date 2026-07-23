@@ -44,6 +44,12 @@
       <div class="panel-h"><i class="placeholder" data-ic="bell"></i><h3>活跃任务</h3><span class="sub">GET /async_tasks/tasks · running/pending</span></div>
       <div class="panel-b" id="tasks"><div class="muted" style="padding:14px">加载…</div></div>
     </div>
+    <div class="panel flush">
+      <div class="panel-h"><i class="placeholder" data-ic="database"></i><h3>存储维护</h3><span class="sub">GET /admin/maintenance/status · ADMIN</span>
+        <button class="btn btn-sm" id="mtnRunBtn" style="display:none;margin-left:auto">立即执行</button>
+      </div>
+      <div class="panel-b" id="maintenance"><div class="muted" style="padding:14px">加载…</div></div>
+    </div>
   </div>
 </div></main>
 </div>
@@ -53,8 +59,19 @@
 import { request, API_BASE } from "./src/api.js";
 import { isLoggedIn } from "./src/auth.js";
 import { toast } from "./src/ui/toast.js";
+import { confirmDialog } from "./src/ui/modal.js";
 
 if (!isLoggedIn()) location.href = "login.html";
+
+// role 从 JWT payload 解(ADMIN 才显示"立即执行";对齐 audit.html 模式)
+const isAdmin = (() => {
+  try {
+    const t = localStorage.getItem("al_access");
+    if (!t) return false;
+    const p = JSON.parse(atob(t.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+    return String(p.role || "viewer").toLowerCase() === "admin";
+  } catch { return false; }
+})();
 
 const { renderShell, icon } = window;
 renderShell({ active: "system", crumb: "<b>系统运维</b>" });
@@ -181,12 +198,57 @@ async function loadTasks() {
   } catch (e) { $("#tasks").innerHTML = `<div class="muted">活跃任务加载失败:${esc(e?.detail || e?.message || e)}<br/><span style="font-size:.72rem">需登录</span></div>`; }
 }
 
-function loadAll() { loadHealth(); loadVersion(); loadMetrics(); loadDeep(); loadTasks(); }
+/* ---------- 存储维护(GET /admin/maintenance/status, ADMIN) ---------- */
+async function loadMaintenance() {
+  try {
+    const st = await request("GET", "/admin/maintenance/status");
+    if (!st.enabled) {
+      $("#maintenance").innerHTML = `<div class="muted" style="padding:14px">维护调度<b>未启用</b>${st.last_report ? "(上次报告保留)" : " · 尚无报告"}</div>`;
+      return;
+    }
+    const r = st.last_report;
+    const fmt = (s) => s ? new Date(s).toLocaleString("zh-CN") : "—";
+    $("#maintenance").innerHTML = `
+      <div class="kpi-row" style="margin-bottom:10px">
+        <div class="kpi"><div class="label">调度</div><div class="val" style="color:var(--ok)">启用</div><div class="delta">周期 ${esc(st.interval_seconds||0)}s</div></div>
+        <div class="kpi"><div class="label">上次运行</div><div class="val" style="font-size:.9rem">${esc(fmt(st.last_run))}</div></div>
+        <div class="kpi"><div class="label">下次运行</div><div class="val" style="font-size:.9rem">${esc(fmt(st.next_run))}</div></div>
+      </div>
+      ${r ? `<div class="kpi-row">
+        <div class="kpi"><div class="label">压缩数据集</div><div class="val">${r.datasets_compacted}</div></div>
+        <div class="kpi"><div class="label">清理数据集</div><div class="val">${r.datasets_cleaned}</div></div>
+        <div class="kpi"><div class="label">碎片(前→后)</div><div class="val">${r.total_fragments_before}→${r.total_fragments_after}</div></div>
+        <div class="kpi"><div class="label">移除版本</div><div class="val">${r.total_versions_removed}</div></div>
+        <div class="kpi"><div class="label">耗时</div><div class="val">${(r.duration_seconds||0).toFixed(1)}s</div></div>
+      </div>` : `<div class="muted" style="padding:8px 14px">调度已启用,尚无运行报告</div>`}`;
+  } catch (e) {
+    const forbidden = /403|401/.test(String(e?.status || e?.message || ""));
+    $("#maintenance").innerHTML = `<div class="muted" style="padding:14px">${forbidden ? "维护状态需 ADMIN 角色" : "维护状态加载失败:" + esc(e?.detail || e?.message || e)}</div>`;
+  }
+}
+
+async function runMaintenance() {
+  if (!isAdmin) return;
+  if (!(await confirmDialog({ title: "立即执行维护", message: "触发一次存储维护(碎片合并 + 版本清理)?大库可能耗时较长。", danger: true, confirmText: "执行" }))) return;
+  try {
+    const r = await request("POST", "/admin/maintenance/run");
+    if (r && r.success) {
+      toast(`维护完成:压缩 ${r.data?.datasets_compacted ?? 0} · 清理 ${r.data?.datasets_cleaned ?? 0} · 耗时 ${(r.data?.duration_seconds||0).toFixed(1)}s`, "ok", 4000);
+      loadMaintenance();
+    } else {
+      toast(`维护失败:${esc(r?.error || "未知错误")}`, "warn", 4000);
+    }
+  } catch (e) { toast(`维护请求失败:${esc(e?.detail || e?.message || e)}`, "warn", 4000); }
+}
+
+function loadAll() { loadHealth(); loadVersion(); loadMetrics(); loadDeep(); loadTasks(); loadMaintenance(); }
 loadAll();
-setInterval(() => { loadHealth(); loadMetrics(); loadDeep(); loadTasks(); }, 10000);
+setInterval(() => { loadHealth(); loadMetrics(); loadDeep(); loadTasks(); loadMaintenance(); }, 10000);
 window.applyIcons && applyIcons(document);
 
+if (isAdmin) $("#mtnRunBtn").style.display = "inline-flex";
 $("#refresh").addEventListener("click", () => { loadAll(); toast("已刷新运维态势", "ok", 2000); });
+$("#mtnRunBtn").addEventListener("click", runMaintenance);
 $("#apiBtn").addEventListener("click", () => window.openApi(
   "系统运维",
   `curl -s $API/health | jq .\ncurl -s $API/metrics | grep arrow_lake_\ncurl -s $API/api/v1/version -H "Authorization: Bearer $JWT" -H "X-API-Key: $KEY"`,
