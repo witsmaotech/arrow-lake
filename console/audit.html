@@ -34,6 +34,7 @@
       <thead><tr><th>时间</th><th>事件类型</th><th>触发者</th><th>数据集</th><th>HMAC</th></tr></thead>
       <tbody><tr><td colspan="5" class="muted" style="padding:28px;text-align:center">加载中…</td></tr></tbody>
     </table></div>
+    <div id="pager" class="flex wrap" style="gap:6px;padding:10px 14px;border-top:1px solid var(--line-soft);align-items:center;font-size:.78rem"></div>
   </div>
 </div></main>
 </div>
@@ -50,6 +51,7 @@ const { renderShell, icon } = window;
 renderShell({ active: "audit", crumb: "<b>审计日志</b>" });
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+let _all = [], _page = 1; const _SIZE = 20;
 
 // role 从 JWT payload 解(ADMIN 才显示导出)
 const role = (() => {
@@ -90,19 +92,7 @@ async function load() {
     const r = await request("GET", `/audit/query?${q}`);
     // 真实响应键:entries(list[dict]);多键容错
     const list = Array.isArray(r?.entries) ? r.entries : (Array.isArray(r?.items) ? r.items : (Array.isArray(r) ? r : []));
-    $("#cnt").textContent = `${list.length} 条`;
-    $("#tbl").innerHTML = `<thead><tr><th>时间</th><th>事件类型</th><th>触发者</th><th>数据集</th><th>HMAC</th></tr></thead><tbody>${
-      list.length ? list.map(e => {
-        const evt = e.event_type || e.event || "—";
-        return `<tr>
-          <td class="mono" style="font-size:.72rem;white-space:nowrap">${fmtTime(e.timestamp || e.time)}</td>
-          <td><span class="tag ${tagCls(evt)}">${esc(evt)}</span></td>
-          <td><b>${esc(e.actor || e.user || e.username || "—")}</b></td>
-          <td class="mono" style="font-size:.78rem">${esc(e.dataset_name || e.dataset || e.resource || "—")}</td>
-          <td class="mono" style="font-size:.68rem;color:var(--fg-lo)">${esc((e.hmac_hash || e.hmac || "").slice(0, 12))}${e.hmac_hash ? "…" : ""}</td>
-        </tr>`;
-      }).join("") : `<tr><td colspan="5" class="muted" style="padding:28px;text-align:center">无审计事件(_audit_trail 为空,或过滤无匹配)</td></tr>`
-    }</tbody>`;
+    _all = list; _page = 1; renderPage();
   } catch (e) {
     const msg = e?.detail || e?.message || String(e);
     $("#cnt").textContent = "失败";
@@ -110,6 +100,41 @@ async function load() {
     $("#retry")?.addEventListener("click", load);
     toast("审计查询失败:" + msg, "warn", 4000);
   }
+}
+
+function renderPage() {
+  const list = _all, total = list.length, pages = Math.max(1, Math.ceil(total / _SIZE));
+  if (_page < 1) _page = 1; if (_page > pages) _page = pages;
+  const slice = list.slice((_page - 1) * _SIZE, _page * _SIZE);
+  $("#cnt").textContent = `${total} 条 · 第 ${_page}/${pages} 页`;
+  $("#tbl").innerHTML = `<thead><tr><th>时间</th><th>事件类型</th><th>触发者</th><th>数据集</th><th>HMAC</th></tr></thead><tbody>${
+    slice.length ? slice.map(e => {
+      const evt = e.event_type || e.event || "—";
+      return `<tr>
+        <td class="mono" style="font-size:.72rem;white-space:nowrap">${fmtTime(e.timestamp || e.time)}</td>
+        <td><span class="tag ${tagCls(evt)}">${esc(evt)}</span></td>
+        <td><b>${esc(e.actor || e.user || e.username || "—")}</b></td>
+        <td class="mono" style="font-size:.78rem">${esc(e.dataset_name || e.dataset || e.resource || "—")}</td>
+        <td class="mono" style="font-size:.68rem;color:var(--fg-lo)">${esc((e.hmac_hash || e.hmac || "").slice(0, 12))}${e.hmac_hash ? "…" : ""}</td>
+      </tr>`;
+    }).join("") : `<tr><td colspan="5" class="muted" style="padding:28px;text-align:center">无审计事件(_audit_trail 为空,或过滤无匹配)</td></tr>`
+  }</tbody>`;
+  const pg = $("#pager");
+  if (total <= _SIZE) { pg.innerHTML = ""; return; }
+  let btns = `<button class="btn btn-ghost btn-sm" data-p="${_page - 1}" ${_page <= 1 ? "disabled" : ""}>‹ 上一页</button> `;
+  const nums = [...new Set([1, pages, _page - 1, _page, _page + 1].filter(n => n >= 1 && n <= pages))].sort((a, b) => a - b);
+  nums.forEach((n, i) => {
+    if (i && n - nums[i - 1] > 1) btns += `<span class="muted" style="padding:0 2px">…</span> `;
+    btns += n === _page
+      ? `<button class="btn btn-sm" disabled style="background:var(--ink-700);color:var(--fg-hi)">${n}</button> `
+      : `<button class="btn btn-ghost btn-sm" data-p="${n}">${n}</button> `;
+  });
+  btns += `<button class="btn btn-ghost btn-sm" data-p="${_page + 1}" ${_page >= pages ? "disabled" : ""}>下一页 ›</button>`;
+  pg.innerHTML = btns;
+  pg.querySelectorAll("[data-p]").forEach(b => b.addEventListener("click", () => {
+    const p = parseInt(b.dataset.p); if (isNaN(p)) return;
+    _page = p; renderPage(); document.querySelector(".page").scrollIntoView({ behavior: "smooth", block: "start" });
+  }));
 }
 
 async function exportAudit() {
