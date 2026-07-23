@@ -7,12 +7,21 @@
 <link rel="stylesheet" href="assets/tokens.css"/>
 <link rel="stylesheet" href="assets/app.css"/>
 <link rel="stylesheet" href="assets/console.css"/>
+<script src="vendor/vis-network.bundle.min.js" defer></script>
 <style>
   .schema-chip{display:inline-block;font-family:var(--font-mono);font-size:.72rem;padding:2px 8px;border:1px solid var(--teal-soft,var(--line));border-radius:var(--r-sm);background:var(--ink-900);color:var(--teal-bright);margin:0 4px 4px 0}
   .preview-wrap{overflow:auto;max-height:600px;border:1px solid var(--line-soft);border-radius:var(--r-sm)}
   .preview-wrap table{margin:0}
   .preview-wrap td{max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.74rem}
   .preview-wrap th{position:sticky;top:0;background:var(--ink-850);z-index:1;font-size:.7rem}
+  /* Tab 切换器 */
+  .tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:var(--s4);flex-wrap:wrap}
+  .tab{appearance:none;background:transparent;border:none;border-bottom:2px solid transparent;color:var(--fg-md);font:inherit;font-size:.88rem;font-weight:600;padding:10px 18px;cursor:pointer;border-radius:var(--r-sm) var(--r-sm) 0 0;transition:color .15s,border-color .15s,background .15s;display:inline-flex;align-items:center;gap:6px}
+  .tab:hover{color:var(--fg-hi);background:var(--ink-850)}
+  .tab.active{color:var(--teal-bright);border-bottom-color:var(--teal-bright)}
+  .tab-panel{display:none}
+  .tab-panel.active{display:block}
+  #lgCanvas{height:420px;border:1px solid var(--line-soft);border-radius:var(--r-sm);background:var(--ink-950);overflow:hidden}
 </style>
 </head>
 <body>
@@ -22,18 +31,53 @@
     <div><h1 id="title">数据集</h1><div class="desc" id="meta">加载中…</div></div>
     <div class="flex"><a class="btn btn-primary btn-sm" id="ingestBtn" href="ingest.html"><i class="placeholder" data-ic="plus"></i> 追加摄入</a></div>
   </div>
-  <div class="panel"><div class="panel-b" id="body"></div></div>
-  <div class="panel flush" id="schemaPanel" style="margin-top:var(--s4);display:none">
-    <div class="panel-h"><i class="placeholder" data-ic="code"></i><h3>Schema(字段)</h3><span class="sub" id="schemaMeta">—</span></div>
-    <div class="panel-b" id="schema"></div>
+
+  <!-- Tab 切换器(概览 / 血缘 / 版本)-->
+  <div class="tabs" role="tablist">
+    <button class="tab active" data-tab="overview" role="tab"><i class="placeholder" data-ic="database"></i> 概览</button>
+    <button class="tab" data-tab="lineage" role="tab"><i class="placeholder" data-ic="share-nodes"></i> 血缘</button>
+    <button class="tab" data-tab="version" role="tab"><i class="placeholder" data-ic="dashboard"></i> 版本</button>
   </div>
-  <div class="panel flush" id="kgPanel" style="margin-top:var(--s4);display:none">
-    <div class="panel-h"><i class="placeholder" data-ic="share-nodes"></i><h3>知识图谱(KG)</h3><span class="sub" id="kgMeta">—</span></div>
-    <div class="panel-b" id="kg"></div>
+
+  <!-- 概览 Tab:现有 4 panel 整体包入 -->
+  <div class="tab-panel active" id="tab-overview" role="tabpanel">
+    <div class="panel"><div class="panel-b" id="body"></div></div>
+    <div class="panel flush" id="schemaPanel" style="margin-top:var(--s4);display:none">
+      <div class="panel-h"><i class="placeholder" data-ic="code"></i><h3>Schema(字段)</h3><span class="sub" id="schemaMeta">—</span></div>
+      <div class="panel-b" id="schema"></div>
+    </div>
+    <div class="panel flush" id="kgPanel" style="margin-top:var(--s4);display:none">
+      <div class="panel-h"><i class="placeholder" data-ic="share-nodes"></i><h3>知识图谱(KG)</h3><span class="sub" id="kgMeta">—</span></div>
+      <div class="panel-b" id="kg"></div>
+    </div>
+    <div class="panel flush" id="previewPanel" style="margin-top:var(--s4)">
+      <div class="panel-h"><i class="placeholder" data-ic="database"></i><h3>前 100 行预览</h3><span class="sub" id="previewMeta">—</span></div>
+      <div class="panel-b" id="preview"></div>
+    </div>
   </div>
-  <div class="panel flush" id="previewPanel" style="margin-top:var(--s4)">
-    <div class="panel-h"><i class="placeholder" data-ic="database"></i><h3>前 100 行预览</h3><span class="sub" id="previewMeta">—</span></div>
-    <div class="panel-b" id="preview"></div>
+
+  <!-- 血缘 Tab -->
+  <div class="tab-panel" id="tab-lineage" role="tabpanel">
+    <div class="panel flush">
+      <div class="panel-h"><i class="placeholder" data-ic="share-nodes"></i><h3>血缘图</h3><span class="sub" id="lgMeta">—</span><span class="actions"><span class="lamp ok pulse"><i></i>DAG</span></span></div>
+      <div class="panel-b"><div id="lgCanvas"></div></div>
+    </div>
+    <div class="panel flush" style="margin-top:var(--s4)">
+      <div class="panel-h"><i class="placeholder" data-ic="bell"></i><h3>血缘事件</h3><span class="sub" id="lgHistMeta">—</span></div>
+      <div class="panel-b" id="lgHist"><div class="muted" style="padding:14px">点「血缘」Tab 加载…</div></div>
+    </div>
+  </div>
+
+  <!-- 版本 Tab -->
+  <div class="tab-panel" id="tab-version" role="tabpanel">
+    <div class="panel flush">
+      <div class="panel-h"><i class="placeholder" data-ic="dashboard"></i><h3>当前版本</h3><span class="sub">Lance time-travel · DatasetInfo.version</span></div>
+      <div class="panel-b" id="vCur"><div class="muted" style="padding:14px">点「版本」Tab 加载…</div></div>
+    </div>
+    <div class="panel flush" style="margin-top:var(--s4)" id="vPanel">
+      <div class="panel-h"><i class="placeholder" data-ic="database"></i><h3>备份快照</h3><span class="sub" id="vMeta">—</span><span class="actions"><button class="btn btn-primary btn-sm" id="vCreate" style="display:none"><i class="placeholder" data-ic="plus"></i> 创建快照</button></span></div>
+      <div class="panel-b" id="vTbl"><div class="muted" style="padding:14px">点「版本」Tab 加载…</div></div>
+    </div>
   </div>
 </div></main>
 </div>
@@ -56,6 +100,23 @@ const fmtCell = (v) => {
 };
 const fmtSize = (b) => { if (b == null || isNaN(b)) return "—"; const u = ["B", "KB", "MB", "GB", "TB"]; let i = 0, n = Number(b); while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; } return `${n.toFixed(n < 10 && i > 0 ? 1 : 0)} ${u[i]}`; };
 const fmtDate = (s) => { if (!s) return "—"; const d = new Date(s); if (isNaN(d)) return String(s).slice(0, 16); const p = (n) => String(n).padStart(2, "0"); return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
+const isAdmin = (() => {
+  try {
+    const tok = localStorage.getItem("al_access") || "";
+    const payload = JSON.parse(atob(tok.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+    return String(payload.role || "EDITOR").toUpperCase() === "ADMIN";
+  } catch (_) { return false; }
+})();
+
+/* ---------- Tab 切换 ---------- */
+let lineageLoaded = false, versionLoaded = false;
+function switchTab(name) {
+  document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.dataset.tab === name));
+  document.querySelectorAll(".tab-panel").forEach(p => p.classList.toggle("active", p.id === `tab-${name}`));
+  if (name === "lineage" && ds && !lineageLoaded) { lineageLoaded = true; loadLineage(ds); }
+  if (name === "version" && ds && !versionLoaded) { versionLoaded = true; loadVersion(ds); }
+}
+document.querySelectorAll(".tab").forEach(t => t.addEventListener("click", () => switchTab(t.dataset.tab)));
 
 if (!ds) {
   $("#body").innerHTML = '<div class="muted" style="padding:28px;text-align:center">未指定数据集(<code>?ds=name</code>)— <a href="datasets.html" style="color:var(--teal-bright)">返回列表</a></div>';
@@ -89,7 +150,7 @@ if (!ds) {
       $("#meta").textContent = "加载失败";
     }
 
-    // 1.5) 真实 schema(字段名 + Arrow 类型,从 Lance schema 直读,空数据集也有)
+    // 1.5) 真实 schema
     try {
       const s = await request("GET", `/datasets/${encodeURIComponent(ds)}/schema`);
       const fields = s?.fields || [];
@@ -100,7 +161,7 @@ if (!ds) {
       }
     } catch (_) { /* schema 取失败不阻塞预览 */ }
 
-    // 1.6) 知识图谱统计 + 入口(KG 未启用则隐藏面板)
+    // 1.6) 知识图谱统计
     try {
       const s = await request("GET", `/kg/stats?dataset=${encodeURIComponent(ds)}`);
       $("#kgPanel").style.display = "";
@@ -115,7 +176,7 @@ if (!ds) {
         : `<div class="muted" style="font-size:.82rem;padding:4px 0">该数据集尚未构建知识图谱(0 实体)。<a class="btn btn-ghost btn-sm" href="kg.html?ds=${encodeURIComponent(ds)}" style="margin-left:8px">去构建 →</a></div>`;
     } catch (_) { /* KG 未启用,隐藏 */ }
 
-    // 2) 前 100 行预览(POST /query/olap SELECT * LIMIT 100)
+    // 2) 前 100 行预览
     $("#preview").innerHTML = '<div class="muted" style="padding:20px;text-align:center">加载前 100 行…</div>';
     try {
       const res = await request("POST", `/datasets/${encodeURIComponent(ds)}/query/olap`, {
@@ -127,7 +188,6 @@ if (!ds) {
       if (!rows.length) {
         $("#preview").innerHTML = '<div class="muted" style="padding:24px;text-align:center">数据集为空(无行)</div>';
       } else {
-        // 表
         const head = cols.map((c) => `<th>${esc(c)}</th>`).join("");
         const body = rows.map((r) => `<tr>${cols.map((c) => {
           const raw = r[c];
@@ -142,6 +202,164 @@ if (!ds) {
     }
   })();
 }
+
+/* ---------- 血缘 Tab ---------- */
+let lgNetwork = null;
+async function loadLineage(name) {
+  const V = window.vis;
+  const meta = $("#lgMeta"), cont = $("#lgCanvas");
+  // graph
+  try {
+    const g = await request("GET", `/lineage/graph/${encodeURIComponent(name)}?max_depth=10&format=json`);
+    const ns = (g.nodes || []).map(n => ({
+      id: n.id, group: n.type || "derived",
+      label: n.id,
+      title: `${n.id}\n深度 ${n.depth ?? 0} · 类型 ${n.type || "derived"}`,
+    }));
+    const es = (g.edges || []).map((e, i) => ({
+      id: e.id || ("e" + i), from: e.from || e.source, to: e.to || e.target,
+      label: e.operation || e.transform_type || "", arrows: "to",
+      font: { size: 9, color: "#64748b", strokeWidth: 0 },
+      title: `${e.operation || "?"}${e.transform_type ? " · " + e.transform_type : ""}`,
+    }));
+    const stats = g.stats || {};
+    meta.innerHTML = `${stats.total_nodes ?? ns.length} 节点 · ${stats.total_edges ?? es.length} 边 · 深度 <b>${stats.max_depth ?? 0}</b>`;
+    if (!V) { cont.innerHTML = '<div class="muted" style="padding:14px;color:var(--warn)">vis-network 未加载</div>'; }
+    else if (!ns.length) { cont.innerHTML = '<div class="muted" style="padding:14px">该数据集无血缘记录(孤立节点)</div>'; }
+    else {
+      if (lgNetwork) { lgNetwork.destroy(); lgNetwork = null; }
+      lgNetwork = new V.Network(cont, { nodes: new V.DataSet(ns), edges: new V.DataSet(es) }, {
+        height: "100%", width: "100%", autoResize: true,
+        layout: { hierarchical: { enabled: true, direction: "LR", sortMethod: "directed", levelSeparation: 160, nodeSpacing: 120 } },
+        physics: { enabled: false },
+        nodes: { shape: "box", margin: 10, font: { size: 12, color: "#e2e8f0" }, borderWidth: 2 },
+        edges: { color: { color: "#475569", opacity: 0.6 }, smooth: { type: "cubicBezier" }, selectionWidth: 2 },
+        groups: {
+          target: { color: { background: "#34d399", border: "#059669" } },
+          source: { color: { background: "#60a5fa", border: "#2563eb" } },
+          derived: { color: { background: "#fbbf24", border: "#d97706" } },
+        },
+        interaction: { hover: true, zoomView: true, dragView: true },
+      });
+    }
+  } catch (e) {
+    meta.innerHTML = `<span style="color:var(--danger)">血缘图加载失败</span>`;
+    cont.innerHTML = `<div class="muted" style="padding:14px;color:var(--danger)">${esc(e?.detail || e?.message || e)}</div>`;
+  }
+  // history
+  try {
+    const h = await request("GET", `/lineage/history/${encodeURIComponent(name)}`);
+    const ev = h.events || [];
+    $("#lgHistMeta").textContent = `${ev.length} 条事件`;
+    if (!ev.length) {
+      $("#lgHist").innerHTML = '<div class="muted" style="padding:14px">无血缘事件记录</div>';
+    } else {
+      const head = `<tr><th>时间</th><th>操作</th><th>来源数据集</th><th>转换</th><th>触发者</th></tr>`;
+      const body = ev.map(ev => {
+        const ts = ev.timestamp || ev.time || ev.created_at;
+        const op = ev.operation || ev.action || "?";
+        const src = Array.isArray(ev.source_datasets) ? ev.source_datasets.join(", ") : (ev.source_datasets || ev.sources || "—");
+        const tt = ev.transform_type || ev.transform || "—";
+        const actor = ev.actor || ev.user || ev.user_id || "—";
+        return `<tr><td style="white-space:nowrap">${esc(fmtDate(ts))}</td><td><b>${esc(op)}</b></td><td style="font-family:var(--font-mono);font-size:.74rem">${esc(src)}</td><td>${esc(tt)}</td><td>${esc(actor)}</td></tr>`;
+      }).join("");
+      $("#lgHist").innerHTML = `<div class="preview-wrap"><table class="tbl"><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
+    }
+  } catch (e) {
+    $("#lgHist").innerHTML = `<div class="muted" style="padding:14px;color:var(--danger)">事件加载失败:${esc(e?.detail || e?.message || e)}</div>`;
+  }
+}
+
+/* ---------- 版本 Tab ---------- */
+async function loadVersion(name) {
+  // 当前 Lance 版本 KPI
+  try {
+    const d = await request("GET", `/datasets/${encodeURIComponent(name)}`);
+    const idx = [
+      ["版本", d.version ?? "—"],
+      ["行数", (d.num_rows ?? 0).toLocaleString()],
+      ["大小", fmtSize(d.size_bytes)],
+      ["创建", fmtDate(d.created_at)],
+      ["更新", fmtDate(d.updated_at)],
+    ];
+    const flags = [
+      ["向量索引", d.has_vector_index, "teal"],
+      ["全文索引", d.has_fts_index, "info"],
+      ["知识图谱", d.has_kg, "warn"],
+    ];
+    $("#vCur").innerHTML = `<div class="grid g-3">${idx.map(([l, v]) => `<div class="kpi"><div class="label">${l}</div><div class="val">${esc(v)}</div></div>`).join("")}
+      ${flags.map(([l, ok, c]) => `<div class="kpi"><div class="label">${l}</div><div class="val"><span class="lamp ${ok ? "ok" : "muted"}${ok ? " pulse" : ""}"><i></i>${ok ? "已启用" : "未启用"}</span></div></div>`).join("")}</div>`;
+  } catch (e) {
+    $("#vCur").innerHTML = `<div class="muted" style="padding:14px;color:var(--danger)">版本信息加载失败:${esc(e?.detail || e?.message || e)}</div>`;
+  }
+  // backup 列表(ADMIN 可见写操作)
+  if (isAdmin) $("#vCreate").style.display = "";
+  try {
+    const r = await request("GET", "/backup/list");
+    const all = r?.backups || [];
+    const mine = all.filter(b => Array.isArray(b.datasets) && b.datasets.includes(name));
+    $("#vMeta").textContent = `${mine.length} 个含本数据集的快照(共 ${all.length} 个)`;
+    if (!mine.length) {
+      $("#vTbl").innerHTML = `<div class="muted" style="padding:14px">无含本数据集的备份快照${isAdmin ? "。可点上方「创建快照」" : ""}。</div>`;
+    } else {
+      const head = `<tr><th>备份 ID</th><th>创建时间</th><th>状态</th><th>大小</th><th>含数据集</th>${isAdmin ? "<th>操作</th>" : ""}</tr>`;
+      const body = mine.map(b => {
+        const sz = fmtSize(b.total_size_bytes);
+        const dss = (b.datasets || []).length;
+        return `<tr>
+          <td style="font-family:var(--font-mono);font-size:.72rem">${esc(b.backup_id)}</td>
+          <td style="white-space:nowrap">${esc(fmtDate(b.created_at))}</td>
+          <td><span class="lamp ${b.status === "completed" || b.status === "ok" ? "ok" : "warn"}"><i></i>${esc(b.status || "?")}</span></td>
+          <td>${esc(sz)}</td>
+          <td>${dss}</td>
+          ${isAdmin ? `<td><button class="btn btn-ghost btn-sm" data-restore="${esc(b.backup_id)}">恢复</button> <button class="btn btn-ghost btn-sm" data-del="${esc(b.backup_id)}" style="color:var(--danger)">删</button></td>` : ""}
+        </tr>`;
+      }).join("");
+      $("#vTbl").innerHTML = `<div class="preview-wrap"><table class="tbl"><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
+      // 操作绑定
+      if (isAdmin) {
+        $("#vTbl").querySelectorAll("[data-restore]").forEach(b => b.addEventListener("click", () => restoreBackup(b.dataset.restore, name)));
+        $("#vTbl").querySelectorAll("[data-del]").forEach(b => b.addEventListener("click", () => deleteBackup(b.dataset.del)));
+      }
+    }
+  } catch (e) {
+    // 非 ADMIN 或 backup 未启用 → 只读降级
+    const msg = e?.status === 403 || /403|forbidden/i.test(String(e?.detail || e?.message || e)) ? "需 ADMIN 权限查看快照" : (e?.detail || e?.message || e);
+    $("#vMeta").textContent = "—";
+    $("#vTbl").innerHTML = `<div class="muted" style="padding:14px">快照列表不可用:${esc(msg)}</div>`;
+  }
+}
+
+async function restoreBackup(backupId, name) {
+  if (!confirm(`确认从备份 ${backupId} 恢复数据集「${name}」?\n(overwrite=true,将覆盖当前数据)`)) return;
+  try {
+    await request("POST", `/backup/restore?backup_id=${encodeURIComponent(backupId)}`, { body: { dataset_names: [name], overwrite: true } });
+    await loadVersion(name);
+    window.toast && toast("恢复已触发", "ok", 2500);
+  } catch (e) {
+    alert("恢复失败:" + (e?.detail || e?.message || e));
+  }
+}
+async function deleteBackup(backupId) {
+  if (!confirm(`确认删除备份 ${backupId}?此操作不可撤销。`)) return;
+  try {
+    await request("DELETE", `/backup/${encodeURIComponent(backupId)}`);
+    await loadVersion(ds);
+    window.toast && toast("备份已删除", "ok", 2500);
+  } catch (e) {
+    alert("删除失败:" + (e?.detail || e?.message || e));
+  }
+}
+$("#vCreate")?.addEventListener("click", async () => {
+  if (!ds) return;
+  try {
+    await request("POST", "/backup/create", { body: { dataset_names: [ds] } });
+    await loadVersion(ds);
+    window.toast && toast("快照创建已触发", "ok", 2500);
+  } catch (e) {
+    alert("创建快照失败:" + (e?.detail || e?.message || e));
+  }
+});
 </script>
 </body>
 </html>

@@ -65,6 +65,9 @@ const NAV = [
   { group: "合规", items: [
     { id: "audit", label: "审计日志", ic: "bell", href: "audit.html" },
   ] },
+  { group: "治理", items: [
+    { id: "governance", label: "元数据治理", ic: "key", href: "governance.html" },
+  ] },
 ];
 
 function decodeUser(tok) {

@@ -16,7 +16,7 @@ from arrow_lake.api.deps import require_role
 
 logger = structlog.get_logger(__name__)
 
-router = APIRouter(prefix="/metadata", tags=["metadata"])
+router = APIRouter(prefix="/api/v1/metadata", tags=["metadata"])
 
 _SAFE_ID = re.compile(r"^[a-zA-Z0-9_-]+$")
 

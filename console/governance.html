@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>元数据治理 · Arrow Lake Console</title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/tokens.css"/>
+<link rel="stylesheet" href="assets/app.css"/>
+<link rel="stylesheet" href="assets/console.css"/>
+<style>
+  .gov-grid{display:grid;grid-template-columns:1fr 1.2fr 1.6fr 1.2fr;gap:var(--s4);align-items:start}
+  @media(max-width:1280px){.gov-grid{grid-template-columns:1fr 1fr;}}
+  @media(max-width:768px){.gov-grid{grid-template-columns:1fr;}}
+  .picklist{max-height:480px;overflow:auto}
+  .picklist .row{padding:8px 12px;border-radius:var(--r-sm);cursor:pointer;font-size:.82rem;font-family:var(--font-mono);color:var(--fg-md);border:1px solid transparent;display:flex;align-items:center;gap:8px;transition:background .12s,border-color .12s}
+  .picklist .row:hover{background:var(--ink-850);color:var(--fg-hi)}
+  .picklist .row.active{background:var(--teal-soft,var(--ink-850));border-color:var(--teal-bright);color:var(--teal-bright)}
+  .picklist .row .ic-dot{width:8px;height:8px;border-radius:50%;background:var(--teal-bright);flex-shrink:0}
+  .col-row{padding:6px 10px;border-bottom:1px solid var(--line-soft);font-size:.78rem;display:flex;justify-content:space-between;gap:8px}
+  .col-row:last-child{border-bottom:none}
+  .gov-form{display:grid;gap:8px;margin-top:8px}
+  .gov-form input,.gov-form textarea{background:var(--ink-900);border:1px solid var(--line);color:var(--fg-hi);border-radius:var(--r-sm);padding:6px 10px;font:inherit;font-size:.8rem;font-family:var(--font-mono)}
+  .gov-form textarea{resize:vertical;min-height:54px;font-size:.74rem}
+  .degraded{padding:14px;color:var(--warn);font-size:.82rem;border:1px dashed var(--warn);border-radius:var(--r-sm);background:rgba(245,158,11,.05)}
+</style>
+</head>
+<body>
+<div id="app">
+<main class="main"><div class="page">
+  <div class="h-sec between">
+    <div><h1>元数据治理</h1><div class="desc">Gravitino · Metalake → Catalog → Schema → Table · <span class="mono">GET /api/v1/metadata/*</span></div></div>
+    <div class="flex"><button class="btn btn-ghost btn-sm" id="apiBtn"><i class="placeholder" data-ic="code"></i> API</button><button class="btn btn-primary btn-sm" id="refresh"><i class="placeholder" data-ic="dashboard"></i> 刷新</button></div>
+  </div>
+
+  <div class="panel flush">
+    <div class="panel-h"><i class="placeholder" data-ic="database"></i><h3>Gravitino 探活</h3><span class="sub" id="govProbe">检测中…</span></div>
+  </div>
+
+  <div class="gov-grid" style="margin-top:var(--s4)">
+    <!-- 列 1:Catalogs -->
+    <div class="panel flush">
+      <div class="panel-h"><i class="placeholder" data-ic="database"></i><h3>Catalogs</h3><span class="sub" id="gCatMeta">—</span></div>
+      <div class="panel-b picklist" id="gCatalogs"><div class="muted" style="padding:10px">加载…</div></div>
+    </div>
+    <!-- 列 2:Tables -->
+    <div class="panel flush">
+      <div class="panel-h"><i class="placeholder" data-ic="code"></i><h3>Tables</h3><span class="sub" id="gTblMeta">—</span></div>
+      <div class="panel-b picklist" id="gTables"><div class="muted" style="padding:10px">先选 catalog</div></div>
+    </div>
+    <!-- 列 3:表详情(列 + properties)-->
+    <div class="panel flush">
+      <div class="panel-h"><i class="placeholder" data-ic="file"></i><h3>表详情</h3><span class="sub" id="gDetailMeta">—</span></div>
+      <div class="panel-b" id="gDetail"><div class="muted" style="padding:10px">选一个表查看列与属性</div></div>
+    </div>
+    <!-- 列 4:Tags + Policies + 模型注册表 -->
+    <div class="panel flush">
+      <div class="panel-h"><i class="placeholder" data-ic="key"></i><h3>Tags / Policies</h3><span class="sub" id="gGovMeta">—</span></div>
+      <div class="panel-b" id="gGov"><div class="muted" style="padding:10px">选表后显示标签与策略</div></div>
+    </div>
+  </div>
+
+  <div class="panel flush" style="margin-top:var(--s4)">
+    <div class="panel-h"><i class="placeholder" data-ic="dashboard"></i><h3>模型注册表</h3><span class="sub">ML models · /metadata/models · 含版本</span></div>
+    <div class="panel-b" id="gModels"><div class="muted" style="padding:10px">加载…</div></div>
+  </div>
+</div></main>
+</div>
+
+<script src="assets/console-layout.js"></script>
+<script type="module">
+import { request } from "./src/api.js";
+import { isLoggedIn } from "./src/auth.js";
+import { toast } from "./src/ui/toast.js";
+
+if (!isLoggedIn()) location.href = "login.html";
+
+const { renderShell, icon } = window;
+renderShell({ active: "governance", crumb: "<b>元数据治理</b>" });
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const fmtDate = (s) => { if (!s) return "—"; const d = new Date(s); if (isNaN(d)) return String(s).slice(0, 16); const p = (n) => String(n).padStart(2, "0"); return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
+const isAdmin = (() => {
+  try {
+    const tok = localStorage.getItem("al_access") || "";
+    const payload = JSON.parse(atob(tok.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+    return String(payload.role || "EDITOR").toUpperCase() === "ADMIN";
+  } catch (_) { return false; }
+})();
+
+let govReachable = true;
+let curTable = null;
+
+/* ---------- Gravitino 探活(顺带加载 catalogs)---------- */
+async function probeAndCatalogs() {
+  try {
+    const r = await request("GET", "/metadata/catalogs");
+    govReachable = true;
+    $("#govProbe").innerHTML = `<span class="lamp ok pulse"><i></i>Gravitino 在线</span>`;
+    const cats = r?.data || [];
+    $("#gCatMeta").textContent = `${cats.length} 个`;
+    if (!cats.length) {
+      $("#gCatalogs").innerHTML = '<div class="muted" style="padding:10px">无 catalog</div>';
+      return;
+    }
+    $("#gCatalogs").innerHTML = cats.map(c => `<div class="row"><span class="ic-dot"></span>${esc(c.name)}</div>`).join("");
+    // catalog 点击 → 列出该 catalog 下所有表(当前实现:全表列表过滤)
+    // 注:/metadata/tables 返回平台全部 lance 表;catalog 仅作展示筛选
+    loadTables();
+  } catch (e) {
+    govReachable = false;
+    const status = e?.status || /(\d{3})/.exec(String(e?.detail || e?.message || ""))?.[1];
+    const is503 = status === 503 || /503|not configured|Gravitino/i.test(String(e?.detail || e?.message || ""));
+    $("#govProbe").innerHTML = `<span class="lamp warn"><i></i>Gravitino 不可用</span>`;
+    const msg = is503 ? "Gravitino 未配置(503)。元数据治理需要 Gravitino metalake + catalog 接入,请在 deploy/.env 配置后重启 api。" : (e?.detail || e?.message || e);
+    ["#gCatalogs", "#gTables", "#gDetail", "#gGov", "#gModels"].forEach(sel => $(sel).innerHTML = `<div class="degraded">元数据服务不可用<br/><span style="font-size:.72rem">${esc(msg)}</span></div>`);
+    ["#gCatMeta", "#gTblMeta", "#gDetailMeta", "#gGovMeta"].forEach(sel => $(sel).textContent = "—");
+  }
+}
+
+/* ---------- Tables 列表 ---------- */
+async function loadTables() {
+  try {
+    const r = await request("GET", "/metadata/tables");
+    const ts = r?.data || [];
+    $("#gTblMeta").textContent = `${ts.length} 张`;
+    if (!ts.length) {
+      $("#gTables").innerHTML = '<div class="muted" style="padding:10px">无表</div>';
+      return;
+    }
+    $("#gTables").innerHTML = ts.map(t => `<div class="row" data-table="${esc(t.name)}"><span class="ic-dot"></span>${esc(t.name)}</div>`).join("");
+    $("#gTables").querySelectorAll("[data-table]").forEach(el => el.addEventListener("click", () => {
+      $("#gTables").querySelectorAll(".row").forEach(r => r.classList.remove("active"));
+      el.classList.add("active");
+      curTable = el.dataset.table;
+      loadDetail(curTable);
+    }));
+  } catch (e) {
+    $("#gTables").innerHTML = `<div class="degraded">表列表加载失败:${esc(e?.detail || e?.message || e)}</div>`;
+  }
+}
+
+/* ---------- 表详情 ---------- */
+async function loadDetail(name) {
+  $("#gDetailMeta").textContent = name;
+  $("#gDetail").innerHTML = '<div class="muted" style="padding:10px">加载…</div>';
+  try {
+    const r = await request("GET", `/metadata/tables/${encodeURIComponent(name)}`);
+    const d = r?.data || {};
+    const cols = d.columns || [];
+    const props = d.properties || {};
+    const colsHtml = cols.length
+      ? cols.map(c => `<div class="col-row"><span><b>${esc(c.name)}</b>${c.nullable === false ? ' <span style="color:var(--danger);font-size:.7rem">NOT NULL</span>' : ""}</span><span class="mono" style="color:var(--teal-bright);font-size:.74rem">${esc(c.type)}</span></div>`).join("")
+      : '<div class="muted" style="padding:6px">无列信息</div>';
+    const propsHtml = Object.keys(props).length
+      ? `<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--line-soft)"><div class="muted" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px">Properties</div>${Object.entries(props).map(([k, v]) => `<div class="col-row"><span class="mono" style="font-size:.72rem">${esc(k)}</span><span class="mono" style="font-size:.72rem;color:var(--fg-md)">${esc(v)}</span></div>`).join("")}</div>`
+      : "";
+    $("#gDetail").innerHTML = `${colsHtml}${propsHtml}`;
+  } catch (e) {
+    $("#gDetail").innerHTML = `<div class="degraded">表详情加载失败:${esc(e?.detail || e?.message || e)}</div>`;
+  }
+  // 同时加载该表的 tags
+  loadGov(name);
+}
+
+/* ---------- Tags + Policies(表级)---------- */
+async function loadGov(name) {
+  $("#gGovMeta").textContent = name;
+  $("#gGov").innerHTML = '<div class="muted" style="padding:10px">加载…</div>';
+  // 并发 tags + policies
+  const [tagsR, polR] = await Promise.allSettled([
+    request("GET", `/metadata/tags?table=${encodeURIComponent(name)}`),
+    request("GET", "/metadata/policies"),
+  ]);
+  const tags = tagsR.status === "fulfilled" ? (tagsR.value?.data || []) : [];
+  const policies = polR.status === "fulfilled" ? (polR.value?.data || []) : [];
+  const tagsHtml = tags.length
+    ? `<div class="flex wrap" style="gap:6px">${tags.map(t => `<span class="tag teal mono"><b>${esc(t.name)}</b>${t.comment ? ` <span class="muted">${esc(t.comment)}</span>` : ""}</span>`).join("")}</div>`
+    : '<div class="muted" style="font-size:.74rem;padding:4px 0">无标签</div>';
+  const polHtml = policies.length
+    ? `<div style="margin-top:8px">${policies.map(p => `<div class="col-row"><span><b>${esc(p.name)}</b> <span class="muted" style="font-size:.7rem">${esc(p.type || "?")}</span></span><span class="muted mono" style="font-size:.7rem">${esc(JSON.stringify(p).slice(0, 80))}</span></div>`).join("")}</div>`
+    : '<div class="muted" style="font-size:.74rem;padding:4px 0">无策略</div>';
+  // ADMIN 写操作(body 走 query param)
+  const adminForm = isAdmin ? `
+    <details style="margin-top:12px;border-top:1px solid var(--line-soft);padding-top:10px">
+      <summary style="cursor:pointer;font-size:.78rem;font-weight:600;color:var(--teal-bright)">ADMIN · 新增 Tag / Retention / Masking</summary>
+      <div class="gov-form">
+        <div style="font-size:.74rem;font-weight:600;margin-top:4px">建标签</div>
+        <input id="tgName" placeholder="标签名(如 pii)"/>
+        <input id="tgComment" placeholder="注释(可选)"/>
+        <button class="btn btn-primary btn-sm" id="tgCreate">建标签</button>
+        <div style="font-size:.74rem;font-weight:600;margin-top:6px">保留策略(retention days)</div>
+        <input id="rtName" placeholder="策略名" value="retention-${esc(name)}"/>
+        <input id="rtDays" type="number" placeholder="天数(如 90)" value="90"/>
+        <button class="btn btn-primary btn-sm" id="rtCreate">建保留策略</button>
+        <div style="font-size:.74rem;font-weight:600;margin-top:6px">脱敏策略(masking columns,逗号分隔)</div>
+        <input id="mkName" placeholder="策略名" value="masking-${esc(name)}"/>
+        <textarea id="mkCols" placeholder="列名逗号分隔(如 phone,email)"></textarea>
+        <button class="btn btn-primary btn-sm" id="mkCreate">建脱敏策略</button>
+      </div>
+    </details>` : '<div class="muted" style="font-size:.72rem;margin-top:8px">写操作需 ADMIN</div>';
+  $("#gGov").innerHTML = `<div style="padding:6px 10px"><div class="muted" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.07em">Tags</div>${tagsHtml}<div style="margin-top:8px"><div class="muted" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.07em">Policies</div>${polHtml}</div>${adminForm}</div>`;
+  if (isAdmin) bindGovForms(name);
+}
+
+function postBody(path, obj) {
+  // ⚠️ 踩坑 #1:Gravitino router 写操作 body 走 query param ?body=encodeURIComponent(JSON)
+  const body = encodeURIComponent(JSON.stringify(obj));
+  return request("POST", `${path}?body=${body}`);
+}
+
+function bindGovForms(name) {
+  $("#tgCreate")?.addEventListener("click", async () => {
+    const n = $("#tgName").value.trim(); if (!n) return alert("请填标签名");
+    try { await postBody("/metadata/tags", { name: n, comment: $("#tgComment").value.trim() || undefined }); toast("标签已建", "ok", 2000); loadGov(name); }
+    catch (e) { alert("建标签失败:" + (e?.detail || e?.message || e)); }
+  });
+  $("#rtCreate")?.addEventListener("click", async () => {
+    const n = $("#rtName").value.trim(); const days = Number($("#rtDays").value);
+    if (!n || !days) return alert("请填策略名与天数");
+    try { await postBody("/metadata/policies/retention", { name: n, days }); toast("保留策略已建", "ok", 2000); loadGov(name); }
+    catch (e) { alert("建保留策略失败:" + (e?.detail || e?.message || e)); }
+  });
+  $("#mkCreate")?.addEventListener("click", async () => {
+    const n = $("#mkName").value.trim(); const cols = $("#mkCols").value.split(",").map(s => s.trim()).filter(Boolean);
+    if (!n || !cols.length) return alert("请填策略名与列名");
+    try { await postBody("/metadata/policies/masking", { name: n, columns: cols }); toast("脱敏策略已建", "ok", 2000); loadGov(name); }
+    catch (e) { alert("建脱敏策略失败:" + (e?.detail || e?.message || e)); }
+  });
+}
+
+/* ---------- 模型注册表(并发拉 versions)---------- */
+async function loadModels() {
+  try {
+    const r = await request("GET", "/metadata/models");
+    const ms = r?.data || [];
+    if (!ms.length) {
+      $("#gModels").innerHTML = '<div class="muted" style="padding:10px">无注册模型(ml-models catalog 未配或为空)</div>';
+      return;
+    }
+    // 并发拉每个模型的 versions
+    const enriched = await Promise.all(ms.map(async m => {
+      try {
+        const v = await request("GET", `/metadata/models/${encodeURIComponent(m.name)}/versions`);
+        return { ...m, versions: v?.data || [] };
+      } catch (_) { return { ...m, versions: [] }; }
+    }));
+    const html = enriched.map(m => `<div style="padding:10px;border-bottom:1px solid var(--line-soft)">
+      <div style="display:flex;justify-content:space-between;align-items:center"><b style="color:var(--fg-hi)">${esc(m.name)}</b><span class="muted" style="font-size:.72rem">${m.versions.length} 版本</span></div>
+      ${m.versions.length ? `<div class="flex wrap" style="gap:4px;margin-top:6px">${m.versions.map(v => `<span class="tag mono" title="${esc(v.uri || "")}">v${esc(v.version)}${v.tier ? ` · ${esc(v.tier)}` : ""}${(v.aliases || []).length ? ` · ${v.aliases.join("/")}` : ""}</span>`).join("")}</div>` : '<div class="muted" style="font-size:.72rem;margin-top:4px">无版本</div>'}
+    </div>`).join("");
+    $("#gModels").innerHTML = html;
+  } catch (e) {
+    $("#gModels").innerHTML = `<div class="degraded">模型注册表加载失败:${esc(e?.detail || e?.message || e)}</div>`;
+  }
+}
+
+function loadAll() { probeAndCatalogs(); loadModels(); }
+loadAll();
+window.applyIcons && applyIcons(document);
+
+$("#refresh").addEventListener("click", () => { loadAll(); toast("已刷新元数据治理", "ok", 2000); });
+$("#apiBtn").addEventListener("click", () => window.openApi(
+  "元数据治理",
+  `curl -s $API/api/v1/metadata/catalogs -H "Authorization: Bearer $JWT" -H "X-API-Key: $KEY" | jq .\ncurl -s $API/api/v1/metadata/tables -H "Authorization: Bearer $JWT" -H "X-API-Key: $KEY" | jq .\n# ADMIN 写操作 body 走 query param:\ncurl -XPOST "$API/api/v1/metadata/tags?body=%7B%22name%22%3A%22pii%22%7D" -H "Authorization: Bearer $JWT" -H "X-API-Key: $KEY"`,
+  "# /metadata/* 走 Gravitino proxy\n# 浏览无 role 守卫,写(tags/policies)需 ADMIN"
+));
+</script>
+</body>
+</html>
