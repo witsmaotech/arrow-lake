@@ -84,7 +84,7 @@
           <option value="rays">射线 · 非环展开</option>
           <option value="single-source">单源最短 · 到所有可达</option>
           <option value="weighted-shortest">加权最短 · 按权重</option>
-          <option value="multi-node">多节点 · 集合间最短</option>
+          <option value="multi-node" disabled>多节点 · 集合间最短(后端 1.7.0 暂不支持)</option>
         </select></div>
         <div id="tDirFg"><label>方向</label><select class="input mono" id="tDir">
           <option value="OUT">OUT · 出边</option>
@@ -407,11 +407,14 @@ async function runTraverse() {
       const r = await request("POST", `/kg/traversers/${mode}`, { body });
       isRing = mode === "rings";
       if (mode === "weighted-shortest") {
-        const res = r.result || {}; paths = res.path ? [{ objects: res.path }] : (res.paths || []);
-      } else if (mode === "single-source") {
+        // 响应 result.path={weight,vertices:[...]} 对象(非裸 id 数组);result.vertices 顶层也有
         const res = r.result || {};
-        paths = Object.entries(res).filter(([k]) => !["weight", "size"].includes(k))
-          .map(([tid, v]) => ({ objects: Array.isArray(v?.path) ? [startId, ...v.path] : [startId, tid] }));
+        const wp = res.path?.vertices || res.vertices || (Array.isArray(res.path) ? res.path : []);
+        paths = wp.length ? [{ objects: wp }] : (res.paths || []);
+      } else if (mode === "single-source") {
+        // 响应 result.paths={target_id:{weight,vertices:[...]}} map(非数组);vertices 已含起点
+        const res = r.result || {};
+        paths = Object.entries(res.paths || {}).map(([tid, v]) => ({ objects: v?.vertices || [startId, tid] }));
       } else {
         paths = r.results || [];
       }
