@@ -69,7 +69,7 @@ window.icon = icon;
 /* —— Nav model —— */
 const NAV = [
   {group:'概览',items:[
-    {id:'dashboard',label:'总览',ic:'dashboard',href:'dashboard.html'},
+    {id:'dashboard',label:'总览',ic:'dashboard',href:'system.html'},
     {id:'tasks',label:'异步任务',ic:'tasks',href:'tasks.html',badge:'3'},
     {id:'system',label:'系统健康',ic:'system',href:'system.html'},
   ]},

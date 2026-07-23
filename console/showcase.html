@@ -309,7 +309,7 @@ const caps=[
 ['kg','知识图谱','HugeGraph per-dataset 分图 · 8 traverser · LLM 抽取','图谱'],
 ['quality','质量与治理','Schema 校验 · 去重 · 血缘 · HMAC 审计','治理'],
 ];
-$('#capGrid').innerHTML=caps.map(c=>`<a class="panel cap-card" href="${{ingest:'datasets.html',search:'search.html',olap:'olap.html',rag:'rag.html',kg:'kg.html',quality:'dashboard.html#lineage'}[c[0]]}">
+$('#capGrid').innerHTML=caps.map(c=>`<a class="panel cap-card" href="${{ingest:'datasets.html',search:'search.html',olap:'olap.html',rag:'rag.html',kg:'kg.html',quality:'governance.html'}[c[0]]}">
 <div class="panel-b"><div class="cap-ic">${icon(c[0]==='olap'?'olap':c[0]==='quality'?'audit':c[0],'')}</div>
 <h3>${c[1]} <span class="tag" style="font-size:.6rem">${c[3]}</span></h3>
 <div class="muted" style="font-size:.8rem;margin-top:6px">${c[2]}</div>

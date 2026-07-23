@@ -90,7 +90,7 @@ function renderShell({ active, crumb } = {}) {
     </a>`).join("")).join("");
   const sidebar = `
   <aside class="sidebar">
-    <a class="brand" href="dashboard.html">${icon("dashboard")}<span><div class="brand-name">Arrow Lake</div><div class="brand-sub">数据湖仓</div></span></a>
+    <a class="brand" href="index.html">${icon("dashboard")}<span><div class="brand-name">Arrow Lake</div><div class="brand-sub">数据湖仓</div></span></a>
     <nav class="nav">${navHtml}</nav>
     <div style="padding:var(--s3) var(--s4);border-top:1px solid var(--line-soft)">
       <div class="lamp ok pulse" style="margin-bottom:6px"><i></i>湖仓在线</div>

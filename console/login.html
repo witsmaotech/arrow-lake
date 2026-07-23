@@ -83,7 +83,7 @@
 import { login, isLoggedIn } from "./src/auth.js";
 import { toast } from "./src/ui/toast.js";
 
-if (isLoggedIn()) location.href = "dashboard.html";
+if (isLoggedIn()) location.href = "system.html";
 
 const $ = (s) => document.querySelector(s);
 const tabKey = $("#tabKey"), tabPwd = $("#tabPwd");
@@ -120,7 +120,7 @@ $("#formPwd").addEventListener("submit", async (e) => {
   try {
     const { loginWithPassword } = await import("./src/auth.js");
     await loginWithPassword(u, p);
-    location.href = "dashboard.html";
+    location.href = "system.html";
   } catch (err) {
     toast("登录失败: " + err.message, "danger", 5000);
     $("#password").focus();
@@ -137,7 +137,7 @@ form.addEventListener("submit", async (e) => {
   if (!v) { toast("请输入 API Key", "warn"); key.focus(); return; }
   const btn = $("#loginBtn");
   btn.disabled = true; btn.textContent = "登录中…";
-  try { await login(v); location.href = "dashboard.html"; }
+  try { await login(v); location.href = "system.html"; }
   catch (err) { toast("登录失败: " + err.message, "danger", 5000); key.focus(); key.select(); }
   finally { btn.disabled = false; btn.innerHTML = '<i class="placeholder" data-ic="key"></i> 登录'; }
 });
