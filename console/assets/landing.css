@@ -33,12 +33,6 @@
 .search-result-mini{margin-top:8px}
 .search-result-mini .bar{height:5px}
 
-/* trust */
-.trust{border-top:1px solid var(--line);border-bottom:1px solid var(--line);background:var(--ink-900)}
-.trust-inner{max-width:var(--content-max);margin:0 auto;padding:var(--s4) var(--s6);display:flex;align-items:center;gap:var(--s5);flex-wrap:wrap;font-family:var(--font-mono);font-size:.78rem;color:var(--fg-md)}
-.trust-inner span:not(.muted):not(.tag){color:var(--fg-hi);font-weight:600}
-.trust-inner .tag{margin-left:auto}
-
 /* sections */
 .section{max-width:var(--content-max);margin:0 auto;padding:var(--s7) var(--s6)}
 .section-head{margin-bottom:var(--s5)}

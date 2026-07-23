@@ -35,14 +35,14 @@
     <div class="hero-copy">
       <span class="tag teal"><span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--ok);box-shadow:0 0 8px var(--ok);vertical-align:middle"></span> v1.9.1 · console 核心界面 + 数据准备 + 安全加固</span>
       <h1>一个湖仓<br/>装下你的全部<span class="accent">检索 · 分析 · 智能</span></h1>
-      <p class="lede">把存储 / 检索 / 分析 / 智能化收敛到<strong>同一份 Lance 列式底座</strong>之上。文本、图像、视频多模态原生——SDK / REST(106 routes) / CLI 三入口统一对外。</p>
+      <p class="lede">把存储 / 检索 / 分析 / 智能化收敛到<strong>同一份 Lance 列式底座</strong>之上。文本、图像、视频多模态原生——SDK / REST(145 routes) / CLI 三入口统一对外。</p>
       <div class="hero-actions">
         <a class="btn btn-primary" href="dashboard.html"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>进入控制台</a>
         <a class="btn btn-line" href="#architecture">看五层架构</a>
       </div>
       <div class="hero-stats">
-        <div><b class="readout">106</b><span>REST routes</span></div>
-        <div><b class="readout">6,374</b><span>测试 / 406 文件</span></div>
+        <div><b class="readout">145</b><span>REST routes</span></div>
+        <div><b class="readout">6,536</b><span>测试 / 406 文件</span></div>
         <div><b class="readout">80%+</b><span>覆盖率</span></div>
         <div><b class="readout">5</b><span>层架构</span></div>
       </div>
@@ -79,15 +79,6 @@
     </div>
   </div>
 </header>
-
-<!-- ===== TRUST STRIP ===== -->
-<section class="trust">
-  <div class="trust-inner">
-    <span class="muted">受信于</span>
-    <span>金融监管</span><span>媒体资产</span><span>ML 训练</span><span>零售分析</span><span>学术研究</span>
-    <span class="tag ok"><span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--ok);vertical-align:middle"></span> MIT 许可</span>
-  </div>
-</section>
 
 <!-- ===== ARCHITECTURE (signature) ===== -->
 <section id="architecture" class="section">
@@ -134,7 +125,7 @@
 <section id="stack" class="section">
   <div class="section-head">
     <span class="tag teal">技术栈</span>
-    <h2>每项都钉到确切版本<span class="muted" style="font-weight:400">—— 经 6,300+ 测试验证</span></h2>
+    <h2>每项都钉到确切版本<span class="muted" style="font-weight:400">—— 经 6,500+ 测试验证</span></h2>
   </div>
   <div class="stack-wall" id="stackWall"></div>
 </section>
@@ -189,7 +180,7 @@ const dm=$('#depthMini'); if(dm){dm.innerHTML=`<div class="muted" style="font-si
 // architecture diagram
 const arch=$('#archDiagram'); if(arch){
 const layers=[
-['① 接入层 · Entry','SDK Lake facade · 9 mixin  ·  REST 106 routes  ·  CLI 16 组','#1a2740','#2DD4BF'],
+['① 接入层 · Entry','SDK Lake facade · 9 mixin  ·  REST 145 routes  ·  CLI 16 组','#1a2740','#2DD4BF'],
 ['② 能力层 · Capabilities','摄取 · 查询 8 Bridge · 智能 RAG/KG','#1c2b3e','#38BDF8'],
 ['③ 计算层 · Compute','Daft 多模态 · Ray 集群 · 嵌入 CLIP/Qwen3','#243042','#F59E0B'],
 ['④ 引擎层 · Engines','LanceDB · DuckDB · DuckLake 物化视图','#262a42','#A78BFA'],

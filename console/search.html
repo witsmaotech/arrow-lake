@@ -120,7 +120,7 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 let mode = "vector";
 let schemaFields = [];
 
-const isVec = (t) => /list|fixed_size/i.test(t);
+const isVec = (t) => /fixed_size_list/i.test(t);
 const isTxt = (t) => /string|utf8|large_string/i.test(t);
 const vecCols = () => schemaFields.filter(f => isVec(f.type)).map(f => f.name);
 const txtCols = () => schemaFields.filter(f => isTxt(f.type)).map(f => f.name);
