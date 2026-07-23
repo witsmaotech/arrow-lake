@@ -41,7 +41,9 @@ function colStats(rows, col) {
       let sq = 0;
       for (const x of nums) sq += (x - avg) ** 2;
       out.min = min; out.max = max; out.sum = sum; out.avg = avg;
-      out.std = nums.length > 1 ? Math.sqrt(sq / nums.length) : 0;
+      // 样本标准差(÷(N-1)),对齐 DuckDB SUMMARIZE 的 std 列(默认 stddev_samp);
+      // 原 ÷N(总体)与 SUMMARIZE 不一致会误导用户对比。
+      out.std = nums.length > 1 ? Math.sqrt(sq / (nums.length - 1)) : 0;
     }
   }
   return out;
