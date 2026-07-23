@@ -17,8 +17,13 @@
   .bubble.a.md code{font-family:var(--font-mono);font-size:.78rem;background:var(--ink-950);padding:1px 5px;border-radius:var(--r-sm);border:1px solid var(--line-soft)}
   .bubble.a.md pre{background:var(--ink-950);border:1px solid var(--line);border-radius:var(--r-sm);padding:8px;overflow:auto;margin:.4em 0}
   .bubble.a.md pre code{background:none;border:none;padding:0}.bubble.a.md strong{font-weight:600}
-  .schema-chip{display:inline-block;font-family:var(--font-mono);font-size:.72rem;padding:2px 8px;border:1px solid var(--line-soft);border-radius:var(--r-sm);background:var(--ink-900);margin:0 4px 4px 0}
+  .schema-chip{display:inline-block;font-family:var(--font-mono);font-size:.72rem;padding:2px 8px;border:1px solid var(--line-soft);border-radius:var(--r-sm);background:var(--ink-900);margin:0 4px 4px 0;cursor:pointer;transition:background .12s,border-color .12s}
   .schema-chip.v{color:var(--teal-bright)}.schema-chip.e{color:var(--fg-hi)}
+  .schema-chip:hover{background:var(--ink-850);border-color:var(--teal-bright)}
+  .schema-chip.active{background:var(--ink-850);border-color:var(--teal-bright);color:var(--teal-bright)!important}
+  .mode-tag{font-family:var(--font-mono);font-size:.68rem;padding:1px 6px;border-radius:var(--r-sm);background:var(--ink-900);color:var(--fg-md)}
+  .trav-hint{font-size:.72rem;color:var(--fg-lo);margin-top:10px;line-height:1.5}
+  .ring-row .tag{color:var(--danger)!important;border-color:var(--danger)!important}
   .cite{border:1px solid var(--line-soft);border-radius:var(--r-sm);padding:6px 8px;background:var(--ink-950);font-size:.74rem;color:var(--fg-md);margin-top:4px}
   .stat{font-family:var(--font-mono);font-size:.7rem;color:var(--fg-lo)}
 </style>
@@ -66,16 +71,41 @@
     </div>
   </div>
 
-  <!-- 实体遍历(方案A:遍历 KG 实体关系图,非表 src/dst;复用 /kg/graph 数据前端 BFS)-->
+  <!-- 图遍历工作台(HugeGraph Traversers:8 种遍历模式,后端 REST 代理;替换原前端 BFS)-->
   <div class="panel flush" style="margin-top:var(--s4)">
-    <div class="panel-h"><i class="placeholder" data-ic="search"></i><h3>实体遍历 · KG 子图</h3><span class="sub">从起点实体 BFS N 跳 · 找邻居关系(related_to/part_of/...) · 复用 /kg/graph</span></div>
+    <div class="panel-h"><i class="placeholder" data-ic="search"></i><h3>图遍历 · HugeGraph Traversers</h3><span class="sub">8 种遍历 · K-neighbor/最短/环/交叉点/单源/多节点/射线/加权 · 后端 traversers/* 代理</span></div>
     <div class="panel-b" style="padding:14px">
-      <div class="fg"><label>起点实体 <span style="color:var(--danger)">*</span></label><select class="input mono" id="gStart"><option value="">— 先选数据集加载实体 —</option></select></div>
-      <div class="fg" style="grid-template-columns:1fr 1fr"><div><label>跳数 (1-3)</label><input class="input mono" id="gDepth" type="number" value="2" min="1" max="3"></div><div><label>关系过滤(可选)</label><select class="input mono" id="gRel"><option value="">全部关系</option></select></div></div>
-      <button class="btn btn-primary btn-sm" id="gRun"><i class="placeholder" data-ic="play"></i> 遍历邻居</button>
-      <div class="muted" style="font-size:.72rem;margin-top:10px">选起点实体 + 跳数,前端 BFS 遍历 KG 关系(不查后端),找 N 跳邻居子图。结果高亮在上方图可视化。</div>
-      <div class="sub" id="gMeta" style="margin-top:12px">未遍历</div>
-      <div id="gPaths" style="max-height:280px;overflow:auto;margin-top:6px"><div class="muted" style="padding:10px">选起点实体后点「遍历邻居」</div></div>
+      <div class="fg" style="grid-template-columns:1fr 1fr">
+        <div><label>遍历模式</label><select class="input mono" id="tMode">
+          <option value="kneighbor">K-neighbor · N 跳邻居</option>
+          <option value="all-shortest-paths">最短路径 · 两实体间</option>
+          <option value="rings">环检测 · 回环路径</option>
+          <option value="crosspoints">交叉点 · 共同可达</option>
+          <option value="rays">射线 · 非环展开</option>
+          <option value="single-source">单源最短 · 到所有可达</option>
+          <option value="weighted-shortest">加权最短 · 按权重</option>
+          <option value="multi-node">多节点 · 集合间最短</option>
+        </select></div>
+        <div id="tDirFg"><label>方向</label><select class="input mono" id="tDir">
+          <option value="OUT">OUT · 出边</option>
+          <option value="IN">IN · 入边</option>
+          <option value="BOTH">BOTH · 双向</option>
+        </select></div>
+      </div>
+      <div class="fg" id="tStartFg"><label>起点实体 <span style="color:var(--danger)">*</span></label><select class="input mono" id="gStart"><option value="">— 先选数据集加载实体 —</option></select></div>
+      <div class="fg" id="tTargetFg" style="display:none"><label>终点实体 <span style="color:var(--danger)">*</span></label><select class="input mono" id="gTarget"><option value="">— 选终点实体 —</option></select></div>
+      <div class="fg" id="tMultiFg" style="display:none"><label>多节点源(逗号分隔实体名/id)</label><input class="input mono" id="tMultiSrc" placeholder="实体A, 实体B"><label style="margin-top:6px">多节点目标</label><input class="input mono" id="tMultiDst" placeholder="实体C, 实体D"></div>
+      <div class="fg" style="grid-template-columns:1fr 1fr" id="tDepthFg">
+        <div><label>最大深度</label><input class="input mono" id="gDepth" type="number" value="2" min="1" max="10"></div>
+        <div><label>关系过滤(可选 · 点 Schema 边类型联动)</label><select class="input mono" id="gRel"><option value="">全部关系</option></select></div>
+      </div>
+      <div class="flex" style="gap:8px;margin-top:4px;align-items:center">
+        <button class="btn btn-primary btn-sm" id="gRun"><i class="placeholder" data-ic="play"></i> 执行遍历</button>
+        <button class="btn btn-ghost btn-sm" id="gReset"><i class="placeholder" data-ic="refresh"></i> 重置为完整图</button>
+        <span id="gMeta" class="sub" style="margin-left:auto">未遍历</span>
+      </div>
+      <div class="trav-hint" id="tHint">选起点实体 + 模式,调后端 HugeGraph traverser,返回子图/路径 → vis-network 重渲(起点高亮 · 路径着色 · 环标红)。</div>
+      <div id="gPaths" style="max-height:280px;overflow:auto;margin-top:6px"><div class="muted" style="padding:10px">选起点实体 + 遍历模式后点「执行遍历」</div></div>
     </div>
   </div>
 </div></main>
@@ -137,7 +167,24 @@ async function loadSchema() {
     const vs = s.vertex_labels || [], es = s.edge_labels || [];
     $("#schemaPanel").style.display = "";
     $("#schemaMeta").textContent = `${vs.length} 顶点类型 · ${es.length} 边类型`;
-    $("#schema").innerHTML = (vs.length || es.length) ? `<div style="margin-bottom:6px"><span class="muted" style="font-size:.72rem">顶点:</span>${vs.map(x => `<span class="schema-chip v">${esc(x)}</span>`).join("")}</div><div><span class="muted" style="font-size:.72rem">边:</span>${es.map(x => `<span class="schema-chip e">${esc(x)}</span>`).join("")}</div>` : '<div class="muted" style="font-size:.74rem;padding:4px 0">图为空,无 schema</div>';
+    $("#schema").innerHTML = (vs.length || es.length) ? `<div style="margin-bottom:6px"><span class="muted" style="font-size:.72rem">顶点(点击→筛选起点▼):</span>${vs.map(x => `<span class="schema-chip v" data-vtype="${esc(x)}" title="点击:起点下拉仅留「${esc(x)}」类型">${esc(x)}</span>`).join("")}</div><div><span class="muted" style="font-size:.72rem">边(点击→设关系过滤▼):</span>${es.map(x => `<span class="schema-chip e" data-elabel="${esc(x)}" title="点击:关系过滤=「${esc(x)}」">${esc(x)}</span>`).join("")}</div>` : '<div class="muted" style="font-size:.74rem;padding:4px 0">图为空,无 schema</div>';
+    // Schema-遍历联动:顶点类型 chip → 筛选起点下拉为该类型;边类型 chip → 关系过滤下拉
+    $("#schema").querySelectorAll(".schema-chip[data-vtype]").forEach((chip) => {
+      chip.addEventListener("click", () => {
+        const t = chip.dataset.vtype;
+        const isActive = chip.classList.toggle("active");
+        $("#schema").querySelectorAll(".schema-chip[data-vtype]").forEach((c) => { if (c !== chip) c.classList.remove("active"); });
+        filterStartByType(isActive ? t : "");
+      });
+    });
+    $("#schema").querySelectorAll(".schema-chip[data-elabel]").forEach((chip) => {
+      chip.addEventListener("click", () => {
+        const l = chip.dataset.elabel;
+        const isActive = chip.classList.toggle("active");
+        $("#schema").querySelectorAll(".schema-chip[data-elabel]").forEach((c) => { if (c !== chip) c.classList.remove("active"); });
+        $("#gRel").value = isActive ? l : "";
+      });
+    });
   } catch (_) { $("#schemaPanel").style.display = "none"; }
 }
 
@@ -168,7 +215,7 @@ async function loadGraph() {
   // 消失,只保留实体间的关系边(related_to/part_of/...)。溯源走邻居查询。
   const STRUCTURE = new Set(["document", "chunk"]);
   const ns = (r.nodes || []).filter(n => !STRUCTURE.has(n.label)).map(n => ({
-    id: n.id, group: n.type || n.label,
+    id: n.id, group: n.type || n.label, vtype: n.label,
     label: n.name && n.name !== n.label ? n.name : (n.name || n.label),
     title: `${n.name || n.label} [${n.label}]${n.type && n.type !== n.label ? " · " + n.type : ""}${n.definition ? "\n" + n.definition : ""}`,
   }));
@@ -182,6 +229,7 @@ async function loadGraph() {
   meta.innerHTML = `${ns.length} 实体节点 · ${es.length} 关系边${r.truncated ? ` · <span style="color:var(--warn)">仅显示前 300(数据集更大)</span>` : ""}`;
   kgNodes = new V.DataSet(ns);
   kgEdges = new V.DataSet(es);
+  fullSnapshot = { nodes: ns, edges: es }; // 快照完整 300 图(遍历后重置恢复)
   kgNetwork = new V.Network(cont, { nodes: kgNodes, edges: kgEdges }, {
     height: "100%", width: "100%", autoResize: true,
     layout: { improvedLayout: ns.length <= 150 },
@@ -207,65 +255,188 @@ async function loadGraph() {
     },
     interaction: { hover: true, tooltipDelay: 120, navigationButtons: false },
   });
-  // 联动(反向):点 vis 节点 → 高亮结果里含该节点的关系行 + 滚动到位
+  // 联动(反向):点 vis 节点 → 高亮结果里含该节点的路径行 + 滚动到位
   kgNetwork.on("click", (params) => {
     const nid = params.nodes?.[0]; if (!nid) return;
+    const nidStr = String(nid);
     const rows = document.querySelectorAll("#gPaths .path-row");
     let first = null;
-    rows.forEach((r) => { const hit = r.dataset.from === nid || r.dataset.to === nid; r.classList.toggle("hl", hit); if (hit && !first) first = r; });
+    rows.forEach((r) => { const hit = (r.dataset.ids || "").split(",").includes(nidStr); r.classList.toggle("hl", hit); if (hit && !first) first = r; });
     if (first) first.scrollIntoView({ block: "nearest", behavior: "smooth" });
   });
-  // 填充实实体遍历下拉(方案A:起点=实体节点; 关系类型=去重)
-  const _entSel = $("#gStart"), _relSel = $("#gRel");
-  if (_entSel) _entSel.innerHTML = `<option value="">— 选起点实体 (${ns.length}) —</option>` + ns.map((n) => `<option value="${esc(n.id)}">${esc(n.label)}</option>`).join("");
+  // 填充遍历起点/终点下拉(实体节点)+ 关系类型去重;data-vtype 供 Schema 联动过滤
+  const _entSel = $("#gStart"), _tgtSel = $("#gTarget"), _relSel = $("#gRel");
+  if (_entSel) _entSel.innerHTML = `<option value="">— 选起点实体 (${ns.length}) —</option>` + ns.map((n) => `<option value="${esc(n.id)}" data-vtype="${esc(n.vtype || "")}">${esc(n.label)}</option>`).join("");
+  if (_tgtSel) _tgtSel.innerHTML = `<option value="">— 选终点实体 (${ns.length}) —</option>` + ns.map((n) => `<option value="${esc(n.id)}">${esc(n.label)}</option>`).join("");
   if (_relSel) { const _rels = [...new Set(es.map((e) => e.label).filter(Boolean))].sort(); _relSel.innerHTML = `<option value="">全部关系</option>` + _rels.map((r) => `<option value="${esc(r)}">${esc(r)}</option>`).join(""); }
 }
 
-// ---------- 实体遍历(方案A:BFS 遍历 KG 实体关系,复用 /kg/graph 数据,不查后端)----------
-function entityTraverse() {
-  const startId = $("#gStart").value;
-  if (!startId) return toast("请选起点实体", "warn");
-  if (!kgEdges || !kgNodes) return toast("KG 未加载,先选数据集等待图渲染", "warn");
-  const depth = Math.min(3, Math.max(1, parseInt($("#gDepth").value) || 2));
-  const relFilter = $("#gRel").value;
-  const allEdges = kgEdges.get();
-  // BFS:N 跳邻居 + 路径边
-  const visited = new Set([startId]);
-  let frontier = [startId];
-  const pathEdges = [];
-  for (let d = 0; d < depth; d++) {
-    const next = [];
-    for (const id of frontier) {
-      for (const e of allEdges) {
-        if (e.from !== id) continue;
-        if (relFilter && e.label !== relFilter) continue;
-        pathEdges.push(e);
-        if (!visited.has(e.to)) { visited.add(e.to); next.push(e.to); }
-      }
-    }
-    if (!next.length) break;
-    frontier = next;
+// ---------- 图遍历工作台(后端 HugeGraph traversers 代理;替换原前端 BFS)----------
+let fullSnapshot = null; // 完整 300 图快照(遍历后重置用)
+
+// Schema 联动:按顶点类型过滤起点下拉(vtype = HugeGraph vertex label)
+function filterStartByType(type) {
+  const sel = $("#gStart"); if (!sel || !fullSnapshot) return;
+  const all = fullSnapshot.nodes;
+  const filtered = type ? all.filter((n) => n.vtype === type) : all;
+  const cur = sel.value;
+  sel.innerHTML = `<option value="">— 选起点实体 (${filtered.length}/${all.length}) —</option>` + filtered.map((n) => `<option value="${esc(n.id)}" data-vtype="${esc(n.vtype || "")}">${esc(n.label)}</option>`).join("");
+  if (cur && filtered.some((n) => n.id === cur)) sel.value = cur;
+}
+
+// 遍历模式 → 显隐字段(起/终点/深度/方向/多节点)
+const MODE_FIELDS = {
+  kneighbor:            { start: true,  target: false, depth: true,  dir: false, multi: false },
+  "all-shortest-paths": { start: true,  target: true,  depth: true,  dir: true,  multi: false },
+  rings:                { start: true,  target: false, depth: true,  dir: true,  multi: false },
+  crosspoints:          { start: true,  target: true,  depth: true,  dir: true,  multi: false },
+  rays:                 { start: true,  target: false, depth: true,  dir: true,  multi: false },
+  "single-source":      { start: true,  target: false, depth: false, dir: true,  multi: false },
+  "weighted-shortest":  { start: true,  target: true,  depth: false, dir: true,  multi: false },
+  "multi-node":         { start: false, target: false, depth: false, dir: true,  multi: true },
+};
+function syncModeFields() {
+  const m = MODE_FIELDS[$("#tMode").value] || MODE_FIELDS.kneighbor;
+  $("#tStartFg").style.display = m.start ? "" : "none";
+  $("#tTargetFg").style.display = m.target ? "" : "none";
+  $("#tDepthFg").style.display = m.depth ? "" : "none";
+  $("#tDirFg").style.display = m.dir ? "" : "none";
+  $("#tMultiFg").style.display = m.multi ? "" : "none";
+}
+$("#tMode").addEventListener("change", syncModeFields);
+
+// id → 显示名/分组(从快照 map;未知 id 截断显示)
+function nodeLabel(id, idMap) {
+  const n = idMap.get(id);
+  if (n?.label) return n.label;
+  return typeof id === "string" ? id.replace(/^(guest:|default:)/, "").slice(0, 20) : String(id);
+}
+function nodeGroup(id, idMap) { return idMap.get(id)?.group || "entity"; }
+
+// traverser 路径数组 → nodes/edges(HugeGraph 路径对象:objects=顶点 id 序列, labels=边 label 序列)
+function pathsToGraph(paths, idMap) {
+  const nodeSet = new Map();
+  const edges = [];
+  for (const p of paths) {
+    const objs = p.objects || p.path || p.vertices || [];
+    const labs = p.labels || p.edgeLabels || [];
+    for (const id of objs) { const sid = String(id); if (!nodeSet.has(sid)) nodeSet.set(sid, { id: sid, label: nodeLabel(sid, idMap), group: nodeGroup(sid, idMap) }); }
+    for (let i = 1; i < objs.length; i++) edges.push({ from: String(objs[i - 1]), to: String(objs[i]), label: labs[i - 1] || "" });
   }
-  const startNode = kgNodes.get(startId);
-  $("#gMeta").textContent = `起点「${startNode?.label || startId}」· ${depth} 跳 → ${visited.size} 实体 · ${pathEdges.length} 关系`;
-  $("#gPaths").innerHTML = pathEdges.length ? pathEdges.map((e) => {
-    const from = kgNodes.get(e.from)?.label || e.from;
-    const to = kgNodes.get(e.to)?.label || e.to;
-    return `<div class="path-row" data-from="${esc(e.from)}" data-to="${esc(e.to)}"><span class="node">${esc(from)}</span><span class="tag">${esc(e.label || "→")}</span><span class="node">${esc(to)}</span></div>`;
-  }).join("") : `<div class="muted" style="padding:10px">该实体无邻居关系(叶子节点或关系被过滤)</div>`;
-  // 联动(正向):点结果行 → vis 高亮该边两端节点 + focus 聚焦
+  return { nodes: [...nodeSet.values()], edges };
+}
+
+// 遍历结果 → vis-network setData 重渲(起点高亮 · 路径着色 · 环标红)+ 路径列表表
+function renderTraverseSubgraph({ nodes, edges, paths, mode, startId, isRing }) {
+  if (!kgNetwork) return;
+  const idMap = new Map((fullSnapshot?.nodes || []).map((n) => [String(n.id), n]));
+  for (const n of nodes) idMap.set(String(n.id), n);
+  const visNodes = nodes.map((n) => ({
+    id: n.id, group: n.group || "entity",
+    label: n.label || nodeLabel(n.id, idMap),
+    title: `${n.label || nodeLabel(n.id, idMap)}${n.group && n.group !== "entity" ? " · " + n.group : ""}`,
+  }));
+  if (startId) { // 起点放大 + 高亮边框
+    const sn = visNodes.find((x) => String(x.id) === String(startId));
+    if (sn) { sn.size = 22; sn.borderWidth = 4; sn.font = { size: 15, color: "#fef3c7" }; }
+  }
+  const visEdges = edges.map((e, i) => ({
+    id: "te" + i, from: e.from, to: e.to, label: e.label || "", arrows: "to",
+    font: { size: 9, color: "#64748b", strokeWidth: 0 },
+    color: { color: isRing ? "#ef4444" : "#38bdf8", opacity: 0.75 },
+  }));
+  kgNodes.clear(); kgNodes.add(visNodes);
+  kgEdges.clear(); kgEdges.add(visEdges);
+  kgNetwork.setData({ nodes: kgNodes, edges: kgEdges });
+  kgNetwork.once("stabilizationIterationsDone", () => { try { if (startId) kgNetwork.focus(startId, { scale: 0.85, animation: { duration: 500 } }); } catch (_) {} });
+  $("#gMeta").innerHTML = `<span class="mode-tag">${esc(mode)}</span> ${visNodes.length} 节点 · ${visEdges.length} 边${paths?.length ? ` · ${paths.length} 路径` : ""}`;
+  $("#gPaths").innerHTML = paths && paths.length ? paths.map((p, i) => {
+    const ids = (p.objects || p.path || p.vertices || []).map(String), labs = p.labels || p.edgeLabels || [];
+    const segs = ids.map((id, k) => {
+      const lab = esc(nodeLabel(id, idMap));
+      const rel = k > 0 ? (labs[k - 1] || "→") : "";
+      return rel ? `<span class="tag">${esc(rel)}</span><span class="node">${lab}</span>` : `<span class="node">${lab}</span>`;
+    });
+    return `<div class="path-row ${isRing ? "ring-row" : ""}" data-ids="${esc(ids.join(","))}"><span class="muted" style="font-size:.68rem;margin-right:4px">#${i + 1}</span>${segs.join("")}</div>`;
+  }).join("") : (visEdges.length ? `<div class="muted" style="padding:10px">遍历返回子图(无显式路径列表,见上方可视化)</div>` : `<div class="muted" style="padding:10px">无遍历结果(该实体无邻居/路径,或深度不足)</div>`);
   $("#gPaths").querySelectorAll(".path-row").forEach((row) => {
     row.addEventListener("click", () => {
       $("#gPaths").querySelectorAll(".path-row.hl").forEach((r) => r.classList.remove("hl"));
       row.classList.add("hl");
-      try { kgNetwork?.selectNodes([row.dataset.from, row.dataset.to]); kgNetwork?.focus(row.dataset.from, { scale: 1.3, animation: { duration: 400, easingFunction: "easeInOutQuad" } }); } catch (_) {}
+      const ids = row.dataset.ids.split(",").filter(Boolean);
+      try { kgNetwork?.selectNodes(ids); if (ids[0]) kgNetwork?.focus(ids[0], { scale: 1.1, animation: { duration: 400, easingFunction: "easeInOutQuad" } }); } catch (_) {}
     });
   });
-  // 高亮子图(上方图可视化)——遍历后默认全选 N 跳
-  try { kgNetwork?.selectNodes?.([...visited]); } catch (_) {}
-  toast(`遍历完成:${visited.size} 实体 · ${pathEdges.length} 关系`, "ok", 2500);
 }
-$("#gRun").addEventListener("click", entityTraverse);
+
+async function runTraverse() {
+  const ds = curDs(); if (!ds) return toast("先选数据集", "warn");
+  if (!kgNetwork) return toast("KG 未加载,先等图渲染", "warn");
+  const mode = $("#tMode").value, f = MODE_FIELDS[mode];
+  const dir = $("#tDir").value;
+  const depth = Math.min(10, Math.max(1, parseInt($("#gDepth").value) || 2));
+  const startId = $("#gStart").value, targetId = $("#gTarget").value;
+  if (f.start && !startId) return toast("请选起点实体", "warn");
+  if (f.target && !targetId) return toast("请选终点实体", "warn");
+  const idMap = new Map((fullSnapshot?.nodes || []).map((n) => [String(n.id), n]));
+  const btn = $("#gRun"); btn.disabled = true; btn.textContent = "遍历中…";
+  $("#gMeta").textContent = "调用后端 traverser…";
+  try {
+    let resultNodes = [], resultEdges = [], paths = [], isRing = false;
+    if (mode === "kneighbor") {
+      const d = Math.min(5, depth); // neighbors 端点 depth>5 → 400
+      const r = await request("GET", `/kg/entities/${encodeURIComponent(startId)}/neighbors?depth=${d}&dataset=${encodeURIComponent(ds)}`);
+      const nbrs = r.neighbors || [];
+      resultNodes = [{ id: startId, label: nodeLabel(startId, idMap), group: nodeGroup(startId, idMap) },
+        ...nbrs.map((n) => ({ id: String(n.id), label: n.properties?.name || n.name || n.label || nodeLabel(String(n.id), idMap), group: n.properties?.type || n.type || n.label || "entity" }))];
+      resultEdges = nbrs.map((n) => ({ from: startId, to: String(n.id), label: "" }));
+    } else if (mode === "multi-node") {
+      const parseIds = (v) => [...new Set(v.split(",").map((s) => s.trim()).filter(Boolean).flatMap((s) => {
+        const m = [...idMap.entries()].find(([_, n]) => n.label === s); return m ? [m[0]] : [s];
+      }))];
+      const sources = parseIds($("#tMultiSrc").value), targets = parseIds($("#tMultiDst").value);
+      if (!sources.length || !targets.length) return toast("多节点:源/目标各至少 1 个", "warn");
+      const r = await request("POST", "/kg/traversers/multi-node", { body: { sources, targets, direction: dir, dataset: ds } });
+      paths = r.results || []; const g = pathsToGraph(paths, idMap); resultNodes = g.nodes; resultEdges = g.edges;
+    } else {
+      const body = { direction: dir, dataset: ds };
+      if (f.depth) body.max_depth = depth;
+      body.source = startId;
+      if (f.target) body.target = targetId;
+      if (mode === "weighted-shortest" || mode === "single-source") { body.weight_prop = "weight"; body.max_degree = 10000; }
+      const r = await request("POST", `/kg/traversers/${mode}`, { body });
+      isRing = mode === "rings";
+      if (mode === "weighted-shortest") {
+        const res = r.result || {}; paths = res.path ? [{ objects: res.path }] : (res.paths || []);
+      } else if (mode === "single-source") {
+        const res = r.result || {};
+        paths = Object.entries(res).filter(([k]) => !["weight", "size"].includes(k))
+          .map(([tid, v]) => ({ objects: Array.isArray(v?.path) ? [startId, ...v.path] : [startId, tid] }));
+      } else {
+        paths = r.results || [];
+      }
+      const g = pathsToGraph(paths, idMap); resultNodes = g.nodes; resultEdges = g.edges;
+    }
+    renderTraverseSubgraph({ nodes: resultNodes, edges: resultEdges, paths, mode, startId: f.start ? startId : null, isRing });
+    toast(`遍历完成:${resultNodes.length} 节点 · ${resultEdges.length} 边`, "ok", 2500);
+  } catch (e) {
+    const d = e?.detail; const emsg = Array.isArray(d) ? d.map((x) => x?.msg || "").join("; ") : (d || e?.message || e);
+    $("#gMeta").innerHTML = `<span style="color:var(--danger)">遍历失败:${esc(String(emsg)).slice(0, 120)}</span>`;
+    toast("遍历失败:" + String(emsg).slice(0, 80), "danger");
+  } finally { btn.disabled = false; btn.textContent = "执行遍历"; }
+}
+$("#gRun").addEventListener("click", runTraverse);
+
+// 重置为完整 300 图(从快照恢复)
+$("#gReset").addEventListener("click", () => {
+  if (!fullSnapshot || !kgNetwork) return;
+  kgNodes.clear(); kgNodes.add(fullSnapshot.nodes);
+  kgEdges.clear(); kgEdges.add(fullSnapshot.edges);
+  kgNetwork.setData({ nodes: kgNodes, edges: kgEdges });
+  $("#gMeta").textContent = "已重置为完整图";
+  $("#gPaths").innerHTML = '<div class="muted" style="padding:10px">选起点实体 + 遍历模式后点「执行遍历」</div>';
+});
+syncModeFields();
 
 // 建/重建 KG:默认折叠(顶点=0 时自动展开引导首次构建,有数据时收起)
 function setBuildOpen(open) {
