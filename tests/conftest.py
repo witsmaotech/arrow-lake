@@ -134,3 +134,64 @@ def make_table():
         )
 
     return _make
+
+
+# ---------------------------------------------------------------------------
+# Global state isolation (v1.9.2 批3)
+# ---------------------------------------------------------------------------
+# Root cause of full-suite flakiness (memory issue_test_isolation_pollution):
+# tests/conftest.py had NO autouse global-state reset, so module-level caches
+# / process singletons / DuckDB handles leaked across tests. Individual files
+# pass alone but fail under the full run (~106 failed, wave-like).
+#
+# This autouse fixture runs after every test and clears the known process-level
+# caches defensively (each clear is wrapped so a missing/renamed attribute can
+# never introduce a NEW failure). gc.collect() at the end reclaims lingering
+# cyclic refs held by module singletons.
+
+
+@pytest.fixture(autouse=True)
+def reset_global_state():
+    """Function-scope teardown: clear process-level caches/singletons.
+
+    Best-effort — every clear is guarded so unrelated tests are never affected.
+    """
+    yield
+
+    import gc
+
+    # arrow_lake.ingest.document: parse cache + docling converter cache
+    # (confirmed module-level mutables; see document.py:198/226).
+    try:
+        from arrow_lake.ingest import document as _doc
+
+        _doc._PARSE_CACHE.clear()  # type: ignore[attr-defined]
+        _doc._DOCLING_CONVERTERS.clear()  # type: ignore[attr-defined]
+    except Exception:
+        pass
+
+    # DuckDB: some adapters keep a module-level connection pool. Clear any dict
+    # / list named like a session pool if present.
+    for _mod_path in (
+        "arrow_lake.query._db",
+        "arrow_lake.query.lance_adapter",
+    ):
+        try:
+            import importlib
+
+            _mod = importlib.import_module(_mod_path)
+            for _pool_name in (
+                "_GLOBAL_SESSIONS",
+                "_SESSIONS",
+                "_POOL",
+                "_global_pool",
+            ):
+                _pool = getattr(_mod, _pool_name, None)
+                if isinstance(_pool, dict):
+                    _pool.clear()
+                elif isinstance(_pool, list):
+                    _pool.clear()
+        except Exception:
+            pass
+
+    gc.collect()
