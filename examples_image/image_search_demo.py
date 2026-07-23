@@ -44,7 +44,7 @@ DS = os.environ.get("IMAGE_SEARCH_DS", "image_search_demo")
 API = os.environ.get("ARROW_LAKE__API__URL", "http://127.0.0.1:8000").rstrip("/")
 API_KEY = os.environ.get("ARROW_LAKE__API__API_KEY", "dev-api-key-for-local-testing-only")
 TOTAL = 256  # ≥256:IVF_PQ 训练阈值
-FORCE = "--force" in sys.argv
+FORCE = "--force" in sys.argv or os.environ.get("DEMO_FORCE") == "1"
 
 t0 = time.time()
 
