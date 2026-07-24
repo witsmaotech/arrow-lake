@@ -19,6 +19,8 @@
   .op-btn .op-ic svg{width:15px;height:15px}
   .op-btn .op-t{font-weight:600;display:block;font-size:.8rem}
   .op-btn .op-s{font-size:.66rem;color:var(--fg-lo);display:block;margin-top:1px}
+  .dsc-chip{display:inline-block;font-family:var(--font-mono);font-size:.72rem;padding:2px 8px;border:1px solid var(--line-soft);border-radius:var(--r-sm);background:var(--ink-900);color:var(--teal-bright);margin:3px 4px 0 0}
+  .dsc-chip .dsc-cm{color:var(--fg-lo);font-style:italic;max-width:18ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:bottom}
   .op-grp-title{font-size:.66rem;color:var(--fg-lo);text-transform:uppercase;letter-spacing:.05em;margin:8px 2px 4px}
   .cfg-row{display:grid;gap:6px;margin-bottom:10px}
   .cfg-row label{font-size:.68rem;color:var(--fg-lo);text-transform:uppercase;letter-spacing:.04em}
@@ -46,6 +48,7 @@
     <div class="panel-h"><i class="placeholder" data-ic="database"></i><h3>数据源</h3><span class="sub" id="dsMeta">—</span></div>
     <div class="panel-b" style="padding:12px">
       <select class="select" id="dsSel" style="width:100%;max-width:440px"><option value="">加载数据集…</option></select>
+      <div id="dsSchema" style="margin-top:10px"></div>
     </div>
   </div>
 
@@ -314,6 +317,27 @@ $("#runPipe").addEventListener("click", async () => {
   }
 });
 
+async function loadDsSchema(name) {
+  const box = $("#dsSchema");
+  if (!name) { if (box) box.innerHTML = ""; return; }
+  box.innerHTML = `<span class="muted" style="font-size:.72rem">加载字段…</span>`;
+  try {
+    const s = await request("GET", `/datasets/${encodeURIComponent(name)}/schema`);
+    const fs = s?.fields || [];
+    $("#dsMeta").textContent = `${fs.length} 字段 · 已选:${name}`;
+    box.innerHTML = fs.length
+      ? fs.map((f) => {
+          const cm = f.comment || "";
+          const tip = `${esc(f.type)}${f.nullable ? "" : " · NOT NULL"}${cm ? "\n" + cm : ""}`;
+          const cmHtml = cm ? ` <span class="dsc-cm" title="${esc(cm)}">// ${esc(cm.length > 18 ? cm.slice(0, 17) + "…" : cm)}</span>` : "";
+          return `<span class="dsc-chip" title="${tip}">${esc(f.name)}<span style="color:var(--fg-lo)"> : ${esc(f.type)}</span>${cmHtml}</span>`;
+        }).join("")
+      : `<span class="muted" style="font-size:.72rem">无字段</span>`;
+  } catch (_) {
+    box.innerHTML = `<span class="muted" style="font-size:.72rem">字段加载失败</span>`;
+  }
+}
+
 async function loadDatasets() {
   try {
     const data = await request("GET", "/datasets?limit=1000");
@@ -322,8 +346,12 @@ async function loadDatasets() {
     $("#dsSel").innerHTML = list.length
       ? list.map((d) => `<option value="${esc(d.name)}"${d.name === cur ? " selected" : ""}>${esc(d.name)} · ${(d.num_rows ?? 0).toLocaleString()} 行</option>`).join("")
       : `<option value="">(无数据集)</option>`;
-    if ($("#dsSel").value) $("#dsMeta").textContent = `已选:${$("#dsSel").value}`;
-    $("#dsSel").addEventListener("change", () => { $("#dsMeta").textContent = $("#dsSel").value ? `已选:${$("#dsSel").value}` : "—"; });
+    if ($("#dsSel").value) loadDsSchema($("#dsSel").value);
+    $("#dsSel").addEventListener("change", () => {
+      const v = $("#dsSel").value;
+      $("#dsMeta").textContent = v ? `已选:${v}` : "—";
+      loadDsSchema(v);
+    });
   } catch (e) {
     toast("数据集列表加载失败:" + (e?.detail || e?.message), "warn", 4000);
     $("#dsMeta").textContent = "数据集加载失败";

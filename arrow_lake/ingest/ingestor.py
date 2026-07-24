@@ -13,6 +13,7 @@ Implementation is split across private mixin modules:
 from __future__ import annotations
 
 import contextlib
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar
@@ -23,6 +24,9 @@ from arrow_lake.exceptions import ErrorCode, IngestError
 from arrow_lake.ingest._ingest_files import _FileIngestMixin
 from arrow_lake.ingest._ingest_media import _MediaIngestMixin
 from arrow_lake.ingest._ingest_sources import _SourceIngestMixin
+from arrow_lake.ingest.field_comments import capture_for_file
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -95,6 +99,16 @@ class Ingestor(_FileIngestMixin, _MediaIngestMixin, _SourceIngestMixin):
                     rejected=result.rejected,
                     reasons=result.rejection_reasons,
                 )
+
+        # Best-effort column-comment capture from the source file (Parquet
+        # field metadata / CSV sidecar). Daft discards field metadata on
+        # to_arrow(), so we re-attach it here before the table is written;
+        # Lance then persists it with the schema. Failures never block ingest.
+        try:
+            file_type = self._detect_file_type(source_path)
+            table = capture_for_file(source_path, file_type, table)
+        except Exception:
+            logger.debug("field_comment_capture_skipped", path=source_path, exc_info=True)
 
         # Decide create vs append by STORAGE state, not just this Ingestor's
         # history. ``_first_table_seen`` only tracks writes within one Ingestor

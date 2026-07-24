@@ -103,9 +103,22 @@ async function probeAndCatalogs() {
       $("#gCatalogs").innerHTML = '<div class="muted" style="padding:10px">无 catalog</div>';
       return;
     }
-    $("#gCatalogs").innerHTML = cats.map(c => `<div class="row"><span class="ic-dot"></span>${esc(c.name)}</div>`).join("");
-    // catalog 点击 → 列出该 catalog 下所有表(当前实现:全表列表过滤)
-    // 注:/metadata/tables 返回平台全部 lance 表;catalog 仅作展示筛选
+    let curCat = null;
+    const paintCats = () => {
+      $("#gCatalogs").innerHTML = cats.map(c => {
+        const tp = c.type ? `<span class="tag mono" style="font-size:.6rem;margin-left:6px">${esc(c.type)}${c.provider ? ` · ${esc(c.provider)}` : ""}</span>` : "";
+        const open = curCat === c.name;
+        const pr = c.properties || {};
+        const det = open ? `<div style="margin:4px 0 8px 18px;padding:6px 10px;border-left:2px solid var(--teal-soft);font-size:.7rem">${
+          Object.keys(pr).length
+            ? Object.entries(pr).filter(([k]) => !/secret|password|access.?key/i.test(k)).map(([k, v]) => `<div><span class="mono" style="color:var(--fg-lo)">${esc(k)}</span> <span class="mono">${esc(String(v).slice(0, 50))}</span></div>`).join("")
+            : '<span class="muted">无属性</span>'
+        }${c.in_use === false ? '<div class="muted">未启用</div>' : ""}</div>` : "";
+        return `<div class="row${open ? " active" : ""}" data-cat="${esc(c.name)}" style="cursor:pointer"><span class="ic-dot"></span>${esc(c.name)}${tp}</div>${det}`;
+      }).join("");
+      $("#gCatalogs").querySelectorAll("[data-cat]").forEach(el => el.addEventListener("click", () => { curCat = (curCat === el.dataset.cat) ? null : el.dataset.cat; paintCats(); }));
+    };
+    paintCats();
     loadTables();
   } catch (e) {
     govReachable = false;
@@ -135,6 +148,12 @@ async function loadTables() {
       curTable = el.dataset.table;
       loadDetail(curTable);
     }));
+    // 刷新后保留选中(#9):重选 curTable 并重载详情
+    if (curTable) {
+      $("#gTables").querySelectorAll("[data-table]").forEach(el => {
+        if (el.dataset.table === curTable) { el.classList.add("active"); loadDetail(curTable); }
+      });
+    }
   } catch (e) {
     $("#gTables").innerHTML = `<div class="degraded">表列表加载失败:${esc(e?.detail || e?.message || e)}</div>`;
   }
@@ -142,18 +161,28 @@ async function loadTables() {
 
 /* ---------- 表详情 ---------- */
 async function loadDetail(name) {
-  $("#gDetailMeta").textContent = name;
+  $("#gDetailMeta").innerHTML = `${esc(name)} <a class="btn btn-ghost btn-sm" href="dataset-detail.html?ds=${encodeURIComponent(name)}" style="margin-left:8px;font-size:.7rem">→ 数据集</a>`;
   $("#gDetail").innerHTML = '<div class="muted" style="padding:10px">加载…</div>';
+  // 并发:Gravitino 表详情 + 数据集 schema(取字段注释,对齐字段注释特性)
+  const [metaR, schR] = await Promise.allSettled([
+    request("GET", `/metadata/tables/${encodeURIComponent(name)}`),
+    request("GET", `/datasets/${encodeURIComponent(name)}/schema`),
+  ]);
   try {
-    const r = await request("GET", `/metadata/tables/${encodeURIComponent(name)}`);
-    const d = r?.data || {};
+    const d = metaR.status === "fulfilled" ? (metaR.value?.data || {}) : {};
     const cols = d.columns || [];
     const props = d.properties || {};
+    const cmtByCol = {};
+    (schR.status === "fulfilled" ? (schR.value?.fields || []) : []).forEach(f => { if (f.comment) cmtByCol[f.name] = f.comment; });
     const colsHtml = cols.length
-      ? cols.map(c => `<div class="col-row"><span><b>${esc(c.name)}</b>${c.nullable === false ? ' <span style="color:var(--danger);font-size:.7rem">NOT NULL</span>' : ""}</span><span class="mono" style="color:var(--teal-bright);font-size:.74rem">${esc(c.type)}</span></div>`).join("")
+      ? cols.map(c => {
+          const cm = c.comment || cmtByCol[c.name] || "";
+          const cmHtml = cm ? ` <span style="color:var(--fg-lo);font-style:italic;font-size:.7rem" title="${esc(cm)}">// ${esc(cm.length > 22 ? cm.slice(0, 21) + "…" : cm)}</span>` : "";
+          return `<div class="col-row"><span><b>${esc(c.name)}</b>${c.nullable === false ? ' <span style="color:var(--danger);font-size:.7rem">NOT NULL</span>' : ""}${cmHtml}</span><span class="mono" style="color:var(--teal-bright);font-size:.74rem">${esc(c.type)}</span></div>`;
+        }).join("")
       : '<div class="muted" style="padding:6px">无列信息</div>';
     const propsHtml = Object.keys(props).length
-      ? `<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--line-soft)"><div class="muted" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px">Properties</div>${Object.entries(props).map(([k, v]) => `<div class="col-row"><span class="mono" style="font-size:.72rem">${esc(k)}</span><span class="mono" style="font-size:.72rem;color:var(--fg-md)">${esc(v)}</span></div>`).join("")}</div>`
+      ? `<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--line-soft)"><div class="muted" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px">Properties</div>${Object.entries(props).filter(([k]) => !/secret|password|access.?key/i.test(k)).map(([k, v]) => `<div class="col-row"><span class="mono" style="font-size:.72rem">${esc(k)}</span><span class="mono" style="font-size:.72rem;color:var(--fg-md)">${esc(String(v).slice(0, 60))}</span></div>`).join("")}</div>`
       : "";
     $("#gDetail").innerHTML = `${colsHtml}${propsHtml}`;
   } catch (e) {
@@ -178,7 +207,14 @@ async function loadGov(name) {
     ? `<div class="flex wrap" style="gap:6px">${tags.map(t => `<span class="tag teal mono"><b>${esc(t.name)}</b>${t.comment ? ` <span class="muted">${esc(t.comment)}</span>` : ""}</span>`).join("")}</div>`
     : '<div class="muted" style="font-size:.74rem;padding:4px 0">无标签</div>';
   const polHtml = policies.length
-    ? `<div style="margin-top:8px">${policies.map(p => `<div class="col-row"><span><b>${esc(p.name)}</b> <span class="muted" style="font-size:.7rem">${esc(p.type || "?")}</span></span><span class="muted mono" style="font-size:.7rem">${esc(JSON.stringify(p).slice(0, 80))}</span></div>`).join("")}</div>`
+    ? `<div style="margin-top:8px">${policies.map(p => {
+        const t = p.type || "?";
+        let detail = "";
+        if (/retention/i.test(t)) detail = `保留 ${p.days ?? "?"} 天`;
+        else if (/masking/i.test(t)) detail = `脱敏列: ${esc((p.columns || []).join(", ") || "—")}`;
+        else detail = esc(JSON.stringify(p).slice(0, 60));
+        return `<div class="col-row"><span><b>${esc(p.name)}</b> <span class="tag mono" style="font-size:.6rem;margin-left:4px">${esc(t)}</span></span><span class="muted" style="font-size:.72rem">${detail}</span></div>`;
+      }).join("")}</div>`
     : '<div class="muted" style="font-size:.74rem;padding:4px 0">无策略</div>';
   // ADMIN 写操作(body 走 query param)
   const adminForm = isAdmin ? `

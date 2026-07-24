@@ -65,15 +65,32 @@
     <div class="panel-h"><i class="placeholder" data-ic="dashboard"></i><h3>偏好</h3><span class="sub">JSON · 自由键值</span>
       <span class="actions"><button class="btn btn-primary btn-sm" id="pSave"><i class="placeholder" data-ic="check"></i> 保存</button></span></div>
     <div class="panel-b">
-      <div class="muted" style="font-size:.76rem;margin-bottom:6px">编辑 JSON 后点「保存」(PUT /me/preferences)</div>
-      <textarea class="input mono" id="pEditor" style="width:100%;min-height:200px;font-size:.8rem" placeholder='{ "theme": "dark", "pageSize": 50 }'></textarea>
+      <div style="display:grid;grid-template-columns:auto 1fr auto 1fr;gap:8px;align-items:center;margin-bottom:10px">
+        <label class="muted" style="font-size:.74rem">主题</label>
+        <select class="select" id="pfTheme"><option value="">默认</option><option value="dark">dark</option><option value="light">light</option></select>
+        <label class="muted" style="font-size:.74rem">每页条数</label>
+        <input class="input mono" id="pfSize" type="number" min="5" max="500" placeholder="50">
+      </div>
+      <div class="muted" style="font-size:.76rem;margin-bottom:6px">高级:自由 JSON(与上方快捷键合并保存)</div>
+      <textarea class="input mono" id="pEditor" style="width:100%;min-height:160px;font-size:.8rem" placeholder='{ "defaultDataset": "jd_ddd" }'></textarea>
     </div>
   </div>
 
   <!-- 仪表盘 -->
   <div id="pDash" class="panel flush hidden">
-    <div class="panel-h"><i class="placeholder" data-ic="dashboard"></i><h3>我的仪表盘</h3><span class="sub" id="dCnt">—</span></div>
-    <div class="panel-b"><div id="dList"></div></div>
+    <div class="panel-h"><i class="placeholder" data-ic="dashboard"></i><h3>我的仪表盘</h3><span class="sub" id="dCnt">—</span>
+      <span class="actions"><button class="btn btn-ghost btn-sm" id="dNew"><i class="placeholder" data-ic="plus"></i> 新建</button></span></div>
+    <div class="panel-b">
+      <div id="dList"></div>
+      <div id="dNewForm" class="hidden" style="margin-top:14px;border-top:1px solid var(--line-soft);padding-top:12px">
+        <div class="muted" style="font-size:.74rem;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">新建仪表盘</div>
+        <div style="display:grid;grid-template-columns:1fr auto;gap:8px">
+          <input class="input mono" id="dName" placeholder="仪表盘名(如 销售概览)">
+          <button class="btn btn-primary btn-sm" id="dCreate"><i class="placeholder" data-ic="check"></i> 创建</button>
+        </div>
+        <div class="muted" style="font-size:.72rem;margin-top:6px">创建空布局(POST /me/dashboards),后续在详情页加卡片(MVP)</div>
+      </div>
+    </div>
   </div>
 
   <!-- 收藏 -->
@@ -189,13 +206,19 @@ $("#nReadAll")?.addEventListener("click", async () => {
 async function loadPref() {
   try {
     const d = await meRequest("GET", "/me/preferences");
-    $("#pEditor").value = JSON.stringify(d.preferences || {}, null, 2);
+    const p = d.preferences || {};
+    $("#pfTheme").value = p.theme || "";
+    $("#pfSize").value = p.pageSize ?? "";
+    const rest = { ...p }; delete rest.theme; delete rest.pageSize;
+    $("#pEditor").value = Object.keys(rest).length ? JSON.stringify(rest, null, 2) : "";
   } catch (e) { $("#pEditor").value = ""; toast("偏好加载失败:" + errMsg(e), "warn"); }
 }
 $("#pSave")?.addEventListener("click", async () => {
   let pref; try { pref = JSON.parse($("#pEditor").value || "{}"); }
   catch { return toast("JSON 格式错误", "warn"); }
-  try { const r = await meRequest("PUT", "/me/preferences", { preferences: pref }); $("#pEditor").value = JSON.stringify(r.preferences || {}, null, 2); toast("偏好已保存", "ok"); }
+  const theme = $("#pfTheme").value; if (theme) pref.theme = theme;
+  const size = parseInt($("#pfSize").value); if (size >= 5) pref.pageSize = size;
+  try { await meRequest("PUT", "/me/preferences", { preferences: pref }); loadPref(); toast("偏好已保存", "ok"); }
   catch (e) { toast("保存失败:" + errMsg(e), "danger"); }
 });
 
@@ -213,6 +236,13 @@ async function loadDash() {
     </div>`).join("") : `<div class="muted" style="padding:20px;text-align:center">无仪表盘</div>`;
   } catch (e) { $("#dList").innerHTML = errBox(errMsg(e), loadDash); }
 }
+$("#dNew")?.addEventListener("click", () => $("#dNewForm")?.classList.toggle("hidden"));
+$("#dCreate")?.addEventListener("click", async () => {
+  const name = $("#dName").value.trim();
+  if (!name) return toast("请填仪表盘名", "warn");
+  try { await meRequest("POST", "/me/dashboards", { name, layout: {} }); toast("仪表盘已创建", "ok"); $("#dName").value = ""; $("#dNewForm").classList.add("hidden"); loadDash(); }
+  catch (e) { toast("创建失败:" + errMsg(e), "danger"); }
+});
 
 /* ---------- 收藏 ---------- */
 async function loadFav() {
@@ -272,7 +302,9 @@ $("#tt").addEventListener("click", (e) => {
 });
 
 /* ---------- 初始化 ---------- */
-if (PTOKEN) { $("#ptoken").value = PTOKEN; saveToken(true); }
+const urlTok = new URL(location.href).searchParams.get("ptoken");
+if (urlTok) { PTOKEN = urlTok; localStorage.setItem(PKEY, urlTok); $("#ptoken").value = urlTok; saveToken(); history.replaceState(null, "", location.pathname); }
+else if (PTOKEN) { $("#ptoken").value = PTOKEN; saveToken(true); }
 else { setLamp("warn", "未配置"); $("#qList").innerHTML = `<div class="muted" style="padding:20px;text-align:center">请在上方配置 personal token 后加载。</div>`; }
 window.applyIcons && applyIcons(document);
 </script>

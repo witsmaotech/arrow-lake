@@ -182,6 +182,14 @@ class _LakeAdminMixin:
         """
         return self._get_storage().open_dataset(name)
 
+    def update_field_comments(self, name: str, comments: dict[str, str]) -> None:
+        """In-place update of column ``comment`` metadata (no data rewrite).
+
+        Thin facade over ``StorageManager.update_field_comments`` for the
+        ``/schema/annotate`` endpoint and DB comment capture.
+        """
+        self._get_storage().update_field_comments(name, comments)
+
     def delete_dataset(self, name: str) -> None:
         """Delete a dataset and all its data.
 

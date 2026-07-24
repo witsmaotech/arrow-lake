@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from typing import Any
 from urllib.request import Request as UrlRequest
 from urllib.request import urlopen
@@ -12,7 +13,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from arrow_lake.api.auth_models import Role
-from arrow_lake.api.deps import require_role
+from arrow_lake.api.deps import get_lake, require_role
 
 logger = structlog.get_logger(__name__)
 
@@ -66,6 +67,44 @@ def _gravitino_get(config: Any, path: str, auth_provider: Any = None) -> dict[st
         return None
 
 
+_LAKE_DS_CACHE: list = [0.0, []]  # [monotonic_ts, names]; mutated in place (no global needed)
+_LAKE_DS_TTL_S = 5.0
+
+
+def _cached_list_datasets(lake: Any) -> list[str]:
+    """lake.list_datasets() with a short TTL (avoids a catalog scan per request)."""
+    now = time.monotonic()
+    if _LAKE_DS_CACHE[1] and now - _LAKE_DS_CACHE[0] < _LAKE_DS_TTL_S:
+        return _LAKE_DS_CACHE[1]
+    raw = lake.list_datasets()
+    out = [(n.name if hasattr(n, "name") else n) for n in raw]
+    _LAKE_DS_CACHE[0] = now
+    _LAKE_DS_CACHE[1] = out
+    return out
+
+
+def _lake_table_fallback(lake: Any, name: str) -> dict[str, Any] | None:
+    """Build a table-like payload from a lake dataset's schema.
+
+    Used when the Gravitino lance-catalog has no table for ``name`` (the
+    dataset exists in the lake but isn't registered in Gravitino) so the
+    governance UI still shows real columns.
+    """
+    try:
+        schema = lake.open_dataset(name).schema
+    except Exception:
+        return None
+    columns = [
+        {"name": f.name, "type": str(f.type), "nullable": bool(f.nullable)}
+        for f in schema
+    ]
+    return {
+        "name": name,
+        "columns": columns,
+        "properties": {"source": "lake", "location": f"s3://arrow-lake/{name}.lance"},
+    }
+
+
 # ---------------------------------------------------------------------------
 # Catalogs
 # ---------------------------------------------------------------------------
@@ -91,28 +130,39 @@ def list_catalogs(request: Request) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 @router.get("/tables")
-def list_tables(request: Request) -> dict[str, Any]:
-    """List tables in lance-catalog."""
+def list_tables(request: Request, lake=Depends(get_lake)) -> dict[str, Any]:
+    """List tables in lance-catalog, falling back to lake datasets when empty."""
     cfg = request.app.state.config.gravitino
     data = _gravitino_get(
         cfg,
         f"/api/metalakes/{cfg.metalake}/catalogs/lance-catalog/schemas/arrow_lake/tables",
         _get_auth_provider(request),
     )
-    if data is None:
-        return {"success": False, "data": [], "error": "Gravitino unreachable", "metadata": {}}
-    identifiers = data.get("identifiers", [])
-    return {
-        "success": True,
-        "data": [{"name": i["name"]} for i in identifiers],
-        "error": None,
-        "metadata": {"total": len(identifiers)},
-    }
+    identifiers = (data or {}).get("identifiers", [])
+    if identifiers:
+        return {
+            "success": True,
+            "data": [{"name": i["name"]} for i in identifiers],
+            "error": None,
+            "metadata": {"total": len(identifiers), "source": "gravitino"},
+        }
+    # Gravitino lance-catalog empty/unreachable → surface lake datasets so
+    # governance isn't bare (datasets are real; Gravitino registration is best-effort).
+    try:
+        names = _cached_list_datasets(lake)
+        return {
+            "success": True,
+            "data": [{"name": n} for n in names],
+            "error": None,
+            "metadata": {"total": len(names), "source": "lake-fallback"},
+        }
+    except Exception as exc:
+        return {"success": False, "data": [], "error": str(exc), "metadata": {}}
 
 
 @router.get("/tables/{name}")
-def get_table(name: str, request: Request) -> dict[str, Any]:
-    """Get table details including columns and properties."""
+def get_table(name: str, request: Request, lake=Depends(get_lake)) -> dict[str, Any]:
+    """Get table details; fall back to the lake dataset schema if not in Gravitino."""
     _validate_id(name, "table name")
     cfg = request.app.state.config.gravitino
     data = _gravitino_get(
@@ -120,19 +170,23 @@ def get_table(name: str, request: Request) -> dict[str, Any]:
         f"/api/metalakes/{cfg.metalake}/catalogs/lance-catalog/schemas/arrow_lake/tables/{name}",
         _get_auth_provider(request),
     )
-    if data is None:
+    t = (data or {}).get("table") if data else None
+    if t:
+        return {
+            "success": True,
+            "data": {
+                "name": t.get("name"),
+                "columns": t.get("columns", []),
+                "properties": t.get("properties", {}),
+            },
+            "error": None,
+            "metadata": {"source": "gravitino"},
+        }
+    # Not registered in Gravitino → fall back to the lake dataset's schema.
+    fb = _lake_table_fallback(lake, name)
+    if fb is None:
         return {"success": False, "data": None, "error": "Table not found", "metadata": {}}
-    t = data.get("table", {})
-    return {
-        "success": True,
-        "data": {
-            "name": t.get("name"),
-            "columns": t.get("columns", []),
-            "properties": t.get("properties", {}),
-        },
-        "error": None,
-        "metadata": {},
-    }
+    return {"success": True, "data": fb, "error": None, "metadata": {"source": "lake-fallback"}}
 
 
 # ---------------------------------------------------------------------------

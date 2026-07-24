@@ -111,6 +111,31 @@ class StorageCRUDMixin:
         finally:
             lock.release()
 
+    def update_field_comments(self, name: str, comments: dict[str, str]) -> None:
+        """In-place update of column ``comment`` field metadata.
+
+        Uses Lance 7's ``update_field_metadata`` (incremental, no data rewrite)
+        so the comment is persisted to the manifest cheaply. Used by DB
+        comment capture and the ``/schema/annotate`` endpoint. Best-effort for
+        callers: a missing dataset raises StorageError; callers that want
+        non-fatal behavior wrap in try/except.
+        """
+        self._validate_name(name)
+        if not self.dataset_exists(name):
+            raise StorageError(
+                error_code=ErrorCode.STORAGE_PATH_NOT_FOUND,
+                message=f"Dataset '{name}' does not exist, cannot annotate",
+            )
+        payload = {c: {"comment": v} for c, v in comments.items() if c}
+        if not payload:
+            return
+        import lance
+
+        ds = lance.dataset(
+            self.dataset_uri(name), storage_options=self._storage_options
+        )
+        ds.update_field_metadata(payload, replace=False)
+
     def delete_dataset(self, name: str) -> None:
         """Delete a Lance dataset.
 

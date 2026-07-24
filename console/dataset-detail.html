@@ -10,10 +10,19 @@
 <script src="vendor/vis-network.bundle.min.js" defer></script>
 <style>
   .schema-chip{display:inline-block;font-family:var(--font-mono);font-size:.72rem;padding:2px 8px;border:1px solid var(--teal-soft,var(--line));border-radius:var(--r-sm);background:var(--ink-900);color:var(--teal-bright);margin:0 4px 4px 0}
+  .schema-chip .cm{color:var(--fg-lo);font-style:italic;max-width:16ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:bottom}
+  .schema-chip .ic-btn{appearance:none;background:transparent;border:none;color:var(--fg-lo);cursor:pointer;padding:0 0 0 3px;font:inherit;font-size:.74rem;line-height:1;vertical-align:baseline}
+  .schema-chip .ic-btn:hover{color:var(--teal-bright)}
   .preview-wrap{overflow:auto;max-height:600px;border:1px solid var(--line-soft);border-radius:var(--r-sm)}
   .preview-wrap table{margin:0}
   .preview-wrap td{max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.74rem}
   .preview-wrap th{position:sticky;top:0;background:var(--ink-850);z-index:1;font-size:.7rem}
+  .preview-wrap th .th-cm{font-weight:400;font-style:italic;color:var(--fg-lo);font-size:.66rem;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pv-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:0 0 10px}
+  .pv-bar input{flex:1;min-width:160px;background:var(--ink-900);border:1px solid var(--line);border-radius:var(--r-sm);color:var(--fg-hi);font:inherit;font-size:.78rem;padding:6px 10px}
+  .pv-bar select{background:var(--ink-900);border:1px solid var(--line);border-radius:var(--r-sm);color:var(--fg-hi);font:inherit;font-size:.78rem;padding:5px 8px}
+  .pv-pager{display:inline-flex;align-items:center;gap:6px;color:var(--fg-md);font-size:.76rem;margin-left:auto}
+  .pv-pager button:disabled{opacity:.4;cursor:not-allowed}
   /* Tab 切换器 */
   .tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:var(--s4);flex-wrap:wrap}
   .tab{appearance:none;background:transparent;border:none;border-bottom:2px solid transparent;color:var(--fg-md);font:inherit;font-size:.88rem;font-weight:600;padding:10px 18px;cursor:pointer;border-radius:var(--r-sm) var(--r-sm) 0 0;transition:color .15s,border-color .15s,background .15s;display:inline-flex;align-items:center;gap:6px}
@@ -55,7 +64,7 @@
       <div class="panel-b" id="kg"></div>
     </div>
     <div class="panel flush" id="previewPanel" style="margin-top:var(--s4)">
-      <div class="panel-h"><i class="placeholder" data-ic="database"></i><h3>前 100 行预览</h3><span class="sub" id="previewMeta">—</span></div>
+      <div class="panel-h"><i class="placeholder" data-ic="database"></i><h3>数据预览</h3><span class="sub" id="previewMeta">—</span></div>
       <div class="panel-b" id="preview"></div>
     </div>
   </div>
@@ -179,16 +188,47 @@ if (!ds) {
       $("#meta").textContent = "加载失败";
     }
 
-    // 1.5) 真实 schema
+    // 1.5) 真实 schema(含字段注释)
+    let commentMap = {};
+    let schemaFields = [];
+    const trunc = (s, n = 16) => (s && s.length > n ? s.slice(0, n - 1) + "…" : s || "");
+    const renderSchema = (fields) => {
+      $("#schemaMeta").textContent = `${fields.length} 个字段`;
+      $("#schema").innerHTML = fields.map((f) => {
+        const cm = f.comment || "";
+        const tip = `${esc(f.type)}${f.nullable ? "" : " · NOT NULL"}${cm ? "\n" + cm : ""}`;
+        const cmHtml = cm ? ` <span class="cm" title="${esc(cm)}">// ${esc(trunc(cm))}</span>` : "";
+        return `<span class="schema-chip" title="${tip}">${esc(f.name)}<span style="color:var(--fg-lo)"> : ${esc(f.type)}</span>${cmHtml}<button class="ic-btn" data-field="${esc(f.name)}" data-cm="${esc(cm)}" title="编辑字段注释" type="button">✎</button></span>`;
+      }).join("");
+    };
     try {
       const s = await request("GET", `/datasets/${encodeURIComponent(ds)}/schema`);
       const fields = s?.fields || [];
+      commentMap = Object.fromEntries(fields.map((f) => [f.name, f.comment || ""]));
+      schemaFields = fields;
       if (fields.length) {
         $("#schemaPanel").style.display = "";
-        $("#schemaMeta").textContent = `${fields.length} 个字段`;
-        $("#schema").innerHTML = fields.map((f) => `<span class="schema-chip" title="${esc(f.type)}${f.nullable ? "" : " · NOT NULL"}">${esc(f.name)}<span style="color:var(--fg-lo)"> : ${esc(f.type)}</span></span>`).join("");
+        renderSchema(fields);
       }
     } catch (_) { /* schema 取失败不阻塞预览 */ }
+    // 字段注释编辑(铅笔 → prompt → POST annotate → 局部刷新)
+    $("#schema").addEventListener("click", async (ev) => {
+      const btn = ev.target.closest(".ic-btn");
+      if (!btn) return;
+      const field = btn.dataset.field;
+      const v = window.prompt(`编辑字段注释 — ${field}`, btn.dataset.cm || "");
+      if (v === null) return; // 用户取消
+      try {
+        const s = await request("POST", `/datasets/${encodeURIComponent(ds)}/schema/annotate`, { body: { field, comment: v } });
+        if (s?.fields?.length) {
+          renderSchema(s.fields);
+          commentMap = Object.fromEntries(s.fields.map((f) => [f.name, f.comment || ""]));
+        }
+        toast(v.trim() ? "注释已保存" : "注释已清除", "ok", 2500);
+      } catch (e) {
+        toast("保存失败:" + (e?.detail || e?.message || e), "warn", 5000);
+      }
+    });
 
     // 1.6) 知识图谱统计
     try {
@@ -205,30 +245,89 @@ if (!ds) {
         : `<div class="muted" style="font-size:.82rem;padding:4px 0">该数据集尚未构建知识图谱(0 实体)。<a class="btn btn-ghost btn-sm" href="kg.html?ds=${encodeURIComponent(ds)}" style="margin-left:8px">去构建 →</a></div>`;
     } catch (_) { /* KG 未启用,隐藏 */ }
 
-    // 2) 前 100 行预览
-    $("#preview").innerHTML = '<div class="muted" style="padding:20px;text-align:center">加载前 100 行…</div>';
-    try {
-      const res = await request("POST", `/datasets/${encodeURIComponent(ds)}/query/olap`, {
-        body: { sql: `SELECT * FROM "${ds}" LIMIT 100` },
-      });
-      const rows = res?.rows || [];
-      const cols = rows.length ? Object.keys(rows[0]) : [];
-      $("#previewMeta").textContent = `${res?.row_count ?? rows.length} 行 · ${res?.column_count ?? cols.length} 列`;
-      if (!rows.length) {
-        $("#preview").innerHTML = '<div class="muted" style="padding:24px;text-align:center">数据集为空(无行)</div>';
-      } else {
-        const head = cols.map((c) => `<th>${esc(c)}</th>`).join("");
+    // 2) 数据预览(分页 + 检索)
+    const pv = { page: 1, size: 100, q: "", col: "__all__", total: 0 };
+    const escSql = (s) => String(s ?? "").replace(/'/g, "''");
+    const escId = (s) => String(s ?? "").replace(/"/g, '""'); // escape double-quote in SQL identifiers (col/table) — stored-injection hardening
+    async function loadPreview() {
+      $("#preview").innerHTML = '<div class="muted" style="padding:20px;text-align:center">加载…</div>';
+      const q = pv.q.trim();
+      const textCols = schemaFields.filter((f) => /string|utf8|large_string/i.test(f.type)).map((f) => f.name);
+      const whereCols = (pv.col && pv.col !== "__all__") ? [pv.col] : (textCols.length ? textCols : schemaFields.map((f) => f.name));
+      let where = "";
+      if (q && whereCols.length) {
+        const escQ = escSql(q);
+        const clause = whereCols.map((c) => `"${escId(c)}"::VARCHAR LIKE '%${escQ}%'`).join(" OR ");
+        where = `WHERE ${whereCols.length > 1 ? `(${clause})` : clause}`;
+      }
+      const tbl = escId(ds);
+      const dsEnc = encodeURIComponent(ds);
+      try {
+        const cr = await request("POST", `/datasets/${dsEnc}/query/olap`, { body: { sql: `SELECT COUNT(*) AS c FROM "${tbl}" ${where}` } });
+        pv.total = Number(cr?.rows?.[0]?.c ?? 0);
+        const pages = Math.max(1, Math.ceil(pv.total / pv.size));
+        if (pv.page > pages) pv.page = pages;
+        const offset = Math.min((pv.page - 1) * pv.size, 100000); // cap deep-offset (perf + abuse guard)
+        const res = await request("POST", `/datasets/${dsEnc}/query/olap`, { body: { sql: `SELECT * FROM "${tbl}" ${where} LIMIT ${pv.size} OFFSET ${offset}` } });
+        const rows = res?.rows || [];
+        const cols = rows.length ? Object.keys(rows[0]) : [];
+        const head = cols.map((c) => {
+          const cm = commentMap[c] || "";
+          const cmHtml = cm ? `<div class="th-cm" title="${esc(cm)}">${esc(trunc(cm, 20))}</div>` : "";
+          return `<th>${esc(c)}${cmHtml}</th>`;
+        }).join("");
         const body = rows.map((r) => `<tr>${cols.map((c) => {
           const raw = r[c];
           const title = typeof raw === "object" ? JSON.stringify(raw) : String(raw ?? "");
           return `<td title="${esc(title)}">${fmtCell(raw)}</td>`;
         }).join("")}</tr>`).join("");
-        $("#preview").innerHTML = `<div class="preview-wrap"><table class="tbl"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+        const colOpts = `<option value="__all__"${pv.col === "__all__" ? " selected" : ""}>全部文本列</option>` + textCols.map((c) => `<option value="${esc(c)}"${pv.col === c ? " selected" : ""}>${esc(c)}</option>`).join("");
+        const atFirst = pv.page <= 1, atLast = pv.page >= pages;
+        const pager = `<span class="pv-pager">
+            <button class="btn btn-ghost btn-sm" data-pv="first" ${atFirst ? "disabled" : ""}>«</button>
+            <button class="btn btn-ghost btn-sm" data-pv="prev" ${atFirst ? "disabled" : ""}>‹</button>
+            <span>第 <b>${pv.page}</b>/${pages} 页 · 共 ${pv.total.toLocaleString()} 行</span>
+            <button class="btn btn-ghost btn-sm" data-pv="next" ${atLast ? "disabled" : ""}>›</button>
+            <button class="btn btn-ghost btn-sm" data-pv="last" ${atLast ? "disabled" : ""}>»</button>
+            <select id="pvSize">${[50, 100, 200].map((s) => `<option${pv.size === s ? " selected" : ""}>${s}</option>`).join("")}</select>/页
+          </span>`;
+        const bar = `<div class="pv-bar">
+            <input id="pvSearch" placeholder="检索(文本列 LIKE %关键词%)…" value="${esc(q)}" />
+            <select id="pvCol">${colOpts}</select>
+            <button class="btn btn-primary btn-sm" data-pv="search">搜索</button>
+            <button class="btn btn-ghost btn-sm" data-pv="reset">重置</button>
+            ${pager}
+          </div>`;
+        $("#previewMeta").textContent = `${pv.total.toLocaleString()} 行 · ${cols.length} 列${q ? ` · 检索 "${q}"` : ""}`;
+        $("#preview").innerHTML = pv.total
+          ? `${bar}<div class="preview-wrap"><table class="tbl"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`
+          : `${bar}<div class="muted" style="padding:24px;text-align:center">${q ? "无匹配行" : "数据集为空(无行)"}</div>`;
+      } catch (e) {
+        const msg = e?.detail || e?.message || String(e);
+        $("#preview").innerHTML = `<div style="color:var(--danger);padding:16px">预览失败:${esc(msg)}<br/><span class="muted" style="font-size:.72rem">可能:数据集无表结构 / SQL 安全校验拒 / 列名特殊;可在 OLAP Worksheet 手写 SQL</span></div>`;
       }
-    } catch (e) {
-      const msg = e?.detail || e?.message || String(e);
-      $("#preview").innerHTML = `<div style="color:var(--danger);padding:16px">预览失败:${esc(msg)}<br/><span class="muted" style="font-size:.72rem">可能:数据集无表结构 / SQL 安全校验拒 / 列名特殊;可在 OLAP Worksheet 手写 SQL</span></div>`;
     }
+    // 分页/检索事件委托(挂一次;#preview 元素稳定,仅 innerHTML 变)
+    $("#preview").addEventListener("click", (ev) => {
+      const b = ev.target.closest("[data-pv]"); if (!b) return;
+      const a = b.dataset.pv;
+      const pages = Math.max(1, Math.ceil(pv.total / pv.size));
+      if (a === "first") pv.page = 1;
+      else if (a === "prev") pv.page = Math.max(1, pv.page - 1);
+      else if (a === "next") pv.page = Math.min(pages, pv.page + 1);
+      else if (a === "last") pv.page = pages;
+      else if (a === "search") { pv.q = $("#pvSearch").value; pv.col = $("#pvCol").value; pv.page = 1; }
+      else if (a === "reset") { pv.q = ""; pv.col = "__all__"; pv.page = 1; }
+      else return;
+      loadPreview();
+    });
+    $("#preview").addEventListener("change", (ev) => {
+      if (ev.target.id === "pvSize") { pv.size = Number(ev.target.value) || 100; pv.page = 1; loadPreview(); }
+    });
+    $("#preview").addEventListener("keydown", (ev) => {
+      if (ev.target.id === "pvSearch" && ev.key === "Enter") { ev.preventDefault(); $("#preview").querySelector('[data-pv="search"]').click(); }
+    });
+    loadPreview();
   })();
 }
 

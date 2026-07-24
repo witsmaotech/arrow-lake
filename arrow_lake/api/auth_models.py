@@ -21,6 +21,7 @@ class TokenPayload(BaseModel):
 
     sub: str
     role: Role
+    user_id: int | None = None  # v1.9.3: numeric id (for task notifications)
     permissions: list[str] = []
     exp: datetime
     iat: datetime

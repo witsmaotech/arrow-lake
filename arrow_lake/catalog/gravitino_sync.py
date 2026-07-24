@@ -44,6 +44,8 @@ class GravitinoSyncScheduler:
         self._bridge = bridge
         self._lake = lake
         self._interval = max(interval, 5)
+        self._max_failures = 5  # circuit breaker: stop after N consecutive failed cycles
+        self._consecutive_failures = 0
         self._tag_acl_resolver = tag_acl_resolver
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
@@ -75,13 +77,31 @@ class GravitinoSyncScheduler:
                 entries = _load_local_entries(self._lake)
                 outbound = self._bridge.sync_outbound(entries)
                 inbound = self._bridge.sync_inbound()
+                self._consecutive_failures = 0
                 logger.debug(
                     "gravitino_sync_cycle",
                     outbound=outbound,
                     inbound=len(inbound),
                 )
             except Exception as exc:
-                logger.warning("gravitino_sync_cycle_failed", error=str(exc))
+                self._consecutive_failures += 1
+                logger.warning(
+                    "gravitino_sync_cycle_failed",
+                    error=str(exc),
+                    failures=self._consecutive_failures,
+                )
+                # Circuit breaker: a persistently-failing Gravitino (server down /
+                # client-version mismatch) holds catalog/session locks during slow
+                # remote calls and can stall request handlers. Stop the sync thread
+                # instead of retrying forever — governance is best-effort and must
+                # never take down the data plane.
+                if self._consecutive_failures >= self._max_failures:
+                    logger.error(
+                        "gravitino_sync_circuit_open",
+                        failures=self._consecutive_failures,
+                        hint="Stopping Gravitino sync after repeated failures. Set gravitino.enabled=false or fix the Gravitino server/version, then restart.",
+                    )
+                    return
 
             # Tag→ACL sync (v1.4.2)
             if self._tag_acl_resolver is not None:

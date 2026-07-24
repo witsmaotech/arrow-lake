@@ -34,6 +34,7 @@ from arrow_lake.api.models.dataset import (
     IngestVideosRequest,
     SchemaField,
     SchemaResponse,
+    SchemaAnnotateRequest,
     PresignedUpload,
     PresignRequest,
     PresignResponse,
@@ -51,6 +52,29 @@ router = APIRouter(prefix="/api/v1/datasets", tags=["datasets"])
 _INGEST_TIMEOUT = 600
 _ADMIN_TIMEOUT = 60
 _DOWNLOAD_WORKERS = 4
+
+
+def _schema_field_dicts(schema: Any) -> list[dict[str, Any]]:
+    """Project a Lance/Arrow schema into SchemaField kwargs, including comments.
+
+    Column comments are stored in Arrow field metadata under the ``comment``
+    key (written by ingest capture or the annotate endpoint); ``description``
+    is accepted as a fallback written by some producers.
+    """
+    out: list[dict[str, Any]] = []
+    for f in schema:
+        md = f.metadata or {}
+        raw = md.get(b"comment") or md.get(b"description")
+        comment = raw.decode("utf-8", "replace").strip() if raw else ""
+        out.append(
+            {
+                "name": f.name,
+                "type": str(f.type),
+                "nullable": bool(f.nullable),
+                "comment": comment,
+            }
+        )
+    return out
 
 
 def _after_ingest_hooks(app_state: Any, dataset_name: str, lake: Any) -> None:
@@ -729,15 +753,40 @@ async def get_dataset_schema(
 
     Unlike inferring columns from a preview row, this reads the Lance schema
     directly — so it's correct for empty datasets and carries field types.
+    Field comments (stored in Arrow field metadata) are included.
     """
     def _read() -> list[dict[str, Any]]:
         schema = lake.open_dataset(name).schema
-        return [
-            {"name": f.name, "type": str(f.type), "nullable": bool(f.nullable)}
-            for f in schema
-        ]
+        return _schema_field_dicts(schema)
 
     fields = await run_sync(_read, timeout=_ADMIN_TIMEOUT, label="schema")
+    return SchemaResponse(name=name, fields=[SchemaField(**f) for f in fields])
+
+
+@router.post("/{name}/schema/annotate", response_model=SchemaResponse)
+async def annotate_schema(
+    name: str = Path(..., pattern=_NAME_PATTERN),
+    body: SchemaAnnotateRequest = ...,
+    *,
+    _auth: None = Depends(require_role(Role.ADMIN)),
+    lake=Depends(get_lake),
+) -> SchemaResponse:
+    """Set or clear a field's human-readable comment (Arrow field metadata).
+
+    Persists via Lance ``update_field_metadata`` (no data rewrite). Returns the
+    refreshed schema so the console can re-render without a second request.
+    """
+    def _apply() -> list[dict[str, Any]]:
+        schema = lake.open_dataset(name).schema
+        if body.field not in schema.names:
+            raise CatalogError(
+                error_code=ErrorCode.VALIDATION_INVALID_CONFIG,
+                message=f"Field '{body.field}' not found in dataset '{name}'",
+            )
+        lake.update_field_comments(name, {body.field: body.comment})
+        return _schema_field_dicts(lake.open_dataset(name).schema)
+
+    fields = await run_sync(_apply, timeout=_ADMIN_TIMEOUT, label="schema_annotate")
     return SchemaResponse(name=name, fields=[SchemaField(**f) for f in fields])
 
 

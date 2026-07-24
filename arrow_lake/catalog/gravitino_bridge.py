@@ -306,8 +306,17 @@ class GravitinoBridge:
         for catalog_name in (_LANCE_CATALOG, _FILESET_CATALOG):
             try:
                 catalog = client.load_catalog(catalog_name)
+                # Skip create if the schema already exists. Gravitino's
+                # createSchema verifies the S3 location *before* reporting
+                # SchemaAlreadyExists, so re-ensuring on a fileset catalog
+                # whose s3a creds are misconfigured surfaces a spurious 403.
+                # schema_exists reads Gravitino's own metadata (no S3 call).
+                if self._call_sdk(
+                    lambda c=catalog: c.as_schemas().schema_exists(_DEFAULT_SCHEMA)
+                ):
+                    continue
                 self._call_sdk(
-                    lambda c=catalog: c.as_schema_catalog().create_schema(
+                    lambda c=catalog: c.as_schemas().create_schema(
                         schema_name=_DEFAULT_SCHEMA,
                         comment="Arrow Lake datasets",
                         properties=None,
@@ -455,6 +464,7 @@ class GravitinoBridge:
                 self.register_dataset(
                     name=entry["name"],
                     location=entry.get("location", ""),
+                    schema=entry.get("schema"),
                 )
                 synced += 1
             except Exception as exc:
@@ -477,7 +487,9 @@ class GravitinoBridge:
                 from gravitino.namespace import Namespace
 
                 catalog = client.load_catalog(_FILESET_CATALOG)
-                ns = Namespace.of(self._metalake, _FILESET_CATALOG, _DEFAULT_SCHEMA)
+                # Bound FilesetCatalog expects a 1-level namespace (schema only);
+                # passing metalake.catalog.schema raises "must have 1 level".
+                ns = Namespace.of(_DEFAULT_SCHEMA)
                 idents = self._call_sdk(
                     lambda: catalog.as_fileset_catalog().list_filesets(ns)
                 )

@@ -134,6 +134,79 @@ class SqlConnector:
         """Mask credentials in connection URL for logging."""
         return re.sub(r"://([^:]+):([^@]+)@", r"://***:***@", self._conn)
 
+    def fetch_column_comments(self, sql: str) -> dict[str, str]:
+        """Best-effort column-comment capture for the query's source table.
+
+        Resolves the dialect from ``connection_url`` and queries the catalog:
+          - MySQL: ``information_schema.columns.column_comment``
+          - PostgreSQL: ``col_description(table_oid, attnum)``
+        Other dialects return ``{}``. The first ``FROM <table>`` in ``sql`` is
+        used (qualified ``schema.table`` supported). Any failure returns ``{}``
+        — comment capture must never block ingestion.
+        """
+        scheme = (urlparse(self._conn).scheme or "").lower()
+        if scheme.startswith("mysql"):
+            dialect = "mysql"
+        elif scheme.startswith("postgres") or scheme in ("postgresql",):
+            dialect = "postgres"
+        else:
+            return {}
+
+        match = re.search(r"\bFROM\s+([A-Za-z_][\w.]*)", sql, re.IGNORECASE)
+        if not match:
+            return {}
+        parts = match.group(1).split(".")
+        table = parts[-1].strip('"').strip("`")
+        schema = parts[-2].strip('"').strip("`") if len(parts) >= 2 else None
+        if not table:
+            return {}
+
+        if dialect == "mysql":
+            stmt = (
+                "SELECT column_name, column_comment "
+                "FROM information_schema.columns "
+                "WHERE table_name = :t"
+            )
+            params: dict[str, str] = {"t": table}
+            if schema:
+                stmt += " AND table_schema = :s"
+                params["s"] = schema
+        else:  # postgres
+            stmt = (
+                "SELECT a.attname AS col, "
+                "col_description(a.attrelid, a.attnum) AS cmt "
+                "FROM pg_attribute a "
+                "JOIN pg_class c ON a.attrelid = c.oid "
+                "JOIN pg_namespace n ON c.relnamespace = n.oid "
+                "WHERE c.relname = :t AND a.attnum > 0 AND NOT a.attisdropped"
+            )
+            params = {"t": table}
+            if schema:
+                stmt += " AND n.nspname = :s"
+                params["s"] = schema
+
+        try:
+            from sqlalchemy import create_engine, text
+        except Exception:
+            return {}
+        try:
+            engine = create_engine(self._conn)
+            with engine.connect() as conn:
+                rows = conn.execute(text(stmt), params).fetchall()
+        except Exception:
+            return {}
+        finally:
+            try:
+                engine.dispose()
+            except Exception:
+                pass
+
+        out: dict[str, str] = {}
+        for col_name, comment in rows:
+            if comment and str(comment).strip():
+                out[str(col_name)] = str(comment).strip()
+        return out
+
 
 def _validate_sql_readonly(sql: str) -> None:
     """Reject non-SELECT statements to prevent mutation via ingest."""

@@ -45,6 +45,7 @@ class BackgroundTask:
     error: str | None = None
     result: dict[str, Any] | None = None
     detail: dict[str, Any] = field(default_factory=dict)
+    user_id: int | None = None  # v1.9.3: task owner → my-workspace notification
 
     # Legacy export-specific fields (kept for backward compat)
     output_path: str = ""
@@ -123,6 +124,7 @@ class TaskManager:
     # v1.9.0: durable history store (TaskHistoryStore | None). When set,
     # completed/failed tasks are recorded beyond the Redis TTL.
     _history_store: ClassVar[Any] = None
+    _user_state_store: ClassVar[Any] = None  # v1.9.3: my-workspace notifications
     _TASK_TTL_SECONDS = 7200  # Auto-cleanup after 2 hours
 
     # ------------------------------------------------------------------
@@ -160,16 +162,37 @@ class TaskManager:
             logger.info("TaskManager: history store enabled")
 
     @classmethod
+    def init_user_state_store(cls, store: Any) -> None:
+        """v1.9.3: enable my-workspace notifications on task completion."""
+        cls._user_state_store = store
+
+    @classmethod
     def _persist_history(cls, task: BackgroundTask) -> None:
-        """Record completed/failed tasks into the durable history store."""
-        if cls._history_store is None:
-            return
+        """Record terminal tasks into history + notify the owner (my-workspace feed)."""
         if task.status not in (TaskStatus.COMPLETED, TaskStatus.FAILED):
             return
+        if cls._history_store is not None:
+            try:
+                cls._history_store.record(task.to_dict())
+            except Exception as exc:  # noqa: BLE001 — fail-soft: history is best-effort
+                logger.warning("TaskManager: history persist failed for %s: %s", task.task_id, exc)
+        cls._notify_owner(task)
+
+    @classmethod
+    def _notify_owner(cls, task: BackgroundTask) -> None:
+        """v1.9.3: push a my-workspace notification to the task owner (best-effort)."""
+        if cls._user_state_store is None or task.user_id is None:
+            return
+        ds = f" · {task.dataset_name}" if task.dataset_name else ""
+        if task.status == TaskStatus.COMPLETED:
+            msg, kind = f"{task.operation} 完成{ds}", "success"
+        else:
+            err = (task.error or "").strip()[:160]
+            msg, kind = f"{task.operation} 失败{ds}{': ' + err if err else ''}", "error"
         try:
-            cls._history_store.record(task.to_dict())
-        except Exception as exc:  # noqa: BLE001 — fail-soft: history is best-effort
-            logger.warning("TaskManager: history persist failed for %s: %s", task.task_id, exc)
+            cls._user_state_store.notify(task.user_id, msg, kind=kind)
+        except Exception as exc:  # noqa: BLE001 — notifications are best-effort
+            logger.warning("TaskManager: notify owner failed for %s: %s", task.task_id, exc)
 
     # ------------------------------------------------------------------
     # Housekeeping
@@ -202,6 +225,7 @@ class TaskManager:
         dataset_name: str = "",
         *,
         detail: dict[str, Any] | None = None,
+        user_id: int | None = None,
     ) -> str:
         """Create a new background task and return its ID."""
         cls._evict_expired()
@@ -213,6 +237,7 @@ class TaskManager:
             status=TaskStatus.PENDING,
             created_at=datetime.now(UTC).isoformat(),
             detail=detail or {},
+            user_id=user_id,
         )
         cls._tasks[task_id] = task
 
@@ -260,7 +285,9 @@ class TaskManager:
     ) -> list[BackgroundTask]:
         """List tasks, optionally filtered by operation type and/or status.
 
-        Merges in-memory and Redis results (deduplicates by task_id).
+        Merges in-memory, Redis, and durable history results (dedup by task_id).
+        History covers completed/failed tasks that survive restarts and the
+        Redis 2h TTL — without it ``/tasks`` looks empty on a fresh boot.
         """
         seen: dict[str, BackgroundTask] = {}
 
@@ -275,6 +302,18 @@ class TaskManager:
                     remote = cls._redis_store.get_task(tid)
                     if remote is not None:
                         seen[tid] = BackgroundTask.from_dict(remote)
+
+        # Merge durable history (completed/failed across restarts & Redis 2h TTL)
+        if cls._history_store is not None:
+            try:
+                for h in cls._history_store.list(
+                    operation=operation, status=status, limit=200
+                ):
+                    tid = h.get("task_id")
+                    if tid and tid not in seen:
+                        seen[tid] = BackgroundTask.from_dict(h)
+            except Exception:
+                logger.exception("task_history list failed")
 
         tasks = list(seen.values())
         if operation:

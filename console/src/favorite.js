@@ -27,8 +27,10 @@ function bind() {
     btn.addEventListener("click", () => {
       const type = btn.dataset.fav;
       const $ = (s) => document.querySelector(s);
-      const qt = type === "rag" ? ($("#question")?.value || "") : ($("#query")?.value || "");
-      saveQuery({ query_type: type, query_text: qt, dataset: $("#ds")?.value || null });
+      const qt = type === "rag" ? ($("#question")?.value || "")
+        : type === "sql" ? (window.__olapGetSql?.() || "")
+        : ($("#query")?.value || "");
+      saveQuery({ query_type: type, query_text: qt, dataset: $("#ds")?.value || $("#dsSel")?.value || null });
     });
   });
 }

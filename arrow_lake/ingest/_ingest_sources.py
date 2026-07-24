@@ -46,6 +46,16 @@ class _SourceIngestMixin:
         row_count = df.count().to_arrow().column(0)[0].as_py()
         self._manager.write_lance_from_dataframe(dataset_name, df, mode="create")
 
+        # Best-effort column-comment capture (MySQL/PG catalog). Daft wrote the
+        # DataFrame directly (no Arrow interception), so we apply comments to
+        # the persisted Lance schema after the write via update_field_metadata.
+        try:
+            comments = connector.fetch_column_comments(sql)
+            if comments:
+                self._manager.update_field_comments(dataset_name, comments)
+        except Exception:
+            pass
+
         sources = [IngestionSource(
             path=f"sql:{connection_url.split('@')[-1] if '@' in connection_url else connection_url}",
             row_count=row_count,

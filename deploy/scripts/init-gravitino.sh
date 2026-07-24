@@ -70,10 +70,10 @@ else
       "provider":"fileset",
       "properties":{
         "location":"s3a://arrow-lake/",
-        "fs.s3a.endpoint":"http://minio:9000",
-        "fs.s3a.access.key":"${MINIO_ROOT_USER:-minioadmin}",
-        "fs.s3a.secret.key":"${MINIO_ROOT_PASSWORD:-minioadmin}",
-        "fs.s3a.path.style.access":"true"
+        "s3-endpoint":"http://minio:9000",
+        "s3-access-key-id":"${MINIO_ROOT_USER:-minioadmin}",
+        "s3-secret-access-key":"${MINIO_ROOT_PASSWORD:-minioadmin}",
+        "s3-path-style-access":"true"
       }
     }' "${_cat_base}" || { echo "  ERROR: Failed to create minio-fileset"; exit 1; }
 fi

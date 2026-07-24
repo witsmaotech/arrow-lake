@@ -7,12 +7,33 @@
 <link rel="stylesheet" href="assets/tokens.css"/>
 <link rel="stylesheet" href="assets/app.css"/>
 <link rel="stylesheet" href="assets/console.css"/>
+<style>
+  .tbl tr[data-id]{cursor:pointer}
+  .tbl tr[data-id]:hover{background:var(--ink-800)}
+  .tbl tr.expanded{background:var(--ink-800)}
+  .tr-detail td{background:var(--ink-900);padding:12px 14px;border-bottom:1px solid var(--line-soft)}
+  .tr-detail .dt-grid{display:grid;grid-template-columns:64px 1fr 64px 1fr;gap:6px 12px;font-size:.76rem}
+  .tr-detail .dt-k{color:var(--fg-lo)}
+  .tr-detail .dt-v{color:var(--fg-hi);word-break:break-all;font-family:var(--font-mono)}
+  .tr-detail .dt-err{margin-top:8px;border-top:1px dashed var(--line-soft);padding-top:8px}
+  .tr-detail .dt-err .dt-k{margin-bottom:4px;display:block}
+  .tr-detail .dt-err pre{margin:0;white-space:pre-wrap;word-break:break-all;font-size:.72rem;color:var(--danger);max-height:220px;overflow:auto;background:var(--ink-900);padding:8px 10px;border:1px solid var(--line-soft);border-radius:4px}
+  .dt-hint{color:var(--teal-bright);font-size:.66rem;margin-left:4px;white-space:nowrap}
+  .pager{display:flex;align-items:center;gap:4px;flex-wrap:wrap;padding:8px 12px;border-top:1px solid var(--line-soft);font-size:.76rem}
+  .pager:empty{display:none}
+  .pager button{min-width:28px;height:26px;padding:0 8px;border:1px solid var(--line-soft);background:transparent;color:var(--fg-md);border-radius:4px;cursor:pointer;font-size:.74rem}
+  .pager button:hover:not(:disabled){background:var(--ink-800);color:var(--fg-hi)}
+  .pager button.active{background:var(--teal-bright);color:#04201a;border-color:var(--teal-bright);font-weight:600}
+  .pager button:disabled{opacity:.4;cursor:not-allowed}
+  .pager .pg-ell{color:var(--fg-lo);padding:0 2px}
+  .pager .pg-info{color:var(--fg-lo);margin-left:auto;font-size:.72rem}
+</style>
 </head>
 <body>
 <div id="app">
 <main class="main"><div class="page">
   <div class="h-sec between">
-    <div><h1>异步任务</h1><div class="desc">摄取 / KG 构建 / 嵌入 / 导出 · <span class="mono">GET /api/v1/tasks</span> · 实时轮询</div></div>
+    <div><h1>异步任务</h1><div class="desc">摄取 / KG 构建 / 嵌入 / 导出 · <span class="mono">GET /api/v1/tasks</span> · 实时轮询 · 点击行查看详情</div></div>
     <div class="flex"><button class="btn btn-ghost btn-sm" id="apiBtn"><i class="placeholder" data-ic="code"></i> API</button></div>
   </div>
 
@@ -30,22 +51,25 @@
       <thead><tr><th>task_id</th><th>类型</th><th>数据集</th><th>状态</th><th>进度</th><th class="num">耗时</th><th class="num">创建</th></tr></thead>
       <tbody id="rows"></tbody>
     </table></div>
+    <div class="pager" id="pgActive"></div>
   </div>
 
   <div id="pHistory" class="panel flush hidden">
-    <div class="panel-h"><i class="placeholder" data-ic="check"></i><h3>任务历史</h3><span class="sub">终态(COMPLETED / FAILED)· 最近 50 条</span></div>
+    <div class="panel-h"><i class="placeholder" data-ic="check"></i><h3>任务历史</h3><span class="sub">终态(COMPLETED / FAILED)· 点击行查看详情</span></div>
     <div class="tbl-scroll"><table class="tbl">
       <thead><tr><th>task_id</th><th>类型</th><th>数据集</th><th>结果</th><th class="num">耗时</th><th class="num">完成于</th></tr></thead>
       <tbody id="histRows"></tbody>
     </table></div>
+    <div class="pager" id="pgHistory"></div>
   </div>
 
   <div id="pFailed" class="panel flush hidden">
-    <div class="panel-h"><i class="placeholder" data-ic="close"></i><h3>失败任务</h3><span class="sub">FAILED / ERROR · 含错误详情(后端任务系统为终态,无 DLQ 重试机制)</span></div>
+    <div class="panel-h"><i class="placeholder" data-ic="close"></i><h3>失败任务</h3><span class="sub">FAILED / ERROR · 点击行展开错误详情(后端任务系统为终态,无 DLQ 重试机制)</span></div>
     <div class="tbl-scroll"><table class="tbl">
       <thead><tr><th>task_id</th><th>类型</th><th>数据集</th><th>状态</th><th>错误</th><th class="num">创建</th></tr></thead>
       <tbody id="failRows"></tbody>
     </table></div>
+    <div class="pager" id="pgFailed"></div>
   </div>
 </div></main>
 </div>
@@ -64,6 +88,7 @@ renderShell({ active: "tasks", crumb: "<b>异步任务</b>" });
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const empty = (n, msg = "无任务") => `<tr><td colspan="${n}" class="muted" style="padding:28px;text-align:center">${msg}</td></tr>`;
 
 const STATUS = {
   PENDING:   { lamp: "",       pulse: false, label: "待定",   cls: "" },
@@ -83,31 +108,119 @@ const fmtDur = (t) => {
   return s >= 60 ? `${Math.floor(s / 60)}m${s % 60}s` : `${s}s`;
 };
 
+// 分页:三个 tab 各自独立页码,翻页用 lastAll 本地切片(不重新请求)
+const PSIZE = 20;
+const pages = { active: 1, history: 1, failed: 1 };
+let lastAll = [];
+const expanded = new Set(); // 跨轮询刷新保持展开
+let lastSig = "";           // 数据签名:轮询未变则跳过重渲染(保展开/分页/滚动)
+const sigOf = (arr) => arr.map((t) => `${t.task_id}:${t.status}:${Math.round(t.progress || 0)}`).join("|");
+
+function paged(arr, tab) {
+  const total = arr.length;
+  const pages_n = Math.max(1, Math.ceil(total / PSIZE));
+  if (pages[tab] > pages_n) pages[tab] = pages_n;
+  if (pages[tab] < 1) pages[tab] = 1;
+  const cp = pages[tab];
+  return { slice: arr.slice((cp - 1) * PSIZE, cp * PSIZE), total, pages_n, cp };
+}
+
+function renderPager(elId, tab, total, pages_n, cp) {
+  const el = $(`#${elId}`);
+  if (!el) return;
+  if (total === 0 || pages_n <= 1) { el.innerHTML = total ? `<span class="pg-info">共 ${total} 条</span>` : ""; return; }
+  const win = [];
+  for (let i = 1; i <= pages_n; i++) if (i === 1 || i === pages_n || Math.abs(i - cp) <= 2) win.push(i);
+  let html = `<button data-pg="prev" ${cp <= 1 ? "disabled" : ""}>‹</button>`;
+  let prev = 0;
+  for (const i of win) {
+    if (i - prev > 1) html += `<span class="pg-ell">…</span>`;
+    html += `<button data-pg="${i}" class="${i === cp ? "active" : ""}">${i}</button>`;
+    prev = i;
+  }
+  html += `<button data-pg="next" ${cp >= pages_n ? "disabled" : ""}>›</button>`;
+  html += `<span class="pg-info">共 ${total} 条 · 第 ${cp}/${pages_n} 页</span>`;
+  el.innerHTML = html;
+  el.querySelectorAll("[data-pg]").forEach((b) => b.addEventListener("click", () => {
+    const v = b.dataset.pg;
+    if (v === "prev") pages[tab] = Math.max(1, cp - 1);
+    else if (v === "next") pages[tab] = Math.min(pages_n, cp + 1);
+    else pages[tab] = parseInt(v);
+    render(lastAll);
+  }));
+}
+
+// 行点击展开详情(含完整错误,红色 <pre>)
+function detailHtml(t) {
+  const s = st(t.status);
+  const grid = [
+    ["task_id", t.task_id],
+    ["类型", t.operation || "—"],
+    ["数据集", t.dataset_name || "—"],
+    ["状态", s.label],
+    ["进度", `${Math.round(t.progress || 0)}%`],
+    ["耗时", fmtDur(t)],
+    ["创建", t.created_at || "—"],
+    ["完成", t.completed_at || "—"],
+  ].map(([k, v]) => `<div class="dt-k">${k}</div><div class="dt-v">${esc(v)}</div>`).join("");
+  const err = t.error ? `<div class="dt-err"><span class="dt-k">错误详情</span><pre>${esc(t.error)}</pre></div>` : "";
+  return `<div class="dt-grid">${grid}</div>${err}`;
+}
+function insertDetail(tr, id) {
+  const t = lastAll.find((x) => x.task_id === id);
+  if (!t) return;
+  const det = document.createElement("tr");
+  det.className = "tr-detail";
+  det.innerHTML = `<td colspan="${tr.children.length}">${detailHtml(t)}</td>`;
+  tr.after(det);
+}
+function bindDetail() {
+  $$(".tbl tr[data-id]").forEach((tr) => {
+    tr.addEventListener("click", () => {
+      const id = tr.dataset.id;
+      const wasOpen = tr.classList.contains("expanded");
+      const tbody = tr.parentElement;
+      tbody.querySelectorAll("tr.tr-detail").forEach((n) => n.remove());
+      tbody.querySelectorAll("tr.expanded").forEach((n) => n.classList.remove("expanded"));
+      if (wasOpen) { expanded.delete(id); return; }
+      tr.classList.add("expanded");
+      expanded.add(id);
+      insertDetail(tr, id);
+    });
+  });
+}
+
 function render(all) {
+  lastAll = all;
   const active = all.filter((t) => !isTerm(t.status));
-  const hist = all.filter((t) => isTerm(t.status)).slice(0, 50);
+  const term = all.filter((t) => isTerm(t.status));
+  const failed = term.filter((t) => /FAIL|ERROR/i.test(t.status));
+
   $("#bActive").textContent = active.length;
-  const run = active.filter((t) => t.status === "RUNNING").length;
-  const pend = active.filter((t) => t.status === "PENDING").length;
-  const fail = hist.filter((t) => /FAIL|ERROR/.test(t.status)).length;
-  const failed = hist.filter((t) => /FAIL|ERROR/.test(t.status));
+  const run = active.filter((t) => /RUNNING/i.test(t.status)).length;
+  const pend = active.filter((t) => /PENDING/i.test(t.status)).length;
   $("#bFailed").style.display = failed.length ? "inline-block" : "none";
   $("#bFailed").textContent = failed.length;
-  const done = hist.length - fail;
+  const done = term.length - failed.length;
   $("#kpis").innerHTML = [
     ["运行中", run + pend, "warn", "PENDING+RUNNING"],
     ["已完成", done, "ok", "本批终态"],
-    ["失败", fail, "danger", "需关注"],
+    ["失败", failed.length, "danger", "点击行查看错误"],
   ].map(([l, v, c, d]) => `<div class="kpi"><div class="label">${l}</div><div class="val" style="color:var(--${c === "warn" ? "warn" : c === "ok" ? "ok" : "danger"})">${v}</div><div class="delta">${d}</div></div>`).join("");
 
   const focusId = new URL(location.href).searchParams.get("task");
   const hl = (t) => (focusId && t.task_id === focusId) ? ' style="background:var(--ink-900);box-shadow:inset 3px 0 0 var(--teal-bright)"' : "";
+  const stop = `onclick="event.stopPropagation()"`;
+  const ds = (t) => t.dataset_name
+    ? `<a href="datasets.html?ds=${encodeURIComponent(t.dataset_name)}" ${stop} style="color:var(--teal-bright)">${esc(t.dataset_name)}</a>`
+    : `<span class="muted">—</span>`;
+
   const rowActive = (t) => {
     const s = st(t.status); const pct = Math.round(t.progress || 0);
-    return `<tr${hl(t)}>
+    return `<tr data-id="${esc(t.task_id)}"${hl(t)}>
       <td class="mono" style="font-size:.75rem" title="${esc(t.task_id)}">${esc(t.task_id)}</td>
       <td><span class="tag">${esc(t.operation || "—")}</span></td>
-      <td><a href="datasets.html?ds=${encodeURIComponent(t.dataset_name || "")}" style="color:var(--teal-bright)">${esc(t.dataset_name || "—")}</a></td>
+      <td>${ds(t)}</td>
       <td><span class="lamp ${s.lamp} ${s.pulse ? "pulse" : ""}"><i></i>${s.label}</span></td>
       <td><div class="flex" style="gap:8px"><span class="bar ${s.cls}" style="flex:1;max-width:140px"><i style="width:${pct}%"></i></span><span class="pct">${pct}%</span></div></td>
       <td class="num mono">${fmtDur(t)}</td>
@@ -116,29 +229,47 @@ function render(all) {
   };
   const rowHist = (t) => {
     const s = st(t.status);
-    return `<tr${hl(t)}>
+    return `<tr data-id="${esc(t.task_id)}"${hl(t)}>
       <td class="mono" style="font-size:.75rem">${esc(t.task_id)}</td>
       <td><span class="tag">${esc(t.operation || "—")}</span></td>
-      <td><a href="datasets.html?ds=${encodeURIComponent(t.dataset_name || "")}" style="color:var(--teal-bright)">${esc(t.dataset_name || "—")}</a></td>
+      <td>${ds(t)}</td>
       <td><span class="lamp ${s.lamp}"><i></i>${s.label}</span></td>
       <td class="num mono">${fmtDur(t)}</td>
       <td class="num mono">${esc(t.completed_at || "—")}</td>
     </tr>`;
   };
-  $("#rows").innerHTML = active.length ? active.map(rowActive).join("") : `<tr><td colspan="7" class="muted" style="padding:28px;text-align:center">无活跃任务</td></tr>`;
-  $("#histRows").innerHTML = hist.length ? hist.map(rowHist).join("") : `<tr><td colspan="6" class="muted" style="padding:28px;text-align:center">无历史</td></tr>`;
   const rowFailed = (t) => {
     const s = st(t.status);
-    return `<tr${hl(t)}>
+    const err = (t.error || t.message || "").trim();
+    const preview = err ? (err.length > 80 ? err.slice(0, 79) + "…" : err) : "—";
+    return `<tr data-id="${esc(t.task_id)}"${hl(t)}>
       <td class="mono" style="font-size:.75rem">${esc(t.task_id)}</td>
       <td><span class="tag">${esc(t.operation || "—")}</span></td>
-      <td><a href="datasets.html?ds=${encodeURIComponent(t.dataset_name || "")}" style="color:var(--teal-bright)">${esc(t.dataset_name || "—")}</a></td>
+      <td>${ds(t)}</td>
       <td><span class="lamp ${s.lamp}"><i></i>${s.label}</span></td>
-      <td class="muted" style="font-size:.74rem;max-width:440px;word-break:break-all">${esc(t.error || t.message || "—")}</td>
+      <td class="muted" style="font-size:.74rem;max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(preview)}${err ? '<span class="dt-hint">▾ 展开</span>' : ""}</td>
       <td class="num mono">${esc(t.created_at || "—")}</td>
     </tr>`;
   };
-  $("#failRows").innerHTML = failed.length ? failed.map(rowFailed).join("") : `<tr><td colspan="6" class="muted" style="padding:28px;text-align:center">无失败任务</td></tr>`;
+
+  const pa = paged(active, "active");
+  const ph = paged(term, "history");
+  const pf = paged(failed, "failed");
+  $("#rows").innerHTML = pa.slice.length ? pa.slice.map(rowActive).join("") : empty(7, "无活跃任务");
+  $("#histRows").innerHTML = ph.slice.length ? ph.slice.map(rowHist).join("") : empty(6, "无历史");
+  $("#failRows").innerHTML = pf.slice.length ? pf.slice.map(rowFailed).join("") : empty(6, "无失败任务");
+  renderPager("pgActive", "active", pa.total, pa.pages_n, pa.cp);
+  renderPager("pgHistory", "history", ph.total, ph.pages_n, ph.cp);
+  renderPager("pgFailed", "failed", pf.total, pf.pages_n, pf.cp);
+  bindDetail();
+  // 数据变化重渲染后,恢复之前展开的详情行
+  $$(".tbl tr[data-id]").forEach((tr) => {
+    if (expanded.has(tr.dataset.id)) {
+      tr.classList.add("expanded");
+      insertDetail(tr, tr.dataset.id);
+    }
+  });
+  lastSig = sigOf(all); // 记录本次渲染签名,供 streamTasks 轮询对比
 }
 
 async function load() {
@@ -153,7 +284,11 @@ async function load() {
   }
 }
 
-streamTasks((tasks) => render(tasks)); // 实时轮询刷新
+streamTasks((tasks) => {
+  // 轮询:数据未变跳过重渲染(保展开/分页/滚动);load() 与翻页直接调 render,不走此检查
+  if (sigOf(tasks) === lastSig) return;
+  render(tasks);
+});
 load();
 
 $("#tt").addEventListener("click", (e) => {

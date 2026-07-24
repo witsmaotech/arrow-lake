@@ -14,10 +14,12 @@
   .olap-side{position:sticky;top:14px;max-height:calc(100vh - 90px);overflow:auto}
   .olap-side .side-head{padding:8px 10px;border-bottom:1px solid var(--line-soft)}
   .olap-side .side-head .select{width:100%}
-  .schema-col{display:flex;justify-content:space-between;gap:8px;padding:6px 10px;border-bottom:1px solid var(--line-soft);cursor:pointer;font-size:.78rem;transition:background .12s}
+  .schema-col{display:flex;flex-direction:column;gap:2px;padding:6px 10px;border-bottom:1px solid var(--line-soft);cursor:pointer;font-size:.78rem;transition:background .12s}
   .schema-col:hover{background:var(--ink-800)}
+  .schema-col .sc-head{display:flex;justify-content:space-between;gap:8px;align-items:center}
   .schema-col .sc-name{color:var(--fg-hi);font-family:var(--font-mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .schema-col .sc-type{color:var(--fg-lo);font-size:.66rem;font-family:var(--font-mono);flex-shrink:0}
+  .schema-col .sc-comment{color:var(--fg-lo);font-size:.68rem;font-family:var(--font-mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .mode-tabs{display:flex;gap:2px;background:var(--ink-850);border:1px solid var(--line-soft);border-radius:var(--r-md);padding:3px;margin-bottom:var(--s3)}
   .mode-tabs .mtab{flex:1;padding:7px;border:none;background:none;color:var(--fg-lo);font-size:.78rem;font-weight:600;cursor:pointer;border-radius:5px;font-family:inherit}
   .mode-tabs .mtab.active{background:var(--ink-700);color:var(--fg-hi)}
@@ -85,6 +87,7 @@
             <button class="btn btn-ghost btn-sm" id="explainBtn"><i class="placeholder" data-ic="olap"></i> EXPLAIN</button>
             <button class="btn btn-ghost btn-sm" id="apiBtn"><i class="placeholder" data-ic="code"></i> API</button>
             <button class="btn btn-ghost btn-sm" id="mvTplBtn" title="插入 CREATE MATERIALIZED VIEW 模板"><i class="placeholder" data-ic="database"></i> MV 模板</button>
+            <button class="btn btn-ghost btn-sm" data-fav="sql" title="收藏当前 SQL 到我的工作区(需 personal token)">收藏</button>
             <button class="btn btn-primary btn-sm" id="runBtn"><i class="placeholder" data-ic="play"></i> 运行 ⌘⏎</button>
           </span></div>
           <div id="editor"></div>
@@ -158,6 +161,7 @@
 import { isLoggedIn } from "./src/auth.js";
 import { request, API_BASE } from "./src/api.js";
 import { initWorksheet } from "./src/olap/worksheet.js";
+import "./src/favorite.js";  // [data-fav="sql"] 自动绑收藏入口
 import { toast } from "./src/ui/toast.js";
 
 if (!isLoggedIn()) { location.replace("login.html"); }

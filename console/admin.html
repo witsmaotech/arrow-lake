@@ -20,6 +20,14 @@
   .acl-card .meta{font-size:.78rem;color:var(--fg-lo)}
   .chips{display:flex;flex-wrap:wrap;gap:6px}
   .gap-note{margin-top:14px;padding:10px 12px;border:1px dashed var(--line-soft);border-radius:var(--r-md);font-size:.76rem;color:var(--fg-lo);background:var(--ink-950)}
+  .pager{display:flex;align-items:center;gap:4px;flex-wrap:wrap;padding:10px 2px;font-size:.76rem}
+  .pager:empty{display:none}
+  .pager button{min-width:28px;height:26px;padding:0 8px;border:1px solid var(--line-soft);background:transparent;color:var(--fg-md);border-radius:4px;cursor:pointer;font-size:.74rem}
+  .pager button:hover:not(:disabled){background:var(--ink-800);color:var(--fg-hi)}
+  .pager button.active{background:var(--teal-bright);color:#04201a;border-color:var(--teal-bright);font-weight:600}
+  .pager button:disabled{opacity:.4;cursor:not-allowed}
+  .pager .pg-ell{color:var(--fg-lo);padding:0 2px}
+  .pager .pg-info{color:var(--fg-lo);margin-left:auto;font-size:.72rem}
   @media(max-width:860px){.form-grid.g5,.form-grid.g3{grid-template-columns:1fr 1fr}}
 </style>
 </head>
@@ -187,7 +195,7 @@ async function loadUsers() {
   }
 }
 // 用户表分页(每页 20;行操作按钮走事件委托,翻页重渲安全)
-let _uPage = 1; const _U_SIZE = 20;
+let _uPage = 1; const _U_SIZE = 10;
 function renderUserRows() {
   const list = USERS || [];
   if (!list.length) { $("#userRows").innerHTML = `<tr><td colspan="7" class="muted" style="padding:28px;text-align:center">无用户</td></tr>`; $("#userPager").innerHTML = ""; return; }
@@ -208,13 +216,33 @@ function renderUserRows() {
         <button class="btn btn-ghost btn-sm" data-tok-list="${u.id}" title="查看 / 撤销 token">token</button>
       </td>
     </tr>`).join("");
-  $("#userPager").innerHTML = pages > 1 ? `<div style="display:flex;gap:8px;align-items:center;justify-content:center;padding:10px;font-size:.78rem"><button class="btn btn-ghost btn-sm" data-upg="prev" ${_uPage <= 1 ? "disabled" : ""}>‹ 上一页</button><span class="muted">第 ${_uPage} / ${pages} 页 · 共 ${total}</span><button class="btn btn-ghost btn-sm" data-upg="next" ${_uPage >= pages ? "disabled" : ""}>下一页 ›</button></div>` : "";
+  renderUserPager(total, pages);
+}
+// 用户表分页栏(页码 + 省略号;pages=1 也显示总数,让分页机制可见)
+function renderUserPager(total, pages) {
+  const el = $("#userPager");
+  if (!total) { el.innerHTML = ""; return; }
+  if (pages <= 1) { el.innerHTML = `<div class="pager"><span class="pg-info">共 ${total} 个用户</span></div>`; return; }
+  const win = [];
+  for (let i = 1; i <= pages; i++) if (i === 1 || i === pages || Math.abs(i - _uPage) <= 2) win.push(i);
+  let html = `<div class="pager"><button data-upg="prev" ${_uPage <= 1 ? "disabled" : ""}>‹</button>`;
+  let prev = 0;
+  for (const i of win) {
+    if (i - prev > 1) html += `<span class="pg-ell">…</span>`;
+    html += `<button data-upg="${i}"${i === _uPage ? ' class="active"' : ""}>${i}</button>`;
+    prev = i;
+  }
+  html += `<button data-upg="next" ${_uPage >= pages ? "disabled" : ""}>›</button>`;
+  html += `<span class="pg-info">共 ${total} 个 · 第 ${_uPage}/${pages} 页</span></div>`;
+  el.innerHTML = html;
 }
 $("#userPager").addEventListener("click", (e) => {
   const btn = e.target.closest("[data-upg]"); if (!btn) return;
   const pages = Math.ceil((USERS || []).length / _U_SIZE);
-  if (btn.dataset.upg === "prev" && _uPage > 1) _uPage--;
-  else if (btn.dataset.upg === "next" && _uPage < pages) _uPage++;
+  const v = btn.dataset.upg;
+  if (v === "prev") _uPage = Math.max(1, _uPage - 1);
+  else if (v === "next") _uPage = Math.min(pages, _uPage + 1);
+  else _uPage = parseInt(v);
   renderUserRows();
 });
 $("#nuBtn").addEventListener("click", async () => {
@@ -285,8 +313,13 @@ async function issueToken(uid) {
       showModal(`✓ token 已发放 · ${esc(name)}`, `<div style="border:1px solid var(--warn);background:var(--ink-950);padding:12px;border-radius:var(--r-md);margin-bottom:12px;font-size:.8rem;color:var(--warn)">⚠ 明文仅此一次,关闭后不可再见(store 只存 sha256)。</div>
         <div class="muted" style="font-size:.74rem;margin-bottom:6px">token(prefix <span class="mono">${esc(r.token_prefix)}</span>)</div>
         <textarea class="input mono" readonly style="width:100%;min-height:64px;font-size:.8rem">${esc(r.token)}</textarea>
-        <div class="flex" style="gap:8px;margin-top:10px"><button class="btn btn-primary btn-sm" id="tkCopy">${icon("copy")} 复制</button></div>`);
+        <div class="flex" style="gap:8px;margin-top:10px"><button class="btn btn-primary btn-sm" id="tkCopy">${icon("copy")} 复制</button><button class="btn btn-ghost btn-sm" id="tkGo" title="复制并打开我的工作区(预填此 token)">复制并打开工作区 →</button></div>`);
       $("#tkCopy")?.addEventListener("click", () => { navigator.clipboard?.writeText(r.token); toast("已复制到剪贴板", "ok"); });
+      $("#tkGo")?.addEventListener("click", () => {
+        navigator.clipboard?.writeText(r.token)?.catch(() => {});
+        window.open(`my-workspace.html?ptoken=${encodeURIComponent(r.token)}`, "_blank");
+        toast("已复制 token,正在打开我的工作区…", "ok");
+      });
       loadUsers();
     } catch (e) { toast("发 token 失败:" + errMsg(e), "danger"); closeModal(); }
   });

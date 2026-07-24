@@ -381,6 +381,7 @@ class SchemaField(BaseModel):
     name: str
     type: str
     nullable: bool = True
+    comment: str = ""
 
 
 class SchemaResponse(BaseModel):
@@ -390,6 +391,13 @@ class SchemaResponse(BaseModel):
     name: str
     fields: list[SchemaField] = Field(default_factory=list)
     total: int = 0
+
+
+class SchemaAnnotateRequest(BaseModel):
+    """Set a human-readable comment on one field (writes Arrow field metadata)."""
+
+    field: str
+    comment: str = Field(default="", max_length=1000)
 
 
 # ---------------------------------------------------------------------------

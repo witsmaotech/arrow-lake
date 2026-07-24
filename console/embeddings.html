@@ -17,6 +17,7 @@
   .schema-chip{display:inline-block;font-family:var(--font-mono);font-size:.72rem;padding:2px 8px;border:1px solid var(--line-soft);border-radius:var(--r-sm);background:var(--ink-900);margin:0 4px 4px 0}
   .schema-chip.vec{border-color:var(--teal-soft,var(--line));color:var(--teal-bright)}
   .schema-chip.txt{color:var(--fg-hi)}
+  .schema-chip .cm{color:var(--fg-lo);font-style:italic;max-width:16ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:bottom}
   .idx-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line-soft)}
   .idx-row:last-child{border-bottom:none}
   .vec-preview{font-family:var(--font-mono);font-size:.72rem;color:var(--fg-md);word-break:break-all;background:var(--ink-950);border:1px solid var(--line);border-radius:var(--r-sm);padding:10px;max-height:160px;overflow:auto}
@@ -175,7 +176,10 @@ async function loadSchema() {
     $("#schema").innerHTML = fields.map(f => {
       const isVec = /list|fixed_size/i.test(f.type);
       const isTxt = /string|utf8|large_string/i.test(f.type);
-      return `<span class="schema-chip ${isVec ? "vec" : isTxt ? "txt" : ""}" title="${esc(f.type)}">${esc(f.name)} <span style="color:var(--fg-lo)">: ${esc(f.type)}</span></span>`;
+      const cm = f.comment || "";
+      const tip = cm ? `${esc(f.type)}\n${cm}` : esc(f.type);
+      const cmHtml = cm ? ` <span class="cm" title="${esc(cm)}">// ${esc(cm.length > 16 ? cm.slice(0, 15) + "…" : cm)}</span>` : "";
+      return `<span class="schema-chip ${isVec ? "vec" : isTxt ? "txt" : ""}" title="${tip}">${esc(f.name)} <span style="color:var(--fg-lo)">: ${esc(f.type)}</span>${cmHtml}</span>`;
     }).join("");
     // populate column selects
     const vecCols = fields.filter(f => /list|fixed_size/i.test(f.type)).map(f => f.name);

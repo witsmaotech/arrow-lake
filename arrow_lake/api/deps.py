@@ -126,6 +126,14 @@ def require_role(required_role: Role) -> Callable:
                 status_code=403,
                 detail=f"Insufficient permissions: requires {required_role.value}",
             )
+        uid = getattr(request.state, "user_id", None)
+        if uid is None and getattr(user, "sub", "").isdigit():
+            uid = int(user.sub)  # v1.9.3: JWT path carries user_id in sub (login: str(user["id"]))
+        if uid is not None and getattr(user, "user_id", None) is None:
+            try:
+                user.user_id = uid  # v1.9.3: expose numeric id for task notifications
+            except Exception:  # noqa: BLE001
+                pass
         return user
 
     return _check

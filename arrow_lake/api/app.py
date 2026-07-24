@@ -238,6 +238,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         from arrow_lake.api.tasks import TaskManager
 
         TaskManager.init_history_store(task_history_store)
+        TaskManager.init_user_state_store(app.state.user_state_store)
 
         logger.info(
             "system_db_enabled",

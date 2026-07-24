@@ -133,7 +133,7 @@ async def ingest_files_async(
         from arrow_lake.ingest.transforms import build_transforms
         transforms = build_transforms(req.transforms)
 
-    task_id = TaskManager.create_task("ingest", name)
+    task_id = TaskManager.create_task("ingest", name, user_id=_user.user_id)
     _task = asyncio.create_task(  # noqa: RUF006
         TaskManager.run_background(task_id, lake.ingest, name, all_paths, transforms=transforms)
     )
@@ -221,7 +221,7 @@ async def ingest_documents_async(
     open for the full ingest. Poll via ``GET /api/v1/tasks/{task_id}/status``
     or watch on the tasks queue page (``tasks.html?task=<task_id>``).
     """
-    task_id = TaskManager.create_task("ingest_documents", name)
+    task_id = TaskManager.create_task("ingest_documents", name, user_id=_user.user_id)
     asyncio.create_task(  # noqa: RUF006
         TaskManager.run_background(
             task_id, _bg_ingest_documents,
@@ -282,7 +282,7 @@ async def create_vector_index_async(
     Vector index builds (IVF_PQ/HNSW) can run minutes on large datasets; this
     avoids blocking the client. Poll via /tasks/{task_id}/status.
     """
-    task_id = TaskManager.create_task("create_vector_index", name)
+    task_id = TaskManager.create_task("create_vector_index", name, user_id=_user.user_id)
     asyncio.create_task(  # noqa: RUF006
         TaskManager.run_background(
             task_id, _bg_create_vector_index, lake, name,
@@ -309,7 +309,7 @@ async def create_fts_index_async(
     _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> AsyncTaskResponse:
     """Async FTS index creation — returns task_id immediately (HTTP 202)."""
-    task_id = TaskManager.create_task("create_fts_index", name)
+    task_id = TaskManager.create_task("create_fts_index", name, user_id=_user.user_id)
     asyncio.create_task(  # noqa: RUF006
         TaskManager.run_background(
             task_id, _bg_create_fts_index, lake, name,
@@ -352,7 +352,7 @@ async def backup_create_async(
         blob_store=blob_store,
     )
 
-    task_id = TaskManager.create_task("backup", detail={"datasets": req.datasets})
+    task_id = TaskManager.create_task("backup", detail={"datasets": req.datasets}, user_id=_user.user_id)
     _task = asyncio.create_task(  # noqa: RUF006
         TaskManager.run_background(task_id, mgr.create_backup, req.datasets)
     )
@@ -388,7 +388,7 @@ async def backup_restore_async(
         blob_store=blob_store,
     )
 
-    task_id = TaskManager.create_task("restore", detail={"backup_id": req.backup_id})
+    task_id = TaskManager.create_task("restore", detail={"backup_id": req.backup_id}, user_id=_user.user_id)
     _task = asyncio.create_task(  # noqa: RUF006
         TaskManager.run_background(
             task_id, mgr.restore_backup, req.backup_id, req.datasets or []

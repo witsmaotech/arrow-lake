@@ -67,7 +67,11 @@ export async function initWorksheet() {
       const fields = s.fields || [];
       schemaList.innerHTML = (fields.length
         ? `<div class="muted" style="padding:6px 8px;font-size:.68rem;text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--line-soft)">${fields.length} 字段 · 点击插入编辑器</div>` +
-          fields.map((f) => `<div class="schema-col" data-col="${encodeURIComponent(f.name)}" title="${esc(f.type)} · ${f.nullable ? "nullable" : "not null"} · 点击插入"><span class="sc-name">${esc(f.name)}</span><span class="sc-type">${esc(f.type)}</span></div>`).join("")
+          fields.map((f) => {
+            const cm = f.comment || "";
+            const cmHtml = cm ? `<div class="sc-comment" title="${esc(cm)}">// ${esc(cm)}</div>` : "";
+            return `<div class="schema-col" data-col="${encodeURIComponent(f.name)}" title="${esc(f.type)} · ${f.nullable ? "nullable" : "not null"} · 点击插入"><div class="sc-head"><span class="sc-name">${esc(f.name)}</span><span class="sc-type">${esc(f.type)}</span></div>${cmHtml}</div>`;
+          }).join("")
         : `<div class="muted" style="padding:12px;text-align:center">无字段</div>`);
       schemaList.querySelectorAll(".schema-col").forEach((el) => {
         el.addEventListener("click", () => {
