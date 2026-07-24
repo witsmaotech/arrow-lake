@@ -48,7 +48,7 @@ const NAV = [
     { id: "data-prep", label: "数据准备", ic: "file", href: "data-prep.html" },
     { id: "tidy", label: "清洗整理", ic: "olap", href: "tidy.html" },
     { id: "embeddings", label: "索引/嵌入", ic: "code", href: "embeddings.html" },
-    { id: "search", label: "检索", ic: "search", href: "search.html" },
+    { id: "search", label: "文本检索", ic: "search", href: "search.html" },
     { id: "image-search", label: "图像检索", ic: "file", href: "search.html?mode=image" },
   ] },
   { group: "智能", items: [
