@@ -58,7 +58,7 @@
 
   <div class="panel"><div class="panel-b" id="stats"><div class="muted" style="padding:16px">选择数据集后加载…</div></div></div>
 
-  <div class="panel flush" id="schemaPanel" style="margin-top:var(--s4);display:none">
+  <div class="panel" id="schemaPanel" style="margin-top:var(--s4);display:none">
     <div class="panel-h" id="schemaToggle" style="cursor:pointer;user-select:none"><i class="placeholder" data-ic="code"></i><h3>Schema · 图遍历</h3><span class="sub" id="schemaMeta">—</span><span class="sub toggle-mark" style="margin-left:auto">▾</span></div>
     <div class="panel-b" id="schemaBody">
       <div id="schema"></div>
@@ -97,7 +97,7 @@
     </div>
   </div>
 
-  <div class="panel flush" style="margin-top:var(--s4)">
+  <div class="panel" style="margin-top:var(--s4)">
     <div class="panel-h" id="buildToggle" style="cursor:pointer;user-select:none"><i class="placeholder" data-ic="plus"></i><h3>建 / 重建 KG</h3><span class="sub toggle-mark" style="margin-left:auto">▸</span></div>
     <div class="panel-b" id="buildBody" style="display:none">
       <div class="muted" style="font-size:.78rem;margin-bottom:8px">对当前数据集抽取实体/关系建图(异步,ADMIN;走全局轻量 LLM 抽取)。大 dataset 耗时较长,完成后自动刷新统计。</div>
@@ -105,7 +105,7 @@
     </div>
   </div>
 
-  <div class="panel flush" style="margin-top:var(--s4)">
+  <div class="panel" style="margin-top:var(--s4)">
     <div class="panel-h"><i class="placeholder" data-ic="chat"></i><h3>图问答(KG-RAG)</h3><span class="sub">POST /kg/ask · 走 he_qa_llm(qwen-max)</span></div>
     <div class="panel-b">
       <div id="thread"><div class="muted" style="padding:16px;text-align:center">先建 KG 再提问(基于图的实体/关系作答)</div></div>
