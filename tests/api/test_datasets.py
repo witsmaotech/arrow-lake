@@ -31,6 +31,13 @@ class _FakeEntry:
     name: str
     version: int
     num_rows: int
+    num_columns: int = 0
+    vector_dim: int | None = None
+    has_vector_index: bool = False
+    has_fts_index: bool = False
+    size_bytes: int = 0
+    created_at: str = ""
+    updated_at: str = ""
 
 
 @dataclass(frozen=True)
@@ -143,7 +150,7 @@ async def test_ingest_files(client: AsyncClient, mock_lake_with_catalog: MagicMo
     assert body["sources"][0]["path"] == "data.csv"
 
     # Verify Lake.ingest was called with correct args
-    mock_lake_with_catalog.ingest.assert_called_once_with("test", ["data.csv", "data2.json"], transforms=None)
+    mock_lake_with_catalog.ingest.assert_called_once_with("test", ["data.csv", "data2.json"], transforms=None, actor="api-key")
 
 
 # ---- POST /api/v1/datasets/{name}/ingest/http ----
@@ -168,7 +175,7 @@ async def test_ingest_http(client: AsyncClient, mock_lake_with_catalog: MagicMoc
     assert body["sources"][0]["path"] == "https://example.com/data.json"
 
     mock_lake_with_catalog.ingest_http.assert_called_once_with(
-        "test", ["https://example.com/data.json"]
+        "test", ["https://example.com/data.json"], actor="api-key"
     )
 
 
@@ -179,7 +186,7 @@ async def test_delete_dataset(client: AsyncClient, mock_lake_with_catalog: Magic
     resp = await client.delete("/api/v1/datasets/documents")
     assert resp.status_code == 200
     assert "deleted" in resp.json()["message"]
-    mock_lake_with_catalog.delete_dataset.assert_called_once_with("documents")
+    mock_lake_with_catalog.delete_dataset.assert_called_once_with("documents", actor="api-key")
 
 
 @pytest.mark.asyncio
@@ -260,7 +267,7 @@ async def test_ingest_images(client: AsyncClient, mock_lake_with_catalog: MagicM
     assert body["total_rows"] == 5
 
     mock_lake_with_catalog.ingest_images.assert_called_once_with(
-        "test", ["photo.jpg", "image.png"]
+        "test", ["photo.jpg", "image.png"], actor="api-key"
     )
 
 
@@ -291,7 +298,7 @@ async def test_ingest_videos(client: AsyncClient, mock_lake_with_catalog: MagicM
     body = resp.json()
     assert body["total_rows"] == 3
 
-    mock_lake_with_catalog.ingest_videos.assert_called_once_with("test", ["video.mp4"])
+    mock_lake_with_catalog.ingest_videos.assert_called_once_with("test", ["video.mp4"], actor="api-key")
 
 
 # ---- POST /api/v1/datasets/{name}/ingest/mixed ----
@@ -324,4 +331,4 @@ async def test_ingest_mixed(client: AsyncClient, mock_lake_with_catalog: MagicMo
     mock_lake_with_catalog.ingest_mixed.assert_called_once_with("test", {
         "files": ["data.csv"],
         "images": ["photo.jpg"],
-    })
+    }, actor="api-key")

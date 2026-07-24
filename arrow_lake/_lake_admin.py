@@ -190,12 +190,13 @@ class _LakeAdminMixin:
         """
         self._get_storage().update_field_comments(name, comments)
 
-    def delete_dataset(self, name: str) -> None:
+    def delete_dataset(self, name: str, *, actor: str = "system") -> None:
         """Delete a dataset and all its data.
 
         Args:
             name: Dataset name to delete.
         """
+        pre_version = self._safe_version(name)
         with self._trace_span("delete_dataset", dataset=name):
             self._get_storage().delete_dataset(name)
         # v1.8.6: best-effort drop of the dataset's isolated KG graph so
@@ -207,6 +208,15 @@ class _LakeAdminMixin:
             val = catalog_tables_total._value.get()
             if val is not None and val > 0:
                 catalog_tables_total.dec()
+        # v1.9.4: durable audit for destructive ops (compliance red line).
+        # Covers ALL callers (REST + CLI + internal); best-effort, never blocks.
+        try:
+            self.audit_record(
+                "dataset.deleted", dataset_name=name, actor=actor,
+                lance_version=pre_version, payload={"actor": actor},
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning("delete audit failed for %s", name, exc_info=True)
 
     def _drop_dataset_kg_graph_best_effort(self, name: str) -> None:
         """v1.8.6: best-effort drop of the ``kg_{name}`` graph on dataset delete.
@@ -235,7 +245,7 @@ class _LakeAdminMixin:
                 "best-effort KG graph drop failed for dataset %s", name, exc_info=True
             )
 
-    def restore_dataset(self, name: str, data: Any) -> None:
+    def restore_dataset(self, name: str, data: Any, *, actor: str = "system") -> None:
         """Replace a dataset entirely with new data (delete + recreate).
 
         Used for schema changes, column additions, and full dataset reloads.
@@ -248,6 +258,14 @@ class _LakeAdminMixin:
             StorageError: If dataset does not exist or write fails.
         """
         self._get_storage().restore_dataset(name, data)
+        # v1.9.4: audit restore (companion to delete audit); best-effort.
+        try:
+            self.audit_record(
+                "dataset.restored", dataset_name=name, actor=actor,
+                lance_version=self._safe_version(name), payload={"actor": actor},
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning("restore audit failed for %s", name, exc_info=True)
 
     def get_dataset_version(self, name: str) -> int:
         """Get the current version number of a dataset.

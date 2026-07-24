@@ -16,12 +16,20 @@ if TYPE_CHECKING:
 class _LakeIngestMixin:
     """Provides data ingestion, dataset management, quality filtering, and dedup."""
 
+    def _safe_version(self, name: str) -> int | None:
+        """Best-effort current Lance version for lineage; None if unreadable."""
+        try:
+            return self.get_dataset_version(name)
+        except Exception:  # noqa: BLE001
+            return None
+
     def ingest(
         self,
         dataset_name: str,
         file_paths: list[str],
         *,
         transforms: list[Any] | None = None,
+        actor: str = "system",
     ) -> IngestionReport:
         """Ingest local files into a Lance dataset (Stories 3.1-3.5).
 
@@ -41,7 +49,10 @@ class _LakeIngestMixin:
         report = Ingestor(self._get_storage()).ingest(
             dataset_name, file_paths, transforms=transforms,
         )
-        self._lineage_after_ingest(dataset_name, source_paths=file_paths)
+        self._lineage_after_ingest(
+            dataset_name, source_paths=file_paths, actor=actor,
+            lance_version=self._safe_version(dataset_name), total_rows=report.total_rows,
+        )
         return report
 
     def load_hf_dataset(self, repo_id: str, *, table: str | None = None) -> Any:
@@ -95,6 +106,7 @@ class _LakeIngestMixin:
         file_paths: list[str],
         *,
         transforms: list[Any] | None = None,
+        actor: str = "system",
     ) -> IngestionReport:
         """Batch-ingest files of same type via Daft write_lance.
 
@@ -113,7 +125,10 @@ class _LakeIngestMixin:
         report = Ingestor(self._get_storage()).ingest_batch(
             dataset_name, file_paths, transforms=transforms,
         )
-        self._lineage_after_ingest(dataset_name, source_paths=file_paths)
+        self._lineage_after_ingest(
+            dataset_name, source_paths=file_paths, actor=actor,
+            lance_version=self._safe_version(dataset_name), total_rows=report.total_rows,
+        )
         return report
 
     def ingest_sql(
@@ -125,6 +140,7 @@ class _LakeIngestMixin:
         partition_col: str | None = None,
         num_partitions: int | None = None,
         transforms: list[Any] | None = None,
+        actor: str = "system",
     ) -> IngestionReport:
         """Ingest data from a SQL database query.
 
@@ -151,6 +167,8 @@ class _LakeIngestMixin:
         )
         self._lineage_after_ingest(
             dataset_name, source_descriptor={"sql": sql, "connection_url": connection_url},
+            actor=actor, lance_version=self._safe_version(dataset_name),
+            total_rows=report.total_rows,
         )
         return report
 
@@ -164,6 +182,7 @@ class _LakeIngestMixin:
         end: str = "latest",
         json_decode: bool = True,
         transforms: list[Any] | None = None,
+        actor: str = "system",
     ) -> IngestionReport:
         """Ingest messages from Kafka topics.
 
@@ -193,7 +212,8 @@ class _LakeIngestMixin:
         topics_list = [topics] if isinstance(topics, str) else list(topics)
         self._lineage_after_ingest(
             dataset_name, source_descriptor={"kafka_topics": topics_list},
-            transform_type="ingest_kafka",
+            transform_type="ingest_kafka", actor=actor,
+            lance_version=self._safe_version(dataset_name), total_rows=report.total_rows,
         )
         return report
 
@@ -203,6 +223,7 @@ class _LakeIngestMixin:
         *,
         table_uri: str,
         transforms: list[Any] | None = None,
+        actor: str = "system",
     ) -> IngestionReport:
         """Ingest data from an Apache Iceberg table."""
         from arrow_lake.ingest.ingestor import Ingestor
@@ -212,7 +233,8 @@ class _LakeIngestMixin:
         )
         self._lineage_after_ingest(
             dataset_name, source_descriptor={"iceberg_table": table_uri},
-            transform_type="ingest_iceberg",
+            transform_type="ingest_iceberg", actor=actor,
+            lance_version=self._safe_version(dataset_name), total_rows=report.total_rows,
         )
         return report
 
@@ -223,6 +245,7 @@ class _LakeIngestMixin:
         table_uri: str,
         version: int | None = None,
         transforms: list[Any] | None = None,
+        actor: str = "system",
     ) -> IngestionReport:
         """Ingest data from a Delta Lake table."""
         from arrow_lake.ingest.ingestor import Ingestor
@@ -232,7 +255,8 @@ class _LakeIngestMixin:
         )
         self._lineage_after_ingest(
             dataset_name, source_descriptor={"delta_table": table_uri},
-            transform_type="ingest_deltalake",
+            transform_type="ingest_deltalake", actor=actor,
+            lance_version=self._safe_version(dataset_name), total_rows=report.total_rows,
         )
         return report
 
@@ -272,6 +296,7 @@ class _LakeIngestMixin:
         transforms: list[Any] | None = None,
         model: str | None = None,
         num_partitions: int | None = None,
+        actor: str = "system",
     ) -> Any:
         """Ingest files and generate embeddings in a single Daft pipeline.
 
@@ -305,6 +330,7 @@ class _LakeIngestMixin:
         )
         self._lineage_after_ingest(
             dataset_name, source_paths=file_paths, transform_type="ingest_and_embed",
+            actor=actor, lance_version=self._safe_version(dataset_name),
         )
         return result
 
@@ -312,6 +338,8 @@ class _LakeIngestMixin:
         self,
         dataset_name: str,
         urls: list[str],
+        *,
+        actor: str = "system",
     ) -> IngestionReport:
         """Ingest files from HTTP(S) URLs (Story 3.2).
 
@@ -327,13 +355,18 @@ class _LakeIngestMixin:
         from arrow_lake.ingest.ingestor import Ingestor
 
         report = Ingestor(self._get_storage()).ingest_http(dataset_name, urls)
-        self._lineage_after_ingest(dataset_name, source_paths=urls, transform_type="ingest_http")
+        self._lineage_after_ingest(
+            dataset_name, source_paths=urls, transform_type="ingest_http", actor=actor,
+            lance_version=self._safe_version(dataset_name), total_rows=report.total_rows,
+        )
         return report
 
     def ingest_images(
         self,
         dataset_name: str,
         image_paths: list[str],
+        *,
+        actor: str = "system",
     ) -> IngestionReport:
         """Ingest image files with thumbnails and EXIF (Story 3.3).
 
@@ -349,13 +382,18 @@ class _LakeIngestMixin:
         from arrow_lake.ingest.ingestor import Ingestor
 
         report = Ingestor(self._get_storage()).ingest_images(dataset_name, image_paths)
-        self._lineage_after_ingest(dataset_name, source_paths=image_paths, transform_type="ingest_images")
+        self._lineage_after_ingest(
+            dataset_name, source_paths=image_paths, transform_type="ingest_images", actor=actor,
+            lance_version=self._safe_version(dataset_name), total_rows=report.total_rows,
+        )
         return report
 
     def ingest_videos(
         self,
         dataset_name: str,
         video_paths: list[str],
+        *,
+        actor: str = "system",
     ) -> IngestionReport:
         """Ingest video files with keyframe extraction (Story 3.4).
 
@@ -371,13 +409,18 @@ class _LakeIngestMixin:
         from arrow_lake.ingest.ingestor import Ingestor
 
         report = Ingestor(self._get_storage()).ingest_videos(dataset_name, video_paths)
-        self._lineage_after_ingest(dataset_name, source_paths=video_paths, transform_type="ingest_videos")
+        self._lineage_after_ingest(
+            dataset_name, source_paths=video_paths, transform_type="ingest_videos", actor=actor,
+            lance_version=self._safe_version(dataset_name), total_rows=report.total_rows,
+        )
         return report
 
     def ingest_mixed(
         self,
         dataset_name: str,
         sources: dict[str, list[str]],
+        *,
+        actor: str = "system",
     ) -> IngestionReport:
         """Ingest mixed modality sources into a unified table (Story 3.5).
 
@@ -396,7 +439,8 @@ class _LakeIngestMixin:
         report = Ingestor(self._get_storage()).ingest_mixed(dataset_name, sources)
         self._lineage_after_ingest(
             dataset_name, source_descriptor={"modalities": {k: len(v) for k, v in sources.items()}},
-            transform_type="ingest_mixed",
+            transform_type="ingest_mixed", actor=actor,
+            lance_version=self._safe_version(dataset_name), total_rows=report.total_rows,
         )
         return report
 
@@ -407,6 +451,7 @@ class _LakeIngestMixin:
         *,
         doc_config: Any = None,
         doc_type: str | None = None,
+        actor: str = "system",
     ) -> IngestionReport:
         """Ingest PDF documents: parse → chunk → write to Lance dataset.
 
@@ -465,11 +510,12 @@ class _LakeIngestMixin:
         self._lineage_after_ingest(
             dataset_name, source_paths=pdf_paths,
             source_descriptor={"doc_type": doc_type} if doc_type else None,
-            transform_type="ingest_documents",
+            transform_type="ingest_documents", actor=actor,
+            lance_version=self._safe_version(dataset_name), total_rows=report.total_rows,
         )
         return report
 
-    def create_dataset(self, name: str, data: pa.Table) -> None:
+    def create_dataset(self, name: str, data: pa.Table, *, actor: str = "system") -> None:
         """Create a new dataset from an Arrow Table.
 
         This is the primary way to write programmatic data into Arrow Lake.
@@ -517,9 +563,12 @@ class _LakeIngestMixin:
                 ingestion_bytes_total.labels(source=source).inc(nbytes)
                 ingestion_duration_seconds.labels(source=source).set(time.monotonic() - t0)
                 catalog_tables_total.inc()
-            self._lineage_after_ingest(name, transform_type="create", operation="create")
+            self._lineage_after_ingest(
+                name, transform_type="create", operation="create", actor=actor,
+                lance_version=self._safe_version(name), total_rows=rows,
+            )
 
-    def append_dataset(self, name: str, data: pa.Table) -> None:
+    def append_dataset(self, name: str, data: pa.Table, *, actor: str = "system") -> None:
         """Append rows to an existing dataset from an Arrow Table.
 
         Args:
@@ -560,7 +609,10 @@ class _LakeIngestMixin:
                 ingestion_rows_total.labels(source=source).inc(rows)
                 ingestion_bytes_total.labels(source=source).inc(nbytes)
                 ingestion_duration_seconds.labels(source=source).set(time.monotonic() - t0)
-            self._lineage_after_ingest(name, transform_type="append", operation="append")
+            self._lineage_after_ingest(
+                name, transform_type="append", operation="append", actor=actor,
+                lance_version=self._safe_version(name), total_rows=rows,
+            )
 
     def upsert(
         self,

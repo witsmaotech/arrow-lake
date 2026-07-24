@@ -39,17 +39,25 @@ class _LakeLineageMixin:
         source_descriptor: dict[str, Any] | None = None,
         transform_type: str = "ingest",
         operation: str = "append",
+        actor: str = "system",
+        lance_version: int | None = None,
+        total_rows: int | None = None,
     ) -> None:
         """v1.9.0 async fire-and-forget lineage capture after a successful ingest.
 
         Enqueues onto a bounded background worker so the Lance _lineage_events
         append + index write never adds latency to the ingest path. Best-effort:
         a full queue drops the event (lineage is reconstructable from Lance).
+
+        v1.9.4: threads ``actor`` (who), ``lance_version`` (post-write version),
+        and ``total_rows`` so lineage events carry real provenance instead of
+        the prior ``actor="system"`` / empty ``source_datasets`` placeholders.
         """
         try:
             self._get_lineage_queue().put_nowait(
                 (dataset_name, operation, list(source_paths or []),
-                 dict(source_descriptor or {}), transform_type)
+                 dict(source_descriptor or {}), transform_type,
+                 actor, lance_version, total_rows)
             )
         except Exception:  # noqa: BLE001 — queue full / unavailable → drop
             pass
@@ -76,15 +84,23 @@ class _LakeLineageMixin:
         q = self._lineage_queue
         while True:
             try:
-                dataset_name, operation, source_paths, source_descriptor, transform_type = q.get()
+                (dataset_name, operation, source_paths, source_descriptor,
+                 transform_type, actor, lance_version, total_rows) = q.get()
             except Exception:  # noqa: BLE001
                 break
             try:
+                from arrow_lake.catalog.lineage_hooks import _extract_source_datasets
+                source_datasets = _extract_source_datasets(source_paths)
+                meta = {"source_paths": source_paths, **source_descriptor}
+                if total_rows is not None:
+                    meta["total_rows"] = total_rows
                 self.lineage_record_event(
                     dataset_name, operation,
-                    source_datasets=[],
+                    source_datasets=source_datasets,
                     transform_type=transform_type,
-                    metadata={"source_paths": source_paths, **source_descriptor},
+                    actor=actor,
+                    lance_version=lance_version,
+                    metadata=meta,
                 )
             except Exception:  # noqa: BLE001 — best-effort
                 pass
@@ -99,6 +115,7 @@ class _LakeLineageMixin:
         source_datasets: list[str] | None = None,
         transform_type: str = "",
         actor: str = "system",
+        lance_version: int | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> None:
         """Record a lineage event (Story 8.3)."""
@@ -113,6 +130,7 @@ class _LakeLineageMixin:
             operation,
             source_datasets=source_datasets,
             transform_type=transform_type,
+            lance_version=lance_version,
             actor=actor,
             metadata=metadata,
         )

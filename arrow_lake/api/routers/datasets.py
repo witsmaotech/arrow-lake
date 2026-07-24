@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, File, Path, Query, Request, UploadFile
 
 from arrow_lake.api.auth_models import Role
 from arrow_lake.api.deps import get_lake, require_role
+from arrow_lake.api._security_log import actor_of
 from arrow_lake.api.models.common import _NAME_PATTERN, MessageResponse
 from arrow_lake.api.models.dataset import (
     CleanupResponse,
@@ -336,7 +337,7 @@ async def ingest_files(
             transforms = build_transforms(req.transforms)
         report = await run_sync(
             lake.ingest, name, all_paths,
-            timeout=_INGEST_TIMEOUT, label="ingest_files",
+            timeout=_INGEST_TIMEOUT, label="ingest_files", actor=actor_of(_user),
             transforms=transforms,
         )
         _after_ingest_hooks(request.app.state, name, lake)
@@ -367,7 +368,7 @@ async def ingest_sql(
         partition_col=req.partition_col,
         num_partitions=req.num_partitions,
         transforms=transforms,
-        timeout=_INGEST_TIMEOUT, label="ingest_sql",
+        timeout=_INGEST_TIMEOUT, label="ingest_sql", actor=actor_of(_user),
     )
     _after_ingest_hooks(request, name, lake)
     return IngestResponse.from_report(report)
@@ -395,7 +396,7 @@ async def ingest_kafka(
         end=req.end,
         json_decode=req.json_decode,
         transforms=transforms,
-        timeout=_INGEST_TIMEOUT, label="ingest_kafka",
+        timeout=_INGEST_TIMEOUT, label="ingest_kafka", actor=actor_of(_user),
     )
     _after_ingest_hooks(request, name, lake)
     return IngestResponse.from_report(report)
@@ -418,7 +419,7 @@ async def ingest_iceberg(
     report = await run_sync(
         lake.ingest_iceberg, name,
         table_uri=req.table_uri, transforms=transforms,
-        timeout=_INGEST_TIMEOUT, label="ingest_iceberg",
+        timeout=_INGEST_TIMEOUT, label="ingest_iceberg", actor=actor_of(_user),
     )
     _after_ingest_hooks(request, name, lake)
     return IngestResponse.from_report(report)
@@ -441,7 +442,7 @@ async def ingest_deltalake(
     report = await run_sync(
         lake.ingest_deltalake, name,
         table_uri=req.table_uri, version=req.version, transforms=transforms,
-        timeout=_INGEST_TIMEOUT, label="ingest_deltalake",
+        timeout=_INGEST_TIMEOUT, label="ingest_deltalake", actor=actor_of(_user),
     )
     _after_ingest_hooks(request, name, lake)
     return IngestResponse.from_report(report)
@@ -459,7 +460,7 @@ async def ingest_http(
     """Ingest files from HTTP(S) URLs into a dataset."""
     report = await run_sync(
         lake.ingest_http, name, req.urls,
-        timeout=_INGEST_TIMEOUT, label="ingest_http",
+        timeout=_INGEST_TIMEOUT, label="ingest_http", actor=actor_of(_user),
     )
     _after_ingest_hooks(request, name, lake)
     return IngestResponse.from_report(report)
@@ -484,7 +485,7 @@ async def ingest_images(
             all_paths.extend(_resolve_blob_keys(req.blob_keys, lake, tmp_dir))
         report = await run_sync(
             lake.ingest_images, name, all_paths,
-            timeout=_INGEST_TIMEOUT, label="ingest_images",
+            timeout=_INGEST_TIMEOUT, label="ingest_images", actor=actor_of(_user),
         )
         # 自动 CLIP embed(图像语义检索;模型不可用 → 静默跳过,不阻塞摄入,图已落库可后续手动 embed)
         try:
@@ -517,7 +518,7 @@ async def ingest_videos(
             all_paths.extend(_resolve_blob_keys(req.blob_keys, lake, tmp_dir))
         report = await run_sync(
             lake.ingest_videos, name, all_paths,
-            timeout=_INGEST_TIMEOUT, label="ingest_videos",
+            timeout=_INGEST_TIMEOUT, label="ingest_videos", actor=actor_of(_user),
         )
         # 自动 CLIP embed 关键帧(视频语义检索;模型不可用 → 静默跳过)
         try:
@@ -551,7 +552,7 @@ async def ingest_mixed(
                 sources.setdefault(modality, []).extend(paths)
         report = await run_sync(
             lake.ingest_mixed, name, sources,
-            timeout=_INGEST_TIMEOUT, label="ingest_mixed",
+            timeout=_INGEST_TIMEOUT, label="ingest_mixed", actor=actor_of(_user),
         )
         _after_ingest_hooks(request.app.state, name, lake)
         return IngestResponse.from_report(report)
@@ -584,7 +585,7 @@ async def ingest_documents(
         doc_config = lake._config.document if hasattr(lake, "_config") else None
         report = await run_sync(
             lake.ingest_documents, name, all_paths, doc_config=doc_config, doc_type=req.doc_type,
-            timeout=_INGEST_TIMEOUT, label="ingest_documents",
+            timeout=_INGEST_TIMEOUT, label="ingest_documents", actor=actor_of(_user),
         )
         # [#v1.8.9-E2E] The documents path writes text_content but not embeddings;
         # embed now so the dataset is vector / hybrid / RAG searchable (previously
@@ -916,5 +917,9 @@ async def delete_dataset(
     _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> MessageResponse:
     """Delete a dataset and all its data."""
-    await run_sync(lake.delete_dataset, name, timeout=_ADMIN_TIMEOUT, label="delete_dataset")
+    from arrow_lake.api._security_log import actor_of
+    await run_sync(
+        lake.delete_dataset, name, timeout=_ADMIN_TIMEOUT,
+        label="delete_dataset", actor=actor_of(_user),
+    )
     return MessageResponse(message=f"Dataset '{name}' deleted")

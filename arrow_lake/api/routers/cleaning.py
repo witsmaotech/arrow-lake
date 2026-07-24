@@ -26,6 +26,7 @@ from fastapi import APIRouter, Depends, Path, Request
 
 from arrow_lake.api.auth_models import Role
 from arrow_lake.api.deps import authorize_dataset, get_lake, require_role
+from arrow_lake.api._security_log import actor_of
 from arrow_lake.api.models.cleaning import (
     CleanFilter,
     CleanRequest,
@@ -247,7 +248,8 @@ async def clean_dataset(
     written = False
     if req.write_back:
         await run_sync(
-            lake.restore_dataset, name, cleaned, timeout=_CLEAN_TIMEOUT, label="clean_write"
+            lake.restore_dataset, name, cleaned, timeout=_CLEAN_TIMEOUT,
+            label="clean_write", actor=actor_of(_user),
         )
         written = True
 

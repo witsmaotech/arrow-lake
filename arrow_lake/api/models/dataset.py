@@ -373,6 +373,7 @@ class DatasetListResponse(BaseModel):
 
     success: bool = True
     datasets: list[DatasetInfo] = Field(default_factory=list)
+    total: int = 0
 
 
 class SchemaField(BaseModel):

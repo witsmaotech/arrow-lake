@@ -133,9 +133,11 @@ async def ingest_files_async(
         from arrow_lake.ingest.transforms import build_transforms
         transforms = build_transforms(req.transforms)
 
+    from arrow_lake.api._security_log import actor_of
+    actor = actor_of(_user)
     task_id = TaskManager.create_task("ingest", name, user_id=_user.user_id)
     _task = asyncio.create_task(  # noqa: RUF006
-        TaskManager.run_background(task_id, lake.ingest, name, all_paths, transforms=transforms)
+        TaskManager.run_background(task_id, lake.ingest, name, all_paths, transforms=transforms, actor=actor)
     )
     return AsyncTaskResponse(
         task_id=task_id, operation="ingest",
@@ -158,6 +160,7 @@ def _bg_ingest_documents(
     blob_keys: list[str],
     doc_type: str | None,
     lake: Any,
+    actor: str = "system",
 ) -> Any:
     """Background worker for the full documents ingest flow.
 
@@ -181,7 +184,7 @@ def _bg_ingest_documents(
             all_paths.extend(_resolve_blob_keys(blob_keys, lake, tmp_dir))
         doc_config = lake._config.document if hasattr(lake, "_config") else None
         report = lake.ingest_documents(
-            name, all_paths, doc_config=doc_config, doc_type=doc_type
+            name, all_paths, doc_config=doc_config, doc_type=doc_type, actor=actor
         )
         # Best-effort post-steps (mirror sync endpoint): never fail the task on
         # embedding / FTS index errors — text_content + FTS still work without them.
@@ -221,11 +224,13 @@ async def ingest_documents_async(
     open for the full ingest. Poll via ``GET /api/v1/tasks/{task_id}/status``
     or watch on the tasks queue page (``tasks.html?task=<task_id>``).
     """
+    from arrow_lake.api._security_log import actor_of
+    actor = actor_of(_user)
     task_id = TaskManager.create_task("ingest_documents", name, user_id=_user.user_id)
     asyncio.create_task(  # noqa: RUF006
         TaskManager.run_background(
             task_id, _bg_ingest_documents,
-            request.app.state, name, req.pdf_paths, req.blob_keys, req.doc_type, lake,
+            request.app.state, name, req.pdf_paths, req.blob_keys, req.doc_type, lake, actor,
         )
     )
     return AsyncTaskResponse(
