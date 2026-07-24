@@ -736,7 +736,7 @@ answer = await lake.rag_query("当前 state of the art 是什么？", dataset_na
 | v1.8.5 | 上传端点 500 修复（boto3/botocore 版本错配）、Ray readiness 探针改 dashboard 轻探 |
 | **v1.8.6** | **per-dataset HugeGraph 分图隔离**（`kg_{dataset}`）+ 全 traverser REST 暴露 + per-dataset ACL（防 IDOR）+ step/list 安全加固 |
 
-> 完整记录见 `CHANGELOG.md`；架构级细节见 `docs/ARCHITECTURE.md` §14（注：`ARCHITECTURE.md` 当前基线为 v1.8.0，§14 版本表止于 v1.8.0；v1.8.3–v1.8.6 的演进以本文此表与 `CHANGELOG.md` 为准）。
+> 完整记录见 `CHANGELOG.md`；架构级细节见 `docs/ARCHITECTURE.md` §14（注：本文为 v1.8.6 快照；`ARCHITECTURE.md` 现已演进至 v1.9.2 基线，§14 版本表已覆盖 v1.9.x；v1.8.3–v1.8.6 的演进以本文此表与 `CHANGELOG.md` 为准）。
 
 ### 升级到 v1.8.6
 

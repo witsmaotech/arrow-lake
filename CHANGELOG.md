@@ -6,6 +6,48 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.9.2] - 2026-07-23
+
+**console 完备化（运维/合规/治理）+ 质量深化**。把 console 从"数据智能 + 管理"扩展到覆盖全部 20 routers 的完整数据平台，配套清 v1.9.1 既有债（测试隔离 / KG 模板 / kg_build GC）。详见 `docs/v1.9.2-impl-plan.md`、`docs/v1.9.2-roadmap.md`。
+
+### Added — console 完备化
+- **运维**：`system.html`（health / version / DuckDB 会话池 / gravitino / lance-rest / metrics 摘要 + `maintenance` 子区）。
+- **合规**：`audit.html`（审计事件列表，user/action/dataset/时间 过滤 + 导出）。
+- **治理**：`governance.html`（Gravitino metalake/catalog/schema 浏览）+ dataset-detail 血缘 Tab / 版本 Tab（backup + Lance 版本）。
+- **kg.html 工作台**：Schema·图遍历合并、起点实体可搜索 combobox、图前 3000 节点。
+- **admin**：用户分页 + ACL / deny 管理。
+- **olap 分析工作台增强**：导出下拉、纯 SVG 图表、列统计、SUMMARIZE 子查询、Pivot 助手（走 DuckDB PIVOT，绕开 Daft 0.7.8 pivot bug）；DuckLake MV 面板（独立 router 避路由冲突，`ducklake_enabled=False`→503 门控）。
+- **多模态 + 导出**：search 以图搜图（`/embed/image` + IVF_PQ）+ 全局导出统一（export.js 接 datasets/detail/search）。
+
+### Changed
+- **gravitino router 加 `/api/v1` prefix**（实测裸 `/metadata/*`→404）。
+- **rate_limit + login lockout 迁 Redis**：per-(username, ip) 失败计数 + 锁定窗口，多 worker 一致、fail-open（Redis 不可达放行避免锁死）；v1.9.1 前为单进程内存态（分布式可被并行撞库绕过）。
+
+### Fixed
+- **kg_build fire-and-forget 持强引用**：`asyncio.create_task` 未存强引用被 GC 静默杀 → 大 dataset build 卡死的真凶；现模块级 set 持有强引用。
+- **audit_query `asdict` 序列化**：替代 `str(e)` repr → 修 audit.html 界面空。
+- **conftest autouse 全局清理 fixture**：治全量测试隔离污染（单跑全过、全量不稳定）。
+- **KG 模板收紧 + CI 校验**：concept_graph 固定 type 枚举 + 必填 description + relation snap。
+- **olap 列统计 std 改样本标准差**（÷N-1，对齐 DuckDB）；Parquet 导出不传结果列（治聚合查询导出失败）。
+
+### 测试
+- 全量回归零失败；console 页 playwright 验证 0 error。
+
+
+## [1.9.1] - 2026-07-23
+
+**console 核心界面 + 安全加固 + 数据准备**。原生 JS + ES module 前端落地，admin 全功能 + my-workspace；personal token 鉴权通路打通。详见 `docs/v1.9.1-frontend-core-impl-plan.md`。
+
+### Added — console 核心
+- **admin.html 全功能**：用户 CRUD（pbkdf2 密码）/ 角色目录 / `DatasetACL`（visible_columns + row_filter）/ `SchemaACL` / deny 管理。
+- **my-workspace 5 区**：saved-queries / notifications / preferences / dashboards / favorites。
+- **personal_token 鉴权**：admin `POST /admin/users/{id}/tokens` 签发，请求带 `X-API-Key`；`/api/v1/me/*` 硬约束必须 personal token（JWT/api_key 不可调）。
+- **数据准备**：data-prep（MinHash 近似去重 + llm_enrich）+ `tidy.html` 清洗整理（`POST /datasets/{n}/clean`，DuckDB 语义 steps→SQL→`restore_dataset` 写回）。
+
+### Changed
+- **dev.override.yml 联调热重载**：挂 `arrow_lake/` 源码 + `console/` bind-mount + uvicorn `--reload` + `PYTHONPATH=/app`，改 Python/前端秒级生效免 rebuild（须 `--force-recreate`）。
+
+
 ## [1.9.0] - 2026-07-17
 
 **Turso/libSQL 统一控制面库**。引入 libSQL 作控制面统一基础数据库，接管需事务/关系/持久一致的系统级结构化数据，数据面(Lance/DuckDB/HugeGraph/MinIO)完全不动。默认 `system_db.enabled=false` 渐进 opt-in。详见 `docs/v1.9.0-turso-system-db-plan.md`。

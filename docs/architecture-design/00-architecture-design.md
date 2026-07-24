@@ -100,7 +100,7 @@ Arrow Lake 是一个**生产级、统一的多模态数据湖仓（Unified Multi
 | 对象存储 | **MinIO / S3** | blob 原文 + 备份 | — |
 | 缓存/任务 | **Redis** | 分布式会话 + JWT 黑名单 + 异步任务跨 worker 共享 + rate_limit/login lockout（v1.9.2） | [`v1.6.0-plan.md`](../v1.6.0-plan.md)、[`v1.6.1_performance_plan.md`](../v1.6.1_performance_plan.md) |
 | **控制面** | **libSQL / Turso（sqld）** | **v1.9.0 控制面库**：RBAC / identity / personal_token / catalog 注册 / 任务历史 / lineage 索引 / RAG 会话 / governance；**数据面不触碰**；opt-in + fail_close/fail_soft | [`v1.9.0-turso-system-db-plan.md`](../v1.9.0-turso-system-db-plan.md) |
-| 前端 | **Console** | v1.9.1 运维/合规/治理 Web 控制台（原生 JS + ES module，同源 mount `/console`，复用 REST + RBAC） | [`v1.9.1-frontend-core-impl-plan.md`](../v1.9.1-frontend-core-impl-plan.md) |
+| 前端 | **Console** | v1.9.1 起（v1.9.2 完备）运维/合规/治理 Web 控制台（原生 JS + ES module，同源 mount `/console`，复用 REST + RBAC） | [`v1.9.1-frontend-core-impl-plan.md`](../v1.9.1-frontend-core-impl-plan.md) |
 
 > **关键澄清**：DuckDB 是**主力查询路径**而非 fallback。`olap_query` / `vector_search` / `fts` 全部由 DuckDB 执行（40+ 处调用），LanceDB 提供 Table/索引/版本管理 API。DuckLake 在其上提供物化视图。三者分工见 ADR-06（[DuckDB OLAP + DuckLake 评估](../design_plan/adr-06-duckdb-olap-and-ducklake-evaluation.md)）与 ADR-07（[DuckDB 高可用](../design_plan/adr-07-duckdb-high-availability.md)）。
 
@@ -197,7 +197,7 @@ Arrow Lake 采用**严格五层架构**：请求自上而下穿越 **① 接入 
 - **治理（Gravitino）** —— 统一 catalog，**tag-driven ACL**（打标签即授权/脱敏），masking engine，retention enforcement。作用于能力层与引擎层。
 - **可观测** —— `structlog` 结构化 JSON 日志 + Prometheus 指标 + OpenTelemetry 分布式追踪（Jaeger）+ Loki 日志聚合。
 - **安全** —— AuthN/AuthZ、注入防御、HMAC 审计、限流（v1.9.2 rate_limit+login lockout 迁 Redis，多 worker fail-open）。经 FastAPI 中间件 + facade hook 作用。
-- **控制面持久化（system_db，v1.9.0）** —— 横切面的"记忆层"：RBAC / identity / personal_token / catalog 注册 / 任务历史 / lineage 索引 / RAG 会话 / governance 由 **libSQL / Turso（sqld）** 统一持久化；**数据面（Lance / DuckDB / HugeGraph / MinIO）完全不触碰**。opt-in（`enabled` 默认 false，渐进启用）+ fail_close（RBAC/identity，库挂拒非 admin）/ fail_soft（catalog/tasks/rag，记日志降级）双模；`arrow_lake/system_db/` 10 个 store + 启动迁移 V001–V004。设计见 [`v1.9.0-turso-system-db-plan.md`](../v1.9.0-turso-system-db-plan.md)。
+- **控制面持久化（system_db，v1.9.0）** —— 横切面的"记忆层"：RBAC / identity / personal_token / catalog 注册 / 任务历史 / lineage 索引 / RAG 会话 / governance 由 **libSQL / Turso（sqld）** 统一持久化；**数据面（Lance / DuckDB / HugeGraph / MinIO）完全不触碰**。opt-in（`enabled` 默认 false，渐进启用）+ fail_close（RBAC/identity，库挂拒非 admin）/ fail_soft（catalog/tasks/rag，记日志降级）双模；`arrow_lake/system_db/` **9 个 store**（rbac/identity/catalog/task_history/lineage_index/rag_session/governance/user_state/ingest_dlq，+ `base.py` 基类）+ 启动迁移 V001–V004。设计见 [`v1.9.0-turso-system-db-plan.md`](../v1.9.0-turso-system-db-plan.md)。
 
 横切面的深入讨论见 §5。
 
@@ -615,7 +615,7 @@ ArrowLakeError → StorageError, QueryError, IngestError, CatalogError,
 | **v1.8.3** | 启动 HA 修复（readiness gate / warmup 后台化 / fileset 400 / Gravitino 钉版本） | — |
 | **v1.8.6** | **per-dataset KG 分图隔离 + IDOR ACL gate + CLI/API 收尾** | [`v1.8.6-per-dataset-kg-isolation-plan.md`](../v1.8.6-per-dataset-kg-isolation-plan.md)、[`arrow-lake-v1.8.6-product-introduction-zh.md`](../arrow-lake-v1.8.6-product-introduction-zh.md) |
 | **v1.8.7–v1.8.9** | Docling 全栈替代 kreuzberg；Console SQL Worksheet；KG per-dataset KA + doc_type 路由 + 双 LLM（`he_extract_llm`/`he_qa_llm`）；**OllamaReranker 设默认**；审计 P0 三连 + Step2-4 + P2 | [`arrow-lake-v1.8.7-release-zh.md`](../arrow-lake-v1.8.7-release-zh.md)、[`arrow-lake-v1.8.9-release-zh.md`](../arrow-lake-v1.8.9-release-zh.md) |
-| **v1.9.0** | **Turso（libSQL）控制面库**（`system_db/`，10 store）：接管 RBAC/identity/personal_token/catalog/任务/lineage/RAG 会话/governance，**数据面零改动**；opt-in + fail_close/fail_soft；personal_token + list_users + fail-close(401) | [`v1.9.0-turso-system-db-plan.md`](../v1.9.0-turso-system-db-plan.md) |
+| **v1.9.0** | **Turso（libSQL）控制面库**（`system_db/`，9 store + base）：接管 RBAC/identity/personal_token/catalog/任务/lineage/RAG 会话/governance，**数据面零改动**；opt-in + fail_close/fail_soft；personal_token + list_users + fail-close(401) | [`v1.9.0-turso-system-db-plan.md`](../v1.9.0-turso-system-db-plan.md) |
 | **v1.9.1** | **console 核心界面**（原生 JS + ES module）：admin 全功能 + my-workspace 5 区；personal token 走 `X-API-Key`；dev.override 秒级热重载 | [`v1.9.1-frontend-core-impl-plan.md`](../v1.9.1-frontend-core-impl-plan.md) | |
 | **v1.9.2**（当前） | **console 完备化 + 质量深化**：运维（system/audit/governance/maintenance）+ 合规（audit `asdict`+分页）+ 治理（admin 分页/ACL/deny）；kg.html Schema·遍历合并 + combobox + 图前 3000；**rate_limit 迁 Redis**、**kg_build fire-forget 持强引用**（治 GC 卡死）；conftest autouse 清理 + KG 模板收紧 CI | [`v1.9.2-impl-plan.md`](../v1.9.2-impl-plan.md)、[`v1.9.2-roadmap.md`](../v1.9.2-roadmap.md) |
 

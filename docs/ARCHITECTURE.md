@@ -91,7 +91,7 @@ flowchart TD
       SDK["Python SDK<br/><b>Lake</b> facade · 9 mixin"]:::l1
       REST["REST API<br/>FastAPI · 159 routes · 20 routers · RBAC/限流"]:::l1
       CLI["CLI<br/>arrow-lake · 16 命令组"]:::l1
-      CONSOLE["Console<br/>运维·合规·治理 前端 (v1.9.1)"]:::l1
+      CONSOLE["Console<br/>运维·合规·治理 前端 (v1.9.1起,v1.9.2完备)"]:::l1
     end
     subgraph L2["② 能力层 · Capabilities"]
       direction LR
@@ -138,7 +138,7 @@ flowchart TD
 
 | 层 | 职责 | 关键组件 |
 |---|---|---|
-| ① 接入 | 四入口归一到 facade；认证 / 限流 / 路由 | `Lake` facade · FastAPI（**20 routers / 159 routes**）· CLI · **Console**（v1.9.1 运维/合规/治理前端） |
+| ① 接入 | 四入口归一到 facade；认证 / 限流 / 路由 | `Lake` facade · FastAPI（**20 routers / 159 routes**）· CLI · **Console**（v1.9.1 起，v1.9.2 运维/合规/治理完备） |
 | ② 能力 | 业务能力：把数据写进去、查出来、问答 | 摄取 · 查询（8 Bridge）· 智能（RAG / KG） |
 | ③ 计算 | 批处理 / 分布式 / 嵌入 | Daft · Ray · 嵌入器（Local / Daft / CLIP） |
 | ④ 存储引擎 | 向量 / 标量 / FTS / 物化的执行 | LanceDB · DuckDB · DuckLake |
