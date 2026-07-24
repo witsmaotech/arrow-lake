@@ -270,6 +270,16 @@ function loadG6() {
   return g6Loader;
 }
 
+// G6 画布随窗口/面板自适应(vis 有 autoResize,G6 需手动 changeSize;防抖)
+let g6ResizeTimer = null;
+window.addEventListener("resize", () => {
+  if (!kgGraph6) return;
+  clearTimeout(g6ResizeTimer);
+  g6ResizeTimer = setTimeout(() => {
+    try { const c = document.getElementById("kgGraph"); if (c) kgGraph6.changeSize(c.clientWidth || 900, c.clientHeight || 540); } catch (_) {}
+  }, 200);
+});
+
 // 大图 G6 v4 UMD 渲染(canvas + GPU 力导向,~10k 节点;v5 需 bundler 不适配无构建 console)
 async function renderG6(cont, ns, es, meta) {
   const V = window.vis;
