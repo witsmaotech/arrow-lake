@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
@@ -60,6 +61,127 @@ def _serialize_ka_item(item: Any) -> dict[str, Any]:
     if hasattr(item, "__dict__"):
         return {k: v for k, v in vars(item).items() if not k.startswith("_")}
     return {"value": str(item)}
+
+
+def _ka_node_name(node: Any) -> str | None:
+    """Best-effort display name for a KA node or HugeGraph vertex (dict/pydantic/dataclass).
+
+    KA nodes carry ``name`` at top level; HugeGraph vertices nest it under
+    ``properties``. ``name`` is preferred over ``label``/``id`` (the latter are
+    vertex types / opaque ids, not human-readable entity names).
+    """
+    if isinstance(node, dict):
+        d = node
+    elif hasattr(node, "model_dump"):
+        try:
+            d = node.model_dump() or {}
+        except Exception:  # noqa: BLE001
+            d = getattr(node, "__dict__", {}) or {}
+    else:
+        d = getattr(node, "__dict__", {}) or {}
+    if d.get("name"):
+        return str(d["name"])
+    props = d.get("properties")
+    if isinstance(props, dict) and props.get("name"):
+        return str(props["name"])
+    for k in ("label", "id"):
+        if d.get(k):
+            return str(d[k])
+    return None
+
+
+def _build_neighbor_context(
+    anchor_names: list[str],
+    vertices: list[dict[str, Any]],
+    edges: list[dict[str, Any]],
+    *,
+    max_per_anchor: int = 6,
+) -> list[dict[str, Any]]:
+    """From a HugeGraph snapshot, collect 1-hop relations for named anchors.
+
+    Label-agnostic: matches anchors by vertex ``properties.name`` (falling back
+    to ``label``). Returns ``[{entity, relations}]`` where each relation is a
+    short ``—[label]→ other`` / ``←[label]— other`` string. Anchors (or their
+    neighbors) missing from the possibly-capped snapshot are simply skipped —
+    so this degrades gracefully on very large graphs.
+    """
+    id2name: dict[str, str] = {}
+    name2id: dict[str, str] = {}
+    for v in vertices:
+        vid = str(v.get("id"))
+        props = v.get("properties") or {}
+        nm = str(props.get("name") or v.get("label") or vid)
+        id2name.setdefault(vid, nm)
+        if nm not in name2id:
+            name2id[nm] = vid
+    anchor_ids = [name2id[n] for n in anchor_names if n in name2id]
+    if not anchor_ids:
+        return []
+    out: list[dict[str, Any]] = []
+    for aid in anchor_ids:
+        rels: list[str] = []
+        for e in edges:
+            src, tgt = str(e.get("outV", "")), str(e.get("inV", ""))
+            lbl = e.get("label") or "related_to"
+            if src == aid:
+                rels.append(f"—[{lbl}]→ {id2name.get(tgt, tgt)}")
+            elif tgt == aid:
+                rels.append(f"←[{lbl}]— {id2name.get(src, src)}")
+            if len(rels) >= max_per_anchor:
+                break
+        if rels:
+            out.append({"entity": id2name.get(aid, aid), "relations": rels})
+    return out
+
+
+def _augment_question_with_graph(
+    question: str,
+    neighbor_ctx: list[dict[str, Any]],
+    *,
+    max_items: int = 5,
+    max_chars: int = 2000,
+) -> str:
+    """Inject 1-hop graph context in front of the question for ``chat_ka``.
+
+    Capped at ``max_chars`` so highly-connected hub entities can't blow up the
+    prompt — remaining relations are dropped with an ellipsis marker.
+    """
+    header = "【知识图谱邻居上下文(HugeGraph 1 跳关系,补充实体间的结构关系)】"
+    budget = max_chars
+    lines: list[str] = []
+    truncated = False
+    for c in neighbor_ctx[:max_items]:
+        line = f"- {c['entity']}: " + "; ".join(c.get("relations", [])[:5])
+        if len(line) + 1 > budget:
+            truncated = True
+            break
+        lines.append(line)
+        budget -= len(line) + 1
+    block = header + "\n" + "\n".join(lines)
+    if truncated:
+        block += "\n…(更多关系已省略,避免上下文过长)"
+    return f"{block}\n\n【问题】\n{question}"
+
+
+_KG_SNAPSHOT_CACHE: dict[str, tuple[float, tuple[list[dict[str, Any]], list[dict[str, Any]]]]] = {}
+_KG_SNAPSHOT_TTL_S = 60.0
+
+
+async def _cached_graph_snapshot(
+    client: Any, graph_name: str
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Graph snapshot with a short per-graph TTL so repeated QA on the same
+    dataset doesn't re-fetch up to 3000 vertices + edges on every call. A
+    fresh KA build invalidates naturally (new entities → anchors not in the
+    cached snapshot → lookup fallback fills them; cache expires in ≤ TTL).
+    """
+    now = time.monotonic()
+    hit = _KG_SNAPSHOT_CACHE.get(graph_name)
+    if hit and now - hit[0] < _KG_SNAPSHOT_TTL_S:
+        return hit[1]
+    data = await client.get_graph_snapshot(graph_name=graph_name, limit=3000)
+    _KG_SNAPSHOT_CACHE[graph_name] = (now, data)
+    return data
 
 
 class _LakeKGMixin:
@@ -639,20 +761,30 @@ class _LakeKGMixin:
         question: str,
         *,
         top_k: int = 5,
+        graph_context: bool = True,
     ) -> dict[str, Any]:
-        """[#2] RAG Q&A over a dataset's Knowledge Abstract (KA).
+        """[#2] GraphRAG Q&A over a dataset's Knowledge Abstract (KA).
 
         Retrieves the top-K semantically-relevant nodes/edges and generates an
-        answer with the configured LLM. Returns the answer plus the retrieved
-        source items for citation. Requires ``extractor_backend=he``.
+        answer with the configured LLM. When ``graph_context`` is true (default),
+        the question-relevant anchor entities are first resolved via ``search_ka``
+        and expanded with their 1-hop neighbors from HugeGraph; that relational
+        context is injected into the prompt so generation is grounded in the
+        graph's structure (true GraphRAG), not just isolated nodes. Expansion is
+        best-effort — any failure silently falls back to plain ``chat_ka``.
+        Requires ``extractor_backend=he``.
 
         Args:
             dataset_name: Lake dataset whose KA to query.
             question: Natural-language question.
             top_k: Top-K nodes and edges fed as RAG context (1-50).
+            graph_context: If true, augment the prompt with 1-hop HugeGraph
+                neighbor relations of the anchor entities.
 
         Returns:
-            Dict with ``answer``, ``retrieved_items`` (serialized), and count.
+            Dict with ``answer``, ``retrieved_items`` (serialized),
+            ``retrieval_count``, and ``neighbor_context`` (the graph relations
+            used, possibly empty when KG is disabled / snapshot misses anchors).
 
         Raises:
             KGError: If KG is disabled, the extractor is not ``he``, or the KA
@@ -660,8 +792,16 @@ class _LakeKGMixin:
         """
         top_k = max(1, min(int(top_k), 50))
         extractor = self._get_he_extractor_or_raise()
+        q_in = question
+        neighbor_ctx: list[dict[str, Any]] = []
+        if graph_context:
+            neighbor_ctx = await self._graph_neighbor_context(
+                extractor, dataset_name, question, top_k
+            )
+            if neighbor_ctx:
+                q_in = _augment_question_with_graph(question, neighbor_ctx)
         resp = await asyncio.to_thread(
-            extractor.chat_ka, dataset_name, question, top_k
+            extractor.chat_ka, dataset_name, q_in, top_k
         )
         answer = getattr(resp, "content", "") or ""
         # hyper-extract's ka.chat() populates ``retrieved_nodes`` /
@@ -675,7 +815,108 @@ class _LakeKGMixin:
             "answer": answer,
             "retrieved_items": [_serialize_ka_item(it) for it in (retrieved or [])],
             "retrieval_count": len(retrieved or []),
+            "neighbor_context": neighbor_ctx,
         }
+
+    async def _graph_neighbor_context(
+        self, extractor: Any, dataset_name: str, question: str, top_k: int
+    ) -> list[dict[str, Any]]:
+        """Best-effort 1-hop neighbor context for GraphRAG.
+
+        Two-stage so it stays reliable on large graphs:
+        1. ``search_ka`` → question-relevant anchor entity names.
+        2. HugeGraph snapshot (capped, labeled) → 1-hop relations for the
+           anchors it covers (small/medium graphs are fully covered here).
+        3. Anchors the snapshot missed (large graphs) → resolved by name via
+           ``find_vertices_by_property`` (label-agnostic) + ``traverser_kneighbor``
+           → names-only relations (no per-vertex edge API for labels).
+
+        Any error returns ``[]`` so ``kg_chat`` falls back to plain ``chat_ka``.
+        """
+        try:
+            anchor_nodes, _ = await asyncio.to_thread(
+                extractor.search_ka, dataset_name, question, top_k
+            )
+        except Exception as exc:  # noqa: BLE001 — best-effort
+            logger.warning("kg_chat anchor search_ka failed: %s", exc)
+            return []
+        anchor_names: list[str] = []
+        for n in (anchor_nodes or []):
+            nm = _ka_node_name(n)
+            if nm:
+                anchor_names.append(nm)
+        if not anchor_names:
+            return []
+        ctx: list[dict[str, Any]] = []
+        covered: set[str] = set()
+        try:
+            with self._require_kg_client() as client:
+                vertices, edges = await _cached_graph_snapshot(
+                    client, graph_name_for(dataset_name)
+                )
+            ctx = _build_neighbor_context(anchor_names, vertices or [], edges or [])
+            covered = {c["entity"] for c in ctx}
+        except Exception as exc:  # noqa: BLE001 — KG disabled / HugeGraph down
+            logger.warning("kg_chat graph snapshot failed: %s", exc)
+        missing = [n for n in anchor_names if n not in covered]
+        if missing:
+            try:
+                ctx.extend(await self._neighbor_context_by_lookup(missing, dataset_name))
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("kg_chat neighbor lookup fallback failed: %s", exc)
+        return ctx
+
+    async def _neighbor_context_by_lookup(
+        self,
+        names: list[str],
+        dataset_name: str,
+        *,
+        max_anchors: int = 4,
+        max_per_anchor: int = 6,
+    ) -> list[dict[str, Any]]:
+        """Large-graph fallback: resolve anchors by name (label-agnostic) via
+        ``find_vertices_by_property`` and pull 1-hop neighbors via
+        ``traverser_kneighbor``. Relations are name-only ( HugeGraph has no
+        per-vertex edge REST exposed here, so edge labels are omitted).
+        """
+        out: list[dict[str, Any]] = []
+        g = graph_name_for(dataset_name)
+        with self._require_kg_client() as client:
+
+            async def _resolve_one(name: str) -> dict[str, Any] | None:
+                try:
+                    hits = await client.find_vertices_by_property(
+                        None, {"name": name}, graph_name=g, limit=1
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("find_vertices_by_property(%r) failed: %s", name, exc)
+                    return None
+                if not hits:
+                    return None
+                vid = str(hits[0].get("id"))
+                try:
+                    nbrs = await client.traverser_kneighbor(source=vid, depth=1, graph_name=g)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("traverser_kneighbor(%r) failed: %s", vid, exc)
+                    return None
+                rel_names: list[str] = []
+                for n in (nbrs or []):
+                    nm = _ka_node_name(n)
+                    lbl = (n.get("label") if isinstance(n, dict) else "") or ""
+                    if nm and lbl not in ("document", "chunk") and nm != name:
+                        rel_names.append(nm)
+                    if len(rel_names) >= max_per_anchor:
+                        break
+                return (
+                    {"entity": name, "relations": [f"—[关联]→ {r}" for r in rel_names]}
+                    if rel_names
+                    else None
+                )
+
+            results = await asyncio.gather(
+                *(_resolve_one(n) for n in names[:max_anchors])
+            )
+        return [r for r in results if r]
 
     async def kg_rebuild_index(self, dataset_name: str) -> dict[str, Any]:
         """[#7] Rebuild a dataset's KA FAISS index from its dump (no LLM re-extract).

@@ -336,6 +336,7 @@ async def kg_ask(
             answer=result["answer"],
             retrieved_items=result["retrieved_items"],
             retrieval_count=result["retrieval_count"],
+            neighbor_context=result.get("neighbor_context", []),
         )
     except KGError as exc:
         raise HTTPException(status_code=_kg_error_to_status(exc), detail=exc.message) from exc

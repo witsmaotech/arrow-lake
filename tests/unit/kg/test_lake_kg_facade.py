@@ -283,3 +283,155 @@ class TestKGEnabled:
         assert "obsidian" in args[1]
         assert kwargs["overwrite"] is True
         assert result["node_count"] == 5
+
+
+# ---------------------------------------------------------------------------
+# Tests: GraphRAG neighbor-context helpers and kg_chat graph augmentation
+# ---------------------------------------------------------------------------
+
+
+class TestGraphRagHelpers:
+    """Pure-function helpers for GraphRAG neighbor-context expansion."""
+
+    def test_build_neighbor_context_out_and_in_edges(self) -> None:
+        from arrow_lake._lake_kg import _build_neighbor_context
+
+        verts = [
+            {"id": "V1", "label": "系统", "properties": {"name": "ArrowLake"}},
+            {"id": "V2", "label": "组件", "properties": {"name": "LanceDB"}},
+            {"id": "V3", "label": "模型", "properties": {"name": "qwen"}},
+        ]
+        edges = [
+            {"outV": "V1", "inV": "V2", "label": "contains"},  # outgoing
+            {"outV": "V3", "inV": "V1", "label": "serves"},  # incoming
+            {"outV": "V2", "inV": "V3", "label": "uses"},  # unrelated to anchor
+        ]
+        ctx = _build_neighbor_context(["ArrowLake", "缺失实体"], verts, edges)
+        assert len(ctx) == 1
+        assert ctx[0]["entity"] == "ArrowLake"
+        rels = ctx[0]["relations"]
+        assert any("contains" in r and "LanceDB" in r for r in rels)
+        assert any("serves" in r and "qwen" in r for r in rels)
+        assert not any("uses" in r for r in rels)
+
+    def test_build_neighbor_context_caps_per_anchor(self) -> None:
+        from arrow_lake._lake_kg import _build_neighbor_context
+
+        verts = [{"id": f"V{i}", "label": "x", "properties": {"name": f"n{i}"}} for i in range(1, 9)]
+        verts.insert(0, {"id": "V0", "label": "x", "properties": {"name": "anchor"}})
+        edges = [{"outV": "V0", "inV": f"V{i}", "label": "r"} for i in range(1, 9)]
+        ctx = _build_neighbor_context(["anchor"], verts, edges, max_per_anchor=3)
+        assert len(ctx[0]["relations"]) == 3
+
+    def test_ka_node_name_ka_and_hugegraph(self) -> None:
+        from arrow_lake._lake_kg import _ka_node_name
+
+        assert _ka_node_name({"name": "KA节点"}) == "KA节点"
+        assert _ka_node_name({"id": "V2", "label": "组件", "properties": {"name": "LanceDB"}}) == "LanceDB"
+        assert _ka_node_name({"label": "只label"}) == "只label"
+
+    def test_augment_question_injects_and_truncates(self) -> None:
+        from arrow_lake._lake_kg import _augment_question_with_graph
+
+        out = _augment_question_with_graph("为什么?", [{"entity": "X", "relations": ["—[r]→ Y"]}])
+        assert "知识图谱邻居上下文" in out and "【问题】" in out and "X" in out
+        big = [{"entity": "E", "relations": ["—" + "z" * 50 + "→"]} for _ in range(5)]
+        out2 = _augment_question_with_graph("q", big, max_chars=20)
+        assert "已省略" in out2
+
+
+class TestKgChatGraphContext:
+    """kg_chat / _graph_neighbor_context with mocked extractor + HugeGraph client."""
+
+    @pytest.fixture()
+    def lake(self) -> _TestLake:
+        return _TestLake(_make_config(enabled=True))
+
+    @pytest.fixture(autouse=True)
+    def _clear_snapshot_cache(self):
+        from arrow_lake._lake_kg import _KG_SNAPSHOT_CACHE
+
+        _KG_SNAPSHOT_CACHE.clear()
+        yield
+        _KG_SNAPSHOT_CACHE.clear()
+
+    @staticmethod
+    def _extractor(anchor_names: list[str]) -> MagicMock:
+        ext = MagicMock()
+        ext.search_ka = MagicMock(return_value=([{"name": n} for n in anchor_names], []))
+        ext.chat_ka = MagicMock(
+            return_value=SimpleNamespace(content="答案", additional_kwargs={})
+        )
+        return ext
+
+    @pytest.mark.asyncio()
+    async def test_snapshot_path_covers_anchors(self, lake: _TestLake) -> None:
+        ext = self._extractor(["ArrowLake"])
+        client = AsyncMock()
+        client.get_graph_snapshot = AsyncMock(
+            return_value=(
+                [{"id": "V1", "label": "系统", "properties": {"name": "ArrowLake"}},
+                 {"id": "V2", "label": "组件", "properties": {"name": "LanceDB"}}],
+                [{"outV": "V1", "inV": "V2", "label": "contains"}],
+            )
+        )
+        lake._components["kg_client"] = client
+        ctx = await lake._graph_neighbor_context(ext, "ds", "q", 5)
+        assert ctx and ctx[0]["entity"] == "ArrowLake"
+        assert any("contains" in r for r in ctx[0]["relations"])
+        client.find_vertices_by_property.assert_not_called()  # snapshot covered it
+
+    @pytest.mark.asyncio()
+    async def test_lookup_fallback_for_missed_anchors(self, lake: _TestLake) -> None:
+        ext = self._extractor(["FarEntity"])
+        client = AsyncMock()
+        client.get_graph_snapshot = AsyncMock(
+            return_value=([{"id": "V9", "label": "x", "properties": {"name": "other"}}], [])
+        )
+        client.find_vertices_by_property = AsyncMock(
+            return_value=[{"id": "V100", "label": "概念", "properties": {"name": "FarEntity"}}]
+        )
+        client.traverser_kneighbor = AsyncMock(
+            return_value=[{"id": "VN", "label": "组件", "properties": {"name": "Neighbor"}}]
+        )
+        lake._components["kg_client"] = client
+        ctx = await lake._graph_neighbor_context(ext, "ds", "q", 5)
+        assert ctx and ctx[0]["entity"] == "FarEntity"
+        assert any("Neighbor" in r for r in ctx[0]["relations"])
+        client.find_vertices_by_property.assert_awaited()
+
+    @pytest.mark.asyncio()
+    async def test_search_failure_returns_empty(self, lake: _TestLake) -> None:
+        ext = MagicMock()
+        ext.search_ka = MagicMock(side_effect=RuntimeError("boom"))
+        ctx = await lake._graph_neighbor_context(ext, "ds", "q", 5)
+        assert ctx == []
+
+    @pytest.mark.asyncio()
+    async def test_kg_chat_returns_neighbor_context(self, lake: _TestLake) -> None:
+        ext = self._extractor(["X"])
+        lake._get_he_extractor_or_raise = lambda: ext  # type: ignore[assignment]
+        client = AsyncMock()
+        client.get_graph_snapshot = AsyncMock(
+            return_value=(
+                [{"id": "V1", "label": "x", "properties": {"name": "X"}},
+                 {"id": "V2", "label": "y", "properties": {"name": "Y"}}],
+                [{"outV": "V1", "inV": "V2", "label": "r"}],
+            )
+        )
+        lake._components["kg_client"] = client
+        result = await lake.kg_chat("ds", "q")
+        assert result["answer"] == "答案"
+        assert result["neighbor_context"] and result["neighbor_context"][0]["entity"] == "X"
+        sent_question = ext.chat_ka.call_args.args[1]
+        assert "知识图谱邻居上下文" in sent_question  # augmented prompt carries graph block
+
+    @pytest.mark.asyncio()
+    async def test_kg_chat_graph_context_false_skips_expansion(self, lake: _TestLake) -> None:
+        ext = MagicMock()
+        ext.chat_ka = MagicMock(return_value=SimpleNamespace(content="A", additional_kwargs={}))
+        lake._get_he_extractor_or_raise = lambda: ext  # type: ignore[assignment]
+        result = await lake.kg_chat("ds", "q", graph_context=False)
+        assert result["neighbor_context"] == []
+        ext.search_ka.assert_not_called()
+        assert ext.chat_ka.call_args.args[1] == "q"  # question passed through unchanged

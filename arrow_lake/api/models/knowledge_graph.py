@@ -184,6 +184,11 @@ class KGChatResponse(BaseModel):
     answer: str
     retrieved_items: list[dict[str, Any]]
     retrieval_count: int
+    neighbor_context: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="1-hop HugeGraph neighbor relations used to ground the answer "
+        "(GraphRAG); empty when KG is disabled or anchors could not be resolved.",
+    )
 
 
 class KGRebuildIndexRequest(BaseModel):

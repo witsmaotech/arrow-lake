@@ -265,24 +265,28 @@ class HugeGraphClient(_TraverserMixin, _ImportExportMixin):
 
     async def find_vertices_by_property(
         self,
-        label: str,
+        label: str | None,
         properties: dict[str, Any],
         *,
         graph_name: str | None = None,
         limit: int = 1000,
     ) -> list[dict[str, Any]]:
-        """Find vertices by label + property values via REST.
+        """Find vertices by property values via REST (label optional).
 
-        ``GET /graphs/{name}/graph/vertices?label=..&properties={..}``.
-        Replaces the gremlin ``find_entity`` query so it works on dynamically
-        created per-dataset graphs (which are not gremlin-bound). Returns the
-        matching ``vertices`` list (empty if none / graph missing).
+        ``GET /graphs/{name}/graph/vertices?properties={..}`` — ``label`` is
+        added only when provided, so a label-less query matches across all
+        vertex labels (used for GraphRAG anchor resolution on large graphs
+        where the vertex label scheme is unknown). Replaces the gremlin
+        ``find_entity`` query so it works on dynamically created per-dataset
+        graphs (which are not gremlin-bound). Returns the matching ``vertices``
+        list (empty if none / graph missing).
         """
         params = {
-            "label": label,
             "properties": json.dumps(properties),
             "limit": str(limit),
         }
+        if label:
+            params["label"] = label
         try:
             resp = await self._get(
                 f"{self._graph_base_for(graph_name)}/graph/vertices",

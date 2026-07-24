@@ -22,10 +22,22 @@
   .schema-chip:hover{background:var(--ink-850);border-color:var(--teal-bright)}
   .schema-chip.active{background:var(--ink-850);border-color:var(--teal-bright);color:var(--teal-bright)!important}
   .combo{position:relative}
-  .combo-list{position:absolute;left:0;right:0;top:100%;z-index:50;display:none;max-height:260px;overflow-y:auto;background:var(--ink-850);border:1px solid var(--line);border-radius:var(--r-sm);margin-top:2px;box-shadow:0 8px 24px rgba(0,0,0,.45)}
-  .combo-opt{padding:5px 10px;font-size:.78rem;cursor:pointer;font-family:var(--font-mono);color:var(--fg-mid);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .combo-list{position:absolute;left:0;right:0;top:100%;z-index:50;display:none;max-height:300px;overflow-y:auto;background:var(--ink-850);border:1px solid var(--line);border-radius:var(--r-sm);margin-top:2px;box-shadow:0 8px 24px rgba(0,0,0,.45);grid-template-columns:repeat(4,1fr);gap:1px}
+  .combo-opt{padding:4px 8px;font-size:.74rem;cursor:pointer;font-family:var(--font-mono);color:var(--fg-mid);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-radius:3px}
   .combo-opt:hover{background:var(--ink-700);color:var(--teal-bright)}
-  .combo-more{padding:6px;text-align:center;font-size:.7rem;color:var(--fg-lo);background:var(--ink-900);position:sticky;bottom:0}
+  .combo-more{padding:6px;text-align:center;font-size:.7rem;color:var(--fg-lo);background:var(--ink-900);position:sticky;bottom:0;grid-column:1/-1}
+  .cite{font-size:.72rem;padding:3px 8px;border-radius:4px;cursor:pointer;display:inline-block;margin:3px 4px 0 0;background:var(--ink-850);border:1px solid var(--line);transition:all .15s}
+  .cite:hover{background:var(--ink-700);color:var(--teal-bright);border-color:var(--teal-bright)}
+  .ex-chip{display:inline-block;font-size:.74rem;padding:4px 10px;border-radius:999px;border:1px dashed var(--line);color:var(--fg-mid);cursor:pointer;margin:3px;transition:all .15s}
+  .ex-chip:hover{color:var(--teal-bright);border-color:var(--teal-bright);border-style:solid}
+  .typing{display:inline-flex;gap:3px;align-items:center;padding:6px 0}
+  .typing i{width:5px;height:5px;border-radius:50%;background:var(--fg-lo);animation:tb 1.2s infinite}
+  .typing i:nth-child(2){animation-delay:.2s}
+  .typing i:nth-child(3){animation-delay:.4s}
+  @keyframes tb{0%,60%,100%{transform:translateY(0);opacity:.4}30%{transform:translateY(-4px);opacity:1}}
+  .md table{border-collapse:collapse;margin:6px 0;font-size:.8rem;width:auto;max-width:100%}
+  .md th,.md td{border:1px solid var(--line);padding:3px 8px;text-align:left}
+  .md th{background:var(--ink-850);color:var(--teal-bright)}
   .mode-tag{font-family:var(--font-mono);font-size:.68rem;padding:1px 6px;border-radius:var(--r-sm);background:var(--ink-900);color:var(--fg-md)}
   .trav-hint{font-size:.72rem;color:var(--fg-lo);margin-top:10px;line-height:1.5}
   .ring-row .tag{color:var(--danger)!important;border-color:var(--danger)!important}
@@ -153,6 +165,7 @@ async function loadAll() {
   </div>${(!v && s.graph_enabled) ? `<div class="muted" style="font-size:.74rem;margin-top:8px">图为空(0 实体)— 点下方「建 KG」抽取,或该数据集抽取得到 0 实体(换 doc_type/模板或更大模型)</div>` : ""}`;
   loadSchema();
   loadGraph(v);
+  loadThread(name);
   setBuildOpen(!v);
 }
 async function loadSchema() {
@@ -280,18 +293,19 @@ function makeCombo(inputId, listId) {
   inp.dataset.id = "";
   function render() {
     list.innerHTML = filtered.slice(0, shown).map((it, i) =>
-      `<div class="combo-opt" data-idx="${i}">${esc(it.label)}</div>`).join("") +
+      `<div class="combo-opt" data-idx="${i}" title="${esc(it.label)}">${esc(it.label)}</div>`).join("") +
       (filtered.length ? `<div class="combo-more" data-more="${shown < filtered.length ? 1 : 0}">${shown < filtered.length ? `显示 ${shown} / ${filtered.length} · 点击或滚动加载更多 ↓` : `共 ${filtered.length} 条`}</div>` : "");
   }
-  function apply(q, base) {
+  function apply(q, base, open) {
     filtered = base || all;
     q = (q || "").trim().toLowerCase();
     if (q) filtered = filtered.filter((it) => it.label.toLowerCase().includes(q));
     shown = Math.min(PAGE, filtered.length);
-    render(); list.style.display = filtered.length ? "block" : "none";
+    render();
+    if (open) list.style.display = filtered.length ? "grid" : "none";
   }
-  inp.addEventListener("focus", () => { if (all.length) apply(inp.value); });
-  inp.addEventListener("input", () => { inp.dataset.id = ""; apply(inp.value); });
+  inp.addEventListener("focus", () => { if (all.length) apply(inp.value, null, true); });
+  inp.addEventListener("input", () => { inp.dataset.id = ""; apply(inp.value, null, true); });
   list.addEventListener("click", (e) => {
     if (e.target.closest("[data-more='1']")) { shown = Math.min(shown + PAGE, filtered.length); render(); return; }
     const opt = e.target.closest(".combo-opt"); if (!opt) return;
@@ -307,8 +321,8 @@ function makeCombo(inputId, listId) {
     if (e.target !== inp && !list.contains(e.target)) list.style.display = "none";
   });
   return {
-    setData(items) { all = items; inp.value = ""; inp.dataset.id = ""; apply(""); },
-    filterByType(type) { apply(inp.value, type ? all.filter((n) => n.vtype === type) : all); },
+    setData(items) { all = items; inp.value = ""; inp.dataset.id = ""; apply("", null, false); },
+    filterByType(type) { apply(inp.value, type ? all.filter((n) => n.vtype === type) : all, true); },
     getId() { return inp.dataset.id || ""; },
   };
 }
@@ -542,6 +556,13 @@ function renderMd(src) {
     const h = g.match(/^(#{1,4})\s+(.*)/);
     if (h && !g.includes("\n")) { out.push(`<h${h[1].length + 1}>${h[2]}</h${h[1].length + 1}>`); continue; }
     const lines = g.split("\n");
+    if (lines.length >= 2 && lines.every(l => l.trim().startsWith("|")) && /^\|[\s:|-]+\|$/.test(lines[1].trim())) {
+      const parse = (l) => l.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map(c => c.trim());
+      const head = parse(lines[0]);
+      const body = lines.slice(2).map(parse);
+      out.push(`<table><thead><tr>${head.map(h => `<th>${h}</th>`).join("")}</tr></thead><tbody>${body.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join("")}</tr>`).join("")}</tbody></table>`);
+      continue;
+    }
     if (lines.every(l => /^\s*[-*+]\s+/.test(l))) { out.push(`<ul>${lines.map(l => `<li>${l.replace(/^\s*[-*+]\s+/, "")}</li>`).join("")}</ul>`); continue; }
     if (lines.every(l => /^\s*\d+[.)]\s+/.test(l))) { out.push(`<ol>${lines.map(l => `<li>${l.replace(/^\s*\d+[.)]\s+/, "")}</li>`).join("")}</ol>`); continue; }
     out.push(`<p>${g.replace(/\n/g, "<br>")}</p>`);
@@ -553,36 +574,67 @@ function renderMd(src) {
 }
 
 const turns = [];
+const EX_QUESTIONS = ["这个数据集主要讲什么？", "有哪些核心实体类型？", "实体之间是什么关系？", "列举几个关键实体"];
+const citeLabel = (c) => c.name || c.label || c.relation || (c.source && c.target ? `${c.source} → ${c.target}` : "") || c.id || "(未命名)";
+const citeType = (c) => c.type || c.kind || (c.source != null ? "edge" : "") || "";
 function renderThread() {
-  if (!turns.length) { $("#thread").innerHTML = '<div class="muted" style="padding:16px;text-align:center">先建 KG 再提问(基于图的实体/关系作答)</div>'; return; }
+  if (!turns.length) {
+    $("#thread").innerHTML = `<div class="muted" style="padding:12px;text-align:center">先建 KG 再提问(基于图的实体/关系作答),或试试:</div><div style="text-align:center">${EX_QUESTIONS.map(q => `<span class="ex-chip" data-q="${esc(q)}">${esc(q)}</span>`).join("")}</div>`;
+    return;
+  }
   $("#thread").innerHTML = turns.map(t => `
     <div style="margin-bottom:var(--s3)">
       <div class="muted" style="font-size:.7rem;font-family:var(--font-mono);margin-bottom:4px">YOU</div>
       <div class="bubble q">${esc(t.q)}</div>
       <div class="muted" style="font-size:.7rem;font-family:var(--font-mono);margin:10px 0 4px">ASSISTANT</div>
-      <div class="bubble a md">${renderMd(t.a)}</div>
-      ${t.citations?.length ? t.citations.map((c, i) => `<div class="cite">#${i + 1} ${esc(c.name || c.id || c.entity || "")} <span class="muted">${esc((c.type || c.label || "") + (c.score != null ? " · " + (typeof c.score === "number" ? c.score.toFixed(3) : c.score) : ""))}</span></div>`).join("") : ""}
+      <div class="bubble a md">${t.loading ? `<span class="typing"><i></i><i></i><i></i></span>` : renderMd(t.a)}</div>
+      ${t.citations?.length ? `<div style="margin-top:6px">${t.citations.map((c) => `<span class="cite" data-name="${esc(citeLabel(c))}" title="点击在图谱中定位该实体">${esc(citeLabel(c))}<span class="muted"> ${esc(citeType(c) + (c.score != null ? " · " + (typeof c.score === "number" ? c.score.toFixed(3) : c.score) : ""))}</span></span>`).join("")}</div>` : ""}
+      ${t.neighbor_context?.length ? `<div style="margin-top:6px"><span class="muted" style="font-size:.7rem">GraphRAG 邻居(HugeGraph 1 跳):</span> ${t.neighbor_context.map((c) => `<span class="cite" data-name="${esc(c.entity)}" title="点击在图谱中定位该实体">${esc(c.entity)}<span class="muted"> ${esc((c.relations || []).slice(0, 3).join("; "))}</span></span>`).join("")}</div>` : ""}
       <div class="stat">检索 ${t.retrieval_count ?? (t.citations?.length || 0)} 条${t.latency_ms ? ` · ${(t.latency_ms / 1000).toFixed(2)}s` : ""}</div>
     </div>`).join("");
+  $("#thread").lastElementChild?.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
-$("#askBtn").addEventListener("click", ask);
+// 引用点击 → 图谱聚焦定位;示例问题点击 → 填入输入框
+$("#thread").addEventListener("click", (e) => {
+  const cite = e.target.closest(".cite"); if (cite) return focusEntityInGraph(cite.dataset.name);
+  const ex = e.target.closest(".ex-chip"); if (ex) { $("#question").value = ex.dataset.q; $("#question").focus(); }
+});
+function focusEntityInGraph(name) {
+  if (!kgNetwork || !kgNodes) return toast("图谱未加载", "warn");
+  const found = kgNodes.get().find(n => (n.label || n.name || "") === name || (n.label || "").includes(name));
+  if (!found) return toast("图中未找到该实体", "warn");
+  kgNetwork.selectNodes([found.id]);
+  kgNetwork.focus(found.id, { scale: 1.25, animation: { duration: 600, easingFunction: "easeInOutQuad" } });
+  (document.querySelector("#graph") || document.querySelector("canvas")?.closest(".panel,section"))?.scrollIntoView({ block: "center", behavior: "smooth" });
+}
+let askAbort = null;
+function saveThread(name) { try { sessionStorage.setItem("kg_qa_" + name, JSON.stringify(turns)); } catch (e) { /* quota / private mode */ } }
+function loadThread(name) { try { turns.length = 0; const s = sessionStorage.getItem("kg_qa_" + name); if (s) turns.push(...JSON.parse(s)); } catch (e) { /* corrupt */ } renderThread(); }
+$("#askBtn").addEventListener("click", () => { if (askAbort) { askAbort.abort(); return; } ask(); });
 $("#question").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(); } });
 async function ask() {
   const name = curDs(); if (!name) return toast("先选数据集", "warn");
   const q = $("#question").value.trim(); if (!q) return toast("输入问题", "warn");
-  const btn = $("#askBtn"); btn.disabled = true; btn.textContent = "图检索+生成中…";
-  turns.push({ q, a: "…", citations: [], retrieval_count: 0 }); $("#question").value = ""; renderThread();
+  const btn = $("#askBtn"); btn.textContent = "取消";
+  askAbort = new AbortController();
+  turns.push({ q, loading: true, citations: [], retrieval_count: 0 }); $("#question").value = ""; renderThread();
   try {
-    const r = await request("POST", "/kg/ask", { body: { dataset: name, question: q } });
+    const r = await request("POST", "/kg/ask", { body: { dataset: name, question: q }, signal: askAbort.signal });
     const last = turns[turns.length - 1];
-    last.a = r.answer || "(无回答)"; last.citations = r.citations || []; last.retrieval_count = r.retrieval_count;
-    renderThread();
+    last.loading = false; last.a = r.answer || "(无回答)";
+    last.citations = r.citations || r.retrieved_items || []; last.retrieval_count = r.retrieval_count;
+    last.neighbor_context = r.neighbor_context || [];
+    renderThread(); saveThread(name);
   } catch (e) {
     const last = turns[turns.length - 1];
-    const d = e?.detail; const emsg = Array.isArray(d) ? d.map(x => x?.msg || JSON.stringify(x)).join("; ") : (d || e?.message || e);
-    last.a = "❌ 查询失败:" + String(emsg).slice(0, 200);
-    renderThread(); toast("KG 问答失败", "danger");
-  } finally { btn.disabled = false; btn.textContent = "提问"; }
+    if (askAbort?.signal.aborted) { last.loading = false; last.a = "（已取消）"; }
+    else {
+      const d = e?.detail; const emsg = Array.isArray(d) ? d.map(x => x?.msg || JSON.stringify(x)).join("; ") : (d || e?.message || e);
+      last.loading = false; last.a = "❌ 查询失败:" + String(emsg).slice(0, 200);
+      toast("KG 问答失败", "danger");
+    }
+    renderThread();
+  } finally { askAbort = null; btn.disabled = false; btn.textContent = "提问"; }
 }
 
 loadDatasets();
