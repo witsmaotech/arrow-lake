@@ -203,7 +203,106 @@ function setSchemaOpen(open) {
 }
 $("#schemaToggle").addEventListener("click", () => setSchemaOpen($("#schemaBody").style.display === "none"));
 
-let kgNetwork = null, kgNodes = null, kgEdges = null;
+let kgNetwork = null, kgNodes = null, kgEdges = null, kgGraph6 = null, kgEngine = null;
+
+// ---------- 双引擎:中小图 vis-network(成熟交互)/ 大图 G6 v5(WebGL) ----------
+const G6_THRESHOLD = 2000; // ≥ 此节点数走 G6 WebGL
+const G6_CDN = "https://cdn.jsdelivr.net/npm/@antv/g6@4.8.24/dist/g6.min.js"; // v4 UMD(<script> 即用,适配无构建 console)
+const G6_TYPE_COLOR = { 系统:"#3b82f6", 算法:"#8b5cf6", 模型:"#ec4899", 组件:"#f59e0b", 应用:"#10b981", 数据:"#06b6d4", 方法:"#f97316", 过程:"#64748b", 事件:"#ef4444", 组织:"#a855f7", 角色:"#84cc16", 产品:"#14b8a6", 属性:"#94a3b8", 概念:"#d946ef", entity:"#14b8a6" };
+let g6Loader = null;
+
+function visOpts(n) {
+  return {
+    height: "100%", width: "100%", autoResize: true,
+    layout: { improvedLayout: n <= 150 },
+    physics: { stabilization: { iterations: n > 5000 ? 30 : (n > 2000 ? 80 : 200) }, barnesHut: { gravitationalConstant: -8000, springLength: 110 } },
+    nodes: { shape: "dot", size: 14, font: { size: 13, color: "#e2e8f0" }, borderWidth: 2 },
+    edges: { color: { color: "#475569", opacity: 0.55 }, smooth: { type: "continuous" }, selectionWidth: 2 },
+    groups: {
+      系统: { color: { background: "#60a5fa", border: "#2563eb" } },
+      算法: { color: { background: "#a78bfa", border: "#7c3aed" } },
+      模型: { color: { background: "#f472b6", border: "#db2777" } },
+      组件: { color: { background: "#fbbf24", border: "#d97706" } },
+      应用: { color: { background: "#34d399", border: "#059669" } },
+      数据: { color: { background: "#22d3ee", border: "#0891b2" } },
+      方法: { color: { background: "#fb923c", border: "#ea580c" } },
+      过程: { color: { background: "#94a3b8", border: "#475569" } },
+      事件: { color: { background: "#f87171", border: "#dc2626" } },
+      组织: { color: { background: "#c084fc", border: "#9333ea" } },
+      角色: { color: { background: "#a3e635", border: "#65a30d" } },
+      产品: { color: { background: "#2dd4bf", border: "#0d9488" } },
+      属性: { color: { background: "#cbd5e1", border: "#64748b" } },
+      概念: { color: { background: "#e879f9", border: "#a21caf" } },
+      entity: { color: { background: "#2dd4bf", border: "#0d9488" } },
+    },
+    interaction: { hover: true, tooltipDelay: 120, navigationButtons: false },
+  };
+}
+
+function destroyGraph() {
+  if (kgNetwork) { try { kgNetwork.destroy(); } catch (_) {} kgNetwork = null; }
+  if (kgGraph6) { try { kgGraph6.destroy(); } catch (_) {} kgGraph6 = null; }
+  kgEngine = null;
+}
+
+// vis 节点 click → 高亮遍历结果里含该节点的路径行(两引擎共用)
+function highlightPathRows(nidStr) {
+  if (!nidStr) return;
+  const rows = document.querySelectorAll("#gPaths .path-row");
+  let first = null;
+  rows.forEach((r) => { const hit = (r.dataset.ids || "").split(",").includes(nidStr); r.classList.toggle("hl", hit); if (hit && !first) first = r; });
+  if (first) first.scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+
+function loadG6() {
+  if (window.G6) return Promise.resolve(window.G6);
+  if (g6Loader) return g6Loader;
+  g6Loader = new Promise((res, rej) => {
+    const s = document.createElement("script");
+    s.src = G6_CDN;
+    s.onload = () => res(window.G6);
+    s.onerror = () => { g6Loader = null; rej(new Error("G6 UMD CDN 加载失败")); };
+    document.head.appendChild(s);
+  });
+  return g6Loader;
+}
+
+// 大图 G6 v4 UMD 渲染(canvas + GPU 力导向,~10k 节点;v5 需 bundler 不适配无构建 console)
+async function renderG6(cont, ns, es, meta) {
+  const V = window.vis;
+  let G6;
+  try { G6 = await loadG6(); }
+  catch (e) {
+    if (meta) meta.innerHTML = `<span style="color:var(--warn)">G6 加载失败,回退 vis:${esc(e.message)}</span>`;
+    kgNetwork = new V.Network(cont, { nodes: kgNodes, edges: kgEdges }, visOpts(ns.length)); kgEngine = "vis"; return;
+  }
+  const showLabels = es.length <= 800;
+  try {
+    kgGraph6 = new G6.Graph({
+      container: cont,
+      width: cont.clientWidth || cont.offsetWidth || 900,
+      height: cont.clientHeight || cont.offsetHeight || 540,
+      modes: { default: ["drag-canvas", "zoom-canvas", "drag-node"] },
+      layout: { type: "force", preventOverlap: true, nodeSize: 18, linkDistance: 45, nodeStrength: -30 },
+      defaultNode: { size: 14, style: { lineWidth: 1.5 }, labelCfg: { style: { fill: "#e2e8f0", fontSize: 11 } } },
+      defaultEdge: { style: { stroke: "#475569", opacity: 0.4, lineWidth: 1 }, labelCfg: { style: { fill: "#94a3b8", fontSize: 9 } } },
+      nodeStateStyles: { selected: { style: { lineWidth: 3, stroke: "#fbbf24" } } },
+    });
+    kgEngine = "g6";
+    kgGraph6.data({
+      nodes: ns.map(n => { const c = G6_TYPE_COLOR[n.vtype] || "#14b8a6"; return { id: String(n.id), label: n.label, group: n.vtype || "entity", style: { fill: c, stroke: c } }; }),
+      edges: es.map((e, i) => ({ id: e.id || ("ge" + i), source: String(e.from), target: String(e.to), label: (showLabels && e.label) ? e.label : "" })),
+    });
+    kgGraph6.on("node:click", (ev) => { try { const m = ev.item && ev.item.getModel(); if (m) highlightPathRows(String(m.id)); } catch (_) {} });
+    kgGraph6.render();
+    try { kgGraph6.on("afterrender", () => { try { kgGraph6.fitView(20); } catch (_) {} }); } catch (_) {}
+  } catch (e) {
+    if (meta) meta.innerHTML = `<span style="color:var(--warn)">G6 渲染失败,回退 vis:${esc(e?.message || e)}</span>`;
+    try { if (kgGraph6) kgGraph6.destroy(); } catch (_) {}
+    kgGraph6 = null; kgEngine = null;
+    kgNetwork = new V.Network(cont, { nodes: kgNodes, edges: kgEdges }, visOpts(ns.length)); kgEngine = "vis";
+  }
+}
 async function loadGraph(totalV = 0) {
   const name = curDs(); if (!name) return;
   const meta = $("#kgGraphMeta"), cont = $("#kgGraph");
@@ -216,7 +315,7 @@ async function loadGraph(totalV = 0) {
     const emsg = Array.isArray(e?.detail) ? e.detail.map(x => x?.msg || "").join("; ") : (e?.detail || e?.message || e);
     meta.innerHTML = `<span style="color:var(--danger)">图加载失败:${esc(emsg)}</span>`; return;
   }
-  if (kgNetwork) { kgNetwork.destroy(); kgNetwork = null; }
+  destroyGraph();
   // 隐藏结构节点 document/chunk:它们是度数最高的 hub(每个 chunk 经 references
   // 连到所有 entity),力导向会把 chunk 推到中心、把图压成星型,淹没真实的
   // entity-entity 关系结构。references 边(chunk→entity)因 chunk 被过滤而自动
@@ -240,40 +339,14 @@ async function loadGraph(totalV = 0) {
   kgNodes = new V.DataSet(ns);
   kgEdges = new V.DataSet(es);
   fullSnapshot = { nodes: ns, edges: es }; // 快照完整 8000 图(遍历后重置恢复)
-  kgNetwork = new V.Network(cont, { nodes: kgNodes, edges: kgEdges }, {
-    height: "100%", width: "100%", autoResize: true,
-    layout: { improvedLayout: ns.length <= 150 },
-    physics: { stabilization: { iterations: ns.length > 5000 ? 30 : (ns.length > 2000 ? 80 : 200) }, barnesHut: { gravitationalConstant: -8000, springLength: 110 } },
-    nodes: { shape: "dot", size: 14, font: { size: 13, color: "#e2e8f0" }, borderWidth: 2 },
-    edges: { color: { color: "#475569", opacity: 0.55 }, smooth: { type: "continuous" }, selectionWidth: 2 },
-    groups: {
-      系统: { color: { background: "#60a5fa", border: "#2563eb" } },
-      算法: { color: { background: "#a78bfa", border: "#7c3aed" } },
-      模型: { color: { background: "#f472b6", border: "#db2777" } },
-      组件: { color: { background: "#fbbf24", border: "#d97706" } },
-      应用: { color: { background: "#34d399", border: "#059669" } },
-      数据: { color: { background: "#22d3ee", border: "#0891b2" } },
-      方法: { color: { background: "#fb923c", border: "#ea580c" } },
-      过程: { color: { background: "#94a3b8", border: "#475569" } },
-      事件: { color: { background: "#f87171", border: "#dc2626" } },
-      组织: { color: { background: "#c084fc", border: "#9333ea" } },
-      角色: { color: { background: "#a3e635", border: "#65a30d" } },
-      产品: { color: { background: "#2dd4bf", border: "#0d9488" } },
-      属性: { color: { background: "#cbd5e1", border: "#64748b" } },
-      概念: { color: { background: "#e879f9", border: "#a21caf" } },
-      entity: { color: { background: "#2dd4bf", border: "#0d9488" } },
-    },
-    interaction: { hover: true, tooltipDelay: 120, navigationButtons: false },
-  });
-  // 联动(反向):点 vis 节点 → 高亮结果里含该节点的路径行 + 滚动到位
-  kgNetwork.on("click", (params) => {
-    const nid = params.nodes?.[0]; if (!nid) return;
-    const nidStr = String(nid);
-    const rows = document.querySelectorAll("#gPaths .path-row");
-    let first = null;
-    rows.forEach((r) => { const hit = (r.dataset.ids || "").split(",").includes(nidStr); r.classList.toggle("hl", hit); if (hit && !first) first = r; });
-    if (first) first.scrollIntoView({ block: "nearest", behavior: "smooth" });
-  });
+  if (ns.length >= G6_THRESHOLD) {
+    await renderG6(cont, ns, es, meta);
+  } else {
+    kgNetwork = new V.Network(cont, { nodes: kgNodes, edges: kgEdges }, visOpts(ns.length));
+    kgEngine = "vis";
+    // 联动(反向):点 vis 节点 → 高亮结果里含该节点的路径行 + 滚动到位
+    kgNetwork.on("click", (params) => { highlightPathRows(String(params.nodes?.[0] || "")); });
+  }
   // 填充遍历起点/终点下拉(实体节点);vtype 供 Schema 联动过滤
   gStartCombo.setData(ns.map((n) => ({ id: n.id, label: n.label, vtype: n.vtype || "" })));
   gTargetCombo.setData(ns.map((n) => ({ id: n.id, label: n.label })));
@@ -333,7 +406,7 @@ const gTargetCombo = makeCombo("gTarget", "gTargetList");
 
 // Schema 联动:边类型 chip → vis 高亮该关系类型的边(其他淡化);后端 traverser 不支持关系过滤故走本地视觉
 function highlightEdgesByLabel(label) {
-  if (!kgEdges) return;
+  if (!kgEdges || kgEngine === "g6") return; // G6 大图无边 label,Schema 边 chip 高亮仅 vis
   const updates = kgEdges.get().map((e) => ({
     id: e.id,
     color: { color: !label || e.label === label ? "#38bdf8" : "#334155", opacity: !label ? 0.55 : (e.label === label ? 0.95 : 0.12) },
@@ -385,6 +458,15 @@ function pathsToGraph(paths, idMap) {
 
 // 遍历结果 → vis-network setData 重渲(起点高亮 · 路径着色 · 环标红)+ 路径列表表
 function renderTraverseSubgraph({ nodes, edges, paths, mode, startId, isRing }) {
+  const V = window.vis;
+  // 大图(G6)上跑遍历 → 切回 vis 渲染子图(遍历结果小而聚焦,复用 vis 路径着色/环标红)
+  if (kgEngine === "g6" || !kgNetwork) {
+    if (kgGraph6) { try { kgGraph6.destroy(); } catch (_) {} kgGraph6 = null; }
+    if (!kgNodes) kgNodes = new V.DataSet();
+    if (!kgEdges) kgEdges = new V.DataSet();
+    kgNetwork = new V.Network($("#kgGraph"), { nodes: kgNodes, edges: kgEdges }, visOpts((nodes || []).length || 100));
+    kgEngine = "vis";
+  }
   if (!kgNetwork) return;
   const idMap = new Map((fullSnapshot?.nodes || []).map((n) => [String(n.id), n]));
   for (const n of nodes) idMap.set(String(n.id), n);
@@ -488,11 +570,18 @@ async function runTraverse() {
 $("#gRun").addEventListener("click", runTraverse);
 
 // 重置为完整 3000 图(从快照恢复)
-$("#gReset").addEventListener("click", () => {
-  if (!fullSnapshot || !kgNetwork) return;
-  kgNodes.clear(); kgNodes.add(fullSnapshot.nodes);
-  kgEdges.clear(); kgEdges.add(fullSnapshot.edges);
-  kgNetwork.setData({ nodes: kgNodes, edges: kgEdges });
+$("#gReset").addEventListener("click", async () => {
+  if (!fullSnapshot) return;
+  const { nodes, edges } = fullSnapshot;
+  if (kgEngine === "g6" || nodes.length >= G6_THRESHOLD) {
+    destroyGraph();
+    kgNodes = new window.vis.DataSet(nodes); kgEdges = new window.vis.DataSet(edges);
+    await renderG6($("#kgGraph"), nodes, edges, $("#kgGraphMeta"));
+  } else if (kgNetwork) {
+    kgNodes.clear(); kgNodes.add(nodes);
+    kgEdges.clear(); kgEdges.add(edges);
+    kgNetwork.setData({ nodes: kgNodes, edges: kgEdges });
+  } else return;
   $("#gMeta").textContent = "已重置为完整图";
   $("#gPaths").innerHTML = '<div class="muted" style="padding:10px">选起点实体 + 遍历模式后点「执行遍历」</div>';
 });
@@ -602,12 +691,17 @@ $("#thread").addEventListener("click", (e) => {
   const ex = e.target.closest(".ex-chip"); if (ex) { $("#question").value = ex.dataset.q; $("#question").focus(); }
 });
 function focusEntityInGraph(name) {
-  if (!kgNetwork || !kgNodes) return toast("图谱未加载", "warn");
-  const found = kgNodes.get().find(n => (n.label || n.name || "") === name || (n.label || "").includes(name));
+  const nodes = (fullSnapshot && fullSnapshot.nodes) || (kgNodes ? kgNodes.get() : []);
+  const found = nodes.find(n => (n.label || n.name || "") === name || (n.label || "").includes(name));
   if (!found) return toast("图中未找到该实体", "warn");
-  kgNetwork.selectNodes([found.id]);
-  kgNetwork.focus(found.id, { scale: 1.25, animation: { duration: 600, easingFunction: "easeInOutQuad" } });
-  (document.querySelector("#graph") || document.querySelector("canvas")?.closest(".panel,section"))?.scrollIntoView({ block: "center", behavior: "smooth" });
+  const id = String(found.id);
+  if (kgEngine === "g6" && kgGraph6) {
+    try { kgGraph6.focusItem(id, true); kgGraph6.setItemState(id, "selected", true); } catch (_) {}
+  } else if (kgNetwork) {
+    kgNetwork.selectNodes([found.id]);
+    kgNetwork.focus(found.id, { scale: 1.25, animation: { duration: 600, easingFunction: "easeInOutQuad" } });
+  } else { return toast("图谱未加载", "warn"); }
+  (document.querySelector("#kgGraph") || document.querySelector("canvas")?.closest(".panel,section"))?.scrollIntoView({ block: "center", behavior: "smooth" });
 }
 let askAbort = null;
 function saveThread(name) { try { sessionStorage.setItem("kg_qa_" + name, JSON.stringify(turns)); } catch (e) { /* quota / private mode */ } }
