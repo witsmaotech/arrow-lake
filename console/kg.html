@@ -106,7 +106,7 @@
   </div>
 
   <div class="panel flush" style="margin-top:var(--s4)">
-    <div class="panel-h"><i class="placeholder" data-ic="search"></i><h3>图问答(KG-RAG)</h3><span class="sub">POST /kg/ask · 走 he_qa_llm(qwen-max)</span></div>
+    <div class="panel-h"><i class="placeholder" data-ic="chat"></i><h3>图问答(KG-RAG)</h3><span class="sub">POST /kg/ask · 走 he_qa_llm(qwen-max)</span></div>
     <div class="panel-b">
       <div id="thread"><div class="muted" style="padding:16px;text-align:center">先建 KG 再提问(基于图的实体/关系作答)</div></div>
       <div class="flex" style="gap:8px;margin-top:var(--s3)">
@@ -234,7 +234,7 @@ async function loadGraph(totalV = 0) {
     font: { size: 9, color: "#64748b", strokeWidth: 0 },
   }));
   if (!ns.length) { meta.textContent = "无实体节点(已隐藏 document/chunk)— 先建 KG 抽取实体"; cont.innerHTML = ""; return; }
-  meta.innerHTML = `${ns.length} 实体节点 · ${es.length} 关系边${(totalV > 3000 || r.truncated) ? ` · <span style="color:var(--warn)">数据集共 ${totalV.toLocaleString()} 顶点,仅显示前 3000(数据集更大)</span>` : ""}`;
+  meta.innerHTML = `${ns.length} 实体节点 · ${es.length} 关系边` + (totalV > ns.length ? ` · <span class="muted" style="font-size:.74rem">图共 ${totalV.toLocaleString()} 顶点(已隐藏 ${totalV - ns.length} 个 document/chunk 结构节点)</span>` : "") + ((totalV > 3000 || r.truncated) ? ` · <span style="color:var(--warn)">仅显示前 3000(数据集更大)</span>` : "");
   kgNodes = new V.DataSet(ns);
   kgEdges = new V.DataSet(es);
   fullSnapshot = { nodes: ns, edges: es }; // 快照完整 3000 图(遍历后重置恢复)
