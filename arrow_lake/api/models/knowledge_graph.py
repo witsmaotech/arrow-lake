@@ -178,6 +178,15 @@ class KGChatRequest(BaseModel):
     )
     question: str = Field(..., min_length=1, max_length=5000, description="Natural-language question")
     top_k: int = Field(default=5, ge=1, le=50, description="Top-K nodes and edges fed as RAG context")
+    engine: str = Field(
+        default="graphrag",
+        pattern=r"^(graphrag|chat_ka)$",
+        description="graphrag (default: direct LLM, streaming + multi-turn capable) | chat_ka (legacy hyper-extract black-box)",
+    )
+    history: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Prior turns [{q, a}] for multi-turn (graphrag engine only)",
+    )
 
 
 class KGChatResponse(BaseModel):

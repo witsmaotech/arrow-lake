@@ -281,8 +281,23 @@ class HugeGraphClient(_TraverserMixin, _ImportExportMixin):
         graphs (which are not gremlin-bound). Returns the matching ``vertices``
         list (empty if none / graph missing).
         """
+        # Hardening: label-agnostic queries (used by GraphRAG anchor resolution)
+        # are restricted to a safe property-key allowlist + bounded value length,
+        # preventing overly broad / enumeration-style queries.
+        if label is None:
+            bad = [k for k in properties if k not in ("name", "label")]
+            if bad:
+                raise KGError(
+                    error_code=ErrorCode.KG_QUERY_FAILED,
+                    message=(
+                        "label-agnostic vertex query allows only 'name'/'label' "
+                        f"property keys; rejected: {bad}"
+                    ),
+                    context={"rejected_keys": bad},
+                )
+        bounded = {str(k): str(v)[: 256] for k, v in properties.items()}
         params = {
-            "properties": json.dumps(properties),
+            "properties": json.dumps(bounded),
             "limit": str(limit),
         }
         if label:

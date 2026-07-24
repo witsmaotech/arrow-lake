@@ -224,7 +224,7 @@ class TestKGEnabled:
         ext.chat_ka = MagicMock(return_value=resp)
         lake._components["kg_extractor"] = ext
 
-        result = await lake.kg_chat("jd_ddd", "什么是聚合根", top_k=5)
+        result = await lake.kg_chat("jd_ddd", "什么是聚合根", top_k=5, engine="chat_ka")
         ext.chat_ka.assert_called_once_with("jd_ddd", "什么是聚合根", 5)
         assert "聚合根" in result["answer"]
         assert result["retrieval_count"] == 1
@@ -408,7 +408,7 @@ class TestKgChatGraphContext:
         assert ctx == []
 
     @pytest.mark.asyncio()
-    async def test_kg_chat_returns_neighbor_context(self, lake: _TestLake) -> None:
+    async def test_kg_chat_chat_ka_engine_returns_neighbor_context(self, lake: _TestLake) -> None:
         ext = self._extractor(["X"])
         lake._get_he_extractor_or_raise = lambda: ext  # type: ignore[assignment]
         client = AsyncMock()
@@ -420,18 +420,73 @@ class TestKgChatGraphContext:
             )
         )
         lake._components["kg_client"] = client
-        result = await lake.kg_chat("ds", "q")
+        result = await lake.kg_chat("ds", "q", engine="chat_ka")
         assert result["answer"] == "答案"
         assert result["neighbor_context"] and result["neighbor_context"][0]["entity"] == "X"
         sent_question = ext.chat_ka.call_args.args[1]
         assert "知识图谱邻居上下文" in sent_question  # augmented prompt carries graph block
 
     @pytest.mark.asyncio()
-    async def test_kg_chat_graph_context_false_skips_expansion(self, lake: _TestLake) -> None:
+    async def test_kg_chat_chat_ka_graph_context_false_skips(self, lake: _TestLake) -> None:
         ext = MagicMock()
         ext.chat_ka = MagicMock(return_value=SimpleNamespace(content="A", additional_kwargs={}))
         lake._get_he_extractor_or_raise = lambda: ext  # type: ignore[assignment]
-        result = await lake.kg_chat("ds", "q", graph_context=False)
+        result = await lake.kg_chat("ds", "q", graph_context=False, engine="chat_ka")
         assert result["neighbor_context"] == []
         ext.search_ka.assert_not_called()
         assert ext.chat_ka.call_args.args[1] == "q"  # question passed through unchanged
+
+    @pytest.mark.asyncio()
+    async def test_kg_chat_graphrag_engine_direct_llm(self, lake: _TestLake) -> None:
+        ext = self._extractor(["X"])
+        lake._get_he_extractor_or_raise = lambda: ext  # type: ignore[assignment]
+        client = AsyncMock()
+        client.get_graph_snapshot = AsyncMock(return_value=([], []))  # no neighbor ctx
+        lake._components["kg_client"] = client
+        provider = AsyncMock()
+        provider.generate = AsyncMock(return_value=SimpleNamespace(content="graphrag答"))
+        lake._components["kg_qa_provider"] = provider
+        result = await lake.kg_chat("ds", "q", engine="graphrag")
+        assert result["answer"] == "graphrag答"
+        provider.generate.assert_awaited_once()
+        ext.chat_ka.assert_not_called()  # graphrag path bypasses chat_ka
+        msgs = provider.generate.call_args.args[0]
+        assert msgs[0].role == "system"  # structured messages, isolation (#1 fix)
+        assert any(m.role == "user" and "当前问题" in m.content for m in msgs)
+
+    @pytest.mark.asyncio()
+    async def test_kg_chat_graphrag_multi_turn_history(self, lake: _TestLake) -> None:
+        ext = self._extractor(["X"])
+        lake._get_he_extractor_or_raise = lambda: ext  # type: ignore[assignment]
+        client = AsyncMock()
+        client.get_graph_snapshot = AsyncMock(return_value=([], []))
+        lake._components["kg_client"] = client
+        provider = AsyncMock()
+        provider.generate = AsyncMock(return_value=SimpleNamespace(content="ans"))
+        lake._components["kg_qa_provider"] = provider
+        await lake.kg_chat("ds", "q2", engine="graphrag", history=[{"q": "q1", "a": "a1"}])
+        msgs = provider.generate.call_args.args[0]
+        roles = [m.role for m in msgs]
+        # system, context(user), history user, history assistant, current question(user)
+        assert roles[:1] == ["system"]
+        assert "user" in roles and "assistant" in roles  # history turns present
+
+    @pytest.mark.asyncio()
+    async def test_kg_chat_stream_yields_meta_then_deltas(self, lake: _TestLake) -> None:
+        ext = self._extractor(["X"])
+        lake._get_he_extractor_or_raise = lambda: ext  # type: ignore[assignment]
+        client = AsyncMock()
+        client.get_graph_snapshot = AsyncMock(return_value=([], []))
+        lake._components["kg_client"] = client
+
+        async def _gen(msgs):
+            for t in ("Hel", "lo"):
+                yield t
+
+        provider = SimpleNamespace(generate_stream=_gen)
+        lake._components["kg_qa_provider"] = provider
+        out = [x async for x in lake.kg_chat_stream("ds", "q")]
+        assert out[0][0] == "meta"
+        assert out[0][1]["retrieval_count"] == 0 or isinstance(out[0][1]["retrieval_count"], int)
+        deltas = [p for k, p in out if k == "delta"]
+        assert "".join(deltas) == "Hello"

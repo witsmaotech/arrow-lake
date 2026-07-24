@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 import re
 import time
-from typing import Any, Literal
+import uuid
+from typing import Any, AsyncIterator, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
+from starlette.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from arrow_lake.api.auth_models import Role
@@ -331,7 +335,9 @@ async def kg_ask(
     """
     _enforce_read_acl(checker, _user, req.dataset)
     try:
-        result = await lake.kg_chat(req.dataset, req.question, top_k=req.top_k)
+        result = await lake.kg_chat(
+            req.dataset, req.question, top_k=req.top_k, engine=req.engine, history=req.history
+        )
         return KGChatResponse(
             answer=result["answer"],
             retrieved_items=result["retrieved_items"],
@@ -340,6 +346,45 @@ async def kg_ask(
         )
     except KGError as exc:
         raise HTTPException(status_code=_kg_error_to_status(exc), detail=exc.message) from exc
+
+
+@router.post("/ask/stream")
+async def kg_ask_stream(
+    *,
+    req: KGChatRequest,
+    lake: Any = Depends(get_lake),
+    _user: dict = Depends(require_role(Role.VIEWER)),
+    checker=Depends(get_checker),
+) -> StreamingResponse:
+    """Stream a GraphRAG KG answer via Server-Sent Events.
+
+    Emits ``metadata`` (retrieved items + neighbor context) once, then
+    ``content`` deltas, then ``done`` (or ``error``).
+    """
+    _enforce_read_acl(checker, _user, req.dataset)
+
+    async def _events() -> AsyncIterator[str]:
+        event_id = uuid.uuid4().hex[:8]
+        try:
+            async with asyncio.timeout(300):
+                async for kind, payload in lake.kg_chat_stream(
+                    req.dataset, req.question, top_k=req.top_k, history=req.history
+                ):
+                    if kind == "meta":
+                        yield f"id: {event_id}-meta\nevent: metadata\ndata: {json.dumps(payload)}\n\n"
+                    else:  # delta token
+                        yield f"event: content\ndata: {json.dumps({'data': payload})}\n\n"
+                yield f"id: {event_id}-done\nevent: done\ndata: {{}}\n\n"
+        except TimeoutError:
+            logger.warning("KG stream timed out after 300s")
+            yield f"id: {event_id}-error\nevent: error\ndata: {json.dumps({'error': 'Streaming timed out'})}\n\n"
+        except KGError as exc:
+            yield f"id: {event_id}-error\nevent: error\ndata: {json.dumps({'error': exc.message})}\n\n"
+        except Exception:
+            logger.exception("KG stream error")
+            yield f"id: {event_id}-error\nevent: error\ndata: {json.dumps({'error': 'Internal error during streaming'})}\n\n"
+
+    return StreamingResponse(_events(), media_type="text/event-stream; charset=utf-8")
 
 
 @router.post("/rebuild-index", dependencies=[Depends(require_role(Role.ADMIN))])
