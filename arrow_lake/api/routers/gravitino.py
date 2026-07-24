@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 import time
 from typing import Any
 from urllib.request import Request as UrlRequest
@@ -69,17 +70,22 @@ def _gravitino_get(config: Any, path: str, auth_provider: Any = None) -> dict[st
 
 _LAKE_DS_CACHE: list = [0.0, []]  # [monotonic_ts, names]; mutated in place (no global needed)
 _LAKE_DS_TTL_S = 5.0
+# Guards the in-place mutation of _LAKE_DS_CACHE across concurrent requests.
+_LAKE_DS_CACHE_LOCK = threading.Lock()
 
 
 def _cached_list_datasets(lake: Any) -> list[str]:
     """lake.list_datasets() with a short TTL (avoids a catalog scan per request)."""
     now = time.monotonic()
-    if _LAKE_DS_CACHE[1] and now - _LAKE_DS_CACHE[0] < _LAKE_DS_TTL_S:
-        return _LAKE_DS_CACHE[1]
+    with _LAKE_DS_CACHE_LOCK:
+        if _LAKE_DS_CACHE[1] and now - _LAKE_DS_CACHE[0] < _LAKE_DS_TTL_S:
+            return _LAKE_DS_CACHE[1]
+    # list_datasets() is outside the lock so concurrent reads don't serialize.
     raw = lake.list_datasets()
     out = [(n.name if hasattr(n, "name") else n) for n in raw]
-    _LAKE_DS_CACHE[0] = now
-    _LAKE_DS_CACHE[1] = out
+    with _LAKE_DS_CACHE_LOCK:
+        _LAKE_DS_CACHE[0] = now
+        _LAKE_DS_CACHE[1] = out
     return out
 
 
@@ -130,7 +136,7 @@ def list_catalogs(request: Request) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 @router.get("/tables")
-def list_tables(request: Request, lake=Depends(get_lake)) -> dict[str, Any]:
+def list_tables(request: Request, lake=Depends(get_lake), _user=Depends(require_role(Role.VIEWER))) -> dict[str, Any]:
     """List tables in lance-catalog, falling back to lake datasets when empty."""
     cfg = request.app.state.config.gravitino
     data = _gravitino_get(
@@ -161,7 +167,7 @@ def list_tables(request: Request, lake=Depends(get_lake)) -> dict[str, Any]:
 
 
 @router.get("/tables/{name}")
-def get_table(name: str, request: Request, lake=Depends(get_lake)) -> dict[str, Any]:
+def get_table(name: str, request: Request, lake=Depends(get_lake), _user=Depends(require_role(Role.VIEWER))) -> dict[str, Any]:
     """Get table details; fall back to the lake dataset schema if not in Gravitino."""
     _validate_id(name, "table name")
     cfg = request.app.state.config.gravitino

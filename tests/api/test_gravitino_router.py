@@ -72,7 +72,7 @@ class TestValidateId:
             base_url="http://test",
             headers={"X-API-Key": "test-api-key"},
         ) as ac:
-            resp = await ac.get("/metadata/tables/invalid name!")
+            resp = await ac.get("/api/v1/metadata/tables/invalid name!")
         assert resp.status_code == 400
 
     @pytest.mark.asyncio
@@ -83,7 +83,7 @@ class TestValidateId:
             base_url="http://test",
             headers={"X-API-Key": "test-api-key"},
         ) as ac:
-            resp = await ac.get("/metadata/tables/a.b")
+            resp = await ac.get("/api/v1/metadata/tables/a.b")
         assert resp.status_code == 400
 
 
@@ -103,7 +103,7 @@ class TestServiceNotConfigured:
             base_url="http://test",
             headers={"X-API-Key": "test-api-key"},
         ) as ac:
-            resp = await ac.get("/metadata/tags")
+            resp = await ac.get("/api/v1/metadata/tags")
         assert resp.status_code == 503
 
     @pytest.mark.asyncio
@@ -114,7 +114,7 @@ class TestServiceNotConfigured:
             base_url="http://test",
             headers={"X-API-Key": "test-api-key"},
         ) as ac:
-            resp = await ac.get("/metadata/models")
+            resp = await ac.get("/api/v1/metadata/models")
         assert resp.status_code == 503
 
 
@@ -148,7 +148,7 @@ class TestListCatalogs:
                 base_url="http://test",
                 headers={"X-API-Key": "test-api-key"},
             ) as ac:
-                resp = await ac.get("/metadata/catalogs")
+                resp = await ac.get("/api/v1/metadata/catalogs")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -164,7 +164,7 @@ class TestListCatalogs:
                 base_url="http://test",
                 headers={"X-API-Key": "test-api-key"},
             ) as ac:
-                resp = await ac.get("/metadata/catalogs")
+                resp = await ac.get("/api/v1/metadata/catalogs")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -199,7 +199,7 @@ class TestListTables:
                 base_url="http://test",
                 headers={"X-API-Key": "test-api-key"},
             ) as ac:
-                resp = await ac.get("/metadata/tables")
+                resp = await ac.get("/api/v1/metadata/tables")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -238,7 +238,7 @@ class TestGetTable:
                 base_url="http://test",
                 headers={"X-API-Key": "test-api-key"},
             ) as ac:
-                resp = await ac.get("/metadata/tables/docs")
+                resp = await ac.get("/api/v1/metadata/tables/docs")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -249,13 +249,15 @@ class TestGetTable:
     @pytest.mark.asyncio
     async def test_returns_not_found_when_unreachable(self) -> None:
         app = _make_app()
+        # Simulate a truly-missing dataset so the lake fallback also misses.
+        app.state.lake.open_dataset.side_effect = Exception("not found")
         with patch("arrow_lake.api.routers.gravitino.urlopen", side_effect=Exception("err")):
             async with AsyncClient(
                 transport=ASGITransport(app=app),
                 base_url="http://test",
                 headers={"X-API-Key": "test-api-key"},
             ) as ac:
-                resp = await ac.get("/metadata/tables/missing")
+                resp = await ac.get("/api/v1/metadata/tables/missing")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -282,7 +284,7 @@ class TestListTags:
             base_url="http://test",
             headers={"X-API-Key": "test-api-key"},
         ) as ac:
-            resp = await ac.get("/metadata/tags?table=docs")
+            resp = await ac.get("/api/v1/metadata/tags?table=docs")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -301,7 +303,7 @@ class TestListTags:
             base_url="http://test",
             headers={"X-API-Key": "test-api-key"},
         ) as ac:
-            resp = await ac.get("/metadata/tags?table=docs")
+            resp = await ac.get("/api/v1/metadata/tags?table=docs")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -327,7 +329,7 @@ class TestCreateTag:
             base_url="http://test",
             headers={"X-API-Key": "test-api-key"},
         ) as ac:
-            resp = await ac.post(f"/metadata/tags?body={body_json}")
+            resp = await ac.post(f"/api/v1/metadata/tags?body={body_json}")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -346,7 +348,7 @@ class TestCreateTag:
             base_url="http://test",
             headers={"X-API-Key": "test-api-key"},
         ) as ac:
-            resp = await ac.post(f"/metadata/tags?body={body_json}")
+            resp = await ac.post(f"/api/v1/metadata/tags?body={body_json}")
 
         assert resp.status_code == 400
 
@@ -360,7 +362,7 @@ class TestCreateTag:
             base_url="http://test",
             headers={"X-API-Key": "test-api-key"},
         ) as ac:
-            resp = await ac.post("/metadata/tags?body=not-json")
+            resp = await ac.post("/api/v1/metadata/tags?body=not-json")
 
         assert resp.status_code == 400
 
@@ -392,7 +394,7 @@ class TestListPolicies:
                 base_url="http://test",
                 headers={"X-API-Key": "test-api-key"},
             ) as ac:
-                resp = await ac.get("/metadata/policies")
+                resp = await ac.get("/api/v1/metadata/policies")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -425,7 +427,7 @@ class TestCreateRetentionPolicy:
                 base_url="http://test",
                 headers={"X-API-Key": "test-api-key"},
             ) as ac:
-                resp = await ac.post(f"/metadata/policies/retention?body={body_json}")
+                resp = await ac.post(f"/api/v1/metadata/policies/retention?body={body_json}")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -442,7 +444,7 @@ class TestCreateRetentionPolicy:
             base_url="http://test",
             headers={"X-API-Key": "test-api-key"},
         ) as ac:
-            resp = await ac.post(f"/metadata/policies/retention?body={body_json}")
+            resp = await ac.post(f"/api/v1/metadata/policies/retention?body={body_json}")
 
         assert resp.status_code == 400
 
@@ -472,7 +474,7 @@ class TestCreateMaskingPolicy:
                 base_url="http://test",
                 headers={"X-API-Key": "test-api-key"},
             ) as ac:
-                resp = await ac.post(f"/metadata/policies/masking?body={body_json}")
+                resp = await ac.post(f"/api/v1/metadata/policies/masking?body={body_json}")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -508,7 +510,7 @@ class TestCollectStats:
                 base_url="http://test",
                 headers={"X-API-Key": "test-api-key"},
             ) as ac:
-                resp = await ac.post("/metadata/statistics/docs")
+                resp = await ac.post("/api/v1/metadata/statistics/docs")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -535,7 +537,7 @@ class TestListModels:
             base_url="http://test",
             headers={"X-API-Key": "test-api-key"},
         ) as ac:
-            resp = await ac.get("/metadata/models")
+            resp = await ac.get("/api/v1/metadata/models")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -553,7 +555,7 @@ class TestListModels:
             base_url="http://test",
             headers={"X-API-Key": "test-api-key"},
         ) as ac:
-            resp = await ac.get("/metadata/models")
+            resp = await ac.get("/api/v1/metadata/models")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -582,7 +584,7 @@ class TestGetModelVersions:
             base_url="http://test",
             headers={"X-API-Key": "test-api-key"},
         ) as ac:
-            resp = await ac.get("/metadata/models/sentinel/versions")
+            resp = await ac.get("/api/v1/metadata/models/sentinel/versions")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -603,7 +605,7 @@ class TestGetModelVersions:
             base_url="http://test",
             headers={"X-API-Key": "test-api-key"},
         ) as ac:
-            resp = await ac.get("/metadata/models/model-a/versions")
+            resp = await ac.get("/api/v1/metadata/models/model-a/versions")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -622,7 +624,7 @@ class TestGetModelVersions:
             base_url="http://test",
             headers={"X-API-Key": "test-api-key"},
         ) as ac:
-            resp = await ac.get("/metadata/models/model-b/versions")
+            resp = await ac.get("/api/v1/metadata/models/model-b/versions")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -648,7 +650,7 @@ class TestEnforcePolicies:
             base_url="http://test",
             headers={"X-API-Key": "test-api-key"},
         ) as ac:
-            resp = await ac.post("/metadata/policies/enforce")
+            resp = await ac.post("/api/v1/metadata/policies/enforce")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -667,7 +669,7 @@ class TestEnforcePolicies:
             base_url="http://test",
             headers={"X-API-Key": "test-api-key"},
         ) as ac:
-            resp = await ac.post("/metadata/policies/enforce?table=docs&dry_run=true")
+            resp = await ac.post("/api/v1/metadata/policies/enforce?table=docs&dry_run=true")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -683,7 +685,7 @@ class TestEnforcePolicies:
             base_url="http://test",
             headers={"X-API-Key": "test-api-key"},
         ) as ac:
-            resp = await ac.post("/metadata/policies/enforce")
+            resp = await ac.post("/api/v1/metadata/policies/enforce")
 
         assert resp.status_code == 503
 
@@ -724,7 +726,7 @@ class TestGetLineage:
                 base_url="http://test",
                 headers={"X-API-Key": "test-api-key"},
             ) as ac:
-                resp = await ac.get("/metadata/lineage/docs")
+                resp = await ac.get("/api/v1/metadata/lineage/docs")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -743,7 +745,7 @@ class TestGetLineage:
                 base_url="http://test",
                 headers={"X-API-Key": "test-api-key"},
             ) as ac:
-                resp = await ac.get("/metadata/lineage/missing")
+                resp = await ac.get("/api/v1/metadata/lineage/missing")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -774,7 +776,7 @@ class TestGetLineage:
                 base_url="http://test",
                 headers={"X-API-Key": "test-api-key"},
             ) as ac:
-                resp = await ac.get("/metadata/lineage/docs")
+                resp = await ac.get("/api/v1/metadata/lineage/docs")
 
         assert resp.status_code == 200
         body = resp.json()
