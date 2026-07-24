@@ -211,7 +211,7 @@ async function loadGraph(totalV = 0) {
   if (!V) { meta.textContent = "图库未加载(vis-network)"; return; }
   meta.textContent = "加载图…";
   let r;
-  try { r = await request("GET", `/kg/graph?dataset=${encodeURIComponent(name)}&limit=3000`); }
+  try { r = await request("GET", `/kg/graph?dataset=${encodeURIComponent(name)}&limit=8000`); }
   catch (e) {
     const emsg = Array.isArray(e?.detail) ? e.detail.map(x => x?.msg || "").join("; ") : (e?.detail || e?.message || e);
     meta.innerHTML = `<span style="color:var(--danger)">图加载失败:${esc(emsg)}</span>`; return;
@@ -228,20 +228,22 @@ async function loadGraph(totalV = 0) {
     title: `${n.name || n.label} [${n.label}]${n.type && n.type !== n.label ? " · " + n.type : ""}${n.definition ? "\n" + n.definition : ""}`,
   }));
   const keepIds = new Set(ns.map(n => n.id));
-  const es = (r.edges || []).filter(e => keepIds.has(e.source) && keepIds.has(e.target)).map((e, i) => ({
+  const keptEdges = (r.edges || []).filter(e => keepIds.has(e.source) && keepIds.has(e.target));
+  const showEdgeLabels = keptEdges.length <= 800; // 大图隐藏边 label(渲染文字是首因开销)
+  const es = keptEdges.map((e, i) => ({
     id: e.id || ("e" + i), from: e.source, to: e.target,
-    label: e.relation_type || "", arrows: "to",
+    label: showEdgeLabels ? (e.relation_type || "") : "", arrows: "to",
     font: { size: 9, color: "#64748b", strokeWidth: 0 },
   }));
   if (!ns.length) { meta.textContent = "无实体节点(已隐藏 document/chunk)— 先建 KG 抽取实体"; cont.innerHTML = ""; return; }
-  meta.innerHTML = `${ns.length} 实体节点 · ${es.length} 关系边` + (totalV > ns.length ? ` · <span class="muted" style="font-size:.74rem">图共 ${totalV.toLocaleString()} 顶点(已隐藏 ${totalV - ns.length} 个 document/chunk 结构节点)</span>` : "") + ((totalV > 3000 || r.truncated) ? ` · <span style="color:var(--warn)">仅显示前 3000(数据集更大)</span>` : "");
+  meta.innerHTML = `${ns.length} 实体节点 · ${es.length} 关系边` + (totalV > ns.length ? ` · <span class="muted" style="font-size:.74rem">图共 ${totalV.toLocaleString()} 顶点(已隐藏 ${totalV - ns.length} 个 document/chunk 结构节点)</span>` : "") + (!showEdgeLabels ? ` · <span class="muted" style="font-size:.74rem">边 label 已隐藏(性能)</span>` : "") + ((totalV > 8000 || r.truncated) ? ` · <span style="color:var(--warn)">仅显示前 8000(数据集更大)</span>` : "");
   kgNodes = new V.DataSet(ns);
   kgEdges = new V.DataSet(es);
-  fullSnapshot = { nodes: ns, edges: es }; // 快照完整 3000 图(遍历后重置恢复)
+  fullSnapshot = { nodes: ns, edges: es }; // 快照完整 8000 图(遍历后重置恢复)
   kgNetwork = new V.Network(cont, { nodes: kgNodes, edges: kgEdges }, {
     height: "100%", width: "100%", autoResize: true,
     layout: { improvedLayout: ns.length <= 150 },
-    physics: { stabilization: { iterations: 200 }, barnesHut: { gravitationalConstant: -8000, springLength: 110 } },
+    physics: { stabilization: { iterations: ns.length > 5000 ? 30 : (ns.length > 2000 ? 80 : 200) }, barnesHut: { gravitationalConstant: -8000, springLength: 110 } },
     nodes: { shape: "dot", size: 14, font: { size: 13, color: "#e2e8f0" }, borderWidth: 2 },
     edges: { color: { color: "#475569", opacity: 0.55 }, smooth: { type: "continuous" }, selectionWidth: 2 },
     groups: {

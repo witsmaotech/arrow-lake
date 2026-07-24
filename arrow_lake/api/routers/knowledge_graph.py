@@ -282,7 +282,7 @@ async def kg_graph(
     if not checker.check_dataset_access(role=_user.role, dataset=dataset, action="read"):
         raise HTTPException(status_code=403, detail=f"Read access to dataset '{dataset}' denied")
     try:
-        data = await lake.kg_get_graph(dataset, limit=min(max(limit, 1), 1000))
+        data = await lake.kg_get_graph(dataset, limit=min(max(limit, 1), 8000))
         return KGGraphResponse(**data)
     except KGError as exc:
         raise HTTPException(status_code=_kg_error_to_status(exc), detail=exc.message) from exc
