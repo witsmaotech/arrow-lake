@@ -209,6 +209,7 @@ let kgNetwork = null, kgNodes = null, kgEdges = null, kgGraph6 = null, kgEngine 
 const G6_THRESHOLD = 2000; // ≥ 此节点数走 G6 WebGL
 const G6_CDN = "https://cdn.jsdelivr.net/npm/@antv/g6@4.8.24/dist/g6.min.js"; // v4 UMD(<script> 即用,适配无构建 console)
 const G6_TYPE_COLOR = { 系统:"#3b82f6", 算法:"#8b5cf6", 模型:"#ec4899", 组件:"#f59e0b", 应用:"#10b981", 数据:"#06b6d4", 方法:"#f97316", 过程:"#64748b", 事件:"#ef4444", 组织:"#a855f7", 角色:"#84cc16", 产品:"#14b8a6", 属性:"#94a3b8", 概念:"#d946ef", entity:"#14b8a6" };
+const G6_INTEGRITY = "sha384-iYoticlq+TpD6YYL4Lx7pZ8jM+Loq+EKfAbFtWUe0d3639XqCkVreQ57oSygxMD1"; // SRI(防 CDN 篡改;hash 取自实际字节)
 let g6Loader = null;
 
 function visOpts(n) {
@@ -260,8 +261,10 @@ function loadG6() {
   g6Loader = new Promise((res, rej) => {
     const s = document.createElement("script");
     s.src = G6_CDN;
+    s.crossOrigin = "anonymous"; // SRI 需要 CORS
+    s.integrity = G6_INTEGRITY;  // 校验字节,防 CDN 篡改
     s.onload = () => res(window.G6);
-    s.onerror = () => { g6Loader = null; rej(new Error("G6 UMD CDN 加载失败")); };
+    s.onerror = () => { g6Loader = null; rej(new Error("G6 UMD CDN 加载失败(或 SRI 校验未过)")); };
     document.head.appendChild(s);
   });
   return g6Loader;
