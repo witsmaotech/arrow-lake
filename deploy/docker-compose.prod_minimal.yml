@@ -283,6 +283,11 @@ services:
       ARROW_LAKE__OPENTELEMETRY__SERVICE_NAME: "arrow-lake"
       ARROW_LAKE__OPENTELEMETRY__OTEL_ENDPOINT: "${OTEL_ENDPOINT:-http://jaeger:4317}"
       ARROW_LAKE__OPENTELEMETRY__TRACE_SAMPLE_RATE: "${OTEL_SAMPLE_RATE:-0.1}"
+      # v1.9.4: 文档解析后端。默认 kreuzberg(快,数字原生PDF文本层抽取;但表格检测弱,复杂表格被拍平成文本)。
+      # 表格结构化解析(markdown 表格)需 docling(TableFormer): 设 DOCUMENT_OCR_BACKEND=docling,
+      # 且需 GPU 镜像(CPU 跑 109 页 PDF 要数小时)。kreuzberg result.tables 机制本身保留表格 markdown,
+      # 只是检测器常漏检无框线/复杂表格。
+      ARROW_LAKE__DOCUMENT__OCR_BACKEND: "${DOCUMENT_OCR_BACKEND:-kreuzberg}"
       # v1.5.1: Gravitino authentication (simple by default)
       ARROW_LAKE__GRAVITINO__AUTH_TYPE: "${GRAVITINO_AUTH_TYPE:-simple}"
       ARROW_LAKE__GRAVITINO__AUTH_SIMPLE_USER: "${GRAVITINO_AUTH_USER:-arrow_lake}"
