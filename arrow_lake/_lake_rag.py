@@ -190,6 +190,8 @@ class _LakeRAGMixin:
         )
         if get_metrics_enabled():
             query_latency_seconds.labels(query_type="rag_query").observe(time.monotonic() - t0)
+        from arrow_lake.catalog.lineage_hooks import auto_record_rag
+        auto_record_rag(self._get_storage(), dataset_name, question)
         return result
 
     async def rag_query_stream(

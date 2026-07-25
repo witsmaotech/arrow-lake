@@ -284,7 +284,10 @@ class _LakeIngestMixin:
         storage = self._get_storage()
         table = storage.read_dataset(dataset_name)
         df = daft.from_arrow(table)
-        return storage.export_dataframe(df, target_uri, format, **kwargs)
+        result = storage.export_dataframe(df, target_uri, format, **kwargs)
+        from arrow_lake.catalog.lineage_hooks import auto_record_export
+        auto_record_export(storage, dataset_name, target_uri, format)
+        return result
 
     def ingest_and_embed(
         self,

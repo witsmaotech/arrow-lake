@@ -85,6 +85,8 @@ class _LakeQueryMixin:
             result = bridge.query(dataset_name, sql, max_rows=max_rows, tables=tables)
         if get_metrics_enabled():
             query_results_total.labels(query_type="olap_query").inc(result.table.num_rows)
+        from arrow_lake.catalog.lineage_hooks import auto_record_query
+        auto_record_query(self._get_storage(), dataset_name, sql, result.table.num_rows)
         return result
 
     def invalidate_query_cache(self, dataset_name: str) -> None:
