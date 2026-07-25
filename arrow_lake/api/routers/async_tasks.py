@@ -287,7 +287,14 @@ async def create_vector_index_async(
     Vector index builds (IVF_PQ/HNSW) can run minutes on large datasets; this
     avoids blocking the client. Poll via /tasks/{task_id}/status.
     """
-    task_id = TaskManager.create_task("create_vector_index", name, user_id=_user.user_id)
+    task_id = TaskManager.create_task(
+        "create_vector_index", name, user_id=_user.user_id,
+        detail={
+            "metric": req.metric, "vector_column": req.vector_column,
+            "index_type": req.index_type, "num_partitions": req.num_partitions,
+            "num_sub_vectors": req.num_sub_vectors,
+        },
+    )
     asyncio.create_task(  # noqa: RUF006
         TaskManager.run_background(
             task_id, _bg_create_vector_index, lake, name,
@@ -314,7 +321,10 @@ async def create_fts_index_async(
     _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> AsyncTaskResponse:
     """Async FTS index creation — returns task_id immediately (HTTP 202)."""
-    task_id = TaskManager.create_task("create_fts_index", name, user_id=_user.user_id)
+    task_id = TaskManager.create_task(
+        "create_fts_index", name, user_id=_user.user_id,
+        detail={"fts_column": req.fts_column},
+    )
     asyncio.create_task(  # noqa: RUF006
         TaskManager.run_background(
             task_id, _bg_create_fts_index, lake, name,

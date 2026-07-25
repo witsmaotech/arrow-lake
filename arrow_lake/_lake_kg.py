@@ -540,11 +540,16 @@ class _LakeKGMixin:
                 tm_task = TaskManager.get_task(tm_task_id)
                 if kg_task and tm_task:
                     tm_task.progress = kg_task.processed_chunks / max(kg_task.total_chunks, 1)
+                    hg = self._config.hugegraph
+                    tm_task.detail = {
+                        "kg_task_id": task_id,
+                        "model": hg.he_model or self._config.llm.model,
+                        "template": hg.he_default_template,
+                        "template_type": hg.he_template_type,
+                    }
                     if kg_task.entity_count or kg_task.relation_count:
-                        tm_task.detail = {
-                            "entity_count": kg_task.entity_count,
-                            "relation_count": kg_task.relation_count,
-                        }
+                        tm_task.detail["entity_count"] = kg_task.entity_count
+                        tm_task.detail["relation_count"] = kg_task.relation_count
                     # Sync updated state to Redis for cross-worker visibility
                     TaskManager._sync_to_redis(tm_task)
 
