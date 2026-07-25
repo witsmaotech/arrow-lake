@@ -538,6 +538,7 @@ DOC_TYPE_DESCRIPTIONS: dict[str, str] = {
     "medicine": "clinical, treatment, drug interaction, anatomy, hospital",
     "tcm": "traditional chinese medicine: herbs, formulas, meridians, syndromes",
     "industry": "industrial: equipment topology, operation flow, safety, failure",
+    "project": "project tender/contract/solution/design doc: parties, deliverables, specs, amounts, milestones",
     "general": "general-purpose (fallback)",
 }
 

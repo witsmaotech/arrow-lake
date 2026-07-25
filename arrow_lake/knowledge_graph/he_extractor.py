@@ -875,6 +875,85 @@ class HyperExtractExtractor:
             ka=ka, ka_dir=ka_dir, entity_chunks=entity_chunks, result=result
         )
 
+    async def build_grouped_ka(
+        self,
+        template_path: str,
+        chunks: list[tuple[str, str]],
+        ka_dir: Path,
+        *,
+        group_size: int = 100,
+        checkpoint_every: int = 20,
+    ) -> DatasetKA:
+        """Build per-dataset KA in GROUPS — avoid BALANCED merge explosion on large datasets.
+
+        Splits ``chunks`` into groups of ``group_size``, builds a dataset KA per
+        group (within-group BALANCED merge via :meth:`build_dataset_ka`), then
+        merges all groups' entities/relations into ONE result with cross-group
+        name-dedup (first occurrence wins; lighter than a full BALANCED merge).
+        This is the middle tier between ``dataset`` (full merge, slow on large
+        data) and ``chunk`` (no merge, many duplicates): within-group dedup +
+        cross-group simple dedup → fewer duplicates than chunk, faster than
+        full dataset.
+
+        The merged entities are returned for KG insertion. The per-group KA
+        dumps land in ``ka_dir/batch_*``; the last group's KA is also dumped
+        into ``ka_dir`` so ``load_ka_for_query`` has a usable (partial) dump.
+        """
+        ka_dir = Path(ka_dir)
+        ka_dir.mkdir(parents=True, exist_ok=True)
+        if group_size <= 0:
+            group_size = 100
+        groups = [chunks[i : i + group_size] for i in range(0, len(chunks), group_size)]
+        logger.info(
+            "build_grouped_ka: %d chunks → %d groups (size=%d) template=%s",
+            len(chunks), len(groups), group_size, template_path,
+        )
+
+        all_entities: list[Any] = []
+        all_relations: list[Any] = []
+        entity_chunks: dict[str, list[str]] = {}
+        seen_names: set[str] = set()
+        last_ka: Any = None
+
+        for gi, group in enumerate(groups):
+            batch_dir = ka_dir / f"batch_{gi}"
+            batch = await self.build_dataset_ka(
+                template_path, group, batch_dir,
+                checkpoint_every=checkpoint_every, incremental=False,
+            )
+            br = batch.result
+            added = 0
+            for ent in (getattr(br, "entities", None) or []):
+                name = getattr(ent, "name", None)
+                if name and name in seen_names:
+                    continue  # cross-group name dedup
+                if name:
+                    seen_names.add(name)
+                all_entities.append(ent)
+                added += 1
+            all_relations.extend(getattr(br, "relations", None) or [])
+            for name, cids in (batch.entity_chunks or {}).items():
+                entity_chunks.setdefault(name, []).extend(cids)
+            last_ka = batch.ka
+            logger.info(
+                "build_grouped_ka group %d/%d done: +%d entities (merged total=%d, relations=%d)",
+                gi + 1, len(groups), added, len(all_entities), len(all_relations),
+            )
+
+        # Dump the last group's KA into ka_dir so load_ka_for_query has a usable
+        # dump (the full merged entity set is inserted into HugeGraph by the builder;
+        # this dump is for RAG query, best-effort partial).
+        if last_ka is not None:
+            try:
+                await asyncio.to_thread(last_ka.dump, ka_dir)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("build_grouped_ka final dump failed: %s", str(exc)[:160])
+
+        merged = ExtractionResult(entities=all_entities, relations=all_relations)
+        return DatasetKA(
+            ka=last_ka, ka_dir=ka_dir, entity_chunks=entity_chunks, result=merged,
+        )
+
     async def extract_batch(
         self, chunks: list[tuple[str, str]], doc_type: str | None = None
     ) -> list[ExtractionResult]:

@@ -181,6 +181,7 @@ class HugeGraphConfig(BaseModel):
         "medicine": "medical_concept_graph",
         "legal": "legal_concept_graph",
         "finance": "finance_concept_graph",
+        "project": "project_concept_graph",
     }
     he_language: Literal["zh", "en"] = "zh"
     he_model: str | None = None
@@ -195,11 +196,20 @@ class HugeGraphConfig(BaseModel):
     # 优先级：he_extract_llm(全配置) > he_model(仅名) > 全局 llm。
     he_extract_llm: LLMConfig | None = None
     he_qa_llm: LLMConfig | None = None
-    # v1.8.8 per-dataset KA 抽取粒度（见 docs/v1.8.8-kg-per-dataset-ka-plan.md）。
-    # "dataset" = 整 dataset 一个 KA，chunk 逐个 feed_text，激活跨 chunk LLM.BALANCED
-    #   合并 + build_index + dump 落盘（默认，解决 per-chunk fresh KA 并发 0 实体根因）。
-    # "chunk"   = 旧 per-chunk fresh KA.parse() 路径，保留作对照/降级。
-    he_kg_granularity: Literal["chunk", "dataset"] = "dataset"
+    # v1.8.8 per-dataset KA 抽取粒度 + v1.9.4 三档自动（分组避 BALANCED 合并爆炸）。
+    # "auto"(默认): 按 chunk 数自动——≤dataset_max_chunks 用 dataset / >chunk_min_chunks
+    #   用 chunk / 中间用 grouped。
+    # "dataset" = 整 dataset 一个 KA, chunk 逐个 feed_text, 跨 chunk LLM.BALANCED 合并
+    #   (小 dataset 最佳去重; 大 dataset 合并爆炸卡死, 见 docs/v1.9.4 + memory project_kg_build_bottleneck)。
+    # "grouped" = 分组(group_size/组), 每组 build_dataset_ka 组内 BALANCED 去重, 组间合并
+    #   (中间档: 比 dataset 轻、比 chunk 少重复, 大 dataset 推荐)。
+    # "chunk"   = 旧 per-chunk fresh KA.parse() 路径, 无合并 (超大 dataset 最快但重复多)。
+    he_kg_granularity: Literal["auto", "dataset", "grouped", "chunk"] = "auto"
+    # grouped: 每组 chunk 数（组小合并轻；紧类型 concept_graph 可调大）。
+    he_kg_group_size: int = 100
+    # auto 三档阈值。
+    he_kg_dataset_max_chunks: int = 100   # N ≤ 此值 → dataset
+    he_kg_chunk_min_chunks: int = 1000    # N > 此值 → chunk (中间 → grouped)
     # Local filesystem root for per-dataset KA dumps (<root>/<dataset>/ka/).
     # MUST be a local path — hyper-extract's ``ka.dump`` writes data.json /
     # metadata.json / index/ to the filesystem, NOT to minio/s3. The storage

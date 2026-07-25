@@ -155,9 +155,11 @@ class KGBuilder:
 
     async def execute_build(self, task_id: str) -> None:
         """Execute a previously prepared build task in the background."""
+        logger.info("KGDISPATCH execute_build ENTER task=%s has_task=%s builder_id=%s", task_id, task_id in self._tasks, id(self))
         task = self._tasks.get(task_id)
         pending = self._pending_tables.pop(task_id, None)
         if task is None or pending is None:
+            logger.info("KGDISPATCH execute_build EARLY_RETURN task_none=%s pending_none=%s", task is None, pending is None)
             return
         table, incremental = pending
         try:
@@ -198,8 +200,10 @@ class KGBuilder:
         # v1.8.6: per-dataset graph isolation — every write targets kg_{dataset}.
         graph_name = graph_name_for(task.dataset_name)
         # 1. Ensure schema (also creates graph if needed)
+        logger.info("KG build %s: STEP1 ensure_schema START graph=%s", task.task_id, graph_name)
         schema_payload = schema_to_hugegraph_payload(ARROW_LAKE_KG_SCHEMA)
         await self._client.ensure_schema(schema_payload, graph_name=graph_name)
+        logger.info("KG build %s: STEP1 ensure_schema DONE", task.task_id)
 
         if table.num_rows == 0:
             return
@@ -235,7 +239,9 @@ class KGBuilder:
             {"label": "document", "properties": {"id": name, "name": name}}
             for name in doc_names
         ]
+        logger.info("KG build %s: STEP2 add doc vertices n=%d START", task.task_id, len(doc_vertices))
         doc_hg_ids = await self._client.add_vertices(doc_vertices, graph_name=graph_name)
+        logger.info("KG build %s: STEP2 add doc vertices DONE", task.task_id)
         doc_id_map: dict[str, str] = dict(zip(doc_names, doc_hg_ids, strict=True))
 
         # 3. Insert chunk vertices
@@ -261,13 +267,17 @@ class KGBuilder:
             for cid, content, idx in zip(chunk_ids, contents, chunk_indices, strict=True)
         ]
         all_chunk_hg_ids: list[str] = []
+        nbatches = (len(chunk_vertices) + batch_size - 1) // max(batch_size, 1)
+        logger.info("KG build %s: STEP3 add chunk vertices n=%d bs=%d batches=%d START", task.task_id, len(chunk_vertices), batch_size, nbatches)
         for i in range(0, len(chunk_vertices), batch_size):
             batch = chunk_vertices[i : i + batch_size]
             hg_ids = await self._client.add_vertices(batch, graph_name=graph_name)
             all_chunk_hg_ids.extend(hg_ids)
+        logger.info("KG build %s: STEP3 add chunk vertices DONE", task.task_id)
         chunk_id_map: dict[str, str] = dict(zip(chunk_ids, all_chunk_hg_ids, strict=True))
 
         # 4. Insert contains_chunk edges (document -> chunk)
+        logger.info("KG build %s: STEP4 contains edges START", task.task_id)
         contains_edges: list[dict[str, Any]] = []
         for cid, doc_name in zip(chunk_ids, doc_name_col, strict=True):
             contains_edges.append({
@@ -282,6 +292,7 @@ class KGBuilder:
             await self._client.add_edges(contains_edges[i : i + batch_size], graph_name=graph_name)
 
         # 5. Insert next_chunk edges (sequential chunks in same doc)
+        logger.info("KG build %s: STEP5 next edges START", task.task_id)
         next_edges = self._build_next_chunk_edges_hg(
             chunk_id_map, doc_name_col, chunk_indices
         )
@@ -311,8 +322,18 @@ class KGBuilder:
         # Write-side gate, separate from the extraction semaphore above.
         write_sem = asyncio.Semaphore(self._config.write_concurrency)
 
+        # v1.9.4: three-tier granularity (auto/dataset/grouped/chunk).
+        _gran = getattr(self._extractor, "_kg_granularity", "chunk")
+        if _gran == "auto":
+            _nchunks = len(chunk_ids)
+            if _nchunks <= self._config.he_kg_dataset_max_chunks:
+                _gran = "dataset"
+            elif _nchunks > self._config.he_kg_chunk_min_chunks:
+                _gran = "chunk"
+            else:
+                _gran = "grouped"
         use_dataset_path = (
-            getattr(self._extractor, "_kg_granularity", "chunk") == "dataset"
+            _gran in ("dataset", "grouped")
             and hasattr(self._extractor, "build_dataset_ka")
             and self._ka_base_dir is not None
         )
@@ -341,12 +362,20 @@ class KGBuilder:
             except Exception as exc:  # noqa: BLE001 — versioning is best-effort
                 logger.warning("KA versioning archive/prune failed for %s: %s",
                                task.dataset_name, exc)
-            dataset_ka = await self._extractor.build_dataset_ka(
-                template_path,
-                list(zip(chunk_ids, contents, strict=True)),
-                ka_dir,
-                incremental=incremental,
-            )
+            _chunk_pairs = list(zip(chunk_ids, contents, strict=True))
+            if _gran == "grouped":
+                logger.info("KG build %s: STEP7 build_grouped_ka START (grouped, %d chunks, group_size=%d)", task.task_id, len(chunk_ids), self._config.he_kg_group_size)
+                dataset_ka = await self._extractor.build_grouped_ka(
+                    template_path, _chunk_pairs, ka_dir,
+                    group_size=self._config.he_kg_group_size,
+                )
+            else:
+                logger.info("KG build %s: STEP7 build_dataset_ka START (dataset, %d chunks)", task.task_id, len(chunk_ids))
+                dataset_ka = await self._extractor.build_dataset_ka(
+                    template_path, _chunk_pairs, ka_dir,
+                    incremental=incremental,
+                )
+            logger.info("KG build %s: STEP7 extraction DONE entities=%d", task.task_id, len(dataset_ka.result.entities))
             result = dataset_ka.result
             total_entities = len(result.entities)
             total_relations = len(result.relations)
