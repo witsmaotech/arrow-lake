@@ -278,10 +278,10 @@ services:
       ARROW_LAKE__RAG__HISTORY_INJECTION_ENABLED: "true"
       ARROW_LAKE__RAG__HISTORY_BUDGET_RATIO: "0.2"
       ARROW_LAKE__RAG__HISTORY_MAX_TURNS: "6"
-      # v1.4.3: OpenTelemetry — minimal 下默认关闭 (jaeger 已移除，避免空导出报错)
+      # v1.9.4: OpenTelemetry — minimal 默认关;点亮 = OTEL_ENABLED=true + `--profile tracing` 起 jaeger
       ARROW_LAKE__OPENTELEMETRY__ENABLED: "${OTEL_ENABLED:-false}"
       ARROW_LAKE__OPENTELEMETRY__SERVICE_NAME: "arrow-lake"
-      ARROW_LAKE__OPENTELEMETRY__OTEL_ENDPOINT: "http://jaeger:4317"
+      ARROW_LAKE__OPENTELEMETRY__OTEL_ENDPOINT: "${OTEL_ENDPOINT:-http://jaeger:4317}"
       ARROW_LAKE__OPENTELEMETRY__TRACE_SAMPLE_RATE: "${OTEL_SAMPLE_RATE:-0.1}"
       # v1.5.1: Gravitino authentication (simple by default)
       ARROW_LAKE__GRAVITINO__AUTH_TYPE: "${GRAVITINO_AUTH_TYPE:-simple}"
@@ -344,6 +344,23 @@ services:
         hard: 65536
 
   # ---------------------------------------------------------------------------
+  # v1.9.4: Jaeger — optional tracing collector (opt-in via profile).
+  # 点亮 OTel: deploy/.env 设 OTEL_ENABLED=true,再
+  #   docker compose -p arrow-lake -f deploy/docker-compose.prod_minimal.yml --profile tracing up -d jaeger api
+  # 然后 Jaeger UI: http://127.0.0.1:16686 。api 经 OTEL_ENDPOINT=http://jaeger:4317 导出。
+  jaeger:
+    image: jaegertracing/all-in-one:${JAEGER_VERSION:-1.57}
+    container_name: arrow-lake-jaeger
+    restart: unless-stopped
+    profiles: ["tracing"]
+    networks:
+      - arrow-lake-net
+    ports:
+      - "127.0.0.1:${JAEGER_UI_PORT:-16686}:16686"   # Jaeger UI
+      - "127.0.0.1:${JAEGER_OTLP_PORT:-4317}:4317"   # OTLP gRPC (api exports here)
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+
   # Nginx — TLS reverse proxy + security headers
   # ---------------------------------------------------------------------------
   nginx:
