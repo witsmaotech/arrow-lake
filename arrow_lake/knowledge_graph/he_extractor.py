@@ -247,6 +247,11 @@ class HyperExtractExtractor:
         old parse-only behaviour (per-chunk granularity without index).
         """
         from hyperextract import Template
+        # 合并策略: ontomem MergeStrategy. 默认 LLM.BALANCED 在规模上会"合并爆炸"(每个重叠
+        # 实体触发一次 LLM 合并调用 → 累积内存/延迟, grouped 100 OOM / 50 末组卡死的真凶)。
+        # MERGE_FIELD 非 LLM 字段级合并(新节点非空字段填充旧节点空字段): 无额外 LLM 调用、
+        # 稳定、跨 chunk 去重 + definition 补全。配 dataset 粒度(一份 KA 喂全部 chunk)通用且稳。
+        from ontomem.merger import MergeStrategy
 
         cfg = self._hugegraph_config
         return Template.create(
@@ -257,6 +262,8 @@ class HyperExtractExtractor:
             chunk_size=cfg.he_chunk_size,
             chunk_overlap=cfg.he_chunk_overlap,
             max_workers=cfg.he_max_workers,
+            node_strategy_or_merger=MergeStrategy.MERGE_FIELD,
+            edge_strategy_or_merger=MergeStrategy.MERGE_FIELD,
         )
 
     def _ka_dir_for(self, dataset_name: str) -> Any:
@@ -832,7 +839,7 @@ class HyperExtractExtractor:
             if checkpoint_every and (i + 1) % checkpoint_every == 0:
                 try:
                     await asyncio.to_thread(ka.dump, ka_dir)
-                    logger.info(
+                    logger.debug(
                         "build_dataset_ka checkpoint at chunk %d/%d → %s",
                         i + 1, len(chunks_to_feed), ka_dir,
                     )
@@ -842,14 +849,27 @@ class HyperExtractExtractor:
                     )
 
         if failures:
-            logger.info(
+            logger.debug(
                 "build_dataset_ka done: %d/%d chunks skipped (template=%s)",
                 failures, len(chunks_to_feed), template_path,
             )
 
         # feed_text invalidates the index (omem clear_index); rebuild once, then dump.
+        # build_index (FAISS via embedder) is for RAG semantic search over the KA — it is
+        # DECOUPLED from KG insertion: entities/relations are already extracted in the KA.
+        # An embedder/FAISS failure must NOT fail the build — warn + continue so the builder
+        # still dumps + inserts KG vertices (only the RAG index is skipped).
         if not ka.empty():
-            await asyncio.to_thread(ka.build_index)
+            try:
+                # wait_for: a build_index HANG (e.g. ollama embedder deadlock / FAISS stall)
+                # becomes a TimeoutError → caught below → non-fatal. Without this a hang blocks
+                # the build forever (try/except only catches errors, not hangs).
+                await asyncio.wait_for(asyncio.to_thread(ka.build_index), timeout=600)
+            except Exception as exc:  # noqa: BLE001 — RAG index is best-effort, non-fatal (incl. TimeoutError)
+                logger.warning(
+                    "build_dataset_ka build_index failed/timed-out — KA RAG index skipped, "
+                    "KG insert continues: %s", str(exc)[:160],
+                )
         await asyncio.to_thread(ka.dump, ka_dir)
 
         # [#incremental] persist the full set of fed chunk_ids so the next
@@ -873,85 +893,6 @@ class HyperExtractExtractor:
             valid_relations=self._get_relation_enum(template_path))
         return DatasetKA(
             ka=ka, ka_dir=ka_dir, entity_chunks=entity_chunks, result=result
-        )
-
-    async def build_grouped_ka(
-        self,
-        template_path: str,
-        chunks: list[tuple[str, str]],
-        ka_dir: Path,
-        *,
-        group_size: int = 100,
-        checkpoint_every: int = 20,
-    ) -> DatasetKA:
-        """Build per-dataset KA in GROUPS — avoid BALANCED merge explosion on large datasets.
-
-        Splits ``chunks`` into groups of ``group_size``, builds a dataset KA per
-        group (within-group BALANCED merge via :meth:`build_dataset_ka`), then
-        merges all groups' entities/relations into ONE result with cross-group
-        name-dedup (first occurrence wins; lighter than a full BALANCED merge).
-        This is the middle tier between ``dataset`` (full merge, slow on large
-        data) and ``chunk`` (no merge, many duplicates): within-group dedup +
-        cross-group simple dedup → fewer duplicates than chunk, faster than
-        full dataset.
-
-        The merged entities are returned for KG insertion. The per-group KA
-        dumps land in ``ka_dir/batch_*``; the last group's KA is also dumped
-        into ``ka_dir`` so ``load_ka_for_query`` has a usable (partial) dump.
-        """
-        ka_dir = Path(ka_dir)
-        ka_dir.mkdir(parents=True, exist_ok=True)
-        if group_size <= 0:
-            group_size = 100
-        groups = [chunks[i : i + group_size] for i in range(0, len(chunks), group_size)]
-        logger.info(
-            "build_grouped_ka: %d chunks → %d groups (size=%d) template=%s",
-            len(chunks), len(groups), group_size, template_path,
-        )
-
-        all_entities: list[Any] = []
-        all_relations: list[Any] = []
-        entity_chunks: dict[str, list[str]] = {}
-        seen_names: set[str] = set()
-        last_ka: Any = None
-
-        for gi, group in enumerate(groups):
-            batch_dir = ka_dir / f"batch_{gi}"
-            batch = await self.build_dataset_ka(
-                template_path, group, batch_dir,
-                checkpoint_every=checkpoint_every, incremental=False,
-            )
-            br = batch.result
-            added = 0
-            for ent in (getattr(br, "entities", None) or []):
-                name = getattr(ent, "name", None)
-                if name and name in seen_names:
-                    continue  # cross-group name dedup
-                if name:
-                    seen_names.add(name)
-                all_entities.append(ent)
-                added += 1
-            all_relations.extend(getattr(br, "relations", None) or [])
-            for name, cids in (batch.entity_chunks or {}).items():
-                entity_chunks.setdefault(name, []).extend(cids)
-            last_ka = batch.ka
-            logger.info(
-                "build_grouped_ka group %d/%d done: +%d entities (merged total=%d, relations=%d)",
-                gi + 1, len(groups), added, len(all_entities), len(all_relations),
-            )
-
-        # Dump the last group's KA into ka_dir so load_ka_for_query has a usable
-        # dump (the full merged entity set is inserted into HugeGraph by the builder;
-        # this dump is for RAG query, best-effort partial).
-        if last_ka is not None:
-            try:
-                await asyncio.to_thread(last_ka.dump, ka_dir)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("build_grouped_ka final dump failed: %s", str(exc)[:160])
-
-        merged = ExtractionResult(entities=all_entities, relations=all_relations)
-        return DatasetKA(
-            ka=last_ka, ka_dir=ka_dir, entity_chunks=entity_chunks, result=merged,
         )
 
     async def extract_batch(

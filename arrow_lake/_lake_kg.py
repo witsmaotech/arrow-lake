@@ -534,7 +534,12 @@ class _LakeKGMixin:
             )
 
             async def _run_build() -> None:
-                await TaskManager.run_background(tm_task_id, builder.execute_build, task_id)
+                logger.info("KGDISPATCH _run_build ENTER tm=%s kg=%s builder_id=%s", tm_task_id, task_id, id(builder))
+                try:
+                    await TaskManager.run_background(tm_task_id, builder.execute_build, task_id)
+                except Exception:
+                    logger.exception("kg_build _run_build FAILED task=%s dataset=%s", task_id, dataset_name)
+                    raise
                 # Sync final status from KGBuilder task into TaskManager
                 kg_task = builder.get_task_status(task_id)
                 tm_task = TaskManager.get_task(tm_task_id)
