@@ -116,7 +116,7 @@ def _lake_table_fallback(lake: Any, name: str) -> dict[str, Any] | None:
 # ---------------------------------------------------------------------------
 
 @router.get("/catalogs")
-def list_catalogs(request: Request) -> dict[str, Any]:
+def list_catalogs(request: Request, _user=Depends(require_role(Role.VIEWER))) -> dict[str, Any]:
     """List all catalogs in the Gravitino metalake."""
     cfg = request.app.state.config.gravitino
     data = _gravitino_get(cfg, f"/api/metalakes/{cfg.metalake}/catalogs", _get_auth_provider(request))
@@ -200,7 +200,7 @@ def get_table(name: str, request: Request, lake=Depends(get_lake), _user=Depends
 # ---------------------------------------------------------------------------
 
 @router.get("/tags")
-def list_tags(request: Request) -> dict[str, Any]:
+def list_tags(request: Request, _user=Depends(require_role(Role.VIEWER))) -> dict[str, Any]:
     """List all tags or tags for a specific table."""
     table = request.query_params.get("table")
     tag_svc = _get_tag_service(request)
@@ -240,7 +240,7 @@ def create_tag(request: Request) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 @router.get("/policies")
-def list_policies(request: Request) -> dict[str, Any]:
+def list_policies(request: Request, _user=Depends(require_role(Role.VIEWER))) -> dict[str, Any]:
     """List all policies."""
     cfg = request.app.state.config.gravitino
     data = _gravitino_get(cfg, f"/api/metalakes/{cfg.metalake}/policies", _get_auth_provider(request))
@@ -333,7 +333,7 @@ def collect_stats(name: str, request: Request) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 @router.get("/models")
-def list_models(request: Request) -> dict[str, Any]:
+def list_models(request: Request, _user=Depends(require_role(Role.VIEWER))) -> dict[str, Any]:
     """List all registered models."""
     registry = _get_model_registry(request)
     try:
@@ -349,7 +349,7 @@ def list_models(request: Request) -> dict[str, Any]:
 
 
 @router.get("/models/{name}/versions")
-def get_model_versions(name: str, request: Request) -> dict[str, Any]:
+def get_model_versions(name: str, request: Request, _user=Depends(require_role(Role.VIEWER))) -> dict[str, Any]:
     """Get version info for a model."""
     _validate_id(name, "model name")
     registry = _get_model_registry(request)
@@ -414,7 +414,7 @@ def enforce_policies(request: Request) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 @router.get("/lineage/{name}")
-def get_lineage(name: str, request: Request) -> dict[str, Any]:
+def get_lineage(name: str, request: Request, _user=Depends(require_role(Role.VIEWER))) -> dict[str, Any]:
     """Get lineage information for a table from Gravitino properties."""
     _validate_id(name, "table name")
     cfg = request.app.state.config.gravitino
