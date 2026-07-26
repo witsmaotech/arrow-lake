@@ -27,6 +27,7 @@
   .bubble.a.md strong{font-weight:600}
   .bubble.a.md em{color:var(--fg-md)}
   .bubble.a.md blockquote{border-left:3px solid var(--teal-soft,var(--line));padding-left:10px;margin:.4em 0;color:var(--fg-md)}
+  .bubble.a.md hr{border:none;border-top:1px solid var(--line-soft);margin:.6em 0}
   .turn-role{font-size:.7rem;color:var(--fg-lo);margin-bottom:4px;font-family:var(--font-mono)}
   .cites{margin-top:8px;display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:8px}
   .cite{border:1px solid var(--line-soft);border-radius:var(--r-sm);padding:8px 10px;background:var(--ink-950)}
@@ -152,28 +153,40 @@ async function loadHistory() {
   } catch (_) { /* 历史失败静默 */ }
 }
 
-// 极简 markdown 渲染(escape-first → XSS 安全,无外部依赖/CDN):
-// 支持 ```代码块```、`行内代码`、# 标题、-/* 列表、N. 有序列表、**粗体**、*斜体*、段落。
+// 极简 markdown 渲染(escape-first → XSS 安全,无外部依赖/CDN,逐行块级解析):
+// 支持 ```代码块```、`行内代码`、# 标题、-/* 列表、N. 有序列表、> 引用、--- 分割线、**粗体**、*斜体*、段落。
+// 逐行解析 → 列表/代码块/引用不再依赖前后空行,真实 LLM 输出可靠渲染。
 function renderMd(src) {
   if (!src) return "(无回答)";
   let s = esc(src);
   const blocks = [], inls = [];
+  // 抽离围栏代码块 / 行内代码 → \x00 哨兵占位符(与正文不冲突),最后统一还原
   s = s.replace(/```[^\n`]*\n?([\s\S]*?)```/g, (_m, c) => { blocks.push(c.replace(/\n$/, "")); return `\x00B${blocks.length - 1}\x00`; });
   s = s.replace(/`([^`\n]+)`/g, (_m, c) => { inls.push(c); return `\x00I${inls.length - 1}\x00`; });
+  const lines = s.split("\n");
   const out = [];
-  for (let g of s.split(/\n{2,}/)) {
-    g = g.replace(/^\n+|\n+$/g, "");
-    if (!g) continue;
-    if (g.startsWith("\x00B") && g.endsWith("\x00")) { out.push(`<pre class="md-pre"><code>${blocks[+g.slice(2, -1)]}</code></pre>`); continue; }
-    const h = g.match(/^(#{1,4})\s+(.*)/);
-    if (h && !g.includes("\n")) { out.push(`<h${h[1].length + 1} class="md-h">${h[2]}</h${h[1].length + 1}>`); continue; }
-    const lines = g.split("\n");
-    if (lines.every(l => /^\s*[-*+]\s+/.test(l))) { out.push(`<ul class="md-ul">${lines.map(l => `<li>${l.replace(/^\s*[-*+]\s+/, "")}</li>`).join("")}</ul>`); continue; }
-    if (lines.every(l => /^\s*\d+[.)]\s+/.test(l))) { out.push(`<ol class="md-ol">${lines.map(l => `<li>${l.replace(/^\s*\d+[.)]\s+/, "")}</li>`).join("")}</ol>`); continue; }
-    out.push(`<p class="md-p">${g.replace(/\n/g, "<br>")}</p>`);
+  let para = [];
+  const flush = () => { if (para.length) { out.push(`<p class="md-p">${para.join("<br>")}</p>`); para = []; } };
+  const isUl = (l) => /^\s*[-*+]\s+/.test(l);
+  const isOl = (l) => /^\s*\d+[.)]\s+/.test(l);
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line.trim()) { flush(); continue; }
+    const cb = line.match(/^\x00B(\d+)\x00$/);
+    if (cb) { flush(); out.push(`<pre class="md-pre"><code>${blocks[+cb[1]]}</code></pre>`); continue; }
+    const h = line.match(/^(#{1,4})\s+(.*)/);
+    if (h) { flush(); out.push(`<h${h[1].length + 1} class="md-h">${h[2]}</h${h[1].length + 1}>`); continue; }
+    if (/^&gt;\s?/.test(line)) { flush(); const q = []; while (i < lines.length && /^&gt;\s?/.test(lines[i])) { q.push(lines[i].replace(/^&gt;\s?/, "")); i++; } out.push(`<blockquote class="md-bq">${q.join("<br>")}</blockquote>`); i--; continue; }
+    if (isUl(line)) { flush(); const it = []; while (i < lines.length && isUl(lines[i])) { it.push(`<li>${lines[i].replace(/^\s*[-*+]\s+/, "")}</li>`); i++; } out.push(`<ul class="md-ul">${it.join("")}</ul>`); i--; continue; }
+    if (isOl(line)) { flush(); const it = []; while (i < lines.length && isOl(lines[i])) { it.push(`<li>${lines[i].replace(/^\s*\d+[.)]\s+/, "")}</li>`); i++; } out.push(`<ol class="md-ol">${it.join("")}</ol>`); i--; continue; }
+    if (/^(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) { flush(); out.push(`<hr class="md-hr"/>`); continue; }
+    para.push(line);
   }
+  flush();
   let html = out.join("");
-  html = html.replace(/\x00I(\d+)\x00/g, (_m, i) => `<code class="md-code">${inls[+i]}</code>`);
+  // 兜底:代码块占位符若未独占一行,降级为行内代码(不再泄漏哨兵)
+  html = html.replace(/\x00B(\d+)\x00/g, (_m, b) => `<code class="md-code">${blocks[+b]}</code>`);
+  html = html.replace(/\x00I(\d+)\x00/g, (_m, k) => `<code class="md-code">${inls[+k]}</code>`);
   html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
   html = html.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>");
   return html || "(无回答)";
