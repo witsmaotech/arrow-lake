@@ -37,11 +37,11 @@ x-arrow-lake: &arrow-lake
     dockerfile: deploy/Dockerfile
     network: host
     args:
-      VERSION: "1.9.2"
+      VERSION: "1.9.4"
       HTTP_PROXY: "${BUILD_HTTP_PROXY:-}"
       HTTPS_PROXY: "${BUILD_HTTPS_PROXY:-}"
       NO_PROXY: "${BUILD_NO_PROXY:-127.0.0.1,localhost}"
-  image: arrow-lake:1.9.2
+  image: arrow-lake:1.9.4
   restart: unless-stopped
   env_file:
     - path: ../.env
@@ -158,6 +158,8 @@ services:
     image: ghcr.io/tursodatabase/libsql-server:${LIBSQL_VERSION:-latest}
     container_name: arrow-lake-system-db
     restart: unless-stopped
+    environment:
+      TZ: "Asia/Shanghai"
     volumes:
       - system-db-data:/var/lib/sqld
     command: ["sqld", "--http-listen-addr", "0.0.0.0:8080"]
@@ -188,16 +190,24 @@ services:
       ARROW_LAKE__REDIS__URL: "redis://:${REDIS_PASSWORD:?REDIS_PASSWORD must be set}@redis:6379/0"
       # Ray 集群已在 minimal 中移除 → RAY_ADDRESS=auto 回退本地计算
       ARROW_LAKE__COMPUTE__RAY_DASHBOARD_URL: "http://ray-head:8265"
-      # LLM backend → local Ollama via ollama-relay (host network, :11534→127.0.0.1:11434).
-      # 容器无法直连 host.docker.internal:11434(Windows ollama mirrored 仅绑 127.0.0.1),
-      # 必须经 ollama-relay 的 11534。he backend validated on wuhu KG。
-      ARROW_LAKE__LLM__PROVIDER: "ollama"
-      ARROW_LAKE__LLM__MODEL: "ministral-3:3b"
-      ARROW_LAKE__LLM__API_BASE: "http://host.docker.internal:11534/v1"
+      # KG 抽取 LLM = 百炼 qwen-turbo (json_schema 约束 + 22 类枚举遵循好; 经 17887 代理出网)。
+      # 抽取走全局 llm (he_extract_llm=None→fallback global); QA 仍走下面的 he_qa_llm qwen3-max。
+      # 旧 ollama ministral-3:3b 配置(保留注释备查):3B 小模型对紧模板枚举遵循差。
+      # ARROW_LAKE__LLM__PROVIDER: "ollama"
+      # ARROW_LAKE__LLM__MODEL: "ministral-3:3b"
+      # ARROW_LAKE__LLM__API_BASE: "http://host.docker.internal:11534/v1"
+      ARROW_LAKE__LLM__PROVIDER: "openai"
+      ARROW_LAKE__LLM__MODEL: "qwen-turbo"
+      ARROW_LAKE__LLM__API_BASE: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+      ARROW_LAKE__LLM__API_KEY: "${DASHSCOPE_API_KEY}"
+      ARROW_LAKE__LLM__MAX_TOKENS: "8192"
+      ARROW_LAKE__LLM__CONTEXT_WINDOW_TOKENS: "512000"
+      ARROW_LAKE__LLM__TIMEOUT_SECONDS: "120"
       ARROW_LAKE__REDIS__PASSWORD: "${REDIS_PASSWORD:?REDIS_PASSWORD must be set}"
       ARROW_LAKE__RATE_LIMIT__ENABLED: "${RATE_LIMIT_ENABLED:-true}"
       ARROW_LAKE__RATE_LIMIT__DEFAULT_REQUESTS_PER_MINUTE: "${RATE_LIMIT_RPM:-60}"
       ARROW_LAKE__RATE_LIMIT__DEFAULT_BURST: "${RATE_LIMIT_BURST:-10}"
+      TZ: "Asia/Shanghai"
       HTTP_PROXY: "http://host.docker.internal:17887"
       HTTPS_PROXY: "http://host.docker.internal:17887"
       http_proxy: "http://host.docker.internal:17887"
@@ -219,6 +229,9 @@ services:
       # v1.8.8 per-dataset KA dump 根目录。read_only 容器只能写挂载卷 → 必须用 /data/lake/ka
       # (lake-data 卷),不能默认 /data/ka(根 FS 只读,Errno 30)。
       ARROW_LAKE__HUGEGRAPH__HE_KA_BASE_DIR: "/data/lake/ka"
+      # v1.9.4: 合并策略改 MERGE_FIELD(非 LLM, 见 he_extractor._create_ka)后, BALANCED 合并爆炸消除,
+      # dataset 粒度(一份 KA 喂全部 chunk)对任意规模都稳定 → 不再需要 grouped 分组。通用且简单。
+      ARROW_LAKE__HUGEGRAPH__HE_KG_GRANULARITY: "dataset"
       # [#KG-LLM-split] RAG 问答 (ka.chat 生成回答) 用旗舰模型, 与抽取分离
       # (抽取 feed_text 默认走上面全局 LLM ministral-3:3b)。设 DASHSCOPE_API_KEY 后启用;
       # 注释整个块 → 问答回退全局 llm (ministral)。百炼 dashscope 经上面 HTTP_PROXY 出网。
@@ -244,7 +257,7 @@ services:
       ARROW_LAKE__HUGEGRAPH__HE_EXTRACT_LLM__PROVIDER: "openai"
       ARROW_LAKE__HUGEGRAPH__HE_EXTRACT_LLM__API_BASE: "https://dashscope.aliyuncs.com/compatible-mode/v1"
       ARROW_LAKE__HUGEGRAPH__HE_EXTRACT_LLM__API_KEY: "${DASHSCOPE_API_KEY:-}"
-      ARROW_LAKE__HUGEGRAPH__HE_EXTRACT_LLM__MODEL: "qwen-plus"
+      ARROW_LAKE__HUGEGRAPH__HE_EXTRACT_LLM__MODEL: "qwen-turbo"
       # DuckDB performance tuning (v1.3.4)
       ARROW_LAKE__OLAP__PRESERVE_INSERTION_ORDER: "false"
       ARROW_LAKE__OLAP__TEMP_DIRECTORY: "/tmp/duckdb"
@@ -332,7 +345,7 @@ services:
       replicas: ${API_REPLICAS:-1}
       resources:
         limits:
-          memory: ${API_MEMORY_LIMIT:-4G}
+          memory: ${API_MEMORY_LIMIT:-16G}
           cpus: "${API_CPU_LIMIT:-1.0}"
           pids: 512
         reservations:
@@ -375,6 +388,7 @@ services:
     networks:
       - arrow-lake-net
     environment:
+      TZ: "Asia/Shanghai"
       # nginx only talks to internal services — clear proxy to avoid routing upstream through proxy
       HTTP_PROXY: ""
       HTTPS_PROXY: ""
@@ -423,10 +437,12 @@ services:
       - "127.0.0.1:${MINIO_API_PORT:-9000}:9000"
       - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
     environment:
+      TZ: "Asia/Shanghai"
       MINIO_ROOT_USER: "${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set}"
       MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set}"
     volumes:
       - minio-data:/data
+      - /etc/localtime:/etc/localtime:ro
     networks:
       - arrow-lake-net
     logging:
@@ -491,6 +507,8 @@ services:
     image: redis:${REDIS_VERSION:-7.4}
     container_name: arrow-lake-redis
     restart: unless-stopped
+    environment:
+      TZ: "Asia/Shanghai"
     networks:
       - arrow-lake-net
     ports:
@@ -560,6 +578,7 @@ services:
     entrypoint: ["/usr/local/bin/entrypoint-hugegraph.sh"]
     command: ["./docker-entrypoint.sh"]
     environment:
+      TZ: "Asia/Shanghai"
       HTTP_PROXY: ""
       HTTPS_PROXY: ""
       http_proxy: ""
@@ -677,6 +696,7 @@ services:
     ports:
       - "127.0.0.1:${GRAVITINO_PORT:-8090}:8090"
     environment:
+      TZ: "Asia/Shanghai"
       GRAVITINO_AUTHENTICATORS: "simple"
       GRAVITINO_AUTHORIZATION_ENABLE: "false"
       GRAVITINO_USE_WEB_V2: "true"
@@ -730,6 +750,7 @@ services:
     ports:
       - "127.0.0.1:${LANCE_REST_PORT:-9002}:9101"
     environment:
+      TZ: "Asia/Shanghai"
       LANCE_REST_GRAVITINO_URI: "http://arrow-lake-gravitino:8090"
       LANCE_REST_GRAVITINO_METALAKE_NAME: "${GRAVITINO_METALAKE:-arrow_lake}"
       AWS_ACCESS_KEY_ID: "${MINIO_ROOT_USER}"

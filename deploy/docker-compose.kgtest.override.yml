@@ -1,0 +1,7 @@
+# KG test override: qwen-turbo + HF_HUB_CACHE 修 + chunk 粒度(避 BALANCED 合并爆炸)。
+services:
+  api:
+    environment:
+      ARROW_LAKE__HUGEGRAPH__HE_EXTRACT_LLM__MODEL: "qwen-turbo"
+      HF_HUB_CACHE: "/app/.docling-cache/hub"
+      ARROW_LAKE__HUGEGRAPH__HE_KG_GRANULARITY: "chunk"
