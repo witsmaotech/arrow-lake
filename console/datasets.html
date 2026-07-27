@@ -124,7 +124,9 @@ async function load() {
   $("#pager").innerHTML = "";
   try {
     const data = await request("GET", "/datasets?limit=1000");
-    STATE.all = data?.datasets || [];
+    // 默认按时间倒序(最新在前):优先 updated_at,缺失回退 created_at
+    const tsOf = (d) => { const t = d.updated_at || d.created_at; if (!t) return 0; const n = new Date(t).getTime(); return isNaN(n) ? 0 : n; };
+    STATE.all = (data?.datasets || []).slice().sort((a, b) => tsOf(b) - tsOf(a));
     STATE.page = 1;
     renderPage();
   } catch (e) {

@@ -12,7 +12,6 @@
   .cfg-bar .field{margin:0;min-width:0}
   .cfg-bar select,.cfg-bar input{height:34px}
   .thread{max-height:60vh;overflow:auto;padding:4px 2px}
-  .turn{margin-bottom:var(--s4)}
   .bubble{padding:12px 14px;border-radius:var(--r-md);font-size:.88rem;line-height:1.6;white-space:pre-wrap;word-break:break-word}
   .bubble.q{background:var(--ink-850);border:1px solid var(--line-soft);margin-left:60px}
   .bubble.a{background:var(--ink-900);border:1px solid var(--teal-soft,var(--line));color:var(--fg-hi);white-space:normal}
@@ -28,13 +27,40 @@
   .bubble.a.md em{color:var(--fg-md)}
   .bubble.a.md blockquote{border-left:3px solid var(--teal-soft,var(--line));padding-left:10px;margin:.4em 0;color:var(--fg-md)}
   .bubble.a.md hr{border:none;border-top:1px solid var(--line-soft);margin:.6em 0}
-  .turn-role{font-size:.7rem;color:var(--fg-lo);margin-bottom:4px;font-family:var(--font-mono)}
+  .bubble.a.md table{border-collapse:collapse;margin:6px 0;font-size:.8rem;width:auto;max-width:100%}
+  .bubble.a.md th,.bubble.a.md td{border:1px solid var(--line);padding:3px 8px;text-align:left}
+  .bubble.a.md th{background:var(--ink-850);color:var(--teal-bright)}
+  /* 可折叠历史 turn(对齐 kg.html:问题作标题,点击折叠/展开) */
+  .turn{border-top:1px dashed var(--line-soft);padding:8px 0 0;margin-top:8px}
+  .turn:first-child{border-top:none;margin-top:0}
+  .turn-head{display:flex;align-items:center;gap:6px;cursor:pointer;font-size:.78rem;color:var(--fg-mid);font-family:var(--font-mono);padding:2px 0}
+  .turn-head:hover{color:var(--teal-bright)}
+  .turn-q{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+  .turn-body{margin-top:4px}
+  .turn.collapsed .turn-body{display:none}
+  .tg{width:0;height:0;border-left:5px solid currentColor;border-top:4px solid transparent;border-bottom:4px solid transparent;display:inline-block;transition:transform .15s}
+  .turn.collapsed .tg{transform:rotate(0)}
+  .turn:not(.collapsed) .tg{transform:rotate(90deg)}
+  .role-ic{width:13px;height:13px;vertical-align:-2px;margin-right:5px;opacity:.85;stroke:currentColor;fill:none}
+  .assistant-mark{font-size:.7rem;font-family:var(--font-mono);color:var(--fg-lo);margin:8px 0 4px;display:flex;align-items:center}
+  /* typing 动画(请求中) */
+  .typing{display:inline-flex;gap:3px;align-items:center;padding:6px 0}
+  .typing i{width:5px;height:5px;border-radius:50%;background:var(--fg-lo);animation:tb 1.2s infinite}
+  .typing i:nth-child(2){animation-delay:.2s}
+  .typing i:nth-child(3){animation-delay:.4s}
+  @keyframes tb{0%,60%,100%{transform:translateY(0);opacity:.4}30%{transform:translateY(-4px);opacity:1}}
+  /* 示例问题 chip(空态) */
+  .ex-chip{display:inline-block;font-size:.74rem;padding:4px 10px;border-radius:999px;border:1px dashed var(--line);color:var(--fg-mid);cursor:pointer;margin:3px;transition:all .15s}
+  .ex-chip:hover{color:var(--teal-bright);border-color:var(--teal-bright);border-style:solid}
+  /* 引用卡片(可点击展开/收起原文,对齐 kg cite 的"可点击"交互) */
   .cites{margin-top:8px;display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:8px}
-  .cite{border:1px solid var(--line-soft);border-radius:var(--r-sm);padding:8px 10px;background:var(--ink-950)}
+  .cite{border:1px solid var(--line-soft);border-radius:var(--r-sm);padding:8px 10px;background:var(--ink-950);cursor:pointer;transition:border-color .15s}
+  .cite:hover{border-color:var(--teal-bright)}
   .cite-head{display:flex;gap:8px;align-items:center;margin-bottom:4px}
   .cite-score{font-family:var(--font-mono);font-size:.68rem;padding:1px 6px;border-radius:var(--r-sm);background:var(--ink-900);color:var(--teal-bright);border:1px solid var(--line-soft)}
   .cite-meta{font-family:var(--font-mono);font-size:.66rem;color:var(--fg-lo)}
-  .cite-text{font-size:.74rem;color:var(--fg-md);line-height:1.5;max-height:80px;overflow:auto}
+  .cite-text{font-size:.74rem;color:var(--fg-md);line-height:1.5;max-height:60px;overflow:auto;transition:max-height .2s}
+  .cite.expanded .cite-text{max-height:400px}
   .stat{font-family:var(--font-mono);font-size:.7rem;color:var(--fg-lo);margin-top:6px}
   .empty{padding:40px 0;text-align:center;color:var(--fg-lo)}
 </style>
@@ -92,8 +118,10 @@ const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 const SESS_KEY = "al_rag_session";
+const EX_QUESTIONS = ["这个数据集主要讲什么？", "总结关键内容和要点", "有哪些核心主题？", "列举几个关键信息"];
 let turns = [];
 let session = null; // {session_id, ds}
+let askAbort = null; // AbortController(取消当前查询)
 
 function curDs() { return $("#ds").value; }
 
@@ -141,7 +169,7 @@ $("#ds").addEventListener("change", () => { session = null; turns = []; saveSess
 async function loadHistory() {
   if (!session?.session_id) return;
   try {
-    const r = await request("GET", `/rag/history?session_id=${encodeURIComponent(session.session_id)}`);
+    const r = await request("GET", `/rag/history/${encodeURIComponent(session.session_id)}`);
     turns = (r?.turns || []).map(t => ({
       q: t.question || t.q || "",
       a: t.answer || t.a || "",
@@ -154,8 +182,8 @@ async function loadHistory() {
 }
 
 // 极简 markdown 渲染(escape-first → XSS 安全,无外部依赖/CDN,逐行块级解析):
-// 支持 ```代码块```、`行内代码`、# 标题、-/* 列表、N. 有序列表、> 引用、--- 分割线、**粗体**、*斜体*、段落。
-// 逐行解析 → 列表/代码块/引用不再依赖前后空行,真实 LLM 输出可靠渲染。
+// 支持 ```代码块```、`行内代码`、# 标题、-/* 列表、N. 有序列表、> 引用、--- 分割线、|表格|、**粗体**、*斜体*、段落。
+// 逐行解析 → 列表/代码块/引用/表格不再依赖前后空行,真实 LLM 输出可靠渲染。
 function renderMd(src) {
   if (!src) return "(无回答)";
   let s = esc(src);
@@ -169,6 +197,9 @@ function renderMd(src) {
   const flush = () => { if (para.length) { out.push(`<p class="md-p">${para.join("<br>")}</p>`); para = []; } };
   const isUl = (l) => /^\s*[-*+]\s+/.test(l);
   const isOl = (l) => /^\s*\d+[.)]\s+/.test(l);
+  const isTableRow = (l) => /^\s*\|.*\|\s*$/.test(l);
+  const isTableSep = (l) => /^\s*\|[\s:|-]+\|\s*$/.test(l);
+  const parseRow = (l) => l.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map(c => c.trim());
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (!line.trim()) { flush(); continue; }
@@ -179,6 +210,16 @@ function renderMd(src) {
     if (/^&gt;\s?/.test(line)) { flush(); const q = []; while (i < lines.length && /^&gt;\s?/.test(lines[i])) { q.push(lines[i].replace(/^&gt;\s?/, "")); i++; } out.push(`<blockquote class="md-bq">${q.join("<br>")}</blockquote>`); i--; continue; }
     if (isUl(line)) { flush(); const it = []; while (i < lines.length && isUl(lines[i])) { it.push(`<li>${lines[i].replace(/^\s*[-*+]\s+/, "")}</li>`); i++; } out.push(`<ul class="md-ul">${it.join("")}</ul>`); i--; continue; }
     if (isOl(line)) { flush(); const it = []; while (i < lines.length && isOl(lines[i])) { it.push(`<li>${lines[i].replace(/^\s*\d+[.)]\s+/, "")}</li>`); i++; } out.push(`<ol class="md-ol">${it.join("")}</ol>`); i--; continue; }
+    // 表格:首行 |...|,次行 |---| 分隔 → 吃连续表格行(对齐 kg.html renderMd 表格能力)
+    if (isTableRow(line) && i + 1 < lines.length && isTableSep(lines[i + 1])) {
+      flush();
+      const head = parseRow(line); i += 2;
+      const body = [];
+      while (i < lines.length && isTableRow(lines[i])) { body.push(parseRow(lines[i])); i++; }
+      i--; // 外层 for 会 i++,回退一格
+      out.push(`<table><thead><tr>${head.map(c => `<th>${c}</th>`).join("")}</tr></thead><tbody>${body.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join("")}</tr>`).join("")}</tbody></table>`);
+      continue;
+    }
     if (/^(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) { flush(); out.push(`<hr class="md-hr"/>`); continue; }
     para.push(line);
   }
@@ -193,33 +234,46 @@ function renderMd(src) {
 }
 
 function renderThread() {
-  if (!turns.length) { $("#thread").innerHTML = '<div class="empty">选数据集 → 提问开始(答案来自真实 LLM,引用来自检索+重排)</div>'; renderSessionTag(); return; }
+  if (!turns.length) {
+    $("#thread").innerHTML = `<div class="empty">选数据集 → 提问开始(答案来自真实 LLM,引用来自检索+重排)</div><div style="text-align:center">${EX_QUESTIONS.map(q => `<span class="ex-chip" data-q="${esc(q)}">${esc(q)}</span>`).join("")}</div>`;
+    renderSessionTag(); return;
+  }
   $("#thread").innerHTML = turns.map((t, i) => `
-    <div class="turn">
-      <div class="turn-role">YOU</div>
-      <div class="bubble q">${esc(t.q)}</div>
-      <div class="turn-role" style="margin-top:10px">ASSISTANT</div>
-      <div class="bubble a md">${renderMd(t.a)}</div>
-      ${t.citations?.length ? `<div class="cites">${t.citations.map((c, j) => `
-        <div class="cite">
-          <div class="cite-head"><span class="cite-score">#${j + 1} · ${typeof c.score === "number" ? c.score.toFixed(3) : esc(c.score ?? "—")}</span><span class="cite-meta">chunk ${esc(c.chunk_index)} · ${esc(c.row_id)}</span></div>
-          <div class="cite-text">${esc((c.text_excerpt || "").slice(0, 240))}</div>
-        </div>`).join("")}</div>` : ""}
-      <div class="stat">检索 ${t.retrieval_count ?? (t.citations?.length || 0)} 条${t.latency_ms ? ` · ${(t.latency_ms / 1000).toFixed(2)}s` : ""}</div>
+    <div class="turn ${t.collapsed ? "collapsed" : ""}" data-idx="${i}">
+      <div class="turn-head">${window.icon ? window.icon("user", "role-ic") : ""}<span class="tg"></span><span class="turn-q">${esc(t.q)}</span></div>
+      <div class="turn-body">
+        <div class="assistant-mark">${window.icon ? window.icon("sparkles", "role-ic") : ""}ASSISTANT</div>
+        <div class="bubble a md">${t.pending ? `<span class="typing"><i></i><i></i><i></i></span>` : renderMd(t.a)}</div>
+        ${t.citations?.length ? `<div class="cites">${t.citations.map((c, j) => `
+          <div class="cite" title="点击展开/收起原文">
+            <div class="cite-head"><span class="cite-score">#${j + 1} · ${typeof c.score === "number" ? c.score.toFixed(3) : esc(c.score ?? "—")}</span><span class="cite-meta">chunk ${esc(c.chunk_index)} · ${esc(c.row_id)}</span></div>
+            <div class="cite-text">${esc((c.text_excerpt || "").slice(0, 600))}</div>
+          </div>`).join("")}</div>` : ""}
+        <div class="stat">检索 ${t.retrieval_count ?? (t.citations?.length || 0)} 条${t.latency_ms ? ` · ${(t.latency_ms / 1000).toFixed(2)}s` : ""}</div>
+      </div>
     </div>`).join("");
   $("#thread").scrollTop = $("#thread").scrollHeight;
   renderSessionTag();
 }
 
-$("#askBtn").addEventListener("click", ask);
-$("#question").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(); } });
+// 委托:turn-head 折叠 / cite 点击展开原文 / ex-chip 填入示例问题
+$("#thread").addEventListener("click", (e) => {
+  const head = e.target.closest(".turn-head");
+  if (head) { const tn = head.parentElement; const idx = +tn.dataset.idx; tn.classList.toggle("collapsed"); if (turns[idx]) turns[idx].collapsed = tn.classList.contains("collapsed"); return; }
+  const cite = e.target.closest(".cite"); if (cite) { cite.classList.toggle("expanded"); return; }
+  const ex = e.target.closest(".ex-chip"); if (ex) { $("#question").value = ex.dataset.q; $("#question").focus(); }
+});
+
+$("#askBtn").addEventListener("click", () => { if (askAbort) { askAbort.abort(); return; } ask(); });
+$("#question").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (!askAbort) ask(); } });
 
 async function ask() {
   const ds = curDs(); if (!ds) return toast("先选数据集", "warn");
   const question = $("#question").value.trim(); if (!question) return toast("输入问题", "warn");
-  const btn = $("#askBtn"); btn.disabled = true; btn.textContent = "检索+生成中…";
-  // 占位:先显示用户问题 + "思考中"
-  turns.push({ q: question, a: "…", citations: [], retrieval_count: 0, pending: true });
+  const btn = $("#askBtn"); btn.textContent = "取消";
+  askAbort = new AbortController();
+  if (turns.length) turns[turns.length - 1].collapsed = true; // 新提问时收起上一条(历史折叠)
+  turns.push({ q: question, a: "", citations: [], retrieval_count: 0, pending: true, collapsed: false });
   $("#question").value = "";
   renderThread();
   try {
@@ -230,26 +284,25 @@ async function ask() {
       top_k: parseInt($("#topK").value, 10) || null,
       session_id: session?.session_id || null,
     };
-    const r = await request("POST", "/rag/query", { body });
+    const r = await request("POST", "/rag/query", { body, signal: askAbort.signal });
     const last = turns[turns.length - 1];
     last.a = r.answer || "(无回答)";
     last.citations = r.citations || [];
-    $("#kgSubPanel").style.display = "";
-    $("#kgSubMeta").textContent = "基于问题的实体子图";
-    renderKgSubgraph($("#kgSub"), { dataset: ds, query: question, limit: 30 });
     last.retrieval_count = r.retrieval_count;
     last.latency_ms = r.latency_ms;
     last.pending = false;
     if (r.session_id) { session = { session_id: r.session_id, ds }; saveSession(); }
     renderThread();
+    $("#kgSubPanel").style.display = "";
+    $("#kgSubMeta").textContent = "基于问题的实体子图";
+    renderKgSubgraph($("#kgSub"), { dataset: ds, query: question, limit: 30 });
   } catch (e) {
     const last = turns[turns.length - 1];
-    const msg = String(e?.detail || e?.message || e).slice(0, 200);
-    last.a = "❌ 查询失败:" + msg;
     last.pending = false;
+    if (askAbort?.signal.aborted) { last.a = "（已取消）"; }
+    else { const msg = String(e?.detail || e?.message || e).slice(0, 200); last.a = "❌ 查询失败:" + msg; toast("RAG 查询失败", "danger"); }
     renderThread();
-    toast("RAG 查询失败", "danger");
-  } finally { btn.disabled = false; btn.textContent = "提问"; }
+  } finally { askAbort = null; btn.disabled = false; btn.textContent = "提问"; }
 }
 
 loadDatasets(); loadTemplates();

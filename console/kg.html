@@ -234,7 +234,7 @@ function clearG6Hi() {
 }
 
 // ---------- 双引擎:中小图 vis-network(成熟交互)/ 大图 G6 v4(canvas 力导向 + 悬停高亮邻居)----------
-const G6_THRESHOLD = 2000; // ≥ 此节点数走 G6 canvas
+const G6_THRESHOLD = 4000; // ≥ 此节点数走 G6 canvas
 const G6_CDN = "https://cdn.jsdelivr.net/npm/@antv/g6@4.8.24/dist/g6.min.js"; // v4 UMD(<script> 即用,适配无构建 console)
 const G6_TYPE_COLOR = { 系统:"#3b82f6", 算法:"#8b5cf6", 模型:"#ec4899", 组件:"#f59e0b", 应用:"#10b981", 数据:"#06b6d4", 方法:"#f97316", 过程:"#64748b", 事件:"#ef4444", 组织:"#a855f7", 角色:"#84cc16", 产品:"#14b8a6", 属性:"#94a3b8", 概念:"#d946ef", entity:"#14b8a6" };
 const G6_INTEGRITY = "sha384-iYoticlq+TpD6YYL4Lx7pZ8jM+Loq+EKfAbFtWUe0d3639XqCkVreQ57oSygxMD1"; // SRI(防 CDN 篡改;hash 取自实际字节)
@@ -901,7 +901,8 @@ function renderThread() {
       <div class="turn-body">
         <div class="muted" style="font-size:.7rem;font-family:var(--font-mono);margin:8px 0 4px">${window.icon ? window.icon("sparkles", "role-ic") : ""}ASSISTANT</div>
         <div class="bubble a md">${t.loading ? `<span class="typing"><i></i><i></i><i></i></span>` : renderMd(t.a)}</div>
-        ${t.citations?.length ? `<div style="margin-top:6px">${t.citations.map((c) => `<span class="cite" data-name="${esc(citeLabel(c))}" title="点击在图谱中定位该实体">${esc(citeLabel(c))}<span class="muted"> ${esc(citeType(c) + (c.score != null ? " · " + (typeof c.score === "number" ? c.score.toFixed(3) : c.score) : ""))}</span></span>`).join("")}</div>` : ""}
+        ${t.text_chunks?.length ? `<details style="margin-top:6px"><summary class="muted" style="font-size:.7rem;cursor:pointer;outline:none">📄 原文依据(${t.text_chunks.length} 段,向量检索 · 含数据/细节,点击展开)</summary><div style="margin-top:4px;padding:6px 8px;background:var(--ink-850);border-radius:6px;border-left:2px solid var(--accent)">${t.text_chunks.map((c, i) => `<div style="margin:3px 0;font-size:.72rem;line-height:1.5;color:var(--ink-300)"><b style="color:var(--ink-100)">[${i + 1}]</b> ${esc((c.text || "").slice(0, 240))}${(c.text || "").length > 240 ? "…" : ""}</div>`).join("")}</div></details>` : ""}
+        ${t.citations?.length ? `<div style="margin-top:6px"><span class="muted" style="font-size:.7rem">🟢 图谱顶点(KA 实体):</span> ${t.citations.map((c) => `<span class="cite" data-name="${esc(citeLabel(c))}" title="点击在图谱中定位该实体">${esc(citeLabel(c))}<span class="muted"> ${esc(citeType(c) + (c.score != null ? " · " + (typeof c.score === "number" ? c.score.toFixed(3) : c.score) : ""))}</span></span>`).join("")}</div>` : ""}
         ${t.neighbor_context?.length ? `<div style="margin-top:6px"><span class="muted" style="font-size:.7rem">GraphRAG 邻居(HugeGraph 1 跳):</span> ${t.neighbor_context.map((c) => `<span class="cite" data-name="${esc(c.entity)}" title="点击在图谱中定位该实体">${esc(c.entity)}<span class="muted"> ${esc((c.relations || []).slice(0, 3).join("; "))}</span></span>`).join("")}</div>` : ""}
         <div class="stat">检索 ${t.retrieval_count ?? (t.citations?.length || 0)} 条${t.latency_ms ? ` · ${(t.latency_ms / 1000).toFixed(2)}s` : ""}</div>
       </div>
@@ -949,7 +950,7 @@ async function ask() {
   const btn = $("#askBtn"); btn.textContent = "取消";
   askAbort = new AbortController();
   if (turns.length) turns[turns.length - 1].collapsed = true; // 新提问时收起上一条(历史折叠)
-  turns.push({ q, loading: true, a: "", citations: [], retrieval_count: 0, neighbor_context: [] });
+  turns.push({ q, loading: true, a: "", citations: [], retrieval_count: 0, neighbor_context: [], text_chunks: [] });
   const last = turns[turns.length - 1];
   $("#question").value = ""; renderThread();
   const hist = turns.slice(0, -1).map(t => ({ q: t.q, a: typeof t.a === "string" ? t.a : "" })).slice(-6);
@@ -962,7 +963,7 @@ async function ask() {
       body: JSON.stringify({ dataset: name, question: q, top_k: 5, engine: "graphrag", history: hist }),
     });
     if (!resp.ok) { const t = await resp.text().catch(() => ""); throw { detail: (t || resp.statusText).slice(0, 300) }; }
-    last.loading = false; last.a = "";
+    last.a = "";
     const reader = resp.body.getReader(); const dec = new TextDecoder(); let buf = "";
     while (true) {
       const { done, value } = await reader.read();
@@ -972,13 +973,13 @@ async function ask() {
       for (const part of parts) {
         const ev = (part.match(/^event: (.+)$/m) || [, "content"])[1];
         const data = JSON.parse((part.match(/^data: (.+)$/m) || [, "{}"])[1]);
-        if (ev === "metadata") { last.citations = data.retrieved_items || []; last.neighbor_context = data.neighbor_context || []; last.retrieval_count = data.retrieval_count || 0; }
-        else if (ev === "content") { last.a += data.data || ""; }
+        if (ev === "metadata") { last.citations = data.retrieved_items || []; last.neighbor_context = data.neighbor_context || []; last.retrieval_count = data.retrieval_count || 0; last.text_chunks = data.text_chunks || []; }
+        else if (ev === "content") { last.loading = false; last.a += data.data || ""; }
         else if (ev === "error") { last.a = "❌ " + (data.error || "流式错误"); }
         renderThread();
       }
     }
-    if (!last.a) last.a = "(无回答)";
+    last.loading = false; if (!last.a) last.a = "(无回答)";
     renderThread(); saveThread(name);
   } catch (e) {
     if (askAbort?.signal.aborted) { last.loading = false; last.a = "（已取消）"; }

@@ -167,7 +167,16 @@ class _LakeRAGMixin:
             return result.table
 
         # hybrid: vector + FTS RRF fusion (default_retrieval_strategy).
-        result = self.hybrid_search(dataset_name, query_vector, question, top_k=top_k)
+        # hybrid 需向量索引(IVF_PQ ≥256 行);小数据集建不了索引 → Lance error 或返空。
+        # 自动降级 vector(brute-force,不需 IVF),避免小数据集 RAG 报"no documents"。
+        try:
+            result = self.hybrid_search(dataset_name, query_vector, question, top_k=top_k)
+            if result.table.num_rows > 0:
+                return result.table
+            logger.warning("hybrid_search returned 0 rows (likely <256, no IVF), degrading to vector")
+        except Exception as exc:
+            logger.warning("hybrid_search failed (likely <256 rows, no IVF index), degrading to vector: %s", exc)
+        result = self.search(dataset_name, query_vector, top_k=top_k)
         return result.table
 
     def _embed_query(self, question: str) -> list[float]:

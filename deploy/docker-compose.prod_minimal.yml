@@ -245,7 +245,10 @@ services:
       ARROW_LAKE__HUGEGRAPH__HE_QA_LLM__PROVIDER: "openai"
       ARROW_LAKE__HUGEGRAPH__HE_QA_LLM__API_BASE: "https://dashscope.aliyuncs.com/compatible-mode/v1"
       ARROW_LAKE__HUGEGRAPH__HE_QA_LLM__API_KEY: "${DASHSCOPE_API_KEY:-}"
-      ARROW_LAKE__HUGEGRAPH__HE_QA_LLM__MODEL: "qwen3-max"
+      ARROW_LAKE__HUGEGRAPH__HE_QA_LLM__MODEL: "qwen-plus"
+      # v1.9.5: KG 问答(he_qa_llm)详尽长输出 + 低温稳定(对齐 RAG qa_llm 调优)。
+      ARROW_LAKE__HUGEGRAPH__HE_QA_LLM__MAX_TOKENS: "16384"
+      ARROW_LAKE__HUGEGRAPH__HE_QA_LLM__TEMPERATURE: "0.3"
       # [#RAG-QA-split] RAG 问答生成用强模型(百炼 qwen3-max);抽取/重排仍走全局轻量 llm。
       # 不设(注释掉)→ RAG 回退全局 llm (ministral)。百炼经上面 HTTP_PROXY 出网。
       ARROW_LAKE__RAG__QA_LLM__PROVIDER: "openai"
