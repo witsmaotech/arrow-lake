@@ -165,6 +165,8 @@ def _augment_question_with_graph(
 
 _KG_SNAPSHOT_CACHE: dict[str, tuple[float, tuple[list[dict[str, Any]], list[dict[str, Any]]]]] = {}
 _KG_SNAPSHOT_TTL_S = 60.0
+_KG_SNAPSHOT_LOCKS: dict[str, asyncio.Lock] = {}
+_KG_SNAPSHOT_MAX_ENTRIES = 32
 
 
 async def _cached_graph_snapshot(
@@ -174,14 +176,27 @@ async def _cached_graph_snapshot(
     dataset doesn't re-fetch up to 3000 vertices + edges on every call. A
     fresh KA build invalidates naturally (new entities → anchors not in the
     cached snapshot → lookup fallback fills them; cache expires in ≤ TTL).
+
+    Per-graph Lock 防冷缓存击穿(多协程同时 miss → 同时 fetch 3000 顶点);
+    容量上限防 graph_name 多时无界增长。
     """
     now = time.monotonic()
     hit = _KG_SNAPSHOT_CACHE.get(graph_name)
     if hit and now - hit[0] < _KG_SNAPSHOT_TTL_S:
         return hit[1]
-    data = await client.get_graph_snapshot(graph_name=graph_name, limit=3000)
-    _KG_SNAPSHOT_CACHE[graph_name] = (now, data)
-    return data
+    lock = _KG_SNAPSHOT_LOCKS.setdefault(graph_name, asyncio.Lock())
+    async with lock:
+        # double-check:持锁后可能已被其他协程填充
+        hit = _KG_SNAPSHOT_CACHE.get(graph_name)
+        if hit and now - hit[0] < _KG_SNAPSHOT_TTL_S:
+            return hit[1]
+        data = await client.get_graph_snapshot(graph_name=graph_name, limit=3000)
+        _KG_SNAPSHOT_CACHE[graph_name] = (now, data)
+        if len(_KG_SNAPSHOT_CACHE) > _KG_SNAPSHOT_MAX_ENTRIES:
+            oldest = min(_KG_SNAPSHOT_CACHE, key=lambda k: _KG_SNAPSHOT_CACHE[k][0])
+            _KG_SNAPSHOT_CACHE.pop(oldest, None)
+            _KG_SNAPSHOT_LOCKS.pop(oldest, None)
+        return data
 
 
 def _build_graphrag_messages(

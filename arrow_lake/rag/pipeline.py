@@ -451,7 +451,7 @@ class RAGPipeline:
         concurrency: int = 5,
     ) -> list[RAGResponse]:
         """Concurrent batch RAG query with semaphore-limited fan-out."""
-        sem = asyncio.Semaphore(concurrency)
+        sem = asyncio.Semaphore(max(concurrency, 1))  # 防 concurrency<=0 永久死锁
 
         async def _single(idx: int, q: str) -> RAGResponse:
             async with sem:
@@ -480,24 +480,29 @@ class RAGPipeline:
             streams = [_stream_single(i, q) for i, q in enumerate(questions)]
             task_to_stream: dict[asyncio.Task, Any] = {}
             pending: set[asyncio.Task] = set()
-            for s in streams:
-                t = asyncio.create_task(s.__anext__())
-                task_to_stream[t] = s
-                pending.add(t)
-            while pending:
-                done, _ = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-                for task in done:
-                    pending.discard(task)
-                    stream = task_to_stream.pop(task)
-                    try:
-                        idx, chunk = task.result()
-                        next_task = asyncio.create_task(stream.__anext__())
-                        task_to_stream[next_task] = stream
-                        pending.add(next_task)
-                        yield idx, chunk
-                    except StopAsyncIteration:
-                        pass  # stream exhausted
-            yield -1, ""  # sentinel
+            try:
+                for s in streams:
+                    t = asyncio.create_task(s.__anext__())
+                    task_to_stream[t] = s
+                    pending.add(t)
+                while pending:
+                    done, _ = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                    for task in done:
+                        pending.discard(task)
+                        stream = task_to_stream.pop(task)
+                        try:
+                            idx, chunk = task.result()
+                            next_task = asyncio.create_task(stream.__anext__())
+                            task_to_stream[next_task] = stream
+                            pending.add(next_task)
+                            yield idx, chunk
+                        except StopAsyncIteration:
+                            pass  # stream exhausted
+                yield -1, ""  # sentinel
+            finally:
+                # 消费者提前中断(break/异常)→ cancel 未完成 task,避免 LLM 流资源泄漏
+                for t in pending:
+                    t.cancel()
 
         async for item in _merge():
             if item[0] == -1:

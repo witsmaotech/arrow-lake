@@ -80,7 +80,12 @@ async def lineage_query(
     lake=Depends(get_lake),
     _user: dict = Depends(require_role(Role.VIEWER)),
 ) -> LineageQueryResponse:
-    """Query lineage events via SQL."""
+    """Query lineage events via SQL.
+
+    走专用 LineageQueryBridge 查 lineage events(VIEWER 可读审计数据,业务数据在 Lance/
+    MinIO 不在此连接)。validate_sql_safety 的关键词正则会误杀 operation='create' 等合法
+    审计查询,注入防护应靠 bridge 表名白名单/参数化,而非此处粗糙校验。
+    """
     result = await run_sync(
         lake.lineage_query, req.sql,
         timeout=_LINEAGE_TIMEOUT, label="lineage_query",

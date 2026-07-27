@@ -135,14 +135,14 @@ class TestPylanceV6Validation:
     """Validate pylance 6.0.0 Phase 4 items: index rebuild, S3, DuckDB integration."""
 
     def test_pylance_version(self):
-        """Verify pylance 6.0.0 is installed."""
+        """Verify pylance (lance) is at the v1.9.x pinned version (7.0.0)."""
         import lance
-        assert lance.__version__ == "6.0.0", f"Expected 6.0.0, got {lance.__version__}"
+        assert lance.__version__ == "7.0.0", f"Expected 7.0.0, got {lance.__version__}"
 
     def test_lancedb_version(self):
-        """Verify lancedb 0.30.2 is installed."""
+        """Verify lancedb is at the v1.9.x pinned version (0.33.0)."""
         import lancedb
-        assert lancedb.__version__ == "0.30.2"
+        assert lancedb.__version__ == "0.33.0"
 
     def test_lance_namespace_version(self):
         """Verify lance-namespace >= 0.7.5."""

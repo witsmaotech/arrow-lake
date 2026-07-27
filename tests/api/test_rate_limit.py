@@ -48,6 +48,8 @@ async def test_rate_limit_disabled_allows_requests() -> None:
     """When rate limiting is disabled, all requests should succeed."""
     config = ArrowLakeConfig()
     app = create_app(config=config)
+    # ASGITransport skips lifespan; mark ready so /health checks storage.
+    app.state.ready = True
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         for _ in range(10):

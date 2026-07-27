@@ -62,6 +62,7 @@ class TestLineageRecordEvent:
             "create",
             source_datasets=None,
             transform_type="",
+            lance_version=None,
             actor="system",
             metadata=None,
         )
@@ -89,6 +90,7 @@ class TestLineageRecordEvent:
             "transform",
             source_datasets=["src_a", "src_b"],
             transform_type="map",
+            lance_version=None,
             actor="alice",
             metadata={"env": "prod"},
         )

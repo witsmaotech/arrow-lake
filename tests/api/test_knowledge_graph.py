@@ -97,9 +97,10 @@ async def test_query_accepts_valid_gremlin(client: AsyncClient, mock_lake: Magic
 
 @pytest.mark.asyncio
 async def test_build_kg(client: AsyncClient, mock_lake: MagicMock) -> None:
+    # v1.9.x renamed KGBuildRequest.dataset_name -> dataset (naming unification).
     resp = await client.post(
         "/api/v1/kg/build",
-        json={"dataset_name": "docs"},
+        json={"dataset": "docs"},
     )
     assert resp.status_code == 200
     assert resp.json()["task_id"] == "task-1"

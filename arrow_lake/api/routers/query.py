@@ -165,6 +165,7 @@ async def metadata_query(
     checker=Depends(get_checker),
 ) -> OlapQueryResponse:
     """Execute metadata SQL query (semantic alias for olap_query)."""
+    validate_sql_safety(req.sql)
     result = await run_sync(
         lake.sql_query, name, req.sql, max_rows=req.max_rows,
         timeout=_QUERY_TIMEOUT, label="metadata_query",

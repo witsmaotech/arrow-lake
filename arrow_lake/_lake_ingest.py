@@ -49,10 +49,13 @@ class _LakeIngestMixin:
         report = Ingestor(self._get_storage()).ingest(
             dataset_name, file_paths, transforms=transforms,
         )
-        self._lineage_after_ingest(
-            dataset_name, source_paths=file_paths, actor=actor,
-            lance_version=self._safe_version(dataset_name), total_rows=report.total_rows,
-        )
+        try:
+            self._lineage_after_ingest(
+                dataset_name, source_paths=file_paths, actor=actor,
+                lance_version=self._safe_version(dataset_name), total_rows=report.total_rows,
+            )
+        except Exception:
+            logger.warning("ingest_lineage_record_failed", exc_info=True)
         return report
 
     def load_hf_dataset(self, repo_id: str, *, table: str | None = None) -> Any:
@@ -125,10 +128,13 @@ class _LakeIngestMixin:
         report = Ingestor(self._get_storage()).ingest_batch(
             dataset_name, file_paths, transforms=transforms,
         )
-        self._lineage_after_ingest(
-            dataset_name, source_paths=file_paths, actor=actor,
-            lance_version=self._safe_version(dataset_name), total_rows=report.total_rows,
-        )
+        try:
+            self._lineage_after_ingest(
+                dataset_name, source_paths=file_paths, actor=actor,
+                lance_version=self._safe_version(dataset_name), total_rows=report.total_rows,
+            )
+        except Exception:
+            logger.warning("ingest_lineage_record_failed", exc_info=True)
         return report
 
     def ingest_sql(

@@ -86,6 +86,11 @@ async def download_export(
     task = TaskManager.get_task(task_id)
     if task is None or task.dataset_name != name:
         raise HTTPException(status_code=404, detail="Export task not found")
+    # IDOR:非 ADMIN 仅能下载自己创建的导出(user_id 未设的旧任务兼容放行)
+    if getattr(_user, "role", None) != Role.ADMIN:
+        _uid = getattr(_user, "user_id", None)
+        if task.user_id is not None and task.user_id != _uid:
+            raise HTTPException(status_code=403, detail="无权下载他人导出")
     if task.status != "completed":
         raise HTTPException(
             status_code=400,

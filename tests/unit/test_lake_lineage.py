@@ -173,6 +173,7 @@ class TestLineageRecordEvent:
             "transform",
             source_datasets=["src_a"],
             transform_type="etl",
+            lance_version=None,
             actor="user",
             metadata=None,
         )
@@ -194,6 +195,7 @@ class TestLineageRecordEvent:
             "ingest",
             source_datasets=None,
             transform_type="",
+            lance_version=None,
             actor="system",
             metadata=None,
         )

@@ -50,7 +50,7 @@ class MockLLMProvider:
         pass
 
 
-def _mock_retriever(question: str, dataset_name: str, top_k: int):
+def _mock_retriever(question: str, dataset_name: str, top_k: int, strategy: str = "fts"):
     """Return a mock PyArrow table."""
     import pyarrow as pa
 

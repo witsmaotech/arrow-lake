@@ -27,6 +27,8 @@ async def client(mock_lake: MagicMock) -> AsyncClient:
     config.api.api_key_default_role = "ADMIN"
     app = create_app(config)
     app.state.lake = mock_lake
+    # ASGITransport does not run lifespan; mark ready so /health/ready checks storage.
+    app.state.ready = True
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",

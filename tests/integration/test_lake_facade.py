@@ -165,4 +165,10 @@ class TestDeleteDatasetIntegration:
         assert "to_delete" in lake.list_datasets()
         lake.delete_dataset("to_delete")
         assert "to_delete" not in lake.list_datasets()
-        assert lake.catalog().total == 0
+        # v1.9.x: delete_dataset records an audit entry in the _audit_trail
+        # system table, which itself shows up in catalog(). Assert the user
+        # dataset is gone rather than total == 0.
+        remaining_user = [
+            e for e in lake.catalog().datasets if not e.name.startswith("_")
+        ]
+        assert all(e.name != "to_delete" for e in remaining_user)

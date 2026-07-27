@@ -10,6 +10,9 @@ from httpx import ASGITransport, AsyncClient
 @pytest.fixture
 async def client() -> AsyncClient:
     app = create_app()
+    # ASGITransport skips lifespan; set ready=True so /health checks storage
+    # instead of returning status="starting" (503).
+    app.state.ready = True
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         yield ac
 

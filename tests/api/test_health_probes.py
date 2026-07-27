@@ -23,6 +23,9 @@ def _make_app(storage_dir: str | None = None) -> FastAPI:
         config.storage.base_uri = storage_dir
     app = create_app(config=config)
     app.state.lake = MagicMock()
+    # ASGITransport does not run the app lifespan, so mark the app ready
+    # (otherwise /health/ready short-circuits to "starting" without checking storage).
+    app.state.ready = True
     return app
 
 
@@ -133,6 +136,7 @@ async def test_health_probes_bypass_auth() -> None:
     cfg.compute.ray_address = ""
     app = create_app(config=cfg)
     app.state.lake = MagicMock()
+    app.state.ready = True  # see _make_app: lifespan not run under ASGITransport
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         resp = await ac.get("/health/live")

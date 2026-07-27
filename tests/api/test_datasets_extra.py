@@ -32,6 +32,14 @@ class _FakeEntry:
     name: str
     version: int
     num_rows: int
+    # Fields added in v1.9.x; mirror arrow_lake.api.models.dataset.DatasetInfo.
+    num_columns: int = 0
+    vector_dim: int | None = None
+    has_vector_index: bool = False
+    has_fts_index: bool = False
+    size_bytes: int | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
 
 
 @dataclass(frozen=True)

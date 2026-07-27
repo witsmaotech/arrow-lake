@@ -28,6 +28,14 @@ class _FakeEntry:
     name: str
     version: int
     num_rows: int
+    # Fields added in v1.9.x; mirror arrow_lake.api.models.dataset.DatasetInfo.
+    num_columns: int = 0
+    vector_dim: int | None = None
+    has_vector_index: bool = False
+    has_fts_index: bool = False
+    size_bytes: int | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -331,9 +339,10 @@ def test_sanitize_filename_valid() -> None:
 
 
 def test_sanitize_filename_rejects_special_chars() -> None:
+    """Since v1.9.x, unsafe characters are substituted with '_' instead of raising."""
     from arrow_lake.api.routers.datasets import _sanitize_filename
-    with pytest.raises(ValueError):
-        _sanitize_filename("file with spaces.csv")
+    # Behaviour changed: previously raised ValueError, now sanitizes to '_'.
+    assert _sanitize_filename("file with spaces.csv") == "file_with_spaces.csv"
 
 
 def test_sanitize_filename_rejects_empty_after_basename() -> None:

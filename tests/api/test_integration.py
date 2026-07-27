@@ -55,6 +55,8 @@ def app_no_auth(lake_base_uri: str) -> Any:
 
     lake = Lake(base_uri=lake_base_uri, config=config)
     application.state.lake = lake
+    # ASGITransport skips lifespan; mark ready so /health checks storage.
+    application.state.ready = True
     return application
 
 
@@ -76,6 +78,8 @@ def app_with_auth(lake_base_uri: str) -> Any:
 
     lake = Lake(base_uri=lake_base_uri, config=config)
     application.state.lake = lake
+    # ASGITransport skips lifespan; mark ready so /health checks storage.
+    application.state.ready = True
     return application
 
 

@@ -19,6 +19,9 @@ def _make_app_with_key(api_key: str) -> FastAPI:
     config.auth.jwt_secret_key = "test-jwt-secret-key-at-least-32-characters-long"
     app = create_app(config=config)
     app.state.lake = MagicMock()
+    # ASGITransport skips lifespan; mark ready so /health checks storage
+    # instead of returning status="starting" (503).
+    app.state.ready = True
     return app
 
 

@@ -59,11 +59,11 @@ class TestConfigDefaults:
         assert config.storage.backend == StorageBackend.MINIO
 
     def test_default_metrics_port(self) -> None:
-        """Default metrics port is 8000."""
+        """Default metrics port is 8001 (changed in v1.9.x to avoid clashing with API port 8000)."""
         from arrow_lake.config import ArrowLakeConfig
 
         config = ArrowLakeConfig()
-        assert config.observability.metrics_port == 8000
+        assert config.observability.metrics_port == 8001
 
     def test_default_metrics_enabled(self) -> None:
         """Default metrics is enabled."""

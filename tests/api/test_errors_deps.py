@@ -137,6 +137,8 @@ class TestGetAppConfig:
         config.compute.ray_address = ""
         app = create_app(config=config)
         app.state.lake = MagicMock()
+        # ASGITransport skips lifespan; mark ready so /health/ready checks storage.
+        app.state.ready = True
 
         # The config should be accessible via the health endpoint
         # which uses get_app_config internally

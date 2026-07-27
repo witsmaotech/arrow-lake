@@ -45,6 +45,14 @@ class _TestLake(_LakeRAGMixin):
         })
         return mock_result
 
+    def _get_storage(self) -> MagicMock:
+        """v1.9.x: _LakeRAGMixin reads storage for retriever fallback; stub it."""
+        return MagicMock()
+
+    # v1.9.4/v1.9.5 lineage/audit hooks live on the main Lake class; stub them.
+    auto_record_rag = MagicMock()
+    _lineage_after_ingest = MagicMock()
+
 
 @pytest.fixture()
 def lake() -> _TestLake:

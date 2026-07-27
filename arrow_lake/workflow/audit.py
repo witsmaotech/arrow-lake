@@ -195,6 +195,9 @@ class AuditTrail:
         idx = ids.index(audit_id)
         stored_hash = table.column("hmac_hash")[idx].as_py()
 
+        # 注:audit verify 无 key 的语义项目内测试矛盾(unit 期望 False strict /
+        # integration 期望 True dev-mode)。保持 False(安全模块保守语义 = 不信任),
+        # integration test_verify_no_secret 的 True 期望是测试债,需单独对齐。
         if not stored_hash:
             logger.warning("Audit HMAC key not configured — integrity check skipped")
             return False

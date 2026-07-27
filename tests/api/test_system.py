@@ -18,11 +18,21 @@ def _make_config() -> ArrowLakeConfig:
     return config
 
 
+def _make_app() -> FastAPI:
+    """Create a test app with the ready flag set.
+
+    ASGITransport does not run the lifespan, so without this flag /health
+    short-circuits to status="starting" (503) without checking storage.
+    """
+    app = create_app(config=_make_config())
+    app.state.lake = MagicMock()
+    app.state.ready = True
+    return app
+
+
 @pytest.mark.asyncio
 async def test_health_returns_ok() -> None:
-    config = _make_config()
-    app: FastAPI = create_app(config=config)
-    app.state.lake = MagicMock()
+    app: FastAPI = _make_app()
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         resp = await ac.get("/health")
@@ -34,9 +44,7 @@ async def test_health_returns_ok() -> None:
 
 @pytest.mark.asyncio
 async def test_health_includes_version() -> None:
-    config = _make_config()
-    app: FastAPI = create_app(config=config)
-    app.state.lake = MagicMock()
+    app: FastAPI = _make_app()
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         resp = await ac.get("/health")
@@ -47,9 +55,7 @@ async def test_health_includes_version() -> None:
 @pytest.mark.asyncio
 async def test_version_returns_info() -> None:
     """GET /api/v1/version returns version, python, and dependency info."""
-    config = _make_config()
-    app: FastAPI = create_app(config=config)
-    app.state.lake = MagicMock()
+    app: FastAPI = _make_app()
 
     async with AsyncClient(
         transport=ASGITransport(app=app),

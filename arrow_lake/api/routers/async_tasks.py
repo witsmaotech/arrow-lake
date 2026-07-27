@@ -63,6 +63,11 @@ async def get_task_status(
     task = TaskManager.get_task(task_id)
     if task is None:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
+    # IDOR:非 ADMIN 仅能查自己创建的任务(user_id 未设的旧任务兼容放行)
+    if getattr(_user, "role", None) != Role.ADMIN:
+        _uid = getattr(_user, "user_id", None)
+        if task.user_id is not None and task.user_id != _uid:
+            raise HTTPException(status_code=403, detail="无权访问该任务")
     return AsyncTaskStatusResponse(
         task_id=task.task_id,
         operation=task.operation,
@@ -84,6 +89,10 @@ async def list_tasks(
 ) -> dict[str, Any]:
     """List background tasks, optionally filtered."""
     tasks = TaskManager.list_tasks(operation=operation, status=status)
+    # IDOR:非 ADMIN 仅列自己创建的任务(user_id 未设的旧任务兼容放行)
+    if getattr(_user, "role", None) != Role.ADMIN:
+        _uid = getattr(_user, "user_id", None)
+        tasks = [t for t in tasks if t.user_id is None or t.user_id == _uid]
     return {
         "total": len(tasks),
         "tasks": [

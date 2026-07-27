@@ -38,6 +38,12 @@ class _TestLake(_LakeIngestMixin):
     def _get_storage(self) -> MagicMock:
         return self._storage
 
+    # v1.9.4/v1.9.5 lineage hooks live on the main Lake class; stub them so the
+    # mixin's lineage-after-ingest call path does not AttributeError in isolation.
+    _lineage_after_ingest = MagicMock()
+    auto_record_rag = MagicMock()
+    get_dataset_version = MagicMock(return_value=1)
+
 
 @pytest.fixture()
 def lake() -> _TestLake:

@@ -855,33 +855,53 @@ function pollBuild(tid) {
   }, 4000);
 }
 
-// 极简 markdown 渲染(同 rag.html,escape-first,XSS 安全)
+// 极简 markdown 渲染(逐行块级解析,escape-first → XSS 安全,无外部依赖/CDN):
+// 支持 ```代码块```、`行内代码`、# 标题、-/* 列表、N. 有序列表、> 引用、--- 分割线、|表格|、**粗体**、*斜体*、段落。
+// 逐行解析 → 列表/代码块/引用/表格不依赖前后空行;GraphRAG 回答常无空行分隔,旧版按 \n\n 分块会把整块塞进 <p> 显示原始符号。
 function renderMd(src) {
   if (!src) return "(无回答)";
   let s = esc(src);
   const blocks = [], inls = [];
+  // 抽离围栏代码块 / 行内代码 → \x00 哨兵占位符(与正文不冲突),最后统一还原
   s = s.replace(/```[^\n`]*\n?([\s\S]*?)```/g, (_m, c) => { blocks.push(c.replace(/\n$/, "")); return `\x00B${blocks.length - 1}\x00`; });
   s = s.replace(/`([^`\n]+)`/g, (_m, c) => { inls.push(c); return `\x00I${inls.length - 1}\x00`; });
+  const lines = s.split("\n");
   const out = [];
-  for (let g of s.split(/\n{2,}/)) {
-    g = g.replace(/^\n+|\n+$/g, ""); if (!g) continue;
-    if (g.startsWith("\x00B") && g.endsWith("\x00")) { out.push(`<pre><code>${blocks[+g.slice(2, -1)]}</code></pre>`); continue; }
-    const h = g.match(/^(#{1,4})\s+(.*)/);
-    if (h && !g.includes("\n")) { out.push(`<h${h[1].length + 1}>${h[2]}</h${h[1].length + 1}>`); continue; }
-    const lines = g.split("\n");
-    if (lines.length >= 2 && lines.every(l => l.trim().startsWith("|")) && /^\|[\s:|-]+\|$/.test(lines[1].trim())) {
-      const parse = (l) => l.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map(c => c.trim());
-      const head = parse(lines[0]);
-      const body = lines.slice(2).map(parse);
-      out.push(`<table><thead><tr>${head.map(h => `<th>${h}</th>`).join("")}</tr></thead><tbody>${body.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join("")}</tr>`).join("")}</tbody></table>`);
+  let para = [];
+  const flush = () => { if (para.length) { out.push(`<p>${para.join("<br>")}</p>`); para = []; } };
+  const isUl = (l) => /^\s*[-*+]\s+/.test(l);
+  const isOl = (l) => /^\s*\d+[.)]\s+/.test(l);
+  const isTableRow = (l) => /^\s*\|.*\|\s*$/.test(l);
+  const isTableSep = (l) => /^\s*\|[\s:|-]+\|\s*$/.test(l);
+  const parseRow = (l) => l.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map(c => c.trim());
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line.trim()) { flush(); continue; }
+    const cb = line.match(/^\x00B(\d+)\x00$/);
+    if (cb) { flush(); out.push(`<pre><code>${blocks[+cb[1]]}</code></pre>`); continue; }
+    const h = line.match(/^(#{1,4})\s+(.*)/);
+    if (h) { flush(); out.push(`<h${h[1].length + 1}>${h[2]}</h${h[1].length + 1}>`); continue; }
+    if (/^&gt;\s?/.test(line)) { flush(); const q = []; while (i < lines.length && /^&gt;\s?/.test(lines[i])) { q.push(lines[i].replace(/^&gt;\s?/, "")); i++; } out.push(`<blockquote>${q.join("<br>")}</blockquote>`); i--; continue; }
+    if (isUl(line)) { flush(); const it = []; while (i < lines.length && isUl(lines[i])) { it.push(`<li>${lines[i].replace(/^\s*[-*+]\s+/, "")}</li>`); i++; } out.push(`<ul>${it.join("")}</ul>`); i--; continue; }
+    if (isOl(line)) { flush(); const it = []; while (i < lines.length && isOl(lines[i])) { it.push(`<li>${lines[i].replace(/^\s*\d+[.)]\s+/, "")}</li>`); i++; } out.push(`<ol>${it.join("")}</ol>`); i--; continue; }
+    // 表格:首行 |...|,次行 |---| 分隔 → 吃连续表格行
+    if (isTableRow(line) && i + 1 < lines.length && isTableSep(lines[i + 1])) {
+      flush();
+      const head = parseRow(line); i += 2;
+      const body = [];
+      while (i < lines.length && isTableRow(lines[i])) { body.push(parseRow(lines[i])); i++; }
+      i--; // 外层 for 会 i++,回退一格
+      out.push(`<table><thead><tr>${head.map(c => `<th>${c}</th>`).join("")}</tr></thead><tbody>${body.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join("")}</tr>`).join("")}</tbody></table>`);
       continue;
     }
-    if (lines.every(l => /^\s*[-*+]\s+/.test(l))) { out.push(`<ul>${lines.map(l => `<li>${l.replace(/^\s*[-*+]\s+/, "")}</li>`).join("")}</ul>`); continue; }
-    if (lines.every(l => /^\s*\d+[.)]\s+/.test(l))) { out.push(`<ol>${lines.map(l => `<li>${l.replace(/^\s*\d+[.)]\s+/, "")}</li>`).join("")}</ol>`); continue; }
-    out.push(`<p>${g.replace(/\n/g, "<br>")}</p>`);
+    if (/^(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) { flush(); out.push(`<hr/>`); continue; }
+    para.push(line);
   }
+  flush();
   let html = out.join("");
-  html = html.replace(/\x00I(\d+)\x00/g, (_m, i) => `<code>${inls[+i]}</code>`);
+  // 兜底:代码块占位符若未独占一行,降级为行内代码(不再泄漏哨兵)
+  html = html.replace(/\x00B(\d+)\x00/g, (_m, b) => `<code>${blocks[+b]}</code>`);
+  html = html.replace(/\x00I(\d+)\x00/g, (_m, k) => `<code>${inls[+k]}</code>`);
   html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>").replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>");
   return html || "(无回答)";
 }

@@ -246,10 +246,15 @@ class GraphRAGPipeline(RAGPipeline):
 
             try:
                 window, context_text = await vector_task
-                graph_text = await graph_task
             except Exception:
                 graph_task.cancel()
-                raise
+                raise  # 向量检索失败 → 外层 fallback super().query()
+            try:
+                graph_text = await graph_task
+            except Exception:
+                # graph 增强失败 → 降级纯 vector(不重做,避免双倍 LLM 成本/延迟)
+                logger.warning("graph_retrieval_failed_using_vector_only", exc_info=True)
+                graph_text = ""
 
             # Step 3: RRF-fuse graph + vector context
             if graph_text:

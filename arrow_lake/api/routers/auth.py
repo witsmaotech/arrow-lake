@@ -196,10 +196,11 @@ async def exchange_token(request: Request) -> TokenPair:
 
     svc = _get_auth_service(request)
 
-    # Default to editor role for API-key-based token exchange
-    payload = svc.create_access_token(user_id="api-user", role=Role.EDITOR)
+    # api-key 是共享凭证(无个体身份),换 JWT 固定 VIEWER(最小权限);
+    # 需 EDITOR/ADMIN 写权限的走 /login(有真实用户身份 + lockout 校验)。
+    payload = svc.create_access_token(user_id="api-user", role=Role.VIEWER)
     refresh = svc.create_refresh_token(
-        user_id="api-user", role=Role.EDITOR, permissions=payload.permissions
+        user_id="api-user", role=Role.VIEWER, permissions=payload.permissions
     )
 
     return TokenPair(

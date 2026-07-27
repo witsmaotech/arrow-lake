@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import TYPE_CHECKING, Any
@@ -262,7 +263,12 @@ class _LakeRAGMixin:
         if get_metrics_enabled():
             query_latency_seconds.labels(query_type="rag_query").observe(time.monotonic() - t0)
         from arrow_lake.catalog.lineage_hooks import auto_record_rag
-        auto_record_rag(self._get_storage(), dataset_name, question)
+        # 同步 IO(Lance append + Gravitino REST)卸载到线程,避免阻塞事件循环;
+        # best-effort:lineage 记录失败不阻断用户查询(审计是次要路径)
+        try:
+            await asyncio.to_thread(auto_record_rag, self._get_storage(), dataset_name, question)
+        except Exception:
+            logger.warning("rag_lineage_record_failed", exc_info=True)
         return result
 
     async def rag_query_stream(
@@ -284,14 +290,23 @@ class _LakeRAGMixin:
 
         if get_metrics_enabled():
             query_total.labels(query_type="rag_query_stream").inc()
-        async for chunk in pipeline.query_stream(
-            question=question,
-            dataset_name=dataset_name,
-            top_k=top_k,
-            strategy=strategy,
-            template_name=template_name,
-        ):
-            yield chunk
+        try:
+            async for chunk in pipeline.query_stream(
+                question=question,
+                dataset_name=dataset_name,
+                top_k=top_k,
+                strategy=strategy,
+                template_name=template_name,
+            ):
+                yield chunk
+        finally:
+            # 流式查询也记 lineage(与非流式 rag_query 对齐,避免血缘审计盲区);
+            # finally 覆盖正常结束 + 客户端断连(GeneratorExit)两条路径
+            from arrow_lake.catalog.lineage_hooks import auto_record_rag
+            try:
+                await asyncio.to_thread(auto_record_rag, self._get_storage(), dataset_name, question)
+            except Exception:
+                logger.warning("rag_stream_lineage_record_failed", exc_info=True)
 
     async def rag_extract(
         self,

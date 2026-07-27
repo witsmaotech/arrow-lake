@@ -13,12 +13,12 @@ class TestRAGPipelineSignature:
     """Verify RAGPipeline.query() signature is stable."""
 
     def test_query_method_signature(self) -> None:
-        """RAGPipeline.query must accept (question, dataset_name, *, top_k, strategy, template_name, session_id)."""
+        """RAGPipeline.query must accept (question, dataset_name, *, top_k, strategy, template_name, session_id, use_kg)."""
         from arrow_lake.rag.pipeline import RAGPipeline
 
         sig = inspect.signature(RAGPipeline.query)
         params = list(sig.parameters.keys())
-        assert params == ["self", "question", "dataset_name", "top_k", "strategy", "template_name", "session_id"]
+        assert params == ["self", "question", "dataset_name", "top_k", "strategy", "template_name", "session_id", "use_kg"]
 
     def test_extract_entities_signature(self) -> None:
         """RAGPipeline.extract_entities must accept (dataset_name, *, text_column, top_k, template_name)."""

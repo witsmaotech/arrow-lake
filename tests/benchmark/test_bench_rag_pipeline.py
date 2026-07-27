@@ -45,7 +45,7 @@ class _MockLLMProvider:
         pass
 
 
-def _mock_retriever(question: str, dataset_name: str, top_k: int) -> pa.Table:
+def _mock_retriever(question: str, dataset_name: str, top_k: int, strategy: str = "fts") -> pa.Table:
     """Mock retriever that returns fixed documents as a pyarrow Table."""
     import pyarrow as pa
 

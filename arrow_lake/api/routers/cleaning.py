@@ -230,9 +230,8 @@ async def clean_dataset(
 ) -> CleanResponse:
     """对结构化数据集跑清洗管道(语义 steps + filters),可选写回。
 
-    鉴权:require_role(EDITOR) —— 与 quality 端点(dedup/filter/rules)一致,
-    均为 role-level。dataset-level ACL(get_checker 框架存在)目前未应用到
-    quality/clean,是项目级一致缺口,留统一加固;此处 write_back 受 EDITOR 角色约束。
+    鉴权:require_role(EDITOR) + authorize_dataset(dataset-level ACL;
+    write_back 时 write=True)。与 quality 端点(filter/dedup/rules/profile)一致。
     """
     authorize_dataset(request, name, write=bool(req.write_back))
     table = _to_pa_table(
