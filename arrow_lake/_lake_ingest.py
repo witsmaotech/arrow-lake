@@ -475,7 +475,8 @@ class _LakeIngestMixin:
         sc = self._config.storage
         blob_store = self._get_component(
             "blob_store",
-            lambda: BlobStoreManager(config=sc),
+            # v1.9.5 批6: raw uploads (store_raw_pdf) go to the uploads bucket.
+            lambda: BlobStoreManager(config=sc, bucket=sc.uploads_bucket),
         )
 
         ocr_endpoint = "http://localhost:8002"

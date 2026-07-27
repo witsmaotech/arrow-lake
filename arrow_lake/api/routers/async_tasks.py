@@ -188,9 +188,13 @@ def _bg_ingest_documents(
         )
         # Best-effort post-steps (mirror sync endpoint): never fail the task on
         # embedding / FTS index errors — text_content + FTS still work without them.
+        # v1.9.5: create_vector_index added so hybrid RAG works out-of-the-box.
+        # IVF_PQ requires ≥256 rows; smaller datasets raise VECTOR_INDEX_TOO_FEW_ROWS
+        # (caught here → WARN skip; vector strategy still works via brute-force).
         for step_fn, label in (
             (getattr(lake, "embed_and_add", None), "embed_documents"),
             (getattr(lake, "create_fts_index", None), "create_fts_index"),
+            (getattr(lake, "create_vector_index", None), "create_vector_index"),
         ):
             if callable(step_fn):
                 try:

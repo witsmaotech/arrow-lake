@@ -129,10 +129,64 @@ class BlobStoreManager:
             # instance profile / env vars.
             opts = {k: v for k, v in opts.items() if v}
             self._s3 = boto3.client("s3", **opts)
+        # v1.9.5 批6: auto-create the bucket if it's not the primary data
+        # bucket (i.e. the uploads bucket), so the first upload doesn't 404.
+        # Also apply an expiration lifecycle rule if configured (>0 days).
+        if self._bucket != self._config.s3_bucket:
+            self.ensure_bucket()
+            exp = getattr(self._config, "uploads_expiration_days", 0)
+            if exp > 0:
+                self.set_lifecycle_expiration(exp)
 
     @property
     def bucket(self) -> str:
         return self._bucket
+
+    def ensure_bucket(self) -> None:
+        """Create the bucket if it doesn't exist (idempotent, best-effort).
+
+        Used for the uploads bucket so the first upload doesn't 404. The
+        primary data bucket is assumed to already exist.
+        """
+        from botocore.exceptions import ClientError
+
+        try:
+            self._s3.head_bucket(Bucket=self._bucket)
+            return
+        except ClientError:
+            pass
+        try:
+            self._s3.create_bucket(Bucket=self._bucket)
+            _log.info("blob_bucket_created", bucket=self._bucket)
+        except (ClientError, botocore.exceptions.BotoCoreError, OSError) as exc:
+            _log.warning("blob_bucket_create_failed", bucket=self._bucket, error=str(exc))
+
+    def set_lifecycle_expiration(self, days: int) -> None:
+        """Set a bucket lifecycle expiration rule (delete objects after N days).
+
+        Idempotent (rule ID ``uploads-expiration`` replaces prior). Best-effort
+        — a failure to set the rule is logged, never raised, so uploads keep
+        working. minio community edition supports expiration natively (no
+        remote tier needed).
+        """
+        from botocore.exceptions import ClientError
+
+        if days <= 0:
+            return
+        rules = [{
+            "ID": "uploads-expiration",
+            "Status": "Enabled",
+            "Filter": {"Prefix": ""},
+            "Expiration": {"Days": days},
+        }]
+        try:
+            self._s3.put_bucket_lifecycle_configuration(
+                Bucket=self._bucket,
+                LifecycleConfiguration={"Rules": rules},
+            )
+            _log.info("blob_lifecycle_set", bucket=self._bucket, expiration_days=days)
+        except (ClientError, botocore.exceptions.BotoCoreError, OSError) as exc:
+            _log.warning("blob_lifecycle_set_failed", bucket=self._bucket, error=str(exc))
 
     # ------------------------------------------------------------------
     # Upload

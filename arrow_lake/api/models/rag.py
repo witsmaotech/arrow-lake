@@ -30,6 +30,10 @@ class RAGQueryRequest(BaseModel):
     )
     template_name: str | None = Field(default=None, description="Prompt template name")
     session_id: str | None = Field(default=None, description="Session ID for conversation history")
+    use_kg: bool = Field(
+        default=True,
+        description="Inject knowledge-graph context (GraphRAG). False = pure vector/fts RAG even when hugegraph enabled.",
+    )
 
 
 class RAGCitationResponse(BaseModel):

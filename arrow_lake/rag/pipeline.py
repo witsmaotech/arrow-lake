@@ -66,9 +66,14 @@ class RAGResponse:
     latency_breakdown: LatencyBreakdown | None = None
 
 
-# Type alias for the retriever callback
+# Type alias for the retriever callback.
+# (question, dataset_name, top_k, strategy) -> Arrow Table.
+# ``strategy`` is the effective retrieval strategy ("fts"/"vector"/"hybrid"),
+# resolved by the pipeline from the per-query override or config default, and
+# forwarded so the retriever can dispatch to the right backend. Retriever
+# implementations MUST accept the 4th positional arg.
 RetrieverFunc = Callable[
-    [str, str, int],
+    [str, str, int, str],
     pa.Table,
 ]
 
@@ -176,11 +181,17 @@ class RAGPipeline:
         question: str,
         dataset_name: str,
         top_k: int,
+        strategy: str = "fts",
     ) -> pa.Table:
-        """Run retrieval in a thread pool (DuckDB queries are synchronous)."""
+        """Run retrieval in a thread pool (DuckDB queries are synchronous).
+
+        ``strategy`` is forwarded to the retriever so it can dispatch to
+        fts / vector / hybrid backends. Defaults to "fts" for backward
+        compatibility with retrievers that ignore it.
+        """
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
-            None, self._retriever, question, dataset_name, top_k
+            None, self._retriever, question, dataset_name, top_k, strategy
         )
 
     def _get_query_transformer(self) -> BaseQueryTransformer:
@@ -206,19 +217,26 @@ class RAGPipeline:
         strategy: str | None = None,
     ) -> tuple[ContextWindow, str]:
         """Retrieve documents, rerank, and build context window. Returns (window, context_text)."""
+        # Resolve effective strategy: per-query override → config default.
+        # Previously ``strategy`` only selected the score-column name and the
+        # retriever always ran fts; now it is also forwarded to the retriever
+        # so vector/hybrid actually run (default_retrieval_strategy was a dead
+        # config before). See docs/v1.9.5-rag-quality-plan.md 批1.
+        effective_strategy = strategy or self._config.default_retrieval_strategy
+
         transformer = self._get_query_transformer()
         queries = await transformer.transform(question)
 
         # Parallel retrieval for each query variant, then merge
         if len(queries) == 1:
-            result_table = await self._retrieve(queries[0], dataset_name, top_k)
+            result_table = await self._retrieve(queries[0], dataset_name, top_k, effective_strategy)
         else:
             tables = await asyncio.gather(
-                *(self._retrieve(q, dataset_name, top_k) for q in queries)
+                *(self._retrieve(q, dataset_name, top_k, effective_strategy) for q in queries)
             )
             result_table = self._merge_tables(tables)
 
-        score_column = "_rrf_score" if strategy == "hybrid" else "_score"
+        score_column = "_rrf_score" if effective_strategy == "hybrid" else "_score"
         if score_column not in result_table.column_names:
             score_column = None
 
@@ -284,8 +302,13 @@ class RAGPipeline:
         strategy: str | None = None,
         template_name: str | None = None,
         session_id: str | None = None,
+        use_kg: bool = True,
     ) -> RAGResponse:
-        """Run a full RAG query: retrieve → context → generate."""
+        """Run a full RAG query: retrieve → context → generate.
+
+        ``use_kg`` is accepted for signature parity with GraphRAGPipeline but
+        ignored here (base pipeline has no KG to inject).
+        """
         start = time.perf_counter()
 
         effective_top_k = top_k or self._config.default_top_k

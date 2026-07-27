@@ -87,7 +87,7 @@ class TestBuildMessages:
         return RAGPipeline(
             llm_provider=provider,
             config=config,
-            retriever=lambda q, ds, k: pa.table({}),
+            retriever=lambda q, ds, k, s: pa.table({}),
         )
 
     def test_prompt_injection_filtered_in_question(self, pipeline: RAGPipeline) -> None:
@@ -118,7 +118,7 @@ class TestBuildMessages:
         pipeline = RAGPipeline(
             llm_provider=provider,
             config=config,
-            retriever=lambda q, ds, k: pa.table({}),
+            retriever=lambda q, ds, k, s: pa.table({}),
         )
         # Long history that should be truncated
         history = [
@@ -142,7 +142,7 @@ class TestBuildMessages:
         pipeline = RAGPipeline(
             llm_provider=provider,
             config=config,
-            retriever=lambda q, ds, k: pa.table({}),
+            retriever=lambda q, ds, k, s: pa.table({}),
         )
         history = [
             {"question": f"Q{i}", "answer": f"A{i}"}
@@ -159,7 +159,7 @@ class TestBuildMessages:
         pipeline = RAGPipeline(
             llm_provider=provider,
             config=config,
-            retriever=lambda q, ds, k: pa.table({}),
+            retriever=lambda q, ds, k, s: pa.table({}),
         )
         messages = pipeline._build_messages("Q", "ctx")
         system_msgs = [m for m in messages if m.role == "system"]
@@ -172,7 +172,7 @@ class TestBuildMessages:
         pipeline = RAGPipeline(
             llm_provider=provider,
             config=config,
-            retriever=lambda q, ds, k: pa.table({}),
+            retriever=lambda q, ds, k, s: pa.table({}),
             prompt_registry=registry,
         )
         messages = pipeline._build_messages("Q", "ctx", template_name="nonexistent_template")
@@ -190,7 +190,7 @@ class TestBuildMessages:
         pipeline = RAGPipeline(
             llm_provider=provider,
             config=config,
-            retriever=lambda q, ds, k: pa.table({}),
+            retriever=lambda q, ds, k, s: pa.table({}),
         )
         history = [{"question": "Q1", "answer": "A1"}]
         messages = pipeline._build_messages("Q2", "ctx", history=history)
@@ -278,7 +278,7 @@ class TestGetQueryTransformer:
         pipeline = RAGPipeline(
             llm_provider=provider,
             config=config,
-            retriever=lambda q, ds, k: pa.table({}),
+            retriever=lambda q, ds, k, s: pa.table({}),
         )
         from arrow_lake.rag.query_transform import IdentityTransformer
         transformer = pipeline._get_query_transformer()
@@ -291,7 +291,7 @@ class TestGetQueryTransformer:
         pipeline = RAGPipeline(
             llm_provider=provider,
             config=config,
-            retriever=lambda q, ds, k: pa.table({}),
+            retriever=lambda q, ds, k, s: pa.table({}),
         )
         t1 = pipeline._get_query_transformer()
         t2 = pipeline._get_query_transformer()
@@ -316,7 +316,7 @@ class TestQueryWithSessionStore:
         pipeline = RAGPipeline(
             llm_provider=provider,
             config=config,
-            retriever=lambda q, ds, k: table,
+            retriever=lambda q, ds, k, s: table,
             session_store=store,
         )
 
@@ -341,7 +341,7 @@ class TestQueryWithSessionStore:
         pipeline = RAGPipeline(
             llm_provider=provider,
             config=config,
-            retriever=lambda q, ds, k: table,
+            retriever=lambda q, ds, k, s: table,
             session_store=store,
         )
 
@@ -363,7 +363,7 @@ class TestQueryWithSessionStore:
         pipeline = RAGPipeline(
             llm_provider=provider,
             config=config,
-            retriever=lambda q, ds, k: table,
+            retriever=lambda q, ds, k, s: table,
             session_store=store,
         )
 
@@ -411,7 +411,7 @@ class TestBatchQuery:
         pipeline = RAGPipeline(
             llm_provider=provider,
             config=config,
-            retriever=lambda q, ds, k: table,
+            retriever=lambda q, ds, k, s: table,
         )
 
         results = await pipeline.batch_query(
@@ -430,7 +430,7 @@ class TestBatchQuery:
         pipeline = RAGPipeline(
             llm_provider=provider,
             config=config,
-            retriever=lambda q, ds, k: pa.table({}),
+            retriever=lambda q, ds, k, s: pa.table({}),
         )
         results = await pipeline.batch_query([], dataset_name="docs")
         assert results == []
@@ -455,7 +455,7 @@ class TestExtractEntitiesExtra:
         pipeline = RAGPipeline(
             llm_provider=provider,
             config=config,
-            retriever=lambda q, ds, k: table,
+            retriever=lambda q, ds, k, s: table,
             prompt_registry=registry,
         )
 
@@ -473,7 +473,7 @@ class TestExtractEntitiesExtra:
         pipeline = RAGPipeline(
             llm_provider=provider,
             config=config,
-            retriever=lambda q, ds, k: table,
+            retriever=lambda q, ds, k, s: table,
         )
 
         resp = await pipeline.extract_entities(dataset_name="docs")
@@ -494,7 +494,7 @@ class TestExtractEntitiesExtra:
         pipeline = RAGPipeline(
             llm_provider=provider,
             config=config,
-            retriever=lambda q, ds, k: empty_table,
+            retriever=lambda q, ds, k, s: empty_table,
         )
 
         resp = await pipeline.extract_entities(dataset_name="docs")
@@ -515,7 +515,7 @@ class TestExtractEntitiesExtra:
         pipeline = RAGPipeline(
             llm_provider=provider,
             config=config,
-            retriever=lambda q, ds, k: custom_table,
+            retriever=lambda q, ds, k, s: custom_table,
         )
 
         resp = await pipeline.extract_entities(
@@ -555,7 +555,7 @@ class TestQueryStreamExtra:
         pipeline = RAGPipeline(
             llm_provider=provider,
             config=config,
-            retriever=lambda q, ds, k: table,
+            retriever=lambda q, ds, k, s: table,
             prompt_registry=registry,
         )
 
@@ -585,7 +585,7 @@ class TestLatencyBreakdown:
         pipeline = RAGPipeline(
             llm_provider=provider,
             config=config,
-            retriever=lambda q, ds, k: table,
+            retriever=lambda q, ds, k, s: table,
         )
 
         resp = await pipeline.query(question="Q", dataset_name="docs")
@@ -625,7 +625,7 @@ class TestRetrieveAndBuildContext:
         pipeline = RAGPipeline(
             llm_provider=provider,
             config=config,
-            retriever=lambda q, ds, k: table,
+            retriever=lambda q, ds, k, s: table,
             reranker=mock_reranker,
         )
 
@@ -646,7 +646,7 @@ class TestRetrieveAndBuildContext:
         pipeline = RAGPipeline(
             llm_provider=provider,
             config=config,
-            retriever=lambda q, ds, k: table,
+            retriever=lambda q, ds, k, s: table,
         )
 
         resp = await pipeline.query(question="Q", dataset_name="docs", strategy="hybrid")
@@ -664,7 +664,7 @@ class TestRetrieveAndBuildContext:
         pipeline = RAGPipeline(
             llm_provider=provider,
             config=config,
-            retriever=lambda q, ds, k: table,
+            retriever=lambda q, ds, k, s: table,
         )
 
         resp = await pipeline.query(question="Q", dataset_name="docs")

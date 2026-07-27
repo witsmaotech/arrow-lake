@@ -73,6 +73,10 @@ x-storage-env: &storage-env
   ARROW_LAKE__STORAGE__BASE_URI: "${MINIO_BUCKET:-arrow-lake}"
   ARROW_LAKE__STORAGE__S3_ENDPOINT: "http://minio:9000"
   ARROW_LAKE__STORAGE__S3_BUCKET: "${MINIO_BUCKET:-arrow-lake}"
+  # v1.9.5 批6: 原始上传文件独立 bucket(IO/生命周期隔离)。BlobStoreManager 首次用时自动 ensure。
+  ARROW_LAKE__STORAGE__S3_UPLOADS_BUCKET: "${S3_UPLOADS_BUCKET:-arrow-lake-uploads}"
+  # v1.9.5 批6: 原始文件 N 天后到期清理(0=禁用,默认禁用保留重解析能力)。启用后到期对象被 minio 自动删。
+  # ARROW_LAKE__STORAGE__UPLOADS_EXPIRATION_DAYS: "30"
   ARROW_LAKE__STORAGE__BACKEND: "minio"
   ARROW_LAKE__OBSERVABILITY__METRICS_ENABLED: "true"
   AWS_ACCESS_KEY_ID: "${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set}"
@@ -218,6 +222,9 @@ services:
       ARROW_LAKE__EMBEDDING__API_BASE: "http://host.docker.internal:11534/v1"
       ARROW_LAKE__EMBEDDING__MODEL: "qwen3-embedding:0.6b"
       ARROW_LAKE__EMBEDDING__API_KEY: "ollama"
+      # v1.9.5 批5: GraphRAG 联动(已建 KG 的数据集)。取消下行注释即开,开启后 RAG 自动
+      # 注入实体关系三元组(graph_qa 模板)。默认关——未建 KG 的数据集开了会降级为纯向量 RAG。
+      # ARROW_LAKE__HUGEGRAPH__ENABLED: "false"
       ARROW_LAKE__HUGEGRAPH__HOST: "${HUGEGRAPH_HOST:-hg-server}"
       ARROW_LAKE__HUGEGRAPH__PORT: "${HUGEGRAPH_PORT:-8080}"
       # HugeGraph 1.7+ auth（动态建图/per-dataset KG 必需）：admin / HG_SERVER_PASSWORD
@@ -244,13 +251,23 @@ services:
       ARROW_LAKE__RAG__QA_LLM__PROVIDER: "openai"
       ARROW_LAKE__RAG__QA_LLM__API_BASE: "https://dashscope.aliyuncs.com/compatible-mode/v1"
       ARROW_LAKE__RAG__QA_LLM__API_KEY: "${DASHSCOPE_API_KEY:-}"
-      ARROW_LAKE__RAG__QA_LLM__MODEL: "qwen3-max"
+      ARROW_LAKE__RAG__QA_LLM__MODEL: "qwen-plus"
+      # v1.9.5 批3: QA 低温 + 长输出,引导详尽稳定的回答。qwen-max 输出上限 8192。
+      ARROW_LAKE__RAG__QA_LLM__TEMPERATURE: "0.3"
+      ARROW_LAKE__RAG__QA_LLM__MAX_TOKENS: "16384"
+      # v1.9.5 批1: 检索策略真正生效(config 默认已是 hybrid,批1 修复死配置后 vector+FTS RRF 才真跑)。
+      ARROW_LAKE__RAG__DEFAULT_RETRIEVAL_STRATEGY: "hybrid"
+      # v1.9.5 批4: 检索池扩大。multi_query 默认值已在下方 RAG 块改为 multi_query;
+      # RERANKER_TOP_N/MULTI_QUERY_VARIANTS 复用下方既有 ${VAR:-default}(避免重复定义 yaml 冲突)。
+      ARROW_LAKE__RAG__DEFAULT_TOP_K: "20"
+      # v1.9.5 批6: Lance 本地读缓存(storage 层,1GiB),吸收 RAG 重复随机读。默认 0=关。
+      ARROW_LAKE__STORAGE__LANCE_CACHE_SIZE: "1073741824"
       # [#RAG-LLM-split] RAG 抽取/重排 LLM(可选;默认回退全局轻量 llm/ministral)。
       # 想让 RAG 抽取也走百炼轻量(qwen-turbo)时取消注释:
-      # ARROW_LAKE__RAG__EXTRACT_LLM__PROVIDER: "openai"
-      # ARROW_LAKE__RAG__EXTRACT_LLM__API_BASE: "https://dashscope.aliyuncs.com/compatible-mode/v1"
-      # ARROW_LAKE__RAG__EXTRACT_LLM__API_KEY: "${DASHSCOPE_API_KEY:-}"
-      # ARROW_LAKE__RAG__EXTRACT_LLM__MODEL: "qwen-turbo"
+      ARROW_LAKE__RAG__EXTRACT_LLM__PROVIDER: "openai"
+      ARROW_LAKE__RAG__EXTRACT_LLM__API_BASE: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+      ARROW_LAKE__RAG__EXTRACT_LLM__API_KEY: "${DASHSCOPE_API_KEY:-}"
+      ARROW_LAKE__RAG__EXTRACT_LLM__MODEL: "qwen-turbo"
       # 候选问答模型 (替换 MODEL 行即换): qwen-max / deepseek-v3 / 本地 qwen3.5:27b
       #   (本地: API_BASE=http://host.docker.internal:11534/v1, API_KEY=ollama)
       # 抽取换百炼轻量 (启用:KG 抽取走云端 qwen-turbo,不依赖本地 ollama,json_schema 约束解码):
@@ -285,7 +302,7 @@ services:
       ARROW_LAKE__RAG__RERANKER: "${RAG_RERANKER:-ollama}"
       ARROW_LAKE__RAG__RERANKER_MODEL: "${RAG_RERANKER_MODEL:-dengcao/Qwen3-Reranker-0.6B:F16}"
       ARROW_LAKE__RAG__RERANKER_TOP_N: "${RAG_RERANKER_TOP_N:-10}"
-      ARROW_LAKE__RAG__QUERY_TRANSFORM: "${RAG_QUERY_TRANSFORM:-none}"
+      ARROW_LAKE__RAG__QUERY_TRANSFORM: "${RAG_QUERY_TRANSFORM:-multi_query}"
       ARROW_LAKE__RAG__HYDE_MAX_TOKENS: "${RAG_HYDE_MAX_TOKENS:-256}"
       ARROW_LAKE__RAG__MULTI_QUERY_VARIANTS: "${RAG_MULTI_QUERY_VARIANTS:-3}"
       ARROW_LAKE__RAG__HISTORY_INJECTION_ENABLED: "true"
@@ -307,6 +324,8 @@ services:
       ARROW_LAKE__GRAVITINO__FEDERATED_QUERY_MAX_ROWS: "${GRAVITINO_QUERY_MAX_ROWS:-100000}"
       # Docling 模型缓存持久化（layout DocLayNet + table TableFormer + OCR，首次下载后随卷复用）
       HF_HOME: "/app/.docling-cache"
+      HF_HUB_OFFLINE: "0"  # v1.9.5: 允许 docling 首次下载模型
+      HF_ENDPOINT: "https://hf-mirror.com"  # 国内 HF mirror(容器内可达)
       # v1.9.0: system_db (libSQL) control-plane DB — off by default; flip in .env
       ARROW_LAKE__SYSTEM_DB__ENABLED: "${SYSTEM_DB_ENABLED:-false}"
       ARROW_LAKE__SYSTEM_DB__URL: "${SYSTEM_DB_URL:-http://system-db:8080}"

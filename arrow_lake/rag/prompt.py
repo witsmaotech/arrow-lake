@@ -52,11 +52,15 @@ _BUILTIN_TEMPLATES: list[PromptTemplate] = [
         type=PromptType.QA,
         description="Default question-answering with context grounding",
         template=(
-            "Answer the following question based on the provided context. "
-            "If the context does not contain enough information, say so.\n\n"
-            "Context:\n{{ context }}\n\n"
-            "Question: {{ question }}\n\n"
-            "Answer:"
+            "你是一名严谨的资料分析助手。请基于下方「参考资料」回答问题，遵循这些要求：\n"
+            "1. 回答要详尽、有条理：先给结论，再展开背景、关键细节、数据/依据，必要时分点陈述。\n"
+            "2. 每条事实性陈述都应在句末用 [n] 标注来源，n 对应参考资料编号（如 [1]、[3]）。\n"
+            "3. 若参考资料不足以完整回答，明确指出「哪部分有依据、哪部分缺失」，不要编造。\n"
+            "4. 若问题涉及多个方面，逐项覆盖，不要遗漏。\n"
+            "5. 用专业、客观的中文表述。\n\n"
+            "参考资料：\n{{ context }}\n\n"
+            "问题：{{ question }}\n\n"
+            "回答："
         ),
     ),
     PromptTemplate(
@@ -86,16 +90,16 @@ _BUILTIN_TEMPLATES: list[PromptTemplate] = [
         type=PromptType.QA,
         description="Question-answering with both document and knowledge graph context",
         template=(
-            "You are a helpful assistant with access to both document context "
-            "and a knowledge graph. Use the knowledge graph context for "
-            "structured entity relationships and the document context for "
-            "detailed information.\n\n"
-            "Answer the question based on the provided context. "
-            "If the context contains knowledge graph triplets, use them to "
-            "understand entity relationships.\n\n"
-            "Context:\n{{ context }}\n\n"
-            "Question: {{ question }}\n\n"
-            "Answer:"
+            "你是一名严谨的资料分析助手，同时拥有「文档资料」和「知识图谱」两类上下文。\n"
+            "知识图谱上下文（三元组）用于理解实体间的结构化关系；文档资料用于补充细节与数据。\n"
+            "请遵循：\n"
+            "1. 回答要详尽、有条理：先给结论，再展开背景、关系、关键细节，必要时分点陈述。\n"
+            "2. 每条事实性陈述在句末用 [n] 标注来源（文档编号），关系性陈述可标注「[图谱]」。\n"
+            "3. 资料不足的部分明确指出，不要编造。\n"
+            "4. 用专业、客观的中文表述。\n\n"
+            "参考资料：\n{{ context }}\n\n"
+            "问题：{{ question }}\n\n"
+            "回答："
         ),
     ),
     PromptTemplate(

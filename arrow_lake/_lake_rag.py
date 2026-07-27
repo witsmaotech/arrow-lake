@@ -132,19 +132,79 @@ class _LakeRAGMixin:
             base_url=base_url,
         )
 
-    def _rag_retriever(self, question: str, dataset_name: str, top_k: int) -> Any:
+    def _rag_retriever(
+        self, question: str, dataset_name: str, top_k: int, strategy: str = "fts"
+    ) -> Any:
         """Retrieve relevant documents for a RAG query.
 
-        Uses FTS (full-text search) by default. Override for custom retrieval.
-        Returns a PyArrow table with columns: text, row_id, _score.
+        Dispatches by ``strategy``:
+        - ``fts`` (or unknown): full-text search (BM25 + jieba).
+        - ``vector``: embed question → vector similarity search.
+        - ``hybrid``: embed question → vector + FTS RRF fusion.
+
+        Returns a PyArrow table. Score column: fts→ ``_score``, hybrid→
+        ``_rrf_score``; vector relies on the reranker (distance column is
+        lower-is-better, so we let the reranker re-score rather than risk an
+        inverted sort in ContextWindow.finalize).
+
+        v1.9.5 批1: previously this ALWAYS ran fts regardless of
+        ``default_retrieval_strategy`` (which was a dead config — the pipeline's
+        strategy arg only picked the score-column name). Now the strategy
+        forwarded by the pipeline is honored. See docs/v1.9.5-rag-quality-plan.md.
         """
         validate_identifier(dataset_name)
-        result = self.text_search(
-            dataset_name,
-            question,
-            top_k=top_k,
-        )
+
+        # fts / unknown → existing FTS path (zero overhead, no embedding cost).
+        if strategy not in ("vector", "hybrid"):
+            result = self.text_search(dataset_name, question, top_k=top_k)
+            return result.table
+
+        # vector / hybrid need a query embedding.
+        query_vector = self._embed_query(question)
+
+        if strategy == "vector":
+            result = self.search(dataset_name, query_vector, top_k=top_k)
+            return result.table
+
+        # hybrid: vector + FTS RRF fusion (default_retrieval_strategy).
+        result = self.hybrid_search(dataset_name, query_vector, question, top_k=top_k)
         return result.table
+
+    def _embed_query(self, question: str) -> list[float]:
+        """Embed a query string via the configured embedding backend.
+
+        Uses a cached raw encoder (NOT wrapped in _LakeEmbedderAdapter — RAG
+        query embedding needs plain ``encode()``, not langchain Embeddings).
+        """
+        encoder = self._get_component("rag_query_embedder", self._create_query_embedder)
+        batch = encoder.encode([question])
+        vec = batch.embeddings[0]
+        # EmbeddingBatch.embeddings is a numpy ndarray → list[float] for the
+        # search/hybrid_search APIs.
+        return vec.tolist() if hasattr(vec, "tolist") else list(vec)
+
+    def _create_query_embedder(self) -> Any:
+        """Build the query embedding encoder (singleton via _get_component).
+
+        Mirrors :meth:`_LakeKG._create_kg_embedder`'s construction over
+        ``ArrowLakeConfig.embedding`` but returns the RAW encoder. DAFT
+        degrades to LOCAL for single-query embedding (Daft's distributed
+        overhead is unjustified per-query).
+        """
+        from arrow_lake.config._enums import EmbeddingBackend
+        from arrow_lake.embed.encoder import ApiEmbeddingEncoder, LocalEmbeddingEncoder
+
+        cfg = self.config.embedding
+        if cfg.backend == EmbeddingBackend.OPENAI and cfg.api_base:
+            return ApiEmbeddingEncoder(
+                api_base=cfg.api_base, api_key=cfg.api_key,
+                model_name=cfg.model, batch_size=cfg.batch_size,
+            )
+        # LOCAL / DAFT / RAY_SERVE → LOCAL (DAFT too heavy for per-query embed).
+        return LocalEmbeddingEncoder(
+            model_name=cfg.model, batch_size=cfg.batch_size,
+            expected_dim=cfg.expected_dim,
+        )
 
     async def rag_query(
         self,
@@ -155,6 +215,7 @@ class _LakeRAGMixin:
         strategy: str | None = None,
         template_name: str | None = None,
         session_id: str | None = None,
+        use_kg: bool = True,
     ) -> RAGResponse:
         """Run a RAG query over a dataset.
 
@@ -187,6 +248,7 @@ class _LakeRAGMixin:
             strategy=strategy,
             template_name=template_name,
             session_id=session_id,
+            use_kg=use_kg,
         )
         if get_metrics_enabled():
             query_latency_seconds.labels(query_type="rag_query").observe(time.monotonic() - t0)

@@ -91,6 +91,7 @@ async def rag_query(
                 strategy=req.retrieval_strategy,
                 template_name=req.template_name,
                 session_id=req.session_id,
+                use_kg=req.use_kg,
             )
     except TimeoutError:
         raise HTTPException(status_code=504, detail="RAG query timed out — LLM provider may be unavailable") from None

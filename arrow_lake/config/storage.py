@@ -40,6 +40,14 @@ class StorageConfig(BaseModel):
     s3_access_key: str = ""
     s3_secret_key: str = ""
     s3_bucket: str = "arrow-lake"
+    # v1.9.5 批6: raw uploaded files go to a separate bucket (IO/lifecycle
+    # isolation from the Lance data plane). Empty → reuse s3_bucket (backward
+    # compatible). Lance tables always use s3_bucket; uploads use uploads_bucket.
+    s3_uploads_bucket: str = ""
+    # v1.9.5 批6: auto-expire uploaded raw files after N days (0 = disabled).
+    # Disabled by default — enabling loses the ability to re-parse (e.g. switch
+    # OCR backend) once objects expire, so opt in deliberately.
+    uploads_expiration_days: int = 0
     s3_region: str = "us-east-1"
 
     # Lance write optimization parameters
@@ -99,6 +107,11 @@ class StorageConfig(BaseModel):
         if path.startswith("./"):
             path = path[2:]
         return f"s3://{self.s3_bucket}/{path}"
+
+    @property
+    def uploads_bucket(self) -> str:
+        """Bucket for raw uploaded files (defaults to s3_bucket if unset)."""
+        return self.s3_uploads_bucket or self.s3_bucket
 
     def to_storage_options(self) -> dict[str, str] | None:
         """Return storage_options dict for lance/boto3, or None for local.

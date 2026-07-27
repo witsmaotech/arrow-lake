@@ -128,7 +128,7 @@ class TestRAGPipeline:
         pipeline = RAGPipeline(
             llm_provider=provider,
             config=rag_config,
-            retriever=lambda q, ds, top_k: table,
+            retriever=lambda q, ds, top_k, s: table,
         )
 
         resp = await pipeline.query(
@@ -156,7 +156,7 @@ class TestRAGPipeline:
         pipeline = RAGPipeline(
             llm_provider=provider,
             config=rag_config,
-            retriever=lambda q, ds, top_k: table,
+            retriever=lambda q, ds, top_k, s: table,
             prompt_registry=registry,
         )
 
@@ -211,7 +211,7 @@ class TestRAGPipeline:
         pipeline = RAGPipeline(
             llm_provider=provider,
             config=config,
-            retriever=lambda q, ds, top_k: table,
+            retriever=lambda q, ds, top_k, s: table,
         )
 
         await pipeline.query(question="Q", dataset_name="docs")
@@ -235,7 +235,7 @@ class TestRAGPipeline:
         pipeline = RAGPipeline(
             llm_provider=provider,
             config=rag_config,
-            retriever=lambda q, ds, top_k: table,
+            retriever=lambda q, ds, top_k, s: table,
         )
 
         chunks = []
@@ -258,7 +258,7 @@ class TestRAGPipeline:
         pipeline = RAGPipeline(
             llm_provider=provider,
             config=rag_config,
-            retriever=lambda q, ds, top_k: table,
+            retriever=lambda q, ds, top_k, s: table,
         )
 
         resp = await pipeline.extract_entities(
@@ -282,7 +282,7 @@ class TestRAGPipeline:
         pipeline = RAGPipeline(
             llm_provider=_mock_provider("I don't have enough context."),
             config=rag_config,
-            retriever=lambda q, ds, top_k: empty_table,
+            retriever=lambda q, ds, top_k, s: empty_table,
         )
 
         with pytest.raises(RAGError, match="no relevant documents") as exc_info:
@@ -302,7 +302,7 @@ class TestRAGPipeline:
         pipeline = RAGPipeline(
             llm_provider=provider,
             config=config,
-            retriever=lambda q, ds, top_k: table,
+            retriever=lambda q, ds, top_k, s: table,
         )
 
         resp = await pipeline.query(question="Q", dataset_name="docs")
@@ -319,7 +319,7 @@ class TestRAGPipeline:
         pipeline = RAGPipeline(
             llm_provider=provider,
             config=config,
-            retriever=lambda q, ds, top_k: table,
+            retriever=lambda q, ds, top_k, s: table,
         )
 
         resp = await pipeline.query(question="Q", dataset_name="docs")

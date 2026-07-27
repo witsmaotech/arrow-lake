@@ -202,6 +202,7 @@ class GraphRAGPipeline(RAGPipeline):
         strategy: str | None = None,
         template_name: str | None = None,
         session_id: str | None = None,
+        use_kg: bool = True,
     ) -> RAGResponse:
         """GraphRAG query with graceful degradation.
 
@@ -214,8 +215,8 @@ class GraphRAGPipeline(RAGPipeline):
         When KG is unavailable or raises an error, falls back to
         ``super().query()`` (pure vector RAG).
         """
-        if not self._kg_available():
-            logger.debug("KG unavailable, falling back to vector RAG")
+        if not self._kg_available() or not use_kg:
+            logger.debug("KG unavailable or disabled (use_kg=False), falling back to vector RAG")
             return await super().query(
                 question,
                 dataset_name,

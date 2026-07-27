@@ -126,7 +126,7 @@ class TestChonkieIntegration:
             assert chunks[1].page_number == 2
             mock_chonkie.TokenChunker.assert_called_once_with(
                 chunk_size=256,
-                chunk_overlap=64,
+                chunk_overlap=150,
             )
         finally:
             del sys.modules["chonkie"]
@@ -152,8 +152,8 @@ class TestChonkieIntegration:
             )
             chunker.chunk([(1, "text")])
             mock_chonkie.TokenChunker.assert_called_once_with(
-                chunk_size=512,
-                chunk_overlap=64,
+                chunk_size=1200,
+                chunk_overlap=150,
                 tokenizer="bert-base-uncased",
             )
         finally:

@@ -47,6 +47,6 @@ services:
         target: /app/console
         read_only: true
       - type: bind
-        source: /home/witshine/.cache/huggingface/hub/models--openai--clip-vit-base-patch32
-        target: /hf-hub/models--openai--clip-vit-base-patch32
+        source: /home/witshine/.cache/huggingface/hub
+        target: /hf-hub
         read_only: true

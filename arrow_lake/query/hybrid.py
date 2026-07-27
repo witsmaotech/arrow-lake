@@ -456,7 +456,7 @@ class HybridSearchBridge:
 
         # Degraded mode: single result, skip RRF fusion
         if vector_result is None or fts_result is None:
-            logger.info("Hybrid search degraded to single mode", errors=errors)
+            logger.info("Hybrid search degraded to single mode: %s", errors)
             single = vector_result if vector_result is not None else fts_result
             return single.table
 

@@ -178,11 +178,18 @@ class TestUploadEndpoint:
 
     @pytest.mark.asyncio
     async def test_upload_bad_filename(self):
+        """Filenames that sanitize to empty (pure unsafe chars) are rejected.
+
+        Note: normal filenames with spaces (e.g. "Attention Is All You Need.pdf")
+        are intentionally SANITIZED, not rejected — a strict allow-list was found
+        to 500 on perfectly normal names. Only names that reduce to empty after
+        sanitization raise "Invalid filename".
+        """
         from arrow_lake.api.routers.datasets import upload_files
 
         mock_lake = MagicMock()
         mock_file = MagicMock(spec=["filename", "content_type", "read"])
-        mock_file.filename = "file with spaces.csv"
+        mock_file.filename = "???###"  # pure unsafe chars → sanitize to empty
         mock_file.content_type = "text/csv"
         mock_file.read = AsyncMock(return_value=b"data")
 

@@ -142,9 +142,11 @@ def _unique_blob_key(dataset_name: str, filename: str) -> str:
 def _get_blob_store(lake: Any) -> Any:
     from arrow_lake.storage.blob_store import BlobStoreManager
 
+    sc = lake._config.storage
     return lake._get_component(
         "blob_store",
-        lambda: BlobStoreManager(config=lake._config.storage),
+        # v1.9.5 批6: raw uploads go to the dedicated uploads bucket.
+        lambda: BlobStoreManager(config=sc, bucket=sc.uploads_bucket),
     )
 
 
@@ -607,6 +609,16 @@ async def ingest_documents(
             import structlog
             structlog.get_logger(__name__).warning(
                 "ingest.create_fts_index_failed", dataset=name, err=str(exc)[:160],
+            )
+        # v1.9.5: create vector index so hybrid RAG works out-of-the-box.
+        # IVF_PQ needs ≥256 rows; smaller datasets raise VECTOR_INDEX_TOO_FEW_ROWS
+        # (caught here → WARN skip; vector strategy still works via brute-force).
+        try:
+            await run_sync(lake.create_vector_index, name, timeout=_INGEST_TIMEOUT, label="create_vector_index")
+        except Exception as exc:  # noqa: BLE001 — never fail ingest on vector index
+            import structlog
+            structlog.get_logger(__name__).warning(
+                "ingest.create_vector_index_failed", dataset=name, err=str(exc)[:160],
             )
         _after_ingest_hooks(request.app.state, name, lake)
         return IngestResponse.from_report(report)
