@@ -228,6 +228,8 @@ class HugeGraphConfig(BaseModel):
     # Versioning archives the pre-build dump to <base>/<ds>/ka/versions/v{ts}/
     # so a regressive/failed rebuild can be rolled back.
     he_ka_max_versions: int = 5
+    # v1.9.6 P0-3: strict mode — drop entities with empty definition (noise reduction).
+    he_strict_definition: bool = False
     # [#1] Optional structural Auto-Type override (orthogonal to doc_type):
     # one of graph/temporal_graph/hypergraph/list/set/model. When set, the
     # TemplateTypeSelector picks that Auto-Type's template instead of doc_type

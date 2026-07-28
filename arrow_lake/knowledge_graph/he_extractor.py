@@ -522,7 +522,7 @@ class HyperExtractExtractor:
         return enum
 
     @staticmethod
-    def _ka_to_extraction_result(ka: Any, raw_text: str = "", valid_types: list[str] | None = None, valid_relations: list[str] | None = None) -> ExtractionResult:
+    def _ka_to_extraction_result(ka: Any, raw_text: str = "", valid_types: list[str] | None = None, valid_relations: list[str] | None = None, strict_definition: bool = False) -> ExtractionResult:
         """Convert a hyper-extract KA (``nodes``/``edges``) to an ExtractionResult.
 
         Applies the same §11.3 stopword filter + endpoint validity as legacy
@@ -558,6 +558,9 @@ class HyperExtractExtractor:
                 _match = difflib.get_close_matches(entity_type, valid_types, n=1, cutoff=0.4)
                 entity_type = _match[0] if _match else ("实体" if "实体" in valid_types else valid_types[0])
             definition = str(getattr(n, "definition", "") or "").strip()
+            # v1.9.6 P0-3: strict mode drops entities with empty definition (LLM noise).
+            if strict_definition and not definition:
+                continue
             props = (("definition", definition),) if definition else ()
             entities.append(ExtractedEntity(
                 name=name, entity_type=entity_type, properties=props))
@@ -680,7 +683,8 @@ class HyperExtractExtractor:
                 return ExtractionResult(entities=(), relations=(), raw_text=text)
 
         return self._ka_to_extraction_result(
-            result, text, valid_types=type_enum, valid_relations=relation_enum)
+            result, text, valid_types=type_enum, valid_relations=relation_enum,
+            strict_definition=getattr(self._hugegraph_config, "he_strict_definition", False))
 
     @staticmethod
     def _is_transient_feed_error(exc: Exception) -> bool:
@@ -896,7 +900,8 @@ class HyperExtractExtractor:
         # variants) flowed straight into HugeGraph.
         result = self._ka_to_extraction_result(
             ka, valid_types=self._get_type_enum(template_path),
-            valid_relations=self._get_relation_enum(template_path))
+            valid_relations=self._get_relation_enum(template_path),
+            strict_definition=getattr(self._hugegraph_config, "he_strict_definition", False))
         return DatasetKA(
             ka=ka, ka_dir=ka_dir, entity_chunks=entity_chunks, result=result
         )
