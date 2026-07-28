@@ -40,6 +40,8 @@ services:
       HF_HUB_OFFLINE: "1"
       ARROW_LAKE__RAG__RERANKER_MODEL: "/bge-reranker"
       ARROW_LAKE__RAG__ENABLE_VERIFICATION: "true"
+      ARROW_LAKE__HUGEGRAPH__HE_STRICT_DEFINITION: "true"
+      ARROW_LAKE__MASKING__HMAC_KEY: "dev-live-test-key-0123456789abcdef"
     volumes:
       - type: bind
         source: ../arrow_lake
