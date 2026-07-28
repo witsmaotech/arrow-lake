@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Awaitable
 from typing import TYPE_CHECKING
 
 from arrow_lake.rag.pipeline import RAGPipeline
@@ -199,7 +200,7 @@ class GraphRAGPipeline(RAGPipeline):
     # latency_breakdown, save_turn) can never drift again.
     # ------------------------------------------------------------------
 
-    def _extra_context_task(self, question: str, dataset_name: str, use_kg: bool):
+    def _extra_context_task(self, question: str, dataset_name: str, use_kg: bool) -> Awaitable[str] | None:
         """GraphRAG: kick off entity extraction + graph triplet retrieval to
         run in PARALLEL with vector retrieval (the base template gathers them).
 

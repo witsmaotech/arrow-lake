@@ -423,9 +423,13 @@ class RAGPipeline:
             verification=verification,
         )
 
-        # Persist turn in session store
+        # Persist turn in session store (best-effort: never fail the query on
+        # session persistence — GraphRAG's old query() had this safety net).
         if self._session_store and session_id:
-            self._session_store.save_turn(session_id, question, result)
+            try:
+                self._session_store.save_turn(session_id, question, result)
+            except Exception:  # noqa: BLE001 — best-effort persistence
+                logger.warning("rag_session_save_failed", exc_info=True)
 
         return result
 
