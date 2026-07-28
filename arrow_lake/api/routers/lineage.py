@@ -206,6 +206,19 @@ def _sanitize_node_id(name: str) -> str:
     return name.replace(".", "_").replace("-", "_").replace(" ", "_")
 
 
+def _esc_graph_label(s: str) -> str:
+    """Escape a label for safe DOT/Mermaid embedding — prevent injection from
+    EDITOR-controlled dataset names / operations (review H4 rendering defense)."""
+    return (
+        str(s)
+        .replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("|", "\\|")
+        .replace("[", "\\[")
+        .replace("]", "\\]")
+    )
+
+
 def _to_mermaid(dataset_name: str, graph: dict) -> PlainTextResponse:
     """Render lineage graph as Mermaid flowchart syntax."""
     edges = graph.get("edges", [])
@@ -217,7 +230,7 @@ def _to_mermaid(dataset_name: str, graph: dict) -> PlainTextResponse:
     for edge in edges:
         src = _sanitize_node_id(edge.get("from", ""))
         dst = _sanitize_node_id(edge.get("to", ""))
-        op = edge.get("operation", "")
+        op = _esc_graph_label(edge.get("operation", ""))
         lines.append(f"    {src} -->|{op}| {dst}")
         seen_nodes.add(src)
         seen_nodes.add(dst)
@@ -226,8 +239,8 @@ def _to_mermaid(dataset_name: str, graph: dict) -> PlainTextResponse:
     for node in nodes:
         nid = _sanitize_node_id(node.get("id", ""))
         if nid and nid not in seen_nodes:
-            label = node.get("id", nid)
-            lines.append(f"    {nid}[{label}]")
+            label = _esc_graph_label(node.get("id", nid))
+            lines.append(f'    {nid}["{label}"]')
 
     return PlainTextResponse(
         "\n".join(lines) + "\n",
@@ -243,19 +256,19 @@ def _to_dot(dataset_name: str, graph: dict) -> PlainTextResponse:
     lines: list[str] = [
         "digraph lineage {",
         "  rankdir=LR;",
-        f'  label="Lineage: {dataset_name}";',
+        f'  label="Lineage: {_esc_graph_label(dataset_name)}";',
     ]
 
     for node in nodes:
         nid = _sanitize_node_id(node.get("id", ""))
         ntype = node.get("type", "")
         color = {"target": "#4CAF50", "source": "#2196F3", "derived": "#FF9800"}.get(ntype, "#9E9E9E")
-        lines.append(f'  {nid} [label="{node.get("id", nid)}", color="{color}"];')
+        lines.append(f'  {nid} [label="{_esc_graph_label(node.get("id", nid))}", color="{color}"];')
 
     for edge in edges:
         src = _sanitize_node_id(edge.get("from", ""))
         dst = _sanitize_node_id(edge.get("to", ""))
-        op = edge.get("operation", "")
+        op = _esc_graph_label(edge.get("operation", ""))
         lines.append(f'  {src} -> {dst} [label="{op}"];')
 
     lines.append("}")
