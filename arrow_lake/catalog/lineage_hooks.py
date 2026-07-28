@@ -203,6 +203,78 @@ def auto_record_federated(
 
 
 # ---------------------------------------------------------------------------
+# Derived-operation hooks (column-level lineage) — backlog P0-5
+# ---------------------------------------------------------------------------
+
+def auto_record_materialize(
+    storage: Any,
+    dataset_name: str,
+    *,
+    source_datasets: list[str],
+    columns: list[str],
+    sql: str = "",
+    actor: str = "system:materialize",
+) -> None:
+    """Record lineage for a materialized (SQL-derived) dataset WITH column-level
+    mappings. Each derived column maps same-named from every source dataset
+    (transform_expr ``sql-project``); precise per-column expression extraction
+    from SQL is a follow-up."""
+    from arrow_lake.catalog.lineage import ColumnMapping, create_lineage_event
+
+    def _record() -> None:
+        store = _get_store(storage)
+        event = create_lineage_event(
+            dataset_name,
+            "transform",
+            source_datasets=source_datasets,
+            transform_type="materialize",
+            actor=actor,
+            metadata={"sql_preview": sql[:200]},
+        )
+        cl = [
+            ColumnMapping(source_dataset=src, source_column=c, target_column=c, transform_expr="sql-project")
+            for src in source_datasets
+            for c in columns
+        ]
+        store.record_event(event, column_lineage=cl or None)
+
+    _fire_and_forget(_record)
+
+
+def auto_record_clean(
+    storage: Any,
+    dataset_name: str,
+    *,
+    columns: list[str],
+    transform_expr: str = "clean",
+    actor: str = "system:clean-pipeline",
+) -> None:
+    """Record lineage for a clean/transform writeback WITH column-level mappings.
+
+    Clean rewrites columns in-place via restore_dataset, so each cleaned column
+    maps source→target = same column."""
+    from arrow_lake.catalog.lineage import ColumnMapping, create_lineage_event
+
+    def _record() -> None:
+        store = _get_store(storage)
+        event = create_lineage_event(
+            dataset_name,
+            "transform",
+            source_datasets=[dataset_name],
+            transform_type="clean-writeback",
+            actor=actor,
+            metadata={"columns": columns},
+        )
+        cl = [
+            ColumnMapping(source_dataset=dataset_name, source_column=c, target_column=c, transform_expr=transform_expr)
+            for c in columns
+        ]
+        store.record_event(event, column_lineage=cl or None)
+
+    _fire_and_forget(_record)
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 

@@ -346,15 +346,24 @@ class PermissionChecker:
         return result
 
     def _apply_masking(self, table: pa.Table, dataset: str, role: str) -> pa.Table:
-        """Apply column-level masking from Gravitino policies if engine is available."""
+        """Apply column-level masking from Gravitino policies if engine is available.
+
+        Fail-closed: on masking failure, return an EMPTY table (same schema,
+        zero rows) rather than the unmasked original — never leak sensitive
+        columns when the masking engine is configured but errors mid-apply.
+        Callers see an empty result (no rows) instead of unmasked data."""
         engine = getattr(self, "_masking_engine", None)
         if engine is None:
             return table
         try:
             return engine.apply_masking(table, dataset=dataset, role=role)
         except Exception:
-            logger.warning("rbac.masking_failed", dataset=dataset, role=role, exc_info=True)
-            return table
+            logger.error(
+                "rbac.masking_failed_fail_closed",
+                dataset=dataset, role=role, exc_info=True,
+                msg="masking failed — returning empty table (fail-closed, no unmasked data)",
+            )
+            return table.slice(0, 0)
 
     def set_masking_engine(self, engine: Any) -> None:
         """Inject the Gravitino MaskingEngine (called during app startup)."""

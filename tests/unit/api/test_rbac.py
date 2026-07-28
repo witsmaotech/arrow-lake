@@ -43,6 +43,22 @@ class TestHasPermission:
     def test_viewer_can_read(self) -> None:
         assert PermissionChecker().has_permission("viewer", Permission.DATASET_READ)
 
+
+def test_apply_masking_fail_closed_on_engine_error() -> None:
+    """Backlog fix: masking engine error → fail-closed (empty table, same schema),
+    never the unmasked original."""
+    import pyarrow as pa
+    from unittest.mock import MagicMock
+
+    checker = PermissionChecker()
+    engine = MagicMock()
+    engine.apply_masking.side_effect = RuntimeError("mask engine crash")
+    checker.set_masking_engine(engine)
+    table = pa.table({"ssn": ["111-22-3333", "444-55-6666"]})
+    result = checker._apply_masking(table, "ds", "viewer")
+    assert result.num_rows == 0  # empty, NOT the 2 unmasked rows
+    assert result.schema == table.schema  # schema preserved
+
     def test_viewer_cannot_write(self) -> None:
         assert not PermissionChecker().has_permission("viewer", Permission.DATASET_WRITE)
 
