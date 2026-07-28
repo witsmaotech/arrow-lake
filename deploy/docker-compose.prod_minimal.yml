@@ -36,6 +36,9 @@ x-arrow-lake: &arrow-lake
     context: ..
     dockerfile: deploy/Dockerfile
     network: host
+    additional_contexts:
+      - "hfmodels=/home/witshine/.cache/huggingface/hub"
+      - "msmodels=/home/witshine/.cache/modelscope/models"
     args:
       VERSION: "1.9.6"
       HTTP_PROXY: "${BUILD_HTTP_PROXY:-}"
@@ -303,7 +306,7 @@ services:
       ARROW_LAKE__STORAGE__VERSION_RETENTION_DAYS: "${VERSION_RETENTION_DAYS:-7}"
       # v1.4.4: RAG quality (reranking + query transform + multi-turn)
       ARROW_LAKE__RAG__RERANKER: "${RAG_RERANKER:-cross-encoder}"
-      ARROW_LAKE__RAG__RERANKER_MODEL: "${RAG_RERANKER_MODEL:-BAAI/bge-reranker-v2-m3}"
+      ARROW_LAKE__RAG__RERANKER_MODEL: "${RAG_RERANKER_MODEL:-/opt/models/bge-reranker-v2-m3}"
       ARROW_LAKE__RAG__RERANKER_TOP_N: "${RAG_RERANKER_TOP_N:-10}"
       ARROW_LAKE__RAG__QUERY_TRANSFORM: "${RAG_QUERY_TRANSFORM:-multi_query}"
       ARROW_LAKE__RAG__HYDE_MAX_TOKENS: "${RAG_HYDE_MAX_TOKENS:-256}"
@@ -325,10 +328,11 @@ services:
       ARROW_LAKE__GRAVITINO__AUTH_TYPE: "${GRAVITINO_AUTH_TYPE:-simple}"
       ARROW_LAKE__GRAVITINO__AUTH_SIMPLE_USER: "${GRAVITINO_AUTH_USER:-arrow_lake}"
       ARROW_LAKE__GRAVITINO__FEDERATED_QUERY_MAX_ROWS: "${GRAVITINO_QUERY_MAX_ROWS:-100000}"
-      # Docling 模型缓存持久化（layout DocLayNet + table TableFormer + OCR，首次下载后随卷复用）
-      HF_HOME: "/app/.docling-cache"
-      HF_HUB_OFFLINE: "0"  # v1.9.5: 允许 docling 首次下载模型
-      HF_ENDPOINT: "https://hf-mirror.com"  # 国内 HF mirror(容器内可达)
+      # v1.9.6: 模型 bake 进镜像 /opt/hf-cache（reranker bge-reranker-v2-m3 + docling layout/models），离线就绪
+      HF_HOME: "/opt/hf-cache"
+      HF_HUB_OFFLINE: "1"  # 模型已在镜像，禁止运行时联网拉
+      # v1.9.6 P0-6: masking HMAC fail-fast — 缺 key 启动阻断。默认 dev key（本地/测试），生产经 .env 覆盖强 key
+      ARROW_LAKE__MASKING__HMAC_KEY: "${ARROW_LAKE__MASKING__HMAC_KEY:-dev-live-test-key-0123456789abcdef}"
       # v1.9.0: system_db (libSQL) control-plane DB — off by default; flip in .env
       ARROW_LAKE__SYSTEM_DB__ENABLED: "${SYSTEM_DB_ENABLED:-false}"
       ARROW_LAKE__SYSTEM_DB__URL: "${SYSTEM_DB_URL:-http://system-db:8080}"

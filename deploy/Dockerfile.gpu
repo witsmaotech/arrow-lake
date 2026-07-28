@@ -114,6 +114,13 @@ COPY --from=builder /build/flows /app/flows
 # Copy examples for testing / demos
 COPY examples/ /app/examples/
 
+# v1.9.6: bake reranker + docling models (offline-ready) — same as CPU Dockerfile.
+# Sources: msmodels (modelscope reranker) + hfmodels (HF docling). Supply via
+# buildx --build-context msmodels=... --build-context hfmodels=...
+COPY --from=msmodels BAAI--bge-reranker-v2-m3/snapshots/master /opt/models/bge-reranker-v2-m3
+COPY --from=hfmodels models--docling-project--docling-layout-heron \
+     models--docling-project--docling-models /opt/hf-cache/hub/
+
 # Activate venv in PATH
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONPATH="/app" \
@@ -122,7 +129,8 @@ ENV PATH="/app/.venv/bin:$PATH" \
     NVIDIA_VISIBLE_DEVICES="all" \
     NVIDIA_DRIVER_CAPABILITIES="compute,utility" \
     ARROW_LAKE__COMPUTE__GPU_ENABLED="true" \
-    HF_HOME="/app/.docling-cache"
+    HF_HOME="/opt/hf-cache" \
+    HF_HUB_OFFLINE="1"
 
 # Install mc (MinIO Client) for health checks
 RUN curl -sL https://dl.min.io/client/mc/release/linux-amd64/mc -o /usr/local/bin/mc \

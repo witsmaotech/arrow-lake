@@ -175,6 +175,20 @@ COPY examples/ /app/examples/
 # Copy SQL Worksheet console (static frontend, served at /console via app.py StaticFiles mount)
 COPY console/ /app/console/
 
+# v1.9.6: bake reranker (bge-reranker-v2-m3) + docling models into the image so the
+# service is offline-ready (no runtime model download, no network dependency at boot).
+# Sources (BuildKit named contexts — supply via compose build.additional_contexts or
+# buildx --build-context):
+#   msmodels = modelscope models dir  → reranker snapshots/master (local-path load)
+#   hfmodels = huggingface hub dir    → docling models (HF_HOME cache)
+# Reranker loads from RERANKER_MODEL=/opt/models/bge-reranker-v2-m3 (local path);
+# docling reads via HF_HOME. HF_HUB_OFFLINE=1 forbids any runtime network fetch.
+COPY --from=msmodels BAAI--bge-reranker-v2-m3/snapshots/master /opt/models/bge-reranker-v2-m3
+COPY --from=hfmodels models--docling-project--docling-layout-heron \
+     models--docling-project--docling-models /opt/hf-cache/hub/
+ENV HF_HOME=/opt/hf-cache
+ENV HF_HUB_OFFLINE=1
+
 # Activate venv in PATH
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONPATH="/app" \
