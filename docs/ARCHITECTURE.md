@@ -437,7 +437,7 @@ YAML 配置文件 (ArrowLakeConfig.from_yaml)
 |---|---|
 | `pipeline.py` (16KB) | `RAGPipeline` 主编排，返回 `RAGResponse`（含 citation） |
 | `provider.py` (20KB) | **5 LLM provider**：OpenAI 兼容 / Anthropic / Ollama / vLLM / 自定义；`LLMProviderType` enum |
-| `reranker.py` | reranker 体系：`BaseReranker` / `NoopReranker` / `CrossEncoderReranker` / `LLMReranker` / `OllamaReranker`（v1.8.9，Qwen3-Reranker yes/no judge，**默认**）+ `create_reranker` 工厂（接 `ContextChunk`）；LLMReranker 带 SSRF scheme 校验 + prompt-injection 过滤 |
+| `reranker.py` | reranker 体系：`BaseReranker` / `NoopReranker` / `CrossEncoderReranker`（**v1.9.6 默认**，bge-reranker-v2-m3，本地 `/opt/models/` 加载）/ `LLMReranker` / `OllamaReranker`（v1.8.9 Qwen3-Reranker yes/no judge）+ `create_reranker` 工厂（接 `ContextChunk`）；`_retrieve_ranked` 统一 async 契约（v1.9.6 refactor #7）；LLMReranker 带 SSRF scheme 校验 + prompt-injection 过滤 |
 | `query_transform.py` | **HyDE** + multi-query 查询改写 |
 | `graph_rag.py` (11KB) | GraphRAG（经 KG retriever） |
 | `context.py` (10KB) | `ContextChunk` + 上下文组装 |
@@ -797,8 +797,8 @@ main.py: env_nested_delimiter="__"
 
 ### 8.4 审计与脱敏
 
-- **HMAC-SHA256 tamper-evident 审计**（`_lake_audit.py`）：日志不可篡改，可验证
-- **Masking engine**（Gravitino）：`MaskingEngine` + `RegistryModelResolver`，字段级脱敏
+- **HMAC-SHA256 tamper-evident 审计**（`_lake_audit.py`）：日志不可篡改，可验证；masking 策略创建/变更复用同一轨迹（零新表）
+- **Masking engine**（v1.9.6 完整治理）：暴露 **4 函数**（`redact` / `hash`(HMAC-SHA256 128 位) / `partial` / `nullify`）+ **HMAC fail-fast**（缺 `MASKING__HMAC_KEY` 启动阻断，`ALLOW_MISSING_KEY=1` opt-in）+ **mask-preview**（`POST /datasets/{name}/quality/mask-preview`，ADMIN-only，列名白名单防注入）；未知函数 raise（不 no-op）
 - **Retention enforcement**：保留期强制
 
 ### 8.5 传输与限流
@@ -811,6 +811,21 @@ main.py: env_nested_delimiter="__"
 ### 8.6 v1.5.2 安全加固基线
 
 8 CRITICAL + 13 HIGH 已修复（见 CHANGELOG / `project_v152_security` 记忆），构成当前安全底盘。
+
+### 8.7 v1.9.6 fail-closed 主线
+
+信任边界出错向安全一侧失败，绝不向数据泄露失败：
+
+| 路径 | 失败场景 | 行为 |
+|---|---|---|
+| masking `_apply_masking` | 引擎抛错 / 未知函数 / hash 缺 key | 返空表 `slice(0,0)` |
+| row-filter `_apply_row_filter` | 表达式不可解析 / 列缺失 / 类型不匹配 | 返空表 |
+| masking `_fetch_rules` | Gravitino 拉规则失败 | `raise RuntimeError`（不返空规则集） |
+| 启动 | `MASKING__HMAC_KEY` 缺失 | 启动阻断（`ALLOW_MISSING_KEY=1` opt-in） |
+| mask-preview | 列名非法 | 标识符白名单拒（防 SQL 注入）+ ADMIN 收紧 |
+| lineage 图谱 | 节点/边标签 | HTML 转义（vis title + DOT/Mermaid，防 XSS） |
+
+矩阵详见 [`docs/architecture-design/rbac-user-system.md`](architecture-design/rbac-user-system.md) §10。
 
 ---
 
@@ -907,7 +922,11 @@ main.py: env_nested_delimiter="__"
 
 ### 12.5 镜像构建
 
-`Dockerfile`（builder + runtime 双显式构建代理，WSL2 mirror 模式 buildkit 自动代理不注入 → 手动注入；apt/PyPI 切 aliyun 镜像；extras 合并一次解析；`--mount=type=cache,target=/root/.cache/uv` 复用下载，改 `arrow_lake/` 源码后 rebuild ~3-5min）+ `Dockerfile.gpu`。当前生产镜像 **`arrow-lake:1.9.6`**。`api` 容器 `read_only: true` —— 改后端 Python 必须 rebuild，或走 dev.override 热重载（见 [§12.2](#122-compose-profiles--overlays)）。
+`Dockerfile`（builder + runtime 双显式构建代理，WSL2 mirror 模式 buildkit 自动代理不注入 → 手动注入；apt/PyPI 切 aliyun 镜像；extras 合并一次解析；`--mount=type=cache,target=/root/.cache/uv` 复用下载，改 `arrow_lake/` 源码后 rebuild ~3-5min）+ `Dockerfile.gpu`（CUDA 12.4 cu124 torch）。当前生产镜像 **`arrow-lake:1.9.6`**（CPU 16.8GB）/ **`arrow-lake:1.9.6-gpu`**。
+
+> **v1.9.6 模型 bake**：reranker（modelscope `BAAI--bge-reranker-v2-m3` 2.2G）+ docling（HF `docling-project/*` 506M）经 BuildKit **named context**（`--build-context hfmodels=…/msmodels=…`；compose `additional_contexts`）COPY 进镜像 → `/opt/models/`（reranker 本地路径加载）+ `/opt/hf-cache/`（docling）；`ENV HF_HOME=/opt/hf-cache` + `HF_HUB_OFFLINE=1` → **服务离线就绪，启动零模型下载**。reranker 走 modelscope（HF hub 国内受限，hf-mirror 经代理不稳）。
+
+`api` 容器 `read_only: true` —— 改后端 Python 必须 rebuild，或走 dev.override 热重载（见 [§12.2](#122-compose-profiles--overlays)）。
 
 > **WSL2 部署经验**：mirrored 模式 Docker 容器外网代理三件套；Gitee push 经 Windows 互操作（gitee:22 blocked）。
 
