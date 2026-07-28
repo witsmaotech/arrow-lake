@@ -39,6 +39,7 @@ services:
       HF_HUB_CACHE: /hf-hub
       HF_HUB_OFFLINE: "1"
       ARROW_LAKE__RAG__RERANKER_MODEL: "/bge-reranker"
+      ARROW_LAKE__RAG__ENABLE_VERIFICATION: "true"
     volumes:
       - type: bind
         source: ../arrow_lake

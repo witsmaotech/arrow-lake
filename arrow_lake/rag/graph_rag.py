@@ -276,6 +276,14 @@ class GraphRAGPipeline(RAGPipeline):
             # Build response
             elapsed = (time.monotonic() - t0) * 1000
             citations = self._extract_citations(window)
+            # v1.9.6 P0-1: faithfulness verification (parity with RAGPipeline.query).
+            verification = None
+            if getattr(self._config, "enable_verification", False):
+                try:
+                    from arrow_lake.rag.verifier import verify
+                    verification = verify(llm_response.content, window.chunk_count)
+                except Exception:  # noqa: BLE001
+                    logger.warning("rag_verification_failed", exc_info=True)
             response = RAGResponse(
                 answer=llm_response.content,
                 citations=citations,
@@ -284,6 +292,7 @@ class GraphRAGPipeline(RAGPipeline):
                 llm_usage=llm_response.usage,
                 latency_ms=round(elapsed, 1),
                 session_id=session_id,
+                verification=verification,
             )
             # Persist turn in session store (parity with base RAGPipeline).
             # v1.9.0: the GraphRAG path previously returned without saving,
