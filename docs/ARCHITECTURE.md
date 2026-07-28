@@ -1,9 +1,9 @@
 # Arrow Lake — 架构技术文档（Architecture Reference）
 
-> **版本基线**：v1.9.2（已合并 `master`；`arrow_lake/_version.py` = `pyproject.toml` = 1.9.2）
-> **文档日期**：2026-07-23
+> **版本基线**：v1.9.6（已合并 `master`；`arrow_lake/_version.py` = `pyproject.toml` = 1.9.6）
+> **文档日期**：2026-07-28
 > **状态**：随主干演进，与代码当前态对齐（已逐项核实 `arrow_lake/` 源码）。v1.9.0 起**控制面库（libSQL / Turso）**已落地接管 RBAC/身份/personal_token/catalog/任务/RAG 会话/血缘索引（见 [§4.9](#49-控制面system_db)），console 运维/合规/治理前端已完备（见 [§12.2](#122-compose-profiles--overlays)）。
-> **v1.9.2 增量**（相对 v1.8.0）：① v1.9.0 Turso 控制面 ② v1.9.1 console 核心（admin/my-workspace + personal token）③ v1.9.2 console 完备化（运维/合规/治理）+ 质量深化（kg_build fire-forget GC fix / redis rate_limit+login lockout / KG 模板收紧）④ v1.8.8-v1.8.9 KG per-dataset KA + 双 LLM + OllamaReranker 默认。详见 [§14](#14-版本演进)。
+> **v1.9.6 增量**（相对 v1.8.0）：① v1.9.0 Turso 控制面 ② v1.9.1 console 核心（admin/my-workspace + personal token）③ v1.9.2 console 完备化 + 质量深化 ④ v1.9.3 数据集字段注释 + tidy/clean 清洗页 ⑤ v1.9.4 血缘审计评审 + KG MERGE_FIELD（治 BALANCED 合并爆炸）+ Gravitino 1.3.0 ⑥ v1.9.5 RAG 质量全链路（hybrid 默认生效 + GraphRAG + multi_query）⑦ v1.9.6 RAG 防幻觉(faithfulness) + cross-encoder reranker + KG snap/strict/三路并行 + 血缘可视化(lineage.html) + masking 治理(HMAC fail-fast) + 安全加固(fail-closed) ⑧ v1.8.8-v1.8.9 KG per-dataset KA + 双 LLM。详见 [§14](#14-版本演进)。
 > **语言约定**：沿用本仓库全部技术文档（roadmap / implementation / 各优化 plan / CHANGELOG）的中文惯例。
 
 本文是 Arrow Lake 的**权威技术参考**：覆盖定位、顶层架构、设计模式、分层详解、公共 API、数据流、配置、安全、可观测性、可靠性、性能、部署、异常、版本演进与测试。面向新成员上手、架构评审与后续演进决策。
@@ -907,7 +907,7 @@ main.py: env_nested_delimiter="__"
 
 ### 12.5 镜像构建
 
-`Dockerfile`（builder + runtime 双显式构建代理，WSL2 mirror 模式 buildkit 自动代理不注入 → 手动注入；apt/PyPI 切 aliyun 镜像；extras 合并一次解析；`--mount=type=cache,target=/root/.cache/uv` 复用下载，改 `arrow_lake/` 源码后 rebuild ~3-5min）+ `Dockerfile.gpu`。当前生产镜像 **`arrow-lake:1.9.2`**。`api` 容器 `read_only: true` —— 改后端 Python 必须 rebuild，或走 dev.override 热重载（见 [§12.2](#122-compose-profiles--overlays)）。
+`Dockerfile`（builder + runtime 双显式构建代理，WSL2 mirror 模式 buildkit 自动代理不注入 → 手动注入；apt/PyPI 切 aliyun 镜像；extras 合并一次解析；`--mount=type=cache,target=/root/.cache/uv` 复用下载，改 `arrow_lake/` 源码后 rebuild ~3-5min）+ `Dockerfile.gpu`。当前生产镜像 **`arrow-lake:1.9.6`**。`api` 容器 `read_only: true` —— 改后端 Python 必须 rebuild，或走 dev.override 热重载（见 [§12.2](#122-compose-profiles--overlays)）。
 
 > **WSL2 部署经验**：mirrored 模式 Docker 容器外网代理三件套；Gitee push 经 Windows 互操作（gitee:22 blocked）。
 
@@ -954,7 +954,11 @@ ArrowLakeError
 | **v1.8.9** | 2026-07-16 | **RAG reranker 回归可用**（新增 `OllamaReranker` 并设默认，修死配置/async-sync/评分反转 + SSRF/prompt-injection 加固）；**KG 双阶段 LLM**（`he_extract_llm`/`he_qa_llm`）+ **增量 KA/KG** + KA 版本管理；`/ingest/documents` 多格式 + append；审计 **P0 三连**（stderr 泄漏 / KG 默认模板 strict：定义 0%→100% / type-enum 竞态）+ Step2（append 刷派生结构 + 缓存失效）+ Step3（内容哈希三连）+ Step4-B（feed_text 退避）+ P2（max_tokens 走 config / 向量校验 / docling 进程级单例 / nprobes clamp）；移除 `_normalize_type` 死代码。详见 `docs/arrow-lake-v1.8.9-release-zh.md` |
 | **v1.9.0** | 2026-07-17 | **Turso (libSQL) 控制面库**（`arrow_lake/system_db/`，见 [§4.9](#49-控制面system_db)）：接管 RBAC / identity / personal_token / catalog 注册 / 任务历史 / lineage 索引 / RAG 会话 / governance；**数据面（Lance/DuckDB/HugeGraph/MinIO）不触碰**；opt-in（`enabled` 默认 false）+ fail_close/fail_soft 双模 + 启动迁移 V001–V004；personal_token 端点（admin 签发，`/me/*` 硬约束）+ list_users + fail-close(401) 实证。详见 `docs/v1.9.0-turso-system-db-plan.md` |
 | **v1.9.1** | 2026-07-23 | **console 核心界面**（原生 JS + ES module）：admin 全功能（用户/ACL/deny）+ my-workspace 5 区；personal token 走 `X-API-Key`；dev.override 联调秒级热重载（挂 `arrow_lake/` 源码 + `console/` bind-mount + uvicorn `--reload`） |
-| **v1.9.2** | 2026-07-23 | **console 完备化 + 质量深化**：运维（`system.html` DuckDB 池/熔断/任务/maintenance）+ 合规（audit `asdict` 序列化修复 + 分页）+ 治理（admin 用户分页、governance/lineage/backup Tab）；`kg.html` Schema·图遍历合并 + 起点实体可搜索 combobox + 图前 3000；后端 gravitino router 加 `/api/v1` prefix、**rate_limit+login lockout 迁 Redis**（多 worker fail-open）、**kg_build fire-forget 持强引用**（治大 dataset asyncio task 被 GC 卡死）、audit 全覆盖（structlog + turso）；质量（conftest autouse 全局清理 / KG 模板收紧 + CI 校验）。当前主干（`_version.py=1.9.2`，镜像 `arrow-lake:1.9.2`；git tag 未打）。详见 `docs/v1.9.2-impl-plan.md` |
+| **v1.9.2** | 2026-07-23 | **console 完备化 + 质量深化**：运维（`system.html` DuckDB 池/熔断/任务/maintenance）+ 合规（audit `asdict` 序列化修复 + 分页）+ 治理（admin 用户分页、governance/lineage/backup Tab）；`kg.html` Schema·图遍历合并 + 起点实体可搜索 combobox + 图前 3000；后端 gravitino router 加 `/api/v1` prefix、**rate_limit+login lockout 迁 Redis**（多 worker fail-open）、**kg_build fire-forget 持强引用**（治大 dataset asyncio task 被 GC 卡死）、audit 全覆盖（structlog + turso）；质量（conftest autouse 全局清理 / KG 模板收紧 + CI 校验）。详见 `docs/v1.9.2-impl-plan.md` |
+| **v1.9.3** | 2026-07-24 | **数据集字段注释**（PyArrow sidecar + DB 捕获 + `GET/POST /schema` annotate + console chip 编辑）+ **tidy.html 清洗整理页**（DuckDB 语义 steps→SQL→`restore_dataset` 写回）+ data-prep 文档型准备页（MinHash 去重 / llm_enrich）；tasks 列表 libSQL task_history 回填修复 |
+| **v1.9.4** | 2026-07-25 | **血缘埋点评审**（5 基底 + 8 gap，P0 = actor 传递链 + delete 审计，落 `docs/v1.9.4-lineage-provenance-audit.md`）+ KG **project_concept_graph** 模板（22 类型 14 关系，质量碾压 entity_graph）+ **MERGE_FIELD 合并**（治 BALANCED grouped OOM/卡死，非 LLM 稳定 15% 内存）+ Gravitino server **1.3.0** 升级（`s3.*` 属性 / `GRAVITINO_HOME=/opt`） |
+| **v1.9.5** | 2026-07-26 | **RAG 质量全链路**：hybrid 默认生效（修死配置 `_rag_retriever` 分流）+ ingest 自动 `create_vector_index`（≥256 IVF_PQ）+ `use_kg` per-query + **GraphRAG**（extract_llm=qwen-turbo，109s→50s）+ qwen-plus@16384 最优 QA + docling chunk 语义 + Lance 留 MinIO（非反模式） |
+| **v1.9.6** | 2026-07-28 | **RAG 防幻觉**（faithfulness verify，`support_ratio`/`unsupported`，embedding cosine 默认 + LLM judge opt-in）+ **cross-encoder reranker**（bge-reranker-v2-m3 默认）+ **KG 质量/性能**（snap 编辑距离归一 / strict definition 过滤 / enum 正则解析 / GraphRAG 三路并行 -40~50% / KA LRU / QuestionEntityCache monotonic）+ **治理兑现**（`lineage.html` 血缘可视化 + 列级血缘 + `max_nodes` 截断 / masking 4 函数 + HMAC fail-fast + mask-preview + audit 复用 Lance）+ **架构 refactor**（RAGQueryPlan + score 列 / `ingest_documents_and_index` 收口 / GraphRAG 模板方法 / reranker async 契约）+ **安全加固**（fail-closed 矩阵 + SQL 注入防护 + XSS esc + HMAC 128 位）。当前主干（`_version.py=1.9.6`，镜像 `arrow-lake:1.9.6`）。详见 `docs/v1.9.6-impl-plan.md` / `docs/arrow-lake-v1.9.6-release-zh.md` |
 
 **v1.8.0 实施纪律**（trunk-based，直接提交 `master`，不开 feature 分支——项目约定优先于全局 PR 规则）：每项 TDD（RED→GREEN→REFACTOR）→ 对应 cookbook 跑通 → 全量 pytest 零失败 → CHANGELOG/roadmap/implementation 同步。
 

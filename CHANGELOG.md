@@ -6,6 +6,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.9.6] - 2026-07-28
+
+**RAG 质量 + KG 质量/性能 + 治理兑现 + 架构 refactor + 安全加固**。批1 RAG 防幻觉/reranker/流式;批2 KG snap/strict/三路并行/缓存;批3 lineage.html 血缘可视化/masking 治理;架构评审 refactor(RAG/ingest 收口);安全加固(fail-closed + 注入防护)。详见 `docs/v1.9.6-impl-plan.md`、`docs/v1.9.6-batch3-impl-plan.md`。
+
+### Added — 批3 治理兑现
+- **P0-5 血缘可视化**: `console/lineage.html`(vis-network + max_nodes 截断 + 列级血缘);`trace_full_graph` max_nodes;`LineageEvent.column_lineage` 端到端打通(/history asdict)。
+- **P0-6 masking 治理**: 4 函数(redact/hash/partial/nullify) + HMAC fail-fast(`ALLOW_MISSING_KEY` opt-in) + audit(复用 Lance) + mask-preview 端点 + governance.html 下拉/预览。
+
+### Added — 批1 RAG 质量
+- **P0-1 防幻觉**: faithfulness verify(embedding/LLM judge) + support_ratio/unsupported 标注。
+- **P0-2 cross-encoder reranker**: bge-reranker-v2-m3 默认(连续分 + warmup)。
+- **P1-9 流式补帧**: citations/latency/verification SSE 事件。
+
+### Changed — 批2 KG + 架构 refactor
+- **P0-3 KG snap/strict/enum**: 编辑距离归一化 + 空 definition 过滤 + enum 正则解析。
+- **P0-4 GraphRAG 性能**: 三路 asyncio.gather 并行 + KA LRU(mtime 失效) + QuestionEntityCache monotonic。
+- **架构评审 refactor**: #1 RAGQueryPlan+score 列;#4 `ingest_documents_and_index` 收口(parse→store→embed→FTS→vector);#6 GraphRAG 模板方法钩子;#7 reranker async 契约。
+
+### Security — 安全加固
+- masking HMAC fail-fast + `ALLOW_MISSING_KEY` opt-in;hash 128 位([:32])。
+- rbac `_apply_masking`/`_apply_row_filter`/`_fetch_rules` 全 fail-closed(空表/raise)。
+- mask-preview 列名 SQL 注入修复 + ADMIN 收紧(防绕 column ACL)。
+- lineage XSS esc(vis title + DOT/Mermaid 渲染转义 + /record 校验)。
+- Gravitino 写端点 POST body 去 `?body=` query param(PII 不入 URL 日志)。
+
+## [1.9.5] - 2026-07-2X
+RAG 问答质量(default_retrieval_strategy 死配置修复/hybrid 真生效/ingest 自动建索引/use_kg per-query/GraphRAG 延迟优化 extract_llm=qwen-turbo/qwen-plus@16384)。详见 `docs/v1.9.5-rag-quality-plan.md`。
+
+## [1.9.4] - 2026-07-2X
+血缘/审计埋点评审 + KG MERGE_FIELD(非 LLM 字段合并,治 grouped 合并爆炸) + project_concept_graph 模板(22 类型)。详见 `docs/v1.9.4-lineage-provenance-audit.md`。
+
+## [1.9.3] - 2026-07-2X
+数据集字段注释(field_comments: PyArrow/CSV sidecar 直读 + _write_table 钩子 + DB 捕获 + storage 原位写 + console chip 编辑)。详见 `docs/v1.9.3-dataset-field-comments-plan.md`。
+
 ## [1.9.2] - 2026-07-23
 
 **console 完备化（运维/合规/治理）+ 质量深化**。把 console 从"数据智能 + 管理"扩展到覆盖全部 20 routers 的完整数据平台，配套清 v1.9.1 既有债（测试隔离 / KG 模板 / kg_build GC）。详见 `docs/v1.9.2-impl-plan.md`、`docs/v1.9.2-roadmap.md`。
