@@ -16,7 +16,7 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
-from arrow_lake.rag.pipeline import RAGPipeline, RAGResponse
+from arrow_lake.rag.pipeline import RAGPipeline
 
 if TYPE_CHECKING:
     from arrow_lake.config import RAGConfig
@@ -194,132 +194,30 @@ class GraphRAGPipeline(RAGPipeline):
         return f"{vec_section}\n\n{graph_section}"
 
     # ------------------------------------------------------------------
-    # Main query (graph-augmented)
+    # Template-method hooks — base RAGPipeline.query() is the single template;
+    # GraphRAG overrides only these hooks so parity (messages, verification,
+    # latency_breakdown, save_turn) can never drift again.
     # ------------------------------------------------------------------
 
-    async def query(
-        self,
-        question: str,
-        dataset_name: str,
-        *,
-        top_k: int | None = None,
-        strategy: str | None = None,
-        template_name: str | None = None,
-        session_id: str | None = None,
-        use_kg: bool = True,
-    ) -> RAGResponse:
-        """GraphRAG query with graceful degradation.
+    def _extra_context_task(self, question: str, dataset_name: str, use_kg: bool):
+        """GraphRAG: kick off entity extraction + graph triplet retrieval to
+        run in PARALLEL with vector retrieval (the base template gathers them).
 
-        When KG is available:
-        1. Extract entities from the question (cached).
-        2. Retrieve graph triplets in parallel with vector retrieval.
-        3. RRF-fuse graph + vector context using graph_weight.
-        4. Generate answer via LLM.
-
-        When KG is unavailable or raises an error, falls back to
-        ``super().query()`` (pure vector RAG).
+        Returning None when KG is off/unavailable makes the base template run
+        pure vector RAG — that IS the graceful degradation, with no duplicated
+        super().query() fallback. Entity extraction + graph retrieval already
+        swallow their own errors (→ [] / ""), so graph-side failure degrades
+        to vector-only without propagating to the template.
         """
-        if not self._kg_available() or not use_kg:
-            logger.debug("KG unavailable or disabled (use_kg=False), falling back to vector RAG")
-            return await super().query(
-                question,
-                dataset_name,
-                top_k=top_k,
-                strategy=strategy,
-                template_name=template_name,
-                session_id=session_id,
-            )
+        if not use_kg or not self._kg_available():
+            return None
+        return self._retrieve_graph_context_for(question)
 
-        t0 = time.monotonic()
-        effective_top_k = top_k or self._config.default_top_k
-        effective_template = template_name or "graph_qa"
+    async def _retrieve_graph_context_for(self, question: str) -> str:
+        """Extract question entities (cached) → retrieve graph triplets."""
+        entities = await self._extract_question_entities(question)
+        return await self._retrieve_graph_context(question, entities)
 
-        try:
-            # Step 1: Extract entities from the question (cached)
-            entities = await self._extract_question_entities(question)
-
-            # Step 2: Parallel vector + graph retrieval
-            vector_task = asyncio.ensure_future(
-                super()._retrieve_and_build_context(
-                    question, dataset_name, effective_top_k, strategy,
-                )
-            )
-            graph_task = asyncio.ensure_future(
-                self._retrieve_graph_context(question, entities)
-            )
-
-            try:
-                window, context_text = await vector_task
-            except Exception:
-                graph_task.cancel()
-                raise  # 向量检索失败 → 外层 fallback super().query()
-            try:
-                graph_text = await graph_task
-            except Exception:
-                # graph 增强失败 → 降级纯 vector(不重做,避免双倍 LLM 成本/延迟)
-                logger.warning("graph_retrieval_failed_using_vector_only", exc_info=True)
-                graph_text = ""
-
-            # Step 3: RRF-fuse graph + vector context
-            if graph_text:
-                fused_text = self._fuse_context_with_weight(context_text, graph_text)
-            else:
-                fused_text = context_text
-
-            # Step 4: Build messages and call LLM
-            # Load session history for multi-turn
-            history = None
-            if session_id and self._session_store and self._config.history_injection_enabled:
-                history = self._session_store.get_history(session_id)
-
-            messages = self._build_messages(
-                question, fused_text, effective_template, history=history,
-            )
-            llm_response = await self._llm.generate(messages)
-
-            # Build response
-            elapsed = (time.monotonic() - t0) * 1000
-            citations = self._extract_citations(window)
-            # v1.9.6 P0-1: faithfulness verification (parity with RAGPipeline.query).
-            verification = None
-            if getattr(self._config, "enable_verification", False):
-                try:
-                    from arrow_lake.rag.verifier import verify
-                    verification = verify(llm_response.content, window.chunk_count)
-                except Exception:  # noqa: BLE001
-                    logger.warning("rag_verification_failed", exc_info=True)
-            response = RAGResponse(
-                answer=llm_response.content,
-                citations=citations,
-                retrieval_count=window.chunk_count,
-                context_tokens=window.token_count if window.token_count > 0 else None,
-                llm_usage=llm_response.usage,
-                latency_ms=round(elapsed, 1),
-                session_id=session_id,
-                verification=verification,
-            )
-            # Persist turn in session store (parity with base RAGPipeline).
-            # v1.9.0: the GraphRAG path previously returned without saving,
-            # so RAG sessions were never durable when hugegraph was enabled.
-            if self._session_store and session_id:
-                try:
-                    self._session_store.save_turn(session_id, question, response)
-                except Exception:  # noqa: BLE001 — best-effort persistence
-                    logger.warning("rag_session_save_failed", exc_info=True)
-            return response
-
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.warning(
-                "GraphRAG query failed, falling back to vector RAG",
-                exc_info=True,
-            )
-            return await super().query(
-                question,
-                dataset_name,
-                top_k=top_k,
-                strategy=strategy,
-                template_name=template_name,
-                session_id=session_id,
-            )
+    def _fuse_extra_context(self, context_text: str, extra_text: str) -> str:
+        """GraphRAG: weighted graph/document fusion (section ordering by graph_weight)."""
+        return self._fuse_context_with_weight(context_text, extra_text)

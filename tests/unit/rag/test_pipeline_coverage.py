@@ -23,6 +23,7 @@ import pytest
 
 from arrow_lake.config import RAGConfig
 from arrow_lake.rag.context import ContextChunk
+from arrow_lake.rag.graph_rag import GraphRAGPipeline
 from arrow_lake.rag.pipeline import RAGCitation, RAGPipeline, RAGResponse
 from arrow_lake.rag.prompt import PromptRegistry, PromptTemplate, PromptType
 from arrow_lake.rag.provider import LLMResponse
@@ -594,6 +595,55 @@ class TestLatencyBreakdown:
         assert resp.latency_breakdown.retrieval_ms >= 0
         assert resp.latency_breakdown.context_ms >= 0
         assert resp.latency_breakdown.llm_ms >= 0
+
+
+# ---------------------------------------------------------------------------
+# GraphRAG template-method hooks (架构评审 #6)
+# ---------------------------------------------------------------------------
+
+
+class TestGraphRAGTemplateHooks:
+    """GraphRAG 不再覆盖 query(); 通过 _extra_context_task + _fuse_extra_context
+    钩入基类模板。parity(messages/verification/latency_breakdown/save_turn)
+    现在结构性保证 —— 只剩一条 query 路径。"""
+
+    def _make(self, kg_client=None, kg_extractor=None, kg_retriever=None):
+        return GraphRAGPipeline(
+            llm_provider=_mock_provider("answer"),
+            config=RAGConfig(enabled=True),
+            retriever=lambda q, ds, k, s: _make_result_table(["text"], ["r1"], [1.0]),
+            kg_client=kg_client,
+            kg_retriever=kg_retriever or MagicMock(),
+            kg_extractor=kg_extractor or MagicMock(),
+        )
+
+    def test_hook_none_when_use_kg_false(self):
+        g = self._make(kg_client=MagicMock())
+        assert g._extra_context_task("q", "ds", use_kg=False) is None
+
+    def test_hook_none_when_kg_unavailable(self):
+        # kg_client=None → _kg_available() False → 降级纯 vector
+        g = self._make(kg_client=None)
+        assert g._extra_context_task("q", "ds", use_kg=True) is None
+
+    def test_hook_returns_coroutine_when_kg_on(self):
+        g = self._make(kg_client=MagicMock())
+        task = g._extra_context_task("q", "ds", use_kg=True)
+        assert asyncio.iscoroutine(task)
+        task.close()  # avoid "coroutine was never awaited"
+
+    @pytest.mark.asyncio
+    async def test_query_latency_breakdown_parity(self):
+        """GraphRAG 走基类模板 → 响应带 latency_breakdown(修复的 parity gap:
+        旧 query() 复制时漏了 breakdown 字段)。KG on → 走 gather 分支。"""
+        kg_extractor = MagicMock()
+        kg_extractor.extract = AsyncMock(return_value=MagicMock(entities=[]))
+        g = self._make(kg_client=MagicMock(), kg_extractor=kg_extractor)
+
+        resp = await g.query("Q", "ds", use_kg=True)
+
+        assert resp.latency_breakdown is not None
+        assert resp.latency_breakdown.total_ms > 0
 
 
 # ---------------------------------------------------------------------------

@@ -6,7 +6,7 @@ import asyncio
 import logging
 import re
 import time
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -272,6 +272,31 @@ class RAGPipeline:
         context_text = window.assemble()
         return window, context_text
 
+    # ------------------------------------------------------------------
+    # Template-method hooks (overridden by GraphRAGPipeline)
+    # ------------------------------------------------------------------
+
+    def _extra_context_task(
+        self, question: str, dataset_name: str, use_kg: bool
+    ) -> Awaitable[str] | None:
+        """Hook: return an awaitable yielding extra context text (e.g. graph
+        triplets) to fuse into the vector context, or None to skip.
+
+        The awaitable runs in PARALLEL with vector retrieval (asyncio.gather),
+        so subclasses can overlap an expensive side retrieval (entity
+        extraction + graph query) with the vector pass. Base: None.
+        """
+        return None
+
+    def _fuse_extra_context(self, context_text: str, extra_text: str) -> str:
+        """Hook: fuse extra context into the vector context.
+
+        Base: identity (returns vector context unchanged). GraphRAG overrides
+        with weighted graph/document fusion. Only called when
+        ``_extra_context_task`` returned non-empty text.
+        """
+        return context_text
+
     @staticmethod
     def _merge_tables(tables: tuple[pa.Table, ...]) -> pa.Table:
         """Concatenate multiple retrieval result tables."""
@@ -317,10 +342,36 @@ class RAGPipeline:
         if session_id and self._session_store and self._config.history_injection_enabled:
             history = self._session_store.get_history(session_id)
 
-        # 1. Retrieval
-        window, context_text = await self._retrieve_and_build_context(
-            question, dataset_name, effective_top_k, strategy,
-        )
+        # 1. Retrieval — vector retrieval runs in PARALLEL with any extra
+        # context a subclass injects via _extra_context_task (GraphRAG:
+        # entity extraction + graph triplets). Base pipeline returns None,
+        # so this collapses to plain vector retrieval.
+        extra_task = self._extra_context_task(question, dataset_name, use_kg)
+        if extra_task is None:
+            window, context_text = await self._retrieve_and_build_context(
+                question, dataset_name, effective_top_k, strategy,
+            )
+        else:
+            # Parallel vector + side retrieval (e.g. graph). If either fails,
+            # cancel the other so we don't leak an in-flight graph/entity-
+            # extraction coroutine — preserves the explicit graph_task.cancel()
+            # the old GraphRAG.query() did on vector failure.
+            vector_t = asyncio.ensure_future(
+                self._retrieve_and_build_context(
+                    question, dataset_name, effective_top_k, strategy,
+                )
+            )
+            extra_t = asyncio.ensure_future(extra_task)
+            try:
+                (window, context_text), extra_text = await asyncio.gather(
+                    vector_t, extra_t,
+                )
+            except BaseException:
+                vector_t.cancel()
+                extra_t.cancel()
+                raise
+            if extra_text:
+                context_text = self._fuse_extra_context(context_text, extra_text)
         t_retrieval = time.perf_counter()
 
         # 2. Context assembly + message build
