@@ -147,3 +147,20 @@ users(id TEXT PK, username TEXT UNIQUE, password_hash TEXT,
 ---
 
 **下一步**:本设计审批后,按阶段 1→4 实施。阶段 1 后端就绪即可解锁前端密码 tab(去掉 `console/login.html` 的 `disabled`)。
+
+---
+
+## 10. v1.9.6 fail-closed 安全加固矩阵
+
+v1.9.6 把 RBAC 与脱敏路径统一收敛为 **fail-closed**:信任边界出错时向安全一侧失败,绝不向数据泄露一侧失败。
+
+| 路径 | 失败场景 | 行为(fail-closed) |
+|---|---|---|
+| 脱敏引擎 `_apply_masking` | 引擎抛错(脱敏失败/未知函数/hash 缺密钥) | 返回空表 `slice(0,0)`,不泄露未脱敏源 |
+| 行级过滤 `_apply_row_filter` | 表达式不可解析 / 列缺失 / 类型不匹配 | 返回空表,不返回未过滤行 |
+| 脱敏策略加载 `_fetch_rules` | Gravitino 拉规则失败 | `raise RuntimeError`(C1),非返空规则集 |
+| 启动 | `ARROW_LAKE__MASKING__HMAC_KEY` 缺失 | 启动阻断 `RuntimeError`;`ALLOW_MISSING_KEY=1` opt-in 降级 |
+| mask-preview | 列名非法 | 标识符白名单拒绝(防 SQL 注入);端点收紧为 ADMIN |
+| lineage 图谱 | 节点/边标签 | HTML 转义(vis title + DOT/Mermaid),防 XSS |
+
+**原则**:隐私或授权路径上的任何错误,宁可返回空结果,也不泄露数据。这与 §4 RBAC 的"默认拒绝"一脉相承。
