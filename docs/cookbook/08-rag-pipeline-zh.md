@@ -496,3 +496,55 @@ asyncio.run(safe_rag_query())
 ```
 
 常见错误码：`RAG_PROVIDER_ERROR`（LLM 调用失败）、`RAG_CONTEXT_EMPTY`（检索为空）。
+
+***
+
+## 12. 重排序（Reranking）
+
+第一阶段检索召回候选分块；**重排序器（Reranker）** 锐化顺序，让最相关的证据优先送达 LLM。Arrow Lake 支持多种重排序器，在 `rag.reranker` 段配置：
+
+| 类型 | 适用场景 |
+|---|---|
+| `cross-encoder`（默认） | 精度最佳 —— bge-reranker-v2-m3 对每个分块针对查询打分 |
+| `llm` | LLM-as-judge；质量高、延迟高 |
+| `ollama` | 经 Ollama 的本地二值（是/否）判断 |
+| `noop` | 关闭重排序 |
+
+```yaml
+# configs/rag.yaml
+rag:
+  reranker:
+    type: cross-encoder        # bge-reranker-v2-m3
+    device: auto               # auto / cpu / cuda
+    warmup_on_init: true       # 启动时预加载，首次查询无冷启动代价
+```
+
+交叉编码器模型从 HuggingFace 缓存（`HF_HOME`）加载；在离线/气隙部署中需预下载。若配置的重排序器在运行时无法加载，管线会透明回退到 `noop` 并记录告警，因此检索绝不会因重排序器配置错误而硬失败。
+
+***
+
+## 13. 忠实度校验（防幻觉）
+
+校验闭环了生成与证据之间的回路。开启后，生成回答的每一句都会被拿来与检索上下文核对，响应携带 `support_ratio` 和明确的 `unsupported` 列表 —— 调用方可以拒绝或标记无依据的回答，而非默默信任。
+
+```yaml
+rag:
+  enable_verification: true      # opt-in；默认关闭
+  verification_threshold: 0.6    # 嵌入余弦阈值（轻量模式）
+```
+
+两种模式：
+
+- **嵌入余弦（默认）** —— 复用抽取编码器；廉价，无额外 LLM 调用。某句与任一上下文分块的余弦相似度超过 `verification_threshold` 即视为*被支撑*。
+- **LLM judge（opt-in）** —— 单次 LLM 调用逐句对照上下文打分；保真度更高、延迟更高。
+
+```python
+response = await lake.rag_query("总结三季度发现", "reports")
+print(response.answer)
+print(f"支撑率：{response.support_ratio}")    # 0.0 – 1.0
+print(f"未支撑论断：{response.unsupported}")
+# support_ratio 接近 1.0 表示回答有充分依据；
+# `unsupported` 中的条目未被检索上下文支撑。
+```
+
+对于流式响应，**末帧**携带 `verification` 块（连同 `citations` 与 `latency`），让流式 UI 可以在生成完成后展示支撑率。

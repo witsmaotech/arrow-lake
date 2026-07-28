@@ -510,3 +510,68 @@ asyncio.run(safe_rag_query())
 
 Common error codes: `RAG_PROVIDER_ERROR` (LLM call failed), `RAG_CONTEXT_EMPTY`
 (retrieval returned no results).
+
+***
+
+## 12. Reranking
+
+First-stage retrieval recalls candidate chunks; a **reranker** sharpens the order so
+the most relevant evidence reaches the LLM first. Arrow Lake supports several
+rerankers, configured under the `rag.reranker` section:
+
+| Type | When to use |
+|---|---|
+| `cross-encoder` (default) | Best precision — bge-reranker-v2-m3 scores each chunk against the query |
+| `llm` | LLM-as-judge; high quality, higher latency |
+| `ollama` | Local binary (yes/no) judge via Ollama |
+| `noop` | Disable reranking |
+
+```yaml
+# configs/rag.yaml
+rag:
+  reranker:
+    type: cross-encoder        # bge-reranker-v2-m3
+    device: auto               # auto / cpu / cuda
+    warmup_on_init: true       # pre-load at startup, no first-query penalty
+```
+
+The cross-encoder model is loaded from the HuggingFace cache (`HF_HOME`); pre-download
+it in air-gapped deployments. If the configured reranker cannot be loaded at runtime,
+the pipeline transparently falls back to `noop` and logs a warning, so retrieval never
+hard-fails on a reranker misconfiguration.
+
+***
+
+## 13. Faithfulness Verification (Anti-Hallucination)
+
+Verification closes the loop between generation and evidence. When enabled, every
+sentence of the generated answer is checked against the retrieved context, and the
+response carries a `support_ratio` plus an explicit `unsupported` list — so callers
+can refuse or flag ungrounded answers instead of trusting them silently.
+
+```yaml
+rag:
+  enable_verification: true      # opt-in; off by default
+  verification_threshold: 0.6    # embedding cosine threshold (lightweight mode)
+```
+
+Two modes:
+
+- **Embedding cosine (default)** — reuses the extract encoder; cheap, no extra LLM
+  call. A sentence counts as *supported* if its cosine similarity to any context
+  chunk exceeds `verification_threshold`.
+- **LLM judge (opt-in)** — a single LLM call scores each sentence against the
+  context; higher fidelity, higher latency.
+
+```python
+response = await lake.rag_query("Summarize the Q3 findings", "reports")
+print(response.answer)
+print(f"Support ratio: {response.support_ratio}")    # 0.0 – 1.0
+print(f"Unsupported claims: {response.unsupported}")
+# A support_ratio near 1.0 means the answer is well-grounded;
+# entries in `unsupported` were not backed by the retrieved context.
+```
+
+For streaming responses, the **final frame** carries the `verification` block (along
+with `citations` and `latency`), so a streaming UI can surface the support ratio once
+generation completes.
