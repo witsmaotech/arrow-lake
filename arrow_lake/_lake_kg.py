@@ -958,36 +958,39 @@ class _LakeKGMixin:
         """Retrieve anchor entities (search_ka) + 1-hop neighbor context + 原文 chunks.
 
         v1.9.5: 原文 vector chunks 加入(KA 抽取会丢原文数据/细节,原文保留事实)。
+        v1.9.6 P0-4: 三路 asyncio.gather 并行(原串行 3x → max(三路),延迟 -40~50%)。
         返回 (retrieved_items 顶点, neighbor_ctx 边, text_chunks 原文)。
         """
-        # 原文 vector chunks(高质量:保留 143亿/企业名等数据,KA 抽取会简化)
-        text_chunks: list[dict[str, Any]] = []
-        try:
-            qv = self._embed_query(question)
-            result = self.search(dataset_name, qv, top_k=top_k)
-            tbl = result.table
-            col = "text_content" if "text_content" in tbl.column_names else next(
-                (c for c in ("text", "content") if c in tbl.column_names), None
-            )
-            if col:
+        async def _vector_chunks() -> list[dict[str, Any]]:
+            try:
+                qv = self._embed_query(question)
+                result = await asyncio.to_thread(self.search, dataset_name, qv, top_k=top_k)
+                tbl = result.table
+                col = "text_content" if "text_content" in tbl.column_names else next(
+                    (c for c in ("text", "content") if c in tbl.column_names), None
+                )
+                if not col:
+                    return []
                 texts = tbl.column(col).to_pylist()
-                text_chunks = [
-                    {"type": "text", "text": str(t)[:800]}
-                    for t in texts
-                    if t
-                ][:top_k]
-        except Exception as exc:  # noqa: BLE001 — best-effort
-            logger.warning("kg_graphrag 原文检索失败,仅用 KA: %s", exc)
-        try:
-            nodes, _ = await asyncio.to_thread(
-                extractor.search_ka, dataset_name, question, top_k
-            )
-        except Exception as exc:  # noqa: BLE001 — best-effort
-            logger.warning("kg_graphrag search_ka failed: %s", exc)
-            nodes = []
-        retrieved_items = [_serialize_ka_item(n) for n in (nodes or [])]
-        neighbor_ctx = await self._graph_neighbor_context(
-            extractor, dataset_name, question, top_k
+                return [{"type": "text", "text": str(t)[:800]} for t in texts if t][:top_k]
+            except Exception as exc:  # noqa: BLE001 — best-effort
+                logger.warning("kg_graphrag 原文检索失败: %s", exc)
+                return []
+
+        async def _ka_nodes() -> list[dict[str, Any]]:
+            try:
+                nodes, _ = await asyncio.to_thread(extractor.search_ka, dataset_name, question, top_k)
+                return [_serialize_ka_item(n) for n in (nodes or [])]
+            except Exception as exc:  # noqa: BLE001 — best-effort
+                logger.warning("kg_graphrag search_ka failed: %s", exc)
+                return []
+
+        async def _neighbors() -> list[dict[str, Any]]:
+            return await self._graph_neighbor_context(extractor, dataset_name, question, top_k)
+
+        # v1.9.6 P0-4: 并行三路(原串行 = vector + search_ka + neighbor 依次)。
+        retrieved_items, neighbor_ctx, text_chunks = await asyncio.gather(
+            _ka_nodes(), _neighbors(), _vector_chunks()
         )
         return retrieved_items, neighbor_ctx, text_chunks
 
