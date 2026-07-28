@@ -79,11 +79,22 @@ class CrossEncoderReranker(BaseReranker):
         self,
         model_name: str = "BAAI/bge-reranker-v2-m3",
         max_length: int = 512,
+        device: str = "auto",
     ) -> None:
         self._model_name = model_name
         self._max_length = max_length
+        self._device = device
         self._model: Any = None
         self._fallback = NoopReranker()
+
+    def warmup(self) -> None:
+        """Eagerly load model + dummy predict to fill caches (avoid first-query stall)."""
+        model = self._load_model()
+        if model is not None:
+            try:
+                model.predict([("warmup", "warmup")])
+            except Exception:  # noqa: BLE001
+                logger.warning("cross-encoder warmup predict failed", exc_info=True)
 
     def _load_model(self) -> Any:
         if self._model is not None:
@@ -91,7 +102,14 @@ class CrossEncoderReranker(BaseReranker):
         try:
             from sentence_transformers import CrossEncoder
 
-            self._model = CrossEncoder(self._model_name, max_length=self._max_length)
+            device = self._device
+            if device == "auto":
+                try:
+                    import torch
+                    device = "cuda" if torch.cuda.is_available() else "cpu"
+                except ImportError:
+                    device = "cpu"
+            self._model = CrossEncoder(self._model_name, max_length=self._max_length, device=device)
             return self._model
         except Exception:
             logger.warning(
@@ -375,6 +393,7 @@ def create_reranker(
     provider: Any = None,
     base_url: str = "",
     api_key: str | None = None,
+    device: str = "auto",
 ) -> BaseReranker:
     """Factory: create a reranker by kind string.
 
@@ -385,7 +404,7 @@ def create_reranker(
     if kind == "none" or not kind:
         return NoopReranker()
     if kind == "cross-encoder":
-        return CrossEncoderReranker(model_name=model_name)
+        return CrossEncoderReranker(model_name=model_name, device=device)
     if kind == "llm":
         if provider is None:
             logger.warning("LLM reranker requires a provider, falling back to noop")

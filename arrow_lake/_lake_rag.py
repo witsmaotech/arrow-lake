@@ -126,12 +126,20 @@ class _LakeRAGMixin:
         if not base_url:
             emb_base = getattr(self.config.embedding, "api_base", "") or ""
             base_url = emb_base[:-3] if emb_base.endswith("/v1") else emb_base
-        return create_reranker(
+        reranker = create_reranker(
             rag_cfg.reranker,
             model_name=rag_cfg.reranker_model,
             provider=provider,
             base_url=base_url,
+            device=getattr(rag_cfg, "reranker_device", "auto"),
         )
+        # v1.9.6 P0-2: warmup cross-encoder at init (avoid first-query model-load stall).
+        if getattr(rag_cfg, "reranker_warmup_on_init", False) and hasattr(reranker, "warmup"):
+            try:
+                reranker.warmup()
+            except Exception:  # noqa: BLE001 — never block RAG on warmup
+                logger.warning("reranker warmup failed", exc_info=True)
+        return reranker
 
     def _rag_retriever(
         self, question: str, dataset_name: str, top_k: int, strategy: str = "fts"
@@ -302,6 +310,42 @@ class _LakeRAGMixin:
         finally:
             # 流式查询也记 lineage(与非流式 rag_query 对齐,避免血缘审计盲区);
             # finally 覆盖正常结束 + 客户端断连(GeneratorExit)两条路径
+            from arrow_lake.catalog.lineage_hooks import auto_record_rag
+            try:
+                await asyncio.to_thread(auto_record_rag, self._get_storage(), dataset_name, question)
+            except Exception:
+                logger.warning("rag_stream_lineage_record_failed", exc_info=True)
+
+    async def rag_query_stream_rich(
+        self,
+        question: str,
+        dataset_name: str,
+        *,
+        top_k: int | None = None,
+        strategy: str | None = None,
+        template_name: str | None = None,
+    ) -> AsyncIterator[tuple[str, Any]]:
+        """Stream RAG with rich events (citations/content/done). v1.9.6 P1-9.
+
+        Yields ``("citations", tuple)`` → ``("content", str)`` ×N → ``("done", dict)``.
+        Enables front-end citation/latency display during streaming.
+        """
+        validate_identifier(dataset_name)
+        pipeline = self._get_rag_pipeline()
+        from arrow_lake.core.metrics import get_metrics_enabled, query_total
+
+        if get_metrics_enabled():
+            query_total.labels(query_type="rag_query_stream").inc()
+        try:
+            async for event in pipeline.query_stream_rich(
+                question=question,
+                dataset_name=dataset_name,
+                top_k=top_k,
+                strategy=strategy,
+                template_name=template_name,
+            ):
+                yield event
+        finally:
             from arrow_lake.catalog.lineage_hooks import auto_record_rag
             try:
                 await asyncio.to_thread(auto_record_rag, self._get_storage(), dataset_name, question)

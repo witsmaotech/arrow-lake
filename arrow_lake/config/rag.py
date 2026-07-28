@@ -77,12 +77,17 @@ class RAGConfig(BaseModel):
     system_prompt: str = ""
     history_dataset: str = "_rag_sessions"
     enable_citations: bool = True
+    # v1.9.6 P0-1: faithfulness verification (lightweight [n] ref check).
+    enable_verification: bool = False
     session_ttl_seconds: int = 86400
     feedback_enabled: bool = True
     reranker: str = "ollama"
     reranker_model: str = "dengcao/Qwen3-Reranker-0.6B:F16"
     reranker_base_url: str = ""
     reranker_top_n: int = 10
+    # v1.9.6 P0-2: cross-encoder device + warmup (bge-reranker-v2-m3 连续分精排)。
+    reranker_device: str = "auto"
+    reranker_warmup_on_init: bool = True
     query_transform: str = "none"
     hyde_max_tokens: int = 256
     multi_query_variants: int = 3

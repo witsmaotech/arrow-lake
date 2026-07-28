@@ -55,6 +55,20 @@ def _rag_response_to_api(resp: RAGResponse) -> RAGQueryResponse:
         context_tokens=resp.context_tokens,
         latency_ms=resp.latency_ms,
         session_id=resp.session_id,
+        verification=(
+            {
+                "support_ratio": resp.verification.support_ratio,
+                "valid_refs": resp.verification.valid_refs,
+                "invalid_refs": resp.verification.invalid_refs,
+                "mode": resp.verification.mode,
+                "sentences": [
+                    {"text": s.text, "label": s.label, "refs": list(s.refs)}
+                    for s in resp.verification.sentences
+                ],
+            }
+            if resp.verification is not None
+            else None
+        ),
     )
 
 
@@ -128,18 +142,24 @@ async def rag_query_stream(
                 })
                 yield f"id: {event_id}-meta\nevent: metadata\ndata: {meta}\n\n"
 
-                # Stream content chunks
-                async for chunk in lake.rag_query_stream(
+                # v1.9.6 P1-9: rich stream — citations first, content ×N, done with latency.
+                async for phase, payload in lake.rag_query_stream_rich(
                     question=req.question,
                     dataset_name=req.dataset_name,
                     top_k=req.top_k,
                     strategy=req.retrieval_strategy,
                     template_name=req.template_name,
                 ):
-                    data = json.dumps({"data": chunk})
-                    yield f"event: content\ndata: {data}\n\n"
-
-                yield f"id: {event_id}-done\nevent: done\ndata: {{}}\n\n"
+                    if phase == "citations":
+                        cites = json.dumps([{
+                            "chunk_index": c.chunk_index, "dataset": c.dataset,
+                            "row_id": c.row_id, "score": c.score, "text_excerpt": c.text_excerpt,
+                        } for c in payload])
+                        yield f"id: {event_id}-cite\nevent: citations\ndata: {cites}\n\n"
+                    elif phase == "content":
+                        yield f"event: content\ndata: {json.dumps({'data': payload})}\n\n"
+                    elif phase == "done":
+                        yield f"id: {event_id}-done\nevent: done\ndata: {json.dumps(payload)}\n\n"
 
         except TimeoutError:
             logger.warning("RAG stream timed out after 300s")

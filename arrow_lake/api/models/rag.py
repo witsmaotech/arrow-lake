@@ -51,6 +51,7 @@ class RAGQueryResponse(BaseModel):
     context_tokens: int | None = None
     latency_ms: float | None = None
     session_id: str | None = None
+    verification: dict | None = None  # v1.9.6 P0-1 faithfulness check (support_ratio/sentences)
 
 
 # ---------------------------------------------------------------------------

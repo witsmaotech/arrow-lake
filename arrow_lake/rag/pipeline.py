@@ -64,6 +64,7 @@ class RAGResponse:
     latency_ms: float | None = None
     session_id: str | None = None
     latency_breakdown: LatencyBreakdown | None = None
+    verification: Any | None = None  # v1.9.6 P0-1 VerificationResult (None if disabled)
 
 
 # Type alias for the retriever callback.
@@ -335,6 +336,15 @@ class RAGPipeline:
         elapsed = (t_llm - start) * 1000
         citations = self._extract_citations(window)
 
+        # v1.9.6 P0-1: faithfulness verification (lightweight [n] ref check).
+        verification = None
+        if getattr(self._config, "enable_verification", False):
+            try:
+                from arrow_lake.rag.verifier import verify
+                verification = verify(llm_response.content, window.chunk_count)
+            except Exception:  # noqa: BLE001 — never fail the query on verification
+                logger.warning("rag_verification_failed", exc_info=True)
+
         breakdown = LatencyBreakdown(
             retrieval_ms=round((t_retrieval - start) * 1000, 1),
             context_ms=round((t_context - t_retrieval) * 1000, 1),
@@ -351,6 +361,7 @@ class RAGPipeline:
             latency_ms=round(elapsed, 1),
             session_id=session_id,
             latency_breakdown=breakdown,
+            verification=verification,
         )
 
         # Persist turn in session store
@@ -380,6 +391,36 @@ class RAGPipeline:
         messages = self._build_messages(question, context_text, template_name)
         async for chunk in self._llm.generate_stream(messages):
             yield chunk
+
+    async def query_stream_rich(
+        self,
+        question: str,
+        dataset_name: str,
+        *,
+        top_k: int | None = None,
+        strategy: str | None = None,
+        template_name: str | None = None,
+    ) -> AsyncIterator[tuple[str, Any]]:
+        """Stream RAG with rich events for front-end citation/latency display.
+
+        v1.9.6 P1-9: yields ``("citations", tuple)`` first, ``("content", str)`` ×N,
+        then ``("done", dict)`` with retrieval_count/context_tokens/latency_ms.
+        """
+        start = time.perf_counter()
+        effective_top_k = top_k or self._config.default_top_k
+        window, context_text = await self._retrieve_and_build_context(
+            question, dataset_name, effective_top_k, strategy,
+        )
+        citations = self._extract_citations(window)
+        yield ("citations", citations)
+        messages = self._build_messages(question, context_text, template_name)
+        async for chunk in self._llm.generate_stream(messages):
+            yield ("content", chunk)
+        yield ("done", {
+            "retrieval_count": window.chunk_count,
+            "context_tokens": window.token_count if window.token_count > 0 else None,
+            "latency_ms": round((time.perf_counter() - start) * 1000, 1),
+        })
 
     async def extract_entities(
         self,
