@@ -111,6 +111,23 @@ class TestTraceFullGraph:
         assert result_default["stats"].get("truncated", False) is False
 
 
+def test_lineage_event_from_dict_parses_column_lineage() -> None:
+    # P0-5: column_lineage end-to-end — LineageEvent parses it into ColumnMapping tuples.
+    from arrow_lake.catalog.lineage import ColumnMapping, LineageEvent
+
+    ev = LineageEvent.from_dict({
+        "event_id": "id1", "timestamp": "ts", "dataset_name": "ds",
+        "operation": "transform", "source_datasets": ["src"],
+        "column_lineage": [
+            {"source_dataset": "src", "source_column": "a", "target_column": "b", "transform_expr": "b::int"},
+        ],
+    })
+    assert ev.column_lineage is not None
+    assert len(ev.column_lineage) == 1
+    assert isinstance(ev.column_lineage[0], ColumnMapping)
+    assert ev.column_lineage[0].target_column == "b"
+
+
 class TestTraceImpact:
     """Test LineageQueryBridge.trace_impact."""
 

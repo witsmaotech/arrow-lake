@@ -66,6 +66,7 @@ class LineageEvent:
     lance_version: int | None
     actor: str
     metadata: tuple[tuple[str, Any], ...]
+    column_lineage: tuple[ColumnMapping, ...] | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> LineageEvent:
@@ -73,6 +74,18 @@ class LineageEvent:
         meta = data.get("metadata", {})
         if isinstance(meta, dict):
             meta = tuple(sorted(meta.items()))
+        raw_cl = data.get("column_lineage")
+        column_lineage = None
+        if raw_cl:
+            column_lineage = tuple(
+                m if isinstance(m, ColumnMapping) else ColumnMapping(
+                    source_dataset=m.get("source_dataset", ""),
+                    source_column=m.get("source_column", ""),
+                    target_column=m.get("target_column", ""),
+                    transform_expr=m.get("transform_expr", ""),
+                )
+                for m in raw_cl
+            )
         return cls(
             event_id=data["event_id"],
             timestamp=data["timestamp"],
@@ -83,6 +96,7 @@ class LineageEvent:
             lance_version=data.get("lance_version"),
             actor=data.get("actor", ""),
             metadata=meta,
+            column_lineage=column_lineage,
         )
 
 
@@ -420,6 +434,15 @@ class LineageStore:
         """Convert a table row to LineageEvent."""
         sources = table.column("source_datasets")[index].as_py()
         meta_str = table.column("metadata")[index].as_py()
+        # column_lineage column may be absent on legacy tables (pre-Story 8.4).
+        cl_list = None
+        if "column_lineage" in table.column_names:
+            cl_str = table.column("column_lineage")[index].as_py()
+            if cl_str:
+                try:
+                    cl_list = json.loads(cl_str)
+                except (json.JSONDecodeError, ValueError):
+                    cl_list = None
         return LineageEvent.from_dict(
             {
                 "event_id": table.column("event_id")[index].as_py(),
@@ -431,6 +454,7 @@ class LineageStore:
                 "lance_version": table.column("lance_version")[index].as_py(),
                 "actor": table.column("actor")[index].as_py() or "",
                 "metadata": json.loads(meta_str) if meta_str else {},
+                "column_lineage": cl_list,
             }
         )
 

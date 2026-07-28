@@ -64,8 +64,9 @@ async def lineage_history(
         lake.lineage_history, dataset_name,
         timeout=_LINEAGE_TIMEOUT, label="lineage_history",
     )
+    from dataclasses import asdict
     serialized = [
-        e if isinstance(e, dict) else {"event": str(e)} for e in events
+        e if isinstance(e, dict) else asdict(e) for e in events
     ]
     return LineageHistoryResponse(
         dataset_name=dataset_name,
