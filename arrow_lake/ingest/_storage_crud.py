@@ -107,9 +107,60 @@ class StorageCRUDMixin:
                     error_code=ErrorCode.STORAGE_PATH_NOT_FOUND,
                     message=f"Dataset '{name}' does not exist, cannot append",
                 )
+            data = self._evolve_and_align_schema(name, data)
             self._write_lance(data, path, mode="append")
         finally:
             lock.release()
+
+    def _evolve_and_align_schema(self, name: str, data: pa.Table) -> pa.Table:
+        """Append-time schema alignment (v1.9.6).
+
+        Columns present in ``data`` but missing from the existing dataset
+        (e.g. ``page_number``/``doc_type`` added by newer ingest code) are
+        added to the dataset via Lance ``add_columns`` (historical rows filled
+        NULL). Columns the dataset has but ``data`` lacks are back-filled NULL
+        onto ``data``. The result is reordered to the dataset's schema so
+        ``mode='append'`` no longer raises ``ValueError: field ... does not
+        exist in table schema`` when appending newer-shaped chunks to an older
+        dataset. New datasets are unaffected (create path). Best-effort: on
+        any failure returns ``data`` unchanged so behavior is no worse than
+        before.
+        """
+        try:
+            import lance
+
+            uri = self.dataset_uri(name)
+            ds = lance.dataset(uri, storage_options=self._storage_options)
+            old_names = set(ds.schema.names)
+            extra = [c for c in data.column_names if c not in old_names]
+            if extra:
+                nrows = ds.count_rows()
+                null_cols = pa.table(
+                    {c: pa.nulls(nrows, type=data.schema.field(c).type) for c in extra}
+                )
+                ds.add_columns(null_cols)
+            fresh = lance.dataset(uri, storage_options=self._storage_options)
+            fresh_names = fresh.schema.names
+            data_cols = set(data.column_names)
+            arrays = [
+                data.column(c) if c in data_cols
+                else pa.nulls(data.num_rows, type=fresh.schema.field(c).type)
+                for c in fresh_names
+            ]
+            if extra:
+                import structlog
+
+                structlog.get_logger(__name__).info(
+                    "ingest_append_schema_evolved", dataset=name, added_columns=extra
+                )
+            return pa.Table.from_arrays(arrays, names=fresh_names)
+        except Exception:
+            import structlog
+
+            structlog.get_logger(__name__).debug(
+                "ingest_append_schema_align_skipped", dataset=name, exc_info=True
+            )
+            return data
 
     def update_field_comments(self, name: str, comments: dict[str, str]) -> None:
         """In-place update of column ``comment`` field metadata.
