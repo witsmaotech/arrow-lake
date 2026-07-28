@@ -114,6 +114,9 @@ COPY --from=builder /build/flows /app/flows
 # Copy examples for testing / demos
 COPY examples/ /app/examples/
 
+# Copy console (static frontend, served at /console via app.py StaticFiles mount)
+COPY console/ /app/console/
+
 # v1.9.6: bake reranker + docling models (offline-ready) — same as CPU Dockerfile.
 # Sources: msmodels (modelscope reranker) + hfmodels (HF docling). Supply via
 # buildx --build-context msmodels=... --build-context hfmodels=...
