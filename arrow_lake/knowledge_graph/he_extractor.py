@@ -278,16 +278,39 @@ class HyperExtractExtractor:
         return Path(self._hugegraph_config.he_ka_base_dir) / artifact_key_for(dataset_name) / "ka"
 
     def load_ka_for_query(self, dataset_name: str) -> Any:
-        """[#2] Load a dumped per-dataset KA for search/chat.
+        """[#2][#P0-4] Load a dumped per-dataset KA for search/chat, with an
+        instance cache keyed by dataset and invalidated on dump mtime change.
 
         Reads the template from ``metadata.json`` (falling back to the default
         template), builds a fresh KA with this extractor's llm+embedder via
         :meth:`_create_ka`, then ``ka.load(ka_dir)`` to restore data + FAISS
         index. ``Template.load`` does not exist in this hyper-extract version,
         so we create-then-load.
+
+        [#P0-4] Loading a large KA (``_create_ka`` + ``ka.load`` + index
+        restore ≈ 60s on big graphs) on every query dominated GraphRAG latency
+        once the vector/graph fan-out was parallelised. We now memoise the
+        built KA per dataset and revalidate against the dump's mtime signature
+        (``data.json`` + ``metadata.json`` + ``index/``); a kg_build re-run
+        bumps the mtime and invalidates cleanly. Cache is per-instance (one
+        extractor per Lake; bounded by dataset count). See
+        :meth:`_ka_mtime_sig` / :meth:`_build_ka_for_query`.
         """
-        import json
         ka_dir = self._ka_dir_for(dataset_name)
+        sig = self._ka_mtime_sig(ka_dir)
+        cache = self.__dict__.setdefault("_ka_query_cache", {})  # dataset -> (sig, ka)
+        hit = cache.get(dataset_name)
+        if hit is not None and hit[0] == sig:
+            return hit[1]
+        ka = self._build_ka_for_query(ka_dir)
+        cache[dataset_name] = (sig, ka)
+        return ka
+
+    def _build_ka_for_query(self, ka_dir: Path) -> Any:
+        """[#P0-4] Uncached KA build: read template from ``metadata.json``,
+        create the KA (QA client), and load the dump. Isolated so
+        :meth:`load_ka_for_query` can memoise its result."""
+        import json
         template = self._router.default_template()
         meta_path = ka_dir / "metadata.json"
         if meta_path.is_file():
@@ -309,6 +332,21 @@ class HyperExtractExtractor:
         ka = self._create_ka(template, llm_client=self._get_qa_client())
         ka.load(ka_dir)
         return ka
+
+    @staticmethod
+    def _ka_mtime_sig(ka_dir: Path) -> int | None:
+        """[#P0-4] Mtime signature of a KA dump: the newest ns-precision mtime
+        across ``data.json``, ``metadata.json`` and the ``index/`` subdir.
+        ``None`` when the dump is absent (forces a rebuild attempt so callers
+        get the usual not-found error rather than a stale cache hit)."""
+        best = 0
+        found = False
+        for name in ("data.json", "metadata.json", "index"):
+            p = ka_dir / name
+            if p.exists():
+                best = max(best, p.stat().st_mtime_ns)
+                found = True
+        return best if found else None
 
     def _ensure_ka_index(self, ka: Any, dataset_name: str) -> None:
         """[#2] Build the KA FAISS index only when the loaded KA lacks one.

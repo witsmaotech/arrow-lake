@@ -797,5 +797,95 @@ class TestFeedRetry:
         assert calls[0] == 1  # no retry on hard error
 
 
+# ---------------------------------------------------------------------------
+# P0#4: load_ka_for_query LRU cache (mtime-invalidated)
+# ---------------------------------------------------------------------------
+
+
+def _wire_ka_dump(extractor: HyperExtractExtractor, ka_dir: Path, created: dict) -> None:
+    """Stub the KA build boundary so ``load_ka_for_query`` runs without
+    hyper-extract: ``_ka_dir_for`` → tmp dump dir, ``_create_ka`` → counter
+    returning a fake loadable KA, ``_get_qa_client`` → None."""
+    extractor._ka_dir_for = lambda dataset_name: ka_dir  # type: ignore[assignment]
+    extractor._get_qa_client = lambda: None  # type: ignore[assignment]
+
+    def fake_create(template_path, *, llm_client=None):  # noqa: ANN001
+        created["n"] += 1
+        return SimpleNamespace(load=lambda d: None)
+
+    extractor._create_ka = fake_create  # type: ignore[assignment]
+
+
+def test_load_ka_for_query_caches_across_calls(
+    extractor: HyperExtractExtractor, tmp_path: Path
+) -> None:
+    # Arrange — a dump with data.json present (stable mtime signature).
+    ka_dir = tmp_path / "ds1" / "ka"
+    ka_dir.mkdir(parents=True)
+    (ka_dir / "data.json").write_text("{}", encoding="utf-8")
+    created = {"n": 0}
+    _wire_ka_dump(extractor, ka_dir, created)
+
+    # Act — two consecutive loads of the same dataset.
+    ka1 = extractor.load_ka_for_query("ds1")
+    ka2 = extractor.load_ka_for_query("ds1")
+
+    # Assert — cached: KA built once, identical object returned.
+    assert created["n"] == 1
+    assert ka1 is ka2
+
+
+def test_load_ka_for_query_invalidates_on_dump_mtime_change(
+    extractor: HyperExtractExtractor, tmp_path: Path
+) -> None:
+    # Arrange
+    import os
+    ka_dir = tmp_path / "ds2" / "ka"
+    ka_dir.mkdir(parents=True)
+    data = ka_dir / "data.json"
+    data.write_text("{}", encoding="utf-8")
+    created = {"n": 0}
+    _wire_ka_dump(extractor, ka_dir, created)
+
+    # Act — first load caches; a kg_build re-run then rewrites the dump.
+    extractor.load_ka_for_query("ds2")
+    prev = data.stat().st_mtime_ns
+    data.write_text('{"v": 2}', encoding="utf-8")
+    os.utime(data, ns=(prev + 10**9, prev + 10**9))  # strictly later, ns-safe
+    extractor.load_ka_for_query("ds2")
+
+    # Assert — mtime change invalidated the cache → rebuilt.
+    assert created["n"] == 2
+
+
+def test_load_ka_for_query_cache_is_per_dataset(
+    extractor: HyperExtractExtractor, tmp_path: Path
+) -> None:
+    # Arrange — two datasets, each with its own dump.
+    created = {"n": 0}
+    dirs: dict[str, Path] = {}
+    for ds in ("a", "b"):
+        d = tmp_path / ds / "ka"
+        d.mkdir(parents=True)
+        (d / "data.json").write_text("{}", encoding="utf-8")
+        dirs[ds] = d
+    extractor._get_qa_client = lambda: None  # type: ignore[assignment]
+
+    def fake_create(template_path, *, llm_client=None):  # noqa: ANN001
+        created["n"] += 1
+        return SimpleNamespace(load=lambda dd: None)
+
+    extractor._create_ka = fake_create  # type: ignore[assignment]
+    extractor._ka_dir_for = lambda dataset_name: dirs[dataset_name]  # type: ignore[assignment]
+
+    # Act — load both, then reload one; the cached reload must not rebuild.
+    extractor.load_ka_for_query("a")
+    extractor.load_ka_for_query("b")
+    extractor.load_ka_for_query("a")
+
+    # Assert — one build per dataset, no rebuild on the cached reload.
+    assert created["n"] == 2
+
+
 
 

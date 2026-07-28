@@ -267,3 +267,24 @@ class TestRetrieveGraphContext:
         )
 
         assert resp.answer == "Answer"
+
+
+class TestQuestionEntityCache:
+    """QuestionEntityCache TTL must be driven by a monotonic clock so a
+    wall-clock jump (NTP step) can't mass-evict or mass-retain entries — the
+    original ``time.time`` made the TTL brittle under clock skew."""
+
+    def test_get_returns_none_after_monotonic_ttl_elapsed(self, monkeypatch) -> None:
+        from arrow_lake.rag import graph_rag
+        from arrow_lake.rag.graph_rag import QuestionEntityCache
+
+        # Freeze the monotonic clock; only it (not wall time) drives the TTL.
+        ticks = [1000.0]
+        monkeypatch.setattr(graph_rag.time, "monotonic", lambda: ticks[0])
+
+        cache = QuestionEntityCache(ttl=100)
+        cache.set("q", ["e1", "e2"])
+        assert cache.get("q") == ["e1", "e2"]  # within TTL
+
+        ticks[0] += 101  # advance ONLY the monotonic clock, past TTL
+        assert cache.get("q") is None  # expired under monotonic

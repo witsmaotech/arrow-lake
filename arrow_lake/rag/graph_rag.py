@@ -29,7 +29,11 @@ logger = logging.getLogger(__name__)
 
 
 class QuestionEntityCache:
-    """TTL-based cache for question → extracted entities mapping."""
+    """TTL-based cache for question → extracted entities mapping.
+
+    Uses ``time.monotonic`` so a wall-clock jump (NTP step, manual time
+    change) can't mass-evict or mass-retain entries — ``time.time`` made the
+    TTL brittle under clock skew. Monotonic time never goes backwards."""
 
     def __init__(self, ttl: int = 300, max_size: int = 1000) -> None:
         self._cache: dict[str, tuple[float, list[str]]] = {}
@@ -39,7 +43,7 @@ class QuestionEntityCache:
     def get(self, question: str) -> list[str] | None:
         key = question
         entry = self._cache.get(key)
-        if entry and time.time() - entry[0] < self._ttl:
+        if entry and time.monotonic() - entry[0] < self._ttl:
             return entry[1]
         return None
 
@@ -48,7 +52,7 @@ class QuestionEntityCache:
         if len(self._cache) >= self._max_size:
             oldest = min(self._cache, key=lambda k: self._cache[k][0])
             del self._cache[oldest]
-        self._cache[key] = (time.time(), entities)
+        self._cache[key] = (time.monotonic(), entities)
 
 
 class GraphRAGPipeline(RAGPipeline):
