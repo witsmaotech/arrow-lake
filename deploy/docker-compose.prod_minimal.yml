@@ -331,8 +331,9 @@ services:
       # v1.9.6: 模型 bake 进镜像 /opt/hf-cache（reranker bge-reranker-v2-m3 + docling layout/models），离线就绪
       HF_HOME: "/opt/hf-cache"
       HF_HUB_OFFLINE: "1"  # 模型已在镜像，禁止运行时联网拉
-      # v1.9.6 P0-6: masking HMAC fail-fast — 缺 key 启动阻断。默认 dev key（本地/测试），生产经 .env 覆盖强 key
-      ARROW_LAKE__MASKING__HMAC_KEY: "${ARROW_LAKE__MASKING__HMAC_KEY:-dev-live-test-key-0123456789abcdef}"
+      # v1.9.6 P0-6: masking HMAC fail-fast — 无默认，缺 key 启动阻断（生产 fail loudly）。
+      # 必须在 deploy/.env 设强 key（32+ bytes）：ARROW_LAKE__MASKING__HMAC_KEY=<openssl rand -hex 32>
+      ARROW_LAKE__MASKING__HMAC_KEY: "${ARROW_LAKE__MASKING__HMAC_KEY:-}"
       # v1.9.0: system_db (libSQL) control-plane DB — off by default; flip in .env
       ARROW_LAKE__SYSTEM_DB__ENABLED: "${SYSTEM_DB_ENABLED:-false}"
       ARROW_LAKE__SYSTEM_DB__URL: "${SYSTEM_DB_URL:-http://system-db:8080}"
