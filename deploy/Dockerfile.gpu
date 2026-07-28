@@ -52,7 +52,12 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # ==============================================================================
 # Stage 2 — runtime (GPU)
 # ==============================================================================
-FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04 AS runtime
+# v1.9.6: 改用 python:3.12-slim base（同 CPU）。原 nvidia/cuda base 无系统 python，
+# 靠 uv install standalone → relocation 崩（找不到 stdlib encodings）。
+# python:3.12-slim 自带系统 python（含 stdlib），venv 直接用。
+# CUDA 支持不依赖 nvidia/cuda base：torch cu124 wheel 自带 nvidia-*-cu12 runtime libs，
+# GPU 驱动由 host --gpus all 注入（标准 PyTorch Docker 做法）。
+FROM python:3.12-slim AS runtime
 
 LABEL maintainer="wits@sunpw.dev"
 LABEL description="Arrow Lake GPU — Multimodal data lakehouse with CUDA support"
@@ -65,9 +70,8 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 # 含 docling/opencv 运行时依赖（libgl1 等），与 CPU Dockerfile 对齐
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
-    libcurl4-openssl-dev \
+    libcurl4 \
     libgomp1 \
-    libgrpc++1 \
     libssl3 \
     libgl1 \
     libglib2.0-0 \
@@ -85,16 +89,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libfontconfig1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Install standalone Python 3.12 via uv (reliable across all base images)
-RUN uv python install 3.12
-
-# Create symlinks so the builder venv works in the runtime image
-# venv bin/python3 → python → /usr/local/bin/python3 (builder path)
-RUN UV_PYTHON=$(uv python find 3.12) \
-    && ln -sf "$UV_PYTHON" /usr/local/bin/python3 \
-    && ln -sf "$UV_PYTHON" /usr/bin/python3 \
-    && ln -sf "$UV_PYTHON" /usr/bin/python \
-    && python3 --version
+# v1.9.6: 删 uv standalone python（relocation 崩）+ symlink。
+# python:3.12-slim base 自带系统 python（/usr/local/bin/python3，含 stdlib），venv 直接用。
 
 # Create non-root user
 RUN groupadd -r arrowlake && useradd -r -g arrowlake -d /app -s /sbin/nologin arrowlake
