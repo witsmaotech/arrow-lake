@@ -405,4 +405,4 @@ class TestKGAskEndpoint:
         data = resp.json()
         assert "聚合根" in data["answer"]
         assert data["retrieval_count"] == 1
-        lake.kg_chat.assert_awaited_once_with("jd_ddd", "什么是聚合根", top_k=5)
+        lake.kg_chat.assert_awaited_once_with("jd_ddd", "什么是聚合根", top_k=5, engine="graphrag", history=None)
