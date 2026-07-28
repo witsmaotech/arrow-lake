@@ -152,8 +152,14 @@ class MaskingEngine:
                         )
                 except Exception:
                     logger.debug("masking_engine.policy_detail_failed", name=name)
-        except Exception:
-            logger.debug("masking_engine.fetch_failed", exc_info=True)
+        except Exception as exc:
+            # Fail CLOSED on Gravitino outage: re-raise so apply_masking propagates
+            # → _apply_masking returns an empty table. A transient Gravitino failure
+            # must NOT silently yield empty rules → unmasked data leak (review C1).
+            logger.error("masking_engine.fetch_failed", dataset=dataset, exc_info=True)
+            raise RuntimeError(
+                f"failed to fetch masking rules from Gravitino for {dataset!r}: {exc}"
+            ) from exc
         return rules
 
     def _mask_column(self, column: pa.ChunkedArray, function: str) -> pa.ChunkedArray:

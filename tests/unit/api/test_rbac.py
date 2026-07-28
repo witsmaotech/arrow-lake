@@ -277,13 +277,15 @@ class TestRowFilter:
         result = _apply_row_filter(_table(), "age > 25")
         assert result.num_rows == 2
 
-    def test_filter_unparseable_returns_all(self) -> None:
+    def test_filter_unparseable_fail_closed(self) -> None:
+        # review H3: unparseable ACL expr → fail-closed (0 rows), not all rows.
         result = _apply_row_filter(_table(), "not a valid filter")
-        assert result.num_rows == 3
+        assert result.num_rows == 0
 
-    def test_filter_missing_column_returns_all(self) -> None:
+    def test_filter_missing_column_fail_closed(self) -> None:
+        # review H3: ACL references missing column → fail-closed (0 rows).
         result = _apply_row_filter(_table(), "missing_col == 1")
-        assert result.num_rows == 3
+        assert result.num_rows == 0
 
 
 # ===========================================================================

@@ -504,12 +504,12 @@ def _apply_row_filter(table: pa.Table, expr: str) -> pa.Table:
     m = pattern.match(expr.strip())
     if not m:
         logger.warning("acl_filter_unparseable", expr=expr)
-        return table
+        return table.slice(0, 0)  # fail-closed (review H3)
 
     col_name, op_str, raw_val = m.groups()
     if col_name not in table.column_names:
         logger.warning("acl_filter_column_missing", column=col_name)
-        return table
+        return table.slice(0, 0)  # fail-closed (review H3)
 
     op = _OPS[op_str]
     col = table.column(col_name)
@@ -527,7 +527,7 @@ def _apply_row_filter(table: pa.Table, expr: str) -> pa.Table:
         return table.filter(mask)
     except (pa.ArrowInvalid, TypeError, pa.ArrowNotImplementedError):
         logger.warning("acl_filter_type_mismatch", column=col_name, value=val)
-        return table
+        return table.slice(0, 0)  # fail-closed (review H3)
 
 
 class GravitinoRBACBridge:

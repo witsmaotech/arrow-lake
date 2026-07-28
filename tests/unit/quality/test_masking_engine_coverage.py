@@ -120,15 +120,15 @@ class TestFetchRulesFromGravitino:
 
         assert rules == []
 
-    def test_fetch_list_api_failure_returns_empty(self) -> None:
+    def test_fetch_list_api_failure_raises(self) -> None:
+        # review C1: Gravitino list-fetch failure → raise (fail-closed), not empty.
         engine = MaskingEngine(_cfg())
 
         with patch("urllib.request.Request") as MockReq, \
              patch("urllib.request.urlopen", side_effect=RuntimeError("network")):
             MockReq.return_value = MagicMock()
-            rules = engine._fetch_rules_from_gravitino("ds")
-
-        assert rules == []
+            with pytest.raises(RuntimeError, match="failed to fetch masking rules"):
+                engine._fetch_rules_from_gravitino("ds")
 
     def test_fetch_detail_api_failure_continues(self) -> None:
         engine = MaskingEngine(_cfg())

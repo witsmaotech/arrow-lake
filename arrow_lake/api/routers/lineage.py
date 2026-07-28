@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Path, Query
+import re
+
+from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from starlette.responses import PlainTextResponse
 
 from arrow_lake.api.auth_models import Role
@@ -39,6 +41,13 @@ async def lineage_record_event(
     _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> LineageRecordResponse:
     """Record a lineage event for a dataset."""
+    # Validate source_datasets against _NAME_PATTERN — they flow into graph
+    # rendering (_to_dot/_to_mermaid labels), so unsanitized names are an
+    # injection vector (review H4).
+    if req.source_datasets:
+        bad = [s for s in req.source_datasets if not re.match(_NAME_PATTERN, s)]
+        if bad:
+            raise HTTPException(status_code=400, detail=f"invalid source_dataset names: {bad}")
     await run_sync(
         lake.lineage_record_event,
         dataset_name, req.operation,
