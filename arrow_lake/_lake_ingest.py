@@ -525,6 +525,45 @@ class _LakeIngestMixin:
         )
         return report
 
+    def ingest_documents_and_index(
+        self,
+        dataset_name: str,
+        pdf_paths: list[str],
+        *,
+        doc_config: Any = None,
+        doc_type: str | None = None,
+        actor: str = "system",
+    ) -> IngestionReport:
+        """Ingest documents AND build retrieval indexes (parse→store→embed→FTS→vector).
+
+        Consolidates the post-ingest index sequence that was duplicated across
+        routers/datasets.py + routers/async_tasks.py (架构评审 #4). SDK callers
+        now get the same indexed product as HTTP — previously
+        ``ingest_documents`` alone left the dataset invisible to vector / hybrid
+        / RAG retrieval. Each post-step is best-effort: never fails the ingest
+        (text_content + FTS still work without embeddings/vector index).
+        """
+        import structlog
+
+        report = self.ingest_documents(
+            dataset_name, pdf_paths, doc_config=doc_config, doc_type=doc_type, actor=actor,
+        )
+        log = structlog.get_logger(__name__)
+        for step_fn, label in (
+            (getattr(self, "embed_and_add", None), "embed_documents"),
+            (getattr(self, "create_fts_index", None), "create_fts_index"),
+            (getattr(self, "create_vector_index", None), "create_vector_index"),
+        ):
+            if callable(step_fn):
+                try:
+                    step_fn(dataset_name)
+                except Exception as exc:  # noqa: BLE001 — never fail ingest on a post-step
+                    log.warning(
+                        "ingest.post_step_failed",
+                        dataset=dataset_name, step=label, err=str(exc)[:160],
+                    )
+        return report
+
     def create_dataset(self, name: str, data: pa.Table, *, actor: str = "system") -> None:
         """Create a new dataset from an Arrow Table.
 

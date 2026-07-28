@@ -585,41 +585,16 @@ async def ingest_documents(
             # Documents always need local paths (parser requirement)
             all_paths.extend(_resolve_blob_keys(req.blob_keys, lake, tmp_dir))
         doc_config = lake._config.document if hasattr(lake, "_config") else None
+        # parse→store→embed→FTS→vector consolidated in the facade (架构评审 #4);
+        # each post-step is best-effort there. _after_ingest_hooks (gravitino +
+        # cache invalidate) stays here — app_state-scoped, HTTP-layer concern.
+        # timeout covers the full ingest+embed+FTS+vector sequence (4 steps);
+        # previously each step had its own _INGEST_TIMEOUT — keep equivalent budget.
         report = await run_sync(
-            lake.ingest_documents, name, all_paths, doc_config=doc_config, doc_type=req.doc_type,
-            timeout=_INGEST_TIMEOUT, label="ingest_documents", actor=actor_of(_user),
+            lake.ingest_documents_and_index, name, all_paths, doc_config=doc_config,
+            doc_type=req.doc_type, timeout=_INGEST_TIMEOUT * 4, label="ingest_documents",
+            actor=actor_of(_user),
         )
-        # [#v1.8.9-E2E] The documents path writes text_content but not embeddings;
-        # embed now so the dataset is vector / hybrid / RAG searchable (previously
-        # such datasets were invisible to retrieval). Best-effort: ingest already
-        # succeeded (FTS over text_content works) if the embedder is unavailable.
-        try:
-            await run_sync(lake.embed_and_add, name, timeout=_INGEST_TIMEOUT, label="embed_documents")
-        except Exception as exc:  # noqa: BLE001 — never fail ingest on embedding
-            import structlog
-            structlog.get_logger(__name__).warning(
-                "ingest.embed_after_documents_failed", dataset=name, err=str(exc)[:160],
-            )
-        # [#v1.8.9-E2E] Build the FTS index so rag/query (FTS-default retriever)
-        # returns results on a freshly-ingested dataset. Without this the retriever
-        # finds no index → "no relevant documents". Best-effort (like embed above).
-        try:
-            await run_sync(lake.create_fts_index, name, timeout=_INGEST_TIMEOUT, label="create_fts_index")
-        except Exception as exc:  # noqa: BLE001 — never fail ingest on FTS index
-            import structlog
-            structlog.get_logger(__name__).warning(
-                "ingest.create_fts_index_failed", dataset=name, err=str(exc)[:160],
-            )
-        # v1.9.5: create vector index so hybrid RAG works out-of-the-box.
-        # IVF_PQ needs ≥256 rows; smaller datasets raise VECTOR_INDEX_TOO_FEW_ROWS
-        # (caught here → WARN skip; vector strategy still works via brute-force).
-        try:
-            await run_sync(lake.create_vector_index, name, timeout=_INGEST_TIMEOUT, label="create_vector_index")
-        except Exception as exc:  # noqa: BLE001 — never fail ingest on vector index
-            import structlog
-            structlog.get_logger(__name__).warning(
-                "ingest.create_vector_index_failed", dataset=name, err=str(exc)[:160],
-            )
         _after_ingest_hooks(request.app.state, name, lake)
         return IngestResponse.from_report(report)
     finally:

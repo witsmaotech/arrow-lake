@@ -184,7 +184,6 @@ def _bg_ingest_documents(
 
     from arrow_lake.api.routers.datasets import _after_ingest_hooks, _resolve_blob_keys
 
-    log = logging.getLogger(__name__)
     tmp_dir: str | None = None
     try:
         all_paths = list(pdf_paths)
@@ -192,24 +191,11 @@ def _bg_ingest_documents(
             tmp_dir = tempfile.mkdtemp(prefix="al_ingest_")
             all_paths.extend(_resolve_blob_keys(blob_keys, lake, tmp_dir))
         doc_config = lake._config.document if hasattr(lake, "_config") else None
-        report = lake.ingest_documents(
+        # parse→store→embed→FTS→vector consolidated in the facade (架构评审 #4);
+        # post-steps best-effort there. _after_ingest_hooks stays here (app_state).
+        report = lake.ingest_documents_and_index(
             name, all_paths, doc_config=doc_config, doc_type=doc_type, actor=actor
         )
-        # Best-effort post-steps (mirror sync endpoint): never fail the task on
-        # embedding / FTS index errors — text_content + FTS still work without them.
-        # v1.9.5: create_vector_index added so hybrid RAG works out-of-the-box.
-        # IVF_PQ requires ≥256 rows; smaller datasets raise VECTOR_INDEX_TOO_FEW_ROWS
-        # (caught here → WARN skip; vector strategy still works via brute-force).
-        for step_fn, label in (
-            (getattr(lake, "embed_and_add", None), "embed_documents"),
-            (getattr(lake, "create_fts_index", None), "create_fts_index"),
-            (getattr(lake, "create_vector_index", None), "create_vector_index"),
-        ):
-            if callable(step_fn):
-                try:
-                    step_fn(name)
-                except Exception as exc:  # noqa: BLE001
-                    log.warning("ingest.post_step_failed", dataset=name, step=label, err=str(exc)[:160])
         _after_ingest_hooks(app_state, name, lake)
         return report
     finally:
