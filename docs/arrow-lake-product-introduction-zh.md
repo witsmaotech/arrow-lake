@@ -146,14 +146,20 @@ LLM 提供商通过通用接口抽象：OpenAI、Anthropic、vLLM、Ollama 和 D
 
 GraphRAG 通过在向量和文本搜索之外同时查询 HugeGraph 知识图谱来扩展检索管线。当用户提出涉及实体关系的问题时 —— "哪些系统依赖于认证服务？" —— 管线检索相关图子图，将它们与传统搜索结果一起注入上下文，生成同时基于结构化和非结构化证据的回答。
 
+**交叉编码器重排序（Cross-Encoder Reranking）** 在第一阶段召回之后锐化检索精度。默认情况下，管线对每个候选分块用 bge-reranker-v2-m3 交叉编码器针对查询打出一个连续的相关性分数并重排列表，使最贴切的证据上浮到顶部。重排器可插拔 —— CrossEncoder（默认）、LLM-as-judge 或 Ollama 二值判断 —— 并支持可配置设备（auto/cpu/cuda）与启动预热（warm-up-on-init），让首次查询不付冷启动代价。
+
+**忠实度校验（Faithfulness Verification）** 闭环防幻觉。生成之后，回答的每一句都被拿来与检索上下文核对：轻量默认版用嵌入余弦相似度（复用抽取编码器，阈值可通过 `verification_threshold` 配置），另有一个 opt-in 的 LLM-judge 模式以单次调用逐句打分。响应携带 `support_ratio` 和明确的 `unsupported` 列表，让下游消费者可以拒绝或标记那些论断未被源证据支撑的回答。
+
 | 能力 | 详情 |
 |---|---|
 | LLM 提供商 | OpenAI、Anthropic、vLLM、Ollama、DeepSeek |
 | 检索模式 | 向量、混合、分面、集成 |
+| 重排序 | 交叉编码器 bge-reranker-v2-m3（默认）、LLM、Ollama |
 | 上下文管理 | 可配置的词元预算、会话历史 |
 | 引用追踪 | 每条论断的源引用及搜索分数 |
+| 忠实度校验 | support_ratio + unsupported（嵌入余弦 / LLM judge） |
 | GraphRAG | 通过 HugeGraph 实现知识图谱增强检索 |
-| 生成 | 支持可配置参数的流式响应 |
+| 生成 | 流式响应，附带引用 + 延迟 + 校验信息 |
 
 ### 知识图谱
 
@@ -179,12 +185,17 @@ GraphRAG 桥接知识图谱和检索管线。当 RAG 查询到达时，系统从
 
 HMAC-SHA256 审计轨迹使血缘具备防篡改能力。每个状态转换 —— 摄入、验证、分块、嵌入、查询 —— 都记录了带密钥哈希，可检测审计记录的修改或删除。这不是一个事后才想到的安全特性；它是一个结构性保证，确保湖中每条数据的来源都可以被独立验证。
 
+**数据脱敏（Data Masking）** 将列级隐私控制引入治理平面。策略把敏感列映射到四种函数之一 —— `redact`、`hash`（HMAC-SHA256，128 位）、`partial` 或 `nullify` —— 并对 VIEWER 角色在读取时透明强制执行。脱敏引擎采用 fail-closed 设计：若 HMAC 密钥缺失，服务拒绝启动（可通过 `ALLOW_MISSING_KEY=1` opt-in 降级）；任何脱敏失败都返回空表，而非泄露未脱敏的源数据。`mask-preview` 端点读取数据集前几行并返回脱敏前/后对比，让策略作者在发布规则前即可验证其效果。
+
+**血缘可视化（Lineage Visualization）** 把审计图谱变成一个可交互的界面。`lineage.html` 控制台页面围绕任一数据集渲染其完整的上下游图谱（按 target/source/derived 着色），以可配置的 `max_nodes` 封顶遍历规模，避免大图压垮浏览器；点击节点即可展示**列级血缘** —— 精确显示哪个源列流向哪个目标列、经由何种变换。策略变更与脱敏操作本身也通过同一套 Lance 审计轨迹记录，使治理动作可被治理。
+
 | 能力 | 详情 |
 |---|---|
 | Schema 验证 | 严格/宽松模式，支持 Schema 演化 |
 | 去重 | 精确哈希（内容）+ 感知哈希（图像） |
 | 质量评分 | NVIDIA NeMo Curator 集成 |
-| 数据血缘 | 从源头到查询结果的全链路追踪 |
+| 数据血缘 | 全链路追踪，可交互图谱 + 列级血缘 |
+| 数据脱敏 | redact/hash/partial/nullify，HMAC fail-closed，mask-preview |
 | 审计轨迹 | HMAC-SHA256 防篡改事件日志 |
 
 ---
@@ -199,6 +210,8 @@ JWT 生命周期完全受控。Token 以可配置的过期时间签发，登出�
 
 容器加固在 Docker 配置中指定：`cap-drop ALL` 移除所有 Linux Capabilities，文件系统以只读方式挂载并显式声明可写卷，资源限制约束 CPU 和内存。Kubernetes NetworkPolicy 模板将 Pod 间通信限制在 Arrow Lake 所需的端口和协议，最小化任何容器被攻破后的爆炸半径。
 
+**默认 fail-closed（失败即关闭）** 是 v1.9.6 安全模型的主线。当信任边界处出现问题时，系统总是向安全一侧失败，绝不向数据泄露一侧失败：脱敏引擎失败和不可解析的行级过滤器返回空表，而非未脱敏或未过滤的源数据；启动时脱敏 HMAC 密钥缺失是硬失败而非告警；mask-preview 的列名经标识符白名单校验以拒绝 SQL 注入；血缘图谱标签经 HTML 转义以阻断经节点标题发起的 XSS。原则是一致的 —— 在任何隐私或授权路径上发生错误时，宁可返回空结果，也不泄露数据。
+
 | 安全特性 | 实现方式 |
 |---|---|
 | RBAC | 3 级（VIEWER/EDITOR/ADMIN），覆盖全部 40+ 端点 |
@@ -207,6 +220,7 @@ JWT 生命周期完全受控。Token 以可配置的过期时间签发，登出�
 | 速率限制 | 按端点 RPM，支持突发 |
 | TLS 与安全头 | TLS 终止 + CSP、X-Frame-Options、HSTS |
 | 注入防御 | Gremlin 参数化、SQL 预处理语句、路径标准化 |
+| Fail-closed | 脱敏/行过滤错误返回空表；启动必须提供 HMAC 密钥 |
 | 容器加固 | cap-drop ALL、只读文件系统、资源限制 |
 | 网络隔离 | Kubernetes NetworkPolicy 模板 |
 

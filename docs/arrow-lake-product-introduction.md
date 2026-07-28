@@ -146,14 +146,20 @@ LLM providers are abstracted behind a common interface: OpenAI, Anthropic, vLLM,
 
 GraphRAG extends the retrieval pipeline by querying the HugeGraph knowledge graph alongside vector and text search. When a user asks a question that involves entity relationships — "Which systems depend on the authentication service?" — the pipeline retrieves relevant graph subgraphs, injects them into the context alongside traditional search results, and generates an answer grounded in both structured and unstructured evidence.
 
+**Cross-encoder reranking** sharpens retrieval precision after first-stage recall. By default the pipeline applies a bge-reranker-v2-m3 cross-encoder to score every candidate chunk against the query with a continuous relevance score, reordering the list so the most pertinent evidence rises to the top. The reranker is pluggable — CrossEncoder (default), LLM-as-judge, or Ollama binary — and runs with a configurable device (auto/cpu/cuda) and warm-up-on-init, so the first query pays no cold-start penalty.
+
+**Faithfulness verification** closes the hallucination loop. After generation, every sentence of the answer is checked against the retrieved context: the lightweight default uses embedding cosine similarity (reusing the extract encoder, threshold configurable via `verification_threshold`), with an opt-in LLM-judge mode that scores each sentence in a single call. The response carries a `support_ratio` and an explicit `unsupported` list, so downstream consumers can refuse or flag answers whose claims are not grounded in the source evidence.
+
 | Capability | Details |
 |---|---|
 | LLM providers | OpenAI, Anthropic, vLLM, Ollama, DeepSeek |
 | Retrieval modes | Vector, Hybrid, Faceted, Ensemble |
+| Reranking | Cross-encoder bge-reranker-v2-m3 (default), LLM, Ollama |
 | Context management | Configurable token budget, session history |
 | Citation tracking | Per-claim source references with search scores |
+| Faithfulness verify | support_ratio + unsupported (embedding cosine / LLM judge) |
 | GraphRAG | Knowledge graph-augmented retrieval via HugeGraph |
-| Generation | Streaming response with configurable parameters |
+| Generation | Streaming response with citations + latency + verification |
 
 ### Knowledge Graph
 
@@ -179,12 +185,17 @@ Full-chain data lineage tracks every record from source to sink. When an embeddi
 
 An HMAC-SHA256 audit trail makes the lineage tamper-evident. Every state transition — ingest, validate, chunk, embed, query — is recorded with a keyed hash that detects modification or deletion of audit records. This is not a security-afterthought feature; it is a structural guarantee that the provenance of every piece of data in the lake can be independently verified.
 
+**Data masking** brings column-level privacy controls into the governance plane. Policies map sensitive columns to one of four functions — `redact`, `hash` (HMAC-SHA256, 128-bit), `partial`, or `nullify` — and are enforced transparently on read for VIEWER roles. The masking engine is fail-closed: if the HMAC key is missing the service refuses to start (opt-in downgrade via `ALLOW_MISSING_KEY=1`), and any masking failure returns an empty table rather than leaking the unmasked source. A `mask-preview` endpoint reads the first rows of a dataset and returns before/after pairs, so policy authors can verify a rule before publishing it.
+
+**Lineage visualization** turns the audit graph into an interactive surface. The `lineage.html` console page renders the full upstream/downstream graph around any dataset (color-coded by target/source/derived), caps the traversal at a configurable `max_nodes` to keep large graphs from overwhelming the browser, and exposes **column-level lineage** on node click — showing exactly which source column flowed into which target column and through what transform. Policy changes and masking operations are themselves audited through the same Lance audit trail, so governance actions are governable.
+
 | Capability | Details |
 |---|---|
 | Schema validation | Strict/lenient modes, evolution support |
 | Deduplication | Exact hash (content) + perceptual hash (images) |
 | Quality scoring | NVIDIA NeMo Curator integration |
-| Data lineage | Full-chain tracking from source to query result |
+| Data lineage | Full-chain tracking, interactive graph + column-level |
+| Data masking | redact/hash/partial/nullify, HMAC fail-closed, mask-preview |
 | Audit trail | HMAC-SHA256 tamper-evident event log |
 
 ---
@@ -199,6 +210,8 @@ Injection defense covers every query path where user input meets a query engine.
 
 Container hardening is specified in the Docker configuration: `cap-drop ALL` removes all Linux capabilities, the filesystem is mounted read-only with explicit writable volumes, and resource limits constrain CPU and memory. A Kubernetes NetworkPolicy template restricts pod-to-pod communication to only the ports and protocols that Arrow Lake requires, minimizing the blast radius of any container compromise.
 
+**Fail-closed by default** is the through-line of the v1.9.6 security model. When something goes wrong at a trust boundary, the system fails toward the safe side, never toward data exposure: masking-engine failures and unparseable row filters return an empty table instead of the unmasked or unfiltered source; a missing masking HMAC key at startup is a hard failure, not a warning; mask-preview column names are validated against an identifier whitelist to refuse SQL injection; and lineage graph labels are HTML-escaped to block XSS through node titles. The principle is uniform — on any error in a privacy or authorization path, prefer an empty result over a leaked one.
+
 | Security Feature | Implementation |
 |---|---|
 | RBAC | 3-tier (VIEWER/EDITOR/ADMIN) on all 40+ endpoints |
@@ -207,6 +220,7 @@ Container hardening is specified in the Docker configuration: `cap-drop ALL` rem
 | Rate limiting | Per-endpoint RPM with burst |
 | TLS and headers | TLS termination + CSP, X-Frame-Options, HSTS |
 | Injection defense | Gremlin parameterization, SQL prepared statements, path normalization |
+| Fail-closed | Masking/row-filter errors return empty table; HMAC key required at boot |
 | Container hardening | cap-drop ALL, read-only fs, resource limits |
 | Network isolation | Kubernetes NetworkPolicy template |
 
