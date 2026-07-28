@@ -407,7 +407,7 @@ class TestRerankTable:
         )
         mock_reranker = MagicMock()
 
-        def fake_rerank(query, chunks, top_n):
+        async def fake_rerank(query, chunks, top_n):
             return list(reversed(chunks))[:top_n]
 
         mock_reranker.rerank.side_effect = fake_rerank

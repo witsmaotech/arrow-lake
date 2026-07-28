@@ -23,10 +23,11 @@ def _chunk(text: str, score: float = 0.5) -> ContextChunk:
 
 
 class TestNoopReranker:
-    def test_truncates_to_top_n(self) -> None:
+    @pytest.mark.asyncio
+    async def test_truncates_to_top_n(self) -> None:
         r = NoopReranker()
         chunks = [_chunk(f"text{i}") for i in range(5)]
-        result = r.rerank("query", chunks, 3)
+        result = await r.rerank("query", chunks, 3)
         assert len(result) == 3
 
     def test_name_property(self) -> None:
@@ -37,34 +38,38 @@ class TestNoopReranker:
 
 
 class TestCrossEncoderReranker:
-    def test_empty_chunks(self) -> None:
+    @pytest.mark.asyncio
+    async def test_empty_chunks(self) -> None:
         r = CrossEncoderReranker()
-        assert r.rerank("q", [], 5) == []
+        assert await r.rerank("q", [], 5) == []
 
-    def test_fallback_to_noop(self) -> None:
+    @pytest.mark.asyncio
+    async def test_fallback_to_noop(self) -> None:
         r = CrossEncoderReranker()
         with pytest.MonkeyPatch.context() as m:
             m.setattr(r, "_load_model", lambda: None)
-            result = r.rerank("q", [_chunk("a"), _chunk("b")], 5)
+            result = await r.rerank("q", [_chunk("a"), _chunk("b")], 5)
         assert len(result) == 2
 
-    def test_rerank_with_model(self) -> None:
+    @pytest.mark.asyncio
+    async def test_rerank_with_model(self) -> None:
         r = CrossEncoderReranker()
         mock_model = MagicMock()
         mock_model.predict.return_value = MagicMock(tolist=lambda: [0.9, 0.1])
         r._model = mock_model
 
-        result = r.rerank("q", [_chunk("a"), _chunk("b")], 2)
+        result = await r.rerank("q", [_chunk("a"), _chunk("b")], 2)
         assert len(result) == 2
         assert result[0].metadata["rerank_score"] == 0.9
 
-    def test_predict_failure_falls_back(self) -> None:
+    @pytest.mark.asyncio
+    async def test_predict_failure_falls_back(self) -> None:
         r = CrossEncoderReranker()
         mock_model = MagicMock()
         mock_model.predict.side_effect = RuntimeError("OOM")
         r._model = mock_model
 
-        result = r.rerank("q", [_chunk("a")], 1)
+        result = await r.rerank("q", [_chunk("a")], 1)
         assert len(result) == 1
 
 

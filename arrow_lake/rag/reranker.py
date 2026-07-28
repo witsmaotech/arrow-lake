@@ -39,13 +39,18 @@ class BaseReranker(ABC):
     """Abstract base class for rerankers."""
 
     @abstractmethod
-    def rerank(
+    async def rerank(
         self,
         query: str,
         chunks: list[ContextChunk],
         top_n: int,
     ) -> list[ContextChunk]:
-        """Re-score and reorder chunks, returning the top-N."""
+        """Re-score and reorder chunks, returning the top-N.
+
+        Async contract: every reranker returns a coroutine the caller awaits.
+        Sync rerankers (Noop, CrossEncoder) simply ``return`` without awaiting.
+        One contract, one place — callers never branch on sync/async.
+        """
 
     @property
     def name(self) -> str:
@@ -55,7 +60,7 @@ class BaseReranker(ABC):
 class NoopReranker(BaseReranker):
     """Passthrough reranker — no re-scoring, just truncates to top_n."""
 
-    def rerank(
+    async def rerank(
         self,
         query: str,
         chunks: list[ContextChunk],
@@ -119,7 +124,7 @@ class CrossEncoderReranker(BaseReranker):
             )
             return None
 
-    def rerank(
+    async def rerank(
         self,
         query: str,
         chunks: list[ContextChunk],
@@ -130,7 +135,7 @@ class CrossEncoderReranker(BaseReranker):
 
         model = self._load_model()
         if model is None:
-            return self._fallback.rerank(query, chunks, top_n)
+            return await self._fallback.rerank(query, chunks, top_n)
 
         pairs = [(query, c.text) for c in chunks]
         try:

@@ -620,7 +620,7 @@ class TestRetrieveAndBuildContext:
             ContextChunk(text="d", dataset="docs", row_id="r4", score=0.95),
             ContextChunk(text="c", dataset="docs", row_id="r3", score=0.90),
         ]
-        mock_reranker.rerank.return_value = reranked
+        mock_reranker.rerank = AsyncMock(return_value=reranked)
 
         pipeline = RAGPipeline(
             llm_provider=provider,

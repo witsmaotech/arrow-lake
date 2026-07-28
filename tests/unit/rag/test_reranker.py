@@ -25,19 +25,22 @@ def _chunk(text: str = "hello", score: float = 0.5) -> ContextChunk:
 
 
 class TestNoopReranker:
-    def test_truncates_to_top_n(self) -> None:
+    @pytest.mark.asyncio
+    async def test_truncates_to_top_n(self) -> None:
         chunks = [_chunk(f"t{i}") for i in range(5)]
-        result = NoopReranker().rerank("q", chunks, top_n=3)
+        result = await NoopReranker().rerank("q", chunks, top_n=3)
         assert len(result) == 3
         assert result[0].text == "t0"
 
-    def test_top_n_exceeds_length(self) -> None:
+    @pytest.mark.asyncio
+    async def test_top_n_exceeds_length(self) -> None:
         chunks = [_chunk()]
-        result = NoopReranker().rerank("q", chunks, top_n=10)
+        result = await NoopReranker().rerank("q", chunks, top_n=10)
         assert len(result) == 1
 
-    def test_empty_chunks(self) -> None:
-        result = NoopReranker().rerank("q", [], top_n=5)
+    @pytest.mark.asyncio
+    async def test_empty_chunks(self) -> None:
+        result = await NoopReranker().rerank("q", [], top_n=5)
         assert result == []
 
     def test_name_property(self) -> None:
@@ -50,19 +53,21 @@ class TestNoopReranker:
 
 
 class TestCrossEncoderReranker:
-    def test_fallback_when_model_load_fails(self) -> None:
+    @pytest.mark.asyncio
+    async def test_fallback_when_model_load_fails(self) -> None:
         """Model loading fails → falls back to NoopReranker behavior."""
         reranker = CrossEncoderReranker()
         reranker._model = None  # ensure no cached model
         chunks = [_chunk(f"t{i}") for i in range(3)]
         with patch.object(reranker, "_load_model", return_value=None):
-            result = reranker.rerank("q", chunks, top_n=2)
+            result = await reranker.rerank("q", chunks, top_n=2)
         assert len(result) == 2
         assert result[0].text == "t0"
 
-    def test_empty_chunks_returns_empty(self) -> None:
+    @pytest.mark.asyncio
+    async def test_empty_chunks_returns_empty(self) -> None:
         reranker = CrossEncoderReranker()
-        assert reranker.rerank("q", [], top_n=5) == []
+        assert await reranker.rerank("q", [], top_n=5) == []
 
 
 # ===========================================================================

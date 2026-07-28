@@ -286,8 +286,27 @@ class HybridSearchBridge:
             for i, (t, s) in enumerate(zip(texts, rrf_scores, strict=True))
         ]
 
+        # BaseReranker.rerank is async (uniform contract), but this is a SYNC
+        # path: HybridSearchBridge.search is sync by design and search_async
+        # runs it in a worker thread via asyncio.to_thread (no running loop).
+        # Drive the coroutine to completion here. If we are somehow inside a
+        # running loop, offload to a throwaway thread to avoid deadlock. This
+        # fixes the latent silent-Noop: an async reranker (llm/ollama) here
+        # previously returned a coroutine that blew up downstream.
+        import asyncio
+        import concurrent.futures
+
+        async def _completed():
+            return await self._reranker.rerank(query_text, chunks, top_k)
+
         try:
-            reranked = self._reranker.rerank(query_text, chunks, top_k)
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                reranked = asyncio.run(_completed())
+            else:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    reranked = pool.submit(asyncio.run, _completed()).result()
         except Exception:
             logger.warning("Rerank failed, returning original order", exc_info=True)
             return table
