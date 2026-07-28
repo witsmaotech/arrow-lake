@@ -294,9 +294,13 @@ async def mask_preview(
     name: str = Path(..., pattern=_NAME_PATTERN),
     *,
     lake=Depends(get_lake),
-    _user: dict = Depends(require_role(Role.EDITOR)),
+    _user: dict = Depends(require_role(Role.ADMIN)),
 ) -> dict:
     """Preview a masking function on the first rows of a dataset's columns.
+
+    ADMIN-only: the ``before`` field returns raw (unmasked) values, so this
+    endpoint must not be reachable by EDITOR (who may be denied the column at
+    ACL level) — would bypass column-level ACL (review H2).
 
     Body: ``{"columns": [...], "function": "redact|hash|partial|nullify"}``.
     Returns ``{column: {"before": [...], "after": [...]}}`` so the console can
@@ -342,6 +346,8 @@ async def mask_preview(
         try:
             after = engine._mask_column(col, function).to_pylist()
             out[c] = {"before": before, "after": after}
-        except RuntimeError as exc:
+        except Exception as exc:
+            # hash-no-key RuntimeError, unknown-function ValueError, non-string
+            # ArrowInvalid/TypeError — surface as error field, never 500.
             out[c] = {"before": before, "after": [], "error": str(exc)}
     return {"success": True, "data": out, "error": None, "metadata": {}}

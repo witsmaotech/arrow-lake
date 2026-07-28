@@ -95,7 +95,7 @@ async function loadGraph(name) {
     const es = (g.edges || []).map((e, i) => ({
       id: "e" + i, from: e.from, to: e.to, label: e.operation || "", arrows: "to",
       font: { size: 9, color: "#64748b", strokeWidth: 0 },
-      title: `${e.operation || "?"}${e.transform_type ? " · " + e.transform_type : ""}`,
+      title: esc(`${e.operation || "?"}${e.transform_type ? " · " + e.transform_type : ""}`),
     }));
     if (!V) { cont.innerHTML = '<div class="muted" style="padding:14px;color:var(--warn)">vis-network 未加载</div>'; return; }
     if (!ns.length) { cont.innerHTML = '<div class="muted" style="padding:14px">该数据集无血缘记录(孤立节点)</div>'; return; }

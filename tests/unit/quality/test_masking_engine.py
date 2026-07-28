@@ -98,13 +98,13 @@ class TestMaskingEngineApplyMasking:
         assert val is not None
         assert "****" in val or "*" in val
 
-    def test_unknown_function_passes_through(self) -> None:
+    def test_unknown_function_raises_in_apply(self) -> None:
+        # P0-6 review: unknown function fails closed (raise), not pass-through.
         engine = MaskingEngine(_cfg())
         rules = [MaskRule(column="email", function="unknown_func")]
         with patch.object(engine, "_get_rules", return_value=rules):
-            result = engine.apply_masking(_table(), dataset="ds", role="viewer")
-        # Should not crash, column may pass through
-        assert result.num_rows == 2
+            with pytest.raises(ValueError, match="unknown masking function"):
+                engine.apply_masking(_table(), dataset="ds", role="viewer")
 
     def test_column_not_in_table(self) -> None:
         engine = MaskingEngine(_cfg())
@@ -174,8 +174,10 @@ class TestMaskingEngineInternalMethods:
         result = engine._mask_column(col, "redact")
         assert result[0].as_py() == "*****"
 
-    def test_unknown_function_noop(self) -> None:
+    def test_unknown_function_raises(self) -> None:
+        # P0-6 review: unknown function must fail closed (raise), not silently
+        # return the unmasked column.
         engine = MaskingEngine(_cfg())
         col = pa.chunked_array([pa.array(["hello"])])
-        result = engine._mask_column(col, "bogus")
-        assert result[0].as_py() == "hello"
+        with pytest.raises(ValueError, match="unknown masking function"):
+            engine._mask_column(col, "bogus")

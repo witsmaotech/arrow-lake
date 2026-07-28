@@ -198,5 +198,7 @@ class MaskingEngine:
             masked = [_partial_mask(v.as_py()) for v in column]
             return pa.chunked_array([pa.array(masked, type=pa.string())])
 
-        # Unknown function — no-op
-        return column
+        # Unknown/misconfigured function — fail closed (never return unmasked).
+        # apply_masking propagates → _apply_masking catches & returns empty table.
+        # A typo in policy config must NOT silently leak the raw column.
+        raise ValueError(f"unknown masking function: {function!r}")

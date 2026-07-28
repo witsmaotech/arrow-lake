@@ -315,7 +315,9 @@ def create_masking_policy(
                 payload={"policy_name": name, "columns": columns, "function": function},
             )
         except Exception:
-            pass
+            # audit is best-effort, but silent failure erases the forensics trail
+            # for a security-critical mutation — surface it (review M1).
+            logger.warning("masking_policy_audit_failed", policy_name=name, exc_info=True)
         return {
             "success": True,
             "data": {"name": name, "columns": columns, "function": function},
