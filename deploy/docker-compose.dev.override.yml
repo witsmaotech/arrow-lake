@@ -38,6 +38,7 @@ services:
       PYTHONPATH: /app
       HF_HUB_CACHE: /hf-hub
       HF_HUB_OFFLINE: "1"
+      ARROW_LAKE__RAG__RERANKER_MODEL: "/bge-reranker"
     volumes:
       - type: bind
         source: ../arrow_lake
@@ -49,4 +50,8 @@ services:
       - type: bind
         source: /home/witshine/.cache/huggingface/hub
         target: /hf-hub
+        read_only: true
+      - type: bind
+        source: /home/witshine/.cache/modelscope/models/BAAI--bge-reranker-v2-m3/snapshots/master
+        target: /bge-reranker
         read_only: true

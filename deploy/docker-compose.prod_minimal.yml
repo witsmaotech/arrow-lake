@@ -37,11 +37,11 @@ x-arrow-lake: &arrow-lake
     dockerfile: deploy/Dockerfile
     network: host
     args:
-      VERSION: "1.9.4"
+      VERSION: "1.9.5"
       HTTP_PROXY: "${BUILD_HTTP_PROXY:-}"
       HTTPS_PROXY: "${BUILD_HTTPS_PROXY:-}"
       NO_PROXY: "${BUILD_NO_PROXY:-127.0.0.1,localhost}"
-  image: arrow-lake:1.9.4
+  image: arrow-lake:1.9.5
   restart: unless-stopped
   env_file:
     - path: ../.env
@@ -302,8 +302,8 @@ services:
       ARROW_LAKE__STORAGE__COMPACTION_FRAGMENT_THRESHOLD: "${COMPACTION_THRESHOLD:-20}"
       ARROW_LAKE__STORAGE__VERSION_RETENTION_DAYS: "${VERSION_RETENTION_DAYS:-7}"
       # v1.4.4: RAG quality (reranking + query transform + multi-turn)
-      ARROW_LAKE__RAG__RERANKER: "${RAG_RERANKER:-ollama}"
-      ARROW_LAKE__RAG__RERANKER_MODEL: "${RAG_RERANKER_MODEL:-dengcao/Qwen3-Reranker-0.6B:F16}"
+      ARROW_LAKE__RAG__RERANKER: "${RAG_RERANKER:-cross-encoder}"
+      ARROW_LAKE__RAG__RERANKER_MODEL: "${RAG_RERANKER_MODEL:-BAAI/bge-reranker-v2-m3}"
       ARROW_LAKE__RAG__RERANKER_TOP_N: "${RAG_RERANKER_TOP_N:-10}"
       ARROW_LAKE__RAG__QUERY_TRANSFORM: "${RAG_QUERY_TRANSFORM:-multi_query}"
       ARROW_LAKE__RAG__HYDE_MAX_TOKENS: "${RAG_HYDE_MAX_TOKENS:-256}"
