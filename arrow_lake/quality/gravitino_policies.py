@@ -71,8 +71,15 @@ class GravitinoPolicyService:
                     error=str(exc),
                 )
 
-    def create_masking_policy(self, name: str, columns: list[str]) -> None:
-        """Create a column masking policy."""
+    def create_masking_policy(self, name: str, columns: list[str], function: str = "redact") -> None:
+        """Create a column masking policy.
+
+        Args:
+            function: masking function — ``redact`` | ``hash`` | ``partial`` |
+                ``nullify`` (default ``redact``). Stored on the policy's
+                ``masking.function`` property and read back by MaskingEngine at
+                apply time.
+        """
         metalake = self._get_metalake()
         if metalake is None:
             return
@@ -81,14 +88,14 @@ class GravitinoPolicyService:
                 metalake.create_policy(
                     name=name,
                     policy_type="masking",
-                    comment=f"Mask columns: {', '.join(columns)}",
+                    comment=f"Mask columns ({function}): {', '.join(columns)}",
                     properties={
                         "masking.columns": json_list(columns),
-                        "masking.function": "redact",
+                        "masking.function": function,
                     },
                 )
                 logger.info(
-                    "gravitino_masking_policy_created", name=name, columns=columns
+                    "gravitino_masking_policy_created", name=name, columns=columns, function=function
                 )
             except Exception as exc:
                 logger.warning(

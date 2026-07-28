@@ -211,7 +211,7 @@ async function loadGov(name) {
         const t = p.type || "?";
         let detail = "";
         if (/retention/i.test(t)) detail = `保留 ${p.days ?? "?"} 天`;
-        else if (/masking/i.test(t)) detail = `脱敏列: ${esc((p.columns || []).join(", ") || "—")}`;
+        else if (/masking/i.test(t)) detail = `${esc(p.function || "redact")} · 列: ${esc((p.columns || []).join(", ") || "—")}`;
         else detail = esc(JSON.stringify(p).slice(0, 60));
         return `<div class="col-row"><span><b>${esc(p.name)}</b> <span class="tag mono" style="font-size:.6rem;margin-left:4px">${esc(t)}</span></span><span class="muted" style="font-size:.72rem">${detail}</span></div>`;
       }).join("")}</div>`
@@ -232,7 +232,16 @@ async function loadGov(name) {
         <div style="font-size:.74rem;font-weight:600;margin-top:6px">脱敏策略(masking columns,逗号分隔)</div>
         <input id="mkName" placeholder="策略名" value="masking-${esc(name)}"/>
         <textarea id="mkCols" placeholder="列名逗号分隔(如 phone,email)"></textarea>
-        <button class="btn btn-primary btn-sm" id="mkCreate">建脱敏策略</button>
+        <label style="font-size:.74rem;display:flex;align-items:center;gap:6px;flex-wrap:wrap">脱敏函数
+          <select id="mkFn" style="background:var(--ink-900);border:1px solid var(--line);color:var(--fg);border-radius:var(--r-md);padding:6px">
+            <option value="redact">redact(全覆盖 *)</option>
+            <option value="hash">hash(HMAC 定向)</option>
+            <option value="partial">partial(留首尾)</option>
+            <option value="nullify">nullify(置空)</option>
+          </select>
+          <button class="btn btn-sm" id="mkPreview">预览</button>
+          <button class="btn btn-primary btn-sm" id="mkCreate">建脱敏策略</button>
+        </label>
       </div>
     </details>` : '<div class="muted" style="font-size:.72rem;margin-top:8px">写操作需 ADMIN</div>';
   $("#gGov").innerHTML = `<div style="padding:6px 10px"><div class="muted" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.07em">Tags</div>${tagsHtml}<div style="margin-top:8px"><div class="muted" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.07em">Policies</div>${polHtml}</div>${adminForm}</div>`;
@@ -260,8 +269,24 @@ function bindGovForms(name) {
   $("#mkCreate")?.addEventListener("click", async () => {
     const n = $("#mkName").value.trim(); const cols = $("#mkCols").value.split(",").map(s => s.trim()).filter(Boolean);
     if (!n || !cols.length) return alert("请填策略名与列名");
-    try { await postBody("/metadata/policies/masking", { name: n, columns: cols }); toast("脱敏策略已建", "ok", 2000); loadGov(name); }
+    try { await postBody("/metadata/policies/masking", { name: n, columns: cols, function: $("#mkFn")?.value || "redact" }); toast("脱敏策略已建", "ok", 2000); loadGov(name); }
     catch (e) { alert("建脱敏策略失败:" + (e?.detail || e?.message || e)); }
+  });
+  $("#mkPreview")?.addEventListener("click", async () => {
+    const cols = $("#mkCols").value.split(",").map(s => s.trim()).filter(Boolean);
+    const fn = $("#mkFn")?.value || "redact";
+    if (!cols.length) return alert("请填列名以预览");
+    try {
+      const r = await request("POST", `/datasets/${encodeURIComponent(name)}/quality/mask-preview`, { body: JSON.stringify({ columns: cols, function: fn }) });
+      const d = r?.data || {};
+      const lines = Object.entries(d).map(([c, v]) => {
+        if (v.error) return `${c}: ⚠ ${v.error}`;
+        const bef = (v.before || []).map(x => String(x)).join(", ");
+        const aft = (v.after || []).map(x => String(x)).join(", ");
+        return `${c}:\n   前 [${bef}]\n   后 [${aft}]`;
+      });
+      alert(`${fn} 预览(前 5 行)\n\n` + (lines.length ? lines.join("\n\n") : "无数据"));
+    } catch (e) { alert("预览失败:" + (e?.detail || e?.message || e)); }
   });
 }
 

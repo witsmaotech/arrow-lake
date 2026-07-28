@@ -14,6 +14,13 @@ from arrow_lake.config.gravitino import GravitinoConfig
 from arrow_lake.quality.masking_engine import MaskRule, MaskingEngine
 
 
+@pytest.fixture(autouse=True)
+def _hmac_key_env():
+    """P0-6: default HMAC key so MaskingEngine construction succeeds."""
+    with patch.dict(os.environ, {"ARROW_LAKE__MASKING__HMAC_KEY": "unit-test-key"}):
+        yield
+
+
 def _cfg(**overrides: object) -> GravitinoConfig:
     defaults = {"enabled": True, "uri": "http://g:8090", "metalake": "ml"}
     defaults.update(overrides)

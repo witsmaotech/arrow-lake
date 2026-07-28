@@ -45,11 +45,21 @@ class MaskingEngine:
             "",
         ).encode()
         if not self._hmac_key:
-            logger.warning(
-                "masking_engine.hmac_key_missing",
-                msg="ARROW_LAKE__MASKING__HMAC_KEY not set — hash masking is DISABLED. "
-                "Set this environment variable to enable secure hash masking.",
-            )
+            if os.environ.get("ARROW_LAKE__MASKING__ALLOW_MISSING_KEY") == "1":
+                # Explicit opt-in: startup proceeds, but hash masking will raise at use
+                # time (other functions still work). For production, always set HMAC_KEY.
+                logger.warning(
+                    "masking_engine.hmac_key_missing_opt_in",
+                    msg="ARROW_LAKE__MASKING__HMAC_KEY not set (ALLOW_MISSING_KEY=1). "
+                    "hash masking will raise if used; redact/partial/nullify still work.",
+                )
+            else:
+                raise RuntimeError(
+                    "ARROW_LAKE__MASKING__HMAC_KEY not set — masking requires an HMAC key "
+                    "for hash masking. Set the env var, or set "
+                    "ARROW_LAKE__MASKING__ALLOW_MISSING_KEY=1 to start with hash masking "
+                    "disabled (redact/partial/nullify remain available)."
+                )
 
     # ── public API ──
 
@@ -159,8 +169,14 @@ class MaskingEngine:
 
         if function == "hash":
             if not self._hmac_key:
-                logger.warning("masking_engine.hash_fallback_nullify", reason="HMAC key not configured")
-                return self._mask_column(column, "nullify")
+                # opt-in startup mode (ALLOW_MISSING_KEY=1) with no key: hash is unusable.
+                # Never silently fall back to nullify — that changes semantics and hides a
+                # misconfiguration. Raise so the caller knows hash is unavailable.
+                raise RuntimeError(
+                    "masking hash function requires ARROW_LAKE__MASKING__HMAC_KEY, which is "
+                    "not set (ALLOW_MISSING_KEY opt-in mode). Configure the key or use "
+                    "redact/partial/nullify."
+                )
 
             def _hash_val(val: str | None) -> str | None:
                 if val is None:

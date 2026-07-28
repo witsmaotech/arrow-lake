@@ -281,8 +281,12 @@ def create_retention_policy(request: Request) -> dict[str, Any]:
         return {"success": False, "data": None, "error": str(exc), "metadata": {}}
 
 
-@router.post("/policies/masking", dependencies=[Depends(require_role(Role.ADMIN))])
-def create_masking_policy(request: Request) -> dict[str, Any]:
+@router.post("/policies/masking")
+def create_masking_policy(
+    request: Request,
+    lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.ADMIN)),
+) -> dict[str, Any]:
     """Create a data masking policy."""
     try:
         body = json.loads(request.query_params.get("body", "{}"))
@@ -290,16 +294,31 @@ def create_masking_policy(request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="Invalid JSON in body parameter") from exc
     name = body.get("name", "")
     columns = body.get("columns", [])
+    function = body.get("function", "redact")
     if not name:
         raise HTTPException(status_code=400, detail="Policy name is required")
+    if function not in ("redact", "hash", "partial", "nullify"):
+        raise HTTPException(
+            status_code=400, detail="function must be one of: redact, hash, partial, nullify"
+        )
     try:
         from arrow_lake.quality.gravitino_policies import GravitinoPolicyService
 
         svc = GravitinoPolicyService(request.app.state.config.gravitino)
-        svc.create_masking_policy(name, columns)
+        svc.create_masking_policy(name, columns, function)
+        # P0-6 audit (best-effort — never block policy creation on audit failure).
+        try:
+            lake.audit_record(
+                event_type="masking_policy_created",
+                dataset_name="",
+                actor=str(_user.get("user_id") or _user.get("sub") or "admin"),
+                payload={"policy_name": name, "columns": columns, "function": function},
+            )
+        except Exception:
+            pass
         return {
             "success": True,
-            "data": {"name": name, "columns": columns},
+            "data": {"name": name, "columns": columns, "function": function},
             "error": None,
             "metadata": {},
         }

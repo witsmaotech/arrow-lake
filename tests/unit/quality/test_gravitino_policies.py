@@ -151,6 +151,15 @@ class TestPolicyServiceEnabled:
         assert call_kwargs["policy_type"] == "masking"
         assert call_kwargs["properties"]["masking.function"] == "redact"
 
+    def test_create_masking_policy_function_passthrough(
+        self, service: GravitinoPolicyService, metalake: MagicMock
+    ) -> None:
+        # P0-6: function param flows through to the policy property (was hardcoded redact).
+        service.create_masking_policy("mask-h", columns=["ssn"], function="hash")
+        call_kwargs = metalake.create_policy.call_args[1]
+        assert call_kwargs["properties"]["masking.function"] == "hash"
+        assert "hash" in call_kwargs["comment"]
+
     def test_create_masking_policy_exception(
         self, service: GravitinoPolicyService, metalake: MagicMock
     ) -> None:

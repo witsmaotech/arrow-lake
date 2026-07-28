@@ -76,6 +76,13 @@ class TestRetentionEnforcer:
 # ────────────────────────────────────────────────────────────
 
 class TestMaskingEngine:
+    @pytest.fixture(autouse=True)
+    def _hmac_key_env(self):
+        """P0-6: default HMAC key so MaskingEngine construction succeeds."""
+        import os
+        with patch.dict(os.environ, {"ARROW_LAKE__MASKING__HMAC_KEY": "unit-test-key"}):
+            yield
+
     @pytest.fixture()
     def table(self) -> pa.Table:
         return pa.table({

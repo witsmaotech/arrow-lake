@@ -589,3 +589,37 @@ async def test_quality_profile_empty_columns(client: AsyncClient, mock_lake: Mag
     body = resp.json()
     assert body["data"]["total_columns"] == 0
     assert body["data"]["columns"] == []
+
+
+# ---------------------------------------------------------------------------
+# Mask preview (P0-6)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_mask_preview_redact(client: AsyncClient, mock_lake: MagicMock) -> None:
+    import os
+    from arrow_lake.query.olap import OlapQueryResult
+
+    tbl = pa.table({"email": ["a@b.com", "c@d.com"]})
+    mock_lake.sql_query.return_value = OlapQueryResult(
+        table=tbl, row_count=2, column_count=1, sql="SELECT"
+    )
+    with patch.dict(os.environ, {"ARROW_LAKE__MASKING__HMAC_KEY": "test-key"}):
+        resp = await client.post(
+            "/api/v1/datasets/ds/quality/mask-preview",
+            json={"columns": ["email"], "function": "redact"},
+        )
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["email"]["before"] == ["a@b.com", "c@d.com"]
+    assert data["email"]["after"][0] != "a@b.com"  # redact changed it
+
+
+@pytest.mark.asyncio
+async def test_mask_preview_invalid_function(client: AsyncClient) -> None:
+    resp = await client.post(
+        "/api/v1/datasets/ds/quality/mask-preview",
+        json={"columns": ["email"], "function": "bogus"},
+    )
+    assert resp.status_code == 400

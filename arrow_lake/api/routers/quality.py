@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import asdict
 
-from fastapi import APIRouter, Depends, Path, Request
+from fastapi import APIRouter, Depends, HTTPException, Path, Request
 
 from arrow_lake.api.auth_models import Role
 from arrow_lake.api.deps import authorize_dataset, get_lake, require_role
@@ -286,3 +286,54 @@ async def extract(
         operation="extract",
         message=f"Structured extraction started on '{name}.{req.column}' ({len(field_dicts)} fields)",
     )
+
+
+@router.post("/{name}/quality/mask-preview")
+async def mask_preview(
+    request: Request,
+    name: str = Path(..., pattern=_NAME_PATTERN),
+    *,
+    lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.EDITOR)),
+) -> dict:
+    """Preview a masking function on the first rows of a dataset's columns.
+
+    Body: ``{"columns": [...], "function": "redact|hash|partial|nullify"}``.
+    Returns ``{column: {"before": [...], "after": [...]}}`` so the console can
+    show the effect before creating a masking policy (P0-6).
+    """
+    authorize_dataset(request, name)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    columns = body.get("columns", []) or []
+    function = body.get("function", "redact")
+    if function not in ("redact", "hash", "partial", "nullify"):
+        raise HTTPException(status_code=400, detail="function must be redact|hash|partial|nullify")
+    if not columns:
+        raise HTTPException(status_code=400, detail="columns is required")
+
+    cols_sql = ", ".join(f'"{c}"' for c in columns)
+    sql = f'SELECT {cols_sql} FROM "{name}" LIMIT 5'
+    qr = await run_sync(
+        lake.sql_query, name, sql, max_rows=5,
+        timeout=_QUALITY_TIMEOUT, label="mask_preview",
+    )
+    table = qr.table
+
+    from arrow_lake.quality.masking_engine import MaskingEngine
+    engine = MaskingEngine(request.app.state.config.gravitino)
+    out: dict[str, dict] = {}
+    for c in columns:
+        if c not in table.column_names:
+            out[c] = {"before": [], "after": [], "error": "column not found"}
+            continue
+        col = table.column(c)
+        before = col.to_pylist()
+        try:
+            after = engine._mask_column(col, function).to_pylist()
+            out[c] = {"before": before, "after": after}
+        except RuntimeError as exc:
+            out[c] = {"before": before, "after": [], "error": str(exc)}
+    return {"success": True, "data": out, "error": None, "metadata": {}}
