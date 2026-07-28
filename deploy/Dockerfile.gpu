@@ -68,7 +68,11 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 # Runtime system dependencies (Ubuntu packages)
 # 含 docling/opencv 运行时依赖（libgl1 等），与 CPU Dockerfile 对齐
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# v1.9.6: 切 apt 到 aliyun mirror（避免代理 17887→deb.debian.org 502 Bad Gateway，同 CPU Dockerfile）
+RUN for f in /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list; do \
+        [ -f "$f" ] && sed -i 's|deb.debian.org|mirrors.aliyun.com|g; s|security.debian.org|mirrors.aliyun.com|g' "$f" || true; \
+    done \
+    && apt-get update && apt-get install -y --no-install-recommends \
     curl \
     libcurl4 \
     libgomp1 \
