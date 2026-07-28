@@ -249,9 +249,9 @@ async function loadGov(name) {
 }
 
 function postBody(path, obj) {
-  // ⚠️ 踩坑 #1:Gravitino router 写操作 body 走 query param ?body=encodeURIComponent(JSON)
-  const body = encodeURIComponent(JSON.stringify(obj));
-  return request("POST", `${path}?body=${body}`);
+  // M2 fix: write as normal JSON body (was ?body= query param — leaked PII
+  // into URL access logs). api.js sets Content-Type: application/json.
+  return request("POST", path, { body: JSON.stringify(obj) });
 }
 
 function bindGovForms(name) {

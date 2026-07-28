@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
+
 from arrow_lake._lake_ingest import _LakeIngestMixin
 
 
@@ -59,3 +61,15 @@ class TestIngestDocumentsAndIndex:
         lake.embed_and_add.assert_called_once()
         lake.create_fts_index.assert_called_once()
         # create_vector_index being None → callable() False → skipped (no call)
+
+    def test_ingest_documents_failure_propagates_and_skips_index_steps(self):
+        """ingest_documents itself failing must propagate; index steps never run (no partial write)."""
+        lake = MagicMock()
+        lake.ingest_documents.side_effect = RuntimeError("parse failed")
+        with pytest.raises(RuntimeError, match="parse failed"):
+            _LakeIngestMixin.ingest_documents_and_index(
+                lake, "ds", ["/tmp/a.pdf"], actor="u",
+            )
+        lake.embed_and_add.assert_not_called()
+        lake.create_fts_index.assert_not_called()
+        lake.create_vector_index.assert_not_called()

@@ -538,10 +538,21 @@ class _LakeIngestMixin:
 
         Consolidates the post-ingest index sequence that was duplicated across
         routers/datasets.py + routers/async_tasks.py (架构评审 #4). SDK callers
-        now get the same indexed product as HTTP — previously
-        ``ingest_documents`` alone left the dataset invisible to vector / hybrid
-        / RAG retrieval. Each post-step is best-effort: never fails the ingest
-        (text_content + FTS still work without embeddings/vector index).
+        now get the same indexed product as HTTP — previously ``ingest_documents``
+        alone left the dataset invisible to vector / hybrid / RAG retrieval.
+
+        Best-effort semantics: index post-steps (embed/FTS/vector) that RAISE are
+        caught + logged so one failing step doesn't block the others; an
+        ``ingest_documents`` failure propagates (no partial write).
+
+        Trade-off (known): per-step *timeout isolation* is NOT provided here. The
+        router path runs this whole sequence under one ``run_sync`` budget; a HUNG
+        step (no client-side timeout) consumes the full budget and later steps
+        won't run — whereas the old per-step ``run_sync`` isolated each at 600s.
+        Accepted: hung steps are rare (embed/FTS/vector normally fail fast with an
+        exception, which IS caught here), and Python threads can't be force-killed
+        so the old isolation leaked executor threads anyway. async_tasks path had
+        no per-step timeout to begin with → no regression there.
         """
         import structlog
 

@@ -187,7 +187,7 @@ class MaskingEngine:
             def _hash_val(val: str | None) -> str | None:
                 if val is None:
                     return None
-                return hmac.new(self._hmac_key, val.encode(), hashlib.sha256).hexdigest()[:16]
+                return hmac.new(self._hmac_key, val.encode(), hashlib.sha256).hexdigest()[:32]
 
             masked = [_hash_val(v.as_py()) for v in column]
             return pa.chunked_array([pa.array(masked, type=pa.string())])

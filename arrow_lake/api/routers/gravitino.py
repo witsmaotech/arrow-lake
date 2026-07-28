@@ -217,10 +217,10 @@ def list_tags(request: Request, _user=Depends(require_role(Role.VIEWER))) -> dic
 
 
 @router.post("/tags", dependencies=[Depends(require_role(Role.ADMIN))])
-def create_tag(request: Request) -> dict[str, Any]:
+async def create_tag(request: Request) -> dict[str, Any]:
     """Create a new tag."""
     try:
-        body = json.loads(request.query_params.get("body", "{}"))
+        body = await request.json()
     except (json.JSONDecodeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail="Invalid JSON in body parameter") from exc
     name = body.get("name", "")
@@ -256,10 +256,10 @@ def list_policies(request: Request, _user=Depends(require_role(Role.VIEWER))) ->
 
 
 @router.post("/policies/retention", dependencies=[Depends(require_role(Role.ADMIN))])
-def create_retention_policy(request: Request) -> dict[str, Any]:
+async def create_retention_policy(request: Request) -> dict[str, Any]:
     """Create a data retention policy."""
     try:
-        body = json.loads(request.query_params.get("body", "{}"))
+        body = await request.json()
     except (json.JSONDecodeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail="Invalid JSON in body parameter") from exc
     name = body.get("name", "")
@@ -282,14 +282,14 @@ def create_retention_policy(request: Request) -> dict[str, Any]:
 
 
 @router.post("/policies/masking")
-def create_masking_policy(
+async def create_masking_policy(
     request: Request,
     lake=Depends(get_lake),
     _user: dict = Depends(require_role(Role.ADMIN)),
 ) -> dict[str, Any]:
     """Create a data masking policy."""
     try:
-        body = json.loads(request.query_params.get("body", "{}"))
+        body = await request.json()
     except (json.JSONDecodeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail="Invalid JSON in body parameter") from exc
     name = body.get("name", "")
