@@ -313,6 +313,14 @@ async def mask_preview(
         raise HTTPException(status_code=400, detail="function must be redact|hash|partial|nullify")
     if not columns:
         raise HTTPException(status_code=400, detail="columns is required")
+    # Validate column names are bare identifiers — they're interpolated into
+    # SELECT "...", so any quote/meta chars would be a SQL injection vector.
+    import re
+    bad_cols = [c for c in columns if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", c)]
+    if bad_cols:
+        raise HTTPException(
+            status_code=400, detail=f"invalid column names (identifiers only): {bad_cols}"
+        )
 
     cols_sql = ", ".join(f'"{c}"' for c in columns)
     sql = f'SELECT {cols_sql} FROM "{name}" LIMIT 5'
