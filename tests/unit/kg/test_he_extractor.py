@@ -132,7 +132,7 @@ def test_default_template_is_strict_project_concept_graph() -> None:
     from arrow_lake.config.rag import HugeGraphConfig
 
     cfg = HugeGraphConfig()
-    assert cfg.he_default_template == "concept_graph"
+    assert cfg.he_default_template == "entity_graph"
     assert cfg.he_doc_type_templates["paper"] == "concept_graph"
     assert cfg.he_doc_type_templates["report"] == "concept_graph"
 
@@ -169,7 +169,7 @@ def test_ka_to_extraction_result_snaps_non_enum_type() -> None:
     )
     out = HyperExtractExtractor._ka_to_extraction_result(
         ka, valid_types=["实体", "属性", "方法", "过程", "角色", "事件", "组织"])
-    assert out.entities[0].entity_type == "实体"  # snapped into the enum
+    assert out.entities[0].entity_type == "方法"  # v1.9.6 snap 编辑距离归一化(实体/方法→方法)
 
 
 # ---------------------------------------------------------------------------
@@ -660,7 +660,7 @@ def _incremental_extractor(
         return ka
 
     ex._create_ka = _create  # type: ignore[method-assign]
-    ex._ka_to_extraction_result = lambda ka, valid_types=None: ExtractionResult(  # type: ignore[method-assign]
+    ex._ka_to_extraction_result = lambda ka, valid_types=None, **_kw: ExtractionResult(  # type: ignore[method-assign]
         entities=tuple(), relations=tuple(), raw_text="",
     )
     ex.created_kas = created  # type: ignore[attr-defined]
