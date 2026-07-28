@@ -4,10 +4,33 @@ from __future__ import annotations
 
 from typing import Any
 
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from arrow_lake.exceptions import ArrowLakeError, ErrorCode
+
+
+def _scrub_bytes(obj: Any) -> Any:
+    """Recursively replace ``bytes``/``bytearray`` with a placeholder.
+
+    FastAPI's default ``request_validation_exception_handler`` feeds
+    ``exc.errors()`` (which embeds the raw request ``input``) through
+    ``jsonable_encoder``. Its ``bytes`` encoder is ``lambda o: o.decode()``
+    (UTF-8), which raises ``UnicodeDecodeError`` on binary request bodies
+    (PDF/image uploads, multipart boundaries) and turns a legitimate 422
+    validation error into an opaque 500 INTERNAL_ERROR. Scrubbing first keeps
+    the 422 and surfaces the real validation reason. Mirrors
+    ``arrow_lake.api.models.common._json_safe_row``.
+    """
+    if isinstance(obj, (bytes, bytearray)):
+        return f"<binary {len(obj)} bytes>"
+    if isinstance(obj, dict):
+        return {k: _scrub_bytes(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_scrub_bytes(x) for x in obj]
+    return obj
 
 
 def _error_code_to_http_status(code: ErrorCode) -> int:
@@ -112,5 +135,22 @@ def register_exception_handlers(app) -> None:
                 "error": exc.error_code.value,
                 "message": exc.message,
                 **({"context": safe_context} if safe_context else {}),
+            },
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def request_validation_error_handler(request: Request, exc: RequestValidationError):
+        # exc.errors() embeds the raw request ``input`` (which may be binary
+        # bytes for multipart/PDF uploads). jsonable_encoder would otherwise
+        # raise UnicodeDecodeError via its bytes->decode() encoder, masking the
+        # real 422 as a 500 INTERNAL_ERROR. Scrub bytes first.
+        safe_errors = _scrub_bytes(exc.errors())
+        return JSONResponse(
+            status_code=422,
+            content={
+                "success": False,
+                "error": "VALIDATION_ERROR",
+                "message": "Request validation failed",
+                "detail": jsonable_encoder(safe_errors),
             },
         )
