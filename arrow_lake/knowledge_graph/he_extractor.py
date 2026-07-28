@@ -553,7 +553,10 @@ class HyperExtractExtractor:
             # non-enum types to "实体" (most generic in the enum) so the graph's
             # type distribution stays within the template's vocabulary.
             if valid_types and entity_type != "未知" and entity_type not in valid_types:
-                entity_type = "实体" if "实体" in valid_types else valid_types[0]
+                # v1.9.6 P0-3: 编辑距离归一化(「架构组件」→「组件」),非粗暴塌缩「实体」。
+                import difflib
+                _match = difflib.get_close_matches(entity_type, valid_types, n=1, cutoff=0.4)
+                entity_type = _match[0] if _match else ("实体" if "实体" in valid_types else valid_types[0])
             definition = str(getattr(n, "definition", "") or "").strip()
             props = (("definition", definition),) if definition else ()
             entities.append(ExtractedEntity(
@@ -575,7 +578,10 @@ class HyperExtractExtractor:
             # declared vocabulary. Prefer a generic "相关" if present, else the
             # first enum member; same defensive shape as the type snap above.
             if valid_relations and rel_type not in valid_relations:
-                rel_type = "相关" if "相关" in valid_relations else valid_relations[0]
+                # v1.9.6 P0-3: 编辑距离归一化(「is_a」→「属于」等),非粗暴塌缩「相关」。
+                import difflib
+                _match = difflib.get_close_matches(rel_type, valid_relations, n=1, cutoff=0.4)
+                rel_type = _match[0] if _match else ("相关" if "相关" in valid_relations else valid_relations[0])
             description = str(getattr(e, "description", "") or "").strip()
             props = (("description", description),) if description else ()
             relations.append(
