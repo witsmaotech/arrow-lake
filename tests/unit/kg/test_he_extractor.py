@@ -133,8 +133,8 @@ def test_default_template_is_strict_project_concept_graph() -> None:
 
     cfg = HugeGraphConfig()
     assert cfg.he_default_template == "entity_graph"
-    assert cfg.he_doc_type_templates["paper"] == "concept_graph"
-    assert cfg.he_doc_type_templates["report"] == "concept_graph"
+    assert cfg.he_doc_type_templates["paper"] == "entity_graph"
+    assert cfg.he_doc_type_templates["report"] == "entity_graph"
 
 
 def test_project_concept_graph_template_is_strict() -> None:
