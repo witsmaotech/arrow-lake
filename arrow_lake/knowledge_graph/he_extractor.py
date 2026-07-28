@@ -684,7 +684,7 @@ class HyperExtractExtractor:
 
         return self._ka_to_extraction_result(
             result, text, valid_types=type_enum, valid_relations=relation_enum,
-            strict_definition=getattr(self._hugegraph_config, "he_strict_definition", False))
+            strict_definition=getattr(getattr(self, "_hugegraph_config", None), "he_strict_definition", False))
 
     @staticmethod
     def _is_transient_feed_error(exc: Exception) -> bool:
@@ -901,7 +901,7 @@ class HyperExtractExtractor:
         result = self._ka_to_extraction_result(
             ka, valid_types=self._get_type_enum(template_path),
             valid_relations=self._get_relation_enum(template_path),
-            strict_definition=getattr(self._hugegraph_config, "he_strict_definition", False))
+            strict_definition=getattr(getattr(self, "_hugegraph_config", None), "he_strict_definition", False))
         return DatasetKA(
             ka=ka, ka_dir=ka_dir, entity_chunks=entity_chunks, result=result
         )
