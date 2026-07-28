@@ -13,7 +13,8 @@ from typing import Any
 import pyarrow as pa
 
 from arrow_lake.config import RAGConfig
-from arrow_lake.rag.context import ContextCitation, ContextWindow, count_tokens, table_to_chunks
+from arrow_lake.rag.context import ContextChunk, ContextCitation, ContextWindow, count_tokens, table_to_chunks
+from arrow_lake.rag.plan import RAGQueryPlan, resolve_score_column
 from arrow_lake.rag.prompt import PromptRegistry
 from arrow_lake.rag.provider import BaseLLMProvider, LLMMessage
 from arrow_lake.rag.query_transform import (
@@ -218,44 +219,12 @@ class RAGPipeline:
         strategy: str | None = None,
     ) -> tuple[ContextWindow, str]:
         """Retrieve documents, rerank, and build context window. Returns (window, context_text)."""
-        # Resolve effective strategy: per-query override → config default.
-        # Previously ``strategy`` only selected the score-column name and the
-        # retriever always ran fts; now it is also forwarded to the retriever
-        # so vector/hybrid actually run (default_retrieval_strategy was a dead
-        # config before). See docs/v1.9.5-rag-quality-plan.md 批1.
-        effective_strategy = strategy or self._config.default_retrieval_strategy
+        # Resolve the retrieval intent ONCE into a plan (strategy None→default,
+        # top_k None→default), then pass it down as data instead of smuggling
+        # strategy as a positional arg through every hop. (架构评审 #1)
+        plan = RAGQueryPlan.resolve(question, dataset_name, top_k, strategy, self._config)
 
-        transformer = self._get_query_transformer()
-        queries = await transformer.transform(question)
-
-        # Parallel retrieval for each query variant, then merge
-        if len(queries) == 1:
-            result_table = await self._retrieve(queries[0], dataset_name, top_k, effective_strategy)
-        else:
-            tables = await asyncio.gather(
-                *(self._retrieve(q, dataset_name, top_k, effective_strategy) for q in queries)
-            )
-            result_table = self._merge_tables(tables)
-
-        score_column = "_rrf_score" if effective_strategy == "hybrid" else "_score"
-        if score_column not in result_table.column_names:
-            score_column = None
-
-        chunks = table_to_chunks(
-            result_table,
-            dataset_name=dataset_name,
-            score_column=score_column,
-        )
-
-        # Deduplicate by row_id across query variants
-        chunks = self._deduplicate_chunks(chunks)
-
-        # Rerank before context assembly. BaseReranker.rerank is uniformly async
-        # (sync adapters just return without awaiting) — await unconditionally.
-        # No per-caller iscoroutine bridge: one contract, one place.
-        reranker = self._reranker or NoopReranker()
-        rerank_top_n = self._config.reranker_top_n or top_k
-        chunks = await reranker.rerank(question, chunks, rerank_top_n)
+        chunks = await self._retrieve_ranked(plan)
 
         window = self._build_context_window()
         for chunk in chunks:
@@ -271,6 +240,47 @@ class RAGPipeline:
 
         context_text = window.assemble()
         return window, context_text
+
+    async def _retrieve_ranked(self, plan: RAGQueryPlan) -> list[ContextChunk]:
+        """Run the retrieval stage end-to-end and return reranked chunks.
+
+        Deep retrieval stage (架构评审 #1): multi-query fan-out → merge →
+        score-column resolution → dedup → rerank. Backend dispatch + score
+        normalization + rerank live here, behind one resolved plan — callers
+        (_retrieve_and_build_context, and any future RetrievalStage consumer)
+        never branch on strategy or hardcode score-column names.
+        """
+        transformer = self._get_query_transformer()
+        queries = await transformer.transform(plan.question)
+
+        # Parallel retrieval for each query variant, then merge
+        if len(queries) == 1:
+            result_table = await self._retrieve(
+                queries[0], plan.dataset_name, plan.top_k, plan.strategy,
+            )
+        else:
+            tables = await asyncio.gather(
+                *(self._retrieve(q, plan.dataset_name, plan.top_k, plan.strategy)
+                  for q in queries)
+            )
+            result_table = self._merge_tables(tables)
+
+        score_column = resolve_score_column(plan.strategy, result_table.column_names)
+
+        chunks = table_to_chunks(
+            result_table,
+            dataset_name=plan.dataset_name,
+            score_column=score_column,
+        )
+
+        # Deduplicate by row_id across query variants
+        chunks = self._deduplicate_chunks(chunks)
+
+        # Rerank before context assembly. BaseReranker.rerank is uniformly async
+        # (sync adapters just return without awaiting) — await unconditionally.
+        # No per-caller iscoroutine bridge: one contract, one place.
+        reranker = self._reranker or NoopReranker()
+        return await reranker.rerank(plan.question, chunks, plan.rerank_top_n)
 
     # ------------------------------------------------------------------
     # Template-method hooks (overridden by GraphRAGPipeline)
