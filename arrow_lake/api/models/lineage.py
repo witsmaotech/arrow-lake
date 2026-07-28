@@ -68,6 +68,7 @@ class LineageGraphStats(BaseModel):
     total_nodes: int = 0
     total_edges: int = 0
     max_depth: int = 0
+    truncated: bool = False
 
 
 class LineageGraphResponse(BaseModel):

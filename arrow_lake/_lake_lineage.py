@@ -203,7 +203,7 @@ class _LakeLineageMixin:
         bridge = self._get_component("lineage_bridge", _create_bridge)
         return bridge.query(sql)
 
-    def lineage_graph(self, dataset_name: str, *, max_depth: int = 10) -> dict[str, Any]:
+    def lineage_graph(self, dataset_name: str, *, max_depth: int = 10, max_nodes: int = 500) -> dict[str, Any]:
         """Get the full lineage graph for a dataset."""
         from arrow_lake.catalog.lineage import LineageQueryBridge
 
@@ -216,7 +216,7 @@ class _LakeLineageMixin:
             return LineageQueryBridge(store, session_manager=self.get_session_manager())
 
         bridge = self._get_component("lineage_bridge", _create_bridge)
-        return bridge.trace_full_graph(dataset_name, max_depth=max_depth)
+        return bridge.trace_full_graph(dataset_name, max_depth=max_depth, max_nodes=max_nodes)
 
     def lineage_impact(self, dataset_name: str) -> list[dict[str, Any]]:
         """Analyze downstream impact of changing a dataset."""

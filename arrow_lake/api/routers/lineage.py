@@ -104,6 +104,7 @@ async def lineage_graph(
     dataset_name: str = Path(..., pattern=_NAME_PATTERN),
     *,
     max_depth: int = Query(default=10, ge=1, le=20),
+    max_nodes: int = Query(default=500, ge=1, le=2000),
     format: str = Query(default="json", pattern=r"^(json|mermaid|dot)$"),
     lake=Depends(get_lake),
     _user: dict = Depends(require_role(Role.VIEWER)),
@@ -111,10 +112,13 @@ async def lineage_graph(
     """Get the full lineage graph for a dataset (upstream + downstream).
 
     Supports ``json`` (default), ``mermaid``, and ``dot`` output formats.
+    ``max_nodes`` caps the graph size (default 500); ``stats.truncated`` is set
+    when the cap is hit.
     """
     result = await run_sync(
         lake.lineage_graph, dataset_name,
         max_depth=max_depth,
+        max_nodes=max_nodes,
         timeout=_LINEAGE_TIMEOUT, label="lineage_graph",
     )
 

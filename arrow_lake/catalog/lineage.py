@@ -532,7 +532,7 @@ class LineageQueryBridge:
         table = self.query(sql, params=[dataset_name])
         return [LineageStore._row_to_event(table, i) for i in range(table.num_rows)]
 
-    def trace_full_graph(self, dataset_name: str, *, max_depth: int = 10) -> dict[str, Any]:
+    def trace_full_graph(self, dataset_name: str, *, max_depth: int = 10, max_nodes: int = 500) -> dict[str, Any]:
         """Recursively trace the complete lineage graph around a dataset.
 
         Performs bidirectional BFS to discover all upstream and downstream
@@ -541,13 +541,18 @@ class LineageQueryBridge:
         Args:
             dataset_name: Starting dataset name.
             max_depth: Maximum traversal depth (default 10).
+            max_nodes: Maximum nodes to return (default 500). When the graph
+                exceeds this, traversal stops and ``stats["truncated"]`` is set
+                — prevents OOM / unbounded response on huge lineage graphs.
 
         Returns:
-            Dict with "nodes", "edges", and "stats" keys.
+            Dict with "nodes", "edges", and "stats" keys (stats carries
+            ``truncated``).
         """
         nodes: dict[str, dict[str, Any]] = {}
         edges: list[dict[str, Any]] = []
         visited_edges: set[tuple[str, str, str]] = set()
+        truncated = False
 
         # BFS queues: (dataset_name, depth)
         upstream_queue: list[tuple[str, int]] = [(dataset_name, 0)]
@@ -559,13 +564,16 @@ class LineageQueryBridge:
         nodes[dataset_name] = {"id": dataset_name, "depth": 0, "type": "target"}
 
         # Trace upstream
-        while upstream_queue:
+        while upstream_queue and not truncated:
             current, depth = upstream_queue.pop(0)
             if depth >= max_depth:
                 continue
             for event in self.trace_upstream(current):
                 for src in event.source_datasets:
                     if src not in nodes:
+                        if len(nodes) >= max_nodes:
+                            truncated = True
+                            break
                         nodes[src] = {"id": src, "depth": depth + 1, "type": "source"}
                     edge_key = (src, event.dataset_name, event.operation)
                     if edge_key not in visited_edges:
@@ -579,9 +587,11 @@ class LineageQueryBridge:
                     if src not in visited_upstream:
                         visited_upstream.add(src)
                         upstream_queue.append((src, depth + 1))
+                if truncated:
+                    break
 
         # Trace downstream
-        while downstream_queue:
+        while downstream_queue and not truncated:
             current, depth = downstream_queue.pop(0)
             if depth >= max_depth:
                 continue
@@ -589,6 +599,9 @@ class LineageQueryBridge:
                 target = event.dataset_name
                 for src in event.source_datasets:
                     if src not in nodes:
+                        if len(nodes) >= max_nodes:
+                            truncated = True
+                            break
                         nodes[src] = {"id": src, "depth": depth + 1, "type": "source"}
                     edge_key = (src, target, event.operation)
                     if edge_key not in visited_edges:
@@ -599,7 +612,12 @@ class LineageQueryBridge:
                             "operation": event.operation,
                             "transform_type": event.transform_type,
                         })
+                if truncated:
+                    break
                 if target not in nodes:
+                    if len(nodes) >= max_nodes:
+                        truncated = True
+                        break
                     nodes[target] = {"id": target, "depth": depth + 1, "type": "derived"}
                 if target not in visited_downstream:
                     visited_downstream.add(target)
@@ -612,6 +630,7 @@ class LineageQueryBridge:
                 "total_nodes": len(nodes),
                 "total_edges": len(edges),
                 "max_depth": max((n["depth"] for n in nodes.values()), default=0),
+                "truncated": truncated,
             },
         }
 

@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>血缘图谱 · Arrow Lake</title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/tokens.css">
+<link rel="stylesheet" href="assets/app.css">
+<link rel="stylesheet" href="assets/console.css">
+<script src="vendor/vis-network.bundle.min.js" defer></script>
+<style>
+  .lg-bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+  .lg-bar input{background:var(--ink-900);border:1px solid var(--line);border-radius:var(--r-md);padding:7px 10px;color:var(--fg);font-size:.825rem}
+  .lg-bar input[type=text]{min-width:240px}
+  .lg-bar label{display:flex;align-items:center;gap:5px;font-size:.75rem;color:var(--fg-md)}
+  .lg-wrap{display:grid;grid-template-columns:1fr 320px;gap:14px;height:calc(100vh - 230px);min-height:420px}
+  .lg-canvas{background:var(--ink-950);border:1px solid var(--line);border-radius:var(--r-md);overflow:hidden}
+  .lg-side{background:var(--ink-900);border:1px solid var(--line);border-radius:var(--r-md);padding:14px;overflow-y:auto}
+  .lg-banner{background:color-mix(in srgb,var(--warn) 14%,transparent);border:1px solid var(--warn);color:var(--warn);padding:8px 12px;border-radius:var(--r-md);margin-bottom:10px;font-size:.78rem;line-height:1.5}
+  .lg-side h4{margin:0 0 10px;font-size:.85rem;display:flex;align-items:baseline;gap:6px}
+  .lg-side h4 .ct{font-size:.7rem;color:var(--fg-md);font-weight:400}
+  .lg-colmap{font-family:var(--font-mono);font-size:.74rem;line-height:1.6}
+  .lg-colmap .row{display:flex;gap:6px;align-items:center;padding:4px 2px;border-bottom:1px dashed var(--line-soft)}
+  .lg-colmap .arrow{color:var(--accent);font-weight:600}
+  .lg-colmap .expr{margin-left:auto;color:var(--fg-md);max-width:42%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .lg-empty{color:var(--fg-md);font-size:.78rem;padding:6px 0;line-height:1.6}
+</style>
+</head>
+<body>
+<div id="app"><main class="main"><div class="page">
+  <div class="h-sec between"><div><h1>血缘图谱</h1><div class="desc">数据集上下游血缘可视化 · 点击节点查看列级映射</div></div></div>
+  <div class="panel flush" style="padding:16px">
+    <div class="lg-bar">
+      <input id="dsInput" type="text" list="dsList" placeholder="选择或输入数据集名…" autocomplete="off">
+      <datalist id="dsList"></datalist>
+      <label>深度 <input id="maxDepth" type="number" value="10" min="1" max="20" style="width:60px"></label>
+      <label>节点上限 <input id="maxNodes" type="number" value="500" min="1" max="2000" style="width:76px"></label>
+      <button class="btn btn-primary btn-sm" id="loadBtn">渲染图谱</button>
+      <span id="lgMeta" class="muted" style="font-size:.75rem"></span>
+    </div>
+    <div id="lgBanner"></div>
+    <div class="lg-wrap">
+      <div id="lgCanvas" class="lg-canvas"></div>
+      <aside id="lgSide" class="lg-side">
+        <h4>列级血缘</h4>
+        <div class="lg-empty">点击图中节点查看其列级血缘映射。</div>
+      </aside>
+    </div>
+  </div>
+</div></main></div>
+<script src="assets/console-layout.js"></script>
+<script type="module">
+import { request } from "./src/api.js";
+import { isLoggedIn } from "./src/auth.js";
+import { toast } from "./src/ui/toast.js";
+
+if (!isLoggedIn()) location.href = "login.html";
+const { renderShell } = window;
+renderShell({ active: "lineage", crumb: "<b>血缘图谱</b>" });
+
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+let network = null;
+
+// 填充数据集 datalist(失败则用户手输)
+(async () => {
+  try {
+    const r = await request("GET", "/datasets");
+    const list = r.datasets || r.items || r || [];
+    const names = list.map(d => d.name || d.dataset_name || d).filter(Boolean);
+    $("#dsList").innerHTML = names.map(n => `<option value="${esc(n)}">`).join("");
+  } catch (_) { /* 用户手输 */ }
+})();
+
+async function loadGraph(name) {
+  if (!name) { toast("请输入数据集名", "warn"); return; }
+  const meta = $("#lgMeta"), cont = $("#lgCanvas"), banner = $("#lgBanner");
+  banner.innerHTML = "";
+  cont.innerHTML = '<div class="muted" style="padding:14px">加载中…</div>';
+  const depth = parseInt($("#maxDepth").value) || 10;
+  const maxNodes = parseInt($("#maxNodes").value) || 500;
+  const V = window.vis;
+  try {
+    const g = await request("GET", `/lineage/graph/${encodeURIComponent(name)}?max_depth=${depth}&max_nodes=${maxNodes}&format=json`);
+    const stats = g.stats || {};
+    meta.textContent = `${stats.total_nodes ?? 0} 节点 · ${stats.total_edges ?? 0} 边 · 最大深度 ${stats.max_depth ?? 0}`;
+    if (stats.truncated) {
+      banner.innerHTML = `<div class="lg-banner">⚠ 图过大已截断:仅显示前 ${stats.total_nodes} 个节点(上限 ${maxNodes})。调大"节点上限"或减小"深度"可展开更多。</div>`;
+    }
+    const ns = (g.nodes || []).map(n => ({
+      id: n.id, group: n.type || "derived", label: n.id,
+      title: `${n.id}\n深度 ${n.depth ?? 0} · 类型 ${n.type || "derived"}`,
+    }));
+    const es = (g.edges || []).map((e, i) => ({
+      id: "e" + i, from: e.from, to: e.to, label: e.operation || "", arrows: "to",
+      font: { size: 9, color: "#64748b", strokeWidth: 0 },
+      title: `${e.operation || "?"}${e.transform_type ? " · " + e.transform_type : ""}`,
+    }));
+    if (!V) { cont.innerHTML = '<div class="muted" style="padding:14px;color:var(--warn)">vis-network 未加载</div>'; return; }
+    if (!ns.length) { cont.innerHTML = '<div class="muted" style="padding:14px">该数据集无血缘记录(孤立节点)</div>'; return; }
+    if (network) { network.destroy(); network = null; }
+    network = new V.Network(cont, { nodes: new V.DataSet(ns), edges: new V.DataSet(es) }, {
+      height: "100%", width: "100%", autoResize: true,
+      layout: { hierarchical: { enabled: true, direction: "LR", sortMethod: "directed", levelSeparation: 160, nodeSpacing: 120 } },
+      physics: { enabled: false },
+      nodes: { shape: "box", margin: 10, font: { size: 12, color: "#e2e8f0" }, borderWidth: 2 },
+      edges: { color: { color: "#475569", opacity: 0.6 }, smooth: { type: "cubicBezier" }, selectionWidth: 2 },
+      groups: {
+        target: { color: { background: "#34d399", border: "#059669" } },
+        source: { color: { background: "#60a5fa", border: "#2563eb" } },
+        derived: { color: { background: "#fbbf24", border: "#d97706" } },
+      },
+      interaction: { hover: true, zoomView: true, dragView: true },
+    });
+    network.on("click", props => {
+      const id = props.nodes[0];
+      if (id) loadColumnLineage(name, id);
+    });
+  } catch (e) {
+    meta.textContent = "";
+    cont.innerHTML = `<div class="muted" style="padding:14px;color:var(--danger)">${esc(e?.detail || e?.message || e)}</div>`;
+  }
+}
+
+async function loadColumnLineage(dataset, node) {
+  const side = $("#lgSide");
+  side.innerHTML = `<h4>${esc(node)} <span class="ct">列级血缘</span></h4><div class="lg-empty">加载中…</div>`;
+  try {
+    const h = await request("GET", `/lineage/history/${encodeURIComponent(dataset)}`);
+    const events = h.events || [];
+    const maps = [];
+    for (const ev of events) {
+      let cl = ev.column_lineage;
+      if (!cl) continue;
+      if (typeof cl === "string") { try { cl = JSON.parse(cl); } catch (_) { cl = []; } }
+      const srcDs = ev.source_datasets || [];
+      for (const m of cl) {
+        const mSrc = m.source_dataset || (Array.isArray(srcDs) ? srcDs[0] : srcDs);
+        if (mSrc === node || ev.dataset_name === node) {
+          maps.push({ src: m.source_column, dst: m.target_column, expr: m.transform_expr || "" });
+        }
+      }
+    }
+    if (!maps.length) {
+      side.innerHTML = `<h4>${esc(node)} <span class="ct">列级血缘</span></h4><div class="lg-empty">该节点无列级血缘记录(可能只是中间传递节点,或摄入时未记录列映射)。</div>`;
+      return;
+    }
+    const rows = maps.map(m =>
+      `<div class="row"><span>${esc(m.src || "?")}</span><span class="arrow">→</span><span>${esc(m.dst || "?")}</span>${m.expr ? `<span class="expr" title="${esc(m.expr)}">=${esc(m.expr)}</span>` : ""}</div>`
+    ).join("");
+    side.innerHTML = `<h4>${esc(node)} <span class="ct">列级血缘 · ${maps.length} 列</span></h4><div class="lg-colmap">${rows}</div>`;
+  } catch (e) {
+    side.innerHTML = `<h4>${esc(node)} <span class="ct">列级血缘</span></h4><div class="lg-empty" style="color:var(--danger)">${esc(e?.detail || e?.message || e)}</div>`;
+  }
+}
+
+$("#loadBtn").addEventListener("click", () => loadGraph($("#dsInput").value.trim()));
+$("#dsInput").addEventListener("keydown", e => { if (e.key === "Enter") loadGraph($("#dsInput").value.trim()); });
+// URL ?ds= 预填 + 自动加载
+const preDs = new URLSearchParams(location.search).get("ds");
+if (preDs) { $("#dsInput").value = preDs; loadGraph(preDs); }
+</script>
+</body>
+</html>

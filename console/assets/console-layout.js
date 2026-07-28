@@ -71,6 +71,7 @@ const NAV = [
   ] },
   { group: "治理", items: [
     { id: "governance", label: "元数据治理", ic: "key", href: "governance.html" },
+    { id: "lineage", label: "血缘图谱", ic: "database", href: "lineage.html" },
   ] },
 ];
 

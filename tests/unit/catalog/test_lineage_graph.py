@@ -91,6 +91,25 @@ class TestTraceFullGraph:
         # root_child_child_child should NOT appear
         assert result["stats"]["max_depth"] <= 2
 
+    def test_max_nodes_truncates_large_graph(self) -> None:
+        store = MagicMock()
+        bridge = LineageQueryBridge(store)
+
+        # Infinite chain: every node has exactly one downstream child.
+        bridge.trace_upstream = MagicMock(return_value=[])
+        bridge.trace_downstream = MagicMock(
+            side_effect=lambda name: [_make_event(f"{name}_c", source_datasets=(name,))]
+        )
+
+        result = bridge.trace_full_graph("root", max_nodes=3)
+        # BFS stops once 3 nodes are reached → truncated flag set, no more.
+        assert result["stats"]["truncated"] is True
+        assert result["stats"]["total_nodes"] <= 3
+
+        # Default max_nodes is generous → same small graph is NOT truncated.
+        result_default = bridge.trace_full_graph("root", max_depth=2)
+        assert result_default["stats"].get("truncated", False) is False
+
 
 class TestTraceImpact:
     """Test LineageQueryBridge.trace_impact."""
