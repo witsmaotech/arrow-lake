@@ -39,7 +39,7 @@ COPY flows/ flows/
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv venv .venv \
     && . .venv/bin/activate \
-    && uv pip install --no-cache-dir ".[fts,otel,rag,he,document,docling,chunking-full,dedup]" \
+    && uv pip install --no-cache-dir ".[fts,otel,rag,he,document,docling,chunking-full,dedup,nemo-curator,gpu]" \
     && uv pip install --no-cache-dir jupyterlab ipywidgets \
     && uv pip install --no-cache-dir modelscope>=1.18 PyJWT "apache-gravitino==1.2.1" "boto3==1.43.0" "botocore==1.43.0"
 
