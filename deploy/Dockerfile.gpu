@@ -121,8 +121,9 @@ COPY console/ /app/console/
 # Sources: msmodels (modelscope reranker) + hfmodels (HF docling). Supply via
 # buildx --build-context msmodels=... --build-context hfmodels=...
 COPY --from=msmodels BAAI--bge-reranker-v2-m3/snapshots/master /opt/models/bge-reranker-v2-m3
-COPY --from=hfmodels models--docling-project--docling-layout-heron \
-     models--docling-project--docling-models /opt/hf-cache/hub/
+# Preserve models--<org>--<name>/ layer (HF cache layout docling expects).
+COPY --from=hfmodels models--docling-project--docling-layout-heron /opt/hf-cache/hub/models--docling-project--docling-layout-heron
+COPY --from=hfmodels models--docling-project--docling-models /opt/hf-cache/hub/models--docling-project--docling-models
 
 # Activate venv in PATH
 ENV PATH="/app/.venv/bin:$PATH" \

@@ -125,6 +125,15 @@ logs-metaflow:
 restart:
 	docker compose $(ALL_FILES) --project-name $(PROJECT_NAME) $(ALL_PROFILES) restart
 
+# KG graph ops: clear/drop a per-dataset graph (kg_{DS}) then restart hg-server to flush
+# GraphManager dirty schema cache (clear/drop 后必须 restart, 否则后续 ensure_schema POST 500).
+DS ?=
+.PHONY: kg-clear-graph kg-drop-graph
+kg-clear-graph:
+	@bash scripts/kg-graph-ops.sh clear $(DS)
+kg-drop-graph:
+	@bash scripts/kg-graph-ops.sh drop $(DS)
+
 # ---------------------------------------------------------------------------
 # Tools
 # ---------------------------------------------------------------------------
@@ -223,6 +232,8 @@ help:
 	@echo "  make logs-jupyter Tail Jupyter logs"
 	@echo "  make logs-metaflow Tail Metaflow metadata logs"
 	@echo "  make restart     Restart all services"
+	@echo "  make kg-clear-graph DS=xxx  Clear a dataset KG graph + restart hg-server"
+	@echo "  make kg-drop-graph DS=xxx   Drop a dataset KG graph + restart hg-server"
 	@echo ""
 	@echo "  make env         Generate .env from .env.example"
 	@echo "  make certs       Generate TLS certificates"

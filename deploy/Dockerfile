@@ -184,8 +184,11 @@ COPY console/ /app/console/
 # Reranker loads from RERANKER_MODEL=/opt/models/bge-reranker-v2-m3 (local path);
 # docling reads via HF_HOME. HF_HUB_OFFLINE=1 forbids any runtime network fetch.
 COPY --from=msmodels BAAI--bge-reranker-v2-m3/snapshots/master /opt/models/bge-reranker-v2-m3
-COPY --from=hfmodels models--docling-project--docling-layout-heron \
-     models--docling-project--docling-models /opt/hf-cache/hub/
+# Preserve models--<org>--<name>/ layer (HF cache layout docling expects).
+# Multi-source COPY flattens contents and loses the models-- dir → docling
+# "Cannot find cached snapshot folder". Copy each to its own models-- path.
+COPY --from=hfmodels models--docling-project--docling-layout-heron /opt/hf-cache/hub/models--docling-project--docling-layout-heron
+COPY --from=hfmodels models--docling-project--docling-models /opt/hf-cache/hub/models--docling-project--docling-models
 ENV HF_HOME=/opt/hf-cache
 ENV HF_HUB_OFFLINE=1
 
