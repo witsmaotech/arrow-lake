@@ -21,7 +21,7 @@ export async function renderKgSubgraph(container, { dataset, query, limit = 40 }
   container.innerHTML = '<div class="muted" style="font-size:.74rem;padding:8px">加载实体子图…</div>';
   let r;
   try {
-    r = await request("POST", "/kg/search", { body: { dataset, query, top_k: limit } });
+    r = await request("GET", `/kg/graph?dataset=${encodeURIComponent(dataset)}&limit=${limit}`);  // 统一 HugeGraph (原 /kg/search 依赖 KA dump, host/容器分歧 500)
   } catch (e) {
     const emsg = Array.isArray(e?.detail) ? e.detail.map((x) => x?.msg || "").join("; ") : (e?.detail || e?.message || e);
     container.innerHTML = `<div class="muted" style="font-size:.74rem;padding:8px">实体检索失败(KG 未建?):${esc(emsg)}</div>`;
@@ -29,15 +29,19 @@ export async function renderKgSubgraph(container, { dataset, query, limit = 40 }
   }
   const V = window.vis;
   if (container._net) { container._net.destroy(); container._net = null; }
-  const ns = (r.nodes || []).map((n) => ({
+  // 对齐 kg.html:隐藏 document/chunk 结构节点(度数最高的 hub,会把子图压成星型淹没
+  // 真实的实体关系),只留实体节点 + 实体间关系边(chunk 被过滤后 references 边自动消失)。
+  const STRUCTURE = new Set(["document", "chunk"]);
+  const ns = (r.nodes || []).filter((n) => !STRUCTURE.has(n.label)).map((n) => ({
     id: n.id ?? n.name,
     label: n.name || n.id || "?",
     group: n.type || n.label || "entity",
     title: `${n.name || n.id}${n.type ? " [" + n.type + "]" : ""}${n.definition ? "\n" + n.definition : ""}`,
   }));
+  const keepIds = new Set(ns.map((n) => n.id));
   const es = (r.edges || [])
     .map((e) => ({ s: e.source ?? e.from ?? e.subject, t: e.target ?? e.to ?? e.object, label: e.relation_type || e.label || e.type || "", id: e.id }))
-    .filter((e) => e.s && e.t)
+    .filter((e) => e.s && e.t && keepIds.has(e.s) && keepIds.has(e.t))
     .map((e, i) => ({
       id: e.id ?? ("e" + i), from: e.s, to: e.t,
       label: e.label, arrows: "to", font: { size: 9, color: "#64748b", strokeWidth: 0 },

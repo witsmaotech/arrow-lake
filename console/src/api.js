@@ -28,6 +28,14 @@ async function doRefresh() {
   return tok.access_token;
 }
 
+// 供流式端点(裸 fetch,不走 request() 的 401 自动刷新)在 401 时调用:单飞 + 冷却
+export async function refreshToken() {
+  if (Date.now() - lastRefresh < REFRESH_COOLDOWN) return getAccessToken();
+  refreshing = refreshing || doRefresh();
+  try { const t = await refreshing; lastRefresh = Date.now(); return t; }
+  finally { refreshing = null; }
+}
+
 // BOTH 模式:同时带 Authorization Bearer(jwt 层)和 X-API-Key(api_key 层)
 function withAuth(headers) {
   const h = { "Content-Type": "application/json", ...(headers || {}) };
