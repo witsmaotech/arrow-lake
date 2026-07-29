@@ -1,0 +1,603 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>架构评审 — Arrow Lake</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+      mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose", flowchart: { curve: "basis" } });
+    </script>
+    <style>
+      body { font-feature-settings: "ss01","cv01"; }
+      .seam { stroke-dasharray: 5 4; }
+      .leak { stroke: #dc2626; }
+      .deep { background: linear-gradient(135deg, #0f172a, #1e293b); color:#f1f5f9; }
+      .label { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+      .box { border:1px solid #cbd5e1; background:#fff; }
+      .arrow { stroke:#475569; stroke-width:1.4; fill:none; marker-end:url(#ah); }
+      .arrow-red { stroke:#dc2626; stroke-width:1.6; fill:none; marker-end:url(#ahr); }
+      .col-label { font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:#64748b; }
+      .badge-strong { background:#ecfdf5; color:#047857; border:1px solid #a7f3d0; }
+      .badge-worth  { background:#fffbeb; color:#b45309; border:1px solid #fde68a; }
+      .badge-spec   { background:#f1f5f9; color:#475569; border:1px solid #cbd5e1; }
+      .cat { background:#eef2ff; color:#3730a3; border:1px solid #c7d2fe; font-size:10px; letter-spacing:.08em; text-transform:uppercase; }
+      .callout-amber { background:#fffbeb; border-left:3px solid #f59e0b; }
+      .callout-slate { background:#f8fafc; border-left:3px solid #64748b; }
+      .h-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+      article { scroll-margin-top: 80px; }
+    </style>
+  </head>
+  <body class="bg-stone-50 text-slate-900 font-sans antialiased">
+    <main class="max-w-5xl mx-auto px-6 py-14 space-y-14">
+
+      <!-- ===================== 页头 ===================== -->
+      <header class="space-y-6">
+        <div class="flex items-baseline justify-between border-b border-slate-200 pb-6">
+          <div>
+            <p class="label text-indigo-600 mb-2">架构评审 · 深化机会</p>
+            <h1 class="text-4xl font-serif tracking-tight text-slate-900">Arrow Lake</h1>
+            <p class="text-sm text-slate-500 mt-1">wits-infra-dintellihub · 2026-07-28 · 基线 v1.9.6</p>
+          </div>
+          <div class="text-right text-xs text-slate-500 space-y-1 hidden sm:block">
+            <p><span class="inline-block w-3 h-3 bg-white border border-slate-400 align-middle mr-1"></span>模块</p>
+            <p><span class="inline-block w-6 border-t-2 border-dashed border-slate-500 align-middle mr-1"></span>缝</p>
+            <p><span class="inline-block w-6 border-t-2 border-red-600 align-middle mr-1"></span>泄漏</p>
+            <p><span class="inline-block w-3 h-3 rounded-sm deep align-middle mr-1"></span>深模块</p>
+          </div>
+        </div>
+
+        <p class="text-base text-slate-700 leading-relaxed max-w-3xl">
+          七个候选,一个统一的根因。横跨 RAG、KG 与 <span class="h-mono text-[13px]">Lake</span> facade,同一个形状反复制造 bug:
+          <strong class="text-slate-900">配置与知识以位置参数在浅模块之间手工转发</strong>,而把它们串起来的编排逻辑
+          <em>没有测试</em>——只有被抽出来的纯函数有。v1.9.5/v1.9.6 反复出现的 "dead config"、"fire-and-forget GC"、
+          "host 与 container 分歧" 不是编码疏忽,而是这个形状的可预见产物。
+        </p>
+
+        <!-- 贯穿性 callout -->
+        <div class="callout-slate rounded-md p-5">
+          <p class="label text-slate-600 mb-2">横切关注点 · 测试的形状</p>
+          <p class="text-sm text-slate-700">
+            纯函数有测试,连接它们的<strong>布线</strong>没有。<span class="h-mono text-[12px]">verifier.verify()</span>、
+            <span class="h-mono text-[12px]">query_transform</span>、<span class="h-mono text-[12px]">reranker._parse_score</span> 都有扎实的单测——
+            但把它们接起来的调用点(<span class="h-mono text-[12px]">getattr(config,"enable_verification",False)</span>、异步扇出、
+            <span class="h-mono text-[12px]">iscoroutine</span> 桥接、facade→TaskManager→builder 的派发)一个测试都没有。测试断言了
+            <em>top_k</em> 到达 retriever,却从不断言 <em>strategy</em>。深化能从结构上修掉它:
+            <strong class="text-slate-900">接口即测试面</strong>,行为在调用者真正穿越的那条缝上一次断言到位。
+          </p>
+        </div>
+
+        <p class="text-xs text-slate-400">术语沿用 <span class="h-mono">/codebase-design</span>:模块(module)· 接口(interface)· 深度(depth)· 缝(seam)· 适配器(adapter)· 杠杆(leverage)· 局部性(locality)。</p>
+      </header>
+
+      <!-- ===================== 候选 ===================== -->
+      <section id="candidates" class="space-y-16">
+
+        <!-- ============ 候选 1:RAG 检索阶段 ============ -->
+        <article id="c1" class="space-y-5">
+          <div class="flex flex-wrap items-center gap-2">
+            <h2 class="text-2xl font-serif text-slate-900 mr-3">1 · 深化 RAG 检索阶段</h2>
+            <span class="badge-strong label px-2 py-0.5 rounded">强烈推荐</span>
+            <span class="cat px-2 py-0.5 rounded">本地可替换</span>
+          </div>
+          <p class="h-mono text-[13px] text-slate-600 leading-relaxed">
+            arrow_lake/_lake_rag.py:144 · arrow_lake/rag/pipeline.py:213 · arrow_lake/rag/reranker.py · arrow_lake/query/hybrid.py:267
+          </p>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="col-label mb-3">改造前 · strategy 鹦鹉学舌 6 跳</p>
+              <div class="rounded bg-stone-50 p-3" style="min-height:300px">
+                <pre class="mermaid text-[11px]">
+flowchart TB
+  R["router<br/>req.retrieval_strategy"]:::box
+  L["_lake_rag._rag_retriever<br/>4 路 if(strategy)"]:::box
+  P["pipeline._retrieve_and_build_context<br/>解析 strategy"]:::box
+  C["context: 选 _rrf_score / _score"]:::box
+  RR["rerank(iscoroutine 桥接)"]:::box
+  H2["query/hybrid.py<br/>又 rerank 一次——无桥接"]:::box
+  R --> L --> P --> C --> RR
+  P -. "strategy 作为位置参数" .-> L
+  C -. "score 列的民间传说" .-> L
+  classDef box fill:#fff,stroke:#475569,color:#0f172a
+  classDef leak fill:#fff,stroke:#dc2626,color:#7f1d1d
+  class L,C,H2 leak
+                </pre>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="col-label mb-3">改造后 · 一个深的 RetrievalStage</p>
+              <div class="rounded bg-stone-50 p-3 flex items-center justify-center" style="min-height:300px">
+                <svg viewBox="0 0 280 300" class="w-full h-full">
+                  <rect x="40" y="20" width="200" height="44" rx="4" fill="#fff" stroke="#0f172a" stroke-width="2"/>
+                  <text x="140" y="40" text-anchor="middle" class="label" fill="#0f172a">接口 · 1 个方法</text>
+                  <text x="140" y="56" text-anchor="middle" font-size="11" font-family="ui-monospace" fill="#0f172a">retrieve(plan) → RankedWindow</text>
+                  <rect x="30" y="78" width="220" height="200" rx="6" class="deep"/>
+                  <text x="140" y="100" text-anchor="middle" class="label" fill="#94a3b8">RetrievalStage · 实现</text>
+                  <text x="140" y="125" text-anchor="middle" font-size="11" fill="#e2e8f0">后端分流 fts/vector/hybrid</text>
+                  <text x="140" y="148" text-anchor="middle" font-size="11" fill="#e2e8f0">归一 score 列 → score</text>
+                  <text x="140" y="171" text-anchor="middle" font-size="11" fill="#e2e8f0">rerank(一条 async 规则)</text>
+                  <text x="140" y="194" text-anchor="middle" font-size="11" fill="#e2e8f0">去重 · multi-query 扇出</text>
+                  <text x="140" y="217" text-anchor="middle" font-size="11" fill="#e2e8f0">预算装配 → ContextWindow</text>
+                  <text x="140" y="250" text-anchor="middle" font-size="10" fill="#64748b">RAGQueryPlan 在缝后解析一次</text>
+                </svg>
+              </div>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-5 pt-1">
+            <div><p class="label text-slate-500 mb-1">问题</p><p class="text-sm">"按 strategy 检索、排序、装配 context 窗口"被切成两个浅模块,靠一个把 <em>strategy</em> 当位置参数走私的回调连起来——于是每个旋钮都要手工转发 6 次。</p></div>
+            <div><p class="label text-indigo-600 mb-1">方案</p><p class="text-sm">一个深的 <span class="h-mono text-[12px]">RetrievalStage</span> 拥有 <span class="h-mono text-[12px]">retrieve(plan) → RankedWindow</span>;一次解析 <span class="h-mono text-[12px]">RAGQueryPlan</span>,作为数据下发,而非 N 个参数。</p></div>
+          </div>
+          <ul class="text-sm text-slate-700 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1">
+            <li>· 局部性:dead-config 这一类在源头消亡</li>
+            <li>· 杠杆:一个接口,router + SDK + graph 路径共用</li>
+            <li>· 消灭 <span class="h-mono text-[12px]">_score</span>/<span class="h-mono text-[12px]">_rrf_score</span> 列耦合</li>
+            <li>· 测试打在一条缝上,而非 6 跳</li>
+          </ul>
+        </article>
+
+        <!-- ============ 候选 2:ControlPlane port ============ -->
+        <article id="c2" class="space-y-5">
+          <div class="flex flex-wrap items-center gap-2">
+            <h2 class="text-2xl font-serif text-slate-900 mr-3">2 · 把控制面做成构造器 port</h2>
+            <span class="badge-strong label px-2 py-0.5 rounded">强烈推荐</span>
+            <span class="cat px-2 py-0.5 rounded">端口与适配器</span>
+          </div>
+          <p class="h-mono text-[13px] text-slate-600 leading-relaxed">
+            arrow_lake/__init__.py:100,331 · arrow_lake/api/app.py:163,219,232 · arrow_lake/api/deps.py:18 · arrow_lake/config/system_db.py:29
+          </p>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="col-label mb-3">改造前 · 持久化是运行期属性</p>
+              <div class="rounded bg-stone-50 p-3 flex items-center justify-center" style="min-height:300px">
+                <svg viewBox="0 0 300 300" class="w-full h-full">
+                  <defs><marker id="ah2" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6" fill="#dc2626"/></marker></defs>
+                  <rect x="20" y="20" width="260" height="120" rx="4" fill="#fff" stroke="#475569"/>
+                  <text x="150" y="40" text-anchor="middle" class="label" fill="#334155">Lake · 163 方法,9 个 mixin</text>
+                  <text x="150" y="60" text-anchor="middle" font-size="10" fill="#64748b">ingest · search · query · rag · kg · admin · lineage · audit</text>
+                  <text x="150" y="95" text-anchor="middle" font-size="10" font-family="ui-monospace" fill="#7f1d1d">getattr(self,"_rag_session_store",None)</text>
+                  <text x="150" y="112" text-anchor="middle" font-size="10" font-family="ui-monospace" fill="#7f1d1d">getattr(self,"_lineage_index_store",None)</text>
+                  <text x="150" y="129" text-anchor="middle" font-size="10" font-family="ui-monospace" fill="#7f1d1d">getattr(self,"_governance_store",None)</text>
+                  <rect x="60" y="160" width="180" height="40" rx="4" fill="#fffbeb" stroke="#f59e0b"/>
+                  <text x="150" y="178" text-anchor="middle" font-size="10" fill="#92400e">app.py lifespan 在 lake.* 建好后</text>
+                  <text x="150" y="193" text-anchor="middle" font-size="10" fill="#92400e">再钉上 3 个 store</text>
+                  <path d="M150 158 L150 142" class="arrow-red"/>
+                  <rect x="40" y="225" width="220" height="55" rx="4" fill="#fef2f2" stroke="#dc2626"/>
+                  <text x="150" y="245" text-anchor="middle" font-size="10" fill="#7f1d1d">host Lake() → 三个全 None</text>
+                  <text x="150" y="261" text-anchor="middle" font-size="10" fill="#7f1d1d">→ 静默退化到内存 / no-op</text>
+                  <text x="150" y="275" text-anchor="middle" font-size="10" fill="#7f1d1d">→ host 建的 dataset 容器看不见</text>
+                </svg>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="col-label mb-3">改造后 · ControlPlane port,两个 adapter</p>
+              <div class="rounded bg-stone-50 p-3 flex items-center justify-center" style="min-height:300px">
+                <svg viewBox="0 0 300 300" class="w-full h-full">
+                  <defs><marker id="ah2b" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6" fill="#475569"/></marker></defs>
+                  <rect x="55" y="18" width="190" height="56" rx="4" fill="#fff" stroke="#0f172a" stroke-width="2"/>
+                  <text x="150" y="38" text-anchor="middle" class="label" fill="#0f172a">Lake · 薄协调器</text>
+                  <text x="150" y="56" text-anchor="middle" font-size="10" fill="#475569">委托给注入的能力</text>
+                  <line x1="150" y1="74" x2="150" y2="104" class="seam" stroke="#0f172a" stroke-width="2"/>
+                  <text x="160" y="92" font-size="9" fill="#334155">ControlPlane(port)</text>
+                  <rect x="25" y="120" width="120" height="70" rx="4" class="deep"/>
+                  <text x="85" y="142" text-anchor="middle" font-size="10" fill="#f1f5f9">NullControlPlane</text>
+                  <text x="85" y="160" text-anchor="middle" font-size="9" fill="#94a3b8">host / 本地开发</text>
+                  <text x="85" y="176" text-anchor="middle" font-size="9" fill="#94a3b8">显式、有日志</text>
+                  <rect x="155" y="120" width="120" height="70" rx="4" fill="#fff" stroke="#0f172a" stroke-width="2"/>
+                  <text x="215" y="142" text-anchor="middle" font-size="10" fill="#0f172a">LibSQLControlPlane</text>
+                  <text x="215" y="160" text-anchor="middle" font-size="9" fill="#475569">容器</text>
+                  <text x="215" y="176" text-anchor="middle" font-size="9" fill="#475569">RBAC·catalog·tasks·sessions</text>
+                  <path d="M85 120 L130 104" class="arrow" marker-end="url(#ah2b)"/>
+                  <path d="M215 120 L170 104" class="arrow" marker-end="url(#ah2b)"/>
+                  <text x="150" y="225" text-anchor="middle" font-size="10" fill="#047857">两个 adapter → 真正的缝 ✓</text>
+                  <text x="150" y="245" text-anchor="middle" font-size="10" fill="#047857">接错线会响亮失败</text>
+                  <text x="150" y="275" text-anchor="middle" font-size="9" fill="#64748b">.rag_sessions · .lineage · .catalog · .governance</text>
+                </svg>
+              </div>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-5 pt-1">
+            <div><p class="label text-slate-500 mb-1">问题</p><p class="text-sm">持久化成了隐藏的运行期属性——三个 mixin 里都用 <span class="h-mono text-[12px]">getattr(self,"_…_store",None)</span> 探测——于是 host 的 <span class="h-mono text-[12px]">Lake()</span> 静默退化,写出的 dataset 容器看不见。</p></div>
+            <div><p class="label text-indigo-600 mb-1">方案</p><p class="text-sm">在 <span class="h-mono text-[12px]">__init__</span> 注入 <span class="h-mono text-[12px]">ControlPlane</span> port;<span class="h-mono text-[12px]">NullControlPlane</span> 与 <span class="h-mono text-[12px]">LibSQLControlPlane</span> 正是证明这条缝合理的两个 adapter。</p></div>
+          </div>
+          <ul class="text-sm text-slate-700 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1">
+            <li>· 局部性:能力检查集中在一个构造器</li>
+            <li>· host-vs-container 404 变成响亮报错</li>
+            <li>· 对齐并正式化 v1.9.0 控制面拆分</li>
+            <li>· store 作为契约变得可测</li>
+          </ul>
+          <div class="callout-amber rounded-md p-3 text-xs text-amber-800">
+            <strong>ADR 提示。</strong>ARCHITECTURE.md §3 把 "Facade + Mixin" 定为既定哲学。本候选<em>保留</em> facade 并深化它——mixin 的作者划分不变,但控制面从 "事后钉属性" 变成注入的 port。值得重开 §3,把这条 port 显式写下来。
+          </div>
+        </article>
+
+        <!-- ============ 候选 3:_lake_kg 胖接口 ============ -->
+        <article id="c3" class="space-y-5">
+          <div class="flex flex-wrap items-center gap-2">
+            <h2 class="text-2xl font-serif text-slate-900 mr-3">3 · 拆分 <span class="h-mono text-xl">_lake_kg</span> 胖接口</h2>
+            <span class="badge-strong label px-2 py-0.5 rounded">强烈推荐</span>
+            <span class="cat px-2 py-0.5 rounded">进程内</span>
+          </div>
+          <p class="h-mono text-[13px] text-slate-600 leading-relaxed">
+            arrow_lake/_lake_kg.py(1571 LOC · 40 方法) · knowledge_graph/builder.py · knowledge_graph/client.py
+          </p>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="col-label mb-3">改造前 · 一个 mixin,五个职责</p>
+              <div class="rounded bg-stone-50 p-3 flex items-center justify-center" style="min-height:300px">
+                <svg viewBox="0 0 300 300" class="w-full h-full">
+                  <rect x="30" y="20" width="240" height="260" rx="5" fill="#fff" stroke="#dc2626" stroke-width="1.5"/>
+                  <text x="150" y="40" text-anchor="middle" class="label" fill="#7f1d1d">_lake_kg · 1571 LOC</text>
+                  <rect x="44" y="52" width="212" height="40" rx="3" fill="#fef2f2"/>
+                  <text x="150" y="70" text-anchor="middle" font-size="10" fill="#7f1d1d">build 派发 + fire-and-forget</text>
+                  <text x="150" y="84" text-anchor="middle" font-size="9" fill="#7f1d1d">(这条缝 0 测试)</text>
+                  <rect x="44" y="98" width="212" height="40" rx="3" fill="#eef2ff"/>
+                  <text x="150" y="116" text-anchor="middle" font-size="10" fill="#3730a3">GraphRAG 聊天引擎(~330 LOC)</text>
+                  <text x="150" y="130" text-anchor="middle" font-size="9" fill="#3730a3">prompt + 邻居上下文 + 流式</text>
+                  <rect x="44" y="144" width="212" height="40" rx="3" fill="#f1f5f9"/>
+                  <text x="150" y="162" text-anchor="middle" font-size="10" fill="#334155">8 个 traverser 透传</text>
+                  <text x="150" y="176" text-anchor="middle" font-size="9" fill="#334155">+ 9 个 Vermeer 透传</text>
+                  <rect x="44" y="190" width="212" height="36" rx="3" fill="#f1f5f9"/>
+                  <text x="150" y="212" text-anchor="middle" font-size="10" fill="#334155">KA 版本管理 + 模板元数据</text>
+                  <rect x="44" y="232" width="212" height="40" rx="3" fill="#fffbeb"/>
+                  <text x="150" y="250" text-anchor="middle" font-size="10" fill="#92400e">HugeGraph 生命周期守卫</text>
+                  <text x="150" y="264" text-anchor="middle" font-size="9" fill="#92400e">各种 workaround 也挤在这</text>
+                </svg>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="col-label mb-3">改造后 · 薄 facade + 3 个深模块</p>
+              <div class="rounded bg-stone-50 p-3 flex items-center justify-center" style="min-height:300px">
+                <svg viewBox="0 0 300 300" class="w-full h-full">
+                  <defs><marker id="ah3" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6" fill="#475569"/></marker></defs>
+                  <rect x="55" y="18" width="190" height="40" rx="4" fill="#fff" stroke="#0f172a" stroke-width="2"/>
+                  <text x="150" y="42" text-anchor="middle" font-size="11" fill="#0f172a">_lake_kg · ~400 LOC,12 方法</text>
+                  <line x1="150" y1="58" x2="150" y2="80" stroke="#475569"/>
+                  <rect x="20" y="92" width="120" height="62" rx="5" class="deep"/>
+                  <text x="80" y="112" text-anchor="middle" font-size="10" fill="#f1f5f9">KGBuilder</text>
+                  <text x="80" y="128" text-anchor="middle" font-size="9" fill="#cbd5e1">build 派发</text>
+                  <text x="80" y="142" text-anchor="middle" font-size="9" fill="#cbd5e1">+ 任务态(可测)</text>
+                  <rect x="160" y="92" width="120" height="62" rx="5" class="deep"/>
+                  <text x="220" y="112" text-anchor="middle" font-size="10" fill="#f1f5f9">KGRagEngine</text>
+                  <text x="220" y="128" text-anchor="middle" font-size="9" fill="#cbd5e1">prompt + 邻居</text>
+                  <text x="220" y="142" text-anchor="middle" font-size="9" fill="#cbd5e1">+ 快照缓存</text>
+                  <rect x="90" y="175" width="120" height="55" rx="5" class="deep"/>
+                  <text x="150" y="194" text-anchor="middle" font-size="10" fill="#f1f5f9">HugeGraphLifecycle</text>
+                  <text x="150" y="210" text-anchor="middle" font-size="9" fill="#cbd5e1">create/drop/rebind</text>
+                  <text x="150" y="223" text-anchor="middle" font-size="9" fill="#cbd5e1">+ 幽灵图清理</text>
+                  <rect x="55" y="248" width="190" height="38" rx="4" fill="#ecfdf5" stroke="#047857"/>
+                  <text x="150" y="266" text-anchor="middle" font-size="10" fill="#047857">kg_traverse() · kg_olap()</text>
+                  <text x="150" y="280" text-anchor="middle" font-size="9" fill="#047857">17 个 wrapper → 2 个通用方法</text>
+                  <path d="M100 58 L80 92" class="arrow" marker-end="url(#ah3)"/>
+                  <path d="M200 58 L220 92" class="arrow" marker-end="url(#ah3)"/>
+                  <path d="M150 58 L150 175" class="arrow" marker-end="url(#ah3)"/>
+                </svg>
+              </div>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-5 pt-1">
+            <div><p class="label text-slate-500 mb-1">问题</p><p class="text-sm">40 方法的 mixin,其中 42% 是纯透传,而真正的行为(build 派发、GraphRAG 引擎)却待在错误的家,旁边挤满 workaround。</p></div>
+            <div><p class="label text-indigo-600 mb-1">方案</p><p class="text-sm">沿三条缝拆:派发→<span class="h-mono text-[12px]">KGBuilder</span>、聊天→<span class="h-mono text-[12px]">KGRagEngine</span>、运维→<span class="h-mono text-[12px]">HugeGraphLifecycle</span>;17 个 wrapper 折成 2 个。</p></div>
+          </div>
+          <ul class="text-sm text-slate-700 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1">
+            <li>· 局部性:build 派发挨着它拥有的任务态</li>
+            <li>· 接口:40 方法 → ~12</li>
+            <li>· fire-and-forget GC 有了测试的家</li>
+            <li>· 杠杆:一个派发,REST + SDK + CLI 共用</li>
+          </ul>
+        </article>
+
+        <!-- ============ 候选 4:后摄入编排 ============ -->
+        <article id="c4" class="space-y-5">
+          <div class="flex flex-wrap items-center gap-2">
+            <h2 class="text-2xl font-serif text-slate-900 mr-3">4 · 把后摄入编排收回 facade</h2>
+            <span class="badge-strong label px-2 py-0.5 rounded">强烈推荐</span>
+            <span class="cat px-2 py-0.5 rounded">进程内</span>
+          </div>
+          <p class="h-mono text-[13px] text-slate-600 leading-relaxed">
+            arrow_lake/api/routers/datasets.py:81,142,566 · arrow_lake/api/routers/async_tasks.py · arrow_lake/_lake_ingest.py
+          </p>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="col-label mb-3">改造前 · router 拥有流水线</p>
+              <div class="rounded bg-stone-50 p-3" style="min-height:300px">
+                <pre class="mermaid text-[11px]">
+flowchart TB
+  H["router handler<br/>ingest_documents"]:::box
+  H --> E["embed 文档"]:::box
+  H --> F["建 FTS 索引"]:::box
+  H --> V["建向量索引"]:::box
+  H --> G["注册 Gravitino"]:::box
+  H --> Q["失效查询缓存"]:::box
+  H --> B["解析 blob key"]:::box
+  SDK["SDK 调用方<br/>lake.ingest_documents"]:::box
+  SDK -. "这些一律没有" .-> X["不可检索的 dataset"]:::leak
+  ASYNC["async_tasks.py"]:::box
+  ASYNC -. "重复一遍流水线" .-> H
+  classDef box fill:#fff,stroke:#475569,color:#0f172a
+  classDef leak fill:#fef2f2,stroke:#dc2626,color:#7f1d1d
+                </pre>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="col-label mb-3">改造后 · 一个深的摄入方法</p>
+              <div class="rounded bg-stone-50 p-3 flex items-center justify-center" style="min-height:300px">
+                <svg viewBox="0 0 300 300" class="w-full h-full">
+                  <defs><marker id="ah4" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6" fill="#475569"/></marker></defs>
+                  <rect x="40" y="18" width="220" height="40" rx="4" fill="#fff" stroke="#0f172a" stroke-width="2"/>
+                  <text x="150" y="36" text-anchor="middle" font-size="10" fill="#0f172a">接口 · 1 个方法</text>
+                  <text x="150" y="51" text-anchor="middle" font-size="10" font-family="ui-monospace" fill="#0f172a">ingest_documents_and_index(...)</text>
+                  <rect x="30" y="74" width="240" height="190" rx="6" class="deep"/>
+                  <text x="150" y="96" text-anchor="middle" class="label" fill="#94a3b8">_LakeIngestMixin · 深</text>
+                  <text x="150" y="122" text-anchor="middle" font-size="11" fill="#e2e8f0">parse → chunk → embed</text>
+                  <text x="150" y="145" text-anchor="middle" font-size="11" fill="#e2e8f0">+ FTS 索引 + 向量索引</text>
+                  <text x="150" y="168" text-anchor="middle" font-size="11" fill="#e2e8f0">+ Gravitino 注册</text>
+                  <text x="150" y="191" text-anchor="middle" font-size="11" fill="#e2e8f0">+ 缓存失效 + blob</text>
+                  <text x="150" y="232" text-anchor="middle" font-size="10" fill="#64748b">router · async_tasks · SDK</text>
+                  <text x="150" y="248" text-anchor="middle" font-size="10" fill="#64748b">都打同一条缝</text>
+                </svg>
+              </div>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-5 pt-1">
+            <div><p class="label text-slate-500 mb-1">问题</p><p class="text-sm">HTTP 层手搓 embed→FTS→vector→Gravitino→cache 流水线(还在 async_tasks 里重复一遍)——于是 SDK 调用方拿到的产品比 HTTP 调用方还差。</p></div>
+            <div><p class="label text-indigo-600 mb-1">方案</p><p class="text-sm">一个深的 <span class="h-mono text-[12px]">lake.ingest_documents_and_index(...)</span> 拥有整条后摄入序列;router 缩成一次调用。</p></div>
+          </div>
+          <ul class="text-sm text-slate-700 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1">
+            <li>· 局部性:索引逻辑一处,而非 11 处</li>
+            <li>· 杠杆:SDK 与 HTTP 能力对齐</li>
+            <li>· 删掉重复的 blob-key 解析</li>
+            <li>· 接口收缩;facade 吸收编排</li>
+          </ul>
+        </article>
+
+        <!-- ============ 候选 5:HugeGraph 生命周期 ============ -->
+        <article id="c5" class="space-y-5">
+          <div class="flex flex-wrap items-center gap-2">
+            <h2 class="text-2xl font-serif text-slate-900 mr-3">5 · 一个深的 HugeGraph 生命周期模块</h2>
+            <span class="badge-strong label px-2 py-0.5 rounded">强烈推荐</span>
+            <span class="cat px-2 py-0.5 rounded">端口与适配器</span>
+          </div>
+          <p class="h-mono text-[13px] text-slate-600 leading-relaxed">
+            deploy/scripts/entrypoint-hugegraph.sh · knowledge_graph/client.py:103,356,467 · _lake_kg.py:31,670 · knowledge_graph/queries.py:3
+          </p>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="col-label mb-3">改造前 · 运维知识散在 4 处</p>
+              <div class="rounded bg-stone-50 p-3 flex items-center justify-center" style="min-height:300px">
+                <svg viewBox="0 0 300 300" class="w-full h-full">
+                  <defs><marker id="ah5" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6" fill="#dc2626"/></marker></defs>
+                  <circle cx="150" cy="150" r="34" fill="#fef2f2" stroke="#dc2626" stroke-dasharray="3 3"/>
+                  <text x="150" y="148" text-anchor="middle" font-size="9" fill="#7f1d1d">幽灵图</text>
+                  <text x="150" y="162" text-anchor="middle" font-size="9" fill="#7f1d1d">drop 后须 restart</text>
+                  <rect x="20" y="30" width="120" height="58" rx="4" fill="#fff" stroke="#475569"/>
+                  <text x="80" y="50" text-anchor="middle" font-size="9" fill="#334155">entrypoint.sh</text>
+                  <text x="80" y="65" text-anchor="middle" font-size="8" fill="#64748b">gremlin 补丁</text>
+                  <text x="80" y="78" text-anchor="middle" font-size="8" fill="#64748b">孤儿清理</text>
+                  <rect x="160" y="30" width="120" height="58" rx="4" fill="#fff" stroke="#475569"/>
+                  <text x="220" y="50" text-anchor="middle" font-size="9" fill="#334155">client.py</text>
+                  <text x="220" y="65" text-anchor="middle" font-size="8" fill="#64748b">ensure_graph</text>
+                  <text x="220" y="78" text-anchor="middle" font-size="8" fill="#64748b">_wait_ready</text>
+                  <rect x="20" y="212" width="120" height="58" rx="4" fill="#fff" stroke="#475569"/>
+                  <text x="80" y="232" text-anchor="middle" font-size="9" fill="#334155">_lake_kg.py</text>
+                  <text x="80" y="247" text-anchor="middle" font-size="8" fill="#64748b">scope_gremlin</text>
+                  <text x="80" y="260" text-anchor="middle" font-size="8" fill="#64748b">workaround</text>
+                  <rect x="160" y="212" width="120" height="58" rx="4" fill="#fff" stroke="#475569"/>
+                  <text x="220" y="232" text-anchor="middle" font-size="9" fill="#334155">queries.py</text>
+                  <text x="220" y="247" text-anchor="middle" font-size="8" fill="#64748b">遍历源</text>
+                  <text x="220" y="260" text-anchor="middle" font-size="8" fill="#64748b">绑定注释</text>
+                  <path d="M100 88 L128 128" class="arrow-red"/>
+                  <path d="M200 88 L172 128" class="arrow-red"/>
+                  <path d="M100 212 L128 172" class="arrow-red"/>
+                  <path d="M200 212 L172 172" class="arrow-red"/>
+                </svg>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="col-label mb-3">改造后 · 一个 adapter 把 HugeGraph 当系统管</p>
+              <div class="rounded bg-stone-50 p-3 flex items-center justify-center" style="min-height:300px">
+                <svg viewBox="0 0 300 300" class="w-full h-full">
+                  <defs><marker id="ah5b" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6" fill="#475569"/></marker></defs>
+                  <rect x="40" y="24" width="220" height="38" rx="4" fill="#fff" stroke="#0f172a" stroke-width="2"/>
+                  <text x="150" y="48" text-anchor="middle" font-size="10" fill="#0f172a">HugeGraphLifecycle · 接口</text>
+                  <rect x="30" y="78" width="240" height="150" rx="6" class="deep"/>
+                  <text x="150" y="100" text-anchor="middle" class="label" fill="#94a3b8">adapter · 实现</text>
+                  <text x="150" y="124" text-anchor="middle" font-size="11" fill="#e2e8f0">ensure_graph · drop · clear</text>
+                  <text x="150" y="146" text-anchor="middle" font-size="11" fill="#e2e8f0">rebind gremlin 遍历源</text>
+                  <text x="150" y="168" text-anchor="middle" font-size="11" fill="#e2e8f0">幽灵孤儿清理</text>
+                  <text x="150" y="190" text-anchor="middle" font-size="11" fill="#e2e8f0">就绪门控</text>
+                  <text x="150" y="212" text-anchor="middle" font-size="10" fill="#64748b">shell 脚本 = 部署清单</text>
+                  <rect x="55" y="244" width="190" height="38" rx="4" fill="#fff" stroke="#475569"/>
+                  <text x="150" y="262" text-anchor="middle" font-size="9" fill="#334155">client.py · _lake_kg · queries</text>
+                  <text x="150" y="276" text-anchor="middle" font-size="9" fill="#334155">全部委托给 adapter</text>
+                  <path d="M150 78 L150 70" class="arrow" marker-end="url(#ah5b)"/>
+                </svg>
+              </div>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-5 pt-1">
+            <div><p class="label text-slate-500 mb-1">问题</p><p class="text-sm">运维知识(幽灵清理、drop 后 restart、gremlin 绑定、后端特定 REST)一半在 196 行 shell 脚本里,一半在 Python workaround 里——两半从不互相引用。</p></div>
+            <div><p class="label text-indigo-600 mb-1">方案</p><p class="text-sm">一个 <span class="h-mono text-[12px]">HugeGraphLifecycle</span> adapter 拥有 create/drop/rebind/清理/就绪;shell 脚本变成它有契约的部署清单。</p></div>
+          </div>
+          <ul class="text-sm text-slate-700 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1">
+            <li>· 局部性:每个运维 bug 在一处修</li>
+            <li>· 吸收 ~150 LOC client workaround</li>
+            <li>· 部落式的 shell 知识有了契约</li>
+            <li>· 一条缝可对 fake 测试</li>
+          </ul>
+        </article>
+
+        <!-- ============ 候选 6:GraphRAG 模板方法 ============ -->
+        <article id="c6" class="space-y-5">
+          <div class="flex flex-wrap items-center gap-2">
+            <h2 class="text-2xl font-serif text-slate-900 mr-3">6 · GraphRAG 用模板方法,别复制</h2>
+            <span class="badge-strong label px-2 py-0.5 rounded">强烈推荐</span>
+            <span class="cat px-2 py-0.5 rounded">进程内</span>
+          </div>
+          <p class="h-mono text-[13px] text-slate-600 leading-relaxed">
+            arrow_lake/rag/graph_rag.py:196 · arrow_lake/rag/pipeline.py:329,355
+          </p>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="col-label mb-3">改造前 · GraphRAG 重写 query()</p>
+              <div class="rounded bg-stone-50 p-3" style="min-height:300px">
+                <pre class="mermaid text-[11px]">
+sequenceDiagram
+  participant GR as GraphRAG.query
+  participant B as Base RAGPipeline
+  GR->>GR: 构造 messages(复制)
+  Note over GR: 重新装配 RAGResponse
+  Note over GR,GR: save_turn —— 漏了
+  GR-->>GR: parity bug(已记录)
+  Note over GR,B: super() 仅用于降级路径
+  GR->>B: _retrieve_and_build_context
+                </pre>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="col-label mb-3">改造后 · 一个模板,一个钩子</p>
+              <div class="rounded bg-stone-50 p-3" style="min-height:300px">
+                <pre class="mermaid text-[11px]">
+sequenceDiagram
+  participant GR as GraphRAG
+  participant B as Base.query(模板)
+  B->>B: messages + retrieve + window
+  B->>GR: _augment_context(window)
+  GR->>GR: 抽实体 + 图融合
+  GR-->>B: 增强后的 context 文本
+  B->>B: LLM + 响应 + 会话 + verify
+  Note over B: parity 不可能再漏
+                </pre>
+              </div>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-5 pt-1">
+            <div><p class="label text-slate-500 mb-1">问题</p><p class="text-sm"><span class="h-mono text-[12px]">GraphRAG.query</span> 端到端覆盖基类,复制了消息构造/响应/会话保存——已经漏了一个镜像(<span class="h-mono text-[12px]">save_turn</span>)。</p></div>
+            <div><p class="label text-indigo-600 mb-1">方案</p><p class="text-sm">基类 <span class="h-mono text-[12px]">query()</span> 变模板方法,带一个空操作 <span class="h-mono text-[12px]">_augment_context</span> 钩子;GraphRAG 只覆盖这个钩子——~120 LOC → ~40。</p></div>
+          </div>
+          <ul class="text-sm text-slate-700 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1">
+            <li>· 局部性:parity bug 结构上不可能</li>
+            <li>· 杠杆:一条 message/响应路径</li>
+            <li>· session + verify 两个 pipeline 各跑一次</li>
+            <li>· 接口缩到一个钩子</li>
+          </ul>
+        </article>
+
+        <!-- ============ 候选 7:reranker 异步契约 ============ -->
+        <article id="c7" class="space-y-5">
+          <div class="flex flex-wrap items-center gap-2">
+            <h2 class="text-2xl font-serif text-slate-900 mr-3">7 · reranker 这条缝上统一 async 契约</h2>
+            <span class="badge-strong label px-2 py-0.5 rounded">强烈推荐</span>
+            <span class="cat px-2 py-0.5 rounded">进程内</span>
+          </div>
+          <p class="h-mono text-[13px] text-slate-600 leading-relaxed">
+            arrow_lake/rag/reranker.py:42,180,300,317 · arrow_lake/rag/pipeline.py:257 · arrow_lake/query/hybrid.py:290
+          </p>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="col-label mb-3">改造前 · 缝上契约未定义</p>
+              <div class="rounded bg-stone-50 p-3 flex items-center justify-center" style="min-height:300px">
+                <svg viewBox="0 0 300 300" class="w-full h-full">
+                  <defs><marker id="ah7" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6" fill="#dc2626"/></marker></defs>
+                  <rect x="60" y="24" width="180" height="34" rx="4" fill="#fff" stroke="#475569"/>
+                  <text x="150" y="46" text-anchor="middle" font-size="10" font-family="ui-monospace" fill="#0f172a">def rerank() → list</text>
+                  <text x="150" y="72" text-anchor="middle" font-size="9" fill="#64748b">基类声明 sync</text>
+                  <rect x="30" y="90" width="110" height="34" rx="3" fill="#fff" stroke="#475569"/>
+                  <text x="85" y="108" text-anchor="middle" font-size="9" fill="#334155">Noop / CrossEnc</text>
+                  <text x="85" y="119" text-anchor="middle" font-size="8" fill="#64748b">sync</text>
+                  <rect x="160" y="90" width="110" height="34" rx="3" fill="#fff" stroke="#dc2626"/>
+                  <text x="215" y="108" text-anchor="middle" font-size="9" fill="#7f1d1d">LLM / Ollama</text>
+                  <text x="215" y="119" text-anchor="middle" font-size="8" fill="#7f1d1d">async def(静默)</text>
+                  <rect x="30" y="160" width="125" height="50" rx="4" fill="#eef2ff" stroke="#3730a3"/>
+                  <text x="92" y="180" text-anchor="middle" font-size="9" fill="#3730a3">pipeline.py:257</text>
+                  <text x="92" y="195" text-anchor="middle" font-size="8" fill="#3730a3">iscoroutine 桥接</text>
+                  <rect x="145" y="160" width="125" height="50" rx="4" fill="#fef2f2" stroke="#dc2626"/>
+                  <text x="207" y="180" text-anchor="middle" font-size="9" fill="#7f1d1d">hybrid.py:290</text>
+                  <text x="207" y="195" text-anchor="middle" font-size="8" fill="#7f1d1d">无桥接 → TypeError</text>
+                  <text x="207" y="206" text-anchor="middle" font-size="8" fill="#7f1d1d">被吞 → 静默 Noop</text>
+                  <path d="M85 124 L80 160" class="arrow-red"/>
+                  <path d="M215 124 L210 160" class="arrow-red"/>
+                  <text x="150" y="245" text-anchor="middle" font-size="10" fill="#7f1d1d">同一条规则,各自重新发现</text>
+                  <text x="150" y="262" text-anchor="middle" font-size="9" fill="#64748b">→ 无局部性</text>
+                </svg>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="col-label mb-3">改造后 · 基类 async,一条规则</p>
+              <div class="rounded bg-stone-50 p-3 flex items-center justify-center" style="min-height:300px">
+                <svg viewBox="0 0 300 300" class="w-full h-full">
+                  <defs><marker id="ah7b" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6" fill="#475569"/></marker></defs>
+                  <rect x="50" y="60" width="200" height="38" rx="4" fill="#fff" stroke="#0f172a" stroke-width="2"/>
+                  <text x="150" y="78" text-anchor="middle" font-size="10" fill="#0f172a">接口 · 一个签名</text>
+                  <text x="150" y="93" text-anchor="middle" font-size="10" font-family="ui-monospace" fill="#0f172a">async def rerank()</text>
+                  <rect x="40" y="118" width="220" height="92" rx="6" class="deep"/>
+                  <text x="150" y="138" text-anchor="middle" font-size="10" fill="#e2e8f0">Noop / CrossEnc:return(不 await)</text>
+                  <text x="150" y="158" text-anchor="middle" font-size="10" fill="#e2e8f0">LLM / Ollama:await</text>
+                  <text x="150" y="186" text-anchor="middle" font-size="10" fill="#cbd5e1">iscoroutine 桥接 —— 删除</text>
+                  <text x="150" y="202" text-anchor="middle" font-size="10" fill="#cbd5e1">hybrid.py 潜伏 bug —— 消失</text>
+                  <rect x="60" y="232" width="180" height="40" rx="4" fill="#ecfdf5" stroke="#047857"/>
+                  <text x="150" y="250" text-anchor="middle" font-size="10" fill="#047857">两个调用方:各 await 一次</text>
+                  <text x="150" y="264" text-anchor="middle" font-size="9" fill="#047857">最小改动,最高杠杆</text>
+                </svg>
+              </div>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-5 pt-1">
+            <div><p class="label text-slate-500 mb-1">问题</p><p class="text-sm">基类声明 <span class="h-mono text-[12px]">def rerank</span>,但两个 adapter 偷偷用 <span class="h-mono text-[12px]">async def</span> 覆盖;调和规则活在每个调用方里——第二个调用方已经搞错了。</p></div>
+            <div><p class="label text-indigo-600 mb-1">方案</p><p class="text-sm">基类声明 <span class="h-mono text-[12px]">async def rerank</span>;sync adapter 直接 <span class="h-mono text-[12px]">return</span>。删掉每个调用方的桥接;<span class="h-mono text-[12px]">hybrid.py:290</span> 的潜伏 bug 顺手消失。</p></div>
+          </div>
+          <ul class="text-sm text-slate-700 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1">
+            <li>· 局部性:一条契约,一处</li>
+            <li>· 消灭 hybrid.py 潜伏的静默 Noop</li>
+            <li>· 缝保留——4 个真 adapter ✓</li>
+            <li>· 七者中 effort 最低</li>
+          </ul>
+        </article>
+
+      </section>
+
+      <!-- ===================== 首推 ===================== -->
+      <section id="top-recommendation" class="pt-6">
+        <div class="rounded-xl border border-slate-900 bg-white p-8 shadow-sm">
+          <p class="label text-indigo-600 mb-3">首推</p>
+          <div class="flex flex-wrap items-baseline gap-3 mb-4">
+            <h2 class="text-3xl font-serif text-slate-900">先做 #1 —— 深化 RAG 检索阶段</h2>
+            <a href="#c1" class="text-sm text-indigo-600 hover:underline">↑ 回到卡片</a>
+          </div>
+          <p class="text-slate-700 leading-relaxed max-w-3xl">
+            它是本组里最纯粹的深化:两个浅模块合并到一个小接口背后,配置一次解析成
+            <span class="h-mono text-[13px]">RAGQueryPlan</span>,而非手工转发 6 次。它自包含(单子系统、爆炸半径适中),
+            是 <em>接口即测试面</em> 最干净的范例,并且恰好消灭了最伤这个仓库的 bug 类——dead
+            <span class="h-mono text-[13px]">strategy</span>、dead <span class="h-mono text-[13px]">reranker</span>、
+            <span class="h-mono text-[13px]">_score</span>/<span class="h-mono text-[13px]">_rrf_score</span> 列耦合——正是 v1.9.5/v1.9.6 反复咬人的那些。
+            检索后端属于本地可替换,所以深化后的模块可对 stub 干净测试,无需真实 LanceDB。
+          </p>
+          <p class="text-slate-700 leading-relaxed max-w-3xl mt-3">
+            <strong class="text-slate-900">若想要更大的结构改造:</strong>候选 #2(<span class="h-mono text-[13px]">ControlPlane</span> port)是 host-vs-container 分歧与
+            "配置到不了模块"反复出现的根因——但它触及整个 facade,爆炸半径更大。
+            <strong class="text-slate-900">若想要最便宜的胜利:</strong>#7(reranker 一条 async 契约)改一个签名,顺手删掉
+            <span class="h-mono text-[13px]">hybrid.py:290</span> 里一个潜伏的静默 Noop。
+          </p>
+        </div>
+      </section>
+
+      <footer class="pt-10 border-t border-slate-200 text-xs text-slate-400 space-y-1">
+        <p>术语来自 <span class="h-mono">/codebase-design</span>:模块 · 接口 · 深度 · 缝 · 适配器 · 杠杆 · 局部性。本文只提深化机会,尚未提出具体接口。</p>
+        <p>生成于 2026-07-28 · 证据来自对 RAG、KG、facade/router/config 三层的 3 路并行 Explore 探查。</p>
+      </footer>
+    </main>
+  </body>
+</html>
