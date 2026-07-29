@@ -1,6 +1,6 @@
 """Graph schema definitions for HugeGraph.
 
-Frozen dataclasses define the Arrow Lake KG schema (8 vertex labels + 9 edge labels)
+Frozen dataclasses define the Arrow Lake KG schema (8 vertex labels + 14 edge labels)
 matching architecture document Section 5C.
 
 Conversion function transforms schema defs to HugeGraph REST API payloads.
@@ -106,7 +106,7 @@ def schema_to_hugegraph_payload(schema: GraphSchema) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Arrow Lake KG Schema (8 vertex labels + 9 edge labels)
+# Arrow Lake KG Schema (8 vertex labels + 14 edge labels)
 # Reference: Architecture doc Section 5C
 # ---------------------------------------------------------------------------
 
@@ -141,6 +141,12 @@ ARROW_LAKE_KG_SCHEMA = GraphSchema(
         EdgeLabelDef("next_chunk", "chunk", "chunk"),
         EdgeLabelDef("related_to", "entity", "entity", ("weight", "relation_type", "description")),
         EdgeLabelDef("part_of", "entity", "entity", ("relation_type", "description")),
+        # project_concept_graph verb-driven domain edges (entity→entity).
+        EdgeLabelDef("deployed_on", "entity", "entity", ("relation_type", "description")),
+        EdgeLabelDef("uses", "entity", "entity", ("relation_type", "description")),
+        EdgeLabelDef("processes", "entity", "entity", ("relation_type", "description")),
+        EdgeLabelDef("provides", "entity", "entity", ("relation_type", "description")),
+        EdgeLabelDef("requires", "entity", "entity", ("relation_type", "description")),
         EdgeLabelDef("belongs_to", "person", "organization", ("relation_type", "description")),
         EdgeLabelDef("located_in", "person", "location", ("relation_type", "description")),
         EdgeLabelDef("participates_in", "person", "event", ("relation_type", "description")),

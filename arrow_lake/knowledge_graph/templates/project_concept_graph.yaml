@@ -22,8 +22,8 @@ output:
       - name: type
         type: str
         description:
-          zh: '按要素性质必须是以下 22 类之一（值=括号前的类名，不得带分组字母前缀或抄写整行）：主体(当事方如采购方承建方供应商)/组织(委办局处室项目组)/角色(人员角色如项目经理)/项目(项目子项建设目标)/场景(业务应用场景用例)/业务流程(流程工作流)/硬件(实体设备如服务器交换机GPU存储传感器摄像头)/软件(程序系统如平台中间件应用模块)/模型(AI算法如大模型OCR RAG)/数据(数据集数据流数据源)/服务(实施运维培训咨询)/区域(区县地点机房路段)/节点(工期里程碑交付节点)/指标(量化技术参数如性能数量规格)/要求(条款约束如等保质保响应)/资质(认证合规如ISO CMMI)/方案(解决方案架构技术路线)/技术(通用技术如云计算边缘区块链数字孪生5G IoT)/标准(接口协议规范国标如GB/T28181 MQTT REST)/金额(报价预算合同金额)/条款(合同条款违约知识产权保密)/安全(安全控制措施如防护等备风险)。禁止"概念""其他"等笼统值，必须选最具体匹配。易混：硬件(实体设备)vs软件(程序)；模型(AI算法)vs技术(通用如5G)；指标(量化)vs要求(条款)；资质(认证)vs安全(控制)。'
-          en: 'MUST be one of 22 types (value = the class name before the paren, no group prefix): 主体(party: purchaser/builder/vendor) / 组织(org: dept/bureau) / 角色(role: pm/tech-lead) / 项目(project/subproject) / 场景(scenario/use-case) / 业务流程(process/workflow) / 硬件(hardware: server/switch/GPU/sensor) / 软件(software: system/platform/app) / 模型(model: AI algo/LLM/OCR) / 数据(data: dataset/stream) / 服务(service: ops/training) / 区域(location/region) / 节点(schedule/milestone) / 指标(spec: metric/perf) / 要求(requirement: clause like warranty) / 资质(qualification: ISO/CMMI) / 方案(solution/architecture) / 技术(technology: cloud/edge/5G) / 标准(standard: protocol/GB) / 金额(amount/budget) / 条款(clause/contract term) / 安全(security/control). Generic "concept" forbidden; pick the most specific match.'
+          zh: '按要素性质必须是以下 22 类之一（值=括号前的类名，不得带分组字母前缀或抄写整行）：主体(当事方如采购方承建方供应商)/组织(委办局处室项目组)/角色(人员角色如项目经理)/项目(项目子项建设目标)/场景(业务应用场景用例)/业务流程(流程工作流)/硬件(实体设备如服务器交换机GPU存储传感器摄像头)/软件(程序系统如平台中间件应用模块)/模型(AI算法如大模型OCR RAG)/数据(数据集数据流数据源)/服务(实施运维培训咨询)/区域(区县地点机房路段)/节点(工期里程碑交付节点)/指标(命名的技术指标如响应时间/吞吐量/并发数,严禁抽具体数值)/要求(条款约束如等保质保响应)/资质(认证合规如ISO CMMI)/方案(解决方案架构技术路线)/技术(通用技术如云计算边缘区块链数字孪生5G IoT)/标准(接口协议规范国标如GB/T28181 MQTT REST)/金额(报价预算合同金额)/条款(合同条款违约知识产权保密)/安全(安全控制措施如防护等备风险)。禁止"概念""其他"等笼统值，必须选最具体匹配。易混：硬件(实体设备)vs软件(程序)；模型(AI算法)vs技术(通用如5G)；指标(量化)vs要求(条款)；资质(认证)vs安全(控制)。'
+          en: 'MUST be one of 22 types (value = the class name before the paren, no group prefix): 主体(party: purchaser/builder/vendor) / 组织(org: dept/bureau) / 角色(role: pm/tech-lead) / 项目(project/subproject) / 场景(scenario/use-case) / 业务流程(process/workflow) / 硬件(hardware: server/switch/GPU/sensor) / 软件(software: system/platform/app) / 模型(model: AI algo/LLM/OCR) / 数据(data: dataset/stream) / 服务(service: ops/training) / 区域(location/region) / 节点(schedule/milestone) / 指标(spec: named metric like response-time, NOT raw value) / 要求(requirement: clause like warranty) / 资质(qualification: ISO/CMMI) / 方案(solution/architecture) / 技术(technology: cloud/edge/5G) / 标准(standard: protocol/GB) / 金额(amount/budget) / 条款(clause/contract term) / 安全(security/control). Generic "concept" forbidden; pick the most specific match.'
         required: true
       - name: definition
         type: str
@@ -67,13 +67,16 @@ guideline:
       - 'name 用规范术语，同一要素全文命名一致'
       - 'definition 必填，简要说明该要素'
       - '区分易混类：硬件(实体设备) vs 软件(程序系统)；模型(AI算法) vs 技术(通用如5G)；指标(量化参数) vs 要求(条款约束)；资质(认证) vs 安全(控制措施)'
-      - '不抽取规格碎片（如"5*8""4U"除非是独立的指标实体）；优先抽结构化项目要素'
+      - '严禁把以下任何形式作为实体 name：纯数字（"12"）、数字+量纲单位（"4座""7天""14座""9.89%""5*8""4U""2G"）、章节号/条款号（"5.5.2""1.2.3""第3页"）、型号/编号、页码——name 必须是命名术语/专有名词（如"COD""GNSS""PE管""裂缝计"），绝不能是数值、量值或编号'
+      - '指标类只抽"命名的指标"（如"系统响应时间""并发用户数""COD""存储容量"），绝不抽指标的具体数值或"数字+单位"（如"7天""9.89%""4座"）；数量、价格、规格值、尺寸、百分比一律不作为实体'
     en:
       - 'Extract explicitly stated project elements: parties, deliverables, solutions, specs, amounts, milestones, qualifications, clauses etc.'
       - 'type must be the most specific of the 22 classes; generic "concept" forbidden'
       - 'Use standard terminology; consistent naming throughout'
       - 'definition required'
       - 'Distinguish hardware vs software; model vs technology; spec vs requirement; qualification vs security'
+      - 'NEVER use as entity name: bare numbers ("12"), number+unit compounds ("4座","7天","9.89%","5*8","4U","2G"), section/clause numbers ("5.5.2","1.2.3"), model/ID codes, page numbers — name must be a named term (e.g. "COD","GNSS","PE管"), never a value/quantity/number'
+      - 'For spec/metric type, extract the NAMED metric (e.g. "system response time","concurrent users","COD"), never its numeric value or number+unit ("7天","9.89%","4座"); quantities/prices/dimensions/percentages are never entities'
   rules_for_relations:
     zh:
       - 'type 必须严格用枚举值之一（包含/属于/依赖/提供/要求/承担/采用/集成/部署/部署于/训练/处理/报价/交付于/达成/遵循），禁止自创或混用英文'

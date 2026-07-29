@@ -24,8 +24,9 @@ from dataclasses import dataclass
 class RelationRoute:
     """A relation routing rule: a type pair + synonym set → an edge label.
 
-    ``target_type == "entity"`` is a wildcard matching any target entity type
-    (used by ``depicts`` which is ``event → entity`` in the schema).
+    ``target_type == "entity"`` or ``"*"`` is a wildcard matching any target
+    type; ``source_type == "*"`` is a wildcard matching any source type (used
+    by the verb-driven domain routes for project_concept_graph relations).
     """
 
     source_type: str
@@ -49,6 +50,9 @@ _ENTITY_TYPE_LABELS: dict[str, str] = {
     "机构": "organization", "公司": "organization", "单位": "organization",
     "location": "location", "地点": "location", "位置": "location", "地方": "location",
     "event": "event", "事件": "event",
+    # project_concept_graph domain NE aliases — parties/roles/regions map to
+    # typed labels so NE typed edges (belongs_to/located_in) gain real endpoints.
+    "主体": "organization", "角色": "person", "区域": "location",
 }
 
 
@@ -90,6 +94,46 @@ DEFAULT_RELATION_ROUTES: tuple[RelationRoute, ...] = (
         }),
         edge_label="depicts",
     ),
+    # --- project_concept_graph verb-driven domain edges (entity→entity).
+    # source="*" matches any (possibly-routed) type; appended LAST so the
+    # NE-specific routes above take priority on overlapping verbs (e.g. 属于
+    # → belongs_to when source routes to person, else part_of). Endpoints
+    # resolve to the generic ``entity`` vertices which always exist (double-
+    # write), so these entity→entity edges never miss an endpoint.
+    RelationRoute(
+        source_type="*", target_type="*",
+        synonyms=frozenset({"contains", "is_a", "depends_on", "integrates",
+                            "包含", "属于", "依赖", "集成"}),
+        edge_label="part_of",
+    ),
+    RelationRoute(
+        source_type="*", target_type="*",
+        synonyms=frozenset({"uses", "trained_on", "采用", "训练"}),
+        edge_label="uses",
+    ),
+    RelationRoute(
+        source_type="*",
+        target_type="*",
+        # "located_in" (en form of 部署于) overlaps the person→location route
+        # above; that NE route wins for person sources, this fires otherwise.
+        synonyms=frozenset({"deployed_on", "located_in", "部署", "部署于"}),
+        edge_label="deployed_on",
+    ),
+    RelationRoute(
+        source_type="*", target_type="*",
+        synonyms=frozenset({"processes", "处理"}),
+        edge_label="processes",
+    ),
+    RelationRoute(
+        source_type="*", target_type="*",
+        synonyms=frozenset({"provides", "提供"}),
+        edge_label="provides",
+    ),
+    RelationRoute(
+        source_type="*", target_type="*",
+        synonyms=frozenset({"requires", "要求"}),
+        edge_label="requires",
+    ),
 )
 
 
@@ -107,28 +151,37 @@ def route_relation(
     """Return the schema edge label for a relation, defaulting to ``related_to``.
 
     A route matches when:
-    - ``source_type`` equals ``route.source_type`` (exact), AND
+    - ``source_type`` matches ``route.source_type`` (exact, OR wildcard when
+      ``route.source_type == "*"``), AND
     - ``target_type`` matches ``route.target_type`` (exact, OR wildcard when
-      ``route.target_type == "entity"``), AND
+      ``route.target_type`` is ``"*"`` or ``"entity"``), AND
     - ``relation_type`` (lowercased) is in ``route.synonyms``.
 
+    Domain entity types are routed to typed labels first (角色→person,
+    主体→organization, ...) so NE edges fire for domain aliases; types that
+    don't route keep their raw (lowercased) value and are matched by the
+    ``"*"`` verb-driven domain routes.
+
     Args:
-        source_type: The source entity's normalized type (person/...).
-        target_type: The target entity's normalized type.
+        source_type: The source entity's type (person/角色/软件/...).
+        target_type: The target entity's type.
         relation_type: The free-text relation verb phrase.
         routes: Optional override of the synonym table (e.g. from config).
 
     Returns:
         A schema edge label — one of ``belongs_to``/``located_in``/
-        ``participates_in``/``depicts`` on a hit, else ``related_to``.
+        ``participates_in``/``depicts``/``part_of``/``uses``/``deployed_on``/
+        ``processes``/``provides``/``requires`` on a hit, else ``related_to``.
     """
     rt = (relation_type or "").strip().lower()
-    src = (source_type or "").strip().lower()
-    tgt = (target_type or "").strip().lower()
+    # Route domain types to typed labels first so NE edges (belongs_to etc.)
+    # fire for domain aliases (角色→person, 主体→organization, 区域→location).
+    src = route_entity_type(source_type) or (source_type or "").strip().lower()
+    tgt = route_entity_type(target_type) or (target_type or "").strip().lower()
     for route in routes:
-        if src != route.source_type:
+        if route.source_type != "*" and src != route.source_type:
             continue
-        target_ok = route.target_type == "entity" or tgt == route.target_type
+        target_ok = route.target_type in ("*", "entity") or tgt == route.target_type
         if target_ok and rt in route.synonyms:
             return route.edge_label
     return "related_to"

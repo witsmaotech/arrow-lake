@@ -95,13 +95,14 @@ def test_arrow_lake_kg_schema_structure() -> None:
         "organization", "location", "concept", "event",
     }
 
-    # 9 edge labels
-    assert len(schema.edge_labels) == 9
+    # 14 edge labels (9 base + 5 project_concept_graph verb-driven domain edges)
+    assert len(schema.edge_labels) == 14
     el_names = {el.name for el in schema.edge_labels}
     assert el_names == {
         "contains_chunk", "references", "next_chunk",
         "related_to", "part_of", "belongs_to",
         "located_in", "participates_in", "depicts",
+        "deployed_on", "uses", "processes", "provides", "requires",
     }
 
     # Property keys must cover all vertex/edge properties
@@ -109,6 +110,17 @@ def test_arrow_lake_kg_schema_structure() -> None:
     # index_labels intentionally empty (e3b4f09 removed the redundant
     # primary_key index); verify it stays empty rather than re-appearing.
     assert len(schema.index_labels) == 0
+
+
+def test_domain_edge_labels_are_entity_to_entity() -> None:
+    """Verb-driven domain edges are entity→entity with relation_type+description."""
+    by_name = {el.name: el for el in ARROW_LAKE_KG_SCHEMA.edge_labels}
+    for name in ("part_of", "deployed_on", "uses", "processes", "provides", "requires"):
+        el = by_name[name]
+        assert el.source_label == "entity"
+        assert el.target_label == "entity"
+        assert "relation_type" in el.properties
+        assert "description" in el.properties
 
 
 # ---------------------------------------------------------------------------

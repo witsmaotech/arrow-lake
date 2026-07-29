@@ -241,7 +241,7 @@ services:
       ARROW_LAKE__HUGEGRAPH__HE_KA_BASE_DIR: "/data/lake/ka"
       # v1.9.4: 合并策略改 MERGE_FIELD(非 LLM, 见 he_extractor._create_ka)后, BALANCED 合并爆炸消除,
       # dataset 粒度(一份 KA 喂全部 chunk)对任意规模都稳定 → 不再需要 grouped 分组。通用且简单。
-      ARROW_LAKE__HUGEGRAPH__HE_KG_GRANULARITY: "dataset"
+      ARROW_LAKE__HUGEGRAPH__HE_KG_GRANULARITY: "auto"
       # [#KG-LLM-split] RAG 问答 (ka.chat 生成回答) 用旗舰模型, 与抽取分离
       # (抽取 feed_text 默认走上面全局 LLM ministral-3:3b)。设 DASHSCOPE_API_KEY 后启用;
       # 注释整个块 → 问答回退全局 llm (ministral)。百炼 dashscope 经上面 HTTP_PROXY 出网。
