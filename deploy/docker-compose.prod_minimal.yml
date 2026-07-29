@@ -198,7 +198,7 @@ services:
       # Ray 集群已在 minimal 中移除 → RAY_ADDRESS=auto 回退本地计算
       ARROW_LAKE__COMPUTE__RAY_DASHBOARD_URL: "http://ray-head:8265"
       # KG 抽取 LLM = 百炼 qwen-turbo (json_schema 约束 + 22 类枚举遵循好; 经 17887 代理出网)。
-      # 抽取走全局 llm (he_extract_llm=None→fallback global); QA 仍走下面的 he_qa_llm qwen3-max。
+      # 抽取走全局 llm (he_extract_llm=None→fallback global); QA 仍走下面的 he_qa_llm qwen-plus。
       # 旧 ollama ministral-3:3b 配置(保留注释备查):3B 小模型对紧模板枚举遵循差。
       # ARROW_LAKE__LLM__PROVIDER: "ollama"
       # ARROW_LAKE__LLM__MODEL: "ministral-3:3b"
@@ -252,7 +252,7 @@ services:
       # v1.9.5: KG 问答(he_qa_llm)详尽长输出 + 低温稳定(对齐 RAG qa_llm 调优)。
       ARROW_LAKE__HUGEGRAPH__HE_QA_LLM__MAX_TOKENS: "16384"
       ARROW_LAKE__HUGEGRAPH__HE_QA_LLM__TEMPERATURE: "0.3"
-      # [#RAG-QA-split] RAG 问答生成用强模型(百炼 qwen3-max);抽取/重排仍走全局轻量 llm。
+      # [#RAG-QA-split] RAG 问答生成用 he_qa_llm(百炼 qwen-plus@16384);抽取/重排仍走全局轻量 llm。
       # 不设(注释掉)→ RAG 回退全局 llm (ministral)。百炼经上面 HTTP_PROXY 出网。
       ARROW_LAKE__RAG__QA_LLM__PROVIDER: "openai"
       ARROW_LAKE__RAG__QA_LLM__API_BASE: "https://dashscope.aliyuncs.com/compatible-mode/v1"
@@ -287,6 +287,9 @@ services:
       ARROW_LAKE__OLAP__ENABLE_PROGRESS_BAR: "true"
       ARROW_LAKE__OLAP__QUERY_CACHE_ENABLED: "true"
       ARROW_LAKE__OLAP__QUERY_CACHE_TTL_SECONDS: "120"
+      # RAG hybrid 走 sub-bridge RRF, 绕开 DuckDB native lance vector stream + IVF_PQ 的 Rust panic (502/worker 崩)。
+      # DuckDB lance scanner 对 IVF_PQ index 的 vector stream 有 abort bug; pyarrow_fallback 用 sync sub-bridge (实测 cosine/L2 OK)。
+      ARROW_LAKE__OLAP__LANCE_SCAN_MODE: "pyarrow_fallback"
       ARROW_LAKE__OLAP__PARQUET_ROW_GROUP_SIZE: "100000"
       # v1.7.1: DuckDB per-query memory limit (minimal 下调到 512MB，配合 API_MEMORY_LIMIT 4G)
       ARROW_LAKE__OLAP__MAX_QUERY_MEMORY_MB: "${OLAP_MAX_QUERY_MEMORY_MB:-512}"
@@ -323,7 +326,7 @@ services:
       # 表格结构化解析(markdown 表格)需 docling(TableFormer): 设 DOCUMENT_OCR_BACKEND=docling,
       # 且需 GPU 镜像(CPU 跑 109 页 PDF 要数小时)。kreuzberg result.tables 机制本身保留表格 markdown,
       # 只是检测器常漏检无框线/复杂表格。
-      ARROW_LAKE__DOCUMENT__OCR_BACKEND: "${DOCUMENT_OCR_BACKEND:-kreuzberg}"
+      ARROW_LAKE__DOCUMENT__OCR_BACKEND: "${DOCUMENT_OCR_BACKEND:-docling}"
       # v1.5.1: Gravitino authentication (simple by default)
       ARROW_LAKE__GRAVITINO__AUTH_TYPE: "${GRAVITINO_AUTH_TYPE:-simple}"
       ARROW_LAKE__GRAVITINO__AUTH_SIMPLE_USER: "${GRAVITINO_AUTH_USER:-arrow_lake}"
@@ -377,6 +380,12 @@ services:
           pids: 512
         reservations:
           memory: 1G
+          # 固化 GPU 部署：docling TableFormer/layout 用 GPU（CPU ≈200s/页不可用）。
+          # 宿主需装 nvidia-container-toolkit。无 GPU 机器设 GPU_COUNT=0 或改回 kreuzberg。
+          devices:
+            - driver: nvidia
+              count: ${GPU_COUNT:-1}
+              capabilities: [gpu]
     healthcheck:
       test: ["CMD-SHELL", "curl -s http://localhost:8000/health | grep -q '\"status\":\"ok\"'"]
       interval: 15s
@@ -617,9 +626,10 @@ services:
       HUGEGRAPH_GRAPH: "hugegraph"
       # HugeGraph 1.7+ 动态建图(per-dataset KG)必须开 auth：设 PASSWORD → enable-auth.sh 建管理员(admin/PASSWORD)
       PASSWORD: "${HG_SERVER_PASSWORD:-pa}"
-      # JVM 堆匹配下方 cgroup 内存（4G），留 ~2G 给 rocksdb block cache/off-heap。
-      # G1GC 降低大堆下的暂停（kg_build 持续写入时 GC 压力大）。
-      JAVA_OPTS: "-Xms1g -Xmx2g -XX:+UseG1GC -XX:MaxGCPauseMillis=200"
+      # JVM 堆匹配下方 cgroup 内存（12G）。2G 堆对稠密 KG 的 traverser（kneighbor
+      # with_vertex / 最短路径等）太小 → OutOfMemoryError；12G 容器给堆 8G，留 ~4G 给
+      # rocksdb native cache/off-heap/metaspace。G1GC 降低大堆下的暂停（kg_build 写入时 GC 压力大）。
+      JAVA_OPTS: "-Xms2g -Xmx8g -XX:+UseG1GC -XX:MaxGCPauseMillis=200"
     ports:
       - "127.0.0.1:${HUGEGRAPH_PORT:-8089}:8080"
     volumes:
@@ -629,7 +639,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: ${HG_SERVER_MEMORY_LIMIT:-4096M}
+          memory: ${HG_SERVER_MEMORY_LIMIT:-12288M}
           cpus: "${HG_SERVER_CPU_LIMIT:-2.0}"
           pids: 512
         reservations:

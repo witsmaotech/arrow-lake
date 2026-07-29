@@ -27,7 +27,7 @@ import re
 from typing import Any
 
 import httpx
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from arrow_lake.config import HugeGraphConfig
 from arrow_lake.exceptions import ErrorCode, KGError
@@ -41,17 +41,25 @@ _SAFE_VERTEX_ID_RE = re.compile(r"^[a-zA-Z0-9_\-一-鿿　-〿＀-￯:.\s]+$")
 
 _DEFAULT_MAX_RETRIES = 3
 
-# Exceptions eligible for tenacity retry in _get/_post/_delete. NOTE:
-# httpx.HTTPStatusError is included because those helpers raise it ONLY on
-# status >= 500 (4xx is returned to the caller unchecked), so adding the type
-# here retries transient 5xx (e.g. HugeGraph "too busy to write" under rocksdb
-# write saturation) without ever retrying 4xx client errors.
-_RETRYABLE_EXCEPTIONS = (
-    httpx.TimeoutException,
-    httpx.ConnectError,
-    ConnectionResetError,  # builtin; httpx raises this on a reset TCP connection
-    httpx.HTTPStatusError,
-)
+# Exceptions eligible for tenacity retry in _get/_post/_delete. Network blips
+# (timeout / connect / reset) always retry. 5xx is retried ONLY when transient —
+# deterministic HugeGraph failures (OutOfMemoryError, IllegalArgument, ...) are
+# not, because re-issuing the same query repeats the failure and, for OOM,
+# hammers the HugeGraph heap once per retry (3× per request under the old policy).
+# 4xx is returned to the caller unchecked and never reaches this predicate.
+def _is_retryable_http_error(exc: BaseException) -> bool:
+    """Tenacity retry predicate for _get/_post/_delete."""
+    if isinstance(exc, (httpx.TimeoutException, httpx.ConnectError, ConnectionResetError)):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError):
+        body = (getattr(exc.response, "text", "") or "")[:2048].lower()
+        non_transient = (
+            "outofmemory", "heap space", "stackoverflowerror",
+            "illegalargumentexception", "illegalstateexception",
+            "nosuchelementexception", "unmodifiable", "unsupportedoperation",
+        )
+        return not any(k in body for k in non_transient)
+    return False
 
 _BLOCKED_GREMLIN_PATTERNS = (
     "drop(", "eval(", "System.", "java.lang", "inject(",
@@ -125,7 +133,7 @@ class HugeGraphClient(_TraverserMixin, _ImportExportMixin):
         )
 
     @retry(
-        retry=retry_if_exception_type(_RETRYABLE_EXCEPTIONS),
+        retry=retry_if_exception(_is_retryable_http_error),
         stop=stop_after_attempt(_DEFAULT_MAX_RETRIES),
         wait=wait_exponential(multiplier=1, min=1, max=10),
         reraise=True,
@@ -134,11 +142,14 @@ class HugeGraphClient(_TraverserMixin, _ImportExportMixin):
         """GET with tenacity retry on transient failures."""
         resp = await self._client.get(path, params=params)
         if resp.status_code >= 500:
-            raise httpx.HTTPStatusError(f"Server error {resp.status_code}", request=resp.request, response=resp)
+            raise httpx.HTTPStatusError(
+                f"Server error {resp.status_code}: {resp.text[:500]}",
+                request=resp.request, response=resp,
+            )
         return resp
 
     @retry(
-        retry=retry_if_exception_type(_RETRYABLE_EXCEPTIONS),
+        retry=retry_if_exception(_is_retryable_http_error),
         stop=stop_after_attempt(_DEFAULT_MAX_RETRIES),
         wait=wait_exponential(multiplier=1, min=1, max=10),
         reraise=True,
@@ -147,11 +158,14 @@ class HugeGraphClient(_TraverserMixin, _ImportExportMixin):
         """POST with tenacity retry on transient failures."""
         resp = await self._client.post(path, json=json_data)
         if resp.status_code >= 500:
-            raise httpx.HTTPStatusError(f"Server error {resp.status_code}", request=resp.request, response=resp)
+            raise httpx.HTTPStatusError(
+                f"Server error {resp.status_code}: {resp.text[:500]}",
+                request=resp.request, response=resp,
+            )
         return resp
 
     @retry(
-        retry=retry_if_exception_type(_RETRYABLE_EXCEPTIONS),
+        retry=retry_if_exception(_is_retryable_http_error),
         stop=stop_after_attempt(_DEFAULT_MAX_RETRIES),
         wait=wait_exponential(multiplier=1, min=1, max=10),
         reraise=True,
@@ -160,7 +174,10 @@ class HugeGraphClient(_TraverserMixin, _ImportExportMixin):
         """DELETE with tenacity retry on transient failures."""
         resp = await self._client.delete(path)
         if resp.status_code >= 500:
-            raise httpx.HTTPStatusError(f"Server error {resp.status_code}", request=resp.request, response=resp)
+            raise httpx.HTTPStatusError(
+                f"Server error {resp.status_code}: {resp.text[:500]}",
+                request=resp.request, response=resp,
+            )
         return resp
 
     def _handle_http_error(self, exc: httpx.HTTPError) -> None:
@@ -542,6 +559,39 @@ class HugeGraphClient(_TraverserMixin, _ImportExportMixin):
     # Schema operations
     # ------------------------------------------------------------------
 
+    async def _post_schema_element(
+        self, base: str, kind: str, payload: dict[str, Any]
+    ) -> None:
+        """POST one schema element. 400 = already exists (ignored, idempotent).
+
+        5xx → KG_SCHEMA_ERROR with restart hint: HugeGraph GraphManager 内存 schema 缓存
+        在运行期 clear/drop 后不刷新(只改持久层),propertykeys POST 返回 500(非 400)。
+        此时 KG build 必 FAILED,需 restart hg-server 让 GraphManager 从 rocksdb 重载。
+        """
+        try:
+            resp = await self._post(f"{base}/{kind}", json_data=payload)
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code >= 500:
+                raise KGError(
+                    error_code=ErrorCode.KG_SCHEMA_ERROR,
+                    message=(
+                        f"HugeGraph schema {kind} POST {e.response.status_code}: GraphManager dirty state "
+                        f"(clear/drop 后内存 schema 缓存未刷新)。restart hg-server 后重试: "
+                        f"`make kg-clear-graph DS=<ds>` 或 `docker restart <hg-server>`"
+                    ),
+                    context={
+                        "kind": kind, "name": payload.get("name"),
+                        "status": e.response.status_code, "detail": e.response.text[:200],
+                    },
+                ) from e
+            raise
+        if resp.status_code not in (200, 201, 202, 400):
+            raise KGError(
+                error_code=ErrorCode.KG_SCHEMA_ERROR,
+                message=f"{kind} creation failed: {payload.get('name')}",
+                context={"status_code": resp.status_code, "detail": resp.text[:200]},
+            )
+
     async def ensure_schema(
         self, schema: dict[str, Any], *, graph_name: str | None = None
     ) -> None:
@@ -554,61 +604,20 @@ class HugeGraphClient(_TraverserMixin, _ImportExportMixin):
         - index_labels: list of {name, base_type, base_value, index_type, fields}
 
         Ignores 400 errors (element already exists) and accepts 202 (async).
+        5xx (GraphManager dirty after clear/drop) → KG_SCHEMA_ERROR with restart hint.
         """
         await self.ensure_graph(graph_name=graph_name)
         base = self._graph_base_for(graph_name) + "/schema"
 
-        # PropertyKeys -- must be created before vertex/edge labels reference them
+        # 依赖序: PropertyKeys → VertexLabels → EdgeLabels → IndexLabels
         for pk in schema.get("property_keys", []):
-            try:
-                resp = await self._post(f"{base}/propertykeys", json_data=pk)
-                if resp.status_code not in (200, 201, 202, 400):
-                    raise KGError(
-                        error_code=ErrorCode.KG_SCHEMA_ERROR,
-                        message=f"PropertyKey creation failed: {pk['name']}",
-                        context={"status_code": resp.status_code, "detail": resp.text[:200]},
-                    )
-            except KGError:
-                raise
-
-        # VertexLabels
+            await self._post_schema_element(base, "propertykeys", pk)
         for vl in schema.get("vertex_labels", []):
-            try:
-                resp = await self._post(f"{base}/vertexlabels", json_data=vl)
-                if resp.status_code not in (200, 201, 202, 400):
-                    raise KGError(
-                        error_code=ErrorCode.KG_SCHEMA_ERROR,
-                        message=f"VertexLabel creation failed: {vl['name']}",
-                        context={"status_code": resp.status_code, "detail": resp.text[:200]},
-                    )
-            except KGError:
-                raise
-
-        # EdgeLabels
+            await self._post_schema_element(base, "vertexlabels", vl)
         for el in schema.get("edge_labels", []):
-            try:
-                resp = await self._post(f"{base}/edgelabels", json_data=el)
-                if resp.status_code not in (200, 201, 202, 400):
-                    raise KGError(
-                        error_code=ErrorCode.KG_SCHEMA_ERROR,
-                        message=f"EdgeLabel creation failed: {el['name']}",
-                        context={"status_code": resp.status_code, "detail": resp.text[:200]},
-                    )
-            except KGError:
-                raise
-
-        # IndexLabels
+            await self._post_schema_element(base, "edgelabels", el)
         for il in schema.get("index_labels", []):
-            try:
-                resp = await self._post(f"{base}/indexlabels", json_data=il)
-                if resp.status_code not in (200, 201, 202, 400):
-                    raise KGError(
-                        error_code=ErrorCode.KG_SCHEMA_ERROR,
-                        message=f"IndexLabel creation failed: {il['name']}",
-                        context={"status_code": resp.status_code, "detail": resp.text[:200]},
-                    )
-            except KGError:
-                raise
+            await self._post_schema_element(base, "indexlabels", il)
 
     async def get_schema(self, *, graph_name: str | None = None) -> dict[str, Any]:
         """Get the current graph schema (vertex labels + edge labels)."""
@@ -658,20 +667,27 @@ class HugeGraphClient(_TraverserMixin, _ImportExportMixin):
         }
 
     async def get_graph_snapshot(
-        self, *, graph_name: str | None = None, limit: int = 300
+        self, *, graph_name: str | None = None, limit: int = 300,
+        label: str | None = None,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """Return raw vertices + edges (capped) for graph visualization.
 
         Fetches ``limit + 1`` vertices so the caller can detect truncation;
         edges fetch uses a larger cap (``limit * 5``) since edges are filtered
         client-side to only those whose endpoints are both in the vertex set.
+        ``label`` (optional) restricts vertices to one vertex label — used by
+        RAG to fetch only ``entity`` vertices (chunk vertices ``2:*`` sort
+        before entity vertices ``3:*`` by id and carry heavy ``content``, so an
+        unfiltered snapshot either misses entities or is slow/bloated). Edges
+        are then naturally filtered to those between same-label vertices.
         Best-effort: transient REST errors return an empty list for that side.
         """
         base = self._graph_base_for(graph_name)
+        v_q = f"limit={limit + 1}" + (f"&label={label}" if label else "")
         vertices: list[dict[str, Any]] = []
         edges: list[dict[str, Any]] = []
         try:
-            v_resp = await self._get(f"{base}/graph/vertices?limit={limit + 1}")
+            v_resp = await self._get(f"{base}/graph/vertices?{v_q}")
             vertices = v_resp.json().get("vertices", [])
         except (ConnectionError, httpx.HTTPStatusError, KeyError, ValueError):
             vertices = []

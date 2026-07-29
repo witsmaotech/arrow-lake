@@ -63,6 +63,24 @@ def _serialize_ka_item(item: Any) -> dict[str, Any]:
     return {"value": str(item)}
 
 
+def _serialize_hg_vertex(v: dict[str, Any]) -> dict[str, Any]:
+    """Serialize a HugeGraph vertex dict into the citation/RAG-context format.
+
+    Mirrors what ``/kg/graph`` exposes (entity ``properties.name``) so a RAG
+    citation vertex is identical to a node in the displayed graph — the two
+    visualizations then correspond, and ``focusEntityInGraph`` resolves by name.
+    """
+    props = v.get("properties") or {}
+    return {
+        "id": str(v.get("id", "")),
+        "name": str(props.get("name") or v.get("label") or v.get("id", "")),
+        "type": str(props.get("type") or v.get("label") or "entity"),
+        "label": v.get("label"),
+        "definition": props.get("definition"),
+        "source": "hugegraph",
+    }
+
+
 def _ka_node_name(node: Any) -> str | None:
     """Best-effort display name for a KA node or HugeGraph vertex (dict/pydantic/dataclass).
 
@@ -123,10 +141,16 @@ def _build_neighbor_context(
         for e in edges:
             src, tgt = str(e.get("outV", "")), str(e.get("inV", ""))
             lbl = e.get("label") or "related_to"
+            # Keep entity↔entity relations only: the visualization filters out
+            # document/chunk vertices, so a relation landing on a chunk id
+            # (e.g. "2:1") can't be located in the displayed graph. id2name
+            # holds entity vertices only → skip endpoints absent from it.
             if src == aid:
-                rels.append(f"—[{lbl}]→ {id2name.get(tgt, tgt)}")
+                if tgt in id2name:
+                    rels.append(f"—[{lbl}]→ {id2name[tgt]}")
             elif tgt == aid:
-                rels.append(f"←[{lbl}]— {id2name.get(src, src)}")
+                if src in id2name:
+                    rels.append(f"←[{lbl}]— {id2name[src]}")
             if len(rels) >= max_per_anchor:
                 break
         if rels:
@@ -172,12 +196,14 @@ _KG_SNAPSHOT_MAX_ENTRIES = 32
 async def _cached_graph_snapshot(
     client: Any, graph_name: str
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Graph snapshot with a short per-graph TTL so repeated QA on the same
-    dataset doesn't re-fetch up to 3000 vertices + edges on every call. A
-    fresh KA build invalidates naturally (new entities → anchors not in the
-    cached snapshot → lookup fallback fills them; cache expires in ≤ TTL).
+    """Entity-only graph snapshot (short per-graph TTL) for GraphRAG.
 
-    Per-graph Lock 防冷缓存击穿(多协程同时 miss → 同时 fetch 3000 顶点);
+    Fetches ``label="entity"`` vertices (not chunks): chunk vertices ``2:*``
+    sort before entity vertices ``3:*`` by id and carry heavy ``content``, so an
+    unfiltered snapshot either misses entities (small cap → anchors never
+    resolve → citations stay KA-only, not corresponding to the displayed KG
+    graph) or is slow/bloated (large cap). Entity-only is lightweight and is
+    exactly the concept graph RAG retrieves over. Per-graph Lock 防冷缓存击穿;
     容量上限防 graph_name 多时无界增长。
     """
     now = time.monotonic()
@@ -190,7 +216,13 @@ async def _cached_graph_snapshot(
         hit = _KG_SNAPSHOT_CACHE.get(graph_name)
         if hit and now - hit[0] < _KG_SNAPSHOT_TTL_S:
             return hit[1]
-        data = await client.get_graph_snapshot(graph_name=graph_name, limit=3000)
+        # label="entity": RAG needs concept/entity vertices only. Chunk vertices
+        # (``2:*``, ~1200+) sort before entities (``3:*``) by id and carry heavy
+        # ``content``; an unfiltered fetch either misses entities (small cap) or
+        # is slow/bloated (large cap). Entity-only is lightweight + exact.
+        data = await client.get_graph_snapshot(
+            graph_name=graph_name, limit=10000, label="entity"
+        )
         _KG_SNAPSHOT_CACHE[graph_name] = (now, data)
         if len(_KG_SNAPSHOT_CACHE) > _KG_SNAPSHOT_MAX_ENTRIES:
             oldest = min(_KG_SNAPSHOT_CACHE, key=lambda k: _KG_SNAPSHOT_CACHE[k][0])
@@ -955,10 +987,13 @@ class _LakeKGMixin:
     async def _graphrag_retrieve(
         self, extractor: Any, dataset_name: str, question: str, top_k: int
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
-        """Retrieve anchor entities (search_ka) + 1-hop neighbor context + 原文 chunks.
+        """Retrieve HugeGraph entities (same-source as the displayed graph) +
+        1-hop neighbor context + 原文 chunks.
 
+        v1.9.7: 语义检索直接在 HugeGraph 实体顶点上(不再走 KA dump)。KA dump 是
+        另一套抽取(979 精选概念 vs HugeGraph 8568 实体,名字仅 ~8% 重合),旧路径
+        citation 与上图对不上。直接检索 HugeGraph 实体 → citation 必为图顶点。
         v1.9.5: 原文 vector chunks 加入(KA 抽取会丢原文数据/细节,原文保留事实)。
-        v1.9.6 P0-4: 三路 asyncio.gather 并行(原串行 3x → max(三路),延迟 -40~50%)。
         返回 (retrieved_items 顶点, neighbor_ctx 边, text_chunks 原文)。
         """
         async def _vector_chunks() -> list[dict[str, Any]]:
@@ -977,22 +1012,49 @@ class _LakeKGMixin:
                 logger.warning("kg_graphrag 原文检索失败: %s", exc)
                 return []
 
-        async def _ka_nodes() -> list[dict[str, Any]]:
-            try:
-                nodes, _ = await asyncio.to_thread(extractor.search_ka, dataset_name, question, top_k)
-                return [_serialize_ka_item(n) for n in (nodes or [])]
-            except Exception as exc:  # noqa: BLE001 — best-effort
-                logger.warning("kg_graphrag search_ka failed: %s", exc)
-                return []
+        async def _entities() -> list[dict[str, Any]]:
+            return await self._retrieve_hg_entities(dataset_name, question, top_k)
 
-        async def _neighbors() -> list[dict[str, Any]]:
-            return await self._graph_neighbor_context(extractor, dataset_name, question, top_k)
-
-        # v1.9.6 P0-4: 并行三路(原串行 = vector + search_ka + neighbor 依次)。
-        retrieved_items, neighbor_ctx, text_chunks = await asyncio.gather(
-            _ka_nodes(), _neighbors(), _vector_chunks()
-        )
+        # 实体检索与原文 chunks 并行;邻居上下文依赖检索出的实体名,故在其后。
+        retrieved_items, text_chunks = await asyncio.gather(_entities(), _vector_chunks())
+        anchor_names = [it.get("name") for it in retrieved_items if it.get("name")]
+        neighbor_ctx = await self._neighbor_context_for_names(anchor_names, dataset_name)
         return retrieved_items, neighbor_ctx, text_chunks
+
+    async def _retrieve_hg_entities(
+        self, dataset_name: str, question: str, top_k: int
+    ) -> list[dict[str, Any]]:
+        """Retrieve HugeGraph entities whose name matches the question, over the
+        entity snapshot — the SAME source as the top ``/kg/graph`` panel, so every
+        citation is a vertex in the displayed graph. No embedding index (keeps it
+        simple + consistent with the schema/traversal panel); the LLM also gets
+        semantic 原文 chunks (``_vector_chunks``) to handle paraphrased questions.
+        """
+        try:
+            with self._require_kg_client() as client:
+                vertices, _ = await _cached_graph_snapshot(client, graph_name_for(dataset_name))
+        except Exception as exc:  # noqa: BLE001 — best-effort
+            logger.warning("hg entity retrieval failed: %s", exc)
+            return []
+        q = question or ""
+        qset = set(q)
+        scored: list[tuple[tuple[int, int], dict[str, Any]]] = []
+        for v in vertices or []:
+            props = v.get("properties") or {}
+            name = str(props.get("name") or "")
+            if len(name) < 2:
+                continue
+            if name in q:                       # exact name in question → top tier
+                key = (3, len(name))
+            else:
+                matched = sum(1 for ch in name if ch in qset)
+                if matched >= len(name) * 0.6:   # majority of name chars present
+                    key = (2, matched)
+                else:
+                    continue
+            scored.append((key, _serialize_hg_vertex(v)))
+        scored.sort(key=lambda kv: kv[0], reverse=True)
+        return [v for _, v in scored[: int(top_k)]]
 
     async def kg_chat_stream(
         self,
@@ -1026,33 +1088,16 @@ class _LakeKGMixin:
         async for delta in provider.generate_stream(messages):
             yield ("delta", delta)
 
-    async def _graph_neighbor_context(
-        self, extractor: Any, dataset_name: str, question: str, top_k: int
+    async def _neighbor_context_for_names(
+        self, anchor_names: list[str], dataset_name: str
     ) -> list[dict[str, Any]]:
-        """Best-effort 1-hop neighbor context for GraphRAG.
+        """1-hop entity relations for named anchors from the HugeGraph snapshot.
 
-        Two-stage so it stays reliable on large graphs:
-        1. ``search_ka`` → question-relevant anchor entity names.
-        2. HugeGraph snapshot (capped, labeled) → 1-hop relations for the
-           anchors it covers (small/medium graphs are fully covered here).
-        3. Anchors the snapshot missed (large graphs) → resolved by name via
-           ``find_vertices_by_property`` (label-agnostic) + ``traverser_kneighbor``
-           → names-only relations (no per-vertex edge API for labels).
-
-        Any error returns ``[]`` so ``kg_chat`` falls back to plain ``chat_ka``.
+        Shared by the graphrag path (HugeGraph-entity anchors) and the chat_ka
+        path (search_ka anchors) so citations and neighbor context stay
+        same-source with the displayed graph. Anchors the snapshot misses (large
+        graphs) fall back to name lookup + traverser_kneighbor.
         """
-        try:
-            anchor_nodes, _ = await asyncio.to_thread(
-                extractor.search_ka, dataset_name, question, top_k
-            )
-        except Exception as exc:  # noqa: BLE001 — best-effort
-            logger.warning("kg_chat anchor search_ka failed: %s", exc)
-            return []
-        anchor_names: list[str] = []
-        for n in (anchor_nodes or []):
-            nm = _ka_node_name(n)
-            if nm:
-                anchor_names.append(nm)
         if not anchor_names:
             return []
         ctx: list[dict[str, Any]] = []
@@ -1073,6 +1118,23 @@ class _LakeKGMixin:
             except Exception as exc:  # noqa: BLE001
                 logger.warning("kg_chat neighbor lookup fallback failed: %s", exc)
         return ctx
+
+    async def _graph_neighbor_context(
+        self, extractor: Any, dataset_name: str, question: str, top_k: int
+    ) -> list[dict[str, Any]]:
+        """search_ka anchors → 1-hop neighbor context (chat_ka engine path).
+
+        Any error returns ``[]`` so ``kg_chat`` falls back to plain ``chat_ka``.
+        """
+        try:
+            anchor_nodes, _ = await asyncio.to_thread(
+                extractor.search_ka, dataset_name, question, top_k
+            )
+        except Exception as exc:  # noqa: BLE001 — best-effort
+            logger.warning("kg_chat anchor search_ka failed: %s", exc)
+            return []
+        anchor_names = [n for n in (_ka_node_name(x) for x in (anchor_nodes or [])) if n]
+        return await self._neighbor_context_for_names(anchor_names, dataset_name)
 
     async def _neighbor_context_by_lookup(
         self,

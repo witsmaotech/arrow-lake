@@ -82,6 +82,11 @@ def _error_code_to_http_status(code: ErrorCode) -> int:
         return 404
     if code == ErrorCode.KG_SCHEMA_ERROR:
         return 400
+    if code == ErrorCode.KG_QUERY_FAILED:
+        # Query-semantics failure (too-expensive traversal/OOM, unsupported
+        # algorithm, NoIndex, ...) — a well-formed request the server cannot
+        # satisfy. Not a server fault, so 422 not 500.
+        return 422
     if code == ErrorCode.KG_TRAVERSAL_TIMEOUT:
         return 504
     if code == ErrorCode.KG_CONNECTION_FAILED or code == ErrorCode.KG_EXTRACT_FAILED:

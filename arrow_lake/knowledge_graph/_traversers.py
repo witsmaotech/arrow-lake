@@ -131,6 +131,22 @@ class _TraverserMixin:
             resp = await self._get(
                 f"{self._graph_base_for(graph_name)}/traversers/allshortestpaths", params=params,
             )
+        except httpx.HTTPStatusError as exc:
+            body = (exc.response.text or "")
+            if "outofmemory" in body.lower() or "heap space" in body.lower():
+                # all-shortest-paths enumerates *every* equal-length path; on a
+                # dense KG (hub vertices / many parallel paths) this is exponential
+                # and exhausts the HugeGraph heap regardless of depth/degree bounds.
+                raise KGError(
+                    error_code=ErrorCode.KG_QUERY_FAILED,
+                    message=(
+                        "「最短路径」在当前图上内存不足：图过密导致等长最短路径数爆炸"
+                        "（HugeGraph OutOfMemoryError）。建议改用「加权最短路径」或"
+                        "「单源最短」，或缩小起止实体的连通范围后重试。"
+                    ),
+                    context={"source": source, "target": target, "hg_error": body[:300]},
+                ) from exc
+            self._handle_http_error(exc)
         except httpx.HTTPError as exc:
             self._handle_http_error(exc)
 
