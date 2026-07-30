@@ -175,20 +175,14 @@ class TestCreateIndex:
         bridge = FullTextSearchBridge(storage, config=config)
         bridge.create_index("test_ds")
 
-        mock_table.create_fts_index.assert_called_once()
-        call_kwargs = mock_table.create_fts_index.call_args[1]
-        assert call_kwargs["field_names"] == "text_content"
+        mock_table.create_index.assert_called_once()
+        # create_index(positional column, config=FTS(), replace=)
+        assert mock_table.create_index.call_args[0][0] == "text_content"
 
-    def test_create_index_success_jieba(self) -> None:
-        """With tokenizer_type=jieba: adds _fts_segmented column and indexes it."""
+    def test_create_index_success_jieba_tokenizer_ignored(self) -> None:
+        """tokenizer_type=jieba is accepted but icu native FTS is used regardless
+        (lancedb 0.36 removed tantivy; ICU handles CJK inline)."""
         from arrow_lake.config import FullTextSearchConfig
-
-        mock_lance = MagicMock()
-        mock_ds = mock_lance.dataset.return_value
-        mock_ds.count_rows.return_value = 1
-        mock_ds.to_batches.return_value = iter([
-            pa.RecordBatch.from_pydict({"text_content": ["hello 机器学习"]}),
-        ])
 
         storage = _make_mock_storage()
         mock_table = _make_mock_lance_table_no_jieba()
@@ -196,15 +190,11 @@ class TestCreateIndex:
 
         config = FullTextSearchConfig(tokenizer_type="jieba")
         bridge = FullTextSearchBridge(storage, config=config)
+        bridge.create_index("test_ds")
 
-        with patch.dict("sys.modules", {"lance": mock_lance}):
-            bridge.create_index("test_ds")
-
-        # lance add_columns should have been called (not write_dataset)
-        mock_ds.add_columns.assert_called_once()
-        # FTS index should be on _fts_segmented column
-        call_kwargs = mock_table.create_fts_index.call_args[1]
-        assert call_kwargs["field_names"] == "_fts_segmented"
+        # Native FTS indexes the original column (icu), not a _fts_segmented column
+        mock_table.create_index.assert_called_once()
+        assert mock_table.create_index.call_args[0][0] == "text_content"
 
     def test_create_index_large_string(self) -> None:
         """Create FTS index on large_string column."""
@@ -218,7 +208,7 @@ class TestCreateIndex:
         bridge = FullTextSearchBridge(storage, config=config)
         bridge.create_index("test_ds")
 
-        mock_table.create_fts_index.assert_called_once()
+        mock_table.create_index.assert_called_once()
 
     def test_create_index_custom_column(self) -> None:
         """Create FTS index on a custom text column."""
@@ -240,8 +230,7 @@ class TestCreateIndex:
         bridge = FullTextSearchBridge(storage, config=config)
         bridge.create_index("test_ds", fts_column="description")
 
-        call_kwargs = mock_table.create_fts_index.call_args[1]
-        assert call_kwargs["field_names"] == "description"
+        assert mock_table.create_index.call_args[0][0] == "description"
 
     def test_create_index_replace(self) -> None:
         """replace=True replaces existing index."""
@@ -255,7 +244,7 @@ class TestCreateIndex:
         bridge = FullTextSearchBridge(storage, config=config)
         bridge.create_index("test_ds", replace=True)
 
-        call_kwargs = mock_table.create_fts_index.call_args[1]
+        call_kwargs = mock_table.create_index.call_args[1]
         assert call_kwargs["replace"] is True
 
     def test_create_index_no_replace(self) -> None:
@@ -270,7 +259,7 @@ class TestCreateIndex:
         bridge = FullTextSearchBridge(storage, config=config)
         bridge.create_index("test_ds", replace=False)
 
-        call_kwargs = mock_table.create_fts_index.call_args[1]
+        call_kwargs = mock_table.create_index.call_args[1]
         assert call_kwargs["replace"] is False
 
     def test_create_index_column_not_found(self) -> None:
@@ -307,12 +296,12 @@ class TestCreateIndex:
             bridge.create_index("test_ds")
 
     def test_create_index_failure(self) -> None:
-        """Raise FTS_INDEX_FAILED on create_fts_index exception."""
+        """Raise FTS_INDEX_FAILED on create_index exception."""
         from arrow_lake.config import FullTextSearchConfig
 
         storage = _make_mock_storage()
         mock_table = _make_mock_lance_table_no_jieba()
-        mock_table.create_fts_index.side_effect = RuntimeError("Lance error")
+        mock_table.create_index.side_effect = RuntimeError("Lance error")
         storage.open_dataset.return_value = mock_table
 
         config = FullTextSearchConfig(tokenizer_type="default")
@@ -362,61 +351,9 @@ class TestSearch:
             query="hello", query_type="fts", fts_columns="text_content"
         )
 
-    def test_search_returns_results_jieba(self) -> None:
-        """With jieba: searches on _fts_segmented column with segmented query."""
-        from arrow_lake.config import FullTextSearchConfig
-
-        storage = _make_mock_storage()
-        mock_table = _make_mock_lance_table(has_fts_segmented=True)
-        storage.open_dataset.return_value = mock_table
-
-        result_table = pa.table(
-            {
-                "text_content": ["机器学习 教程"],
-                "_fts_segmented": ["机器 学习 教程"],
-                "modality": ["text"],
-                "_score": [2.5],
-            }
-        )
-        builder = _make_mock_fts_builder(result_table)
-        mock_table.search.return_value = builder
-
-        config = FullTextSearchConfig(tokenizer_type="jieba")
-        bridge = FullTextSearchBridge(storage, config=config)
-        result = bridge.search("test_ds", "机器学习")
-
-        assert result.row_count == 1
-        assert result.max_score == 2.5
-        # Should search on _fts_segmented column
-        mock_table.search.assert_called_once()
-        call_kwargs = mock_table.search.call_args[1]
-        assert call_kwargs["fts_columns"] == "_fts_segmented"
-
-    def test_search_jieba_hides_segmented_column(self) -> None:
-        """_fts_segmented column should be removed from result."""
-        from arrow_lake.config import FullTextSearchConfig
-
-        storage = _make_mock_storage()
-        mock_table = _make_mock_lance_table(has_fts_segmented=True)
-        storage.open_dataset.return_value = mock_table
-
-        result_table = pa.table(
-            {
-                "text_content": ["match"],
-                "_fts_segmented": ["match"],
-                "_score": [1.0],
-            }
-        )
-        builder = _make_mock_fts_builder(result_table)
-        mock_table.search.return_value = builder
-
-        config = FullTextSearchConfig(tokenizer_type="jieba")
-        bridge = FullTextSearchBridge(storage, config=config)
-        result = bridge.search("test_ds", "match")
-
-        # _fts_segmented should NOT be in the result
-        assert "_fts_segmented" not in result.table.column_names
-        assert "text_content" in result.table.column_names
+    # test_search_returns_results_jieba / test_search_jieba_hides_segmented_column
+    # removed in v1.9.7 — jieba/_fts_segmented path deleted; native FTS (ICU)
+    # searches the original column inline (covered by test_search_*_default_tokenizer).
 
     def test_search_score_column_present(self) -> None:
         """Result table includes _score column."""
@@ -683,8 +620,8 @@ class TestConfigDrivenDefaults:
         bridge = FullTextSearchBridge(storage, config=config)
         bridge.create_index("test_ds")
 
-        call_kwargs = mock_table.create_fts_index.call_args[1]
-        assert call_kwargs["stem"] is False
+        cfg = mock_table.create_index.call_args[1]["config"]
+        assert cfg.stem is False
 
     def test_explicit_param_overrides_config(self) -> None:
         """Explicit parameters override config values."""
@@ -705,81 +642,22 @@ class TestConfigDrivenDefaults:
         builder.limit.assert_called_once_with(20)
 
     def test_no_config_uses_defaults(self) -> None:
-        """Bridge without config uses FullTextSearchConfig defaults (jieba)."""
+        """Bridge without config uses FullTextSearchConfig defaults."""
         storage = _make_mock_storage()
-        mock_table = _make_mock_lance_table(has_fts_segmented=True)
+        mock_table = _make_mock_lance_table(has_fts_segmented=False)
         storage.open_dataset.return_value = mock_table
 
         builder = _make_mock_fts_builder()
         mock_table.search.return_value = builder
 
-        bridge = FullTextSearchBridge(storage)  # No config — defaults to jieba
+        bridge = FullTextSearchBridge(storage)  # No config — defaults
         result = bridge.search("test_ds", "hello")
 
         assert result.top_k == 10  # Default
-        # Should search on _fts_segmented column by default
+        # Searches the original text column (icu tokenizes inline)
         call_kwargs = mock_table.search.call_args[1]
-        assert call_kwargs["fts_columns"] == "_fts_segmented"
+        assert call_kwargs["fts_columns"] == "text_content"
 
 
-# ---------------------------------------------------------------------------
-# Add segmented column tests
-# ---------------------------------------------------------------------------
-
-
-class TestAddSegmentedColumn:
-    """Test _add_segmented_column helper."""
-
-    def test_segmented_column_added(self) -> None:
-        """_add_segmented_column reads data in batches, segments, and uses add_columns."""
-        from arrow_lake.config import FullTextSearchConfig
-
-        mock_lance = MagicMock()
-        mock_ds = mock_lance.dataset.return_value
-        mock_ds.count_rows.return_value = 2
-        mock_ds.to_batches.return_value = iter([
-            pa.RecordBatch.from_pydict({"text_content": ["hello world", "机器学习 基础"]}),
-        ])
-
-        storage = _make_mock_storage()
-        mock_table = _make_mock_lance_table_no_jieba()
-        storage.open_dataset.return_value = mock_table
-
-        config = FullTextSearchConfig(tokenizer_type="jieba")
-        bridge = FullTextSearchBridge(storage, config=config)
-
-        with patch.dict("sys.modules", {"lance": mock_lance}):
-            bridge.create_index("test_ds")
-
-        # Verify lance.dataset was called with URI and storage_options
-        mock_lance.dataset.assert_called_once_with("/tmp/test.lance", storage_options=None)
-        # Verify add_columns was called (not write_dataset)
-        mock_ds.add_columns.assert_called_once()
-        col_table = mock_ds.add_columns.call_args[0][0]
-        assert "_fts_segmented" in col_table.column_names
-        assert col_table.num_rows == 2
-
-    def test_none_values_preserved(self) -> None:
-        """None values in text column produce None in segmented column."""
-        from arrow_lake.config import FullTextSearchConfig
-
-        mock_lance = MagicMock()
-        mock_ds = mock_lance.dataset.return_value
-        mock_ds.count_rows.return_value = 2
-        mock_ds.to_batches.return_value = iter([
-            pa.RecordBatch.from_pydict({"text_content": [None, "hello"]}),
-        ])
-
-        storage = _make_mock_storage()
-        mock_table = _make_mock_lance_table_no_jieba()
-        storage.open_dataset.return_value = mock_table
-
-        config = FullTextSearchConfig(tokenizer_type="jieba")
-        bridge = FullTextSearchBridge(storage, config=config)
-
-        with patch.dict("sys.modules", {"lance": mock_lance}):
-            bridge.create_index("test_ds")
-
-        col_table = mock_ds.add_columns.call_args[0][0]
-        seg_col = col_table.column("_fts_segmented").to_pylist()
-        assert seg_col[0] is None
+# _add_segmented_column tests removed in v1.9.7 — jieba pre-tokenization path
+# deleted; lancedb 0.36 native FTS (ICU) needs no _fts_segmented column.

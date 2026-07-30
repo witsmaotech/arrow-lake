@@ -133,188 +133,39 @@ class FullTextSearchBridge:
                 ),
             )
 
-        if not _TANTIVY_AVAILABLE:
-            _log.warning(
-                "tantivy not installed — FTS index will use lance-index backend "
-                "(DuckDB lance_fts only). Install with: pip install tantivy"
-            )
-
-        # Detect CJK content without jieba
-        if self._use_jieba and not _JIEBA_AVAILABLE:
-            sample = table.to_table().column(column).to_pylist()[:100]
-            if any(has_cjk(str(t)) for t in sample if t):
-                _log.warning(
-                    "CJK content detected but jieba is not installed — "
-                    "Chinese text will NOT be tokenized correctly. "
-                    "Install with: pip install jieba"
-                )
-
         index_column = column
-        if self._use_jieba:
-            # Load jieba user dict if configured
-            if self._config.jieba_user_dict:
-                from pathlib import Path
 
-                dict_path = Path(self._config.jieba_user_dict)
-                if not dict_path.is_file():
-                    raise QueryError(
-                        error_code=ErrorCode.FTS_INDEX_FAILED,
-                        message=(
-                            f"jieba user dict not found: {self._config.jieba_user_dict}"
-                        ),
-                    )
-                try:
-                    import jieba as _jieba
+        # lancedb 0.36: tantivy-based FTS has been removed. Use native FTS via
+        # ``FTS()`` config with ICU ``base_tokenizer`` — Unicode segmentation
+        # provides native CJK/Chinese support, replacing the former
+        # jieba pre-tokenization + tantivy path. Works on both local and
+        # object storage (no local-fs restriction).
+        from lancedb.index import FTS
 
-                    _jieba.load_userdict(str(dict_path))
-                except QueryError:
-                    raise
-                except (ValueError, OSError, RuntimeError) as exc:
-                    raise QueryError(
-                        error_code=ErrorCode.FTS_INDEX_FAILED,
-                        message=f"Failed to load jieba user dict: {exc}",
-                    ) from exc
-
-            index_column = self._add_segmented_column(table, column, dataset_name)
-            table = self._storage.open_dataset(dataset_name)
-
-        # tantivy only supports local filesystem — auto-disable for S3/MinIO/GCS
-        is_local = (
-            self._storage_config is not None
-            and getattr(self._storage_config, "backend", None) == StorageBackend.LOCAL
-        )
-        use_tantivy = _TANTIVY_AVAILABLE and is_local
-        if _TANTIVY_AVAILABLE and not is_local:
-            _log.info(
-                "tantivy requires local filesystem — using lance-index backend "
-                "for %s storage",
-                getattr(self._storage_config, "backend", "remote"),
-            )
-
-        fts_kwargs: dict[str, Any] = dict(
-            field_names=index_column,
-            replace=replace,
-            use_tantivy=use_tantivy,
+        fts_cfg = FTS(
+            base_tokenizer="icu",
+            with_position=self._config.with_position,
             stem=self._config.stem,
             remove_stop_words=self._config.remove_stop_words,
             lower_case=self._config.lower_case,
         )
-        if use_tantivy:
-            fts_kwargs["language"] = "Chinese"
-        # [#P6] Store token positions → enables exact phrase queries (quoted
-        # searches). Opt-in (default False) since it enlarges the index.
-        if self._config.with_position:
-            fts_kwargs["with_position"] = True
-
-        # v1.7.1 #11: optional lance native INVERTED index (experimental).
-        if getattr(self._config, "use_inverted", False):
-            try:
-                table.create_scalar_index(index_column, index_type="INVERTED", replace=replace)
-                return
-            except (ValueError, RuntimeError) as exc:
-                raise QueryError(
-                    error_code=ErrorCode.FTS_INDEX_FAILED,
-                    message=f"Failed to create INVERTED index on '{dataset_name}': {exc}",
-                ) from exc
-
         try:
-            table.create_fts_index(**fts_kwargs)
+            table.create_index(index_column, config=fts_cfg, replace=replace)
         except (ValueError, RuntimeError) as exc:
             raise QueryError(
                 error_code=ErrorCode.FTS_INDEX_FAILED,
                 message=f"Failed to create FTS index on '{dataset_name}': {exc}",
             ) from exc
 
-        seg_note = f" (jieba-segmented column '{index_column}')" if self._use_jieba else ""
         _log.info(
-            "FTS index created on column '%s' for dataset '%s'%s",
+            "FTS index created on column '%s' for dataset '%s' (icu native)",
             index_column,
             dataset_name,
-            seg_note,
         )
 
-    def _has_null_segmented(self, table: Any) -> bool:
-        """True if the ``_fts_segmented`` column has any NULL (un-segmented rows).
-
-        ``open_dataset`` returns a LanceDB ``Table`` (``.to_arrow()``, no
-        ``.column()``); tests/lance datasets expose ``.to_table()`` / ``.column()``.
-        Handle all three. Uses Arrow's ``null_count`` (metadata) once materialized.
-        """
-        try:
-            col = None
-            if hasattr(table, "to_arrow"):  # LanceDB Table (live path)
-                try:
-                    arrow = table.to_arrow(columns=["_fts_segmented"])
-                except Exception:
-                    arrow = table.to_arrow()
-                col = arrow.column("_fts_segmented")
-            elif hasattr(table, "to_table"):  # lance dataset
-                col = table.to_table(columns=["_fts_segmented"]).column("_fts_segmented")
-            elif hasattr(table, "column"):  # pyarrow Table (tests)
-                col = table.column("_fts_segmented")
-            return bool(col is not None and col.null_count > 0)
-        except Exception:
-            return False
-
-    def _add_segmented_column(
-        self,
-        table: Any,
-        source_column: str,
-        dataset_name: str,
-    ) -> str:
-        """Add a _fts_segmented column with jieba-segmented text.
-
-        Reads only the source column in batches (not the full table),
-        builds the segmented array, then uses lance's add_columns(pa.Table)
-        to append the new column without a full dataset rewrite.
-
-        If the column already exists (from a previous index creation), it is
-        dropped first so that ``replace=True`` works correctly.
-
-        Returns the name of the new column.
-        """
-        import lance
-
-        segmented_column = "_fts_segmented"
-        uri = self._storage.dataset_uri(dataset_name)
-        opts = self._storage.storage_options
-
-        ds = lance.dataset(uri, storage_options=opts)
-
-        # Drop existing segmented column if present (needed for replace)
-        if segmented_column in ds.schema.names:
-            _log.info(
-                "Dropping existing segmented column '%s' for replace",
-                segmented_column,
-            )
-            ds.drop_columns([segmented_column])
-            # Re-open to pick up schema change
-            ds = lance.dataset(uri, storage_options=opts)
-
-        row_count = ds.count_rows()
-        _log.info("Segmenting column '%s' for %d rows", source_column, row_count)
-
-        # Read only the source column in batches to limit memory usage
-        segmented_values: list[str | None] = []
-        for batch in ds.to_batches(columns=[source_column]):
-            texts = batch.column(source_column).to_pylist()
-            segmented_values.extend(
-                None if t is None else segment_text(str(t))
-                for t in texts
-            )
-
-        new_col = pa.array(segmented_values, type=pa.string())
-        col_table = pa.table({segmented_column: new_col})
-        ds.add_columns(col_table)
-        del segmented_values, new_col, col_table
-
-        _log.info(
-            "Added jieba-segmented column '%s' to dataset '%s' (%d rows)",
-            segmented_column,
-            dataset_name,
-            row_count,
-        )
-        return segmented_column
+    # jieba pre-tokenization helpers (_has_null_segmented / _add_segmented_column)
+    # removed in v1.9.7 — lancedb 0.36 native FTS (ICU base_tokenizer) segments
+    # inline at index/search time, so no _fts_segmented column is needed.
 
     # ------------------------------------------------------------------
     # Search
@@ -370,57 +221,24 @@ class FullTextSearchBridge:
 
         table = self._storage.open_dataset_versioned(dataset_name, version) if version else self._storage.open_dataset(dataset_name)
 
-        # [#step2-A] Appended rows since the FTS index was created have NULL
-        # _fts_segmented → FTS silently misses them. Detect (Arrow null_count is
-        # metadata-cheap) and re-create the index so new content is searchable.
-        if (
-            self._use_jieba
-            and "_fts_segmented" in table.schema.names
-            and self._has_null_segmented(table)
-        ):
-            _log.info(
-                "FTS: NULL _fts_segmented on '%s' (appended rows) — re-creating index",
-                dataset_name,
-            )
-            try:
-                self.create_index(dataset_name, fts_column=column, replace=True)
-                table = (
-                    self._storage.open_dataset_versioned(dataset_name, version)
-                    if version else self._storage.open_dataset(dataset_name)
-                )
-            except Exception as exc:
-                _log.warning(
-                    "FTS index refresh failed for '%s': %s", dataset_name, str(exc)[:120],
-                )
-
-        # Determine which column was indexed
+        # lancedb 0.36 native FTS (ICU) tokenizes inline at query time — search
+        # the original text column directly. No _fts_segmented column or jieba
+        # query pre-segmentation is needed.
         search_column = column
-        if self._use_jieba and "_fts_segmented" in table.schema.names:
-            search_column = "_fts_segmented"
-
         if search_column not in table.schema.names:
             raise QueryError(
                 error_code=ErrorCode.FTS_SEARCH_FAILED,
                 message=f"Column '{search_column}' not found in dataset '{dataset_name}'",
             )
 
-        # Segment query for Chinese tokenization
-        effective_query = segment_query(query) if self._use_jieba else query
-
-        # Prefer LanceDB SDK path for FTS
         result_table = self._search_via_lancedb(
             table,
-            effective_query,
+            query,
             effective_top_k,
             search_column,
             where,
             offset=offset,
         )
-
-        # Remove _fts_segmented from result if present — caller shouldn't see it
-        if "_fts_segmented" in result_table.column_names:
-            cols_to_keep = [c for c in result_table.column_names if c != "_fts_segmented"]
-            result_table = result_table.select(cols_to_keep)
 
         # Extract max score for diagnostics
         max_score: float | None = None
