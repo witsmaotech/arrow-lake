@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.9.7] - 2026-07-30
+
+**依赖升级(湖仓核心 + 安全)**。批0 uv sync 基线对齐(修复 uv.lock 停滞根因:gravitino pre-commit metadata bug)+ pylance 9.0.0;批1 ray 2.56.0 修复 CVE-2026-57516(代码注入)+ ray_serve get_deployment→get_deployment_handle 适配;批2 lancedb 0.36.0 + duckdb 1.5.5 + table_names→list_tables;批3 metaflow 2.19.35 + daft 0.7.21 + sentence-transformers 5.6.1 + encoder 适配。详见 `docs/v1.9.7-upgrade-plan.md`。
+
+### Changed — 依赖升级
+- **批0**: `[tool.uv] override-dependencies` 修复 gravitino 1.3.0 `pre-commit==3.5.0` 与 dev group 冲突(uv.lock 长期停滞根因);pylance 4.0.1→**9.0.0**。
+- **批1**: ray 2.54.1→**2.56.0**(CVE-2026-57516 代码注入);`ray_serve_encoder` `get_deployment`→`get_deployment_handle`(ray 2.56 Serve breaking)。
+- **批2**: lancedb 0.33.0→**0.36.0** + duckdb 1.5.2→**1.5.5**;`_lake_ingest` `table_names`→`list_tables`(lancedb 0.36 deprecation)。核心 lance/lancedb 路径全量 5157 测试零回归。
+- **批3**: metaflow 2.19.22→2.19.35, daft 0.7.8→0.7.21, sentence-transformers 5.4.0→5.6.1;`encoder` dim_getter 优先 `get_embedding_dimension`(消除 5.6 FutureWarning)。
+
+### 已评估(未实施)
+- **async FTS 迁移**(to_thread→AsyncTable):取消。lancedb 0.36 async search 要求 INVERTED index(项目 tantivy 不兼容)+ to_thread 已 non-blocking,收益微/障碍大。
+- **FTS v2 评估**:`create_fts_index` deprecated 但未移除,新 `create_index(config=FTS())` 结果一致;INVERTED 路径 v1.7.1 已支持。无紧急迁移,无质量退化。
+
 ## [1.9.6] - 2026-07-28
 
 **RAG 质量 + KG 质量/性能 + 治理兑现 + 架构 refactor + 安全加固**。批1 RAG 防幻觉/reranker/流式;批2 KG snap/strict/三路并行/缓存;批3 lineage.html 血缘可视化/masking 治理;架构评审 refactor(RAG/ingest 收口);安全加固(fail-closed + 注入防护)。详见 `docs/v1.9.6-impl-plan.md`、`docs/v1.9.6-batch3-impl-plan.md`。

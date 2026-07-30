@@ -153,10 +153,10 @@ LanceDB + Daft + Ray + DuckDB + PyArrow + FastAPI + HugeGraph + Redis + Metaflow
 
 | 层 | 技术 | 版本 |
 |---|---|---|
-| 数据处理 | Daft, PyArrow | 0.7.8, 23.0.1 |
+| 数据处理 | Daft, PyArrow | 0.7.21, 23.0.1 |
 | 向量存储 | LanceDB, Lance | 0.30.2 |
-| OLAP 引擎 | DuckDB | 1.5.2 |
-| 分布式计算 | Ray, Metaflow | 2.54.1, 2.19.22 |
+| OLAP 引擎 | DuckDB | 1.5.5 |
+| 分布式计算 | Ray, Metaflow | 2.56.0, 2.19.35 |
 | 元数据治理 | Gravitino, Lance REST Catalog | 1.2.1 |
 | 知识图谱 | HugeGraph | 1.7.0 |
 | Session / 缓存 | Redis (hiredis) | >=5.0 |

@@ -1,8 +1,8 @@
 # Dependency Compatibility Matrix
 
-**Last Updated:** 2026-05-26
+**Last Updated:** 2026-07-30
 **Python Version:** 3.11.14
-**Status:** Validated on current codebase (v1.5.3)
+**Status:** Validated on current codebase (v1.9.7)
 
 ---
 
@@ -10,9 +10,9 @@
 
 | Package | Version | Constraint | Python 3.11 | Python 3.12 | Responsibility Boundary |
 |---------|---------|------------|:-----------:|:-----------:|------------------------|
-| daft | 0.7.8 | `==0.7.8` | ✅ | ⚠️ untested | Data transformation, multimodal DataFrame, lazy eval |
-| ray[default] | 2.54.1 | `==2.54.1` | ✅ | ⚠️ untested | Distributed compute, inference parallelization, Ray Serve |
-| metaflow | 2.19.22 | `==2.19.22` | ✅ | ⚠️ untested | ML workflow orchestration, user-facing pipelines |
+| daft | 0.7.21 | `==0.7.21` | ✅ | ⚠️ untested | Data transformation, multimodal DataFrame, lazy eval |
+| ray[default] | 2.56.0 | `==2.56.0` | ✅ | ⚠️ untested | Distributed compute, inference parallelization, Ray Serve |
+| metaflow | 2.19.35 | `==2.19.35` | ✅ | ⚠️ untested | ML workflow orchestration, user-facing pipelines |
 | metaflow-ray | 0.1.4 | `==0.1.4` | ✅ | ⚠️ untested | Metaflow + Ray integration bridge |
 
 **Overlap Resolution:**

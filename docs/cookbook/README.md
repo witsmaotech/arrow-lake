@@ -75,7 +75,7 @@ docker exec -it deploy-api-1 .venv/bin/python /app/examples/19_knowledge_graph_b
 
 ## 版本
 
-对应 Arrow Lake v1.9.6
+对应 Arrow Lake v1.9.7
 
 ## v1.7.0 新特性 — Hyper-Extract KG + Doc-Type 路由
 

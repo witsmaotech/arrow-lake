@@ -144,10 +144,10 @@ LanceDB + Daft + Ray + DuckDB + PyArrow + FastAPI + HugeGraph + Redis + Metaflow
 
 | Layer | Technology | Version |
 |-------|-----------|---------|
-| Data Processing | Daft, PyArrow | 0.7.8, 23.0.1 |
+| Data Processing | Daft, PyArrow | 0.7.21, 23.0.1 |
 | Vector Storage | LanceDB, Lance | 0.30.2 |
-| OLAP Engine | DuckDB | 1.5.2 |
-| Distributed Compute | Ray, Metaflow | 2.54.1, 2.19.22 |
+| OLAP Engine | DuckDB | 1.5.5 |
+| Distributed Compute | Ray, Metaflow | 2.56.0, 2.19.35 |
 | Metadata Governance | Gravitino, Lance REST Catalog | 1.2.1 |
 | Knowledge Graph | HugeGraph | 1.7.0 |
 | Session / Cache | Redis (hiredis) | >=5.0 |
