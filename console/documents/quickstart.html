@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>快速入门 · Arrow Lake 文档</title>
+<link rel="stylesheet" href="../assets/tokens.css"/>
+<link rel="stylesheet" href="../assets/app.css"/>
+<link rel="stylesheet" href="../assets/landing.css"/>
+<link rel="stylesheet" href="docs.css"/>
+</head>
+<body>
+<nav class="lnav">
+  <a class="brand" href="../index.html"><span class="brand-mark">AL</span><span><b class="brand-name">Arrow Lake</b><span class="brand-sub">文档</span></span></a>
+  <div class="lnav-links">
+    <a href="index.html">文档中心</a>
+    <a href="../architecture.html">架构文档</a>
+  </div>
+  <div class="lnav-cta"><a class="btn btn-primary btn-sm" href="../system.html">打开控制台 →</a></div>
+</nav>
+<div class="subnav">
+  <a href="index.html">文档中心</a><span class="crumb-sep">/</span><a href="quickstart.html" style="color:var(--teal-bright)">快速入门</a>
+  <span class="pager-spacer"></span>
+  <div class="prevnext">
+    <a href="index.html"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg><span class="lbl">目录</span></a>
+    <a href="ingestion.html"><span class="lbl">下一章</span><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+  </div>
+</div>
+
+<header class="tut-hero">
+  <div class="tut-hero-inner">
+    <span class="num-badge">第 01 章 · 入门</span>
+    <h1>快速入门</h1>
+    <p class="sub">5 分钟从零创建数据湖、写入数据、执行 SQL 查询并导出结果。理解 Lake facade、数据集与版本模型。</p>
+    <div class="tut-meta">
+      <span><i></i>难度 · 入门</span>
+      <span><i></i>耗时 · 5 分钟</span>
+      <span><i></i>依赖 · 仅 Python 3.11+</span>
+    </div>
+  </div>
+</header>
+
+<article class="tut-body">
+  <p>Arrow Lake 把<strong>存储 / 检索 / 分析 / 智能化</strong>收敛到一个 <code>Lake</code> facade 之后。本章用一个最小可运行示例串起「创建数据集 → 追加 → 查询 → 导出」全链路，并给出 CLI 与生产配置入口。</p>
+
+  <h2><span class="hn">1</span>核心概念</h2>
+  <h3>Lake facade</h3>
+  <p>主入口 <code>Lake(base_uri=...)</code>，封装数据集创建、追加、查询、导出、目录等全部操作。生产环境推荐 <code>Lake.from_yaml("config.yaml")</code> 统一管理参数。</p>
+  <h3>dataset（数据集）</h3>
+  <p>一个 Lance 列式 dataset，等价于一张表；<strong>SQL 中的表名必须与 dataset 名称一致</strong>。每次写入自增一个 <strong>version</strong>（Lance 原生版本控制）。<strong>base_uri</strong> 是存储根，支持本地路径或 <code>s3://bucket/prefix</code>（MinIO / AWS S3）。</p>
+  <h3>query vs olap_query</h3>
+  <p><code>lake.query</code> 单表 SQL 过滤；<code>lake.olap_query</code> 支持 <code>GROUP BY</code>、窗口函数、JOIN 等聚合分析。</p>
+
+  <h2><span class="hn">2</span>五分钟实战</h2>
+  <p>安装依赖并校验版本：</p>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">安装</span></figcaption><pre><code>git clone https://github.com/witshine/wits-infra-dintellihub.git
+cd wits-infra-dintellihub
+uv sync          # 推荐
+# 或 pip install -e .
+arrow-lake version   # 输出 arrow-lake/python/daft/pyarrow/duckdb 版本表</code></pre></figure>
+
+  <p>创建→追加→查询→导出的最小示例：</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">quickstart_demo.py</span><span class="demo">最小可运行</span></figcaption><pre><code><span class="c-kw">from</span> arrow_lake <span class="c-kw">import</span> Lake
+<span class="c-kw">import</span> pyarrow <span class="c-kw">as</span> pa
+
+lake = Lake(base_uri=<span class="c-str">"./my_lake"</span>)
+data = pa.table({
+    <span class="c-str">"name"</span>: [<span class="c-str">"Alice"</span>, <span class="c-str">"Bob"</span>, <span class="c-str">"Charlie"</span>, <span class="c-str">"Diana"</span>],
+    <span class="c-str">"age"</span>: [<span class="c-str">30</span>, <span class="c-str">25</span>, <span class="c-str">35</span>, <span class="c-str">28</span>],
+    <span class="c-str">"department"</span>: [<span class="c-str">"工程"</span>, <span class="c-str">"产品"</span>, <span class="c-str">"工程"</span>, <span class="c-str">"设计"</span>],
+})
+lake.create_dataset(<span class="c-str">"users"</span>, data)
+lake.append_dataset(<span class="c-str">"users"</span>, more_data)   <span class="c-rem"># schema 必须匹配</span>
+
+result = lake.query(<span class="c-str">"users"</span>, <span class="c-str">"SELECT * FROM users WHERE age &gt; 26"</span>)
+olap = lake.olap_query(<span class="c-str">"users"</span>,
+    <span class="c-str">"SELECT department, COUNT(*) AS cnt FROM users GROUP BY department"</span>)
+lake.export(<span class="c-str">"users"</span>, <span class="c-str">"output/users.parquet"</span>, columns=[<span class="c-str">"name"</span>, <span class="c-str">"age"</span>])
+lake.shutdown()
+<span class="c-rem"># 推荐：with Lake(...) as lake: ... 自动清理</span></code></pre></figure>
+
+  <p>Lance 存储布局一目了然：</p>
+  <figure class="code"><figcaption><span class="lang">text</span><span class="file">存储结构</span></figcaption><pre><code>my_lake/
+├── users/
+│   ├── .lance/versions/{1,2}.manifest   <span class="c-rem"># 版本清单</span>
+│   ├── data/*.lance                      <span class="c-rem"># 列式数据</span>
+│   └── indices/{vector,fts}/             <span class="c-rem"># IVF-PQ / Tantivy</span>
+└── ingest_dlq.jsonl                      <span class="c-rem"># 死信队列</span></code></pre></figure>
+
+  <h2><span class="hn">3</span>CLI 速查</h2>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">日常操作</span></figcaption><pre><code>arrow-lake serve --host 0.0.0.0 --port 8000    <span class="c-rem"># 生产</span>
+arrow-lake serve --reload                        <span class="c-rem"># 开发热重载</span>
+arrow-lake --base-uri ./my_lake status           <span class="c-rem"># 列出 dataset</span>
+arrow-lake --base-uri ./my_lake ingest files sales \
+    examples/data/transactions/sales_2024_cn.csv <span class="c-rem"># CSV/JSON/JSONL/Parquet</span>
+arrow-lake --base-uri ./my_lake search fts sales --query <span class="c-str">"电子产品"</span> --top-k 10
+arrow-lake --base-uri ./my_lake search hybrid sales --query <span class="c-str">"无线鼠标"</span>
+arrow-lake demo --base-uri ./demo_data           <span class="c-rem"># 无需 Docker/配置</span></code></pre></figure>
+
+  <h2><span class="hn">4</span>生产配置</h2>
+  <p>生产环境推荐用 YAML 统一管理 storage / olap / vector / fts 参数：</p>
+  <figure class="code"><figcaption><span class="lang">yaml</span><span class="file">config.yaml</span></figcaption><pre><code>storage: { backend: local, base_uri: ./data }
+olap: { max_result_rows: 100000, lance_scan_mode: <span class="c-str">"auto"</span> }
+vector: { metric: <span class="c-str">"cosine"</span>, default_index_type: <span class="c-str">"IVF_PQ"</span>, num_sub_vectors: <span class="c-str">24</span> }
+fts: { fts_column: <span class="c-str">"text_content"</span>, tokenizer_type: <span class="c-str">"jieba"</span> }
+system_db: { enabled: <span class="c-str">false</span> }   <span class="c-rem"># 生产置 true（RBAC/身份/personal_token 走 libSQL）</span></code></pre></figure>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">加载配置</span></figcaption><pre><code><span class="c-kw">from</span> arrow_lake <span class="c-kw">import</span> Lake
+lake = Lake.from_yaml(<span class="c-str">"config.yaml"</span>, base_uri=<span class="c-str">"./production_data"</span>)</code></pre></figure>
+  <div class="callout warn"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>生产必配（v1.9.6）</div><p>脱敏治理需设环境变量 <code>ARROW_LAKE__MASKING__HMAC_KEY</code>（fail-fast，缺失则启动阻断；纯环境变量，不在 YAML 内）。<code>system_db.enabled: true</code> 时 RBAC / 身份 / personal_token 走 libSQL，store 不可达则 fail-closed（返回 401）。详见部署与运维章节。</p></div>
+
+  <h2><span class="hn">5</span>踩坑提示</h2>
+  <div class="callout warn"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>注意</div><p>SQL 中的表名必须与 dataset 名称一致；<code>append_dataset</code> 的 schema 必须与原表<strong>完全匹配</strong>；<code>export</code> 的父目录（如 <code>output/</code>）必须事先存在。</p></div>
+  <div class="callout tip"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-9"/></svg>推荐</div><p>用 <code>with Lake(...) as lake:</code> 上下文管理器自动释放资源，免去手动 <code>lake.shutdown()</code>。</p></div>
+  <div class="callout"><div class="ch">配置</div><p>S3 后端设 <code>s3://bucket/prefix</code> 即用 MinIO / AWS S3；凭证、LLM API Key 等通过 <code>.env</code> 或环境变量配置（见配置章节）；Swagger 文档在 <code>http://localhost:8000/docs</code>。</p></div>
+</article>
+
+<nav class="pager">
+  <a class="prev" href="index.html"><span class="dir"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg> 目录</span><span class="ttl">产品文档教程</span></a>
+  <a class="next" href="ingestion.html"><span class="dir">下一章 <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span><span class="ttl">数据摄取</span></a>
+</nav>
+
+<footer class="footer">
+  <div class="footer-inner">
+    <div><b>Arrow Lake</b> · 快速入门 · v1.9.6<br/><span class="muted mono" style="font-size:.7rem">© 2026 · MIT License</span></div>
+    <div class="muted" style="font-size:.75rem">自包含可离线运行 · 源自 docs/cookbook/01</div>
+  </div>
+</footer>
+</body>
+</html>

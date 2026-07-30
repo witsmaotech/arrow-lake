@@ -57,7 +57,7 @@ Example output:
 ┏━━━━━━━━━━━━┳━━━━━━━━━┓
 ┃ Component  ┃ Version ┃
 ┡━━━━━━━━━━━━╇━━━━━━━━━┩
-│ arrow-lake │ 1.5.3   │
+│ arrow-lake │ 1.9.6   │
 │ python     │ 3.11.9  │
 │ pyarrow    │ 23.0.1  │
 │ duckdb     │ 1.5.2   │
@@ -142,7 +142,7 @@ Schema
 │ text_content │ string             │ true     │
 │ category     │ string             │ true     │
 │ word_count   │ int64              │ true     │
-│ text_embedding│ fixed_size_list[768][float32]│ true│
+│ text_embedding│ fixed_size_list[1024][float32]│ true│
 └──────────────┴────────────────────┴─────────┘
 ```
 
@@ -522,6 +522,41 @@ arrow-lake index fts papers --column text_content
 lake.create_fts_index("papers", fts_column="text_content")
 ```
 
+#### `index scalar <dataset>` — Create Scalar Index
+
+Build a scalar index on a single column to speed up filtering and facet aggregation (BITMAP for low-cardinality columns, BTREE otherwise).
+
+```bash
+arrow-lake index scalar papers --column category
+```
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `--column` | None (**required**) | Target column name |
+| `--type` | auto | Index type: `BTREE`, `BITMAP` |
+| `--name` | auto | Index name |
+| `--replace/--no-replace` | `replace` | Whether to replace an existing index |
+
+**SDK equivalent:**
+
+```python
+lake.create_scalar_index("papers", column="category")
+```
+
+#### `index facets <dataset>` — Bulk-Create Facet Indexes
+
+Bulk-build scalar indexes on the default facet columns according to `FacetedSearchConfig.scalar_index_type_map`.
+
+```bash
+arrow-lake index facets papers
+```
+
+**SDK equivalent:**
+
+```python
+lake.create_facet_indexes("papers")
+```
+
 #### `index list-vector <dataset>` — List Vector Indexes (v1.2)
 
 ```bash
@@ -708,7 +743,7 @@ Example output:
 ```text
 Loading model Qwen/Qwen3-Embedding-0.6B... done
 Encoding... done
-  Dimension: 768
+  Dimension: 1024
   Norm: 1.000000
   First 5 values: [0.0234, -0.0567, 0.0891, -0.0123, 0.0456]
 ```
@@ -811,14 +846,44 @@ arrow-lake backup delete daily-2024-04-24
 ### 11. `arrow-lake kg` — Knowledge Graph
 
 > All KG commands are asynchronous operations and require the HugeGraph service to be running.
+>
+> **Per-dataset isolated graphs (v1.8.6+)**: Each dataset maps to its own HugeGraph graph `kg_{dataset}`. Subcommands `query` / `stats` / `neighbors` / `export` / `traverser` / `algo` accept `--dataset <name>` to target a dataset (inferred from config when omitted).
 
 #### `kg build <dataset>` — Build Knowledge Graph
 
 ```bash
-arrow-lake kg build papers
+arrow-lake kg build papers                 # default: full build
+arrow-lake kg build papers --incremental   # incremental: only feed chunks new since the last build
 ```
 
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `--incremental` | no (full by default) | Incremental mode processes only new chunks (falls back to full if no KA dump exists or the template changed). Use `--incremental` after appending data; use the default full rebuild after re-ingest/delete or a template change |
+
 Returns a `task_id` for querying build progress.
+
+#### `kg list-doc-types` — List Document Types
+
+```bash
+arrow-lake kg list-doc-types
+```
+
+Lists the supported doc_types and their mapped extraction templates (from `HugeGraphConfig.he_doc_type_templates`).
+
+#### `kg list-templates` — List Extraction Templates
+
+```bash
+arrow-lake kg list-templates                  # all templates
+arrow-lake kg list-templates --category general  # filter by category
+```
+
+#### `kg describe-template <path>` — Show Template Detail
+
+```bash
+arrow-lake kg describe-template general/concept_graph
+```
+
+Displays the full schema of the specified template (node/edge types, required fields, constraints, etc.).
 
 #### `kg status <task_id>` — View Build Progress
 
@@ -1006,9 +1071,6 @@ arrow-lake rag query papers \
 | `--strategy` | None (uses config default) | Retrieval strategy: `vector`, `fts`, `hybrid` |
 | `--template` | None (uses config default) | Prompt template: `default_qa`, `graph_qa` |
 | `--session-id` | None | Session ID (for multi-turn conversations) |
-| `--max-context-tokens` | `4096` | Maximum context token count |
-| `--temperature` | `0.7` | Generation temperature |
-| `--use-graph` | No | Enable GraphRAG enhanced retrieval |
 
 Example output:
 
@@ -1150,26 +1212,7 @@ arrow-lake --config prod.yaml config show
 
 Outputs the complete JSON of the default configuration (all 30 configuration sections).
 
-#### `config dump` — Export Current Configuration
-
-```bash
-arrow-lake config dump
-arrow-lake config dump --output config_backup.json
-```
-
-Exports the current effective configuration as a JSON file, including all runtime-merged values.
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `--output` | — | Output file path (outputs to terminal if not specified) |
-
-#### `config validate <file>` — Validate Configuration File
-
-```bash
-arrow-lake config validate prod.yaml
-```
-
-Validates the format and field validity of a YAML configuration file, outputs validation results.
+> The `config` group provides only the `show` and `init` subcommands (no `dump` / `validate`).
 
 #### `config init` — Generate Configuration Template
 
@@ -1208,7 +1251,7 @@ arrow-lake audit verify audit-20260426-001
 #### `audit query` — Query Audit Log
 
 ```bash
-arrow-lake audit query --dataset papers --start 2026-01-01 --end_time 2026-04-01
+arrow-lake audit query --dataset papers --start 2026-01-01 --end 2026-04-01
 arrow-lake audit query --event-type dataset_ingested
 ```
 
@@ -1216,7 +1259,7 @@ arrow-lake audit query --event-type dataset_ingested
 |-----------|---------|-------------|
 | `--dataset` | None | Filter by dataset |
 | `--start` | None | Start time (ISO) |
-| `--end_time` | None | End time (ISO) |
+| `--end` | None | End time (ISO) |
 | `--event-type` | None | Filter by event type |
 
 #### `audit export <dataset>` — Export Audit Log
@@ -1880,9 +1923,8 @@ arrow-lake --config prod.yaml --base-uri ./datasets kg build reports
 | Data lineage | `arrow-lake lineage record <ds> <op>` |
 | Lifecycle rules | `arrow-lake lifecycle rules --prefix <prefix>` |
 | Lifecycle restore | `arrow-lake lifecycle restore <key>` |
-| System maintenance | `arrow-lake maintenance stats` |
-| Cleanup expired data | `arrow-lake maintenance cleanup` |
-| Data compaction | `arrow-lake maintenance compact <ds>` |
+| Maintenance status | `arrow-lake maintenance status` |
+| Run maintenance cycle | `arrow-lake maintenance run` |
 | Generate configuration | `arrow-lake config init --output <file>` |
 | Start server | `arrow-lake serve` |
 | Version info | `arrow-lake version` |

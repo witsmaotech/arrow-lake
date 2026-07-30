@@ -21,8 +21,8 @@ cd wits-infra-dintellihub
 # Install all dependencies with uv (recommended)
 uv sync
 
-# Or use pip
-pip install -e ".[all]"
+# Or use pip (core install; add extras like [rag,he,docling,fts] as needed)
+pip install -e .
 ```
 
 ### Verify Installation
@@ -35,7 +35,7 @@ arrow-lake version
 # ┌───────────┬──────────┐
 # │ Component │ Version  │
 # ├───────────┼──────────┤
-# │ arrow-lake│ 1.5.3    │
+# │ arrow-lake│ 1.9.6    │
 # │ python    │ 3.12.4   │
 # │ daft      │ 0.7.8    │
 # │ pyarrow   │ 23.0.1   │
@@ -211,21 +211,27 @@ my_lake/                          # base_uri root
 For production use, a YAML config file is the recommended way to manage all parameters:
 
 ```yaml
-# config.yaml
+# config.yaml — top-level sections map to ArrowLakeConfig fields (see config/main.py)
 storage:
-  backend: local
-  base_path: ./data
+  backend: local          # local dev; use minio/s3 in production (see 12-deployment)
+  base_uri: ./data        # storage root (local path or s3://bucket/prefix)
 
 olap:
-  max_rows: 10000
-  lance_scan_mode: "batch"
+  max_result_rows: 100000 # max rows returned per query
+  lance_scan_mode: "auto" # valid values: auto / native / pyarrow_fallback only
 
-vector:
-  default_metric: "cosine"
+vector:                   # VectorSearchConfig
+  metric: "cosine"        # cosine / l2 / dot
   default_index_type: "IVF_PQ"
+  num_sub_vectors: 24     # 24 recommended for 1024-dim (must be a multiple of 8)
 
-fts:
-  default_column: "text_content"
+fts:                      # FullTextSearchConfig
+  fts_column: "text_content"
+  tokenizer_type: "jieba" # jieba segmentation recommended for Chinese
+
+# v1.9.0 control plane (RBAC / identity / personal_token / task history / RAG sessions via libSQL)
+system_db:
+  enabled: false          # set true in production and configure url (see 12-deployment); off by default locally
 ```
 
 ```python
@@ -234,6 +240,12 @@ from arrow_lake import Lake
 # Create a Lake instance from a config file
 lake = Lake.from_yaml("config.yaml", base_uri="./production_data")
 ```
+
+> **Required for production (v1.9.6)**: set the `ARROW_LAKE__MASKING__HMAC_KEY` environment
+> variable to enable masking governance (fail-fast — startup is blocked if it is missing;
+> this key is a plain env var, not part of the YAML). When `system_db.enabled: true`, RBAC /
+> identity / personal_token run on libSQL, and any store outage fails closed (returns 401).
+> See [12-Deployment & Operations](./12-deployment.md).
 
 ***
 

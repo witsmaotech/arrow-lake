@@ -57,7 +57,7 @@ arrow-lake version
 ┏━━━━━━━━━━━━┳━━━━━━━━━┓
 ┃ Component  ┃ Version ┃
 ┡━━━━━━━━━━━━╇━━━━━━━━━┩
-│ arrow-lake │ 1.5.3   │
+│ arrow-lake │ 1.9.6   │
 │ python     │ 3.11.9  │
 │ pyarrow    │ 23.0.1  │
 │ duckdb     │ 1.5.2   │
@@ -142,7 +142,7 @@ Schema
 │ text_content │ string             │ true     │
 │ category     │ string             │ true     │
 │ word_count   │ int64              │ true     │
-│ text_embedding│ fixed_size_list[768][float32]│ true│
+│ text_embedding│ fixed_size_list[1024][float32]│ true│
 └──────────────┴────────────────────┴─────────┘
 ```
 
@@ -522,6 +522,41 @@ arrow-lake index fts papers --column text_content
 lake.create_fts_index("papers", fts_column="text_content")
 ```
 
+#### `index scalar <dataset>` — 创建标量索引
+
+对单列建标量索引，加速过滤和分面聚合（低基数列用 BITMAP，其余用 BTREE）。
+
+```bash
+arrow-lake index scalar papers --column category
+```
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--column` | 无（**必填**） | 目标列名 |
+| `--type` | 自动 | 索引类型: `BTREE`, `BITMAP` |
+| `--name` | 自动 | 索引名称 |
+| `--replace/--no-replace` | `replace` | 是否替换已有索引 |
+
+**SDK 等价:**
+
+```python
+lake.create_scalar_index("papers", column="category")
+```
+
+#### `index facets <dataset>` — 批量创建分面索引
+
+按 `FacetedSearchConfig.scalar_index_type_map` 对默认分面列批量建标量索引。
+
+```bash
+arrow-lake index facets papers
+```
+
+**SDK 等价:**
+
+```python
+lake.create_facet_indexes("papers")
+```
+
 #### `index list-vector <dataset>` — 列出向量索引 (v1.2)
 
 ```bash
@@ -708,7 +743,7 @@ arrow-lake embed text "transformer attention mechanism" \
 ```text
 Loading model Qwen/Qwen3-Embedding-0.6B... done
 Encoding... done
-  Dimension: 768
+  Dimension: 1024
   Norm: 1.000000
   First 5 values: [0.0234, -0.0567, 0.0891, -0.0123, 0.0456]
 ```
@@ -811,14 +846,44 @@ arrow-lake backup delete daily-2024-04-24
 ### 11. `arrow-lake kg` — 知识图谱
 
 > 所有 KG 命令为异步操作，需要 HugeGraph 服务运行中。
+>
+> **per-dataset 隔离图 (v1.8.6+)**: 每个数据集对应独立的 HugeGraph 图 `kg_{dataset}`。`query` / `stats` / `neighbors` / `export` / `traverser` / `algo` 等子命令均支持 `--dataset <name>` 指定目标数据集（省略时从配置推断）。
 
 #### `kg build <dataset>` — 构建知识图谱
 
 ```bash
-arrow-lake kg build papers
+arrow-lake kg build papers                 # 默认全量构建
+arrow-lake kg build papers --incremental   # 增量：仅喂入自上次构建以来的新 chunk
 ```
 
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--incremental` | 否（默认全量） | 增量模式只处理新 chunk（无 KA dump 或模板变更时回退为全量）；append 数据后用 `--incremental`，re-ingest/delete 或改模板后用默认全量重建 |
+
 返回 `task_id`，用于查询构建进度。
+
+#### `kg list-doc-types` — 列出文档类型
+
+```bash
+arrow-lake kg list-doc-types
+```
+
+列出 hyper-extract 支持的 doc_type 及其映射到的抽取模板（来自 `HugeGraphConfig.he_doc_type_templates`）。
+
+#### `kg list-templates` — 列出抽取模板
+
+```bash
+arrow-lake kg list-templates                  # 全部模板
+arrow-lake kg list-templates --category general  # 按分类过滤
+```
+
+#### `kg describe-template <path>` — 查看模板详情
+
+```bash
+arrow-lake kg describe-template general/concept_graph
+```
+
+展示指定模板的完整 schema（节点/边类型、必填字段、约束等）。
 
 #### `kg status <task_id>` — 查看构建进度
 
@@ -1006,9 +1071,6 @@ arrow-lake rag query papers \
 | `--strategy` | 无（使用配置默认值） | 检索策略: `vector`, `fts`, `hybrid` |
 | `--template` | 无（使用配置默认值） | 提示词模板: `default_qa`, `graph_qa` |
 | `--session-id` | 无 | 会话 ID（用于多轮对话） |
-| `--max-context-tokens` | `4096` | 最大上下文 token 数 |
-| `--temperature` | `0.7` | 生成温度 |
-| `--use-graph` | 否 | 启用 GraphRAG 增强检索 |
 
 输出示例：
 
@@ -1150,26 +1212,7 @@ arrow-lake --config prod.yaml config show
 
 输出默认配置的完整 JSON（所有 30 个配置分区）。
 
-#### `config dump` — 导出当前配置
-
-```bash
-arrow-lake config dump
-arrow-lake config dump --output config_backup.json
-```
-
-导出当前生效配置为 JSON 文件，包含所有运行时合并后的值。
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `--output` | — | 输出文件路径（不指定则输出到终端） |
-
-#### `config validate <file>` — 验证配置文件
-
-```bash
-arrow-lake config validate prod.yaml
-```
-
-验证 YAML 配置文件的格式和字段合法性，输出验证结果。
+> `config` 组仅提供 `show` 与 `init` 两个子命令（无 `dump` / `validate`）。
 
 #### `config init` — 生成配置模板
 
@@ -1208,7 +1251,7 @@ arrow-lake audit verify audit-20260426-001
 #### `audit query` — 查询审计日志
 
 ```bash
-arrow-lake audit query --dataset papers --start 2026-01-01 --end_time 2026-04-01
+arrow-lake audit query --dataset papers --start 2026-01-01 --end 2026-04-01
 arrow-lake audit query --event-type dataset_ingested
 ```
 
@@ -1216,7 +1259,7 @@ arrow-lake audit query --event-type dataset_ingested
 |------|--------|------|
 | `--dataset` | 无 | 按数据集过滤 |
 | `--start` | 无 | 起始时间 (ISO) |
-| `--end_time` | 无 | 结束时间 (ISO) |
+| `--end` | 无 | 结束时间 (ISO) |
 | `--event-type` | 无 | 按事件类型过滤 |
 
 #### `audit export <dataset>` — 导出审计日志
@@ -1880,9 +1923,8 @@ arrow-lake --config prod.yaml --base-uri ./datasets kg build reports
 | 数据血缘 | `arrow-lake lineage record <ds> <op>` |
 | 生命周期规则 | `arrow-lake lifecycle rules --prefix <prefix>` |
 | 生命周期恢复 | `arrow-lake lifecycle restore <key>` |
-| 系统维护 | `arrow-lake maintenance stats` |
-| 清理过期数据 | `arrow-lake maintenance cleanup` |
-| 数据压缩 | `arrow-lake maintenance compact <ds>` |
+| 维护状态 | `arrow-lake maintenance status` |
+| 执行维护周期 | `arrow-lake maintenance run` |
 | 生成配置 | `arrow-lake config init --output <file>` |
 | 启动服务 | `arrow-lake serve` |
 | 版本信息 | `arrow-lake version` |

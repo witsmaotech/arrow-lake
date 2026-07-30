@@ -21,8 +21,8 @@ cd wits-infra-dintellihub
 # 使用 uv 安装所有依赖 (推荐)
 uv sync
 
-# 或使用 pip
-pip install -e ".[all]"
+# 或使用 pip（核心安装；按需追加 [rag,he,docling,fts] 等 extras）
+pip install -e .
 ```
 
 ### 验证安装
@@ -35,7 +35,7 @@ arrow-lake version
 # ┌───────────┬──────────┐
 # │ Component │ Version  │
 # ├───────────┼──────────┤
-# │ arrow-lake│ 1.5.3    │
+# │ arrow-lake│ 1.9.6    │
 # │ python    │ 3.12.4   │
 # │ daft      │ 0.7.8    │
 # │ pyarrow   │ 23.0.1   │
@@ -211,21 +211,27 @@ my_lake/                          # base_uri 根目录
 对于生产环境，推荐使用 YAML 配置文件管理所有参数：
 
 ```yaml
-# config.yaml
+# config.yaml —— 顶层 section 对应 ArrowLakeConfig 字段（见 config/main.py）
 storage:
-  backend: local
-  base_path: ./data
+  backend: local          # 本地开发；生产用 minio/s3（见 12-部署）
+  base_uri: ./data        # 存储根（本地路径或 s3://bucket/prefix）
 
 olap:
-  max_rows: 10000
-  lance_scan_mode: "batch"
+  max_result_rows: 100000 # 单查询最大返回行数
+  lance_scan_mode: "auto" # 合法值仅：auto / native / pyarrow_fallback
 
-vector:
-  default_metric: "cosine"
+vector:                   # VectorSearchConfig
+  metric: "cosine"        # cosine / l2 / dot
   default_index_type: "IVF_PQ"
+  num_sub_vectors: 24     # 1024 维推荐 24（须为 8 的倍数）
 
-fts:
-  default_column: "text_content"
+fts:                      # FullTextSearchConfig
+  fts_column: "text_content"
+  tokenizer_type: "jieba" # 中文推荐 jieba 分词
+
+# v1.9.0 控制面（RBAC / 身份 / personal_token / 任务历史 / RAG 会话走 libSQL）
+system_db:
+  enabled: false          # 生产置 true 并配 url（见 12-部署）；本地默认关
 ```
 
 ```python
@@ -234,6 +240,11 @@ from arrow_lake import Lake
 # 从配置文件创建 Lake 实例
 lake = Lake.from_yaml("config.yaml", base_uri="./production_data")
 ```
+
+> **生产必配（v1.9.6）**：脱敏治理需设环境变量 `ARROW_LAKE__MASKING__HMAC_KEY`（fail-fast，
+> 缺失则启动阻断；该 key 是纯环境变量，不在 YAML 内）。`system_db.enabled: true` 时
+> RBAC/身份/personal_token 走 libSQL，store 不可达则 fail-closed（返回 401）。
+> 详见 [12-部署与运维](./12-deployment-zh.md)。
 
 ***
 

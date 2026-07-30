@@ -37,7 +37,7 @@ pip install arrow-lake
 ```bash
 git clone https://github.com/wits-sunpw/arrow-lake.git
 cd arrow-lake
-pip install -e ".[all]"
+pip install -e .
 ```
 
 ### Docker
@@ -951,7 +951,7 @@ docker compose -f deploy/docker-compose.monitoring.yml up -d
 ### REST API Server
 
 ```bash
-arrow-lake serve --host 0.0.0.0 --port 8000 --config configs/prod.yaml
+arrow-lake --config configs/prod.yaml serve --host 0.0.0.0 --port 8000
 ```
 
 The REST API provides HTTP endpoints for all SDK operations:
@@ -1190,8 +1190,8 @@ arrow-lake ingest kafka <dataset> --bootstrap-servers "host:9092" --topics "even
 ```bash
 arrow-lake search vector <dataset> --query "search text" --top-k 10
 arrow-lake search fts <dataset> --query "keyword search" --top-k 10
-arrow-lake search hybrid <dataset> --query "text" --vector-file embeddings.json
-arrow-lake search faceted <dataset> --vector-file embeddings.json --facets "category,year"
+arrow-lake search hybrid <dataset> --query "text" --vector-column text_embedding
+arrow-lake search faceted <dataset> --query "text" --facets "category,year"
 ```
 
 ### Query
@@ -1212,8 +1212,8 @@ arrow-lake kg query "g.V().count()"        # Gremlin query
 ### RAG
 
 ```bash
-arrow-lake rag query "What is deep learning?" --dataset docs --top-k 5
-arrow-lake rag extract --dataset docs --text-column body
+arrow-lake rag query docs "What is deep learning?" --top-k 5
+arrow-lake rag extract docs --text-column body
 ```
 
 ### Quality & Maintenance
@@ -1221,21 +1221,20 @@ arrow-lake rag extract --dataset docs --text-column body
 ```bash
 arrow-lake quality filter <dataset> --filters "text_length_check,null_check"
 arrow-lake quality dedup <dataset> --strategy both --action remove
-arrow-lake maintenance compact <dataset>
+arrow-lake maintenance run
 ```
 
 ### Export
 
 ```bash
-arrow-lake export <dataset> --output-path /tmp/data.parquet --format parquet
+arrow-lake export <dataset> --output /tmp/data.parquet --format parquet
 ```
 
 ### Lineage & Audit
 
 ```bash
-arrow-lake lineage record <dataset> --operation ingest --sources "raw_data"
+arrow-lake lineage record <dataset> ingest --sources "raw_data"
 arrow-lake lineage history <dataset>
-arrow-lake lineage graph <dataset>
 arrow-lake audit query --dataset <dataset> --event-type ingest
 ```
 
@@ -1251,7 +1250,7 @@ arrow-lake backup restore <backup-id>
 
 ```bash
 arrow-lake --config configs/prod.yaml <command>    # Use YAML config
-arrow-lake --json <command>                         # JSON output
+arrow-lake --format json <command>                         # JSON output
 arrow-lake --verbose <command>                      # Verbose logging
 ```
 
