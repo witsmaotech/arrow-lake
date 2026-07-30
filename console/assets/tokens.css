@@ -60,7 +60,7 @@
   --ring:0 0 0 2px var(--ink-900), 0 0 0 4px var(--teal);
 
   /* —— Type —— */
-  --font-ui:"Plus Jakarta Sans",-apple-system,"PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+  --font-ui:"Microsoft YaHei","PingFang SC",-apple-system,system-ui,sans-serif;
   --font-mono:"JetBrains Mono",ui-monospace,"SF Mono",Menlo,monospace;
   --fs-readout:clamp(2.2rem,1.6rem + 2.6vw,3.5rem);
   --fs-h1:1.5rem; --fs-h2:1.125rem; --fs-h3:.9375rem;

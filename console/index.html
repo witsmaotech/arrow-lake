@@ -41,9 +41,10 @@
         <a class="btn btn-line" href="#architecture">看五层架构</a>
       </div>
       <div class="hero-stats">
-        <div><b class="readout">159</b><span>REST routes</span></div>
-        <div><b class="readout">6,536</b><span>测试 / 406 文件</span></div>
-        <div><b class="readout">80%+</b><span>覆盖率</span></div>
+        <div><b class="readout">52,967</b><span>代码行 / 263 文件</span></div>
+        <div><b class="readout">159</b><span><a href="/docs" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;text-underline-offset:3px;text-decoration-color:rgba(255,255,255,.25)">REST routes ↗</a></span></div>
+        <div><b class="readout">6,465</b><span>测试 / 419 文件</span></div>
+        <div><b class="readout">90%+</b><span>覆盖率</span></div>
         <div><b class="readout">5</b><span>层架构</span></div>
       </div>
     </div>
@@ -91,6 +92,9 @@
     <div class="panel"><div class="panel-b"><div class="lamp ok pulse" style="margin-bottom:8px"><i></i>零拷贝查询</div><div class="muted">Arrow RecordBatch 直返，无序列化</div></div></div>
     <div class="panel"><div class="panel-b"><div class="lamp ok pulse" style="margin-bottom:8px"><i></i>谓词下推</div><div class="muted">过滤在 Lance 层求值，只物化匹配行</div></div></div>
     <div class="panel"><div class="panel-b"><div class="lamp ok pulse" style="margin-bottom:8px"><i></i>流式处理</div><div class="muted">RecordBatchReader 处理超内存数据集</div></div></div>
+    <div class="panel"><div class="panel-b"><div class="lamp ok pulse" style="margin-bottom:8px"><i></i>混合检索</div><div class="muted">向量 IVF_PQ + 全文 BM25，RRF 融合重排</div></div></div>
+    <div class="panel"><div class="panel-b"><div class="lamp ok pulse" style="margin-bottom:8px"><i></i>per-dataset 知识图谱</div><div class="muted">HugeGraph 动态分图隔离 · GraphRAG 推理</div></div></div>
+    <div class="panel"><div class="panel-b"><div class="lamp ok pulse" style="margin-bottom:8px"><i></i>三档 RBAC · 行级 ACL</div><div class="muted">库内行过滤 + 角色分级，列级/租户隔离</div></div></div>
   </div>
 </section>
 
@@ -125,7 +129,7 @@
 <section id="stack" class="section">
   <div class="section-head">
     <span class="tag teal">技术栈</span>
-    <h2>每项都钉到确切版本<span class="muted" style="font-weight:400">—— 经 6,500+ 测试验证</span></h2>
+    <h2>每项都钉到确切版本<span class="muted" style="font-weight:400">—— 经 6,465 测试验证</span></h2>
   </div>
   <div class="stack-wall" id="stackWall"></div>
 </section>

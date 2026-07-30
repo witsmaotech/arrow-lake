@@ -10,10 +10,11 @@
 <link rel="stylesheet" href="assets/console.css"/>
 <style>
   /* 复用原型 login 双栏样式 */
-  .login-bg{min-height:100vh;display:grid;grid-template-columns:1.1fr .9fr}
-  .login-art{position:relative;padding:var(--s7);display:flex;flex-direction:column;justify-content:space-between;background:
-    radial-gradient(700px 400px at 20% 10%,rgba(20,184,166,.18),transparent 60%),
-    radial-gradient(600px 400px at 80% 90%,rgba(56,189,248,.12),transparent 60%),var(--ink-950);overflow:hidden;border-right:1px solid var(--line)}
+  .login-bg{min-height:100vh;display:grid;grid-template-columns:1.1fr .9fr;position:relative;z-index:1}
+  .login-bgimg{position:fixed;inset:0;z-index:0;background:#020a0e}
+  .login-bgimg svg{width:100%;height:100%;display:block}
+  .login-bgimg:after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(2,10,14,.28),rgba(2,8,12,.72))}
+  .login-art{position:relative;padding:var(--s7);display:flex;flex-direction:column;justify-content:space-between;background:transparent;overflow:hidden;border-right:1px solid rgba(255,255,255,.06)}
   .login-art:before{content:"";position:absolute;inset:0;background-image:linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px);background-size:32px 32px;-webkit-mask-image:radial-gradient(500px 400px at 30% 40%,#000,transparent);mask-image:radial-gradient(500px 400px at 30% 40%,#000,transparent)}
   .login-form{display:grid;place-items:center;padding:var(--s6)}
   .login-card{width:min(380px,92vw)}
@@ -27,40 +28,46 @@
 </style>
 </head>
 <body>
+<div class="login-bgimg" aria-hidden="true">
+  <svg viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice">
+    <defs>
+      <radialGradient id="bmGlow" cx="40%" cy="24%" r="62%"><stop offset="0" stop-color="#5eead4" stop-opacity=".22"/><stop offset="1" stop-color="#000" stop-opacity="0"/></radialGradient>
+      <linearGradient id="bmSea" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0ea5a4" stop-opacity=".05"/><stop offset="1" stop-color="#0b7283" stop-opacity=".30"/></linearGradient>
+    </defs>
+    <rect width="1600" height="900" fill="#020a0e"/>
+    <rect width="1600" height="900" fill="url(#bmGlow)"/>
+    <!-- 鹏翼 · 垂天之云(上部,横展) -->
+    <path d="M120 180 q360 -150 720 -84 q-336 10 -540 116 q-118 64 -180 -32 z" fill="#7dd3fc" fill-opacity=".11"/>
+    <path d="M860 120 q336 -78 600 -22 q-256 6 -420 74 q-132 52 -180 -52 z" fill="#7dd3fc" fill-opacity=".08"/>
+    <path d="M480 100 q272 -52 488 -12 q-184 4 -304 52 q-96 36 -184 -40 z" fill="#38bdf8" fill-opacity=".07"/>
+    <!-- 鲲 · 潜于北冥之渊 -->
+    <path d="M260 520 q200 -100 486 -74 q128 14 224 70 q-96 -22 -192 -8 q-134 20 -224 86 q-156 86 -294 -74 z" fill="#1f6f78" fill-opacity=".30"/>
+    <path d="M360 552 q134 -48 278 -26" stroke="#5eead4" stroke-opacity=".24" stroke-width="3" fill="none"/>
+    <circle cx="1040" cy="510" r="5" fill="#5eead4" fill-opacity=".6"/>
+    <!-- 远鲲 -->
+    <path d="M1000 690 q118 -58 284 -42 q74 8 132 42 q-58 -12 -112 -5 q-76 12 -132 52 q-90 52 -172 -47 z" fill="#15525a" fill-opacity=".22"/>
+    <!-- 海浪层(底部全宽) -->
+    <path d="M0 600 Q 200 562 400 600 T 800 600 T 1200 600 T 1600 600 L1600 900 L0 900 Z" fill="url(#bmSea)"/>
+    <path d="M0 690 Q 200 658 400 690 T 800 690 T 1200 690 T 1600 690 L1600 900 L0 900 Z" fill="#0b7283" fill-opacity=".26"/>
+    <path d="M0 780 Q 200 752 400 780 T 800 780 T 1200 780 T 1600 780 L1600 900 L0 900 Z" fill="#073b43" fill-opacity=".38"/>
+    <path d="M0 840 Q 200 818 400 840 T 800 840 T 1200 840 T 1600 840 L1600 900 L0 900 Z" fill="#04262b" fill-opacity=".48"/>
+  </svg>
+</div>
 <div class="login-bg">
   <div class="login-art">
     <a class="brand" href="index.html" style="text-decoration:none;display:flex;gap:10px;align-items:center">
       <span class="brand-mark">AL</span>
       <span><b class="brand-name" style="color:var(--fg-hi)">Arrow Lake</b><div class="brand-sub">数据湖仓控制台</div></span>
     </a>
-    <div style="position:relative">
-      <span class="tag teal"><span style="width:7px;height:7px;border-radius:50%;background:var(--ok);display:inline-block"></span> 走产品 OLAP · RBAC + ACL</span>
-      <h1 style="font-size:clamp(1.8rem,1.2rem+1.4vw,2.8rem);font-weight:800;line-height:1.1;margin:var(--s4) 0;letter-spacing:-.02em">一个湖仓<br/><span style="background:linear-gradient(120deg,var(--teal-bright),var(--info));-webkit-background-clip:text;background-clip:text;color:transparent">装下检索 · 分析 · 智能</span></h1>
-      <p class="muted" style="max-width:46ch">文本 / 图像 / 视频多模态原生 · 向量检索 + RAG + 知识图谱 · RBAC 三档角色 + 行级 ACL。</p>
-    </div>
-    <div class="telem" style="position:relative">
-      <span class="item"><span class="dot"></span>API 在线</span><span class="item">DuckDB OLAP</span><span class="item">Lance 湖仓</span><span class="item" style="margin-left:auto">RBAC 三档</span>
+    <div style="position:relative;margin:auto 0">
+      <h1 style="font-size:clamp(1.8rem,1.2rem+1.4vw,2.8rem);font-weight:800;line-height:1.1;margin:var(--s4) 0;letter-spacing:-.02em">一个湖仓<br/><span style="background:linear-gradient(120deg,var(--teal-bright),var(--info));-webkit-background-clip:text;background-clip:text;color:transparent"> &nbsp;&nbsp;装下检索 · 分析 · 智能</span></h1>
+      <p class="muted" style="max-width:46ch">文本 / 图像 / 视频多模态原生 · 向量检索 + RAG + 知识图谱 </p>
     </div>
   </div>
   <div class="login-form">
     <div class="login-card">
       <h2 style="margin:0 0 var(--s2)">登录控制台</h2>
-      <p class="muted" style="margin:0 0 var(--s4);font-size:.85rem">用户名密码 → libSQL IdentityStore → JWT pair(API Key 作应急 / 开发)</p>
-      <div class="toggles">
-        <button id="tabKey" type="button">API Key</button>
-        <button class="active" id="tabPwd" type="button">用户名 / 密码</button>
-      </div>
-
-      <!-- API Key 表单(应急 / 开发)-->
-      <form id="formKey" class="col hidden">
-        <div class="field">
-          <label>API Key <span style="color:var(--danger)">*</span></label>
-          <input class="input mono" id="apiKey" type="password" placeholder="al_xxx..." autocomplete="current-password"/>
-        </div>
-        <button class="btn btn-primary" type="submit" style="width:100%;justify-content:center" id="loginBtn">
-          <i class="placeholder" data-ic="key"></i> 登录
-        </button>
-      </form>
+      <!-- <p class="muted" style="margin:0 0 var(--s4);font-size:.85rem">用户名密码 → libSQL IdentityStore → JWT pair(API Key 作应急 / 开发)</p> -->
 
       <!-- 用户名密码(默认 · v1.9.1:接 /auth/login → libSQL IdentityStore pbkdf2 验证)-->
       <form id="formPwd" class="col">
@@ -68,11 +75,11 @@
         <div class="field"><label>密码</label><input class="input" id="password" type="password" placeholder="••••••••" autocomplete="current-password"/></div>
         <div class="field"><label>验证码 <span class="muted" style="font-weight:400;text-transform:none;letter-spacing:0">(<span id="capQ" class="mono">—</span> = ?)</span></label><input class="input" id="captcha" inputmode="numeric" placeholder="计算结果" autocomplete="off"/></div>
         <button class="btn btn-primary" type="submit" style="width:100%;justify-content:center" id="loginPwdBtn"><i class="placeholder" data-ic="key"></i> 登录</button>
-        <p class="muted" style="font-size:.72rem;margin-top:var(--s2)">用户名密码 → libSQL IdentityStore(pbkdf2)→ JWT pair。</p>
+        <!-- <p class="muted" style="font-size:.72rem;margin-top:var(--s2)">用户名密码 → libSQL IdentityStore(pbkdf2)→ JWT pair。</p> -->
       </form>
 
       <div class="divider"></div>
-      <div class="flex between" style="font-size:.72rem;color:var(--fg-lo)"><span>JWT HS256</span><span>Bearer + X-API-Key</span><span>SELECT 只读</span></div>
+      <!-- <div class="flex between" style="font-size:.72rem;color:var(--fg-lo)"><span>JWT HS256</span><span>Bearer + X-API-Key</span><span>SELECT 只读</span></div> -->
       <a href="index.html" style="display:block;text-align:center;margin-top:var(--s4);font-size:.82rem;color:var(--fg-lo);text-decoration:none">→ 先看 <span style="color:var(--teal-bright);font-weight:600">产品介绍</span>(免登录 · 架构全景 + 能力)</a>
     </div>
   </div>
@@ -80,23 +87,12 @@
 
 <script src="assets/console-layout.js"></script>
 <script type="module">
-import { login, isLoggedIn } from "./src/auth.js";
+import { isLoggedIn } from "./src/auth.js";
 import { toast } from "./src/ui/toast.js";
 
 if (isLoggedIn()) location.href = "system.html";
 
 const $ = (s) => document.querySelector(s);
-const tabKey = $("#tabKey"), tabPwd = $("#tabPwd");
-const formKey = $("#formKey"), formPwd = $("#formPwd");
-
-tabKey.onclick = () => {
-  tabKey.classList.add("active"); tabPwd.classList.remove("active");
-  formKey.classList.remove("hidden"); formPwd.classList.add("hidden");
-};
-tabPwd.onclick = () => {
-  tabPwd.classList.add("active"); tabKey.classList.remove("active");
-  formPwd.classList.remove("hidden"); formKey.classList.add("hidden");
-};
 
 // 算术验证码(纯前端,防简单机器人/暴力登录)
 let _capAns = 0;
@@ -129,18 +125,13 @@ $("#formPwd").addEventListener("submit", async (e) => {
     btn.innerHTML = '<i class="placeholder" data-ic="key"></i> 登录';
   }
 });
-
-const form = $("#formKey"), key = $("#apiKey");
-form.addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const v = key.value.trim();
-  if (!v) { toast("请输入 API Key", "warn"); key.focus(); return; }
-  const btn = $("#loginBtn");
-  btn.disabled = true; btn.textContent = "登录中…";
-  try { await login(v); location.href = "system.html"; }
-  catch (err) { toast("登录失败: " + err.message, "danger", 5000); key.focus(); key.select(); }
-  finally { btn.disabled = false; btn.innerHTML = '<i class="placeholder" data-ic="key"></i> 登录'; }
-});
 </script>
+<div style="position:fixed;left:0;right:0;bottom:16px;text-align:center;z-index:5;pointer-events:none;white-space:nowrap;padding:0 12px;font-size:clamp(1.2rem,1rem+.6vw,1.6rem)">
+  <span style="font-weight:700;letter-spacing:.03em;background:linear-gradient(118deg,#7ff0dc,#7dd3fc 52%,#fcd34d);-webkit-background-clip:text;background-clip:text;color:transparent">北冥有鱼,其名为鲲</span>
+  <span style="color:#9fd8cf;font-size:.9em"> —— 湖仓纳万物于渊;</span>
+  <span style="color:#5eead4;margin:0 12px;opacity:.7">·</span>
+  <span style="font-weight:700;letter-spacing:.03em;background:linear-gradient(118deg,#7ff0dc,#7dd3fc 52%,#fcd34d);-webkit-background-clip:text;background-clip:text;color:transparent">化而为鹏,怒而飞</span>
+  <span style="color:#9fd8cf;font-size:.9em"> —— 数据腾跃为洞察。</span>
+</div>
 </body>
 </html>
