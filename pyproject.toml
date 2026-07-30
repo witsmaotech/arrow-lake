@@ -101,6 +101,13 @@ dev = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.uv]
+# apache-gravitino 1.3.0 错误地把 pre-commit==3.5.0 列为无条件运行时依赖,
+# 与 dev group 的 pre-commit>=4.2 冲突,导致 uv 无法重新解析 lock
+# (uv.lock 长期停滞在 lancedb 0.30.2 / pylance 4.0.1 的根因)。
+# override 强制统一到 >=4.2(本项目 dev 实际所需)。
+override-dependencies = ["pre-commit>=4.2"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["arrow_lake", "flows"]
 
