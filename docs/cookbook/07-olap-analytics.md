@@ -1,6 +1,6 @@
 # OLAP Analytics Queries
 
-> Version: 1.5.3
+> Version: 1.9.6
 
 Arrow Lake delivers high-performance OLAP analytics through DuckDB's zero-copy Arrow
 integration, supporting GROUP BY aggregation, window functions, JOINs, and materialized
@@ -178,6 +178,14 @@ dropped = lake.cleanup_materialized(ttl_days=3)
 
 It is recommended to call this method in a scheduled job or at application startup.
 
+**REST management endpoints**: Materialized views are global resources managed via a dedicated `/api/v1/materialized` router (not per-dataset, to avoid clashing with the `datasets` `GET /{name}` route). All endpoints require the ADMIN role and `ducklake_enabled=True` (returns 503 otherwise):
+
+| Method + Path                       | Description                                          |
+| ----------------------------------- | ---------------------------------------------------- |
+| `GET /api/v1/materialized`          | List all materialized views with lifecycle metadata  |
+| `DELETE /api/v1/materialized/{view}` | Drop a single materialized view by name             |
+| `POST /api/v1/materialized/cleanup` | Drop all expired materialized views (TTL-based)      |
+
 ***
 
 ## 6. Query Plan Analysis
@@ -273,6 +281,8 @@ Available `LazyDaftFrame` operations:
 | `sort(column, desc)`   | Sort                           | `df.sort("date", desc=True)`        |
 | `groupby(*columns)`    | Group                          | `df.groupby("category")`            |
 | `join(other, on, how)` | Join                           | `df.join(df2, on="id", how="left")` |
+| `pivot(group_by, pivot_col, value_col, agg_fn)` | Pivot (long-to-wide, cross-tab) | `df.pivot("cat", "prod", "amt", "sum")` |
+| `unpivot(ids, values)` | Unpivot (wide-to-long, melt)   | `df.unpivot("id", ["q1","q2"])`     |
 | `collect()`            | Execute and return Arrow Table | `df.collect()`                      |
 
 ***
@@ -320,6 +330,10 @@ Parameter reference:
 | `version`      | `int \| None`       | Dataset version number; `None` uses the latest             |
 | `compression`  | `str \| None`       | Parquet compression codec (snappy, gzip, zstd, etc.)       |
 | `overwrite`    | `bool`              | Whether to overwrite existing files (default `False`)      |
+
+**Async export (REST)**: Export large datasets asynchronously via `POST /api/v1/datasets/{name}/export`, which returns `202` + `task_id` immediately; then poll status with `GET /{name}/export/{task_id}/status` and download the result with `GET /{name}/export/{task_id}/download`. The request body `ExportRequest` requires `output_path` (relative path; `..`, absolute paths, and null bytes are rejected).
+
+**Multi-target export**: `POST /api/v1/datasets/{name}/export-to` (synchronous) exports a dataset to an external target via Daft, supporting five formats: `parquet` / `csv` / `json` / `iceberg` / `clickhouse`. The request body requires `target_uri` + `format`.
 
 ***
 

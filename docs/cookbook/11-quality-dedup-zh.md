@@ -292,8 +292,8 @@ quality:
   nemo_curator_batch_size: 64
 
   # 内容去重
-  dedup_enabled: true
-  dedup_strategy: exact               # exact | perceptual | both
+  dedup_enabled: false                # 默认 false（config/media.py:124）——去重需显式开启
+  dedup_strategy: exact               # exact | perceptual | both（YAML 不接受 minhash，见 §5）
   dedup_action: flag                  # flag | remove
   dedup_perceptual_threshold: 10
 
@@ -312,6 +312,7 @@ quality:
 | 文章 / 新闻 / 代码    | `exact`                        | 相同内容产生相同 SHA-256，精确高效     |
 | 产品图片去重          | `perceptual` (threshold 5-10)  | 过滤不同尺寸/压缩率的同一商品图          |
 | 社交媒体图片          | `perceptual` (threshold 10-15) | 允许滤镜/裁剪差异                 |
+| 中等文本近重复（改写/少量编辑） | `minhash`（CPU，编程式，见 §12）| 检测 Jaccard 相似度近重复，无需 GPU |
 | 大规模文本语料 (>1M 行) | `NeMoDeduplicator` (GPU)       | MinHash LSH 近似去重，速度远超精确匹配 |
 | 混合数据集 (文本 + 图片)   | `both`                         | 先精确去重再感知去重，两阶段流水线         |
 
@@ -569,37 +570,40 @@ print(policies)  # ["log_retention", "email_mask"]
 
 ### 11.3 标签与策略的 REST API
 
-标签和策略也可通过 `/metadata/*` REST 端点管理。所有端点需要 `X-API-Key` 请求头，当 Gravitino 未配置时返回 503。
+标签和策略也可通过 `/api/v1/metadata/*` REST 端点管理。所有端点需要 `X-API-Key` 请求头，当 Gravitino 未配置时返回 503。
 
 ```bash
 # --- 标签 ---
 
 # 列出标签 (可按表过滤)
-curl "http://localhost:8000/metadata/tags?table=articles" \
+curl "http://localhost:8000/api/v1/metadata/tags?table=articles" \
   -H "X-API-Key: your-key"
 # => {"success": true, "data": [{"name": "sensitive"}], "error": null, "metadata": {"total": 1}}
 
-# 创建标签
-curl -X POST "http://localhost:8000/metadata/tags?body=%7B%22name%22%3A%22pii%22%2C%22comment%22%3A%22PII%20data%22%7D" \
-  -H "X-API-Key: your-key"
+# 创建标签（JSON body）
+curl -X POST http://localhost:8000/api/v1/metadata/tags \
+  -H "X-API-Key: your-key" -H "Content-Type: application/json" \
+  -d '{"name": "pii", "comment": "PII data"}'
 # => {"success": true, "data": {"name": "pii"}, "error": null, "metadata": {}}
 
 # --- 策略 ---
 
 # 列出所有策略
-curl http://localhost:8000/metadata/policies \
+curl http://localhost:8000/api/v1/metadata/policies \
   -H "X-API-Key: your-key"
 # => {"success": true, "data": [{"name": "log_retention"}], "error": null, "metadata": {"total": 1}}
 
-# 创建保留策略
-curl -X POST "http://localhost:8000/metadata/policies/retention?body=%7B%22name%22%3A%22log_retention%22%2C%22days%22%3A90%7D" \
-  -H "X-API-Key: your-key"
+# 创建保留策略（JSON body）
+curl -X POST http://localhost:8000/api/v1/metadata/policies/retention \
+  -H "X-API-Key: your-key" -H "Content-Type: application/json" \
+  -d '{"name": "log_retention", "days": 90}'
 # => {"success": true, "data": {"name": "log_retention", "days": 90}, "error": null, "metadata": {}}
 
-# 创建脱敏策略
-curl -X POST "http://localhost:8000/metadata/policies/masking?body=%7B%22name%22%3A%22email_mask%22%2C%22columns%22%3A%5B%22email%22%5D%7D" \
-  -H "X-API-Key: your-key"
-# => {"success": true, "data": {"name": "email_mask", "columns": ["email"]}, "error": null, "metadata": {}}
+# 创建脱敏策略（JSON body，function 必填：redact|hash|partial|nullify）
+curl -X POST http://localhost:8000/api/v1/metadata/policies/masking \
+  -H "X-API-Key: your-key" -H "Content-Type: application/json" \
+  -d '{"name": "email_mask", "columns": ["email"], "function": "partial"}'
+# => {"success": true, "data": {"name": "email_mask", "columns": ["email"], "function": "partial"}, "error": null, "metadata": {}}
 ```
 
 ### 11.4 启用 Gravitino
@@ -615,4 +619,149 @@ gravitino:
   sync_interval_seconds: 300          # 后台 Catalog 同步间隔
 ```
 
-当 `gravitino.enabled` 为 `false` (默认值) 时，所有 `/metadata/*` 端点返回 503，`GravitinoTagService`/`GravitinoPolicyService` 构造函数静默完成，不进行连接。现有的质量过滤、去重和 ACL 功能不受影响。
+当 `gravitino.enabled` 为 `false` (默认值) 时，所有 `/api/v1/metadata/*` 端点返回 503，`GravitinoTagService`/`GravitinoPolicyService` 构造函数静默完成，不进行连接。现有的质量过滤、去重和 ACL 功能不受影响。
+
+***
+
+## 12. MinHash 近似去重 (CPU datasketch)
+
+除精确 SHA-256 和感知 pHash 外，`ContentDeduplicator` 还内置 **MinHash LSH** 近似去重
+（`quality/dedup.py:70,91-96,132`），基于 CPU 版 `datasketch`，用于检测**语义近重复**的文本
+（改写、少量编辑的变体），无需 GPU。
+
+```python
+from arrow_lake.quality.dedup import ContentDeduplicator
+
+deduper = ContentDeduplicator(
+    strategy="minhash",      # MinHash LSH 近似去重
+    action="flag",
+    text_column="text_content",  # 必填（strategy="minhash" 时强制要求，dedup.py:95-96）
+    ngram_size=5,            # 字符 n-gram shingling 大小
+    num_hashes=128,          # MinHash 置换数（num_perm）
+    threshold=0.8,           # Jaccard 相似度阈值 (0.0–1.0)，高于此视为近重复
+)
+result = deduper.deduplicate(table)
+# DedupResult(strategy="minhash", ...)
+```
+
+> **陷阱（YAML 不接受 minhash）**：`QualityConfig.dedup_strategy` 的 validator 只允许
+> `exact`/`perceptual`/`both`（`config/media.py:129-134`），写 `minhash` 会触发
+> `ValidationError`。MinHash **只能编程式调用** `ContentDeduplicator(strategy="minhash", ...)`，
+> 不能通过 `dedup_strategy: minhash` 配置。大规模语料（>1M 行）需 GPU 时用 §5 的 `NeMoDeduplicator`。
+
+| 参数 | 默认 | 说明 |
+|------|------|------|
+| `strategy` | `exact` | `minhash` 走独立路径（`dedup.py:132`） |
+| `text_column` | (必填) | 要计算 MinHash 的文本列 |
+| `ngram_size` | `5` | 字符 n-gram |
+| `num_hashes` | `128` | MinHash 置换数（精度/成本权衡） |
+| `threshold` | `0.8` | Jaccard 相似度阈值 |
+
+***
+
+## 13. 质量画像与评分 (QualityProfiler)
+
+`QualityProfiler`（`quality/profiler.py:39`）对数据集做整体质量画像，输出 `DatasetQualityProfile`，
+含 `overall_quality_score`（0.0–1.0，`profiler.py:34`）和各维度统计。对应 REST 端点
+`GET /api/v1/datasets/{name}/quality/profile`（`routers/quality.py:156`）。
+
+```python
+from arrow_lake.quality.profiler import QualityProfiler
+
+profiler = QualityProfiler()
+profile = profiler.profile(table, dataset_name="articles")
+print(profile.overall_quality_score)   # 0.0–1.0
+# DatasetQualityProfile 还含空值率、基数、分布等维度统计
+```
+
+```bash
+# REST：获取数据集质量画像
+curl http://localhost:8000/api/v1/datasets/articles/quality/profile -H "X-API-Key: your-key"
+```
+
+***
+
+## 14. 质量 REST API 全景
+
+`routers/quality.py` 暴露的端点（前缀 `/api/v1/datasets/{name}/quality`）：
+
+| 方法 | 端点 | 说明 | 代码位置 |
+|------|------|------|---------|
+| `POST` | `/quality/filter` | 运行质量过滤器，返回聚合报告 | quality.py:46 |
+| `GET` | `/quality/report` | 获取上一次质量过滤报告 | quality.py:64 |
+| `POST` | `/quality/deduplicate` | 对数据集去重（exact/perceptual/both） | quality.py:81 |
+| `POST` | `/quality/rules` | 应用声明式规则引擎（见 §9.5） | quality.py:105 |
+| `GET` | `/quality/profile` | 质量画像与评分（见 §13） | quality.py:156 |
+| `POST` | `/quality/llm_label` | LLM 富化：给行打标签（**异步 202**） | quality.py:213 |
+| `POST` | `/quality/extract` | LLM 富化：从文本抽取结构化字段（**异步 202**） | quality.py:252 |
+| `POST` | `/quality/mask-preview` | 预览脱敏效果（function/columns） | quality.py:291 |
+
+`llm_label` 与 `extract` 走 fire-and-forget 异步任务（`status_code=202`），立即返回 `task_id`，
+通过 `GET /api/v1/tasks/{task_id}/status` 轮询结果（见第 14 章 TaskManager）。
+
+```bash
+# 去重（REST）
+curl -X POST http://localhost:8000/api/v1/datasets/articles/quality/deduplicate \
+  -H "X-API-Key: your-key" -H "Content-Type: application/json" \
+  -d '{"strategy": "exact", "action": "flag"}'
+
+# mask-preview（function 必填：redact|hash|partial|nullify）
+curl -X POST http://localhost:8000/api/v1/datasets/hr_data/quality/mask-preview \
+  -H "X-API-Key: your-key" -H "Content-Type: application/json" \
+  -d '{"columns": ["ssn", "email"], "function": "partial"}'
+```
+
+***
+
+## 15. 数据准备：清洗与 LLM 富化
+
+### 15.1 结构化清洗 `POST /clean`
+
+`routers/cleaning.py:222` 的 `POST /api/v1/datasets/{name}/clean` 把声明式清洗步骤（DuckDB 语义）
+编译成 SQL，再经 `restore_dataset` 写回 Lance。支持按列链式算子。
+
+```bash
+curl -X POST http://localhost:8000/api/v1/datasets/sales/clean \
+  -H "X-API-Key: your-key" -H "Content-Type: application/json" \
+  -d '{"steps": [
+        {"column": "revenue", "op": "fill_null", "value": 0},
+        {"column": "region",  "op": "trim"},
+        {"column": "email",   "op": "lowercase"}
+      ]}'
+```
+
+### 15.2 LLM 富化（llm_label / extract，异步）
+
+`quality/llm_enrich.py:105,156` 提供两类 LLM 富化，均异步执行（202 + task_id 轮询）：
+
+- **`llm_label`**（quality.py:213）：对每行文本运行 LLM 分类，新增标签列（如情感、主题、意图）。
+- **`extract`**（quality.py:252）：从非结构化文本抽取结构化字段（实体、键值对），新增列。
+
+```bash
+# 异步 LLM 打标签（立即返回 task_id）
+curl -X POST http://localhost:8000/api/v1/datasets/articles/quality/llm_label \
+  -H "X-API-Key: your-key" -H "Content-Type: application/json" \
+  -d '{"text_column": "text_content", "label_column": "sentiment", "prompt": "positive|negative|neutral"}'
+# => 202 {"task_id": "...", "status": "pending"}
+
+# 轮询结果
+curl http://localhost:8000/api/v1/tasks/<task_id>/status -H "X-API-Key: your-key"
+```
+
+### 15.3 字段注释 (v1.9.3)
+
+`ingest/field_comments.py` 支持给数据集字段加人类可读注释（PyArrow 直读 parquet/CSV sidecar，
+写入 Lance schema `comment` 元数据）。对应 `POST /api/v1/datasets/{name}/schema/annotate`。
+
+```bash
+# 给字段加注释
+curl -X POST http://localhost:8000/api/v1/datasets/articles/schema/annotate \
+  -H "X-API-Key: your-key" -H "Content-Type: application/json" \
+  -d '{"field": "text_content", "comment": "正文文本（已清洗，去 HTML 标签）"}'
+
+# 查看带注释的 schema
+curl http://localhost:8000/api/v1/datasets/articles/schema -H "X-API-Key: your-key"
+```
+
+字段注释持久化在 Lance schema 的 `SchemaField.comment` 中，摄入时由 `_write_table` 钩子自动捕获，
+后续 `GET /schema` 会回显。

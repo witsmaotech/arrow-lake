@@ -64,19 +64,19 @@ Reciprocal Rank Fusion is implemented in `HybridSearchBridge._rrf_fuse()`:
 score(doc) = SUM( 1 / (rank(doc, list_i) + k) )
 ```
 
-* `rank(doc, list_i)`: the document's rank in the i-th ranked list (0-indexed)
+* `rank(doc, list_i)`: the document's rank in the i-th ranked list (1-indexed)
 * `k`: smoothing constant, default 60 (the value recommended in the original paper)
 
 ```text
 Vector search top 3:         Full-text search top 3:
-  rank 0: Trail Runners        rank 0: Lightweight Running Shoes
-  rank 1: Hiking Boots         rank 1: Kids Cushion Runners
-  rank 2: Basketball Shoes     rank 2: Summer Breathable Sandals
+  rank 1: Trail Runners        rank 1: Lightweight Running Shoes
+  rank 2: Hiking Boots         rank 2: Kids Cushion Runners
+  rank 3: Basketball Shoes     rank 3: Summer Breathable Sandals
 
            +-- RRF fusion (k=60) --+
                       |
-  rank 0: Lightweight Running Shoes  (1/(0+60) + 1/(0+60) = 0.0333)
-  rank 1: Trail Runners             (1/(0+60) + 0 = 0.0167)
+  rank 1: Lightweight Running Shoes  (1/(1+60) + 1/(1+60) = 0.0328)
+  rank 1: Trail Runners             (1/(1+60) + 0 = 0.0164)
 ```
 
 | rrf\_k           | Effect                              | Recommended For           |
@@ -128,12 +128,16 @@ config = HybridSearchConfig(
     default_top_k=10,             # Final number of results
     vector_top_k_multiplier=3,    # Vector candidate pool = top_k * 3
     fts_top_k_multiplier=3,       # FTS candidate pool = top_k * 3
+    reranker_type="none",         # Reranker: none / cross_encoder (default none, RRF rough-rank is final)
+    reranker_model="BAAI/bge-reranker-v2-m3",  # cross-encoder fine-rank model
 )
 ```
 
 Arrow Lake automatically selects the execution path: it prefers DuckDB native
 `lance_hybrid_search()`, falling back to sub-bridges that search independently
 and then fuse the results.
+
+> **Reranking is config-driven, not a request parameter**: `reranker_type` / `reranker_model` are set globally in `HybridSearchConfig`; the search endpoint (`POST /{name}/search/hybrid`) accepts no per-request reranker arguments. When set to `cross_encoder`, the `reranker_model` (default `BAAI/bge-reranker-v2-m3`) fine-ranks the RRF rough-ranked results with continuous scores.
 
 ***
 
@@ -228,6 +232,17 @@ result = lake.faceted_search("products", query_vector=query_vec,
                               where="category = 'running'")
 ```
 
+### Scalar Index Acceleration
+
+Building scalar indexes on the facet dimension columns significantly speeds up the `GROUP BY CUBE` aggregation. `FacetedSearchConfig.scalar_index_type_map` auto-selects the index type per column by cardinality (low-cardinality like `modality`/`source`/`doc_type` → `BITMAP`, others → `BTREE`). Build indexes in bulk:
+
+```python
+# Build scalar indexes on default facet columns (BTREE/BITMAP per scalar_index_type_map)
+lake.create_facet_indexes("products")
+# Or build an index on a single column
+lake.create_scalar_index("products", column="category")
+```
+
 ***
 
 ## 5. Ensemble Multi-Column Search
@@ -273,6 +288,16 @@ When `columns` is not specified, it auto-detects all `fixed_size_list` columns
 whose dimensionality matches the query vector.
 
 Weighted RRF formula: `score(doc) = SUM( weight_i / (rank(doc, list_i) + k) )`
+
+### Multimodal Image Search
+
+CLIP embeddings map text and images into the same vector space, enabling "text-to-image" and "image-to-image" search. `Lake.encode_text_clip()` encodes the query text, producing embeddings in the same space (L2-normalized) as those returned by `POST /api/v1/embed/image`, ready for direct vector search:
+
+```python
+# Text -> image embedding, same space as /embed/image
+query_vec = lake.encode_text_clip("red running shoes")
+results = lake.search("products", query_vector=query_vec, vector_column="image_embedding")
+```
 
 ***
 

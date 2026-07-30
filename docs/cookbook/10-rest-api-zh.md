@@ -918,7 +918,7 @@ curl http://localhost:8000/health/ready
 ```json
 {
   "status": "ok",
-  "version": "1.5.3",
+  "version": "1.9.6",
   "storage": "accessible",
   "gravitino": "healthy",
   "duckdb_pool": {"pool_size": 5, "active_sessions": 1, "queued_requests": 0, "total_queries": 142, "total_errors": 0}
@@ -936,7 +936,7 @@ curl http://localhost:8000/api/v1/version \
 
 ```json
 {
-  "version": "1.5.3",
+  "version": "1.9.6",
   "python": "3.12.4",
   "fastapi": "0.115.0",
   "uvicorn": "0.30.0",
@@ -1659,46 +1659,220 @@ curl http://localhost:8000/api/v1/admin/deny/sensitive_data \
 {"dataset": "sensitive_data", "denied_actions": ["delete", "export"]}
 ```
 
-### 存储生命周期 API
+### 存储生命周期 API（已移除）
 
-管理 Blob 存储生命周期策略（归档、过期、恢复）。
+> **已废弃**：`/api/v1/lifecycle/*` 端点（`apply`/`status`/`restore`/`rules`/`estimate`）
+> 在 v1.9.x 中**已从 REST 服务中移除**——代码库中不再注册对应路由器。归档/过期/恢复等
+> 生命周期策略现通过 CLI（`arrow-lake lifecycle ...`）和后台维护调度器
+> （`/admin/maintenance/*`）管理。调用旧端点将返回 404。
 
-| 方法     | 端点                                | 说明                 | 认证    |
-| ------ | --------------------------------- | ------------------ | ----- |
-| `POST` | `/api/v1/lifecycle/apply`         | 对前缀应用生命周期规则       | ADMIN |
-| `GET`  | `/api/v1/lifecycle/status`        | 检查前缀的生命周期状态      | ADMIN |
-| `POST` | `/api/v1/lifecycle/restore`       | 恢复已归档的 Blob      | ADMIN |
-| `GET`  | `/api/v1/lifecycle/rules`         | 列出已配置的生命周期规则     | ADMIN |
-| `POST` | `/api/v1/lifecycle/estimate`      | 估算存储节省量           | ADMIN |
+***
 
-#### 应用生命周期规则
+## v1.9.x 新增端点
+
+以下端点在 v1.6–v1.9.6 中新增。涵盖用户态、用户与令牌管理、多模态嵌入、物化视图、
+字段注释、质量增强、索引管理、清洗、异步任务、KG 模板/版本、RAG 增强等。
+
+### 用户态 API（`/api/v1/me/*`）
+
+当前用户的个人状态端点。**需要 personal token**（通过 `X-API-Key` 或 Bearer 传递个人令牌，
+非 JWT 访问令牌；JWT 调用 `/me/*` 会返回 401）。角色要求 VIEWER。
+
+| 方法      | 端点                                       | 说明                         |
+| ------- | ---------------------------------------- | -------------------------- |
+| `POST`  | `/api/v1/me/saved-queries`               | 保存查询                       |
+| `GET`   | `/api/v1/me/saved-queries`               | 列出已保存查询                    |
+| `DELETE`| `/api/v1/me/saved-queries/{qid}`         | 删除已保存查询                    |
+| `GET`   | `/api/v1/me/notifications`               | 列出通知                       |
+| `POST`  | `/api/v1/me/notifications/read`          | 标记通知已读（`?notification_id=`） |
+| `GET`   | `/api/v1/me/preferences`                 | 获取偏好设置                     |
+| `PUT`   | `/api/v1/me/preferences`                 | 更新偏好设置                     |
+| `POST`  | `/api/v1/me/dashboards`                  | 保存仪表盘布局                    |
+| `GET`   | `/api/v1/me/dashboards`                  | 列出仪表盘                      |
+| `DELETE`| `/api/v1/me/dashboards/{dashboard_id}`   | 删除仪表盘                      |
+| `POST`  | `/api/v1/me/favorites`                   | 添加收藏（幂等）                   |
+| `GET`   | `/api/v1/me/favorites`                   | 列出收藏                       |
+| `DELETE`| `/api/v1/me/favorites/{target_type}/{target_id}` | 移除收藏                  |
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/lifecycle/apply \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"prefix": "uploads/"}'
+# 标记单条通知已读
+curl -X POST "http://localhost:8000/api/v1/me/notifications/read?notification_id=42" \
+  -H "X-API-Key: <personal-token>"
 ```
 
-**响应：**
+### 用户与令牌管理（admin 扩展）
 
-```json
-{"success": true, "archived": 15, "expired": 3, "errors": []}
-```
+对 v1.4.0 行/列 ACL 端点的补充。**需要 ADMIN 角色**。
 
-#### 恢复已归档的 Blob
+| 方法      | 端点                                        | 说明                          |
+| ------- | ----------------------------------------- | --------------------------- |
+| `GET`   | `/api/v1/admin/users`                     | 列出全部用户                      |
+| `POST`  | `/api/v1/admin/users`                     | 创建用户（`CreateUserRequest`）   |
+| `PUT`   | `/api/v1/admin/users/{user_id}`           | 更新用户字段                      |
+| `DELETE`| `/api/v1/admin/users/{user_id}`           | 停用用户（软删除）                   |
+| `GET`   | `/api/v1/admin/roles`                     | 列出角色及权限矩阵                   |
+| `POST`  | `/api/v1/admin/users/{user_id}/tokens`    | 签发 personal token           |
+| `GET`   | `/api/v1/admin/users/{user_id}/tokens`    | 列出某用户的令牌                    |
+| `DELETE`| `/api/v1/admin/users/{user_id}/tokens/{token_id}` | 撤销令牌                  |
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/lifecycle/restore \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"key": "uploads/archive/data.parquet", "days": 7}'
+# 创建用户
+curl -X POST http://localhost:8000/api/v1/admin/users \
+  -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
+  -d '{"username": "alice", "email": "alice@example.com", "role": "viewer", "password": "change-me-12"}'
+
+# 为某用户签发 personal token（响应中的 token 即可用于 /me/* 端点）
+curl -X POST http://localhost:8000/api/v1/admin/users/3/tokens \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
-**响应：**
+### 多模态嵌入（`/api/v1/embed/*`）
 
-```json
-{"success": true, "key": "uploads/archive/data.parquet", "restore_days": 7, "status": "restoring"}
+`embed_router` 提供独立的文本/图像嵌入计算，用于跨模态检索（文搜图、以图搜图）。
+
+| 方法     | 端点                     | 说明                                     |
+| ------ | ---------------------- | -------------------------------------- |
+| `POST` | `/api/v1/embed/text`   | 文本嵌入（本地模型或外部 API）                       |
+| `POST` | `/api/v1/embed/image`  | 图像嵌入（CLIP/SigLIP；JSON body `{"images":["<base64>"]}`） |
+| `POST` | `/api/v1/embed/clip-text` | CLIP 文本嵌入（文搜图：文本向量与图像向量同空间）          |
+
+```bash
+# 文搜图：用文本 query 生成向量，再对图像数据集做向量检索
+curl -X POST http://localhost:8000/api/v1/embed/clip-text \
+  -H "X-API-Key: your-key" -H "Content-Type: application/json" \
+  -d '{"texts": ["a red car"]}'
+```
+
+### 物化视图（`/api/v1/materialized/*`）
+
+DuckLake 物化视图管理。**当 `ducklake_enabled=false`（默认）时所有端点返回 503**。
+所有端点要求 ADMIN。
+
+| 方法      | 端点                          | 说明              |
+| ------- | --------------------------- | --------------- |
+| `GET`   | `/api/v1/materialized`      | 列出所有物化视图        |
+| `DELETE`| `/api/v1/materialized/{view}` | 删除指定物化视图（不存在返回 404） |
+| `POST`  | `/api/v1/materialized/cleanup` | 清理失效物化视图      |
+
+### 字段注释（Schema 注解）
+
+在数据集 schema 的 Arrow 字段元数据上写入人类可读注释（ingest 钩子与 annotate 端点共用同一 key）。
+
+| 方法     | 端点                                        | 说明                       | 角色    |
+| ------ | ----------------------------------------- | ------------------------ | ----- |
+| `GET`  | `/api/v1/datasets/{name}/schema`          | 获取 schema（含字段 comment）   | VIEWER |
+| `POST` | `/api/v1/datasets/{name}/schema/annotate` | 设置某字段注释（body：`field`+`comment`） | ADMIN |
+
+```bash
+curl -X POST http://localhost:8000/api/v1/datasets/users/schema/annotate \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"field": "email", "comment": "用户登录邮箱（PII）"}'
+```
+
+### 质量增强端点
+
+对 v1.4.0 `quality/rules` 端点的补充（完整质量管线）。
+
+| 方法     | 端点                                          | 说明                    | 角色     |
+| ------ | ------------------------------------------- | --------------------- | ------ |
+| `POST` | `/api/v1/datasets/{name}/quality/filter`    | 按表达式过滤行               | EDITOR |
+| `GET`  | `/api/v1/datasets/{name}/quality/report`    | 生成质量报告                | VIEWER |
+| `POST` | `/api/v1/datasets/{name}/quality/deduplicate` | 去重（相似度/精确匹配）        | EDITOR |
+| `GET`  | `/api/v1/datasets/{name}/quality/profile`   | 列分布画像                 | VIEWER |
+| `POST` | `/api/v1/datasets/{name}/quality/llm_label` | LLM 标注（分类/打标）         | EDITOR |
+| `POST` | `/api/v1/datasets/{name}/quality/extract`   | LLM 结构化抽取             | EDITOR |
+| `POST` | `/api/v1/datasets/{name}/quality/mask-preview` | 脱敏预览（读前 5 行，返 before/after） | EDITOR |
+
+```bash
+# 脱敏预览：不写回，仅展示前 5 行的脱敏前后对比
+curl -X POST http://localhost:8000/api/v1/datasets/users/quality/mask-preview \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### 索引管理端点
+
+| 方法      | 端点                                            | 说明                          | 角色     |
+| ------- | --------------------------------------------- | --------------------------- | ------ |
+| `POST`  | `/api/v1/datasets/{name}/index/vector`        | 创建向量索引（IVF_PQ，≥256 行自动建）    | EDITOR |
+| `POST`  | `/api/v1/datasets/{name}/index/fts`           | 创建全文索引（BM25 + 可选 jieba 分词列） | EDITOR |
+| `POST`  | `/api/v1/datasets/{name}/index/scalar`        | 创建标量索引（BTREE/BITMAP）        | EDITOR |
+| `POST`  | `/api/v1/datasets/{name}/index/facets`        | 创建分面索引                      | EDITOR |
+| `GET`   | `/api/v1/datasets/{name}/index`               | 列出全部索引                      | VIEWER |
+| `DELETE`| `/api/v1/datasets/{name}/index/{index_name}`  | 删除索引                        | EDITOR |
+
+### 清洗（语义写回）
+
+将声明式清洗步骤编译为 DuckDB SQL，经 `restore_dataset` 写回 Lance（结构化数据集）。
+
+| 方法     | 端点                              | 说明                                | 角色     |
+| ------ | ------------------------------- | --------------------------------- | ------ |
+| `POST` | `/api/v1/datasets/{name}/clean` | 语义清洗（body：`steps`/`filters`/`write_back`/`limit`） | EDITOR |
+
+```bash
+curl -X POST http://localhost:8000/api/v1/datasets/users/clean \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"steps": [{"op": "trim", "column": "name"},
+                   {"op": "lowercase", "column": "email"}], "write_back": true}'
+```
+
+### 异步任务（`/api/v1/tasks/*`）
+
+长耗时操作（摄取/索引/备份）的异步变体。所有端点要求 VIEWER（创建类要求对应操作的角色）。
+
+| 方法     | 端点                                              | 说明               |
+| ------ | ----------------------------------------------- | ---------------- |
+| `GET`  | `/api/v1/tasks`                                 | 列出任务（含历史，支持状态过滤） |
+| `GET`  | `/api/v1/tasks/{task_id}/status`                | 查询任务状态           |
+| `POST` | `/api/v1/datasets/{name}/ingest/async`          | 异步摄取本地文件         |
+| `POST` | `/api/v1/datasets/{name}/ingest/documents/async`| 异步摄取 PDF/文档      |
+| `POST` | `/api/v1/datasets/{name}/index/vector/async`    | 异步建向量索引          |
+| `POST` | `/api/v1/datasets/{name}/index/fts/async`       | 异步建全文索引          |
+| `POST` | `/api/v1/backup/create/async`                   | 异步创建备份           |
+| `POST` | `/api/v1/backup/restore/async`                  | 异步恢复备份           |
+
+### 知识图谱模板与版本管理
+
+对第 4 节 KG 端点的补充。模板路径暴露了 hyper-extract 的多模板能力；KA 版本支持增量、回滚与清理。
+
+| 方法      | 端点                                  | 说明                              | 角色     |
+| ------- | ----------------------------------- | ------------------------------- | ------ |
+| `GET`   | `/api/v1/kg/doc-types`             | 列出可用文档类型（解析为模板）                 | VIEWER |
+| `GET`   | `/api/v1/kg/templates`             | 列出全部模板                          | VIEWER |
+| `GET`   | `/api/v1/kg/templates/{template_path}` | 获取模板详情（`{template_path:path}`） | VIEWER |
+| `GET`   | `/api/v1/kg/ka-versions/{dataset}` | 列出某数据集的 KA 版本                   | VIEWER |
+| `POST`  | `/api/v1/kg/ka-rollback`           | 回滚到指定 KA 版本                     | ADMIN  |
+| `POST`  | `/api/v1/kg/ka-prune`              | 清理旧版本 KA dump                   | ADMIN  |
+| `POST`  | `/api/v1/kg/build`                 | body 支持 `incremental:true`（增量；无 KA dump 时回退全量） | ADMIN  |
+| `POST`  | `/api/v1/kg/ask/stream`            | KG 问答流式（SSE）                    | VIEWER |
+| `POST`  | `/api/v1/kg/query/graphrag`        | GraphRAG 问答（body：`question`+`dataset`） | VIEWER |
+| `POST`  | `/api/v1/kg/search`                | KG 实体检索                         | VIEWER |
+| `POST`  | `/api/v1/kg/rebuild-index`         | 重建 KA 嵌入索引                      | ADMIN  |
+| `POST`  | `/api/v1/kg/export-obsidian`       | 导出为 Obsidian 知识库                | VIEWER |
+
+```bash
+# 增量构建 KG（只处理新增 chunk，复用已有 KA dump）
+curl -X POST http://localhost:8000/api/v1/kg/build \
+  -H "X-API-Key: your-key" -H "Content-Type: application/json" \
+  -d '{"dataset_name": "docs", "incremental": true}'
+```
+
+### RAG 增强（`/api/v1/rag/*`）
+
+RAG 端点请求体字段为 **`question`** 与 **`dataset_name`**（非 `query`/`dataset`）。
+`use_kg: bool`（默认 `true`）支持 per-query 控制 GraphRAG 增强与否——无需关闭全局 `hugegraph.enabled`。
+
+| 方法     | 端点                       | 说明                                            |
+| ------ | ------------------------ | --------------------------------------------- |
+| `POST` | `/api/v1/rag/query`      | RAG 问答（body：`question`/`dataset_name`/`top_k`/`retrieval_strategy`/`use_kg`） |
+| `POST` | `/api/v1/rag/query/stream` | 流式 RAG（SSE，先 citation 再内容）                  |
+| `POST` | `/api/v1/rag/extract`    | RAG 抽取（仅返回检索+抽取结果，不生成答案）                      |
+| `GET`  | `/api/v1/rag/templates`  | 列出可用 prompt 模板                                |
+
+```bash
+# 关闭 GraphRAG，做纯向量/混合检索对比
+curl -X POST http://localhost:8000/api/v1/rag/query \
+  -H "X-API-Key: your-key" -H "Content-Type: application/json" \
+  -d '{"question": "架构是什么？", "dataset_name": "docs", "use_kg": false, "retrieval_strategy": "hybrid"}'
 ```
 
 ### v1.5.2 安全加固说明

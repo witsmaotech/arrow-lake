@@ -1,0 +1,441 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>CLI 完全参考 · Arrow Lake 文档</title>
+<link rel="stylesheet" href="../assets/tokens.css"/>
+<link rel="stylesheet" href="../assets/app.css"/>
+<link rel="stylesheet" href="../assets/landing.css"/>
+<link rel="stylesheet" href="docs.css"/>
+</head>
+<body>
+<nav class="lnav">
+  <a class="brand" href="../index.html"><span class="brand-mark">AL</span><span><b class="brand-name">Arrow Lake</b><span class="brand-sub">文档</span></span></a>
+  <div class="lnav-links">
+    <a href="index.html">文档中心</a>
+    <a href="../architecture.html">架构文档</a>
+  </div>
+  <div class="lnav-cta"><a class="btn btn-primary btn-sm" href="../system.html">打开控制台 →</a></div>
+</nav>
+<div class="subnav">
+  <a href="index.html">文档中心</a><span class="crumb-sep">/</span><a href="cli.html" style="color:var(--teal-bright)">CLI 参考</a>
+  <span class="pager-spacer"></span>
+  <div class="prevnext">
+    <a href="index.html"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg><span class="lbl">目录</span></a>
+    <a href="gravitino.html"><span class="lbl">下一章</span><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+  </div>
+</div>
+
+<header class="tut-hero">
+  <div class="tut-hero-inner">
+    <span class="num-badge">第 13 章 · CLI</span>
+    <h1>CLI 完全参考手册</h1>
+    <p class="sub">涵盖全部 100+ 命令、参数说明、示例输出与 Python SDK 对应关系。配合 5 个端到端实战场景，从本地开发到 S3/MinIO 生产部署一气呵成。</p>
+    <div class="tut-meta">
+      <span><i></i>难度 · 入门到进阶</span>
+      <span><i></i>耗时 · 25 分钟</span>
+      <span><i></i>依赖 · arrow-lake CLI · 示例数据 examples/data/</span>
+    </div>
+  </div>
+</header>
+
+<article class="tut-body">
+  <p><code>arrow-lake</code> 是覆盖数据湖全生命周期的命令行工具：摄取、索引、搜索、SQL 分析、RAG、知识图谱、质量、备份、审计、血缘、生命周期。本教程所有实战场景使用 <code>examples/data/</code> 目录的真实示例数据，可直接运行。</p>
+
+  <h2><span class="hn">1</span>全局选项</h2>
+  <p>所有子命令均继承主命令的全局选项，<strong>全局选项必须放在子命令之前</strong>：<code>arrow-lake --base-uri ./lake status</code> 正确，<code>arrow-lake status --base-uri ./lake</code> 错误。</p>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">全局选项</span></figcaption><pre><code>arrow-lake --base-uri ./data/lake --config prod.yaml &lt;子命令&gt;</code></pre></figure>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>选项</th><th>默认值</th><th>环境变量</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><code>--base-uri</code></td><td><code>./data/lake</code></td><td><code>ARROW_LAKE_BASE_URI</code></td><td>数据湖存储根路径（本地路径或桶内前缀）</td></tr>
+      <tr><td><code>--config</code></td><td>无</td><td>—</td><td>YAML 配置文件路径</td></tr>
+      <tr><td><code>--verbose</code> / <code>-v</code></td><td><code>0</code></td><td>—</td><td>增加输出详细程度（可叠加 -v, -vv, -vvv）</td></tr>
+      <tr><td><code>--quiet</code> / <code>-q</code></td><td>否</td><td>—</td><td>仅显示错误输出</td></tr>
+      <tr><td><code>--format</code></td><td><code>table</code></td><td>—</td><td>输出格式：<code>table</code> / <code>json</code> / <code>csv</code></td></tr>
+    </tbody>
+  </table></div>
+
+  <h2><span class="hn">2</span>顶层命令</h2>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">serve / version / status / demo</span></figcaption><pre><code>arrow-lake serve --host 0.0.0.0 --port 8000    <span class="c-rem"># 启动 API 服务</span>
+arrow-lake serve --reload                        <span class="c-rem"># 开发模式热重载</span>
+arrow-lake version                               <span class="c-rem"># 查看 arrow-lake/python/pyarrow/duckdb 版本表</span>
+arrow-lake status                                <span class="c-rem"># 列出数据集（catalog list 别名）</span>
+arrow-lake --base-uri ./my_lake status
+arrow-lake demo                                  <span class="c-rem"># 合成数据演示向量/SQL/FTS（无需 Docker）</span>
+arrow-lake demo --no-cleanup                     <span class="c-rem"># 保留演示数据</span>
+arrow-lake multimodal-demo                       <span class="c-rem"># 多模态演示（图片 + 文本 + 结构化）</span></code></pre></figure>
+  <p>启动后访问 <code>http://localhost:8000/docs</code> 查看 Swagger 文档。</p>
+
+  <h2><span class="hn">3</span>catalog — 数据集管理</h2>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">catalog 命令组</span></figcaption><pre><code>arrow-lake catalog list                          <span class="c-rem"># 列出全部数据集（--json JSON 格式）</span>
+arrow-lake catalog info papers                   <span class="c-rem"># 数据集详情（行数/列/schema/版本）</span>
+arrow-lake catalog delete old_data --yes         <span class="c-rem"># 删除（跳过确认）</span>
+arrow-lake catalog rename old_name new_name      <span class="c-rem"># 重命名</span>
+arrow-lake catalog copy documents documents_backup   <span class="c-rem"># 复制</span>
+arrow-lake catalog merge --sources <span class="c-str">"q1,q2,q3"</span> yearly   <span class="c-rem"># 合并（schema 须一致）</span>
+arrow-lake catalog health                        <span class="c-rem"># 存储可达性 / DuckDB 池 / 运行时间</span>
+arrow-lake catalog inspect documents             <span class="c-rem"># 数据集元数据（catalog 视图）</span></code></pre></figure>
+  <div class="callout warn"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>警告</div><p><code>catalog delete</code> 不可恢复，建议先执行 <code>backup create</code>。</p></div>
+
+  <h2><span class="hn">4</span>ingest — 数据摄取</h2>
+  <p>支持文件、远程 URL、图片、PDF、视频等多种来源，另有 create/append/upsert/delete-rows/update-rows 数据集级操作。</p>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">ingest 命令组</span></figcaption><pre><code><span class="c-rem"># 本地文件（CSV/JSON/JSONL/Parquet，支持通配符与混合格式）</span>
+arrow-lake ingest files sales examples/data/transactions/sales_2024.csv
+arrow-lake ingest files logs ./logs/api.jsonl ./logs/service.json
+arrow-lake ingest files raw_data ./csv/*.csv ./parquet/*.parquet
+
+<span class="c-rem"># 远程 URL / 图片 / PDF / 视频</span>
+arrow-lake ingest http papers https://arxiv.org/papers/2401.00001
+arrow-lake ingest images photos ./photos/vacation/*.jpg
+arrow-lake ingest documents papers ./papers/report.pdf
+arrow-lake ingest videos frames ./videos/lecture.mp4
+
+<span class="c-rem"># 数据集级操作</span>
+arrow-lake ingest create sales --data sales_2024.csv
+arrow-lake ingest append sales --data new_records.parquet
+arrow-lake ingest upsert products --data updated.csv --on product_id
+arrow-lake ingest delete-rows sales --where <span class="c-str">"year &lt; 2020"</span>
+arrow-lake ingest update-rows products --where <span class="c-str">"category = 'electronics'"</span> --set <span class="c-str">'{"price": 99.99}'</span></code></pre></figure>
+  <figure class="code"><figcaption><span class="lang">text</span><span class="file">摄取输出示例</span></figcaption><pre><code>Ingestion: 3 file(s) -> sales
+┏━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃ Metric          ┃ Value        ┃
+┡━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│ Rows ingested   │ 15000        │
+│ Dataset         │ sales        │
+│ Files processed │ 3            │
+│ Duration (s)    │ 1.23         │
+└────────────────┴─────────────┘</code></pre></figure>
+
+  <h2><span class="hn">5</span>search — 搜索</h2>
+  <p>五种搜索模式，覆盖向量检索、全文检索、混合检索、分面搜索和集成搜索。</p>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">搜索命令组</span></figcaption><pre><code><span class="c-rem"># 向量相似度搜索（先用嵌入模型编码 query，再 ANN 搜索）</span>
+arrow-lake search vector papers \
+    --query <span class="c-str">"transformer attention mechanism"</span> --top-k <span class="c-str">5</span> \
+    --column text_embedding --model Qwen/Qwen3-Embedding-0.6B
+
+<span class="c-rem"># 全文搜索（BM25，中文自动 jieba 分词）</span>
+arrow-lake search fts papers --query <span class="c-str">"attention mechanism"</span> --top-k <span class="c-str">10</span>
+
+<span class="c-rem"># 混合搜索（向量 + FTS，RRF 融合）</span>
+arrow-lake search hybrid papers --query <span class="c-str">"transformer architecture"</span> \
+    --vector-column text_embedding --fts-column text_content
+
+<span class="c-rem"># 分面搜索（向量 + 分组统计）</span>
+arrow-lake search faceted products --query <span class="c-str">"laptop"</span> --facets <span class="c-str">"category,brand"</span> --top-k <span class="c-str">20</span>
+
+<span class="c-rem"># 集成搜索（跨多嵌入列加权融合）</span>
+arrow-lake search ensemble papers --query <span class="c-str">"transformer architecture"</span> \
+    --columns <span class="c-str">"text_embedding,title_embedding"</span> \
+    --weights <span class="c-str">'{"text_embedding": 0.7, "title_embedding": 0.3}'</span></code></pre></figure>
+
+  <h2><span class="hn">6</span>index — 索引管理</h2>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">index 命令组</span></figcaption><pre><code><span class="c-rem"># 向量索引（IVF_PQ / IVF_FLAT / IVF_HNSW_PQ；metric: l2/cosine/dot）</span>
+arrow-lake index vector papers --column text_embedding --metric l2 --type IVF_PQ --replace
+
+<span class="c-rem"># 全文索引（中文自动 jieba 分词）</span>
+arrow-lake index fts papers --column text_content
+
+<span class="c-rem"># 标量索引（低基数列用 BITMAP，其余 BTREE）</span>
+arrow-lake index scalar papers --column category
+
+<span class="c-rem"># 批量分面索引 / 列出 / 重建 / 删除</span>
+arrow-lake index facets papers
+arrow-lake index list-vector papers
+arrow-lake index info-vector papers
+arrow-lake index rebuild-vector papers --column text_embedding
+arrow-lake index delete-vector papers text_embedding_idx
+arrow-lake index info-fts papers
+arrow-lake index delete-fts papers</code></pre></figure>
+
+  <h2><span class="hn">7</span>query — SQL 查询</h2>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">query 命令组</span></figcaption><pre><code><span class="c-rem"># DuckDB OLAP SQL（聚合 / 窗口 / JOIN）</span>
+arrow-lake query sql sales \
+    --sql <span class="c-str">"SELECT category, COUNT(*) as cnt, AVG(amount) as avg_amount
+           FROM sales GROUP BY category ORDER BY cnt DESC"</span> --max-rows <span class="c-str">50</span>
+
+<span class="c-rem"># 物化视图（持久化可复用结果）</span>
+arrow-lake query materialize sales \
+    --sql <span class="c-str">"SELECT category, COUNT(*) as cnt FROM sales GROUP BY category"</span> \
+    --name category_summary --ttl-days <span class="c-str">30</span>
+
+<span class="c-rem"># 元数据查询 / 清理过期物化视图 / Daft DataFrame</span>
+arrow-lake query meta papers --sql <span class="c-str">"SELECT * FROM papers LIMIT 5"</span>
+arrow-lake query cleanup-materialized --ttl-days <span class="c-str">30</span>
+arrow-lake query daft papers --columns id,title --limit <span class="c-str">10</span></code></pre></figure>
+  <figure class="code"><figcaption><span class="lang">text</span><span class="file">SQL 输出示例</span></figcaption><pre><code>Query Result (5 rows)
+┏━━━━━━━━━━┳━━━━━━┳━━━━━━━━━━━━┓
+┃ category  ┃ cnt  ┃ avg_amount ┃
+┡━━━━━━━━━━╇━━━━━━╇━━━━━━━━━━━━╩
+│ electronics│ 5420│ 234.56     │
+│ clothing   │ 3210│ 89.12      │
+│ books      │ 2870│ 34.78      │
+└───────────┴─────┴────────────┘</code></pre></figure>
+
+  <h2><span class="hn">8</span>export / embed / quality / backup</h2>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">导出与嵌入</span></figcaption><pre><code><span class="c-rem"># 导出（parquet/csv，可指定列）</span>
+arrow-lake export papers --output result.parquet --format parquet
+arrow-lake export papers --output subset.parquet --columns id,title,text_content
+
+<span class="c-rem"># 独立向量生成（不依赖数据集）</span>
+arrow-lake embed text <span class="c-str">"transformer attention mechanism"</span> \
+    --model Qwen/Qwen3-Embedding-0.6B --source huggingface
+arrow-lake embed image ./photos/cat.jpg --model openai/clip-vit-base-patch32</code></pre></figure>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">质量与备份</span></figcaption><pre><code><span class="c-rem"># 去重（exact/perceptual/both；flag/remove）</span>
+arrow-lake quality dedup sales --strategy exact --action remove
+arrow-lake quality dedup photos --strategy perceptual --action flag --threshold <span class="c-str">10</span>
+arrow-lake quality filter papers --filters <span class="c-str">"null_check,min_length"</span> --mode all
+
+<span class="c-rem"># 备份恢复</span>
+arrow-lake backup create --datasets papers images
+arrow-lake backup create --backup-id daily-2024-04-24
+arrow-lake backup list
+arrow-lake backup restore daily-2024-04-24 --datasets papers
+arrow-lake backup delete daily-2024-04-24</code></pre></figure>
+  <div class="callout"><div class="ch">备份存储</div><p>本地存储时备份在 <code>{base_uri}/.backups/</code>；S3/MinIO 时备份存入对象存储 <code>backups/{backup_id}/</code> 前缀。</p></div>
+
+  <h2><span class="hn">9</span>kg — 知识图谱</h2>
+  <p>所有 KG 命令为异步操作，需要 HugeGraph 服务运行中。</p>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">kg 命令组</span></figcaption><pre><code>arrow-lake kg build papers                  <span class="c-rem"># 全量构建（返回 task_id）</span>
+arrow-lake kg build papers --incremental     <span class="c-rem"># 增量：仅喂入新 chunk（无 KA dump 回退全量）</span>
+arrow-lake kg build papers --full            <span class="c-rem"># 显式全量重建</span>
+arrow-lake kg list-doc-types                 <span class="c-rem"># 列出文档类型（解析为模板）</span>
+arrow-lake kg list-templates                 <span class="c-rem"># 列出抽取模板（--category 过滤）</span>
+arrow-lake kg describe-template general/concept_graph   <span class="c-rem"># 模板详情</span>
+arrow-lake kg status task_abc123             <span class="c-rem"># 构建进度</span>
+arrow-lake kg stats                          <span class="c-rem"># 图谱统计</span>
+arrow-lake kg query <span class="c-str">"g.V().has('type','paper').limit(10)"</span>
+arrow-lake kg neighbors <span class="c-str">"paper:2401.00001"</span> --depth <span class="c-str">2</span>
+arrow-lake kg export --output graph.json
+arrow-lake kg import graph.json
+arrow-lake kg delete --yes                   <span class="c-rem"># 删除图谱（不可恢复）</span></code></pre></figure>
+  <h3>图遍历算法（traverser，v1.2）</h3>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">8 种遍历算法</span></figcaption><pre><code>arrow-lake kg traverser all-shortest-paths v1 v2              <span class="c-rem"># 所有最短路径</span>
+arrow-lake kg traverser weighted-shortest v1 v2              <span class="c-rem"># 加权最短路径</span>
+arrow-lake kg traverser single-source-shortest v1            <span class="c-rem"># 单源最短路径</span>
+arrow-lake kg traverser multi-node-shortest \
+    --sources <span class="c-str">'["v1","v2"]'</span> --targets <span class="c-str">'["v3","v4"]'</span>  <span class="c-rem"># 多节点</span>
+arrow-lake kg traverser rays v1 --max-depth <span class="c-str">5</span>                <span class="c-rem"># 射线（非环路径）</span>
+arrow-lake kg traverser rings v1 --max-depth <span class="c-str">5</span>              <span class="c-rem"># 环检测</span>
+arrow-lake kg traverser crosspoints v1 v2                    <span class="c-rem"># 交叉点</span>
+arrow-lake kg traverser customized v1 \
+    --steps <span class="c-str">'[{"labels":["person"],"direction":"OUT"}]'</span> --with-vertex   <span class="c-rem"># 自定义多步</span></code></pre></figure>
+  <h3>图 OLAP 算法（algo，v1.2）</h3>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">9 种算法</span></figcaption><pre><code>arrow-lake kg algo pagerank                  <span class="c-rem"># PageRank（重要节点）</span>
+arrow-lake kg algo louvain                    <span class="c-rem"># 社区发现</span>
+arrow-lake kg algo label-propagation          <span class="c-rem"># 社区检测</span>
+arrow-lake kg algo wcc                        <span class="c-rem"># 弱连通分量</span>
+arrow-lake kg algo triangle-count             <span class="c-rem"># 三角计数</span>
+arrow-lake kg algo degree-centrality          <span class="c-rem"># 度中心性</span>
+arrow-lake kg algo closeness-centrality       <span class="c-rem"># 接近中心性</span>
+arrow-lake kg algo k-core --k <span class="c-str">3</span>              <span class="c-rem"># K-core 分解</span>
+arrow-lake kg algo betweenness-centrality     <span class="c-rem"># 介数中心性</span></code></pre></figure>
+
+  <h2><span class="hn">10</span>rag — RAG 问答</h2>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">rag 命令组</span></figcaption><pre><code><span class="c-rem"># 单轮问答</span>
+arrow-lake rag query papers <span class="c-str">"Transformer 的自注意力机制是如何工作的？"</span> \
+    --top-k <span class="c-str">5</span> --strategy hybrid --session-id session_001
+
+<span class="c-rem"># 流式输出 / 批量查询 / 实体抽取</span>
+arrow-lake rag stream papers <span class="c-str">"什么是 RAG？"</span> --top-k <span class="c-str">5</span>
+arrow-lake rag batch papers --questions <span class="c-str">'["问题1","问题2"]'</span> --top-k <span class="c-str">5</span> --concurrency <span class="c-str">5</span>
+arrow-lake rag extract papers --top-k <span class="c-str">20</span>
+
+<span class="c-rem"># 模板 / 反馈 / 历史 / 清理</span>
+arrow-lake rag templates
+arrow-lake rag feedback s1 <span class="c-str">0</span> positive --comment <span class="c-str">"回答准确"</span>
+arrow-lake rag history s1
+arrow-lake rag cleanup-sessions
+arrow-lake rag get-feedback s1</code></pre></figure>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th><code>rag query</code> 参数</th><th>默认值</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><code>--top-k</code></td><td><code>5</code></td><td>检索上下文块数量</td></tr>
+      <tr><td><code>--strategy</code></td><td>配置默认</td><td>检索策略：<code>vector</code> / <code>fts</code> / <code>hybrid</code></td></tr>
+      <tr><td><code>--template</code></td><td>配置默认</td><td>提示词模板：<code>default_qa</code> / <code>graph_qa</code></td></tr>
+      <tr><td><code>--session-id</code></td><td>无</td><td>会话 ID（多轮对话）</td></tr>
+      <tr><td><code>--max-context-tokens</code></td><td><code>4096</code></td><td>最大上下文 token 数</td></tr>
+      <tr><td><code>--use-graph</code></td><td>否</td><td>启用 GraphRAG 增强检索</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2><span class="hn">11</span>audit / lineage / maintenance / config</h2>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">审计与血缘</span></figcaption><pre><code><span class="c-rem"># 审计追踪（HMAC 完整性验证 / 异常检测）</span>
+arrow-lake audit record dataset_ingested --dataset papers --actor admin \
+    --payload <span class="c-str">'{"rows": 500, "format": "parquet"}'</span>
+arrow-lake audit verify audit-20260426-001
+arrow-lake audit query --dataset papers --start <span class="c-str">2026-01-01</span> --end_time <span class="c-str">2026-04-01</span>
+arrow-lake audit export papers --output audit_trail.json
+arrow-lake audit analyze                         <span class="c-rem"># z-score 异常检测</span>
+
+<span class="c-rem"># 数据血缘</span>
+arrow-lake lineage record sales merge --sources <span class="c-str">"raw_sales,cleaned_sales"</span> --transform-type etl
+arrow-lake lineage history sales
+arrow-lake lineage query <span class="c-str">"SELECT * FROM lineage WHERE dataset_name = 'sales'"</span></code></pre></figure>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">维护与配置</span></figcaption><pre><code>arrow-lake maintenance status                     <span class="c-rem"># 调度器状态</span>
+arrow-lake maintenance run --json                 <span class="c-rem"># 执行维护周期（压缩 + 版本清理）</span>
+arrow-lake config show                            <span class="c-rem"># 显示当前完整配置</span>
+arrow-lake config init --output prod.yaml         <span class="c-rem"># 生成配置模板</span></code></pre></figure>
+
+  <h2><span class="hn">12</span>lifecycle — Blob 生命周期</h2>
+  <p>S3/MinIO 对象的存储分层、Glacier 恢复、成本估算。</p>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">lifecycle 命令组</span></figcaption><pre><code>arrow-lake lifecycle config                      <span class="c-rem"># 当前配置</span>
+arrow-lake lifecycle rules                       <span class="c-rem"># 预览将应用的规则</span>
+arrow-lake lifecycle rules --prefix data/archive/
+arrow-lake lifecycle apply                       <span class="c-rem"># 应用规则</span>
+arrow-lake lifecycle status                      <span class="c-rem"># 查看存储分层</span>
+arrow-lake lifecycle restore data/old-file.parquet --days <span class="c-str">7</span>   <span class="c-rem"># 恢复 Glacier 对象</span>
+arrow-lake lifecycle estimate --size-gb <span class="c-str">1000</span> --target-tier STANDARD_IA  <span class="c-rem"># 成本估算</span></code></pre></figure>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th><code>estimate</code> 目标分层</th><th>语义</th></tr></thead>
+    <tbody>
+      <tr><td><code>STANDARD_IA</code></td><td>低频访问层</td></tr>
+      <tr><td><code>GLACIER</code></td><td>归档层</td></tr>
+      <tr><td><code>DEEP_ARCHIVE</code></td><td>深度归档层</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2><span class="hn">13</span>场景导航别名（v1.5.0+）</h2>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>别名</th><th>等效命令组</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><code>arrow-lake knowledge</code></td><td>rag + kg</td><td>知识构建与管理导航</td></tr>
+      <tr><td><code>arrow-lake connect</code></td><td>ingest + catalog</td><td>数据连接与摄取导航</td></tr>
+      <tr><td><code>arrow-lake analyze</code></td><td>query + search + export</td><td>数据分析与检索导航</td></tr>
+      <tr><td><code>arrow-lake govern</code></td><td>audit + lineage + backup + maintenance</td><td>数据治理与运维导航</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2><span class="hn">14</span>存储配置：本地与 S3/MinIO</h2>
+  <p>Arrow Lake 支持将数据存储在 S3 或 MinIO 上，<strong>CLI 命令不需要改变</strong>——只需通过配置文件或环境变量指定 S3 连接信息。<code>--base-uri</code> 在 S3 模式下是<strong>桶内前缀</strong>，不是完整路径。</p>
+  <figure class="code"><figcaption><span class="lang">text</span><span class="file">S3 路径拼接</span></figcaption><pre><code>实际路径 = s3://{s3_bucket}/{base_uri}/{dataset}.lance
+<span class="c-rem"># 例如 --base-uri ./data + s3_bucket=arrow-lake → s3://arrow-lake/data/papers.lance</span></code></pre></figure>
+  <figure class="code"><figcaption><span class="lang">yaml</span><span class="file">minio.yaml</span></figcaption><pre><code>storage:
+  backend: minio              <span class="c-rem"># minio | s3 | gcs | local</span>
+  s3_endpoint: <span class="c-str">"http://localhost:9000"</span>
+  s3_access_key: <span class="c-str">"minioadmin"</span>
+  s3_secret_key: <span class="c-str">"minioadmin"</span>
+  s3_bucket: <span class="c-str">"arrow-lake"</span>
+  s3_region: <span class="c-str">"us-east-1"</span></code></pre></figure>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">三种配置方式</span></figcaption><pre><code><span class="c-rem"># 方式一：YAML（推荐）</span>
+arrow-lake --config minio.yaml --base-uri ./data status
+
+<span class="c-rem"># 方式二：ARROW_LAKE__ 前缀环境变量</span>
+export ARROW_LAKE__STORAGE__BACKEND=minio
+export ARROW_LAKE__STORAGE__S3_ENDPOINT=http://localhost:9000
+export ARROW_LAKE__STORAGE__S3_ACCESS_KEY=minioadmin
+export ARROW_LAKE__STORAGE__S3_SECRET_KEY=minioadmin
+export ARROW_LAKE__STORAGE__S3_BUCKET=arrow-lake
+
+<span class="c-rem"># 方式三：AWS 标准环境变量</span>
+export AWS_ACCESS_KEY_ID=minioadmin
+export AWS_SECRET_ACCESS_KEY=minioadmin
+export S3_BUCKET=arrow-lake</code></pre></figure>
+  <div class="callout tip"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-9"/></svg>配置优先级</div><p>YAML 配置文件（最高） &gt; 环境变量（<code>ARROW_LAKE__*</code>） &gt; <code>.env</code> 文件 &gt; 代码默认值。系统检测到 <code>s3_access_key</code> 为空或以 <code>&lt;</code> 开头时，会静默回退为本地存储。</p></div>
+
+  <h2><span class="hn">15</span>实战场景</h2>
+  <h3>场景一：科研论文管理（本地）</h3>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">摄取 → 索引 → 搜索 → 分析 → 导出</span></figcaption><pre><code>arrow-lake --base-uri ./paper_lake ingest files papers examples/data/papers/metadata.csv
+arrow-lake --base-uri ./paper_lake ingest files papers_zh examples/data/papers/metadata_zh.csv
+arrow-lake --base-uri ./paper_lake ingest documents papers examples/data/papers/full_text/*.pdf
+
+arrow-lake --base-uri ./paper_lake index fts papers --column text_content
+arrow-lake --base-uri ./paper_lake index vector papers --column text_embedding --type IVF_PQ
+
+arrow-lake --base-uri ./paper_lake search fts papers --query <span class="c-str">"attention mechanism"</span> --top-k <span class="c-str">5</span>
+arrow-lake --base-uri ./paper_lake search hybrid papers --query <span class="c-str">"transformer architecture"</span>
+arrow-lake --base-uri ./paper_lake search fts papers_zh --query <span class="c-str">"知识图谱 大模型"</span> --top-k <span class="c-str">5</span>
+
+arrow-lake --base-uri ./paper_lake query sql papers \
+    --sql <span class="c-str">"SELECT category, COUNT(*) as cnt FROM papers GROUP BY category ORDER BY cnt DESC"</span>
+
+arrow-lake --base-uri ./paper_lake export papers --output ml_papers.parquet --columns id,title,authors,year</code></pre></figure>
+  <h3>场景二：多媒体数据湖（本地）</h3>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">图片 + 视频跨模态搜索</span></figcaption><pre><code>arrow-lake --base-uri ./media_lake ingest files photos examples/data/photos/*.jpg
+arrow-lake --base-uri ./media_lake ingest videos clips examples/data/videos/lecture_demo.mp4
+arrow-lake embed image examples/data/photos/sunset.jpg --model openai/clip-vit-base-patch32
+arrow-lake embed text <span class="c-str">"golden hour landscape photography"</span>
+arrow-lake --base-uri ./media_lake index vector photos --column image_embedding
+arrow-lake --base-uri ./media_lake search vector photos --query <span class="c-str">"sunset over the ocean"</span> --column image_embedding</code></pre></figure>
+  <h3>场景三：数据分析工作流（本地）</h3>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">质量检查 → SQL 分析 → 物化 → 备份</span></figcaption><pre><code>arrow-lake --base-uri ./analytics_lake ingest files transactions examples/data/transactions/sales_2024.csv
+arrow-lake --base-uri ./analytics_lake quality dedup transactions --strategy both --action flag
+arrow-lake --base-uri ./analytics_lake quality filter transactions --filters <span class="c-str">"null_check,range_check"</span> --mode all
+
+arrow-lake --base-uri ./analytics_lake query sql transactions \
+    --sql <span class="c-str">"SELECT DATE(timestamp) as day, COUNT(*) as tx_count, SUM(amount) as total
+           FROM transactions GROUP BY day ORDER BY day DESC LIMIT 30"</span>
+
+arrow-lake --base-uri ./analytics_lake query materialize transactions \
+    --sql <span class="c-str">"SELECT user_id, COUNT(*) as tx_count FROM transactions GROUP BY user_id"</span> \
+    --name user_summary --ttl-days <span class="c-str">7</span>
+
+arrow-lake --base-uri ./analytics_lake backup create --datasets transactions --backup-id pre-cleanup</code></pre></figure>
+  <h3>场景四：RAG 问答系统（本地）</h3>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">知识图谱增强 RAG</span></figcaption><pre><code>arrow-lake --base-uri ./rag_lake ingest files knowledge examples/data/kb/knowledge_zh.jsonl
+arrow-lake --base-uri ./rag_lake index vector knowledge --column text_embedding
+arrow-lake --base-uri ./rag_lake index fts knowledge --column text_content
+
+arrow-lake --base-uri ./rag_lake kg build knowledge
+arrow-lake --base-uri ./rag_lake kg status &lt;task_id&gt;
+arrow-lake --base-uri ./rag_lake kg stats
+
+arrow-lake --base-uri ./rag_lake rag query knowledge_zh <span class="c-str">"HNSW 算法的时间复杂度是多少？"</span>
+arrow-lake --base-uri ./rag_lake rag query knowledge <span class="c-str">"它支持哪些压缩算法？"</span> --session-id sess_001</code></pre></figure>
+  <h3>场景五：MinIO 生产部署</h3>
+  <p>全部 CLI 命令在 S3/MinIO 环境下零改动使用，只需一次配置。所有命令只需加 <code>--config prod.yaml</code>，<code>--base-uri</code> 是桶内前缀。</p>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">零改动迁移到 MinIO</span></figcaption><pre><code>arrow-lake config init --output prod.yaml   <span class="c-rem"># 编辑填入 MinIO 连接信息</span>
+
+arrow-lake --config prod.yaml --base-uri ./datasets ingest files reports ./reports/*.csv
+arrow-lake --config prod.yaml --base-uri ./datasets catalog info reports
+arrow-lake --config prod.yaml --base-uri ./datasets index vector reports
+arrow-lake --config prod.yaml --base-uri ./datasets search hybrid reports --query <span class="c-str">"Q4 revenue"</span> --top-k <span class="c-str">5</span>
+arrow-lake --config prod.yaml --base-uri ./datasets query sql reports \
+    --sql <span class="c-str">"SELECT region, SUM(revenue) FROM reports GROUP BY region"</span>
+arrow-lake --config prod.yaml --base-uri ./datasets export reports --output /tmp/q4.parquet --columns region,revenue
+arrow-lake --config prod.yaml --base-uri ./datasets backup create --datasets reports --backup-id q4-2024-snapshot
+arrow-lake --config prod.yaml --base-uri ./datasets rag query reports <span class="c-str">"上季度各区域收入对比？"</span> --top-k <span class="c-str">10</span></code></pre></figure>
+  <div class="callout tip"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-9"/></svg>所有命令完全相同</div><p>切换存储后端无需改 CLI 命令，只是加了 <code>--config prod.yaml</code>。数据实际存储在 <code>s3://company-data/lake/datasets/reports.lance</code>。</p></div>
+
+  <h2><span class="hn">16</span>命令速查表</h2>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>场景</th><th>命令</th></tr></thead>
+    <tbody>
+      <tr><td>查看数据集</td><td><code>arrow-lake status</code></td></tr>
+      <tr><td>摄取文件 / 图片 / PDF / 远程</td><td><code>ingest files|images|documents|http &lt;ds&gt; &lt;paths...&gt;</code></td></tr>
+      <tr><td>向量 / 全文 / 混合 / 分面 / 集成搜索</td><td><code>search vector|fts|hybrid|faceted|ensemble &lt;ds&gt; --query &lt;text&gt;</code></td></tr>
+      <tr><td>创建向量 / 全文 / 标量索引</td><td><code>index vector|fts|scalar &lt;ds&gt;</code></td></tr>
+      <tr><td>SQL 查询 / 物化视图</td><td><code>query sql &lt;ds&gt; --sql &lt;sql&gt;</code> · <code>query materialize &lt;ds&gt; --sql --name</code></td></tr>
+      <tr><td>导出数据</td><td><code>export &lt;ds&gt; --output &lt;path&gt;</code></td></tr>
+      <tr><td>生成向量</td><td><code>embed text &lt;text&gt;</code> · <code>embed image &lt;path&gt;</code></td></tr>
+      <tr><td>去重 / 质量过滤</td><td><code>quality dedup &lt;ds&gt; --strategy &lt;s&gt; --action &lt;a&gt;</code></td></tr>
+      <tr><td>备份创建 / 恢复</td><td><code>backup create --datasets &lt;ds...&gt;</code> · <code>backup restore &lt;id&gt;</code></td></tr>
+      <tr><td>构建图谱 / 图谱查询</td><td><code>kg build &lt;ds&gt;</code> · <code>kg query &lt;gremlin&gt;</code></td></tr>
+      <tr><td>RAG 问答 / 流式 / 批量</td><td><code>rag query|stream|batch &lt;ds&gt; &lt;question&gt;</code></td></tr>
+      <tr><td>审计记录 / 数据血缘</td><td><code>audit record &lt;event&gt;</code> · <code>lineage record &lt;ds&gt; &lt;op&gt;</code></td></tr>
+      <tr><td>生命周期规则 / 恢复</td><td><code>lifecycle rules --prefix</code> · <code>lifecycle restore &lt;key&gt;</code></td></tr>
+      <tr><td>系统维护 / 生成配置 / 启动服务</td><td><code>maintenance run</code> · <code>config init</code> · <code>serve</code></td></tr>
+    </tbody>
+  </table></div>
+
+  <h2><span class="hn">17</span>常见问题</h2>
+  <div class="callout"><div class="ch">Q：--base-uri 能直接写 s3://bucket/prefix 吗？</div><p>不能。<code>--base-uri</code> 始终是本地路径或桶内前缀。S3 连接信息通过 <code>--config</code> 或环境变量单独提供，系统内部拼接为 <code>s3://{bucket}/{base_uri}/{dataset}.lance</code>。</p></div>
+  <div class="callout"><div class="ch">Q：配置了 S3 但忘了填密钥会怎样？</div><p>会静默回退为本地存储。系统检测到 <code>s3_access_key</code> 为空或以 <code>&lt;</code> 开头时，不传递 S3 配置给 Lance 引擎。</p></div>
+  <div class="callout"><div class="ch">Q：很多参数默认值显示"无（使用配置默认值）"是什么意思？</div><p>CLI 的 <code>--column</code>、<code>--metric</code>、<code>--strategy</code> 等参数默认值为 <code>None</code>，此时回退到 YAML 配置或 <code>arrow-lake config show</code> 的默认值。如需覆盖，通过命令行参数显式指定。</p></div>
+  <div class="callout"><div class="ch">Q：切换存储后端需要改 CLI 命令吗？</div><p>不需要。所有 CLI 命令与存储后端无关，切换只需改配置。</p></div>
+</article>
+
+<nav class="pager">
+  <a class="prev" href="deployment.html"><span class="dir"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg> 上一章</span><span class="ttl">部署与运维</span></a>
+  <a class="next" href="gravitino.html"><span class="dir">下一章 <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span><span class="ttl">Gravitino 元数据治理</span></a>
+</nav>
+
+<footer class="footer">
+  <div class="footer-inner">
+    <div><b>Arrow Lake</b> · CLI 完全参考 · v1.9.6<br/><span class="muted mono" style="font-size:.7rem">© 2026 · MIT License</span></div>
+    <div class="muted" style="font-size:.75rem">自包含可离线运行 · 源自 docs/cookbook/13</div>
+  </div>
+</footer>
+</body>
+</html>

@@ -360,50 +360,62 @@ _flow_map: dict[str, str] = {
 
 ## 10. Configuration Reference
 
+> Field names below are verified against `arrow_lake/config/workflow.py`. Passing a field that does
+> not exist raises a pydantic `ValidationError`.
+
 ### WorkflowConfig
 
-`WorkflowConfig` controls general workflow behavior:
+`WorkflowConfig` (`config/workflow.py:8-28`) controls general workflow behavior:
 
 ```python
 from arrow_lake.config import WorkflowConfig
 
 wf_config = WorkflowConfig(
-    max_retries=3,               # Maximum retry attempts per step
-    retry_delay_seconds=5,       # Initial retry backoff delay
-    default_shard_size=500,      # Default rows per shard for @foreach
-    dead_letter_enabled=True,    # Capture failed items to dead-letter
+    max_retry_attempts=3,        # Maximum retry attempts per step (>=0)
+    min_backoff_seconds=1.0,     # Minimum backoff between retries (exponential)
+    max_backoff_seconds=60.0,    # Maximum backoff between retries
+    checkpoint_enabled=True,     # Enable Lance version checkpointing before steps
+    ray_execution_enabled=False, # Enable Ray cluster execution (--with ray)
+    auto_tag_runs=True,          # Auto-generate tags from run metadata
+    artifact_retention_days=30,  # Days to retain Argo workflow artifacts
+    schedule_cron=None,          # Optional cron expression for scheduled runs
 )
 ```
 
 ### ArgoConfig
 
-`ArgoConfig` controls Argo Workflows integration:
+`ArgoConfig` (`config/workflow.py:45-62`) controls Argo Workflows integration:
 
 ```python
 from arrow_lake.config import ArgoConfig
 
 argo_config = ArgoConfig(
-    namespace="arrow-lake",      # Kubernetes namespace
-    image="arrow-lake:latest",   # Container image
-    service_account="arrow-lake",# ServiceAccount for pods
-    ttl_seconds_after_finished=3600,  # Clean up completed workflows
-    parallelism=10,              # Max parallel steps
+    namespace="arrow-lake",       # Kubernetes namespace for Argo workflows
+    service_account="arrow-lake", # Service account for workflow pods
+    workflow_timeout=3600,        # Workflow execution timeout in seconds (>=60)
+    image="arrow-lake:latest",    # Container image for workflow pods
+    image_pull_policy="IfNotPresent",  # Image pull policy
+    artifact_storage="",          # Storage backend for artifacts (s3:// or minio://)
 )
 ```
 
 ### AutoscaleConfig
 
-`AutoscaleConfig` controls dynamic resource scaling:
+`AutoscaleConfig` (`config/workflow.py:72-95`) controls dynamic GPU scaling:
 
 ```python
 from arrow_lake.config import AutoscaleConfig
 
 autoscale_config = AutoscaleConfig(
-    enabled=True,                # Enable autoscaling
-    min_workers=1,               # Minimum parallel workers
-    max_workers=8,               # Maximum parallel workers
-    scale_up_threshold=0.8,      # CPU/memory threshold to scale up
-    scale_down_cooldown=300,     # Seconds before scaling down
+    enabled=True,                 # Whether GPU autoscaling is active
+    min_workers=0,                # Minimum GPU workers (0 = scale to zero)
+    max_workers=8,                # Maximum GPU workers (>=1)
+    scale_up_timeout_seconds=300, # Max wait time for scale-up (>=60)
+    idle_timeout_seconds=600,     # Seconds of inactivity before scale-down (>=60)
+    spot_preference=0.8,          # Prefer spot instances (0.0=on-demand, 1.0=spot-only)
+    gpu_increment=0.5,            # Fractional GPU increment (must be 0.5 or 1.0)
+    cooldown_period=60.0,         # Seconds between consecutive scaling decisions
+    scale_down_protection=True,   # Wait for all tasks to finish before scaling down
 )
 ```
 
@@ -411,31 +423,81 @@ autoscale_config = AutoscaleConfig(
 
 ## 11. FlowRegistry API Reference
 
-Beyond the basic `list_flows()` and `get()` shown earlier, `FlowRegistry` provides:
+`FlowRegistry` (`workflow/base.py:65-118`) maps flow names to `FlowSpec` classes via class-level
+storage. The full API surface is intentionally small:
 
 ```python
 from arrow_lake.workflow.base import FlowRegistry
 
-# List all registered flow names
+# List all registered flow names (sorted)
 flow_names = FlowRegistry.list_flows()
 # ['batch_rag', 'embed', 'ingest', 'kg', 'maya_e2e', ...]
 
-# Get detailed info about a specific flow
-info = FlowRegistry.get_flow_info("ingest")
-# FlowInfo(
-#     name="ingest",
-#     class_name="IngestFlow",
-#     module="flows.ingest_flow",
-#     parameters=["source-path", "dataset-name", "base-uri"],
-#     description="Parallel file ingestion with dead-letter queue",
-# )
-
-# Get the flow class for instantiation
+# Get the flow class for instantiation (raises KeyError if unknown)
 IngestFlow = FlowRegistry.get("ingest")
+
+# Register / clear (used by flows/__init__.py at import time)
+FlowRegistry.register("my_flow", MyFlow)   # raises ValueError on duplicate name
+FlowRegistry.clear()                       # remove all registrations (mainly for tests)
 ```
 
 | Method | Returns | Description |
 | ------ | ------- | ----------- |
-| `list_flows()` | `list[str]` | All registered flow names |
-| `get_flow_info(name)` | `FlowInfo` | Flow metadata (class, module, params, description) |
-| `get(name)` | `type[FlowSpec]` | Flow class for direct instantiation |
+| `register(name, flow_cls)` | `None` | Register a flow class (raises `ValueError` on duplicate) |
+| `get(name)` | `type[ArrowLakeFlowSpec]` | Flow class for instantiation (raises `KeyError` if absent) |
+| `list_flows()` | `list[str]` | All registered flow names, sorted |
+| `clear()` | `None` | Remove all registrations |
+
+> There is no `get_flow_info()` / `FlowInfo` on `FlowRegistry` — to inspect a flow's parameters or
+> description, instantiate the class returned by `get(name)` and read its Metaflow `Parameter`
+> declarations directly.
+
+***
+
+## 12. Fire-and-Forget Async Tasks (TaskManager)
+
+Metaflow flows run out-of-band via the CLI. For long-running operations triggered **from the API**
+(KG builds, exports, large cleans), Arrow Lake uses an in-process `TaskManager`
+(`arrow_lake/api/tasks.py:115`) that runs coroutines in the background and exposes a polling status
+endpoint. This is the same mechanism the console drives for progress bars.
+
+### Lifecycle
+
+```text
+Client POSTs a long operation  →  TaskManager.run_background(...) returns a task_id immediately
+                                  ↓ (asyncio task, holds a strong ref to avoid GC)
+Client polls  GET /api/v1/tasks/{task_id}/status  until status == "completed" | "failed"
+```
+
+- **Fire-and-forget, GC-safe**: `run_background()` stores a strong reference to the asyncio task so
+  the runtime's garbage collector cannot silently kill it mid-flight (v1.6.1 generalized this from
+  the original export-only tracker).
+- **Status polling**: `GET /api/v1/tasks/{task_id}/status` (`routers/async_tasks.py:57`) returns
+  `AsyncTaskStatusResponse` with `status`, `progress` (0.0–1.0), `result`, `detail`, and `error`.
+- **Cross-worker visibility (v1.6.2)**: when Redis is configured, task state is written to a shared
+  Redis HASH so any API worker can answer a status poll (init via `TaskManager.init_redis_store()`).
+- **Durable history (v1.9.0)**: when the libSQL `TaskHistoryStore` is wired
+  (`TaskManager.init_history_store()`), completed/failed tasks are recorded beyond the Redis TTL, so
+  the `/tasks` list survives a Redis flush or restart.
+- **Owner notifications (v1.9.3)**: `TaskManager.init_user_state_store()` wires the my-workspace
+  notification store; task completion writes a notification for the owning user.
+
+### Programmatic Usage
+
+```python
+from arrow_lake.api.tasks import TaskManager
+
+# Fire-and-forget a coroutine; returns immediately with a task_id
+task_id = await TaskManager.run_background(
+    owner="user@example.com",
+    name="kg_build_documents",
+    coro=my_async_work(),
+)
+# Poll elsewhere:
+task = TaskManager.get_task(task_id)
+print(task.status, task.progress)   # "running" 0.42  →  "completed" 1.0
+```
+
+> **When to use which**: Metaflow (`flows/*.py`) is for multi-step, resumable, artifact-tracked
+> pipelines run via CLI/Argo. `TaskManager` is for single in-API async operations that need a
+> pollable `task_id` and a progress bar in the console.

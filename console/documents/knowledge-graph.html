@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>知识图谱与 GraphRAG · Arrow Lake 文档</title>
+<link rel="stylesheet" href="../assets/tokens.css"/>
+<link rel="stylesheet" href="../assets/app.css"/>
+<link rel="stylesheet" href="../assets/landing.css"/>
+<link rel="stylesheet" href="docs.css"/>
+</head>
+<body>
+<nav class="lnav">
+  <a class="brand" href="../index.html"><span class="brand-mark">AL</span><span><b class="brand-name">Arrow Lake</b><span class="brand-sub">文档</span></span></a>
+  <div class="lnav-links"><a href="index.html">文档中心</a><a href="../architecture.html">架构文档</a></div>
+  <div class="lnav-cta"><a class="btn btn-primary btn-sm" href="../system.html">打开控制台 →</a></div>
+</nav>
+<div class="subnav">
+  <a href="index.html">文档中心</a><span class="crumb-sep">/</span><a href="knowledge-graph.html" style="color:var(--teal-bright)">知识图谱</a>
+  <span class="pager-spacer"></span>
+  <div class="prevnext">
+    <a href="rag.html"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg><span class="lbl">上一章</span></a>
+    <a href="deployment.html"><span class="lbl">下一章</span><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+  </div>
+</div>
+
+<header class="tut-hero" style="background:radial-gradient(700px 320px at 85% -30%,rgba(244,114,182,.14),transparent 60%),var(--ink-950)">
+  <div class="tut-hero-inner">
+    <span class="num-badge" style="color:#F472B6;background:rgba(244,114,182,.16);border-color:rgba(244,114,182,.3)">第 09 章 · 图谱</span>
+    <h1>知识图谱与 GraphRAG</h1>
+    <p class="sub">Arrow Lake 内置 KG 子系统，通过 LLM 抽取实体 / 关系写入 HugeGraph；<code>hugegraph.enabled=True</code> 时 RAG 自动升级为 GraphRAG，融合图谱邻居上下文提升多跳推理。</p>
+    <div class="tut-meta"><span><i style="background:#F472B6"></i>难度 · 高级</span><span><i style="background:#F472B6"></i>耗时 · 30 分钟</span><span><i style="background:#F472B6"></i>依赖 · HugeGraph + LLM</span></div>
+  </div>
+</header>
+
+<article class="tut-body">
+  <p>知识图谱是能力层<strong>直达持久化的唯一旁路</strong>。每个数据集可拥有独立的隔离 KG（动态图 <code>kg_{ds}</code>），抽取出的实体 / 关系既能独立查询，也能在 RAG 中作为邻居上下文增强推理。</p>
+
+  <h2><span class="hn">1</span>核心概念</h2>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>能力</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><strong>kg_build 异步构建</strong></td><td>读文本块→LLM 抽实体/关系→批量写 HugeGraph，返回 <code>task_id</code>；<code>kg_build_status</code> 轮询</td></tr>
+      <tr><td><strong>查询与遍历</strong></td><td><code>kg_stats</code> 顶点/边计数、<code>kg_query</code> 原生 Gremlin、<code>kg_get_neighbors</code> K 邻居（GraphRAG 核心）</td></tr>
+      <tr><td><strong>GraphRAG 自动升级</strong></td><td>启用后 <code>rag_query()</code> 自动用 GraphRAGPipeline：抽实体→邻居遍历→与向量融合；连接失败降级标准 RAG</td></tr>
+      <tr><td><strong>doc_type 三层路由</strong></td><td>配置覆盖 &gt; TemplateGallery 元数据匹配 &gt; default；<code>extractor_backend="he"</code> 切 hyper-extract</td></tr>
+      <tr><td><strong>A 方案实体双写</strong></td><td>每实体同时写通用 <code>entity</code> + 细分 label；关系有同义词→细分边，否则降级 <code>related_to</code></td></tr>
+      <tr><td><strong>per-dataset 隔离</strong></td><td>PD 集群模式支持运行时创建多图，每文档独立 KG；按 PD→Store→Server 顺序启动</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2><span class="hn">2</span>配置与异步构建</h2>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">config + kg_build</span></figcaption><pre><code><span class="c-kw">from</span> arrow_lake <span class="c-kw">import</span> Lake
+<span class="c-kw">from</span> arrow_lake.config <span class="c-kw">import</span> ArrowLakeConfig
+
+config = ArrowLakeConfig()
+config.hugegraph.enabled = <span class="c-str">True</span>
+config.hugegraph.host = <span class="c-str">"localhost"</span>
+config.hugegraph.port = <span class="c-str">8089</span>              <span class="c-rem"># REST API 端口</span>
+config.hugegraph.graph_name = <span class="c-str">"hugegraph"</span>   <span class="c-rem"># 基础图名；实际图按数据集派生 kg_{dataset}（per-dataset 隔离）</span>
+lake = Lake(base_uri=<span class="c-str">"./data"</span>, config=config)
+
+<span class="c-kw">import</span> asyncio
+task_id = asyncio.run(lake.kg_build(<span class="c-str">"docs"</span>))
+print(<span class="c-str">f"构建任务已提交：{task_id}"</span>)</code></pre></figure>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">轮询状态</span></figcaption><pre><code>status = asyncio.run(lake.kg_build_status(task_id))
+<span class="c-kw">if</span> status:
+    print(status[<span class="c-str">"status"</span>], status[<span class="c-str">"processed_chunks"</span>], <span class="c-str">"/"</span>, status[<span class="c-str">"total_chunks"</span>])
+    print(<span class="c-str">f"实体 {status['entity_count']} 关系 {status['relation_count']}"</span>)</code></pre></figure>
+
+  <h2><span class="hn">3</span>Gremlin 查询与遍历</h2>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">标签 / 实体查询</span></figcaption><pre><code>labels = asyncio.run(lake.kg_query(<span class="c-str">"g.V().label().dedup()"</span>))
+ents  = asyncio.run(lake.kg_query(<span class="c-str">"g.V().hasLabel('entity').limit(10)"</span>))
+<span class="c-rem"># 写操作(addV/addE) 被 REST 端点拦截，仅 SDK 直调执行</span></code></pre></figure>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">K 邻居 + 最短路径</span><span class="demo">GraphRAG 基础</span></figcaption><pre><code>neighbors = asyncio.run(lake.kg_get_neighbors(
+    entity_id=<span class="c-str">"arrow_lake:entity:42"</span>,
+    direction=<span class="c-str">"both"</span>,   <span class="c-rem"># out | in | both</span>
+    depth=<span class="c-str">2</span>,            <span class="c-rem"># 受 max_traversal_depth(默认 5) 约束</span>
+    limit=<span class="c-str">200</span>,
+))
+paths = asyncio.run(lake.kg_all_shortest_paths(
+    source=<span class="c-str">"arrow_lake:entity:1"</span>, target=<span class="c-str">"arrow_lake:entity:42"</span>))</code></pre></figure>
+
+  <h2><span class="hn">4</span>GraphRAG 与抽取后端</h2>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">GraphRAG 自动启用</span></figcaption><pre><code>response = asyncio.run(lake.rag_query(
+    question=<span class="c-str">"知识图谱和向量检索如何协同？"</span>,
+    dataset_name=<span class="c-str">"docs"</span>, top_k=<span class="c-str">5</span>,
+))
+print(response.answer, response.retrieval_count)</code></pre></figure>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">Hyper-Extract + 模板</span></figcaption><pre><code>config.hugegraph.extractor_backend = <span class="c-str">"he"</span>              <span class="c-rem"># "legacy" | "he"（默认 he = hyper-extract）</span>
+config.hugegraph.he_model = <span class="c-str">"qwen3:30b-a3b"</span>
+<span class="c-rem"># 默认 strict 模板；勿用 "general/concept_graph"（definition 可选→噪声）</span>
+config.hugegraph.he_default_template = <span class="c-str">"entity_graph"</span></code></pre></figure>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">doc_type 三层路由</span></figcaption><pre><code><span class="c-kw">from</span> arrow_lake.knowledge_graph.doc_type_router <span class="c-kw">import</span> (
+    DocTypeRouter, TemplateGallery, normalize_doc_type)
+print(normalize_doc_type(<span class="c-str">"论文"</span>))            <span class="c-rem"># "paper"</span>
+router = DocTypeRouter(
+    doc_type_templates={<span class="c-str">"paper"</span>: <span class="c-str">"general/entity_graph"</span>},
+    default_template=<span class="c-str">"general/entity_graph"</span>)
+path, src = router.resolve_with_source(<span class="c-str">"论文"</span>)  <span class="c-rem"># override &gt; gallery &gt; default</span>
+lake.ingest_documents(<span class="c-str">"papers"</span>, [<span class="c-str">"data/paper.pdf"</span>], doc_type=<span class="c-str">"paper"</span>)</code></pre></figure>
+
+  <h2><span class="hn">5</span>踩坑提示</h2>
+  <div class="callout tip"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-9"/></svg>MERGE_FIELD / 增量 / 领域模板</div><p>大 dataset 勿用 BALANCED 合并（LLM 合并爆炸 OOM），改 <code>MERGE_FIELD</code>（非 LLM，稳定）；<code>kg_build</code> 支持增量（fed_chunks sidecar，只喂新 chunk，KG 按 PRIMARY_KEY 幂等 upsert，CLI 加 <code>--incremental</code>）；项目方案书等结构化场景用 <code>project_concept_graph</code> 领域模板（22 类型 + 14 关系，质量优于通用 entity_graph）。</p></div>
+  <div class="callout warn"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>HugeGraph 认证</div><p><code>HugeGraphConfig.username/password</code> 默认空=不认证；生产 / 动态建图集群<strong>必开 auth</strong>（部署态 <code>admin</code> / <code>pa</code>，env <code>HUGEGRAPH_PASSWORD</code>），否则 per-dataset 建图失败。</p></div>
+  <div class="callout warn"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>Gremlin 遍历源绑定缺失</div><p>动态图下 <code>g.V()</code> 可能报 <code>MissingProperty</code>（全局遍历源未绑定）；排查顶点 / 边<strong>优先走 REST</strong>（<code>GET /graphs/{name}/graph/vertices?limit=N</code>）或项目 <code>kg_stats</code>，勿用裸 gremlin。</p></div>
+  <div class="callout tip"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-9"/></svg>per-dataset 隔离</div><p>standalone rocksdb 只单图；要每文档独立 KG 须用 PD 模式（hg-pd / hg-store / hg-server），按 PD→Store→Server 顺序启动；drop/clear 图后须 <strong>restart hg-server</strong> 刷新内存 schema 缓存。</p></div>
+  <div class="callout"><div class="ch">LLM 模型选择</div><p>百炼走 <code>qwen-turbo</code>（支持 json_schema，快 + 非思考）；thinking 模型（qwen3.7-max / glm-5.2）抽取极慢；KG 抽取与 QA LLM 可拆分（<code>he_extract_llm</code> / <code>he_qa_llm</code>）。</p></div>
+  <div class="callout warn"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>CLI 盲区</div><p><code>kg build</code> CLI 无 <code>--doc-type</code>，须摄入期设置；Gremlin 写操作（addV/addE）被 REST 端点拦截，仅 Python SDK 直调 <code>kg_query()</code> 执行。</p></div>
+</article>
+
+<nav class="pager">
+  <a class="prev" href="rag.html"><span class="dir"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg> 上一章</span><span class="ttl">RAG 问答管线</span></a>
+  <a class="next" href="deployment.html"><span class="dir">下一章 <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span><span class="ttl">部署与运维</span></a>
+</nav>
+
+<footer class="footer">
+  <div class="footer-inner">
+    <div><b>Arrow Lake</b> · 知识图谱与 GraphRAG · v1.9.6<br/><span class="muted mono" style="font-size:.7rem">© 2026 · MIT License</span></div>
+    <div class="muted" style="font-size:.75rem">自包含可离线运行 · 源自 docs/cookbook/09</div>
+  </div>
+</footer>
+</body>
+</html>

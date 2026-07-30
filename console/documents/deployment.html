@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>部署与运维 · Arrow Lake 文档</title>
+<link rel="stylesheet" href="../assets/tokens.css"/>
+<link rel="stylesheet" href="../assets/app.css"/>
+<link rel="stylesheet" href="../assets/landing.css"/>
+<link rel="stylesheet" href="docs.css"/>
+</head>
+<body>
+<nav class="lnav">
+  <a class="brand" href="../index.html"><span class="brand-mark">AL</span><span><b class="brand-name">Arrow Lake</b><span class="brand-sub">文档</span></span></a>
+  <div class="lnav-links"><a href="index.html">文档中心</a><a href="../architecture.html">架构文档</a></div>
+  <div class="lnav-cta"><a class="btn btn-primary btn-sm" href="../system.html">打开控制台 →</a></div>
+</nav>
+<div class="subnav">
+  <a href="index.html">文档中心</a><span class="crumb-sep">/</span><a href="deployment.html" style="color:var(--teal-bright)">部署与运维</a>
+  <span class="pager-spacer"></span>
+  <div class="prevnext">
+    <a href="knowledge-graph.html"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg><span class="lbl">上一章</span></a>
+    <a href="index.html"><span class="lbl">目录</span><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+  </div>
+</div>
+
+<header class="tut-hero" style="background:radial-gradient(700px 320px at 85% -30%,rgba(34,197,94,.13),transparent 60%),var(--ink-950)">
+  <div class="tut-hero-inner">
+    <span class="num-badge" style="color:var(--ok);background:var(--ok-soft);border-color:rgba(34,197,94,.3)">第 12 章 · 运维</span>
+    <h1>部署与运维</h1>
+    <p class="sub">从 Docker Compose 全栈部署到 Prometheus 监控、备份恢复、安全加固与 Helm on Kubernetes——同一套引擎与配置，从笔记本到生产集群。</p>
+    <div class="tut-meta"><span><i style="background:var(--ok)"></i>难度 · 高级</span><span><i style="background:var(--ok)"></i>耗时 · 30 分钟</span><span><i style="background:var(--ok)"></i>形态 · SDK / Compose / K8s</span></div>
+  </div>
+</header>
+
+<article class="tut-body">
+  <p>Arrow Lake 支持三种递进部署形态：嵌入式 SDK（进程内 Lake facade）、Docker Compose 全栈（profile 按需启服务）、Helm on Kubernetes（HPA 自动扩缩、NetworkPolicy、CronJob 备份）。<strong>同一份引擎与配置</strong>贯穿三者。</p>
+
+  <h2><span class="hn">1</span>三种部署形态</h2>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>形态</th><th>适用</th><th>关键</th></tr></thead>
+    <tbody>
+      <tr><td><strong>嵌入式 SDK</strong></td><td>本地 / 笔记本</td><td><code>pip install arrow-lake</code> · 进程内 Lake facade</td></tr>
+      <tr><td><strong>Docker Compose</strong></td><td>小型生产</td><td><code>profile</code> 机制按需启服务（core / dev / gpu / monitoring / ocr）</td></tr>
+      <tr><td><strong>Kubernetes (Helm)</strong></td><td>生产集群</td><td>HPA 自动扩缩 · PDB · NetworkPolicy · 备份 CronJob</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2><span class="hn">2</span>Docker Compose 与 Profile</h2>
+  <p><strong>推荐生产栈</strong>（v1.9.x 主路径）为 <code>deploy/docker-compose.prod_minimal.yml</code>——取代旧版 <code>--profile core</code>，是唯一受运维验证的部署栈（api / system-db / minio / redis / hg-server / gravitino / lance-rest / nginx / ollama-relay / proxy-forwarder + init）。</p>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">推荐：prod_minimal 启动</span></figcaption><pre><code><span class="c-rem"># 启动整个生产栈（读 deploy/.env）</span>
+make prod-minimal
+<span class="c-rem"># 单服务启动 / 重建（复用镜像不 rebuild）</span>
+docker compose --project-directory deploy -p arrow-lake \
+  -f deploy/docker-compose.prod_minimal.yml up -d api</code></pre></figure>
+  <p>旧版 <code>docker-compose.yml</code> 基于 profile 按需启动（Ray / Jupyter / GPU 计算场景），仅作参考：</p>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">旧版 profile（参考）</span></figcaption><pre><code><span class="c-rem"># 最小部署：API + MinIO</span>
+docker compose -f deploy/docker-compose.yml --profile core up -d
+<span class="c-rem"># 开发环境：core + Ray + Jupyter</span>
+docker compose -f deploy/docker-compose.yml --profile dev up -d
+<span class="c-rem"># 监控 overlay</span>
+docker compose -f deploy/docker-compose.yml \
+  -f deploy/docker-compose.monitoring.yml --profile monitoring up -d</code></pre></figure>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">核心环境变量 · deploy/.env</span></figcaption><pre><code>MINIO_ROOT_USER=admin
+MINIO_ROOT_PASSWORD=changeme
+ARROW_LAKE__STORAGE__BACKEND=minio
+ARROW_LAKE__STORAGE__S3_ENDPOINT=http://minio:9000
+ARROW_LAKE__API__ENABLED=true
+ARROW_LAKE__API__PORT=8000
+ARROW_LAKE__OBSERVABILITY__METRICS_ENABLED=true</code></pre></figure>
+  <p>Redis 服务在多 profile 间共享，LRU 淘汰 + AOF 持久化：</p>
+  <figure class="code"><figcaption><span class="lang">yaml</span><span class="file">Redis 服务</span></figcaption><pre><code>redis:
+  image: redis:7.4
+  profiles: [<span class="c-str">"core"</span>, <span class="c-str">"dev"</span>, <span class="c-str">"monitoring"</span>, <span class="c-str">"gpu"</span>]
+  command: &gt;
+    redis-server
+    --maxmemory ${REDIS_MAXMEMORY:-256mb}
+    --maxmemory-policy allkeys-lru
+    --appendonly yes
+  volumes:
+    - redis-data:/data</code></pre></figure>
+
+  <h2><span class="hn">3</span>生产配置与安全</h2>
+  <figure class="code"><figcaption><span class="lang">yaml</span><span class="file">生产安全基线</span></figcaption><pre><code>api:
+  api_key: <span class="c-str">"${ARROW_LAKE_API_KEY}"</span>
+  cors_origins: [<span class="c-str">"https://app.example.com"</span>]
+  max_request_size_bytes: <span class="c-str">10485760</span>    <span class="c-rem"># 10 MB</span>
+  security_headers_enabled: <span class="c-str">true</span>
+  frame_options: <span class="c-str">"DENY"</span>
+auth:
+  auth_mode: jwt
+  jwt_secret_key: <span class="c-str">"${JWT_SECRET_KEY}"</span>
+  jwt_access_token_minutes: <span class="c-str">30</span>
+rate_limit:
+  enabled: <span class="c-str">true</span>
+  default_requests_per_minute: <span class="c-str">120</span>
+audit:
+  hmac_secret_key: <span class="c-str">"${AUDIT_HMAC_KEY}"</span></code></pre></figure>
+
+  <h2><span class="hn">4</span>Kubernetes · HPA · 备份</h2>
+  <figure class="code"><figcaption><span class="lang">yaml</span><span class="file">HPA + Redis</span></figcaption><pre><code>apiServer:
+  replicaCount: <span class="c-str">2</span>
+  autoscaling:
+    enabled: <span class="c-str">true</span>
+    minReplicas: <span class="c-str">2</span>
+    maxReplicas: <span class="c-str">8</span>
+    targetCPUUtilizationPercentage: <span class="c-str">70</span>
+    targetMemoryUtilizationPercentage: <span class="c-str">80</span>
+redis:
+  enabled: <span class="c-str">true</span>  <span class="c-rem"># HPA 必需</span></code></pre></figure>
+  <figure class="code"><figcaption><span class="lang">yaml</span><span class="file">CronJob 自动备份</span></figcaption><pre><code>backup:
+  enabled: <span class="c-str">true</span>
+  schedule: <span class="c-str">"0 2 * * *"</span>   <span class="c-rem"># 每天 02:00 UTC</span>
+  image: { repository: curlimages/curl, tag: <span class="c-str">"8.12.1"</span> }
+  apiKeySecret: { name: arrow-lake-api-key, key: api-key }
+  successfulJobsHistoryLimit: <span class="c-str">3</span>
+  failedJobsHistoryLimit: <span class="c-str">1</span></code></pre></figure>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">Helm 部署</span></figcaption><pre><code>helm install arrow-lake deploy/helm/arrow-lake/ \
+  --namespace arrow-lake --create-namespace \
+  -f deploy/helm/arrow-lake/values.yaml
+kubectl create secret generic arrow-lake-api-key \
+  --namespace arrow-lake \
+  --from-literal=api-key=<span class="c-str">'your-secret-api-key-here'</span></code></pre></figure>
+
+  <h2><span class="hn">5</span>健康检查与可观测</h2>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">探针端点</span></figcaption><pre><code>curl http://localhost:8000/health/live    <span class="c-rem"># 存活（不检查依赖）</span>
+curl http://localhost:8000/health/ready   <span class="c-rem"># 就绪（验证存储/Redis）</span>
+curl http://localhost:8000/health -H <span class="c-str">"X-API-Key: your-key"</span>   <span class="c-rem"># 完整报告</span>
+curl http://localhost:8000/metrics        <span class="c-rem"># Prometheus 指标</span></code></pre></figure>
+  <p>可观测三件套：Prometheus 抓取 <code>arrow_lake_</code> / <code>duckdb_pool_</code> / <code>http_request_duration_seconds</code> 前缀指标，Grafana（:3000）可视化，Jaeger（:16686，OTLP :4317）分布式追踪。</p>
+
+  <h2><span class="hn">6</span>踩坑提示</h2>
+  <div class="callout warn"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>HPA 无 Redis 必崩</div><p>多副本不启用 Redis 时各 Pod 独立用进程内信号量，负载下 <strong>DuckDB 连接池耗尽</strong>；HPA 强依赖 <code>redis.enabled: true</code>。</p></div>
+  <div class="callout warn"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>安全默认</div><p>API 默认仅 <strong>127.0.0.1 绑定</strong>，远程访问须显式 <code>api.host: 0.0.0.0</code> 或走 Ingress；<strong>空 JWT 密钥拒绝启动</strong>，须配 32+ 字符随机密钥；Redis 默认密码已移除，生产必须显式配 <code>REDIS_PASSWORD</code>。</p></div>
+  <div class="callout tip"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-9"/></svg>prod_minimal 现实部署（v1.9.6）</div><p>当前生产栈 <code>docker-compose.prod_minimal.yml</code> 共 <strong>11 服务</strong>：api / minio(+init) / nginx / lance-rest / hg-server(+hubble) / redis / system-db / gravitino(+init) / ollama-relay / proxy-forwarder。api 容器 <code>read_only: true</code>——<strong>改 Python 需 rebuild 或 dev.override 热重载</strong>；模型权重 bake 进镜像（<code>HF_HUB_OFFLINE=1</code>），离线即用。</p></div>
+  <div class="callout"><div class="ch">WSL2 代理中继</div><p>WSL2 mirrored 网络下容器外网经 socat 中继：ollama <code>11534</code> / proxy <code>17887</code>；<code>NO_PROXY</code> 必含 <code>host.docker.internal</code> + 内部服务名（minio / redis / hg-server…），否则内部调用误走代理。</p></div>
+  <div class="callout warn"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>CronJob 非幂等清理</div><p>每次备份生成带时间戳新备份，旧备份需单独 <code>backup delete</code> 清理，不会自动轮转。</p></div>
+  <div class="callout warn"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>v1.9.6 · system_db fail-closed + Masking HMAC</div><p>v1.9.0 起控制面（RBAC / 身份 / personal_token / catalog / 任务历史 / RAG 会话 / 血缘）迁移至独立 <code>system-db</code> 服务（libSQL / Turso sqld），<code>deploy/.env</code> 须设 <code>SYSTEM_DB_ENABLED=true</code>；store 不可达时 RBAC 读<strong>返 401 fail-closed</strong>（不放行；opt-in <code>SYSTEM_DB_SERVE_STALE_ON_ERROR</code> 会 honor 宕机期撤销的权限，慎用）。v1.9.6 masking 的 <code>ARROW_LAKE__MASKING__HMAC_KEY</code> 是<strong>纯环境变量</strong>（非 YAML 段），<strong>缺失则启动阻断</strong>（fail-fast，<code>openssl rand -hex 32</code>），仅 dev 可 <code>ALLOW_MISSING_KEY=1</code> 降级。</p></div>
+  <div class="callout warn"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>v1.9.6 · HugeGraph 堆 + drop 重启 / Gravitino proxy 中和</div><p>HugeGraph start 脚本自带 <code>-Xmx32768m</code> 与 compose <code>JAVA_OPTS -Xmx2g</code> 冲突，JVM 对<strong>重复 -Xmx 取末值</strong>→ 实际堆仅 2g 致稠密图遍历 OOM；修 <code>HG_SERVER_MEMORY_LIMIT=12288M</code> + <code>JAVA_OPTS="-Xms2g -Xmx8g"</code>，验证 <code>ps -ef|grep -oE Xmx[0-9]+[mg]</code> 应输出 <code>Xmx8g</code>。<strong>drop/clear 图后必须 restart hg-server</strong>（内存 schema 缓存不刷新否则 <code>ensure_schema</code> 报 500），一键 <code>make kg-(drop|clear)-graph DS=&lt;ds&gt;</code>（自动 restart + 等 healthy）。Gravitino 1.3.0 须在 compose 显式 <code>HTTP(S)_PROXY: ""</code> + <code>NO_PROXY: "*"</code> 中和 Docker daemon 注入的死代理，否则 s3a 经代理 → SigV4 被改 → minio <code>403 Forbidden</code>。</p></div>
+  <div class="callout tip"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-9"/></svg>v1.9.6 · docling GPU 热重载 / RAG hybrid 502 修复</div><p>docling GPU 叠 <code>gpu.override.yml</code> 重建即可切 CUDA；<code>API_CPU_LIMIT</code> 默认 <code>1.0</code> 是 PDF 渲染 / layout / 表格后处理的 CPU 侧瓶颈（552 页 / 1 核会超时崩），宿主多核设 <code>API_CPU_LIMIT=8.0</code>（约 5.4min / 552 页，接近 host）。改 <code>arrow_lake/</code> Python 源码<strong>不必 rebuild</strong>——叠 <code>dev.override.yml</code> 挂源码 + <code>uvicorn --reload</code>，<strong>必须 <code>--force-recreate</code></strong>（否则保留 prod command，新端点 404）。RAG hybrid 502（DuckDB lance scanner 对 IVF_PQ async vector stream 的 Rust panic，uvicorn worker died）修复：api env <code>ARROW_LAKE__OLAP__LANCE_SCAN_MODE: "pyarrow_fallback"</code>（绕 DuckDB path，性能略降但 RAG 通）。</p></div>
+</article>
+
+<nav class="pager">
+  <a class="prev" href="knowledge-graph.html"><span class="dir"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg> 上一章</span><span class="ttl">知识图谱 &amp; GraphRAG</span></a>
+  <a class="next" href="index.html"><span class="dir">目录 <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span><span class="ttl">产品文档教程</span></a>
+</nav>
+
+<footer class="footer">
+  <div class="footer-inner">
+    <div><b>Arrow Lake</b> · 部署与运维 · v1.9.6<br/><span class="muted mono" style="font-size:.7rem">© 2026 · MIT License</span></div>
+    <div class="muted" style="font-size:.75rem">自包含可离线运行 · 源自 docs/cookbook/12</div>
+  </div>
+</footer>
+</body>
+</html>

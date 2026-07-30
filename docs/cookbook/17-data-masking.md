@@ -33,7 +33,7 @@ A policy names a set of columns and the function to apply:
 |---|---|
 | `redact` | Replace with a fixed sentinel (default) |
 | `hash` | HMAC-SHA256, 128-bit (`[:32]` hexdigest) — deterministic, joinable |
-| `partial` | Keep prefix/suffix, mask the middle (e.g. `138****1234`) |
+| `partial` | Keep the first 2 and last 2 chars, mask the middle (e.g. `13812345678` → `13*******78`) |
 | `nullify` | Replace with NULL |
 
 ```bash
@@ -57,7 +57,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/datasets/customers/quality/mask-previe
 Returns before/after pairs for the first rows:
 
 ```json
-{"phone": {"before": ["13812345678"], "after": ["138****5678"]}}
+{"phone": {"before": ["13812345678"], "after": ["13*******78"]}}
 ```
 
 The preview is **ADMIN-only** (not `EDITOR`) to prevent bypassing column ACLs,
@@ -67,10 +67,13 @@ injection.
 ## 4. Enforcement and Fail-Closed
 
 Once a policy targets a dataset, the RBAC layer applies it transparently on read
-for VIEWER roles. Enforcement is **fail-closed**: if the masking engine raises
-(masking error, missing key in `hash`, unknown function), the query returns an
-**empty table** rather than leaking the unmasked source. An unknown function name
-raises `ValueError` at policy time, so misconfiguration surfaces early.
+for VIEWER/EDITOR roles; the **ADMIN role skips masking entirely** (returns the
+raw data). Enforcement is **fail-closed**: if the masking engine raises (masking
+error, missing key in `hash`, unknown function, or a Gravitino outage while
+fetching policies), the query returns an **empty table** rather than leaking the
+unmasked source. An unknown function name is **rejected at policy creation**
+(HTTP 400); even if one slips through, `_mask_column` still raises `ValueError`
+at execution time as a defense-in-depth.
 
 ## 5. Audit
 

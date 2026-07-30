@@ -1,12 +1,17 @@
-# Gravitino 元数据治理（实验性）
+# Gravitino 元数据治理（可选）
 
-> **状态：实验性** — Arrow Lake v1.5.2 提供用于元数据存储、浏览和深度治理的 Gravitino 集成。v1.4.2 引入了 FQN 注入防护、通过 pydantic-settings 配置 Gravitino，以及增强的安全验证。
-> 参见下方能力矩阵，了解当前可用功能与计划功能的对比。
+> **状态：可选治理层** — Gravitino 是 Arrow Lake 的**可选**元数据治理组件（RBAC/tag/血缘/fileset
+> 治理），**不在数据/查询热路径**上：数据集 CRUD、查询、KG、search、RAG 均不依赖 Gravitino。
+> 卡死或不需要时，设置 `gravitino.enabled: false` 临时关闭即可，核心功能完全不受影响。
 >
-> 本章记录当前状态，并展示如何使用可用的元数据 API。
+> 版本：本章对应 Arrow Lake v1.9.6。Gravitino server 已升级至 **1.3.0**，Python SDK pin 在
+> `apache-gravitino==1.3.0`（`pyproject.toml:75`）。1.3.0 的 docker 布局变更：
+> `GRAVITINO_HOME=/opt/gravitino`（非旧版 `/root/gravitino`），数据卷须挂 `/opt/gravitino/data`。
+> Catalog S3 属性使用 **`s3.*`**（`s3.endpoint`/`s3.access-key-id`/`s3.secret-access-key`，
+> `deploy/scripts/init-gravitino.sh:53-55`）——旧的 `fs.s3a.*` 在 1.3.0 fileset catalog 上不生效。
 >
-> 前提条件：Arrow Lake v1.5.2，`gravitino.enabled: true`，Docker Compose 生产环境 profile
-> 正在运行（`gravitino` + `lance-rest` 容器健康）。
+> 前提条件：`gravitino.enabled: true`（默认 `false`，见 `config/gravitino.py:32`），Docker Compose
+> 生产环境 profile 正在运行（`gravitino` + `lance-rest` 容器健康）。
 
 ### 当前能力矩阵
 
@@ -18,9 +23,14 @@
 | 脱敏策略 | Gravitino | 不转换查询结果 | **仅元数据** |
 | 表统计信息 | Gravitino | 查询规划器不消费 | **仅元数据** |
 | 模型版本 | Gravitino | 未接入 embed/rag | **仅元数据** |
-| RBAC 桥接 | Gravitino SDK | 降级到本地 RBAC | **降级路径** |
+| RBAC（访问控制） | **Turso/libSQL**（一等 store） | `RbacStore` fail-close 执行 | **生产可用** |
+| Gravitino RBAC 桥接 | Gravitino SDK | 可选旁路，非主路径 | **可选** |
 | 血缘集成 | 表属性 | 无跨系统血缘图 | **浅层** |
 | 联邦查询 | 路径拼接 | 无元数据驱动读取 | **仅路径前缀** |
+
+> **RBAC 说明（v1.9.0+）**：访问控制的**一等持久化后端是 Turso/libSQL**（`arrow_lake/system_db/stores/rbac.py`
+> 的 `RbacStore`，fail-close，表 `dataset_acl_grants`/`schema_acls`/`acl_denies`/`role_permissions`）。
+> `GravitinoRBACBridge` 仅是可选旁路；**不要高估 Gravitino 角色的作用**——Gravitino 关闭时 RBAC 照常生效。
 
 ***
 
@@ -28,10 +38,10 @@
 
 ### 代理架构
 
-Arrow Lake 作为 Gravitino 元数据操作的代理层。客户端调用 Arrow Lake API 上的 `/metadata/*` 端点，由 Arrow Lake 通过 REST API 或 Python SDK 委托给 Gravitino：
+Arrow Lake 作为 Gravitino 元数据操作的代理层。客户端调用 Arrow Lake API 上的 `/api/v1/metadata/*` 端点，由 Arrow Lake 通过 REST API 或 Python SDK 委托给 Gravitino：
 
 ```text
-Client → Arrow Lake API (/metadata/*)
+Client → Arrow Lake API (/api/v1/metadata/*)
             ├── GravitinoBridge (REST)       ← catalogs, tables, stats
             ├── GravitinoTagService (SDK)    ← tags
             ├── GravitinoPolicyService (SDK) ← policies
@@ -61,7 +71,7 @@ Metalake: arrow-lake
 ```yaml
 # config.yaml
 gravitino:
-  enabled: true
+  enabled: true          # 默认 false（config/gravitino.py:32）——Gravitino 是可选治理层
   uri: "http://gravitino:8090"
   metalake: "arrow-lake"
   lance_rest_enabled: true
@@ -71,7 +81,7 @@ gravitino:
   sync_interval_seconds: 30   # 范围: 5–300
 ```
 
-所有 Gravitino 调用均包装在 `try/except` 中——Gravitino 不可用时，Arrow Lake 使用本地 DuckDB 目录继续正常运行。
+所有 Gravitino 调用均包装在 `try/except` 中——Gravitino 不可用时，Arrow Lake 使用本地 DuckDB/Lance 目录继续正常运行（数据面不依赖 Gravitino）。
 
 ***
 
@@ -100,7 +110,7 @@ curl http://localhost:8000/health -H "X-API-Key: your-key"
 ### 步骤 2：浏览目录
 
 ```bash
-curl http://localhost:8000/metadata/catalogs -H "X-API-Key: your-key"
+curl http://localhost:8000/api/v1/metadata/catalogs -H "X-API-Key: your-key"
 ```
 
 ```json
@@ -124,7 +134,7 @@ curl http://localhost:8000/metadata/catalogs -H "X-API-Key: your-key"
 ### 步骤 3：列出表
 
 ```bash
-curl http://localhost:8000/metadata/tables -H "X-API-Key: your-key"
+curl http://localhost:8000/api/v1/metadata/tables -H "X-API-Key: your-key"
 ```
 
 ```json
@@ -143,7 +153,7 @@ curl http://localhost:8000/metadata/tables -H "X-API-Key: your-key"
 ### 步骤 4：查看表结构
 
 ```bash
-curl http://localhost:8000/metadata/tables/articles -H "X-API-Key: your-key"
+curl http://localhost:8000/api/v1/metadata/tables/articles -H "X-API-Key: your-key"
 ```
 
 ```json
@@ -177,11 +187,11 @@ BASE = "http://localhost:8000"
 H = {"X-API-Key": "your-key"}
 
 # 浏览 catalogs → tables → detail
-for cat in httpx.get(f"{BASE}/metadata/catalogs", headers=H).json()["data"]:
+for cat in httpx.get(f"{BASE}/api/v1/metadata/catalogs", headers=H).json()["data"]:
     print(f"Catalog: {cat['name']}")
 
-for tbl in httpx.get(f"{BASE}/metadata/tables", headers=H).json()["data"]:
-    detail = httpx.get(f"{BASE}/metadata/tables/{tbl['name']}", headers=H).json()
+for tbl in httpx.get(f"{BASE}/api/v1/metadata/tables", headers=H).json()["data"]:
+    detail = httpx.get(f"{BASE}/api/v1/metadata/tables/{tbl['name']}", headers=H).json()
     cols = detail["data"]["columns"]
     print(f"  {tbl['name']}: {len(cols)} columns")
 ```
@@ -211,10 +221,15 @@ for tbl in httpx.get(f"{BASE}/metadata/tables", headers=H).json()["data"]:
 
 ### 步骤 1：创建自定义标签
 
+> **v1.9.6 安全加固**：写端点不再接受 `?body=` URL query（PII 会落入 URL/访问日志）。
+> 改用 **JSON POST body**（`routers/gravitino.py:219-235`，`await request.json()`）。
+
 ```bash
-# 创建 GDPR 监管数据的标签
-curl -X POST "http://localhost:8000/metadata/tags?body=%7B%22name%22%3A%22gdpr_subject%22%2C%22comment%22%3A%22Data%20subject%20under%20GDPR%22%7D" \
-  -H "X-API-Key: your-key"
+# 创建 GDPR 监管数据的标签（JSON body，非 URL query）
+curl -X POST http://localhost:8000/api/v1/metadata/tags \
+  -H "X-API-Key: your-key" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "gdpr_subject", "comment": "Data subject under GDPR"}'
 ```
 
 ### 步骤 2：关联标签到表/列 (Python SDK)
@@ -244,10 +259,10 @@ pii_tables = tags.get_tables_by_tag("pii")
 
 ```bash
 # 列出所有标签
-curl http://localhost:8000/metadata/tags -H "X-API-Key: your-key"
+curl http://localhost:8000/api/v1/metadata/tags -H "X-API-Key: your-key"
 
 # 列出特定表的标签
-curl "http://localhost:8000/metadata/tags?table=users" -H "X-API-Key: your-key"
+curl "http://localhost:8000/api/v1/metadata/tags?table=users" -H "X-API-Key: your-key"
 ```
 
 ```json
@@ -283,9 +298,11 @@ curl "http://localhost:8000/metadata/tags?table=users" -H "X-API-Key: your-key"
 ### 步骤 1：创建保留策略
 
 ```bash
-# 日志数据仅保留 90 天
-curl -X POST "http://localhost:8000/metadata/policies/retention?body=%7B%22name%22%3A%22log_retention_90d%22%2C%22days%22%3A90%7D" \
-  -H "X-API-Key: your-key"
+# 日志数据仅保留 90 天（JSON body）
+curl -X POST http://localhost:8000/api/v1/metadata/policies/retention \
+  -H "X-API-Key: your-key" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "log_retention_90d", "days": 90}'
 ```
 
 ```json
@@ -294,14 +311,19 @@ curl -X POST "http://localhost:8000/metadata/policies/retention?body=%7B%22name%
 
 ### 步骤 2：创建脱敏策略
 
+> **必填 `function` 字段**（`routers/gravitino.py:300-303`）：脱敏策略的 `function` 必须是
+> `redact`/`hash`/`partial`/`nullify` 之一，否则返回 400。省略时默认 `redact`。
+
 ```bash
-# 脱敏 email 和 phone 列
-curl -X POST "http://localhost:8000/metadata/policies/masking?body=%7B%22name%22%3A%22email_mask%22%2C%22columns%22%3A%5B%22email%22%2C%22phone%22%5D%7D" \
-  -H "X-API-Key: your-key"
+# 脱敏 email 和 phone 列（partial: 保留首尾各 2 字符）
+curl -X POST http://localhost:8000/api/v1/metadata/policies/masking \
+  -H "X-API-Key: your-key" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "email_mask", "columns": ["email", "phone"], "function": "partial"}'
 ```
 
 ```json
-{"success": true, "data": {"name": "email_mask", "columns": ["email", "phone"]}, "error": null, "metadata": {}}
+{"success": true, "data": {"name": "email_mask", "columns": ["email", "phone"], "function": "partial"}, "error": null, "metadata": {}}
 ```
 
 ### 步骤 3：应用策略到表 (Python SDK)
@@ -317,7 +339,7 @@ svc.apply_policy("email_mask", "users")
 ### 步骤 4：列出所有策略
 
 ```bash
-curl http://localhost:8000/metadata/policies -H "X-API-Key: your-key"
+curl http://localhost:8000/api/v1/metadata/policies -H "X-API-Key: your-key"
 ```
 
 ```json
@@ -343,7 +365,7 @@ BASE = "http://localhost:8000"
 # 验证所有 PII 表都有脱敏策略
 pii_tables = ["users", "customers", "orders"]
 for table in pii_tables:
-    resp = httpx.get(f"{BASE}/metadata/policies", headers=H).json()
+    resp = httpx.get(f"{BASE}/api/v1/metadata/policies", headers=H).json()
     has_masking = any("mask" in p["name"] for p in resp.get("data", []))
     status = "OK" if has_masking else "MISSING"
     print(f"  {table}: masking policy {status}")
@@ -404,7 +426,7 @@ registry.add_version(
 ### 步骤 3：通过 REST 查询模型版本
 
 ```bash
-curl http://localhost:8000/metadata/models -H "X-API-Key: your-key"
+curl http://localhost:8000/api/v1/metadata/models -H "X-API-Key: your-key"
 ```
 
 ```json
@@ -412,7 +434,7 @@ curl http://localhost:8000/metadata/models -H "X-API-Key: your-key"
 ```
 
 ```bash
-curl http://localhost:8000/metadata/models/text-embedder/versions -H "X-API-Key: your-key"
+curl http://localhost:8000/api/v1/metadata/models/text-embedder/versions -H "X-API-Key: your-key"
 ```
 
 ```json
@@ -456,7 +478,7 @@ canary_uri = latest.uri      # → s3://models/text-embedder/v2
 ### 步骤 1：采集统计信息
 
 ```bash
-curl -X POST http://localhost:8000/metadata/statistics/articles \
+curl -X POST http://localhost:8000/api/v1/metadata/statistics/articles \
   -H "X-API-Key: your-key"
 ```
 
@@ -522,7 +544,7 @@ gravitino:
 | 数据摄取 | 正常 + 同步到 Gravitino | 正常（仅 DuckDB） |
 | 向量/全文搜索 | 正常 | 正常 |
 | OLAP 查询 | 正常 + 联邦查询 | 正常 |
-| `/metadata/*` 端点 | 完整数据 | 503 Service Unavailable |
+| `/api/v1/metadata/*` 端点 | 完整数据 | 503 Service Unavailable |
 | 标签与策略 | 完整 CRUD | 503 或空结果 |
 | 模型注册表 | 完整 CRUD | 503 |
 | 健康检查 | 显示 `gravitino: healthy` | 显示 `gravitino: unhealthy` |
@@ -588,6 +610,14 @@ Arrow Lake 设计为**优雅降级**：Gravitino 是增强层，不是硬依赖�
 
 调度器随 API 服务器生命周期启停（通过 FastAPI `lifespan`）。
 
+### 熔断器（v1.9.6）
+
+`GravitinoSyncScheduler` 内置熔断：连续 **5 次**同步周期失败后**主动停止**同步线程，而非无限重试
+（`catalog/gravitino_sync.py:47,93-104`）。持续失败的 Gravitino（server 宕机/SDK 版本不匹配）
+会在慢速远程调用期间持有目录/会话锁、阻塞请求处理线程；熔断确保治理层永远不会拖垮数据面。
+触发熔断后日志输出 `gravitino_sync_circuit_open`，提示设置 `gravitino.enabled=false` 或修复
+Gravitino server/版本后重启。
+
 ### 同步示例
 
 ```python
@@ -607,9 +637,15 @@ print(f"Discovered {len(external)} external tables")
 
 ***
 
-## 9. 安全与 RBAC 桥接
+## 9. 安全与 RBAC
 
-### 认证类型
+> **v1.9.0 架构变更**：访问控制的**一等持久化后端是 Turso/libSQL**（`RbacStore`，
+> `system_db/stores/rbac.py`），**不是 Gravitino**。Gravitino 是可选治理层，其 RBAC 桥接
+> 仅作旁路。RBAC 相关的表（`dataset_acl_grants`/`dataset_row_col_acls`/`schema_acls`/
+> `acl_denies`/`role_permissions`）由迁移脚本 `V001__init_rbac.sql` 创建，fail-close，
+> 热路径有短 TTL 缓存。**不要高估 Gravitino 角色的作用——Gravitino 关闭时 RBAC 照常生效。**
+
+### Gravitino 自身认证类型
 
 | 类型 | 用途 |
 |------|------|
@@ -618,9 +654,9 @@ print(f"Discovered {len(external)} external tables")
 | `kerberos` | 企业 Hadoop 环境 |
 | `null` | 无认证（不安全，仅限测试） |
 
-### 权限映射
+### 可选的 GravitinoRBACBridge（旁路）
 
-`GravitinoRBACBridge` 将 Arrow Lake 操作映射到 Gravitino 权限：
+`GravitinoRBACBridge` 将 Arrow Lake 操作映射到 Gravitino 权限，是**可选旁路**而非主路径：
 
 | Arrow Lake 操作 | Gravitino 权限 |
 |-----------------|---------------|
@@ -632,14 +668,15 @@ print(f"Discovered {len(external)} external tables")
 
 ### 降级行为
 
-当 Gravitino RBAC 检查失败时（网络错误、服务宕机），桥接返回 `None`，通知 Arrow Lake 降级到本地 JWT/RBAC 系统。这确保即使在 Gravitino 中断期间，访问控制也始终生效。
+当 Gravitino RBAC 检查失败时（网络错误、服务宕机），桥接返回 `None`，Arrow Lake 回退到
+Turso/libSQL `RbacStore`（fail-close）。访问控制始终生效，即使 Gravitino 完全关闭。
 
 ```python
 from arrow_lake.api.rbac import GravitinoRBACBridge
 
-rbac = GravitinoRBACBridge(cfg)
+rbac = GravitinoRBACBridge(cfg)   # 可选旁路；主路径是 RbacStore（Turso/libSQL）
 result = rbac.check_permission("user@example.com", "articles", "read")
-# result: True（允许）、False（拒绝）、None（降级到本地 RBAC）
+# result: True（允许）、False（拒绝）、None（回退到 Turso/libSQL RbacStore）
 ```
 
 ***
@@ -687,7 +724,7 @@ result = rbac.check_permission("user@example.com", "articles", "read")
 - **跳过健康检查**：批量治理操作前务必验证 Gravitino 可用性。
 - **期望实时同步**：后台同步是最终一致的（5-300 秒延迟）。不要依赖它实现实时一致性。
 - **过度打标签**：过度标记使治理变得更难而非更容易。聚焦于合规相关的分类。
-- **忽略 503 响应**：将 `/metadata/*` 返回的 503 视为"功能不可用"，而非需要重试的错误。
+- **忽略 503 响应**：将 `/api/v1/metadata/*` 返回的 503 视为"功能不可用"，而非需要重试的错误。
 
 ***
 
@@ -697,19 +734,19 @@ result = rbac.check_permission("user@example.com", "articles", "read")
 
 | 方法 | 端点 | 说明 |
 |------|------|------|
-| `GET` | `/metadata/catalogs` | 列出 Gravitino 目录 |
-| `GET` | `/metadata/tables` | 列出 Lance 目录中的表 |
-| `GET` | `/metadata/tables/{name}` | 表详情（列、属性） |
-| `GET` | `/metadata/tags` | 列出标签（可选 `?table=`） |
-| `POST` | `/metadata/tags` | 创建标签 |
-| `GET` | `/metadata/policies` | 列出策略 |
-| `POST` | `/metadata/policies/retention` | 创建保留策略 |
-| `POST` | `/metadata/policies/masking` | 创建脱敏策略 |
-| `POST` | `/metadata/policies/enforce` | 执行保留策略（可选 `?dry_run=true`、`?table=`） |
-| `POST` | `/metadata/statistics/{name}` | 采集表统计信息 |
-| `GET` | `/metadata/models` | 列出 ML 模型 |
-| `GET` | `/metadata/models/{name}/versions` | 模型版本信息 |
-| `GET` | `/metadata/lineage/{name}` | 表血缘信息 |
+| `GET` | `/api/v1/metadata/catalogs` | 列出 Gravitino 目录 |
+| `GET` | `/api/v1/metadata/tables` | 列出 Lance 目录中的表 |
+| `GET` | `/api/v1/metadata/tables/{name}` | 表详情（列、属性） |
+| `GET` | `/api/v1/metadata/tags` | 列出标签（可选 `?table=`） |
+| `POST` | `/api/v1/metadata/tags` | 创建标签 |
+| `GET` | `/api/v1/metadata/policies` | 列出策略 |
+| `POST` | `/api/v1/metadata/policies/retention` | 创建保留策略 |
+| `POST` | `/api/v1/metadata/policies/masking` | 创建脱敏策略 |
+| `POST` | `/api/v1/metadata/policies/enforce` | 执行保留策略（可选 `?dry_run=true`、`?table=`） |
+| `POST` | `/api/v1/metadata/statistics/{name}` | 采集表统计信息 |
+| `GET` | `/api/v1/metadata/models` | 列出 ML 模型 |
+| `GET` | `/api/v1/metadata/models/{name}/versions` | 模型版本信息 |
+| `GET` | `/api/v1/metadata/lineage/{name}` | 表血缘信息 |
 
 ### 可运行示例
 
@@ -730,11 +767,11 @@ python docs/cookbook/examples_api/33_gravitino_metadata_governance.py
 
 ```bash
 # 手动触发（先 dry-run）
-curl -X POST "http://localhost:8000/metadata/policies/enforce?dry_run=true" \
+curl -X POST "http://localhost:8000/api/v1/metadata/policies/enforce?dry_run=true" \
   -H "X-API-Key: your-key"
 
 # 对特定表实际执行
-curl -X POST "http://localhost:8000/metadata/policies/enforce?table=access_logs" \
+curl -X POST "http://localhost:8000/api/v1/metadata/policies/enforce?table=access_logs" \
   -H "X-API-Key: your-key"
 ```
 
@@ -807,7 +844,7 @@ model_path = resolver.resolve_model_path("text-embedder")
 血缘事件现在将丰富的元数据写入 Gravitino 表属性：
 
 ```bash
-curl http://localhost:8000/metadata/lineage/articles -H "X-API-Key: your-key"
+curl http://localhost:8000/api/v1/metadata/lineage/articles -H "X-API-Key: your-key"
 ```
 
 ```json
@@ -838,3 +875,50 @@ resolution = engine.resolve_table("hive-catalog.default.orders")
 df = engine.load_dataset("hive-catalog.default.orders")
 # → daft.read_parquet("s3://warehouse/orders")  (从元数据自动检测)
 ```
+
+***
+
+## v1.9.6 — Gravitino 1.3.0 升级与可靠性修复
+
+### 1.3.0 升级要点
+
+- **server 与 SDK 均升 1.3.0**：server `apache/gravitino:1.3.0`；Python SDK pin
+  `apache-gravitino==1.3.0`（`pyproject.toml:75`）。SDK 与 server REST 兼容，sync 实测零失败。
+- **docker 布局变更**：`GRAVITINO_HOME=/opt/gravitino`（旧版 `/root/gravitino`），数据卷须挂
+  `/opt/gravitino/data`，workdir 随之确认。升级走全新启动（重建空卷后重跑 `gravitino-init`，
+  实际数据在 MinIO 不受影响）。
+- **Catalog S3 属性用 `s3.*`**（`deploy/scripts/init-gravitino.sh:53-55`）：
+  `s3.endpoint` / `s3.access-key-id` / `s3.secret-access-key`，location 用 `s3://`。
+  旧的 `fs.s3a.*` 在 1.3.0 fileset catalog 上**不生效**（schema 建不出）；lance-catalog 一直是 `s3.*`。
+- Web UI v2 已开（`GRAVITINO_USE_WEB_V2=true`）。
+- 残余无害告警：`gravitino_list_column_tags_failed ... NoSuchTableException` = tag-ACL sync 对未在
+  lance-catalog 注册为 table 的数据集查列标签，per-dataset warning，不致命不阻塞。
+
+### 4-layer SDK 兼容性修复（v1.9.6）
+
+Gravitino Python SDK 1.x 的 API 与旧文档/代码假设不一致，`GravitinoBridge` 已修四处：
+
+1. **`as_schemas()`（非 `as_schema_catalog()`）**：SDK 1.x 删了 `Catalog.as_schema_catalog()`，
+   改 `as_schemas()` 返回 `SupportsSchemas`（有 `create_schema`/`schema_exists`/`list_schemas`）。
+   `catalog/gravitino_bridge.py:315,319` 已用 `c.as_schemas().schema_exists(...)` /
+   `.create_schema(...)`。调用不存在的方法会报 `'RelationalCatalog' object has no attribute
+   'as_schema_catalog'`，sync 每 30s 失败循环。
+2. **1-level namespace**：`list_filesets(ns)` 的 `ns` 要 **1 级**（只 schema），
+   `Namespace.of(metalake, catalog, schema)`（3 级）会报 `must have 1 level`。
+   `gravitino_bridge.py:492` 已用 `Namespace.of(_DEFAULT_SCHEMA)`。
+3. **`_ensure_schema` 幂等性**：Gravitino `createSchema` 先验 S3 location 再报
+   `SchemaAlreadyExists`，对 s3a 配错的 catalog 重确保 schema 会冒 spurious 403。
+   `gravitino_bridge.py:314-317` 已改为 `schema_exists(name)` 先查（读 Gravitino 自身元数据，
+   不碰 S3）→ 存在则 skip。
+4. **代理中和**：Docker daemon 会从 `~/.docker/config.json` 自动给容器注入 `HTTP_PROXY`，导致
+   Gravitino 经代理走 → minio SigV4 被改 → 403。`core/http.py:52,65` 的
+   `create_http_client` 设 `trust_env=False` + 显式按 `HTTPS_PROXY` 套代理，且 compose
+   `gravitino` 服务显式置 `HTTP_PROXY/HTTPS_PROXY: ""` + `NO_PROXY: "*"` 覆盖（server 只连内部
+   minio，本不需要代理）。
+
+### 排查口诀
+
+- 改 SDK 调用前先核实方法名：`docker exec api python -c "from gravitino import Catalog;print([m for m in dir(Catalog) if 'schema' in m or m.startswith('as_')])"`。
+- sync 连续失败看熔断日志 `gravitino_sync_circuit_open`（5 次后停）。
+- 403 多半是 s3a 误配（改 `s3.*`）或代理注入（compose 显式清空 proxy env）。
+- Gravitino 卡死时最简办法：`gravitino.enabled=false` 临时关，核心功能不受影响。

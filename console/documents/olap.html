@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>OLAP 分析 · Arrow Lake 文档</title>
+<link rel="stylesheet" href="../assets/tokens.css"/>
+<link rel="stylesheet" href="../assets/app.css"/>
+<link rel="stylesheet" href="../assets/landing.css"/>
+<link rel="stylesheet" href="docs.css"/>
+</head>
+<body>
+<nav class="lnav">
+  <a class="brand" href="../index.html"><span class="brand-mark">AL</span><span><b class="brand-name">Arrow Lake</b><span class="brand-sub">文档</span></span></a>
+  <div class="lnav-links">
+    <a href="index.html">文档中心</a>
+    <a href="../architecture.html">架构文档</a>
+  </div>
+  <div class="lnav-cta"><a class="btn btn-primary btn-sm" href="../system.html">打开控制台 →</a></div>
+</nav>
+<div class="subnav">
+  <a href="index.html">文档中心</a><span class="crumb-sep">/</span><a href="olap.html" style="color:var(--teal-bright)">OLAP 分析</a>
+  <span class="pager-spacer"></span>
+  <div class="prevnext">
+    <a href="hybrid.html"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg><span class="lbl">上一章</span></a>
+    <a href="rag.html"><span class="lbl">下一章</span><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+  </div>
+</div>
+
+<header class="tut-hero">
+  <div class="tut-hero-inner">
+    <span class="num-badge">第 07 章 · 分析</span>
+    <h1>OLAP 分析</h1>
+    <p class="sub">DuckDB 零拷贝 Arrow 集成驱动的高性能分析：GROUP BY 聚合、窗口函数、多表 JOIN、DuckLake 物化视图与 Daft DataFrame——覆盖查询、导出与引擎调优全链路。</p>
+    <div class="tut-meta">
+      <span><i></i>难度 · 中级</span>
+      <span><i></i>耗时 · 15 分钟</span>
+      <span><i></i>前置 · Lance 数据集 + DuckDB</span>
+    </div>
+  </div>
+</header>
+
+<article class="tut-body">
+  <p>Arrow Lake 通过 <strong>DuckDB 零拷贝 Arrow 集成</strong>提供高性能 OLAP 分析能力，支持 <code>GROUP BY</code> 聚合、窗口函数、JOIN 以及物化视图。本章串起「基础查询 → 窗口函数 → JOIN → 物化视图 → Daft DataFrame → 导出 → 配置 → 错误处理」全链路。</p>
+
+  <div class="callout tip"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-9"/></svg>前置准备</div><p>确保已安装依赖 <code>pip install arrow-lake[olap]</code>，并有一个已写入数据的 Lance 数据集。</p></div>
+
+  <h2><span class="hn">1</span>基础 SQL 查询</h2>
+  <p><code>Lake.olap_query()</code> 在 Lance 数据集上执行只读 SQL（SELECT 语句），返回 <code>OlapQueryResult</code>，其中 <code>.table</code> 是 PyArrow Table，可直接转 Pandas。</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">基础聚合</span></figcaption><pre><code><span class="c-kw">from</span> arrow_lake <span class="c-kw">import</span> Lake
+
+lake = Lake(base_uri=<span class="c-str">"./data"</span>)
+
+<span class="c-rem"># 按品类汇总销售额</span>
+result = lake.olap_query(
+    <span class="c-str">"sales"</span>,
+    <span class="c-str">"SELECT category, SUM(amount) as total, COUNT(*) as cnt "</span>
+    <span class="c-str">"FROM sales GROUP BY category ORDER BY total DESC"</span>,
+)
+print(<span class="c-str">f"返回 {result.row_count} 行，{result.column_count} 列"</span>)
+print(result.table.to_pandas())</code></pre></figure>
+
+  <p>通过 <code>max_rows</code> 参数限制返回行数，防止内存溢出：</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">限制行数</span></figcaption><pre><code>result = lake.olap_query(
+    <span class="c-str">"sales"</span>,
+    <span class="c-str">"SELECT * FROM sales"</span>,
+    max_rows=<span class="c-str">500</span>,  <span class="c-rem"># 最多返回 500 行</span>
+)</code></pre></figure>
+
+  <div class="callout"><div class="ch">注意</div><p><code>Lake.sql_query()</code> 是更低层的替代方法，直接返回 <code>pa.Table</code>（不包装为 <code>OlapQueryResult</code>）；<code>Lake.query()</code> 返回 <code>MetadataQueryResult</code>，用于元数据查询。需要行/列计数和元数据时使用 <code>olap_query()</code>，只需原始 Arrow 表时使用 <code>sql_query()</code>。</p></div>
+
+  <h2><span class="hn">2</span>窗口函数</h2>
+  <p>DuckDB 支持完整的窗口函数语法，适合排名、累计求和、环比等场景。</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">窗口函数示例</span></figcaption><pre><code>result = lake.olap_query(
+    <span class="c-str">"sales"</span>,
+    <span class="c-str">"""
+    SELECT
+        product,
+        category,
+        amount,
+        ROW_NUMBER() OVER (
+            PARTITION BY category ORDER BY amount DESC
+        ) AS category_rank,
+        SUM(amount) OVER (
+            PARTITION BY category
+        ) AS category_total,
+        amount - LAG(amount, 1) OVER (
+            PARTITION BY category ORDER BY amount DESC
+        ) AS diff_from_prev
+    FROM sales
+    ORDER BY category, category_rank
+    """</span>,
+)
+print(result.table.to_pandas())</code></pre></figure>
+
+  <p>常见窗口函数速查：</p>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>函数</th><th>用途</th><th>示例</th></tr></thead>
+    <tbody>
+      <tr><td><code>ROW_NUMBER()</code></td><td>行编号（不重复）</td><td><code>ROW_NUMBER() OVER (ORDER BY amount DESC)</code></td></tr>
+      <tr><td><code>RANK()</code></td><td>排名（并列跳号）</td><td><code>RANK() OVER (ORDER BY score DESC)</code></td></tr>
+      <tr><td><code>SUM() OVER</code></td><td>累计求和</td><td><code>SUM(amount) OVER (ORDER BY date)</code></td></tr>
+      <tr><td><code>AVG() OVER</code></td><td>移动平均</td><td><code>AVG(amount) OVER (ORDER BY date ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)</code></td></tr>
+      <tr><td><code>LAG() / LEAD()</code></td><td>前/后值偏移</td><td><code>LAG(amount, 1) OVER (ORDER BY date)</code></td></tr>
+    </tbody>
+  </table></div>
+
+  <h2><span class="hn">3</span>JOIN 多表查询</h2>
+  <p>当配置 <code>enable_join=True</code> 时（默认开启），可传入额外的 Arrow Table 进行 JOIN 操作。</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">多表 JOIN</span></figcaption><pre><code><span class="c-kw">import</span> pyarrow <span class="c-kw">as</span> pa
+
+<span class="c-rem"># 构造品类维度表</span>
+categories = pa.table({
+    <span class="c-str">"category"</span>: [<span class="c-str">"电子产品"</span>, <span class="c-str">"服装"</span>, <span class="c-str">"食品"</span>],
+    <span class="c-str">"department"</span>: [<span class="c-str">"科技"</span>, <span class="c-str">"零售"</span>, <span class="c-str">"消费"</span>],
+})
+
+result = lake.olap_query(
+    <span class="c-str">"sales"</span>,
+    <span class="c-str">"""
+    SELECT s.category, c.department, SUM(s.amount) as total
+    FROM sales s
+    INNER JOIN categories c ON s.category = c.category
+    GROUP BY s.category, c.department
+    ORDER BY total DESC
+    """</span>,
+    tables={<span class="c-str">"categories"</span>: categories},  <span class="c-rem"># 注册临时表供 JOIN 使用</span>
+)
+print(result.table.to_pandas())</code></pre></figure>
+
+  <div class="callout warn"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>注意</div><p>传入的 <code>tables</code> 字典键名必须符合标识符规范（字母/下划线开头，不含特殊字符）。</p></div>
+
+  <h2><span class="hn">4</span>物化视图</h2>
+  <p><code>Lake.materialize()</code> 将查询结果持久化为 DuckLake 表，设置 TTL 自动过期。适合缓存高频聚合查询的结果。</p>
+  <p><strong>配置要求</strong>：需要在配置中启用 <code>ducklake_enabled=True</code>：</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">启用 DuckLake</span></figcaption><pre><code><span class="c-kw">from</span> arrow_lake.config <span class="c-kw">import</span> ArrowLakeConfig
+
+config = ArrowLakeConfig()
+config.olap.ducklake_enabled = <span class="c-str">True</span>
+config.olap.ducklake_ttl_days = <span class="c-str">7</span>
+
+lake = Lake(base_uri=<span class="c-str">"./data"</span>, config=config)</code></pre></figure>
+
+  <p><strong>创建物化视图</strong>：</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">materialize()</span></figcaption><pre><code>view_name = lake.materialize(
+    <span class="c-str">"sales"</span>,
+    <span class="c-str">"SELECT category, SUM(amount) as total FROM sales GROUP BY category"</span>,
+    view_name=<span class="c-str">"category_summary"</span>,
+    ttl_days=<span class="c-str">7</span>,
+)
+print(<span class="c-str">f"物化视图已创建：{view_name}"</span>)</code></pre></figure>
+
+  <p>参数说明：</p>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>参数</th><th>类型</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><code>dataset_name</code></td><td><code>str</code></td><td>源 Lance 数据集名称</td></tr>
+      <tr><td><code>sql</code></td><td><code>str</code></td><td>SELECT 查询语句</td></tr>
+      <tr><td><code>view_name</code></td><td><code>str | None</code></td><td>物化表名，<code>None</code> 则自动生成 <code>_materialized_{dataset}</code></td></tr>
+      <tr><td><code>ttl_days</code></td><td><code>int | None</code></td><td>过期天数，<code>None</code> 使用配置默认值（默认 7 天）</td></tr>
+      <tr><td><code>max_join_rows</code></td><td><code>int | None</code></td><td>行数预算上限，<code>None</code> 使用配置默认值</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2><span class="hn">5</span>清理过期物化视图</h2>
+  <p>定期清理超过 TTL 的物化表，释放存储空间：</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">cleanup_materialized()</span></figcaption><pre><code>dropped = lake.cleanup_materialized()
+print(<span class="c-str">f"已清理 {len(dropped)} 个过期视图：{dropped}"</span>)
+
+<span class="c-rem"># 自定义 TTL 阈值（只清理超过 3 天的）</span>
+dropped = lake.cleanup_materialized(ttl_days=<span class="c-str">3</span>)</code></pre></figure>
+
+  <p>建议在定时任务中调用此方法，或在应用启动时执行一次清理。</p>
+  <p><strong>REST 管理端点</strong>：物化视图是全局资源，通过独立路由 <code>/api/v1/materialized</code> 管理（非 per-dataset，避免与 <code>datasets</code> 的 <code>GET /{name}</code> 冲突）。所有端点需 ADMIN 角色，且 <code>ducklake_enabled=True</code>（未启用返回 503）：</p>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>方法 + 路径</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><code>GET /api/v1/materialized</code></td><td>列出所有物化视图及生命周期元数据</td></tr>
+      <tr><td><code>DELETE /api/v1/materialized/{view}</code></td><td>按名称删除单个物化视图</td></tr>
+      <tr><td><code>POST /api/v1/materialized/cleanup</code></td><td>批量清理所有已过期的物化视图（TTL）</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2><span class="hn">6</span>查询计划分析</h2>
+  <p>使用 <code>EXPLAIN</code> 查看查询执行计划，辅助性能调优：</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">EXPLAIN</span></figcaption><pre><code>explain_output = lake.olap_query(
+    <span class="c-str">"sales"</span>,
+    <span class="c-str">"""
+    EXPLAIN
+    SELECT category, SUM(amount) as total
+    FROM sales
+    GROUP BY category
+    """</span>,
+)</code></pre></figure>
+
+  <div class="callout"><div class="ch">提示</div><p>当前 <code>OlapSearchBridge</code> 提供 <code>explain()</code> 方法用于更直接的 EXPLAIN 分析，可通过底层 bridge 调用。</p></div>
+
+  <h2><span class="hn">7</span>Daft DataFrame 查询</h2>
+  <p><code>Lake.daft_query()</code> 返回 <code>LazyDaftFrame</code>，支持链式延迟操作。Daft 不支持 SQL，但提供表达式风格的 DataFrame API。</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">链式操作</span></figcaption><pre><code><span class="c-kw">from</span> arrow_lake <span class="c-kw">import</span> Lake
+
+lake = Lake(base_uri=<span class="c-str">"./data"</span>)
+
+<span class="c-rem"># 加载为延迟 Daft DataFrame，支持列选择和过滤</span>
+df = lake.daft_query(<span class="c-str">"sales"</span>)
+df_filtered = lake.daft_query(
+    <span class="c-str">"sales"</span>,
+    columns=[<span class="c-str">"product"</span>, <span class="c-str">"category"</span>, <span class="c-str">"amount"</span>],
+    filter=<span class="c-str">"amount &gt; 50"</span>,
+    limit=<span class="c-str">1000</span>,
+)
+
+<span class="c-rem"># 链式操作：选择列 -&gt; 过滤 -&gt; 排序 -&gt; 收集</span>
+result = (
+    df.select(<span class="c-str">"product"</span>, <span class="c-str">"category"</span>, <span class="c-str">"amount"</span>)
+    .filter(<span class="c-str">"amount &gt; 100"</span>)
+    .sort(<span class="c-str">"amount"</span>, desc=<span class="c-str">True</span>)
+    .collect()  <span class="c-rem"># 执行并返回 PyArrow Table</span>
+)
+print(result.to_pandas())</code></pre></figure>
+
+  <p><strong>分组聚合</strong>：</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">groupby + agg</span></figcaption><pre><code><span class="c-kw">import</span> daft
+
+grouped = df.select(<span class="c-str">"category"</span>, <span class="c-str">"amount"</span>).groupby(<span class="c-str">"category"</span>)
+<span class="c-rem"># 应用聚合表达式获得具体结果</span>
+agg_result = grouped.agg(
+    daft.col(<span class="c-str">"amount"</span>).sum().alias(<span class="c-str">"total"</span>),
+    daft.col(<span class="c-str">"amount"</span>).mean().alias(<span class="c-str">"avg_amount"</span>),
+    daft.col(<span class="c-str">"amount"</span>).count().alias(<span class="c-str">"count"</span>),
+)
+print(agg_result.collect().to_pandas())</code></pre></figure>
+
+  <p><strong>多表 JOIN</strong>：</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">Daft JOIN</span></figcaption><pre><code>df1 = lake.daft_query(<span class="c-str">"sales"</span>)
+df2 = lake.daft_query(<span class="c-str">"products"</span>)
+
+joined = df1.join(df2, on=<span class="c-str">"product_id"</span>, how=<span class="c-str">"inner"</span>)
+result = joined.collect()
+print(result.to_pandas())</code></pre></figure>
+
+  <p><code>daft_query()</code> 参数说明：</p>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>参数</th><th>类型</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><code>columns</code></td><td><code>list[str] | None</code></td><td>只选择这些列</td></tr>
+      <tr><td><code>filter</code></td><td><code>str | None</code></td><td>SQL 风格的过滤表达式</td></tr>
+      <tr><td><code>limit</code></td><td><code>int | None</code></td><td>返回的最大行数</td></tr>
+    </tbody>
+  </table></div>
+
+  <p><code>LazyDaftFrame</code> 支持的操作：</p>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>方法</th><th>说明</th><th>示例</th></tr></thead>
+    <tbody>
+      <tr><td><code>select(*columns)</code></td><td>选择列</td><td><code>df.select("name", "amount")</code></td></tr>
+      <tr><td><code>filter(predicate)</code></td><td>过滤行</td><td><code>df.filter("amount &gt; 100")</code></td></tr>
+      <tr><td><code>sort(column, desc)</code></td><td>排序</td><td><code>df.sort("date", desc=True)</code></td></tr>
+      <tr><td><code>groupby(*columns)</code></td><td>分组</td><td><code>df.groupby("category")</code></td></tr>
+      <tr><td><code>join(other, on, how)</code></td><td>连接</td><td><code>df.join(df2, on="id", how="left")</code></td></tr>
+      <tr><td><code>pivot(group_by, pivot_col, value_col, agg_fn)</code></td><td>透视（长转宽，交叉表）</td><td><code>df.pivot("cat", "prod", "amt", "sum")</code></td></tr>
+      <tr><td><code>unpivot(ids, values)</code></td><td>逆透视（宽转长，melt）</td><td><code>df.unpivot("id", ["q1","q2"])</code></td></tr>
+      <tr><td><code>collect()</code></td><td>执行并返回 Arrow Table</td><td><code>df.collect()</code></td></tr>
+    </tbody>
+  </table></div>
+
+  <h2><span class="hn">8</span>导出数据</h2>
+  <p><code>Lake.export()</code> 将数据集导出为 Parquet 或 CSV 文件，支持列选择、版本指定和压缩配置。返回 <code>ExportResult</code>。</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">export()</span></figcaption><pre><code><span class="c-kw">from</span> arrow_lake <span class="c-kw">import</span> Lake
+
+lake = Lake(base_uri=<span class="c-str">"./data"</span>)
+
+<span class="c-rem"># 导出为 Parquet（自动从后缀推断格式）</span>
+result = lake.export(<span class="c-str">"sales"</span>, <span class="c-str">"output/sales_export.parquet"</span>)
+print(<span class="c-str">f"导出完成：{result}"</span>)  <span class="c-rem"># ExportResult 包含 path, format, row_count</span>
+
+<span class="c-rem"># 导出指定列</span>
+result = lake.export(
+    <span class="c-str">"sales"</span>,
+    <span class="c-str">"output/sales_summary.csv"</span>,
+    columns=[<span class="c-str">"category"</span>, <span class="c-str">"product"</span>, <span class="c-str">"amount"</span>],
+    format=<span class="c-str">"csv"</span>,
+)
+
+<span class="c-rem"># 导出特定版本 + 压缩</span>
+result = lake.export(
+    <span class="c-str">"sales"</span>,
+    <span class="c-str">"output/sales_v1.parquet"</span>,
+    version=<span class="c-str">1</span>,
+    compression=<span class="c-str">"snappy"</span>,
+    overwrite=<span class="c-str">True</span>,
+)</code></pre></figure>
+
+  <p>参数说明：</p>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>参数</th><th>类型</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><code>dataset_name</code></td><td><code>str</code></td><td>源数据集名称</td></tr>
+      <tr><td><code>output_path</code></td><td><code>str</code></td><td>输出文件路径（.parquet 或 .csv）</td></tr>
+      <tr><td><code>format</code></td><td><code>str | None</code></td><td>导出格式，<code>None</code> 自动从路径后缀推断</td></tr>
+      <tr><td><code>columns</code></td><td><code>list[str] | None</code></td><td>只导出指定列</td></tr>
+      <tr><td><code>version</code></td><td><code>int | None</code></td><td>数据集版本号，<code>None</code> 使用最新版</td></tr>
+      <tr><td><code>compression</code></td><td><code>str | None</code></td><td>Parquet 压缩编码（snappy, gzip, zstd 等）</td></tr>
+      <tr><td><code>overwrite</code></td><td><code>bool</code></td><td>是否覆盖已有文件（默认 <code>False</code>）</td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="callout tip"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-9"/></svg>异步与多目标导出（REST）</div><p>通过 <code>POST /api/v1/datasets/{name}/export</code> 异步导出大数据集，立即返回 <code>202</code> + <code>task_id</code>，随后用 <code>GET /{name}/export/{task_id}/status</code> 轮询状态、<code>GET /{name}/export/{task_id}/download</code> 下载结果。请求体 <code>ExportRequest</code> 必填 <code>output_path</code>（相对路径，禁止 <code>..</code> / 绝对路径 / 空字节）。</p><p><code>POST /api/v1/datasets/{name}/export-to</code>（同步）通过 Daft 将数据集导出到外部目标，支持 <code>parquet</code> / <code>csv</code> / <code>json</code> / <code>iceberg</code> / <code>clickhouse</code> 五种格式，请求体 <code>target_uri</code> + <code>format</code> 必填。</p></div>
+
+  <h2><span class="hn">9</span>OLAP 配置参考</h2>
+  <p>通过 <code>ArrowLakeConfig.olap</code> 精调分析引擎行为：</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">OLAP 配置</span></figcaption><pre><code><span class="c-kw">from</span> arrow_lake.config <span class="c-kw">import</span> ArrowLakeConfig
+
+config = ArrowLakeConfig()
+config.olap.max_result_rows = <span class="c-str">500_000</span>
+config.olap.enable_join = <span class="c-str">True</span>
+config.olap.enable_streaming = <span class="c-str">True</span>
+config.olap.lance_scan_mode = <span class="c-str">"auto"</span>       <span class="c-rem"># "auto" | "native" | "pyarrow_fallback"</span>
+config.olap.max_query_memory_mb = <span class="c-str">1024</span>
+config.olap.query_timeout_seconds = <span class="c-str">600</span>
+config.olap.ducklake_enabled = <span class="c-str">True</span>
+config.olap.ducklake_ttl_days = <span class="c-str">7</span>
+
+lake = Lake(base_uri=<span class="c-str">"./data"</span>, config=config)</code></pre></figure>
+
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>配置项</th><th>默认值</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><code>max_result_rows</code></td><td><code>100,000</code></td><td>查询最大返回行数</td></tr>
+      <tr><td><code>enable_predicate_pushdown</code></td><td><code>True</code></td><td>是否将谓词下推到 Lance</td></tr>
+      <tr><td><code>enable_join</code></td><td><code>True</code></td><td>是否允许 JOIN 查询</td></tr>
+      <tr><td><code>enable_streaming</code></td><td><code>True</code></td><td>使用 RecordBatchReader 流式读取</td></tr>
+      <tr><td><code>lance_scan_mode</code></td><td><code>"auto"</code></td><td>Lance 扫描模式</td></tr>
+      <tr><td><code>max_query_memory_mb</code></td><td><code>512</code></td><td>单查询内存上限（MB）</td></tr>
+      <tr><td><code>max_concurrent_queries</code></td><td><code>4</code></td><td>最大并发查询数</td></tr>
+      <tr><td><code>query_timeout_seconds</code></td><td><code>300</code></td><td>查询超时时间（秒）</td></tr>
+      <tr><td><code>ducklake_enabled</code></td><td><code>False</code></td><td>是否启用 DuckLake 物化视图</td></tr>
+      <tr><td><code>ducklake_ttl_days</code></td><td><code>7</code></td><td>物化视图默认 TTL（天）</td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="callout warn"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>生产必配（v1.9.6）</div><p>RAG/OLAP 混合路径若遇 DuckDB lance vector stream Rust panic（502 + worker died），将 <code>lance_scan_mode</code> 设为 <code>"pyarrow_fallback"</code> 绕开 DuckDB native lance scanner。物化视图（<code>ducklake_enabled</code>）默认关闭，启用时配套定时 <code>cleanup_materialized()</code> 控制存储增长。</p></div>
+
+  <h2><span class="hn">10</span>错误处理</h2>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">错误处理</span></figcaption><pre><code><span class="c-kw">from</span> arrow_lake <span class="c-kw">import</span> Lake, QueryError
+
+lake = Lake(base_uri=<span class="c-str">"./data"</span>)
+
+<span class="c-kw">try</span>:
+    result = lake.olap_query(<span class="c-str">"sales"</span>, <span class="c-str">"DELETE FROM sales WHERE 1=1"</span>)
+<span class="c-kw">except</span> QueryError <span class="c-kw">as</span> e:
+    <span class="c-kw">if</span> e.error_code.name == <span class="c-str">"OLAP_QUERY_FAILED"</span>:
+        print(<span class="c-str">f"查询失败：{e.message}"</span>)
+    <span class="c-kw">elif</span> e.error_code.name == <span class="c-str">"QUERY_JOIN_NOT_ALLOWED"</span>:
+        print(<span class="c-str">"JOIN 查询未启用，请在配置中设置 enable_join=True"</span>)
+    <span class="c-kw">else</span>:
+        print(<span class="c-str">f"未知错误：{e}"</span>)</code></pre></figure>
+
+  <div class="callout warn"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>安全约束</div><p>OLAP 桥接器<strong>只允许 SELECT 语句</strong>，会自动拦截 DML/DDL 以及包含分号的多语句输入。</p></div>
+</article>
+
+<nav class="pager">
+  <a class="prev" href="hybrid.html"><span class="dir"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg> 上一章</span><span class="ttl">混合与分面搜索</span></a>
+  <a class="next" href="rag.html"><span class="dir">下一章 <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span><span class="ttl">RAG 问答管线</span></a>
+</nav>
+
+<footer class="footer">
+  <div class="footer-inner">
+    <div><b>Arrow Lake</b> · OLAP 分析 · v1.9.6<br/><span class="muted mono" style="font-size:.7rem">© 2026 · MIT License</span></div>
+    <div class="muted" style="font-size:.75rem">自包含可离线运行 · 源自 docs/cookbook/07</div>
+  </div>
+</footer>
+</body>
+</html>

@@ -1,6 +1,6 @@
 # RAG 问答管线
 
-> 版本：1.5.3
+> 版本：1.9.6
 
 Arrow Lake 内置 RAG（检索增强生成）管线，支持多检索策略、流式输出、
 多轮对话和知识图谱增强。返回 `RAGResponse`，包含回答、引用来源和性能指标。
@@ -27,13 +27,13 @@ print(f"摄入 {report.total_rows} 行")
 
 # 2. 生成嵌入向量（替换为实际嵌入模型）
 #    列名需与 RAG 管线期望的一致（默认：text_embedding）
-DIM = 768
-embeddings = np.random.randn(report.total_rows, DIM).astype(np.float32)  # 占位
+DIM = 1024  # bge-m3 / qwen3-embedding 维度（占位；实际用配置的嵌入模型）
+embeddings = np.random.randn(report.total_rows, DIM).astype(np.float32)
 embeddings /= np.linalg.norm(embeddings, axis=1, keepdims=True)
 vec_table = pa.table({
     "text_embedding": pa.FixedSizeListArray.from_arrays(embeddings.ravel(), DIM),
 })
-lake.append("docs", vec_table)
+lake.append_dataset("docs", vec_table)
 
 # 3. 创建向量索引
 lake.create_vector_index("docs", "text_embedding")
@@ -92,7 +92,7 @@ for citation in response.citations:
 | `citations`       | `tuple[RAGCitation, ...]` | 引用来源列表           |
 | `retrieval_count` | `int`                     | 检索到的文档块数         |
 | `context_tokens`  | `int \| None`             | 上下文窗口使用的 Token 数 |
-| `llm_usage`       | `dict \| None`            | LLM Token 用量统计   |
+| `verification`    | `dict \| None`            | 忠实度校验结果（v1.9.6；需开 `enable_verification`，含 support_ratio/sentences/valid_refs） |
 | `latency_ms`      | `float \| None`           | 端到端延迟（毫秒）        |
 | `session_id`      | `str \| None`             | 会话标识符            |
 
@@ -196,7 +196,8 @@ async def compare_strategies():
 asyncio.run(compare_strategies())
 ```
 
-默认策略由 `rag.default_retrieval_strategy` 配置控制：
+默认策略由 `rag.default_retrieval_strategy` 配置控制（默认 `"hybrid"`，v1.9.5 起真正生效——
+此前 strategy 仅用于选 score 列名，检索实际只走 FTS，向量索引 0 参与）：
 
 ```python
 from arrow_lake.config import ArrowLakeConfig
@@ -205,6 +206,9 @@ config = ArrowLakeConfig()
 config.rag.default_retrieval_strategy = "hybrid"  # "fts" | "vector" | "hybrid"
 config.rag.default_top_k = 10                      # 默认检索文档数
 ```
+
+**`use_kg` per-query 开关**（v1.9.5）：`rag_query(..., use_kg=False)` 单次降级为纯向量/FTS，
+**无需关闭 `hugegraph.enabled`** 做对比；默认 True，hugegraph 启用时自动注入图谱上下文。
 
 ***
 
@@ -376,6 +380,23 @@ lake = Lake.from_yaml("configs/rag.yaml", base_uri="./data")
 环境变量方式：`ARROW_LAKE__LLM__PROVIDER=openai`，
 `ARROW_LAKE__RAG__DEFAULT_TOP_K=10` 等。
 
+### 两阶段独立 LLM（v1.9.5）
+
+RAG 框架支持抽取/重排与问答生成用**不同模型**（`rag.extract_llm` / `rag.qa_llm`，均为 `LLMConfig`，
+任一为 None 回退全局 `llm`）。典型搭配：抽取用轻量 `qwen-turbo`（快），生成用旗舰 `qwen-plus@16384`
+（≈ qwen-max 质量、便宜约 4.8 倍）。百炼（dashscope）须走代理，勿放入 `NO_PROXY`。
+
+```yaml
+rag:
+  extract_llm: { provider: openai, api_base: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                 api_key: "sk-...", model: qwen-turbo }
+  qa_llm:      { provider: openai, api_base: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                 api_key: "sk-...", model: qwen-plus, max_tokens: 16384, temperature: 0.3 }
+```
+
+> **查询变换**（可选）：`rag.query_transform`（`none`/`hyde`/`multi_query`）+ `multi_query_variants=3`
+> 对复杂多 facet 问题并行多路检索再合并去重，提升召回。
+
 ***
 
 ## 8. 批量查询
@@ -501,50 +522,79 @@ asyncio.run(safe_rag_query())
 
 ## 12. 重排序（Reranking）
 
-第一阶段检索召回候选分块；**重排序器（Reranker）** 锐化顺序，让最相关的证据优先送达 LLM。Arrow Lake 支持多种重排序器，在 `rag.reranker` 段配置：
+第一阶段检索召回候选分块；**重排序器（Reranker）** 锐化顺序，让最相关的证据优先送达 LLM。
+RAG 管线的重排序器由 `rag.*` 下的**扁平字段**配置（注意：是扁平字段，不是嵌套对象）：
 
-| 类型 | 适用场景 |
-|---|---|
-| `cross-encoder`（默认） | 精度最佳 —— bge-reranker-v2-m3 对每个分块针对查询打分 |
-| `llm` | LLM-as-judge；质量高、延迟高 |
-| `ollama` | 经 Ollama 的本地二值（是/否）判断 |
-| `noop` | 关闭重排序 |
+| 配置项 | 默认值 | 说明 |
+|---|---|---|
+| `rag.reranker` | `"ollama"` | 策略：`ollama` / `cross-encoder` / `llm` / `noop` |
+| `rag.reranker_model` | `"dengcao/Qwen3-Reranker-0.6B:F16"` | ollama 时为模型 tag；cross-encoder 时为 HF 模型名 |
+| `rag.reranker_base_url` | `""` | 远程端点（空 = 从 embedding api_base 推导） |
+| `rag.reranker_top_n` | `10` | 重排后保留的块数 |
+| `rag.reranker_device` | `"auto"` | cross-encoder 设备：auto / cpu / cuda（v1.9.6 P0-2） |
+| `rag.reranker_warmup_on_init` | `True` | 启动预热，消除首次查询冷启动 |
+
+> **默认是 `ollama`，不是 `cross-encoder`**（v1.9.5 修复死配置后确立）。`ollama` 用 Qwen3-Reranker
+> 做是/否二值判断（区分度有限）；若要连续分精排，切 `reranker="cross-encoder"` +
+> `reranker_model="BAAI/bge-reranker-v2-m3"`（从 `HF_HOME` 加载，气隙部署需预下载）。
+> 注意 **search 端点**（非 RAG）的重排由 `hybrid.reranker_model` 配置（默认即 bge-reranker-v2-m3）。
+> 若配置的重排器运行时无法加载，管线透明回退 `noop` 并告警，检索绝不因重排器配置错误而硬失败。
 
 ```yaml
-# configs/rag.yaml
+# configs/rag.yaml —— 扁平字段（非嵌套对象）
 rag:
-  reranker:
-    type: cross-encoder        # bge-reranker-v2-m3
-    device: auto               # auto / cpu / cuda
-    warmup_on_init: true       # 启动时预加载，首次查询无冷启动代价
+  reranker: ollama                      # 或 cross-encoder / llm / noop
+  reranker_model: dengcao/Qwen3-Reranker-0.6B:F16
+  reranker_top_n: 10
+  reranker_device: auto                 # cross-encoder 时生效
+  reranker_warmup_on_init: true
 ```
-
-交叉编码器模型从 HuggingFace 缓存（`HF_HOME`）加载；在离线/气隙部署中需预下载。若配置的重排序器在运行时无法加载，管线会透明回退到 `noop` 并记录告警，因此检索绝不会因重排序器配置错误而硬失败。
 
 ***
 
 ## 13. 忠实度校验（防幻觉）
 
-校验闭环了生成与证据之间的回路。开启后，生成回答的每一句都会被拿来与检索上下文核对，响应携带 `support_ratio` 和明确的 `unsupported` 列表 —— 调用方可以拒绝或标记无依据的回答，而非默默信任。
+开启后，生成回答中的 `[n]` 引用编号会被校验是否落在检索上下文范围内，并逐句标注
+`supported`（携带有效 `[n]` 引用）或 `unverified`（无引用）；响应携带 `verification` 块，
+给出 `support_ratio` 与逐句明细，让调用方可以标记无依据论断，而非默默信任。
 
 ```yaml
 rag:
   enable_verification: true      # opt-in；默认关闭
-  verification_threshold: 0.6    # 嵌入余弦阈值（轻量模式）
 ```
 
-两种模式：
-
-- **嵌入余弦（默认）** —— 复用抽取编码器；廉价，无额外 LLM 调用。某句与任一上下文分块的余弦相似度超过 `verification_threshold` 即视为*被支撑*。
-- **LLM judge（opt-in）** —— 单次 LLM 调用逐句对照上下文打分；保真度更高、延迟更高。
+当前实现为 **lightweight 模式**（纯 stdlib，零额外成本）：校验 `[n]` 引用有效性 + 逐句标签。
+embedding 余弦模式与 LLM judge 模式为规划中的扩展（见 `arrow_lake/rag/verifier.py` 末尾注释），尚未实现。
 
 ```python
 response = await lake.rag_query("总结三季度发现", "reports")
 print(response.answer)
-print(f"支撑率：{response.support_ratio}")    # 0.0 – 1.0
-print(f"未支撑论断：{response.unsupported}")
-# support_ratio 接近 1.0 表示回答有充分依据；
-# `unsupported` 中的条目未被检索上下文支撑。
+v = response.verification          # dict 或 None（未开启时）
+if v:
+    print(f"支撑率：{v['support_ratio']}")     # 0.0 – 1.0
+    print(f"有效引用：{v['valid_refs']}，无效引用：{v['invalid_refs']}")
+    # v['sentences']：逐句明细 [{text, label: "supported"|"unverified", refs}]
 ```
 
 对于流式响应，**末帧**携带 `verification` 块（连同 `citations` 与 `latency`），让流式 UI 可以在生成完成后展示支撑率。
+
+***
+
+## 14. GraphRAG（知识图谱增强）
+
+当 `hugegraph.enabled=true` 且数据集已 `kg_build` 时，RAG 管线自动升级为 `GraphRAGPipeline`：
+从问题抽实体 → 并行检索（向量 + 图三元组 + 邻居）→ RRF 融合 → 用 `graph_qa` 模板生成。
+KG 不可用时优雅降级为纯向量 RAG（`graph_rag.py` 内置降级）。
+
+- **三路并行**（v1.9.6 P0-4）：`_graphrag_retrieve` 用 `asyncio.gather` 并行跑 vector / search_ka / neighbor，
+  延迟较串行降 40~50%；`QuestionEntityCache` 用 monotonic 时钟防 NTP 跳变致 TTL 批量失效。
+- **per-query `use_kg`**：传 `use_kg=False` 单次绕过 KG（降级 `super().query()`），无需关 hugegraph。
+- **延迟优化**：实体抽取/查询变体用 `extract_llm=qwen-turbo`（快），`qa_llm` 用 qwen-plus（生成）。
+
+```python
+# GraphRAG（hugegraph 已启用 + 数据集已建 KG）
+r = await lake.rag_query("哪些系统依赖认证服务？", "docs")           # use_kg 默认 True
+r2 = await lake.rag_query("同问题纯向量对比", "docs", use_kg=False)  # 单次绕过 KG
+```
+
+REST 专用端点 `POST /api/v1/kg/query/graphrag`（body 用 `question` + `dataset`）。

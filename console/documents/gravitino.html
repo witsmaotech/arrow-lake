@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Gravitino 元数据治理 · Arrow Lake 文档</title>
+<link rel="stylesheet" href="../assets/tokens.css"/>
+<link rel="stylesheet" href="../assets/app.css"/>
+<link rel="stylesheet" href="../assets/landing.css"/>
+<link rel="stylesheet" href="docs.css"/>
+</head>
+<body>
+<nav class="lnav">
+  <a class="brand" href="../index.html"><span class="brand-mark">AL</span><span><b class="brand-name">Arrow Lake</b><span class="brand-sub">文档</span></span></a>
+  <div class="lnav-links">
+    <a href="index.html">文档中心</a>
+    <a href="../architecture.html">架构文档</a>
+  </div>
+  <div class="lnav-cta"><a class="btn btn-primary btn-sm" href="../system.html">打开控制台 →</a></div>
+</nav>
+<div class="subnav">
+  <a href="index.html">文档中心</a><span class="crumb-sep">/</span><a href="gravitino.html" style="color:var(--teal-bright)">Gravitino 元数据治理</a>
+  <span class="pager-spacer"></span>
+  <div class="prevnext">
+    <a href="index.html"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg><span class="lbl">目录</span></a>
+    <a href="new-features.html"><span class="lbl">下一章</span><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+  </div>
+</div>
+
+<header class="tut-hero">
+  <div class="tut-hero-inner">
+    <span class="num-badge">第 15 章 · 治理</span>
+    <h1>Gravitino 元数据治理</h1>
+    <p class="sub">可选元数据治理层：目录浏览、标签分类、合规策略、ML 模型注册、统计信息与优雅降级。理解 Gravitino 与 Turso/libSQL RBAC 的职责边界。</p>
+    <div class="tut-meta">
+      <span><i></i>难度 · 进阶</span>
+      <span><i></i>耗时 · 20 分钟</span>
+      <span><i></i>依赖 · Gravitino 1.3.0 + Lance REST</span>
+    </div>
+  </div>
+</header>
+
+<article class="tut-body">
+  <div class="callout"><div class="ch">状态：可选治理层</div><p>Gravitino 是 Arrow Lake 的<strong>可选</strong>元数据治理组件（RBAC/tag/血缘/fileset 治理），<strong>不在数据/查询热路径</strong>上：数据集 CRUD、查询、KG、search、RAG 均不依赖 Gravitino。卡死或不需要时，设置 <code>gravitino.enabled: false</code> 临时关闭即可，核心功能完全不受影响。本章对应 Arrow Lake v1.9.6，Gravitino server 已升级至 <strong>1.3.0</strong>。</p></div>
+
+  <h2><span class="hn">0</span>当前能力矩阵</h2>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>功能</th><th>存储</th><th>执行</th><th>状态</th></tr></thead>
+    <tbody>
+      <tr><td>Catalog/Table 浏览</td><td>Gravitino</td><td>—</td><td><strong>可用</strong></td></tr>
+      <tr><td>标签创建与关联</td><td>Gravitino</td><td>不驱动访问控制</td><td>仅元数据</td></tr>
+      <tr><td>保留 / 脱敏策略</td><td>Gravitino</td><td>不自动清理 / 不转换结果</td><td>仅元数据</td></tr>
+      <tr><td>表统计信息</td><td>Gravitino</td><td>查询规划器不消费</td><td>仅元数据</td></tr>
+      <tr><td>RBAC（访问控制）</td><td><strong>Turso/libSQL</strong>（一等 store）</td><td><code>RbacStore</code> fail-close</td><td><strong>生产可用</strong></td></tr>
+      <tr><td>Gravitino RBAC 桥接</td><td>Gravitino SDK</td><td>可选旁路，非主路径</td><td>可选</td></tr>
+      <tr><td>血缘集成</td><td>表属性</td><td>无跨系统血缘图</td><td>浅层</td></tr>
+    </tbody>
+  </table></div>
+  <div class="callout warn"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>RBAC 说明（v1.9.0+）</div><p>访问控制的<strong>一等持久化后端是 Turso/libSQL</strong>（<code>RbacStore</code>，fail-close），<strong>不是 Gravitino</strong>。<code>GravitinoRBACBridge</code> 仅是可选旁路——<strong>Gravitino 关闭时 RBAC 照常生效</strong>，不要高估 Gravitino 角色的作用。</p></div>
+
+  <h2><span class="hn">1</span>架构概览</h2>
+  <p>Arrow Lake 作为 Gravitino 元数据操作的代理层。客户端调用 Arrow Lake API 上的 <code>/api/v1/metadata/*</code> 端点，由 Arrow Lake 通过 REST API 或 Python SDK 委托给 Gravitino：</p>
+  <figure class="code"><figcaption><span class="lang">text</span><span class="file">代理架构</span></figcaption><pre><code>Client → Arrow Lake API (/api/v1/metadata/*)
+            ├── GravitinoBridge (REST)       ← catalogs, tables, stats
+            ├── GravitinoTagService (SDK)    ← tags
+            ├── GravitinoPolicyService (SDK) ← policies
+            └── GravitinoModelRegistry (SDK) ← models
+                    ↓
+            Apache Gravitino Server (:8090)
+            Apache Lance REST Catalog (:9002)</code></pre></figure>
+  <p>元数据分三层：Metalake → Catalog → Schema → 对象（Table / Fileset / Model）：</p>
+  <figure class="code"><figcaption><span class="lang">text</span><span class="file">元数据层级</span></figcaption><pre><code>Metalake: arrow-lake
+  ├── Catalog: lance-catalog     (RELATIONAL, lakehouse-generic)
+  │     └── Schema: arrow_lake
+  │           └── Tables: articles, sales, ...
+  ├── Catalog: minio-fileset     (FILESET)
+  │     └── Schema: arrow_lake
+  │           └── Filesets: dataset paths
+  └── Catalog: ml-models         (MODEL)
+        └── Schema: default
+              └── Models: text-embedder, image-classifier, ...</code></pre></figure>
+
+  <h2><span class="hn">2</span>配置</h2>
+  <p>Gravitino 默认关闭（<code>enabled: false</code>）。启用时所有调用均包装在 <code>try/except</code> 中——Gravitino 不可用时 Arrow Lake 使用本地 DuckDB/Lance 目录继续正常运行。</p>
+  <figure class="code"><figcaption><span class="lang">yaml</span><span class="file">config.yaml</span></figcaption><pre><code>gravitino:
+  enabled: <span class="c-str">true</span>          <span class="c-rem"># 默认 false ——Gravitino 是可选治理层</span>
+  uri: <span class="c-str">"http://gravitino:8090"</span>
+  metalake: <span class="c-str">"arrow-lake"</span>
+  lance_rest_enabled: <span class="c-str">true</span>
+  lance_rest_uri: <span class="c-str">"http://lance-rest:9002"</span>
+  auth_type: simple    <span class="c-rem"># simple | oauth | kerberos | null</span>
+  sync_direction: bidirectional
+  sync_interval_seconds: <span class="c-str">30</span>   <span class="c-rem"># 范围: 5–300</span></code></pre></figure>
+
+  <h2><span class="hn">3</span>场景 A — 数据发现与目录浏览</h2>
+  <p>新入职数据工程师探索数据湖中有哪些数据集：浏览 catalogs → 列出 tables → 查看单个表结构。</p>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">浏览目录与表</span></figcaption><pre><code><span class="c-rem"># 健康检查（Gravitino 启用时含 gravitino / lance_rest 字段）</span>
+curl http://127.0.0.1:8000/health -H <span class="c-str">"X-API-Key: $KEY"</span>
+
+<span class="c-rem"># 列出 catalogs（三类：lance-catalog / minio-fileset / ml-models）</span>
+curl http://127.0.0.1:8000/api/v1/metadata/catalogs -H <span class="c-str">"X-API-Key: $KEY"</span>
+<span class="c-rem"># =&gt; {"success": true, "data": [{"name":"lance-catalog"}, ...], "metadata": {"total": 3}}</span>
+
+<span class="c-rem"># 列出表 + 查看表结构（列、属性）</span>
+curl http://127.0.0.1:8000/api/v1/metadata/tables -H <span class="c-str">"X-API-Key: $KEY"</span>
+curl http://127.0.0.1:8000/api/v1/metadata/tables/articles -H <span class="c-str">"X-API-Key: $KEY"</span></code></pre></figure>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">httpx 浏览</span></figcaption><pre><code><span class="c-kw">import</span> httpx
+BASE = <span class="c-str">"http://127.0.0.1:8000"</span>
+H = {<span class="c-str">"X-API-Key"</span>: <span class="c-str">"your-key"</span>}
+
+<span class="c-kw">for</span> cat <span class="c-kw">in</span> httpx.get(f<span class="c-str">"{BASE}/api/v1/metadata/catalogs"</span>, headers=H).json()[<span class="c-str">"data"</span>]:
+    print(f<span class="c-str">"Catalog: {cat['name']}"</span>)
+
+<span class="c-kw">for</span> tbl <span class="c-kw">in</span> httpx.get(f<span class="c-str">"{BASE}/api/v1/metadata/tables"</span>, headers=H).json()[<span class="c-str">"data"</span>]:
+    detail = httpx.get(f<span class="c-str">"{BASE}/api/v1/metadata/tables/{tbl['name']}"</span>, headers=H).json()
+    print(f<span class="c-str">"  {tbl['name']}: {len(detail['data']['columns'])} columns"</span>)</code></pre></figure>
+
+  <h2><span class="hn">4</span>场景 B — 数据分类与标签治理</h2>
+  <p>数据管家为 GDPR 合规打标签。标签当前作为元数据用于发现和审计，列级标签实现精细治理。</p>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>预定义标签</th><th>用途</th></tr></thead>
+    <tbody>
+      <tr><td><code>sensitive</code></td><td>敏感信息</td></tr>
+      <tr><td><code>pii</code></td><td>个人身份信息</td></tr>
+      <tr><td><code>financial</code></td><td>金融/账单数据</td></tr>
+      <tr><td><code>expires:30d</code></td><td>30 天保留标记</td></tr>
+    </tbody>
+  </table></div>
+  <div class="callout warn"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>v1.9.6 安全加固</div><p>写端点不再接受 <code>?body=</code> URL query（PII 会落入 URL/访问日志）。改用 <strong>JSON POST body</strong>（<code>await request.json()</code>）。</p></div>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">创建标签 + 列出标签</span></figcaption><pre><code><span class="c-rem"># 创建 GDPR 标签（JSON body，非 URL query）</span>
+curl -X POST http://127.0.0.1:8000/api/v1/metadata/tags \
+  -H <span class="c-str">"X-API-Key: $KEY"</span> -H <span class="c-str">"Content-Type: application/json"</span> \
+  -d <span class="c-str">'{"name": "gdpr_subject", "comment": "Data subject under GDPR"}'</span>
+
+<span class="c-rem"># 列出所有标签 / 列出特定表的标签</span>
+curl http://127.0.0.1:8000/api/v1/metadata/tags -H <span class="c-str">"X-API-Key: $KEY"</span>
+curl <span class="c-str">"http://127.0.0.1:8000/api/v1/metadata/tags?table=users"</span> -H <span class="c-str">"X-API-Key: $KEY"</span></code></pre></figure>
+  <p>标签-表/列关联需直接用 Python SDK（暂无 REST 端点）：</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">GravitinoTagService</span></figcaption><pre><code><span class="c-kw">from</span> arrow_lake.quality.gravitino_tags <span class="c-kw">import</span> GravitinoTagService
+tags = GravitinoTagService(cfg)
+
+tags.tag_table(<span class="c-str">"users"</span>, [<span class="c-str">"pii"</span>, <span class="c-str">"sensitive"</span>])      <span class="c-rem"># 标记整表</span>
+tags.tag_column(<span class="c-str">"users"</span>, <span class="c-str">"email"</span>, [<span class="c-str">"pii"</span>])           <span class="c-rem"># 标记列</span>
+pii_tables = tags.get_tables_by_tag(<span class="c-str">"pii"</span>)              <span class="c-rem"># 按标签发现 → ["users","customers",...]</span></code></pre></figure>
+
+  <h2><span class="hn">5</span>场景 C — 合规策略：保留与脱敏</h2>
+  <p>合规官执行数据保留规则和列级脱敏。策略将治理意图与执行分离：声明式定义规则，再应用到表。</p>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">保留策略 + 脱敏策略</span></figcaption><pre><code><span class="c-rem"># 保留策略：日志仅保留 90 天</span>
+curl -X POST http://127.0.0.1:8000/api/v1/metadata/policies/retention \
+  -H <span class="c-str">"X-API-Key: $KEY"</span> -H <span class="c-str">"Content-Type: application/json"</span> \
+  -d <span class="c-str">'{"name": "log_retention_90d", "days": 90}'</span>
+
+<span class="c-rem"># 脱敏策略：partial 保留首尾各 2 字符（function 必填：redact/hash/partial/nullify）</span>
+curl -X POST http://127.0.0.1:8000/api/v1/metadata/policies/masking \
+  -H <span class="c-str">"X-API-Key: $KEY"</span> -H <span class="c-str">"Content-Type: application/json"</span> \
+  -d <span class="c-str">'{"name": "email_mask", "columns": ["email", "phone"], "function": "partial"}'</span>
+
+curl http://127.0.0.1:8000/api/v1/metadata/policies -H <span class="c-str">"X-API-Key: $KEY"</span>   <span class="c-rem"># 列出全部策略</span></code></pre></figure>
+  <div class="callout warn"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>必填 function 字段</div><p>脱敏策略的 <code>function</code> 必须是 <code>redact</code>/<code>hash</code>/<code>partial</code>/<code>nullify</code> 之一，否则返回 400。省略时默认 <code>redact</code>。<strong>策略存储在 Gravitino，但执行由 <code>MaskingEngine</code>（读取路径）与 <code>RetentionEnforcer</code>（后台线程）落地</strong>——见第 17 章脱敏。</p></div>
+
+  <h2><span class="hn">6</span>场景 D — ML 模型生命周期</h2>
+  <p>模型目录将版本管理与服务解耦：用别名（<code>latest</code>、<code>production</code>）控制哪个版本用于何处——更新别名，而非代码。</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">GravitinoModelRegistry</span></figcaption><pre><code><span class="c-kw">from</span> arrow_lake.catalog.gravitino_models <span class="c-kw">import</span> GravitinoModelRegistry
+registry = GravitinoModelRegistry(cfg)
+
+registry.register_model(name=<span class="c-str">"text-embedder"</span>,
+    comment=<span class="c-str">"Text embedding model for RAG"</span>,
+    properties={<span class="c-str">"framework"</span>: <span class="c-str">"sentence-transformers"</span>, <span class="c-str">"dimension"</span>: <span class="c-str">"768"</span>})
+
+registry.add_version(name=<span class="c-str">"text-embedder"</span>, uri=<span class="c-str">"s3://models/text-embedder/v2"</span>, aliases=[<span class="c-str">"production"</span>])
+prod = registry.get_production_version(<span class="c-str">"text-embedder"</span>)   <span class="c-rem"># 热切换：更新 alias，重启生效</span></code></pre></figure>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">REST 查询模型版本</span></figcaption><pre><code>curl http://127.0.0.1:8000/api/v1/metadata/models -H <span class="c-str">"X-API-Key: $KEY"</span>
+curl http://127.0.0.1:8000/api/v1/metadata/models/text-embedder/versions -H <span class="c-str">"X-API-Key: $KEY"</span></code></pre></figure>
+
+  <h2><span class="hn">7</span>场景 E — 统计信息与场景 F — 优雅降级</h2>
+  <p>统计信息采集后以 <code>stats.*</code> 前缀存为 Gravitino 表属性；查询引擎可据此做 join 排序与过滤下推决策。大量摄取后定期采集。</p>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">采集统计 + 健康检查</span></figcaption><pre><code><span class="c-rem"># 采集表统计（row_count / column_count / size_mb / 列类型）</span>
+curl -X POST http://127.0.0.1:8000/api/v1/metadata/statistics/articles -H <span class="c-str">"X-API-Key: $KEY"</span></code></pre></figure>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>功能</th><th>Gravitino 正常</th><th>Gravitino 不可用</th></tr></thead>
+    <tbody>
+      <tr><td>数据摄取 / 搜索 / OLAP</td><td>正常 + 同步/联邦</td><td><strong>正常</strong>（仅 DuckDB/Lance）</td></tr>
+      <tr><td><code>/api/v1/metadata/*</code></td><td>完整数据</td><td>503 Service Unavailable</td></tr>
+      <tr><td>标签 / 策略 / 模型注册</td><td>完整 CRUD</td><td>503 或空结果</td></tr>
+      <tr><td>健康检查</td><td><code>gravitino: healthy</code></td><td><code>gravitino: unhealthy</code></td></tr>
+    </tbody>
+  </table></div>
+  <div class="callout tip"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-9"/></svg>优雅降级</div><p>Arrow Lake 设计为<strong>优雅降级</strong>：Gravitino 是增强层，不是硬依赖。核心操作（ingest / search / query）始终可用；元数据治理功能在不可用时降级为 503。客户端应把 <code>/api/v1/metadata/*</code> 返回的 503 视为"功能不可用"，而非需要重试的错误。</p></div>
+
+  <h2><span class="hn">8</span>后台同步与熔断</h2>
+  <p><code>GravitinoSyncScheduler</code> 作为后台守护线程运行在 API 进程中：每隔 <code>sync_interval_seconds</code> 执行 <code>sync_outbound</code>（DuckDB → Gravitino）与 <code>sync_inbound</code>（Gravitino → DuckDB），通过 <code>GravitinoBridge.lock</code> 保证线程安全。</p>
+  <div class="callout warn"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>熔断器（v1.9.6）</div><p>连续 <strong>5 次</strong>同步周期失败后调度器<strong>主动停止</strong>同步线程（而非无限重试），避免慢速远程调用期间持有锁阻塞请求处理。触发后日志输出 <code>gravitino_sync_circuit_open</code>，提示设 <code>gravitino.enabled=false</code> 或修复 server/版本后重启——治理层永远不会拖垮数据面。</p></div>
+
+  <h2><span class="hn">9</span>端点概要</h2>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>方法</th><th>端点</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><code>GET</code></td><td><code>/api/v1/metadata/catalogs</code></td><td>列出 Gravitino 目录</td></tr>
+      <tr><td><code>GET</code></td><td><code>/api/v1/metadata/tables</code></td><td>列出 Lance 目录中的表</td></tr>
+      <tr><td><code>GET</code></td><td><code>/api/v1/metadata/tables/{name}</code></td><td>表详情（列、属性）</td></tr>
+      <tr><td><code>GET</code> / <code>POST</code></td><td><code>/api/v1/metadata/tags</code></td><td>列出 / 创建标签（可选 <code>?table=</code>）</td></tr>
+      <tr><td><code>GET</code> / <code>POST</code></td><td><code>/api/v1/metadata/policies</code></td><td>列出 / 创建策略（retention / masking / enforce）</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/v1/metadata/statistics/{name}</code></td><td>采集表统计信息</td></tr>
+      <tr><td><code>GET</code></td><td><code>/api/v1/metadata/models[/{name}/versions]</code></td><td>ML 模型与版本</td></tr>
+      <tr><td><code>GET</code></td><td><code>/api/v1/metadata/lineage/{name}</code></td><td>表血缘信息</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2><span class="hn">10</span>最佳实践与反模式</h2>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>实践</th><th>指南</th></tr></thead>
+    <tbody>
+      <tr><td><strong>标签命名</strong></td><td>小写 + 下划线 + 域前缀：<code>pii</code>、<code>fin_revenue</code>、<code>gdpr_subject</code></td></tr>
+      <tr><td><strong>粒度</strong></td><td>标记列而非仅标记表——实现精细脱敏</td></tr>
+      <tr><td><strong>策略命名</strong></td><td><code>{域}_{类型}_{范围}</code>：<code>gdpr_retention_90d</code>、<code>fin_mask_email</code></td></tr>
+      <tr><td><strong>模型别名</strong></td><td>始终维护 <code>production</code> 和 <code>latest</code>；URI 用不可变路径（<code>s3://models/name/v3</code>）</td></tr>
+      <tr><td><strong>同步</strong></td><td>30 秒默认足够；不低于 5 秒；批量操作前检查健康</td></tr>
+    </tbody>
+  </table></div>
+  <div class="callout warn"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>常见反模式</div><p>跳过健康检查就批量治理；期望实时同步（后台是最终一致，5-300s 延迟）；过度打标签使治理更难；忽略 503 当错误重试。</p></div>
+
+  <h2><span class="hn">11</span>v1.9.6 — 1.3.0 升级与可靠性</h2>
+  <p>v1.9.6 把 server 与 SDK 均升到 <strong>1.3.0</strong>，并修复四处 SDK 兼容性问题：</p>
+  <ul>
+    <li><strong>docker 布局变更</strong>：<code>GRAVITINO_HOME=/opt/gravitino</code>（旧版 <code>/root/gravitino</code>），数据卷须挂 <code>/opt/gravitino/data</code>。升级走全新启动（重建空卷后重跑 <code>gravitino-init</code>，实际数据在 MinIO 不受影响）。</li>
+    <li><strong>Catalog S3 属性用 <code>s3.*</code></strong>：<code>s3.endpoint</code>/<code>s3.access-key-id</code>/<code>s3.secret-access-key</code>，location 用 <code>s3://</code>。旧的 <code>fs.s3a.*</code> 在 1.3.0 fileset catalog 上<strong>不生效</strong>。</li>
+    <li><strong><code>as_schemas()</code>（非 <code>as_schema_catalog()</code>）</strong>：SDK 1.x 删了旧方法，改 <code>as_schemas()</code> 返 <code>SupportsSchemas</code>。</li>
+    <li><strong>1-level namespace</strong>：<code>list_filesets(ns)</code> 的 <code>ns</code> 要 1 级（只 schema），3 级会报 <code>must have 1 level</code>。</li>
+    <li><strong>代理中和</strong>：Docker daemon 自动注入的 <code>HTTP_PROXY</code> 致 s3a SigV4 被改 → minio 403。compose 显式置 <code>HTTP_PROXY/HTTPS_PROXY: ""</code> + <code>NO_PROXY: "*"</code> 覆盖。</li>
+  </ul>
+  <div class="callout tip"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-9"/></svg>排查口诀</div><p>改 SDK 调用前先核实方法名：<code>docker exec api python -c "from gravitino import Catalog;print([m for m in dir(Catalog) if 'schema' in m or m.startswith('as_')])"</code>。sync 连续失败看 <code>gravitino_sync_circuit_open</code>（5 次后停）。403 多半是 s3a 误配（改 <code>s3.*</code>）或代理注入。Gravitino 卡死时最简：<code>gravitino.enabled=false</code> 临时关。</p></div>
+</article>
+
+<nav class="pager">
+  <a class="prev" href="index.html"><span class="dir"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg> 目录</span><span class="ttl">产品文档教程</span></a>
+  <a class="next" href="new-features.html"><span class="dir">下一章 <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span><span class="ttl">v1.8–v1.9 新特性</span></a>
+</nav>
+
+<footer class="footer">
+  <div class="footer-inner">
+    <div><b>Arrow Lake</b> · Gravitino 元数据治理 · v1.9.6<br/><span class="muted mono" style="font-size:.7rem">© 2026 · MIT License</span></div>
+    <div class="muted" style="font-size:.75rem">自包含可离线运行 · 源自 docs/cookbook/15</div>
+  </div>
+</footer>
+</body>
+</html>

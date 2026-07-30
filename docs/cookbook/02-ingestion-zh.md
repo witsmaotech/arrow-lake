@@ -154,6 +154,9 @@ print(f"图像摄取：{report.total_rows} 行")
 #           image_width, image_height, exif_make, exif_model
 ```
 
+> **以图搜图（v1.9.2）**：图像摄入后，用 `POST /embed/image` 把查询图编码为 CLIP/SigLIP 向量，
+> 再 `POST /datasets/{name}/search/vector` 检索相似图像；文搜图用 SDK `lake.encode_text_clip()`。
+
 ### 视频摄取
 
 摄取视频时自动提取关键帧。
@@ -198,9 +201,11 @@ print(f"混合摄取：{report.total_rows} 行，{report.total_files} 文件")
 
 ***
 
-## 9. PDF 文档摄取
+## 9. 文档摄取（PDF / Word / Markdown / HTML / 邮件 … 17 种）
 
-将 PDF 解析为文本块 (chunk) 并写入 Lance dataset，供全文搜索和 RAG 使用。
+将文档解析为文本块 (chunk) 并写入 Lance dataset，供全文搜索和 RAG 使用。`/ingest/documents`
+REST 端点已放开 17 种文档类型（PDF/DOCX/PPTX/XLSX/MD/HTML/TXT/EPUB/邮件/图片等），且支持
+`append=true` 追加到已存数据集（增量）。
 
 ```python
 from arrow_lake import Lake
@@ -216,7 +221,7 @@ report = lake.ingest_documents(
 )
 print(f"文档摄取：{report.total_rows} 个文本块")
 
-# 写入的列：text, page_number, chunk_index, document_id, blob_key
+# 写入的列：text_content, page_number, chunk_index, document_id, blob_key, doc_type
 ```
 
 ### 自定义文档配置
@@ -228,6 +233,7 @@ from arrow_lake.config import ChunkStrategy, PdfParseMode
 doc_config = DocumentConfig(
     chunk_strategy=ChunkStrategy.RECURSIVE,     # page / paragraph / recursive / semchunk
                                                  # / chonkie_token / chonkie_semantic / chonkie_sdpm
+                                                 # / docling_hybrid（Docling HybridChunker，token 级）
     chunk_size=512,
     chunk_overlap=64,
     chunk_tokenizer="",                         # semchunk 分词器（空 = 字符级）
@@ -235,7 +241,7 @@ doc_config = DocumentConfig(
     semantic_similarity_threshold=0.5,
     semantic_min_chunk_size=100,
     pdf_parse_mode=PdfParseMode.AUTO,           # auto / text / ocr
-    ocr_backend="kreuzberg",                    # kreuzberg / turbo_ocr
+    ocr_backend="kreuzberg",                    # kreuzberg / turbo_ocr / docling
     ocr_endpoint="http://localhost:8002",
     max_file_size_mb=100,
     store_raw_pdf=True,
@@ -249,7 +255,16 @@ report = lake.ingest_documents(
 )
 ```
 
-文档摄取流水线：`PDF -> Kreuzberg 解析 (+ TurboOCR 回退) -> BlobStore (可选) -> Chunker 分块 -> Lance 持久化`
+文档摄取流水线：`PDF/Office/HTML → 解析 (Kreuzberg / TurboOCR / Docling) → BlobStore (可选) → Chunker 分块 → Lance 持久化`
+
+> **SDK 与 REST 的建索引差异（v1.9.5，高频踩坑）**：SDK `lake.ingest_documents()` 只分块 + 存储，
+> **不建检索索引**；REST `POST /ingest/documents` 走 `ingest_documents_and_index`
+> （parse → store → embed → FTS → vector 一条龙），行数 ≥256 自动建 IVF_PQ，<256 跳过并告警
+> （vector 仍可暴力搜索）。SDK 用户若要检索，摄入后需手动 `lake.create_vector_index()` +
+> `lake.create_fts_index()`，或改用 `lake.ingest_documents_and_index()`。
+
+> **摄取即治理**：摄入时自动捕获字段注释（v1.9.3，可经 `POST /datasets/{name}/schema/annotate`
+> 编辑）；所有写入经 `_lineage_after_ingest` 记录血缘并透传认证 `actor`（v1.9.4）。
 
 ***
 

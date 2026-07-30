@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Arrow Lake · 产品文档教程</title>
+<link rel="stylesheet" href="../assets/tokens.css"/>
+<link rel="stylesheet" href="../assets/app.css"/>
+<link rel="stylesheet" href="../assets/landing.css"/>
+<link rel="stylesheet" href="docs.css"/>
+</head>
+<body>
+<!-- ===== TOP NAV ===== -->
+<nav class="lnav">
+  <a class="brand" href="../index.html"><span class="brand-mark">AL</span><span><b class="brand-name">Arrow Lake</b><span class="brand-sub">文档中心</span></span></a>
+  <div class="lnav-links">
+    <a href="../index.html">← 返回首页</a>
+    <a href="index.html" style="color:var(--teal-bright)">文档中心</a>
+    <a href="../architecture.html">架构文档</a>
+  </div>
+  <div class="lnav-cta">
+    <a class="btn btn-primary btn-sm" href="../system.html">打开控制台 →</a>
+  </div>
+</nav>
+
+<!-- ===== HERO ===== -->
+<header class="doc-hero" style="background:radial-gradient(820px 420px at 82% -22%,rgba(20,184,166,.12),transparent 60%),radial-gradient(620px 340px at 8% 10%,rgba(56,189,248,.08),transparent 60%),var(--ink-950)">
+  <div class="doc-hero-inner" style="max-width:var(--content-max);margin:0 auto">
+    <span class="tag teal">产品文档教程 · Cookbook</span>
+    <h1 style="font-size:clamp(2rem,1.4rem+2.4vw,3rem);font-weight:800;letter-spacing:-.025em;margin:var(--s3) 0 var(--s2);line-height:1.08">从零到生产，<br/>六步掌握多模态数据湖仓</h1>
+    <p class="lede" style="font-size:1.05rem;color:var(--fg-md);max-width:68ch;margin:0 0 var(--s4)">六篇精修教程覆盖<strong style="color:var(--fg-hi)">摄取 · 检索 · RAG · 知识图谱 · 部署</strong>——每篇含可运行代码、概念详解与踩坑提示。源自 <code style="font-family:var(--font-mono);font-size:.84em;background:var(--ink-900);border:1px solid var(--line);border-radius:4px;padding:1px 5px;color:var(--teal-bright)">docs/cookbook/</code> 19 章实战手册的旗舰章节。</p>
+    <div class="doc-meta" style="display:flex;gap:var(--s2);flex-wrap:wrap;align-items:center;color:var(--fg-lo);font-family:var(--font-mono);font-size:.72rem;margin-top:var(--s4)">
+      <span style="display:inline-flex;align-items:center;gap:5px"><i style="width:5px;height:5px;border-radius:50%;background:var(--teal);font-style:normal"></i>环境 Python 3.11+ · uv sync</span>
+      <span style="display:inline-flex;align-items:center;gap:5px"><i style="width:5px;height:5px;border-radius:50%;background:var(--info);font-style:normal"></i>可选 MinIO / HugeGraph / Ollama</span>
+      <span style="display:inline-flex;align-items:center;gap:5px"><i style="width:5px;height:5px;border-radius:50%;background:var(--warn);font-style:normal"></i>对应 v1.9.6</span>
+    </div>
+  </div>
+</header>
+
+<!-- ===== LEARNING PATHS ===== -->
+<section class="section" style="padding-top:var(--s7)">
+  <div class="section-head">
+    <span class="tag amber">学习路径</span>
+    <h2 style="font-size:clamp(1.4rem,1rem+1vw,2rem);margin:var(--s2) 0 0;font-weight:700;letter-spacing:-.01em">四条主线，按目标推进</h2>
+  </div>
+  <div class="path-grid">
+    <div class="path">
+      <div class="pn"><span class="tag teal">入门</span>从零起步</div>
+      <div class="muted" style="font-size:.82rem">5 分钟跑通第一条数据管线，理解 Lake facade 与数据集模型。</div>
+      <div class="trail"><span class="step">01 快速入门</span><span class="arrow">→</span><span class="step">02 数据摄取</span><span class="arrow">→</span><span class="step">03 配置</span></div>
+    </div>
+    <div class="path">
+      <div class="pn"><span class="tag amber">搜索进阶</span>检索专家</div>
+      <div class="muted" style="font-size:.82rem">从向量 ANN 到全文 BM25，再到 RRF 混合与分面检索。</div>
+      <div class="trail"><span class="step">04 向量搜索</span><span class="arrow">→</span><span class="step">05 全文</span><span class="arrow">→</span><span class="step">06 混合</span></div>
+    </div>
+    <div class="path">
+      <div class="pn"><span class="tag" style="color:#A78BFA;background:rgba(139,92,246,.16);border-color:rgba(139,92,246,.3)">分析 &amp; AI</span>智能化</div>
+      <div class="muted" style="font-size:.82rem">OLAP 分析、RAG 防幻觉问答、知识图谱与 GraphRAG 推理。</div>
+      <div class="trail"><span class="step">07 OLAP</span><span class="arrow">→</span><span class="step">08 RAG</span><span class="arrow">→</span><span class="step">09 KG</span></div>
+    </div>
+    <div class="path">
+      <div class="pn"><span class="tag ok">生产部署</span>上线就绪</div>
+      <div class="muted" style="font-size:.82rem">REST/CLI 入口、质量去重、Docker/K8s 部署与运维监控。</div>
+      <div class="trail"><span class="step">10 REST</span><span class="arrow">→</span><span class="step">11 质量</span><span class="arrow">→</span><span class="step">12 部署</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== FLAGSHIP 6 ===== -->
+<section class="section" style="padding-top:var(--s5)">
+  <div class="section-head">
+    <span class="tag teal">旗舰教程</span>
+    <h2 style="font-size:clamp(1.4rem,1rem+1vw,2rem);margin:var(--s2) 0 0;font-weight:700;letter-spacing:-.01em">六篇精修教程<span class="muted" style="font-weight:400"> —— 含可运行代码与踩坑提示</span></h2>
+  </div>
+  <div class="doc-grid">
+    <a class="doc-card" href="quickstart.html" style="--c:var(--teal-bright)">
+      <div class="dc-num">第 01 章 · 入门</div>
+      <h3>快速入门</h3>
+      <div class="dc-desc">5 分钟创建数据湖、写入数据、SQL 查询与导出。Lake facade、数据集、版本模型一次讲清。</div>
+      <div class="dc-go">阅读 <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+    </a>
+    <a class="doc-card" href="ingestion.html" style="--c:var(--info)">
+      <div class="dc-num">第 02 章 · 摄取</div>
+      <h3>数据摄取</h3>
+      <div class="dc-desc">文件 / HTTP / SQL / Kafka / 多模态统一写入；PDF 分块、OCR、嵌入一体化与死信队列。</div>
+      <div class="dc-go">阅读 <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+    </a>
+    <a class="doc-card" href="vector-search.html" style="--c:var(--amber-bright)">
+      <div class="dc-num">第 04 章 · 检索</div>
+      <h3>向量搜索与索引</h3>
+      <div class="dc-desc">IVF_PQ / HNSW 索引、cosine/l2 度量、元数据过滤与 nprobes 调参，ANN 全流程。</div>
+      <div class="dc-go">阅读 <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+    </a>
+    <a class="doc-card" href="rag.html" style="--c:#A78BFA">
+      <div class="dc-num">第 08 章 · AI</div>
+      <h3>RAG 问答管线</h3>
+      <div class="dc-desc">多策略检索、流式输出、多轮对话、cross-encoder 重排与 faithfulness 防幻觉校验。</div>
+      <div class="dc-go">阅读 <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+    </a>
+    <a class="doc-card" href="knowledge-graph.html" style="--c:#F472B6">
+      <div class="dc-num">第 09 章 · 图谱</div>
+      <h3>知识图谱 &amp; GraphRAG</h3>
+      <div class="dc-desc">per-dataset 动态图、hyper-extract 抽取、Gremlin 遍历与 GraphRAG 自动升级。</div>
+      <div class="dc-go">阅读 <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+    </a>
+    <a class="doc-card" href="deployment.html" style="--c:var(--ok)">
+      <div class="dc-num">第 12 章 · 运维</div>
+      <h3>部署与运维</h3>
+      <div class="dc-desc">SDK / Docker Compose / Kubernetes 三形态、profile、监控告警、备份恢复与安全加固。</div>
+      <div class="dc-go">阅读 <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+    </a>
+  </div>
+</section>
+
+<!-- ===== MORE CHAPTERS ===== -->
+<section class="section" style="padding-top:var(--s5)">
+  <div class="section-head">
+    <span class="tag">完整 Cookbook</span>
+    <h2 style="font-size:clamp(1.4rem,1rem+1vw,2rem);margin:var(--s2) 0 0;font-weight:700;letter-spacing:-.01em">其余章节<span class="muted" style="font-weight:400"> —— 全部 13 章已同步为本地 HTML（与旗舰 6 章一致，自包含可离线）</span></h2>
+  </div>
+  <div class="more-toc">
+    <a href="configuration.html"><span class="mn">03</span> 配置系统</a>
+    <a href="fulltext.html"><span class="mn">05</span> 全文搜索</a>
+    <a href="hybrid.html"><span class="mn">06</span> 混合与分面搜索</a>
+    <a href="olap.html"><span class="mn">07</span> OLAP 分析</a>
+    <a href="rest-api.html"><span class="mn">10</span> REST API 指南</a>
+    <a href="quality.html"><span class="mn">11</span> 数据质量与去重</a>
+    <a href="cli.html"><span class="mn">13</span> CLI 完全参考</a>
+    <a href="workflow.html"><span class="mn">14</span> 工作流编排</a>
+    <a href="gravitino.html"><span class="mn">15</span> Gravitino 元数据治理</a>
+    <a href="new-features.html"><span class="mn">16</span> 新特性总览</a>
+    <a href="data-masking.html"><span class="mn">17</span> 数据脱敏</a>
+    <a href="lineage.html"><span class="mn">18</span> 血缘可视化</a>
+    <a href="rest-recipes.html"><span class="mn">19</span> REST 实战配方</a>
+  </div>
+  <div class="callout" style="max-width:var(--content-max);margin-top:var(--s5)">
+    <div class="ch">提示</div>
+    <p>全部 19 章现已为本控制台自包含 HTML（与旗舰 6 章一致，可离线）。内容源自 <code>docs/cookbook/</code> 并对齐 v1.9.6；Markdown 原文仍在仓库 <code>docs/cookbook/</code> 目录。</p>
+  </div>
+</section>
+
+<footer class="footer">
+  <div class="footer-inner">
+    <div><b>Arrow Lake</b> · 产品文档教程 · v1.9.6<br/><span class="muted mono" style="font-size:.7rem">© 2026 · MIT License · Gitee / GitHub</span></div>
+    <div class="muted" style="font-size:.75rem">自包含可离线运行 · 源自 docs/cookbook</div>
+  </div>
+</footer>
+</body>
+</html>

@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>数据摄取 · Arrow Lake 文档</title>
+<link rel="stylesheet" href="../assets/tokens.css"/>
+<link rel="stylesheet" href="../assets/app.css"/>
+<link rel="stylesheet" href="../assets/landing.css"/>
+<link rel="stylesheet" href="docs.css"/>
+</head>
+<body>
+<nav class="lnav">
+  <a class="brand" href="../index.html"><span class="brand-mark">AL</span><span><b class="brand-name">Arrow Lake</b><span class="brand-sub">文档</span></span></a>
+  <div class="lnav-links"><a href="index.html">文档中心</a><a href="../architecture.html">架构文档</a></div>
+  <div class="lnav-cta"><a class="btn btn-primary btn-sm" href="../system.html">打开控制台 →</a></div>
+</nav>
+<div class="subnav">
+  <a href="index.html">文档中心</a><span class="crumb-sep">/</span><a href="ingestion.html" style="color:var(--teal-bright)">数据摄取</a>
+  <span class="pager-spacer"></span>
+  <div class="prevnext">
+    <a href="quickstart.html"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg><span class="lbl">上一章</span></a>
+    <a href="vector-search.html"><span class="lbl">下一章</span><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+  </div>
+</div>
+
+<header class="tut-hero">
+  <div class="tut-hero-inner">
+    <span class="num-badge">第 02 章 · 摄取</span>
+    <h1>数据摄取指南</h1>
+    <p class="sub">本地文件、HTTP / SQL / Kafka、图像 / 视频 / PDF 文档与 PyArrow Table——统一 <code>Lake</code> 接口写入 Lance，覆盖分块、嵌入、去重与死信队列。</p>
+    <div class="tut-meta"><span><i></i>难度 · 初级</span><span><i></i>耗时 · 15 分钟</span><span><i></i>依赖 · 可选 sqlalchemy / kafka / s3</span></div>
+  </div>
+</header>
+
+<article class="tut-body">
+  <p>摄取是数据进入湖仓的唯一入口。<strong>多源统一接口</strong>把不同来源数据收敛到一致的 <code>IngestionReport</code>（含 <code>total_rows</code> / <code>total_files</code> / <code>sources</code>），下游检索、分析、RAG 全部基于此。</p>
+
+  <h2><span class="hn">1</span>核心概念</h2>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>能力</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><strong>多源统一接口</strong></td><td><code>ingest</code> / <code>ingest_http</code> / <code>ingest_sql</code> / <code>ingest_kafka</code> / <code>ingest_iceberg</code> / <code>ingest_deltalake</code>，统一返回 <code>IngestionReport</code></td></tr>
+      <tr><td><strong>结构化格式</strong></td><td>CSV / JSON / JSONL / Parquet；CSV/Parquet 由 Daft 解析，首文件决定 schema</td></tr>
+      <tr><td><strong>多模态摄取</strong></td><td><code>ingest_images</code>（缩略图+EXIF）/ <code>ingest_videos</code>（关键帧）/ <code>ingest_mixed</code>（统一表）</td></tr>
+      <tr><td><strong>文档分块（17 种）</strong></td><td><code>PDF/Office/HTML → 解析 (Kreuzberg/TurboOCR/Docling) → BlobStore → Chunker → Lance</code>，写入 text_content/page_number/chunk_index/document_id/blob_key/doc_type</td></tr>
+      <tr><td><strong>分块策略</strong></td><td>page / paragraph / recursive / semchunk / chonkie_token / chonkie_semantic / chonkie_sdpm</td></tr>
+      <tr><td><strong>嵌入一体化</strong></td><td><code>ingest_and_embed</code> 摄取同时算嵌入；<code>embed_and_add</code> 向已有表追加向量</td></tr>
+      <tr><td><strong>死信队列 DLQ</strong></td><td><code>IngestDeadLetterQueue</code> 记录失败文件，状态 pending → retrying → resolved | permanent</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2><span class="hn">2</span>结构化与多源摄取</h2>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">本地文件 + 报告</span></figcaption><pre><code><span class="c-kw">from</span> arrow_lake <span class="c-kw">import</span> Lake
+lake = Lake(base_uri=<span class="c-str">"./data_lake"</span>)
+report = lake.ingest(<span class="c-str">"sales"</span>, [<span class="c-str">"examples/data/transactions/sales_2024_cn.csv"</span>])
+print(<span class="c-str">f"摄取完成：{report.total_rows} 行，{report.total_files} 文件"</span>)
+<span class="c-kw">for</span> src <span class="c-kw">in</span> report.sources:
+    print(<span class="c-str">f"  {src.path}: {src.row_count} 行"</span>)</code></pre></figure>
+
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">HTTP / SQL / Kafka</span><span class="demo">SSRF 防护 + 退避重试</span></figcaption><pre><code><span class="c-rem"># HTTP 远程（自动格式检测 + SSRF 防护 + tenacity 退避）</span>
+lake.ingest_http(<span class="c-str">"external_data"</span>, [<span class="c-str">"https://example.com/dataset/sales.csv"</span>])
+
+<span class="c-rem"># SQL 数据库（SQLAlchemy 连接 URL）</span>
+lake.ingest_sql(<span class="c-str">"pg_orders"</span>, sql=<span class="c-str">"SELECT * FROM orders WHERE year = 2024"</span>,
+                connection_url=<span class="c-str">"postgresql://user:pass@localhost:5432/mydb"</span>)
+
+<span class="c-rem"># Kafka 流（消费到最新 offset 后返回）</span>
+lake.ingest_kafka(<span class="c-str">"clickstream"</span>, topics=[<span class="c-str">"user_clicks"</span>, <span class="c-str">"page_views"</span>],
+                  bootstrap_servers=<span class="c-str">"localhost:9092"</span>, group_id=<span class="c-str">"arrow_lake_ingest"</span>)</code></pre></figure>
+
+  <h2><span class="hn">3</span>文档（17 种）与多模态</h2>
+  <p><code>ingest_documents</code> 流水线支持自定义分块与 OCR 配置：</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">doc_config.py</span><span class="demo">分块 + OCR</span></figcaption><pre><code><span class="c-kw">from</span> arrow_lake.config <span class="c-kw">import</span> DocumentConfig, ChunkStrategy, PdfParseMode
+doc_config = DocumentConfig(
+    chunk_strategy=ChunkStrategy.RECURSIVE,   <span class="c-rem"># page/paragraph/recursive/semchunk</span>
+    chunk_size=<span class="c-str">512</span>, chunk_overlap=<span class="c-str">64</span>,
+    semantic_embedding_model=<span class="c-str">""</span>,            <span class="c-rem"># chonkie semantic/sdpm HF 模型</span>
+    semantic_similarity_threshold=<span class="c-str">0.5</span>,
+    pdf_parse_mode=PdfParseMode.AUTO,         <span class="c-rem"># auto/text/ocr</span>
+    ocr_backend=<span class="c-str">"kreuzberg"</span>,               <span class="c-rem"># kreuzberg / turbo_ocr / docling</span>
+    ocr_endpoint=<span class="c-str">"http://localhost:8002"</span>,
+    max_file_size_mb=<span class="c-str">100</span>, store_raw_pdf=<span class="c-str">True</span>, blob_prefix=<span class="c-str">"documents/"</span>,
+)
+lake.ingest_documents(<span class="c-str">"papers"</span>, [<span class="c-str">"examples/data/papers/full_text/zh001.pdf"</span>], doc_config=doc_config)</code></pre></figure>
+  <div class="callout warn"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>SDK ≠ REST 建索引</div><p>SDK <code>lake.ingest_documents()</code> 只分块 + 存储，<strong>不建检索索引</strong>；REST <code>POST /ingest/documents</code> 走 <code>ingest_documents_and_index</code>（parse → store → embed → FTS → vector 一条龙），行数 ≥256 自动建 IVF_PQ，&lt;256 跳过并告警（vector 仍可暴力搜索）。SDK 用户若要检索，摄入后需手动 <code>lake.create_vector_index()</code> + <code>lake.create_fts_index()</code>。</p></div>
+  <div class="callout tip"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-9"/></svg>以图搜图（v1.9.2）</div><p>图像摄入后，用 <code>POST /embed/image</code> 把查询图编码为 CLIP/SigLIP 向量，再 <code>POST /datasets/{name}/search/vector</code> 检索相似图像；文搜图用 SDK <code>lake.encode_text_clip()</code>。图像列写入 <code>image_data/image_thumbnail/image_preview</code> 及 EXIF 元数据。</p></div>
+
+  <p>或直接用 PyArrow Table 带向量列建表：</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">带向量列表</span></figcaption><pre><code><span class="c-kw">import</span> pyarrow <span class="c-kw">as</span> pa, numpy <span class="c-kw">as</span> np
+n, dim = <span class="c-str">100</span>, <span class="c-str">128</span>
+vectors = np.random.randn(n, dim).astype(np.float32)
+table = pa.table({
+    <span class="c-str">"id"</span>: [f<span class="c-str">"doc_{i:04d}"</span> <span class="c-kw">for</span> i <span class="c-kw">in</span> range(n)],
+    <span class="c-str">"text_content"</span>: [f<span class="c-str">"示例文本 {i}"</span> <span class="c-kw">for</span> i <span class="c-kw">in</span> range(n)],
+    <span class="c-str">"text_embedding"</span>: pa.FixedSizeListArray.from_arrays(vectors.ravel(), dim),
+})
+lake.create_dataset(<span class="c-str">"documents"</span>, table)
+lake.append_dataset(<span class="c-str">"documents"</span>, new_table)   <span class="c-rem"># schema 必须匹配</span></code></pre></figure>
+
+  <h2><span class="hn">4</span>写入维护与死信队列</h2>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">upsert / delete / embed</span></figcaption><pre><code>lake.upsert(<span class="c-str">"documents"</span>, updated_table, on=<span class="c-str">"id"</span>)
+lake.delete_rows(<span class="c-str">"documents"</span>, where=<span class="c-str">"category = 'expired'"</span>)
+lake.update_rows(<span class="c-str">"documents"</span>, where=<span class="c-str">"id = 'doc_0001'"</span>, updates={<span class="c-str">"category"</span>: <span class="c-str">"reviewed"</span>})
+
+lake.ingest_and_embed(<span class="c-str">"articles"</span>, [<span class="c-str">"data/articles.json"</span>], embed_column=<span class="c-str">"text_content"</span>)
+lake.embed_and_add(<span class="c-str">"documents"</span>, texts=[<span class="c-str">"新文档"</span>], ids=[<span class="c-str">"doc_0200"</span>], metadata=[{<span class="c-str">"source"</span>: <span class="c-str">"api"</span>}])</code></pre></figure>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">DLQ 死信队列</span></figcaption><pre><code><span class="c-kw">from</span> arrow_lake.ingest.dead_letter <span class="c-kw">import</span> IngestDeadLetterQueue
+dlq = IngestDeadLetterQueue(base_dir=<span class="c-str">"./data_lake"</span>)
+print(dlq.stats)                    <span class="c-rem"># {"pending": 3, "resolved": 1, "total": 4}</span>
+dlq.retry(<span class="c-str">"data/broken.csv"</span>); dlq.resolve(<span class="c-str">"data/broken.csv"</span>)
+removed = dlq.purge(resolved=<span class="c-str">True</span>, permanent=<span class="c-str">True</span>)</code></pre></figure>
+
+  <h2><span class="hn">5</span>踩坑提示</h2>
+  <div class="callout warn"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>Schema 锁定</div><p>多文件 / 追加摄取时，<strong>第一个文件决定 dataset schema</strong>，后续文件列须为子集或类型兼容，否则抛 <code>StorageError</code>。</p></div>
+  <div class="callout warn"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>非线程安全</div><p><code>Ingestor</code> 非线程安全；并发写不同 dataset 要建独立实例，并发写同一 dataset 需外部同步。</p></div>
+  <div class="callout"><div class="ch">依赖按需装</div><p>SQL 需 <code>sqlalchemy</code> + 驱动（psycopg2 / pymysql / pyodbc）；Kafka 需 <code>confluent-kafka</code>；Iceberg 需 <code>pyiceberg[pyarrow,s3fs]</code>；Delta 需 <code>deltalake</code>；S3 URI 须经 <code>StorageConfig</code> 或环境变量配凭证。<code>ocr_endpoint</code> 默认 <code>http://localhost:8002</code>，切 <code>turbo_ocr</code> 须保证服务可达。</p></div>
+  <div class="callout tip"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-9"/></svg>安全默认</div><p><code>ingest_http</code> 内置 SSRF 防护（阻止私有 IP）、仅 http/https、对 429/5xx 指数退避；dataset 名须匹配 <code>^[a-zA-Z_][a-zA-Z0-9_-]*$</code>。</p></div>
+</article>
+
+<nav class="pager">
+  <a class="prev" href="quickstart.html"><span class="dir"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg> 上一章</span><span class="ttl">快速入门</span></a>
+  <a class="next" href="vector-search.html"><span class="dir">下一章 <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span><span class="ttl">向量搜索与索引</span></a>
+</nav>
+
+<footer class="footer">
+  <div class="footer-inner">
+    <div><b>Arrow Lake</b> · 数据摄取 · v1.9.6<br/><span class="muted mono" style="font-size:.7rem">© 2026 · MIT License</span></div>
+    <div class="muted" style="font-size:.75rem">自包含可离线运行 · 源自 docs/cookbook/02</div>
+  </div>
+</footer>
+</body>
+</html>

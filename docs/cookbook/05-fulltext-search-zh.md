@@ -108,6 +108,16 @@ def text_search(
 ) -> FullTextSearchResult: ...
 ```
 
+### 异步全文搜索
+
+```python
+# 异步版本 (v1.8.0 #17): 保持事件循环响应,适合并发 async handler
+result = await lake.text_search_async("docs", query="机器学习", top_k=10)
+```
+
+`text_search_async` 签名与 `text_search` 完全一致,内部经 `asyncio.to_thread` 包装
+(lancedb 无原生 async FTS 路径,故非阻塞委托),返回同一 `FullTextSearchResult`。
+
 ### 返回类型：FullTextSearchResult
 
 ```python
@@ -191,6 +201,8 @@ config = FullTextSearchConfig(
     lower_case=True,           # 转小写
     tokenizer_type="jieba",    # "jieba" (中文推荐) | "default" (内置)
     jieba_user_dict=None,      # jieba 自定义词典路径
+    with_position=False,       # 存 token 位置 → 启用短语查询 (引号 "..."),索引变大
+    use_inverted=False,        # v1.7.1: 改用 lance 原生 INVERTED 索引 (替代 tantivy,实验性)
 )
 ```
 
@@ -203,6 +215,8 @@ config = FullTextSearchConfig(
 | `lower_case`        | `bool`        | `True`           | 转小写                     |
 | `tokenizer_type`    | `str`         | `"jieba"`        | `"jieba"` 或 `"default"` |
 | `jieba_user_dict`   | `str \| None` | `None`           | 自定义词典路径                 |
+| `with_position`     | `bool`        | `False`          | 存 token 位置,启用短语查询 (引号 `"..."`),索引变大 |
+| `use_inverted`      | `bool`        | `False`          | v1.7.1: 用 lance 原生 INVERTED 索引替代 tantivy (实验性) |
 
 ***
 
@@ -285,3 +299,5 @@ curl -X POST http://localhost:8000/api/v1/datasets/docs/search/fts \
 | `POST /{name}/index/fts`  | `FtsIndexRequest`       | `FtsIndexResponse`       |
 | `POST /{name}/search/fts` | `FullTextSearchRequest` | `FullTextSearchResponse` |
 | `POST /embed/text`        | `TextEmbedRequest`      | `EmbeddingResponse`      |
+| `POST /embed/image`       | `ImageEmbedRequest`     | `EmbeddingResponse`      |
+| `POST /embed/clip-text`   | `ClipTextEmbedRequest`  | `EmbeddingResponse`      |

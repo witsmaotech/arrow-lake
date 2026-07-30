@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>数据脱敏 · Arrow Lake 文档</title>
+<link rel="stylesheet" href="../assets/tokens.css"/>
+<link rel="stylesheet" href="../assets/app.css"/>
+<link rel="stylesheet" href="../assets/landing.css"/>
+<link rel="stylesheet" href="docs.css"/>
+</head>
+<body>
+<nav class="lnav">
+  <a class="brand" href="../index.html"><span class="brand-mark">AL</span><span><b class="brand-name">Arrow Lake</b><span class="brand-sub">文档</span></span></a>
+  <div class="lnav-links">
+    <a href="index.html">文档中心</a>
+    <a href="../architecture.html">架构文档</a>
+  </div>
+  <div class="lnav-cta"><a class="btn btn-primary btn-sm" href="../system.html">打开控制台 →</a></div>
+</nav>
+<div class="subnav">
+  <a href="index.html">文档中心</a><span class="crumb-sep">/</span><a href="data-masking.html" style="color:var(--teal-bright)">数据脱敏</a>
+  <span class="pager-spacer"></span>
+  <div class="prevnext">
+    <a href="new-features.html"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg><span class="lbl">上一章</span></a>
+    <a href="lineage.html"><span class="lbl">下一章</span><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+  </div>
+</div>
+
+<header class="tut-hero">
+  <div class="tut-hero-inner">
+    <span class="num-badge">第 17 章 · 治理</span>
+    <h1>数据脱敏</h1>
+    <p class="sub">读取路径上的列级隐私控制。四种脱敏函数、HMAC 签名、发布前预览、fail-closed 强制执行与审计闭环——对 VIEWER 透明，ADMIN 跳过。</p>
+    <div class="tut-meta">
+      <span><i></i>难度 · 进阶</span>
+      <span><i></i>耗时 · 10 分钟</span>
+      <span><i></i>依赖 · HMAC_KEY（fail-fast）</span>
+    </div>
+  </div>
+</header>
+
+<article class="tut-body">
+  <p>脱敏由 <code>MaskingEngine</code>（<code>arrow_lake/quality/masking_engine.py</code>）治理，经 Gravitino 策略层 + 预览端点暴露。它<strong>启动时必须有 HMAC 密钥</strong>——缺失则服务拒绝启动。策略把敏感列映射到四种脱敏函数之一，对 VIEWER 角色透明强制执行，fail-closed，并经 Lance 审计轨迹记录。</p>
+
+  <h2><span class="hn">1</span>配置 HMAC 密钥（必需）</h2>
+  <p>引擎对 <code>hash</code> 输出签名，并在密钥缺失时 fail-closed。启动 API 前必须设置密钥。</p>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">deploy/.env 或 compose environment</span></figcaption><pre><code>ARROW_LAKE__MASKING__HMAC_KEY=&lt;your-secret-key&gt;</code></pre></figure>
+  <div class="callout warn"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>fail-fast</div><p>密钥缺失时，启动抛 <code>RuntimeError</code>，容器退出。仅开发环境可 opt-in 降级：<code>ARROW_LAKE__MASKING__ALLOW_MISSING_KEY=1</code>（此时 <code>hash()</code> 在调用时抛错）。</p></div>
+
+  <h2><span class="hn">2</span>四种脱敏函数</h2>
+  <p>策略命名一组列及要应用的函数：</p>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>函数</th><th>行为</th><th>示例</th></tr></thead>
+    <tbody>
+      <tr><td><code>redact</code></td><td>替换为固定哨兵值（默认）</td><td>—</td></tr>
+      <tr><td><code>hash</code></td><td>HMAC-SHA256，128 位（<code>[:32]</code> 十六进制）—— 确定性、可关联</td><td>—</td></tr>
+      <tr><td><code>partial</code></td><td>保留首 2 尾 2，中间脱敏</td><td><code>13812345678</code> → <code>13*******78</code></td></tr>
+      <tr><td><code>nullify</code></td><td>替换为 NULL</td><td>—</td></tr>
+    </tbody>
+  </table></div>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">创建脱敏策略</span></figcaption><pre><code>curl -X POST http://127.0.0.1:8000/api/v1/gravitino/policies/masking \
+  -H <span class="c-str">"X-API-Key: $KEY"</span> -H <span class="c-str">"Content-Type: application/json"</span> \
+  -d <span class="c-str">'{"name": "pii_mask", "columns": ["phone", "email"], "function": "partial"}'</span></code></pre></figure>
+  <p>策略创建本身会被审计（见 §5）。</p>
+
+  <h2><span class="hn">3</span>发布前预览</h2>
+  <p>在提交规则前用真实数据验证。返回前几行的脱敏前/后对比：</p>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">mask-preview</span></figcaption><pre><code>curl -X POST http://127.0.0.1:8000/api/v1/datasets/customers/quality/mask-preview \
+  -H <span class="c-str">"X-API-Key: $KEY"</span> -H <span class="c-str">"Content-Type: application/json"</span> \
+  -d <span class="c-str">'{"columns": ["phone"], "function": "partial"}'</span>
+<span class="c-rem"># =&gt; {"phone": {"before": ["13812345678"], "after": ["13*******78"]}}</span></code></pre></figure>
+  <div class="callout warn"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>预览权限</div><p>预览为 <strong>ADMIN 专属</strong>（非 <code>EDITOR</code>），以防绕过列级 ACL；列名经标识符白名单校验以拒绝 SQL 注入。</p></div>
+
+  <h2><span class="hn">4</span>强制执行与 Fail-Closed</h2>
+  <p>策略指向某数据集后，RBAC 层对 VIEWER/EDITOR 角色在读取时透明应用脱敏；<strong>ADMIN 角色完全跳过脱敏</strong>（返回原始数据）。</p>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>角色</th><th>读取行为</th></tr></thead>
+    <tbody>
+      <tr><td>VIEWER / EDITOR</td><td>透明应用脱敏（返回脱敏后值）</td></tr>
+      <tr><td>ADMIN</td><td>完全跳过脱敏（返回原始数据）</td></tr>
+    </tbody>
+  </table></div>
+  <div class="callout warn"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>fail-closed</div><p>强制执行为 <strong>fail-closed</strong>：若脱敏引擎抛错（脱敏错误、<code>hash</code> 缺密钥、未知函数，或 Gravitino 故障拉取策略失败），查询返回<strong>空表</strong>，而非泄露未脱敏的源数据。未知函数名在策略<strong>创建时</strong>即被校验拒绝（HTTP 400）；即便漏网，执行时 <code>_mask_column</code> 仍会抛 <code>ValueError</code> 兜底。</p></div>
+
+  <h2><span class="hn">5</span>审计</h2>
+  <p>策略创建经 Lance 审计轨迹记录（零新表）：</p>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">查询脱敏审计</span></figcaption><pre><code>curl <span class="c-str">"http://127.0.0.1:8000/api/v1/audit/query?event_type=masking_policy_created"</span> \
+  -H <span class="c-str">"X-API-Key: $KEY"</span></code></pre></figure>
+  <div class="callout tip"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-9"/></svg>治理闭环</div><p>脱敏 + 血缘 + 审计组成 v1.9 治理三件套：用 <code>mask-preview</code> 预览 → 发布策略（自动入审计）→ <code>/lineage/history</code> 追溯 → <code>/audit/query</code> 还原。详见第 18 章血缘与第 19 章 REST 实战配方。</p></div>
+</article>
+
+<nav class="pager">
+  <a class="prev" href="new-features.html"><span class="dir"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg> 上一章</span><span class="ttl">v1.8–v1.9 新特性</span></a>
+  <a class="next" href="lineage.html"><span class="dir">下一章 <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span><span class="ttl">血缘可视化</span></a>
+</nav>
+
+<footer class="footer">
+  <div class="footer-inner">
+    <div><b>Arrow Lake</b> · 数据脱敏 · v1.9.6<br/><span class="muted mono" style="font-size:.7rem">© 2026 · MIT License</span></div>
+    <div class="muted" style="font-size:.75rem">自包含可离线运行 · 源自 docs/cookbook/17</div>
+  </div>
+</footer>
+</body>
+</html>

@@ -24,7 +24,7 @@ curl "http://127.0.0.1:8000/api/v1/lineage/graph/reports?max_depth=10&max_nodes=
 from arrow_lake import Lake
 lake = Lake.from_yaml("configs/prod.yaml")
 graph = lake.lineage_graph("reports", max_depth=10, max_nodes=500)
-print(graph.stats)  # {"nodes": 42, "edges": 51, "truncated": False}
+print(graph.stats)  # {"total_nodes": 42, "total_edges": 51, "max_depth": 3, "truncated": False}
 ```
 
 ## 2. Node Coloring
@@ -53,5 +53,31 @@ dataset-level lineage.
 ## 4. Render in the Console
 
 Open `http://127.0.0.1:8000/console/lineage.html`, pick a dataset, and the graph
-renders with vis-network (≤2000 nodes) or G6 v4 (larger graphs). Edge labels and
-node titles are HTML-escaped to block XSS through crafted labels.
+renders with **vis-network**. `max_nodes` is an API truncation parameter (default
+500, max 2000), not a threshold for switching render libraries — `lineage.html`
+loads only vis-network and does not pull in G6 (G6 is used solely by `kg.html` for
+large graph scenarios). When the true node count exceeds the cap,
+`stats.truncated=true` and the UI shows a banner prompting you to raise the node
+cap or reduce the depth. Edge labels and node titles are HTML-escaped to block XSS
+through crafted labels.
+
+## 5. Actor Provenance
+
+Since v1.9.4, write operations such as ingest and delete thread the authenticated
+user (`actor`) into the lineage record, replacing the previous `actor="system"`
+placeholder. Every event in the `GET /lineage/history/{dataset}` response carries
+an `actor` field, useful for auditing "who changed this dataset and when".
+
+## 6. Downstream Impact Analysis
+
+`POST /api/v1/lineage/impact` analyzes which downstream datasets are affected by
+changing a given dataset:
+
+```bash
+curl -X POST "http://127.0.0.1:8000/api/v1/lineage/impact" \
+  -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
+  -d '{"dataset_name": "reports"}'
+```
+
+Returns an `impacted_datasets` list with each downstream dataset and its dependency
+path, useful for gauging the blast radius before a change.

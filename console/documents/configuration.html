@@ -1,0 +1,500 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>配置系统 · Arrow Lake 文档</title>
+<link rel="stylesheet" href="../assets/tokens.css"/>
+<link rel="stylesheet" href="../assets/app.css"/>
+<link rel="stylesheet" href="../assets/landing.css"/>
+<link rel="stylesheet" href="docs.css"/>
+</head>
+<body>
+<nav class="lnav">
+  <a class="brand" href="../index.html"><span class="brand-mark">AL</span><span><b class="brand-name">Arrow Lake</b><span class="brand-sub">文档</span></span></a>
+  <div class="lnav-links">
+    <a href="index.html">文档中心</a>
+    <a href="../architecture.html">架构文档</a>
+  </div>
+  <div class="lnav-cta"><a class="btn btn-primary btn-sm" href="../system.html">打开控制台 →</a></div>
+</nav>
+<div class="subnav">
+  <a href="index.html">文档中心</a><span class="crumb-sep">/</span><a href="configuration.html" style="color:var(--teal-bright)">配置系统</a>
+  <span class="pager-spacer"></span>
+  <div class="prevnext">
+    <a href="index.html"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg><span class="lbl">目录</span></a>
+    <a href="vector-search.html"><span class="lbl">下一章</span><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+  </div>
+</div>
+
+<header class="tut-hero">
+  <div class="tut-hero-inner">
+    <span class="num-badge">第 03 章 · 配置</span>
+    <h1>配置系统</h1>
+    <p class="sub">四层覆盖机制统一管理 30+ 配置模块——从代码默认值到 .env、环境变量、YAML；覆盖存储、LLM、搜索、RAG、Redis 分布式会话与 libSQL 控制面。</p>
+    <div class="tut-meta">
+      <span><i></i>难度 · 进阶</span>
+      <span><i></i>耗时 · 15 分钟</span>
+      <span><i></i>依赖 · Pydantic Settings</span>
+    </div>
+  </div>
+</header>
+
+<article class="tut-body">
+  <p>Arrow Lake 采用<strong>四层覆盖机制</strong>，优先级从低到高为：代码默认值 → <code>.env</code> 文件 → 环境变量 → YAML 配置文件。每一层都会覆盖前一层中同名的配置项。</p>
+
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">config_demo.py</span></figcaption><pre><code><span class="c-kw">from</span> arrow_lake.config <span class="c-kw">import</span> (
+    ArrowLakeConfig, StorageConfig, LLMConfig,
+    VectorSearchConfig, FullTextSearchConfig, HybridSearchConfig,
+)
+<span class="c-kw">from</span> arrow_lake <span class="c-kw">import</span> Lake
+
+<span class="c-rem"># 方式 1: 纯代码配置（优先级最低，可被更高层覆盖）</span>
+config = ArrowLakeConfig()
+config.storage = StorageConfig(backend=<span class="c-str">"local"</span>, base_uri=<span class="c-str">"./data"</span>)
+config.llm = LLMConfig(provider=<span class="c-str">"ollama"</span>, model=<span class="c-str">"qwen3.5:9b"</span>, api_base=<span class="c-str">"http://localhost:11434"</span>)
+lake = Lake(base_uri=<span class="c-str">"./data"</span>, config=config)
+
+<span class="c-rem"># 方式 2: 从 YAML 加载（优先级最高）</span>
+lake = Lake.from_yaml(<span class="c-str">"config.yaml"</span>)</code></pre></figure>
+
+  <h2><span class="hn">1</span>四层覆盖机制</h2>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>优先级</th><th>层级</th><th>来源</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td>1（最低）</td><td>代码默认值</td><td>Pydantic field defaults</td><td>每个配置字段的初始默认值</td></tr>
+      <tr><td>2</td><td><code>.env</code> 文件</td><td>项目根目录 <code>.env</code></td><td>pydantic-settings 自动加载</td></tr>
+      <tr><td>3</td><td>环境变量</td><td><code>ARROW_LAKE__</code> 前缀</td><td>如 <code>ARROW_LAKE__STORAGE__BACKEND=local</code></td></tr>
+      <tr><td>4（最高）</td><td>YAML 文件</td><td><code>ArrowLakeConfig.from_yaml()</code></td><td>显式加载，覆盖以上所有层</td></tr>
+    </tbody>
+  </table></div>
+  <p>环境变量使用 <code>ARROW_LAKE__</code> 前缀 + <code>__</code> 分隔嵌套结构。例如：</p>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">环境变量</span></figcaption><pre><code><span class="c-rem"># 设置存储后端</span>
+export ARROW_LAKE__STORAGE__BACKEND=s3
+
+<span class="c-rem"># 设置 LLM 提供商</span>
+export ARROW_LAKE__LLM__PROVIDER=openai
+
+<span class="c-rem"># 设置向量搜索度量</span>
+export ARROW_LAKE__VECTOR__METRIC=cosine</code></pre></figure>
+
+  <h2><span class="hn">2</span>核心配置类</h2>
+  <p><code>ArrowLakeConfig</code> 是顶层入口，聚合了 30+ 个子配置模块：</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">配置导览</span></figcaption><pre><code>config = ArrowLakeConfig()
+
+<span class="c-rem"># --- 核心 ---</span>
+config.storage       <span class="c-rem"># StorageConfig        — 存储层 (local, MinIO, S3, GCS)</span>
+config.compute       <span class="c-rem"># ComputeConfig        — 计算资源</span>
+config.http          <span class="c-rem"># HttpConfig           — HTTP 客户端设置</span>
+config.observability <span class="c-rem"># ObservabilityConfig  — 日志和追踪</span>
+
+<span class="c-rem"># --- 搜索 ---</span>
+config.vector   <span class="c-rem"># VectorSearchConfig   — 向量搜索</span>
+config.fts      <span class="c-rem"># FullTextSearchConfig — 全文搜索</span>
+config.hybrid   <span class="c-rem"># HybridSearchConfig   — 混合搜索 (RRF 融合)</span>
+config.faceted  <span class="c-rem"># FacetedSearchConfig  — 分面搜索</span>
+config.ensemble <span class="c-rem"># EnsembleSearchConfig — 集成搜索</span>
+
+<span class="c-rem"># --- AI / RAG ---</span>
+config.llm        <span class="c-rem"># LLMConfig       — LLM 提供商</span>
+config.rag        <span class="c-rem"># RAGConfig       — RAG 流水线</span>
+config.embedding  <span class="c-rem"># EmbeddingConfig — 嵌入模型</span>
+config.hugegraph  <span class="c-rem"># HugeGraphConfig — HugeGraph 知识图谱</span>
+
+<span class="c-rem"># --- 媒体与文档 ---</span>
+config.media    <span class="c-rem"># MediaConfig    — 媒体处理</span>
+config.decode   <span class="c-rem"># DecodeConfig   — 图像解码设置</span>
+config.document <span class="c-rem"># DocumentConfig — PDF 解析和分块</span>
+config.export   <span class="c-rem"># ExportConfig   — 导出设置</span>
+
+<span class="c-rem"># --- 数据 ---</span>
+config.olap    <span class="c-rem"># OlapConfig    — OLAP / DuckDB 查询</span>
+config.daft    <span class="c-rem"># DaftConfig    — Daft 计算引擎</span>
+config.quality <span class="c-rem"># QualityConfig — 质量过滤</span>
+
+<span class="c-rem"># --- 基础设施 ---</span>
+config.api        <span class="c-rem"># ApiConfig        — API 服务</span>
+config.auth       <span class="c-rem"># AuthConfig       — 认证</span>
+config.rate_limit <span class="c-rem"># RateLimitConfig  — 限流</span>
+config.redis      <span class="c-rem"># RedisConfig      — Redis 分布式会话</span>
+config.workflow   <span class="c-rem"># WorkflowConfig   — 工作流编排</span>
+config.lifecycle  <span class="c-rem"># LifecycleConfig  — 数据集生命周期管理</span>
+
+<span class="c-rem"># --- 治理 ---</span>
+config.gravitino     <span class="c-rem"># GravitinoConfig     — Apache Gravitino 元数据目录</span>
+config.lineage       <span class="c-rem"># LineageConfig       — 数据血缘追踪</span>
+config.audit         <span class="c-rem"># AuditConfig         — 审计日志</span>
+config.opentelemetry <span class="c-rem"># OpenTelemetryConfig — OpenTelemetry 追踪</span></code></pre></figure>
+
+  <h2><span class="hn">3</span>存储配置 (StorageConfig)</h2>
+  <p>控制 Lance 数据集的存储位置和 S3/MinIO 连接参数：</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">storage.py</span></figcaption><pre><code><span class="c-kw">from</span> arrow_lake.config <span class="c-kw">import</span> StorageConfig, StorageBackend
+
+<span class="c-rem"># 本地存储</span>
+local_storage = StorageConfig(backend=StorageBackend.LOCAL, base_uri=<span class="c-str">"./data"</span>)
+
+<span class="c-rem"># MinIO 存储</span>
+minio_storage = StorageConfig(
+    backend=StorageBackend.MINIO,
+    base_uri=<span class="c-str">"datasets"</span>,
+    s3_endpoint=<span class="c-str">"http://localhost:9000"</span>,
+    s3_access_key=<span class="c-str">"minioadmin"</span>,
+    s3_secret_key=<span class="c-str">"minioadmin"</span>,
+    s3_bucket=<span class="c-str">"arrow-lake"</span>,
+    s3_region=<span class="c-str">"us-east-1"</span>,
+)
+
+<span class="c-rem"># AWS S3 存储</span>
+s3_storage = StorageConfig(
+    backend=StorageBackend.S3,
+    base_uri=<span class="c-str">"production"</span>,
+    s3_endpoint=<span class="c-str">""</span>,  <span class="c-rem"># 使用 AWS 默认端点</span>
+    s3_access_key=<span class="c-str">"AKIA..."</span>,
+    s3_secret_key=<span class="c-str">"..."</span>,
+    s3_bucket=<span class="c-str">"my-arrow-lake"</span>,
+    s3_region=<span class="c-str">"ap-southeast-1"</span>,
+)
+
+<span class="c-rem"># 辅助方法</span>
+print(minio_storage.s3_uri)               <span class="c-rem"># s3://arrow-lake/datasets</span>
+opts = minio_storage.to_storage_options() <span class="c-rem"># lance/boto3 存储选项</span>
+sqls = minio_storage.to_duckdb_s3_config() <span class="c-rem"># DuckDB SET 语句列表</span>
+env_storage = StorageConfig.from_env()    <span class="c-rem"># 从环境变量自动构建</span></code></pre></figure>
+  <p><strong>StorageConfig 字段说明：</strong></p>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>字段</th><th>默认值</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><code>backend</code></td><td><code>"minio"</code></td><td>存储后端：<code>local</code> / <code>minio</code> / <code>s3</code> / <code>gcs</code></td></tr>
+      <tr><td><code>base_uri</code></td><td><code>"./data"</code></td><td>Lance 数据集存储路径</td></tr>
+      <tr><td><code>s3_endpoint</code></td><td><code>"http://localhost:9000"</code></td><td>S3 兼容端点</td></tr>
+      <tr><td><code>s3_access_key</code></td><td><code>""</code></td><td>S3 访问密钥</td></tr>
+      <tr><td><code>s3_secret_key</code></td><td><code>""</code></td><td>S3 秘密密钥</td></tr>
+      <tr><td><code>s3_bucket</code></td><td><code>"arrow-lake"</code></td><td>默认存储桶</td></tr>
+      <tr><td><code>s3_region</code></td><td><code>"us-east-1"</code></td><td>S3 区域</td></tr>
+      <tr><td><code>s3_uploads_bucket</code></td><td><code>""</code></td><td>v1.9.5 上传原始文件独立桶（空=复用 <code>s3_bucket</code>，与 Lance 数据面隔离）</td></tr>
+      <tr><td><code>uploads_expiration_days</code></td><td><code>0</code></td><td>上传原始文件自动过期天数（0=禁用；启用后过期将无法重解析如切换 OCR 后端）</td></tr>
+      <tr><td><code>lance_cache_size</code></td><td><code>0</code></td><td>Lance 读缓存字节数（0=禁用）。生产建议增大以加速重复扫描</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2><span class="hn">4</span>LLM 提供商配置 (LLMConfig)</h2>
+  <p>用于 RAG 生成阶段的 LLM 后端配置：</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">llm.py</span></figcaption><pre><code><span class="c-kw">from</span> arrow_lake.config <span class="c-kw">import</span> LLMConfig, LLMProviderType
+
+<span class="c-rem"># Ollama (本地)</span>
+ollama_cfg = LLMConfig(provider=LLMProviderType.OLLAMA, model=<span class="c-str">"qwen3.5:9b"</span>,
+                      api_base=<span class="c-str">"http://localhost:11434"</span>, temperature=<span class="c-str">0.7</span>)
+
+<span class="c-rem"># OpenAI</span>
+openai_cfg = LLMConfig(provider=LLMProviderType.OPENAI, model=<span class="c-str">"gpt-4o-mini"</span>,
+                      api_key=<span class="c-str">"sk-..."</span>, temperature=<span class="c-str">0.3</span>, max_tokens=<span class="c-str">4096</span>)
+
+<span class="c-rem"># Anthropic</span>
+anthropic_cfg = LLMConfig(provider=LLMProviderType.ANTHROPIC, model=<span class="c-str">"claude-sonnet-4-20250514"</span>,
+                         api_key=<span class="c-str">"sk-ant-..."</span>, anthropic_version=<span class="c-str">"2023-06-01"</span>)
+
+<span class="c-rem"># vLLM (自部署)</span>
+vllm_cfg = LLMConfig(provider=LLMProviderType.VLLM, model=<span class="c-str">"Qwen/Qwen3-8B"</span>,
+                    api_base=<span class="c-str">"http://localhost:8000/v1"</span>, timeout_seconds=<span class="c-str">120.0</span>)
+
+<span class="c-rem"># DeepSeek</span>
+deepseek_cfg = LLMConfig(provider=LLMProviderType.DEEPSEEK, model=<span class="c-str">"deepseek-chat"</span>,
+                       api_key=<span class="c-str">"sk-..."</span>, api_base=<span class="c-str">"https://api.deepseek.com/v1"</span>)</code></pre></figure>
+  <p><strong>LLMConfig 字段说明：</strong></p>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>字段</th><th>默认值</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><code>provider</code></td><td><code>"openai"</code></td><td>后端：<code>openai</code> / <code>anthropic</code> / <code>vllm</code> / <code>ollama</code> / <code>deepseek</code></td></tr>
+      <tr><td><code>model</code></td><td><code>"gpt-4o-mini"</code></td><td>模型名称</td></tr>
+      <tr><td><code>api_key</code></td><td><code>""</code></td><td>API 密钥（本地模型可为空）</td></tr>
+      <tr><td><code>api_base</code></td><td><code>""</code></td><td>自定义 API 端点</td></tr>
+      <tr><td><code>temperature</code></td><td><code>0.7</code></td><td>采样温度 (0.0–2.0)</td></tr>
+      <tr><td><code>max_tokens</code></td><td><code>2048</code></td><td>最大生成 token 数</td></tr>
+      <tr><td><code>timeout_seconds</code></td><td><code>60.0</code></td><td>HTTP 请求超时 (&gt;= 1.0)</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2><span class="hn">5</span>搜索配置</h2>
+  <h3>5.1 向量搜索 (VectorSearchConfig)</h3>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">vector.py</span></figcaption><pre><code><span class="c-kw">from</span> arrow_lake.config <span class="c-kw">import</span> VectorSearchConfig, DistanceMetric, VectorIndexType
+
+vector_cfg = VectorSearchConfig(
+    metric=DistanceMetric.COSINE,       <span class="c-rem"># 距离度量：cosine / l2 / dot</span>
+    default_index_type=VectorIndexType.IVF_PQ,
+    default_top_k=<span class="c-str">10</span>,
+    num_partitions=<span class="c-str">256</span>,       <span class="c-rem"># IVF 分区数 (大数据集自动调整)</span>
+    num_sub_vectors=<span class="c-str">24</span>,        <span class="c-rem"># PQ 子向量数 (8 的倍数)</span>
+    num_bits=<span class="c-str">8</span>,             <span class="c-rem"># PQ 量化位数</span>
+    nprobes=<span class="c-str">20</span>,            <span class="c-rem"># 搜索探测分区数</span>
+    max_nprobes=<span class="c-str">256</span>,
+)</code></pre></figure>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>字段</th><th>默认值</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><code>metric</code></td><td><code>"cosine"</code></td><td>距离度量：<code>cosine</code> / <code>l2</code> / <code>dot</code></td></tr>
+      <tr><td><code>default_index_type</code></td><td><code>"IVF_PQ"</code></td><td>索引类型：<code>IVF_PQ</code> / <code>IVF_FLAT</code> / <code>IVF_HNSW_PQ</code> / <code>HNSW</code></td></tr>
+      <tr><td><code>default_top_k</code></td><td><code>10</code></td><td>默认返回结果数</td></tr>
+      <tr><td><code>num_partitions</code></td><td><code>256</code></td><td>IVF 分区数</td></tr>
+      <tr><td><code>num_sub_vectors</code></td><td><code>24</code></td><td>PQ 子向量数 (8 的倍数)</td></tr>
+      <tr><td><code>nprobes</code></td><td><code>20</code></td><td>搜索时探测的分区数</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>5.2 全文搜索 (FullTextSearchConfig)</h3>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">fts.py</span></figcaption><pre><code><span class="c-kw">from</span> arrow_lake.config <span class="c-kw">import</span> FullTextSearchConfig
+
+fts_cfg = FullTextSearchConfig(
+    default_top_k=<span class="c-str">10</span>,
+    fts_column=<span class="c-str">"text_content"</span>,  <span class="c-rem"># 索引的文本列</span>
+    stem=<span class="c-str">True</span>,                  <span class="c-rem"># 词干提取</span>
+    remove_stop_words=<span class="c-str">True</span>,
+    lower_case=<span class="c-str">True</span>,
+    tokenizer_type=<span class="c-str">"jieba"</span>,      <span class="c-rem"># 中文推荐 jieba; 英文用 default</span>
+    jieba_user_dict=<span class="c-str">None</span>,
+)</code></pre></figure>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>字段</th><th>默认值</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><code>fts_column</code></td><td><code>"text_content"</code></td><td>索引的文本列名</td></tr>
+      <tr><td><code>stem</code></td><td><code>True</code></td><td>词干提取</td></tr>
+      <tr><td><code>tokenizer_type</code></td><td><code>"jieba"</code></td><td><code>"default"</code>（LanceDB 内置）或 <code>"jieba"</code>（中文）</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>5.3 混合搜索 (HybridSearchConfig)</h3>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">hybrid.py</span></figcaption><pre><code><span class="c-kw">from</span> arrow_lake.config <span class="c-kw">import</span> HybridSearchConfig
+
+hybrid_cfg = HybridSearchConfig(
+    default_top_k=<span class="c-str">10</span>,
+    rrf_k=<span class="c-str">60</span>,                      <span class="c-rem"># RRF 常数 (论文推荐 K=60)</span>
+    vector_top_k_multiplier=<span class="c-str">3</span>,     <span class="c-rem"># 向量候选数 = top_k * multiplier</span>
+    fts_top_k_multiplier=<span class="c-str">3</span>,
+)
+<span class="c-rem"># 通过 RRF 融合向量搜索和全文搜索排序</span></code></pre></figure>
+
+  <h2><span class="hn">6</span>从 YAML 加载配置</h2>
+  <p>YAML 具有最高优先级。创建 <code>config.yaml</code>：</p>
+  <figure class="code"><figcaption><span class="lang">yaml</span><span class="file">config.yaml</span><span class="demo">生产配置</span></figcaption><pre><code><span class="c-rem"># config.yaml — 生产配置</span>
+storage:
+  backend: minio
+  base_uri: production
+  s3_endpoint: http://minio:9000
+  s3_access_key: ${MINIO_ACCESS_KEY}
+  s3_secret_key: ${MINIO_SECRET_KEY}
+  s3_bucket: arrow-lake
+  s3_region: us-east-1
+
+llm:
+  provider: ollama
+  model: qwen3.5:9b
+  api_base: http://llm-host:11434
+  temperature: 0.5
+
+embedding:
+  model: Qwen/Qwen3-Embedding-0.6B
+  backend: local
+
+vector:
+  metric: cosine
+  default_index_type: IVF_PQ
+  num_partitions: 256
+  nprobes: 20
+
+fts:
+  fts_column: text_content
+  tokenizer_type: jieba
+
+hybrid:
+  rrf_k: 60
+  vector_top_k_multiplier: 3
+
+redis:
+  enabled: true
+  url: <span class="c-str">"redis://redis:6379/0"</span>
+  password: <span class="c-str">"${REDIS_PASSWORD}"</span>
+  ssl: false
+  redis_pool_size: 10</code></pre></figure>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">加载配置</span></figcaption><pre><code><span class="c-kw">from</span> arrow_lake <span class="c-kw">import</span> Lake
+<span class="c-kw">from</span> arrow_lake.config <span class="c-kw">import</span> ArrowLakeConfig
+
+<span class="c-rem"># 方式 1: Lake.from_yaml 加载 YAML 并合并到默认配置之上</span>
+lake = Lake.from_yaml(<span class="c-str">"config.yaml"</span>, base_uri=<span class="c-str">"./data"</span>)
+
+<span class="c-rem"># 方式 2: 只构建配置对象</span>
+config = ArrowLakeConfig.from_yaml(<span class="c-str">"config.yaml"</span>)
+print(config.storage.s3_endpoint)  <span class="c-rem"># http://minio:9000</span></code></pre></figure>
+  <div class="callout"><div class="ch">注意</div><p>YAML 加载使用<strong>深度合并</strong> (deep-merge)，未指定的字段保留代码默认值。YAML 的值会覆盖 <code>.env</code> 和环境变量中的同名配置。</p></div>
+
+  <h2><span class="hn">7</span>.env 文件示例</h2>
+  <p>在项目根目录创建 <code>.env</code>，pydantic-settings 自动加载：</p>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">.env</span><span class="demo">开发环境</span></figcaption><pre><code><span class="c-rem"># .env — 开发环境</span>
+ARROW_LAKE__STORAGE__BACKEND=local
+ARROW_LAKE__STORAGE__BASE_URI=./data
+
+<span class="c-rem"># MinIO/S3</span>
+ARROW_LAKE__STORAGE__S3_ENDPOINT=http://localhost:9000
+ARROW_LAKE__STORAGE__S3_ACCESS_KEY=minioadmin
+ARROW_LAKE__STORAGE__S3_SECRET_KEY=minioadmin
+ARROW_LAKE__STORAGE__S3_BUCKET=arrow-lake
+
+<span class="c-rem"># LLM</span>
+ARROW_LAKE__LLM__PROVIDER=ollama
+ARROW_LAKE__LLM__MODEL=qwen3.5:9b
+ARROW_LAKE__LLM__API_BASE=http://localhost:11434
+
+<span class="c-rem"># 向量搜索 / 全文搜索 / 嵌入</span>
+ARROW_LAKE__VECTOR__METRIC=cosine
+ARROW_LAKE__FTS__TOKENIZER_TYPE=jieba
+ARROW_LAKE__EMBEDDING__BACKEND=local
+ARROW_LAKE__EMBEDDING__MODEL=Qwen/Qwen3-Embedding-0.6B</code></pre></figure>
+
+  <h2><span class="hn">8</span>配置最佳实践</h2>
+  <ol>
+    <li><strong>开发环境</strong>：使用 <code>.env</code> 文件管理本地配置，不要将含密钥的 <code>.env</code> 提交到版本控制。</li>
+    <li><strong>生产环境</strong>：使用 YAML 配置文件，敏感信息通过环境变量注入。</li>
+    <li><strong>容器部署</strong>：通过 <code>ARROW_LAKE__</code> 环境变量覆盖关键配置，无需修改配置文件。</li>
+    <li><strong>中文场景</strong>：设置 <code>fts.tokenizer_type = "jieba"</code> 以获得更好的中文分词效果。</li>
+    <li><strong>大向量维度</strong>：<code>num_sub_vectors</code> 必须是 8 的倍数，且不大于向量维度。</li>
+    <li><strong>生产 Redis</strong>：运行多个 API 副本时（HPA / Kubernetes）启用 <code>redis.enabled = true</code>，使 DuckDB 会话信号量跨 Pod 协调。</li>
+    <li><strong>Redis TLS</strong>：连接托管 Redis 服务（ElastiCache、Azure Cache 等）时设置 <code>redis.ssl = true</code> 并提供 <code>redis.password</code>。</li>
+  </ol>
+
+  <h2><span class="hn">9</span>Redis 分布式会话配置 (RedisConfig)</h2>
+  <p>当 Arrow Lake 运行在多个 API 副本之后时，DuckDB 会话协调和 JWT Token 黑名单必须在进程间共享。<code>RedisConfig</code> 启用基于 Redis 的分布式信号量来替代默认的 <code>threading.Semaphore</code>。当 <code>enabled</code> 为 <code>False</code>（默认值）时，系统回退到进程内同步。</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">redis.py</span></figcaption><pre><code><span class="c-kw">from</span> arrow_lake.config <span class="c-kw">import</span> RedisConfig
+
+<span class="c-rem"># 本地开发（进程内信号量，无需 Redis）</span>
+redis_cfg = RedisConfig()  <span class="c-rem"># 默认 enabled=False</span>
+
+<span class="c-rem"># 生产环境使用 Redis</span>
+redis_cfg = RedisConfig(
+    enabled=<span class="c-str">True</span>,
+    url=<span class="c-str">"redis://redis:6379/0"</span>,
+    password=<span class="c-str">""</span>,
+    ssl=<span class="c-str">False</span>,
+    semaphore_key_prefix=<span class="c-str">"arrow_lake:semaphore:"</span>,
+    semaphore_ttl_seconds=<span class="c-str">300</span>,
+    redis_pool_size=<span class="c-str">10</span>,
+)</code></pre></figure>
+  <p><strong>RedisConfig 字段说明：</strong></p>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>字段</th><th>类型</th><th>默认值</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><code>enabled</code></td><td>bool</td><td><code>False</code></td><td>启用基于 Redis 的分布式信号量和 JWT 黑名单</td></tr>
+      <tr><td><code>url</code></td><td>str</td><td><code>"redis://localhost:6379/0"</code></td><td>Redis 连接 URL</td></tr>
+      <tr><td><code>password</code></td><td>str</td><td><code>""</code></td><td>Redis 认证密码</td></tr>
+      <tr><td><code>ssl</code></td><td>bool</td><td><code>False</code></td><td>启用 TLS 加密 Redis 连接</td></tr>
+      <tr><td><code>ssl_cert_reqs</code></td><td>str</td><td><code>"required"</code></td><td><code>ssl=True</code> 时的 SSL 证书验证模式</td></tr>
+      <tr><td><code>semaphore_key_prefix</code></td><td>str</td><td><code>"arrow_lake:semaphore:"</code></td><td>分布式信号量计数器的 Redis 键前缀</td></tr>
+      <tr><td><code>semaphore_ttl_seconds</code></td><td>int</td><td><code>300</code></td><td>信号量键的 TTL — 自动回收过期的许可</td></tr>
+      <tr><td><code>redis_pool_size</code></td><td>int</td><td><code>10</code></td><td>Redis 客户端连接池大小</td></tr>
+      <tr><td><code>instance_registry_key</code></td><td>str</td><td><code>"arrow_lake:instances"</code></td><td>多实例注册的 Redis 键</td></tr>
+      <tr><td><code>instance_heartbeat_ttl_seconds</code></td><td>int</td><td><code>30</code></td><td>实例心跳键的 TTL</td></tr>
+    </tbody>
+  </table></div>
+  <h3>YAML 配置</h3>
+  <figure class="code"><figcaption><span class="lang">yaml</span><span class="file">config.yaml</span></figcaption><pre><code><span class="c-rem"># config.yaml — Redis 分布式会话协调</span>
+redis:
+  enabled: true
+  url: <span class="c-str">"redis://redis:6379/0"</span>
+  password: <span class="c-str">"${REDIS_PASSWORD}"</span>
+  ssl: false
+  semaphore_key_prefix: arrow_lake:semaphore:
+  semaphore_ttl_seconds: 300
+  redis_pool_size: 10</code></pre></figure>
+  <h3>工作原理</h3>
+  <p><code>RedisCountingSemaphore</code> 使用 Lua 脚本实现原子的获取/释放操作：</p>
+  <ul>
+    <li><strong>获取 (Acquire)</strong>：当 Redis 计数器低于 <code>max_permits</code> 时，原子递增计数器；设置 TTL 自动回收过期的许可。</li>
+    <li><strong>释放 (Release)</strong>：原子递减计数器，防止下溢。</li>
+    <li><strong>回退 (Fallback)</strong>：如果 Redis 不可用，透明回退到 <code>threading.Semaphore</code> 并记录警告日志。</li>
+  </ul>
+
+  <h2><span class="hn">10</span>系统数据库配置 (SystemDBConfig)</h2>
+  <div class="callout tip"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-9"/></svg>v1.9.0</div><p>统一的关系型<strong>控制面</strong>存储（基于 libSQL / Turso），承载 RBAC、身份、personal token、catalog 注册表、任务历史、血缘索引、RAG 会话和治理历史。<strong>数据面</strong>（Lance / DuckDB / HugeGraph / MinIO）完全不受影响。当 <code>enabled</code> 为 <code>False</code>（默认值）时，控制面结构退化为 v1.9.0 之前的内存 / 临时文件行为，可逐步灰度接入。</p></div>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">system_db.py</span></figcaption><pre><code><span class="c-kw">from</span> arrow_lake.config <span class="c-kw">import</span> SystemDBConfig
+
+<span class="c-rem"># 开发：嵌入式（无服务器、无 token）</span>
+dev_db = SystemDBConfig()  <span class="c-rem"># 默认 enabled=False, url="file:local.db"</span>
+
+<span class="c-rem"># 生产：自托管 libSQL server（4 workers）</span>
+prod_db = SystemDBConfig(
+    enabled=<span class="c-str">True</span>,
+    url=<span class="c-str">"http://system-db:8080"</span>,
+    auth_token=<span class="c-str">"${SQLD_AUTH_TOKEN}"</span>,
+    fail_mode=<span class="c-str">"fail_close"</span>,          <span class="c-rem"># RBAC/身份：store 宕机时拒绝请求</span>
+    serve_stale_on_error=<span class="c-str">False</span>,      <span class="c-rem"># 安全 fail-close（默认）</span>
+    acl_cache_ttl_seconds=<span class="c-str">5.0</span>,       <span class="c-rem"># 多 worker 最终一致性窗口</span>
+)</code></pre></figure>
+  <p><strong>部署模式由 <code>url</code> 选择：</strong></p>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th><code>url</code></th><th>模式</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><code>file:local.db</code></td><td>嵌入式（默认）</td><td>开发，无服务器、无 token</td></tr>
+      <tr><td><code>http://system-db:8080</code></td><td>自托管 libSQL</td><td>生产，4 workers</td></tr>
+      <tr><td><code>:memory:</code></td><td>内存</td><td>单元测试</td></tr>
+    </tbody>
+  </table></div>
+  <p><strong>SystemDBConfig 关键字段：</strong></p>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>字段</th><th>默认值</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><code>enabled</code></td><td><code>False</code></td><td>启用控制面数据库（关闭=退化为内存/临时文件）</td></tr>
+      <tr><td><code>url</code></td><td><code>"file:local.db"</code></td><td>libSQL 连接 URL（决定部署模式）</td></tr>
+      <tr><td><code>auth_token</code></td><td><code>""</code></td><td>远程 server 的认证 token（嵌入式留空）</td></tr>
+      <tr><td><code>fail_mode</code></td><td><code>"fail_close"</code></td><td><code>fail_close</code>（RBAC/身份，宕机拒绝）或 <code>fail_soft</code>（catalog/tasks/rag，记日志降级）</td></tr>
+      <tr><td><code>serve_stale_on_error</code></td><td><code>False</code></td><td><strong>安全：FAIL-OPEN</strong>。<code>True</code>=store 不可达时返回上次缓存决策。默认 <code>False</code>=安全 fail-close</td></tr>
+      <tr><td><code>acl_cache_ttl_seconds</code></td><td><code>5.0</code></td><td>每 worker 短 TTL ACL 缓存（多 worker 最终一致性窗口）</td></tr>
+    </tbody>
+  </table></div>
+  <div class="callout warn"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>安全警告</div><p><code>serve_stale_on_error=True</code> 是 <strong>FAIL-OPEN</strong> 行为，可能在中断期放行已撤销权限。仅在显式接受该权衡时启用，正确的高可用方案是 sqld HA（保持默认 <code>False</code>）。</p></div>
+
+  <h2><span class="hn">11</span>RAG 流水线配置 (RAGConfig)</h2>
+  <p>控制 RAG 检索增强生成的检索策略、重排、两阶段 LLM 与验证。默认检索策略为 <strong>hybrid</strong>（向量 + 全文 RRF 融合）。</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">rag.py</span></figcaption><pre><code><span class="c-kw">from</span> arrow_lake.config <span class="c-kw">import</span> RAGConfig, LLMConfig
+
+rag_cfg = RAGConfig(
+    enabled=<span class="c-str">True</span>,
+    default_retrieval_strategy=<span class="c-str">"hybrid"</span>,   <span class="c-rem"># vector | fts | hybrid</span>
+    default_top_k=<span class="c-str">10</span>,
+    <span class="c-rem"># 重排（默认 ollama Qwen3-Reranker）</span>
+    reranker=<span class="c-str">"ollama"</span>,
+    reranker_model=<span class="c-str">"dengcao/Qwen3-Reranker-0.6B:F16"</span>,
+    reranker_device=<span class="c-str">"auto"</span>,                <span class="c-rem"># cpu | cuda | auto</span>
+    <span class="c-rem"># 两阶段独立 LLM（None → 回退全局 llm）</span>
+    extract_llm=LLMConfig(provider=<span class="c-str">"openai"</span>, model=<span class="c-str">"qwen-turbo"</span>, api_key=<span class="c-str">"sk-..."</span>),
+    qa_llm=LLMConfig(provider=<span class="c-str">"openai"</span>, model=<span class="c-str">"qwen-plus"</span>, api_key=<span class="c-str">"sk-..."</span>),
+    <span class="c-rem"># 可选：faithfulness 校验（默认关闭，opt-in）</span>
+    enable_verification=<span class="c-str">False</span>,
+)</code></pre></figure>
+  <p><strong>RAGConfig 关键字段：</strong></p>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>字段</th><th>默认值</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><code>default_retrieval_strategy</code></td><td><code>"hybrid"</code></td><td>检索策略：<code>vector</code> / <code>fts</code> / <code>hybrid</code></td></tr>
+      <tr><td><code>default_top_k</code></td><td><code>10</code></td><td>默认检索结果数</td></tr>
+      <tr><td><code>reranker</code></td><td><code>"ollama"</code></td><td>重排器类型（<code>ollama</code> / <code>cross_encoder</code> / <code>llm</code> / <code>noop</code>）</td></tr>
+      <tr><td><code>reranker_model</code></td><td><code>"dengcao/Qwen3-Reranker-0.6B:F16"</code></td><td>重排模型</td></tr>
+      <tr><td><code>reranker_device</code></td><td><code>"auto"</code></td><td>重排设备：<code>cpu</code> / <code>cuda</code> / <code>auto</code></td></tr>
+      <tr><td><code>extract_llm</code></td><td><code>None</code></td><td>抽取/重排阶段 LLM（<code>None</code>=回退全局 <code>llm</code>）</td></tr>
+      <tr><td><code>qa_llm</code></td><td><code>None</code></td><td>问答生成阶段 LLM（<code>None</code>=回退全局 <code>llm</code>；设旗舰可显著提质量）</td></tr>
+      <tr><td><code>enable_verification</code></td><td><code>False</code></td><td>v1.9.6 轻量 faithfulness 校验（默认关闭）</td></tr>
+      <tr><td><code>enable_citations</code></td><td><code>True</code></td><td>是否跟踪并返回引用</td></tr>
+    </tbody>
+  </table></div>
+  <div class="callout tip"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-9"/></svg>推荐</div><p>抽取阶段用快模型（<code>qwen-turbo</code>）做实体/重排判断，问答生成用旗舰模型（<code>qwen-plus</code>）——延迟与质量的最优平衡。</p></div>
+</article>
+
+<nav class="pager">
+  <a class="prev" href="index.html"><span class="dir"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg> 目录</span><span class="ttl">产品文档教程</span></a>
+  <a class="next" href="vector-search.html"><span class="dir">下一章 <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span><span class="ttl">向量搜索与索引</span></a>
+</nav>
+
+<footer class="footer">
+  <div class="footer-inner">
+    <div><b>Arrow Lake</b> · 配置系统 · v1.9.6<br/><span class="muted mono" style="font-size:.7rem">© 2026 · MIT License</span></div>
+    <div class="muted" style="font-size:.75rem">自包含可离线运行 · 源自 docs/cookbook/03</div>
+  </div>
+</footer>
+</body>
+</html>

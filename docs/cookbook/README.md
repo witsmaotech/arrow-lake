@@ -75,7 +75,7 @@ docker exec -it deploy-api-1 .venv/bin/python /app/examples/19_knowledge_graph_b
 
 ## 版本
 
-对应 Arrow Lake v1.7.0
+对应 Arrow Lake v1.9.6
 
 ## v1.7.0 新特性 — Hyper-Extract KG + Doc-Type 路由
 
@@ -88,6 +88,19 @@ docker exec -it deploy-api-1 .venv/bin/python /app/examples/19_knowledge_graph_b
 | — | — | ingest `doc_type` 贯通：上传 API → facade → Ingestor → chunk → KG builder |
 
 > 新增功能：hyper-extract 抽取后端（精准三元组）、doc_type 三层路由（config override → TemplateGallery 元数据匹配 → default 兜底）+ LLM 内容推断、HugeGraph PD 集群运行时多图隔离、A 方案实体双写。详见 [v1.7.0 方案](../v1.7.0-hyper-extract-kg-extraction-plan.md) 与 [CHANGELOG](../../CHANGELOG.md)。
+
+## v1.8 / v1.9 新特性 — 控制面统一 / 多模态 / RAG 质量 / 治理兑现
+
+| 版本    | 说明 |
+| ------- | ---- |
+| v1.9.0  | **Turso/libSQL 统一控制面**：RBAC / 身份 / personal_token / catalog / 任务历史 / RAG 会话全部走 libSQL；fail-close 鉴权（401） |
+| v1.9.2  | **多模态深化**：以图搜图（`POST /embed/image` + IVF_PQ）、导出统一（datasets/detail/search）、DuckLake 物化视图、Pivot 助手、纯 SVG 图表 |
+| v1.9.3  | **数据集字段注释**：`field_comments`（PyArrow 直读 parquet/CSV sidecar）+ `GET/POST /schema/annotate` 原位写回 |
+| v1.9.4  | **血缘 actor 贯穿**（delete 审计 + 列级血缘）+ KG `project_concept_graph` 模板（22 类型 + 14 关系，百炼 qwen-turbo 100% def）+ MERGE_FIELD 单模式 |
+| v1.9.5  | **RAG 质量全链路**：`default_retrieval_strategy=hybrid` 真生效、`faithfulness` 防幻觉校验、GraphRAG 三路并行（延迟 -40~50%）、qa_llm 两阶段、`OllamaReranker`（默认 Qwen3-Reranker-0.6B） |
+| v1.9.6  | **KG 质量/性能**（snap 编辑距离归一 + strict 空定义过滤 + KA LRU 缓存）+ **治理兑现**（`lineage.html` 列级血缘、masking 4 函数 + HMAC fail-fast + mask-preview、audit 复用 Lance）+ **安全 fail-closed**（masking/RBAC/Gravitino 全 fail-closed） |
+
+> 详见 [v1.9.6 发布说明](../arrow-lake-v1.9.6-release-zh.md) 与 [RAG 质量方案](../v1.9.5-rag-quality-plan.md)。
 
 ## v1.6.3 新特性 — Deploy Hardening & nginx Proxy
 

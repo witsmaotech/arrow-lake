@@ -944,7 +944,7 @@ curl http://localhost:8000/health/ready
 ```json
 {
   "status": "ok",
-  "version": "1.5.3",
+  "version": "1.9.6",
   "storage": "accessible",
   "gravitino": "healthy",
   "duckdb_pool": {"pool_size": 5, "active_sessions": 1, "queued_requests": 0, "total_queries": 142, "total_errors": 0}
@@ -962,7 +962,7 @@ curl http://localhost:8000/api/v1/version \
 
 ```json
 {
-  "version": "1.5.3",
+  "version": "1.9.6",
   "python": "3.12.4",
   "fastapi": "0.115.0",
   "uvicorn": "0.30.0",
@@ -1685,46 +1685,229 @@ curl http://localhost:8000/api/v1/admin/deny/sensitive_data \
 {"dataset": "sensitive_data", "denied_actions": ["delete", "export"]}
 ```
 
-### Storage Lifecycle API
+### Storage Lifecycle API (Removed)
 
-Manage blob storage lifecycle policies (archive, expire, restore).
+> **Deprecated**: The `/api/v1/lifecycle/*` endpoints (`apply`/`status`/`restore`/`rules`/`estimate`)
+> were **removed from the REST server in v1.9.x** — no corresponding router is registered in the
+> codebase anymore. Archive/expire/restore lifecycle policies are now managed via the CLI
+> (`arrow-lake lifecycle ...`) and the background maintenance scheduler (`/admin/maintenance/*`).
+> Calls to the old endpoints return 404.
 
-| Method | Endpoint | Description | Auth |
-|--------|----------|-------------|------|
-| `POST` | `/api/v1/lifecycle/apply` | Apply lifecycle rules to a prefix | ADMIN |
-| `GET` | `/api/v1/lifecycle/status` | Check lifecycle status for a prefix | ADMIN |
-| `POST` | `/api/v1/lifecycle/restore` | Restore an archived blob | ADMIN |
-| `GET` | `/api/v1/lifecycle/rules` | List configured lifecycle rules | ADMIN |
-| `POST` | `/api/v1/lifecycle/estimate` | Estimate storage savings | ADMIN |
+***
 
-#### Apply Lifecycle Rules
+## v1.9.x New Endpoints
+
+The endpoints below were added in v1.6–v1.9.6. They cover user state, user & token management,
+multimodal embedding, materialized views, field annotation, quality enhancements, index management,
+cleaning, async tasks, KG templates/versions, and RAG enhancements.
+
+### User-State API (`/api/v1/me/*`)
+
+Personal-state endpoints for the current user. **Requires a personal token** (passed via `X-API-Key`
+or Bearer as a personal token, *not* a JWT access token; JWT calls to `/me/*` return 401).
+Role requirement: VIEWER.
+
+| Method  | Endpoint                                       | Description                          |
+| ------- | ---------------------------------------------- | ------------------------------------ |
+| `POST`  | `/api/v1/me/saved-queries`                     | Save a query                         |
+| `GET`   | `/api/v1/me/saved-queries`                     | List saved queries                   |
+| `DELETE`| `/api/v1/me/saved-queries/{qid}`               | Delete a saved query                 |
+| `GET`   | `/api/v1/me/notifications`                     | List notifications                   |
+| `POST`  | `/api/v1/me/notifications/read`                | Mark notifications read (`?notification_id=`) |
+| `GET`   | `/api/v1/me/preferences`                       | Get preferences                      |
+| `PUT`   | `/api/v1/me/preferences`                       | Update preferences                   |
+| `POST`  | `/api/v1/me/dashboards`                        | Save a dashboard layout              |
+| `GET`   | `/api/v1/me/dashboards`                        | List dashboards                      |
+| `DELETE`| `/api/v1/me/dashboards/{dashboard_id}`         | Delete a dashboard                   |
+| `POST`  | `/api/v1/me/favorites`                         | Add a favorite (idempotent)          |
+| `GET`   | `/api/v1/me/favorites`                         | List favorites                       |
+| `DELETE`| `/api/v1/me/favorites/{target_type}/{target_id}` | Remove a favorite                  |
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/lifecycle/apply \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"prefix": "uploads/"}'
+# Mark a single notification read
+curl -X POST "http://localhost:8000/api/v1/me/notifications/read?notification_id=42" \
+  -H "X-API-Key: <personal-token>"
 ```
 
-**Response:**
+### User & Token Management (admin extensions)
 
-```json
-{"success": true, "archived": 15, "expired": 3, "errors": []}
-```
+Supplements the row/column ACL endpoints from v1.4.0. **Requires ADMIN role.**
 
-#### Restore Archived Blob
+| Method  | Endpoint                                        | Description                          |
+| ------- | ----------------------------------------------- | ------------------------------------ |
+| `GET`   | `/api/v1/admin/users`                           | List all users                       |
+| `POST`  | `/api/v1/admin/users`                           | Create user (`CreateUserRequest`)    |
+| `PUT`   | `/api/v1/admin/users/{user_id}`                 | Update user fields                   |
+| `DELETE`| `/api/v1/admin/users/{user_id}`                 | Deactivate user (soft delete)        |
+| `GET`   | `/api/v1/admin/roles`                           | List roles + permission matrix       |
+| `POST`  | `/api/v1/admin/users/{user_id}/tokens`          | Issue a personal token               |
+| `GET`   | `/api/v1/admin/users/{user_id}/tokens`          | List a user's tokens                 |
+| `DELETE`| `/api/v1/admin/users/{user_id}/tokens/{token_id}` | Revoke a token                     |
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/lifecycle/restore \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"key": "uploads/archive/data.parquet", "days": 7}'
+# Create a user
+curl -X POST http://localhost:8000/api/v1/admin/users \
+  -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
+  -d '{"username": "alice", "email": "alice@example.com", "role": "viewer", "password": "change-me-12"}'
+
+# Issue a personal token for a user (the returned token is usable on /me/* endpoints)
+curl -X POST http://localhost:8000/api/v1/admin/users/3/tokens \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
-**Response:**
+### Multimodal Embedding (`/api/v1/embed/*`)
 
-```json
-{"success": true, "key": "uploads/archive/data.parquet", "restore_days": 7, "status": "restoring"}
+The `embed_router` provides standalone text/image embedding computation for cross-modal retrieval
+(text-to-image, image-to-image search).
+
+| Method | Endpoint                  | Description                                              |
+| ------ | ------------------------- | -------------------------------------------------------- |
+| `POST` | `/api/v1/embed/text`      | Text embeddings (local model or external API)            |
+| `POST` | `/api/v1/embed/image`     | Image embeddings (CLIP/SigLIP; JSON body `{"images":["<base64>"]}`) |
+| `POST` | `/api/v1/embed/clip-text` | CLIP text embeddings (text-to-image: shared vector space) |
+
+```bash
+# Text-to-image: embed the text query, then run vector search against an image dataset
+curl -X POST http://localhost:8000/api/v1/embed/clip-text \
+  -H "X-API-Key: your-key" -H "Content-Type: application/json" \
+  -d '{"texts": ["a red car"]}'
+```
+
+### Materialized Views (`/api/v1/materialized/*`)
+
+DuckLake materialized-view management. **All endpoints return 503 when `ducklake_enabled=false`
+(default).** All endpoints require ADMIN.
+
+| Method  | Endpoint                          | Description                                  |
+| ------- | --------------------------------- | -------------------------------------------- |
+| `GET`   | `/api/v1/materialized`            | List all materialized views                  |
+| `DELETE`| `/api/v1/materialized/{view}`     | Drop a materialized view (404 if not found)  |
+| `POST`  | `/api/v1/materialized/cleanup`    | Clean up stale materialized views            |
+
+### Field Annotation (schema annotate)
+
+Writes human-readable comments onto Arrow field metadata for a dataset's schema (the ingest hook and
+the annotate endpoint share the same key).
+
+| Method | Endpoint                                        | Description                              | Role   |
+| ------ | ----------------------------------------------- | ---------------------------------------- | ------ |
+| `GET`  | `/api/v1/datasets/{name}/schema`                | Get schema (includes field `comment`)    | VIEWER |
+| `POST` | `/api/v1/datasets/{name}/schema/annotate`       | Set a field comment (body: `field`+`comment`) | ADMIN |
+
+```bash
+curl -X POST http://localhost:8000/api/v1/datasets/users/schema/annotate \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"field": "email", "comment": "User login email (PII)"}'
+```
+
+### Quality Enhancement Endpoints
+
+Supplements the v1.4.0 `quality/rules` endpoint (full quality pipeline).
+
+| Method | Endpoint                                         | Description                      | Role   |
+| ------ | ------------------------------------------------ | -------------------------------- | ------ |
+| `POST` | `/api/v1/datasets/{name}/quality/filter`         | Filter rows by expression        | EDITOR |
+| `GET`  | `/api/v1/datasets/{name}/quality/report`         | Produce a quality report         | VIEWER |
+| `POST` | `/api/v1/datasets/{name}/quality/deduplicate`    | Deduplicate (similarity/exact)   | EDITOR |
+| `GET`  | `/api/v1/datasets/{name}/quality/profile`        | Column distribution profile      | VIEWER |
+| `POST` | `/api/v1/datasets/{name}/quality/llm_label`      | LLM labeling (classification)    | EDITOR |
+| `POST` | `/api/v1/datasets/{name}/quality/extract`        | LLM structured extraction        | EDITOR |
+| `POST` | `/api/v1/datasets/{name}/quality/mask-preview`   | Masking preview (reads first 5 rows, returns before/after) | EDITOR |
+
+```bash
+# Masking preview: no write-back, just shows before/after for the first 5 rows
+curl -X POST http://localhost:8000/api/v1/datasets/users/quality/mask-preview \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### Index Management Endpoints
+
+| Method  | Endpoint                                        | Description                              | Role   |
+| ------- | ----------------------------------------------- | ---------------------------------------- | ------ |
+| `POST`  | `/api/v1/datasets/{name}/index/vector`          | Create vector index (IVF_PQ; auto ≥256 rows) | EDITOR |
+| `POST`  | `/api/v1/datasets/{name}/index/fts`             | Create full-text index (BM25 + optional jieba column) | EDITOR |
+| `POST`  | `/api/v1/datasets/{name}/index/scalar`          | Create scalar index (BTREE/BITMAP)       | EDITOR |
+| `POST`  | `/api/v1/datasets/{name}/index/facets`          | Create facet index                       | EDITOR |
+| `GET`   | `/api/v1/datasets/{name}/index`                 | List all indices                         | VIEWER |
+| `DELETE`| `/api/v1/datasets/{name}/index/{index_name}`    | Drop an index                            | EDITOR |
+
+### Cleaning (semantic write-back)
+
+Compiles declarative cleaning steps into DuckDB SQL and writes back via `restore_dataset`
+(for structured datasets).
+
+| Method | Endpoint                          | Description                                              | Role   |
+| ------ | --------------------------------- | -------------------------------------------------------- | ------ |
+| `POST` | `/api/v1/datasets/{name}/clean`   | Semantic clean (body: `steps`/`filters`/`write_back`/`limit`) | EDITOR |
+
+```bash
+curl -X POST http://localhost:8000/api/v1/datasets/users/clean \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"steps": [{"op": "trim", "column": "name"},
+                   {"op": "lowercase", "column": "email"}], "write_back": true}'
+```
+
+### Async Tasks (`/api/v1/tasks/*`)
+
+Async variants of long-running operations (ingest/index/backup). All endpoints require VIEWER
+(creation endpoints require the role of the underlying operation).
+
+| Method | Endpoint                                            | Description                          |
+| ------ | --------------------------------------------------- | ------------------------------------ |
+| `GET`  | `/api/v1/tasks`                                     | List tasks (includes history, status filter) |
+| `GET`  | `/api/v1/tasks/{task_id}/status`                    | Query task status                    |
+| `POST` | `/api/v1/datasets/{name}/ingest/async`              | Async ingest local files             |
+| `POST` | `/api/v1/datasets/{name}/ingest/documents/async`    | Async ingest PDF/documents           |
+| `POST` | `/api/v1/datasets/{name}/index/vector/async`        | Async create vector index            |
+| `POST` | `/api/v1/datasets/{name}/index/fts/async`           | Async create full-text index         |
+| `POST` | `/api/v1/backup/create/async`                       | Async create backup                  |
+| `POST` | `/api/v1/backup/restore/async`                      | Async restore backup                 |
+
+### Knowledge Graph Templates & Versions
+
+Supplements the KG endpoints in Section 4. The template path exposes hyper-extract's multi-template
+capability; KA versions support incremental builds, rollback, and pruning.
+
+| Method  | Endpoint                                  | Description                                  | Role   |
+| ------- | ----------------------------------------- | -------------------------------------------- | ------ |
+| `GET`   | `/api/v1/kg/doc-types`                    | List available doc types (resolve to templates) | VIEWER |
+| `GET`   | `/api/v1/kg/templates`                    | List all templates                           | VIEWER |
+| `GET`   | `/api/v1/kg/templates/{template_path}`    | Get template detail (`{template_path:path}`) | VIEWER |
+| `GET`   | `/api/v1/kg/ka-versions/{dataset}`        | List KA versions for a dataset               | VIEWER |
+| `POST`  | `/api/v1/kg/ka-rollback`                  | Roll back to a specified KA version          | ADMIN  |
+| `POST`  | `/api/v1/kg/ka-prune`                     | Prune old KA dumps                          | ADMIN  |
+| `POST`  | `/api/v1/kg/build`                        | body supports `incremental:true` (incremental; falls back to full when no KA dump) | ADMIN |
+| `POST`  | `/api/v1/kg/ask/stream`                   | Streaming KG Q&A (SSE)                      | VIEWER |
+| `POST`  | `/api/v1/kg/query/graphrag`               | GraphRAG Q&A (body: `question`+`dataset`)    | VIEWER |
+| `POST`  | `/api/v1/kg/search`                       | KG entity search                            | VIEWER |
+| `POST`  | `/api/v1/kg/rebuild-index`                | Rebuild KA embedding index                  | ADMIN  |
+| `POST`  | `/api/v1/kg/export-obsidian`              | Export to an Obsidian vault                 | VIEWER |
+
+```bash
+# Incremental KG build (process only new chunks, reuse existing KA dump)
+curl -X POST http://localhost:8000/api/v1/kg/build \
+  -H "X-API-Key: your-key" -H "Content-Type: application/json" \
+  -d '{"dataset_name": "docs", "incremental": true}'
+```
+
+### RAG Enhancements (`/api/v1/rag/*`)
+
+The RAG request body uses **`question`** and **`dataset_name`** (not `query`/`dataset`).
+`use_kg: bool` (default `true`) enables per-query control of GraphRAG augmentation — no need to
+disable the global `hugegraph.enabled` flag.
+
+| Method | Endpoint                  | Description                                                                       |
+| ------ | ------------------------- | --------------------------------------------------------------------------------- |
+| `POST` | `/api/v1/rag/query`       | RAG Q&A (body: `question`/`dataset_name`/`top_k`/`retrieval_strategy`/`use_kg`)  |
+| `POST` | `/api/v1/rag/query/stream`| Streaming RAG (SSE; citations first, then content)                               |
+| `POST` | `/api/v1/rag/extract`     | RAG extract (returns retrieval + extraction only, no generated answer)            |
+| `GET`  | `/api/v1/rag/templates`   | List available prompt templates                                                   |
+
+```bash
+# Disable GraphRAG for an A/B comparison with pure vector/hybrid retrieval
+curl -X POST http://localhost:8000/api/v1/rag/query \
+  -H "X-API-Key: your-key" -H "Content-Type: application/json" \
+  -d '{"question": "What is the architecture?", "dataset_name": "docs", "use_kg": false, "retrieval_strategy": "hybrid"}'
 ```
 
 ### v1.5.2 Security Hardening Notes

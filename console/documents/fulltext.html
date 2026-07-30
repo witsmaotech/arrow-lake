@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>全文搜索 · Arrow Lake 文档</title>
+<link rel="stylesheet" href="../assets/tokens.css"/>
+<link rel="stylesheet" href="../assets/app.css"/>
+<link rel="stylesheet" href="../assets/landing.css"/>
+<link rel="stylesheet" href="docs.css"/>
+</head>
+<body>
+<nav class="lnav">
+  <a class="brand" href="../index.html"><span class="brand-mark">AL</span><span><b class="brand-name">Arrow Lake</b><span class="brand-sub">文档</span></span></a>
+  <div class="lnav-links">
+    <a href="index.html">文档中心</a>
+    <a href="../architecture.html">架构文档</a>
+  </div>
+  <div class="lnav-cta"><a class="btn btn-primary btn-sm" href="../system.html">打开控制台 →</a></div>
+</nav>
+<div class="subnav">
+  <a href="index.html">文档中心</a><span class="crumb-sep">/</span><a href="fulltext.html" style="color:var(--teal-bright)">全文搜索</a>
+  <span class="pager-spacer"></span>
+  <div class="prevnext">
+    <a href="index.html"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg><span class="lbl">目录</span></a>
+    <a href="hybrid.html"><span class="lbl">下一章</span><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+  </div>
+</div>
+
+<header class="tut-hero">
+  <div class="tut-hero-inner">
+    <span class="num-badge">第 05 章 · 全文</span>
+    <h1>全文搜索（BM25）</h1>
+    <p class="sub">基于 LanceDB Tantivy 全文索引 + jieba 中文分词的 BM25 检索。从建索引到分词、元数据过滤、异步搜索与索引管理全流程。</p>
+    <div class="tut-meta">
+      <span><i></i>难度 · 进阶</span>
+      <span><i></i>耗时 · 10 分钟</span>
+      <span><i></i>依赖 · LanceDB Tantivy + jieba</span>
+    </div>
+  </div>
+</header>
+
+<article class="tut-body">
+  <p>Arrow Lake 的全文搜索基于 <strong>LanceDB Tantivy</strong> 全文索引构建 BM25 排序，并内置 <strong>jieba 中文分词</strong>。本章覆盖建索引、搜索、分词、参数配置、元数据过滤、索引管理与 REST API。</p>
+
+  <h2><span class="hn">1</span>快速示例</h2>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">fts_demo.py</span><span class="demo">最小可运行</span></figcaption><pre><code><span class="c-str">"""全文搜索最小可运行示例"""</span>
+<span class="c-kw">from</span> arrow_lake <span class="c-kw">import</span> Lake
+<span class="c-kw">import</span> pyarrow <span class="c-kw">as</span> pa
+
+lake = Lake(base_uri=<span class="c-str">"./lake_demo"</span>)
+
+<span class="c-rem"># 写入带文本列的 dataset</span>
+docs = pa.table({
+    <span class="c-str">"id"</span>: [<span class="c-str">1</span>, <span class="c-str">2</span>, <span class="c-str">3</span>, <span class="c-str">4</span>, <span class="c-str">5</span>],
+    <span class="c-str">"title"</span>: [<span class="c-str">"机器学习入门指南"</span>, <span class="c-str">"深度学习与神经网络"</span>, <span class="c-str">"自然语言处理实战"</span>,
+              <span class="c-str">"Python 数据分析"</span>, <span class="c-str">"推荐系统算法详解"</span>],
+    <span class="c-str">"text_content"</span>: [
+        <span class="c-str">"机器学习是人工智能的核心分支，涵盖了监督学习和无监督学习等技术"</span>,
+        <span class="c-str">"深度学习通过多层神经网络实现特征自动提取，广泛应用于计算机视觉"</span>,
+        <span class="c-str">"自然语言处理利用深度学习模型实现文本分类、情感分析和机器翻译"</span>,
+        <span class="c-str">"Python 提供了丰富的数据分析库，如 Pandas 和 NumPy"</span>,
+        <span class="c-str">"推荐系统结合协同过滤和内容推荐，为用户提供个性化服务"</span>,
+    ],
+    <span class="c-str">"category"</span>: [<span class="c-str">"AI"</span>, <span class="c-str">"AI"</span>, <span class="c-str">"AI"</span>, <span class="c-str">"数据"</span>, <span class="c-str">"AI"</span>],
+})
+lake.create_dataset(<span class="c-str">"docs"</span>, docs)
+
+<span class="c-rem"># 创建全文索引 (默认使用 jieba 中文分词)</span>
+lake.create_fts_index(<span class="c-str">"docs"</span>, fts_column=<span class="c-str">"text_content"</span>)
+
+<span class="c-rem"># 执行全文搜索</span>
+result = lake.text_search(<span class="c-str">"docs"</span>, query=<span class="c-str">"机器学习入门"</span>, top_k=<span class="c-str">10</span>)
+<span class="c-kw">for</span> i <span class="c-kw">in</span> range(result.table.num_rows):
+    doc_id = result.table.column(<span class="c-str">"id"</span>)[i].as_py()
+    score = result.table.column(<span class="c-str">"_score"</span>)[i].as_py()
+    title = result.table.column(<span class="c-str">"title"</span>)[i].as_py()
+    print(<span class="c-str">f"  [{doc_id}] {title}  (score={score:.4f})"</span>)
+
+lake.shutdown()</code></pre></figure>
+
+  <h2><span class="hn">2</span>创建 FTS 索引</h2>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">create_index.py</span></figcaption><pre><code><span class="c-rem"># 在默认列 (text_content) 上创建索引</span>
+lake.create_fts_index(<span class="c-str">"docs"</span>)
+
+<span class="c-rem"># 指定索引列</span>
+lake.create_fts_index(<span class="c-str">"docs"</span>, fts_column=<span class="c-str">"title"</span>)
+
+<span class="c-rem"># 强制重建索引</span>
+lake.create_fts_index(<span class="c-str">"docs"</span>, fts_column=<span class="c-str">"text_content"</span>, replace=<span class="c-str">True</span>)</code></pre></figure>
+  <h3>API 签名</h3>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">签名</span></figcaption><pre><code><span class="c-kw">def</span> create_fts_index(
+    self,
+    dataset_name: str,
+    *,
+    fts_column: str | <span class="c-str">None</span> = <span class="c-str">None</span>,   <span class="c-rem"># 文本列名，默认来自配置</span>
+    replace: bool = <span class="c-str">True</span>,             <span class="c-rem"># 是否替换已有索引</span>
+) -&gt; <span class="c-str">None</span>: ...</code></pre></figure>
+  <p>当 <code>tokenizer_type</code> 为 <code>"jieba"</code>（默认）时，<code>create_index</code> 会：</p>
+  <ol>
+    <li>对每行文本调用 <code>segment_text()</code> 进行分词</li>
+    <li>将分词结果写入 <code>_fts_segmented</code> 列</li>
+    <li>在该列上建立 Tantivy BM25 索引</li>
+  </ol>
+
+  <h2><span class="hn">3</span>执行全文搜索</h2>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">search.py</span></figcaption><pre><code><span class="c-rem"># 基本搜索</span>
+result = lake.text_search(<span class="c-str">"docs"</span>, query=<span class="c-str">"深度学习模型"</span>)
+print(<span class="c-str">f"查询：{result.query}, 结果：{result.row_count} 条，最高分：{result.max_score:.4f}"</span>)
+
+<span class="c-rem"># 限制返回数量</span>
+result = lake.text_search(<span class="c-str">"docs"</span>, query=<span class="c-str">"Python"</span>, top_k=<span class="c-str">5</span>)
+
+<span class="c-rem"># 指定搜索列</span>
+result = lake.text_search(<span class="c-str">"docs"</span>, query=<span class="c-str">"推荐算法"</span>, fts_column=<span class="c-str">"title"</span>)</code></pre></figure>
+  <h3>API 签名</h3>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">签名</span></figcaption><pre><code><span class="c-kw">def</span> text_search(
+    self,
+    dataset_name: str,
+    query: str,
+    *,
+    top_k: int | <span class="c-str">None</span> = <span class="c-str">None</span>,      <span class="c-rem"># 返回数量 (默认来自配置)</span>
+    fts_column: str | <span class="c-str">None</span> = <span class="c-str">None</span>,  <span class="c-rem"># 搜索列名</span>
+    where: str | <span class="c-str">None</span> = <span class="c-str">None</span>,       <span class="c-rem"># 元数据过滤表达式</span>
+    version: int | <span class="c-str">None</span> = <span class="c-str">None</span>,     <span class="c-rem"># 数据集版本 (时间旅行查询)</span>
+    offset: int = <span class="c-str">0</span>,                <span class="c-rem"># 跳过结果数 (分页)</span>
+) -&gt; FullTextSearchResult: ...</code></pre></figure>
+  <h3>异步全文搜索</h3>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">async</span></figcaption><pre><code><span class="c-rem"># 异步版本 (v1.8.0 #17): 保持事件循环响应,适合并发 async handler</span>
+result = <span class="c-kw">await</span> lake.text_search_async(<span class="c-str">"docs"</span>, query=<span class="c-str">"机器学习"</span>, top_k=<span class="c-str">10</span>)</code></pre></figure>
+  <p><code>text_search_async</code> 签名与 <code>text_search</code> 完全一致，内部经 <code>asyncio.to_thread</code> 包装（lancedb 无原生 async FTS 路径，故非阻塞委托），返回同一 <code>FullTextSearchResult</code>。</p>
+  <h3>返回类型：FullTextSearchResult</h3>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">dataclass</span></figcaption><pre><code>@dataclass(frozen=<span class="c-str">True</span>)
+<span class="c-kw">class</span> FullTextSearchResult:
+    table: pa.Table           <span class="c-rem"># Arrow 表，含 _score 相关性列</span>
+    row_count: int            <span class="c-rem"># 结果数量</span>
+    query: str                <span class="c-rem"># 搜索查询字符串</span>
+    top_k: int                <span class="c-rem"># 请求的最大返回数</span>
+    fts_column: str           <span class="c-rem"># 搜索的文本列</span>
+    max_score: float | <span class="c-str">None</span>   <span class="c-rem"># 最高相关性评分</span></code></pre></figure>
+  <h3>遍历结果</h3>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">iterate.py</span></figcaption><pre><code>result = lake.text_search(<span class="c-str">"docs"</span>, query=<span class="c-str">"自然语言处理"</span>, top_k=<span class="c-str">3</span>)
+ids = result.table.column(<span class="c-str">"id"</span>).to_pylist()
+scores = result.table.column(<span class="c-str">"_score"</span>).to_pylist()
+titles = result.table.column(<span class="c-str">"title"</span>).to_pylist()
+<span class="c-kw">for</span> doc_id, title, score <span class="c-kw">in</span> zip(ids, titles, scores):
+    print(<span class="c-str">f"  [{doc_id}] {title}  (score={score:.4f})"</span>)
+
+<span class="c-rem"># 转为 Pandas</span>
+df = result.table.to_pandas()</code></pre></figure>
+
+  <h2><span class="hn">4</span>中文分词：jieba 集成</h2>
+  <p>分词逻辑位于 <code>arrow_lake.query._chinese_tokenizer</code> 模块。</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">tokenizer.py</span></figcaption><pre><code><span class="c-kw">from</span> arrow_lake.query._chinese_tokenizer <span class="c-kw">import</span> segment_text, segment_query
+
+<span class="c-rem"># 索引时：分词文档</span>
+print(segment_text(<span class="c-str">"自然语言处理利用深度学习模型实现文本分类"</span>))
+<span class="c-rem"># "自然 语言 处理 利用 深度 学习 模型 实现 文本 分类"</span>
+
+<span class="c-rem"># 搜索时：分词查询</span>
+print(segment_query(<span class="c-str">"深度学习入门"</span>))
+<span class="c-rem"># "深度 学习 入门"</span></code></pre></figure>
+  <h3>自定义词典</h3>
+  <figure class="code"><figcaption><span class="lang">text</span><span class="file">custom_dict.txt</span></figcaption><pre><code><span class="c-rem"># custom_dict.txt — 每行一个词条</span>
+机器学习
+深度学习
+自然语言处理
+推荐系统</code></pre></figure>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">custom_dict.py</span></figcaption><pre><code><span class="c-kw">from</span> arrow_lake <span class="c-kw">import</span> Lake
+<span class="c-kw">from</span> arrow_lake.config <span class="c-kw">import</span> FullTextSearchConfig
+
+fts_config = FullTextSearchConfig(
+    fts_column=<span class="c-str">"text_content"</span>,
+    tokenizer_type=<span class="c-str">"jieba"</span>,
+    jieba_user_dict=<span class="c-str">"./custom_dict.txt"</span>,
+)
+lake = Lake(base_uri=<span class="c-str">"./lake"</span>, fts=fts_config)
+lake.create_fts_index(<span class="c-str">"docs"</span>)</code></pre></figure>
+
+  <h2><span class="hn">5</span>搜索参数配置</h2>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">config.py</span></figcaption><pre><code><span class="c-kw">from</span> arrow_lake.config <span class="c-kw">import</span> FullTextSearchConfig
+
+config = FullTextSearchConfig(
+    default_top_k=<span class="c-str">10</span>,          <span class="c-rem"># 默认返回数量 (&gt;= 1)</span>
+    fts_column=<span class="c-str">"text_content"</span>, <span class="c-rem"># 默认索引文本列</span>
+    stem=<span class="c-str">True</span>,                 <span class="c-rem"># 词干提取 (英文：running -&gt; run)</span>
+    remove_stop_words=<span class="c-str">True</span>,    <span class="c-rem"># 去除停用词 (the, is, 的，了)</span>
+    lower_case=<span class="c-str">True</span>,           <span class="c-rem"># 转小写</span>
+    tokenizer_type=<span class="c-str">"jieba"</span>,    <span class="c-rem"># "jieba" (中文推荐) | "default" (内置)</span>
+    jieba_user_dict=<span class="c-str">None</span>,      <span class="c-rem"># jieba 自定义词典路径</span>
+    with_position=<span class="c-str">False</span>,       <span class="c-rem"># 存 token 位置 → 启用短语查询 (引号 "..."),索引变大</span>
+    use_inverted=<span class="c-str">False</span>,        <span class="c-rem"># v1.7.1: 改用 lance 原生 INVERTED 索引 (替代 tantivy,实验性)</span>
+)</code></pre></figure>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>参数</th><th>类型</th><th>默认值</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><code>default_top_k</code></td><td>int</td><td><code>10</code></td><td>默认返回数量</td></tr>
+      <tr><td><code>fts_column</code></td><td>str</td><td><code>"text_content"</code></td><td>默认索引列</td></tr>
+      <tr><td><code>stem</code></td><td>bool</td><td><code>True</code></td><td>英文词干提取</td></tr>
+      <tr><td><code>remove_stop_words</code></td><td>bool</td><td><code>True</code></td><td>去除停用词</td></tr>
+      <tr><td><code>lower_case</code></td><td>bool</td><td><code>True</code></td><td>转小写</td></tr>
+      <tr><td><code>tokenizer_type</code></td><td>str</td><td><code>"jieba"</code></td><td><code>"jieba"</code> 或 <code>"default"</code></td></tr>
+      <tr><td><code>jieba_user_dict</code></td><td>str | None</td><td><code>None</code></td><td>自定义词典路径</td></tr>
+      <tr><td><code>with_position</code></td><td>bool</td><td><code>False</code></td><td>存 token 位置，启用短语查询（引号 <code>"..."</code>），索引变大</td></tr>
+      <tr><td><code>use_inverted</code></td><td>bool</td><td><code>False</code></td><td>v1.7.1：用 lance 原生 INVERTED 索引替代 tantivy（实验性）</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2><span class="hn">6</span>向量搜索 vs 全文搜索</h2>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>维度</th><th>向量搜索</th><th>全文搜索</th></tr></thead>
+    <tbody>
+      <tr><td><strong>索引列</strong></td><td><code>float[]</code> (embedding)</td><td><code>string</code> (文本)</td></tr>
+      <tr><td><strong>索引类型</strong></td><td>IVF-PQ</td><td>Tantivy BM25</td></tr>
+      <tr><td><strong>匹配方式</strong></td><td>语义相似度 (cosine/l2/dot)</td><td>关键词匹配 + BM25 评分</td></tr>
+      <tr><td><strong>查询输入</strong></td><td>embedding 向量</td><td>自然语言字符串</td></tr>
+      <tr><td><strong>精确匹配</strong></td><td>弱</td><td>强</td></tr>
+      <tr><td><strong>模糊匹配</strong></td><td>强</td><td>弱</td></tr>
+      <tr><td><strong>适用场景</strong></td><td>语义搜索、RAG、相似推荐</td><td>关键词搜索、标识符查找</td></tr>
+    </tbody>
+  </table></div>
+  <ul>
+    <li><strong>选择向量搜索</strong>：语义检索、「找关于量子计算的文章」、RAG 检索</li>
+    <li><strong>选择全文搜索</strong>：精确关键词、错误码搜索、术语查找</li>
+    <li><strong>选择混合搜索</strong>：两者兼顾——参见 <a href="hybrid.html">第 06 章 混合搜索与分面搜索</a></li>
+  </ul>
+
+  <h2><span class="hn">7</span>元数据过滤 (where 参数)</h2>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">filter.py</span></figcaption><pre><code><span class="c-rem"># 单条件过滤</span>
+result = lake.text_search(<span class="c-str">"docs"</span>, query=<span class="c-str">"深度学习"</span>, where=<span class="c-str">"category = 'AI'"</span>)
+
+<span class="c-rem"># 数值过滤</span>
+result = lake.text_search(<span class="c-str">"docs"</span>, query=<span class="c-str">"NLP"</span>, where=<span class="c-str">"quality_score &gt; 0.8"</span>)
+
+<span class="c-rem"># 组合条件</span>
+result = lake.text_search(<span class="c-str">"docs"</span>, query=<span class="c-str">"机器学习"</span>,
+                          where=<span class="c-str">"category = 'AI' AND year &gt;= 2023"</span>)
+
+<span class="c-rem"># OR 条件</span>
+result = lake.text_search(<span class="c-str">"docs"</span>, query=<span class="c-str">"数据分析"</span>,
+                          where=<span class="c-str">"category = 'AI' OR category = '数据'"</span>)</code></pre></figure>
+  <p><code>where</code> 子句经过 <code>validate_where_clause</code> 安全验证，会阻止 SQL 注入和数据修改语句。非法表达式将抛出 <code>QueryError</code>。</p>
+
+  <h2><span class="hn">8</span>FTS 索引管理</h2>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">manage.py</span></figcaption><pre><code><span class="c-kw">from</span> arrow_lake <span class="c-kw">import</span> Lake
+
+lake = Lake(base_uri=<span class="c-str">"./data"</span>)
+
+<span class="c-rem"># 删除全文搜索索引</span>
+lake.delete_fts_index(<span class="c-str">"docs"</span>)
+
+<span class="c-rem"># 获取 FTS 索引信息</span>
+info = lake.get_fts_index_info(<span class="c-str">"docs"</span>)
+<span class="c-kw">if</span> info <span class="c-kw">is not</span> <span class="c-str">None</span>:
+    print(<span class="c-str">f"FTS 索引：{info['name']}, 列：{info['columns']}"</span>)
+<span class="c-kw">else</span>:
+    print(<span class="c-str">"未找到 FTS 索引"</span>)</code></pre></figure>
+
+  <h2><span class="hn">9</span>REST API</h2>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">curl</span></figcaption><pre><code><span class="c-rem"># 创建 FTS 索引</span>
+curl -X POST http://localhost:8000/api/v1/datasets/docs/index/fts \
+  -H <span class="c-str">"Content-Type: application/json"</span> \
+  -d <span class="c-str">'{"fts_column": "text_content", "replace": true}'</span>
+
+<span class="c-rem"># 全文搜索</span>
+curl -X POST http://localhost:8000/api/v1/datasets/docs/search/fts \
+  -H <span class="c-str">"Content-Type: application/json"</span> \
+  -d <span class="c-str">'{"query": "机器学习入门", "top_k": 10}'</span></code></pre></figure>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>端点</th><th>请求模型</th><th>响应模型</th></tr></thead>
+    <tbody>
+      <tr><td><code>POST /{name}/index/fts</code></td><td><code>FtsIndexRequest</code></td><td><code>FtsIndexResponse</code></td></tr>
+      <tr><td><code>POST /{name}/search/fts</code></td><td><code>FullTextSearchRequest</code></td><td><code>FullTextSearchResponse</code></td></tr>
+      <tr><td><code>POST /embed/text</code></td><td><code>TextEmbedRequest</code></td><td><code>EmbeddingResponse</code></td></tr>
+      <tr><td><code>POST /embed/image</code></td><td><code>ImageEmbedRequest</code></td><td><code>EmbeddingResponse</code></td></tr>
+      <tr><td><code>POST /embed/clip-text</code></td><td><code>ClipTextEmbedRequest</code></td><td><code>EmbeddingResponse</code></td></tr>
+    </tbody>
+  </table></div>
+  <div class="callout tip"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-9"/></svg>推荐</div><p>中文场景务必设置 <code>tokenizer_type="jieba"</code>；领域术语丰富的语料用 <code>jieba_user_dict</code> 加载自定义词典以提升召回。错误码、编号等精确匹配场景优先用全文搜索。</p></div>
+</article>
+
+<nav class="pager">
+  <a class="prev" href="index.html"><span class="dir"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg> 目录</span><span class="ttl">产品文档教程</span></a>
+  <a class="next" href="hybrid.html"><span class="dir">下一章 <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span><span class="ttl">混合搜索与分面搜索</span></a>
+</nav>
+
+<footer class="footer">
+  <div class="footer-inner">
+    <div><b>Arrow Lake</b> · 全文搜索 · v1.9.6<br/><span class="muted mono" style="font-size:.7rem">© 2026 · MIT License</span></div>
+    <div class="muted" style="font-size:.75rem">自包含可离线运行 · 源自 docs/cookbook/05</div>
+  </div>
+</footer>
+</body>
+</html>

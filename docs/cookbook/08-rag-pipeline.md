@@ -1,6 +1,6 @@
 # RAG Question-Answering Pipeline
 
-> Version: 1.5.3
+> Version: 1.9.6
 
 Arrow Lake includes a built-in RAG (Retrieval-Augmented Generation) pipeline that
 supports multiple retrieval strategies, streaming output, multi-turn conversations,
@@ -30,13 +30,13 @@ print(f"Ingested {report.total_rows} rows")
 
 # 2. Generate embeddings (replace with your embedding model)
 #    The column name must match what the RAG pipeline expects (default: "text_embedding")
-DIM = 768
-embeddings = np.random.randn(report.total_rows, DIM).astype(np.float32)  # placeholder
+DIM = 1024  # bge-m3 / qwen3-embedding dim (placeholder; use your configured embed model)
+embeddings = np.random.randn(report.total_rows, DIM).astype(np.float32)
 embeddings /= np.linalg.norm(embeddings, axis=1, keepdims=True)
 vec_table = pa.table({
     "text_embedding": pa.FixedSizeListArray.from_arrays(embeddings.ravel(), DIM),
 })
-lake.append("docs", vec_table)
+lake.append_dataset("docs", vec_table)
 
 # 3. Create vector index
 lake.create_vector_index("docs", "text_embedding")
@@ -96,7 +96,7 @@ for citation in response.citations:
 | `citations`       | `tuple[RAGCitation, ...]` | List of cited sources               |
 | `retrieval_count` | `int`                     | Number of document chunks retrieved |
 | `context_tokens`  | `int \| None`             | Tokens used in the context window   |
-| `llm_usage`       | `dict \| None`            | LLM token usage statistics          |
+| `verification`    | `dict \| None`            | Faithfulness result (v1.9.6; needs `enable_verification`; holds support_ratio/sentences/valid_refs) |
 | `latency_ms`      | `float \| None`           | End-to-end latency (milliseconds)   |
 | `session_id`      | `str \| None`             | Session identifier                  |
 
@@ -202,7 +202,9 @@ async def compare_strategies():
 asyncio.run(compare_strategies())
 ```
 
-The default strategy is controlled by the `rag.default_retrieval_strategy` config:
+The default strategy is controlled by the `rag.default_retrieval_strategy` config (default `"hybrid"`,
+truly effective since v1.9.5 — previously the strategy only selected the score column name and retrieval
+actually only used FTS, leaving the vector index idle):
 
 ```python
 from arrow_lake.config import ArrowLakeConfig
@@ -211,6 +213,10 @@ config = ArrowLakeConfig()
 config.rag.default_retrieval_strategy = "hybrid"  # "fts" | "vector" | "hybrid"
 config.rag.default_top_k = 10                      # Default number of documents to retrieve
 ```
+
+**`use_kg` per-query switch** (v1.9.5): `rag_query(..., use_kg=False)` downgrades a single query to pure
+vector/FTS — **no need to disable `hugegraph.enabled`** for comparison; defaults to True, auto-injecting
+graph context when hugegraph is enabled.
 
 ***
 
@@ -386,6 +392,26 @@ lake = Lake.from_yaml("configs/rag.yaml", base_uri="./data")
 Environment variable override: `ARROW_LAKE__LLM__PROVIDER=openai`,
 `ARROW_LAKE__RAG__DEFAULT_TOP_K=10`, etc.
 
+### Two-Stage Independent LLM (v1.9.5)
+
+The RAG framework supports **different models** for extraction/reranking vs answer generation
+(`rag.extract_llm` / `rag.qa_llm`, both `LLMConfig`; either None falls back to the global `llm`).
+A typical pairing: a lightweight `qwen-turbo` for extraction (fast), a flagship `qwen-plus@16384`
+for generation (≈ qwen-max quality, ~4.8× cheaper). Bailian (dashscope) must go through the proxy —
+do not put it in `NO_PROXY`.
+
+```yaml
+rag:
+  extract_llm: { provider: openai, api_base: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                 api_key: "sk-...", model: qwen-turbo }
+  qa_llm:      { provider: openai, api_base: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                 api_key: "sk-...", model: qwen-plus, max_tokens: 16384, temperature: 0.3 }
+```
+
+> **Query transformation** (optional): `rag.query_transform` (`none`/`hyde`/`multi_query`) +
+> `multi_query_variants=3` runs parallel multi-variant retrieval for complex multi-facet questions,
+> then merges and dedups — improving recall.
+
 ***
 
 ## 8. Batch Queries
@@ -516,62 +542,89 @@ Common error codes: `RAG_PROVIDER_ERROR` (LLM call failed), `RAG_CONTEXT_EMPTY`
 ## 12. Reranking
 
 First-stage retrieval recalls candidate chunks; a **reranker** sharpens the order so
-the most relevant evidence reaches the LLM first. Arrow Lake supports several
-rerankers, configured under the `rag.reranker` section:
+the most relevant evidence reaches the LLM first. The RAG pipeline's reranker is configured via
+**flat fields** under `rag.*` (note: flat fields, not a nested object):
 
-| Type | When to use |
-|---|---|
-| `cross-encoder` (default) | Best precision — bge-reranker-v2-m3 scores each chunk against the query |
-| `llm` | LLM-as-judge; high quality, higher latency |
-| `ollama` | Local binary (yes/no) judge via Ollama |
-| `noop` | Disable reranking |
+| Field | Default | Description |
+|---|---|---|
+| `rag.reranker` | `"ollama"` | Strategy: `ollama` / `cross-encoder` / `llm` / `noop` |
+| `rag.reranker_model` | `"dengcao/Qwen3-Reranker-0.6B:F16"` | ollama model tag; or HF model for cross-encoder |
+| `rag.reranker_base_url` | `""` | Remote endpoint (empty = derived from embedding api_base) |
+| `rag.reranker_top_n` | `10` | Chunks kept after reranking |
+| `rag.reranker_device` | `"auto"` | cross-encoder device: auto / cpu / cuda (v1.9.6 P0-2) |
+| `rag.reranker_warmup_on_init` | `True` | Warm up at startup, no first-query penalty |
+
+> **The default is `ollama`, not `cross-encoder`** (established after the v1.9.5 dead-config fix).
+> `ollama` uses Qwen3-Reranker as a yes/no binary judge (limited discrimination); for continuous-score
+> precision reranking, switch to `reranker="cross-encoder"` + `reranker_model="BAAI/bge-reranker-v2-m3"`
+> (loaded from `HF_HOME`; pre-download for air-gapped deployments). Note the **search endpoints** (not RAG)
+> rerank via `hybrid.reranker_model` (which defaults to bge-reranker-v2-m3). If the configured reranker cannot
+> load at runtime, the pipeline transparently falls back to `noop` and logs a warning — retrieval never
+> hard-fails on a reranker misconfiguration.
 
 ```yaml
-# configs/rag.yaml
+# configs/rag.yaml — flat fields (not a nested object)
 rag:
-  reranker:
-    type: cross-encoder        # bge-reranker-v2-m3
-    device: auto               # auto / cpu / cuda
-    warmup_on_init: true       # pre-load at startup, no first-query penalty
+  reranker: ollama                      # or cross-encoder / llm / noop
+  reranker_model: dengcao/Qwen3-Reranker-0.6B:F16
+  reranker_top_n: 10
+  reranker_device: auto                 # effective for cross-encoder
+  reranker_warmup_on_init: true
 ```
-
-The cross-encoder model is loaded from the HuggingFace cache (`HF_HOME`); pre-download
-it in air-gapped deployments. If the configured reranker cannot be loaded at runtime,
-the pipeline transparently falls back to `noop` and logs a warning, so retrieval never
-hard-fails on a reranker misconfiguration.
 
 ***
 
 ## 13. Faithfulness Verification (Anti-Hallucination)
 
-Verification closes the loop between generation and evidence. When enabled, every
-sentence of the generated answer is checked against the retrieved context, and the
-response carries a `support_ratio` plus an explicit `unsupported` list — so callers
-can refuse or flag ungrounded answers instead of trusting them silently.
+When enabled, the `[n]` citation refs in the generated answer are validated against the retrieved
+context range, and each sentence is labeled `supported` (carries a valid `[n]` ref) or `unverified`
+(no ref). The response carries a `verification` block with `support_ratio` and per-sentence detail,
+so callers can flag ungrounded claims instead of trusting them silently.
 
 ```yaml
 rag:
   enable_verification: true      # opt-in; off by default
-  verification_threshold: 0.6    # embedding cosine threshold (lightweight mode)
 ```
 
-Two modes:
-
-- **Embedding cosine (default)** — reuses the extract encoder; cheap, no extra LLM
-  call. A sentence counts as *supported* if its cosine similarity to any context
-  chunk exceeds `verification_threshold`.
-- **LLM judge (opt-in)** — a single LLM call scores each sentence against the
-  context; higher fidelity, higher latency.
+The current implementation is the **lightweight mode** (pure stdlib, zero extra cost): `[n]` ref
+validation + per-sentence labels. Embedding-cosine mode and LLM-judge mode are planned extensions
+(see the trailing comment in `arrow_lake/rag/verifier.py`), not yet implemented.
 
 ```python
 response = await lake.rag_query("Summarize the Q3 findings", "reports")
 print(response.answer)
-print(f"Support ratio: {response.support_ratio}")    # 0.0 – 1.0
-print(f"Unsupported claims: {response.unsupported}")
-# A support_ratio near 1.0 means the answer is well-grounded;
-# entries in `unsupported` were not backed by the retrieved context.
+v = response.verification          # dict or None (when disabled)
+if v:
+    print(f"Support ratio: {v['support_ratio']}")     # 0.0 – 1.0
+    print(f"Valid refs: {v['valid_refs']}, invalid: {v['invalid_refs']}")
+    # v['sentences']: per-sentence detail [{text, label: "supported"|"unverified", refs}]
 ```
 
 For streaming responses, the **final frame** carries the `verification` block (along
 with `citations` and `latency`), so a streaming UI can surface the support ratio once
 generation completes.
+
+***
+
+## 14. GraphRAG (Knowledge-Graph Augmentation)
+
+When `hugegraph.enabled=true` and the dataset has been `kg_build`-ed, the RAG pipeline auto-upgrades to
+`GraphRAGPipeline`: extract entities from the question → parallel retrieval (vector + graph triples +
+neighbors) → RRF fusion → generate with the `graph_qa` template. Degrades gracefully to pure vector RAG
+when KG is unavailable (built into `graph_rag.py`).
+
+- **Three-way parallel** (v1.9.6 P0-4): `_graphrag_retrieve` uses `asyncio.gather` to run vector / search_ka /
+  neighbor concurrently, cutting latency 40~50% vs sequential; `QuestionEntityCache` uses a monotonic clock
+  to prevent NTP jumps from invalidating TTLs en masse.
+- **per-query `use_kg`**: pass `use_kg=False` to bypass KG for a single query (degrades to `super().query()`),
+  no need to disable hugegraph.
+- **Latency tuning**: entity extraction / query variants use `extract_llm=qwen-turbo` (fast); `qa_llm` uses
+  qwen-plus (generation).
+
+```python
+# GraphRAG (hugegraph enabled + dataset has a built KG)
+r = await lake.rag_query("Which systems depend on the auth service?", "docs")           # use_kg defaults True
+r2 = await lake.rag_query("Same question, pure-vector comparison", "docs", use_kg=False)  # bypass KG once
+```
+
+The dedicated REST endpoint `POST /api/v1/kg/query/graphrag` (body uses `question` + `dataset`).

@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>血缘可视化 · Arrow Lake 文档</title>
+<link rel="stylesheet" href="../assets/tokens.css"/>
+<link rel="stylesheet" href="../assets/app.css"/>
+<link rel="stylesheet" href="../assets/landing.css"/>
+<link rel="stylesheet" href="docs.css"/>
+</head>
+<body>
+<nav class="lnav">
+  <a class="brand" href="../index.html"><span class="brand-mark">AL</span><span><b class="brand-name">Arrow Lake</b><span class="brand-sub">文档</span></span></a>
+  <div class="lnav-links">
+    <a href="index.html">文档中心</a>
+    <a href="../architecture.html">架构文档</a>
+  </div>
+  <div class="lnav-cta"><a class="btn btn-primary btn-sm" href="../system.html">打开控制台 →</a></div>
+</nav>
+<div class="subnav">
+  <a href="index.html">文档中心</a><span class="crumb-sep">/</span><a href="lineage.html" style="color:var(--teal-bright)">血缘可视化</a>
+  <span class="pager-spacer"></span>
+  <div class="prevnext">
+    <a href="data-masking.html"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg><span class="lbl">上一章</span></a>
+    <a href="rest-recipes.html"><span class="lbl">下一章</span><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+  </div>
+</div>
+
+<header class="tut-hero">
+  <div class="tut-hero-inner">
+    <span class="num-badge">第 18 章 · 治理</span>
+    <h1>血缘可视化</h1>
+    <p class="sub">追溯任一数据集的完整上下游图谱，检视列级数据流向，用节点数上限让大图可浏览，并用 actor 字段溯源操作者。vis-network 渲染 + max_nodes 截断 + 下游影响分析。</p>
+    <div class="tut-meta">
+      <span><i></i>难度 · 进阶</span>
+      <span><i></i>耗时 · 12 分钟</span>
+      <span><i></i>依赖 · Lance 审计轨迹</span>
+    </div>
+  </div>
+</header>
+
+<article class="tut-body">
+  <p>血缘事件由 Lance 审计轨迹在每个管线状态转换（摄入、验证、分块、嵌入、查询、物化、清洗）时记录。<code>/lineage</code> 端点把它们以可查询图谱暴露；<code>lineage.html</code> 控制台页面负责渲染。</p>
+
+  <h2><span class="hn">1</span>获取图谱</h2>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">lineage graph</span></figcaption><pre><code>curl <span class="c-str">"http://127.0.0.1:8000/api/v1/lineage/graph/reports?max_depth=10&amp;max_nodes=500&amp;format=json"</span> \
+  -H <span class="c-str">"X-API-Key: $KEY"</span></code></pre></figure>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>参数</th><th>默认</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><code>max_depth</code></td><td>10</td><td>BFS 深度上限</td></tr>
+      <tr><td><code>max_nodes</code></td><td>500（上限 2000）</td><td>返回节点数上限。超出时 <code>stats.truncated=true</code>，UI 显示横幅提示</td></tr>
+      <tr><td><code>format</code></td><td><code>json</code></td><td><code>json</code> / <code>dot</code> / <code>mermaid</code></td></tr>
+    </tbody>
+  </table></div>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">Lake facade</span></figcaption><pre><code><span class="c-kw">from</span> arrow_lake <span class="c-kw">import</span> Lake
+lake = Lake.from_yaml(<span class="c-str">"configs/prod.yaml"</span>)
+graph = lake.lineage_graph(<span class="c-str">"reports"</span>, max_depth=<span class="c-str">10</span>, max_nodes=<span class="c-str">500</span>)
+print(graph.stats)
+<span class="c-rem"># {"total_nodes": 42, "total_edges": 51, "max_depth": 3, "truncated": False}</span></code></pre></figure>
+
+  <h2><span class="hn">2</span>节点着色</h2>
+  <p>节点按类型着色以便区分：</p>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>类型</th><th>颜色</th><th>含义</th></tr></thead>
+    <tbody>
+      <tr><td><code>target</code></td><td>绿色</td><td>被查询的数据集</td></tr>
+      <tr><td><code>source</code></td><td>蓝色</td><td>上游来源</td></tr>
+      <tr><td><code>derived</code></td><td>橙色</td><td>下游派生数据集</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2><span class="hn">3</span>列级血缘</h2>
+  <p>在 <code>lineage.html</code> 中点击节点（或直接调用 history）查看哪个源列流向哪个目标列、经由何种变换：</p>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">lineage history</span></figcaption><pre><code>curl <span class="c-str">"http://127.0.0.1:8000/api/v1/lineage/history/reports"</span> -H <span class="c-str">"X-API-Key: $KEY"</span></code></pre></figure>
+  <p>每个事件携带可选的 <code>column_lineage</code> 列表，含 <code>{source_column, target_column, transform_expr}</code> 映射。若缺失，该节点仅有数据集级血缘。</p>
+
+  <h2><span class="hn">4</span>在控制台渲染</h2>
+  <p>打开 <code>http://127.0.0.1:8000/console/lineage.html</code>，选择数据集，图谱用 <strong>vis-network</strong> 渲染。<code>max_nodes</code> 是 API 截断参数（默认 500，上限 2000），<strong>并非切换渲染库的阈值</strong>——<code>lineage.html</code> 只加载 vis-network，不引入 G6（G6 仅用于 <code>kg.html</code> 的大图场景）。当真实节点数超出上限时 <code>stats.truncated=true</code>，UI 显示横幅提示调大「节点上限」或减小深度。边标签与节点标题经 HTML 转义，以防经构造标签发起 XSS。</p>
+  <div class="callout warn"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>XSS 防护</div><p>边标签与节点标题经 HTML 转义，以防经构造标签发起 XSS——数据集名若含恶意 <code>&lt;script&gt;</code> 也不会执行。</p></div>
+
+  <h2><span class="hn">5</span>操作者溯源（actor）</h2>
+  <p>v1.9.4 起，摄入与删除等写操作会把认证用户（<code>actor</code>）透传到血缘记录中，取代之前的 <code>actor="system"</code> 占位。<code>GET /lineage/history/{dataset}</code> 的响应里每个事件都携带 <code>actor</code> 字段，可用于审计「谁在何时改了这个数据集」。</p>
+
+  <h2><span class="hn">6</span>下游影响分析（impact）</h2>
+  <p><code>POST /api/v1/lineage/impact</code> 分析修改某数据集后受影响的下游数据集：</p>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">lineage impact</span></figcaption><pre><code>curl -X POST <span class="c-str">"http://127.0.0.1:8000/api/v1/lineage/impact"</span> \
+  -H <span class="c-str">"X-API-Key: $KEY"</span> -H <span class="c-str">"Content-Type: application/json"</span> \
+  -d <span class="c-str">'{"dataset_name": "reports"}'</span></code></pre></figure>
+  <p>返回 <code>impacted_datasets</code> 列表，列出每个下游数据集及其依赖路径，便于变更前评估爆炸半径。</p>
+  <div class="callout tip"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-9"/></svg>stats 字段</div><p>图谱响应的 <code>stats</code> 含 <code>total_nodes</code> / <code>total_edges</code> / <code>max_depth</code> / <code>truncated</code>——前端据此决定是否显示截断横幅。详细端到端场景（治理闭环）见第 19 章 REST 实战配方。</p></div>
+</article>
+
+<nav class="pager">
+  <a class="prev" href="data-masking.html"><span class="dir"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg> 上一章</span><span class="ttl">数据脱敏</span></a>
+  <a class="next" href="rest-recipes.html"><span class="dir">下一章 <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span><span class="ttl">REST 实战配方</span></a>
+</nav>
+
+<footer class="footer">
+  <div class="footer-inner">
+    <div><b>Arrow Lake</b> · 血缘可视化 · v1.9.6<br/><span class="muted mono" style="font-size:.7rem">© 2026 · MIT License</span></div>
+    <div class="muted" style="font-size:.75rem">自包含可离线运行 · 源自 docs/cookbook/18</div>
+  </div>
+</footer>
+</body>
+</html>

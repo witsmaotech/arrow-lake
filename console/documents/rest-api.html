@@ -1,0 +1,593 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>REST API 使用指南 · Arrow Lake 文档</title>
+<link rel="stylesheet" href="../assets/tokens.css"/>
+<link rel="stylesheet" href="../assets/app.css"/>
+<link rel="stylesheet" href="../assets/landing.css"/>
+<link rel="stylesheet" href="docs.css"/>
+</head>
+<body>
+<nav class="lnav">
+  <a class="brand" href="../index.html"><span class="brand-mark">AL</span><span><b class="brand-name">Arrow Lake</b><span class="brand-sub">文档</span></span></a>
+  <div class="lnav-links">
+    <a href="index.html">文档中心</a>
+    <a href="../architecture.html">架构文档</a>
+  </div>
+  <div class="lnav-cta"><a class="btn btn-primary btn-sm" href="../system.html">打开控制台 →</a></div>
+</nav>
+<div class="subnav">
+  <a href="index.html">文档中心</a><span class="crumb-sep">/</span><a href="rest-api.html" style="color:var(--teal-bright)">REST API</a>
+  <span class="pager-spacer"></span>
+  <div class="prevnext">
+    <a href="index.html"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg><span class="lbl">目录</span></a>
+    <a href="quality.html"><span class="lbl">下一章</span><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+  </div>
+</div>
+
+<header class="tut-hero">
+  <div class="tut-hero-inner">
+    <span class="num-badge">第 10 章 · API</span>
+    <h1>REST API 使用指南</h1>
+    <p class="sub">FastAPI 内置服务覆盖摄取、检索、RAG、知识图谱、治理等全部能力。支持 API Key 与 JWT + RBAC 双模认证，统一错误信封与链路追踪。</p>
+    <div class="tut-meta">
+      <span><i></i>难度 · 中级</span>
+      <span><i></i>耗时 · 20 分钟</span>
+      <span><i></i>依赖 · arrow-lake[api] · curl/httpx</span>
+    </div>
+  </div>
+</header>
+
+<article class="tut-body">
+  <p>Arrow Lake 内置 FastAPI REST 服务，提供数据摄取、向量搜索、RAG 问答、知识图谱管理等全部功能的 HTTP 接口。支持 <strong>API Key</strong> 认证和 <strong>JWT + RBAC</strong> 双模式。前置准备：<code>pip install arrow-lake[api]</code>。</p>
+
+  <h2><span class="hn">1</span>启动服务器</h2>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">启动</span></figcaption><pre><code>arrow-lake serve --host 0.0.0.0 --port 8000      <span class="c-rem"># 默认配置</span>
+arrow-lake serve --config /path/to/config.yaml    <span class="c-rem"># YAML 配置启动</span></code></pre></figure>
+  <p>启动后访问 Swagger UI：<code>http://localhost:8000/docs</code>，ReDoc：<code>http://localhost:8000/redoc</code>。</p>
+
+  <h2><span class="hn">2</span>API Key 认证</h2>
+  <p>在配置中设置 <code>api.api_key</code> 后，所有非文档端点需要通过 <code>X-API-Key</code> 请求头认证。</p>
+  <figure class="code"><figcaption><span class="lang">yaml</span><span class="file">config.yaml</span></figcaption><pre><code>api:
+  enabled: true
+  api_key: <span class="c-str">"your-secret-api-key-here"</span>
+  api_key_header: <span class="c-str">"X-API-Key"</span></code></pre></figure>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">携带 API Key</span></figcaption><pre><code>curl -X GET http://localhost:8000/api/v1/datasets \
+  -H <span class="c-str">"X-API-Key: your-secret-api-key-here"</span></code></pre></figure>
+  <p>未携带 API Key 时返回 401：<code>{"detail": "Missing or invalid API key"}</code></p>
+
+  <h2><span class="hn">3</span>JWT 认证与 RBAC</h2>
+  <p>认证模式通过 <code>auth.auth_mode</code> 配置，可选 <code>api_key</code>、<code>jwt</code> 或 <code>both</code>。角色层级为 <strong>ADMIN &gt; EDITOR &gt; VIEWER</strong>，高级角色继承低级角色全部权限。</p>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>角色</th><th>说明</th><th>权限范围</th></tr></thead>
+    <tbody>
+      <tr><td><code>ADMIN</code></td><td>管理员</td><td>全部操作，包括图谱构建、数据集删除</td></tr>
+      <tr><td><code>EDITOR</code></td><td>编辑者</td><td>数据摄取、搜索、Gremlin 查询</td></tr>
+      <tr><td><code>VIEWER</code></td><td>查看者</td><td>只读搜索、RAG 问答</td></tr>
+    </tbody>
+  </table></div>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">换取与刷新令牌</span></figcaption><pre><code><span class="c-rem"># both 模式下用 API Key 换取 JWT 令牌对</span>
+curl -X POST http://localhost:8000/api/v1/auth/token \
+  -H <span class="c-str">"X-API-Key: your-secret-api-key-here"</span> \
+  -H <span class="c-str">"Content-Type: application/json"</span> \
+  -d <span class="c-str">'{"role": "editor"}'</span>
+<span class="c-rem"># =&gt; {"access_token": "eyJ...", "refresh_token": "eyJ...", "token_type": "bearer"}</span>
+
+<span class="c-rem"># 携带 Bearer Token 访问受保护端点</span>
+curl -X POST http://localhost:8000/api/v1/rag/query \
+  -H <span class="c-str">"Authorization: Bearer eyJhbGciOiJIUzI1NiIs..."</span> \
+  -H <span class="c-str">"Content-Type: application/json"</span> \
+  -d <span class="c-str">'{"question": "...", "dataset_name": "docs"}'</span>
+
+<span class="c-rem"># 刷新令牌</span>
+curl -X POST http://localhost:8000/api/v1/auth/refresh \
+  -H <span class="c-str">"Content-Type: application/json"</span> \
+  -d <span class="c-str">'{"refresh_token": "eyJ..."}'</span></code></pre></figure>
+  <h3>JWT 配置参考</h3>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>配置项</th><th>默认值</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><code>auth.auth_mode</code></td><td><code>"api_key"</code></td><td>认证模式：api_key / jwt / both</td></tr>
+      <tr><td><code>auth.jwt_secret_key</code></td><td><code>""</code></td><td>JWT 签名密钥（v1.5.2 起为空则阻止启动）</td></tr>
+      <tr><td><code>auth.jwt_algorithm</code></td><td><code>"HS256"</code></td><td>签名算法</td></tr>
+      <tr><td><code>auth.jwt_access_token_minutes</code></td><td><code>30</code></td><td>Access Token 有效期（分钟）</td></tr>
+      <tr><td><code>auth.jwt_refresh_token_days</code></td><td><code>7</code></td><td>Refresh Token 有效期（天）</td></tr>
+      <tr><td><code>auth.jwt_issuer</code></td><td><code>"arrow-lake"</code></td><td>JWT issuer 声明</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2><span class="hn">4</span>核心端点速查表</h2>
+  <h3>数据集与摄取（v1）</h3>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>方法</th><th>端点</th><th>说明</th><th>角色</th></tr></thead>
+    <tbody>
+      <tr><td><code>GET</code></td><td><code>/api/v1/datasets</code></td><td>列出数据集</td><td>-</td></tr>
+      <tr><td><code>GET</code></td><td><code>/api/v1/datasets/{name}</code></td><td>数据集详情</td><td>-</td></tr>
+      <tr><td><code>DELETE</code></td><td><code>/api/v1/datasets/{name}</code></td><td>删除数据集</td><td>EDITOR</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/v1/datasets/{name}/ingest</code></td><td>摄取本地文件</td><td>EDITOR</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/v1/datasets/{name}/ingest/http</code></td><td>摄取远程 URL</td><td>EDITOR</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/v1/datasets/{name}/ingest/images</code></td><td>摄取图片</td><td>EDITOR</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/v1/datasets/{name}/ingest/documents</code></td><td>摄取 PDF / 文档</td><td>EDITOR</td></tr>
+    </tbody>
+  </table></div>
+  <h3>搜索（v1）</h3>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>方法</th><th>端点</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><code>POST</code></td><td><code>/api/v1/datasets/{name}/search/vector</code></td><td>向量搜索</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/v1/datasets/{name}/search/fts</code></td><td>全文搜索</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/v1/datasets/{name}/search/hybrid</code></td><td>混合搜索</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/v1/datasets/{name}/search/faceted</code></td><td>分面搜索</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/v1/datasets/{name}/search/ensemble</code></td><td>集成搜索（向量 + FTS + 分面）</td></tr>
+    </tbody>
+  </table></div>
+  <h3>RAG 与知识图谱（v2）</h3>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>方法</th><th>端点</th><th>说明</th><th>角色</th></tr></thead>
+    <tbody>
+      <tr><td><code>POST</code></td><td><code>/api/v1/rag/query</code></td><td>RAG 问答</td><td>-</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/v1/rag/query/stream</code></td><td>流式 RAG</td><td>-</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/v1/kg/build</code></td><td>构建知识图谱</td><td>ADMIN</td></tr>
+      <tr><td><code>GET</code></td><td><code>/api/v1/kg/build/{task_id}/status</code></td><td>构建状态</td><td>-</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/v1/kg/query</code></td><td>Gremlin 查询</td><td>EDITOR</td></tr>
+      <tr><td><code>GET</code></td><td><code>/api/v1/kg/entities/{id}/neighbors</code></td><td>邻居遍历</td><td>-</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/v1/kg/query/graphrag</code></td><td>GraphRAG 问答</td><td>VIEWER</td></tr>
+    </tbody>
+  </table></div>
+  <h3>认证（v2）</h3>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>方法</th><th>端点</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><code>POST</code></td><td><code>/api/v1/auth/token</code></td><td>API Key 换取 JWT</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/v1/auth/refresh</code></td><td>刷新令牌</td></tr>
+      <tr><td><code>GET</code></td><td><code>/api/v1/auth/me</code></td><td>当前用户信息</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2><span class="hn">5</span>curl 示例</h2>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">摄取文件</span></figcaption><pre><code>curl -X POST http://localhost:8000/api/v1/datasets/docs/ingest \
+  -H <span class="c-str">"X-API-Key: your-secret-api-key-here"</span> \
+  -H <span class="c-str">"Content-Type: application/json"</span> \
+  -d <span class="c-str">'{"file_paths": ["examples/data/papers/full_text/zh001.pdf", "examples/data/papers/full_text/zh002.pdf"]}'</span>
+<span class="c-rem"># =&gt; {"success": true, "dataset_name": "docs", "total_rows": 156, "total_files": 2}</span></code></pre></figure>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">向量搜索</span></figcaption><pre><code>curl -X POST http://localhost:8000/api/v1/datasets/docs/search/vector \
+  -H <span class="c-str">"X-API-Key: your-secret-api-key-here"</span> \
+  -H <span class="c-str">"Content-Type: application/json"</span> \
+  -d <span class="c-str">'{"query": "Arrow Lake 支持哪些向量索引类型？", "top_k": 5}'</span></code></pre></figure>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">RAG 问答（hybrid 检索）</span></figcaption><pre><code>curl -X POST http://localhost:8000/api/v1/rag/query \
+  -H <span class="c-str">"X-API-Key: your-secret-api-key-here"</span> \
+  -H <span class="c-str">"Content-Type: application/json"</span> \
+  -d <span class="c-str">'{"question": "RAG 管线是如何工作的？", "dataset_name": "docs", "top_k": 5, "retrieval_strategy": "hybrid"}'</span></code></pre></figure>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">构建知识图谱</span></figcaption><pre><code>curl -X POST http://localhost:8000/api/v1/kg/build \
+  -H <span class="c-str">"X-API-Key: your-secret-api-key-here"</span> \
+  -H <span class="c-str">"Content-Type: application/json"</span> \
+  -d <span class="c-str">'{"dataset_name": "docs"}'</span></code></pre></figure>
+
+  <h2><span class="hn">6</span>Python httpx 异步调用</h2>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">async_client.py</span></figcaption><pre><code><span class="c-kw">import</span> asyncio
+<span class="c-kw">import</span> httpx
+
+BASE_URL = <span class="c-str">"http://localhost:8000"</span>
+API_KEY = <span class="c-str">"your-secret-api-key-here"</span>
+HEADERS = {<span class="c-str">"X-API-Key"</span>: API_KEY, <span class="c-str">"Content-Type"</span>: <span class="c-str">"application/json"</span>}
+
+
+<span class="c-kw">async def</span> ingest_files(dataset: <span class="c-kw">str</span>, paths: <span class="c-kw">list</span>[<span class="c-kw">str</span>]) -&gt; <span class="c-kw">dict</span>:
+    <span class="c-kw">async with</span> httpx.AsyncClient(timeout=<span class="c-str">300</span>) <span class="c-kw">as</span> client:
+        resp = <span class="c-kw">await</span> client.post(
+            f<span class="c-str">"{BASE_URL}/api/v1/datasets/{dataset}/ingest"</span>,
+            headers=HEADERS, json={<span class="c-str">"file_paths"</span>: paths},
+        )
+        resp.raise_for_status()
+        <span class="c-kw">return</span> resp.json()
+
+
+<span class="c-kw">async def</span> vector_search(dataset: <span class="c-kw">str</span>, query: <span class="c-kw">str</span>, top_k: <span class="c-kw">int</span> = <span class="c-str">5</span>) -&gt; <span class="c-kw">dict</span>:
+    <span class="c-kw">async with</span> httpx.AsyncClient(timeout=<span class="c-str">60</span>) <span class="c-kw">as</span> client:
+        resp = <span class="c-kw">await</span> client.post(
+            f<span class="c-str">"{BASE_URL}/api/v1/datasets/{dataset}/search/vector"</span>,
+            headers=HEADERS, json={<span class="c-str">"query"</span>: query, <span class="c-str">"top_k"</span>: top_k},
+        )
+        resp.raise_for_status()
+        <span class="c-kw">return</span> resp.json()
+
+
+<span class="c-kw">async def</span> build_kg(dataset: <span class="c-kw">str</span>) -&gt; <span class="c-kw">dict</span>:
+    <span class="c-kw">async with</span> httpx.AsyncClient(timeout=<span class="c-str">300</span>) <span class="c-kw">as</span> client:
+        resp = <span class="c-kw">await</span> client.post(
+            f<span class="c-str">"{BASE_URL}/api/v1/kg/build"</span>, headers=HEADERS, json={<span class="c-str">"dataset_name"</span>: dataset},
+        )
+        task_id = resp.json()[<span class="c-str">"task_id"</span>]
+        <span class="c-kw">for</span> _ <span class="c-kw">in</span> <span class="c-kw">range</span>(<span class="c-str">60</span>):
+            <span class="c-kw">await</span> asyncio.sleep(<span class="c-str">3</span>)
+            status = (<span class="c-kw">await</span> client.get(
+                f<span class="c-str">"{BASE_URL}/api/v1/kg/build/{task_id}/status"</span>, headers=HEADERS,
+            )).json()
+            <span class="c-kw">if</span> status[<span class="c-str">"status"</span>] <span class="c-kw">in</span> (<span class="c-str">"completed"</span>, <span class="c-str">"failed"</span>):
+                <span class="c-kw">return</span> status
+        <span class="c-kw">return</span> {<span class="c-str">"status"</span>: <span class="c-str">"timeout"</span>}
+
+
+<span class="c-kw">async def</span> main():
+    result = <span class="c-kw">await</span> ingest_files(<span class="c-str">"docs"</span>, [<span class="c-str">"examples/data/kb/knowledge_zh.jsonl"</span>])
+    <span class="c-kw">print</span>(f<span class="c-str">"摄取完成：{result['total_rows']} 行"</span>)
+    results = <span class="c-kw">await</span> vector_search(<span class="c-str">"docs"</span>, <span class="c-str">"向量索引类型"</span>)
+    <span class="c-kw">for</span> item <span class="c-kw">in</span> results.get(<span class="c-str">"results"</span>, [])[:<span class="c-str">3</span>]:
+        <span class="c-kw">print</span>(f<span class="c-str">"  [{item.get('score', 0):.3f}] {item.get('content', '')[:80]}..."</span>)
+
+
+asyncio.run(main())</code></pre></figure>
+
+  <h2><span class="hn">7</span>错误响应格式</h2>
+  <p>所有错误响应使用统一的 JSON 信封：</p>
+  <figure class="code"><figcaption><span class="lang">json</span><span class="file">错误信封</span></figcaption><pre><code>{
+  "success": false,
+  "error": "kg_build_failed",
+  "message": "Knowledge graph build failed: connection refused",
+  "context": {}
+}</code></pre></figure>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>字段</th><th>类型</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><code>success</code></td><td><code>bool</code></td><td>始终为 <code>false</code></td></tr>
+      <tr><td><code>error</code></td><td><code>str</code></td><td>错误码（机器可读）</td></tr>
+      <tr><td><code>message</code></td><td><code>str</code></td><td>人类可读的错误描述</td></tr>
+      <tr><td><code>context</code></td><td><code>object</code></td><td>可选附加上下文</td></tr>
+    </tbody>
+  </table></div>
+  <p>常见 HTTP 状态码：<code>400</code> 参数校验失败、<code>401</code> 未认证、<code>403</code> 权限不足、<code>404</code> 资源不存在、<code>413</code> 请求体过大、<code>429</code> 速率限制、<code>500</code> 服务内部异常。</p>
+
+  <h2><span class="hn">8</span>高级配置</h2>
+  <figure class="code"><figcaption><span class="lang">yaml</span><span class="file">速率限制 / CORS / 安全头</span></figcaption><pre><code>rate_limit:
+  enabled: <span class="c-kw">true</span>
+  default_requests_per_minute: <span class="c-str">60</span>
+  default_burst: <span class="c-str">10</span>
+
+api:
+  cors_origins:
+    - <span class="c-str">"https://app.example.com"</span>
+    - <span class="c-str">"http://localhost:3000"</span>
+  security_headers_enabled: <span class="c-kw">true</span>
+  frame_options: <span class="c-str">"DENY"</span></code></pre></figure>
+  <p>每个请求自动生成 <code>X-Request-ID</code> 头用于链路追踪；客户端可自行传入（设置 <code>auto_generate_request_id: false</code> 关闭自动生成）。</p>
+
+  <h2><span class="hn">9</span>RBAC 角色矩阵</h2>
+  <p>超过 30 个 API 端点通过 <code>require_role()</code> 依赖项执行基于角色的访问控制。<code>PermissionChecker</code> 支持按数据集的 ACL 覆盖——ADMIN 可向 VIEWER 授予特定数据集的写入权限而无需更改其全局角色。</p>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>能力类别</th><th>VIEWER</th><th>EDITOR</th><th>ADMIN</th></tr></thead>
+    <tbody>
+      <tr><td>搜索与查询</td><td><code>search/*</code></td><td>（继承 VIEWER）</td><td>（继承所有）</td></tr>
+      <tr><td>RAG / GraphRAG</td><td><code>rag/query/*</code>、<code>graphrag</code></td><td>（继承 VIEWER）</td><td>（继承所有）</td></tr>
+      <tr><td>数据摄取</td><td>-</td><td><code>ingest/*</code>、<code>datasets DELETE</code></td><td>（继承所有）</td></tr>
+      <tr><td>向量嵌入</td><td>-</td><td><code>embedding/*</code></td><td>（继承所有）</td></tr>
+      <tr><td>质量与去重</td><td>-</td><td><code>quality/*</code>、<code>dedup/*</code></td><td>（继承所有）</td></tr>
+      <tr><td>血缘与审计</td><td>-</td><td>lineage 写入</td><td>audit 导出</td></tr>
+      <tr><td>导出</td><td>-</td><td><code>export/*</code></td><td>（继承所有）</td></tr>
+      <tr><td>备份</td><td>-</td><td>-</td><td><code>backup/*</code></td></tr>
+      <tr><td>知识图谱构建</td><td>-</td><td><code>kg/query</code></td><td><code>kg/build</code>、<code>admin/*</code></td></tr>
+      <tr><td>数据集 ACL 管理</td><td>-</td><td>-</td><td>授予 / 撤销数据集访问权限</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2><span class="hn">10</span>v1.4.0 新增端点</h2>
+  <h3>血缘图谱 API</h3>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">血缘查询与影响分析</span></figcaption><pre><code><span class="c-rem"># 获取数据集的完整血缘图谱</span>
+curl http://localhost:8000/api/v1/lineage/graph/articles -H <span class="c-str">"X-API-Key: your-key"</span>
+
+<span class="c-rem"># 影响分析：某个变更会影响哪些下游数据集</span>
+curl -X POST http://localhost:8000/api/v1/lineage/impact \
+  -H <span class="c-str">"X-API-Key: your-key"</span> -H <span class="c-str">"Content-Type: application/json"</span> \
+  -d <span class="c-str">'{"dataset_name": "articles"}'</span>
+
+<span class="c-rem"># 血缘统计</span>
+curl http://localhost:8000/api/v1/lineage/stats -H <span class="c-str">"X-API-Key: your-key"</span></code></pre></figure>
+  <h3>质量规则 API</h3>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">声明式质量规则</span></figcaption><pre><code>curl -X POST http://localhost:8000/api/v1/datasets/articles/quality/rules \
+  -H <span class="c-str">"X-API-Key: your-key"</span> -H <span class="c-str">"Content-Type: application/json"</span> \
+  -d <span class="c-str">'{
+    "rules": [
+      {"name": "min_len", "column": "text_content", "check": "length", "params": {"min": 10}, "action": "reject"},
+      {"name": "no_dupes", "column": "text_content", "check": "duplicate", "action": "remove"},
+      {"name": "score_range", "column": "score", "check": "range", "params": {"min": 0.0, "max": 1.0}, "action": "flag"}
+    ]
+  }'</span>
+<span class="c-rem"># =&gt; {"success": true, "applied_rules": 3, "total_affected_rows": 42}</span></code></pre></figure>
+  <h3>行 / 列级 ACL 管理 API</h3>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">ACL 设置</span></figcaption><pre><code><span class="c-rem"># 列级 ACL（viewer 只能看到 title 和 summary）</span>
+curl -X PUT http://localhost:8000/api/v1/admin/acl/articles \
+  -H <span class="c-str">"X-API-Key: admin-key"</span> -H <span class="c-str">"Content-Type: application/json"</span> \
+  -d <span class="c-str">'{"role": "viewer", "visible_columns": ["title", "summary"]}'</span>
+
+<span class="c-rem"># 行级 ACL（viewer 只能看到 US 区域数据）</span>
+curl -X PUT http://localhost:8000/api/v1/admin/acl/sales \
+  -H <span class="c-str">"X-API-Key: admin-key"</span> -H <span class="c-str">"Content-Type: application/json"</span> \
+  -d <span class="c-str">'{"role": "viewer", "row_filter": "region == US"}'</span></code></pre></figure>
+  <p>ACL 过滤会自动应用于所有查询和搜索端点——客户端无需改动。</p>
+  <h3>全文搜索分页与 OLAP 流式传输（SSE）</h3>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">offset 分页 / SSE 流</span></figcaption><pre><code><span class="c-rem"># FTS 分页：取第 21-30 条结果</span>
+curl -X POST http://localhost:8000/api/v1/datasets/articles/search/fts \
+  -H <span class="c-str">"X-API-Key: your-key"</span> -H <span class="c-str">"Content-Type: application/json"</span> \
+  -d <span class="c-str">'{"query": "machine learning", "top_k": 10, "offset": 20}'</span>
+
+<span class="c-rem"># 大结果集 SSE 流式传输（&gt;10000 行）</span>
+curl -N -X POST http://localhost:8000/api/v1/datasets/sales/query/olap \
+  -H <span class="c-str">"X-API-Key: your-key"</span> -H <span class="c-str">"Content-Type: application/json"</span> \
+  -d <span class="c-str">'{"sql": "SELECT * FROM sales", "stream": true, "batch_size": 1000}'</span>
+<span class="c-rem"># data: {"type": "schema", "columns": [...], "row_count": 50000}</span>
+<span class="c-rem"># data: {"type": "batch", "rows": 1000, "data": "&lt;base64-arrow-ipc&gt;"}</span>
+<span class="c-rem"># data: {"type": "done", "total_rows": 50000}</span></code></pre></figure>
+  <p>每个 <code>batch</code> 事件包含一个 base64 编码的 Arrow IPC 流，含 <code>batch_size</code> 行（默认 1000）。</p>
+
+  <h2><span class="hn">11</span>v1.4.1 Gravitino 元数据端点</h2>
+  <p>当 Gravitino 启用时（<code>gravitino.enabled: true</code>），<code>/metadata/*</code> 端点代理来自 Gravitino metalake 的 catalog、table、tag、policy、statistics 和 model 信息。未配置时返回 <strong>503</strong>。</p>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>方法</th><th>端点</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><code>GET</code></td><td><code>/metadata/catalogs</code></td><td>列出所有 Gravitino catalog</td></tr>
+      <tr><td><code>GET</code></td><td><code>/metadata/tables</code></td><td>列出 Lance catalog 中的表</td></tr>
+      <tr><td><code>GET</code></td><td><code>/metadata/tables/{name}</code></td><td>获取表详情（列、属性）</td></tr>
+      <tr><td><code>GET</code> / <code>POST</code></td><td><code>/metadata/tags</code></td><td>列出（可选 <code>?table=</code>）/ 创建标签</td></tr>
+      <tr><td><code>GET</code> / <code>POST</code></td><td><code>/metadata/policies</code>、<code>/retention</code>、<code>/masking</code></td><td>列出 / 创建保留与脱敏策略</td></tr>
+      <tr><td><code>POST</code></td><td><code>/metadata/statistics/{name}</code></td><td>收集并注册表统计信息</td></tr>
+      <tr><td><code>GET</code></td><td><code>/metadata/models</code>、<code>/models/{name}/versions</code></td><td>列出 ML 模型与版本（latest/production）</td></tr>
+    </tbody>
+  </table></div>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">Gravitino 元数据</span></figcaption><pre><code><span class="c-rem"># 列出所有 catalog</span>
+curl http://localhost:8000/metadata/catalogs -H <span class="c-str">"X-API-Key: your-key"</span>
+<span class="c-rem"># =&gt; {"success": true, "data": [{"name": "lance-catalog"}, {"name": "hive-catalog"}]}</span>
+
+<span class="c-rem"># 创建脱敏策略（columns + function: redact|hash|partial|nullify）</span>
+curl -X POST http://localhost:8000/metadata/policies/masking \
+  -H <span class="c-str">"X-API-Key: your-key"</span> -H <span class="c-str">"Content-Type: application/json"</span> \
+  -d <span class="c-str">'{"name": "email_mask", "columns": ["email", "phone"], "function": "partial"}'</span></code></pre></figure>
+  <figure class="code"><figcaption><span class="lang">yaml</span><span class="file">启用 Gravitino</span></figcaption><pre><code>gravitino:
+  enabled: <span class="c-kw">true</span>
+  uri: <span class="c-str">"http://localhost:8090"</span>
+  metalake: <span class="c-str">"arrow_lake"</span>
+  lance_rest_enabled: <span class="c-kw">true</span>
+  lance_rest_uri: <span class="c-str">"http://localhost:8888"</span>
+  sync_interval_seconds: <span class="c-str">300</span>     <span class="c-rem"># 后台同步间隔</span></code></pre></figure>
+
+  <h2><span class="hn">12</span>v1.5.x 新增端点</h2>
+  <h3>审计追踪 API</h3>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>方法</th><th>端点</th><th>说明</th><th>认证</th></tr></thead>
+    <tbody>
+      <tr><td><code>POST</code></td><td><code>/api/v1/audit/record</code></td><td>记录审计事件</td><td>EDITOR</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/v1/audit/verify?audit_id=...</code></td><td>验证审计条目完整性（HMAC）</td><td>VIEWER</td></tr>
+      <tr><td><code>GET</code></td><td><code>/api/v1/audit/query</code></td><td>带过滤条件的审计追踪查询</td><td>VIEWER</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/v1/audit/export?dataset_name=...</code></td><td>导出数据集审计追踪</td><td>ADMIN</td></tr>
+    </tbody>
+  </table></div>
+  <h3>备份与恢复 API</h3>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>方法</th><th>端点</th><th>说明</th><th>认证</th></tr></thead>
+    <tbody>
+      <tr><td><code>POST</code></td><td><code>/api/v1/backup/create</code></td><td>创建备份</td><td>ADMIN</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/v1/backup/restore?backup_id=...</code></td><td>按 ID 恢复备份</td><td>ADMIN</td></tr>
+      <tr><td><code>GET</code></td><td><code>/api/v1/backup/list</code></td><td>列出所有备份</td><td>ADMIN</td></tr>
+      <tr><td><code>DELETE</code></td><td><code>/api/v1/backup/{backup_id}</code></td><td>删除备份</td><td>ADMIN</td></tr>
+    </tbody>
+  </table></div>
+  <h3>维护、系统与健康 API</h3>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>方法</th><th>端点</th><th>说明</th><th>认证</th></tr></thead>
+    <tbody>
+      <tr><td><code>GET</code></td><td><code>/api/v1/admin/maintenance/status</code></td><td>调度器状态</td><td>ADMIN</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/v1/admin/maintenance/run</code></td><td>触发维护周期</td><td>ADMIN</td></tr>
+      <tr><td><code>GET</code></td><td><code>/health/live</code></td><td>存活探针</td><td>-</td></tr>
+      <tr><td><code>GET</code></td><td><code>/health/ready</code></td><td>就绪探针（存储 + 依赖）</td><td>-</td></tr>
+      <tr><td><code>GET</code></td><td><code>/metrics</code></td><td>Prometheus 指标</td><td>-</td></tr>
+      <tr><td><code>GET</code></td><td><code>/api/v1/version</code></td><td>版本及依赖信息</td><td>VIEWER</td></tr>
+    </tbody>
+  </table></div>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">就绪探针</span></figcaption><pre><code>curl http://localhost:8000/health/ready
+<span class="c-rem"># {"status": "ok", "version": "1.9.6", "storage": "accessible",</span>
+<span class="c-rem">#  "gravitino": "healthy", "duckdb_pool": {"pool_size": 5, "active_sessions": 1}}</span></code></pre></figure>
+  <h3>文件上传 API</h3>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>方法</th><th>端点</th><th>说明</th><th>认证</th></tr></thead>
+    <tbody>
+      <tr><td><code>POST</code></td><td><code>/api/v1/datasets/{name}/upload</code></td><td>上传文件到 MinIO（代理模式）</td><td>EDITOR</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/v1/datasets/{name}/upload/presign</code></td><td>生成预签名 PUT URL</td><td>EDITOR</td></tr>
+      <tr><td><code>DELETE</code></td><td><code>/api/v1/datasets/{name}/upload/cleanup</code></td><td>删除上传 Blob</td><td>EDITOR</td></tr>
+    </tbody>
+  </table></div>
+  <h3>扩展摄取端点</h3>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>方法</th><th>端点</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><code>POST</code></td><td><code>/api/v1/datasets/{name}/ingest/sql</code></td><td>从 SQL 数据库摄取</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/v1/datasets/{name}/ingest/kafka</code></td><td>从 Kafka 主题摄取</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/v1/datasets/{name}/ingest/iceberg</code></td><td>从 Apache Iceberg 摄取</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/v1/datasets/{name}/ingest/deltalake</code></td><td>从 Delta Lake 摄取</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/v1/datasets/{name}/ingest/videos</code></td><td>摄取视频文件（含关键帧）</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/v1/datasets/{name}/ingest/mixed</code></td><td>摄取多模态混合来源</td></tr>
+    </tbody>
+  </table></div>
+  <h3>模式迁移、导出与血缘扩展</h3>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>方法</th><th>端点</th><th>说明</th><th>认证</th></tr></thead>
+    <tbody>
+      <tr><td><code>POST</code></td><td><code>/api/v1/datasets/{name}/schema/migrate</code></td><td>验证 / 应用模式迁移（dry_run 支持）</td><td>ADMIN</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/v1/datasets/{name}/export</code></td><td>导出为 Parquet/CSV（异步）</td><td>EDITOR</td></tr>
+      <tr><td><code>GET</code></td><td><code>/api/v1/datasets/{name}/export/{task_id}/status</code></td><td>检查导出任务状态</td><td>VIEWER</td></tr>
+      <tr><td><code>GET</code></td><td><code>/api/v1/datasets/{name}/export/{task_id}/download</code></td><td>下载导出文件</td><td>VIEWER</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/v1/datasets/{name}/export-to</code></td><td>导出到外部目标（同步）</td><td>EDITOR</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/v1/lineage/record</code></td><td>记录血缘事件</td><td>EDITOR</td></tr>
+      <tr><td><code>GET</code></td><td><code>/api/v1/lineage/graph/{dataset_name}</code></td><td>血缘图谱（json/mermaid/dot）</td><td>VIEWER</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/v1/lineage/impact</code></td><td>下游影响分析</td><td>VIEWER</td></tr>
+    </tbody>
+  </table></div>
+  <p>支持的导出格式：<code>parquet</code>、<code>csv</code>、<code>json</code>、<code>iceberg</code>、<code>clickhouse</code>。</p>
+  <h3>查询 API（OLAP / 元数据 / Daft）</h3>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>方法</th><th>端点</th><th>说明</th><th>认证</th></tr></thead>
+    <tbody>
+      <tr><td><code>POST</code></td><td><code>/api/v1/datasets/{name}/query/olap</code></td><td>DuckDB OLAP SQL（支持 SSE）</td><td>EDITOR</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/v1/datasets/{name}/query/metadata</code></td><td>元数据 SQL 查询（语义别名）</td><td>EDITOR</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/v1/datasets/{name}/query/daft</code></td><td>Daft DataFrame 链式操作</td><td>VIEWER</td></tr>
+    </tbody>
+  </table></div>
+  <h3>知识图谱与认证扩展</h3>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>方法</th><th>端点</th><th>说明</th><th>认证</th></tr></thead>
+    <tbody>
+      <tr><td><code>GET</code></td><td><code>/api/v1/kg/schema</code></td><td>获取图谱模式（顶点 / 边标签）</td><td>VIEWER</td></tr>
+      <tr><td><code>GET</code></td><td><code>/api/v1/kg/stats</code></td><td>获取图谱统计信息</td><td>VIEWER</td></tr>
+      <tr><td><code>DELETE</code></td><td><code>/api/v1/kg/graph</code></td><td>删除所有图谱数据</td><td>ADMIN</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/v1/auth/logout</code></td><td>撤销当前令牌</td><td>VIEWER</td></tr>
+    </tbody>
+  </table></div>
+  <h3>管理 ACL 扩展（模式级 + 显式拒绝）</h3>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>方法</th><th>端点</th><th>说明</th><th>认证</th></tr></thead>
+    <tbody>
+      <tr><td><code>PUT/GET/DELETE</code></td><td><code>/api/v1/admin/acl/schema/{schema_name}</code></td><td>模式级 ACL（allowed/denied_actions）</td><td>ADMIN</td></tr>
+      <tr><td><code>PUT/DELETE/GET</code></td><td><code>/api/v1/admin/deny/{dataset}</code></td><td>显式拒绝规则（按 action）</td><td>ADMIN</td></tr>
+    </tbody>
+  </table></div>
+  <div class="callout warn"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>已废弃端点</div><p><code>/api/v1/lifecycle/*</code> 端点（<code>apply</code>/<code>status</code>/<code>restore</code>/<code>rules</code>/<code>estimate</code>）在 v1.9.x 中<strong>已从 REST 服务移除</strong>。归档 / 过期 / 恢复现通过 CLI（<code>arrow-lake lifecycle ...</code>）和后台维护调度器（<code>/admin/maintenance/*</code>）管理，调用旧端点返回 404。</p></div>
+
+  <h2><span class="hn">13</span>v1.9.x 新增端点</h2>
+  <p>以下端点在 v1.6–v1.9.6 中新增，涵盖用户态、用户与令牌管理、多模态嵌入、物化视图、字段注释、质量增强、索引管理、清洗、异步任务、KG 模板 / 版本、RAG 增强等。</p>
+  <h3>用户态 API（<code>/api/v1/me/*</code>）</h3>
+  <p>当前用户的个人状态端点。<strong>需要 personal token</strong>（通过 <code>X-API-Key</code> 或 Bearer 传递个人令牌，非 JWT 访问令牌；JWT 调用 <code>/me/*</code> 会返回 401）。角色要求 VIEWER。</p>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>方法</th><th>端点</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><code>POST/GET/DELETE</code></td><td><code>/api/v1/me/saved-queries</code></td><td>保存 / 列出 / 删除已保存查询</td></tr>
+      <tr><td><code>GET</code></td><td><code>/api/v1/me/notifications</code></td><td>列出通知</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/v1/me/notifications/read?notification_id=</code></td><td>标记通知已读</td></tr>
+      <tr><td><code>GET/PUT</code></td><td><code>/api/v1/me/preferences</code></td><td>获取 / 更新偏好设置</td></tr>
+      <tr><td><code>POST/GET/DELETE</code></td><td><code>/api/v1/me/dashboards</code></td><td>保存 / 列出 / 删除仪表盘布局</td></tr>
+      <tr><td><code>POST/GET/DELETE</code></td><td><code>/api/v1/me/favorites</code></td><td>添加 / 列出 / 移除收藏（幂等）</td></tr>
+    </tbody>
+  </table></div>
+  <h3>用户与令牌管理（admin 扩展）</h3>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>方法</th><th>端点</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><code>GET/POST</code></td><td><code>/api/v1/admin/users</code></td><td>列出全部用户 / 创建用户（<code>CreateUserRequest</code>）</td></tr>
+      <tr><td><code>PUT/DELETE</code></td><td><code>/api/v1/admin/users/{user_id}</code></td><td>更新用户字段 / 停用用户（软删除）</td></tr>
+      <tr><td><code>GET</code></td><td><code>/api/v1/admin/roles</code></td><td>列出角色及权限矩阵</td></tr>
+      <tr><td><code>POST/GET/DELETE</code></td><td><code>/api/v1/admin/users/{user_id}/tokens</code></td><td>签发 / 列出 / 撤销 personal token</td></tr>
+    </tbody>
+  </table></div>
+  <h3>多模态嵌入（<code>/api/v1/embed/*</code>）</h3>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>方法</th><th>端点</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><code>POST</code></td><td><code>/api/v1/embed/text</code></td><td>文本嵌入（本地模型或外部 API）</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/v1/embed/image</code></td><td>图像嵌入（CLIP/SigLIP；JSON body <code>{"images":["&lt;base64&gt;"]}</code>）</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/v1/embed/clip-text</code></td><td>CLIP 文本嵌入（文搜图：文本与图像向量同空间）</td></tr>
+    </tbody>
+  </table></div>
+  <h3>物化视图（<code>/api/v1/materialized/*</code>）</h3>
+  <p>DuckLake 物化视图管理。当 <code>ducklake_enabled=false</code>（默认）时所有端点返回 503。所有端点要求 ADMIN。</p>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>方法</th><th>端点</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><code>GET</code></td><td><code>/api/v1/materialized</code></td><td>列出所有物化视图</td></tr>
+      <tr><td><code>DELETE</code></td><td><code>/api/v1/materialized/{view}</code></td><td>删除指定物化视图（不存在返回 404）</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/v1/materialized/cleanup</code></td><td>清理失效物化视图</td></tr>
+    </tbody>
+  </table></div>
+  <h3>字段注释（Schema 注解）</h3>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>方法</th><th>端点</th><th>说明</th><th>角色</th></tr></thead>
+    <tbody>
+      <tr><td><code>GET</code></td><td><code>/api/v1/datasets/{name}/schema</code></td><td>获取 schema（含字段 comment）</td><td>VIEWER</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/v1/datasets/{name}/schema/annotate</code></td><td>设置字段注释（body：<code>field</code>+<code>comment</code>）</td><td>ADMIN</td></tr>
+    </tbody>
+  </table></div>
+  <h3>质量增强 / 索引管理 / 清洗端点</h3>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>方法</th><th>端点</th><th>说明</th><th>角色</th></tr></thead>
+    <tbody>
+      <tr><td><code>POST</code></td><td><code>/quality/filter</code></td><td>按表达式过滤行</td><td>EDITOR</td></tr>
+      <tr><td><code>GET</code></td><td><code>/quality/report</code></td><td>生成质量报告</td><td>VIEWER</td></tr>
+      <tr><td><code>POST</code></td><td><code>/quality/deduplicate</code></td><td>去重（exact/perceptual/both）</td><td>EDITOR</td></tr>
+      <tr><td><code>GET</code></td><td><code>/quality/profile</code></td><td>列分布画像</td><td>VIEWER</td></tr>
+      <tr><td><code>POST</code></td><td><code>/quality/llm_label</code> / <code>/extract</code></td><td>LLM 标注 / 结构化抽取（异步 202）</td><td>EDITOR</td></tr>
+      <tr><td><code>POST</code></td><td><code>/quality/mask-preview</code></td><td>脱敏预览（读前 5 行，返 before/after）</td><td>EDITOR</td></tr>
+      <tr><td><code>POST</code></td><td><code>/index/vector</code> / <code>/fts</code> / <code>/scalar</code> / <code>/facets</code></td><td>创建各类索引</td><td>EDITOR</td></tr>
+      <tr><td><code>GET/DELETE</code></td><td><code>/index</code> / <code>/index/{index_name}</code></td><td>列出 / 删除索引</td><td>VIEWER/EDITOR</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/v1/datasets/{name}/clean</code></td><td>语义清洗写回（steps/filters/write_back）</td><td>EDITOR</td></tr>
+    </tbody>
+  </table></div>
+  <p class="muted" style="font-size:.78rem">注：上表端点前缀均为 <code>/api/v1/datasets/{name}</code>（质量与索引端点）。</p>
+  <h3>异步任务（<code>/api/v1/tasks/*</code>）</h3>
+  <p>长耗时操作（摄取 / 索引 / 备份）的异步变体。创建类要求对应操作的角色，查询类要求 VIEWER。</p>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>方法</th><th>端点</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><code>GET</code></td><td><code>/api/v1/tasks</code></td><td>列出任务（含历史，支持状态过滤）</td></tr>
+      <tr><td><code>GET</code></td><td><code>/api/v1/tasks/{task_id}/status</code></td><td>查询任务状态</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/v1/datasets/{name}/ingest/async</code> / <code>/documents/async</code></td><td>异步摄取本地文件 / PDF</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/v1/datasets/{name}/index/vector/async</code> / <code>/fts/async</code></td><td>异步建向量 / 全文索引</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/v1/backup/create/async</code> / <code>/restore/async</code></td><td>异步创建 / 恢复备份</td></tr>
+    </tbody>
+  </table></div>
+  <h3>知识图谱模板与版本管理</h3>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>方法</th><th>端点</th><th>说明</th><th>角色</th></tr></thead>
+    <tbody>
+      <tr><td><code>GET</code></td><td><code>/api/v1/kg/doc-types</code></td><td>列出可用文档类型（解析为模板）</td><td>VIEWER</td></tr>
+      <tr><td><code>GET</code></td><td><code>/api/v1/kg/templates</code> / <code>/{template_path}</code></td><td>列出 / 获取模板详情</td><td>VIEWER</td></tr>
+      <tr><td><code>GET</code></td><td><code>/api/v1/kg/ka-versions/{dataset}</code></td><td>列出某数据集的 KA 版本</td><td>VIEWER</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/v1/kg/ka-rollback</code> / <code>/ka-prune</code></td><td>回滚到指定版本 / 清理旧 KA dump</td><td>ADMIN</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/v1/kg/build</code></td><td>body 支持 <code>incremental:true</code>（增量；无 KA dump 回退全量）</td><td>ADMIN</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/v1/kg/ask/stream</code> / <code>/query/graphrag</code></td><td>KG 问答流式（SSE）/ GraphRAG 问答</td><td>VIEWER</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/v1/kg/search</code> / <code>/rebuild-index</code> / <code>/export-obsidian</code></td><td>实体检索 / 重建嵌入索引 / 导出 Obsidian</td><td>VIEWER/ADMIN</td></tr>
+    </tbody>
+  </table></div>
+  <h3>RAG 增强（<code>/api/v1/rag/*</code>）</h3>
+  <p>RAG 端点请求体字段为 <strong><code>question</code></strong> 与 <strong><code>dataset_name</code></strong>（非 <code>query</code>/<code>dataset</code>）。<code>use_kg: bool</code>（默认 <code>true</code>）支持 per-query 控制 GraphRAG 增强与否——无需关闭全局 <code>hugegraph.enabled</code>。</p>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>方法</th><th>端点</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><code>POST</code></td><td><code>/api/v1/rag/query</code></td><td>RAG 问答（question/dataset_name/top_k/retrieval_strategy/use_kg）</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/v1/rag/query/stream</code></td><td>流式 RAG（SSE，先 citation 再内容）</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/v1/rag/extract</code></td><td>RAG 抽取（仅返回检索 + 抽取结果，不生成答案）</td></tr>
+      <tr><td><code>GET</code></td><td><code>/api/v1/rag/templates</code></td><td>列出可用 prompt 模板</td></tr>
+    </tbody>
+  </table></div>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">per-query 关闭 GraphRAG</span></figcaption><pre><code>curl -X POST http://localhost:8000/api/v1/rag/query \
+  -H <span class="c-str">"X-API-Key: your-key"</span> -H <span class="c-str">"Content-Type: application/json"</span> \
+  -d <span class="c-str">'{"question": "架构是什么？", "dataset_name": "docs", "use_kg": false, "retrieval_strategy": "hybrid"}'</span></code></pre></figure>
+
+  <h2><span class="hn">14</span>v1.5.2 安全加固</h2>
+  <p>v1.5.2 应用了以下安全加固措施，自动生效，无需配置更改。</p>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>领域</th><th>加固内容</th></tr></thead>
+    <tbody>
+      <tr><td><strong>JWT</strong></td><td>空 <code>jwt_secret_key</code> 现在会阻止服务器启动</td></tr>
+      <tr><td><strong>Kerberos</strong></td><td>认证提供程序中的命令注入漏洞已消除</td></tr>
+      <tr><td><strong>SQL</strong></td><td>所有面向用户的查询均使用参数化执行</td></tr>
+      <tr><td><strong>Redis</strong></td><td>移除默认密码；必须显式配置</td></tr>
+      <tr><td><strong>网络</strong></td><td>所有端口默认绑定到 <code>127.0.0.1</code></td></tr>
+      <tr><td><strong>SSRF</strong></td><td><code>ingest_http</code> 和预签名端点增加 URL 校验</td></tr>
+      <tr><td><strong>Admin</strong></td><td>角色枚举取代基于字符串的管理员绕过</td></tr>
+      <tr><td><strong>令牌</strong></td><td>Refresh Token 轮换，支持撤销</td></tr>
+      <tr><td><strong>Gremlin</strong></td><td><code>kg_query</code> 端点增加输入净化</td></tr>
+    </tbody>
+  </table></div>
+  <div class="callout tip"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-9"/></svg>推荐</div><p>联调优先用 <code>http://127.0.0.1:8000/console/*.html</code>（同源 API 无 CORS）。Swagger 文档在 <code>/docs</code>，交互式调试最便捷。</p></div>
+</article>
+
+<nav class="pager">
+  <a class="prev" href="knowledge-graph.html"><span class="dir"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg> 上一章</span><span class="ttl">知识图谱 &amp; GraphRAG</span></a>
+  <a class="next" href="quality.html"><span class="dir">下一章 <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span><span class="ttl">数据质量与去重</span></a>
+</nav>
+
+<footer class="footer">
+  <div class="footer-inner">
+    <div><b>Arrow Lake</b> · REST API 使用指南 · v1.9.6<br/><span class="muted mono" style="font-size:.7rem">© 2026 · MIT License</span></div>
+    <div class="muted" style="font-size:.75rem">自包含可离线运行 · 源自 docs/cookbook/10</div>
+  </div>
+</footer>
+</body>
+</html>

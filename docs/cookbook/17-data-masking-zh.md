@@ -29,7 +29,7 @@ ARROW_LAKE__MASKING__ALLOW_MISSING_KEY=1   # 仅 dev；此时 hash() 在调用�
 |---|---|
 | `redact` | 替换为固定哨兵值（默认） |
 | `hash` | HMAC-SHA256，128 位（`[:32]` 十六进制）—— 确定性、可关联 |
-| `partial` | 保留首尾，中间脱敏（如 `138****1234`） |
+| `partial` | 保留首 2 尾 2，中间脱敏（如 `13812345678` → `13*******78`） |
 | `nullify` | 替换为 NULL |
 
 ```bash
@@ -53,7 +53,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/datasets/customers/quality/mask-previe
 返回前几行的脱敏前/后对比：
 
 ```json
-{"phone": {"before": ["13812345678"], "after": ["138****5678"]}}
+{"phone": {"before": ["13812345678"], "after": ["13*******78"]}}
 ```
 
 预览为 **ADMIN 专属**（非 `EDITOR`），以防绕过列级 ACL；列名经标识符白名单校验
@@ -61,10 +61,11 @@ curl -X POST http://127.0.0.1:8000/api/v1/datasets/customers/quality/mask-previe
 
 ## 4. 强制执行与 Fail-Closed
 
-策略指向某数据集后，RBAC 层对 VIEWER 角色在读取时透明应用脱敏。强制执行为
-**fail-closed**：若脱敏引擎抛错（脱敏错误、`hash` 缺密钥、未知函数），查询返回
-**空表**，而非泄露未脱敏的源数据。未知函数名在策略创建时即抛 `ValueError`，使
-错误配置尽早暴露。
+策略指向某数据集后，RBAC 层对 VIEWER/EDITOR 角色在读取时透明应用脱敏；**ADMIN
+角色完全跳过脱敏**（返回原始数据）。强制执行为 **fail-closed**：若脱敏引擎抛错
+（脱敏错误、`hash` 缺密钥、未知函数，或 Gravitino 故障拉取策略失败），查询返回
+**空表**，而非泄露未脱敏的源数据。未知函数名在策略**创建时**即被校验拒绝
+（HTTP 400）；即便漏网，执行时 `_mask_column` 仍会抛 `ValueError` 兜底。
 
 ## 5. 审计
 

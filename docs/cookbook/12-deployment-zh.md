@@ -6,7 +6,38 @@
 
 ## 1. Docker Compose 全栈部署
 
-Arrow Lake 通过 profile 机制按需启动服务：
+### 1.1 推荐生产栈：prod_minimal.yml（v1.9.x）
+
+生产环境**主路径**为 `deploy/docker-compose.prod_minimal.yml`（16 个服务块，含 api / system-db / minio / redis / hg-server / hg-hubble / gravitino / lance-rest / nginx / jaeger 等，init 任务与 jaeger 按 profile 门控）。它取代了旧的 `docker-compose.yml --profile core`，是 v1.9.x 唯一受运维验证的部署栈。
+
+```bash
+# 启动整个生产栈（读 deploy/.env）
+make prod-minimal
+
+# 只 build api 镜像（避开 BuildKit 共享 tag quirk）
+make prod-minimal-build
+
+# 直接用 docker compose 启动单个服务
+docker compose --project-directory deploy -p arrow-lake \
+  -f deploy/docker-compose.prod_minimal.yml up -d api
+```
+
+宿主侧端口（仅绑 `127.0.0.1`，远程访问需经反向代理）：
+
+| 服务          | 宿主端口 → 容器         | 凭据 / 说明                          |
+| ------------- | ---------------------- | ------------------------------------ |
+| api           | `127.0.0.1:8000` → 8000 | API key 见 `deploy/.env`             |
+| minio         | `127.0.0.1:9000` → 9000 | `minioadmin` / `minioadmin`（默认）  |
+| hg-server     | `127.0.0.1:8089` → 8080 | auth 必开：`admin` / `pa`            |
+| redis         | `127.0.0.1:6380` → 6379 | 密码 `:?` 强制必填                   |
+| gravitino     | `127.0.0.1:8090` → 8090 | —                                    |
+| system-db     | （内部）→ 8080          | libSQL sqld，v1.9.0 控制面           |
+
+> **注意**：改 `arrow_lake/` Python 源码需 rebuild api 镜像；改 `deploy/scripts/*.sh` 等 bind-mount 文件 restart 即生效。秒级热重载方案见 §17.4 dev override。
+
+### 1.2 旧版 profile 栈（参考）
+
+`deploy/docker-compose.yml` 仍提供基于 profile 的按需启动（Ray/Jupyter/GPU 计算等场景）：
 
 ```bash
 # 最小部署: API + MinIO
@@ -190,6 +221,7 @@ curl -X POST http://localhost:8000/api/v1/backup/restore \
 | **请求超时**            | `api.request_timeout_seconds`  | `300s`      | 按需缩短               |
 | **速率限制**            | `rate_limit.enabled`           | `true`      | 保持启用               |
 | **HMAC 审计**         | `audit.hmac_secret_key`        | 空           | 生产必须设置             |
+| **Masking HMAC (v1.9.6)** | `ARROW_LAKE__MASKING__HMAC_KEY`（环境变量） | 空 | 缺失则**启动阻断**；降级需 `ALLOW_MISSING_KEY=1`（见 §17.2） |
 | **API Key 轮换**      | `api.api_key_rotation_days`    | `90`        | 30-90 天轮换          |
 | **SSRF 防护**         | 内置 URL 校验                      | 启用          | 拒绝内网地址访问           |
 | **输入验证**            | `schema_validation`            | `lenient`   | 可设为 `strict`       |
@@ -218,6 +250,8 @@ audit:
   enabled: true
   hmac_secret_key: "${AUDIT_HMAC_KEY}"
 ```
+
+> **v1.9.0 RBAC 依赖外部 system_db**：prod_minimal 栈的 RBAC / 身份 / personal_token / 任务历史等控制面状态现由独立的 `system-db`（libSQL sqld）承载，`SYSTEM_DB_ENABLED=true` 时生效。store 不可达时按 **fail-closed**（返 401）处理，不会放行请求（除非显式 opt-in `SYSTEM_DB_SERVE_STALE_ON_ERROR=true`）。详见 §17.1。
 
 ***
 
@@ -403,6 +437,8 @@ ARROW_LAKE__REDIS__ENABLED=true
 ARROW_LAKE__REDIS__URL=redis://redis:6379/0
 ARROW_LAKE__REDIS__PASSWORD=${REDIS_PASSWORD:-}
 ```
+
+> **v1.9.x prod_minimal 强制 Redis 密码**：prod_minimal 栈用 `${REDIS_PASSWORD:?REDIS_PASSWORD must be set}` 语法，**缺失则整个栈无法启动**（fail-fast，非旧版的默认空密码）。必须在 `deploy/.env` 显式设置 `REDIS_PASSWORD`。
 
 ### Helm (Kubernetes)
 
@@ -629,7 +665,7 @@ v1.5.2 引入了多项关键安全修复，涵盖认证、注入防护和网络�
 | JWT 空密钥阻止 | 服务器在 `jwt_secret_key` 为空或使用默认值时拒绝启动 | 防止未认证 JWT 令牌签发 |
 | Kerberos 命令注入消除 | Kerberos 主体名称中的 shell 元字符被过滤 | 消除通过构造主体名的远程代码执行风险 |
 | SQL 注入参数化 | 所有用户提供的 SQL 参数使用参数化查询 | 防止 OLAP 和 lineage 查询端点的 SQL 注入 |
-| Redis 默认密码移除 | Docker Compose 和 Helm values 中不再设置默认密码 | 强制生产环境显式配置密码 |
+| Redis 默认密码移除 | Docker Compose 和 Helm values 中不再设置默认密码 | 强制生产环境显式配置密码；prod_minimal 用 `:?` 语法缺失即启动失败 |
 | 127.0.0.1 绑定 | 默认 API 绑定地址改为仅 localhost | 减小攻击面；远程访问需设置 `api.host: 0.0.0.0` |
 | SSRF 防护 | URL 校验阻止私有/内网地址 | 防止通过摄取 URL 实现服务端请求伪造 |
 | Admin bypass 改用 Role enum | 硬编码 admin 字符串检查替换为 `Role` 枚举 | 类型安全的角色检查防止字符串比较绕过 |
@@ -868,3 +904,87 @@ arrow-lake maintenance
 arrow-lake quality dedup --dataset articles --strategy exact
 arrow-lake quality filter --dataset articles --mode all
 ```
+
+***
+
+## 17. v1.9.x 生产运维要点（prod_minimal）
+
+> 本节沉淀 v1.9.0–v1.9.6 生产实测的运维要点与高频踩坑，均为 prod_minimal 栈语境。
+
+### 17.1 system_db 控制面（v1.9.0 libSQL）
+
+v1.9.0 起控制面状态（RBAC / 身份 / personal_token / catalog / 任务历史 / RAG 会话 / 血缘索引）迁移至独立的 `system-db` 服务（libSQL / Turso sqld）：
+
+- prod_minimal 提供 `system-db` 服务块，`deploy/.env` 设 `SYSTEM_DB_ENABLED=true`。
+- 迁移 V001–V004（RBAC、identity、personal_token、catalog、task_history、RAG sessions、lineage）在容器内**自动执行**。
+- **fail-closed**：store 不可达时 RBAC 读返 401，不放行请求（除非 opt-in `SYSTEM_DB_SERVE_STALE_ON_ERROR=true`，可能 honor 宕机期间撤销的权限，谨慎使用）。
+
+### 17.2 Masking HMAC 必配（v1.9.6 安全基线）
+
+`ARROW_LAKE__MASKING__HMAC_KEY` 是**纯环境变量**（非 YAML 配置段），决定 hash masking 是否可用：
+
+- **缺失则启动阻断**（fail-fast）。prod_minimal 已配占位 `${ARROW_LAKE__MASKING__HMAC_KEY:-}`，须在 `deploy/.env` 设强 key（`openssl rand -hex 32`，32+ bytes）。
+- opt-in 降级：`ARROW_LAKE__MASKING__ALLOW_MISSING_KEY=1`（仅 dev/测试，hash masking 不可用但服务可起）。
+- 部署后**必须配置 `HMAC_KEY`**，否则线上无法启动。
+
+### 17.3 HugeGraph 运维（高频踩坑）
+
+- **per-dataset 动态图**：每个数据集独立图 `kg_{ds}`，rocksdb 后端在容器 `/var/lib/hugegraph/graphs/{name}/`（持久卷）。**auth 必开**（动态建图需要），凭据 `admin` / `pa`（env `HUGEGRAPH_PASSWORD`）。
+- **traverser OOM（已修）**：曾因 HugeGraph start 脚本自带 `-Xmx32768m` 与 compose `JAVA_OPTS` 的 `-Xmx2g` 冲突，JVM 对**重复 `-Xmx` 取末值**→ 实际堆仅 2g，稠密图遍历 OOM。修复：`HG_SERVER_MEMORY_LIMIT=12288M` + compose `JAVA_OPTS="-Xms2g -Xmx8g ..."`。验证：
+  ```bash
+  docker exec arrow-lake-hg-server ps -ef | grep -oE "Xmx[0-9]+[mg]" | tail -1
+  # 应输出 Xmx8g（末值生效）
+  ```
+- **drop/clear 图后必须 restart hg-server**：GraphManager 的内存 schema 缓存不刷新，否则后续 `ensure_schema` 报 500（非良性 400）。一键 SOP：
+  ```bash
+  make kg-clear-graph DS=<dataset>   # clear：留 shell，持久干净
+  make kg-drop-graph  DS=<dataset>   # drop：删注册，内存干净
+  ```
+  两者均自动 clear/drop + restart hg-server + 等待 healthy。
+- **动态图 gremlin 遍历源未全局绑定**：`g.V()` / `{name}.traversal()` 会报 `MissingProperty`。查顶点边用 **REST**（`GET /graphs/{name}/graph/vertices?limit=N --compressed`）或项目端点 `/api/v1/kg/stats`，勿用裸 gremlin。
+
+### 17.4 Gravitino 1.3.0 升级变化
+
+- server `apache/gravitino:${GRAVITINO_VERSION:-1.3.0}`；**proxy 必须中和**：compose `gravitino` 服务显式设 `HTTP_PROXY/HTTPS_PROXY/http_proxy/https_proxy: ""` + `NO_PROXY/no_proxy: "*"`，否则 Docker daemon 注入死代理 → s3a 经代理走 → SigV4 被改 → minio `403 Forbidden`。
+- **`GRAVITINO_HOME=/opt/gravitino`**（1.3.0 布局变，数据卷须挂 `/opt/gravitino/data`）；S3 属性用 **`s3.*`**（`s3.endpoint` / `s3.access-key-id` / `s3.secret-access-key`，location `s3://`），旧 `fs.s3a.*` 在 1.3.0 fileset catalog **不生效**。
+- 明确：Gravitino 是**可选治理**（RBAC / tag / 血缘 / fileset），**不在数据 / 查询热路径**（dataset CRUD / query / KG / search / RAG 不依赖）。卡死时可临时关：`GRAVITINO_ENABLED=false`。`GravitinoSyncScheduler` 有熔断（连续 5 次失败自停）。
+
+### 17.5 docling GPU 切换
+
+- prod_minimal **默认内联挂 GPU**（`deploy.resources.devices` + `count: ${GPU_COUNT:-1}`），非叠 `gpu.override.yml`；`DOCUMENT_OCR_BACKEND` 默认 `docling`。无 GPU 机器设 `GPU_COUNT=0` 或改回 `kreuzberg`。
+- `API_CPU_LIMIT` 默认 `1.0` 是 docling CPU 侧瓶颈（PDF 渲染 / layout / 表格后处理吃 CPU；552 页 / 1 核会超时崩）。宿主多核设 `API_CPU_LIMIT=8.0` 后约 5.4min / 552 页（接近 host）。
+- 显式切 GPU（覆盖 inline 配置）：
+  ```bash
+  docker compose --project-directory deploy -p arrow-lake \
+    -f deploy/docker-compose.prod_minimal.yml \
+    -f deploy/docker-compose.gpu.override.yml \
+    up -d --force-recreate api
+  ```
+
+### 17.6 dev override 秒级热重载
+
+改 `arrow_lake/` Python 源码**不必 rebuild 镜像**——叠加 dev override 即可挂源码 + `uvicorn --reload`：
+
+```bash
+docker compose --project-directory deploy -p arrow-lake \
+  -f deploy/docker-compose.prod_minimal.yml \
+  -f deploy/docker-compose.dev.override.yml \
+  up -d --force-recreate api
+```
+
+> **必须 `--force-recreate`**：否则容器保留 prod command（uvicorn 不带 `--reload`），新代码 / 新端点不生效、404。dev override 同时 bind-mount `console/`，改前端 `*.html|css|js` 刷新浏览器即生效。仅最终固化出镜像时才 rebuild。
+
+### 17.7 RAG hybrid 502 修复
+
+`lance_scan_mode` 默认 `auto` → bridge 走 **DuckDB native lance vector stream + IVF_PQ** → 触发 **Rust panic**（abort，uvicorn worker died，浏览器 "Failed to fetch" / curl 502）。sync vector search 单独正常，仅 DuckDB lance scanner 对 IVF_PQ 的 async vector stream 有 abort bug。修复：prod_minimal api env 已设：
+
+```yaml
+ARROW_LAKE__OLAP__LANCE_SCAN_MODE: "pyarrow_fallback"
+```
+
+走 pyarrow fallback 的 sub-bridge（绕开 DuckDB path，性能略降但 RAG 通）。排查口诀：RAG 502 + api 日志见 `Failed to create Lance search stream ... Index for column text_embedding` + `terminate called` = 此 bug。
+
+### 17.8 compose env 注入机制与 export base_dir
+
+- **compose env 注入**：api 服务用 compose `environment:` 块 + `${VAR:-default}` 插值。**`deploy/.env` 的裸值不会自动注入容器**——只有被 compose `${VAR}` 引用的变量才生效。改后端配置须改 compose `environment:` 块（或 dev override）。
+- **export base_dir**：api 容器 `read_only: true`，`/app/exports` 是**瞬态 tmpfs**（重启丢）。持久导出须设 `ARROW_LAKE__EXPORT__BASE_DIR=/data/lake/exports`（持久可写卷，prod_minimal 已配）。同理 `he_ka_base_dir` 等需写本地路径的配置须指向挂载卷（如 `/data/lake/ka`）。

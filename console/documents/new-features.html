@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>v1.8–v1.9 新特性 · Arrow Lake 文档</title>
+<link rel="stylesheet" href="../assets/tokens.css"/>
+<link rel="stylesheet" href="../assets/app.css"/>
+<link rel="stylesheet" href="../assets/landing.css"/>
+<link rel="stylesheet" href="docs.css"/>
+</head>
+<body>
+<nav class="lnav">
+  <a class="brand" href="../index.html"><span class="brand-mark">AL</span><span><b class="brand-name">Arrow Lake</b><span class="brand-sub">文档</span></span></a>
+  <div class="lnav-links">
+    <a href="index.html">文档中心</a>
+    <a href="../architecture.html">架构文档</a>
+  </div>
+  <div class="lnav-cta"><a class="btn btn-primary btn-sm" href="../system.html">打开控制台 →</a></div>
+</nav>
+<div class="subnav">
+  <a href="index.html">文档中心</a><span class="crumb-sep">/</span><a href="new-features.html" style="color:var(--teal-bright)">v1.8–v1.9 新特性</a>
+  <span class="pager-spacer"></span>
+  <div class="prevnext">
+    <a href="gravitino.html"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg><span class="lbl">上一章</span></a>
+    <a href="data-masking.html"><span class="lbl">下一章</span><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+  </div>
+</div>
+
+<header class="tut-hero">
+  <div class="tut-hero-inner">
+    <span class="num-badge">第 16 章 · 演进</span>
+    <h1>v1.8–v1.9 新特性实战</h1>
+    <p class="sub">11 项 v1.8.0 roadmap 落地能力（CLIP 跨模态、Lance branches、blob 存储、hf://、VLM、Gravitino 联邦、行级血缘、Daft 流式写、async 检索、日文分词）+ v1.9.0–v1.9.6 控制面/多模态/治理/RAG 质量/KG 性能演进。</p>
+    <div class="tut-meta">
+      <span><i></i>难度 · 进阶</span>
+      <span><i></i>耗时 · 25 分钟</span>
+      <span><i></i>依赖 · Python 3.11+ · 部分需模型/外部服务</span>
+    </div>
+  </div>
+</header>
+
+<article class="tut-body">
+  <p>本章分两部分：<strong>§16.1–16.13</strong> 是 v1.8.0 roadmap 落地的 11 项新能力（+ 2 项压测 DEFER）；<strong>§16.14</strong> 是 v1.9.0–v1.9.6 的演进。每项给一句话价值、facade 方法签名、最小用法。</p>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">运行示例</span></figcaption><pre><code>.venv/bin/python docs/cookbook/examples/41_v1_8_0_new_features.py            <span class="c-rem"># 全部</span>
+.venv/bin/python docs/cookbook/examples/41_v1_8_0_new_features.py branches   <span class="c-rem"># 单项（缺模型/服务时优雅 SKIP）</span></code></pre></figure>
+
+  <h2><span class="hn">1</span>CLIP 跨模态检索（#6）</h2>
+  <p>用 CLIP/SigLIP 的 <strong>text tower</strong> 把文本查询编入与图像相同的嵌入空间，实现文搜图。</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">encode_text_clip</span></figcaption><pre><code>qvecs = lake.encode_text_clip([<span class="c-str">"a cat sitting on a sofa"</span>], model=<span class="c-str">"openai/clip-vit-base-patch32"</span>)
+hits = lake.search(<span class="c-str">"photos"</span>, qvecs[<span class="c-str">0</span>], vector_column=<span class="c-str">"image_embedding"</span>, top_k=<span class="c-str">5</span>)</code></pre></figure>
+  <p>签名：<code>encode_text_clip(texts, *, model=None, model_source="huggingface") -&gt; list[list[float]]</code>。需预先有含 <code>image_embedding</code> 列的数据集（用 <code>CLIPImageEncoder.encode</code> 摄入）。</p>
+
+  <h2><span class="hn">2</span>Lance 数据集 branches（#1）</h2>
+  <p>数据集像代码一样打 tag、开 branch，支持 A/B、回滚、可复现训练。本地 Lance 即可跑，无需额外服务。</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">branches</span></figcaption><pre><code>lake.create_branch(<span class="c-str">"docs"</span>, <span class="c-str">"experiment-a"</span>)          <span class="c-rem"># 默认从 HEAD</span>
+lake.list_branches(<span class="c-str">"docs"</span>)                          <span class="c-rem"># → ['experiment-a', 'v1.8-baseline']</span>
+head = lake.read_at_branch(<span class="c-str">"docs"</span>, <span class="c-str">"experiment-a"</span>)  <span class="c-rem"># 读 branch HEAD</span>
+lake.delete_branch(<span class="c-str">"docs"</span>, <span class="c-str">"v1.8-baseline"</span>)</code></pre></figure>
+
+  <h2><span class="hn">3</span>blob 存储（#2）</h2>
+  <p>把 image/audio/video 的<strong>原始字节</strong>原地存为 Lance binary 列，与嵌入同库——省一次 IO，多模态一致性更好。</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">add_blob_column</span></figcaption><pre><code>lake.add_blob_column(<span class="c-str">"docs"</span>, <span class="c-str">"image_bytes"</span>, [png_bytes_1, png_bytes_2, png_bytes_3])</code></pre></figure>
+
+  <h2><span class="hn">4</span><code>hf://</code> 数据集（#8）</h2>
+  <p>用 lancedb 的 <code>hf://</code> scheme 直接读 HuggingFace 上的 Lance-format 数据集——评测/种子数据一键加载。需联网与 <code>HF_TOKEN</code>。</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">load_hf_dataset</span></figcaption><pre><code>tbl = lake.load_hf_dataset(<span class="c-str">"lance-format/quora-duplicates-embedding-bge-small"</span>, table=<span class="c-str">"quora"</span>)</code></pre></figure>
+
+  <h2><span class="hn">5</span>VLM decode_image 变换（#18）</h2>
+  <p><code>decode_image</code> 是注册到 <code>build_transforms</code> 的 builder，补全 VLM 链：image bytes → 解码 → <code>classify_image</code> / <code>prompt</code>。</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">build_transforms</span></figcaption><pre><code><span class="c-kw">from</span> arrow_lake.ingest.transforms <span class="c-kw">import</span> build_transforms
+transforms = build_transforms({<span class="c-str">"decode_image"</span>: {<span class="c-str">"column"</span>: <span class="c-str">"image_bytes"</span>}})
+lake.ingest(<span class="c-str">"ds"</span>, file_paths, transforms=transforms)   <span class="c-rem"># 摄取期自动解码</span></code></pre></figure>
+
+  <h2><span class="hn">6</span>Gravitino 统一 catalog facade（#19）+ Daft 联邦（#14）</h2>
+  <p>把数据集注册到 Gravitino（Table + Fileset），让 DuckDB / Daft / lancedb 三引擎都经 Gravitino 解析——真正的联邦 catalog。Daft 用 <code>daft.io.GravitinoConfig</code> 直连，联邦查询不经 DuckDB 转译。</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">联邦 catalog</span></figcaption><pre><code>lake.gravitino_register_dataset(<span class="c-str">"docs"</span>)                       <span class="c-rem"># 注册到 Gravitino</span>
+stats = lake.table_statistics(<span class="c-str">"docs"</span>)                       <span class="c-rem"># 统计</span>
+df = lake.daft_from_gravitino(<span class="c-str">"docs"</span>, url=<span class="c-str">"http://localhost:8090"</span>, metalake=<span class="c-str">"arrow_lake"</span>)
+df.collect()   <span class="c-rem"># lazy，触发执行</span></code></pre></figure>
+
+  <h2><span class="hn">7</span>行级 lineage（#3）</h2>
+  <p>在事件级血缘之上叠加 Lance <code>row_id</code> 行级溯源——精确到"这一行从哪几行派生来"。</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">lineage_record_row</span></figcaption><pre><code>lake.lineage_record_row(
+    <span class="c-str">"docs"</span>, row_id=<span class="c-str">2</span>,
+    source_rows=[{<span class="c-str">"dataset"</span>: <span class="c-str">"raw_docs"</span>, <span class="c-str">"row_id"</span>: <span class="c-str">42</span>}],
+    operation=<span class="c-str">"derive"</span>,
+)</code></pre></figure>
+
+  <h2><span class="hn">8</span>Daft 流式写（#16）</h2>
+  <p>Daft lazy DataFrame 直接写 Lance，跳过 Arrow 中转，处理超内存负载（&gt;16×）。KG build / 大批量 ingest 推荐。</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">write_lance_from_dataframe</span></figcaption><pre><code><span class="c-kw">import</span> daft
+df = daft.from_pydict({<span class="c-str">"id"</span>: [<span class="c-str">10</span>, <span class="c-str">11</span>], <span class="c-str">"text"</span>: [<span class="c-str">"流式写"</span>, <span class="c-str">"超内存友好"</span>]})
+lake._get_storage().write_lance_from_dataframe(<span class="c-str">"docs_daft"</span>, df, mode=<span class="c-str">"create"</span>)</code></pre></figure>
+
+  <h2><span class="hn">9</span>全链路 async 检索（#17）</h2>
+  <p>向量 <code>search_async</code> 走 lancedb 原生 <code>connect_async</code>（GIL-free）；fts / hybrid / faceted 的 <code>*_async</code> 是 <code>asyncio.to_thread</code> 线程卸载——async handler 不阻塞事件循环。</p>
+  <div class="callout tip"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-9"/></svg>v1.8.x 更新</div><p>向量 <code>search_async</code> 的 <code>AsyncConnection</code>/<code>AsyncTable</code> 句柄现已进程级池化（<code>async_conn_pool.py</code>），消除每次调用的连接建立开销；并修复了 v1.7.1 起遗留的 <code>AsyncTable.search</code> 缺 <code>await</code> 缺陷（此前一调即崩）。</p></div>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">async 检索</span></figcaption><pre><code>res = <span class="c-kw">await</span> lake.search_async(<span class="c-str">"docs"</span>, query_vec, top_k=<span class="c-str">10</span>)          <span class="c-rem"># 向量（原生 async + 连接池）</span>
+res = <span class="c-kw">await</span> lake.text_search_async(<span class="c-str">"docs"</span>, <span class="c-str">"数据湖仓"</span>, top_k=<span class="c-str">5</span>)      <span class="c-rem"># FTS</span>
+res = <span class="c-kw">await</span> lake.hybrid_search_async(<span class="c-str">"docs"</span>, query_vec, <span class="c-str">"Lance"</span>, top_k=<span class="c-str">5</span>)
+res = <span class="c-kw">await</span> lake.faceted_search_async(<span class="c-str">"docs"</span>, query_vec, facets=[<span class="c-str">"category"</span>], top_k=<span class="c-str">10</span>)</code></pre></figure>
+
+  <h2><span class="hn">10</span>日文分词 lindera（#4）</h2>
+  <p>FTS 多语言分词：在日文场景接入 lindera 假名分词（模块级缓存 + 优雅降级）。lindera 是可选依赖；未装时自动降级到默认分词器，不报错。</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">lindera 分词</span></figcaption><pre><code>lake.create_fts_index(<span class="c-str">"docs_ja"</span>, fts_column=<span class="c-str">"text"</span>, tokenizer=<span class="c-str">"lindera"</span>)</code></pre></figure>
+
+  <h2><span class="hn">11</span>压测 DEFER 与已知限制</h2>
+  <p>两项诚实记录的 DEFER：<strong>#15 分布式索引</strong>（单节点 21s/1M，1B+ 行才需 Ray 分布式 backfill，<code>ray_runtime</code> 基建已就绪待触发）；<strong>#7 ColBERT/colpali</strong>（现实 recall 96%，病态下降源于 IVF_PQ 量化，修法是 HNSW，非 ColBERT 场景）。</p>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>能力</th><th>前置条件</th><th>已知限制</th></tr></thead>
+    <tbody>
+      <tr><td><strong>CLIP（§1）</strong></td><td>需联网下载 CLIP 权重（首次），HF 镜像需 <code>HF_TOKEN</code></td><td>无</td></tr>
+      <tr><td><strong>hf://（§4）</strong></td><td>需 <code>HF_TOKEN</code>（否则 HF 返回 401）</td><td>无</td></tr>
+      <tr><td><strong>VLM decode（§5）</strong></td><td><code>build_transforms</code> 签名是 <code>list[dict]</code>（非单 dict）；真实图像需 Daft image decode</td><td>无</td></tr>
+      <tr><td><strong>Daft↔Gravitino（§6）</strong></td><td>需 Gravitino 运行</td><td>⚠️ facade bug（<strong>v1.8.1 已修</strong>：改用 <code>GravitinoConfig(endpoint=, metalake_name=)</code>）</td></tr>
+      <tr><td><strong>Daft 流式写（§8）</strong></td><td>需 Daft</td><td>⚠️ facade bug（<strong>v1.8.1 已修</strong>：加 <code>.collect()</code> 并改用 <code>_lance_dir</code>）</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2><span class="hn">12</span>v1.9.0–v1.9.6 演进总览</h2>
+  <p>v1.9 系列围绕<strong>控制面统一、质量闭环、治理兑现</strong>三条主线推进。</p>
+
+  <h3>v1.9.0 — Turso/libSQL 统一控制面</h3>
+  <p>把 RBAC / 身份 / personal_token / catalog / 任务历史 / RAG 会话 / 血缘索引从分散存储收敛到 <strong>libSQL</strong>（<code>system_db</code> 配置，<code>enabled</code> 默认关，生产置 true；store 不可达 fail-closed 返 401）。迁移 V001–V004 自动跑。新增 personal token 签发 <code>POST /admin/users/{id}/tokens</code> 与 <code>/me/*</code> 用户态。</p>
+
+  <h3>v1.9.1 — console 全页实施</h3>
+  <p>console 全页真跑通：admin（users / ACL / deny）+ my-workspace 五区；personal token 经 <code>X-API-Key</code> 鉴权。</p>
+
+  <h3>v1.9.2 — 多模态深化 + OLAP</h3>
+  <ul>
+    <li><strong>以图搜图</strong>：<code>POST /embed/image</code>（CLIP/SigLIP，JSON <code>images:[base64]</code>）→ <code>/datasets/{name}/search/vector</code>。</li>
+    <li><strong>导出统一</strong>：<code>/datasets/{name}/export</code>（异步 202 + <code>output_path</code> 必填）+ <code>/export-to</code>（parquet/csv/json/iceberg/clickhouse）。</li>
+    <li><strong>DuckLake 物化视图</strong>：<code>/api/v1/materialized/*</code>（<code>ducklake_enabled</code> 默认关）。</li>
+    <li><strong>Pivot 助手 + 纯 SVG 图表</strong>（零 vendor 依赖）。</li>
+  </ul>
+
+  <h3>v1.9.3 — 数据集字段注释</h3>
+  <p><code>field_comments</code>（PyArrow 直读 parquet/CSV sidecar + MySQL/PG 捕获）+ <code>POST /datasets/{name}/schema/annotate</code> → <code>SchemaField.comment</code>。</p>
+
+  <h3>v1.9.4 — 血缘 actor + KG 质量</h3>
+  <ul>
+    <li><strong>血缘 actor 传递链</strong>：ingest / delete 透传认证用户，history 响应含 actor。</li>
+    <li><strong>KG <code>project_concept_graph</code></strong>（22 类型 + 14 关系）+ <code>MERGE_FIELD</code> 合并（替 BALANCED，非 LLM，消除内存爆炸）。</li>
+  </ul>
+
+  <h3>v1.9.5 — RAG 质量全链路</h3>
+  <ul>
+    <li><strong><code>default_retrieval_strategy="hybrid"</code> 真生效</strong>（此前是死配置，检索实际只走 FTS）。</li>
+    <li><strong>faithfulness 校验</strong>（lightweight 引用校验，返 <code>verification.support_ratio</code>）。</li>
+    <li><strong>GraphRAG 三路并行</strong>（延迟 -40~50%）+ KA LRU 缓存。</li>
+    <li><strong>reranker 三连修复</strong> + <strong>OllamaReranker 默认</strong>（<code>dengcao/Qwen3-Reranker-0.6B:F16</code>）。</li>
+    <li><strong>两阶段 LLM</strong>（<code>rag.extract_llm</code> / <code>qa_llm</code>）+ <code>query_transform</code>（hyde/multi_query）。</li>
+  </ul>
+
+  <h3>v1.9.6 — 治理兑现 + KG 性能 + 安全加固</h3>
+  <ul>
+    <li><strong>血缘可视化</strong> <code>console/lineage.html</code>（vis-network 列级血缘 + <code>max_nodes</code> 截断）。</li>
+    <li><strong>masking 治理</strong>：4 函数 + <strong>HMAC fail-fast</strong>（缺 <code>ARROW_LAKE__MASKING__HMAC_KEY</code> 启动阻断）+ <code>mask-preview</code>。</li>
+    <li><strong>KG 质量/性能</strong>：snap 编辑距离归一化 + <code>he_strict_definition</code> 严格过滤 + GraphRAG 三路并行 + <code>QuestionEntityCache</code>。</li>
+    <li><strong>安全 fail-closed</strong>：masking/RBAC 全 fail-closed；lineage XSS 转义；Gravitino 写端点去 <code>?body=</code> URL param。</li>
+  </ul>
+  <div class="callout warn"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>生产必配</div><p><code>ARROW_LAKE__MASKING__HMAC_KEY</code>（fail-fast）；<code>system_db.enabled=true</code> + url。</p></div>
+
+  <h2><span class="hn">13</span>组合用：端到端多模态</h2>
+  <div class="callout tip"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-9"/></svg>组合拳</div><p>§3 blob + §5 VLM decode + §1 CLIP 即是端到端多模态（原文入库 → 解码 → 跨模态检索）；§6 + §14 是联邦查询基座；v1.9 治理三件套（lineage / masking / audit）见第 17 章脱敏与第 18 章血缘。</p></div>
+</article>
+
+<nav class="pager">
+  <a class="prev" href="gravitino.html"><span class="dir"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg> 上一章</span><span class="ttl">Gravitino 元数据治理</span></a>
+  <a class="next" href="data-masking.html"><span class="dir">下一章 <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span><span class="ttl">数据脱敏</span></a>
+</nav>
+
+<footer class="footer">
+  <div class="footer-inner">
+    <div><b>Arrow Lake</b> · v1.8–v1.9 新特性 · v1.9.6<br/><span class="muted mono" style="font-size:.7rem">© 2026 · MIT License</span></div>
+    <div class="muted" style="font-size:.75rem">自包含可离线运行 · 源自 docs/cookbook/16</div>
+  </div>
+</footer>
+</body>
+</html>

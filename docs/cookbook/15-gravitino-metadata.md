@@ -1,14 +1,19 @@
-# Gravitino Metadata Governance (Experimental)
+# Gravitino Metadata Governance (Optional)
 
-> **Status: Experimental** — Arrow Lake v1.5.2 provides Gravitino integration for
-> metadata storage, browsing, and deep governance. v1.4.2 introduced FQN injection prevention,
-> Gravitino configuration via pydantic-settings, and enhanced security validation.
-> See the capability matrix below for what works today vs. what's planned.
+> **Status: Optional governance layer** — Gravitino is an **optional** metadata governance component
+> of Arrow Lake (RBAC/tag/lineage/fileset governance) and is **not on the data/query hot path**:
+> dataset CRUD, queries, KG, search, and RAG do not depend on Gravitino. If it is stuck or unneeded,
+> set `gravitino.enabled: false` to turn it off temporarily — core functionality is fully unaffected.
 >
-> This chapter documents the current state and shows how to use the available metadata APIs.
+> Version: this chapter targets Arrow Lake v1.9.6. The Gravitino server has been upgraded to **1.3.0**
+> and the Python SDK is pinned to `apache-gravitino==1.3.0` (`pyproject.toml:75`). The 1.3.0 docker
+> layout changed: `GRAVITINO_HOME=/opt/gravitino` (not the old `/root/gravitino`), and the data volume
+> must mount at `/opt/gravitino/data`. Catalog S3 properties use **`s3.*`**
+> (`s3.endpoint`/`s3.access-key-id`/`s3.secret-access-key`, `deploy/scripts/init-gravitino.sh:53-55`)
+> — the old `fs.s3a.*` does not take effect on the 1.3.0 fileset catalog.
 >
-> Prerequisites: Arrow Lake v1.5.2 with `gravitino.enabled: true` and Docker Compose prod profile
-> running (`gravitino` + `lance-rest` containers healthy).
+> Prerequisites: `gravitino.enabled: true` (default `false`, see `config/gravitino.py:32`) and the
+> Docker Compose prod profile running (`gravitino` + `lance-rest` containers healthy).
 
 ### Current Capability Matrix
 
@@ -20,9 +25,15 @@
 | Masking policies | Gravitino | No query result masking | **Metadata only** |
 | Table statistics | Gravitino | Not consumed by query planner | **Metadata only** |
 | Model versions | Gravitino | Not connected to embed/rag | **Metadata only** |
-| RBAC bridge | Gravitino SDK | Falls back to local RBAC | **Fallback path** |
+| RBAC (access control) | **Turso/libSQL** (first-class store) | `RbacStore` fail-close | **Production** |
+| Gravitino RBAC bridge | Gravitino SDK | Optional bypass, not the main path | **Optional** |
 | Lineage integration | Table property | No cross-system lineage graph | **Shallow** |
 | Federated queries | Path construction | No metadata-driven reads | **Path prefix only** |
+
+> **RBAC note (v1.9.0+)**: the **first-class persistence backend for access control is Turso/libSQL**
+> (`RbacStore` in `arrow_lake/system_db/stores/rbac.py`, fail-close, tables `dataset_acl_grants`/
+> `schema_acls`/`acl_denies`/`role_permissions`). The `GravitinoRBACBridge` is only an optional bypass;
+> **do not overestimate the role of Gravitino** — RBAC stays in effect when Gravitino is off.
 
 ***
 
@@ -30,11 +41,11 @@
 
 ### Proxy Architecture
 
-Arrow Lake acts as a proxy for Gravitino metadata operations. Clients call `/metadata/*` endpoints on
+Arrow Lake acts as a proxy for Gravitino metadata operations. Clients call `/api/v1/metadata/*` endpoints on
 the Arrow Lake API, which delegates to Gravitino via the REST API or Python SDK:
 
 ```text
-Client → Arrow Lake API (/metadata/*)
+Client → Arrow Lake API (/api/v1/metadata/*)
             ├── GravitinoBridge (REST)      ← catalogs, tables, stats
             ├── GravitinoTagService (SDK)   ← tags
             ├── GravitinoPolicyService (SDK)← policies
@@ -64,7 +75,7 @@ Metalake: arrow-lake
 ```yaml
 # config.yaml
 gravitino:
-  enabled: true
+  enabled: true          # default false (config/gravitino.py:32) — Gravitino is optional governance
   uri: "http://gravitino:8090"
   metalake: "arrow-lake"
   lance_rest_enabled: true
@@ -75,7 +86,7 @@ gravitino:
 ```
 
 All Gravitino calls wrap in `try/except` — if Gravitino is unavailable, Arrow Lake continues to
-operate normally with local DuckDB catalog.
+operate normally with the local DuckDB/Lance catalog (the data plane does not depend on Gravitino).
 
 ***
 
@@ -104,7 +115,7 @@ When Gravitino is enabled, the health response includes `gravitino` and `lance_r
 ### Step 2: Browse Catalogs
 
 ```bash
-curl http://localhost:8000/metadata/catalogs -H "X-API-Key: your-key"
+curl http://localhost:8000/api/v1/metadata/catalogs -H "X-API-Key: your-key"
 ```
 
 ```json
@@ -128,7 +139,7 @@ Three catalogs serve different purposes:
 ### Step 3: List Tables
 
 ```bash
-curl http://localhost:8000/metadata/tables -H "X-API-Key: your-key"
+curl http://localhost:8000/api/v1/metadata/tables -H "X-API-Key: your-key"
 ```
 
 ```json
@@ -147,7 +158,7 @@ curl http://localhost:8000/metadata/tables -H "X-API-Key: your-key"
 ### Step 4: Inspect Table Schema
 
 ```bash
-curl http://localhost:8000/metadata/tables/articles -H "X-API-Key: your-key"
+curl http://localhost:8000/api/v1/metadata/tables/articles -H "X-API-Key: your-key"
 ```
 
 ```json
@@ -181,11 +192,11 @@ BASE = "http://localhost:8000"
 H = {"X-API-Key": "your-key"}
 
 # Browse catalogs → tables → detail
-for cat in httpx.get(f"{BASE}/metadata/catalogs", headers=H).json()["data"]:
+for cat in httpx.get(f"{BASE}/api/v1/metadata/catalogs", headers=H).json()["data"]:
     print(f"Catalog: {cat['name']}")
 
-for tbl in httpx.get(f"{BASE}/metadata/tables", headers=H).json()["data"]:
-    detail = httpx.get(f"{BASE}/metadata/tables/{tbl['name']}", headers=H).json()
+for tbl in httpx.get(f"{BASE}/api/v1/metadata/tables", headers=H).json()["data"]:
+    detail = httpx.get(f"{BASE}/api/v1/metadata/tables/{tbl['name']}", headers=H).json()
     cols = detail["data"]["columns"]
     print(f"  {tbl['name']}: {len(cols)} columns")
 ```
@@ -218,10 +229,16 @@ properly classified.
 
 ### Step 1: Create Custom Tags
 
+> **v1.9.6 security hardening**: write endpoints no longer accept a `?body=` URL query (PII would
+> land in URL/access logs). Use a **JSON POST body** instead (`routers/gravitino.py:219-235`,
+> `await request.json()`).
+
 ```bash
-# Create a tag for GDPR-regulated data
-curl -X POST "http://localhost:8000/metadata/tags?body=%7B%22name%22%3A%22gdpr_subject%22%2C%22comment%22%3A%22Data%20subject%20under%20GDPR%22%7D" \
-  -H "X-API-Key: your-key"
+# Create a tag for GDPR-regulated data (JSON body, not URL query)
+curl -X POST http://localhost:8000/api/v1/metadata/tags \
+  -H "X-API-Key: your-key" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "gdpr_subject", "comment": "Data subject under GDPR"}'
 ```
 
 ### Step 2: Associate Tags with Tables (Python SDK)
@@ -251,10 +268,10 @@ pii_tables = tags.get_tables_by_tag("pii")
 
 ```bash
 # List all tags
-curl http://localhost:8000/metadata/tags -H "X-API-Key: your-key"
+curl http://localhost:8000/api/v1/metadata/tags -H "X-API-Key: your-key"
 
 # List tags for a specific table
-curl "http://localhost:8000/metadata/tags?table=users" -H "X-API-Key: your-key"
+curl "http://localhost:8000/api/v1/metadata/tags?table=users" -H "X-API-Key: your-key"
 ```
 
 ```json
@@ -293,9 +310,11 @@ Tags provide a lightweight classification system. Use column-level tagging for f
 ### Step 1: Create Retention Policy
 
 ```bash
-# Retain log data for 90 days only
-curl -X POST "http://localhost:8000/metadata/policies/retention?body=%7B%22name%22%3A%22log_retention_90d%22%2C%22days%22%3A90%7D" \
-  -H "X-API-Key: your-key"
+# Retain log data for 90 days only (JSON body)
+curl -X POST http://localhost:8000/api/v1/metadata/policies/retention \
+  -H "X-API-Key: your-key" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "log_retention_90d", "days": 90}'
 ```
 
 ```json
@@ -304,14 +323,20 @@ curl -X POST "http://localhost:8000/metadata/policies/retention?body=%7B%22name%
 
 ### Step 2: Create Masking Policy
 
+> **Required `function` field** (`routers/gravitino.py:300-303`): the masking policy `function` must
+> be one of `redact`/`hash`/`partial`/`nullify`, otherwise a 400 is returned. It defaults to `redact`
+> when omitted.
+
 ```bash
-# Mask email and phone columns
-curl -X POST "http://localhost:8000/metadata/policies/masking?body=%7B%22name%22%3A%22email_mask%22%2C%22columns%22%3A%5B%22email%22%2C%22phone%22%5D%7D" \
-  -H "X-API-Key: your-key"
+# Mask email and phone columns (partial: keep first/last 2 chars)
+curl -X POST http://localhost:8000/api/v1/metadata/policies/masking \
+  -H "X-API-Key: your-key" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "email_mask", "columns": ["email", "phone"], "function": "partial"}'
 ```
 
 ```json
-{"success": true, "data": {"name": "email_mask", "columns": ["email", "phone"]}, "error": null, "metadata": {}}
+{"success": true, "data": {"name": "email_mask", "columns": ["email", "phone"], "function": "partial"}, "error": null, "metadata": {}}
 ```
 
 ### Step 3: Apply Policy to a Table (Python SDK)
@@ -327,7 +352,7 @@ svc.apply_policy("email_mask", "users")
 ### Step 4: List All Policies
 
 ```bash
-curl http://localhost:8000/metadata/policies -H "X-API-Key: your-key"
+curl http://localhost:8000/api/v1/metadata/policies -H "X-API-Key: your-key"
 ```
 
 ```json
@@ -353,7 +378,7 @@ BASE = "http://localhost:8000"
 # Verify all PII tables have masking policies
 pii_tables = ["users", "customers", "orders"]
 for table in pii_tables:
-    resp = httpx.get(f"{BASE}/metadata/policies", headers=H).json()
+    resp = httpx.get(f"{BASE}/api/v1/metadata/policies", headers=H).json()
     has_masking = any("mask" in p["name"] for p in resp.get("data", []))
     status = "OK" if has_masking else "MISSING"
     print(f"  {table}: masking policy {status}")
@@ -417,7 +442,7 @@ registry.add_version(
 ### Step 3: Query Model Versions via REST
 
 ```bash
-curl http://localhost:8000/metadata/models -H "X-API-Key: your-key"
+curl http://localhost:8000/api/v1/metadata/models -H "X-API-Key: your-key"
 ```
 
 ```json
@@ -425,7 +450,7 @@ curl http://localhost:8000/metadata/models -H "X-API-Key: your-key"
 ```
 
 ```bash
-curl http://localhost:8000/metadata/models/text-embedder/versions -H "X-API-Key: your-key"
+curl http://localhost:8000/api/v1/metadata/models/text-embedder/versions -H "X-API-Key: your-key"
 ```
 
 ```json
@@ -471,7 +496,7 @@ to control which version is used where — update the alias, not the code.
 ### Step 1: Collect Statistics
 
 ```bash
-curl -X POST http://localhost:8000/metadata/statistics/articles \
+curl -X POST http://localhost:8000/api/v1/metadata/statistics/articles \
   -H "X-API-Key: your-key"
 ```
 
@@ -539,7 +564,7 @@ after large ingests) so query planners have accurate row counts and cardinality 
 | Data ingestion | Normal + Gravitino sync | Normal (local DuckDB only) |
 | Vector/FTS search | Normal | Normal |
 | OLAP queries | Normal + federated | Normal |
-| `/metadata/*` endpoints | Full data | 503 Service Unavailable |
+| `/api/v1/metadata/*` endpoints | Full data | 503 Service Unavailable |
 | Tags & Policies | Full CRUD | 503 or empty results |
 | Model registry | Full CRUD | 503 |
 | Health check | Shows `gravitino: healthy` | Shows `gravitino: unhealthy` |
@@ -606,6 +631,15 @@ dependency. Core operations always work; metadata governance features degrade to
 
 The scheduler starts and stops with the API server lifecycle (via FastAPI `lifespan`).
 
+### Circuit Breaker (v1.9.6)
+
+`GravitinoSyncScheduler` has a built-in circuit breaker: after **5 consecutive** failed sync cycles it
+**stops the sync thread** instead of retrying forever (`catalog/gravitino_sync.py:47,93-104`). A
+persistently failing Gravitino (server down / SDK version mismatch) holds catalog/session locks during
+slow remote calls and can stall request handlers; the breaker ensures the governance layer never takes
+down the data plane. On trip the log emits `gravitino_sync_circuit_open`, advising you to set
+`gravitino.enabled=false` or fix the Gravitino server/version, then restart.
+
 ### Sync Example
 
 ```python
@@ -625,9 +659,16 @@ print(f"Discovered {len(external)} external tables")
 
 ***
 
-## 9. Security & RBAC Bridge
+## 9. Security & RBAC
 
-### Authentication Types
+> **v1.9.0 architecture change**: the **first-class persistence backend for access control is
+> Turso/libSQL** (`RbacStore`, `system_db/stores/rbac.py`), **not Gravitino**. Gravitino is an
+> optional governance layer and its RBAC bridge is only a bypass. The RBAC tables
+> (`dataset_acl_grants`/`dataset_row_col_acls`/`schema_acls`/`acl_denies`/`role_permissions`) are
+> created by migration `V001__init_rbac.sql`, are fail-close, and have a short-TTL cache on the hot
+> path. **Do not overestimate the role of Gravitino — RBAC stays in effect when Gravitino is off.**
+
+### Gravitino Authentication Types
 
 | Type | Use Case |
 |------|----------|
@@ -636,9 +677,10 @@ print(f"Discovered {len(external)} external tables")
 | `kerberos` | Enterprise Hadoop environments |
 | `null` | No authentication (insecure, testing only) |
 
-### Permission Mapping
+### Optional GravitinoRBACBridge (bypass)
 
-`GravitinoRBACBridge` maps Arrow Lake actions to Gravitino privileges:
+`GravitinoRBACBridge` maps Arrow Lake actions to Gravitino privileges; it is an **optional bypass**,
+not the main path:
 
 | Arrow Lake Action | Gravitino Privilege |
 |-------------------|---------------------|
@@ -650,16 +692,16 @@ print(f"Discovered {len(external)} external tables")
 
 ### Fallback Behavior
 
-When Gravitino RBAC check fails (network error, service down), the bridge returns `None`, signaling
-Arrow Lake to fall back to the local JWT/RBAC system. This ensures access control is always enforced,
-even during Gravitino outages.
+When the Gravitino RBAC check fails (network error, service down), the bridge returns `None` and
+Arrow Lake falls back to the Turso/libSQL `RbacStore` (fail-close). Access control is always enforced,
+even when Gravitino is completely down.
 
 ```python
 from arrow_lake.api.rbac import GravitinoRBACBridge
 
-rbac = GravitinoRBACBridge(cfg)
+rbac = GravitinoRBACBridge(cfg)   # optional bypass; the main path is RbacStore (Turso/libSQL)
 result = rbac.check_permission("user@example.com", "articles", "read")
-# result: True (allowed), False (denied), None (fallback to local RBAC)
+# result: True (allowed), False (denied), None (fall back to Turso/libSQL RbacStore)
 ```
 
 ***
@@ -709,7 +751,7 @@ result = rbac.check_permission("user@example.com", "articles", "read")
   real-time consistency.
 - **Tagging everything**: Over-tagging makes governance harder, not easier. Focus on compliance-relevant
   classifications.
-- **Ignoring 503 responses**: Treat 503 from `/metadata/*` as "feature unavailable," not an error
+- **Ignoring 503 responses**: Treat 503 from `/api/v1/metadata/*` as "feature unavailable," not an error
   requiring retry.
 
 ***
@@ -720,19 +762,19 @@ result = rbac.check_permission("user@example.com", "articles", "read")
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/metadata/catalogs` | List Gravitino catalogs |
-| `GET` | `/metadata/tables` | List tables in Lance catalog |
-| `GET` | `/metadata/tables/{name}` | Table details (columns, properties) |
-| `GET` | `/metadata/tags` | List tags (optional `?table=`) |
-| `POST` | `/metadata/tags` | Create tag |
-| `GET` | `/metadata/policies` | List policies |
-| `POST` | `/metadata/policies/retention` | Create retention policy |
-| `POST` | `/metadata/policies/masking` | Create masking policy |
-| `POST` | `/metadata/policies/enforce` | Enforce retention policy (optional `?dry_run=true`, `?table=`) |
-| `POST` | `/metadata/statistics/{name}` | Collect table statistics |
-| `GET` | `/metadata/models` | List ML models |
-| `GET` | `/metadata/models/{name}/versions` | Model version info |
-| `GET` | `/metadata/lineage/{name}` | Lineage info for a table |
+| `GET` | `/api/v1/metadata/catalogs` | List Gravitino catalogs |
+| `GET` | `/api/v1/metadata/tables` | List tables in Lance catalog |
+| `GET` | `/api/v1/metadata/tables/{name}` | Table details (columns, properties) |
+| `GET` | `/api/v1/metadata/tags` | List tags (optional `?table=`) |
+| `POST` | `/api/v1/metadata/tags` | Create tag |
+| `GET` | `/api/v1/metadata/policies` | List policies |
+| `POST` | `/api/v1/metadata/policies/retention` | Create retention policy |
+| `POST` | `/api/v1/metadata/policies/masking` | Create masking policy |
+| `POST` | `/api/v1/metadata/policies/enforce` | Enforce retention policy (optional `?dry_run=true`, `?table=`) |
+| `POST` | `/api/v1/metadata/statistics/{name}` | Collect table statistics |
+| `GET` | `/api/v1/metadata/models` | List ML models |
+| `GET` | `/api/v1/metadata/models/{name}/versions` | Model version info |
+| `GET` | `/api/v1/metadata/lineage/{name}` | Lineage info for a table |
 
 ### Runnable Example
 
@@ -756,11 +798,11 @@ reads policies from Gravitino and calls `LanceDataset.cleanup_old_versions()`:
 
 ```bash
 # Manual trigger (dry-run first)
-curl -X POST "http://localhost:8000/metadata/policies/enforce?dry_run=true" \
+curl -X POST "http://localhost:8000/api/v1/metadata/policies/enforce?dry_run=true" \
   -H "X-API-Key: your-key"
 
 # Actual enforcement for a specific table
-curl -X POST "http://localhost:8000/metadata/policies/enforce?table=access_logs" \
+curl -X POST "http://localhost:8000/api/v1/metadata/policies/enforce?table=access_logs" \
   -H "X-API-Key: your-key"
 ```
 
@@ -835,7 +877,7 @@ model_path = resolver.resolve_model_path("text-embedder")
 Lineage events now write rich metadata to Gravitino table properties:
 
 ```bash
-curl http://localhost:8000/metadata/lineage/articles -H "X-API-Key: your-key"
+curl http://localhost:8000/api/v1/metadata/lineage/articles -H "X-API-Key: your-key"
 ```
 
 ```json
@@ -866,4 +908,58 @@ resolution = engine.resolve_table("hive-catalog.default.orders")
 df = engine.load_dataset("hive-catalog.default.orders")
 # → daft.read_parquet("s3://warehouse/orders")  (auto-detected from metadata)
 ```
+
+***
+
+## v1.9.6 — Gravitino 1.3.0 Upgrade & Reliability Fixes
+
+### 1.3.0 Upgrade Highlights
+
+- **Both server and SDK on 1.3.0**: server `apache/gravitino:1.3.0`; Python SDK pinned to
+  `apache-gravitino==1.3.0` (`pyproject.toml:75`). The SDK is REST-compatible with the server; sync
+  shows zero failures in practice.
+- **docker layout change**: `GRAVITINO_HOME=/opt/gravitino` (old `/root/gravitino`); the data volume
+  must mount at `/opt/gravitino/data` and the workdir follows. Upgrades use a fresh start (rebuild an
+  empty volume, then re-run `gravitino-init`; the actual data lives in MinIO and is unaffected).
+- **Catalog S3 properties use `s3.*`** (`deploy/scripts/init-gravitino.sh:53-55`):
+  `s3.endpoint` / `s3.access-key-id` / `s3.secret-access-key`, with `s3://` locations. The old
+  `fs.s3a.*` **does not work** on the 1.3.0 fileset catalog (schema creation fails); lance-catalog has
+  always used `s3.*`.
+- Web UI v2 is enabled (`GRAVITINO_USE_WEB_V2=true`).
+- Benign residual warning: `gravitino_list_column_tags_failed ... NoSuchTableException` = tag-ACL sync
+  querying column tags for a dataset not registered as a table in lance-catalog; per-dataset warning,
+  non-fatal and non-blocking.
+
+### 4-Layer SDK Compatibility Fixes (v1.9.6)
+
+The Gravitino Python SDK 1.x API is inconsistent with old doc/code assumptions; `GravitinoBridge` has
+four fixes:
+
+1. **`as_schemas()` (not `as_schema_catalog()`)**: SDK 1.x removed `Catalog.as_schema_catalog()` in
+   favor of `as_schemas()` returning `SupportsSchemas` (with `create_schema`/`schema_exists`/
+   `list_schemas`). `catalog/gravitino_bridge.py:315,319` now use `c.as_schemas().schema_exists(...)`
+   / `.create_schema(...)`. Calling the missing method raises `'RelationalCatalog' object has no
+   attribute 'as_schema_catalog'` and the sync fails every 30s in a loop.
+2. **1-level namespace**: `list_filesets(ns)` expects a **1-level** `ns` (schema only);
+   `Namespace.of(metalake, catalog, schema)` (3 levels) raises `must have 1 level`.
+   `gravitino_bridge.py:492` now uses `Namespace.of(_DEFAULT_SCHEMA)`.
+3. **`_ensure_schema` idempotency**: Gravitino `createSchema` verifies the S3 location *before*
+   reporting `SchemaAlreadyExists`, so re-ensuring on a catalog whose s3a creds are misconfigured
+   surfaces a spurious 403. `gravitino_bridge.py:314-317` now checks `schema_exists(name)` first
+   (reads Gravitino's own metadata, no S3 call) and skips if present.
+4. **Proxy neutralization**: the Docker daemon auto-injects `HTTP_PROXY` into containers from
+   `~/.docker/config.json`, which routes Gravitino through the proxy → minio SigV4 is rewritten → 403.
+   `core/http.py:52,65` `create_http_client` sets `trust_env=False` and applies the proxy explicitly
+   from `HTTPS_PROXY`; the compose `gravitino` service also sets `HTTP_PROXY/HTTPS_PROXY: ""` +
+   `NO_PROXY: "*"` to override (the server only talks to internal minio and does not need a proxy).
+
+### Troubleshooting Cheat Sheet
+
+- Before changing an SDK call, verify the method name:
+  `docker exec api python -c "from gravitino import Catalog;print([m for m in dir(Catalog) if 'schema' in m or m.startswith('as_')])"`.
+- Repeated sync failures: look for the breaker log `gravitino_sync_circuit_open` (stops after 5).
+- 403 is usually s3a misconfiguration (switch to `s3.*`) or an injected proxy (compose: explicitly
+  clear the proxy env).
+- Simplest remedy when Gravitino is stuck: `gravitino.enabled=false` to turn it off; core features
+  are unaffected.
 

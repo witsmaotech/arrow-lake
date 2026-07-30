@@ -1,6 +1,6 @@
 # Knowledge Graph & GraphRAG
 
-> Version: 1.7.0
+> Version: 1.9.6
 
 Arrow Lake includes a built-in Knowledge Graph (KG) subsystem that transforms unstructured text
 into a structured entity-relationship graph through LLM-based entity extraction, writing results
@@ -28,8 +28,8 @@ from arrow_lake.config import ArrowLakeConfig
 config = ArrowLakeConfig()
 config.hugegraph.enabled = True
 config.hugegraph.host = "localhost"
-config.hugegraph.port = 8089
-config.hugegraph.graph_name = "arrow_lake_kg"
+config.hugegraph.port = 8091            # code default 8091; prod compose often rewrites to 8089
+config.hugegraph.graph_name = "hugegraph"  # base name; actual graph derived per dataset as kg_{dataset} (per-dataset isolation)
 
 lake = Lake(base_uri="./data", config=config)
 
@@ -503,21 +503,24 @@ asyncio.run(main())
 
 ## 12. Configuration Reference
 
-Complete configuration options for `HugeGraphConfig`:
+Key configuration options for `HugeGraphConfig` (v1.9.6):
 
 | Option                    | Type    | Default           | Description                                 |
 | ------------------------- | ------- | ----------------- | ------------------------------------------- |
 | `enabled`                 | `bool`  | `False`           | Whether to enable the knowledge graph       |
-| `host`                    | `str`   | `"localhost"`     | HugeGraph server address                    |
-| `port`                    | `int`   | `8089`            | HugeGraph REST API port                     |
-| `graph_name`              | `str`   | `"arrow_lake_kg"` | Graph database name within HugeGraph        |
-| `timeout_seconds`         | `float` | `30.0`            | HTTP request timeout in seconds             |
-| `username`                | `str`   | `""`              | Authentication username (empty = no auth)   |
-| `password`                | `str`   | `""`              | Authentication password                     |
-| `auto_build_on_ingest`    | `bool`  | `False`           | Automatically build graph on ingestion      |
-| `build_batch_size`        | `int`   | `50`              | Batch size for inserting vertices and edges |
-| `default_traversal_depth` | `int`   | `2`               | Default graph traversal hop count           |
-| `max_traversal_depth`     | `int`   | `5`               | Maximum allowed traversal hops (1-10)       |
+| `host` / `port`           | `str`/`int` | `localhost`/`8091` | HugeGraph REST endpoint (prod often rewrites to 8089) |
+| `graph_name`              | `str`   | `"hugegraph"`     | Base graph name; actual graph derived per dataset as `kg_{dataset}` (per-dataset isolation) |
+| `backend`                 | `str`   | `"rocksdb"`       | Storage backend (rocksdb single-node multi-graph / hstore PD cluster) |
+| `build_concurrency` / `write_concurrency` | `int` | `3`/`2` | LLM extraction concurrency / HugeGraph write concurrency (write is the bottleneck, lower by default) |
+| `extractor_backend`       | `str`   | `"he"`            | Extraction backend: `"he"` (hyper-extract, default) / `"legacy"` |
+| `he_default_template`     | `str`   | `"entity_graph"`  | Default extraction template (generic entity+relation, strict enum) |
+| `he_doc_type_templates`   | `dict`  | see code          | doc_type→template mapping (paper/report→entity_graph, medicine→medical_concept_graph, project→project_concept_graph, etc.) |
+| `he_kg_granularity`       | `str`   | `"auto"`          | Extraction granularity: `auto`/`dataset`/`chunk` (dataset uses MERGE_FIELD, stable) |
+| `he_strict_definition`    | `bool`  | `False`           | v1.9.6: drop entities with empty definition (noise reduction) |
+| `he_extract_llm` / `he_qa_llm` | `LLMConfig\|None` | `None` | Two-stage independent LLMs (extraction/QA; None falls back to global llm) |
+| `he_ka_max_versions`      | `int`   | `5`               | Number of KA versions retained per dataset (excess pruned; supports rollback) |
+| `he_ka_base_dir`          | `str`   | `"/data/ka"`      | KA dump local root (must be a local path, not a bucket) |
+| `default_traversal_depth` / `max_traversal_depth` | `int` | `2`/`5` | Default/max traversal hops (1-10) |
 
 Configuration constraints:
 
@@ -527,9 +530,9 @@ Configuration constraints:
 
 ***
 
-## v1.7.0 Update: Doc-Type Routing & Hyper-Extract Backend
+## v1.7–v1.9 KG Evolution: extraction backend + doc_type routing + per-dataset + incremental + quality/perf
 
-v1.7.0 adds a pluggable extraction backend and document-type-aware template routing to `kg_build`,
+v1.7.0 added a pluggable extraction backend and document-type-aware template routing to `kg_build`,
 significantly improving triple precision for domain-specific documents (papers, contracts, financial
 reports, medical records, etc.).
 
@@ -542,13 +545,13 @@ from arrow_lake.config import ArrowLakeConfig
 
 config = ArrowLakeConfig()
 config.hugegraph.enabled = True
-config.hugegraph.extractor_backend = "he"            # "graphrag" (default) | "he"
-config.hugegraph.he_model = "qwen3:30b-a3b"          # any OpenAI-compatible model
-config.hugegraph.he_default_template = "concept_graph"  # v1.8.9 default: project-local strict template (type/relation enum + required definition). Do NOT set "general/concept_graph" — that gallery preset leaves definition optional and yields noisy free-typed entities (0% definition coverage).
+config.hugegraph.extractor_backend = "he"            # "legacy" | "he" (default he, hyper-extract)
+config.hugegraph.he_model = "qwen3:30b-a3b"          # any OpenAI-compatible model (or use he_extract_llm/he_qa_llm two-stage)
+config.hugegraph.he_default_template = "entity_graph"  # default entity_graph (generic entity+relation, strict enum + required definition); concept_graph reserved for taxonomy scenarios; domain templates (project_concept_graph, etc.) see he_doc_type_templates.
 ```
 
 Requires the `he` extra: `pip install "arrow-lake[he]"`. The `he` backend drives hyper-extract
-templates via langchain `ChatOpenAI`, producing higher-precision triples than the default graphrag
+templates via langchain `ChatOpenAI`, producing higher-precision triples than the legacy generic
 extractor.
 
 ### Doc-Type Three-Layer Routing
@@ -619,6 +622,25 @@ The production compose (`deploy/docker-compose.prod.yml`) runs HugeGraph in PD m
 (`hg-pd` + `hg-store` + `hg-server`, hstore backend) instead of standalone rocksdb, enabling
 **runtime multi-graph creation** — each document can get its own isolated KG. Services start in
 order PD → Store → Server, gated by healthchecks.
+
+### v1.8.8 Per-Dataset Dynamic Graph + Incremental KA + Versioning
+
+- **Per-dataset isolation**: each dataset gets its own graph `kg_{dataset}` (not a single global graph), with true isolation on the rocksdb backend.
+- **`kg_build(incremental=True)`**: incremental build — only feeds new chunks (`fed_chunks` sidecar), falls back on template mismatch, and KG reuses `PRIMARY_KEY` for idempotent upsert. CLI: `kg build --incremental`. REST: `POST /api/v1/kg/build` body adds `"incremental": true`.
+- **KA versioning**: before each `kg_build`, the pre-build dump is archived to `<base>/<ds>/ka/versions/v{ts}/`; `he_ka_max_versions` (default 5) prunes the oldest beyond the cap. SDK: `lake.kg_list_ka_versions(ds)` / `kg_rollback_ka(ds, version)` / `kg_prune_ka_versions(ds)`; REST: `/api/v1/kg/ka-versions/{dataset}`, `/ka-rollback`, `/ka-prune`.
+- **Template discovery endpoints**: `GET /api/v1/kg/doc-types`, `/templates`, `/templates/{template_path}` (lists canonical doc_types + aliases + templates; `is_high_risk` flags hypergraph presets).
+
+### v1.9.4 Quality: MERGE_FIELD + Domain Strict Templates
+
+- **MERGE_FIELD merge** (replaces BALANCED): at `dataset` granularity, cross-chunk field merging now uses the non-LLM MERGE_FIELD strategy (`he_extractor._create_ka`), eliminating the memory blowups of BALANCED grouped merges and staying stable at any scale; `build_index` is decoupled so KG ingestion is reliable. The grouped tier has been removed.
+- **Domain strict templates**: `project_concept_graph` (22 types + 14 relations, for project proposals), `medical_concept_graph`, `legal_concept_graph`, `finance_concept_graph` — tight enums + required definition, avoiding the 0% definition coverage + 80+ free-typed noise of `general/concept_graph`.
+
+### v1.9.6 Performance & Noise Reduction
+
+- **Snap edit-distance normalization**: noisy types ("architecture component" → "component") are snapped to the nearest enum value.
+- **Strict filtering**: `he_strict_definition=true` drops entities with empty definition (noise reduction).
+- **GraphRAG three-way parallelism**: `_graphrag_retrieve` uses `asyncio.gather` to run vector / search_ka / neighbor in parallel, cutting latency by 40–50%; `QuestionEntityCache` uses a monotonic clock to prevent bulk TTL expiry; the KA LRU cache invalidates by dump mtime.
+- **Traverser OOM fix**: JVM taking the last of duplicate `-Xmx` flags once left the heap at only 2g → traversal OOM. Fixed via `HG_SERVER_MEMORY_LIMIT=12288M` + `JAVA_OPTS -Xmx8g` (see [12-deployment](./12-deployment.md)).
 
 > See also: cookbook [example 44](examples/44_kg_doctype_he.py) (routing, offline-runnable) and
 > [example 45](examples/45_kg_doctype_api.py) (REST API build flow).

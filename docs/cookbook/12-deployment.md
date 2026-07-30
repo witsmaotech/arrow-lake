@@ -7,7 +7,38 @@
 
 ## 1. Docker Compose Full-Stack Deployment
 
-Arrow Lake uses Docker Compose profiles to selectively start services:
+### 1.1 Recommended Production Stack: prod_minimal.yml (v1.9.x)
+
+The **primary production path** is `deploy/docker-compose.prod_minimal.yml` (16 service blocks: api / system-db / minio / redis / hg-server / hg-hubble / gravitino / lance-rest / nginx / jaeger, etc., with init jobs and jaeger gated by profiles). It supersedes the legacy `docker-compose.yml --profile core` and is the only deployment stack operationally validated for v1.9.x.
+
+```bash
+# Bring up the entire production stack (reads deploy/.env)
+make prod-minimal
+
+# Build only the api image (avoids the BuildKit shared-tag quirk)
+make prod-minimal-build
+
+# Start a single service directly with docker compose
+docker compose --project-directory deploy -p arrow-lake \
+  -f deploy/docker-compose.prod_minimal.yml up -d api
+```
+
+Host-side ports (bound to `127.0.0.1` only; remote access requires a reverse proxy):
+
+| Service   | Host Port → Container      | Credentials / Notes                  |
+| --------- | -------------------------- | ------------------------------------ |
+| api       | `127.0.0.1:8000` → 8000    | API key in `deploy/.env`             |
+| minio     | `127.0.0.1:9000` → 9000    | `minioadmin` / `minioadmin` (default)|
+| hg-server | `127.0.0.1:8089` → 8080    | auth required: `admin` / `pa`        |
+| redis     | `127.0.0.1:6380` → 6379    | password `:?` mandatory              |
+| gravitino | `127.0.0.1:8090` → 8090    | —                                    |
+| system-db | (internal) → 8080          | libSQL sqld, v1.9.0 control plane    |
+
+> **Note**: Changing `arrow_lake/` Python source requires rebuilding the api image; changing bind-mounted files like `deploy/scripts/*.sh` only needs a container restart. For second-level hot-reload see §17.6 dev override.
+
+### 1.2 Legacy Profile Stack (Reference)
+
+`deploy/docker-compose.yml` still offers profile-based selective startup (Ray / Jupyter / GPU compute scenarios):
 
 ```bash
 # Minimal deployment: API + MinIO
@@ -193,6 +224,7 @@ curl -X POST http://localhost:8000/api/v1/backup/restore \
 | **Request Timeout**   | `api.request_timeout_seconds`  | `300s`           | Shorten as needed                   |
 | **Rate Limiting**     | `rate_limit.enabled`           | `true`           | Keep enabled                        |
 | **HMAC Audit**        | `audit.hmac_secret_key`        | Empty            | Must set for production             |
+| **Masking HMAC (v1.9.6)** | `ARROW_LAKE__MASKING__HMAC_KEY` (env var) | Empty | Missing blocks startup; downgrade via `ALLOW_MISSING_KEY=1` (see §17.2) |
 | **API Key Rotation**  | `api.api_key_rotation_days`    | `90`             | Rotate every 30-90 days             |
 | **SSRF Protection**   | Built-in URL validation        | Enabled          | Blocks access to internal addresses |
 | **Input Validation**  | `schema_validation`            | `lenient`        | Consider switching to `strict`      |
@@ -221,6 +253,8 @@ audit:
   enabled: true
   hmac_secret_key: "${AUDIT_HMAC_KEY}"
 ```
+
+> **v1.9.0 RBAC depends on external system_db**: In the prod_minimal stack, control-plane state (RBAC / identity / personal_token / task history / etc.) is now backed by a standalone `system-db` (libSQL sqld) service, active when `SYSTEM_DB_ENABLED=true`. When the store is unreachable it is **fail-closed** (returns 401) — requests are not allowed through (unless you explicitly opt in via `SYSTEM_DB_SERVE_STALE_ON_ERROR=true`). See §17.1.
 
 ***
 
@@ -408,6 +442,8 @@ ARROW_LAKE__REDIS__ENABLED=true
 ARROW_LAKE__REDIS__URL=redis://redis:6379/0
 ARROW_LAKE__REDIS__PASSWORD=${REDIS_PASSWORD:-}
 ```
+
+> **v1.9.x prod_minimal requires a Redis password**: the prod_minimal stack uses the `${REDIS_PASSWORD:?REDIS_PASSWORD must be set}` syntax, so **the whole stack refuses to start if it is unset** (fail-fast, unlike the legacy empty-default behavior). You must set `REDIS_PASSWORD` explicitly in `deploy/.env`.
 
 ### Helm (Kubernetes)
 
@@ -643,7 +679,7 @@ network binding. All deployments should upgrade to at least this version.
 | JWT empty key block | Server rejects startup if `jwt_secret_key` is empty or default | Prevents unauthenticated JWT token minting |
 | Kerberos command injection | Shell metacharacters in Kerberos principal names are sanitized | Eliminates remote code execution via crafted principals |
 | SQL injection parameterization | All user-supplied SQL parameters use parameterized queries | Prevents SQL injection in OLAP and lineage query endpoints |
-| Redis default password removal | No default password in Docker Compose or Helm values | Forces explicit password configuration in production |
+| Redis default password removal | No default password in Docker Compose or Helm values | Forces explicit password configuration in production; prod_minimal uses `:?` syntax so a missing password fails at startup |
 | 127.0.0.1 binding | Default API bind address changed to localhost only | Reduces attack surface; override with `api.host: 0.0.0.0` for remote access |
 | SSRF protection | URL validation blocks private/internal network addresses | Prevents server-side request forgery via ingest URLs |
 | Admin bypass to Role enum | Hardcoded admin string checks replaced with `Role` enum | Type-safe role checks prevent string comparison bypass |
@@ -885,3 +921,88 @@ arrow-lake maintenance
 arrow-lake quality dedup --dataset articles --strategy exact
 arrow-lake quality filter --dataset articles --mode all
 ```
+
+***
+
+## 17. v1.9.x Production Operations Notes (prod_minimal)
+
+> This section consolidates operationally validated notes and common pitfalls from v1.9.0–v1.9.6,
+> all in the prod_minimal stack context.
+
+### 17.1 system_db Control Plane (v1.9.0 libSQL)
+
+Starting in v1.9.0, control-plane state (RBAC / identity / personal_token / catalog / task history / RAG sessions / lineage index) moved to a standalone `system-db` service (libSQL / Turso sqld):
+
+- prod_minimal provides the `system-db` service block; set `SYSTEM_DB_ENABLED=true` in `deploy/.env`.
+- Migrations V001–V004 (RBAC, identity, personal_token, catalog, task_history, RAG sessions, lineage) run **automatically** inside the container.
+- **Fail-closed**: when the store is unreachable, RBAC reads return 401 and requests are not allowed through (unless you opt in via `SYSTEM_DB_SERVE_STALE_ON_ERROR=true`, which may honor permissions revoked during the outage — use with caution).
+
+### 17.2 Masking HMAC is Mandatory (v1.9.6 Security Baseline)
+
+`ARROW_LAKE__MASKING__HMAC_KEY` is a **pure environment variable** (not a YAML config section) and gates hash-masking availability:
+
+- **Missing it blocks startup** (fail-fast). prod_minimal already wires a placeholder `${ARROW_LAKE__MASKING__HMAC_KEY:-}`; you must set a strong key in `deploy/.env` (`openssl rand -hex 32`, 32+ bytes).
+- Opt-in downgrade: `ARROW_LAKE__MASKING__ALLOW_MISSING_KEY=1` (dev/test only; hash masking is unusable but the service starts).
+- After deploy you **must configure `HMAC_KEY`**, otherwise production will not start.
+
+### 17.3 HugeGraph Operations (Common Pitfalls)
+
+- **Per-dataset dynamic graphs**: each dataset gets its own graph `kg_{ds}` with a rocksdb backend at `/var/lib/hugegraph/graphs/{name}/` (persistent volume) inside the container. **Auth is mandatory** (required for dynamic graph creation); credentials `admin` / `pa` (env `HUGEGRAPH_PASSWORD`).
+- **Traverser OOM (fixed)**: the HugeGraph start script used to inject `-Xmx32768m`, conflicting with compose `JAVA_OPTS`' `-Xmx2g`; the JVM takes the **last duplicate `-Xmx`** → effective heap was only 2g, causing OOM on dense-graph traversals. Fix: `HG_SERVER_MEMORY_LIMIT=12288M` + compose `JAVA_OPTS="-Xms2g -Xmx8g ..."`. Verify:
+  ```bash
+  docker exec arrow-lake-hg-server ps -ef | grep -oE "Xmx[0-9]+[mg]" | tail -1
+  # should print Xmx8g (the last value wins)
+  ```
+- **Restart hg-server after any graph DROP/CLEAR**: the in-memory GraphManager does not refresh its schema cache, otherwise subsequent `ensure_schema` calls fail with 500 (not the benign 400). One-shot SOP:
+  ```bash
+  make kg-clear-graph DS=<dataset>   # clear: keeps the shell, storage is clean
+  make kg-drop-graph  DS=<dataset>   # drop: deletes the registration, memory is clean
+  ```
+  Both automatically clear/drop + restart hg-server + wait for healthy.
+- **Dynamic-graph gremlin traversal source is not globally bound**: `g.V()` / `{name}.traversal()` raise `MissingProperty`. Query vertices/edges via **REST** (`GET /graphs/{name}/graph/vertices?limit=N --compressed`) or the project endpoint `/api/v1/kg/stats` — do not use raw gremlin.
+
+### 17.4 Gravitino 1.3.0 Upgrade Changes
+
+- Server `apache/gravitino:${GRAVITINO_VERSION:-1.3.0}`; **the proxy must be neutralized**: the compose `gravitino` service explicitly sets `HTTP_PROXY/HTTPS_PROXY/http_proxy/https_proxy: ""` + `NO_PROXY/no_proxy: "*"`, otherwise the Docker daemon injects a dead proxy → s3a routes through it → the SigV4 signature is mangled → minio returns `403 Forbidden`.
+- **`GRAVITINO_HOME=/opt/gravitino`** (layout change in 1.3.0; the data volume must mount `/opt/gravitino/data`); S3 properties use **`s3.*`** (`s3.endpoint` / `s3.access-key-id` / `s3.secret-access-key`, location `s3://`) — the legacy `fs.s3a.*` keys **do not take effect** on the 1.3.0 fileset catalog.
+- Note: Gravitino is **optional governance** (RBAC / tags / lineage / fileset) and is **not on the data/query hot path** (dataset CRUD / query / KG / search / RAG do not depend on it). When it stalls you can disable it temporarily: `GRAVITINO_ENABLED=false`. `GravitinoSyncScheduler` has a circuit breaker (stops after 5 consecutive failures).
+
+### 17.5 docling GPU Switching
+
+- prod_minimal **mounts the GPU inline by default** (`deploy.resources.devices` + `count: ${GPU_COUNT:-1}`), not via `gpu.override.yml`; `DOCUMENT_OCR_BACKEND` defaults to `docling`. On hosts without a GPU set `GPU_COUNT=0` or switch back to `kreuzberg`.
+- The default `API_CPU_LIMIT=1.0` is the docling CPU bottleneck (PDF rendering / layout / table post-processing is CPU-bound; 552 pages on a single core will time out/crash). On a multi-core host set `API_CPU_LIMIT=8.0` for roughly 5.4 min / 552 pages (close to bare-metal).
+- To switch to GPU explicitly (overriding the inline config):
+  ```bash
+  docker compose --project-directory deploy -p arrow-lake \
+    -f deploy/docker-compose.prod_minimal.yml \
+    -f deploy/docker-compose.gpu.override.yml \
+    up -d --force-recreate api
+  ```
+
+### 17.6 dev override Second-Level Hot-Reload
+
+Changing `arrow_lake/` Python source **does not require rebuilding the image** — layer the dev override to bind-mount the source + run `uvicorn --reload`:
+
+```bash
+docker compose --project-directory deploy -p arrow-lake \
+  -f deploy/docker-compose.prod_minimal.yml \
+  -f deploy/docker-compose.dev.override.yml \
+  up -d --force-recreate api
+```
+
+> **`--force-recreate` is mandatory**: otherwise the container keeps the prod command (uvicorn without `--reload`), so new code/endpoints do not take effect and 404. The dev override also bind-mounts `console/`, so editing frontend `*.html|css|js` takes effect on browser refresh. Rebuild only when finalizing an image.
+
+### 17.7 RAG Hybrid 502 Fix
+
+The default `lance_scan_mode=auto` routes the bridge through the **DuckDB native lance vector stream + IVF_PQ** → triggering a **Rust panic** (abort, uvicorn worker dies, browser "Failed to fetch" / curl 502). Standalone sync vector search works fine; only the DuckDB lance scanner has an abort bug on IVF_PQ's async vector stream. Fix: the prod_minimal api env sets:
+
+```yaml
+ARROW_LAKE__OLAP__LANCE_SCAN_MODE: "pyarrow_fallback"
+```
+
+This routes through the pyarrow-fallback sub-bridge (bypasses the DuckDB path; slightly slower but RAG works). Triage rhyme: RAG 502 + api logs show `Failed to create Lance search stream ... Index for column text_embedding` + `terminate called` → this bug.
+
+### 17.8 Compose env Injection & export base_dir
+
+- **Compose env injection**: the api service uses a compose `environment:` block with `${VAR:-default}` interpolation. **Bare values in `deploy/.env` are NOT injected into the container automatically** — only variables referenced via compose `${VAR}` take effect. To change backend config, edit the compose `environment:` block (or the dev override).
+- **export base_dir**: the api container is `read_only: true`, so `/app/exports` is **ephemeral tmpfs** (lost on restart). For persistent exports set `ARROW_LAKE__EXPORT__BASE_DIR=/data/lake/exports` (a persistent writable volume; prod_minimal already configures this). Likewise any config that writes to a local path (e.g. `he_ka_base_dir`) must point at a mounted volume (e.g. `/data/lake/ka`).

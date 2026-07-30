@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>混合搜索与分面搜索 · Arrow Lake 文档</title>
+<link rel="stylesheet" href="../assets/tokens.css"/>
+<link rel="stylesheet" href="../assets/app.css"/>
+<link rel="stylesheet" href="../assets/landing.css"/>
+<link rel="stylesheet" href="docs.css"/>
+</head>
+<body>
+<nav class="lnav">
+  <a class="brand" href="../index.html"><span class="brand-mark">AL</span><span><b class="brand-name">Arrow Lake</b><span class="brand-sub">文档</span></span></a>
+  <div class="lnav-links">
+    <a href="index.html">文档中心</a>
+    <a href="../architecture.html">架构文档</a>
+  </div>
+  <div class="lnav-cta"><a class="btn btn-primary btn-sm" href="../system.html">打开控制台 →</a></div>
+</nav>
+<div class="subnav">
+  <a href="index.html">文档中心</a><span class="crumb-sep">/</span><a href="hybrid.html" style="color:var(--teal-bright)">混合搜索与分面搜索</a>
+  <span class="pager-spacer"></span>
+  <div class="prevnext">
+    <a href="index.html"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg><span class="lbl">目录</span></a>
+    <a href="olap.html"><span class="lbl">下一章</span><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+  </div>
+</div>
+
+<header class="tut-hero">
+  <div class="tut-hero-inner">
+    <span class="num-badge">第 06 章 · 混合</span>
+    <h1>混合搜索与分面搜索</h1>
+    <p class="sub">RRF 融合向量搜索 + 全文搜索实现混合检索；DuckDB CUBE 实现分面导航；加权 RRF 实现多列 Ensemble 搜索。三类进阶检索一次讲清。</p>
+    <div class="tut-meta">
+      <span><i></i>难度 · 进阶</span>
+      <span><i></i>耗时 · 12 分钟</span>
+      <span><i></i>依赖 · 向量索引 + FTS 索引</span>
+    </div>
+  </div>
+</header>
+
+<article class="tut-body">
+  <p>本章把<strong>混合搜索</strong>（RRF 融合向量 + 全文）、<strong>分面搜索</strong>（向量召回 + DuckDB CUBE 维度计数）与 <strong>Ensemble 多列搜索</strong>（加权 RRF 融合多 embedding 列）串联起来，并给出搜索策略选择指南与 REST API。</p>
+
+  <h2><span class="hn">1</span>混合搜索</h2>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">hybrid_demo.py</span><span class="demo">最小可运行</span></figcaption><pre><code><span class="c-str">"""混合搜索最小可运行示例"""</span>
+<span class="c-kw">from</span> arrow_lake <span class="c-kw">import</span> Lake
+<span class="c-kw">import</span> pyarrow <span class="c-kw">as</span> pa
+<span class="c-kw">import</span> numpy <span class="c-kw">as</span> np
+
+lake = Lake(base_uri=<span class="c-str">"./lake_demo"</span>)
+
+<span class="c-rem"># 写入带文本和 embedding 的 dataset</span>
+np.random.seed(<span class="c-str">42</span>)
+titles = [<span class="c-str">"轻量级跑步运动鞋"</span>, <span class="c-str">"专业篮球鞋高帮款"</span>, <span class="c-str">"商务休闲皮鞋"</span>,
+          <span class="c-str">"越野跑鞋防滑"</span>, <span class="c-str">"夏季透气运动凉鞋"</span>, <span class="c-str">"女士瑜伽健身鞋"</span>]
+embeddings = np.random.randn(len(titles), <span class="c-str">128</span>).astype(np.float32).tolist()
+
+products = pa.table({
+    <span class="c-str">"id"</span>: list(range(<span class="c-str">1</span>, len(titles) + <span class="c-str">1</span>)),
+    <span class="c-str">"title"</span>: titles,
+    <span class="c-str">"category"</span>: [<span class="c-str">"running"</span>, <span class="c-str">"basketball"</span>, <span class="c-str">"casual"</span>, <span class="c-str">"running"</span>, <span class="c-str">"casual"</span>, <span class="c-str">"fitness"</span>],
+    <span class="c-str">"brand"</span>: [<span class="c-str">"Nike"</span>, <span class="c-str">"Adidas"</span>, <span class="c-str">"Clarks"</span>, <span class="c-str">"Salomon"</span>, <span class="c-str">"Teva"</span>, <span class="c-str">"Lululemon"</span>],
+    <span class="c-str">"text_content"</span>: [<span class="c-str">f"{t}，品牌：{b}"</span> <span class="c-kw">for</span> t, b <span class="c-kw">in</span> zip(titles,
+        [<span class="c-str">"Nike"</span>, <span class="c-str">"Adidas"</span>, <span class="c-str">"Clarks"</span>, <span class="c-str">"Salomon"</span>, <span class="c-str">"Teva"</span>, <span class="c-str">"Lululemon"</span>])],
+    <span class="c-str">"text_embedding"</span>: embeddings,
+})
+lake.create_dataset(<span class="c-str">"products"</span>, products)
+
+<span class="c-rem"># 创建索引</span>
+lake.create_vector_index(<span class="c-str">"products"</span>, vector_column=<span class="c-str">"text_embedding"</span>)
+lake.create_fts_index(<span class="c-str">"products"</span>, fts_column=<span class="c-str">"text_content"</span>)
+
+<span class="c-rem"># 混合搜索</span>
+query_vec = np.random.randn(<span class="c-str">128</span>).astype(np.float32).tolist()
+result = lake.hybrid_search(<span class="c-str">"products"</span>, query_vector=query_vec,
+                            query_text=<span class="c-str">"轻量级运动鞋"</span>, top_k=<span class="c-str">5</span>)
+print(<span class="c-str">f"混合搜索 -&gt; {result.row_count} 条结果 (rrf_k={result.rrf_k})"</span>)
+<span class="c-kw">for</span> i <span class="c-kw">in</span> range(result.table.num_rows):
+    doc_id = result.table.column(<span class="c-str">"id"</span>)[i].as_py()
+    title = result.table.column(<span class="c-str">"title"</span>)[i].as_py()
+    score = result.table.column(<span class="c-str">"_rrf_score"</span>)[i].as_py()
+    print(<span class="c-str">f"  [{doc_id}] {title}  (rrf_score={score:.6f})"</span>)
+
+lake.shutdown()</code></pre></figure>
+
+  <h2><span class="hn">2</span>RRF 融合原理</h2>
+  <p>Reciprocal Rank Fusion 在 <code>HybridSearchBridge._rrf_fuse()</code> 中实现：</p>
+  <figure class="code"><figcaption><span class="lang">text</span><span class="file">公式</span></figcaption><pre><code>score(doc) = SUM( 1 / (rank(doc, list_i) + k) )</code></pre></figure>
+  <ul>
+    <li><code>rank(doc, list_i)</code>：文档在第 i 个排序列表中的排名（从 1 开始）</li>
+    <li><code>k</code>：平滑常数，默认 60（论文推荐值）</li>
+  </ul>
+  <figure class="code"><figcaption><span class="lang">text</span><span class="file">融合示意</span></figcaption><pre><code>向量搜索 top 3:              全文搜索 top 3:
+  rank 1: 越野跑鞋              rank 1: 轻量级跑步运动鞋
+  rank 2: 登山徒步鞋            rank 2: 儿童减震跑步鞋
+  rank 3: 篮球鞋                rank 3: 夏季透气凉鞋
+
+           +-- RRF 融合 (k=60) --+
+                      |
+  rank 1: 轻量级跑步运动鞋  (1/(1+60) + 1/(1+60) = 0.0328)
+  rank 1: 越野跑鞋            (1/(1+60) + 0 = 0.0164)</code></pre></figure>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>rrf_k</th><th>效果</th><th>推荐场景</th></tr></thead>
+    <tbody>
+      <tr><td>30–50</td><td>高排名结果权重更大</td><td>重视精确匹配</td></tr>
+      <tr><td><strong>60</strong>（默认）</td><td>平衡融合</td><td>通用推荐</td></tr>
+      <tr><td>100–200</td><td>排名差异被拉平</td><td>重视多样性</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2><span class="hn">3</span>混合搜索 API</h2>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">签名</span></figcaption><pre><code><span class="c-kw">def</span> hybrid_search(
+    self,
+    dataset_name: str,
+    query_vector: list[<span class="c-kw">float</span>],          <span class="c-rem"># 查询 embedding 向量 (位置参数)</span>
+    query_text: str,                    <span class="c-rem"># 查询文本 (用于 FTS, 位置参数)</span>
+    *,
+    top_k: int | <span class="c-str">None</span> = <span class="c-str">None</span>,           <span class="c-rem"># 返回数量</span>
+    vector_column: str = <span class="c-str">"text_embedding"</span>,  <span class="c-rem"># 向量列名</span>
+    fts_column: str | <span class="c-str">None</span> = <span class="c-str">None</span>,      <span class="c-rem"># FTS 列名</span>
+    where: str | <span class="c-str">None</span> = <span class="c-str">None</span>,           <span class="c-rem"># 元数据过滤</span>
+    version: int | <span class="c-str">None</span> = <span class="c-str">None</span>,         <span class="c-rem"># 数据集版本 (时间旅行查询)</span>
+) -&gt; HybridSearchResult: ...</code></pre></figure>
+  <h3>返回类型：HybridSearchResult</h3>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">dataclass</span></figcaption><pre><code>@dataclass(frozen=<span class="c-str">True</span>)
+<span class="c-kw">class</span> HybridSearchResult:
+    table: pa.Table               <span class="c-rem"># 结果表，含 _rrf_score 列</span>
+    row_count: int                <span class="c-rem"># 结果数量</span>
+    query_text: str               <span class="c-rem"># FTS 查询文本</span>
+    query_vector_dim: int         <span class="c-rem"># 向量维度</span>
+    top_k: int                    <span class="c-rem"># 请求的最大返回数</span>
+    rrf_k: int                    <span class="c-rem"># RRF 常数</span>
+    max_rrf_score: float | <span class="c-str">None</span>   <span class="c-rem"># 最高 RRF 分数</span></code></pre></figure>
+  <h3>配置参数</h3>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">config.py</span></figcaption><pre><code><span class="c-kw">from</span> arrow_lake.config <span class="c-kw">import</span> HybridSearchConfig
+
+config = HybridSearchConfig(
+    rrf_k=<span class="c-str">60</span>,                    <span class="c-rem"># RRF 平滑常数</span>
+    default_top_k=<span class="c-str">10</span>,             <span class="c-rem"># 最终返回数量</span>
+    vector_top_k_multiplier=<span class="c-str">3</span>,    <span class="c-rem"># 向量候选池 = top_k * 3</span>
+    fts_top_k_multiplier=<span class="c-str">3</span>,       <span class="c-rem"># FTS 候选池 = top_k * 3</span>
+    reranker_type=<span class="c-str">"none"</span>,         <span class="c-rem"># 重排器：none / cross_encoder（默认 none，RRF 粗排即最终结果）</span>
+    reranker_model=<span class="c-str">"BAAI/bge-reranker-v2-m3"</span>,  <span class="c-rem"># cross-encoder 精排模型</span>
+)</code></pre></figure>
+  <p>Arrow Lake 自动选择执行路径：优先 DuckDB 原生 <code>lance_hybrid_search()</code>，失败时回退为子 Bridge 分别搜索再融合。</p>
+  <div class="callout warn"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>注意</div><p><strong>重排是配置驱动，非请求参数</strong>：<code>reranker_type</code> / <code>reranker_model</code> 在 <code>HybridSearchConfig</code> 中全局设定，搜索端点（<code>POST /{name}/search/hybrid</code>）不接受 per-request 重排参数。设为 <code>cross_encoder</code> 时用 <code>reranker_model</code>（默认 <code>BAAI/bge-reranker-v2-m3</code>）对 RRF 粗排结果做连续分精排。</p></div>
+
+  <h2><span class="hn">4</span>分面搜索</h2>
+  <p><code>faceted_search</code> 在向量搜索基础上，通过 DuckDB <code>GROUP BY CUBE</code> 计算各维度分面计数，适用于电商/内容平台分类导航。</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">faceted.py</span></figcaption><pre><code>query_vec = encoder.embed_text(<span class="c-str">"运动鞋"</span>)
+
+result = lake.faceted_search(<span class="c-str">"products"</span>, query_vector=query_vec,
+                             facets=[<span class="c-str">"category"</span>, <span class="c-str">"brand"</span>], top_k=<span class="c-str">10</span>)
+
+<span class="c-rem"># 搜索结果</span>
+print(<span class="c-str">f"搜索结果：{result.row_count} 条"</span>)
+<span class="c-kw">for</span> i <span class="c-kw">in</span> range(result.table.num_rows):
+    print(<span class="c-str">f"  - {result.table.column('title')[i].as_py()}"</span>)
+
+<span class="c-rem"># 分面计数</span>
+facet_dict: dict[str, dict[str, int]] = {}
+<span class="c-kw">for</span> f <span class="c-kw">in</span> result.facets:
+    facet_dict.setdefault(f.name, {})[f.value] = f.count
+
+<span class="c-kw">for</span> dim, values <span class="c-kw">in</span> facet_dict.items():
+    print(<span class="c-str">f"\n  [{dim}]"</span>)
+    <span class="c-kw">for</span> val, cnt <span class="c-kw">in</span> sorted(values.items(), key=<span class="c-kw">lambda</span> x: -x[<span class="c-str">1</span>]):
+        print(<span class="c-str">f"    {val}: {cnt}"</span>)
+<span class="c-rem"># 输出：
+#   [category]
+#     running: 2
+#     casual: 2
+#     ...
+#   [brand]
+#     Nike: 1
+#     Adidas: 1</span></code></pre></figure>
+  <h3>API 签名</h3>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">签名</span></figcaption><pre><code><span class="c-kw">def</span> faceted_search(
+    self,
+    dataset_name: str,
+    query_vector: list[<span class="c-kw">float</span>],       <span class="c-rem"># 查询 embedding 向量 (位置参数)</span>
+    *,
+    facets: list[str] | <span class="c-str">None</span> = <span class="c-str">None</span>, <span class="c-rem"># 分面维度列名</span>
+    top_k: int = <span class="c-str">10</span>,
+    vector_column: str = <span class="c-str">"embedding"</span>,
+    where: str | <span class="c-str">None</span> = <span class="c-str">None</span>,        <span class="c-rem"># 元数据过滤</span>
+    version: int | <span class="c-str">None</span> = <span class="c-str">None</span>,      <span class="c-rem"># 数据集版本 (时间旅行查询)</span>
+) -&gt; FacetedSearchResult: ...</code></pre></figure>
+  <h3>返回类型</h3>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">dataclass</span></figcaption><pre><code>@dataclass(frozen=<span class="c-str">True</span>)
+<span class="c-kw">class</span> FacetCount:
+    name: str     <span class="c-rem"># 分面维度 (如 "category")</span>
+    value: str    <span class="c-rem"># 分面值 (如 "running")</span>
+    count: int    <span class="c-rem"># 记录数</span>
+
+@dataclass(frozen=<span class="c-str">True</span>)
+<span class="c-kw">class</span> FacetedSearchResult:
+    table: pa.Table               <span class="c-rem"># 向量搜索结果</span>
+    row_count: int
+    facets: list[FacetCount]      <span class="c-rem"># 分面计数列表</span>
+    total_facets: int             <span class="c-rem"># 分面值总数</span>
+    query_vector_dim: int
+    top_k: int</code></pre></figure>
+  <h3>前端联动</h3>
+  <p>分面搜索的核心用途是「搜索结果 + 分类筛选导航」联动：</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">frontend.py</span></figcaption><pre><code><span class="c-rem"># 1. 用户搜索 -&gt; 展示分面选项 (侧边栏)</span>
+result = lake.faceted_search(<span class="c-str">"products"</span>, query_vector=query_vec,
+                             facets=[<span class="c-str">"category"</span>, <span class="c-str">"brand"</span>])
+
+<span class="c-rem"># 2. 用户点击 "running" 筛选 -&gt; 分面计数自动更新</span>
+result = lake.faceted_search(<span class="c-str">"products"</span>, query_vector=query_vec,
+                             facets=[<span class="c-str">"category"</span>, <span class="c-str">"brand"</span>],
+                             where=<span class="c-str">"category = 'running'"</span>)</code></pre></figure>
+  <h3>标量索引加速</h3>
+  <p>对分面维度列建标量索引可显著加速 <code>GROUP BY CUBE</code> 聚合。<code>FacetedSearchConfig.scalar_index_type_map</code> 按列基数自动选择索引类型（低基数如 <code>modality</code>/<code>source</code>/<code>doc_type</code> → <code>BITMAP</code>，其余 → <code>BTREE</code>）。批量建索引：</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">indexes.py</span></figcaption><pre><code><span class="c-rem"># 对默认分面列建标量索引（按 scalar_index_type_map 选 BTREE/BITMAP）</span>
+lake.create_facet_indexes(<span class="c-str">"products"</span>)
+<span class="c-rem"># 或对单列建索引</span>
+lake.create_scalar_index(<span class="c-str">"products"</span>, column=<span class="c-str">"category"</span>)</code></pre></figure>
+
+  <h2><span class="hn">5</span>Ensemble 多列搜索</h2>
+  <p><code>ensemble_search</code> 在多个 embedding 列上执行向量搜索，通过加权 RRF 融合。适用于多模态 embedding 场景。</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">ensemble.py</span></figcaption><pre><code><span class="c-rem"># 假设 products 有 text_embedding 和 image_embedding 两列</span>
+result = lake.ensemble_search(
+    <span class="c-str">"products"</span>,
+    query_vector=query_vec,
+    columns=[<span class="c-str">"text_embedding"</span>, <span class="c-str">"image_embedding"</span>],
+    weights={<span class="c-str">"text_embedding"</span>: <span class="c-str">0.7</span>, <span class="c-str">"image_embedding"</span>: <span class="c-str">0.3</span>},
+    top_k=<span class="c-str">10</span>,
+)
+print(<span class="c-str">f"搜索列：{result.columns_searched}, 融合：{result.fusion_method}"</span>)
+
+<span class="c-kw">for</span> i <span class="c-kw">in</span> range(result.table.num_rows):
+    doc_id = result.table.column(<span class="c-str">"id"</span>)[i].as_py()
+    score = result.table.column(<span class="c-str">"_ensemble_score"</span>)[i].as_py()
+    title = result.table.column(<span class="c-str">"title"</span>)[i].as_py()
+    print(<span class="c-str">f"  [{doc_id}] {title}  (score={score:.6f})"</span>)</code></pre></figure>
+  <h3>API 签名</h3>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">签名</span></figcaption><pre><code><span class="c-kw">def</span> ensemble_search(
+    self,
+    dataset_name: str,
+    query_vector: list[<span class="c-kw">float</span>],              <span class="c-rem"># 查询向量 (所有列同维度)</span>
+    *,
+    columns: list[str] | <span class="c-str">None</span> = <span class="c-str">None</span>,       <span class="c-rem"># embedding 列名</span>
+    weights: dict[str, <span class="c-kw">float</span>] | <span class="c-str">None</span> = <span class="c-str">None</span>,<span class="c-rem"># 各列权重</span>
+    top_k: int | <span class="c-str">None</span> = <span class="c-str">None</span>,               <span class="c-rem"># 返回数量</span>
+    where: str | <span class="c-str">None</span> = <span class="c-str">None</span>,               <span class="c-rem"># 元数据过滤</span>
+    version: int | <span class="c-str">None</span> = <span class="c-str">None</span>,             <span class="c-rem"># 数据集版本 (时间旅行查询)</span>
+) -&gt; EnsembleSearchResult: ...</code></pre></figure>
+  <p>不指定 <code>columns</code> 时自动检测所有与查询向量维度匹配的 <code>fixed_size_list</code> 列。</p>
+  <p>加权 RRF 公式：<code>score(doc) = SUM( weight_i / (rank(doc, list_i) + k) )</code></p>
+  <h3>多模态以图搜图</h3>
+  <p>CLIP 嵌入把文本和图像映射到同一向量空间，支持「以文搜图」「以图搜图」。<code>Lake.encode_text_clip()</code> 对查询文本编码，结果与 <code>POST /api/v1/embed/image</code> 返回的图像嵌入同源（L2 归一化），可直接用于向量搜索：</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">clip.py</span></figcaption><pre><code><span class="c-rem"># 文本 → 图像 embedding，与 /embed/image 同空间</span>
+query_vec = lake.encode_text_clip(<span class="c-str">"红色运动鞋"</span>)
+results = lake.search(<span class="c-str">"products"</span>, query_vector=query_vec, vector_column=<span class="c-str">"image_embedding"</span>)</code></pre></figure>
+
+  <h2><span class="hn">6</span>搜索策略选择指南</h2>
+  <figure class="code"><figcaption><span class="lang">text</span><span class="file">决策树</span></figcaption><pre><code>需要搜索?
+  |
+  +-- 精确关键词匹配 ------&gt; text_search()
+  +-- 语义相似度 ----------&gt; search() (向量)
+  +-- 分类筛选导航 --------&gt; faceted_search()
+  +-- 多种 embedding ------&gt; ensemble_search()
+  +-- 语义 + 关键词 -------&gt; hybrid_search()</code></pre></figure>
+  <h3>策略对比</h3>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>策略</th><th>API</th><th>输入</th><th>适用场景</th></tr></thead>
+    <tbody>
+      <tr><td>向量搜索</td><td><code>lake.search()</code></td><td>embedding 向量</td><td>语义检索、RAG、相似推荐</td></tr>
+      <tr><td>全文搜索</td><td><code>lake.text_search()</code></td><td>文本字符串</td><td>精确关键词、标识符搜索</td></tr>
+      <tr><td>混合搜索</td><td><code>lake.hybrid_search()</code></td><td>向量 + 文本</td><td>兼顾语义和关键词</td></tr>
+      <tr><td>分面搜索</td><td><code>lake.faceted_search()</code></td><td>向量 + 分面列</td><td>电商/内容分类导航</td></tr>
+      <tr><td>Ensemble</td><td><code>lake.ensemble_search()</code></td><td>向量 + 多列</td><td>多模态 embedding 融合</td></tr>
+    </tbody>
+  </table></div>
+  <h3>场景推荐</h3>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>业务场景</th><th>推荐策略</th><th>原因</th></tr></thead>
+    <tbody>
+      <tr><td>文档问答 (RAG)</td><td><code>hybrid_search</code></td><td>语义 + 关键词提升召回</td></tr>
+      <tr><td>电商商品搜索</td><td><code>faceted_search</code></td><td>向量召回 + 品牌分类导航</td></tr>
+      <tr><td>日志/错误码搜索</td><td><code>text_search</code></td><td>精确匹配编码和标识符</td></tr>
+      <tr><td>多模态搜索</td><td><code>ensemble_search</code></td><td>融合文本和图像 embedding</td></tr>
+      <tr><td>技术文档站</td><td><code>hybrid_search</code></td><td>标题精确匹配 + 内容语义</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2><span class="hn">7</span>REST API 参考</h2>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">curl</span></figcaption><pre><code><span class="c-rem"># 混合搜索</span>
+curl -X POST http://localhost:8000/api/v1/datasets/products/search/hybrid \
+  -H <span class="c-str">"Content-Type: application/json"</span> \
+  -d <span class="c-str">'{"query_vector": [0.1, 0.2], "query_text": "轻量级运动鞋", "top_k": 10}'</span>
+
+<span class="c-rem"># 分面搜索</span>
+curl -X POST http://localhost:8000/api/v1/datasets/products/search/faceted \
+  -H <span class="c-str">"Content-Type: application/json"</span> \
+  -d <span class="c-str">'{"query_vector": [0.1, 0.2], "facets": ["category", "brand"]}'</span>
+
+<span class="c-rem"># Ensemble 搜索</span>
+curl -X POST http://localhost:8000/api/v1/datasets/products/search/ensemble \
+  -H <span class="c-str">"Content-Type: application/json"</span> \
+  -d <span class="c-str">'{"query_vector": [0.1, 0.2], "columns": ["text_embedding", "image_embedding"],</span>
+<span class="c-str">       "weights": {"text_embedding": 0.7, "image_embedding": 0.3}}'</span></code></pre></figure>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>端点</th><th>请求模型</th><th>响应模型</th></tr></thead>
+    <tbody>
+      <tr><td><code>POST /{name}/search/hybrid</code></td><td><code>HybridSearchRequest</code></td><td><code>HybridSearchResponse</code></td></tr>
+      <tr><td><code>POST /{name}/search/faceted</code></td><td><code>FacetedSearchRequest</code></td><td><code>FacetedSearchResponse</code></td></tr>
+      <tr><td><code>POST /{name}/search/ensemble</code></td><td><code>EnsembleSearchRequest</code></td><td><code>EnsembleSearchResponse</code></td></tr>
+    </tbody>
+  </table></div>
+  <div class="callout tip"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-9"/></svg>推荐</div><p>RAG 场景默认用 <code>hybrid_search</code>（语义 + 关键词提升召回）；电商/内容平台用 <code>faceted_search</code> 做分类导航；多模态用 <code>ensemble_search</code> 融合文本与图像 embedding。</p></div>
+</article>
+
+<nav class="pager">
+  <a class="prev" href="index.html"><span class="dir"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg> 目录</span><span class="ttl">产品文档教程</span></a>
+  <a class="next" href="olap.html"><span class="dir">下一章 <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span><span class="ttl">OLAP 分析查询</span></a>
+</nav>
+
+<footer class="footer">
+  <div class="footer-inner">
+    <div><b>Arrow Lake</b> · 混合搜索与分面搜索 · v1.9.6<br/><span class="muted mono" style="font-size:.7rem">© 2026 · MIT License</span></div>
+    <div class="muted" style="font-size:.75rem">自包含可离线运行 · 源自 docs/cookbook/06</div>
+  </div>
+</footer>
+</body>
+</html>

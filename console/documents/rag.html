@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>RAG 问答管线 · Arrow Lake 文档</title>
+<link rel="stylesheet" href="../assets/tokens.css"/>
+<link rel="stylesheet" href="../assets/app.css"/>
+<link rel="stylesheet" href="../assets/landing.css"/>
+<link rel="stylesheet" href="docs.css"/>
+</head>
+<body>
+<nav class="lnav">
+  <a class="brand" href="../index.html"><span class="brand-mark">AL</span><span><b class="brand-name">Arrow Lake</b><span class="brand-sub">文档</span></span></a>
+  <div class="lnav-links"><a href="index.html">文档中心</a><a href="../architecture.html">架构文档</a></div>
+  <div class="lnav-cta"><a class="btn btn-primary btn-sm" href="../system.html">打开控制台 →</a></div>
+</nav>
+<div class="subnav">
+  <a href="index.html">文档中心</a><span class="crumb-sep">/</span><a href="rag.html" style="color:var(--teal-bright)">RAG 问答管线</a>
+  <span class="pager-spacer"></span>
+  <div class="prevnext">
+    <a href="vector-search.html"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg><span class="lbl">上一章</span></a>
+    <a href="knowledge-graph.html"><span class="lbl">下一章</span><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+  </div>
+</div>
+
+<header class="tut-hero" style="background:radial-gradient(700px 320px at 85% -30%,rgba(139,92,246,.14),transparent 60%),var(--ink-950)">
+  <div class="tut-hero-inner">
+    <span class="num-badge" style="color:#A78BFA;background:rgba(139,92,246,.16);border-color:rgba(139,92,246,.3)">第 08 章 · AI</span>
+    <h1>RAG 问答管线</h1>
+    <p class="sub">多检索策略（fts / vector / hybrid）、流式输出、多轮对话、Reranker 重排序与 faithfulness 防幻觉校验——返回结构化 <code>RAGResponse</code>（answer / citations / 指标）。</p>
+    <div class="tut-meta"><span><i style="background:#A78BFA"></i>难度 · 中高级</span><span><i style="background:#A78BFA"></i>耗时 · 25 分钟</span><span><i style="background:#A78BFA"></i>前置 · 向量索引 + LLM</span></div>
+  </div>
+</header>
+
+<article class="tut-body">
+  <p><code>Lake.rag_query()</code> 完整执行「检索 → 增强（拼上下文）→ 生成」。检索依赖目标数据集<strong>已建向量索引</strong>；未建则回退纯 FTS，无可用策略时抛 <code>RAGError</code>。</p>
+
+  <h2><span class="hn">1</span>核心概念</h2>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>能力</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><strong>检索策略</strong></td><td><code>fts</code>（关键词）/ <code>vector</code>（语义）/ <code>hybrid</code>（RRF 融合，<strong>默认</strong>）</td></tr>
+      <tr><td><strong>上下文窗口</strong></td><td><code>top_k</code> / <code>max_context_chunks</code> / <code>context_budget_ratio</code>(0.75) / <code>context_window_tokens</code>(128000) 联合管 Token 预算</td></tr>
+      <tr><td><strong>流式与多轮</strong></td><td>SSE 逐 token 返回（末帧 verification/citations）；<code>session_id</code> 启用会话历史</td></tr>
+      <tr><td><strong>重排序 Reranker</strong></td><td>默认 <code>ollama</code>（Qwen3-Reranker-0.6B）/ <code>cross-encoder</code> / <code>llm</code> / <code>noop</code>；扁平字段配置</td></tr>
+      <tr><td><strong>忠实度校验</strong></td><td>lightweight <code>[n]</code> 引用校验，返 <code>verification.support_ratio</code>(0–1) + 逐句 <code>supported</code>/<code>unverified</code> 标签</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2><span class="hn">2</span>基础查询 · 流式 · 多轮</h2>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">前置：RAG 就绪</span></figcaption><pre><code>lake.create_vector_index(<span class="c-str">"docs"</span>, <span class="c-str">"text_embedding"</span>)
+lake.create_fts_index(<span class="c-str">"docs"</span>, columns=[<span class="c-str">"text_content"</span>])  <span class="c-rem"># 可选：混合检索</span>
+<span class="c-rem"># 列名需与管线期望一致：text_embedding / text_content</span>
+response = asyncio.run(lake.rag_query(<span class="c-str">"什么是 Arrow Lake？"</span>, <span class="c-str">"docs"</span>))</code></pre></figure>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">基础 + citations</span></figcaption><pre><code>response = asyncio.run(lake.rag_query(<span class="c-str">"什么是核心架构？"</span>, <span class="c-str">"docs"</span>))
+print(response.answer, response.retrieval_count, response.latency_ms)
+<span class="c-kw">for</span> c <span class="c-kw">in</span> response.citations:        <span class="c-rem"># RAGCitation</span>
+    print(<span class="c-str">f"[{c.chunk_index}] row={c.row_id} score={c.score:.2f}"</span>)</code></pre></figure>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">流式响应</span></figcaption><pre><code><span class="c-kw">async for</span> chunk <span class="c-kw">in</span> lake.rag_query_stream(<span class="c-str">"解释 DuckLake 物化视图"</span>, <span class="c-str">"docs"</span>):
+    print(chunk, end=<span class="c-str">""</span>, flush=<span class="c-str">True</span>)
+<span class="c-rem"># FastAPI: StreamingResponse(media_type="text/event-stream")</span></code></pre></figure>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">多轮对话</span></figcaption><pre><code>r1 = <span class="c-kw">await</span> lake.rag_query(<span class="c-str">"支持哪些向量索引？"</span>, <span class="c-str">"docs"</span>, session_id=sid)
+r2 = <span class="c-kw">await</span> lake.rag_query(<span class="c-str">"哪种适合百万级？"</span>, <span class="c-str">"docs"</span>, session_id=sid)
+history = lake.rag_get_history(sid)   <span class="c-rem"># 需配 rag.history_dataset</span></code></pre></figure>
+
+  <h2><span class="hn">3</span>重排与防幻觉校验</h2>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">三策略 + 忠实度</span></figcaption><pre><code>r = <span class="c-kw">await</span> lake.rag_query(q, <span class="c-str">"docs"</span>, strategy=<span class="c-str">"hybrid"</span>)   <span class="c-rem"># fts|vector|hybrid</span>
+
+response = <span class="c-kw">await</span> lake.rag_query(<span class="c-str">"总结三季度发现"</span>, <span class="c-str">"reports"</span>)
+v = response.verification          <span class="c-rem"># dict 或 None（未开启时）</span>
+print(v[<span class="c-str">"support_ratio"</span>], v[<span class="c-str">"valid_refs"</span>], v[<span class="c-str">"invalid_refs"</span>])   <span class="c-rem"># 0.0–1.0 / [n] 引用校验</span>
+<span class="c-rem"># v["sentences"]：逐句明细 [{text, label: "supported"|"unverified", refs}]</span>
+<span class="c-kw">try</span>:
+    <span class="c-kw">await</span> lake.rag_query(<span class="c-str">"测试"</span>, <span class="c-str">"nonexistent_dataset"</span>)
+<span class="c-kw">except</span> RAGError <span class="c-kw">as</span> e:
+    print(e.error_code.name, e.context)   <span class="c-rem"># RAG_PROVIDER_ERROR / RAG_CONTEXT_EMPTY</span></code></pre></figure>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">GraphRAG 自动升级 · use_kg per-query</span></figcaption><pre><code><span class="c-rem"># hugegraph.enabled=true + 数据集已 kg_build → 自动升级 GraphRAGPipeline</span>
+r = <span class="c-kw">await</span> lake.rag_query(<span class="c-str">"哪些系统依赖认证服务？"</span>, <span class="c-str">"docs"</span>)             <span class="c-rem"># use_kg 默认 True</span>
+r2 = <span class="c-kw">await</span> lake.rag_query(<span class="c-str">"同问题纯向量对比"</span>, <span class="c-str">"docs"</span>, use_kg=<span class="c-str">False</span>)      <span class="c-rem"># 单次绕过 KG</span>
+<span class="c-rem"># 三路并行（v1.9.6）：vector + search_ka + neighbor（asyncio.gather，较串行降 40~50%）</span>
+<span class="c-rem"># 延迟优化：extract_llm=qwen-turbo 抽实体（快），qa_llm=qwen-plus 生成</span></code></pre></figure>
+
+  <h2><span class="hn">4</span>配置与 LLM Provider</h2>
+  <figure class="code"><figcaption><span class="lang">yaml</span><span class="file">RAG 配置</span></figcaption><pre><code>rag:
+  enabled: <span class="c-str">true</span>
+  default_retrieval_strategy: hybrid
+  default_top_k: <span class="c-str">10</span>
+  max_context_chunks: <span class="c-str">20</span>
+  enable_citations: <span class="c-str">true</span>
+  reranker: ollama                          <span class="c-rem"># 默认；cross-encoder / llm / noop</span>
+  reranker_model: dengcao/Qwen3-Reranker-0.6B:F16
+  reranker_top_n: <span class="c-str">10</span>
+  reranker_device: auto                     <span class="c-rem"># cross-encoder 时生效：auto/cpu/cuda</span>
+  reranker_warmup_on_init: <span class="c-str">true</span>
+  enable_verification: <span class="c-str">true</span>   <span class="c-rem"># opt-in，默认关（返 verification.support_ratio）</span></code></pre></figure>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">LLM Provider</span></figcaption><pre><code>config.llm.provider = <span class="c-str">"ollama"</span>
+config.llm.model = <span class="c-str">"qwen3:8b"</span>
+config.llm.api_base = <span class="c-str">"http://localhost:11434/v1"</span>
+config.llm.timeout_seconds = <span class="c-str">120.0</span>
+<span class="c-rem"># 环境变量：ARROW_LAKE__LLM__PROVIDER / ARROW_LAKE__RAG__DEFAULT_TOP_K（双下划线）</span></code></pre></figure>
+
+  <h2><span class="hn">5</span>踩坑提示</h2>
+  <div class="callout warn"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>向量索引必须先建</div><p><code>rag_query</code> 无向量索引时回退 FTS，若也无则抛 <code>RAGError</code>；列名必须 <code>text_embedding</code>（向量）/ <code>text_content</code>（文本），否则管线不认。</p></div>
+  <div class="callout warn"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>混合检索需 ≥256 行</div><p>IVF_PQ 硬限制——小数据集自动跳过建 IVF，hybrid 降级走 brute-force vector。</p></div>
+  <div class="callout tip"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-9"/></svg>最优 QA 配置</div><p>抽取 / 查询改写用 <code>extract_llm=qwen-turbo</code>（快、支持 json_schema），生成用 <code>qa_llm=qwen-plus@16384</code>（质量最优）；Anthropic 提取 system 到顶层字段，Ollama 对 qwen3.x 自动禁用 extended thinking。</p></div>
+  <div class="callout"><div class="ch">离线与会话</div><p>reranker 模型从 <code>HF_HOME</code> 加载，离线 / 气隙需预下载；加载失败<strong>透明回退 noop</strong>（不硬失败）；流式响应的 verification/citations 在末帧。会话历史持久化需配 <code>rag.history_dataset</code>（默认 <code>_rag_sessions</code>）。</p></div>
+</article>
+
+<nav class="pager">
+  <a class="prev" href="vector-search.html"><span class="dir"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg> 上一章</span><span class="ttl">向量搜索与索引</span></a>
+  <a class="next" href="knowledge-graph.html"><span class="dir">下一章 <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span><span class="ttl">知识图谱 &amp; GraphRAG</span></a>
+</nav>
+
+<footer class="footer">
+  <div class="footer-inner">
+    <div><b>Arrow Lake</b> · RAG 问答管线 · v1.9.6<br/><span class="muted mono" style="font-size:.7rem">© 2026 · MIT License</span></div>
+    <div class="muted" style="font-size:.75rem">自包含可离线运行 · 源自 docs/cookbook/08</div>
+  </div>
+</footer>
+</body>
+</html>

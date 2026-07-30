@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>工作流编排 · Arrow Lake 文档</title>
+<link rel="stylesheet" href="../assets/tokens.css"/>
+<link rel="stylesheet" href="../assets/app.css"/>
+<link rel="stylesheet" href="../assets/landing.css"/>
+<link rel="stylesheet" href="docs.css"/>
+</head>
+<body>
+<nav class="lnav">
+  <a class="brand" href="../index.html"><span class="brand-mark">AL</span><span><b class="brand-name">Arrow Lake</b><span class="brand-sub">文档</span></span></a>
+  <div class="lnav-links">
+    <a href="index.html">文档中心</a>
+    <a href="../architecture.html">架构文档</a>
+  </div>
+  <div class="lnav-cta"><a class="btn btn-primary btn-sm" href="../system.html">打开控制台 →</a></div>
+</nav>
+<div class="subnav">
+  <a href="index.html">文档中心</a><span class="crumb-sep">/</span><a href="workflow.html" style="color:var(--teal-bright)">工作流编排</a>
+  <span class="pager-spacer"></span>
+  <div class="prevnext">
+    <a href="cli.html"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg><span class="lbl">上一章</span></a>
+    <a href="index.html"><span class="lbl">目录</span><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+  </div>
+</div>
+
+<header class="tut-hero">
+  <div class="tut-hero-inner">
+    <span class="num-badge">第 14 章 · 编排</span>
+    <h1>工作流编排（Metaflow）</h1>
+    <p class="sub">用 Metaflow 编排并行摄取、GPU 嵌入、知识图谱构建与批量 RAG。覆盖 @foreach / branch / @retry、运行历史、Argo 部署、自定义 Flow 与后台 TaskManager 异步任务。</p>
+    <div class="tut-meta">
+      <span><i></i>难度 · 高级</span>
+      <span><i></i>耗时 · 20 分钟</span>
+      <span><i></i>依赖 · Metaflow（可选 Argo / Ray）</span>
+    </div>
+  </div>
+</header>
+
+<article class="tut-body">
+  <p>Arrow Lake 以 <strong>Metaflow</strong> 作为工作流编排层，提供并行执行（<code>@foreach</code>）、分支（<code>branch</code>）、容错（<code>@retry</code> / <code>@catch</code>）、资源管理（<code>@resources</code>）与运行历史追踪（Client API）。所有 Flow 位于 <code>flows/</code> 目录。</p>
+  <div class="callout"><div class="ch">前置</div><p>安装依赖 <code>pip install metaflow</code>（已包含在 Arrow Lake 依赖中）。Metaflow 适合多步、可恢复、带产物追踪的 CLI/Argo 流水线；单次 API 异步操作请用本章末尾的 <code>TaskManager</code>。</p></div>
+
+  <h2><span class="hn">1</span>快速开始：运行一个 Flow</h2>
+  <p>所有 Flow 通过 Metaflow CLI 执行：</p>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">运行 Flow</span></figcaption><pre><code><span class="c-rem"># 列出可用 Flow</span>
+python -m flows.ingest_flow --help
+
+<span class="c-rem"># 对一个目录并行摄取</span>
+python flows/ingest_flow.py run \
+    --source-path ./data/input \
+    --dataset-name documents \
+    --base-uri ./data/lake
+
+<span class="c-rem"># 用本地编码器并行嵌入</span>
+python flows/embed_flow.py run \
+    --dataset-name documents \
+    --encoder-type local \
+    --shard-size 500
+
+<span class="c-rem"># 批量 RAG 问答</span>
+python flows/batch_rag_flow.py run \
+    --questions-file ./questions.json \
+    --dataset-name documents \
+    --top-k 5</code></pre></figure>
+
+  <p>内置 7 个 Flow：</p>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>Flow</th><th>用途</th><th>关键装饰器</th></tr></thead>
+    <tbody>
+      <tr><td><code>IngestFlow</code></td><td>并行文件摄取 + 死信队列</td><td><code>@foreach</code> try/except</td></tr>
+      <tr><td><code>EmbedFlow</code></td><td>并行嵌入 + GPU 资源管理</td><td><code>@foreach</code> <code>@resources</code></td></tr>
+      <tr><td><code>KGFlow</code></td><td>知识图谱构建（分支并行）</td><td><code>branch</code> <code>@resources</code></td></tr>
+      <tr><td><code>BatchRAGFlow</code></td><td>批量 RAG 查询 + 错误捕获</td><td><code>@foreach</code> try/except</td></tr>
+      <tr><td><code>QualityPipelineFlow</code></td><td>质量过滤管线（线性）</td><td><code>@step</code> <code>@project</code></td></tr>
+      <tr><td><code>MayaE2EFlow</code></td><td>端到端演示管线（线性）</td><td><code>@step</code> <code>@project</code></td></tr>
+      <tr><td><code>ScheduledQualityFlow</code></td><td>定时每日质量检查</td><td><code>@schedule</code> <code>@project</code></td></tr>
+    </tbody>
+  </table></div>
+
+  <h2><span class="hn">2</span>IngestFlow：并行文件摄取</h2>
+  <p><code>IngestFlow</code> 扫描源目录，通过 <code>@foreach</code> 并行处理每个文件，结果汇聚到成功与死信两个桶。</p>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">并行摄取</span></figcaption><pre><code>python flows/ingest_flow.py run \
+    --source-path ./data/raw \
+    --dataset-name my_dataset</code></pre></figure>
+  <figure class="code"><figcaption><span class="lang">json</span><span class="file">输出示例</span></figcaption><pre><code>{
+  "total_files": 10, "success": 9, "failed": 1, "total_rows_ingested": 45000,
+  "dead_letter": [{"file": "/data/raw/broken.csv", "status": "failed", "error": "..."}]
+}</code></pre></figure>
+  <p>中断后可从最后成功的 step 恢复：<code>python flows/ingest_flow.py resume</code>。也可经 <code>FlowRegistry</code> 编程式访问：</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">FlowRegistry</span></figcaption><pre><code><span class="c-kw">from</span> arrow_lake.workflow.base <span class="c-kw">import</span> FlowRegistry
+<span class="c-kw">import</span> flows; flows._register_flows()          <span class="c-rem"># 触发惰性注册</span>
+<span class="c-kw">print</span>(FlowRegistry.list_flows())              <span class="c-rem"># ['batch_rag','embed','ingest','kg',...]</span>
+IngestFlow = FlowRegistry.get(<span class="c-str">"ingest"</span>)</code></pre></figure>
+
+  <h2><span class="hn">3</span>EmbedFlow：并行嵌入（GPU）</h2>
+  <p><code>EmbedFlow</code> 把数据集切片分片，并行编码后合并写回。<code>@resources(gpu=1, memory=16000)</code> 在 Kubernetes/Argo 上生效，本地静默忽略。</p>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>参数</th><th>默认</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><code>--shard-size</code></td><td>500</td><td>每片行数（控制并行度）</td></tr>
+      <tr><td><code>--encoder-type</code></td><td>local</td><td>local（SentenceTransformer）或 api（OpenAI 兼容）</td></tr>
+      <tr><td><code>--vector-column</code></td><td>vector</td><td>输出向量列名</td></tr>
+      <tr><td><code>--text-column</code></td><td>text_content</td><td>要编码的文本列</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2><span class="hn">4</span>KGFlow 与 BatchRAGFlow</h2>
+  <p><code>KGFlow</code> 用 <code>branch</code> 并行运行实体抽取与 schema 创建：</p>
+  <figure class="code"><figcaption><span class="lang">text</span><span class="file">拓扑</span></figcaption><pre><code>start → ┬─ extract_entities (try/except) ─→ join → insert_vertices → end
+        └─ ensure_schema (@resources)     ─┘</code></pre></figure>
+  <p><code>BatchRAGFlow</code> 为每个问题扇出一个 step（带超时保护）；单个查询失败被捕获，不会阻塞整批。</p>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">批量 RAG</span></figcaption><pre><code>echo '["What is Arrow Lake?","How does vector search work?"]' > questions.json
+python flows/batch_rag_flow.py run \
+    --questions-file ./questions.json --dataset-name documents --top-k 5</code></pre></figure>
+
+  <h2><span class="hn">5</span>运行历史：RunTracker</h2>
+  <p><code>RunTracker</code> 封装 Metaflow Client API，查询历史 run：</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">run_tracker.py</span></figcaption><pre><code><span class="c-kw">from</span> arrow_lake.workflow.run_tracker <span class="c-kw">import</span> RunTracker
+
+latest = RunTracker.latest_run(<span class="c-str">"IngestFlow"</span>)
+<span class="c-kw">if</span> latest:
+    <span class="c-kw">print</span>(latest.run_id, latest.created_at, latest.status)
+
+history = RunTracker.run_history(<span class="c-str">"IngestFlow"</span>, limit=5)
+comparison = RunTracker.compare_runs(<span class="c-str">"IngestFlow"</span>, <span class="c-str">"42"</span>, <span class="c-str">"43"</span>)</code></pre></figure>
+
+  <h2><span class="hn">6</span>Argo Workflows 部署</h2>
+  <p>用 <code>ArgoWorkflowBridge</code> 生成 Argo YAML 并部署到 Kubernetes：</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">argo 桥接</span></figcaption><pre><code><span class="c-kw">from</span> arrow_lake.workflow.argo <span class="c-kw">import</span> ArgoWorkflowBridge
+<span class="c-kw">from</span> flows.ingest_flow <span class="c-kw">import</span> IngestFlow
+
+bridge = ArgoWorkflowBridge()
+yaml_str = bridge.generate_workflow(IngestFlow)   <span class="c-rem"># 干跑生成 YAML</span>
+bridge.validate_workflow(yaml_str)
+bridge.deploy_workflow(IngestFlow)                <span class="c-rem"># 部署</span></code></pre></figure>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">CLI 方式</span></figcaption><pre><code>python flows/ingest_flow.py --with argo-workflows create --dry-run > argo/ingest.yaml
+kubectl apply -f argo/ingest.yaml -n arrow-lake</code></pre></figure>
+
+  <h2><span class="hn">7</span>基础设施模块</h2>
+  <p>Arrow Lake 提供 10 个可复用的工作流基础设施模块：</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">workflow 模块</span></figcaption><pre><code><span class="c-kw">from</span> arrow_lake.workflow <span class="c-kw">import</span> (
+    ArrowLakeFlowSpec,     <span class="c-rem"># 基础 mixin：_load_config() + _auto_tag()</span>
+    FlowRegistry,          <span class="c-rem"># Flow 发现与注册</span>
+    StateRollback,         <span class="c-rem"># Lance 版本检查点 + 回滚</span>
+    classify_error,        <span class="c-rem"># 错误 → TRANSIENT/RESOURCE/VALIDATION/FATAL</span>
+    catch_handler,         <span class="c-rem"># @catch 处理器（结构化日志）</span>
+    build_metaflow_retry,  <span class="c-rem"># 可配置的 @retry 构造器</span>
+    ScheduleConfig, RunTags, AuditTrail,
+    ArgoWorkflowBridge, RunTracker,
+)</code></pre></figure>
+  <p>错误分类与状态回滚示例：</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">错误分类 + 回滚</span></figcaption><pre><code><span class="c-kw">from</span> arrow_lake.workflow.error_handler <span class="c-kw">import</span> classify_error
+<span class="c-kw">try</span>:
+    ...
+<span class="c-kw">except</span> <span class="c-kw">Exception</span> <span class="c-kw">as</span> exc:
+    c = classify_error(exc)
+    <span class="c-kw">print</span>(c.category, c.should_retry, c.retry_max_attempts)
+
+<span class="c-kw">from</span> arrow_lake.workflow.rollback <span class="c-kw">import</span> StateRollback
+rb = StateRollback(storage)
+rb.checkpoint(<span class="c-str">"documents"</span>, tag_prefix=<span class="c-str">"pre-quality"</span>)
+<span class="c-kw">if</span> something_wrong: rb.rollback(<span class="c-str">"documents"</span>)</code></pre></figure>
+
+  <h2><span class="hn">8</span>编写自定义 Flow</h2>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">模板</span></figcaption><pre><code><span class="c-kw">from</span> arrow_lake.workflow.base <span class="c-kw">import</span> ArrowLakeFlowSpec
+<span class="c-kw">from</span> metaflow <span class="c-kw">import</span> FlowSpec, Parameter, step, resources
+
+<span class="c-kw">class</span> <span class="c-str">MyCustomFlow</span>(ArrowLakeFlowSpec, FlowSpec):
+    <span class="c-str">"""一行描述"""</span>
+    base_uri = Parameter(<span class="c-str">"base-uri"</span>, default=<span class="c-str">"./data/lake"</span>)
+
+    @step
+    <span class="c-kw">def</span> start(self):
+        self.config = self._load_config()
+        self._auto_tag()
+        self.next(self.end)
+
+    @step
+    <span class="c-kw">def</span> end(self):
+        <span class="c-kw">print</span>(<span class="c-str">"done"</span>)</code></pre></figure>
+  <div class="callout warn"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>错误处理推荐</div><p>优先在 step 内用 try/except，而非 <code>@catch</code> / <code>@retry</code>——后者在 Metaflow v2.19+ 可能产生 "Internal error" 并绕过 catch 机制。新 Flow 需在 <code>flows/__init__.py</code> 的 <code>_flow_map</code> 中注册。</p></div>
+
+  <h2><span class="hn">9</span>配置参考</h2>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>配置（config/workflow.py）</th><th>关键字段</th></tr></thead>
+    <tbody>
+      <tr><td><code>WorkflowConfig</code></td><td><code>max_retry_attempts</code>、<code>min/max_backoff_seconds</code>、<code>checkpoint_enabled</code>、<code>ray_execution_enabled</code>、<code>auto_tag_runs</code>、<code>artifact_retention_days</code>、<code>schedule_cron</code></td></tr>
+      <tr><td><code>ArgoConfig</code></td><td><code>namespace</code>、<code>service_account</code>、<code>workflow_timeout</code>(≥60)、<code>image</code>、<code>image_pull_policy</code>、<code>artifact_storage</code></td></tr>
+      <tr><td><code>AutoscaleConfig</code></td><td><code>enabled</code>、<code>min_workers</code>、<code>max_workers</code>、<code>scale_up_timeout_seconds</code>、<code>idle_timeout_seconds</code>、<code>spot_preference</code>(0–1)、<code>gpu_increment</code>(0.5 或 1.0)、<code>scale_down_protection</code></td></tr>
+    </tbody>
+  </table></div>
+  <div class="callout warn"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>字段名以源码为准</div><p>字段名经 <code>arrow_lake/config/workflow.py</code> 核实。传入不存在的字段会触发 pydantic <code>ValidationError</code>。<code>FlowRegistry</code> 仅暴露 <code>register / get / list_flows / clear</code>，无 <code>get_flow_info()</code>——要查看参数，实例化 <code>get(name)</code> 返回的类并读其 Metaflow <code>Parameter</code>。</p></div>
+
+  <h2><span class="hn">10</span>后台异步任务（TaskManager）</h2>
+  <p>Metaflow Flow 经 CLI 在进程外运行；而从 <strong>API 触发</strong>的长耗时操作（KG 构建、导出、大规模清洗），由进程内 <code>TaskManager</code>（<code>arrow_lake/api/tasks.py:115</code>）在后台跑协程并暴露轮询状态端点——console 进度条即由它驱动。</p>
+  <figure class="code"><figcaption><span class="lang">text</span><span class="file">生命周期</span></figcaption><pre><code>Client POST 长操作 → TaskManager.run_background(...) 立即返回 task_id
+                      ↓（asyncio task，持有强引用防 GC）
+Client 轮询 GET /api/v1/tasks/{task_id}/status 直到 status == completed|failed</code></pre></figure>
+  <ul>
+    <li><strong>fire-and-forget、GC 安全</strong>：<code>run_background()</code> 存有 asyncio task 的强引用，垃圾回收器不会中途静默杀掉它（v1.6.1 从仅限导出的 tracker 泛化而来）。</li>
+    <li><strong>跨 worker 可见（v1.6.2）</strong>：配置 Redis 后，任务状态写入共享 Redis HASH，任意 worker 都能应答状态轮询（<code>TaskManager.init_redis_store()</code>）。</li>
+    <li><strong>持久历史（v1.9.0）</strong>：接入 libSQL <code>TaskHistoryStore</code> 后，完成/失败任务记录超越 Redis TTL，<code>/tasks</code> 列表能在 Redis 刷新或重启后存活。</li>
+    <li><strong>归属通知（v1.9.3）</strong>：<code>init_user_state_store()</code> 接入 my-workspace 通知存储，任务完成时给所有者写一条通知。</li>
+  </ul>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">编程式用法</span></figcaption><pre><code><span class="c-kw">from</span> arrow_lake.api.tasks <span class="c-kw">import</span> TaskManager
+
+task_id = <span class="c-kw">await</span> TaskManager.run_background(
+    owner=<span class="c-str">"user@example.com"</span>, name=<span class="c-str">"kg_build_documents"</span>,
+    coro=my_async_work(),
+)
+task = TaskManager.get_task(task_id)
+<span class="c-kw">print</span>(task.status, task.progress)   <span class="c-rem"># "running" 0.42 → "completed" 1.0</span></code></pre></figure>
+  <div class="callout tip"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-9"/></svg>何时用哪个</div><p>Metaflow（<code>flows/*.py</code>）用于多步、可恢复、带产物追踪、经 CLI/Argo 运行的流水线；<code>TaskManager</code> 用于需要在 console 显示进度条、可轮询 <code>task_id</code> 的单次 API 内异步操作。</p></div>
+</article>
+
+<nav class="pager">
+  <a class="prev" href="cli.html"><span class="dir"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg> 上一章</span><span class="ttl">CLI 完全参考</span></a>
+  <a class="next" href="index.html"><span class="dir">返回目录 <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span><span class="ttl">产品文档教程</span></a>
+</nav>
+
+<footer class="footer">
+  <div class="footer-inner">
+    <div><b>Arrow Lake</b> · 工作流编排 · v1.9.6<br/><span class="muted mono" style="font-size:.7rem">© 2026 · MIT License</span></div>
+    <div class="muted" style="font-size:.75rem">自包含可离线运行 · 源自 docs/cookbook/14</div>
+  </div>
+</footer>
+</body>
+</html>

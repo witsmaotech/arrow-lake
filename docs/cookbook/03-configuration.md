@@ -159,6 +159,9 @@ env_storage = StorageConfig.from_env()        # Auto-build from environment vari
 | `s3_secret_key` | `""`                      | S3 secret key                                  |             |
 | `s3_bucket`     | `"arrow-lake"`            | Default bucket                                 |             |
 | `s3_region`     | `"us-east-1"`             | S3 region                                      |             |
+| `s3_uploads_bucket` | `""`                  | v1.9.5 separate bucket for raw uploaded files (empty=reuse `s3_bucket`, isolating them from the Lance data plane) |             |
+| `uploads_expiration_days` | `0`             | Auto-expire uploaded raw files after N days (0=disabled; once expired, re-parsing e.g. switching OCR backend is no longer possible) |             |
+| `lance_cache_size` | `0`                     | Lance read cache in bytes (0=disabled). Increase in production to speed up repeated scans |             |
 
 ***
 
@@ -469,3 +472,86 @@ The `RedisCountingSemaphore` uses Lua scripts for atomic acquire/release operati
 - **Acquire**: Atomically increments a Redis counter if below `max_permits`; sets TTL to auto-reclaim stale permits.
 - **Release**: Atomically decrements the counter, guarding against underflow.
 - **Fallback**: If Redis becomes unavailable, transparently falls back to `threading.Semaphore` and logs a warning.
+
+***
+
+## 10. System Database Configuration (SystemDBConfig)
+
+> Introduced in v1.9.0: a unified relational **control-plane** store (libSQL / Turso) backing RBAC, identity, personal tokens, the catalog registry, task history, the lineage index, RAG sessions, and governance history. The **data plane** (Lance / DuckDB / HugeGraph / MinIO) is intentionally untouched.
+
+When `enabled` is `False` (default), control-plane structs fall back to their pre-v1.9.0 in-memory / ephemeral-file behavior, so a deployment can opt in incrementally.
+
+```python
+from arrow_lake.config import SystemDBConfig
+
+# Development: embedded (no server, no token)
+dev_db = SystemDBConfig()  # default enabled=False, url="file:local.db"
+
+# Production: self-hosted libSQL server (4 workers)
+prod_db = SystemDBConfig(
+    enabled=True,
+    url="http://system-db:8080",
+    auth_token="${SQLD_AUTH_TOKEN}",
+    fail_mode="fail_close",          # RBAC/identity: refuse requests when store down
+    serve_stale_on_error=False,      # secure fail-close (default)
+    acl_cache_ttl_seconds=5.0,       # multi-worker eventual-consistency window
+)
+```
+
+**Deployment mode is selected by `url`:**
+
+| `url`                   | Mode                | Notes                                 |
+| ----------------------- | ------------------- | ------------------------------------- |
+| `file:local.db`         | Embedded (default)  | Dev, no server, no token              |
+| `http://system-db:8080` | Self-hosted libSQL  | Production, 4 workers                 |
+| `:memory:`              | In-memory           | Unit tests                            |
+
+**Key SystemDBConfig fields:**
+
+| Field                      | Default             | Description |
+| -------------------------- | ------------------- | ----------- |
+| `enabled`                  | `False`             | Enable the control-plane DB (off=degrade to in-memory/ephemeral files) |
+| `url`                      | `"file:local.db"`   | libSQL connection URL (selects deployment mode) |
+| `auth_token`               | `""`                | Auth token for a remote server (empty for embedded) |
+| `fail_mode`                | `"fail_close"`      | `"fail_close"` (RBAC/identity, deny on outage) or `"fail_soft"` (catalog/tasks/rag, log + degrade) |
+| `serve_stale_on_error`     | `False`             | **⚠️ SECURITY: FAIL-OPEN.** `True`=serve last-cached decision when store unreachable (may honor a permission revoked during the outage). Default `False`=secure fail-close. Enable only when you explicitly accept the tradeoff; prefer sqld HA for proper availability |
+| `acl_cache_ttl_seconds`    | `5.0`               | Per-worker short-TTL ACL cache (multi-worker eventual-consistency window) |
+
+***
+
+## 11. RAG Pipeline Configuration (RAGConfig)
+
+Controls RAG retrieval strategy, reranking, the two-stage LLM split, and verification. The default retrieval strategy is **hybrid** (vector + full-text RRF fusion).
+
+```python
+from arrow_lake.config import RAGConfig, LLMConfig
+
+rag_cfg = RAGConfig(
+    enabled=True,
+    default_retrieval_strategy="hybrid",   # vector | fts | hybrid
+    default_top_k=10,
+    # Reranker (default ollama Qwen3-Reranker)
+    reranker="ollama",
+    reranker_model="dengcao/Qwen3-Reranker-0.6B:F16",
+    reranker_device="auto",                # cpu | cuda | auto
+    # Two-stage independent LLMs (None falls back to global llm)
+    extract_llm=LLMConfig(provider="openai", model="qwen-turbo", api_key="sk-..."),
+    qa_llm=LLMConfig(provider="openai", model="qwen-plus", api_key="sk-..."),
+    # Optional: faithfulness verification (off by default, opt-in)
+    enable_verification=False,
+)
+```
+
+**Key RAGConfig fields:**
+
+| Field                        | Default                                 | Description |
+| ---------------------------- | --------------------------------------- | ----------- |
+| `default_retrieval_strategy` | `"hybrid"`                              | Retrieval strategy: `vector`, `fts`, `hybrid` |
+| `default_top_k`              | `10`                                    | Default number of results to retrieve |
+| `reranker`                   | `"ollama"`                              | Reranker type (`ollama` / `cross_encoder` / `llm` / `noop`) |
+| `reranker_model`             | `"dengcao/Qwen3-Reranker-0.6B:F16"`     | Rerank model |
+| `reranker_device`            | `"auto"`                                | Rerank device: `cpu` / `cuda` / `auto` |
+| `extract_llm`                | `None`                                  | Extraction/rerank stage LLM (`None`=fall back to global `llm`) |
+| `qa_llm`                     | `None`                                  | Generation stage LLM (`None`=fall back to global `llm`; a flagship model significantly improves answer quality) |
+| `enable_verification`        | `False`                                 | v1.9.6 lightweight faithfulness verification (off by default) |
+| `enable_citations`           | `True`                                  | Whether to track and return citations |

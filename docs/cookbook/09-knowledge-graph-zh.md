@@ -1,6 +1,6 @@
 # 知识图谱与 GraphRAG
 
-> 版本：1.7.0
+> 版本：1.9.6
 
 Arrow Lake 内置知识图谱 (KG) 子系统，通过 LLM 实体抽取将非结构化文本转化为结构化的实体 - 关系图，
 并写入 HugeGraph 图数据库。当 `hugegraph.enabled=True` 时，RAG 管线自动升级为 GraphRAG，
@@ -25,8 +25,8 @@ from arrow_lake.config import ArrowLakeConfig
 config = ArrowLakeConfig()
 config.hugegraph.enabled = True
 config.hugegraph.host = "localhost"
-config.hugegraph.port = 8089
-config.hugegraph.graph_name = "arrow_lake_kg"
+config.hugegraph.port = 8091            # 代码默认 8091（生产 compose 常重写为 8089）
+config.hugegraph.graph_name = "hugegraph"  # 基础图名；实际图按数据集派生 kg_{dataset}（per-dataset 隔离）
 
 lake = Lake(base_uri="./data", config=config)
 
@@ -494,21 +494,24 @@ asyncio.run(main())
 
 ## 12. 配置参考
 
-`HugeGraphConfig` 完整配置项：
+`HugeGraphConfig` 关键配置项（v1.9.6）：
 
 | 配置项                       | 类型      | 默认值               | 说明                    |
 | ------------------------- | ------- | ----------------- | --------------------- |
 | `enabled`                 | `bool`  | `False`           | 是否启用知识图谱功能            |
-| `host`                    | `str`   | `"localhost"`     | HugeGraph 服务器地址       |
-| `port`                    | `int`   | `8089`            | HugeGraph REST API 端口 |
-| `graph_name`              | `str`   | `"arrow_lake_kg"` | 图数据库在 HugeGraph 中的名称  |
-| `timeout_seconds`         | `float` | `30.0`            | HTTP 请求超时（秒）          |
-| `username`                | `str`   | `""`              | 认证用户名（空则不认证）          |
-| `password`                | `str`   | `""`              | 认证密码                  |
-| `auto_build_on_ingest`    | `bool`  | `False`           | 摄取时自动构建图谱             |
-| `build_batch_size`        | `int`   | `50`              | 批量插入顶点/边的数量           |
-| `default_traversal_depth` | `int`   | `2`               | 默认图遍历跳数               |
-| `max_traversal_depth`     | `int`   | `5`               | 最大允许遍历跳数 (1-10)       |
+| `host` / `port`           | `str`/`int` | `localhost`/`8091` | HugeGraph REST 端点（生产常重写为 8089） |
+| `graph_name`              | `str`   | `"hugegraph"`     | 基础图名；实际图按数据集派生 `kg_{dataset}`（per-dataset 隔离） |
+| `backend`                 | `str`   | `"rocksdb"`       | 存储后端（rocksdb 单节点多图 / hstore PD 集群） |
+| `build_concurrency` / `write_concurrency` | `int` | `3`/`2` | LLM 抽取并发 / HugeGraph 写入并发（写瓶颈，默认更低） |
+| `extractor_backend`       | `str`   | `"he"`            | 抽取后端：`"he"`（hyper-extract，默认）/ `"legacy"` |
+| `he_default_template`     | `str`   | `"entity_graph"`  | 默认抽取模板（通用实体+关系，strict 枚举） |
+| `he_doc_type_templates`   | `dict`  | 见代码               | doc_type→模板映射（paper/report→entity_graph、medicine→medical_concept_graph、project→project_concept_graph 等） |
+| `he_kg_granularity`       | `str`   | `"auto"`          | 抽取粒度：`auto`/`dataset`/`chunk`（dataset 走 MERGE_FIELD，稳定） |
+| `he_strict_definition`     | `bool`  | `False`           | v1.9.6：丢弃空 definition 实体（降噪） |
+| `he_extract_llm` / `he_qa_llm` | `LLMConfig\|None` | `None` | 两阶段独立 LLM（抽取/问答；None 回退全局 llm） |
+| `he_ka_max_versions`      | `int`   | `5`               | 每数据集保留 KA 版本数（超出 prune，支持 rollback） |
+| `he_ka_base_dir`          | `str`   | `"/data/ka"`      | KA dump 本地根（须本地路径，非 bucket） |
+| `default_traversal_depth` / `max_traversal_depth` | `int` | `2`/`5` | 默认/最大遍历跳数 (1-10) |
 
 配置约束：
 
@@ -518,7 +521,7 @@ asyncio.run(main())
 
 ***
 
-## v1.7.0 更新：文档类型路由 + Hyper-Extract 后端
+## v1.7–v1.9 KG 演进：抽取后端 + doc_type 路由 + per-dataset + 增量 + 质量/性能
 
 v1.7.0 为 `kg_build` 增加了可插拔的抽取后端与按文档类型路由的模板选择，显著提升领域文档
 （论文、合同、财报、病历等）的三元组抽取精度。
@@ -532,13 +535,13 @@ from arrow_lake.config import ArrowLakeConfig
 
 config = ArrowLakeConfig()
 config.hugegraph.enabled = True
-config.hugegraph.extractor_backend = "he"            # "graphrag"（默认）| "he"
-config.hugegraph.he_model = "qwen3:30b-a3b"          # 任意 OpenAI 兼容模型
-config.hugegraph.he_default_template = "concept_graph"  # v1.8.9 默认：项目本地 strict 模板（type/relation 枚举 + 必填 definition）。勿设 "general/concept_graph"——该 gallery preset 的 definition 可选，会产出噪声自由类型实体（定义覆盖 0%）。
+config.hugegraph.extractor_backend = "he"            # "legacy" | "he"（默认 he，hyper-extract）
+config.hugegraph.he_model = "qwen3:30b-a3b"          # 任意 OpenAI 兼容模型（或用 he_extract_llm/he_qa_llm 两阶段）
+config.hugegraph.he_default_template = "entity_graph"  # 默认 entity_graph（通用实体+关系，strict 枚举+必填 definition）；concept_graph 留给 taxonomy 场景；project_concept_graph 等领域模板见 he_doc_type_templates。
 ```
 
 需安装 `he` 扩展：`pip install "arrow-lake[he]"`。`he` 后端通过 langchain `ChatOpenAI`
-驱动 hyper-extract 模板，三元组精度高于默认的 graphrag 抽取器。
+驱动 hyper-extract 模板，三元组精度高于 legacy 通用抽取器。
 
 ### doc_type 三层路由
 
@@ -604,6 +607,25 @@ await lake.kg_query("g.V().hasLabel('person').limit(10)")
 生产部署（`deploy/docker-compose.prod.yml`）以 PD 模式（`hg-pd` + `hg-store` + `hg-server`，
 hstore 后端）替代 standalone rocksdb，支持**运行时创建多图**——每个文档可拥有独立隔离的 KG。
 服务按 PD → Store → Server 顺序启动，由 healthcheck 保障。
+
+### v1.8.8 per-dataset 动态图 + 增量 KA + 版本管理
+
+- **per-dataset 隔离**：每个数据集一个独立图 `kg_{dataset}`（非单一全局图），rocksdb 后端真隔离。
+- **`kg_build(incremental=True)`**：增量构建——仅喂新 chunk（`fed_chunks` sidecar），模板不匹配回退，KG 复用 `PRIMARY_KEY` 幂等 upsert。CLI `kg build --incremental`。REST `POST /api/v1/kg/build` body 加 `"incremental": true`。
+- **KA 版本管理**：每次 `kg_build` 前归档 pre-build dump 到 `<base>/<ds>/ka/versions/v{ts}/`，`he_ka_max_versions`（默认 5）超出 prune 最旧。SDK：`lake.kg_list_ka_versions(ds)` / `kg_rollback_ka(ds, version)` / `kg_prune_ka_versions(ds)`；REST：`/api/v1/kg/ka-versions/{dataset}`、`/ka-rollback`、`/ka-prune`。
+- **模板发现端点**：`GET /api/v1/kg/doc-types`、`/templates`、`/templates/{template_path}`（列规范 doc_type + 别名 + 模板，`is_high_risk` 标记 hypergraph）。
+
+### v1.9.4 质量：MERGE_FIELD + 领域 strict 模板
+
+- **MERGE_FIELD 合并**（替 BALANCED）：`dataset` 粒度下跨 chunk 字段合并改**非 LLM** 的 MERGE_FIELD（`he_extractor._create_ka`），消除 BALANCED grouped 的内存爆炸，任意规模稳定；`build_index` 已解耦，KG 入库可靠。grouped 分组档已移除。
+- **领域 strict 模板**：`project_concept_graph`（22 类型 + 14 关系，项目方案书）、`medical_concept_graph`、`legal_concept_graph`、`finance_concept_graph`——tight 枚举 + 必填 definition，避免 `general/concept_graph` 的 0% 描述 + 80+ 自由类型噪声。
+
+### v1.9.6 性能与降噪
+
+- **snap 编辑距离归一化**：噪声类型（"架构组件"→"组件"）snap 到最近枚举值。
+- **strict 过滤**：`he_strict_definition=true` 丢弃空 definition 实体（降噪）。
+- **GraphRAG 三路并行**：`_graphrag_retrieve` 用 `asyncio.gather` 并行 vector / search_ka / neighbor，延迟 -40~50%；`QuestionEntityCache` monotonic 时钟防 TTL 批量失效；KA LRU 缓存按 dump mtime 失效。
+- **traverser OOM 修复**：JVM 重复 `-Xmx` 末值生效曾致堆仅 2g → 遍历 OOM；修 `HG_SERVER_MEMORY_LIMIT=12288M` + `JAVA_OPTS -Xmx8g`（见 [12-部署](./12-deployment-zh.md)）。
 
 > 另见：cookbook [示例 44](examples/44_kg_doctype_he.py)（路由，可离线运行）与
 > [示例 45](examples/45_kg_doctype_api.py)（REST API 构建流程）。

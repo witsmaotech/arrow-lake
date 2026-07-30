@@ -159,6 +159,9 @@ env_storage = StorageConfig.from_env()        # 从环境变量自动构建
 | `s3_secret_key` | `""`                      | S3 秘密密钥                             |    |
 | `s3_bucket`     | `"arrow-lake"`            | 默认存储桶                               |    |
 | `s3_region`     | `"us-east-1"`             | S3 区域                               |    |
+| `s3_uploads_bucket` | `""`                  | v1.9.5 上传原始文件独立桶（空=复用 `s3_bucket`，与 Lance 数据面隔离） |    |
+| `uploads_expiration_days` | `0`             | 上传原始文件自动过期天数（0=禁用；启用后过期将无法重解析如切换 OCR 后端） |    |
+| `lance_cache_size` | `0`                     | Lance 读缓存字节数（0=禁用）。生产环境建议增大以加速重复扫描 |    |
 
 ***
 
@@ -467,3 +470,86 @@ ARROW_LAKE__REDIS__REDIS_POOL_SIZE=10
 - **获取 (Acquire)**：当 Redis 计数器低于 `max_permits` 时，原子递增计数器；设置 TTL 自动回收过期的许可。
 - **释放 (Release)**：原子递减计数器，防止下溢。
 - **回退 (Fallback)**：如果 Redis 不可用，透明回退到 `threading.Semaphore` 并记录警告日志。
+
+***
+
+## 10. 系统数据库配置 (SystemDBConfig)
+
+> v1.9.0 引入：统一的关系型 **控制面** 存储（基于 libSQL / Turso），承载 RBAC、身份、personal token、catalog 注册表、任务历史、血缘索引、RAG 会话和治理历史。**数据面**（Lance / DuckDB / HugeGraph / MinIO）完全不受影响。
+
+当 `enabled` 为 `False`（默认值）时，控制面结构退化为 v1.9.0 之前的内存 / 临时文件行为，可逐步灰度接入。
+
+```python
+from arrow_lake.config import SystemDBConfig
+
+# 开发：嵌入式（无服务器、无 token）
+dev_db = SystemDBConfig()  # 默认 enabled=False, url="file:local.db"
+
+# 生产：自托管 libSQL server（4 workers）
+prod_db = SystemDBConfig(
+    enabled=True,
+    url="http://system-db:8080",
+    auth_token="${SQLD_AUTH_TOKEN}",
+    fail_mode="fail_close",          # RBAC/身份：store 宕机时拒绝请求
+    serve_stale_on_error=False,      # 安全 fail-close（默认）
+    acl_cache_ttl_seconds=5.0,       # 多 worker 最终一致性窗口
+)
+```
+
+**部署模式由 `url` 选择：**
+
+| `url`                 | 模式           | 说明                                   |
+| --------------------- | -------------- | -------------------------------------- |
+| `file:local.db`       | 嵌入式（默认） | 开发，无服务器、无 token               |
+| `http://system-db:8080` | 自托管 libSQL  | 生产，4 workers                        |
+| `:memory:`            | 内存           | 单元测试                               |
+
+**SystemDBConfig 关键字段：**
+
+| 字段                       | 默认值             | 说明 |
+| -------------------------- | ------------------ | ---- |
+| `enabled`                  | `False`            | 启用控制面数据库（关闭=退化为内存/临时文件） |
+| `url`                      | `"file:local.db"`  | libSQL 连接 URL（决定部署模式） |
+| `auth_token`               | `""`               | 远程 server 的认证 token（嵌入式留空） |
+| `fail_mode`                | `"fail_close"`     | `"fail_close"`（RBAC/身份，宕机拒绝）或 `"fail_soft"`（catalog/tasks/rag，记日志降级） |
+| `serve_stale_on_error`     | `False`            | **⚠️ 安全：FAIL-OPEN**。`True`=store 不可达时返回上次缓存决策（可能在中断期放行已撤销权限）。默认 `False`=安全 fail-close。仅在显式接受该权衡时启用，正确的高可用方案是 sqld HA |
+| `acl_cache_ttl_seconds`    | `5.0`              | 每 worker 短 TTL ACL 缓存（多 worker 最终一致性窗口） |
+
+***
+
+## 11. RAG 流水线配置 (RAGConfig)
+
+控制 RAG 检索增强生成的检索策略、重排、两阶段 LLM 与验证。默认检索策略为 **hybrid**（向量 + 全文 RRF 融合）。
+
+```python
+from arrow_lake.config import RAGConfig, LLMConfig
+
+rag_cfg = RAGConfig(
+    enabled=True,
+    default_retrieval_strategy="hybrid",   # vector | fts | hybrid
+    default_top_k=10,
+    # 重排（默认 ollama Qwen3-Reranker）
+    reranker="ollama",
+    reranker_model="dengcao/Qwen3-Reranker-0.6B:F16",
+    reranker_device="auto",                # cpu | cuda | auto
+    # 两阶段独立 LLM（None → 回退全局 llm）
+    extract_llm=LLMConfig(provider="openai", model="qwen-turbo", api_key="sk-..."),
+    qa_llm=LLMConfig(provider="openai", model="qwen-plus", api_key="sk-..."),
+    # 可选：faithfulness 校验（默认关闭，opt-in）
+    enable_verification=False,
+)
+```
+
+**RAGConfig 关键字段：**
+
+| 字段                          | 默认值                                  | 说明 |
+| ----------------------------- | --------------------------------------- | ---- |
+| `default_retrieval_strategy`  | `"hybrid"`                              | 检索策略：`vector`, `fts`, `hybrid` |
+| `default_top_k`               | `10`                                    | 默认检索结果数 |
+| `reranker`                    | `"ollama"`                              | 重排器类型（`ollama` / `cross_encoder` / `llm` / `noop`） |
+| `reranker_model`              | `"dengcao/Qwen3-Reranker-0.6B:F16"`     | 重排模型 |
+| `reranker_device`             | `"auto"`                                | 重排设备：`cpu` / `cuda` / `auto` |
+| `extract_llm`                 | `None`                                  | 抽取/重排阶段 LLM（`None`=回退全局 `llm`） |
+| `qa_llm`                      | `None`                                  | 问答生成阶段 LLM（`None`=回退全局 `llm`；设旗舰可显著提质量） |
+| `enable_verification`         | `False`                                 | v1.9.6 轻量 faithfulness 校验（默认关闭） |
+| `enable_citations`            | `True`                                  | 是否跟踪并返回引用 |

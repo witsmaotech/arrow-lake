@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>向量搜索与索引 · Arrow Lake 文档</title>
+<link rel="stylesheet" href="../assets/tokens.css"/>
+<link rel="stylesheet" href="../assets/app.css"/>
+<link rel="stylesheet" href="../assets/landing.css"/>
+<link rel="stylesheet" href="docs.css"/>
+</head>
+<body>
+<nav class="lnav">
+  <a class="brand" href="../index.html"><span class="brand-mark">AL</span><span><b class="brand-name">Arrow Lake</b><span class="brand-sub">文档</span></span></a>
+  <div class="lnav-links"><a href="index.html">文档中心</a><a href="../architecture.html">架构文档</a></div>
+  <div class="lnav-cta"><a class="btn btn-primary btn-sm" href="../system.html">打开控制台 →</a></div>
+</nav>
+<div class="subnav">
+  <a href="index.html">文档中心</a><span class="crumb-sep">/</span><a href="vector-search.html" style="color:var(--teal-bright)">向量搜索</a>
+  <span class="pager-spacer"></span>
+  <div class="prevnext">
+    <a href="ingestion.html"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg><span class="lbl">上一章</span></a>
+    <a href="rag.html"><span class="lbl">下一章</span><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+  </div>
+</div>
+
+<header class="tut-hero" style="background:radial-gradient(700px 320px at 85% -30%,rgba(245,158,11,.12),transparent 60%),var(--ink-950)">
+  <div class="tut-hero-inner">
+    <span class="num-badge" style="color:var(--warn);background:var(--amber-soft);border-color:rgba(245,158,11,.3)">第 04 章 · 检索</span>
+    <h1>向量搜索与索引</h1>
+    <p class="sub">从 Embedding 生成、索引创建、相似度搜索到索引管理——覆盖 Python Lake facade 与 REST API 的 ANN 全流程。</p>
+    <div class="tut-meta"><span><i style="background:var(--warn)"></i>难度 · 中级</span><span><i style="background:var(--warn)"></i>耗时 · 20 分钟</span><span><i style="background:var(--warn)"></i>前置 · 已摄取带向量列数据</span></div>
+  </div>
+</header>
+
+<article class="tut-body">
+  <p>向量相似度搜索（ANN）对 <code>text_embedding</code> 列执行近似最近邻检索。双路径策略优先 DuckDB <code>lance_vector_search()</code>，失败回退 LanceDB SDK；<strong>无索引时自动暴力搜索</strong>，性能随数据量线性下降。</p>
+
+  <h2><span class="hn">1</span>索引类型与度量</h2>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>索引类型</th><th>特点</th></tr></thead>
+    <tbody>
+      <tr><td><code>IVF_PQ</code></td><td>IVF 倒排 + 乘积量化，<strong>大规模默认</strong>，内存小</td></tr>
+      <tr><td><code>IVF_FLAT</code></td><td>无量化，精度高、内存大</td></tr>
+      <tr><td><code>IVF_HNSW_PQ</code></td><td>IVF + HNSW + PQ，低延迟但构建最贵</td></tr>
+      <tr><td><code>IVF_HNSW_SQ</code></td><td>IVF + HNSW + 标量量化，低延迟、精度优于 PQ</td></tr>
+      <tr><td><code>IVF_SQ</code></td><td>IVF + 标量量化，内存与精度介于 IVF_FLAT / IVF_PQ 之间</td></tr>
+      <tr><td><code>IVF_RQ</code></td><td>IVF + 残差量化，高精度、内存略大</td></tr>
+      <tr><td><code>HNSW</code></td><td>纯图索引，查询延迟最低、构建内存大</td></tr>
+    </tbody>
+  </table></div>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>度量</th><th>值域</th><th>适用</th></tr></thead>
+    <tbody>
+      <tr><td><code>cosine</code></td><td>[0,2] 越小越好</td><td>方向相似，<strong>文本 / RAG 默认</strong></td></tr>
+      <tr><td><code>l2</code></td><td>[0,+inf)</td><td>欧氏距离，空间距离有意义时</td></tr>
+      <tr><td><code>dot</code></td><td>越大越好</td><td>已归一化向量，最快</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2><span class="hn">2</span>端到端三步</h2>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">ingest + index + search</span></figcaption><pre><code>lake.ingest(<span class="c-str">"docs"</span>, [<span class="c-str">"article.txt"</span>])
+info = lake.create_vector_index(<span class="c-str">"docs"</span>, metric=<span class="c-str">"cosine"</span>, index_type=<span class="c-str">"IVF_PQ"</span>)
+<span class="c-rem"># print(info.index_type, info.distance_type, info.num_indexed_rows)</span>
+<span class="c-kw">import</span> numpy <span class="c-kw">as</span> np
+qv = np.random.randn(<span class="c-str">1024</span>).tolist()
+result = lake.search(<span class="c-str">"docs"</span>, qv, top_k=<span class="c-str">5</span>)
+<span class="c-kw">for</span> i <span class="c-kw">in</span> range(result.row_count):
+    row = result.table.to_pylist()[i]
+    print(<span class="c-str">f"  [{i}] distance={row['_distance']:.4f}"</span>)</code></pre></figure>
+
+  <p>嵌入模型可走本地 HuggingFace 或 OpenAI 兼容端点：</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">EmbeddingConfig</span></figcaption><pre><code>config.embedding = EmbeddingConfig(
+    model=<span class="c-str">"Qwen/Qwen3-Embedding-0.6B"</span>,
+    model_source=ModelSource.HUGGINGFACE,
+    backend=EmbeddingBackend.LOCAL, batch_size=<span class="c-str">128</span>,
+)
+<span class="c-rem"># 或 OpenAI 兼容：</span>
+<span class="c-rem"># config.embedding = EmbeddingConfig(</span>
+<span class="c-rem">#     backend=EmbeddingBackend.OPENAI, api_key="sk-...",</span>
+<span class="c-rem">#     api_base="https://api.openai.com/v1")</span></code></pre></figure>
+
+  <h2><span class="hn">3</span>精细控制与多形态搜索</h2>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">create_vector_index 参数</span></figcaption><pre><code>info = lake.create_vector_index(
+    <span class="c-str">"docs"</span>, metric=<span class="c-str">"l2"</span>,
+    vector_column=<span class="c-str">"text_embedding"</span>,
+    index_type=<span class="c-str">"IVF_FLAT"</span>,          <span class="c-rem"># 更精确但更慢</span>
+    num_partitions=<span class="c-str">512</span>,
+    num_sub_vectors=<span class="c-str">24</span>,             <span class="c-rem"># IVF_PQ 专用，8 的倍数（1024 维推荐 24）</span>
+    replace=<span class="c-str">True</span>,
+)</code></pre></figure>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">度量 / 过滤 / 时间旅行</span></figcaption><pre><code>result = lake.search(<span class="c-str">"docs"</span>, qv, top_k=<span class="c-str">10</span>, metric=<span class="c-str">"cosine"</span>)
+result = lake.search(<span class="c-str">"docs"</span>, qv, top_k=<span class="c-str">5</span>, where=<span class="c-str">"category = 'AI' AND year &gt;= 2023"</span>)
+result = lake.search(<span class="c-str">"docs"</span>, qv, top_k=<span class="c-str">5</span>, where=<span class="c-str">"status IN ('published','reviewed')"</span>)
+result = lake.search(<span class="c-str">"docs"</span>, qv, top_k=<span class="c-str">5</span>, version=<span class="c-str">3</span>)   <span class="c-rem"># 时间旅行</span></code></pre></figure>
+
+  <h3>nprobes 调召回 / 延迟</h3>
+  <p>搜索时扫描的 IVF 分区数，越大召回越高、延迟越大；硬上限 <code>max_nprobes</code>（默认 256），推荐起点 <code>num_partitions // 10</code>。</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">召回权衡</span></figcaption><pre><code>result = lake.search(<span class="c-str">"docs"</span>, qv, top_k=<span class="c-str">10</span>, nprobes=<span class="c-str">5</span>)     <span class="c-rem"># 低召回</span>
+result = lake.search(<span class="c-str">"docs"</span>, qv, top_k=<span class="c-str">10</span>, nprobes=<span class="c-str">20</span>)    <span class="c-rem"># 平衡</span>
+result = lake.search(<span class="c-str">"docs"</span>, qv, top_k=<span class="c-str">10</span>, nprobes=<span class="c-str">128</span>)   <span class="c-rem"># 高召回</span></code></pre></figure>
+
+  <h2><span class="hn">4</span>索引管理与 REST</h2>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">list / rebuild / delete</span></figcaption><pre><code><span class="c-kw">for</span> idx <span class="c-kw">in</span> lake.list_vector_indexes(<span class="c-str">"docs"</span>):
+    print(<span class="c-str">f"{idx.index_type} on {idx.columns}, metric={idx.distance_type}"</span>)
+info = lake.rebuild_vector_index(<span class="c-str">"docs"</span>, metric=<span class="c-str">"cosine"</span>,
+    index_type=<span class="c-str">"IVF_PQ"</span>, num_partitions=<span class="c-str">512</span>, num_sub_vectors=<span class="c-str">24</span>)
+lake.delete_vector_index(<span class="c-str">"docs"</span>, <span class="c-str">"docs_text_embedding_idx"</span>)</code></pre></figure>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">REST API</span></figcaption><pre><code>curl -X POST .../datasets/docs/index/vector -H <span class="c-str">"Content-Type: application/json"</span> \
+  -d <span class="c-str">'{"metric":"cosine","index_type":"IVF_PQ","vector_column":"text_embedding"}'</span>
+curl -X POST .../datasets/docs/search/vector -H <span class="c-str">"Content-Type: application/json"</span> \
+  -d <span class="c-str">'{"query_vector":[0.1,0.2],"top_k":10,"metric":"cosine"}'</span>
+curl -X POST .../embed/text -H <span class="c-str">"Content-Type: application/json"</span> \
+  -d <span class="c-str">'{"texts":["机器学习入门教程"]}'</span></code></pre></figure>
+
+  <h2><span class="hn">5</span>踩坑提示</h2>
+  <div class="callout warn"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>索引创建最少 256 行</div><p>IVF_PQ 索引创建有<strong>硬限制</strong>：数据集 &lt; 256 行会抛 <code>VECTOR_INDEX_TOO_FEW_ROWS</code>（小数据集用暴力搜索即可，无需索引）。REST <code>ingest_documents_and_index</code> 摄入后行数 ≥256 才自动建 IVF_PQ，&lt;256 跳过并告警，向量检索仍可走暴力。</p></div>
+  <div class="callout warn"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>RAG 502 / lance_scan_mode</div><p>默认 <code>lance_scan_mode: "auto"</code> 下，DuckDB 原生 lance 向量流对 IVF_PQ 有 Rust panic（uvicorn worker 崩 → 浏览器 502）。RAG hybrid 检索 502 时改 <code>olap.lance_scan_mode: "pyarrow_fallback"</code> 走 sub-bridge sync RRF 绕开 DuckDB 路径（性能略降，但 RAG 通）。</p></div>
+  <div class="callout tip"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-9"/></svg>多模态以图搜图</div><p>图像数据集带 <code>image_embedding</code> 列（CLIP/SigLIP 向量）后，用 <code>POST /embed/image</code> 编码查询图，再 <code>POST /datasets/{name}/search/vector</code> 检索相似图像；文搜图用 <code>lake.encode_text_clip()</code>。</p></div>
+  <div class="callout warn"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>num_sub_vectors 必须 8 的倍数</div><p>1024 维推荐 24（子向量 ~42 维）、768 维推荐 24、1536 维推荐 32；子向量越多量化越精，但构建时间与内存越大。</p></div>
+  <div class="callout tip"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-9"/></svg>num_partitions 自动策略</div><p><strong>&lt;65,536 行</strong>取 <code>min(sqrt(rows)*4, 256)</code>；<strong>65K–1M</strong>用配置值（默认 256）；<strong>≥1M</strong>取 <code>min(sqrt(rows), 4096)</code>。一般传 <code>None</code> 让系统选。</p></div>
+  <div class="callout"><div class="ch">度量选择</div><p>查询向量维度必须与数据集向量列一致（<code>VectorSearchResult.query_vector_dim</code> 可校验）。<code>cosine</code> 是默认且对长度不敏感；已归一化向量用 <code>dot</code> 最快；不确定就用 <code>cosine</code>。</p></div>
+  <div class="callout warn"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>过滤安全</div><p><code>where</code> 内部虽检查危险 SQL 关键字，但<strong>不应直接拼接未净化用户输入</strong>。</p></div>
+</article>
+
+<nav class="pager">
+  <a class="prev" href="ingestion.html"><span class="dir"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg> 上一章</span><span class="ttl">数据摄取</span></a>
+  <a class="next" href="rag.html"><span class="dir">下一章 <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span><span class="ttl">RAG 问答管线</span></a>
+</nav>
+
+<footer class="footer">
+  <div class="footer-inner">
+    <div><b>Arrow Lake</b> · 向量搜索与索引 · v1.9.6<br/><span class="muted mono" style="font-size:.7rem">© 2026 · MIT License</span></div>
+    <div class="muted" style="font-size:.75rem">自包含可离线运行 · 源自 docs/cookbook/04</div>
+  </div>
+</footer>
+</body>
+</html>

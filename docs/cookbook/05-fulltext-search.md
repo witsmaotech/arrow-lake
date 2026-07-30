@@ -108,6 +108,17 @@ def text_search(
 ) -> FullTextSearchResult: ...
 ```
 
+### Async Full-Text Search
+
+```python
+# Async variant (v1.8.0 #17): keeps the event loop responsive for concurrent async handlers
+result = await lake.text_search_async("docs", query="machine learning", top_k=10)
+```
+
+`text_search_async` has the same signature as `text_search`. It is wrapped via
+`asyncio.to_thread` (lancedb has no native async FTS path, so it is delegated
+non-blockingly) and returns the same `FullTextSearchResult`.
+
 ### Return Type: FullTextSearchResult
 
 ```python
@@ -191,6 +202,8 @@ config = FullTextSearchConfig(
     lower_case=True,           # Convert to lowercase
     tokenizer_type="jieba",    # "jieba" (recommended for Chinese) | "default" (built-in)
     jieba_user_dict=None,      # Path to jieba custom dictionary
+    with_position=False,       # Store token positions → enables phrase queries (quoted "..."), larger index
+    use_inverted=False,        # v1.7.1: use lance native INVERTED index instead of tantivy (experimental)
 )
 ```
 
@@ -203,6 +216,8 @@ config = FullTextSearchConfig(
 | `lower_case`        | `bool`        | `True`           | Convert to lowercase      |
 | `tokenizer_type`    | `str`         | `"jieba"`        | `"jieba"` or `"default"`  |
 | `jieba_user_dict`   | `str \| None` | `None`           | Path to custom dictionary |
+| `with_position`     | `bool`        | `False`          | Store token positions, enables phrase queries (quoted `"..."`); larger index |
+| `use_inverted`      | `bool`        | `False`          | v1.7.1: use lance native INVERTED index instead of tantivy (experimental) |
 
 ***
 
@@ -285,3 +300,5 @@ curl -X POST http://localhost:8000/api/v1/datasets/docs/search/fts \
 | `POST /{name}/index/fts`  | `FtsIndexRequest`       | `FtsIndexResponse`       |
 | `POST /{name}/search/fts` | `FullTextSearchRequest` | `FullTextSearchResponse` |
 | `POST /embed/text`        | `TextEmbedRequest`      | `EmbeddingResponse`      |
+| `POST /embed/image`       | `ImageEmbedRequest`     | `EmbeddingResponse`      |
+| `POST /embed/clip-text`   | `ClipTextEmbedRequest`  | `EmbeddingResponse`      |

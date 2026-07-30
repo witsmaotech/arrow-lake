@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>REST 实战配方 · Arrow Lake 文档</title>
+<link rel="stylesheet" href="../assets/tokens.css"/>
+<link rel="stylesheet" href="../assets/app.css"/>
+<link rel="stylesheet" href="../assets/landing.css"/>
+<link rel="stylesheet" href="docs.css"/>
+</head>
+<body>
+<nav class="lnav">
+  <a class="brand" href="../index.html"><span class="brand-mark">AL</span><span><b class="brand-name">Arrow Lake</b><span class="brand-sub">文档</span></span></a>
+  <div class="lnav-links">
+    <a href="index.html">文档中心</a>
+    <a href="../architecture.html">架构文档</a>
+  </div>
+  <div class="lnav-cta"><a class="btn btn-primary btn-sm" href="../system.html">打开控制台 →</a></div>
+</nav>
+<div class="subnav">
+  <a href="index.html">文档中心</a><span class="crumb-sep">/</span><a href="rest-recipes.html" style="color:var(--teal-bright)">REST 实战配方</a>
+  <span class="pager-spacer"></span>
+  <div class="prevnext">
+    <a href="lineage.html"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg><span class="lbl">上一章</span></a>
+    <a href="index.html"><span class="lbl">目录</span><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+  </div>
+</div>
+
+<header class="tut-hero">
+  <div class="tut-hero-inner">
+    <span class="num-badge">第 19 章 · 实战</span>
+    <h1>REST 实战配方</h1>
+    <p class="sub">五个端到端场景把多个端点串成完整工作流：文档知识库 + RAG、多模态以图搜图 + 导出、治理闭环、OLAP + 清洗 + 血缘、混合检索 + GraphRAG。</p>
+    <div class="tut-meta">
+      <span><i></i>难度 · 进阶</span>
+      <span><i></i>耗时 · 15 分钟</span>
+      <span><i></i>依赖 · 运行中的 API（127.0.0.1:8000）</span>
+    </div>
+  </div>
+</header>
+
+<article class="tut-body">
+  <p>面向真实 REST API 的端到端实战场景。每个食谱把多个端点串成一个完整工作流——本章讲的是<strong>把事做成</strong>。所有示例用 <code>curl</code> 访问 <code>http://127.0.0.1:8000</code>。先设好 base URL 与 key：</p>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">环境变量</span></figcaption><pre><code><span class="c-kw">export</span> API=http://127.0.0.1:8000/api/v1
+<span class="c-kw">export</span> KEY=dev-api-key-for-local-testing-only
+AUTH=<span class="c-str">"X-API-Key: $KEY"</span></code></pre></figure>
+
+  <h2><span class="hn">1</span>场景一：文档知识库 + 防幻觉 RAG</h2>
+  <p>摄入 PDF/文档，让管线自动建向量索引，再提问。</p>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">ingest → RAG → stream</span></figcaption><pre><code><span class="c-rem"># 1. 摄入文档（自动分块 + 嵌入 + 行数 ≥256 时自动建 IVF_PQ 索引）</span>
+curl -X POST <span class="c-str">"$API/datasets/kb/ingest/documents"</span> -H <span class="c-str">"$AUTH"</span> \
+  -F <span class="c-str">"files=@report.pdf"</span> -F <span class="c-str">"files=@spec.md"</span>
+<span class="c-rem"># =&gt; {"success": true, "total_rows": 412, ...}</span>
+
+<span class="c-rem"># 2. RAG 问答 —— 默认 hybrid（向量 + FTS 经 RRF 融合），use_kg 默认 true 注入图谱上下文</span>
+curl -X POST <span class="c-str">"$API/rag/query"</span> -H <span class="c-str">"$AUTH"</span> -H <span class="c-str">"Content-Type: application/json"</span> -d <span class="c-str">'{
+  "question": "三季度有哪些发现？",
+  "dataset_name": "kb",
+  "retrieval_strategy": "hybrid"
+}'</span>
+<span class="c-rem"># 响应：answer、citations[]、retrieval_count、latency_ms</span>
+<span class="c-rem"># 纯向量对比：传 "use_kg": false 即降级（无需关 hugegraph.enabled）</span>
+
+<span class="c-rem"># 3. 流式变体 —— 首帧带 citations，末帧带 latency/verification</span>
+curl -N -X POST <span class="c-str">"$API/rag/query/stream"</span> -H <span class="c-str">"$AUTH"</span> -H <span class="c-str">"Content-Type: application/json"</span> -d <span class="c-str">'{
+  "question": "总结风险", "dataset_name": "kb"
+}'</span>
+
+<span class="c-rem"># 4.（可选）开启防幻觉校验：设 ARROW_LAKE__RAG__ENABLE_VERIFICATION=true 后，</span>
+<span class="c-rem">#    响应额外携带 verification.{support_ratio, unsupported[]}，逐句标注是否被上下文支撑</span></code></pre></figure>
+  <div class="callout warn"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>字段名注意</div><p>请求体用 <code>question</code> / <code>dataset_name</code>（不是 query/dataset）；<code>use_kg</code> 默认 true，GraphRAG 在 hugegraph 启用时自动注入，失败优雅降级。</p></div>
+
+  <h2><span class="hn">2</span>场景二：多模态以图搜图 + 导出</h2>
+  <p>建图像数据集，按图搜索，导出命中结果。</p>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">images → embed → search → export</span></figcaption><pre><code><span class="c-rem"># 1. 摄入图像（自动嵌入到图像向量列）</span>
+curl -X POST <span class="c-str">"$API/datasets/products/ingest/images"</span> -H <span class="c-str">"$AUTH"</span> \
+  -F <span class="c-str">"files=@red.jpg"</span> -F <span class="c-str">"files=@blue.jpg"</span>
+
+<span class="c-rem"># 2. 把查询图嵌入 → 向量（JSON body，images 为 base64 字符串列表），再搜索</span>
+IMG=$(base64 -w0 query.jpg)
+QV=$(curl -X POST <span class="c-str">"$API/embed/image"</span> -H <span class="c-str">"$AUTH"</span> -H <span class="c-str">"Content-Type: application/json"</span> -d <span class="c-str">"{
+  \"images\": [\"$IMG\"]
+}"</span> | jq <span class="c-str">'.embeddings[0]'</span>)
+curl -X POST <span class="c-str">"$API/datasets/products/search/vector"</span> -H <span class="c-str">"$AUTH"</span> -H <span class="c-str">"Content-Type: application/json"</span> -d <span class="c-str">"{
+  \"query_vector\": $QV, \"top_k\": 8
+}"</span>
+
+<span class="c-rem"># 3. 导出数据集（异步 —— 202 返回任务 id；output_path 必填）</span>
+TID=$(curl -X POST <span class="c-str">"$API/datasets/products/export"</span> -H <span class="c-str">"$AUTH"</span> -H <span class="c-str">"Content-Type: application/json"</span> \
+  -d <span class="c-str">'{"output_path":"exports/products.parquet","columns":["id","uri"]}'</span> | jq -r .task_id)
+curl <span class="c-str">"$API/datasets/products/export/$TID/status"</span> -H <span class="c-str">"$AUTH"</span>     <span class="c-rem"># 轮询直至完成，产物落在 output_path</span></code></pre></figure>
+
+  <h2><span class="hn">3</span>场景三：治理闭环 —— 脱敏 + 血缘 + 审计</h2>
+  <p>脱敏 PII、预览规则、追溯血缘、审计策略变更。</p>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">mask-preview → policy → lineage → audit</span></figcaption><pre><code><span class="c-rem"># 1. 发布前预览 partial 脱敏规则（读前 5 行返 before/after；partial 保留首2尾2）</span>
+curl -X POST <span class="c-str">"$API/datasets/customers/quality/mask-preview"</span> -H <span class="c-str">"$AUTH"</span> \
+  -H <span class="c-str">"Content-Type: application/json"</span> \
+  -d <span class="c-str">'{"columns":["phone"],"function":"partial"}'</span>
+<span class="c-rem"># =&gt; {"phone": {"before": ["13812345678"], "after": ["13*******78"]}}</span>
+
+<span class="c-rem"># 2. 发布策略（Gravitino policy，创建自动入审计）</span>
+curl -X POST <span class="c-str">"$API/metadata/policies/masking"</span> -H <span class="c-str">"$AUTH"</span> -H <span class="c-str">"Content-Type: application/json"</span> \
+  -d <span class="c-str">'{"name":"pii_mask","columns":["phone","email"],"function":"partial"}'</span>
+
+<span class="c-rem"># 3. 追溯血缘（图谱 + 点击节点的列级血缘）</span>
+curl <span class="c-str">"$API/lineage/graph/customers?max_nodes=500"</span> -H <span class="c-str">"$AUTH"</span>
+curl <span class="c-str">"$API/lineage/history/customers"</span> -H <span class="c-str">"$AUTH"</span>
+
+<span class="c-rem"># 4. 审计策略创建（零新表 —— 复用 Lance 审计轨迹）</span>
+curl <span class="c-str">"$API/audit/query?event_type=masking_policy_created"</span> -H <span class="c-str">"$AUTH"</span></code></pre></figure>
+
+  <h2><span class="hn">4</span>场景四：OLAP 分析 + 清洗 + 血缘</h2>
+  <p>跑 SQL、原地清洗数据、看血缘更新。</p>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">olap → clean → lineage</span></figcaption><pre><code><span class="c-rem"># 1. OLAP 查询（DuckDB SQL —— 透明应用 RBAC 行/列 ACL）</span>
+curl -X POST <span class="c-str">"$API/datasets/sales/query/olap"</span> -H <span class="c-str">"$AUTH"</span> -H <span class="c-str">"Content-Type: application/json"</span> -d <span class="c-str">'{
+  "sql": "SELECT region, SUM(amount) AS total FROM sales GROUP BY region ORDER BY total DESC"
+}'</span>
+
+<span class="c-rem"># 2. 原地清洗（语义 steps → SQL → restore_dataset 写回）</span>
+curl -X POST <span class="c-str">"$API/datasets/sales/clean"</span> -H <span class="c-str">"$AUTH"</span> -H <span class="c-str">"Content-Type: application/json"</span> -d <span class="c-str">'{
+  "steps": [{"op": "drop_nulls", "column": "amount"}]
+}'</span>
+
+<span class="c-rem"># 3. 血缘此时把清洗显示为一条派生边</span>
+curl <span class="c-str">"$API/lineage/graph/sales"</span> -H <span class="c-str">"$AUTH"</span> | jq .stats</code></pre></figure>
+
+  <h2><span class="hn">5</span>场景五：混合检索 + 重排 + GraphRAG</h2>
+  <p>对比检索模式；让 GraphRAG 回答实体关系类问题。</p>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">hybrid → graphrag</span></figcaption><pre><code><span class="c-rem"># 1. 混合（向量 + FTS 经 RRF 融合）—— 需同时给 query_vector 与 query_text</span>
+QV=$(curl -X POST <span class="c-str">"$API/embed/text"</span> -H <span class="c-str">"$AUTH"</span> -H <span class="c-str">"Content-Type: application/json"</span> -d <span class="c-str">'{
+  "texts": ["认证依赖链路"]
+}'</span> | jq <span class="c-str">'.embeddings[0]'</span>)
+curl -X POST <span class="c-str">"$API/datasets/docs/search/hybrid"</span> -H <span class="c-str">"$AUTH"</span> -H <span class="c-str">"Content-Type: application/json"</span> -d <span class="c-str">"{
+  \"query_vector\": $QV, \"query_text\": \"认证依赖链路\", \"top_k\": 10
+}"</span>
+<span class="c-rem"># search 侧默认 bge-reranker-v2-m3 重排（由 SearchConfig.reranker_model 配置驱动，非请求参数）</span>
+
+<span class="c-rem"># 2. GraphRAG —— 适合"哪些 X 依赖 Y"类、基于知识图谱的问题</span>
+curl -X POST <span class="c-str">"$API/kg/query/graphrag"</span> -H <span class="c-str">"$AUTH"</span> -H <span class="c-str">"Content-Type: application/json"</span> -d <span class="c-str">'{
+  "question": "哪些系统依赖认证服务？", "dataset": "docs"
+}'</span></code></pre></figure>
+
+  <div class="callout tip"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-9"/></svg>HMAC 审计轨迹</div><p>上述每个写操作（摄入、清洗、脱敏策略）都被 HMAC-SHA256 审计轨迹捕获——用 <code>GET /audit/query</code> 配合 <code>event_type</code> 或 <code>dataset_name</code> 过滤，即可事后还原任意工作流。</p></div>
+</article>
+
+<nav class="pager">
+  <a class="prev" href="lineage.html"><span class="dir"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg> 上一章</span><span class="ttl">血缘可视化</span></a>
+  <a class="next" href="index.html"><span class="dir">目录 <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span><span class="ttl">产品文档教程</span></a>
+</nav>
+
+<footer class="footer">
+  <div class="footer-inner">
+    <div><b>Arrow Lake</b> · REST 实战配方 · v1.9.6<br/><span class="muted mono" style="font-size:.7rem">© 2026 · MIT License</span></div>
+    <div class="muted" style="font-size:.75rem">自包含可离线运行 · 源自 docs/cookbook/19</div>
+  </div>
+</footer>
+</body>
+</html>

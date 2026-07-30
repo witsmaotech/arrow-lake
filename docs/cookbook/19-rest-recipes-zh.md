@@ -13,7 +13,7 @@ AUTH="X-API-Key: $KEY"
 
 ## 场景 1. 文档知识库 + 防幻觉 RAG
 
-摄入 PDF/文档，让管线自动建向量索引，再带忠实度校验提问。
+摄入 PDF/文档，让管线自动建向量索引，再提问。
 
 ```bash
 # 1. 摄入文档（自动分块 + 嵌入 + 行数 ≥256 时自动建 IVF_PQ 索引）
@@ -21,20 +21,26 @@ curl -X POST "$API/datasets/kb/ingest/documents" -H "$AUTH" \
   -F "files=@report.pdf" -F "files=@spec.md"
 # => {"success": true, "total_rows": 412, ...}
 
-# 2. RAG 问答 —— 混合检索，答案落地，忠实度校验
+# 2. RAG 问答 —— 默认 hybrid（向量 + FTS 经 RRF 融合），use_kg 默认 true 注入图谱上下文
 curl -X POST "$API/rag/query" -H "$AUTH" -H "Content-Type: application/json" -d '{
-  "query": "三季度有哪些发现？",
-  "dataset": "kb",
+  "question": "三季度有哪些发现？",
+  "dataset_name": "kb",
   "retrieval_strategy": "hybrid"
 }'
-# 响应携带：answer、citations[]、support_ratio、unsupported[]
-# support_ratio ≈ 1.0 → 依据充分；查看 `unsupported` 中有无幻觉论断。
+# 响应：answer、citations[]、retrieval_count、latency_ms
+# 纯向量对比：传 "use_kg": false 即降级（无需关 hugegraph.enabled）
 
-# 3. 流式变体 —— 首帧带引用，末帧带校验信息
+# 3. 流式变体 —— 首帧带 citations，末帧带 latency/verification
 curl -N -X POST "$API/rag/query/stream" -H "$AUTH" -H "Content-Type: application/json" -d '{
-  "query": "总结风险", "dataset": "kb"
+  "question": "总结风险", "dataset_name": "kb"
 }'
+
+# 4.（可选）开启防幻觉校验：设 ARROW_LAKE__RAG__ENABLE_VERIFICATION=true 后，
+#    响应额外携带 verification.{support_ratio, unsupported[]}，逐句标注是否被上下文支撑
 ```
+
+> **字段名注意**：请求体用 `question` / `dataset_name`（不是 query/dataset）；
+> `use_kg` 默认 true，GraphRAG 在 hugegraph 启用时自动注入，失败优雅降级。
 
 ## 场景 2. 多模态以图搜图 + 导出
 
@@ -45,17 +51,19 @@ curl -N -X POST "$API/rag/query/stream" -H "$AUTH" -H "Content-Type: application
 curl -X POST "$API/datasets/products/ingest/images" -H "$AUTH" \
   -F "files=@red.jpg" -F "files=@blue.jpg"
 
-# 2. 把查询图嵌入 → 向量，再搜索
-QV=$(curl -X POST "$API/embed/image" -H "$AUTH" -F "file=@query.jpg" | jq -r .vector)
+# 2. 把查询图嵌入 → 向量（JSON body，images 为 base64 字符串列表），再搜索
+IMG=$(base64 -w0 query.jpg)
+QV=$(curl -X POST "$API/embed/image" -H "$AUTH" -H "Content-Type: application/json" -d "{
+  \"images\": [\"$IMG\"]
+}" | jq '.embeddings[0]')
 curl -X POST "$API/datasets/products/search/vector" -H "$AUTH" -H "Content-Type: application/json" -d "{
   \"query_vector\": $QV, \"top_k\": 8
 }"
 
-# 3. 导出数据集（异步 —— 202 返回任务 id）
+# 3. 导出数据集（异步 —— 202 返回任务 id；output_path 必填）
 TID=$(curl -X POST "$API/datasets/products/export" -H "$AUTH" -H "Content-Type: application/json" \
-  -d '{"format":"parquet","columns":["id","uri"]}' | jq -r .task_id)
-curl "$API/datasets/products/export/$TID/status" -H "$AUTH"     # 轮询直至完成
-curl "$API/datasets/products/export/$TID/download" -H "$AUTH" -o products.parquet
+  -d '{"output_path":"exports/products.parquet","columns":["id","uri"]}' | jq -r .task_id)
+curl "$API/datasets/products/export/$TID/status" -H "$AUTH"     # 轮询直至完成，产物落在 output_path
 ```
 
 ## 场景 3. 治理闭环 —— 脱敏 + 血缘 + 审计
@@ -63,14 +71,14 @@ curl "$API/datasets/products/export/$TID/download" -H "$AUTH" -o products.parque
 脱敏 PII、预览规则、追溯血缘、审计策略变更。
 
 ```bash
-# 1. 发布前预览 partial 脱敏规则
+# 1. 发布前预览 partial 脱敏规则（读前 5 行返 before/after；partial 保留首2尾2）
 curl -X POST "$API/datasets/customers/quality/mask-preview" -H "$AUTH" \
   -H "Content-Type: application/json" \
   -d '{"columns":["phone"],"function":"partial"}'
-# => {"phone": {"before": ["13812345678"], "after": ["138****5678"]}}
+# => {"phone": {"before": ["13812345678"], "after": ["13*******78"]}}
 
-# 2. 发布策略（创建自动入审计）
-curl -X POST "$API/gravitino/policies/masking" -H "$AUTH" -H "Content-Type: application/json" \
+# 2. 发布策略（Gravitino policy，创建自动入审计）
+curl -X POST "$API/metadata/policies/masking" -H "$AUTH" -H "Content-Type: application/json" \
   -d '{"name":"pii_mask","columns":["phone","email"],"function":"partial"}'
 
 # 3. 追溯血缘（图谱 + 点击节点的列级血缘）
@@ -105,14 +113,18 @@ curl "$API/lineage/graph/sales" -H "$AUTH" | jq .stats
 对比检索模式；让 GraphRAG 回答实体关系类问题。
 
 ```bash
-# 1. 混合（向量 + FTS 经 RRF 融合）—— cross-encoder（bge-reranker-v2-m3）自动重排
-curl -X POST "$API/datasets/docs/search/hybrid" -H "$AUTH" -H "Content-Type: application/json" -d '{
-  "query": "认证依赖链路", "top_k": 10
-}'
+# 1. 混合（向量 + FTS 经 RRF 融合）—— 需同时给 query_vector 与 query_text
+QV=$(curl -X POST "$API/embed/text" -H "$AUTH" -H "Content-Type: application/json" -d '{
+  "texts": ["认证依赖链路"]
+}' | jq '.embeddings[0]')
+curl -X POST "$API/datasets/docs/search/hybrid" -H "$AUTH" -H "Content-Type: application/json" -d "{
+  \"query_vector\": $QV, \"query_text\": \"认证依赖链路\", \"top_k\": 10
+}"
+# search 侧默认 bge-reranker-v2-m3 重排（由 SearchConfig.reranker_model 配置驱动，非请求参数）
 
 # 2. GraphRAG —— 适合"哪些 X 依赖 Y"类、基于知识图谱的问题
-curl -X POST "$API/rag/query/graphrag" -H "$AUTH" -H "Content-Type: application/json" -d '{
-  "query": "哪些系统依赖认证服务？", "dataset": "docs"
+curl -X POST "$API/kg/query/graphrag" -H "$AUTH" -H "Content-Type: application/json" -d '{
+  "question": "哪些系统依赖认证服务？", "dataset": "docs"
 }'
 ```
 

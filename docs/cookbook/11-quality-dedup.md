@@ -305,8 +305,8 @@ quality:
   nemo_curator_batch_size: 64
 
   # Content deduplication
-  dedup_enabled: true
-  dedup_strategy: exact               # exact | perceptual | both
+  dedup_enabled: false                # default false (config/media.py:124) — dedup is opt-in
+  dedup_strategy: exact               # exact | perceptual | both (YAML rejects minhash, see §12)
   dedup_action: flag                  # flag | remove
   dedup_perceptual_threshold: 10
 
@@ -325,6 +325,7 @@ quality:
 | Articles / News / Code              | `exact`                        | Identical content produces the same SHA-256 — precise and efficient     |
 | Product image dedup                 | `perceptual` (threshold 5-10)  | Filters the same product shown at different sizes or compression levels |
 | Social media images                 | `perceptual` (threshold 10-15) | Allows for filter and crop differences                                  |
+| Mid-scale text near-dups (rewrites / light edits) | `minhash` (CPU, programmatic, see §12) | Jaccard-similarity near-dups, no GPU needed                  |
 | Large-scale text corpora (>1M rows) | `NeMoDeduplicator` (GPU)       | MinHash LSH approximate deduplication, far faster than exact matching   |
 | Mixed datasets (text + images)      | `both`                         | Runs exact deduplication first, then perceptual — a two-stage pipeline  |
 
@@ -587,38 +588,41 @@ print(policies)  # ["log_retention", "email_mask"]
 
 ### 11.3 REST API for Tag & Policy Management
 
-Tags and policies can also be managed through the `/metadata/*` REST endpoints. All endpoints
+Tags and policies can also be managed through the `/api/v1/metadata/*` REST endpoints. All endpoints
 require the `X-API-Key` header and return 503 when Gravitino is not configured.
 
 ```bash
 # --- Tags ---
 
 # List tags (optionally filtered by table)
-curl "http://localhost:8000/metadata/tags?table=articles" \
+curl "http://localhost:8000/api/v1/metadata/tags?table=articles" \
   -H "X-API-Key: your-key"
 # => {"success": true, "data": [{"name": "sensitive"}], "error": null, "metadata": {"total": 1}}
 
-# Create a tag
-curl -X POST "http://localhost:8000/metadata/tags?body=%7B%22name%22%3A%22pii%22%2C%22comment%22%3A%22PII%20data%22%7D" \
-  -H "X-API-Key: your-key"
+# Create a tag (JSON body)
+curl -X POST http://localhost:8000/api/v1/metadata/tags \
+  -H "X-API-Key: your-key" -H "Content-Type: application/json" \
+  -d '{"name": "pii", "comment": "PII data"}'
 # => {"success": true, "data": {"name": "pii"}, "error": null, "metadata": {}}
 
 # --- Policies ---
 
 # List all policies
-curl http://localhost:8000/metadata/policies \
+curl http://localhost:8000/api/v1/metadata/policies \
   -H "X-API-Key: your-key"
 # => {"success": true, "data": [{"name": "log_retention"}], "error": null, "metadata": {"total": 1}}
 
-# Create a retention policy
-curl -X POST "http://localhost:8000/metadata/policies/retention?body=%7B%22name%22%3A%22log_retention%22%2C%22days%22%3A90%7D" \
-  -H "X-API-Key: your-key"
+# Create a retention policy (JSON body)
+curl -X POST http://localhost:8000/api/v1/metadata/policies/retention \
+  -H "X-API-Key: your-key" -H "Content-Type: application/json" \
+  -d '{"name": "log_retention", "days": 90}'
 # => {"success": true, "data": {"name": "log_retention", "days": 90}, "error": null, "metadata": {}}
 
-# Create a masking policy
-curl -X POST "http://localhost:8000/metadata/policies/masking?body=%7B%22name%22%3A%22email_mask%22%2C%22columns%22%3A%5B%22email%22%5D%7D" \
-  -H "X-API-Key: your-key"
-# => {"success": true, "data": {"name": "email_mask", "columns": ["email"]}, "error": null, "metadata": {}}
+# Create a masking policy (JSON body; function required: redact|hash|partial|nullify)
+curl -X POST http://localhost:8000/api/v1/metadata/policies/masking \
+  -H "X-API-Key: your-key" -H "Content-Type: application/json" \
+  -d '{"name": "email_mask", "columns": ["email"], "function": "partial"}'
+# => {"success": true, "data": {"name": "email_mask", "columns": ["email"], "function": "partial"}, "error": null, "metadata": {}}
 ```
 
 ### 11.4 Enabling Gravitino
@@ -634,6 +638,158 @@ gravitino:
   sync_interval_seconds: 300          # Background catalog sync interval
 ```
 
-When `gravitino.enabled` is `false` (the default), all `/metadata/*` endpoints return 503 and
+When `gravitino.enabled` is `false` (the default), all `/api/v1/metadata/*` endpoints return 503 and
 the `GravitinoTagService`/`GravitinoPolicyService` constructors complete silently without
 connecting. Existing quality filtering, deduplication, and ACL features are unaffected.
+
+***
+
+## 12. MinHash Near-Duplicate Dedup (CPU datasketch)
+
+In addition to exact SHA-256 and perceptual pHash, `ContentDeduplicator` ships **MinHash LSH**
+near-duplicate dedup (`quality/dedup.py:70,91-96,132`), backed by the CPU `datasketch` package. It
+detects **semantic near-duplicates** (rewrites, lightly-edited variants) without a GPU.
+
+```python
+from arrow_lake.quality.dedup import ContentDeduplicator
+
+deduper = ContentDeduplicator(
+    strategy="minhash",          # MinHash LSH near-duplicate dedup
+    action="flag",
+    text_column="text_content",  # required when strategy="minhash" (dedup.py:95-96)
+    ngram_size=5,                # character n-gram shingle size
+    num_hashes=128,              # number of MinHash permutations (num_perm)
+    threshold=0.8,               # Jaccard similarity threshold (0.0–1.0) for near-duplicate
+)
+result = deduper.deduplicate(table)
+# DedupResult(strategy="minhash", ...)
+```
+
+> **Trap (YAML rejects minhash)**: the `QualityConfig.dedup_strategy` validator only allows
+> `exact`/`perceptual`/`both` (`config/media.py:129-134`); writing `minhash` raises a
+> `ValidationError`. MinHash is **programmatic only** — call
+> `ContentDeduplicator(strategy="minhash", ...)` directly; you cannot set `dedup_strategy: minhash`.
+> For large corpora (>1M rows) needing a GPU, use the `NeMoDeduplicator` from §5.
+
+| Parameter | Default | Notes |
+|-----------|---------|-------|
+| `strategy` | `exact` | `minhash` takes an isolated path (`dedup.py:132`) |
+| `text_column` | (required) | text column to MinHash |
+| `ngram_size` | `5` | character n-gram |
+| `num_hashes` | `128` | MinHash permutations (precision/cost trade-off) |
+| `threshold` | `0.8` | Jaccard similarity threshold |
+
+***
+
+## 13. Quality Profiling & Scoring (QualityProfiler)
+
+`QualityProfiler` (`quality/profiler.py:39`) produces a holistic dataset quality profile as a
+`DatasetQualityProfile`, including an `overall_quality_score` (0.0–1.0, `profiler.py:34`) and
+per-dimension statistics. The matching REST endpoint is
+`GET /api/v1/datasets/{name}/quality/profile` (`routers/quality.py:156`).
+
+```python
+from arrow_lake.quality.profiler import QualityProfiler
+
+profiler = QualityProfiler()
+profile = profiler.profile(table, dataset_name="articles")
+print(profile.overall_quality_score)   # 0.0–1.0
+# DatasetQualityProfile also carries null rate, cardinality, distribution, etc.
+```
+
+```bash
+# REST: fetch the dataset quality profile
+curl http://localhost:8000/api/v1/datasets/articles/quality/profile -H "X-API-Key: your-key"
+```
+
+***
+
+## 14. Quality REST API Panorama
+
+Endpoints exposed by `routers/quality.py` (prefix `/api/v1/datasets/{name}/quality`):
+
+| Method | Endpoint | Description | Source |
+|--------|----------|-------------|--------|
+| `POST` | `/quality/filter` | Run quality filters, return aggregated report | quality.py:46 |
+| `GET` | `/quality/report` | Fetch the last quality-filter report | quality.py:64 |
+| `POST` | `/quality/deduplicate` | Dedup a dataset (exact/perceptual/both) | quality.py:81 |
+| `POST` | `/quality/rules` | Apply the declarative rule engine (see §9.5) | quality.py:105 |
+| `GET` | `/quality/profile` | Quality profile & score (see §13) | quality.py:156 |
+| `POST` | `/quality/llm_label` | LLM enrichment: tag rows (**async 202**) | quality.py:213 |
+| `POST` | `/quality/extract` | LLM enrichment: extract structured fields (**async 202**) | quality.py:252 |
+| `POST` | `/quality/mask-preview` | Preview masking (function/columns) | quality.py:291 |
+
+`llm_label` and `extract` are fire-and-forget async tasks (`status_code=202`): they return a `task_id`
+immediately, and you poll `GET /api/v1/tasks/{task_id}/status` for the result (see the TaskManager
+chapter in `14-workflow-orchestration.md`).
+
+```bash
+# Dedup (REST)
+curl -X POST http://localhost:8000/api/v1/datasets/articles/quality/deduplicate \
+  -H "X-API-Key: your-key" -H "Content-Type: application/json" \
+  -d '{"strategy": "exact", "action": "flag"}'
+
+# mask-preview (function required: redact|hash|partial|nullify)
+curl -X POST http://localhost:8000/api/v1/datasets/hr_data/quality/mask-preview \
+  -H "X-API-Key: your-key" -H "Content-Type: application/json" \
+  -d '{"columns": ["ssn", "email"], "function": "partial"}'
+```
+
+***
+
+## 15. Data Preparation: Cleaning & LLM Enrichment
+
+### 15.1 Structured Cleaning `POST /clean`
+
+`POST /api/v1/datasets/{name}/clean` (`routers/cleaning.py:222`) compiles declarative cleaning steps
+(DuckDB semantics) into SQL, then writes the result back to Lance via `restore_dataset`. Column-wise
+chained operators are supported.
+
+```bash
+curl -X POST http://localhost:8000/api/v1/datasets/sales/clean \
+  -H "X-API-Key: your-key" -H "Content-Type: application/json" \
+  -d '{"steps": [
+        {"column": "revenue", "op": "fill_null", "value": 0},
+        {"column": "region",  "op": "trim"},
+        {"column": "email",   "op": "lowercase"}
+      ]}'
+```
+
+### 15.2 LLM Enrichment (llm_label / extract, async)
+
+`quality/llm_enrich.py:105,156` provides two LLM enrichment operations, both async (202 + task-id poll):
+
+- **`llm_label`** (quality.py:213): runs an LLM classifier over each row's text, adding a label column
+  (sentiment, topic, intent, ...).
+- **`extract`** (quality.py:252): extracts structured fields (entities, key-value pairs) from
+  unstructured text into new columns.
+
+```bash
+# Async LLM labeling (returns a task_id immediately)
+curl -X POST http://localhost:8000/api/v1/datasets/articles/quality/llm_label \
+  -H "X-API-Key: your-key" -H "Content-Type: application/json" \
+  -d '{"text_column": "text_content", "label_column": "sentiment", "prompt": "positive|negative|neutral"}'
+# => 202 {"task_id": "...", "status": "pending"}
+
+# Poll for the result
+curl http://localhost:8000/api/v1/tasks/<task_id>/status -H "X-API-Key: your-key"
+```
+
+### 15.3 Field Comments (v1.9.3)
+
+`ingest/field_comments.py` supports attaching human-readable comments to dataset fields (reads
+parquet/CSV sidecars via PyArrow, writes into the Lance schema `comment` metadata). The matching
+endpoint is `POST /api/v1/datasets/{name}/schema/annotate`.
+
+```bash
+# Annotate a field
+curl -X POST http://localhost:8000/api/v1/datasets/articles/schema/annotate \
+  -H "X-API-Key: your-key" -H "Content-Type: application/json" \
+  -d '{"field": "text_content", "comment": "Article body (cleaned, HTML stripped)"}'
+
+# View the annotated schema
+curl http://localhost:8000/api/v1/datasets/articles/schema -H "X-API-Key: your-key"
+```
+
+Field comments persist in the Lance schema as `SchemaField.comment`; they are captured automatically
+by the `_write_table` hook on ingest and echoed back by `GET /schema`.

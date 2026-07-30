@@ -157,6 +157,10 @@ print(f"Image ingestion: {report.total_rows} rows")
 #                 image_width, image_height, exif_make, exif_model
 ```
 
+> **Image-to-image search (v1.9.2)**: after ingesting images, encode a query image to a CLIP/SigLIP vector via
+> `POST /embed/image`, then `POST /datasets/{name}/search/vector` for similar images; text-to-image uses SDK
+> `lake.encode_text_clip()`.
+
 ### Video Ingestion
 
 Videos are automatically processed to extract key frames during ingestion.
@@ -201,9 +205,9 @@ Internally, `UnifiedTableManager` creates a unified schema, then calls
 
 ***
 
-## 9. PDF Document Ingestion
+## 9. Document Ingestion (PDF / Word / Markdown / HTML / Email … 17 types)
 
-PDFs are parsed into text chunks and written to a Lance dataset, ready for full-text search and RAG.
+Documents are parsed into text chunks and written to a Lance dataset, ready for full-text search and RAG. The `/ingest/documents` REST endpoint accepts 17 document types (PDF/DOCX/PPTX/XLSX/MD/HTML/TXT/EPUB/email/images, etc.) and supports `append=true` to append to an existing dataset (incremental).
 
 ```python
 from arrow_lake import Lake
@@ -219,7 +223,7 @@ report = lake.ingest_documents(
 )
 print(f"Document ingestion: {report.total_rows} text chunks")
 
-# Columns written: text, page_number, chunk_index, document_id, blob_key
+# Columns written: text_content, page_number, chunk_index, document_id, blob_key, doc_type
 ```
 
 ### Custom Document Configuration
@@ -231,6 +235,7 @@ from arrow_lake.config import ChunkStrategy, PdfParseMode
 doc_config = DocumentConfig(
     chunk_strategy=ChunkStrategy.RECURSIVE,     # page / paragraph / recursive / semchunk
                                                  # / chonkie_token / chonkie_semantic / chonkie_sdpm
+                                                 # / docling_hybrid (Docling HybridChunker, token-level)
     chunk_size=512,
     chunk_overlap=64,
     chunk_tokenizer="",                         # Tokenizer for semchunk (empty = char-based)
@@ -238,7 +243,7 @@ doc_config = DocumentConfig(
     semantic_similarity_threshold=0.5,
     semantic_min_chunk_size=100,
     pdf_parse_mode=PdfParseMode.AUTO,           # auto / text / ocr
-    ocr_backend="kreuzberg",                    # kreuzberg / turbo_ocr
+    ocr_backend="kreuzberg",                    # kreuzberg / turbo_ocr / docling
     ocr_endpoint="http://localhost:8002",
     max_file_size_mb=100,
     store_raw_pdf=True,
@@ -252,7 +257,17 @@ report = lake.ingest_documents(
 )
 ```
 
-Document ingestion pipeline: `PDF -> Kreuzberg parse (+ TurboOCR fallback) -> BlobStore (optional) -> Chunker -> Lance persistence`
+Document ingestion pipeline: `PDF/Office/HTML → parse (Kreuzberg / TurboOCR / Docling) → BlobStore (optional) → Chunker → Lance persistence`
+
+> **SDK vs REST indexing gap (v1.9.5, common pitfall)**: the SDK `lake.ingest_documents()` only chunks + stores;
+> it does **not** build retrieval indexes. The REST `POST /ingest/documents` path runs `ingest_documents_and_index`
+> (parse → store → embed → FTS → vector end-to-end), auto-building IVF_PQ when rows ≥256 and skipping with a warning
+> otherwise (vector brute-force still works). SDK users who need retrieval must call `lake.create_vector_index()` +
+> `lake.create_fts_index()` afterward, or use `lake.ingest_documents_and_index()`.
+
+> **Ingest-as-governance**: field comments are captured at ingest time (v1.9.3; editable via
+> `POST /datasets/{name}/schema/annotate`); every write records lineage via `_lineage_after_ingest` and threads
+> the authenticated `actor` (v1.9.4).
 
 ***
 

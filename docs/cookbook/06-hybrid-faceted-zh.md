@@ -63,19 +63,19 @@ Reciprocal Rank Fusion 在 `HybridSearchBridge._rrf_fuse()` 中实现：
 score(doc) = SUM( 1 / (rank(doc, list_i) + k) )
 ```
 
-* `rank(doc, list_i)`: 文档在第 i 个排序列表中的排名 (从 0 开始)
+* `rank(doc, list_i)`: 文档在第 i 个排序列表中的排名 (从 1 开始)
 * `k`: 平滑常数，默认 60 (论文推荐值)
 
 ```text
 向量搜索 top 3:              全文搜索 top 3:
-  rank 0: 越野跑鞋              rank 0: 轻量级跑步运动鞋
-  rank 1: 登山徒步鞋            rank 1: 儿童减震跑步鞋
-  rank 2: 篮球鞋                rank 2: 夏季透气凉鞋
+  rank 1: 越野跑鞋              rank 1: 轻量级跑步运动鞋
+  rank 2: 登山徒步鞋            rank 2: 儿童减震跑步鞋
+  rank 3: 篮球鞋                rank 3: 夏季透气凉鞋
 
            +-- RRF 融合 (k=60) --+
                       |
-  rank 0: 轻量级跑步运动鞋  (1/(0+60) + 1/(0+60) = 0.0333)
-  rank 1: 越野跑鞋            (1/(0+60) + 0 = 0.0167)
+  rank 1: 轻量级跑步运动鞋  (1/(1+60) + 1/(1+60) = 0.0328)
+  rank 1: 越野跑鞋            (1/(1+60) + 0 = 0.0164)
 ```
 
 | rrf\_k      | 效果        | 推荐场景   |
@@ -127,10 +127,14 @@ config = HybridSearchConfig(
     default_top_k=10,             # 最终返回数量
     vector_top_k_multiplier=3,    # 向量候选池 = top_k * 3
     fts_top_k_multiplier=3,       # FTS 候选池 = top_k * 3
+    reranker_type="none",         # 重排器：none / cross_encoder（默认 none，RRF 粗排即最终结果）
+    reranker_model="BAAI/bge-reranker-v2-m3",  # cross-encoder 精排模型
 )
 ```
 
 Arrow Lake 自动选择执行路径：优先 DuckDB 原生 `lance_hybrid_search()`，失败时回退为子 Bridge 分别搜索再融合。
+
+> **重排是配置驱动，非请求参数**：`reranker_type` / `reranker_model` 在 `HybridSearchConfig` 中全局设定，搜索端点（`POST /{name}/search/hybrid`）不接受 per-request 重排参数。设为 `cross_encoder` 时用 `reranker_model`（默认 `BAAI/bge-reranker-v2-m3`）对 RRF 粗排结果做连续分精排。
 
 ***
 
@@ -223,6 +227,17 @@ result = lake.faceted_search("products", query_vector=query_vec,
                               where="category = 'running'")
 ```
 
+### 标量索引加速
+
+对分面维度列建标量索引可显著加速 `GROUP BY CUBE` 聚合。`FacetedSearchConfig.scalar_index_type_map` 按列基数自动选择索引类型（低基数如 `modality`/`source`/`doc_type` → `BITMAP`，其余 → `BTREE`）。批量建索引：
+
+```python
+# 对默认分面列建标量索引（按 scalar_index_type_map 选 BTREE/BITMAP）
+lake.create_facet_indexes("products")
+# 或对单列建索引
+lake.create_scalar_index("products", column="category")
+```
+
 ***
 
 ## 5. Ensemble 多列搜索
@@ -266,6 +281,16 @@ def ensemble_search(
 不指定 `columns` 时自动检测所有与查询向量维度匹配的 `fixed_size_list` 列。
 
 加权 RRF 公式：`score(doc) = SUM( weight_i / (rank(doc, list_i) + k) )`
+
+### 多模态以图搜图
+
+CLIP 嵌入把文本和图像映射到同一向量空间，支持「以文搜图」「以图搜图」。`Lake.encode_text_clip()` 对查询文本编码，结果与 `POST /api/v1/embed/image` 返回的图像嵌入同源（L2 归一化），可直接用于向量搜索：
+
+```python
+# 文本 → 图像 embedding，与 /embed/image 同空间
+query_vec = lake.encode_text_clip("红色运动鞋")
+results = lake.search("products", query_vector=query_vec, vector_column="image_embedding")
+```
 
 ***
 

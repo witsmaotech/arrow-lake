@@ -1,6 +1,6 @@
 # OLAP 分析查询
 
-> 版本：1.5.3
+> 版本：1.9.6
 
 Arrow Lake 通过 DuckDB 零拷贝 Arrow 集成提供高性能 OLAP 分析能力，支持
 GROUP BY 聚合、窗口函数、JOIN 以及物化视图。
@@ -173,6 +173,14 @@ dropped = lake.cleanup_materialized(ttl_days=3)
 
 建议在定时任务中调用此方法，或在应用启动时执行一次清理。
 
+**REST 管理端点**：物化视图是全局资源，通过独立路由 `/api/v1/materialized` 管理（非 per-dataset，避免与 `datasets` 的 `GET /{name}` 冲突）。所有端点需 ADMIN 角色，且 `ducklake_enabled=True`（未启用返回 503）：
+
+| 方法 + 路径                         | 说明                                   |
+| ------------------------------- | ------------------------------------ |
+| `GET /api/v1/materialized`      | 列出所有物化视图及生命周期元数据                     |
+| `DELETE /api/v1/materialized/{view}` | 按名称删除单个物化视图                       |
+| `POST /api/v1/materialized/cleanup` | 批量清理所有已过期的物化视图（TTL）               |
+
 ***
 
 ## 6. 查询计划分析
@@ -268,6 +276,8 @@ print(result.to_pandas())
 | `sort(column, desc)`   | 排序                | `df.sort("date", desc=True)`        |
 | `groupby(*columns)`    | 分组                | `df.groupby("category")`            |
 | `join(other, on, how)` | 连接                | `df.join(df2, on="id", how="left")` |
+| `pivot(group_by, pivot_col, value_col, agg_fn)` | 透视（长转宽，交叉表） | `df.pivot("cat", "prod", "amt", "sum")` |
+| `unpivot(ids, values)` | 逆透视（宽转长，melt）   | `df.unpivot("id", ["q1","q2"])`     |
 | `collect()`            | 执行并返回 Arrow Table | `df.collect()`                      |
 
 ***
@@ -315,6 +325,10 @@ result = lake.export(
 | `version`      | `int \| None`       | 数据集版本号，`None` 使用最新版                |
 | `compression`  | `str \| None`       | Parquet 压缩编码（snappy, gzip, zstd 等） |
 | `overwrite`    | `bool`              | 是否覆盖已有文件（默认 `False`）               |
+
+**异步导出（REST）**：通过 `POST /api/v1/datasets/{name}/export` 异步导出大数据集，立即返回 `202` + `task_id`，随后用 `GET /{name}/export/{task_id}/status` 轮询状态、`GET /{name}/export/{task_id}/download` 下载结果。请求体 `ExportRequest` 必填 `output_path`（相对路径，禁止 `..` / 绝对路径 / 空字节）。
+
+**多目标导出**：`POST /api/v1/datasets/{name}/export-to`（同步）通过 Daft 将数据集导出到外部目标，支持 `parquet` / `csv` / `json` / `iceberg` / `clickhouse` 五种格式，请求体 `target_uri` + `format` 必填。
 
 ***
 

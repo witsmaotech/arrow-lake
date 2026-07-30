@@ -1,0 +1,395 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>数据质量与去重 · Arrow Lake 文档</title>
+<link rel="stylesheet" href="../assets/tokens.css"/>
+<link rel="stylesheet" href="../assets/app.css"/>
+<link rel="stylesheet" href="../assets/landing.css"/>
+<link rel="stylesheet" href="docs.css"/>
+</head>
+<body>
+<nav class="lnav">
+  <a class="brand" href="../index.html"><span class="brand-mark">AL</span><span><b class="brand-name">Arrow Lake</b><span class="brand-sub">文档</span></span></a>
+  <div class="lnav-links">
+    <a href="index.html">文档中心</a>
+    <a href="../architecture.html">架构文档</a>
+  </div>
+  <div class="lnav-cta"><a class="btn btn-primary btn-sm" href="../system.html">打开控制台 →</a></div>
+</nav>
+<div class="subnav">
+  <a href="index.html">文档中心</a><span class="crumb-sep">/</span><a href="quality.html" style="color:var(--teal-bright)">数据质量</a>
+  <span class="pager-spacer"></span>
+  <div class="prevnext">
+    <a href="index.html"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg><span class="lbl">目录</span></a>
+    <a href="deployment.html"><span class="lbl">下一章</span><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+  </div>
+</div>
+
+<header class="tut-hero">
+  <div class="tut-hero-inner">
+    <span class="num-badge">第 11 章 · 质量</span>
+    <h1>数据质量与去重</h1>
+    <p class="sub">使用 Arrow Lake 的质量过滤和内容去重管线，确保入库数据的完整性和唯一性。覆盖精确 / 感知 / MinHash / NeMo Curator 四级去重、声明式规则引擎、死信队列与 Gravitino 治理。</p>
+    <div class="tut-meta">
+      <span><i></i>难度 · 中级</span>
+      <span><i></i>耗时 · 15 分钟</span>
+      <span><i></i>依赖 · arrow-lake[dedup] · imagehash（可选）</span>
+    </div>
+  </div>
+</header>
+
+<article class="tut-body">
+  <p>数据质量是检索与分析可信度的基石。Arrow Lake 把<strong>质量过滤、多策略去重、声明式规则、死信队列、质量画像、治理策略</strong>收敛到统一的 facade 与 REST 端点之下。</p>
+
+  <h2><span class="hn">1</span>质量过滤器</h2>
+  <p><code>quality_filter()</code> 对数据集运行所有已注册的质量过滤器，返回一份聚合报告。</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">quality_filter.py</span></figcaption><pre><code><span class="c-kw">from</span> arrow_lake <span class="c-kw">import</span> Lake
+
+lake = Lake(base_uri=<span class="c-str">"./data"</span>)
+
+<span class="c-rem"># 运行全部已注册过滤器 (AND 模式)</span>
+report = lake.quality_filter(<span class="c-str">"articles"</span>, mode=<span class="c-str">"all"</span>)
+<span class="c-kw">print</span>(f<span class="c-str">"通过：{report.passed}, 拒绝：{report.rejected}"</span>)
+<span class="c-rem"># 通过：9420, 拒绝：580</span>
+
+rate = report.overall_pass_rate()       <span class="c-rem"># 94.2</span>
+<span class="c-kw">print</span>(f<span class="c-str">"通过率：{rate:.1f}%"</span>)
+
+<span class="c-kw">for</span> detail <span class="c-kw">in</span> report.per_filter_breakdown():
+    <span class="c-kw">print</span>(f<span class="c-str">"  {detail['filter_name']}: 通过 {detail['passed_count']}, 拒绝 {detail['rejected_count']}"</span>)
+
+payload = report.to_json()   <span class="c-rem"># 兼容 Metaflow Cards</span></code></pre></figure>
+  <h3>参数说明</h3>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>参数</th><th>类型</th><th>默认值</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><code>dataset_name</code></td><td><code>str</code></td><td>(必填)</td><td>数据集名称</td></tr>
+      <tr><td><code>active_filters</code></td><td><code>str</code></td><td>配置值</td><td>逗号分隔的过滤器名，空串使用全部</td></tr>
+      <tr><td><code>mode</code></td><td><code>str</code></td><td><code>"all"</code></td><td><code>all</code> = AND（全部通过），<code>any</code> = OR</td></tr>
+    </tbody>
+  </table></div>
+  <p><code>QualityReport</code> 是 <code>frozen dataclass</code>，含 <code>total</code> / <code>passed</code> / <code>rejected</code> / <code>filter_results</code> / <code>schema_rejected</code> / <code>duration_seconds</code> 字段。</p>
+
+  <h2><span class="hn">2</span>内置过滤器</h2>
+  <p>两个内置过滤器可通过 <code>configs/dev.yaml</code> 的 <code>quality</code> 段调整阈值。运行前会先做 schema 验证：<code>lenient</code>（默认，丢弃未知列）或 <code>strict</code>（拒绝未知列与类型不匹配）。</p>
+  <h3>TextLengthFilter</h3>
+  <p>过滤文本长度不满足要求的行，要求数据集含 <code>text_content</code> 列。</p>
+  <figure class="code"><figcaption><span class="lang">yaml</span><span class="file">configs/dev.yaml</span></figcaption><pre><code>quality:
+  text_min_chars: <span class="c-str">1</span>           <span class="c-rem"># 最少字符数</span>
+  text_max_chars: <span class="c-kw">null</span>        <span class="c-rem"># 最大字符数 (null = 不限制)</span></code></pre></figure>
+  <h3>ImageResolutionFilter</h3>
+  <p>过滤图片分辨率低于阈值的行，要求列名为 <code>image_data</code> 且值为可解码字节。</p>
+  <figure class="code"><figcaption><span class="lang">yaml</span><span class="file">图片阈值</span></figcaption><pre><code>quality:
+  image_min_width: <span class="c-str">64</span>         <span class="c-rem"># 最小宽度 (像素)</span>
+  image_min_height: <span class="c-str">64</span>        <span class="c-rem"># 最小高度 (像素)</span></code></pre></figure>
+
+  <h2><span class="hn">3</span>精确去重（SHA-256）</h2>
+  <p><code>deduplicate()</code> 默认使用 SHA-256 哈希进行精确去重，适用于文本和二进制数据。</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">exact_dedup.py</span></figcaption><pre><code><span class="c-rem"># 精确去重：移除完全相同的行</span>
+result = lake.deduplicate(<span class="c-str">"articles"</span>, strategy=<span class="c-str">"exact"</span>, action=<span class="c-str">"remove"</span>)
+<span class="c-kw">print</span>(f<span class="c-str">"唯一：{result.unique_rows}, 重复：{result.duplicates_found}"</span>)
+<span class="c-rem"># 唯一：8750, 重复：1250 / 总输入：10000</span>
+
+<span class="c-rem"># flag 模式：保留所有行，新增 is_duplicate 列标记</span>
+result = lake.deduplicate(<span class="c-str">"articles"</span>, strategy=<span class="c-str">"exact"</span>, action=<span class="c-str">"flag"</span>)
+<span class="c-kw">print</span>(result.table.column(<span class="c-str">"is_duplicate"</span>).to_pylist())
+<span class="c-rem"># [False, False, True, False, True, ...]</span></code></pre></figure>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th><code>action</code> 值</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><code>"flag"</code></td><td>保留所有行，新增 <code>is_duplicate</code> 布尔列标记重复</td></tr>
+      <tr><td><code>"remove"</code></td><td>直接从结果表移除重复行，返回去重后的表</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2><span class="hn">4</span>感知去重（pHash）</h2>
+  <p>对于图片数据集，使用感知哈希（pHash）检测视觉相似但非完全相同的图片。底层用 <code>imagehash</code> 计算 <code>phash</code>，再比较 Hamming 距离。</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">perceptual_dedup.py</span></figcaption><pre><code><span class="c-rem"># 感知去重：基于 pHash Hamming 距离</span>
+result = lake.deduplicate(
+    <span class="c-str">"photos"</span>, strategy=<span class="c-str">"perceptual"</span>,
+    perceptual_threshold=<span class="c-str">10</span>, action=<span class="c-str">"remove"</span>,
+)
+
+<span class="c-rem"># 精确 + 感知两阶段</span>
+result = lake.deduplicate(
+    <span class="c-str">"photos"</span>, strategy=<span class="c-str">"both"</span>,
+    perceptual_threshold=<span class="c-str">10</span>, action=<span class="c-str">"flag"</span>,
+)</code></pre></figure>
+  <h3>pHash 阈值参考</h3>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>阈值</th><th>语义</th></tr></thead>
+    <tbody>
+      <tr><td><code>0</code></td><td>完全相同的图片</td></tr>
+      <tr><td><code>5</code></td><td>轻微裁剪 / 压缩变体</td></tr>
+      <tr><td><code>10</code>（默认）</td><td>明显缩放 / 水印 / 颜色偏移</td></tr>
+      <tr><td><code>20</code></td><td>宽松模式，允许较大视觉差异</td></tr>
+    </tbody>
+  </table></div>
+  <div class="callout warn"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>依赖说明</div><p>感知去重需要 <code>imagehash</code> 库，通过 <code>pip install arrow-lake[dedup]</code> 安装。</p></div>
+
+  <h2><span class="hn">5</span>MinHash 近似去重（CPU datasketch）</h2>
+  <p>除精确 SHA-256 和感知 pHash 外，<code>ContentDeduplicator</code> 还内置 <strong>MinHash LSH</strong> 近似去重（<code>quality/dedup.py</code>），基于 CPU 版 <code>datasketch</code>，用于检测<strong>语义近重复</strong>文本（改写、少量编辑的变体），无需 GPU。</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">minhash_dedup.py</span></figcaption><pre><code><span class="c-kw">from</span> arrow_lake.quality.dedup <span class="c-kw">import</span> ContentDeduplicator
+
+deduper = ContentDeduplicator(
+    strategy=<span class="c-str">"minhash"</span>,      <span class="c-rem"># MinHash LSH 近似去重</span>
+    action=<span class="c-str">"flag"</span>,
+    text_column=<span class="c-str">"text_content"</span>,  <span class="c-rem"># strategy="minhash" 时必填</span>
+    ngram_size=<span class="c-str">5</span>,            <span class="c-rem"># 字符 n-gram shingling 大小</span>
+    num_hashes=<span class="c-str">128</span>,          <span class="c-rem"># MinHash 置换数 (num_perm)</span>
+    threshold=<span class="c-str">0.8</span>,           <span class="c-rem"># Jaccard 相似度阈值，高于此视为近重复</span>
+)
+result = deduper.deduplicate(table)</code></pre></figure>
+  <div class="callout warn"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>陷阱：YAML 不接受 minhash</div><p><code>QualityConfig.dedup_strategy</code> 的 validator 只允许 <code>exact</code> / <code>perceptual</code> / <code>both</code>，写 <code>minhash</code> 会触发 <code>ValidationError</code>。MinHash <strong>只能编程式调用</strong> <code>ContentDeduplicator(strategy="minhash", ...)</code>，不能通过 <code>dedup_strategy: minhash</code> 配置。大规模语料（&gt;1M 行）需 GPU 时用 NeMo Curator。</p></div>
+
+  <h2><span class="hn">6</span>NeMo Curator 集成（GPU 加速 MinHash LSH）</h2>
+  <p>对于大规模文本去重，Arrow Lake 支持通过 NeMo Curator 进行 GPU 加速的 MinHash LSH 近似去重（<code>pip install arrow-lake[nemo-curator]</code>）。</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">nemo_dedup.py</span></figcaption><pre><code><span class="c-kw">from</span> arrow_lake.quality.nemo_curator <span class="c-kw">import</span> NeMoDeduplicator, NeMoCuratorFilter
+
+deduper = NeMoDeduplicator(
+    ngram_size=<span class="c-str">5</span>, num_hashes=<span class="c-str">128</span>, threshold=<span class="c-str">0.8</span>,
+    text_column=<span class="c-str">"text_content"</span>,
+)
+<span class="c-rem"># GPU 可用时自动使用 MinHash LSH，否则回退到 SHA-256 精确去重</span>
+unique_table, dup_table = deduper.deduplicate(table)
+<span class="c-kw">print</span>(f<span class="c-str">"GPU 加速：{deduper.using_gpu}"</span>)
+
+scorer = NeMoCuratorFilter(classifiers=(<span class="c-str">"quality"</span>,), threshold=<span class="c-str">0.5</span>, batch_size=<span class="c-str">64</span>)
+passed_table, rejected_table = scorer.filter(table)</code></pre></figure>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">GPU overlay</span></figcaption><pre><code>docker compose -f deploy/docker-compose.yml \
+              -f deploy/docker-compose.gpu.yml up -d</code></pre></figure>
+
+  <h2><span class="hn">7</span>死信队列</h2>
+  <p>质量过滤和 schema 验证中被拒绝的行会进入死信队列（Dead Letter Queue），支持重试、解决和清理。状态流转：<code>pending</code> → <code>retrying</code> → <code>pending</code>（失败）/ <code>resolved</code>；也可直接 <code>pending</code> → <code>permanent</code>。</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">dead_letter.py</span></figcaption><pre><code><span class="c-kw">from</span> arrow_lake.ingest.dead_letter <span class="c-kw">import</span> IngestDeadLetterQueue
+
+dlq = IngestDeadLetterQueue(base_dir=<span class="c-str">"./data"</span>)
+<span class="c-kw">print</span>(dlq.stats)
+<span class="c-rem"># {"pending": 12, "resolved": 3, "permanent": 1, "total": 16}</span>
+
+<span class="c-kw">for</span> item <span class="c-kw">in</span> dlq.list_items(status=<span class="c-str">"pending"</span>):
+    <span class="c-kw">print</span>(f<span class="c-str">"{item.file_path}: {item.last_error}"</span>)
+
+dlq.retry(<span class="c-str">"s3://raw/broken_doc.pdf"</span>)              <span class="c-rem"># 重试（attempt_count 自增）</span>
+dlq.resolve(<span class="c-str">"s3://raw/broken_doc.pdf"</span>)            <span class="c-rem"># 手动标记已解决</span>
+dlq.mark_permanent(<span class="c-str">"s3://raw/corrupt.bin"</span>, reason=<span class="c-str">"文件头损坏"</span>)
+removed = dlq.purge(resolved=<span class="c-kw">True</span>, permanent=<span class="c-kw">True</span>)</code></pre></figure>
+
+  <h2><span class="hn">8</span>质量规则引擎（v1.4.0）</h2>
+  <p>声明式 <code>QualityRuleEngine</code> 用可配置规则替代硬编码过滤器，支持从 JSON、YAML 或 REST API 加载。</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">rule_engine.py</span></figcaption><pre><code><span class="c-kw">from</span> arrow_lake.quality.rules <span class="c-kw">import</span> QualityRuleEngine, RuleDefinition
+<span class="c-kw">import</span> pyarrow <span class="c-kw">as</span> pa
+
+table = pa.table({
+    <span class="c-str">"text_content"</span>: [<span class="c-str">"good article"</span>, <span class="c-str">"hi"</span>, <span class="c-str">"another good one"</span>, <span class="c-str">"x"</span>],
+    <span class="c-str">"score"</span>: [<span class="c-str">0.9</span>, <span class="c-str">0.1</span>, <span class="c-str">0.85</span>, <span class="c-str">0.05</span>],
+})
+
+engine = QualityRuleEngine()
+engine.add_rule(RuleDefinition(
+    name=<span class="c-str">"reject_short_text"</span>, column=<span class="c-str">"text_content"</span>,
+    check=<span class="c-str">"length"</span>, params={<span class="c-str">"min"</span>: <span class="c-str">3</span>}, action=<span class="c-str">"reject"</span>,
+    message=<span class="c-str">"Text too short (min={min} chars)"</span>,
+))
+engine.add_rule(RuleDefinition(
+    name=<span class="c-str">"flag_low_score"</span>, column=<span class="c-str">"score"</span>,
+    check=<span class="c-str">"range"</span>, params={<span class="c-str">"min"</span>: <span class="c-str">0.5</span>}, action=<span class="c-str">"flag"</span>,
+))
+
+results = engine.evaluate(table)                       <span class="c-rem"># 评估但不修改</span>
+filtered, results = engine.apply(table)                <span class="c-rem"># 应用：移除 reject/remove 行</span>
+<span class="c-kw">print</span>(f<span class="c-str">"{table.num_rows} → {filtered.num_rows} rows"</span>)</code></pre></figure>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>Check</th><th>参数</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><code>length</code></td><td><code>min</code>, <code>max</code></td><td>字符串长度范围</td></tr>
+      <tr><td><code>range</code></td><td><code>min</code>, <code>max</code></td><td>数值范围</td></tr>
+      <tr><td><code>regex</code></td><td><code>pattern</code>, <code>invert</code></td><td>正则匹配（invert=True 匹配不满足的）</td></tr>
+      <tr><td><code>duplicate</code></td><td>—</td><td>精确哈希重复检测</td></tr>
+    </tbody>
+  </table></div>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>Action</th><th><code>evaluate()</code> 效果</th><th><code>apply()</code> 效果</th></tr></thead>
+    <tbody>
+      <tr><td><code>reject</code> / <code>remove</code></td><td>报告违规数量</td><td>移除违规行</td></tr>
+      <tr><td><code>flag</code></td><td>报告违规数量</td><td>保留行（仅作标记）</td></tr>
+    </tbody>
+  </table></div>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">REST API 应用规则</span></figcaption><pre><code>curl -X POST http://localhost:8000/api/v1/datasets/articles/quality/rules \
+  -H <span class="c-str">"X-API-Key: your-key"</span> -H <span class="c-str">"Content-Type: application/json"</span> \
+  -d <span class="c-str">'{"rules": [
+    {"name": "min_len", "column": "text_content", "check": "length", "params": {"min": 10}, "action": "reject"},
+    {"name": "no_dupes", "column": "text_content", "check": "duplicate", "action": "remove"}
+  ]}'</span></code></pre></figure>
+
+  <h2><span class="hn">9</span>质量画像与评分</h2>
+  <p><code>QualityProfiler</code>（<code>quality/profiler.py</code>）对数据集做整体质量画像，输出 <code>DatasetQualityProfile</code>，含 <code>overall_quality_score</code>（0.0–1.0）和各维度统计（空值率、基数、分布等）。</p>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">profiler.py</span></figcaption><pre><code><span class="c-kw">from</span> arrow_lake.quality.profiler <span class="c-kw">import</span> QualityProfiler
+
+profiler = QualityProfiler()
+profile = profiler.profile(table, dataset_name=<span class="c-str">"articles"</span>)
+<span class="c-kw">print</span>(profile.overall_quality_score)   <span class="c-rem"># 0.0–1.0</span></code></pre></figure>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">REST 质量画像</span></figcaption><pre><code>curl http://localhost:8000/api/v1/datasets/articles/quality/profile -H <span class="c-str">"X-API-Key: your-key"</span></code></pre></figure>
+
+  <h2><span class="hn">10</span>质量 REST API 全景</h2>
+  <p><code>routers/quality.py</code> 暴露的端点（前缀 <code>/api/v1/datasets/{name}/quality</code>）：</p>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>方法</th><th>端点</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><code>POST</code></td><td><code>/quality/filter</code></td><td>运行质量过滤器，返回聚合报告</td></tr>
+      <tr><td><code>GET</code></td><td><code>/quality/report</code></td><td>获取上一次质量过滤报告</td></tr>
+      <tr><td><code>POST</code></td><td><code>/quality/deduplicate</code></td><td>对数据集去重（exact/perceptual/both）</td></tr>
+      <tr><td><code>POST</code></td><td><code>/quality/rules</code></td><td>应用声明式规则引擎</td></tr>
+      <tr><td><code>GET</code></td><td><code>/quality/profile</code></td><td>质量画像与评分</td></tr>
+      <tr><td><code>POST</code></td><td><code>/quality/llm_label</code> / <code>/extract</code></td><td>LLM 富化：打标签 / 结构化抽取（异步 202）</td></tr>
+      <tr><td><code>POST</code></td><td><code>/quality/mask-preview</code></td><td>预览脱敏效果（function/columns）</td></tr>
+    </tbody>
+  </table></div>
+  <p><code>llm_label</code> 与 <code>extract</code> 走 fire-and-forget 异步任务（<code>status_code=202</code>），立即返回 <code>task_id</code>，通过 <code>GET /api/v1/tasks/{task_id}/status</code> 轮询结果。</p>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">脱敏预览 + LLM 标注</span></figcaption><pre><code><span class="c-rem"># mask-preview（function 必填：redact|hash|partial|nullify）</span>
+curl -X POST http://localhost:8000/api/v1/datasets/hr_data/quality/mask-preview \
+  -H <span class="c-str">"X-API-Key: your-key"</span> -H <span class="c-str">"Content-Type: application/json"</span> \
+  -d <span class="c-str">'{"columns": ["ssn", "email"], "function": "partial"}'</span>
+
+<span class="c-rem"># 异步 LLM 打标签（立即返回 task_id）</span>
+curl -X POST http://localhost:8000/api/v1/datasets/articles/quality/llm_label \
+  -H <span class="c-str">"X-API-Key: your-key"</span> -H <span class="c-str">"Content-Type: application/json"</span> \
+  -d <span class="c-str">'{"text_column": "text_content", "label_column": "sentiment", "prompt": "positive|negative|neutral"}'</span>
+<span class="c-rem"># =&gt; 202 {"task_id": "...", "status": "pending"}</span></code></pre></figure>
+
+  <h2><span class="hn">11</span>行 / 列级访问控制</h2>
+  <p>行级和列级 ACL 限制每个角色在查询和搜索结果中能看到的数据。ACL 过滤自动应用于所有查询（OLAP / 元数据 / Daft）和搜索（向量 / 全文 / 混合 / 分面 / 集成）端点——客户端无需改动。</p>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">设置 ACL</span></figcaption><pre><code><span class="c-rem"># 列级：viewer 只能看到 title 和 summary 列</span>
+curl -X PUT http://localhost:8000/api/v1/admin/acl/articles \
+  -H <span class="c-str">"X-API-Key: admin-key"</span> -H <span class="c-str">"Content-Type: application/json"</span> \
+  -d <span class="c-str">'{"role": "viewer", "visible_columns": ["title", "summary"]}'</span>
+
+<span class="c-rem"># 行级：viewer 只能看到 region == US 的行</span>
+curl -X PUT http://localhost:8000/api/v1/admin/acl/sales \
+  -H <span class="c-str">"X-API-Key: admin-key"</span> -H <span class="c-str">"Content-Type: application/json"</span> \
+  -d <span class="c-str">'{"role": "viewer", "row_filter": "region == US"}'</span>
+
+<span class="c-rem"># 组合：列裁剪 + 行过滤</span>
+curl -X PUT http://localhost:8000/api/v1/admin/acl/hr_data \
+  -H <span class="c-str">"X-API-Key: admin-key"</span> -H <span class="c-str">"Content-Type: application/json"</span> \
+  -d <span class="c-str">'{"role": "viewer", "visible_columns": ["name", "department"], "row_filter": "department == Engineering"}'</span></code></pre></figure>
+  <div class="callout"><div class="ch">工作原理</div><p><strong>列裁剪</strong>：不可见列在结果序列化前被移除；<strong>行过滤</strong>：用 <code>column op value</code> 表达式（<code>==</code>、<code>!=</code>、<code>&lt;</code>、<code>&lt;=</code>、<code>&gt;</code>、<code>&gt;=</code>）过滤；<strong>Admin 绕过</strong>：<code>admin</code> 角色始终能看到所有数据；<strong>无 ACL = 不过滤</strong>：未配置时结果原样返回。</p></div>
+
+  <h2><span class="hn">12</span>Gravitino 标签与策略（v1.4.1）</h2>
+  <p>Arrow Lake 集成 <strong>Apache Gravitino</strong> 实现元数据驱动的数据治理。<code>GravitinoTagService</code> 和 <code>GravitinoPolicyService</code> 提供数据分类、保留管理和列脱敏功能。当 Gravitino 不可用时优雅降级（返回空列表而非报错）。</p>
+  <h3>数据分类（GravitinoTagService）</h3>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">tag_service.py</span></figcaption><pre><code><span class="c-kw">from</span> arrow_lake.quality.gravitino_tags <span class="c-kw">import</span> GravitinoTagService
+
+tag_svc = GravitinoTagService(config.gravitino)
+
+<span class="c-kw">print</span>(GravitinoTagService.SENSITIVE)   <span class="c-rem"># "sensitive"</span>
+<span class="c-kw">print</span>(GravitinoTagService.PII)         <span class="c-rem"># "pii"</span>
+
+tag_svc.create_tag(<span class="c-str">"internal_only"</span>, comment=<span class="c-str">"Internal use only"</span>)
+tag_svc.tag_table(<span class="c-str">"hr_data"</span>, [<span class="c-str">"sensitive"</span>, <span class="c-str">"pii"</span>])
+tag_svc.tag_column(<span class="c-str">"hr_data"</span>, <span class="c-str">"ssn"</span>, [<span class="c-str">"pii"</span>])
+tags = tag_svc.list_tags(<span class="c-str">"hr_data"</span>)            <span class="c-rem"># ["sensitive", "pii"]</span>
+tables = tag_svc.get_tables_by_tag(<span class="c-str">"pii"</span>)       <span class="c-rem"># ["hr_data", "customer_records"]</span></code></pre></figure>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>常量</th><th>值</th><th>用途</th></tr></thead>
+    <tbody>
+      <tr><td><code>SENSITIVE</code></td><td><code>"sensitive"</code></td><td>通用敏感数据标记</td></tr>
+      <tr><td><code>PII</code></td><td><code>"pii"</code></td><td>个人身份信息</td></tr>
+      <tr><td><code>FINANCIAL</code></td><td><code>"financial"</code></td><td>金融或支付相关数据</td></tr>
+      <tr><td><code>EXPIRES_30D</code></td><td><code>"expires:30d"</code></td><td>30 天后应清除的数据</td></tr>
+    </tbody>
+  </table></div>
+  <h3>保留策略与脱敏（GravitinoPolicyService）</h3>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">policy_service.py</span></figcaption><pre><code><span class="c-kw">from</span> arrow_lake.quality.gravitino_policies <span class="c-kw">import</span> GravitinoPolicyService
+
+policy_svc = GravitinoPolicyService(config.gravitino)
+policy_svc.create_retention_policy(<span class="c-str">"log_retention"</span>, days=<span class="c-str">90</span>)
+policy_svc.create_masking_policy(<span class="c-str">"email_mask"</span>, columns=[<span class="c-str">"email"</span>, <span class="c-str">"phone"</span>])
+policy_svc.apply_policy(<span class="c-str">"email_mask"</span>, <span class="c-str">"customer_data"</span>)
+<span class="c-kw">print</span>(policy_svc.list_policies())   <span class="c-rem"># ["log_retention", "email_mask"]</span></code></pre></figure>
+  <p>标签和策略也可通过 <code>/api/v1/metadata/*</code> REST 端点管理（详见 REST API 章节）。当 <code>gravitino.enabled</code> 为 <code>false</code>（默认）时，这些端点返回 503，治理服务静默完成不连接，质量过滤 / 去重 / ACL 不受影响。</p>
+
+  <h2><span class="hn">13</span>数据准备：清洗与 LLM 富化</h2>
+  <h3>结构化清洗 <code>POST /clean</code></h3>
+  <p>把声明式清洗步骤（DuckDB 语义）编译成 SQL，再经 <code>restore_dataset</code> 写回 Lance，支持按列链式算子。</p>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">语义清洗写回</span></figcaption><pre><code>curl -X POST http://localhost:8000/api/v1/datasets/sales/clean \
+  -H <span class="c-str">"X-API-Key: your-key"</span> -H <span class="c-str">"Content-Type: application/json"</span> \
+  -d <span class="c-str">'{"steps": [
+        {"column": "revenue", "op": "fill_null", "value": 0},
+        {"column": "region",  "op": "trim"},
+        {"column": "email",   "op": "lowercase"}
+      ]}'</span></code></pre></figure>
+  <h3>字段注释（v1.9.3）</h3>
+  <p><code>ingest/field_comments.py</code> 支持给数据集字段加人类可读注释（PyArrow 直读 parquet/CSV sidecar，写入 Lance schema <code>comment</code> 元数据）。摄入时由 <code>_write_table</code> 钩子自动捕获，后续 <code>GET /schema</code> 会回显。</p>
+  <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">字段注释</span></figcaption><pre><code>curl -X POST http://localhost:8000/api/v1/datasets/articles/schema/annotate \
+  -H <span class="c-str">"X-API-Key: your-key"</span> -H <span class="c-str">"Content-Type: application/json"</span> \
+  -d <span class="c-str">'{"field": "text_content", "comment": "正文文本（已清洗，去 HTML 标签）"}'</span></code></pre></figure>
+
+  <h2><span class="hn">14</span>质量配置参考与最佳实践</h2>
+  <figure class="code"><figcaption><span class="lang">yaml</span><span class="file">完整 quality 配置</span></figcaption><pre><code>quality:
+  enabled: <span class="c-kw">true</span>
+  filter_mode: all                    <span class="c-rem"># all = AND, any = OR</span>
+  active_filters: <span class="c-str">""</span>                  <span class="c-rem"># 空 = 使用全部已注册过滤器</span>
+  schema_validation: lenient          <span class="c-rem"># lenient | strict</span>
+  text_min_chars: <span class="c-str">1</span>
+  text_max_chars: <span class="c-kw">null</span>
+  image_min_width: <span class="c-str">64</span>
+  image_min_height: <span class="c-str">64</span>
+  nemo_curator_enabled: <span class="c-kw">false</span>
+  dedup_enabled: <span class="c-kw">false</span>               <span class="c-rem"># 默认 false，去重需显式开启</span>
+  dedup_strategy: exact               <span class="c-rem"># exact | perceptual | both</span>
+  dedup_action: flag                  <span class="c-rem"># flag | remove</span>
+  dedup_perceptual_threshold: <span class="c-str">10</span>
+  dead_letter_enabled: <span class="c-kw">true</span></code></pre></figure>
+  <h3>何时用哪种去重策略</h3>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>场景</th><th>推荐策略</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td>文章 / 新闻 / 代码</td><td><code>exact</code></td><td>相同内容产生相同 SHA-256，精确高效</td></tr>
+      <tr><td>产品图片去重</td><td><code>perceptual</code>（threshold 5-10）</td><td>过滤不同尺寸 / 压缩率的同一商品图</td></tr>
+      <tr><td>社交媒体图片</td><td><code>perceptual</code>（threshold 10-15）</td><td>允许滤镜 / 裁剪差异</td></tr>
+      <tr><td>中等文本近重复（改写 / 少量编辑）</td><td><code>minhash</code>（CPU，编程式）</td><td>检测 Jaccard 相似度近重复，无需 GPU</td></tr>
+      <tr><td>大规模文本语料（&gt;1M 行）</td><td><code>NeMoDeduplicator</code>（GPU）</td><td>MinHash LSH 近似去重，速度远超精确匹配</td></tr>
+      <tr><td>混合数据集（文本 + 图片）</td><td><code>both</code></td><td>先精确去重再感知去重，两阶段流水线</td></tr>
+    </tbody>
+  </table></div>
+  <h3>典型数据质量管线</h3>
+  <figure class="code"><figcaption><span class="lang">python</span><span class="file">quality_pipeline.py</span></figcaption><pre><code><span class="c-kw">from</span> arrow_lake <span class="c-kw">import</span> Lake
+<span class="c-kw">from</span> arrow_lake.ingest.dead_letter <span class="c-kw">import</span> IngestDeadLetterQueue
+
+lake = Lake.from_yaml(<span class="c-str">"configs/dev.yaml"</span>)
+
+<span class="c-rem"># 第一步：质量过滤</span>
+report = lake.quality_filter(<span class="c-str">"articles"</span>)
+<span class="c-kw">print</span>(f<span class="c-str">"质量通过率：{report.overall_pass_rate():.1f}%"</span>)
+
+<span class="c-rem"># 第二步：去重（flag 模式，先审查不删除）</span>
+result = lake.deduplicate(<span class="c-str">"articles"</span>, strategy=<span class="c-str">"exact"</span>, action=<span class="c-str">"flag"</span>)
+<span class="c-kw">print</span>(f<span class="c-str">"发现 {result.duplicates_found} 条重复"</span>)
+
+<span class="c-rem"># 第三步：审查后确认删除</span>
+<span class="c-kw">if</span> result.duplicates_found &gt; <span class="c-str">0</span>:
+    confirmed = lake.deduplicate(<span class="c-str">"articles"</span>, strategy=<span class="c-str">"exact"</span>, action=<span class="c-str">"remove"</span>)
+    <span class="c-kw">print</span>(f<span class="c-str">"去重完成，保留 {confirmed.unique_rows} 条"</span>)
+
+<span class="c-rem"># 第四步：检查死信队列</span>
+dlq = IngestDeadLetterQueue()
+<span class="c-kw">print</span>(f<span class="c-str">"失败项：{dlq.stats}"</span>)</code></pre></figure>
+  <div class="callout tip"><div class="ch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-9"/></svg>性能提示</div><p>质量过滤和去重对数据集进行全表扫描，建议在非高峰期运行；&gt;100 万行启用 NeMo Curator GPU 加速；<code>perceptual</code> 策略需解码图片字节计算 pHash，CPU 消耗较大；设置 <code>text_max_chars</code> 可提前过滤超长文本。</p></div>
+</article>
+
+<nav class="pager">
+  <a class="prev" href="rest-api.html"><span class="dir"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg> 上一章</span><span class="ttl">REST API 使用指南</span></a>
+  <a class="next" href="deployment.html"><span class="dir">下一章 <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span><span class="ttl">部署与运维</span></a>
+</nav>
+
+<footer class="footer">
+  <div class="footer-inner">
+    <div><b>Arrow Lake</b> · 数据质量与去重 · v1.9.6<br/><span class="muted mono" style="font-size:.7rem">© 2026 · MIT License</span></div>
+    <div class="muted" style="font-size:.75rem">自包含可离线运行 · 源自 docs/cookbook/11</div>
+  </div>
+</footer>
+</body>
+</html>

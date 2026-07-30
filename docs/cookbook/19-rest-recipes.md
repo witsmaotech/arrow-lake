@@ -15,8 +15,7 @@ AUTH="X-API-Key: $KEY"
 
 ## Recipe 1. Document Knowledge Base with Anti-Hallucination RAG
 
-Ingest PDFs/docs, let the pipeline auto-build the vector index, then ask questions
-with faithfulness verification.
+Ingest PDFs/docs, let the pipeline auto-build the vector index, then ask questions.
 
 ```bash
 # 1. Ingest documents (auto chunks + embeds + builds IVF_PQ index when ≥256 rows)
@@ -24,20 +23,27 @@ curl -X POST "$API/datasets/kb/ingest/documents" -H "$AUTH" \
   -F "files=@report.pdf" -F "files=@spec.md"
 # => {"success": true, "total_rows": 412, ...}
 
-# 2. RAG query — hybrid retrieval, ground the answer, verify faithfulness
+# 2. RAG query — default hybrid (vector + FTS via RRF); use_kg defaults true (injects graph context)
 curl -X POST "$API/rag/query" -H "$AUTH" -H "Content-Type: application/json" -d '{
-  "query": "What were the Q3 findings?",
-  "dataset": "kb",
+  "question": "What were the Q3 findings?",
+  "dataset_name": "kb",
   "retrieval_strategy": "hybrid"
 }'
-# Response carries: answer, citations[], support_ratio, unsupported[]
-# support_ratio ≈ 1.0 → well grounded; review `unsupported` for hallucinated claims.
+# Response: answer, citations[], retrieval_count, latency_ms
+# Pure-vector comparison: pass "use_kg": false to downgrade (no need to disable hugegraph.enabled)
 
-# 3. Streaming variant — first frame has citations, final frame has verification
+# 3. Streaming variant — first frame has citations, final frame has latency/verification
 curl -N -X POST "$API/rag/query/stream" -H "$AUTH" -H "Content-Type: application/json" -d '{
-  "query": "Summarize risks", "dataset": "kb"
+  "question": "Summarize risks", "dataset_name": "kb"
 }'
+
+# 4. (Optional) Enable faithfulness verification: set ARROW_LAKE__RAG__ENABLE_VERIFICATION=true,
+#    then the response additionally carries verification.{support_ratio, unsupported[]},
+#    marking per-sentence whether it is supported by the context
 ```
+
+> **Field names**: the request body uses `question` / `dataset_name` (not query/dataset);
+> `use_kg` defaults to true. GraphRAG auto-injects when hugegraph is enabled and degrades gracefully on failure.
 
 ## Recipe 2. Multimodal Image Search + Export
 
@@ -48,17 +54,19 @@ Build an image dataset, search by image, export the hits.
 curl -X POST "$API/datasets/products/ingest/images" -H "$AUTH" \
   -F "files=@red.jpg" -F "files=@blue.jpg"
 
-# 2. Embed a query image → vector, then search
-QV=$(curl -X POST "$API/embed/image" -H "$AUTH" -F "file=@query.jpg" | jq -r .vector)
+# 2. Embed a query image → vector (JSON body, images is a list of base64 strings), then search
+IMG=$(base64 -w0 query.jpg)
+QV=$(curl -X POST "$API/embed/image" -H "$AUTH" -H "Content-Type: application/json" -d "{
+  \"images\": [\"$IMG\"]
+}" | jq '.embeddings[0]')
 curl -X POST "$API/datasets/products/search/vector" -H "$AUTH" -H "Content-Type: application/json" -d "{
   \"query_vector\": $QV, \"top_k\": 8
 }"
 
-# 3. Export the dataset (async — 202 returns a task id)
+# 3. Export the dataset (async — 202 returns a task id; output_path is required)
 TID=$(curl -X POST "$API/datasets/products/export" -H "$AUTH" -H "Content-Type: application/json" \
-  -d '{"format":"parquet","columns":["id","uri"]}' | jq -r .task_id)
-curl "$API/datasets/products/export/$TID/status" -H "$AUTH"     # poll until done
-curl "$API/datasets/products/export/$TID/download" -H "$AUTH" -o products.parquet
+  -d '{"output_path":"exports/products.parquet","columns":["id","uri"]}' | jq -r .task_id)
+curl "$API/datasets/products/export/$TID/status" -H "$AUTH"     # poll until done; artifact lands at output_path
 ```
 
 ## Recipe 3. Governance Loop — Masking + Lineage + Audit
@@ -66,14 +74,14 @@ curl "$API/datasets/products/export/$TID/download" -H "$AUTH" -o products.parque
 Mask PII, preview the rule, trace lineage, audit the policy change.
 
 ```bash
-# 1. Preview a partial-mask rule before publishing
+# 1. Preview a partial-mask rule before publishing (reads first 5 rows; partial keeps first2/last2)
 curl -X POST "$API/datasets/customers/quality/mask-preview" -H "$AUTH" \
   -H "Content-Type: application/json" \
   -d '{"columns":["phone"],"function":"partial"}'
-# => {"phone": {"before": ["13812345678"], "after": ["138****5678"]}}
+# => {"phone": {"before": ["13812345678"], "after": ["13*******78"]}}
 
-# 2. Publish the policy (creation is audited automatically)
-curl -X POST "$API/gravitino/policies/masking" -H "$AUTH" -H "Content-Type: application/json" \
+# 2. Publish the policy (Gravitino policy; creation is audited automatically)
+curl -X POST "$API/metadata/policies/masking" -H "$AUTH" -H "Content-Type: application/json" \
   -d '{"name":"pii_mask","columns":["phone","email"],"function":"partial"}'
 
 # 3. Trace lineage (graph + column-level lineage on node click)
@@ -108,14 +116,18 @@ curl "$API/lineage/graph/sales" -H "$AUTH" | jq .stats
 Compare retrieval modes; let GraphRAG answer entity-relationship questions.
 
 ```bash
-# 1. Hybrid (vector + FTS via RRF) — cross-encoder (bge-reranker-v2-m3) reranks automatically
-curl -X POST "$API/datasets/docs/search/hybrid" -H "$AUTH" -H "Content-Type: application/json" -d '{
-  "query": "authentication dependency chain", "top_k": 10
-}'
+# 1. Hybrid (vector + FTS via RRF) — both query_vector and query_text are required
+QV=$(curl -X POST "$API/embed/text" -H "$AUTH" -H "Content-Type: application/json" -d '{
+  "texts": ["authentication dependency chain"]
+}' | jq '.embeddings[0]')
+curl -X POST "$API/datasets/docs/search/hybrid" -H "$AUTH" -H "Content-Type: application/json" -d "{
+  \"query_vector\": $QV, \"query_text\": \"authentication dependency chain\", \"top_k\": 10
+}"
+# The search path reranks with bge-reranker-v2-m3 by default (driven by SearchConfig.reranker_model, not a request param)
 
 # 2. GraphRAG — for "which X depends on Y" questions over the knowledge graph
-curl -X POST "$API/rag/query/graphrag" -H "$AUTH" -H "Content-Type: application/json" -d '{
-  "query": "Which systems depend on the auth service?", "dataset": "docs"
+curl -X POST "$API/kg/query/graphrag" -H "$AUTH" -H "Content-Type: application/json" -d '{
+  "question": "Which systems depend on the auth service?", "dataset": "docs"
 }'
 ```
 
