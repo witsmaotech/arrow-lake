@@ -17,9 +17,9 @@ dependencies = [
     "metaflow==2.19.22",
     "metaflow-ray==0.1.4",
     # Extension layer — exact pins from Story 1.2 Spike
-    "lancedb==0.33.0",
+    "lancedb==0.36.0",
     "pylance>=7.0.0",
-    "duckdb==1.5.2",
+    "duckdb==1.5.5",
     # Data models & config
     "pydantic>=2.10",
     "pydantic-settings>=2.7",

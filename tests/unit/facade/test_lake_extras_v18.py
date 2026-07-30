@@ -54,7 +54,7 @@ class TestLoadHfDataset:
         lake = Lake(base_uri=str(tmp_path))
         with patch("lancedb.connect") as mock_connect:
             mock_db = MagicMock()
-            mock_db.table_names.return_value = []
+            mock_db.list_tables.return_value = []
             mock_connect.return_value = mock_db
             with pytest.raises(ValueError, match="No tables"):
                 lake.load_hf_dataset("user/eval-set")
@@ -66,7 +66,7 @@ class TestLoadHfDataset:
         lake = Lake(base_uri=str(tmp_path))
         with patch("lancedb.connect") as mock_connect:
             mock_db = MagicMock()
-            mock_db.table_names.return_value = ["train"]
+            mock_db.list_tables.return_value = ["train"]
             mock_tbl = MagicMock()
             mock_tbl.to_arrow.return_value = pa.table({"x": [1, 2, 3]})
             mock_db.open_table.return_value = mock_tbl

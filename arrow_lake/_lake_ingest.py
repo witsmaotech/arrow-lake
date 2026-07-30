@@ -81,7 +81,7 @@ class _LakeIngestMixin:
 
         uri = repo_id if repo_id.startswith("hf://") else f"hf://datasets/{repo_id}"
         db = lancedb.connect(uri)
-        names = db.table_names()
+        names = db.list_tables()
         if not names:
             raise ValueError(f"No tables found in hf dataset '{repo_id}'")
         return db.open_table(table or names[0]).to_arrow()
