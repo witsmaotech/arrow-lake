@@ -99,8 +99,8 @@ class LocalEmbeddingEncoder:
         else:
             self._model = SentenceTransformer(self.model_name, device=device)
         dim_getter = getattr(
-            self._model, "get_sentence_embedding_dimension",
-            getattr(self._model, "get_embedding_dimension", None),
+            self._model, "get_embedding_dimension",
+            getattr(self._model, "get_sentence_embedding_dimension", None),
         )
         if dim_getter is None:
             raise EmbeddingError(
