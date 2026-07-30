@@ -94,7 +94,7 @@ info = lake.create_vector_index(
     vector_column="text_embedding",  # 向量列名
     index_type="IVF_FLAT",           # 更精确但更慢
     num_partitions=512,              # IVF 分区数
-    num_sub_vectors=32,              # PQ 子向量数 (IVF_PQ 专用)
+    num_sub_vectors=24,              # PQ 子向量数 (须为 8 的倍数，1024 维推荐 24)
     replace=True,                    # 替换已有索引
 )
 ```
@@ -114,7 +114,16 @@ print(f"覆盖列：{info.columns}")
 | ------------- | --------------- | --------------- | ----------- |
 | `IVF_PQ`      | IVF 倒排 + 乘积量化   | 大规模数据集 (>10K 行) | 默认选择，内存占用小  |
 | `IVF_FLAT`    | IVF 倒排 + 精确距离   | 中等规模，需要精度       | 无量化损失，内存占用大 |
-| `IVF_HNSW_PQ` | IVF + HNSW + PQ | 大规模 + 低延迟       | 构建成本最高      |
+| `IVF_HNSW_PQ` | IVF + HNSW + PQ | 大规模 + 低延迟       | 构建成本高      |
+| `IVF_HNSW_SQ` | IVF + HNSW + 标量量化 | 大规模 + 低延迟 + 较高精度 | 内存与精度的折中 |
+| `IVF_SQ`      | IVF + 标量量化      | 中大规模，精度优于 PQ    | 量化损失小于 PQ  |
+| `IVF_RQ`      | IVF + 残差量化      | 超大规模，极致压缩       | 内存最小，精度损失较大 |
+| `HNSW`        | 纯 HNSW 图索引     | 中小规模，最低延迟       | 内存占用大，无 IVF 粗筛 |
+
+> **建索引须知（v1.9.6）**：
+> - **最少 256 行**：IVF_PQ 等量化索引需 ≥256 行训练数据（`_PQ_MIN_TRAINING_ROWS`），不足抛 `VECTOR_INDEX_TOO_FEW_ROWS`；行数不足时向量检索退化为暴力扫描（仍可用）。auto-index 对 <256 行 WARN 跳过。
+> - **`lance_scan_mode: pyarrow_fallback`**：生产环境若 RAG/向量检索遇 DuckDB lance vector stream 的 Rust panic（worker 崩溃/502），设此值绕过（见 [12-部署](./12-deployment-zh.md)）。
+> - **多模态以图搜图**：图像用 CLIP/SigLIP 嵌入（`POST /embed/image` 或 SDK `lake.encode_text_clip()` 文搜图），再 `search(vector_column="image_embedding")`。
 
 ***
 
@@ -346,7 +355,7 @@ info = lake.rebuild_vector_index(
     vector_column="text_embedding",
     index_type="IVF_PQ",
     num_partitions=512,
-    num_sub_vectors=32,
+    num_sub_vectors=24,              # 1024 维推荐 24
 )
 print(f"重建完成：{info.index_type}, {info.num_indexed_rows} 行")
 ```

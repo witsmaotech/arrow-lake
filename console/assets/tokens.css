@@ -3,6 +3,12 @@
    Style: Soft UI Evolution · Dark variant · Density 8/10
    Do not write raw hex in components — consume these tokens.
    ============================================================ */
+
+/* —— Self-hosted JetBrains Mono (offline-ready; same-origin, no CDN) —— */
+@font-face{font-family:"JetBrains Mono";font-style:normal;font-weight:400;font-display:swap;src:url(fonts/jetbrains-mono-400.woff2) format("woff2")}
+@font-face{font-family:"JetBrains Mono";font-style:normal;font-weight:500;font-display:swap;src:url(fonts/jetbrains-mono-500.woff2) format("woff2")}
+@font-face{font-family:"JetBrains Mono";font-style:normal;font-weight:600;font-display:swap;src:url(fonts/jetbrains-mono-600.woff2) format("woff2")}
+
 :root{
   /* —— Ink (backgrounds, deep→raised) —— */
   --ink-950:#090D16;

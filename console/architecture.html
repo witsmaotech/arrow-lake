@@ -1,0 +1,521 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Arrow Lake · 产品架构设计文档</title>
+<link rel="stylesheet" href="assets/tokens.css"/>
+<link rel="stylesheet" href="assets/app.css"/>
+<link rel="stylesheet" href="assets/landing.css"/>
+<style>
+/* ===== doc page ===== */
+.doc-hero{position:relative;padding:var(--s7) var(--s6) var(--s6);overflow:hidden;border-bottom:1px solid var(--line);
+  background:radial-gradient(820px 420px at 82% -22%,rgba(20,184,166,.12),transparent 60%),radial-gradient(620px 340px at 8% 10%,rgba(56,189,248,.08),transparent 60%),var(--ink-950)}
+.doc-hero-inner{max-width:var(--content-max);margin:0 auto}
+.doc-hero h1{font-size:clamp(2rem,1.4rem+2.4vw,3rem);font-weight:800;letter-spacing:-.025em;margin:var(--s3) 0 var(--s2);line-height:1.08}
+.doc-hero .lede{font-size:1.05rem;color:var(--fg-md);max-width:68ch;margin:0 0 var(--s4)}
+.doc-meta{display:flex;gap:var(--s2);flex-wrap:wrap;align-items:center;color:var(--fg-lo);font-family:var(--font-mono);font-size:.72rem;margin-top:var(--s4)}
+.doc-meta span{display:inline-flex;align-items:center;gap:5px}
+.doc-meta i{width:5px;height:5px;border-radius:50%;background:var(--teal);font-style:normal}
+.jumps{display:flex;gap:var(--s2);flex-wrap:wrap;margin-top:var(--s5)}
+.jumps a{font-family:var(--font-mono);font-size:.72rem;padding:5px 10px;border-radius:var(--r-sm);background:var(--ink-800);border:1px solid var(--line);color:var(--fg-md)}
+.jumps a:hover{text-decoration:none;color:var(--teal-bright);border-color:var(--teal)}
+
+.doc-shell{max-width:var(--content-max);margin:0 auto;display:grid;grid-template-columns:216px 1fr;gap:var(--s6);padding:var(--s6) var(--s6) var(--s7);align-items:start}
+.doc-toc{position:sticky;top:76px;max-height:calc(100vh - 92px);overflow:auto}
+.doc-toc .toc-title{font-family:var(--font-mono);font-size:var(--fs-cap);text-transform:uppercase;letter-spacing:.08em;color:var(--fg-lo);margin:0 0 var(--s3);padding:0 10px}
+.doc-toc ol{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:1px}
+.doc-toc a{display:block;padding:6px 10px;border-radius:var(--r-sm);color:var(--fg-md);font-size:.79rem;border-left:2px solid transparent;line-height:1.4;transition:all var(--dur-1)}
+.doc-toc a:hover{color:var(--fg-hi);text-decoration:none;background:var(--ink-850)}
+.doc-toc a.active{color:var(--teal-bright);border-left-color:var(--teal);background:var(--teal-soft)}
+.doc-main{min-width:0}
+
+.doc-sec{padding-top:var(--s6);margin-top:var(--s6);border-top:1px solid var(--line-soft)}
+.doc-sec:first-child{border-top:0;margin-top:0;padding-top:0}
+.doc-sec h2{font-size:clamp(1.3rem,1rem+.8vw,1.75rem);margin:0 0 var(--s3);font-weight:700;letter-spacing:-.01em;display:flex;align-items:center;gap:var(--s3);flex-wrap:wrap}
+.doc-sec h2 .num{font-family:var(--font-mono);font-size:.85rem;color:var(--teal-bright);background:var(--teal-soft);border:1px solid rgba(45,212,191,.3);border-radius:var(--r-sm);padding:3px 9px;flex-shrink:0}
+.doc-sec h3{font-size:1rem;margin:var(--s5) 0 var(--s2);font-weight:600;color:var(--fg-hi);display:flex;align-items:center;gap:8px}
+.doc-sec h3 .tag{font-size:.6rem}
+.doc-sec p{color:var(--fg-md);line-height:1.72;margin:0 0 var(--s3)}
+.doc-sec strong{color:var(--fg-hi)}
+.doc-sec ul.bul{margin:var(--s2) 0 var(--s3);padding-left:18px;color:var(--fg-md);line-height:1.7}
+.doc-sec ul.bul li{margin-bottom:4px}
+.doc-sec code{font-family:var(--font-mono);font-size:.78em;background:var(--ink-900);border:1px solid var(--line);border-radius:4px;padding:1px 5px;color:var(--teal-bright)}
+
+/* tables */
+.tbl{width:100%;border-collapse:collapse;font-size:.8rem;border:1px solid var(--line);border-radius:var(--r-md);overflow:hidden;margin:var(--s3) 0}
+.tbl th,.tbl td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--line-soft);vertical-align:top}
+.tbl th{background:var(--ink-900);color:var(--fg-lo);font-family:var(--font-mono);font-size:.66rem;text-transform:uppercase;letter-spacing:.06em;font-weight:600;white-space:nowrap}
+.tbl tr:last-child td{border-bottom:0}
+.tbl tr:hover td{background:var(--ink-850)}
+.tbl td code{font-size:.74rem;border:none;background:transparent;padding:0;color:var(--info)}
+.tbl .mono{font-family:var(--font-mono);font-size:.74rem;color:var(--fg-md)}
+.tbl-wrap{overflow-x:auto;border-radius:var(--r-md)}
+
+/* layer rows */
+.layer-row{display:grid;grid-template-columns:172px 1fr;gap:var(--s4);align-items:start;padding:var(--s4);border:1px solid var(--line);border-left:3px solid var(--c);border-radius:var(--r-md);background:linear-gradient(90deg,color-mix(in srgb,var(--c) 8%,var(--ink-850)),var(--ink-900));margin-bottom:var(--s2);transition:transform var(--dur-2) var(--ease)}
+.layer-row:hover{transform:translateX(4px)}
+.layer-row .lname{font-weight:700;color:var(--c);display:flex;flex-direction:column;gap:3px}
+.layer-row .lname small{font-family:var(--font-mono);font-size:.62rem;color:var(--fg-lo);font-weight:400;letter-spacing:.04em;text-transform:uppercase}
+.layer-row .ldesc{color:var(--fg-md);font-size:.82rem;line-height:1.65}
+
+/* step rail */
+.steps{position:relative;margin:var(--s4) 0;padding-left:4px}
+.step{position:relative;padding:0 0 var(--s4) 34px}
+.step::before{content:"";position:absolute;left:11px;top:26px;bottom:0;width:2px;background:var(--line-strong)}
+.step:last-child{padding-bottom:0}
+.step:last-child::before{display:none}
+.step .step-n{position:absolute;left:0;top:0;width:24px;height:24px;border-radius:50%;background:var(--ink-800);border:2px solid var(--teal);color:var(--teal-bright);font-family:var(--font-mono);font-size:.68rem;font-weight:700;display:grid;place-items:center}
+.step.tail .step-n{border-color:var(--ok);color:var(--ok)}
+.step .step-t{font-weight:600;color:var(--fg-hi);font-size:.88rem;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.step .step-d{color:var(--fg-md);font-size:.8rem;margin-top:3px;line-height:1.6}
+
+/* timeline */
+.tl{position:relative;padding-left:24px;margin:var(--s4) 0}
+.tl::before{content:"";position:absolute;left:7px;top:6px;bottom:6px;width:2px;background:linear-gradient(180deg,var(--teal),var(--line-strong))}
+.tl-item{position:relative;padding:0 0 var(--s4) 18px}
+.tl-item:last-child{padding-bottom:0}
+.tl-item::before{content:"";position:absolute;left:-21px;top:4px;width:12px;height:12px;border-radius:50%;background:var(--ink-700);border:2px solid var(--teal)}
+.tl-item.cur::before{background:var(--ok);border-color:var(--ok);box-shadow:0 0 0 4px var(--ok-soft)}
+.tl-item .v{font-family:var(--font-mono);font-weight:700;color:var(--teal-bright);font-size:.82rem}
+.tl-item.cur .v{color:var(--ok)}
+.tl-item .vt{color:var(--fg-md);font-size:.82rem;margin-top:2px;line-height:1.55}
+
+/* facade */
+.facade-card{padding:var(--s5);border:1px solid var(--line);border-radius:var(--r-lg);background:radial-gradient(500px 240px at 50% 0%,rgba(20,184,166,.08),transparent 70%),var(--ink-900);text-align:center;margin:var(--s4) 0}
+.facade-card .core{display:inline-flex;align-items:center;gap:8px;font-family:var(--font-mono);font-weight:700;color:var(--teal-bright);font-size:1.1rem;padding:10px 20px;border:1.5px solid var(--teal);border-radius:var(--r-md);background:var(--teal-soft)}
+.mixin-grid{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin-top:var(--s4)}
+.mixin-chip{display:inline-flex;align-items:center;gap:5px;font-family:var(--font-mono);font-size:.7rem;padding:4px 9px;border-radius:var(--r-sm);background:var(--ink-800);border:1px solid var(--line);color:var(--fg-md)}
+.mixin-chip b{color:var(--info);font-weight:600}
+
+/* ADR */
+.adr-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:var(--s3);margin:var(--s4) 0}
+.adr{padding:var(--s4);border:1px solid var(--line);border-radius:var(--r-md);background:var(--ink-850)}
+.adr .adr-id{font-family:var(--font-mono);font-size:.66rem;color:var(--amber-bright);background:var(--amber-soft);border:1px solid rgba(245,158,11,.3);border-radius:var(--r-sm);padding:2px 7px;display:inline-block;margin-bottom:8px}
+.adr h4{margin:0 0 6px;font-size:.92rem;color:var(--fg-hi)}
+.adr .adr-d{color:var(--fg-md);font-size:.78rem;line-height:1.6}
+.adr .adr-r{margin-top:8px;font-size:.76rem;color:var(--fg-lo);border-top:1px dashed var(--line);padding-top:8px}
+.adr .adr-r b{color:var(--teal-bright)}
+
+.callout{padding:var(--s4);border-radius:var(--r-md);border:1px solid var(--line);background:var(--ink-850);border-left:3px solid var(--info);margin:var(--s4) 0}
+.callout.warn{border-left-color:var(--warn)}
+.callout .ct{font-family:var(--font-mono);font-size:var(--fs-cap);text-transform:uppercase;letter-spacing:.07em;color:var(--info);margin-bottom:6px;font-weight:600}
+.callout.warn .ct{color:var(--warn)}
+.callout p{margin:0;font-size:.84rem}
+
+.fig-cap{font-family:var(--font-mono);font-size:.66rem;color:var(--fg-lo);text-align:center;margin-top:var(--s2);letter-spacing:.05em}
+@media (max-width:980px){.doc-shell{grid-template-columns:1fr;padding:var(--s5) var(--s4)}.doc-toc{position:static;max-height:none;margin-bottom:var(--s4)}.layer-row{grid-template-columns:1fr}.adr-grid{grid-template-columns:1fr}.doc-hero,.lnav{padding-left:var(--s4);padding-right:var(--s4)}}
+@media (max-width:680px){.lnav-links a:not(:first-child){display:none}.lnav{gap:var(--s3);padding:0 var(--s3)}.brand-sub{display:none}.doc-hero h1{font-size:1.85rem}}
+</style>
+</head>
+<body>
+<!-- ===== TOP NAV ===== -->
+<nav class="lnav">
+  <a class="brand" href="index.html"><span class="brand-mark">AL</span><span><b class="brand-name">Arrow Lake</b><span class="brand-sub">架构文档</span></span></a>
+  <div class="lnav-links">
+    <a href="index.html">← 返回首页</a>
+    <a href="documents/index.html" style="color:var(--teal-bright)">文档教程</a>
+    <a href="#positioning">定位</a>
+    <a href="#layers">五层</a>
+    <a href="#modules">模块</a>
+    <a href="#flows">流程</a>
+    <a href="#deploy">部署</a>
+  </div>
+  <div class="lnav-cta">
+    <a class="btn btn-primary btn-sm" href="system.html">打开控制台 →</a>
+  </div>
+</nav>
+
+<!-- ===== DOC HERO ===== -->
+<header class="doc-hero">
+  <div class="doc-hero-inner">
+    <span class="tag teal">产品架构设计 · 详细文档</span>
+    <h1>Arrow Lake 多模态数据湖仓<br/>架构设计文档</h1>
+    <p class="lede">把<strong>存储 / 检索 / 分析 / 智能化</strong>收敛到同一份 Lance 列式底座之上——一个 <code>Lake</code> facade 承载向量检索、全文检索、OLAP、RAG 与知识图谱五类能力，原生支持文本 / 图像 / 视频多模态，全链路可治理、可审计、可离线运行。</p>
+    <div class="doc-meta">
+      <span><i></i>版本基线 <b style="color:var(--fg-hi)">v1.9.6</b></span>
+      <span><i></i>镜像 arrow-lake:1.9.6 / 1.9.6-gpu</span>
+      <span><i></i>文档日期 2026-07-28</span>
+      <span><i></i>随主干演进</span>
+    </div>
+    <div class="jumps">
+      <a href="#layers">五层架构</a>
+      <a href="#stack">技术栈 DARMU</a>
+      <a href="#modules">模块全景</a>
+      <a href="#flows">核心流程</a>
+      <a href="#cross">横切关注点</a>
+      <a href="#deploy">部署</a>
+      <a href="#adr">关键决策</a>
+    </div>
+  </div>
+</header>
+
+<!-- ===== DOC SHELL ===== -->
+<div class="doc-shell">
+  <aside class="doc-toc" id="toc">
+    <div class="toc-title">目录</div>
+    <ol>
+      <li><a href="#positioning" class="active">① 产品定位与命题</a></li>
+      <li><a href="#layers">② 五层架构</a></li>
+      <li><a href="#stack">③ 技术栈 · DARMU</a></li>
+      <li><a href="#modules">④ 模块全景</a></li>
+      <li><a href="#flows">⑤ 核心业务流程</a></li>
+      <li><a href="#cross">⑥ 横切关注点</a></li>
+      <li><a href="#deploy">⑦ 部署架构</a></li>
+      <li><a href="#evolution">⑧ 版本演进</a></li>
+      <li><a href="#adr">⑨ 关键决策 ADR</a></li>
+    </ol>
+  </aside>
+
+  <main class="doc-main">
+    <!-- ===== 1 POSITIONING ===== -->
+    <section class="doc-sec" id="positioning">
+      <h2><span class="num">01</span>产品定位与核心命题</h2>
+      <p>Arrow Lake 是面向 AI/ML 团队的<strong>生产级多模态数据湖仓库</strong>。传统智能检索架构往往是「向量库 + 关系库 + 图谱 + 检索系统」拼装四个组件，数据跨组件搬运、一致性难保证、运维复杂。Arrow Lake 的命题是<strong>收敛</strong>——一份列式湖仓底座同时承载五类能力，三种入口归一到同一个 <code>Lake</code> facade。</p>
+
+      <div class="callout">
+        <div class="ct">核心命题</div>
+        <p>让数据从摄入到可被 RAG / KG / 分析消费的<strong>全链路</strong>，在一个 facade 内<strong>可治理、可审计、可离线运行</strong>。v1.9.6 把这条链路从「能用」推进到「可信赖」：RAG 可溯源防幻觉 · 治理兑现（masking + 血缘）· 安全 fail-closed · 部署自包含。</p>
+      </div>
+
+      <h3><span class="tag teal">五能力一体</span></h3>
+      <div class="tbl-wrap">
+      <table class="tbl">
+        <thead><tr><th>能力</th><th>引擎</th><th>入口</th></tr></thead>
+        <tbody>
+          <tr><td><strong>向量检索 ANN</strong></td><td>Lance 索引（IVF_PQ / HNSW / SQ / RQ）经 DuckDB <code>vector_search</code></td><td><code>Lake.search()</code></td></tr>
+          <tr><td><strong>全文检索 BM25</strong></td><td>Lance FTS 倒排（Tantivy + jieba）</td><td><code>Lake.text_search()</code></td></tr>
+          <tr><td><strong>OLAP 分析</strong></td><td>DuckDB <code>lance_scan</code> + DuckLake 物化视图</td><td><code>Lake.olap_query()</code></td></tr>
+          <tr><td><strong>RAG 问答</strong></td><td>RAGPipeline + 多 Provider LLM + Cross-encoder Reranker + GraphRAG</td><td><code>await Lake.rag_query()</code></td></tr>
+          <tr><td><strong>知识图谱</strong></td><td>HugeGraph（per-dataset 动态图）+ hyper-extract 构建</td><td><code>await Lake.kg_build()</code></td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p><strong>多模态</strong>：文本（bge-m3 / Qwen3-Emb，1024 维）、图像（CLIP text+image 双塔）、音频 / 视频（Whisper / decode）统一进 Lance 多模态向量列 + MinIO blob 原文，支持文搜图 / 图搜图 / 图搜文。</p>
+
+      <h3><span class="tag amber">设计哲学</span></h3>
+      <div class="grid g-2" style="gap:var(--s3);margin-top:var(--s3)">
+        <div class="panel"><div class="panel-b"><div class="lamp ok" style="margin-bottom:6px"><i></i>Facade + Mixin 组合</div><div class="muted" style="font-size:.8rem">一个 <code>Lake</code> 拥有全部能力，内部按子系统懒加载、按能力桥接（Bridge + Protocol）。</div></div></div>
+        <div class="panel"><div class="panel-b"><div class="lamp ok" style="margin-bottom:6px"><i></i>优雅降级是一等公民</div><div class="muted" style="font-size:.8rem">Ray 不可用→本地、MinHash→CPU、KG→Vector RAG、Gremlin→REST。基础设施不全也持续服务。</div></div></div>
+        <div class="panel"><div class="panel-b"><div class="lamp ok" style="margin-bottom:6px"><i></i>配置驱动 · 四层覆盖</div><div class="muted" style="font-size:.8rem">代码默认 &lt; <code>.env</code> &lt; 环境变量 &lt; YAML，34 个子配置覆盖每个子系统。</div></div></div>
+        <div class="panel"><div class="panel-b"><div class="lamp ok" style="margin-bottom:6px"><i></i>压测驱动 · 不投机优化</div><div class="muted" style="font-size:.8rem">gate 框架对 async / 分布式索引 / ColBERT 逐项裁决，数据证明该做才做。</div></div></div>
+      </div>
+    </section>
+
+    <!-- ===== 2 LAYERS ===== -->
+    <section class="doc-sec" id="layers">
+      <h2><span class="num">02</span>五层贯穿，治理横切</h2>
+      <p>请求自上而下穿越 <strong>① 接入 → ② 能力 → ③ 计算 → ④ 存储引擎 → ⑤ 持久化</strong>，<strong>治理 / 可观测 / 安全</strong>作为横切面贯穿全部层级。每层只依赖其直接下一层；知识图谱是能力层直达持久化的唯一旁路。</p>
+
+      <div class="layer-row" style="--c:var(--teal-bright)">
+        <div class="lname">① 接入层<small>Entry</small></div>
+        <div class="ldesc">四入口归一到 <code>Lake</code> facade：<strong>SDK</strong>（Python）· <strong>REST</strong>（FastAPI，20 routers / 159 routes）· <strong>CLI</strong>（16 组）· <strong>Console</strong>（原生 JS，同源 mount <code>/console</code>，复用 REST + RBAC，bind-mount 改即生效）。</div>
+      </div>
+      <div class="layer-row" style="--c:var(--info)">
+        <div class="lname">② 能力层<small>Capabilities</small></div>
+        <div class="ldesc"><strong>摄入</strong>：<code>ingest_documents_and_index</code> 收口 parse→store→embed→FTS→vector 一条龙，SDK=HTTP 对齐。<strong>检索</strong>：vector / fts / hybrid(RRF) / faceted / ensemble + cross-encoder reranker。<strong>RAG</strong>：多策略 + 会话 + 引用 + 流式 + faithfulness verify + GraphRAG。<strong>KG</strong>：hyper-extract 抽取 + per-dataset 图 + Gremlin 注入防御。</div>
+      </div>
+      <div class="layer-row" style="--c:var(--amber-bright)">
+        <div class="lname">③ 计算层<small>Compute</small></div>
+        <div class="ldesc"><strong>DuckDB OLAP</strong>：主力查询路径（<code>olap_query</code> / <code>vector_search</code> / <code>fts</code> 全经 DuckDB）。<strong>嵌入器矩阵</strong>：Local / Daft / CLIP / RayServe。<strong>clean 写回</strong>：语义 steps→SQL→<code>restore_dataset</code> 原地清洗 + 派生血缘。</div>
+      </div>
+      <div class="layer-row" style="--c:#A78BFA">
+        <div class="lname">④ 存储引擎<small>Engines</small></div>
+        <div class="ldesc">LanceDB（Table / Namespace / 索引 / 版本 / tags / branches）+ HugeGraph（动态图 <code>kg_{ds}</code>）+ Gravitino（catalog 联邦 + tag-driven ACL）。</div>
+      </div>
+      <div class="layer-row" style="--c:#F472B6">
+        <div class="lname">⑤ 持久化<small>Persistence</small></div>
+        <div class="ldesc"><strong>数据面</strong>：MinIO/S3（Lance 列式 + 对象）+ HugeGraph rocksdb + DuckDB 文件。<strong>控制面</strong>：libSQL <code>system_db</code>（9 store：rbac / identity / catalog / task_history / lineage_index / rag_session / governance / user_state / ingest_dlq），opt-in + fail_close / fail_soft 双模。</div>
+      </div>
+
+      <div class="callout" style="border-left-color:var(--violet);margin-top:var(--s4)">
+        <div class="ct" style="color:#A78BFA">⟂ 横切面</div>
+        <p><strong>治理</strong>（Gravitino catalog / masking / lineage / audit）· <strong>可观测</strong>（structlog JSON + Prometheus + OpenTelemetry）· <strong>安全</strong>（RBAC 3 级 + JWT/API Key + 注入防御 + 限流）——经 hook / 中间件作用于各层，不进入主调用链；控制面状态由 <code>system_db</code> 持久化。</p>
+      </div>
+    </section>
+
+    <!-- ===== 3 STACK ===== -->
+    <section class="doc-sec" id="stack">
+      <h2><span class="num">03</span>技术栈 · DARMU</h2>
+      <p>记忆口诀 <strong>DARMU</strong>（<strong>D</strong>aft + <strong>A</strong>rrow/Lance + <strong>R</strong>ay + <strong>M</strong>etaflow + d<strong>U</strong>ckdb），外加 HugeGraph 图谱层、Gravitino 治理层、libSQL 控制面与 Console 前端。</p>
+      <div class="tbl-wrap">
+      <table class="tbl">
+        <thead><tr><th>层</th><th>技术</th><th>角色</th></tr></thead>
+        <tbody>
+          <tr><td>计算层</td><td><b>Daft</b> <span class="muted">0.7.8</span></td><td>懒求值 DataFrame + 内置 AI 函数 + 26 连接器 + 多模态 decode</td></tr>
+          <tr><td>湖仓格式</td><td><b>Lance / pylance</b></td><td>列式 + 向量索引 + 标量索引 + FTS + tags/branches</td></tr>
+          <tr><td>应用层</td><td><b>LanceDB</b> <span class="muted">0.33.0</span></td><td>向量库 SDK：Table / Namespace / 索引 / 版本 + <code>search_async</code></td></tr>
+          <tr><td>分布式</td><td><b>Ray</b> <span class="muted">2.54.1</span></td><td>head + worker + GPU；KG 构建 / 批嵌入</td></tr>
+          <tr><td>编排</td><td><b>Metaflow</b> <span class="muted">2.19</span></td><td>工作流 + checkpoint + retry/backoff + Argo 桥</td></tr>
+          <tr><td>引擎层</td><td><b>DuckDB</b> <span class="muted">1.5.2</span></td><td><strong>主力查询路径</strong>（<code>lance_scan</code> / <code>vector_search</code> / <code>fts</code>）</td></tr>
+          <tr><td>物化层</td><td><b>DuckLake</b></td><td>跨存储物化视图（TTL + ART index + 行预算）</td></tr>
+          <tr><td>图谱</td><td><b>HugeGraph</b> <span class="muted">1.7</span></td><td>知识图谱存储 + Gremlin 遍历；per-dataset 动态图</td></tr>
+          <tr><td>治理</td><td><b>Apache Gravitino</b> <span class="muted">1.3.0</span></td><td>统一 catalog + tag-driven ACL + masking policy + retention</td></tr>
+          <tr><td>对象存储</td><td><b>MinIO / S3</b></td><td>blob 原文 + 备份</td></tr>
+          <tr><td>缓存 / 任务</td><td><b>Redis</b> <span class="muted">≥5</span></td><td>分布式会话 + JWT 黑名单 + 任务跨 worker + rate_limit / lockout</td></tr>
+          <tr><td>控制面</td><td><b>libSQL / Turso</b></td><td>v1.9.0 控制面库：RBAC / identity / token / catalog / 任务 / lineage / RAG 会话 / governance；<strong>数据面不触碰</strong></td></tr>
+          <tr><td>前端</td><td><b>Console</b></td><td>运维 / 合规 / 治理 / 管理 / 工作台（原生 JS + ES module）</td></tr>
+          <tr><td>LLM / 嵌入</td><td><b>OpenAI / Anthropic / Ollama / vLLM / DeepSeek / 百炼</b></td><td>RAG + KG 抽取；cross-encoder reranker (bge-reranker-v2-m3)</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <div class="callout warn">
+        <div class="ct">关键澄清</div>
+        <p>DuckDB 是<strong>主力查询路径</strong>而非 fallback。<code>olap_query</code> / <code>vector_search</code> / <code>fts</code> 全部由 DuckDB 执行（40+ 处调用），LanceDB 提供 Table / 索引 / 版本管理 API，DuckLake 在其上提供物化视图。三者分工见 ADR-06。</p>
+      </div>
+    </section>
+
+    <!-- ===== 4 MODULES ===== -->
+    <section class="doc-sec" id="modules">
+      <h2><span class="num">04</span>模块全景</h2>
+      <p><code>Lake</code> facade 由 9+ mixin 组成，内部按子系统懒加载。v1.9.6 在稳定骨架之上强化了 RAG 防幻觉、治理兑现与安全加固的关键模块。</p>
+
+      <div class="facade-card">
+        <div class="core">Lake facade</div>
+        <div class="muted" style="font-size:.78rem;margin-top:8px">一个对象 · 全部能力 · 按子系统懒加载 · 按能力桥接</div>
+        <div class="mixin-grid">
+          <span class="mixin-chip"><b>_storage_*</b> CRUD/索引</span>
+          <span class="mixin-chip"><b>_lake_rag</b> RAG 管线</span>
+          <span class="mixin-chip"><b>_lake_kg</b> 知识图谱</span>
+          <span class="mixin-chip"><b>_lake_lineage</b> 血缘</span>
+          <span class="mixin-chip"><b>_lake_admin</b> RBAC/ACL</span>
+          <span class="mixin-chip"><b>_lake_search</b> 检索</span>
+          <span class="mixin-chip"><b>_lake_olap</b> OLAP</span>
+          <span class="mixin-chip"><b>_lake_embed</b> 嵌入</span>
+          <span class="mixin-chip"><b>_lake_ingest</b> 摄取</span>
+        </div>
+      </div>
+
+      <h3><span class="tag teal">v1.9.6 新增 / 强化组件</span></h3>
+      <div class="tbl-wrap">
+      <table class="tbl">
+        <thead><tr><th>模块</th><th>文件</th><th>职责</th></tr></thead>
+        <tbody>
+          <tr><td><strong>CrossEncoderReranker</strong></td><td><code>rag/reranker.py</code></td><td>bge-reranker-v2-m3 重排（默认）；可插拔 LLM / Ollama / Noop；<code>_retrieve_ranked</code> async 契约</td></tr>
+          <tr><td><strong>FaithfulnessVerifier</strong></td><td><code>rag/pipeline.py</code></td><td>生成后逐句校验 vs 上下文；embedding cosine（默认）+ LLM judge（opt-in）；返 <code>support_ratio</code> / <code>unsupported</code></td></tr>
+          <tr><td><strong>GraphRAGPipeline</strong></td><td><code>rag/graph_rag.py</code></td><td>模板方法钩子 <code>_extra_context_task</code>；三路并行 <code>asyncio.gather</code>（vector + search_ka + neighbor）</td></tr>
+          <tr><td><strong>RAGQueryPlan</strong></td><td><code>rag/pipeline.py</code></td><td>检索阶段收口 + score 列解析（等价 <code>resolve_score_column</code>）</td></tr>
+          <tr><td><strong>MaskingEngine</strong></td><td><code>quality/masking_engine.py</code></td><td>redact / hash(128 位) / partial / nullify；HMAC fail-fast + opt-in；unknown 函数 raise</td></tr>
+          <tr><td><strong>LineageService</strong></td><td><code>catalog/lineage.py</code></td><td><code>trace_full_graph(max_nodes)</code> 双向 BFS + 截断；<code>LineageEvent.column_lineage</code> 列级</td></tr>
+          <tr><td><strong>lineage_hooks</strong></td><td><code>catalog/lineage_hooks.py</code></td><td>materialize / clean 自动记列级血缘</td></tr>
+          <tr><td><strong>GravitinoPolicies</strong></td><td><code>quality/gravitino_policies.py</code></td><td><code>create_masking_policy(name, columns, function)</code></td></tr>
+          <tr><td><strong>KG 抽取质量</strong></td><td><code>kg/he_extractor.py</code></td><td>snap 编辑距离归一 + strict definition 过滤 + enum 正则解析 + MERGE_FIELD 合并</td></tr>
+          <tr><td><strong>QuestionEntityCache</strong></td><td><code>rag/graph_rag.py</code></td><td>monotonic 时钟防 TTL 批量失效</td></tr>
+        </tbody>
+      </table>
+      </div>
+    </section>
+
+    <!-- ===== 5 FLOWS ===== -->
+    <section class="doc-sec" id="flows">
+      <h2><span class="num">05</span>核心业务流程</h2>
+
+      <h3><span class="tag amber">5.1</span>文档摄入 → 索引</h3>
+      <div class="steps">
+        <div class="step"><span class="step-n">1</span><div class="step-t"><code>POST /datasets/{name}/ingest/documents</code></div><div class="step-d">支持多格式（PDF / Office / 图像 / 混合）+ append 到已存数据集。</div></div>
+        <div class="step"><span class="step-n">2</span><div class="step-t">parse → chunk → embed → store (Lance)</div><div class="step-d">parse 走 kreuzberg / docling；7 种分块；多模型嵌入；写入 Lance 列式表。</div></div>
+        <div class="step"><span class="step-n">3</span><div class="step-t">auto <code>create_vector_index</code></div><div class="step-d">≥256 行建 IVF_PQ；&lt;256 行 WARN skip（brute-force）。</div></div>
+        <div class="step tail"><span class="step-n">4</span><div class="step-t">auto FTS 索引</div><div class="step-d">v1.9.5 起 hybrid 默认生效；v1.9.6 <code>ingest_documents_and_index</code> 收口，SDK = HTTP 对齐。</div></div>
+      </div>
+
+      <h3><span class="tag teal">5.2</span>RAG 问答 · 防幻觉闭环</h3>
+      <p>七步闭环，每条论断可追溯到源 chunk 与检索分数；流式响应首帧 <code>citations</code>、末帧 <code>latency</code> + <code>verification</code>。</p>
+      <div class="steps">
+        <div class="step"><span class="step-n">1</span><div class="step-t">query transform</div><div class="step-d">HyDE / multi_query 改写（<code>extract_llm=qwen-turbo</code>，快）。</div></div>
+        <div class="step"><span class="step-n">2</span><div class="step-t">retrieval · hybrid</div><div class="step-d">vector + fts，RRF 融合。</div></div>
+        <div class="step"><span class="step-n">3</span><div class="step-t">rerank · cross-encoder</div><div class="step-d">bge-reranker-v2-m3（本地 <code>/opt/models/</code>），连续分排序。</div></div>
+        <div class="step"><span class="step-n">4</span><div class="step-t">GraphRAG 三路并行</div><div class="step-d"><code>asyncio.gather</code>(vector + search_ka + neighbor)，<code>use_kg=true</code> 时启用。</div></div>
+        <div class="step"><span class="step-n">5</span><div class="step-t">context assembly</div><div class="step-d">token budget 组装上下文。</div></div>
+        <div class="step"><span class="step-n">6</span><div class="step-t">LLM generate · streaming</div><div class="step-d"><code>qa_llm=qwen-plus@16384</code>（最优 QA）。</div></div>
+        <div class="step tail"><span class="step-n">7</span><div class="step-t">faithfulness verify</div><div class="step-d">逐句 vs context → <code>support_ratio</code> / <code>unsupported</code>；embedding cosine（默认）+ LLM judge（opt-in）。</div></div>
+      </div>
+
+      <h3><span class="tag info">5.3</span>KG 构建 + GraphRAG</h3>
+      <div class="steps">
+        <div class="step"><span class="step-n">1</span><div class="step-t"><code>kg_build(dataset)</code> → feed_text chunks</div><div class="step-d">hyper-extract 经 snap / strict / enum 质量门。</div></div>
+        <div class="step"><span class="step-n">2</span><div class="step-t">MERGE_FIELD 合并</div><div class="step-d">非 LLM，稳定 15% 内存，治 BALANCED grouped OOM。</div></div>
+        <div class="step"><span class="step-n">3</span><div class="step-t">HugeGraph upsert</div><div class="step-d">per-dataset <code>kg_{ds}</code>，<code>PRIMARY_KEY</code> 幂等。</div></div>
+        <div class="step tail"><span class="step-n">4</span><div class="step-t">build_index + GraphRAG</div><div class="step-d">KA LRU mtime 失效；三路并行 retrieve（109s → 50s）。</div></div>
+      </div>
+
+      <h3><span class="tag amber">5.4</span>治理闭环 · masking + lineage + audit</h3>
+      <div class="steps">
+        <div class="step"><span class="step-n">1</span><div class="step-t">mask-preview</div><div class="step-d"><code>POST /datasets/{name}/quality/mask-preview</code>（ADMIN，列名白名单）。</div></div>
+        <div class="step"><span class="step-n">2</span><div class="step-t">create policy</div><div class="step-d"><code>POST /gravitino/policies/masking</code>（function 4 选 1，审计入 Lance）。</div></div>
+        <div class="step"><span class="step-n">3</span><div class="step-t">enforce</div><div class="step-d">RBAC <code>_apply_masking</code> 对 VIEWER 透明（fail-closed 返空表）。</div></div>
+        <div class="step"><span class="step-n">4</span><div class="step-t">lineage</div><div class="step-d"><code>GET /lineage/graph/{name}?max_nodes=500</code> + <code>/history</code>（列级血缘）。</div></div>
+        <div class="step tail"><span class="step-n">5</span><div class="step-t">audit</div><div class="step-d"><code>GET /audit/query?event_type=masking_policy_created</code>（HMAC 签名，零新表）。</div></div>
+      </div>
+
+      <h3><span class="tag info">5.5</span>OLAP + 清洗写回</h3>
+      <div class="steps">
+        <div class="step"><span class="step-n">1</span><div class="step-t"><code>POST /datasets/{name}/query/olap</code></div><div class="step-d">DuckDB SQL，RBAC 行 / 列 ACL。</div></div>
+        <div class="step tail"><span class="step-n">2</span><div class="step-t"><code>POST /datasets/{name}/clean</code></div><div class="step-d">语义 steps → SQL → <code>restore_dataset</code> 写回；lineage 自动记 clean 派生边（列级）。</div></div>
+      </div>
+    </section>
+
+    <!-- ===== 6 CROSS ===== -->
+    <section class="doc-sec" id="cross">
+      <h2><span class="num">06</span>横切关注点</h2>
+
+      <h3><span class="tag" style="color:var(--danger);background:var(--danger-soft);border-color:rgba(239,68,68,.3)">6.1</span>安全 · fail-closed 主线</h3>
+      <p>原则：信任边界出错<strong>向安全一侧失败</strong>，绝不向数据泄露失败。</p>
+      <div class="tbl-wrap">
+      <table class="tbl">
+        <thead><tr><th>路径</th><th>失败场景</th><th>fail-closed 行为</th></tr></thead>
+        <tbody>
+          <tr><td>masking <code>_apply_masking</code></td><td>引擎抛错 / 未知函数 / hash 缺 key</td><td>返空表 <code>slice(0,0)</code></td></tr>
+          <tr><td>row-filter <code>_apply_row_filter</code></td><td>表达式不可解析 / 列缺失 / 类型不匹配</td><td>返空表</td></tr>
+          <tr><td>masking <code>_fetch_rules</code></td><td>Gravitino 拉规则失败</td><td><code>raise RuntimeError</code>（不返空规则集）</td></tr>
+          <tr><td>启动</td><td><code>MASKING__HMAC_KEY</code> 缺失</td><td>启动阻断（<code>ALLOW_MISSING_KEY=1</code> opt-in）</td></tr>
+          <tr><td>mask-preview</td><td>列名非法</td><td>标识符白名单拒（防 SQL 注入），端点 ADMIN</td></tr>
+          <tr><td>lineage 图谱</td><td>节点 / 边标签</td><td>HTML 转义（vis title + DOT / Mermaid，防 XSS）</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p>其他：RBAC 3 级（VIEWER / EDITOR / ADMIN）+ API Key / JWT（Redis 黑名单）+ 注入防御（Gremlin 参数化 / SQL prepared / 路径标准化）+ 限流。</p>
+
+      <h3><span class="tag teal">6.2</span>治理</h3>
+      <ul class="bul">
+        <li><strong>Gravitino</strong>：统一 catalog，tag-driven ACL，masking policy，retention。</li>
+        <li><strong>masking</strong>：4 函数（redact / hash 128 位 / partial / nullify）+ HMAC fail-fast + mask-preview + audit（复用 Lance <code>audit_record</code>，零新表）。</li>
+        <li><strong>lineage</strong>：<code>lineage.html</code> 可视化（vis-network ≤2000 / G6 v4 更大）+ 列级血缘 + <code>max_nodes</code> 截断 + <code>stats.truncated</code> 透明告知。</li>
+        <li><strong>audit</strong>：HMAC-SHA256 防篡改，每个状态转换记录（摄入 / 验证 / 分块 / 嵌入 / 查询 / 清洗 / masking 策略）。</li>
+      </ul>
+
+      <h3><span class="tag info">6.3</span>可观测</h3>
+      <p><code>structlog</code> JSON 日志 + Prometheus 指标 + OpenTelemetry（Jaeger，opt-in <code>--profile tracing</code>）+ audit 全覆盖（structlog + libSQL 双写）。</p>
+    </section>
+
+    <!-- ===== 7 DEPLOY ===== -->
+    <section class="doc-sec" id="deploy">
+      <h2><span class="num">07</span>部署架构</h2>
+
+      <h3><span class="tag teal">7.1</span>镜像 · 模型 bake，离线就绪</h3>
+      <p>v1.9.6 核心改进：<strong>模型权重 bake 进镜像</strong>，服务启动零网络下载（<code>HF_HUB_OFFLINE=1</code>）。</p>
+      <div class="tbl-wrap">
+      <table class="tbl">
+        <thead><tr><th>镜像</th><th>基础</th><th>模型</th><th>大小</th></tr></thead>
+        <tbody>
+          <tr><td><code>arrow-lake:1.9.6</code>（CPU）</td><td>python:3.12-slim</td><td>reranker 2.2G (modelscope) + docling 506M (HF)</td><td>16.8GB</td></tr>
+          <tr><td><code>arrow-lake:1.9.6-gpu</code></td><td>nvidia/cuda:12.4.1-runtime</td><td>同上 + cu124 torch</td><td>~18GB</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p>reranker 走 modelscope 缓存（HF hub 国内受限）→ 本地路径加载 <code>CrossEncoder("/opt/models/...")</code>；docling 走 HF cache（<code>HF_HOME</code>）。build 时 BuildKit named context <code>--build-context</code> 指向 host 缓存，零下载。</p>
+
+      <h3><span class="tag amber">7.2</span>容器栈 · prod_minimal</h3>
+      <p>11 服务：<code>api</code> / <code>minio</code>(+init) / <code>nginx</code> / <code>lance-rest</code> / <code>hg-server</code>(+hubble) / <code>redis</code> / <code>system-db</code> / <code>gravitino</code>(+init) / <code>ollama-relay</code> / <code>proxy-forwarder</code>。</p>
+      <ul class="bul">
+        <li><code>api</code> 容器 <code>read_only: true</code>——改 Python 需 rebuild 或 dev.override 热重载。</li>
+        <li>WSL2 mirrored 网络：容器外网经 socat 中继（ollama <code>11534</code> / proxy <code>17887</code>）。</li>
+        <li><code>NO_PROXY</code> 必含 <code>host.docker.internal</code> + 内部服务名。</li>
+      </ul>
+
+      <h3><span class="tag info">7.3</span>控制面 · system_db</h3>
+      <p>libSQL 接管控制面（v1.9.0），opt-in（<code>SYSTEM_DB_ENABLED=true</code>）。<strong>数据面零触碰</strong>——9 个 store 覆盖 RBAC / identity / token / catalog / 任务 / lineage / RAG 会话 / governance，按重要性分 fail_close（RBAC / identity）与 fail_soft（catalog / tasks / rag）双模。</p>
+    </section>
+
+    <!-- ===== 8 EVOLUTION ===== -->
+    <section class="doc-sec" id="evolution">
+      <h2><span class="num">08</span>版本演进</h2>
+      <div class="tl">
+        <div class="tl-item"><span class="v">v1.9.0</span><div class="vt">Turso (libSQL) 控制面库（9 store，opt-in + fail_close / soft）</div></div>
+        <div class="tl-item"><span class="v">v1.9.1</span><div class="vt">console 核心（admin / my-workspace + personal token）</div></div>
+        <div class="tl-item"><span class="v">v1.9.2</span><div class="vt">console 完备化 + 质量深化（fire-forget GC / Redis lockout / KG 模板收紧）</div></div>
+        <div class="tl-item"><span class="v">v1.9.3</span><div class="vt">数据集字段注释 + tidy / clean 清洗页 + data-prep</div></div>
+        <div class="tl-item"><span class="v">v1.9.4</span><div class="vt">血缘埋点评审 + KG project_concept_graph + MERGE_FIELD + Gravitino 1.3.0</div></div>
+        <div class="tl-item"><span class="v">v1.9.5</span><div class="vt">RAG 质量全链路（hybrid 默认 + GraphRAG + multi_query + 自动建索引）</div></div>
+        <div class="tl-item cur"><span class="v">v1.9.6</span><div class="vt">RAG 防幻觉 + cross-encoder reranker + KG snap/strict/三路并行 + lineage 可视化 + masking 治理 + 架构 refactor + fail-closed 安全 + 镜像模型 bake</div></div>
+      </div>
+    </section>
+
+    <!-- ===== 9 ADR ===== -->
+    <section class="doc-sec" id="adr">
+      <h2><span class="num">09</span>关键决策 · ADR</h2>
+      <div class="adr-grid">
+        <div class="adr">
+          <span class="adr-id">ADR-1</span>
+          <h4>模型 bake 进镜像 vs 运行时拉</h4>
+          <div class="adr-d">决策：bake（reranker + docling）。</div>
+          <div class="adr-r"><b>理由</b>：生产 / 离线自包含、首启快、版本固定、多副本一致。代价：镜像 +4.6GB。</div>
+        </div>
+        <div class="adr">
+          <span class="adr-id">ADR-2</span>
+          <h4>fail-closed 默认</h4>
+          <div class="adr-d">决策：masking / rbac 异常返空表或 raise，不泄露未脱敏。</div>
+          <div class="adr-r"><b>理由</b>：隐私 / 授权路径上宁可空结果也不泄露。与 RBAC「默认拒绝」一致。</div>
+        </div>
+        <div class="adr">
+          <span class="adr-id">ADR-3</span>
+          <h4>cross-encoder reranker 默认</h4>
+          <div class="adr-d">决策：bge-reranker-v2-m3（连续分，替 Ollama 二值判断）。</div>
+          <div class="adr-r"><b>理由</b>：检索质量是 RAG 头号因子；cross-encoder 排序优于二值。CPU 可跑，GPU 更快。</div>
+        </div>
+        <div class="adr">
+          <span class="adr-id">ADR-4</span>
+          <h4>masking HMAC fail-fast</h4>
+          <div class="adr-d">决策：缺 key 启动阻断（<code>ALLOW_MISSING_KEY=1</code> opt-in）。</div>
+          <div class="adr-r"><b>理由</b>：hash 脱敏需密钥签名；静默 fallback nullify 是合规隐患。</div>
+        </div>
+        <div class="adr">
+          <span class="adr-id">ADR-5</span>
+          <h4>GraphRAG 模板方法 + 三路并行</h4>
+          <div class="adr-d">决策：<code>super().query()</code> 单一模板 + <code>_extra_context_task</code> 钩子；<code>asyncio.gather</code> 三路。</div>
+          <div class="adr-r"><b>理由</b>：消除子类复制（parity bug）；并行砍延迟 40–50%。</div>
+        </div>
+        <div class="adr">
+          <span class="adr-id">ADR-6</span>
+          <h4>reranker 经 modelscope + 本地路径</h4>
+          <div class="adr-d">决策：bake modelscope snapshots → <code>/opt/models/</code>，<code>RERANKER_MODEL=本地路径</code>。</div>
+          <div class="adr-r"><b>理由</b>：HF hub 国内受限（hf-mirror 不稳）；modelscope 缓存可用，离线加载。</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="doc-sec">
+      <div class="callout">
+        <div class="ct">指路</div>
+        <p style="margin-bottom:6px">稳定骨架（五层 / 模块 / 流程全景）见 <code>docs/architecture-design/00-architecture-design.md</code>；权威技术参考见 <code>docs/ARCHITECTURE.md</code>；v1.9.6 增量组件设计见 <code>docs/architecture-design/v1.9.6-architecture-design.md</code>；实战见 <code>docs/cookbook/</code>（17-masking / 18-lineage / 19-rest-recipes）。</p>
+      </div>
+    </section>
+  </main>
+</div>
+
+<footer class="footer">
+  <div class="footer-inner">
+    <div><b>Arrow Lake</b> · 产品架构设计文档 · v1.9.6<br/><span class="muted mono" style="font-size:.7rem">© 2026 · MIT License · Gitee / GitHub</span></div>
+    <div class="muted" style="font-size:.75rem">本页为企业级前端原型 · 自包含可离线运行</div>
+  </div>
+</footer>
+
+<script>
+// TOC scroll-spy
+(function(){
+  const links=[...document.querySelectorAll('.doc-toc a')];
+  const map=new Map();
+  links.forEach(a=>map.set(a.getAttribute('href').slice(1),a));
+  const secEls=links.map(a=>document.getElementById(a.getAttribute('href').slice(1))).filter(Boolean);
+  if('IntersectionObserver' in window && secEls.length){
+    const io=new IntersectionObserver((entries)=>{
+      entries.forEach(e=>{
+        if(e.isIntersecting){
+          links.forEach(l=>l.classList.remove('active'));
+          const a=map.get(e.target.id);
+          if(a)a.classList.add('active');
+        }
+      });
+    },{rootMargin:'-20% 0px -70% 0px',threshold:0});
+    secEls.forEach(s=>io.observe(s));
+  }
+  // smooth scroll respecting reduced motion
+  const reduce=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  links.forEach(a=>a.addEventListener('click',function(ev){
+    const id=this.getAttribute('href').slice(1);
+    const el=document.getElementById(id);
+    if(el){ev.preventDefault();el.scrollIntoView({behavior:reduce?'auto':'smooth',block:'start'});}
+  }));
+})();
+</script>
+</body>
+</html>

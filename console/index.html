@@ -4,12 +4,10 @@
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Arrow Lake · 多模态数据湖仓</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="assets/tokens.css"/>
 <link rel="stylesheet" href="assets/app.css"/>
 <link rel="stylesheet" href="assets/landing.css"/>
+<style>@media (max-width:760px){.lnav-links{display:none}.lnav{gap:var(--s3);padding:0 var(--s3)}.brand-sub{display:none}.lnav-cta .btn-ghost{display:none}}</style>
 </head>
 <body>
 <!-- ===== TOP NAV ===== -->
@@ -21,6 +19,8 @@
     <a href="#stack">技术栈</a>
     <a href="#usecases">用例</a>
     <a href="#deploy">部署</a>
+    <a href="architecture.html" style="color:var(--teal-bright)">架构文档</a>
+    <a href="documents/index.html" style="color:var(--teal-bright)">文档教程</a>
   </div>
   <div class="lnav-cta">
     <a class="btn btn-ghost btn-sm" href="login.html">登录</a>
@@ -86,6 +86,7 @@
   <div class="section-head">
     <span class="tag teal">架构</span>
     <h2>五层贯穿，治理横切<span class="muted" style="font-weight:400">—— 请求自上而下穿越①接入→②能力→③计算→④引擎→⑤持久化</span></h2>
+    <a class="btn btn-line btn-sm" href="architecture.html" style="margin-top:var(--s3)">查看完整架构设计文档 →</a>
   </div>
   <div class="arch" id="archDiagram"></div>
   <div class="grid g-3 arch-cards">

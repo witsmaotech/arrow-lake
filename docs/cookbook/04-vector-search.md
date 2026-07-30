@@ -94,7 +94,7 @@ info = lake.create_vector_index(
     vector_column="text_embedding",  # Vector column name
     index_type="IVF_FLAT",           # More precise but slower
     num_partitions=512,              # Number of IVF partitions
-    num_sub_vectors=32,              # PQ sub-vectors (IVF_PQ only)
+    num_sub_vectors=24,              # PQ sub-vectors (must be a multiple of 8; 24 recommended for 1024-dim)
     replace=True,                    # Replace existing index
 )
 ```
@@ -114,7 +114,16 @@ print(f"Columns: {info.columns}")
 | ------------- | ----------------------------------------- | --------------------------------- | ----------------------------------- |
 | `IVF_PQ`      | IVF inverted index + product quantization | Large datasets (>10K rows)        | Default choice, low memory usage    |
 | `IVF_FLAT`    | IVF inverted index + exact distance       | Medium datasets needing precision | No quantization loss, higher memory |
-| `IVF_HNSW_PQ` | IVF + HNSW + PQ                           | Large datasets + low latency      | Highest build cost                  |
+| `IVF_HNSW_PQ` | IVF + HNSW + PQ                           | Large datasets + low latency      | High build cost                     |
+| `IVF_HNSW_SQ` | IVF + HNSW + scalar quantization          | Large + low latency + higher precision | Memory/precision trade-off      |
+| `IVF_SQ`      | IVF + scalar quantization                 | Medium-large, more precise than PQ | Smaller quantization loss than PQ  |
+| `IVF_RQ`      | IVF + residual quantization               | Very large datasets, extreme compression | Smallest memory, larger precision loss |
+| `HNSW`        | Pure HNSW graph index                     | Small-medium, lowest latency      | High memory, no IVF coarse filter   |
+
+> **Indexing notes (v1.9.6)**:
+> - **Minimum 256 rows**: quantized indexes (IVF_PQ etc.) need ≥256 training rows (`_PQ_MIN_TRAINING_ROWS`), otherwise `VECTOR_INDEX_TOO_FEW_ROWS` is raised; below that, vector search degrades to brute-force (still usable). Auto-index WARN-skips datasets with <256 rows.
+> - **`lance_scan_mode: pyarrow_fallback`**: in production, if RAG/vector search hits a DuckDB lance vector stream Rust panic (worker crash / 502), set this to bypass it (see [12-deployment](./12-deployment.md)).
+> - **Multimodal image search**: embed images with CLIP/SigLIP (`POST /embed/image` or SDK `lake.encode_text_clip()` for text→image), then `search(vector_column="image_embedding")`.
 
 ***
 
@@ -346,7 +355,7 @@ info = lake.rebuild_vector_index(
     vector_column="text_embedding",
     index_type="IVF_PQ",
     num_partitions=512,
-    num_sub_vectors=32,
+    num_sub_vectors=24,              # 24 recommended for 1024-dim
 )
 print(f"Rebuilt: {info.index_type}, {info.num_indexed_rows} rows")
 ```
