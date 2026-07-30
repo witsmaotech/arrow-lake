@@ -71,7 +71,7 @@ class RayServeEmbeddingEncoder:
             )
 
         try:
-            self._handle = ray_serve.get_deployment(self.deployment_name)
+            self._handle = ray_serve.get_deployment_handle(self.deployment_name)
             logger.info(
                 "ray_serve_encoder_connected deployment=%s",
                 self.deployment_name,

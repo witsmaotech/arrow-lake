@@ -49,7 +49,7 @@ class TestRayServeEncoderEncode:
 
     @patch("arrow_lake.embed.ray_serve_encoder.ray_serve")
     def test_encode_single_text(self, mock_serve: Any) -> None:
-        mock_serve.get_deployment.return_value = self._make_mock_handle()
+        mock_serve.get_deployment_handle.return_value = self._make_mock_handle()
         enc = RayServeEmbeddingEncoder()
         table = pa.table({"text_content": ["hello world"]})
         result = enc.encode_column(table)
@@ -59,7 +59,7 @@ class TestRayServeEncoderEncode:
 
     @patch("arrow_lake.embed.ray_serve_encoder.ray_serve")
     def test_encode_null_text(self, mock_serve: Any) -> None:
-        mock_serve.get_deployment.return_value = self._make_mock_handle()
+        mock_serve.get_deployment_handle.return_value = self._make_mock_handle()
         enc = RayServeEmbeddingEncoder()
         table = pa.table({"text_content": [None]})
         result = enc.encode_column(table)
@@ -73,20 +73,20 @@ class TestRayServeEncoderEncode:
         table = pa.table({"text_content": []})
         result = enc.encode_column(table)
         assert result.total_rows == 0
-        mock_serve.get_deployment.assert_not_called()
+        mock_serve.get_deployment_handle.assert_not_called()
 
     @patch("arrow_lake.embed.ray_serve_encoder.ray_serve")
     def test_encode_multiple_rows(self, mock_serve: Any) -> None:
         handle = MagicMock()
         handle.remote.return_value = np.random.randn(3, 384).astype(np.float32)
-        mock_serve.get_deployment.return_value = handle
+        mock_serve.get_deployment_handle.return_value = handle
 
         enc = RayServeEmbeddingEncoder()
         table = pa.table({"text_content": ["a", "b", "c"]})
         result = enc.encode_column(table)
         assert result.total_rows == 3
         assert result.embedded_rows == 3
-        mock_serve.get_deployment.assert_called_once()
+        mock_serve.get_deployment_handle.assert_called_once()
 
     @patch("arrow_lake.embed.ray_serve_encoder.ray_serve")
     def test_encode_missing_column_raises(self, mock_serve: Any) -> None:
@@ -102,7 +102,7 @@ class TestRayServeFallback:
     @patch("arrow_lake.embed.ray_serve_encoder.ray_serve")
     @patch("arrow_lake.embed.ray_serve_encoder.RayServeEmbeddingEncoder._fallback_encode")
     def test_fallback_on_import_error(self, mock_fb: Any, mock_serve: Any) -> None:
-        mock_serve.get_deployment.side_effect = ImportError("ray not installed")
+        mock_serve.get_deployment_handle.side_effect = ImportError("ray not installed")
         mock_fb.return_value = MagicMock(total_rows=1, embedded_rows=1, null_rows=0)
         enc = RayServeEmbeddingEncoder()
         table = pa.table({"text_content": ["hello"]})
@@ -125,7 +125,7 @@ class TestRayServeFallback:
     def test_fallback_on_connection_error(self, mock_fb: Any, mock_serve: Any) -> None:
         handle = MagicMock()
         handle.remote.side_effect = ConnectionError("Ray Serve not reachable")
-        mock_serve.get_deployment.return_value = handle
+        mock_serve.get_deployment_handle.return_value = handle
         mock_fb.return_value = MagicMock(total_rows=1, embedded_rows=1, null_rows=0)
 
         enc = RayServeEmbeddingEncoder()
@@ -138,7 +138,7 @@ class TestRayServeFallback:
     @patch("arrow_lake.embed.ray_serve_encoder.ray_serve")
     @patch("arrow_lake.embed.ray_serve_encoder.RayServeEmbeddingEncoder._fallback_encode")
     def test_fallback_logs_warning(self, mock_fb: Any, mock_serve: Any, caplog: Any) -> None:
-        mock_serve.get_deployment.side_effect = ImportError("ray not installed")
+        mock_serve.get_deployment_handle.side_effect = ImportError("ray not installed")
         mock_fb.return_value = MagicMock(total_rows=1, embedded_rows=1, null_rows=0)
         enc = RayServeEmbeddingEncoder()
         table = pa.table({"text_content": ["test"]})
