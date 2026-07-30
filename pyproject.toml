@@ -104,6 +104,18 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["arrow_lake", "flows"]
 
+[tool.hatch.build.targets.sdist]
+# Keep the source distribution lean: exclude vendored frontend deps, sample
+# datasets, and large binary documents. Source (.py) examples and cookbook
+# .md tutorials are retained.
+exclude = [
+  "console/node_modules",        # vendored frontend deps (~96 MB)
+  "examples/data",               # sample PDFs (papers/files, ~46 MB)
+  "examples/chunking/data",      # chunking sample PDFs (淮北 ~50 MB)
+  "docs/cookbook/**/*.pdf",      # binary PDFs — .md tutorials kept
+  "docs/cookbook/**/data",       # KA artifacts (*.faiss indexes)
+]
+
 [tool.ruff]
 target-version = "py311"
 line-length = 100
