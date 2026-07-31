@@ -104,8 +104,8 @@
 <script src="assets/console-layout.js"></script>
 <script src="vendor/vis-network.bundle.min.js"></script>
 <script type="module">
-import { request } from "./src/api.js";
-import { isLoggedIn } from "./src/auth.js";
+import { request, refreshToken, API_BASE } from "./src/api.js";
+import { isLoggedIn, getAccessToken, getApiKey } from "./src/auth.js";
 import { toast } from "./src/ui/toast.js";
 import { renderKgSubgraph } from "./src/kg-subgraph.js";
 import "./src/favorite.js";  // [data-fav] 自动绑收藏入口
@@ -283,14 +283,31 @@ async function ask() {
       top_k: parseInt($("#topK").value, 10) || null,
       session_id: session?.session_id || null,
     };
-    const r = await request("POST", "/rag/query", { body, signal: askAbort.signal });
+    // 流式 SSE(/rag/query/stream):content 增量输出,避免整体等待 LLM 生成(~45s)
+    const makeHeaders = () => { const h = { "Content-Type": "application/json" }; const t = getAccessToken(); if (t) h["Authorization"] = `Bearer ${t}`; const k = getApiKey(); if (k) h["X-API-Key"] = k; return h; };
+    let resp = await fetch(`${API_BASE}/rag/query/stream`, { method: "POST", headers: makeHeaders(), signal: askAbort.signal, body: JSON.stringify(body) });
+    if (resp.status === 401) { try { await refreshToken(); resp = await fetch(`${API_BASE}/rag/query/stream`, { method: "POST", headers: makeHeaders(), signal: askAbort.signal, body: JSON.stringify(body) }); } catch (e) { throw { detail: "登录已过期,请重新登录" }; } }
+    if (!resp.ok) { const t = await resp.text().catch(() => ""); throw { detail: (t || resp.statusText).slice(0, 300) }; }
     const last = turns[turns.length - 1];
-    last.a = r.answer || "(无回答)";
-    last.citations = r.citations || [];
-    last.retrieval_count = r.retrieval_count;
-    last.latency_ms = r.latency_ms;
+    last.a = "";
+    const reader = resp.body.getReader(); const dec = new TextDecoder(); let buf = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const parts = buf.split("\n\n"); buf = parts.pop();
+      for (const part of parts) {
+        const ev = (part.match(/^event: (.+)$/m) || [, "content"])[1];
+        const data = JSON.parse((part.match(/^data: (.+)$/m) || [, "{}"])[1]);
+        if (ev === "citations") { last.citations = Array.isArray(data) ? data : []; }
+        else if (ev === "content") { last.pending = false; last.a += data.data || ""; }
+        else if (ev === "done") { last.retrieval_count = data.retrieval_count ?? last.citations.length; last.latency_ms = data.latency_ms ?? data.latency; if (data.session_id) { session = { session_id: data.session_id, ds }; saveSession(); } }
+        else if (ev === "error") { last.pending = false; last.a = "❌ " + (data.error || "流式错误"); }
+        renderThread();
+      }
+    }
     last.pending = false;
-    if (r.session_id) { session = { session_id: r.session_id, ds }; saveSession(); }
+    if (!last.a) last.a = "(无回答)";
     renderThread();
     $("#kgSubPanel").style.display = "";
     $("#kgSubMeta").textContent = "基于问题的实体子图";

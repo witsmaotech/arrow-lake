@@ -384,7 +384,12 @@ async def kg_ask_stream(
             logger.exception("KG stream error")
             yield f"id: {event_id}-error\nevent: error\ndata: {json.dumps({'error': 'Internal error during streaming'})}\n\n"
 
-    return StreamingResponse(_events(), media_type="text/event-stream; charset=utf-8")
+    return StreamingResponse(
+        _events(),
+        media_type="text/event-stream; charset=utf-8",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
+                 "Content-Encoding": "identity"},  # 绕过 GZipMiddleware(SSE 压缩会缓冲,破坏流式)
+    )
 
 
 @router.post("/rebuild-index", dependencies=[Depends(require_role(Role.ADMIN))])

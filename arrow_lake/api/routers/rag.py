@@ -177,6 +177,7 @@ async def rag_query_stream(
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
+            "Content-Encoding": "identity",  # 绕过 GZipMiddleware(SSE 压缩会缓冲整个响应,破坏流式)
         },
     )
 

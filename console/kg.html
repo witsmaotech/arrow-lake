@@ -230,9 +230,9 @@ function visOpts(n) {
   return {
     height: "100%", width: "100%", autoResize: true,
     layout: { improvedLayout: n <= 150 },
-    physics: { stabilization: { iterations: n > 5000 ? 30 : (n > 2000 ? 80 : 200) }, barnesHut: { gravitationalConstant: -8000, springLength: 110 } },
+    physics: { stabilization: { iterations: n > 5000 ? 30 : 60 }, barnesHut: { gravitationalConstant: -8000, springLength: 110 } },
     nodes: { shape: "dot", size: 14, font: { size: 13, color: "#e2e8f0" }, borderWidth: 2 },
-    edges: { color: { color: "#475569", opacity: 0.55 }, smooth: { type: "continuous" }, selectionWidth: 2 },
+    edges: { color: { color: "#475569", opacity: 0.55 }, smooth: false, selectionWidth: 2 },
     groups: {
       系统: { color: { background: "#60a5fa", border: "#2563eb" } },
       算法: { color: { background: "#a78bfa", border: "#7c3aed" } },
