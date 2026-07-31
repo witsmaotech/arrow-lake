@@ -165,13 +165,16 @@ class TestSchemaAndStats:
 
     @pytest.mark.asyncio
     async def test_get_stats(self, client: HugeGraphClient) -> None:
+        graphs_resp = MagicMock()
+        graphs_resp.status_code = 200
+        graphs_resp.json.return_value = {"graphs": ["testgraph"]}
         v_resp = MagicMock()
         v_resp.status_code = 200
         v_resp.json.return_value = {"vertices": [{"id": "v1"}, {"id": "v2"}]}
         e_resp = MagicMock()
         e_resp.status_code = 200
         e_resp.json.return_value = {"edges": [{"id": "e1"}]}
-        with patch.object(client, "_get", side_effect=[v_resp, e_resp]):
+        with patch.object(client, "_get", side_effect=[graphs_resp, v_resp, e_resp]):
             stats = await client.get_stats()
         assert stats["total_vertices"] == 2
         assert stats["total_edges"] == 1

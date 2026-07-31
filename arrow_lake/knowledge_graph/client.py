@@ -642,7 +642,17 @@ class HugeGraphClient(_TraverserMixin, _ImportExportMixin):
 
         HugeGraph REST API does not return a 'total' field in list responses,
         so we fetch with a large limit and count the returned items.
+
+        Short-circuits to ``{0, 0}`` when the graph does not exist: hitting
+        ``/graphs/{name}/graph/vertices`` on a non-existent graph returns 5xx in
+        PD mode, which triggers tenacity retry + exponential backoff (~seconds).
+        The existence check (``list_graphs``) is a lightweight metadata call, so
+        datasets without a KG (the common case on dataset-detail pages) resolve
+        in tens of ms instead of seconds.
         """
+        name = graph_name or self._config.graph_name
+        if not await self.graph_exists(graph_name=name):
+            return {"total_vertices": 0, "total_edges": 0}
         base = self._graph_base_for(graph_name)
         v_count = 0
         e_count = 0

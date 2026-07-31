@@ -660,6 +660,26 @@ class OlapSearchBridge:
 
         return "\n".join(lines)
 
+    @staticmethod
+    def _has_vector_column(source: Any) -> bool:
+        """Return True if the Arrow source has a fixed_size_list (vector) column.
+
+        IVF_PQ Rust panic only occurs on vector-column scans, so vector-less
+        structured datasets are safe under the fast native lance scan path
+        (实测 noaa 翻页 5.4s→0.27s). Unknown schema → True (stay safe).
+        """
+        try:
+            import pyarrow as pa
+            for field in source.schema:
+                try:
+                    if pa.types.is_fixed_size_list(field.type):
+                        return True
+                except Exception:
+                    continue
+        except Exception:
+            return True
+        return False
+
     def _register_dataset(self, conn: Any, dataset_name: str, source: Any) -> None:
         """Register a Lance dataset in DuckDB, preferring native lance scan.
 
@@ -671,7 +691,13 @@ class OlapSearchBridge:
             dataset_name: Name to register the dataset under.
             source: Arrow Table or RecordBatchReader from storage.
         """
-        if self._config.lance_scan_mode == "pyarrow_fallback":
+        # 全局 pyarrow_fallback 是为 IVF_PQ 向量扫描避免 Rust panic(RAG 502 根因)。
+        # 但对无向量列的结构化数据集,native lance scan 下推 LIMIT/OFFSET,翻页快 13-20x
+        # 且不 panic(panic 仅 IVF_PQ vector scan)。按 source 是否有向量列自包含选模式。
+        mode = self._config.lance_scan_mode
+        if mode == "pyarrow_fallback" and not self._has_vector_column(source):
+            mode = "auto"
+        if mode == "pyarrow_fallback":
             # Clear stale registration from pooled connections
             with contextlib.suppress(duckdb.Error):
                 conn.execute(f"DROP VIEW IF EXISTS {dataset_name}")  # nosec B608
@@ -696,7 +722,7 @@ class OlapSearchBridge:
                     uri = self._storage.dataset_uri(dataset_name)
                 adapter = create_lance_scan_adapter(
                     conn,
-                    mode=self._config.lance_scan_mode,
+                    mode=mode,
                 )
                 adapter.create_view(conn, uri, dataset_name)
                 logger.debug("Registered %s via native lance scan", dataset_name)

@@ -287,13 +287,39 @@ async def test_get_schema(mock_client: HugeGraphClient) -> None:
 
 @pytest.mark.asyncio
 async def test_get_stats(mock_client: HugeGraphClient) -> None:
+    # First GET: list_graphs (graph_exists guard) → graph present
+    # Then vertices + edges counts
     mock_client._client.get.side_effect = [
+        _mock_response(200, {"graphs": ["test_graph"]}),
         _mock_response(200, {"vertices": [{"id": "1:a"}, {"id": "1:b"}]}),
         _mock_response(200, {"edges": [{"id": "S1>1>>S2"}]}),
     ]
     stats = await mock_client.get_stats()
     assert stats["total_vertices"] == 2
     assert stats["total_edges"] == 1
+
+
+@pytest.mark.asyncio
+async def test_get_stats_short_circuits_when_graph_missing(
+    mock_client: HugeGraphClient,
+) -> None:
+    """Non-existent graph → {0,0} without hitting vertices/edges endpoints.
+
+    Regression guard for slow dataset-detail pages: a 5xx on the vertices
+    endpoint used to trigger tenacity retry + backoff (~seconds) for every
+    KG-less dataset. The existence check must short-circuit before any
+    vertex/edge fetch.
+    """
+    # list_graphs returns graphs that do NOT include our target
+    mock_client._client.get.return_value = _mock_response(
+        200, {"graphs": ["other_graph"]}
+    )
+    stats = await mock_client.get_stats(graph_name="kg_noaa_china")
+    assert stats == {"total_vertices": 0, "total_edges": 0}
+    # Only the list_graphs call happened — no vertices/edges fetch
+    assert mock_client._client.get.await_count == 1
+    first_path = mock_client._client.get.call_args[0][0]
+    assert first_path == "/graphs"
 
 
 # ---------------------------------------------------------------------------

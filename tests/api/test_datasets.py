@@ -116,6 +116,7 @@ async def test_get_dataset_found(client: AsyncClient) -> None:
     body = resp.json()
     assert body["name"] == "documents"
     assert body["num_rows"] == 1000
+    assert body["has_kg"] is False  # MagicMock lake → no KA base on disk
 
 
 @pytest.mark.asyncio
@@ -123,6 +124,32 @@ async def test_get_dataset_not_found(client: AsyncClient) -> None:
     resp = await client.get("/api/v1/datasets/nonexistent")
     assert resp.status_code == 404
     assert "not found" in resp.json()["message"]
+
+
+def test_dataset_has_kg_detects_built_kg(tmp_path) -> None:
+    """_dataset_has_kg True iff KA dump exists on disk (O(1) file check)."""
+    from arrow_lake.api.routers.datasets import _dataset_has_kg
+    from arrow_lake.knowledge_graph._naming import artifact_key_for
+
+    name = "wuhu_report"
+    lake = MagicMock()
+    lake.config.hugegraph.he_ka_base_dir = str(tmp_path)
+
+    assert _dataset_has_kg(lake, name) is False  # no KA dump yet
+
+    key = artifact_key_for(name)
+    (tmp_path / key / "ka").mkdir(parents=True)
+    (tmp_path / key / "ka" / "data.json").write_text("{}")
+    assert _dataset_has_kg(lake, name) is True
+
+
+def test_dataset_has_kg_false_when_kg_disabled() -> None:
+    """KG disabled (hugegraph None) → False, never raises."""
+    from arrow_lake.api.routers.datasets import _dataset_has_kg
+
+    lake = MagicMock()
+    lake.config.hugegraph = None
+    assert _dataset_has_kg(lake, "any") is False
 
 
 # ---- POST /api/v1/datasets/{name}/ingest ----

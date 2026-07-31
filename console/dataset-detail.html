@@ -163,8 +163,10 @@ if (!ds) {
 
   (async () => {
     // 1) 元数据
+    let detailInfo = null;
     try {
       const d = await request("GET", `/datasets/${encodeURIComponent(ds)}`);
+      detailInfo = d;
       $("#title").textContent = d.name;
       $("#meta").textContent = `v${d.version} · ${(d.num_rows ?? 0).toLocaleString()} 行`;
       $("#body").innerHTML = `
@@ -185,6 +187,14 @@ if (!ds) {
     } catch (e) {
       $("#body").innerHTML = `<div style="color:var(--danger);padding:24px">元数据加载失败:${esc(e?.detail || e?.message || e)}</div>`;
       $("#meta").textContent = "加载失败";
+    }
+
+    // 1.55) 后台预热 OLAP/DuckDB session — 利用后续 schema/KG 加载窗口预热,
+    //       让用户实际滚到预览时为 warm(~1.3s)而非冷启动(~3.5s)。fire-and-forget
+    if (detailInfo) {
+      request("POST", `/datasets/${encodeURIComponent(ds)}/query/olap`,
+        { body: { sql: `SELECT * FROM "${String(ds).replace(/"/g, '""')}" LIMIT 1` } }
+      ).catch(() => {});
     }
 
     // 1.5) 真实 schema(含字段注释)
@@ -229,28 +239,40 @@ if (!ds) {
       }
     });
 
-    // 1.6) 知识图谱统计
-    try {
-      const s = await request("GET", `/kg/stats?dataset=${encodeURIComponent(ds)}`);
-      $("#kgPanel").style.display = "";
-      const v = s.total_vertices ?? 0, e = s.total_edges ?? 0;
-      $("#kgMeta").textContent = v ? `${v} 顶点 · ${e} 边` : "未构建";
-      $("#kg").innerHTML = v
-        ? `<div class="flex" style="gap:12px;align-items:center;flex-wrap:wrap">
-             <div class="kpi" style="padding:8px 14px"><div class="label">顶点</div><div class="val">${v.toLocaleString()}</div></div>
-             <div class="kpi" style="padding:8px 14px"><div class="label">边</div><div class="val">${e.toLocaleString()}</div></div>
-             <a class="btn btn-primary btn-sm" href="kg.html?ds=${encodeURIComponent(ds)}">查看图谱 →</a>
-           </div>`
-        : `<div class="muted" style="font-size:.82rem;padding:4px 0">该数据集尚未构建知识图谱(0 实体)。<a class="btn btn-ghost btn-sm" href="kg.html?ds=${encodeURIComponent(ds)}" style="margin-left:8px">去构建 →</a></div>`;
-    } catch (_) { /* KG 未启用,隐藏 */ }
+    // 1.6) 知识图谱统计 — 仅当元数据标记 has_kg 时才请求 /kg/stats,
+    //      避免对无 KG 的数据集(如结构化大表 noaa)发起空查询
+    if (detailInfo?.has_kg) {
+      try {
+        const s = await request("GET", `/kg/stats?dataset=${encodeURIComponent(ds)}`);
+        $("#kgPanel").style.display = "";
+        const v = s.total_vertices ?? 0, e = s.total_edges ?? 0;
+        $("#kgMeta").textContent = v ? `${v} 顶点 · ${e} 边` : "未构建";
+        $("#kg").innerHTML = v
+          ? `<div class="flex" style="gap:12px;align-items:center;flex-wrap:wrap">
+               <div class="kpi" style="padding:8px 14px"><div class="label">顶点</div><div class="val">${v.toLocaleString()}</div></div>
+               <div class="kpi" style="padding:8px 14px"><div class="label">边</div><div class="val">${e.toLocaleString()}</div></div>
+               <a class="btn btn-primary btn-sm" href="kg.html?ds=${encodeURIComponent(ds)}">查看图谱 →</a>
+             </div>`
+          : `<div class="muted" style="font-size:.82rem;padding:4px 0">该数据集尚未构建知识图谱(0 实体)。<a class="btn btn-ghost btn-sm" href="kg.html?ds=${encodeURIComponent(ds)}" style="margin-left:8px">去构建 →</a></div>`;
+      } catch (_) { /* KG 查询失败,保持面板隐藏 */ }
+    }
+    // has_kg=false → 不发请求,#kgPanel 保持初始隐藏
 
     // 2) 数据预览(分页 + 检索)
     const pv = { page: 1, size: 100, q: "", col: "__all__", total: 0 };
+    let firstPageCache = null;  // {size,total,meta,html} — 仅缓存无搜索的第一页,翻页返回时秒显
     const escSql = (s) => String(s ?? "").replace(/'/g, "''");
     const escId = (s) => String(s ?? "").replace(/"/g, '""'); // escape double-quote in SQL identifiers (col/table) — stored-injection hardening
     async function loadPreview() {
-      $("#preview").innerHTML = '<div class="muted" style="padding:20px;text-align:center">加载…</div>';
       const q = pv.q.trim();
+      // 命中第一页缓存(无搜索 + size 一致)→ 秒显,跳过请求
+      if (pv.page === 1 && !q && firstPageCache && firstPageCache.size === pv.size) {
+        pv.total = firstPageCache.total;
+        $("#previewMeta").textContent = firstPageCache.meta;
+        $("#preview").innerHTML = firstPageCache.html;
+        return;
+      }
+      $("#preview").innerHTML = '<div class="muted" style="padding:20px;text-align:center">加载…</div>';
       const textCols = schemaFields.filter((f) => /string|utf8|large_string/i.test(f.type)).map((f) => f.name);
       const whereCols = (pv.col && pv.col !== "__all__") ? [pv.col] : (textCols.length ? textCols : schemaFields.map((f) => f.name));
       let where = "";
@@ -262,13 +284,25 @@ if (!ds) {
       const tbl = escId(ds);
       const dsEnc = encodeURIComponent(ds);
       try {
-        const cr = await request("POST", `/datasets/${dsEnc}/query/olap`, { body: { sql: `SELECT COUNT(*) AS c FROM "${tbl}" ${where}` } });
-        pv.total = Number(cr?.rows?.[0]?.c ?? 0);
-        const pages = Math.max(1, Math.ceil(pv.total / pv.size));
-        if (pv.page > pages) pv.page = pages;
         const offset = Math.min((pv.page - 1) * pv.size, 100000); // cap deep-offset (perf + abuse guard)
+        if (where) {
+          // 搜索:跳过精确 COUNT(LIKE '%x%' 前导通配全扫,noaa ~7s),探索式分页
+          pv.total = -1;
+        } else if (detailInfo?.num_rows == null) {
+          const cr = await request("POST", `/datasets/${dsEnc}/query/olap`, { body: { sql: `SELECT COUNT(*) AS c FROM "${tbl}"` } });
+          pv.total = Number(cr?.rows?.[0]?.c ?? 0);
+        } else {
+          // 无搜索 → 复用元数据行数,跳过全表 COUNT(*)
+          pv.total = detailInfo.num_rows;
+        }
         const res = await request("POST", `/datasets/${dsEnc}/query/olap`, { body: { sql: `SELECT * FROM "${tbl}" ${where} LIMIT ${pv.size} OFFSET ${offset}` } });
         const rows = res?.rows || [];
+        if (pv.total === -1) {
+          // 探索式:满页假定还有下一页;不满 → 末页
+          pv.total = rows.length >= pv.size ? offset + pv.size + 1 : offset + rows.length;
+        }
+        const pages = Math.max(1, Math.ceil(pv.total / pv.size));
+        if (pv.page > pages) pv.page = pages;
         const cols = rows.length ? Object.keys(rows[0]) : [];
         const head = cols.map((c) => {
           const cm = commentMap[c] || "";
@@ -297,10 +331,16 @@ if (!ds) {
             <button class="btn btn-ghost btn-sm" data-pv="reset">重置</button>
             ${pager}
           </div>`;
-        $("#previewMeta").textContent = `${pv.total.toLocaleString()} 行 · ${cols.length} 列${q ? ` · 检索 "${q}"` : ""}`;
+        $("#previewMeta").textContent = q
+          ? `检索 "${esc(q)}" · 第 ${pv.page} 页${rows.length < pv.size ? "(末页)" : ""} · ${cols.length} 列`
+          : `${pv.total.toLocaleString()} 行 · ${cols.length} 列`;
         $("#preview").innerHTML = pv.total
           ? `${bar}<div class="preview-wrap"><table class="tbl"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`
           : `${bar}<div class="muted" style="padding:24px;text-align:center">${q ? "无匹配行" : "数据集为空(无行)"}</div>`;
+        // 缓存无搜索的第一页,翻页返回时秒显
+        if (pv.page === 1 && !q) {
+          firstPageCache = { size: pv.size, total: pv.total, meta: $("#previewMeta").textContent, html: $("#preview").innerHTML };
+        }
       } catch (e) {
         const msg = e?.detail || e?.message || String(e);
         $("#preview").innerHTML = `<div style="color:var(--danger);padding:16px">预览失败:${esc(msg)}<br/><span class="muted" style="font-size:.72rem">可能:数据集无表结构 / SQL 安全校验拒 / 列名特殊;可在 OLAP Worksheet 手写 SQL</span></div>`;

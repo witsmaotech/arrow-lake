@@ -35,7 +35,7 @@ class OlapConfig(BaseModel):
     enable_join: bool = True
     scanner_batch_size: int = 10_000
     enable_streaming: bool = True
-    lance_scan_mode: str = "auto"
+    lance_scan_mode: str = "pyarrow_fallback"
     max_query_memory_mb: int = 512
     max_concurrent_queries: int = 4
     query_timeout_seconds: int = 300

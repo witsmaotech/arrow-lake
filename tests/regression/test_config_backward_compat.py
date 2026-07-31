@@ -85,7 +85,9 @@ class TestConfigBackwardCompat:
         from arrow_lake.config import OlapConfig
 
         olap = OlapConfig()
-        assert olap.lance_scan_mode == "auto"
+        # v1.9.8: 默认 pyarrow_fallback 避免 IVF_PQ native lance panic(RAG 502 根因);
+        # 无向量列数据集由 OlapSearchBridge._has_vector_column per-dataset 自动加速到 auto
+        assert olap.lance_scan_mode == "pyarrow_fallback"
         assert olap.max_query_memory_mb >= 1
         assert olap.max_concurrent_queries >= 1
         assert olap.query_timeout_seconds >= 1

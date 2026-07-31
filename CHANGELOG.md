@@ -8,7 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.9.7] - 2026-07-30
 
-**依赖升级(湖仓核心 + 安全)**。批0 uv sync 基线对齐(修复 uv.lock 停滞根因:gravitino pre-commit metadata bug)+ pylance 9.0.0;批1 ray 2.56.0 修复 CVE-2026-57516(代码注入)+ ray_serve get_deployment→get_deployment_handle 适配;批2 lancedb 0.36.0 + duckdb 1.5.5 + table_names→list_tables;批3 metaflow 2.19.35 + daft 0.7.21 + sentence-transformers 5.6.1 + encoder 适配。详见 `docs/v1.9.7-upgrade-plan.md`。
+**依赖升级(湖仓核心 + 安全)+ 结构化大表 web 性能(2026-07-31 追加)**。批0 uv sync 基线对齐(修复 uv.lock 停滞根因:gravitino pre-commit metadata bug)+ pylance 9.0.0;批1 ray 2.56.0 修复 CVE-2026-57516(代码注入)+ ray_serve get_deployment→get_deployment_handle 适配;批2 lancedb 0.36.0 + duckdb 1.5.5 + table_names→list_tables;批3 metaflow 2.19.35 + daft 0.7.21 + sentence-transformers 5.6.1 + encoder 适配。详见 `docs/v1.9.7-upgrade-plan.md`、`docs/v1.9.7-web-perf.md`。
+
+### Added/Fixed — 结构化大表 web 性能(2026-07-31 追加,noaa_china 1070 万行)
+noaa 详情页加载 ~50s → 翻页 0.27s。根因:kg/stats 对无 KG 数据集查 HugeGraph 6s + 预览 `COUNT(*)` 全扫(pyarrow_fallback 41s)+ `pyarrow_fallback` OFFSET 翻页不下推(每页 5.4s)。
+- **OLAP scan_mode 安全默认 + per-dataset 自动加速**:`config/olap.py` 默认 auto→**pyarrow_fallback**(避免 IVF_PQ native panic);`olap.py:OlapSearchBridge._register_dataset` 新增 `_has_vector_column(source)`,**无向量列→auto**(native lance scan 下推 LIMIT/OFFSET,翻页 19×)、**有向量列→pyarrow_fallback**(RAG 安全)。**升级注意**:默认值变更,依赖 auto 的部署需显式设 env。
+- **kg/stats 短路**:`client.py:get_stats` 图不存在→`{0,0}`(6s→0);`datasets.py:get_dataset` 补 `has_kg`(`_dataset_has_kg` O(1));前端 `has_kg=false` 不请求。
+- **COUNT(*) 优化**:无搜索复用元数据 `num_rows`;有搜索探索式分页(LIKE COUNT 无法下推,~7s→跳过)。注:auto 下无 WHERE `COUNT(*)` 本身 **0.3s**(下推近 `count_rows` 元数据 0.001s),41s 是 pyarrow_fallback 旧值。
+- **第一页缓存 + 后台预热**:翻页返回秒显 + `LIMIT 1` 预热 DuckDB session。
+实测:kg/stats 6s→0 · 翻页 OFFSET 100 **5.4s→0.27s(19×)** · 翻页返回秒显。
+
+### Changed — 依赖升级
 
 ### Changed — 依赖升级
 - **批0**: `[tool.uv] override-dependencies` 修复 gravitino 1.3.0 `pre-commit==3.5.0` 与 dev group 冲突(uv.lock 长期停滞根因);pylance 4.0.1→**9.0.0**。

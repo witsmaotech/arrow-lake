@@ -700,6 +700,26 @@ async def list_datasets(
     return DatasetListResponse(datasets=page, total=len(visible))
 
 
+def _dataset_has_kg(lake: Any, name: str) -> bool:
+    """Return whether a dataset has a built KG (KA dump on disk).
+
+    O(1) file check — lets callers learn whether a KG exists without hitting
+    HugeGraph (``/kg/stats`` on a KG-less dataset is an empty-graph query).
+    Mirrors the ``ka_keys`` logic in ``list_datasets`` but for a single dataset.
+    """
+    from pathlib import Path
+
+    from arrow_lake.knowledge_graph._naming import artifact_key_for
+
+    ka_base = getattr(lake.config.hugegraph, "he_ka_base_dir", None)
+    if not isinstance(ka_base, (str, Path)) or not ka_base:
+        return False
+    try:
+        return (Path(ka_base) / artifact_key_for(name) / "ka" / "data.json").is_file()
+    except (OSError, TypeError):
+        return False
+
+
 @router.get("/{name}", response_model=DatasetInfo)
 async def get_dataset(
     name: str = Path(..., pattern=_NAME_PATTERN),
@@ -719,6 +739,7 @@ async def get_dataset(
                 vector_dim=entry.vector_dim,
                 has_vector_index=entry.has_vector_index,
                 has_fts_index=entry.has_fts_index,
+                has_kg=_dataset_has_kg(lake, entry.name),
                 size_bytes=entry.size_bytes,
                 created_at=entry.created_at,
                 updated_at=entry.updated_at,
