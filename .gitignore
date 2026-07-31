@@ -125,3 +125,4 @@ deploy/uvx-local
 
 # HugeGraph migration backups (local only, do not commit)
 deploy/backups/
+console-standalone/

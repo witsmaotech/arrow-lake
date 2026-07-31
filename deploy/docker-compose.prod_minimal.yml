@@ -204,7 +204,7 @@ services:
       # ARROW_LAKE__LLM__MODEL: "ministral-3:3b"
       # ARROW_LAKE__LLM__API_BASE: "http://host.docker.internal:11534/v1"
       ARROW_LAKE__LLM__PROVIDER: "openai"
-      ARROW_LAKE__LLM__MODEL: "qwen-turbo"
+      ARROW_LAKE__LLM__MODEL: "qwen-plus"
       ARROW_LAKE__LLM__API_BASE: "https://dashscope.aliyuncs.com/compatible-mode/v1"
       ARROW_LAKE__LLM__API_KEY: "${DASHSCOPE_API_KEY}"
       ARROW_LAKE__LLM__MAX_TOKENS: "8192"
@@ -223,7 +223,7 @@ services:
       no_proxy: "127.0.0.1,localhost,host.docker.internal,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,172.19.0.0/16,172.30.0.0/16,minio,redis,metaflow-metadata,metaflow-db,hg-server,hg-pd,hg-store,gravitino,lance-rest,arrow-lake-gravitino,arrow-lake-lance-rest"
       ARROW_LAKE__EMBEDDING__BACKEND: "openai"
       ARROW_LAKE__EMBEDDING__API_BASE: "http://host.docker.internal:11534/v1"
-      ARROW_LAKE__EMBEDDING__MODEL: "qwen3-embedding:0.6b"
+      ARROW_LAKE__EMBEDDING__MODEL: "qwen3-embedding:4b"
       ARROW_LAKE__EMBEDDING__API_KEY: "ollama"
       # v1.9.5 批5: GraphRAG 联动(已建 KG 的数据集)。取消下行注释即开,开启后 RAG 自动
       # 注入实体关系三元组(graph_qa 模板)。默认关——未建 KG 的数据集开了会降级为纯向量 RAG。
@@ -273,14 +273,14 @@ services:
       ARROW_LAKE__RAG__EXTRACT_LLM__PROVIDER: "openai"
       ARROW_LAKE__RAG__EXTRACT_LLM__API_BASE: "https://dashscope.aliyuncs.com/compatible-mode/v1"
       ARROW_LAKE__RAG__EXTRACT_LLM__API_KEY: "${DASHSCOPE_API_KEY:-}"
-      ARROW_LAKE__RAG__EXTRACT_LLM__MODEL: "qwen-turbo"
+      ARROW_LAKE__RAG__EXTRACT_LLM__MODEL: "qwen-plus"
       # 候选问答模型 (替换 MODEL 行即换): qwen-max / deepseek-v3 / 本地 qwen3.5:27b
       #   (本地: API_BASE=http://host.docker.internal:11534/v1, API_KEY=ollama)
       # 抽取换百炼轻量 (启用:KG 抽取走云端 qwen-turbo,不依赖本地 ollama,json_schema 约束解码):
       ARROW_LAKE__HUGEGRAPH__HE_EXTRACT_LLM__PROVIDER: "openai"
       ARROW_LAKE__HUGEGRAPH__HE_EXTRACT_LLM__API_BASE: "https://dashscope.aliyuncs.com/compatible-mode/v1"
       ARROW_LAKE__HUGEGRAPH__HE_EXTRACT_LLM__API_KEY: "${DASHSCOPE_API_KEY:-}"
-      ARROW_LAKE__HUGEGRAPH__HE_EXTRACT_LLM__MODEL: "qwen-turbo"
+      ARROW_LAKE__HUGEGRAPH__HE_EXTRACT_LLM__MODEL: "qwen-plus"
       # DuckDB performance tuning (v1.3.4)
       ARROW_LAKE__OLAP__PRESERVE_INSERTION_ORDER: "false"
       ARROW_LAKE__OLAP__TEMP_DIRECTORY: "/tmp/duckdb"
