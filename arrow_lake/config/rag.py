@@ -250,6 +250,14 @@ class HugeGraphConfig(BaseModel):
     # 白名单过滤(丢弃无语义边,如"金额—训练→硬件")。仅 project_concept_graph 生效,
     # 其他模板 type 体系不同 → 跳过。默认开。
     he_kg_type_pair: bool = True
+    # v1.9.9 孤儿点连接: 软降级 + 消歧后, 仍无任何 entity↔entity 边的孤立顶点,
+    # 按共现(同 chunk)+ embedding 余弦 + type-pair 合法动词启发式连接到已连通实体
+    # (无额外 LLM)。三重证据门控——共现是证据, 不臆造常识关系。默认 "auto"(开):
+    # embedder 恒在(he 后端), 最坏只是几条低权 related_to, 可 off 关。仅 project_concept_graph。
+    he_orphan_linking: Literal["off", "auto"] = "auto"
+    he_orphan_threshold: float = 0.75    # 孤儿连接 cosine 阈值(低于消歧 0.86, "相关"<"同义")
+    he_orphan_max_partners: int = 3      # 每个孤立最多新增几条边
+    he_orphan_max_links: int = 500       # 全局新增边上限(封顶, 控制噪声与工作量)
 
     @field_validator("max_traversal_depth")
     @classmethod

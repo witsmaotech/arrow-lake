@@ -598,6 +598,7 @@ async def test_execute_build_dataset_path_runs_entity_resolution(
     extractor = AsyncMock()
     extractor._classifier = None
     extractor._kg_granularity = "dataset"
+    extractor._embedder = None  # resolve_entities is mocked below; no embedder needed
     extractor._resolve_template = MagicMock(return_value="entity_graph")
     base_result = ExtractionResult(
         entities=(
@@ -808,6 +809,7 @@ async def test_execute_build_map_reduce_runs_entity_resolution(
     extractor = AsyncMock()
     extractor._classifier = None
     extractor._kg_granularity = "map_reduce"
+    extractor._embedder = None  # resolve_entities is mocked below; no embedder needed
     extractor._resolve_template = MagicMock(return_value="entity_graph")
     extractor.extract = AsyncMock(side_effect=[
         ExtractionResult((ExtractedEntity("A", "x"),), (), ""),    # chunk-1
@@ -971,3 +973,119 @@ async def test_batch_add_vertices_splits_below_hugegraph_cap(config: HugeGraphCo
     assert ids == [f"id-{i}" for i in range(7)]   # concatenated in order
     assert calls == [3, 3, 1]                       # split into ≤3
     assert all(c <= 2500 for c in calls)
+
+
+@pytest.mark.asyncio
+async def test_execute_build_map_reduce_orphan_links_added(
+    mock_client: object,
+    chunks_table_with_doc_type: pa.Table,
+    config: HugeGraphConfig,
+) -> None:
+    """v1.9.9: map_reduce + he_orphan_linking=auto links orphan entities that
+    co-occur with a connected entity in the same chunk (evidence-gated, no LLM).
+
+    chunk-1 yields 甲方(主体)—提供→平台(软件) + 响应时间(指标, orphan in same
+    chunk). The linker connects 响应时间 to 平台 (软件→指标 via 要求, reverse)
+    because they co-occur and cosine ≥ threshold. _insert_kg thus receives BOTH
+    the original 提供 edge and the inferred 要求 edge."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    _PCG = "arrow_lake/knowledge_graph/templates/project_concept_graph.yaml"
+    config.he_kg_granularity = "map_reduce"
+    config.he_entity_resolution = "off"
+    config.he_kg_type_pair = True
+    config.he_orphan_linking = "auto"
+
+    extractor = AsyncMock()
+    extractor._classifier = None
+    extractor._kg_granularity = "map_reduce"
+    extractor._resolve_template = MagicMock(return_value=_PCG)
+
+    # Sync embedder (production embed_documents is sync). 响应时间 close to 平台.
+    _emb_table = {"响应时间": [1.0, 0.0], "平台": [0.8, 0.6], "甲方": [0.0, 1.0]}
+    extractor._embedder = MagicMock()
+    extractor._embedder.embed_documents = lambda texts: [
+        _emb_table.get(t.strip(), [0.5, 0.5]) for t in texts
+    ]
+
+    def _extract(content, *, chunk_id="", doc_type=None):
+        if chunk_id == "chunk-1":
+            return ExtractionResult(
+                (ExtractedEntity("甲方", "主体"),
+                 ExtractedEntity("平台", "软件"),
+                 ExtractedEntity("响应时间", "指标")),
+                (ExtractedRelation("甲方", "平台", "提供"),),
+                "",
+            )
+        return ExtractionResult((), (), "")  # chunk-2 empty
+
+    extractor.extract = AsyncMock(side_effect=_extract)
+
+    builder = KGBuilder(mock_client, extractor, config)
+    captured: list = []
+
+    async def _spy(result, graph_name, chunk_id_map, **kw):
+        captured.append(result)
+
+    builder._insert_kg = _spy  # type: ignore[method-assign]
+
+    task_id = await builder.build("ds", chunks_table_with_doc_type)
+    await builder.execute_build(task_id)
+
+    assert len(captured) == 1
+    triples = {(r.source, r.target, r.relation_type) for r in captured[0].relations}
+    # original legal relation preserved
+    assert ("甲方", "平台", "提供") in triples
+    # orphan 响应时间 linked to 平台 (co-occur in chunk-1; 软件→指标 要求, reverse)
+    assert ("平台", "响应时间", "要求") in triples
+
+
+@pytest.mark.asyncio
+async def test_execute_build_map_reduce_soft_degrade_keeps_endpoints(
+    mock_client: object,
+    chunks_table_with_doc_type: pa.Table,
+    config: HugeGraphConfig,
+) -> None:
+    """v1.9.9: an illegal type-pair relation (金额—训练→硬件) is soft-degraded to
+    相关 (not dropped) so both endpoints stay connected. he_orphan_linking=off
+    isolates the degrade path."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    _PCG = "arrow_lake/knowledge_graph/templates/project_concept_graph.yaml"
+    config.he_kg_granularity = "map_reduce"
+    config.he_entity_resolution = "off"
+    config.he_kg_type_pair = True
+    config.he_orphan_linking = "off"  # isolate soft-degrade
+
+    extractor = AsyncMock()
+    extractor._classifier = None
+    extractor._kg_granularity = "map_reduce"
+    extractor._resolve_template = MagicMock(return_value=_PCG)
+
+    def _extract(content, *, chunk_id="", doc_type=None):
+        if chunk_id == "chunk-1":
+            return ExtractionResult(
+                (ExtractedEntity("X", "金额"), ExtractedEntity("H", "硬件")),
+                (ExtractedRelation("X", "H", "训练"),),  # illegal type-pair
+                "",
+            )
+        return ExtractionResult((), (), "")
+
+    extractor.extract = AsyncMock(side_effect=_extract)
+
+    builder = KGBuilder(mock_client, extractor, config)
+    captured: list = []
+
+    async def _spy(result, graph_name, chunk_id_map, **kw):
+        captured.append(result)
+
+    builder._insert_kg = _spy  # type: ignore[method-assign]
+
+    task_id = await builder.build("ds", chunks_table_with_doc_type)
+    await builder.execute_build(task_id)
+
+    assert len(captured) == 1
+    rels = captured[0].relations
+    assert len(rels) == 1                     # degraded, NOT dropped
+    assert rels[0].relation_type == "相关"    # generic marker
+    assert dict(rels[0].properties)["original_relation_type"] == "训练"

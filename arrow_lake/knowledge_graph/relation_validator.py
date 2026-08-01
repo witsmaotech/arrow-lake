@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 from dataclasses import replace
 from pathlib import Path
+from typing import Literal
 
 from arrow_lake.knowledge_graph.entity_router import normalize_name
 from arrow_lake.knowledge_graph.extractor import ExtractionResult
@@ -30,6 +31,15 @@ _TEMPLATE_STEM = "project_concept_graph"
 # Entities whose type we could not determine (template usually snaps these
 # away, but guard against empty/未知 so we don't over-filter on missing info).
 _UNKNOWN_TYPES = frozenset({"", "未知", "unknown"})
+
+# v1.9.9 soft-degrade: an illegal (verb, type-pair) relation is downgraded to
+# this generic marker instead of being dropped. ``相关`` is intentionally OUT
+# of the template's 16-value enum, so ``route_relation("相关")`` falls through
+# to the generic ``related_to`` edge label (entity→entity, always resolvable),
+# keeping both endpoints connected rather than orphaning them. The original
+# verb is preserved in ``properties.original_relation_type`` for traceability.
+_GENERIC_VERB = "相关"
+_DEGRADED_WEIGHT = 0.4
 
 # Legal (source_type, target_type) pairs per relation verb. "*" = wildcard
 # (any type on that side). Verbs NOT present here (包含/属于/依赖/...) are
@@ -110,12 +120,25 @@ def _is_legal(rel_type: str, src_type: str, tgt_type: str) -> bool:
 
 def filter_relations_by_type_pair(
     result: ExtractionResult, template_path: str | None,
+    *,
+    on_illegal: Literal["drop", "degrade"] = "drop",
 ) -> ExtractionResult:
-    """Drop relations whose entity-type pair is illegal for their verb.
+    """Filter/degrade relations whose entity-type pair is illegal for their verb.
+
+    - ``on_illegal="drop"`` (default, v1.9.8 behavior): illegal relations are
+      dropped. Endpoints with no other relation go orphan.
+    - ``on_illegal="degrade"`` (v1.9.9): illegal relations are KEPT but their
+      ``relation_type`` is rewritten to the generic marker ``相关`` (which
+      routes to a ``related_to`` edge in ``_insert_kg``), with the original
+      verb preserved in ``properties.original_relation_type`` and a low
+      ``properties.weight=0.4``. The connection is real (the LLM extracted it
+      from source text); only the typed verb/type combo was wrong, so keeping
+      the endpoints connected reduces the orphan rate without asserting a
+      false specific verb.
 
     No-op for non-project_concept_graph templates. Returns a NEW
-    :class:`ExtractionResult` (the input is never mutated). The dropped count
-    is logged so an operator can see how much noise the filter removed.
+    :class:`ExtractionResult` (the input is never mutated). Dropped/degraded
+    counts are logged so an operator can see how much the filter touched.
     """
     if not is_project_concept_graph(template_path):
         return result
@@ -125,18 +148,35 @@ def filter_relations_by_type_pair(
     }
     kept: list = []
     dropped = 0
+    degraded = 0
     for r in result.relations:
         src_type = type_by_name.get(normalize_name(r.source), "")
         tgt_type = type_by_name.get(normalize_name(r.target), "")
         if _is_legal(r.relation_type, src_type, tgt_type):
             kept.append(r)
+        elif on_illegal == "degrade":
+            # Preserve the original verb for traceability, then rewrite to the
+            # generic marker + low weight. The connection stays (no orphan).
+            new_props = dict(r.properties)
+            new_props["original_relation_type"] = r.relation_type
+            new_props["weight"] = _DEGRADED_WEIGHT
+            kept.append(replace(
+                r,
+                relation_type=_GENERIC_VERB,
+                properties=tuple(new_props.items()),
+            ))
+            degraded += 1
         else:
             dropped += 1
 
+    if degraded:
+        logger.info(
+            "type-pair filter: degraded %d/%d relations to '%s' (template=%s)",
+            degraded, len(result.relations), _GENERIC_VERB, _TEMPLATE_STEM,
+        )
     if dropped:
-        total = len(result.relations)
         logger.info(
             "type-pair filter: dropped %d/%d relations (template=%s)",
-            dropped, total, _TEMPLATE_STEM,
+            dropped, len(result.relations), _TEMPLATE_STEM,
         )
     return replace(result, relations=tuple(kept))

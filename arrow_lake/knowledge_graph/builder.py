@@ -45,7 +45,10 @@ from arrow_lake.knowledge_graph.extractor import (
     ExtractedRelation,
     ExtractionResult,
 )
-from arrow_lake.knowledge_graph.relation_validator import filter_relations_by_type_pair
+from arrow_lake.knowledge_graph.relation_validator import (
+    filter_relations_by_type_pair,
+    is_project_concept_graph,
+)
 from arrow_lake.knowledge_graph._naming import graph_name_for
 from arrow_lake.knowledge_graph.schema import ARROW_LAKE_KG_SCHEMA, schema_to_hugegraph_payload
 
@@ -402,19 +405,33 @@ class KGBuilder:
                     task.dataset_name, len(chunk_ids),
                 )
             else:
-                # type-pair white-list filter (project_concept_graph only) —
-                # applied on the dataset path too for consistency with map_reduce.
+                # (A) v1.9.9 soft-degrade (consistency with map_reduce).
                 if getattr(self._config, "he_kg_type_pair", True):
-                    result = filter_relations_by_type_pair(result, template_path)
+                    result = filter_relations_by_type_pair(
+                        result, template_path, on_illegal="degrade",
+                    )
                     total_relations = len(result.relations)
-                # [entity resolution] merge synonymous entities (opt-in, default
-                # off). Runs on the per-dataset ExtractionResult before insert;
+                _hg_cfg = getattr(self._config, "hugegraph", None) or self._config
+                _resolution_on = getattr(_hg_cfg, "he_entity_resolution", "off") != "off"
+                _orphan_on = getattr(_hg_cfg, "he_orphan_linking", "auto") != "off"
+                # (B) shared embeddings (resolver + orphan linker reuse). PCG guard
+                # — orphan linker is PCG-only, so skip embed on other templates
+                # when resolution is also off.
+                precomputed_vecs, name_to_vec = (None, {})
+                if _resolution_on or (
+                    _orphan_on and is_project_concept_graph(template_path)
+                ):
+                    precomputed_vecs, name_to_vec = (
+                        await self._shared_entity_embeddings(result)
+                    )
+                # (C) [entity resolution] merge synonymous entities (opt-in).
                 # entity_chunks (chunk→entity provenance) is remapped so the
                 # canonical inherits all merged entities' chunk references.
-                _hg_cfg = getattr(self._config, "hugegraph", None) or self._config
-                if getattr(_hg_cfg, "he_entity_resolution", "off") == "auto":
+                if _resolution_on:
                     try:
-                        result, merge_map = await self._extractor.resolve_entities(result)
+                        result, merge_map = await self._extractor.resolve_entities(
+                            result, embeddings=precomputed_vecs,
+                        )
                         if merge_map:
                             ec = dataset_ka.entity_chunks
                             for merged, canon in merge_map.items():
@@ -425,6 +442,20 @@ class KGBuilder:
                             "entity resolution failed, using unmerged result: %s",
                             str(exc)[:160],
                         )
+                # (D) v1.9.9 heuristic orphan linking (evidence-gated, no LLM).
+                if _orphan_on and name_to_vec:
+                    try:
+                        from arrow_lake.knowledge_graph.orphan_linker import link_orphans
+                        result, _new_links = link_orphans(
+                            result, dataset_ka.entity_chunks, name_to_vec,
+                            template_path=template_path,
+                            threshold=getattr(_hg_cfg, "he_orphan_threshold", 0.75),
+                            max_partners=getattr(_hg_cfg, "he_orphan_max_partners", 3),
+                            max_links=getattr(_hg_cfg, "he_orphan_max_links", 500),
+                        )
+                    except Exception as exc:  # noqa: BLE001 — best-effort
+                        logger.warning("orphan linking failed: %s", str(exc)[:160])
+                # (E) insert.
                 await self._insert_kg(
                     result,
                     graph_name,
@@ -573,15 +604,37 @@ class KGBuilder:
                     task.dataset_name, len(chunk_ids),
                 )
             else:
-                # type-pair white-list filter (project_concept_graph only).
+                # (A) v1.9.9 soft-degrade: illegal type-pair relations are
+                # downgraded to 相关 (→ related_to) instead of dropped, so their
+                # endpoints stay connected rather than going orphan.
                 if getattr(self._config, "he_kg_type_pair", True):
-                    result = filter_relations_by_type_pair(result, template_path)
+                    result = filter_relations_by_type_pair(
+                        result, template_path, on_illegal="degrade",
+                    )
                     total_relations = len(result.relations)
-                # entity resolution (synonym merge) — opt-in via config.
+
                 _hg_cfg = getattr(self._config, "hugegraph", None) or self._config
-                if getattr(_hg_cfg, "he_entity_resolution", "off") != "off":
+                _resolution_on = getattr(_hg_cfg, "he_entity_resolution", "off") != "off"
+                _orphan_on = getattr(_hg_cfg, "he_orphan_linking", "auto") != "off"
+
+                # (B) compute embeddings ONCE — shared by resolver + orphan linker.
+                # Skip when neither will use them: orphan linker is PCG-only, so a
+                # non-PCG template with resolution off needs no embed pass.
+                precomputed_vecs, name_to_vec = (None, {})
+                _need_embed = _resolution_on or (
+                    _orphan_on and is_project_concept_graph(template_path)
+                )
+                if _need_embed:
+                    precomputed_vecs, name_to_vec = (
+                        await self._shared_entity_embeddings(result)
+                    )
+
+                # (C) entity resolution (synonym merge) — opt-in, reuses embeddings.
+                if _resolution_on:
                     try:
-                        result, merge_map = await self._extractor.resolve_entities(result)
+                        result, merge_map = await self._extractor.resolve_entities(
+                            result, embeddings=precomputed_vecs,
+                        )
                         total_entities = len(result.entities)
                         total_relations = len(result.relations)
                         if merge_map:
@@ -595,6 +648,26 @@ class KGBuilder:
                             "entity resolution failed, using unmerged result: %s",
                             str(exc)[:160],
                         )
+
+                # (D) v1.9.9 heuristic orphan linking — evidence-gated, no LLM.
+                # Links remaining orphan entities to co-occurring connected ones
+                # (same chunk + embedding ≥ threshold + legal type-pair verb).
+                if _orphan_on and name_to_vec:
+                    try:
+                        from arrow_lake.knowledge_graph.orphan_linker import link_orphans
+                        result, new_links = link_orphans(
+                            result, entity_chunks, name_to_vec,
+                            template_path=template_path,
+                            threshold=getattr(_hg_cfg, "he_orphan_threshold", 0.75),
+                            max_partners=getattr(_hg_cfg, "he_orphan_max_partners", 3),
+                            max_links=getattr(_hg_cfg, "he_orphan_max_links", 500),
+                        )
+                        if new_links:
+                            total_relations = len(result.relations)
+                    except Exception as exc:  # noqa: BLE001 — best-effort
+                        logger.warning("orphan linking failed: %s", str(exc)[:160])
+
+                # (E) insert.
                 await self._insert_kg(
                     result,
                     graph_name,
@@ -862,6 +935,36 @@ class KGBuilder:
                 rel_edges, graph_name=graph_name, write_sem=write_sem,
                 batch_size=self._config.build_batch_size,
             )
+
+    async def _shared_entity_embeddings(
+        self, result: ExtractionResult,
+    ) -> tuple[list[list[float]] | None, dict[str, list[float]]]:
+        """Compute entity embeddings ONCE for reuse by resolver + orphan linker.
+
+        Returns ``(vectors_aligned_to_result_entities, name_to_vec)``. Both are
+        ``None`` / empty on any failure so callers fall back gracefully
+        (resolver re-embeds internally; orphan linker no-ops). This is an O(n)
+        embed pass — NOT the O(n²) cosine matrix in entity_resolver — so it is
+        capped at 50k entities, independent of the resolver's 10k O(n²) cap.
+        """
+        embed_fn = getattr(getattr(self._extractor, "_embedder", None), "embed_documents", None)
+        n = len(result.entities)
+        if embed_fn is None or not (2 <= n <= 50000):
+            return None, {}
+        try:
+            from arrow_lake.knowledge_graph.entity_resolver import _entity_text
+            texts = [_entity_text(e) for e in result.entities]
+            vecs = await asyncio.wait_for(
+                asyncio.to_thread(embed_fn, texts), timeout=600,
+            )
+            name_to_vec = {
+                normalize_name(e.name): v
+                for e, v in zip(result.entities, vecs, strict=False)
+            }
+        except Exception as exc:  # noqa: BLE001 — best-effort
+            logger.warning("shared entity embed failed: %s", str(exc)[:120])
+            return None, {}
+        return vecs, name_to_vec
 
     async def _infer_doc_type(self, contents: list[str]) -> str | None:
         """Infer doc_type ONCE from aggregated document content.

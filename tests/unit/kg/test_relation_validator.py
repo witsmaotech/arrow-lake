@@ -146,3 +146,102 @@ def test_original_result_not_mutated() -> None:
     before = r.relations
     filter_relations_by_type_pair(r, _PCG)
     assert r.relations == before  # immutable: original untouched
+
+
+# --- v1.9.9 soft-degrade: illegal type-pair → generic 相关 (not dropped) ---
+
+
+def _props(rel: ExtractedRelation) -> dict[str, object]:
+    return dict(rel.properties)
+
+
+def test_degrade_keeps_relation_as_generic() -> None:
+    # 训练 金额→硬件 illegal; degrade keeps it, rewrites verb to 相关.
+    r = _result(
+        [_e("X", "金额"), _e("H", "硬件")],
+        [_rel("X", "H", "训练")],
+    )
+    out = filter_relations_by_type_pair(r, _PCG, on_illegal="degrade")
+    assert len(out.relations) == 1
+    rel = out.relations[0]
+    assert rel.relation_type == "相关"
+    p = _props(rel)
+    assert p["original_relation_type"] == "训练"
+    assert p["weight"] == 0.4
+
+
+def test_degrade_default_is_drop() -> None:
+    # No on_illegal arg → drop (v1.9.8 backward-compat default unchanged).
+    r = _result(
+        [_e("X", "金额"), _e("H", "硬件")],
+        [_rel("X", "H", "训练")],
+    )
+    out = filter_relations_by_type_pair(r, _PCG)
+    assert out.relations == ()
+
+
+def test_drop_mode_explicit_matches_default() -> None:
+    r = _result(
+        [_e("X", "金额"), _e("H", "硬件")],
+        [_rel("X", "H", "训练")],
+    )
+    out = filter_relations_by_type_pair(r, _PCG, on_illegal="drop")
+    assert out.relations == ()
+
+
+def test_degrade_preserves_description() -> None:
+    # An existing description property survives alongside the added markers.
+    rel = ExtractedRelation(
+        source="X", target="H", relation_type="训练",
+        properties=(("description", "金额用来训练硬件"),),
+    )
+    r = _result([_e("X", "金额"), _e("H", "硬件")], [rel])
+    out = filter_relations_by_type_pair(r, _PCG, on_illegal="degrade")
+    p = _props(out.relations[0])
+    assert p["description"] == "金额用来训练硬件"
+    assert p["original_relation_type"] == "训练"
+    assert p["weight"] == 0.4
+
+
+def test_degrade_mixed_batch() -> None:
+    # legal kept as-is; illegal degraded to 相关; generic (包含) kept unchanged.
+    r = _result(
+        [_e("M", "模型"), _e("D", "数据"), _e("X", "金额"), _e("H", "硬件")],
+        [
+            _rel("M", "D", "训练"),   # legal
+            _rel("X", "H", "训练"),   # illegal → degraded
+            _rel("M", "D", "包含"),   # generic, kept as-is
+        ],
+    )
+    out = filter_relations_by_type_pair(r, _PCG, on_illegal="degrade")
+    by_triple = {(rel.source, rel.target, rel.relation_type): rel for rel in out.relations}
+    # legal retained with original verb
+    assert ("M", "D", "训练") in by_triple
+    # generic retained with original verb
+    assert ("M", "D", "包含") in by_triple
+    # illegal downgraded to 相关 (endpoints preserved → no orphan)
+    assert ("X", "H", "相关") in by_triple
+    assert _props(by_triple[("X", "H", "相关")])["original_relation_type"] == "训练"
+    assert len(out.relations) == 3
+
+
+def test_degraded_relation_passes_second_filter() -> None:
+    # 相关 is not in LEGAL_TYPE_PAIRS → unrestricted → survives a re-filter.
+    r = _result(
+        [_e("X", "金额"), _e("H", "硬件")],
+        [_rel("X", "H", "训练")],
+    )
+    once = filter_relations_by_type_pair(r, _PCG, on_illegal="degrade")
+    twice = filter_relations_by_type_pair(once, _PCG, on_illegal="degrade")
+    assert len(twice.relations) == 1
+    assert twice.relations[0].relation_type == "相关"
+
+
+def test_degrade_non_project_template_is_noop() -> None:
+    # Non-project template → no filtering/degrading at all (passes through).
+    r = _result(
+        [_e("X", "金额"), _e("H", "硬件")],
+        [_rel("X", "H", "训练")],
+    )
+    out = filter_relations_by_type_pair(r, "entity_graph", on_illegal="degrade")
+    assert out.relations == r.relations

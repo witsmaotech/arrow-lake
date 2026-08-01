@@ -147,3 +147,44 @@ async def test_parse_recovers_bare_name_when_llm_wraps_with_definition() -> None
     )
     assert mmap == {"应急指挥中心": "市应急指挥中心"}
     assert {e.name for e in new_r.entities} == {"市应急指挥中心"}
+
+
+@pytest.mark.asyncio
+async def test_precomputed_embeddings_skip_embed_fn() -> None:
+    # v1.9.9 reuse: passing embeddings= (length-matched) must NOT call embed_fn.
+    result = _result([_e("A", "a"), _e("B", "b")])
+
+    calls = {"n": 0}
+
+    def embed_fn(texts):  # should never run
+        calls["n"] += 1
+        return [[0.0, 0.0]] * len(texts)
+
+    async def gen_fn(prompt):
+        return '{"merge": {}}'   # no merge → empty resolved_map
+
+    precomputed = [[1.0, 0.0], [0.99, 0.01]]  # aligned to result.entities
+    await resolve_entities(
+        result, embed_fn=embed_fn, generate_fn=gen_fn,
+        threshold=0.86, batch=8, embeddings=precomputed,
+    )
+    assert calls["n"] == 0  # embed_fn never invoked → reuse worked
+
+
+@pytest.mark.asyncio
+async def test_precomputed_embeddings_wrong_length_falls_back() -> None:
+    # Mismatched length → fall back to embed_fn (don't silently mis-align).
+    result = _result([_e("A", "a"), _e("B", "b"), _e("C", "c")])
+
+    def embed_fn(texts):
+        return [[1.0, 0.0]] * len(texts)
+
+    async def gen_fn(prompt):
+        return '{"merge": {}}'
+
+    await resolve_entities(
+        result, embed_fn=embed_fn, generate_fn=gen_fn,
+        threshold=0.86, batch=8, embeddings=[[1.0, 0.0], [0.0, 1.0]],  # len 2 != 3
+    )
+    # no assertion on result (no clusters at threshold 0.86); the point is it
+    # did not crash and fell back through embed_fn.

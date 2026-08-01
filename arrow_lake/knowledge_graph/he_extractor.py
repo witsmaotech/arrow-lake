@@ -208,10 +208,15 @@ class HyperExtractExtractor:
             self.__dict__["_resolution_provider"] = create_llm_provider(self._extract_llm_cfg)
         return self.__dict__["_resolution_provider"]
 
-    async def resolve_entities(self, result: Any) -> tuple[Any, dict[str, str]]:
+    async def resolve_entities(
+        self, result: Any, *, embeddings: list[list[float]] | None = None,
+    ) -> tuple[Any, dict[str, str]]:
         """[entity resolution] Wrapper: inject embedder + LLM provider + config
         into :func:`entity_resolver.resolve_entities`. Best-effort — returns the
-        input unchanged on any failure (no embedder / resolution error)."""
+        input unchanged on any failure (no embedder / resolution error).
+
+        ``embeddings`` (v1.9.9 reuse): precomputed vectors aligned to
+        ``result.entities``; when passed, the embedder is not re-invoked."""
         cfg = self._hugegraph_config
         if self._embedder is None:
             logger.warning("entity resolution needs an embedder; skipped")
@@ -237,6 +242,7 @@ class HyperExtractExtractor:
             generate_fn=generate_fn,
             threshold=getattr(cfg, "he_resolution_threshold", 0.86),
             batch=getattr(cfg, "he_resolution_batch", 8),
+            embeddings=embeddings,
         )
 
     def _get_qa_client(self) -> Any:

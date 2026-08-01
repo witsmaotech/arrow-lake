@@ -223,6 +223,7 @@ async def resolve_entities(
     generate_fn: GenerateFn,
     threshold: float,
     batch: int,
+    embeddings: list[list[float]] | None = None,
 ) -> tuple[ExtractionResult, dict[str, str]]:
     """Cluster + LLM-resolve + merge synonymous entities.
 
@@ -233,6 +234,9 @@ async def resolve_entities(
         generate_fn: async ``str -> str`` (user prompt -> raw content text).
         threshold: cosine similarity merge threshold.
         batch: max candidates per LLM call (within a cluster).
+        embeddings: optional precomputed vectors aligned to ``result.entities``
+            (v1.9.9 reuse — the build embeds once for resolver + orphan linker).
+            When provided and length-matched, ``embed_fn`` is NOT called.
 
     Returns:
         (resolved_result, resolved_map) where resolved_map[merged_name]=canonical.
@@ -252,19 +256,22 @@ async def resolve_entities(
         return result, {}
 
     texts = [_entity_text(e) for e in entities]
-    try:
-        vecs = await asyncio.wait_for(
-            asyncio.to_thread(embed_fn, texts), timeout=_RESOLVE_EMBED_TIMEOUT_S,
-        )
-    except asyncio.TimeoutError:
-        logger.warning(
-            "entity resolution embed timed out (>%ss), skipped",
-            _RESOLVE_EMBED_TIMEOUT_S,
-        )
-        return result, {}
-    except Exception as exc:  # noqa: BLE001 — best-effort
-        logger.warning("entity resolution embedding failed, skipped: %s", str(exc)[:160])
-        return result, {}
+    if embeddings is not None and len(embeddings) == len(entities):
+        vecs = embeddings  # reuse precomputed vectors (no re-embed)
+    else:
+        try:
+            vecs = await asyncio.wait_for(
+                asyncio.to_thread(embed_fn, texts), timeout=_RESOLVE_EMBED_TIMEOUT_S,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "entity resolution embed timed out (>%ss), skipped",
+                _RESOLVE_EMBED_TIMEOUT_S,
+            )
+            return result, {}
+        except Exception as exc:  # noqa: BLE001 — best-effort
+            logger.warning("entity resolution embedding failed, skipped: %s", str(exc)[:160])
+            return result, {}
 
     clusters = _cosine_clusters(vecs, threshold)
     if not clusters:
