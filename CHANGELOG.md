@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.9.9] - 2026-08-02
+
+**增强图谱顶点关系 — 关系软降级 + 启发式孤儿连接 + embedding 复用 + 模板 few-shot**。v1.9.8 的 type-pair 过滤器丢弃非法关系 → 端点孤立(orphan_rate 0.44)。本阶段:① 软降级——非法 type-pair 关系降级为「相关」(route→related_to,weight 0.4)而非丢弃,端点保连通;② 启发式孤儿连接(新 `orphan_linker.py`)——共现(同 chunk)+ embedding 余弦≥阈值 + type-pair 合法动词,把孤立顶点连到已连通实体,三重证据门控,零 LLM;③ embedding 复用——构建期算一次,消歧+连接共用;④ 模板 few-shot 降主体过判。wuhu 实证(qwen-plus, map_reduce):orphan_rate 0.4397→0.0336(−92%),entity↔entity 边 5104→11451(+124%),avg_degree 1.19→2.84,主体占比 28%→<6.6%。软降级回收 5054 条「相关」边为头号功臣。+24 新测。详见 `docs/v1.9.9-kg-relation-enhance-impl.md`。
+
 ## [1.9.8] - 2026-08-01
 
 **map_reduce 图谱构建 + type-pair 过滤 + /kg/quality 量化**。解耦抽取与合并:per-chunk 并发抽取(MAP)→ streaming fold 全局精确名合并(SHUFFLE)→ entity_resolver 同义消歧 + type-pair 白名单过滤(REDUCE)→ 一次批量入库。兼得并发速度与全局合并质量,绕开 dataset path 串行 feed_text 卡死。配套健壮性:extract `asyncio.wait_for(120s)` 治 LLM 挂死、`_insert_kg` 批量(HugeGraph 2500/batch)、resolve embed/LLM timeout + 实体/簇 cap、`_apply_merge` O(n²)→O(n)、JSON checkpoint/resume(避 pickle RCE)。`auto` 大文件采纳 map_reduce;`he_extract_llm MAX_TOKENS=4096` 封顶(治 qwen 16k 胡言)。wuhu 实证:54min,12188v/20851e,16/16 合法关系动词,跨 chunk 关系连通。49 单测绿。详见 `docs/v1.9.8-phase1-mapreduce-impl.md`。
