@@ -99,18 +99,17 @@ class TestInsertKgDatasetMode:
         assert rel_edges[0]["properties"]["relation_type"] == "uses"
 
 
-class TestInsertKgValueAndSourceChunk:
-    """v1.9.10: entity vertex writes `value` (numeric spec/amount) and
-    `source_chunk` (provenance chunk ids, SET)."""
+class TestInsertKgSourceChunk:
+    """v1.9.10: entity vertex writes `source_chunk` (provenance chunk ids, SET)."""
 
-    def test_per_chunk_writes_value_and_source_chunk(self):
-        # Arrange — 指标类实体带 value;per-chunk path (owning_chunk_id)
+    def test_per_chunk_writes_source_chunk(self):
+        # Arrange — per-chunk path (owning_chunk_id) → source_chunk written
         client = _MockClient()
         builder = _make_builder(client)
         result = ExtractionResult(
             entities=(ExtractedEntity(
                 name="响应时间", entity_type="指标",
-                properties=(("value", "2秒"), ("definition", "系统响应时间")),
+                properties=(("definition", "系统响应时间"),),
             ),),
             relations=(),
             raw_text="",
@@ -121,10 +120,9 @@ class TestInsertKgValueAndSourceChunk:
             result, "kg_ds", {"c0": "hg0"}, owning_chunk_id="c0",
         ))
 
-        # Assert — generic entity vertex carries value + source_chunk
+        # Assert — generic entity vertex carries source_chunk provenance
         ent = [v for v in client.added_vertices if v["label"] == "entity"]
         assert len(ent) == 1
-        assert ent[0]["properties"]["value"] == "2秒"
         assert ent[0]["properties"]["source_chunk"] == ["c0"]
 
     def test_per_dataset_source_chunk_multi_and_value_default(self):
@@ -145,7 +143,6 @@ class TestInsertKgValueAndSourceChunk:
 
         ent = [v for v in client.added_vertices if v["label"] == "entity"]
         assert ent[0]["properties"]["source_chunk"] == ["c0", "c5"]
-        assert ent[0]["properties"]["value"] == ""
 
     def test_source_chunk_omitted_when_no_provenance(self):
         # Arrange — entity absent from entity_chunks → source_chunk key must be
@@ -165,4 +162,3 @@ class TestInsertKgValueAndSourceChunk:
 
         ent = [v for v in client.added_vertices if v["label"] == "entity"]
         assert "source_chunk" not in ent[0]["properties"]
-        assert ent[0]["properties"]["value"] == ""

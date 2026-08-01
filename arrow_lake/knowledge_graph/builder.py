@@ -814,7 +814,6 @@ class KGBuilder:
                 "name": e.name,
                 "type": e.entity_type,
                 "definition": dict(e.properties).get("definition", ""),
-                "value": dict(e.properties).get("value", ""),
             }
             chunks = list(dict.fromkeys(name2chunks.get(e.name, [])))
             if chunks:
