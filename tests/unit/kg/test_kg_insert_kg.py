@@ -146,3 +146,23 @@ class TestInsertKgValueAndSourceChunk:
         ent = [v for v in client.added_vertices if v["label"] == "entity"]
         assert ent[0]["properties"]["source_chunk"] == ["c0", "c5"]
         assert ent[0]["properties"]["value"] == ""
+
+    def test_source_chunk_omitted_when_no_provenance(self):
+        # Arrange — entity absent from entity_chunks → source_chunk key must be
+        # absent (not []): HugeGraph SET property does not accept empty list.
+        client = _MockClient()
+        builder = _make_builder(client)
+        result = ExtractionResult(
+            entities=(ExtractedEntity(name="孤儿实体", entity_type="concept"),),
+            relations=(),
+            raw_text="",
+        )
+
+        asyncio.run(builder._insert_kg(
+            result, "kg_ds", {"c0": "hg0"},
+            entity_chunks={"其他实体": ["c0"]},  # "孤儿实体" not present here
+        ))
+
+        ent = [v for v in client.added_vertices if v["label"] == "entity"]
+        assert "source_chunk" not in ent[0]["properties"]
+        assert ent[0]["properties"]["value"] == ""

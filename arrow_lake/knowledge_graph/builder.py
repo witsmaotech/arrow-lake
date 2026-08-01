@@ -797,25 +797,29 @@ class KGBuilder:
         # route_entity_type recognizes the type, so typed edges can use it.---
         # v1.9.10: owner map name→[chunk_id] computed once, feeds both the
         # entity `source_chunk` provenance property and the references edges.
+        # Shallow-copy entity_chunks (it is also serialized into the KA dump)
+        # so read-only use here can never mutate the caller's dict.
         if entity_chunks is not None:
-            name2chunks: dict[str, list[str]] = entity_chunks
+            name2chunks: dict[str, list[str]] = dict(entity_chunks)
         elif owning_chunk_id is not None:
             name2chunks = {e.name: [owning_chunk_id] for e in result.entities}
         else:
             name2chunks = {}
-        entity_vertices = [
-            {
-                "label": "entity",
-                "properties": {
-                    "name": e.name,
-                    "type": e.entity_type,
-                    "definition": dict(e.properties).get("definition", ""),
-                    "value": dict(e.properties).get("value", ""),
-                    "source_chunk": list(dict.fromkeys(name2chunks.get(e.name, []))),
-                },
+        # SET-cardinality `source_chunk` is omitted when empty: HugeGraph does
+        # not guarantee accepting an empty list for a SET property key, and
+        # nullability applies only when the key is absent (not when sent as []).
+        entity_vertices: list[dict[str, Any]] = []
+        for e in result.entities:
+            props: dict[str, Any] = {
+                "name": e.name,
+                "type": e.entity_type,
+                "definition": dict(e.properties).get("definition", ""),
+                "value": dict(e.properties).get("value", ""),
             }
-            for e in result.entities
-        ]
+            chunks = list(dict.fromkeys(name2chunks.get(e.name, [])))
+            if chunks:
+                props["source_chunk"] = chunks
+            entity_vertices.append({"label": "entity", "properties": props})
         entity_id_map: dict[str, str] = {}
         if entity_vertices:
             entity_hg_ids = await self._batch_add_vertices(
