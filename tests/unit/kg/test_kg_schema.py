@@ -112,6 +112,22 @@ def test_arrow_lake_kg_schema_structure() -> None:
     assert len(schema.index_labels) == 0
 
 
+def test_entity_vertex_has_value_and_source_chunk_properties() -> None:
+    """v1.9.10: entity vertex carries `value` (spec/amount numeric) and
+    `source_chunk` (provenance chunk ids) for QA traceability + fact completeness.
+    `source_chunk` is the first SET-cardinality property key in the schema."""
+    ent = {vl.name: vl for vl in ARROW_LAKE_KG_SCHEMA.vertex_labels}["entity"]
+    assert "value" in ent.properties
+    assert "source_chunk" in ent.properties
+    assert "value" in ent.nullable_keys
+    assert "source_chunk" in ent.nullable_keys
+    pk = {pk.name: pk for pk in ARROW_LAKE_KG_SCHEMA.property_keys}
+    assert pk["value"].data_type == "TEXT"
+    assert pk["value"].cardinality == "SINGLE"
+    assert pk["source_chunk"].data_type == "TEXT"
+    assert pk["source_chunk"].cardinality == "SET"
+
+
 def test_domain_edge_labels_are_entity_to_entity() -> None:
     """Verb-driven domain edges are entity→entity with relation_type+description."""
     by_name = {el.name: el for el in ARROW_LAKE_KG_SCHEMA.edge_labels}

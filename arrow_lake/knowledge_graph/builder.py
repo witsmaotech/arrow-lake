@@ -795,6 +795,14 @@ class KGBuilder:
         # the schema's single-type edge endpoints); a typed vertex
         # (person/organization/location/concept/event) is added too when
         # route_entity_type recognizes the type, so typed edges can use it.---
+        # v1.9.10: owner map name→[chunk_id] computed once, feeds both the
+        # entity `source_chunk` provenance property and the references edges.
+        if entity_chunks is not None:
+            name2chunks: dict[str, list[str]] = entity_chunks
+        elif owning_chunk_id is not None:
+            name2chunks = {e.name: [owning_chunk_id] for e in result.entities}
+        else:
+            name2chunks = {}
         entity_vertices = [
             {
                 "label": "entity",
@@ -802,6 +810,8 @@ class KGBuilder:
                     "name": e.name,
                     "type": e.entity_type,
                     "definition": dict(e.properties).get("definition", ""),
+                    "value": dict(e.properties).get("value", ""),
+                    "source_chunk": list(dict.fromkeys(name2chunks.get(e.name, []))),
                 },
             }
             for e in result.entities
@@ -864,18 +874,13 @@ class KGBuilder:
 
         # --- references(chunk→entity) edges ---
         # per-dataset: expand entity_chunks[name] → one edge per owning chunk;
-        # per-chunk:   single owning chunk.
-        if entity_chunks is not None:
-            owner_lists: dict[str, list[str]] = entity_chunks
-        elif owning_chunk_id is not None:
-            owner_lists = {e.name: [owning_chunk_id] for e in result.entities}
-        else:
-            owner_lists = {}
+        # per-chunk:   single owning chunk. owner map (`name2chunks`) computed
+        # once above (also feeds entity provenance `source_chunk`).
         ref_edges: list[dict[str, Any]] = []
         for e in result.entities:
             if normalize_name(e.name) not in entity_id_map:
                 continue
-            for cid in owner_lists.get(e.name, []):
+            for cid in name2chunks.get(e.name, []):
                 if cid in chunk_id_map:
                     ref_edges.append({
                         "label": "references",

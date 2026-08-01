@@ -125,11 +125,13 @@ def _build_neighbor_context(
     """
     id2name: dict[str, str] = {}
     name2id: dict[str, str] = {}
+    id2props: dict[str, dict[str, Any]] = {}
     for v in vertices:
         vid = str(v.get("id"))
         props = v.get("properties") or {}
         nm = str(props.get("name") or v.get("label") or vid)
         id2name.setdefault(vid, nm)
+        id2props.setdefault(vid, props)
         if nm not in name2id:
             name2id[nm] = vid
     anchor_ids = [name2id[n] for n in anchor_names if n in name2id]
@@ -158,7 +160,12 @@ def _build_neighbor_context(
             if len(rels) >= max_per_anchor:
                 break
         if rels:
-            out.append({"entity": id2name.get(aid, aid), "relations": rels})
+            vprops = id2props.get(aid, {})
+            out.append({
+                "entity": id2name.get(aid, aid),
+                "relations": rels,
+                "value": vprops.get("value", ""),
+            })
     return out
 
 
@@ -179,7 +186,10 @@ def _augment_question_with_graph(
     lines: list[str] = []
     truncated = False
     for c in neighbor_ctx[:max_items]:
-        line = f"- {c['entity']}: " + "; ".join(c.get("relations", [])[:5])
+        ent = c['entity']
+        val = c.get('value')
+        head = f"{ent}（{val}）" if val else ent
+        line = f"- {head}: " + "; ".join(c.get("relations", [])[:5])
         if len(line) + 1 > budget:
             truncated = True
             break
@@ -279,7 +289,10 @@ def _build_graphrag_messages(
     nb_lines: list[str] = []
     budget = 1500
     for c in neighbor_ctx[:max_items]:
-        line = f"- {c['entity']}: " + "; ".join(c.get("relations", [])[:5])
+        ent = c['entity']
+        val = c.get('value')
+        head = f"{ent}（{val}）" if val else ent
+        line = f"- {head}: " + "; ".join(c.get("relations", [])[:5])
         if len(line) + 1 > budget:
             break
         nb_lines.append(line)

@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.9.10] - 2026-08-02
+
+**KG 实体 value + provenance(source_chunk)字段 — 数值不丢 + 关系可溯源**。v1.9.9 关系增强后,图谱拓扑质量已达标(orphan 0.03),但两类"使用质量"痛点仍在:① 指标/金额数值全丢(模板明令"绝不抽数值"防数值当 entity,导致"响应时间是多少"答不出);② 实体/关系无来源 chunk,问答无法引原文、无法识别无源臆造。本版最小化补齐:① schema 加 `value`(SINGLE TEXT,指标/金额数值)+ `source_chunk`(SET TEXT,首个 SET cardinality property key,实体来源 chunk 列表)两 property key + entity vertex 字段;② `builder._insert_kg` 写入——`value` 取自 `e.properties`(与 definition/date/description 同款),`source_chunk` 复用 references 边的 owner 归并逻辑(`name2chunks`,per-chunk 用 owning_chunk_id、per-dataset/map_reduce 用 entity_chunks),零额外抽取成本;③ project_concept_graph 模板加 `value` 字段 + 规则措辞(数值进 value 不进 name)+ few-shot 补例;④ `_lake_kg._build_neighbor_context` 问答注入 value(数值型问题从 0→可答)。范围收窄:经评估砍掉 aliases(边际)/retriever predicate 修复(仅 RAG use_kg)/Leiden 社区(性价比低)/phase3 超图(成本高+前置 broken+wuhu 无多元关系需求),详见 `docs/v1.9.10-kg-phase2-completion-plan.md`。+3 新测(test_kg_schema 断言两字段 + test_kg_insert_kg per-chunk/per-dataset 各一例),顺带修 test_kg_insert_kg fixture 的 build_batch_size 陈旧 bug。stash 验证零回归(21 个 pre-existing 失败在 HEAD 同款)。
+
 ## [1.9.9] - 2026-08-02
 
 **增强图谱顶点关系 — 关系软降级 + 启发式孤儿连接 + embedding 复用 + 模板 few-shot**。v1.9.8 的 type-pair 过滤器丢弃非法关系 → 端点孤立(orphan_rate 0.44)。本阶段:① 软降级——非法 type-pair 关系降级为「相关」(route→related_to,weight 0.4)而非丢弃,端点保连通;② 启发式孤儿连接(新 `orphan_linker.py`)——共现(同 chunk)+ embedding 余弦≥阈值 + type-pair 合法动词,把孤立顶点连到已连通实体,三重证据门控,零 LLM;③ embedding 复用——构建期算一次,消歧+连接共用;④ 模板 few-shot 降主体过判。wuhu 实证(qwen-plus, map_reduce):orphan_rate 0.4397→0.0336(−92%),entity↔entity 边 5104→11451(+124%),avg_degree 1.19→2.84,主体占比 28%→<6.6%。软降级回收 5054 条「相关」边为头号功臣。+24 新测。详见 `docs/v1.9.9-kg-relation-enhance-impl.md`。

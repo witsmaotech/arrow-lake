@@ -124,11 +124,13 @@ ARROW_LAKE_KG_SCHEMA = GraphSchema(
         PropertyKeyDef("relation_type", "TEXT", "SINGLE"),
         PropertyKeyDef("definition", "TEXT", "SINGLE"),
         PropertyKeyDef("description", "TEXT", "SINGLE"),
+        PropertyKeyDef("source_chunk", "TEXT", "SET"),  # entity provenance chunk ids (v1.9.10)
+        PropertyKeyDef("value", "TEXT", "SINGLE"),      # spec/amount numeric value (v1.9.10)
     ),
     vertex_labels=(
         VertexLabelDef("document", ("id", "name"), ("id",)),
         VertexLabelDef("chunk", ("id", "content", "chunk_index"), ("id",)),
-        VertexLabelDef("entity", ("name", "type", "definition"), ("name",), nullable_keys=("type", "definition")),
+        VertexLabelDef("entity", ("name", "type", "definition", "source_chunk", "value"), ("name",), nullable_keys=("type", "definition", "source_chunk", "value")),
         VertexLabelDef("person", ("name",), ("name",)),
         VertexLabelDef("organization", ("name",), ("name",)),
         VertexLabelDef("location", ("name",), ("name",)),
