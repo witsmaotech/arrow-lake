@@ -51,8 +51,8 @@ output:
         required: true
       - name: description
         type: str
-        description: { zh: '关系说明', en: 'Relation description' }
-        required: false
+        description: { zh: '关系说明（必填）', en: 'Relation description (required)' }
+        required: true
 
 guideline:
   target:
@@ -80,6 +80,8 @@ guideline:
   rules_for_relations:
     zh:
       - 'type 必须严格用枚举值之一（包含/属于/依赖/提供/要求/承担/采用/集成/部署/部署于/训练/处理/报价/交付于/达成/遵循），禁止自创或混用英文'
+      - 'type 必须与 source/target 的要素类型匹配：如“部署”只能 软件/模型→硬件/平台；“训练”只能 模型→数据；“报价”目标必须是 金额；“承担”只能 主体→条款/服务——不得连接语义不相关的类型对'
+      - 'description 必填，简要说明该关系（用于问答时注入更丰富语义）'
       - '优先提取文档中明确表述的项目关联'
       - '不创建隐含的常识性关联，仅提取文档中明确说明的关系'
     en:

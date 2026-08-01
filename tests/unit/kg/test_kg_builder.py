@@ -518,3 +518,423 @@ async def test_execute_build_falls_back_to_related_to_with_relation_type(
     assert r["inVLabel"] == "entity"
     assert r["properties"]["relation_type"] == "knows"
     assert r["properties"]["weight"] == 1.0
+
+
+# ---------------------------------------------------------------------------
+# normalize_name: relation endpoint case/whitespace tolerance (orphan fix)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def spaced_case_extractor() -> object:
+    """Extractor whose relation source/target differ from entity names by
+    case + whitespace. Without normalize_name these miss ``entity_id_map`` and
+    the relation is dropped at ``_insert_kg`` → endpoint vertices go orphan.
+    """
+    from unittest.mock import AsyncMock
+
+    extractor = AsyncMock()
+    extractor._classifier = None
+    extractor.extract.return_value = ExtractionResult(
+        entities=(
+            ExtractedEntity(name="Alice", entity_type="person"),
+            ExtractedEntity(name="Acme Corp", entity_type="organization"),
+        ),
+        relations=(
+            # source/target carry case + whitespace variants of the entity names.
+            ExtractedRelation(
+                source=" alice ", target="ACME CORP", relation_type="works_at"
+            ),
+        ),
+        raw_text="Alice works at Acme Corp.",
+    )
+    return extractor
+
+
+@pytest.mark.asyncio
+async def test_execute_build_normalizes_relation_endpoints(
+    mock_client: object,
+    spaced_case_extractor: object,
+    chunks_table_with_doc_type: pa.Table,
+    config: HugeGraphConfig,
+) -> None:
+    """A relation whose source/target differ only by case/whitespace from the
+    entity names still resolves to an edge (previously dropped → orphans)."""
+    builder = KGBuilder(mock_client, spaced_case_extractor, config)
+    task_id = await builder.build("ds", chunks_table_with_doc_type)
+    await builder.execute_build(task_id)
+
+    works = [
+        e for e in _all_edges(mock_client)
+        if e.get("properties", {}).get("relation_type") == "works_at"
+    ]
+    # Pre-fix this was 0 (the relation was `continue`-dropped on name mismatch).
+    assert len(works) >= 1
+
+
+# ---------------------------------------------------------------------------
+# entity resolution (per-dataset path, he_entity_resolution=auto)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_execute_build_dataset_path_runs_entity_resolution(
+    mock_client: object,
+    chunks_table_with_doc_type: pa.Table,
+    config: HugeGraphConfig,
+    tmp_path,
+) -> None:
+    """per-dataset path with he_entity_resolution=auto invokes resolve_entities
+    and remaps entity_chunks so the canonical inherits the merged name's chunks."""
+    from pathlib import Path
+    from unittest.mock import AsyncMock, MagicMock
+
+    from arrow_lake.knowledge_graph.he_extractor import DatasetKA
+
+    config.he_kg_granularity = "dataset"
+    config.he_entity_resolution = "auto"
+    config.he_ka_base_dir = str(tmp_path)
+
+    extractor = AsyncMock()
+    extractor._classifier = None
+    extractor._kg_granularity = "dataset"
+    extractor._resolve_template = MagicMock(return_value="entity_graph")
+    base_result = ExtractionResult(
+        entities=(
+            ExtractedEntity(name="B", entity_type="x"),
+            ExtractedEntity(name="A", entity_type="x"),
+        ),
+        relations=(),
+        raw_text="",
+    )
+    ec: dict[str, list[str]] = {"B": ["c1"], "A": ["c2"]}
+    extractor.build_dataset_ka = AsyncMock(
+        return_value=DatasetKA(
+            ka=MagicMock(),
+            ka_dir=tmp_path / "ka",
+            entity_chunks=ec,
+            result=base_result,
+        )
+    )
+    resolved = ExtractionResult(
+        entities=(ExtractedEntity(name="A", entity_type="x"),),
+        relations=(),
+        raw_text="",
+    )
+    extractor.resolve_entities = AsyncMock(return_value=(resolved, {"B": "A"}))
+
+    builder = KGBuilder(mock_client, extractor, config)
+    builder._ka_base_dir = Path(tmp_path)
+    task_id = await builder.build("ds", chunks_table_with_doc_type)
+    await builder.execute_build(task_id)
+
+    extractor.resolve_entities.assert_awaited_once()
+    # entity_chunks remapped in place: B's chunk c1 folded into A
+    assert "B" not in ec
+    assert "c1" in ec["A"]
+
+
+# ---------------------------------------------------------------------------
+# _merge_chunk_results (map_reduce shuffle/reduce step, pure logic)
+# ---------------------------------------------------------------------------
+
+
+def _ent(name: str, etype: str = "概念", defn: str = "") -> ExtractedEntity:
+    props = (("definition", defn),) if defn else ()
+    return ExtractedEntity(name=name, entity_type=etype, properties=props)
+
+
+def _rel(s: str, t: str, rt: str) -> ExtractedRelation:
+    return ExtractedRelation(source=s, target=t, relation_type=rt, properties=())
+
+
+def _chunk_res(cid, entities=(), relations=()):
+    return (cid, ExtractionResult(entities=tuple(entities), relations=tuple(relations), raw_text=""))
+
+
+def test_merge_dedup_entities_by_normalized_name() -> None:
+    results = [
+        _chunk_res("c1", [_ent("Alice", "主体")]),
+        _chunk_res("c2", [_ent("ALICE", "主体")]),  # case variant
+    ]
+    merged, ec = KGBuilder._merge_chunk_results(results)
+    assert {e.name for e in merged.entities} == {"Alice"}  # first-seen display name
+    assert ec["Alice"] == ["c1", "c2"]
+
+
+def test_merge_keeps_longest_definition() -> None:
+    results = [
+        _chunk_res("c1", [_ent("A", defn="short")]),
+        _chunk_res("c2", [_ent("A", defn="a much longer definition")]),
+    ]
+    merged, _ = KGBuilder._merge_chunk_results(results)
+    a = next(e for e in merged.entities if e.name == "A")
+    assert dict(a.properties).get("definition") == "a much longer definition"
+
+
+def test_merge_first_nonempty_type_wins() -> None:
+    results = [
+        _chunk_res("c1", [_ent("A", etype="")]),
+        _chunk_res("c2", [_ent("A", etype="模型")]),
+    ]
+    merged, _ = KGBuilder._merge_chunk_results(results)
+    a = next(e for e in merged.entities if e.name == "A")
+    assert a.entity_type == "模型"
+
+
+def test_merge_provenance_union() -> None:
+    results = [
+        _chunk_res("c1", [_ent("X")]),
+        _chunk_res("c2", [_ent("Y")]),
+        _chunk_res("c3", [_ent("X")]),
+    ]
+    _, ec = KGBuilder._merge_chunk_results(results)
+    assert ec["X"] == ["c1", "c3"]
+    assert ec["Y"] == ["c2"]
+
+
+def test_merge_relation_endpoint_remap_and_dedup() -> None:
+    results = [
+        _chunk_res("c1", [_ent("Alice")]),
+        _chunk_res("c2", [_ent("ALICE"), _ent("Bob")], [_rel("ALICE", "Bob", "包含")]),
+        _chunk_res("c3", [_ent("Bob")], [_rel("alice", "Bob", "包含")]),  # dedup with c2
+    ]
+    merged, _ = KGBuilder._merge_chunk_results(results)
+    rels = [(r.source, r.target, r.relation_type) for r in merged.relations]
+    assert ("Alice", "Bob", "包含") in rels
+    assert len(merged.relations) == 1  # deduped across chunks
+
+
+def test_merge_drops_self_loop() -> None:
+    results = [_chunk_res("c1", [_ent("A")], [_rel("A", "A", "包含")])]
+    merged, _ = KGBuilder._merge_chunk_results(results)
+    assert merged.relations == ()
+
+
+def test_merge_empty_input() -> None:
+    merged, ec = KGBuilder._merge_chunk_results([])
+    assert merged.entities == ()
+    assert merged.relations == ()
+    assert ec == {}
+
+
+def test_merge_keeps_distinct_entities_across_chunks() -> None:
+    results = [
+        _chunk_res("c1", [_ent("A"), _ent("B")]),
+        _chunk_res("c2", [_ent("C")]),
+    ]
+    merged, ec = KGBuilder._merge_chunk_results(results)
+    assert {e.name for e in merged.entities} == {"A", "B", "C"}
+    assert ec["A"] == ["c1"] and ec["C"] == ["c2"]
+
+
+def test_merge_relation_to_unknown_endpoint_kept() -> None:
+    # Tolerant: unknown endpoint passes through (insert will drop if unresolved).
+    results = [_chunk_res("c1", [_ent("A")], [_rel("A", "Ghost", "包含")])]
+    merged, _ = KGBuilder._merge_chunk_results(results)
+    assert len(merged.relations) == 1
+    assert (merged.relations[0].source, merged.relations[0].target) == ("A", "Ghost")
+
+
+# ---------------------------------------------------------------------------
+# map_reduce _execute_build branch (integration, mock extractor/client)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_execute_build_map_reduce_merges_and_inserts_once(
+    mock_client: object,
+    chunks_table_with_doc_type: pa.Table,
+    config: HugeGraphConfig,
+) -> None:
+    """map_reduce: per-chunk extract → global merge → SINGLE _insert_kg with
+    merged entities + unioned provenance. Resolution + type-pair OFF to isolate
+    the merge/insert wiring."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    config.he_kg_granularity = "map_reduce"
+    config.he_entity_resolution = "off"
+    config.he_kg_type_pair = False
+
+    extractor = AsyncMock()
+    extractor._classifier = None
+    extractor._kg_granularity = "map_reduce"
+    extractor._resolve_template = MagicMock(return_value="entity_graph")
+
+    def _extract(content, *, chunk_id="", doc_type=None):
+        if chunk_id == "chunk-1":
+            return ExtractionResult(
+                (ExtractedEntity("Alice", "主体"), ExtractedEntity("Bob", "主体")), (), "")
+        return ExtractionResult(
+            (ExtractedEntity("ALICE", "主体"), ExtractedEntity("Carol", "主体")), (), "")
+
+    extractor.extract = AsyncMock(side_effect=_extract)
+
+    builder = KGBuilder(mock_client, extractor, config)
+    inserted: list = []
+
+    async def _spy(result, graph_name, chunk_id_map, **kw):
+        inserted.append((result, kw.get("entity_chunks")))
+
+    builder._insert_kg = _spy  # type: ignore[method-assign]
+
+    task_id = await builder.build("ds", chunks_table_with_doc_type)
+    await builder.execute_build(task_id)
+
+    assert extractor.extract.await_count == 2
+    assert len(inserted) == 1  # one insert, not two
+    result, ec = inserted[0]
+    assert {e.name for e in result.entities} == {"Alice", "Bob", "Carol"}  # ALICE→Alice
+    assert set(ec) == {"Alice", "Bob", "Carol"}
+    assert ec["Alice"] == ["chunk-1", "chunk-2"]  # provenance union
+    assert ec["Bob"] == ["chunk-1"]
+    assert ec["Carol"] == ["chunk-2"]
+
+
+@pytest.mark.asyncio
+async def test_execute_build_map_reduce_runs_entity_resolution(
+    mock_client: object,
+    chunks_table_with_doc_type: pa.Table,
+    config: HugeGraphConfig,
+) -> None:
+    """map_reduce with he_entity_resolution=auto invokes resolve_entities on the
+    merged result and remaps entity_chunks so the canonical inherits merged chunks."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    config.he_kg_granularity = "map_reduce"
+    config.he_entity_resolution = "auto"
+    config.he_kg_type_pair = False
+
+    extractor = AsyncMock()
+    extractor._classifier = None
+    extractor._kg_granularity = "map_reduce"
+    extractor._resolve_template = MagicMock(return_value="entity_graph")
+    extractor.extract = AsyncMock(side_effect=[
+        ExtractionResult((ExtractedEntity("A", "x"),), (), ""),    # chunk-1
+        ExtractionResult((ExtractedEntity("B", "x"),), (), ""),    # chunk-2
+    ])
+    resolved = ExtractionResult((ExtractedEntity("A", "x"),), (), "")
+    extractor.resolve_entities = AsyncMock(return_value=(resolved, {"B": "A"}))
+
+    builder = KGBuilder(mock_client, extractor, config)
+    captured: dict = {}
+
+    async def _spy(result, graph_name, chunk_id_map, **kw):
+        captured["ec"] = kw.get("entity_chunks")
+
+    builder._insert_kg = _spy  # type: ignore[method-assign]
+
+    task_id = await builder.build("ds", chunks_table_with_doc_type)
+    await builder.execute_build(task_id)
+
+    extractor.resolve_entities.assert_awaited_once()
+    ec = captured["ec"]
+    assert "B" not in ec            # merged away
+    assert ec["A"] == ["chunk-1", "chunk-2"]  # canonical inherited B's chunk-2
+
+
+@pytest.mark.asyncio
+async def test_execute_build_map_reduce_resumes_from_checkpoint(
+    mock_client: object,
+    chunks_table_with_doc_type: pa.Table,
+    config: HugeGraphConfig,
+    tmp_path,
+) -> None:
+    """A matching checkpoint (total_chunks + template + content sig) skips MAP:
+    extractor.extract is NOT called; the checkpoint's merged result is inserted."""
+    import hashlib
+    import json
+    from pathlib import Path
+    from unittest.mock import AsyncMock, MagicMock
+
+    from arrow_lake.knowledge_graph._naming import artifact_key_for
+
+    config.he_kg_granularity = "map_reduce"
+    config.he_entity_resolution = "off"
+    config.he_kg_type_pair = False
+    config.he_ka_base_dir = str(tmp_path)
+
+    extractor = AsyncMock()
+    extractor._classifier = None
+    extractor._kg_granularity = "map_reduce"
+    extractor._resolve_template = MagicMock(return_value="entity_graph")
+    extractor.extract = AsyncMock()  # must NOT be awaited on resume
+
+    contents = [str(c) for c in chunks_table_with_doc_type.column("content").to_pylist()]
+    sig = hashlib.sha1(
+        (contents[0] + "\n" + contents[-1]).encode("utf-8", "replace")
+    ).hexdigest()[:16]
+    ckpt = Path(tmp_path) / artifact_key_for("ds") / "map_reduce.json"
+    ckpt.parent.mkdir(parents=True, exist_ok=True)
+    ckpt.write_text(json.dumps({
+        "total_chunks": chunks_table_with_doc_type.num_rows,
+        "template": "entity_graph",
+        "sig": sig,
+        "entities": [{"name": "X", "type": "t", "properties": []}],
+        "relations": [],
+        "entity_chunks": {"X": ["chunk-1"]},
+    }), encoding="utf-8")
+
+    builder = KGBuilder(mock_client, extractor, config)
+    builder._ka_base_dir = Path(tmp_path)
+    inserted: list = []
+
+    async def _spy(result, graph_name, chunk_id_map, **kw):
+        inserted.append(result)
+
+    builder._insert_kg = _spy  # type: ignore[method-assign]
+
+    task_id = await builder.build("ds", chunks_table_with_doc_type)
+    await builder.execute_build(task_id)
+
+    extractor.extract.assert_not_awaited()        # MAP skipped
+    assert len(inserted) == 1
+    assert {e.name for e in inserted[0].entities} == {"X"}  # checkpoint's entity
+
+
+@pytest.mark.asyncio
+async def test_execute_build_map_reduce_extract_timeout_skips_chunk(
+    mock_client: object,
+    chunks_table_with_doc_type: pa.Table,
+    config: HugeGraphConfig,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """A chunk whose extract exceeds the timeout is counted as a failure and
+    skipped — the build completes instead of hanging."""
+    import asyncio as _asyncio
+    from pathlib import Path
+    from unittest.mock import AsyncMock, MagicMock
+
+    import arrow_lake.knowledge_graph.builder as builder_mod
+    monkeypatch.setattr(builder_mod, "_MAP_EXTRACT_TIMEOUT_S", 0.1)
+
+    config.he_kg_granularity = "map_reduce"
+    config.he_entity_resolution = "off"
+    config.he_kg_type_pair = False
+    config.he_ka_base_dir = str(tmp_path)
+
+    async def _slow_extract(content, *, chunk_id="", doc_type=None):
+        await _asyncio.sleep(5)  # well over the 0.1s timeout
+        return ExtractionResult(entities=(), relations=(), raw_text=content)
+
+    extractor = AsyncMock()
+    extractor._classifier = None
+    extractor._kg_granularity = "map_reduce"
+    extractor._resolve_template = MagicMock(return_value="entity_graph")
+    extractor.extract = _slow_extract
+
+    builder = KGBuilder(mock_client, extractor, config)
+    builder._ka_base_dir = Path(tmp_path)
+
+    async def _spy(result, graph_name, chunk_id_map, **kw):
+        pass
+
+    builder._insert_kg = _spy  # type: ignore[method-assign]
+
+    task_id = await builder.build("ds", chunks_table_with_doc_type)
+    await builder.execute_build(task_id)  # would hang without the timeout guard
+
+    task = builder.get_task_status(task_id)
+    assert task.status == KGBuildStatus.COMPLETED
+    assert task.extraction_failures == chunks_table_with_doc_type.num_rows

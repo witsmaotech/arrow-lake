@@ -735,7 +735,7 @@ async function ask() {
   const headers = { "Content-Type": "application/json" };
   const tok = getAccessToken(); if (tok) headers["Authorization"] = `Bearer ${tok}`;
   const ak = getApiKey(); if (ak) headers["X-API-Key"] = ak;
-  const body = JSON.stringify({ dataset: name, question: q, top_k: 5, engine: "graphrag", history: hist });
+  const body = JSON.stringify({ dataset: name, question: q, top_k: 10, engine: "graphrag", history: hist });
   const makeHeaders = () => { const h = { "Content-Type": "application/json" }; const t = getAccessToken(); if (t) h["Authorization"] = `Bearer ${t}`; const k = getApiKey(); if (k) h["X-API-Key"] = k; return h; };
   try {
     let resp = await fetch(`${API_BASE}/kg/ask/stream`, { method: "POST", headers, signal: askAbort.signal, body });

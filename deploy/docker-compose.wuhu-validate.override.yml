@@ -1,0 +1,13 @@
+# v1.9.8 阶段1 wuhu 实证临时 override(验证后删除 + recreate 回退)。
+# 仅覆盖两处 env:KG 粒度 map_reduce + 抽取模型 qwen-turbo(快 + json_schema)。
+# 叠加顺序:prod_minimal + dev.override + gpu.override + 本文件。
+services:
+  api:
+    environment:
+      ARROW_LAKE__HUGEGRAPH__HE_KG_GRANULARITY: "map_reduce"
+      ARROW_LAKE__HUGEGRAPH__HE_EXTRACT_LLM__MODEL: "qwen-turbo"
+      # qwen-turbo 偶发 16k token 胡乱生成(结构化解码循环)→ 解析失败 + 模板重试,拖慢
+      # map_reduce。4096 足够单 chunk 实体抽取(~15 实体 × ~80 token),失败更快→整体加速。
+      ARROW_LAKE__HUGEGRAPH__HE_EXTRACT_LLM__MAX_TOKENS: "4096"
+      # 提速重建:qwen-turbo 经百炼,bailian 并发宽松。3→6 约减半 MAP 时长。
+      ARROW_LAKE__HUGEGRAPH__BUILD_CONCURRENCY: "6"

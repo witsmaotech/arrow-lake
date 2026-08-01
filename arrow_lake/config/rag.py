@@ -208,7 +208,10 @@ class HugeGraphConfig(BaseModel):
     # "dataset" = 整 dataset 一个 KA, chunk 逐个 feed_text, 跨 chunk MERGE_FIELD 字段合并
     #   (非 LLM 合并, 无爆炸, 任意规模稳定; build_index 已解耦, KG 入库可靠)。
     # "chunk"   = 旧 per-chunk fresh KA.parse() 路径, 无合并 (并发快, 无统一 KA dump)。
-    he_kg_granularity: Literal["auto", "dataset", "chunk"] = "auto"
+    # "map_reduce"(v1.9.8) = 并发 per-chunk 抽取(不 insert)→ 全局精确名去重 +
+    #   provenance 合并 → entity_resolver 同义消歧 + type-pair 过滤 → 一次 insert。
+    #   兼得并发速度与全局合并质量,绕开 dataset path 串行/卡死。显式 opt-in(auto 不路由到此)。
+    he_kg_granularity: Literal["auto", "dataset", "chunk", "map_reduce"] = "auto"
     # auto 阈值(builder.py 只读此项: N > chunk_min_chunks → chunk, 否则 dataset)。
     he_kg_chunk_min_chunks: int = 500    # N > 此值 → chunk
     # Local filesystem root for per-dataset KA dumps (<root>/<dataset>/ka/).
@@ -237,6 +240,16 @@ class HugeGraphConfig(BaseModel):
     # still auto-pick temporal_graph on event-heavy content. See
     # template_type_selector.py.
     he_template_type: str | None = None
+    # KG 实体消歧后处理(per-dataset 抽取后):off=禁用;auto=embedding 聚类 +
+    # 批量 LLM 合并同义实体(如"应急指挥中心"/"市应急指挥中心"→一个 canonical)。
+    # 治 MERGE_FIELD 只精确名合并导致的同实体多顶点/碎片/孤立。默认 off(opt-in,增 LLM 成本)。
+    he_entity_resolution: Literal["off", "auto"] = "off"
+    he_resolution_threshold: float = 0.86   # cosine 合并阈值
+    he_resolution_batch: int = 8             # 每批送 LLM 的候选簇大小
+    # v1.9.8 map_reduce: 合并阶段是否对 project_concept_graph 关系做 type-pair
+    # 白名单过滤(丢弃无语义边,如"金额—训练→硬件")。仅 project_concept_graph 生效,
+    # 其他模板 type 体系不同 → 跳过。默认开。
+    he_kg_type_pair: bool = True
 
     @field_validator("max_traversal_depth")
     @classmethod

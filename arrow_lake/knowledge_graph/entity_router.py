@@ -137,6 +137,24 @@ DEFAULT_RELATION_ROUTES: tuple[RelationRoute, ...] = (
 )
 
 
+def normalize_name(name: str) -> str:
+    """Normalize an entity/endpoint name for matching.
+
+    ``casefold`` + collapse internal whitespace + strip ends. The original
+    name is still stored on the vertex (``properties.name``) for display;
+    this is only the lookup key, so ``"Alice"`` / ``" alice "`` / ``"ALICE"``
+    resolve to the same vertex and a relation whose source/target differs
+    only by case/whitespace no longer gets dropped at ``_insert_kg``.
+
+    Conservative by design: no full/half-width conversion, no bracketed-alias
+    stripping, no edit-distance/containment fuzzy match (those risk linking
+    short names wrongly). Short-form vs full-form mismatches
+    ("应急指挥中心" vs "市应急指挥中心") need fuzzy matching — listed as
+    follow-up.
+    """
+    return " ".join(str(name or "").casefold().split())
+
+
 def route_entity_type(entity_type: str | None) -> str | None:
     """Map an entity_type to a typed vertex label, or ``None`` (generic only)."""
     return _ENTITY_TYPE_LABELS.get((entity_type or "").strip().lower())

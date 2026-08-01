@@ -37,6 +37,7 @@ from arrow_lake.api.models.knowledge_graph import (
     KGSearchRequest,
     KGSearchResponse,
     KGStatsResponse,
+    KGQualityResponse,
     KGTemplateDetail,
     KGTemplateDetailResponse,
     KGTemplateSummary,
@@ -260,6 +261,33 @@ async def kg_stats(
             total_vertices=stats.get("total_vertices", 0),
             total_edges=stats.get("total_edges", 0),
             graph_enabled=True,
+        )
+    except KGError as exc:
+        raise HTTPException(status_code=_kg_error_to_status(exc), detail=exc.message) from exc
+
+
+@router.get("/quality", response_model=KGQualityResponse)
+async def kg_quality(
+    dataset: str | None = None,
+    lake: Any = Depends(get_lake),
+    _user: dict = Depends(require_role(Role.VIEWER)),
+    checker=Depends(get_checker),
+) -> KGQualityResponse:
+    """Get knowledge graph QUALITY metrics (entity-subgraph).
+
+    ``dataset`` (lake path) scopes metrics to the ``kg_{dataset}`` graph; omitted
+    → default graph. Metrics: orphan entity rate, average degree, relation-type
+    coverage, entity↔entity edge count, type distribution. Per-dataset ACL
+    enforced when ``dataset`` is set. Snapshot is capped at 10000 entities
+    (``truncated`` flags when the cap was hit).
+    """
+    if dataset is not None and not checker.check_dataset_access(
+        role=_user.role, dataset=dataset, action="read"
+    ):
+        raise HTTPException(status_code=403, detail=f"Read access to dataset '{dataset}' denied")
+    try:
+        return KGQualityResponse(
+            **await lake.kg_quality(dataset_name=dataset)
         )
     except KGError as exc:
         raise HTTPException(status_code=_kg_error_to_status(exc), detail=exc.message) from exc

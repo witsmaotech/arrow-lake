@@ -241,7 +241,15 @@ services:
       ARROW_LAKE__HUGEGRAPH__HE_KA_BASE_DIR: "/data/lake/ka"
       # v1.9.4: 合并策略改 MERGE_FIELD(非 LLM, 见 he_extractor._create_ka)后, BALANCED 合并爆炸消除,
       # dataset 粒度(一份 KA 喂全部 chunk)对任意规模都稳定 → 不再需要 grouped 分组。通用且简单。
-      ARROW_LAKE__HUGEGRAPH__HE_KG_GRANULARITY: "auto"
+      ARROW_LAKE__HUGEGRAPH__HE_KG_GRANULARITY: "dataset"
+      # 实体消歧(opt-in):per-dataset 抽取后 embedding 聚类 + 批量 LLM 合并同义实体
+      # (治 MERGE_FIELD 只精确名合并→同实体多顶点/碎片/孤立)。off=禁用。
+      ARROW_LAKE__HUGEGRAPH__HE_ENTITY_RESOLUTION: "auto"
+      ARROW_LAKE__HUGEGRAPH__HE_RESOLUTION_THRESHOLD: "0.60"
+      ARROW_LAKE__HUGEGRAPH__HE_RESOLUTION_BATCH: "8"
+      # hyper-extract HybridChunker 用 tiktoken cl100k_base 分词；外网下载
+      # (openaipublic.blob) 经 socat 中继 SSL 失败 → 预置到持久卷离线读。
+      TIKTOKEN_CACHE_DIR: "/data/lake/tiktoken"
       # [#KG-LLM-split] RAG 问答 (ka.chat 生成回答) 用旗舰模型, 与抽取分离
       # (抽取 feed_text 默认走上面全局 LLM ministral-3:3b)。设 DASHSCOPE_API_KEY 后启用;
       # 注释整个块 → 问答回退全局 llm (ministral)。百炼 dashscope 经上面 HTTP_PROXY 出网。
@@ -281,6 +289,9 @@ services:
       ARROW_LAKE__HUGEGRAPH__HE_EXTRACT_LLM__API_BASE: "https://dashscope.aliyuncs.com/compatible-mode/v1"
       ARROW_LAKE__HUGEGRAPH__HE_EXTRACT_LLM__API_KEY: "${DASHSCOPE_API_KEY:-}"
       ARROW_LAKE__HUGEGRAPH__HE_EXTRACT_LLM__MODEL: "qwen-plus"
+      # v1.9.8: 抽取输出封顶 4096 token(防 qwen 结构化解码偶发 16k 胡言 → 解析失败+模板
+      # 重试拖慢构建)。单 chunk 实体抽取(~15 实体×~80 token)绰绰有余。
+      ARROW_LAKE__HUGEGRAPH__HE_EXTRACT_LLM__MAX_TOKENS: "4096"
       # DuckDB performance tuning (v1.3.4)
       ARROW_LAKE__OLAP__PRESERVE_INSERTION_ORDER: "false"
       ARROW_LAKE__OLAP__TEMP_DIRECTORY: "/tmp/duckdb"

@@ -5,6 +5,7 @@ from __future__ import annotations
 from arrow_lake.knowledge_graph.entity_router import (
     DEFAULT_RELATION_ROUTES,
     RelationRoute,
+    normalize_name,
     route_entity_type,
     route_relation,
 )
@@ -26,6 +27,23 @@ def test_route_entity_type_unknown_returns_none() -> None:
     assert route_entity_type("wacky") is None
     assert route_entity_type("") is None
     assert route_entity_type(None) is None
+
+
+# ---------------------------------------------------------------------------
+# normalize_name (entity/endpoint matching key)
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_name_casefolds_and_collapses_whitespace() -> None:
+    assert normalize_name("Alice") == "alice"
+    assert normalize_name("  alice  ") == "alice"
+    assert normalize_name("Acme\t Corp") == "acme corp"
+    assert normalize_name("ALICE") == normalize_name(" alice ")
+
+
+def test_normalize_name_safe_on_empty_and_none() -> None:
+    assert normalize_name("") == ""
+    assert normalize_name(None) == ""
 
 
 def test_route_entity_type_project_concept_graph_domain_aliases() -> None:

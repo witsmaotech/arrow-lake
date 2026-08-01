@@ -12,6 +12,9 @@ Two granularities (``HugeGraphConfig.he_kg_granularity``):
                   AutoGraph LLM.BALANCED merger fuses cross-chunk entities,
                   then ``build_index`` + ``dump`` to ``<base>/<ds>/ka/``.
                   ``build_dataset_ka`` → :class:`DatasetKA`.
+- ``"map_reduce"`` — v1.9.8: builder-side path; reuses this class's per-chunk
+                  ``extract`` concurrently (no extractor-side merge state), then
+                  merges the per-chunk results globally in ``KGBuilder``.
 
 Pipeline (per-chunk): doc_type → template (DocTypeRouter) → ``parse()``
 → AutoGraph ``nodes``/``edges`` → :class:`ExtractionResult`.
@@ -191,6 +194,50 @@ class HyperExtractExtractor:
             model = self._model or self._extract_llm_cfg.model or ""
             self._extract_client = self._build_client(self._extract_llm_cfg, model)
         return self._extract_client
+
+    def _get_resolution_provider(self) -> Any:
+        """[entity resolution] Cached LLM provider (extract LLM, qwen-turbo-grade).
+
+        Resolution is a simple synonymy judgement — the extract llm (fast/cheap)
+        is enough; no need for the flagship qa model. ``create_llm_provider`` is
+        used (not the hyper-extract client) so we can send a free-form JSON prompt.
+        """
+        if self.__dict__.get("_resolution_provider") is None:
+            from arrow_lake.rag.provider import create_llm_provider
+
+            self.__dict__["_resolution_provider"] = create_llm_provider(self._extract_llm_cfg)
+        return self.__dict__["_resolution_provider"]
+
+    async def resolve_entities(self, result: Any) -> tuple[Any, dict[str, str]]:
+        """[entity resolution] Wrapper: inject embedder + LLM provider + config
+        into :func:`entity_resolver.resolve_entities`. Best-effort — returns the
+        input unchanged on any failure (no embedder / resolution error)."""
+        cfg = self._hugegraph_config
+        if self._embedder is None:
+            logger.warning("entity resolution needs an embedder; skipped")
+            return result, {}
+        embed_fn = self._embedder.embed_documents
+
+        async def generate_fn(prompt: str) -> str:
+            from arrow_lake.rag.provider import LLMMessage
+
+            provider = self._get_resolution_provider()
+            messages = [
+                LLMMessage(role="system", content="你是实体消歧专家，只返回JSON。"),
+                LLMMessage(role="user", content=prompt),
+            ]
+            resp = await provider.generate(messages)
+            return getattr(resp, "content", "") or ""
+
+        from arrow_lake.knowledge_graph.entity_resolver import resolve_entities as _resolve
+
+        return await _resolve(
+            result,
+            embed_fn=embed_fn,
+            generate_fn=generate_fn,
+            threshold=getattr(cfg, "he_resolution_threshold", 0.86),
+            batch=getattr(cfg, "he_resolution_batch", 8),
+        )
 
     def _get_qa_client(self) -> Any:
         """Cached LLM client for the Q&A phase (ka.chat generative answer).

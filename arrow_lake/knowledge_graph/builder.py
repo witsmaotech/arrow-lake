@@ -3,14 +3,19 @@ insertion, and entity extraction from text chunks.
 
 Two extraction granularities (``HugeGraphConfig.he_kg_granularity``):
 
-- ``"chunk"``   -- per-chunk: each chunk extracted independently (fresh KA per
-                  chunk) and inserted. Legacy path; ``KGBuilder._process_chunk``.
-- ``"dataset"`` -- per-dataset: ONE hyper-extract KA fed all chunks via
-                  ``feed_text`` (LLM.BALANCED cross-chunk merge), then inserted
-                  as a whole + dumped to ``<ka_base_dir>/<dataset>/ka/``.
-                  ``KGBuilder._execute_build`` dataset branch → ``_insert_kg``.
+- ``"chunk"``      -- per-chunk: each chunk extracted independently (fresh KA per
+                     chunk) and inserted. Legacy path; ``KGBuilder._process_chunk``.
+- ``"dataset"``    -- per-dataset: ONE hyper-extract KA fed all chunks via
+                     ``feed_text`` (LLM.BALANCED cross-chunk merge), then inserted
+                     as a whole + dumped to ``<ka_base_dir>/<dataset>/ka/``.
+                     ``KGBuilder._execute_build`` dataset branch → ``_insert_kg``.
+- ``"map_reduce"`` -- v1.9.8: concurrent per-chunk extract (NO insert) → global
+                     exact-name merge (:meth:`_merge_chunk_results`) → entity
+                     resolution + type-pair filter → ONE ``_insert_kg``. Decouples
+                     extraction concurrency from global merging; opt-in (auto does
+                     not route here).
 
-Both paths share ``_insert_kg`` for vertex/edge insertion (entity + typed
+All paths share ``_insert_kg`` for vertex/edge insertion (entity + typed
 vertices, references, routed relations).
 """
 
@@ -19,7 +24,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
@@ -29,12 +34,28 @@ import pyarrow as pa
 
 from arrow_lake.config import HugeGraphConfig
 from arrow_lake.knowledge_graph.client import HugeGraphClient
-from arrow_lake.knowledge_graph.entity_router import route_entity_type, route_relation
-from arrow_lake.knowledge_graph.extractor import EntityExtractor, ExtractionResult
+from arrow_lake.knowledge_graph.entity_router import (
+    normalize_name,
+    route_entity_type,
+    route_relation,
+)
+from arrow_lake.knowledge_graph.extractor import (
+    EntityExtractor,
+    ExtractedEntity,
+    ExtractedRelation,
+    ExtractionResult,
+)
+from arrow_lake.knowledge_graph.relation_validator import filter_relations_by_type_pair
 from arrow_lake.knowledge_graph._naming import graph_name_for
 from arrow_lake.knowledge_graph.schema import ARROW_LAKE_KG_SCHEMA, schema_to_hugegraph_payload
 
 logger = logging.getLogger(__name__)
+
+# Per-chunk extract timeout for the map_reduce path (seconds). hyper-extract's
+# internal LLM call has no timeout, so without this bound one hung request
+# (dropped connection) blocks the whole build. 120s matches the LLM config; a
+# normal qwen-turbo chunk extract is ~8-15s, so this only kills genuine hangs.
+_MAP_EXTRACT_TIMEOUT_S = 120
 
 # edge_label → (source_label, target_label) from the schema, for endpoint
 # resolution in relation routing (v1.7.1 §4.5 double-write strategy).
@@ -328,7 +349,10 @@ class KGBuilder:
         _gran = getattr(self._extractor, "_kg_granularity", "chunk")
         if _gran == "auto":
             _nchunks = len(chunk_ids)
-            _gran = "chunk" if _nchunks > self._config.he_kg_chunk_min_chunks else "dataset"
+            # v1.9.8: large files → map_reduce (concurrent extract + global merge;
+            # validated on wuhu — better quality than the no-merge chunk path and
+            # avoids the dataset path's serial feed_text). Small files → dataset.
+            _gran = "map_reduce" if _nchunks > self._config.he_kg_chunk_min_chunks else "dataset"
         use_dataset_path = (
             _gran == "dataset"
             and hasattr(self._extractor, "build_dataset_ka")
@@ -378,6 +402,29 @@ class KGBuilder:
                     task.dataset_name, len(chunk_ids),
                 )
             else:
+                # type-pair white-list filter (project_concept_graph only) —
+                # applied on the dataset path too for consistency with map_reduce.
+                if getattr(self._config, "he_kg_type_pair", True):
+                    result = filter_relations_by_type_pair(result, template_path)
+                    total_relations = len(result.relations)
+                # [entity resolution] merge synonymous entities (opt-in, default
+                # off). Runs on the per-dataset ExtractionResult before insert;
+                # entity_chunks (chunk→entity provenance) is remapped so the
+                # canonical inherits all merged entities' chunk references.
+                _hg_cfg = getattr(self._config, "hugegraph", None) or self._config
+                if getattr(_hg_cfg, "he_entity_resolution", "off") == "auto":
+                    try:
+                        result, merge_map = await self._extractor.resolve_entities(result)
+                        if merge_map:
+                            ec = dataset_ka.entity_chunks
+                            for merged, canon in merge_map.items():
+                                if merged in ec:
+                                    ec.setdefault(canon, []).extend(ec.pop(merged))
+                    except Exception as exc:  # noqa: BLE001 — best-effort
+                        logger.warning(
+                            "entity resolution failed, using unmerged result: %s",
+                            str(exc)[:160],
+                        )
                 await self._insert_kg(
                     result,
                     graph_name,
@@ -385,6 +432,181 @@ class KGBuilder:
                     entity_chunks=dataset_ka.entity_chunks,
                     write_sem=write_sem,
                 )
+        elif _gran == "map_reduce":
+            # --- v1.9.8 map-reduce: concurrent per-chunk extract (NO insert) →
+            # global exact-name merge → entity resolution → single insert.
+            # Decouples extraction (concurrent, fast) from merging (global,
+            # high-quality), bypassing the dataset path's serial feed_text AND
+            # the per-chunk path's no-merge fragmentation (orphan/碎片).
+            _sample = next((c for c in contents if c), "")
+            template_path = self._extractor._resolve_template(
+                dataset_doc_type, _sample, None,
+            )
+
+            async def _extract_only(
+                idx: int, cid: str, content: str, doc_type: str | None = None,
+            ) -> tuple[str, ExtractionResult]:
+                nonlocal extraction_failures
+                async with semaphore:
+                    try:
+                        # Bound each chunk's extract: hyper-extract's LLM call has
+                        # no timeout, so a single hung request (dropped bailian
+                        # connection) would otherwise block the final gather
+                        # forever — proc stalls at N-1/N with idle CPU. On timeout
+                        # the chunk is counted as a failure and the build moves on
+                        # (the underlying to_thread becomes a harmless zombie).
+                        res = await asyncio.wait_for(
+                            self._extractor.extract(
+                                content, chunk_id=cid, doc_type=doc_type,
+                            ),
+                            timeout=_MAP_EXTRACT_TIMEOUT_S,
+                        )
+                    except asyncio.TimeoutError:
+                        extraction_failures += 1
+                        logger.warning(
+                            "KG map_reduce chunk %s extract timed out (>%ss), skipped",
+                            cid, _MAP_EXTRACT_TIMEOUT_S,
+                        )
+                        res = ExtractionResult(
+                            entities=(), relations=(), raw_text=content
+                        )
+                    task.processed_chunks = idx + 1
+                if not res.entities and not res.relations and len(content.strip()) > 50:
+                    logger.warning(
+                        "KG map_reduce chunk %s yielded no entities (content_len=%d)",
+                        cid, len(content),
+                    )
+                return (cid, res)
+
+            # MAP + online SHUFFLE (streaming fold, #5) + checkpoint/resume (#3).
+            from arrow_lake.knowledge_graph._naming import artifact_key_for
+            ckpt_path = Path(self._config.he_ka_base_dir) / artifact_key_for(
+                task.dataset_name) / "map_reduce.json"
+            result: ExtractionResult | None = None
+            entity_chunks: dict[str, list[str]] = {}
+            # Resume from checkpoint if MAP already completed for this chunk set.
+            if ckpt_path.is_file():
+                try:
+                    # JSON (not pickle): the checkpoint lives on a writable shared
+                    # volume, so a planted file must not yield arbitrary code
+                    # execution. We reconstruct only declared dataclasses.
+                    import hashlib
+                    import json
+                    d = json.loads(ckpt_path.read_text(encoding="utf-8"))
+                    # Resume only if the chunk set, template, AND content (first+
+                    # last chunk hash) all match — otherwise a template change or
+                    # re-ingest would stale-resume a now-wrong merged result.
+                    _sig = (hashlib.sha1(
+                        (str(contents[0]) + "\n" + str(contents[-1])).encode("utf-8", "replace")
+                    ).hexdigest()[:16]) if contents else ""
+                    if (d.get("total_chunks") == len(chunk_ids)
+                            and d.get("template") == Path(template_path).stem
+                            and d.get("sig") == _sig):
+                        result = ExtractionResult(
+                            entities=tuple(ExtractedEntity(
+                                name=e["name"], entity_type=e["type"],
+                                properties=tuple(tuple(p) for p in e.get("properties", [])),
+                            ) for e in d.get("entities", [])),
+                            relations=tuple(ExtractedRelation(
+                                source=r["source"], target=r["target"], relation_type=r["type"],
+                                properties=tuple(tuple(p) for p in r.get("properties", [])),
+                            ) for r in d.get("relations", [])),
+                            raw_text="",
+                        )
+                        entity_chunks = d.get("entity_chunks", {})
+                        task.processed_chunks = len(chunk_ids)
+                        logger.info(
+                            "KG map_reduce %s: resumed from checkpoint (%d entities, %d relations)",
+                            task.dataset_name, len(result.entities), len(result.relations),
+                        )
+                except Exception as exc:  # noqa: BLE001 — fall back to full MAP
+                    logger.warning(
+                        "KG map_reduce checkpoint load failed, full MAP: %s", str(exc)[:120],
+                    )
+            if result is None:
+                acc = KGBuilder._MergeAccumulator()
+                for batch_start in range(0, len(chunk_ids), concurrency):
+                    batch_end = min(batch_start + concurrency, len(chunk_ids))
+                    batch = await asyncio.gather(*(
+                        _extract_only(idx, chunk_ids[idx], contents[idx], chunk_doc_types[idx])
+                        for idx in range(batch_start, batch_end)
+                    ))
+                    for cid, _res in batch:              # streaming fold (#5)
+                        acc.fold(cid, _res)
+                    if batch_delay > 0 and batch_end < len(chunk_ids):
+                        await asyncio.sleep(batch_delay)
+                result, entity_chunks = acc.finalize()
+                # Checkpoint the merged result (JSON — see resume note) so a
+                # post-MAP failure (resolve/insert) doesn't lose the extraction
+                # work on rerun (#3).
+                try:
+                    import hashlib
+                    import json
+                    _sig = (hashlib.sha1(
+                        (str(contents[0]) + "\n" + str(contents[-1])).encode("utf-8", "replace")
+                    ).hexdigest()[:16]) if contents else ""
+                    ckpt_path.parent.mkdir(parents=True, exist_ok=True)
+                    ckpt_path.write_text(json.dumps({
+                        "total_chunks": len(chunk_ids),
+                        "template": Path(template_path).stem,
+                        "sig": _sig,
+                        "entities": [{"name": e.name, "type": e.entity_type,
+                                      "properties": [list(p) for p in e.properties]}
+                                     for e in result.entities],
+                        "relations": [{"source": r.source, "target": r.target,
+                                       "type": r.relation_type,
+                                       "properties": [list(p) for p in r.properties]}
+                                      for r in result.relations],
+                        "entity_chunks": entity_chunks,
+                    }, ensure_ascii=False), encoding="utf-8")
+                except Exception as exc:  # noqa: BLE001 — checkpoint is best-effort
+                    logger.warning(
+                        "KG map_reduce checkpoint write failed: %s", str(exc)[:120],
+                    )
+
+            total_entities = len(result.entities)
+            total_relations = len(result.relations)
+
+            if not result.entities and not result.relations:
+                logger.warning(
+                    "KG map_reduce yielded no entities for %s (chunks=%d)",
+                    task.dataset_name, len(chunk_ids),
+                )
+            else:
+                # type-pair white-list filter (project_concept_graph only).
+                if getattr(self._config, "he_kg_type_pair", True):
+                    result = filter_relations_by_type_pair(result, template_path)
+                    total_relations = len(result.relations)
+                # entity resolution (synonym merge) — opt-in via config.
+                _hg_cfg = getattr(self._config, "hugegraph", None) or self._config
+                if getattr(_hg_cfg, "he_entity_resolution", "off") != "off":
+                    try:
+                        result, merge_map = await self._extractor.resolve_entities(result)
+                        total_entities = len(result.entities)
+                        total_relations = len(result.relations)
+                        if merge_map:
+                            for merged, canon in merge_map.items():
+                                if merged in entity_chunks:
+                                    entity_chunks.setdefault(canon, []).extend(
+                                        entity_chunks.pop(merged)
+                                    )
+                    except Exception as exc:  # noqa: BLE001 — best-effort
+                        logger.warning(
+                            "entity resolution failed, using unmerged result: %s",
+                            str(exc)[:160],
+                        )
+                await self._insert_kg(
+                    result,
+                    graph_name,
+                    chunk_id_map,
+                    entity_chunks=entity_chunks,
+                    write_sem=write_sem,
+                )
+                # insert succeeded → drop the MAP checkpoint (avoid stale resume).
+                try:
+                    ckpt_path.unlink(missing_ok=True)
+                except Exception:  # noqa: BLE001
+                    pass
         else:
             # --- per-chunk: fresh KA.parse() per chunk (legacy path) ---
             async def _process_chunk(
@@ -433,6 +655,39 @@ class KGBuilder:
         task.relation_count = total_relations
         task.extraction_failures = extraction_failures
 
+    async def _batch_add_vertices(
+        self, vertices: list[dict[str, Any]], *, graph_name: str,
+        write_sem: asyncio.Semaphore, batch_size: int,
+    ) -> list[str]:
+        """Insert vertices in batches (HugeGraph caps POSTs at 2500 vertices).
+
+        Single-shot ``add_vertices`` fails on a large merged entity set
+        (map_reduce inserts ALL entities at once). Returns the concatenated
+        HugeGraph ids in input order so callers can zip them back to vertices.
+        """
+        ids: list[str] = []
+        if not vertices:
+            return ids
+        bs = max(1, min(batch_size, 2500))
+        async with write_sem:
+            for i in range(0, len(vertices), bs):
+                ids.extend(
+                    await self._client.add_vertices(vertices[i:i + bs], graph_name=graph_name)
+                )
+        return ids
+
+    async def _batch_add_edges(
+        self, edges: list[dict[str, Any]], *, graph_name: str,
+        write_sem: asyncio.Semaphore, batch_size: int,
+    ) -> None:
+        """Insert edges in batches (mirrors _batch_add_vertices)."""
+        if not edges:
+            return
+        bs = max(1, min(batch_size, 2500))
+        async with write_sem:
+            for i in range(0, len(edges), bs):
+                await self._client.add_edges(edges[i:i + bs], graph_name=graph_name)
+
     async def _insert_kg(
         self,
         result: ExtractionResult,
@@ -480,17 +735,23 @@ class KGBuilder:
         ]
         entity_id_map: dict[str, str] = {}
         if entity_vertices:
-            async with write_sem:
-                entity_hg_ids = await self._client.add_vertices(entity_vertices, graph_name=graph_name)
+            entity_hg_ids = await self._batch_add_vertices(
+                entity_vertices, graph_name=graph_name, write_sem=write_sem,
+                batch_size=self._config.build_batch_size,
+            )
             if len(entity_hg_ids) != len(entity_vertices):
                 logger.warning(
                     "entity add_vertices returned %d ids for %d vertices — "
                     "some edges may resolve to stale/missing ids",
                     len(entity_hg_ids), len(entity_vertices),
                 )
-            # name-only map for edge resolution (last wins for duplicates)
+            # name-only map for edge resolution (last wins for duplicates).
+            # Keys are normalized so a relation whose source/target differs only
+            # by case/whitespace from the entity name still resolves — otherwise
+            # the relation is dropped at the `continue` below and the endpoint
+            # vertex becomes an orphan in the entity-only subgraph.
             for e, hg_id in zip(result.entities, entity_hg_ids, strict=False):
-                entity_id_map[e.name] = hg_id
+                entity_id_map[normalize_name(e.name)] = hg_id
 
         typed_vertices: list[dict[str, Any]] = []
         typed_keys: list[tuple[str, str]] = []
@@ -504,11 +765,13 @@ class KGBuilder:
                 if date_val is not None:
                     props["date"] = str(date_val)
             typed_vertices.append({"label": label, "properties": props})
-            typed_keys.append((e.name, label))
+            typed_keys.append((normalize_name(e.name), label))
         typed_id_map: dict[tuple[str, str], str] = {}
         if typed_vertices:
-            async with write_sem:
-                typed_hg_ids = await self._client.add_vertices(typed_vertices, graph_name=graph_name)
+            typed_hg_ids = await self._batch_add_vertices(
+                typed_vertices, graph_name=graph_name, write_sem=write_sem,
+                batch_size=self._config.build_batch_size,
+            )
             if len(typed_hg_ids) != len(typed_vertices):
                 logger.warning(
                     "typed add_vertices returned %d ids for %d vertices — "
@@ -518,12 +781,13 @@ class KGBuilder:
             for key, hg_id in zip(typed_keys, typed_hg_ids, strict=False):
                 typed_id_map[key] = hg_id
 
-        entity_type_map = {e.name: e.entity_type for e in result.entities}
+        entity_type_map = {normalize_name(e.name): e.entity_type for e in result.entities}
 
         def _vertex_id(name: str, label: str) -> str | None:
+            n = normalize_name(name)
             if label == "entity":
-                return entity_id_map.get(name)
-            return typed_id_map.get((name, label))
+                return entity_id_map.get(n)
+            return typed_id_map.get((n, label))
 
         # --- references(chunk→entity) edges ---
         # per-dataset: expand entity_chunks[name] → one edge per owning chunk;
@@ -536,7 +800,7 @@ class KGBuilder:
             owner_lists = {}
         ref_edges: list[dict[str, Any]] = []
         for e in result.entities:
-            if e.name not in entity_id_map:
+            if normalize_name(e.name) not in entity_id_map:
                 continue
             for cid in owner_lists.get(e.name, []):
                 if cid in chunk_id_map:
@@ -544,13 +808,15 @@ class KGBuilder:
                         "label": "references",
                         "outV": chunk_id_map[cid],
                         "outVLabel": "chunk",
-                        "inV": entity_id_map[e.name],
+                        "inV": entity_id_map[normalize_name(e.name)],
                         "inVLabel": "entity",
                         "properties": {},
                     })
         if ref_edges:
-            async with write_sem:
-                await self._client.add_edges(ref_edges, graph_name=graph_name)
+            await self._batch_add_edges(
+                ref_edges, graph_name=graph_name, write_sem=write_sem,
+                batch_size=self._config.build_batch_size,
+            )
 
         # --- Relation routing (v1.7.1 §4.5): route_relation picks a typed
         # edge label on a synonym hit (endpoints resolved via _EDGE_ENDPOINTS
@@ -559,10 +825,12 @@ class KGBuilder:
         # preserved as an edge property (fixes the prior discard bug). ---
         rel_edges: list[dict[str, Any]] = []
         for r in result.relations:
-            if r.source not in entity_id_map or r.target not in entity_id_map:
+            src_n = normalize_name(r.source)
+            tgt_n = normalize_name(r.target)
+            if src_n not in entity_id_map or tgt_n not in entity_id_map:
                 continue
-            src_type = entity_type_map.get(r.source, "")
-            tgt_type = entity_type_map.get(r.target, "")
+            src_type = entity_type_map.get(src_n, "")
+            tgt_type = entity_type_map.get(tgt_n, "")
             edge_label = route_relation(src_type, tgt_type, r.relation_type)
             src_label, tgt_label = _EDGE_ENDPOINTS[edge_label]
             src_id = _vertex_id(r.source, src_label)
@@ -571,8 +839,8 @@ class KGBuilder:
                 # Missing typed endpoint — degrade to related_to on generic vertices.
                 edge_label = "related_to"
                 src_label, tgt_label = "entity", "entity"
-                src_id = entity_id_map[r.source]
-                tgt_id = entity_id_map[r.target]
+                src_id = entity_id_map[src_n]
+                tgt_id = entity_id_map[tgt_n]
             props = {
                 "relation_type": r.relation_type,
                 "description": dict(r.properties).get("description", ""),
@@ -590,8 +858,10 @@ class KGBuilder:
                 "properties": props,
             })
         if rel_edges:
-            async with write_sem:
-                await self._client.add_edges(rel_edges, graph_name=graph_name)
+            await self._batch_add_edges(
+                rel_edges, graph_name=graph_name, write_sem=write_sem,
+                batch_size=self._config.build_batch_size,
+            )
 
     async def _infer_doc_type(self, contents: list[str]) -> str | None:
         """Infer doc_type ONCE from aggregated document content.
@@ -638,6 +908,92 @@ class KGBuilder:
         """Return unique string values from a table column."""
         col = table.column(column)
         return list(dict.fromkeys(col.to_pylist()))
+
+    class _MergeAccumulator:
+        """Streaming merge state for the map_reduce path: fold per chunk,
+        finalize once. Folding entities incrementally bounds peak memory to the
+        unique-entity set + raw relations (not the whole ``chunk_results`` list),
+        so the map_reduce branch can merge-as-it-extracts (#5). Relations are
+        stashed raw and remapped at finalize (they need the COMPLETE canonical
+        map). The finalized output is pickled to disk after MAP so a post-MAP
+        failure (resolve/insert) doesn't lose the extraction work (#3).
+        """
+
+        def __init__(self) -> None:
+            self.norm_to_canon: dict[str, str] = {}
+            self.canon_entities: dict[str, Any] = {}   # display name -> first entity
+            self.canon_def: dict[str, str] = {}        # display name -> longest def
+            self.canon_type: dict[str, str] = {}       # display name -> first non-empty type
+            self.entity_chunks: dict[str, list[str]] = {}
+            self._raw_relations: list[Any] = []
+
+        def fold(self, cid: str, res: ExtractionResult) -> None:
+            for e in res.entities:
+                n = normalize_name(e.name)
+                if n not in self.norm_to_canon:
+                    self.norm_to_canon[n] = e.name
+                    self.canon_entities[e.name] = e
+                canon = self.norm_to_canon[n]
+                d = ""
+                if e.properties:
+                    d = str(dict(e.properties).get("definition", "") or "")
+                if d and len(d) > len(self.canon_def.get(canon, "")):
+                    self.canon_def[canon] = d
+                et = e.entity_type or ""
+                if et and not self.canon_type.get(canon):
+                    self.canon_type[canon] = et
+                self.entity_chunks.setdefault(canon, []).append(cid)
+            if res.relations:
+                self._raw_relations.extend(res.relations)
+
+        def finalize(self) -> tuple[ExtractionResult, dict[str, list[str]]]:
+            final_entities = []
+            for name, e in self.canon_entities.items():
+                d = self.canon_def.get(name, "")
+                et = self.canon_type.get(name, "") or e.entity_type
+                props = (("definition", d),) if d else (() if not e.properties else e.properties)
+                final_entities.append(replace(e, entity_type=et, properties=props))
+            seen_rel: set[tuple[str, str, str]] = set()
+            final_relations = []
+            for r in self._raw_relations:
+                src = self.norm_to_canon.get(normalize_name(r.source), r.source)
+                tgt = self.norm_to_canon.get(normalize_name(r.target), r.target)
+                if normalize_name(src) == normalize_name(tgt):
+                    continue
+                key = (normalize_name(src), r.relation_type, normalize_name(tgt))
+                if key in seen_rel:
+                    continue
+                seen_rel.add(key)
+                final_relations.append(
+                    r if (src == r.source and tgt == r.target)
+                    else replace(r, source=src, target=tgt)
+                )
+            return ExtractionResult(
+                entities=tuple(final_entities),
+                relations=tuple(final_relations),
+                raw_text="",
+            ), self.entity_chunks
+
+    @staticmethod
+    def _merge_chunk_results(
+        chunk_results: list[tuple[str, ExtractionResult]],
+    ) -> tuple[ExtractionResult, dict[str, list[str]]]:
+        """MAP→SHUFFLE/REDUCE merge of per-chunk ExtractionResults (map_reduce).
+
+        Thin wrapper over :class:`_MergeAccumulator` (fold-all-then-finalize).
+        The map_reduce branch folds incrementally for bounded memory + checkpoints
+        the finalized result; this wrapper preserves the tested batch API.
+
+        - Entities exact-name-deduped by :func:`normalize_name` (first surface
+          form canonical; longest definition wins; first non-empty type wins).
+        - ``entity_chunks[canonical] = [chunk_id...]`` provenance union.
+        - Relations remapped to canonical, self-loops dropped, deduped by
+          ``(norm_src, type, norm_tgt)``.
+        """
+        acc = KGBuilder._MergeAccumulator()
+        for cid, res in chunk_results:
+            acc.fold(cid, res)
+        return acc.finalize()
 
     @staticmethod
     def _build_next_chunk_edges_hg(

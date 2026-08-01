@@ -131,6 +131,19 @@ class KGStatsResponse(BaseModel):
     graph_enabled: bool
 
 
+class KGQualityResponse(BaseModel):
+    """Entity-subgraph quality metrics for a per-dataset graph (v1.9.8)."""
+
+    entity_vertex_count: int
+    entity_entity_edges: int
+    orphan_rate: float
+    avg_degree: float
+    relation_type_coverage: int
+    truncated: bool = False
+    relation_type_counts: dict[str, int] = {}
+    type_distribution: dict[str, int] = {}
+
+
 # ---------------------------------------------------------------------------
 # GraphRAG Query
 # ---------------------------------------------------------------------------

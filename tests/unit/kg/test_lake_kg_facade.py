@@ -138,6 +138,38 @@ class TestKGEnabled:
         mock_client.get_stats.assert_awaited_once()
 
     @pytest.mark.asyncio()
+    async def test_kg_quality_delegates(self, lake: _TestLake) -> None:
+        """kg_quality computes orphan rate / degree / relation coverage over the
+        entity-only snapshot, excluding non-entity↔entity edges."""
+        from arrow_lake._lake_kg import _KG_SNAPSHOT_CACHE
+        _KG_SNAPSHOT_CACHE.clear()  # avoid cache masking the mock
+
+        mock_client = AsyncMock()
+        mock_client.get_graph_snapshot = AsyncMock(return_value=(
+            [   # entity vertices: e3 is an orphan
+                {"id": "e1", "label": "entity", "properties": {"name": "A", "type": "模型"}},
+                {"id": "e2", "label": "entity", "properties": {"name": "B", "type": "数据"}},
+                {"id": "e3", "label": "entity", "properties": {"name": "C", "type": "模型"}},
+            ],
+            [   # only e1→e2 is entity↔entity; the references edge is excluded
+                {"outV": "e1", "inV": "e2", "label": "训练",
+                 "properties": {"relation_type": "训练"}},
+                {"outV": "chunk1", "inV": "e1", "label": "references", "properties": {}},
+            ],
+        ))
+        lake._components["kg_client"] = mock_client
+
+        result = await lake.kg_quality(dataset_name="ds")
+        assert result["entity_vertex_count"] == 3
+        assert result["entity_entity_edges"] == 1
+        assert result["orphan_rate"] == round(1 / 3, 4)   # e3 orphan
+        assert result["avg_degree"] == round(2 / 3, 4)    # 2*1 edges / 3 entities
+        assert result["relation_type_coverage"] == 1
+        assert result["relation_type_counts"] == {"训练": 1}
+        assert result["type_distribution"] == {"模型": 2, "数据": 1}
+        assert result["truncated"] is False
+
+    @pytest.mark.asyncio()
     async def test_kg_query_delegates(self, lake: _TestLake) -> None:
         mock_client = AsyncMock()
         mock_client.gremlin = AsyncMock(return_value=[{"id": "v1"}])
@@ -322,6 +354,36 @@ class TestGraphRagHelpers:
         edges = [{"outV": "V0", "inV": f"V{i}", "label": "r"} for i in range(1, 9)]
         ctx = _build_neighbor_context(["anchor"], verts, edges, max_per_anchor=3)
         assert len(ctx[0]["relations"]) == 3
+
+    def test_build_neighbor_context_prefers_relation_type(self) -> None:
+        from arrow_lake._lake_kg import _build_neighbor_context
+
+        verts = [
+            {"id": "V1", "label": "系统", "properties": {"name": "ArrowLake"}},
+            {"id": "V2", "label": "组件", "properties": {"name": "LanceDB"}},
+        ]
+        # Real relation verb lives in properties.relation_type; label is the
+        # generic routed "related_to". The LLM context must surface the verb.
+        edges = [
+            {"outV": "V1", "inV": "V2", "label": "related_to",
+             "properties": {"relation_type": "包含"}},
+        ]
+        ctx = _build_neighbor_context(["ArrowLake"], verts, edges)
+        rels = ctx[0]["relations"]
+        assert any("包含" in r for r in rels)
+        assert not any("related_to" in r for r in rels)
+
+    def test_build_neighbor_context_falls_back_to_label(self) -> None:
+        from arrow_lake._lake_kg import _build_neighbor_context
+
+        verts = [
+            {"id": "V1", "label": "x", "properties": {"name": "A"}},
+            {"id": "V2", "label": "x", "properties": {"name": "B"}},
+        ]
+        # No properties (e.g. a references edge) → fall back to edge label.
+        edges = [{"outV": "V1", "inV": "V2", "label": "contains"}]
+        ctx = _build_neighbor_context(["A"], verts, edges)
+        assert any("contains" in r for r in ctx[0]["relations"])
 
     def test_ka_node_name_ka_and_hugegraph(self) -> None:
         from arrow_lake._lake_kg import _ka_node_name

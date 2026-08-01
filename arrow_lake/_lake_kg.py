@@ -140,7 +140,11 @@ def _build_neighbor_context(
         rels: list[str] = []
         for e in edges:
             src, tgt = str(e.get("outV", "")), str(e.get("inV", ""))
-            lbl = e.get("label") or "related_to"
+            # Prefer the真实 relation verb (written to edge properties at
+            # builder.py _insert_kg) over the routed edge label, so the LLM
+            # sees "包含/部署于" instead of a meaningless "related_to".
+            eprops = e.get("properties") or {}
+            lbl = eprops.get("relation_type") or e.get("label") or "related_to"
             # Keep entity↔entity relations only: the visualization filters out
             # document/chunk vertices, so a relation landing on a chunk id
             # (e.g. "2:1") can't be located in the displayed graph. id2name
@@ -768,6 +772,71 @@ class _LakeKGMixin:
         with self._require_kg_client() as client:
             g = graph_name_for(dataset_name) if dataset_name else None
             return await client.get_stats(graph_name=g)
+
+    async def kg_quality(self, dataset_name: str | None = None) -> dict[str, Any]:
+        """KG quality metrics for the ``kg_{ds}`` graph (or default graph).
+
+        Entity-subgraph quality, computed over the entity-only snapshot
+        (:func:`_cached_graph_snapshot`, capped at 10000 entities — ``truncated``
+        flags when the cap was hit):
+
+        - ``orphan_rate``: share of entity vertices with NO entity↔entity edge.
+        - ``avg_degree``: mean entity↔entity degree (2×edges / entities).
+        - ``relation_type_coverage`` / ``relation_type_counts``: verb diversity +
+          per-verb counts (from ``properties.relation_type``).
+        - ``entity_entity_edges`` + ``type_distribution``.
+
+        Edges whose endpoints are not both entities (e.g. chunk→entity references)
+        are excluded. Empty / absent graph → all-zero metrics.
+
+        Raises:
+            KGError: If KG is not enabled.
+        """
+        with self._require_kg_client() as client:
+            g = graph_name_for(dataset_name) if dataset_name else None
+            vertices, edges = await _cached_graph_snapshot(client, g)
+
+        entity_ids = {str(v.get("id")) for v in vertices}
+        truncated = len(vertices) > 10000
+        degree: dict[str, int] = {eid: 0 for eid in entity_ids}
+        relation_type_counts: dict[str, int] = {}
+        type_distribution: dict[str, int] = {}
+        entity_entity_edges = 0
+
+        for v in vertices:
+            props = v.get("properties") or {}
+            if isinstance(props, dict):
+                t = str(props.get("type", "") or "")
+                if t:
+                    type_distribution[t] = type_distribution.get(t, 0) + 1
+
+        for e in edges:
+            src, tgt = str(e.get("outV")), str(e.get("inV"))
+            if src not in entity_ids or tgt not in entity_ids:
+                continue  # not an entity↔entity edge (e.g. chunk→entity reference)
+            entity_entity_edges += 1
+            degree[src] = degree.get(src, 0) + 1
+            degree[tgt] = degree.get(tgt, 0) + 1
+            eprops = e.get("properties") or {}
+            rtype = ""
+            if isinstance(eprops, dict):
+                rtype = str(eprops.get("relation_type", "") or "")
+            rtype = rtype or str(e.get("label", "") or "")
+            if rtype:
+                relation_type_counts[rtype] = relation_type_counts.get(rtype, 0) + 1
+
+        n = len(entity_ids)
+        orphan_count = sum(1 for d in degree.values() if d == 0)
+        return {
+            "entity_vertex_count": n,
+            "entity_entity_edges": entity_entity_edges,
+            "orphan_rate": round(orphan_count / n, 4) if n else 0.0,
+            "avg_degree": round(2.0 * entity_entity_edges / n, 4) if n else 0.0,
+            "relation_type_coverage": len(relation_type_counts),
+            "truncated": truncated,
+            "relation_type_counts": relation_type_counts,
+            "type_distribution": type_distribution,
+        }
 
     async def kg_get_graph(
         self, dataset_name: str, *, limit: int = 300
