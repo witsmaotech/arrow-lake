@@ -938,3 +938,36 @@ async def test_execute_build_map_reduce_extract_timeout_skips_chunk(
     task = builder.get_task_status(task_id)
     assert task.status == KGBuildStatus.COMPLETED
     assert task.extraction_failures == chunks_table_with_doc_type.num_rows
+
+
+@pytest.mark.asyncio
+async def test_batch_add_vertices_splits_below_hugegraph_cap(config: HugeGraphConfig) -> None:
+    """_batch_add_vertices splits a large list into ≤batch_size chunks (HugeGraph
+    caps POSTs at 2500 vertices — the wuhu insert failure) and concatenates the
+    returned ids in input order."""
+    import asyncio as _asyncio
+    from unittest.mock import AsyncMock
+
+    calls: list[int] = []
+    n = [0]
+
+    async def _add(vertices, **kw):
+        calls.append(len(vertices))
+        out = []
+        for _ in vertices:
+            out.append(f"id-{n[0]}")
+            n[0] += 1
+        return out
+
+    client = AsyncMock()
+    client.add_vertices = _add
+    builder = KGBuilder(client, AsyncMock(), config)
+    verts = [{"label": "entity", "properties": {}} for _ in range(7)]
+
+    ids = await builder._batch_add_vertices(
+        verts, graph_name="g", write_sem=_asyncio.Semaphore(2), batch_size=3,
+    )
+
+    assert ids == [f"id-{i}" for i in range(7)]   # concatenated in order
+    assert calls == [3, 3, 1]                       # split into ≤3
+    assert all(c <= 2500 for c in calls)
