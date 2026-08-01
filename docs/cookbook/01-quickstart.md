@@ -35,7 +35,7 @@ arrow-lake version
 # ┌───────────┬──────────┐
 # │ Component │ Version  │
 # ├───────────┼──────────┤
-# │ arrow-lake│ 1.9.7    │
+# │ arrow-lake│ 1.9.8    │
 # │ python    │ 3.12.4   │
 # │ daft      │ 0.7.8    │
 # │ pyarrow   │ 23.0.1   │

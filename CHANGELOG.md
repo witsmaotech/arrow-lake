@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.9.8] - 2026-08-01
+
+**map_reduce 图谱构建 + type-pair 过滤 + /kg/quality 量化**。解耦抽取与合并:per-chunk 并发抽取(MAP)→ streaming fold 全局精确名合并(SHUFFLE)→ entity_resolver 同义消歧 + type-pair 白名单过滤(REDUCE)→ 一次批量入库。兼得并发速度与全局合并质量,绕开 dataset path 串行 feed_text 卡死。配套健壮性:extract `asyncio.wait_for(120s)` 治 LLM 挂死、`_insert_kg` 批量(HugeGraph 2500/batch)、resolve embed/LLM timeout + 实体/簇 cap、`_apply_merge` O(n²)→O(n)、JSON checkpoint/resume(避 pickle RCE)。`auto` 大文件采纳 map_reduce;`he_extract_llm MAX_TOKENS=4096` 封顶(治 qwen 16k 胡言)。wuhu 实证:54min,12188v/20851e,16/16 合法关系动词,跨 chunk 关系连通。49 单测绿。详见 `docs/v1.9.8-phase1-mapreduce-impl.md`。
+
 ## [1.9.7] - 2026-07-30
 
 **依赖升级(湖仓核心 + 安全)+ 结构化大表 web 性能(2026-07-31 追加)**。批0 uv sync 基线对齐(修复 uv.lock 停滞根因:gravitino pre-commit metadata bug)+ pylance 9.0.0;批1 ray 2.56.0 修复 CVE-2026-57516(代码注入)+ ray_serve get_deployment→get_deployment_handle 适配;批2 lancedb 0.36.0 + duckdb 1.5.5 + table_names→list_tables;批3 metaflow 2.19.35 + daft 0.7.21 + sentence-transformers 5.6.1 + encoder 适配。详见 `docs/v1.9.7-upgrade-plan.md`、`docs/v1.9.7-web-perf.md`。
