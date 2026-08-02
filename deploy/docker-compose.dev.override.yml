@@ -42,9 +42,6 @@ services:
       ARROW_LAKE__RAG__ENABLE_VERIFICATION: "true"
       ARROW_LAKE__HUGEGRAPH__HE_STRICT_DEFINITION: "true"
       ARROW_LAKE__MASKING__HMAC_KEY: "dev-live-test-key-0123456789abcdef"
-      # v1.9.9 validation: explicit map_reduce (matches the v1.9.8 baseline path
-      # exactly; deterministic vs auto's chunk-count heuristic). Dev-only override.
-      ARROW_LAKE__HUGEGRAPH__HE_KG_GRANULARITY: "map_reduce"
     volumes:
       - type: bind
         source: ../arrow_lake

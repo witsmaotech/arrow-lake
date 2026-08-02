@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.9.12] - 2026-08-02
+
+**he_kg_granularity 统一默认 map_reduce**(代码/compose 三处对齐)。v1.9.8 引入 map_reduce 后,代码默认 `auto`、`prod_minimal.yml` `dataset`、`dev.override.yml` `map_reduce` 三处分歧。wuhu 等大数据集 dev.override 长期实证 map_reduce 稳定(18000+顶点/21600边)→ 统一默认为 `map_reduce`:① `config/rag.py` 默认 `auto`→`map_reduce`(顺带修正 v1.9.8 遗留的 "auto→chunk" 错注,实为 →map_reduce);② `prod_minimal.yml` `dataset`→`map_reduce`;③ 删 `dev.override.yml` 冗余覆盖(已成默认)。`auto` 分流逻辑保留(可显式选做小数据集对比)。builder.py docstring 同步。test_kg_builder 34 测试绿(全显式传 granularity,不依赖默认)。
+
 ## [1.9.11] - 2026-08-02
 
 **GraphRAG 检索优化 + KG chunk 关联可视化**(对照 hugegraph/hyper-extract 技能 review)。① **retriever predicate 修复**:`/rag/query?use_kg=true` 三元组 predicate 从 `related_to_{label}`(丢语义)改为取边 `relation_type`——`client` 加 `get_vertex_edges`(REST `GET /graph/edges?vertex_id=`),retriever 建 neighbor_id→relation_type 映射,fallback `related_to_{label}`;② **retriever char-overlap fallback**:name 精确 miss 时(表述差异,如"市应急指挥中心" vs "应急指挥中心")按 entity snapshot 字符重叠(≥60%)命中,复刻 `_retrieve_hg_entities` 逻辑(零 embedding 依赖,避 KA FAISS 与 HugeGraph 实体错配);顺手修 `graph_rag` 漏传 `dataset_name` 的 latent bug(per-dataset 隔离失效);③ **kg.html chunk 关联展示**:后端 `kg_get_graph`+`KGGraphNode` 透传 `source_chunk`;前端按 source_chunk 算共现虚线边(同 chunk 抽取的实体视觉关联,per-chunk cap ≤8 防爆)+ hover 显示来源 chunk。+5 新测(test_kg_retriever #1 predicate + #2 char-overlap),33 核心测试绿。

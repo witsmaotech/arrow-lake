@@ -204,16 +204,16 @@ class HugeGraphConfig(BaseModel):
     # v1.8.8 per-dataset KA 抽取粒度。v1.9.4: 合并策略改 MERGE_FIELD(非 LLM, 见
     # he_extractor._create_ka), BALANCED 合并爆炸消除 → dataset 对任意规模都稳定,
     # 不再需要 grouped 分组档(已移除)。
-    # "auto"(默认): 按 chunk 数自动——N > chunk_min_chunks 用 chunk, 否则 dataset。
+    # "map_reduce"(默认, v1.9.11 起统一) = 并发 per-chunk 抽取(不 insert)→ 全局精确名去重 +
+    #   provenance 合并 → entity_resolver 同义消歧 + type-pair 过滤 → 一次 insert。
+    #   兼得并发速度与全局合并质量, 绕开 dataset path 串行/卡死。wuhu 等大数据集已验证稳定。
+    # "auto" = 按 chunk 数自动——N > chunk_min_chunks 用 map_reduce, 否则 dataset。
     # "dataset" = 整 dataset 一个 KA, chunk 逐个 feed_text, 跨 chunk MERGE_FIELD 字段合并
     #   (非 LLM 合并, 无爆炸, 任意规模稳定; build_index 已解耦, KG 入库可靠)。
     # "chunk"   = 旧 per-chunk fresh KA.parse() 路径, 无合并 (并发快, 无统一 KA dump)。
-    # "map_reduce"(v1.9.8) = 并发 per-chunk 抽取(不 insert)→ 全局精确名去重 +
-    #   provenance 合并 → entity_resolver 同义消歧 + type-pair 过滤 → 一次 insert。
-    #   兼得并发速度与全局合并质量,绕开 dataset path 串行/卡死。显式 opt-in(auto 不路由到此)。
-    he_kg_granularity: Literal["auto", "dataset", "chunk", "map_reduce"] = "auto"
-    # auto 阈值(builder.py 只读此项: N > chunk_min_chunks → chunk, 否则 dataset)。
-    he_kg_chunk_min_chunks: int = 500    # N > 此值 → chunk
+    he_kg_granularity: Literal["auto", "dataset", "chunk", "map_reduce"] = "map_reduce"
+    # auto 阈值(builder.py 只读此项: N > chunk_min_chunks → map_reduce, 否则 dataset)。
+    he_kg_chunk_min_chunks: int = 500    # N > 此值 → map_reduce
     # Local filesystem root for per-dataset KA dumps (<root>/<dataset>/ka/).
     # MUST be a local path — hyper-extract's ``ka.dump`` writes data.json /
     # metadata.json / index/ to the filesystem, NOT to minio/s3. The storage

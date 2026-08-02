@@ -12,8 +12,8 @@ Two extraction granularities (``HugeGraphConfig.he_kg_granularity``):
 - ``"map_reduce"`` -- v1.9.8: concurrent per-chunk extract (NO insert) → global
                      exact-name merge (:meth:`_merge_chunk_results`) → entity
                      resolution + type-pair filter → ONE ``_insert_kg``. Decouples
-                     extraction concurrency from global merging; opt-in (auto does
-                     not route here).
+                     extraction concurrency from global merging; the default since
+                     v1.9.11 (auto still routes here for large datasets).
 
 All paths share ``_insert_kg`` for vertex/edge insertion (entity + typed
 vertices, references, routed relations).
