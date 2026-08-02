@@ -219,6 +219,8 @@ class KGRetriever:
             if cname == name:
                 return v
             matched = sum(1 for ch in cname if ch in nset)
+            if matched == len(cname):  # full char overlap → high confidence, early exit
+                return v
             if matched >= len(cname) * 0.6 and matched > 0:
                 key = (matched, len(cname))
                 if key > best_key:

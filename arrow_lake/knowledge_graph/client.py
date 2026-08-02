@@ -359,6 +359,8 @@ class HugeGraphClient(_TraverserMixin, _ImportExportMixin):
         }
         if direction in ("IN", "OUT", "BOTH"):
             params["direction"] = direction
+        limit = max(1, min(int(limit), 10000))  # cap to prevent DoS via huge limit
+        params["limit"] = str(limit)
         try:
             resp = await self._get(
                 f"{self._graph_base_for(graph_name)}/graph/edges", params=params,

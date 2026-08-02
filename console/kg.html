@@ -322,7 +322,7 @@ async function loadGraph(totalV = 0) {
     return {
       id: n.id, group: grp, vtype: n.label, source_chunk: sc,
       label: n.name && n.name !== n.label ? n.name : (n.name || n.label),
-      title: `${n.name || n.label} [${n.label}]${n.type && n.type !== n.label ? " · " + n.type : ""}${n.definition ? "\n" + n.definition : ""}${sc.length ? "\n来源chunk: " + sc.join(", ") : ""}`,
+      title: `${n.name || n.label} [${n.label}]${n.type && n.type !== n.label ? " · " + n.type : ""}${n.definition ? "\n" + n.definition : ""}${sc.length ? "\n来源chunk: " + sc.map(c => esc(c)).join(", ") : ""}`,
       color: { background: c, border: c, highlight: { background: c, border: "#ffffff" }, hover: { background: c, border: "#ffffff" } },
     };
   });
