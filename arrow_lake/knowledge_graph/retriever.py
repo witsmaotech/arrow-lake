@@ -49,6 +49,7 @@ class KGRetriever:
     def __init__(self, client: HugeGraphClient, config: HugeGraphConfig) -> None:
         self._client = client
         self._config = config
+        self._snapshot_cache: dict[str, tuple[float, list[dict]]] = {}
 
     async def retrieve(
         self,
@@ -93,6 +94,10 @@ class KGRetriever:
         )
         depth = min(depth, self._config.max_traversal_depth)
 
+        # v1.9.11 #2: entity snapshot for char-overlap fallback (name-miss due
+        # to paraphrased entity names). Cached per graph with a short TTL.
+        snapshot = await self._entity_snapshot(g)
+
         all_triplets: list[GraphTriplet] = []
         vertex_ids: list[str] = []
 
@@ -107,8 +112,12 @@ class KGRetriever:
                     continue
 
             if vertex is None:
-                logger.debug("Entity not found in HugeGraph: %s", entity_name)
-                return
+                # v1.9.11 #2: char-overlap fallback on entity snapshot (query
+                # entity name may differ from the canonical graph name).
+                vertex = self._char_overlap_vertex(entity_name, snapshot)
+                if vertex is None:
+                    logger.debug("Entity not found in HugeGraph: %s", entity_name)
+                    return
 
             vid = vertex.get("id", "")
             if not vid:
@@ -119,13 +128,32 @@ class KGRetriever:
             neighbors = await self._client.traverser_kneighbor(
                 source=vid, depth=depth, graph_name=g
             )
+            # v1.9.11 #1: recover edge relation_type — traverser_kneighbor
+            # returns only neighbor vertices, so fetch OUT edges of the source
+            # and build neighbor_id → relation_type (kneighbor depth-1 endpoints
+            # are exactly the OUT edge targets). Falls back to related_to_{label}
+            # when the edge lookup misses (consistent with kg.html semantics).
+            edge_rel: dict[str, str] = {}
+            try:
+                edges_out = await self._client.get_vertex_edges(
+                    vid, graph_name=g, direction="OUT", limit=500,
+                )
+                for e in edges_out:
+                    nid = e.get("inV")
+                    eprops = e.get("properties") or {}
+                    rt = eprops.get("relation_type") or e.get("label")
+                    if nid and rt:
+                        edge_rel[str(nid)] = rt
+            except Exception:
+                pass
 
             for neighbor in neighbors:
                 n_label = neighbor.get("label", "")
                 n_props = neighbor.get("properties", {})
+                n_id = str(neighbor.get("id", ""))
                 n_name = n_props.get("name", neighbor.get("id", ""))
 
-                predicate = f"related_to_{n_label}"
+                predicate = edge_rel.get(n_id) or f"related_to_{n_label}"
                 all_triplets.append(
                     GraphTriplet(
                         subject=v_name,
@@ -150,6 +178,53 @@ class KGRetriever:
             vertex_count=vertex_count,
             edge_count=edge_count,
         )
+
+    async def _entity_snapshot(self, graph_name: str | None) -> list[dict]:
+        """Cached entity-vertex snapshot for char-overlap fallback (v1.9.11 #2).
+
+        Mirrors ``_lake_kg._cached_graph_snapshot`` but lives on the retriever
+        (which only holds client+config). Short TTL so a fresh build is picked up.
+        """
+        import time
+        key = graph_name or ""
+        now = time.monotonic()
+        cached = self._snapshot_cache.get(key)
+        if cached and now - cached[0] < 60.0:
+            return cached[1]
+        try:
+            vertices, _ = await self._client.get_graph_snapshot(
+                graph_name=graph_name, label="entity", limit=10000,
+            )
+        except Exception:
+            vertices = []
+        self._snapshot_cache[key] = (now, vertices)
+        return vertices
+
+    @staticmethod
+    def _char_overlap_vertex(name: str, snapshot: list[dict]) -> dict | None:
+        """Best entity vertex by char-overlap: exact name win, else ≥60% of
+        candidate name chars present in the query name (mirrors
+        ``_lake_kg._retrieve_hg_entities`` L1116-1123). Returns None if no match.
+        """
+        if not name or not snapshot:
+            return None
+        nset = set(name)
+        best: dict | None = None
+        best_key: tuple[int, int] = (0, 0)
+        for v in snapshot:
+            props = v.get("properties") or {}
+            cname = str(props.get("name") or "")
+            if len(cname) < 2:
+                continue
+            if cname == name:
+                return v
+            matched = sum(1 for ch in cname if ch in nset)
+            if matched >= len(cname) * 0.6 and matched > 0:
+                key = (matched, len(cname))
+                if key > best_key:
+                    best_key = key
+                    best = v
+        return best
 
     def triplets_to_text(self, result: GraphRetrievalResult) -> str:
         """Render triplets as text for RAG context injection.

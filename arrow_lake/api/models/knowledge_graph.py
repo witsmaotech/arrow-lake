@@ -59,6 +59,7 @@ class KGGraphNode(BaseModel):
     name: str = ""
     type: str = ""
     definition: str = ""
+    source_chunk: list[str] = []
 
 
 class KGGraphEdge(BaseModel):

@@ -318,10 +318,11 @@ async function loadGraph(totalV = 0) {
   const ns = (r.nodes || []).filter(n => !STRUCTURE.has(n.label)).map(n => {
     const grp = n.type || n.label;
     const c = typeColor(grp); // 显式着色(已知类型固定色 + 未知类型稳定哈希色),与图例同源
+    const sc = n.source_chunk || [];
     return {
-      id: n.id, group: grp, vtype: n.label,
+      id: n.id, group: grp, vtype: n.label, source_chunk: sc,
       label: n.name && n.name !== n.label ? n.name : (n.name || n.label),
-      title: `${n.name || n.label} [${n.label}]${n.type && n.type !== n.label ? " · " + n.type : ""}${n.definition ? "\n" + n.definition : ""}`,
+      title: `${n.name || n.label} [${n.label}]${n.type && n.type !== n.label ? " · " + n.type : ""}${n.definition ? "\n" + n.definition : ""}${sc.length ? "\n来源chunk: " + sc.join(", ") : ""}`,
       color: { background: c, border: c, highlight: { background: c, border: "#ffffff" }, hover: { background: c, border: "#ffffff" } },
     };
   });
@@ -333,11 +334,27 @@ async function loadGraph(totalV = 0) {
     label: showEdgeLabels ? (e.relation_type || "") : "", arrows: "to",
     font: { size: 9, color: "#64748b", strokeWidth: 0 },
   }));
+  // v1.9.11 #3C: chunk 共现边 — 共享 source_chunk 的实体画虚线边(同 chunk 抽取
+  // → 视觉关联,即使无显式关系边)。per-chunk cap ≤8 实体防爆(O(n²) per chunk)。
+  const byChunk = new Map();
+  ns.forEach(n => (n.source_chunk || []).forEach(c => {
+    if (!byChunk.has(c)) byChunk.set(c, []);
+    byChunk.get(c).push(n.id);
+  }));
+  const CO_CAP = 8;
+  const coEdges = [];
+  byChunk.forEach(ids => {
+    if (ids.length < 2 || ids.length > CO_CAP) return;
+    for (let i = 0; i < ids.length; i++)
+      for (let j = i + 1; j < ids.length; j++)
+        coEdges.push({ id: "co_" + coEdges.length, from: ids[i], to: ids[j], dashes: true, color: { color: "rgba(100,116,139,.3)" }, arrows: "", width: 1, font: { size: 0 } });
+  });
+  const allEdges = es.concat(coEdges);
   if (!ns.length) { meta.textContent = "无实体节点(已隐藏 document/chunk)— 先建 KG 抽取实体"; cont.innerHTML = ""; return; }
   meta.innerHTML = `${ns.length} 实体节点 · ${es.length} 关系边` + (totalV > ns.length ? ` · <span class="muted" style="font-size:.74rem">图共 ${totalV.toLocaleString()} 顶点(已隐藏 ${totalV - ns.length} 个 document/chunk 结构节点)</span>` : "") + (!showEdgeLabels ? ` · <span class="muted" style="font-size:.74rem">边 label 已隐藏(性能)</span>` : "") + ((totalV > 8000 || r.truncated) ? ` · <span style="color:var(--warn)">仅显示前 8000(数据集更大)</span>` : "");
   kgNodes = new V.DataSet(ns);
-  kgEdges = new V.DataSet(es);
-  fullSnapshot = { nodes: ns, edges: es }; // 快照完整 8000 图(遍历后重置恢复)
+  kgEdges = new V.DataSet(allEdges);
+  fullSnapshot = { nodes: ns, edges: allEdges }; // 快照完整 8000 图(遍历后重置恢复)
   // 图例:按 type 着色说明(与节点 color 同源 typeColor)
   { const _lg = $("#kgLegend"); if (_lg) { const _ts = [...new Set(ns.map(n => n.group))].sort(); _lg.innerHTML = _ts.map((t) => `<span style="display:inline-flex;align-items:center;gap:4px"><i style="display:inline-block;width:11px;height:11px;border-radius:3px;background:${typeColor(t)};border:1px solid rgba(255,255,255,.45)"></i>${esc(t)}</span>`).join(""); } }
   kgNetwork = new V.Network(cont, { nodes: kgNodes, edges: kgEdges }, visOpts(ns.length));

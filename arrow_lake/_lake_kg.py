@@ -862,6 +862,15 @@ class _LakeKGMixin:
             val = props.get(key, "") if isinstance(props, dict) else ""
             return "" if val is None else str(val)
 
+        def _prop_list(v: dict[str, Any], key: str) -> list[str]:
+            props = v.get("properties") or {}
+            val = props.get(key) if isinstance(props, dict) else None
+            if not val:
+                return []
+            if isinstance(val, (list, tuple, set)):
+                return [str(x) for x in val]
+            return [str(val)]
+
         nodes = [
             {
                 "id": str(v.get("id")),
@@ -869,6 +878,7 @@ class _LakeKGMixin:
                 "name": _prop(v, "name") or str(v.get("label", "")),
                 "type": _prop(v, "type") or str(v.get("label", "")),
                 "definition": _prop(v, "definition"),
+                "source_chunk": _prop_list(v, "source_chunk"),
             }
             for v in vertices
         ]

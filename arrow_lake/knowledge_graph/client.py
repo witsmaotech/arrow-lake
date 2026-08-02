@@ -337,6 +337,40 @@ class HugeGraphClient(_TraverserMixin, _ImportExportMixin):
             )
         return resp.json().get("vertices", [])
 
+    async def get_vertex_edges(
+        self,
+        vertex_id: str,
+        *,
+        graph_name: str | None = None,
+        direction: str = "OUT",
+        limit: int = 1000,
+    ) -> list[dict[str, Any]]:
+        """Get edges incident to a vertex (default: OUT edges).
+
+        ``GET /graphs/{name}/graph/edges?vertex_id="..."`` — used by the KG
+        retriever to recover edge ``relation_type`` (``traverser_kneighbor``
+        returns only neighbor vertices, not edges). ``vertex_id`` is JSON-
+        encoded per HugeGraph REST convention. Returns the ``edges`` list
+        (empty on 404 / transient error).
+        """
+        params: dict[str, Any] = {
+            "vertex_id": json.dumps(vertex_id),
+            "limit": str(limit),
+        }
+        if direction in ("IN", "OUT", "BOTH"):
+            params["direction"] = direction
+        try:
+            resp = await self._get(
+                f"{self._graph_base_for(graph_name)}/graph/edges", params=params,
+            )
+        except httpx.HTTPError:
+            return []
+        if resp.status_code == 404:
+            return []
+        if resp.status_code != 200:
+            return []
+        return resp.json().get("edges", [])
+
     # ------------------------------------------------------------------
     # Edge operations
     # ------------------------------------------------------------------

@@ -142,7 +142,7 @@ class GraphRAGPipeline(RAGPipeline):
     # ------------------------------------------------------------------
 
     async def _retrieve_graph_context(
-        self, question: str, entities: list[str]
+        self, question: str, entities: list[str], dataset_name: str = ""
     ) -> str:
         """Retrieve graph triplets and serialize to text.
 
@@ -157,6 +157,7 @@ class GraphRAGPipeline(RAGPipeline):
                 extracted_entities=entities,
                 traversal_depth=self._traversal_depth,
                 max_triplets=self._max_graph_triplets,
+                dataset_name=dataset_name or None,
             )
             return self._kg_retriever.triplets_to_text(graph_result)
         except asyncio.CancelledError:
@@ -212,12 +213,12 @@ class GraphRAGPipeline(RAGPipeline):
         """
         if not use_kg or not self._kg_available():
             return None
-        return self._retrieve_graph_context_for(question)
+        return self._retrieve_graph_context_for(question, dataset_name)
 
-    async def _retrieve_graph_context_for(self, question: str) -> str:
+    async def _retrieve_graph_context_for(self, question: str, dataset_name: str) -> str:
         """Extract question entities (cached) → retrieve graph triplets."""
         entities = await self._extract_question_entities(question)
-        return await self._retrieve_graph_context(question, entities)
+        return await self._retrieve_graph_context(question, entities, dataset_name)
 
     def _fuse_extra_context(self, context_text: str, extra_text: str) -> str:
         """GraphRAG: weighted graph/document fusion (section ordering by graph_weight)."""

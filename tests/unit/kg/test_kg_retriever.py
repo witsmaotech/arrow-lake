@@ -187,6 +187,49 @@ class TestKGRetrieverRetrieve:
 # ---------------------------------------------------------------------------
 
 
+class TestV1911EdgeRelationAndCharOverlap:
+    """v1.9.11 #1 (edge relation_type) + #2 (char-overlap fallback)."""
+
+    def test_char_overlap_exact_hit(self) -> None:
+        snap = [{"id": "3:A", "properties": {"name": "应急指挥中心"}}]
+        assert KGRetriever._char_overlap_vertex("应急指挥中心", snap)["id"] == "3:A"
+
+    def test_char_overlap_paraphrase_hit(self) -> None:
+        # "市应急指挥中心" vs "应急指挥中心": 6/6 candidate chars overlap → hit
+        snap = [{"id": "3:A", "properties": {"name": "应急指挥中心"}}]
+        assert KGRetriever._char_overlap_vertex("市应急指挥中心", snap)["id"] == "3:A"
+
+    def test_char_overlap_no_match(self) -> None:
+        snap = [{"id": "3:B", "properties": {"name": "完全无关的另一实体"}}]
+        assert KGRetriever._char_overlap_vertex("响应时间", snap) is None
+
+    def test_char_overlap_empty(self) -> None:
+        assert KGRetriever._char_overlap_vertex("A", []) is None
+
+    def test_retrieve_uses_edge_relation_type(self) -> None:
+        import asyncio
+        from types import SimpleNamespace
+        cfg = SimpleNamespace(default_traversal_depth=1, max_traversal_depth=2)
+        client = AsyncMock()
+        client.get_vertex.return_value = {
+            "id": "3:resp", "label": "entity", "properties": {"name": "响应时间"},
+        }
+        client.traverser_kneighbor.return_value = [
+            {"id": "3:sys", "label": "entity", "properties": {"name": "业务系统"}},
+        ]
+        client.get_vertex_edges.return_value = [
+            {"inV": "3:sys", "label": "requires", "properties": {"relation_type": "要求"}},
+        ]
+        client.get_graph_snapshot.return_value = ([], [])
+        ret = KGRetriever(client, cfg)
+        result = asyncio.run(
+            ret.retrieve("q", extracted_entities=["响应时间"], dataset_name="ds")
+        )
+        assert len(result.triplets) == 1
+        assert result.triplets[0].predicate == "要求"  # relation_type, not related_to_entity
+        assert result.triplets[0].object_ == "业务系统"
+
+
 class TestTripletsToText:
     def test_single_triplet(self) -> None:
         retriever = KGRetriever(AsyncMock(), HugeGraphConfig(enabled=True))

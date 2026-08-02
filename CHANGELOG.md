@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.9.11] - 2026-08-02
+
+**GraphRAG 检索优化 + KG chunk 关联可视化**(对照 hugegraph/hyper-extract 技能 review)。① **retriever predicate 修复**:`/rag/query?use_kg=true` 三元组 predicate 从 `related_to_{label}`(丢语义)改为取边 `relation_type`——`client` 加 `get_vertex_edges`(REST `GET /graph/edges?vertex_id=`),retriever 建 neighbor_id→relation_type 映射,fallback `related_to_{label}`;② **retriever char-overlap fallback**:name 精确 miss 时(表述差异,如"市应急指挥中心" vs "应急指挥中心")按 entity snapshot 字符重叠(≥60%)命中,复刻 `_retrieve_hg_entities` 逻辑(零 embedding 依赖,避 KA FAISS 与 HugeGraph 实体错配);顺手修 `graph_rag` 漏传 `dataset_name` 的 latent bug(per-dataset 隔离失效);③ **kg.html chunk 关联展示**:后端 `kg_get_graph`+`KGGraphNode` 透传 `source_chunk`;前端按 source_chunk 算共现虚线边(同 chunk 抽取的实体视觉关联,per-chunk cap ≤8 防爆)+ hover 显示来源 chunk。+5 新测(test_kg_retriever #1 predicate + #2 char-overlap),33 核心测试绿。
+
 ## [1.9.10] - 2026-08-02
 
 **KG 实体 source_chunk provenance 字段 — 关系可溯源**。v1.9.9 关系增强后图谱拓扑质量已达标(orphan 0.03),本版补"使用质量":实体/关系无来源 chunk,问答无法引原文、无法识别无源臆造。schema 加 `source_chunk`(SET TEXT,首个 SET cardinality property key,实体来源 chunk 列表)+ entity vertex 字段;`builder._insert_kg` 复用 references 边 owner 归并(`name2chunks`,per-chunk 用 owning_chunk_id、per-dataset/map_reduce 用 entity_chunks),零额外抽取成本;SET 空 list 时 omit key(避 HugeGraph SET 空 list 4xx,review HIGH fix)+ name2chunks 浅拷贝(MEDIUM)。wuhu 全量实证(1250 chunks):orphan 0.0315(≥v1.9.9 的 0.0336)/edges 12316/avg_degree 2.86,图拓扑不回归;source_chunk SET 注册+写入 live 验证成功(kg_kg_test_docs 11/11 + kg_wuhu_report)。**value 字段评估后砍**:原计划 value(指标/金额数值),wuhu 验证发现 hyper-extract AutoGraph node 固定 name/type/definition,value 无处抽取(非简单修);深反思认定 value 解决的"数值丢失"是伪命题(数值在 chunk 原文,RAG 已可达,无结构化数值查询需求则增量极小),post-process 成本不值——砍。+3 新测,顺带修 test_kg_insert_kg build_batch_size 陈旧 fixture;stash 验证零回归。详见 `docs/v1.9.10-kg-phase2-completion-plan.md`。
