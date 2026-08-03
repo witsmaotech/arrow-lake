@@ -64,41 +64,59 @@ def _find(name: str) -> Any | None:
     return None
 
 
-def _inject_doc_type_tag(yaml_text: str, doc_type: str | None) -> str:
-    """Add ``doc_type`` to the YAML's ``tags`` so gallery routing (Layer 2 tag
-    match) finds it — fixes the v1.10.0 小坑 where the API ``doc_type`` field
-    only reached system_db, not the routing gallery. Surgical regex (preserves
-    user formatting); ``tags`` is a valid hyper-extract field (safe to touch).
+_CATEGORY_TOKEN_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+
+
+def _inject_category(yaml_text: str, doc_type: str | None) -> str:
+    """Set the YAML top-level ``category:`` to ``doc_type`` (M5).
+
+    Layer-2 routing keys on ``template.category == doc_type``
+    (doc_type_router.py:277), so the API ``doc_type`` param maps directly to the
+    YAML ``category`` field — the v1.10.0 ``_inject_doc_type_tag`` workaround
+    (which injected doc_type into ``tags``) is retired; ``tags`` returns to being
+    pure author hints. When ``doc_type`` is empty the YAML's own ``category`` is
+    used as-is (validated against the dictionary).
+
+    ``doc_type`` is validated against the category-name token regex BEFORE
+    splicing into the YAML (defense-in-depth: a value with ``\\n``/``:``/``#``
+    could otherwise inject a new YAML key). Regexes are anchored to column 0 so
+    a NESTED ``category:``/``name:`` key (e.g. under ``guideline:``) is never
+    matched — only the top-level key is replaced/anchored.
     """
-    import re
     if not doc_type:
         return yaml_text
     dt = doc_type.strip().lower()
     if not dt:
         return yaml_text
-    # flow list:  tags: [a, b]
-    m = re.search(r'^(\s*tags:\s*\[)([^\]]*)\]\s*$', yaml_text, re.M)
+    if not _CATEGORY_TOKEN_RE.match(dt):
+        raise TemplateValidationError([
+            ("doc_type", f"must be a lowercase identifier matching {_CATEGORY_TOKEN_RE.pattern}")])
+    # existing top-level `category:` line (column 0) → replace its value.
+    # No leading \s* — an indented `category:` is a nested key, not this field.
+    m = re.search(r'^(category:\s*).*$', yaml_text, re.M)
     if m:
-        items = [x.strip().strip('"\'') for x in m.group(2).split(',') if x.strip()]
-        if dt not in items:
-            items.append(dt)
-        return yaml_text[:m.start()] + f"{m.group(1)}{', '.join(items)}]" + yaml_text[m.end():]
-    # block list:  tags:\n  - a\n  - b
-    m = re.search(r'^(\s*tags:\s*\n)((?:[ \t]+-.*\n?)+)', yaml_text, re.M)
+        return yaml_text[:m.start()] + f"{m.group(1)}{dt}" + yaml_text[m.end():]
+    # no top-level category → insert right after the top-level `name:` line
+    m = re.search(r'^(name:\s*.*)$', yaml_text, re.M)
     if m:
-        lines = [l for l in m.group(2).splitlines() if l.strip()]
-        items = [re.search(r'-\s*(.+)', l).group(1).strip().strip('"\'') for l in lines]
-        if dt not in items:
-            indent = (re.match(r'([ \t]*)', lines[0]).group(1) if lines else "  ")
-            block = m.group(2).rstrip("\n") + f"\n{indent}- {dt}\n"
-        else:
-            block = m.group(2)
-        return yaml_text[:m.start()] + m.group(1) + block + yaml_text[m.end():]
-    # no tags block → add `tags: [dt]` right after the `name:` line
-    m = re.search(r'^(\s*name:\s*.*)$', yaml_text, re.M)
-    if m:
-        return yaml_text[:m.end()] + f"\ntags: [{dt}]" + yaml_text[m.end():]
-    return yaml_text + f"\ntags: [{dt}]\n"
+        return yaml_text[:m.end()] + f"\ncategory: {dt}" + yaml_text[m.end():]
+    return f"category: {dt}\n" + yaml_text
+
+
+def _known_categories(request: Request) -> set[str]:
+    """The dynamic doc_type/category dictionary for template validation.
+
+    From the :class:`DocTypeCategoryStore` (seed + admin-added customs) when
+    system_db is enabled; falls back to the static :data:`KNOWN_DOC_TYPES`
+    constant otherwise so category is still enforced against the built-in 11.
+    """
+    store = getattr(request.app.state, "doc_type_category_store", None)
+    if store is not None:
+        names = store.known_names()
+        if names:
+            return names
+    from arrow_lake.knowledge_graph.doc_type_router import KNOWN_DOC_TYPES
+    return set(KNOWN_DOC_TYPES)
 
 
 # --- models ----------------------------------------------------------------
@@ -183,11 +201,14 @@ def _read_yaml(path: str) -> str | None:
 @router.post("/validate")
 async def validate(
     req: TemplateValidateRequest,
+    request: Request,
     _user: dict = Depends(require_role(Role.ADMIN)),
 ) -> dict:
     """Validate a YAML without saving. Returns field-level errors."""
     try:
-        validate_template_yaml(req.yaml, reserved_names=_reserved_names())
+        validate_template_yaml(
+            req.yaml, reserved_names=_reserved_names(),
+            known_categories=_known_categories(request))
         return {"success": True, "data": {"valid": True}}
     except TemplateValidationError as exc:
         return {"success": True, "data": {
@@ -205,44 +226,58 @@ class GenerateRequest(BaseModel):
 
 _generate_sem = asyncio.Semaphore(3)  # 限并发,防 LLM 代理滥用
 
-_GEN_SYSTEM = """你是 hyper-extract 知识抽取模板设计专家。只输出一个合法模板的 YAML,严格符合下述 schema。
+_GEN_SYSTEM = """你是 hyper-extract 知识抽取模板设计专家。只输出一个合法、高质量的 graph 模板 YAML,严格符合下述完整 schema。
 
-【输出 schema】(字段名、层级、缩进必须完全一致;下面是一个结构范例)
+【完整 graph 模板 schema】(字段名/层级/缩进必须完全一致;范例已含全部必填与推荐段,直接照此结构填领域内容)
 language: [zh, en]
-name: security_concept_graph
+name: <domain>_concept_graph            # snake_case,领域派生;勿照抄范例 name
 type: graph
-tags: [security, asset, threat]
-description: {zh: 安全概念图, en: security concept graph}
+tags: [<domain>, concept, knowledge]    # 全小写
+description: {zh: "<中文一句话定位该图谱抽什么>", en: "<one-line English>"}   # 必填,双语
 output:
+  description: {zh: "<输出图谱的一句话说明>", en: "<one-line English>"}         # 必填,最易漏
   entities:
-    description: {zh: 文档中的安全要素, en: security elements}
-    fields:
-      - {name: name, type: str, description: {zh: 要素名称(规范术语), en: name}, required: true}
-      - {name: type, type: str, description: {zh: "必须是以下之一: 资产/威胁/控制/事件", en: "one of: asset/threat/control/event"}, required: true}
-      - {name: definition, type: str, description: {zh: 要素定义, en: definition}, required: true}
+    description: {zh: "<实体的中文说明>", en: "<English>"}
+    fields:                              # 3-5 个字段;核心标识 required: true
+      - {name: name, type: str, description: {zh: "要素名称(文档中的规范术语)", en: "canonical name"}, required: true}
+      - {name: type, type: str, description: {zh: "按领域必须是以下之一: <5-8 类互斥枚举>", en: "one of: <enum>"}, required: true}
+      - {name: definition, type: str, description: {zh: "一句话定义/解释(必填,杜绝空描述)", en: "one-sentence definition"}, required: true}
   relations:
-    description: {zh: 安全要素间关联, en: relations}
-    fields:
-      - {name: source, type: str, description: {zh: 源要素, en: source}, required: true}
-      - {name: target, type: str, description: {zh: 目标要素, en: target}, required: true}
-      - {name: type, type: str, description: {zh: "关系类型,必须是: 防护/利用/触发/相关", en: relation type}, required: true}
-guideline:
-  target: {zh: 你是网络安全知识图谱专家, en: you are a security kg expert}
-  rules_for_entities:
-    zh: [每段最多提取 12 个核心要素, type 必须按枚举, name 用规范术语]
-    en: [extract up to 12 core elements per chunk]
+    description: {zh: "<关系的中文说明>", en: "<English>"}
+    fields:                              # 关系字段固定 source/target/type(+可选 description)
+      - {name: source, type: str, description: {zh: "源要素名称", en: "source element name"}, required: true}
+      - {name: target, type: str, description: {zh: "目标要素名称", en: "target element name"}, required: true}
+      - {name: type, type: str, description: {zh: "关系类型,必须是: <5-10 种互斥枚举>", en: "one of: <enum>"}, required: true}
+guideline:                               # HOW to extract well;不重复 schema 字段定义(WHAT)
+  target: {zh: "你是<领域>知识图谱专家,擅长从文档提取要素及其语义关联", en: "You are a <domain> knowledge-graph expert..."}
+  rules_for_entities:                    # 必填,最易漏
+    zh: ["<3-5 条可执行约束:每段提取上限/type 必须按枚举/name 用规范术语/只抽明确表述不臆测>"]
+    en: ["<English equivalents>"]
+  rules_for_relations:                   # 必填,最易漏
+    zh: ["<3-5 条:type 严格用枚举禁止自创/仅取文档明确关系/不臆测常识关联>"]
+    en: ["<English equivalents>"]
+identifiers:                             # graph 必填
+  entity_id: name
+  relation_id: '{source}|{type}|{target}'
+  relation_members: { source: source, target: target }
+display:                                 # 必填;占位符只能引用已存在的字段
+  entity_label: '{name} ({type})'        # 5-20 字符
+  relation_label: '{type}'               # 10-30 字符,勿重复 source/target
 
-【硬约束 — 任一不满足会被校验拒绝】
-1. 只输出纯 YAML。首行必须是 language: [zh, en]。禁止 markdown 代码围栏,禁止任何解释/前后缀/对话文字。
-2. output.entities.fields 必须包含 name 字段;output.relations.fields 必须包含 source、target、type 三个字段。
-3. 每个字段必须有 name/type/description;字段 type 只能是 str/int/float/bool。
-4. 顶层 type 只能是 graph(除非用户明确要求 model 或 hypergraph)。
-5. guideline.target 必须有 zh 和 en。
-6. entity 建议 3-6 个字段(至少 name/type/definition);relations 至少 source/target/type。
-7. 把该领域的核心实体类型作为枚举写进 entity.type 的 description(如"必须是 A/B/C 之一"),把关系类型枚举写进 relation.type 的 description —— 这是约束抽取质量的关键。
-8. name 用领域派生的英文小写下划线标识符(不要用范例的 security_concept_graph,除非领域就是安全)。
+【硬约束 — 任一不满足会被校验拒绝 → 模板无法使用】
+1. 只输出纯 YAML,首行 language: [zh, en]。禁止 markdown 围栏、解释、前后缀、对话文字。
+2. 必填段一个不能少(最常被遗漏,务必逐项自检):output.description、guideline.rules_for_entities、guideline.rules_for_relations、identifiers、display。
+3. entities.fields 必含 name;relations.fields 必含 source/target/type(字段名固定,勿用 relation_type/event_date 等变体)。
+4. 每个 field 必须有 name/type/description;type 只能是 str/int/float/bool/list[str]/datetime。required 缺省 false,核心标识字段(name/type/source/target)必须 true。
+5. identifiers.entity_id 必须指向 entities.fields 中真实存在的字段(通常 name);graph 的 relation_members 是 dict {source, target}。
+6. 顶层 type 固定 graph(除非用户明确要求 model/hypergraph/temporal_graph/spatial_graph 等;届时 output/guideline/identifiers 段要相应调整)。
+7. 所有 zh 字段纯中文(禁止"实体(entity)"这类中英混用),所有 en 字段纯英文,双语对照一致。
+8. 质量关键:entity.type 与 relation.type 的 description 必须给出该领域**完整且互斥的枚举**(如"必须是 A/B/C/D 之一")——枚举全覆盖、无重叠、禁用"其他/概念/相关"等笼统值。这是抽取质量的根本约束。
+9. Schema 定义 WHAT(字段/类型),Guideline 定义 HOW(抽取策略/质量要求/创建条件),两者不重复。
+10. 字段精简:实体 3-5 个、关系 3-4 个;只留 Essential,辅助字段(描述/时间)required:false。
+11. name 用领域派生 snake_case(勿照抄范例 name)。
 
-【参考蓝本】(仅供学习结构与写法,严禁照抄其领域内容):
+【参考蓝本】(仅供学习结构与写法,严禁照抄其领域内容/枚举/name):
 {BASE}
 """
 
@@ -265,6 +300,35 @@ def _strip_fences(text: str) -> str:
     return t.strip()
 
 
+def _format_he_errors(exc: Exception) -> str:
+    """Turn a hyper-extract TemplateCfg rejection into a concise, field-specific
+    error list (for self-heal feedback + the save-gate 422 detail). Extracts
+    pydantic ``ValidationError.errors()`` into clean field paths — strips noisy
+    union-branch schema names (NaiveOutputSchema/GraphGuidelineSchema/…) and
+    dedupes — so the LLM sees ``output.description: Field required`` instead of
+    a 240-char-truncated blob, and can self-heal precisely."""
+    import re
+    raw = getattr(exc, "errors", None)
+    errs = raw() if callable(raw) else None
+    if not errs:
+        return f"hyper-extract 加载拒绝: {str(exc)[:300]}"
+    branch = re.compile(
+        r"^(?:Naive|Graph|Hypergraph(?:Simple|Nested)?|Temporal|Spatial|SpatioTemporal|Record|Model|List|Set)"
+        r"(?:Output|Guideline)Schema$")
+    seen, lines = set(), []
+    for e in errs[:12]:
+        loc = [str(x) for x in e.get("loc", ()) if not branch.match(str(x))]
+        path = ".".join(loc) or "?"
+        msg = (e.get("msg") or "").strip()
+        key = (path, msg)
+        if key in seen:
+            continue
+        seen.add(key)
+        lines.append(f"{path}: {msg}")
+    head = f"hyper-extract 校验失败(共 {len(errs)} 处,字段级):"
+    return head + "\n  - " + "\n  - ".join(lines) if lines else head
+
+
 def _hyperextract_check(yaml_text: str) -> tuple[bool, str]:
     """Authoritative 校验:让 hyper-extract 真实加载模板(比 registry 严)。
 
@@ -285,12 +349,53 @@ def _hyperextract_check(yaml_text: str) -> tuple[bool, str]:
         Template.create(tmp)  # 不传 llm_client/embedder,仅解析模板结构
         return True, ""
     except Exception as exc:  # TemplateCfg ValidationError 等
-        return False, f"hyper-extract 加载拒绝: {str(exc)[:240]}"
+        return False, _format_he_errors(exc)
     finally:
         try:
             os.remove(tmp)
         except OSError:
             pass
+
+
+def _gate_hyperextract(yaml_text: str) -> None:
+    """Authoritative save gate: reject templates hyper-extract refuses to load.
+    Closes the E2E gap where the fast registry check passes but HE rejects at
+    extract time (missing output.description / guideline.rules_for_relations /
+    identifiers / display) → 模板能存不能用 → 0 实体。Raises 422 on failure."""
+    ok, he_err = _hyperextract_check(yaml_text)
+    if not ok:
+        raise HTTPException(status_code=422, detail={
+            "code": "TEMPLATE_INVALID_HE",
+            "message": he_err,
+            "hint": "hyper-extract 拒绝加载。常见缺失段: output.description / guideline.rules_for_relations / identifiers / display",
+        })
+
+
+def _trim_base(by: str, budget: int = 6000) -> str:
+    """Reference-template trim for the generate prompt. Cuts at a top-level key
+    boundary (no mid-section severance) and always preserves trailing required
+    sections (identifiers/display) even when they fall past the budget — so the
+    LLM always sees a structurally complete example."""
+    import re
+    by = (by or "").strip()
+    if len(by) <= budget:
+        return by
+    head = by[:budget]
+    # cut back to the last newline so we never leave a garbled half-line
+    nl = head.rfind("\n")
+    if nl > 0:
+        head = head[:nl]
+    # always re-append trailing required sections if the cut dropped them
+    tail_needed = []
+    for sec in ("identifiers", "display"):
+        if re.search(rf"(?m)^{sec}:", head) is None:
+            m = re.search(rf"(?ms)^{sec}:.*?(?=\n[a-zA-Z_]|\Z)", by)
+            if m:
+                tail_needed.append(m.group(0).rstrip())
+    out = head.rstrip()
+    if tail_needed:
+        out += "\n\n# …蓝本过长已截断,以下为必填尾部段(完整结构以上方 schema 范例为准)…\n\n" + "\n\n".join(tail_needed)
+    return out
 
 
 async def _do_generate(req: "GenerateRequest", generate_fn) -> tuple[str, list, bool]:
@@ -301,7 +406,7 @@ async def _do_generate(req: "GenerateRequest", generate_fn) -> tuple[str, list, 
         t = _find(req.base)
         if t is not None:
             by = _read_yaml(t.path) or ""
-            base_yaml = by[:1800]  # 节选,控 prompt 长度
+            base_yaml = _trim_base(by)  # 智能截断:保留必填尾部段,避免切断 display/identifiers
     system = _GEN_SYSTEM.replace("{BASE}", base_yaml)
     user = f"领域描述:{req.prompt.strip()}\n"
     if req.doc_type:
@@ -330,7 +435,7 @@ async def _do_generate(req: "GenerateRequest", generate_fn) -> tuple[str, list, 
         if not ok:
             last_errors = [("hyper-extract", he_err)]
             msgs.append(("assistant", out))
-            msgs.append(("user", he_err + " 常见原因:字段缺失/必填项/output.entities 或 relations 缺 description/guideline 结构不全/字段 type 不合法。请只输出修正后的完整纯 YAML。"))
+            msgs.append(("user", he_err + "\n请按上述字段级错误逐一补正(缺失段就补该段,类型/枚举不符就改成合法值),只输出修正后的完整纯 YAML。"))
             continue
         return yaml_text, [], attempt > 0
     return last_yaml, last_errors, True
@@ -798,14 +903,18 @@ async def template_usage(
 @router.post("", status_code=201)
 async def create_template(
     req: TemplateCreate,
+    request: Request,
     _user: dict = Depends(require_role(Role.ADMIN)),
 ) -> dict:
     """Create a user template: validate → write → refresh gallery cache."""
     if req.name in _reserved_names():
         raise HTTPException(status_code=409, detail=f"template name conflicts with system template: {req.name}")
     try:
-        yaml = _inject_doc_type_tag(req.yaml, req.doc_type)
-        path = save_template(req.name, yaml, _user_dir(), reserved_names=_reserved_names())
+        yaml = _inject_category(req.yaml, req.doc_type)
+        _gate_hyperextract(yaml)  # 权威闸门:HE 拒绝的模板不得落盘
+        path = save_template(req.name, yaml, _user_dir(),
+                             reserved_names=_reserved_names(),
+                             known_categories=_known_categories(request))
     except TemplateValidationError as exc:
         raise HTTPException(status_code=422, detail={
             "code": "TEMPLATE_INVALID",
@@ -820,6 +929,7 @@ async def create_template(
 async def update_template(
     name: str,
     req: TemplateUpdate,
+    request: Request,
     _user: dict = Depends(require_role(Role.ADMIN)),
 ) -> dict:
     """Update a user template (system/project → 403)."""
@@ -828,8 +938,11 @@ async def update_template(
         raise HTTPException(status_code=403, detail={"code": "TEMPLATE_READ_ONLY",
                                                       "message": f"{name} is a read-only {existing.source} template"})
     try:
-        yaml = _inject_doc_type_tag(req.yaml, req.doc_type)
-        path = save_template(name, yaml, _user_dir(), reserved_names=_reserved_names())
+        yaml = _inject_category(req.yaml, req.doc_type)
+        _gate_hyperextract(yaml)  # 权威闸门:HE 拒绝的模板不得落盘
+        path = save_template(name, yaml, _user_dir(),
+                             reserved_names=_reserved_names(),
+                             known_categories=_known_categories(request))
     except TemplateValidationError as exc:
         raise HTTPException(status_code=422, detail={
             "code": "TEMPLATE_INVALID",
