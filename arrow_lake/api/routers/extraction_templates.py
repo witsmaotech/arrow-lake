@@ -557,9 +557,11 @@ async def quality_doc(
 
     async with _generate_sem:  # 复用 generate 的并发闸
         try:
-            out = await asyncio.wait_for(generate_fn(msgs), timeout=90)
+            # 150s 上限给百炼慢窗 + provider 超时重试(httpx 60s × 重试)留余量;
+            # 实测快窗 ~30s,慢窗/rate-limit 时单次可 60s+。
+            out = await asyncio.wait_for(generate_fn(msgs), timeout=150)
         except asyncio.TimeoutError:
-            raise HTTPException(status_code=504, detail="LLM 生成文档超时(>90s)")
+            raise HTTPException(status_code=504, detail="LLM 生成文档超时(>150s,可能百炼限流,稍后重试)")
         except Exception as exc:  # noqa: BLE001 — LLM/provider 故障
             raise HTTPException(status_code=502, detail=f"LLM 生成失败: {str(exc)[:160]}") from exc
     document = _strip_doc_fences(out)

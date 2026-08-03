@@ -148,6 +148,7 @@ renderShell({ active: "templates", crumb: `<a href="extraction-templates.html">�
 if (!NAME) { $("#sub").innerHTML = `<span style="color:var(--danger)">缺少 ?name= 参数</span>`; }
 let isUser = false, tempDs = null, kgTaskId = null, pollTimer = null;
 let kgNetwork = null;
+let tplDocType = null;  // 模板原 doc_type(另存为 user 时继承路由)
 // M4 历史保存/回放所需的状态
 let ragHistory = [];          // [{question, answer, citations}]
 let lastGraphSnapshot = null; // /kg/graph 原始 {nodes, edges,...}
@@ -191,11 +192,14 @@ async function loadTemplate() {
     const r = await request("GET", `${API}/${encodeURIComponent(NAME)}`);
     const d = r.data;
     isUser = d.source === "user";
+    tplDocType = d.doc_type || d.category || null;
     $("#tplMeta").innerHTML = `<span><b>来源</b> ${esc(d.source)}</span><span><b>type</b> ${esc(d.type)}</span><span><b>category</b> ${esc(d.category)}</span><span><b>实体字段</b> ${(d.entity_fields || []).length}</span><span><b>关系字段</b> ${(d.relation_fields || []).length}</span>`;
     $("#tplYaml").value = d.yaml || "";
     if (!isUser) {
-      $("#saveBtn").disabled = true;
-      $("#saveMsg").textContent = "system/project 模板只读,无法保存(可先在列表复制成 user 模板)";
+      $("#saveBtn").textContent = "另存为 user 模板";
+      $("#saveMsg").textContent = "system 模板只读 — 编辑后「另存为」新 user 模板即可保存并切换";
+    } else {
+      $("#saveBtn").textContent = "保存模板";
     }
     makeYamlEditor("tplYaml");
     liveValidate();
@@ -215,22 +219,72 @@ async function liveValidate() {
   } catch (e) { $("#vbox").innerHTML = `<div class="err">${esc(errMsg(e))}</div>`; }
 }
 
-/* ---------- 0. 保存模板(仅 user) ---------- */
+/* ---------- 0. 保存(user→PUT; system→另存为 user 模板并切换) ---------- */
+function saveAsDialog(defaultName) {
+  return new Promise((resolve) => {
+    const o = document.createElement("div");
+    o.className = "modal-overlay dynamic show";
+    o.innerHTML = `<div class="modal-card" role="dialog" aria-modal="true" style="max-width:460px;width:94vw">
+      <div class="modal-title">另存为 user 模板</div>
+      <div class="modal-body" style="margin-top:12px">
+        <div style="font-size:.76rem;color:var(--fg-lo);margin-bottom:8px">system 模板只读(容器只读 + 基线语义)。把当前编辑另存为可编辑的 user 模板,保存后自动切换到新模板继续验证。</div>
+        <input class="input" id="saName" value="${esc(defaultName)}" pattern="[a-z][a-z0-9_]*" style="font-family:var(--mono)">
+        <div id="saErr" style="font-size:.72rem;color:#ff6b6b;margin-top:6px;min-height:14px"></div>
+        <div style="display:flex;gap:8px;margin-top:10px;justify-content:flex-end">
+          <button class="btn btn-ghost btn-sm" data-sa-cancel>取消</button>
+          <button class="btn btn-primary btn-sm" data-sa-ok>保存并切换</button>
+        </div>
+      </div></div>`;
+    document.body.appendChild(o);
+    const inp = o.querySelector("#saName"); inp.focus(); inp.select();
+    const close = (v) => { o.remove(); resolve(v); };
+    o.addEventListener("click", (e) => {
+      if (e.target === o || e.target.closest("[data-sa-cancel]")) close(null);
+      else if (e.target.closest("[data-sa-ok]")) {
+        const nm = inp.value.trim();
+        if (!/^[a-z][a-z0-9_]*$/.test(nm)) { o.querySelector("#saErr").textContent = "名称需匹配 ^[a-z][a-z0-9_]*$"; return; }
+        close(nm);
+      }
+    });
+    inp.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") o.querySelector("[data-sa-ok]").click();
+      else if (e.key === "Escape") close(null);
+    });
+  });
+}
+
 $("#saveBtn").addEventListener("click", async () => {
-  if (!isUser) { toast("system/project 模板只读", "error"); return; }
   const y = $("#tplYaml").value;
-  $("#saveMsg").textContent = "保存中…"; $("#saveBtn").disabled = true;
+  if (!y.trim()) { toast("模板为空", "error"); return; }
+  if (isUser) {
+    $("#saveMsg").textContent = "保存中…"; $("#saveBtn").disabled = true;
+    try {
+      await request("PUT", `${API}/${encodeURIComponent(NAME)}`, { body: { yaml: y } });
+      $("#saveMsg").textContent = "已保存,下次 /kg/build 即生效";
+      toast("模板已保存", "success");
+    } catch (e) { $("#saveMsg").textContent = ""; toast("保存失败:" + errMsg(e), "error"); }
+    finally { $("#saveBtn").disabled = false; }
+    return;
+  }
+  // system 模板 → 另存为 user 模板
+  const def = (NAME || "template").replace(/[^a-z0-9_]/g, "_") + "_v2";
+  const newName = await saveAsDialog(def);
+  if (!newName) return;
+  const forkedYaml = y.replace(/^[ \t]*name:.*$/m, `name: ${newName}`);
+  $("#saveMsg").textContent = "另存为中…"; $("#saveBtn").disabled = true;
   try {
-    await request("PUT", `${API}/${encodeURIComponent(NAME)}`, { body: { yaml: y } });
-    $("#saveMsg").textContent = "已保存,下次 /kg/build 即生效";
-    toast("模板已保存", "success");
-  } catch (e) { $("#saveMsg").textContent = ""; toast("保存失败:" + errMsg(e), "error"); }
-  finally { if (isUser) $("#saveBtn").disabled = false; }
+    await request("POST", API, { body: { name: newName, yaml: forkedYaml, doc_type: tplDocType } });
+    toast(`已另存为 ${newName},切换中…`, "success");
+    location.href = `template-quality.html?name=${encodeURIComponent(newName)}`;
+  } catch (e) {
+    $("#saveMsg").textContent = ""; $("#saveBtn").disabled = false;
+    toast("另存为失败:" + errMsg(e), "error");
+  }
 });
 
 /* ---------- 1. 生成场景文档 ---------- */
 $("#docBtn").addEventListener("click", async () => {
-  $("#docMsg").textContent = "生成中…(≤90s,LLM 读模板强制覆盖所有类型)"; $("#docBtn").disabled = true; $("#docText").value = "";
+  $("#docMsg").textContent = "生成中…(≤150s,LLM 读模板强制覆盖所有类型;慢窗/限流会重试)"; $("#docBtn").disabled = true; $("#docText").value = "";
   try {
     const r = await request("POST", `${API}/${encodeURIComponent(NAME)}/quality/doc`, {
       body: { scenario_hint: $("#docHint").value.trim() || null } });
