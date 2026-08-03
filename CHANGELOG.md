@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.10.0] - 2026-08-03
+
+### 知识抽取模板管理(Knowledge Extraction Template Management)
+
+前端模板管理界面(CRUD)+ 后端 KA/KG 能根据**新模板动态抽取建图**(不 rebuild/不 restart 加载卷上用户 YAML)。
+
+- **M1 后端动态加载 + CRUD API**:卷上 `/data/lake/templates/*.yaml` 运行时加载进 hyper-extract gallery(`reset_gallery_cache` 热重载)+ `/api/v1/admin/extraction-templates` CRUD(ADMIN)+ `template_registry` 校验(name 正则/schema/denylist/路径穿越守护)+ 查询路径模板快照(`ka_dir/template.yaml`,治 user 模板 RAG "Template not found")+ `build(template_override=)` 透传三粒度。
+- **M2 CRUD 页面 + 数据集绑定**:`console/extraction-templates.html`(列表/新建/编辑 YAML+实时校验/删除/系统派生)+ 数据集绑定(system_db `dataset_template_bindings`,`/kg/build` 缺省 template→自动解析绑定模板)。
+- **M2.5 LLM 辅助生成模板**:self-heal 多轮 LLM 生成 YAML + `_hyperextract_check` 权威落盘闸门 + 前端「✨AI 生成」。
+- **M3 dry-run + set-default + usage**:单 chunk feed_text 试跑沙箱 + 设默认 + 用量查看。
+- **M4 模板质量验证 harness**:`console/template-quality.html` 4 步(编辑→生成 ~2000字文档→ingest+kg_build+vis 图谱→RAG→清理)+ 新端点 `POST /{name}/quality/{doc,build}` + `DELETE /quality/{temp_ds}` + KA 隔离(分片根)+ 验证历史(system_db V006 `template_quality_runs`)+ 安全加固(path-traversal/XSS/DoS)。
+- **M5 category↔doc_type 端到端拉通 + 动态词典**:system_db V007 `doc_type_categories` 表(seed 11 规范词)+ `/api/v1/admin/doc-type-categories` 动态 CRUD + `validate_template_yaml` category 必填且∈词典 + `_inject_category`(写 YAML `category:`)+ `GET /kg/doc-types` 动态 + ingest doc_type 下拉动态。
+- **Console**:原生弹框(prompt/confirm/alert)→ 站内 modal/toast 组件。
+
+新增 system_db 迁移:V005 `extraction_templates`、V006 `template_quality_runs`、V007 `doc_type_categories`。新增 console 页:`extraction-templates.html`、`template-quality.html`。
+
 ## [1.9.12] - 2026-08-02
 
 **he_kg_granularity 统一默认 map_reduce**(代码/compose 三处对齐)。v1.9.8 引入 map_reduce 后,代码默认 `auto`、`prod_minimal.yml` `dataset`、`dev.override.yml` `map_reduce` 三处分歧。wuhu 等大数据集 dev.override 长期实证 map_reduce 稳定(18000+顶点/21600边)→ 统一默认为 `map_reduce`:① `config/rag.py` 默认 `auto`→`map_reduce`(顺带修正 v1.9.8 遗留的 "auto→chunk" 错注,实为 →map_reduce);② `prod_minimal.yml` `dataset`→`map_reduce`;③ 删 `dev.override.yml` 冗余覆盖(已成默认)。`auto` 分流逻辑保留(可显式选做小数据集对比)。builder.py docstring 同步。test_kg_builder 34 测试绿(全显式传 granularity,不依赖默认)。

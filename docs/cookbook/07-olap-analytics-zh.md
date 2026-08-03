@@ -1,6 +1,6 @@
 # OLAP 分析查询
 
-> 版本：1.9.11
+> 版本：1.10.0
 
 Arrow Lake 通过 DuckDB 零拷贝 Arrow 集成提供高性能 OLAP 分析能力，支持
 GROUP BY 聚合、窗口函数、JOIN 以及物化视图。

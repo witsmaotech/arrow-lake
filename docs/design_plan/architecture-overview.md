@@ -3,7 +3,7 @@
 **版本**: v1.4.4 | **日期**: 2026-05-26
 **来源**: [architecture-v1.3.0.md](architecture-v1.3.0.md) + [architecture-v1.0_draft_up.md](architecture-v1.0_draft_up.md)
 
-> ⚠️ **本文为 v1.4.4 架构快照**（历史草案合集），**不反映 v1.5+ 变更**。当前主干为 **v1.9.2**（2026-07-23）：v1.9.0 起 **libSQL/Turso 控制面库（`system_db`）** 接管 RBAC/身份/personal_token/catalog/任务/lineage/RAG 会话（数据面零改动），v1.9.1 起内置运维/合规/治理 **console** 前端。权威技术参考请见 [`docs/ARCHITECTURE.md`](../ARCHITECTURE.md)（v1.9.2 基线），完备架构设计见 [`docs/architecture-design/00-architecture-design.md`](../architecture-design/00-architecture-design.md)。
+> ⚠️ **本文为 v1.4.4 架构快照**（历史草案合集），**不反映 v1.5+ 变更**。当前主干为 **v1.10.0**（2026-08-03）：v1.9.0 起 **libSQL/Turso 控制面库（`system_db`）** 接管 RBAC/身份/personal_token/catalog/任务/lineage/RAG 会话（数据面零改动），v1.9.1 起内置运维/合规/治理 **console** 前端，v1.10.0 起新增**知识抽取模板管理**（前端模板 CRUD + 后端动态抽取建图）。权威技术参考请见 [`docs/ARCHITECTURE.md`](../ARCHITECTURE.md)（v1.10.0 基线），完备架构设计见 [`docs/architecture-design/00-architecture-design.md`](../architecture-design/00-architecture-design.md)。
 
 ---
 

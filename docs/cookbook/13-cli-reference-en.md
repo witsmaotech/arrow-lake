@@ -854,11 +854,13 @@ arrow-lake backup delete daily-2024-04-24
 ```bash
 arrow-lake kg build papers                 # default: full build
 arrow-lake kg build papers --incremental   # incremental: only feed chunks new since the last build
+arrow-lake kg build papers --template project_concept_graph   # v1.10.0: specify extraction template, overriding doc_type routing
 ```
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `--incremental` | no (full by default) | Incremental mode processes only new chunks (falls back to full if no KA dump exists or the template changed). Use `--incremental` after appending data; use the default full rebuild after re-ingest/delete or a template change |
+| `--template` | none (doc_type routing) | v1.10.0: knowledge extraction template name (e.g. `project_concept_graph`), overriding the doc_type 3-tier router; pair with templates managed online via the console `extraction-templates.html` |
 
 Returns a `task_id` for querying build progress.
 

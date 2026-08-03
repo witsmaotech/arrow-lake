@@ -1,6 +1,6 @@
 # Knowledge Graph & GraphRAG
 
-> Version: 1.9.6
+> Version: 1.10.0
 
 Arrow Lake includes a built-in Knowledge Graph (KG) subsystem that transforms unstructured text
 into a structured entity-relationship graph through LLM-based entity extraction, writing results

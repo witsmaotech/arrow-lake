@@ -2,7 +2,7 @@
 
 **Production-Grade Multimodal Data Lakehouse for AI/ML Teams**
 
-Arrow Lake unifies Lance columnar storage, Daft DataFrame processing, and Ray distributed compute into a single Python-native platform — so you can ingest documents, images, and unstructured data; search it with vector, full-text, and hybrid queries; analyze it with OLAP SQL; and feed it directly into RAG pipelines and knowledge graphs, all without leaving one architecture. MIT licensed, built for Python 3.11+, with roughly 28,000 lines of production code, 5,005+ tests (v1.9.2), and 80%+ coverage out of the box. Since v1.9.0 a **libSQL/Turso control-plane database** unifies RBAC, identity, personal tokens, audit, lineage, and task state (data plane untouched, opt-in), and a built-in **web console (v1.9.1)** covers operations, compliance, and governance.
+Arrow Lake unifies Lance columnar storage, Daft DataFrame processing, and Ray distributed compute into a single Python-native platform — so you can ingest documents, images, and unstructured data; search it with vector, full-text, and hybrid queries; analyze it with OLAP SQL; and feed it directly into RAG pipelines and knowledge graphs, all without leaving one architecture. MIT licensed, built for Python 3.11+, with roughly 28,000 lines of production code, 5,005+ tests (v1.10.0), and 80%+ coverage out of the box. Since v1.9.0 a **libSQL/Turso control-plane database** unifies RBAC, identity, personal tokens, audit, lineage, and task state (data plane untouched, opt-in), and a built-in **web console (v1.9.1)** covers operations, compliance, and governance.
 
 ---
 
@@ -169,6 +169,8 @@ Query runs through Gremlin, the standard graph traversal language, with injectio
 
 GraphRAG bridges the knowledge graph and the retrieval pipeline. When a RAG query arrives, the system extracts candidate entities from the query, traverses the knowledge graph to retrieve relevant subgraphs, and merges those subgraph results with traditional search results before passing the combined context to the LLM. This gives you retrieval that understands not just what a document says, but how concepts in the document relate to each other and to the broader knowledge base.
 
+**Knowledge Extraction Template Management (v1.10.0)** is a core extensibility capability: a built-in template console (extraction-templates.html) provides YAML editing with live validation and system-template derivation, dataset-to-template binding (`/kg/build` auto-applies the bound template), and AI-assisted template authoring with self-heal and an authoritative validation gate. The KA/KG extraction engine dynamically loads user templates at runtime to build graphs — **no image rebuild or service restart required**. A companion template-quality page (template-quality.html) runs end-to-end validation (scenario-doc generation → graph build → visualization → RAG → cleanup), and category↔doc_type end-to-end wiring plus a dynamic domain dictionary let new business domains onboard quickly.
+
 | Capability | Details |
 |---|---|
 | Graph backend | HugeGraph (Gremlin-compatible) |
@@ -176,6 +178,7 @@ GraphRAG bridges the knowledge graph and the retrieval pipeline. When a RAG quer
 | Query language | Gremlin with injection defense |
 | GraphRAG integration | Subgraph retrieval merged into RAG context |
 | Schema management | Automatic graph schema from extraction results |
+| Template management | YAML CRUD console + AI-assisted authoring + dataset binding, runtime graph building (v1.10.0) |
 
 ### Data Quality and Governance
 

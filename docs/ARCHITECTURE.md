@@ -1,9 +1,9 @@
 # Arrow Lake — 架构技术文档（Architecture Reference）
 
-> **版本基线**：v1.9.6（已合并 `master`；`arrow_lake/_version.py` = `pyproject.toml` = 1.9.6）
-> **文档日期**：2026-07-28
+> **版本基线**：v1.10.0（已合并 `master`；`arrow_lake/_version.py` = `pyproject.toml` = 1.10.0）
+> **文档日期**：2026-08-03
 > **状态**：随主干演进，与代码当前态对齐（已逐项核实 `arrow_lake/` 源码）。v1.9.0 起**控制面库（libSQL / Turso）**已落地接管 RBAC/身份/personal_token/catalog/任务/RAG 会话/血缘索引（见 [§4.9](#49-控制面system_db)），console 运维/合规/治理前端已完备（见 [§12.2](#122-compose-profiles--overlays)）。
-> **v1.9.6 增量**（相对 v1.8.0）：① v1.9.0 Turso 控制面 ② v1.9.1 console 核心（admin/my-workspace + personal token）③ v1.9.2 console 完备化 + 质量深化 ④ v1.9.3 数据集字段注释 + tidy/clean 清洗页 ⑤ v1.9.4 血缘审计评审 + KG MERGE_FIELD（治 BALANCED 合并爆炸）+ Gravitino 1.3.0 ⑥ v1.9.5 RAG 质量全链路（hybrid 默认生效 + GraphRAG + multi_query）⑦ v1.9.6 RAG 防幻觉(faithfulness) + cross-encoder reranker + KG snap/strict/三路并行 + 血缘可视化(lineage.html) + masking 治理(HMAC fail-fast) + 安全加固(fail-closed) ⑧ v1.8.8-v1.8.9 KG per-dataset KA + 双 LLM。详见 [§14](#14-版本演进)。
+> **v1.10.0 增量**（相对 v1.8.0）：① v1.9.0 Turso 控制面 ② v1.9.1 console 核心（admin/my-workspace + personal token）③ v1.9.2 console 完备化 + 质量深化 ④ v1.9.3 数据集字段注释 + tidy/clean 清洗页 ⑤ v1.9.4 血缘审计评审 + KG MERGE_FIELD（治 BALANCED 合并爆炸）+ Gravitino 1.3.0 ⑥ v1.9.5 RAG 质量全链路（hybrid 默认生效 + GraphRAG + multi_query）⑦ v1.9.6 RAG 防幻觉(faithfulness) + cross-encoder reranker + KG snap/strict/三路并行 + 血缘可视化(lineage.html) + masking 治理(HMAC fail-fast) + 安全加固(fail-closed) ⑧ v1.8.8-v1.8.9 KG per-dataset KA + 双 LLM ⑨ v1.10.0 知识抽取模板管理（前端模板 CRUD + 后端按新模板动态抽取建图不 rebuild/restart + LLM 辅助生成 self-heal + dry-run 试跑沙箱 + 模板质量验证 harness + category↔doc_type 拉通 + V005/V006/V007 迁移）。详见 [§14](#14-版本演进)。
 > **语言约定**：沿用本仓库全部技术文档（roadmap / implementation / 各优化 plan / CHANGELOG）的中文惯例。
 
 本文是 Arrow Lake 的**权威技术参考**：覆盖定位、顶层架构、设计模式、分层详解、公共 API、数据流、配置、安全、可观测性、可靠性、性能、部署、异常、版本演进与测试。面向新成员上手、架构评审与后续演进决策。
@@ -89,7 +89,7 @@ flowchart TD
     subgraph L1["① 接入层 · Entry"]
       direction LR
       SDK["Python SDK<br/><b>Lake</b> facade · 9 mixin"]:::l1
-      REST["REST API<br/>FastAPI · 159 routes · 20 routers · RBAC/限流"]:::l1
+      REST["REST API<br/>FastAPI · 186 routes · 22 routers · RBAC/限流"]:::l1
       CLI["CLI<br/>arrow-lake · 16 命令组"]:::l1
       CONSOLE["Console<br/>运维·合规·治理 前端 (v1.9.1起,v1.9.2完备)"]:::l1
     end
@@ -138,7 +138,7 @@ flowchart TD
 
 | 层 | 职责 | 关键组件 |
 |---|---|---|
-| ① 接入 | 四入口归一到 facade；认证 / 限流 / 路由 | `Lake` facade · FastAPI（**20 routers / 159 routes**）· CLI · **Console**（v1.9.1 起，v1.9.2 运维/合规/治理完备） |
+| ① 接入 | 四入口归一到 facade；认证 / 限流 / 路由 | `Lake` facade · FastAPI（**22 routers / 186 routes**）· CLI · **Console**（v1.9.1 起，v1.9.2 运维/合规/治理完备） |
 | ② 能力 | 业务能力：把数据写进去、查出来、问答 | 摄取 · 查询（8 Bridge）· 智能（RAG / KG） |
 | ③ 计算 | 批处理 / 分布式 / 嵌入 | Daft · Ray · 嵌入器（Local / Daft / CLIP） |
 | ④ 存储引擎 | 向量 / 标量 / FTS / 物化的执行 | LanceDB · DuckDB · DuckLake |
@@ -280,7 +280,7 @@ YAML 配置文件 (ArrowLakeConfig.from_yaml)
 
 **工厂**：`arrow_lake/api/app.py`（`create_app()` 工厂模式，`uvicorn arrow_lake.api.app:create_app --factory`）。
 
-**规模**（已核实）：**20 个 router 文件 / 159 个路由处理器**。
+**规模**（已核实）：**22 个 router 文件 / 186 个路由处理器**。
 
 | Router | 文件 | 职责 |
 |---|---|---|
@@ -505,7 +505,7 @@ YAML 配置文件 (ArrowLakeConfig.from_yaml)
 | 文件 / store | 职责 |
 |---|---|
 | `connection.py` | `SystemDB` 单例连接（retry + 启动健康探测） |
-| `migrator.py` | 顺序 SQL 迁移 runner（`migrations/`，V001–V004 已落地） |
+| `migrator.py` | 顺序 SQL 迁移 runner（`migrations/`，V001–V007 已落地；v1.10.0 新增 V005 extraction_templates / V006 template_quality_runs / V007 doc_type_categories） |
 | `stores/rbac.py` | RBAC 角色 / `DatasetACL` / `SchemaACL` 持久化 |
 | `stores/identity.py` | 用户身份 + **personal_token**（admin 签发 `POST /admin/users/{id}/tokens`） |
 | `stores/catalog.py` | catalog 注册表（dataset 元数据镜像） |
@@ -515,6 +515,9 @@ YAML 配置文件 (ArrowLakeConfig.from_yaml)
 | `stores/governance.py` | governance 历史 |
 | `stores/user_state.py` | 用户态（saved-queries / notifications / preferences） |
 | `stores/ingest_dlq.py` | 摄取死信队列 |
+| `stores/extraction_templates.py` | **抽取模板** CRUD + 元数据（v1.10.0，YAML 模板 registry + dataset 绑定） |
+| `stores/template_quality_runs.py` | 模板质量验证试跑历史（v1.10.0，dry-run sandbox + KA 隔离） |
+| `stores/doc_type_categories.py` | doc_type 分类词典（v1.10.0，category↔doc_type 拉通 + 动态 `GET /kg/doc-types`） |
 
 **`SystemDBConfig`**（`config/system_db.py`）关键项：
 
@@ -978,6 +981,7 @@ ArrowLakeError
 | **v1.9.4** | 2026-07-25 | **血缘埋点评审**（5 基底 + 8 gap，P0 = actor 传递链 + delete 审计，落 `docs/v1.9.4-lineage-provenance-audit.md`）+ KG **project_concept_graph** 模板（22 类型 14 关系，质量碾压 entity_graph）+ **MERGE_FIELD 合并**（治 BALANCED grouped OOM/卡死，非 LLM 稳定 15% 内存）+ Gravitino server **1.3.0** 升级（`s3.*` 属性 / `GRAVITINO_HOME=/opt`） |
 | **v1.9.5** | 2026-07-26 | **RAG 质量全链路**：hybrid 默认生效（修死配置 `_rag_retriever` 分流）+ ingest 自动 `create_vector_index`（≥256 IVF_PQ）+ `use_kg` per-query + **GraphRAG**（extract_llm=qwen-turbo，109s→50s）+ qwen-plus@16384 最优 QA + docling chunk 语义 + Lance 留 MinIO（非反模式） |
 | **v1.9.6** | 2026-07-28 | **RAG 防幻觉**（faithfulness verify，`support_ratio`/`unsupported`，embedding cosine 默认 + LLM judge opt-in）+ **cross-encoder reranker**（bge-reranker-v2-m3 默认）+ **KG 质量/性能**（snap 编辑距离归一 / strict definition 过滤 / enum 正则解析 / GraphRAG 三路并行 -40~50% / KA LRU / QuestionEntityCache monotonic）+ **治理兑现**（`lineage.html` 血缘可视化 + 列级血缘 + `max_nodes` 截断 / masking 4 函数 + HMAC fail-fast + mask-preview + audit 复用 Lance）+ **架构 refactor**（RAGQueryPlan + score 列 / `ingest_documents_and_index` 收口 / GraphRAG 模板方法 / reranker async 契约）+ **安全加固**（fail-closed 矩阵 + SQL 注入防护 + XSS esc + HMAC 128 位）。当前主干（`_version.py=1.9.6`，镜像 `arrow-lake:1.9.6`）。详见 `docs/v1.9.6-impl-plan.md` / `docs/arrow-lake-v1.9.6-release-zh.md` |
+| **v1.10.0** | 2026-08-03 | **知识抽取模板管理**（M1–M5 全交付）：① M1 后端动态加载（`/data/lake/templates` 卷 YAML 运行时进 gallery + `reset_gallery_cache` 热重载，**不 rebuild/不 restart**）+ `/api/v1/admin/extraction-templates` CRUD（ADMIN）+ `template_registry` 校验 + 查询路径模板快照 + `build(template_override=)`；② M2 `console/extraction-templates.html` CRUD 页 + 数据集绑定（`dataset_template_bindings`，`/kg/build` 自动解析）；③ M2.5 LLM 辅助生成模板（self-heal + `_hyperextract_check` 落盘闸门）；④ M3 dry-run 试跑沙箱 + set-default + usage；⑤ M4 模板质量验证 harness（`console/template-quality.html` + `POST /{name}/quality/{doc,build}` + `DELETE /quality/{temp_ds}` + KA 隔离 + 验证历史 V006）；⑥ M5 category↔doc_type 拉通 + 动态词典（V007 `doc_type_categories` + `/admin/doc-type-categories` + category 必填校验 + `GET /kg/doc-types` 动态）。新增 system_db 迁移 **V005 extraction_templates / V006 template_quality_runs / V007 doc_type_categories**；Console 原生弹框→站内 modal/toast。当前主干（`_version.py=1.10.0`）。详见 [`docs/v1.10.0-extraction-template-management-plan.md`](./v1.10.0-extraction-template-management-plan.md) |
 
 **v1.8.0 实施纪律**（trunk-based，直接提交 `master`，不开 feature 分支——项目约定优先于全局 PR 规则）：每项 TDD（RED→GREEN→REFACTOR）→ 对应 cookbook 跑通 → 全量 pytest 零失败 → CHANGELOG/roadmap/implementation 同步。
 
@@ -1002,7 +1006,7 @@ ArrowLakeError
 v1.8.0 19 项落地后，主干演进分两条线（详见 [§14](#14-版本演进)）：
 
 - **控制面独立**（v1.9.0）：libSQL/Turso `system_db` 把 RBAC/identity/personal_token/catalog/任务/lineage/RAG 会话/governance 从各组件内存态收敛到统一关系库，**数据面零改动**；opt-in + fail_close/fail_soft 双模保证渐进启用与降级（见 [§4.9](#49-控制面system_db)）。
-- **console 完备化**（v1.9.1–v1.9.2）：原生 JS 前端从"数据智能 + 管理"扩展到"含运维/合规/治理的完整数据平台"，覆盖全部 20 routers；配套质量深化（kg_build fire-forget GC fix / redis rate_limit / KG 模板收紧 / 测试隔离治理）。
+- **console 完备化**（v1.9.1–v1.9.2）：原生 JS 前端从"数据智能 + 管理"扩展到"含运维/合规/治理的完整数据平台"，覆盖全部 22 routers；配套质量深化（kg_build fire-forget GC fix / redis rate_limit / KG 模板收紧 / 测试隔离治理）。
 
 > 下方 §16.1 为 v1.8.0 roadmap 19 项的历史状态总览（保留作 go/no-go gate 记录）；v1.9.x 增量以本节 + [§14](#14-版本演进) 为准。
 

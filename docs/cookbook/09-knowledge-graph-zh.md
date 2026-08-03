@@ -1,6 +1,6 @@
 # 知识图谱与 GraphRAG
 
-> 版本：1.9.6
+> 版本：1.10.0
 
 Arrow Lake 内置知识图谱 (KG) 子系统，通过 LLM 实体抽取将非结构化文本转化为结构化的实体 - 关系图，
 并写入 HugeGraph 图数据库。当 `hugegraph.enabled=True` 时，RAG 管线自动升级为 GraphRAG，

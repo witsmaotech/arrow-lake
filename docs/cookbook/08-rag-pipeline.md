@@ -1,6 +1,6 @@
 # RAG Question-Answering Pipeline
 
-> Version: 1.9.6
+> Version: 1.10.0
 
 Arrow Lake includes a built-in RAG (Retrieval-Augmented Generation) pipeline that
 supports multiple retrieval strategies, streaming output, multi-turn conversations,

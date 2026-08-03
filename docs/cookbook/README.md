@@ -75,7 +75,7 @@ docker exec -it deploy-api-1 .venv/bin/python /app/examples/19_knowledge_graph_b
 
 ## 版本
 
-对应 Arrow Lake v1.9.11
+对应 Arrow Lake v1.10.0
 
 ## v1.7.0 新特性 — Hyper-Extract KG + Doc-Type 路由
 
@@ -99,6 +99,7 @@ docker exec -it deploy-api-1 .venv/bin/python /app/examples/19_knowledge_graph_b
 | v1.9.4  | **血缘 actor 贯穿**（delete 审计 + 列级血缘）+ KG `project_concept_graph` 模板（22 类型 + 14 关系，百炼 qwen-turbo 100% def）+ MERGE_FIELD 单模式 |
 | v1.9.5  | **RAG 质量全链路**：`default_retrieval_strategy=hybrid` 真生效、`faithfulness` 防幻觉校验、GraphRAG 三路并行（延迟 -40~50%）、qa_llm 两阶段、`OllamaReranker`（默认 Qwen3-Reranker-0.6B） |
 | v1.9.6  | **KG 质量/性能**（snap 编辑距离归一 + strict 空定义过滤 + KA LRU 缓存）+ **治理兑现**（`lineage.html` 列级血缘、masking 4 函数 + HMAC fail-fast + mask-preview、audit 复用 Lance）+ **安全 fail-closed**（masking/RBAC/Gravitino 全 fail-closed） |
+| v1.10.0 | **知识抽取模板管理**：前端模板 CRUD 控制台（`extraction-templates.html` + `template-quality.html`）+ 后端按新模板动态抽取建图（不 rebuild/不 restart）+ CLI `--template` + API `/api/v1/admin/extraction-templates` |
 
 > 详见 [v1.9.6 发布说明](../arrow-lake-v1.9.6-release-zh.md) 与 [RAG 质量方案](../v1.9.5-rag-quality-plan.md)。
 

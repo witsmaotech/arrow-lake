@@ -2,7 +2,7 @@
 
 **面向 AI/ML 团队的生产级多模态数据湖仓（Data Lakehouse）**
 
-Arrow Lake 将 Lance 列式存储、Daft DataFrame 处理和 Ray 分布式计算统一为一个 Python 原生平台 —— 你可以在同一架构内完成文档、图像和非结构化数据的摄入，通过向量搜索（Vector Search）、全文搜索（Full-Text Search）和混合搜索（Hybrid Search）进行检索，使用 OLAP SQL 进行分析，并将数据直接送入 RAG 管线和知识图谱。采用 MIT 许可证，基于 Python 3.11+ 构建，拥有约 28,000 行生产代码、5,005+ 个测试用例（v1.9.2），开箱即用覆盖率超过 80%。自 v1.9.0 起以 **libSQL/Turso 控制面库**统一承载 RBAC、身份、personal token、审计、血缘、任务等控制面状态（数据面零改动、opt-in），并内置覆盖运维/合规/治理的 **Web 控制台（console，v1.9.1）**。
+Arrow Lake 将 Lance 列式存储、Daft DataFrame 处理和 Ray 分布式计算统一为一个 Python 原生平台 —— 你可以在同一架构内完成文档、图像和非结构化数据的摄入，通过向量搜索（Vector Search）、全文搜索（Full-Text Search）和混合搜索（Hybrid Search）进行检索，使用 OLAP SQL 进行分析，并将数据直接送入 RAG 管线和知识图谱。采用 MIT 许可证，基于 Python 3.11+ 构建，拥有约 28,000 行生产代码、5,005+ 个测试用例（v1.10.0），开箱即用覆盖率超过 80%。自 v1.9.0 起以 **libSQL/Turso 控制面库**统一承载 RBAC、身份、personal token、审计、血缘、任务等控制面状态（数据面零改动、opt-in），并内置覆盖运维/合规/治理的 **Web 控制台（console，v1.9.1）**。
 
 ---
 
@@ -169,6 +169,8 @@ Arrow Lake 集成 HugeGraph 作为原生知识图谱后端，为你提供一个�
 
 GraphRAG 桥接知识图谱和检索管线。当 RAG 查询到达时，系统从查询中提取候选实体，遍历知识图谱检索相关子图，将这些子图结果与传统搜索结果合并后再将组合上下文传递给 LLM。这赋予你不仅能理解文档说了什么，还能理解文档中概念如何相互关联以及与更广泛知识库关联的检索能力。
 
+**知识抽取模板管理（v1.10.0）** 是平台扩展性的核心能力：内置模板管理控制台（extraction-templates.html）提供 YAML 在线编辑、实时校验与系统模板派生，支持数据集与模板绑定（`/kg/build` 自动套用绑定模板），并可通过 LLM 辅助生成新模板（自带 self-heal 与权威校验闸门）。KA/KG 抽取引擎在运行时动态加载用户模板进行建图，**无需 rebuild 镜像或重启服务**。配套的模板质量验证页（template-quality.html）支持场景文档生成→建图→可视化→RAG→清理的端到端试跑，并通过 category↔doc_type 端到端拉通与动态领域词典，让新业务领域快速接入。
+
 | 能力 | 详情 |
 |---|---|
 | 图后端 | HugeGraph（Gremlin 兼容） |
@@ -176,6 +178,7 @@ GraphRAG 桥接知识图谱和检索管线。当 RAG 查询到达时，系统从
 | 查询语言 | 带注入防御的 Gremlin |
 | GraphRAG 集成 | 子图检索合并到 RAG 上下文中 |
 | Schema 管理 | 从抽取结果自动构建图 Schema |
+| 抽取模板管理 | YAML CRUD 控制台 + LLM 辅助生成 + 数据集绑定，运行时动态建图（v1.10.0） |
 
 ### 数据质量与治理
 

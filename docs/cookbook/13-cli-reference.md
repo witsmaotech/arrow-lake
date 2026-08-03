@@ -854,11 +854,13 @@ arrow-lake backup delete daily-2024-04-24
 ```bash
 arrow-lake kg build papers                 # 默认全量构建
 arrow-lake kg build papers --incremental   # 增量：仅喂入自上次构建以来的新 chunk
+arrow-lake kg build papers --template project_concept_graph   # v1.10.0：指定抽取模板，覆盖 doc_type 路由
 ```
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
 | `--incremental` | 否（默认全量） | 增量模式只处理新 chunk（无 KA dump 或模板变更时回退为全量）；append 数据后用 `--incremental`，re-ingest/delete 或改模板后用默认全量重建 |
+| `--template` | 无（走 doc_type 路由） | v1.10.0：指定知识抽取模板名（如 `project_concept_graph`），覆盖 doc_type 三层路由；配合 console `extraction-templates.html` 在线管理的模板 |
 
 返回 `task_id`，用于查询构建进度。
 
