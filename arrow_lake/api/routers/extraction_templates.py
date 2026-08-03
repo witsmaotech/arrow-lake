@@ -11,14 +11,16 @@ M1 ships CRUD with the YAML as single source of truth (gallery lists everything)
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import secrets
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from arrow_lake.api.auth_models import Role
-from arrow_lake.api.deps import require_role
+from arrow_lake.api.deps import require_role, get_lake
 from arrow_lake.knowledge_graph.doc_type_router import (
     get_template_gallery, reset_gallery_cache,
 )
@@ -56,6 +58,43 @@ def _find(name: str) -> Any | None:
         if t.name == name.lower():
             return t
     return None
+
+
+def _inject_doc_type_tag(yaml_text: str, doc_type: str | None) -> str:
+    """Add ``doc_type`` to the YAML's ``tags`` so gallery routing (Layer 2 tag
+    match) finds it — fixes the v1.10.0 小坑 where the API ``doc_type`` field
+    only reached system_db, not the routing gallery. Surgical regex (preserves
+    user formatting); ``tags`` is a valid hyper-extract field (safe to touch).
+    """
+    import re
+    if not doc_type:
+        return yaml_text
+    dt = doc_type.strip().lower()
+    if not dt:
+        return yaml_text
+    # flow list:  tags: [a, b]
+    m = re.search(r'^(\s*tags:\s*\[)([^\]]*)\]\s*$', yaml_text, re.M)
+    if m:
+        items = [x.strip().strip('"\'') for x in m.group(2).split(',') if x.strip()]
+        if dt not in items:
+            items.append(dt)
+        return yaml_text[:m.start()] + f"{m.group(1)}{', '.join(items)}]" + yaml_text[m.end():]
+    # block list:  tags:\n  - a\n  - b
+    m = re.search(r'^(\s*tags:\s*\n)((?:[ \t]+-.*\n?)+)', yaml_text, re.M)
+    if m:
+        lines = [l for l in m.group(2).splitlines() if l.strip()]
+        items = [re.search(r'-\s*(.+)', l).group(1).strip().strip('"\'') for l in lines]
+        if dt not in items:
+            indent = (re.match(r'([ \t]*)', lines[0]).group(1) if lines else "  ")
+            block = m.group(2).rstrip("\n") + f"\n{indent}- {dt}\n"
+        else:
+            block = m.group(2)
+        return yaml_text[:m.start()] + m.group(1) + block + yaml_text[m.end():]
+    # no tags block → add `tags: [dt]` right after the `name:` line
+    m = re.search(r'^(\s*name:\s*.*)$', yaml_text, re.M)
+    if m:
+        return yaml_text[:m.end()] + f"\ntags: [{dt}]" + yaml_text[m.end():]
+    return yaml_text + f"\ntags: [{dt}]\n"
 
 
 # --- models ----------------------------------------------------------------
@@ -103,21 +142,38 @@ async def get_template(
     name: str,
     _user: dict = Depends(require_role(Role.ADMIN)),
 ) -> dict:
-    """Detail: parsed metadata + raw YAML text."""
+    """Detail: parsed metadata + raw YAML text (user/project file OR preset)."""
     t = _find(name)
     if t is None:
         raise HTTPException(status_code=404, detail=f"template not found: {name}")
     detail = t.to_detail()
-    # raw YAML for user/project (file-path) templates; presets have no local file
-    raw = None
-    if t.path.endswith(".yaml"):
-        try:
-            with open(t.path, encoding="utf-8") as fh:
-                raw = fh.read()
-        except OSError:
-            raw = None
-    detail["yaml"] = raw
+    detail["yaml"] = _read_yaml(t.path)
     return {"success": True, "data": detail}
+
+
+def _read_yaml(path: str) -> str | None:
+    """Read raw YAML for a template path (file path OR preset ``category/name``)."""
+    # user/project template: absolute .yaml file path
+    if path.endswith(".yaml"):
+        try:
+            with open(path, encoding="utf-8") as fh:
+                return fh.read()
+        except OSError:
+            return None
+    # preset: category/name → <hyperextract>/templates/presets/<category>/<name>.yaml
+    if "/" in path:
+        try:
+            import hyperextract
+            import os
+            cat, _, nm = path.partition("/")
+            preset_file = os.path.join(
+                os.path.dirname(hyperextract.__file__), "templates", "presets", cat, f"{nm}.yaml")
+            if os.path.isfile(preset_file):
+                with open(preset_file, encoding="utf-8") as fh:
+                    return fh.read()
+        except Exception:  # noqa: BLE001 — hyperextract missing / unreadable preset
+            return None
+    return None
 
 
 @router.post("/validate")
@@ -143,7 +199,8 @@ async def create_template(
     if req.name in _reserved_names():
         raise HTTPException(status_code=409, detail=f"template name conflicts with system template: {req.name}")
     try:
-        path = save_template(req.name, req.yaml, _user_dir(), reserved_names=_reserved_names())
+        yaml = _inject_doc_type_tag(req.yaml, req.doc_type)
+        path = save_template(req.name, yaml, _user_dir(), reserved_names=_reserved_names())
     except TemplateValidationError as exc:
         raise HTTPException(status_code=422, detail={
             "code": "TEMPLATE_INVALID",
@@ -166,7 +223,8 @@ async def update_template(
         raise HTTPException(status_code=403, detail={"code": "TEMPLATE_READ_ONLY",
                                                       "message": f"{name} is a read-only {existing.source} template"})
     try:
-        path = save_template(name, req.yaml, _user_dir(), reserved_names=_reserved_names())
+        yaml = _inject_doc_type_tag(req.yaml, req.doc_type)
+        path = save_template(name, yaml, _user_dir(), reserved_names=_reserved_names())
     except TemplateValidationError as exc:
         raise HTTPException(status_code=422, detail={
             "code": "TEMPLATE_INVALID",

@@ -13,14 +13,38 @@
   .toolbar{display:flex;align-items:center;gap:10px;margin:12px 0}
   .ed-area{width:100%;min-height:340px;font-family:var(--mono);font-size:.78rem;border:1px solid var(--line-soft);border-radius:var(--r-md);background:var(--ink-950);color:var(--fg-hi);padding:10px;resize:vertical;tab-size:2}
   .ed-area:focus{outline:none;border-color:var(--teal-bright)}
-  .vbox{font-size:.76rem;margin-top:6px;max-height:160px;overflow-y:auto}
-  .vbox .ok{color:var(--teal-bright)}
-  .vbox .err{color:#ff6b6b}
+  .vbox{font-size:.76rem;margin-top:8px;max-height:180px;overflow-y:auto;min-height:24px;border-top:1px dashed var(--line-soft);padding-top:8px}
+  .vbox .ok{color:var(--teal-bright);font-weight:600}
+  .vbox .err{color:#ff6b6b;font-weight:600}
   .vrow{display:flex;gap:8px;padding:2px 0}
   .vrow .path{color:var(--fg-lo);font-family:var(--mono);min-width:200px}
   .meta-row{display:flex;gap:14px;font-size:.74rem;color:var(--fg-lo);margin-bottom:8px;flex-wrap:wrap}
   .meta-row b{color:var(--fg-md);font-weight:600}
   .name-in{font-family:var(--mono);font-size:.82rem}
+  .etpl-form{display:flex;gap:14px;align-items:flex-end;margin-bottom:12px;flex-wrap:wrap}
+  .etpl-form .ef{display:flex;flex-direction:column;gap:4px;font-size:.7rem;color:var(--fg-lo);text-transform:uppercase;letter-spacing:.05em}
+  .etpl-form .ef input{text-transform:none;letter-spacing:0}
+  .etpl-form .ef.name{flex:0 0 260px}
+  .etpl-form .ef.doctype{flex:0 0 200px}
+  .pager{display:flex;align-items:center;gap:4px;flex-wrap:wrap;font-size:.76rem}
+  .pager:empty{display:none}
+  .pager button{min-width:28px;height:26px;padding:0 8px;border:1px solid var(--line-soft);background:transparent;color:var(--fg-md);border-radius:4px;cursor:pointer;font-size:.74rem}
+  .pager button:hover:not(:disabled){background:var(--ink-800);color:var(--fg-hi)}
+  .pager button.active{background:var(--teal-bright);color:#04201a;border-color:var(--teal-bright);font-weight:600}
+  .pager button:disabled{opacity:.4;cursor:not-allowed}
+  .pager .pg-info{color:var(--fg-lo);margin-left:auto;font-size:.72rem}
+  /* YAML 双层编辑器(textarea 透明叠在 <pre> 高亮层上) */
+  .yaml-edit{position:relative;min-height:360px;border:1px solid var(--line-soft);border-radius:var(--r-md);background:var(--ink-950)}
+  .yaml-edit:focus-within{border-color:var(--teal-bright)}
+  .yaml-edit pre,.yaml-edit textarea{position:absolute;inset:0;margin:0;padding:10px 12px;font-family:var(--mono);font-size:.78rem;line-height:1.55;tab-size:2;white-space:pre-wrap;word-break:break-word;overflow:auto;border:none;background:transparent}
+  .yaml-edit pre{pointer-events:none;z-index:1;color:var(--fg-hi)}
+  .yaml-edit textarea{color:transparent;-webkit-text-fill-color:transparent;caret-color:var(--teal-bright);z-index:2;resize:none}
+  .yaml-edit textarea:focus{outline:none}
+  .hl-cmt{color:#5c6370;font-style:italic}
+  .hl-key{color:#61afef}
+  .hl-str{color:#98c379}
+  .hl-num{color:#d19a66}
+  .hl-bool{color:#c678dd}
 </style>
 </head>
 <body>
@@ -46,6 +70,7 @@
         <thead><tr><th>名称</th><th>来源</th><th>type</th><th>category</th><th>标签</th><th>风险</th><th>操作</th></tr></thead>
         <tbody id="rows"></tbody>
       </table></div>
+      <div class="pager" id="pager" style="padding:10px 2px"></div>
     </div>
   </div>
   <div class="gap-note">系统/项目模板(system)只读,可「复制成 user 模板」派生。用户模板(user)可编辑/删除;改后下次 <span class="mono">/kg/build</span> 即生效。</div>
@@ -64,7 +89,7 @@ const { renderShell, icon, applyIcons } = window;
 renderShell({ active: "templates", crumb: '<b>知识抽取模板</b>' });
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-const API = "/api/v1/admin/extraction-templates";
+const API = "/admin/extraction-templates";  // API_BASE 已含 /api/v1,这里用相对路径
 let ALL = [];
 
 const errMsg = (e) => {
@@ -77,15 +102,27 @@ const errMsg = (e) => {
 async function load() {
   try {
     const r = await request("GET", API);
-    ALL = r.data || [];
+    console.log("[etpl] response", r);
+    ALL = Array.isArray(r?.data) ? r.data : [];
+    $("#cnt").textContent = `已加载 ${ALL.length} 条`;
     render();
-  } catch (e) { toast("加载失败:" + errMsg(e), "error"); }
+    if (!ALL.length) $("#cnt").textContent = "已加载 0 条(检查来源筛选 / 是否 admin)";
+  } catch (e) {
+    $("#cnt").textContent = "加载失败(status=" + (e?.status || "?") + ")";
+    console.error("[etpl] load failed", e);
+    toast("加载失败:" + errMsg(e), "error");
+  }
 }
+const PSIZE = 12;
+let PAGE = 1;
 function render() {
   const src = $("#srcFilter").value, q = $("#qFilter").value.trim().toLowerCase();
-  const rows = ALL.filter((t) => (!src || t.source === src)
+  const filtered = ALL.filter((t) => (!src || t.source === src)
     && (!q || t.name.includes(q) || (t.tags || []).some((x) => x.includes(q))));
-  $("#cnt").textContent = `${rows.length} / ${ALL.length}`;
+  const pages = Math.max(1, Math.ceil(filtered.length / PSIZE));
+  if (PAGE > pages) PAGE = pages;
+  const rows = filtered.slice((PAGE - 1) * PSIZE, PAGE * PSIZE);
+  $("#cnt").textContent = `${filtered.length} / ${ALL.length}`;
   $("#rows").innerHTML = rows.map((t) => {
     const sys = t.source !== "user";
     const chip = sys ? `<span class="src-chip system">system</span>` : `<span class="src-chip user">user</span>`;
@@ -107,6 +144,27 @@ function render() {
       <td class="nowrap">${act}</td></tr>`;
   }).join("");
   applyIcons($("#rows"));
+  renderPager(filtered.length, pages);
+}
+
+function renderPager(total, pages) {
+  const el = $("#pager");
+  if (!el || pages <= 1) { if (el) el.innerHTML = ""; return; }
+  const btn = (label, p, dis, act2) => `<button class="${act2 ? "active" : ""}" ${dis ? "disabled" : ""} data-pg="${p}">${label}</button>`;
+  let html = `<span class="pg-info">第 ${PAGE}/${pages} 页 · 共 ${total} 条</span>`;
+  html += btn("‹", "prev", PAGE === 1, false);
+  // windowed page numbers (show ±2 around current + first/last)
+  const win = new Set([1, pages]);
+  for (let i = PAGE - 2; i <= PAGE + 2; i++) if (i > 0 && i <= pages) win.add(i);
+  const sorted = [...win].sort((a, b) => a - b);
+  let prev = 0;
+  for (const p of sorted) {
+    if (prev && p - prev > 1) html += `<span class="pg-ell">…</span>`;
+    html += btn(p, p, false, p === PAGE);
+    prev = p;
+  }
+  html += btn("›", "next", PAGE === pages, false);
+  el.innerHTML = html;
 }
 
 /* ---------- modal: create / edit ---------- */
@@ -114,9 +172,9 @@ let validateTimer = null;
 function openEditor({mode, name, yaml, docType}) {
   const isCreate = mode === "create";
   const body = `
-    <div class="meta-row">
-      <span><b>名称</b> <input class="input name-in" id="edName" value="${esc(name || "")}" ${isCreate ? "" : "disabled"} style="width:220px" pattern="[a-z][a-z0-9_]*"></span>
-      <span><b>doc_type</b> <input class="input" id="edDocType" value="${esc(docType || "")}" placeholder="(可选)"></span>
+    <div class="etpl-form">
+      <label class="ef name"><span>名称</span><input class="input name-in" id="edName" value="${esc(name || "")}" ${isCreate ? "" : "disabled"} pattern="[a-z][a-z0-9_]*"></label>
+      <label class="ef doctype"><span>doc_type(可选)</span><input class="input" id="edDocType" value="${esc(docType || "")}" placeholder="如 project / finance"></label>
     </div>
     <textarea class="ed-area" id="edYaml" spellcheck="false">${esc(yaml || "")}</textarea>
     <div class="vbox" id="vbox"></div>
@@ -126,6 +184,7 @@ function openEditor({mode, name, yaml, docType}) {
       <button class="btn btn-primary btn-sm" id="saveBtn">${isCreate ? "创建" : "保存"}</button>
     </div>`;
   showModal(isCreate ? "新建用户模板" : `编辑 ${esc(name)}`, body);
+  makeYamlEditor("edYaml");
   const doValidate = async () => {
     const y = $("#edYaml").value;
     if (!y.trim()) { $("#vbox").innerHTML = ""; return; }
@@ -140,6 +199,7 @@ function openEditor({mode, name, yaml, docType}) {
   // debounce live-validate
   $("#edYaml").addEventListener("input", () => { clearTimeout(validateTimer); validateTimer = setTimeout(doValidate, 500); });
   $("#valBtn").addEventListener("click", doValidate);
+  doValidate();  // 打开即校验当前内容(starter/载入的 YAML)
   $("#saveBtn").addEventListener("click", async () => {
     const y = $("#edYaml").value, nm = $("#edName").value.trim(), dt = $("#edDocType").value.trim() || null;
     if (!nm || !y.trim()) { toast("名称和 YAML 不能为空", "error"); return; }
@@ -157,11 +217,40 @@ function openEditor({mode, name, yaml, docType}) {
 }
 
 function closeModal() { const o = document.querySelector(".modal-overlay.dynamic"); if (o) o.remove(); }
+/* ---------- YAML 语法高亮(自包含正则,无外部依赖) ---------- */
+function hlYaml(src) {
+  const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return (src || "").split("\n").map((line) => {
+    const c = line.match(/^(\s*)(#.*)$/);
+    if (c) return esc(c[1]) + '<span class="hl-cmt">' + esc(c[2]) + "</span>";
+    const kv = line.match(/^(\s*-?\s*)([\w.-]+)(:)(.*)$/);
+    if (kv) { const [, i, k, co, v] = kv; return esc(i) + '<span class="hl-key">' + esc(k) + "</span>" + co + hlYamlVal(v); }
+    return esc(line);
+  }).join("\n");
+}
+function hlYamlVal(v) {
+  return v.replace(/("[^"]*"|'[^']*')/g, '<span class="hl-str">$1</span>')
+    .replace(/\b(-?\d+\.?\d*)\b/g, '<span class="hl-num">$1</span>')
+    .replace(/\b(true|false|null|yes|no)\b/g, '<span class="hl-bool">$1</span>');
+}
+function makeYamlEditor(id) {
+  const ta = document.getElementById(id); if (!ta) return;
+  const h = ta.offsetHeight || 360;
+  const parent = ta.parentNode;
+  const wrap = document.createElement("div"); wrap.className = "yaml-edit"; wrap.style.minHeight = h + "px";
+  const pre = document.createElement("pre"); pre.setAttribute("aria-hidden", "true");
+  parent.replaceChild(wrap, ta); wrap.appendChild(pre); wrap.appendChild(ta);
+  const sync = () => { pre.innerHTML = hlYaml(ta.value) + "\n"; pre.scrollTop = ta.scrollTop; pre.scrollLeft = ta.scrollLeft; };
+  ta.addEventListener("input", sync);
+  ta.addEventListener("scroll", () => { pre.scrollTop = ta.scrollTop; pre.scrollLeft = ta.scrollLeft; });
+  sync();
+}
+
 function showModal(title, bodyHtml) {
   closeModal();
   const o = document.createElement("div");
   o.className = "modal-overlay dynamic show";
-  o.innerHTML = `<div class="modal-card" role="dialog" aria-modal="true" style="max-width:760px">
+  o.innerHTML = `<div class="modal-card" role="dialog" aria-modal="true" style="max-width:1040px;width:96vw">
     <div class="modal-title" style="display:flex;align-items:center;justify-content:space-between;gap:12px">${esc(title)}
       <button class="btn btn-icon btn-ghost" data-modal-close>${icon("close")}</button></div>
     <div class="modal-body" style="margin-top:12px">${bodyHtml}</div></div>`;
@@ -171,16 +260,40 @@ function showModal(title, bodyHtml) {
   return o;
 }
 
-/* ---------- view (read-only) ---------- */
+/* ---------- view (editable + 另存为 user 模板) ---------- */
 async function onView(name) {
   try {
     const r = await request("GET", `${API}/${encodeURIComponent(name)}`);
     const d = r.data;
-    showModal(`查看 ${esc(name)}`, `
+    showModal(`查看 ${esc(name)}(可编辑)`, `
       <div class="meta-row"><span><b>来源</b> ${esc(d.source)}</span><span><b>type</b> ${esc(d.type)}</span>
       <span><b>category</b> ${esc(d.category)}</span><span><b>实体字段</b> ${(d.entity_fields||[]).length}</span>
       <span><b>关系字段</b> ${(d.relation_fields||[]).length}</span></div>
-      <textarea class="ed-area" readonly>${esc(d.yaml || "(preset, 无本地文件)")}</textarea>`);
+      <textarea class="ed-area" id="viewYaml" spellcheck="false">${esc(d.yaml || "(无内容 / preset 不可读)")}</textarea>
+      <div class="vbox" id="vboxView"></div>
+      <div style="display:flex;gap:8px;margin-top:10px;justify-content:flex-end">
+        <button class="btn btn-ghost btn-sm" id="viewValBtn">校验</button>
+        <button class="btn btn-primary btn-sm" id="viewSaveAsBtn"><i class="placeholder" data-ic="plus"></i> 另存为 user 模板</button>
+      </div>`);
+    makeYamlEditor("viewYaml");
+    const ta = $("#viewYaml");
+    // live validate (reuse the validate endpoint)
+    let vt; const doVal = async () => {
+      const y = ta.value; if (!y.trim()) { $("#vboxView").innerHTML = ""; return; }
+      try { const rr = await request("POST", API + "/validate", { body: { yaml: y } }); const dd = rr.data;
+        $("#vboxView").innerHTML = dd.valid ? `<div class="ok">✓ 校验通过(可另存为 user 模板)</div>`
+          : `<div class="err">✗ ${dd.errors.length} 处:</div>` + dd.errors.map((e) => `<div class="vrow"><span class="path">${esc(e.path)}</span><span>${esc(e.message)}</span></div>`).join("");
+      } catch (e) { $("#vboxView").innerHTML = `<div class="err">${esc(errMsg(e))}</div>`; }
+    };
+    ta.addEventListener("input", () => { clearTimeout(vt); vt = setTimeout(doVal, 500); });
+    $("#viewValBtn").addEventListener("click", doVal);
+    doVal();  // 打开即校验
+    $("#viewSaveAsBtn").addEventListener("click", () => {
+      const y = ta.value;
+      // rename the YAML's `name:` so it doesn't collide with the source template
+      const derived = (d.name || "template").replace(/[^a-z0-9_]/g, "_") + "_copy";
+      openEditor({ mode: "create", name: derived, yaml: y.replace(/^[ \t]*name:.*$/m, `name: ${derived}`), docType: d.category });
+    });
   } catch (e) { toast("查看失败:" + errMsg(e), "error"); }
 }
 
@@ -207,8 +320,16 @@ $("#rows").addEventListener("click", async (e) => {
     }
   }
 });
-$("#srcFilter").addEventListener("change", render);
-$("#qFilter").addEventListener("input", render);
+$("#srcFilter").addEventListener("change", () => { PAGE = 1; render(); });
+$("#qFilter").addEventListener("input", () => { PAGE = 1; render(); });
+$("#pager").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-pg]"); if (!b) return;
+  const p = b.dataset.pg;
+  if (p === "prev") PAGE = Math.max(1, PAGE - 1);
+  else if (p === "next") PAGE = PAGE + 1;
+  else PAGE = Number(p);
+  render();
+});
 
 const STARTER_YAML = `language: [zh, en]
 name: my_template
