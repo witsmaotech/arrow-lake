@@ -160,6 +160,21 @@ function bindUpload() {
   renderUploaded();
 }
 
+// 抽取模板下拉:从 /extraction-templates 拉全量(含 user),按 source 分组。
+async function fillExtTpl() {
+  const sel = $("#extTpl"); if (!sel) return;
+  try {
+    const r = await request("GET", "/admin/extraction-templates?selectable=true");
+    const tpls = Array.isArray(r?.data) ? r.data : [];
+    const opt = (t) => `<option value="${esc(t.name)}">${esc(t.name)}${t.source === "user" ? " · user" : ""}${t.is_high_risk ? " ⚠" : ""}</option>`;
+    const user = tpls.filter((t) => t.source === "user");
+    const sys = tpls.filter((t) => t.source !== "user");
+    sel.innerHTML = `<option value="">未指定(走 doc_type 路由)</option>`
+      + (user.length ? `<optgroup label="user(可编辑)">${user.map(opt).join("")}</optgroup>` : "")
+      + (sys.length ? `<optgroup label="system(只读基线)">${sys.map(opt).join("")}</optgroup>` : "");
+  } catch (_) { /* admin-only 端点;非 admin 或不可用时保留默认选项 */ }
+}
+
 function renderFields() {
   const src = $("#src").value;
   const _ep = src === "clickhouse" ? "sql" : (["csv", "parquet", "json"].includes(src) ? "" : src);
@@ -182,9 +197,11 @@ function renderFields() {
             <option value="technical_spec">技术规格(technical_spec)</option>
           </select></div>
         </div>
+        <div class="field" style="margin-top:var(--s3)"><label>抽取模板 <span class="muted" style="font-weight:400">(绑定后 /kg/build 自动套用 · 优先于 doc_type · 含 user 模板)</span></label><select class="select" id="extTpl"><option value="">未指定(走 doc_type 路由)</option></select></div>
         <div class="muted" style="font-size:.7rem;margin-top:var(--s3)">v1.8.9 端点自动:解析 → chunk → <b>embed</b> → <b>FTS 索引</b></div>`;
     window.applyIcons && applyIcons($("#fields"));
     bindUpload();
+    fillExtTpl();
     // 文件格式下拉 → 动态限定上传 accept(选 PDF 则只收 .pdf;默认全部)
     const _fmt = $("#fileFmt"), _fi = $("#fileInput");
     if (_fmt && _fi) _fmt.addEventListener("change", () => { _fi.accept = _fmt.value || DOC_ACCEPT; });
@@ -339,6 +356,12 @@ $("#submit").addEventListener("click", async () => {
     if (desc) {
       try { await request("PUT", `/datasets/${encodeURIComponent(ds)}/description`, { body: { description: desc } }); }
       catch (_) { /* 描述写入失败不阻塞 */ }
+    }
+    // 抽取模板绑定(documents 选了模板时;绑定后 /kg/build 自动套用,优先于 doc_type)
+    const extTpl = $("#extTpl")?.value?.trim();
+    if (extTpl) {
+      try { await request("PUT", `/admin/extraction-templates/bindings/${encodeURIComponent(ds)}`, { body: { template: extTpl } }); }
+      catch (_) { /* 绑定失败不阻塞摄入(非 admin 或端点不可用) */ }
     }
     $("#resultPanel").classList.remove("hidden");
     const tid = res?.task_id || res?.task?.task_id;
