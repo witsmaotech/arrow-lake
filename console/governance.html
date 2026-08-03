@@ -71,6 +71,7 @@
 import { request } from "./src/api.js";
 import { isLoggedIn } from "./src/auth.js";
 import { toast } from "./src/ui/toast.js";
+import { confirmDialog } from "./src/ui/modal.js";
 
 if (!isLoggedIn()) location.href = "login.html";
 
@@ -255,26 +256,26 @@ function postBody(path, obj) {
 
 function bindGovForms(name) {
   $("#tgCreate")?.addEventListener("click", async () => {
-    const n = $("#tgName").value.trim(); if (!n) return alert("请填标签名");
+    const n = $("#tgName").value.trim(); if (!n) { toast("请填标签名", "error"); return; }
     try { await postBody("/metadata/tags", { name: n, comment: $("#tgComment").value.trim() || undefined }); toast("标签已建", "ok", 2000); loadGov(name); }
-    catch (e) { alert("建标签失败:" + (e?.detail || e?.message || e)); }
+    catch (e) { toast("建标签失败:" + (e?.detail || e?.message || e), "error"); }
   });
   $("#rtCreate")?.addEventListener("click", async () => {
     const n = $("#rtName").value.trim(); const days = Number($("#rtDays").value);
-    if (!n || !days) return alert("请填策略名与天数");
+    if (!n || !days) { toast("请填策略名与天数", "error"); return; }
     try { await postBody("/metadata/policies/retention", { name: n, days }); toast("保留策略已建", "ok", 2000); loadGov(name); }
-    catch (e) { alert("建保留策略失败:" + (e?.detail || e?.message || e)); }
+    catch (e) { toast("建保留策略失败:" + (e?.detail || e?.message || e), "error"); }
   });
   $("#mkCreate")?.addEventListener("click", async () => {
     const n = $("#mkName").value.trim(); const cols = $("#mkCols").value.split(",").map(s => s.trim()).filter(Boolean);
-    if (!n || !cols.length) return alert("请填策略名与列名");
+    if (!n || !cols.length) { toast("请填策略名与列名", "error"); return; }
     try { await postBody("/metadata/policies/masking", { name: n, columns: cols, function: $("#mkFn")?.value || "redact" }); toast("脱敏策略已建", "ok", 2000); loadGov(name); }
-    catch (e) { alert("建脱敏策略失败:" + (e?.detail || e?.message || e)); }
+    catch (e) { toast("建脱敏策略失败:" + (e?.detail || e?.message || e), "error"); }
   });
   $("#mkPreview")?.addEventListener("click", async () => {
     const cols = $("#mkCols").value.split(",").map(s => s.trim()).filter(Boolean);
     const fn = $("#mkFn")?.value || "redact";
-    if (!cols.length) return alert("请填列名以预览");
+    if (!cols.length) { toast("请填列名以预览", "error"); return; }
     try {
       const r = await request("POST", `/datasets/${encodeURIComponent(name)}/quality/mask-preview`, { body: JSON.stringify({ columns: cols, function: fn }) });
       const d = r?.data || {};
@@ -284,8 +285,8 @@ function bindGovForms(name) {
         const aft = (v.after || []).map(x => String(x)).join(", ");
         return `${c}:\n   前 [${bef}]\n   后 [${aft}]`;
       });
-      alert(`${fn} 预览(前 5 行)\n\n` + (lines.length ? lines.join("\n\n") : "无数据"));
-    } catch (e) { alert("预览失败:" + (e?.detail || e?.message || e)); }
+      await confirmDialog({ title: `${fn} 预览(前 5 行)`, message: lines.length ? lines.join("\n\n") : "无数据", confirmText: "关闭" });
+    } catch (e) { toast("预览失败:" + (e?.detail || e?.message || e), "error"); }
   });
 }
 

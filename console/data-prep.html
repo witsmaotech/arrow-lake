@@ -143,6 +143,7 @@ import { isLoggedIn } from "./src/auth.js";
 import { loadDatasets, loadProfile, renderKpis } from "./src/data-prep/profile.js";
 import { OPS, renderOpList, icon } from "./src/data-prep/ops.js";
 import { runPreview, runSubmit } from "./src/data-prep/run.js";
+import { confirmDialog } from "./src/ui/modal.js";
 
 if (!isLoggedIn()) location.href = "login.html";
 const { renderShell } = window;
@@ -238,7 +239,7 @@ function renderPreviewTbl(head, rows) {
 
 $("#runBtn").addEventListener("click", async () => {
   if (!state.current) return;
-  if (!confirm(`${state.op.label}:将对该数据集执行写操作,确认?`)) return;
+  if (!(await confirmDialog({ title: `${state.op.label}`, message: "将对该数据集执行写操作,确认?", danger: true }))) return;
   $("#runBtn").disabled = true; $("#runStatus").textContent = "提交中…";
   try {
     await runSubmit(state.current, state.op, $("#cfgArea"), {

@@ -109,6 +109,7 @@ import { request } from "./src/api.js";
 import { isLoggedIn } from "./src/auth.js";
 import { runExport } from "./src/export.js";
 import { toast } from "./src/ui/toast.js";
+import { confirmDialog, promptDialog } from "./src/ui/modal.js";
 
 if (!isLoggedIn()) location.href = "login.html";
 const { renderShell, icon } = window;
@@ -234,7 +235,7 @@ if (!ds) {
       const btn = ev.target.closest(".ic-btn");
       if (!btn) return;
       const field = btn.dataset.field;
-      const v = window.prompt(`编辑字段注释 — ${field}`, btn.dataset.cm || "");
+      const v = await promptDialog({ title: `编辑字段注释 — ${field}`, defaultValue: btn.dataset.cm || "" });
       if (v === null) return; // 用户取消
       try {
         const s = await request("POST", `/datasets/${encodeURIComponent(ds)}/schema/annotate`, { body: { field, comment: v } });
@@ -536,23 +537,23 @@ async function loadVersion(name) {
 }
 
 async function restoreBackup(backupId, name) {
-  if (!confirm(`确认从备份 ${backupId} 恢复数据集「${name}」?\n(overwrite=true,将覆盖当前数据)`)) return;
+  if (!(await confirmDialog({ title: "恢复备份", message: `确认从备份 ${backupId} 恢复数据集「${name}」?(overwrite=true,将覆盖当前数据)`, confirmText: "恢复", danger: true }))) return;
   try {
     await request("POST", `/backup/restore?backup_id=${encodeURIComponent(backupId)}`, { body: { dataset_names: [name], overwrite: true } });
     await loadVersion(name);
     window.toast && toast("恢复已触发", "ok", 2500);
   } catch (e) {
-    alert("恢复失败:" + (e?.detail || e?.message || e));
+    toast("恢复失败:" + (e?.detail || e?.message || e), "error");
   }
 }
 async function deleteBackup(backupId) {
-  if (!confirm(`确认删除备份 ${backupId}?此操作不可撤销。`)) return;
+  if (!(await confirmDialog({ title: "删除备份", message: `确认删除备份 ${backupId}?此操作不可撤销。`, confirmText: "删除", danger: true }))) return;
   try {
     await request("DELETE", `/backup/${encodeURIComponent(backupId)}`);
     await loadVersion(ds);
     window.toast && toast("备份已删除", "ok", 2500);
   } catch (e) {
-    alert("删除失败:" + (e?.detail || e?.message || e));
+    toast("删除失败:" + (e?.detail || e?.message || e), "error");
   }
 }
 $("#vCreate")?.addEventListener("click", async () => {
@@ -562,7 +563,7 @@ $("#vCreate")?.addEventListener("click", async () => {
     await loadVersion(ds);
     window.toast && toast("快照创建已触发", "ok", 2500);
   } catch (e) {
-    alert("创建快照失败:" + (e?.detail || e?.message || e));
+    toast("创建快照失败:" + (e?.detail || e?.message || e), "error");
   }
 });
 </script>

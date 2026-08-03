@@ -162,6 +162,7 @@ import { request, API_BASE } from "./src/api.js";
 import { initWorksheet } from "./src/olap/worksheet.js";
 import "./src/favorite.js";  // [data-fav="sql"] 自动绑收藏入口
 import { toast } from "./src/ui/toast.js";
+import { confirmDialog, promptDialog } from "./src/ui/modal.js";
 
 if (!isLoggedIn()) { location.replace("login.html"); }
 else {
@@ -213,16 +214,17 @@ SELECT * FROM mv_monthly_quality ORDER BY month DESC;`;
     py += `\n   .limit(${parseInt($("#dLimit").value) || 100})\n   .collect()`;
     $("#dPy").textContent = py;
   }
-  $("#dAddFilter").addEventListener("click", () => {
-    const col = prompt("filter 列名(如 score):"); if (!col) return;
-    const op = prompt("操作符(eq/ne/gt/gte/lt/lte/is_null/is_not_null):", "gt") || "gt";
-    const val = prompt("值(数字/字符串,is_null 留空):", "0");
+  $("#dAddFilter").addEventListener("click", async () => {
+    const col = await promptDialog({ title: "filter 列名", message: "如 score", placeholder: "列名" }); if (!col) return;
+    const op = await promptDialog({ title: "操作符", message: "eq/ne/gt/gte/lt/lte/is_null/is_not_null", defaultValue: "gt" }) || "gt";
+    const val = await promptDialog({ title: "值", message: "数字/字符串,is_null 留空", defaultValue: "0" });
     dSteps.push({ kind: "filter", desc: `${col} ${op} ${val}`, py: `   .where(daft.col("${col}") ${op === "eq" ? "==" : op === "ne" ? "!=" : op} ${isNaN(Number(val)) ? `"${val}"` : Number(val)})` });
     renderChain();
   });
-  $("#dAddSort").addEventListener("click", () => {
-    const col = prompt("sort 列名:"); if (!col) return;
-    const desc = confirm("降序?"); dSteps.push({ kind: "sort", desc: `${col} ${desc ? "DESC" : "ASC"}`, py: `   .sort("${col}", desc=${desc})` });
+  $("#dAddSort").addEventListener("click", async () => {
+    const col = await promptDialog({ title: "sort 列名", placeholder: "列名" }); if (!col) return;
+    const desc = await confirmDialog({ title: "排序方向", message: "降序?", confirmText: "降序", cancelText: "升序" });
+    dSteps.push({ kind: "sort", desc: `${col} ${desc ? "DESC" : "ASC"}`, py: `   .sort("${col}", desc=${desc})` });
     renderChain();
   });
   function renderDaftResult(r) {
@@ -291,8 +293,8 @@ SELECT * FROM mv_monthly_quality ORDER BY month DESC;`;
       $("#mvList").querySelectorAll("[data-mvdel]").forEach((b) => b.addEventListener("click", () => dropMv(b.dataset.mvdel)));
     }).catch((e) => mvDegraded(errMsg(e)));
   }
-  function dropMv(name) {
-    if (!confirm(`删除物化视图「${name}」?`)) return;
+  async function dropMv(name) {
+    if (!(await confirmDialog({ title: "删除物化视图", message: `删除物化视图「${name}」?`, confirmText: "删除", danger: true }))) return;
     request("DELETE", `/materialized/${encodeURIComponent(name)}`).then(() => { toast(`已删除 ${name}`, "ok"); loadMv(); }).catch((e) => toast("删除失败:" + errMsg(e), "danger", 5000));
   }
   function createMv() {
@@ -311,8 +313,8 @@ SELECT * FROM mv_monthly_quality ORDER BY month DESC;`;
       .catch((e) => { mvDegraded(errMsg(e)); toast("物化失败:" + errMsg(e), "danger", 5000); });
   }
   $("#mvRefresh").addEventListener("click", loadMv);
-  $("#mvCleanup").addEventListener("click", () => {
-    if (!confirm("清理所有过期(TTL)物化视图?")) return;
+  $("#mvCleanup").addEventListener("click", async () => {
+    if (!(await confirmDialog({ title: "清理过期视图", message: "清理所有过期(TTL)物化视图?", confirmText: "清理", danger: true }))) return;
     request("POST", "/materialized/cleanup").then((r) => { toast(`已清理 ${r.count || 0} 个`, "ok"); loadMv(); }).catch((e) => mvDegraded(errMsg(e)));
   });
   $("#mvCreate").addEventListener("click", createMv);

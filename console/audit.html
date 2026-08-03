@@ -43,6 +43,7 @@
 import { request } from "./src/api.js";
 import { isLoggedIn } from "./src/auth.js";
 import { toast } from "./src/ui/toast.js";
+import { promptDialog } from "./src/ui/modal.js";
 
 if (!isLoggedIn()) location.href = "login.html";
 
@@ -137,7 +138,8 @@ function renderPage() {
 }
 
 async function exportAudit() {
-  const ds = $("#fDs").value.trim() || prompt("导出哪个数据集的审计日志?(输入 dataset_name)");
+  let ds = $("#fDs").value.trim();
+  if (!ds) ds = await promptDialog({ title: "导出审计日志", message: "输入要导出的数据集名", placeholder: "dataset_name" });
   if (!ds) return;
   try {
     await request("POST", `/audit/export?dataset_name=${encodeURIComponent(ds)}`);

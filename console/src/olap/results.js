@@ -5,6 +5,7 @@ import { renderChart, recommendChart } from "./charts.js";
 import { renderStats } from "./stats.js";
 import { runExport } from "../export.js";
 import { toast } from "../ui/toast.js";
+import { confirmDialog } from "../ui/modal.js";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
@@ -152,8 +153,7 @@ function exportResult(fmt, columns, rows) {
 async function exportDatasetParquet(dataset) {
   // 导出整个数据集(不按结果列过滤 —— 结果列可能是聚合别名如 COUNT(*)→c,
   // 数据集上不存在,传 columns 会报 'Field "c" does not exist in schema' 而失败)。
-  const ok = confirm(`导出数据集「${dataset}」为 Parquet?\n(异步任务,导出整个数据集,完成后自动下载)`);
-  if (!ok) return;
+  if (!(await confirmDialog({ title: "导出数据集", message: `导出数据集「${dataset}」为 Parquet?\n(异步任务,导出整个数据集,完成后自动下载)`, confirmText: "导出" }))) return;
   try {
     await runExport(dataset, {
       format: "parquet",

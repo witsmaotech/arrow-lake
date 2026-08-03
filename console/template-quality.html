@@ -379,7 +379,7 @@ async function pollBuild(taskId, dataset) {
 $("#buildBtn").addEventListener("click", async () => {
   const doc = $("#docText").value.trim();
   if (!doc || doc.length < 50) { toast("请先生成或粘贴一段文档(≥50 字)", "error"); return; }
-  if (kgTaskId && !confirm("已有进行中的验证,重新生成会覆盖当前结果。继续?")) return;
+  if (kgTaskId && !await confirmDialog({ title: "重新生成图谱?", message: "已有进行中的验证,重新生成会覆盖当前结果。", okText: "继续", danger: true })) return;
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
   $("#buildMsg").textContent = "提交 ingest+build…"; $("#buildBtn").disabled = true;
   try {
