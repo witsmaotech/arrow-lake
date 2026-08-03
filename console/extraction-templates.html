@@ -342,10 +342,23 @@ async function onView(name) {
   try {
     const r = await request("GET", `${API}/${encodeURIComponent(name)}`);
     const d = r.data;
+    // usage: 已绑定的数据集(best-effort,system_db 关时为空)
+    let bound = [];
+    try { const u = await request("GET", `${API}/${encodeURIComponent(name)}/usage`); bound = (u.data && u.data.bound_datasets) || []; } catch (_) {}
+    const bindLine = bound.length
+      ? bound.map((b) => `<span class="mono">${esc(b)}</span>`).join(", ")
+      : `<span class="muted">无</span>`;
     showModal(`查看 ${esc(name)}(可编辑)`, `
       <div class="meta-row"><span><b>来源</b> ${esc(d.source)}</span><span><b>type</b> ${esc(d.type)}</span>
       <span><b>category</b> ${esc(d.category)}</span><span><b>实体字段</b> ${(d.entity_fields||[]).length}</span>
       <span><b>关系字段</b> ${(d.relation_fields||[]).length}</span></div>
+      <div class="gap-note" style="margin-bottom:8px;display:flex;gap:14px;align-items:center;flex-wrap:wrap;font-size:.74rem">
+        <span><b>已绑定数据集</b>: ${bindLine}</span>
+        <span style="display:flex;align-items:center;gap:4px"><b>设为默认</b>
+          <input class="input" id="defDocType" placeholder="doc_type" style="width:120px;font-size:.76rem">
+          <button class="btn btn-primary btn-sm" id="defBtn">设默认</button>
+          <span id="defMsg" style="font-size:.7rem;color:var(--fg-lo)"></span></span>
+      </div>
       <textarea class="ed-area" id="viewYaml" spellcheck="false">${esc(d.yaml || "(无内容 / preset 不可读)")}</textarea>
       <div class="vbox" id="vboxView"></div>
       <div style="display:flex;gap:8px;margin-top:10px;justify-content:flex-end">
@@ -371,6 +384,17 @@ async function onView(name) {
       const derived = (d.name || "template").replace(/[^a-z0-9_]/g, "_") + "_copy";
       openEditor({ mode: "create", name: derived, yaml: y.replace(/^[ \t]*name:.*$/m, `name: ${derived}`), docType: d.category });
     });
+    // 设为 doc_type 默认(M3 set-default)
+    $("#defBtn").onclick = async () => {
+      const dt = $("#defDocType").value.trim();
+      if (!dt) { toast("请填 doc_type", "error"); return; }
+      try {
+        const rr = await request("PUT", API + "/default", { body: { doc_type: dt, template: name } });
+        const dd = rr.data;
+        $("#defMsg").textContent = dd.effective ? `✓ 已设为 ${dt} 默认` : `⚠ 被 config he_doc_type_templates 覆盖,未生效`;
+        toast(dd.effective ? `已设为 ${dt} 默认` : "被运维配置覆盖,未生效", dd.effective ? "success" : "error");
+      } catch (e) { $("#defMsg").textContent = ""; toast("设默认失败:" + errMsg(e), "error"); }
+    };
   } catch (e) { toast("查看失败:" + errMsg(e), "error"); }
 }
 
