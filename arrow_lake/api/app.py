@@ -229,6 +229,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         from arrow_lake.system_db.stores import UserStateStore
 
         app.state.user_state_store = UserStateStore(sys_db)
+        # v1.10.0: user extraction-template metadata + per-dataset bindings.
+        from arrow_lake.system_db.stores.extraction_templates import ExtractionTemplateStore
+
+        app.state.extraction_template_store = ExtractionTemplateStore(sys_db)
         # Activate RAG-session persistence in the Lake facade's RAG pipeline.
         lake._rag_session_store = app.state.rag_session_store
         # Activate the lineage adjacency index in the Lake facade's LineageStore.

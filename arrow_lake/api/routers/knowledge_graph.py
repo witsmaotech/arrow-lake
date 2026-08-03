@@ -10,7 +10,7 @@ import time
 import uuid
 from typing import Any, AsyncIterator, Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from starlette.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -116,12 +116,25 @@ def _kg_stats_enabled(lake: Any) -> bool:
 async def kg_build(
     *,
     req: KGBuildRequest,
+    request: Request,
     lake: Any = Depends(get_lake),
 ) -> KGBuildResponse:
-    """Build a knowledge graph from a dataset."""
+    """Build a knowledge graph from a dataset.
+
+    Template resolution: explicit ``req.template`` wins; else the dataset's
+    persisted binding (system_db) if any; else doc_type routing in the builder.
+    """
+    template = req.template
+    if not template:
+        store = getattr(request.app.state, "extraction_template_store", None)
+        if store is not None:
+            try:
+                template = store.get_binding(req.dataset)
+            except Exception:  # noqa: BLE001 — binding is best-effort; never block a build
+                template = None
     try:
         task_id = await lake.kg_build(req.dataset, incremental=req.incremental,
-                                      template=req.template)
+                                      template=template)
         return KGBuildResponse(
             task_id=task_id,
             status="pending",

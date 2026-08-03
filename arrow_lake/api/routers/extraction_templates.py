@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from arrow_lake.api.auth_models import Role
@@ -39,6 +39,11 @@ _USER_DIR_DEFAULT = "/data/lake/templates"
 def _user_dir() -> str:
     import os
     return os.environ.get(_USER_DIR_ENV, _USER_DIR_DEFAULT)
+
+
+def _store(request: Request):
+    """The extraction-template store (None when system_db is disabled — degrade)."""
+    return getattr(request.app.state, "extraction_template_store", None)
 
 
 def _reserved_names() -> set[str]:
@@ -175,17 +180,76 @@ async def update_template(
 @router.delete("/{name}")
 async def remove_template(
     name: str,
+    request: Request,
     _user: dict = Depends(require_role(Role.ADMIN)),
 ) -> dict:
-    """Delete a user template (system/project → 403)."""
+    """Delete a user template (system/project → 403; in-use → 422)."""
     existing = _find(name)
     if existing is not None and existing.source != "user":
         raise HTTPException(status_code=403, detail={"code": "TEMPLATE_READ_ONLY",
                                                       "message": f"{name} is a read-only {existing.source} template"})
-    # NOTE: in-use check (TEMPLATE_IN_USE) lands with the binding store (M2).
+    store = _store(request)
+    if store is not None:
+        bound = store.list_bindings(name)
+        if bound:
+            raise HTTPException(status_code=422, detail={
+                "code": "TEMPLATE_IN_USE",
+                "message": f"template {name} is bound to dataset(s): {bound}. Unbind first.",
+            })
     removed = delete_template(name, _user_dir())
     if not removed:
         raise HTTPException(status_code=404, detail=f"template not found: {name}")
     reset_gallery_cache()
     logger.info("extraction_template_deleted name=%s by=%s", name, getattr(_user, "username", None))
     return {"success": True, "data": {"name": name, "deleted": True}}
+
+
+# --- per-dataset bindings (persisted in system_db) ------------------------
+
+class BindingRequest(BaseModel):
+    template: str = Field(..., min_length=1, description="template name to bind")
+
+
+@router.get("/bindings/{dataset}")
+async def get_binding(
+    dataset: str,
+    request: Request,
+    _user: dict = Depends(require_role(Role.ADMIN)),
+) -> dict:
+    """Which template is bound to ``dataset`` (None if unbound)."""
+    store = _store(request)
+    bound = store.get_binding(dataset) if store is not None else None
+    return {"success": True, "data": {"dataset": dataset, "template": bound}}
+
+
+@router.put("/bindings/{dataset}")
+async def set_binding(
+    dataset: str,
+    req: BindingRequest,
+    request: Request,
+    _user: dict = Depends(require_role(Role.ADMIN)),
+) -> dict:
+    """Bind ``dataset`` to a template (used automatically by /kg/build)."""
+    if _find(req.template) is None:
+        raise HTTPException(status_code=404, detail=f"template not found: {req.template}")
+    store = _store(request)
+    if store is None:
+        raise HTTPException(status_code=503, detail="system_db disabled; binding unavailable")
+    store.set_binding(dataset, req.template, bound_by=getattr(_user, "username", None))
+    logger.info("template_bound dataset=%s template=%s by=%s",
+                dataset, req.template, getattr(_user, "username", None))
+    return {"success": True, "data": {"dataset": dataset, "template": req.template}}
+
+
+@router.delete("/bindings/{dataset}")
+async def clear_binding(
+    dataset: str,
+    request: Request,
+    _user: dict = Depends(require_role(Role.ADMIN)),
+) -> dict:
+    """Remove a dataset's template binding."""
+    store = _store(request)
+    if store is None:
+        raise HTTPException(status_code=503, detail="system_db disabled; binding unavailable")
+    cleared = store.clear_binding(dataset)
+    return {"success": True, "data": {"dataset": dataset, "cleared": cleared}}

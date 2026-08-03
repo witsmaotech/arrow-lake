@@ -60,7 +60,16 @@
     </div>
     <div class="panel flush" id="kgPanel" style="margin-top:var(--s4);display:none">
       <div class="panel-h"><i class="placeholder" data-ic="share-nodes"></i><h3>知识图谱(KG)</h3><span class="sub" id="kgMeta">—</span></div>
-      <div class="panel-b" id="kg"></div>
+      <div class="panel-b">
+        <div id="tplBind" class="gap-note" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+          <span style="font-size:.78rem"><b>抽取模板</b>(绑定后 /kg/build 自动套用):</span>
+          <select class="select" id="tplSel" style="max-width:280px"></select>
+          <button class="btn btn-primary btn-sm" id="tplBindBtn">绑定</button>
+          <button class="btn btn-ghost btn-sm" id="tplUnbindBtn" style="display:none">解绑</button>
+          <span id="tplBindMsg" style="font-size:.74rem;color:var(--fg-lo)"></span>
+        </div>
+        <div id="kg"></div>
+      </div>
     </div>
     <div class="panel flush" id="previewPanel" style="margin-top:var(--s4)">
       <div class="panel-h"><i class="placeholder" data-ic="database"></i><h3>数据预览</h3><span class="sub" id="previewMeta">—</span></div>
@@ -369,6 +378,35 @@ if (!ds) {
     loadPreview();
   })();
 }
+
+/* ---------- 抽取模板绑定 (v1.10.0) ---------- */
+async function loadTplBinding() {
+  const sel = $("#tplSel"), btn = $("#tplBindBtn"), unbtn = $("#tplUnbindBtn"), msg = $("#tplBindMsg");
+  if (!ds) return;
+  const enc = encodeURIComponent(ds);
+  try {
+    const [list, cur] = await Promise.all([
+      request("GET", "/api/v1/admin/extraction-templates"),
+      request("GET", `/api/v1/admin/extraction-templates/bindings/${enc}`).catch(() => ({ data: { template: null } })),
+    ]);
+    sel.innerHTML = `<option value="">(未绑定 · 按 doc_type 路由)</option>` +
+      (list.data || []).map((t) => `<option value="${t.name}" ${cur.data.template === t.name ? "selected" : ""}>${t.name} [${t.source}]</option>`).join("");
+    unbtn.style.display = cur.data.template ? "" : "none";
+  } catch (e) { msg.textContent = "(模板绑定需 ADMIN / system_db)"; }
+  btn.onclick = async () => {
+    const t = sel.value; if (!t) { msg.textContent = "请先选模板"; return; }
+    try { await request("PUT", `/api/v1/admin/extraction-templates/bindings/${enc}`, { body: { template: t } });
+      msg.textContent = `已绑定 → ${t}(下次 /kg/build 自动套用)`; unbtn.style.display = "";
+      toast(`模板已绑定: ${t}`, "success");
+    } catch (e) { msg.textContent = "绑定失败:" + (e?.detail?.message || e?.message || e); toast("绑定失败", "error"); }
+  };
+  unbtn.onclick = async () => {
+    try { await request("DELETE", `/api/v1/admin/extraction-templates/bindings/${enc}`);
+      sel.value = ""; msg.textContent = "已解绑"; unbtn.style.display = "none"; toast("已解绑", "success");
+    } catch (e) { msg.textContent = "解绑失败"; }
+  };
+}
+loadTplBinding();
 
 /* ---------- 血缘 Tab ---------- */
 let lgNetwork = null;
