@@ -262,6 +262,34 @@ def _strip_fences(text: str) -> str:
     return t.strip()
 
 
+def _hyperextract_check(yaml_text: str) -> tuple[bool, str]:
+    """Authoritative 校验:让 hyper-extract 真实加载模板(比 registry 严)。
+
+    生成的模板过了 ``validate_template_yaml`` 仍可能被 hyper-extract 的
+    TemplateCfg 拒(字段必填/枚举/结构)→ 实际抽取 0 实体。这里用
+    ``Template.create(path)``(不传 llm_client,只解析)做真实加载校验。
+    hyperextract 未装(如 host 测试环境)→ 跳过返 (True, "") 只靠 registry。
+    """
+    try:
+        from hyperextract import Template
+    except ImportError:
+        return True, ""
+    import os
+    import tempfile
+    fd, tmp = tempfile.mkstemp(suffix=".yaml")
+    try:
+        os.write(fd, yaml_text.encode("utf-8")); os.close(fd)
+        Template.create(tmp)  # 不传 llm_client/embedder,仅解析模板结构
+        return True, ""
+    except Exception as exc:  # TemplateCfg ValidationError 等
+        return False, f"hyper-extract 加载拒绝: {str(exc)[:240]}"
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+
+
 async def _do_generate(req: "GenerateRequest", generate_fn) -> tuple[str, list, bool]:
     """生成 + self-heal。generate_fn: async ([(role, content), ...]) -> str。
     返回 (yaml_text, errors, healed)。errors 空 = 校验通过。"""
@@ -284,15 +312,24 @@ async def _do_generate(req: "GenerateRequest", generate_fn) -> tuple[str, list, 
         out = await generate_fn(msgs)
         yaml_text = _strip_fences(out)
         last_yaml = yaml_text
+        # 1. registry 结构校验(快)
         try:
             validate_template_yaml(yaml_text)
-            return yaml_text, [], attempt > 0
         except TemplateValidationError as exc:
             last_errors = [(p, m) for p, m in exc.errors]
             msgs.append(("assistant", out))
             msgs.append(("user", "校验失败 " + str(len(last_errors)) + " 处: "
                          + "; ".join(f"{p}: {m}" for p, m in last_errors[:6])
                          + "。请只输出修正后的完整纯 YAML。"))
+            continue
+        # 2. hyper-extract 真实加载校验(authoritative;修 E2E gap:registry 过但 HE 拒→0实体)
+        ok, he_err = _hyperextract_check(yaml_text)
+        if not ok:
+            last_errors = [("hyper-extract", he_err)]
+            msgs.append(("assistant", out))
+            msgs.append(("user", he_err + " 常见原因:字段缺失/必填项/output.entities 或 relations 缺 description/guideline 结构不全/字段 type 不合法。请只输出修正后的完整纯 YAML。"))
+            continue
+        return yaml_text, [], attempt > 0
     return last_yaml, last_errors, True
 
 
