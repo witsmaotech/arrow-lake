@@ -24,6 +24,7 @@ from arrow_lake.api.deps import require_role, get_lake
 from arrow_lake.knowledge_graph.doc_type_router import (
     get_template_gallery, reset_gallery_cache,
 )
+from arrow_lake.rag.provider import create_llm_provider, LLMMessage
 from arrow_lake.knowledge_graph.template_registry import (
     TemplateValidationError,
     content_hash, delete_template, save_template, validate_template_yaml,
@@ -188,6 +189,143 @@ async def validate(
     except TemplateValidationError as exc:
         return {"success": True, "data": {
             "valid": False, "errors": [{"path": p, "message": m} for p, m in exc.errors]}}
+
+
+# --- LLM-assisted generation (M2.5) ---------------------------------------
+
+class GenerateRequest(BaseModel):
+    prompt: str = Field(..., min_length=2, max_length=1000, description="领域描述")
+    sample_text: str | None = Field(default=None, max_length=3000)
+    doc_type: str | None = None
+    base: str | None = "project_concept_graph"  # few-shot 蓝本
+
+
+_generate_sem = asyncio.Semaphore(3)  # 限并发,防 LLM 代理滥用
+
+_GEN_SYSTEM = """你是 hyper-extract 知识抽取模板设计专家。只输出一个合法模板的 YAML,严格符合下述 schema。
+
+【输出 schema】(字段名、层级、缩进必须完全一致;下面是一个结构范例)
+language: [zh, en]
+name: security_concept_graph
+type: graph
+tags: [security, asset, threat]
+description: {zh: 安全概念图, en: security concept graph}
+output:
+  entities:
+    description: {zh: 文档中的安全要素, en: security elements}
+    fields:
+      - {name: name, type: str, description: {zh: 要素名称(规范术语), en: name}, required: true}
+      - {name: type, type: str, description: {zh: "必须是以下之一: 资产/威胁/控制/事件", en: "one of: asset/threat/control/event"}, required: true}
+      - {name: definition, type: str, description: {zh: 要素定义, en: definition}, required: true}
+  relations:
+    description: {zh: 安全要素间关联, en: relations}
+    fields:
+      - {name: source, type: str, description: {zh: 源要素, en: source}, required: true}
+      - {name: target, type: str, description: {zh: 目标要素, en: target}, required: true}
+      - {name: type, type: str, description: {zh: "关系类型,必须是: 防护/利用/触发/相关", en: relation type}, required: true}
+guideline:
+  target: {zh: 你是网络安全知识图谱专家, en: you are a security kg expert}
+  rules_for_entities:
+    zh: [每段最多提取 12 个核心要素, type 必须按枚举, name 用规范术语]
+    en: [extract up to 12 core elements per chunk]
+
+【硬约束 — 任一不满足会被校验拒绝】
+1. 只输出纯 YAML。首行必须是 language: [zh, en]。禁止 markdown 代码围栏,禁止任何解释/前后缀/对话文字。
+2. output.entities.fields 必须包含 name 字段;output.relations.fields 必须包含 source、target、type 三个字段。
+3. 每个字段必须有 name/type/description;字段 type 只能是 str/int/float/bool。
+4. 顶层 type 只能是 graph(除非用户明确要求 model 或 hypergraph)。
+5. guideline.target 必须有 zh 和 en。
+6. entity 建议 3-6 个字段(至少 name/type/definition);relations 至少 source/target/type。
+7. 把该领域的核心实体类型作为枚举写进 entity.type 的 description(如"必须是 A/B/C 之一"),把关系类型枚举写进 relation.type 的 description —— 这是约束抽取质量的关键。
+8. name 用领域派生的英文小写下划线标识符(不要用范例的 security_concept_graph,除非领域就是安全)。
+
+【参考蓝本】(仅供学习结构与写法,严禁照抄其领域内容):
+{BASE}
+"""
+
+
+def _strip_fences(text: str) -> str:
+    """剥 markdown 代码围栏 + 前后空白/解释,只留 YAML 主体。"""
+    import re
+    t = text.strip()
+    # 去代码围栏 ```yaml ... ``` 或 ``` ... ```
+    m = re.search(r"```(?:ya?ml|yaml)?\s*\n(.*?)```", t, re.S)
+    if m:
+        t = m.group(1).strip()
+    # 若开头不是 yaml 键,截到第一个 `language:` 或 `name:`
+    if not t.startswith(("language", "name", "type", "tags")):
+        idx = t.find("language:")
+        if idx == -1:
+            idx = t.find("name:")
+        if idx > 0:
+            t = t[idx:]
+    return t.strip()
+
+
+async def _do_generate(req: "GenerateRequest", generate_fn) -> tuple[str, list, bool]:
+    """生成 + self-heal。generate_fn: async ([(role, content), ...]) -> str。
+    返回 (yaml_text, errors, healed)。errors 空 = 校验通过。"""
+    base_yaml = ""
+    if req.base:
+        t = _find(req.base)
+        if t is not None:
+            by = _read_yaml(t.path) or ""
+            base_yaml = by[:1800]  # 节选,控 prompt 长度
+    system = _GEN_SYSTEM.replace("{BASE}", base_yaml)
+    user = f"领域描述:{req.prompt.strip()}\n"
+    if req.doc_type:
+        user += f"doc_type: {req.doc_type.strip()}\n"
+    if req.sample_text:
+        user += f"\n样本文档(节选,据此推断该抽哪些实体/关系):\n{req.sample_text.strip()[:1500]}\n"
+    user += "\n请只输出符合 schema 的纯 YAML。"
+    msgs: list[tuple[str, str]] = [("system", system), ("user", user)]
+    last_yaml, last_errors = "", []
+    for attempt in range(3):  # 初次 + 最多 2 轮 self-heal
+        out = await generate_fn(msgs)
+        yaml_text = _strip_fences(out)
+        last_yaml = yaml_text
+        try:
+            validate_template_yaml(yaml_text)
+            return yaml_text, [], attempt > 0
+        except TemplateValidationError as exc:
+            last_errors = [(p, m) for p, m in exc.errors]
+            msgs.append(("assistant", out))
+            msgs.append(("user", "校验失败 " + str(len(last_errors)) + " 处: "
+                         + "; ".join(f"{p}: {m}" for p, m in last_errors[:6])
+                         + "。请只输出修正后的完整纯 YAML。"))
+    return last_yaml, last_errors, True
+
+
+@router.post("/generate")
+async def generate_template(
+    req: GenerateRequest,
+    lake: Any = Depends(get_lake),
+    _user: dict = Depends(require_role(Role.ADMIN)),
+) -> dict:
+    """LLM 生成模板 YAML(self-heal,不落盘)。返 {yaml, errors, healed}。"""
+    async with _generate_sem:
+        # 抽取阶段 LLM(he_extract_llm 优先,回退全局 llm)
+        hg = getattr(lake._config, "hugegraph", None)
+        cfg = getattr(hg, "he_extract_llm", None) or getattr(lake._config, "llm", None)
+        if cfg is None or not getattr(cfg, "api_key", None):
+            raise HTTPException(status_code=503, detail="未配置 LLM(he_extract_llm/llm),无法生成")
+
+        async def generate_fn(msgs: list[tuple[str, str]]) -> str:
+            provider = create_llm_provider(cfg)
+            resp = await provider.generate([LLMMessage(role=r, content=c) for r, c in msgs])
+            return getattr(resp, "content", "") or ""
+
+        try:
+            yaml_text, errors, healed = await asyncio.wait_for(_do_generate(req, generate_fn), timeout=60)
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=504, detail="LLM 生成超时(>60s)")
+        except Exception as exc:  # noqa: BLE001 — LLM/provider 故障
+            raise HTTPException(status_code=502, detail=f"LLM 生成失败: {str(exc)[:160]}")
+    logger.info("template_generated by=%s healed=%s valid=%s",
+                getattr(_user, "username", None), healed, not errors)
+    return {"success": True, "data": {"yaml": yaml_text, "errors": [
+        {"path": p, "message": m} for p, m in errors], "healed": healed,
+        "valid": not errors}}
 
 
 @router.post("", status_code=201)

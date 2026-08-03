@@ -172,6 +172,19 @@ let validateTimer = null;
 function openEditor({mode, name, yaml, docType}) {
   const isCreate = mode === "create";
   const body = `
+    <details class="ai-gen" style="margin-bottom:12px;border:1px solid var(--line-soft);border-radius:var(--r-md);padding:8px 12px;background:var(--ink-950)">
+      <summary style="cursor:pointer;font-size:.8rem;font-weight:600;color:var(--teal-bright)">✨ AI 生成模板(LLM 辅助 · 不落盘)</summary>
+      <div style="margin-top:10px;display:flex;flex-direction:column;gap:8px">
+        <input class="input" id="aiPrompt" placeholder="领域描述(必):如 网络安全,提取资产/威胁/控制/事件" style="font-size:.8rem">
+        <textarea class="input" id="aiSample" placeholder="样本文档(可选,帮 LLM 推断实体/关系类型,≤2000 字)" style="min-height:64px;font-size:.76rem;font-family:var(--mono)"></textarea>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <label style="display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--fg-lo)">蓝本
+            <select class="select" id="aiBase" style="font-size:.78rem"></select></label>
+          <button class="btn btn-primary btn-sm" id="aiGenBtn" style="margin-left:auto">✨ 生成</button>
+          <span id="aiMsg" style="font-size:.72rem;color:var(--fg-lo)"></span>
+        </div>
+      </div>
+    </details>
     <div class="etpl-form">
       <label class="ef name"><span>名称</span><input class="input name-in" id="edName" value="${esc(name || "")}" ${isCreate ? "" : "disabled"} pattern="[a-z][a-z0-9_]*"></label>
       <label class="ef doctype"><span>doc_type(可选)</span><input class="input" id="edDocType" value="${esc(docType || "")}" placeholder="如 project / finance"></label>
@@ -185,6 +198,27 @@ function openEditor({mode, name, yaml, docType}) {
     </div>`;
   showModal(isCreate ? "新建用户模板" : `编辑 ${esc(name)}`, body);
   makeYamlEditor("edYaml");
+  // ✨ AI 生成(M2.5)
+  $("#aiBase").innerHTML = ALL.filter((t) => t.source === "system")
+    .map((t) => `<option value="${esc(t.name)}"${t.name === "project_concept_graph" ? " selected" : ""}>${esc(t.name)}</option>`).join("");
+  $("#aiGenBtn").onclick = async () => {
+    const p = $("#aiPrompt").value.trim();
+    if (!p) { toast("请填领域描述", "error"); return; }
+    $("#aiMsg").textContent = "生成中…(≤60s)"; $("#aiGenBtn").disabled = true;
+    try {
+      const r = await request("POST", API + "/generate", { body: {
+        prompt: p,
+        sample_text: $("#aiSample").value.trim() || null,
+        base: $("#aiBase").value || null,
+        doc_type: $("#edDocType").value.trim() || null } });
+      const d = r.data;
+      $("#edYaml").value = d.yaml;
+      $("#edYaml").dispatchEvent(new Event("input"));  // 刷新高亮层 + 触发 debounced 实时校验
+      $("#aiMsg").textContent = d.valid ? `已生成${d.healed ? "(经 self-heal)" : ""},请审阅后保存` : `生成但仍有 ${d.errors.length} 处校验错,请手改`;
+      if (!d.valid) toast("生成内容校验未全过,请在编辑器修正", "error");
+    } catch (e) { $("#aiMsg").textContent = ""; toast("生成失败:" + errMsg(e), "error"); }
+    finally { $("#aiGenBtn").disabled = false; }
+  };
   const doValidate = async () => {
     const y = $("#edYaml").value;
     if (!y.trim()) { $("#vbox").innerHTML = ""; return; }
