@@ -141,10 +141,13 @@ function render() {
     const chip = sys ? `<span class="src-chip system">system</span>` : `<span class="src-chip user">user</span>`;
     const risk = t.is_high_risk ? `<span style="color:#ff6b6b">⚠</span>` : "—";
     const tags = (t.tags || []).slice(0, 4).map((x) => `<span class="mono" style="color:var(--fg-lo)">${esc(x)}</span>`).join(" ");
+    const quality = `<a class="btn btn-ghost btn-sm" style="color:var(--teal-bright)" href="template-quality.html?name=${encodeURIComponent(t.name)}" title="生成场景文档 · 建图 · RAG 端到端验证模板质量">质量验证</a>`;
     const act = sys
-      ? `<button class="btn btn-ghost btn-sm" data-copy="${esc(t.name)}">复制</button>
+      ? `${quality}
+         <button class="btn btn-ghost btn-sm" data-copy="${esc(t.name)}">复制</button>
          <button class="btn btn-ghost btn-sm" data-view="${esc(t.name)}">查看</button>`
-      : `<button class="btn btn-ghost btn-sm" data-edit="${esc(t.name)}">编辑</button>
+      : `${quality}
+         <button class="btn btn-ghost btn-sm" data-edit="${esc(t.name)}">编辑</button>
          <button class="btn btn-ghost btn-sm" data-view="${esc(t.name)}">查看</button>
          <button class="btn btn-ghost btn-sm" data-del="${esc(t.name)}" style="color:#ff6b6b">删除</button>`;
     return `<tr>
@@ -306,7 +309,9 @@ function hlYaml(src) {
   }).join("\n");
 }
 function hlYamlVal(v) {
-  return v.replace(/("[^"]*"|'[^']*')/g, '<span class="hl-str">$1</span>')
+  const e = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return e(v)
+    .replace(/("[^"]*"|'[^']*')/g, '<span class="hl-str">$1</span>')
     .replace(/\b(-?\d+\.?\d*)\b/g, '<span class="hl-num">$1</span>')
     .replace(/\b(true|false|null|yes|no)\b/g, '<span class="hl-bool">$1</span>');
 }

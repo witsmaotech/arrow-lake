@@ -1,0 +1,470 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>模板质量验证 · Arrow Lake Console</title>
+<link rel="stylesheet" href="assets/tokens.css"/>
+<link rel="stylesheet" href="assets/app.css"/>
+<link rel="stylesheet" href="assets/console.css"/>
+<style>
+  .desc{font-size:.78rem;color:var(--fg-lo)}
+  .ed-area{width:100%;min-height:300px;font-family:var(--mono);font-size:.78rem;border:1px solid var(--line-soft);border-radius:var(--r-md);background:var(--ink-950);color:var(--fg-hi);padding:10px;resize:vertical;tab-size:2}
+  .ed-area:focus{outline:none;border-color:var(--teal-bright)}
+  /* YAML 双层编辑器(textarea 透明叠在 <pre> 高亮层上) */
+  .yaml-edit{position:relative;min-height:300px;border:1px solid var(--line-soft);border-radius:var(--r-md);background:var(--ink-950)}
+  .yaml-edit:focus-within{border-color:var(--teal-bright)}
+  .yaml-edit pre,.yaml-edit textarea{position:absolute;inset:0;margin:0;padding:10px 12px;font-family:var(--mono);font-size:.78rem;line-height:1.55;tab-size:2;white-space:pre-wrap;word-break:break-word;overflow:auto;border:none;background:transparent}
+  .yaml-edit pre{pointer-events:none;z-index:1;color:var(--fg-hi)}
+  .yaml-edit textarea{color:transparent;-webkit-text-fill-color:transparent;caret-color:var(--teal-bright);z-index:2;resize:none}
+  .yaml-edit textarea:focus{outline:none}
+  .hl-cmt{color:#5c6370;font-style:italic}.hl-key{color:#61afef}.hl-str{color:#98c379}.hl-num{color:#d19a66}.hl-bool{color:#c678dd}
+  .vbox{font-size:.76rem;margin-top:8px;min-height:20px;border-top:1px dashed var(--line-soft);padding-top:8px}
+  .vbox .ok{color:var(--teal-bright);font-weight:600}.vbox .err{color:#ff6b6b;font-weight:600}
+  .vrow{display:flex;gap:8px;padding:2px 0}.vrow .path{color:var(--fg-lo);font-family:var(--mono);min-width:200px}
+  .qstep{border:1px solid var(--line-soft);border-radius:var(--r-md);background:var(--ink-900);padding:14px 16px;margin-top:14px}
+  .qstep>h3{display:flex;align-items:center;gap:8px;font-size:.92rem;margin:0 0 4px}
+  .qstep .num{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:99px;background:var(--teal-bright);color:#04201a;font-weight:700;font-size:.8rem}
+  .qstep .hint{font-size:.74rem;color:var(--fg-lo);margin-bottom:10px}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+  .meta-row{display:flex;gap:14px;font-size:.74rem;color:var(--fg-lo);margin-bottom:8px;flex-wrap:wrap}
+  .meta-row b{color:var(--fg-md);font-weight:600}
+  #kgGraph{height:440px;background:var(--ink-950);border:1px solid var(--line-soft);border-radius:var(--r-md)}
+  .ans{background:var(--ink-950);border:1px solid var(--line-soft);border-radius:var(--r-md);padding:12px;font-size:.84rem;line-height:1.6;white-space:pre-wrap;color:var(--fg-hi)}
+  .cite{font-size:.72rem;color:var(--fg-lo);margin-top:8px}
+  .lamp.busy{color:var(--warn)}
+</style>
+</head>
+<body>
+<div id="app">
+<main class="main"><div class="page">
+  <div class="h-sec between">
+    <div><h1>模板质量验证</h1><div class="desc" id="sub">端到端验证抽取模板:生成场景文档 → 建 HugeGraph → RAG 问答 · <span class="mono">/api/v1/admin/extraction-templates/{name}/quality/*</span> · 需 ADMIN</div></div>
+    <div class="flex"><a class="btn btn-ghost btn-sm" href="extraction-templates.html">← 返回模板列表</a></div>
+  </div>
+
+  <!-- 0. 模板 YAML(可编辑 + 保存,反复迭代) -->
+  <div class="qstep">
+    <h3><span class="num">0</span> 模板定义<span id="tplMeta" class="meta-row" style="margin:0 0 0 8px"></span></h3>
+    <div class="hint">编辑模板后「保存」(<span class="mono">PUT /{name}</span>),反复迭代 guideline / 字段枚举 —— 质量瓶颈在模板不在模型。</div>
+    <div class="row">
+      <button class="btn btn-primary btn-sm" id="saveBtn">保存模板</button>
+      <span id="saveMsg" style="font-size:.72rem;color:var(--fg-lo)"></span>
+    </div>
+    <textarea class="ed-area" id="tplYaml" spellcheck="false"></textarea>
+    <div class="vbox" id="vbox"></div>
+  </div>
+
+  <!-- 1. 生成场景文档 -->
+  <div class="qstep">
+    <h3><span class="num">1</span> ✨ 生成场景文档</h3>
+    <div class="hint">LLM 读模板 → 生成 <b>~2000 字</b>场景文档,<b>强制覆盖每种实体 / 关系类型</b>(每种实体 ≥2 例)。可编辑后用于建图。</div>
+    <div class="row">
+      <input class="input" id="docHint" placeholder="场景提示(可选):如 智慧城市应急指挥系统的威胁与防护" style="flex:1;min-width:280px">
+      <button class="btn btn-primary btn-sm" id="docBtn">✨ 生成文档</button>
+      <span id="docMsg" style="font-size:.72rem;color:var(--fg-lo)"></span>
+    </div>
+    <textarea class="ed-area" id="docText" spellcheck="false" placeholder="生成的场景文档会显示在这里(可编辑)。也可直接粘贴自有文档。"></textarea>
+  </div>
+
+  <!-- 2. 生成图谱 -->
+  <div class="qstep">
+    <h3><span class="num">2</span> 生成图谱(真 HugeGraph)</h3>
+    <div class="hint">用上方文档 ingest+index 建临时数据集 → <span class="mono">kg_build(template=name)</span> → 可视化。build 分钟级,异步轮询。</div>
+    <div class="row">
+      <button class="btn btn-primary btn-sm" id="buildBtn">▶ 生成图谱</button>
+      <span id="buildMsg" style="font-size:.72rem;color:var(--fg-lo)"></span>
+    </div>
+    <div id="kgGraph"></div>
+    <div id="kgMeta" style="font-size:.74rem;color:var(--fg-lo);margin-top:6px"></div>
+  </div>
+
+  <!-- 3. RAG 测试 -->
+  <div class="qstep">
+    <h3><span class="num">3</span> RAG 问答测试(GraphRAG)</h3>
+    <div class="hint">复用 <span class="mono">POST /api/v1/rag/query {use_kg:true}</span>,在临时数据集上问答,验证模板是否支持有意义检索。</div>
+    <div class="row">
+      <input class="input" id="ragQ" placeholder="提问:如 有哪些威胁资产?它们如何被防护?" style="flex:1;min-width:280px">
+      <button class="btn btn-primary btn-sm" id="ragBtn">询问</button>
+      <span id="ragMsg" style="font-size:.72rem;color:var(--fg-lo)"></span>
+    </div>
+    <div class="ans" id="ragAns">—</div>
+    <div class="cite" id="ragCite"></div>
+    <div id="ragHistoryList" style="margin-top:10px"></div>
+  </div>
+
+  <!-- 4. 清理 -->
+  <div class="qstep">
+    <h3><span class="num">4</span> 清理临时数据</h3>
+    <div class="hint">删除验证产生的临时数据集及其 kg 图(<span class="mono">DELETE /quality/{temp_dataset}</span>),释放空间。隔离的 KA 文件(<span class="mono">/data/lake/template-quality-ka/</span>)一并删除。</div>
+    <div class="row">
+      <button class="btn btn-ghost btn-sm" id="cleanBtn" style="color:#ff6b6b">清理临时数据集</button>
+      <span id="cleanMsg" style="font-size:.72rem;color:var(--fg-lo)"></span>
+    </div>
+  </div>
+
+  <!-- 5. 保存与历史 -->
+  <div class="qstep">
+    <h3><span class="num">5</span> 保存验证结果 / 查看历史</h3>
+    <div class="hint">把本次验证(文档 + 实体/关系计数 + 图快照 + RAG 问答)持久化,清理后仍可在历史里回看(图快照重放)。每模板独立历史。</div>
+    <div class="row">
+      <input class="input" id="saveNote" placeholder="备注(可选):如 模板v2 覆盖全类型" style="flex:1;min-width:240px">
+      <button class="btn btn-primary btn-sm" id="saveRunBtn">💾 保存当前验证</button>
+      <button class="btn btn-ghost btn-sm" id="histBtn">📜 刷新历史</button>
+      <span id="saveMsg" style="font-size:.72rem;color:var(--fg-lo)"></span>
+    </div>
+    <div class="tbl-scroll"><table class="tbl" id="histTable" style="display:none">
+      <thead><tr><th>ID</th><th>时间</th><th>实体/关系</th><th>备注</th><th>提示</th><th>操作</th></tr></thead>
+      <tbody id="histRows"></tbody>
+    </table></div>
+    <div id="histEmpty" class="muted" style="font-size:.74rem;padding:6px 0">暂无历史记录</div>
+  </div>
+</div></main>
+</div>
+
+<script src="assets/console-layout.js"></script>
+<script src="vendor/vis-network.bundle.min.js"></script>
+<script type="module">
+import { request } from "./src/api.js";
+import { isLoggedIn } from "./src/auth.js";
+import { toast } from "./src/ui/toast.js";
+import { confirmDialog } from "./src/ui/modal.js";
+
+if (!isLoggedIn()) location.href = "login.html";
+const { renderShell, icon, applyIcons } = window;
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const API = "/admin/extraction-templates";
+
+const errMsg = (e) => {
+  const d = e?.detail ?? e?.body?.detail;
+  if (d?.errors) return d.errors.map((x) => `${x.path}: ${x.message}`).join("; ");
+  if (Array.isArray(d)) return d.map((x) => x?.msg || JSON.stringify(x)).join("; ");
+  return (d && d.message) || e?.message || String(e);
+};
+
+const NAME = new URLSearchParams(location.search).get("name");
+renderShell({ active: "templates", crumb: `<a href="extraction-templates.html">抽取模板</a> · <b>质量验证 · ${esc(NAME || "?")}</b>` });
+
+if (!NAME) { $("#sub").innerHTML = `<span style="color:var(--danger)">缺少 ?name= 参数</span>`; }
+let isUser = false, tempDs = null, kgTaskId = null, pollTimer = null;
+let kgNetwork = null;
+// M4 历史保存/回放所需的状态
+let ragHistory = [];          // [{question, answer, citations}]
+let lastGraphSnapshot = null; // /kg/graph 原始 {nodes, edges,...}
+let lastCounts = { e: 0, r: 0 };
+
+/* ---------- YAML 高亮编辑器(自包含,复用 extraction-templates 实现) ---------- */
+function hlYaml(src) {
+  return (src || "").split("\n").map((line) => {
+    const e = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const c = line.match(/^(\s*)(#.*)$/);
+    if (c) return e(c[1]) + '<span class="hl-cmt">' + e(c[2]) + "</span>";
+    const kv = line.match(/^(\s*-?\s*)([\w.-]+)(:)(.*)$/);
+    if (kv) { const [, i, k, co, v] = kv; return e(i) + '<span class="hl-key">' + e(k) + "</span>" + co + hlYamlVal(v); }
+    return e(line);
+  }).join("\n");
+}
+function hlYamlVal(v) {
+  const e = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return e(v)
+    .replace(/("[^"]*"|'[^']*')/g, '<span class="hl-str">$1</span>')
+    .replace(/\b(-?\d+\.?\d*)\b/g, '<span class="hl-num">$1</span>')
+    .replace(/\b(true|false|null|yes|no)\b/g, '<span class="hl-bool">$1</span>');
+}
+function makeYamlEditor(id) {
+  const ta = document.getElementById(id); if (!ta) return;
+  const h = ta.offsetHeight || 300;
+  const parent = ta.parentNode;
+  const wrap = document.createElement("div"); wrap.className = "yaml-edit"; wrap.style.minHeight = h + "px";
+  const pre = document.createElement("pre"); pre.setAttribute("aria-hidden", "true");
+  parent.replaceChild(wrap, ta); wrap.appendChild(pre); wrap.appendChild(ta);
+  const sync = () => { pre.innerHTML = hlYaml(ta.value) + "\n"; pre.scrollTop = ta.scrollTop; pre.scrollLeft = ta.scrollLeft; };
+  ta.addEventListener("input", sync);
+  ta.addEventListener("scroll", () => { pre.scrollTop = ta.scrollTop; pre.scrollLeft = ta.scrollLeft; });
+  sync();
+}
+
+/* ---------- 加载模板 ---------- */
+async function loadTemplate() {
+  if (!NAME) return;
+  try {
+    const r = await request("GET", `${API}/${encodeURIComponent(NAME)}`);
+    const d = r.data;
+    isUser = d.source === "user";
+    $("#tplMeta").innerHTML = `<span><b>来源</b> ${esc(d.source)}</span><span><b>type</b> ${esc(d.type)}</span><span><b>category</b> ${esc(d.category)}</span><span><b>实体字段</b> ${(d.entity_fields || []).length}</span><span><b>关系字段</b> ${(d.relation_fields || []).length}</span>`;
+    $("#tplYaml").value = d.yaml || "";
+    if (!isUser) {
+      $("#saveBtn").disabled = true;
+      $("#saveMsg").textContent = "system/project 模板只读,无法保存(可先在列表复制成 user 模板)";
+    }
+    makeYamlEditor("tplYaml");
+    liveValidate();
+    $("#tplYaml").addEventListener("input", () => { clearTimeout(vt); vt = setTimeout(liveValidate, 500); });
+  } catch (e) {
+    toast("加载模板失败:" + errMsg(e), "error");
+    $("#sub").innerHTML = `<span style="color:var(--danger)">加载失败:${esc(errMsg(e))}</span>`;
+  }
+}
+let vt = null;
+async function liveValidate() {
+  const y = $("#tplYaml").value; if (!y.trim()) { $("#vbox").innerHTML = ""; return; }
+  try {
+    const r = await request("POST", API + "/validate", { body: { yaml: y } }); const d = r.data;
+    $("#vbox").innerHTML = d.valid ? `<div class="ok">✓ 校验通过</div>`
+      : `<div class="err">✗ ${d.errors.length} 处:</div>` + d.errors.map((e) => `<div class="vrow"><span class="path">${esc(e.path)}</span><span>${esc(e.message)}</span></div>`).join("");
+  } catch (e) { $("#vbox").innerHTML = `<div class="err">${esc(errMsg(e))}</div>`; }
+}
+
+/* ---------- 0. 保存模板(仅 user) ---------- */
+$("#saveBtn").addEventListener("click", async () => {
+  if (!isUser) { toast("system/project 模板只读", "error"); return; }
+  const y = $("#tplYaml").value;
+  $("#saveMsg").textContent = "保存中…"; $("#saveBtn").disabled = true;
+  try {
+    await request("PUT", `${API}/${encodeURIComponent(NAME)}`, { body: { yaml: y } });
+    $("#saveMsg").textContent = "已保存,下次 /kg/build 即生效";
+    toast("模板已保存", "success");
+  } catch (e) { $("#saveMsg").textContent = ""; toast("保存失败:" + errMsg(e), "error"); }
+  finally { if (isUser) $("#saveBtn").disabled = false; }
+});
+
+/* ---------- 1. 生成场景文档 ---------- */
+$("#docBtn").addEventListener("click", async () => {
+  $("#docMsg").textContent = "生成中…(≤90s,LLM 读模板强制覆盖所有类型)"; $("#docBtn").disabled = true; $("#docText").value = "";
+  try {
+    const r = await request("POST", `${API}/${encodeURIComponent(NAME)}/quality/doc`, {
+      body: { scenario_hint: $("#docHint").value.trim() || null } });
+    $("#docText").value = r.data.document || "";
+    $("#docMsg").textContent = `已生成 ${(r.data.document || "").length} 字`;
+  } catch (e) { $("#docMsg").textContent = ""; toast("生成文档失败:" + errMsg(e), "error"); }
+  finally { $("#docBtn").disabled = false; }
+});
+
+/* ---------- 2. 生成图谱 ---------- */
+const TYPE_COLOR = { 系统: "#3b82f6", 算法: "#8b5cf6", 模型: "#ec4899", 组件: "#f59e0b", 应用: "#10b981", 数据: "#06b6d4", 方法: "#f97316", 过程: "#64748b", 事件: "#ef4444", 组织: "#a855f7", 角色: "#84cc16", 产品: "#14b8a6", 属性: "#94a3b8", 概念: "#d946ef", entity: "#14b8a6" };
+function typeColor(t) { t = t || "entity"; if (TYPE_COLOR[t]) return TYPE_COLOR[t]; let h = 0; for (let i = 0; i < t.length; i++) h = (h * 131 + t.charCodeAt(i)) % 360; return `hsl(${h},68%,62%)`; }
+
+function destroyGraph() { if (kgNetwork) { try { kgNetwork.destroy(); } catch (_) {} kgNetwork = null; } }
+
+function renderGraphData(rawNodes, rawEdges) {
+  const meta = $("#kgMeta"), cont = $("#kgGraph");
+  const V = window.vis; if (!V) { meta.textContent = "图库未加载(vis-network)"; return; }
+  destroyGraph();
+  const STRUCTURE = new Set(["document", "chunk"]);
+  const ns = (rawNodes || []).filter((n) => !STRUCTURE.has(n.label)).map((n) => {
+    const c = typeColor(n.type || n.label);
+    return {
+      id: n.id, group: n.type || n.label,
+      label: n.name && n.name !== n.label ? n.name : (n.name || n.label),
+      title: `${esc(n.name || n.label)} [${esc(n.label)}]${n.type && n.type !== n.label ? " · " + esc(n.type) : ""}${n.definition ? "\n" + esc(n.definition) : ""}`,
+      color: { background: c, border: c, highlight: { background: c, border: "#fff" } },
+    };
+  });
+  const keepIds = new Set(ns.map((n) => n.id));
+  const es = (rawEdges || []).filter((e) => keepIds.has(e.source) && keepIds.has(e.target))
+    .map((e, i) => ({ id: e.id || "e" + i, from: e.source, to: e.target, label: e.relation_type || "", arrows: "to", font: { size: 9, color: "#64748b", strokeWidth: 0 } }));
+  if (!ns.length) { meta.textContent = "无实体节点(已隐藏 document/chunk)— 模板可能未抽到实体,检查 guideline / type 枚举"; cont.innerHTML = ""; return; }
+  meta.innerHTML = `${ns.length} 实体节点 · ${es.length} 关系边`;
+  const opts = {
+    height: "100%", width: "100%", autoResize: true,
+    layout: { improvedLayout: ns.length <= 150 },
+    physics: { stabilization: { iterations: ns.length > 5000 ? 30 : 80 }, barnesHut: { gravitationalConstant: -8000, springLength: 110 } },
+    nodes: { shape: "dot", size: 14, font: { size: 13, color: "#e2e8f0" }, borderWidth: 2 },
+    edges: { color: { color: "#475569", opacity: 0.55 }, smooth: false, selectionWidth: 2 },
+  };
+  kgNetwork = new V.Network(cont, { nodes: new V.DataSet(ns), edges: new V.DataSet(es) }, opts);
+}
+
+async function renderGraph(dataset) {
+  const meta = $("#kgMeta");
+  meta.textContent = "加载图…";
+  let r;
+  try { r = await request("GET", `/kg/graph?dataset=${encodeURIComponent(dataset)}&limit=8000`); }
+  catch (e) { meta.innerHTML = `<span style="color:var(--danger)">图加载失败:${esc(errMsg(e))}</span>`; return; }
+  lastGraphSnapshot = r;  // 留存原始快照,供保存/历史回放
+  renderGraphData(r.nodes, r.edges);
+}
+
+async function pollBuild(taskId, dataset) {
+  if (pollTimer) clearInterval(pollTimer);
+  return new Promise((resolve) => {
+    let done = false;
+    pollTimer = setInterval(async () => {
+      try {
+        const s = await request("GET", `/kg/build/${encodeURIComponent(taskId)}/status`);
+        const st = s.status || s.data?.status;
+        const ecount = s.entity_count ?? s.data?.entity_count ?? 0;
+        const rcount = s.relation_count ?? s.data?.relation_count ?? 0;
+        const proc = s.processed_chunks ?? s.data?.processed_chunks ?? 0;
+        const tot = s.total_chunks ?? s.data?.total_chunks ?? 0;
+        if (["COMPLETED", "FAILED", "completed", "failed"].includes(st)) {
+          if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+          done = true;
+          if (st === "FAILED" || st === "failed") {
+            $("#buildMsg").innerHTML = `<span style="color:var(--danger)">build 失败:${esc(s.error || s.data?.error || "?")}</span>`;
+            resolve(false);
+          } else {
+            $("#buildMsg").innerHTML = `✓ 完成:${ecount} 实体 / ${rcount} 关系 · 加载图…`;
+            await renderGraph(dataset);
+            $("#buildMsg").textContent = `✓ 完成:${ecount} 实体 / ${rcount} 关系`;
+            lastCounts = { e: ecount, r: rcount };
+            resolve(true);
+          }
+        } else {
+          $("#buildMsg").textContent = `build 中…${proc}/${tot} chunks · ${ecount} 实体`;
+        }
+      } catch (e) {
+        if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+        $("#buildMsg").innerHTML = `<span style="color:var(--danger)">轮询失败:${esc(errMsg(e))}</span>`;
+        resolve(false);
+      }
+    }, 3000);
+  });
+}
+
+$("#buildBtn").addEventListener("click", async () => {
+  const doc = $("#docText").value.trim();
+  if (!doc || doc.length < 50) { toast("请先生成或粘贴一段文档(≥50 字)", "error"); return; }
+  if (kgTaskId && !confirm("已有进行中的验证,重新生成会覆盖当前结果。继续?")) return;
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  $("#buildMsg").textContent = "提交 ingest+build…"; $("#buildBtn").disabled = true;
+  try {
+    const r = await request("POST", `${API}/${encodeURIComponent(NAME)}/quality/build`, { body: { document: doc } });
+    tempDs = r.data.temp_dataset; kgTaskId = r.data.kg_task_id;
+    $("#buildMsg").textContent = `build 派发成功,临时数据集 ${tempDs},轮询中…`;
+    await pollBuild(kgTaskId, tempDs);
+  } catch (e) { $("#buildMsg").innerHTML = `<span style="color:var(--danger)">${esc(errMsg(e))}</span>`; }
+  finally { $("#buildBtn").disabled = false; }
+});
+
+/* ---------- 3. RAG 问答 ---------- */
+$("#ragBtn").addEventListener("click", async () => {
+  if (!tempDs) { toast("请先生成图谱(步骤 2)", "error"); return; }
+  const q = $("#ragQ").value.trim(); if (!q) { toast("请输入问题", "error"); return; }
+  $("#ragMsg").textContent = "问答中…(GraphRAG,≤120s)"; $("#ragBtn").disabled = true;
+  $("#ragAns").textContent = "…"; $("#ragCite").textContent = "";
+  try {
+    const r = await request("POST", "/rag/query", { body: { question: q, dataset_name: tempDs, use_kg: true } });
+    const d = r.data ?? r;
+    $("#ragAns").textContent = d.answer || "(空回答)";
+    const cites = d.citations || [];
+    $("#ragCite").textContent = cites.length ? `引用 ${cites.length} 段(chunk: ${cites.map((c) => c.chunk_index ?? "?").join(", ")}) · retrieval=${d.retrieval_count ?? "?"}` : "无引用";
+    ragHistory.push({ question: q, answer: d.answer || "", citations: cites });
+    renderRagHistory();
+    $("#ragMsg").textContent = "";
+  } catch (e) { $("#ragMsg").textContent = ""; $("#ragAns").textContent = "× 失败:" + errMsg(e); }
+  finally { $("#ragBtn").disabled = false; }
+});
+
+/* ---------- 4. 清理 ---------- */
+$("#cleanBtn").addEventListener("click", async () => {
+  if (!tempDs) { $("#cleanMsg").textContent = "无可清理的临时数据集"; return; }
+  if (!await confirmDialog({ title: "清理临时数据集?", message: `将删除 ${tempDs} 及其 kg 图。`, okText: "清理", danger: true })) return;
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  $("#cleanMsg").textContent = "清理中…";
+  try {
+    await request("DELETE", `${API}/quality/${encodeURIComponent(tempDs)}`);
+    destroyGraph();
+    $("#cleanMsg").textContent = `已删除 ${tempDs}`;
+    $("#buildMsg").textContent = ""; $("#kgMeta").textContent = ""; $("#kgGraph").innerHTML = "";
+    $("#ragAns").textContent = "—"; $("#ragCite").textContent = "";
+    tempDs = null; kgTaskId = null;
+    toast("临时数据已清理", "success");
+  } catch (e) { $("#cleanMsg").textContent = ""; toast("清理失败:" + errMsg(e), "error"); }
+});
+
+/* ---------- RAG 本会话问答列表 ---------- */
+function renderRagHistory() {
+  const el = $("#ragHistoryList");
+  if (!ragHistory.length) { el.innerHTML = ""; return; }
+  el.innerHTML = `<div class="muted" style="font-size:.7rem;margin-bottom:4px">本会话问答(${ragHistory.length},保存时一并入库)</div>`
+    + ragHistory.map((qa, i) => `<div style="border:1px solid var(--line-soft);border-radius:6px;padding:6px 8px;margin-bottom:4px;font-size:.76rem">
+      <div><b>Q${i + 1}:</b> ${esc(qa.question)}</div>
+      <div class="muted" style="margin-top:2px;white-space:pre-wrap">${esc((qa.answer || "").slice(0, 240))}${(qa.answer || "").length > 240 ? "…" : ""}</div></div>`).join("");
+}
+
+/* ---------- 5. 保存 + 历史 ---------- */
+$("#saveRunBtn").addEventListener("click", async () => {
+  const doc = $("#docText").value.trim();
+  if (!doc || doc.length < 50) { toast("无文档可保存(先生成/粘贴文档)", "error"); return; }
+  $("#saveMsg").textContent = "保存中…"; $("#saveRunBtn").disabled = true;
+  try {
+    const body = {
+      document: doc, scenario_hint: $("#docHint").value.trim() || null,
+      temp_dataset: tempDs, entity_count: lastCounts.e, relation_count: lastCounts.r,
+      graph_snapshot: lastGraphSnapshot, rag_qa: ragHistory.length ? ragHistory : null,
+      note: $("#saveNote").value.trim() || null,
+    };
+    const r = await request("POST", `${API}/${encodeURIComponent(NAME)}/quality/save`, { body });
+    $("#saveMsg").textContent = `已保存(run #${r.data.run_id})`;
+    toast("验证结果已保存", "success");
+    loadHistory();
+  } catch (e) { $("#saveMsg").textContent = ""; toast("保存失败:" + errMsg(e), "error"); }
+  finally { $("#saveRunBtn").disabled = false; }
+});
+
+$("#histBtn").addEventListener("click", loadHistory);
+
+async function loadHistory() {
+  try {
+    const r = await request("GET", `${API}/${encodeURIComponent(NAME)}/quality/history`);
+    const rows = r.data || [];
+    const tbl = $("#histTable"), empty = $("#histEmpty");
+    if (!rows.length) { tbl.style.display = "none"; empty.style.display = ""; empty.textContent = "暂无历史记录"; return; }
+    tbl.style.display = ""; empty.style.display = "none";
+    $("#histRows").innerHTML = rows.map((x) => `<tr>
+      <td class="mono">#${x.id}</td>
+      <td style="font-size:.7rem">${esc((x.created_at || "").replace("T", " ").replace("Z", ""))}</td>
+      <td>${x.entity_count}/${x.relation_count}</td>
+      <td>${esc(x.note || "—")}</td>
+      <td style="font-size:.72rem;color:var(--fg-lo)">${esc(x.scenario_hint || "—")}</td>
+      <td class="nowrap">
+        <button class="btn btn-ghost btn-sm" data-load="${x.id}">查看</button>
+        <button class="btn btn-ghost btn-sm" data-delrun="${x.id}" style="color:#ff6b6b">删除</button>
+      </td></tr>`).join("");
+  } catch (e) { toast("加载历史失败:" + errMsg(e), "error"); }
+}
+
+$("#histRows").addEventListener("click", async (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  if (b.dataset.load) { await loadRun(Number(b.dataset.load)); }
+  else if (b.dataset.delrun) {
+    const id = Number(b.dataset.delrun);
+    if (await confirmDialog({ title: `删除历史 #${id}?`, message: "仅删库记录,不影响任何数据集/图。", okText: "删除", danger: true })) {
+      try { await request("DELETE", `${API}/quality/runs/${id}`); toast("已删除", "success"); loadHistory(); }
+      catch (err) { toast("删除失败:" + errMsg(err), "error"); }
+    }
+  }
+});
+
+async function loadRun(id) {
+  try {
+    const r = await request("GET", `${API}/quality/runs/${id}`);
+    const d = r.data;
+    $("#docText").value = d.document || "";
+    $("#docHint").value = d.scenario_hint || "";
+    $("#saveNote").value = d.note || "";
+    lastCounts = { e: d.entity_count || 0, r: d.relation_count || 0 };
+    lastGraphSnapshot = d.graph_snapshot || null;
+    ragHistory = Array.isArray(d.rag_qa) ? d.rag_qa : [];
+    renderRagHistory();
+    // 重放图快照(若无快照,提示)
+    if (d.graph_snapshot && (d.graph_snapshot.nodes || []).length) {
+      renderGraphData(d.graph_snapshot.nodes, d.graph_snapshot.edges || []);
+      $("#buildMsg").textContent = `历史回放 #${id}:${lastCounts.e} 实体 / ${lastCounts.r} 关系(图来自快照)`;
+    } else {
+      destroyGraph(); $("#kgGraph").innerHTML = "";
+      $("#kgMeta").textContent = `历史 #${id}:${lastCounts.e} 实体 / ${lastCounts.r} 关系(无图快照)`;
+      $("#buildMsg").textContent = "";
+    }
+    tempDs = null; kgTaskId = null;  // 历史回放不绑定活跃临时数据集
+    toast(`已加载历史 #${id}`, "success");
+    document.querySelector(".qstep").scrollIntoView({ behavior: "smooth" });
+  } catch (e) { toast("加载记录失败:" + errMsg(e), "error"); }
+}
+
+loadTemplate();
+loadHistory();
+applyIcons(document);
+</script>
+</body></html>

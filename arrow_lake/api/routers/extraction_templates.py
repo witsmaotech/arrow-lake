@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import re
 import secrets
 from typing import Any
 
@@ -21,6 +23,7 @@ from pydantic import BaseModel, Field
 
 from arrow_lake.api.auth_models import Role
 from arrow_lake.api.deps import require_role, get_lake
+from arrow_lake.api.utils import run_sync
 from arrow_lake.knowledge_graph.doc_type_router import (
     get_template_gallery, reset_gallery_cache,
 )
@@ -446,6 +449,305 @@ async def dry_run(
                 os.remove(tmp)
             except OSError:
                 pass
+
+
+# --- quality validation harness(M4,方案 B 真 HugeGraph)-------------------
+# 模板质量端到端验证:LLM 按模板生成 ~2000字 场景文档 → ingest+index → kg_build
+# (template=name) → 前端 vis-network 可视化 + RAG 问答 → 清理临时数据集。
+# 比 M3 dry-run(单 chunk 抽样)更彻底:多 chunk 合并 + 真 HugeGraph + RAG。
+
+class QualityDocRequest(BaseModel):
+    scenario_hint: str | None = Field(default=None, max_length=500)
+
+
+class QualityBuildRequest(BaseModel):
+    document: str = Field(..., min_length=50, max_length=20000)
+
+
+_quality_sem = asyncio.Semaphore(2)  # ingest+build 重,限并发
+_QUALITY_DIR = "/data/lake/template-quality-md"  # 卷上临时 .md 目录,不进 user 模板 glob
+_QUALITY_KA_DIR = "/data/lake/template-quality-ka"  # 隔离的 KA dump/checkpoint 根(与 /data/lake/ka 同级,生产隔离)
+# 临时数据集严格匹配 build 生成的 _quality_<token_hex(6)>(12 个小写 hex)。cleanup 路径
+# 派生用它前先校验,杜绝 path-traversal(恶意 temp_ds 经 _quality_ka_root 派生 .. 可越界 rmtree)。
+_QUALITY_DS_RE = re.compile(r"^_quality_[0-9a-f]{12}$")
+
+
+def _quality_ka_root(temp_ds: str) -> str:
+    """Sharded quality-KA base dir for a temp dataset.
+
+    ``/data/lake/template-quality-ka/<tt>`` where ``<tt>`` is the 2-char token
+    prefix — git-style sharding so a single flat dir doesn't grow unbounded as
+    concurrent / un-cleaned runs accumulate. Derived purely from ``temp_ds``
+    (``_quality_<token>``), so build dispatch and cleanup always agree.
+
+    Caller MUST have validated ``temp_ds`` against ``_QUALITY_DS_RE`` first — the
+    shard is sliced from the raw name, so an unsanitized value could traverse.
+    """
+    token = temp_ds[len("_quality_"):]
+    return os.path.join(_QUALITY_KA_DIR, token[:2])
+
+
+def _get_extract_llm_cfg(lake) -> Any:
+    """抽取/生成用 LLM 配置(he_extract_llm 优先,回退全局 llm)。"""
+    hg = getattr(lake._config, "hugegraph", None)
+    return getattr(hg, "he_extract_llm", None) or getattr(lake._config, "llm", None)
+
+
+def _extract_schema_snippet(yaml_text: str) -> str:
+    """取模板的 output/guideline 块喂给 doc-gen LLM —— 这些字段的 description
+    带着实体/关系类型枚举,LLM 据此覆盖所有类型。解析失败回退裁剪后的原始 YAML。"""
+    try:
+        import yaml as _yaml
+        d = _yaml.safe_load(yaml_text) or {}
+        keep = {k: d[k] for k in ("name", "type", "output", "guideline", "description") if k in d}
+        return _yaml.safe_dump(keep, allow_unicode=True, sort_keys=False)
+    except Exception:  # noqa: BLE001 — 解析失败不阻塞,喂原始文本
+        return yaml_text[:4000]
+
+
+def _strip_doc_fences(text: str) -> str:
+    """剥可能的 markdown 代码围栏 + 前后空白。文档是自由文本,只去围栏不过滤内容。"""
+    t = (text or "").strip()
+    m = re.search(r"```(?:markdown|md|text)?\s*\n(.*?)```", t, re.S)
+    return m.group(1).strip() if m else t
+
+
+_QUALITY_DOC_SYSTEM = """你是领域场景文档撰写专家。下面给出一个 hyper-extract 知识抽取模板的定义。请撰写一篇真实、连贯、信息密集的中文场景文档(约 2000 字),用于端到端验证该模板的抽取能力。
+
+【硬约束】
+1. 先从模板 output.entities.fields 里 type 字段的说明读出**所有实体类型**(通常是枚举,如"必须是 资产/威胁/控制 之一")。文档中**每一种实体类型至少出现 2 个具体实例**,用规范术语命名,自然嵌入叙述。
+2. 从 output.relations.fields 里 type 字段的说明读出**所有关系类型**。文档中**每一种关系类型至少被 1 对实体实例真实体现**(可被抽取的关系)。
+3. 文档必须是**连贯的真实叙事**(一份完整的报告/案例/方案/纪要),有背景、过程、结论。**禁止**用清单、表格、JSON 或罗列实体来凑数。
+4. 字数约 1500-2500 字(中文)。只输出正文:不要解释、不要元注释、不要 markdown 代码围栏。
+
+【模板定义】:
+{TEMPLATE}
+"""
+
+
+@router.post("/{name}/quality/doc")
+async def quality_doc(
+    name: str,
+    req: QualityDocRequest,
+    lake: Any = Depends(get_lake),
+    _user: dict = Depends(require_role(Role.ADMIN)),
+) -> dict:
+    """质量验证·生成文档:LLM 读模板 → 生成 ~2000字 场景文档(强制覆盖所有实体/关系类型)。"""
+    t = _find(name)
+    if t is None:
+        raise HTTPException(status_code=404, detail=f"template not found: {name}")
+    yaml_text = _read_yaml(t.path) or ""
+    if not yaml_text:
+        raise HTTPException(status_code=422, detail="模板 YAML 不可读(无法生成文档)")
+    cfg = _get_extract_llm_cfg(lake)
+    if cfg is None or not getattr(cfg, "api_key", None):
+        raise HTTPException(status_code=503, detail="未配置 LLM(he_extract_llm/llm),无法生成文档")
+
+    system = _QUALITY_DOC_SYSTEM.replace("{TEMPLATE}", _extract_schema_snippet(yaml_text))
+    user_msg = ""
+    if req.scenario_hint and req.scenario_hint.strip():
+        user_msg += f"场景提示:{req.scenario_hint.strip()}\n"
+    user_msg += "请撰写约 2000 字的中文场景文档,严格覆盖模板定义的全部实体类型与关系类型,只输出正文。"
+    msgs: list[tuple[str, str]] = [("system", system), ("user", user_msg)]
+
+    async def generate_fn(m):
+        provider = create_llm_provider(cfg)
+        resp = await provider.generate([LLMMessage(role=r, content=c) for r, c in m])
+        return getattr(resp, "content", "") or ""
+
+    async with _generate_sem:  # 复用 generate 的并发闸
+        try:
+            out = await asyncio.wait_for(generate_fn(msgs), timeout=90)
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=504, detail="LLM 生成文档超时(>90s)")
+        except Exception as exc:  # noqa: BLE001 — LLM/provider 故障
+            raise HTTPException(status_code=502, detail=f"LLM 生成失败: {str(exc)[:160]}") from exc
+    document = _strip_doc_fences(out)
+    logger.info("template_quality_doc template=%s doc_len=%d by=%s",
+                name, len(document), getattr(_user, "username", None))
+    return {"success": True, "data": {"document": document}}
+
+
+async def _safe_delete_quality(lake, temp_ds: str) -> None:
+    """Best-effort 清理临时质量数据集 + 其隔离 KA 目录(delete_dataset 已会 drop kg 图)。"""
+    # defense-in-depth:先严格校验 temp_ds 形如 _quality_<hex>。_quality_ka_root 从裸名
+    # 切 shard,未校验则 .. 可越界 rmtree;delete_dataset 也会因非法名被拒。
+    if not _QUALITY_DS_RE.match(temp_ds):
+        return
+    try:
+        await run_sync(lake.delete_dataset, temp_ds, timeout=120, label="quality_cleanup")
+    except Exception:  # noqa: BLE001 — 清理永不抛
+        pass
+    # delete_dataset 不删 KA dump/checkpoint → 手动删隔离 KA 目录。
+    try:
+        import shutil
+        from arrow_lake.knowledge_graph._naming import artifact_key_for
+        ka_key_dir = os.path.join(_quality_ka_root(temp_ds), artifact_key_for(temp_ds))
+        await run_sync(shutil.rmtree, ka_key_dir, True, timeout=60, label="quality_ka_cleanup")
+    except Exception:  # noqa: BLE001
+        pass
+
+
+@router.post("/{name}/quality/build")
+async def quality_build(
+    name: str,
+    req: QualityBuildRequest,
+    lake: Any = Depends(get_lake),
+    _user: dict = Depends(require_role(Role.ADMIN)),
+) -> dict:
+    """质量验证·建图:写 .md → ingest+index → kg_build(template=name)。
+    返回临时数据集名 + kg 任务 id(build 异步,前端轮询 /kg/build/{id}/status)。"""
+    if _find(name) is None:
+        raise HTTPException(status_code=404, detail=f"template not found: {name}")
+    async with _quality_sem:
+        os.makedirs(_QUALITY_DIR, exist_ok=True)
+        token = secrets.token_hex(6)
+        temp_ds = f"_quality_{token}"
+        md_path = os.path.join(_QUALITY_DIR, f"{token}.md")
+        with open(md_path, "w", encoding="utf-8") as fh:
+            fh.write(req.document.strip())
+        try:
+            await run_sync(
+                lake.ingest_documents_and_index, temp_ds, [md_path],
+                timeout=600, label="quality_ingest",
+                actor=getattr(_user, "username", None) or "system",
+            )
+        except Exception as exc:
+            await _safe_delete_quality(lake, temp_ds)
+            raise HTTPException(status_code=502, detail=f"ingest 失败: {str(exc)[:160]}") from exc
+        finally:
+            try:
+                os.remove(md_path)  # 数据已入 lance/minio,删临时 .md
+            except OSError:
+                pass
+        try:
+            task_id = await lake.kg_build(temp_ds, template=name,
+                                          ka_base_dir=_quality_ka_root(temp_ds))
+        except Exception as exc:
+            await _safe_delete_quality(lake, temp_ds)
+            raise HTTPException(status_code=502, detail=f"kg_build 派发失败: {str(exc)[:160]}") from exc
+        logger.info("template_quality_build template=%s temp_ds=%s task=%s by=%s",
+                    name, temp_ds, task_id, getattr(_user, "username", None))
+        return {"success": True, "data": {"temp_dataset": temp_ds, "kg_task_id": task_id}}
+
+
+@router.delete("/quality/{temp_dataset}")
+async def quality_cleanup(
+    temp_dataset: str,
+    lake: Any = Depends(get_lake),
+    _user: dict = Depends(require_role(Role.ADMIN)),
+) -> dict:
+    """质量验证·清理:删临时数据集(同时 best-effort drop 其 kg_{temp} 图)。"""
+    if not _QUALITY_DS_RE.match(temp_dataset):
+        raise HTTPException(status_code=422, detail={
+            "code": "INVALID_TEMP_DATASET",
+            "message": "temp_dataset must be a quality-harness generated name (_quality_<12hex>)",
+        })
+    await _safe_delete_quality(lake, temp_dataset)
+    logger.info("template_quality_cleanup temp_ds=%s by=%s",
+                temp_dataset, getattr(_user, "username", None))
+    return {"success": True, "data": {"temp_dataset": temp_dataset, "deleted": True}}
+
+
+# --- quality run history(M4:持久化验证结果,可回看)------------------------
+
+_GRAPH_SNAPSHOT_MAX_NODES = 500  # 超过则不存快照(只存计数),控 libSQL 行大小
+_GRAPH_SNAPSHOT_MAX_EDGES = 2000
+
+
+class QualitySaveRequest(BaseModel):
+    document: str = Field(..., min_length=50, max_length=20000)
+    scenario_hint: str | None = Field(default=None, max_length=500)
+    temp_dataset: str | None = None
+    entity_count: int = Field(default=0, ge=0)
+    relation_count: int = Field(default=0, ge=0)
+    graph_snapshot: dict | None = None  # {nodes, edges} from /kg/graph
+    rag_qa: list[dict] | None = Field(default=None, max_length=50)  # [{question, answer, citations}]
+    note: str | None = Field(default=None, max_length=1000)
+
+
+def _quality_store(request: Request):
+    return getattr(request.app.state, "template_quality_store", None)
+
+
+@router.post("/{name}/quality/save")
+async def quality_save(
+    name: str,
+    req: QualitySaveRequest,
+    request: Request,
+    _user: dict = Depends(require_role(Role.ADMIN)),
+) -> dict:
+    """质量验证·保存:持久化本次验证(文档/计数/图快照/RAG 问答),供历史回看。"""
+    store = _quality_store(request)
+    if store is None:
+        raise HTTPException(status_code=503, detail="system_db disabled; history unavailable")
+    import json
+    snap = None
+    if req.graph_snapshot and len(req.graph_snapshot.get("nodes") or []) <= _GRAPH_SNAPSHOT_MAX_NODES \
+            and len(req.graph_snapshot.get("edges") or []) <= _GRAPH_SNAPSHOT_MAX_EDGES:
+        snap = json.dumps(req.graph_snapshot, ensure_ascii=False)
+    rag = json.dumps(req.rag_qa or [], ensure_ascii=False) if req.rag_qa else None
+    run_id = store.save_run(
+        template_name=name, document=req.document, scenario_hint=req.scenario_hint,
+        temp_dataset=req.temp_dataset, entity_count=req.entity_count,
+        relation_count=req.relation_count, graph_snapshot=snap, rag_qa=rag,
+        note=req.note, created_by=getattr(_user, "username", None),
+    )
+    logger.info("template_quality_saved template=%s run=%s by=%s",
+                name, run_id, getattr(_user, "username", None))
+    return {"success": True, "data": {"run_id": run_id}}
+
+
+@router.get("/{name}/quality/history")
+async def quality_history(
+    name: str,
+    request: Request,
+    _user: dict = Depends(require_role(Role.ADMIN)),
+) -> dict:
+    """质量验证·历史:列出某模板的历次验证(摘要,不含大字段)。"""
+    store = _quality_store(request)
+    if store is None:
+        raise HTTPException(status_code=503, detail="system_db disabled; history unavailable")
+    runs = store.list_runs(name)
+    return {"success": True, "data": runs, "count": len(runs)}
+
+
+@router.get("/quality/runs/{run_id}")
+async def quality_run_detail(
+    run_id: int,
+    request: Request,
+    _user: dict = Depends(require_role(Role.ADMIN)),
+) -> dict:
+    """质量验证·详情:单次验证全量(含文档/图快照/RAG 问答),供回看重放。"""
+    store = _quality_store(request)
+    if store is None:
+        raise HTTPException(status_code=503, detail="system_db disabled; history unavailable")
+    import json
+    run = store.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"run {run_id} not found")
+    # 解包 JSON 字段为结构,前端直接用
+    run["graph_snapshot"] = json.loads(run["graph_snapshot"]) if run.get("graph_snapshot") else None
+    run["rag_qa"] = json.loads(run["rag_qa"]) if run.get("rag_qa") else []
+    return {"success": True, "data": run}
+
+
+@router.delete("/quality/runs/{run_id}")
+async def quality_run_delete(
+    run_id: int,
+    request: Request,
+    _user: dict = Depends(require_role(Role.ADMIN)),
+) -> dict:
+    """质量验证·删历史记录(仅删库记录,不影响任何数据集/图)。"""
+    store = _quality_store(request)
+    if store is None:
+        raise HTTPException(status_code=503, detail="system_db disabled; history unavailable")
+    removed = store.delete_run(run_id)
+    if not removed:
+        raise HTTPException(status_code=404, detail=f"run {run_id} not found")
+    logger.info("template_quality_run_deleted run=%s by=%s",
+                run_id, getattr(_user, "username", None))
+    return {"success": True, "data": {"run_id": run_id, "deleted": True}}
 
 
 # --- set-default + usage(M3)----------------------------------------------

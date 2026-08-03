@@ -149,6 +149,7 @@ class KGBuilder:
     async def build(
         self, dataset_name: str, chunks_table: pa.Table, *,
         incremental: bool = False, template_override: str | None = None,
+        ka_base_dir: str | None = None,
     ) -> str:
         """Prepare a KG build task and return its ID immediately.
 
@@ -162,6 +163,10 @@ class KGBuilder:
         ``template_override`` (v1.10.0): a template name or path binding this
         dataset to a specific extraction template; takes priority over doc_type
         routing (see ``he_extractor._resolve_template``). None = route as before.
+
+        ``ka_base_dir`` (v1.10.0 M4): override the per-build KA-artifact root so
+        the quality-validation harness can isolate its temp KA dumps/checkpoints
+        from production. None = use the configured ``he_ka_base_dir``.
         """
         task_id = str(uuid.uuid4())[:8]
         started = datetime.now(UTC)
@@ -178,7 +183,7 @@ class KGBuilder:
             error=None,
         )
         self._tasks[task_id] = task
-        self._pending_tables[task_id] = (chunks_table, incremental, template_override)
+        self._pending_tables[task_id] = (chunks_table, incremental, template_override, ka_base_dir)
         return task_id
 
     async def execute_build(self, task_id: str) -> None:
@@ -189,10 +194,11 @@ class KGBuilder:
         if task is None or pending is None:
             logger.debug("KGDISPATCH execute_build EARLY_RETURN task_none=%s pending_none=%s", task is None, pending is None)
             return
-        table, incremental, template_override = pending
+        table, incremental, template_override, ka_base_dir = pending
         try:
             await self._execute_build(task, table, incremental=incremental,
-                                      template_override=template_override)
+                                      template_override=template_override,
+                                      ka_base_dir=ka_base_dir)
             task.status = KGBuildStatus.COMPLETED
         except asyncio.CancelledError:
             # Cancellation is abnormal — mark FAILED, then propagate (do NOT
@@ -221,7 +227,7 @@ class KGBuilder:
 
     async def _execute_build(
         self, task: KGBuildTask, table: pa.Table, *, incremental: bool = False,
-        template_override: str | None = None,
+        template_override: str | None = None, ka_base_dir: str | None = None,
     ) -> None:
         """Run the full build pipeline.
 
@@ -233,9 +239,24 @@ class KGBuilder:
         ``template_override`` (v1.10.0): set on the extractor for this build so
         every granularity's ``_resolve_template`` honors the per-dataset binding.
         Cleared by :meth:`execute_build`'s finally to avoid leaking across builds.
+
+        ``ka_base_dir`` (v1.10.0 M4): override root for this build's KA artifacts
+        (dataset-path dump + map_reduce checkpoint). The quality harness isolates
+        its temp artifacts from production. None = configured ``he_ka_base_dir``.
         """
         # v1.10.0: per-dataset template binding — single chokepoint in _resolve_template.
         self._extractor._active_template_override = template_override
+        # v1.10.0 M4: resolve the KA-artifact root for THIS build (override wins,
+        # else builder-configured base, else config he_ka_base_dir). None only
+        # when no base is configured at all.
+        if ka_base_dir:
+            _ka_root: Path | None = Path(ka_base_dir)
+        elif self._ka_base_dir is not None:
+            _ka_root = self._ka_base_dir
+        elif getattr(self._config, "he_ka_base_dir", None):
+            _ka_root = Path(self._config.he_ka_base_dir)
+        else:
+            _ka_root = None
         # v1.8.6: per-dataset graph isolation — every write targets kg_{dataset}.
         graph_name = graph_name_for(task.dataset_name)
         # 1. Ensure schema (also creates graph if needed)
@@ -374,7 +395,7 @@ class KGBuilder:
         use_dataset_path = (
             _gran == "dataset"
             and hasattr(self._extractor, "build_dataset_ka")
-            and self._ka_base_dir is not None
+            and _ka_root is not None
         )
 
         if use_dataset_path:
@@ -388,16 +409,16 @@ class KGBuilder:
             # [#naming] use artifact_key_for so the build-time KA dir matches
             # the query-time dir (he_extractor._ka_dir_for) and the graph name.
             from arrow_lake.knowledge_graph._naming import artifact_key_for
-            ka_dir = self._ka_base_dir / artifact_key_for(task.dataset_name) / "ka"
+            ka_dir = _ka_root / artifact_key_for(task.dataset_name) / "ka"
             # [#11] Archive the current dump (if any) before overwrite so a
             # regressive/failed rebuild can be rolled back. Then prune to the
             # configured max versions to bound disk usage.
             try:
                 from arrow_lake.knowledge_graph import ka_versioning
-                ka_versioning.archive_current(self._ka_base_dir, task.dataset_name)
+                ka_versioning.archive_current(_ka_root, task.dataset_name)
                 _max = getattr(self._config, "he_ka_max_versions", 0) or 0
                 if _max > 0:
-                    ka_versioning.prune(self._ka_base_dir, task.dataset_name, keep=_max)
+                    ka_versioning.prune(_ka_root, task.dataset_name, keep=_max)
             except Exception as exc:  # noqa: BLE001 — versioning is best-effort
                 logger.warning("KA versioning archive/prune failed for %s: %s",
                                task.dataset_name, exc)
@@ -526,7 +547,7 @@ class KGBuilder:
 
             # MAP + online SHUFFLE (streaming fold, #5) + checkpoint/resume (#3).
             from arrow_lake.knowledge_graph._naming import artifact_key_for
-            ckpt_path = Path(self._config.he_ka_base_dir) / artifact_key_for(
+            ckpt_path = (_ka_root or Path(self._config.he_ka_base_dir)) / artifact_key_for(
                 task.dataset_name) / "map_reduce.json"
             result: ExtractionResult | None = None
             entity_chunks: dict[str, list[str]] = {}
