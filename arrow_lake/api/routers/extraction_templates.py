@@ -328,6 +328,132 @@ async def generate_template(
         "valid": not errors}}
 
 
+# --- dry-run 试跑(M3)-----------------------------------------------------
+
+class DryRunRequest(BaseModel):
+    yaml: str | None = Field(default=None, description="模板 YAML(与 template_name 二选一)")
+    template_name: str | None = None
+    sample_text: str = Field(..., min_length=2, max_length=8000)
+
+
+_dryrun_sem = asyncio.Semaphore(3)
+_DRYRUN_DIR = "/data/lake/.template-dryrun"  # 卷上临时目录(user 模板 glob 不递归,不会污染 gallery)
+
+
+def _result_sample(result, max_e: int = 30, max_r: int = 20) -> tuple[list, list]:
+    def props(p):
+        return {str(k): ("" if v is None else str(v)) for k, v in (p or [])}
+    ents = [{"name": e.name, "type": e.entity_type, "properties": props(e.properties)}
+            for e in (getattr(result, "entities", None) or [])[:max_e]]
+    rels = [{"source": r.source, "target": r.target, "type": r.relation_type,
+             "properties": props(r.properties)}
+            for r in (getattr(result, "relations", None) or [])[:max_r]]
+    return ents, rels
+
+
+@router.post("/dry-run")
+async def dry_run(
+    req: DryRunRequest,
+    lake: Any = Depends(get_lake),
+    _user: dict = Depends(require_role(Role.ADMIN)),
+) -> dict:
+    """试跑:用模板对样本文本抽一次,返实体/关系样本。不落盘、不建图。"""
+    yaml_text = req.yaml
+    if not yaml_text and req.template_name:
+        t = _find(req.template_name)
+        if t is None:
+            raise HTTPException(status_code=404, detail=f"template not found: {req.template_name}")
+        yaml_text = _read_yaml(t.path)
+    if not yaml_text:
+        raise HTTPException(status_code=422, detail="需提供 yaml 或 template_name")
+    try:
+        validate_template_yaml(yaml_text)
+    except TemplateValidationError as exc:
+        raise HTTPException(status_code=422, detail={
+            "code": "TEMPLATE_INVALID",
+            "errors": [{"path": p, "message": m} for p, m in exc.errors]}) from exc
+
+    import os
+    import secrets
+    import time
+    async with _dryrun_sem:
+        os.makedirs(_DRYRUN_DIR, exist_ok=True)
+        token = secrets.token_hex(8)
+        tmp = os.path.join(_DRYRUN_DIR, f"{token}.yaml")
+        try:
+            with open(tmp, "w", encoding="utf-8") as fh:
+                fh.write(yaml_text)
+            ext = lake._get_kg_extractor()
+            if ext is None:
+                raise HTTPException(status_code=503, detail="KG 抽取器不可用(检查 hugegraph.enabled / LLM 配置)")
+            ext._active_template_override = tmp  # 复用 _resolve_template 单 chokepoint
+            t0 = time.perf_counter()
+            try:
+                result = await asyncio.wait_for(
+                    ext.extract(req.sample_text.strip(), chunk_id="dryrun"), timeout=60)
+            finally:
+                ext._active_template_override = None
+            ents, rels = _result_sample(result)
+            elapsed = int((time.perf_counter() - t0) * 1000)
+            logger.info("template_dry_run by=%s entities=%d relations=%d elapsed=%dms",
+                        getattr(_user, "username", None), len(ents), len(rels), elapsed)
+            return {"success": True, "data": {
+                "entities": ents, "relations": rels,
+                "entity_count": len(getattr(result, "entities", None) or []),
+                "relation_count": len(getattr(result, "relations", None) or []),
+                "elapsed_ms": elapsed}}
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=504, detail="试跑超时(>60s)")
+        finally:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+
+
+# --- set-default + usage(M3)----------------------------------------------
+
+class DefaultRequest(BaseModel):
+    doc_type: str = Field(..., min_length=1)
+    template: str = Field(..., min_length=1)
+
+
+@router.put("/default")
+async def set_default(
+    req: DefaultRequest,
+    request: Request,
+    lake: Any = Depends(get_lake),
+    _user: dict = Depends(require_role(Role.ADMIN)),
+) -> dict:
+    """设某 doc_type 的默认模板。返回 effective + shadowed_by_config(M2 review)。"""
+    if _find(req.template) is None:
+        raise HTTPException(status_code=404, detail=f"template not found: {req.template}")
+    store = _store(request)
+    if store is None:
+        raise HTTPException(status_code=503, detail="system_db disabled; set-default unavailable")
+    store.set_default(req.doc_type, req.template)
+    # 运维 config override (he_doc_type_templates) 是否已覆盖该 doc_type?
+    hg = getattr(lake._config, "hugegraph", None)
+    overrides = getattr(hg, "he_doc_type_templates", None) or {}
+    shadowed = req.doc_type in overrides
+    logger.info("template_default_set doc_type=%s template=%s shadowed=%s by=%s",
+                req.doc_type, req.template, shadowed, getattr(_user, "username", None))
+    return {"success": True, "data": {"doc_type": req.doc_type, "template": req.template,
+            "effective": not shadowed, "shadowed_by_config": shadowed}}
+
+
+@router.get("/{name}/usage")
+async def template_usage(
+    name: str,
+    request: Request,
+    _user: dict = Depends(require_role(Role.ADMIN)),
+) -> dict:
+    """该模板被哪些数据集绑定(删前确认)。"""
+    store = _store(request)
+    bound = store.list_bindings(name) if store is not None else []
+    return {"success": True, "data": {"template": name, "bound_datasets": bound}}
+
+
 @router.post("", status_code=201)
 async def create_template(
     req: TemplateCreate,
