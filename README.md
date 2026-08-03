@@ -1,179 +1,202 @@
+<div align="center">
+
 # Arrow Lake
 
-> Production-grade multimodal data lakehouse for AI/ML teams.
-> Text, images, audio, vectors, knowledge graphs — one platform.
+**The open-source multimodal data lakehouse for AI.**
 
-[![Tests](https://img.shields.io/badge/tests-6122%20passing-brightgreen)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
-[![Coverage](https://img.shields.io/badge/coverage-90%25-brightgreen)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
-[![Security](https://img.shields.io/badge/bandit-0%20HIGH-success)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
-[![Python](https://img.shields.io/badge/python-3.11+-blue)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
-[![Version](https://img.shields.io/badge/version-1.7.0-blue)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
-[![License](https://img.shields.io/badge/license-MIT-informational)](https://gitee.com/wits__sunpw/wits-infra-dintellihub)
+Vectors · Full-text · SQL analytics · Knowledge Graph · GraphRAG · Document AI — **one self-hosted platform**, not five tools stitched together.
 
-## Install
+[![Version](https://img.shields.io/badge/version-1.10.0-blue)](#)
+[![License](https://img.shields.io/badge/license-Apache--2.0-informational)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue)](#)
+[![Tests](https://img.shields.io/badge/tests-6%2C100%2B-brightgreen)](#)
+[![Coverage](https://img.shields.io/badge/coverage-90%25-brightgreen)](#)
+[![REST routes](https://img.shields.io/badge/REST-186%20routes-orange)](#)
+
+**Repository:** [Gitee](https://gitee.com/wits__sunpw/wits-infra-dintellihub) · [GitHub mirror](https://github.com/Witshine/arrow-lake) _(adjust mirror URL after creating)_
+
+**English** | [中文](README.zh.md)
+
+</div>
+
+---
+
+## What is Arrow Lake
+
+Arrow Lake is a **production-grade, multimodal data lakehouse** built for **enterprise AI teams and data platforms**. Instead of wiring together a vector DB, an OLAP engine, a graph store, an LLM/RAG framework, a governance layer, and a UI — Arrow Lake unifies them behind **one `Lake` facade**, with shared storage, RBAC, lineage, and audit out of the box.
+
+It is **self-hosted first**: your data, your models, your network. Run it from `pip`, Docker Compose, or Kubernetes (Helm).
+
+<p align="center">
+  <img src="docs/architecture-design/diagrams/01-layered-architecture.svg" alt="Arrow Lake layered architecture" width="760">
+</p>
+
+## Why Arrow Lake
+
+Most AI data stacks today are **glue code** — LanceDB for vectors, DuckDB for SQL, HugeGraph for graphs, LangChain for RAG, plus a hand-rolled auth/governance/UI layer around all of them. Arrow Lake collapses that into a single platform:
+
+| The pain of stitching | What Arrow Lake gives you |
+|---|---|
+| 5 data stores + 5 clients + 5 auth models | **One `Lake` facade**, one storage layer, one RBAC model |
+| "Which vector/SQL/graph tool for this query?" | **Unified search + SQL + graph** over the same dataset |
+| RAG that ignores your domain structure | **GraphRAG + pluggable extraction templates** (v1.10.0) |
+| No lineage, no audit, no governance | **Built-in lineage, HMAC audit, Gravitino governance** |
+| A backend with no UI | **16+ page operations console** (admin, KG viz, OLAP worksheet, lineage, template QA) |
+
+**Four things that make it competitive:**
+
+1. **Unified, not assembled** — vector + full-text + SQL + graph + RAG share one facade, one storage, one auth/lineage/audit plane.
+2. **Native GraphRAG** — HugeGraph + hyper-extract knowledge extraction with **template-driven graph building** that loads new templates at runtime (**no image rebuild, no restart**).
+3. **Real multimodal** — text, images, audio, vectors, plus Docling document parsing and image-to-image search. Not just text embeddings.
+4. **Production-ready by default** — RBAC, JWT, rate limiting, tamper-evident audit, Helm chart, observability. Not a dev-only toy.
+
+## Key features
+
+| Area | Capabilities |
+|---|---|
+| 🔎 **Search** | Vector (cosine/L2/dot; IVF_PQ/IVF_FLAT/IVF_HNSW_PQ), Tantivy full-text (jieba CJK), **hybrid RRF**, faceted, ensemble cross-column fusion |
+| 🧠 **RAG** | Multi-provider LLM (OpenAI/Anthropic/vLLM/Ollama/DeepSeek/Bailian), sessions, streaming, citations, **cross-encoder / LLM / Ollama reranking**, faithfulness verification, HyDE / MultiQuery, multi-turn |
+| 🕸️ **Knowledge Graph & GraphRAG** | HugeGraph: build, Gremlin query, shortest-path, k-neighbor; **GraphRAG** with KG-injected context; **template-based extraction** (hyper-extract) |
+| 🧩 **Extraction Templates (v1.10.0)** | CRUD console + AI-assisted authoring + dataset binding + dry-run + **template quality validation harness** (generate doc → build graph → visualize → RAG → cleanup); `category↔doc_type` dynamic dictionary |
+| 📊 **Analytics** | DuckDB OLAP (window, JOIN, streaming, materialized views) + Daft lazy DataFrame (Ray-distributed) |
+| 📄 **Document AI** | PDF/Office/HTML → Docling parse → chunk → embed → Lance; 7 chunking strategies; OCR fallback; image-to-image search |
+| 🛡️ **Security & Governance** | RBAC (VIEWER/EDITOR/ADMIN), JWT + API-key dual auth, Redis-backed blacklist, rate limiting, **HMAC-SHA256 audit trail**, Gravitino 1.3.0 federation (tags/policies/model catalog), **column-level masking** |
+| 🖥️ **Console** | 16+ pages: datasets, KG visualization, OLAP SQL worksheet, lineage graph, extraction-template manager, template QA, admin, audit, governance |
+| 🚀 **Ops** | Docker Compose (profile-based), **Helm chart** (HPA, Ingress, PDB, NetworkPolicy, CronJob backup), OpenTelemetry + Prometheus + Grafana |
+
+## Console
+
+Arrow Lake ships a native operations console (vanilla JS, served by the API) — no separate frontend deployment:
+
+- **Datasets** — browse, preview (paginated + search), schema with field comments, export
+- **Knowledge Graph** — interactive `vis-network` graph, GraphRAG Q&A with citations
+- **OLAP Worksheet** — DuckDB SQL + Daft DataFrame + Pivot helper, RBAC-scoped
+- **Lineage** — DAG visualization + event history
+- **Extraction Templates** — YAML CRUD, AI generation, dry-run, quality validation (build a graph from a template and RAG over it)
+- **Admin / Audit / Governance** — users, RBAC, tamper-evident audit, tags & masking policies
+
+_Screenshots: to be added (capture from a running instance at `/console/`)._
+
+## Quickstart (30 seconds)
 
 ```bash
 pip install arrow-lake
+arrow-lake demo        # self-contained demo: vector + SQL + full-text search on synthetic data
 ```
 
-## Quickstart
+Or in Python:
 
 ```python
 from arrow_lake import Lake
 import pyarrow as pa
 
-lake = Lake("./my_lake")
+lake = Lake("./my_lake")           # local FS storage — no MinIO, no Docker
 
-# Create a dataset from an Arrow Table
 table = pa.table({
     "id": ["1", "2", "3"],
     "text": ["machine learning", "deep learning", "data analytics"],
-    "category": ["ml", "dl", "data"],
 })
 lake.create_dataset("articles", table)
 
-# SQL analytics
-result = lake.olap_query(
-    "articles",
-    "SELECT category, COUNT(*) as cnt FROM articles GROUP BY category",
-)
-print(result.table.to_pandas())
+# Vector search, full-text, hybrid, SQL — all on the same dataset
+print(lake.search("articles", query="ML", top_k=3))
 ```
 
-No Docker. No config files. From `pip install` to first result in under a minute.
+From `pip install` to first result in under a minute.
 
-## Try the Demo
+## How it compares
 
+| Capability | Arrow Lake | LanceDB | DuckDB | Milvus / Qdrant | Dify | LangChain |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|
+| Vector / hybrid search | ✅ | ✅ | — | ✅ | — | — |
+| SQL OLAP analytics | ✅ | — | ✅ | — | — | — |
+| Knowledge Graph + GraphRAG | ✅ | — | — | — | partial | partial |
+| Template-driven extraction | ✅ | — | — | — | — | — |
+| Document AI (Docling, multimodal) | ✅ | partial | — | — | partial | partial |
+| Metadata governance (Gravitino) | ✅ | — | — | — | — | — |
+| RBAC + audit + lineage (built-in) | ✅ | — | — | partial | partial | — |
+| Operations console | ✅ | — | — | partial | ✅ | — |
+| **Unified single platform** | ✅ | vector | OLAP | vector | LLM app | framework |
+
+Each of those tools is excellent at its specialty. Arrow Lake is for teams that need **all of it, integrated**, without maintaining the glue.
+
+## Use cases
+
+- **Enterprise document RAG** — ingest PDFs/Office, build a knowledge graph, answer with citations and provenance
+- **Multimodal search** — text→image, image→image, hybrid retrieval across modalities
+- **GraphRAG / knowledge platforms** — domain-specific extraction templates, structured entity-relation graphs
+- **Self-service analytics** — SQL + DataFrame over the same lake that powers search and RAG
+- **AI data layer for platforms** — one governed, audited, RBAC-protected backend for an internal AI product
+
+## Installation
+
+**pip** (library / single-node)
 ```bash
-arrow-lake demo
+pip install "arrow-lake[fts,rag,he,document]"
 ```
 
-Runs a self-contained demo with synthetic data — vector search, SQL analytics, and full-text search in ~15 seconds. No setup required.
+**Docker Compose** (full stack, profile-based)
+```bash
+git clone <repo> && cd wits-infra-dintellihub
+docker compose -f deploy/docker-compose.prod_minimal.yml up -d
+# API: http://127.0.0.1:8000  ·  Console: http://127.0.0.1:8000/console/
+```
 
-## What's Inside
-
-| Capability | Description |
-|---|---|
-| **Vector Search** | Cosine/L2/Dot similarity, IVF_PQ / IVF_FLAT / IVF_HNSW_PQ indexes |
-| **Full-Text Search** | Tantivy-powered FTS with jieba CJK tokenizer, stemming, stop-word removal |
-| **Hybrid Search** | Reciprocal Rank Fusion (RRF) combining vector + text scores |
-| **Faceted Search** | Multi-column metadata filtering with configurable facets |
-| **Ensemble Search** | Cross-column RRF fusion across multiple embedding columns |
-| **SQL Analytics** | DuckDB-powered OLAP: GROUP BY, window functions, JOINs, streaming |
-| **Daft DataFrame** | Lazy evaluation + Ray distributed execution |
-| **Knowledge Graph** | HugeGraph integration: build, Gremlin query, GraphRAG; v1.7 doc-type routing + hyper-extract extraction backend |
-| **RAG Pipeline** | Multi-provider LLM (OpenAI, Anthropic, vLLM, Ollama, DeepSeek), sessions, citations, streaming, reranking (CrossEncoder/LLM/Ollama — default CrossEncoder bge-reranker-v2-m3), faithfulness verification (support_ratio / unsupported), query transformation (HyDE/MultiQuery), multi-turn conversation |
-| **Document Pipeline** | PDF parse → chunk → embed → Lance, 7 chunking strategies, OCR fallback |
-| **Data Quality** | Schema validation, null detection, dedup (exact hash + perceptual hash), NeMo Curator |
-| **Lineage & Audit** | Full-chain lineage tracking, HMAC-SHA256 tamper-evident audit trail |
-| **Export** | Parquet / CSV with version selection, column projection, compression |
-| **Metadata Governance** | Gravitino 1.2.1 federation: DuckDB ↔ Lance Catalog bidirectional sync, Tags, Policies, Model Catalog |
-| **Security** | RBAC (VIEWER/EDITOR/ADMIN), JWT blacklist (Redis-backed), rate limiting, Gremlin injection defense, FQN/SQL injection prevention, path traversal prevention |
-| **Observability** | OpenTelemetry tracing, Prometheus + Alertmanager, Grafana dashboards, structlog, latency breakdown tracking |
-| **REST API** | 40+ endpoints + `/metadata/*` proxy (catalogs/tables/tags/policies/statistics/models), API Key + JWT auth, TLS, security headers |
-| **Distributed** | Redis distributed semaphore, Ray distributed ingestion, GPU autoscaling, Helm chart |
+**Kubernetes** (production)
+```bash
+helm install arrow-lake deploy/helm/arrow-lake/
+```
 
 ## CLI
 
 ```bash
-arrow-lake demo                  # Interactive demo
-arrow-lake serve                 # Start REST API server
-arrow-lake ingest files my_data data.csv
+arrow-lake demo                        # interactive demo
+arrow-lake serve                       # REST API server
+arrow-lake ingest files my_data *.csv
 arrow-lake search vector my_data --query "ML" --top-k 5
 arrow-lake query sql my_data --sql "SELECT * FROM my_data LIMIT 10"
-arrow-lake kg build my_data      # Build knowledge graph
-arrow-lake rag query "What is RAG?" --dataset docs
-arrow-lake status
+arrow-lake kg build my_data            # build knowledge graph
+arrow-lake kg build my_data --template project_concept_graph   # v1.10.0 template override
+arrow-lake rag query "..." --dataset docs
 ```
 
 ## Configuration
 
-Copy `.env.example` to `.env` and edit. For production, use YAML:
+27 independent config sections, 3-layer precedence: **defaults → env vars (`ARROW_LAKE__` prefix) → YAML**.
 
 ```python
-lake = Lake.from_yaml("configs/prod.yaml")
+lake = Lake("./data")                       # local, minimal
+lake = Lake.from_yaml("configs/prod.yaml")  # production
 ```
-
-27 independent config sections with 3-layer precedence: defaults → environment variables (`ARROW_LAKE__` prefix) → YAML overlay.
-
-For local development, just pass `base_uri`:
-
-```python
-lake = Lake("./data")  # local file storage, no MinIO needed
-```
-
-## Production Deployment
-
-```bash
-# Docker Compose (11 services, profile-based activation)
-docker compose -f deploy/docker-compose.yml up -d     # core profile
-docker compose --profile dev -f deploy/docker-compose.yml up -d  # + Ray + Jupyter
-docker compose --profile gravitino -f deploy/docker-compose.yml up -d  # + Gravitino + Lance REST
-
-# Kubernetes (Helm)
-helm install arrow-lake deploy/helm/arrow-lake/
-```
-
-Production features:
-- **RBAC**: 3-tier role model (VIEWER / EDITOR / ADMIN) on all 40+ endpoints
-- **Auth**: Dual-mode API Key + JWT (HS256/RS256), Redis-backed blacklist with TTL
-- **Redis**: Distributed session coordination, JWT blacklist persistence, distributed semaphore
-- **TLS**: Configurable TLS termination + security headers (CSP, HSTS, X-Frame-Options)
-- **Helm**: Deployment, HPA (CPU + custom metrics), CronJob backup (02:00 UTC), Ingress, PDB, Secret, NetworkPolicy
-- **Audit**: HMAC-SHA256 verified tamper-evident audit trail
-- **NetworkPolicy**: Restricted pod-to-pod communication (Redis 6379, HugeGraph 8080, HTTPS 443, DNS 53)
-- **Container Hardening**: cap-drop ALL, read-only filesystems, resource limits, PID constraints
-
-## Testing
-
-```bash
-# Full suite (6122 tests, 90%+ coverage)
-pytest tests/ -q
-
-# By category
-pytest tests/unit/ tests/api/ -q          # Unit + API
-pytest tests/integration/ tests/e2e/ -q   # Integration + E2E
-
-# Coverage
-pytest tests/ --cov=arrow_lake --cov-report=term-missing
-```
-
-## Tech Stack
-
-LanceDB + Daft + Ray + DuckDB + PyArrow + FastAPI + HugeGraph + Redis + Metaflow + Gravitino
-
-| Layer | Technology | Version |
-|-------|-----------|---------|
-| Data Processing | Daft, PyArrow | 0.7.21, 23.0.1 |
-| Vector Storage | LanceDB, Lance | 0.30.2 |
-| OLAP Engine | DuckDB | 1.5.5 |
-| Distributed Compute | Ray, Metaflow | 2.56.0, 2.19.35 |
-| Metadata Governance | Gravitino, Lance REST Catalog | 1.2.1 |
-| Knowledge Graph | HugeGraph | 1.7.0 |
-| Session / Cache | Redis (hiredis) | >=5.0 |
-| Object Storage | MinIO / S3 / GCS | boto3 >=1.35 |
-| HTTP API | FastAPI, Uvicorn, slowapi | >=0.115 |
-| LLM Providers | OpenAI, Anthropic, vLLM, Ollama, DeepSeek | — |
-| Full-Text Search | Tantivy, jieba | >=0.20.0 |
-| Embedding Models | Qwen3-Embedding-0.6B, sentence-transformers | — |
-| Security | PyJWT, HMAC-SHA256 | >=2.9 |
-| Observability | structlog, Prometheus, OpenTelemetry, Alertmanager | — |
-| Configuration | Pydantic v2, pydantic-settings, PyYAML | >=2.7 |
 
 ## Documentation
 
-- [Usage Guide](docs/usage-guide.md) — comprehensive walkthrough
-- [Cookbook](docs/cookbook/README.md) — 15 chapters + 45 examples (bilingual EN/ZH)
-- [Product Introduction](docs/arrow-lake-product-introduction.html) — full product overview
-- [Security Policy](SECURITY.md) — auth, RBAC, audit, transport security
-- [Contributing](CONTRIBUTING.md) — development setup and coding standards
-- [API Docs](http://localhost:8000/docs) — auto-generated OpenAPI/Swagger
-- [Changelog](CHANGELOG.md) — version history
+- 📖 [Cookbook](docs/cookbook/README.md) — 15 chapters, 45+ examples (bilingual EN/ZH)
+- 🏗️ [Architecture](docs/ARCHITECTURE.md) — authoritative technical reference
+- 🎨 [Product introduction](docs/arrow-lake-product-introduction.md) — capabilities overview
+- 🔒 [Security policy](SECURITY.md) — auth, RBAC, audit, transport
+- 🤝 [Contributing](CONTRIBUTING.md) — dev setup and standards
+- 📒 [Changelog](CHANGELOG.md) — version history
+- 🌐 [API docs](http://localhost:8000/docs) — OpenAPI/Swagger (running instance)
+
+## Project status
+
+Stable and in production use. Current release: **v1.10.0** (knowledge extraction template management — M1–M5). See [CHANGELOG](CHANGELOG.md) for the full history and roadmap direction (deeper multimodal, distributed scale-out, more extraction backends).
+
+- **6,100+ tests**, 90%+ coverage, zero high-severity security findings (bandit)
+- **186 REST routes** across 22 routers
+- Trunk-based development, frequent releases
+
+## Community
+
+- 💬 [Issues / Q&A](https://gitee.com/wits__sunpw/wits-infra-dintellihub/issues)
+- 🤝 [Contributing guide](CONTRIBUTING.md) · [Code of Conduct](CODE_OF_CONDUCT.md)
+- 💼 **Commercial support / consulting / custom integration** welcome — reach out via Issues.
+
+Contributions (code, docs, templates, bug reports) are very welcome. Please open an issue first for non-trivial changes.
 
 ## License
 
-MIT — Copyright (c) 2026 Witshine
+[Apache License 2.0](LICENSE) — © 2026 Witshine.
 
----
-
-中文文档: [README.zh.md](README.zh.md) | English: [README.en.md](README.en.md)
+Apache-2.0 lets you use, modify, and distribute Arrow Lake freely (including commercially), as long as attribution and the license notice are retained. Built for adoption — and for the consulting/projects that follow it.
