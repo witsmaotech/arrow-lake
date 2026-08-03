@@ -220,6 +220,10 @@ class HugeGraphConfig(BaseModel):
     # ``base_uri`` is a bucket name ("arrow-lake") and must NOT be used here.
     # Defaults to /data/ka (same volume as metaflow in the deploy compose).
     he_ka_base_dir: str = "/data/ka"
+    # v1.10.0: 用户知识抽取模板目录(writable volume)。CRUD 经 /admin/extraction-templates
+    # 写盘 → reset_gallery_cache() 刷内存 gallery → 下次 kg_build 生效(不 rebuild/不 restart)。
+    # MUST 指可写卷(/data/lake/templates),read_only 根 FS 下 /app/ 不可写(同 he_ka_base_dir)。
+    he_user_templates_dir: str = "/data/lake/templates"
     # hyper-extract chunking / concurrency tuning (#10) — passed through to
     # Template.create → AutoGraph.__init__. Defaults match hyper-extract.
     he_chunk_size: int = 2048

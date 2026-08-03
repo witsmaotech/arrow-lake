@@ -268,14 +268,17 @@ class HyperExtractExtractor:
     def _resolve_template(
         self, doc_type: str | None, content: str, template_type: str | None,
     ) -> str:
-        """[#1] Resolve the hyper-extract template path.
+        """Resolve the hyper-extract template path.
 
-        Priority: per-call ``template_type`` > config default ``template_type``
-        > :class:`TemplateTypeSelector` temporal heuristic > ``DocTypeRouter``.
-        The selector returns None to defer; DocTypeRouter then maps doc_type →
-        template (graph default), preserving pre-#1 behavior when no type is
-        requested and no temporal signal is present.
+        Priority (v1.10.0): **per-build ``_active_template_override``** (explicit
+        per-dataset binding) > per-call ``template_type`` > config default
+        ``template_type`` > :class:`TemplateTypeSelector` temporal heuristic >
+        ``DocTypeRouter``. The override is the SINGLE chokepoint covering all
+        granularities (dataset / map_reduce / chunk — every path calls this).
         """
+        override = getattr(self, "_active_template_override", None)
+        if override:
+            return self._resolve_template_path(override)
         tt = template_type or self._default_template_type
         selected = self._type_selector.select(
             template_type=tt, doc_type=doc_type, content=content,
@@ -283,6 +286,29 @@ class HyperExtractExtractor:
         if selected:
             return selected
         return self._router.resolve(doc_type)
+
+    def _resolve_template_path(self, ref: str) -> str:
+        """[v1.10.0] Resolve a template reference (bare name OR path) to a
+        loadable path.
+
+        Bare names are looked up in the gallery (user / project / preset);
+        paths (contain ``/`` or end ``.yaml``) are used directly if the file
+        exists. Raises ``ValueError`` if unresolved so the build fails fast with
+        a clear message instead of a downstream "Template not found".
+        """
+        import os
+        if not ref:
+            raise ValueError("empty template override")
+        if ("/" in ref or ref.endswith(".yaml")) and os.path.isfile(ref):
+            return ref
+        from arrow_lake.knowledge_graph.doc_type_router import get_template_gallery
+        gallery = get_template_gallery()
+        hit = gallery.get(ref)  # exact path match, e.g. "general/concept_graph"
+        if hit is None:  # bare name → user/project template
+            hit = next((t for t in gallery.templates if t.name == ref.lower()), None)
+        if hit is None:
+            raise ValueError(f"template not found: {ref!r}")
+        return hit.path
 
     def _create_ka(self, template_path: str, *, llm_client: Any = None) -> Any:
         """Create a fresh hyper-extract KA with the given llm + this embedder.
@@ -329,6 +355,44 @@ class HyperExtractExtractor:
         from pathlib import Path
         from arrow_lake.knowledge_graph._naming import artifact_key_for
         return Path(self._hugegraph_config.he_ka_base_dir) / artifact_key_for(dataset_name) / "ka"
+
+    def _snapshot_template_into_dump(self, template_path: str, ka_dir: Any) -> None:
+        """[v1.10.0 §4.7] Make a KA dump self-contained for file-path templates.
+
+        For user/project templates (absolute ``.yaml`` path, NOT a preset like
+        ``general/concept_graph``), copy the template into ``ka_dir/template.yaml``
+        and patch ``metadata.json``'s ``template`` field to that snapshot path.
+        The query path (:meth:`_build_ka_for_query`) then loads the snapshot via
+        the path guard (value contains ``/`` and ends ``.yaml`` → skips the
+        project-dir-only stem resolution) — fixing the C1 "Template not found"
+        for user templates — and the dump stays queryable even if the source
+        template is later edited or deleted (H2). Presets are left untouched
+        (stable in the installed package). Best-effort: never raises.
+        """
+        import json as _json
+        import os
+        import shutil
+        if (not template_path or "/" not in template_path
+                or not template_path.endswith(".yaml")):
+            return  # preset path or empty → no snapshot needed
+        if not os.path.isfile(template_path):
+            logger.warning("snapshot: template file missing, skipped: %s", template_path)
+            return
+        try:
+            snap = ka_dir / "template.yaml"
+            shutil.copy2(template_path, snap)
+            meta_path = ka_dir / "metadata.json"
+            meta: dict = {}
+            if meta_path.is_file():
+                try:
+                    meta = _json.loads(meta_path.read_text("utf-8"))
+                except (OSError, ValueError):
+                    meta = {}
+            meta["template"] = str(snap.resolve())
+            meta_path.write_text(_json.dumps(meta, ensure_ascii=False), "utf-8")
+        except Exception as exc:  # noqa: BLE001 — best-effort; query degrades to default
+            logger.warning("template snapshot into dump failed (%s): %s",
+                           template_path, str(exc)[:160])
 
     def load_ka_for_query(self, dataset_name: str) -> Any:
         """[#2][#P0-4] Load a dumped per-dataset KA for search/chat, with an
@@ -972,6 +1036,12 @@ class HyperExtractExtractor:
                     "KG insert continues: %s", str(exc)[:160],
                 )
         await asyncio.to_thread(ka.dump, ka_dir)
+
+        # v1.10.0 §4.7 (C1/H2): snapshot the file-path template into the dump so
+        # the query path can reload it (user templates otherwise "Template not
+        # found" — _build_ka_for_query resolves stems against the project dir
+        # only) and the dump stays queryable if the source is later edited/deleted.
+        self._snapshot_template_into_dump(template_path, ka_dir)
 
         # [#incremental] persist the full set of fed chunk_ids so the next
         # incremental build can diff. Best-effort: a missing sidecar just means

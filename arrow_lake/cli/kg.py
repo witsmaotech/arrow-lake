@@ -18,13 +18,18 @@ def kg_group() -> None:
 @kg_group.command("build")
 @click.argument("dataset")
 @click.option(
+    "--template", "template", default=None,
+    help="v1.10.0: bind this build to a specific extraction template (name or path). "
+         "Overrides doc_type routing. None = route by doc_type as before.",
+)
+@click.option(
     "--incremental/--full", "incremental", default=False,
     help="Incremental: feed only NEW chunks into the existing KA + upsert entities "
          "(falls back to full rebuild if no KA dump or template changed). Use after "
          "appending data; use --full after re-ingest/delete or a template change.",
 )
 @click.pass_context
-def kg_build(ctx: click.Context, dataset: str, incremental: bool) -> None:
+def kg_build(ctx: click.Context, dataset: str, incremental: bool, template: str | None) -> None:
     """Build knowledge graph from a dataset."""
     lake = _get_lake(ctx)
 
@@ -32,7 +37,7 @@ def kg_build(ctx: click.Context, dataset: str, incremental: bool) -> None:
     console.print(f"[dim]Building knowledge graph from '{dataset}' ({mode})...[/dim]")
 
     try:
-        task_id = _run_async(lake.kg_build(dataset, incremental=incremental))
+        task_id = _run_async(lake.kg_build(dataset, incremental=incremental, template=template))
     except Exception as exc:
         _print_error(f"KG build failed: {exc}")
         raise SystemExit(1) from None

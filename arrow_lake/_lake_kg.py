@@ -532,7 +532,8 @@ class _LakeKGMixin:
     # Public API
     # ------------------------------------------------------------------
 
-    async def kg_build(self, dataset_name: str, *, incremental: bool = False) -> str:
+    async def kg_build(self, dataset_name: str, *, incremental: bool = False,
+                       template: str | None = None) -> str:
         """Build a knowledge graph from a dataset.
 
         Reads text chunks from the specified dataset, extracts entities
@@ -580,7 +581,8 @@ class _LakeKGMixin:
                 None, self._load_kg_table, dataset_name,
             )
 
-            task_id = await builder.build(dataset_name, table, incremental=incremental)
+            task_id = await builder.build(dataset_name, table, incremental=incremental,
+                                          template_override=template)
 
             # Fire-and-forget via TaskManager for consistent status tracking.
             # TaskManager.run_background handles both sync and async callables

@@ -148,7 +148,7 @@ class KGBuilder:
 
     async def build(
         self, dataset_name: str, chunks_table: pa.Table, *,
-        incremental: bool = False,
+        incremental: bool = False, template_override: str | None = None,
     ) -> str:
         """Prepare a KG build task and return its ID immediately.
 
@@ -158,6 +158,10 @@ class KGBuilder:
         ``incremental``: feed only NEW chunks (not in the KA's fed_chunks) into
         the existing KA + upsert their entities/edges (idempotent). Falls back to
         a full rebuild when no dump exists or the template changed.
+
+        ``template_override`` (v1.10.0): a template name or path binding this
+        dataset to a specific extraction template; takes priority over doc_type
+        routing (see ``he_extractor._resolve_template``). None = route as before.
         """
         task_id = str(uuid.uuid4())[:8]
         started = datetime.now(UTC)
@@ -174,7 +178,7 @@ class KGBuilder:
             error=None,
         )
         self._tasks[task_id] = task
-        self._pending_tables[task_id] = (chunks_table, incremental)
+        self._pending_tables[task_id] = (chunks_table, incremental, template_override)
         return task_id
 
     async def execute_build(self, task_id: str) -> None:
@@ -185,9 +189,10 @@ class KGBuilder:
         if task is None or pending is None:
             logger.debug("KGDISPATCH execute_build EARLY_RETURN task_none=%s pending_none=%s", task is None, pending is None)
             return
-        table, incremental = pending
+        table, incremental, template_override = pending
         try:
-            await self._execute_build(task, table, incremental=incremental)
+            await self._execute_build(task, table, incremental=incremental,
+                                      template_override=template_override)
             task.status = KGBuildStatus.COMPLETED
         except asyncio.CancelledError:
             # Cancellation is abnormal — mark FAILED, then propagate (do NOT
@@ -202,6 +207,9 @@ class KGBuilder:
             logger.error("KG build %s failed", task_id, exc_info=True)
         finally:
             task.completed_at = datetime.now(UTC)
+            # v1.10.0: clear the per-build template override so it never leaks
+            # into a later unrelated build on the same extractor instance.
+            self._extractor._active_template_override = None
 
     def get_task_status(self, task_id: str) -> KGBuildTask | None:
         """Return the current status of a build task, or None if unknown."""
@@ -213,6 +221,7 @@ class KGBuilder:
 
     async def _execute_build(
         self, task: KGBuildTask, table: pa.Table, *, incremental: bool = False,
+        template_override: str | None = None,
     ) -> None:
         """Run the full build pipeline.
 
@@ -220,7 +229,13 @@ class KGBuilder:
         idempotent upsert by primary key, so re-inserting the merged result is
         safe). Falls back to a full rebuild inside build_dataset_ka when no dump
         exists or the template changed.
+
+        ``template_override`` (v1.10.0): set on the extractor for this build so
+        every granularity's ``_resolve_template`` honors the per-dataset binding.
+        Cleared by :meth:`execute_build`'s finally to avoid leaking across builds.
         """
+        # v1.10.0: per-dataset template binding — single chokepoint in _resolve_template.
+        self._extractor._active_template_override = template_override
         # v1.8.6: per-dataset graph isolation — every write targets kg_{dataset}.
         graph_name = graph_name_for(task.dataset_name)
         # 1. Ensure schema (also creates graph if needed)

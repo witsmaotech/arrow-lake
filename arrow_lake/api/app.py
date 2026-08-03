@@ -24,6 +24,7 @@ from arrow_lake.api.routers.embedding import router as embedding_router
 from arrow_lake.api.routers.export import router as export_router
 from arrow_lake.api.routers.gravitino import router as gravitino_router
 from arrow_lake.api.routers.knowledge_graph import router as kg_router
+from arrow_lake.api.routers.extraction_templates import router as extraction_templates_router
 from arrow_lake.api.routers.lineage import router as lineage_router
 from arrow_lake.api.routers.materialized import router as materialized_router
 from arrow_lake.api.routers.maintenance import router as maintenance_router
@@ -654,6 +655,7 @@ def create_app(config: ArrowLakeConfig | None = None) -> FastAPI:
     app.include_router(backup_router)
     app.include_router(rag_router)
     app.include_router(kg_router)
+    app.include_router(extraction_templates_router)
     app.include_router(auth_router)
     app.include_router(admin_router)
     app.include_router(maintenance_router)

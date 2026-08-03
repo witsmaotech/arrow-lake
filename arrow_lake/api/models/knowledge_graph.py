@@ -29,6 +29,15 @@ class KGBuildRequest(BaseModel):
             "re-ingest/delete or a template change."
         ),
     )
+    template: str | None = Field(
+        default=None,
+        description=(
+            "v1.10.0: bind this build to a specific extraction template (bare name "
+            "like 'security_concept_graph' or a path). Overrides doc_type routing; "
+            "the dataset keeps its binding for subsequent rebuilds. None = route "
+            "by doc_type as before."
+        ),
+    )
 
 
 class KGBuildResponse(BaseModel):

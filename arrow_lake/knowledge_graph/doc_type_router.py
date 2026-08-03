@@ -104,6 +104,7 @@ class TemplateInfo:
     relation_fields: tuple[str, ...] = ()  # output.relations.fields[].name
     guideline_zh: str = ""  # flattened guideline.target.zh (role summary)
     guideline_en: str = ""  # flattened guideline.target.en (role summary)
+    source: str = "system"  # "system" (preset/project, read-only) | "user" (CRUD-managed)
 
     @property
     def is_high_risk(self) -> bool:
@@ -129,6 +130,7 @@ class TemplateInfo:
             "is_high_risk": self.is_high_risk,
             "description_zh": self.description_zh,
             "description_en": self.description_en,
+            "source": self.source,
         }
 
     def to_detail(self) -> dict:
@@ -400,12 +402,87 @@ def _merge_project_templates(gallery: TemplateGallery) -> None:
         ))
 
 
+def _user_templates_dir() -> str:
+    """Resolve the user extraction-template directory (writable volume).
+
+    Read from the same env var that populates ``HugeGraphConfig.
+    he_user_templates_dir`` so the module-level gallery (no config access)
+    stays in sync with config without plumbing. Default ``/data/lake/templates``
+    (the lake-data writable volume; the api root FS is read-only — v1.10.0
+    user templates MUST live on a writable volume, never ``/app/``).
+    """
+    return os.environ.get(
+        "ARROW_LAKE__HUGEGRAPH__HE_USER_TEMPLATES_DIR", "/data/lake/templates"
+    )
+
+
+def _merge_user_templates(gallery: TemplateGallery, user_dir: str | os.PathLike) -> None:
+    """Append user-authored extraction templates (``<user_dir>/*.yaml``).
+
+    Mirrors :func:`_merge_project_templates` but for runtime-managed templates
+    on a writable volume (CRUD via ``/admin/extraction-templates``; no
+    rebuild/restart — :func:`reset_gallery_cache` picks up changes). Each user
+    template's absolute file path is its ``TemplateInfo.path`` so
+    ``Template.create()`` loads it directly. ``source="user"`` marks it
+    editable/deletable in the UI; ``category`` is taken from the YAML when the
+    author set a domain (finance/legal/…, enabling doc_type routing via tags),
+    else ``"user"`` (routed only via explicit per-dataset binding — see
+    validate_taxonomy exemption). Names colliding with a system template are
+    resolved in favor of the system template by the loader; user templates
+    SHOULD use distinct names (enforced at CRUD validation time).
+    """
+    user_path = Path(user_dir)
+    if not user_path.is_dir():
+        return
+    import yaml
+    for yml in sorted(user_path.glob("*.yaml")):
+        if yml.name.startswith("."):  # skip dry-run staging / hidden
+            continue
+        try:
+            with open(yml, encoding="utf-8") as fh:
+                data = yaml.safe_load(fh)
+        except (OSError, yaml.YAMLError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        tags = tuple(str(t).lower() for t in data.get("tags", []) if t)
+        desc_zh, desc_en = _bilingual_texts(data.get("description"))
+        output = data.get("output")
+        entity_fields = relation_fields = ()
+        if isinstance(output, dict):
+            entity_fields = _field_names(output.get("entities"))
+            relation_fields = _field_names(output.get("relations"))
+            if not entity_fields and not relation_fields:
+                entity_fields = _field_names(output)
+        guideline = data.get("guideline")
+        gl_zh, gl_en = _bilingual_texts(
+            guideline.get("target") if isinstance(guideline, dict) else None)
+        gallery.templates.append(TemplateInfo(
+            path=str(yml.resolve()),
+            category=str(data.get("category") or "user").lower(),
+            name=str(data.get("name", yml.stem)).lower(),
+            type=str(data.get("type", "")).lower(),
+            tags=tags,
+            description=_flatten_description(data.get("description")).lower(),
+            description_zh=desc_zh,
+            description_en=desc_en,
+            entity_fields=entity_fields,
+            relation_fields=relation_fields,
+            guideline_zh=gl_zh,
+            guideline_en=gl_en,
+            source="user",
+        ))
+
+
 @lru_cache(maxsize=1)
 def _shared_gallery() -> TemplateGallery:
     """Module-level shared gallery: hyper-extract presets + project-local
-    templates (arrow_lake/knowledge_graph/templates/). Built once, cached."""
+    templates (arrow_lake/knowledge_graph/templates/) + user templates
+    (/data/lake/templates/). Built once, cached; rebuilt on
+    :func:`reset_gallery_cache`."""
     gallery = TemplateGallery.build()
     _merge_project_templates(gallery)
+    _merge_user_templates(gallery, _user_templates_dir())
     return gallery
 
 
@@ -566,7 +643,7 @@ def validate_taxonomy(gallery: TemplateGallery | None = None) -> list[str]:
     # 'project' is a template-source marker (project-local vs hyper-extract
     # preset), not a doc_type — project templates route via explicit override
     # (he_doc_type_templates), so it is expected + not drift.
-    _non_doc_type_categories = frozenset({"project"})
+    _non_doc_type_categories = frozenset({"project", "user"})
     for cat in sorted(cats):
         if cat in _non_doc_type_categories:
             continue
