@@ -118,9 +118,11 @@ def test_bad_name_rejected():
 
 
 def test_expect_name_mismatch():
+    # strict validation (the /validate endpoint) still flags a filename
+    # mismatch; save_template (strict=False) tolerates it as a draft.
     with pytest.raises(TemplateValidationError) as exc:
         validate_template_yaml(_GOOD, expect_name="other_name")
-    assert any("must equal filename stem" in m for p, m in exc.value.errors)
+    assert any(p == "filename" for p, m in exc.value.errors)
 
 
 def test_reserved_name_collision():
@@ -160,6 +162,52 @@ def test_duplicate_field_rejected():
     with pytest.raises(TemplateValidationError) as exc:
         validate_template_yaml(raw)
     assert any("duplicate" in m for p, m in exc.value.errors)
+
+
+# --- category validation (M5) ----------------------------------------------
+
+def test_category_optional_when_no_dictionary():
+    """Without known_categories, category is NOT required (backward compat for
+    LLM self-heal + callers that don't gate on category)."""
+    validate_template_yaml(_GOOD)  # _GOOD has no category — must pass
+    validate_template_yaml(_GOOD + "category: anything\n")  # and an arbitrary one is fine
+
+
+def test_category_required_when_dictionary_given():
+    with pytest.raises(TemplateValidationError) as exc:
+        validate_template_yaml(_GOOD, known_categories={"finance", "legal"})
+    assert any(p == "category" for p, m in exc.value.errors)
+
+
+def test_category_must_be_in_dictionary():
+    raw = _GOOD + "category: nope\n"
+    with pytest.raises(TemplateValidationError) as exc:
+        validate_template_yaml(raw, known_categories={"finance", "legal"})
+    assert any(p == "category" and "known" in m for p, m in exc.value.errors)
+
+
+def test_category_membership_case_insensitive():
+    raw = _GOOD + "category: Finance\n"  # uppercase — should still match
+    validate_template_yaml(raw, known_categories={"finance", "legal"})
+
+
+def test_category_valid_member_passes():
+    raw = _GOOD + "category: finance\n"
+    data = validate_template_yaml(raw, known_categories={"finance", "legal"})
+    assert data["category"] == "finance"
+
+
+def test_save_tolerates_soft_errors(tmp_path):
+    # save (strict=False, default) tolerates a missing category (soft/advisory)
+    # — a work-in-progress template may be saved despite quality issues.
+    path = save_template("security_concept_graph", _GOOD, tmp_path, known_categories={"finance"})
+    assert path.is_file()
+    # strict save (validate-endpoint semantics) still rejects the missing category
+    with pytest.raises(TemplateValidationError):
+        save_template("security_concept_graph", _GOOD, tmp_path, known_categories={"finance"}, strict=True)
+    # a HARD error (unparseable YAML) blocks even non-strict save
+    with pytest.raises(TemplateValidationError):
+        save_template("security_concept_graph", "name: security_concept_graph\n  : [unclosed", tmp_path)
 
 
 # --- filesystem CRUD -------------------------------------------------------

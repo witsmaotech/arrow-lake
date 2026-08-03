@@ -132,13 +132,26 @@ def _validate_fields(
 def validate_template_yaml(
     raw: str, *, expect_name: str | None = None,
     reserved_names: set[str] | None = None,
+    known_categories: set[str] | None = None,
+    strict: bool = True,
 ) -> dict:
     """Validate an extraction-template YAML string against the schema (§4.3).
 
-    Returns the parsed dict on success; raises :class:`TemplateValidationError`
-    (with ``errors``) on any structural failure. ``expect_name`` checks the
-    in-YAML ``name`` matches (used by save_template where name == filename).
-    ``reserved_names`` blocks shadowing a system template.
+    Returns the parsed dict on success. Failures split into two tiers:
+
+    - **Hard** (always raise) — system/identity safety: unparseable YAML,
+      DoS size, forbidden alias tokens, nesting depth, and an invalid ``name``
+      (name == filename, a path-traversal surface). These block save.
+    - **Soft** (raise only when ``strict=True``) — structural quality:
+      ``language``/``type``/``output`` fields/``guideline``/``category``.
+      :func:`save_template` passes ``strict=False`` so a work-in-progress
+      template can be saved despite quality issues; the ``/validate`` endpoint
+      keeps ``strict=True`` to surface them as advisory.
+
+    ``expect_name`` checks the in-YAML ``name`` matches (save_template where
+    name == filename). ``reserved_names`` blocks shadowing a system template.
+    ``known_categories`` (M5): when provided, ``category`` must be a member
+    (soft — a missing/unknown category just disables Layer-2 auto-routing).
     """
     errors: list[tuple[str, str]] = []
 
@@ -163,14 +176,17 @@ def validate_template_yaml(
     if _depth(data) > MAX_DEPTH:
         errors.append(("yaml", f"nesting depth exceeds {MAX_DEPTH}"))
 
-    # name
+    # name — regex/path-safety and reserved-collision are HARD; a filename
+    # mismatch (YAML `name:` != filename stem) is SOFT — a draft may carry a
+    # different YAML name (the gallery reads the YAML name regardless), so it
+    # shouldn't block save. Path "filename" is outside the hard set below.
     name = data.get("name")
     if not isinstance(name, str) or not NAME_RE.match(name):
         errors.append(("name", f"must match {NAME_RE.pattern}"))
-    elif expect_name is not None and name != expect_name:
-        errors.append(("name", f"must equal filename stem {expect_name!r}"))
     elif reserved_names and name in reserved_names:
         errors.append(("name", f"collides with system template {name!r}"))
+    if expect_name is not None and isinstance(name, str) and NAME_RE.match(name) and name != expect_name:
+        errors.append(("filename", f"YAML name {name!r} != filename stem {expect_name!r}"))
 
     # language
     lang = data.get("language")
@@ -182,6 +198,20 @@ def validate_template_yaml(
     data["type"] = ttype  # normalize default into the parsed dict (downstream merge reads it)
     if ttype not in VALID_TYPES:
         errors.append(("type", f"must be one of {VALID_TYPES}"))
+
+    # category (M5): required + must be a known doc_type/category when the
+    # caller passes the dynamic dictionary. Layer-2 routing keys on
+    # template.category == doc_type, so a user template MUST declare a valid
+    # domain category to be auto-routed (otherwise it only routes via an
+    # explicit per-dataset binding).
+    if known_categories is not None:
+        category = data.get("category")
+        if not isinstance(category, str) or not category.strip():
+            sample = sorted(known_categories)[:12]
+            errors.append(("category", f"required (one of: {', '.join(sample)}…)"))
+        elif category.strip().lower() not in {c.lower() for c in known_categories}:
+            sample = sorted(known_categories)[:12]
+            errors.append(("category", f"must be a known doc_type category (one of: {', '.join(sample)}…)"))
 
     # guideline (prompt) — required bilingual target; rules optional
     guideline = data.get("guideline")
@@ -220,7 +250,15 @@ def validate_template_yaml(
             errors.append(("output", "must define entities and/or relations with fields"))
 
     if errors:
-        raise TemplateValidationError(errors)
+        if strict:
+            raise TemplateValidationError(errors)
+        # non-strict (save_template): only system/identity-safety errors block
+        # (yaml DoS-depth / name == filename). Structural quality issues
+        # (language/type/output/guideline/category) are advisory — a WIP
+        # template may be saved despite them; /validate surfaces the full list.
+        hard = [e for e in errors if e[0].split(".", 1)[0] in {"yaml", "name"}]
+        if hard:
+            raise TemplateValidationError(hard)
     return data
 
 
@@ -253,16 +291,23 @@ def _safe_path(name: str, user_dir: str | Path) -> Path:
 def save_template(
     name: str, raw: str, user_dir: str | Path, *,
     reserved_names: set[str] | None = None,
+    known_categories: set[str] | None = None,
+    strict: bool = False,
 ) -> Path:
     """Validate + write ``<user_dir>/<name>.yaml``. Returns its path.
 
     Raises :class:`TemplateNameConflict` if ``name`` shadows a system template,
-    :class:`TemplateValidationError` on schema failure. Overwrites an existing
-    user template with the same name.
+    :class:`TemplateValidationError` on a HARD error only (unparseable / DoS
+    size / forbidden token / depth / bad name). ``strict=False`` (default) lets
+    a work-in-progress template save despite structural-quality issues
+    (language/type/output/guideline/category) — those are advisory, surfaced by
+    the ``/validate`` endpoint. Pass ``strict=True`` to block on all issues.
     """
     if reserved_names and name in reserved_names:
         raise TemplateNameConflict(f"{name!r} is a reserved system template name")
-    validate_template_yaml(raw, expect_name=name, reserved_names=reserved_names)
+    validate_template_yaml(
+        raw, expect_name=name, reserved_names=reserved_names,
+        known_categories=known_categories, strict=strict)
     path = _safe_path(name, user_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(raw, encoding="utf-8")

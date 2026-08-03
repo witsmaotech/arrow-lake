@@ -25,7 +25,13 @@
   .etpl-form .ef{display:flex;flex-direction:column;gap:4px;font-size:.7rem;color:var(--fg-lo);text-transform:uppercase;letter-spacing:.05em}
   .etpl-form .ef input{text-transform:none;letter-spacing:0}
   .etpl-form .ef.name{flex:0 0 260px}
-  .etpl-form .ef.doctype{flex:0 0 200px}
+  .etpl-form .ef.doctype{flex:1 1 260px}
+  .combo{position:relative}
+  .combo-menu{position:absolute;top:calc(100% + 2px);left:0;right:0;z-index:60;max-height:240px;overflow:auto;background:var(--ink-900,#15171c);border:1px solid var(--line-soft);border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,.45)}
+  .combo-item{padding:6px 10px;cursor:pointer;font-size:.78rem;display:flex;justify-content:space-between;gap:10px;white-space:nowrap}
+  .combo-item:hover{background:rgba(255,255,255,.07)}
+  .combo-item .ci-zh{color:var(--fg-lo);font-size:.72rem}
+  .combo-item.new{color:var(--teal-bright)}
   .pager{display:flex;align-items:center;gap:4px;flex-wrap:wrap;font-size:.76rem}
   .pager:empty{display:none}
   .pager button{min-width:28px;height:26px;padding:0 8px;border:1px solid var(--line-soft);background:transparent;color:var(--fg-md);border-radius:4px;cursor:pointer;font-size:.74rem}
@@ -131,7 +137,8 @@ let PAGE = 1;
 function render() {
   const src = $("#srcFilter").value, q = $("#qFilter").value.trim().toLowerCase();
   const filtered = ALL.filter((t) => (!src || t.source === src)
-    && (!q || t.name.includes(q) || (t.tags || []).some((x) => x.includes(q))));
+    && (!q || t.name.includes(q) || (t.tags || []).some((x) => x.includes(q))))
+    .sort((a, b) => (b.mtime || 0) - (a.mtime || 0));  // 倒序:最近添加/修改的排前面
   const pages = Math.max(1, Math.ceil(filtered.length / PSIZE));
   if (PAGE > pages) PAGE = pages;
   const rows = filtered.slice((PAGE - 1) * PSIZE, PAGE * PSIZE);
@@ -185,6 +192,86 @@ function renderPager(total, pages) {
 
 /* ---------- modal: create / edit ---------- */
 let validateTimer = null;
+// M5: category 自定义组合框:下拉每项显示「name · 中文」,可选已有,也可输入新建(保存时自动创建)。
+let _KNOWN_CATS = new Set();
+let _CAT_ITEMS = []; // [{name, zh}]
+let _DOC_TYPES = null; // /kg/doc-types 共享缓存(category 下拉 + 蓝本下拉共用一次请求)
+async function docTypes() {
+  if (_DOC_TYPES) return _DOC_TYPES;
+  try { const r = await request("GET", "/kg/doc-types"); _DOC_TYPES = (r && r.doc_types) || []; }
+  catch (_) { _DOC_TYPES = []; }
+  return _DOC_TYPES;
+}
+async function fillDocTypeSelect(preset) {
+  const inp = $("#edDocType"), menu = $("#catMenu");
+  if (!inp) return;
+  if (preset) inp.value = preset;
+  const dts = await docTypes();
+  _KNOWN_CATS = new Set(dts.map((d) => d.doc_type));
+  _CAT_ITEMS = dts.map((d) => ({ name: d.doc_type, zh: d.description_zh || "" }));
+  if (!menu) return;
+  const render = () => {
+    const q = (inp.value || "").trim().toLowerCase();
+    const hits = _CAT_ITEMS.filter((c) => !q || c.name.includes(q) || c.zh.includes(q));
+    let h = "";
+    if (q && !_KNOWN_CATS.has(q)) {
+      const p = parseCatName(q);
+      if (p) {
+        h += `<div class="combo-item new" data-val="${esc(q)}"><span>＋ 新增分类「${esc(p.name)}」</span>${p.zh ? `<span class="ci-zh">${esc(p.zh)}</span>` : ""}</div>`;
+      } else {
+        h += `<div class="combo-item" style="opacity:.6;cursor:default"><span>分类名须以英文标识符开头(可加空格+中文)</span></div>`;
+      }
+    }
+    h += hits.slice(0, 60).map((c) =>
+      `<div class="combo-item" data-val="${esc(c.name)}"><span>${esc(c.name)}</span><span class="ci-zh">${esc(c.zh || "")}</span></div>`).join("");
+    menu.innerHTML = h; menu.hidden = !h;
+  };
+  const open = () => { render(); menu.hidden = false; };
+  inp.addEventListener("focus", open);
+  inp.addEventListener("input", () => { render(); menu.hidden = false; });
+  inp.addEventListener("click", open);
+  // mousedown 先于 blur 触发,保证点选生效
+  menu.addEventListener("mousedown", (e) => {
+    const it = e.target.closest(".combo-item"); if (!it) return;
+    inp.value = it.dataset.val; menu.hidden = true; inp.focus();
+  });
+  inp.addEventListener("blur", () => setTimeout(() => { menu.hidden = true; }, 150));
+}
+// 解析「名字 [中文]」:名字=ASCII 路由键(必),中文=显示标签(可选,空格分隔)。
+// 例:"aerospace 航空航天" → {name:"aerospace", zh:"航空航天"};"security" → {name:"security",zh:""}
+function parseCatName(raw) {
+  const m = (raw || "").trim().match(/^([a-z][a-z0-9_]{0,63})(?:\s+(.+))?$/i);
+  return m ? { name: m[1].toLowerCase(), zh: (m[2] || "").trim() } : null;
+}
+// 保存前确保 category 存在;输入新名(不在词典)则 POST 创建(可带中文标签)。返回规范名或 null。
+async function ensureCategory(raw) {
+  const parsed = parseCatName(raw);
+  if (!parsed) { toast("分类名须为小写英文标识符(可后接空格+中文标签)", "error"); throw new Error("invalid category"); }
+  const { name, zh } = parsed;
+  if (_KNOWN_CATS.has(name)) return name;
+  await request("POST", "/admin/doc-type-categories", { body: { name, desc_zh: zh || undefined } });
+  _KNOWN_CATS.add(name);
+  const it = _CAT_ITEMS.find((c) => c.name === name);
+  if (it) it.zh = zh; else _CAT_ITEMS.push({ name, zh });
+  toast(`分类 ${name}${zh ? " · " + zh : ""} 已创建`, "success");
+  return name;
+}
+// 蓝本下拉(参考 ingest.html):按 category(中文)→ type 分组,不区分 user/system。
+async function fillAiBase() {
+  const sel = $("#aiBase"); if (!sel) return;
+  const dts = await docTypes();
+  const zh = {}; dts.forEach((d) => { zh[d.doc_type] = d.description_zh || ""; });
+  const byCat = {};
+  (ALL || []).forEach((t) => { const c = t.category || "uncategorized"; (byCat[c] = byCat[c] || []).push(t); });
+  let html = "";
+  for (const c of Object.keys(byCat).sort()) {
+    const items = byCat[c].sort((a, b) => (a.type || "").localeCompare(b.type || ""));
+    const opts = items.map((t) => `<option value="${esc(t.name)}">${esc(t.name)}${t.type ? " · " + esc(t.type) : ""}${t.is_high_risk ? " ⚠" : ""}</option>`).join("");
+    html += `<optgroup label="${esc(zh[c] ? c + " · " + zh[c] : c)}">${opts}</optgroup>`;
+  }
+  sel.innerHTML = html;
+  if ([...sel.options].some((o) => o.value === "project_concept_graph")) sel.value = "project_concept_graph";
+}
 function openEditor({mode, name, yaml, docType}) {
   const isCreate = mode === "create";
   const body = `
@@ -203,7 +290,12 @@ function openEditor({mode, name, yaml, docType}) {
     </details>
     <div class="etpl-form">
       <label class="ef name"><span>名称</span><input class="input name-in" id="edName" value="${esc(name || "")}" ${isCreate ? "" : "disabled"} pattern="[a-z][a-z0-9_]*"></label>
-      <label class="ef doctype"><span>doc_type(可选)</span><input class="input" id="edDocType" value="${esc(docType || "")}" placeholder="如 project / finance"></label>
+      <label class="ef doctype"><span>category(领域 · 必填)</span>
+        <div class="combo" id="catCombo">
+          <input class="input" id="edDocType" placeholder="选择或输入新分类(如 security)" autocomplete="off">
+          <div class="combo-menu" id="catMenu" hidden></div>
+        </div>
+      </label>
     </div>
     <textarea class="ed-area" id="edYaml" spellcheck="false">${esc(yaml || "")}</textarea>
     <div class="vbox" id="vbox"></div>
@@ -225,9 +317,11 @@ function openEditor({mode, name, yaml, docType}) {
     </div>`;
   showModal(isCreate ? "新建用户模板" : `编辑 ${esc(name)}`, body);
   makeYamlEditor("edYaml");
-  // ✨ AI 生成(M2.5)
-  $("#aiBase").innerHTML = ALL.filter((t) => t.source === "system")
-    .map((t) => `<option value="${esc(t.name)}"${t.name === "project_concept_graph" ? " selected" : ""}>${esc(t.name)}</option>`).join("");
+  // category select(M5):动态来自 /kg/doc-types;预选 YAML 自带 category 或传入 docType
+  const _yCat = (() => { const m = ($("#edYaml").value || "").match(/^[ \t]*category:[ \t]*(\S+)/m); return m ? m[1].trim() : ""; })();
+  fillDocTypeSelect(_yCat || docType || "");
+  // ✨ AI 生成(M2.5)蓝本下拉按 category(中文)→ type 分组(参考 ingest.html)
+  fillAiBase();
   $("#aiGenBtn").onclick = async () => {
     const p = $("#aiPrompt").value.trim();
     if (!p) { toast("请填领域描述", "error"); return; }
@@ -273,7 +367,7 @@ function openEditor({mode, name, yaml, docType}) {
       const d = r.data;
       $("#vbox").innerHTML = d.valid
         ? `<div class="ok">✓ 校验通过</div>`
-        : `<div class="err">✗ ${d.errors.length} 处错误:</div>` + d.errors.map((e) => `<div class="vrow"><span class="path">${esc(e.path)}</span><span>${esc(e.message)}</span></div>`).join("");
+        : `<div class="err">✗ ${d.errors.length} 处提示(不阻塞保存,可存为草稿):</div>` + d.errors.map((e) => `<div class="vrow"><span class="path">${esc(e.path)}</span><span>${esc(e.message)}</span></div>`).join("");
     } catch (e) { $("#vbox").innerHTML = `<div class="err">${esc(errMsg(e))}</div>`; }
   };
   // debounce live-validate
@@ -281,16 +375,22 @@ function openEditor({mode, name, yaml, docType}) {
   $("#valBtn").addEventListener("click", doValidate);
   doValidate();  // 打开即校验当前内容(starter/载入的 YAML)
   $("#saveBtn").addEventListener("click", async () => {
-    const y = $("#edYaml").value, nm = $("#edName").value.trim(), dt = $("#edDocType").value.trim() || null;
+    let y = $("#edYaml").value, nm = $("#edName").value.trim();
     if (!nm || !y.trim()) { toast("名称和 YAML 不能为空", "error"); return; }
+    // 强制 YAML 内 name 与文件名(#edName)一致 —— gallery 按模板 YAML 的内部 name 展示,
+    // 若不一致(手改/✨生成带不同 name),保存后模板会"看似新建"(旧名消失、新名出现)。
+    // 编辑场景 #edName 不可改(=原文件名),故强制对齐 = 保持原身份,即"修改"而非"新建"。
+    y = y.replace(/^[ \t]*name:[ \t]*.*$/m, `name: ${nm}`);
+    // category:已选则直用;输入新名则先创建(失败则中止,提示用户)
+    let dt;
+    try { dt = await ensureCategory($("#edDocType").value); }
+    catch (e) { toast("分类创建失败:" + errMsg(e), "error"); return; }
     try {
-      if (isCreate) {
-        await request("POST", API, { body: { name: nm, yaml: y, doc_type: dt } });
-        toast(`模板 ${nm} 已创建`, "success");
-      } else {
-        await request("PUT", `${API}/${encodeURIComponent(nm)}`, { body: { yaml: y, doc_type: dt } });
-        toast(`模板 ${nm} 已保存`, "success");
-      }
+      const r = isCreate
+        ? await request("POST", API, { body: { name: nm, yaml: y, doc_type: dt } })
+        : await request("PUT", `${API}/${encodeURIComponent(nm)}`, { body: { yaml: y, doc_type: dt } });
+      const ws = r?.data?.warnings || [];
+      toast(`模板 ${nm} 已${isCreate ? "创建" : "保存"}${ws.length ? " · ⚠ hyper-extract 暂不可加载(可存草稿,见右侧校验)" : ""}`, "success");
       closeModal(); await load();
     } catch (e) { toast("保存失败:" + errMsg(e), "error"); }
   });
@@ -409,7 +509,7 @@ $("#rows").addEventListener("click", async (e) => {
   const t = e.target.closest("[data-edit],[data-del],[data-view],[data-copy]");
   if (!t) return;
   if (t.dataset.edit) {
-    try { const r = await request("GET", `${API}/${encodeURIComponent(t.dataset.edit)}`); openEditor({ mode: "edit", name: t.dataset.edit, yaml: r.data.yaml, docType: r.data.doc_type }); }
+    try { const r = await request("GET", `${API}/${encodeURIComponent(t.dataset.edit)}`); openEditor({ mode: "edit", name: t.dataset.edit, yaml: r.data.yaml, docType: r.data.category }); }
     catch (err) { toast("加载失败:" + errMsg(err), "error"); }
   } else if (t.dataset.view) { onView(t.dataset.view); }
   else if (t.dataset.copy) {

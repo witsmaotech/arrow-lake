@@ -1372,12 +1372,16 @@ class _LakeKGMixin:
     # ------------------------------------------------------------------
 
     async def kg_list_doc_types(self) -> list[dict[str, Any]]:
-        """List the canonical doc_types with aliases, description, and the
-        template they auto-resolve to.
+        """List the doc_types with aliases, description, and the template they
+        auto-resolve to.
 
-        Read-only metadata (shared hyper-extract template gallery + doc_type
-        taxonomy); does NOT require HugeGraph. Use it to discover the right
-        ``doc_type`` to pass ``ingest_documents`` and bypass the classifier.
+        When a :class:`DocTypeCategoryStore` is wired
+        (``self._doc_type_category_store``), the list is the runtime dictionary
+        (seed + admin-added customs) — so newly added categories appear here
+        immediately. Otherwise it falls back to the static code-level taxonomy
+        (:data:`DOC_TYPE_DESCRIPTIONS`). Read-only metadata; does NOT require
+        HugeGraph. Use it to discover the right ``doc_type`` to pass
+        ``ingest_documents`` and bypass the classifier.
         """
         from arrow_lake.knowledge_graph.doc_type_router import (
             DOC_TYPE_ALIASES,
@@ -1388,15 +1392,34 @@ class _LakeKGMixin:
         hg = self._config.hugegraph
         router = DocTypeRouter(hg.he_doc_type_templates, hg.he_default_template)
         out: list[dict[str, Any]] = []
+        store = getattr(self, "_doc_type_category_store", None)
+        if store is not None:
+            for c in store.list_categories():
+                dt = c["name"]
+                path, source = router.resolve_with_source(dt)
+                out.append({
+                    "doc_type": dt,
+                    "description": c.get("desc_en") or DOC_TYPE_DESCRIPTIONS.get(dt, ""),
+                    "description_zh": c.get("desc_zh") or "",
+                    "aliases": c.get("aliases") or [],
+                    "resolved_template": path,
+                    "resolution": source,
+                    "source": c.get("source"),
+                })
+            if out:
+                return out
+        # fallback: static code-level taxonomy (system_db disabled or empty store)
         for doc_type in DOC_TYPE_DESCRIPTIONS:  # canonical order
             path, source = router.resolve_with_source(doc_type)
             out.append(
                 {
                     "doc_type": doc_type,
                     "description": DOC_TYPE_DESCRIPTIONS[doc_type],
+                    "description_zh": "",
                     "aliases": list(DOC_TYPE_ALIASES.get(doc_type, ())),
                     "resolved_template": path,
                     "resolution": source,
+                    "source": "seed",
                 }
             )
         return out

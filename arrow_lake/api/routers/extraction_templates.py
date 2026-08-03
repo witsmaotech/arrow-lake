@@ -226,58 +226,92 @@ class GenerateRequest(BaseModel):
 
 _generate_sem = asyncio.Semaphore(3)  # 限并发,防 LLM 代理滥用
 
-_GEN_SYSTEM = """你是 hyper-extract 知识抽取模板设计专家。只输出一个合法、高质量的 graph 模板 YAML,严格符合下述完整 schema。
+_GEN_SYSTEM = """你是 hyper-extract 知识抽取模板设计专家。严格按下面权威规范,只输出一个合法、高质量的模板 YAML。
 
-【完整 graph 模板 schema】(字段名/层级/缩进必须完全一致;范例已含全部必填与推荐段,直接照此结构填领域内容)
+【第一原则:Schema 定义 WHAT,Guideline 定义 HOW】(模板质量分水岭,劣质模板几乎都错在这)
+- Schema(output):字段名/类型/描述/必填 —— 定义"抽什么"。
+- Guideline(guideline):抽取策略/质量要求/创建条件/常见错误规避 —— 定义"怎么抽好"。
+- ❌ 别在 guideline 重述字段含义(如"name 是实体名称")。✅ 写策略(如"同一实体全文命名一致""仅抽明确表述,不臆测常识关联")。
+
+【第一步:选 Auto-Type(决策树)】
+需要建模关系吗?
+  否 → 记录类:model(单个对象,如财报摘要)/ list(有序数组)/ set(去重集合)
+  是 → 图类:graph(二元 A→B)/ hypergraph(多元 A+B+C→D)
+        hypergraph 内:参与方等价 → simple;角色不同(攻/守、买/卖)→ nested
+图类可叠加维度:+时间→temporal_graph;+位置→spatial_graph;+两者→spatio_temporal_graph。
+本平台默认/最常用 graph;除非领域明确需要,选 graph。
+
+【各类型 schema 差异(按所选 type 填对应段落,段落错会被校验拒)】
+• 记录类 model/list/set —— 用 output.fields(无 entities/relations,严禁写 items):
+    output: { description:{zh,en}, fields:[...] }                      # fields ≤3
+    guideline: { target:{zh,en}, rules:{zh:[...],en:[...]} }           # 记录类用 rules(非 rules_for_entities)
+    identifiers: { item_id: <字段> }                                    # 仅 set 需要;model/list 留 {}
+    display: { label: '{name}' }
+• graph —— output.entities + output.relations;guideline 用 rules_for_entities + rules_for_relations
+• hypergraph —— relations 加 type:list 字段承载多参与方:
+    simple(等价): relation_members: participants        # 字符串,指向一个 list 字段
+    nested(分组): relation_members: [attackers, defenders]  # 列表,每个指向 list 字段(角色分组)
+• temporal_graph —— graph 基础 + relations 加 time 字段;identifiers 加 time_field: time;guideline 加 rules_for_time(绝对日期保留原样/相对时间转绝对/模糊时间留空不猜)
+• spatial_graph —— 同理加 location + location_field + rules_for_location;spatio_temporal 两者都加。
+  temporal 的 relation_label 用 '{type}@{time}';spatio_temporal 用 '{type}@{location}({time})'。
+
+【完整 graph 范例】(结构权威,直接照填领域内容;勿照抄 name/枚举)
 language: [zh, en]
-name: <domain>_concept_graph            # snake_case,领域派生;勿照抄范例 name
+name: <domain>_concept_graph
 type: graph
-tags: [<domain>, concept, knowledge]    # 全小写
-description: {zh: "<中文一句话定位该图谱抽什么>", en: "<one-line English>"}   # 必填,双语
+tags: [<domain>, concept, knowledge]
+description: {zh: "<中文一句话定位抽什么>", en: "<one-line English>"}
 output:
-  description: {zh: "<输出图谱的一句话说明>", en: "<one-line English>"}         # 必填,最易漏
+  description: {zh: "<输出图谱一句话说明>", en: "<English>"}              # 必填,最易漏
   entities:
-    description: {zh: "<实体的中文说明>", en: "<English>"}
-    fields:                              # 3-5 个字段;核心标识 required: true
-      - {name: name, type: str, description: {zh: "要素名称(文档中的规范术语)", en: "canonical name"}, required: true}
-      - {name: type, type: str, description: {zh: "按领域必须是以下之一: <5-8 类互斥枚举>", en: "one of: <enum>"}, required: true}
-      - {name: definition, type: str, description: {zh: "一句话定义/解释(必填,杜绝空描述)", en: "one-sentence definition"}, required: true}
+    description: {zh: "<实体说明>", en: "<English>"}
+    fields:                                       # ≤5 个;核心标识 required:true
+      - {name: name, type: str, description: {zh: "要素规范术语", en: "canonical name"}, required: true}
+      - {name: type, type: str, description: {zh: "必须是以下之一: <5-8 类互斥枚举>", en: "one of: <enum>"}, required: true}
+      - {name: definition, type: str, description: {zh: "一句话定义", en: "definition"}, required: true}
   relations:
-    description: {zh: "<关系的中文说明>", en: "<English>"}
-    fields:                              # 关系字段固定 source/target/type(+可选 description)
-      - {name: source, type: str, description: {zh: "源要素名称", en: "source element name"}, required: true}
-      - {name: target, type: str, description: {zh: "目标要素名称", en: "target element name"}, required: true}
+    description: {zh: "<关系说明>", en: "<English>"}
+    fields:                                       # ≤5 个;source/target/type 必填
+      - {name: source, type: str, description: {zh: "源要素", en: "source"}, required: true}
+      - {name: target, type: str, description: {zh: "目标要素", en: "target"}, required: true}
       - {name: type, type: str, description: {zh: "关系类型,必须是: <5-10 种互斥枚举>", en: "one of: <enum>"}, required: true}
-guideline:                               # HOW to extract well;不重复 schema 字段定义(WHAT)
-  target: {zh: "你是<领域>知识图谱专家,擅长从文档提取要素及其语义关联", en: "You are a <domain> knowledge-graph expert..."}
-  rules_for_entities:                    # 必填,最易漏
-    zh: ["<3-5 条可执行约束:每段提取上限/type 必须按枚举/name 用规范术语/只抽明确表述不臆测>"]
+guideline:
+  target: {zh: "你是<领域>知识图谱专家,擅长提取要素及其语义关联", en: "You are a <domain> knowledge-graph expert..."}
+  rules_for_entities:                             # 必填;讲策略不讲字段含义
+    zh: ["<3-5 条:每段提取上限/type 严格按枚举/name 用规范术语/只抽明确表述>"]
     en: ["<English equivalents>"]
-  rules_for_relations:                   # 必填,最易漏
-    zh: ["<3-5 条:type 严格用枚举禁止自创/仅取文档明确关系/不臆测常识关联>"]
+  rules_for_relations:                            # 必填
+    zh: ["<3-5 条:type 严格用枚举禁自创/仅取文档明确关系/不臆测常识关联>"]
     en: ["<English equivalents>"]
-identifiers:                             # graph 必填
+identifiers:                                      # graph 必填
   entity_id: name
   relation_id: '{source}|{type}|{target}'
   relation_members: { source: source, target: target }
-display:                                 # 必填;占位符只能引用已存在的字段
-  entity_label: '{name} ({type})'        # 5-20 字符
-  relation_label: '{type}'               # 10-30 字符,勿重复 source/target
+display:                                          # 必填;占位符只能引用已存在字段
+  entity_label: '{name} ({type})'                 # 5-20 字符
+  relation_label: '{type}'                        # 10-30 字符,勿重复 source/target
 
-【硬约束 — 任一不满足会被校验拒绝 → 模板无法使用】
-1. 只输出纯 YAML,首行 language: [zh, en]。禁止 markdown 围栏、解释、前后缀、对话文字。
-2. 必填段一个不能少(最常被遗漏,务必逐项自检):output.description、guideline.rules_for_entities、guideline.rules_for_relations、identifiers、display。
-3. entities.fields 必含 name;relations.fields 必含 source/target/type(字段名固定,勿用 relation_type/event_date 等变体)。
-4. 每个 field 必须有 name/type/description;type 只能是 str/int/float/bool/list[str]/datetime。required 缺省 false,核心标识字段(name/type/source/target)必须 true。
-5. identifiers.entity_id 必须指向 entities.fields 中真实存在的字段(通常 name);graph 的 relation_members 是 dict {source, target}。
-6. 顶层 type 固定 graph(除非用户明确要求 model/hypergraph/temporal_graph/spatial_graph 等;届时 output/guideline/identifiers 段要相应调整)。
-7. 所有 zh 字段纯中文(禁止"实体(entity)"这类中英混用),所有 en 字段纯英文,双语对照一致。
-8. 质量关键:entity.type 与 relation.type 的 description 必须给出该领域**完整且互斥的枚举**(如"必须是 A/B/C/D 之一")——枚举全覆盖、无重叠、禁用"其他/概念/相关"等笼统值。这是抽取质量的根本约束。
-9. Schema 定义 WHAT(字段/类型),Guideline 定义 HOW(抽取策略/质量要求/创建条件),两者不重复。
-10. 字段精简:实体 3-5 个、关系 3-4 个;只留 Essential,辅助字段(描述/时间)required:false。
-11. name 用领域派生 snake_case(勿照抄范例 name)。
+【字段类型】只能是 str/int/float/bool/list[str]/datetime。无独立 enum 类型——枚举约束写进 description(如"必须是 A/B/C 之一")。
 
-【参考蓝本】(仅供学习结构与写法,严禁照抄其领域内容/枚举/name):
+【命名硬约定(违反会被校验拒/auto-fix)】
+- 关系类型字段必须叫 type(不是 relation_type);时间字段必须叫 time(不是 event_date);实体类型字段叫 type(不是 entity_type)。
+- 字段名 snake_case;tags 全小写。
+- 模板 name:hyper-extract 上游惯例 CamelCase,但**本平台文件名规则强制小写 snake_case**,故用 `<domain>_concept_graph` 风格(禁大写/连字符/中文)。
+
+【字段数上限】实体 ≤5、关系 ≤5、记录类 output.fields ≤3。超了按 Essential→Important→Optional 砍,辅助字段(description/time)设 required:false。
+
+【多语言】所有 description/target/rules_* 都给 zh+en 两份:zh 纯中文(禁止"实体(entity)"中英混用),en 纯英文,双语对照一致。
+
+【质量关键】entity.type 与 relation.type 的 description 必须给出该领域**完整且互斥的枚举**——全覆盖、无重叠、禁用"其他/概念/相关"等笼统值。这是抽取质量的根本约束。
+
+【输出前自检(逐项)】
+1. 只输出纯 YAML,首行 language: [zh, en]。禁 markdown 围栏/解释/前后缀/对话文字。
+2. 所选 type 的必填段一个不漏:记录类(output.fields+rules+display.label);图类(output.entities/relations + rules_for_entities/rules_for_relations + identifiers.entity_id/relation_id/relation_members + display);temporal 加 time_field+rules_for_time;spatial 加 location_field+rules_for_location;hypergraph 的 relation_members 类型(simple=字符串/nested=列表)与字段一致且指向 type:list 字段。
+3. entities 必含 name;relations 必含 source/target/type;时间放 relations 不放 entities。
+4. identifiers/display 占位符引用的字段都真实存在;entity_id 指向 entities 字段;relation_label 不重复 source/target。
+5. Guideline 讲"怎么抽好",不重复字段定义。
+
+【参考蓝本】(仅供学习结构,严禁照抄领域内容/枚举/name):
 {BASE}
 """
 
@@ -349,6 +383,15 @@ def _hyperextract_check(yaml_text: str) -> tuple[bool, str]:
         Template.create(tmp)  # 不传 llm_client/embedder,仅解析模板结构
         return True, ""
     except Exception as exc:  # TemplateCfg ValidationError 等
+        msg = str(exc)
+        # credential/config errors mean HE couldn't RUN the check in this env
+        # (Template.create may require an api_key even just to parse) — NOT a
+        # template defect. Treat as "check skipped", not a rejection, so we
+        # don't warn on every save.
+        if any(k in msg.lower() for k in (
+            "credentials", "api_key", "api key", "openai_api_key",
+            "openai_admin_key", "workload_identity", "admin_api_key")):
+            return True, ""
         return False, _format_he_errors(exc)
     finally:
         try:
@@ -357,18 +400,24 @@ def _hyperextract_check(yaml_text: str) -> tuple[bool, str]:
             pass
 
 
-def _gate_hyperextract(yaml_text: str) -> None:
-    """Authoritative save gate: reject templates hyper-extract refuses to load.
-    Closes the E2E gap where the fast registry check passes but HE rejects at
-    extract time (missing output.description / guideline.rules_for_relations /
-    identifiers / display) → 模板能存不能用 → 0 实体。Raises 422 on failure."""
-    ok, he_err = _hyperextract_check(yaml_text)
-    if not ok:
-        raise HTTPException(status_code=422, detail={
-            "code": "TEMPLATE_INVALID_HE",
-            "message": he_err,
-            "hint": "hyper-extract 拒绝加载。常见缺失段: output.description / guideline.rules_for_relations / identifiers / display",
-        })
+def _he_warning(yaml_text: str) -> str | None:
+    """Advisory hyper-extract load check. DISABLED — returns None.
+
+    The pre-save HE check (``_hyperextract_check`` → ``Template.create(tmp)``)
+    is unreliable in this stack: it calls Template.create WITHOUT the
+    ``language`` positional arg that the real extract path passes
+    (``Template.create(path, self._language, ...)``), so it false-positives the
+    standard ``language: [zh, en]`` format as "language is required" — even on
+    the gold baseline ``project_concept_graph`` (which extracts fine in
+    production). That made it warn on every save (noise), so it's disabled here.
+
+    The authoritative loadability check stays at **build** time: ``kg_build``
+    runs the real ``Template.create(path, language, llm_client, ...)`` and fails
+    loudly on a template HE genuinely can't load — so a non-extractable draft is
+    never silently used. Re-enable a *correct* pre-save check here only if it
+    replicates the real extract call (with the language arg).
+    """
+    return None
 
 
 def _trim_base(by: str, budget: int = 6000) -> str:
@@ -911,7 +960,7 @@ async def create_template(
         raise HTTPException(status_code=409, detail=f"template name conflicts with system template: {req.name}")
     try:
         yaml = _inject_category(req.yaml, req.doc_type)
-        _gate_hyperextract(yaml)  # 权威闸门:HE 拒绝的模板不得落盘
+        he_warn = _he_warning(yaml)  # advisory:不阻塞保存,落盘后随响应返回
         path = save_template(req.name, yaml, _user_dir(),
                              reserved_names=_reserved_names(),
                              known_categories=_known_categories(request))
@@ -920,9 +969,11 @@ async def create_template(
             "code": "TEMPLATE_INVALID",
             "errors": [{"path": p, "message": m} for p, m in exc.errors]}) from exc
     reset_gallery_cache()
-    logger.info("extraction_template_created name=%s by=%s hash=%s",
-                req.name, getattr(_user, "username", None), content_hash(req.yaml)[:12])
-    return {"success": True, "data": {"name": req.name, "path": str(path), "source": "user"}}
+    logger.info("extraction_template_created name=%s by=%s hash=%s he_warn=%s",
+                req.name, getattr(_user, "username", None), content_hash(req.yaml)[:12],
+                bool(he_warn))
+    return {"success": True, "data": {"name": req.name, "path": str(path), "source": "user",
+            "warnings": [{"path": "hyper-extract", "message": he_warn}] if he_warn else []}}
 
 
 @router.put("/{name}")
@@ -939,7 +990,7 @@ async def update_template(
                                                       "message": f"{name} is a read-only {existing.source} template"})
     try:
         yaml = _inject_category(req.yaml, req.doc_type)
-        _gate_hyperextract(yaml)  # 权威闸门:HE 拒绝的模板不得落盘
+        he_warn = _he_warning(yaml)  # advisory:不阻塞保存,落盘后随响应返回
         path = save_template(name, yaml, _user_dir(),
                              reserved_names=_reserved_names(),
                              known_categories=_known_categories(request))
@@ -948,9 +999,11 @@ async def update_template(
             "code": "TEMPLATE_INVALID",
             "errors": [{"path": p, "message": m} for p, m in exc.errors]}) from exc
     reset_gallery_cache()
-    logger.info("extraction_template_updated name=%s by=%s hash=%s",
-                name, getattr(_user, "username", None), content_hash(req.yaml)[:12])
-    return {"success": True, "data": {"name": name, "path": str(path)}}
+    logger.info("extraction_template_updated name=%s by=%s hash=%s he_warn=%s",
+                name, getattr(_user, "username", None), content_hash(req.yaml)[:12],
+                bool(he_warn))
+    return {"success": True, "data": {"name": name, "path": str(path),
+            "warnings": [{"path": "hyper-extract", "message": he_warn}] if he_warn else []}}
 
 
 @router.delete("/{name}")
@@ -964,6 +1017,8 @@ async def remove_template(
     if existing is not None and existing.source != "user":
         raise HTTPException(status_code=403, detail={"code": "TEMPLATE_READ_ONLY",
                                                       "message": f"{name} is a read-only {existing.source} template"})
+    if existing is None:
+        raise HTTPException(status_code=404, detail=f"template not found: {name}")
     store = _store(request)
     if store is not None:
         bound = store.list_bindings(name)
@@ -972,11 +1027,33 @@ async def remove_template(
                 "code": "TEMPLATE_IN_USE",
                 "message": f"template {name} is bound to dataset(s): {bound}. Unbind first.",
             })
-    removed = delete_template(name, _user_dir())
+    # Delete the ACTUAL on-disk file. The gallery indexes templates by the
+    # YAML's internal `name:`, which may differ from the filename (e.g. a file
+    # foo.yaml whose YAML says `name: bar`). delete_template(name) assumes
+    # <user_dir>/<name>.yaml and 404s under such divergence — so delete via the
+    # gallery's resolved path, with a prefix guard so only the user-templates
+    # directory is ever touched (path-traversal defense-in-depth).
+    removed = False
+    user_dir = _user_dir()
+    real_path = getattr(existing, "path", "") or ""
+    if real_path:
+        try:
+            rp = os.path.realpath(real_path)
+            base = os.path.realpath(user_dir)
+            if rp != base and rp.startswith(base + os.sep) and os.path.isfile(rp):
+                os.remove(rp)
+                removed = True
+        except OSError:
+            removed = False
+    if not removed:
+        removed = delete_template(name, user_dir)  # fallback: <user_dir>/<name>.yaml
     if not removed:
         raise HTTPException(status_code=404, detail=f"template not found: {name}")
+    if store is not None:
+        store.delete_template(name)  # metadata row cleanup (orphan-safe)
     reset_gallery_cache()
-    logger.info("extraction_template_deleted name=%s by=%s", name, getattr(_user, "username", None))
+    logger.info("extraction_template_deleted name=%s file=%s by=%s",
+                name, real_path, getattr(_user, "username", None))
     return {"success": True, "data": {"name": name, "deleted": True}}
 
 

@@ -269,11 +269,16 @@ class KAPruneRequest(BaseModel):
 
 class KGDocType(BaseModel):
     doc_type: str
-    description: str
-    aliases: list[str]
+    description: str = ""
+    description_zh: str = ""
+    aliases: list[str] = []
     resolved_template: str = Field(description="Template this doc_type resolves to")
     resolution: str = Field(
         description="Match source: override | gallery | degraded | default"
+    )
+    source: str | None = Field(
+        default=None,
+        description="Dictionary source: seed (built-in) | custom (admin-added) | None (static fallback)",
     )
 
 

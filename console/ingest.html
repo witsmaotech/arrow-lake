@@ -160,19 +160,28 @@ function bindUpload() {
   renderUploaded();
 }
 
-// 抽取模板下拉:从 /extraction-templates 拉全量(含 user),按 source 分组。
+// 抽取模板下拉:按 category(中文)→ type 分组,不区分 user/system。
 async function fillExtTpl() {
   const sel = $("#extTpl"); if (!sel) return;
   try {
-    const r = await request("GET", "/admin/extraction-templates?selectable=true");
-    const tpls = Array.isArray(r?.data) ? r.data : [];
-    const opt = (t) => `<option value="${esc(t.name)}">${esc(t.name)}${t.source === "user" ? " · user" : ""}${t.is_high_risk ? " ⚠" : ""}</option>`;
-    const user = tpls.filter((t) => t.source === "user");
-    const sys = tpls.filter((t) => t.source !== "user");
-    sel.innerHTML = `<option value="">未指定(走 doc_type 路由)</option>`
-      + (user.length ? `<optgroup label="user(可编辑)">${user.map(opt).join("")}</optgroup>` : "")
-      + (sys.length ? `<optgroup label="system(只读基线)">${sys.map(opt).join("")}</optgroup>` : "");
-  } catch (_) { /* admin-only 端点;非 admin 或不可用时保留默认选项 */ }
+    const [tr, dr] = await Promise.all([
+      request("GET", "/admin/extraction-templates?selectable=true"),
+      request("GET", "/kg/doc-types"),
+    ]);
+    const tpls = Array.isArray(tr?.data) ? tr.data : [];
+    const zh = {}; (dr?.doc_types || []).forEach((d) => { zh[d.doc_type] = d.description_zh || ""; });
+    const catLabel = (c) => zh[c] ? `${c} · ${zh[c]}` : c;
+    const byCat = {};
+    tpls.forEach((t) => { const c = t.category || "uncategorized"; (byCat[c] = byCat[c] || []).push(t); });
+    let html = `<option value="">未指定(走分类器自动路由)</option>`;
+    Object.keys(byCat).sort().forEach((c) => {
+      const items = byCat[c].sort((a, b) => (a.type || "").localeCompare(b.type || ""));
+      const opts = items.map((t) =>
+        `<option value="${esc(t.name)}">${esc(t.name)}${t.type ? " · " + esc(t.type) : ""}${t.is_high_risk ? " ⚠" : ""}</option>`).join("");
+      html += `<optgroup label="${esc(catLabel(c))}">${opts}</optgroup>`;
+    });
+    sel.innerHTML = html;
+  } catch (_) { /* 端点不可用时保留默认选项 */ }
 }
 
 function renderFields() {
@@ -182,22 +191,8 @@ function renderFields() {
   uploadedBlobs = []; pickedFiles = []; // 切换来源重置
   if (src === "documents") {
     $("#fields").innerHTML = renderUploadHTML(DOC_ACCEPT, "PDF · MD/TXT · HTML · DOCX/DOC · PPTX · XLSX/XLS · EPUB · RTF · ODT/ODS/ODP")
-      + `<div class="grid g-2" style="margin-top:var(--s3)">
-          <div class="field"><label>文件格式 <span class="muted" style="font-weight:400">(限定上传类型)</span></label><select class="select" id="fileFmt">${[["","自动识别(全部 14 种)"],[".pdf","PDF"],[".docx,.doc","Word(docx/doc)"],[".pptx,.ppt","PowerPoint(pptx/ppt)"],[".xlsx,.xls","Excel(xlsx/xls)"],[".md,.markdown","Markdown(md)"],[".txt","文本(txt)"],[".html,.htm","HTML"],[".epub","EPUB"],[".rtf","RTF"],[".odt","ODT"],[".ods","ODS"],[".odp","ODP"]].map(([v,t])=>`<option value="${v}">${t}</option>`).join("")}</select></div>
-          <div class="field"><label>doc_type <span class="muted" style="font-weight:400">(KG 抽取路由 · 可选)</span></label><select class="select" id="docType">
-            <option value="">未指定(untyped)</option>
-            <option value="research_paper">研究论文(research_paper)</option>
-            <option value="report">报告(report)</option>
-            <option value="policy">政策法规(policy)</option>
-            <option value="patent">专利(patent)</option>
-            <option value="manual">手册 / 说明(manual)</option>
-            <option value="legal_contract">法律合同(legal_contract)</option>
-            <option value="financial_report">财报(financial_report)</option>
-            <option value="medical_record">病历(medical_record)</option>
-            <option value="technical_spec">技术规格(technical_spec)</option>
-          </select></div>
-        </div>
-        <div class="field" style="margin-top:var(--s3)"><label>抽取模板 <span class="muted" style="font-weight:400">(绑定后 /kg/build 自动套用 · 优先于 doc_type · 含 user 模板)</span></label><select class="select" id="extTpl"><option value="">未指定(走 doc_type 路由)</option></select></div>
+      + `<div class="field" style="margin-top:var(--s3)"><label>文件格式 <span class="muted" style="font-weight:400">(限定上传类型)</span></label><select class="select" id="fileFmt">${[["","自动识别(全部 14 种)"],[".pdf","PDF"],[".docx,.doc","Word(docx/doc)"],[".pptx,.ppt","PowerPoint(pptx/ppt)"],[".xlsx,.xls","Excel(xlsx/xls)"],[".md,.markdown","Markdown(md)"],[".txt","文本(txt)"],[".html,.htm","HTML"],[".epub","EPUB"],[".rtf","RTF"],[".odt","ODT"],[".ods","ODS"],[".odp","ODP"]].map(([v,t])=>`<option value="${v}">${t}</option>`).join("")}</select></div>
+        <div class="field" style="margin-top:var(--s3)"><label>抽取模板 <span class="muted" style="font-weight:400">(选模板则 /kg/build 自动套用该模板 · 按 category 分组)</span></label><select class="select" id="extTpl"><option value="">未指定(走分类器自动路由)</option></select></div>
         <div class="muted" style="font-size:.7rem;margin-top:var(--s3)">v1.8.9 端点自动:解析 → chunk → <b>embed</b> → <b>FTS 索引</b></div>`;
     window.applyIcons && applyIcons($("#fields"));
     bindUpload();
@@ -308,7 +303,7 @@ $("#submit").addEventListener("click", async () => {
     const blobKeys = uploadedBlobs.map((b) => b.key);
     if (src === "documents") {
       if (!blobKeys.length) { toast("请先上传文件", "warn"); return; }
-      body = { pdf_paths: [], blob_keys: blobKeys, doc_type: $("#docType").value.trim() || null };
+      body = { pdf_paths: [], blob_keys: blobKeys };
     } else if (src === "images" || src === "videos" || src === "csv" || src === "parquet" || src === "json") {
       if (!blobKeys.length) { toast("请先上传文件", "warn"); return; }
       body = { file_paths: [], blob_keys: blobKeys };

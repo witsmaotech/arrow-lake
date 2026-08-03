@@ -128,6 +128,7 @@ class TemplateInfo:
             "type": self.type,
             "tags": list(self.tags),
             "is_high_risk": self.is_high_risk,
+            "mtime": _path_mtime(self.path),
             "description_zh": self.description_zh,
             "description_en": self.description_en,
             "source": self.source,
@@ -147,6 +148,17 @@ class TemplateInfo:
 # Splits on any run of non-alphanumeric OR underscore (template names are
 # underscore-joined, e.g. "workflow_graph" → {"workflow", "graph"}).
 _TOKEN_SPLIT = re.compile(r"[\W_]+")
+
+
+def _path_mtime(path: str) -> float:
+    """File mtime for newest-first sorting in the template gallery; 0.0 when
+    ``path`` isn't a real file (e.g. a ``category/name`` preset id for system
+    templates), so user templates (real files, recently added/edited) surface
+    on top and system presets settle below."""
+    try:
+        return os.path.getmtime(path)
+    except (OSError, TypeError, ValueError):
+        return 0.0
 
 
 def _tokens(text: str) -> set[str]:
@@ -424,12 +436,13 @@ def _merge_user_templates(gallery: TemplateGallery, user_dir: str | os.PathLike)
     rebuild/restart — :func:`reset_gallery_cache` picks up changes). Each user
     template's absolute file path is its ``TemplateInfo.path`` so
     ``Template.create()`` loads it directly. ``source="user"`` marks it
-    editable/deletable in the UI; ``category`` is taken from the YAML when the
-    author set a domain (finance/legal/…, enabling doc_type routing via tags),
-    else ``"user"`` (routed only via explicit per-dataset binding — see
-    validate_taxonomy exemption). Names colliding with a system template are
-    resolved in favor of the system template by the loader; user templates
-    SHOULD use distinct names (enforced at CRUD validation time).
+    editable/deletable in the UI. ``category`` is read from the YAML (M5:
+    required + ∈ dictionary at CRUD validation time, so on-disk user templates
+    always carry a real domain category → Layer-2 routing works). Templates
+    missing a category (pre-M5 / hand-edited) load with an empty category and
+    route only via an explicit per-dataset binding. Names colliding with a
+    system template are resolved in favor of the system template by the loader;
+    user templates SHOULD use distinct names (enforced at CRUD validation time).
     """
     user_path = Path(user_dir)
     if not user_path.is_dir():
@@ -459,7 +472,7 @@ def _merge_user_templates(gallery: TemplateGallery, user_dir: str | os.PathLike)
             guideline.get("target") if isinstance(guideline, dict) else None)
         gallery.templates.append(TemplateInfo(
             path=str(yml.resolve()),
-            category=str(data.get("category") or "user").lower(),
+            category=str(data.get("category") or "").lower().strip(),
             name=str(data.get("name", yml.stem)).lower(),
             type=str(data.get("type", "")).lower(),
             tags=tags,
@@ -642,8 +655,9 @@ def validate_taxonomy(gallery: TemplateGallery | None = None) -> list[str]:
     cats = {t.category for t in gallery.templates}
     # 'project' is a template-source marker (project-local vs hyper-extract
     # preset), not a doc_type — project templates route via explicit override
-    # (he_doc_type_templates), so it is expected + not drift.
-    _non_doc_type_categories = frozenset({"project", "user"})
+    # (he_doc_type_templates). An empty category (pre-M5 / hand-edited user
+    # template without a domain) routes only via explicit binding — not drift.
+    _non_doc_type_categories = frozenset({"project", "user", ""})
     for cat in sorted(cats):
         if cat in _non_doc_type_categories:
             continue

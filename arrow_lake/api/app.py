@@ -25,6 +25,7 @@ from arrow_lake.api.routers.export import router as export_router
 from arrow_lake.api.routers.gravitino import router as gravitino_router
 from arrow_lake.api.routers.knowledge_graph import router as kg_router
 from arrow_lake.api.routers.extraction_templates import router as extraction_templates_router
+from arrow_lake.api.routers.doc_type_categories import router as doc_type_categories_router
 from arrow_lake.api.routers.lineage import router as lineage_router
 from arrow_lake.api.routers.materialized import router as materialized_router
 from arrow_lake.api.routers.maintenance import router as maintenance_router
@@ -237,6 +238,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         from arrow_lake.system_db.stores.template_quality_runs import TemplateQualityRunStore
 
         app.state.template_quality_store = TemplateQualityRunStore(sys_db)
+        # v1.10.0 M5: dynamic doc_type ↔ template-category dictionary. Seeded
+        # once from the code-level taxonomy (DOC_TYPE_ALIASES/DESCRIPTIONS);
+        # admin-added customs are source='custom'. Enables runtime category
+        # extension without a code change (template category + ingest doc_type).
+        from arrow_lake.system_db.stores.doc_type_categories import DocTypeCategoryStore
+
+        doc_type_store = DocTypeCategoryStore(sys_db)
+        doc_type_store.seed_if_empty()
+        app.state.doc_type_category_store = doc_type_store
+        lake._doc_type_category_store = doc_type_store
         # Activate RAG-session persistence in the Lake facade's RAG pipeline.
         lake._rag_session_store = app.state.rag_session_store
         # Activate the lineage adjacency index in the Lake facade's LineageStore.
@@ -664,6 +675,7 @@ def create_app(config: ArrowLakeConfig | None = None) -> FastAPI:
     app.include_router(rag_router)
     app.include_router(kg_router)
     app.include_router(extraction_templates_router)
+    app.include_router(doc_type_categories_router)
     app.include_router(auth_router)
     app.include_router(admin_router)
     app.include_router(maintenance_router)

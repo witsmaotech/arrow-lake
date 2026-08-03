@@ -81,14 +81,18 @@ def test_user_template_indexed_with_absolute_path(user_dir):
     assert "security" in t.tags
 
 
-def test_user_template_category_defaults_to_user(user_dir):
+def test_user_template_category_empty_when_missing(user_dir):
+    # M5: the "user" fallback is retired — a user template without a domain
+    # category loads with an EMPTY category (routes only via explicit binding,
+    # not Layer-2). CRUD validation now requires category, so this only arises
+    # for hand-edited / pre-M5 templates.
     yaml = _VALID_YAML.replace("category: security\n", "")
     _write(user_dir, "no_category.yaml", yaml.replace("name: security_concept_graph", "name: no_category"))
     reset_gallery_cache()
     g = get_template_gallery()
     t = g.get(next(p for p in [t.path for t in g.templates] if "no_category" in p))
     assert t is not None
-    assert t.category == "user"
+    assert t.category == ""
     assert t.source == "user"
 
 
@@ -119,15 +123,16 @@ def test_skips_hidden_and_nonyaml(user_dir):
     assert not any(n.startswith("hidden") for n in names)
 
 
-def test_user_category_exempt_from_taxonomy_warning(user_dir):
-    # A user template without a domain category lands in category="user"; the
-    # taxonomy validator must NOT flag "user" as drift (parallel to "project").
+def test_empty_category_exempt_from_taxonomy_warning(user_dir):
+    # M5: a user template without a domain category loads with category="" and
+    # must NOT be flagged as drift (it routes only via explicit binding, like
+    # the "project" source marker). Parallel to the pre-M5 "user" exemption.
     yaml = _VALID_YAML.replace("category: security\n", "").replace(
         "name: security_concept_graph", "name: uncat")
     _write(user_dir, "uncat.yaml", yaml)
     reset_gallery_cache()
     warnings = validate_taxonomy()
-    assert not any("user" in w for w in warnings)
+    assert not any("category ''" in w for w in warnings)
 
 
 def test_user_templates_dir_env_default(monkeypatch):
