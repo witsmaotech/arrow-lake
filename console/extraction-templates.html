@@ -98,6 +98,19 @@ const errMsg = (e) => {
   return (d && d.message) || e?.message || String(e);
 };
 
+/* ---------- dry-run 结果渲染 ---------- */
+function renderDry(ents, rels) {
+  const etbl = (ents && ents.length)
+    ? `<table class="tbl" style="font-size:.74rem"><thead><tr><th>实体 name</th><th>type</th></tr></thead><tbody>
+      ${ents.map((e) => `<tr><td class="mono">${esc(e.name)}</td><td>${esc(e.type)}</td></tr>`).join("")}</tbody></table>`
+    : `<div class="muted" style="font-size:.74rem;padding:6px 0">⚠ 无实体(检查模板 guideline / type 枚举是否过严)</div>`;
+  const rtbl = (rels && rels.length)
+    ? `<table class="tbl" style="font-size:.74rem;margin-top:8px"><thead><tr><th>source</th><th>type</th><th>target</th></tr></thead><tbody>
+      ${rels.map((r) => `<tr><td class="mono">${esc(r.source)}</td><td>${esc(r.type)}</td><td class="mono">${esc(r.target)}</td></tr>`).join("")}</tbody></table>`
+    : "";
+  return etbl + rtbl;
+}
+
 /* ---------- list ---------- */
 async function load() {
   try {
@@ -191,6 +204,17 @@ function openEditor({mode, name, yaml, docType}) {
     </div>
     <textarea class="ed-area" id="edYaml" spellcheck="false">${esc(yaml || "")}</textarea>
     <div class="vbox" id="vbox"></div>
+    <details class="ai-gen" style="margin-top:10px;border:1px solid var(--line-soft);border-radius:var(--r-md);padding:8px 12px;background:var(--ink-950)">
+      <summary style="cursor:pointer;font-size:.8rem;font-weight:600;color:var(--teal-bright)">▶ 试跑(LLM 用当前模板抽一次样本,看抽取质量)</summary>
+      <div style="margin-top:8px;display:flex;flex-direction:column;gap:6px">
+        <textarea class="input" id="drySample" placeholder="粘贴一段样本文档(必填,≤8000 字)" style="min-height:70px;font-size:.76rem;font-family:var(--mono)"></textarea>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="btn btn-primary btn-sm" id="dryBtn">▶ 试跑</button>
+          <span id="dryMsg" style="font-size:.72rem;color:var(--fg-lo)"></span>
+        </div>
+        <div id="dryResult"></div>
+      </div>
+    </details>
     <div style="display:flex;gap:8px;margin-top:10px;justify-content:flex-end">
       <button class="btn btn-ghost btn-sm" id="valBtn">校验</button>
       <button class="btn btn-ghost btn-sm" data-modal-close>取消</button>
@@ -218,6 +242,25 @@ function openEditor({mode, name, yaml, docType}) {
       if (!d.valid) toast("生成内容校验未全过,请在编辑器修正", "error");
     } catch (e) { $("#aiMsg").textContent = ""; toast("生成失败:" + errMsg(e), "error"); }
     finally { $("#aiGenBtn").disabled = false; }
+  };
+  // ▶ 试跑(M3)
+  $("#dryBtn").onclick = async () => {
+    const yaml = $("#edYaml").value, sample = $("#drySample").value.trim();
+    if (!sample) { toast("请填样本文本", "error"); return; }
+    $("#dryMsg").textContent = "试跑中…(≤60s)"; $("#dryBtn").disabled = true; $("#dryResult").innerHTML = "";
+    try {
+      const r = await request("POST", API + "/dry-run", { body: { yaml, sample_text: sample } });
+      const d = r.data;
+      $("#dryMsg").textContent = `${d.entity_count} 实体 / ${d.relation_count} 关系 · ${d.elapsed_ms}ms`;
+      $("#dryResult").innerHTML = renderDry(d.entities, d.relations);
+    } catch (e) {
+      $("#dryMsg").textContent = "";
+      const det = e?.body?.detail;
+      const msg = det?.code === "TEMPLATE_INVALID"
+        ? "模板校验未过:" + (det.errors || []).map((x) => `${x.path}:${x.message}`).join("; ")
+        : (e?.message || "试跑失败");
+      toast("试跑失败:" + msg, "error");
+    } finally { $("#dryBtn").disabled = false; }
   };
   const doValidate = async () => {
     const y = $("#edYaml").value;
