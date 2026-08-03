@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>知识抽取模板 · Arrow Lake Console</title>
+<link rel="stylesheet" href="assets/tokens.css"/>
+<link rel="stylesheet" href="assets/app.css"/>
+<link rel="stylesheet" href="assets/console.css"/>
+<style>
+  .src-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:99px;font-size:.7rem;font-weight:600;border:1px solid var(--line-soft)}
+  .src-chip.system{color:var(--fg-lo);background:var(--ink-800)}
+  .src-chip.user{color:#04201a;background:var(--teal-bright);border-color:var(--teal-bright)}
+  .toolbar{display:flex;align-items:center;gap:10px;margin:12px 0}
+  .ed-area{width:100%;min-height:340px;font-family:var(--mono);font-size:.78rem;border:1px solid var(--line-soft);border-radius:var(--r-md);background:var(--ink-950);color:var(--fg-hi);padding:10px;resize:vertical;tab-size:2}
+  .ed-area:focus{outline:none;border-color:var(--teal-bright)}
+  .vbox{font-size:.76rem;margin-top:6px;max-height:160px;overflow-y:auto}
+  .vbox .ok{color:var(--teal-bright)}
+  .vbox .err{color:#ff6b6b}
+  .vrow{display:flex;gap:8px;padding:2px 0}
+  .vrow .path{color:var(--fg-lo);font-family:var(--mono);min-width:200px}
+  .meta-row{display:flex;gap:14px;font-size:.74rem;color:var(--fg-lo);margin-bottom:8px;flex-wrap:wrap}
+  .meta-row b{color:var(--fg-md);font-weight:600}
+  .name-in{font-family:var(--mono);font-size:.82rem}
+</style>
+</head>
+<body>
+<div id="app">
+<main class="main"><div class="page">
+  <div class="h-sec between">
+    <div><h1>知识抽取模板</h1><div class="desc">CRUD 用户模板 · 后端 <span class="mono">/kg/build?template=</span> 即用 · 不 rebuild/不 restart · <span class="mono">/api/v1/admin/extraction-templates</span> · 需 ADMIN</div></div>
+    <div class="flex"><span class="lamp ok"><i></i>动态加载</span></div>
+  </div>
+
+  <div class="toolbar">
+    <button class="btn btn-primary btn-sm" id="newBtn"><i class="placeholder" data-ic="plus"></i> 新建模板</button>
+    <label class="field" style="flex-direction:row;align-items:center;gap:6px">来源
+      <select class="select" id="srcFilter"><option value="">全部</option><option value="user">user(可编辑)</option><option value="system">system(只读)</option></select>
+    </label>
+    <input class="input" id="qFilter" placeholder="按名称/标签过滤…" style="max-width:240px;margin-left:auto"/>
+  </div>
+
+  <div class="panel flush">
+    <div class="panel-h"><i class="placeholder" data-ic="code"></i><h3>模板列表</h3><span class="sub" id="cnt">—</span></div>
+    <div class="panel-b">
+      <div class="tbl-scroll"><table class="tbl">
+        <thead><tr><th>名称</th><th>来源</th><th>type</th><th>category</th><th>标签</th><th>风险</th><th>操作</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table></div>
+    </div>
+  </div>
+  <div class="gap-note">系统/项目模板(system)只读,可「复制成 user 模板」派生。用户模板(user)可编辑/删除;改后下次 <span class="mono">/kg/build</span> 即生效。</div>
+</div></main>
+</div>
+
+<script src="assets/console-layout.js"></script>
+<script type="module">
+import { request } from "./src/api.js";
+import { isLoggedIn } from "./src/auth.js";
+import { toast } from "./src/ui/toast.js";
+import { confirmDialog } from "./src/ui/modal.js";
+
+if (!isLoggedIn()) location.href = "login.html";
+const { renderShell, icon, applyIcons } = window;
+renderShell({ active: "templates", crumb: '<b>知识抽取模板</b>' });
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const API = "/api/v1/admin/extraction-templates";
+let ALL = [];
+
+const errMsg = (e) => {
+  const d = e?.detail; if (d?.errors) return d.errors.map((x) => `${x.path}: ${x.message}`).join("; ");
+  if (Array.isArray(d)) return d.map((x) => x?.msg || JSON.stringify(x)).join("; ");
+  return (d && d.message) || e?.message || String(e);
+};
+
+/* ---------- list ---------- */
+async function load() {
+  try {
+    const r = await request("GET", API);
+    ALL = r.data || [];
+    render();
+  } catch (e) { toast("加载失败:" + errMsg(e), "error"); }
+}
+function render() {
+  const src = $("#srcFilter").value, q = $("#qFilter").value.trim().toLowerCase();
+  const rows = ALL.filter((t) => (!src || t.source === src)
+    && (!q || t.name.includes(q) || (t.tags || []).some((x) => x.includes(q))));
+  $("#cnt").textContent = `${rows.length} / ${ALL.length}`;
+  $("#rows").innerHTML = rows.map((t) => {
+    const sys = t.source !== "user";
+    const chip = sys ? `<span class="src-chip system">system</span>` : `<span class="src-chip user">user</span>`;
+    const risk = t.is_high_risk ? `<span style="color:#ff6b6b">⚠</span>` : "—";
+    const tags = (t.tags || []).slice(0, 4).map((x) => `<span class="mono" style="color:var(--fg-lo)">${esc(x)}</span>`).join(" ");
+    const act = sys
+      ? `<button class="btn btn-ghost btn-sm" data-copy="${esc(t.name)}">复制</button>
+         <button class="btn btn-ghost btn-sm" data-view="${esc(t.name)}">查看</button>`
+      : `<button class="btn btn-ghost btn-sm" data-edit="${esc(t.name)}">编辑</button>
+         <button class="btn btn-ghost btn-sm" data-view="${esc(t.name)}">查看</button>
+         <button class="btn btn-ghost btn-sm" data-del="${esc(t.name)}" style="color:#ff6b6b">删除</button>`;
+    return `<tr>
+      <td><span class="mono name-in">${esc(t.name)}</span></td>
+      <td>${chip}</td>
+      <td><span class="mono">${esc(t.type)}</span></td>
+      <td>${esc(t.category)}</td>
+      <td>${tags}</td>
+      <td>${risk}</td>
+      <td class="nowrap">${act}</td></tr>`;
+  }).join("");
+  applyIcons($("#rows"));
+}
+
+/* ---------- modal: create / edit ---------- */
+let validateTimer = null;
+function openEditor({mode, name, yaml, docType}) {
+  const isCreate = mode === "create";
+  const body = `
+    <div class="meta-row">
+      <span><b>名称</b> <input class="input name-in" id="edName" value="${esc(name || "")}" ${isCreate ? "" : "disabled"} style="width:220px" pattern="[a-z][a-z0-9_]*"></span>
+      <span><b>doc_type</b> <input class="input" id="edDocType" value="${esc(docType || "")}" placeholder="(可选)"></span>
+    </div>
+    <textarea class="ed-area" id="edYaml" spellcheck="false">${esc(yaml || "")}</textarea>
+    <div class="vbox" id="vbox"></div>
+    <div style="display:flex;gap:8px;margin-top:10px;justify-content:flex-end">
+      <button class="btn btn-ghost btn-sm" id="valBtn">校验</button>
+      <button class="btn btn-ghost btn-sm" data-modal-close>取消</button>
+      <button class="btn btn-primary btn-sm" id="saveBtn">${isCreate ? "创建" : "保存"}</button>
+    </div>`;
+  showModal(isCreate ? "新建用户模板" : `编辑 ${esc(name)}`, body);
+  const doValidate = async () => {
+    const y = $("#edYaml").value;
+    if (!y.trim()) { $("#vbox").innerHTML = ""; return; }
+    try {
+      const r = await request("POST", API + "/validate", { body: { yaml: y } });
+      const d = r.data;
+      $("#vbox").innerHTML = d.valid
+        ? `<div class="ok">✓ 校验通过</div>`
+        : `<div class="err">✗ ${d.errors.length} 处错误:</div>` + d.errors.map((e) => `<div class="vrow"><span class="path">${esc(e.path)}</span><span>${esc(e.message)}</span></div>`).join("");
+    } catch (e) { $("#vbox").innerHTML = `<div class="err">${esc(errMsg(e))}</div>`; }
+  };
+  // debounce live-validate
+  $("#edYaml").addEventListener("input", () => { clearTimeout(validateTimer); validateTimer = setTimeout(doValidate, 500); });
+  $("#valBtn").addEventListener("click", doValidate);
+  $("#saveBtn").addEventListener("click", async () => {
+    const y = $("#edYaml").value, nm = $("#edName").value.trim(), dt = $("#edDocType").value.trim() || null;
+    if (!nm || !y.trim()) { toast("名称和 YAML 不能为空", "error"); return; }
+    try {
+      if (isCreate) {
+        await request("POST", API, { body: { name: nm, yaml: y, doc_type: dt } });
+        toast(`模板 ${nm} 已创建`, "success");
+      } else {
+        await request("PUT", `${API}/${encodeURIComponent(nm)}`, { body: { yaml: y, doc_type: dt } });
+        toast(`模板 ${nm} 已保存`, "success");
+      }
+      closeModal(); await load();
+    } catch (e) { toast("保存失败:" + errMsg(e), "error"); }
+  });
+}
+
+function closeModal() { const o = document.querySelector(".modal-overlay.dynamic"); if (o) o.remove(); }
+function showModal(title, bodyHtml) {
+  closeModal();
+  const o = document.createElement("div");
+  o.className = "modal-overlay dynamic show";
+  o.innerHTML = `<div class="modal-card" role="dialog" aria-modal="true" style="max-width:760px">
+    <div class="modal-title" style="display:flex;align-items:center;justify-content:space-between;gap:12px">${esc(title)}
+      <button class="btn btn-icon btn-ghost" data-modal-close>${icon("close")}</button></div>
+    <div class="modal-body" style="margin-top:12px">${bodyHtml}</div></div>`;
+  o.addEventListener("click", (e) => { if (e.target === o || e.target.closest("[data-modal-close]")) closeModal(); });
+  document.body.appendChild(o);
+  applyIcons(o);
+  return o;
+}
+
+/* ---------- view (read-only) ---------- */
+async function onView(name) {
+  try {
+    const r = await request("GET", `${API}/${encodeURIComponent(name)}`);
+    const d = r.data;
+    showModal(`查看 ${esc(name)}`, `
+      <div class="meta-row"><span><b>来源</b> ${esc(d.source)}</span><span><b>type</b> ${esc(d.type)}</span>
+      <span><b>category</b> ${esc(d.category)}</span><span><b>实体字段</b> ${(d.entity_fields||[]).length}</span>
+      <span><b>关系字段</b> ${(d.relation_fields||[]).length}</span></div>
+      <textarea class="ed-area" readonly>${esc(d.yaml || "(preset, 无本地文件)")}</textarea>`);
+  } catch (e) { toast("查看失败:" + errMsg(e), "error"); }
+}
+
+/* ---------- events ---------- */
+$("#newBtn").addEventListener("click", () => openEditor({ mode: "create", yaml: STARTER_YAML }));
+$("#rows").addEventListener("click", async (e) => {
+  const t = e.target.closest("[data-edit],[data-del],[data-view],[data-copy]");
+  if (!t) return;
+  if (t.dataset.edit) {
+    try { const r = await request("GET", `${API}/${encodeURIComponent(t.dataset.edit)}`); openEditor({ mode: "edit", name: t.dataset.edit, yaml: r.data.yaml, docType: r.data.doc_type }); }
+    catch (err) { toast("加载失败:" + errMsg(err), "error"); }
+  } else if (t.dataset.view) { onView(t.dataset.view); }
+  else if (t.dataset.copy) {
+    try {
+      const r = await request("GET", `${API}/${encodeURIComponent(t.dataset.copy)}`);
+      const y = (r.data.yaml || "").replace(/name:\s*\S+/, `name: ${r.data.name}_copy`);
+      openEditor({ mode: "create", name: `${r.data.name}_copy`, yaml: y });
+    } catch (err) { toast("复制失败:" + errMsg(err), "error"); }
+  } else if (t.dataset.del) {
+    const nm = t.dataset.del;
+    if (await confirmDialog({ title: `删除模板 ${nm}?`, message: "删除后不可恢复;已用它建的图查询不受影响(dump 自包含快照)。", okText: "删除", danger: true })) {
+      try { await request("DELETE", `${API}/${encodeURIComponent(nm)}`); toast(`模板 ${nm} 已删除`, "success"); await load(); }
+      catch (err) { toast("删除失败:" + errMsg(err), "error"); }
+    }
+  }
+});
+$("#srcFilter").addEventListener("change", render);
+$("#qFilter").addEventListener("input", render);
+
+const STARTER_YAML = `language: [zh, en]
+name: my_template
+type: graph
+tags: [mytag]
+description: {zh: 我的模板, en: my template}
+output:
+  entities:
+    fields:
+      - {name: name, type: str, description: {zh: 名称, en: name}}
+      - {name: type, type: str, description: {zh: 类型, en: type}}
+  relations:
+    fields:
+      - {name: source, type: str, description: {zh: 源, en: source}}
+      - {name: target, type: str, description: {zh: 目标, en: target}}
+      - {name: type, type: str, description: {zh: 关系, en: relation}}
+guideline:
+  target: {zh: 你是知识图谱专家, en: you are a kg expert}
+`;
+
+load();
+</script>
+</body></html>

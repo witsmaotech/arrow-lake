@@ -61,6 +61,7 @@ const NAV = [
   { group: "管理", items: [
     { id: "tasks", label: "异步任务", ic: "dashboard", href: "tasks.html" },
     { id: "admin", label: "管理后台", ic: "key", href: "admin.html" },
+    { id: "templates", label: "抽取模板", ic: "code", href: "extraction-templates.html" },
     { id: "my-workspace", label: "我的工作区", ic: "bell", href: "my-workspace.html" },
   ] },
   { group: "运维", items: [
