@@ -314,7 +314,7 @@ arrow-lake rag query "..." --dataset docs
 
 ## 配置
 
-27 个独立配置段，三层优先级：**默认值 → 环境变量（`ARROW_LAKE__` 前缀）→ YAML**。
+34 个独立配置段，四层优先级：**默认值 → `.env` → 环境变量（`ARROW_LAKE__` 前缀）→ YAML**。
 
 ```python
 lake = Lake("./data")                       # 本地、最小化

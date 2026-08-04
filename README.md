@@ -314,7 +314,7 @@ arrow-lake rag query "..." --dataset docs
 
 ## Configuration
 
-27 independent config sections, 3-layer precedence: **defaults → env vars (`ARROW_LAKE__` prefix) → YAML**.
+34 independent config sections, 4-layer precedence: **defaults → `.env` → env vars (`ARROW_LAKE__` prefix) → YAML**.
 
 ```python
 lake = Lake("./data")                       # local, minimal

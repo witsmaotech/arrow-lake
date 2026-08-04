@@ -36,8 +36,8 @@ Arrow Lake 是一个**生产级、统一的多模态数据湖仓（Unified Multi
 
 | 既有材料 | 定位 | 本文关系 |
 |---|---|---|
-| [`docs/ARCHITECTURE.md`](../ARCHITECTURE.md)（990 行权威文本参考） | 逐项核实源码的技术参考 | 本文以图为骨架重组其要点，深度 API 细节回链 |
-| [`docs/cookbook/`](../cookbook/)（16 章实战手册） | 可跑的 how-to | 本文 §4 流程章指路对应 cookbook 章 |
+| [`docs/ARCHITECTURE.md`](../ARCHITECTURE.md)（1084 行权威文本参考） | 逐项核实源码的技术参考 | 本文以图为骨架重组其要点，深度 API 细节回链 |
+| [`docs/cookbook/`](../cookbook/)（19 章实战手册，中英双语） | 可跑的 how-to | 本文 §4 流程章指路对应 cookbook 章 |
 | [`CHANGELOG.md`](../../CHANGELOG.md) | 变更流水 | 本文 §6.4 抽取架构级变更 |
 
 ## 0.3 读图约定与图集索引
@@ -227,7 +227,7 @@ Arrow Lake 采用**严格五层架构**：请求自上而下穿越 **① 接入 
 ### [`core/`](../../arrow_lake/core/) —— 公共基础设施
 
 - **职责**：熔断器（circuit breaker）、WSL2 感知的 httpx 客户端、structlog JSON 日志、Prometheus 指标、共享工具。
-- **关键文件**：`http_client.py`、`circuit_breaker.py`、`logging.py`、[`metrics.py`](../../arrow_lake/metrics.py)。
+- **关键文件**：`http.py`（WSL2 代理感知 httpx 客户端 `create_http_client`）、`circuit_breaker.py`、`logging.py`、`metrics.py`（Prometheus，`/metrics`）、`validation.py`、`service_registry.py`。
 - **依赖**：被所有需要出网 / 日志 / 指标的模块复用。
 - **设计要点**：httpx 客户端内建 WSL2 代理探测（[WSL2 代理方案](https://github.com/)），熔断器支撑优雅降级。
 
@@ -235,8 +235,8 @@ Arrow Lake 采用**严格五层架构**：请求自上而下穿越 **① 接入 
 
 ### [`api/`](../../arrow_lake/api/) —— REST API
 
-- **职责**：FastAPI 工厂，186 routes / 22 routers，统一响应信封，Auth + RBAC + 限流。
-- **关键文件**：`app.py`（工厂）、`_auth.py`、`_rbac.py`、`_middleware.py`、各 router（`routers/`）。
+- **职责**：FastAPI 工厂，**186 routes / 22 routers**，统一响应信封，Auth + RBAC + 限流。
+- **关键文件**：`app.py`（`create_app()` 工厂）、`auth_service.py` + `jwt_auth.py`（API Key HMAC + JWT HS256/RS256/ES256 + Redis 黑名单）、`rbac.py`（三级 RBAC + `DatasetACL`/`SchemaACL`）、`rate_limit.py`（slowapi 滑窗）、`middleware.py`（安全头/请求 ID/CORS）、`tasks.py` + `_redis_task_store.py`（`TaskManager`，Redis HASH 双写）、`telemetry.py` + `errors.py`、`deps.py`（FastAPI Depends）、`routers/`（22 个 router 文件）。
 - **公共 API**：HTTP 端点；`create_app()` 工厂。
 - **依赖**：调用 `Lake` facade。被 `cli/` 复用同一套 schema。
 - **设计要点**：v1.6.1+ 异步任务端点（`/ingest/async`、`/backup/create/async`、`/tasks/{id}/status`）；安全加固见 §5.1。详见 cookbook [`10-rest-api`](../cookbook/10-rest-api.md)。
@@ -255,7 +255,7 @@ Arrow Lake 采用**严格五层架构**：请求自上而下穿越 **① 接入 
 ### [`ingest/`](../../arrow_lake/ingest/) —— 多模态摄取
 
 - **职责**：10 种数据源摄取 + `LanceStorageManager` 写入 + `DocumentParser`（Docling/Kreuzberg）+ 7 种切块策略 + Daft 批量编排。
-- **关键文件**：`sources/`（10 源：sql/kafka/iceberg/deltalake/http/images/videos/mixed/documents/and_embed）、`parser.py`（Docling/Kreuzberg）、`chunker.py`（7 策略）、`storage_manager.py`。
+- **关键文件**：`storage.py`（`LanceStorageManager` 主写入入口）+ `_storage_crud.py` / `_storage_advanced.py` / `_storage_indexing.py` / `_storage_versioning.py`（CRUD / upsert / 索引 / 版本拆分）、`document.py`（`DocumentParser` Docling/Kreuzberg + PDF parse mode）、`chunker.py`（7 种 `ChunkStrategy`）、`connectors.py` + `connectors_http.py` / `_kafka` / `_lakehouse` / `_sql`（多源连接器）、`media.py`（图像/视频/音频 blob）、`ingest_embed.py`（端到端）、`schema.py`（`SchemaValidationMode`）、`transforms.py`、`dead_letter.py`、`field_comments.py`（v1.9.3 字段注释）。
 - **公共 API**：经 `_LakeIngestMixin` 暴露 `create_dataset` / `ingest` / `ingest_*` / `append_dataset` / `upsert` / `update_rows` / `delete_rows` / `quality_filter` / `deduplicate`。
 - **依赖**：`embed/`（嵌入）、`storage/`（blob）、`quality/`（质量门）、Daft（批量）。
 - **设计要点**：v1.8.x 用 Docling 库内嵌替代 Kreuzberg（多格式 + RapidOCR 中文）；7 种切块策略见 [`chunker.py`](../../arrow_lake/ingest/chunker.py)。详见 §4.1、cookbook [`02-ingestion`](../cookbook/02-ingestion.md)。
@@ -268,8 +268,8 @@ Arrow Lake 采用**严格五层架构**：请求自上而下穿越 **① 接入 
 
 ### [`query/`](../../arrow_lake/query/) —— 查询引擎协调
 
-- **职责**：DuckDB `DuckDBSessionManager`（信号量并发）+ 6+ Bridge + DuckLake 物化视图 + query cache。
-- **关键文件**：`session.py`（会话管理）、`bridges/`（VectorSearch/FTS/Hybrid/Faceted/Ensemble/Olap）、`materialize.py`（DuckLake）、`cache.py`。
+- **职责**：DuckDB `DuckDBSessionManager`（信号量并发）+ **8 个 Bridge**（扁平文件，非目录）+ DuckLake 物化视图 + query cache。
+- **关键文件**：`session_manager.py`（`DuckDBSessionManager` 受管连接池 + warmup）+ `_redis_semaphore.py`（跨 worker 分布式信号量）、`_base.py`（Bridge 基类 / `SearchBridge` 协议）、**8 Bridge**：`vector.py`（ANN + `search_async`）/ `fts.py`（Tantivy BM25 + jieba）/ `hybrid.py`（RRF + Reranker）/ `faceted.py` / `ensemble.py`（跨列 RRF）/ `olap.py`（SQL + `graph_query` 递归 CTE + `materialize`）/ `metadata.py` / `export.py`、`ducklake_workspace.py`（DuckLake 物化，TTL + ART + 行预算 + `$1..$4` 参数化）、`daft_api.py`（Daft 查询后端）、`federated_engine.py`（联邦）、`_cache.py`、`lazy_decode.py` / `streaming.py`。
 - **公共 API**：经 `_LakeQueryMixin` / `_LakeSearchMixin`：`search` / `text_search` / `hybrid_search` / `faceted_search` / `ensemble_search` / `olap_query` / `sql_query` / `materialize` / `export` / `daft_query` + 索引管理（`create_vector_index` / `create_fts_index` / `rebuild_vector_index` / ...）。
 - **依赖**：DuckDB / LanceDB / DuckLake；被 `rag/`（检索）、`api/` / `cli/` 调用。
 - **设计要点**：v1.8.0 Reranker（#5）、DuckLake 物化视图、SQL-PGQ/DuckLake 探索；查询缓存与并发信号量是性能关键。详见 §4.2–4.3、cookbook [`04`](../cookbook/04-vector-search.md)/[`05`](../cookbook/05-fulltext-search.md)/[`06`](../cookbook/06-hybrid-faceted.md)/[`07`](../cookbook/07-olap-analytics.md)。
@@ -277,7 +277,7 @@ Arrow Lake 采用**严格五层架构**：请求自上而下穿越 **① 接入 
 ### [`embed/`](../../arrow_lake/embed/) —— 嵌入引擎
 
 - **职责**：Daft 批量编码 + CLIP 多模态 + Ray Serve 在线 + 模型注册表。
-- **关键文件**：`local.py`、`daft_backend.py`、`clip.py`、`ray_serve.py`、`registry.py`。
+- **关键文件**：`encoder.py`（`LocalEmbeddingEncoder` SentenceTransformer）、`daft_encoder.py`（`DaftBatchEncoder`，Daft `embed_text`，满足 `EmbeddingEncoderProtocol`）、`image_encoder.py`（`CLIPImageEncoder`，`encode()` 编图 + `encode_text()` text tower 跨模态）、`ray_serve_encoder.py`（Ray Serve 远程，降级 Local）、`registry_resolver.py`（模型名 → 后端路由）。
 - **公共 API**：内部模块，经 `ingest/`（写时嵌入）与 `rag/`（查询时嵌入）调用。
 - **设计要点**：四后端按场景选；bge-m3 文本 1024 维、CLIP 图像/文本双塔。
 
@@ -286,7 +286,7 @@ Arrow Lake 采用**严格五层架构**：请求自上而下穿越 **① 接入 
 ### [`quality/`](../../arrow_lake/quality/) —— 质量门与去重
 
 - **职责**：`QualityFilter` Protocol + Registry，3-stage gate，`QualityReport` / `DedupResult`。
-- **关键文件**：`filters/`、`registry.py`、`dedup.py`、`report.py`。
+- **关键文件**：`base.py`（`QualityFilter` protocol）、`gate.py`（**3-stage gate** filter→dedup→report）、`builtin.py` + `rules.py`（内置过滤器 + 注册表）、`schema_validation.py`、`scoring.py` + `models.py`（`QualityReport` / `DedupResult`）、`dedup.py`（MinHash 近似 + 感知哈希图像去重）、`nemo_curator.py`（NeMo 质量评分，GPU 缺失降级 CPU）、`masking_engine.py`（v1.9.6 脱敏 4 函数 + HMAC fail-fast）、`retention_enforcer.py`、`gravitino_tags.py` / `gravitino_policies.py`、`llm_enrich.py`（v1.9.3 数据准备）、`profiler.py`。
 - **公共 API**：经 `_LakeIngestMixin`：`quality_filter(dataset, active_filters, mode)` → `QualityReport`；`deduplicate(dataset, strategy, action, perceptual_threshold)` → `DedupResult`。
 - **设计要点**：3-stage gate（filter / dedup / report），NeMo Curator 不可用降级 CPU MinHash。详见 cookbook [`11-quality-dedup`](../cookbook/11-quality-dedup.md)、§4.6。
 
@@ -295,7 +295,7 @@ Arrow Lake 采用**严格五层架构**：请求自上而下穿越 **① 接入 
 ### [`rag/`](../../arrow_lake/rag/) —— RAG 管线
 
 - **职责**：`RAGPipeline` + citations + 5 LLM provider + HyDE + Reranker；GraphRAG 经 KG retriever。
-- **关键文件**：`pipeline.py`、`providers/`（5 LLM）、`reranker.py`、`hyde.py`、`citations.py`。
+- **关键文件**：`pipeline.py`（`RAGPipeline` 主编排，返 `RAGResponse` 含 citation）、`provider.py`（**5 LLM provider** 单文件：OpenAI/Anthropic/Ollama/vLLM/自定义，`LLMProviderType`）、`reranker.py`（`BaseReranker`/Noop/CrossEncoder/LLM/Ollama + `create_reranker` 工厂）、`query_transform.py`（HyDE + multi-query 改写）、`graph_rag.py`（GraphRAG 经 KG retriever）、`context.py`（`ContextChunk` + 上下文组装）、`verifier.py`（v1.9.6 faithfulness 校验 `support_ratio`/`unsupported`）、`plan.py`（RAGQueryPlan）、`session.py`（多轮会话，Redis）、`prompt.py`。
 - **公共 API**：经 `_LakeRAGMixin`（全 async）：`await rag_query(question, dataset, top_k, strategy, template_name)` / `rag_query_stream` / `rag_batch_query` / `rag_extract` / `rag_get_history` / `rag_feedback`。
 - **依赖**：`query/`（检索）、`knowledge_graph/`（GraphRAG）、`embed/`（查询嵌入）。
 - **设计要点**：v1.8.0 Reranker（#5）、5 LLM provider 抽象、citation 锚点。详见 §4.4、cookbook [`08-rag-pipeline`](../cookbook/08-rag-pipeline.md)。
@@ -303,7 +303,7 @@ Arrow Lake 采用**严格五层架构**：请求自上而下穿越 **① 接入 
 ### [`knowledge_graph/`](../../arrow_lake/knowledge_graph/) —— 知识图谱
 
 - **职责**：`HugeGraphClient`（查询）+ `VermeerClient`（构建）+ `KGBuilder` / `KGRetriever` + `EntityExtractor` + `_import_export`（REST 降级）。
-- **关键文件**：`hugegraph_client.py`、`vermeer.py`、`builder.py`、`retriever.py`、`extractor.py`、`import_export.py`。
+- **关键文件**：`client.py`（`HugeGraphClient` Gremlin 查询 + REST 降级）、`vermeer_client.py`（`VermeerClient` 构建）、`builder.py`（`KGBuilder` 三元组抽取 + A 方案实体双写）、`retriever.py`（`KGRetriever` GraphRAG 检索）、`extractor.py`（基础抽取）、`he_extractor.py`（**hyper-extract (he)** 后端：langchain ChatOpenAI + 领域模板）、`doc_type_router.py`（doc_type 三层路由）、`entity_router.py` / `entity_resolver.py` / `orphan_linker.py`（关系路由 / 实体消歧 / 孤儿连接）、`template_registry.py` + `template_type_selector.py`（v1.10.0 模板 registry + 类型选择）、`ka_versioning.py`（KA 版本管理）、`_traversers.py`（最短路径/邻居/rays/rings）、`_import_export.py`（Gremlin→REST 降级）、`schema.py` / `queries.py`。
 - **公共 API**：经 `_LakeKGMixin`（全 async）：`await kg_build(dataset) -> task_id`（fire-and-forget）/ `kg_build_status(task_id)` / `kg_query(query, traversal_depth)` / `kg_get_neighbors` / `kg_stats` / `kg_all_shortest_paths` / `kg_weighted_shortest_path` / `kg_rays` / `kg_rings`。
 - **依赖**：HugeGraph（存储）、Vermeer（构建）、Ray（并行）、LLM（实体抽取）。
 - **设计要点**：v1.6.1 kg_build 拆 `prepare_build` + `execute_build` 并 fire-and-forget；v1.6.3 Gremlin 绑定修复 + REST 降级；**v1.8.6 per-dataset 分图隔离 + IDOR ACL gate**（v1.8.6）。详见 §4.5、cookbook [`09-knowledge-graph`](../cookbook/09-knowledge-graph.md)。
@@ -313,14 +313,14 @@ Arrow Lake 采用**严格五层架构**：请求自上而下穿越 **① 接入 
 ### [`catalog/`](../../arrow_lake/catalog/) —— 元数据治理
 
 - **职责**：Gravitino 桥 + 血缘存储 + tag→ACL + Auth provider。
-- **关键文件**：`gravitino_bridge.py`、`lineage_store.py`、`acl.py`、`auth_providers.py`。
+- **关键文件**：`gravitino_bridge.py`（`GravitinoBridge` 主桥接）、`lineage.py`（事件级血缘 store + 查询，`LineageConfig`）、`lineage_hooks.py`（摄取/查询自动埋点）、`tag_acl_resolver.py`（tag → ACL 解析）、`gravitino_auth.py`（`GravitinoAuthType`）、`gravitino_sync.py`（双向同步 `GravitinoSyncDirection`）、`gravitino_client.py` / `gravitino_stats.py` / `gravitino_models.py`、`connection_pool.py`、`actor.py`（Actor 模型任务）、`replica.py`。
 - **公共 API**：经 `_LakeLineageMixin` / 治理 API；tag 驱动授权/脱敏。
 - **设计要点**：tag-driven ACL、masking engine、retention enforcement。详见 cookbook [`15-gravitino-metadata`](../cookbook/15-gravitino-metadata.md)。
 
 ### [`workflow/`](../../arrow_lake/workflow/) —— 工作流编排
 
 - **职责**：Metaflow + Argo 桥 + retry/backoff + checkpoint。
-- **关键文件**：`flows/`、`argo_bridge.py`、`retry.py`。
+- **关键文件**：`base.py`（FlowSpec 基类）、`argo.py`（Argo 桥接，`ArgoConfig`/`ArgoError`）、`retry.py`（tenacity 退避）、`audit.py` / `audit_analyzer.py`、`rollback.py`、`schedule.py`、`tags.py`、`run_tracker.py`、`error_handler.py`。
 - **公共 API**：`list_flows` / `get_flow_info`（经 `_LakeAdminMixin`）。
 - **设计要点**：Metaflow checkpoint/retry，Argo 桥接生产调度。详见 cookbook [`14-workflow-orchestration`](../cookbook/14-workflow-orchestration.md)。
 
@@ -558,7 +558,7 @@ Arrow Lake 采用**严格五层架构**：请求自上而下穿越 **① 接入 
 
 ![部署拓扑](./diagrams/05-deployment-topology.png)
 
-Docker Compose 单栈交付（镜像 `arrow-lake:1.8.6`），六个功能区：
+Docker Compose 单栈交付（镜像 `arrow-lake:1.10.0`），六个功能区：
 
 | 区 | 服务 | 说明 |
 |---|---|---|
@@ -610,7 +610,7 @@ ArrowLakeError → StorageError, QueryError, IngestError, CatalogError,
 | **v1.8.7–v1.8.9** | Docling 全栈替代 kreuzberg；Console SQL Worksheet；KG per-dataset KA + doc_type 路由 + 双 LLM（`he_extract_llm`/`he_qa_llm`）；**OllamaReranker 设默认**；审计 P0 三连 + Step2-4 + P2 | — |
 | **v1.9.0** | **Turso（libSQL）控制面库**（`system_db/`，9 store + base）：接管 RBAC/identity/personal_token/catalog/任务/lineage/RAG 会话/governance，**数据面零改动**；opt-in + fail_close/fail_soft；personal_token + list_users + fail-close(401) | — |
 | **v1.9.1** | **console 核心界面**（原生 JS + ES module）：admin 全功能 + my-workspace 5 区；personal token 走 `X-API-Key`；dev.override 秒级热重载 | — |
-| **v1.9.2**（当前） | **console 完备化 + 质量深化**：运维（system/audit/governance/maintenance）+ 合规（audit `asdict`+分页）+ 治理（admin 分页/ACL/deny）；kg.html Schema·遍历合并 + combobox + 图前 3000；**rate_limit 迁 Redis**、**kg_build fire-forget 持强引用**（治 GC 卡死）；conftest autouse 清理 + KG 模板收紧 CI | — |
+| **v1.9.2** | **console 完备化 + 质量深化**：运维（system/audit/governance/maintenance）+ 合规（audit `asdict`+分页）+ 治理（admin 分页/ACL/deny）；kg.html Schema·遍历合并 + combobox + 图前 3000；**rate_limit 迁 Redis**、**kg_build fire-forget 持强引用**（治 GC 卡死）；conftest autouse 清理 + KG 模板收紧 CI | — |
 | **v1.10.0** | **知识抽取模板管理**（M1–M5）：后端 `/data/lake/templates` 卷 YAML 运行时进 gallery + `reset_gallery_cache` 热重载（不 rebuild/restart）+ `/api/v1/admin/extraction-templates` CRUD（ADMIN）+ `build(template_override=)`；`console/extraction-templates.html` CRUD + 数据集绑定（`dataset_template_bindings`）；LLM 辅助生成（self-heal + `_hyperextract_check` 闸门）；dry-run 试跑沙箱；模板质量验证 harness（`template-quality.html` + `POST /{name}/quality/{doc,build}` + KA 隔离）；category↔doc_type 拉通（`/admin/doc-type-categories` + 动态 `GET /kg/doc-types`）；新增迁移 V005 extraction_templates / V006 template_quality_runs / V007 doc_type_categories；Console 弹框→站内 modal/toast | — |
 
 完整流水见 [`CHANGELOG.md`](../../CHANGELOG.md)。
@@ -667,6 +667,9 @@ ArrowLakeError → StorageError, QueryError, IngestError, CatalogError,
 | 14 | workflow-orchestration | §4.8 |
 | 15 | gravitino-metadata | §4.7 |
 | 16 | v1.8.0-new-features | §6.4 |
+| 17 | data-masking | §5.1 |
+| 18 | lineage-visualization | §5.1 |
+| 19 | rest-recipes | §4.4 |
 
 ## D. Lake Facade 公共 API 速查
 

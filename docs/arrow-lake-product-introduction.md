@@ -2,7 +2,7 @@
 
 **Production-Grade Multimodal Data Lakehouse for AI/ML Teams**
 
-Arrow Lake unifies Lance columnar storage, Daft DataFrame processing, and Ray distributed compute into a single Python-native platform — so you can ingest documents, images, and unstructured data; search it with vector, full-text, and hybrid queries; analyze it with OLAP SQL; and feed it directly into RAG pipelines and knowledge graphs, all without leaving one architecture. MIT licensed, built for Python 3.11+, with roughly 28,000 lines of production code, 5,005+ tests (v1.10.0), and 80%+ coverage out of the box. Since v1.9.0 a **libSQL/Turso control-plane database** unifies RBAC, identity, personal tokens, audit, lineage, and task state (data plane untouched, opt-in), and a built-in **web console (v1.9.1)** covers operations, compliance, and governance.
+Arrow Lake unifies Lance columnar storage, Daft DataFrame processing, and Ray distributed compute into a single Python-native platform — so you can ingest documents, images, and unstructured data; search it with vector, full-text, and hybrid queries; analyze it with OLAP SQL; and feed it directly into RAG pipelines and knowledge graphs, all without leaving one architecture. Apache-2.0 licensed, built for Python 3.11+, with roughly 28,000 lines of production code, 5,005+ tests (v1.10.0), and 80%+ coverage out of the box. Since v1.9.0 a **libSQL/Turso control-plane database** unifies RBAC, identity, personal tokens, audit, lineage, and task state (data plane untouched, opt-in), and a built-in **web console (v1.9.1)** covers operations, compliance, and governance.
 
 ---
 
@@ -57,7 +57,7 @@ graph TB
     end
 
     subgraph API["API Layer"]
-        REST["FastAPI REST<br/>40+ Endpoints"]
+        REST["FastAPI REST<br/>186 routes · 22 routers"]
         CLI["CLI Interface"]
         SDK["Python SDK"]
     end
@@ -82,7 +82,7 @@ graph TB
     REST --> CLI & SDK
 ```
 
-**The Lake class** is the central orchestrator, composed through a mixin architecture that keeps each concern isolated and independently testable. Eight mixin classes provide ingestion, storage management, search, analytics, RAG, knowledge graph, data quality, and security capabilities. A Lake instance gains behavior by inheriting the mixins it needs — no plugin registration, no configuration-driven dispatch, just clean Python composition. This design means you can instantiate a Lake with ingestion and search only for a lightweight indexing service, or enable all eight mixins for a full-featured data platform, without changing a single line of business logic.
+**The Lake class** is the central orchestrator, composed through a mixin architecture that keeps each concern isolated and independently testable. Nine mixin classes — base lifecycle, ingestion, search, query/OLAP, admin/versioning, lineage, audit, RAG, and knowledge graph — are each a separate `_lake_*.py` file, so every capability is independently maintained and tested. A `Lake` instance always carries all nine mixins, but each subsystem is lazily initialized and cached behind a re-entrant lock (`_get_component`), so you pay only for what you touch: a lightweight indexing workload never spins up the RAG pipeline or the HugeGraph client. This is clean Python composition — no plugin registration, no configuration-driven dispatch — and new capabilities are added by appending a mixin plus a Bridge, without touching the trunk.
 
 Three performance principles run through every layer. First, **zero-copy query**: because Lance stores data in Apache Arrow format, every read path returns Arrow RecordBatches directly to the caller — no serialization, no copies. Second, **predicate pushdown**: filters on metadata columns are pushed down to the Lance storage engine so only matching rows are materialized into memory. Third, **streaming**: ingestion, embedding, and query results all flow through RecordBatchReader iterators, meaning you can process datasets that exceed available RAM without paging or spilling.
 
@@ -205,7 +205,7 @@ An HMAC-SHA256 audit trail makes the lineage tamper-evident. Every state transit
 
 ## Security — Production-Ready from Day One
 
-Most data platforms treat security as a deployment concern — something you configure after the code is running. Arrow Lake treats security as a structural property, built into every layer from the query engine to the API surface. Role-based access control covers all 40+ REST endpoints with three tiers: VIEWER for read-only access, EDITOR for write operations, and ADMIN for configuration and user management. Authentication supports both API key validation and JWT tokens with configurable HS256 or RS256 signing.
+Most data platforms treat security as a deployment concern — something you configure after the code is running. Arrow Lake treats security as a structural property, built into every layer from the query engine to the API surface. Role-based access control covers all 186 routes across 22 routers with three tiers: VIEWER for read-only access, EDITOR for write operations, and ADMIN for configuration and user management. Authentication supports both API key validation and JWT tokens with configurable HS256, RS256, or ES256 signing, plus admin-issued personal tokens for long-lived service access (v1.9.0).
 
 The JWT lifecycle is fully managed. Tokens are issued with configurable expiration, blacklisted on logout or revocation through a Redis-backed blacklist with TTL, and validated on every request. Rate limiting is enforced per-endpoint with configurable requests-per-minute thresholds and burst allowances, so a runaway client cannot exhaust query capacity. TLS terminates at the FastAPI layer with security headers — Content-Security-Policy, X-Frame-Options, HSTS, and more — applied to every response.
 
@@ -217,8 +217,8 @@ Container hardening is specified in the Docker configuration: `cap-drop ALL` rem
 
 | Security Feature | Implementation |
 |---|---|
-| RBAC | 3-tier (VIEWER/EDITOR/ADMIN) on all 40+ endpoints |
-| Authentication | API Key + JWT (HS256/RS256) |
+| RBAC | 3-tier (VIEWER/EDITOR/ADMIN) on all 186 routes / 22 routers |
+| Authentication | API Key + JWT (HS256/RS256/ES256) + personal tokens (v1.9.0) |
 | JWT blacklist | Redis-backed with TTL |
 | Rate limiting | Per-endpoint RPM with burst |
 | TLS and headers | TLS termination + CSP, X-Frame-Options, HSTS |
@@ -441,8 +441,9 @@ Arrow Lake is designed so you can go from zero to a working pipeline in under th
 
 | Command Group | Subcommands | Purpose |
 |--------------|-------------|---------|
-| `serve` | --host, --port, --reload | Start REST API server |
+| `serve` | --host, --port, --reload | Start REST API server (uvicorn factory) |
 | `catalog` | list, info, schema | Dataset catalog management |
+| `maintenance` | expire, compact, stats | Dataset version cleanup & compaction |
 | `ingest` | files, images, audio, video, documents | Multimodal data ingestion |
 | `search` | vector, text, hybrid | Semantic and full-text search |
 | `index` | create, delete, list | Vector and FTS index management |
@@ -460,11 +461,11 @@ Arrow Lake is designed so you can go from zero to a working pipeline in under th
 
 **Documentation Suite:**
 
-The documentation includes 13 bilingual cookbook chapters (English and Chinese) with 43 runnable examples covering every feature from basic ingestion to advanced GraphRAG. Twelve comprehensive usage guides provide deeper architectural context, configuration reference, and deployment procedures.
+The documentation includes 19 bilingual cookbook chapters (English and Chinese) with 50+ runnable examples covering every feature from basic ingestion to advanced GraphRAG, data masking, and lineage visualization. A comprehensive [`usage-guide.md`](./usage-guide.md), the authoritative [`ARCHITECTURE.md`](./ARCHITECTURE.md) reference, and the diagram-driven [`architecture-design/`](./architecture-design/) design doc provide deeper architectural context, configuration reference, and deployment procedures.
 
 **Configuration System:**
 
-27 independent configuration sections, each backed by a Pydantic model with type validation. Three-layer precedence: code defaults (lowest), environment variables with `ARROW_LAKE__` prefix, and YAML config file overlay (highest). A `config show` CLI command displays the resolved configuration at runtime.
+34 independent configuration sections (a Pydantic v2 `ArrowLakeConfig` root combining 34 sub-configs), each backed by a Pydantic model with type validation. Four-layer precedence: code defaults (lowest), `.env` file, environment variables with `ARROW_LAKE__` prefix (`__` as the nesting delimiter), and YAML config file overlay (highest). A `config show` CLI command displays the resolved configuration at runtime.
 
 ---
 
@@ -476,16 +477,14 @@ A financial services firm ingests 50,000 regulatory documents, internal policies
 
 ```python
 lake = Lake.from_yaml("configs/production.yaml")
-lake.ingest("regulations", ["data/regulations/"], document_mode=True)
-lake.chunk("regulations", strategy="semantic")
-lake.embed_and_add("regulations")
+# parse + chunk + embed + write in one orchestrated flow
+lake.ingest_documents("regulations", ["data/regulations/"])
 
 answer = await lake.rag_query(
     "What are the capital requirements for Basel III Tier 1?",
     dataset_name="regulations",
     top_k=10,
-    include_citations=True,
-)
+)  # RAGResponse always carries citations
 ```
 
 ### Multimedia Asset Platform
@@ -496,8 +495,9 @@ A media company manages 200,000 product images, 5,000 promotional videos, and 10
 lake.ingest_images("product_photos", ["photos/*.jpg", "photos/*.png"])
 lake.ingest_videos("promos", ["videos/*.mp4"], keyframe_interval=5)
 
-# Find visually similar products
-results = lake.search("product_photos", query_image="reference.jpg", top_k=20)
+# Text-to-image: encode the query via CLIP's text tower, search the image_embedding column
+query_vec = lake.encode_text_clip("red sneakers on white background")
+results = lake.search("product_photos", query_vec, vector_column="image_embedding", top_k=20)
 
 # Analytics: asset usage by format and month
 report = lake.olap_query("product_photos",
@@ -510,8 +510,8 @@ report = lake.olap_query("product_photos",
 A machine learning team maintains training data quality across 12 datasets totaling 2 million rows. The quality pipeline runs nightly: schema validation, null detection, outlier flagging, and deduplication using SHA-256 for exact matches and MinHash for near-duplicates. Flagged records route to a dead-letter dataset for review. The team reports a 34% reduction in training failures.
 
 ```python
-report = lake.quality_check("training_data", checks=["schema", "nulls", "outliers"])
-flagged = lake.deduplicate("training_data", strategy="minhash", threshold=0.85, action="flag")
+report = lake.quality_filter("training_data", mode="all")   # runs all registered filters → QualityReport
+flagged = lake.deduplicate("training_data", strategy="minhash", action="flag")
 clean = lake.deduplicate("training_data", strategy="exact", action="remove")
 ```
 
@@ -536,13 +536,13 @@ result = lake.olap_query("transactions",
 A research institution builds a knowledge graph over 100,000 academic papers. LLM-based extraction identifies entities (authors, institutions, methods, datasets) and relationships (cites, extends, contradicts). GraphRAG combines vector search with graph context for comprehensive answers grounded in both textual evidence and structural relationships.
 
 ```python
-task_id = await lake.kg_build("papers", entity_types=["author", "institution", "method", "dataset"])
-await lake.kg_wait(task_id)
+task_id = await lake.kg_build("papers")   # fire-and-forget; entity types come from the extraction template
+await lake.kg_build_status(task_id)        # poll until COMPLETED
 
 answer = await lake.rag_query(
     "Which labs are working on efficient attention mechanisms?",
     dataset_name="papers",
-    use_graph=True,
+    use_kg=True,                            # GraphRAG: KG subgraph + vector retrieval
     top_k=15,
 )
 ```
@@ -598,11 +598,11 @@ answer = await lake.rag_query("What is the state of the art?", dataset_name="kno
 | Resource | Location |
 |----------|----------|
 | Source Code | [GitHub](https://github.com/wits-sunpw/arrow-lake) / [Gitee](https://gitee.com/wits__sunpw/wits-infra-dintellihub) |
-| Cookbook | 13 chapters, 43 examples — bilingual English/Chinese |
+| Cookbook | 19 chapters, 50+ examples — bilingual English/Chinese |
 | Usage Guide | `docs/usage-guide.md` |
 | Security Policy | `SECURITY.md` |
 | API Documentation | Auto-generated at `/docs` when server is running |
 
 ### License
 
-Arrow Lake is released under the **MIT License**. Free to use, modify, and distribute in commercial and open-source projects without restriction.
+Arrow Lake is released under the **Apache License 2.0**. A permissive, commercial-friendly license that also grants an express patent grant — free to use, modify, and distribute in commercial and open-source projects.

@@ -2,7 +2,7 @@
 
 **面向 AI/ML 团队的生产级多模态数据湖仓（Data Lakehouse）**
 
-Arrow Lake 将 Lance 列式存储、Daft DataFrame 处理和 Ray 分布式计算统一为一个 Python 原生平台 —— 你可以在同一架构内完成文档、图像和非结构化数据的摄入，通过向量搜索（Vector Search）、全文搜索（Full-Text Search）和混合搜索（Hybrid Search）进行检索，使用 OLAP SQL 进行分析，并将数据直接送入 RAG 管线和知识图谱。采用 MIT 许可证，基于 Python 3.11+ 构建，拥有约 28,000 行生产代码、5,005+ 个测试用例（v1.10.0），开箱即用覆盖率超过 80%。自 v1.9.0 起以 **libSQL/Turso 控制面库**统一承载 RBAC、身份、personal token、审计、血缘、任务等控制面状态（数据面零改动、opt-in），并内置覆盖运维/合规/治理的 **Web 控制台（console，v1.9.1）**。
+Arrow Lake 将 Lance 列式存储、Daft DataFrame 处理和 Ray 分布式计算统一为一个 Python 原生平台 —— 你可以在同一架构内完成文档、图像和非结构化数据的摄入，通过向量搜索（Vector Search）、全文搜索（Full-Text Search）和混合搜索（Hybrid Search）进行检索，使用 OLAP SQL 进行分析，并将数据直接送入 RAG 管线和知识图谱。采用 Apache-2.0 许可证，基于 Python 3.11+ 构建，拥有约 28,000 行生产代码、5,005+ 个测试用例（v1.10.0），开箱即用覆盖率超过 80%。自 v1.9.0 起以 **libSQL/Turso 控制面库**统一承载 RBAC、身份、personal token、审计、血缘、任务等控制面状态（数据面零改动、opt-in），并内置覆盖运维/合规/治理的 **Web 控制台（console，v1.9.1）**。
 
 ---
 
@@ -57,7 +57,7 @@ graph TB
     end
 
     subgraph API["API Layer"]
-        REST["FastAPI REST<br/>40+ Endpoints"]
+        REST["FastAPI REST<br/>186 routes · 22 routers"]
         CLI["CLI Interface"]
         SDK["Python SDK"]
     end
@@ -82,7 +82,7 @@ graph TB
     REST --> CLI & SDK
 ```
 
-**Lake 类**是中央编排器，通过 Mixin 架构组合而成，将每个关注点隔离并独立可测试。八个 Mixin 类分别提供摄入、存储管理、搜索、分析、RAG、知识图谱、数据质量和安全能力。Lake 实例通过继承所需的 Mixin 来获得行为 —— 无需插件注册，无需配置驱动的分发，就是简洁的 Python 组合。这意味着你可以实例化一个仅包含摄入和搜索功能的 Lake，用于轻量级索引服务，也可以启用全部八个 Mixin 构建全功能数据平台，而无需修改一行业务逻辑。
+**Lake 类**是中央编排器，通过 Mixin 架构组合而成，将每个关注点隔离并独立可测试。九个 Mixin 类 —— 基础生命周期、摄入、搜索、查询/OLAP、管理/版本、血缘、审计、RAG 与知识图谱 —— 各自是独立的 `_lake_*.py` 文件，每个能力都独立维护与测试。一个 `Lake` 实例始终携带全部九个 Mixin，但每个子系统都懒加载并缓存在可重入锁（`_get_component`）之后，因此你只为用到的部分付费：一个轻量级索引工作负载永远不会启动 RAG 管线或 HugeGraph 客户端。这是纯粹的 Python 组合 —— 无需插件注册，无需配置驱动的分发 —— 新增能力只需追加一个 Mixin 加一个 Bridge，无需改动主干。
 
 三个性能原则贯穿每一个层级。第一，**零拷贝查询（Zero-Copy Query）**：因为 Lance 以 Apache Arrow 格式存储数据，每条读取路径都直接将 Arrow RecordBatch 返回给调用者 —— 无序列化，无拷贝。第二，**谓词下推（Predicate Pushdown）**：元数据列上的过滤条件被下推到 Lance 存储引擎，只有匹配的行才会被物化到内存中。第三，**流式处理（Streaming）**：摄入、嵌入和查询结果都通过 RecordBatchReader 迭代器流动，这意味着你可以在不进行分页或溢写的情况下处理超出可用 RAM 的数据集。
 
@@ -205,7 +205,7 @@ HMAC-SHA256 审计轨迹使血缘具备防篡改能力。每个状态转换 —�
 
 ## 安全 —— 从第一天起即可用于生产
 
-大多数数据平台将安全视为部署关注点 —— 代码运行后再配置的东西。Arrow Lake 将安全视为结构属性，从查询引擎到 API 表面的每个层级都内置安全能力。基于角色的访问控制（Role-Based Access Control, RBAC）覆盖全部 40+ 个 REST 端点，分为三个层级：VIEWER 用于只读访问，EDITOR 用于写操作，ADMIN 用于配置和用户管理。认证同时支持 API Key 验证和 JWT Token，可配置 HS256 或 RS256 签名。
+大多数数据平台将安全视为部署关注点 —— 代码运行后再配置的东西。Arrow Lake 将安全视为结构属性，从查询引擎到 API 表面的每个层级都内置安全能力。基于角色的访问控制（Role-Based Access Control, RBAC）覆盖全部 22 个 router 的 186 条路由，分为三个层级：VIEWER 用于只读访问，EDITOR 用于写操作，ADMIN 用于配置和用户管理。认证同时支持 API Key 验证和 JWT Token，可配置 HS256、RS256 或 ES256 签名，外加 admin 签发的 personal token 用于长生命周期服务访问（v1.9.0）。
 
 JWT 生命周期完全受控。Token 以可配置的过期时间签发，登出或撤销时通过 Redis 支持的 TTL 黑名单进行失效处理，每次请求都进行验证。速率限制在端点级别强制执行，配备可配置的每分钟请求上限和突发余量（Burst Allowance），防止失控的客户端耗尽查询容量。TLS 在 FastAPI 层终止，安全头 —— Content-Security-Policy、X-Frame-Options、HSTS 等 —— 应用于每个响应。
 
@@ -217,8 +217,8 @@ JWT 生命周期完全受控。Token 以可配置的过期时间签发，登出�
 
 | 安全特性 | 实现方式 |
 |---|---|
-| RBAC | 3 级（VIEWER/EDITOR/ADMIN），覆盖全部 40+ 端点 |
-| 认证 | API Key + JWT（HS256/RS256） |
+| RBAC | 3 级（VIEWER/EDITOR/ADMIN），覆盖全部 186 条路由 / 22 routers |
+| 认证 | API Key + JWT（HS256/RS256/ES256）+ personal token（v1.9.0） |
 | JWT 黑名单 | Redis 支持，带 TTL |
 | 速率限制 | 按端点 RPM，支持突发 |
 | TLS 与安全头 | TLS 终止 + CSP、X-Frame-Options、HSTS |
@@ -441,8 +441,9 @@ Arrow Lake 的设计目标是让你在三分钟内从零搭建出一条可运行
 
 | 命令组 | 子命令 | 用途 |
 |--------------|-------------|---------|
-| `serve` | --host, --port, --reload | 启动 REST API 服务器 |
+| `serve` | --host, --port, --reload | 启动 REST API 服务器（uvicorn 工厂） |
 | `catalog` | list, info, schema | 数据集目录管理 |
+| `maintenance` | expire, compact, stats | 数据集版本清理与压缩 |
 | `ingest` | files, images, audio, video, documents | 多模态数据摄入 |
 | `search` | vector, text, hybrid | 语义和全文搜索 |
 | `index` | create, delete, list | 向量和 FTS 索引管理 |
@@ -460,11 +461,11 @@ Arrow Lake 的设计目标是让你在三分钟内从零搭建出一条可运行
 
 **文档套件：**
 
-文档包含 13 章双语 Cookbook（英文和中文），43 个可运行示例，覆盖从基础摄入到高级 GraphRAG 的每个功能。12 份综合使用指南提供更深层的架构上下文、配置参考和部署流程。
+文档包含 19 章双语 Cookbook（英文和中文），50+ 个可运行示例，覆盖从基础摄入到高级 GraphRAG、数据脱敏、血缘可视化的每个功能。一份详尽的 [`usage-guide.md`](./usage-guide.md)、权威的 [`ARCHITECTURE.md`](./ARCHITECTURE.md) 技术参考，以及以图驱动的 [`architecture-design/`](./architecture-design/) 设计文档，提供更深层的架构上下文、配置参考和部署流程。
 
 **配置系统：**
 
-27 个独立配置节，每个都由带类型验证的 Pydantic 模型支撑。三层优先级：代码默认值（最低）、带 `ARROW_LAKE__` 前缀的环境变量、YAML 配置文件覆盖（最高）。`config show` CLI 命令在运行时显示解析后的完整配置。
+34 个独立配置节（Pydantic v2 `ArrowLakeConfig` 根组合 34 个子配置），每个都由带类型验证的 Pydantic 模型支撑。四层优先级：代码默认值（最低）、`.env` 文件、带 `ARROW_LAKE__` 前缀的环境变量（`__` 作层级分隔符）、YAML 配置文件覆盖（最高）。`config show` CLI 命令在运行时显示解析后的完整配置。
 
 ---
 
@@ -476,16 +477,14 @@ Arrow Lake 的设计目标是让你在三分钟内从零搭建出一条可运行
 
 ```python
 lake = Lake.from_yaml("configs/production.yaml")
-lake.ingest("regulations", ["data/regulations/"], document_mode=True)
-lake.chunk("regulations", strategy="semantic")
-lake.embed_and_add("regulations")
+# 解析 + 分块 + 嵌入 + 写入，一个编排流程完成
+lake.ingest_documents("regulations", ["data/regulations/"])
 
 answer = await lake.rag_query(
     "What are the capital requirements for Basel III Tier 1?",
     dataset_name="regulations",
     top_k=10,
-    include_citations=True,
-)
+)  # RAGResponse 始终携带 citations
 ```
 
 ### 多媒体资产管理平台
@@ -496,8 +495,9 @@ answer = await lake.rag_query(
 lake.ingest_images("product_photos", ["photos/*.jpg", "photos/*.png"])
 lake.ingest_videos("promos", ["videos/*.mp4"], keyframe_interval=5)
 
-# Find visually similar products
-results = lake.search("product_photos", query_image="reference.jpg", top_k=20)
+# 文搜图：用 CLIP text tower 编码查询，搜索 image_embedding 列
+query_vec = lake.encode_text_clip("red sneakers on white background")
+results = lake.search("product_photos", query_vec, vector_column="image_embedding", top_k=20)
 
 # Analytics: asset usage by format and month
 report = lake.olap_query("product_photos",
@@ -510,8 +510,8 @@ report = lake.olap_query("product_photos",
 一个机器学习团队维护着 12 个数据集共计 200 万行训练数据的质量。质量管线每晚运行：Schema 验证、空值检测、异常值标记，以及使用 SHA-256 进行精确去重和 MinHash 进行近似去重。标记的记录路由到死信数据集待审查。团队报告训练失败率降低了 34%。
 
 ```python
-report = lake.quality_check("training_data", checks=["schema", "nulls", "outliers"])
-flagged = lake.deduplicate("training_data", strategy="minhash", threshold=0.85, action="flag")
+report = lake.quality_filter("training_data", mode="all")   # 跑全部已注册过滤器 → QualityReport
+flagged = lake.deduplicate("training_data", strategy="minhash", action="flag")
 clean = lake.deduplicate("training_data", strategy="exact", action="remove")
 ```
 
@@ -536,13 +536,13 @@ result = lake.olap_query("transactions",
 一家研究机构在 10 万篇学术论文上构建知识图谱。基于 LLM 的抽取识别实体（作者、机构、方法、数据集）和关系（引用、扩展、反驳）。GraphRAG 将向量搜索与图谱上下文结合，生成同时基于文本证据和结构化关系的全面回答。
 
 ```python
-task_id = await lake.kg_build("papers", entity_types=["author", "institution", "method", "dataset"])
-await lake.kg_wait(task_id)
+task_id = await lake.kg_build("papers")   # fire-and-forget；实体类型由抽取模板决定
+await lake.kg_build_status(task_id)        # 轮询直到 COMPLETED
 
 answer = await lake.rag_query(
     "Which labs are working on efficient attention mechanisms?",
     dataset_name="papers",
-    use_graph=True,
+    use_kg=True,                            # GraphRAG：KG 子图 + 向量检索
     top_k=15,
 )
 ```
@@ -598,11 +598,11 @@ answer = await lake.rag_query("What is the state of the art?", dataset_name="kno
 | 资源 | 地址 |
 |----------|----------|
 | 源代码 | [GitHub](https://github.com/wits-sunpw/arrow-lake) / [Gitee](https://gitee.com/wits__sunpw/wits-infra-dintellihub) |
-| Cookbook | 13 章，43 个示例 —— 中英双语 |
+| Cookbook | 19 章，50+ 个示例 —— 中英双语 |
 | 使用指南 | `docs/usage-guide.md` |
 | 安全策略 | `SECURITY.md` |
 | API 文档 | 服务启动时自动生成于 `/docs` |
 
 ### 许可证
 
-Arrow Lake 采用 **MIT 许可证**发布。可自由使用、修改和分发，适用于商业和开源项目，无任何限制。
+Arrow Lake 采用 **Apache License 2.0** 发布。这是一款宽松、商业友好的许可证，同时附带明确的专利授权 —— 可自由使用、修改和分发，适用于商业和开源项目。

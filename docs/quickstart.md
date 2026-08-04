@@ -12,15 +12,14 @@ cd arrow-lake
 uv sync
 ```
 
-## Generate Seed Data
+## Example Data
 
-```bash
-uv run python data/seed/generate_seed_data.py
-```
+Runnable sample data ships with the repo — no generation step required:
 
-This creates:
-- `data/seed/users.parquet` — 1000 rows (id, name, age, department, city, salary)
-- `data/seed/documents.jsonl` — 500 rows (id, title, category, language, source, word_count, created_at)
+- [`examples/data/`](../examples/data/) — `kb/knowledge.jsonl` (knowledge-base records), `papers/`, `photos/`, `texts/`, `images/`, `audio/`
+- [`docs/cookbook/datas/`](./cookbook/datas/) — business PDFs (e.g. 许昌智慧城市 / 芜湖城市生命线), plus `papers/`, `transactions/`, `photos/`, `videos/`, `kb/`
+
+The snippets below create tiny inline tables with `pyarrow`, so you can run them with zero external data.
 
 ## Usage
 
@@ -110,10 +109,9 @@ from arrow_lake.ingest.ingestor import Ingestor
 
 ingestor = Ingestor(manager)
 
-# Ingest from local files
-report = ingestor.ingest("users", [
-    "data/seed/users.parquet",
-    "data/seed/documents.jsonl",
+# Ingest from local files (sample data ships in examples/data/)
+report = ingestor.ingest("knowledge", [
+    "examples/data/kb/knowledge.jsonl",
 ])
 print(f"Ingested {report.total_rows} rows from {report.total_files} files")
 ```
@@ -124,7 +122,7 @@ print(f"Ingested {report.total_rows} rows from {report.total_files} files")
 from arrow_lake.ingest.connectors import LocalConnector, S3Connector
 
 # Local filesystem
-local = LocalConnector(base_path="./data/seed")
+local = LocalConnector(base_path="./examples/data")
 result = local.list_files(extensions=[".csv", ".parquet"])
 print(result.paths)
 
@@ -313,7 +311,7 @@ uv run mypy arrow_lake/
 | Component | Version |
 |-----------|---------|
 | Python | 3.11 |
-| LanceDB | 0.30.2 |
+| LanceDB | 0.36.0 |
 | PyArrow | 23.0.1 |
 | Daft | 0.7.8 |
 | Ray | 2.54.1 |

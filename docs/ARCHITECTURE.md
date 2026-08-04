@@ -44,12 +44,12 @@
 
 | 层 | 技术 | 版本（`pyproject.toml` 实测 pin） | 角色 |
 |---|---|---|---|
-| 计算层 | **Daft** | `0.7.8` | lazy DataFrame + 内置 AI 函数（embed/prompt/classify）+ 26 连接器 + 多模态 decode |
+| 计算层 | **Daft** | `0.7.21` | lazy DataFrame + 内置 AI 函数（embed/prompt/classify）+ 26 连接器 + 多模态 decode |
 | 湖仓格式 | **Lance / pylance** | pylance `>=7.0.0`（v1.7.1 升） | 列式存储 + 向量索引（IVF_PQ/HNSW/SQ/RQ）+ 标量索引（BTree/Bitmap）+ FTS 倒排 + tags/branches |
-| 应用层 | **LanceDB** | `0.33.0`（v1.7.1 升） | 向量库 SDK，Table/Namespace/索引/版本管理 + `search_async` |
-| 分布式 | **Ray** | `2.54.1` | head + worker 集群，KG 构建 / 批计算 /（预留）分布式索引 backfill |
-| 编排 | **Metaflow** | `2.19.22` + `metaflow-ray` `0.1.4` | 工作流编排 + checkpoint + retry/backoff + Argo 桥接 |
-| 引擎层 | **DuckDB** | `1.5.2` | **主力查询路径**（`lance_scan` / `vector_search` / `fts`，40+ 处调用），非 fallback |
+| 应用层 | **LanceDB** | `0.36.0`（v1.7.1 起 ≥0.33） | 向量库 SDK，Table/Namespace/索引/版本管理 + `search_async` |
+| 分布式 | **Ray** | `2.56.0` | head + worker 集群，KG 构建 / 批计算 /（预留）分布式索引 backfill |
+| 编排 | **Metaflow** | `2.19.35` + `metaflow-ray` `0.1.4` | 工作流编排 + checkpoint + retry/backoff + Argo 桥接 |
+| 引擎层 | **DuckDB** | `1.5.5` | **主力查询路径**（`lance_scan` / `vector_search` / `fts`，40+ 处调用），非 fallback |
 | 物化层 | **DuckLake** | DuckDB 扩展 | 跨存储物化视图（TTL + ART index + 行预算） |
 | 图谱 | **HugeGraph** | 1.7（PD 集群模式） | 知识图谱存储 + Gremlin 遍历；`VermeerClient` 构建 |
 | 治理 | **Apache Gravitino** | — | 统一 catalog + tag-driven ACL + masking + retention |
@@ -303,6 +303,8 @@ YAML 配置文件 (ArrowLakeConfig.from_yaml)
 | `materialized` | `materialized.py` | DuckLake 物化视图面板（MV 懒加载，`ducklake_enabled=False`→503，v1.9.2） |
 | `quality` | `quality.py` | 质量过滤 / 去重 |
 | `cleaning` | `cleaning.py` | 结构化清洗整理（`POST /datasets/{n}/clean`，DuckDB 语义 steps→SQL→`restore_dataset` 写回） |
+| `extraction_templates` | `extraction_templates.py` (51KB) | **知识抽取模板管理**（v1.10.0，ADMIN）：YAML 模板 registry + dataset 绑定 + LLM 辅助生成（self-heal + `_hyperextract_check` 闸门）+ dry-run 试跑沙箱 + 质量验证 harness |
+| `doc_type_categories` | `doc_type_categories.py` | doc_type 分类词典（v1.10.0，category↔doc_type 拉通 + 动态 `GET /kg/doc-types` + category 必填校验） |
 | `system` | `system.py` | 系统信息 / 配置 / 健康 |
 
 **横切组件**（`arrow_lake/api/`）：
@@ -457,6 +459,10 @@ YAML 配置文件 (ArrowLakeConfig.from_yaml)
 | `he_extractor.py` (8KB) | **hyper-extract (he) 后端**（v1.7.0）：langchain `ChatOpenAI` + 领域模板，三元组精准度提升 |
 | `doc_type_router.py` (18KB) | **doc_type 三层路由**（v1.7.0，见下） |
 | `entity_router.py` | 关系路由（同义词→细分边，无→`related_to` 降级） |
+| `entity_resolver.py` | 实体消歧（embedding 余弦聚类 + 批量 LLM，opt-in `he_entity_resolution=auto`，治同实体多顶点） |
+| `orphan_linker.py` | 启发式孤儿连接（共现 + embedding + type-pair，零 LLM 连通孤立顶点，v1.9.9） |
+| `template_registry.py` / `template_type_selector.py` | **抽取模板 registry + 类型选择**（v1.10.0，运行时动态加载 YAML 模板，`reset_gallery_cache` 热重载，不 rebuild/restart） |
+| `relation_validator.py` | type-pair 合法性校验（非法关系软降级为 `相关`，不丢弃端点连通性） |
 | `vermeer_client.py` (9KB) | `VermeerClient` —— KG 构建 |
 | `_traversers.py` (11KB) | 最短路径 / 邻居 / rays / rings 遍历 |
 | `_import_export.py` | 图导入导出（Gremlin→REST 降级） |
@@ -908,7 +914,7 @@ main.py: env_nested_delimiter="__"
 |---|---|
 | `docker-compose.yml` | 基础（profile: core/dev/gravitino） |
 | `docker-compose.prod.yml` | 生产（42KB，全服务 + 安全加固 + 镜像标签固定） |
-| `docker-compose.prod_minimal.yml` | **精简生产栈**（v1.8+ 实际部署：api + minio + redis + hg-server + gravitino + system-db + ollama-relay/proxy-forwarder socat 中继；`make prod-minimal`） |
+| `docker-compose.prod_minimal.yml` | **精简生产栈**（v1.8+ 实际部署：api + minio + redis + hg-server + gravitino + system-db + ollama-relay/proxy-forwarder socat 中继；启动 `docker compose --project-directory deploy -p arrow-lake -f deploy/docker-compose.prod_minimal.yml up -d`） |
 | `docker-compose.dev.override.yml` | **dev 联调热重载**（挂 `arrow_lake/` 源码 + `console/` bind-mount + uvicorn `--reload` + `PYTHONPATH=/app`，改 Python/前端秒级生效免 rebuild；须 `--force-recreate`） |
 | `docker-compose.dev.yml` | 开发 |
 | `docker-compose.gpu.yml` | GPU worker |
@@ -925,7 +931,7 @@ main.py: env_nested_delimiter="__"
 
 ### 12.5 镜像构建
 
-`Dockerfile`（builder + runtime 双显式构建代理，WSL2 mirror 模式 buildkit 自动代理不注入 → 手动注入；apt/PyPI 切 aliyun 镜像；extras 合并一次解析；`--mount=type=cache,target=/root/.cache/uv` 复用下载，改 `arrow_lake/` 源码后 rebuild ~3-5min）+ `Dockerfile.gpu`（CUDA 12.4 cu124 torch）。当前生产镜像 **`arrow-lake:1.9.6`**（CPU 16.8GB）/ **`arrow-lake:1.9.6-gpu`**。
+`Dockerfile`（builder + runtime 双显式构建代理，WSL2 mirror 模式 buildkit 自动代理不注入 → 手动注入；apt/PyPI 切 aliyun 镜像；extras 合并一次解析；`--mount=type=cache,target=/root/.cache/uv` 复用下载，改 `arrow_lake/` 源码后 rebuild ~3-5min）+ `Dockerfile.gpu`（CUDA 12.4 cu124 torch）。当前生产镜像 **`arrow-lake:1.10.0`**（`prod_minimal.yml` 声明 tag；CPU ~16.8GB）/ **`arrow-lake:1.10.0-gpu`**。
 
 > **v1.9.6 模型 bake**：reranker（modelscope `BAAI--bge-reranker-v2-m3` 2.2G）+ docling（HF `docling-project/*` 506M）经 BuildKit **named context**（`--build-context hfmodels=…/msmodels=…`；compose `additional_contexts`）COPY 进镜像 → `/opt/models/`（reranker 本地路径加载）+ `/opt/hf-cache/`（docling）；`ENV HF_HOME=/opt/hf-cache` + `HF_HUB_OFFLINE=1` → **服务离线就绪，启动零模型下载**。reranker 走 modelscope（HF hub 国内受限，hf-mirror 经代理不稳）。
 
@@ -980,7 +986,7 @@ ArrowLakeError
 | **v1.9.3** | 2026-07-24 | **数据集字段注释**（PyArrow sidecar + DB 捕获 + `GET/POST /schema` annotate + console chip 编辑）+ **tidy.html 清洗整理页**（DuckDB 语义 steps→SQL→`restore_dataset` 写回）+ data-prep 文档型准备页（MinHash 去重 / llm_enrich）；tasks 列表 libSQL task_history 回填修复 |
 | **v1.9.4** | 2026-07-25 | **血缘埋点评审**（5 基底 + 8 gap，P0 = actor 传递链 + delete 审计）+ KG **project_concept_graph** 模板（22 类型 14 关系，质量碾压 entity_graph）+ **MERGE_FIELD 合并**（治 BALANCED grouped OOM/卡死，非 LLM 稳定 15% 内存）+ Gravitino server **1.3.0** 升级（`s3.*` 属性 / `GRAVITINO_HOME=/opt`） |
 | **v1.9.5** | 2026-07-26 | **RAG 质量全链路**：hybrid 默认生效（修死配置 `_rag_retriever` 分流）+ ingest 自动 `create_vector_index`（≥256 IVF_PQ）+ `use_kg` per-query + **GraphRAG**（extract_llm=qwen-turbo，109s→50s）+ qwen-plus@16384 最优 QA + docling chunk 语义 + Lance 留 MinIO（非反模式） |
-| **v1.9.6** | 2026-07-28 | **RAG 防幻觉**（faithfulness verify，`support_ratio`/`unsupported`，embedding cosine 默认 + LLM judge opt-in）+ **cross-encoder reranker**（bge-reranker-v2-m3 默认）+ **KG 质量/性能**（snap 编辑距离归一 / strict definition 过滤 / enum 正则解析 / GraphRAG 三路并行 -40~50% / KA LRU / QuestionEntityCache monotonic）+ **治理兑现**（`lineage.html` 血缘可视化 + 列级血缘 + `max_nodes` 截断 / masking 4 函数 + HMAC fail-fast + mask-preview + audit 复用 Lance）+ **架构 refactor**（RAGQueryPlan + score 列 / `ingest_documents_and_index` 收口 / GraphRAG 模板方法 / reranker async 契约）+ **安全加固**（fail-closed 矩阵 + SQL 注入防护 + XSS esc + HMAC 128 位）。当前主干（`_version.py=1.9.6`，镜像 `arrow-lake:1.9.6`）。 |
+| **v1.9.6** | 2026-07-28 | **RAG 防幻觉**（faithfulness verify，`support_ratio`/`unsupported`，embedding cosine 默认 + LLM judge opt-in）+ **cross-encoder reranker**（bge-reranker-v2-m3 默认）+ **KG 质量/性能**（snap 编辑距离归一 / strict definition 过滤 / enum 正则解析 / GraphRAG 三路并行 -40~50% / KA LRU / QuestionEntityCache monotonic）+ **治理兑现**（`lineage.html` 血缘可视化 + 列级血缘 + `max_nodes` 截断 / masking 4 函数 + HMAC fail-fast + mask-preview + audit 复用 Lance）+ **架构 refactor**（RAGQueryPlan + score 列 / `ingest_documents_and_index` 收口 / GraphRAG 模板方法 / reranker async 契约）+ **安全加固**（fail-closed 矩阵 + SQL 注入防护 + XSS esc + HMAC 128 位）。 |
 | **v1.10.0** | 2026-08-03 | **知识抽取模板管理**（M1–M5 全交付）：① M1 后端动态加载（`/data/lake/templates` 卷 YAML 运行时进 gallery + `reset_gallery_cache` 热重载，**不 rebuild/不 restart**）+ `/api/v1/admin/extraction-templates` CRUD（ADMIN）+ `template_registry` 校验 + 查询路径模板快照 + `build(template_override=)`；② M2 `console/extraction-templates.html` CRUD 页 + 数据集绑定（`dataset_template_bindings`，`/kg/build` 自动解析）；③ M2.5 LLM 辅助生成模板（self-heal + `_hyperextract_check` 落盘闸门）；④ M3 dry-run 试跑沙箱 + set-default + usage；⑤ M4 模板质量验证 harness（`console/template-quality.html` + `POST /{name}/quality/{doc,build}` + `DELETE /quality/{temp_ds}` + KA 隔离 + 验证历史 V006）；⑥ M5 category↔doc_type 拉通 + 动态词典（V007 `doc_type_categories` + `/admin/doc-type-categories` + category 必填校验 + `GET /kg/doc-types` 动态）。新增 system_db 迁移 **V005 extraction_templates / V006 template_quality_runs / V007 doc_type_categories**；Console 原生弹框→站内 modal/toast。当前主干（`_version.py=1.10.0`）。详见 CHANGELOG。 |
 
 **v1.8.0 实施纪律**（trunk-based，直接提交 `master`，不开 feature 分支——项目约定优先于全局 PR 规则）：每项 TDD（RED→GREEN→REFACTOR）→ 对应 cookbook 跑通 → 全量 pytest 零失败 → CHANGELOG/roadmap/implementation 同步。
@@ -1081,4 +1087,4 @@ v1.8.0 19 项落地后，主干演进分两条线（详见 [§14](#14-版本演�
 
 ---
 
-**文档维护**：随版本演进更新；架构级变更须同步本文 + `CHANGELOG.md` + 对应 roadmap/implementation。源码核实优先于记忆——本文所有方法签名、文件路径、版本事实均已对齐 `arrow_lake/` 当前主干（**v1.9.2**，2026-07-23）。
+**文档维护**：随版本演进更新；架构级变更须同步本文 + `CHANGELOG.md` + 对应 roadmap/implementation。源码核实优先于记忆——本文所有方法签名、文件路径、版本事实均已对齐 `arrow_lake/` 当前主干（**v1.10.0**，2026-08-03）。

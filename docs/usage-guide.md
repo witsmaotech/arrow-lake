@@ -1,6 +1,6 @@
 # Arrow Lake Usage Guide
 
-A practical walkthrough for **Arrow Lake v1.7.0** -- a production-grade multimodal data lakehouse
+A practical walkthrough for **Arrow Lake v1.10.0** -- a production-grade multimodal data lakehouse
 built on Lance, DuckDB, Daft, and Ray.
 
 ---
@@ -1277,4 +1277,4 @@ except StorageError as e:
 
 ---
 
-*Arrow Lake v1.5.2 | MIT License | [GitHub](https://github.com/wits-sunpw/arrow-lake)*
+*Arrow Lake v1.10.0 | Apache-2.0 License | [GitHub](https://github.com/wits-sunpw/arrow-lake)*

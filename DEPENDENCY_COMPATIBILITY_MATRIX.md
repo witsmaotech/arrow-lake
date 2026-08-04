@@ -2,7 +2,7 @@
 
 **Last Updated:** 2026-07-30
 **Python Version:** 3.11.14
-**Status:** Validated on current codebase (v1.9.11)
+**Status:** Validated on current codebase (v1.10.0)
 
 ---
 
@@ -26,9 +26,9 @@
 
 | Package | Version | Constraint | Python 3.11 | Python 3.12 | Role |
 |---------|---------|------------|:-----------:|:-----------:|------|
-| lancedb | 0.30.2 | `==0.30.2` | ✅ | ⚠️ | Vector + FTS storage, columnar, versioned |
-| pylance | ≥6.0.0 | `>=6.0.0` | ✅ | ⚠️ | Lance format bindings |
-| duckdb | 1.5.2 | `==1.5.2` | ✅ | ⚠️ | OLAP analytics, metadata catalog |
+| lancedb | 0.36.0 | `==0.36.0` | ✅ | ⚠️ | Vector + FTS storage, columnar, versioned |
+| pylance | ≥7.0.0 | `>=7.0.0` | ✅ | ⚠️ | Lance format bindings |
+| duckdb | 1.5.5 | `==1.5.5` | ✅ | ⚠️ | OLAP analytics, metadata catalog |
 | pyarrow | 23.0.1 | `==23.0.1` | ✅ | ⚠️ | Arrow IPC, shared between Daft + Lance + DuckDB |
 
 **Critical constraint:** PyArrow 23.0.1 is shared by daft, lancedb, and duckdb. All three must be tested together before any PyArrow version bump.
@@ -105,7 +105,7 @@
 
 | Python | daft | ray | metaflow | lancedb | duckdb | pyarrow | Status |
 |--------|------|-----|----------|---------|--------|---------|--------|
-| 3.11.14 | 0.7.8 | 2.54.1 | 2.19.22 | 0.30.2 | 1.5.2 | 23.0.1 | ✅ Production |
+| 3.11.14 | 0.7.21 | 2.56.0 | 2.19.35 | 0.36.0 | 1.5.5 | 23.0.1 | ✅ Production |
 
 ---
 
