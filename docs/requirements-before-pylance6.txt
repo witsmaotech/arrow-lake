@@ -1,7 +1,0 @@
-daft==0.7.8
-duckdb==1.5.2
-lance-namespace==0.6.1
-lance-namespace-urllib3-client==0.6.1
-lancedb==0.30.2
-pyarrow==23.0.1
-pylance==4.0.1

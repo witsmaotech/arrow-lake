@@ -87,7 +87,7 @@ docker exec -it deploy-api-1 .venv/bin/python /app/examples/19_knowledge_graph_b
 | — | — | A 方案实体双写（通用 `entity` 顶点 + 细分 label）+ 关系路由 |
 | — | — | ingest `doc_type` 贯通：上传 API → facade → Ingestor → chunk → KG builder |
 
-> 新增功能：hyper-extract 抽取后端（精准三元组）、doc_type 三层路由（config override → TemplateGallery 元数据匹配 → default 兜底）+ LLM 内容推断、HugeGraph PD 集群运行时多图隔离、A 方案实体双写。详见 [v1.7.0 方案](../v1.7.0-hyper-extract-kg-extraction-plan.md) 与 [CHANGELOG](../../CHANGELOG.md)。
+> 新增功能：hyper-extract 抽取后端（精准三元组）、doc_type 三层路由（config override → TemplateGallery 元数据匹配 → default 兜底）+ LLM 内容推断、HugeGraph PD 集群运行时多图隔离、A 方案实体双写。详见 [CHANGELOG](../../CHANGELOG.md)。
 
 ## v1.8 / v1.9 新特性 — 控制面统一 / 多模态 / RAG 质量 / 治理兑现
 
@@ -101,7 +101,7 @@ docker exec -it deploy-api-1 .venv/bin/python /app/examples/19_knowledge_graph_b
 | v1.9.6  | **KG 质量/性能**（snap 编辑距离归一 + strict 空定义过滤 + KA LRU 缓存）+ **治理兑现**（`lineage.html` 列级血缘、masking 4 函数 + HMAC fail-fast + mask-preview、audit 复用 Lance）+ **安全 fail-closed**（masking/RBAC/Gravitino 全 fail-closed） |
 | v1.10.0 | **知识抽取模板管理**：前端模板 CRUD 控制台（`extraction-templates.html` + `template-quality.html`）+ 后端按新模板动态抽取建图（不 rebuild/不 restart）+ CLI `--template` + API `/api/v1/admin/extraction-templates` |
 
-> 详见 [v1.9.6 发布说明](../arrow-lake-v1.9.6-release-zh.md) 与 [RAG 质量方案](../v1.9.5-rag-quality-plan.md)。
+> 详见 [CHANGELOG](../../CHANGELOG.md)。
 
 ## v1.6.3 新特性 — Deploy Hardening & nginx Proxy
 
