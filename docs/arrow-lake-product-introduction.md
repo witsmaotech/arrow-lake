@@ -257,13 +257,13 @@ Arrow Lake is built on a carefully curated stack of best-in-class open-source te
 
 | Layer | Technology | Version | Purpose |
 |-------|-----------|---------|---------|
-| **Data Processing** | Daft | 0.7.8 | Distributed DataFrame engine for multimodal data |
+| **Data Processing** | Daft | 0.7.21 | Distributed DataFrame engine for multimodal data |
 | | PyArrow | 23.0.1 | In-memory columnar format and IPC |
-| | DuckDB | 1.5.2 | Embedded OLAP SQL engine |
-| **Vector Storage** | LanceDB | 0.33.0 | Serverless vector database built on Lance |
+| | DuckDB | 1.5.5 | Embedded OLAP SQL engine |
+| **Vector Storage** | LanceDB | 0.36.0 | Serverless vector database built on Lance |
 | | Lance (pylance) | >=7.0.0 | Columnar vector storage format |
-| **Distributed Compute** | Ray | 2.54.1 | Scalable cluster runtime for parallel tasks |
-| | Metaflow | 2.19.22 | Workflow orchestration for data pipelines |
+| **Distributed Compute** | Ray | 2.56.0 | Scalable cluster runtime for parallel tasks |
+| | Metaflow | 2.19.35 | Workflow orchestration for data pipelines |
 | **API Framework** | FastAPI | >=0.115 | High-performance async REST API |
 | | Uvicorn | >=0.34 | ASGI server with HTTP/1.1 and WebSocket |
 | | slowapi | >=0.1.9 | Request rate limiting middleware |

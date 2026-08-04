@@ -107,8 +107,8 @@ flowchart TD
     end
     subgraph L4["④ 存储引擎 · Engines"]
       direction LR
-      LANCE["LanceDB 0.33 / Lance v2<br/>向量·标量·FTS·tags·blob"]:::l4
-      DUCK["DuckDB 1.5.2<br/>lance_scan · vector_search · fts"]:::l4
+      LANCE["LanceDB 0.36 / Lance v2<br/>向量·标量·FTS·tags·blob"]:::l4
+      DUCK["DuckDB 1.5.5<br/>lance_scan · vector_search · fts"]:::l4
       DLAKE["DuckLake<br/>物化视图 (TTL+ART)"]:::l4
     end
     subgraph L5["⑤ 持久化 · Persistence"]
@@ -372,7 +372,7 @@ YAML 配置文件 (ArrowLakeConfig.from_yaml)
 └─────────────────────────────────────────────┘
         ↑ lance_scan / vector_search / fts
 ┌─────────────────────────────────────────────┐
-│  DuckDB 1.5.2 (主力查询引擎)                  │
+│  DuckDB 1.5.5 (主力查询引擎)                  │
 │   + DuckLake 物化视图 (TTL + ART + 行预算)    │
 └─────────────────────────────────────────────┘
 ```
@@ -409,7 +409,7 @@ YAML 配置文件 (ArrowLakeConfig.from_yaml)
 **v1.8.0 查询层三大增强**（已核实源码）：
 
 1. **#5 Reranker 接入 hybrid**：`HybridSearchConfig` 加 `reranker_type`（默认 `none`，向后兼容）/ `reranker_model`（默认 `BAAI/bge-reranker-v2-m3`）；`HybridSearchBridge.search()` 末尾 `_rerank_table`：行 → `ContextChunk` → cross-encoder rerank → `take` 重排 + 追加 `_rerank_score` 列。缺 text 列 / 异常优雅降级。
-2. **#10 轻图查询**：PGQ（`CREATE PROPERTY GRAPH`/`MATCH`）在此 DuckDB 1.5.2 build **不可用**（`pgq` 扩展无法安装，ParserException），改用 `OlapSearchBridge.graph_query()` **递归 CTE** 实现环安全 BFS 邻居/路径遍历（`list_contains` 环检测，`max_depth` 钳 [1,10]，directed/undirected + 可选权重）。与 HugeGraph 互补：重图→HG，轻查询→DuckDB。
+2. **#10 轻图查询**：PGQ（`CREATE PROPERTY GRAPH`/`MATCH`）在此 DuckDB 1.5.5 build **不可用**（`pgq` 扩展无法安装，ParserException），改用 `OlapSearchBridge.graph_query()` **递归 CTE** 实现环安全 BFS 邻居/路径遍历（`list_contains` 环检测，`max_depth` 钳 [1,10]，directed/undirected + 可选权重）。与 HugeGraph 互补：重图→HG，轻查询→DuckDB。
 3. **#17 全链路 async**：lancedb 无原生 async FTS/聚合路径，故给 fts/hybrid/faceted 补 `search_async`（`asyncio.to_thread` 线程卸载，非 GIL-free）；价值 = async handler 不阻塞事件循环（vector 仍是原生 `search_async`）。压测驱动 GO 后落地（worker 1→20 仅 5.8→7.2 QPS，并发平台期显著）。
 
 ### 4.5 嵌入层（Embedding）
