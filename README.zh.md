@@ -75,7 +75,22 @@ Arrow Lake 内置原生运维控制台（原生 JS，由 API 提供服务）—�
 - **抽取模板** —— YAML CRUD、AI 生成、dry-run、质量验证（基于模板建图并在其上跑 RAG）
 - **Admin / 审计 / 治理** —— 用户、RBAC、防篡改审计、tags 与脱敏策略
 
-_截图：待补充（从运行实例的 `/console/` 截取）。_
+<table>
+<tr>
+<td align="center"><b>首页总览</b><br><img src="docs/asserts/images/页面-首页.png" width="420"></td>
+<td align="center"><b>知识图谱</b><br><img src="docs/asserts/images/页面-知识图谱01.png" width="420"></td>
+</tr>
+<tr>
+<td align="center"><b>OLAP 数据分析</b><br><img src="docs/asserts/images/页面-数据分析olap.png" width="420"></td>
+<td align="center"><b>模板质量验证（v1.10.0）</b><br><img src="docs/asserts/images/页面-图谱抽取模板质量验证01.png" width="420"></td>
+</tr>
+<tr>
+<td align="center"><b>RAG 问答</b><br><img src="docs/asserts/images/页面-RAG.png" width="420"></td>
+<td align="center"><b>数据血缘</b><br><img src="docs/asserts/images/页面-数据血缘.png" width="420"></td>
+</tr>
+</table>
+
+<sup>共 19 张截图，见 [`docs/asserts/images/`](docs/asserts/images/) —— 含登录、数据集、摄入、数据准备、清洗整理、索引嵌入、异步任务、文档教程等。</sup>
 
 ## 快速开始（30 秒）
 

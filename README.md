@@ -75,7 +75,22 @@ Arrow Lake ships a native operations console (vanilla JS, served by the API) —
 - **Extraction Templates** — YAML CRUD, AI generation, dry-run, quality validation (build a graph from a template and RAG over it)
 - **Admin / Audit / Governance** — users, RBAC, tamper-evident audit, tags & masking policies
 
-_Screenshots: to be added (capture from a running instance at `/console/`)._
+<table>
+<tr>
+<td align="center"><b>Overview</b><br><img src="docs/asserts/images/页面-首页.png" width="420"></td>
+<td align="center"><b>Knowledge Graph</b><br><img src="docs/asserts/images/页面-知识图谱01.png" width="420"></td>
+</tr>
+<tr>
+<td align="center"><b>OLAP Worksheet</b><br><img src="docs/asserts/images/页面-数据分析olap.png" width="420"></td>
+<td align="center"><b>Template QA (v1.10.0)</b><br><img src="docs/asserts/images/页面-图谱抽取模板质量验证01.png" width="420"></td>
+</tr>
+<tr>
+<td align="center"><b>RAG Q&amp;A</b><br><img src="docs/asserts/images/页面-RAG.png" width="420"></td>
+<td align="center"><b>Lineage</b><br><img src="docs/asserts/images/页面-数据血缘.png" width="420"></td>
+</tr>
+</table>
+
+<sup>19 screenshots total in [`docs/asserts/images/`](docs/asserts/images/) — incl. login, datasets, ingest, data-prep, tidy/clean, index/embed, async tasks, docs.</sup>
 
 ## Quickstart (30 seconds)
 
