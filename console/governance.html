@@ -70,11 +70,6 @@
     <div class="panel-b" id="gLineage"><div class="muted" style="padding:10px">选一个表查看血缘概览(上下游计数 + 跳转图谱)</div></div>
   </div>
 
-  <!-- 审计日志(全局治理操作流)-->
-  <div class="panel flush" style="margin-top:var(--s4)">
-    <div class="panel-h"><i class="placeholder" data-ic="history"></i><h3>审计日志 Audit</h3><span class="sub" id="gAudMeta">最近治理操作 · GET /audit/query</span></div>
-    <div class="panel-b" id="gAudit"><div class="muted" style="padding:10px">加载…</div></div>
-  </div>
 </div></main>
 </div>
 
@@ -366,24 +361,7 @@ async function loadLineage(name) {
   }
 }
 
-/* ---------- 审计概览(最近 8 条 + 跳转 audit.html 深度查询)---------- */
-/* governance 只做概览;过滤/分页/导出收敛到独立 audit.html,避免重复。 */
-async function loadAudit() {
-  $("#gAudit").innerHTML = '<div class="muted" style="padding:10px">加载…</div>';
-  try {
-    const r = await request("GET", "/audit/query");
-    const es = r?.entries || [];
-    if (!es.length) { $("#gAudit").innerHTML = '<div class="muted" style="padding:10px">暂无审计记录</div>'; $("#gAudMeta").textContent = "无记录"; return; }
-    const rows = es.slice(0, 8).map(e => `<div class="col-row"><span><b>${esc(e.actor || "—")}</b> <span class="tag mono" style="font-size:.6rem;margin-left:4px">${esc(e.event_type || e.action || "—")}</span></span><span style="font-size:.72rem"><a href="dataset-detail.html?ds=${encodeURIComponent(e.dataset_name || e.target || "")}" style="color:var(--teal-bright);text-decoration:none" class="mono">${esc(e.dataset_name || e.target || "—")}</a> · <span class="muted">${fmtDate(e.timestamp || e.created_at || e.time)}</span></span></div>`).join("");
-    const btn = `<a class="btn btn-primary btn-sm" href="audit.html" style="margin:8px 10px;display:inline-flex;align-items:center;gap:6px">→ 审计日志(过滤 · 分页 · 导出)</a>`;
-    $("#gAudit").innerHTML = rows + btn;
-    $("#gAudMeta").textContent = `最近 ${Math.min(8, es.length)} / ${es.length} 条`;
-  } catch (e) {
-    $("#gAudit").innerHTML = `<div class="degraded">审计加载失败:${esc(e?.detail || e?.message || e)}<br/><a class="btn btn-ghost btn-sm" href="audit.html" style="margin-top:8px">→ 仍去审计日志</a></div>`;
-  }
-}
-
-function loadAll() { probeAndCatalogs(); loadModels(); loadAudit(); }
+function loadAll() { probeAndCatalogs(); loadModels(); }
 loadAll();
 window.applyIcons && applyIcons(document);
 
