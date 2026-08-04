@@ -239,7 +239,7 @@ Each of those tools is excellent at its specialty. Arrow Lake is for teams that 
 
 ### Cookbook (bilingual EN / ZH)
 
-The cookbook is the primary hands-on guide — **19 chapters**, 55+ runnable examples.
+The cookbook is the primary hands-on guide — **19 chapters**, 90 runnable examples.
 
 | # | Chapter | SDK examples | REST examples |
 |---|---|---|---|
@@ -261,11 +261,11 @@ The cookbook is the primary hands-on guide — **19 chapters**, 55+ runnable exa
 | 16 | [v1.8.0 New Features](docs/cookbook/16-v1.8.0-new-features-zh.md) | — | — |
 | 17 | [Data Masking](docs/cookbook/17-data-masking.md) | — | — |
 | 18 | [Lineage Visualization](docs/cookbook/18-lineage-visualization.md) | — | `09_lineage_audit.py` |
-| 19 | [REST Recipes](docs/cookbook/19-rest-recipes.md) | — | `19_rest-recipes` |
+| 19 | [REST Recipes](docs/cookbook/19-rest-recipes.md) | — | — |
 
-> **Learning path:** 入门 01→02→03 · 搜索 04→05→06 · AI 07→08→09 · 生产 10→11→12
+> **Learning path:** getting started 01→02→03 · search 04→05→06 · AI 07→08→09 · production 10→11→12
 
-**Runnable examples** — 24 SDK scripts in [`docs/cookbook/examples/`](docs/cookbook/examples/) and 31 REST scripts in [`docs/cookbook/examples_api/`](docs/cookbook/examples_api/), including the v1.10.0 **template-management** scripts (`examples/46_template_management.py`, `examples_api/34_extraction_templates_api.py`).
+**Runnable examples** — 51 SDK scripts in [`docs/cookbook/examples/`](docs/cookbook/examples/) and 39 REST scripts in [`docs/cookbook/examples_api/`](docs/cookbook/examples_api/), including the v1.10.0 **template-management** scripts (`examples/46_template_management.py`, `examples_api/34_extraction_templates_api.py`).
 
 ### Reference docs
 

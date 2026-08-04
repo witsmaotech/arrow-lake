@@ -239,7 +239,7 @@ print(lake.search("articles", query="ML", top_k=3))
 
 ### Cookbook（中英双语）
 
-Cookbook 是首要的实战指南 —— **共 19 章**，55+ 个可运行示例。
+Cookbook 是首要的实战指南 —— **共 19 章**，90 个可运行示例。
 
 | # | 章节 | SDK 示例 | REST 示例 |
 |---|---|---|---|
@@ -261,11 +261,11 @@ Cookbook 是首要的实战指南 —— **共 19 章**，55+ 个可运行示例
 | 16 | [v1.8.0 新特性](docs/cookbook/16-v1.8.0-new-features-zh.md) | — | — |
 | 17 | [数据脱敏](docs/cookbook/17-data-masking.md) | — | — |
 | 18 | [血缘可视化](docs/cookbook/18-lineage-visualization.md) | — | `09_lineage_audit.py` |
-| 19 | [REST 食谱](docs/cookbook/19-rest-recipes.md) | — | `19_rest-recipes` |
+| 19 | [REST 食谱](docs/cookbook/19-rest-recipes.md) | — | — |
 
 > **学习路径：** 入门 01→02→03 · 检索 04→05→06 · AI 07→08→09 · 生产 10→11→12
 
-**可运行示例** —— [`docs/cookbook/examples/`](docs/cookbook/examples/) 下 24 个 SDK 脚本，[`docs/cookbook/examples_api/`](docs/cookbook/examples_api/) 下 31 个 REST 脚本，包含 v1.10.0 的**模板管理**脚本（`examples/46_template_management.py`、`examples_api/34_extraction_templates_api.py`）。
+**可运行示例** —— [`docs/cookbook/examples/`](docs/cookbook/examples/) 下 51 个 SDK 脚本，[`docs/cookbook/examples_api/`](docs/cookbook/examples_api/) 下 39 个 REST 脚本，包含 v1.10.0 的**模板管理**脚本（`examples/46_template_management.py`、`examples_api/34_extraction_templates_api.py`）。
 
 ### 参考文档
 
