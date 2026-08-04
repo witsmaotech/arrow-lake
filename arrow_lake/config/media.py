@@ -25,13 +25,11 @@ class MediaConfig(BaseModel):
         thumbnail_size: Thumbnail image dimension (square).
         preview_size: Preview image dimension (square).
         max_image_dimension: Maximum allowed image dimension before downscaling.
-        retention_original_days: Days to retain original full-resolution images.
     """
 
     thumbnail_size: int = 64
     preview_size: int = 512
     max_image_dimension: int = 4096
-    retention_original_days: int = 90
 
 
 class EmbeddingConfig(BaseModel):
@@ -45,7 +43,6 @@ class EmbeddingConfig(BaseModel):
         api_base: Base URL for external embedding API.
         api_key: API key for external embedding API.
         expected_dim: Expected embedding dimension (0 = auto-detect from model).
-        validate_dimension: Whether to validate embedding dimension after model load.
         daft_provider: Daft embed provider when backend is "daft".
         daft_num_partitions: Number of Daft partitions for parallel embedding.
     """
@@ -57,7 +54,6 @@ class EmbeddingConfig(BaseModel):
     api_base: str = ""
     api_key: str = ""
     expected_dim: int = 0
-    validate_dimension: bool = True
     daft_provider: str = "transformers"
     daft_num_partitions: int = 4
 
@@ -97,7 +93,6 @@ class QualityConfig(BaseModel):
         active_filters: Comma-separated names of enabled filters from registry.
         schema_validation: strict rejects unknown cols + type mismatches;
                           lenient drops unknown cols, safe-casts compatible types.
-        dead_letter_enabled: Whether rejected rows go to dead-letter table.
         text_min_chars: Minimum text length for TextLengthFilter.
         text_max_chars: Maximum text length for TextLengthFilter.
         image_min_width: Minimum image width for ImageResolutionFilter.
@@ -108,20 +103,22 @@ class QualityConfig(BaseModel):
     filter_mode: FilterMode = FilterMode.ALL
     active_filters: str = ""
     schema_validation: SchemaValidationMode = SchemaValidationMode.LENIENT
-    dead_letter_enabled: bool = True
     text_min_chars: int = 1
     text_max_chars: int | None = None
     image_min_width: int = 64
     image_min_height: int = 64
 
     # NeMo Curator (Sprint 9, Story 8.5)
+    # DEPRECATED (defined but never read by code; kept for compat): NeMoCuratorFilter 类未注册,半成品
     nemo_curator_enabled: bool = False
+    # DEPRECATED (defined but never read by code; kept for compat): NeMoCuratorFilter 类未注册,半成品
     nemo_curator_model: str = "nemo/quality-scorer"
+    # DEPRECATED (defined but never read by code; kept for compat): NeMoCuratorFilter 类未注册,半成品
     nemo_curator_threshold: float = 0.5
+    # DEPRECATED (defined but never read by code; kept for compat): NeMoCuratorFilter 类未注册,半成品
     nemo_curator_batch_size: int = 64
 
     # Content dedup (Story 4.7)
-    dedup_enabled: bool = False
     dedup_strategy: str = "exact"
     dedup_action: str = "flag"
     dedup_perceptual_threshold: int = 10
@@ -145,24 +142,13 @@ class ExportConfig(BaseModel):
     """Data export configuration (Story 5.9).
 
     Attributes:
-        default_format: Default export format ("parquet" or "csv").
         parquet_compression: Compression codec for Parquet files.
         csv_delimiter: Delimiter for CSV files.
-        allow_overwrite: Whether overwriting existing files is allowed.
     """
 
-    default_format: str = "parquet"
     parquet_compression: str = "snappy"
     csv_delimiter: str = ","
-    allow_overwrite: bool = False
     base_dir: str = "/app/exports"
-
-    @field_validator("default_format")
-    @classmethod
-    def validate_format(cls, v: str) -> str:
-        if v not in ("parquet", "csv"):
-            raise ValueError(f"format must be 'parquet' or 'csv', got {v!r}")
-        return v
 
     @field_validator("parquet_compression")
     @classmethod

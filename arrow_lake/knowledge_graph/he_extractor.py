@@ -811,7 +811,10 @@ class HyperExtractExtractor:
             # hyperextract.types.hypergraph.merge_batch_data when a partial
             # nodes list is empty). Retry with the default template before
             # yielding empty — otherwise one misrouted chunk zeroes the KG.
-            default_path = self._router.default_template()
+            # Resolve default stem (e.g. "entity_graph") to a full path —
+            # _parse_fresh/Template.create only accepts gallery/full paths; a bare
+            # stem raises "Template not found" and the misroute-fallback fails too.
+            default_path = self._resolve_template_path(self._router.default_template())
             if template_path != default_path:
                 logger.warning(
                     "hyper-extract parse failed for chunk %s (template=%s): %s "

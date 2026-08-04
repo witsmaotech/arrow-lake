@@ -79,8 +79,6 @@ class RAGConfig(BaseModel):
     enable_citations: bool = True
     # v1.9.6 P0-1: faithfulness verification (lightweight [n] ref check).
     enable_verification: bool = False
-    session_ttl_seconds: int = 86400
-    feedback_enabled: bool = True
     reranker: str = "ollama"
     reranker_model: str = "dengcao/Qwen3-Reranker-0.6B:F16"
     reranker_base_url: str = ""
@@ -127,7 +125,6 @@ class HugeGraphConfig(BaseModel):
         timeout_seconds: HTTP request timeout.
         username: Auth username (empty = no auth).
         password: Auth password.
-        auto_build_on_ingest: Auto-build KG on data ingestion.
         build_batch_size: Vertices/edges per batch insert.
         build_concurrency: Max parallel LLM calls during entity extraction.
         build_batch_delay: Seconds to wait between extraction batches.
@@ -147,7 +144,6 @@ class HugeGraphConfig(BaseModel):
     timeout_seconds: float = 30.0
     username: str = ""
     password: str = ""
-    auto_build_on_ingest: bool = False
     build_batch_size: int = 50
     build_concurrency: int = 3
     # Write-side semaphore for batch inserts, SEPARATE from build_concurrency

@@ -11,24 +11,13 @@ class ComputeConfig(BaseModel):
     """Compute layer configuration.
 
     Attributes:
-        gpu_enabled: Whether GPU acceleration is available.
         ray_address: Ray cluster address ('auto' for local cluster).
         ray_dashboard_url: Ray dashboard base URL for health probing
             (e.g. ``http://ray-head:8265``). Empty ⇒ Ray probe skipped.
-        num_workers: Number of Ray worker processes.
     """
 
-    gpu_enabled: bool = False
     ray_address: str = "auto"
     ray_dashboard_url: str = ""
-    num_workers: int = 2
-
-    @field_validator("num_workers")
-    @classmethod
-    def validate_num_workers(cls, v: int) -> int:
-        if v < 1:
-            raise ValueError(f"num_workers must be >= 1, got {v}")
-        return v
 
 
 class ObservabilityConfig(BaseModel):
@@ -98,17 +87,13 @@ class DaftConfig(BaseModel):
         enabled: Whether Daft query engine is available via Lake.daft_query().
         default_num_partitions: Default number of partitions for Daft operations.
         target_partition_max_memory_bytes: Memory cap per partition in bytes.
-        read_num_threads: Number of threads for parallel file reads.
-        ingest_use_daft_pipeline: Use Daft DataFrame pipeline for ingestion transforms.
     """
 
     enabled: bool = True
     default_num_partitions: int = 10
     target_partition_max_memory_bytes: int = 256 * 1024 * 1024
-    read_num_threads: int = 4
-    ingest_use_daft_pipeline: bool = True
 
-    @field_validator("default_num_partitions", "read_num_threads")
+    @field_validator("default_num_partitions")
     @classmethod
     def validate_positive(cls, v: int) -> int:
         if v < 1:

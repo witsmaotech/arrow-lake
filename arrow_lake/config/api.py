@@ -11,13 +11,13 @@ class LineageConfig(BaseModel):
     """Data lineage configuration (Sprint 9, Story 8.3).
 
     Attributes:
-        enabled: Whether lineage tracking is active.
         store_dataset: Name of the lineage events dataset.
         auto_record: Automatically record lineage on dataset operations.
     """
 
-    enabled: bool = False
+    # DEPRECATED (defined but never read by code; kept for compat): 未接通 catalog/lineage.py,实际落盘名见 app.py 迁移
     store_dataset: str = "sys_lineage_events"
+    # DEPRECATED (defined but never read by code; kept for compat): 未接通,功能默认全记
     auto_record: bool = True
 
 
@@ -34,6 +34,7 @@ class AuditConfig(BaseModel):
     enabled: bool = False
     hmac_secret_key: str = ""
     audit_dataset: str = "sys_audit_trail"
+    # DEPRECATED (defined but never read by code; kept for compat): 未接通,功能默认全记
     auto_record_workflow: bool = True
 
 
@@ -47,16 +48,10 @@ class ApiConfig(BaseModel):
         api_key: API key for authentication. Empty disables auth.
         api_key_header: HTTP header name for API key.
         cors_origins: Allowed CORS origins.
-        arrow_ipc_threshold_bytes: Results larger than this use Arrow IPC encoding.
-        request_timeout_seconds: Maximum request processing time.
         max_request_size_bytes: Maximum HTTP request body size.
         security_headers_enabled: Enable HTTP security response headers.
         content_security_policy: CSP value. Empty = header not set.
         frame_options: X-Frame-Options value (DENY, SAMEORIGIN, or empty to disable).
-        tls_enabled: Whether TLS is enabled. Actual TLS termination should be
-            handled by uvicorn CLI flags or a reverse proxy (nginx/Caddy).
-        ssl_keyfile: Path to TLS private key file.
-        ssl_certfile: Path to TLS certificate file.
         api_key_default_role: Default role assigned to API key authenticated users.
     """
 
@@ -66,25 +61,12 @@ class ApiConfig(BaseModel):
     api_key: str = ""
     api_key_header: str = "X-API-Key"
     cors_origins: list[str] = []
-    arrow_ipc_threshold_bytes: int = 10240  # 10 KB
-    request_timeout_seconds: float = 300.0
-
-    @field_validator("request_timeout_seconds")
-    @classmethod
-    def validate_request_timeout(cls, v: float) -> float:
-        if v < 1.0:
-            raise ValueError(f"request_timeout_seconds must be >= 1.0, got {v}")
-        return v
     max_request_size_bytes: int = 100 * 1024 * 1024  # 100 MB
     auto_generate_request_id: bool = True
     docs_enabled: bool = True
-    api_key_rotation_days: int = 90
     security_headers_enabled: bool = True
     content_security_policy: str = ""
     frame_options: str = "DENY"
-    tls_enabled: bool = False
-    ssl_keyfile: str = ""
-    ssl_certfile: str = ""
     api_key_default_role: str = "VIEWER"
 
 
@@ -162,14 +144,12 @@ class RateLimitConfig(BaseModel):
         enabled: 是否启用速率限制.
         default_requests_per_minute: 默认每分钟请求数.
         default_burst: 默认突发请求数.
-        override_per_endpoint: 每端点自定义限制 {"path": rpm}.
         exempt_paths: 免除限制的路径前缀列表.
     """
 
     enabled: bool = True
     default_requests_per_minute: int = 60
     default_burst: int = 10
-    override_per_endpoint: dict[str, int] = {}
     exempt_paths: list[str] = ["/health", "/metrics", "/docs", "/openapi.json", "/redoc", "/console"]
     trusted_proxies: set[str] = set()
 

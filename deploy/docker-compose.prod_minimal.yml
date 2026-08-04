@@ -207,8 +207,8 @@ services:
       # ARROW_LAKE__LLM__MODEL: "ministral-3:3b"
       # ARROW_LAKE__LLM__API_BASE: "http://host.docker.internal:11534/v1"
       ARROW_LAKE__LLM__PROVIDER: "openai"
-      ARROW_LAKE__LLM__MODEL: "qwen-plus"
-      ARROW_LAKE__LLM__API_BASE: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+      ARROW_LAKE__LLM__MODEL: "${ARROW_LAKE__LLM__MODEL:-qwen-plus}"
+      ARROW_LAKE__LLM__API_BASE: "${ARROW_LAKE__LLM__API_BASE:-https://dashscope.aliyuncs.com/compatible-mode/v1}"
       ARROW_LAKE__LLM__API_KEY: "${DASHSCOPE_API_KEY}"
       ARROW_LAKE__LLM__MAX_TOKENS: "8192"
       ARROW_LAKE__LLM__CONTEXT_WINDOW_TOKENS: "512000"
@@ -226,7 +226,7 @@ services:
       no_proxy: "127.0.0.1,localhost,host.docker.internal,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,172.19.0.0/16,172.30.0.0/16,minio,redis,metaflow-metadata,metaflow-db,hg-server,hg-pd,hg-store,gravitino,lance-rest,arrow-lake-gravitino,arrow-lake-lance-rest"
       ARROW_LAKE__EMBEDDING__BACKEND: "openai"
       ARROW_LAKE__EMBEDDING__API_BASE: "http://host.docker.internal:11534/v1"
-      ARROW_LAKE__EMBEDDING__MODEL: "qwen3-embedding:4b"
+      ARROW_LAKE__EMBEDDING__MODEL: "${ARROW_LAKE__EMBEDDING__MODEL:-qwen3-embedding:4b}"
       ARROW_LAKE__EMBEDDING__API_KEY: "ollama"
       # v1.9.5 批5: GraphRAG 联动(已建 KG 的数据集)。取消下行注释即开,开启后 RAG 自动
       # 注入实体关系三元组(graph_qa 模板)。默认关——未建 KG 的数据集开了会降级为纯向量 RAG。
@@ -348,6 +348,8 @@ services:
       # v1.9.6: 模型 bake 进镜像 /opt/hf-cache（reranker bge-reranker-v2-m3 + docling layout/models），离线就绪
       HF_HOME: "/opt/hf-cache"
       HF_HUB_OFFLINE: "1"  # 模型已在镜像，禁止运行时联网拉
+      # triton JIT kernel cache 显式指向可写卷(read_only 根 FS 下默认 ~/.triton=/app/.triton 会 Errno 30)
+      TRITON_CACHE_DIR: "/app/.triton"
       # v1.9.6 P0-6: masking HMAC fail-fast — 无默认，缺 key 启动阻断（生产 fail loudly）。
       # 必须在 deploy/.env 设强 key（32+ bytes）：ARROW_LAKE__MASKING__HMAC_KEY=<openssl rand -hex 32>
       ARROW_LAKE__MASKING__HMAC_KEY: "${ARROW_LAKE__MASKING__HMAC_KEY:-}"
@@ -364,6 +366,7 @@ services:
       - lake-data:/data/lake
       - metaflow-store:/data/metaflow
       - docling-cache:/app/.docling-cache
+      - triton-cache:/app/.triton   # triton/torch JIT kernel cache — read_only 根 FS 下必须挂卷,否则 docling GPU 推理 Errno 30
     depends_on:
       minio:
         condition: service_healthy
@@ -529,7 +532,8 @@ services:
     volumes:
       - lake-data:/data/lake
       - metaflow-store:/data/metaflow
-    command: chown -R 999:999 /data/lake /data/metaflow
+      - triton-cache:/app/.triton   # 首次挂载默认 root;api cap_drop=ALL 无权 chown,需此处 root 修正
+    command: chown -R 999:999 /data/lake /data/metaflow /app/.triton
 
   # ---------------------------------------------------------------------------
   # MinIO Init — Create buckets on first start
@@ -894,6 +898,8 @@ volumes:
   metaflow-store:
     driver: local
   docling-cache:
+    driver: local
+  triton-cache:
     driver: local
   hg-server-data:
     driver: local

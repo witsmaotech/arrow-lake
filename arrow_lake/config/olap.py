@@ -10,7 +10,6 @@ class OlapConfig(BaseModel):
 
     Attributes:
         max_result_rows: Maximum number of rows returned by OLAP queries.
-        enable_predicate_pushdown: Whether to push down predicates to Lance.
         enable_join: Whether JOIN queries are allowed.
         scanner_batch_size: Rows per batch when streaming via Lance scanner.
         enable_streaming: Use RecordBatchReader streaming instead of full
@@ -31,7 +30,6 @@ class OlapConfig(BaseModel):
     """
 
     max_result_rows: int = 100_000
-    enable_predicate_pushdown: bool = True
     enable_join: bool = True
     scanner_batch_size: int = 10_000
     enable_streaming: bool = True

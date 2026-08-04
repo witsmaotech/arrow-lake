@@ -12,20 +12,11 @@ class WorkflowConfig(BaseModel):
         max_retry_attempts: Maximum retry attempts per step.
         min_backoff_seconds: Minimum backoff between retries (exponential).
         max_backoff_seconds: Maximum backoff between retries.
-        checkpoint_enabled: Enable Lance version checkpointing before steps.
-        ray_execution_enabled: Enable Ray cluster execution (--with ray).
-        auto_tag_runs: Auto-generate tags from run metadata.
-        artifact_retention_days: Days to retain Argo workflow artifacts.
     """
 
     max_retry_attempts: int = 3
     min_backoff_seconds: float = 1.0
     max_backoff_seconds: float = 60.0
-    checkpoint_enabled: bool = True
-    ray_execution_enabled: bool = False
-    auto_tag_runs: bool = True
-    artifact_retention_days: int = 30
-    schedule_cron: str | None = None
 
     @field_validator("max_retry_attempts")
     @classmethod

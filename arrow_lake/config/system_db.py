@@ -31,7 +31,6 @@ class SystemDBConfig(BaseModel):
     auth_token: str = ""
 
     connect_timeout_seconds: float = Field(default=5.0, ge=0.1)
-    health_probe_on_startup: bool = True
 
     # fail_close (RBAC/identity: refuse requests when store down) |
     # fail_soft (catalog/tasks/rag: log + degrade)

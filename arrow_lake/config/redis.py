@@ -16,7 +16,6 @@ class RedisConfig(BaseModel):
     url: str = "redis://localhost:6379/0"
     password: str = ""
     ssl: bool = False
-    ssl_cert_reqs: str = "required"
     semaphore_key_prefix: str = "arrow_lake:semaphore:"
     semaphore_ttl_seconds: int = Field(default=300, ge=1)
     redis_pool_size: int = Field(default=10, ge=1)

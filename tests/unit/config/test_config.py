@@ -76,25 +76,9 @@ class TestStorageConfig:
 class TestComputeConfig:
     """Test ComputeConfig defaults and validation."""
 
-    def test_default_gpu_disabled(self) -> None:
-        config = ComputeConfig()
-        assert config.gpu_enabled is False
-
     def test_default_ray_address(self) -> None:
         config = ComputeConfig()
         assert config.ray_address == "auto"
-
-    def test_default_num_workers(self) -> None:
-        config = ComputeConfig()
-        assert config.num_workers == 2
-
-    def test_gpu_can_be_enabled(self) -> None:
-        config = ComputeConfig(gpu_enabled=True)
-        assert config.gpu_enabled is True
-
-    def test_num_workers_must_be_positive(self) -> None:
-        with pytest.raises(ValueError):
-            ComputeConfig(num_workers=0)
 
 
 class TestObservabilityConfig:
@@ -142,11 +126,6 @@ class TestArrowLakeConfig:
         assert config.storage.backend == "minio"
         assert config.storage.s3_endpoint == "http://127.0.0.1:9000"
 
-    def test_default_compute_values(self) -> None:
-        config = ArrowLakeConfig()
-        assert config.compute.gpu_enabled is False
-        assert config.compute.num_workers == 2
-
     def test_default_observability_values(self) -> None:
         config = ArrowLakeConfig()
         assert config.observability.metrics_enabled is True
@@ -166,16 +145,6 @@ class TestEnvOverride:
         monkeypatch.setenv("ARROW_LAKE__STORAGE__S3_ENDPOINT", "https://custom.s3.com")
         config = ArrowLakeConfig()
         assert config.storage.s3_endpoint == "https://custom.s3.com"
-
-    def test_env_overrides_num_workers(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("ARROW_LAKE__COMPUTE__NUM_WORKERS", "8")
-        config = ArrowLakeConfig()
-        assert config.compute.num_workers == 8
-
-    def test_env_overrides_gpu_enabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("ARROW_LAKE__COMPUTE__GPU_ENABLED", "true")
-        config = ArrowLakeConfig()
-        assert config.compute.gpu_enabled is True
 
     def test_env_overrides_metrics_port(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("ARROW_LAKE__OBSERVABILITY__METRICS_PORT", "9090")
@@ -208,9 +177,6 @@ storage:
   s3_endpoint: "https://s3.amazonaws.com"
   s3_region: "eu-west-1"
 
-compute:
-  num_workers: 16
-
 observability:
   metrics_port: 9090
   log_level: WARNING
@@ -222,7 +188,6 @@ observability:
         assert config.storage.backend == "s3"
         assert config.storage.s3_endpoint == "https://s3.amazonaws.com"
         assert config.storage.s3_region == "eu-west-1"
-        assert config.compute.num_workers == 16
         assert config.observability.metrics_port == 9090
         assert config.observability.log_level == "WARNING"
 
@@ -251,7 +216,6 @@ observability:
         assert config.observability.log_level == "DEBUG"
         # Kept defaults
         assert config.storage.backend == "minio"
-        assert config.compute.num_workers == 2
 
     def test_missing_yaml_file_raises(self) -> None:
         with pytest.raises(FileNotFoundError):
@@ -267,16 +231,11 @@ observability:
         """Verify existing prod.yaml can be loaded."""
         config = ArrowLakeConfig.from_yaml("configs/prod.yaml")
         assert config.storage.backend == "s3"
-        assert config.compute.gpu_enabled is True
         assert config.observability.log_level == "WARNING"
 
 
 class TestFailFast:
     """Test fail-fast validation on required values."""
-
-    def test_invalid_num_workers_raises(self) -> None:
-        with pytest.raises(ValueError, match="num_workers"):
-            ArrowLakeConfig(compute=ComputeConfig(num_workers=-1))
 
     def test_invalid_metrics_port_raises(self) -> None:
         with pytest.raises(ValueError, match="metrics_port"):
@@ -311,13 +270,12 @@ class TestEnvFileLoading:
     """Test .env file loading (layer 2)."""
 
     def test_env_file_overrides_defaults(self, tmp_path: Any) -> None:
-        env_content = "ARROW_LAKE__STORAGE__BACKEND=s3\nARROW_LAKE__COMPUTE__NUM_WORKERS=4\n"
+        env_content = "ARROW_LAKE__STORAGE__BACKEND=s3\n"
         env_file = tmp_path / ".env"
         env_file.write_text(env_content)
 
         config = ArrowLakeConfig(_env_file=str(env_file))
         assert config.storage.backend == "s3"
-        assert config.compute.num_workers == 4
 
     def test_env_file_lower_than_env_vars(
         self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
@@ -339,7 +297,6 @@ class TestYamlPreservesEnv:
         self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("ARROW_LAKE__STORAGE__BACKEND", "s3")
-        monkeypatch.setenv("ARROW_LAKE__COMPUTE__NUM_WORKERS", "8")
 
         yaml_content = """
 observability:
@@ -353,7 +310,6 @@ observability:
         assert config.observability.log_level == "DEBUG"
         # Env var overrides preserved (not lost)
         assert config.storage.backend == "s3"
-        assert config.compute.num_workers == 8
 
 
 class TestHttpConfig:
@@ -387,10 +343,6 @@ class TestMediaConfig:
     def test_default_max_image_dimension(self) -> None:
         config = MediaConfig()
         assert config.max_image_dimension == 4096
-
-    def test_default_retention_days(self) -> None:
-        config = MediaConfig()
-        assert config.retention_original_days == 90
 
 
 class TestEmbeddingConfig:
@@ -775,17 +727,11 @@ class TestOlapConfig:
         config = OlapConfig()
         assert config.max_result_rows == 100_000
 
-    def test_default_enable_predicate_pushdown(self) -> None:
-        config = OlapConfig()
-        assert config.enable_predicate_pushdown is True
-
     def test_custom_values(self) -> None:
         config = OlapConfig(
             max_result_rows=50_000,
-            enable_predicate_pushdown=False,
         )
         assert config.max_result_rows == 50_000
-        assert config.enable_predicate_pushdown is False
 
     def test_max_result_rows_must_be_positive(self) -> None:
         with pytest.raises(ValueError, match="max_result_rows"):
@@ -804,7 +750,6 @@ class TestOlapConfigInArrowLake:
     def test_olap_defaults(self) -> None:
         config = ArrowLakeConfig()
         assert config.olap.max_result_rows == 100_000
-        assert config.olap.enable_predicate_pushdown is True
 
     def test_env_override_olap_max_rows(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("ARROW_LAKE__OLAP__MAX_RESULT_ROWS", "50000")
@@ -815,14 +760,12 @@ class TestOlapConfigInArrowLake:
         yaml_content = """
 olap:
   max_result_rows: 200000
-  enable_predicate_pushdown: false
 """
         yaml_file = tmp_path / "config.yaml"
         yaml_file.write_text(yaml_content)
 
         config = ArrowLakeConfig.from_yaml(str(yaml_file))
         assert config.olap.max_result_rows == 200_000
-        assert config.olap.enable_predicate_pushdown is False
 
 
 class TestQualityConfig:
@@ -844,10 +787,6 @@ class TestQualityConfig:
         config = QualityConfig()
         assert config.schema_validation == SchemaValidationMode.LENIENT
 
-    def test_default_dead_letter_enabled(self) -> None:
-        config = QualityConfig()
-        assert config.dead_letter_enabled is True
-
     def test_default_text_min_chars(self) -> None:
         config = QualityConfig()
         assert config.text_min_chars == 1
@@ -867,7 +806,6 @@ class TestQualityConfig:
             filter_mode=FilterMode.ANY,
             active_filters="text_length,image_resolution",
             schema_validation=SchemaValidationMode.STRICT,
-            dead_letter_enabled=False,
             text_min_chars=5,
             text_max_chars=10000,
             image_min_width=128,
@@ -877,7 +815,6 @@ class TestQualityConfig:
         assert config.filter_mode == FilterMode.ANY
         assert config.active_filters == "text_length,image_resolution"
         assert config.schema_validation == SchemaValidationMode.STRICT
-        assert config.dead_letter_enabled is False
         assert config.text_min_chars == 5
         assert config.text_max_chars == 10000
         assert config.image_min_width == 128
@@ -914,7 +851,6 @@ class TestQualityConfigInArrowLake:
         assert config.quality.enabled is True
         assert config.quality.filter_mode == "all"
         assert config.quality.schema_validation == "lenient"
-        assert config.quality.dead_letter_enabled is True
 
     def test_env_override_quality_enabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("ARROW_LAKE__QUALITY__ENABLED", "false")
@@ -985,33 +921,15 @@ class TestWorkflowConfig:
         config = WorkflowConfig()
         assert config.max_backoff_seconds == 60.0
 
-    def test_default_checkpoint_enabled(self) -> None:
-        config = WorkflowConfig()
-        assert config.checkpoint_enabled is True
-
-    def test_default_ray_execution_enabled(self) -> None:
-        config = WorkflowConfig()
-        assert config.ray_execution_enabled is False
-
-    def test_default_auto_tag_runs(self) -> None:
-        config = WorkflowConfig()
-        assert config.auto_tag_runs is True
-
     def test_custom_values(self) -> None:
         config = WorkflowConfig(
             max_retry_attempts=5,
             min_backoff_seconds=2.0,
             max_backoff_seconds=120.0,
-            checkpoint_enabled=False,
-            ray_execution_enabled=True,
-            auto_tag_runs=False,
         )
         assert config.max_retry_attempts == 5
         assert config.min_backoff_seconds == 2.0
         assert config.max_backoff_seconds == 120.0
-        assert config.checkpoint_enabled is False
-        assert config.ray_execution_enabled is True
-        assert config.auto_tag_runs is False
 
     def test_negative_max_retry_attempts_raises(self) -> None:
         with pytest.raises(ValueError, match="max_retry_attempts"):
@@ -1032,27 +950,17 @@ class TestWorkflowConfigInArrowLake:
     def test_workflow_defaults(self) -> None:
         config = ArrowLakeConfig()
         assert config.workflow.max_retry_attempts == 3
-        assert config.workflow.checkpoint_enabled is True
-        assert config.workflow.ray_execution_enabled is False
-        assert config.workflow.auto_tag_runs is True
 
     def test_env_override_workflow_max_retry(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("ARROW_LAKE__WORKFLOW__MAX_RETRY_ATTEMPTS", "5")
         config = ArrowLakeConfig()
         assert config.workflow.max_retry_attempts == 5
 
-    def test_env_override_workflow_ray_enabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("ARROW_LAKE__WORKFLOW__RAY_EXECUTION_ENABLED", "true")
-        config = ArrowLakeConfig()
-        assert config.workflow.ray_execution_enabled is True
-
     def test_yaml_override_workflow(self, tmp_path: Any) -> None:
         yaml_content = """
 workflow:
   max_retry_attempts: 5
   min_backoff_seconds: 2.0
-  ray_execution_enabled: true
-  checkpoint_enabled: false
 """
         yaml_file = tmp_path / "config.yaml"
         yaml_file.write_text(yaml_content)
@@ -1060,15 +968,11 @@ workflow:
         config = ArrowLakeConfig.from_yaml(str(yaml_file))
         assert config.workflow.max_retry_attempts == 5
         assert config.workflow.min_backoff_seconds == 2.0
-        assert config.workflow.ray_execution_enabled is True
-        assert config.workflow.checkpoint_enabled is False
 
     def test_from_yaml_with_dev_config_workflow(self) -> None:
         """Verify dev.yaml workflow section loads correctly."""
         config = ArrowLakeConfig.from_yaml("configs/dev.yaml")
         assert config.workflow.max_retry_attempts == 3
-        assert config.workflow.ray_execution_enabled is True
-        assert config.workflow.auto_tag_runs is True
 
 
 class TestDaftConfig:

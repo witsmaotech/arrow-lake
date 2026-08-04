@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.10.1] - 2026-08-04
+
+### docling GPU 推理修复(triton JIT 缺 C 编译器)
+
+前端 PDF ingest 触发 docling GPU 解析时 gunicorn worker 反复崩溃重启(pid 8→3380+,fork 资源耗尽)。根因:`Dockerfile` 多阶段构建的 runtime 阶段(全新 python:3.12-slim)未装 gcc,而 docling GPU 走 `torch.compile → inductor → triton` JIT 编译 CUDA kernel 需要 `cc`。
+
+- **Dockerfile runtime 加 `build-essential`**:triton `compile_module_from_src` 用 `cc` 编译 host wrapper,镜像缺 gcc/cc → `Failed to find C compiler` → InductorError 未捕获 → `terminate called` → worker 崩溃循环。builder 阶段本就有 build-essential,多阶段被扔。验证:重传 PDF → docling `mean_grade=EXCELLENT` → lineage append 入库。
+- **prod_minimal.yml triton-cache**:命名卷 `triton-cache:/app/.triton` + `TRITON_CACHE_DIR=/app/.triton` + volume-init chown(read_only 根 FS 下 docling GPU 推理 triton kernel cache 写入 Errno 30)。与既有 triton-cache 坑互补。
+
+### KG 抽取模板降级路径修复(he_extractor)
+
+`map_reduce` 抽取阶段 per-chunk doc_type 路由,部分 chunk 被路由到 `general/workflow_graph`(模板 NoneType bug)→ 自动降级回 `entity_graph` 却 `Template not found` → misroute chunk 0 实体。
+
+- **降级路径走 `_resolve_template_path`**:主路径 `template_path` 经 `_resolve_template`(含 stem→完整路径解析),降级路径 `default_template()` 返回 raw stem 直接喂 `_parse_fresh` → `Template.create` 不认 stem。改 `default_path = self._resolve_template_path(self._router.default_template())`,降级兜底成功,misroute/模板失败不再归零实体。
+
+### 配置精简 + 部署 override 收敛
+
+- 11 个 `arrow_lake/config/*.py` 精简(-209 行冗余字段)。
+- 删 4 个冗余 compose override(`gpu`/`kgtest`/`prod`/`wuhu-validate`)。
+- `prod_minimal.yml`:LLM/embedding model 改 `${VAR:-default}` env 可覆盖;`Makefile` 精简。
+- config/后向兼容 tests 配套。
+
 ## [1.10.0] - 2026-08-03
 
 ### 知识抽取模板管理(Knowledge Extraction Template Management)

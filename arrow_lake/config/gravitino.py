@@ -89,9 +89,6 @@ class GravitinoConfig(BaseModel):
     )
 
     # ── v1.4.2: Tag-driven ACL ──
-    tag_acl_sync_interval_seconds: int = Field(
-        default=300, ge=30, description="Tag-to-ACL sync interval"
-    )
     tag_access_rules: dict[str, dict[str, list[str]]] = Field(
         default_factory=lambda: {
             "pii": {"visible_to": ["admin"]},
@@ -113,14 +110,6 @@ class GravitinoConfig(BaseModel):
     # ── v1.4.2: Model registry ──
     model_resolver_cache_ttl_seconds: int = Field(
         default=600, ge=60, description="Model path cache TTL"
-    )
-
-    # ── v1.4.2: Lineage ──
-    lineage_sync_to_gravitino: bool = Field(
-        default=True, description="Sync lineage events to Gravitino table properties"
-    )
-    lineage_sync_from_gravitino: bool = Field(
-        default=False, description="Pull lineage from Gravitino into local store"
     )
 
     # ── v1.4.2: Federated query ──

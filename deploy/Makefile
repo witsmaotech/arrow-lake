@@ -20,7 +20,6 @@ COMPOSE_DEV   ?= -f docker-compose.dev.yml
 COMPOSE_GPU    ?= -f docker-compose.gpu.yml
 COMPOSE_KG     ?= -f docker-compose.hugegraph.yml
 COMPOSE_MON    ?= -f docker-compose.monitoring.yml
-COMPOSE_PROD        ?= -f docker-compose.prod.yml
 COMPOSE_PROD_MINIMAL ?= -f docker-compose.prod_minimal.yml
 PROJECT_NAME  ?= arrow-lake
 
@@ -33,7 +32,7 @@ PROFILE_KG     = --profile kg
 PROFILE_OCR    = --profile ocr
 
 # Common Compose invocation with all override files (for down/clean/ps/logs)
-ALL_FILES = $(COMPOSE_FILE) $(COMPOSE_DEV) $(COMPOSE_GPU) $(COMPOSE_KG) $(COMPOSE_MON) $(COMPOSE_PROD) $(COMPOSE_PROD_MINIMAL)
+ALL_FILES = $(COMPOSE_FILE) $(COMPOSE_DEV) $(COMPOSE_GPU) $(COMPOSE_KG) $(COMPOSE_MON) $(COMPOSE_PROD_MINIMAL)
 
 # All profiles (for teardown commands)
 ALL_PROFILES = --profile core --profile compute --profile dev --profile gpu --profile kg --profile monitoring --profile ocr
@@ -68,7 +67,8 @@ ocr:
 	docker compose $(COMPOSE_FILE) --project-name $(PROJECT_NAME) $(PROFILE_OCR) up -d
 
 prod:
-	docker compose $(COMPOSE_PROD) --project-name $(PROJECT_NAME) up -d
+	@echo ">>> 'prod' 现指向 prod_minimal(prod.yml 已移除)。显式启动用 'make prod-minimal'。"
+	docker compose $(COMPOSE_PROD_MINIMAL) --project-name $(PROJECT_NAME) up -d
 
 # Minimal production stack (core + KG + Gravitino; no Ray/monitoring/Hubble).
 # Build the shared arrow-lake image (BuildKit shared-tag quirk → build api only).
@@ -120,7 +120,7 @@ logs-jupyter:
 	docker compose $(COMPOSE_FILE) $(COMPOSE_DEV) $(COMPOSE_MON) --project-name $(PROJECT_NAME) $(PROFILE_DEV) logs -f jupyter
 
 logs-metaflow:
-	docker compose $(COMPOSE_PROD) --project-name $(PROJECT_NAME) logs -f metaflow-metadata
+	@echo ">>> 已退役:prod_minimal 不含 metaflow-metadata 服务(prod.yml 已移除)。"
 
 restart:
 	docker compose $(ALL_FILES) --project-name $(PROJECT_NAME) $(ALL_PROFILES) restart
@@ -154,7 +154,7 @@ shell-jupyter:
 	docker compose $(COMPOSE_FILE) $(COMPOSE_DEV) $(COMPOSE_MON) --project-name $(PROJECT_NAME) $(PROFILE_DEV) exec jupyter bash
 
 shell-prod:
-	docker compose $(COMPOSE_PROD) --project-name $(PROJECT_NAME) exec api bash
+	docker compose $(COMPOSE_PROD_MINIMAL) --project-name $(PROJECT_NAME) exec api bash
 
 # ---------------------------------------------------------------------------
 # Testing
@@ -169,25 +169,10 @@ test-smoke:
 # ---------------------------------------------------------------------------
 
 flow-run:
-	@echo "=== Running $(FLOW) Flow ==="
-	docker compose $(COMPOSE_PROD) --project-name $(PROJECT_NAME) exec $(PROD_RUNNER) \
-		/app/.venv/bin/python flows/$(FLOW)_flow.py run $(ARGS)
+	@echo ">>> 已退役:MetaFlow 编排依赖 prod.yml 的 metaflow 服务(prod_minimal 不含,已移除)。flow 脚本仍保留在 flows/。"
 
 flow-test:
-	@echo "=== Running All 4 Flows (production) ==="
-	@echo "--- IngestFlow ---"
-	docker compose $(COMPOSE_PROD) --project-name $(PROJECT_NAME) exec api \
-		/app/.venv/bin/python flows/ingest_flow.py run --source-path /data/input --dataset-name test_metaflow
-	@echo "--- EmbedFlow ---"
-	docker compose $(COMPOSE_PROD) --project-name $(PROJECT_NAME) exec api \
-		/app/.venv/bin/python flows/embed_flow.py run --dataset-name test_metaflow --encoder-type api --shard-size 100
-	@echo "--- KGFlow ---"
-	docker compose $(COMPOSE_PROD) --project-name $(PROJECT_NAME) exec api \
-		/app/.venv/bin/python flows/kg_flow.py run --dataset-name test_metaflow --chunk-size 20
-	@echo "--- BatchRAGFlow ---"
-	docker compose $(COMPOSE_PROD) --project-name $(PROJECT_NAME) exec api \
-		/app/.venv/bin/python flows/batch_rag_flow.py run --dataset-name test_metaflow --questions-file /app/examples/questions.json
-	@echo "=== All Flows Complete ==="
+	@echo ">>> 已退役:MetaFlow 编排依赖 prod.yml 的 metaflow 服务(prod_minimal 不含,已移除)。"
 
 # ---------------------------------------------------------------------------
 # Security & Maintenance
@@ -200,8 +185,7 @@ scan:
 		(echo "Vulnerabilities found! Review and fix before deploying." && exit 1)
 
 backup:
-	@echo "=== Running MinIO backup ==="
-	docker compose $(COMPOSE_PROD) --project-name $(PROJECT_NAME) run --rm minio-backup
+	@echo ">>> 旧 minio-backup 容器随 prod.yml 移除。备份请用 API: POST /api/v1/backup/create/async(BackupManager,代码层)。"
 
 # ---------------------------------------------------------------------------
 # Help
@@ -243,13 +227,13 @@ help:
 	@echo "  make shell-prod  Shell into API container (prod)"
 	@echo ""
 	@echo "  make test-smoke  Run container integration tests"
-	@echo "  make flow-run FLOW=ingest [ARGS='...']  Run a flow (prod)"
-	@echo "  make flow-test   Run all 4 flows (prod)"
+	@echo "  make flow-run    (已退役,MetaFlow 随 prod.yml 移除)"
+	@echo "  make flow-test   (已退役,MetaFlow 随 prod.yml 移除)"
 	@echo "  make scan        Scan images for vulnerabilities (trivy)"
-	@echo "  make backup      Run MinIO backup (prod)"
+	@echo "  make backup      (已退役,改用 POST /api/v1/backup/create/async)"
 	@echo ""
 	@echo "Variables:"
 	@echo "  FLOW           Flow name (ingest|embed|kg|batch_rag) default: ingest"
 	@echo "  ARGS           Extra arguments passed to the flow"
-	@echo "  COMPOSE_PROD   Production compose (default: -f docker-compose.prod.yml)"
+	@echo "  COMPOSE_PROD_MINIMAL  Minimal prod compose (-f docker-compose.prod_minimal.yml)"
 	@echo "  PROJECT_NAME   Docker project name (default: arrow-lake)"

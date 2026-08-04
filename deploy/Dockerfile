@@ -107,6 +107,9 @@ ENV https_proxy=${BUILD_PROXY}
 # apt-get update succeeds through the proxy instead of hitting the intercepted
 # deb.debian.org (which returns an HTML auth page → "NOSPLIT" apt error).
 # Handle BOTH apt source formats (DEB822 .sources and legacy sources.list).
+# build-essential: triton (torch.compile/inductor) JIT-compiles CUDA kernels via
+# `cc` at runtime — without it docling GPU layout inference raises
+# "Failed to find C compiler" → InductorError → gunicorn worker crash loop.
 RUN for f in /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list; do \
         [ -f "$f" ] && sed -i 's|deb.debian.org|mirrors.aliyun.com|g; s|security.debian.org|mirrors.aliyun.com|g' "$f" || true; \
     done \
@@ -130,6 +133,7 @@ RUN for f in /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list; do \
     libxi6 \
     libxtst6 \
     libfontconfig1 \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user for security

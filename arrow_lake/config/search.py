@@ -76,6 +76,7 @@ class FullTextSearchConfig(BaseModel):
     # v1.7.1 #11: use lance native INVERTED index instead of legacy create_fts_index
     # (tantivy backend). Experimental: search-side text_search compat with INVERTED
     # should be validated per dataset before enabling in production.
+    # DEPRECATED (defined but never read by code; kept for compat): experimental,未接线
     use_inverted: bool = False
 
     @field_validator("default_top_k")

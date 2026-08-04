@@ -26,13 +26,8 @@ class TestConfigBackwardCompat:
 
         # OLAP
         assert config.olap.max_result_rows == 100_000
-        assert config.olap.enable_predicate_pushdown is True
         assert config.olap.enable_join is True
         assert config.olap.enable_streaming is True
-
-        # Compute
-        assert config.compute.gpu_enabled is False
-        assert config.compute.num_workers >= 1
 
         # Observability
         assert config.observability.log_level == "INFO"
