@@ -35,11 +35,11 @@ arrow-lake version
 # ┌───────────┬──────────┐
 # │ Component │ Version  │
 # ├───────────┼──────────┤
-# │ arrow-lake│ 1.9.11    │
+# │ arrow-lake│ 1.10.0   │
 # │ python    │ 3.12.4   │
-# │ daft      │ 0.7.8    │
+# │ daft      │ 0.7.21   │
 # │ pyarrow   │ 23.0.1   │
-# │ duckdb    │ 1.5.2    │
+# │ duckdb    │ 1.5.5    │
 # └───────────┴──────────┘
 ```
 

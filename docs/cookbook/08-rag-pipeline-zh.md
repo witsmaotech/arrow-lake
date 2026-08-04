@@ -210,6 +210,11 @@ config.rag.default_top_k = 10                      # 默认检索文档数
 **`use_kg` per-query 开关**（v1.9.5）：`rag_query(..., use_kg=False)` 单次降级为纯向量/FTS，
 **无需关闭 `hugegraph.enabled`** 做对比；默认 True，hugegraph 启用时自动注入图谱上下文。
 
+**部署提示 — `lance_scan_mode=pyarrow_fallback`**：在 IVF_PQ 数据集上，DuckDB lance scanner 的
+async vector stream 可能触发 Rust panic（worker 崩溃 → 混合/向量 RAG 返回 HTTP 502）。在 api 容器
+环境设 `ARROW_LAKE__OLAP__LANCE_SCAN_MODE=pyarrow_fallback`，让向量检索走同步 sub-bridge；RAG
+稳定运行，延迟代价很小。随发的 `prod_minimal` compose 已默认如此。
+
 ***
 
 ## 5. 上下文窗口管理
@@ -588,8 +593,13 @@ KG 不可用时优雅降级为纯向量 RAG（`graph_rag.py` 内置降级）。
 
 - **三路并行**（v1.9.6 P0-4）：`_graphrag_retrieve` 用 `asyncio.gather` 并行跑 vector / search_ka / neighbor，
   延迟较串行降 40~50%；`QuestionEntityCache` 用 monotonic 时钟防 NTP 跳变致 TTL 批量失效。
+- **关系类型增强**（v1.9.11）：邻居上下文现在读取边的 `relation_type` 属性（如 `depends_on`、`authored_by`），
+  而非把所有边压扁成无意义的 `related_to`，LLM 拿到的是语义明确的三元组。当问题里的实体名与图顶点
+  精确匹配不上时，**字符重叠回退**先按字符级重叠找回候选实体（零 embedding 成本），再回退到 KA 查找——
+  对改写/同义的实体名仍保持高 citation 覆盖。
 - **per-query `use_kg`**：传 `use_kg=False` 单次绕过 KG（降级 `super().query()`），无需关 hugegraph。
-- **延迟优化**：实体抽取/查询变体用 `extract_llm=qwen-turbo`（快），`qa_llm` 用 qwen-plus（生成）。
+- **延迟优化**：实体抽取/查询变体用 `extract_llm=qwen-turbo`（快），`qa_llm` 用 qwen-plus（生成）。最优 QA
+  配对：`qwen-plus@16384`（≈ qwen-max 质量，便宜约 4.8 倍）。
 
 ```python
 # GraphRAG（hugegraph 已启用 + 数据集已建 KG）

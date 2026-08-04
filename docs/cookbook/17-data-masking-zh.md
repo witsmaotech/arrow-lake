@@ -33,7 +33,7 @@ ARROW_LAKE__MASKING__ALLOW_MISSING_KEY=1   # 仅 dev；此时 hash() 在调用�
 | `nullify` | 替换为 NULL |
 
 ```bash
-curl -X POST http://127.0.0.1:8000/api/v1/gravitino/policies/masking \
+curl -X POST http://127.0.0.1:8000/api/v1/metadata/policies/masking \
   -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
   -d '{"name": "pii_mask", "columns": ["phone", "email"], "function": "partial"}'
 ```

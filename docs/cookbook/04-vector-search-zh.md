@@ -69,7 +69,7 @@ lake = Lake(base_uri="./data", config=config)
 
 ## 2. 创建向量索引
 
-在执行高效搜索前，需要先创建向量索引。Arrow Lake 支持三种索引类型：
+在执行高效搜索前，需要先创建向量索引。Arrow Lake 支持七种索引类型：
 
 ```python
 from arrow_lake import Lake

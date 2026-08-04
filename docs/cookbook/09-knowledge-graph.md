@@ -515,7 +515,7 @@ Key configuration options for `HugeGraphConfig` (v1.9.6):
 | `extractor_backend`       | `str`   | `"he"`            | Extraction backend: `"he"` (hyper-extract, default) / `"legacy"` |
 | `he_default_template`     | `str`   | `"entity_graph"`  | Default extraction template (generic entity+relation, strict enum) |
 | `he_doc_type_templates`   | `dict`  | see code          | doc_type→template mapping (paper/report→entity_graph, medicine→medical_concept_graph, project→project_concept_graph, etc.) |
-| `he_kg_granularity`       | `str`   | `"auto"`          | Extraction granularity: `auto`/`dataset`/`chunk` (dataset uses MERGE_FIELD, stable) |
+| `he_kg_granularity`       | `str`   | `"map_reduce"`    | Extraction granularity: `map_reduce` (default since v1.9.12, concurrent extract + global merge) / `dataset` / `chunk` / `auto` (auto picks map_reduce when N>500 chunks) |
 | `he_strict_definition`    | `bool`  | `False`           | v1.9.6: drop entities with empty definition (noise reduction) |
 | `he_extract_llm` / `he_qa_llm` | `LLMConfig\|None` | `None` | Two-stage independent LLMs (extraction/QA; None falls back to global llm) |
 | `he_ka_max_versions`      | `int`   | `5`               | Number of KA versions retained per dataset (excess pruned; supports rollback) |
@@ -530,7 +530,7 @@ Configuration constraints:
 
 ***
 
-## v1.7–v1.9 KG Evolution: extraction backend + doc_type routing + per-dataset + incremental + quality/perf
+## v1.7–v1.10 KG Evolution: extraction backend + doc_type routing + per-dataset + incremental + quality/perf + template management
 
 v1.7.0 added a pluggable extraction backend and document-type-aware template routing to `kg_build`,
 significantly improving triple precision for domain-specific documents (papers, contracts, financial
@@ -599,7 +599,9 @@ table → KG builder:
 lake.ingest_documents("papers", ["data/paper.pdf"], doc_type="paper")
 ```
 
-> CLI `kg build` has **no** `--doc-type` flag — set `doc_type` when ingesting.
+> CLI `kg build` has **no** `--doc-type` flag — set `doc_type` when ingesting. To override the *template*
+> (not the doc_type) for a single build, use `kg build <ds> --template <name>` (v1.10.0); see
+> [13-cli-reference](./13-cli-reference-en.md).
 
 ### A-Scheme Entity Dual-Write
 
@@ -644,6 +646,62 @@ order PD → Store → Server, gated by healthchecks.
 
 > See also: cookbook [example 44](examples/44_kg_doctype_he.py) (routing, offline-runnable) and
 > [example 45](examples/45_kg_doctype_api.py) (REST API build flow).
+
+### v1.9.9 Resilient Relations + Orphan Linking
+
+- **Relation soft-degrade** (`he_kg_type_pair=True`, default): when the LLM emits a relation whose
+  endpoint type-pair is not in the legal verb table, the relation is **downgraded to `related_to`**
+  (weight 0.4) instead of being dropped — endpoints stay connected. This fixes the paradox where the
+  type-pair filter itself created orphans. Empirically recovered ~5000 `related_to` edges on a 12k-entity
+  graph, cutting the orphan rate from 0.44 → 0.03.
+- **Heuristic orphan linking** (`he_orphan_linking=auto`, default on, zero LLM): combines chunk
+  co-occurrence + embedding cosine ≥ `he_orphan_threshold` (0.75) + a legal type-pair verb to connect
+  isolated vertices into the existing connected component. Capped by `he_orphan_max_partners=3` and
+  `he_orphan_max_links=500`. Effective only for `project_concept_graph` (other templates have different
+  type systems → no-op). Quantifiable via `GET /api/v1/kg/quality` (`orphan_rate` / `avg_degree` /
+  `relation_type_coverage`).
+
+### v1.9.12 map_reduce Default Granularity
+
+`he_kg_granularity` now defaults to **`map_reduce`** (concurrent per-chunk extraction + a global merge
+pass), unified across the code default, prod_minimal compose, and dev override. `auto` is retained and
+picks `map_reduce` when a dataset has > 500 chunks, else `dataset`. `chunk` granularity (no cross-chunk
+merge) remains available but is rarely the right choice for connected graphs.
+
+### v1.10.0 Extraction-Template Management ⚑
+
+v1.10.0 adds a full **dynamic template lifecycle** — no rebuild or restart needed to pick up a new
+preset (`reset_gallery_cache` re-scans). All template state lives in the system_db (libSQL).
+
+- **Template registry YAML schema** (`template_registry.py`): each template declares `name` /
+  `category` / `type` / `output.entities` + `output.relations` / `guideline`. `category` is required and
+  must exist in the doc-type category dictionary.
+- **CRUD + binding**: `POST/PUT/DELETE/GET /api/v1/admin/extraction-templates`; bind a dataset with
+  `/bindings/{dataset}`. `POST /api/v1/kg/build` auto-resolves the template: explicit `req.template` →
+  dataset binding → doc_type routing (three-layer).
+- **AI generate + dry-run**: `POST /generate` produces a template from a doc sample + doc_type;
+  `POST /dry-run` validates extraction without persisting.
+- **Quality-validation harness**: `POST /{name}/quality/doc` generates a ~2000-word sample doc →
+  `POST /{name}/quality/build` ingests it + builds the KG + renders the graph + runs RAG →
+  `DELETE /quality/{temp_dataset}` cleans up the throwaway dataset. Run history is queryable via
+  `GET /{name}/quality/history`.
+
+```bash
+# Generate a template from a sample, then quality-validate it end-to-end
+curl -X POST http://localhost:8000/api/v1/admin/extraction-templates/generate \
+  -H "Authorization: Bearer $TOKEN" -H "X-API-Key: $KEY" \
+  -H "Content-Type: application/json" -d '{"doc_type": "project", "sample": "...proposal text..."}'
+
+curl -X POST http://localhost:8000/api/v1/admin/extraction-templates/project_concept_graph/quality/build \
+  -H "Authorization: Bearer $TOKEN" -H "X-API-Key: $KEY"
+```
+
+### v1.10.0 Category ↔ Doc-Type Dynamic Dictionary
+
+`GET /api/v1/kg/doc-types` is now dynamic. `DOC_TYPE_ALIASES` ships 10 canonical keys
+(paper/report/manual/biography/finance/legal/medicine/industry/tcm/general); `project` and custom keys
+are added through `POST /api/v1/admin/doc-type-categories` (admin-only; `GET` lists, `DELETE/{name}`
+removes). A template's `category` must be present in this dictionary or registration is rejected.
 
 ***
 

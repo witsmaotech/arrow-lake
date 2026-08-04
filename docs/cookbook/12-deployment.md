@@ -7,16 +7,18 @@
 
 ## 1. Docker Compose Full-Stack Deployment
 
-### 1.1 Recommended Production Stack: prod_minimal.yml (v1.9.x)
+### 1.1 Recommended Production Stack: prod_minimal.yml (v1.10.0)
 
-The **primary production path** is `deploy/docker-compose.prod_minimal.yml` (16 service blocks: api / system-db / minio / redis / hg-server / hg-hubble / gravitino / lance-rest / nginx / jaeger, etc., with init jobs and jaeger gated by profiles). It supersedes the legacy `docker-compose.yml --profile core` and is the only deployment stack operationally validated for v1.9.x.
+The **primary production path** is `deploy/docker-compose.prod_minimal.yml` (16 service blocks: api / system-db / minio / redis / hg-server / hg-hubble / gravitino / lance-rest / nginx / jaeger, etc., with init jobs and jaeger gated by profiles). It supersedes the legacy `docker-compose.yml --profile core` and is the only deployment stack operationally validated for v1.10.0.
 
 ```bash
 # Bring up the entire production stack (reads deploy/.env)
-make prod-minimal
+docker compose --project-directory deploy -p arrow-lake \
+  -f deploy/docker-compose.prod_minimal.yml up -d
 
-# Build only the api image (avoids the BuildKit shared-tag quirk)
-make prod-minimal-build
+# Build only the api image (avoids the BuildKit shared-tag quirk; image tags arrow-lake:1.10.0)
+docker compose --project-directory deploy -p arrow-lake \
+  -f deploy/docker-compose.prod_minimal.yml build api
 
 # Start a single service directly with docker compose
 docker compose --project-directory deploy -p arrow-lake \
@@ -924,7 +926,7 @@ arrow-lake quality filter --dataset articles --mode all
 
 ***
 
-## 17. v1.9.x Production Operations Notes (prod_minimal)
+## 17. v1.10.0 Production Operations Notes (prod_minimal)
 
 > This section consolidates operationally validated notes and common pitfalls from v1.9.0–v1.9.6,
 > all in the prod_minimal stack context.

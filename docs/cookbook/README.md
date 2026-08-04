@@ -103,6 +103,30 @@ docker exec -it deploy-api-1 .venv/bin/python /app/examples/19_knowledge_graph_b
 
 > 详见 [CHANGELOG](../../CHANGELOG.md)。
 
+## v1.9.x–v1.10.0 示例索引 / Example Index
+
+**SDK 示例（`examples/`，`python` + `Lake` facade）**
+
+| #  | 示例 | 说明 |
+| -- | ---- | ---- |
+| 46 | [`examples/46_template_management.py`](./examples/46_template_management.py) | 模板管理与运行时切换（v1.10.0 旗舰）：动态加载 / CRUD / 绑定 / `--template` CLI |
+| 47 | [`examples/47_dynamic_doc_type_category.py`](./examples/47_dynamic_doc_type_category.py) | 动态 doc_type ↔ 模板 category 路由（v1.10.0）：运行时 category 字典 |
+| 48 | [`examples/48_graphrag_relation_qa.py`](./examples/48_graphrag_relation_qa.py) | GraphRAG 关系增强问答（v1.9.11）：relation_type predicate + char-overlap fallback |
+| 49 | [`examples/49_rag_reranker_faithfulness.py`](./examples/49_rag_reranker_faithfulness.py) | RAG 重排器与忠实度验证（v1.9.5/6）：OllamaReranker + `faithfulness` 防幻觉 |
+| 50 | [`examples/50_personal_token_and_system_db.py`](./examples/50_personal_token_and_system_db.py) | 个人令牌与 system_db 控制面（v1.9.0）：personal token + `/me` + RBAC fail-close |
+
+**REST API 示例（`examples_api/`，`curl` + 端到端场景）**
+
+| #  | 示例 | 说明 |
+| -- | ---- | ---- |
+| 34 | [`examples_api/34_extraction_templates_api.py`](./examples_api/34_extraction_templates_api.py) | 抽取模板生命周期（v1.10.0 旗舰）：`/admin/extraction-templates` CRUD + 质量试跑 |
+| 35 | [`examples_api/35_doc_type_categories_api.py`](./examples_api/35_doc_type_categories_api.py) | doc_type category 字典（v1.10.0）：`/admin/doc-type-categories` list/create/delete |
+| 36 | [`examples_api/36_graphrag_relation_qa_api.py`](./examples_api/36_graphrag_relation_qa_api.py) | GraphRAG 关系问答（v1.9.11）：`/kg/query/graphrag` 富关系三元组 |
+| 37 | [`examples_api/37_rag_reranker_faithfulness_api.py`](./examples_api/37_rag_reranker_faithfulness_api.py) | RAG 重排 + 忠实度（v1.9.5/6）：hybrid + reranker + `faithfulness` 校验 |
+| 38 | [`examples_api/38_personal_token_and_me_api.py`](./examples_api/38_personal_token_and_me_api.py) | 个人令牌 + `/me` 用户态（v1.9.0）：saved-queries / notifications / preferences |
+
+> **v1.10.0 旗舰 / What's new**：知识抽取模板管理 —— 前端模板 CRUD 控制台（`extraction-templates.html` + `template-quality.html`）+ 后端按新模板动态抽取建图（不 rebuild / 不 restart）+ 动态 doc_type category 字典 + CLI `--template` + API `/api/v1/admin/extraction-templates`。详见 [15 章 Gravitino](./15-gravitino-metadata.md)、[19 章 REST Recipes](./19-rest-recipes.md)。
+
 ## v1.6.3 新特性 — Deploy Hardening & nginx Proxy
 
 | #  | 说明 |
@@ -213,3 +237,5 @@ docker exec -it deploy-api-1 .venv/bin/python /app/examples/19_knowledge_graph_b
 | 06-10 | `rag_pipeline` ~ `multimodal_ingest` | AI 管线：RAG、知识图谱、质量去重、血缘审计、多模态 |
 | 11-20 | `transaction_analytics` ~ `cross_dataset` | 业务场景：交易分析、论文库、知识库、销售漏斗、视频分析等 |
 | 21-32 | `daft_dataframe_basics` ~ `daft_pivot_explode_sample` | Daft DataFrame：基础查询、清洗、关联、时序、SQL、pivot 等 |
+| 33 | `kg_doctype_api` | 知识图谱：doc_type 路由 + he 抽取后端 + REST 构建 KG 全流程 |
+| 34-38 | `extraction_templates_api` ~ `personal_token_and_me_api` | v1.10.0 / v1.9.x 新增：抽取模板生命周期、doc_type category、GraphRAG 问答、RAG 重排忠实度、个人令牌 + `/me`（见上方 [示例索引](#v19xv1100-示例索引--example-index)） |

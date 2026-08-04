@@ -506,7 +506,7 @@ asyncio.run(main())
 | `extractor_backend`       | `str`   | `"he"`            | 抽取后端：`"he"`（hyper-extract，默认）/ `"legacy"` |
 | `he_default_template`     | `str`   | `"entity_graph"`  | 默认抽取模板（通用实体+关系，strict 枚举） |
 | `he_doc_type_templates`   | `dict`  | 见代码               | doc_type→模板映射（paper/report→entity_graph、medicine→medical_concept_graph、project→project_concept_graph 等） |
-| `he_kg_granularity`       | `str`   | `"auto"`          | 抽取粒度：`auto`/`dataset`/`chunk`（dataset 走 MERGE_FIELD，稳定） |
+| `he_kg_granularity`       | `str`   | `"map_reduce"`    | 抽取粒度：`map_reduce`（v1.9.12 起默认，并发抽取+全局合并）/ `dataset` / `chunk` / `auto`（N>500 chunk 时 auto 选 map_reduce） |
 | `he_strict_definition`     | `bool`  | `False`           | v1.9.6：丢弃空 definition 实体（降噪） |
 | `he_extract_llm` / `he_qa_llm` | `LLMConfig\|None` | `None` | 两阶段独立 LLM（抽取/问答；None 回退全局 llm） |
 | `he_ka_max_versions`      | `int`   | `5`               | 每数据集保留 KA 版本数（超出 prune，支持 rollback） |
@@ -521,7 +521,7 @@ asyncio.run(main())
 
 ***
 
-## v1.7–v1.9 KG 演进：抽取后端 + doc_type 路由 + per-dataset + 增量 + 质量/性能
+## v1.7–v1.10 KG 演进：抽取后端 + doc_type 路由 + per-dataset + 增量 + 质量/性能 + 模板管理
 
 v1.7.0 为 `kg_build` 增加了可插拔的抽取后端与按文档类型路由的模板选择，显著提升领域文档
 （论文、合同、财报、病历等）的三元组抽取精度。
@@ -587,7 +587,9 @@ print(path, source)                           # general/concept_graph 'override'
 lake.ingest_documents("papers", ["data/paper.pdf"], doc_type="paper")
 ```
 
-> CLI `kg build` **没有** `--doc-type` 参数——请在摄入时设置 `doc_type`。
+> CLI `kg build` **没有** `--doc-type` 参数——请在摄入时设置 `doc_type`。若要为单次构建覆盖*模板*
+> （而非 doc_type），用 `kg build <ds> --template <name>`（v1.10.0）；见
+> [13-cli-reference](./13-cli-reference.md)。
 
 ### A 方案实体双写
 
@@ -629,6 +631,54 @@ hstore 后端）替代 standalone rocksdb，支持**运行时创建多图**—�
 
 > 另见：cookbook [示例 44](examples/44_kg_doctype_he.py)（路由，可离线运行）与
 > [示例 45](examples/45_kg_doctype_api.py)（REST API 构建流程）。
+
+### v1.9.9 韧性关系 + 孤儿连接
+
+- **关系软降级**（`he_kg_type_pair=True`，默认开）：当 LLM 产出端点 type-pair 不在合法动词表里的关系时，
+  该关系**降级为 `related_to`**（权重 0.4）而非丢弃——端点保持连通。这治了 type-pair 过滤器本身造孤立的
+  悖论。实证在 1.2 万实体图上回收约 5000 条 `related_to` 边，孤立率从 0.44 降至 0.03。
+- **启发式孤儿连接**（`he_orphan_linking=auto`，默认开，零 LLM）：结合 chunk 共现 + embedding 余弦
+  ≥ `he_orphan_threshold`（0.75）+ 合法 type-pair 动词，把孤立顶点连入已连通分量。由
+  `he_orphan_max_partners=3` 与 `he_orphan_max_links=500` 封顶。仅对 `project_concept_graph` 生效（其他模板
+  type 体系不同 → no-op）。可通过 `GET /api/v1/kg/quality` 量化（`orphan_rate` / `avg_degree` /
+  `relation_type_coverage`）。
+
+### v1.9.12 map_reduce 默认粒度
+
+`he_kg_granularity` 现默认 **`map_reduce`**（并发逐 chunk 抽取 + 全局合并一遍），代码默认、prod_minimal
+compose、dev override 三处已统一。`auto` 保留，N>500 chunk 时选 `map_reduce`，否则 `dataset`。`chunk`
+粒度（不做跨 chunk 合并）仍可用，但对连通图很少是正确选择。
+
+### v1.10.0 抽取模板管理 ⚑
+
+v1.10.0 新增完整的**动态模板生命周期**——拾取新 preset 无需 rebuild 或重启（`reset_gallery_cache` 重扫）。
+所有模板状态存于 system_db（libSQL）。
+
+- **模板注册表 YAML schema**（`template_registry.py`）：每个模板声明 `name` / `category` / `type` /
+  `output.entities` + `output.relations` / `guideline`。`category` 必填且必须存在于 doc-type 字典。
+- **CRUD + 绑定**：`POST/PUT/DELETE/GET /api/v1/admin/extraction-templates`；用 `/bindings/{dataset}` 绑定
+  数据集。`POST /api/v1/kg/build` 自动解析模板：显式 `req.template` → 数据集绑定 → doc_type 三层路由。
+- **AI 生成 + 试运行**：`POST /generate` 根据样本文档 + doc_type 生成模板；`POST /dry-run` 不落盘验证抽取。
+- **质量验证 harness**：`POST /{name}/quality/doc` 生成约 2000 字样本文档 →
+  `POST /{name}/quality/build` 摄取 + 建 KG + 渲染图 + 跑 RAG → `DELETE /quality/{temp_dataset}` 清理临时
+  数据集。运行历史可经 `GET /{name}/quality/history` 查询。
+
+```bash
+# 从样本生成模板，再端到端质量验证
+curl -X POST http://localhost:8000/api/v1/admin/extraction-templates/generate \
+  -H "Authorization: Bearer $TOKEN" -H "X-API-Key: $KEY" \
+  -H "Content-Type: application/json" -d '{"doc_type": "project", "sample": "...方案书正文..."}'
+
+curl -X POST http://localhost:8000/api/v1/admin/extraction-templates/project_concept_graph/quality/build \
+  -H "Authorization: Bearer $TOKEN" -H "X-API-Key: $KEY"
+```
+
+### v1.10.0 Category ↔ Doc-Type 动态字典
+
+`GET /api/v1/kg/doc-types` 现为动态。`DOC_TYPE_ALIASES` 内置 10 个规范键
+（paper/report/manual/biography/finance/legal/medicine/industry/tcm/general）；`project` 及自定义键通过
+`POST /api/v1/admin/doc-type-categories`（仅管理员；`GET` 列出、`DELETE/{name}` 删除）添加。模板的
+`category` 必须存在于字典中，否则注册被拒。
 
 ***
 

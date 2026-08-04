@@ -128,8 +128,61 @@ curl -X POST "$API/kg/query/graphrag" -H "$AUTH" -H "Content-Type: application/j
 }'
 ```
 
+## 场景 6. 抽取模板生命周期（v1.10.0）
+
+KG 抽取模板不再是静态文件 —— 通过 `/api/v1/admin/extraction-templates` 运行时管理
+（ADMIN 角色）。新模板在下次 `kg/build` 时生效，**无需重建镜像、无需重启 API**。
+
+```bash
+# 1. 列出已安装模板（gallery + 用户保存）
+curl "$API/admin/extraction-templates" -H "$AUTH"
+
+# 2. 保存自定义模板（校验结构；拒绝未知字段）
+curl -X POST "$API/admin/extraction-templates" -H "$AUTH" -H "Content-Type: application/json" -d '{
+  "name": "my_concept_graph",
+  "doc_type": "project_report",
+  "schema": {"vertices": [...], "edges": [...]}
+}'
+
+# 3. 在提交前用一篇文档试跑 KG 验证（质量 harness）
+TDS=$(curl -X POST "$API/admin/extraction-templates/my_concept_graph/quality/build" \
+  -H "$AUTH" -H "Content-Type: application/json" -d '{"doc_path":"datas/sample.md"}' \
+  | jq -r .temp_dataset)
+curl "$API/admin/extraction-templates/my_concept_graph/quality/history" -H "$AUTH"
+
+# 4. 清理临时验证数据集
+curl -X DELETE "$API/admin/extraction-templates/quality/$TDS" -H "$AUTH"
+```
+
+> 相关：`/api/v1/admin/doc-type-categories` 管理动态 doc_type → 模板 category 字典
+> （list / create / delete），可在运行时新增文档类别。
+
+## 场景 7. 个人令牌 + `/me` 用户态
+
+个人令牌（Role.VIEWER，经 `/auth/...` 发放）解锁 `/me` 用户态端点 —— 按调用用户
+作用域的已保存查询、通知与偏好。**JWT 和 admin API key 调不通 `/me/*`** —— 必须用
+个人令牌（放 `X-API-Key`）。
+
+```bash
+# 1. 保存私有查询
+curl -X POST "$API/me/saved-queries" -H "X-API-Key: $PTOK" -H "Content-Type: application/json" -d '{
+  "name": "high-value-sales",
+  "dataset": "sales",
+  "sql": "SELECT * FROM sales WHERE amount > 10000"
+}'
+
+# 2. 读取通知（任务完成事件落到这里）
+curl "$API/me/notifications" -H "X-API-Key: $PTOK"
+curl -X POST "$API/me/notifications/read?notification_id=42" -H "X-API-Key: $PTOK"
+
+# 3. 读取/写入偏好（按用户的 UI/API 设置）
+curl "$API/me/preferences" -H "X-API-Key: $PTOK"
+curl -X PUT "$API/me/preferences" -H "X-API-Key: $PTOK" -H "Content-Type: application/json" \
+  -d '{"theme":"dark","default_dataset":"sales"}'
+```
+
 ---
 
 **小贴士**：上述每个写操作（摄入、清洗、脱敏策略）都被 HMAC-SHA256 审计轨迹捕获
 —— 用 `GET /audit/query` 配合 `event_type` 或 `dataset_name` 过滤，即可事后还原
-任意工作流。
+任意工作流。OpenAPI 目前暴露 **186 条路由**（`/docs` 查看交互式浏览器）。

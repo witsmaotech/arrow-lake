@@ -918,7 +918,7 @@ curl http://localhost:8000/health/ready
 ```json
 {
   "status": "ok",
-  "version": "1.9.6",
+  "version": "1.10.0",
   "storage": "accessible",
   "gravitino": "healthy",
   "duckdb_pool": {"pool_size": 5, "active_sessions": 1, "queued_requests": 0, "total_queries": 142, "total_errors": 0}
@@ -936,7 +936,7 @@ curl http://localhost:8000/api/v1/version \
 
 ```json
 {
-  "version": "1.9.6",
+  "version": "1.10.0",
   "python": "3.12.4",
   "fastapi": "0.115.0",
   "uvicorn": "0.30.0",
@@ -1670,8 +1670,12 @@ curl http://localhost:8000/api/v1/admin/deny/sensitive_data \
 
 ## v1.9.x 新增端点
 
-以下端点在 v1.6–v1.9.6 中新增。涵盖用户态、用户与令牌管理、多模态嵌入、物化视图、
-字段注释、质量增强、索引管理、清洗、异步任务、KG 模板/版本、RAG 增强等。
+以下端点在 v1.6–v1.9.6 中新增。当前 v1.10.0 共暴露 **~190 条路由、23 个 router**（system、
+datasets、search、query、export、quality、cleaning、embedding、embed、lineage、materialized、
+audit、backup、rag、kg、extraction_templates、doc_type_categories、auth、admin、maintenance、
+gravitino、async_tasks、user_state）。涵盖用户态、用户与令牌管理、多模态嵌入、物化视图、
+字段注释、质量增强、索引管理、清洗、异步任务、KG 模板/版本、RAG 增强等。v1.10.0 新增的
+抽取模板管理与 doc-type 字典见下一节。
 
 ### 用户态 API（`/api/v1/me/*`）
 
@@ -1892,3 +1896,70 @@ v1.5.2 中应用了以下安全加固措施：
 | **Gremlin** | `kg_query` 端点增加输入净化                      |
 
 这些加固措施自动生效，无需配置更改。
+
+***
+
+## v1.10.0 新增端点
+
+v1.10.0 新增动态**抽取模板管理**面与 **category ↔ doc_type 字典**，以及模板感知的 KG 构建。
+模板动态加载——无需 rebuild 或重启（`reset_gallery_cache` 自动拾取新 preset），所有状态存于
+system_db（libSQL）。
+
+### 抽取模板管理（`/api/v1/admin/extraction-templates/*`）
+
+仅管理员（Role.ADMIN）。包含 CRUD、AI 生成、试运行、数据集绑定，以及**质量验证 harness**
+（建临时数据集 → 摄取样本文档 → 构建 KG → 跑 RAG → 清理）。
+
+| 方法      | 端点                                              | 说明                                  |
+| ------- | ----------------------------------------------- | ----------------------------------- |
+| `GET`    | `/api/v1/admin/extraction-templates`            | 列出模板（可选 `?category=`）              |
+| `GET`    | `/api/v1/admin/extraction-templates/{name}`     | 模板详情                                |
+| `POST`   | `/api/v1/admin/extraction-templates`            | 创建模板（201）                           |
+| `PUT`    | `/api/v1/admin/extraction-templates/{name}`     | 更新模板                                |
+| `DELETE` | `/api/v1/admin/extraction-templates/{name}`     | 删除模板                                |
+| `POST`   | `/api/v1/admin/extraction-templates/validate`   | 落盘前校验 YAML schema                    |
+| `POST`   | `/api/v1/admin/extraction-templates/generate`   | 根据样本文档 + doc_type 用 AI 生成模板         |
+| `POST`   | `/api/v1/admin/extraction-templates/dry-run`    | 试运行抽取（不持久化）                         |
+| `POST`   | `/api/v1/admin/extraction-templates/{name}/quality/doc`    | 质量 harness：生成样本文档          |
+| `POST`   | `/api/v1/admin/extraction-templates/{name}/quality/build`   | 质量 harness：建图 + 可视化 + RAG |
+| `DELETE` | `/api/v1/admin/extraction-templates/quality/{temp_dataset}` | 质量 harness：清理临时数据集        |
+| `GET`    | `/api/v1/admin/extraction-templates/{name}/quality/history` | 质量运行历史                    |
+| `PUT`    | `/api/v1/admin/extraction-templates/default`    | 设置默认模板                              |
+| `GET`    | `/api/v1/admin/extraction-templates/{name}/usage` | 查询模板绑定在哪里                         |
+| `GET`    | `/api/v1/admin/extraction-templates/bindings/{dataset}`    | 查询数据集的绑定                    |
+| `PUT`    | `/api/v1/admin/extraction-templates/bindings/{dataset}`    | 将数据集绑定到模板                  |
+| `DELETE` | `/api/v1/admin/extraction-templates/bindings/{dataset}`    | 清除数据集的绑定                   |
+
+```bash
+# 绑定数据集到模板，再用它构建（构建时模板自动解析）
+curl -X PUT http://localhost:8000/api/v1/admin/extraction-templates/bindings/papers \
+  -H "Authorization: Bearer $TOKEN" -H "X-API-Key: $KEY" \
+  -H "Content-Type: application/json" -d '{"template": "project_concept_graph"}'
+
+curl -X POST http://localhost:8000/api/v1/kg/build \
+  -H "Authorization: Bearer $TOKEN" -H "X-API-Key: $KEY" \
+  -H "Content-Type: application/json" -d '{"dataset": "papers"}'   # 模板从绑定解析
+```
+
+### Doc-Type 字典（`/api/v1/admin/doc-type-categories`）
+
+仅管理员。管理动态 category → doc_type 字典，支撑 `GET /api/v1/kg/doc-types`。
+`DOC_TYPE_ALIASES` 内置 10 个规范键（paper/report/manual/biography/finance/legal/medicine/
+industry/tcm/general）；`project` 及自定义键通过本端点添加。模板的 `category` 为必填且必须存在于字典。
+
+| 方法      | 端点                                  | 说明          |
+| ------- | ----------------------------------- | ----------- |
+| `GET`   | `/api/v1/admin/doc-type-categories` | 列出所有 category |
+| `POST`  | `/api/v1/admin/doc-type-categories` | 创建 category（201） |
+| `DELETE`| `/api/v1/admin/doc-type-categories/{name}` | 删除 category  |
+
+### 模板感知的 KG 构建与 GraphRAG
+
+| 方法    | 端点                          | 说明                                          |
+| ----- | --------------------------- | ------------------------------------------- |
+| `POST`| `/api/v1/kg/build`          | 构建 KG；body 增加 `template`（覆盖 doc_type 路由）与 `incremental` |
+| `GET` | `/api/v1/kg/build/{task_id}/status` | 轮询构建进度（chunks/entities/relations）       |
+| `GET` | `/api/v1/kg/doc-types`      | 动态 doc_type 列表（规范键 + 字典 + 解析出的模板）           |
+| `POST`| `/api/v1/kg/query/graphrag` | GraphRAG 问答（body：`question` + `dataset`）    |
+
+> 端到端流程见 cookbook 示例:SDK [`examples/46_template_management.py`](examples/46_template_management.py)、[`examples/48_graphrag_relation_qa.py`](examples/48_graphrag_relation_qa.py);REST [`examples_api/34_extraction_templates_api.py`](examples_api/34_extraction_templates_api.py)、[`examples_api/36_graphrag_relation_qa_api.py`](examples_api/36_graphrag_relation_qa_api.py)。

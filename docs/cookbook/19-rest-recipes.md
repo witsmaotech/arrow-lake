@@ -131,8 +131,65 @@ curl -X POST "$API/kg/query/graphrag" -H "$AUTH" -H "Content-Type: application/j
 }'
 ```
 
+## Recipe 6. Extraction Template Lifecycle (v1.10.0)
+
+The KG extraction template is no longer a static file — manage it at runtime via
+`/api/v1/admin/extraction-templates` (ADMIN role). A new template takes effect on
+the next `kg/build` **without rebuilding the image or restarting the API**.
+
+```bash
+# 1. List installed templates (gallery + user-saved)
+curl "$API/admin/extraction-templates" -H "$AUTH"
+
+# 2. Save a custom template (validates structure; rejects unknown keys)
+curl -X POST "$API/admin/extraction-templates" -H "$AUTH" -H "Content-Type: application/json" -d '{
+  "name": "my_concept_graph",
+  "doc_type": "project_report",
+  "schema": {"vertices": [...], "edges": [...]}
+}'
+
+# 3. Validate a KG run against a doc before committing (quality harness)
+TDS=$(curl -X POST "$API/admin/extraction-templates/my_concept_graph/quality/build" \
+  -H "$AUTH" -H "Content-Type: application/json" -d '{"doc_path":"datas/sample.md"}' \
+  | jq -r .temp_dataset)
+curl "$API/admin/extraction-templates/my_concept_graph/quality/history" -H "$AUTH"
+
+# 4. Clean up the temporary validation dataset
+curl -X DELETE "$API/admin/extraction-templates/quality/$TDS" -H "$AUTH"
+```
+
+> Related: `/api/v1/admin/doc-type-categories` manages the dynamic doc_type →
+> template-category dictionary (list / create / delete), letting you add new
+> document categories at runtime.
+
+## Recipe 7. Personal Token + the `/me` Surface
+
+Personal tokens (Role.VIEWER, issued via `/auth/...`) unlock the `/me` user-state
+endpoints — saved queries, notifications, and preferences scoped to the calling
+user. **JWT and admin API keys do not work on `/me/*`** — a personal token is
+required (passed in `X-API-Key`).
+
+```bash
+# 1. Save a private saved query
+curl -X POST "$API/me/saved-queries" -H "X-API-Key: $PTOK" -H "Content-Type: application/json" -d '{
+  "name": "high-value-sales",
+  "dataset": "sales",
+  "sql": "SELECT * FROM sales WHERE amount > 10000"
+}'
+
+# 2. Read your notifications (task completion events land here)
+curl "$API/me/notifications" -H "X-API-Key: $PTOK"
+curl -X POST "$API/me/notifications/read?notification_id=42" -H "X-API-Key: $PTOK"
+
+# 3. Get/put preferences (per-user UI/API settings)
+curl "$API/me/preferences" -H "X-API-Key: $PTOK"
+curl -X PUT "$API/me/preferences" -H "X-API-Key: $PTOK" -H "Content-Type: application/json" \
+  -d '{"theme":"dark","default_dataset":"sales"}'
+```
+
 ---
 
 **Tip**: every write above (ingest, clean, masking policy) is captured by the
 HMAC-SHA256 audit trail — query `GET /audit/query` with `event_type` or
-`dataset_name` filters to reconstruct any workflow after the fact.
+`dataset_name` filters to reconstruct any workflow after the fact. The OpenAPI
+surface currently exposes **186 routes** (`/docs` for the interactive explorer).

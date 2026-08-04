@@ -944,7 +944,7 @@ curl http://localhost:8000/health/ready
 ```json
 {
   "status": "ok",
-  "version": "1.9.6",
+  "version": "1.10.0",
   "storage": "accessible",
   "gravitino": "healthy",
   "duckdb_pool": {"pool_size": 5, "active_sessions": 1, "queued_requests": 0, "total_queries": 142, "total_errors": 0}
@@ -962,7 +962,7 @@ curl http://localhost:8000/api/v1/version \
 
 ```json
 {
-  "version": "1.9.6",
+  "version": "1.10.0",
   "python": "3.12.4",
   "fastapi": "0.115.0",
   "uvicorn": "0.30.0",
@@ -1697,9 +1697,13 @@ curl http://localhost:8000/api/v1/admin/deny/sensitive_data \
 
 ## v1.9.x New Endpoints
 
-The endpoints below were added in v1.6–v1.9.6. They cover user state, user & token management,
-multimodal embedding, materialized views, field annotation, quality enhancements, index management,
-cleaning, async tasks, KG templates/versions, and RAG enhancements.
+The endpoints below were added in v1.6–v1.9.6. The current v1.10.0 surface exposes **~190 routes
+across 23 routers** (system, datasets, search, query, export, quality, cleaning, embedding, embed,
+lineage, materialized, audit, backup, rag, kg, extraction_templates, doc_type_categories, auth,
+admin, maintenance, gravitino, async_tasks, user_state). They cover user state, user & token
+management, multimodal embedding, materialized views, field annotation, quality enhancements, index
+management, cleaning, async tasks, KG templates/versions, and RAG enhancements. The v1.10.0
+additions (extraction-template management, doc-type categories) are documented in the next section.
 
 ### User-State API (`/api/v1/me/*`)
 
@@ -1927,3 +1931,72 @@ The following security improvements were applied in v1.5.2:
 | **Gremlin** | Input sanitization on `kg_query` endpoint |
 
 These hardening measures are enforced automatically — no configuration changes needed.
+
+***
+
+## v1.10.0 New Endpoints
+
+v1.10.0 adds a dynamic **extraction-template management** surface and a **category ↔ doc_type
+dictionary**, plus template-aware KG build. Templates are loaded dynamically — no rebuild or restart
+needed (`reset_gallery_cache` picks up new presets); all state lives in the system_db (libSQL).
+
+### Extraction-Template Management (`/api/v1/admin/extraction-templates/*`)
+
+Admin-only (Role.ADMIN). CRUD, AI generation, dry-run, dataset binding, and a **quality-validation
+harness** that builds a throwaway dataset → ingests a sample doc → builds the KG → runs RAG → cleans up.
+
+| Method   | Endpoint                                              | Description                                              |
+| -------- | ----------------------------------------------------- | -------------------------------------------------------- |
+| `GET`    | `/api/v1/admin/extraction-templates`                  | List templates (optional `?category=`)                   |
+| `GET`    | `/api/v1/admin/extraction-templates/{name}`           | Template detail                                          |
+| `POST`   | `/api/v1/admin/extraction-templates`                  | Create a template (201)                                  |
+| `PUT`    | `/api/v1/admin/extraction-templates/{name}`           | Update a template                                        |
+| `DELETE` | `/api/v1/admin/extraction-templates/{name}`           | Delete a template                                        |
+| `POST`   | `/api/v1/admin/extraction-templates/validate`         | Validate YAML schema before save                         |
+| `POST`   | `/api/v1/admin/extraction-templates/generate`         | AI-generate a template from a doc sample + doc_type      |
+| `POST`   | `/api/v1/admin/extraction-templates/dry-run`          | Dry-run extract on a sample (no persistence)             |
+| `POST`   | `/api/v1/admin/extraction-templates/{name}/quality/doc`    | Quality harness: generate sample doc                |
+| `POST`   | `/api/v1/admin/extraction-templates/{name}/quality/build`   | Quality harness: build graph + viz + RAG           |
+| `DELETE` | `/api/v1/admin/extraction-templates/quality/{temp_dataset}` | Quality harness: cleanup throwaway dataset         |
+| `GET`    | `/api/v1/admin/extraction-templates/{name}/quality/history` | Quality run history                                |
+| `PUT`    | `/api/v1/admin/extraction-templates/default`          | Set the default template                                 |
+| `GET`    | `/api/v1/admin/extraction-templates/{name}/usage`     | Where a template is bound                                |
+| `GET`    | `/api/v1/admin/extraction-templates/bindings/{dataset}`    | Get a dataset's binding                            |
+| `PUT`    | `/api/v1/admin/extraction-templates/bindings/{dataset}`    | Bind a dataset to a template                       |
+| `DELETE` | `/api/v1/admin/extraction-templates/bindings/{dataset}`    | Clear a dataset's binding                          |
+
+```bash
+# Bind a dataset to a template, then build with it (template auto-resolves at build time)
+curl -X PUT http://localhost:8000/api/v1/admin/extraction-templates/bindings/papers \
+  -H "Authorization: Bearer $TOKEN" -H "X-API-Key: $KEY" \
+  -H "Content-Type: application/json" -d '{"template": "project_concept_graph"}'
+
+curl -X POST http://localhost:8000/api/v1/kg/build \
+  -H "Authorization: Bearer $TOKEN" -H "X-API-Key: $KEY" \
+  -H "Content-Type: application/json" -d '{"dataset": "papers"}'   # template resolved from binding
+```
+
+### Doc-Type Category Dictionary (`/api/v1/admin/doc-type-categories`)
+
+Admin-only. Manages the dynamic category → doc_type dictionary that backs `GET /api/v1/kg/doc-types`.
+`DOC_TYPE_ALIASES` ships 10 canonical keys (paper/report/manual/biography/finance/legal/medicine/
+industry/tcm/general); `project` and custom keys are added through this endpoint. A template's
+`category` is required and must exist in the dictionary.
+
+| Method   | Endpoint                                  | Description                       |
+| -------- | ----------------------------------------- | --------------------------------- |
+| `GET`    | `/api/v1/admin/doc-type-categories`       | List all categories               |
+| `POST`   | `/api/v1/admin/doc-type-categories`       | Create a category (201)           |
+| `DELETE` | `/api/v1/admin/doc-type-categories/{name}` | Delete a category                |
+
+### Template-Aware KG Build & GraphRAG
+
+| Method | Endpoint                          | Description                                              |
+| ------ | --------------------------------- | -------------------------------------------------------- |
+| `POST` | `/api/v1/kg/build`                | Build KG; body adds `template` (overrides doc_type routing) and `incremental` |
+| `GET`  | `/api/v1/kg/build/{task_id}/status` | Poll build progress (chunks/entities/relations)       |
+| `GET`  | `/api/v1/kg/doc-types`            | Dynamic doc_type list (canonical + dictionary + resolved template) |
+| `POST` | `/api/v1/kg/query/graphrag`       | GraphRAG Q&A (body: `question` + `dataset`)              |
+
+> See cookbook examples: SDK [`examples/46_template_management.py`](examples/46_template_management.py), [`examples/48_graphrag_relation_qa.py`](examples/48_graphrag_relation_qa.py); REST [`examples_api/34_extraction_templates_api.py`](examples_api/34_extraction_templates_api.py), [`examples_api/36_graphrag_relation_qa_api.py`](examples_api/36_graphrag_relation_qa_api.py).
+> for end-to-end SDK + REST flows.

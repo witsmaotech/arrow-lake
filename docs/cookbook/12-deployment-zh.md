@@ -6,16 +6,18 @@
 
 ## 1. Docker Compose 全栈部署
 
-### 1.1 推荐生产栈：prod_minimal.yml（v1.9.x）
+### 1.1 推荐生产栈：prod_minimal.yml（v1.10.0）
 
-生产环境**主路径**为 `deploy/docker-compose.prod_minimal.yml`（16 个服务块，含 api / system-db / minio / redis / hg-server / hg-hubble / gravitino / lance-rest / nginx / jaeger 等，init 任务与 jaeger 按 profile 门控）。它取代了旧的 `docker-compose.yml --profile core`，是 v1.9.x 唯一受运维验证的部署栈。
+生产环境**主路径**为 `deploy/docker-compose.prod_minimal.yml`（16 个服务块，含 api / system-db / minio / redis / hg-server / hg-hubble / gravitino / lance-rest / nginx / jaeger 等，init 任务与 jaeger 按 profile 门控）。它取代了旧的 `docker-compose.yml --profile core`，是 v1.10.0 唯一受运维验证的部署栈。
 
 ```bash
 # 启动整个生产栈（读 deploy/.env）
-make prod-minimal
+docker compose --project-directory deploy -p arrow-lake \
+  -f deploy/docker-compose.prod_minimal.yml up -d
 
-# 只 build api 镜像（避开 BuildKit 共享 tag quirk）
-make prod-minimal-build
+# 只 build api 镜像（避开 BuildKit 共享 tag quirk；镜像 tag 为 arrow-lake:1.10.0）
+docker compose --project-directory deploy -p arrow-lake \
+  -f deploy/docker-compose.prod_minimal.yml build api
 
 # 直接用 docker compose 启动单个服务
 docker compose --project-directory deploy -p arrow-lake \
@@ -907,7 +909,7 @@ arrow-lake quality filter --dataset articles --mode all
 
 ***
 
-## 17. v1.9.x 生产运维要点（prod_minimal）
+## 17. v1.10.0 生产运维要点（prod_minimal）
 
 > 本节沉淀 v1.9.0–v1.9.6 生产实测的运维要点与高频踩坑，均为 prod_minimal 栈语境。
 

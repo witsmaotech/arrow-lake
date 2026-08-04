@@ -37,7 +37,7 @@ A policy names a set of columns and the function to apply:
 | `nullify` | Replace with NULL |
 
 ```bash
-curl -X POST http://127.0.0.1:8000/api/v1/gravitino/policies/masking \
+curl -X POST http://127.0.0.1:8000/api/v1/metadata/policies/masking \
   -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
   -d '{"name": "pii_mask", "columns": ["phone", "email"], "function": "partial"}'
 ```

@@ -69,7 +69,7 @@ During ingestion, text from the `text_content` column is automatically encoded i
 
 ## 2. Creating Vector Indexes
 
-Before running efficient searches, you need to create a vector index. Arrow Lake supports three index types:
+Before running efficient searches, you need to create a vector index. Arrow Lake supports seven index types:
 
 ```python
 from arrow_lake import Lake

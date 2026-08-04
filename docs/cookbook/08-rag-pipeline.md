@@ -218,6 +218,12 @@ config.rag.default_top_k = 10                      # Default number of documents
 vector/FTS — **no need to disable `hugegraph.enabled`** for comparison; defaults to True, auto-injecting
 graph context when hugegraph is enabled.
 
+**Deployment note — `lance_scan_mode=pyarrow_fallback`**: on IVF_PQ datasets the DuckDB lance scanner's
+async vector stream can trigger a Rust panic (worker dies → HTTP 502 on hybrid/vector RAG). Set
+`ARROW_LAKE__OLAP__LANCE_SCAN_MODE=pyarrow_fallback` in the api container environment to route vector
+search through the sync sub-bridge; RAG stays stable at a small latency cost. This is the default in
+the shipped `prod_minimal` compose.
+
 ***
 
 ## 5. Context Window Management
@@ -616,10 +622,15 @@ when KG is unavailable (built into `graph_rag.py`).
 - **Three-way parallel** (v1.9.6 P0-4): `_graphrag_retrieve` uses `asyncio.gather` to run vector / search_ka /
   neighbor concurrently, cutting latency 40~50% vs sequential; `QuestionEntityCache` uses a monotonic clock
   to prevent NTP jumps from invalidating TTLs en masse.
+- **Relation-type enrichment** (v1.9.11): the neighbor context now reads the edge `relation_type` property
+  (e.g. `depends_on`, `authored_by`) instead of collapsing every edge to a generic `related_to`, so the LLM
+  receives semantically meaningful triples. When an entity name from the question does not match a graph
+  vertex exactly, a **char-overlap fallback** recovers candidate entities by character-level overlap
+  (zero embedding cost) before falling back to KA lookup — keeping citation coverage high on paraphrased names.
 - **per-query `use_kg`**: pass `use_kg=False` to bypass KG for a single query (degrades to `super().query()`),
   no need to disable hugegraph.
 - **Latency tuning**: entity extraction / query variants use `extract_llm=qwen-turbo` (fast); `qa_llm` uses
-  qwen-plus (generation).
+  qwen-plus (generation). Optimal QA pairing: `qwen-plus@16384` (≈ qwen-max quality, ~4.8× cheaper).
 
 ```python
 # GraphRAG (hugegraph enabled + dataset has a built KG)
