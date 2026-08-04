@@ -4,108 +4,193 @@
 
 **面向 AI 的开源多模态数据湖仓。**
 
-向量 · 全文 · SQL 分析 · 知识图谱 · GraphRAG · 文档 AI —— **一个自托管平台**，而非五个工具拼凑而成。
+向量 · 全文检索 · SQL 分析 · 知识图谱 · GraphRAG · 文档智能 ——
+**一个自托管平台**，而非五件套拼接。
 
-[![Version](https://img.shields.io/badge/version-1.10.0-blue)](#)
-[![License](https://img.shields.io/badge/license-Apache--2.0-informational)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.11%2B-blue)](#)
-[![Tests](https://img.shields.io/badge/tests-6%2C100%2B-brightgreen)](#)
-[![Coverage](https://img.shields.io/badge/coverage-90%25-brightgreen)](#)
-[![REST routes](https://img.shields.io/badge/REST-186%20routes-orange)](#)
+[![Version](https://img.shields.io/badge/version-1.10.0-blue?style=flat-square)](#)
+[![License](https://img.shields.io/badge/license-Apache--2.0-informational?style=flat-square)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue?style=flat-square)](#)
+[![Tests](https://img.shields.io/badge/tests-6%2C100%2B-brightgreen?style=flat-square)](#)
+[![Coverage](https://img.shields.io/badge/coverage-90%25%2B-brightgreen?style=flat-square)](#)
+[![REST](https://img.shields.io/badge/REST-186%20routes%20·%2022%20routers-orange?style=flat-square)](#)
+[![LanceDB](https://img.shields.io/badge/LanceDB-0.36.0-9cf?style=flat-square)](#)
+[![DuckDB](https://img.shields.io/badge/DuckDB-1.5.5-9cf?style=flat-square)](#)
 
-**仓库:** [Gitee](https://gitee.com/wits__sunpw/wits-infra-dintellihub) · [GitHub 镜像](https://github.com/Witshine/arrow-lake) _（创建后请调整镜像 URL）_
+**仓库：** [Gitee](https://gitee.com/wits__sunpw/wits-infra-dintellihub) · [GitHub 镜像](https://github.com/Witshine/arrow-lake)
 
-**中文** | [English](README.md)
+**[English](README.md)** | 中文
+
+<p align="center">
+  <img src="docs/asserts/images/页面-首页.png" alt="Arrow Lake console overview" width="800">
+</p>
 
 </div>
 
 ---
 
-## 什么是 Arrow Lake
+## Arrow Lake 是什么
 
-Arrow Lake 是一个**生产级多模态数据湖仓**，专为**企业 AI 团队与数据平台**打造。无需把向量数据库、OLAP 引擎、图存储、LLM/RAG 框架、治理层以及 UI 分别拼接起来 —— Arrow Lake 将它们统一在**一个 `Lake` facade** 之后，并开箱即用地提供共享存储、RBAC、血缘与审计。
+Arrow Lake 是一个**生产级多模态数据湖仓**，面向**企业 AI 团队与数据平台**而构建。它将向量检索、全文检索、SQL 分析、知识图谱与 RAG 引擎统一在**一个 `Lake` facade** 之后 —— 存储共享、RBAC、血缘与审计开箱即用。
 
-它是**自托管优先**的：你的数据、你的模型、你的网络。可通过 `pip`、Docker Compose 或 Kubernetes (Helm) 运行。
+核心理念很简单：今天的多数 AI 数据栈本质都是**胶水代码** —— 这边一个向量库，那边一个 OLAP 引擎，再加一个图存储、一个 LLM 框架，外裹一层手写的鉴权/治理/UI。Arrow Lake 把这种碎片化收敛为一个平台，**向量、全文、SQL、图与 RAG 查询在同一份数据集上运行**，并由同一套身份与审计平面治理。
+
+它是**自托管优先**的：你的数据、你的模型、你的网络、你的合规边界。可通过 `pip` 单节点部署，通过 Docker Compose 拉起全栈，或通过 Helm chart 部署到 Kubernetes。零厂商锁定、零数据外泄、零按席位授权 —— Apache-2.0 协议，为规模化采用而生。
 
 <p align="center">
-  <img src="docs/architecture-design/diagrams/01-layered-architecture.svg" alt="Arrow Lake 分层架构" width="760">
+  <img src="docs/architecture-design/diagrams/01-layered-architecture.svg" alt="Arrow Lake layered architecture" width="800">
 </p>
 
-## 为什么选择 Arrow Lake
+---
 
-如今大多数 AI 数据栈都是**胶水代码** —— 用 LanceDB 做向量、DuckDB 跑 SQL、HugeGraph 存图、LangChain 搞 RAG，再手搓一套 auth/governance/UI 层把它们包起来。Arrow Lake 把这些收拢为单一平台：
+## ✨ 核心能力
 
-| 拼凑的痛点 | Arrow Lake 提供的 |
+Arrow Lake 围绕**六大支柱**组织。每一根支柱都是一等子系统 —— 而非薄薄一层封装 —— 它们共享同一存储层、同一身份模型与同一审计链路。
+
+### 🗄️ 统一湖仓
+
+**一个存储层、一个 facade、一个治理平面。** 单个 `Lake` 对象通过一致的 Python API 暴露数据集、检索、SQL、图与 RAG —— 同样的操作也可经 186 条 REST 路由完成。存储采用 Lance（列式、多模态、可落对象存储或本地 FS），因此向量、文本、图像与结构化字段在同一张表中并存。你不必再同时维护五套客户端、五个鉴权模型与五份部署清单。
+
+```python
+from arrow_lake import Lake
+lake = Lake("./my_lake")
+# 一个 facade → 向量检索、SQL、全文、图、RAG、治理。
+```
+
+### 🔎 混合检索
+
+**向量 + Tantivy 全文 + RRF 融合 —— 混合是默认项，而非事后补丁。**
+
+- **向量检索**支持 cosine / L2 / dot 度量与**多种索引类型**（`IVF_PQ`、`IVF_HNSW_PQ`、`IVF_FLAT`、`IVF_SQ`、`IVF_HNSW`），小数据集走暴力扫描。
+- **全文检索**基于 Tantivy BM25，并集成 **jieba 分词**以适配 CJK / 中文文本。
+- **混合检索**采用 Reciprocal Rank Fusion（RRF）—— 推荐的默认策略 —— 融合语义与词法信号。
+- **分面检索（Faceted search）**用于下钻导航，外加面向多字段检索的**跨列集成融合**。
+
+同一份索引、同一份数据集即可服务上述三种模式。无需独立的检索集群，无需维护第二份存储保持同步。
+
+### 🕸️ GraphRAG 与知识图谱
+
+**HugeGraph + hyper-extract 抽取 —— 一张真正的图，而非三元组袋子。**
+
+- 数据集级隔离的知识图谱（`kg_{dataset}`）运行于 HugeGraph 之上，支持 Gremlin、最短路径与 k-neighbor 遍历。
+- **GraphRAG** 将实体邻居上下文注入 LLM prompt，并做 **`relation_type` 富化**，让模型看到实体之间*如何*连接，而不仅仅是它们*是否*相连。
+- **模板驱动的图谱构建**由 [hyper-extract](https://github.com/hyper-extract) 驱动 —— 强类型 Knowledge Abstract、8 种 auto-type（graph、temporal、hypergraph、spatial……）以及 80+ 领域模板。
+- 内置**实体归一化**与**启发式孤儿连接**，让图保持连通与可用。
+
+### 🧩 知识抽取模板 —— v1.10.0 ⚑
+
+**运行时编写、绑定与验证抽取模板 —— 无需重建镜像、无需重启。** 这是本版本的头部新特性。
+
+- **动态加载** —— 丢一个 YAML 模板进去即被实时拾取；镜像从不重建，服务从不重启。
+- **Console CRUD** —— 从 Web UI 创建、编辑、列举与描述模板。
+- **数据集绑定** —— 把模板绑定到数据集，使 `kg build` 自动采用（`category↔doc_type` 动态词典）。
+- **AI 辅助编写** —— 从一句 prompt 生成模板草稿，再行精修。
+- **试运行（Dry-run）** —— 在提交到全量构建前用样本文本测试模板。
+- **质量验证 harness** —— 生成一份合成文档 → 构建图 → 可视化 → 其上做 RAG → 拆除，全在同一个页面完成。在模板上线前量化 orphan rate、关系类型覆盖率与平均度数。
+
+### 💬 生产级 RAG
+
+**多 provider、默认混合、带重排与抗幻觉校验。**
+
+- **多 provider LLM** —— OpenAI、Anthropic、vLLM、Ollama、DeepSeek 与百炼（阿里云 MaaS）均为一等公民。
+- **混合检索为默认**策略（向量 + FTS 经 RRF 融合）。
+- **三大 reranker 家族** —— cross-encoder、LLM-judge 与 **Ollama 托管的 Qwen3-Reranker**（可完全离线运行）。
+- **Faithfulness 校验**以抑制幻觉答案。
+- **HyDE** 与 **MultiQuery** 查询扩展、多轮 **session**、**流式**响应，以及带溯源的落地 **citation**。
+
+### 🖼️ 多模态与文档智能
+
+**文本、图像、音频、视频与文档 —— 摄入、解析、嵌入、可检索。**
+
+- **Docling** 文档解析（PDF / Office / HTML），含版面、表格与结构抽取 —— GPU 加速。
+- **以图搜图**经 CLIP 风格嵌入实现，并支持以文搜图、以文搜文。
+- 面向不同内容形态的 **7 种分块（chunking）策略**。
+- **OCR 回退**与结构化表格抽取，适配扫描件。
+
+### 📊 分析
+
+**DuckDB OLAP + Daft 惰性 DataFrame —— 从一次性查询到 Ray 分布式管道。**
+
+- **DuckDB** 负责窗口函数、JOIN、流式聚合，以及在 Lance 表上的**物化视图**。
+- **Daft** 惰性 DataFrame 承载 Ray 分布式、out-of-core 负载 —— 批推理、大规模变换与 join。
+- 提供 **Pivot 助手**与 `SUMMARIZE` 用于快速探索性分析。
+
+### 🛡️ 治理与安全
+
+**企业级控制内建其中，而非外挂补丁。**
+
+- **RBAC** 含 VIEWER / EDITOR / ADMIN 角色，JWT + API-key **双因子认证**，以及 Redis 支撑的 token 黑名单。
+- **HMAC-SHA256 防篡改审计链路**与列级**数据脱敏**。
+- **Gravitino 1.3.0** 联邦 —— 跨异构数据源的 tag、policy、模型 catalog 与留存规则。
+- **`system_db`**（libSQL）控制面承载身份、RBAC、personal token、任务历史与 RAG 会话。
+- **Helm chart**（HPA、Ingress、PDB、NetworkPolicy、CronJob 备份）与 **OpenTelemetry + Prometheus + Grafana** 可观测性。
+
+---
+
+## 为什么选 Arrow Lake
+
+多数 AI 数据栈由五件专业工具拼接而成，每一件单看都很出色，彼此却互不感知。Arrow Lake 用一个全集成平台替代那层胶水代码。
+
+| 拼接五件套的痛 | Arrow Lake 给你的 |
 |---|---|
-| 5 个数据存储 + 5 个客户端 + 5 套 auth 模型 | **一个 `Lake` facade**，一个存储层，一套 RBAC 模型 |
-| "这条查询该用向量/SQL/图哪个工具?" | 在**同一数据集**上统一搜索 + SQL + 图 |
-| 忽略领域结构的 RAG | **GraphRAG + 可插拔抽取模板**（v1.10.0） |
-| 没有血缘、没有审计、没有治理 | **内置血缘、HMAC 审计、Gravitino 治理** |
-| 只有后端、没有 UI | **16+ 页运维控制台**（admin、KG 可视化、OLAP worksheet、血缘、模板 QA） |
+| 5 套数据存储 + 5 套客户端 + 5 套鉴权模型 | **一个 `Lake` facade**、一个存储层、一套 RBAC 模型 |
+| "这条查询该走向量 / SQL / 图哪个工具？" | 在同一份数据集上做**统一的检索 + SQL + 图** |
+| RAG 无视你的领域结构 | **GraphRAG + 运行时可插拔的抽取模板** |
+| 没有血缘、没有审计、没有治理 | **内建血缘、HMAC 审计、Gravitino 治理** |
+| 只有后端、没有 UI | **19 页运维 console**（admin、KG 可视化、OLAP、血缘、模板质检） |
 
-**四点核心竞争力：**
+**四点让它具备竞争力：**
 
-1. **统一而非组装** —— 向量 + 全文 + SQL + 图 + RAG 共享同一 facade、同一存储、同一 auth/血缘/审计平面。
-2. **原生 GraphRAG** —— HugeGraph + hyper-extract 知识抽取，配合**模板驱动建图**，运行时加载新模板（**无需重建镜像、无需重启**）。
-3. **真正的多模态** —— 文本、图像、音频、向量，外加 Docling 文档解析与以图搜图。不只是文本嵌入。
-4. **默认生产就绪** —— RBAC、JWT、限流、防篡改审计、Helm chart、可观测性。不是开发玩具。
+1. **统一，而非拼装** —— 向量 + 全文 + SQL + 图 + RAG 共享一个 facade、一份存储、一套鉴权/血缘/审计平面。
+2. **原生 GraphRAG** —— HugeGraph + hyper-extract 抽取，模板驱动建图并支持运行时加载新模板（无需重建镜像、无需重启）。
+3. **真正的多模态** —— 文本、图像、音频、向量、Docling 文档解析与以图搜图。而不只是文本嵌入。
+4. **默认即生产可用** —— RBAC、JWT、限流、防篡改审计、Helm chart 与可观测性。不是仅供开发的玩具。
 
-## 核心能力
+---
 
-| 领域 | 能力 |
-|---|---|
-| 🔎 **搜索** | 向量（cosine/L2/dot；IVF_PQ/IVF_FLAT/IVF_HNSW_PQ）、Tantivy 全文（jieba 中文分词）、**hybrid RRF**、faceted、跨列 ensemble 融合 |
-| 🧠 **RAG** | 多 provider LLM（OpenAI/Anthropic/vLLM/Ollama/DeepSeek/Bailian）、会话、流式、citation、**cross-encoder / LLM / Ollama 重排**、faithfulness 校验、HyDE / MultiQuery、多轮 |
-| 🕸️ **知识图谱 & GraphRAG** | HugeGraph：build、Gremlin 查询、最短路径、k-neighbor；**GraphRAG** 注入 KG 上下文；**基于模板的抽取**（hyper-extract） |
-| 🧩 **抽取模板（v1.10.0）** | CRUD 控制台 + AI 辅助编写 + 数据集绑定 + dry-run + **模板质量验证 harness**（生成文档 → 建图 → 可视化 → RAG → 清理）；`category↔doc_type` 动态字典 |
-| 📊 **分析** | DuckDB OLAP（窗口、JOIN、流式、物化视图）+ Daft 惰性 DataFrame（Ray 分布式） |
-| 📄 **文档 AI** | PDF/Office/HTML → Docling 解析 → 切块 → 嵌入 → Lance；7 种切块策略；OCR 回退；以图搜图 |
-| 🛡️ **安全与治理** | RBAC（VIEWER/EDITOR/ADMIN）、JWT + API-key 双重认证、Redis 黑名单、限流、**HMAC-SHA256 审计链**、Gravitino 1.3.0 联邦（tags/policies/model catalog）、**列级脱敏** |
-| 🖥️ **控制台** | 16+ 页面：数据集、KG 可视化、OLAP SQL worksheet、血缘图、抽取模板管理、模板 QA、admin、审计、治理 |
-| 🚀 **运维** | Docker Compose（基于 profile）、**Helm chart**（HPA、Ingress、PDB、NetworkPolicy、CronJob 备份）、OpenTelemetry + Prometheus + Grafana |
+## 🖥️ Console
 
-## 控制台
+Arrow Lake 自带一个**原生运维 console**（原生 JS，由 API 直接 serve）—— 无需独立前端部署，无需处理 CORS。
 
-Arrow Lake 内置原生运维控制台（原生 JS，由 API 提供服务）—— 无需独立部署前端：
-
-- **数据集** —— 浏览、预览（分页 + 搜索）、带字段注释的 schema、导出
-- **知识图谱** —— 交互式 `vis-network` 图谱、带 citation 的 GraphRAG 问答
-- **OLAP Worksheet** —— DuckDB SQL + Daft DataFrame + Pivot 助手，受 RBAC 约束
+- **数据集** —— 浏览、预览（分页 + 检索）、带字段注释的 schema、导出
+- **知识图谱** —— 交互式 `vis-network` / G6 图可视化、带 citation 的 GraphRAG 问答
+- **OLAP 工作表** —— DuckDB SQL + Daft DataFrame + Pivot 助手，受 RBAC 约束
 - **血缘** —— DAG 可视化 + 事件历史
-- **抽取模板** —— YAML CRUD、AI 生成、dry-run、质量验证（基于模板建图并在其上跑 RAG）
-- **Admin / 审计 / 治理** —— 用户、RBAC、防篡改审计、tags 与脱敏策略
+- **抽取模板** —— YAML CRUD、AI 生成、试运行，以及**质量验证 harness**（从模板建图并做 RAG）
+- **Admin / 审计 / 治理** —— 用户、RBAC、防篡改审计、tag 与脱敏策略
 
 <table>
 <tr>
-<td align="center"><b>首页总览</b><br><img src="docs/asserts/images/页面-首页.png" width="420"></td>
+<td align="center"><b>总览</b><br><img src="docs/asserts/images/页面-首页.png" width="420"></td>
 <td align="center"><b>知识图谱</b><br><img src="docs/asserts/images/页面-知识图谱01.png" width="420"></td>
 </tr>
 <tr>
-<td align="center"><b>OLAP 数据分析</b><br><img src="docs/asserts/images/页面-数据分析olap.png" width="420"></td>
-<td align="center"><b>模板质量验证（v1.10.0）</b><br><img src="docs/asserts/images/页面-图谱抽取模板质量验证01.png" width="420"></td>
+<td align="center"><b>OLAP 工作表</b><br><img src="docs/asserts/images/页面-数据分析olap.png" width="420"></td>
+<td align="center"><b>模板质检（v1.10.0）</b><br><img src="docs/asserts/images/页面-图谱抽取模板质量验证01.png" width="420"></td>
 </tr>
 <tr>
 <td align="center"><b>RAG 问答</b><br><img src="docs/asserts/images/页面-RAG.png" width="420"></td>
-<td align="center"><b>数据血缘</b><br><img src="docs/asserts/images/页面-数据血缘.png" width="420"></td>
+<td align="center"><b>血缘</b><br><img src="docs/asserts/images/页面-数据血缘.png" width="420"></td>
 </tr>
 </table>
 
-<sup>共 19 张截图，见 [`docs/asserts/images/`](docs/asserts/images/) —— 含登录、数据集、摄入、数据准备、清洗整理、索引嵌入、异步任务、文档教程等。</sup>
+<sup>共 19 张截图见 [`docs/asserts/images/`](docs/asserts/images/) —— 含登录、数据集、摄入、数据准备、清洗整理、索引/嵌入、异步任务、文档等。</sup>
 
-## 快速开始（30 秒）
+---
+
+## 🚀 快速开始（30 秒）
 
 ```bash
 pip install arrow-lake
-arrow-lake demo        # 自包含 demo：在合成数据上跑向量 + SQL + 全文搜索
+arrow-lake demo        # 自包含 demo：在合成数据上跑向量 + SQL + 全文检索
 ```
 
-或用 Python：
+或在 Python 中：
 
 ```python
 from arrow_lake import Lake
 import pyarrow as pa
 
-lake = Lake("./my_lake")           # 本地文件系统存储 —— 无需 MinIO、无需 Docker
+lake = Lake("./my_lake")           # 本地 FS 存储 —— 无需 MinIO、无需 Docker
 
 table = pa.table({
     "id": ["1", "2", "3"],
@@ -113,35 +198,87 @@ table = pa.table({
 })
 lake.create_dataset("articles", table)
 
-# 向量搜索、全文、hybrid、SQL —— 全在同一数据集上
+# 向量检索、全文、混合、SQL —— 全在同一份数据集上
 print(lake.search("articles", query="ML", top_k=3))
 ```
 
 从 `pip install` 到拿到第一条结果，不到一分钟。
 
-## 对比
+---
+
+## 📊 横向对比
 
 | 能力 | Arrow Lake | LanceDB | DuckDB | Milvus / Qdrant | Dify | LangChain |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|
-| 向量 / hybrid 搜索 | ✅ | ✅ | — | ✅ | — | — |
+| 向量 / 混合检索 | ✅ | ✅ | — | ✅ | — | — |
 | SQL OLAP 分析 | ✅ | — | ✅ | — | — | — |
-| 知识图谱 + GraphRAG | ✅ | — | — | — | 部分 | 部分 |
+| 知识图谱 + GraphRAG | ✅ | — | — | — | partial | partial |
 | 模板驱动抽取 | ✅ | — | — | — | — | — |
-| 文档 AI（Docling、多模态） | ✅ | 部分 | — | — | 部分 | 部分 |
+| 文档智能（Docling、多模态） | ✅ | partial | — | — | partial | partial |
 | 元数据治理（Gravitino） | ✅ | — | — | — | — | — |
-| RBAC + 审计 + 血缘（内置） | ✅ | — | — | 部分 | 部分 | — |
-| 运维控制台 | ✅ | — | — | 部分 | ✅ | — |
+| RBAC + 审计 + 血缘（内建） | ✅ | — | — | partial | partial | — |
+| 运维 console | ✅ | — | — | partial | ✅ | — |
 | **统一单一平台** | ✅ | 向量 | OLAP | 向量 | LLM 应用 | 框架 |
 
-以上每一个工具在其专长领域都很优秀。Arrow Lake 面向需要**全部能力且已集成**、又不想维护胶水代码的团队。
+上述每一款工具在其专长领域都很出色。Arrow Lake 面向的是需要**全部能力且彼此集成**、又不愿维护胶水代码的团队。
 
-## 使用场景
+---
 
-- **企业文档 RAG** —— 摄取 PDF/Office，构建知识图谱，带 citation 与溯源作答
-- **多模态搜索** —— 文→图、图→图、跨模态 hybrid 检索
-- **GraphRAG / 知识平台** —— 领域专属抽取模板、结构化实体关系图
-- **自助式分析** —— 在驱动搜索与 RAG 的同一湖仓上跑 SQL + DataFrame
-- **平台级 AI 数据层** —— 为内部 AI 产品提供单一受治理、可审计、受 RBAC 保护的后端
+## 🎯 适用场景
+
+- **企业文档 RAG** —— 摄入 PDF / Office 文档，构建知识图谱，带 citation 与溯源回答
+- **多模态检索** —— 文 → 图、图 → 图，以及跨模态的混合检索
+- **GraphRAG / 知识平台** —— 领域专属抽取模板产出结构化实体-关系图
+- **自助式分析** —— 在驱动检索与 RAG 的同一座湖上跑 SQL + DataFrame
+- **平台级 AI 数据层** —— 为内部 AI 产品提供一个受治理、可审计、受 RBAC 保护的后端
+- **受治理的数据产品** —— 经 Gravitino 跨异构数据源打 tag、脱敏、留存与审计
+
+---
+
+## 📚 文档与 Cookbook
+
+### Cookbook（中英双语）
+
+Cookbook 是首要的实战指南 —— **共 19 章**，55+ 个可运行示例。
+
+| # | 章节 | SDK 示例 | REST 示例 |
+|---|---|---|---|
+| 01 | [快速开始](docs/cookbook/01-quickstart.md) | — | — |
+| 02 | [数据摄入](docs/cookbook/02-ingestion.md) | `01_ingest_basics.py` | `02_ingest_file_http.py` |
+| 03 | [配置](docs/cookbook/03-configuration.md) | — | — |
+| 04 | [向量检索与索引](docs/cookbook/04-vector-search.md) | `02_search_and_index.py` | `03_search_vector_fts_hybrid.py` |
+| 05 | [全文检索](docs/cookbook/05-fulltext-search.md) | — | — |
+| 06 | [混合与分面检索](docs/cookbook/06-hybrid-faceted.md) | `23_faceted_search.py` | — |
+| 07 | [OLAP 分析](docs/cookbook/07-olap-analytics.md) | `03_olap_and_export.py` | `04_olap_export_backup.py` |
+| 08 | [RAG 管道](docs/cookbook/08-rag-pipeline.md) | `20_rag_qa_system.py` | `06_rag_pipeline.py` |
+| 09 | [知识图谱与 GraphRAG](docs/cookbook/09-knowledge-graph.md) | `19_knowledge_graph_build.py` | `07_knowledge_graph.py` |
+| 10 | [REST API 指南](docs/cookbook/10-rest-api.md) | — | （全部 `examples_api/`） |
+| 11 | [质量与去重](docs/cookbook/11-quality-dedup.md) | `04_quality_and_dedup.py` | `08_quality_dedup.py` |
+| 12 | [部署与运维](docs/cookbook/12-deployment.md) | — | — |
+| 13 | [CLI 完整参考](docs/cookbook/13-cli-reference.md) | — | — |
+| 14 | [工作流编排](docs/cookbook/14-workflow-orchestration.md) | — | — |
+| 15 | [Gravitino 元数据治理](docs/cookbook/15-gravitino-metadata.md) | `08_catalog_management.py` | — |
+| 16 | [v1.8.0 新特性](docs/cookbook/16-v1.8.0-new-features-zh.md) | — | — |
+| 17 | [数据脱敏](docs/cookbook/17-data-masking.md) | — | — |
+| 18 | [血缘可视化](docs/cookbook/18-lineage-visualization.md) | — | `09_lineage_audit.py` |
+| 19 | [REST 食谱](docs/cookbook/19-rest-recipes.md) | — | `19_rest-recipes` |
+
+> **学习路径：** 入门 01→02→03 · 检索 04→05→06 · AI 07→08→09 · 生产 10→11→12
+
+**可运行示例** —— [`docs/cookbook/examples/`](docs/cookbook/examples/) 下 24 个 SDK 脚本，[`docs/cookbook/examples_api/`](docs/cookbook/examples_api/) 下 31 个 REST 脚本，包含 v1.10.0 的**模板管理**脚本（`examples/46_template_management.py`、`examples_api/34_extraction_templates_api.py`）。
+
+### 参考文档
+
+- 🏗️ [**架构**](docs/ARCHITECTURE.md) —— 权威技术参考（分层、facade、数据流）
+- 🎨 [架构设计](docs/architecture-design/00-architecture-design.md) —— 8 张时序与拓扑图（[`diagrams/`](docs/architecture-design/diagrams/)）
+- 📦 [产品介绍](docs/arrow-lake-product-introduction.md) —— 能力总览
+- 🔒 [安全策略](SECURITY.md) —— 鉴权、RBAC、审计、传输
+- 🤝 [贡献指南](CONTRIBUTING.md) —— 开发环境与规范
+- 📒 [更新日志](CHANGELOG.md) —— 版本历史
+- 🌐 [API 文档](http://localhost:8000/docs) —— OpenAPI / Swagger（运行中的实例）
+- 📖 [Cookbook 目录](docs/cookbook/README.md) —— 完整章节索引
+
+---
 
 ## 安装
 
@@ -150,7 +287,7 @@ print(lake.search("articles", query="ML", top_k=3))
 pip install "arrow-lake[fts,rag,he,document]"
 ```
 
-**Docker Compose**（完整栈，基于 profile）
+**Docker Compose**（全栈，基于 profile）
 ```bash
 git clone <repo> && cd wits-infra-dintellihub
 docker compose -f deploy/docker-compose.prod_minimal.yml up -d
@@ -177,41 +314,34 @@ arrow-lake rag query "..." --dataset docs
 
 ## 配置
 
-27 个独立配置段，3 层优先级：**defaults → 环境变量（`ARROW_LAKE__` 前缀）→ YAML**。
+27 个独立配置段，三层优先级：**默认值 → 环境变量（`ARROW_LAKE__` 前缀）→ YAML**。
 
 ```python
-lake = Lake("./data")                       # 本地，最小化
+lake = Lake("./data")                       # 本地、最小化
 lake = Lake.from_yaml("configs/prod.yaml")  # 生产
 ```
 
-## 文档
-
-- 📖 [Cookbook](docs/cookbook/README.md) —— 15 章、45+ 示例（中英双语）
-- 🏗️ [架构](docs/ARCHITECTURE.md) —— 权威技术参考
-- 🎨 [产品介绍](docs/arrow-lake-product-introduction.md) —— 能力概览
-- 🔒 [安全策略](SECURITY.md) —— auth、RBAC、审计、传输
-- 🤝 [贡献指南](CONTRIBUTING.md) —— 开发环境与规范
-- 📒 [更新日志](CHANGELOG.md) —— 版本历史
-- 🌐 [API 文档](http://localhost:8000/docs) —— OpenAPI/Swagger（运行实例）
+---
 
 ## 项目状态
 
-稳定且已在生产中使用。当前版本：**v1.10.0**（知识抽取模板管理 —— M1–M5）。完整历史与路线图方向（更深的多模态、分布式横向扩展、更多抽取后端）见 [CHANGELOG](CHANGELOG.md)。
+稳定且已在生产中使用。当前版本：**v1.10.0** —— 知识抽取模板管理（M1–M5：动态加载、CRUD、绑定、AI 编写、试运行、质量验证 harness）。完整历史与路线图方向（更深入的多模态、分布式扩展、更多抽取后端）见 [CHANGELOG](CHANGELOG.md)。
 
 - **6,100+ 测试**，90%+ 覆盖率，零高危安全发现（bandit）
-- **186 条 REST 路由**，跨 22 个 router
-- trunk-based 开发，频繁发布
+- **186 条 REST 路由**，横跨 22 个 router
+- 关键依赖：LanceDB 0.36.0 · DuckDB 1.5.5 · Daft 0.7.21 · Gravitino 1.3.0 · HugeGraph · Docling
+- 主干开发（trunk-based），频繁发布
 
 ## 社区
 
 - 💬 [Issues / 问答](https://gitee.com/wits__sunpw/wits-infra-dintellihub/issues)
 - 🤝 [贡献指南](CONTRIBUTING.md) · [行为准则](CODE_OF_CONDUCT.md)
-- 💼 **欢迎商业支持 / 咨询 / 定制集成** —— 通过 Issues 联系。
+- 💼 **商业支持 / 咨询 / 定制集成**欢迎洽谈 —— 通过 Issues 联系。
 
-欢迎贡献（代码、文档、模板、bug 报告）。非平凡的改动请先开 issue 讨论。
+非常欢迎贡献（代码、文档、模板、bug 报告）。非平凡改动请先开 issue。
 
 ## 许可证
 
-[Apache License 2.0](LICENSE) —— © 2026 Witshine.
+[Apache License 2.0](LICENSE) — © 2026 Witshine.
 
-Apache-2.0 允许你自由使用、修改和分发 Arrow Lake（包括商业用途），只需保留署名与许可证声明。为采纳而生 —— 也为随之而来的咨询/项目而生。
+Apache-2.0 允许你自由地使用、修改与分发 Arrow Lake（含商业用途），只需保留署名与许可声明。为规模化采用而生 —— 也为随之而来的咨询/项目合作而生。

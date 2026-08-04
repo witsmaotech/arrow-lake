@@ -4,7 +4,7 @@ version = "1.10.0"
 description = "Unified multimodal data lakehouse — Lance + Daft + Ray"
 readme = "README.md"
 requires-python = ">=3.11"
-license = {text = "MIT"}
+license = {text = "Apache-2.0"}
 authors = [
     {name = "Witshine", email = "wits@sunpw.dev"},
 ]
