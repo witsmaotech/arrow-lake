@@ -24,6 +24,13 @@
   .lg-colmap .arrow{color:var(--accent);font-weight:600}
   .lg-colmap .expr{margin-left:auto;color:var(--fg-md);max-width:42%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .lg-empty{color:var(--fg-md);font-size:.78rem;padding:6px 0;line-height:1.6}
+  /* custom combobox(替代原生 datalist,统一下拉样式 + 键盘导航)*/
+  .lg-combobox{position:relative;min-width:240px;flex:0 0 auto}
+  .lg-cmb-list{position:absolute;top:calc(100% + 2px);left:0;right:0;max-height:260px;overflow-y:auto;background:var(--ink-900);border:1px solid var(--line);border-radius:var(--r-md);z-index:50;box-shadow:0 8px 24px rgba(0,0,0,.45)}
+  .lg-cmb-list .it{padding:7px 12px;cursor:pointer;font-size:.78rem;font-family:var(--font-mono);color:var(--fg-md);border-bottom:1px solid var(--line-soft)}
+  .lg-cmb-list .it:hover,.lg-cmb-list .it.active{background:var(--ink-850);color:var(--teal-bright)}
+  .lg-cmb-list .it:last-child{border-bottom:none}
+  .lg-cmb-list .empty{padding:10px 12px;color:var(--fg-lo);font-size:.75rem}
 </style>
 </head>
 <body>
@@ -31,8 +38,10 @@
   <div class="h-sec between"><div><h1>血缘图谱</h1><div class="desc">数据集上下游血缘可视化 · 点击节点查看列级映射</div></div></div>
   <div class="panel flush" style="padding:16px">
     <div class="lg-bar">
-      <input id="dsInput" type="text" list="dsList" placeholder="选择或输入数据集名…" autocomplete="off">
-      <datalist id="dsList"></datalist>
+      <div class="lg-combobox" id="dsCmb">
+        <input id="dsInput" type="text" placeholder="选择或输入数据集名…" autocomplete="off">
+        <div class="lg-cmb-list" id="dsList" hidden></div>
+      </div>
       <label>深度 <input id="maxDepth" type="number" value="10" min="1" max="20" style="width:60px"></label>
       <label>节点上限 <input id="maxNodes" type="number" value="500" min="1" max="2000" style="width:76px"></label>
       <button class="btn btn-primary btn-sm" id="loadBtn">渲染图谱</button>
@@ -62,15 +71,43 @@ const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 let network = null;
 
-// 填充数据集 datalist(失败则用户手输)
+// 数据集 custom combobox(替代原生 datalist,统一样式 + 过滤 + 键盘导航)
+const _dsNames = [];
+let _dsActive = -1;
+const dsInput = $("#dsInput"), dsList = $("#dsList");
+function paintDsList(filter = "") {
+  const f = filter.trim().toLowerCase();
+  const matched = _dsNames.filter(n => !f || n.toLowerCase().includes(f)).slice(0, 200);
+  _dsActive = -1;
+  if (!matched.length) { dsList.innerHTML = '<div class="empty">无匹配数据集</div>'; dsList.hidden = false; return; }
+  dsList.innerHTML = matched.map(n => `<div class="it" data-name="${esc(n)}">${esc(n)}</div>`).join("");
+  dsList.hidden = false;
+  dsList.querySelectorAll(".it").forEach(el => el.addEventListener("mousedown", (ev) => { ev.preventDefault(); dsInput.value = el.dataset.name; dsList.hidden = true; }));
+}
+function markDsActive() {
+  const its = dsList.querySelectorAll(".it");
+  its.forEach((el, i) => el.classList.toggle("active", i === _dsActive));
+  its[_dsActive]?.scrollIntoView({ block: "nearest" });
+}
 (async () => {
   try {
     const r = await request("GET", "/datasets");
     const list = r.datasets || r.items || r || [];
-    const names = list.map(d => d.name || d.dataset_name || d).filter(Boolean);
-    $("#dsList").innerHTML = names.map(n => `<option value="${esc(n)}">`).join("");
+    _dsNames.push(...list.map(d => d.name || d.dataset_name || d).filter(Boolean));
   } catch (_) { /* 用户手输 */ }
 })();
+dsInput.addEventListener("focus", () => paintDsList(dsInput.value));
+dsInput.addEventListener("input", () => paintDsList(dsInput.value));
+dsInput.addEventListener("keydown", (e) => {
+  if (dsList.hidden) return;
+  const its = dsList.querySelectorAll(".it");
+  if (!its.length) return;
+  if (e.key === "ArrowDown") { e.preventDefault(); _dsActive = (_dsActive + 1) % its.length; markDsActive(); }
+  else if (e.key === "ArrowUp") { e.preventDefault(); _dsActive = (_dsActive - 1 + its.length) % its.length; markDsActive(); }
+  else if (e.key === "Enter" && _dsActive >= 0) { e.preventDefault(); dsInput.value = its[_dsActive].dataset.name; dsList.hidden = true; }
+  else if (e.key === "Escape") { dsList.hidden = true; }
+});
+document.addEventListener("click", (e) => { if (!$("#dsCmb").contains(e.target)) dsList.hidden = true; });
 
 async function loadGraph(name) {
   if (!name) { toast("请输入数据集名", "warn"); return; }

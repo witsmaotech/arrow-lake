@@ -47,6 +47,7 @@ from arrow_lake.api.models.dataset import (
 )
 from arrow_lake.api.utils import run_sync
 from arrow_lake.exceptions import CatalogError, ErrorCode
+from arrow_lake._system_tables import is_internal_table, is_system_table
 
 router = APIRouter(prefix="/api/v1/datasets", tags=["datasets"])
 
@@ -673,7 +674,7 @@ async def list_datasets(
     result = await run_sync(lake.catalog, timeout=_ADMIN_TIMEOUT, label="catalog")
     # require_role 返回当前 user(TokenPayload);系统表(_ 前缀)仅 admin 可见
     is_admin = _auth is not None and getattr(_auth, "role", None) == Role.ADMIN
-    visible = [e for e in result.datasets if is_admin or not e.name.startswith("_")]
+    visible = [e for e in result.datasets if is_admin or not is_internal_table(e.name)]
     # 一次扫描 KA base 得到已构建 KG 的数据集集合(避免前端 N 次 /kg/stats)
     from pathlib import Path
     from arrow_lake.knowledge_graph._naming import artifact_key_for
@@ -920,14 +921,26 @@ async def migrate_schema(
 @router.delete("/{name}", response_model=MessageResponse, status_code=200)
 async def delete_dataset(
     name: str = Path(..., pattern=_NAME_PATTERN),
+    cascade: bool = Query(
+        True, description="Also reclaim derived assets (KG graph, KA dump, "
+        "Gravitino/catalog metadata, RBAC grants, template bindings)."
+    ),
     *,
     lake=Depends(get_lake),
     _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> MessageResponse:
     """Delete a dataset and all its data."""
+    # 系统运行表(sys_ 前缀)是系统运行依赖,禁止删除。判断集中 _system_tables.py。
+    if is_system_table(name):
+        from fastapi import HTTPException
+
+        raise HTTPException(
+            status_code=422,
+            detail=f"系统表 '{name}' 受保护,不可删除(系统运行依赖)",
+        )
     from arrow_lake.api._security_log import actor_of
     await run_sync(
         lake.delete_dataset, name, timeout=_ADMIN_TIMEOUT,
-        label="delete_dataset", actor=actor_of(_user),
+        label="delete_dataset", actor=actor_of(_user), cascade=cascade,
     )
     return MessageResponse(message=f"Dataset '{name}' deleted")

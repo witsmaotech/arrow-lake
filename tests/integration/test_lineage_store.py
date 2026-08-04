@@ -128,3 +128,38 @@ class TestUpstreamTrace:
 
         assert len(downstream) == 1
         assert downstream[0].source_datasets == ("dataset_a",)
+
+
+class TestLineageStoreIndexes:
+    """LineageStore scalar indexes (v1.9.x) — dataset_name/timestamp/operation.
+
+    dataset_name/timestamp get BTREE (accelerate trace_downstream predicate
+    pushdown + ORDER BY); operation gets BITMAP (low cardinality). Verified
+    against a real Lance table after record_event backfills them.
+    """
+
+    def test_indexes_created_after_record(self, tmp_path: Path) -> None:
+        store = LineageStore(LanceStorageManager(str(tmp_path)))
+        store.record_event(create_lineage_event("ds_a", "create"))
+        table = store._storage.open_dataset(store._store_dataset)
+        indexed = {
+            col
+            for idx in table.list_indices()
+            for col in (idx.columns if hasattr(idx, "columns") else [])
+        }
+        assert {"dataset_name", "timestamp", "operation"} <= indexed
+
+    def test_record_event_idempotent_indexes(self, tmp_path: Path) -> None:
+        store = LineageStore(LanceStorageManager(str(tmp_path)))
+        store.record_event(create_lineage_event("ds_a", "create"))
+        store.record_event(create_lineage_event("ds_a", "append"))
+        table = store._storage.open_dataset(store._store_dataset)
+        indexed = [
+            col
+            for idx in table.list_indices()
+            for col in (idx.columns if hasattr(idx, "columns") else [])
+        ]
+        # replace=True keeps exactly one index per column — no duplicates pile up.
+        assert indexed.count("dataset_name") == 1
+        assert indexed.count("timestamp") == 1
+        assert indexed.count("operation") == 1

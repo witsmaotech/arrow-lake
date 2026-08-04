@@ -132,6 +132,110 @@ class TestLakeListDeleteDatasets:
         assert "to_delete" not in lake.list_datasets()
 
 
+class TestLakeDeleteCascade:
+    """Lake.delete_dataset(cascade=True) reclaims derived assets — KA dump dir,
+    libSQL catalog row, RBAC grants/denies, and extraction-template bindings.
+    KG-graph and Gravitino paths are no-ops here (disabled in the unit config)."""
+
+    def _wire_stores(self, lake: Lake) -> None:
+        from arrow_lake.system_db import Migrator, SystemDB
+        from arrow_lake.system_db.stores.catalog import CatalogStore
+        from arrow_lake.system_db.stores.extraction_templates import (
+            ExtractionTemplateStore,
+        )
+        from arrow_lake.system_db.stores.rbac import RbacStore
+
+        db = SystemDB(":memory:")
+        Migrator(db).run()
+        lake._catalog_store = CatalogStore(db)
+        lake._rbac_store = RbacStore(db, cache_ttl=0)
+        lake._extraction_template_store = ExtractionTemplateStore(db)
+
+    def _seed_ka(self, ka_base: str, ds: str) -> Path:
+        from arrow_lake.knowledge_graph._naming import artifact_key_for
+
+        ka_root = Path(ka_base) / artifact_key_for(ds)
+        (ka_root / "ka").mkdir(parents=True)
+        (ka_root / "ka" / "data.json").write_text("{}")
+        return ka_root
+
+    def test_delete_dataset_cascades_derived_assets(
+        self, lake: Lake, tmp_path: Path
+    ) -> None:
+        from arrow_lake.ingest.storage import LanceStorageManager
+
+        self._wire_stores(lake)
+        lake._config.hugegraph.he_ka_base_dir = str(tmp_path / "ka")
+        ds = "cascade_ds"
+
+        # populate derived assets
+        LanceStorageManager(str(tmp_path / "lance_data")).create_dataset(
+            ds, pa.table({"a": [1]})
+        )
+        ka_root = self._seed_ka(lake._config.hugegraph.he_ka_base_dir, ds)
+        lake._rbac_store.grant_dataset_access(ds, "editor", "read")
+        lake._extraction_template_store.set_binding(ds, "project_concept_graph")
+        lake._catalog_store.register_table(ds, '{"a":"int64"}', "loc")
+
+        # sanity: assets exist
+        assert ka_root.exists()
+        assert lake._rbac_store.get_dataset_grants(ds) == {"editor": {"read"}}
+        assert lake._extraction_template_store.get_binding(ds) == "project_concept_graph"
+
+        lake.delete_dataset(ds, cascade=True)
+
+        assert ds not in lake.list_datasets()  # Lance table dropped
+        assert not ka_root.exists()  # KA dump reclaimed
+        assert lake._rbac_store.get_dataset_grants(ds) == {}  # RBAC purged
+        assert lake._extraction_template_store.get_binding(ds) is None  # binding cleared
+        assert lake._catalog_store.delete_table(ds) is False  # catalog row already gone
+
+    def test_cascade_false_keeps_derived_assets(
+        self, lake: Lake, tmp_path: Path
+    ) -> None:
+        """cascade=False = table-only; KG/KA/metadata/ACL preserved for reuse."""
+        from arrow_lake.ingest.storage import LanceStorageManager
+
+        self._wire_stores(lake)
+        lake._config.hugegraph.he_ka_base_dir = str(tmp_path / "ka")
+        ds = "keep_ds"
+        LanceStorageManager(str(tmp_path / "lance_data")).create_dataset(
+            ds, pa.table({"a": [1]})
+        )
+        ka_root = self._seed_ka(lake._config.hugegraph.he_ka_base_dir, ds)
+        lake._rbac_store.grant_dataset_access(ds, "editor", "read")
+
+        lake.delete_dataset(ds, cascade=False)
+
+        assert ds not in lake.list_datasets()  # table dropped
+        assert ka_root.exists()  # KA dump preserved
+        assert lake._rbac_store.get_dataset_grants(ds) == {"editor": {"read"}}  # ACL kept
+
+    def test_cascade_best_effort_resilience(
+        self, lake: Lake, tmp_path: Path
+    ) -> None:
+        """A failing subsystem never blocks deletion or the other cleanups."""
+        from arrow_lake.ingest.storage import LanceStorageManager
+
+        self._wire_stores(lake)
+        lake._config.hugegraph.he_ka_base_dir = str(tmp_path / "ka")
+        ds = "resilient_ds"
+        LanceStorageManager(str(tmp_path / "lance_data")).create_dataset(
+            ds, pa.table({"a": [1]})
+        )
+        ka_root = self._seed_ka(lake._config.hugegraph.he_ka_base_dir, ds)
+        # RBAC purge blows up — must not abort the rest of the cascade
+        bad_rbac = MagicMock()
+        bad_rbac.purge_dataset.side_effect = RuntimeError("db down")
+        lake._rbac_store = bad_rbac
+
+        lake.delete_dataset(ds, cascade=True)  # must not raise
+
+        assert ds not in lake.list_datasets()  # core delete succeeded
+        assert not ka_root.exists()  # KA cleanup still ran (independent try/except)
+        bad_rbac.purge_dataset.assert_called_once_with(ds)
+
+
 class TestLakeFromYaml:
     """Test Lake.from_yaml() class method."""
 

@@ -15,7 +15,7 @@
     <div class="flex"><a class="btn btn-primary btn-sm" href="ingest.html"><i class="placeholder" data-ic="plus"></i> 摄入</a></div>
   </div>
   <div class="panel flush">
-    <div class="panel-h"><i class="placeholder" data-ic="search"></i><h3>数据集</h3><span class="sub" id="cnt">—</span><span class="actions"><button class="btn btn-ghost btn-sm" id="refresh"><i class="placeholder" data-ic="refresh"></i></button></span></div>
+    <div class="panel-h"><i class="placeholder" data-ic="search"></i><h3>数据集</h3><span class="sub" id="cnt">—</span><span class="actions"><label class="muted" style="font-size:.78rem;display:inline-flex;align-items:center;gap:4px;cursor:pointer;margin-right:8px" title="显示 _ 前缀的系统运行表(受保护,不可删除)"><input type="checkbox" id="showSystem" style="margin:0"> 系统表</label><button class="btn btn-ghost btn-sm" id="refresh"><i class="placeholder" data-ic="refresh"></i></button></span></div>
     <div style="overflow-x:auto"><table class="tbl">
       <thead><tr><th>数据集</th><th>描述</th><th class="num">行数</th><th class="num">大小</th><th>列 / 向量</th><th>索引</th><th>KG</th><th class="num">版本</th><th>创建</th><th>更新</th><th></th></tr></thead>
       <tbody id="rows"></tbody>
@@ -30,6 +30,7 @@ import { request } from "./src/api.js";
 import { isLoggedIn } from "./src/auth.js";
 import { runExport } from "./src/export.js";
 import { toast } from "./src/ui/toast.js";
+import { confirmDialog } from "./src/ui/modal.js";
 
 if (!isLoggedIn()) location.href = "login.html";
 const { renderShell, icon } = window;
@@ -54,6 +55,19 @@ async function doExport(name, btn) {
     toast("导出失败:" + (e?.detail || e?.message || e), "warn", 5000);
   } finally { if (btn) btn.disabled = false; }
 }
+// 删除需 EDITOR(DELETE /datasets/{n} role=EDITOR);级联清除派生资产(KG/KA/索引/catalog元数据/ACL/模板绑定)+ 二次确认 + 本地移除避免整表 reload 丢分页
+async function doDelete(name, btn) {
+  if (!(await confirmDialog({ title: "删除数据集", message: `确认删除「${name}」?将一并清除其关联的知识图谱、KA 转储、向量/全文索引、权限与模板绑定。历史任务/RAG 记录保留。此操作不可恢复。`, danger: true, confirmText: "删除" }))) return;
+  try {
+    if (btn) btn.disabled = true;
+    await request("DELETE", `/datasets/${encodeURIComponent(name)}?cascade=true`);
+    toast(`已删除:${name}`, "ok");
+    STATE.all = STATE.all.filter((d) => d.name !== name);
+    renderPage();
+  } catch (e) {
+    toast("删除失败:" + (e?.detail || e?.message || e), "danger", 5000);
+  } finally { if (btn) btn.disabled = false; }
+}
 
 const fmtSize = (b) => {
   if (b == null || isNaN(b)) return "—";
@@ -69,7 +83,7 @@ const fmtDate = (s) => {
   const p = (n) => String(n).padStart(2, "0");
   return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 };
-const STATE = { all: [], page: 1, pageSize: 10 };
+const STATE = { all: [], page: 1, pageSize: 10, showSystem: false };
 // 描述:优先人工 description(ingest 时填),否则基于元数据自动摘要
 function descOf(d) {
   if (d.description && d.description.trim()) return d.description.trim();
@@ -97,11 +111,11 @@ function rowOf(d) {
     <td class="num mono">${d.version ?? "—"}</td>
     <td class="num mono" style="color:var(--fg-lo)">${fmtDate(d.created_at)}</td>
     <td class="num mono" style="color:var(--fg-lo)">${fmtDate(d.updated_at)}</td>
-    <td style="white-space:nowrap">${canEdit ? `<button class="btn btn-icon btn-ghost btn-sm" data-export="${esc(d.name)}" title="异步导出 Parquet(202 任务 + 下载)">⬇</button>` : ""}<a href="dataset-detail.html?ds=${encodeURIComponent(d.name)}" class="btn btn-icon btn-ghost btn-sm" aria-label="进入">${icon("arrowR")}</a></td>
+    <td style="white-space:nowrap">${canEdit ? `<button class="btn btn-icon btn-ghost btn-sm" data-export="${esc(d.name)}" title="异步导出 Parquet(202 任务 + 下载)">⬇</button>` : ""}${canEdit && !d.name.startsWith("_") && !d.name.startsWith("sys_") ? `<button class="btn btn-icon btn-ghost btn-sm" data-delete="${esc(d.name)}" style="color:var(--danger)" title="删除数据集(不可恢复)">🗑</button>` : ""}<a href="dataset-detail.html?ds=${encodeURIComponent(d.name)}" class="btn btn-icon btn-ghost btn-sm" aria-label="进入">${icon("arrowR")}</a></td>
   </tr>`;
 }
 function renderPage() {
-  const all = STATE.all, total = all.length, ps = STATE.pageSize;
+  const all = STATE.all.filter((d) => STATE.showSystem || (!d.name.startsWith("_") && !d.name.startsWith("sys_"))), total = all.length, ps = STATE.pageSize;
   const totalPages = Math.max(1, Math.ceil(total / ps));
   if (STATE.page > totalPages) STATE.page = totalPages;
   const start = (STATE.page - 1) * ps;
@@ -116,7 +130,9 @@ function renderPage() {
     <select class="select" id="pageSizeSel" style="width:auto;font-size:.78rem">${[10, 20, 50].map((n) => `<option value="${n}"${n === ps ? " selected" : ""}>${n} / 页</option>`).join("")}</select>` : "";
   $("#pager").querySelectorAll("[data-go]").forEach((b) => { if (!b.disabled) b.addEventListener("click", () => { STATE.page = +b.dataset.go; renderPage(); }); });
   const sel = $("#pageSizeSel"); if (sel) sel.addEventListener("change", () => { STATE.pageSize = +sel.value; STATE.page = 1; renderPage(); });
+  $("#showSystem")?.addEventListener("change", (e) => { STATE.showSystem = e.target.checked; STATE.page = 1; renderPage(); });
   $("#rows").querySelectorAll("[data-export]").forEach((b) => b.addEventListener("click", () => doExport(b.dataset.export, b)));
+  $("#rows").querySelectorAll("[data-delete]").forEach((b) => b.addEventListener("click", () => doDelete(b.dataset.delete, b)));
 }
 async function load() {
   $("#rows").innerHTML = `<tr><td colspan="11" class="muted" style="padding:28px;text-align:center">加载中…</td></tr>`;

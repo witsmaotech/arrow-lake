@@ -190,18 +190,32 @@ class _LakeAdminMixin:
         """
         self._get_storage().update_field_comments(name, comments)
 
-    def delete_dataset(self, name: str, *, actor: str = "system") -> None:
+    def delete_dataset(
+        self, name: str, *, actor: str = "system", cascade: bool = True
+    ) -> None:
         """Delete a dataset and all its data.
 
         Args:
             name: Dataset name to delete.
+            actor: Who triggered the deletion (for the audit record).
+            cascade: When True (default) also reclaim the derived assets built
+                on top of the dataset — its KG graph (``kg_{name}``), KA dump
+                directory, Gravitino/catalog metadata, RBAC grants/denies, and
+                extraction-template bindings. Set False to drop only the Lance
+                table (e.g. to preserve a KA dump for re-ingesting the same
+                name). Every cascade step is best-effort and never blocks the
+                core Lance-table deletion.
         """
         pre_version = self._safe_version(name)
         with self._trace_span("delete_dataset", dataset=name):
             self._get_storage().delete_dataset(name)
-        # v1.8.6: best-effort drop of the dataset's isolated KG graph so
-        # "delete dataset" also reclaims its kg_{name} graph.
-        self._drop_dataset_kg_graph_best_effort(name)
+        # Cascade: reclaim derived assets (best-effort, per-subsystem isolation).
+        # KG graph drop is gated by cascade too so cascade=False truly preserves
+        # everything built on top (KG + KA + metadata) for same-name reuse.
+        cascade_summary: dict[str, str] = {}
+        if cascade:
+            self._drop_dataset_kg_graph_best_effort(name)
+            cascade_summary = self._cascade_delete_derived_assets(name)
         from arrow_lake.core.metrics import catalog_tables_total, get_metrics_enabled
 
         if get_metrics_enabled():
@@ -213,10 +227,99 @@ class _LakeAdminMixin:
         try:
             self.audit_record(
                 "dataset.deleted", dataset_name=name, actor=actor,
-                lance_version=pre_version, payload={"actor": actor},
+                lance_version=pre_version,
+                payload={"actor": actor, "cascade": cascade, **cascade_summary},
             )
         except Exception:  # noqa: BLE001
             logger.warning("delete audit failed for %s", name, exc_info=True)
+
+    def _cascade_delete_derived_assets(self, name: str) -> dict[str, str]:
+        """Best-effort cleanup of a dataset's derived assets after its Lance
+        table is dropped.
+
+        Each subsystem is isolated in its own try/except — a failure in one
+        (e.g. Gravitino down) never blocks the others or the overall deletion.
+        Returns a ``{step: "ok"|"skipped"|"failed"}`` summary for the audit
+        record (observability: which cleanups ran vs were unavailable).
+        """
+        import shutil
+        from pathlib import Path
+
+        summary: dict[str, str] = {}
+
+        # 1) KA dump directory: {he_ka_base_dir}/{artifact_key}/ holds ka/ and
+        # obsidian/. NOTE the path divergence — the Obsidian export (_lake_kg)
+        # keys on the RAW dataset name while ka/ keys on artifact_key_for(name);
+        # for non-canonical names (mixed case / hyphens / >45 chars) they split,
+        # so rmtree BOTH stems (usually identical; cheap and safe).
+        try:
+            hg_cfg = getattr(self._config, "hugegraph", None)
+            ka_base = getattr(hg_cfg, "he_ka_base_dir", None)
+            if ka_base:
+                from arrow_lake.knowledge_graph._naming import artifact_key_for
+
+                for stem in {artifact_key_for(name), name}:
+                    shutil.rmtree(Path(ka_base) / stem, ignore_errors=True)
+                summary["ka_dir"] = "ok"
+            else:
+                summary["ka_dir"] = "skipped"
+        except Exception:  # noqa: BLE001
+            summary["ka_dir"] = "failed"
+            logger.warning("cascade KA dir purge failed for %s", name, exc_info=True)
+
+        # 2) libSQL catalog registry row (v1.9.0 control plane).
+        try:
+            catalog_store = getattr(self, "_catalog_store", None)
+            if catalog_store is not None:
+                catalog_store.delete_table(name)
+                summary["catalog"] = "ok"
+            else:
+                summary["catalog"] = "skipped"
+        except Exception:  # noqa: BLE001
+            summary["catalog"] = "failed"
+            logger.warning("cascade catalog cleanup failed for %s", name, exc_info=True)
+
+        # 3) Gravitino table + fileset deregistration (_get_gravitino_bridge is
+        # not None-safe; guard on config.gravitino.enabled before calling).
+        try:
+            if getattr(self._config.gravitino, "enabled", False):
+                self._get_gravitino_bridge().deregister_dataset(name)
+                summary["gravitino"] = "ok"
+            else:
+                summary["gravitino"] = "skipped"
+        except Exception:  # noqa: BLE001
+            summary["gravitino"] = "failed"
+            logger.warning(
+                "cascade Gravitino deregister failed for %s", name, exc_info=True
+            )
+
+        # 4) RBAC grants + row/col ACL + denies.
+        try:
+            rbac_store = getattr(self, "_rbac_store", None)
+            if rbac_store is not None:
+                rbac_store.purge_dataset(name)
+                summary["rbac"] = "ok"
+            else:
+                summary["rbac"] = "skipped"
+        except Exception:  # noqa: BLE001
+            summary["rbac"] = "failed"
+            logger.warning("cascade RBAC purge failed for %s", name, exc_info=True)
+
+        # 5) Extraction-template bindings.
+        try:
+            tpl_store = getattr(self, "_extraction_template_store", None)
+            if tpl_store is not None:
+                tpl_store.clear_binding(name)
+                summary["template_bindings"] = "ok"
+            else:
+                summary["template_bindings"] = "skipped"
+        except Exception:  # noqa: BLE001
+            summary["template_bindings"] = "failed"
+            logger.warning(
+                "cascade template-binding clear failed for %s", name, exc_info=True
+            )
+
+        return summary
 
     def _drop_dataset_kg_graph_best_effort(self, name: str) -> None:
         """v1.8.6: best-effort drop of the ``kg_{name}`` graph on dataset delete.
@@ -240,7 +343,18 @@ class _LakeAdminMixin:
                 asyncio.ensure_future(coro)  # async ctx: fire-and-forget
             except RuntimeError:
                 asyncio.run(coro)  # sync ctx: run to completion
-        except Exception:
+        except Exception as exc:
+            # HugeGraph drop_graph 对不存在的图返回非 2xx → KGError。这正是
+            # desired state(图已不在):按 docstring "missing graph is a no-op" 静默,
+            # 不刷 traceback 噪音;仅对真失败(网络/权限/5xx)告警。
+            msg = str(exc).lower()
+            ctx = getattr(exc, "context", None) or {}
+            status = ctx.get("status_code") if isinstance(ctx, dict) else None
+            if status == 404 or any(
+                k in msg for k in ("not exist", "not found", "does not exist", "no such")
+            ):
+                logger.debug("KG graph already absent for dataset %s (no-op)", name)
+                return
             logger.warning(
                 "best-effort KG graph drop failed for dataset %s", name, exc_info=True
             )

@@ -97,16 +97,27 @@ def catalog_info_cmd(ctx: click.Context, name: str) -> None:
 @catalog_group.command("delete")
 @click.argument("name")
 @click.option("--yes", is_flag=True, help="Skip confirmation")
+@click.option(
+    "--no-cascade",
+    is_flag=True,
+    help="Only drop the Lance table; keep KG graph / KA dump / catalog metadata "
+    "/ ACL / template bindings for same-name reuse.",
+)
 @click.pass_context
-def catalog_delete_cmd(ctx: click.Context, name: str, yes: bool) -> None:
+def catalog_delete_cmd(
+    ctx: click.Context, name: str, yes: bool, no_cascade: bool
+) -> None:
     """Delete a dataset."""
-    if not yes and not click.confirm(f"Delete dataset '{name}'? This cannot be undone."):
+    scope = "Lance table only" if no_cascade else "dataset + derived assets (KG/KA/metadata/ACL)"
+    if not yes and not click.confirm(
+        f"Delete dataset '{name}' ({scope})? This cannot be undone."
+    ):
         return
 
     lake = _get_lake(ctx)
 
     try:
-        lake.delete_dataset(name)
+        lake.delete_dataset(name, cascade=not no_cascade)
     except Exception as exc:
         _print_error(f"Failed to delete dataset '{name}': {exc}")
         raise SystemExit(1) from None

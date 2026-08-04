@@ -414,7 +414,7 @@ class TestAuditConfig:
         cfg = AuditConfig()
         assert cfg.enabled is False
         assert cfg.hmac_secret_key == ""
-        assert cfg.audit_dataset == "_audit_trail"
+        assert cfg.audit_dataset == "sys_audit_trail"
         assert cfg.auto_record_workflow is True
 
 

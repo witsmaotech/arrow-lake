@@ -189,6 +189,33 @@ class TestRbacStore:
         store.grant_dataset_access("ds1", "editor", "write")
         assert store.get_dataset_grants("ds1")["editor"] == {"read", "write"}
 
+    def test_purge_dataset_clears_all_three_tables_and_cache(self, db: SystemDB) -> None:
+        """Cascade-delete hook: purge_dataset removes grants + row/col ACL +
+        denies for one dataset, invalidates its cache keys, and leaves other
+        datasets untouched."""
+        store = RbacStore(db, cache_ttl=60)
+        # populate three tables across two datasets
+        store.grant_dataset_access("dsA", "editor", "read")
+        store.set_row_col_acl("dsA", "editor", visible_columns=["x"], row_filter="x>0")
+        store.deny_action("dsA", "delete", reason="policy")
+        store.grant_dataset_access("dsB", "editor", "read")  # must survive
+        # warm cache for dsA
+        assert store.get_dataset_grants("dsA")["editor"] == {"read"}
+        assert store.list_row_col_acls("dsA")[0]["role"] == "editor"
+        assert store.list_denies("dsA") == {"delete"}
+
+        deleted = store.purge_dataset("dsA")
+
+        assert deleted == 3  # one row in each of the three tables
+        # all three cleared for dsA
+        assert store.get_dataset_grants("dsA") == {}
+        assert store.list_row_col_acls("dsA") == []
+        assert store.list_denies("dsA") == set()
+        # dsB untouched (cross-dataset isolation)
+        assert store.get_dataset_grants("dsB")["editor"] == {"read"}
+        # idempotent: purging an already-empty dataset is a no-op
+        assert store.purge_dataset("dsA") == 0
+
 
 # --------------------------------------------------------------------------- #
 # IdentityStore

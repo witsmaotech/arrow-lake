@@ -359,5 +359,5 @@ class TestLineageConfig:
     def test_defaults(self) -> None:
         cfg = LineageConfig()
         assert cfg.enabled is False
-        assert cfg.store_dataset == "_lineage_events"
+        assert cfg.store_dataset == "sys_lineage_events"
         assert cfg.auto_record is True

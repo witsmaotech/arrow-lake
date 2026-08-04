@@ -300,6 +300,38 @@ class RbacStore:
         return bool(deleted)
 
     # ------------------------------------------------------------------
+    # dataset-level bulk cleanup (cascade delete)
+    # ------------------------------------------------------------------
+    def purge_dataset(self, dataset: str) -> int:
+        """Delete ALL RBAC rows for a dataset (grants + row/col ACL + denies).
+
+        Used by ``Lake.delete_dataset(cascade=True)`` so deleting a dataset
+        reclaims its governance config too. Idempotent: a dataset with no rows
+        is a no-op returning 0. Invalidates the three per-dataset cache keys
+        (``grants:``/``rowcol:``/``deny:``) so the same worker never serves a
+        stale grant after purge.
+
+        Returns the total number of rows deleted.
+        """
+        with self._db.with_write() as db:
+            cur = db.execute(
+                "DELETE FROM dataset_acl_grants WHERE dataset_name = ?", (dataset,)
+            )
+            n = cur.rowcount if cur is not None else 0
+            cur = db.execute(
+                "DELETE FROM dataset_row_col_acls WHERE dataset_name = ?",
+                (dataset,),
+            )
+            n += cur.rowcount if cur is not None else 0
+            cur = db.execute(
+                "DELETE FROM acl_denies WHERE dataset_name = ?", (dataset,)
+            )
+            n += cur.rowcount if cur is not None else 0
+        for key in (f"grants:{dataset}", f"rowcol:{dataset}", f"deny:{dataset}"):
+            self._cache.invalidate(key)
+        return int(n)
+
+    # ------------------------------------------------------------------
     def invalidate_all(self) -> None:
         """Drop every cached ACL (called after bulk changes)."""
         self._cache.invalidate()

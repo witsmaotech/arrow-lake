@@ -131,6 +131,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     lake = Lake(base_uri=config.storage.base_uri, config=config)
     app.state.lake = lake
 
+    # v1.x 系统表命名规范迁移: _ 前缀 → sys_ 前缀(系统运行表与 _quality_* 临时表命名空间分离)。
+    # 启动时 best-effort rename 旧名表;旧存在且新不存在才迁,幂等,失败不阻断启动。
+    for _old, _new in (("_audit_trail", "sys_audit_trail"), ("_lineage_events", "sys_lineage_events")):
+        try:
+            _names = lake.list_datasets()
+            if _old in _names and _new not in _names:
+                lake.rename_dataset(_old, _new)
+                logger.info("system_table_renamed", **{"from": _old, "to": _new})
+        except Exception as _e:  # noqa: BLE001 — 多 worker 并发迁移:落败者撞源表已被迁走
+            _msg = str(_e).lower()
+            if "not found" in _msg or "exist" in _msg:
+                logger.debug("system_table_rename_skipped", old=_old, reason=str(_e)[:80])
+            else:
+                logger.warning("system_table_rename_failed", old=_old, exc_info=True)
+
     # Create the session manager WITHOUT blocking on warmup, then run warmup in
     # a background daemon thread. The pool lazy-creates sessions on demand, so
     # readiness does not need to wait for warmup; this keeps startup off the
@@ -254,6 +269,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         lake._lineage_index_store = app.state.lineage_index_store
         # Activate governance history (schema changes; maintenance wired separately).
         lake._governance_store = app.state.governance_store
+        # Cascade-delete hooks: Lake.delete_dataset(cascade=True) reaches these
+        # stores to reclaim per-dataset catalog metadata, RBAC grants/denies,
+        # and extraction-template bindings. Absent on the CLI Lake (no lifespan)
+        # → getattr-None-guard in the cascade helper skips them gracefully.
+        lake._catalog_store = app.state.catalog_store
+        lake._rbac_store = app.state.rbac_store
+        lake._extraction_template_store = app.state.extraction_template_store
         # Wire TaskManager durable history (Redis still holds real-time state)
         from arrow_lake.api.tasks import TaskManager
 

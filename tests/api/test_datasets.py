@@ -213,7 +213,21 @@ async def test_delete_dataset(client: AsyncClient, mock_lake_with_catalog: Magic
     resp = await client.delete("/api/v1/datasets/documents")
     assert resp.status_code == 200
     assert "deleted" in resp.json()["message"]
-    mock_lake_with_catalog.delete_dataset.assert_called_once_with("documents", actor="api-key")
+    mock_lake_with_catalog.delete_dataset.assert_called_once_with(
+        "documents", actor="api-key", cascade=True
+    )
+
+
+@pytest.mark.asyncio
+async def test_delete_dataset_cascade_false_query(
+    client: AsyncClient, mock_lake_with_catalog: MagicMock
+) -> None:
+    """?cascade=false opts out of derived-asset reclamation (table-only delete)."""
+    resp = await client.delete("/api/v1/datasets/documents?cascade=false")
+    assert resp.status_code == 200
+    mock_lake_with_catalog.delete_dataset.assert_called_once_with(
+        "documents", actor="api-key", cascade=False
+    )
 
 
 @pytest.mark.asyncio

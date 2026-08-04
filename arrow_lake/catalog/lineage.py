@@ -40,6 +40,17 @@ _LINEAGE_EVENT_SCHEMA = pa.schema(
     ]
 )
 
+# High-value query columns → scalar indexes. dataset_name accelerates
+# trace_downstream / get_dataset_history predicate pushdown (DuckDB SQL over
+# Lance), timestamp the ORDER BY, operation a low-cardinality filter. Best-effort
+# (see LineageStore._ensure_indexes): empty/absent-column tables are skipped and
+# retried after the next record_event.
+_LINEAGE_INDEX_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("dataset_name", "BTREE"),
+    ("timestamp", "BTREE"),
+    ("operation", "BITMAP"),
+)
+
 
 @dataclass(frozen=True)
 class LineageEvent:
@@ -129,6 +140,7 @@ class LineageStore:
         self._storage = storage
         self._store_dataset = store_dataset
         self._initialized = False
+        self._indexes_ready = False
         self._auth_provider: Any = None
 
     def set_lineage_index(self, index: Any) -> None:
@@ -213,6 +225,11 @@ class LineageStore:
                 )
             except Exception:  # noqa: BLE001 — fail-backfill
                 pass
+
+        # First write leaves the table non-empty → backfill indexes skipped while
+        # the table was empty (no-op once _indexes_ready is set).
+        if not self._indexes_ready:
+            self._ensure_indexes()
 
         logger.info(
             "lineage_event_recorded",
@@ -411,7 +428,26 @@ class LineageStore:
             # v1.7.1: migrate legacy table missing the column_lineage field
             self._migrate_schema()
 
+        self._ensure_indexes()
         self._initialized = True
+
+    def _ensure_indexes(self) -> None:
+        """Create scalar indexes on high-value query columns (idempotent, best-effort).
+
+        Skipped silently when the table is empty or a column is absent; the flag
+        stays unset so the next successful ``record_event`` retries with data.
+        """
+        if self._indexes_ready:
+            return
+        ready = True
+        for column, idx_type in _LINEAGE_INDEX_COLUMNS:
+            try:
+                self._storage.create_scalar_index(
+                    self._store_dataset, column, index_type=idx_type, replace=True,
+                )
+            except (StorageError, ValueError, RuntimeError, OSError):
+                ready = False
+        self._indexes_ready = ready
 
     def _migrate_schema(self) -> None:
         """Add column_lineage field if missing from a legacy lineage table."""

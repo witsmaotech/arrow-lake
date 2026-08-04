@@ -228,3 +228,43 @@ class TestAuditTrailExport:
         assert result["total_entries"] == 1
         assert result["format"] == "json"
         assert len(result["entries"]) == 1
+
+
+class TestAuditTrailIndexes:
+    """AuditTrail scalar indexes (v1.9.x) — keep audit_query/verify fast at scale.
+
+    dataset_name/timestamp/audit_id get BTREE (equality + range); event_type gets
+    BITMAP (low cardinality). Index creation is best-effort: it must never break
+    recording, and must not rebuild once ready.
+    """
+
+    def test_indexes_created_when_store_has_data(self) -> None:
+        storage = MagicMock()
+        storage.dataset_exists.return_value = True
+        trail = AuditTrail(storage=storage, hmac_secret_key="key")
+        trail.record(event_type="create", dataset_name="docs")
+        indexed = {c.args[1] for c in storage.create_scalar_index.call_args_list}
+        assert {"dataset_name", "timestamp", "event_type", "audit_id"} <= indexed
+        assert trail._indexes_ready is True
+
+    def test_index_failure_does_not_break_record(self) -> None:
+        storage = MagicMock()
+        storage.dataset_exists.return_value = True
+        storage.create_scalar_index.side_effect = StorageError(
+            error_code=ErrorCode.SCALAR_INDEX_FAILED, message="empty table",
+        )
+        trail = AuditTrail(storage=storage, hmac_secret_key="key")
+        # Best-effort: index failure is swallowed, recording still succeeds.
+        audit_id = trail.record(event_type="create")
+        assert audit_id
+        assert trail._indexes_ready is False
+
+    def test_indexes_not_rebuilt_once_ready(self) -> None:
+        storage = MagicMock()
+        storage.dataset_exists.return_value = True
+        trail = AuditTrail(storage=storage, hmac_secret_key="key")
+        trail.record(event_type="create", dataset_name="docs")
+        first = storage.create_scalar_index.call_count
+        trail.record(event_type="query", dataset_name="docs")
+        # _ensure_indexes short-circuits once the ready flag is set.
+        assert storage.create_scalar_index.call_count == first

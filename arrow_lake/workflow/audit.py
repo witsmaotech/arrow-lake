@@ -39,6 +39,17 @@ _AUDIT_ENTRY_SCHEMA = pa.schema(
     ]
 )
 
+# High-value query columns → scalar indexes, so audit_query / verify stay fast
+# once the trail grows large. BTREE for equality + range scans; BITMAP for the
+# low-cardinality event_type. Best-effort (see AuditTrail._ensure_indexes): an
+# empty or absent-column table is skipped and retried after the next record.
+_AUDIT_INDEX_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("dataset_name", "BTREE"),
+    ("timestamp", "BTREE"),
+    ("event_type", "BITMAP"),
+    ("audit_id", "BTREE"),
+)
+
 
 @dataclass(frozen=True)
 class AuditEntry:
@@ -92,6 +103,7 @@ class AuditTrail:
         self._audit_dataset = audit_dataset
         self._hmac_secret = hmac_secret_key.encode() if hmac_secret_key else b""
         self._initialized = False
+        self._indexes_ready = False
         if not hmac_secret_key:
             structlog.get_logger(__name__).warning(
                 "audit_hmac_disabled",
@@ -162,6 +174,11 @@ class AuditTrail:
                 error_code=ErrorCode.AUDIT_STORE_FAILED,
                 message=f"Failed to record audit entry: {exc}",
             ) from exc
+
+        # First write leaves the table non-empty → backfill indexes skipped while
+        # the table was empty (no-op once _indexes_ready is set).
+        if not self._indexes_ready:
+            self._ensure_indexes()
 
         logger.info(
             "audit_entry_recorded",
@@ -315,6 +332,24 @@ class AuditTrail:
         canonical = json.dumps(entry_dict, sort_keys=True, default=str)
         return hmac.new(self._hmac_secret, canonical.encode(), hashlib.sha256).hexdigest()
 
+    def _ensure_indexes(self) -> None:
+        """Create scalar indexes on high-value query columns (idempotent, best-effort).
+
+        Skipped silently when the table is empty or a column is absent; the flag
+        stays unset so the next successful ``record`` retries with data present.
+        """
+        if self._indexes_ready:
+            return
+        ready = True
+        for column, idx_type in _AUDIT_INDEX_COLUMNS:
+            try:
+                self._storage.create_scalar_index(
+                    self._audit_dataset, column, index_type=idx_type, replace=True,
+                )
+            except (StorageError, ValueError, RuntimeError, OSError):
+                ready = False
+        self._indexes_ready = ready
+
     def _ensure_store(self) -> None:
         """Lazily create the audit trail dataset if it doesn't exist."""
         if self._initialized:
@@ -328,6 +363,7 @@ class AuditTrail:
             self._storage.create_dataset(self._audit_dataset, empty_table)
             logger.info("audit_trail_created", dataset=self._audit_dataset)
 
+        self._ensure_indexes()
         self._initialized = True
 
     @staticmethod

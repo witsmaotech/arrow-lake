@@ -17,7 +17,7 @@ class LineageConfig(BaseModel):
     """
 
     enabled: bool = False
-    store_dataset: str = "_lineage_events"
+    store_dataset: str = "sys_lineage_events"
     auto_record: bool = True
 
 
@@ -33,7 +33,7 @@ class AuditConfig(BaseModel):
 
     enabled: bool = False
     hmac_secret_key: str = ""
-    audit_dataset: str = "_audit_trail"
+    audit_dataset: str = "sys_audit_trail"
     auto_record_workflow: bool = True
 
 
