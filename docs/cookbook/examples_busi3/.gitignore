@@ -1,3 +1,0 @@
-# 运行产物 (run_all.sh 可重建): KA dump / FAISS index / results / PDF 源料
-data/
-*.pdf

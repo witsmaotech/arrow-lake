@@ -1,5 +1,0 @@
-# 中间结果（大 JSON），不提交；保留 .gitkeep 和 *.md
-*.json
-!*.gitkeep
-# cytoscape.min.js 本地缓存（build_page.py 内联进 dashboard.html，无需提交）
-assets/
