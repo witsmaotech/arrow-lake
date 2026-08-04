@@ -155,7 +155,7 @@ curl -X POST http://localhost:8000/api/v1/auth/refresh \
 
 ## 4.5 RBAC Role Matrix (continued)
 
-Over 30 API endpoints enforce role-based access control via the `require_role()` dependency.
+Over 180 of the 186 routes enforce role-based access control via the `require_role()` dependency.
 The role hierarchy is **ADMIN > EDITOR > VIEWER** — each higher role inherits the permissions
 of all roles below it.
 

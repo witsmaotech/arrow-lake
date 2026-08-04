@@ -60,8 +60,8 @@ Example output:
 │ arrow-lake │ 1.10.0  │
 │ python     │ 3.11.9  │
 │ pyarrow    │ 23.0.1  │
-│ duckdb     │ 1.5.2   │
-│ lancedb    │ 0.30.2  │
+│ duckdb     │ 1.5.5   │
+│ lancedb    │ 0.36.0  │
 └────────────┴─────────┘
 ```
 
