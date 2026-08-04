@@ -42,12 +42,13 @@ class OlapConfig(BaseModel):
     ducklake_enabled: bool = False
     ducklake_ttl_days: int = 7
     ducklake_max_join_rows: int = 1_000_000
-    # When False (default), ``pyarrow_fallback`` stays put even for vector-less
-    # datasets. The implicit promotion to native Rust lance scan in
-    # OlapSearchBridge._register_dataset is the D-state IO stall that froze the
-    # API on 2026-08-04. Set True only for a known-stable vector-less dataset
-    # where the 13-20x LIMIT/OFFSET speedup is worth the D-state risk.
-    lance_auto_promote: bool = False
+    # When True (default), vector-less structured datasets use native Rust lance
+    # scan (13-20x faster LIMIT/OFFSET pushdown). The D-state IO stall risk that
+    # once froze the API (2026-08-04) is now bounded by the dedicated OLAP thread
+    # pool (api/utils.olap_executor) + gunicorn worker timeout — a stuck scan only
+    # blocks other OLAP queries, not the whole API. Set False to fall back to the
+    # slower PyArrow path if absolute stability matters more than scan speed.
+    lance_auto_promote: bool = True
 
     # Performance tuning
     preserve_insertion_order: bool = False
