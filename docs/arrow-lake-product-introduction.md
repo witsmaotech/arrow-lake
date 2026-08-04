@@ -461,7 +461,7 @@ Arrow Lake is designed so you can go from zero to a working pipeline in under th
 
 **Documentation Suite:**
 
-The documentation includes 19 bilingual cookbook chapters (English and Chinese) with 50+ runnable examples covering every feature from basic ingestion to advanced GraphRAG, data masking, and lineage visualization. A comprehensive [`usage-guide.md`](./usage-guide.md), the authoritative [`ARCHITECTURE.md`](./ARCHITECTURE.md) reference, and the diagram-driven [`architecture-design/`](./architecture-design/) design doc provide deeper architectural context, configuration reference, and deployment procedures.
+The documentation includes 19 bilingual cookbook chapters (English and Chinese) with 50+ runnable examples covering every feature from basic ingestion to advanced GraphRAG, data masking, and lineage visualization. The authoritative [`ARCHITECTURE.md`](./ARCHITECTURE.md) reference, the diagram-driven [`architecture-design/`](./architecture-design/) design doc, and the [`cookbook/`](./cookbook/) how-to suite provide deeper architectural context, configuration reference, and deployment procedures.
 
 **Configuration System:**
 
@@ -599,7 +599,6 @@ answer = await lake.rag_query("What is the state of the art?", dataset_name="kno
 |----------|----------|
 | Source Code | [GitHub](https://github.com/wits-sunpw/arrow-lake) / [Gitee](https://gitee.com/wits__sunpw/wits-infra-dintellihub) |
 | Cookbook | 19 chapters, 50+ examples — bilingual English/Chinese |
-| Usage Guide | `docs/usage-guide.md` |
 | Security Policy | `SECURITY.md` |
 | API Documentation | Auto-generated at `/docs` when server is running |
 

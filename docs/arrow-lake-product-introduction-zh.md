@@ -461,7 +461,7 @@ Arrow Lake 的设计目标是让你在三分钟内从零搭建出一条可运行
 
 **文档套件：**
 
-文档包含 19 章双语 Cookbook（英文和中文），50+ 个可运行示例，覆盖从基础摄入到高级 GraphRAG、数据脱敏、血缘可视化的每个功能。一份详尽的 [`usage-guide.md`](./usage-guide.md)、权威的 [`ARCHITECTURE.md`](./ARCHITECTURE.md) 技术参考，以及以图驱动的 [`architecture-design/`](./architecture-design/) 设计文档，提供更深层的架构上下文、配置参考和部署流程。
+文档包含 19 章双语 Cookbook（英文和中文），50+ 个可运行示例，覆盖从基础摄入到高级 GraphRAG、数据脱敏、血缘可视化的每个功能。权威的 [`ARCHITECTURE.md`](./ARCHITECTURE.md) 技术参考、以图驱动的 [`architecture-design/`](./architecture-design/) 设计文档，以及 [`cookbook/`](./cookbook/) 实战手册，提供更深层的架构上下文、配置参考和部署流程。
 
 **配置系统：**
 
@@ -599,7 +599,6 @@ answer = await lake.rag_query("What is the state of the art?", dataset_name="kno
 |----------|----------|
 | 源代码 | [GitHub](https://github.com/wits-sunpw/arrow-lake) / [Gitee](https://gitee.com/wits__sunpw/wits-infra-dintellihub) |
 | Cookbook | 19 章，50+ 个示例 —— 中英双语 |
-| 使用指南 | `docs/usage-guide.md` |
 | 安全策略 | `SECURITY.md` |
 | API 文档 | 服务启动时自动生成于 `/docs` |
 
