@@ -38,11 +38,6 @@ Arrow Lake 是一个**生产级、统一的多模态数据湖仓（Unified Multi
 |---|---|---|
 | [`docs/ARCHITECTURE.md`](../ARCHITECTURE.md)（990 行权威文本参考） | 逐项核实源码的技术参考 | 本文以图为骨架重组其要点，深度 API 细节回链 |
 | [`docs/cookbook/`](../cookbook/)（16 章实战手册） | 可跑的 how-to | 本文 §4 流程章指路对应 cookbook 章 |
-| [`docs/design_plan/`](../design_plan/)（ADR + 架构演进草案） | 决策记录与历史草案 | 本文引用 ADR-05~08、v1.3/v1.5 架构演进 |
-| [`docs/impls/`](../impls/)（v1.0–v1.3 实现计划） | 分阶段落地计划 | 本文 §6.4 版本演进引用 |
-| 各优化 plan（`lance`/`duckdb`/`llm-module`/`metaflow`/`sdk-cli`/`pylance`/`v1.4.x`/`v1.6.x`/`v1.7.x`/`v1.8.x`） | 单域优化方案 | 本文相应模块/流程章引用 |
-| [`docs/review/`](../review/)（architect/fullstack/security/quality/perf 评审） | 生产就绪评审 | 本文 §5 横切关注点引用结论 |
-| [`docs/arrow-lake-v1.8.6-product-introduction-zh.md`](../arrow-lake-v1.8.6-product-introduction-zh.md) | 产品介绍 | 互补：产品视角 vs 本文架构视角 |
 | [`CHANGELOG.md`](../../CHANGELOG.md) | 变更流水 | 本文 §6.4 抽取架构级变更 |
 
 ## 0.3 读图约定与图集索引
@@ -88,28 +83,28 @@ Arrow Lake 是一个**生产级、统一的多模态数据湖仓（Unified Multi
 
 | 层 | 技术 | 角色 | 选型依据（ADR/plan） |
 |---|---|---|---|
-| 计算层 | **Daft** | lazy DataFrame + 内置 AI 函数 + 26 连接器 + 多模态 decode | [`daft-repositioning-plan.md`](../design_plan/daft-repositioning-plan.md)、[`daft-phase2-data-source-expansion.md`](../design_plan/daft-phase2-data-source-expansion.md) |
-| 湖仓格式 | **Lance / pylance** | 列式 + 向量索引 + 标量索引 + FTS + tags/branches | [`lance-optimization-plan.md`](../lance-optimization-plan.md)、[`pylance-upgrade-plan-v4-to-v6.md`](../pylance-upgrade-plan-v4-to-v6.md) |
+| 计算层 | **Daft** | lazy DataFrame + 内置 AI 函数 + 26 连接器 + 多模态 decode | — |
+| 湖仓格式 | **Lance / pylance** | 列式 + 向量索引 + 标量索引 + FTS + tags/branches | — |
 | 应用层 | **LanceDB** | 向量库 SDK：Table / Namespace / 索引 / 版本 | — |
 | 分布式 | **Ray** | head + worker + GPU；KG 构建 / 批嵌入 | — |
-| 编排 | **Metaflow** | 工作流 + checkpoint + retry/backoff + Argo 桥 | [`metaflow-optimization-plan.md`](../metaflow-optimization-plan.md) |
-| 引擎层 | **DuckDB** | **主力查询路径**（`lance_scan` / `vector_search` / `fts`） | [`duckdb-optimization-plan.md`](../duckdb-optimization-plan.md)、ADR-05/06/07 |
-| 物化层 | **DuckLake** | 跨存储物化视图（TTL + ART index + 行预算） | [`duckdb-optimization-plan.md`](../duckdb-optimization-plan.md) |
+| 编排 | **Metaflow** | 工作流 + checkpoint + retry/backoff + Argo 桥 | — |
+| 引擎层 | **DuckDB** | **主力查询路径**（`lance_scan` / `vector_search` / `fts`） | ADR-05/06/07 |
+| 物化层 | **DuckLake** | 跨存储物化视图（TTL + ART index + 行预算） | — |
 | 图谱 | **HugeGraph** | 知识图谱存储 + Gremlin 遍历；Vermeer 构建 | — |
-| 治理 | **Apache Gravitino** | 统一 catalog + tag-driven ACL + masking + retention | [`v1.4.1-gravitino-integration-plan.md`](../v1.4.1-gravitino-integration-plan.md)、[`v1.4.2-gravitino-governance-deep-plan.md`](../v1.4.2-gravitino-governance-deep-plan.md) |
+| 治理 | **Apache Gravitino** | 统一 catalog + tag-driven ACL + masking + retention | — |
 | 对象存储 | **MinIO / S3** | blob 原文 + 备份 | — |
-| 缓存/任务 | **Redis** | 分布式会话 + JWT 黑名单 + 异步任务跨 worker 共享 + rate_limit/login lockout（v1.9.2） | [`v1.6.0-plan.md`](../v1.6.0-plan.md)、[`v1.6.1_performance_plan.md`](../v1.6.1_performance_plan.md) |
-| **控制面** | **libSQL / Turso（sqld）** | **v1.9.0 控制面库**：RBAC / identity / personal_token / catalog 注册 / 任务历史 / lineage 索引 / RAG 会话 / governance；**数据面不触碰**；opt-in + fail_close/fail_soft | [`v1.9.0-turso-system-db-plan.md`](../v1.9.0-turso-system-db-plan.md) |
-| 前端 | **Console** | v1.9.1 起（v1.9.2 完备）运维/合规/治理 Web 控制台（原生 JS + ES module，同源 mount `/console`，复用 REST + RBAC） | [`v1.9.1-frontend-core-impl-plan.md`](../v1.9.1-frontend-core-impl-plan.md) |
+| 缓存/任务 | **Redis** | 分布式会话 + JWT 黑名单 + 异步任务跨 worker 共享 + rate_limit/login lockout（v1.9.2） | — |
+| **控制面** | **libSQL / Turso（sqld）** | **v1.9.0 控制面库**：RBAC / identity / personal_token / catalog 注册 / 任务历史 / lineage 索引 / RAG 会话 / governance；**数据面不触碰**；opt-in + fail_close/fail_soft | — |
+| 前端 | **Console** | v1.9.1 起（v1.9.2 完备）运维/合规/治理 Web 控制台（原生 JS + ES module，同源 mount `/console`，复用 REST + RBAC） | — |
 
-> **关键澄清**：DuckDB 是**主力查询路径**而非 fallback。`olap_query` / `vector_search` / `fts` 全部由 DuckDB 执行（40+ 处调用），LanceDB 提供 Table/索引/版本管理 API。DuckLake 在其上提供物化视图。三者分工见 ADR-06（[DuckDB OLAP + DuckLake 评估](../design_plan/adr-06-duckdb-olap-and-ducklake-evaluation.md)）与 ADR-07（[DuckDB 高可用](../design_plan/adr-07-duckdb-high-availability.md)）。
+> **关键澄清**：DuckDB 是**主力查询路径**而非 fallback。`olap_query` / `vector_search` / `fts` 全部由 DuckDB 执行（40+ 处调用），LanceDB 提供 Table/索引/版本管理 API。DuckLake 在其上提供物化视图。三者分工见 ADR-06（[DuckDB OLAP + DuckLake 评估](./adrs/adr-06-duckdb-olap-and-ducklake-evaluation.md)）与 ADR-07（[DuckDB 高可用](./adrs/adr-07-duckdb-high-availability.md)）。
 
 ## 1.3 设计哲学
 
 1. **Facade + Mixin + Bridge + Protocol 组合** —— 一个 `Lake` 对象拥有全部能力，内部按子系统懒加载、按能力桥接。
 2. **优雅降级是一等公民** —— Ray 不可用→本地、NeMo→CPU MinHash、KG→Vector RAG、Gremlin→REST。系统在不完整基础设施下持续服务（详见 §5.3）。
 3. **配置驱动、四层覆盖** —— 代码默认 < `.env` < 环境变量 < YAML，34 个子配置覆盖每个子系统。
-4. **压测驱动、不做投机性优化** —— v1.8.0 用 gate 框架对 async / 分布式索引 / ColBERT 逐项裁决，数据证明该做才做（见 [`v1.8.0-implementation.md`](../v1.8.0-implementation.md)、§6.4）。
+4. **压测驱动、不做投机性优化** —— v1.8.0 用 gate 框架对 async / 分布式索引 / ColBERT 逐项裁决，数据证明该做才做（见 §6.4）。
 
 ## 1.4 顶层五层架构
 
@@ -146,7 +141,7 @@ Arrow Lake 采用**严格五层架构**：请求自上而下穿越 **① 接入 
 
 **请求穿越**（REST）：`AuthN（API Key HMAC / JWT）→ AuthZ（RBAC + DatasetACL）→ 限流（滑动窗口 per IP:path）→ 路由 → 能力层`。SDK / CLI 直接调 facade，不经过 HTTP 中间件，但仍受配置层 RBAC 约束（`DatasetACL` 行/列级）。
 
-**设计要点**：三入口共用同一套 facade 方法与异常体系（§6.3），保证"SDK 能做的 REST 都能做、CLI 都能做"。详见 [`sdk-cli-optimization-plan.md`](../sdk-cli-optimization-plan.md) 与 cookbook [`10-rest-api`](../cookbook/10-rest-api.md)、[`13-cli-reference`](../cookbook/13-cli-reference.md)。
+**设计要点**：三入口共用同一套 facade 方法与异常体系（§6.3），保证"SDK 能做的 REST 都能做、CLI 都能做"。详见 cookbook [`10-rest-api`](../cookbook/10-rest-api.md)、[`13-cli-reference`](../cookbook/13-cli-reference.md)。
 
 ## 2.2 ② 能力层（Capabilities）
 
@@ -166,7 +161,7 @@ Arrow Lake 采用**严格五层架构**：请求自上而下穿越 **① 接入 
 - **Ray 集群** —— head + worker + worker-gpu。承载 KG 构建（Vermeer 并行建图）、批量嵌入、（预留）分布式索引 backfill。Ray 不可用时降级本地执行（§5.3）。
 - **嵌入器矩阵** —— `Local`（单机）/ `Daft`（批量）/ `CLIP`（多模态）/ `RayServe`（在线服务）四种，按场景选；模型注册表统一版本。
 
-**设计要点**：嵌入是摄取与查询共享的能力（写时嵌入、读时查向量），故抽到计算层而非能力层。详见 [`llm-module-optimization-plan.md`](../llm-module-optimization-plan.md) 与 §3.4。
+**设计要点**：嵌入是摄取与查询共享的能力（写时嵌入、读时查向量），故抽到计算层而非能力层。详见 §3.4。
 
 ## 2.4 ④ 存储引擎层（Engines）
 
@@ -178,7 +173,7 @@ Arrow Lake 采用**严格五层架构**：请求自上而下穿越 **① 接入 
 | **DuckDB** | **主力查询执行**：扫 + ANN + FTS + SQL | `lance_scan` / `vector_search` / `fts` / `olap_query` |
 | **DuckLake** | 跨存储物化视图 | `materialize` / `cleanup_materialized`（TTL + ART index） |
 
-**设计要点**：LanceDB 管"数据怎么存 + 索引怎么建"，DuckDB 管"查询怎么跑"。这是 v1.7.1 重定位的成果（[ADR-05](../design_plan/adr-05-duckdb-olap-deviation.md) 记录了最初偏离设计、[ADR-06](../design_plan/adr-06-duckdb-olap-and-ducklake-evaluation.md) 评估定型）。DuckDB 会话由 `DuckDBSessionManager` 用信号量管并发，避免连接爆炸。详见 [`duckdb-optimization-plan.md`](../duckdb-optimization-plan.md)、[`lance-optimization-plan.md`](../lance-optimization-plan.md)。
+**设计要点**：LanceDB 管"数据怎么存 + 索引怎么建"，DuckDB 管"查询怎么跑"。这是 v1.7.1 重定位的成果（[ADR-05](./adrs/adr-05-duckdb-olap-deviation.md) 记录了最初偏离设计、[ADR-06](./adrs/adr-06-duckdb-olap-and-ducklake-evaluation.md) 评估定型）。DuckDB 会话由 `DuckDBSessionManager` 用信号量管并发，避免连接爆炸。
 
 ## 2.5 ⑤ 持久化层（Persistence）
 
@@ -197,7 +192,7 @@ Arrow Lake 采用**严格五层架构**：请求自上而下穿越 **① 接入 
 - **治理（Gravitino）** —— 统一 catalog，**tag-driven ACL**（打标签即授权/脱敏），masking engine（v1.9.6 暴露 redact/hash/partial/nullify 4 函数 + HMAC fail-fast + mask-preview），retention enforcement，**lineage 可视化**（v1.9.6 `lineage.html` + 列级血缘 + max_nodes 截断）。作用于能力层与引擎层。
 - **可观测** —— `structlog` 结构化 JSON 日志 + Prometheus 指标 + OpenTelemetry 分布式追踪（Jaeger）+ Loki 日志聚合。
 - **安全** —— AuthN/AuthZ、注入防御、HMAC 审计、限流（v1.9.2 rate_limit+login lockout 迁 Redis）；**v1.9.6 fail-closed 主线**（masking/row-filter 错误返空表不泄露、HMAC 缺 key 启动阻断、mask-preview 列名白名单防注入、lineage 标签 HTML 转义防 XSS）。经 FastAPI 中间件 + facade hook 作用。
-- **控制面持久化（system_db，v1.9.0）** —— 横切面的"记忆层"：RBAC / identity / personal_token / catalog 注册 / 任务历史 / lineage 索引 / RAG 会话 / governance 由 **libSQL / Turso（sqld）** 统一持久化；**数据面（Lance / DuckDB / HugeGraph / MinIO）完全不触碰**。opt-in（`enabled` 默认 false，渐进启用）+ fail_close（RBAC/identity，库挂拒非 admin）/ fail_soft（catalog/tasks/rag，记日志降级）双模；`arrow_lake/system_db/` **12 个 store**（rbac/identity/catalog/task_history/lineage_index/rag_session/governance/user_state/ingest_dlq + v1.10.0 新增 extraction_templates/template_quality_runs/doc_type_categories，+ `base.py` 基类）+ 启动迁移 V001–V007。设计见 [`v1.9.0-turso-system-db-plan.md`](../v1.9.0-turso-system-db-plan.md)。
+- **控制面持久化（system_db，v1.9.0）** —— 横切面的"记忆层"：RBAC / identity / personal_token / catalog 注册 / 任务历史 / lineage 索引 / RAG 会话 / governance 由 **libSQL / Turso（sqld）** 统一持久化；**数据面（Lance / DuckDB / HugeGraph / MinIO）完全不触碰**。opt-in（`enabled` 默认 false，渐进启用）+ fail_close（RBAC/identity，库挂拒非 admin）/ fail_soft（catalog/tasks/rag，记日志降级）双模；`arrow_lake/system_db/` **12 个 store**（rbac/identity/catalog/task_history/lineage_index/rag_session/governance/user_state/ingest_dlq + v1.10.0 新增 extraction_templates/template_quality_runs/doc_type_categories，+ `base.py` 基类）+ 启动迁移 V001–V007。
 
 横切面的深入讨论见 §5。
 
@@ -244,13 +239,13 @@ Arrow Lake 采用**严格五层架构**：请求自上而下穿越 **① 接入 
 - **关键文件**：`app.py`（工厂）、`_auth.py`、`_rbac.py`、`_middleware.py`、各 router（`routers/`）。
 - **公共 API**：HTTP 端点；`create_app()` 工厂。
 - **依赖**：调用 `Lake` facade。被 `cli/` 复用同一套 schema。
-- **设计要点**：v1.6.1+ 异步任务端点（`/ingest/async`、`/backup/create/async`、`/tasks/{id}/status`）；安全加固见 [`review/production-review-security.md`](../review/production-review-security.md)。详见 cookbook [`10-rest-api`](../cookbook/10-rest-api.md)。
+- **设计要点**：v1.6.1+ 异步任务端点（`/ingest/async`、`/backup/create/async`、`/tasks/{id}/status`）；安全加固见 §5.1。详见 cookbook [`10-rest-api`](../cookbook/10-rest-api.md)。
 
 ### [`cli/`](../../arrow_lake/cli/) —— 命令行
 
 - **职责**：Click + Rich，16 命令组，覆盖全部 facade 能力。
 - **依赖**：调用 `Lake` facade，复用 `api/` 的 schema 与校验。
-- **设计要点**：Rich 美化输出、进度条；与 SDK / REST 同源。详见 cookbook [`13-cli-reference`](../cookbook/13-cli-reference.md)、[`design_plan/cli-expansion-plan.md`](../design_plan/cli-expansion-plan.md)。
+- **设计要点**：Rich 美化输出、进度条；与 SDK / REST 同源。详见 cookbook [`13-cli-reference`](../cookbook/13-cli-reference.md)。
 
 ### [`sdk/`](../../arrow_lake/sdk/) —— 对外 SDK 桥
 - 薄封装，暴露 `Lake` 给外部 Python 消费者，做版本兼容与便捷构造。
@@ -263,7 +258,7 @@ Arrow Lake 采用**严格五层架构**：请求自上而下穿越 **① 接入 
 - **关键文件**：`sources/`（10 源：sql/kafka/iceberg/deltalake/http/images/videos/mixed/documents/and_embed）、`parser.py`（Docling/Kreuzberg）、`chunker.py`（7 策略）、`storage_manager.py`。
 - **公共 API**：经 `_LakeIngestMixin` 暴露 `create_dataset` / `ingest` / `ingest_*` / `append_dataset` / `upsert` / `update_rows` / `delete_rows` / `quality_filter` / `deduplicate`。
 - **依赖**：`embed/`（嵌入）、`storage/`（blob）、`quality/`（质量门）、Daft（批量）。
-- **设计要点**：v1.8.x 用 Docling 库内嵌替代 Kreuzberg（多格式 + RapidOCR 中文），见 [`docling-ocr-migration-adr.md`](../docling-ocr-migration-adr.md)；7 种切块策略见 [`chunker.py`](../../arrow_lake/ingest/chunker.py)。详见 §4.1、cookbook [`02-ingestion`](../cookbook/02-ingestion.md)。
+- **设计要点**：v1.8.x 用 Docling 库内嵌替代 Kreuzberg（多格式 + RapidOCR 中文）；7 种切块策略见 [`chunker.py`](../../arrow_lake/ingest/chunker.py)。详见 §4.1、cookbook [`02-ingestion`](../cookbook/02-ingestion.md)。
 
 ### [`storage/`](../../arrow_lake/storage/) —— 对象存储抽象
 - **职责**：`BlobStoreManager` 抽象 S3/MinIO，blob 原文 + 生命周期 + 备份策略。
@@ -277,14 +272,14 @@ Arrow Lake 采用**严格五层架构**：请求自上而下穿越 **① 接入 
 - **关键文件**：`session.py`（会话管理）、`bridges/`（VectorSearch/FTS/Hybrid/Faceted/Ensemble/Olap）、`materialize.py`（DuckLake）、`cache.py`。
 - **公共 API**：经 `_LakeQueryMixin` / `_LakeSearchMixin`：`search` / `text_search` / `hybrid_search` / `faceted_search` / `ensemble_search` / `olap_query` / `sql_query` / `materialize` / `export` / `daft_query` + 索引管理（`create_vector_index` / `create_fts_index` / `rebuild_vector_index` / ...）。
 - **依赖**：DuckDB / LanceDB / DuckLake；被 `rag/`（检索）、`api/` / `cli/` 调用。
-- **设计要点**：v1.8.0 Reranker（#5）、DuckLake 物化视图、SQL-PGQ/DuckLake 探索见 [`duckdb-optimization-plan.md`](../duckdb-optimization-plan.md)；查询缓存与并发信号量是性能关键。详见 §4.2–4.3、cookbook [`04`](../cookbook/04-vector-search.md)/[`05`](../cookbook/05-fulltext-search.md)/[`06`](../cookbook/06-hybrid-faceted.md)/[`07`](../cookbook/07-olap-analytics.md)。
+- **设计要点**：v1.8.0 Reranker（#5）、DuckLake 物化视图、SQL-PGQ/DuckLake 探索；查询缓存与并发信号量是性能关键。详见 §4.2–4.3、cookbook [`04`](../cookbook/04-vector-search.md)/[`05`](../cookbook/05-fulltext-search.md)/[`06`](../cookbook/06-hybrid-faceted.md)/[`07`](../cookbook/07-olap-analytics.md)。
 
 ### [`embed/`](../../arrow_lake/embed/) —— 嵌入引擎
 
 - **职责**：Daft 批量编码 + CLIP 多模态 + Ray Serve 在线 + 模型注册表。
 - **关键文件**：`local.py`、`daft_backend.py`、`clip.py`、`ray_serve.py`、`registry.py`。
 - **公共 API**：内部模块，经 `ingest/`（写时嵌入）与 `rag/`（查询时嵌入）调用。
-- **设计要点**：四后端按场景选；bge-m3 文本 1024 维、CLIP 图像/文本双塔。详见 [`llm-module-optimization-plan.md`](../llm-module-optimization-plan.md)。
+- **设计要点**：四后端按场景选；bge-m3 文本 1024 维、CLIP 图像/文本双塔。
 
 ## 3.5 数据质量
 
@@ -303,7 +298,7 @@ Arrow Lake 采用**严格五层架构**：请求自上而下穿越 **① 接入 
 - **关键文件**：`pipeline.py`、`providers/`（5 LLM）、`reranker.py`、`hyde.py`、`citations.py`。
 - **公共 API**：经 `_LakeRAGMixin`（全 async）：`await rag_query(question, dataset, top_k, strategy, template_name)` / `rag_query_stream` / `rag_batch_query` / `rag_extract` / `rag_get_history` / `rag_feedback`。
 - **依赖**：`query/`（检索）、`knowledge_graph/`（GraphRAG）、`embed/`（查询嵌入）。
-- **设计要点**：v1.8.0 Reranker（#5）、5 LLM provider 抽象、citation 锚点。详见 §4.4、cookbook [`08-rag-pipeline`](../cookbook/08-rag-pipeline.md)、[`llm-module-optimization-plan.md`](../llm-module-optimization-plan.md)。
+- **设计要点**：v1.8.0 Reranker（#5）、5 LLM provider 抽象、citation 锚点。详见 §4.4、cookbook [`08-rag-pipeline`](../cookbook/08-rag-pipeline.md)。
 
 ### [`knowledge_graph/`](../../arrow_lake/knowledge_graph/) —— 知识图谱
 
@@ -311,7 +306,7 @@ Arrow Lake 采用**严格五层架构**：请求自上而下穿越 **① 接入 
 - **关键文件**：`hugegraph_client.py`、`vermeer.py`、`builder.py`、`retriever.py`、`extractor.py`、`import_export.py`。
 - **公共 API**：经 `_LakeKGMixin`（全 async）：`await kg_build(dataset) -> task_id`（fire-and-forget）/ `kg_build_status(task_id)` / `kg_query(query, traversal_depth)` / `kg_get_neighbors` / `kg_stats` / `kg_all_shortest_paths` / `kg_weighted_shortest_path` / `kg_rays` / `kg_rings`。
 - **依赖**：HugeGraph（存储）、Vermeer（构建）、Ray（并行）、LLM（实体抽取）。
-- **设计要点**：v1.6.1 kg_build 拆 `prepare_build` + `execute_build` 并 fire-and-forget；v1.6.3 Gremlin 绑定修复 + REST 降级；**v1.8.6 per-dataset 分图隔离 + IDOR ACL gate**（[`v1.8.6-per-dataset-kg-isolation-plan.md`](../v1.8.6-per-dataset-kg-isolation-plan.md)）。详见 §4.5、cookbook [`09-knowledge-graph`](../cookbook/09-knowledge-graph.md)。
+- **设计要点**：v1.6.1 kg_build 拆 `prepare_build` + `execute_build` 并 fire-and-forget；v1.6.3 Gremlin 绑定修复 + REST 降级；**v1.8.6 per-dataset 分图隔离 + IDOR ACL gate**（v1.8.6）。详见 §4.5、cookbook [`09-knowledge-graph`](../cookbook/09-knowledge-graph.md)。
 
 ## 3.7 治理与编排
 
@@ -320,14 +315,14 @@ Arrow Lake 采用**严格五层架构**：请求自上而下穿越 **① 接入 
 - **职责**：Gravitino 桥 + 血缘存储 + tag→ACL + Auth provider。
 - **关键文件**：`gravitino_bridge.py`、`lineage_store.py`、`acl.py`、`auth_providers.py`。
 - **公共 API**：经 `_LakeLineageMixin` / 治理 API；tag 驱动授权/脱敏。
-- **设计要点**：tag-driven ACL、masking engine、retention enforcement。详见 cookbook [`15-gravitino-metadata`](../cookbook/15-gravitino-metadata.md)、[`v1.4.2-gravitino-governance-deep-plan.md`](../v1.4.2-gravitino-governance-deep-plan.md)、[`reports/gravitino-integration-analysis.md`](../reports/gravitino-integration-analysis.md)。
+- **设计要点**：tag-driven ACL、masking engine、retention enforcement。详见 cookbook [`15-gravitino-metadata`](../cookbook/15-gravitino-metadata.md)。
 
 ### [`workflow/`](../../arrow_lake/workflow/) —— 工作流编排
 
 - **职责**：Metaflow + Argo 桥 + retry/backoff + checkpoint。
 - **关键文件**：`flows/`、`argo_bridge.py`、`retry.py`。
 - **公共 API**：`list_flows` / `get_flow_info`（经 `_LakeAdminMixin`）。
-- **设计要点**：Metaflow checkpoint/retry，Argo 桥接生产调度。详见 cookbook [`14-workflow-orchestration`](../cookbook/14-workflow-orchestration.md)、[`metaflow-optimization-plan.md`](../metaflow-optimization-plan.md)。
+- **设计要点**：Metaflow checkpoint/retry，Argo 桥接生产调度。详见 cookbook [`14-workflow-orchestration`](../cookbook/14-workflow-orchestration.md)。
 
 ## 3.8 运行时与运维
 
@@ -365,8 +360,6 @@ Arrow Lake 采用**严格五层架构**：请求自上而下穿越 **① 接入 
 
 **参考材料**：
 - cookbook [`02-ingestion`](../cookbook/02-ingestion.md)、[`11-quality-dedup`](../cookbook/11-quality-dedup.md)
-- [`docling-ocr-migration-adr.md`](../docling-ocr-migration-adr.md)（Docling 替代 Kreuzberg）
-- [`plan-upload-minio-ingest.md`](../plan-upload-minio-ingest.md)（MinIO 摄取）
 - examples [`ingestion/`](../../examples/ingestion/)、[`chunking/`](../../examples/chunking/)
 - 业务端到端：§4.9 芜湖 552 页 PDF
 
@@ -384,9 +377,9 @@ Arrow Lake 采用**严格五层架构**：请求自上而下穿越 **① 接入 
 
 **关键代码路径**：`Lake.search(query_vector, top_k, metric, vector_column, where)` → `VectorSearchBridge` → DuckDB `vector_search`。索引管理：`create_vector_index` / `create_fts_index` / `rebuild_vector_index`。
 
-**参考材料**：cookbook [`04-vector-search`](../cookbook/04-vector-search.md)、[`05-fulltext-search`](../cookbook/05-fulltext-search.md)、[`06-hybrid-faceted`](../cookbook/06-hybrid-faceted.md)；[`lance-optimization-plan.md`](../lance-optimization-plan.md)（索引选型 IVF_PQ 参数：bge-m3 1024 维 → `num_sub_vectors=32`）；examples [`search/`](../../examples/search/)。
+**参考材料**：cookbook [`04-vector-search`](../cookbook/04-vector-search.md)、[`05-fulltext-search`](../cookbook/05-fulltext-search.md)、[`06-hybrid-faceted`](../cookbook/06-hybrid-faceted.md)；examples [`search/`](../../examples/search/)。
 
-**要点**：v1.8.0 对 async 检索、ColBERT 等做了 gate 裁决（数据驱动决定是否引入），见 [`v1.8.0-implementation.md`](../v1.8.0-implementation.md)。
+**要点**：bge-m3 1024 维 → IVF_PQ `num_sub_vectors=32`（索引选型）；v1.8.0 对 async 检索、ColBERT 等做了 gate 裁决（数据驱动决定是否引入）。
 
 ## 4.3 OLAP 分析与物化视图
 
@@ -400,9 +393,9 @@ Arrow Lake 采用**严格五层架构**：请求自上而下穿越 **① 接入 
 
 **关键代码路径**：`Lake.olap_query()` → `OlapBridge` → DuckDB `lance_scan` + SQL → `OlapQueryResult`。
 
-**参考材料**：cookbook [`07-olap-analytics`](../cookbook/07-olap-analytics.md)；[`duckdb-optimization-plan.md`](../duckdb-optimization-plan.md)（DuckLake 物化视图、SQL-PGQ 探索）；ADR-05/06/07；examples [`query/`](../../examples/query/)。
+**参考材料**：cookbook [`07-olap-analytics`](../cookbook/07-olap-analytics.md)；DuckLake 物化视图、SQL-PGQ 探索；ADR-05/06/07；examples [`query/`](../../examples/query/)。
 
-**要点**：DuckDB 是主力（非 fallback）；`DuckDBSessionManager` 信号量管并发，避免连接爆炸（[`review/perf-audit.md`](../review/perf-audit.md)）。
+**要点**：DuckDB 是主力（非 fallback）；`DuckDBSessionManager` 信号量管并发，避免连接爆炸。
 
 ## 4.4 RAG + GraphRAG 问答
 
@@ -427,7 +420,7 @@ Arrow Lake 采用**严格五层架构**：请求自上而下穿越 **① 接入 
 
 **关键代码路径**：`await Lake.rag_query(question, dataset)` → `RAGPipeline` → `embed` → `query/bridges`（向量）+ `knowledge_graph/retriever`（图谱）→ `reranker` → LLM → citations。
 
-**参考材料**：cookbook [`08-rag-pipeline`](../cookbook/08-rag-pipeline.md)；[`llm-module-optimization-plan.md`](../llm-module-optimization-plan.md)；[`v1.8.0-implementation.md`](../v1.8.0-implementation.md)（Reranker #5、async 裁决）；examples [`rag/`](../../examples/rag/)。
+**参考材料**：cookbook [`08-rag-pipeline`](../cookbook/08-rag-pipeline.md)；examples [`rag/`](../../examples/rag/)。
 
 **要点**：GraphRAG 降级——KG 不可用时回落纯向量 RAG（§5.3）。GraphRAG 在"需要关系链"的问题上（如"A 项目依赖的合规风险"）显著优于单路向量。
 
@@ -449,7 +442,7 @@ Arrow Lake 采用**严格五层架构**：请求自上而下穿越 **① 接入 
 
 **关键代码路径**：`await Lake.kg_build()` → `_LakeKGMixin` → `TaskManager`（create_task，返回 task_id）+ 后台 `knowledge_graph/builder` → `extractor`（LLM）→ `vermeer` → HugeGraph。查询：`kg_query` → `hugegraph_client`（Gremlin，异常降级 REST）。
 
-**参考材料**：cookbook [`09-knowledge-graph`](../cookbook/09-knowledge-graph.md)；[`v1.6.1_performance_plan.md`](../v1.6.1_performance_plan.md)（fire-and-forget 重构）；[`v1.7.0-hyper-extract-kg-extraction-plan.md`](../v1.7.0-hyper-extract-kg-extraction-plan.md)（抽取引擎）；[`v1.8.6-per-dataset-kg-isolation-plan.md`](../v1.8.6-per-dataset-kg-isolation-plan.md)（per-dataset 隔离）；examples [`knowledge_graph/`](../../examples/knowledge_graph/)。
+**参考材料**：cookbook [`09-knowledge-graph`](../cookbook/09-knowledge-graph.md)；examples [`knowledge_graph/`](../../examples/knowledge_graph/)。
 
 **要点**：v1.6.1 把同步 `kg_build` 拆 `prepare_build` + `execute_build` 并异步化，解决 HTTP 超时；v1.6.2 TaskManager 双写 Redis HASH，跨 worker 状态可见；v1.8.6 per-dataset 分图隔离 + IDOR ACL gate，避免跨数据集越权。
 
@@ -471,7 +464,7 @@ Arrow Lake 采用**严格五层架构**：请求自上而下穿越 **① 接入 
 
 **能力**：Gravitino bridge 统一 catalog；`_LakeLineageMixin` 血缘记录与追踪；tag→ACL（行/列级 `DatasetACL` + `SchemaACL`）；masking engine；retention enforcement。
 
-**参考材料**：cookbook [`15-gravitino-metadata`](../cookbook/15-gravitino-metadata.md)；[`v1.4.1-gravitino-integration-plan.md`](../v1.4.1-gravitino-integration-plan.md)、[`v1.4.2-gravitino-governance-deep-plan.md`](../v1.4.2-gravitino-governance-deep-plan.md)；[`reports/gravitino-integration-analysis.md`](../reports/gravitino-integration-analysis.md)。
+**参考材料**：cookbook [`15-gravitino-metadata`](../cookbook/15-gravitino-metadata.md)。
 
 ## 4.8 工作流编排（Metaflow + Argo）
 
@@ -479,7 +472,7 @@ Arrow Lake 采用**严格五层架构**：请求自上而下穿越 **① 接入 
 
 **能力**：Metaflow（FlowSpec + `@step/@batch/@kubernetes` + checkpoint + `@retry/@catch`）；Argo 桥接生产 K8s 调度；`list_flows` / `get_flow_info`。
 
-**参考材料**：cookbook [`14-workflow-orchestration`](../cookbook/14-workflow-orchestration.md)；[`metaflow-optimization-plan.md`](../metaflow-optimization-plan.md)。
+**参考材料**：cookbook [`14-workflow-orchestration`](../cookbook/14-workflow-orchestration.md)。
 
 ## 4.9 业务端到端案例 —— 芜湖城市生命线 552 页 PDF
 
@@ -513,13 +506,13 @@ Arrow Lake 采用**严格五层架构**：请求自上而下穿越 **① 接入 
 - Gravitino tag-driven ACL（治理层，打标签即授权/脱敏）。
 - **v1.8.6 IDOR ACL gate**：KG 分图隔离 + 越权检查。
 
-**注入防御**：SQL 注入（危险关键字 regex）、Gremlin 注入防御、路径遍历防护（详见 [`review/round-1-security-critical.md`](../review/round-1-security-critical.md)）。
+**注入防御**：SQL 注入（危险关键字 regex）、Gremlin 注入防御、路径遍历防护。
 
 **审计与脱敏**：HMAC-SHA256 防篡改审计日志（`_LakeAuditMixin`）；masking engine 按 tag 脱敏。
 
 **传输与限流**：HTTPS；滑动窗口限流（per IP:path）；安全 headers（CSP/HSTS/etc.，nginx 层）。
 
-**安全基线**：v1.5.2 8 CRITICAL + 13 HIGH 修复（[`review/production-review-security.md`](../review/production-review-security.md)、[`review/production-review-summary.md`](../review/production-review-summary.md)）；部署层 nginx gzip/CSP/proxy、`REDISCLI_AUTH`、镜像标签固定。
+**安全基线**：v1.5.2 8 CRITICAL + 13 HIGH 修复；部署层 nginx gzip/CSP/proxy、`REDISCLI_AUTH`、镜像标签固定。
 
 ## 5.2 可观测性
 
@@ -529,7 +522,7 @@ Arrow Lake 采用**严格五层架构**：请求自上而下穿越 **① 接入 
 - **日志聚合**：Loki。
 - **健康检查**：`Lake.health()` → `HealthInfo`；部署层 readiness gate。
 
-**参考**：[`review/perf-audit.md`](../review/perf-audit.md)、§6.1 部署拓扑的 observability 区。
+**参考**：§6.1 部署拓扑的 observability 区。
 
 ## 5.3 可靠性与优雅降级矩阵
 
@@ -551,11 +544,11 @@ Arrow Lake 采用**严格五层架构**：请求自上而下穿越 **① 接入 
 - **并发控制**：`DuckDBSessionManager` 信号量限并发，避免连接爆炸。
 - **查询缓存**：`query/cache.py`，重复查询命中。
 - **异步任务**：重操作（摄取/备份/KG 构建）异步化，Redis 共享状态，避免 HTTP 超时。
-- **索引选型**：bge-m3 1024 维 → IVF_PQ `num_sub_vectors=32`；标量 BTree/Bitmap；FTS Tantivy 倒排（[`lance-optimization-plan.md`](../lance-optimization-plan.md)）。
+- **索引选型**：bge-m3 1024 维 → IVF_PQ `num_sub_vectors=32`；标量 BTree/Bitmap；FTS Tantivy 倒排。
 - **批量嵌入**：Daft 批编 + Ray Serve 水平扩展。
 - **物化视图**：DuckLake TTL + ART index 加速重复重查询。
 
-**性能验证**：[`review/perf-audit.md`](../review/perf-audit.md)；v1.8.0 gate 框架对 async / 分布式索引 / ColBERT 逐项压测裁决（[`v1.8.0-implementation.md`](../v1.8.0-implementation.md)）—— 数据证明该做才做，不投机优化。
+**性能验证**：v1.8.0 gate 框架对 async / 分布式索引 / ColBERT 逐项压测裁决 —— 数据证明该做才做，不投机优化。
 
 ---
 
@@ -578,7 +571,7 @@ Docker Compose 单栈交付（镜像 `arrow-lake:1.8.6`），六个功能区：
 
 **叠加文件**：`docker-compose.prod.yml`（生产）、`docker-compose.monitoring.yml`（监控）、`docker-compose.hugegraph.yml`（图谱）、`docker-compose.gpu.yml`（GPU）、`docker-compose.dev.yml`（开发）。Helm Chart 在 `deploy/helm/arrow-lake/`。
 
-**安全/运维**：容器 `read-only` + `cap_drop`；健康检查门控的滚动更新；所有区向可观测区打指标/日志/链路。详见 cookbook [`12-deployment`](../cookbook/12-deployment.md)、[`design_plan/v1.4.3-production-readiness.md`](../design_plan/v1.4.3-production-readiness.md)、[`review/production-review-architect.md`](../review/production-review-architect.md)。
+**安全/运维**：容器 `read-only` + `cap_drop`；健康检查门控的滚动更新；所有区向可观测区打指标/日志/链路。详见 cookbook [`12-deployment`](../cookbook/12-deployment.md)。
 
 ## 6.2 配置体系
 
@@ -606,18 +599,18 @@ ArrowLakeError → StorageError, QueryError, IngestError, CatalogError,
 
 | 版本 | 关键架构变更 | 材料 |
 |---|---|---|
-| **v1.0–v1.3** | 架构定型：五层 + Facade + DuckDB 主路径 + Gravitino + KG | [`impls/implementation-plan-v1.0.md`](../impls/implementation-plan-v1.0.md)~`v1.3.0.md`、[ADR-08](../design_plan/adr-08-v1.2-architecture.md) |
-| **v1.4.x** | 生产就绪 + Gravitino 治理深化 + 安全加固 | [`v1.4-optimization-plan.md`](../v1.4-optimization-plan.md)、[`v1.4.3-production-readiness.md`](../design_plan/v1.4.3-production-readiness.md) |
-| **v1.5.x** | 平台系统化 + 安全加固（8 CRITICAL + 13 HIGH）+ 测试 100% | [`v1.5.0-platform-systematization.md`](../design_plan/v1.5.0-platform-systematization.md)、[`review/`](../review/) |
-| **v1.6.0–v1.6.3** | threading.RLock 死锁修复；`kg_build` fire-and-forget；TaskManager 双写 Redis；HugeGraph Gremlin 绑定修复 + REST 降级 | [`v1.6.0-plan.md`](../v1.6.0-plan.md)、[`v1.6.1_performance_plan.md`](../v1.6.1_performance_plan.md) |
-| **v1.7.x** | hyper-extract KG 抽取引擎；Lance/DuckDB 栈优化（Daft AI / Reranker / Lance branches / DuckLake 物化视图） | [`v1.7.0-hyper-extract-kg-extraction-plan.md`](../v1.7.0-hyper-extract-kg-extraction-plan.md)、[`v1.7.1-lance-duckdb-stack-optimization-plan.md`](../v1.7.1-lance-duckdb-stack-optimization-plan.md) |
-| **v1.8.0** | 19 项优化；gate 框架按压测裁决 async / 分布式索引 / ColBERT；CLIP 跨模态 | [`v1.8.0-roadmap.md`](../v1.8.0-roadmap.md)、[`v1.8.0-implementation.md`](../v1.8.0-implementation.md)、[`arrow-lake-v1.8.0-release-zh.md`](../arrow-lake-v1.8.0-release-zh.md) |
+| **v1.0–v1.3** | 架构定型：五层 + Facade + DuckDB 主路径 + Gravitino + KG | [ADR-08](./adrs/adr-08-v1.2-architecture.md) |
+| **v1.4.x** | 生产就绪 + Gravitino 治理深化 + 安全加固 | — |
+| **v1.5.x** | 平台系统化 + 安全加固（8 CRITICAL + 13 HIGH）+ 测试 100% | — |
+| **v1.6.0–v1.6.3** | threading.RLock 死锁修复；`kg_build` fire-and-forget；TaskManager 双写 Redis；HugeGraph Gremlin 绑定修复 + REST 降级 | — |
+| **v1.7.x** | hyper-extract KG 抽取引擎；Lance/DuckDB 栈优化（Daft AI / Reranker / Lance branches / DuckLake 物化视图） | — |
+| **v1.8.0** | 19 项优化；gate 框架按压测裁决 async / 分布式索引 / ColBERT；CLIP 跨模态 | — |
 | **v1.8.3** | 启动 HA 修复（readiness gate / warmup 后台化 / fileset 400 / Gravitino 钉版本） | — |
-| **v1.8.6** | **per-dataset KG 分图隔离 + IDOR ACL gate + CLI/API 收尾** | [`v1.8.6-per-dataset-kg-isolation-plan.md`](../v1.8.6-per-dataset-kg-isolation-plan.md)、[`arrow-lake-v1.8.6-product-introduction-zh.md`](../arrow-lake-v1.8.6-product-introduction-zh.md) |
-| **v1.8.7–v1.8.9** | Docling 全栈替代 kreuzberg；Console SQL Worksheet；KG per-dataset KA + doc_type 路由 + 双 LLM（`he_extract_llm`/`he_qa_llm`）；**OllamaReranker 设默认**；审计 P0 三连 + Step2-4 + P2 | [`arrow-lake-v1.8.7-release-zh.md`](../arrow-lake-v1.8.7-release-zh.md)、[`arrow-lake-v1.8.9-release-zh.md`](../arrow-lake-v1.8.9-release-zh.md) |
-| **v1.9.0** | **Turso（libSQL）控制面库**（`system_db/`，9 store + base）：接管 RBAC/identity/personal_token/catalog/任务/lineage/RAG 会话/governance，**数据面零改动**；opt-in + fail_close/fail_soft；personal_token + list_users + fail-close(401) | [`v1.9.0-turso-system-db-plan.md`](../v1.9.0-turso-system-db-plan.md) |
-| **v1.9.1** | **console 核心界面**（原生 JS + ES module）：admin 全功能 + my-workspace 5 区；personal token 走 `X-API-Key`；dev.override 秒级热重载 | [`v1.9.1-frontend-core-impl-plan.md`](../v1.9.1-frontend-core-impl-plan.md) | |
-| **v1.9.2**（当前） | **console 完备化 + 质量深化**：运维（system/audit/governance/maintenance）+ 合规（audit `asdict`+分页）+ 治理（admin 分页/ACL/deny）；kg.html Schema·遍历合并 + combobox + 图前 3000；**rate_limit 迁 Redis**、**kg_build fire-forget 持强引用**（治 GC 卡死）；conftest autouse 清理 + KG 模板收紧 CI | [`v1.9.2-impl-plan.md`](../v1.9.2-impl-plan.md)、[`v1.9.2-roadmap.md`](../v1.9.2-roadmap.md) |
+| **v1.8.6** | **per-dataset KG 分图隔离 + IDOR ACL gate + CLI/API 收尾** | — |
+| **v1.8.7–v1.8.9** | Docling 全栈替代 kreuzberg；Console SQL Worksheet；KG per-dataset KA + doc_type 路由 + 双 LLM（`he_extract_llm`/`he_qa_llm`）；**OllamaReranker 设默认**；审计 P0 三连 + Step2-4 + P2 | — |
+| **v1.9.0** | **Turso（libSQL）控制面库**（`system_db/`，9 store + base）：接管 RBAC/identity/personal_token/catalog/任务/lineage/RAG 会话/governance，**数据面零改动**；opt-in + fail_close/fail_soft；personal_token + list_users + fail-close(401) | — |
+| **v1.9.1** | **console 核心界面**（原生 JS + ES module）：admin 全功能 + my-workspace 5 区；personal token 走 `X-API-Key`；dev.override 秒级热重载 | — |
+| **v1.9.2**（当前） | **console 完备化 + 质量深化**：运维（system/audit/governance/maintenance）+ 合规（audit `asdict`+分页）+ 治理（admin 分页/ACL/deny）；kg.html Schema·遍历合并 + combobox + 图前 3000；**rate_limit 迁 Redis**、**kg_build fire-forget 持强引用**（治 GC 卡死）；conftest autouse 清理 + KG 模板收紧 CI | — |
 | **v1.10.0** | **知识抽取模板管理**（M1–M5）：后端 `/data/lake/templates` 卷 YAML 运行时进 gallery + `reset_gallery_cache` 热重载（不 rebuild/restart）+ `/api/v1/admin/extraction-templates` CRUD（ADMIN）+ `build(template_override=)`；`console/extraction-templates.html` CRUD + 数据集绑定（`dataset_template_bindings`）；LLM 辅助生成（self-heal + `_hyperextract_check` 闸门）；dry-run 试跑沙箱；模板质量验证 harness（`template-quality.html` + `POST /{name}/quality/{doc,build}` + KA 隔离）；category↔doc_type 拉通（`/admin/doc-type-categories` + 动态 `GET /kg/doc-types`）；新增迁移 V005 extraction_templates / V006 template_quality_runs / V007 doc_type_categories；Console 弹框→站内 modal/toast | — |
 
 完整流水见 [`CHANGELOG.md`](../../CHANGELOG.md)。
@@ -626,9 +619,9 @@ ArrowLakeError → StorageError, QueryError, IngestError, CatalogError,
 
 - **分布式索引 backfill**（Ray，v1.8.0 gate 评估后预留）。
 - **ColBERT**（v1.8.0 gate 暂缓，待数据支持）。
-- **更多 Daft 连接器**（[`daft-phase2-data-source-expansion.md`](../design_plan/daft-phase2-data-source-expansion.md)）。
-- **Hyper-Extract autotype 扩展**（[`v1.7.0-hyper-extract-kg-extraction-plan.md`](../v1.7.0-hyper-extract-kg-extraction-plan.md)）。
-- **SQL-PGQ / DuckLake 深化**（[`duckdb-optimization-plan.md`](../duckdb-optimization-plan.md)）。
+- **更多 Daft 连接器**。
+- **Hyper-Extract autotype 扩展**。
+- **SQL-PGQ / DuckLake 深化**。
 
 扩展原则：**压测驱动**——任何新优化必须 gate 数据支持才引入，保持系统精简。
 
