@@ -89,7 +89,7 @@
 import { isLoggedIn } from "./src/auth.js";
 import { toast } from "./src/ui/toast.js";
 
-if (isLoggedIn()) location.href = "system.html";
+if (isLoggedIn()) location.href = "datasets.html";
 
 const $ = (s) => document.querySelector(s);
 
@@ -115,7 +115,7 @@ $("#formPwd").addEventListener("submit", async (e) => {
   try {
     const { loginWithPassword } = await import("./src/auth.js");
     await loginWithPassword(u, p);
-    location.href = "system.html";
+    location.href = "datasets.html";
   } catch (err) {
     toast("登录失败: " + err.message, "danger", 5000);
     $("#password").focus();

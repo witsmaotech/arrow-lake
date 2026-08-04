@@ -63,6 +63,18 @@
     <div class="panel-h"><i class="placeholder" data-ic="dashboard"></i><h3>模型注册表</h3><span class="sub">ML models · /metadata/models · 含版本</span></div>
     <div class="panel-b" id="gModels"><div class="muted" style="padding:10px">加载…</div></div>
   </div>
+
+  <!-- 血缘(选表后展示上下游)-->
+  <div class="panel flush" style="margin-top:var(--s4)">
+    <div class="panel-h"><i class="placeholder" data-ic="git-branch"></i><h3>血缘 Lineage</h3><span class="sub" id="gLinMeta">选表查看上下游 · GET /lineage/graph</span></div>
+    <div class="panel-b" id="gLineage"><div class="muted" style="padding:10px">选一个表查看血缘概览(上下游计数 + 跳转图谱)</div></div>
+  </div>
+
+  <!-- 审计日志(全局治理操作流)-->
+  <div class="panel flush" style="margin-top:var(--s4)">
+    <div class="panel-h"><i class="placeholder" data-ic="history"></i><h3>审计日志 Audit</h3><span class="sub" id="gAudMeta">最近治理操作 · GET /audit/query</span></div>
+    <div class="panel-b" id="gAudit"><div class="muted" style="padding:10px">加载…</div></div>
+  </div>
 </div></main>
 </div>
 
@@ -161,12 +173,23 @@ async function loadTables() {
 
 /* ---------- 表详情 ---------- */
 async function loadDetail(name) {
-  $("#gDetailMeta").innerHTML = `${esc(name)} <a class="btn btn-ghost btn-sm" href="dataset-detail.html?ds=${encodeURIComponent(name)}" style="margin-left:8px;font-size:.7rem">→ 数据集</a>`;
+  $("#gDetailMeta").innerHTML = `${esc(name)} <a class="btn btn-ghost btn-sm" href="dataset-detail.html?ds=${encodeURIComponent(name)}" style="margin-left:8px;font-size:.7rem">→ 数据集</a> <button class="btn btn-ghost btn-sm" id="statBtn" style="margin-left:4px;font-size:.7rem">收集统计</button>`;
+  $("#statBtn")?.addEventListener("click", async () => {
+    $("#statBtn").disabled = true; $("#statBtn").textContent = "收集中…";
+    try {
+      const r = await request("POST", `/metadata/statistics/${encodeURIComponent(name)}`);
+      const d = r?.data || {};
+      const summary = Object.entries(d).filter(([, v]) => v != null).slice(0, 8).map(([k, v]) => `${esc(k)}=${esc(String(v).slice(0, 40))}`).join(" · ") || "无统计字段";
+      toast(`统计已收集:${summary}`, "ok", 6000);
+    } catch (e) { toast("收集统计失败:" + (e?.detail || e?.message || e), "error"); }
+    $("#statBtn").disabled = false; $("#statBtn").textContent = "收集统计";
+  });
   $("#gDetail").innerHTML = '<div class="muted" style="padding:10px">加载…</div>';
   // 并发:Gravitino 表详情 + 数据集 schema(取字段注释,对齐字段注释特性)
-  const [metaR, schR] = await Promise.allSettled([
+  const [metaR, schR, ctR] = await Promise.allSettled([
     request("GET", `/metadata/tables/${encodeURIComponent(name)}`),
     request("GET", `/datasets/${encodeURIComponent(name)}/schema`),
+    request("GET", `/metadata/tables/${encodeURIComponent(name)}/column-tags`),
   ]);
   try {
     const d = metaR.status === "fulfilled" ? (metaR.value?.data || {}) : {};
@@ -174,11 +197,14 @@ async function loadDetail(name) {
     const props = d.properties || {};
     const cmtByCol = {};
     (schR.status === "fulfilled" ? (schR.value?.fields || []) : []).forEach(f => { if (f.comment) cmtByCol[f.name] = f.comment; });
+    const colTags = ctR.status === "fulfilled" ? (ctR.value?.data || {}) : {};
     const colsHtml = cols.length
       ? cols.map(c => {
           const cm = c.comment || cmtByCol[c.name] || "";
           const cmHtml = cm ? ` <span style="color:var(--fg-lo);font-style:italic;font-size:.7rem" title="${esc(cm)}">// ${esc(cm.length > 22 ? cm.slice(0, 21) + "…" : cm)}</span>` : "";
-          return `<div class="col-row"><span><b>${esc(c.name)}</b>${c.nullable === false ? ' <span style="color:var(--danger);font-size:.7rem">NOT NULL</span>' : ""}${cmHtml}</span><span class="mono" style="color:var(--teal-bright);font-size:.74rem">${esc(c.type)}</span></div>`;
+          const tags = colTags[c.name] || [];
+          const tagHtml = tags.length ? ` <span class="flex wrap" style="gap:2px;margin-left:4px">${tags.map(t => `<span class="tag teal mono" style="font-size:.58rem;padding:0 4px">${esc(t)}</span>`).join("")}</span>` : "";
+          return `<div class="col-row"><span><b>${esc(c.name)}</b>${c.nullable === false ? ' <span style="color:var(--danger);font-size:.7rem">NOT NULL</span>' : ""}${cmHtml}${tagHtml}</span><span class="mono" style="color:var(--teal-bright);font-size:.74rem">${esc(c.type)}</span></div>`;
         }).join("")
       : '<div class="muted" style="padding:6px">无列信息</div>';
     const propsHtml = Object.keys(props).length
@@ -188,8 +214,9 @@ async function loadDetail(name) {
   } catch (e) {
     $("#gDetail").innerHTML = `<div class="degraded">表详情加载失败:${esc(e?.detail || e?.message || e)}</div>`;
   }
-  // 同时加载该表的 tags
+  // 同时加载该表的 tags + 血缘
   loadGov(name);
+  loadLineage(name);
 }
 
 /* ---------- Tags + Policies(表级)---------- */
@@ -316,7 +343,47 @@ async function loadModels() {
   }
 }
 
-function loadAll() { probeAndCatalogs(); loadModels(); }
+/* ---------- 血缘概览(上下游计数 + 跳转 lineage.html 深度分析)---------- */
+/* governance 只做概览;完整图谱/列级映射/影响分析收敛到独立 lineage.html,避免两套 vis 渲染。 */
+async function loadLineage(name) {
+  $("#gLinMeta").textContent = `${name} · 加载中…`;
+  $("#gLineage").innerHTML = '<div class="muted" style="padding:10px">加载…</div>';
+  try {
+    const r = await request("GET", `/lineage/graph/${encodeURIComponent(name)}?max_depth=3&max_nodes=100`);
+    const edges = r?.edges || [];
+    const up = new Set(), down = new Set();
+    edges.forEach(e => { const f = e.from_ ?? e.from, t = e.to; if (t === name && f) up.add(f); if (f === name && t) down.add(t); });
+    const chip = (n) => `<a class="tag mono" href="dataset-detail.html?ds=${encodeURIComponent(n)}" style="text-decoration:none;font-size:.72rem">${esc(n)}</a>`;
+    const upHtml = up.size ? `<div class="flex wrap" style="gap:4px">${[...up].map(chip).join("")}</div>` : '<div class="muted" style="font-size:.74rem">无(原始数据源)</div>';
+    const downHtml = down.size ? `<div class="flex wrap" style="gap:4px">${[...down].map(chip).join("")}</div>` : '<div class="muted" style="font-size:.74rem">无(终端消费)</div>';
+    const trunc = r?.stats?.truncated ? `<div class="muted" style="font-size:.7rem;margin-top:6px">⚠ 概览仅取深度 3 / 节点 100,完整图谱见下方链接</div>` : "";
+    const btn = `<a class="btn btn-primary btn-sm" href="lineage.html?ds=${encodeURIComponent(name)}" style="margin-top:10px;display:inline-flex;align-items:center;gap:6px">→ 血缘图谱(列级映射 · 影响分析)</a>`;
+    $("#gLineage").innerHTML = `<div style="padding:10px"><div class="muted" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px">上游 ← ${up.size}</div>${upHtml}<div class="muted" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.07em;margin:10px 0 4px">下游 → ${down.size}</div>${downHtml}${trunc}${btn}</div>`;
+    $("#gLinMeta").textContent = `${name} · 上游 ${up.size} · 下游 ${down.size}`;
+  } catch (e) {
+    $("#gLineage").innerHTML = `<div class="degraded">血缘加载失败:${esc(e?.detail || e?.message || e)}<br/><a class="btn btn-ghost btn-sm" href="lineage.html?ds=${encodeURIComponent(name)}" style="margin-top:8px">→ 仍去血缘图谱</a></div>`;
+    $("#gLinMeta").textContent = name;
+  }
+}
+
+/* ---------- 审计概览(最近 8 条 + 跳转 audit.html 深度查询)---------- */
+/* governance 只做概览;过滤/分页/导出收敛到独立 audit.html,避免重复。 */
+async function loadAudit() {
+  $("#gAudit").innerHTML = '<div class="muted" style="padding:10px">加载…</div>';
+  try {
+    const r = await request("GET", "/audit/query");
+    const es = r?.entries || [];
+    if (!es.length) { $("#gAudit").innerHTML = '<div class="muted" style="padding:10px">暂无审计记录</div>'; $("#gAudMeta").textContent = "无记录"; return; }
+    const rows = es.slice(0, 8).map(e => `<div class="col-row"><span><b>${esc(e.actor || "—")}</b> <span class="tag mono" style="font-size:.6rem;margin-left:4px">${esc(e.event_type || e.action || "—")}</span></span><span style="font-size:.72rem"><a href="dataset-detail.html?ds=${encodeURIComponent(e.dataset_name || e.target || "")}" style="color:var(--teal-bright);text-decoration:none" class="mono">${esc(e.dataset_name || e.target || "—")}</a> · <span class="muted">${fmtDate(e.timestamp || e.created_at || e.time)}</span></span></div>`).join("");
+    const btn = `<a class="btn btn-primary btn-sm" href="audit.html" style="margin:8px 10px;display:inline-flex;align-items:center;gap:6px">→ 审计日志(过滤 · 分页 · 导出)</a>`;
+    $("#gAudit").innerHTML = rows + btn;
+    $("#gAudMeta").textContent = `最近 ${Math.min(8, es.length)} / ${es.length} 条`;
+  } catch (e) {
+    $("#gAudit").innerHTML = `<div class="degraded">审计加载失败:${esc(e?.detail || e?.message || e)}<br/><a class="btn btn-ghost btn-sm" href="audit.html" style="margin-top:8px">→ 仍去审计日志</a></div>`;
+  }
+}
+
+function loadAll() { probeAndCatalogs(); loadModels(); loadAudit(); }
 loadAll();
 window.applyIcons && applyIcons(document);
 

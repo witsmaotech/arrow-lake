@@ -64,15 +64,11 @@ const NAV = [
     { id: "templates", label: "抽取模板", ic: "code", href: "extraction-templates.html" },
     { id: "my-workspace", label: "我的工作区", ic: "bell", href: "my-workspace.html" },
   ] },
-  { group: "运维", items: [
-    { id: "system", label: "系统运维", ic: "dashboard", href: "system.html" },
-  ] },
-  { group: "合规", items: [
-    { id: "audit", label: "审计日志", ic: "bell", href: "audit.html" },
-  ] },
-  { group: "治理", items: [
+  { group: "治理运维", items: [
     { id: "governance", label: "元数据治理", ic: "key", href: "governance.html" },
     { id: "lineage", label: "血缘图谱", ic: "database", href: "lineage.html" },
+    { id: "audit", label: "审计日志", ic: "bell", href: "audit.html" },
+    { id: "system", label: "系统运维", ic: "dashboard", href: "system.html" },
   ] },
 ];
 

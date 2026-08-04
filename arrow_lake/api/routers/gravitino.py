@@ -216,6 +216,30 @@ def list_tags(request: Request, _user=Depends(require_role(Role.VIEWER))) -> dic
         return {"success": False, "data": [], "error": str(exc), "metadata": {}}
 
 
+@router.get("/tables/{name}/column-tags")
+def list_column_tags(
+    request: Request,
+    name: str,
+    _user=Depends(require_role(Role.VIEWER)),
+) -> dict[str, Any]:
+    """List column-level tags for a table. Returns ``{column: [tag_names]}``.
+
+    Backed by ``GravitinoTagService.list_column_tags`` (Gravitino SDK
+    ``supports_tags().list_column_tags(col)``).
+    """
+    tag_svc = _get_tag_service(request)
+    try:
+        col_tags = tag_svc.list_column_tags(name)
+        return {
+            "success": True,
+            "data": col_tags,
+            "error": None,
+            "metadata": {"columns_tagged": len(col_tags)},
+        }
+    except Exception as exc:
+        return {"success": False, "data": {}, "error": str(exc), "metadata": {}}
+
+
 @router.post("/tags", dependencies=[Depends(require_role(Role.ADMIN))])
 async def create_tag(request: Request) -> dict[str, Any]:
     """Create a new tag."""

@@ -40,7 +40,7 @@
       <div class="panel-b" id="deep"><div class="muted" style="padding:14px">加载…</div></div>
     </div>
     <div class="panel flush">
-      <div class="panel-h"><i class="placeholder" data-ic="bell"></i><h3>活跃任务</h3><span class="sub">GET /async_tasks/tasks · running/pending</span></div>
+      <div class="panel-h"><i class="placeholder" data-ic="bell"></i><h3>活跃任务</h3><span class="sub">GET /tasks · running/pending</span></div>
       <div class="panel-b" id="tasks"><div class="muted" style="padding:14px">加载…</div></div>
     </div>
     <div class="panel flush">
@@ -183,10 +183,10 @@ async function loadDeep() {
   } catch (e) { $("#deep").innerHTML = `<div class="muted">深度指标加载失败:${esc(e?.message || e)}</div>`; }
 }
 
-/* ---------- 活跃任务(GET /async_tasks/tasks)---------- */
+/* ---------- 活跃任务(GET /tasks)---------- */
 async function loadTasks() {
   try {
-    const r = await request("GET", "/async_tasks/tasks?limit=20");
+    const r = await request("GET", "/tasks?limit=20");
     const list = Array.isArray(r) ? r : (r?.tasks || r?.items || []);
     const active = list.filter(t => /running|pending|started/i.test(t?.status || ""));
     $("#tasks").innerHTML = active.length

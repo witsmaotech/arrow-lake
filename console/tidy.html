@@ -230,6 +230,24 @@ async function runDiag(id, name) {
   if (id === "filter") { const v = cfgVals(); return request("POST", `/datasets/${encodeURIComponent(name)}/quality/filter`, { body: { active_filters: v.active_filters || "", mode: v.mode || "all" } }); }
 }
 
+function pollProfile(tid, title) {
+  // 大数据集画像异步任务:照 kg.html pollBuild,setInterval GET 任务状态,
+  // 完成取 result 渲染(全量精确,后台跑不阻塞前端)。
+  return new Promise((resolve, reject) => {
+    let n = 0;
+    const timer = setInterval(async () => {
+      n++;
+      try {
+        const s = await request("GET", `/tasks/${encodeURIComponent(tid)}/status`);
+        $("#resMeta").textContent = `${title} 计算中…`;
+        if (s.status === "completed") { clearInterval(timer); resolve(renderDiag("profile", { success: true, data: s.result })); }
+        else if (s.status === "failed") { clearInterval(timer); reject(new Error(s.error || "画像失败")); }
+      } catch (_) { /* 单次 fetch 失败下轮重试 */ }
+      if (n > 150) { clearInterval(timer); reject(new Error("画像超时(10min)")); }  // 4s × 150 = 10min
+    }, 4000);
+  });
+}
+
 function escTbl(rows, cols) {
   if (!rows || !rows.length) return `<div class="muted" style="padding:14px;text-align:center">无数据</div>`;
   const ks = cols.length ? cols : Object.keys(rows[0]);
@@ -267,8 +285,14 @@ async function runOp() {
   try {
     let html;
     if (op.g === "diag") {
-      const data = await runDiag(op.id, name);
-      html = renderDiag(op.id, data);
+      if (op.id === "profile") {
+        // 大数据集画像走异步任务:POST 启动 → poll 状态(全量精确,后台跑不阻塞)
+        const t = await request("POST", `/datasets/${encodeURIComponent(name)}/quality/profile/async`);
+        html = await pollProfile(t.task_id, op.t);
+      } else {
+        const data = await runDiag(op.id, name);
+        html = renderDiag(op.id, data);
+      }
       $("#resMeta").textContent = `${op.t} ✓`;
     } else {
       const body = buildTxReq(op.id);

@@ -24,7 +24,7 @@ from arrow_lake.api.models.quality import (
     QualityRuleSetResponse,
 )
 from arrow_lake.api.tasks import TaskManager
-from arrow_lake.api.utils import run_sync
+from arrow_lake.api.utils import olap_executor, run_sync
 from arrow_lake.quality.llm_enrich import extract_fields, label_column
 
 # Strong references for fire-and-forget background tasks so the asyncio GC
@@ -40,7 +40,7 @@ def _spawn(coro) -> None:
 
 router = APIRouter(prefix="/api/v1/datasets", tags=["quality"])
 
-_QUALITY_TIMEOUT = 300
+_QUALITY_TIMEOUT = 600
 
 
 @router.post("/{name}/quality/filter", response_model=QualityFilterResponse)
@@ -153,29 +153,15 @@ async def quality_rules(
     )
 
 
-@router.get("/{name}/quality/profile")
-async def quality_profile(
-    request: Request,
-    name: str = Path(..., pattern=_NAME_PATTERN),
-    *,
-    lake=Depends(get_lake),
-    _user: dict = Depends(require_role(Role.VIEWER)),
-) -> dict:
-    """Get quality profile for a dataset — column-level statistics and quality scores."""
-    from arrow_lake.quality.profiler import QualityProfiler
+def _profile_to_dict(profile) -> dict:
+    """Serialize a DatasetQualityProfile to a JSON-friendly dict.
 
-    authorize_dataset(request, name)
-    table = await run_sync(
-        lake.read_dataset, name,
-        timeout=_QUALITY_TIMEOUT, label="quality_profile_read",
-    )
-
-    profiler = QualityProfiler()
-    profile = profiler.profile(table, name)
-
+    Shared by the sync GET endpoint and the async background task so both return
+    the same shape.
+    """
     columns = []
     for cp in profile.column_profiles:
-        col_data = {
+        col = {
             "name": cp.name,
             "dtype": cp.dtype,
             "null_count": cp.null_count,
@@ -185,22 +171,76 @@ async def quality_profile(
             "max_value": cp.max_value,
         }
         if cp.histogram is not None:
-            col_data["histogram"] = [dict(b) for b in cp.histogram]
-        columns.append(col_data)
-
+            col["histogram"] = [dict(b) for b in cp.histogram]
+        columns.append(col)
     return {
-        "success": True,
-        "data": {
-            "dataset_name": profile.dataset_name,
-            "total_rows": profile.total_rows,
-            "total_columns": profile.total_columns,
-            "overall_quality_score": profile.overall_quality_score,
-            "profiled_at": profile.profiled_at,
-            "columns": columns,
-        },
-        "error": None,
-        "metadata": {},
+        "dataset_name": profile.dataset_name,
+        "total_rows": profile.total_rows,
+        "total_columns": profile.total_columns,
+        "overall_quality_score": profile.overall_quality_score,
+        "profiled_at": profile.profiled_at,
+        "columns": columns,
     }
+
+
+def _bg_profile(lake, name) -> dict:
+    """Read dataset + compute full quality profile. Runs in a worker thread.
+
+    Column statistics over large tables are CPU-bound and synchronous — this must
+    stay off the event loop. The returned dict is stored on the task by
+    ``TaskManager.run_background`` (Redis HASH, ~15KB for 30 cols, well within limits).
+    """
+    from arrow_lake.quality.profiler import QualityProfiler
+
+    table = lake.read_dataset(name)
+    profile = QualityProfiler().profile(table, name)
+    return _profile_to_dict(profile)
+
+
+@router.get("/{name}/quality/profile")
+async def quality_profile(
+    request: Request,
+    name: str = Path(..., pattern=_NAME_PATTERN),
+    *,
+    lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.VIEWER)),
+) -> dict:
+    """Get quality profile for a dataset — column-level statistics and quality scores."""
+    authorize_dataset(request, name)
+    data = await run_sync(
+        _bg_profile, lake, name,
+        timeout=_QUALITY_TIMEOUT, label="quality_profile", executor=olap_executor,
+    )
+    return {"success": True, "data": data, "error": None, "metadata": {}}
+
+
+@router.post(
+    "/{name}/quality/profile/async",
+    response_model=PrepTaskResponse,
+    status_code=202,
+)
+async def quality_profile_async(
+    request: Request,
+    name: str = Path(..., pattern=_NAME_PATTERN),
+    *,
+    lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.VIEWER)),
+) -> PrepTaskResponse:
+    """Async quality profile for large datasets — full table stats in background.
+
+    Returns ``task_id``; poll ``GET /api/v1/tasks/{task_id}/status`` until
+    ``status == "completed"``, then read ``result`` (same shape as the sync
+    endpoint's ``data``). Avoids the multi-minute blocking of the sync path on
+    tables with 100M+ rows.
+    """
+    authorize_dataset(request, name)
+    task_id = TaskManager.create_task("quality_profile", name)
+    _spawn(TaskManager.run_background(task_id, _bg_profile, lake, name))
+    return PrepTaskResponse(
+        task_id=task_id,
+        operation="quality_profile",
+        message=f"Quality profile started for dataset '{name}'",
+    )
 
 
 # ---------------------------------------------------------------------------
