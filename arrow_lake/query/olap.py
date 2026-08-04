@@ -692,10 +692,15 @@ class OlapSearchBridge:
             source: Arrow Table or RecordBatchReader from storage.
         """
         # 全局 pyarrow_fallback 是为 IVF_PQ 向量扫描避免 Rust panic(RAG 502 根因)。
-        # 但对无向量列的结构化数据集,native lance scan 下推 LIMIT/OFFSET,翻页快 13-20x
-        # 且不 panic(panic 仅 IVF_PQ vector scan)。按 source 是否有向量列自包含选模式。
+        # 对无向量列的结构化数据集,native lance scan 下推 LIMIT/OFFSET 翻页快 13-20x,
+        # 但其 Rust scanner 会卡 D-state IO 拖死 API(2026-08-04 实证,非 panic 而是阻塞 IO)。
+        # 默认 lance_auto_promote=False 不翻转 = 全 pyarrow_fallback(稳定);确需加速再开。
         mode = self._config.lance_scan_mode
-        if mode == "pyarrow_fallback" and not self._has_vector_column(source):
+        if (
+            mode == "pyarrow_fallback"
+            and self._config.lance_auto_promote
+            and not self._has_vector_column(source)
+        ):
             mode = "auto"
         if mode == "pyarrow_fallback":
             # Clear stale registration from pooled connections

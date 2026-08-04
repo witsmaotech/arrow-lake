@@ -16,22 +16,24 @@
 # 注:
 # - PYTHONPATH=/app 让 import arrow_lake 走挂载源码(/app/arrow_lake)而非镜像内
 #   site-packages 的安装副本(Dockerfile 是非 editable install)。
-# - --reload 与 --workers 互斥,故 dev 用单 worker。
+# - gunicorn + UvicornWorker --workers 4 --reload:多 worker 保开发并发(单 worker
+#   遇同步慢查询会占死 API),同时保留热重载(uvicorn 原生 --reload 与 --workers 互斥)。
+#   gunicorn --reload 监听已加载模块;新增 .py 文件需二次修改或 restart 才触发。
 # - bind mount 绕过容器 read_only,Python __pycache__ 可写入挂载目录。
 services:
   api:
     command:
-      - uvicorn
-      - arrow_lake.api.app:create_app
-      - --factory
-      - --host
-      - 0.0.0.0
-      - --port
-      - "8000"
+      - gunicorn
+      - arrow_lake.api.app:create_app()
+      - -k
+      - uvicorn.workers.UvicornWorker
+      - --workers
+      - "4"
+      - --timeout
+      - "120"
+      - --bind
+      - 0.0.0.0:8000
       - --reload
-      - --reload-dir
-      - /app/arrow_lake
-      - --proxy-headers
       - --forwarded-allow-ips
       - 172.30.0.0/16
     environment:

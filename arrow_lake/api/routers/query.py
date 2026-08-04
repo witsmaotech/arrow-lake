@@ -24,7 +24,7 @@ from arrow_lake.api.models.query import (
     OlapQueryRequest,
     OlapQueryResponse,
 )
-from arrow_lake.api.utils import run_sync
+from arrow_lake.api.utils import olap_executor, run_sync
 from arrow_lake.validation import validate_sql_safety
 
 if TYPE_CHECKING:
@@ -140,7 +140,7 @@ async def olap_query(
     validate_sql_safety(req.sql)
     result = await run_sync(
         lake.olap_query, name, req.sql, max_rows=req.max_rows,
-        timeout=_QUERY_TIMEOUT, label="olap_query",
+        timeout=_QUERY_TIMEOUT, label="olap_query", executor=olap_executor,
     )
     table = checker.apply_table_filter(result.table, dataset=name, role=_user.role)
 
@@ -168,7 +168,7 @@ async def metadata_query(
     validate_sql_safety(req.sql)
     result = await run_sync(
         lake.sql_query, name, req.sql, max_rows=req.max_rows,
-        timeout=_QUERY_TIMEOUT, label="metadata_query",
+        timeout=_QUERY_TIMEOUT, label="metadata_query", executor=olap_executor,
     )
     table = checker.apply_table_filter(result.table, dataset=name, role=_user.role)
     resp = arrow_table_to_response(table, req.format, meta={"sql": result.sql})
@@ -201,6 +201,7 @@ async def graph_query(
         directed=req.directed,
         timeout=_QUERY_TIMEOUT,
         label="graph_query",
+        executor=olap_executor,
     )
     table = checker.apply_table_filter(result.table, dataset=name, role=_user.role)
     resp = arrow_table_to_response(table, req.format, meta={"sql": result.sql})
