@@ -293,18 +293,8 @@ class KGBuilder:
 
         batch_size = self._config.build_batch_size
 
-        # 2. Collect unique documents and insert document vertices
-        doc_names = self._unique_column_values(table, "document_name")
-        doc_vertices = [
-            {"label": "document", "properties": {"id": name, "name": name}}
-            for name in doc_names
-        ]
-        logger.debug("KG build %s: STEP2 add doc vertices n=%d START", task.task_id, len(doc_vertices))
-        doc_hg_ids = await self._client.add_vertices(doc_vertices, graph_name=graph_name)
-        logger.debug("KG build %s: STEP2 add doc vertices DONE", task.task_id)
-        doc_id_map: dict[str, str] = dict(zip(doc_names, doc_hg_ids, strict=True))
-
-        # 3. Insert chunk vertices
+        # Columns used by STEP2-5 AND the extraction branches below — extract the
+        # FULL set once (branches need all chunks; STEP2-5 filter to new below).
         chunk_ids = table.column("id").to_pylist()
         contents = [str(c) if c is not None else "" for c in table.column("content").to_pylist()]
         doc_name_col = table.column("document_name").to_pylist()
@@ -315,47 +305,99 @@ class KGBuilder:
             else [None] * table.num_rows
         )
 
+        # v1.10.2 M4 P4: incremental STEP2-5 — only process NEW chunks (not yet
+        # in the graph). fed_chunks {cid: hash} is the canonical "already built"
+        # marker (shared with the dataset path / map_reduce checkpoint). For
+        # incremental=False (default) fed_map is empty ⇒ every chunk is "new" ⇒
+        # STEP2-5 process the full set, byte-identical to v1.10.1 (G6). Re-adding
+        # is idempotent (vertex PRIMARY_KEY + edge frequency=SINGLE from M2), so
+        # this is a REST-call optimization, not a correctness fix.
+        import hashlib as _hl
+
+        def _chunk_hash(t: str) -> str:
+            return _hl.sha1((t or "").encode("utf-8", "replace")).hexdigest()[:16]
+
+        fed_map: dict[str, str] = {}
+        if incremental:
+            from arrow_lake.knowledge_graph._naming import artifact_key_for
+            _fed_path = (
+                (_ka_root or Path(self._config.he_ka_base_dir))
+                / artifact_key_for(task.dataset_name) / "ka" / "fed_chunks.json"
+            )
+            try:
+                import json as _json
+                _raw = _json.loads(_fed_path.read_text(encoding="utf-8"))
+                if isinstance(_raw, dict):
+                    fed_map = {str(k): str(v) for k, v in _raw.items()}
+            except Exception:  # noqa: BLE001 — missing/corrupt ⇒ full STEP2-5
+                fed_map = {}
+        new_idx = [
+            i for i, cid in enumerate(chunk_ids)
+            if fed_map.get(cid, "") != _chunk_hash(contents[i])
+        ]
+        new_cid_set = {chunk_ids[i] for i in new_idx}
+        if incremental:
+            logger.info(
+                "KG build %s STEP2-5 incremental: %d chunks, %d new (STEP2-5 skip %d)",
+                task.dataset_name, len(chunk_ids), len(new_idx), len(chunk_ids) - len(new_idx),
+            )
+
+        # 2. Document vertices — only documents appearing in NEW chunks.
+        new_doc_names = list(dict.fromkeys(doc_name_col[i] for i in new_idx))
+        logger.debug("KG build %s: STEP2 add doc vertices n=%d START", task.task_id, len(new_doc_names))
+        doc_hg_ids = await self._client.add_vertices(
+            [{"label": "document", "properties": {"id": n, "name": n}} for n in new_doc_names],
+            graph_name=graph_name,
+        ) if new_doc_names else []
+        logger.debug("KG build %s: STEP2 add doc vertices DONE", task.task_id)
+        # doc_id_map covers the docs re-added THIS build. Contains edges below
+        # are only for NEW chunks, whose docs ⊆ new_doc_names, so all lookups hit.
+        doc_id_map: dict[str, str] = dict(zip(new_doc_names, doc_hg_ids, strict=True))
+
+        # 3. Chunk vertices — NEW chunks only.
         chunk_vertices = [
-            {
-                "label": "chunk",
-                "properties": {
-                    "id": cid,
-                    "content": str(content) if content is not None else "",
-                    "chunk_index": idx,
-                },
-            }
-            for cid, content, idx in zip(chunk_ids, contents, chunk_indices, strict=True)
+            {"label": "chunk", "properties": {
+                "id": chunk_ids[i], "content": contents[i], "chunk_index": chunk_indices[i],
+            }}
+            for i in new_idx
         ]
         all_chunk_hg_ids: list[str] = []
-        nbatches = (len(chunk_vertices) + batch_size - 1) // max(batch_size, 1)
-        logger.debug("KG build %s: STEP3 add chunk vertices n=%d bs=%d batches=%d START", task.task_id, len(chunk_vertices), batch_size, nbatches)
+        logger.debug("KG build %s: STEP3 add chunk vertices n=%d START", task.task_id, len(chunk_vertices))
         for i in range(0, len(chunk_vertices), batch_size):
             batch = chunk_vertices[i : i + batch_size]
             hg_ids = await self._client.add_vertices(batch, graph_name=graph_name)
             all_chunk_hg_ids.extend(hg_ids)
         logger.debug("KG build %s: STEP3 add chunk vertices DONE", task.task_id)
-        chunk_id_map: dict[str, str] = dict(zip(chunk_ids, all_chunk_hg_ids, strict=True))
+        # chunk_id_map = NEW chunks only. references(chunk→entity) edges for OLD
+        # chunks' entities already exist from prior builds; this build adds only
+        # new-chunk-owned references (correct, no dups — M2 edge idempotency).
+        chunk_id_map: dict[str, str] = {
+            chunk_ids[i]: hgid for i, hgid in zip(new_idx, all_chunk_hg_ids, strict=True)
+        }
 
-        # 4. Insert contains_chunk edges (document -> chunk)
+        # 4. contains_chunk edges — NEW chunks only.
         logger.debug("KG build %s: STEP4 contains edges START", task.task_id)
-        contains_edges: list[dict[str, Any]] = []
-        for cid, doc_name in zip(chunk_ids, doc_name_col, strict=True):
-            contains_edges.append({
-                "label": "contains_chunk",
-                "outV": doc_id_map[doc_name],
-                "outVLabel": "document",
-                "inV": chunk_id_map[cid],
-                "inVLabel": "chunk",
-                "properties": {},
-            })
+        contains_edges: list[dict[str, Any]] = [
+            {"label": "contains_chunk", "outV": doc_id_map[doc_name_col[i]],
+             "outVLabel": "document", "inV": chunk_id_map[chunk_ids[i]],
+             "inVLabel": "chunk", "properties": {}}
+            for i in new_idx
+        ]
         for i in range(0, len(contains_edges), batch_size):
             await self._client.add_edges(contains_edges[i : i + batch_size], graph_name=graph_name)
 
-        # 5. Insert next_chunk edges (sequential chunks in same doc)
+        # 5. next_chunk edges — among NEW chunks + boundary (old-last → new-first
+        # per doc spanning old+new). Append-only ⇒ new chunks are a suffix.
         logger.debug("KG build %s: STEP5 next edges START", task.task_id)
         next_edges = self._build_next_chunk_edges_hg(
-            chunk_id_map, doc_name_col, chunk_indices
+            chunk_id_map,
+            [doc_name_col[i] for i in new_idx],
+            [chunk_indices[i] for i in new_idx],
         )
+        if incremental and new_idx:
+            next_edges.extend(await self._build_boundary_next_edges(
+                chunk_ids, doc_name_col, chunk_indices, new_cid_set, chunk_id_map, graph_name,
+            ))
         if next_edges:
             for i in range(0, len(next_edges), batch_size):
                 await self._client.add_edges(next_edges[i : i + batch_size], graph_name=graph_name)
@@ -1238,4 +1280,59 @@ class KGBuilder:
                     "properties": {},
                 })
 
+        return edges
+
+    async def _build_boundary_next_edges(
+        self,
+        chunk_ids: list[str],
+        doc_name_col: list[str],
+        chunk_indices: list[int],
+        new_cid_set: set[str],
+        chunk_id_map: dict[str, str],
+        graph_name: str,
+    ) -> list[dict[str, Any]]:
+        """Boundary next_chunk edges for incremental append (v1.10.2 M4 P4).
+
+        For each document spanning OLD + NEW chunks, connect the doc's prior
+        last chunk → its new first chunk, so the next_chunk chain isn't broken
+        across the append boundary. Append-only ⇒ new chunks are a contiguous
+        suffix, so new-first = min-index new chunk, old-last = max-index OLD
+        chunk of that doc. The old-last hg id is queried (it was added in a
+        prior build, not in this build's chunk_id_map). Best-effort: a missing
+        old vertex is warned + skipped (chain reconnects on the next full build).
+        """
+        doc_new_first: dict[str, tuple[int, str]] = {}   # doc -> (idx, cid)
+        doc_old_last: dict[str, tuple[int, str]] = {}    # doc -> (idx, cid)
+        for i, cid in enumerate(chunk_ids):
+            doc = doc_name_col[i]
+            if cid in new_cid_set:
+                cur = doc_new_first.get(doc)
+                if cur is None or chunk_indices[i] < cur[0]:
+                    doc_new_first[doc] = (chunk_indices[i], cid)
+            else:
+                cur = doc_old_last.get(doc)
+                if cur is None or chunk_indices[i] > cur[0]:
+                    doc_old_last[doc] = (chunk_indices[i], cid)
+
+        edges: list[dict[str, Any]] = []
+        for doc, (_nidx, ncid) in doc_new_first.items():
+            old = doc_old_last.get(doc)
+            if old is None:
+                continue  # doc entirely new this build — no boundary
+            try:
+                verts = await self._client.find_vertices_by_property(
+                    "chunk", {"id": old[1]}, graph_name=graph_name, limit=5,
+                )
+            except Exception as exc:  # noqa: BLE001 — best-effort
+                logger.warning("boundary next_chunk query failed for %s: %s", old[1], str(exc)[:120])
+                continue
+            if not verts:
+                logger.warning("boundary next_chunk: old chunk %s not found (skip)", old[1])
+                continue
+            edges.append({
+                "label": "next_chunk",
+                "outV": verts[0].get("id"), "outVLabel": "chunk",
+                "inV": chunk_id_map[ncid], "inVLabel": "chunk",
+                "properties": {},
+            })
         return edges

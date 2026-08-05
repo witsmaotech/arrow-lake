@@ -1302,3 +1302,67 @@ async def test_execute_build_map_reduce_soft_degrade_keeps_endpoints(
     assert len(rels) == 1                     # degraded, NOT dropped
     assert rels[0].relation_type == "相关"    # generic marker
     assert dict(rels[0].properties)["original_relation_type"] == "训练"
+
+
+@pytest.mark.asyncio
+async def test_execute_build_map_reduce_incremental_step25_only_new_chunks(
+    mock_client: object, config: HugeGraphConfig, tmp_path,
+) -> None:
+    """v1.10.2 M4 P4: incremental STEP2-5 add only NEW chunk vertices/edges (the
+    prior chunks in fed_chunks are skipped); default incremental=False re-adds
+    all (G6, byte-identical to v1.10.1)."""
+    from pathlib import Path
+    from unittest.mock import AsyncMock, MagicMock
+
+    config.he_kg_granularity = "map_reduce"
+    config.he_entity_resolution = "off"
+    config.he_kg_type_pair = False
+    config.he_ka_base_dir = str(tmp_path)
+    tpl = Path(tmp_path) / "t.yaml"
+    tpl.write_text("name: t\n", encoding="utf-8")
+
+    def _extract(content, *, chunk_id="", doc_type=None):
+        return ExtractionResult((ExtractedEntity(chunk_id or "e", "t"),), (), content)
+
+    extractor = AsyncMock()
+    extractor._classifier = None
+    extractor._kg_granularity = "map_reduce"
+    extractor._resolve_template = MagicMock(return_value=str(tpl))
+    extractor.extract = AsyncMock(side_effect=_extract)
+    builder = KGBuilder(mock_client, extractor, config)
+    builder._ka_base_dir = Path(tmp_path)
+    builder._insert_kg = AsyncMock(return_value=None)  # type: ignore[method-assign]
+    mock_client.find_vertices_by_property = AsyncMock(return_value=[{"id": "hg-old"}])
+
+    chunk_added = {"n": 0}
+
+    def _count_verts(vertices, **kw):
+        chunk_added["n"] += sum(1 for v in vertices if v.get("label") == "chunk")
+        return [f"hg-{i}" for i in range(len(vertices))]
+
+    mock_client.add_vertices = AsyncMock(side_effect=_count_verts)
+
+    def _tbl(ids, contents):
+        return pa.table({
+            "id": ids, "content": contents,
+            "document_name": ["d.txt"] * len(ids),
+            "chunk_index": list(range(len(ids))),
+            "doc_type": ["report"] * len(ids),
+        })
+
+    # build 1: 2 new chunks → STEP3 adds 2 chunk vertices.
+    t1 = await builder.build("ds", _tbl(["c1", "c2"], ["alpha", "beta"]), incremental=True)
+    await builder.execute_build(t1)
+    assert chunk_added["n"] == 2
+
+    # build 2: append c3 incremental → STEP3 adds ONLY the 1 new chunk vertex (P4).
+    chunk_added["n"] = 0
+    t2 = await builder.build("ds", _tbl(["c1", "c2", "c3"], ["alpha", "beta", "gamma"]), incremental=True)
+    await builder.execute_build(t2)
+    assert chunk_added["n"] == 1
+
+    # build 3: incremental=False (default) → STEP3 re-adds ALL 3 chunk vertices (G6).
+    chunk_added["n"] = 0
+    t3 = await builder.build("ds", _tbl(["c1", "c2", "c3"], ["alpha", "beta", "gamma"]), incremental=False)
+    await builder.execute_build(t3)
+    assert chunk_added["n"] == 3
