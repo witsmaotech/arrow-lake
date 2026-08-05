@@ -1,6 +1,6 @@
 [project]
 name = "arrow-lake"
-version = "1.10.1"
+version = "1.10.2"
 description = "Unified multimodal data lakehouse — Lance + Daft + Ray"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -183,7 +183,7 @@ markers = [
     "integration: Integration tests (require Docker Compose)",
     "e2e: End-to-end tests",
     "smoke: Platform boot smoke tests",
-    "benchmark: NO-GO gate latency benchmarks (require local LLM)",
+    "benchmark: latency/throughput benchmarks (kg_build/rag_pipeline require local LLM; olap/parse/clean/concurrency do not)",
     "distributed_gpu: Distributed GPU tests (requires K8s cluster, excluded from CI)",
     "slow: Slow-running tests (>30s)",
     "perf_regression: Performance regression tests (compare against baselines)",

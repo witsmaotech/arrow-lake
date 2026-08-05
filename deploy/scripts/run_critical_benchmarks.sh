@@ -15,6 +15,10 @@
 #   5. Hybrid search
 #   6. KG build overhead
 #   7. RAG pipeline
+#   8. OLAP analytical queries (ontime, 10K/100K rows)
+#   9. Document chunking throughput (parse front-end)
+#  10. Clean/writeback pipeline (read → DuckDB → restore)
+#  11. Mixed-load concurrency (vector+FTS+OLAP QPS sweep)
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
@@ -65,31 +69,47 @@ fi
 # Mode: run all benchmarks (default)
 # ---------------------------------------------------------------------------
 echo ""
-echo "[1/7] Ingestion benchmarks..."
+echo "[1/11] Ingestion benchmarks..."
 $UV pytest tests/benchmark/test_bench_ingest.py -v --no-header -q -m benchmark 2>&1 | tail -10
 
 echo ""
-echo "[2/7] Vector search benchmarks..."
+echo "[2/11] Vector search benchmarks..."
 $UV pytest tests/benchmark/test_bench_vector.py -v --no-header -q -m benchmark 2>&1 | tail -10
 
 echo ""
-echo "[3/7] Full-text search benchmarks..."
+echo "[3/11] Full-text search benchmarks..."
 $UV pytest tests/benchmark/test_bench_fts.py -v --no-header -q -m benchmark 2>&1 | tail -10
 
 echo ""
-echo "[4/7] Hybrid search benchmarks..."
+echo "[4/11] Hybrid search benchmarks..."
 $UV pytest tests/benchmark/test_bench_hybrid.py -v --no-header -q -m benchmark 2>&1 | tail -10
 
 echo ""
-echo "[5/7] KG build benchmarks..."
+echo "[5/11] KG build benchmarks..."
 $UV pytest tests/benchmark/test_bench_kg_build.py -v --no-header -q -m benchmark 2>&1 | tail -10
 
 echo ""
-echo "[6/7] RAG pipeline benchmarks..."
+echo "[6/11] RAG pipeline benchmarks..."
 $UV pytest tests/benchmark/test_bench_rag_pipeline.py -v --no-header -q -m benchmark 2>&1 | tail -10
 
 echo ""
-echo "[7/7] Performance regression check..."
+echo "[7/11] OLAP analytical query benchmarks..."
+$UV pytest tests/benchmark/test_bench_olap.py -v --no-header -q -m benchmark 2>&1 | tail -10
+
+echo ""
+echo "[8/11] Document chunking benchmarks..."
+$UV pytest tests/benchmark/test_bench_parse.py -v --no-header -q -m benchmark 2>&1 | tail -10
+
+echo ""
+echo "[9/11] Clean/writeback pipeline benchmarks..."
+$UV pytest tests/benchmark/test_bench_clean.py -v --no-header -q -m benchmark 2>&1 | tail -10
+
+echo ""
+echo "[10/11] Mixed-load concurrency benchmarks..."
+$UV pytest tests/benchmark/test_bench_concurrency.py -v --no-header -q -m benchmark 2>&1 | tail -10
+
+echo ""
+echo "[11/11] Performance regression check..."
 $UV pytest tests/benchmark/test_perf_regression.py -v --no-header -q -m perf_regression 2>&1 | tail -10
 
 echo ""

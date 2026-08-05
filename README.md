@@ -235,6 +235,59 @@ Each of those tools is excellent at its specialty. Arrow Lake is for teams that 
 
 ---
 
+## 📊 Benchmarks
+
+A `@pytest.mark.benchmark` suite in `tests/benchmark/` measures every hot path on real code (no mocks): ingestion, vector / FTS / hybrid search, KG build, RAG, and the four benchmarks added in this release — **OLAP analytical SQL**, **document chunking**, **clean/writeback**, and **mixed-load concurrency**. Run the full 11-step suite with `bash deploy/scripts/run_critical_benchmarks.sh`, or one file with `.venv/bin/pytest tests/benchmark/test_bench_<name>.py -m benchmark -s`.
+
+> **Environment**: Python 3.11.14 · WSL2 Linux x86_64 · 10 cores · DuckDB 1.5.5 · pylance 9.0.0 · lancedb 0.36.0. Numbers are the median of repeated runs (`BenchmarkReport`). Absolute values vary by hardware; the *shape* (where time goes, where throughput plateaus) is the durable finding.
+
+**OLAP analytical queries** — `OlapSearchBridge.query`, the `/query/olap` path, on a synthetic `ontime`-schema dataset:
+
+| Query shape | 10K rows | 100K rows |
+|---|---|---|
+| filter + order + limit | 0.178 s (56K rows/s) | 0.183 s (546K rows/s) |
+| group-by carrier | 0.176 s (57K rows/s) | 0.180 s (554K rows/s) |
+| route concat + HAVING | 0.190 s (53K rows/s) | 0.189 s (530K rows/s) |
+| multi-key group-by year×month | 0.183 s (55K rows/s) | 0.176 s (568K rows/s) |
+
+A 10× larger dataset adds **no measurable latency** — a ~180 ms per-query bridge overhead (register Lance → DuckDB view → SELECT → Arrow) dominates, while the DuckDB scan + aggregation itself is near-free up to 100K rows. Throughput therefore scales linearly with rows (56K → 554K rows/s).
+
+**Document chunking** — `DocumentChunker.chunk`, the CPU front of the ingest pipeline:
+
+| Workload | Throughput |
+|---|---|
+| Recursive (20 pages, 512/50) | ~37K pages/s (~185K chunks/s → 100 chunks) |
+| Page strategy | ~1.16M pages/s |
+| Paragraph strategy | ~560K pages/s |
+| Recursive (100 pages) | ~38K pages/s (500 chunks) |
+| chunk_size 256 / 512 / 1024 | ~34–38K pages/s (200 / 100 / 40 chunks) |
+
+Chunking is never the ingest bottleneck — recursive splits run at ~37K pages/s, and `chunk_size` changes only the chunk count, not throughput.
+
+**Clean / writeback** — the `POST /clean` path (read → DuckDB transform → `restore_dataset`):
+
+| Stage | 10K rows | 100K rows |
+|---|---|---|
+| full read → transform → writeback | 0.023 s (436K rows/s) | 0.059 s (1.68M rows/s) |
+| read dataset | 2.43M rows/s | 4.10M rows/s |
+| DuckDB transform | 915K rows/s | 5.77M rows/s |
+| `restore_dataset` write | 1.70M rows/s | 9.45M rows/s |
+
+Writeback scales super-linearly (436K → 1.68M rows/s); at 100K rows no single stage dominates.
+
+**Mixed-load concurrency** — 300 ops (100 each vector / FTS / OLAP) under a `ThreadPoolExecutor` worker sweep:
+
+| Workers | QPS | Wall time |
+|---|---|---|
+| 1 | 8.3 | 36.4 s |
+| 5 | 10.2 | 29.3 s |
+| 10 | 10.4 | 29.0 s |
+| 20 | 10.4 | 28.8 s |
+
+Throughput **plateaus at ~10 QPS by 5 workers** — extra concurrency buys nothing. This is the sync-query contention ceiling (GIL + DuckDB session pool + Lance scan) on one node, and is the empirical basis for the async-query track (v1.8.0 #17).
+
+---
+
 ## 📚 Documentation & Cookbook
 
 ### Cookbook (bilingual EN / ZH)

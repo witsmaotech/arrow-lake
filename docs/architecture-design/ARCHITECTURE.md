@@ -1016,8 +1016,13 @@ ArrowLakeError
 - **规模**：**424+ 个测试文件**（unit / integration / e2e / benchmark 四类），全量 **5005+ passed**（v1.7.1 基线，v1.8.0 / v1.9.x 各批回归零失败；v1.9.2 conftest autouse 全局清理 fixture 治理隔离污染）。
 - **框架**：pytest（`-q --tb=line --no-header`，失败 `-x`）。
 - **环境**：统一 `.venv/bin/python3`。
-- **基准**：`tests/benchmark/`（scale / quality / perf-regression / **batch3 gates**）；`BenchmarkReport` 可复用。
-- **覆盖**：unit 7043 节点 / integration 457 / e2e 80 / benchmark 173（codebase-memory 图谱统计）。
+- **基准**：`tests/benchmark/`（scale / quality / perf-regression / **batch3 gates**）；`BenchmarkReport` 可复用。`deploy/scripts/run_critical_benchmarks.sh` 编排 11 步全链路：ingest / vector / fts / hybrid / kg_build / rag_pipeline / **olap / parse / clean / concurrency** / perf_regression。后四项为 v1.10.x 新增，覆盖此前缺口：
+  - **OLAP 分析查询**（`OlapSearchBridge.query`，`ontime` schema，1 万 / 10 万行）：四种查询形态（过滤+排序 / 单键聚合 / 航线拼接+HAVING / 多键聚合）每查询 ~180 ms 固定 bridge 开销主导，10 万行较 1 万行延迟几乎不变，吞吐 56K → 554K 行/s 线性扩展。
+  - **文档分块**（`DocumentChunker.chunk`）：递归 ~37K 页/s（~185K 块/s），按页 / 按段 >560K 页/s；`chunk_size` 只改变块数不影响吞吐 → 分块非摄入瓶颈。
+  - **清洗写回**（`POST /clean` 路径：read → DuckDB 转换 → `restore_dataset`）：完整写回 436K（1 万行）→ 1.68M 行/s（10 万行）超线性扩展。
+  - **混合负载并发**（向量+全文+OLAP 各 100 次，worker 扫描）：吞吐在 5 worker 见顶于 ~10 QPS → 同步查询争用天花板，v1.8.0 #17 异步查询的实证依据。
+  - 复现：`.venv/bin/pytest tests/benchmark/test_bench_<olap|parse|clean|concurrency>.py -m benchmark -s`（详见 README「📊 Benchmarks」）。
+- **覆盖**：unit 7043 节点 / integration 457 / e2e 80 / benchmark 190（含 v1.10.2 新增 olap/parse/clean/concurrency 17 项；codebase-memory 图谱统计）。
 - **cookbook**：`docs/cookbook/`（18 章，中英双语）+ `examples/` + `examples_api/`（SDK + REST 端到端示例）—— 作为回归套件。
 - **CI 守护**：`KNOWN_DOC_TYPES` + `validate_taxonomy()` 单一真相源。
 

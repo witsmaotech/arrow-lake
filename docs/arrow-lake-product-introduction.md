@@ -249,6 +249,19 @@ GPU autoscaling integration supports both scale-to-zero for idle periods and fra
 | Ray distributed ingestion | Parallel document processing |
 | Blob lifecycle tiering | Standard to IA to Glacier cost optimization |
 
+### Measured benchmarks (v1.10.x)
+
+The numbers below come from `tests/benchmark/` (`@pytest.mark.benchmark`, `BenchmarkReport` median), measured on Python 3.11.14 / WSL2 10-core / DuckDB 1.5.5 / pylance 9.0.0 / lancedb 0.36.0. Absolute values vary by hardware; the *shape* (where cost lives, where throughput plateaus) is the conclusion. Full reproduce commands and per-stage data are in the README "📊 Benchmarks" section.
+
+| Benchmark (new) | Key result |
+|---|---|
+| **OLAP analytical queries** (`OlapSearchBridge.query`, `ontime`, 10K / 100K rows) | ~180 ms fixed per-query bridge overhead dominates; 100K-row latency matches 10K, throughput scales 56K → 554K rows/s |
+| **Document chunking** (`DocumentChunker.chunk`) | Recursive ~37K pages/s (~185K chunks/s); page / paragraph >560K pages/s; `chunk_size` affects count, not throughput |
+| **Clean / writeback** (`POST /clean`: read → DuckDB → `restore_dataset`) | Full writeback 436K → 1.68M rows/s (10K → 100K rows), super-linear, no single-stage bottleneck |
+| **Mixed-load concurrency** (vector+FTS+OLAP, worker sweep) | Throughput plateaus at ~10 QPS by 5 workers — the sync-query contention ceiling, empirical basis for the async-query track |
+
+> The existing ingestion / vector / FTS / hybrid / KG-build / RAG benchmarks are orchestrated by `bash deploy/scripts/run_critical_benchmarks.sh` (11 steps total); KG-build and RAG require an LLM service.
+
 ---
 
 ## Technology Stack

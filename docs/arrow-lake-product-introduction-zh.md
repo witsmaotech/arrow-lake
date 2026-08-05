@@ -249,6 +249,19 @@ GPU 自动扩缩集成支持空闲时段的缩放到零（Scale-to-Zero）和成
 | Ray 分布式摄入 | 并行文档处理 |
 | Blob 生命周期分层 | Standard → IA → Glacier 成本优化 |
 
+### 实测基准（v1.10.x）
+
+下列数值来自 `tests/benchmark/`（`@pytest.mark.benchmark`，`BenchmarkReport` 取中位数），在 Python 3.11.14 / WSL2 10 核 / DuckDB 1.5.5 / pylance 9.0.0 / lancedb 0.36.0 上实测。绝对值随硬件变化，**形态**（开销在哪、吞吐在哪见顶）才是结论。完整复现命令与分项数据见 README「📊 Benchmarks」。
+
+| 基准（新增） | 关键结果 |
+|---|---|
+| **OLAP 分析查询**（`OlapSearchBridge.query`，`ontime`，1 万 / 10 万行） | 每查询 ~180 ms 固定 bridge 开销主导；10 万行延迟与 1 万行持平，吞吐 56K → 554K 行/s 线性扩展 |
+| **文档分块**（`DocumentChunker.chunk`） | 递归 ~37K 页/s（~185K 块/s）；按页 / 按段 >560K 页/s；`chunk_size` 只影响块数 |
+| **清洗写回**（`POST /clean`：read → DuckDB → `restore_dataset`） | 完整写回 436K → 1.68M 行/s（1 万 → 10 万行）超线性扩展，无单一阶段瓶颈 |
+| **混合负载并发**（向量+全文+OLAP，worker 扫描） | 吞吐在 5 worker 见顶于 ~10 QPS —— 同步查询争用天花板，异步查询演进的实证依据 |
+
+> 既有的摄入 / 向量 / 全文 / 混合搜索 / KG 构建 / RAG 基准由 `bash deploy/scripts/run_critical_benchmarks.sh` 编排（共 11 步），其中 KG 构建 / RAG 依赖 LLM 服务。
+
 ---
 
 ## 技术栈

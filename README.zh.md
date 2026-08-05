@@ -235,6 +235,59 @@ print(lake.search("articles", query="ML", top_k=3))
 
 ---
 
+## 📊 性能基准
+
+`tests/benchmark/` 下的一套 `@pytest.mark.benchmark` 基准在真实代码（非 mock）上测量每条热路径：摄入、向量 / 全文 / 混合搜索、KG 构建、RAG，以及本次新增的四项基准 —— **OLAP 分析 SQL**、**文档分块**、**清洗写回**、**混合负载并发**。用 `bash deploy/scripts/run_critical_benchmarks.sh` 跑完整 11 步套件，或单文件 `.venv/bin/pytest tests/benchmark/test_bench_<名称>.py -m benchmark -s`。
+
+> **环境**：Python 3.11.14 · WSL2 Linux x86_64 · 10 核 · DuckDB 1.5.5 · pylance 9.0.0 · lancedb 0.36.0。数值为多次重复的中位数（`BenchmarkReport`）。绝对值随硬件变化，**形态**（时间花在哪、吞吐在哪见顶）才是可复用的结论。
+
+**OLAP 分析查询** —— `OlapSearchBridge.query`（即 `/query/olap` 路径），在合成的 `ontime` schema 上：
+
+| 查询形态 | 1 万行 | 10 万行 |
+|---|---|---|
+| 过滤 + 排序 + LIMIT | 0.178 s（56K 行/s） | 0.183 s（546K 行/s） |
+| 按航司 GROUP BY | 0.176 s（57K 行/s） | 0.180 s（554K 行/s） |
+| 航线拼接 + HAVING | 0.190 s（53K 行/s） | 0.189 s（530K 行/s） |
+| 多键 GROUP BY 年×月 | 0.183 s（55K 行/s） | 0.176 s（568K 行/s） |
+
+数据放大 10 倍**延迟几乎不变** —— 每查询约 180 ms 的 bridge 固定开销（注册 Lance → DuckDB 视图 → SELECT → Arrow）占绝对主导，而 DuckDB 扫描 + 聚合本身在 10 万行以内近乎免费。吞吐因此随行数线性扩展（56K → 554K 行/s）。
+
+**文档分块** —— `DocumentChunker.chunk`，摄入管线 CPU 前端：
+
+| 负载 | 吞吐 |
+|---|---|
+| 递归（20 页，512/50） | ~37K 页/s（~185K 块/s → 100 块） |
+| 按页策略 | ~1.16M 页/s |
+| 按段策略 | ~560K 页/s |
+| 递归（100 页） | ~38K 页/s（500 块） |
+| chunk_size 256 / 512 / 1024 | ~34–38K 页/s（200 / 100 / 40 块） |
+
+分块永远不会成为摄入瓶颈 —— 递归切分约 37K 页/s，`chunk_size` 只改变块数，不影响吞吐。
+
+**清洗 / 写回** —— `POST /clean` 路径（读取 → DuckDB 转换 → `restore_dataset`）：
+
+| 阶段 | 1 万行 | 10 万行 |
+|---|---|---|
+| 完整 读取→转换→写回 | 0.023 s（436K 行/s） | 0.059 s（1.68M 行/s） |
+| 读取数据集 | 2.43M 行/s | 4.10M 行/s |
+| DuckDB 转换 | 915K 行/s | 5.77M 行/s |
+| `restore_dataset` 写回 | 1.70M 行/s | 9.45M 行/s |
+
+写回超线性扩展（436K → 1.68M 行/s）；10 万行时没有单一阶段成为瓶颈。
+
+**混合负载并发** —— 300 次操作（向量 / 全文 / OLAP 各 100）在 `ThreadPoolExecutor` worker 扫描下：
+
+| Worker 数 | QPS | 墙钟时间 |
+|---|---|---|
+| 1 | 8.3 | 36.4 s |
+| 5 | 10.2 | 29.3 s |
+| 10 | 10.4 | 29.0 s |
+| 20 | 10.4 | 28.8 s |
+
+吞吐在 **5 worker 时即见顶于 ~10 QPS** —— 再加并发毫无收益。这是单节点上同步查询层的争用天花板（GIL + DuckDB 会话池 + Lance 扫描），也正是异步查询演进（v1.8.0 #17）的实证依据。
+
+---
+
 ## 📚 文档与 Cookbook
 
 ### Cookbook（中英双语）

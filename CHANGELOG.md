@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.10.2] - 2026-08-05
+
+### 性能基准套件扩充(4 项缺口补齐)
+
+`tests/benchmark/` 新增 4 个 `@pytest.mark.benchmark` 基准文件(17 个测试用例,全绿),覆盖既有套件的四类空白,均走真实代码路径(非 mock):
+
+- **`test_bench_olap.py`** — OLAP 分析查询(`OlapSearchBridge.query`,即 `/query/olap` 路径),合成 `ontime` schema,1 万 / 10 万行 × 四种查询形态(过滤+排序 / 单键聚合 / 航线拼接+HAVING / 多键聚合)。实测:每查询 ~180 ms 固定 bridge 开销主导,10 万行延迟与 1 万行持平,吞吐 56K → 554K 行/s 线性扩展。
+- **`test_bench_parse.py`** — 文档分块吞吐(`DocumentChunker.chunk`,摄入管线 CPU 前端):递归 ~37K 页/s(~185K 块/s),按页 / 按段 >560K 页/s;`chunk_size` 只影响块数不影响吞吐 → 分块非摄入瓶颈。
+- **`test_bench_clean.py`** — 清洗写回管线(`POST /clean` 路径:read → DuckDB 转换 → `restore_dataset`):完整写回 436K → 1.68M 行/s(1 万 → 10 万行)超线性扩展,并提供 read/transform/write 分项分解。
+- **`test_bench_concurrency.py`** — 混合负载并发(向量+全文+OLAP 各 100 次,`ThreadPoolExecutor` worker 扫描):吞吐在 5 worker 见顶于 ~10 QPS → 同步查询争用天花板,v1.8.0 #17 异步查询演进的实证依据。
+
+**编排/文档同步**:`deploy/scripts/run_critical_benchmarks.sh` 由 7 步扩至 11 步(新增 olap/parse/clean/concurrency);结果写入 README(EN/zh「📊 Benchmarks」)、ARCHITECTURE §15、产品介绍(EN/zh「Performance/性能」)。复现:`.venv/bin/pytest tests/benchmark/test_bench_<olap|parse|clean|concurrency>.py -m benchmark -s`。环境:Python 3.11.14 / WSL2 10 核 / DuckDB 1.5.5 / pylance 9.0.0 / lancedb 0.36.0。
+
 ## [1.10.1] - 2026-08-04
 
 ### docling GPU 推理修复(triton JIT 缺 C 编译器)
