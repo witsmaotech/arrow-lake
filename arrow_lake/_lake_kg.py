@@ -677,7 +677,20 @@ class _LakeKGMixin:
 
         storage = self._get_storage()
         dataset = storage.open_dataset(dataset_name)
-        table = dataset.search().to_arrow()
+        # v1.10.2 M4 P4 (part c): project out the heavy vector column
+        # (text_embedding, ~4KB/row × N) — KG build never uses it, so loading
+        # it is pure memory waste on large datasets (peak drops an order of
+        # magnitude on big vector'd sets). Best-effort: fall back to the full
+        # load if projection isn't supported for this dataset/remote backend.
+        full_cols = list(dataset.schema.names)
+        keep = [c for c in full_cols if c != "text_embedding"]
+        if keep and len(keep) < len(full_cols):
+            try:
+                table = dataset.to_lance().to_table(columns=keep)
+            except Exception:  # noqa: BLE001 — best-effort projection
+                table = dataset.search().to_arrow()
+        else:
+            table = dataset.search().to_arrow()
 
         # Normalize required columns (builder also does this as safety net)
         if "content" not in table.column_names:
