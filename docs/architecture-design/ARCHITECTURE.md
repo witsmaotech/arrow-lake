@@ -229,7 +229,7 @@ def _get_component(self, key: str, factory: Callable[[], Any]) -> Any:
 | Bridge | 文件 | 能力 |
 |---|---|---|
 | `VectorSearchBridge` | `query/vector.py` | 向量 ANN + `search_async` + 跨列（`vector_column`）+ 跨模态 |
-| `FullTextSearchBridge` | `query/fts.py` | Tantivy BM25 + jieba 中文 + `search_async` |
+| `FullTextSearchBridge` | `query/fts.py` | lancedb 0.36 native FTS (ICU) + jieba 中文预分词 + `search_async`（v1.9.7 从 Tantivy 迁移） |
 | `HybridSearchBridge` | `query/hybrid.py` | RRF 融合 + **Reranker 精排**（v1.8.0 #5）+ `search_async` |
 | `FacetedSearchBridge` | `query/faceted.py` | 标量索引分面 + `search_async` |
 | `EnsembleSearchBridge` | `query/ensemble.py` | 跨列 RRF 集成 |
@@ -384,7 +384,7 @@ YAML 配置文件 (ArrowLakeConfig.from_yaml)
 - **DuckDB 是主力查询路径**，不是 fallback。`lance_scan` / `vector_search` / `fts` 在代码中有 **40+ 处调用**。升级 pylance 时头号风险即在此：pylance 7.0 可能写 Lance v2.2/v3，而 DuckDB core `lance` 扩展可能只认 v2.1 → `lance_scan` 全断（v1.7.1 已验证兼容）。
 - **Lance tags/branches**：tags 全链路已就绪（create/list/delete/read_at_tag），v1.8.0 #1 补 branches。支持 A/B、回滚、可复现训练。
 - **标量索引**：v1.7.1 前全项目 `create_scalar_index=0`，facet 列（modality/source/doc_type/created_at）缺索引；现已全量补齐 + SDK prefilter 路径。
-- **FTS**：默认 Tantivy 倒排 + jieba 中文分词；`use_inverted` 为实验选项；v1.8.0 路线图含 DuckDB 原生 fts/vss 备选（#12）。
+- **FTS**：lancedb 0.36 **native FTS（ICU base_tokenizer，v1.9.7 从 Tantivy 迁移——0.36 移除了 tantivy-based FTS）** + jieba 中文预分词（default `tokenizer_type='jieba'`，写 `_fts_segmented` 列）；`use_inverted` 为实验选项；DuckDB 原生 fts（`OlapSearchBridge.fts_search` BM25）已落地（#12）。
 
 ### 4.4 查询层（Query）
 
