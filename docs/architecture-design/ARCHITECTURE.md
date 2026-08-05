@@ -659,6 +659,10 @@ lake.list_flows / get_flow_info
 
 ### 6.1 文档摄取 + 嵌入 + KG 构建（端到端）
 
+![多模态摄取流水线](diagrams/02-ingestion-pipeline.svg)
+
+![KG 异步构建流水线（map_reduce 并发抽取 → 全局合并 → 消歧 → insert）](diagrams/04-kg-build-pipeline.svg)
+
 ```mermaid
 sequenceDiagram
     participant U as Client
@@ -993,7 +997,8 @@ ArrowLakeError
 | **v1.9.4** | 2026-07-25 | **血缘埋点评审**（5 基底 + 8 gap，P0 = actor 传递链 + delete 审计）+ KG **project_concept_graph** 模板（22 类型 14 关系，质量碾压 entity_graph）+ **MERGE_FIELD 合并**（治 BALANCED grouped OOM/卡死，非 LLM 稳定 15% 内存）+ Gravitino server **1.3.0** 升级（`s3.*` 属性 / `GRAVITINO_HOME=/opt`） |
 | **v1.9.5** | 2026-07-26 | **RAG 质量全链路**：hybrid 默认生效（修死配置 `_rag_retriever` 分流）+ ingest 自动 `create_vector_index`（≥256 IVF_PQ）+ `use_kg` per-query + **GraphRAG**（extract_llm=qwen-turbo，109s→50s）+ qwen-plus@16384 最优 QA + docling chunk 语义 + Lance 留 MinIO（非反模式） |
 | **v1.9.6** | 2026-07-28 | **RAG 防幻觉**（faithfulness verify，`support_ratio`/`unsupported`，embedding cosine 默认 + LLM judge opt-in）+ **cross-encoder reranker**（bge-reranker-v2-m3 默认）+ **KG 质量/性能**（snap 编辑距离归一 / strict definition 过滤 / enum 正则解析 / GraphRAG 三路并行 -40~50% / KA LRU / QuestionEntityCache monotonic）+ **治理兑现**（`lineage.html` 血缘可视化 + 列级血缘 + `max_nodes` 截断 / masking 4 函数 + HMAC fail-fast + mask-preview + audit 复用 Lance）+ **架构 refactor**（RAGQueryPlan + score 列 / `ingest_documents_and_index` 收口 / GraphRAG 模板方法 / reranker async 契约）+ **安全加固**（fail-closed 矩阵 + SQL 注入防护 + XSS esc + HMAC 128 位）。 |
-| **v1.10.0** | 2026-08-03 | **知识抽取模板管理**（M1–M5 全交付）：① M1 后端动态加载（`/data/lake/templates` 卷 YAML 运行时进 gallery + `reset_gallery_cache` 热重载，**不 rebuild/不 restart**）+ `/api/v1/admin/extraction-templates` CRUD（ADMIN）+ `template_registry` 校验 + 查询路径模板快照 + `build(template_override=)`；② M2 `console/extraction-templates.html` CRUD 页 + 数据集绑定（`dataset_template_bindings`，`/kg/build` 自动解析）；③ M2.5 LLM 辅助生成模板（self-heal + `_hyperextract_check` 落盘闸门）；④ M3 dry-run 试跑沙箱 + set-default + usage；⑤ M4 模板质量验证 harness（`console/template-quality.html` + `POST /{name}/quality/{doc,build}` + `DELETE /quality/{temp_ds}` + KA 隔离 + 验证历史 V006）；⑥ M5 category↔doc_type 拉通 + 动态词典（V007 `doc_type_categories` + `/admin/doc-type-categories` + category 必填校验 + `GET /kg/doc-types` 动态）。新增 system_db 迁移 **V005 extraction_templates / V006 template_quality_runs / V007 doc_type_categories**；Console 原生弹框→站内 modal/toast。当前主干（`_version.py=1.10.0`）。详见 CHANGELOG。 |
+| **v1.10.0** | 2026-08-03 | **知识抽取模板管理**（M1–M5 全交付）：① M1 后端动态加载（`/data/lake/templates` 卷 YAML 运行时进 gallery + `reset_gallery_cache` 热重载，**不 rebuild/不 restart**）+ `/api/v1/admin/extraction-templates` CRUD（ADMIN）+ `template_registry` 校验 + 查询路径模板快照 + `build(template_override=)`；② M2 `console/extraction-templates.html` CRUD 页 + 数据集绑定（`dataset_template_bindings`，`/kg/build` 自动解析）；③ M2.5 LLM 辅助生成模板（self-heal + `_hyperextract_check` 落盘闸门）；④ M3 dry-run 试跑沙箱 + set-default + usage；⑤ M4 模板质量验证 harness（`console/template-quality.html` + `POST /{name}/quality/{doc,build}` + `DELETE /quality/{temp_ds}` + KA 隔离 + 验证历史 V006）；⑥ M5 category↔doc_type 拉通 + 动态词典（V007 `doc_type_categories` + `/admin/doc-type-categories` + category 必填校验 + `GET /kg/doc-types` 动态）。新增 system_db 迁移 **V005 extraction_templates / V006 template_quality_runs / V007 doc_type_categories**；Console 原生弹框→站内 modal/toast。详见 CHANGELOG。 |
+| **v1.10.1** | 2026-08-04 | **稳定性与治理收尾**：① docling GPU triton JIT 缺 C 编译器修复（Dockerfile runtime 加 `build-essential`，治 worker 崩溃循环 pid 8→3380+）；② KG 抽取模板降级路径修复（`he_extractor` 降级走 `_resolve_template_path`，治 misroute chunk 0 实体）；③ 配置精简（11 config −209 行）+ 部署 override 收敛（删 4 冗余）；④ **examples/examples_image 整合进 docs/cookbook**（自包含：SDK 59 + REST 40 + datas，根 examples 全重叠清除）；⑤ 架构文档整合（ARCHITECTURE 移入 architecture-design + 注入图集 + 附录 A 图集 / B ADR / C 源码导航 / E 组件链接+Lance 湖仓博文）。 |
 
 **v1.8.0 实施纪律**（trunk-based，直接提交 `master`，不开 feature 分支——项目约定优先于全局 PR 规则）：每项 TDD（RED→GREEN→REFACTOR）→ 对应 cookbook 跑通 → 全量 pytest 零失败 → CHANGELOG/roadmap/implementation 同步。
 
