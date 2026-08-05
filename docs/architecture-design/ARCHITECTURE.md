@@ -45,14 +45,14 @@
 | 层 | 技术 | 版本（`pyproject.toml` 实测 pin） | 角色 |
 |---|---|---|---|
 | 计算层 | **Daft** | `0.7.21` | lazy DataFrame + 内置 AI 函数（embed/prompt/classify）+ 26 连接器 + 多模态 decode |
-| 湖仓格式 | **Lance / pylance** | pylance `>=7.0.0`（v1.7.1 升） | 列式存储 + 向量索引（IVF_PQ/HNSW/SQ/RQ）+ 标量索引（BTree/Bitmap）+ FTS 倒排 + tags/branches |
+| 湖仓格式 | **Lance / pylance** | pylance `9.0.0`（pyproject 下限 `>=7.0.0`，v1.7.1 升） | 列式存储 + 向量索引（IVF_PQ/HNSW/SQ/RQ）+ 标量索引（BTree/Bitmap）+ FTS 倒排 + tags/branches |
 | 应用层 | **LanceDB** | `0.36.0`（v1.7.1 起 ≥0.33） | 向量库 SDK，Table/Namespace/索引/版本管理 + `search_async` |
 | 分布式 | **Ray** | `2.56.0` | head + worker 集群，KG 构建 / 批计算 /（预留）分布式索引 backfill |
 | 编排 | **Metaflow** | `2.19.35` + `metaflow-ray` `0.1.4` | 工作流编排 + checkpoint + retry/backoff + Argo 桥接 |
 | 引擎层 | **DuckDB** | `1.5.5` | **主力查询路径**（`lance_scan` / `vector_search` / `fts`，40+ 处调用），非 fallback |
 | 物化层 | **DuckLake** | DuckDB 扩展 | 跨存储物化视图（TTL + ART index + 行预算） |
 | 图谱 | **HugeGraph** | 1.7（PD 集群模式） | 知识图谱存储 + Gremlin 遍历；`VermeerClient` 构建 |
-| 治理 | **Apache Gravitino** | — | 统一 catalog + tag-driven ACL + masking + retention |
+| 治理 | **Apache Gravitino** | `1.3.0`（server `apache/gravitino:1.3.0` + SDK `apache-gravitino==1.3.0`，`s3.*` 属性） | 统一 catalog + tag-driven ACL + masking + retention |
 | 对象存储 | **MinIO / S3** | `boto3>=1.35` | blob 原文（图像/视频）+ 备份 |
 | 缓存/任务 | **Redis** | `redis[hiredis]>=5.0,<6.0` | 分布式会话 + JWT 黑名单 + 异步任务状态共享 + rate_limit/login lockout（v1.9.2，多 worker） |
 | **控制面库** | **libSQL / Turso（sqld）** | `ghcr.io/tursodatabase/libsql-server`（**v1.9.0**） | **控制面关系库**：RBAC / identity / personal_token / catalog 注册 / 任务历史 / lineage 索引 / RAG 会话 / governance；**数据面（Lance/DuckDB/HugeGraph/MinIO）不触碰**；`enabled` 默认 false（opt-in，渐进启用）；fail_close（RBAC/identity）+ fail_soft（catalog/tasks/rag）双模 |
