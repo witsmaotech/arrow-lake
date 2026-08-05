@@ -196,6 +196,19 @@ class StorageAdvancedMixin:
             ) from exc
         self._record_schema_change(name, "add_columns", {"columns": list(columns.column_names)})
 
+    def has_column(self, name: str, column_name: str) -> bool:
+        """Return True iff ``column_name`` exists in dataset ``name`` (v1.10.2 P1).
+
+        Used by ``embed_and_add`` to decide first-time-add vs null-backfill.
+        Fail-soft: a missing dataset returns False (caller treats as first-time).
+        """
+        self._validate_name(name)
+        try:
+            table = self._open_lance(self._get_dataset_path(name))
+            return column_name in table.schema.names
+        except Exception:  # noqa: BLE001 — dataset missing / unreadable
+            return False
+
     def alter_column(self, name: str, column_name: str, new_type: pa.DataType) -> None:
         """Change a column's data type.
 

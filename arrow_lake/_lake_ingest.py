@@ -890,65 +890,114 @@ class _LakeIngestMixin:
             StorageError: If dataset not found.
             EmbeddingError: If encoding fails.
         """
+        from arrow_lake.config._enums import EmbeddingBackend  # noqa: F401 (kept for callers)
+        emb_cfg = self._config.embedding
+        storage = self._get_storage()
+
+        # v1.10.2 P1: if the embedding column already exists (append scenario),
+        # backfill ONLY the null rows. Re-running add_columns_table would fail
+        # ("Column names must not already exist") and be swallowed by the ingest
+        # post-step best-effort, leaving new append rows null (§2.2).
+        if storage.has_column(dataset_name, embedding_column):
+            return self._backfill_embedding_nulls(
+                dataset_name, text_column, embedding_column, emb_cfg, batch_size
+            )
+
+        # First-time add (original path): full encode + add_columns_table.
+        table = storage.read_dataset(dataset_name, columns=[text_column])
+        texts = table.column(text_column).to_pylist()
+        vecs, dim = self._encode_texts(texts, emb_cfg, batch_size)
+        vec_array = pa.FixedSizeListArray.from_arrays(
+            pa.array(vecs.ravel()), dim,  # vecs is a float32 ndarray
+        )
+        storage.add_columns_table(dataset_name, pa.table({embedding_column: vec_array}))
+        return len(texts)
+
+    def _encode_texts(self, texts, emb_cfg, batch_size=None):
+        """Encode ``texts`` via the configured backend → ``(np.ndarray [n, dim], dim)``.
+
+        Centralizes the DAFT / OPENAI / LOCAL branches (v1.10.2 P1) so the
+        first-time add and the null-backfill paths share one encoder path.
+        """
         from arrow_lake.config._enums import EmbeddingBackend
         from arrow_lake.embed.encoder import ApiEmbeddingEncoder, LocalEmbeddingEncoder
-
-        emb_cfg = self._config.embedding
-
-        # Read text column
-        table = self._get_storage().read_dataset(
-            dataset_name, columns=[text_column],
-        )
-        texts = table.column(text_column).to_pylist()
-        n = len(texts)
+        import numpy as np
 
         effective_batch = batch_size or emb_cfg.batch_size
-
-        # Encode using configured backend
+        n = len(texts)
         if emb_cfg.backend == EmbeddingBackend.DAFT:
             from arrow_lake.embed.daft_encoder import DaftBatchEncoder
-
             encoder = DaftBatchEncoder(
-                model=emb_cfg.model,
-                provider=emb_cfg.daft_provider,
+                model=emb_cfg.model, provider=emb_cfg.daft_provider,
                 num_partitions=emb_cfg.daft_num_partitions,
                 expected_dim=emb_cfg.expected_dim,
             )
-            all_embeddings_array, dim = encoder.encode_to_vectors(
-                pa.table({text_column: texts}), column=text_column,
-            )
-            all_embeddings = all_embeddings_array.tolist()
-        elif emb_cfg.backend == EmbeddingBackend.OPENAI and emb_cfg.api_base:
+            arr, dim = encoder.encode_to_vectors(pa.table({"t": texts}), column="t")
+            return np.asarray(arr, dtype=np.float32), dim
+        if emb_cfg.backend == EmbeddingBackend.OPENAI and emb_cfg.api_base:
             encoder = ApiEmbeddingEncoder(
-                api_base=emb_cfg.api_base,
-                api_key=emb_cfg.api_key,
-                model_name=emb_cfg.model,
-                batch_size=effective_batch,
+                api_base=emb_cfg.api_base, api_key=emb_cfg.api_key,
+                model_name=emb_cfg.model, batch_size=effective_batch,
             )
-            all_embeddings: list[list[float]] = []
+            out: list[list[float]] = []
             for i in range(0, n, effective_batch):
-                batch = encoder.encode(texts[i : i + effective_batch])
-                all_embeddings.extend(batch.embeddings.tolist())
-            dim = len(all_embeddings[0])
-        else:
-            encoder = LocalEmbeddingEncoder(
-                model_name=emb_cfg.model,
-                batch_size=effective_batch,
-                expected_dim=emb_cfg.expected_dim,
-            )
-            emb_array, dim = encoder.encode_to_vectors(
-                pa.table({text_column: texts}), column=text_column,
-            )
-            all_embeddings = emb_array.tolist()
-
-        import numpy as np
-
-        vec_array = pa.FixedSizeListArray.from_arrays(
-            np.array(all_embeddings, dtype=np.float32).ravel(), dim,
+                out.extend(encoder.encode(texts[i : i + effective_batch]).embeddings.tolist())
+            arr = np.asarray(out, dtype=np.float32)
+            return arr, (arr.shape[1] if n else 0)
+        encoder = LocalEmbeddingEncoder(
+            model_name=emb_cfg.model, batch_size=effective_batch,
+            expected_dim=emb_cfg.expected_dim,
         )
-        vec_table = pa.table({embedding_column: vec_array})
-        self._get_storage().add_columns_table(dataset_name, vec_table)
-        return n
+        arr, dim = encoder.encode_to_vectors(pa.table({"t": texts}), column="t")
+        return np.asarray(arr, dtype=np.float32), dim
+
+    def _backfill_embedding_nulls(self, dataset_name, text_column, embedding_column,
+                                  emb_cfg, batch_size=None) -> int:
+        """Backfill NULL embedding rows in place (v1.10.2 P1, append scenario).
+
+        Arrow-native: read text+emb (projected), encode ONLY null rows, rebuild
+        the column via numpy (no ``.to_pylist()`` — avoids the ~40GB OOM on a
+        1M×1024 table, review performance C1), then drop+re-add. Non-null rows
+        are NOT re-encoded. Embeddings are reproducible from text → a mid-write
+        failure is recoverable (re-run), not fatal data loss.
+        """
+        import numpy as np
+        storage = self._get_storage()
+        table = storage.read_dataset(dataset_name, columns=[text_column, embedding_column])
+        n = table.num_rows
+        if n == 0:
+            return 0
+        text_arr = table.column(text_column)
+        emb_fsl = table.column(embedding_column).combine_chunks()  # FixedSizeListArray
+        dim = emb_fsl.type.list_size
+        null_mask = emb_fsl.is_null().to_numpy(zero_copy_only=False)
+        n_null = int(null_mask.sum())
+        if n_null == 0:
+            return 0  # idempotent no-op
+        null_idxs = np.nonzero(null_mask)[0]
+        texts = [
+            (text_arr[i].as_py() if text_arr[i].is_valid else "")
+            for i in null_idxs
+        ]
+        new_vecs, _ = self._encode_texts(texts, emb_cfg, batch_size)  # [n_null, dim]
+        # Rebuild the full [n, dim] grid. FSL's child array holds values ONLY for
+        # non-null rows (verified live: child len = (n - n_null) * dim, NOT n*dim
+        # — null rows occupy no child slots), so scatter the existing non-null
+        # vectors back to their original row positions and fill the null
+        # positions with the freshly-encoded vectors. (replace_with_mask has no
+        # FixedSizeList kernel — ArrowNotImplementedError, verified.)
+        non_null_rows = np.asarray(emb_fsl.flatten(), dtype=np.float32).reshape(
+            n - n_null, dim
+        )
+        full = np.zeros((n, dim), dtype=np.float32)
+        full[np.nonzero(~null_mask)[0]] = non_null_rows  # preserve existing vectors
+        full[null_idxs] = np.asarray(new_vecs, dtype=np.float32).reshape(-1, dim)
+        new_fsl = pa.FixedSizeListArray.from_arrays(
+            pa.array(full.ravel(), type=pa.float32()), dim
+        )
+        storage.drop_column(dataset_name, embedding_column)
+        storage.add_columns_table(dataset_name, pa.table({embedding_column: new_fsl}))
+        return n_null
 
     def embed_media(
         self,
