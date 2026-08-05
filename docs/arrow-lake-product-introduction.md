@@ -461,7 +461,7 @@ Arrow Lake is designed so you can go from zero to a working pipeline in under th
 
 **Documentation Suite:**
 
-The documentation includes 19 bilingual cookbook chapters (English and Chinese) with 50+ runnable examples covering every feature from basic ingestion to advanced GraphRAG, data masking, and lineage visualization. The authoritative [`ARCHITECTURE.md`](./ARCHITECTURE.md) reference, the diagram-driven [`architecture-design/`](./architecture-design/) design doc, and the [`cookbook/`](./cookbook/) how-to suite provide deeper architectural context, configuration reference, and deployment procedures.
+The documentation includes 19 bilingual cookbook chapters (English and Chinese) with 50+ runnable examples covering every feature from basic ingestion to advanced GraphRAG, data masking, and lineage visualization. The authoritative [`ARCHITECTURE.md`](./architecture-design/ARCHITECTURE.md) reference, the diagram-driven [`architecture-design/`](./architecture-design/) design doc, and the [`cookbook/`](./cookbook/) how-to suite provide deeper architectural context, configuration reference, and deployment procedures.
 
 **Configuration System:**
 

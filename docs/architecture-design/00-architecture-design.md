@@ -36,7 +36,7 @@ Arrow Lake 是一个**生产级、统一的多模态数据湖仓（Unified Multi
 
 | 既有材料 | 定位 | 本文关系 |
 |---|---|---|
-| [`docs/ARCHITECTURE.md`](../ARCHITECTURE.md)（1084 行权威文本参考） | 逐项核实源码的技术参考 | 本文以图为骨架重组其要点，深度 API 细节回链 |
+| [`docs/architecture-design/ARCHITECTURE.md`](ARCHITECTURE.md)（1084 行权威文本参考） | 逐项核实源码的技术参考 | 本文以图为骨架重组其要点，深度 API 细节回链 |
 | [`docs/cookbook/`](../cookbook/)（19 章实战手册，中英双语） | 可跑的 how-to | 本文 §4 流程章指路对应 cookbook 章 |
 | [`CHANGELOG.md`](../../CHANGELOG.md) | 变更流水 | 本文 §6.4 抽取架构级变更 |
 
@@ -210,7 +210,7 @@ Arrow Lake 采用**严格五层架构**：请求自上而下穿越 **① 接入 
 
 > ⚠️ **RAG / KG 方法多为 async（必须 await）**；`kg_build` 是 fire-and-forget，立即返回 `task_id`。
 
-**为什么这样设计**：用户面对的 API 表面是一个对象，物理实现按子系统隔离文件、按能力桥接 Protocol。新增能力只需加一个 mixin + Bridge，不动主干。详见 [`ARCHITECTURE.md` §3 / §5](../ARCHITECTURE.md)。
+**为什么这样设计**：用户面对的 API 表面是一个对象，物理实现按子系统隔离文件、按能力桥接 Protocol。新增能力只需加一个 mixin + Bridge，不动主干。详见 [`ARCHITECTURE.md` §3 / §5](ARCHITECTURE.md)。
 
 ---
 
@@ -705,7 +705,7 @@ lake.list_datasets(); lake.health(); lake.version()
 lake.create_tag(...); lake.add_column(...); lake.backup_create(...)
 ```
 
-> 完整签名见 [`ARCHITECTURE.md` §5](../ARCHITECTURE.md) 与 cookbook。
+> 完整签名见 [`ARCHITECTURE.md` §5](ARCHITECTURE.md) 与 cookbook。
 
 ---
 

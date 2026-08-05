@@ -269,7 +269,7 @@ Cookbook 是首要的实战指南 —— **共 19 章**，90 个可运行示例�
 
 ### 参考文档
 
-- 🏗️ [**架构**](docs/ARCHITECTURE.md) —— 权威技术参考（分层、facade、数据流）
+- 🏗️ [**架构**](docs/architecture-design/ARCHITECTURE.md) —— 权威技术参考（分层、facade、数据流）
 - 🎨 [架构设计](docs/architecture-design/00-architecture-design.md) —— 8 张时序与拓扑图（[`diagrams/`](docs/architecture-design/diagrams/)）
 - 📦 [产品介绍](docs/arrow-lake-product-introduction.md) —— 能力总览
 - 🔒 [安全策略](SECURITY.md) —— 鉴权、RBAC、审计、传输

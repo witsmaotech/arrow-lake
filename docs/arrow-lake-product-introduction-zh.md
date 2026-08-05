@@ -461,7 +461,7 @@ Arrow Lake 的设计目标是让你在三分钟内从零搭建出一条可运行
 
 **文档套件：**
 
-文档包含 19 章双语 Cookbook（英文和中文），50+ 个可运行示例，覆盖从基础摄入到高级 GraphRAG、数据脱敏、血缘可视化的每个功能。权威的 [`ARCHITECTURE.md`](./ARCHITECTURE.md) 技术参考、以图驱动的 [`architecture-design/`](./architecture-design/) 设计文档，以及 [`cookbook/`](./cookbook/) 实战手册，提供更深层的架构上下文、配置参考和部署流程。
+文档包含 19 章双语 Cookbook（英文和中文），50+ 个可运行示例，覆盖从基础摄入到高级 GraphRAG、数据脱敏、血缘可视化的每个功能。权威的 [`ARCHITECTURE.md`](./architecture-design/ARCHITECTURE.md) 技术参考、以图驱动的 [`architecture-design/`](./architecture-design/) 设计文档，以及 [`cookbook/`](./cookbook/) 实战手册，提供更深层的架构上下文、配置参考和部署流程。
 
 **配置系统：**
 

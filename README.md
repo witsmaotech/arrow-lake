@@ -269,7 +269,7 @@ The cookbook is the primary hands-on guide — **19 chapters**, 90 runnable exam
 
 ### Reference docs
 
-- 🏗️ [**Architecture**](docs/ARCHITECTURE.md) — the authoritative technical reference (layers, facades, data flow)
+- 🏗️ [**Architecture**](docs/architecture-design/ARCHITECTURE.md) — the authoritative technical reference (layers, facades, data flow)
 - 🎨 [Architecture design](docs/architecture-design/00-architecture-design.md) — 8 sequence & topology diagrams ([`diagrams/`](docs/architecture-design/diagrams/))
 - 📦 [Product introduction](docs/arrow-lake-product-introduction.md) — capabilities overview
 - 🔒 [Security policy](SECURITY.md) — auth, RBAC, audit, transport
