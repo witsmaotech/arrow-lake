@@ -196,9 +196,14 @@ class KGBuilder:
             return
         table, incremental, template_override, ka_base_dir = pending
         try:
-            await self._execute_build(task, table, incremental=incremental,
-                                      template_override=template_override,
-                                      ka_base_dir=ka_base_dir)
+            # v1.10.2 M4 P-辅.3: bind the override via contextvars for the whole
+            # build (async-safe under concurrent builds on a shared extractor),
+            # replacing the racy instance-attr set/clear.
+            from arrow_lake.knowledge_graph.he_extractor import using_template_override
+            with using_template_override(template_override):
+                await self._execute_build(task, table, incremental=incremental,
+                                          template_override=template_override,
+                                          ka_base_dir=ka_base_dir)
             task.status = KGBuildStatus.COMPLETED
         except asyncio.CancelledError:
             # Cancellation is abnormal — mark FAILED, then propagate (do NOT
@@ -213,9 +218,6 @@ class KGBuilder:
             logger.error("KG build %s failed", task_id, exc_info=True)
         finally:
             task.completed_at = datetime.now(UTC)
-            # v1.10.0: clear the per-build template override so it never leaks
-            # into a later unrelated build on the same extractor instance.
-            self._extractor._active_template_override = None
 
     def get_task_status(self, task_id: str) -> KGBuildTask | None:
         """Return the current status of a build task, or None if unknown."""
@@ -245,7 +247,8 @@ class KGBuilder:
         its temp artifacts from production. None = configured ``he_ka_base_dir``.
         """
         # v1.10.0: per-dataset template binding — single chokepoint in _resolve_template.
-        self._extractor._active_template_override = template_override
+        # v1.10.2 M4 P-辅.3: override is now bound via contextvars in execute_build
+        # (async-safe); no instance-attr set here.
         # v1.10.0 M4: resolve the KA-artifact root for THIS build (override wins,
         # else builder-configured base, else config he_ka_base_dir). None only
         # when no base is configured at all.

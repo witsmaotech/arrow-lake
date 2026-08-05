@@ -38,6 +38,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+import contextvars
+from contextlib import contextmanager
 
 from arrow_lake.knowledge_graph.doc_type_router import (
     DocTypeClassifier,
@@ -52,6 +54,25 @@ from arrow_lake.knowledge_graph.extractor import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# v1.10.2 M4 P-辅.3: per-task template override via contextvars. The old
+# ``_active_template_override`` INSTANCE attr raced when two datasets built
+# concurrently on the shared extractor (per-dataset locks serialize the SAME
+# dataset, not different ones). contextvars are isolated per async task.
+_TEMPLATE_OVERRIDE_VAR: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "he_template_override", default=None,
+)
+
+
+@contextmanager
+def using_template_override(path: str | None):
+    """Bind ``path`` as the template override for the current async task."""
+    token = _TEMPLATE_OVERRIDE_VAR.set(path)
+    try:
+        yield
+    finally:
+        _TEMPLATE_OVERRIDE_VAR.reset(token)
 
 
 @dataclass(frozen=True)
@@ -275,8 +296,15 @@ class HyperExtractExtractor:
         ``template_type`` > :class:`TemplateTypeSelector` temporal heuristic >
         ``DocTypeRouter``. The override is the SINGLE chokepoint covering all
         granularities (dataset / map_reduce / chunk — every path calls this).
+
+        v1.10.2 M4 P-辅.3: the override is read from a contextvar first (async-
+        safe under concurrent builds on a shared extractor), falling back to the
+        instance attr for the legacy synchronous template-试跑 path
+        (``extraction_templates.py``).
         """
-        override = getattr(self, "_active_template_override", None)
+        override = _TEMPLATE_OVERRIDE_VAR.get()
+        if override is None:
+            override = getattr(self, "_active_template_override", None)
         if override:
             return self._resolve_template_path(override)
         tt = template_type or self._default_template_type

@@ -96,3 +96,25 @@ def test_override_is_single_chokepoint(user_dir):
     assert getattr(obj, "_active_template_override", None) is None
     obj._active_template_override = "security_concept_graph"
     assert obj._active_template_override == "security_concept_graph"
+
+
+@pytest.mark.asyncio
+async def test_template_override_concurrent_tasks_isolated() -> None:
+    """v1.10.2 M4 P-辅.3: the per-build template override is a contextvar, so
+    two concurrent builds on a SHARED extractor each see their own override
+    (the old instance attr raced across different-dataset builds)."""
+    import asyncio
+    from arrow_lake.knowledge_graph.he_extractor import (
+        _TEMPLATE_OVERRIDE_VAR, using_template_override,
+    )
+
+    seen: dict[str, str | None] = {}
+
+    async def _build(name: str, path: str) -> None:
+        with using_template_override(path):
+            await asyncio.sleep(0.02)  # force overlap with the sibling task
+            seen[name] = _TEMPLATE_OVERRIDE_VAR.get()
+
+    await asyncio.gather(_build("A", "tmplA"), _build("B", "tmplB"))
+    assert seen == {"A": "tmplA", "B": "tmplB"}   # no cross-task bleed
+    assert _TEMPLATE_OVERRIDE_VAR.get() is None    # reset after the builds
