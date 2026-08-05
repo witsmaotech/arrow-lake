@@ -73,6 +73,8 @@ Arrow Lake 采用**严格五层架构**：请求自上而下穿越 **① 接入 
 
 > **控制面 / 数据面分离**（v1.9.0）：横切面中 RBAC / identity / personal_token / catalog 注册 / 任务历史 / lineage 索引 / RAG 会话 / governance 这些**控制面**状态由 **libSQL/Turso（`system_db`）** 统一持久化；**数据面**（Lance 列式 / DuckDB / HugeGraph / MinIO）完全不触碰。控制面是横切面的"记忆层"，图中以 SYSDB 节点表示。
 
+![五层架构（① 接入 ② 能力 ③ 计算 ④ 存储引擎 ⑤ 持久化 + 横切面）](diagrams/01-layered-architecture.svg)
+
 ### 2.1 分层视图（五层 + 横切面）
 
 > 下图用**粗箭头 `==>` 强制纵向层级**，每层一种色带，横切面（⟂）置于右侧贯穿。
@@ -543,6 +545,8 @@ YAML 配置文件 (ArrowLakeConfig.from_yaml)
 
 ## 5. Lake Facade — 公共 SDK API 全景
 
+![Lake Facade + 9 能力 mixin](diagrams/08-lake-facade-mixins.svg)
+
 `Lake("./data")` 或 `Lake.from_yaml("config.yaml")`。以下为已核实的方法族（按 mixin 分组）。
 
 > ⚠️ **RAG / KG 方法多为 async，必须 `await`。`kg_build` 是 fire-and-forget 返回 `task_id`。**
@@ -893,6 +897,8 @@ main.py: env_nested_delimiter="__"
 
 ## 12. 部署架构
 
+![部署拓扑（prod_minimal 栈）](diagrams/05-deployment-topology.svg)
+
 `deploy/` —— 全套容器化 + K8s。
 
 ### 12.1 服务拓扑（`docker-compose.prod.yml` 42KB）
@@ -1084,6 +1090,89 @@ v1.8.0 19 项落地后，主干演进分两条线（详见 [§14](#14-版本演�
 | **personal_token** | admin 签发的长期 token（带 `X-API-Key` header），`/api/v1/me/*` 硬约束必用（v1.9.0） |
 | **Console** | 原生 JS + ES module 运维/合规/治理前端（v1.9.1），同源 mount `/console`，复用 REST + RBAC，无 CORS |
 | **控制面 / 数据面** | 控制面 = system_db 管的状态（RBAC/身份/元数据/任务/血缘）；数据面 = Lance/DuckDB/HugeGraph/MinIO 的业务数据；v1.9.0 起物理隔离 |
+
+---
+
+## 附录 A. 图集索引
+
+> 8 张图均为 Midnight Blueprint 设计语言（深蓝渐变底、层级色编码、深色玻璃节点卡）。SVG 为主格式，PNG 为 2× 高清备份。由 `diagrams/gen_midnight.py` 程序化产出，修改重跑后 cairosvg 导出 PNG。
+
+| # | 图名 | 嵌入章节 | 文件 |
+|---|---|---|---|
+| 1 | 五层架构（接入/能力/计算/引擎/持久化 + 横切） | §2 | `diagrams/01-layered-architecture` |
+| 2 | 多模态摄取流水线 | §6 | `diagrams/02-ingestion-pipeline` |
+| 3 | RAG + GraphRAG 查询流 | §6 | `diagrams/03-rag-kg-query-flow` |
+| 4 | KG 异步构建流水线 | §6 | `diagrams/04-kg-build-pipeline` |
+| 5 | 部署拓扑（prod_minimal 栈） | §12 | `diagrams/05-deployment-topology` |
+| 6 | RAG 查询时序图 | §6 | `diagrams/06-rag-query-sequence` |
+| 7 | KG 构建时序图 | §6 | `diagrams/07-kgbuild-sequence` |
+| 8 | Lake Facade + 9 能力 mixin | §5 | `diagrams/08-lake-facade-mixins` |
+
+## 附录 B. 关键决策记录（ADR）索引
+
+| ADR | 主题 | 文件 |
+|-----|------|------|
+| ADR-05 | DuckDB OLAP 偏差与迁移路线 | [`adrs/adr-05-duckdb-olap-deviation.md`](adrs/adr-05-duckdb-olap-deviation.md) |
+| ADR-06 | DuckDB OLAP 定位 + DuckLake v1.0 评估 | [`adrs/adr-06-duckdb-olap-and-ducklake-evaluation.md`](adrs/adr-06-duckdb-olap-and-ducklake-evaluation.md) |
+| ADR-07 | DuckDB High Availability — 统一会话管理 | [`adrs/adr-07-duckdb-high-availability.md`](adrs/adr-07-duckdb-high-availability.md) |
+| ADR-08 | v1.2 Architecture Decisions | [`adrs/adr-08-v1.2-architecture.md`](adrs/adr-08-v1.2-architecture.md) |
+
+## 附录 C. 源码导航（arrow_lake/ 模块 → 章节）
+
+| 模块（.py 数） | 职责 | 参见章节 |
+|---|---|---|
+| `api`（55） | REST API 层（FastAPI 路由、RBAC、auth） | §4 分层详解 / §8 安全 |
+| `cli`（17） | 命令行（`arrow-lake` 入口） | §4 |
+| `sdk`（1） | Lake facade 公共入口 | §3 设计模式 / §5 |
+| `ingest`（26） | 多模态摄取（docling/kreuzberg → Lance） | §4 / §6 数据流 |
+| `storage`（3） | 存储抽象（MinIO/S3 + Lance） | §4 |
+| `query`（24） | OLAP/SQL（DuckDB + Lance bridge） | §4 / §6 / §11 性能 |
+| `rag`（11） | RAG/GraphRAG 检索 + rerank | §6 |
+| `embed`（6） | 嵌入编码（多 backend） | §4 |
+| `knowledge_graph`（22） | KG build/traversal/resolve（HugeGraph + hyper-extract） | §6 |
+| `quality`（17） | 数据质量 / 去重 / 清洗写回 | §4 |
+| `catalog`（13） | 元数据（Gravitino bridge / lance-rest） | §4 / §11 可观测 |
+| `system_db`（17） | 控制面（libSQL：RBAC/身份/catalog/任务/lineage） | §4 / §9 配置 |
+| `config`（15） | 分层配置（pydantic-settings） | §7 配置体系 |
+| `core`（7） | 核心（http client / exceptions / utils） | §3 / §13 异常 |
+| `workflow`（11） | Metaflow 编排 | §4 |
+| `ray_runtime`（5） | Ray 分布式（可选） | §4 / §11 |
+| `ops`（3） | 运维（export / backup） | §12 部署 |
+| `testing`（2） | 测试 fixtures | §15 测试 |
+
+---
+
+## 附录 E. 组件官方链接与 Lance 湖仓架构参考
+
+### E.1 核心组件官方文档
+
+| 组件 | 本项目用途 | 官方链接 |
+|------|------------|----------|
+| **Lance** | 列式湖仓格式（文件 + 表 + catalog 三合一），数据面存储基座 | https://lancedb.github.io/lance/ |
+| **LanceDB** | 向量数据库 / 多模态湖仓引擎（向量 ANN + FTS + 混合检索） | https://lancedb.com · https://docs.lancedb.com |
+| **Daft** | 分布式 DataFrame（多模态读取、批 LLM/embed、UDF） | https://getdaft.io |
+| **Ray** | 分布式计算运行时（ray_runtime，可选并行） | https://ray.io |
+| **DuckDB** | 进程内 OLAP 分析引擎（DuckLake 物化 / SQL Worksheet） | https://duckdb.org |
+| **Apache HugeGraph** | 图数据库（per-dataset KG：实体/关系/遍历） | https://hugegraph.apache.org |
+| **Turso / libSQL** | 控制面库（SQLite fork，RBAC/身份/catalog/任务/lineage/governance） | https://turso.tech/libsql · https://github.com/tursodatabase/libsql |
+| **Apache Gravitino** | 元数据治理（RBAC/tag/血缘/fileset，可选） | https://gravitino.apache.org |
+| **MinIO** | S3 兼容对象存储（Lance 主场、上传 bucket） | https://min.io |
+| **FastAPI** | 异步 Web 框架（REST API 层） | https://fastapi.tiangolo.com |
+| **hyper-extract** | 知识抽取（结构化模板 + doc_type 路由 → KA/KG） | https://github.com/hyperextract/hyper-extract |
+| **Docling** | 文档解析（PDF/Office → 结构化，GPU 加速） | https://docling-project.github.io |
+| **Pydantic** | 数据校验 / Settings（分层 config） | https://docs.pydantic.dev |
+
+### E.2 Lance 湖仓架构参考博文
+
+> Arrow Lake 的数据面架构（Lance + 多模态 + 向量 + 湖仓）与下列参考同源，阅读有助于理解设计取舍。
+
+- **[What is the LanceDB Multimodal Lakehouse?](https://www.lancedb.com/blog/multimodal-lakehouse)**（官方旗舰文）— 定义"多模态湖仓"架构范式：raw files → production-ready 特征的统一管线。**最权威起点**。
+- **[How Lance Enables the Multimodal Lakehouse](https://thedataquarry.com/blog/how-lance-enables-the-multimodal-lakehouse)**（The Data Quarry）— Lance 格式级深度技术解析（列式 + 向量 + 随机访问），理解文件/表/catalog 三合一。
+- **[Test-Driving the Lance Lakehouse Format in DuckDB](https://duckdb.org/2026/05/21/test-driving-lance.html)**（DuckDB 官方）— DuckDB 视角，点明 Lance 与 Parquet 的关键差异：**文件格式 + 表格式 + catalog spec 三合一**（本项目 §5.4 存储引擎同源）。
+- **[Rethinking What "Multimodal" Means for AI](https://www.lancedb.com/blog/what-we-mean-by-multimodal)**（LanceDB）— 多模态复杂度分级与架构应对。
+- **[Building an Open Lakehouse for Multimodal AI with LanceDB on S3](https://medium.com/@shahsoumil519/building-an-open-lakehouse-for-multimodal-ai-with-lancedb-on-s3-937106455a2e)**（Medium）— S3/MinIO 实战（对应本项目 MinIO 部署）。
+- **[The Rise of the Multimodal Lakehouse](https://gradientflow.substack.com/p/the-rise-of-the-multimodal-lakehouse)**（Gradient Flow / Ben Lorica）— 行业分析，存储 + 检索多样化的范式收敛。
+- **[Apache Polaris and Lance: AI-Native Storage for the Open Multimodal Lakehouse](https://polaris.apache.org/blog/2026/01/06/apache-polaris-and-lance-bringing-ai-native-storage-to-the-open-multimodal-lakehouse/)**（Apache Polaris）— 开放 catalog 互操作（对应本项目 Gravitino/lance-rest catalog 取向）。
 
 ---
 
