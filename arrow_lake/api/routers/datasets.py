@@ -14,7 +14,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, File, Path, Query, Request, UploadFile
 
 from arrow_lake.api.auth_models import Role
-from arrow_lake.api.deps import get_lake, require_role
+from arrow_lake.api.deps import authorize_dataset, get_lake, require_role
 from arrow_lake.api._security_log import actor_of
 from arrow_lake.api.models.common import _NAME_PATTERN, MessageResponse
 from arrow_lake.api.models.dataset import (
@@ -605,6 +605,7 @@ async def ingest_documents(
 
 @router.get("/{name}/embed/status")
 async def get_embed_backfill_status(
+    request: Request,
     name: str = Path(..., pattern=_NAME_PATTERN),
     *,
     lake=Depends(get_lake),
@@ -616,6 +617,7 @@ async def get_embed_backfill_status(
     ``{"status": "idle"}`` when no backfill has ever run. Vector search is
     unavailable while ``status == "running"``; FTS works throughout.
     """
+    authorize_dataset(request, name)  # dataset-level ACL (read)
     status = lake.get_embed_backfill_status(name)
     if status is None:
         return {"status": "idle"}

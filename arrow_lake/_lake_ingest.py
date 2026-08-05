@@ -24,6 +24,10 @@ if TYPE_CHECKING:
 # request thread. Mirrors the olap_executor / kg_executor isolation pattern.
 # max_workers=2 bounds concurrent embed calls (local model GPU/CPU OOM guard).
 _embed_backfill_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="embed-bf")
+# Graceful shutdown at process exit (don't block on stuck workers). Per-task
+# timeout is the embed backend's responsibility (LLM_TIMEOUT_SECONDS etc).
+import atexit as _atexit
+_atexit.register(_embed_backfill_executor.shutdown, wait=False)
 _EMBED_BG_LOCK = threading.Lock()
 _embed_bg: dict[str, "_EmbedBackfillStatus"] = {}
 
@@ -1219,7 +1223,7 @@ class _LakeIngestMixin:
             cur = _EmbedBackfillStatus(
                 status="failed", started_at=cur.started_at,
                 finished_at=datetime.now(timezone.utc).isoformat(),
-                null_rows=null_rows, error=str(exc)[:200],
+                null_rows=null_rows, error=type(exc).__name__,
             )
             with _EMBED_BG_LOCK:
                 _embed_bg[dataset_name] = cur
