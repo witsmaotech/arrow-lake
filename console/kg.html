@@ -611,7 +611,7 @@ $("#buildBtn").addEventListener("click", async () => {
   const btn = $("#buildBtn"); btn.disabled = true; btn.textContent = "构建中…"; $("#buildStatus").textContent = "提交中…";
   let tid;
   try {
-    const r = await request("POST", "/kg/build", { body: { dataset: name } });
+    const r = await request("POST", "/kg/build", { body: { dataset: name, incremental: true } });
     tid = r.task_id || r.id;
     if (!tid) { $("#buildStatus").textContent = "已提交(无 task_id,5s 后刷新统计)"; setTimeout(() => { resetBuildBtn(); loadAll(); }, 5000); return; }
     $("#buildStatus").innerHTML = `任务 <span class="mono">${esc(tid.slice(0, 8))}</span> 运行中… <a href="tasks.html" style="color:var(--teal-bright)">队列</a>`;
