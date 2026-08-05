@@ -613,7 +613,8 @@ class KGBuilder:
                         (str(contents[0]) + "\n" + str(contents[-1])).encode("utf-8", "replace")
                     ).hexdigest()[:16]) if contents else ""
                     ckpt_path.parent.mkdir(parents=True, exist_ok=True)
-                    ckpt_path.write_text(json.dumps({
+                    from arrow_lake.knowledge_graph._atomic import atomic_write_json
+                    atomic_write_json(ckpt_path, {
                         "total_chunks": len(chunk_ids),
                         "template": Path(template_path).stem,
                         "sig": _sig,
@@ -625,7 +626,7 @@ class KGBuilder:
                                        "properties": [list(p) for p in r.properties]}
                                       for r in result.relations],
                         "entity_chunks": entity_chunks,
-                    }, ensure_ascii=False), encoding="utf-8")
+                    })
                 except Exception as exc:  # noqa: BLE001 — checkpoint is best-effort
                     logger.warning(
                         "KG map_reduce checkpoint write failed: %s", str(exc)[:120],

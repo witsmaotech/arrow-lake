@@ -194,6 +194,11 @@ def _augment_question_with_graph(
 _KG_SNAPSHOT_CACHE: dict[str, tuple[float, tuple[list[dict[str, Any]], list[dict[str, Any]]]]] = {}
 _KG_SNAPSHOT_TTL_S = 60.0
 _KG_SNAPSHOT_LOCKS: dict[str, asyncio.Lock] = {}
+# P0.1 (v1.10.2): per-dataset KG build serial. Concurrent kg_build on the SAME
+# dataset would overwrite fed_chunks.json / map_reduce.json sidecars (review C1
+# root cause). Same dataset → queue on its lock; different datasets → run
+# concurrently (each gets its own lock entry).
+_KG_BUILD_LOCKS: dict[str, asyncio.Lock] = {}
 _KG_SNAPSHOT_MAX_ENTRIES = 32
 
 
@@ -597,29 +602,33 @@ class _LakeKGMixin:
             )
 
             async def _run_build() -> None:
-                logger.info("KGDISPATCH _run_build ENTER tm=%s kg=%s builder_id=%s", tm_task_id, task_id, id(builder))
-                try:
-                    await TaskManager.run_background(tm_task_id, builder.execute_build, task_id)
-                except Exception:
-                    logger.exception("kg_build _run_build FAILED task=%s dataset=%s", task_id, dataset_name)
-                    raise
-                # Sync final status from KGBuilder task into TaskManager
-                kg_task = builder.get_task_status(task_id)
-                tm_task = TaskManager.get_task(tm_task_id)
-                if kg_task and tm_task:
-                    tm_task.progress = kg_task.processed_chunks / max(kg_task.total_chunks, 1)
-                    hg = self._config.hugegraph
-                    tm_task.detail = {
-                        "kg_task_id": task_id,
-                        "model": hg.he_model or self._config.llm.model,
-                        "template": hg.he_default_template,
-                        "template_type": hg.he_template_type,
-                    }
-                    if kg_task.entity_count or kg_task.relation_count:
-                        tm_task.detail["entity_count"] = kg_task.entity_count
-                        tm_task.detail["relation_count"] = kg_task.relation_count
-                    # Sync updated state to Redis for cross-worker visibility
-                    TaskManager._sync_to_redis(tm_task)
+                # P0.1: hold the per-dataset lock across execute_build so a second
+                # kg_build on the same dataset queues instead of racing on sidecars.
+                build_lock = _KG_BUILD_LOCKS.setdefault(dataset_name, asyncio.Lock())
+                async with build_lock:
+                    logger.info("KGDISPATCH _run_build ENTER tm=%s kg=%s builder_id=%s", tm_task_id, task_id, id(builder))
+                    try:
+                        await TaskManager.run_background(tm_task_id, builder.execute_build, task_id)
+                    except Exception:
+                        logger.exception("kg_build _run_build FAILED task=%s dataset=%s", task_id, dataset_name)
+                        raise
+                    # Sync final status from KGBuilder task into TaskManager
+                    kg_task = builder.get_task_status(task_id)
+                    tm_task = TaskManager.get_task(tm_task_id)
+                    if kg_task and tm_task:
+                        tm_task.progress = kg_task.processed_chunks / max(kg_task.total_chunks, 1)
+                        hg = self._config.hugegraph
+                        tm_task.detail = {
+                            "kg_task_id": task_id,
+                            "model": hg.he_model or self._config.llm.model,
+                            "template": hg.he_default_template,
+                            "template_type": hg.he_template_type,
+                        }
+                        if kg_task.entity_count or kg_task.relation_count:
+                            tm_task.detail["entity_count"] = kg_task.entity_count
+                            tm_task.detail["relation_count"] = kg_task.relation_count
+                        # Sync updated state to Redis for cross-worker visibility
+                        TaskManager._sync_to_redis(tm_task)
 
             build_task = asyncio.create_task(_run_build())
             # Hold a strong reference so the GC cannot reclaim this task while

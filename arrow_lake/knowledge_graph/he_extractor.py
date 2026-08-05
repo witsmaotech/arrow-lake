@@ -1050,11 +1050,12 @@ class HyperExtractExtractor:
         # incremental build can diff. Best-effort: a missing sidecar just means
         # the next build re-feeds everything (correct, not lossy).
         try:
+            from arrow_lake.knowledge_graph._atomic import atomic_write_json
             all_fed_map = {
                 **prev_fed_map,
                 **{cid: _chunk_hash(text) for cid, text in chunks_to_feed},
             }
-            fed_path.write_text(_json.dumps(all_fed_map), "utf-8")
+            atomic_write_json(fed_path, all_fed_map)
         except Exception as exc:  # noqa: BLE001
             logger.warning("fed_chunks sidecar write failed: %s", str(exc)[:120])
 
