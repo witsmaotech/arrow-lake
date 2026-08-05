@@ -995,6 +995,26 @@ class _LakeIngestMixin:
         new_fsl = pa.FixedSizeListArray.from_arrays(
             pa.array(full.ravel(), type=pa.float32()), dim
         )
+        from arrow_lake.exceptions import ErrorCode, StorageError
+        # P1.3 TOCTOU guard (review H4): a concurrent ingest append between our
+        # read and the drop would make the rebuilt column (n rows) mismatch the
+        # live table → add_columns raises on row alignment. Detect it explicitly
+        # and abort, so the caller's best-effort retries on the next ingest
+        # (clean failure) rather than silently misaligning / wrong-row vectors.
+        live_n = storage.read_dataset(dataset_name, columns=[text_column]).num_rows
+        if live_n != n:
+            raise StorageError(
+                error_code=ErrorCode.STORAGE_WRITE_FAILED,
+                message=(
+                    f"embedding backfill aborted: '{dataset_name}' changed mid-build "
+                    f"({n}→{live_n} rows, concurrent append); next ingest retries"
+                ),
+            )
+        # P1.2 (review H3): drop+re-add is not atomic, but embeddings are fully
+        # reproducible from text_content — if add_columns fails after the drop,
+        # the column is absent and the NEXT ingest's embed_and_add sees no
+        # text_embedding column → takes the first-time path → rebuilds it whole
+        # (self-healing, no manual intervention). So no temp-column staging.
         storage.drop_column(dataset_name, embedding_column)
         storage.add_columns_table(dataset_name, pa.table({embedding_column: new_fsl}))
         return n_null

@@ -10,6 +10,7 @@ preserved at their original indices.
 from __future__ import annotations
 
 import numpy as np
+import pytest
 import pyarrow as pa
 
 
@@ -95,3 +96,38 @@ def test_backfill_all_null_encodes_all() -> None:
     assert n == 2
     result = storage.added.column("text_embedding").to_pylist()
     assert result == [[1., 1, 1, 1], [2., 2, 2, 2]]
+
+
+def test_backfill_aborts_on_concurrent_append() -> None:
+    """P1.3 TOCTOU: row count changed mid-build (concurrent append) → abort."""
+    from arrow_lake import Lake
+    from arrow_lake.exceptions import StorageError
+
+    dim = 4
+    emb = pa.array([[1., 1, 1, 1], None, [3., 3, 3, 3]], type=pa.list_(pa.float32(), dim))
+    tbl = pa.table({"text_content": pa.array(["a", "b", "c"]), "text_embedding": emb})
+    tbl_after_append = pa.table({"text_content": pa.array(["a", "b", "c", "d"])})
+    calls = {"n": 0}
+
+    class FakeStorage:
+        def read_dataset(self, name: str, columns=None):
+            calls["n"] += 1
+            return tbl if calls["n"] == 1 else tbl_after_append  # 2nd read = post-append
+
+        def drop_column(self, name: str, col: str) -> None:
+            raise AssertionError("must NOT drop when TOCTOU check fails")
+
+        def add_columns_table(self, name: str, cols: pa.Table) -> None:
+            raise AssertionError("must NOT add when TOCTOU check fails")
+
+    class FakeLake:
+        def _get_storage(self):
+            return FakeStorage()
+
+        def _encode_texts(self, texts, cfg, bs=None):
+            return np.array([[9., 9, 9, 9]], dtype=np.float32), dim
+
+    with pytest.raises(StorageError, match="changed mid-build"):
+        Lake._backfill_embedding_nulls(
+            FakeLake(), "ds", "text_content", "text_embedding", None
+        )
