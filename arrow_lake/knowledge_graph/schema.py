@@ -33,12 +33,27 @@ class VertexLabelDef:
 
 @dataclass(frozen=True)
 class EdgeLabelDef:
-    """A HugeGraph edge label definition."""
+    """A HugeGraph edge label definition.
+
+    HugeGraph edge id (实测 1.3.0, 2026-08-05): unlike vertex labels, edge
+    labels have **NO ``id_strategy`` field** — edge id is deterministically
+    derived from ``(source_vertex_id, target_vertex_id, sort_key_values,
+    label)``. So an edge is idempotent (re-insert upserts) **iff ``sort_keys``
+    is set**; with empty ``sort_keys``, id = (src, dst) and re-inserting the
+    same ordered pair upserts. v1.10.2 P0.3/M2: set ``sort_keys`` on structural
+    edges for build idempotency (review logic C1 — **corrected by live test**:
+    ``sort_keys`` alone IS sufficient; the original "needs id_strategy=
+    PRIMARY_KEY" claim was wrong — edge labels have no such field).
+
+    ``sort_keys``: edge properties whose values participate in the edge id.
+    Must be a subset of ``properties``. Empty = id is just (src, dst).
+    """
 
     name: str
     source_label: str
     target_label: str
     properties: tuple[str, ...] = ()
+    sort_keys: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -89,6 +104,10 @@ def schema_to_hugegraph_payload(schema: GraphSchema) -> dict:
                 "source_label": el.source_label,
                 "target_label": el.target_label,
                 "properties": list(el.properties),
+                # 实测 1.3.0: edge label has NO id_strategy field (vertex-only).
+                # Edge id determinism comes from sort_keys alone. Never emit
+                # id_strategy here — HugeGraph rejects it as unrecognized (400).
+                "sort_keys": list(el.sort_keys),
             }
             for el in schema.edge_labels
         ],
