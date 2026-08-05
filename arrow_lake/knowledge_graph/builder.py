@@ -819,12 +819,18 @@ class KGBuilder:
     async def _batch_add_vertices(
         self, vertices: list[dict[str, Any]], *, graph_name: str,
         write_sem: asyncio.Semaphore, batch_size: int,
+        update_strategies: dict[str, str] | None = None,
     ) -> list[str]:
         """Insert vertices in batches (HugeGraph caps POSTs at 2500 vertices).
 
         Single-shot ``add_vertices`` fails on a large merged entity set
         (map_reduce inserts ALL entities at once). Returns the concatenated
         HugeGraph ids in input order so callers can zip them back to vertices.
+
+        ``update_strategies`` (v1.10.2 M4 P-辅.1): forwarded to ``add_vertices``
+        (PUT batch w/ per-property merge) — used for ``{"source_chunk": "UNION"}``
+        so an incremental rebuild EXTENDS rather than overwrites the entity
+        provenance SET (G8: old chunks' provenance survives).
         """
         ids: list[str] = []
         if not vertices:
@@ -833,7 +839,10 @@ class KGBuilder:
         async with write_sem:
             for i in range(0, len(vertices), bs):
                 ids.extend(
-                    await self._client.add_vertices(vertices[i:i + bs], graph_name=graph_name)
+                    await self._client.add_vertices(
+                        vertices[i:i + bs], graph_name=graph_name,
+                        update_strategies=update_strategies,
+                    )
                 )
         return ids
 
@@ -912,6 +921,10 @@ class KGBuilder:
             entity_hg_ids = await self._batch_add_vertices(
                 entity_vertices, graph_name=graph_name, write_sem=write_sem,
                 batch_size=self._config.build_batch_size,
+                # v1.10.2 M4 P-辅.1: UNION source_chunk so an incremental rebuild
+                # accumulates provenance (old + new owning chunks) instead of
+                # overwriting the SET — old chunks' references survive (G8).
+                update_strategies={"source_chunk": "UNION"},
             )
             if len(entity_hg_ids) != len(entity_vertices):
                 logger.warning(

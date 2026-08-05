@@ -26,7 +26,8 @@ class _MockClient:
         self.added_edges: list[dict] = []
         self._v = 0
 
-    async def add_vertices(self, verts, graph_name=None):
+    async def add_vertices(self, verts, graph_name=None, update_strategies=None):
+        self.last_vertex_strategies = update_strategies
         ids = []
         for _ in verts:
             ids.append(f"v{self._v}")
@@ -34,7 +35,7 @@ class _MockClient:
         self.added_vertices.extend(verts)
         return ids
 
-    async def add_edges(self, edges, graph_name=None):
+    async def add_edges(self, edges, graph_name=None, update_strategies=None):
         self.added_edges.extend(edges)
 
 
@@ -194,3 +195,26 @@ class TestInsertKgSourceChunk:
 
         ent = [v for v in client.added_vertices if v["label"] == "entity"]
         assert "source_chunk" not in ent[0]["properties"]
+
+
+class TestInsertKgSourceChunkUnion:
+    """v1.10.2 M4 P-辅.1: entity vertices are added with update_strategies=
+    {"source_chunk":"UNION"} so an incremental rebuild EXTENDS the provenance
+    SET (old + new owning chunks) instead of overwriting it (G8)."""
+
+    def test_entity_add_uses_source_chunk_union(self):
+        client = _MockClient()
+        builder = _make_builder(client)
+        result = ExtractionResult(
+            entities=(ExtractedEntity(name="A", entity_type="concept"),),
+            relations=(),
+            raw_text="",
+        )
+        asyncio.run(builder._insert_kg(
+            result, "kg_ds", {"c0": "hg0"},
+            entity_chunks={"A": ["c0", "c2"]},
+        ))
+        # entity vertex add must request UNION on source_chunk (G8).
+        assert client.last_vertex_strategies == {"source_chunk": "UNION"}
+        ent = [v for v in client.added_vertices if v["label"] == "entity"][0]
+        assert ent["properties"]["source_chunk"] == ["c0", "c2"]
