@@ -203,7 +203,7 @@ if (!ds) {
     //       让用户实际滚到预览时为 warm(~1.3s)而非冷启动(~3.5s)。fire-and-forget
     if (detailInfo) {
       request("POST", `/datasets/${encodeURIComponent(ds)}/query/olap`,
-        { body: { sql: `SELECT * EXCEPT (text_embedding) FROM "${String(ds).replace(/"/g, '""')}" LIMIT 1` } }
+        { body: { sql: `SELECT COUNT(*) FROM "${String(ds).replace(/"/g, '""')}"` } }
       ).catch(() => {});
     }
 
