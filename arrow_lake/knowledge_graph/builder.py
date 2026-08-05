@@ -960,7 +960,11 @@ class KGBuilder:
                 src_id = entity_id_map[src_n]
                 tgt_id = entity_id_map[tgt_n]
             props = {
-                "relation_type": r.relation_type,
+                # relation_type is now a sort_key (v1.10.2 M2: relation edges are
+                # frequency=MULTIPLE + sort_keys=[relation_type]). HugeGraph
+                # rejects a null sort_key value, so coerce empty/None to the
+                # routed label name — deterministic, non-empty, groups the pair.
+                "relation_type": r.relation_type or edge_label,
                 "description": dict(r.properties).get("description", ""),
             }
             if edge_label == "related_to":

@@ -47,6 +47,16 @@ class EdgeLabelDef:
 
     ``sort_keys``: edge properties whose values participate in the edge id.
     Must be a subset of ``properties``. Empty = id is just (src, dst).
+    **Requires** ``frequency="MULTIPLE"`` — HugeGraph rejects ``sort_keys`` on a
+    ``SINGLE``-frequency edge label (400 *"can't contain sortKeys when the
+    cardinality property is single"*, live test 2026-08-05).
+
+    ``frequency``: ``SINGLE`` (default) = at most one edge per ``(src, dst,
+    label)`` pair, re-insert upserts (structural edges — idempotent without
+    sort_keys). ``MULTIPLE`` = allows several edges per pair, distinguished by
+    ``sort_keys`` values (relation edges — distinct ``relation_type`` values
+    between the same pair stay as distinct edges, fixing the prior collapse-to-
+    one data-loss bug; v1.10.2 M2/P3).
     """
 
     name: str
@@ -54,6 +64,7 @@ class EdgeLabelDef:
     target_label: str
     properties: tuple[str, ...] = ()
     sort_keys: tuple[str, ...] = ()
+    frequency: str = "SINGLE"
 
 
 @dataclass(frozen=True)
@@ -108,6 +119,10 @@ def schema_to_hugegraph_payload(schema: GraphSchema) -> dict:
                 # Edge id determinism comes from sort_keys alone. Never emit
                 # id_strategy here — HugeGraph rejects it as unrecognized (400).
                 "sort_keys": list(el.sort_keys),
+                # frequency: SINGLE (default, idempotent per src/dst pair) or
+                # MULTIPLE (sort_keys distinguishes multiple edges per pair).
+                # sort_keys REQUIRES MULTIPLE — HugeGraph 400s otherwise.
+                "frequency": el.frequency,
             }
             for el in schema.edge_labels
         ],
@@ -156,21 +171,65 @@ ARROW_LAKE_KG_SCHEMA = GraphSchema(
         VertexLabelDef("event", ("name", "date"), ("name",), nullable_keys=("date",)),
     ),
     edge_labels=(
+        # Structural edges: frequency=SINGLE (default) → already idempotent.
+        # Edge id = (src, dst, label); re-insert upserts (live test 2026-08-05).
+        # No sort_keys needed — and sort_keys would REQUIRE MULTIPLE, which would
+        # wrongly allow duplicate structural edges. Keep these SINGLE + empty.
         EdgeLabelDef("contains_chunk", "document", "chunk"),
         EdgeLabelDef("references", "chunk", "entity"),
         EdgeLabelDef("next_chunk", "chunk", "chunk"),
-        EdgeLabelDef("related_to", "entity", "entity", ("weight", "relation_type", "description")),
-        EdgeLabelDef("part_of", "entity", "entity", ("relation_type", "description")),
+        # Relation edges (v1.10.2 M2/P3): frequency=MULTIPLE + sort_keys=
+        # [relation_type] so distinct relations between the same entity pair
+        # (e.g. A→B "uses" AND A→B "deploys") stay as separate edges. Under the
+        # prior default SINGLE they collapsed to one edge (data loss). Re-
+        # extracting the same (pair, relation_type) upserts → idempotent across
+        # rebuilds (G3/G9). relation_type is always populated by the builder.
+        EdgeLabelDef(
+            "related_to", "entity", "entity",
+            ("weight", "relation_type", "description"),
+            sort_keys=("relation_type",), frequency="MULTIPLE",
+        ),
+        EdgeLabelDef(
+            "part_of", "entity", "entity", ("relation_type", "description"),
+            sort_keys=("relation_type",), frequency="MULTIPLE",
+        ),
         # project_concept_graph verb-driven domain edges (entity→entity).
-        EdgeLabelDef("deployed_on", "entity", "entity", ("relation_type", "description")),
-        EdgeLabelDef("uses", "entity", "entity", ("relation_type", "description")),
-        EdgeLabelDef("processes", "entity", "entity", ("relation_type", "description")),
-        EdgeLabelDef("provides", "entity", "entity", ("relation_type", "description")),
-        EdgeLabelDef("requires", "entity", "entity", ("relation_type", "description")),
-        EdgeLabelDef("belongs_to", "person", "organization", ("relation_type", "description")),
-        EdgeLabelDef("located_in", "person", "location", ("relation_type", "description")),
-        EdgeLabelDef("participates_in", "person", "event", ("relation_type", "description")),
-        EdgeLabelDef("depicts", "event", "entity", ("relation_type", "description")),
+        EdgeLabelDef(
+            "deployed_on", "entity", "entity", ("relation_type", "description"),
+            sort_keys=("relation_type",), frequency="MULTIPLE",
+        ),
+        EdgeLabelDef(
+            "uses", "entity", "entity", ("relation_type", "description"),
+            sort_keys=("relation_type",), frequency="MULTIPLE",
+        ),
+        EdgeLabelDef(
+            "processes", "entity", "entity", ("relation_type", "description"),
+            sort_keys=("relation_type",), frequency="MULTIPLE",
+        ),
+        EdgeLabelDef(
+            "provides", "entity", "entity", ("relation_type", "description"),
+            sort_keys=("relation_type",), frequency="MULTIPLE",
+        ),
+        EdgeLabelDef(
+            "requires", "entity", "entity", ("relation_type", "description"),
+            sort_keys=("relation_type",), frequency="MULTIPLE",
+        ),
+        EdgeLabelDef(
+            "belongs_to", "person", "organization", ("relation_type", "description"),
+            sort_keys=("relation_type",), frequency="MULTIPLE",
+        ),
+        EdgeLabelDef(
+            "located_in", "person", "location", ("relation_type", "description"),
+            sort_keys=("relation_type",), frequency="MULTIPLE",
+        ),
+        EdgeLabelDef(
+            "participates_in", "person", "event", ("relation_type", "description"),
+            sort_keys=("relation_type",), frequency="MULTIPLE",
+        ),
+        EdgeLabelDef(
+            "depicts", "event", "entity", ("relation_type", "description"),
+            sort_keys=("relation_type",), frequency="MULTIPLE",
+        ),
     ),
     # Index labels removed: all 8 were SECONDARY on PRIMARY_KEY fields (name/id),
     # which HugeGraph rejects — "No need to build index on properties containing

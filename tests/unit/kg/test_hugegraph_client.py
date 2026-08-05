@@ -131,6 +131,84 @@ async def test_add_edges(mock_client: HugeGraphClient) -> None:
 
 
 # ---------------------------------------------------------------------------
+# add_vertices / add_edges with update_strategies (v1.10.2 P3.2)
+#
+# When update_strategies is provided the client must PUT the batch endpoint
+# with a {"<vertices|edges>":[...], "update_strategies":{...}} wrapper so
+# HugeGraph applies per-property merge (e.g. source_chunk UNION). Without it the
+# default create/upsert POST path is used (no regression).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_add_vertices_with_update_strategies_uses_put(mock_client: HugeGraphClient) -> None:
+    """update_strategies ⇒ PUT /graph/vertices/batch with wrapper, ids parsed
+    from the {"vertices":[{"id":...}]} response."""
+    vertices = [{"label": "entity", "properties": {"name": "A"}}]
+    # PUT-with-wrapper returns full vertex objects under "vertices"
+    mock_client._client.put.return_value = _mock_response(
+        200, {"vertices": [{"id": "1:A", "label": "entity"}]},
+    )
+    ids = await mock_client.add_vertices(
+        vertices, update_strategies={"source_chunk": "UNION"},
+    )
+    assert ids == ["1:A"]
+    mock_client._client.post.assert_not_called()
+    call_args = mock_client._client.put.call_args
+    assert "/graph/vertices/batch" in call_args[0][0]
+    body = call_args[1]["json"]
+    assert body["vertices"] == vertices
+    assert body["update_strategies"] == {"source_chunk": "UNION"}
+
+
+@pytest.mark.asyncio
+async def test_add_vertices_without_strategies_uses_post(mock_client: HugeGraphClient) -> None:
+    """No update_strategies ⇒ default POST bare list (regression guard)."""
+    vertices = [{"label": "entity", "properties": {"name": "A"}}]
+    mock_client._client.post.return_value = _mock_response(201, ["1:A"])
+    ids = await mock_client.add_vertices(vertices)
+    assert ids == ["1:A"]
+    mock_client._client.put.assert_not_called()
+    # bare list posted (no wrapper)
+    assert mock_client._client.post.call_args[1]["json"] == vertices
+
+
+@pytest.mark.asyncio
+async def test_add_edges_with_update_strategies_uses_put(mock_client: HugeGraphClient) -> None:
+    """update_strategies ⇒ PUT /graph/edges/batch with {"edges":[...],...}."""
+    edges = [{
+        "label": "related_to", "outV": "1:A", "outVLabel": "entity",
+        "inV": "2:B", "inVLabel": "entity",
+        "properties": {"relation_type": "uses"},
+    }]
+    mock_client._client.put.return_value = _mock_response(
+        200, {"edges": [{"id": "e1"}, {"id": "e2"}]},
+    )
+    count = await mock_client.add_edges(
+        edges, update_strategies={"weight": "SUM"},
+    )
+    assert count == 2
+    mock_client._client.post.assert_not_called()
+    call_args = mock_client._client.put.call_args
+    assert "/graph/edges/batch" in call_args[0][0]
+    body = call_args[1]["json"]
+    assert body["edges"] == edges
+    assert body["update_strategies"] == {"weight": "SUM"}
+
+
+@pytest.mark.asyncio
+async def test_add_edges_without_strategies_uses_post(mock_client: HugeGraphClient) -> None:
+    """No update_strategies ⇒ default POST bare list (regression guard)."""
+    edges = [{"label": "knows", "outV": "1:A", "outVLabel": "person",
+              "inV": "2:B", "inVLabel": "person", "properties": {}}]
+    mock_client._client.post.return_value = _mock_response(201, ["e1"])
+    count = await mock_client.add_edges(edges)
+    assert count == 1
+    mock_client._client.put.assert_not_called()
+    assert mock_client._client.post.call_args[1]["json"] == edges
+
+
+# ---------------------------------------------------------------------------
 # 5xx server errors: exponential backoff retry (P0.1)
 #
 # HugeGraph returns 5xx with "too busy to write" when rocksdb write throughput

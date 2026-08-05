@@ -170,6 +170,27 @@ class HugeGraphClient(_TraverserMixin, _ImportExportMixin):
         wait=wait_exponential(multiplier=1, min=1, max=10),
         reraise=True,
     )
+    async def _put(self, path: str, json_data: Any = None) -> httpx.Response:
+        """PUT with tenacity retry on transient failures.
+
+        Used by ``add_vertices``/``add_edges`` when ``update_strategies`` is
+        provided — HugeGraph applies per-property merge strategies (e.g.
+        ``UNION`` for SET) only on the PUT batch endpoint (v1.10.2 P3.2).
+        """
+        resp = await self._client.put(path, json=json_data)
+        if resp.status_code >= 500:
+            raise httpx.HTTPStatusError(
+                f"Server error {resp.status_code}: {resp.text[:500]}",
+                request=resp.request, response=resp,
+            )
+        return resp
+
+    @retry(
+        retry=retry_if_exception(_is_retryable_http_error),
+        stop=stop_after_attempt(_DEFAULT_MAX_RETRIES),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        reraise=True,
+    )
     async def _delete(self, path: str) -> httpx.Response:
         """DELETE with tenacity retry on transient failures."""
         resp = await self._client.delete(path)
@@ -239,14 +260,35 @@ class HugeGraphClient(_TraverserMixin, _ImportExportMixin):
     # ------------------------------------------------------------------
 
     async def add_vertices(
-        self, vertices: list[dict[str, Any]], *, graph_name: str | None = None
+        self,
+        vertices: list[dict[str, Any]],
+        *,
+        graph_name: str | None = None,
+        update_strategies: dict[str, str] | None = None,
     ) -> list[str]:
-        """Batch insert vertices. Returns list of created vertex IDs."""
+        """Batch insert vertices. Returns list of created vertex IDs.
+
+        ``update_strategies`` (v1.10.2 P3.2): when provided, switches to
+        ``PUT /graph/vertices/batch`` with a ``{"vertices": [...],
+        "update_strategies": {...}}`` wrapper so HugeGraph applies per-property
+        merge strategies (e.g. ``{"source_chunk": "UNION"}`` to accumulate SET
+        provenance across incremental rebuilds instead of overwriting). Omit it
+        for the default create/upsert-by-primary-key path (POST bare list).
+        """
         try:
-            resp = await self._post(
-                f"{self._graph_base_for(graph_name)}/graph/vertices/batch",
-                json_data=vertices,
-            )
+            if update_strategies is not None:
+                resp = await self._put(
+                    f"{self._graph_base_for(graph_name)}/graph/vertices/batch",
+                    json_data={
+                        "vertices": vertices,
+                        "update_strategies": update_strategies,
+                    },
+                )
+            else:
+                resp = await self._post(
+                    f"{self._graph_base_for(graph_name)}/graph/vertices/batch",
+                    json_data=vertices,
+                )
         except httpx.HTTPError as exc:
             self._handle_http_error(exc)
 
@@ -257,8 +299,12 @@ class HugeGraphClient(_TraverserMixin, _ImportExportMixin):
                 context={"status_code": resp.status_code},
             )
 
-        ids = resp.json()
-        return ids if isinstance(ids, list) else []
+        data = resp.json()
+        # PUT-with-wrapper returns {"vertices": [{"id": ...}, ...]} (full vertex
+        # objects); POST returns a bare id list. Normalize to a bare id list.
+        if isinstance(data, dict) and isinstance(data.get("vertices"), list):
+            return [v.get("id") for v in data["vertices"]]
+        return data if isinstance(data, list) else []
 
     async def get_vertex(
         self, vertex_id: str, *, graph_name: str | None = None
@@ -378,17 +424,35 @@ class HugeGraphClient(_TraverserMixin, _ImportExportMixin):
     # ------------------------------------------------------------------
 
     async def add_edges(
-        self, edges: list[dict[str, Any]], *, graph_name: str | None = None
+        self,
+        edges: list[dict[str, Any]],
+        *,
+        graph_name: str | None = None,
+        update_strategies: dict[str, str] | None = None,
     ) -> int:
         """Batch insert edges. Returns count of inserted edges.
 
         Each edge must include: label, outV, outVLabel, inV, inVLabel, properties.
+
+        ``update_strategies`` (v1.10.2 P3.2): when provided, switches to
+        ``PUT /graph/edges/batch`` with a ``{"edges": [...], "update_strategies":
+        {...}}`` wrapper for per-property merge semantics. Omit for the default
+        create/upsert path (POST bare list).
         """
         try:
-            resp = await self._post(
-                f"{self._graph_base_for(graph_name)}/graph/edges/batch",
-                json_data=edges,
-            )
+            if update_strategies is not None:
+                resp = await self._put(
+                    f"{self._graph_base_for(graph_name)}/graph/edges/batch",
+                    json_data={
+                        "edges": edges,
+                        "update_strategies": update_strategies,
+                    },
+                )
+            else:
+                resp = await self._post(
+                    f"{self._graph_base_for(graph_name)}/graph/edges/batch",
+                    json_data=edges,
+                )
         except httpx.HTTPError as exc:
             self._handle_http_error(exc)
 
@@ -399,8 +463,12 @@ class HugeGraphClient(_TraverserMixin, _ImportExportMixin):
                 context={"status_code": resp.status_code},
             )
 
-        ids = resp.json()
-        return len(ids) if isinstance(ids, list) else 0
+        data = resp.json()
+        # PUT-with-wrapper returns {"edges": [{"id": ...}, ...]}; POST returns
+        # a bare id list. Count either shape.
+        if isinstance(data, dict) and isinstance(data.get("edges"), list):
+            return len(data["edges"])
+        return len(data) if isinstance(data, list) else 0
 
     # ------------------------------------------------------------------
     # Graph management

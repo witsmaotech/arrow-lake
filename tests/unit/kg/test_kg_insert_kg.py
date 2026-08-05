@@ -99,6 +99,38 @@ class TestInsertKgDatasetMode:
         assert rel_edges[0]["properties"]["relation_type"] == "uses"
 
 
+class TestInsertKgRelationTypeSortKey:
+    """v1.10.2 M2: relation_type is now a sort_key (relation edges are
+    frequency=MULTIPLE + sort_keys=[relation_type]). HugeGraph rejects a null
+    sort_key, so an empty/None relation_type must be coerced to a non-empty
+    value (the routed edge label) — never null/empty on the posted edge."""
+
+    def test_empty_relation_type_coerced_to_label(self):
+        client = _MockClient()
+        builder = _make_builder(client)
+        result = ExtractionResult(
+            entities=(
+                ExtractedEntity(name="A", entity_type="concept"),
+                ExtractedEntity(name="B", entity_type="concept"),
+            ),
+            relations=(
+                ExtractedRelation(source="A", target="B", relation_type=""),
+            ),
+            raw_text="",
+        )
+
+        asyncio.run(builder._insert_kg(
+            result, "kg_ds", {"c0": "hg0"}, owning_chunk_id="c0",
+        ))
+
+        rel_edges = [e for e in client.added_edges if e["label"] != "references"]
+        assert len(rel_edges) == 1
+        rt = rel_edges[0]["properties"]["relation_type"]
+        # never null/empty (sort_key must be non-null); coerced to the label
+        assert rt, f"relation_type must be non-empty, got {rt!r}"
+        assert rt == rel_edges[0]["label"]
+
+
 class TestInsertKgSourceChunk:
     """v1.9.10: entity vertex writes `source_chunk` (provenance chunk ids, SET)."""
 
