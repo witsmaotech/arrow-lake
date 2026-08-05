@@ -42,7 +42,7 @@ TEMPLATE_TYPES: tuple[str, ...] = (
 # without naming a domain.
 TYPE_DEFAULTS: dict[str, str] = {
     "graph": "general/concept_graph",
-    "temporal_graph": "general/workflow_graph",
+    "temporal_graph": "entity_graph",  # was general/workflow_graph (hyperextract NoneType bug on sparse content)
     "hypergraph": "tcm/formula_composition",   # HIGH RISK — opt-in only
     "list": "legal/compliance_list",
     "set": "legal/defined_term_set",
