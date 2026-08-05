@@ -545,92 +545,143 @@ class KGBuilder:
                     )
                 return (cid, res)
 
-            # MAP + online SHUFFLE (streaming fold, #5) + checkpoint/resume (#3).
+            # MAP + SHUFFLE/REDUCE + per-cid checkpoint (v1.10.2 M3: incremental).
+            # Checkpoint is per-cid {hash, entities, relations} so an append can
+            # reuse previously-extracted chunks and MAP only new/changed ones. A
+            # granular per-cid content-hash check is correct for append, re-ingest,
+            # AND content edits — simpler + more robust than a coarse first/last
+            # signature (and re-ingest/edit is logged per G5 instead of forced to a
+            # wasteful full rebuild). fed_chunks lives under /ka/ next to the
+            # checkpoint, shared with the dataset path (P2.4).
+            import hashlib
+            import json
             from arrow_lake.knowledge_graph._naming import artifact_key_for
-            ckpt_path = (_ka_root or Path(self._config.he_ka_base_dir)) / artifact_key_for(
-                task.dataset_name) / "map_reduce.json"
-            result: ExtractionResult | None = None
-            entity_chunks: dict[str, list[str]] = {}
-            # Resume from checkpoint if MAP already completed for this chunk set.
-            if ckpt_path.is_file():
+            _ka_subdir = (
+                (_ka_root or Path(self._config.he_ka_base_dir))
+                / artifact_key_for(task.dataset_name) / "ka"
+            )
+            ckpt_path = _ka_subdir / "map_reduce.json"
+            fed_path = _ka_subdir / "fed_chunks.json"
+
+            def _chunk_hash(t: str) -> str:
+                return hashlib.sha1((t or "").encode("utf-8", "replace")).hexdigest()[:16]
+
+            def _template_hash(p: str | Path) -> str:
                 try:
-                    # JSON (not pickle): the checkpoint lives on a writable shared
-                    # volume, so a planted file must not yield arbitrary code
-                    # execution. We reconstruct only declared dataclasses.
-                    import hashlib
-                    import json
+                    return hashlib.sha1(Path(p).read_bytes()).hexdigest()[:16]
+                except OSError:
+                    return ""  # unreadable template ⇒ no incremental (safe fallback)
+
+            def _res_to_dict(res: ExtractionResult) -> dict:
+                return {
+                    "entities": [{"name": e.name, "type": e.entity_type,
+                                  "properties": [list(p) for p in e.properties]}
+                                 for e in res.entities],
+                    "relations": [{"source": r.source, "target": r.target,
+                                   "type": r.relation_type,
+                                   "properties": [list(p) for p in r.properties]}
+                                  for r in res.relations],
+                }
+
+            def _dict_to_res(d: dict) -> ExtractionResult:
+                return ExtractionResult(
+                    entities=tuple(ExtractedEntity(
+                        name=e["name"], entity_type=e["type"],
+                        properties=tuple(tuple(p) for p in e.get("properties", [])),
+                    ) for e in d.get("entities", [])),
+                    relations=tuple(ExtractedRelation(
+                        source=r["source"], target=r["target"], relation_type=r["type"],
+                        properties=tuple(tuple(p) for p in r.get("properties", [])),
+                    ) for r in d.get("relations", [])),
+                    raw_text="",
+                )
+
+            # --- admission: load per-cid checkpoint, gate on template hash (P2.3) ---
+            per_cid: dict[str, ExtractionResult] = {}
+            ckpt_hashes: dict[str, str] = {}
+            can_incremental = False
+            cur_thash = _template_hash(template_path)
+            if incremental and ckpt_path.is_file() and cur_thash:
+                try:
                     d = json.loads(ckpt_path.read_text(encoding="utf-8"))
-                    # Resume only if the chunk set, template, AND content (first+
-                    # last chunk hash) all match — otherwise a template change or
-                    # re-ingest would stale-resume a now-wrong merged result.
-                    _sig = (hashlib.sha1(
-                        (str(contents[0]) + "\n" + str(contents[-1])).encode("utf-8", "replace")
-                    ).hexdigest()[:16]) if contents else ""
-                    if (d.get("total_chunks") == len(chunk_ids)
-                            and d.get("template") == Path(template_path).stem
-                            and d.get("sig") == _sig):
-                        result = ExtractionResult(
-                            entities=tuple(ExtractedEntity(
-                                name=e["name"], entity_type=e["type"],
-                                properties=tuple(tuple(p) for p in e.get("properties", [])),
-                            ) for e in d.get("entities", [])),
-                            relations=tuple(ExtractedRelation(
-                                source=r["source"], target=r["target"], relation_type=r["type"],
-                                properties=tuple(tuple(p) for p in r.get("properties", [])),
-                            ) for r in d.get("relations", [])),
-                            raw_text="",
-                        )
-                        entity_chunks = d.get("entity_chunks", {})
-                        task.processed_chunks = len(chunk_ids)
-                        logger.info(
-                            "KG map_reduce %s: resumed from checkpoint (%d entities, %d relations)",
-                            task.dataset_name, len(result.entities), len(result.relations),
-                        )
+                    if (d.get("template") == Path(template_path).stem
+                            and d.get("template_hash", "") == cur_thash):
+                        for cid, cd in d.get("chunks", {}).items():
+                            per_cid[cid] = _dict_to_res(cd)
+                            ckpt_hashes[cid] = cd.get("hash", "")
+                        can_incremental = True
                 except Exception as exc:  # noqa: BLE001 — fall back to full MAP
                     logger.warning(
                         "KG map_reduce checkpoint load failed, full MAP: %s", str(exc)[:120],
                     )
-            if result is None:
-                acc = KGBuilder._MergeAccumulator()
-                for batch_start in range(0, len(chunk_ids), concurrency):
-                    batch_end = min(batch_start + concurrency, len(chunk_ids))
-                    batch = await asyncio.gather(*(
-                        _extract_only(idx, chunk_ids[idx], contents[idx], chunk_doc_types[idx])
-                        for idx in range(batch_start, batch_end)
-                    ))
-                    for cid, _res in batch:              # streaming fold (#5)
-                        acc.fold(cid, _res)
-                    if batch_delay > 0 and batch_end < len(chunk_ids):
-                        await asyncio.sleep(batch_delay)
-                result, entity_chunks = acc.finalize()
-                # Checkpoint the merged result (JSON — see resume note) so a
-                # post-MAP failure (resolve/insert) doesn't lose the extraction
-                # work on rerun (#3).
-                try:
-                    import hashlib
-                    import json
-                    _sig = (hashlib.sha1(
-                        (str(contents[0]) + "\n" + str(contents[-1])).encode("utf-8", "replace")
-                    ).hexdigest()[:16]) if contents else ""
-                    ckpt_path.parent.mkdir(parents=True, exist_ok=True)
-                    from arrow_lake.knowledge_graph._atomic import atomic_write_json
-                    atomic_write_json(ckpt_path, {
-                        "total_chunks": len(chunk_ids),
-                        "template": Path(template_path).stem,
-                        "sig": _sig,
-                        "entities": [{"name": e.name, "type": e.entity_type,
-                                      "properties": [list(p) for p in e.properties]}
-                                     for e in result.entities],
-                        "relations": [{"source": r.source, "target": r.target,
-                                       "type": r.relation_type,
-                                       "properties": [list(p) for p in r.properties]}
-                                      for r in result.relations],
-                        "entity_chunks": entity_chunks,
-                    })
-                except Exception as exc:  # noqa: BLE001 — checkpoint is best-effort
-                    logger.warning(
-                        "KG map_reduce checkpoint write failed: %s", str(exc)[:120],
-                    )
+                    per_cid, ckpt_hashes = {}, {}
+
+            # --- decide which chunks to (re-)extract (P2.1 MAP diff) ---
+            cur_hashes = {cid: _chunk_hash(contents[i]) for i, cid in enumerate(chunk_ids)}
+            new_idxs: list[int] = []
+            reingest_warned = False
+            for i, cid in enumerate(chunk_ids):
+                h = cur_hashes[cid]
+                if can_incremental and cid in ckpt_hashes:
+                    if ckpt_hashes[cid] == h:
+                        continue  # reuse prior extraction (content unchanged)
+                    # previously-fed cid now differs → re-ingest / content edit (G5)
+                    if not reingest_warned:
+                        logger.warning(
+                            "KG map_reduce %s: chunk content changed since last build "
+                            "(re-ingest/edit) — re-extracting affected chunks",
+                            task.dataset_name,
+                        )
+                        reingest_warned = True
+                new_idxs.append(i)
+
+            if can_incremental:
+                logger.info(
+                    "KG map_reduce %s incremental: %d chunks, MAP %d new/changed (reuse %d)",
+                    task.dataset_name, len(chunk_ids), len(new_idxs),
+                    len(chunk_ids) - len(new_idxs),
+                )
+
+            # --- MAP the new/changed chunks (concurrent, bounded by semaphore) ---
+            for batch_start in range(0, len(new_idxs), concurrency):
+                batch_end = min(batch_start + concurrency, len(new_idxs))
+                batch = await asyncio.gather(*(
+                    _extract_only(idx, chunk_ids[idx], contents[idx], chunk_doc_types[idx])
+                    for idx in new_idxs[batch_start:batch_end]
+                ))
+                for cid, _res in batch:
+                    per_cid[cid] = _res
+                if batch_delay > 0 and batch_end < len(new_idxs):
+                    await asyncio.sleep(batch_delay)
+            task.processed_chunks = len(chunk_ids)
+
+            # --- SHUFFLE/REDUCE: fold all present chunks (reused + new) in order ---
+            acc = KGBuilder._MergeAccumulator()
+            for cid in chunk_ids:
+                _res = per_cid.get(cid)
+                if _res is not None:
+                    acc.fold(cid, _res)
+            result, entity_chunks = acc.finalize()
+
+            # --- persist per-cid checkpoint + fed_chunks (best-effort) ---
+            try:
+                ckpt_path.parent.mkdir(parents=True, exist_ok=True)
+                from arrow_lake.knowledge_graph._atomic import atomic_write_json
+                atomic_write_json(ckpt_path, {
+                    "template": Path(template_path).stem,
+                    "template_hash": cur_thash,
+                    "chunks": {
+                        cid: {"hash": cur_hashes[cid], **_res_to_dict(per_cid[cid])}
+                        for cid in chunk_ids if cid in per_cid
+                    },
+                })
+                # fed_chunks shared with the dataset path (switching granularity
+                # keeps progress); only current cids retained (stale cleanup P2.4).
+                atomic_write_json(fed_path, {cid: cur_hashes[cid] for cid in chunk_ids})
+            except Exception as exc:  # noqa: BLE001 — checkpoint is best-effort
+                logger.warning(
+                    "KG map_reduce checkpoint write failed: %s", str(exc)[:120],
+                )
 
             total_entities = len(result.entities)
             total_relations = len(result.relations)
@@ -712,11 +763,11 @@ class KGBuilder:
                     entity_chunks=entity_chunks,
                     write_sem=write_sem,
                 )
-                # insert succeeded → drop the MAP checkpoint (avoid stale resume).
-                try:
-                    ckpt_path.unlink(missing_ok=True)
-                except Exception:  # noqa: BLE001
-                    pass
+                # v1.10.2 M3: the per-cid checkpoint PERSISTS after a successful
+                # insert — it is the incremental-reuse source for the next build.
+                # (Previously deleted to avoid stale crash-recovery resume; now the
+                # G6 gate means a default incremental=False build ignores it, and an
+                # incremental build reuses matching cids / re-MAPs changed ones.)
         else:
             # --- per-chunk: fresh KA.parse() per chunk (legacy path) ---
             async def _process_chunk(

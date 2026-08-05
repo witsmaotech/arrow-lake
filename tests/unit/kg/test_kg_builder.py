@@ -842,8 +842,11 @@ async def test_execute_build_map_reduce_resumes_from_checkpoint(
     config: HugeGraphConfig,
     tmp_path,
 ) -> None:
-    """A matching checkpoint (total_chunks + template + content sig) skips MAP:
-    extractor.extract is NOT called; the checkpoint's merged result is inserted."""
+    """incremental=True + matching per-cid checkpoint (template content hash +
+    per-cid content hashes) skips MAP entirely: extractor.extract is NOT called;
+    the checkpoint's per-cid entities are folded + inserted. (v1.10.2 M3: per-cid
+    sharded checkpoint; resume is now gated on incremental=True — G6 default =
+    full MAP.)"""
     import hashlib
     import json
     from pathlib import Path
@@ -856,25 +859,35 @@ async def test_execute_build_map_reduce_resumes_from_checkpoint(
     config.he_kg_type_pair = False
     config.he_ka_base_dir = str(tmp_path)
 
+    # Real template file so the content-hash gate (file bytes) is stable.
+    tpl = Path(tmp_path) / "entity_graph.yaml"
+    tpl.write_text("name: entity_graph\n", encoding="utf-8")
+    tpl_hash = hashlib.sha1(tpl.read_bytes()).hexdigest()[:16]
+
     extractor = AsyncMock()
     extractor._classifier = None
     extractor._kg_granularity = "map_reduce"
-    extractor._resolve_template = MagicMock(return_value="entity_graph")
-    extractor.extract = AsyncMock()  # must NOT be awaited on resume
+    extractor._resolve_template = MagicMock(return_value=str(tpl))
+    extractor.extract = AsyncMock()  # must NOT be awaited on full reuse
 
     contents = [str(c) for c in chunks_table_with_doc_type.column("content").to_pylist()]
-    sig = hashlib.sha1(
-        (contents[0] + "\n" + contents[-1]).encode("utf-8", "replace")
-    ).hexdigest()[:16]
-    ckpt = Path(tmp_path) / artifact_key_for("ds") / "map_reduce.json"
+
+    def _h(t: str) -> str:
+        return hashlib.sha1((t or "").encode("utf-8", "replace")).hexdigest()[:16]
+
+    ckpt = Path(tmp_path) / artifact_key_for("ds") / "ka" / "map_reduce.json"
     ckpt.parent.mkdir(parents=True, exist_ok=True)
     ckpt.write_text(json.dumps({
-        "total_chunks": chunks_table_with_doc_type.num_rows,
         "template": "entity_graph",
-        "sig": sig,
-        "entities": [{"name": "X", "type": "t", "properties": []}],
-        "relations": [],
-        "entity_chunks": {"X": ["chunk-1"]},
+        "template_hash": tpl_hash,
+        "chunks": {
+            "chunk-1": {"hash": _h(contents[0]),
+                        "entities": [{"name": "X", "type": "t", "properties": []}],
+                        "relations": []},
+            "chunk-2": {"hash": _h(contents[1]),
+                        "entities": [{"name": "Y", "type": "t", "properties": []}],
+                        "relations": []},
+        },
     }), encoding="utf-8")
 
     builder = KGBuilder(mock_client, extractor, config)
@@ -886,12 +899,161 @@ async def test_execute_build_map_reduce_resumes_from_checkpoint(
 
     builder._insert_kg = _spy  # type: ignore[method-assign]
 
-    task_id = await builder.build("ds", chunks_table_with_doc_type)
+    task_id = await builder.build("ds", chunks_table_with_doc_type, incremental=True)
     await builder.execute_build(task_id)
 
-    extractor.extract.assert_not_awaited()        # MAP skipped
+    extractor.extract.assert_not_awaited()        # MAP fully skipped (all reused)
     assert len(inserted) == 1
-    assert {e.name for e in inserted[0].entities} == {"X"}  # checkpoint's entity
+    assert {e.name for e in inserted[0].entities} == {"X", "Y"}  # both per-cid
+
+
+@pytest.mark.asyncio
+async def test_execute_build_map_reduce_incremental_append_maps_only_new(
+    mock_client: object, config: HugeGraphConfig, tmp_path,
+) -> None:
+    """incremental append: first build MAPs all chunks; second build (one new
+    chunk appended, others byte-identical) MAPs ONLY the new chunk — the per-cid
+    checkpoint reuses the unchanged ones (P2.1, G2)."""
+    from pathlib import Path
+    from unittest.mock import AsyncMock, MagicMock
+
+    config.he_kg_granularity = "map_reduce"
+    config.he_entity_resolution = "off"
+    config.he_kg_type_pair = False
+    config.he_ka_base_dir = str(tmp_path)
+    tpl = Path(tmp_path) / "t.yaml"
+    tpl.write_text("name: t\n", encoding="utf-8")
+
+    def _extract(content, *, chunk_id="", doc_type=None):
+        return ExtractionResult((ExtractedEntity(chunk_id or "e", "t"),), (), content)
+
+    extractor = AsyncMock()
+    extractor._classifier = None
+    extractor._kg_granularity = "map_reduce"
+    extractor._resolve_template = MagicMock(return_value=str(tpl))
+    extractor.extract = AsyncMock(side_effect=_extract)
+    builder = KGBuilder(mock_client, extractor, config)
+    builder._ka_base_dir = Path(tmp_path)
+    builder._insert_kg = AsyncMock(return_value=None)  # type: ignore[method-assign]
+
+    def _tbl(ids, contents):
+        return pa.table({
+            "id": ids, "content": contents,
+            "document_name": ["d.txt"] * len(ids),
+            "chunk_index": list(range(len(ids))),
+            "doc_type": ["report"] * len(ids),
+        })
+
+    # 1st build: 2 chunks → both MAPped (no prior checkpoint)
+    t1 = await builder.build("ds", _tbl(["c1", "c2"], ["alpha", "beta"]), incremental=True)
+    await builder.execute_build(t1)
+    assert extractor.extract.await_count == 2
+
+    # 2nd build: append c3 (c1,c2 unchanged) → ONLY c3 MAPped
+    extractor.extract = AsyncMock(side_effect=_extract)
+    t2 = await builder.build(
+        "ds", _tbl(["c1", "c2", "c3"], ["alpha", "beta", "gamma"]), incremental=True,
+    )
+    await builder.execute_build(t2)
+    assert extractor.extract.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_execute_build_map_reduce_incremental_content_edit_re_extracts(
+    mock_client: object, config: HugeGraphConfig, tmp_path, caplog,
+) -> None:
+    """A previously-fed chunk whose content changed (re-ingest/edit) is re-
+    extracted; unchanged chunks are reused (G5 — granular per-cid hash check)."""
+    import logging
+    from pathlib import Path
+    from unittest.mock import AsyncMock, MagicMock
+
+    config.he_kg_granularity = "map_reduce"
+    config.he_entity_resolution = "off"
+    config.he_kg_type_pair = False
+    config.he_ka_base_dir = str(tmp_path)
+    tpl = Path(tmp_path) / "t.yaml"
+    tpl.write_text("name: t\n", encoding="utf-8")
+
+    def _extract(content, *, chunk_id="", doc_type=None):
+        return ExtractionResult((ExtractedEntity(chunk_id or "e", "t"),), (), content)
+
+    extractor = AsyncMock()
+    extractor._classifier = None
+    extractor._kg_granularity = "map_reduce"
+    extractor._resolve_template = MagicMock(return_value=str(tpl))
+    extractor.extract = AsyncMock(side_effect=_extract)
+    builder = KGBuilder(mock_client, extractor, config)
+    builder._ka_base_dir = Path(tmp_path)
+    builder._insert_kg = AsyncMock(return_value=None)  # type: ignore[method-assign]
+
+    def _tbl(ids, contents):
+        return pa.table({
+            "id": ids, "content": contents,
+            "document_name": ["d.txt"] * len(ids),
+            "chunk_index": list(range(len(ids))),
+            "doc_type": ["report"] * len(ids),
+        })
+
+    t1 = await builder.build("ds", _tbl(["c1", "c2"], ["alpha", "beta"]), incremental=True)
+    await builder.execute_build(t1)
+
+    # 2nd build: c2 content edited → only c2 re-extracted; warns (G5)
+    extractor.extract = AsyncMock(side_effect=_extract)
+    with caplog.at_level(logging.WARNING):
+        t2 = await builder.build(
+            "ds", _tbl(["c1", "c2"], ["alpha", "BETA-changed"]), incremental=True,
+        )
+        await builder.execute_build(t2)
+    assert extractor.extract.await_count == 1
+    assert any("content changed" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_execute_build_map_reduce_default_is_full_map(
+    mock_client: object, config: HugeGraphConfig, tmp_path,
+) -> None:
+    """incremental=False (default) → full MAP even when a checkpoint exists
+    (G6: default build behavior unchanged from v1.10.1)."""
+    from pathlib import Path
+    from unittest.mock import AsyncMock, MagicMock
+
+    config.he_kg_granularity = "map_reduce"
+    config.he_entity_resolution = "off"
+    config.he_kg_type_pair = False
+    config.he_ka_base_dir = str(tmp_path)
+    tpl = Path(tmp_path) / "t.yaml"
+    tpl.write_text("name: t\n", encoding="utf-8")
+
+    def _extract(content, *, chunk_id="", doc_type=None):
+        return ExtractionResult((ExtractedEntity(chunk_id or "e", "t"),), (), content)
+
+    extractor = AsyncMock()
+    extractor._classifier = None
+    extractor._kg_granularity = "map_reduce"
+    extractor._resolve_template = MagicMock(return_value=str(tpl))
+    extractor.extract = AsyncMock(side_effect=_extract)
+    builder = KGBuilder(mock_client, extractor, config)
+    builder._ka_base_dir = Path(tmp_path)
+    builder._insert_kg = AsyncMock(return_value=None)  # type: ignore[method-assign]
+
+    def _tbl(ids, contents):
+        return pa.table({
+            "id": ids, "content": contents,
+            "document_name": ["d.txt"] * len(ids),
+            "chunk_index": list(range(len(ids))),
+            "doc_type": ["report"] * len(ids),
+        })
+
+    # 1st build (incremental) writes a checkpoint.
+    t1 = await builder.build("ds", _tbl(["c1", "c2"], ["alpha", "beta"]), incremental=True)
+    await builder.execute_build(t1)
+
+    # 2nd build with incremental=False → full MAP (2 extracts), checkpoint ignored.
+    extractor.extract = AsyncMock(side_effect=_extract)
+    t2 = await builder.build("ds", _tbl(["c1", "c2"], ["alpha", "beta"]), incremental=False)
+    await builder.execute_build(t2)
+    assert extractor.extract.await_count == 2
 
 
 @pytest.mark.asyncio
