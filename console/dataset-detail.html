@@ -203,7 +203,7 @@ if (!ds) {
     //       让用户实际滚到预览时为 warm(~1.3s)而非冷启动(~3.5s)。fire-and-forget
     if (detailInfo) {
       request("POST", `/datasets/${encodeURIComponent(ds)}/query/olap`,
-        { body: { sql: `SELECT * FROM "${String(ds).replace(/"/g, '""')}" LIMIT 1` } }
+        { body: { sql: `SELECT * EXCEPT (text_embedding) FROM "${String(ds).replace(/"/g, '""')}" LIMIT 1` } }
       ).catch(() => {});
     }
 
@@ -305,7 +305,11 @@ if (!ds) {
           // 无搜索 → 复用元数据行数,跳过全表 COUNT(*)
           pv.total = detailInfo.num_rows;
         }
-        const res = await request("POST", `/datasets/${dsEnc}/query/olap`, { body: { sql: `SELECT * FROM "${tbl}" ${where} LIMIT ${pv.size} OFFSET ${offset}` } });
+        // 投影掉 embedding 大向量列(DuckDB lance scan FixedSizeList 卡,SELECT * 120s 超时)
+        const projCols = (schemaFields.length
+          ? schemaFields.filter(f => !/embedding/i.test(f.name)).map(f => `"${String(f.name).replace(/"/g, '""')}"`).join(",")
+          : "*") || "*";
+        const res = await request("POST", `/datasets/${dsEnc}/query/olap`, { body: { sql: `SELECT ${projCols} FROM "${tbl}" ${where} LIMIT ${pv.size} OFFSET ${offset}` } });
         const rows = res?.rows || [];
         if (pv.total === -1) {
           // 探索式:满页假定还有下一页;不满 → 末页
