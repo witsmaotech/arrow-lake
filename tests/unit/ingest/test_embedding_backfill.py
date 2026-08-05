@@ -21,12 +21,25 @@ import pyarrow as pa
 
 
 def _fake_storage(table: pa.Table):
+    class _FakeLanceTable:
+        """Stand-in for a lance table; count_rows(filter) emulates null pushdown."""
+
+        def count_rows(self, filter: str | None = None) -> int:
+            if filter and "IS NULL" in filter:
+                for col in table.column_names:
+                    if col in filter:
+                        return int(table.column(col).is_null().to_numpy(zero_copy_only=False).sum())
+            return table.num_rows
+
     class _FakeStorage:
         def has_column(self, name: str, column_name: str) -> bool:
             return column_name in table.column_names
 
         def read_dataset(self, name: str, columns=None) -> pa.Table:
             return table
+
+        def open_dataset(self, name: str) -> _FakeLanceTable:
+            return _FakeLanceTable()
 
         def drop_column(self, name: str, col: str) -> None:
             self.dropped = col  # type: ignore[attr-defined]

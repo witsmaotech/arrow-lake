@@ -1183,13 +1183,14 @@ class _LakeIngestMixin:
                 return storage.read_dataset(dataset_name, columns=["text_content"]).num_rows
             except Exception:  # noqa: BLE001 — unreadable → treat as nothing to do
                 return 0
+        # append: text_embedding 列已存在。不 read_dataset 全列(FixedSizeList
+        # 2560dim 物化 child 卡死,实测 SELECT * 同列 120s 超时),用 lance
+        # count_rows(filter) 下推到 valid bitmap(只查 null 标记,不读向量值)。
         try:
-            tbl = storage.read_dataset(dataset_name, columns=[embedding_column])
+            return int(storage.open_dataset(dataset_name).count_rows(
+                filter=f"{embedding_column} IS NULL"))
         except Exception:  # noqa: BLE001
             return 0
-        if tbl.num_rows == 0:
-            return 0
-        return int(tbl.column(embedding_column).combine_chunks().is_null().sum())
 
     def _run_embed_and_vector_bg(self, dataset_name: str, null_rows: int) -> None:
         """P1.4: background embed + vector index (runs in _embed_backfill_executor).
