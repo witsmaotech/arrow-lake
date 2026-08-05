@@ -141,7 +141,7 @@ arrow-lake --base-uri ./my_lake status
 
 ```bash
 # Ingest a local file into a target dataset
-arrow-lake --base-uri ./my_lake ingest files sales examples/data/transactions/sales_2024.csv
+arrow-lake --base-uri ./my_lake ingest files sales datas/transactions/sales_2024.csv
 
 # Supported formats: CSV, JSON, JSONL, Parquet
 ```

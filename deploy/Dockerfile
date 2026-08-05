@@ -173,8 +173,8 @@ USER arrowlake
 COPY --from=builder /build/arrow_lake /app/arrow_lake
 COPY --from=builder /build/flows /app/flows
 
-# Copy examples for testing / demos
-COPY examples/ /app/examples/
+# Copy cookbook examples for testing / demos (consolidated: examples/ → docs/cookbook/examples)
+COPY docs/cookbook/examples/ /app/examples/
 
 # Copy SQL Worksheet console (static frontend, served at /console via app.py StaticFiles mount)
 COPY console/ /app/console/

@@ -143,7 +143,7 @@ curl -X POST http://localhost:8000/api/v1/auth/refresh \
 curl -X POST http://localhost:8000/api/v1/datasets/docs/ingest \
   -H "X-API-Key: your-secret-api-key-here" \
   -H "Content-Type: application/json" \
-  -d '{"file_paths": ["examples/data/papers/full_text/zh001_大语言模型知识图谱构建综述.pdf", "examples/data/papers/full_text/zh002_向量数据库技术选型与实践.pdf"]}'
+  -d '{"file_paths": ["datas/papers/full_text/zh001_大语言模型知识图谱构建综述.pdf", "datas/papers/full_text/zh002_向量数据库技术选型与实践.pdf"]}'
 # => {"success": true, "dataset_name": "docs", "total_rows": 156, "total_files": 2, ...}
 ```
 
@@ -240,7 +240,7 @@ async def build_kg(dataset: str) -> dict:
 
 
 async def main():
-    result = await ingest_files("docs", ["examples/data/kb/knowledge_zh.jsonl"])
+    result = await ingest_files("docs", ["datas/kb/knowledge_zh.jsonl"])
     print(f"摄取完成：{result['total_rows']} 行")
 
     results = await vector_search("docs", "向量索引类型")

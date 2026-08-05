@@ -118,8 +118,7 @@ packages = ["arrow_lake", "flows"]
 # .md tutorials are retained.
 exclude = [
   "console/node_modules",        # vendored frontend deps (~96 MB)
-  "examples/data",               # sample PDFs (papers/files, ~46 MB)
-  "examples/chunking/data",      # chunking sample PDFs (淮北 ~50 MB)
+  "docs/cookbook/datas",         # sample datasets (papers/chunking PDFs, ~50 MB)
   "docs/cookbook/**/*.pdf",      # binary PDFs — .md tutorials kept
   "docs/cookbook/**/data",       # KA artifacts (*.faiss indexes)
 ]
@@ -135,9 +134,6 @@ ignore = ["E501", "B008", "S101", "RUF002", "RUF003", "PERF203"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/api/*" = ["S101", "S106"]
-"examples/deployment/13_rest_api_basics.py" = ["RUF001", "RUF002", "RUF003"]
-"examples/deployment/14_rest_api_search_query.py" = ["RUF001", "RUF002", "RUF003"]
-"examples/deployment/15_rest_api_advanced.py" = ["RUF001", "RUF002", "RUF003"]
 
 [tool.ruff.format]
 quote-style = "double"

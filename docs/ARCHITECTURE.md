@@ -1000,7 +1000,7 @@ ArrowLakeError
 - **环境**：统一 `.venv/bin/python3`。
 - **基准**：`tests/benchmark/`（scale / quality / perf-regression / **batch3 gates**）；`BenchmarkReport` 可复用。
 - **覆盖**：unit 7043 节点 / integration 457 / e2e 80 / benchmark 173（codebase-memory 图谱统计）。
-- **cookbook**：`docs/cookbook/`（15 章，中英双语）+ `examples/`（含 API 示例、benchmark、busitests）—— 作为端到端回归套件。
+- **cookbook**：`docs/cookbook/`（18 章，中英双语）+ `examples/` + `examples_api/`（SDK + REST 端到端示例）—— 作为回归套件。
 - **CI 守护**：`KNOWN_DOC_TYPES` + `validate_taxonomy()` 单一真相源。
 
 ---

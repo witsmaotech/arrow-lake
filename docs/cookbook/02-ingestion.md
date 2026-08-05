@@ -18,7 +18,7 @@ lake = Lake(base_uri="./data_lake")
 # Ingest multiple files — the first file creates the dataset, the rest are appended automatically
 report = lake.ingest(
     "sales",
-    ["examples/data/transactions/sales_2024.csv"],
+    ["datas/transactions/sales_2024.csv"],
 )
 
 # IngestionReport contains detailed statistics
@@ -46,8 +46,8 @@ Use `ingest_batch()` for optimized bulk loading of same-type files via Daft `wri
 ```python
 report = lake.ingest_batch(
     "sales",
-    ["examples/data/transactions/sales_2024.csv",
-     "examples/data/transactions/sales_2025.csv"],
+    ["datas/transactions/sales_2024.csv",
+     "datas/transactions/sales_2025.csv"],
 )
 print(f"Batch ingestion: {report.total_rows} rows")
 ```
@@ -148,8 +148,8 @@ lake = Lake(base_uri="./data_lake")
 
 report = lake.ingest_images(
     "photos",
-    ["examples/data/photos/sunset_landscape.jpg",
-     "examples/data/photos/mountain_view.jpg"],
+    ["datas/photos/sunset_landscape.jpg",
+     "datas/photos/mountain_view.jpg"],
 )
 print(f"Image ingestion: {report.total_rows} rows")
 
@@ -168,8 +168,8 @@ Videos are automatically processed to extract key frames during ingestion.
 ```python
 report = lake.ingest_videos(
     "videos",
-    ["examples/data/videos/lecture_demo.mp4",
-     "examples/data/videos/interview_clip.mp4"],
+    ["datas/videos/lecture_demo.mp4",
+     "datas/videos/interview_clip.mp4"],
 )
 print(f"Video ingestion: {report.total_rows} rows")
 
@@ -191,10 +191,10 @@ lake = Lake(base_uri="./data_lake")
 report = lake.ingest_mixed(
     "multi_modal_dataset",
     {
-        "files": ["examples/data/transactions/sales_2024.csv"],
+        "files": ["datas/transactions/sales_2024.csv"],
         "urls": ["https://example.com/extra_data.csv"],
-        "images": ["examples/data/photos/sunset_landscape.jpg"],
-        "videos": ["examples/data/videos/lecture_demo.mp4"],
+        "images": ["datas/photos/sunset_landscape.jpg"],
+        "videos": ["datas/videos/lecture_demo.mp4"],
     },
 )
 print(f"Mixed ingestion: {report.total_rows} rows, {report.total_files} files")
@@ -217,8 +217,8 @@ lake = Lake(base_uri="./data_lake")
 # Basic ingestion — Kreuzberg parser + default chunking
 report = lake.ingest_documents(
     "research_papers",
-    ["examples/data/papers/full_text/p001_attention_is_all_you_need.pdf",
-     "examples/data/papers/full_text/p009_clip.pdf"],
+    ["datas/papers/full_text/p001_attention_is_all_you_need.pdf",
+     "datas/papers/full_text/p009_clip.pdf"],
     doc_config=None,
 )
 print(f"Document ingestion: {report.total_rows} text chunks")
@@ -252,7 +252,7 @@ doc_config = DocumentConfig(
 
 report = lake.ingest_documents(
     "papers",
-    ["examples/data/papers/full_text/p014_gpt4_technical_report.pdf"],
+    ["datas/papers/full_text/p014_gpt4_technical_report.pdf"],
     doc_config=doc_config,
 )
 ```
@@ -391,7 +391,7 @@ Compute vector embeddings and ingest in one step:
 # Ingest data and compute embeddings for a text column
 report = lake.ingest_and_embed(
     "articles",
-    ["examples/data/articles.json"],
+    ["datas/articles.json"],
     embed_column="text_content",
 )
 print(f"Embedded ingestion: {report.total_rows} rows with vectors")
@@ -445,7 +445,7 @@ from arrow_lake import Lake
 lake = Lake(base_uri="./data_lake")
 
 # Use glob to collect files and batch-ingest them
-csv_files = sorted(Path("examples/data/transactions").glob("**/*.csv"))
+csv_files = sorted(Path("datas/transactions").glob("**/*.csv"))
 all_files = [str(f) for f in csv_files]
 
 if all_files:

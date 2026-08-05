@@ -17,7 +17,7 @@ lake = Lake(base_uri="./data_lake")
 # 摄取多个文件 — 第一个文件创建 dataset，后续自动追加
 report = lake.ingest(
     "sales",
-    ["examples/data/transactions/sales_2024_cn.csv"],
+    ["datas/transactions/sales_2024_cn.csv"],
 )
 
 # IngestionReport 包含详细的摄取统计
@@ -44,8 +44,8 @@ for src in report.sources:
 ```python
 report = lake.ingest_batch(
     "sales",
-    ["examples/data/transactions/sales_2024_cn.csv",
-     "examples/data/transactions/sales_2025_cn.csv"],
+    ["datas/transactions/sales_2024_cn.csv",
+     "datas/transactions/sales_2025_cn.csv"],
 )
 print(f"批量摄取：{report.total_rows} 行")
 ```
@@ -145,8 +145,8 @@ lake = Lake(base_uri="./data_lake")
 
 report = lake.ingest_images(
     "photos",
-    ["examples/data/photos/sunset_landscape.jpg",
-     "examples/data/photos/mountain_view.jpg"],
+    ["datas/photos/sunset_landscape.jpg",
+     "datas/photos/mountain_view.jpg"],
 )
 print(f"图像摄取：{report.total_rows} 行")
 
@@ -164,8 +164,8 @@ print(f"图像摄取：{report.total_rows} 行")
 ```python
 report = lake.ingest_videos(
     "videos",
-    ["examples/data/videos/lecture_demo.mp4",
-     "examples/data/videos/interview_clip.mp4"],
+    ["datas/videos/lecture_demo.mp4",
+     "datas/videos/interview_clip.mp4"],
 )
 print(f"视频摄取：{report.total_rows} 行")
 
@@ -187,10 +187,10 @@ lake = Lake(base_uri="./data_lake")
 report = lake.ingest_mixed(
     "multi_modal_dataset",
     {
-        "files": ["examples/data/transactions/sales_2024_cn.csv"],
+        "files": ["datas/transactions/sales_2024_cn.csv"],
         "urls": ["https://example.com/extra_data.csv"],
-        "images": ["examples/data/photos/sunset_landscape.jpg"],
-        "videos": ["examples/data/videos/lecture_demo.mp4"],
+        "images": ["datas/photos/sunset_landscape.jpg"],
+        "videos": ["datas/videos/lecture_demo.mp4"],
     },
 )
 print(f"混合摄取：{report.total_rows} 行，{report.total_files} 文件")
@@ -215,8 +215,8 @@ lake = Lake(base_uri="./data_lake")
 # 基础摄取 — Kreuzberg 解析 + 默认分块
 report = lake.ingest_documents(
     "research_papers",
-    ["examples/data/papers/full_text/p001_attention_is_all_you_need.pdf",
-     "examples/data/papers/full_text/p009_clip.pdf"],
+    ["datas/papers/full_text/p001_attention_is_all_you_need.pdf",
+     "datas/papers/full_text/p009_clip.pdf"],
     doc_config=None,
 )
 print(f"文档摄取：{report.total_rows} 个文本块")
@@ -250,7 +250,7 @@ doc_config = DocumentConfig(
 
 report = lake.ingest_documents(
     "papers",
-    ["examples/data/papers/full_text/zh001_大语言模型知识图谱构建综述.pdf"],
+    ["datas/papers/full_text/zh001_大语言模型知识图谱构建综述.pdf"],
     doc_config=doc_config,
 )
 ```
@@ -388,7 +388,7 @@ except StorageError:
 # 摄取数据并计算文本列的嵌入
 report = lake.ingest_and_embed(
     "articles",
-    ["examples/data/articles.json"],
+    ["datas/articles.json"],
     embed_column="text_content",
 )
 print(f"嵌入摄取：{report.total_rows} 行含向量")
@@ -442,7 +442,7 @@ from arrow_lake import Lake
 lake = Lake(base_uri="./data_lake")
 
 # 使用 glob 收集文件，批量摄取
-csv_files = sorted(Path("examples/data/transactions").glob("**/*.csv"))
+csv_files = sorted(Path("datas/transactions").glob("**/*.csv"))
 all_files = [str(f) for f in csv_files]
 
 if all_files:

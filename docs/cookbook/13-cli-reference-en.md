@@ -2,7 +2,7 @@
 
 > Covers all 100+ commands, parameter descriptions, example output, and Python SDK equivalents. Includes 5 end-to-end practical scenarios, from local development to S3/MinIO production deployment.
 
-**Sample Data**: The data files used in all practical scenarios in this tutorial are located in the [`examples/data/`](datas/README.md) directory and can be run directly. Includes paper metadata CSV, transaction records CSV, knowledge base JSONL, and other real-world examples.
+**Sample Data**: The data files used in all practical scenarios in this tutorial are located in the [`datas/`](datas/README.md) directory and can be run directly. Includes paper metadata CSV, transaction records CSV, knowledge base JSONL, and other real-world examples.
 
 ---
 
@@ -219,7 +219,7 @@ Supported formats: CSV, JSON, JSONL, Parquet.
 
 ```bash
 # Single file
-arrow-lake ingest files sales examples/data/transactions/sales_2024.csv
+arrow-lake ingest files sales datas/transactions/sales_2024.csv
 
 # Multiple files (mixed formats)
 arrow-lake ingest files logs ./logs/api.jsonl ./logs/service.json
@@ -1567,21 +1567,21 @@ S3 configuration is only passed to the Lance engine when conditions are met; oth
 Build a paper dataset from scratch, completing the full workflow of ingestion, indexing, search, and export.
 
 **Sample Data**:
-- `examples/data/papers/metadata.csv` — 20 English paper metadata entries (Transformer, BERT, CLIP, GPT-4, LoRA, etc.)
-- `examples/data/papers/metadata_zh.csv` — 12 Chinese paper metadata entries (Knowledge Graph, Vector Database, RAG, MinIO, etc.)
-- `examples/data/papers/full_text/` — 18 real paper PDFs from arxiv
+- `datas/papers/metadata.csv` — 20 English paper metadata entries (Transformer, BERT, CLIP, GPT-4, LoRA, etc.)
+- `datas/papers/metadata_zh.csv` — 12 Chinese paper metadata entries (Knowledge Graph, Vector Database, RAG, MinIO, etc.)
+- `datas/papers/full_text/` — 18 real paper PDFs from arxiv
 
 **Step 1: Create Dataset and Ingest Data**
 
 ```bash
 # Ingest English paper metadata
-arrow-lake --base-uri ./paper_lake ingest files papers examples/data/papers/metadata.csv
+arrow-lake --base-uri ./paper_lake ingest files papers datas/papers/metadata.csv
 
 # Ingest Chinese paper metadata (jieba auto-tokenization)
-arrow-lake --base-uri ./paper_lake ingest files papers_zh examples/data/papers/metadata_zh.csv
+arrow-lake --base-uri ./paper_lake ingest files papers_zh datas/papers/metadata_zh.csv
 
 # Ingest PDF full texts
-arrow-lake --base-uri ./paper_lake ingest documents papers examples/data/papers/full_text/*.pdf
+arrow-lake --base-uri ./paper_lake ingest documents papers datas/papers/full_text/*.pdf
 ```
 
 **Step 2: View Dataset**
@@ -1642,23 +1642,23 @@ arrow-lake --base-uri ./paper_lake export papers \
 
 Manage image and video data, enabling cross-modal search.
 
-**Sample Data**: `examples/data/photos/` directory already contains 6 sample images. Videos need to be placed in `examples/data/videos/` manually.
+**Sample Data**: `datas/photos/` directory already contains 6 sample images. Videos need to be placed in `datas/videos/` manually.
 
 **Step 1: Ingest Multimedia Data**
 
 ```bash
 # Image ingestion (auto-extract thumbnails + EXIF)
-arrow-lake --base-uri ./media_lake ingest files photos examples/data/photos/*.jpg examples/data/photos/*.png
+arrow-lake --base-uri ./media_lake ingest files photos datas/photos/*.jpg datas/photos/*.png
 
 # Video ingestion (auto-extract key frames)
-arrow-lake --base-uri ./media_lake ingest videos clips examples/data/videos/lecture_demo.mp4 examples/data/videos/interview_clip.mp4
+arrow-lake --base-uri ./media_lake ingest videos clips datas/videos/lecture_demo.mp4 datas/videos/interview_clip.mp4
 ```
 
 **Step 2: Generate Embedding Vectors**
 
 ```bash
 # Single image vector
-arrow-lake embed image examples/data/photos/sunset.jpg --model openai/clip-vit-base-patch32
+arrow-lake embed image datas/photos/sunset.jpg --model openai/clip-vit-base-patch32
 
 # Single text vector
 arrow-lake embed text "golden hour landscape photography"
@@ -1682,17 +1682,17 @@ arrow-lake --base-uri ./media_lake search vector photos \
 A complete workflow from raw data through quality control to analytical reports.
 
 **Sample Data**:
-- `examples/data/transactions/sales_2024.csv` — 50 English transaction records
-- `examples/data/transactions/sales_2024_cn.csv` — 50 Chinese transaction records (suitable for Chinese FTS demo)
+- `datas/transactions/sales_2024.csv` — 50 English transaction records
+- `datas/transactions/sales_2024_cn.csv` — 50 Chinese transaction records (suitable for Chinese FTS demo)
 
 **Step 1: Ingest Raw Data**
 
 ```bash
 # English transaction data
-arrow-lake --base-uri ./analytics_lake ingest files transactions examples/data/transactions/sales_2024.csv
+arrow-lake --base-uri ./analytics_lake ingest files transactions datas/transactions/sales_2024.csv
 
 # Chinese transaction data (jieba auto-tokenization, suitable for Chinese full-text search demo)
-arrow-lake --base-uri ./analytics_lake ingest files transactions_cn examples/data/transactions/sales_2024_cn.csv
+arrow-lake --base-uri ./analytics_lake ingest files transactions_cn datas/transactions/sales_2024_cn.csv
 ```
 
 **Step 2: Quality Check**
@@ -1750,17 +1750,17 @@ arrow-lake --base-uri ./analytics_lake backup create \
 Build a knowledge graph-enhanced RAG Q&A system.
 
 **Sample Data**:
-- `examples/data/kb/knowledge.jsonl` — 10 English knowledge base entries (Arrow, Parquet, DuckDB, LanceDB, RAG, HNSW, MinIO, etc.)
-- `examples/data/kb/knowledge_zh.jsonl` — 10 Chinese knowledge base entries (suitable for Chinese RAG Q&A demo)
+- `datas/kb/knowledge.jsonl` — 10 English knowledge base entries (Arrow, Parquet, DuckDB, LanceDB, RAG, HNSW, MinIO, etc.)
+- `datas/kb/knowledge_zh.jsonl` — 10 Chinese knowledge base entries (suitable for Chinese RAG Q&A demo)
 
 **Step 1: Ingest Knowledge Base Data**
 
 ```bash
 # English knowledge base
-arrow-lake --base-uri ./rag_lake ingest files knowledge examples/data/kb/knowledge.jsonl
+arrow-lake --base-uri ./rag_lake ingest files knowledge datas/kb/knowledge.jsonl
 
 # Chinese knowledge base
-arrow-lake --base-uri ./rag_lake ingest files knowledge_zh examples/data/kb/knowledge_zh.jsonl
+arrow-lake --base-uri ./rag_lake ingest files knowledge_zh datas/kb/knowledge_zh.jsonl
 ```
 
 **Step 2: Create Indexes**

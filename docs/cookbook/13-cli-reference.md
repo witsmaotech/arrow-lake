@@ -2,7 +2,7 @@
 
 > 涵盖全部 100+ 命令、参数说明、示例输出与 Python SDK 对应关系。配合 5 个端到端实战场景，从本地开发到 S3/MinIO 生产部署一气呵成。
 
-**示例数据**: 本教程所有实战场景使用的数据文件位于 [`examples/data/`](datas/README.md) 目录，可直接运行。包含论文元数据 CSV、交易记录 CSV、知识库 JSONL 等真实示例。
+**示例数据**: 本教程所有实战场景使用的数据文件位于 [`datas/`](datas/README.md) 目录，可直接运行。包含论文元数据 CSV、交易记录 CSV、知识库 JSONL 等真实示例。
 
 ---
 
@@ -219,7 +219,7 @@ arrow-lake catalog inspect documents --json
 
 ```bash
 # 单文件
-arrow-lake ingest files sales examples/data/transactions/sales_2024.csv
+arrow-lake ingest files sales datas/transactions/sales_2024.csv
 
 # 多文件（混合格式）
 arrow-lake ingest files logs ./logs/api.jsonl ./logs/service.json
@@ -1567,21 +1567,21 @@ has_real_creds = (
 从零搭建一个论文数据集，完成摄取、索引、搜索、导出的完整流程。
 
 **示例数据**:
-- `examples/data/papers/metadata.csv` — 20 条英文论文元数据（Transformer、BERT、CLIP、GPT-4、LoRA 等）
-- `examples/data/papers/metadata_zh.csv` — 12 条中文论文元数据（知识图谱、向量数据库、RAG、MinIO 等）
-- `examples/data/papers/full_text/` — 18 篇来自 arxiv 的真实论文 PDF
+- `datas/papers/metadata.csv` — 20 条英文论文元数据（Transformer、BERT、CLIP、GPT-4、LoRA 等）
+- `datas/papers/metadata_zh.csv` — 12 条中文论文元数据（知识图谱、向量数据库、RAG、MinIO 等）
+- `datas/papers/full_text/` — 18 篇来自 arxiv 的真实论文 PDF
 
 **步骤 1：创建数据集并摄取数据**
 
 ```bash
 # 摄取英文论文元数据
-arrow-lake --base-uri ./paper_lake ingest files papers examples/data/papers/metadata.csv
+arrow-lake --base-uri ./paper_lake ingest files papers datas/papers/metadata.csv
 
 # 摄取中文论文元数据（jieba 自动分词）
-arrow-lake --base-uri ./paper_lake ingest files papers_zh examples/data/papers/metadata_zh.csv
+arrow-lake --base-uri ./paper_lake ingest files papers_zh datas/papers/metadata_zh.csv
 
 # 摄取 PDF 原文
-arrow-lake --base-uri ./paper_lake ingest documents papers examples/data/papers/full_text/*.pdf
+arrow-lake --base-uri ./paper_lake ingest documents papers datas/papers/full_text/*.pdf
 ```
 
 **步骤 2：查看数据集**
@@ -1642,23 +1642,23 @@ arrow-lake --base-uri ./paper_lake export papers \
 
 管理图片和视频数据，实现跨模态搜索。
 
-**示例数据**: `examples/data/photos/` 目录已包含 6 张示例图片。视频需自行放入 `examples/data/videos/`。
+**示例数据**: `datas/photos/` 目录已包含 6 张示例图片。视频需自行放入 `datas/videos/`。
 
 **步骤 1：摄取多媒体数据**
 
 ```bash
 # 图片摄取（自动提取缩略图 + EXIF）
-arrow-lake --base-uri ./media_lake ingest files photos examples/data/photos/*.jpg examples/data/photos/*.png
+arrow-lake --base-uri ./media_lake ingest files photos datas/photos/*.jpg datas/photos/*.png
 
 # 视频摄取（自动提取关键帧）
-arrow-lake --base-uri ./media_lake ingest videos clips examples/data/videos/lecture_demo.mp4 examples/data/videos/interview_clip.mp4
+arrow-lake --base-uri ./media_lake ingest videos clips datas/videos/lecture_demo.mp4 datas/videos/interview_clip.mp4
 ```
 
 **步骤 2：生成嵌入向量**
 
 ```bash
 # 单张图片的向量
-arrow-lake embed image examples/data/photos/sunset.jpg --model openai/clip-vit-base-patch32
+arrow-lake embed image datas/photos/sunset.jpg --model openai/clip-vit-base-patch32
 
 # 单条文本的向量
 arrow-lake embed text "golden hour landscape photography"
@@ -1682,17 +1682,17 @@ arrow-lake --base-uri ./media_lake search vector photos \
 从原始数据到质量管控再到分析报告的完整流程。
 
 **示例数据**:
-- `examples/data/transactions/sales_2024.csv` — 50 条英文交易记录
-- `examples/data/transactions/sales_2024_cn.csv` — 50 条中文交易记录（适合中文 FTS 演示）
+- `datas/transactions/sales_2024.csv` — 50 条英文交易记录
+- `datas/transactions/sales_2024_cn.csv` — 50 条中文交易记录（适合中文 FTS 演示）
 
 **步骤 1：摄取原始数据**
 
 ```bash
 # 英文交易数据
-arrow-lake --base-uri ./analytics_lake ingest files transactions examples/data/transactions/sales_2024.csv
+arrow-lake --base-uri ./analytics_lake ingest files transactions datas/transactions/sales_2024.csv
 
 # 中文交易数据（jieba 自动分词，适合中文全文搜索演示）
-arrow-lake --base-uri ./analytics_lake ingest files transactions_cn examples/data/transactions/sales_2024_cn.csv
+arrow-lake --base-uri ./analytics_lake ingest files transactions_cn datas/transactions/sales_2024_cn.csv
 ```
 
 **步骤 2：质量检查**
@@ -1750,17 +1750,17 @@ arrow-lake --base-uri ./analytics_lake backup create \
 构建一个基于知识图谱增强的 RAG 问答系统。
 
 **示例数据**:
-- `examples/data/kb/knowledge.jsonl` — 10 条英文知识库条目（Arrow、Parquet、DuckDB、LanceDB、RAG、HNSW、MinIO 等）
-- `examples/data/kb/knowledge_zh.jsonl` — 10 条中文知识库条目（适合中文 RAG 问答演示）
+- `datas/kb/knowledge.jsonl` — 10 条英文知识库条目（Arrow、Parquet、DuckDB、LanceDB、RAG、HNSW、MinIO 等）
+- `datas/kb/knowledge_zh.jsonl` — 10 条中文知识库条目（适合中文 RAG 问答演示）
 
 **步骤 1：摄取知识库数据**
 
 ```bash
 # 英文知识库
-arrow-lake --base-uri ./rag_lake ingest files knowledge examples/data/kb/knowledge.jsonl
+arrow-lake --base-uri ./rag_lake ingest files knowledge datas/kb/knowledge.jsonl
 
 # 中文知识库
-arrow-lake --base-uri ./rag_lake ingest files knowledge_zh examples/data/kb/knowledge_zh.jsonl
+arrow-lake --base-uri ./rag_lake ingest files knowledge_zh datas/kb/knowledge_zh.jsonl
 ```
 
 **步骤 2：创建索引**

@@ -417,7 +417,7 @@ flows/               # Metaflow pipeline definitions
 | Project overview | [`README.md`](README.md) |
 | Changelog | [`CHANGELOG.md`](CHANGELOG.md) |
 | Config reference | `docs/` |
-| Examples | `examples/` |
+| Examples | `docs/cookbook/examples` |
 | API reference | Inline docstrings (Google style) |
 
 ### Docstring Style
@@ -464,4 +464,4 @@ async def search(
 
 - Open a [GitHub Discussion](https://github.com/<org>/wits-infra-dintellihub/discussions) for general questions
 - Open an issue for bugs or feature requests
-- Check `docs/` and `examples/` for existing documentation and usage patterns
+- Check `docs/cookbook/` for existing documentation and usage patterns
