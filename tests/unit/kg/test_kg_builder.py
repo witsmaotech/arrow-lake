@@ -1010,6 +1010,57 @@ async def test_execute_build_map_reduce_incremental_content_edit_re_extracts(
 
 
 @pytest.mark.asyncio
+async def test_execute_build_map_reduce_template_content_edit_full_remap(
+    mock_client: object, config: HugeGraphConfig, tmp_path,
+) -> None:
+    """Template YAML content edited (stem unchanged) → the template_hash gate
+    fails → no per-cid reuse → full re-MAP. P2.3: a template guideline/enum
+    edit must invalidate prior extraction (schema semantically changed)."""
+    from pathlib import Path
+    from unittest.mock import AsyncMock, MagicMock
+
+    config.he_kg_granularity = "map_reduce"
+    config.he_entity_resolution = "off"
+    config.he_kg_type_pair = False
+    config.he_ka_base_dir = str(tmp_path)
+    tpl = Path(tmp_path) / "t.yaml"
+    tpl.write_text("name: t\nversion: 1\n", encoding="utf-8")
+
+    def _extract(content, *, chunk_id="", doc_type=None):
+        return ExtractionResult((ExtractedEntity(chunk_id or "e", "t"),), (), content)
+
+    extractor = AsyncMock()
+    extractor._classifier = None
+    extractor._kg_granularity = "map_reduce"
+    extractor._resolve_template = MagicMock(return_value=str(tpl))
+    extractor.extract = AsyncMock(side_effect=_extract)
+    builder = KGBuilder(mock_client, extractor, config)
+    builder._ka_base_dir = Path(tmp_path)
+    builder._insert_kg = AsyncMock(return_value=None)  # type: ignore[method-assign]
+
+    def _tbl(ids, contents):
+        return pa.table({
+            "id": ids, "content": contents,
+            "document_name": ["d.txt"] * len(ids),
+            "chunk_index": list(range(len(ids))),
+            "doc_type": ["report"] * len(ids),
+        })
+
+    # 1st build: 2 chunks → checkpoint with template_hash = sha1(version:1).
+    t1 = await builder.build("ds", _tbl(["c1", "c2"], ["alpha", "beta"]), incremental=True)
+    await builder.execute_build(t1)
+    assert extractor.extract.await_count == 2
+
+    # Edit template CONTENT (same path/stem, different bytes) → gate must fail.
+    tpl.write_text("name: t\nversion: 2\n", encoding="utf-8")
+    extractor.extract = AsyncMock(side_effect=_extract)
+    t2 = await builder.build("ds", _tbl(["c1", "c2"], ["alpha", "beta"]), incremental=True)
+    await builder.execute_build(t2)
+    # Full re-MAP (2), NOT reuse — template semantics changed even though cid+content identical.
+    assert extractor.extract.await_count == 2
+
+
+@pytest.mark.asyncio
 async def test_execute_build_map_reduce_default_is_full_map(
     mock_client: object, config: HugeGraphConfig, tmp_path,
 ) -> None:
