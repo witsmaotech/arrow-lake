@@ -46,6 +46,7 @@ from arrow_lake.knowledge_graph.doc_type_router import (
     DocTypeRouter,
     _PROJECT_TEMPLATES_DIR,
 )
+from arrow_lake.knowledge_graph._executor import kg_to_thread
 from arrow_lake.knowledge_graph.extractor import (
     _GENERIC_ENTITY_STOPWORDS,
     ExtractedEntity,
@@ -832,7 +833,7 @@ class HyperExtractExtractor:
         relation_enum = self._get_relation_enum(template_path)
         try:
             # Fresh KA per parse (no shared mutable state across chunks).
-            result = await asyncio.to_thread(self._parse_fresh, template_path, stripped)
+            result = await kg_to_thread(self._parse_fresh, template_path, stripped)
         except Exception as exc:
             # Fallback: a doc_type-routed template can fail on sparse/atypical
             # content (e.g. hypergraph templates raise IndexError in
@@ -850,7 +851,7 @@ class HyperExtractExtractor:
                     chunk_id, template_path, exc, default_path,
                 )
                 try:
-                    result = await asyncio.to_thread(
+                    result = await kg_to_thread(
                         self._parse_fresh, default_path, stripped
                     )
                     type_enum = self._get_type_enum(default_path)
@@ -980,7 +981,7 @@ class HyperExtractExtractor:
         ka = self._create_ka(template_path)
         if can_incremental:
             try:
-                await asyncio.to_thread(ka.load, ka_dir)
+                await kg_to_thread(ka.load, ka_dir)
             except Exception as exc:  # noqa: BLE001 — corrupt/unreadable dump
                 logger.warning("incremental KA load failed (%s): full feed", str(exc)[:120])
                 ka = self._create_ka(template_path)
@@ -1004,7 +1005,7 @@ class HyperExtractExtractor:
                 continue
             before = {getattr(n, "name", "") for n in (getattr(ka, "nodes", None) or [])}
             try:
-                await asyncio.to_thread(self._feed_with_retry, ka, stripped)
+                await kg_to_thread(self._feed_with_retry, ka, stripped)
             except Exception as exc:
                 failures += 1
                 logger.warning(
@@ -1034,7 +1035,7 @@ class HyperExtractExtractor:
             # checkpoint (§9 large-corpus crash protection)
             if checkpoint_every and (i + 1) % checkpoint_every == 0:
                 try:
-                    await asyncio.to_thread(ka.dump, ka_dir)
+                    await kg_to_thread(ka.dump, ka_dir)
                     logger.debug(
                         "build_dataset_ka checkpoint at chunk %d/%d → %s",
                         i + 1, len(chunks_to_feed), ka_dir,
@@ -1060,13 +1061,13 @@ class HyperExtractExtractor:
                 # wait_for: a build_index HANG (e.g. ollama embedder deadlock / FAISS stall)
                 # becomes a TimeoutError → caught below → non-fatal. Without this a hang blocks
                 # the build forever (try/except only catches errors, not hangs).
-                await asyncio.wait_for(asyncio.to_thread(ka.build_index), timeout=600)
+                await asyncio.wait_for(kg_to_thread(ka.build_index), timeout=600)
             except Exception as exc:  # noqa: BLE001 — RAG index is best-effort, non-fatal (incl. TimeoutError)
                 logger.warning(
                     "build_dataset_ka build_index failed/timed-out — KA RAG index skipped, "
                     "KG insert continues: %s", str(exc)[:160],
                 )
-        await asyncio.to_thread(ka.dump, ka_dir)
+        await kg_to_thread(ka.dump, ka_dir)
 
         # v1.10.0 §4.7 (C1/H2): snapshot the file-path template into the dump so
         # the query path can reload it (user templates otherwise "Template not

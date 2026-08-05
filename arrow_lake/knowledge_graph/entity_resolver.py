@@ -23,6 +23,7 @@ import re
 from dataclasses import replace
 from typing import Awaitable, Callable
 
+from arrow_lake.knowledge_graph._executor import kg_to_thread
 from arrow_lake.knowledge_graph.extractor import (
     ExtractedEntity,
     ExtractionResult,
@@ -261,7 +262,7 @@ async def resolve_entities(
     else:
         try:
             vecs = await asyncio.wait_for(
-                asyncio.to_thread(embed_fn, texts), timeout=_RESOLVE_EMBED_TIMEOUT_S,
+                kg_to_thread(embed_fn, texts), timeout=_RESOLVE_EMBED_TIMEOUT_S,
             )
         except asyncio.TimeoutError:
             logger.warning(

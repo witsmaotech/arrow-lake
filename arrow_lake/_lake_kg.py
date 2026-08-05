@@ -204,6 +204,10 @@ _KG_SNAPSHOT_LOCKS: dict[str, asyncio.Lock] = {}
 # Lock per dataset; acceptable — clean on dataset delete if ever a concern).
 _KG_BUILD_LOCKS: dict[str, asyncio.Lock] = {}
 _KG_SNAPSHOT_MAX_ENTRIES = 32
+# v1.10.2 M4 P-辅.2: how often (seconds) a running KG build syncs its progress
+# to Redis, so /kg/build/status is visible across workers (the builder task lives
+# only in the originating worker's memory; other workers read Redis).
+_KG_PROGRESS_SYNC_INTERVAL = 2.0
 
 
 async def _cached_graph_snapshot(
@@ -611,11 +615,37 @@ class _LakeKGMixin:
                 build_lock = _KG_BUILD_LOCKS.setdefault(dataset_name, asyncio.Lock())
                 async with build_lock:
                     logger.info("KGDISPATCH _run_build ENTER tm=%s kg=%s builder_id=%s", tm_task_id, task_id, id(builder))
+
+                    # P-辅.2: periodic progress → Redis so /kg/build/status works
+                    # across workers. The builder task is in-process only; other
+                    # workers (gunicorn) hit Redis. Polls the builder task every
+                    # _KG_PROGRESS_SYNC_INTERVAL until the build leaves RUNNING.
+                    async def _progress_poller() -> None:
+                        while True:
+                            try:
+                                await asyncio.sleep(_KG_PROGRESS_SYNC_INTERVAL)
+                            except asyncio.CancelledError:
+                                return
+                            kg = builder.get_task_status(task_id)
+                            tm = TaskManager.get_task(tm_task_id)
+                            if not kg or not tm:
+                                continue
+                            if str(kg.status) != "RUNNING":
+                                return
+                            tm.progress = kg.processed_chunks / max(kg.total_chunks, 1)
+                            try:
+                                TaskManager._sync_to_redis(tm)
+                            except Exception:  # noqa: BLE001 — Redis is best-effort
+                                pass
+
+                    poller = asyncio.create_task(_progress_poller())
                     try:
                         await TaskManager.run_background(tm_task_id, builder.execute_build, task_id)
                     except Exception:
                         logger.exception("kg_build _run_build FAILED task=%s dataset=%s", task_id, dataset_name)
                         raise
+                    finally:
+                        poller.cancel()
                     # Sync final status from KGBuilder task into TaskManager
                     kg_task = builder.get_task_status(task_id)
                     tm_task = TaskManager.get_task(tm_task_id)

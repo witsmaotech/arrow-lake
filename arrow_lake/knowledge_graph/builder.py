@@ -50,6 +50,7 @@ from arrow_lake.knowledge_graph.relation_validator import (
     is_project_concept_graph,
 )
 from arrow_lake.knowledge_graph._naming import graph_name_for
+from arrow_lake.knowledge_graph._executor import kg_to_thread
 from arrow_lake.knowledge_graph.schema import ARROW_LAKE_KG_SCHEMA, schema_to_hugegraph_payload
 
 logger = logging.getLogger(__name__)
@@ -1113,7 +1114,7 @@ class KGBuilder:
             from arrow_lake.knowledge_graph.entity_resolver import _entity_text
             texts = [_entity_text(e) for e in result.entities]
             vecs = await asyncio.wait_for(
-                asyncio.to_thread(embed_fn, texts), timeout=600,
+                kg_to_thread(embed_fn, texts), timeout=600,
             )
             name_to_vec = {
                 normalize_name(e.name): v
