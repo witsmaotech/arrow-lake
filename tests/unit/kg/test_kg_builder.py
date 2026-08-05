@@ -1366,3 +1366,118 @@ async def test_execute_build_map_reduce_incremental_step25_only_new_chunks(
     t3 = await builder.build("ds", _tbl(["c1", "c2", "c3"], ["alpha", "beta", "gamma"]), incremental=False)
     await builder.execute_build(t3)
     assert chunk_added["n"] == 3
+
+
+@pytest.mark.asyncio
+async def test_execute_build_map_reduce_incremental_boundary_next_edge(
+    mock_client: object, config: HugeGraphConfig, tmp_path,
+) -> None:
+    """v1.10.2 M4 P4 part b: appending to an EXISTING doc adds a boundary
+    next_chunk edge (old-last → new-first); the old-last hg id is queried from
+    HugeGraph (it was added in a prior build, not this build's chunk_id_map)."""
+    from pathlib import Path
+    from unittest.mock import AsyncMock, MagicMock
+
+    config.he_kg_granularity = "map_reduce"
+    config.he_entity_resolution = "off"
+    config.he_kg_type_pair = False
+    config.he_ka_base_dir = str(tmp_path)
+    tpl = Path(tmp_path) / "t.yaml"
+    tpl.write_text("name: t\n", encoding="utf-8")
+
+    def _extract(content, *, chunk_id="", doc_type=None):
+        return ExtractionResult((ExtractedEntity(chunk_id or "e", "t"),), (), content)
+
+    extractor = AsyncMock()
+    extractor._classifier = None
+    extractor._kg_granularity = "map_reduce"
+    extractor._resolve_template = MagicMock(return_value=str(tpl))
+    extractor.extract = AsyncMock(side_effect=_extract)
+    builder = KGBuilder(mock_client, extractor, config)
+    builder._ka_base_dir = Path(tmp_path)
+    builder._insert_kg = AsyncMock(return_value=None)  # type: ignore[method-assign]
+    # old-last chunk lookup → fake prior-build vertex id
+    mock_client.find_vertices_by_property = AsyncMock(return_value=[{"id": "hg-oldlast"}])
+
+    added_edges: list[dict] = []
+
+    async def _record_edges(edges, **kw):
+        added_edges.extend(edges)
+        return len(edges)
+
+    mock_client.add_edges = AsyncMock(side_effect=_record_edges)
+
+    def _tbl(ids, contents):
+        return pa.table({
+            "id": ids, "content": contents,
+            "document_name": ["d.txt"] * len(ids),
+            "chunk_index": list(range(len(ids))),
+            "doc_type": ["report"] * len(ids),
+        })
+
+    # build 1: c1,c2 same doc → no boundary (doc entirely new this build).
+    t1 = await builder.build("ds", _tbl(["c1", "c2"], ["alpha", "beta"]), incremental=True)
+    await builder.execute_build(t1)
+
+    # build 2: append c3 same doc → boundary edge old-last(c2) → new-first(c3).
+    added_edges.clear()
+    t2 = await builder.build("ds", _tbl(["c1", "c2", "c3"], ["alpha", "beta", "gamma"]), incremental=True)
+    await builder.execute_build(t2)
+
+    boundary = [
+        e for e in added_edges
+        if e.get("label") == "next_chunk" and e.get("outV") == "hg-oldlast"
+    ]
+    assert len(boundary) == 1, f"expected 1 boundary next_chunk edge, got {boundary}"
+    assert boundary[0]["inV"], "boundary edge inV (new-first hg id) must be set"
+
+
+@pytest.mark.asyncio
+async def test_execute_build_map_reduce_writes_fed_chunks_unified_path(
+    mock_client: object, config: HugeGraphConfig, tmp_path,
+) -> None:
+    """v1.10.2 M3 P2.4: map_reduce writes fed_chunks.json to
+    <ka_base>/<artifact_key>/ka/ (shared with the dataset path), keyed by
+    {cid: content_hash} so switching granularity keeps progress."""
+    import json
+    from pathlib import Path
+    from unittest.mock import AsyncMock, MagicMock
+
+    from arrow_lake.knowledge_graph._naming import artifact_key_for
+
+    config.he_kg_granularity = "map_reduce"
+    config.he_entity_resolution = "off"
+    config.he_kg_type_pair = False
+    config.he_ka_base_dir = str(tmp_path)
+    tpl = Path(tmp_path) / "t.yaml"
+    tpl.write_text("name: t\n", encoding="utf-8")
+
+    def _extract(content, *, chunk_id="", doc_type=None):
+        return ExtractionResult((ExtractedEntity(chunk_id or "e", "t"),), (), content)
+
+    extractor = AsyncMock()
+    extractor._classifier = None
+    extractor._kg_granularity = "map_reduce"
+    extractor._resolve_template = MagicMock(return_value=str(tpl))
+    extractor.extract = AsyncMock(side_effect=_extract)
+    builder = KGBuilder(mock_client, extractor, config)
+    builder._ka_base_dir = Path(tmp_path)
+    builder._insert_kg = AsyncMock(return_value=None)  # type: ignore[method-assign]
+
+    def _tbl(ids, contents):
+        return pa.table({
+            "id": ids, "content": contents,
+            "document_name": ["d.txt"] * len(ids),
+            "chunk_index": list(range(len(ids))),
+            "doc_type": ["report"] * len(ids),
+        })
+
+    t1 = await builder.build("ds", _tbl(["c1", "c2"], ["alpha", "beta"]), incremental=True)
+    await builder.execute_build(t1)
+
+    fed = Path(tmp_path) / artifact_key_for("ds") / "ka" / "fed_chunks.json"
+    assert fed.is_file(), f"fed_chunks.json not at unified path {fed}"
+    data = json.loads(fed.read_text("utf-8"))
+    assert isinstance(data, dict)
+    assert set(data.keys()) == {"c1", "c2"}
+    assert all(isinstance(v, str) and v for v in data.values()), "hashes must be non-empty strings"
