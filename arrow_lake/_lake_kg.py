@@ -194,10 +194,14 @@ def _augment_question_with_graph(
 _KG_SNAPSHOT_CACHE: dict[str, tuple[float, tuple[list[dict[str, Any]], list[dict[str, Any]]]]] = {}
 _KG_SNAPSHOT_TTL_S = 60.0
 _KG_SNAPSHOT_LOCKS: dict[str, asyncio.Lock] = {}
-# P0.1 (v1.10.2): per-dataset KG build serial. Concurrent kg_build on the SAME
-# dataset would overwrite fed_chunks.json / map_reduce.json sidecars (review C1
-# root cause). Same dataset → queue on its lock; different datasets → run
-# concurrently (each gets its own lock entry).
+# P0.1 (v1.10.2): per-dataset KG build serial WITHIN ONE WORKER PROCESS.
+# asyncio.Lock is event-loop-local — it does NOT serialize across uvicorn
+# workers (prod runs 4). Same-dataset builds hitting different workers still
+# race on the shared sidecar FS; P0.2 (atomic_write_json) prevents *torn* files
+# but cross-worker last-write-wins on fed_chunks/checkpoint remains until the
+# cross-process lock lands (§5.7 P-辅.2, future). Cross-worker serialization is
+# explicitly OUT of M0 scope. Entries are never evicted (one trivially-small
+# Lock per dataset; acceptable — clean on dataset delete if ever a concern).
 _KG_BUILD_LOCKS: dict[str, asyncio.Lock] = {}
 _KG_SNAPSHOT_MAX_ENTRIES = 32
 

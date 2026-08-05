@@ -47,3 +47,36 @@ def test_atomic_write_indent_readable(tmp_path: Path) -> None:
     p = tmp_path / "a.json"
     atomic_write_json(p, {"a": 1}, indent=2)
     assert "\n" in p.read_text("utf-8")  # pretty-printed
+
+
+def _raise_oserror(*_a: object, **_k: object) -> None:
+    raise OSError("simulated replace failure")
+
+
+def test_atomic_write_failure_keeps_old_and_cleans_tmp(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """On os.replace failure: old file intact, no stale tmp left (review M3)."""
+    import pytest
+
+    p = tmp_path / "a.json"
+    p.write_text(json.dumps({"old": 1}), "utf-8")
+    monkeypatch.setattr(
+        "arrow_lake.knowledge_graph._atomic.os.replace", _raise_oserror
+    )
+    with pytest.raises(OSError):
+        atomic_write_json(p, {"new": 2})
+    # old file intact (reader never sees a half-written file)
+    assert json.loads(p.read_text("utf-8")) == {"old": 1}
+    # the failed attempt's tmp was cleaned by the except branch
+    assert not list(tmp_path.glob(".a.json.*.tmp"))
+
+
+def test_atomic_write_sweeps_preexisting_stale_tmp(tmp_path: Path) -> None:
+    """A stale tmp from a prior crash is swept on the next write (review M1)."""
+    p = tmp_path / "a.json"
+    stale = tmp_path / ".a.json.deadbeef.tmp"
+    stale.write_text("garbage", "utf-8")
+    atomic_write_json(p, {"x": 1})
+    assert not stale.exists()  # swept
+    assert json.loads(p.read_text("utf-8")) == {"x": 1}

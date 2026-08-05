@@ -32,6 +32,15 @@ def atomic_write_json(path: str | Path, obj: object, *, indent: int | None = Non
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     data = json.dumps(obj, ensure_ascii=False, indent=indent)
+    # Clean any stale tmp left by a previous crashed write in this dir. mkstemp
+    # always mints a new unique name, so without this sweep they'd accumulate
+    # after repeated OOM-kill/SIGKILL (the docstring promise).
+    import glob
+    for stale in glob.glob(str(path.parent / f".{path.name}.*.tmp")):
+        try:
+            os.unlink(stale)
+        except OSError:
+            pass
     fd, tmp = tempfile.mkstemp(
         dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp"
     )
