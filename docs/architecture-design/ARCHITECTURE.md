@@ -239,14 +239,21 @@ def _get_component(self, key: str, factory: Callable[[], Any]) -> Any:
 
 > Bridges 通过 `lake.get_session_manager()` 获取**受管连接**，而非每次查询新建 session。
 
-### 3.4 Protocol（结构化鸭子类型）
+### 3.4 Protocol（结构化契约 / Structural Typing）
 
-`arrow_lake/_protocols.py` 定义跨层契约：
+`arrow_lake/_protocols.py` 用 `typing.Protocol` 定义**跨层能力契约**——只声明方法签名（参数 + 返回类型），不提供实现、不强制继承。任何具备这些方法的对象**自动满足协议**（按"结构"匹配而非"名义"），由 mypy / pyright / IDE 静态校验，无需 `isinstance` 或继承基类。这是"鸭子类型 + 静态类型安全"的结合。
 
-- `StorageProtocol` —— 存储后端抽象（本地 / S3 / MinIO）
-- `SearchBridge` —— 查询桥接统一接口
-- `QualityFilter` —— 质量过滤器协议（`quality/` 下有 Registry + 3-stage gate）
-- `EmbeddingEncoderProtocol` —— 嵌入器协议（`encode(list[str])`，v1.8.0 #13 让 Daft 也满足此协议）
+**为什么用 Protocol 而非抽象基类（ABC）**：
+- **零耦合**：实现方无需 import 或继承协议，独立演进的后端（Lance / DuckDB / HugeGraph / Daft）各自实现即可被桥接。
+- **可插拔**：新增后端 = 写一个满足协议的类 + 注册，主干 `Lake` 不动（契合 §3.1 Mixin + §3.3 Bridge 的组合）。
+- **多实现 + 编译期安全**：同一契约承载多实现（本地/S3、SentenceTransformer/Daft），类型检查器在编辑期即捕获签名漂移——既有鸭子类型的灵活，又有名义类型（继承）的安全性。
+
+| 协议 | 契约要点 | 实现示例 |
+|---|---|---|
+| `StorageProtocol` | 存储后端抽象（读/写/列举/删除 blob） | 本地 FS / S3 / MinIO |
+| `SearchBridge` | 查询桥接统一接口（`search` / `search_async`） | §3.3 的八个 Bridge |
+| `QualityFilter` | 质量过滤器（`apply(record) → record \| None`） | `quality/` Registry + 3-stage gate |
+| `EmbeddingEncoderProtocol` | `encode(list[str]) → list[vector]` | SentenceTransformer / **Daft UDF**（v1.8.0 #13 让 Daft 也满足，统一批嵌入路径） |
 
 ### 3.5 优雅降级矩阵（Reliability）
 
