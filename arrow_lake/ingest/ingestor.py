@@ -45,6 +45,11 @@ class IngestionReport:
     sources: tuple[IngestionSource, ...] = ()
     total_rows: int = 0
     total_files: int = 0
+    # v1.10.2 P1.4: when the embed+vector post-step is deferred to a background
+    # thread (null rows > embed_async_threshold), this carries the backfill
+    # status so the HTTP response can signal "embedding in progress" instead of
+    # blocking the request. None = synchronous (embed completed inline).
+    embed_async: dict | None = None
 
 
 class Ingestor(_FileIngestMixin, _MediaIngestMixin, _SourceIngestMixin):

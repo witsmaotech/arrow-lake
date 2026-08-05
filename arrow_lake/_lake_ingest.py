@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+import os
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import asdict, dataclass, replace
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
@@ -11,6 +16,99 @@ if TYPE_CHECKING:
     from arrow_lake.ingest.ingestor import IngestionReport
     from arrow_lake.quality.dedup import DedupResult
     from arrow_lake.quality.models import QualityReport
+
+
+# v1.10.2 P1.4: dedicated pool + in-process status for background embed backfill.
+# embed_and_add + create_vector_index are deferred here when null rows exceed the
+# async threshold, so a large first-time ingest / big append doesn't block the
+# request thread. Mirrors the olap_executor / kg_executor isolation pattern.
+# max_workers=2 bounds concurrent embed calls (local model GPU/CPU OOM guard).
+_embed_backfill_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="embed-bf")
+_EMBED_BG_LOCK = threading.Lock()
+_embed_bg: dict[str, "_EmbedBackfillStatus"] = {}
+
+
+@dataclass
+class _EmbedBackfillStatus:
+    """Latest background embed+vector backfill status for one dataset."""
+
+    status: str  # "running" | "completed" | "failed"
+    started_at: str
+    null_rows: int
+    finished_at: str | None = None
+    error: str | None = None
+
+
+# v1.10.2 P1.4 G11: _embed_bg is process-local, but gunicorn runs N workers — a
+# /embed/status request hitting a non-originating worker would see idle. Mirror
+# status to Redis (same connection TaskManager uses) so any worker can read it.
+_EMBED_STATUS_TTL_S = 3600
+_EMBED_REDIS_PREFIX = "arrow-lake:embed_status"
+
+
+_embed_redis: Any = None
+_embed_redis_tried = False
+
+
+def _embed_redis_client():
+    """Best-effort Redis client for cross-worker status mirror.
+
+    Prefers TaskManager's shared connection; falls back to a direct connection
+    from ARROW_LAKE__REDIS__URL (lazy, cached) so the mirror works even when the
+    task store isn't initialized in this deployment.
+    """
+    global _embed_redis, _embed_redis_tried
+    try:
+        from arrow_lake.api.tasks import TaskManager
+        store = TaskManager._redis_store
+        if store is not None and getattr(store, "_connected", False):
+            return store._redis
+    except Exception:  # noqa: BLE001
+        pass
+    if _embed_redis_tried:
+        return _embed_redis
+    _embed_redis_tried = True
+    try:
+        import redis as _redis_mod
+        url = os.environ.get("ARROW_LAKE__REDIS__URL", "")
+        if not url:
+            return None
+        _embed_redis = _redis_mod.Redis.from_url(url, socket_connect_timeout=2)
+        _embed_redis.ping()
+        return _embed_redis
+    except Exception:  # noqa: BLE001
+        _embed_redis = None
+        return None
+
+
+def _sync_embed_status_redis(dataset_name: str, status: dict) -> None:
+    """Mirror embed backfill status to Redis for cross-worker visibility."""
+    r = _embed_redis_client()
+    if r is None:
+        return
+    try:
+        import json as _json
+        key = f"{_EMBED_REDIS_PREFIX}:{dataset_name}"
+        r.set(key, _json.dumps(status, default=str), ex=_EMBED_STATUS_TTL_S)
+    except Exception:  # noqa: BLE001 — Redis is best-effort
+        pass
+
+
+def _read_embed_status_redis(dataset_name: str) -> dict | None:
+    """Read embed backfill status from Redis (cross-worker fallback)."""
+    r = _embed_redis_client()
+    if r is None:
+        return None
+    try:
+        import json as _json
+        raw = r.get(f"{_EMBED_REDIS_PREFIX}:{dataset_name}")
+        if not raw:
+            return None
+        if isinstance(raw, bytes):
+            raw = raw.decode()
+        return _json.loads(raw)
+    except Exception:  # noqa: BLE001
+        return None
 
 
 class _LakeIngestMixin:
@@ -560,19 +658,61 @@ class _LakeIngestMixin:
             dataset_name, pdf_paths, doc_config=doc_config, doc_type=doc_type, actor=actor,
         )
         log = structlog.get_logger(__name__)
-        for step_fn, label in (
-            (getattr(self, "embed_and_add", None), "embed_documents"),
-            (getattr(self, "create_fts_index", None), "create_fts_index"),
-            (getattr(self, "create_vector_index", None), "create_vector_index"),
-        ):
-            if callable(step_fn):
-                try:
-                    step_fn(dataset_name)
-                except Exception as exc:  # noqa: BLE001 — never fail ingest on a post-step
-                    log.warning(
-                        "ingest.post_step_failed",
-                        dataset=dataset_name, step=label, err=str(exc)[:160],
-                    )
+
+        def _try(label: str, fn: Any, *args: Any) -> bool:
+            """Run one best-effort post-step; never propagate to the caller."""
+            try:
+                fn(*args)
+                return True
+            except Exception as exc:  # noqa: BLE001 — never fail ingest on a post-step
+                log.warning(
+                    "ingest.post_step_failed",
+                    dataset=dataset_name, step=label, err=str(exc)[:160],
+                )
+                return False
+
+        # P1.4: FTS does not depend on the embedding column — run it first so
+        # full-text search is available even while embedding backfills in the
+        # background.
+        if callable(getattr(self, "create_fts_index", None)):
+            _try("create_fts_index", self.create_fts_index, dataset_name)
+
+        # P1.4: embed + vector are coupled (create_vector_index needs
+        # text_embedding non-null). When null rows exceed the async threshold
+        # (large first-time ingest / big append) defer BOTH to a background
+        # thread so the request returns immediately; otherwise run inline.
+        n_null = self._estimate_null_embeddings(dataset_name)
+        threshold = getattr(self._config.embedding, "embed_async_threshold", 5000)
+        with _EMBED_BG_LOCK:
+            cur = _embed_bg.get(dataset_name)
+            already_running = cur is not None and cur.status == "running"
+
+        embed_async_info: dict | None = None
+        embed_fn = getattr(self, "embed_and_add", None)
+        if already_running:
+            # A background backfill owns embed+vector for this dataset — don't
+            # also run it inline (would race on drop+add). P1.2 self-healing + the
+            # running task cover new nulls on its next pass / next ingest.
+            log.info("embed_backfill_skip_running", dataset=dataset_name)
+        elif n_null > threshold and callable(embed_fn):
+            _embed_backfill_executor.submit(self._run_embed_and_vector_bg, dataset_name, n_null)
+            embed_async_info = {
+                "status": "running",
+                "task": "embed_backfill",
+                "null_rows": n_null,
+                "threshold": threshold,
+                "hint": "embedding + vector index building in background; vector "
+                        "search unavailable until complete, FTS works now",
+            }
+            log.info("embed_backfill_deferred", dataset=dataset_name, null_rows=n_null)
+        else:
+            if callable(embed_fn):
+                _try("embed_documents", self.embed_and_add, dataset_name)
+            if callable(getattr(self, "create_vector_index", None)):
+                _try("create_vector_index", self.create_vector_index, dataset_name)
+
+        if embed_async_info is not None:
+            report = replace(report, embed_async=embed_async_info)
         return report
 
     def create_dataset(self, name: str, data: pa.Table, *, actor: str = "system") -> None:
@@ -974,18 +1114,10 @@ class _LakeIngestMixin:
         n_null = int(null_mask.sum())
         if n_null == 0:
             return 0  # idempotent no-op
-        # P1.4 (review safety M2): large null counts block the ingest request
-        # thread synchronously. Full fire-and-forget async needs reordering the
-        # post-step (embed→vector dependency) — deferred; the threshold acts as
-        # a circuit-breaker signal so ops can batch/async externally.
-        import logging
-        threshold = getattr(emb_cfg, "embed_async_threshold", 5000)
-        if n_null > threshold:
-            logging.getLogger(__name__).warning(
-                "embed_backfill_large_nulls ds=%s null=%d threshold=%d — sync "
-                "encode may block ingest; batch/async recommended (P1.4)",
-                dataset_name, n_null, threshold,
-            )
+        # P1.4: the async threshold gate now lives in ingest_documents_and_index's
+        # post-step (large null → fire-and-forget in _embed_backfill_executor).
+        # This direct-call path is reached only for sync callers; large counts are
+        # deferred before ever calling embed_and_add, so no inline gate is needed.
         null_idxs = np.nonzero(null_mask)[0]
         texts = [
             (text_arr[i].as_py() if text_arr[i].is_valid else "")
@@ -1030,6 +1162,85 @@ class _LakeIngestMixin:
         storage.drop_column(dataset_name, embedding_column)
         storage.add_columns_table(dataset_name, pa.table({embedding_column: new_fsl}))
         return n_null
+
+    def _estimate_null_embeddings(
+        self, dataset_name: str, embedding_column: str = "text_embedding",
+    ) -> int:
+        """P1.4: cheap estimate of rows needing embedding (gates sync vs async).
+
+        First-time (column absent): every row needs embedding → returns total
+        rows. Otherwise counts NULL rows in the embedding column via the Arrow
+        valid-bitmap (does NOT decode vector values). Used only to compare
+        against ``embed_async_threshold`` — not for the actual encode.
+        """
+        storage = self._get_storage()
+        if not storage.has_column(dataset_name, embedding_column):
+            try:
+                return storage.read_dataset(dataset_name, columns=["text_content"]).num_rows
+            except Exception:  # noqa: BLE001 — unreadable → treat as nothing to do
+                return 0
+        try:
+            tbl = storage.read_dataset(dataset_name, columns=[embedding_column])
+        except Exception:  # noqa: BLE001
+            return 0
+        if tbl.num_rows == 0:
+            return 0
+        return int(tbl.column(embedding_column).combine_chunks().is_null().sum())
+
+    def _run_embed_and_vector_bg(self, dataset_name: str, null_rows: int) -> None:
+        """P1.4: background embed + vector index (runs in _embed_backfill_executor).
+
+        Synchronous: embed_and_add (first-time or null-backfill, internal branch)
+        then create_vector_index (depends on text_embedding non-null). Exceptions
+        are swallowed into the status entry — P1.2 self-healing means the next
+        ingest retries. Never raises (it's a background thread).
+        """
+        import structlog
+        log = structlog.get_logger(__name__)
+        started = datetime.now(timezone.utc).isoformat()
+        cur = _EmbedBackfillStatus(status="running", started_at=started, null_rows=null_rows)
+        with _EMBED_BG_LOCK:
+            _embed_bg[dataset_name] = cur
+        _sync_embed_status_redis(dataset_name, asdict(cur))
+        try:
+            self.embed_and_add(dataset_name)
+            if callable(getattr(self, "create_vector_index", None)):
+                self.create_vector_index(dataset_name)
+            cur = _EmbedBackfillStatus(
+                status="completed", started_at=cur.started_at,
+                finished_at=datetime.now(timezone.utc).isoformat(),
+                null_rows=cur.null_rows,
+            )
+            with _EMBED_BG_LOCK:
+                _embed_bg[dataset_name] = cur
+            _sync_embed_status_redis(dataset_name, asdict(cur))
+            log.info("embed_backfill_bg_completed", dataset=dataset_name)
+        except Exception as exc:  # noqa: BLE001 — background thread, never raise
+            cur = _EmbedBackfillStatus(
+                status="failed", started_at=cur.started_at,
+                finished_at=datetime.now(timezone.utc).isoformat(),
+                null_rows=null_rows, error=str(exc)[:200],
+            )
+            with _EMBED_BG_LOCK:
+                _embed_bg[dataset_name] = cur
+            _sync_embed_status_redis(dataset_name, asdict(cur))
+            log.warning(
+                "embed_backfill_bg_failed", dataset=dataset_name, err=str(exc)[:200],
+            )
+
+    def get_embed_backfill_status(self, dataset_name: str) -> dict | None:
+        """P1.4: latest background embed+vector backfill status for a dataset.
+
+        Returns a dict (status/started_at/finished_at/null_rows/error) or None
+        if no backfill has ever run for this dataset.
+        """
+        with _EMBED_BG_LOCK:
+            st = _embed_bg.get(dataset_name)
+            if st is not None:
+                return asdict(st)
+        # G11 cross-worker fallback: this worker may not be the one that kicked
+        # off the background backfill — check Redis (set by the originating worker).
+        return _read_embed_status_redis(dataset_name)
 
     def embed_media(
         self,

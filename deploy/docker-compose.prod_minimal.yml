@@ -228,6 +228,8 @@ services:
       ARROW_LAKE__EMBEDDING__API_BASE: "http://host.docker.internal:11534/v1"
       ARROW_LAKE__EMBEDDING__MODEL: "${ARROW_LAKE__EMBEDDING__MODEL:-qwen3-embedding:4b}"
       ARROW_LAKE__EMBEDDING__API_KEY: "ollama"
+      # v1.10.2 P1.4: rows with NULL embedding above this → async background backfill
+      ARROW_LAKE__EMBEDDING__EMBED_ASYNC_THRESHOLD: "${ARROW_LAKE__EMBEDDING__EMBED_ASYNC_THRESHOLD:-5000}"
       # v1.9.5 批5: GraphRAG 联动(已建 KG 的数据集)。取消下行注释即开,开启后 RAG 自动
       # 注入实体关系三元组(graph_qa 模板)。默认关——未建 KG 的数据集开了会降级为纯向量 RAG。
       # ARROW_LAKE__HUGEGRAPH__ENABLED: "false"

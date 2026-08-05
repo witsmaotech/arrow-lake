@@ -603,6 +603,25 @@ async def ingest_documents(
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+@router.get("/{name}/embed/status")
+async def get_embed_backfill_status(
+    name: str = Path(..., pattern=_NAME_PATTERN),
+    *,
+    lake=Depends(get_lake),
+    _user: dict = Depends(require_role(Role.VIEWER)),
+):
+    """v1.10.2 P1.4: background embed+vector backfill status for a dataset.
+
+    Returns the latest deferred-embedding status (running/completed/failed) or
+    ``{"status": "idle"}`` when no backfill has ever run. Vector search is
+    unavailable while ``status == "running"``; FTS works throughout.
+    """
+    status = lake.get_embed_backfill_status(name)
+    if status is None:
+        return {"status": "idle"}
+    return status
+
+
 # ---------------------------------------------------------------------------
 # Dataset CRUD
 # ---------------------------------------------------------------------------

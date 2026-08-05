@@ -159,6 +159,10 @@ class IngestResponse(BaseModel):
     total_rows: int = 0
     total_files: int = 0
     sources: list[IngestionSourceResponse] = Field(default_factory=list)
+    # v1.10.2 P1.4: present when embed+vector was deferred to a background thread
+    # (null rows exceeded the async threshold). Clients poll
+    # GET /datasets/{name}/embed/status for completion.
+    embed_async: dict | None = None
 
     @classmethod
     def from_report(cls, report: Any) -> IngestResponse:
@@ -175,6 +179,7 @@ class IngestResponse(BaseModel):
             total_rows=report.total_rows,
             total_files=report.total_files,
             sources=sources,
+            embed_async=getattr(report, "embed_async", None),
         )
 
 

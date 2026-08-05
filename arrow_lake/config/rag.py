@@ -174,7 +174,10 @@ class HugeGraphConfig(BaseModel):
         # concept_graph 仅留给 concept/taxonomy 场景(走 tag 匹配/default)。
         "paper": "entity_graph",
         "report": "entity_graph",
-        "manual": "general/workflow_graph",
+        # manual → entity_graph (was general/workflow_graph, a temporal_graph
+        # preset that raises "argument of type 'NoneType' is not iterable" in
+        # hyperextract's merge on sparse content; can't fix site-packages here).
+        "manual": "entity_graph",
         "biography": "general/biography_graph",
         # [#9] 多领域项目模板 (arrow_lake/knowledge_graph/templates/*.yaml) —
         # tight type/relation 枚举 + 必填定义，避免 general/concept_graph 的自由类型 +

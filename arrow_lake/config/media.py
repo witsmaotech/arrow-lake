@@ -45,6 +45,8 @@ class EmbeddingConfig(BaseModel):
         expected_dim: Expected embedding dimension (0 = auto-detect from model).
         daft_provider: Daft embed provider when backend is "daft".
         daft_num_partitions: Number of Daft partitions for parallel embedding.
+        embed_async_threshold: Rows with NULL embedding above this count are
+            deferred to a background thread (P1.4 async backfill).
     """
 
     model: str = "Qwen/Qwen3-Embedding-0.6B"
@@ -56,6 +58,8 @@ class EmbeddingConfig(BaseModel):
     expected_dim: int = 0
     daft_provider: str = "transformers"
     daft_num_partitions: int = 4
+    # v1.10.2 P1.4: background-embed gate (see _lake_ingest post-step).
+    embed_async_threshold: int = 5000
 
     @property
     def known_dimension(self) -> int:
