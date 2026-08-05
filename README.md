@@ -325,7 +325,7 @@ lake = Lake.from_yaml("configs/prod.yaml")  # production
 
 ## Project status
 
-Stable and in production use. Current release: **v1.10.0** — knowledge extraction template management (M1–M5: dynamic loading, CRUD, binding, AI authoring, dry-run, quality validation harness). See [CHANGELOG](CHANGELOG.md) for the full history and roadmap direction (deeper multimodal, distributed scale-out, more extraction backends).
+Stable and in production use. Current release: **v1.10.1** — v1.10.0 knowledge extraction template management (M1–M5: dynamic loading, CRUD, binding, AI authoring, dry-run, quality validation harness) + v1.10.1 stability & governance hardening (docling GPU triton JIT fix, KG template fallback path, config consolidation, examples→cookbook). See [CHANGELOG](CHANGELOG.md) for the full history and roadmap direction (deeper multimodal, distributed scale-out, more extraction backends).
 
 - **6,100+ tests**, 90%+ coverage, zero high-severity security findings (bandit)
 - **186 REST routes** across 22 routers

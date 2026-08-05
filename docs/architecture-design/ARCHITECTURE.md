@@ -1,6 +1,6 @@
 # Arrow Lake — 架构技术文档（Architecture Reference）
 
-> **版本基线**：v1.10.0（已合并 `master`；`arrow_lake/_version.py` = `pyproject.toml` = 1.10.0）
+> **版本基线**：v1.10.1（已合并 `master`；`arrow_lake/_version.py` = `pyproject.toml` = 1.10.1）
 > **文档日期**：2026-08-03
 > **状态**：随主干演进，与代码当前态对齐（已逐项核实 `arrow_lake/` 源码）。v1.9.0 起**控制面库（libSQL / Turso）**已落地接管 RBAC/身份/personal_token/catalog/任务/RAG 会话/血缘索引（见 [§4.9](#49-控制面system_db)），console 运维/合规/治理前端已完备（见 [§12.2](#122-compose-profiles--overlays)）。
 > **v1.10.0 增量**（相对 v1.8.0）：① v1.9.0 Turso 控制面 ② v1.9.1 console 核心（admin/my-workspace + personal token）③ v1.9.2 console 完备化 + 质量深化 ④ v1.9.3 数据集字段注释 + tidy/clean 清洗页 ⑤ v1.9.4 血缘审计评审 + KG MERGE_FIELD（治 BALANCED 合并爆炸）+ Gravitino 1.3.0 ⑥ v1.9.5 RAG 质量全链路（hybrid 默认生效 + GraphRAG + multi_query）⑦ v1.9.6 RAG 防幻觉(faithfulness) + cross-encoder reranker + KG snap/strict/三路并行 + 血缘可视化(lineage.html) + masking 治理(HMAC fail-fast) + 安全加固(fail-closed) ⑧ v1.8.8-v1.8.9 KG per-dataset KA + 双 LLM ⑨ v1.10.0 知识抽取模板管理（前端模板 CRUD + 后端按新模板动态抽取建图不 rebuild/restart + LLM 辅助生成 self-heal + dry-run 试跑沙箱 + 模板质量验证 harness + category↔doc_type 拉通 + V005/V006/V007 迁移）。详见 [§14](#14-版本演进)。

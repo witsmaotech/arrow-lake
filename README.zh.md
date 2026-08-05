@@ -325,7 +325,7 @@ lake = Lake.from_yaml("configs/prod.yaml")  # 生产
 
 ## 项目状态
 
-稳定且已在生产中使用。当前版本：**v1.10.0** —— 知识抽取模板管理（M1–M5：动态加载、CRUD、绑定、AI 编写、试运行、质量验证 harness）。完整历史与路线图方向（更深入的多模态、分布式扩展、更多抽取后端）见 [CHANGELOG](CHANGELOG.md)。
+稳定且已在生产中使用。当前版本：**v1.10.1** —— v1.10.0 知识抽取模板管理（M1–M5：动态加载、CRUD、绑定、AI 编写、试运行、质量验证 harness）+ v1.10.1 稳定性与治理加固（docling GPU triton JIT 修复、KG 模板降级路径、配置精简、examples 整合进 cookbook）。完整历史与路线图方向（更深入的多模态、分布式扩展、更多抽取后端）见 [CHANGELOG](CHANGELOG.md)。
 
 - **6,100+ 测试**，90%+ 覆盖率，零高危安全发现（bandit）
 - **186 条 REST 路由**，横跨 22 个 router
