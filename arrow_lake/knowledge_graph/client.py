@@ -692,9 +692,9 @@ class HugeGraphClient(_TraverserMixin, _ImportExportMixin):
         if resp.status_code == 400:
             # 400 = element already exists (idempotent re-ensure). NOTE (v1.10.2
             # P0.3, review H1): HugeGraph POST does NOT diff the posted def vs the
-            # existing one, AND 1.3.0 returns 400 for an unrecognized field too
-            # (live test 2026-08-05: edge labels have NO id_strategy field — so
-            # schema.py must never emit it, which it doesn't). We keep 400 as
+            # existing one, AND core 1.7.0 returns 400 for an unrecognized field
+            # too (live test 2026-08-05: edge labels have NO id_strategy field —
+            # so schema.py must never emit it, which it doesn't). We keep 400 as
             # idempotent-ignore for backward compat; surfaced as debug (not silent)
             # so re-ensure is observable. M2 must GET-compare before claiming an
             # edge-label upgrade (needs full drop+recreate, see §5.5).
