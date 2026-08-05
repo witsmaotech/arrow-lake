@@ -974,6 +974,18 @@ class _LakeIngestMixin:
         n_null = int(null_mask.sum())
         if n_null == 0:
             return 0  # idempotent no-op
+        # P1.4 (review safety M2): large null counts block the ingest request
+        # thread synchronously. Full fire-and-forget async needs reordering the
+        # post-step (embed→vector dependency) — deferred; the threshold acts as
+        # a circuit-breaker signal so ops can batch/async externally.
+        import logging
+        threshold = getattr(emb_cfg, "embed_async_threshold", 5000)
+        if n_null > threshold:
+            logging.getLogger(__name__).warning(
+                "embed_backfill_large_nulls ds=%s null=%d threshold=%d — sync "
+                "encode may block ingest; batch/async recommended (P1.4)",
+                dataset_name, n_null, threshold,
+            )
         null_idxs = np.nonzero(null_mask)[0]
         texts = [
             (text_arr[i].as_py() if text_arr[i].is_valid else "")

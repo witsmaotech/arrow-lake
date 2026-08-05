@@ -131,3 +131,33 @@ def test_backfill_aborts_on_concurrent_append() -> None:
         Lake._backfill_embedding_nulls(
             FakeLake(), "ds", "text_content", "text_embedding", None
         )
+
+
+def test_backfill_warns_on_large_null_count(caplog) -> None:
+    """P1.4: null count > threshold → circuit-breaker warning (review M2)."""
+    import logging
+
+    from arrow_lake import Lake
+
+    dim = 4
+    emb = pa.array([None, None, None], type=pa.list_(pa.float32(), dim))
+    tbl = pa.table({"text_content": pa.array(["a", "b", "c"]), "text_embedding": emb})
+    storage = _fake_storage(tbl)
+
+    class FakeLake:
+        def _get_storage(self):
+            return storage
+
+        def _encode_texts(self, texts, cfg, bs=None):
+            return np.zeros((len(texts), dim), dtype=np.float32), dim
+
+    class LowThresholdCfg:
+        embed_async_threshold = 2  # 3 nulls > 2 → warn
+
+    with caplog.at_level(logging.WARNING, logger="arrow_lake._lake_ingest"):
+        Lake._backfill_embedding_nulls(
+            FakeLake(), "ds", "text_content", "text_embedding", LowThresholdCfg()
+        )
+    assert any(
+        "embed_backfill_large_nulls" in r.message for r in caplog.records
+    ), "expected circuit-breaker warning for large null count"
