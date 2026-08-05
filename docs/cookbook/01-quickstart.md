@@ -189,7 +189,7 @@ my_lake/                          # base_uri root
 │   │   └── ...
 │   └── indices/                  # Index files (optional)
 │       ├── vector/               # Vector index (IVF-PQ)
-│       └── fts/                  # Full-text index (Tantivy)
+│       └── fts/                  # Full-text index (native FTS (ICU))
 ├── products/                     # Another dataset
 │   └── ...
 └── ingest_dlq.jsonl              # Dead letter queue (failed ingestion records)

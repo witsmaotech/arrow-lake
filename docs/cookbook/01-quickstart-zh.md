@@ -189,7 +189,7 @@ my_lake/                          # base_uri 根目录
 │   │   └── ...
 │   └── indices/                  # 索引文件 (可选)
 │       ├── vector/               # 向量索引 (IVF-PQ)
-│       └── fts/                  # 全文索引 (Tantivy)
+│       └── fts/                  # 全文索引 (native FTS (ICU))
 ├── products/                     # 另一个 dataset
 │   └── ...
 └── ingest_dlq.jsonl              # 死信队列 (摄取失败记录)

@@ -42,7 +42,7 @@ graph TB
 
     subgraph Query["Query Layer"]
         VS["Vector Search<br/>Cosine / L2 / Dot<br/>IVF_PQ / IVF_FLAT / IVF_HNSW_PQ"]
-        FTS["Full-Text Search<br/>Tantivy + jieba CJK"]
+        FTS["Full-Text Search<br/>native FTS (ICU) + jieba CJK"]
         HS["Hybrid Search<br/>RRF Fusion"]
         FAC["Faceted Search<br/>Multi-Column Filters"]
         ENS["Ensemble Search<br/>Cross-Column RRF"]
@@ -109,7 +109,7 @@ Beyond text, Arrow Lake processes media at ingestion time. Images are thumbnaile
 
 ### Multi-Modal Search
 
-Search in Arrow Lake is not a single algorithm — it is a composable stack of five query strategies that you combine based on what the question demands. Vector search supports cosine, L2, and dot-product similarity with three index types: IVF_PQ for compressed high-throughput recall, IVF_FLAT for exact recall within partitions, and IVF_HNSW_PQ for graph-based approximate nearest neighbor with quantization. Full-text search is powered by Tantivy with a jieba tokenizer for CJK content, giving you proper Chinese, Japanese, and Korean segmentation without a separate indexing step.
+Search in Arrow Lake is not a single algorithm — it is a composable stack of five query strategies that you combine based on what the question demands. Vector search supports cosine, L2, and dot-product similarity with three index types: IVF_PQ for compressed high-throughput recall, IVF_FLAT for exact recall within partitions, and IVF_HNSW_PQ for graph-based approximate nearest neighbor with quantization. Full-text search is powered by native FTS (ICU) with a jieba tokenizer for CJK content, giving you proper Chinese, Japanese, and Korean segmentation without a separate indexing step.
 
 Hybrid search fuses vector and text results through Reciprocal Rank Fusion (RRF), assigning each result a score that balances semantic similarity with keyword relevance. Faceted search adds multi-column metadata filtering on top of any query strategy, so you can search for "pipeline architectures" and simultaneously filter by date range, document type, and source system. Ensemble search extends this further by running RRF fusion across multiple embedding columns — for example, combining a dense embedding with a sparse BM25-style embedding to capture both semantic and lexical signals.
 
@@ -118,7 +118,7 @@ All five strategies share a common result interface: ranked hits with scores, me
 | Search Type | Engine | Index / Method |
 |---|---|---|
 | Vector | Lance native | IVF_PQ, IVF_FLAT, IVF_HNSW_PQ |
-| Full-text | Tantivy + jieba | Inverted index with CJK tokenizer |
+| Full-text | native FTS (ICU) + jieba | Inverted index with CJK tokenizer |
 | Hybrid | RRF fusion | Vector + FTS score combination |
 | Faceted | Lance metadata | Multi-column predicate filters |
 | Ensemble | Cross-column RRF | Multi-embedding result fusion |
@@ -285,7 +285,7 @@ Arrow Lake is built on a carefully curated stack of best-in-class open-source te
 | | Page / Paragraph | built-in | Document structure-aware chunking |
 | | Semchunk | >=2.0 | Semantic boundary-aware chunking |
 | | Chonkie | >=1.0 | Advanced semantic chunking |
-| **Full-Text Search** | Tantivy | >=0.20.0 | Rust-native full-text search engine |
+| **Full-Text Search** | native FTS (ICU) | >=0.20.0 | Rust-native full-text search engine |
 | | jieba | >=0.42 | Chinese text segmentation for CJK search |
 | **Data Quality** | datasketch | >=1.6 | MinHash-based near-duplicate detection |
 | | imagehash | >=4.3 | Perceptual hashing for image dedup |

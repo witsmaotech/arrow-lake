@@ -1,6 +1,6 @@
 # 全文搜索 (BM25)
 
-> 基于 LanceDB Tantivy 全文索引 + jieba 中文分词的 BM25 检索。
+> 基于 LanceDB native FTS (ICU) 全文索引 + jieba 中文分词的 BM25 检索。
 
 ***
 
@@ -74,7 +74,7 @@ def create_fts_index(
 
 1. 对每行文本调用 `segment_text()` 进行分词
 2. 将分词结果写入 `_fts_segmented` 列
-3. 在该列上建立 Tantivy BM25 索引
+3. 在该列上建立 native FTS (ICU) BM25 索引
 
 ***
 
@@ -225,7 +225,7 @@ config = FullTextSearchConfig(
 | 维度       | 向量搜索                  | 全文搜索            |
 | -------- | --------------------- | --------------- |
 | **索引列**  | `float[]` (embedding) | `string` (文本)   |
-| **索引类型** | IVF-PQ                | Tantivy BM25    |
+| **索引类型** | IVF-PQ                | native FTS (ICU) BM25    |
 | **匹配方式** | 语义相似度 (cosine/l2/dot) | 关键词匹配 + BM25 评分 |
 | **查询输入** | embedding 向量          | 自然语言字符串         |
 | **精确匹配** | 弱                     | 强               |

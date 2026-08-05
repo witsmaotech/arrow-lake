@@ -1,6 +1,6 @@
 # Full-Text Search (BM25)
 
-> BM25 retrieval powered by LanceDB Tantivy full-text indexing with jieba Chinese tokenization.
+> BM25 retrieval powered by LanceDB native FTS (ICU) full-text indexing with jieba Chinese tokenization.
 
 ***
 
@@ -74,7 +74,7 @@ When `tokenizer_type` is `"jieba"` (the default), `create_index` will:
 
 1. Call `segment_text()` to tokenize each row of text
 2. Write the tokenized results into a `_fts_segmented` column
-3. Build a Tantivy BM25 index on that column
+3. Build a native FTS (ICU) BM25 index on that column
 
 ***
 
@@ -226,7 +226,7 @@ config = FullTextSearchConfig(
 | Dimension        | Vector Search                                 | Full-Text Search                  |
 | ---------------- | --------------------------------------------- | --------------------------------- |
 | **Index column** | `float[]` (embedding)                         | `string` (text)                   |
-| **Index type**   | IVF-PQ                                        | Tantivy BM25                      |
+| **Index type**   | IVF-PQ                                        | native FTS (ICU) BM25                      |
 | **Matching**     | Semantic similarity (cosine/l2/dot)           | Keyword matching + BM25 scoring   |
 | **Query input**  | Embedding vector                              | Natural language string           |
 | **Exact match**  | Weak                                          | Strong                            |

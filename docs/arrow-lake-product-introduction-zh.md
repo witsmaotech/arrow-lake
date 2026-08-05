@@ -42,7 +42,7 @@ graph TB
 
     subgraph Query["Query Layer"]
         VS["Vector Search<br/>Cosine / L2 / Dot<br/>IVF_PQ / IVF_FLAT / IVF_HNSW_PQ"]
-        FTS["Full-Text Search<br/>Tantivy + jieba CJK"]
+        FTS["Full-Text Search<br/>native FTS (ICU) + jieba CJK"]
         HS["Hybrid Search<br/>RRF Fusion"]
         FAC["Faceted Search<br/>Multi-Column Filters"]
         ENS["Ensemble Search<br/>Cross-Column RRF"]
@@ -109,7 +109,7 @@ Arrow Lake 通过连接器抽象（Connector Abstraction）从磁盘文件、HTT
 
 ### 多模态搜索
 
-Arrow Lake 的搜索不是单一算法 —— 它是一个由五种查询策略组成的可组合堆栈，你可以根据问题的需求灵活组合。向量搜索支持余弦相似度（Cosine Similarity）、L2 距离和点积（Dot Product）三种度量，配备三种索引类型：IVF_PQ 用于高吞吐量的压缩召回、IVF_FLAT 用于分区内的精确召回、IVF_HNSW_PQ 用于带量化的图近似最近邻搜索。全文搜索基于 Tantivy 引擎，集成了 jieba 分词器处理 CJK 内容，无需单独的索引步骤即可获得高质量的中日韩分词效果。
+Arrow Lake 的搜索不是单一算法 —— 它是一个由五种查询策略组成的可组合堆栈，你可以根据问题的需求灵活组合。向量搜索支持余弦相似度（Cosine Similarity）、L2 距离和点积（Dot Product）三种度量，配备三种索引类型：IVF_PQ 用于高吞吐量的压缩召回、IVF_FLAT 用于分区内的精确召回、IVF_HNSW_PQ 用于带量化的图近似最近邻搜索。全文搜索基于 native FTS (ICU) 引擎，集成了 jieba 分词器处理 CJK 内容，无需单独的索引步骤即可获得高质量的中日韩分词效果。
 
 混合搜索通过倒数排名融合（Reciprocal Rank Fusion, RRF）将向量和文本结果融合，为每个结果分配一个平衡语义相似度和关键词相关性的分数。分面搜索在任何查询策略之上叠加多列元数据过滤，让你可以搜索"管线架构"的同时按日期范围、文档类型和来源系统进行过滤。集成搜索（Ensemble Search）进一步扩展了这一能力，在多个嵌入列之间运行 RRF 融合 —— 例如，将稠密嵌入与稀疏 BM25 风格嵌入结合，同时捕获语义和词法信号。
 
@@ -118,7 +118,7 @@ Arrow Lake 的搜索不是单一算法 —— 它是一个由五种查询策略�
 | 搜索类型 | 引擎 | 索引 / 方法 |
 |---|---|---|
 | 向量搜索 | Lance 原生 | IVF_PQ, IVF_FLAT, IVF_HNSW_PQ |
-| 全文搜索 | Tantivy + jieba | 带 CJK 分词器的倒排索引 |
+| 全文搜索 | native FTS (ICU) + jieba | 带 CJK 分词器的倒排索引 |
 | 混合搜索 | RRF 融合 | 向量 + FTS 分数组合 |
 | 分面搜索 | Lance 元数据 | 多列谓词过滤 |
 | 集成搜索 | 跨列 RRF | 多嵌入结果融合 |
@@ -285,7 +285,7 @@ Arrow Lake 构建在一个精心策划的顶级开源技术栈之上，每个组
 | | Page / Paragraph | 内置 | 感知文档结构的分块 |
 | | Semchunk | >=2.0 | 语义边界感知分块 |
 | | Chonkie | >=1.0 | 高级语义分块 |
-| **全文搜索** | Tantivy | >=0.20.0 | Rust 原生全文搜索引擎 |
+| **全文搜索** | native FTS (ICU) | >=0.20.0 | Rust 原生全文搜索引擎 |
 | | jieba | >=0.42 | 中文文本分词，用于 CJK 搜索 |
 | **数据质量** | datasketch | >=1.6 | 基于 MinHash 的近似重复检测 |
 | | imagehash | >=4.3 | 图像去重的感知哈希 |
