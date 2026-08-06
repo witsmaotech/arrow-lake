@@ -264,12 +264,39 @@ function renderFields() {
 
 // 来源下拉已改两级(srcCat → src),绑定在上方 fillSrc
 
+// 任务进度回调:驱动按钮恢复 + 完成/失败明确提示(+ best-effort embed 回填状态)
+async function handleIngestTask(t, btn) {
+  const st = String(t.status || "").toUpperCase();
+  const pct = Math.round(t.progress || 0);
+  const resetBtn = () => { btn.disabled = false; btn.innerHTML = '<i class="placeholder" data-ic="plus"></i> 开始摄入'; };
+  if (/FAIL|ERROR/.test(st)) {
+    resetBtn();
+    toast(`摄入失败: ${t.error || st}`, "danger", 6000);
+    return;
+  }
+  if (/COMPLETE|SUCCESS/.test(st)) {
+    resetBtn();
+    toast("摄入完成", "ok", 4000);
+    // best-effort:查一次任务结果,看向量索引是否后台构建中
+    try {
+      const detail = await request("GET", `/tasks/${encodeURIComponent(t.task_id)}/status`);
+      const ea = detail?.result?.value?.embed_async || detail?.result?.embed_async;
+      if (ea && ea.status === "running") {
+        toast("向量索引后台构建中,完成前向量检索暂不可用(全文检索可用)", "warn", 7000);
+      }
+    } catch (_) { /* best-effort */ }
+    return;
+  }
+  toast(`摄入中… ${st} ${pct}%`, "ok");
+}
+
 $("#submit").addEventListener("click", async () => {
   const ds = $("#ds").value.trim();
   if (!ds) { toast("请输入目标数据集名", "warn"); return; }
   const src = $("#src").value;
   const btn = $("#submit");
   btn.disabled = true; btn.textContent = "摄入中…";
+  let submitted = false;
   try {
     // 防重复提交:同数据集已有活跃摄入任务(异步 documents 可能还在后台跑)→ 拦下
     try {
@@ -340,18 +367,16 @@ $("#submit").addEventListener("click", async () => {
     } else {
       toast(`「${src}」无表单`, "warn"); return;
     }
-    const ep = src === "clickhouse" ? "sql" : (["csv", "parquet", "json"].includes(src) ? "" : src); // clickhouse 复用 /ingest/sql;csv/parquet/json 复用通用 /ingest
-    // documents 走异步端点:立即返回 task_id,避免长耗时摄入阻塞浏览器
-    const url = src === "documents"
-      ? `/datasets/${encodeURIComponent(ds)}/ingest/documents/async`
-      : `/datasets/${encodeURIComponent(ds)}/ingest${ep ? "/" + ep : ""}`;
+    // 说明介绍随摄入 payload 一起发(后端在数据集创建后持久化,治 202 后 PUT 的竞态 422)
+    body.description = $("#desc").value.trim() || null;
+    // 全类型走异步:立即返回 task_id,避免长耗时摄入阻塞浏览器。
+    // clickhouse 复用 /ingest/sql;csv/parquet/json 复用通用 /ingest
+    let ep;
+    if (src === "clickhouse" || src === "sql") ep = "sql";
+    else if (["csv", "parquet", "json"].includes(src)) ep = "";
+    else ep = src;
+    const url = `/datasets/${encodeURIComponent(ds)}/ingest${ep ? "/" + ep : ""}/async`;
     const res = await request("POST", url, { body });
-    // 说明介绍:摄入成功后写入(独立端点,失败不阻塞摄入结果)
-    const desc = $("#desc").value.trim();
-    if (desc) {
-      try { await request("PUT", `/datasets/${encodeURIComponent(ds)}/description`, { body: { description: desc } }); }
-      catch (_) { /* 描述写入失败不阻塞 */ }
-    }
     // 抽取模板绑定(documents 选了模板时;绑定后 /kg/build 自动套用,优先于 doc_type)
     const extTpl = $("#extTpl")?.value?.trim();
     if (extTpl) {
@@ -360,21 +385,24 @@ $("#submit").addEventListener("click", async () => {
     }
     $("#resultPanel").classList.remove("hidden");
     const tid = res?.task_id || res?.task?.task_id;
-    if (src === "documents" && tid) {
+    if (tid) {
       $("#result").innerHTML = `<div style="padding:14px;line-height:1.9">异步摄入已提交 · 任务 <span class="mono" style="color:var(--teal-bright)">${esc(tid)}</span><br><a href="tasks.html?task=${encodeURIComponent(tid)}" style="color:var(--teal-bright)">在任务队列页查看进度 →</a></div>`;
       toast("异步摄入已提交,可在任务队列页跟踪", "ok");
+      submitted = true;
+      watchTask(tid, (t) => handleIngestTask(t, btn));
     } else {
+      // 兜底:无 task_id(理论上不该发生)→ 显示原始响应
       $("#result").innerHTML = `<pre style="white-space:pre-wrap;background:var(--ink-950);border:1px solid var(--line);border-radius:var(--r-md);padding:var(--s4);font-family:var(--font-mono);font-size:.78rem;color:var(--fg-md);margin:0">${esc(JSON.stringify(res, null, 2))}</pre>`;
       toast("摄入已提交", "ok");
     }
-    if (tid) watchTask(tid, (t) => toast(`任务 ${String(t.task_id).slice(0, 8)}: ${t.status} ${Math.round(t.progress || 0)}%`, /FAIL|ERROR/.test(t.status || "") ? "warn" : "ok"));
   } catch (e) {
     const msg = e?.detail || e?.message || String(e);
     toast("摄入失败: " + msg, "danger", 5000);
     $("#resultPanel").classList.remove("hidden");
     $("#result").innerHTML = `<div style="color:var(--danger);padding:12px">${esc(msg)}</div>`;
   } finally {
-    btn.disabled = false; btn.innerHTML = '<i class="placeholder" data-ic="plus"></i> 开始摄入';
+    // 异步任务:按钮由 handleIngestTask 在终态恢复;仅前置失败(未拿到 tid)时在此恢复
+    if (!submitted) { btn.disabled = false; btn.innerHTML = '<i class="placeholder" data-ic="plus"></i> 开始摄入'; }
   }
 });
 </script>
