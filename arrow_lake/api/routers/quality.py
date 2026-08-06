@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import asdict
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Request
@@ -23,20 +22,9 @@ from arrow_lake.api.models.quality import (
     QualityRuleSetRequest,
     QualityRuleSetResponse,
 )
-from arrow_lake.api.tasks import TaskManager
+from arrow_lake.api.tasks import TaskManager, spawn_background
 from arrow_lake.api.utils import olap_executor, run_sync
 from arrow_lake.quality.llm_enrich import extract_fields, label_column
-
-# Strong references for fire-and-forget background tasks so the asyncio GC
-# does not silently cancel them mid-run (cf. kg_build fire-forget lesson).
-_BG_TASKS: set[asyncio.Task] = set()
-
-
-def _spawn(coro) -> None:
-    """Schedule a background coroutine, keeping a strong ref until it completes."""
-    t = asyncio.create_task(coro)
-    _BG_TASKS.add(t)
-    t.add_done_callback(_BG_TASKS.discard)
 
 router = APIRouter(prefix="/api/v1/datasets", tags=["quality"])
 
@@ -235,7 +223,7 @@ async def quality_profile_async(
     """
     authorize_dataset(request, name)
     task_id = TaskManager.create_task("quality_profile", name)
-    _spawn(TaskManager.run_background(task_id, _bg_profile, lake, name))
+    spawn_background(TaskManager.run_background(task_id, _bg_profile, lake, name))
     return PrepTaskResponse(
         task_id=task_id,
         operation="quality_profile",
@@ -273,7 +261,7 @@ async def llm_label(
         "llm_label", name,
         detail={"column": req.column, "new_column": req.new_column},
     )
-    _spawn(
+    spawn_background(
         TaskManager.run_background(
             task_id, label_column, lake, name,
             req.column, req.new_column, req.prompt_template,
@@ -312,7 +300,7 @@ async def extract(
         "extract", name,
         detail={"column": req.column, "fields": [f["name"] for f in field_dicts]},
     )
-    _spawn(
+    spawn_background(
         TaskManager.run_background(
             task_id, extract_fields, lake, name,
             req.column, field_dicts,

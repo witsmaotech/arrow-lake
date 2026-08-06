@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path as FilePath
 from typing import Any
 
@@ -13,7 +12,7 @@ from arrow_lake.api.auth_models import Role
 from arrow_lake.api.deps import get_lake, require_role
 from arrow_lake.api.models.common import _NAME_PATTERN
 from arrow_lake.api.models.query import ExportRequest, ExportTaskResponse, ExportTaskStatusResponse
-from arrow_lake.api.tasks import TaskManager
+from arrow_lake.api.tasks import TaskManager, spawn_background
 from arrow_lake.api.utils import run_sync
 
 router = APIRouter(prefix="/api/v1/datasets", tags=["export"])
@@ -38,7 +37,7 @@ async def export_dataset(
         "overwrite": req.overwrite,
     }
 
-    _task = asyncio.create_task(  # noqa: RUF006 — TaskManager tracks lifetime
+    spawn_background(
         TaskManager.run_export(task_id, lake, **export_kwargs)
     )
 

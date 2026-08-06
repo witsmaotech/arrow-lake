@@ -7,7 +7,6 @@ and can be polled via ``GET /api/v1/tasks/{task_id}/status``.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
 
@@ -16,7 +15,7 @@ from pydantic import BaseModel, Field
 
 from arrow_lake.api.auth_models import Role
 from arrow_lake.api.deps import get_config, get_lake, require_role
-from arrow_lake.api.tasks import TaskManager
+from arrow_lake.api.tasks import TaskManager, spawn_background
 
 logger = logging.getLogger(__name__)
 
@@ -145,7 +144,7 @@ async def ingest_files_async(
     from arrow_lake.api._security_log import actor_of
     actor = actor_of(_user)
     task_id = TaskManager.create_task("ingest", name, user_id=_user.user_id)
-    _task = asyncio.create_task(  # noqa: RUF006
+    spawn_background(
         TaskManager.run_background(task_id, lake.ingest, name, all_paths, transforms=transforms, actor=actor)
     )
     return AsyncTaskResponse(
@@ -226,7 +225,7 @@ async def ingest_documents_async(
     from arrow_lake.api._security_log import actor_of
     actor = actor_of(_user)
     task_id = TaskManager.create_task("ingest_documents", name, user_id=_user.user_id)
-    asyncio.create_task(  # noqa: RUF006
+    spawn_background(
         TaskManager.run_background(
             task_id, _bg_ingest_documents,
             request.app.state, name, req.pdf_paths, req.blob_keys, req.doc_type, lake, actor,
@@ -294,7 +293,7 @@ async def create_vector_index_async(
             "num_sub_vectors": req.num_sub_vectors,
         },
     )
-    asyncio.create_task(  # noqa: RUF006
+    spawn_background(
         TaskManager.run_background(
             task_id, _bg_create_vector_index, lake, name,
             metric=req.metric, vector_column=req.vector_column, index_type=req.index_type,
@@ -324,7 +323,7 @@ async def create_fts_index_async(
         "create_fts_index", name, user_id=_user.user_id,
         detail={"fts_column": req.fts_column},
     )
-    asyncio.create_task(  # noqa: RUF006
+    spawn_background(
         TaskManager.run_background(
             task_id, _bg_create_fts_index, lake, name,
             fts_column=req.fts_column, replace=req.replace,
@@ -367,7 +366,7 @@ async def backup_create_async(
     )
 
     task_id = TaskManager.create_task("backup", detail={"datasets": req.datasets}, user_id=_user.user_id)
-    _task = asyncio.create_task(  # noqa: RUF006
+    spawn_background(
         TaskManager.run_background(task_id, mgr.create_backup, req.datasets)
     )
     return AsyncTaskResponse(
@@ -403,7 +402,7 @@ async def backup_restore_async(
     )
 
     task_id = TaskManager.create_task("restore", detail={"backup_id": req.backup_id}, user_id=_user.user_id)
-    _task = asyncio.create_task(  # noqa: RUF006
+    spawn_background(
         TaskManager.run_background(
             task_id, mgr.restore_backup, req.backup_id, req.datasets or []
         )

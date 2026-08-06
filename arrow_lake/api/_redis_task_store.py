@@ -82,13 +82,37 @@ class RedisTaskStore:
     def is_connected(self) -> bool:
         return self._connected
 
+    def _ensure_connected(self) -> bool:
+        """Return True if Redis is usable, (re)connecting lazily on demand.
+
+        A transient error sets ``_connected=False`` (see :meth:`_handle_error`).
+        The NEXT call re-pings and recovers, so a worker is never permanently
+        blinded by a single Redis hiccup — the original bug where one error
+        disabled cross-worker task visibility for the worker's whole lifetime.
+        """
+        if self._connected and self._redis is not None:
+            return True
+        if self._redis is None:
+            return False
+        try:
+            self._redis.ping()
+            self._connected = True
+            logger.info("RedisTaskStore reconnected")
+            return True
+        except Exception as exc:  # noqa: BLE001 — unreachable/transient
+            self._connected = False
+            logger.debug("RedisTaskStore reconnect failed: %s", exc)
+            return False
+
     # ------------------------------------------------------------------
     # CRUD
     # ------------------------------------------------------------------
 
     def create_task(self, task_data: dict[str, Any]) -> bool:
         """Store a new task.  Returns True on success."""
-        if not self._connected or self._redis is None:
+        if not self._ensure_connected():
+            tid = task_data.get("task_id", "")
+            logger.warning("RedisTaskStore create_task dropped (redis down): %s", tid)
             return False
         task_id = task_data.get("task_id", "")
         if not task_id:
@@ -113,7 +137,7 @@ class RedisTaskStore:
 
     def get_task(self, task_id: str) -> dict[str, Any] | None:
         """Return task data as dict, or None."""
-        if not self._connected or self._redis is None:
+        if not self._ensure_connected():
             return None
         key = f"{self._prefix}{task_id}"
         try:
@@ -128,7 +152,10 @@ class RedisTaskStore:
 
     def update_task(self, task_id: str, updates: dict[str, Any]) -> bool:
         """Update specific fields of a task."""
-        if not self._connected or self._redis is None:
+        if not self._ensure_connected():
+            # update_task is hot (kg_build progress poller calls ~every 2s);
+            # the per-task create_task warning already flags the outage, so
+            # stay quiet here to avoid log spam during a transient outage.
             return False
         key = f"{self._prefix}{task_id}"
         try:
@@ -148,7 +175,7 @@ class RedisTaskStore:
 
     def list_task_ids(self) -> list[str]:
         """Return all active task IDs."""
-        if not self._connected or self._redis is None:
+        if not self._ensure_connected():
             return []
         try:
             ids = self._redis.smembers(self._index_key)
@@ -159,7 +186,7 @@ class RedisTaskStore:
 
     def delete_task(self, task_id: str) -> bool:
         """Remove a task from Redis."""
-        if not self._connected or self._redis is None:
+        if not self._ensure_connected():
             return False
         key = f"{self._prefix}{task_id}"
         try:
@@ -181,7 +208,7 @@ class RedisTaskStore:
 
         Returns count of evicted tasks.
         """
-        if not self._connected or self._redis is None:
+        if not self._ensure_connected():
             return 0
         evicted = 0
         try:

@@ -340,7 +340,8 @@ class _LakeAdminMixin:
             coro = client.drop_graph(graph_name_for(name))
             try:
                 asyncio.get_running_loop()  # raises RuntimeError if no loop
-                asyncio.ensure_future(coro)  # async ctx: fire-and-forget
+                from arrow_lake.api.tasks import spawn_background
+                spawn_background(coro)  # async ctx: fire-and-forget (strong ref)
             except RuntimeError:
                 asyncio.run(coro)  # sync ctx: run to completion
         except Exception as exc:

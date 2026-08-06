@@ -17,7 +17,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any, Callable, ClassVar
+from typing import Any, Callable, ClassVar, Coroutine
 
 from arrow_lake.api._redis_task_store import RedisTaskStore
 
@@ -110,6 +110,28 @@ class BackgroundTask:
 
 # Backward-compatible alias
 ExportTask = BackgroundTask
+
+
+# ---------------------------------------------------------------------------
+# Fire-and-forget strong-reference registry
+# ---------------------------------------------------------------------------
+# asyncio.create_task without a held reference can be garbage-collected
+# mid-flight, freezing the task at RUNNING (run_background's finally never
+# runs). Holding each task here until completion prevents that. Consolidates
+# the correct pattern already used by _lake_kg._kg_bg_tasks and quality._BG_TASKS.
+_BG_TASKS: set[asyncio.Task[Any]] = set()
+
+
+def spawn_background(coro: Coroutine[Any, Any, Any]) -> asyncio.Task[Any]:
+    """Schedule a coroutine as a tracked background task with a strong ref.
+
+    Use for every fire-and-forget ``TaskManager.run_background`` dispatch so the
+    GC cannot reclaim the task while pending. Auto-removed on completion.
+    """
+    task = asyncio.create_task(coro)
+    _BG_TASKS.add(task)
+    task.add_done_callback(_BG_TASKS.discard)
+    return task
 
 
 class TaskManager:
