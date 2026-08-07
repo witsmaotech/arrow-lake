@@ -23,7 +23,7 @@ class DocumentConfig(BaseModel):
 
     Attributes:
         pdf_parse_mode: PDF parsing mode — "text", "ocr", or "auto".
-        ocr_backend: Primary OCR backend — "kreuzberg" or "turbo_ocr".
+        ocr_backend: Primary OCR backend — "kreuzberg"(代码默认)/"turbo_ocr"/"docling"(部署层默认,见 OcrBackend 枚举)。
         ocr_fallback_enabled: Whether to fall back to secondary OCR on failure.
         ocr_endpoint: HTTP endpoint for TurboOCR service.
         kreuzberg_ocr_backend: Kreuzberg OCR engine (tesseract/easyocr/paddleocr).
@@ -51,7 +51,7 @@ class DocumentConfig(BaseModel):
     kreuzberg_force_ocr: bool = False
     # Docling backend (ocr_backend="docling") — Python SDK 库内嵌，
     # 支持 PDF/Office/HTML/图片/邮件多格式 + rapidocr/easyocr/tesseract OCR 切换。
-    # 详见 docs/docling-ocr-migration-adr.md
+    # 详见 docs_offline/docling-ocr-migration-adr.md
     docling_ocr_engine: DoclingOcrEngine = DoclingOcrEngine.AUTO
     docling_ocr_languages: list[str] = []
     # Docling PDF 流水线类型：standard(布局+OCR+表格) / vlm(GraniteDocling 端到端视觉模型)。
