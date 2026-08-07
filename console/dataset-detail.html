@@ -139,6 +139,23 @@ const canEdit = (() => {
     return ["EDITOR", "ADMIN"].includes(String(payload.role || "EDITOR").toUpperCase());
   } catch (_) { return false; }
 })();
+// 关联上传文档:按 document_name 聚合 chunk 数(仅 documents 类数据集有该列)
+async function loadDocs(name, hasDocNameCol) {
+  const el = $("#docsBlock");
+  if (!el) return;
+  if (!hasDocNameCol) { el.innerHTML = ""; return; }
+  try {
+    const tbl = String(name).replace(/"/g, '""');
+    const r = await request("POST", `/datasets/${encodeURIComponent(name)}/query/olap`,
+      { body: { sql: `SELECT "document_name", COUNT(*) AS chunks FROM "${tbl}" GROUP BY "document_name" ORDER BY chunks DESC` } });
+    const rows = r?.rows || [];
+    if (!rows.length) { el.innerHTML = ""; return; }
+    const total = rows.reduce((s, x) => s + Number(x.chunks || 0), 0);
+    const items = rows.map((x) => `<tr><td style="font-size:.78rem">${esc(x.document_name || "(未命名)")}</td><td style="font-size:.72rem;color:var(--fg-lo);text-align:right;white-space:nowrap">${Number(x.chunks).toLocaleString()} chunk</td></tr>`).join("");
+    el.innerHTML = `<div style="margin-bottom:6px"><b style="font-size:.8rem">关联文档</b> <span class="muted" style="font-size:.72rem">${rows.length} 份 · ${total.toLocaleString()} chunk</span></div><div class="preview-wrap" style="max-height:240px"><table class="tbl"><tbody>${items}</tbody></table></div>`;
+  } catch (e) { el.innerHTML = `<div class="muted" style="font-size:.74rem">关联文档加载失败:${esc(e?.detail || e?.message || e)}</div>`; }
+}
+
 async function doExport(format) {
   if (!ds) return toast("未指定数据集", "warn");
   const btn = format === "csv" ? $("#exportCsv") : $("#exportPq");
@@ -192,6 +209,8 @@ if (!ds) {
           <div class="kpi"><div class="label">创建</div><div class="val" style="font-size:.95rem">${fmtDate(d.created_at)}</div></div>
           <div class="kpi"><div class="label">更新</div><div class="val" style="font-size:.95rem">${fmtDate(d.updated_at)}</div></div>
         </div>
+        ${d.description ? `<div style="margin-top:var(--s3);padding:var(--s3) var(--s4);background:var(--ink-900);border:1px solid var(--line-soft);border-radius:var(--r-sm);font-size:.82rem;line-height:1.6;color:var(--fg-md)"><b style="color:var(--fg-hi);margin-right:6px">说明:</b>${esc(d.description)}</div>` : ""}
+        <div id="docsBlock" style="margin-top:var(--s3)"></div>
         <div class="divider" style="margin:var(--s4) 0"></div>
         <div class="flex" style="gap:8px;flex-wrap:wrap">
           <a class="btn btn-ghost btn-sm" href="ingest.html?ds=${encodeURIComponent(d.name)}">${icon("plus")} 追加摄入</a>
@@ -233,6 +252,7 @@ if (!ds) {
         renderSchema(fields);
       }
     }
+    if (detailInfo) loadDocs(detailInfo.name, schemaFields.some((f) => f.name === "document_name"));
     // 字段注释编辑(铅笔 → prompt → POST annotate → 局部刷新)
     $("#schema").addEventListener("click", async (ev) => {
       const btn = ev.target.closest(".ic-btn");
