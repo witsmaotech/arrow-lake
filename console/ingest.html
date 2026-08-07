@@ -199,7 +199,15 @@ async function fillExtTpl() {
       html += `<optgroup label="${esc(catLabel(c))}">${opts}</optgroup>`;
     });
     sel.innerHTML = html;
-    applyBoundTpl();  // 已绑定模板回填(loadExistingMeta 先于下拉渲染拿到 binding)
+    // 回填已绑定模板(本数据集):options 已就绪 → 直接拉 binding 选中,自包含消除竞态
+    const _ds = $("#ds").value.trim();
+    if (_ds) {
+      try {
+        const b = await request("GET", `/admin/extraction-templates/bindings/${encodeURIComponent(_ds)}`);
+        const t = b?.data?.template;
+        if (t && [...sel.options].some((o) => o.value === t)) sel.value = t;
+      } catch (_) { /* 未绑定或端点不可用 */ }
+    }
   } catch (_) { /* 端点不可用时保留默认选项 */ }
 }
 
