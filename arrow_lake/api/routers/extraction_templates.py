@@ -144,7 +144,6 @@ class TemplateValidateRequest(BaseModel):
 async def list_templates(
     source: str | None = None,
     selectable: bool = False,
-    _user: dict = Depends(require_role(Role.ADMIN)),
 ) -> dict:
     """List extraction templates (system + project read-only, user editable)."""
     templates = get_template_gallery().templates
