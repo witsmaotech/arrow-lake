@@ -67,6 +67,11 @@ class DocumentConfig(BaseModel):
     # 页栅格+推理张量内存从 O(总页数) 降到 O(块大小),解 552 页 OOM(实测 6.2min/1.48p/s/无OOM)。
     # 小文档自然=1块(page_range 覆盖全文,等价单次 convert);0=关闭分块退回原单次路径(escape hatch)。
     docling_chunk_size: int = 50
+    # P2 置信度门控:mode="retry"(L2,默认,低质自动 force_full_page_ocr 重转一次取优)/
+    # "mark"(L1,仅标记不重试)/ "off"(关闭)。min_grade:mean_grade 低于此档(POOR/FAIR/GOOD/
+    # EXCELLENT)即判定低质。QualityGrade 有序枚举,mean_grade=整篇均质(比 low_grade 最差页稳)。
+    docling_confidence_mode: str = "retry"
+    docling_confidence_min_grade: str = "good"
     chunk_strategy: ChunkStrategy = ChunkStrategy.RECURSIVE
     chunk_size: int = 512
     chunk_overlap: int = 64

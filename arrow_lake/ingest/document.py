@@ -94,6 +94,9 @@ class ParsedDocument:
     backend: str
     blob_key: str = ""
     docling_doc: Any = None
+    # P2: docling 解析置信度(ConfidenceReport)+ 低质标记(供摄入质量门控/复核)
+    confidence: Any = None
+    quality_low: bool = False
 
 
 def _build_extraction_config(cfg: DocumentConfig, mode: PdfParseMode):
@@ -438,12 +441,14 @@ class DocumentParser:
             tuple(str(x) for x in langs),
         )
 
-    def _build_docling_converter(self) -> Any:
+    def _build_docling_converter(self, force_full_page_ocr: bool = False) -> Any:
         """Construct a fresh Docling DocumentConverter (expensive — loads models).
 
         Called at most once per distinct config signature (see
         ``_get_docling_converter``); callers must never invoke this directly to
         avoid reloading layout/table/OCR models on every request.
+        ``force_full_page_ocr=True`` builds a transient converter for the P2 L2
+        confidence-retry (caller builds it directly, NOT via the cache, and discards it).
         """
         from arrow_lake.config._enums import DoclingPipelineType
 
@@ -464,7 +469,7 @@ class DocumentParser:
 
         # 标准流水线：布局 + OCR + 表格识别
         engine, langs = self._resolve_docling_ocr()
-        pipeline = self._build_docling_pipeline(engine, langs)
+        pipeline = self._build_docling_pipeline(engine, langs, force_full_page_ocr=force_full_page_ocr)
         # 多格式默认首选：PDF/IMAGE 用配好的 pipeline(OCR)，
         # DOCX/PPTX/XLSX/HTML/MD/ASCIIDOC 用默认 SimplePipeline（无需 layout 模型，快）
         allowed = [
@@ -569,13 +574,109 @@ class DocumentParser:
 
         # 合并分块 DoclingDocument(concatenate)→ 单 doc,下游 page-building + HybridChunker 统一处理
         merged = self._merge_docling_docs(docs)
-        # 置信度评估(docling v2.34+: mean_grade / low_grade),用于摄入质量门控
+        # P2 置信度门控(L1 mark / L2 retry)
+        docs, conf, merged, quality_low = self._apply_confidence_gating(
+            docs, conf, merged, file_path, max_pages, chunk_size,
+        )
         if conf is not None:
             logger.info(
-                "docling confidence file=%s mean_grade=%s low_grade=%s",
-                file_path, getattr(conf, "mean_grade", None), getattr(conf, "low_grade", None),
+                "docling confidence file=%s mean_grade=%s low_grade=%s quality_low=%s",
+                file_path, getattr(conf, "mean_grade", None),
+                getattr(conf, "low_grade", None), quality_low,
             )
-        return self._build_parsed_from_docling(merged, docs, max_pages, file_path)
+        return self._build_parsed_from_docling(
+            merged, docs, max_pages, file_path, confidence=conf, quality_low=quality_low,
+        )
+
+    def _apply_confidence_gating(
+        self, docs: list[Any], conf: Any, merged: Any,
+        file_path: Path, max_pages: int, chunk_size: int,
+    ) -> tuple[list[Any], Any, Any, bool]:
+        """P2: 评估 mean_grade;低质时按 mode 处理(L2=force_full_page_ocr 重试取优,L1=仅标记)。
+
+        返回 (docs, conf, merged, quality_low)。L2 重试用 transient converter(不进缓存,
+        用完 ``del`` 释放模型内存),封顶 1 次重试。
+        """
+        if not self._is_quality_low(conf):
+            return docs, conf, merged, False
+        mode = str(getattr(self._config, "docling_confidence_mode", "retry")).lower()
+        if mode != "retry":
+            return docs, conf, merged, True  # L1 mark only
+        # L2 retry:transient force_full_page_ocr converter(不缓存,用完丢弃)
+        logger.info(
+            "docling L2 retry (force_full_page_ocr) file=%s grade=%s",
+            file_path, self._grade_name(conf),
+        )
+        try:
+            converter = self._build_docling_converter(force_full_page_ocr=True)
+            lock = _threading.RLock()
+            if chunk_size <= 0:
+                result = _convert_with_timeout(
+                    converter, str(file_path), lock, _DOCLING_CONVERT_TIMEOUT)
+                docs2 = [result.document]
+                conf2 = getattr(result, "confidence", None)
+                del result
+            else:
+                docs2, conf2 = self._convert_docling_chunked(
+                    converter, lock, file_path, chunk_size, max_pages)
+        except Exception as exc:
+            logger.warning("docling L2 retry failed, keeping original: %s", exc)
+            return docs, conf, merged, True
+        del converter  # transient — 释放模型内存,避免常驻第二份模型
+        # 取 mean_grade 更优者
+        if self._grade_ordinal(conf2) > self._grade_ordinal(conf):
+            merged2 = self._merge_docling_docs(docs2)
+            logger.info(
+                "docling L2 retry improved %s→%s, taking retry",
+                self._grade_name(conf), self._grade_name(conf2),
+            )
+            return docs2, conf2, merged2, self._is_quality_low(conf2)
+        logger.info(
+            "docling L2 retry no improvement (%s→%s), keeping original",
+            self._grade_name(conf), self._grade_name(conf2),
+        )
+        return docs, conf, merged, True
+
+    def _is_quality_low(self, conf: Any) -> bool:
+        """mean_grade < min_grade → True。UNSPECIFIED/None/off → False(不门控)。
+
+        ⚠️ QualityGrade 是 StrEnum,``<`` 按字符串值字母序比较('excellent'<'good'→True)
+        而非语义序 → 必须用 ``list(QualityGrade).index()``(ordinal: POOR<FAIR<GOOD<EXCELLENT)
+        比较,不能直接 ``mean_grade < min_grade``。
+        """
+        if not conf:
+            return False
+        if str(getattr(self._config, "docling_confidence_mode", "retry")).lower() == "off":
+            return False
+        mean_grade = getattr(conf, "mean_grade", None)
+        if mean_grade is None:
+            return False
+        try:
+            from docling.datamodel.base_models import QualityGrade
+            if mean_grade == QualityGrade.UNSPECIFIED:
+                return False
+            grades = list(QualityGrade)
+            min_name = str(getattr(self._config, "docling_confidence_min_grade", "good")).upper()
+            return grades.index(mean_grade) < grades.index(QualityGrade[min_name])
+        except Exception:
+            return False
+
+    @staticmethod
+    def _grade_ordinal(conf: Any) -> int:
+        """mean_grade 在 QualityGrade 序(POOR<FAIR<GOOD<EXCELLENT<UNSPECIFIED)中的下标,越大越好。"""
+        g = getattr(conf, "mean_grade", None) if conf else None
+        if g is None:
+            return -1
+        try:
+            from docling.datamodel.base_models import QualityGrade
+            return list(QualityGrade).index(g)
+        except Exception:
+            return -1
+
+    @staticmethod
+    def _grade_name(conf: Any) -> str:
+        g = getattr(conf, "mean_grade", None) if conf else None
+        return getattr(g, "name", str(g)) if g is not None else "none"
 
     def _convert_docling_chunked(
         self, converter: Any, convert_lock: Any, file_path: Path,
@@ -655,6 +756,7 @@ class DocumentParser:
     @staticmethod
     def _build_parsed_from_docling(
         merged: Any, docs: list[Any], max_pages: int, file_path: Path,
+        confidence: Any = None, quality_low: bool = False,
     ) -> ParsedDocument:
         """从(合并后的)DoclingDocument 构建 ParsedDocument:markdown + 按真实页码拆分。
 
@@ -707,6 +809,8 @@ class DocumentParser:
             page_count=len(pages),
             backend="docling",
             docling_doc=merged,
+            confidence=confidence,
+            quality_low=quality_low,
         )
 
     def _resolve_docling_ocr(self) -> tuple[str, list[str]]:
@@ -727,7 +831,7 @@ class DocumentParser:
         return DoclingOcrEngine.RAPIDOCR.value, list(langs) or ["ch_sim"]
 
     @staticmethod
-    def _build_docling_pipeline(engine: str, langs: list[str]) -> Any:
+    def _build_docling_pipeline(engine: str, langs: list[str], force_full_page_ocr: bool = False) -> Any:
         """构造 Docling ThreadedPdfPipelineOptions（GPU 页批处理 + OCR 引擎 + 表格优化）。
 
         v1.10.3: plain ``PdfPipelineOptions``(逐页串行)→ ``ThreadedPdfPipelineOptions``
@@ -746,6 +850,12 @@ class DocumentParser:
             ocr = TesseractOcrOptions(lang=langs or ["eng"])
         else:  # rapidocr / auto / none（none 仍保留 ocr_options 默认，由 do_ocr=False 关闭）
             ocr = RapidOcrOptions()
+        # P2 L2 重试:force_full_page_ocr 强制整页 OCR(低质文档兜底)。三引擎选项类均有此字段。
+        if force_full_page_ocr:
+            try:
+                ocr.force_full_page_ocr = True
+            except Exception as e:  # noqa: BLE001
+                logger.debug("force_full_page_ocr set skipped: %s", e)
         # GPU 页批处理:layout/table 模型批处理是主要加速来源(M0 实证)。
         # batch_size 经 env 可调(显存小机器下调);CPU 无 GPU 时 Threaded 退化为小批串行,不会更慢。
         try:
