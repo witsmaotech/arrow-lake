@@ -1067,7 +1067,6 @@ class BindingRequest(BaseModel):
 async def get_binding(
     dataset: str,
     request: Request,
-    _user: dict = Depends(require_role(Role.ADMIN)),
 ) -> dict:
     """Which template is bound to ``dataset`` (None if unbound)."""
     store = _store(request)
