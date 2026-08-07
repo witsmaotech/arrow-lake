@@ -11,8 +11,10 @@ Falls back to pure in-memory when Redis is unavailable.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import functools
 import logging
+import os
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -132,6 +134,42 @@ def spawn_background(coro: Coroutine[Any, Any, Any]) -> asyncio.Task[Any]:
     _BG_TASKS.add(task)
     task.add_done_callback(_BG_TASKS.discard)
     return task
+
+
+# run_background writes a heartbeat every this many seconds while a task runs,
+# so a live worker can be distinguished from one that died mid-task.
+_HEARTBEAT_INTERVAL_SECONDS = 20.0
+# A running/pending task whose heartbeat (or created_at, for legacy tasks that
+# predate heartbeats) is older than this is considered orphaned — its owning
+# worker exited (dev --reload, gunicorn recycle/timeout, OOM, crash) before
+# run_background's finally could sync the terminal status.
+_ORPHAN_STALE_SECONDS = 180.0
+# Hard ceiling on a single background task's run time — a BACKSTOP only. The
+# principled "is this hung?" signal is per-operation timeouts (embed already
+# enforces 30s/call) + the heartbeat (worker-death detection). This ceiling
+# catches the residual case: a blocking call that slipped through WITHOUT a
+# per-call timeout (a storage write, docling parse, network socket stall) and
+# so hangs forever with the worker still alive (heartbeat fresh → reaper
+# spares it). It must stay GENEROUS so it never kills a legit long ingest
+# (docling on CPU can run several hours for big PDFs). Tunable via env so heavy
+# workloads can raise it without a code change; set 0 to disable.
+_TASK_MAX_LIFETIME_SECONDS = 14400.0
+
+
+def _resolve_max_lifetime() -> float | None:
+    """Resolve the task lifetime ceiling (seconds) or None to disable.
+
+    Reads ``ARROW_LAKE_TASK_MAX_LIFETIME_SECONDS`` env (override); falls back
+    to the module default. ``<= 0`` disables the ceiling (no wait_for).
+    """
+    raw = os.environ.get("ARROW_LAKE_TASK_MAX_LIFETIME_SECONDS")
+    if raw:
+        try:
+            val = float(raw)
+        except (TypeError, ValueError):
+            return _TASK_MAX_LIFETIME_SECONDS
+        return val if val > 0 else None
+    return _TASK_MAX_LIFETIME_SECONDS
 
 
 class TaskManager:
@@ -366,20 +404,47 @@ class TaskManager:
 
         ``func`` may be sync or async.  Sync functions are dispatched to
         the default executor so they don't block the event loop.
+
+        A heartbeat is written while running so :meth:`reap_orphaned_tasks` can
+        tell a live task from one whose owning worker died (reload/recycle/
+        crash) — without it, such tasks strand in ``running`` forever because
+        this method's ``finally`` never runs on a dead process.
         """
         task = cls._tasks.get(task_id)
         if task is None:
             return
         task.status = TaskStatus.RUNNING
         cls._sync_to_redis(task)
+
+        async def _heartbeat() -> None:
+            while True:
+                await asyncio.sleep(_HEARTBEAT_INTERVAL_SECONDS)
+                task.detail["heartbeat"] = datetime.now(UTC).isoformat()
+                cls._sync_to_redis(task)
+
+        heartbeat = asyncio.create_task(_heartbeat())
         try:
             if asyncio.iscoroutinefunction(func):
-                result = await func(*args, **kwargs)
+                coro = func(*args, **kwargs)
             else:
                 loop = asyncio.get_running_loop()
-                result = await loop.run_in_executor(
+                coro = loop.run_in_executor(
                     None, functools.partial(func, *args, **kwargs),
                 )
+            # Bound the run time as a backstop: a hung sync step (no client-side
+            # timeout) must still transition to FAILED instead of idling in
+            # running forever. The executor thread can't be force-killed, but
+            # the status becomes correct and the de-dup guard unblocks.
+            lifetime = _resolve_max_lifetime()
+            try:
+                if lifetime is None:
+                    result = await coro
+                else:
+                    result = await asyncio.wait_for(coro, timeout=lifetime)
+            except asyncio.TimeoutError as exc:
+                raise TimeoutError(
+                    f"task exceeded {lifetime:.0f}s max lifetime"
+                ) from exc
             task.status = TaskStatus.COMPLETED
             task.progress = 1.0
             task.completed_at = datetime.now(UTC).isoformat()
@@ -393,8 +458,62 @@ class TaskManager:
             task.error = str(exc)
             logger.error("Background task %s (%s) failed: %s", task_id, task.operation, exc)
         finally:
+            heartbeat.cancel()
+            with contextlib.suppress(BaseException):
+                await heartbeat
+            task.detail.pop("heartbeat", None)
             cls._sync_to_redis(task)
             cls._persist_history(task)
+
+    @classmethod
+    def reap_orphaned_tasks(cls, *, stale_seconds: float = _ORPHAN_STALE_SECONDS) -> int:
+        """Mark ``running``/``pending`` tasks whose owning worker has exited as failed.
+
+        A background task only progresses while its worker is alive. If the
+        worker dies (dev ``--reload``, gunicorn worker recycle/timeout, OOM,
+        crash), :meth:`run_background`'s ``finally`` never runs and the task is
+        stranded in ``running``/``pending`` forever — the task queue shows it
+        endlessly "running" and the console's ingest de-dup guard blocks the
+        next incremental ingest (2026-08-07 outage).
+
+        Called at every worker startup: a fresh process cannot still be
+        executing a task from a previous lifetime. A task is reclaimed when its
+        heartbeat (or ``created_at`` for legacy tasks predating heartbeats) is
+        older than ``stale_seconds`` — the age guard spares a task a sibling
+        worker just started.
+        """
+        now = datetime.now(UTC)
+        ids: set[str] = set()
+        if cls._redis_store is not None:
+            ids.update(cls._redis_store.list_task_ids())
+        ids.update(cls._tasks.keys())
+
+        reaped = 0
+        for tid in ids:
+            task = cls.get_task(tid)
+            if task is None or task.status not in (TaskStatus.RUNNING, TaskStatus.PENDING):
+                continue
+            stamp = task.detail.get("heartbeat") if task.detail else None
+            try:
+                ref = datetime.fromisoformat(stamp) if stamp else datetime.fromisoformat(task.created_at)
+            except (TypeError, ValueError):
+                ref = now
+            age = (now - ref).total_seconds()
+            if age < stale_seconds:
+                continue
+            task.status = TaskStatus.FAILED
+            task.completed_at = now.isoformat()
+            task.error = "orphaned: owning worker exited before completion"
+            task.detail.pop("heartbeat", None)
+            cls._tasks[tid] = task
+            cls._sync_to_redis(task)
+            cls._persist_history(task)
+            reaped += 1
+            logger.warning(
+                "TaskManager: reaped orphaned %s task %s (age=%.0fs)",
+                task.operation, tid, age,
+            )
+        return reaped
 
     # ------------------------------------------------------------------
     # Legacy export wrapper (backward compat)

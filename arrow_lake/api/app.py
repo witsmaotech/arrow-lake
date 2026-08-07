@@ -293,6 +293,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     TaskManager.init_redis_store(config.redis)
 
+    # Reclaim tasks orphaned by a previous worker lifetime (reload/recycle/
+    # crash): a fresh process cannot still be executing them. Without this they
+    # stay "running" forever and the console's ingest de-dup guard blocks the
+    # next incremental ingest.
+    try:
+        reaped = TaskManager.reap_orphaned_tasks()
+        if reaped:
+            logger.info("TaskManager: reaped %d orphaned task(s) at startup", reaped)
+    except Exception as exc:  # noqa: BLE001 — best-effort; never block startup
+        logger.warning("TaskManager: startup reap failed: %s", exc)
+
     # Gravitino integration (optional — no-op when disabled)
     gravitino_sync: object | None = None
     retention_enforcer: object | None = None
