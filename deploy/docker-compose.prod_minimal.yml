@@ -117,7 +117,6 @@ services:
       resources:
         limits:
           memory: 64M
-          cpus: "0.1"
     logging:
       driver: json-file
       options:
@@ -140,7 +139,6 @@ services:
       resources:
         limits:
           memory: 64M
-          cpus: "0.1"
     logging:
       driver: json-file
       options:
@@ -338,10 +336,10 @@ services:
       ARROW_LAKE__OPENTELEMETRY__SERVICE_NAME: "arrow-lake"
       ARROW_LAKE__OPENTELEMETRY__OTEL_ENDPOINT: "${OTEL_ENDPOINT:-http://jaeger:4317}"
       ARROW_LAKE__OPENTELEMETRY__TRACE_SAMPLE_RATE: "${OTEL_SAMPLE_RATE:-0.1}"
-      # v1.9.4: 文档解析后端。默认 kreuzberg(快,数字原生PDF文本层抽取;但表格检测弱,复杂表格被拍平成文本)。
-      # 表格结构化解析(markdown 表格)需 docling(TableFormer): 设 DOCUMENT_OCR_BACKEND=docling,
-      # 且需 GPU 镜像(CPU 跑 109 页 PDF 要数小时)。kreuzberg result.tables 机制本身保留表格 markdown,
-      # 只是检测器常漏检无框线/复杂表格。
+      # 文档解析后端。默认 docling(.env DOCUMENT_OCR_BACKEND=docling + 此处 fallback):
+      # TableFormer 表格结构化 + 布局理解,需 GPU(GPU_COUNT>=1;CPU ~200s/页)。
+      # 备选 kreuzberg(快,数字原生 PDF 文本层抽取;表格检测弱,复杂表格拍平成文本)
+      # 或 turbo_ocr(TurboOCR sidecar 主 + kreuzberg fallback)。三值见 OcrBackend 枚举。
       ARROW_LAKE__DOCUMENT__OCR_BACKEND: "${DOCUMENT_OCR_BACKEND:-docling}"
       # v1.5.1: Gravitino authentication (simple by default)
       ARROW_LAKE__GRAVITINO__AUTH_TYPE: "${GRAVITINO_AUTH_TYPE:-simple}"
@@ -395,8 +393,6 @@ services:
       resources:
         limits:
           memory: ${API_MEMORY_LIMIT:-16G}
-          cpus: "${API_CPU_LIMIT:-1.0}"
-          pids: 512
         reservations:
           memory: 1G
           # 固化 GPU 部署：docling TableFormer/layout 用 GPU（CPU ≈200s/页不可用）。
@@ -464,8 +460,6 @@ services:
       resources:
         limits:
           memory: ${NGINX_MEMORY_LIMIT:-128M}
-          cpus: "${NGINX_CPU_LIMIT:-0.3}"
-          pids: 128
         reservations:
           memory: 32M
     healthcheck:
@@ -511,8 +505,6 @@ services:
       resources:
         limits:
           memory: ${MINIO_MEMORY_LIMIT:-1G}
-          cpus: "${MINIO_CPU_LIMIT:-0.5}"
-          pids: 512
         reservations:
           memory: 512M
     healthcheck:
@@ -585,8 +577,6 @@ services:
       resources:
         limits:
           memory: ${REDIS_MEMORY_LIMIT:-256M}
-          cpus: "${REDIS_CPU_LIMIT:-0.3}"
-          pids: 256
         reservations:
           memory: 128M
     healthcheck:
@@ -660,8 +650,6 @@ services:
       resources:
         limits:
           memory: ${HG_SERVER_MEMORY_LIMIT:-12288M}
-          cpus: "${HG_SERVER_CPU_LIMIT:-2.0}"
-          pids: 512
         reservations:
           memory: 1G
     healthcheck:
@@ -698,8 +686,6 @@ services:
       resources:
         limits:
           memory: ${HG_HUBBLE_MEMORY_LIMIT:-2G}
-          cpus: "${HG_HUBBLE_CPU_LIMIT:-1.0}"
-          pids: 128
         reservations:
           memory: 256M
     logging:
@@ -736,8 +722,6 @@ services:
       resources:
         limits:
           memory: 64M
-          cpus: "0.2"
-          pids: 32
     stop_grace_period: 5s
 
   # ==============================================================================
@@ -777,8 +761,6 @@ services:
       resources:
         limits:
           memory: ${GRAVITINO_MEMORY_LIMIT:-1G}
-          cpus: "${GRAVITINO_CPU_LIMIT:-0.5}"
-          pids: 512
         reservations:
           memory: 256M
     healthcheck:
@@ -823,8 +805,6 @@ services:
       resources:
         limits:
           memory: ${LANCE_REST_MEMORY_LIMIT:-512M}
-          cpus: "${LANCE_REST_CPU_LIMIT:-0.3}"
-          pids: 64
         reservations:
           memory: 128M
     healthcheck:
@@ -869,8 +849,6 @@ services:
       resources:
         limits:
           memory: 64M
-          cpus: "0.2"
-          pids: 32
     stop_grace_period: 5s
 
 # ==============================================================================

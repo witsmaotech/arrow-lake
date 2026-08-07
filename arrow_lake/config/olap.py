@@ -36,17 +36,24 @@ class OlapConfig(BaseModel):
     lance_scan_mode: str = "pyarrow_fallback"
     max_query_memory_mb: int = 512
     max_concurrent_queries: int = 4
-    query_timeout_seconds: int = 300
+    # MUST stay below the gunicorn `--timeout` (120s in dev). run_duckdb_interruptible
+    # aborts a query at this threshold via conn.interrupt(); if it exceeds gunicorn's
+    # worker timeout, gunicorn SIGABRTs the whole worker first (native
+    # `terminate called` → in-flight requests dropped → "Failed to fetch"). 90s gives
+    # the watchdog a clean 30s window to interrupt before gunicorn reaps the worker.
+    query_timeout_seconds: int = 90
     ducklake_enabled: bool = False
     ducklake_ttl_days: int = 7
     ducklake_max_join_rows: int = 1_000_000
-    # When True (default), vector-less structured datasets use native Rust lance
-    # scan (13-20x faster LIMIT/OFFSET pushdown). The D-state IO stall risk that
-    # once froze the API (2026-08-04) is now bounded by the dedicated OLAP thread
-    # pool (api/utils.olap_executor) + gunicorn worker timeout — a stuck scan only
-    # blocks other OLAP queries, not the whole API. Set False to fall back to the
-    # slower PyArrow path if absolute stability matters more than scan speed.
-    lance_auto_promote: bool = True
+    # Default False (was True pre-2026-08-07): vector-less datasets stay on the
+    # PyArrow fallback path. The native Rust lance scanner (13-20x faster LIMIT/
+    # OFFSET) intermittently enters D-state (uninterruptible) IO — conn.interrupt()
+    # cannot break D-state, so the watchdog daemonizes the worker thread; once the
+    # session is recycled that thread races the next user on the same connection →
+    # native `std::terminate` → worker SIGABRT → whole OLAP path wedges
+    # (2026-08-07 outage). Force pyarrow_fallback everywhere for stability; re-enable
+    # per-dataset only once Lance/DuckDB D-state is fixed upstream.
+    lance_auto_promote: bool = False
 
     # Performance tuning
     preserve_insertion_order: bool = False
