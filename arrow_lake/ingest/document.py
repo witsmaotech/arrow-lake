@@ -97,6 +97,8 @@ class ParsedDocument:
     # P2: docling 解析置信度(ConfidenceReport)+ 低质标记(供摄入质量门控/复核)
     confidence: Any = None
     quality_low: bool = False
+    # P2-2: 页面图片落盘路径(page_no → file path),供下游 ColPali/CLIP 多模态检索消费
+    page_images: tuple[tuple[int, str], ...] = ()
 
 
 def _build_extraction_config(cfg: DocumentConfig, mode: PdfParseMode):
@@ -469,7 +471,11 @@ class DocumentParser:
 
         # 标准流水线：布局 + OCR + 表格识别
         engine, langs = self._resolve_docling_ocr()
-        pipeline = self._build_docling_pipeline(engine, langs, force_full_page_ocr=force_full_page_ocr)
+        pipeline = self._build_docling_pipeline(
+            engine, langs, force_full_page_ocr=force_full_page_ocr,
+            generate_images=bool(getattr(self._config, "docling_generate_images", False)),
+            images_scale=float(getattr(self._config, "docling_images_scale", 2.0)),
+        )
         # 多格式默认首选：PDF/IMAGE 用配好的 pipeline(OCR)，
         # DOCX/PPTX/XLSX/HTML/MD/ASCIIDOC 用默认 SimplePipeline（无需 layout 模型，快）
         allowed = [
@@ -584,9 +590,48 @@ class DocumentParser:
                 file_path, getattr(conf, "mean_grade", None),
                 getattr(conf, "low_grade", None), quality_low,
             )
+        page_images = self._extract_page_images(docs, file_path)
         return self._build_parsed_from_docling(
             merged, docs, max_pages, file_path, confidence=conf, quality_low=quality_low,
+            page_images=page_images,
         )
+
+    def _extract_page_images(self, docs: list[Any], file_path: Path) -> tuple[tuple[int, str], ...]:
+        """P2-2: 各 chunk doc 的页面图(doc.pages[n].image.pil_image)落盘到
+        ``images_dir/{content_hash}/page_N.png``,返 [(page_no, path), ...]。
+
+        供下游 ColPali/CLIP 多模态检索消费。失败(未启用/无图/目录写不了)返 () 不阻断解析。
+        """
+        if not getattr(self._config, "docling_generate_images", False):
+            return ()
+        import hashlib
+        out_base = str(getattr(self._config, "docling_images_dir", "/data/lake/page_images"))
+        try:
+            doc_hash = hashlib.sha256(Path(file_path).read_bytes()).hexdigest()[:16]
+        except Exception:
+            doc_hash = Path(file_path).stem
+        out_dir = Path(out_base) / doc_hash
+        try:
+            out_dir.mkdir(parents=True, exist_ok=True)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("docling page_images mkdir failed (%s), skipping: %s", out_dir, e)
+            return ()
+        result: list[tuple[int, str]] = []
+        for doc in docs:
+            for pno, pg in (getattr(doc, "pages", None) or {}).items():
+                img_ref = getattr(pg, "image", None)
+                pil = getattr(img_ref, "pil_image", None) if img_ref else None
+                if pil is None:
+                    continue
+                p = out_dir / f"page_{pno}.png"
+                try:
+                    pil.save(p, format="PNG")
+                    result.append((int(pno), str(p)))
+                except Exception as e:  # noqa: BLE001
+                    logger.debug("docling page_images save failed page=%s: %s", pno, e)
+        if result:
+            logger.info("docling page_images extracted: %d pages → %s", len(result), out_dir)
+        return tuple(result)
 
     def _apply_confidence_gating(
         self, docs: list[Any], conf: Any, merged: Any,
@@ -658,7 +703,8 @@ class DocumentParser:
             grades = list(QualityGrade)
             min_name = str(getattr(self._config, "docling_confidence_min_grade", "good")).upper()
             return grades.index(mean_grade) < grades.index(QualityGrade[min_name])
-        except Exception:
+        except Exception as e:  # noqa: BLE001 — fail-open 保留数据(grading 出错不挡摄入),但记日志可检测
+            logger.warning("docling quality grade compare failed, skipping gating (fail-open): %s", e)
             return False
 
     @staticmethod
@@ -757,6 +803,7 @@ class DocumentParser:
     def _build_parsed_from_docling(
         merged: Any, docs: list[Any], max_pages: int, file_path: Path,
         confidence: Any = None, quality_low: bool = False,
+        page_images: tuple[tuple[int, str], ...] = (),
     ) -> ParsedDocument:
         """从(合并后的)DoclingDocument 构建 ParsedDocument:markdown + 按真实页码拆分。
 
@@ -811,6 +858,7 @@ class DocumentParser:
             docling_doc=merged,
             confidence=confidence,
             quality_low=quality_low,
+            page_images=page_images,
         )
 
     def _resolve_docling_ocr(self) -> tuple[str, list[str]]:
@@ -831,7 +879,10 @@ class DocumentParser:
         return DoclingOcrEngine.RAPIDOCR.value, list(langs) or ["ch_sim"]
 
     @staticmethod
-    def _build_docling_pipeline(engine: str, langs: list[str], force_full_page_ocr: bool = False) -> Any:
+    def _build_docling_pipeline(
+        engine: str, langs: list[str], force_full_page_ocr: bool = False,
+        generate_images: bool = False, images_scale: float = 2.0,
+    ) -> Any:
         """构造 Docling ThreadedPdfPipelineOptions（GPU 页批处理 + OCR 引擎 + 表格优化）。
 
         v1.10.3: plain ``PdfPipelineOptions``(逐页串行)→ ``ThreadedPdfPipelineOptions``
@@ -883,6 +934,10 @@ class DocumentParser:
             # [P1/§5.4] 阶段级 profile(layout/OCR/table 耗时),生产默认关,压测/调参时开。
             if os.environ.get("ARROW_LAKE_DOCLING_PROFILE", "").lower() in ("1", "true"):
                 _docling_settings.debug.profile_pipeline_timings = True
+        # [P2-2] 图片导出(ColPali/CLIP 多模态 RAG 前置):渲染页面 PNG,下游 _extract_page_images 落盘。
+        if generate_images:
+            pipeline.generate_page_images = True
+            pipeline.images_scale = images_scale
         # 表格识别优化（中文多列防错并）
         try:
             from docling.datamodel.pipeline_options import TableFormerMode

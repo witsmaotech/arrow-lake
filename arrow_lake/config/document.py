@@ -72,6 +72,12 @@ class DocumentConfig(BaseModel):
     # EXCELLENT)即判定低质。QualityGrade 有序枚举,mean_grade=整篇均质(比 low_grade 最差页稳)。
     docling_confidence_mode: str = "retry"
     docling_confidence_min_grade: str = "good"
+    # P2-2 图片导出(多模态 RAG / ColPali/CLIP 前置):generate_page_images 渲染页面 PNG 落盘,
+    # 路径入 ParsedDocument.page_images(供下游多模态检索消费)。⚠️ 增 convert 内存(页栅格 retained),
+    # 大文档须配 P0-3 分块;images_scale=2.0(ColPali 推荐 ≥2x 保 patch 分辨率)。
+    docling_generate_images: bool = True
+    docling_images_scale: float = 2.0
+    docling_images_dir: str = "/data/lake/page_images"
     chunk_strategy: ChunkStrategy = ChunkStrategy.RECURSIVE
     chunk_size: int = 512
     chunk_overlap: int = 64
