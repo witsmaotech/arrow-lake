@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import re
+import threading as _threading
 from dataclasses import dataclass
 from typing import Any
 
@@ -49,6 +50,29 @@ try:
     _DOCLING_CHUNK_AVAILABLE = True
 except ImportError:
     pass
+
+# [P1/§5.3] Process-level HuggingFaceTokenizer singleton cache. AutoTokenizer.from_pretrained
+# is ~seconds; HybridChunker is rebuilt per-document (serializer binds the doc), but the tokenizer
+# is doc-independent → reuse across all docs. Double-checked locking like document._DOCLING_CONVERTERS.
+_DOCLING_TOKENIZERS: dict[str, Any] = {}
+_DOCLING_TOKENIZER_LOCK = _threading.Lock()
+
+
+def _get_or_build_docling_tokenizer(name: str) -> Any:
+    """Return a process-shared HuggingFaceTokenizer for ``name``, building it once."""
+    cached = _DOCLING_TOKENIZERS.get(name)
+    if cached is not None:
+        return cached
+    with _DOCLING_TOKENIZER_LOCK:
+        cached = _DOCLING_TOKENIZERS.get(name)
+        if cached is not None:
+            return cached
+        from docling_core.transforms.chunker.tokenizer.huggingface import HuggingFaceTokenizer
+        from transformers import AutoTokenizer
+
+        tok = HuggingFaceTokenizer(tokenizer=AutoTokenizer.from_pretrained(name))
+        _DOCLING_TOKENIZERS[name] = tok
+        return tok
 
 
 @dataclass(frozen=True)
@@ -272,14 +296,14 @@ class DocumentChunker:
         return [c.text for c in result]
 
     def _get_docling_hybrid_chunker(self, docling_doc: Any) -> Any:
-        """懒加载 docling HybridChunker（按 docling_doc 重建，因为 serializer 绑定文档）。"""
-        from docling.chunking import HybridChunker
-        from docling_core.transforms.chunker.tokenizer.huggingface import HuggingFaceTokenizer
-        from transformers import AutoTokenizer
+        """懒加载 docling HybridChunker（按 docling_doc 重建，因为 serializer 绑定文档）。
 
-        tokenizer = HuggingFaceTokenizer(
-            tokenizer=AutoTokenizer.from_pretrained(self._docling_chunk_tokenizer),
-        )
+        tokenizer 走进程级单例(``_get_or_build_docling_tokenizer``),避免每文档重复
+        ``AutoTokenizer.from_pretrained`` 的秒级加载;HybridChunker 本身仍按文档新建。
+        """
+        from docling.chunking import HybridChunker
+
+        tokenizer = _get_or_build_docling_tokenizer(self._docling_chunk_tokenizer)
         return HybridChunker(tokenizer=tokenizer, merge_peers=True)
 
     def _chunk_with_docling_hybrid(self, docling_doc: Any) -> list[str]:

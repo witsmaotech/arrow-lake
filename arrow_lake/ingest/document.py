@@ -770,6 +770,9 @@ class DocumentParser:
                 )
             except (ValueError, AttributeError):
                 pass
+            # [P1/§5.4] 阶段级 profile(layout/OCR/table 耗时),生产默认关,压测/调参时开。
+            if os.environ.get("ARROW_LAKE_DOCLING_PROFILE", "").lower() in ("1", "true"):
+                _docling_settings.debug.profile_pipeline_timings = True
         # 表格识别优化（中文多列防错并）
         try:
             from docling.datamodel.pipeline_options import TableFormerMode
