@@ -53,8 +53,9 @@ class TestDoclingP2Config:
     def test_chunk_tokenizer_default_aligns_with_bge_m3(self):
         # Arrange / Act
         cfg = DocumentConfig()
-        # Assert — 与默认嵌入模型 bge-m3 对齐
-        assert cfg.docling_chunk_tokenizer == "BAAI/bge-m3"
+        # Assert — §5.10 起默认指向镜像 baked 本地路径(/opt/models/bge-m3),离线容器即用;
+        # host/无镜像环境改回 "BAAI/bge-m3"(见 config/document.py docstring)。
+        assert cfg.docling_chunk_tokenizer == "/opt/models/bge-m3"
 
     def test_chunk_strategy_enum_has_docling_hybrid(self):
         # Arrange / Act / Assert
@@ -205,7 +206,7 @@ class TestVlmPipelineBuilder:
     def test_vlm_converter_uses_vlm_pipeline_cls(self, docling_patched, monkeypatch):
         # Arrange — _resolve_docling_ocr 不会在 VLM 分支被调用，但 _build_docling_pipeline 引用
         monkeypatch.setattr(
-            document_mod.DocumentParser, "_build_docling_pipeline", lambda self, e, l: object(),
+            document_mod.DocumentParser, "_build_docling_pipeline", lambda self, e, l, **kw: object(),
         )
         from arrow_lake.ingest.document import DocumentParser
         parser = DocumentParser(DocumentConfig(docling_pipeline_type="vlm"))
@@ -224,7 +225,7 @@ class TestVlmPipelineBuilder:
     def test_standard_converter_does_not_use_vlm(self, docling_patched, monkeypatch):
         # Arrange
         monkeypatch.setattr(
-            document_mod.DocumentParser, "_build_docling_pipeline", lambda self, e, l: "std-pipe",
+            document_mod.DocumentParser, "_build_docling_pipeline", lambda self, e, l, **kw: "std-pipe",
         )
         from arrow_lake.ingest.document import DocumentParser
         parser = DocumentParser(DocumentConfig(docling_pipeline_type="standard"))
@@ -274,8 +275,9 @@ def _install_fake_docling_chunking(
         chunker_cls = _HybridChunker
 
     class _HuggingFaceTokenizer:
-        def __init__(self, *, tokenizer: Any) -> None:
+        def __init__(self, *, tokenizer: Any, max_tokens: int = 8192) -> None:
             self.tokenizer = tokenizer
+            self.max_tokens = max_tokens
 
     class _AutoTokenizer:
         @staticmethod

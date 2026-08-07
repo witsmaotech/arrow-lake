@@ -609,7 +609,8 @@ class DocumentParser:
         try:
             doc_hash = hashlib.sha256(Path(file_path).read_bytes()).hexdigest()[:16]
         except Exception:
-            doc_hash = Path(file_path).stem
+            # 回退:用文件名哈希(非原始 stem),杜绝路径穿越——stem 可能含 '../'
+            doc_hash = hashlib.sha256(Path(file_path).name.encode("utf-8", "ignore")).hexdigest()[:16]
         out_dir = Path(out_base) / doc_hash
         try:
             out_dir.mkdir(parents=True, exist_ok=True)
