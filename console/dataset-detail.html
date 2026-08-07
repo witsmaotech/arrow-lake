@@ -172,11 +172,15 @@ if (!ds) {
   $("#crumbDs").textContent = ds;
 
   (async () => {
-    // 1) 元数据
+    // 1) 元数据 + schema 并行拉取(互不依赖;原串行 await 链让预览多等一轮)
     let detailInfo = null;
-    try {
-      const d = await request("GET", `/datasets/${encodeURIComponent(ds)}`);
-      detailInfo = d;
+    const [dRes, sRes] = await Promise.allSettled([
+      request("GET", `/datasets/${encodeURIComponent(ds)}`),
+      request("GET", `/datasets/${encodeURIComponent(ds)}/schema`),
+    ]);
+    if (dRes.status === "fulfilled") {
+      detailInfo = dRes.value;
+      const d = detailInfo;
       $("#title").textContent = d.name;
       $("#meta").textContent = `v${d.version} · ${(d.num_rows ?? 0).toLocaleString()} 行`;
       $("#body").innerHTML = `
@@ -194,20 +198,20 @@ if (!ds) {
           <a class="btn btn-ghost btn-sm" href="tasks.html">${icon("dashboard")} 任务</a>
           <a class="btn btn-ghost btn-sm" href="datasets.html">${icon("arrowR")} 返回列表</a>
         </div>`;
-    } catch (e) {
-      $("#body").innerHTML = `<div style="color:var(--danger);padding:24px">元数据加载失败:${esc(e?.detail || e?.message || e)}</div>`;
+    } else {
+      $("#body").innerHTML = `<div style="color:var(--danger);padding:24px">元数据加载失败:${esc(dRes.reason?.detail || dRes.reason?.message || dRes.reason)}</div>`;
       $("#meta").textContent = "加载失败";
     }
 
-    // 1.55) 后台预热 OLAP/DuckDB session — 利用后续 schema/KG 加载窗口预热,
-    //       让用户实际滚到预览时为 warm(~1.3s)而非冷启动(~3.5s)。fire-and-forget
+    // 1.55) 后台预热 OLAP/DuckDB session — 让用户实际滚到预览时为 warm(~1.3s)
+    //       而非冷启动(~3.5s)。fire-and-forget
     if (detailInfo) {
       request("POST", `/datasets/${encodeURIComponent(ds)}/query/olap`,
         { body: { sql: `SELECT COUNT(*) FROM "${String(ds).replace(/"/g, '""')}"` } }
       ).catch(() => {});
     }
 
-    // 1.5) 真实 schema(含字段注释)
+    // 1.5) schema(已与元数据并行拉取,此处只处理结果)
     let commentMap = {};
     let schemaFields = [];
     const trunc = (s, n = 16) => (s && s.length > n ? s.slice(0, n - 1) + "…" : s || "");
@@ -220,16 +224,15 @@ if (!ds) {
         return `<span class="schema-chip" title="${tip}">${esc(f.name)}<span style="color:var(--fg-lo)"> : ${esc(f.type)}</span>${cmHtml}<button class="ic-btn" data-field="${esc(f.name)}" data-cm="${esc(cm)}" title="编辑字段注释" type="button">✎</button></span>`;
       }).join("");
     };
-    try {
-      const s = await request("GET", `/datasets/${encodeURIComponent(ds)}/schema`);
-      const fields = s?.fields || [];
+    if (sRes.status === "fulfilled") {
+      const fields = sRes.value?.fields || [];
       commentMap = Object.fromEntries(fields.map((f) => [f.name, f.comment || ""]));
       schemaFields = fields;
       if (fields.length) {
         $("#schemaPanel").style.display = "";
         renderSchema(fields);
       }
-    } catch (_) { /* schema 取失败不阻塞预览 */ }
+    }
     // 字段注释编辑(铅笔 → prompt → POST annotate → 局部刷新)
     $("#schema").addEventListener("click", async (ev) => {
       const btn = ev.target.closest(".ic-btn");
@@ -251,9 +254,9 @@ if (!ds) {
 
     // 1.6) 知识图谱统计 — 仅当元数据标记 has_kg 时才请求 /kg/stats,
     //      避免对无 KG 的数据集(如结构化大表 noaa)发起空查询
+    // KG 统计是独立面板 → fire-and-forget,不阻塞下方数据预览(预览不依赖 KG)
     if (detailInfo?.has_kg) {
-      try {
-        const s = await request("GET", `/kg/stats?dataset=${encodeURIComponent(ds)}`);
+      request("GET", `/kg/stats?dataset=${encodeURIComponent(ds)}`).then((s) => {
         $("#kgPanel").style.display = "";
         const v = s.total_vertices ?? 0, e = s.total_edges ?? 0;
         $("#kgMeta").textContent = v ? `${v} 顶点 · ${e} 边` : "未构建";
@@ -264,7 +267,7 @@ if (!ds) {
                <a class="btn btn-primary btn-sm" href="kg.html?ds=${encodeURIComponent(ds)}">查看图谱 →</a>
              </div>`
           : `<div class="muted" style="font-size:.82rem;padding:4px 0">该数据集尚未构建知识图谱(0 实体)。<a class="btn btn-ghost btn-sm" href="kg.html?ds=${encodeURIComponent(ds)}" style="margin-left:8px">去构建 →</a></div>`;
-      } catch (_) { /* KG 查询失败,保持面板隐藏 */ }
+      }).catch(() => { /* KG 查询失败,保持面板隐藏 */ });
     }
     // has_kg=false → 不发请求,#kgPanel 保持初始隐藏
 
