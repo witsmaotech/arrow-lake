@@ -39,12 +39,13 @@ try:
     from docling.datamodel.base_models import InputFormat
     from docling.datamodel.pipeline_options import (
         EasyOcrOptions,
-        PdfPipelineOptions,
         RapidOcrOptions,
         TesseractOcrOptions,
+        ThreadedPdfPipelineOptions,
         VlmConvertOptions,
         VlmPipelineOptions,
     )
+    from docling.datamodel.settings import settings as _docling_settings
     from docling.datamodel.vlm_engine_options import TransformersVlmEngineOptions
     from docling.pipeline.vlm_pipeline import VlmPipeline
 
@@ -55,12 +56,13 @@ except ImportError:
     PdfFormatOption = None  # type: ignore[assignment]
     ImageFormatOption = None  # type: ignore[assignment]
     InputFormat = None  # type: ignore[assignment]
-    PdfPipelineOptions = None  # type: ignore[assignment]
     RapidOcrOptions = None  # type: ignore[assignment]
     EasyOcrOptions = None  # type: ignore[assignment]
     TesseractOcrOptions = None  # type: ignore[assignment]
     VlmPipelineOptions = None  # type: ignore[assignment]
     VlmConvertOptions = None  # type: ignore[assignment]
+    ThreadedPdfPipelineOptions = None  # type: ignore[assignment]
+    _docling_settings = None  # type: ignore[assignment]
     TransformersVlmEngineOptions = None  # type: ignore[assignment]
     VlmPipeline = None  # type: ignore[assignment]
 
@@ -613,10 +615,14 @@ class DocumentParser:
 
     @staticmethod
     def _build_docling_pipeline(engine: str, langs: list[str]) -> Any:
-        """构造 Docling PdfPipelineOptions（OCR 引擎切换 + 表格识别优化）。
+        """构造 Docling ThreadedPdfPipelineOptions（GPU 页批处理 + OCR 引擎 + 表格优化）。
 
-        表格：TableFormerMode.ACCURATE + do_cell_matching=False，
-        针对中文工程文档多列表格（目录/投资表）防 cell 错误合并。
+        v1.10.3: plain ``PdfPipelineOptions``(逐页串行)→ ``ThreadedPdfPipelineOptions``
+        (文档内多页打包喂 layout/OCR/table 模型)。M0 实测 7.4× 加速(20 页 126s→17s,
+        见 tests/benchmark/docling_convert_bench.py),质量无损。OCR 仍 ONNX CPU(R1:
+        RapidOCR torch 后端需 .pth 模型,read-only 镜像写不了;且批处理后 OCR 非瓶颈)。
+
+        表格:TableFormerMode.ACCURATE + do_cell_matching=False,中文工程文档多列防错并。
         """
         if not _DOCLING_AVAILABLE:
             return None
@@ -627,9 +633,30 @@ class DocumentParser:
             ocr = TesseractOcrOptions(lang=langs or ["eng"])
         else:  # rapidocr / auto / none（none 仍保留 ocr_options 默认，由 do_ocr=False 关闭）
             ocr = RapidOcrOptions()
-        pipeline = PdfPipelineOptions(
+        # GPU 页批处理:layout/table 模型批处理是主要加速来源(M0 实证)。
+        # batch_size 经 env 可调(显存小机器下调);CPU 无 GPU 时 Threaded 退化为小批串行,不会更慢。
+        try:
+            _layout_batch = int(os.environ.get("ARROW_LAKE_DOCLING_LAYOUT_BATCH", "64"))
+            _ocr_batch = int(os.environ.get("ARROW_LAKE_DOCLING_OCR_BATCH", "64"))
+            _table_batch = int(os.environ.get("ARROW_LAKE_DOCLING_TABLE_BATCH", "4"))
+        except ValueError:
+            _layout_batch, _ocr_batch, _table_batch = 64, 64, 4
+        pipeline = ThreadedPdfPipelineOptions(
             do_ocr=(engine != "none"), ocr_options=ocr, do_table_structure=True,
+            ocr_batch_size=_ocr_batch, layout_batch_size=_layout_batch,
+            table_batch_size=_table_batch,
         )
+        # page_batch_size:docling 全局并发页数(默认 4)。v1.10.3 默认 16——M0 实测 page_batch=64
+        # 在 552 页全量 + OCR-on-CPU 下 OOM-killed 整个 16GiB api 容器(64 页并发 × 页栅格 +
+        # ONNX OCR 张量撑爆宿主 RAM)。16 在 16GiB 容器安全;大内存机器 env 调高(32/64)。
+        # 根因缓解待 P0-2(OCR 上 GPU,张量从 RAM 挪 VRAM,腾 RAM 才能用大 batch)。
+        if _docling_settings is not None:
+            try:
+                _docling_settings.perf.page_batch_size = int(
+                    os.environ.get("ARROW_LAKE_DOCLING_PAGE_BATCH", "16")
+                )
+            except (ValueError, AttributeError):
+                pass
         # 表格识别优化（中文多列防错并）
         try:
             from docling.datamodel.pipeline_options import TableFormerMode
@@ -644,7 +671,10 @@ class DocumentParser:
             from docling.datamodel.accelerator_options import AcceleratorDevice, AcceleratorOptions
             device = AcceleratorDevice.CUDA if torch.cuda.is_available() else AcceleratorDevice.AUTO
             pipeline.accelerator_options = AcceleratorOptions(device=device)
-            logger.info("docling_accelerator device=%s", device.value)
+            logger.info(
+                "docling_accelerator device=%s layout_batch=%d ocr_batch=%d table_batch=%d",
+                device.value, _layout_batch, _ocr_batch, _table_batch,
+            )
         except Exception as e:
             logger.debug("docling accelerator config skipped: %s", e)
         return pipeline
