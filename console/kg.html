@@ -118,7 +118,7 @@
     <div class="panel-h" id="buildToggle" style="cursor:pointer;user-select:none"><i class="placeholder" data-ic="plus"></i><h3>建 / 重建 KG</h3><span class="sub toggle-mark" style="margin-left:auto">▸</span></div>
     <div class="panel-b" id="buildBody" style="display:none">
       <div class="muted" style="font-size:.78rem;margin-bottom:8px">对当前数据集抽取实体/关系建图(异步,ADMIN;走全局轻量 LLM 抽取)。大 dataset 耗时较长,完成后自动刷新统计。</div>
-      <div class="flex" style="gap:8px"><button class="btn btn-primary btn-sm" id="buildBtn">建 KG</button><span id="buildStatus" class="muted" style="font-size:.74rem"></span></div>
+      <div class="flex" style="gap:8px;align-items:center"><button class="btn btn-primary btn-sm" id="buildBtn">建 KG</button><span id="buildMode" class="tag" style="font-size:.72rem;display:none"></span><span id="buildStatus" class="muted" style="font-size:.74rem"></span></div>
     </div>
   </div>
 
@@ -166,9 +166,23 @@ async function loadDatasets() {
 $("#ds").addEventListener("change", loadAll);
 $("#refresh").addEventListener("click", loadAll);
 
+// v1.10.3: build 前判定首次/增量(查 KA dump 是否存在),标注到 buildMode 标签
+async function loadBuildInfo(name) {
+  const el = $("#buildMode");
+  if (!el) return;
+  if (!name) { el.style.display = "none"; return; }
+  try {
+    const info = await request("GET", `/kg/build-info?dataset=${encodeURIComponent(name)}`);
+    if (info.has_prior_build) { el.textContent = "🔄 增量构建"; el.className = "tag ok"; }
+    else { el.textContent = "📅 首次构建"; el.className = "tag info"; }
+    el.style.display = "";
+  } catch (_) { el.style.display = "none"; }
+}
+
 async function loadAll() {
   const name = curDs();
-  if (!name) { $("#stats").innerHTML = '<div class="muted" style="padding:16px">选择数据集后加载…</div>'; $("#schemaPanel").style.display = "none"; return; }
+  if (!name) { $("#stats").innerHTML = '<div class="muted" style="padding:16px">选择数据集后加载…</div>'; $("#schemaPanel").style.display = "none"; loadBuildInfo(""); return; }
+  loadBuildInfo(name);
   $("#stats").innerHTML = '<div class="muted" style="padding:16px">加载中…</div>';
   let s;
   try { s = await request("GET", `/kg/stats?dataset=${encodeURIComponent(name)}`); }
@@ -607,7 +621,8 @@ $("#buildToggle").addEventListener("click", () => setBuildOpen($("#buildBody").s
 function resetBuildBtn() { const b = $("#buildBtn"); b.disabled = false; b.textContent = "建 KG"; }
 $("#buildBtn").addEventListener("click", async () => {
   const name = curDs(); if (!name) return toast("先选数据集", "warn");
-  if (!(await confirmDialog({ title: "建 / 重建 KG", message: `对「${name}」执行?异步抽取,大 dataset 耗时长。`, confirmText: "建 KG" }))) return;
+  const modeLbl = ($("#buildMode")?.textContent || "").trim();
+  if (!(await confirmDialog({ title: "建 / 重建 KG", message: `对「${name}」执行${modeLbl ? "(" + modeLbl + ")" : ""}?异步抽取,大 dataset 耗时长。`, confirmText: "建 KG" }))) return;
   const btn = $("#buildBtn"); btn.disabled = true; btn.textContent = "构建中…"; $("#buildStatus").textContent = "提交中…";
   let tid;
   try {
@@ -631,8 +646,14 @@ function pollBuild(tid) {
         ? ` · chunk ${s.processed_chunks ?? 0}/${s.total_chunks ?? 0} · 实体 ${s.entity_count ?? 0} · 关系 ${s.relation_count ?? 0}` : "";
       $("#buildStatus").innerHTML = `任务 <span class="mono">${esc(tid.slice(0, 8))}</span>:${esc(st)}${esc(prog)}`;
       if (/COMPLETED|SUCCESS|DONE|FINISH/i.test(st)) {
-        clearInterval(t); toast("KG 构建完成,刷新统计…", "ok"); $("#buildStatus").textContent = "完成"; resetBuildBtn();
-        loadAll();                   // 立即刷新统计/Schema
+        clearInterval(t);
+        // v1.10.3: 首次/增量 + 复用/新抽取计数(map_reduce 精确;dataset 路径无 per-cid 计数)
+        let msg;
+        if (s.first_build) msg = `首次构建完成 · 实体 ${s.entity_count ?? 0} · 关系 ${s.relation_count ?? 0}`;
+        else if (s.incremental && (s.new_chunks || s.reused_chunks)) msg = `增量构建完成 · 复用 ${s.reused_chunks ?? 0} · 新抽取 ${s.new_chunks ?? 0}`;
+        else msg = `KG 构建完成 · 实体 ${s.entity_count ?? 0} · 关系 ${s.relation_count ?? 0}`;
+        toast(msg + ",刷新统计…", "ok"); $("#buildStatus").textContent = "完成"; resetBuildBtn();
+        loadAll();                   // 立即刷新统计/Schema + buildMode 标签
         setTimeout(loadAll, 2500);   // 再刷一次(HugeGraph 提交/统计可能有延迟)
       } else if (/FAIL|ERROR/i.test(st)) {
         clearInterval(t); toast("KG 构建失败:" + (s.error || st), "danger"); $("#buildStatus").textContent = "失败"; resetBuildBtn();

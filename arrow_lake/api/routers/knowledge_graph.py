@@ -18,6 +18,7 @@ from arrow_lake.api.auth_models import Role
 from arrow_lake.api.deps import get_checker, get_lake, require_role
 from arrow_lake.api.models.knowledge_graph import (
     GraphRAGQueryRequest,
+    KGBuildInfoResponse,
     KGBuildRequest,
     KGBuildResponse,
     KGBuildStatusResponse,
@@ -163,10 +164,45 @@ async def kg_build_status(
             processed_chunks=status.get("processed_chunks", 0),
             entity_count=status.get("entity_count", 0),
             relation_count=status.get("relation_count", 0),
+            incremental=status.get("incremental", False),
+            first_build=status.get("first_build", True),
+            new_chunks=status.get("new_chunks", 0),
+            reused_chunks=status.get("reused_chunks", 0),
             error=status.get("error"),
         )
     except KGError as exc:
         raise HTTPException(status_code=_kg_error_to_status(exc), detail=exc.message) from exc
+
+
+@router.get("/build-info", response_model=KGBuildInfoResponse)
+async def kg_build_info(
+    dataset: str,
+    lake: Any = Depends(get_lake),
+    _user: dict = Depends(require_role(Role.VIEWER)),
+) -> KGBuildInfoResponse:
+    """Pre-build diagnostics: whether a prior KA dump exists.
+
+    Drives the kg.html label (首次构建 vs 增量构建) before the operator clicks.
+    ``has_prior_build`` = a KA dump exists for this dataset → an incremental
+    build can reuse prior extractions; otherwise this will be a first build.
+    """
+    from pathlib import Path
+
+    from arrow_lake.knowledge_graph import ka_versioning
+
+    hg_cfg = getattr(getattr(lake, "config", None), "hugegraph", None)
+    ka_base = getattr(hg_cfg, "he_ka_base_dir", None) if hg_cfg else None
+    has_prior = False
+    if ka_base:
+        try:
+            has_prior = ka_versioning.has_active_dump(Path(ka_base), dataset)
+        except Exception:  # noqa: BLE001 — best-effort pre-build hint
+            has_prior = False
+    return KGBuildInfoResponse(
+        dataset=dataset,
+        has_prior_build=has_prior,
+        suggested_incremental=has_prior,
+    )
 
 
 @router.get("/schema", response_model=KGSchemaResponse)

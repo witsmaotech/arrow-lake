@@ -102,6 +102,15 @@ class KGBuildTask:
     # an empty result) so an operator can distinguish "no entities" from
     # "extractor was down". Surfaced via get_task_status.
     extraction_failures: int = 0
+    # v1.10.3: incremental-build diagnostics for the console (kg.html). Set
+    # during _execute_build; surfaced via kg_build_status + /kg/build-info so
+    # the operator can tell a first build from an incremental one and see the
+    # reuse/new chunk split. map_reduce path fills all four precisely; the
+    # dataset path fills incremental/first_build (new/reused stay 0).
+    incremental: bool = False
+    first_build: bool = True
+    new_chunks: int = 0
+    reused_chunks: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -456,6 +465,12 @@ class KGBuilder:
             # the query-time dir (he_extractor._ka_dir_for) and the graph name.
             from arrow_lake.knowledge_graph._naming import artifact_key_for
             ka_dir = _ka_root / artifact_key_for(task.dataset_name) / "ka"
+            # v1.10.3: incremental diagnostics for the console (dataset path).
+            # new/reused per-cid counts aren't tracked here without changing
+            # build_dataset_ka's contract; first_build/incremental are accurate.
+            _dump_existed = (ka_dir / "data.json").is_file()
+            task.first_build = not _dump_existed
+            task.incremental = bool(incremental and _dump_existed)
             # [#11] Archive the current dump (if any) before overwrite so a
             # regressive/failed rebuild can be rolled back. Then prune to the
             # configured max versions to bound disk usage.
@@ -687,6 +702,11 @@ class KGBuilder:
                     task.dataset_name, len(chunk_ids), len(new_idxs),
                     len(chunk_ids) - len(new_idxs),
                 )
+            # v1.10.3: surface incremental diagnostics to the console (kg.html).
+            task.incremental = can_incremental
+            task.first_build = not ckpt_path.is_file()
+            task.new_chunks = len(new_idxs)
+            task.reused_chunks = len(chunk_ids) - len(new_idxs)
 
             # --- MAP the new/changed chunks (concurrent, bounded by semaphore) ---
             for batch_start in range(0, len(new_idxs), concurrency):

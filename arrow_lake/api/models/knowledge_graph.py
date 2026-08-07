@@ -54,7 +54,23 @@ class KGBuildStatusResponse(BaseModel):
     processed_chunks: int = 0
     entity_count: int = 0
     relation_count: int = 0
+    # v1.10.3: incremental-build diagnostics (kg.html labels + post-build toast)
+    incremental: bool = False
+    first_build: bool = True
+    new_chunks: int = 0
+    reused_chunks: int = 0
     error: str | None = None
+
+
+class KGBuildInfoResponse(BaseModel):
+    """Pre-build diagnostics: is there a prior KA dump (→ incremental) or not.
+
+    Drives the kg.html label (首次构建 vs 增量构建) before the operator clicks.
+    """
+
+    dataset: str
+    has_prior_build: bool
+    suggested_incremental: bool
 
 
 # ---------------------------------------------------------------------------
