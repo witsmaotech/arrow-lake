@@ -7,7 +7,7 @@
 Vectors · Full-text · SQL analytics · Knowledge Graph · GraphRAG · Document AI —
 **one self-hosted platform**, not five tools stitched together.
 
-[![Version](https://img.shields.io/badge/version-1.10.0-blue?style=flat-square)](#)
+[![Version](https://img.shields.io/badge/version-1.10.2-blue?style=flat-square)](#)
 [![License](https://img.shields.io/badge/license-Apache--2.0-informational?style=flat-square)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue?style=flat-square)](#)
 [![Tests](https://img.shields.io/badge/tests-6%2C100%2B-brightgreen?style=flat-square)](#)
@@ -377,7 +377,7 @@ lake = Lake.from_yaml("configs/prod.yaml")  # production
 
 ## Project status
 
-Stable and in production use. Current release: **v1.10.1** — v1.10.0 knowledge extraction template management (M1–M5: dynamic loading, CRUD, binding, AI authoring, dry-run, quality validation harness) + v1.10.1 stability & governance hardening (docling GPU triton JIT fix, KG template fallback path, config consolidation, examples→cookbook). See [CHANGELOG](CHANGELOG.md) for the full history and roadmap direction (deeper multimodal, distributed scale-out, more extraction backends).
+Stable and in production use. Current release: **v1.10.2** — v1.10.0 knowledge extraction template management (M1–M5: dynamic loading, CRUD, binding, AI authoring, dry-run, quality validation harness) + v1.10.1 stability & governance hardening (docling GPU triton JIT fix, KG template fallback path, config consolidation, examples→cookbook) + **v1.10.2 text-document incremental build (ingest/KA/KG incremental), performance benchmark suite expansion, and timeout/reliability hardening (OLAP `conn.interrupt()` watchdog so a stuck scan can't strand the pool, async-task heartbeat + orphan reaper so worker death can't strand a task in `running`, and per-call timeouts across the ingest chain), with an SSD performance re-baseline**. See [CHANGELOG](CHANGELOG.md) for the full history and roadmap direction (deeper multimodal, distributed scale-out, more extraction backends).
 
 - **6,100+ tests**, 90%+ coverage, zero high-severity security findings (bandit)
 - **186 REST routes** across 22 routers

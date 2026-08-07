@@ -249,7 +249,9 @@ GPU 自动扩缩集成支持空闲时段的缩放到零（Scale-to-Zero）和成
 | Ray 分布式摄入 | 并行文档处理 |
 | Blob 生命周期分层 | Standard → IA → Glacier 成本优化 |
 
-### 实测基准（v1.10.x）
+### 实测基准（v1.10.2,SSD 复测 2026-08-07）
+
+> **SSD 复测刷新**（2026-08-07,存储换 SSD 后重跑 IO 敏感基准）:OLAP 100K 行扫描 ~574K rows/s、清洗写回 100K 峰值 **10.38M rows/s**、ingest 写入 **697K rows/s** —— 顺序读写与扫描稳态吞吐百万级,基本消除旧盘大表扫描/写回的 D-state 阻塞。IVF_PQ 建索引(1024 维 100K 行 28.9s)是训练计算瓶颈、与 IO 无关。完整复测命令与分项见 `docs_offline/v1.10.2-version-plan.md` 附录 D。
 
 下列数值来自 `tests/benchmark/`（`@pytest.mark.benchmark`，`BenchmarkReport` 取中位数），在 Python 3.11.14 / WSL2 10 核 / DuckDB 1.5.5 / pylance 9.0.0 / lancedb 0.36.0 上实测。绝对值随硬件变化，**形态**（开销在哪、吞吐在哪见顶）才是结论。完整复现命令与分项数据见 README「📊 Benchmarks」。
 

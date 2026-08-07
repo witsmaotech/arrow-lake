@@ -249,7 +249,9 @@ GPU autoscaling integration supports both scale-to-zero for idle periods and fra
 | Ray distributed ingestion | Parallel document processing |
 | Blob lifecycle tiering | Standard to IA to Glacier cost optimization |
 
-### Measured benchmarks (v1.10.x)
+### Measured benchmarks (v1.10.2, SSD re-baseline 2026-08-07)
+
+> **SSD re-baseline** (2026-08-07, after switching storage to SSD): OLAP 100K-row scan ~574K rows/s, clean writeback 100K peak **10.38M rows/s**, ingest write **697K rows/s** — sequential read/write and scan sustained throughput in the millions of rows/s, essentially eliminating the D-state stalls large-table scans/writebacks hit on the old disk. IVF_PQ index build (1024-dim 100K rows in 28.9s) is training-compute bound, IO-independent. Full reproduction commands and per-bench detail in `docs_offline/v1.10.2-version-plan.md` Appendix D.
 
 The numbers below come from `tests/benchmark/` (`@pytest.mark.benchmark`, `BenchmarkReport` median), measured on Python 3.11.14 / WSL2 10-core / DuckDB 1.5.5 / pylance 9.0.0 / lancedb 0.36.0. Absolute values vary by hardware; the *shape* (where cost lives, where throughput plateaus) is the conclusion. Full reproduce commands and per-stage data are in the README "📊 Benchmarks" section.
 
