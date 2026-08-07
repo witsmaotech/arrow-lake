@@ -636,17 +636,23 @@ $("#buildBtn").addEventListener("click", async () => {
   pollBuild(tid);
 });
 function pollBuild(tid) {
-  let n = 0;
-  const t = setInterval(async () => {
+  // 异步 KG 构建(map_reduce + LLM 抽取)大 dataset 可达数十分钟 → 不设硬超时,
+  // 只要页面开着就跟踪到终态。渐进退避(前 ~5min 每 4s,之后每 10s)避免轰炸;
+  // 容忍偶发网络抖动(连续 6 次查不到才停)。完成时自动刷新统计。
+  let n = 0, missed = 0, elapsed = 0, done = false;
+  const tick = async () => {
+    if (done) return;
     n++;
+    const delay = elapsed < 300000 ? 4000 : 10000; // 5min 后退避到 10s
     try {
       const s = await request("GET", `/kg/build/${encodeURIComponent(tid)}/status`);
+      missed = 0;
       const st = String(s.status || s.state || "");
       const prog = (s.total_chunks || s.processed_chunks || s.entity_count || s.relation_count)
         ? ` · chunk ${s.processed_chunks ?? 0}/${s.total_chunks ?? 0} · 实体 ${s.entity_count ?? 0} · 关系 ${s.relation_count ?? 0}` : "";
-      $("#buildStatus").innerHTML = `任务 <span class="mono">${esc(tid.slice(0, 8))}</span>:${esc(st)}${esc(prog)}`;
+      $("#buildStatus").innerHTML = `任务 <span class="mono">${esc(tid.slice(0, 8))}</span>:${esc(st)}${esc(prog)} · 跟踪中 ${Math.round(elapsed / 60000)}min`;
       if (/COMPLETED|SUCCESS|DONE|FINISH/i.test(st)) {
-        clearInterval(t);
+        done = true;
         // v1.10.3: 首次/增量 + 复用/新抽取计数(map_reduce 精确;dataset 路径无 per-cid 计数)
         let msg;
         if (s.first_build) msg = `首次构建完成 · 实体 ${s.entity_count ?? 0} · 关系 ${s.relation_count ?? 0}`;
@@ -655,12 +661,26 @@ function pollBuild(tid) {
         toast(msg + ",刷新统计…", "ok"); $("#buildStatus").textContent = "完成"; resetBuildBtn();
         loadAll();                   // 立即刷新统计/Schema + buildMode 标签
         setTimeout(loadAll, 2500);   // 再刷一次(HugeGraph 提交/统计可能有延迟)
-      } else if (/FAIL|ERROR/i.test(st)) {
-        clearInterval(t); toast("KG 构建失败:" + (s.error || st), "danger"); $("#buildStatus").textContent = "失败"; resetBuildBtn();
+        return;
       }
-    } catch (_) {}
-    if (n > 150) { clearInterval(t); $("#buildStatus").textContent = "轮询超时,请手动刷新"; resetBuildBtn(); }
-  }, 4000);
+      if (/FAIL|ERROR/i.test(st)) {
+        done = true;
+        toast("KG 构建失败:" + (s.error || st), "danger"); $("#buildStatus").textContent = "失败"; resetBuildBtn();
+        return;
+      }
+    } catch (_) {
+      // 偶发抖动/短暂 404 → 容忍;连续失败才停(任务可能已落 history 或被逐)
+      if (++missed > 6) {
+        done = true;
+        $("#buildStatus").textContent = "状态查询持续失败,请手动刷新或去任务队列查看";
+        resetBuildBtn();
+        return;
+      }
+    }
+    elapsed += delay;
+    setTimeout(tick, delay);
+  };
+  tick();
 }
 
 // 极简 markdown 渲染(逐行块级解析,escape-first → XSS 安全,无外部依赖/CDN):

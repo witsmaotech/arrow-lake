@@ -652,11 +652,18 @@ class _LakeKGMixin:
                     if kg_task and tm_task:
                         tm_task.progress = kg_task.processed_chunks / max(kg_task.total_chunks, 1)
                         hg = self._config.hugegraph
+                        # v1.10.3: 同步全量诊断字段(total_chunks + 首次/增量/复用/新),
+                        # 供 /kg/build/{tid}/status 跨 worker 回落(builder._tasks 仅本进程)。
                         tm_task.detail = {
                             "kg_task_id": task_id,
                             "model": hg.he_model or self._config.llm.model,
                             "template": hg.he_default_template,
                             "template_type": hg.he_template_type,
+                            "total_chunks": kg_task.total_chunks,
+                            "first_build": kg_task.first_build,
+                            "incremental": kg_task.incremental,
+                            "new_chunks": kg_task.new_chunks,
+                            "reused_chunks": kg_task.reused_chunks,
                         }
                         if kg_task.entity_count or kg_task.relation_count:
                             tm_task.detail["entity_count"] = kg_task.entity_count
@@ -730,29 +737,52 @@ class _LakeKGMixin:
         self._ensure_kg_enabled()
 
         builder = self._get_kg_builder()
-        if builder is None:
-            return None
+        task = builder.get_task_status(task_id) if builder else None
+        if task is not None:
+            return {
+                "task_id": task.task_id,
+                "status": task.status.value,
+                "dataset_name": task.dataset_name,
+                "total_chunks": task.total_chunks,
+                "processed_chunks": task.processed_chunks,
+                "entity_count": task.entity_count,
+                "relation_count": task.relation_count,
+                "incremental": task.incremental,
+                "first_build": task.first_build,
+                "new_chunks": task.new_chunks,
+                "reused_chunks": task.reused_chunks,
+                "started_at": task.started_at.isoformat() if task.started_at else None,
+                "completed_at": task.completed_at.isoformat() if task.completed_at else None,
+                "error": task.error,
+            }
 
-        task = builder.get_task_status(task_id)
-        if task is None:
-            return None
+        # v1.10.3 回落:builder 任务仅在发起构建的那个 worker 的内存里(builder._tasks
+        # 不镜像 Redis),4 workers 下轮询大概率打到别的 worker → 404。回落到 TaskManager
+        # (经 Redis + 持久 history 跨 worker 可见)。注意:builder task_id(8 位)≠ TM
+        # task_id(16 位),TM 任务的 detail.kg_task_id 存的就是 builder 8 位 id,按它匹配。
+        from arrow_lake.api.tasks import TaskManager
 
-        return {
-            "task_id": task.task_id,
-            "status": task.status.value,
-            "dataset_name": task.dataset_name,
-            "total_chunks": task.total_chunks,
-            "processed_chunks": task.processed_chunks,
-            "entity_count": task.entity_count,
-            "relation_count": task.relation_count,
-            "incremental": task.incremental,
-            "first_build": task.first_build,
-            "new_chunks": task.new_chunks,
-            "reused_chunks": task.reused_chunks,
-            "started_at": task.started_at.isoformat() if task.started_at else None,
-            "completed_at": task.completed_at.isoformat() if task.completed_at else None,
-            "error": task.error,
-        }
+        for tm in TaskManager.list_tasks(operation="kg_build"):
+            if (tm.detail or {}).get("kg_task_id") == task_id:
+                d = tm.detail or {}
+                tc = int(d.get("total_chunks", 0))
+                return {
+                    "task_id": tm.task_id,
+                    "status": tm.status.value,
+                    "dataset_name": tm.dataset_name,
+                    "total_chunks": tc,
+                    "processed_chunks": tc if tm.status.value == "completed" else 0,
+                    "entity_count": int(d.get("entity_count", 0)),
+                    "relation_count": int(d.get("relation_count", 0)),
+                    "incremental": bool(d.get("incremental", False)),
+                    "first_build": bool(d.get("first_build", True)),
+                    "new_chunks": int(d.get("new_chunks", 0)),
+                    "reused_chunks": int(d.get("reused_chunks", 0)),
+                    "started_at": tm.created_at,
+                    "completed_at": tm.completed_at,
+                    "error": tm.error,
+                }
+        return None
 
     async def kg_query(
         self,
