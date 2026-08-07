@@ -65,6 +65,9 @@ const VID_ACCEPT = "video/*";
 
 const dsParam = new URL(location.href).searchParams.get("ds");
 if (dsParam) $("#ds").value = dsParam;
+let boundTpl = "";  // 已绑定模板(后端回填),fillExtTpl 渲染后选中
+$("#ds").addEventListener("change", () => loadExistingMeta($("#ds").value.trim()));
+loadExistingMeta((dsParam || $("#ds").value).trim());
 
 let uploadedBlobs = [];
 let pickedFiles = [];
@@ -160,6 +163,21 @@ function bindUpload() {
   renderUploaded();
 }
 
+// 已有数据集回填:描述 + 抽取模板绑定(从 dataset-detail "追加摄入" 带 ?ds= 进来,或手输已有名时加载)
+function applyBoundTpl() {
+  const sel = $("#extTpl");
+  if (sel && boundTpl && [...sel.options].some((o) => o.value === boundTpl)) sel.value = boundTpl;
+}
+async function loadExistingMeta(name) {
+  boundTpl = "";
+  if (!name) { $("#desc").value = ""; return; }
+  try { const d = await request("GET", `/datasets/${encodeURIComponent(name)}`); $("#desc").value = d?.description || ""; }
+  catch (_) { /* 新数据集尚无描述 → 留空,不阻塞 */ }
+  try { const b = await request("GET", `/admin/extraction-templates/bindings/${encodeURIComponent(name)}`); boundTpl = b?.data?.template || ""; }
+  catch (_) { /* 未绑定或端点不可用 */ }
+  applyBoundTpl();
+}
+
 // 抽取模板下拉:按 category(中文)→ type 分组,不区分 user/system。
 async function fillExtTpl() {
   const sel = $("#extTpl"); if (!sel) return;
@@ -181,6 +199,7 @@ async function fillExtTpl() {
       html += `<optgroup label="${esc(catLabel(c))}">${opts}</optgroup>`;
     });
     sel.innerHTML = html;
+    applyBoundTpl();  // 已绑定模板回填(loadExistingMeta 先于下拉渲染拿到 binding)
   } catch (_) { /* 端点不可用时保留默认选项 */ }
 }
 
