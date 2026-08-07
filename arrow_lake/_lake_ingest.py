@@ -28,6 +28,38 @@ _embed_backfill_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix=
 # timeout is the embed backend's responsibility (LLM_TIMEOUT_SECONDS etc).
 import atexit as _atexit
 _atexit.register(_embed_backfill_executor.shutdown, wait=False)
+
+# Coarse per-step ceiling for the background embed+vector backfill. The real
+# bound is the embed per-batch timeout (30s) + Lance request_timeout; this is a
+# backstop so a hung step still moves the status to failed instead of idling in
+# running forever. Tunable via env.
+_BG_STEP_TIMEOUT = float(os.environ.get("ARROW_LAKE_EMBED_BG_STEP_TIMEOUT", "3600"))
+
+
+def _run_step_with_timeout(func: Any, *, timeout: float, label: str) -> Any:
+    """Run ``func()`` in a daemon worker bounded by ``timeout``.
+
+    Used by the background embed+vector backfill so a hung step (a Lance write
+    that slipped past request_timeout, a vector-index training stall) surfaces
+    as a timely FAILED status. Python can't kill the leaked worker thread; the
+    Lance/embed per-call timeouts are expected to eventually release it.
+    """
+    holder: dict[str, Any] = {}
+
+    def _work() -> None:
+        try:
+            holder["result"] = func()
+        except BaseException as exc:  # noqa: BLE001 — surfaced to caller
+            holder["error"] = exc
+
+    t = threading.Thread(target=_work, daemon=True, name=f"embed-bg-{label}")
+    t.start()
+    t.join(timeout)
+    if t.is_alive():
+        raise TimeoutError(f"{label} exceeded {timeout}s")
+    if "error" in holder:
+        raise holder["error"]
+    return holder.get("result")
 _EMBED_BG_LOCK = threading.Lock()
 _embed_bg: dict[str, "_EmbedBackfillStatus"] = {}
 
@@ -1208,9 +1240,15 @@ class _LakeIngestMixin:
             _embed_bg[dataset_name] = cur
         _sync_embed_status_redis(dataset_name, asdict(cur))
         try:
-            self.embed_and_add(dataset_name)
+            _run_step_with_timeout(
+                lambda: self.embed_and_add(dataset_name),
+                timeout=_BG_STEP_TIMEOUT, label="embed",
+            )
             if callable(getattr(self, "create_vector_index", None)):
-                self.create_vector_index(dataset_name)
+                _run_step_with_timeout(
+                    lambda: self.create_vector_index(dataset_name),
+                    timeout=_BG_STEP_TIMEOUT, label="vector_index",
+                )
             cur = _EmbedBackfillStatus(
                 status="completed", started_at=cur.started_at,
                 finished_at=datetime.now(timezone.utc).isoformat(),

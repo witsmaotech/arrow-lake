@@ -123,6 +123,14 @@ class BlobStoreManager:
                 "config": BotoConfig(
                     signature_version="s3v4",
                     s3={"addressing_style": "path"},
+                    # Explicit timeouts + bounded adaptive retries. Without
+                    # these boto3 uses botocore defaults (60s/60s) + legacy
+                    # retry mode (4–5 exponential backoff) that can stall a
+                    # background ingest for many minutes on a flaky MinIO —
+                    # long enough to look like a permanently "running" task.
+                    connect_timeout=10,
+                    read_timeout=60,
+                    retries={"max_attempts": 3, "mode": "adaptive"},
                 ),
             }
             # Drop empty credential values so boto3 falls back to

@@ -225,6 +225,75 @@ def _parse_cache_put(key, value):
 # run in parallel). Unbounded — distinct configs per process are few.
 _DOCLING_CONVERTERS: dict[tuple, tuple[Any, _threading.RLock]] = {}
 _DOCLING_BUILD_LOCK = _threading.Lock()
+# Per-document Docling parse ceiling. Docling inference has no built-in
+# timeout; a pathological PDF or a GPU/CUDA stall can hang convert() for hours
+# (incident: worker stuck 2.5h). Python can't kill the leaked thread, but the
+# timeout lets us mark the file failed and evict the poisoned converter so
+# later parses aren't queued behind the hung one. Tunable via env.
+_DOCLING_CONVERT_TIMEOUT = float(os.environ.get("ARROW_LAKE_DOCLING_TIMEOUT_SECONDS", "1200"))
+
+
+class _DoclingConvertTimeout(Exception):
+    """Raised when ``converter.convert()`` exceeds the per-document ceiling."""
+
+
+def _convert_with_timeout(converter: Any, path: str, lock: Any, timeout: float) -> Any:
+    """Run ``converter.convert(path)`` under ``lock`` in a daemon worker; bound it.
+
+    Docling inference isn't thread-safe, so convert runs under the converter's
+    RLock (acquired inside the worker). On timeout the worker is leaked (Python
+    cannot kill threads) — the caller must evict the poisoned converter entry so
+    subsequent parses get a fresh converter + lock instead of queueing behind
+    the hung thread.
+    """
+    holder: dict[str, Any] = {}
+
+    def _work() -> None:
+        with lock:
+            try:
+                holder["result"] = converter.convert(path)
+            except BaseException as exc:  # noqa: BLE001 — surfaced to caller
+                holder["error"] = exc
+
+    t = _threading.Thread(target=_work, daemon=True, name="docling-convert")
+    t.start()
+    t.join(timeout)
+    if t.is_alive():
+        raise _DoclingConvertTimeout(f"convert exceeded {timeout}s")
+    if "error" in holder:
+        raise holder["error"]
+    return holder.get("result")
+
+
+# Kreuzberg extraction has no built-in timeout; a pathological file (or an
+# internal OCR subprocess hang) can block the parse indefinitely. Same daemon-
+# worker pattern as docling. Tunable via env.
+_KREUZBERG_TIMEOUT = float(os.environ.get("ARROW_LAKE_KREUZBERG_TIMEOUT_SECONDS", "600"))
+
+
+def _run_with_timeout(func: Any, timeout: float, label: str) -> Any:
+    """Run ``func()`` in a daemon worker bounded by ``timeout`` (builtin).
+
+    Raises ``TimeoutError`` on timeout (a subclass of OSError, so callers that
+    catch OSError must catch TimeoutError first). The worker is leaked on
+    timeout — Python can't kill threads.
+    """
+    holder: dict[str, Any] = {}
+
+    def _work() -> None:
+        try:
+            holder["result"] = func()
+        except BaseException as exc:  # noqa: BLE001 — surfaced to caller
+            holder["error"] = exc
+
+    t = _threading.Thread(target=_work, daemon=True, name=f"parse-{label}")
+    t.start()
+    t.join(timeout)
+    if t.is_alive():
+        raise TimeoutError(f"{label} exceeded {timeout}s")
+    if "error" in holder:
+        raise holder["error"]
+    return holder.get("result")
 
 
 class DocumentParser:
@@ -313,7 +382,15 @@ class DocumentParser:
 
         try:
             with _suppress_tesseract_noise():
-                result = extract_file_sync(str(file_path), config=cfg)  # type: ignore[misc]
+                result = _run_with_timeout(
+                    lambda: extract_file_sync(str(file_path), config=cfg),  # type: ignore[misc]
+                    timeout=_KREUZBERG_TIMEOUT, label="kreuzberg",
+                )
+        except TimeoutError:
+            raise DocumentError(
+                error_code=ErrorCode.DOCUMENT_PARSE_FAILED,
+                message=f"Kreuzberg parse timed out after {_KREUZBERG_TIMEOUT}s for '{file_path}'",
+            )
         except (OSError, ValueError, RuntimeError) as exc:
             raise DocumentError(
                 error_code=ErrorCode.DOCUMENT_PARSE_FAILED,
@@ -443,11 +520,23 @@ class DocumentParser:
         """
         converter, convert_lock = self._get_docling_converter()
         try:
-            # Serialize convert() per-converter: Docling inference (layout/OCR/
-            # table models) is not guaranteed thread-safe, and the router serves
-            # concurrent ingests from a thread pool sharing this converter.
-            with convert_lock:
-                result = converter.convert(str(file_path))
+            # Serialize convert() per-converter (Docling inference isn't
+            # thread-safe) AND bound it: a hung convert would otherwise stall
+            # the ingest task forever. convert runs in a daemon worker under
+            # the lock; on timeout the worker is leaked but the converter is
+            # evicted below so later parses aren't blocked.
+            result = _convert_with_timeout(
+                converter, str(file_path), convert_lock, _DOCLING_CONVERT_TIMEOUT,
+            )
+        except _DoclingConvertTimeout:
+            _DOCLING_CONVERTERS.pop(self._docling_signature(), None)
+            logger.warning(
+                "docling convert timed out after %ss: %s", _DOCLING_CONVERT_TIMEOUT, file_path,
+            )
+            raise DocumentError(
+                error_code=ErrorCode.DOCUMENT_PARSE_FAILED,
+                message=f"Docling parse timed out after {_DOCLING_CONVERT_TIMEOUT}s for '{file_path}'",
+            )
         except Exception as exc:
             raise DocumentError(
                 error_code=ErrorCode.DOCUMENT_PARSE_FAILED,

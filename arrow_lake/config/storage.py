@@ -127,6 +127,11 @@ class StorageConfig(BaseModel):
             "aws_access_key_id": self.s3_access_key,
             "aws_secret_access_key": self.s3_secret_key,
             "allow_anonymous": "false",
+            # Per-request ceiling for the Lance (object_store) Rust S3 client.
+            # Without it a stalled MinIO connection can hang a read/write/
+            # add_columns/create_index call indefinitely — stranding the
+            # background ingest task in "running". 60s bounds each request.
+            "request_timeout": "60s",
         }
         # LanceDB rust S3 client requires explicit allow_http for HTTP endpoints
         if self.s3_endpoint.startswith("http://"):

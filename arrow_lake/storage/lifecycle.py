@@ -54,8 +54,18 @@ class BlobLifecycleManager:
             self._s3_client = s3_client
         else:
             import boto3
+            from botocore.config import Config as BotoConfig
 
-            self._s3_client = boto3.client("s3")
+            # Explicit timeouts + bounded adaptive retries (was: no Config at
+            # all → botocore 60s/60s defaults + legacy retry amplification).
+            self._s3_client = boto3.client(
+                "s3",
+                config=BotoConfig(
+                    connect_timeout=10,
+                    read_timeout=60,
+                    retries={"max_attempts": 3, "mode": "adaptive"},
+                ),
+            )
 
     @property
     def config(self) -> LifecycleConfig:

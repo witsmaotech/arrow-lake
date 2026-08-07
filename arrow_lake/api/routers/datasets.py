@@ -8,7 +8,7 @@ import re
 import shutil
 import tempfile
 import uuid
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError, as_completed
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Path, Query, Request, UploadFile
@@ -54,6 +54,10 @@ router = APIRouter(prefix="/api/v1/datasets", tags=["datasets"])
 _INGEST_TIMEOUT = 600
 _ADMIN_TIMEOUT = 60
 _DOWNLOAD_WORKERS = 4
+# Total budget for a blob-download batch. One slow/hung download (boto3 default
+# retries amplify a flaky MinIO) must not stall the whole ingest; boto3's
+# per-call BotoConfig timeout bounds each download, this bounds the aggregate.
+_DOWNLOAD_TIMEOUT = 600
 
 
 def _schema_field_dicts(schema: Any) -> list[dict[str, Any]]:
@@ -164,8 +168,7 @@ def _is_s3_native(key: str) -> bool:
 def _resolve_blob_keys(blob_keys: list[str], lake: Any, tmp_dir: str) -> list[str]:
     blob_store = _get_blob_store(lake)
 
-    def _download_one(idx_key: tuple[int, str]) -> str:
-        idx, key = idx_key
+    def _download_one(idx: int, key: str) -> str:
         filename = key.rsplit("/", 1)[-1]
         # Use index prefix to prevent filename collisions
         dest = os.path.join(tmp_dir, f"{idx:04d}_{filename}")
@@ -175,8 +178,23 @@ def _resolve_blob_keys(blob_keys: list[str], lake: Any, tmp_dir: str) -> list[st
         return dest
 
     try:
+        paths: dict[int, str] = {}
+        # Bound the batch: as_completed + a total budget so one slow/hung blob
+        # download can't stall the whole ingest. Results are re-ordered to the
+        # input order (downstream zips them with the source file list).
         with ThreadPoolExecutor(max_workers=_DOWNLOAD_WORKERS) as pool:
-            return list(pool.map(_download_one, enumerate(blob_keys)))
+            futures = {pool.submit(_download_one, i, k): i for i, k in enumerate(blob_keys)}
+            try:
+                for fut in as_completed(futures, timeout=_DOWNLOAD_TIMEOUT):
+                    paths[futures[fut]] = fut.result()
+            except FuturesTimeoutError:
+                for f in futures:
+                    f.cancel()
+                raise OSError(
+                    f"Blob download exceeded {_DOWNLOAD_TIMEOUT}s "
+                    f"(completed {len(paths)}/{len(blob_keys)})"
+                )
+        return [paths[i] for i in range(len(blob_keys))]
     except Exception:
         # Clean up partial downloads on failure
         for f in os.listdir(tmp_dir):
