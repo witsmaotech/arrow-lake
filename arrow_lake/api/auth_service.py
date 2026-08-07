@@ -152,6 +152,7 @@ class AuthService:
             user_id=old_payload.sub,
             role=old_payload.role,
             permissions=old_payload.permissions,
+            username=old_payload.username,
         )
 
     def verify_token(self, token: str, *, require_refresh: bool = False) -> TokenPayload:
