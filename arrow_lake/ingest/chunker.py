@@ -58,8 +58,14 @@ _DOCLING_TOKENIZERS: dict[str, Any] = {}
 _DOCLING_TOKENIZER_LOCK = _threading.Lock()
 
 
-def _get_or_build_docling_tokenizer(name: str) -> Any:
-    """Return a process-shared HuggingFaceTokenizer for ``name``, building it once."""
+def _get_or_build_docling_tokenizer(name: str, max_tokens: int = 8192) -> Any:
+    """Return a process-shared HuggingFaceTokenizer for ``name``, building it once.
+
+    ``max_tokens`` must be passed explicitly: docling's HuggingFaceTokenizer auto-detects it
+    by resolving the tokenizer's name_or_path as a HF repo id, which fails for local paths
+    (e.g. the baked ``/opt/models/bge-m3``) → "max_tokens could not be determined".
+    8192 = bge-m3 max_seq_length(换其他 tokenizer 按其上下文窗口调)。
+    """
     cached = _DOCLING_TOKENIZERS.get(name)
     if cached is not None:
         return cached
@@ -70,7 +76,9 @@ def _get_or_build_docling_tokenizer(name: str) -> Any:
         from docling_core.transforms.chunker.tokenizer.huggingface import HuggingFaceTokenizer
         from transformers import AutoTokenizer
 
-        tok = HuggingFaceTokenizer(tokenizer=AutoTokenizer.from_pretrained(name))
+        tok = HuggingFaceTokenizer(
+            tokenizer=AutoTokenizer.from_pretrained(name), max_tokens=max_tokens,
+        )
         _DOCLING_TOKENIZERS[name] = tok
         return tok
 

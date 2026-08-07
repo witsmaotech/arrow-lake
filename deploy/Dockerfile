@@ -188,6 +188,10 @@ COPY console/ /app/console/
 # Reranker loads from RERANKER_MODEL=/opt/models/bge-reranker-v2-m3 (local path);
 # docling reads via HF_HOME. HF_HUB_OFFLINE=1 forbids any runtime network fetch.
 COPY --from=msmodels BAAI--bge-reranker-v2-m3/snapshots/master /opt/models/bge-reranker-v2-m3
+# v1.10.3 §5.10: bake bge-m3 tokenizer for HybridChunker (DOCLING_HYBRID 结构感知分块) offline.
+# tokenizer-only snapshot(config.json/sentencepiece.bpe.model/tokenizer.json, ~18MB);loaded via
+# local path docling_chunk_tokenizer=/opt/models/bge-m3(同 reranker 本地路径加载模式)。
+COPY --from=msmodels BAAI--bge-m3/snapshots/master /opt/models/bge-m3
 # Preserve models--<org>--<name>/ layer (HF cache layout docling expects).
 # Multi-source COPY flattens contents and loses the models-- dir → docling
 # "Cannot find cached snapshot folder". Copy each to its own models-- path.
