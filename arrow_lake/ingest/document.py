@@ -239,21 +239,28 @@ class _DoclingConvertTimeout(Exception):
     """Raised when ``converter.convert()`` exceeds the per-document ceiling."""
 
 
-def _convert_with_timeout(converter: Any, path: str, lock: Any, timeout: float) -> Any:
+def _convert_with_timeout(
+    converter: Any, path: str, lock: Any, timeout: float,
+    page_range: tuple[int, int] | None = None,
+) -> Any:
     """Run ``converter.convert(path)`` under ``lock`` in a daemon worker; bound it.
 
     Docling inference isn't thread-safe, so convert runs under the converter's
     RLock (acquired inside the worker). On timeout the worker is leaked (Python
     cannot kill threads) — the caller must evict the poisoned converter entry so
     subsequent parses get a fresh converter + lock instead of queueing behind
-    the hung thread.
+    the hung thread. ``page_range`` (1-based inclusive) is forwarded to
+    ``convert()`` for chunked conversion of large docs.
     """
     holder: dict[str, Any] = {}
 
     def _work() -> None:
         with lock:
             try:
-                holder["result"] = converter.convert(path)
+                if page_range is not None:
+                    holder["result"] = converter.convert(path, page_range=page_range)
+                else:
+                    holder["result"] = converter.convert(path)
             except BaseException as exc:  # noqa: BLE001 — surfaced to caller
                 holder["error"] = exc
 
@@ -515,21 +522,30 @@ class DocumentParser:
     def _parse_docling(
         self, file_path: Path, max_pages: int,
     ) -> ParsedDocument:
-        """Parse via Docling Python SDK（库内嵌，多格式 + 可插拔 OCR）。
+        """Parse via Docling Python SDK（库内嵌，多格式 + 可插拔 OCR + 大文档分块）。
 
         多格式（PDF/Office/HTML/图片/邮件）+ OCR（rapidocr 中文 / easyocr 多语言 /
-        tesseract 英文）。详见 ADR docs/docling-ocr-migration-adr.md。
+        tesseract 英文）。v1.10.3 起大文档自动分块转换(``docling_chunk_size`` 页一块),
+        把 convert() 的页栅格+推理张量内存从 O(总页数) 降到 O(块大小),解 552 页 OOM
+        (实测 6.2min / 1.48 p/s / 无 OOM)。详见 ADR docs/docling-ocr-migration-adr.md。
         """
         converter, convert_lock = self._get_docling_converter()
+        chunk_size = int(getattr(self._config, "docling_chunk_size", 0) or 0)
+
         try:
-            # Serialize convert() per-converter (Docling inference isn't
-            # thread-safe) AND bound it: a hung convert would otherwise stall
-            # the ingest task forever. convert runs in a daemon worker under
-            # the lock; on timeout the worker is leaked but the converter is
-            # evicted below so later parses aren't blocked.
-            result = _convert_with_timeout(
-                converter, str(file_path), convert_lock, _DOCLING_CONVERT_TIMEOUT,
-            )
+            if chunk_size <= 0:
+                # escape hatch:原单次 convert 路径(不分块)
+                result = _convert_with_timeout(
+                    converter, str(file_path), convert_lock, _DOCLING_CONVERT_TIMEOUT,
+                )
+                docs = [result.document]
+                conf = getattr(result, "confidence", None)
+                del result
+            else:
+                # 分块路径:page_range 切片,每块 convert 释放后再下一块,内存 O(块大小)
+                docs, conf = self._convert_docling_chunked(
+                    converter, convert_lock, file_path, chunk_size, max_pages,
+                )
         except _DoclingConvertTimeout:
             _DOCLING_CONVERTERS.pop(self._docling_signature(), None)
             logger.warning(
@@ -545,39 +561,131 @@ class DocumentParser:
                 message=f"Docling failed to parse '{file_path}': {exc}",
             ) from exc
 
-        doc = result.document
-        md = doc.export_to_markdown() or ""
-        # 置信度评估（docling v2.34+: mean_grade / low_grade），用于摄入质量门控
-        conf = getattr(result, "confidence", None)
-        if conf is not None:
-            logger.info(
-                "docling confidence file=%s mean_grade=%s low_grade=%s",
-                file_path, getattr(conf, "mean_grade", None), getattr(conf, "low_grade", None),
-            )
-        if not md:
+        if not docs:
             raise DocumentError(
                 error_code=ErrorCode.DOCUMENT_PARSE_FAILED,
                 message=f"Docling returned empty content for '{file_path}'",
             )
 
-        # 按真实页码拆分（item.prov[0].page_no）。此前把整篇 markdown 塞进 page 1，
-        # 导致 max_pages 无法切片、chunk 的 page_number 全为 1。
+        # 合并分块 DoclingDocument(concatenate)→ 单 doc,下游 page-building + HybridChunker 统一处理
+        merged = self._merge_docling_docs(docs)
+        # 置信度评估(docling v2.34+: mean_grade / low_grade),用于摄入质量门控
+        if conf is not None:
+            logger.info(
+                "docling confidence file=%s mean_grade=%s low_grade=%s",
+                file_path, getattr(conf, "mean_grade", None), getattr(conf, "low_grade", None),
+            )
+        return self._build_parsed_from_docling(merged, docs, max_pages, file_path)
+
+    def _convert_docling_chunked(
+        self, converter: Any, convert_lock: Any, file_path: Path,
+        chunk_size: int, max_pages: int,
+    ) -> tuple[list[Any], Any]:
+        """分块 convert:page_range 切片循环,每块释放后再下一块。返 (chunk_docs, last_confidence)。
+
+        内存有界:convert() 的页栅格+推理张量在 convert 返回后释放(每块 ``del result``);
+        仅保留轻量 DoclingDocument items 供末尾 concatenate。小文档自然=1 块
+        (page_range 覆盖全文,等价单次 convert)。
+        """
+        import gc
+        docs: list[Any] = []
+        last_conf: Any = None
+        start = 1
+        pages_done = 0
+        while True:
+            end = start + chunk_size - 1
+            result = _convert_with_timeout(
+                converter, str(file_path), convert_lock, _DOCLING_CONVERT_TIMEOUT,
+                page_range=(start, end),
+            )
+            doc = result.document
+            last_conf = getattr(result, "confidence", None) or last_conf
+            n = self._docling_page_count(doc)
+            del result
+            gc.collect()
+            if n == 0:
+                break  # 超过文档末尾
+            docs.append(doc)
+            pages_done += n
+            if n < chunk_size:
+                break  # 末尾不满一块 = 文档结束
+            if max_pages > 0 and pages_done >= max_pages:
+                break
+            start += chunk_size
+        logger.info(
+            "docling_chunked file=%s chunks=%d pages~%d chunk_size=%d",
+            file_path, len(docs), pages_done, chunk_size,
+        )
+        return docs, last_conf
+
+    @staticmethod
+    def _docling_page_count(doc: Any) -> int:
+        """doc.num_pages is a method in docling 2.x; call defensively."""
+        attr = getattr(doc, "num_pages", None)
+        try:
+            if callable(attr):
+                return int(attr())
+            if isinstance(attr, int):
+                return attr
+        except Exception:
+            pass
+        return 0
+
+    @staticmethod
+    def _merge_docling_docs(docs: list[Any]) -> Any:
+        """合并分块 DoclingDocument 为单个(``DoclingDocument.concatenate``)。
+
+        多块调 concatenate(官方合并,产出页号一致的单 doc);单块直接返回;
+        失败返 None → 下游 _build_parsed_from_docling 降级为逐块 markdown 拼接
+        (HybridChunker 退化为 RECURSIVE,文本不丢)。
+        """
+        if not docs:
+            return None
+        if len(docs) == 1:
+            return docs[0]
+        try:
+            from docling_core.types.doc import DoclingDocument
+            return DoclingDocument.concatenate(docs)
+        except Exception as exc:
+            logger.warning(
+                "docling concatenate failed (HybridChunker 将降级 RECURSIVE): %s", exc,
+            )
+            return None
+
+    @staticmethod
+    def _build_parsed_from_docling(
+        merged: Any, docs: list[Any], max_pages: int, file_path: Path,
+    ) -> ParsedDocument:
+        """从(合并后的)DoclingDocument 构建 ParsedDocument:markdown + 按真实页码拆分。
+
+        merged 非空时优先用(concatenate 后的单 doc,页号一致,HybridChunker 拿完整结构);
+        merged=None(concatenate 失败)时退化为遍历各块 doc 拼接 markdown。按 item.prov[0].page_no
+        拆页——此前把整篇 markdown 塞进 page 1,导致 max_pages 无法切片、chunk page_number 全为 1。
+        """
         pages_map: dict[int, list[str]] = {}
-        for item in getattr(doc, "texts", None) or []:
-            provs = getattr(item, "prov", None) or []
-            page_no = provs[0].page_no if provs else (len(pages_map) + 1)
-            txt = getattr(item, "text", None) or ""
-            if txt:
-                pages_map.setdefault(page_no, []).append(txt)
-        for tbl in getattr(doc, "tables", None) or []:
-            provs = getattr(tbl, "prov", None) or []
-            page_no = provs[0].page_no if provs else (len(pages_map) + 1)
-            try:
-                tmd = tbl.export_to_markdown(doc=doc) if callable(getattr(tbl, "export_to_markdown", None)) else ""
-            except Exception:
-                tmd = ""
-            if tmd:
-                pages_map.setdefault(page_no, []).append(tmd)
+        if merged is not None:
+            md = merged.export_to_markdown() or ""
+            src_docs = [merged]
+        else:
+            # fallback:concatenate 失败,逐块拼 markdown(丢精确页号保文本)
+            md = "\n\n".join((d.export_to_markdown() or "") for d in docs).strip()
+            src_docs = docs
+        for doc in src_docs:
+            for item in getattr(doc, "texts", None) or []:
+                provs = getattr(item, "prov", None) or []
+                page_no = provs[0].page_no if provs else (len(pages_map) + 1)
+                txt = getattr(item, "text", None) or ""
+                if txt:
+                    pages_map.setdefault(page_no, []).append(txt)
+            for tbl in getattr(doc, "tables", None) or []:
+                provs = getattr(tbl, "prov", None) or []
+                page_no = provs[0].page_no if provs else (len(pages_map) + 1)
+                try:
+                    tmd = tbl.export_to_markdown(doc=doc) if callable(getattr(tbl, "export_to_markdown", None)) else ""
+                except Exception:
+                    tmd = ""
+                if tmd:
+                    pages_map.setdefault(page_no, []).append(tmd)
         pages: list[tuple[int, str]] = []
         for page_no, parts in sorted(pages_map.items(), key=lambda kv: kv[0]):
             page_text = "\n\n".join(parts).strip()
@@ -585,15 +693,20 @@ class DocumentParser:
                 pages.append((page_no, page_text))
                 if max_pages > 0 and len(pages) >= max_pages:
                     break
-        if not pages:  # 拆页失败兜底：退回整篇，不丢数据
+        if not md:
+            raise DocumentError(
+                error_code=ErrorCode.DOCUMENT_PARSE_FAILED,
+                message=f"Docling returned empty content for '{file_path}'",
+            )
+        if not pages:  # 拆页失败兜底:退回整篇,不丢数据
             pages = [(1, md)]
-        # docling_doc 透传 DoclingDocument 对象，供 HybridChunker 结构感知分块消费。
+        # docling_doc 透传(merged 或 None),供 HybridChunker 结构感知分块消费。
         return ParsedDocument(
             text=md,
             pages=tuple(pages),
             page_count=len(pages),
             backend="docling",
-            docling_doc=doc,
+            docling_doc=merged,
         )
 
     def _resolve_docling_ocr(self) -> tuple[str, list[str]]:

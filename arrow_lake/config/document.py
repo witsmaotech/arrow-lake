@@ -61,6 +61,10 @@ class DocumentConfig(BaseModel):
     docling_vlm_preset: str = "granite_docling"
     # HybridChunker 分词器（chunk_strategy="docling_hybrid" 时用）；与嵌入模型对齐 → 默认 bge-m3。
     docling_chunk_tokenizer: str = "BAAI/bge-m3"
+    # 分块转换页数(v1.10.3 P0-3):大文档按 N 页一块走 page_range convert,把 convert() 的
+    # 页栅格+推理张量内存从 O(总页数) 降到 O(块大小),解 552 页 OOM(实测 6.2min/1.48p/s/无OOM)。
+    # 小文档自然=1块(page_range 覆盖全文,等价单次 convert);0=关闭分块退回原单次路径(escape hatch)。
+    docling_chunk_size: int = 50
     chunk_strategy: ChunkStrategy = ChunkStrategy.RECURSIVE
     chunk_size: int = 512
     chunk_overlap: int = 64
