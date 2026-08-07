@@ -332,7 +332,8 @@ $("#submit").addEventListener("click", async () => {
       const dup = tasks.find((t) =>
         /ingest/i.test(t.operation || "") &&
         t.dataset_name === ds &&
-        !/COMPLETED|SUCCESS|FAILED|ERROR|CANCELL/i.test(t.status || ""));
+        !/COMPLETED|SUCCESS|FAILED|ERROR|CANCELL/i.test(t.status || "") &&
+        (!t.created_at || (Date.now() - new Date(t.created_at).getTime()) < 30 * 60 * 1000));  // running 超 30min 视为僵尸(pre-P1.3 GC'd 任务会冻在 running,不再阻塞新提交)
       if (dup) {
         toast(`数据集「${ds}」已有摄入任务进行中,请等完成或去队列查看`, "warn", 5000);
         $("#resultPanel").classList.remove("hidden");
