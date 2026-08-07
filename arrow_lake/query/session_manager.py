@@ -21,11 +21,12 @@ import time
 import weakref
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 import duckdb
 
 from arrow_lake.config import OlapConfig, RedisConfig, StorageConfig
+from arrow_lake.exceptions import ErrorCode, QueryError
 from arrow_lake.core.metrics import (
     duckdb_memory_budget_mb,
     duckdb_pool_active_sessions,
@@ -44,7 +45,110 @@ from arrow_lake.query._db import DuckDBSession
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["DuckDBSessionManager", "SessionPoolStats"]
+__all__ = ["DuckDBSessionManager", "SessionPoolStats", "run_duckdb_interruptible"]
+
+# Grace period after conn.interrupt() for an in-flight query to unwind before
+# declaring it uninterruptible. Most queries — even slow ones — abort within
+# milliseconds because DuckDB polls its interrupt flag between operators.
+_INTERRUPT_GRACE_SECONDS = 5.0
+
+
+def run_duckdb_interruptible(
+    conn: duckdb.DuckDBPyConnection,
+    func: Callable[[], Any],
+    *,
+    timeout: float,
+    label: str = "duckdb_query",
+    on_uninterruptible: Callable[[], None] | None = None,
+) -> Any:
+    """Run ``func()`` in a worker thread; interrupt ``conn`` on timeout.
+
+    DuckDB 1.5.x has no ``statement_timeout`` (the SET is a no-op in the
+    bundled build), and Python threads cannot be killed — so a plain
+    ``asyncio.wait_for`` only abandons the awaitable, leaving the worker
+    thread (plus the DuckDB session and OLAP executor slot it holds) wedged
+    forever. A single stuck Lance scan thus exhausts the OLAP pool and
+    freezes all analytics (2026-08-07 outage).
+
+    This runs ``func()`` in a daemon thread. On timeout it calls
+    ``conn.interrupt()`` (thread-safe) — the in-flight ``execute()`` raises
+    ``InterruptException`` and the worker unwinds, releasing its session and
+    executor slot. If the query still won't die after a short grace period
+    (e.g. stuck in native code that doesn't poll the interrupt flag),
+    ``on_uninterruptible`` is invoked so the caller can mark the session for
+    forced closure; the daemon worker is then left to expire with the
+    process. Either way the calling thread is freed within ``timeout + grace``.
+
+    Args:
+        conn: The DuckDB connection ``func()`` runs against.
+        func: Callable performing the ``conn.execute(...).arrow()`` work.
+        timeout: Max seconds to wait before interrupting.
+        label: Log/metric label for the worker thread and log lines.
+        on_uninterruptible: Optional callback invoked when the query survives
+            the grace period (e.g. ``managed.mark_unhealthy`` so the session is
+            closed rather than recycled).
+
+    Returns:
+        ``func()``'s return value.
+
+    Raises:
+        QueryError: with ``ErrorCode.QUERY_TIMEOUT`` if ``func()`` does not
+            finish within ``timeout``. Any exception ``func()`` raises
+            otherwise (propagated unchanged).
+    """
+    holder: dict[str, Any] = {}
+
+    def _work() -> None:
+        try:
+            holder["result"] = func()
+        except BaseException as exc:  # noqa: BLE001 - re-raised on the caller thread
+            holder["error"] = exc
+
+    worker = threading.Thread(target=_work, daemon=True, name=f"duckdb-{label}")
+    worker.start()
+    worker.join(timeout)
+
+    if worker.is_alive():
+        # Timeout reached — interrupt the in-flight query from this thread.
+        try:
+            conn.interrupt()
+        except Exception as exc:  # noqa: BLE001 - interrupt must never mask the timeout
+            logger.warning("conn.interrupt() failed for %s: %s", label, exc)
+        worker.join(_INTERRUPT_GRACE_SECONDS)
+        if worker.is_alive():
+            logger.error(
+                "duckdb query '%s' uninterruptible after %.1fs grace; "
+                "worker daemonized",
+                label,
+                _INTERRUPT_GRACE_SECONDS,
+            )
+            if on_uninterruptible is not None:
+                with contextlib.suppress(Exception):
+                    on_uninterruptible()
+            raise QueryError(
+                error_code=ErrorCode.QUERY_TIMEOUT,
+                message=(
+                    f"DuckDB query '{label}' timed out after {timeout}s "
+                    f"and was interrupted"
+                ),
+            )
+        # The worker finished during the grace window. If it actually produced
+        # a result (the query completed right at the deadline, before the
+        # interrupt took effect), return it instead of falsely reporting a
+        # timeout — only the interrupted / no-result case is a real timeout.
+        if "result" not in holder:
+            raise QueryError(
+                error_code=ErrorCode.QUERY_TIMEOUT,
+                message=(
+                    f"DuckDB query '{label}' timed out after {timeout}s "
+                    f"and was interrupted"
+                ),
+            )
+        return holder["result"]
+
+    if "error" in holder:
+        raise holder["error"]
+    return holder.get("result")
 
 
 @dataclass(frozen=True)
@@ -90,6 +194,7 @@ class _ManagedSession:
         self._conn = conn
         self._manager = manager
         self._released = False
+        self._force_close = False
         self._created_at = created_at or time.monotonic()
         self._finalizer = weakref.finalize(
             self, type(self)._cleanup, self._manager, self._conn, self._created_at
@@ -105,6 +210,15 @@ class _ManagedSession:
             self._released = True
             self._finalizer.detach()
             self._manager._release_session(self)
+
+    def mark_unhealthy(self) -> None:
+        """Mark this connection to be closed (not recycled) on release.
+
+        Used when a query survived ``conn.interrupt()`` (stuck in native code):
+        the connection is suspect and must not return to the idle pool, and the
+        release path must skip its blocking ``SELECT 1`` health check.
+        """
+        self._force_close = True
 
     def __enter__(self) -> duckdb.DuckDBPyConnection:
         return self._conn
@@ -299,7 +413,12 @@ class DuckDBSessionManager:
 
     def _release_session(self, managed: _ManagedSession) -> None:
         """Release a managed session — return to idle pool or destroy."""
-        healthy = self._health_check(managed._conn)
+        if managed._force_close:
+            # Suspect connection (e.g. query survived interrupt) — close
+            # without a blocking health check so the pool isn't held.
+            healthy = False
+        else:
+            healthy = self._health_check(managed._conn)
         self._return_or_close(managed._conn, healthy, managed._created_at)
 
     def _return_or_close(

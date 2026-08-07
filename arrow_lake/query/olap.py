@@ -35,6 +35,7 @@ from arrow_lake.config import OlapConfig, StorageBackend, StorageConfig
 from arrow_lake.exceptions import ErrorCode, QueryError, StorageError
 from arrow_lake.query._db import create_duckdb_session
 from arrow_lake.query.lance_adapter import create_lance_scan_adapter
+from arrow_lake.query.session_manager import run_duckdb_interruptible
 from arrow_lake.validation import (
     DANGEROUS_SQL_KEYWORDS_RE,
     validate_identifier,
@@ -183,17 +184,27 @@ class OlapSearchBridge:
                 message=f"Failed to read dataset '{dataset_name}': {exc}",
             ) from exc
 
-        # Execute query with LanceScanAdapter (native) or PyArrow fallback
+        # Execute query with LanceScanAdapter (native) or PyArrow fallback.
+        # conn.execute() runs under an interrupt watchdog so a stuck scan is
+        # aborted (conn.interrupt()) at query_timeout_seconds instead of
+        # wedging the OLAP executor slot forever.
         with session as conn:
             self._register_dataset(conn, dataset_name, source)
             for name, extra_table in (tables or {}).items():
                 conn.register(name, extra_table)
-            result_reader = conn.execute(limited_sql).arrow()
-            # DuckDB may return RecordBatchReader — convert to Table
-            if hasattr(result_reader, "read_all"):
-                result_table = result_reader.read_all()
-            else:
-                result_table = result_reader
+
+            def _exec_query() -> Any:
+                reader = conn.execute(limited_sql).arrow()
+                # DuckDB may return RecordBatchReader — convert to Table
+                return reader.read_all() if hasattr(reader, "read_all") else reader
+
+            result_table = run_duckdb_interruptible(
+                conn,
+                _exec_query,
+                timeout=self._config.query_timeout_seconds,
+                label=f"olap_query:{dataset_name}",
+                on_uninterruptible=getattr(session, "mark_unhealthy", None),
+            )
 
         # Store in cache
         if self._cache is not None:
@@ -436,19 +447,27 @@ class OlapSearchBridge:
                 message=f"Failed to read dataset '{edges_dataset}': {exc}",
             ) from exc
 
-        with self._managed_session() as conn:
+        session = self._managed_session()
+        with session as conn:
             self._register_dataset(conn, edges_dataset, source)
             try:
-                result_reader = conn.execute(sql, [start_node]).arrow()
+
+                def _exec_graph() -> Any:
+                    reader = conn.execute(sql, [start_node]).arrow()
+                    return reader.read_all() if hasattr(reader, "read_all") else reader
+
+                result_table = run_duckdb_interruptible(
+                    conn,
+                    _exec_graph,
+                    timeout=self._config.query_timeout_seconds,
+                    label=f"graph_query:{edges_dataset}",
+                    on_uninterruptible=getattr(session, "mark_unhealthy", None),
+                )
             except duckdb.Error as exc:
                 raise QueryError(
                     error_code=ErrorCode.OLAP_QUERY_FAILED,
                     message=f"Graph traversal failed on '{edges_dataset}': {exc}",
                 ) from exc
-            if hasattr(result_reader, "read_all"):
-                result_table = result_reader.read_all()
-            else:
-                result_table = result_reader
 
         return OlapQueryResult(
             table=result_table,

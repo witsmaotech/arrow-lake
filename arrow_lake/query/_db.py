@@ -89,12 +89,17 @@ class DuckDBSession:
     def _configure_resources(self, conn: duckdb.DuckDBPyConnection) -> None:
         """Set memory limit, threads, statement timeout, and performance tuning.
 
-        statement_timeout is only available in DuckDB >= 1.2.0.
-        preserve_insertion_order and temp_directory are applied from OlapConfig.
+        ``statement_timeout`` is best-effort: the bundled DuckDB build rejects
+        it as an unrecognized parameter, so this SET is a no-op there. The real
+        per-query timeout is enforced by ``run_duckdb_interruptible`` (which
+        calls ``conn.interrupt()`` from a watchdog thread) at the execute site.
+        ``preserve_insertion_order`` and ``temp_directory`` come from OlapConfig.
         """
         conn.execute(f"SET memory_limit='{self._max_memory_mb}MB';")
         conn.execute(f"SET threads={self._threads};")
         try:
+            # Best-effort: honored in some DuckDB builds, a no-op in 1.5.x.
+            # Real timeout enforcement lives in run_duckdb_interruptible.
             conn.execute(f"SET statement_timeout='{self._timeout_seconds}s';")
         except duckdb.CatalogException:
             logger.debug(
