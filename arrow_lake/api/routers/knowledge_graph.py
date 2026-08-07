@@ -180,11 +180,13 @@ async def kg_build_info(
     lake: Any = Depends(get_lake),
     _user: dict = Depends(require_role(Role.VIEWER)),
 ) -> KGBuildInfoResponse:
-    """Pre-build diagnostics: whether a prior KA dump exists.
+    """Pre-build diagnostics: whether a prior KA build exists.
 
     Drives the kg.html label (首次构建 vs 增量构建) before the operator clicks.
-    ``has_prior_build`` = a KA dump exists for this dataset → an incremental
-    build can reuse prior extractions; otherwise this will be a first build.
+    ``has_prior_build`` = a build marker exists for this dataset on either
+    extraction path (dataset dump ``data.json`` OR map_reduce checkpoint
+    ``map_reduce.json``/``fed_chunks.json``) → an incremental build can reuse
+    prior extractions; otherwise this will be a first build.
     """
     from pathlib import Path
 
@@ -195,7 +197,7 @@ async def kg_build_info(
     has_prior = False
     if ka_base:
         try:
-            has_prior = ka_versioning.has_active_dump(Path(ka_base), dataset)
+            has_prior = ka_versioning.has_prior_build(Path(ka_base), dataset)
         except Exception:  # noqa: BLE001 — best-effort pre-build hint
             has_prior = False
     return KGBuildInfoResponse(

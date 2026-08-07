@@ -166,11 +166,17 @@ async function loadDatasets() {
 $("#ds").addEventListener("change", loadAll);
 $("#refresh").addEventListener("click", loadAll);
 
-// v1.10.3: build 前判定首次/增量(查 KA dump 是否存在),标注到 buildMode 标签
-async function loadBuildInfo(name) {
+// v1.10.3: build 前判定首次/增量,标注到 buildMode 标签。
+// vertexCount>0 是权威判据——图里已有顶点就绝不是首次构建(覆盖 map_reduce 路径
+// 无 data.json、host/容器 ka_base 错配、feature 前的老构建);仅空图才回退 build-info。
+async function loadBuildInfo(name, vertexCount) {
   const el = $("#buildMode");
   if (!el) return;
   if (!name) { el.style.display = "none"; return; }
+  if (vertexCount && vertexCount > 0) {
+    el.textContent = "🔄 增量构建"; el.className = "tag ok"; el.style.display = "";
+    return;
+  }
   try {
     const info = await request("GET", `/kg/build-info?dataset=${encodeURIComponent(name)}`);
     if (info.has_prior_build) { el.textContent = "🔄 增量构建"; el.className = "tag ok"; }
@@ -182,12 +188,12 @@ async function loadBuildInfo(name) {
 async function loadAll() {
   const name = curDs();
   if (!name) { $("#stats").innerHTML = '<div class="muted" style="padding:16px">选择数据集后加载…</div>'; $("#schemaPanel").style.display = "none"; loadBuildInfo(""); return; }
-  loadBuildInfo(name);
   $("#stats").innerHTML = '<div class="muted" style="padding:16px">加载中…</div>';
   let s;
   try { s = await request("GET", `/kg/stats?dataset=${encodeURIComponent(name)}`); }
-  catch (e) { $("#stats").innerHTML = `<div style="color:var(--danger);padding:12px">统计加载失败:${esc(e?.detail || e?.message || e)}</div>`; return; }
+  catch (e) { $("#stats").innerHTML = `<div style="color:var(--danger);padding:12px">统计加载失败:${esc(e?.detail || e?.message || e)}</div>`; loadBuildInfo(name, 0); return; }
   const v = s.total_vertices ?? 0, e = s.total_edges ?? 0;
+  loadBuildInfo(name, v);  // v>0 权威判增量,覆盖 build-info 的 KA-marker 误判(map_reduce 无 data.json)
   $("#stats").innerHTML = `<div class="grid g-4">
     <div class="kpi"><div class="label">图状态</div><div class="val" style="font-size:.9rem;color:${s.graph_enabled ? "var(--ok)" : "var(--fg-lo)"}">${s.graph_enabled ? "✓ 启用" : "—"}</div></div>
     <div class="kpi"><div class="label">顶点</div><div class="val">${v.toLocaleString()}</div></div>

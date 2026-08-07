@@ -112,8 +112,32 @@ def _copy_dump(src_dir: Path, dst_dir: Path) -> None:
 
 
 def has_active_dump(base_dir: Path, dataset_name: str) -> bool:
-    """True iff an active KA dump (data.json) exists for ``dataset_name``."""
+    """True iff an active KA dump (data.json) exists for ``dataset_name``.
+
+    Only the dataset-granularity path writes ``data.json``; the map_reduce path
+    (default for large datasets since v1.9.12) writes ``map_reduce.json`` +
+    ``fed_chunks.json`` instead. For "has this ever been built?" use
+    :func:`has_prior_build`, which recognizes both paths' markers.
+    """
     return (_ka_dir(base_dir, dataset_name) / "data.json").is_file()
+
+
+# Build markers that indicate a prior kg_build ran for this dataset, regardless
+# of extraction granularity. ``data.json`` = dataset path; ``map_reduce.json`` /
+# ``fed_chunks.json`` = map_reduce path. ``fed_chunks.json`` is the canonical
+# shared marker (written by both paths — see KGBuilder._execute_build).
+_BUILD_MARKERS = ("data.json", "map_reduce.json", "fed_chunks.json")
+
+
+def has_prior_build(base_dir: Path, dataset_name: str) -> bool:
+    """True iff any KA build marker exists for ``dataset_name`` (either path).
+
+    Drives the kg.html 首次/增量 pre-build label. Unlike :func:`has_active_dump`
+    this recognizes the map_reduce checkpoint, so a dataset built via the default
+    large-file path (no ``data.json``) is correctly reported as rebuildable.
+    """
+    ka_dir = _ka_dir(base_dir, dataset_name)
+    return any((ka_dir / marker).is_file() for marker in _BUILD_MARKERS)
 
 
 def archive_current(base_dir: Path, dataset_name: str) -> dict | None:
