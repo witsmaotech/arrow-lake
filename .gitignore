@@ -119,6 +119,10 @@ notebooks
 
 deploy/certs/
 
+# OLAP ontime benchmark — runner 自动产物(带时间戳的 json/md);保留手工深度报告 report.md
+tests/benchmark/results/*.json
+tests/benchmark/results/ontime_*T*.md
+
 # Build artifacts
 deploy/uv-local
 deploy/uvx-local
