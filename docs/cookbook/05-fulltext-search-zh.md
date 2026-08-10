@@ -2,6 +2,8 @@
 
 > 基于 LanceDB native FTS (ICU) 全文索引 + jieba 中文分词的 BM25 检索。
 
+> **贯穿数据集**：沿用 [04 向量搜索](./04-vector-search-zh.md) 引入的 `papers` 论文库——本章改为以关键词（BM25）而非语义向量检索同一语料。
+
 ***
 
 ## 1. 快速示例
@@ -13,27 +15,16 @@ import pyarrow as pa
 
 lake = Lake(base_uri="./lake_demo")
 
-# 写入带文本列的 dataset
-docs = pa.table({
-    "id": [1, 2, 3, 4, 5],
-    "title": ["机器学习入门指南", "深度学习与神经网络", "自然语言处理实战",
-              "Python 数据分析", "推荐系统算法详解"],
-    "text_content": [
-        "机器学习是人工智能的核心分支，涵盖了监督学习和无监督学习等技术",
-        "深度学习通过多层神经网络实现特征自动提取，广泛应用于计算机视觉",
-        "自然语言处理利用深度学习模型实现文本分类、情感分析和机器翻译",
-        "Python 提供了丰富的数据分析库，如 Pandas 和 NumPy",
-        "推荐系统结合协同过滤和内容推荐，为用户提供个性化服务",
-    ],
-    "category": ["AI", "AI", "AI", "数据", "AI"],
-})
-lake.create_dataset("docs", docs)
+# 写入我们的 papers 研究论文库（FTS 无需向量列）
+import pyarrow.csv as pacsv
+papers = pacsv.read_csv("datas/papers/metadata_zh.csv")
+lake.create_dataset("papers", papers)
 
 # 创建全文索引 (默认使用 jieba 中文分词)
-lake.create_fts_index("docs", fts_column="text_content")
+lake.create_fts_index("papers", fts_column="text_content")
 
 # 执行全文搜索
-result = lake.text_search("docs", query="机器学习入门", top_k=10)
+result = lake.text_search("papers", query="检索增强生成", top_k=10)
 for i in range(result.table.num_rows):
     doc_id = result.table.column("id")[i].as_py()
     score = result.table.column("_score")[i].as_py()
@@ -49,13 +40,13 @@ lake.shutdown()
 
 ```python
 # 在默认列 (text_content) 上创建索引
-lake.create_fts_index("docs")
+lake.create_fts_index("papers")
 
 # 指定索引列
-lake.create_fts_index("docs", fts_column="title")
+lake.create_fts_index("papers", fts_column="title")
 
 # 强制重建索引
-lake.create_fts_index("docs", fts_column="text_content", replace=True)
+lake.create_fts_index("papers", fts_column="text_content", replace=True)
 ```
 
 ### API 签名
@@ -82,14 +73,14 @@ def create_fts_index(
 
 ```python
 # 基本搜索
-result = lake.text_search("docs", query="深度学习模型")
+result = lake.text_search("papers", query="大语言模型")
 print(f"查询：{result.query}, 结果：{result.row_count} 条，最高分：{result.max_score:.4f}")
 
 # 限制返回数量
-result = lake.text_search("docs", query="Python", top_k=5)
+result = lake.text_search("papers", query="神经网络", top_k=5)
 
 # 指定搜索列
-result = lake.text_search("docs", query="推荐算法", fts_column="title")
+result = lake.text_search("papers", query="检索", fts_column="title")
 ```
 
 ### API 签名
@@ -112,7 +103,7 @@ def text_search(
 
 ```python
 # 异步版本 (v1.8.0 #17): 保持事件循环响应,适合并发 async handler
-result = await lake.text_search_async("docs", query="机器学习", top_k=10)
+result = await lake.text_search_async("papers", query="神经网络", top_k=10)
 ```
 
 `text_search_async` 签名与 `text_search` 完全一致,内部经 `asyncio.to_thread` 包装
@@ -134,7 +125,7 @@ class FullTextSearchResult:
 ### 遍历结果
 
 ```python
-result = lake.text_search("docs", query="自然语言处理", top_k=3)
+result = lake.text_search("papers", query="大语言模型", top_k=3)
 ids = result.table.column("id").to_pylist()
 scores = result.table.column("_score").to_pylist()
 titles = result.table.column("title").to_pylist()
@@ -183,7 +174,7 @@ fts_config = FullTextSearchConfig(
     jieba_user_dict="./custom_dict.txt",
 )
 lake = Lake(base_uri="./lake", fts=fts_config)
-lake.create_fts_index("docs")
+lake.create_fts_index("papers")
 ```
 
 ***
@@ -242,18 +233,18 @@ config = FullTextSearchConfig(
 
 ```python
 # 单条件过滤
-result = lake.text_search("docs", query="深度学习", where="category = 'AI'")
+result = lake.text_search("papers", query="检索", where="category = '自然语言处理'")
 
 # 数值过滤
-result = lake.text_search("docs", query="NLP", where="quality_score > 0.8")
+result = lake.text_search("papers", query="大语言模型", where="word_count > 5000")
 
 # 组合条件
-result = lake.text_search("docs", query="机器学习",
-                          where="category = 'AI' AND year >= 2023")
+result = lake.text_search("papers", query="神经网络",
+                          where="category = '自然语言处理' AND year >= 2023")
 
 # OR 条件
-result = lake.text_search("docs", query="数据分析",
-                          where="category = 'AI' OR category = '数据'")
+result = lake.text_search("papers", query="强化学习",
+                          where="venue = 'NeurIPS' OR venue = 'AAAI'")
 ```
 
 `where` 子句经过 `validate_where_clause` 安全验证，会阻止 SQL 注入和数据修改语句。非法表达式将抛出 `QueryError`。
@@ -268,10 +259,10 @@ from arrow_lake import Lake
 lake = Lake(base_uri="./data")
 
 # 删除全文搜索索引
-lake.delete_fts_index("docs")
+lake.delete_fts_index("papers")
 
 # 获取 FTS 索引信息
-info = lake.get_fts_index_info("docs")
+info = lake.get_fts_index_info("papers")
 if info is not None:
     print(f"FTS 索引：{info['name']}, 列：{info['columns']}")
 else:
@@ -291,7 +282,7 @@ curl -X POST http://localhost:8000/api/v1/datasets/docs/index/fts \
 # 全文搜索
 curl -X POST http://localhost:8000/api/v1/datasets/docs/search/fts \
   -H "Content-Type: application/json" \
-  -d '{"query": "机器学习入门", "top_k": 10}'
+  -d '{"query": "检索增强生成", "top_k": 10}'
 ```
 
 | 端点                        | 请求模型                    | 响应模型                     |
