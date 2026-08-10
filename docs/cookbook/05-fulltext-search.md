@@ -2,6 +2,8 @@
 
 > BM25 retrieval powered by LanceDB native FTS (ICU) full-text indexing with jieba Chinese tokenization.
 
+> **Running dataset.** We continue with the `papers` research library introduced in [04 - Vector Search](./04-vector-search.md) — now indexed for keyword (BM25) retrieval instead of semantic vectors.
+
 ***
 
 ## 1. Quick Start
@@ -13,27 +15,16 @@ import pyarrow as pa
 
 lake = Lake(base_uri="./lake_demo")
 
-# Ingest a dataset with text columns
-docs = pa.table({
-    "id": [1, 2, 3, 4, 5],
-    "title": ["Introduction to Machine Learning", "Deep Learning & Neural Networks",
-              "NLP in Practice", "Python Data Analysis", "Recommendation Systems Explained"],
-    "text_content": [
-        "Machine learning is a core branch of AI covering supervised and unsupervised learning",
-        "Deep learning enables automatic feature extraction through multi-layer neural networks",
-        "NLP leverages deep learning models for text classification, sentiment analysis, and translation",
-        "Python offers rich data analysis libraries such as Pandas and NumPy",
-        "Recommendation systems combine collaborative filtering and content-based approaches",
-    ],
-    "category": ["AI", "AI", "AI", "Data", "AI"],
-})
-lake.create_dataset("docs", docs)
+# Ingest our papers research library (FTS needs no vector column)
+import pyarrow.csv as pacsv
+papers = pacsv.read_csv("datas/papers/metadata.csv")
+lake.create_dataset("papers", papers)
 
 # Create a full-text index (uses jieba Chinese tokenization by default)
-lake.create_fts_index("docs", fts_column="text_content")
+lake.create_fts_index("papers", fts_column="text_content")
 
 # Execute a full-text search
-result = lake.text_search("docs", query="machine learning", top_k=10)
+result = lake.text_search("papers", query="attention mechanism", top_k=10)
 for i in range(result.table.num_rows):
     doc_id = result.table.column("id")[i].as_py()
     score = result.table.column("_score")[i].as_py()
@@ -49,13 +40,13 @@ lake.shutdown()
 
 ```python
 # Create index on the default column (text_content)
-lake.create_fts_index("docs")
+lake.create_fts_index("papers")
 
 # Specify the index column
-lake.create_fts_index("docs", fts_column="title")
+lake.create_fts_index("papers", fts_column="title")
 
 # Force rebuild an existing index
-lake.create_fts_index("docs", fts_column="text_content", replace=True)
+lake.create_fts_index("papers", fts_column="text_content", replace=True)
 ```
 
 ### API Signature
@@ -82,14 +73,14 @@ When `tokenizer_type` is `"jieba"` (the default), `create_index` will:
 
 ```python
 # Basic search
-result = lake.text_search("docs", query="deep learning models")
+result = lake.text_search("papers", query="retrieval augmented generation")
 print(f"Query: {result.query}, Results: {result.row_count}, Top score: {result.max_score:.4f}")
 
 # Limit the number of results
-result = lake.text_search("docs", query="Python", top_k=5)
+result = lake.text_search("papers", query="diffusion", top_k=5)
 
 # Search a specific column
-result = lake.text_search("docs", query="recommendation algorithms", fts_column="title")
+result = lake.text_search("papers", query="attention", fts_column="title")
 ```
 
 ### API Signature
@@ -112,7 +103,7 @@ def text_search(
 
 ```python
 # Async variant (v1.8.0 #17): keeps the event loop responsive for concurrent async handlers
-result = await lake.text_search_async("docs", query="machine learning", top_k=10)
+result = await lake.text_search_async("papers", query="transformer", top_k=10)
 ```
 
 `text_search_async` has the same signature as `text_search`. It is wrapped via
@@ -135,7 +126,7 @@ class FullTextSearchResult:
 ### Iterating Over Results
 
 ```python
-result = lake.text_search("docs", query="natural language processing", top_k=3)
+result = lake.text_search("papers", query="low-rank adaptation", top_k=3)
 ids = result.table.column("id").to_pylist()
 scores = result.table.column("_score").to_pylist()
 titles = result.table.column("title").to_pylist()
@@ -184,7 +175,7 @@ fts_config = FullTextSearchConfig(
     jieba_user_dict="./custom_dict.txt",
 )
 lake = Lake(base_uri="./lake", fts=fts_config)
-lake.create_fts_index("docs")
+lake.create_fts_index("papers")
 ```
 
 ***
@@ -243,18 +234,18 @@ config = FullTextSearchConfig(
 
 ```python
 # Single-condition filter
-result = lake.text_search("docs", query="deep learning", where="category = 'AI'")
+result = lake.text_search("papers", query="attention", where="category = 'NLP'")
 
 # Numeric filter
-result = lake.text_search("docs", query="NLP", where="quality_score > 0.8")
+result = lake.text_search("papers", query="diffusion", where="word_count > 5000")
 
 # Combined conditions
-result = lake.text_search("docs", query="machine learning",
-                          where="category = 'AI' AND year >= 2023")
+result = lake.text_search("papers", query="transformer",
+                          where="category = 'NLP' AND year >= 2023")
 
 # OR conditions
-result = lake.text_search("docs", query="data analysis",
-                          where="category = 'AI' OR category = 'Data'")
+result = lake.text_search("papers", query="reinforcement",
+                          where="venue = 'NeurIPS' OR venue = 'ICLR'")
 ```
 
 The `where` clause is safely validated by `validate_where_clause`, which blocks SQL injection and data modification statements. Invalid expressions raise a `QueryError`.
@@ -269,10 +260,10 @@ from arrow_lake import Lake
 lake = Lake(base_uri="./data")
 
 # Delete the FTS index
-lake.delete_fts_index("docs")
+lake.delete_fts_index("papers")
 
 # Get FTS index information
-info = lake.get_fts_index_info("docs")
+info = lake.get_fts_index_info("papers")
 if info is not None:
     print(f"FTS index: {info['name']}, columns: {info['columns']}")
 else:
@@ -292,7 +283,7 @@ curl -X POST http://localhost:8000/api/v1/datasets/docs/index/fts \
 # Full-text search
 curl -X POST http://localhost:8000/api/v1/datasets/docs/search/fts \
   -H "Content-Type: application/json" \
-  -d '{"query": "machine learning", "top_k": 10}'
+  -d '{"query": "attention mechanism", "top_k": 10}'
 ```
 
 | Endpoint                  | Request Model           | Response Model           |
