@@ -57,7 +57,7 @@ ingest → index → { search | SQL | RAG | GraphRAG } → export / govern
 | Run something working in 5 minutes | [01 Quickstart](./01-quickstart.md) |
 | **See the whole platform end-to-end (recipes)** | [19 REST Recipes](./19-rest-recipes.md) |
 | Ingest your own data | [02 Ingestion](./02-ingestion.md) |
-| Vector / full-text / hybrid search | [04](./04-vector-search.md) · [05](./05-full-text-search.md) · [06](./06-hybrid-faceted.md) |
+| Vector / full-text / hybrid search | [04](./04-vector-search.md) · [05](./05-fulltext-search.md) · [06](./06-hybrid-faceted.md) |
 | OLAP SQL analytics | [07 OLAP](./07-olap-analytics.md) |
 | RAG & GraphRAG | [08 RAG](./08-rag-pipeline.md) · [09 KG](./09-knowledge-graph.md) |
 | Configure / deploy | [03 Config](./03-configuration.md) · [12 Deployment](./12-deployment.md) |

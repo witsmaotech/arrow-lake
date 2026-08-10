@@ -150,7 +150,7 @@ arrow-lake --base-uri ./my_lake ingest files sales datas/transactions/sales_2024
 
 ### Search
 
-> The `users` dataset built above has no text/vector columns, so search needs a dataset with them. The fastest way to *see* search in action is the built-in demo (it creates searchable data), or jump to [04 Vector Search](./04-vector-search.md) / [05 Full-Text Search](./05-full-text-search.md).
+> The `users` dataset built above has no text/vector columns, so search needs a dataset with them. The fastest way to *see* search in action is the built-in demo (it creates searchable data), or jump to [04 Vector Search](./04-vector-search.md) / [05 Full-Text Search](./05-fulltext-search.md).
 
 ```bash
 # Run the built-in demo — creates a dataset with text + vectors, then runs search
