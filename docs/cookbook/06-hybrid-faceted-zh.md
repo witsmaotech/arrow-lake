@@ -2,6 +2,8 @@
 
 > RRF 融合向量搜索 + 全文搜索实现混合检索，DuckDB CUBE 实现分面导航，加权 RRF 实现多列 Ensemble 搜索。
 
+> **贯穿数据集**：沿用 [04](./04-vector-search-zh.md)/[05](./05-fulltext-search-zh.md) 的 `papers` 论文库——本章融合语义向量与 BM25 检索，并按 `category`/`venue`/`year` 分面切片。
+
 ***
 
 ## 1. 混合搜索
@@ -9,38 +11,23 @@
 ```python
 """混合搜索最小可运行示例"""
 from arrow_lake import Lake
-import pyarrow as pa
 import numpy as np
 
 lake = Lake(base_uri="./lake_demo")
 
-# 写入带文本和 embedding 的 dataset
-np.random.seed(42)
-titles = ["轻量级跑步运动鞋", "专业篮球鞋高帮款", "商务休闲皮鞋",
-          "越野跑鞋防滑", "夏季透气运动凉鞋", "女士瑜伽健身鞋"]
-embeddings = np.random.randn(len(titles), 128).astype(np.float32).tolist()
-
-products = pa.table({
-    "id": list(range(1, len(titles) + 1)),
-    "title": titles,
-    "category": ["running", "basketball", "casual", "running", "casual", "fitness"],
-    "brand": ["Nike", "Adidas", "Clarks", "Salomon", "Teva", "Lululemon"],
-    "text_content": [f"{t}，品牌：{b}" for t, b in zip(titles,
-        ["Nike", "Adidas", "Clarks", "Salomon", "Teva", "Lululemon"])],
-    "text_embedding": embeddings,
-})
-lake.create_dataset("products", products)
+# 摄取我们的 papers 研究论文库（text_content 自动编码为 text_embedding）
+lake.ingest("papers", ["datas/papers/metadata_zh.csv"])
 
 # 创建索引
-lake.create_vector_index("products", vector_column="text_embedding")
-lake.create_fts_index("products", fts_column="text_content")
+lake.create_vector_index("papers", vector_column="text_embedding")
+lake.create_fts_index("papers", fts_column="text_content")
 
-# 混合搜索
-query_vec = np.random.randn(128).astype(np.float32).tolist()
+# 混合搜索（语义向量 + 关键词 BM25，经 RRF 融合）
+query_vec = np.random.randn(1024).astype(np.float32).tolist()  # 替换为真实查询向量
 result = lake.hybrid_search(
-    "products",
+    "papers",
     query_vector=query_vec,
-    query_text="轻量级运动鞋",
+    query_text="注意力机制",
     top_k=5,
 )
 print(f"混合搜索 -> {result.row_count} 条结果 (rrf_k={result.rrf_k})")
@@ -68,14 +55,15 @@ score(doc) = SUM( 1 / (rank(doc, list_i) + k) )
 
 ```text
 向量搜索 top 3:              全文搜索 top 3:
-  rank 1: 越野跑鞋              rank 1: 轻量级跑步运动鞋
-  rank 2: 登山徒步鞋            rank 2: 儿童减震跑步鞋
-  rank 3: 篮球鞋                rank 3: 夏季透气凉鞋
+  rank 1: 注意力机制            rank 1: 注意力机制
+  rank 2: 检索增强生成          rank 2: 检索增强生成
+  rank 3: 知识图谱             rank 3: 大语言模型
 
            +-- RRF 融合 (k=60) --+
                       |
-  rank 1: 轻量级跑步运动鞋  (1/(1+60) + 1/(1+60) = 0.0328)
-  rank 1: 越野跑鞋            (1/(1+60) + 0 = 0.0164)
+  rank 1: 注意力机制            (1/(1+60) + 1/(1+60) = 0.0328)
+  rank 2: 检索增强生成          (1/(1+61) + 1/(1+61) = 0.0323)
+  rank 3: 知识图谱             (1/(1+62) + 0         = 0.0159)
 ```
 
 | rrf\_k      | 效果        | 推荐场景   |
@@ -143,12 +131,12 @@ Arrow Lake 自动选择执行路径：优先 DuckDB 原生 `lance_hybrid_search(
 `faceted_search` 在向量搜索基础上，通过 DuckDB `GROUP BY CUBE` 计算各维度分面计数，适用于电商/内容平台分类导航。
 
 ```python
-query_vec = encoder.embed_text("运动鞋")
+query_vec = encoder.embed_text("注意力")
 
 result = lake.faceted_search(
-    "products",
+    "papers",
     query_vector=query_vec,
-    facets=["category", "brand"],
+    facets=["category", "venue", "year"],
     top_k=10,
 )
 
@@ -168,12 +156,16 @@ for dim, values in facet_dict.items():
         print(f"    {val}: {cnt}")
 # 输出：
 #   [category]
-#     running: 2
-#     casual: 2
+#     自然语言处理: 156
+#     计算机视觉: 172
 #     ...
-#   [brand]
-#     Nike: 1
-#     Adidas: 1
+#   [venue]
+#     AAAI: ...
+#     NeurIPS: ...
+#     ...
+#   [year]
+#     2024: ...
+#     2023: ...
 #     ...
 ```
 
@@ -187,7 +179,7 @@ def faceted_search(
     *,
     facets: list[str] | None = None, # 分面维度列名
     top_k: int = 10,
-    vector_column: str = "embedding",
+    vector_column: str = "embedding",  # SDK 默认；自动嵌入列传 "text_embedding"
     where: str | None = None,        # 元数据过滤
     version: int | None = None,      # 数据集版本 (时间旅行查询)
 ) -> FacetedSearchResult: ...
@@ -199,7 +191,7 @@ def faceted_search(
 @dataclass(frozen=True)
 class FacetCount:
     name: str     # 分面维度 (如 "category")
-    value: str    # 分面值 (如 "running")
+    value: str    # 分面值 (如 "NeurIPS")
     count: int    # 记录数
 
 @dataclass(frozen=True)
@@ -218,24 +210,24 @@ class FacetedSearchResult:
 
 ```python
 # 1. 用户搜索 -> 展示分面选项 (侧边栏)
-result = lake.faceted_search("products", query_vector=query_vec,
-                              facets=["category", "brand"])
+result = lake.faceted_search("papers", query_vector=query_vec,
+                              facets=["category", "venue"])
 
-# 2. 用户点击 "running" 筛选 -> 分面计数自动更新
-result = lake.faceted_search("products", query_vector=query_vec,
-                              facets=["category", "brand"],
-                              where="category = 'running'")
+# 2. 用户点击「自然语言处理」筛选 -> 分面计数自动更新
+result = lake.faceted_search("papers", query_vector=query_vec,
+                              facets=["category", "venue"],
+                              where="category = '自然语言处理'")
 ```
 
 ### 标量索引加速
 
-对分面维度列建标量索引可显著加速 `GROUP BY CUBE` 聚合。`FacetedSearchConfig.scalar_index_type_map` 按列基数自动选择索引类型（低基数如 `modality`/`source`/`doc_type` → `BITMAP`，其余 → `BTREE`）。批量建索引：
+对分面维度列建标量索引可显著加速 `GROUP BY CUBE` 聚合。`FacetedSearchConfig.scalar_index_type_map` 按列基数自动选择索引类型（低基数如 `category`/`venue`/`year` → `BITMAP`，其余 → `BTREE`）。批量建索引：
 
 ```python
 # 对默认分面列建标量索引（按 scalar_index_type_map 选 BTREE/BITMAP）
-lake.create_facet_indexes("products")
+lake.create_facet_indexes("papers")
 # 或对单列建索引
-lake.create_scalar_index("products", column="category")
+lake.create_scalar_index("papers", column="category")
 ```
 
 ***
@@ -245,9 +237,9 @@ lake.create_scalar_index("products", column="category")
 `ensemble_search` 在多个 embedding 列上执行向量搜索，通过加权 RRF 融合。适用于多模态 embedding 场景。
 
 ```python
-# 假设 products 有 text_embedding 和 image_embedding 两列
+# 假设：若 papers 还有一列 image_embedding（例如论文图表的嵌入）
 result = lake.ensemble_search(
-    "products",
+    "papers",
     query_vector=query_vec,
     columns=["text_embedding", "image_embedding"],
     weights={"text_embedding": 0.7, "image_embedding": 0.3},
@@ -288,8 +280,9 @@ CLIP 嵌入把文本和图像映射到同一向量空间，支持「以文搜图
 
 ```python
 # 文本 → 图像 embedding，与 /embed/image 同空间
-query_vec = lake.encode_text_clip("红色运动鞋")
-results = lake.search("products", query_vector=query_vec, vector_column="image_embedding")
+# 需要一列 image_embedding（例如论文图表经 CLIP 嵌入）
+query_vec = lake.encode_text_clip("神经网络结构图")
+results = lake.search("papers", query_vector=query_vec, vector_column="image_embedding")
 ```
 
 ***
@@ -334,12 +327,12 @@ results = lake.search("products", query_vector=query_vec, vector_column="image_e
 # 混合搜索
 curl -X POST http://localhost:8000/api/v1/datasets/products/search/hybrid \
   -H "Content-Type: application/json" \
-  -d '{"query_vector": [0.1, 0.2], "query_text": "轻量级运动鞋", "top_k": 10}'
+  -d '{"query_vector": [0.1, 0.2], "query_text": "注意力机制", "top_k": 10}'
 
 # 分面搜索
 curl -X POST http://localhost:8000/api/v1/datasets/products/search/faceted \
   -H "Content-Type: application/json" \
-  -d '{"query_vector": [0.1, 0.2], "facets": ["category", "brand"]}'
+  -d '{"query_vector": [0.1, 0.2], "facets": ["category", "venue"]}'
 
 # Ensemble 搜索
 curl -X POST http://localhost:8000/api/v1/datasets/products/search/ensemble \
