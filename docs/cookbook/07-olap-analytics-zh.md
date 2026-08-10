@@ -5,6 +5,8 @@
 Arrow Lake 通过 DuckDB 零拷贝 Arrow 集成提供高性能 OLAP 分析能力，支持
 GROUP BY 聚合、窗口函数、JOIN 以及物化视图。
 
+> **贯穿数据集**：沿用 `papers` 论文库——本章把它当作结构化表分析：聚合 `word_count`、按 `category`/`venue`/`year` 切片、用窗口函数为论文排名。
+
 > 前置准备：确保已安装依赖 `pip install arrow-lake[olap]`，并有一个
 > 已写入数据的 Lance 数据集。
 
@@ -15,24 +17,18 @@ GROUP BY 聚合、窗口函数、JOIN 以及物化视图。
 `Lake.olap_query()` 在 Lance 数据集上执行只读 SQL（SELECT 语句），返回
 `OlapQueryResult`，其中 `.table` 是 PyArrow Table，可直接转 Pandas。
 
-> 本章示例查询一个 `sales` 数据集。先用下面代码建一份示例数据（若你已有自己的数据集，把下文 `"sales"` 换成你的数据集名即可）：
+> 本章示例查询 `papers` 研究论文库。先用下面代码载入（若你已有自己的数据集，把下文 `"papers"` 换成你的数据集名即可）：
 
 ```python
-import pyarrow as pa
+import pyarrow.csv as pacsv
 from arrow_lake import Lake
 
 lake = Lake(base_uri="./data")
 
-# 先建示例 sales 数据集（已存在则跳过本块）
-sales = pa.table({
-    "category": ["electronics", "books", "electronics", "food", "books",
-                 "food", "electronics", "books"] * 10,   # 80 行
-    "amount":  [1200, 45, 899, 23, 60, 15, 2300, 38] * 10,
-    "region":  ["east", "west", "east", "north", "west",
-                "north", "south", "east"] * 10,
-})
-lake.create_dataset("sales", sales)
-print(f"sales 已创建: {sales.num_rows} 行")
+# 载入 papers 研究论文库（OLAP 无需向量列）
+papers = pacsv.read_csv("datas/papers/metadata_zh.csv")
+lake.create_dataset("papers", papers)
+print(f"papers 已载入: {papers.num_rows} 行")
 ```
 
 ```python
@@ -42,9 +38,9 @@ lake = Lake(base_uri="./data")
 
 # 按品类汇总销售额
 result = lake.olap_query(
-    "sales",
-    "SELECT category, SUM(amount) as total, COUNT(*) as cnt "
-    "FROM sales GROUP BY category ORDER BY total DESC",
+    "papers",
+    "SELECT category, AVG(word_count) AS avg_words, COUNT(*) as cnt "
+    "FROM papers GROUP BY category ORDER BY avg_words DESC",
 )
 print(f"返回 {result.row_count} 行，{result.column_count} 列")
 print(result.table.to_pandas())
@@ -54,8 +50,8 @@ print(result.table.to_pandas())
 
 ```python
 result = lake.olap_query(
-    "sales",
-    "SELECT * FROM sales",
+    "papers",
+    "SELECT * FROM papers",
     max_rows=500,  # 最多返回 500 行
 )
 ```
@@ -72,22 +68,22 @@ DuckDB 支持完整的窗口函数语法，适合排名、累计求和、环比�
 
 ```python
 result = lake.olap_query(
-    "sales",
+    "papers",
     """
     SELECT
-        product,
+        title,
         category,
-        amount,
+        word_count,
         ROW_NUMBER() OVER (
-            PARTITION BY category ORDER BY amount DESC
+            PARTITION BY category ORDER BY word_count DESC
         ) AS category_rank,
-        SUM(amount) OVER (
+        SUM(word_count) OVER (
             PARTITION BY category
         ) AS category_total,
-        amount - LAG(amount, 1) OVER (
-            PARTITION BY category ORDER BY amount DESC
+        word_count - LAG(word_count, 1) OVER (
+            PARTITION BY category ORDER BY word_count DESC
         ) AS diff_from_prev
-    FROM sales
+    FROM papers
     ORDER BY category, category_rank
     """,
 )
@@ -98,11 +94,11 @@ print(result.table.to_pandas())
 
 | 函数               | 用途       | 示例                                                                          |
 | ---------------- | -------- | --------------------------------------------------------------------------- |
-| `ROW_NUMBER()`   | 行编号（不重复） | `ROW_NUMBER() OVER (ORDER BY amount DESC)`                                  |
-| `RANK()`         | 排名（并列跳号） | `RANK() OVER (ORDER BY score DESC)`                                         |
-| `SUM() OVER`     | 累计求和     | `SUM(amount) OVER (ORDER BY date)`                                          |
-| `AVG() OVER`     | 移动平均     | `AVG(amount) OVER (ORDER BY date ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)` |
-| `LAG() / LEAD()` | 前/后值偏移   | `LAG(amount, 1) OVER (ORDER BY date)`                                       |
+| `ROW_NUMBER()`   | 行编号（不重复） | `ROW_NUMBER() OVER (ORDER BY word_count DESC)`                                  |
+| `RANK()`         | 排名（并列跳号） | `RANK() OVER (ORDER BY word_count DESC)`                                        |
+| `SUM() OVER`     | 累计求和     | `SUM(word_count) OVER (ORDER BY year)`                                          |
+| `AVG() OVER`     | 移动平均     | `AVG(word_count) OVER (ORDER BY year ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)` |
+| `LAG() / LEAD()` | 前/后值偏移   | `LAG(word_count, 1) OVER (ORDER BY year)`                                       |
 
 ***
 
@@ -114,22 +110,24 @@ JOIN 操作。
 ```python
 import pyarrow as pa
 
-# 构造品类维度表
-categories = pa.table({
-    "category": ["电子产品", "服装", "食品"],
-    "department": ["科技", "零售", "消费"],
+# 构造品类维度表（值必须与 papers.category 完全一致）
+category_info = pa.table({
+    "category": ["自然语言处理", "计算机视觉", "机器学习", "强化学习",
+                 "图机器学习", "数据系统"],
+    "field": ["语言", "视觉", "通用机器学习", "决策",
+              "图", "存储"],
 })
 
 result = lake.olap_query(
-    "sales",
+    "papers",
     """
-    SELECT s.category, c.department, SUM(s.amount) as total
-    FROM sales s
-    INNER JOIN categories c ON s.category = c.category
-    GROUP BY s.category, c.department
-    ORDER BY total DESC
+    SELECT s.category, c.field, AVG(s.word_count) AS avg_words, COUNT(*) AS cnt
+    FROM papers s
+    INNER JOIN category_info c ON s.category = c.category
+    GROUP BY s.category, c.field
+    ORDER BY avg_words DESC
     """,
-    tables={"categories": categories},  # 注册临时表供 JOIN 使用
+    tables={"category_info": category_info},  # 注册临时表供 JOIN 使用
 )
 print(result.table.to_pandas())
 ```
@@ -159,8 +157,8 @@ lake = Lake(base_uri="./data", config=config)
 
 ```python
 view_name = lake.materialize(
-    "sales",
-    "SELECT category, SUM(amount) as total FROM sales GROUP BY category",
+    "papers",
+    "SELECT category, AVG(word_count) AS avg_words FROM papers GROUP BY category",
     view_name="category_summary",
     ttl_days=7,
 )
@@ -209,11 +207,11 @@ dropped = lake.cleanup_materialized(ttl_days=3)
 
 ```python
 explain_output = lake.olap_query(
-    "sales",
+    "papers",
     """
     EXPLAIN
-    SELECT category, SUM(amount) as total
-    FROM sales
+    SELECT category, AVG(word_count) AS avg_words
+    FROM papers
     GROUP BY category
     """,
 )
@@ -235,19 +233,19 @@ from arrow_lake import Lake
 lake = Lake(base_uri="./data")
 
 # 加载为延迟 Daft DataFrame，支持列选择和过滤
-df = lake.daft_query("sales")
+df = lake.daft_query("papers")
 df_filtered = lake.daft_query(
-    "sales",
-    columns=["product", "category", "amount"],
-    filter="amount > 50",
+    "papers",
+    columns=["title", "category", "word_count"],
+    filter="word_count > 5000",
     limit=1000,
 )
 
 # 链式操作：选择列 -> 过滤 -> 排序 -> 收集
 result = (
-    df.select("product", "category", "amount")
-    .filter("amount > 100")
-    .sort("amount", desc=True)
+    df.select("title", "category", "word_count")
+    .filter("word_count > 8000")
+    .sort("word_count", desc=True)
     .collect()  # 执行并返回 PyArrow Table
 )
 print(result.to_pandas())
@@ -258,12 +256,12 @@ print(result.to_pandas())
 ```python
 import daft
 
-grouped = df.select("category", "amount").groupby("category")
+grouped = df.select("category", "word_count").groupby("category")
 # 应用聚合表达式获得具体结果
 agg_result = grouped.agg(
-    daft.col("amount").sum().alias("total"),
-    daft.col("amount").mean().alias("avg_amount"),
-    daft.col("amount").count().alias("count"),
+    daft.col("word_count").sum().alias("total"),
+    daft.col("word_count").mean().alias("avg_word_count"),
+    daft.col("word_count").count().alias("count"),
 )
 print(agg_result.collect().to_pandas())
 ```
@@ -271,10 +269,17 @@ print(agg_result.collect().to_pandas())
 **多表 JOIN**：
 
 ```python
-df1 = lake.daft_query("sales")
-df2 = lake.daft_query("products")
+import daft
+import pyarrow as pa
 
-joined = df1.join(df2, on="product_id", how="inner")
+df1 = lake.daft_query("papers")
+# 一张小维度表（venue → 类型）作为 Daft DataFrame
+venue_dim = daft.from_arrow(pa.table({
+    "venue": ["NeurIPS", "ICLR", "CVPR", "ICML", "Nature", "Science"],
+    "type": ["会议", "会议", "会议", "会议", "期刊", "期刊"],
+}))
+
+joined = df1.join(venue_dim, on="venue", how="inner")
 result = joined.collect()
 print(result.to_pandas())
 ```
@@ -291,12 +296,12 @@ print(result.to_pandas())
 
 | 方法                     | 说明                | 示例                                  |
 | ---------------------- | ----------------- | ----------------------------------- |
-| `select(*columns)`     | 选择列               | `df.select("name", "amount")`       |
-| `filter(predicate)`    | 过滤行               | `df.filter("amount > 100")`         |
-| `sort(column, desc)`   | 排序                | `df.sort("date", desc=True)`        |
+| `select(*columns)`     | 选择列               | `df.select("title", "word_count")`       |
+| `filter(predicate)`    | 过滤行               | `df.filter("word_count > 8000")`         |
+| `sort(column, desc)`   | 排序                | `df.sort("year", desc=True)`        |
 | `groupby(*columns)`    | 分组                | `df.groupby("category")`            |
-| `join(other, on, how)` | 连接                | `df.join(df2, on="id", how="left")` |
-| `pivot(group_by, pivot_col, value_col, agg_fn)` | 透视（长转宽，交叉表） | `df.pivot("cat", "prod", "amt", "sum")` |
+| `join(other, on, how)` | 连接                | `df.join(df2, on="venue", how="left")` |
+| `pivot(group_by, pivot_col, value_col, agg_fn)` | 透视（长转宽，交叉表） | `df.pivot("category", "venue", "word_count", "sum")` |
 | `unpivot(ids, values)` | 逆透视（宽转长，melt）   | `df.unpivot("id", ["q1","q2"])`     |
 | `collect()`            | 执行并返回 Arrow Table | `df.collect()`                      |
 
@@ -313,21 +318,21 @@ from arrow_lake import Lake
 lake = Lake(base_uri="./data")
 
 # 导出为 Parquet（自动从后缀推断格式）
-result = lake.export("sales", "output/sales_export.parquet")
+result = lake.export("papers", "output/papers_export.parquet")
 print(f"导出完成：{result}")  # ExportResult 包含 path, format, row_count
 
 # 导出指定列
 result = lake.export(
-    "sales",
-    "output/sales_summary.csv",
-    columns=["category", "product", "amount"],
+    "papers",
+    "output/papers_summary.csv",
+    columns=["category", "venue", "word_count"],
     format="csv",
 )
 
 # 导出特定版本 + 压缩
 result = lake.export(
-    "sales",
-    "output/sales_v1.parquet",
+    "papers",
+    "output/papers_v1.parquet",
     version=1,
     compression="snappy",
     overwrite=True,
@@ -395,7 +400,7 @@ from arrow_lake import Lake, QueryError
 lake = Lake(base_uri="./data")
 
 try:
-    result = lake.olap_query("sales", "DELETE FROM sales WHERE 1=1")
+    result = lake.olap_query("papers", "DELETE FROM papers WHERE 1=1")
 except QueryError as e:
     if e.error_code.name == "OLAP_QUERY_FAILED":
         print(f"查询失败：{e.message}")
