@@ -47,6 +47,8 @@ arrow-lake version
 
 ## 2. Five-Minute Example: Create → Ingest → Query → Export
 
+Save the snippet below as `quickstart_demo.py` and run it with `python quickstart_demo.py` (or paste it into a Python REPL / Jupyter cell). It uses only local storage — no Docker, no external services.
+
 ```python
 """quickstart_demo.py — Arrow Lake minimal working example"""
 from arrow_lake import Lake

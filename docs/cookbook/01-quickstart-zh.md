@@ -35,7 +35,7 @@ arrow-lake version
 # ┌───────────┬──────────┐
 # │ Component │ Version  │
 # ├───────────┼──────────┤
-# │ arrow-lake│ 1.10.0   │
+# │ arrow-lake│ 1.10.4   │
 # │ python    │ 3.12.4   │
 # │ daft      │ 0.7.21   │
 # │ pyarrow   │ 23.0.1   │
@@ -46,6 +46,8 @@ arrow-lake version
 ***
 
 ## 2. 五分钟示例：创建 → 摄取 → 查询 → 导出
+
+把下面的代码存为 `quickstart_demo.py`，然后运行 `python quickstart_demo.py`（也可贴进 Python REPL / Jupyter 单元格）。它只用本地存储 —— 无需 Docker、无需外部服务。
 
 ```python
 """quickstart_demo.py — Arrow Lake 最小可运行示例"""
@@ -148,14 +150,18 @@ arrow-lake --base-uri ./my_lake ingest files sales datas/transactions/sales_2024
 
 ### 搜索
 
-```bash
-# 全文搜索
-arrow-lake --base-uri ./my_lake search fts sales \
-    --query "电子产品" \
-    --top-k 10
+> 上面建的 `users` 数据集没有文本/向量列，因此搜索需要有这些列的数据集。最快"看见"搜索效果的方式是内置 demo（它会创建可搜索的数据），或跳到 [04 向量搜索](./04-vector-search-zh.md) / [05 全文搜索](./05-fulltext-search-zh.md)。
 
-# 混合搜索 (向量 + 全文 RRF 融合)
-arrow-lake --base-uri ./my_lake search hybrid sales \
+```bash
+# 运行内置 demo —— 创建带文本 + 向量的数据集，然后跑搜索
+arrow-lake demo --base-uri ./demo_data
+
+# 全文搜索（需要有文本/FTS 列的数据集）
+arrow-lake --base-uri ./my_lake search fts <数据集名> \
+    --query "电子产品" --top-k 10
+
+# 混合搜索（向量 + 全文 RRF 融合；需要两种列都有）
+arrow-lake --base-uri ./my_lake search hybrid <数据集名> \
     --query "无线鼠标"
 ```
 
