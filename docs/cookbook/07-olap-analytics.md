@@ -17,6 +17,26 @@ views.
 and returns an `OlapQueryResult` whose `.table` is a PyArrow Table that can be directly
 converted to Pandas.
 
+> The examples in this chapter query a `sales` dataset. Build a sample first with the code below (if you already have your own dataset, just replace `"sales"` with its name):
+
+```python
+import pyarrow as pa
+from arrow_lake import Lake
+
+lake = Lake(base_uri="./data")
+
+# Build a sample sales dataset (skip this block if it already exists)
+sales = pa.table({
+    "category": ["electronics", "books", "electronics", "food", "books",
+                 "food", "electronics", "books"] * 10,   # 80 rows
+    "amount":  [1200, 45, 899, 23, 60, 15, 2300, 38] * 10,
+    "region":  ["east", "west", "east", "north", "west",
+                "north", "south", "east"] * 10,
+})
+lake.create_dataset("sales", sales)
+print(f"sales created: {sales.num_rows} rows")
+```
+
 ```python
 from arrow_lake import Lake
 

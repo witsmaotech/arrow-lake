@@ -530,7 +530,11 @@ Configuration constraints:
 
 ***
 
-## v1.7–v1.10 KG Evolution: extraction backend + doc_type routing + per-dataset + incremental + quality/perf + template management
+## 📚 Appendix: v1.7–v1.10 KG Evolution (version history, optional)
+
+> This section is the version evolution log of the KG subsystem (extraction backend / doc_type routing / per-dataset / incremental / quality / template management). **New users can skip it** — core usage is in §1–§11 above; full changes in [CHANGELOG](../../CHANGELOG.md). Kept as an appendix for contributors and existing users to understand the design background.
+
+### v1.7–v1.10 evolution overview
 
 v1.7.0 added a pluggable extraction backend and document-type-aware template routing to `kg_build`,
 significantly improving triple precision for domain-specific documents (papers, contracts, financial

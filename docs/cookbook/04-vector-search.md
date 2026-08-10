@@ -422,17 +422,18 @@ config = ArrowLakeConfig()
 config.storage = StorageConfig(backend=StorageBackend.LOCAL, base_uri="./demo_data")
 lake = Lake(base_uri="./demo_data", config=config)
 
-# 2. Prepare data (simulated embeddings)
-texts = ["Introduction to Machine Learning", "Deep Learning and Neural Networks",
-         "Natural Language Processing", "Computer Vision Fundamentals",
-         "Reinforcement Learning Principles"]
-vectors = np.random.randn(5, 1024).tolist()
+# 2. Prepare data (simulated embeddings; IVF_PQ needs ≥256 training rows, so generate 300)
+base_texts = ["Introduction to Machine Learning", "Deep Learning and Neural Networks",
+              "Natural Language Processing", "Computer Vision Fundamentals",
+              "Reinforcement Learning Principles"]
+texts = base_texts * 60  # 5 × 60 = 300 rows
+vectors = np.random.randn(300, 1024).tolist()
 
 table = pa.table({
     "text_content": texts,
     "text_embedding": vectors,
-    "category": ["AI", "AI", "AI", "AI", "AI"],
-    "year": [2024, 2024, 2023, 2023, 2024],
+    "category": ["AI"] * 300,
+    "year": [2024] * 300,
 })
 
 # 3. Write the dataset
