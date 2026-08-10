@@ -9,6 +9,8 @@ Arrow Lake 内置知识图谱 (KG) 子系统，通过 LLM 实体抽取将非结�
 > 前置准备：安装依赖 `pip install arrow-lake[kg]`，部署 HugeGraph 服务，
 > 并在配置中启用 `hugegraph.enabled = True`。
 
+> **贯穿数据集**：收束 `papers` 论文库——将 [08](./08-rag-pipeline-zh.md) 摄取的论文全文挖掘为实体与关系，把同一语料变成供 GraphRAG 使用的知识图谱。
+
 ***
 
 ## 0. 为什么 GraphRAG —— 纯向量 RAG 答不好什么
@@ -49,8 +51,8 @@ config.hugegraph.graph_name = "hugegraph"  # 基础图名；实际图按数据�
 
 lake = Lake(base_uri="./data", config=config)
 
-# 触发异步构建 — 对 "docs" 数据集进行实体抽取
-task_id = asyncio.run(lake.kg_build("docs"))
+# 触发异步构建 — 对 "papers" 数据集进行实体抽取
+task_id = asyncio.run(lake.kg_build("papers"))
 print(f"构建任务已提交：{task_id}")
 ```
 
@@ -404,8 +406,8 @@ lake = Lake(base_uri="./data", config=config)
 # GraphRAG 自动启用 — 无需额外代码
 response = asyncio.run(
     lake.rag_query(
-        question="Arrow Lake 的知识图谱和向量检索是如何协同工作的？",
-        dataset_name="docs",
+        question="大语言模型知识图谱构建涉及哪些核心方法与数据集？",
+        dataset_name="papers",
         top_k=5,
     )
 )
@@ -475,12 +477,15 @@ async def main():
 
     lake = Lake(base_uri="./data", config=config)
 
-    # 2. 摄取文档
-    report = lake.ingest("my_docs", ["technical_guide.md"])
-    print(f"摄取：{report.total_files} 个文件，{report.total_rows} 行")
+    # 2. 摄取论文库中若干论文的全文（解析 -> 分块 -> 嵌入 -> 索引）
+    report = lake.ingest_documents_and_index("papers", [
+        "datas/papers/full_text/zh001_大语言模型知识图谱构建综述.pdf",
+        "datas/papers/full_text/zh003_检索增强生成企业智能客服应用.pdf",
+    ])
+    print(f"摄取：{report.total_rows} 个分块")
 
     # 3. 构建知识图谱
-    task_id = await lake.kg_build("my_docs")
+    task_id = await lake.kg_build("papers")
     print(f"构建任务：{task_id}")
 
     # 4. 等待构建完成
@@ -497,8 +502,8 @@ async def main():
 
     # 6. GraphRAG 问答
     response = await lake.rag_query(
-        question="系统的核心组件有哪些？它们之间是什么关系？",
-        dataset_name="my_docs",
+        question="这些论文涉及哪些核心方法与概念？它们之间是什么关系？",
+        dataset_name="papers",
     )
     print(f"回答：{response.answer[:200]}...")
 
@@ -607,7 +612,7 @@ print(path, source)                           # general/concept_graph 'override'
 
 ```python
 # Python SDK
-lake.ingest_documents("papers", ["data/paper.pdf"], doc_type="paper")
+lake.ingest_documents("papers", ["datas/papers/full_text/zh001_大语言模型知识图谱构建综述.pdf"], doc_type="paper")
 ```
 
 > CLI `kg build` **没有** `--doc-type` 参数——请在摄入时设置 `doc_type`。若要为单次构建覆盖*模板*
