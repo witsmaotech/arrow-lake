@@ -53,6 +53,16 @@ ENV/
 *.json
 *.parquet
 *.lance
+# Cookbook sample data: ignore all under docs/cookbook/datas/ EXCEPT the papers/ library (runnable ch.04-09)
+docs/cookbook/datas/*
+!docs/cookbook/datas/papers/
+!docs/cookbook/datas/papers/*.csv
+docs/cookbook/datas/papers/full_text/*
+!docs/cookbook/datas/papers/full_text/p011_rag.pdf
+!docs/cookbook/datas/papers/full_text/p016_lora.pdf
+!docs/cookbook/datas/papers/full_text/zh001_大语言模型知识图谱构建综述.pdf
+!docs/cookbook/datas/papers/full_text/zh003_检索增强生成企业智能客服应用.pdf
+!docs/cookbook/datas/papers/full_text/zh005_中文文本分类与情感分析综述.pdf
 
 # But keep examples/data scripts and docs
 !examples/data/
@@ -107,7 +117,7 @@ ray_cluster*
 .claude/
 .roomodes
 web-bundles/
-datas/
+/datas/
 dev_build_notes.md
 
 dev_notes/
