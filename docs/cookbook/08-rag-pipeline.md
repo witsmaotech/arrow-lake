@@ -10,6 +10,8 @@ cited sources, and performance metrics.
 > Prerequisites: install the RAG extra with `pip install arrow-lake[rag]`, configure an
 > LLM provider, and ensure the target dataset has a vector index.
 
+> **Running dataset.** For RAG we ingest the **full text** of a few papers from our `papers` library (PDFs under `datas/papers/full_text/`) — the same domain as chapters 04–07, now queried in natural language.
+
 ***
 
 ## 0. Prerequisites: Setting Up Vector Index
@@ -18,35 +20,22 @@ RAG queries require a vector index on the target dataset. If you have not yet cr
 run the following steps before calling `rag_query()`:
 
 ```python
-import numpy as np
-import pyarrow as pa
+import asyncio
 from arrow_lake import Lake
 
 lake = Lake(base_uri="./data")
 
-# 1. Ingest documents
-report = lake.ingest("docs", ["guide.md"])
-print(f"Ingested {report.total_rows} rows")
+# 1. Ingest the full text of a few papers from our research library.
+#    ingest_documents_and_index = parse -> chunk -> embed -> FTS + vector index,
+#    so the dataset is RAG-ready in a single call (text_embedding is auto-generated).
+report = lake.ingest_documents_and_index("papers", [
+    "datas/papers/full_text/p011_rag.pdf",   # Retrieval-Augmented Generation
+    "datas/papers/full_text/p016_lora.pdf",  # LoRA: Low-Rank Adaptation
+])
+print(f"Ingested {report.total_rows} chunks")
 
-# 2. Generate embeddings (replace with your embedding model)
-#    The column name must match what the RAG pipeline expects (default: "text_embedding")
-DIM = 1024  # bge-m3 / qwen3-embedding dim (placeholder; use your configured embed model)
-embeddings = np.random.randn(report.total_rows, DIM).astype(np.float32)
-embeddings /= np.linalg.norm(embeddings, axis=1, keepdims=True)
-vec_table = pa.table({
-    "text_embedding": pa.FixedSizeListArray.from_arrays(embeddings.ravel(), DIM),
-})
-lake.append_dataset("docs", vec_table)
-
-# 3. Create vector index
-lake.create_vector_index("docs", "text_embedding")
-
-# 4. Optionally create a full-text index for hybrid retrieval
-lake.create_fts_index("docs", fts_column="text_content")
-
-# 5. Now RAG is ready
-import asyncio
-response = asyncio.run(lake.rag_query("What is Arrow Lake?", "docs"))
+# 2. Now RAG is ready
+response = asyncio.run(lake.rag_query("What is retrieval-augmented generation?", "papers"))
 ```
 
 > **Note**: If no vector index exists, `rag_query()` will fall back to FTS-only retrieval
@@ -66,12 +55,12 @@ from arrow_lake import Lake
 lake = Lake(base_uri="./data")
 
 response = asyncio.run(
-    lake.rag_query("What is the core architecture of Arrow Lake?", "docs")
+    lake.rag_query("How does retrieval-augmented generation reduce hallucinations?", "papers")
 )
 
 # If running inside an existing event loop (Jupyter, FastAPI, etc.),
 # use `await` directly instead of asyncio.run():
-#   response = await lake.rag_query("...", "docs")
+#   response = await lake.rag_query("...", "papers")
 
 print(response.answer)
 print(f"Documents retrieved: {response.retrieval_count}")
@@ -118,7 +107,7 @@ async def stream_rag_response():
     """Stream a RAG response, printing chunks as they arrive."""
     full_answer = []
     async for chunk in lake.rag_query_stream(
-        "Explain how DuckLake materialized views work", "docs"
+        "Explain how LoRA reduces trainable parameters", "papers"
     ):
         full_answer.append(chunk)
         print(chunk, end="", flush=True)
@@ -148,12 +137,12 @@ session_id = "user-123-session-abc"
 
 async def multi_turn():
     # Turn 1
-    r1 = await lake.rag_query("What vector indexes does Arrow Lake support?", "docs",
+    r1 = await lake.rag_query("What problem does retrieval-augmented generation solve?", "papers",
                               session_id=session_id)
     print(f"A1: {r1.answer}\n")
 
     # Turn 2 -- context carries forward
-    r2 = await lake.rag_query("Which one is best for million-scale datasets?", "docs",
+    r2 = await lake.rag_query("How does it compare to fine-tuning?", "papers",
                               session_id=session_id)
     print(f"A2: {r2.answer}\n")
 
@@ -188,15 +177,15 @@ from arrow_lake import Lake
 lake = Lake(base_uri="./data")
 
 async def compare_strategies():
-    question = "How does Arrow Lake handle data versioning?"
+    question = "What datasets evaluate retrieval-augmented generation?"
 
-    r_fts = await lake.rag_query(question, "docs", strategy="fts")
+    r_fts = await lake.rag_query(question, "papers", strategy="fts")
     print(f"[FTS]    Retrieved {r_fts.retrieval_count} chunks, {r_fts.latency_ms} ms")
 
-    r_vec = await lake.rag_query(question, "docs", strategy="vector")
+    r_vec = await lake.rag_query(question, "papers", strategy="vector")
     print(f"[Vector] Retrieved {r_vec.retrieval_count} chunks, {r_vec.latency_ms} ms")
 
-    r_hybrid = await lake.rag_query(question, "docs", strategy="hybrid")
+    r_hybrid = await lake.rag_query(question, "papers", strategy="hybrid")
     print(f"[Hybrid] Retrieved {r_hybrid.retrieval_count} chunks, {r_hybrid.latency_ms} ms")
 
 asyncio.run(compare_strategies())
@@ -252,7 +241,7 @@ config.llm.context_window_tokens = 128_000    # Total LLM window
 lake = Lake(base_uri="./data", config=config)
 
 response = asyncio.run(
-    lake.rag_query("Describe Arrow Lake's storage layer design in detail", "docs", top_k=15)
+    lake.rag_query("Describe the retrieval mechanism in retrieval-augmented generation", "papers", top_k=15)
 )
 
 # Effective context tokens = budget_ratio * context_window_tokens
@@ -282,12 +271,12 @@ import asyncio
 from arrow_lake import Lake
 lake = Lake(base_uri="./data")
 
-r1 = await lake.rag_query("What security mechanisms exist?", "docs", template="default_qa")
-r2 = await lake.rag_query("Component dependency relationships?", "docs", template="graph_qa")
+r1 = await lake.rag_query("What components make up a retrieval-augmented generation system?", "papers", template="default_qa")
+r2 = await lake.rag_query("How do the retriever and generator interact?", "papers", template="graph_qa")
 r3 = await lake.rag_extract(
-    text="Arrow Lake uses Lance format for storage and DuckDB for analytics.",
-    schema={"entities": "list[str]", "relationships": "list[tuple[str,str,str]]"},
-    dataset_name="docs",
+    text="LoRA injects trainable low-rank matrices into transformer attention weights, reducing trainable parameters for efficient fine-tuning.",
+    schema={"method": "str", "components": "list[str]", "benefit": "str"},
+    dataset_name="papers",
 )
 ```
 
@@ -434,11 +423,11 @@ lake = Lake(base_uri="./data")
 
 async def batch_example():
     requests = [
-        "What is Arrow Lake's storage format?",
-        "How does versioning work?",
-        "What OLAP features are available?",
+        "What is retrieval-augmented generation?",
+        "How does LoRA reduce trainable parameters?",
+        "What retrieval strategies does the pipeline support?",
     ]
-    results = await lake.rag_batch_query(requests, "docs")
+    results = await lake.rag_batch_query(requests, "papers")
     for q, r in zip(requests, results):
         print(f"Q: {q}")
         print(f"A: {r.answer[:100]}...\n")
@@ -463,17 +452,17 @@ lake = Lake(base_uri="./data")
 
 async def extract_example():
     text = (
-        "Arrow Lake v1.5.3 was released on 2025-01-15. "
-        "It added knowledge graph support via HugeGraph, "
-        "OLAP analytics powered by DuckDB, and RAG pipeline with hybrid retrieval."
+        "The LoRA paper, published at ICLR 2022 by Hu et al., proposes Low-Rank Adaptation. "
+        "It freezes pre-trained weights and learns low-rank update matrices, "
+        "reducing trainable parameters by up to 10,000x on GPT-3 175B."
     )
     schema = {
-        "product_name": "str",
-        "version": "str",
-        "release_date": "str",
-        "features": "list[str]",
+        "method": "str",
+        "authors": "str",
+        "venue": "str",
+        "reduction_factor": "str",
     }
-    response = await lake.rag_extract(text, schema, dataset_name="docs")
+    response = await lake.rag_extract(text, schema, dataset_name="papers")
     print(response.answer)
 
 
@@ -597,7 +586,7 @@ validation + per-sentence labels. Embedding-cosine mode and LLM-judge mode are p
 (see the trailing comment in `arrow_lake/rag/verifier.py`), not yet implemented.
 
 ```python
-response = await lake.rag_query("Summarize the Q3 findings", "reports")
+response = await lake.rag_query("Summarize the LoRA method and its results", "papers")
 print(response.answer)
 v = response.verification          # dict or None (when disabled)
 if v:
@@ -634,8 +623,8 @@ when KG is unavailable (built into `graph_rag.py`).
 
 ```python
 # GraphRAG (hugegraph enabled + dataset has a built KG)
-r = await lake.rag_query("Which systems depend on the auth service?", "docs")           # use_kg defaults True
-r2 = await lake.rag_query("Same question, pure-vector comparison", "docs", use_kg=False)  # bypass KG once
+r = await lake.rag_query("Which components does the retriever depend on?", "papers")           # use_kg defaults True
+r2 = await lake.rag_query("Same question, pure-vector comparison", "papers", use_kg=False)  # bypass KG once
 ```
 
 The dedicated REST endpoint `POST /api/v1/kg/query/graphrag` (body uses `question` + `dataset`).
