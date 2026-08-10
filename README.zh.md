@@ -130,6 +130,12 @@ lake = Lake("./my_lake")
 
 多数 AI 数据栈由五件专业工具拼接而成，每一件单看都很出色，彼此却互不感知。Arrow Lake 用一个全集成平台替代那层胶水代码。
 
+### 为什么 RAG 质量不同
+
+纯向量 RAG（LangChain / LlamaIndex + 向量库）按嵌入相似度检索 —— 它返回的是*段落*，对实体间如何关联一无所知。Arrow Lake 的 **GraphRAG** 注入实体邻居上下文并做 **`relation_type` 富化**，让模型看到实体之间*如何*连接（导致、包含、引用）—— 而非仅仅共现。在实体/关系密集型问题（法规、事件链、组织架构）上，这正是"泛泛总结"与"精准可溯源答案"的差别。
+
+它由**模板驱动抽取**（强类型 Knowledge Abstract、80+ 领域模板、运行时加载 —— 无需重建）与**质量验证 harness**（在模板上线前量化 orphan rate、关系类型覆盖率、平均度数）支撑 —— 把 KG 质量从"凭感觉"变成"可度量的闸门"。
+
 | 拼接五件套的痛 | Arrow Lake 给你的 |
 |---|---|
 | 5 套数据存储 + 5 套客户端 + 5 套鉴权模型 | **一个 `Lake` facade**、一个存储层、一套 RBAC 模型 |
@@ -233,6 +239,12 @@ print(lake.search("articles", query="ML", top_k=3))
 - **平台级 AI 数据层** —— 为内部 AI 产品提供一个受治理、可审计、受 RBAC 保护的后端
 - **受治理的数据产品** —— 经 Gravitino 跨异构数据源打 tag、脱敏、留存与审计
 
+**在真实大数据集上验证：**
+
+- **`ontime` —— 107M 行，美国航班准点数据。** 分析型 SQL（COUNT / GROUP BY / ORDER BY）在 pyarrow 下耗时 **43s**，native scan 仅 **0.3s**（**145×**）。单个自托管节点即可交互式服务航空延误与航线性能分析 —— 无需 OLAP 集群。
+- **`noaa_china` —— 气象观测数据。** 嵌套 `struct` 类型 location 展平为 `longitude`/`latitude`，清洗写回吞吐稳态 **10M+ rows/s**，随后用于地理气候分析与时序 SQL。
+- **大文档 RAG —— 500+ 页 PDF。** Docling GPU 解析（RTX 3090 上 ~1s/页）+ 混合检索 + GraphRAG，从上传到带溯源引用的答案端到端打通。
+
 ---
 
 ## 📊 性能基准
@@ -251,6 +263,17 @@ print(lake.search("articles", query="ML", top_k=3))
 | 多键 GROUP BY 年×月 | 0.183 s（55K 行/s） | 0.176 s（568K 行/s） |
 
 数据放大 10 倍**延迟几乎不变** —— 每查询约 180 ms 的 bridge 固定开销（注册 Lance → DuckDB 视图 → SELECT → Arrow）占绝对主导，而 DuckDB 扫描 + 聚合本身在 10 万行以内近乎免费。吞吐因此随行数线性扩展（56K → 554K 行/s）。
+
+**大规模 OLAP —— `ontime` 107M 行（真实美国航班数据集）：**
+
+| 查询 | pyarrow_fallback | **native scan** | 加速 |
+|---|---|---|---|
+| COUNT(*) 全扫 | 43.4 s | **0.3 s** | **145×** |
+| GROUP BY DayOfWeek（7 组） | 40.7 s | **1.0 s** | **40×** |
+| GROUP BY Origin（382 组） | 51.3 s | **1.5 s** | **34×** |
+| ORDER BY LIMIT 100（107M 排序） | 56.8 s | **3.1 s** | **18×** |
+
+native lance scan 把聚合 / 谓词 / LIMIT 下推到 Rust scanner（零拷贝 —— 不再每查询物化 9.8GB）。按数据集 opt-in（`lance_scan_mode_overrides`），并由 **D-state 熔断器**守护 —— 重复卡顿时自动降回 pyarrow。复现：`tests/benchmark/olap_ontime_benchmark.py`。
 
 **文档分块** —— `DocumentChunker.chunk`，摄入管线 CPU 前端：
 
@@ -389,6 +412,12 @@ lake = Lake.from_yaml("configs/prod.yaml")  # 生产
 - 💬 [Issues / 问答](https://gitee.com/wits__sunpw/wits-infra-dintellihub/issues)
 - 🤝 [贡献指南](CONTRIBUTING.md) · [行为准则](CODE_OF_CONDUCT.md)
 - 💼 **商业支持 / 咨询 / 定制集成**欢迎洽谈 —— 通过 Issues 联系。
+
+### 👥 维护者
+
+- **Witshine**（[@Witshine](https://github.com/Witshine)）—— 架构、核心引擎，以及在真实企业数据平台上的实战验证（1 亿+ 行分析、大文档解析、GraphRAG 知识平台）。
+
+Arrow Lake 源自生产需求，而非演示玩具。非常欢迎贡献 —— 代码、文档、领域模板、bug 报告；非平凡改动请先开 issue。
 
 非常欢迎贡献（代码、文档、模板、bug 报告）。非平凡改动请先开 issue。
 
