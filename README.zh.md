@@ -21,7 +21,7 @@
 **[English](README.md)** | 中文
 
 <p align="center">
-  <img src="docs/asserts/images/页面-首页.png" alt="Arrow Lake console overview" width="800">
+  <img src="docs/assets/images/页面-首页.png" alt="Arrow Lake console overview" width="800">
 </p>
 
 </div>
@@ -160,20 +160,20 @@ Arrow Lake 自带一个**原生运维 console**（原生 JS，由 API 直接 ser
 
 <table>
 <tr>
-<td align="center"><b>总览</b><br><img src="docs/asserts/images/页面-首页.png" width="420"></td>
-<td align="center"><b>知识图谱</b><br><img src="docs/asserts/images/页面-知识图谱01.png" width="420"></td>
+<td align="center"><b>总览</b><br><img src="docs/assets/images/页面-首页.png" width="420"></td>
+<td align="center"><b>知识图谱</b><br><img src="docs/assets/images/页面-知识图谱01.png" width="420"></td>
 </tr>
 <tr>
-<td align="center"><b>OLAP 工作表</b><br><img src="docs/asserts/images/页面-数据分析olap.png" width="420"></td>
-<td align="center"><b>模板质检（v1.10.0）</b><br><img src="docs/asserts/images/页面-图谱抽取模板质量验证01.png" width="420"></td>
+<td align="center"><b>OLAP 工作表</b><br><img src="docs/assets/images/页面-数据分析olap.png" width="420"></td>
+<td align="center"><b>模板质检（v1.10.0）</b><br><img src="docs/assets/images/页面-图谱抽取模板质量验证01.png" width="420"></td>
 </tr>
 <tr>
-<td align="center"><b>RAG 问答</b><br><img src="docs/asserts/images/页面-RAG.png" width="420"></td>
-<td align="center"><b>血缘</b><br><img src="docs/asserts/images/页面-数据血缘.png" width="420"></td>
+<td align="center"><b>RAG 问答</b><br><img src="docs/assets/images/页面-RAG.png" width="420"></td>
+<td align="center"><b>血缘</b><br><img src="docs/assets/images/页面-数据血缘.png" width="420"></td>
 </tr>
 </table>
 
-<sup>共 19 张截图见 [`docs/asserts/images/`](docs/asserts/images/) —— 含登录、数据集、摄入、数据准备、清洗整理、索引/嵌入、异步任务、文档等。</sup>
+<sup>共 19 张截图见 [`docs/assets/images/`](docs/assets/images/) —— 含登录、数据集、摄入、数据准备、清洗整理、索引/嵌入、异步任务、文档等。</sup>
 
 ---
 

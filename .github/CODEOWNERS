@@ -1,0 +1,5 @@
+# CODEOWNERS — auto-request review on PRs.
+# Update @Witshine to your GitHub username (and add more maintainers as the project grows).
+# Gitee does not enforce CODEOWNERS, but GitHub does.
+
+*           @Witshine
