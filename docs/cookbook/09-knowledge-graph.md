@@ -11,6 +11,8 @@ for multi-hop reasoning questions.
 > Prerequisites: Install dependencies with `pip install arrow-lake[kg]`, deploy a HugeGraph service,
 > and enable `hugegraph.enabled = True` in your configuration.
 
+> **Running dataset.** We close the loop on the `papers` library: the full-text PDFs ingested in [08](./08-rag-pipeline.md) are now mined for entities and relationships, turning the same corpus into a knowledge graph for GraphRAG.
+
 ***
 
 ## 0. Why GraphRAG — what pure vector RAG gets wrong
@@ -52,8 +54,8 @@ config.hugegraph.graph_name = "hugegraph"  # base name; actual graph derived per
 
 lake = Lake(base_uri="./data", config=config)
 
-# Trigger an async build — performs entity extraction on the "docs" dataset
-task_id = asyncio.run(lake.kg_build("docs"))
+# Trigger an async build — performs entity extraction on the "papers" dataset
+task_id = asyncio.run(lake.kg_build("papers"))
 print(f"Build task submitted: {task_id}")
 ```
 
@@ -412,8 +414,8 @@ lake = Lake(base_uri="./data", config=config)
 # GraphRAG is enabled automatically — no extra code needed
 response = asyncio.run(
     lake.rag_query(
-        question="How do Arrow Lake's knowledge graph and vector retrieval work together?",
-        dataset_name="docs",
+        question="What methods and datasets do the LoRA and RAG papers relate to?",
+        dataset_name="papers",
         top_k=5,
     )
 )
@@ -484,12 +486,15 @@ async def main():
 
     lake = Lake(base_uri="./data", config=config)
 
-    # 2. Ingest documents
-    report = lake.ingest("my_docs", ["technical_guide.md"])
-    print(f"Ingested: {report.total_files} files, {report.total_rows} rows")
+    # 2. Ingest the full text of a few papers (parse -> chunk -> embed -> index)
+    report = lake.ingest_documents_and_index("papers", [
+        "datas/papers/full_text/p016_lora.pdf",
+        "datas/papers/full_text/p011_rag.pdf",
+    ])
+    print(f"Ingested: {report.total_rows} chunks")
 
     # 3. Build the knowledge graph
-    task_id = await lake.kg_build("my_docs")
+    task_id = await lake.kg_build("papers")
     print(f"Build task: {task_id}")
 
     # 4. Wait for build completion
@@ -506,8 +511,8 @@ async def main():
 
     # 6. GraphRAG Q&A
     response = await lake.rag_query(
-        question="What are the core components of the system and how are they related?",
-        dataset_name="my_docs",
+        question="What are the core methods and concepts in these papers, and how are they related?",
+        dataset_name="papers",
     )
     print(f"Answer: {response.answer[:200]}...")
 
@@ -619,7 +624,7 @@ table → KG builder:
 
 ```python
 # Python SDK
-lake.ingest_documents("papers", ["data/paper.pdf"], doc_type="paper")
+lake.ingest_documents("papers", ["datas/papers/full_text/p016_lora.pdf"], doc_type="paper")
 ```
 
 > CLI `kg build` has **no** `--doc-type` flag — set `doc_type` when ingesting. To override the *template*
