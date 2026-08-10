@@ -6,6 +6,7 @@ Arrow Lake 数据湖平台实战教程，涵盖数据摄取、搜索、分析、
 
 | #  | 中文                                           | English                                               |
 | -- | -------------------------------------------- | ----------------------------------------------------- |
+| 00 | [**总览（从这里开始）**](./00-overview-zh.md)        | [**Overview (start here)**](./00-overview.md)         |
 | 01 | [快速入门](./01-quickstart-zh.md)                | [Quick Start](./01-quickstart.md)                     |
 | 02 | [数据摄取](./02-ingestion-zh.md)                 | [Data Ingestion](./02-ingestion.md)                   |
 | 03 | [配置系统](./03-configuration-zh.md)             | [Configuration](./03-configuration.md)                |
@@ -21,16 +22,26 @@ Arrow Lake 数据湖平台实战教程，涵盖数据摄取、搜索、分析、
 | 13 | [CLI 完全参考手册](./13-cli-reference.md)          | [CLI Complete Reference](./13-cli-reference-en.md)   |
 | 14 | [工作流编排](./14-workflow-orchestration.md)       | [Workflow Orchestration](./14-workflow-orchestration.md) |
 | 15 | [Gravitino 元数据治理](./15-gravitino-metadata-zh.md) | [Gravitino Metadata Governance](./15-gravitino-metadata.md) |
+| 16 | [v1.8 新特性](./16-v1.8.0-new-features-zh.md)   | — *(zh only)*                                         |
+| 17 | [数据脱敏](./17-data-masking-zh.md)             | [Data Masking](./17-data-masking.md)                  |
+| 18 | [血缘可视化](./18-lineage-visualization-zh.md)    | [Lineage Visualization](./18-lineage-visualization.md) |
+| 19 | [**REST 实战配方**](./19-rest-recipes-zh.md)      | [**REST Recipes**](./19-rest-recipes.md)              |
 
 ## 学习路径 / Learning Path
 
-**入门** → 01 → 02 → 03
+> 🌟 **新手推荐 / New here?** → **00 总览** → **01 快速入门** → **19 实战配方（端到端全貌）** → 按需深入下面任一支柱。
+
+**入门** → 00 → 01 → 02 → 03
 
 **搜索进阶** → 04 → 05 → 06
 
 **分析 & AI** → 07 → 08 → 09
 
-**生产部署** → 10 → 11 → 12
+**生产部署** → 12 → 10 → 11
+
+**进阶 / 参考** → 13 (CLI) · 14 (Workflow) · 15 (Gravitino) · 17 (脱敏) · 18 (血缘)
+
+**端到端实战** → 19 REST Recipes
 
 ## 环境要求 / Prerequisites
 
@@ -75,7 +86,7 @@ docker exec -it deploy-api-1 .venv/bin/python /app/examples/19_knowledge_graph_b
 
 ## 版本
 
-对应 Arrow Lake v1.10.0
+对应 Arrow Lake v1.10.4
 
 ## v1.7.0 新特性 — Hyper-Extract KG + Doc-Type 路由
 

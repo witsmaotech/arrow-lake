@@ -148,14 +148,18 @@ arrow-lake --base-uri ./my_lake ingest files sales datas/transactions/sales_2024
 
 ### Search
 
-```bash
-# Full-text search
-arrow-lake --base-uri ./my_lake search fts sales \
-    --query "electronics" \
-    --top-k 10
+> The `users` dataset built above has no text/vector columns, so search needs a dataset with them. The fastest way to *see* search in action is the built-in demo (it creates searchable data), or jump to [04 Vector Search](./04-vector-search.md) / [05 Full-Text Search](./05-full-text-search.md).
 
-# Hybrid search (vector + full-text RRF fusion)
-arrow-lake --base-uri ./my_lake search hybrid sales \
+```bash
+# Run the built-in demo — creates a dataset with text + vectors, then runs search
+arrow-lake demo --base-uri ./demo_data
+
+# Full-text search (needs a dataset with a text/FTS column)
+arrow-lake --base-uri ./my_lake search fts <dataset> \
+    --query "electronics" --top-k 10
+
+# Hybrid search (vector + full-text RRF fusion; needs both columns)
+arrow-lake --base-uri ./my_lake search hybrid <dataset> \
     --query "wireless mouse"
 ```
 
