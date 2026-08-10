@@ -1,6 +1,6 @@
 # OLAP Analytics Queries
 
-> Version: 1.10.0
+> Version: 1.10.4
 
 Arrow Lake delivers high-performance OLAP analytics through DuckDB's zero-copy Arrow
 integration, supporting GROUP BY aggregation, window functions, JOINs, and materialized

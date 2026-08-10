@@ -5,7 +5,7 @@
 > dataset CRUD, queries, KG, search, and RAG do not depend on Gravitino. If it is stuck or unneeded,
 > set `gravitino.enabled: false` to turn it off temporarily — core functionality is fully unaffected.
 >
-> Version: this chapter targets Arrow Lake v1.10.0. The Gravitino server has been upgraded to **1.3.0**
+> Version: this chapter targets Arrow Lake v1.10.4. The Gravitino server has been upgraded to **1.3.0**
 > and the Python SDK is pinned to `apache-gravitino==1.3.0` (`pyproject.toml:75`). The 1.3.0 docker
 > layout changed: `GRAVITINO_HOME=/opt/gravitino` (not the old `/root/gravitino`), and the data volume
 > must mount at `/opt/gravitino/data`. Catalog S3 properties use **`s3.*`**

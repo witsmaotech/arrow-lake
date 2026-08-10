@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.10.4] - 2026-08-10
+
+### OLAP native scan opt-in + D-state 熔断器 + 结果增强
+
+- **per-dataset native lance scan opt-in**(`lance_scan_mode_overrides` 配置映射,JSON-blob env):无向量分析型大数据集(如 `ontime` 107M 行)opt-in 到 native Rust scanner,聚合/谓词/LIMIT 全下推,实测 **34–145× 加速**(COUNT 0.3s vs 43s、GROUP BY 1.0s vs 40.7s)。**不改任何默认**,未 opt-in 数据集零影响。
+- **D-state 熔断器**(`arrow_lake/query/scan_breaker.py`):看门狗 `on_uninterruptible`(worker daemonized = 一次 D-state)触发即 `record_trip`,窗口内达阈值(默认 2 次/10 分钟)自动把该数据集降回 `pyarrow_fallback` 冷却(默认 30 分钟);Redis 镜像跨 worker 状态;**fail-open**(Redis 挂 → 不熔断,每查询看门狗仍兜底 504);无向量护栏(向量数据集即使写进 override 也降回 pyarrow + 告警,挡 IVF_PQ panic)。
+- **OLAP console 结果增强**:结果表客户端分页(25/50/100/200 每页)+ 字段分布统计明细(数值列:min/P25/中位/P75/P90/P95/P99/max + 12 桶直方图;类别列:Top15 值频次条形)。
+- **多语句 SQL 防护**:`validate_sql_safety` 拒绝 `;` 分隔的多语句,堵住串行执行导致的语义混乱与前端报错。
+- **日志降噪**:structlog 绑定 filtering wrapper(默认 no-op 不做级别过滤致 debug 泄漏到 stdout)+ DEBUG handler 绑定 `he_extractor` logger(避免 gravitino sync 等噪声泄漏)+ gravitino 同步周期 fileset/table exists 降 debug + schema ensure 错误首行截断(SDK 塞完整 Java 堆栈)。
+
+## [1.10.3] - 2026-08-08
+
+### docling 解析吞吐与质量优化
+
+- **ThreadedPdfPipelineOptions 页批处理**(`page_batch_size` 默认 16)跑满 GPU,替代 plain `PdfPipelineOptions` 逐页串行;M0 基准对照确立。
+- **RapidOCR**(torch 后端)作为 docling OCR 引擎选项,提升中文识别。
+- **置信度门控**:L1 mark 低置信页 → L2 `force_full_page_ocr` 重试,避免漏识别。
+- **页面图片导出**(`export_page_images`):为 ColPali/CLIP 多模态 RAG 前置(图片导出路径穿越加固)。
+- **bake bge-m3 tokenizer + HybridChunker 离线生效**:镜像内固化,规避 read-only FS + socat SSL EOF 的 tiktoken 下载坑。
+- **测试与安全**:3 处 stale 测试 fixture 修正 + 图片导出路径穿越加固。
+
 ## [1.10.2] - 2026-08-05
 
 ### 性能基准套件扩充(4 项缺口补齐)
