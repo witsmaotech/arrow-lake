@@ -222,6 +222,12 @@ From `pip install` to first result in under a minute.
 
 Each of those tools is excellent at its specialty. Arrow Lake is for teams that need **all of it, integrated**, without maintaining the glue.
 
+### Why the RAG quality is different
+
+Pure vector RAG (LangChain / LlamaIndex over a vector DB) retrieves by embedding similarity — it surfaces *passages*, blind to how entities relate. Arrow Lake's **GraphRAG** injects entity-neighbor context **with `relation_type` enrichment**, so the model sees *how* entities connect (caused, contains, references) — not just that they co-occur. On entity/relation-dense questions (regulations, incident chains, org structures) this is the difference between a generic summary and a precise, traceable answer.
+
+It is backed by **template-driven extraction** (strong-typed Knowledge Abstracts, 80+ domain templates, loaded at runtime — no rebuild) and a **quality validation harness** that quantifies orphan rate, relation-type coverage, and average degree *before* you ship a template — turning KG quality from guesswork into a measurable gate.
+
 ---
 
 ## 🎯 Use cases
@@ -232,6 +238,12 @@ Each of those tools is excellent at its specialty. Arrow Lake is for teams that 
 - **Self-service analytics** — SQL + DataFrame over the same lake that powers search and RAG
 - **AI data layer for platforms** — one governed, audited, RBAC-protected backend for an internal AI product
 - **Governed data products** — tag, mask, retain, and audit datasets across heterogeneous sources via Gravitino
+
+**Validated on real-world large datasets:**
+
+- **`ontime` — 107M rows, US airline on-time performance.** Analytical SQL (COUNT / GROUP BY / ORDER BY) that took **43 s** on pyarrow now runs in **0.3 s** with native scan (**145×**). A single self-hosted node serves airline-delay and route-performance analytics interactively — no OLAP cluster needed.
+- **`noaa_china` — meteorological observations.** Nested `struct` location flattened to `longitude`/`latitude`, clean/writeback sustained at **10M+ rows/s**, then served for geographic climate analysis and time-series SQL.
+- **Large-document RAG — 500+ page PDFs.** Docling GPU parsing (~1 s/page on RTX 3090) + hybrid retrieval + GraphRAG, end-to-end from upload to a cited answer.
 
 ---
 
@@ -251,6 +263,17 @@ A `@pytest.mark.benchmark` suite in `tests/benchmark/` measures every hot path o
 | multi-key group-by year×month | 0.183 s (55K rows/s) | 0.176 s (568K rows/s) |
 
 A 10× larger dataset adds **no measurable latency** — a ~180 ms per-query bridge overhead (register Lance → DuckDB view → SELECT → Arrow) dominates, while the DuckDB scan + aggregation itself is near-free up to 100K rows. Throughput therefore scales linearly with rows (56K → 554K rows/s).
+
+**OLAP at scale — `ontime` 107M rows (real-world US airline dataset):**
+
+| Query | pyarrow_fallback | **native scan** | speedup |
+|---|---|---|---|
+| COUNT(*) full scan | 43.4 s | **0.3 s** | **145×** |
+| GROUP BY DayOfWeek (7 groups) | 40.7 s | **1.0 s** | **40×** |
+| GROUP BY Origin (382 groups) | 51.3 s | **1.5 s** | **34×** |
+| ORDER BY LIMIT 100 (107M sort) | 56.8 s | **3.1 s** | **18×** |
+
+Native lance scan pushes aggregation / predicate / LIMIT down to the Rust scanner (zero-copy — no 9.8 GB materialization per query). Opt-in per dataset (`lance_scan_mode_overrides`), guarded by a **D-state circuit breaker** that auto-degrades to pyarrow on repeated stalls. Reproduce: `tests/benchmark/olap_ontime_benchmark.py`.
 
 **Document chunking** — `DocumentChunker.chunk`, the CPU front of the ingest pipeline:
 
@@ -389,6 +412,12 @@ Stable and in production use. Current release: **v1.10.4** — v1.10.0 knowledge
 - 💬 [Issues / Q&A](https://gitee.com/wits__sunpw/wits-infra-dintellihub/issues)
 - 🤝 [Contributing guide](CONTRIBUTING.md) · [Code of Conduct](CODE_OF_CONDUCT.md)
 - 💼 **Commercial support / consulting / custom integration** welcome — reach out via Issues.
+
+### 👥 Maintainer
+
+- **Witshine** ([@Witshine](https://github.com/Witshine)) — architecture, core engine, and battle-testing on real enterprise data platforms (100M+ row analytics, large-document parsing, GraphRAG knowledge platforms).
+
+Arrow Lake is built from production needs, not a demo. Contributions — code, docs, domain templates, bug reports — are very welcome; please open an issue first for non-trivial changes.
 
 Contributions (code, docs, templates, bug reports) are very welcome. Please open an issue first for non-trivial changes.
 
