@@ -85,8 +85,54 @@ export function renderResult(host, resp, elapsedMs) {
   statHost.className = "stat-host";
   host.appendChild(statHost);
 
-  // 4. 结果表
-  host.appendChild(renderTable(columns, rows));
+  // 4. 结果表(分页:大结果集按页渲染,避免一次铺万行卡浏览器;图表/统计/导出仍用全量 rows)
+  const PAGE_SIZES = [25, 50, 100, 200];
+  let pageSize = 50;
+  let pageIdx = 0;
+  const totalPages = () => Math.max(1, Math.ceil(rows.length / pageSize));
+
+  const mkBtn = (t) => {
+    const b = document.createElement("button");
+    b.className = "btn btn-ghost btn-sm"; b.textContent = t; return b;
+  };
+  const tableHost = document.createElement("div");
+  const pager = document.createElement("div");
+  pager.className = "result-tools pager";
+  const firstBtn = mkBtn("«"), prevBtn = mkBtn("‹"), nextBtn = mkBtn("›"), lastBtn = mkBtn("»");
+  const pageLabel = document.createElement("span");
+  pageLabel.className = "muted mono";
+  pageLabel.style.cssText = "font-size:.78rem";
+  const sizeLabel = document.createElement("label");
+  sizeLabel.className = "rt-group";
+  sizeLabel.style.cssText = "font-size:.78rem;color:var(--fg-md)";
+  const sizeSel = document.createElement("select");
+  sizeSel.className = "select";
+  sizeSel.style.cssText = "width:72px";
+  sizeSel.innerHTML = PAGE_SIZES.map((n) => `<option value="${n}">${n}/页</option>`).join("");
+  sizeSel.value = String(pageSize);
+  sizeLabel.append("每页 ", sizeSel);
+  pager.append(firstBtn, prevBtn, pageLabel, nextBtn, lastBtn, sizeLabel);
+  host.append(pager, tableHost);
+
+  function drawPage() {
+    const tp = totalPages();
+    if (pageIdx > tp - 1) pageIdx = tp - 1;
+    if (pageIdx < 0) pageIdx = 0;
+    tableHost.innerHTML = "";
+    const start = pageIdx * pageSize;
+    tableHost.appendChild(renderTable(columns, rows.slice(start, start + pageSize), { max: pageSize }));
+    pageLabel.textContent = `第 ${pageIdx + 1} / ${tp} 页 · 共 ${rows.length.toLocaleString()} 行`;
+    firstBtn.disabled = prevBtn.disabled = pageIdx === 0;
+    nextBtn.disabled = lastBtn.disabled = pageIdx >= tp - 1;
+  }
+  firstBtn.addEventListener("click", () => { pageIdx = 0; drawPage(); });
+  prevBtn.addEventListener("click", () => { pageIdx--; drawPage(); });
+  nextBtn.addEventListener("click", () => { pageIdx++; drawPage(); });
+  lastBtn.addEventListener("click", () => { pageIdx = totalPages() - 1; drawPage(); });
+  sizeSel.addEventListener("change", () => { pageSize = parseInt(sizeSel.value) || 50; pageIdx = 0; drawPage(); });
+
+  pager.style.display = rows.length > pageSize ? "" : "none";
+  drawPage();
 
   // ---- 事件绑定 ----
   function drawChart() {
