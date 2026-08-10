@@ -112,14 +112,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # lower the whole arrow_lake tree: the structlog-kwarg loggers (system_db url=/
     # version=, rbac key=, …) crash stdlib _log if emitted below WARNING. Targeting the
     # single logger avoids that while showing he_extractor feed/parse/entity activity.
-    _root = logging.getLogger()
-    if not any(getattr(_h, "_al_dbg", False) for _h in _root.handlers):
+    # [#KG-0entity-debug] Surface ONLY he_extractor's stdlib DEBUG logs. Attach the
+    # DEBUG handler to the he_extractor logger itself — NOT root — so other debug
+    # noise (gravitino sync cycles, etc.) is not leaked to stdout under INFO. The
+    # structlog-kwarg loggers (system_db url=/version=, rbac key=, …) crash stdlib
+    # _log if emitted below WARNING, which is why we never lower the whole tree.
+    _he_logger = logging.getLogger("arrow_lake.knowledge_graph.he_extractor")
+    if not any(getattr(_h, "_al_dbg", False) for _h in _he_logger.handlers):
         _h = logging.StreamHandler(sys.stdout)
         _h.setLevel(logging.DEBUG)
         _h.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
         _h._al_dbg = True
-        _root.addHandler(_h)
-    logging.getLogger("arrow_lake.knowledge_graph.he_extractor").setLevel(logging.DEBUG)
+        _he_logger.addHandler(_h)
+    _he_logger.setLevel(logging.DEBUG)
 
     config: ArrowLakeConfig = app.state.config
 
@@ -462,6 +467,24 @@ def create_app(config: ArrowLakeConfig | None = None) -> FastAPI:
     """
     if config is None:
         config = get_config()
+
+    # [log-noise] structlog ships with a no-op default (PrintLogger to stdout, NO
+    # level filtering). Left unconfigured — which it was until now — every debug()
+    # leaks to stdout regardless of log_level, so the 30s gravitino sync cycles
+    # (table_exists/fileset_exists/skipped, ~50 lines/cycle) flooded the logs.
+    # Bind a filtering wrapper to observability.log_level so INFO (default) actually
+    # suppresses debug, while keeping the familiar console renderer (no JSON
+    # migration — CLAUDE.md ops notes all reference the console format). The full
+    # JSON+stdlib variant lives in core/logging.configure_logging (unused so far).
+    import structlog
+
+    _min_level = getattr(
+        logging, str(config.observability.log_level).upper(), logging.INFO
+    )
+    structlog.configure(
+        wrapper_class=structlog.make_filtering_bound_logger(_min_level),
+        cache_logger_on_first_use=True,
+    )
 
     docs_url = "/docs" if config.api.docs_enabled else None
     redoc_url = "/redoc" if config.api.docs_enabled else None

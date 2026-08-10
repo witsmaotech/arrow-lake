@@ -325,10 +325,13 @@ class GravitinoBridge:
             except _Idempotent:
                 pass  # schema already exists
             except GravitinoRequestError as exc:
+                # First-line only — Gravitino SDK embeds the full server-side Java
+                # stack in str(exc); logging verbatim spams ~100 lines per warning.
+                # Aligns with gravitino_tags._short_error (first line, [:200]).
                 logger.warning(
                     "gravitino_schema_ensure_failed",
                     catalog=catalog_name,
-                    error=str(exc),
+                    error=(str(exc) or type(exc).__name__).splitlines()[0][:200],
                 )
         self._schema_ready = True
 
@@ -370,7 +373,9 @@ class GravitinoBridge:
                 )
                 logger.info("gravitino_fileset_registered", name=name)
             except _Idempotent:
-                logger.info("gravitino_fileset_exists", name=name)
+                # Idempotent "already exists" branch fires every 30s sync cycle per
+                # dataset — no signal, demote to debug (keeps *_registered at info).
+                logger.debug("gravitino_fileset_exists", name=name)
             except GravitinoRequestError as exc:
                 logger.warning(
                     "gravitino_fileset_register_failed", name=name, error=str(exc)
@@ -404,7 +409,8 @@ class GravitinoBridge:
                 columns=len(columns),
             )
         else:
-            logger.info("gravitino_table_exists", name=name)
+            # Idempotent "already exists" — fires every sync cycle, no signal → debug.
+            logger.debug("gravitino_table_exists", name=name)
 
     def _build_gravitino_columns(self, schema: Any) -> list[dict[str, Any]]:
         """Convert PyArrow schema to Gravitino Table column definitions."""
