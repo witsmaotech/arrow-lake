@@ -44,6 +44,28 @@ _SQL_ESCAPE_RE = re.compile(r"('|\\)")
 _MAX_LITERAL_LENGTH = 10_000
 
 
+def _is_multi_statement(sql: str) -> bool:
+    """Heuristic: >1 top-level SELECT ⇒ multiple pasted statements.
+
+    UNION/INTERSECT/EXCEPT are already blocked by DANGEROUS_SQL_KEYWORDS_RE, so a
+    second top-level SELECT is unambiguously a new statement. Strips string
+    literals, quoted identifiers, comments, and parenthesized subqueries so legit
+    single-statement queries (subqueries, CTEs, cache-bust comments) are not
+    falsely flagged. Catches the common "paste several queries as one" case that
+    otherwise bypasses the semicolon guard, forces full-dataset materialization,
+    and crashes the worker (502).
+    """
+    s = re.sub(r"'(?:[^']|'')*'", "''", sql)           # string literals
+    s = re.sub(r'"(?:""|[^"])*"', '""', s)             # quoted identifiers
+    s = re.sub(r"/\*.*?\*/", " ", s, flags=re.DOTALL)  # block comments
+    s = re.sub(r"--[^\n]*", " ", s)                    # line comments
+    prev = None
+    while prev != s:                                   # parenthesized subqueries
+        prev = s
+        s = re.sub(r"\([^()]*\)", "", s)
+    return len(re.findall(r"\bSELECT\b", s, re.IGNORECASE)) > 1
+
+
 def validate_sql_safety(sql: str) -> None:
     """Validate that a SQL string contains no dangerous keywords.
 
@@ -57,6 +79,10 @@ def validate_sql_safety(sql: str) -> None:
         raise ValueError(f"Dangerous SQL keyword detected: {sql}")
     if ";" in sql:
         raise ValueError(f"Semicolons not allowed in SQL: {sql}")
+    if _is_multi_statement(sql):
+        raise ValueError(
+            f"Multiple SQL statements detected — run one query at a time: {sql[:80]}"
+        )
 
 
 def escape_sql_literal(value: str, max_length: int = _MAX_LITERAL_LENGTH) -> str:

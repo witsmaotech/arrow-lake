@@ -56,6 +56,35 @@ class TestValidateSqlSafety:
         with pytest.raises(ValueError, match="Dangerous SQL keyword"):
             validate_sql_safety("drop table users")
 
+    # --- multi-statement (no-semicolon) detection ---
+    def test_multi_statement_two_selects_rejected(self) -> None:
+        with pytest.raises(ValueError, match="Multiple SQL statements"):
+            validate_sql_safety(
+                "SELECT Year, count(*) FROM ontime GROUP BY Year\n"
+                "SELECT Month, count(*) FROM ontime GROUP BY Month"
+            )
+
+    def test_multi_statement_three_selects_rejected(self) -> None:
+        with pytest.raises(ValueError, match="Multiple SQL statements"):
+            validate_sql_safety(
+                "SELECT 1 FROM t\nSELECT 2 FROM t\nSELECT 3 FROM t"
+            )
+
+    def test_subquery_not_flagged(self) -> None:
+        validate_sql_safety("SELECT * FROM (SELECT id FROM users) sub WHERE id > 0")
+
+    def test_cte_not_flagged(self) -> None:
+        validate_sql_safety("WITH cte AS (SELECT 1 AS x) SELECT * FROM cte")
+
+    def test_in_subquery_not_flagged(self) -> None:
+        validate_sql_safety("SELECT * FROM users WHERE id IN (SELECT id FROM admins)")
+
+    def test_cache_bust_comment_not_flagged(self) -> None:
+        validate_sql_safety("SELECT /* bust1 */ count(*) FROM ontime")
+
+    def test_select_in_string_literal_not_flagged(self) -> None:
+        validate_sql_safety("SELECT * FROM t WHERE note = 'SELECT something'")
+
 
 # ===========================================================================
 # escape_sql_literal

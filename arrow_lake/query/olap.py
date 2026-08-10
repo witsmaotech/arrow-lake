@@ -25,6 +25,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -35,6 +36,7 @@ from arrow_lake.config import OlapConfig, StorageBackend, StorageConfig
 from arrow_lake.exceptions import ErrorCode, QueryError, StorageError
 from arrow_lake.query._db import create_duckdb_session
 from arrow_lake.query.lance_adapter import create_lance_scan_adapter
+from arrow_lake.query.scan_breaker import LanceScanBreaker
 from arrow_lake.query.session_manager import run_duckdb_interruptible
 from arrow_lake.validation import (
     DANGEROUS_SQL_KEYWORDS_RE,
@@ -51,6 +53,10 @@ _JOIN_KEYWORD_RE = re.compile(
 )
 
 logger = logging.getLogger(__name__)
+
+# Dedupe the vector-override-ignored warning to once per (worker, dataset) so a
+# misconfigured high-traffic vector dataset doesn't spam the log every query.
+_warned_vector_override: set[str] = set()
 
 
 @dataclass(frozen=True)
@@ -110,6 +116,14 @@ class OlapSearchBridge:
                 max_entries=self._config.query_cache_max_entries,
                 ttl_seconds=self._config.query_cache_ttl_seconds,
             )
+        # v1.10.4: per-dataset native-scan breaker (bridge is a cached singleton,
+        # so one shared breaker spans all queries). Fail-open — constructed even
+        # when Redis is absent (the lazy client returns None → no tripping).
+        self._breaker = LanceScanBreaker(
+            threshold=self._config.lance_breaker_trip_threshold,
+            window_s=self._config.lance_breaker_window_seconds,
+            cooldown_s=self._config.lance_breaker_cooldown_seconds,
+        )
 
     def query(
         self,
@@ -203,7 +217,7 @@ class OlapSearchBridge:
                 _exec_query,
                 timeout=self._config.query_timeout_seconds,
                 label=f"olap_query:{dataset_name}",
-                on_uninterruptible=getattr(session, "mark_unhealthy", None),
+                on_uninterruptible=self._on_uninterruptible_tripper(session, dataset_name),
             )
 
         # Store in cache
@@ -461,7 +475,7 @@ class OlapSearchBridge:
                     _exec_graph,
                     timeout=self._config.query_timeout_seconds,
                     label=f"graph_query:{edges_dataset}",
-                    on_uninterruptible=getattr(session, "mark_unhealthy", None),
+                    on_uninterruptible=self._on_uninterruptible_tripper(session, edges_dataset),
                 )
             except duckdb.Error as exc:
                 raise QueryError(
@@ -679,6 +693,78 @@ class OlapSearchBridge:
 
         return "\n".join(lines)
 
+    def _resolve_scan_mode(self, dataset_name: str, source: Any) -> str:
+        """Resolve the lance scan mode for a dataset (v1.10.4).
+
+        Priority:
+        1. Per-dataset override (``lance_scan_mode_overrides``) — but a vector
+           dataset listed there is demoted back to the global mode with a
+           warning, since native lance scan panics on IVF_PQ vector streams.
+        2. Global ``lance_scan_mode`` + ``lance_auto_promote`` flip (a vector-less
+           dataset on pyarrow_fallback may promote to native for the 34-145x
+           speedup; this path is now also breaker-protected).
+        3. If the candidate is native/auto and the breaker has tripped for this
+           dataset, demote to pyarrow_fallback for the cooldown window.
+
+        Returns one of ``"auto"``, ``"native"``, ``"pyarrow_fallback"``.
+        """
+        overrides = self._config.lance_scan_mode_overrides
+        has_vector = self._has_vector_column(source)
+
+        if dataset_name in overrides:
+            candidate = overrides[dataset_name]
+            if has_vector:
+                # Hard guard: native lance scan panics on IVF_PQ vector streams.
+                # Warn once per (worker, dataset) to avoid log spam under traffic.
+                if dataset_name not in _warned_vector_override:
+                    _warned_vector_override.add(dataset_name)
+                    logger.warning(
+                        "lance_scan_override_ignored dataset=%s override=%s — vector "
+                        "column present; falling back to global lance_scan_mode=%s",
+                        dataset_name, candidate, self._config.lance_scan_mode,
+                    )
+                candidate = self._config.lance_scan_mode
+        else:
+            candidate = self._config.lance_scan_mode
+
+        # Global auto-promote: promote a vector-less pyarrow_fallback dataset to
+        # native scan (override-to-native already targets native, so skip here).
+        if (
+            candidate == "pyarrow_fallback"
+            and self._config.lance_auto_promote
+            and not has_vector
+        ):
+            candidate = "auto"
+
+        # Breaker: demote a tripped native/auto dataset to pyarrow_fallback.
+        if candidate in ("native", "auto") and self._breaker.is_tripped(dataset_name):
+            logger.info(
+                "lance_cb_demoting dataset=%s mode=%s -> pyarrow_fallback (cooldown)",
+                dataset_name, candidate,
+            )
+            return "pyarrow_fallback"
+        return candidate
+
+    def _on_uninterruptible_tripper(
+        self, session: Any, dataset_name: str,
+    ) -> Callable[[], None]:
+        """Build the watchdog ``on_uninterruptible`` callback for a query.
+
+        Invoked when a query survives ``conn.interrupt()`` (stuck in native code
+        that doesn't poll the interrupt flag): marks the session unhealthy so it
+        is closed rather than recycled, and records a breaker strike so a
+        repeatedly-stuck native scan demotes to pyarrow_fallback.
+        """
+        mark = getattr(session, "mark_unhealthy", None)
+
+        def _on_stuck() -> None:
+            if mark is not None:
+                with contextlib.suppress(Exception):
+                    mark()
+            self._breaker.record_trip(dataset_name)
+
+        return _on_stuck
+
     @staticmethod
     def _has_vector_column(source: Any) -> bool:
         """Return True if the Arrow source has a fixed_size_list (vector) column.
@@ -710,17 +796,10 @@ class OlapSearchBridge:
             dataset_name: Name to register the dataset under.
             source: Arrow Table or RecordBatchReader from storage.
         """
-        # 全局 pyarrow_fallback 是为 IVF_PQ 向量扫描避免 Rust panic(RAG 502 根因)。
-        # 对无向量列的结构化数据集,native lance scan 下推 LIMIT/OFFSET 翻页快 13-20x,
-        # 但其 Rust scanner 会卡 D-state IO 拖死 API(2026-08-04 实证,非 panic 而是阻塞 IO)。
-        # 默认 lance_auto_promote=False 不翻转 = 全 pyarrow_fallback(稳定);确需加速再开。
-        mode = self._config.lance_scan_mode
-        if (
-            mode == "pyarrow_fallback"
-            and self._config.lance_auto_promote
-            and not self._has_vector_column(source)
-        ):
-            mode = "auto"
+        # Scan mode resolution (v1.10.4): per-dataset opt-in override → global +
+        # auto-promote, then the breaker demotes a tripped native/auto dataset to
+        # pyarrow_fallback. Vector datasets are hard-demoted (IVF_PQ panic guard).
+        mode = self._resolve_scan_mode(dataset_name, source)
         if mode == "pyarrow_fallback":
             # Clear stale registration from pooled connections
             with contextlib.suppress(duckdb.Error):

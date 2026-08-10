@@ -27,6 +27,15 @@ class OlapConfig(BaseModel):
             views and cross-storage joins.
         ducklake_ttl_days: Default TTL in days for DuckLake materialized data.
         ducklake_max_join_rows: Row budget for DuckLake materialize() calls.
+        lance_scan_mode_overrides: Per-dataset lance scan mode (v1.10.4). Maps a
+            dataset name to one of the scan modes; opt-in datasets only. A vector
+            dataset listed here is demoted back to the global mode with a warning
+            (native lance scan panics on IVF_PQ vector streams).
+        lance_breaker_trip_threshold: D-state (uninterruptible) events within the
+            window that trip the breaker for a dataset.
+        lance_breaker_window_seconds: Sliding window for counting trips.
+        lance_breaker_cooldown_seconds: How long a tripped dataset stays demoted
+            to pyarrow_fallback before retrying native.
     """
 
     max_result_rows: int = 100_000
@@ -54,6 +63,15 @@ class OlapConfig(BaseModel):
     # (2026-08-07 outage). Force pyarrow_fallback everywhere for stability; re-enable
     # per-dataset only once Lance/DuckDB D-state is fixed upstream.
     lance_auto_promote: bool = False
+    # v1.10.4: per-dataset opt-in to native lance scan (e.g. large vector-less
+    # analytical datasets like `ontime` 107M rows: native is 34-145x faster). Only
+    # listed datasets are affected; vector datasets are hard-demoted by the resolver.
+    lance_scan_mode_overrides: dict[str, str] = {}
+    # Breaker thresholds (env-overridable). Default conservative (2 trips / 10min →
+    # 30min cooldown): a single D-state wedges the whole OLAP path, so prefer strict.
+    lance_breaker_trip_threshold: int = 2
+    lance_breaker_window_seconds: int = 600
+    lance_breaker_cooldown_seconds: int = 1800
 
     # Performance tuning
     preserve_insertion_order: bool = False
@@ -80,6 +98,17 @@ class OlapConfig(BaseModel):
             raise ValueError(f"lance_scan_mode must be one of {valid}, got {v!r}")
         return v
 
+    @field_validator("lance_scan_mode_overrides")
+    @classmethod
+    def validate_lance_scan_mode_overrides(cls, v: dict[str, str]) -> dict[str, str]:
+        valid = {"auto", "native", "pyarrow_fallback"}
+        bad = {ds: mode for ds, mode in v.items() if mode not in valid}
+        if bad:
+            raise ValueError(
+                f"lance_scan_mode_overrides values must be one of {valid}, got {bad}"
+            )
+        return v
+
     @field_validator(
         "max_query_memory_mb",
         "max_concurrent_queries",
@@ -87,6 +116,9 @@ class OlapConfig(BaseModel):
         "ducklake_ttl_days",
         "ducklake_max_join_rows",
         "warmup_connections",
+        "lance_breaker_trip_threshold",
+        "lance_breaker_window_seconds",
+        "lance_breaker_cooldown_seconds",
     )
     @classmethod
     def validate_positive_int(cls, v: int) -> int:

@@ -32,6 +32,14 @@ def _make_bridge(**kw: object) -> OlapSearchBridge:
     config.ducklake_index_columns = None
     config.query_cache_max_entries = 100
     config.query_cache_ttl_seconds = 300
+    # v1.10.4: OlapSearchBridge now consults these in _resolve_scan_mode; a bare
+    # MagicMock here is truthy for `in`/`bool`, so set real values. auto_promote
+    # stays truthy (MagicMock default) to preserve the native-path reachability
+    # that test_native_scan_local / test_native_scan_fallback rely on.
+    config.lance_scan_mode_overrides = {}
+    config.lance_breaker_trip_threshold = 2
+    config.lance_breaker_window_seconds = 600
+    config.lance_breaker_cooldown_seconds = 1800
     for k, v in kw.items():
         setattr(config, k, v)
     return OlapSearchBridge(storage=storage, config=config)

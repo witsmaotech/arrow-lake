@@ -466,15 +466,20 @@ def phase_soak(n_queries: int, run_id: str) -> dict:
 
 
 def probe_scan_mode() -> str:
-    """Read the running container's LANCE_SCAN_MODE (best-effort)."""
+    """Read the container's global scan mode + per-dataset overrides (best-effort).
+
+    Reports both so an override-driven native run isn't mislabeled as the global
+    pyarrow_fallback mode in the report.
+    """
     try:
-        out = subprocess.check_output(
+        raw = subprocess.check_output(
             ["docker", "exec", CONTAINER, "sh", "-c",
-             "echo $ARROW_LAKE__OLAP__LANCE_SCAN_MODE"],
+             'echo "$ARROW_LAKE__OLAP__LANCE_SCAN_MODE|$ARROW_LAKE__OLAP__LANCE_SCAN_MODE_OVERRIDES"'],
             text=True, timeout=10, stderr=subprocess.DEVNULL,
         ).strip()
-        return out or "unknown"
-    except Exception:  # noqa: BLE001
+        mode, _, overrides = raw.partition("|")
+        return (mode or "unknown") + (f" +overrides:{overrides}" if overrides else "")
+    except Exception:
         return "unknown"
 
 
