@@ -6,6 +6,8 @@ Arrow Lake delivers high-performance OLAP analytics through DuckDB's zero-copy A
 integration, supporting GROUP BY aggregation, window functions, JOINs, and materialized
 views.
 
+> **Running dataset.** We continue with the `papers` research library — now analyzed as a structured table: aggregating `word_count`, slicing by `category` / `venue` / `year`, and ranking papers with window functions.
+
 > Prerequisites: install the OLAP extra with `pip install arrow-lake[olap]` and ensure
 > you have a Lance dataset with data already written.
 
@@ -17,24 +19,18 @@ views.
 and returns an `OlapQueryResult` whose `.table` is a PyArrow Table that can be directly
 converted to Pandas.
 
-> The examples in this chapter query a `sales` dataset. Build a sample first with the code below (if you already have your own dataset, just replace `"sales"` with its name):
+> The examples in this chapter query the `papers` research library. Load it first with the code below (if you already have your own dataset, just replace `"papers"` with its name):
 
 ```python
-import pyarrow as pa
+import pyarrow.csv as pacsv
 from arrow_lake import Lake
 
 lake = Lake(base_uri="./data")
 
-# Build a sample sales dataset (skip this block if it already exists)
-sales = pa.table({
-    "category": ["electronics", "books", "electronics", "food", "books",
-                 "food", "electronics", "books"] * 10,   # 80 rows
-    "amount":  [1200, 45, 899, 23, 60, 15, 2300, 38] * 10,
-    "region":  ["east", "west", "east", "north", "west",
-                "north", "south", "east"] * 10,
-})
-lake.create_dataset("sales", sales)
-print(f"sales created: {sales.num_rows} rows")
+# Load the papers research library (OLAP needs no vector column)
+papers = pacsv.read_csv("datas/papers/metadata.csv")
+lake.create_dataset("papers", papers)
+print(f"papers loaded: {papers.num_rows} rows")
 ```
 
 ```python
@@ -42,11 +38,11 @@ from arrow_lake import Lake
 
 lake = Lake(base_uri="./data")
 
-# Aggregate sales by category
+# Average word count and paper count per category
 result = lake.olap_query(
-    "sales",
-    "SELECT category, SUM(amount) as total, COUNT(*) as cnt "
-    "FROM sales GROUP BY category ORDER BY total DESC",
+    "papers",
+    "SELECT category, AVG(word_count) AS avg_words, COUNT(*) AS cnt "
+    "FROM papers GROUP BY category ORDER BY avg_words DESC",
 )
 print(f"Returned {result.row_count} rows, {result.column_count} columns")
 print(result.table.to_pandas())
@@ -56,8 +52,8 @@ Use the `max_rows` parameter to cap the number of returned rows and prevent OOM:
 
 ```python
 result = lake.olap_query(
-    "sales",
-    "SELECT * FROM sales",
+    "papers",
+    "SELECT * FROM papers",
     max_rows=500,  # Return at most 500 rows
 )
 ```
@@ -76,22 +72,22 @@ period-over-period comparisons, and more.
 
 ```python
 result = lake.olap_query(
-    "sales",
+    "papers",
     """
     SELECT
-        product,
+        title,
         category,
-        amount,
+        word_count,
         ROW_NUMBER() OVER (
-            PARTITION BY category ORDER BY amount DESC
+            PARTITION BY category ORDER BY word_count DESC
         ) AS category_rank,
-        SUM(amount) OVER (
+        SUM(word_count) OVER (
             PARTITION BY category
         ) AS category_total,
-        amount - LAG(amount, 1) OVER (
-            PARTITION BY category ORDER BY amount DESC
+        word_count - LAG(word_count, 1) OVER (
+            PARTITION BY category ORDER BY word_count DESC
         ) AS diff_from_prev
-    FROM sales
+    FROM papers
     ORDER BY category, category_rank
     """,
 )
@@ -102,11 +98,11 @@ Common window functions at a glance:
 
 | Function         | Purpose                      | Example                                                                     |
 | ---------------- | ---------------------------- | --------------------------------------------------------------------------- |
-| `ROW_NUMBER()`   | Row number (no ties)         | `ROW_NUMBER() OVER (ORDER BY amount DESC)`                                  |
-| `RANK()`         | Rank with gaps on ties       | `RANK() OVER (ORDER BY score DESC)`                                         |
-| `SUM() OVER`     | Cumulative sum               | `SUM(amount) OVER (ORDER BY date)`                                          |
-| `AVG() OVER`     | Moving average               | `AVG(amount) OVER (ORDER BY date ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)` |
-| `LAG() / LEAD()` | Previous / next value offset | `LAG(amount, 1) OVER (ORDER BY date)`                                       |
+| `ROW_NUMBER()`   | Row number (no ties)         | `ROW_NUMBER() OVER (ORDER BY word_count DESC)`                                  |
+| `RANK()`         | Rank with gaps on ties       | `RANK() OVER (ORDER BY word_count DESC)`                                        |
+| `SUM() OVER`     | Cumulative sum               | `SUM(word_count) OVER (ORDER BY year)`                                          |
+| `AVG() OVER`     | Moving average               | `AVG(word_count) OVER (ORDER BY year ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)` |
+| `LAG() / LEAD()` | Previous / next value offset | `LAG(word_count, 1) OVER (ORDER BY year)`                                       |
 
 ***
 
@@ -118,22 +114,24 @@ Tables for JOIN operations.
 ```python
 import pyarrow as pa
 
-# Build a category dimension table
-categories = pa.table({
-    "category": ["Electronics", "Apparel", "Food"],
-    "department": ["Technology", "Retail", "Consumer"],
+# Build a category dimension table (values must match papers.category exactly)
+category_info = pa.table({
+    "category": ["NLP", "Computer Vision", "Optimization", "Reinforcement Learning",
+                 "Machine Learning", "Graph ML", "Information Retrieval", "Data Systems"],
+    "field": ["Language", "Vision", "Training", "Decision-making",
+              "General ML", "Graphs", "Search", "Storage"],
 })
 
 result = lake.olap_query(
-    "sales",
+    "papers",
     """
-    SELECT s.category, c.department, SUM(s.amount) as total
-    FROM sales s
-    INNER JOIN categories c ON s.category = c.category
-    GROUP BY s.category, c.department
-    ORDER BY total DESC
+    SELECT s.category, c.field, AVG(s.word_count) AS avg_words, COUNT(*) AS cnt
+    FROM papers s
+    INNER JOIN category_info c ON s.category = c.category
+    GROUP BY s.category, c.field
+    ORDER BY avg_words DESC
     """,
-    tables={"categories": categories},  # Register as a temp table for JOIN
+    tables={"category_info": category_info},  # Register as a temp table for JOIN
 )
 print(result.table.to_pandas())
 ```
@@ -164,8 +162,8 @@ lake = Lake(base_uri="./data", config=config)
 
 ```python
 view_name = lake.materialize(
-    "sales",
-    "SELECT category, SUM(amount) as total FROM sales GROUP BY category",
+    "papers",
+    "SELECT category, AVG(word_count) AS avg_words FROM papers GROUP BY category",
     view_name="category_summary",
     ttl_days=7,
 )
@@ -214,11 +212,11 @@ Use `EXPLAIN` to inspect the query execution plan for performance tuning:
 
 ```python
 explain_output = lake.olap_query(
-    "sales",
+    "papers",
     """
     EXPLAIN
-    SELECT category, SUM(amount) as total
-    FROM sales
+    SELECT category, AVG(word_count) AS avg_words
+    FROM papers
     GROUP BY category
     """,
 )
@@ -240,19 +238,19 @@ from arrow_lake import Lake
 lake = Lake(base_uri="./data")
 
 # Load as a lazy Daft DataFrame with optional column selection and filtering
-df = lake.daft_query("sales")
+df = lake.daft_query("papers")
 df_filtered = lake.daft_query(
-    "sales",
-    columns=["product", "category", "amount"],
-    filter="amount > 50",
+    "papers",
+    columns=["title", "category", "word_count"],
+    filter="word_count > 5000",
     limit=1000,
 )
 
 # Chained operations: select -> filter -> sort -> collect
 result = (
-    df.select("product", "category", "amount")
-    .filter("amount > 100")
-    .sort("amount", desc=True)
+    df.select("title", "category", "word_count")
+    .filter("word_count > 8000")
+    .sort("word_count", desc=True)
     .collect()  # Execute and return a PyArrow Table
 )
 print(result.to_pandas())
@@ -263,12 +261,12 @@ print(result.to_pandas())
 ```python
 import daft
 
-grouped = df.select("category", "amount").groupby("category")
+grouped = df.select("category", "word_count").groupby("category")
 # Apply aggregation expressions to get a concrete result
 agg_result = grouped.agg(
-    daft.col("amount").sum().alias("total"),
-    daft.col("amount").mean().alias("avg_amount"),
-    daft.col("amount").count().alias("count"),
+    daft.col("word_count").sum().alias("total_words"),
+    daft.col("word_count").mean().alias("avg_words"),
+    daft.col("word_count").count().alias("count"),
 )
 print(agg_result.collect().to_pandas())
 ```
@@ -276,10 +274,17 @@ print(agg_result.collect().to_pandas())
 **Multi-table JOIN**:
 
 ```python
-df1 = lake.daft_query("sales")
-df2 = lake.daft_query("products")
+import daft
+import pyarrow as pa
 
-joined = df1.join(df2, on="product_id", how="inner")
+df1 = lake.daft_query("papers")
+# A small dimension table (venue → type) as a Daft DataFrame
+venue_dim = daft.from_arrow(pa.table({
+    "venue": ["NeurIPS", "ICLR", "CVPR", "ICML", "Nature", "Science"],
+    "type": ["conference", "conference", "conference", "conference", "journal", "journal"],
+}))
+
+joined = df1.join(venue_dim, on="venue", how="inner")
 result = joined.collect()
 print(result.to_pandas())
 ```
@@ -296,12 +301,12 @@ Available `LazyDaftFrame` operations:
 
 | Method                 | Description                    | Example                             |
 | ---------------------- | ------------------------------ | ----------------------------------- |
-| `select(*columns)`     | Select columns                 | `df.select("name", "amount")`       |
-| `filter(predicate)`    | Filter rows                    | `df.filter("amount > 100")`         |
-| `sort(column, desc)`   | Sort                           | `df.sort("date", desc=True)`        |
-| `groupby(*columns)`    | Group                          | `df.groupby("category")`            |
-| `join(other, on, how)` | Join                           | `df.join(df2, on="id", how="left")` |
-| `pivot(group_by, pivot_col, value_col, agg_fn)` | Pivot (long-to-wide, cross-tab) | `df.pivot("cat", "prod", "amt", "sum")` |
+| `select(*columns)`     | Select columns                 | `df.select("title", "word_count")`       |
+| `filter(predicate)`    | Filter rows                    | `df.filter("word_count > 8000")`         |
+| `sort(column, desc)`   | Sort                           | `df.sort("year", desc=True)`             |
+| `groupby(*columns)`    | Group                          | `df.groupby("category")`                 |
+| `join(other, on, how)` | Join                           | `df.join(df2, on="venue", how="left")`   |
+| `pivot(group_by, pivot_col, value_col, agg_fn)` | Pivot (long-to-wide, cross-tab) | `df.pivot("category", "venue", "word_count", "sum")` |
 | `unpivot(ids, values)` | Unpivot (wide-to-long, melt)   | `df.unpivot("id", ["q1","q2"])`     |
 | `collect()`            | Execute and return Arrow Table | `df.collect()`                      |
 
@@ -318,21 +323,21 @@ from arrow_lake import Lake
 lake = Lake(base_uri="./data")
 
 # Export to Parquet (format auto-detected from extension)
-result = lake.export("sales", "output/sales_export.parquet")
+result = lake.export("papers", "output/papers_export.parquet")
 print(f"Export complete: {result}")  # ExportResult with path, format, row_count
 
 # Export specific columns
 result = lake.export(
-    "sales",
-    "output/sales_summary.csv",
-    columns=["category", "product", "amount"],
+    "papers",
+    "output/papers_summary.csv",
+    columns=["category", "venue", "word_count"],
     format="csv",
 )
 
 # Export a specific version with compression
 result = lake.export(
-    "sales",
-    "output/sales_v1.parquet",
+    "papers",
+    "output/papers_v1.parquet",
     version=1,
     compression="snappy",
     overwrite=True,
@@ -400,7 +405,7 @@ from arrow_lake import Lake, QueryError
 lake = Lake(base_uri="./data")
 
 try:
-    result = lake.olap_query("sales", "DELETE FROM sales WHERE 1=1")
+    result = lake.olap_query("papers", "DELETE FROM papers WHERE 1=1")
 except QueryError as e:
     if e.error_code.name == "OLAP_QUERY_FAILED":
         print(f"Query failed: {e.message}")
