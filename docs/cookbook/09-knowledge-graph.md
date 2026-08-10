@@ -629,7 +629,7 @@ lake.ingest_documents("papers", ["datas/papers/full_text/p016_lora.pdf"], doc_ty
 
 > CLI `kg build` has **no** `--doc-type` flag — set `doc_type` when ingesting. To override the *template*
 > (not the doc_type) for a single build, use `kg build <ds> --template <name>` (v1.10.0); see
-> [13-cli-reference](./13-cli-reference-en.md).
+> [13-cli-reference](./13-cli-reference.md).
 
 ### A-Scheme Entity Dual-Write
 

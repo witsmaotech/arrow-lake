@@ -19,7 +19,7 @@ Arrow Lake 数据湖平台实战教程，涵盖数据摄取、搜索、分析、
 | 10 | [REST API 指南](./10-rest-api-zh.md)           | [REST API Guide](./10-rest-api.md)                    |
 | 11 | [数据质量与去重](./11-quality-dedup-zh.md)          | [Quality & Deduplication](./11-quality-dedup.md)      |
 | 12 | [部署与运维](./12-deployment-zh.md)               | [Deployment & Operations](./12-deployment.md)         |
-| 13 | [CLI 完全参考手册](./13-cli-reference.md)          | [CLI Complete Reference](./13-cli-reference-en.md)   |
+| 13 | [CLI 完全参考手册](./13-cli-reference-zh.md)          | [CLI Complete Reference](./13-cli-reference.md)   |
 | 14 | [工作流编排](./14-workflow-orchestration.md)       | [Workflow Orchestration](./14-workflow-orchestration.md) |
 | 15 | [Gravitino 元数据治理](./15-gravitino-metadata-zh.md) | [Gravitino Metadata Governance](./15-gravitino-metadata.md) |
 | 16 | [v1.8 新特性](./16-v1.8.0-new-features-zh.md)   | — *(zh only)*                                         |

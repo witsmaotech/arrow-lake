@@ -617,7 +617,7 @@ lake.ingest_documents("papers", ["datas/papers/full_text/zh001_大语言模型�
 
 > CLI `kg build` **没有** `--doc-type` 参数——请在摄入时设置 `doc_type`。若要为单次构建覆盖*模板*
 > （而非 doc_type），用 `kg build <ds> --template <name>`（v1.10.0）；见
-> [13-cli-reference](./13-cli-reference.md)。
+> [13-cli-reference](./13-cli-reference-zh.md)。
 
 ### A 方案实体双写
 

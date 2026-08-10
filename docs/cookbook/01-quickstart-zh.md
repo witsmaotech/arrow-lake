@@ -268,7 +268,7 @@ lake = Lake.from_yaml("config.yaml", base_uri="./production_data")
 * **[10-REST API 指南](./10-rest-api-zh.md)** — `arrow-lake serve` 启动后完整 HTTP API 参考
 * **[11-数据质量与去重](./11-quality-dedup-zh.md)** — `lake.quality_filter()`, `lake.deduplicate()`
 * **[12-部署与运维](./12-deployment-zh.md)** — Docker、Helm、生产环境检查清单
-* **[13-CLI 参考](./13-cli-reference.md)** — CLI 完全命令参考手册
+* **[13-CLI 参考](./13-cli-reference-zh.md)** — CLI 完全命令参考手册
 * **[15-Gravitino](./15-gravitino-metadata-zh.md)** — Apache Gravitino 元数据治理
 
 ***

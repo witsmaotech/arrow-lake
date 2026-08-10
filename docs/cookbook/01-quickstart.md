@@ -269,7 +269,7 @@ After completing the quickstart, explore the rest of the Cookbook:
 * **[10-REST API Guide](./10-rest-api.md)** — Full HTTP API reference after `arrow-lake serve`
 * **[11-Quality & Dedup](./11-quality-dedup.md)** — `lake.quality_filter()`, `lake.deduplicate()`
 * **[12-Deployment](./12-deployment.md)** — Docker, Helm, production checklist
-* **[13-CLI Reference](./13-cli-reference-en.md)** — Complete CLI command manual
+* **[13-CLI Reference](./13-cli-reference.md)** — Complete CLI command manual
 * **[15-Gravitino](./15-gravitino-metadata.md)** — Metadata governance with Apache Gravitino
 
 ***
