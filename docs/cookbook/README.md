@@ -37,7 +37,7 @@ Arrow Lake 数据湖平台实战教程，涵盖数据摄取、搜索、分析、
 | #  | 中文                                           | English                                               |
 | -- | -------------------------------------------- | ----------------------------------------------------- |
 | 13 | [CLI 完全参考手册](./13-cli-reference-zh.md)      | [CLI Complete Reference](./13-cli-reference.md)       |
-| 14 | [工作流编排](./14-workflow-orchestration.md) *(en)* | [Workflow Orchestration](./14-workflow-orchestration.md) |
+| 14 | [工作流编排](./14-workflow-orchestration-zh.md) | [Workflow Orchestration](./14-workflow-orchestration.md) |
 
 ### 治理与安全 / Governance & Security
 
