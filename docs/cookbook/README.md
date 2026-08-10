@@ -4,44 +4,70 @@ Arrow Lake 数据湖平台实战教程，涵盖数据摄取、搜索、分析、
 
 ## 教程目录 / Table of Contents
 
+### 核心教程 / Core
+
 | #  | 中文                                           | English                                               |
 | -- | -------------------------------------------- | ----------------------------------------------------- |
 | 00 | [**总览（从这里开始）**](./00-overview-zh.md)        | [**Overview (start here)**](./00-overview.md)         |
 | 01 | [快速入门](./01-quickstart-zh.md)                | [Quick Start](./01-quickstart.md)                     |
 | 02 | [数据摄取](./02-ingestion-zh.md)                 | [Data Ingestion](./02-ingestion.md)                   |
 | 03 | [配置系统](./03-configuration-zh.md)             | [Configuration](./03-configuration.md)                |
+
+### 搜索与 AI / Search & AI
+
+| #  | 中文                                           | English                                               |
+| -- | -------------------------------------------- | ----------------------------------------------------- |
 | 04 | [向量搜索与索引](./04-vector-search-zh.md)          | [Vector Search & Indexing](./04-vector-search.md)     |
 | 05 | [全文搜索](./05-fulltext-search-zh.md)           | [Full-Text Search](./05-fulltext-search.md)           |
 | 06 | [混合搜索与分面搜索](./06-hybrid-faceted-zh.md)       | [Hybrid & Faceted Search](./06-hybrid-faceted.md)     |
 | 07 | [OLAP 分析](./07-olap-analytics-zh.md)         | [OLAP Analytics](./07-olap-analytics.md)              |
 | 08 | [RAG 问答管线](./08-rag-pipeline-zh.md)          | [RAG Pipeline](./08-rag-pipeline.md)                  |
 | 09 | [知识图谱与 GraphRAG](./09-knowledge-graph-zh.md) | [Knowledge Graph & GraphRAG](./09-knowledge-graph.md) |
+
+### 生产与运维 / Production & Operations
+
+| #  | 中文                                           | English                                               |
+| -- | -------------------------------------------- | ----------------------------------------------------- |
 | 10 | [REST API 指南](./10-rest-api-zh.md)           | [REST API Guide](./10-rest-api.md)                    |
 | 11 | [数据质量与去重](./11-quality-dedup-zh.md)          | [Quality & Deduplication](./11-quality-dedup.md)      |
 | 12 | [部署与运维](./12-deployment-zh.md)               | [Deployment & Operations](./12-deployment.md)         |
-| 13 | [CLI 完全参考手册](./13-cli-reference-zh.md)          | [CLI Complete Reference](./13-cli-reference.md)   |
-| 14 | [工作流编排](./14-workflow-orchestration.md)       | [Workflow Orchestration](./14-workflow-orchestration.md) |
+
+### 参考 / Reference
+
+| #  | 中文                                           | English                                               |
+| -- | -------------------------------------------- | ----------------------------------------------------- |
+| 13 | [CLI 完全参考手册](./13-cli-reference-zh.md)      | [CLI Complete Reference](./13-cli-reference.md)       |
+| 14 | [工作流编排](./14-workflow-orchestration.md) *(en)* | [Workflow Orchestration](./14-workflow-orchestration.md) |
+
+### 治理与安全 / Governance & Security
+
+| #  | 中文                                           | English                                               |
+| -- | -------------------------------------------- | ----------------------------------------------------- |
 | 15 | [Gravitino 元数据治理](./15-gravitino-metadata-zh.md) | [Gravitino Metadata Governance](./15-gravitino-metadata.md) |
-| 16 | [v1.8 新特性](./16-v1.8.0-new-features-zh.md)   | — *(zh only)*                                         |
 | 17 | [数据脱敏](./17-data-masking-zh.md)             | [Data Masking](./17-data-masking.md)                  |
 | 18 | [血缘可视化](./18-lineage-visualization-zh.md)    | [Lineage Visualization](./18-lineage-visualization.md) |
+
+### 实战 / Recipes
+
+| #  | 中文                                           | English                                               |
+| -- | -------------------------------------------- | ----------------------------------------------------- |
 | 19 | [**REST 实战配方**](./19-rest-recipes-zh.md)      | [**REST Recipes**](./19-rest-recipes.md)              |
+
+> **版本特性**：第 16 章（v1.8 新特性，仅中文）及各版本演进详见文末 [版本特性 / Release Notes](#版本特性--release-notes) 区。
 
 ## 学习路径 / Learning Path
 
 > 🌟 **新手推荐 / New here?** → **00 总览** → **01 快速入门** → **19 实战配方（端到端全貌）** → 按需深入下面任一支柱。
 
-**入门** → 00 → 01 → 02 → 03
-
-**搜索进阶** → 04 → 05 → 06
-
-**分析 & AI** → 07 → 08 → 09
-
-**生产部署** → 12 → 10 → 11
-
-**进阶 / 参考** → 13 (CLI) · 14 (Workflow) · 15 (Gravitino) · 17 (脱敏) · 18 (血缘)
-
-**端到端实战** → 19 REST Recipes
+| 路径 | 章节 | 说明 |
+| ---- | ---- | ---- |
+| **入门** | 00 → 01 → 02 → 03 | 总览 → 快速入门 → 摄取 → 配置 |
+| **搜索进阶** | 04 → 05 → 06 | 向量 → 全文 → 混合 / 分面 |
+| **分析 & AI** | 07 → 08 → 09 | OLAP → RAG → 知识图谱 |
+| **生产部署** | 12 → 10 → 11 | 部署 → REST API → 质量去重 |
+| **参考手册** | 13 · 14 | CLI 参考 · 工作流编排 |
+| **治理与安全** | 15 · 17 · 18 | Gravitino · 脱敏 · 血缘 |
+| **端到端实战** | 19 | REST Recipes |
 
 ## 环境要求 / Prerequisites
 
@@ -87,6 +113,10 @@ docker exec -it deploy-api-1 .venv/bin/python /app/examples/19_knowledge_graph_b
 ## 版本
 
 对应 Arrow Lake v1.10.4
+
+## 版本特性 / Release Notes
+
+> 各版本演进与新增功能汇总。第 16 章 [v1.8 新特性（中文）](./16-v1.8.0-new-features-zh.md) 亦归此区。
 
 ## v1.7.0 新特性 — Hyper-Extract KG + Doc-Type 路由
 
