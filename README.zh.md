@@ -315,10 +315,11 @@ native lance scan 把聚合 / 谓词 / LIMIT 下推到 Rust scanner（零拷贝 
 
 ### Cookbook（中英双语）
 
-Cookbook 是首要的实战指南 —— **共 19 章**，90 个可运行示例。
+Cookbook 是首要的实战指南 —— **共 20 章（00–19）**，90 个可运行示例。
 
 | # | 章节 | SDK 示例 | REST 示例 |
 |---|---|---|---|
+| 00 | [总览（从这里开始）](docs/cookbook/00-overview.md) | — | — |
 | 01 | [快速开始](docs/cookbook/01-quickstart.md) | — | — |
 | 02 | [数据摄入](docs/cookbook/02-ingestion.md) | `01_ingest_basics.py` | `02_ingest_file_http.py` |
 | 03 | [配置](docs/cookbook/03-configuration.md) | — | — |

@@ -315,10 +315,11 @@ Throughput **plateaus at ~10 QPS by 5 workers** — extra concurrency buys nothi
 
 ### Cookbook (bilingual EN / ZH)
 
-The cookbook is the primary hands-on guide — **19 chapters**, 90 runnable examples.
+The cookbook is the primary hands-on guide — **20 chapters** (00–19), 90 runnable examples.
 
 | # | Chapter | SDK examples | REST examples |
 |---|---|---|---|
+| 00 | [Overview (start here)](docs/cookbook/00-overview.md) | — | — |
 | 01 | [Quick Start](docs/cookbook/01-quickstart.md) | — | — |
 | 02 | [Data Ingestion](docs/cookbook/02-ingestion.md) | `01_ingest_basics.py` | `02_ingest_file_http.py` |
 | 03 | [Configuration](docs/cookbook/03-configuration.md) | — | — |
@@ -334,7 +335,7 @@ The cookbook is the primary hands-on guide — **19 chapters**, 90 runnable exam
 | 13 | [CLI Complete Reference](docs/cookbook/13-cli-reference.md) | — | — |
 | 14 | [Workflow Orchestration](docs/cookbook/14-workflow-orchestration.md) | — | — |
 | 15 | [Gravitino Metadata Governance](docs/cookbook/15-gravitino-metadata.md) | `08_catalog_management.py` | — |
-| 16 | [v1.8.0 New Features](docs/cookbook/16-v1.8.0-new-features-zh.md) | — | — |
+| 16 | [v1.8.0 New Features](docs/cookbook/16-v1.8.0-new-features.md) | — | — |
 | 17 | [Data Masking](docs/cookbook/17-data-masking.md) | — | — |
 | 18 | [Lineage Visualization](docs/cookbook/18-lineage-visualization.md) | — | `09_lineage_audit.py` |
 | 19 | [REST Recipes](docs/cookbook/19-rest-recipes.md) | — | — |
