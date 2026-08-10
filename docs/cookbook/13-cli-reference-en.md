@@ -57,7 +57,7 @@ Example output:
 ┏━━━━━━━━━━━━┳━━━━━━━━━┓
 ┃ Component  ┃ Version ┃
 ┡━━━━━━━━━━━━╇━━━━━━━━━┩
-│ arrow-lake │ 1.10.0  │
+│ arrow-lake │ 1.10.4  │
 │ python     │ 3.11.9  │
 │ pyarrow    │ 23.0.1  │
 │ duckdb     │ 1.5.5   │
