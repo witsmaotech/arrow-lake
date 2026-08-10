@@ -13,6 +13,25 @@ for multi-hop reasoning questions.
 
 ***
 
+## 0. Why GraphRAG — what pure vector RAG gets wrong
+
+Before diving into KG usage, understand **why** GraphRAG exists.
+
+**The limit of pure vector RAG**: it retrieves by embedding similarity — returning *passages* lexically/semantically near the query. Great for single-hop "what is X" facts. It struggles with multi-hop, relation-dense questions:
+
+> Q: *"Which plan did the Emergency Command Center invoke for this incident, and which resources did it activate?"*
+>
+> - **Pure vector RAG**: retrieves a few passages mentioning "command center" or "plan", stitches a generic answer, likely missing the causal chain *invoked plan → that plan mandates these resources*.
+> - **GraphRAG**: locates the "Emergency Command Center" vertex, traverses typed edges (`invoked` / `activated`) to "plan" and "resource" vertices, injects those **structured neighbors** with `relation_type` into the LLM → a **traceable, relation-complete** answer.
+
+**Three differentiators of Arrow Lake GraphRAG**:
+
+1. **`relation_type` enrichment** — edges aren't just "A connects B" but "A *invoked* B", "A *activated* B"; the LLM sees *how* entities connect, not just that they co-occur.
+2. **Template-driven extraction** — domain YAML templates (e.g. `project_concept_graph`: 22 types + 14 relations) yield strongly-typed entity-relations, not a bag of untyped triples.
+3. **Measurable quality** — the template-quality harness quantifies orphan rate / relation-type coverage / avg degree before shipping, turning "is this graph any good?" from a guess into a metric.
+
+> Want to jump straight to GraphRAG Q&A? See the GraphRAG section of [08 RAG](./08-rag-pipeline.md) and §9 below. First, let's build a knowledge graph that GraphRAG can use.
+
 ## 1. Building the Knowledge Graph
 
 `Lake.kg_build()` reads text chunks from a specified dataset, calls an LLM to extract entities and
