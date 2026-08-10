@@ -8,6 +8,8 @@ Arrow Lake 内置 RAG（检索增强生成）管线，支持多检索策略、�
 > 前置准备：安装依赖 `pip install arrow-lake[rag]`，配置 LLM 提供商，
 > 并确保目标数据集已嵌入向量索引。
 
+> **贯穿数据集**：本章摄取 `papers` 论文库中若干论文的**全文**（`datas/papers/full_text/zh00*.pdf`）——与 04-07 章同域，改为以自然语言提问。
+
 ***
 
 ## 0. 前置准备：创建向量索引
@@ -15,35 +17,22 @@ Arrow Lake 内置 RAG（检索增强生成）管线，支持多检索策略、�
 RAG 查询依赖目标数据集上的向量索引。若尚未创建，请先执行以下步骤：
 
 ```python
-import numpy as np
-import pyarrow as pa
 from arrow_lake import Lake
 
 lake = Lake(base_uri="./data")
 
-# 1. 摄入文档
-report = lake.ingest("docs", ["guide.md"])
-print(f"摄入 {report.total_rows} 行")
+# 1. 摄取论文库中若干论文的全文。
+#    ingest_documents_and_index = 解析 -> 分块 -> 嵌入 -> FTS + 向量索引，
+#    一次调用即让数据集就绪（text_embedding 自动生成）
+report = lake.ingest_documents_and_index("papers", [
+    "datas/papers/full_text/zh003_检索增强生成企业智能客服应用.pdf",  # 检索增强生成
+    "datas/papers/full_text/zh005_中文文本分类与情感分析综述.pdf",    # 中文文本分类
+])
+print(f"摄入 {report.total_rows} 个分块")
 
-# 2. 生成嵌入向量（替换为实际嵌入模型）
-#    列名需与 RAG 管线期望的一致（默认：text_embedding）
-DIM = 1024  # bge-m3 / qwen3-embedding 维度（占位；实际用配置的嵌入模型）
-embeddings = np.random.randn(report.total_rows, DIM).astype(np.float32)
-embeddings /= np.linalg.norm(embeddings, axis=1, keepdims=True)
-vec_table = pa.table({
-    "text_embedding": pa.FixedSizeListArray.from_arrays(embeddings.ravel(), DIM),
-})
-lake.append_dataset("docs", vec_table)
-
-# 3. 创建向量索引
-lake.create_vector_index("docs", "text_embedding")
-
-# 4. 可选：创建全文索引用于混合检索
-lake.create_fts_index("docs", columns=["text_content"])
-
-# 5. RAG 已就绪
+# 2. RAG 已就绪
 import asyncio
-response = asyncio.run(lake.rag_query("什么是 Arrow Lake？", "docs"))
+response = asyncio.run(lake.rag_query("什么是检索增强生成？", "papers"))
 ```
 
 > **注意**：若未创建向量索引，`rag_query()` 会回退为纯 FTS 检索（如有），
@@ -62,12 +51,12 @@ from arrow_lake import Lake
 lake = Lake(base_uri="./data")
 
 response = asyncio.run(
-    lake.rag_query("什么是 Arrow Lake 的核心架构？", "docs")
+    lake.rag_query("检索增强生成如何减少幻觉？", "papers")
 )
 
 # 如果在已有事件循环中运行（Jupyter、FastAPI 等），
 # 直接使用 `await` 代替 asyncio.run()：
-#   response = await lake.rag_query("...", "docs")
+#   response = await lake.rag_query("...", "papers")
 
 print(response.answer)
 print(f"检索文档数：{response.retrieval_count}")
@@ -114,7 +103,7 @@ async def stream_rag_response():
     """流式 RAG 响应，逐片段输出。"""
     full_answer = []
     async for chunk in lake.rag_query_stream(
-        "解释 DuckLake 物化视图的工作原理", "docs"
+        "解释中文文本分类的主要方法", "papers"
     ):
         full_answer.append(chunk)
         print(chunk, end="", flush=True)
@@ -144,12 +133,12 @@ session_id = "user-123-session-abc"
 
 async def multi_turn():
     # 第一轮
-    r1 = await lake.rag_query("Arrow Lake 支持哪些向量索引？", "docs",
+    r1 = await lake.rag_query("检索增强生成解决什么问题？", "papers",
                               session_id=session_id)
     print(f"A1: {r1.answer}\n")
 
     # 第二轮 — 上下文延续
-    r2 = await lake.rag_query("其中哪种适合百万级数据集？", "docs",
+    r2 = await lake.rag_query("它与传统微调相比有何优劣？", "papers",
                               session_id=session_id)
     print(f"A2: {r2.answer}\n")
 
@@ -182,15 +171,15 @@ from arrow_lake import Lake
 lake = Lake(base_uri="./data")
 
 async def compare_strategies():
-    question = "Arrow Lake 如何处理数据版本控制？"
+    question = "检索增强生成常用哪些评测数据集？"
 
-    r_fts = await lake.rag_query(question, "docs", strategy="fts")
+    r_fts = await lake.rag_query(question, "papers", strategy="fts")
     print(f"[FTS]   检索 {r_fts.retrieval_count} 块，{r_fts.latency_ms} ms")
 
-    r_vec = await lake.rag_query(question, "docs", strategy="vector")
+    r_vec = await lake.rag_query(question, "papers", strategy="vector")
     print(f"[Vector] 检索 {r_vec.retrieval_count} 块，{r_vec.latency_ms} ms")
 
-    r_hybrid = await lake.rag_query(question, "docs", strategy="hybrid")
+    r_hybrid = await lake.rag_query(question, "papers", strategy="hybrid")
     print(f"[Hybrid] 检索 {r_hybrid.retrieval_count} 块，{r_hybrid.latency_ms} ms")
 
 asyncio.run(compare_strategies())
@@ -242,7 +231,7 @@ config.llm.context_window_tokens = 128_000    # LLM 总窗口
 lake = Lake(base_uri="./data", config=config)
 
 response = asyncio.run(
-    lake.rag_query("详细介绍 Arrow Lake 的存储层设计", "docs", top_k=15)
+    lake.rag_query("详细介绍检索增强生成的检索机制", "papers", top_k=15)
 )
 
 # 有效上下文 Token = budget_ratio * context_window_tokens
@@ -271,12 +260,12 @@ import asyncio
 from arrow_lake import Lake
 lake = Lake(base_uri="./data")
 
-r1 = await lake.rag_query("安全机制有哪些？", "docs", template="default_qa")
-r2 = await lake.rag_query("组件依赖关系？", "docs", template="graph_qa")
+r1 = await lake.rag_query("检索增强生成系统由哪些组件构成？", "papers", template="default_qa")
+r2 = await lake.rag_query("检索器与生成器如何交互？", "papers", template="graph_qa")
 r3 = await lake.rag_extract(
-    text="Arrow Lake 使用 Lance 格式存储，DuckDB 提供分析能力。",
+    text="中文文本分类通常采用预训练语言模型（如 BERT）进行特征提取，结合情感词典与深度学习实现细粒度情感分析。",
     schema={"entities": "list[str]", "relationships": "list[tuple[str,str,str]]"},
-    dataset_name="docs",
+    dataset_name="papers",
 )
 ```
 
@@ -417,11 +406,11 @@ lake = Lake(base_uri="./data")
 
 async def batch_example():
     requests = [
-        "Arrow Lake 的存储格式是什么？",
-        "版本控制如何工作？",
-        "有哪些 OLAP 功能？",
+        "什么是检索增强生成？",
+        "中文文本分类有哪些主流方法？",
+        "情感分析常用哪些技术？",
     ]
-    results = await lake.rag_batch_query(requests, "docs")
+    results = await lake.rag_batch_query(requests, "papers")
     for q, r in zip(requests, results):
         print(f"Q: {q}")
         print(f"A: {r.answer[:100]}...\n")
@@ -446,17 +435,17 @@ lake = Lake(base_uri="./data")
 
 async def extract_example():
     text = (
-        "Arrow Lake v1.5.3 于 2025-01-15 发布。"
-        "新增通过 HugeGraph 的知识图谱支持、"
-        "基于 DuckDB 的 OLAP 分析，以及混合检索的 RAG 管线。"
+        "中文文本分类综述发表于人工智能学报，系统对比了"
+        "基于规则、传统机器学习与深度学习方法，"
+        "指出预训练模型在情感分析任务上 F1 提升约 15%。"
     )
     schema = {
-        "product_name": "str",
-        "version": "str",
-        "release_date": "str",
-        "features": "list[str]",
+        "method": "str",
+        "venue": "str",
+        "task": "str",
+        "improvement": "str",
     }
-    response = await lake.rag_extract(text, schema, dataset_name="docs")
+    response = await lake.rag_extract(text, schema, dataset_name="papers")
     print(response.answer)
 
 
@@ -572,7 +561,7 @@ rag:
 embedding 余弦模式与 LLM judge 模式为规划中的扩展（见 `arrow_lake/rag/verifier.py` 末尾注释），尚未实现。
 
 ```python
-response = await lake.rag_query("总结三季度发现", "reports")
+response = await lake.rag_query("总结中文文本分类的主要方法与结论", "papers")
 print(response.answer)
 v = response.verification          # dict 或 None（未开启时）
 if v:
@@ -603,8 +592,8 @@ KG 不可用时优雅降级为纯向量 RAG（`graph_rag.py` 内置降级）。
 
 ```python
 # GraphRAG（hugegraph 已启用 + 数据集已建 KG）
-r = await lake.rag_query("哪些系统依赖认证服务？", "docs")           # use_kg 默认 True
-r2 = await lake.rag_query("同问题纯向量对比", "docs", use_kg=False)  # 单次绕过 KG
+r = await lake.rag_query("检索器依赖哪些组件？", "papers")           # use_kg 默认 True
+r2 = await lake.rag_query("同问题纯向量对比", "papers", use_kg=False)  # 单次绕过 KG
 ```
 
 REST 专用端点 `POST /api/v1/kg/query/graphrag`（body 用 `question` + `dataset`）。
