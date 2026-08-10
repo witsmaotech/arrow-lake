@@ -2,6 +2,8 @@
 
 Vector search is the core retrieval capability in Arrow Lake. This guide covers the full pipeline from data ingestion and embedding generation through index creation to similarity search.
 
+> **The running dataset.** Chapters 04–09 all build on one `papers` research library (`datas/papers/metadata.csv` — 1000 AI/ML papers with `title`, `text_content`, `category`, `year`, `venue`, `authors`, `word_count`). This chapter introduces it; later chapters view the same corpus through full-text, hybrid, OLAP, RAG, and knowledge-graph lenses.
+
 ```python
 from arrow_lake import Lake
 from arrow_lake.config import ArrowLakeConfig, StorageConfig, StorageBackend
@@ -11,20 +13,20 @@ config = ArrowLakeConfig()
 config.storage = StorageConfig(backend=StorageBackend.LOCAL, base_uri="./data")
 lake = Lake(base_uri="./data", config=config)
 
-# 1. Ingest data — text columns automatically generate embeddings
-report = lake.ingest("docs", ["article.txt"])
+# 1. Ingest the papers library — text_content is auto-embedded into text_embedding
+report = lake.ingest("papers", ["datas/papers/metadata.csv"])
 print(f"Ingested {report.total_rows} rows")
 
 # 2. Create a vector index
 from arrow_lake.config import DistanceMetric, VectorIndexType
-info = lake.create_vector_index("docs", metric="cosine", index_type="IVF_PQ")
+info = lake.create_vector_index("papers", metric="cosine", index_type="IVF_PQ")
 print(f"Index type: {info.index_type}, distance metric: {info.distance_type}")
 print(f"Indexed rows: {info.num_indexed_rows}")
 
 # 3. Execute a vector search
 import numpy as np
 query_vec = np.random.randn(1024).tolist()  # Replace with a real query vector
-result = lake.search("docs", query_vec, top_k=5)
+result = lake.search("papers", query_vec, top_k=5)
 print(f"Returned {result.row_count} results, metric: {result.metric}")
 
 for i in range(result.row_count):
@@ -77,19 +79,19 @@ from arrow_lake import Lake
 lake = Lake(base_uri="./data")
 
 # --- Basic usage: defaults ---
-info = lake.create_vector_index("docs")
+info = lake.create_vector_index("papers")
 # Defaults: metric=cosine, index_type=IVF_PQ
 
 # --- Specify metric and index type ---
 info = lake.create_vector_index(
-    "docs",
+    "papers",
     metric="cosine",          # Distance metric: cosine / l2 / dot
     index_type="IVF_PQ",      # Index type
 )
 
 # --- Fine-grained index parameter control ---
 info = lake.create_vector_index(
-    "docs",
+    "papers",
     metric="l2",
     vector_column="text_embedding",  # Vector column name
     index_type="IVF_FLAT",           # More precise but slower
@@ -102,7 +104,7 @@ info = lake.create_vector_index(
 `create_vector_index` returns an `IndexInfo` object:
 
 ```python
-info = lake.create_vector_index("docs", metric="cosine", index_type="IVF_PQ")
+info = lake.create_vector_index("papers", metric="cosine", index_type="IVF_PQ")
 print(f"Index: {info.index_type}, metric: {info.distance_type}")
 print(f"Indexed: {info.num_indexed_rows}, unindexed: {info.num_unindexed_rows}")
 print(f"Columns: {info.columns}")
@@ -160,11 +162,11 @@ lake = Lake(base_uri="./data")
 query_vector = np.random.randn(1024).tolist()
 
 # Basic search
-result = lake.search("docs", query_vector, top_k=5)
+result = lake.search("papers", query_vector, top_k=5)
 
 # With explicit metric and column
 result = lake.search(
-    "docs",
+    "papers",
     query_vector,
     top_k=10,
     metric="cosine",
@@ -173,20 +175,20 @@ result = lake.search(
 
 # With metadata filtering
 result = lake.search(
-    "docs",
+    "papers",
     query_vector,
     top_k=5,
-    where="category = 'tech'",
+    where="category = 'NLP'",
 )
 
 # Time-travel query (search a specific dataset version)
-result = lake.search("docs", query_vector, top_k=5, version=3)
+result = lake.search("papers", query_vector, top_k=5, version=3)
 ```
 
 ### Return Type: VectorSearchResult
 
 ```python
-result = lake.search("docs", query_vector, top_k=5)
+result = lake.search("papers", query_vector, top_k=5)
 print(f"Rows: {result.row_count}, dimension: {result.query_vector_dim}")
 print(f"Metric: {result.metric}, max distance: {result.max_distance}")
 
@@ -204,16 +206,16 @@ The `where` parameter accepts SQL-style filter expressions that pre-filter metad
 
 ```python
 # Equality filter
-result = lake.search("docs", qv, where="category = 'AI'")
+result = lake.search("papers", qv, where="category = 'NLP'")
 
 # Numeric range + compound condition
-result = lake.search("docs", qv, where="category = 'AI' AND year >= 2023")
+result = lake.search("papers", qv, where="category = 'NLP' AND year >= 2023")
 
 # IN operator
-result = lake.search("docs", qv, where="status IN ('published', 'reviewed')")
+result = lake.search("papers", qv, where="venue IN ('NeurIPS', 'ICLR')")
 
 # String pattern matching
-result = lake.search("docs", qv, where="title LIKE '%machine learning%'")
+result = lake.search("papers", qv, where="title LIKE '%attention%'")
 ```
 
 > **Security**: Arrow Lake internally checks for dangerous SQL keywords, but you should never interpolate unsanitized user input directly into `where` expressions.
@@ -233,7 +235,7 @@ IVF (Inverted File) divides the vector space into `num_partitions` cluster parti
 #   >= 1M rows:     min(sqrt(rows), 4096)       — scales with data volume
 
 # Usually no need to set manually; pass None to let the system choose
-info = lake.create_vector_index("docs", num_partitions=None)
+info = lake.create_vector_index("papers", num_partitions=None)
 ```
 
 ### 5.2 num\_sub\_vectors -- PQ Sub-Vector Count
@@ -267,13 +269,13 @@ config.vector.num_sub_vectors = 24  # 1024 / 24 ~ 42 dims per sub-vector
 
 ```python
 # Fast search (lower recall)
-result = lake.search("docs", qv, top_k=10, nprobes=5)
+result = lake.search("papers", qv, top_k=10, nprobes=5)
 
 # Balanced mode (default)
-result = lake.search("docs", qv, top_k=10, nprobes=20)
+result = lake.search("papers", qv, top_k=10, nprobes=20)
 
 # High-recall search
-result = lake.search("docs", qv, top_k=10, nprobes=128)
+result = lake.search("papers", qv, top_k=10, nprobes=128)
 
 # Note: nprobes is capped at max_nprobes (default 256)
 ```
@@ -323,7 +325,7 @@ from arrow_lake import Lake
 lake = Lake(base_uri="./data")
 
 # Get info for a specific vector index
-info = lake.get_vector_index_info("docs", vector_column="text_embedding")
+info = lake.get_vector_index_info("papers", vector_column="text_embedding")
 if info is None:
     print("No vector index found; brute-force search will be used")
 else:
@@ -335,7 +337,7 @@ else:
 
 ```python
 # List all vector indexes on a dataset
-indexes = lake.list_vector_indexes("docs")
+indexes = lake.list_vector_indexes("papers")
 for idx in indexes:
     print(f"  {idx.index_type} on {idx.columns}, metric={idx.distance_type}")
 ```
@@ -346,11 +348,11 @@ Rebuilding drops the existing index and creates a new one with updated parameter
 
 ```python
 # Rebuild with the same parameters (useful after data changes)
-info = lake.rebuild_vector_index("docs", vector_column="text_embedding")
+info = lake.rebuild_vector_index("papers", vector_column="text_embedding")
 
 # Rebuild with new parameters
 info = lake.rebuild_vector_index(
-    "docs",
+    "papers",
     metric="cosine",
     vector_column="text_embedding",
     index_type="IVF_PQ",
@@ -364,17 +366,17 @@ print(f"Rebuilt: {info.index_type}, {info.num_indexed_rows} rows")
 
 ```python
 # Delete a vector index by name
-lake.delete_vector_index("docs", "docs_text_embedding_idx")
+lake.delete_vector_index("papers", "papers_text_embedding_idx")
 ```
 
 ### 7.5 FTS Index Management
 
 ```python
 # Delete the full-text search index
-lake.delete_fts_index("docs")
+lake.delete_fts_index("papers")
 
 # Get FTS index information
-fts_info = lake.get_fts_index_info("docs")
+fts_info = lake.get_fts_index_info("papers")
 if fts_info is not None:
     print(f"FTS index: {fts_info['name']}, columns: {fts_info['columns']}")
 ```
@@ -397,7 +399,7 @@ curl -X POST http://localhost:8000/api/v1/datasets/docs/search/vector \
 # Embed text (compute embeddings via the API)
 curl -X POST http://localhost:8000/api/v1/embed/text \
   -H "Content-Type: application/json" \
-  -d '{"texts": ["machine learning fundamentals", "deep learning guide"]}'
+  -d '{"texts": ["efficient attention mechanism", "low-rank adaptation"]}'
 ```
 
 | Endpoint                        | Method | Description           |
@@ -409,48 +411,36 @@ curl -X POST http://localhost:8000/api/v1/embed/text \
 
 ***
 
-## 9. Complete Example: Vector Search from Scratch
+## 9. Complete Example: End-to-end Vector Search
+
+This example ingests the `papers` research library, builds an IVF_PQ index, and runs a filtered similarity search — the same `papers` corpus threaded through chapters 04–09.
 
 ```python
-import pyarrow as pa
 import numpy as np
 from arrow_lake import Lake
 from arrow_lake.config import ArrowLakeConfig, StorageConfig, StorageBackend
 
 # 1. Configuration
 config = ArrowLakeConfig()
-config.storage = StorageConfig(backend=StorageBackend.LOCAL, base_uri="./demo_data")
-lake = Lake(base_uri="./demo_data", config=config)
+config.storage = StorageConfig(backend=StorageBackend.LOCAL, base_uri="./data")
+lake = Lake(base_uri="./data", config=config)
 
-# 2. Prepare data (simulated embeddings; IVF_PQ needs ≥256 training rows, so generate 300)
-base_texts = ["Introduction to Machine Learning", "Deep Learning and Neural Networks",
-              "Natural Language Processing", "Computer Vision Fundamentals",
-              "Reinforcement Learning Principles"]
-texts = base_texts * 60  # 5 × 60 = 300 rows
-vectors = np.random.randn(300, 1024).tolist()
+# 2. Ingest the papers library (1000 rows; text_content → text_embedding automatically)
+report = lake.ingest("papers", ["datas/papers/metadata.csv"])
+print(f"Ingested {report.total_rows} rows")
 
-table = pa.table({
-    "text_content": texts,
-    "text_embedding": vectors,
-    "category": ["AI"] * 300,
-    "year": [2024] * 300,
-})
-
-# 3. Write the dataset
-lake.create_dataset("articles", table)
-
-# 4. Create an index
-info = lake.create_vector_index("articles", metric="cosine", index_type="IVF_PQ")
+# 3. Create an IVF_PQ vector index (the corpus has ≥256 rows, so PQ training is valid)
+info = lake.create_vector_index("papers", metric="cosine", index_type="IVF_PQ")
 print(f"Index created: {info.index_type}, {info.num_indexed_rows} rows")
 
-# 5. Search
-query_vec = np.random.randn(1024).tolist()
-result = lake.search("articles", query_vec, top_k=3, where="year = 2024")
+# 4. Search — semantically similar papers, filtered to the NLP category
+query_vec = np.random.randn(1024).tolist()  # replace with a real query embedding
+result = lake.search("papers", query_vec, top_k=3, where="category = 'NLP'")
 
-# 6. Output results
+# 5. Output results
 for row in result.table.to_pylist():
-    print(f"  [{row['_distance']:.4f}] {row['text_content']}")
+    print(f"  [{row['_distance']:.4f}] {row['title']}")
 
-# 7. Cleanup
+# 6. Cleanup
 lake.shutdown()
 ```
