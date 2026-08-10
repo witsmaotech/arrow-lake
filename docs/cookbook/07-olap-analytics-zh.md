@@ -15,6 +15,26 @@ GROUP BY 聚合、窗口函数、JOIN 以及物化视图。
 `Lake.olap_query()` 在 Lance 数据集上执行只读 SQL（SELECT 语句），返回
 `OlapQueryResult`，其中 `.table` 是 PyArrow Table，可直接转 Pandas。
 
+> 本章示例查询一个 `sales` 数据集。先用下面代码建一份示例数据（若你已有自己的数据集，把下文 `"sales"` 换成你的数据集名即可）：
+
+```python
+import pyarrow as pa
+from arrow_lake import Lake
+
+lake = Lake(base_uri="./data")
+
+# 先建示例 sales 数据集（已存在则跳过本块）
+sales = pa.table({
+    "category": ["electronics", "books", "electronics", "food", "books",
+                 "food", "electronics", "books"] * 10,   # 80 行
+    "amount":  [1200, 45, 899, 23, 60, 15, 2300, 38] * 10,
+    "region":  ["east", "west", "east", "north", "west",
+                "north", "south", "east"] * 10,
+})
+lake.create_dataset("sales", sales)
+print(f"sales 已创建: {sales.num_rows} 行")
+```
+
 ```python
 from arrow_lake import Lake
 

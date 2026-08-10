@@ -422,16 +422,17 @@ config = ArrowLakeConfig()
 config.storage = StorageConfig(backend=StorageBackend.LOCAL, base_uri="./demo_data")
 lake = Lake(base_uri="./demo_data", config=config)
 
-# 2. 准备数据（模拟 embedding）
-texts = ["机器学习入门教程", "深度学习与神经网络", "自然语言处理技术",
-         "计算机视觉基础", "强化学习原理"]
-vectors = np.random.randn(5, 1024).tolist()
+# 2. 准备数据（模拟 embedding；IVF_PQ 需 ≥256 行训练样本，故生成 300 条）
+base_texts = ["机器学习入门教程", "深度学习与神经网络", "自然语言处理技术",
+              "计算机视觉基础", "强化学习原理"]
+texts = base_texts * 60  # 5 × 60 = 300 条
+vectors = np.random.randn(300, 1024).tolist()
 
 table = pa.table({
     "text_content": texts,
     "text_embedding": vectors,
-    "category": ["AI", "AI", "AI", "AI", "AI"],
-    "year": [2024, 2024, 2023, 2023, 2024],
+    "category": ["AI"] * 300,
+    "year": [2024] * 300,
 })
 
 # 3. 写入数据集
