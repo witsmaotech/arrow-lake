@@ -53,7 +53,7 @@ Arrow Lake 数据湖平台实战教程，涵盖数据摄取、搜索、分析、
 | -- | -------------------------------------------- | ----------------------------------------------------- |
 | 19 | [**REST 实战配方**](./19-rest-recipes-zh.md)      | [**REST Recipes**](./19-rest-recipes.md)              |
 
-> **版本特性**：第 16 章（v1.8 新特性，仅中文）及各版本演进详见文末 [版本特性 / Release Notes](#版本特性--release-notes) 区。
+> **版本特性**：第 16 章（v1.8 新特性）及各版本演进详见文末 [版本特性 / Release Notes](#版本特性--release-notes) 区。
 
 ## 学习路径 / Learning Path
 
@@ -116,7 +116,7 @@ docker exec -it deploy-api-1 .venv/bin/python /app/examples/19_knowledge_graph_b
 
 ## 版本特性 / Release Notes
 
-> 各版本演进与新增功能汇总。第 16 章 [v1.8 新特性（中文）](./16-v1.8.0-new-features-zh.md) 亦归此区。
+> 各版本演进与新增功能汇总。第 16 章 [v1.8 新特性](./16-v1.8.0-new-features-zh.md) / [EN](./16-v1.8.0-new-features.md) 亦归此区。
 
 ## v1.7.0 新特性 — Hyper-Extract KG + Doc-Type 路由
 
