@@ -3,6 +3,8 @@
 > RRF fusion of vector search + full-text search for hybrid retrieval, DuckDB CUBE for
 > faceted navigation, and weighted RRF for multi-column ensemble search.
 
+> **Running dataset.** We continue with the `papers` research library from [04](./04-vector-search.md) / [05](./05-fulltext-search.md) — now combining semantic vector and BM25 retrieval, and slicing it by `category` / `venue` / `year` facets.
+
 ***
 
 ## 1. Hybrid Search
@@ -10,38 +12,23 @@
 ```python
 """Minimal hybrid search example"""
 from arrow_lake import Lake
-import pyarrow as pa
 import numpy as np
 
 lake = Lake(base_uri="./lake_demo")
 
-# Ingest a dataset with both text and embeddings
-np.random.seed(42)
-titles = ["Lightweight Running Shoes", "Pro Basketball High-Tops", "Casual Leather Shoes",
-          "Trail Running Shoes - Grip", "Summer Breathable Sandals", "Women's Yoga Sneakers"]
-embeddings = np.random.randn(len(titles), 128).astype(np.float32).tolist()
-
-products = pa.table({
-    "id": list(range(1, len(titles) + 1)),
-    "title": titles,
-    "category": ["running", "basketball", "casual", "running", "casual", "fitness"],
-    "brand": ["Nike", "Adidas", "Clarks", "Salomon", "Teva", "Lululemon"],
-    "text_content": [f"{t}, brand: {b}" for t, b in zip(titles,
-        ["Nike", "Adidas", "Clarks", "Salomon", "Teva", "Lululemon"])],
-    "text_embedding": embeddings,
-})
-lake.create_dataset("products", products)
+# Ingest our papers research library (text_content is auto-embedded → text_embedding)
+lake.ingest("papers", ["datas/papers/metadata.csv"])
 
 # Build indexes
-lake.create_vector_index("products", vector_column="text_embedding")
-lake.create_fts_index("products", fts_column="text_content")
+lake.create_vector_index("papers", vector_column="text_embedding")
+lake.create_fts_index("papers", fts_column="text_content")
 
-# Hybrid search
-query_vec = np.random.randn(128).astype(np.float32).tolist()
+# Hybrid search (semantic vector + keyword BM25, fused via RRF)
+query_vec = np.random.randn(1024).astype(np.float32).tolist()  # replace with a real query embedding
 result = lake.hybrid_search(
-    "products",
+    "papers",
     query_vector=query_vec,
-    query_text="lightweight running shoes",
+    query_text="attention mechanism",
     top_k=5,
 )
 print(f"Hybrid search -> {result.row_count} results (rrf_k={result.rrf_k})")
@@ -68,15 +55,16 @@ score(doc) = SUM( 1 / (rank(doc, list_i) + k) )
 * `k`: smoothing constant, default 60 (the value recommended in the original paper)
 
 ```text
-Vector search top 3:         Full-text search top 3:
-  rank 1: Trail Runners        rank 1: Lightweight Running Shoes
-  rank 2: Hiking Boots         rank 2: Kids Cushion Runners
-  rank 3: Basketball Shoes     rank 3: Summer Breathable Sandals
+Vector search top 3:                Full-text search top 3:
+  rank 1: Attention Is All You Need   rank 1: Attention Is All You Need
+  rank 2: FlashAttention              rank 2: FlashAttention
+  rank 3: LoRA                        rank 3: BERT
 
            +-- RRF fusion (k=60) --+
                       |
-  rank 1: Lightweight Running Shoes  (1/(1+60) + 1/(1+60) = 0.0328)
-  rank 1: Trail Runners             (1/(1+60) + 0 = 0.0164)
+  rank 1: Attention Is All You Need  (1/(1+60) + 1/(1+60) = 0.0328)
+  rank 2: FlashAttention             (1/(1+61) + 1/(1+61) = 0.0323)
+  rank 3: LoRA                       (1/(1+62) + 0         = 0.0159)
 ```
 
 | rrf\_k           | Effect                              | Recommended For           |
@@ -148,12 +136,12 @@ via DuckDB `GROUP BY CUBE`. It is designed for e-commerce and content platform
 category navigation.
 
 ```python
-query_vec = encoder.embed_text("running shoes")
+query_vec = encoder.embed_text("attention")
 
 result = lake.faceted_search(
-    "products",
+    "papers",
     query_vector=query_vec,
-    facets=["category", "brand"],
+    facets=["category", "venue", "year"],
     top_k=10,
 )
 
@@ -173,12 +161,16 @@ for dim, values in facet_dict.items():
         print(f"    {val}: {cnt}")
 # Output:
 #   [category]
-#     running: 2
-#     casual: 2
+#     NLP: 116
+#     Computer Vision: 121
 #     ...
-#   [brand]
-#     Nike: 1
-#     Adidas: 1
+#   [venue]
+#     JMLR: 92
+#     SIGMOD: 91
+#     ...
+#   [year]
+#     2024: 251
+#     2023: 249
 #     ...
 ```
 
@@ -192,7 +184,7 @@ def faceted_search(
     *,
     facets: list[str] | None = None, # Facet dimension column names
     top_k: int = 10,
-    vector_column: str = "embedding",
+    vector_column: str = "embedding",  # SDK default; pass "text_embedding" for auto-embedded columns
     where: str | None = None,        # Metadata filter
     version: int | None = None,      # Dataset version for time-travel queries
 ) -> FacetedSearchResult: ...
@@ -203,8 +195,8 @@ def faceted_search(
 ```python
 @dataclass(frozen=True)
 class FacetCount:
-    name: str     # Facet dimension (e.g. "category")
-    value: str    # Facet value (e.g. "running")
+    name: str     # Facet dimension (e.g. "venue")
+    value: str    # Facet value (e.g. "NeurIPS")
     count: int    # Record count
 
 @dataclass(frozen=True)
@@ -223,24 +215,24 @@ The core use case for faceted search is "search results + category filter naviga
 
 ```python
 # 1. User searches -> display facet options (sidebar)
-result = lake.faceted_search("products", query_vector=query_vec,
-                              facets=["category", "brand"])
+result = lake.faceted_search("papers", query_vector=query_vec,
+                              facets=["category", "venue"])
 
-# 2. User clicks "running" filter -> facet counts update automatically
-result = lake.faceted_search("products", query_vector=query_vec,
-                              facets=["category", "brand"],
-                              where="category = 'running'")
+# 2. User clicks "NLP" filter -> facet counts update automatically
+result = lake.faceted_search("papers", query_vector=query_vec,
+                              facets=["category", "venue"],
+                              where="category = 'NLP'")
 ```
 
 ### Scalar Index Acceleration
 
-Building scalar indexes on the facet dimension columns significantly speeds up the `GROUP BY CUBE` aggregation. `FacetedSearchConfig.scalar_index_type_map` auto-selects the index type per column by cardinality (low-cardinality like `modality`/`source`/`doc_type` → `BITMAP`, others → `BTREE`). Build indexes in bulk:
+Building scalar indexes on the facet dimension columns significantly speeds up the `GROUP BY CUBE` aggregation. `FacetedSearchConfig.scalar_index_type_map` auto-selects the index type per column by cardinality (low-cardinality like `category`/`venue`/`year` → `BITMAP`, others → `BTREE`). Build indexes in bulk:
 
 ```python
 # Build scalar indexes on default facet columns (BTREE/BITMAP per scalar_index_type_map)
-lake.create_facet_indexes("products")
+lake.create_facet_indexes("papers")
 # Or build an index on a single column
-lake.create_scalar_index("products", column="category")
+lake.create_scalar_index("papers", column="category")
 ```
 
 ***
@@ -251,9 +243,9 @@ lake.create_scalar_index("products", column="category")
 them with weighted RRF. It is designed for multi-modal embedding scenarios.
 
 ```python
-# Assume "products" has both text_embedding and image_embedding columns
+# Hypothetical: if papers also had an image_embedding column (e.g. figure embeddings)
 result = lake.ensemble_search(
-    "products",
+    "papers",
     query_vector=query_vec,
     columns=["text_embedding", "image_embedding"],
     weights={"text_embedding": 0.7, "image_embedding": 0.3},
@@ -295,8 +287,9 @@ CLIP embeddings map text and images into the same vector space, enabling "text-t
 
 ```python
 # Text -> image embedding, same space as /embed/image
-query_vec = lake.encode_text_clip("red running shoes")
-results = lake.search("products", query_vector=query_vec, vector_column="image_embedding")
+# (requires an image_embedding column, e.g. paper figures embedded via CLIP)
+query_vec = lake.encode_text_clip("neural network architecture diagram")
+results = lake.search("papers", query_vector=query_vec, vector_column="image_embedding")
 ```
 
 ***
@@ -341,12 +334,12 @@ Need to search?
 # Hybrid search
 curl -X POST http://localhost:8000/api/v1/datasets/products/search/hybrid \
   -H "Content-Type: application/json" \
-  -d '{"query_vector": [0.1, 0.2], "query_text": "lightweight running shoes", "top_k": 10}'
+  -d '{"query_vector": [0.1, 0.2], "query_text": "attention mechanism", "top_k": 10}'
 
 # Faceted search
 curl -X POST http://localhost:8000/api/v1/datasets/products/search/faceted \
   -H "Content-Type: application/json" \
-  -d '{"query_vector": [0.1, 0.2], "facets": ["category", "brand"]}'
+  -d '{"query_vector": [0.1, 0.2], "facets": ["category", "venue"]}'
 
 # Ensemble search
 curl -X POST http://localhost:8000/api/v1/datasets/products/search/ensemble \
