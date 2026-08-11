@@ -464,7 +464,7 @@ async def _do_generate(req: "GenerateRequest", generate_fn) -> tuple[str, list, 
     user += "\n请只输出符合 schema 的纯 YAML。"
     msgs: list[tuple[str, str]] = [("system", system), ("user", user)]
     last_yaml, last_errors = "", []
-    for attempt in range(3):  # 初次 + 最多 2 轮 self-heal
+    for attempt in range(2):  # 初次 + 最多 1 轮 self-heal(每轮~24s,2 轮≈48s 远离超时墙)
         out = await generate_fn(msgs)
         yaml_text = _strip_fences(out)
         last_yaml = yaml_text
