@@ -377,6 +377,9 @@ function openEditor({mode, name, yaml, docType}) {
   $("#saveBtn").addEventListener("click", async () => {
     let y = $("#edYaml").value, nm = $("#edName").value.trim();
     if (!nm || !y.trim()) { toast("名称和 YAML 不能为空", "error"); return; }
+    // 名称是模板标识符(文件名/gallery key),须匹配后端 ^[a-z][a-z0-9_]*$;前端先校验给清晰提示,避免 422
+    if (!/^[a-z][a-z0-9_]{0,63}$/.test(nm)) {
+      toast("名称不合法:须小写字母开头,仅含 a-z/0-9/_,1-64 字符(当前: " + esc(nm) + ")", "error"); return; }
     // 强制 YAML 内 name 与文件名(#edName)一致 —— gallery 按模板 YAML 的内部 name 展示,
     // 若不一致(手改/✨生成带不同 name),保存后模板会"看似新建"(旧名消失、新名出现)。
     // 编辑场景 #edName 不可改(=原文件名),故强制对齐 = 保持原身份,即"修改"而非"新建"。
