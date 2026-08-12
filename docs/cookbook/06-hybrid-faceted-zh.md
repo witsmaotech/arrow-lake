@@ -2,7 +2,7 @@
 
 > RRF 融合向量搜索 + 全文搜索实现混合检索，DuckDB CUBE 实现分面导航，加权 RRF 实现多列 Ensemble 搜索。
 
-> **贯穿数据集**：沿用 [04](./04-vector-search-zh.md)/[05](./05-fulltext-search-zh.md) 的 `papers` 论文库——本章融合语义向量与 BM25 检索，并按 `category`/`venue`/`year` 分面切片。
+> **贯穿数据集**：沿用 [04](./04-vector-search-zh.md)/[05](./05-fulltext-search-zh.md) 的 `aigc_articles` AIGC 文章库（datas/reports/aigc_articles.csv，144 篇 AIGC 文章）——本章融合语义向量与 BM25 检索，并按 `category`/`venue`/`year` 分面切片。
 
 ***
 
@@ -15,17 +15,17 @@ import numpy as np
 
 lake = Lake(base_uri="./lake_demo")
 
-# 摄取我们的 papers 研究论文库（text_content 自动编码为 text_embedding）
-lake.ingest("papers", ["datas/papers/metadata_zh.csv"])
+# 摄取我们的 aigc_articles AIGC 文章库（text_content 自动编码为 text_embedding）
+lake.ingest("aigc_articles", ["datas/reports/aigc_articles.csv"])
 
 # 创建索引
-lake.create_vector_index("papers", vector_column="text_embedding")
-lake.create_fts_index("papers", fts_column="text_content")
+lake.create_vector_index("aigc_articles", vector_column="text_embedding")
+lake.create_fts_index("aigc_articles", fts_column="text_content")
 
 # 混合搜索（语义向量 + 关键词 BM25，经 RRF 融合）
 query_vec = np.random.randn(1024).astype(np.float32).tolist()  # 替换为真实查询向量
 result = lake.hybrid_search(
-    "papers",
+    "aigc_articles",
     query_vector=query_vec,
     query_text="注意力机制",
     top_k=5,
@@ -134,7 +134,7 @@ Arrow Lake 自动选择执行路径：优先 DuckDB 原生 `lance_hybrid_search(
 query_vec = encoder.embed_text("注意力")
 
 result = lake.faceted_search(
-    "papers",
+    "aigc_articles",
     query_vector=query_vec,
     facets=["category", "venue", "year"],
     top_k=10,
@@ -156,11 +156,12 @@ for dim, values in facet_dict.items():
         print(f"    {val}: {cnt}")
 # 输出：
 #   [category]
-#     自然语言处理: 156
-#     计算机视觉: 172
+#     大语言模型: 156
+#     多模态: 172
+#     扩散模型: 98
 #     ...
 #   [venue]
-#     AAAI: ...
+#     ICML: ...
 #     NeurIPS: ...
 #     ...
 #   [year]
@@ -210,13 +211,13 @@ class FacetedSearchResult:
 
 ```python
 # 1. 用户搜索 -> 展示分面选项 (侧边栏)
-result = lake.faceted_search("papers", query_vector=query_vec,
+result = lake.faceted_search("aigc_articles", query_vector=query_vec,
                               facets=["category", "venue"])
 
-# 2. 用户点击「自然语言处理」筛选 -> 分面计数自动更新
-result = lake.faceted_search("papers", query_vector=query_vec,
+# 2. 用户点击「大语言模型」筛选 -> 分面计数自动更新
+result = lake.faceted_search("aigc_articles", query_vector=query_vec,
                               facets=["category", "venue"],
-                              where="category = '自然语言处理'")
+                              where="category = '大语言模型'")
 ```
 
 ### 标量索引加速
@@ -225,9 +226,9 @@ result = lake.faceted_search("papers", query_vector=query_vec,
 
 ```python
 # 对默认分面列建标量索引（按 scalar_index_type_map 选 BTREE/BITMAP）
-lake.create_facet_indexes("papers")
+lake.create_facet_indexes("aigc_articles")
 # 或对单列建索引
-lake.create_scalar_index("papers", column="category")
+lake.create_scalar_index("aigc_articles", column="category")
 ```
 
 ***
@@ -237,9 +238,9 @@ lake.create_scalar_index("papers", column="category")
 `ensemble_search` 在多个 embedding 列上执行向量搜索，通过加权 RRF 融合。适用于多模态 embedding 场景。
 
 ```python
-# 假设：若 papers 还有一列 image_embedding（例如论文图表的嵌入）
+# 假设：若 aigc_articles 还有一列 image_embedding（例如文章配图的嵌入）
 result = lake.ensemble_search(
-    "papers",
+    "aigc_articles",
     query_vector=query_vec,
     columns=["text_embedding", "image_embedding"],
     weights={"text_embedding": 0.7, "image_embedding": 0.3},
@@ -280,9 +281,9 @@ CLIP 嵌入把文本和图像映射到同一向量空间，支持「以文搜图
 
 ```python
 # 文本 → 图像 embedding，与 /embed/image 同空间
-# 需要一列 image_embedding（例如论文图表经 CLIP 嵌入）
+# 需要一列 image_embedding（例如文章配图经 CLIP 嵌入）
 query_vec = lake.encode_text_clip("神经网络结构图")
-results = lake.search("papers", query_vector=query_vec, vector_column="image_embedding")
+results = lake.search("aigc_articles", query_vector=query_vec, vector_column="image_embedding")
 ```
 
 ***

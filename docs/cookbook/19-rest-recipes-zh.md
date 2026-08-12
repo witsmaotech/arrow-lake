@@ -167,7 +167,7 @@ curl -X DELETE "$API/admin/extraction-templates/quality/$TDS" -H "$AUTH"
 # 1. 保存私有查询
 curl -X POST "$API/me/saved-queries" -H "X-API-Key: $PTOK" -H "Content-Type: application/json" -d '{
   "name": "high-value-sales",
-  "dataset": "sales",
+  "dataset": "ontime",
   "sql": "SELECT * FROM sales WHERE amount > 10000"
 }'
 
@@ -178,7 +178,7 @@ curl -X POST "$API/me/notifications/read?notification_id=42" -H "X-API-Key: $PTO
 # 3. 读取/写入偏好（按用户的 UI/API 设置）
 curl "$API/me/preferences" -H "X-API-Key: $PTOK"
 curl -X PUT "$API/me/preferences" -H "X-API-Key: $PTOK" -H "Content-Type: application/json" \
-  -d '{"theme":"dark","default_dataset":"sales"}'
+  -d '{"theme":"dark","default_dataset":"ontime"}'
 ```
 
 ---

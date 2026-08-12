@@ -143,7 +143,7 @@ curl -X POST http://localhost:8000/api/v1/auth/refresh \
 curl -X POST http://localhost:8000/api/v1/datasets/docs/ingest \
   -H "X-API-Key: your-secret-api-key-here" \
   -H "Content-Type: application/json" \
-  -d '{"file_paths": ["datas/papers/full_text/zh001_大语言模型知识图谱构建综述.pdf", "datas/papers/full_text/zh002_向量数据库技术选型与实践.pdf"]}'
+  -d '{"file_paths": ["datas/reports/aigc_industry_report.pdf"]}'
 # => {"success": true, "dataset_name": "docs", "total_rows": 156, "total_files": 2, ...}
 ```
 
@@ -240,7 +240,7 @@ async def build_kg(dataset: str) -> dict:
 
 
 async def main():
-    result = await ingest_files("docs", ["datas/kb/knowledge_zh.jsonl"])
+    result = await ingest_files("aigc_articles", ["datas/reports/aigc_articles.csv"])
     print(f"摄取完成：{result['total_rows']} 行")
 
     results = await vector_search("docs", "向量索引类型")
@@ -474,13 +474,13 @@ curl http://localhost:8000/metadata/catalogs \
 # 列出 Lance catalog 中的表
 curl http://localhost:8000/metadata/tables \
   -H "X-API-Key: your-key"
-# => {"success": true, "data": [{"name": "articles"}, {"name": "sales"}],
+# => {"success": true, "data": [{"name": "aigc_articles"}, {"name": "ontime"}],
 #     "error": null, "metadata": {"total": 2}}
 
 # 获取表详情（列和属性）
 curl http://localhost:8000/metadata/tables/articles \
   -H "X-API-Key: your-key"
-# => {"success": true, "data": {"name": "articles",
+# => {"success": true, "data": {"name": "aigc_articles",
 #     "columns": [{"name": "id", "type": "int"}, ...],
 #     "properties": {"format": "lance", "owner": "data-team"}},
 #     "error": null, "metadata": {}}
@@ -1932,13 +1932,13 @@ system_db（libSQL）。
 
 ```bash
 # 绑定数据集到模板，再用它构建（构建时模板自动解析）
-curl -X PUT http://localhost:8000/api/v1/admin/extraction-templates/bindings/papers \
+curl -X PUT http://localhost:8000/api/v1/admin/extraction-templates/bindings/aigc_report \
   -H "Authorization: Bearer $TOKEN" -H "X-API-Key: $KEY" \
   -H "Content-Type: application/json" -d '{"template": "project_concept_graph"}'
 
 curl -X POST http://localhost:8000/api/v1/kg/build \
   -H "Authorization: Bearer $TOKEN" -H "X-API-Key: $KEY" \
-  -H "Content-Type: application/json" -d '{"dataset": "papers"}'   # 模板从绑定解析
+  -H "Content-Type: application/json" -d '{"dataset": "aigc_report"}'   # 模板从绑定解析
 ```
 
 ### Doc-Type 字典（`/api/v1/admin/doc-type-categories`）

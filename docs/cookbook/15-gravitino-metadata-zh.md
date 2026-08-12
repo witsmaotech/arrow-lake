@@ -141,9 +141,9 @@ curl http://localhost:8000/api/v1/metadata/tables -H "X-API-Key: your-key"
 {
   "success": true,
   "data": [
-    {"name": "articles"},
-    {"name": "sales"},
-    {"name": "transactions"}
+    {"name": "aigc_articles"},
+    {"name": "ontime"},
+    {"name": "aigc_articles"}
   ],
   "error": null,
   "metadata": {"total": 3}
@@ -160,7 +160,7 @@ curl http://localhost:8000/api/v1/metadata/tables/articles -H "X-API-Key: your-k
 {
   "success": true,
   "data": {
-    "name": "articles",
+    "name": "aigc_articles",
     "columns": [
       {"name": "id", "type": "long"},
       {"name": "title", "type": "string"},
@@ -486,7 +486,7 @@ curl -X POST http://localhost:8000/api/v1/metadata/statistics/articles \
 {
   "success": true,
   "data": {
-    "name": "articles",
+    "name": "aigc_articles",
     "row_count": 50000,
     "column_count": 8,
     "size_mb": 125.4,

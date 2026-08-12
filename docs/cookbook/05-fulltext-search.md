@@ -2,7 +2,7 @@
 
 > BM25 retrieval powered by LanceDB native FTS (ICU) full-text indexing with jieba Chinese tokenization.
 
-> **Running dataset.** We continue with the `papers` research library introduced in [04 - Vector Search](./04-vector-search.md) — now indexed for keyword (BM25) retrieval instead of semantic vectors.
+> **Running dataset.** We continue with the `aigc_articles` AIGC article library introduced in [04 - Vector Search](./04-vector-search.md) — now indexed for keyword (BM25) retrieval instead of semantic vectors.
 
 ***
 
@@ -15,16 +15,16 @@ import pyarrow as pa
 
 lake = Lake(base_uri="./lake_demo")
 
-# Ingest our papers research library (FTS needs no vector column)
+# Ingest our aigc_articles AIGC article library (FTS needs no vector column)
 import pyarrow.csv as pacsv
-papers = pacsv.read_csv("datas/papers/metadata.csv")
-lake.create_dataset("papers", papers)
+aigc_articles = pacsv.read_csv("datas/reports/aigc_articles.csv")
+lake.create_dataset("aigc_articles", aigc_articles)
 
 # Create a full-text index (uses jieba Chinese tokenization by default)
-lake.create_fts_index("papers", fts_column="text_content")
+lake.create_fts_index("aigc_articles", fts_column="text_content")
 
 # Execute a full-text search
-result = lake.text_search("papers", query="attention mechanism", top_k=10)
+result = lake.text_search("aigc_articles", query="attention mechanism", top_k=10)
 for i in range(result.table.num_rows):
     doc_id = result.table.column("id")[i].as_py()
     score = result.table.column("_score")[i].as_py()
@@ -40,13 +40,13 @@ lake.shutdown()
 
 ```python
 # Create index on the default column (text_content)
-lake.create_fts_index("papers")
+lake.create_fts_index("aigc_articles")
 
 # Specify the index column
-lake.create_fts_index("papers", fts_column="title")
+lake.create_fts_index("aigc_articles", fts_column="title")
 
 # Force rebuild an existing index
-lake.create_fts_index("papers", fts_column="text_content", replace=True)
+lake.create_fts_index("aigc_articles", fts_column="text_content", replace=True)
 ```
 
 ### API Signature
@@ -73,14 +73,14 @@ When `tokenizer_type` is `"jieba"` (the default), `create_index` will:
 
 ```python
 # Basic search
-result = lake.text_search("papers", query="retrieval augmented generation")
+result = lake.text_search("aigc_articles", query="retrieval augmented generation")
 print(f"Query: {result.query}, Results: {result.row_count}, Top score: {result.max_score:.4f}")
 
 # Limit the number of results
-result = lake.text_search("papers", query="diffusion", top_k=5)
+result = lake.text_search("aigc_articles", query="diffusion", top_k=5)
 
 # Search a specific column
-result = lake.text_search("papers", query="attention", fts_column="title")
+result = lake.text_search("aigc_articles", query="attention", fts_column="title")
 ```
 
 ### API Signature
@@ -103,7 +103,7 @@ def text_search(
 
 ```python
 # Async variant (v1.8.0 #17): keeps the event loop responsive for concurrent async handlers
-result = await lake.text_search_async("papers", query="transformer", top_k=10)
+result = await lake.text_search_async("aigc_articles", query="transformer", top_k=10)
 ```
 
 `text_search_async` has the same signature as `text_search`. It is wrapped via
@@ -126,7 +126,7 @@ class FullTextSearchResult:
 ### Iterating Over Results
 
 ```python
-result = lake.text_search("papers", query="low-rank adaptation", top_k=3)
+result = lake.text_search("aigc_articles", query="low-rank adaptation", top_k=3)
 ids = result.table.column("id").to_pylist()
 scores = result.table.column("_score").to_pylist()
 titles = result.table.column("title").to_pylist()
@@ -175,7 +175,7 @@ fts_config = FullTextSearchConfig(
     jieba_user_dict="./custom_dict.txt",
 )
 lake = Lake(base_uri="./lake", fts=fts_config)
-lake.create_fts_index("papers")
+lake.create_fts_index("aigc_articles")
 ```
 
 ***
@@ -234,17 +234,17 @@ config = FullTextSearchConfig(
 
 ```python
 # Single-condition filter
-result = lake.text_search("papers", query="attention", where="category = 'NLP'")
+result = lake.text_search("aigc_articles", query="attention", where="category = '大语言模型'")
 
 # Numeric filter
-result = lake.text_search("papers", query="diffusion", where="word_count > 5000")
+result = lake.text_search("aigc_articles", query="diffusion", where="word_count > 180")
 
 # Combined conditions
-result = lake.text_search("papers", query="transformer",
-                          where="category = 'NLP' AND year >= 2023")
+result = lake.text_search("aigc_articles", query="transformer",
+                          where="category = '大语言模型' AND year >= 2023")
 
 # OR conditions
-result = lake.text_search("papers", query="reinforcement",
+result = lake.text_search("aigc_articles", query="reinforcement",
                           where="venue = 'NeurIPS' OR venue = 'ICLR'")
 ```
 
@@ -260,10 +260,10 @@ from arrow_lake import Lake
 lake = Lake(base_uri="./data")
 
 # Delete the FTS index
-lake.delete_fts_index("papers")
+lake.delete_fts_index("aigc_articles")
 
 # Get FTS index information
-info = lake.get_fts_index_info("papers")
+info = lake.get_fts_index_info("aigc_articles")
 if info is not None:
     print(f"FTS index: {info['name']}, columns: {info['columns']}")
 else:

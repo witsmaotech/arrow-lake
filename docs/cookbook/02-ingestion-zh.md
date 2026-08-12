@@ -16,8 +16,8 @@ lake = Lake(base_uri="./data_lake")
 
 # 摄取多个文件 — 第一个文件创建 dataset，后续自动追加
 report = lake.ingest(
-    "sales",
-    ["datas/transactions/sales_2024_cn.csv"],
+    "ontime",
+    ["datas/ontime/ontime_2022.parquet"],
 )
 
 # IngestionReport 包含详细的摄取统计
@@ -43,10 +43,11 @@ for src in report.sources:
 
 ```python
 report = lake.ingest_batch(
-    "sales",
-    ["datas/transactions/sales_2024_cn.csv",
-     "datas/transactions/sales_2025_cn.csv"],
+    "ontime",
+    ["datas/ontime/ontime_2022.parquet"],
 )
+# 批量摄入适合多个同构文件（如按年份切分的 ontime_2018.parquet、ontime_2019.parquet 等），
+# 第一个文件决定 schema，后续自动追加。
 print(f"批量摄取：{report.total_rows} 行")
 ```
 
@@ -187,7 +188,7 @@ lake = Lake(base_uri="./data_lake")
 report = lake.ingest_mixed(
     "multi_modal_dataset",
     {
-        "files": ["datas/transactions/sales_2024_cn.csv"],
+        "files": ["datas/ontime/ontime_2022.parquet"],
         "urls": ["https://example.com/extra_data.csv"],
         "images": ["datas/photos/sunset_landscape.jpg"],
         "videos": ["datas/videos/lecture_demo.mp4"],
@@ -214,9 +215,8 @@ lake = Lake(base_uri="./data_lake")
 
 # 基础摄取 — Kreuzberg 解析 + 默认分块
 report = lake.ingest_documents(
-    "research_papers",
-    ["datas/papers/full_text/p001_attention_is_all_you_need.pdf",
-     "datas/papers/full_text/p009_clip.pdf"],
+    "aigc_report",
+    ["datas/reports/aigc_industry_report.pdf"],
     doc_config=None,
 )
 print(f"文档摄取：{report.total_rows} 个文本块")
@@ -249,8 +249,8 @@ doc_config = DocumentConfig(
 )
 
 report = lake.ingest_documents(
-    "papers",
-    ["datas/papers/full_text/zh001_大语言模型知识图谱构建综述.pdf"],
+    "aigc_report",
+    ["datas/reports/aigc_industry_report.pdf"],
     doc_config=doc_config,
 )
 ```
@@ -442,11 +442,11 @@ from arrow_lake import Lake
 lake = Lake(base_uri="./data_lake")
 
 # 使用 glob 收集文件，批量摄取
-csv_files = sorted(Path("datas/transactions").glob("**/*.csv"))
-all_files = [str(f) for f in csv_files]
+pq_files = sorted(Path("datas/ontime").glob("**/*.parquet"))
+all_files = [str(f) for f in pq_files]
 
 if all_files:
-    report = lake.ingest("sales", all_files)
+    report = lake.ingest("ontime", all_files)
     print(f"批量摄取完成：{report.total_rows} 行")
 ```
 

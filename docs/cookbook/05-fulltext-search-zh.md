@@ -2,7 +2,7 @@
 
 > 基于 LanceDB native FTS (ICU) 全文索引 + jieba 中文分词的 BM25 检索。
 
-> **贯穿数据集**：沿用 [04 向量搜索](./04-vector-search-zh.md) 引入的 `papers` 论文库——本章改为以关键词（BM25）而非语义向量检索同一语料。
+> **贯穿数据集**：沿用 [04 向量搜索](./04-vector-search-zh.md) 引入的 `aigc_articles` AIGC 文章库——本章改为以关键词（BM25）而非语义向量检索同一语料。
 
 ***
 
@@ -15,16 +15,16 @@ import pyarrow as pa
 
 lake = Lake(base_uri="./lake_demo")
 
-# 写入我们的 papers 研究论文库（FTS 无需向量列）
+# 写入我们的 aigc_articles AIGC 文章库（FTS 无需向量列）
 import pyarrow.csv as pacsv
-papers = pacsv.read_csv("datas/papers/metadata_zh.csv")
-lake.create_dataset("papers", papers)
+aigc_articles = pacsv.read_csv("datas/reports/aigc_articles.csv")
+lake.create_dataset("aigc_articles", aigc_articles)
 
 # 创建全文索引 (默认使用 jieba 中文分词)
-lake.create_fts_index("papers", fts_column="text_content")
+lake.create_fts_index("aigc_articles", fts_column="text_content")
 
 # 执行全文搜索
-result = lake.text_search("papers", query="检索增强生成", top_k=10)
+result = lake.text_search("aigc_articles", query="检索增强生成", top_k=10)
 for i in range(result.table.num_rows):
     doc_id = result.table.column("id")[i].as_py()
     score = result.table.column("_score")[i].as_py()
@@ -40,13 +40,13 @@ lake.shutdown()
 
 ```python
 # 在默认列 (text_content) 上创建索引
-lake.create_fts_index("papers")
+lake.create_fts_index("aigc_articles")
 
 # 指定索引列
-lake.create_fts_index("papers", fts_column="title")
+lake.create_fts_index("aigc_articles", fts_column="title")
 
 # 强制重建索引
-lake.create_fts_index("papers", fts_column="text_content", replace=True)
+lake.create_fts_index("aigc_articles", fts_column="text_content", replace=True)
 ```
 
 ### API 签名
@@ -73,14 +73,14 @@ def create_fts_index(
 
 ```python
 # 基本搜索
-result = lake.text_search("papers", query="大语言模型")
+result = lake.text_search("aigc_articles", query="大语言模型")
 print(f"查询：{result.query}, 结果：{result.row_count} 条，最高分：{result.max_score:.4f}")
 
 # 限制返回数量
-result = lake.text_search("papers", query="神经网络", top_k=5)
+result = lake.text_search("aigc_articles", query="神经网络", top_k=5)
 
 # 指定搜索列
-result = lake.text_search("papers", query="检索", fts_column="title")
+result = lake.text_search("aigc_articles", query="检索", fts_column="title")
 ```
 
 ### API 签名
@@ -103,7 +103,7 @@ def text_search(
 
 ```python
 # 异步版本 (v1.8.0 #17): 保持事件循环响应,适合并发 async handler
-result = await lake.text_search_async("papers", query="神经网络", top_k=10)
+result = await lake.text_search_async("aigc_articles", query="神经网络", top_k=10)
 ```
 
 `text_search_async` 签名与 `text_search` 完全一致,内部经 `asyncio.to_thread` 包装
@@ -125,7 +125,7 @@ class FullTextSearchResult:
 ### 遍历结果
 
 ```python
-result = lake.text_search("papers", query="大语言模型", top_k=3)
+result = lake.text_search("aigc_articles", query="大语言模型", top_k=3)
 ids = result.table.column("id").to_pylist()
 scores = result.table.column("_score").to_pylist()
 titles = result.table.column("title").to_pylist()
@@ -174,7 +174,7 @@ fts_config = FullTextSearchConfig(
     jieba_user_dict="./custom_dict.txt",
 )
 lake = Lake(base_uri="./lake", fts=fts_config)
-lake.create_fts_index("papers")
+lake.create_fts_index("aigc_articles")
 ```
 
 ***
@@ -233,17 +233,17 @@ config = FullTextSearchConfig(
 
 ```python
 # 单条件过滤
-result = lake.text_search("papers", query="检索", where="category = '自然语言处理'")
+result = lake.text_search("aigc_articles", query="检索", where="category = '大语言模型'")
 
 # 数值过滤
-result = lake.text_search("papers", query="大语言模型", where="word_count > 5000")
+result = lake.text_search("aigc_articles", query="大语言模型", where="word_count > 180")
 
 # 组合条件
-result = lake.text_search("papers", query="神经网络",
-                          where="category = '自然语言处理' AND year >= 2023")
+result = lake.text_search("aigc_articles", query="神经网络",
+                          where="category = '大语言模型' AND year >= 2023")
 
 # OR 条件
-result = lake.text_search("papers", query="强化学习",
+result = lake.text_search("aigc_articles", query="强化学习",
                           where="venue = 'NeurIPS' OR venue = 'AAAI'")
 ```
 
@@ -259,10 +259,10 @@ from arrow_lake import Lake
 lake = Lake(base_uri="./data")
 
 # 删除全文搜索索引
-lake.delete_fts_index("papers")
+lake.delete_fts_index("aigc_articles")
 
 # 获取 FTS 索引信息
-info = lake.get_fts_index_info("papers")
+info = lake.get_fts_index_info("aigc_articles")
 if info is not None:
     print(f"FTS 索引：{info['name']}, 列：{info['columns']}")
 else:

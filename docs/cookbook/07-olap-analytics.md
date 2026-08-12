@@ -6,7 +6,7 @@ Arrow Lake delivers high-performance OLAP analytics through DuckDB's zero-copy A
 integration, supporting GROUP BY aggregation, window functions, JOINs, and materialized
 views.
 
-> **Running dataset.** We continue with the `papers` research library — now analyzed as a structured table: aggregating `word_count`, slicing by `category` / `venue` / `year`, and ranking papers with window functions.
+> **Running dataset.** This chapter uses the `ontime` flight dataset (`datas/ontime/ontime_2022.parquet`, ~1.6M rows × 109 columns) for structured OLAP analysis: aggregating arrival delay `ArrDelay`, slicing by airline / airport / month, and ranking flights with window functions.
 
 > Prerequisites: install the OLAP extra with `pip install arrow-lake[olap]` and ensure
 > you have a Lance dataset with data already written.
@@ -19,18 +19,18 @@ views.
 and returns an `OlapQueryResult` whose `.table` is a PyArrow Table that can be directly
 converted to Pandas.
 
-> The examples in this chapter query the `papers` research library. Load it first with the code below (if you already have your own dataset, just replace `"papers"` with its name):
+> The examples in this chapter query the `ontime` flight dataset. Load it first with the code below (if you already have your own dataset, just replace `"ontime"` with its name):
 
 ```python
-import pyarrow.csv as pacsv
+import pyarrow.parquet as pq
 from arrow_lake import Lake
 
 lake = Lake(base_uri="./data")
 
-# Load the papers research library (OLAP needs no vector column)
-papers = pacsv.read_csv("datas/papers/metadata.csv")
-lake.create_dataset("papers", papers)
-print(f"papers loaded: {papers.num_rows} rows")
+# Load the ontime flight data (OLAP needs no vector column)
+ontime = pq.read_table("datas/ontime/ontime_2022.parquet")
+lake.create_dataset("ontime", ontime)
+print(f"ontime loaded: {ontime.num_rows} rows")
 ```
 
 ```python
@@ -38,11 +38,11 @@ from arrow_lake import Lake
 
 lake = Lake(base_uri="./data")
 
-# Average word count and paper count per category
+# Average arrival delay and flight count per airline
 result = lake.olap_query(
-    "papers",
-    "SELECT category, AVG(word_count) AS avg_words, COUNT(*) AS cnt "
-    "FROM papers GROUP BY category ORDER BY avg_words DESC",
+    "ontime",
+    "SELECT Reporting_Airline, AVG(ArrDelay) AS avg_delay, COUNT(*) AS cnt "
+    "FROM ontime WHERE Cancelled = 0 GROUP BY Reporting_Airline ORDER BY avg_delay DESC",
 )
 print(f"Returned {result.row_count} rows, {result.column_count} columns")
 print(result.table.to_pandas())
@@ -52,8 +52,8 @@ Use the `max_rows` parameter to cap the number of returned rows and prevent OOM:
 
 ```python
 result = lake.olap_query(
-    "papers",
-    "SELECT * FROM papers",
+    "ontime",
+    "SELECT * FROM ontime",
     max_rows=500,  # Return at most 500 rows
 )
 ```
@@ -72,23 +72,26 @@ period-over-period comparisons, and more.
 
 ```python
 result = lake.olap_query(
-    "papers",
+    "ontime",
     """
     SELECT
-        title,
-        category,
-        word_count,
+        Flight_Number_Reporting_Airline,
+        Reporting_Airline,
+        Origin,
+        Dest,
+        ArrDelay,
         ROW_NUMBER() OVER (
-            PARTITION BY category ORDER BY word_count DESC
-        ) AS category_rank,
-        SUM(word_count) OVER (
-            PARTITION BY category
-        ) AS category_total,
-        word_count - LAG(word_count, 1) OVER (
-            PARTITION BY category ORDER BY word_count DESC
+            PARTITION BY Reporting_Airline ORDER BY ArrDelay DESC
+        ) AS airline_rank,
+        SUM(ArrDelay) OVER (
+            PARTITION BY Reporting_Airline
+        ) AS airline_total,
+        ArrDelay - LAG(ArrDelay, 1) OVER (
+            PARTITION BY Reporting_Airline ORDER BY ArrDelay DESC
         ) AS diff_from_prev
-    FROM papers
-    ORDER BY category, category_rank
+    FROM ontime
+    WHERE Cancelled = 0
+    ORDER BY Reporting_Airline, airline_rank
     """,
 )
 print(result.table.to_pandas())
@@ -98,11 +101,11 @@ Common window functions at a glance:
 
 | Function         | Purpose                      | Example                                                                     |
 | ---------------- | ---------------------------- | --------------------------------------------------------------------------- |
-| `ROW_NUMBER()`   | Row number (no ties)         | `ROW_NUMBER() OVER (ORDER BY word_count DESC)`                                  |
-| `RANK()`         | Rank with gaps on ties       | `RANK() OVER (ORDER BY word_count DESC)`                                        |
-| `SUM() OVER`     | Cumulative sum               | `SUM(word_count) OVER (ORDER BY year)`                                          |
-| `AVG() OVER`     | Moving average               | `AVG(word_count) OVER (ORDER BY year ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)` |
-| `LAG() / LEAD()` | Previous / next value offset | `LAG(word_count, 1) OVER (ORDER BY year)`                                       |
+| `ROW_NUMBER()`   | Row number (no ties)         | `ROW_NUMBER() OVER (ORDER BY ArrDelay DESC)`                                  |
+| `RANK()`         | Rank with gaps on ties       | `RANK() OVER (ORDER BY ArrDelay DESC)`                                        |
+| `SUM() OVER`     | Cumulative sum               | `SUM(ArrDelay) OVER (ORDER BY Month)`                                          |
+| `AVG() OVER`     | Moving average               | `AVG(ArrDelay) OVER (ORDER BY Month ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)` |
+| `LAG() / LEAD()` | Previous / next value offset | `LAG(ArrDelay, 1) OVER (ORDER BY Month)`                                       |
 
 ***
 
@@ -114,24 +117,24 @@ Tables for JOIN operations.
 ```python
 import pyarrow as pa
 
-# Build a category dimension table (values must match papers.category exactly)
-category_info = pa.table({
-    "category": ["NLP", "Computer Vision", "Optimization", "Reinforcement Learning",
-                 "Machine Learning", "Graph ML", "Information Retrieval", "Data Systems"],
-    "field": ["Language", "Vision", "Training", "Decision-making",
-              "General ML", "Graphs", "Search", "Storage"],
+# Build an airline dimension table (code must match ontime.Reporting_Airline)
+airline_info = pa.table({
+    "Reporting_Airline": ["AA", "DL", "UA", "WN", "B6", "AS"],
+    "airline_name": ["American Airlines", "Delta", "United", "Southwest", "JetBlue", "Alaska Airlines"],
 })
 
 result = lake.olap_query(
-    "papers",
+    "ontime",
     """
-    SELECT s.category, c.field, AVG(s.word_count) AS avg_words, COUNT(*) AS cnt
-    FROM papers s
-    INNER JOIN category_info c ON s.category = c.category
-    GROUP BY s.category, c.field
-    ORDER BY avg_words DESC
+    SELECT s.Reporting_Airline, c.airline_name,
+           AVG(s.ArrDelay) AS avg_delay, COUNT(*) AS cnt
+    FROM ontime s
+    INNER JOIN airline_info c ON s.Reporting_Airline = c.Reporting_Airline
+    WHERE s.Cancelled = 0
+    GROUP BY s.Reporting_Airline, c.airline_name
+    ORDER BY avg_delay DESC
     """,
-    tables={"category_info": category_info},  # Register as a temp table for JOIN
+    tables={"airline_info": airline_info},  # Register as a temp table for JOIN
 )
 print(result.table.to_pandas())
 ```
@@ -162,9 +165,9 @@ lake = Lake(base_uri="./data", config=config)
 
 ```python
 view_name = lake.materialize(
-    "papers",
-    "SELECT category, AVG(word_count) AS avg_words FROM papers GROUP BY category",
-    view_name="category_summary",
+    "ontime",
+    "SELECT Reporting_Airline, AVG(ArrDelay) AS avg_delay FROM ontime WHERE Cancelled = 0 GROUP BY Reporting_Airline",
+    view_name="airline_delay_summary",
     ttl_days=7,
 )
 print(f"Materialized view created: {view_name}")
@@ -212,12 +215,13 @@ Use `EXPLAIN` to inspect the query execution plan for performance tuning:
 
 ```python
 explain_output = lake.olap_query(
-    "papers",
+    "ontime",
     """
     EXPLAIN
-    SELECT category, AVG(word_count) AS avg_words
-    FROM papers
-    GROUP BY category
+    SELECT Reporting_Airline, AVG(ArrDelay) AS avg_delay
+    FROM ontime
+    WHERE Cancelled = 0
+    GROUP BY Reporting_Airline
     """,
 )
 ```
@@ -238,19 +242,19 @@ from arrow_lake import Lake
 lake = Lake(base_uri="./data")
 
 # Load as a lazy Daft DataFrame with optional column selection and filtering
-df = lake.daft_query("papers")
+df = lake.daft_query("ontime")
 df_filtered = lake.daft_query(
-    "papers",
-    columns=["title", "category", "word_count"],
-    filter="word_count > 5000",
+    "ontime",
+    columns=["Reporting_Airline", "Origin", "Dest", "ArrDelay", "Distance"],
+    filter="ArrDelay > 60",
     limit=1000,
 )
 
 # Chained operations: select -> filter -> sort -> collect
 result = (
-    df.select("title", "category", "word_count")
-    .filter("word_count > 8000")
-    .sort("word_count", desc=True)
+    df.select("Reporting_Airline", "ArrDelay", "Distance")
+    .filter("ArrDelay > 120")
+    .sort("ArrDelay", desc=True)
     .collect()  # Execute and return a PyArrow Table
 )
 print(result.to_pandas())
@@ -261,12 +265,11 @@ print(result.to_pandas())
 ```python
 import daft
 
-grouped = df.select("category", "word_count").groupby("category")
+grouped = df.select("Reporting_Airline", "ArrDelay").groupby("Reporting_Airline")
 # Apply aggregation expressions to get a concrete result
 agg_result = grouped.agg(
-    daft.col("word_count").sum().alias("total_words"),
-    daft.col("word_count").mean().alias("avg_words"),
-    daft.col("word_count").count().alias("count"),
+    daft.col("ArrDelay").mean().alias("avg_delay"),
+    daft.col("ArrDelay").count().alias("count"),
 )
 print(agg_result.collect().to_pandas())
 ```
@@ -277,14 +280,14 @@ print(agg_result.collect().to_pandas())
 import daft
 import pyarrow as pa
 
-df1 = lake.daft_query("papers")
-# A small dimension table (venue → type) as a Daft DataFrame
-venue_dim = daft.from_arrow(pa.table({
-    "venue": ["NeurIPS", "ICLR", "CVPR", "ICML", "Nature", "Science"],
-    "type": ["conference", "conference", "conference", "conference", "journal", "journal"],
+df1 = lake.daft_query("ontime")
+# A small dimension table (Origin airport → hub city) as a Daft DataFrame
+airport_dim = daft.from_arrow(pa.table({
+    "Origin": ["JFK", "LAX", "ORD", "ATL", "DFW"],
+    "hub": ["New York", "Los Angeles", "Chicago", "Atlanta", "Dallas"],
 }))
 
-joined = df1.join(venue_dim, on="venue", how="inner")
+joined = df1.join(airport_dim, on="Origin", how="inner")
 result = joined.collect()
 print(result.to_pandas())
 ```
@@ -301,12 +304,12 @@ Available `LazyDaftFrame` operations:
 
 | Method                 | Description                    | Example                             |
 | ---------------------- | ------------------------------ | ----------------------------------- |
-| `select(*columns)`     | Select columns                 | `df.select("title", "word_count")`       |
-| `filter(predicate)`    | Filter rows                    | `df.filter("word_count > 8000")`         |
-| `sort(column, desc)`   | Sort                           | `df.sort("year", desc=True)`             |
-| `groupby(*columns)`    | Group                          | `df.groupby("category")`                 |
-| `join(other, on, how)` | Join                           | `df.join(df2, on="venue", how="left")`   |
-| `pivot(group_by, pivot_col, value_col, agg_fn)` | Pivot (long-to-wide, cross-tab) | `df.pivot("category", "venue", "word_count", "sum")` |
+| `select(*columns)`     | Select columns                 | `df.select("Reporting_Airline", "ArrDelay")`       |
+| `filter(predicate)`    | Filter rows                    | `df.filter("ArrDelay > 120")`         |
+| `sort(column, desc)`   | Sort                           | `df.sort("Month", desc=True)`             |
+| `groupby(*columns)`    | Group                          | `df.groupby("Reporting_Airline")`                 |
+| `join(other, on, how)` | Join                           | `df.join(df2, on="Origin", how="left")`   |
+| `pivot(group_by, pivot_col, value_col, agg_fn)` | Pivot (long-to-wide, cross-tab) | `df.pivot("Reporting_Airline", "Origin", "ArrDelay", "sum")` |
 | `unpivot(ids, values)` | Unpivot (wide-to-long, melt)   | `df.unpivot("id", ["q1","q2"])`     |
 | `collect()`            | Execute and return Arrow Table | `df.collect()`                      |
 
@@ -323,21 +326,21 @@ from arrow_lake import Lake
 lake = Lake(base_uri="./data")
 
 # Export to Parquet (format auto-detected from extension)
-result = lake.export("papers", "output/papers_export.parquet")
+result = lake.export("ontime", "output/ontime_export.parquet")
 print(f"Export complete: {result}")  # ExportResult with path, format, row_count
 
 # Export specific columns
 result = lake.export(
-    "papers",
-    "output/papers_summary.csv",
-    columns=["category", "venue", "word_count"],
+    "ontime",
+    "output/ontime_summary.csv",
+    columns=["Reporting_Airline", "Origin", "Dest", "ArrDelay", "Distance"],
     format="csv",
 )
 
 # Export a specific version with compression
 result = lake.export(
-    "papers",
-    "output/papers_v1.parquet",
+    "ontime",
+    "output/ontime_v1.parquet",
     version=1,
     compression="snappy",
     overwrite=True,
@@ -405,7 +408,7 @@ from arrow_lake import Lake, QueryError
 lake = Lake(base_uri="./data")
 
 try:
-    result = lake.olap_query("papers", "DELETE FROM papers WHERE 1=1")
+    result = lake.olap_query("ontime", "DELETE FROM ontime WHERE 1=1")
 except QueryError as e:
     if e.error_code.name == "OLAP_QUERY_FAILED":
         print(f"Query failed: {e.message}")

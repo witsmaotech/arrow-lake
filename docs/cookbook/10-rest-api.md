@@ -193,7 +193,7 @@ the full permission matrix implementation.
 curl -X POST http://localhost:8000/api/v1/datasets/docs/ingest \
   -H "X-API-Key: your-secret-api-key-here" \
   -H "Content-Type: application/json" \
-  -d '{"file_paths": ["datas/papers/full_text/p001_attention_is_all_you_need.pdf", "datas/papers/full_text/p002_bert_pretraining.pdf"]}'
+  -d '{"file_paths": ["datas/reports/aigc_industry_report.pdf"]}'
 # => {"success": true, "total_rows": 156, "total_files": 2, "sources": [...]}
 ```
 
@@ -290,7 +290,7 @@ async def build_kg(dataset: str) -> dict:
 
 
 async def main():
-    result = await ingest_files("docs", ["datas/kb/knowledge.jsonl"])
+    result = await ingest_files("aigc_articles", ["datas/reports/aigc_articles.csv"])
     print(f"Ingestion complete: {result['total_rows']} rows")
 
     results = await vector_search("docs", [0.1] * 128)
@@ -498,13 +498,13 @@ curl http://localhost:8000/metadata/catalogs \
 # List tables in the Lance catalog
 curl http://localhost:8000/metadata/tables \
   -H "X-API-Key: your-key"
-# => {"success": true, "data": [{"name": "articles"}, {"name": "sales"}],
+# => {"success": true, "data": [{"name": "aigc_articles"}, {"name": "ontime"}],
 #     "error": null, "metadata": {"total": 2}}
 
 # Get table details (columns and properties)
 curl http://localhost:8000/metadata/tables/articles \
   -H "X-API-Key: your-key"
-# => {"success": true, "data": {"name": "articles",
+# => {"success": true, "data": {"name": "aigc_articles",
 #     "columns": [{"name": "id", "type": "int"}, ...],
 #     "properties": {"format": "lance", "owner": "data-team"}},
 #     "error": null, "metadata": {}}
@@ -1967,13 +1967,13 @@ harness** that builds a throwaway dataset → ingests a sample doc → builds th
 
 ```bash
 # Bind a dataset to a template, then build with it (template auto-resolves at build time)
-curl -X PUT http://localhost:8000/api/v1/admin/extraction-templates/bindings/papers \
+curl -X PUT http://localhost:8000/api/v1/admin/extraction-templates/bindings/aigc_report \
   -H "Authorization: Bearer $TOKEN" -H "X-API-Key: $KEY" \
   -H "Content-Type: application/json" -d '{"template": "project_concept_graph"}'
 
 curl -X POST http://localhost:8000/api/v1/kg/build \
   -H "Authorization: Bearer $TOKEN" -H "X-API-Key: $KEY" \
-  -H "Content-Type: application/json" -d '{"dataset": "papers"}'   # template resolved from binding
+  -H "Content-Type: application/json" -d '{"dataset": "aigc_report"}'   # template resolved from binding
 ```
 
 ### Doc-Type Category Dictionary (`/api/v1/admin/doc-type-categories`)

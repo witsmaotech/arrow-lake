@@ -17,8 +17,8 @@ lake = Lake(base_uri="./data_lake")
 
 # Ingest multiple files — the first file creates the dataset, the rest are appended automatically
 report = lake.ingest(
-    "sales",
-    ["datas/transactions/sales_2024.csv"],
+    "ontime",
+    ["datas/ontime/ontime_2022.parquet"],
 )
 
 # IngestionReport contains detailed statistics
@@ -45,10 +45,11 @@ Use `ingest_batch()` for optimized bulk loading of same-type files via Daft `wri
 
 ```python
 report = lake.ingest_batch(
-    "sales",
-    ["datas/transactions/sales_2024.csv",
-     "datas/transactions/sales_2025.csv"],
+    "ontime",
+    ["datas/ontime/ontime_2022.parquet"],
 )
+# Batch ingest suits multiple homogeneous files (e.g. yearly ontime_2018.parquet,
+# ontime_2019.parquet); the first file defines the schema, later ones append.
 print(f"Batch ingestion: {report.total_rows} rows")
 ```
 
@@ -191,7 +192,7 @@ lake = Lake(base_uri="./data_lake")
 report = lake.ingest_mixed(
     "multi_modal_dataset",
     {
-        "files": ["datas/transactions/sales_2024.csv"],
+        "files": ["datas/ontime/ontime_2022.parquet"],
         "urls": ["https://example.com/extra_data.csv"],
         "images": ["datas/photos/sunset_landscape.jpg"],
         "videos": ["datas/videos/lecture_demo.mp4"],
@@ -216,9 +217,8 @@ lake = Lake(base_uri="./data_lake")
 
 # Basic ingestion — Kreuzberg parser + default chunking
 report = lake.ingest_documents(
-    "research_papers",
-    ["datas/papers/full_text/p001_attention_is_all_you_need.pdf",
-     "datas/papers/full_text/p009_clip.pdf"],
+    "aigc_report",
+    ["datas/reports/aigc_industry_report.pdf"],
     doc_config=None,
 )
 print(f"Document ingestion: {report.total_rows} text chunks")
@@ -251,8 +251,8 @@ doc_config = DocumentConfig(
 )
 
 report = lake.ingest_documents(
-    "papers",
-    ["datas/papers/full_text/p014_gpt4_technical_report.pdf"],
+    "aigc_report",
+    ["datas/reports/aigc_industry_report.pdf"],
     doc_config=doc_config,
 )
 ```
@@ -445,11 +445,11 @@ from arrow_lake import Lake
 lake = Lake(base_uri="./data_lake")
 
 # Use glob to collect files and batch-ingest them
-csv_files = sorted(Path("datas/transactions").glob("**/*.csv"))
-all_files = [str(f) for f in csv_files]
+pq_files = sorted(Path("datas/ontime").glob("**/*.parquet"))
+all_files = [str(f) for f in pq_files]
 
 if all_files:
-    report = lake.ingest("sales", all_files)
+    report = lake.ingest("ontime", all_files)
     print(f"Batch ingestion complete: {report.total_rows} rows")
 ```
 

@@ -2,7 +2,7 @@
 
 向量搜索是 Arrow Lake 的核心检索能力。本文展示从数据摄取、Embedding 生成、索引创建到相似度搜索的完整流程。
 
-> **贯穿数据集**：第 04-09 章共用一个 `papers` 研究论文库（`datas/papers/metadata_zh.csv`——1000 篇 AI/ML 论文，含 `title`/`text_content`/`category`/`year`/`venue`/`authors`/`word_count`）。本章引入该库，后续章节以全文、混合、OLAP、RAG、知识图谱等不同视角继续审视同一语料。
+> **贯穿数据集**：第 04-09 章共用一个 `aigc_articles` AIGC 主题文章库（`datas/reports/aigc_articles.csv`——144 篇 AIGC 文章，含 `title`/`text_content`/`category`/`year`/`venue`/`authors`/`word_count`）。本章引入该库，后续章节以全文、混合、OLAP、RAG、知识图谱等不同视角继续审视同一语料。
 
 ```python
 from arrow_lake import Lake
@@ -13,20 +13,20 @@ config = ArrowLakeConfig()
 config.storage = StorageConfig(backend=StorageBackend.LOCAL, base_uri="./data")
 lake = Lake(base_uri="./data", config=config)
 
-# 1. 摄取论文库 — text_content 自动编码为 text_embedding
-report = lake.ingest("papers", ["datas/papers/metadata_zh.csv"])
+# 1. 摄取 AIGC 文章库 — text_content 自动编码为 text_embedding
+report = lake.ingest("aigc_articles", ["datas/reports/aigc_articles.csv"])
 print(f"摄取 {report.total_rows} 行")
 
 # 2. 创建向量索引
 from arrow_lake.config import DistanceMetric, VectorIndexType
-info = lake.create_vector_index("papers", metric="cosine", index_type="IVF_PQ")
+info = lake.create_vector_index("aigc_articles", metric="cosine", index_type="IVF_PQ")
 print(f"索引类型：{info.index_type}, 距离度量：{info.distance_type}")
 print(f"已索引行数：{info.num_indexed_rows}")
 
 # 3. 执行向量搜索
 import numpy as np
 query_vec = np.random.randn(1024).tolist()  # 替换为真实查询向量
-result = lake.search("papers", query_vec, top_k=5)
+result = lake.search("aigc_articles", query_vec, top_k=5)
 print(f"返回 {result.row_count} 条结果，度量：{result.metric}")
 
 for i in range(result.row_count):
@@ -79,19 +79,19 @@ from arrow_lake import Lake
 lake = Lake(base_uri="./data")
 
 # --- 基础用法：使用默认配置 ---
-info = lake.create_vector_index("papers")
+info = lake.create_vector_index("aigc_articles")
 # 默认：metric=cosine, index_type=IVF_PQ
 
 # --- 指定度量和索引类型 ---
 info = lake.create_vector_index(
-    "papers",
+    "aigc_articles",
     metric="cosine",          # 距离度量：cosine / l2 / dot
     index_type="IVF_PQ",      # 索引类型
 )
 
 # --- 精细控制索引参数 ---
 info = lake.create_vector_index(
-    "papers",
+    "aigc_articles",
     metric="l2",
     vector_column="text_embedding",  # 向量列名
     index_type="IVF_FLAT",           # 更精确但更慢
@@ -104,7 +104,7 @@ info = lake.create_vector_index(
 `create_vector_index` 返回 `IndexInfo`:
 
 ```python
-info = lake.create_vector_index("papers", metric="cosine", index_type="IVF_PQ")
+info = lake.create_vector_index("aigc_articles", metric="cosine", index_type="IVF_PQ")
 print(f"索引：{info.index_type}, 度量：{info.distance_type}")
 print(f"已索引：{info.num_indexed_rows}, 未索引：{info.num_unindexed_rows}")
 print(f"覆盖列：{info.columns}")
@@ -162,11 +162,11 @@ lake = Lake(base_uri="./data")
 query_vector = np.random.randn(1024).tolist()
 
 # 基础搜索
-result = lake.search("papers", query_vector, top_k=5)
+result = lake.search("aigc_articles", query_vector, top_k=5)
 
 # 带度量指定
 result = lake.search(
-    "papers",
+    "aigc_articles",
     query_vector,
     top_k=10,
     metric="cosine",
@@ -175,20 +175,20 @@ result = lake.search(
 
 # 带元数据过滤
 result = lake.search(
-    "papers",
+    "aigc_articles",
     query_vector,
     top_k=5,
-    where="category = '自然语言处理'",
+    where="category = '大语言模型'",
 )
 
 # 时间旅行查询 (搜索指定数据集版本)
-result = lake.search("papers", query_vector, top_k=5, version=3)
+result = lake.search("aigc_articles", query_vector, top_k=5, version=3)
 ```
 
 ### 返回类型：VectorSearchResult
 
 ```python
-result = lake.search("papers", query_vector, top_k=5)
+result = lake.search("aigc_articles", query_vector, top_k=5)
 print(f"返回行数：{result.row_count}, 维度：{result.query_vector_dim}")
 print(f"度量：{result.metric}, 最大距离：{result.max_distance}")
 
@@ -206,16 +206,16 @@ for row in result.table.to_pylist():
 
 ```python
 # 等值过滤
-result = lake.search("papers", qv, where="category = '自然语言处理'")
+result = lake.search("aigc_articles", qv, where="category = '大语言模型'")
 
 # 数值范围 + 组合条件
-result = lake.search("papers", qv, where="category = '自然语言处理' AND year >= 2023")
+result = lake.search("aigc_articles", qv, where="category = '大语言模型' AND year >= 2023")
 
 # IN 操作
-result = lake.search("papers", qv, where="venue IN ('NeurIPS', 'AAAI')")
+result = lake.search("aigc_articles", qv, where="venue IN ('NeurIPS', 'ICML')")
 
 # 字符串匹配
-result = lake.search("papers", qv, where="title LIKE '%检索%'")
+result = lake.search("aigc_articles", qv, where="title LIKE '%大模型%'")
 ```
 
 > **安全**: Arrow Lake 内部会检查危险 SQL 关键字，但不应将未经净化的用户输入直接拼入 where 表达式。
@@ -235,7 +235,7 @@ IVF (Inverted File) 将向量空间分为 `num_partitions` 个聚类分区。搜
 #   >= 1M 行：min(sqrt(rows), 4096)       — 按数据量自动扩展
 
 # 通常无需手动指定，传 None 让系统自动选择
-info = lake.create_vector_index("papers", num_partitions=None)
+info = lake.create_vector_index("aigc_articles", num_partitions=None)
 ```
 
 ### 5.2 num\_sub\_vectors -- PQ 子向量数
@@ -269,13 +269,13 @@ config.vector.num_sub_vectors = 24  # 1024 / 24 ≈ 42 维/子向量
 
 ```python
 # 快速搜索（低召回）
-result = lake.search("papers", qv, top_k=10, nprobes=5)
+result = lake.search("aigc_articles", qv, top_k=10, nprobes=5)
 
 # 平衡模式（默认）
-result = lake.search("papers", qv, top_k=10, nprobes=20)
+result = lake.search("aigc_articles", qv, top_k=10, nprobes=20)
 
 # 高召回搜索
-result = lake.search("papers", qv, top_k=10, nprobes=128)
+result = lake.search("aigc_articles", qv, top_k=10, nprobes=128)
 
 # 注意：nprobes 硬上限为 max_nprobes (默认 256)
 ```
@@ -325,7 +325,7 @@ from arrow_lake import Lake
 lake = Lake(base_uri="./data")
 
 # 获取指定向量索引的信息
-info = lake.get_vector_index_info("papers", vector_column="text_embedding")
+info = lake.get_vector_index_info("aigc_articles", vector_column="text_embedding")
 if info is None:
     print("没有向量索引，将使用暴力搜索")
 else:
@@ -337,7 +337,7 @@ else:
 
 ```python
 # 列出数据集上的所有向量索引
-indexes = lake.list_vector_indexes("papers")
+indexes = lake.list_vector_indexes("aigc_articles")
 for idx in indexes:
     print(f"  {idx.index_type} on {idx.columns}, metric={idx.distance_type}")
 ```
@@ -348,11 +348,11 @@ for idx in indexes:
 
 ```python
 # 用相同参数重建 (数据变更后使用)
-info = lake.rebuild_vector_index("papers", vector_column="text_embedding")
+info = lake.rebuild_vector_index("aigc_articles", vector_column="text_embedding")
 
 # 用新参数重建
 info = lake.rebuild_vector_index(
-    "papers",
+    "aigc_articles",
     metric="cosine",
     vector_column="text_embedding",
     index_type="IVF_PQ",
@@ -366,17 +366,17 @@ print(f"重建完成：{info.index_type}, {info.num_indexed_rows} 行")
 
 ```python
 # 按名称删除向量索引
-lake.delete_vector_index("papers", "papers_text_embedding_idx")
+lake.delete_vector_index("aigc_articles", "aigc_articles_text_embedding_idx")
 ```
 
 ### 7.5 FTS 索引管理
 
 ```python
 # 删除全文搜索索引
-lake.delete_fts_index("papers")
+lake.delete_fts_index("aigc_articles")
 
 # 获取 FTS 索引信息
-fts_info = lake.get_fts_index_info("papers")
+fts_info = lake.get_fts_index_info("aigc_articles")
 if fts_info is not None:
     print(f"FTS 索引：{fts_info['name']}, 列：{fts_info['columns']}")
 ```
@@ -413,7 +413,7 @@ curl -X POST http://localhost:8000/api/v1/embed/text \
 
 ## 9. 完整示例：端到端向量搜索
 
-本例摄取 `papers` 研究论文库，构建 IVF_PQ 索引并执行带过滤的相似度搜索——同一 `papers` 语料贯穿第 04-09 章。
+本例摄取 `aigc_articles` AIGC 文章库，构建 IVF_PQ 索引并执行带过滤的相似度搜索——同一 `aigc_articles` 语料贯穿第 04-09 章。
 
 ```python
 import numpy as np
@@ -425,17 +425,17 @@ config = ArrowLakeConfig()
 config.storage = StorageConfig(backend=StorageBackend.LOCAL, base_uri="./data")
 lake = Lake(base_uri="./data", config=config)
 
-# 2. 摄取论文库（1000 行；text_content 自动编码为 text_embedding）
-report = lake.ingest("papers", ["datas/papers/metadata_zh.csv"])
+# 2. 摄取 AIGC 文章库（144 行；text_content 自动编码为 text_embedding）
+report = lake.ingest("aigc_articles", ["datas/reports/aigc_articles.csv"])
 print(f"摄取 {report.total_rows} 行")
 
 # 3. 创建 IVF_PQ 向量索引（语料 ≥256 行，PQ 训练有效）
-info = lake.create_vector_index("papers", metric="cosine", index_type="IVF_PQ")
+info = lake.create_vector_index("aigc_articles", metric="cosine", index_type="IVF_PQ")
 print(f"索引创建完成：{info.index_type}, {info.num_indexed_rows} 行")
 
-# 4. 搜索——语义相似的论文，过滤到「自然语言处理」类别
+# 4. 搜索——语义相似的文章，过滤到「大语言模型」类别
 query_vec = np.random.randn(1024).tolist()  # 替换为真实查询向量
-result = lake.search("papers", query_vec, top_k=3, where="category = '自然语言处理'")
+result = lake.search("aigc_articles", query_vec, top_k=3, where="category = '大语言模型'")
 
 # 5. 输出结果
 for row in result.table.to_pylist():

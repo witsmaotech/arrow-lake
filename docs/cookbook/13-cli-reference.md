@@ -2,7 +2,7 @@
 
 > Covers all 100+ commands, parameter descriptions, example output, and Python SDK equivalents. Includes 5 end-to-end practical scenarios, from local development to S3/MinIO production deployment.
 
-**Sample Data**: The data files used in all practical scenarios in this tutorial are located in the [`datas/`](datas/README.md) directory and can be run directly. Includes paper metadata CSV, transaction records CSV, knowledge base JSONL, and other real-world examples.
+**Sample Data**: The data files used in all practical scenarios in this tutorial are located in the [`datas/`](datas/README.md) directory and can be run directly. Includes AIGC article metadata CSV, flight parquet, AIGC industry report PDF, and other real-world examples.
 
 ---
 
@@ -98,13 +98,13 @@ arrow-lake catalog list --json        # JSON format output
 Example output:
 
 ```text
-┏━━━┳━━━━━━━━━━┓
-┃ # ┃ Name      ┃
-┡━━━╇━━━━━━━━━━┩
-│ 1 │ papers    │
-│ 2 │ images    │
-│ 3 │ sales_2024│
-└───┴──────────┘
+┏━━━┳━━━━━━━━━━━━━━━━┓
+┃ # ┃ Name            ┃
+┡━━━╇━━━━━━━━━━━━━━━━┩
+│ 1 │ aigc_articles   │
+│ 2 │ images          │
+│ 3 │ ontime          │
+└───┴────────────────┘
 ```
 
 **SDK equivalent:**
@@ -112,19 +112,19 @@ Example output:
 ```python
 from arrow_lake import Lake
 lake = Lake("./data")
-datasets = lake.list_datasets()  # -> ['papers', 'images', 'sales_2024']
+datasets = lake.list_datasets()  # -> ['aigc_articles', 'images', 'ontime']
 ```
 
 #### `catalog info <name>` — View Dataset Details
 
 ```bash
-arrow-lake catalog info papers
+arrow-lake catalog info aigc_articles
 ```
 
 Example output:
 
 ```text
-Dataset: papers
+Dataset: aigc_articles
 ┏━━━━━━━━━┳━━━━━━━━━━━━━━┓
 ┃ Property ┃ Value          ┃
 ┡━━━━━━━━━╇━━━━━━━━━━━━━━┩
@@ -219,7 +219,7 @@ Supported formats: CSV, JSON, JSONL, Parquet.
 
 ```bash
 # Single file
-arrow-lake ingest files sales datas/transactions/sales_2024.csv
+arrow-lake ingest files ontime datas/ontime/ontime_2022.parquet
 
 # Multiple files (mixed formats)
 arrow-lake ingest files logs ./logs/api.jsonl ./logs/service.json
@@ -231,12 +231,12 @@ arrow-lake ingest files raw_data ./csv/*.csv ./parquet/*.parquet
 Example output:
 
 ```text
-Ingestion: 3 file(s) -> sales
+Ingestion: 3 file(s) -> ontime
 ┏━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
 ┃ Metric          ┃ Value        ┃
 ┡━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
 │ Rows ingested   │ 15000        │
-│ Dataset         │ sales        │
+│ Dataset         │ ontime       │
 │ Files processed │ 3            │
 │ Duration (s)    │ 1.23         │
 └────────────────┴─────────────┘
@@ -245,21 +245,21 @@ Ingestion: 3 file(s) -> sales
 **SDK equivalent:**
 
 ```python
-lake.ingest("sales", ["./data/sales_2024.csv"])
+lake.ingest("ontime", ["./data/ontime_2022.parquet"])
 ```
 
 #### `ingest http <dataset> <urls...>` — Remote URL Ingestion
 
 ```bash
-arrow-lake ingest http papers \
-    https://arxiv.org/papers/2401.00001 \
-    https://arxiv.org/papers/2401.00002
+arrow-lake ingest http aigc_report \
+    https://example.com/reports/aigc_industry_report.pdf \
+    https://example.com/reports/aigc_survey_2024.pdf
 ```
 
 **SDK equivalent:**
 
 ```python
-lake.ingest_http("papers", ["https://arxiv.org/papers/2401.00001"])
+lake.ingest_http("aigc_report", ["https://example.com/reports/aigc_industry_report.pdf"])
 ```
 
 #### `ingest images <dataset> <paths...>` — Image Ingestion
@@ -281,13 +281,13 @@ lake.ingest_images("photos", ["./photos/vacation/*.jpg"])
 Automatically parses PDF, OCR recognition, and text chunking.
 
 ```bash
-arrow-lake ingest documents papers ./papers/report.pdf ./papers/whitepaper.pdf
+arrow-lake ingest documents aigc_report datas/reports/aigc_industry_report.pdf
 ```
 
 **SDK equivalent:**
 
 ```python
-lake.ingest_documents("papers", ["./papers/report.pdf"])
+lake.ingest_documents("aigc_report", ["datas/reports/aigc_industry_report.pdf"])
 ```
 
 #### `ingest videos <dataset> <paths...>` — Video Ingestion
@@ -307,13 +307,13 @@ lake.ingest_videos("frames", ["./videos/lecture.mp4"])
 #### `ingest create <name> --data <file>` — Create Dataset from File
 
 ```bash
-arrow-lake ingest create sales --data sales_2024.csv
+arrow-lake ingest create ontime --data ontime_2022.parquet
 ```
 
 #### `ingest append <name> --data <file>` — Append Data
 
 ```bash
-arrow-lake ingest append sales --data new_records.parquet
+arrow-lake ingest append ontime --data new_flights.parquet
 ```
 
 #### `ingest upsert <dataset> --data <file> --on <column>` — Update or Insert
@@ -325,7 +325,7 @@ arrow-lake ingest upsert products --data updated.csv --on product_id
 #### `ingest delete-rows <dataset> --where <expr>` — Delete by WHERE Clause
 
 ```bash
-arrow-lake ingest delete-rows sales --where "year < 2020"
+arrow-lake ingest delete-rows ontime --where "ArrDelay > 60"
 ```
 
 #### `ingest update-rows <dataset> --where <expr> --set <json>` — Update by WHERE Clause
@@ -347,7 +347,7 @@ Five search modes covering vector retrieval, full-text retrieval, hybrid retriev
 First encodes the query text into a vector using an embedding model, then performs ANN search.
 
 ```bash
-arrow-lake search vector papers \
+arrow-lake search vector aigc_articles \
     --query "transformer attention mechanism" \
     --top-k 5 \
     --column text_embedding \
@@ -381,7 +381,7 @@ from arrow_lake.embed.encoder import LocalEmbeddingEncoder
 
 encoder = LocalEmbeddingEncoder()
 vec = encoder._load_model().encode(["transformer attention mechanism"])[0].tolist()
-result = lake.search("papers", vec, top_k=5, vector_column="text_embedding")
+result = lake.search("aigc_articles", vec, top_k=5, vector_column="text_embedding")
 ```
 
 #### `search fts <dataset>` — Full-Text Search (BM25)
@@ -389,7 +389,7 @@ result = lake.search("papers", vec, top_k=5, vector_column="text_embedding")
 BM25-based full-text retrieval. Requires an FTS index to be created first.
 
 ```bash
-arrow-lake search fts papers \
+arrow-lake search fts aigc_articles \
     --query "attention mechanism" \
     --top-k 10
 ```
@@ -405,7 +405,7 @@ arrow-lake search fts papers \
 **SDK equivalent:**
 
 ```python
-result = lake.text_search("papers", "attention mechanism", top_k=10)
+result = lake.text_search("aigc_articles", "attention mechanism", top_k=10)
 ```
 
 #### `search hybrid <dataset>` — Hybrid Search (RRF Fusion)
@@ -413,7 +413,7 @@ result = lake.text_search("papers", "attention mechanism", top_k=10)
 Fuses vector and full-text search results using the Reciprocal Rank Fusion (RRF) algorithm.
 
 ```bash
-arrow-lake search hybrid papers \
+arrow-lake search hybrid aigc_articles \
     --query "attention mechanism" \
     --top-k 10 \
     --vector-column text_embedding \
@@ -431,7 +431,7 @@ arrow-lake search hybrid papers \
 **SDK equivalent:**
 
 ```python
-result = lake.hybrid_search("papers", vec, "attention mechanism",
+result = lake.hybrid_search("aigc_articles", vec, "attention mechanism",
                             top_k=10, vector_column="text_embedding")
 ```
 
@@ -467,7 +467,7 @@ result = lake.faceted_search("products", vec, facets=["category", "brand"], top_
 Weighted fusion search across multiple embedding columns.
 
 ```bash
-arrow-lake search ensemble papers \
+arrow-lake search ensemble aigc_articles \
     --query "transformer architecture" \
     --columns "text_embedding,title_embedding" \
     --weights '{"text_embedding": 0.7, "title_embedding": 0.3}' \
@@ -488,7 +488,7 @@ arrow-lake search ensemble papers \
 #### `index vector <dataset>` — Create Vector Index
 
 ```bash
-arrow-lake index vector papers \
+arrow-lake index vector aigc_articles \
     --column text_embedding \
     --metric l2 \
     --type IVF_PQ \
@@ -505,13 +505,13 @@ arrow-lake index vector papers \
 **SDK equivalent:**
 
 ```python
-lake.create_vector_index("papers", metric="l2", index_type="IVF_PQ")
+lake.create_vector_index("aigc_articles", metric="l2", index_type="IVF_PQ")
 ```
 
 #### `index fts <dataset>` — Create Full-Text Search Index
 
 ```bash
-arrow-lake index fts papers --column text_content
+arrow-lake index fts aigc_articles --column text_content
 ```
 
 > Chinese text is automatically tokenized using jieba before indexing.
@@ -519,7 +519,7 @@ arrow-lake index fts papers --column text_content
 **SDK equivalent:**
 
 ```python
-lake.create_fts_index("papers", fts_column="text_content")
+lake.create_fts_index("aigc_articles", fts_column="text_content")
 ```
 
 #### `index scalar <dataset>` — Create Scalar Index
@@ -527,7 +527,7 @@ lake.create_fts_index("papers", fts_column="text_content")
 Build a scalar index on a single column to speed up filtering and facet aggregation (BITMAP for low-cardinality columns, BTREE otherwise).
 
 ```bash
-arrow-lake index scalar papers --column category
+arrow-lake index scalar aigc_articles --column category
 ```
 
 | Parameter | Default | Description |
@@ -540,7 +540,7 @@ arrow-lake index scalar papers --column category
 **SDK equivalent:**
 
 ```python
-lake.create_scalar_index("papers", column="category")
+lake.create_scalar_index("aigc_articles", column="category")
 ```
 
 #### `index facets <dataset>` — Bulk-Create Facet Indexes
@@ -548,37 +548,37 @@ lake.create_scalar_index("papers", column="category")
 Bulk-build scalar indexes on the default facet columns according to `FacetedSearchConfig.scalar_index_type_map`.
 
 ```bash
-arrow-lake index facets papers
+arrow-lake index facets aigc_articles
 ```
 
 **SDK equivalent:**
 
 ```python
-lake.create_facet_indexes("papers")
+lake.create_facet_indexes("aigc_articles")
 ```
 
 #### `index list-vector <dataset>` — List Vector Indexes (v1.2)
 
 ```bash
-arrow-lake index list-vector papers
+arrow-lake index list-vector aigc_articles
 ```
 
 #### `index info-vector <dataset>` — View Vector Index Info (v1.2)
 
 ```bash
-arrow-lake index info-vector papers
+arrow-lake index info-vector aigc_articles
 ```
 
 #### `index rebuild-vector <dataset>` — Rebuild Vector Index (v1.2)
 
 ```bash
-arrow-lake index rebuild-vector papers --column text_embedding
+arrow-lake index rebuild-vector aigc_articles --column text_embedding
 ```
 
 #### `index delete-vector <dataset> <index_name>` — Delete Vector Index (v1.2)
 
 ```bash
-arrow-lake index delete-vector papers text_embedding_idx
+arrow-lake index delete-vector aigc_articles text_embedding_idx
 ```
 
 | Parameter | Description |
@@ -589,13 +589,13 @@ arrow-lake index delete-vector papers text_embedding_idx
 #### `index info-fts <dataset>` — View Full-Text Index Info (v1.2)
 
 ```bash
-arrow-lake index info-fts papers
+arrow-lake index info-fts aigc_articles
 ```
 
 #### `index delete-fts <dataset>` — Delete Full-Text Index (v1.2)
 
 ```bash
-arrow-lake index delete-fts papers
+arrow-lake index delete-fts aigc_articles
 ```
 
 ---
@@ -607,9 +607,9 @@ arrow-lake index delete-fts papers
 Execute SQL analytical queries via DuckDB. Supports aggregation, window functions, JOINs, etc.
 
 ```bash
-arrow-lake query sql sales \
-    --sql "SELECT category, COUNT(*) as cnt, AVG(amount) as avg_amount
-           FROM sales GROUP BY category ORDER BY cnt DESC" \
+arrow-lake query sql ontime \
+    --sql "SELECT Reporting_Airline, COUNT(*) as cnt, AVG(ArrDelay) as avg_arr_delay
+           FROM ontime GROUP BY Reporting_Airline ORDER BY cnt DESC" \
     --max-rows 50
 ```
 
@@ -622,21 +622,21 @@ Example output:
 
 ```text
 Query Result (5 rows)
-┏━━━━━━━━━━┳━━━━━━┳━━━━━━━━━━━━┓
-┃ category  ┃ cnt  ┃ avg_amount ┃
-┡━━━━━━━━━━╇━━━━━━╇━━━━━━━━━━━━┩
-│ electronics│ 5420│ 234.56     │
-│ clothing   │ 3210│ 89.12      │
-│ books      │ 2870│ 34.78      │
-│ food       │ 2150│ 45.23      │
-│ sports     │ 1350│ 156.89     │
-└───────────┴─────┴────────────┘
+┏━━━━━━━━━━━━━━━━━━━━┳━━━━━━┳━━━━━━━━━━━━━━┓
+┃ Reporting_Airline   ┃ cnt  ┃ avg_arr_delay┃
+┡━━━━━━━━━━━━━━━━━━━━╇━━━━━━╇━━━━━━━━━━━━━━┩
+│ WN                  │ 5420 │ 12.56        │
+│ AA                  │ 3210 │ 9.12         │
+│ DL                  │ 2870 │ 5.78         │
+│ UA                  │ 2150 │ 8.23         │
+│ OO                  │ 1350 │ 14.89        │
+└─────────────────────┴─────┴──────────────┘
 ```
 
 **SDK equivalent:**
 
 ```python
-result = lake.olap_query("sales", sql, max_rows=50)
+result = lake.olap_query("ontime", sql, max_rows=50)
 ```
 
 #### `query materialize <dataset>` — Materialized View
@@ -644,9 +644,9 @@ result = lake.olap_query("sales", sql, max_rows=50)
 Persists SQL query results as reusable materialized views.
 
 ```bash
-arrow-lake query materialize sales \
-    --sql "SELECT category, COUNT(*) as cnt FROM sales GROUP BY category" \
-    --name category_summary \
+arrow-lake query materialize ontime \
+    --sql "SELECT Reporting_Airline, COUNT(*) as cnt FROM ontime GROUP BY Reporting_Airline" \
+    --name airline_summary \
     --ttl-days 30
 ```
 
@@ -659,13 +659,13 @@ arrow-lake query materialize sales \
 **SDK equivalent:**
 
 ```python
-row_count = lake.materialize("sales", sql, view_name="category_summary", ttl_days=30)
+row_count = lake.materialize("ontime", sql, view_name="airline_summary", ttl_days=30)
 ```
 
 #### `query meta <dataset>` — Dataset Metadata Query (v1.2)
 
 ```bash
-arrow-lake query meta papers --sql "SELECT * FROM papers LIMIT 5"
+arrow-lake query meta aigc_articles --sql "SELECT * FROM aigc_articles LIMIT 5"
 ```
 
 | Parameter | Default | Description |
@@ -689,7 +689,7 @@ arrow-lake query cleanup-materialized --ttl-days 30
 Loads the dataset as a Daft DataFrame and displays it.
 
 ```bash
-arrow-lake query daft papers --columns id,title --limit 10
+arrow-lake query daft aigc_articles --columns id,title --limit 10
 ```
 
 | Parameter | Default | Description |
@@ -702,9 +702,9 @@ arrow-lake query daft papers --columns id,title --limit 10
 ### 7. `arrow-lake export` — Data Export
 
 ```bash
-arrow-lake export papers --output result.parquet --format parquet
-arrow-lake export papers --output result.csv --format csv
-arrow-lake export papers --output subset.parquet --columns id,title,text_content
+arrow-lake export aigc_articles --output result.parquet --format parquet
+arrow-lake export aigc_articles --output result.csv --format csv
+arrow-lake export aigc_articles --output subset.parquet --columns id,title,text_content
 ```
 
 | Parameter | Default | Description |
@@ -716,7 +716,7 @@ arrow-lake export papers --output subset.parquet --columns id,title,text_content
 **SDK equivalent:**
 
 ```python
-lake.export("papers", "result.parquet", format="parquet", columns=["id", "title"])
+lake.export("aigc_articles", "result.parquet", format="parquet", columns=["id", "title"])
 ```
 
 ---
@@ -762,13 +762,13 @@ arrow-lake embed image ./photos/cat.jpg --model openai/clip-vit-base-patch32
 
 ```bash
 # Exact deduplication (identical content)
-arrow-lake quality dedup sales --strategy exact --action remove
+arrow-lake quality dedup ontime --strategy exact --action remove
 
 # Perceptual hash deduplication (near-duplicate images/text)
 arrow-lake quality dedup photos --strategy perceptual --action flag --threshold 10
 
 # Combine both
-arrow-lake quality dedup papers --strategy both --action flag
+arrow-lake quality dedup aigc_articles --strategy both --action flag
 ```
 
 | Parameter | Default | Description |
@@ -786,7 +786,7 @@ result = lake.deduplicate("photos", strategy="perceptual", action="flag", percep
 #### `quality filter <dataset>` — Quality Filtering
 
 ```bash
-arrow-lake quality filter papers --filters "null_check,min_length" --mode all
+arrow-lake quality filter aigc_articles --filters "null_check,min_length" --mode all
 ```
 
 | Parameter | Default | Description |
@@ -802,7 +802,7 @@ arrow-lake quality filter papers --filters "null_check,min_length" --mode all
 
 ```bash
 # Backup specific datasets
-arrow-lake backup create --datasets papers images
+arrow-lake backup create --datasets aigc_articles images
 
 # Backup all datasets + custom ID
 arrow-lake backup create --backup-id daily-2024-04-24
@@ -821,8 +821,8 @@ Backups
 ┏━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┓
 ┃ Backup ID           ┃ Created          ┃ Datasets   ┃ Size     ┃
 ┡━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━┩
-│ daily-2024-04-24    │ 2024-04-24 10:30 │ papers,... │ 256 MB   │
-│ daily-2024-04-23    │ 2024-04-23 10:30 │ papers,... │ 248 MB   │
+│ daily-2024-04-24    │ 2024-04-24 10:30 │ aigc_art... │ 256 MB   │
+│ daily-2024-04-23    │ 2024-04-23 10:30 │ aigc_art... │ 248 MB   │
 └─────────────────────┴─────────────────┴────────────┴─────────┘
 ```
 
@@ -830,7 +830,7 @@ Backups
 
 ```bash
 arrow-lake backup restore daily-2024-04-24
-arrow-lake backup restore daily-2024-04-24 --datasets papers
+arrow-lake backup restore daily-2024-04-24 --datasets aigc_articles
 ```
 
 #### `backup delete <id>` — Delete Backup
@@ -852,9 +852,9 @@ arrow-lake backup delete daily-2024-04-24
 #### `kg build <dataset>` — Build Knowledge Graph
 
 ```bash
-arrow-lake kg build papers                 # default: full build
-arrow-lake kg build papers --incremental   # incremental: only feed chunks new since the last build
-arrow-lake kg build papers --template project_concept_graph   # v1.10.0: specify extraction template, overriding doc_type routing
+arrow-lake kg build aigc_report                 # default: full build
+arrow-lake kg build aigc_report --incremental   # incremental: only feed chunks new since the last build
+arrow-lake kg build aigc_report --template project_concept_graph   # v1.10.0: specify extraction template, overriding doc_type routing
 ```
 
 | Parameter | Default | Description |
@@ -915,13 +915,13 @@ Knowledge Graph Stats
 #### `kg query <gremlin>` — Gremlin Query
 
 ```bash
-arrow-lake kg query "g.V().has('type','paper').limit(10)"
+arrow-lake kg query "g.V().has('type','report').limit(10)"
 ```
 
 #### `kg neighbors <entity_id>` — Neighbor Traversal
 
 ```bash
-arrow-lake kg neighbors "paper:2401.00001" --depth 2
+arrow-lake kg neighbors "report:aigc_001" --depth 2
 ```
 
 | Parameter | Default | Description |
@@ -1060,7 +1060,7 @@ arrow-lake kg algo betweenness-centrality
 #### `rag query <dataset> <question>` — RAG Q&A
 
 ```bash
-arrow-lake rag query papers \
+arrow-lake rag query aigc_report \
     "How does the self-attention mechanism in Transformer work?" \
     --top-k 5 \
     --strategy hybrid \
@@ -1083,9 +1083,9 @@ Answer:
 The self-attention mechanism in Transformer is implemented through the Query-Key-Value triplet...
 
 Citations: (3 sources)
-  1. doc_0042 — Attention Is All You Need
-  2. doc_0187 — Self-Attention with Relative Position
-  3. doc_0091 — A Survey of Transformers
+  1. doc_0042 — GPT-4 Technical Capability Evaluation
+  2. doc_0187 — Diffusion Model Survey
+  3. doc_0091 — Agent Framework Research
 
 Latency: 1234.5ms
 Context tokens: 2048
@@ -1112,7 +1112,7 @@ Built-in templates:
 Outputs RAG answers chunk by chunk. Suitable for interactive scenarios.
 
 ```bash
-arrow-lake rag stream papers "What is RAG?" --top-k 5
+arrow-lake rag stream aigc_report "What is RAG?" --top-k 5
 ```
 
 #### `rag batch` — Batch Query (v1.2)
@@ -1120,7 +1120,7 @@ arrow-lake rag stream papers "What is RAG?" --top-k 5
 Submit multiple questions for concurrent querying at once.
 
 ```bash
-arrow-lake rag batch papers --questions '["Question 1","Question 2","Question 3"]' --top-k 5
+arrow-lake rag batch aigc_report --questions '["Question 1","Question 2","Question 3"]' --top-k 5
 ```
 
 | Parameter | Default | Description |
@@ -1133,7 +1133,7 @@ arrow-lake rag batch papers --questions '["Question 1","Question 2","Question 3"
 #### `rag extract` — Entity Extraction (v1.2)
 
 ```bash
-arrow-lake rag extract papers --top-k 20
+arrow-lake rag extract aigc_report --top-k 20
 ```
 
 #### `rag feedback` — Submit Feedback (v1.2)
@@ -1234,7 +1234,7 @@ Complete audit logging, HMAC integrity verification, and anomaly detection.
 #### `audit record <event_type>` — Record Audit Event
 
 ```bash
-arrow-lake audit record dataset_ingested --dataset papers --actor admin \
+arrow-lake audit record dataset_ingested --dataset aigc_articles --actor admin \
     --payload '{"rows": 500, "format": "parquet"}'
 ```
 
@@ -1253,7 +1253,7 @@ arrow-lake audit verify audit-20260426-001
 #### `audit query` — Query Audit Log
 
 ```bash
-arrow-lake audit query --dataset papers --start 2026-01-01 --end 2026-04-01
+arrow-lake audit query --dataset aigc_articles --start 2026-01-01 --end 2026-04-01
 arrow-lake audit query --event-type dataset_ingested
 ```
 
@@ -1267,7 +1267,7 @@ arrow-lake audit query --event-type dataset_ingested
 #### `audit export <dataset>` — Export Audit Log
 
 ```bash
-arrow-lake audit export papers --output audit_trail.json
+arrow-lake audit export aigc_articles --output audit_trail.json
 ```
 
 #### `audit analyze` — Anomaly Detection (v1.2)
@@ -1287,8 +1287,8 @@ Output includes anomaly types, severity levels, and number of affected events.
 #### `lineage record <dataset> <operation>` — Record Lineage Event
 
 ```bash
-arrow-lake lineage record sales merge \
-    --sources "raw_sales,cleaned_sales" \
+arrow-lake lineage record ontime merge \
+    --sources "raw_ontime,cleaned_ontime" \
     --transform-type etl \
     --actor pipeline
 ```
@@ -1303,13 +1303,13 @@ arrow-lake lineage record sales merge \
 #### `lineage history <dataset>` — View Lineage History
 
 ```bash
-arrow-lake lineage history sales
+arrow-lake lineage history ontime
 ```
 
 #### `lineage query <sql>` — SQL Query on Lineage
 
 ```bash
-arrow-lake lineage query "SELECT * FROM lineage WHERE dataset_name = 'sales'"
+arrow-lake lineage query "SELECT * FROM lineage WHERE dataset_name = 'ontime'"
 ```
 
 | Parameter | Default | Description |
@@ -1416,7 +1416,7 @@ Arrow Lake supports storing data on S3 or MinIO. CLI commands **do not need to c
 Actual path = s3://{s3_bucket}/{base_uri}/{dataset}.lance
 ```
 
-For example, `--base-uri ./data` + `s3_bucket=arrow-lake` → dataset stored at `s3://arrow-lake/data/papers.lance`.
+For example, `--base-uri ./data` + `s3_bucket=arrow-lake` → dataset stored at `s3://arrow-lake/data/aigc_articles.lance`.
 
 #### Configuration Method 1: YAML File (Recommended)
 
@@ -1436,9 +1436,9 @@ Usage:
 
 ```bash
 arrow-lake --config minio.yaml --base-uri ./data status
-arrow-lake --config minio.yaml --base-uri ./data ingest files papers data.csv
-arrow-lake --config minio.yaml --base-uri ./data search fts papers --query "AI"
-arrow-lake --config minio.yaml --base-uri ./data export papers --output result.parquet
+arrow-lake --config minio.yaml --base-uri ./data ingest files aigc_articles data.csv
+arrow-lake --config minio.yaml --base-uri ./data search fts aigc_articles --query "AI"
+arrow-lake --config minio.yaml --base-uri ./data export aigc_articles --output result.parquet
 ```
 
 #### Configuration Method 2: Environment Variables (ARROW_LAKE__ Prefix)
@@ -1562,78 +1562,74 @@ S3 configuration is only passed to the Lance engine when conditions are met; oth
 
 ## Part 3: Practical Scenarios
 
-### Scenario 1: Research Paper Management (Local Storage)
+### Scenario 1: AIGC Article and Report Management (Local Storage)
 
-Build a paper dataset from scratch, completing the full workflow of ingestion, indexing, search, and export.
+Build an AIGC article and report dataset from scratch, completing the full workflow of ingestion, indexing, search, and export.
 
 **Sample Data**:
-- `datas/papers/metadata.csv` — 20 English paper metadata entries (Transformer, BERT, CLIP, GPT-4, LoRA, etc.)
-- `datas/papers/metadata_zh.csv` — 12 Chinese paper metadata entries (Knowledge Graph, Vector Database, RAG, MinIO, etc.)
-- `datas/papers/full_text/` — 18 real paper PDFs from arxiv
+- `datas/reports/aigc_articles.csv` — 144 AIGC article metadata entries (LLM, multimodal, diffusion, agents, RAG, etc.)
+- `datas/reports/aigc_industry_report.pdf` — single AIGC industry report PDF (for document parsing / RAG / KG)
 
 **Step 1: Create Dataset and Ingest Data**
 
 ```bash
-# Ingest English paper metadata
-arrow-lake --base-uri ./paper_lake ingest files papers datas/papers/metadata.csv
+# Ingest AIGC article metadata
+arrow-lake --base-uri ./aigc_lake ingest files aigc_articles datas/reports/aigc_articles.csv
 
-# Ingest Chinese paper metadata (jieba auto-tokenization)
-arrow-lake --base-uri ./paper_lake ingest files papers_zh datas/papers/metadata_zh.csv
-
-# Ingest PDF full texts
-arrow-lake --base-uri ./paper_lake ingest documents papers datas/papers/full_text/*.pdf
+# Ingest AIGC industry report PDF
+arrow-lake --base-uri ./aigc_lake ingest documents aigc_report datas/reports/aigc_industry_report.pdf
 ```
 
 **Step 2: View Dataset**
 
 ```bash
-arrow-lake --base-uri ./paper_lake catalog info papers
+arrow-lake --base-uri ./aigc_lake catalog info aigc_articles
 ```
 
 **Step 3: Create Indexes**
 
 ```bash
-# Full-text search index (Chinese papers auto-tokenized with jieba)
-arrow-lake --base-uri ./paper_lake index fts papers --column text_content
+# Full-text search index (Chinese text auto-tokenized with jieba)
+arrow-lake --base-uri ./aigc_lake index fts aigc_articles --column text_content
 
 # Vector index (accelerates vector search)
-arrow-lake --base-uri ./paper_lake index vector papers \
+arrow-lake --base-uri ./aigc_lake index vector aigc_articles \
     --column text_embedding --type IVF_PQ
 ```
 
-**Step 4: Search Papers**
+**Step 4: Search Articles**
 
 ```bash
 # Full-text search
-arrow-lake --base-uri ./paper_lake search fts papers \
+arrow-lake --base-uri ./aigc_lake search fts aigc_articles \
     --query "attention mechanism" --top-k 5
 
 # Vector search (semantic similarity)
-arrow-lake --base-uri ./paper_lake search vector papers \
+arrow-lake --base-uri ./aigc_lake search vector aigc_articles \
     --query "how does self-attention work" --top-k 10
 
 # Hybrid search (combined ranking)
-arrow-lake --base-uri ./paper_lake search hybrid papers \
+arrow-lake --base-uri ./aigc_lake search hybrid aigc_articles \
     --query "transformer architecture"
 
 # Chinese full-text search (jieba auto-tokenization)
-arrow-lake --base-uri ./paper_lake search fts papers_zh \
+arrow-lake --base-uri ./aigc_lake search fts aigc_articles \
     --query "知识图谱 大模型" --top-k 5
 ```
 
 **Step 5: SQL Analysis**
 
 ```bash
-arrow-lake --base-uri ./paper_lake query sql papers \
+arrow-lake --base-uri ./aigc_lake query sql aigc_articles \
     --sql "SELECT category, COUNT(*) as cnt, MIN(year) as earliest, MAX(year) as latest
-           FROM papers GROUP BY category ORDER BY cnt DESC"
+           FROM aigc_articles GROUP BY category ORDER BY cnt DESC"
 ```
 
 **Step 6: Export Results**
 
 ```bash
-arrow-lake --base-uri ./paper_lake export papers \
-    --output ml_papers.parquet --columns id,title,authors,year
+arrow-lake --base-uri ./aigc_lake export aigc_articles \
+    --output aigc_library.parquet --columns id,title,authors,year
 ```
 
 ---
@@ -1682,57 +1678,54 @@ arrow-lake --base-uri ./media_lake search vector photos \
 A complete workflow from raw data through quality control to analytical reports.
 
 **Sample Data**:
-- `datas/transactions/sales_2024.csv` — 50 English transaction records
-- `datas/transactions/sales_2024_cn.csv` — 50 Chinese transaction records (suitable for Chinese FTS demo)
+- `datas/ontime/ontime_2022.parquet` — 1.6M flight records (Reporting_Airline, Origin, Dest, Month, ArrDelay, DepDelay, Cancelled, Distance, CarrierDelay)
 
 **Step 1: Ingest Raw Data**
 
 ```bash
-# English transaction data
-arrow-lake --base-uri ./analytics_lake ingest files transactions datas/transactions/sales_2024.csv
-
-# Chinese transaction data (jieba auto-tokenization, suitable for Chinese full-text search demo)
-arrow-lake --base-uri ./analytics_lake ingest files transactions_cn datas/transactions/sales_2024_cn.csv
+# Flight ontime data
+arrow-lake --base-uri ./analytics_lake ingest files ontime datas/ontime/ontime_2022.parquet
 ```
 
 **Step 2: Quality Check**
 
 ```bash
 # Deduplication
-arrow-lake --base-uri ./analytics_lake quality dedup transactions \
+arrow-lake --base-uri ./analytics_lake quality dedup ontime \
     --strategy both --action flag
 
 # Quality filtering
-arrow-lake --base-uri ./analytics_lake quality filter transactions \
+arrow-lake --base-uri ./analytics_lake quality filter ontime \
     --filters "null_check,range_check" --mode all
 ```
 
 **Step 3: SQL Analysis**
 
 ```bash
-# Daily transaction trends
-arrow-lake --base-uri ./analytics_lake query sql transactions \
-    --sql "SELECT DATE(timestamp) as day,
-           COUNT(*) as tx_count,
-           SUM(amount) as total,
-           AVG(amount) as avg_amount
-           FROM transactions
-           GROUP BY day ORDER BY day DESC
-           LIMIT 30"
+# Monthly flight trends
+arrow-lake --base-uri ./analytics_lake query sql ontime \
+    --sql "SELECT Month,
+           COUNT(*) as flight_count,
+           SUM(Cancelled) as cancelled,
+           AVG(ArrDelay) as avg_arr_delay
+           FROM ontime
+           GROUP BY Month ORDER BY Month DESC"
 
-# Chinese transaction data: sales by city
-arrow-lake --base-uri ./analytics_lake query sql transactions_cn \
-    --sql "SELECT 城市, COUNT(*) as 订单数, SUM(金额) as 总额, AVG(金额) as 平均金额
-           FROM transactions_cn GROUP BY 城市 ORDER BY 总额 DESC"
+# Route analysis: top Origin-Dest pairs by delay
+arrow-lake --base-uri ./analytics_lake query sql ontime \
+    --sql "SELECT Origin, Dest, COUNT(*) as flight_count,
+           AVG(ArrDelay) as avg_arr_delay
+           FROM ontime GROUP BY Origin, Dest
+           ORDER BY avg_arr_delay DESC LIMIT 20"
 ```
 
 **Step 4: Materialize Common Reports**
 
 ```bash
-arrow-lake --base-uri ./analytics_lake query materialize transactions \
-    --sql "SELECT user_id, COUNT(*) as tx_count, SUM(amount) as total_spent
-           FROM transactions GROUP BY user_id" \
-    --name user_summary \
+arrow-lake --base-uri ./analytics_lake query materialize ontime \
+    --sql "SELECT Reporting_Airline, COUNT(*) as flight_count, AVG(ArrDelay) as avg_delay
+           FROM ontime GROUP BY Reporting_Airline" \
+    --name airline_summary \
     --ttl-days 7
 ```
 
@@ -1740,7 +1733,7 @@ arrow-lake --base-uri ./analytics_lake query materialize transactions \
 
 ```bash
 arrow-lake --base-uri ./analytics_lake backup create \
-    --datasets transactions --backup-id pre-cleanup
+    --datasets ontime --backup-id pre-cleanup
 ```
 
 ---
@@ -1750,34 +1743,30 @@ arrow-lake --base-uri ./analytics_lake backup create \
 Build a knowledge graph-enhanced RAG Q&A system.
 
 **Sample Data**:
-- `datas/kb/knowledge.jsonl` — 10 English knowledge base entries (Arrow, Parquet, DuckDB, LanceDB, RAG, HNSW, MinIO, etc.)
-- `datas/kb/knowledge_zh.jsonl` — 10 Chinese knowledge base entries (suitable for Chinese RAG Q&A demo)
+- `datas/reports/aigc_articles.csv` — 144 AIGC article entries (LLM, multimodal, diffusion, agents, RAG, etc.; reused from Scenario 1)
 
-**Step 1: Ingest Knowledge Base Data**
+**Step 1: Ingest Article Data**
 
 ```bash
-# English knowledge base
-arrow-lake --base-uri ./rag_lake ingest files knowledge datas/kb/knowledge.jsonl
-
-# Chinese knowledge base
-arrow-lake --base-uri ./rag_lake ingest files knowledge_zh datas/kb/knowledge_zh.jsonl
+# Ingest AIGC article metadata as the knowledge source
+arrow-lake --base-uri ./rag_lake ingest files aigc_articles datas/reports/aigc_articles.csv
 ```
 
 **Step 2: Create Indexes**
 
 ```bash
 # Vector index
-arrow-lake --base-uri ./rag_lake index vector knowledge --column text_embedding
+arrow-lake --base-uri ./rag_lake index vector aigc_articles --column text_embedding
 
 # Full-text index
-arrow-lake --base-uri ./rag_lake index fts knowledge --column text_content
+arrow-lake --base-uri ./rag_lake index fts aigc_articles --column text_content
 ```
 
 **Step 3: Build Knowledge Graph**
 
 ```bash
 # Start build (async, returns task_id)
-arrow-lake --base-uri ./rag_lake kg build knowledge
+arrow-lake --base-uri ./rag_lake kg build aigc_articles
 
 # Check progress
 arrow-lake --base-uri ./rag_lake kg status <task_id>
@@ -1793,16 +1782,16 @@ arrow-lake --base-uri ./rag_lake kg query "g.V().has('type','concept').limit(20)
 
 ```bash
 # Single-turn Q&A
-arrow-lake --base-uri ./rag_lake rag query knowledge \
-    "What is the difference between Arrow format and Parquet format?"
+arrow-lake --base-uri ./rag_lake rag query aigc_articles \
+    "What is the difference between a diffusion model and an autoregressive LLM?"
 
 # Chinese knowledge base Q&A
-arrow-lake --base-uri ./rag_lake rag query knowledge_zh \
-    "What is the time complexity of the HNSW algorithm?"
+arrow-lake --base-uri ./rag_lake rag query aigc_articles \
+    "What are the key challenges in multimodal agent frameworks?"
 
 # Multi-turn conversation
-arrow-lake --base-uri ./rag_lake rag query knowledge \
-    "What compression algorithms does it support?" \
+arrow-lake --base-uri ./rag_lake rag query aigc_articles \
+    "What evaluation metrics does it cover?" \
     --session-id sess_001
 ```
 

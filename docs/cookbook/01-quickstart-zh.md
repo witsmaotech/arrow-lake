@@ -142,8 +142,8 @@ arrow-lake --base-uri ./my_lake status
 ### 摄取数据
 
 ```bash
-# 从本地文件摄取到指定 dataset
-arrow-lake --base-uri ./my_lake ingest files sales datas/transactions/sales_2024_cn.csv
+# 从本地文件摄取到指定 dataset（以 ontime 航班数据为例）
+arrow-lake --base-uri ./my_lake ingest files ontime docs/cookbook/datas/ontime/ontime_2022.parquet
 
 # 支持的文件格式: CSV, JSON, JSONL, Parquet
 ```

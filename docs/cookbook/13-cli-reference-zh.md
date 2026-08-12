@@ -2,7 +2,7 @@
 
 > 涵盖全部 100+ 命令、参数说明、示例输出与 Python SDK 对应关系。配合 5 个端到端实战场景，从本地开发到 S3/MinIO 生产部署一气呵成。
 
-**示例数据**: 本教程所有实战场景使用的数据文件位于 [`datas/`](datas/README.md) 目录，可直接运行。包含论文元数据 CSV、交易记录 CSV、知识库 JSONL 等真实示例。
+**示例数据**: 本教程所有实战场景使用的数据文件位于 [`datas/`](datas/README.md) 目录，可直接运行。包含 AIGC 文章元数据 CSV、航班 parquet、AIGC 行业报告 PDF 等真实示例。
 
 ---
 
@@ -98,13 +98,13 @@ arrow-lake catalog list --json        # JSON 格式输出
 输出示例：
 
 ```text
-┏━━━┳━━━━━━━━━━┓
-┃ # ┃ Name      ┃
-┡━━━╇━━━━━━━━━━┩
-│ 1 │ papers    │
-│ 2 │ images    │
-│ 3 │ sales_2024│
-└───┴──────────┘
+┏━━━┳━━━━━━━━━━━━━━━━┓
+┃ # ┃ Name            ┃
+┡━━━╇━━━━━━━━━━━━━━━━┩
+│ 1 │ aigc_articles   │
+│ 2 │ images          │
+│ 3 │ ontime          │
+└───┴────────────────┘
 ```
 
 **SDK 等价:**
@@ -112,19 +112,19 @@ arrow-lake catalog list --json        # JSON 格式输出
 ```python
 from arrow_lake import Lake
 lake = Lake("./data")
-datasets = lake.list_datasets()  # -> ['papers', 'images', 'sales_2024']
+datasets = lake.list_datasets()  # -> ['aigc_articles', 'images', 'ontime']
 ```
 
 #### `catalog info <name>` — 查看数据集详情
 
 ```bash
-arrow-lake catalog info papers
+arrow-lake catalog info aigc_articles
 ```
 
 输出示例：
 
 ```text
-Dataset: papers
+Dataset: aigc_articles
 ┏━━━━━━━━━┳━━━━━━━━━━━━━━┓
 ┃ Property ┃ Value          ┃
 ┡━━━━━━━━━╇━━━━━━━━━━━━━━┩
@@ -219,7 +219,7 @@ arrow-lake catalog inspect documents --json
 
 ```bash
 # 单文件
-arrow-lake ingest files sales datas/transactions/sales_2024.csv
+arrow-lake ingest files ontime datas/ontime/ontime_2022.parquet
 
 # 多文件（混合格式）
 arrow-lake ingest files logs ./logs/api.jsonl ./logs/service.json
@@ -231,12 +231,12 @@ arrow-lake ingest files raw_data ./csv/*.csv ./parquet/*.parquet
 输出示例：
 
 ```text
-Ingestion: 3 file(s) -> sales
+Ingestion: 3 file(s) -> ontime
 ┏━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
 ┃ Metric          ┃ Value        ┃
 ┡━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
 │ Rows ingested   │ 15000        │
-│ Dataset         │ sales        │
+│ Dataset         │ ontime       │
 │ Files processed │ 3            │
 │ Duration (s)    │ 1.23         │
 └────────────────┴─────────────┘
@@ -245,21 +245,21 @@ Ingestion: 3 file(s) -> sales
 **SDK 等价:**
 
 ```python
-lake.ingest("sales", ["./data/sales_2024.csv"])
+lake.ingest("ontime", ["./data/ontime_2022.parquet"])
 ```
 
 #### `ingest http <dataset> <urls...>` — 远程 URL 摄取
 
 ```bash
-arrow-lake ingest http papers \
-    https://arxiv.org/papers/2401.00001 \
-    https://arxiv.org/papers/2401.00002
+arrow-lake ingest http aigc_report \
+    https://example.com/reports/aigc_industry_2024.pdf \
+    https://example.com/reports/aigc_industry_2024_en.pdf
 ```
 
 **SDK 等价:**
 
 ```python
-lake.ingest_http("papers", ["https://arxiv.org/papers/2401.00001"])
+lake.ingest_http("aigc_report", ["https://example.com/reports/aigc_industry_2024.pdf"])
 ```
 
 #### `ingest images <dataset> <paths...>` — 图片摄取
@@ -281,13 +281,13 @@ lake.ingest_images("photos", ["./photos/vacation/*.jpg"])
 自动解析 PDF、OCR 识别、文本分块。
 
 ```bash
-arrow-lake ingest documents papers ./papers/report.pdf ./papers/whitepaper.pdf
+arrow-lake ingest documents aigc_report datas/reports/aigc_industry_report.pdf
 ```
 
 **SDK 等价:**
 
 ```python
-lake.ingest_documents("papers", ["./papers/report.pdf"])
+lake.ingest_documents("aigc_report", ["datas/reports/aigc_industry_report.pdf"])
 ```
 
 #### `ingest videos <dataset> <paths...>` — 视频摄取
@@ -307,13 +307,13 @@ lake.ingest_videos("frames", ["./videos/lecture.mp4"])
 #### `ingest create <name> --data <file>` — 从文件创建数据集
 
 ```bash
-arrow-lake ingest create sales --data sales_2024.csv
+arrow-lake ingest create ontime --data ontime_2022.parquet
 ```
 
 #### `ingest append <name> --data <file>` — 追加数据
 
 ```bash
-arrow-lake ingest append sales --data new_records.parquet
+arrow-lake ingest append ontime --data new_records.parquet
 ```
 
 #### `ingest upsert <dataset> --data <file> --on <column>` — 更新或插入
@@ -325,7 +325,7 @@ arrow-lake ingest upsert products --data updated.csv --on product_id
 #### `ingest delete-rows <dataset> --where <expr>` — 按 WHERE 删除
 
 ```bash
-arrow-lake ingest delete-rows sales --where "year < 2020"
+arrow-lake ingest delete-rows ontime --where "ArrDelay > 60"
 ```
 
 #### `ingest update-rows <dataset> --where <expr> --set <json>` — 按 WHERE 更新
@@ -347,8 +347,8 @@ arrow-lake ingest update-rows products \
 先用嵌入模型将查询文本编码为向量，再执行 ANN 搜索。
 
 ```bash
-arrow-lake search vector papers \
-    --query "transformer attention mechanism" \
+arrow-lake search vector aigc_articles \
+    --query "大语言模型注意力机制" \
     --top-k 5 \
     --column text_embedding \
     --model Qwen/Qwen3-Embedding-0.6B
@@ -380,8 +380,8 @@ Results (5 rows)
 from arrow_lake.embed.encoder import LocalEmbeddingEncoder
 
 encoder = LocalEmbeddingEncoder()
-vec = encoder._load_model().encode(["transformer attention mechanism"])[0].tolist()
-result = lake.search("papers", vec, top_k=5, vector_column="text_embedding")
+vec = encoder._load_model().encode(["大语言模型注意力机制"])[0].tolist()
+result = lake.search("aigc_articles", vec, top_k=5, vector_column="text_embedding")
 ```
 
 #### `search fts <dataset>` — 全文搜索 (BM25)
@@ -389,8 +389,8 @@ result = lake.search("papers", vec, top_k=5, vector_column="text_embedding")
 基于 BM25 算法的全文检索，需要先创建 FTS 索引。
 
 ```bash
-arrow-lake search fts papers \
-    --query "attention mechanism" \
+arrow-lake search fts aigc_articles \
+    --query "注意力机制" \
     --top-k 10
 ```
 
@@ -405,7 +405,7 @@ arrow-lake search fts papers \
 **SDK 等价:**
 
 ```python
-result = lake.text_search("papers", "attention mechanism", top_k=10)
+result = lake.text_search("aigc_articles", "注意力机制", top_k=10)
 ```
 
 #### `search hybrid <dataset>` — 混合搜索 (RRF 融合)
@@ -413,8 +413,8 @@ result = lake.text_search("papers", "attention mechanism", top_k=10)
 融合向量检索和全文检索结果，使用 Reciprocal Rank Fusion (RRF) 算法。
 
 ```bash
-arrow-lake search hybrid papers \
-    --query "attention mechanism" \
+arrow-lake search hybrid aigc_articles \
+    --query "注意力机制" \
     --top-k 10 \
     --vector-column text_embedding \
     --fts-column text_content
@@ -431,7 +431,7 @@ arrow-lake search hybrid papers \
 **SDK 等价:**
 
 ```python
-result = lake.hybrid_search("papers", vec, "attention mechanism",
+result = lake.hybrid_search("aigc_articles", vec, "注意力机制",
                             top_k=10, vector_column="text_embedding")
 ```
 
@@ -467,8 +467,8 @@ result = lake.faceted_search("products", vec, facets=["category", "brand"], top_
 跨多个嵌入列加权融合搜索。
 
 ```bash
-arrow-lake search ensemble papers \
-    --query "transformer architecture" \
+arrow-lake search ensemble aigc_articles \
+    --query "扩散模型架构" \
     --columns "text_embedding,title_embedding" \
     --weights '{"text_embedding": 0.7, "title_embedding": 0.3}' \
     --top-k 10
@@ -488,7 +488,7 @@ arrow-lake search ensemble papers \
 #### `index vector <dataset>` — 创建向量索引
 
 ```bash
-arrow-lake index vector papers \
+arrow-lake index vector aigc_articles \
     --column text_embedding \
     --metric l2 \
     --type IVF_PQ \
@@ -505,13 +505,13 @@ arrow-lake index vector papers \
 **SDK 等价:**
 
 ```python
-lake.create_vector_index("papers", metric="l2", index_type="IVF_PQ")
+lake.create_vector_index("aigc_articles", metric="l2", index_type="IVF_PQ")
 ```
 
 #### `index fts <dataset>` — 创建全文搜索索引
 
 ```bash
-arrow-lake index fts papers --column text_content
+arrow-lake index fts aigc_articles --column text_content
 ```
 
 > 中文文本会自动使用 jieba 分词后再建立索引。
@@ -519,7 +519,7 @@ arrow-lake index fts papers --column text_content
 **SDK 等价:**
 
 ```python
-lake.create_fts_index("papers", fts_column="text_content")
+lake.create_fts_index("aigc_articles", fts_column="text_content")
 ```
 
 #### `index scalar <dataset>` — 创建标量索引
@@ -527,7 +527,7 @@ lake.create_fts_index("papers", fts_column="text_content")
 对单列建标量索引，加速过滤和分面聚合（低基数列用 BITMAP，其余用 BTREE）。
 
 ```bash
-arrow-lake index scalar papers --column category
+arrow-lake index scalar aigc_articles --column category
 ```
 
 | 参数 | 默认值 | 说明 |
@@ -540,7 +540,7 @@ arrow-lake index scalar papers --column category
 **SDK 等价:**
 
 ```python
-lake.create_scalar_index("papers", column="category")
+lake.create_scalar_index("aigc_articles", column="category")
 ```
 
 #### `index facets <dataset>` — 批量创建分面索引
@@ -548,37 +548,37 @@ lake.create_scalar_index("papers", column="category")
 按 `FacetedSearchConfig.scalar_index_type_map` 对默认分面列批量建标量索引。
 
 ```bash
-arrow-lake index facets papers
+arrow-lake index facets aigc_articles
 ```
 
 **SDK 等价:**
 
 ```python
-lake.create_facet_indexes("papers")
+lake.create_facet_indexes("aigc_articles")
 ```
 
 #### `index list-vector <dataset>` — 列出向量索引 (v1.2)
 
 ```bash
-arrow-lake index list-vector papers
+arrow-lake index list-vector aigc_articles
 ```
 
 #### `index info-vector <dataset>` — 查看向量索引信息 (v1.2)
 
 ```bash
-arrow-lake index info-vector papers
+arrow-lake index info-vector aigc_articles
 ```
 
 #### `index rebuild-vector <dataset>` — 重建向量索引 (v1.2)
 
 ```bash
-arrow-lake index rebuild-vector papers --column text_embedding
+arrow-lake index rebuild-vector aigc_articles --column text_embedding
 ```
 
 #### `index delete-vector <dataset> <index_name>` — 删除向量索引 (v1.2)
 
 ```bash
-arrow-lake index delete-vector papers text_embedding_idx
+arrow-lake index delete-vector aigc_articles text_embedding_idx
 ```
 
 | 参数 | 说明 |
@@ -589,13 +589,13 @@ arrow-lake index delete-vector papers text_embedding_idx
 #### `index info-fts <dataset>` — 查看全文索引信息 (v1.2)
 
 ```bash
-arrow-lake index info-fts papers
+arrow-lake index info-fts aigc_articles
 ```
 
 #### `index delete-fts <dataset>` — 删除全文索引 (v1.2)
 
 ```bash
-arrow-lake index delete-fts papers
+arrow-lake index delete-fts aigc_articles
 ```
 
 ---
@@ -607,9 +607,9 @@ arrow-lake index delete-fts papers
 通过 DuckDB 执行 SQL 分析查询，支持聚合、窗口函数、JOIN 等。
 
 ```bash
-arrow-lake query sql sales \
-    --sql "SELECT category, COUNT(*) as cnt, AVG(amount) as avg_amount
-           FROM sales GROUP BY category ORDER BY cnt DESC" \
+arrow-lake query sql ontime \
+    --sql "SELECT Reporting_Airline, COUNT(*) as cnt, AVG(ArrDelay) as avg_arr_delay
+           FROM ontime GROUP BY Reporting_Airline ORDER BY cnt DESC" \
     --max-rows 50
 ```
 
@@ -622,21 +622,21 @@ arrow-lake query sql sales \
 
 ```text
 Query Result (5 rows)
-┏━━━━━━━━━━┳━━━━━━┳━━━━━━━━━━━━┓
-┃ category  ┃ cnt  ┃ avg_amount ┃
-┡━━━━━━━━━━╇━━━━━━╇━━━━━━━━━━━━┩
-│ electronics│ 5420│ 234.56     │
-│ clothing   │ 3210│ 89.12      │
-│ books      │ 2870│ 34.78      │
-│ food       │ 2150│ 45.23      │
-│ sports     │ 1350│ 156.89     │
-└───────────┴─────┴────────────┘
+┏━━━━━━━━━━━━━━━━━━━┳━━━━━━┳━━━━━━━━━━━━━━┓
+┃ Reporting_Airline ┃ cnt  ┃ avg_arr_delay┃
+┡━━━━━━━━━━━━━━━━━━╇━━━━━━╇━━━━━━━━━━━━━━┩
+│ AA                 │ 5420 │ 12.45        │
+│ DL                 │ 3210 │ 8.32         │
+│ UA                 │ 2870 │ 15.67        │
+│ WN                 │ 2150 │ 10.21        │
+│ AS                 │ 1350 │ 6.89         │
+└────────────────────┴──────┴──────────────┘
 ```
 
 **SDK 等价:**
 
 ```python
-result = lake.olap_query("sales", sql, max_rows=50)
+result = lake.olap_query("ontime", sql, max_rows=50)
 ```
 
 #### `query materialize <dataset>` — 物化视图
@@ -644,9 +644,9 @@ result = lake.olap_query("sales", sql, max_rows=50)
 将 SQL 查询结果持久化为可复用的物化视图。
 
 ```bash
-arrow-lake query materialize sales \
-    --sql "SELECT category, COUNT(*) as cnt FROM sales GROUP BY category" \
-    --name category_summary \
+arrow-lake query materialize ontime \
+    --sql "SELECT Reporting_Airline, COUNT(*) as cnt FROM ontime GROUP BY Reporting_Airline" \
+    --name airline_summary \
     --ttl-days 30
 ```
 
@@ -659,13 +659,13 @@ arrow-lake query materialize sales \
 **SDK 等价:**
 
 ```python
-row_count = lake.materialize("sales", sql, view_name="category_summary", ttl_days=30)
+row_count = lake.materialize("ontime", sql, view_name="airline_summary", ttl_days=30)
 ```
 
 #### `query meta <dataset>` — 数据集元数据查询 (v1.2)
 
 ```bash
-arrow-lake query meta papers --sql "SELECT * FROM papers LIMIT 5"
+arrow-lake query meta aigc_articles --sql "SELECT * FROM aigc_articles LIMIT 5"
 ```
 
 | 参数 | 默认值 | 说明 |
@@ -689,7 +689,7 @@ arrow-lake query cleanup-materialized --ttl-days 30
 将数据集加载为 Daft DataFrame 并显示。
 
 ```bash
-arrow-lake query daft papers --columns id,title --limit 10
+arrow-lake query daft aigc_articles --columns id,title --limit 10
 ```
 
 | 参数 | 默认值 | 说明 |
@@ -702,9 +702,9 @@ arrow-lake query daft papers --columns id,title --limit 10
 ### 7. `arrow-lake export` — 数据导出
 
 ```bash
-arrow-lake export papers --output result.parquet --format parquet
-arrow-lake export papers --output result.csv --format csv
-arrow-lake export papers --output subset.parquet --columns id,title,text_content
+arrow-lake export aigc_articles --output result.parquet --format parquet
+arrow-lake export aigc_articles --output result.csv --format csv
+arrow-lake export aigc_articles --output subset.parquet --columns id,title,text_content
 ```
 
 | 参数 | 默认值 | 说明 |
@@ -716,7 +716,7 @@ arrow-lake export papers --output subset.parquet --columns id,title,text_content
 **SDK 等价:**
 
 ```python
-lake.export("papers", "result.parquet", format="parquet", columns=["id", "title"])
+lake.export("aigc_articles", "result.parquet", format="parquet", columns=["id", "title"])
 ```
 
 ---
@@ -762,13 +762,13 @@ arrow-lake embed image ./photos/cat.jpg --model openai/clip-vit-base-patch32
 
 ```bash
 # 精确去重（内容完全相同）
-arrow-lake quality dedup sales --strategy exact --action remove
+arrow-lake quality dedup ontime --strategy exact --action remove
 
 # 感知哈希去重（近似重复的图片/文本）
 arrow-lake quality dedup photos --strategy perceptual --action flag --threshold 10
 
 # 两者结合
-arrow-lake quality dedup papers --strategy both --action flag
+arrow-lake quality dedup aigc_articles --strategy both --action flag
 ```
 
 | 参数 | 默认值 | 说明 |
@@ -786,7 +786,7 @@ result = lake.deduplicate("photos", strategy="perceptual", action="flag", percep
 #### `quality filter <dataset>` — 质量过滤
 
 ```bash
-arrow-lake quality filter papers --filters "null_check,min_length" --mode all
+arrow-lake quality filter aigc_articles --filters "null_check,min_length" --mode all
 ```
 
 | 参数 | 默认值 | 说明 |
@@ -802,7 +802,7 @@ arrow-lake quality filter papers --filters "null_check,min_length" --mode all
 
 ```bash
 # 备份指定数据集
-arrow-lake backup create --datasets papers images
+arrow-lake backup create --datasets aigc_articles images
 
 # 备份所有数据集 + 自定义 ID
 arrow-lake backup create --backup-id daily-2024-04-24
@@ -821,8 +821,8 @@ Backups
 ┏━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┓
 ┃ Backup ID           ┃ Created          ┃ Datasets   ┃ Size     ┃
 ┡━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━┩
-│ daily-2024-04-24    │ 2024-04-24 10:30 │ papers,... │ 256 MB   │
-│ daily-2024-04-23    │ 2024-04-23 10:30 │ papers,... │ 248 MB   │
+│ daily-2024-04-24    │ 2024-04-24 10:30 │ aigc_art..│ 256 MB   │
+│ daily-2024-04-23    │ 2024-04-23 10:30 │ aigc_art..│ 248 MB   │
 └─────────────────────┴─────────────────┴────────────┴─────────┘
 ```
 
@@ -830,7 +830,7 @@ Backups
 
 ```bash
 arrow-lake backup restore daily-2024-04-24
-arrow-lake backup restore daily-2024-04-24 --datasets papers
+arrow-lake backup restore daily-2024-04-24 --datasets aigc_articles
 ```
 
 #### `backup delete <id>` — 删除备份
@@ -852,9 +852,9 @@ arrow-lake backup delete daily-2024-04-24
 #### `kg build <dataset>` — 构建知识图谱
 
 ```bash
-arrow-lake kg build papers                 # 默认全量构建
-arrow-lake kg build papers --incremental   # 增量：仅喂入自上次构建以来的新 chunk
-arrow-lake kg build papers --template project_concept_graph   # v1.10.0：指定抽取模板，覆盖 doc_type 路由
+arrow-lake kg build aigc_report                 # 默认全量构建
+arrow-lake kg build aigc_report --incremental   # 增量：仅喂入自上次构建以来的新 chunk
+arrow-lake kg build aigc_report --template project_concept_graph   # v1.10.0：指定抽取模板，覆盖 doc_type 路由
 ```
 
 | 参数 | 默认值 | 说明 |
@@ -915,13 +915,13 @@ Knowledge Graph Stats
 #### `kg query <gremlin>` — Gremlin 查询
 
 ```bash
-arrow-lake kg query "g.V().has('type','paper').limit(10)"
+arrow-lake kg query "g.V().has('type','report').limit(10)"
 ```
 
 #### `kg neighbors <entity_id>` — 邻居遍历
 
 ```bash
-arrow-lake kg neighbors "paper:2401.00001" --depth 2
+arrow-lake kg neighbors "report:aigc_001" --depth 2
 ```
 
 | 参数 | 默认值 | 说明 |
@@ -1060,8 +1060,8 @@ arrow-lake kg algo betweenness-centrality
 #### `rag query <dataset> <question>` — RAG 问答
 
 ```bash
-arrow-lake rag query papers \
-    "Transformer 的自注意力机制是如何工作的？" \
+arrow-lake rag query aigc_report \
+    "AIGC 行业的发展趋势与关键技术是什么？" \
     --top-k 5 \
     --strategy hybrid \
     --session-id session_001
@@ -1080,12 +1080,12 @@ arrow-lake rag query papers \
 Running RAG query...
 
 Answer:
-Transformer 的自注意力机制通过 Query-Key-Value 三元组实现...
+AIGC（人工智能生成内容）行业近年来快速发展，关键技术涵盖大语言模型、扩散模型、多模态融合、智能体框架与检索增强生成等方向...
 
 Citations: (3 sources)
-  1. doc_0042 — Attention Is All You Need
-  2. doc_0187 — Self-Attention with Relative Position
-  3. doc_0091 — A Survey of Transformers
+  1. doc_0042 — GPT-4 技术能力评测
+  2. doc_0187 — 扩散模型综述
+  3. doc_0091 — 智能体框架研究
 
 Latency: 1234.5ms
 Context tokens: 2048
@@ -1112,7 +1112,7 @@ arrow-lake rag templates
 逐 chunk 输出 RAG 回答，适合交互式场景。
 
 ```bash
-arrow-lake rag stream papers "什么是 RAG？" --top-k 5
+arrow-lake rag stream aigc_report "什么是 RAG？" --top-k 5
 ```
 
 #### `rag batch` — 批量查询 (v1.2)
@@ -1120,7 +1120,7 @@ arrow-lake rag stream papers "什么是 RAG？" --top-k 5
 一次提交多个问题并发查询。
 
 ```bash
-arrow-lake rag batch papers --questions '["问题1","问题2","问题3"]' --top-k 5
+arrow-lake rag batch aigc_report --questions '["问题1","问题2","问题3"]' --top-k 5
 ```
 
 | 参数 | 默认值 | 说明 |
@@ -1133,7 +1133,7 @@ arrow-lake rag batch papers --questions '["问题1","问题2","问题3"]' --top-
 #### `rag extract` — 实体抽取 (v1.2)
 
 ```bash
-arrow-lake rag extract papers --top-k 20
+arrow-lake rag extract aigc_report --top-k 20
 ```
 
 #### `rag feedback` — 提交反馈 (v1.2)
@@ -1234,7 +1234,7 @@ arrow-lake config init --output prod.yaml  # 自定义文件名
 #### `audit record <event_type>` — 记录审计事件
 
 ```bash
-arrow-lake audit record dataset_ingested --dataset papers --actor admin \
+arrow-lake audit record dataset_ingested --dataset aigc_articles --actor admin \
     --payload '{"rows": 500, "format": "parquet"}'
 ```
 
@@ -1253,7 +1253,7 @@ arrow-lake audit verify audit-20260426-001
 #### `audit query` — 查询审计日志
 
 ```bash
-arrow-lake audit query --dataset papers --start 2026-01-01 --end 2026-04-01
+arrow-lake audit query --dataset aigc_articles --start 2026-01-01 --end 2026-04-01
 arrow-lake audit query --event-type dataset_ingested
 ```
 
@@ -1267,7 +1267,7 @@ arrow-lake audit query --event-type dataset_ingested
 #### `audit export <dataset>` — 导出审计日志
 
 ```bash
-arrow-lake audit export papers --output audit_trail.json
+arrow-lake audit export aigc_articles --output audit_trail.json
 ```
 
 #### `audit analyze` — 异常检测 (v1.2)
@@ -1287,8 +1287,8 @@ arrow-lake audit analyze
 #### `lineage record <dataset> <operation>` — 记录血缘事件
 
 ```bash
-arrow-lake lineage record sales merge \
-    --sources "raw_sales,cleaned_sales" \
+arrow-lake lineage record ontime merge \
+    --sources "raw_ontime,cleaned_ontime" \
     --transform-type etl \
     --actor pipeline
 ```
@@ -1303,13 +1303,13 @@ arrow-lake lineage record sales merge \
 #### `lineage history <dataset>` — 查看血缘历史
 
 ```bash
-arrow-lake lineage history sales
+arrow-lake lineage history ontime
 ```
 
 #### `lineage query <sql>` — SQL 查询血缘
 
 ```bash
-arrow-lake lineage query "SELECT * FROM lineage WHERE dataset_name = 'sales'"
+arrow-lake lineage query "SELECT * FROM lineage WHERE dataset_name = 'ontime'"
 ```
 
 | 参数 | 默认值 | 说明 |
@@ -1416,7 +1416,7 @@ Arrow Lake 支持将数据存储在 S3 或 MinIO 上，CLI 命令**不需要改�
 实际路径 = s3://{s3_bucket}/{base_uri}/{dataset}.lance
 ```
 
-例如 `--base-uri ./data` + `s3_bucket=arrow-lake` → 数据集存储在 `s3://arrow-lake/data/papers.lance`。
+例如 `--base-uri ./data` + `s3_bucket=arrow-lake` → 数据集存储在 `s3://arrow-lake/data/aigc_articles.lance`。
 
 #### 配置方式一：YAML 文件（推荐）
 
@@ -1436,9 +1436,9 @@ storage:
 
 ```bash
 arrow-lake --config minio.yaml --base-uri ./data status
-arrow-lake --config minio.yaml --base-uri ./data ingest files papers data.csv
-arrow-lake --config minio.yaml --base-uri ./data search fts papers --query "AI"
-arrow-lake --config minio.yaml --base-uri ./data export papers --output result.parquet
+arrow-lake --config minio.yaml --base-uri ./data ingest files aigc_articles data.csv
+arrow-lake --config minio.yaml --base-uri ./data search fts aigc_articles --query "AI"
+arrow-lake --config minio.yaml --base-uri ./data export aigc_articles --output result.parquet
 ```
 
 #### 配置方式二：环境变量（ARROW_LAKE__ 前缀）
@@ -1562,78 +1562,74 @@ has_real_creds = (
 
 ## 第三部分：实战场景
 
-### 场景一：科研论文管理（本地存储）
+### 场景一：AIGC 文章与报告管理（本地存储）
 
-从零搭建一个论文数据集，完成摄取、索引、搜索、导出的完整流程。
+从零搭建 AIGC 文章与报告数据集，完成摄取、索引、搜索、导出的完整流程。
 
 **示例数据**:
-- `datas/papers/metadata.csv` — 20 条英文论文元数据（Transformer、BERT、CLIP、GPT-4、LoRA 等）
-- `datas/papers/metadata_zh.csv` — 12 条中文论文元数据（知识图谱、向量数据库、RAG、MinIO 等）
-- `datas/papers/full_text/` — 18 篇来自 arxiv 的真实论文 PDF
+- `datas/reports/aigc_articles.csv` — 144 条 AIGC 文章元数据（大语言模型、扩散模型、智能体、检索增强生成等）
+- `datas/reports/aigc_industry_report.pdf` — AIGC 行业报告 PDF（用于文档摄取、RAG、知识图谱）
 
 **步骤 1：创建数据集并摄取数据**
 
 ```bash
-# 摄取英文论文元数据
-arrow-lake --base-uri ./paper_lake ingest files papers datas/papers/metadata.csv
+# 摄取 AIGC 文章元数据 CSV（jieba 自动分词支持中英文混排）
+arrow-lake --base-uri ./aigc_lake ingest files aigc_articles datas/reports/aigc_articles.csv
 
-# 摄取中文论文元数据（jieba 自动分词）
-arrow-lake --base-uri ./paper_lake ingest files papers_zh datas/papers/metadata_zh.csv
-
-# 摄取 PDF 原文
-arrow-lake --base-uri ./paper_lake ingest documents papers datas/papers/full_text/*.pdf
+# 摄取 AIGC 行业报告 PDF（文档解析 + 自动分块）
+arrow-lake --base-uri ./aigc_lake ingest documents aigc_report datas/reports/aigc_industry_report.pdf
 ```
 
 **步骤 2：查看数据集**
 
 ```bash
-arrow-lake --base-uri ./paper_lake catalog info papers
+arrow-lake --base-uri ./aigc_lake catalog info aigc_articles
 ```
 
 **步骤 3：创建索引**
 
 ```bash
-# 全文搜索索引（中文论文自动 jieba 分词）
-arrow-lake --base-uri ./paper_lake index fts papers --column text_content
+# 全文搜索索引（中英文自动 jieba 分词）
+arrow-lake --base-uri ./aigc_lake index fts aigc_articles --column text_content
 
 # 向量索引（加速向量搜索）
-arrow-lake --base-uri ./paper_lake index vector papers \
+arrow-lake --base-uri ./aigc_lake index vector aigc_articles \
     --column text_embedding --type IVF_PQ
 ```
 
-**步骤 4：搜索论文**
+**步骤 4：搜索 AIGC 文章**
 
 ```bash
 # 全文搜索
-arrow-lake --base-uri ./paper_lake search fts papers \
+arrow-lake --base-uri ./aigc_lake search fts aigc_articles \
     --query "attention mechanism" --top-k 5
 
 # 向量搜索（语义相似）
-arrow-lake --base-uri ./paper_lake search vector papers \
+arrow-lake --base-uri ./aigc_lake search vector aigc_articles \
     --query "how does self-attention work" --top-k 10
 
 # 混合搜索（综合排序）
-arrow-lake --base-uri ./paper_lake search hybrid papers \
+arrow-lake --base-uri ./aigc_lake search hybrid aigc_articles \
     --query "transformer architecture"
 
 # 中文全文搜索（jieba 自动分词）
-arrow-lake --base-uri ./paper_lake search fts papers_zh \
-    --query "知识图谱 大模型" --top-k 5
+arrow-lake --base-uri ./aigc_lake search fts aigc_articles \
+    --query "大语言模型 智能体" --top-k 5
 ```
 
 **步骤 5：SQL 分析**
 
 ```bash
-arrow-lake --base-uri ./paper_lake query sql papers \
+arrow-lake --base-uri ./aigc_lake query sql aigc_articles \
     --sql "SELECT category, COUNT(*) as cnt, MIN(year) as earliest, MAX(year) as latest
-           FROM papers GROUP BY category ORDER BY cnt DESC"
+           FROM aigc_articles GROUP BY category ORDER BY cnt DESC"
 ```
 
 **步骤 6：导出结果**
 
 ```bash
-arrow-lake --base-uri ./paper_lake export papers \
-    --output ml_papers.parquet --columns id,title,authors,year
+arrow-lake --base-uri ./aigc_lake export aigc_articles \
+    --output aigc_articles.parquet --columns id,title,authors,year
 ```
 
 ---
@@ -1682,57 +1678,53 @@ arrow-lake --base-uri ./media_lake search vector photos \
 从原始数据到质量管控再到分析报告的完整流程。
 
 **示例数据**:
-- `datas/transactions/sales_2024.csv` — 50 条英文交易记录
-- `datas/transactions/sales_2024_cn.csv` — 50 条中文交易记录（适合中文 FTS 演示）
+- `datas/ontime/ontime_2022.parquet` — 1.6M 条 2022 年航班记录（Reporting_Airline、Origin、Dest、ArrDelay 等）
 
 **步骤 1：摄取原始数据**
 
 ```bash
-# 英文交易数据
-arrow-lake --base-uri ./analytics_lake ingest files transactions datas/transactions/sales_2024.csv
-
-# 中文交易数据（jieba 自动分词，适合中文全文搜索演示）
-arrow-lake --base-uri ./analytics_lake ingest files transactions_cn datas/transactions/sales_2024_cn.csv
+# 航班数据（parquet 格式）
+arrow-lake --base-uri ./analytics_lake ingest files ontime datas/ontime/ontime_2022.parquet
 ```
 
 **步骤 2：质量检查**
 
 ```bash
 # 去重
-arrow-lake --base-uri ./analytics_lake quality dedup transactions \
+arrow-lake --base-uri ./analytics_lake quality dedup ontime \
     --strategy both --action flag
 
 # 质量过滤
-arrow-lake --base-uri ./analytics_lake quality filter transactions \
+arrow-lake --base-uri ./analytics_lake quality filter ontime \
     --filters "null_check,range_check" --mode all
 ```
 
 **步骤 3：SQL 分析**
 
 ```bash
-# 每日交易趋势
-arrow-lake --base-uri ./analytics_lake query sql transactions \
-    --sql "SELECT DATE(timestamp) as day,
-           COUNT(*) as tx_count,
-           SUM(amount) as total,
-           AVG(amount) as avg_amount
-           FROM transactions
-           GROUP BY day ORDER BY day DESC
-           LIMIT 30"
+# 每月航班趋势
+arrow-lake --base-uri ./analytics_lake query sql ontime \
+    --sql "SELECT Month,
+           COUNT(*) as flight_count,
+           AVG(ArrDelay) as avg_arr_delay,
+           SUM(Cancelled) as cancelled
+           FROM ontime
+           GROUP BY Month ORDER BY Month DESC"
 
-# 中文交易数据：按城市统计销售额
-arrow-lake --base-uri ./analytics_lake query sql transactions_cn \
-    --sql "SELECT 城市, COUNT(*) as 订单数, SUM(金额) as 总额, AVG(金额) as 平均金额
-           FROM transactions_cn GROUP BY 城市 ORDER BY 总额 DESC"
+# 按出发-到达机场统计航班量与平均延误
+arrow-lake --base-uri ./analytics_lake query sql ontime \
+    --sql "SELECT Origin, Dest, COUNT(*) as flight_count,
+           AVG(ArrDelay) as avg_arr_delay
+           FROM ontime GROUP BY Origin, Dest ORDER BY flight_count DESC LIMIT 30"
 ```
 
 **步骤 4：物化常用报表**
 
 ```bash
-arrow-lake --base-uri ./analytics_lake query materialize transactions \
-    --sql "SELECT user_id, COUNT(*) as tx_count, SUM(amount) as total_spent
-           FROM transactions GROUP BY user_id" \
-    --name user_summary \
+arrow-lake --base-uri ./analytics_lake query materialize ontime \
+    --sql "SELECT Reporting_Airline, COUNT(*) as flight_count, AVG(ArrDelay) as avg_delay
+           FROM ontime GROUP BY Reporting_Airline" \
+    --name airline_summary \
     --ttl-days 7
 ```
 
@@ -1740,7 +1732,7 @@ arrow-lake --base-uri ./analytics_lake query materialize transactions \
 
 ```bash
 arrow-lake --base-uri ./analytics_lake backup create \
-    --datasets transactions --backup-id pre-cleanup
+    --datasets ontime --backup-id pre-cleanup
 ```
 
 ---
@@ -1750,34 +1742,30 @@ arrow-lake --base-uri ./analytics_lake backup create \
 构建一个基于知识图谱增强的 RAG 问答系统。
 
 **示例数据**:
-- `datas/kb/knowledge.jsonl` — 10 条英文知识库条目（Arrow、Parquet、DuckDB、LanceDB、RAG、HNSW、MinIO 等）
-- `datas/kb/knowledge_zh.jsonl` — 10 条中文知识库条目（适合中文 RAG 问答演示）
+- `datas/reports/aigc_articles.csv` — 144 条 AIGC 文章元数据（涵盖大语言模型、扩散模型、智能体、RAG、算力基础设施等主题，适合中英文 RAG 问答演示）
 
 **步骤 1：摄取知识库数据**
 
 ```bash
-# 英文知识库
-arrow-lake --base-uri ./rag_lake ingest files knowledge datas/kb/knowledge.jsonl
-
-# 中文知识库
-arrow-lake --base-uri ./rag_lake ingest files knowledge_zh datas/kb/knowledge_zh.jsonl
+# AIGC 文章库（中英文混排，jieba 自动分词）
+arrow-lake --base-uri ./rag_lake ingest files aigc_articles datas/reports/aigc_articles.csv
 ```
 
 **步骤 2：创建索引**
 
 ```bash
 # 向量索引
-arrow-lake --base-uri ./rag_lake index vector knowledge --column text_embedding
+arrow-lake --base-uri ./rag_lake index vector aigc_articles --column text_embedding
 
 # 全文索引
-arrow-lake --base-uri ./rag_lake index fts knowledge --column text_content
+arrow-lake --base-uri ./rag_lake index fts aigc_articles --column text_content
 ```
 
 **步骤 3：构建知识图谱**
 
 ```bash
 # 启动构建（异步，返回 task_id）
-arrow-lake --base-uri ./rag_lake kg build knowledge
+arrow-lake --base-uri ./rag_lake kg build aigc_articles
 
 # 查看进度
 arrow-lake --base-uri ./rag_lake kg status <task_id>
@@ -1793,16 +1781,16 @@ arrow-lake --base-uri ./rag_lake kg query "g.V().has('type','concept').limit(20)
 
 ```bash
 # 单轮问答
-arrow-lake --base-uri ./rag_lake rag query knowledge \
-    "Arrow 格式和 Parquet 格式有什么区别？"
+arrow-lake --base-uri ./rag_lake rag query aigc_articles \
+    "扩散模型和扩散 Transformer 有什么区别？"
 
-# 中文知识库问答
-arrow-lake --base-uri ./rag_lake rag query knowledge_zh \
-    "HNSW 算法的时间复杂度是多少？"
+# 中文文章问答
+arrow-lake --base-uri ./rag_lake rag query aigc_articles \
+    "智能体框架的核心组件有哪些？"
 
 # 多轮对话
-arrow-lake --base-uri ./rag_lake rag query knowledge \
-    "它支持哪些压缩算法？" \
+arrow-lake --base-uri ./rag_lake rag query aigc_articles \
+    "它们在 RAG 场景下如何应用？" \
     --session-id sess_001
 ```
 

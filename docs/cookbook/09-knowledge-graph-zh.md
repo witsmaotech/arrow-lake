@@ -9,7 +9,7 @@ Arrow Lake 内置知识图谱 (KG) 子系统，通过 LLM 实体抽取将非结�
 > 前置准备：安装依赖 `pip install arrow-lake[kg]`，部署 HugeGraph 服务，
 > 并在配置中启用 `hugegraph.enabled = True`。
 
-> **贯穿数据集**：收束 `papers` 论文库——将 [08](./08-rag-pipeline-zh.md) 摄取的论文全文挖掘为实体与关系，把同一语料变成供 GraphRAG 使用的知识图谱。
+> **贯穿数据集**：基于 **AIGC 行业报告**（`aigc_report`）——将 [08](./08-rag-pipeline-zh.md) 摄取的 `datas/reports/aigc_industry_report.pdf` 全文挖掘为实体与关系，把同一语料变成供 GraphRAG 使用的知识图谱。
 
 ***
 
@@ -19,14 +19,14 @@ Arrow Lake 内置知识图谱 (KG) 子系统，通过 LLM 实体抽取将非结�
 
 **纯向量 RAG 的局限**：它按 embedding 相似度检索——返回与查询字面/语义相近的*段落*。对"X 是什么"这类单跳事实问题很好用，但遇到多跳、关系密集的问题就力不从心：
 
-> 问题：*"应急指挥中心在这次事故响应中依据了哪个预案？启动了哪些资源？"*
+> 问题：*"OpenAI 的 GPT-4 用了 RLHF 对齐，这套方法解决了什么问题？又依赖哪些前置技术？"*
 >
-> - **纯向量 RAG**：检索到几个提到"应急指挥中心"或"预案"的段落，拼出泛泛回答，很可能漏掉"依据了哪个预案 → 该预案规定了哪些资源"的**因果链**。
-> - **GraphRAG**：先定位"应急指挥中心"顶点，沿 `依据` / `启动` 等**带类型的边**遍历到"预案""资源"顶点，把这些**结构化邻居**连同 `relation_type` 注入 LLM → 给出**可溯源、关系完整**的答案。
+> - **纯向量 RAG**：检索到几个提到"GPT-4"或"RLHF"的段落，拼出泛泛回答，很可能漏掉"RLHF 解决了对齐问题 → 它依赖人类反馈与奖励模型 → 奖励模型又基于 Transformer"的**因果链**。
+> - **GraphRAG**：先定位"GPT-4"顶点，沿 `使用` / `基于` 等**带类型的边**遍历到"RLHF""奖励模型""Transformer"顶点，把这些**结构化邻居**连同 `relation_type` 注入 LLM → 给出**可溯源、关系完整**的答案。
 
 **Arrow Lake GraphRAG 的三个差异点**：
 
-1. **`relation_type` 富化** —— 边不只是"A 连 B"，而是"A *依据* B""A *启动* B"，LLM 看到实体*如何*连接，而非仅仅共现。
+1. **`relation_type` 富化** —— 边不只是"A 连 B"，而是"A *使用* B""A *基于* B"，LLM 看到实体*如何*连接，而非仅仅共现。
 2. **模板驱动抽取** —— 用领域 YAML 模板（如 `project_concept_graph`：22 类型 + 14 关系）抽出强类型实体关系，而非无类型三元组袋子。
 3. **质量可度量** —— 模板质量验证 harness 在上线前量化 orphan rate / 关系类型覆盖率 / 平均度数，把"图建得好不好"从猜测变成指标。
 
@@ -51,8 +51,8 @@ config.hugegraph.graph_name = "hugegraph"  # 基础图名；实际图按数据�
 
 lake = Lake(base_uri="./data", config=config)
 
-# 触发异步构建 — 对 "papers" 数据集进行实体抽取
-task_id = asyncio.run(lake.kg_build("papers"))
+# 触发异步构建 — 对 "aigc_report" 数据集进行实体抽取
+task_id = asyncio.run(lake.kg_build("aigc_report"))
 print(f"构建任务已提交：{task_id}")
 ```
 
@@ -126,7 +126,7 @@ for entity in entities:
 
 # 查询特定名称的实体
 results = asyncio.run(
-    lake.kg_query("g.V().has('entity', 'name', 'Arrow Lake').valueMap()")
+    lake.kg_query("g.V().has('entity', 'name', 'OpenAI').valueMap()")
 )
 print(results)
 ```
@@ -406,8 +406,8 @@ lake = Lake(base_uri="./data", config=config)
 # GraphRAG 自动启用 — 无需额外代码
 response = asyncio.run(
     lake.rag_query(
-        question="大语言模型知识图谱构建涉及哪些核心方法与数据集？",
-        dataset_name="papers",
+        question="AIGC 行业产业链分为哪几层？各层的代表企业有哪些？",
+        dataset_name="aigc_report",
         top_k=5,
     )
 )
@@ -477,15 +477,14 @@ async def main():
 
     lake = Lake(base_uri="./data", config=config)
 
-    # 2. 摄取论文库中若干论文的全文（解析 -> 分块 -> 嵌入 -> 索引）
-    report = lake.ingest_documents_and_index("papers", [
-        "datas/papers/full_text/zh001_大语言模型知识图谱构建综述.pdf",
-        "datas/papers/full_text/zh003_检索增强生成企业智能客服应用.pdf",
+    # 2. 摄取 AIGC 行业报告全文（解析 -> 分块 -> 嵌入 -> 索引）
+    report = lake.ingest_documents_and_index("aigc_report", [
+        "datas/reports/aigc_industry_report.pdf",
     ])
     print(f"摄取：{report.total_rows} 个分块")
 
     # 3. 构建知识图谱
-    task_id = await lake.kg_build("papers")
+    task_id = await lake.kg_build("aigc_report")
     print(f"构建任务：{task_id}")
 
     # 4. 等待构建完成
@@ -502,8 +501,8 @@ async def main():
 
     # 6. GraphRAG 问答
     response = await lake.rag_query(
-        question="这些论文涉及哪些核心方法与概念？它们之间是什么关系？",
-        dataset_name="papers",
+        question="AIGC 行业报告涉及哪些核心技术与代表企业？它们之间是什么关系？",
+        dataset_name="aigc_report",
     )
     print(f"回答：{response.answer[:200]}...")
 
@@ -612,7 +611,7 @@ print(path, source)                           # general/concept_graph 'override'
 
 ```python
 # Python SDK
-lake.ingest_documents("papers", ["datas/papers/full_text/zh001_大语言模型知识图谱构建综述.pdf"], doc_type="paper")
+lake.ingest_documents("aigc_report", ["datas/reports/aigc_industry_report.pdf"], doc_type="report")
 ```
 
 > CLI `kg build` **没有** `--doc-type` 参数——请在摄入时设置 `doc_type`。若要为单次构建覆盖*模板*

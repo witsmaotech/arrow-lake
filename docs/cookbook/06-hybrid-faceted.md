@@ -3,7 +3,7 @@
 > RRF fusion of vector search + full-text search for hybrid retrieval, DuckDB CUBE for
 > faceted navigation, and weighted RRF for multi-column ensemble search.
 
-> **Running dataset.** We continue with the `papers` research library from [04](./04-vector-search.md) / [05](./05-fulltext-search.md) — now combining semantic vector and BM25 retrieval, and slicing it by `category` / `venue` / `year` facets.
+> **Running dataset.** We continue with the `aigc_articles` AIGC article library (`datas/reports/aigc_articles.csv`, 144 AIGC articles) from [04](./04-vector-search.md) / [05](./05-fulltext-search.md) — now combining semantic vector and BM25 retrieval, and slicing it by `category` / `venue` / `year` facets.
 
 ***
 
@@ -16,17 +16,17 @@ import numpy as np
 
 lake = Lake(base_uri="./lake_demo")
 
-# Ingest our papers research library (text_content is auto-embedded → text_embedding)
-lake.ingest("papers", ["datas/papers/metadata.csv"])
+# Ingest our aigc_articles AIGC article library (text_content is auto-embedded → text_embedding)
+lake.ingest("aigc_articles", ["datas/reports/aigc_articles.csv"])
 
 # Build indexes
-lake.create_vector_index("papers", vector_column="text_embedding")
-lake.create_fts_index("papers", fts_column="text_content")
+lake.create_vector_index("aigc_articles", vector_column="text_embedding")
+lake.create_fts_index("aigc_articles", fts_column="text_content")
 
 # Hybrid search (semantic vector + keyword BM25, fused via RRF)
 query_vec = np.random.randn(1024).astype(np.float32).tolist()  # replace with a real query embedding
 result = lake.hybrid_search(
-    "papers",
+    "aigc_articles",
     query_vector=query_vec,
     query_text="attention mechanism",
     top_k=5,
@@ -139,7 +139,7 @@ category navigation.
 query_vec = encoder.embed_text("attention")
 
 result = lake.faceted_search(
-    "papers",
+    "aigc_articles",
     query_vector=query_vec,
     facets=["category", "venue", "year"],
     top_k=10,
@@ -161,12 +161,12 @@ for dim, values in facet_dict.items():
         print(f"    {val}: {cnt}")
 # Output:
 #   [category]
-#     NLP: 116
-#     Computer Vision: 121
+#     Large Language Models: 116
+#     Multimodal: 121
 #     ...
 #   [venue]
-#     JMLR: 92
-#     SIGMOD: 91
+#     ICML: 92
+#     NeurIPS: 91
 #     ...
 #   [year]
 #     2024: 251
@@ -215,13 +215,13 @@ The core use case for faceted search is "search results + category filter naviga
 
 ```python
 # 1. User searches -> display facet options (sidebar)
-result = lake.faceted_search("papers", query_vector=query_vec,
+result = lake.faceted_search("aigc_articles", query_vector=query_vec,
                               facets=["category", "venue"])
 
-# 2. User clicks "NLP" filter -> facet counts update automatically
-result = lake.faceted_search("papers", query_vector=query_vec,
+# 2. User clicks "Large Language Models" filter -> facet counts update automatically
+result = lake.faceted_search("aigc_articles", query_vector=query_vec,
                               facets=["category", "venue"],
-                              where="category = 'NLP'")
+                              where="category = 'Large Language Models'")
 ```
 
 ### Scalar Index Acceleration
@@ -230,9 +230,9 @@ Building scalar indexes on the facet dimension columns significantly speeds up t
 
 ```python
 # Build scalar indexes on default facet columns (BTREE/BITMAP per scalar_index_type_map)
-lake.create_facet_indexes("papers")
+lake.create_facet_indexes("aigc_articles")
 # Or build an index on a single column
-lake.create_scalar_index("papers", column="category")
+lake.create_scalar_index("aigc_articles", column="category")
 ```
 
 ***
@@ -243,9 +243,9 @@ lake.create_scalar_index("papers", column="category")
 them with weighted RRF. It is designed for multi-modal embedding scenarios.
 
 ```python
-# Hypothetical: if papers also had an image_embedding column (e.g. figure embeddings)
+# Hypothetical: if aigc_articles also had an image_embedding column (e.g. figure embeddings)
 result = lake.ensemble_search(
-    "papers",
+    "aigc_articles",
     query_vector=query_vec,
     columns=["text_embedding", "image_embedding"],
     weights={"text_embedding": 0.7, "image_embedding": 0.3},
@@ -287,9 +287,9 @@ CLIP embeddings map text and images into the same vector space, enabling "text-t
 
 ```python
 # Text -> image embedding, same space as /embed/image
-# (requires an image_embedding column, e.g. paper figures embedded via CLIP)
+# (requires an image_embedding column, e.g. article figures embedded via CLIP)
 query_vec = lake.encode_text_clip("neural network architecture diagram")
-results = lake.search("papers", query_vector=query_vec, vector_column="image_embedding")
+results = lake.search("aigc_articles", query_vector=query_vec, vector_column="image_embedding")
 ```
 
 ***

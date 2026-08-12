@@ -5,7 +5,7 @@
 Arrow Lake 通过 DuckDB 零拷贝 Arrow 集成提供高性能 OLAP 分析能力，支持
 GROUP BY 聚合、窗口函数、JOIN 以及物化视图。
 
-> **贯穿数据集**：沿用 `papers` 论文库——本章把它当作结构化表分析：聚合 `word_count`、按 `category`/`venue`/`year` 切片、用窗口函数为论文排名。
+> **贯穿数据集**：本章使用 `ontime` 航班数据集（`datas/ontime/ontime_2022.parquet`，约 160 万行 × 109 列）做结构化 OLAP 分析：聚合到达延误 `ArrDelay`、按航空公司 / 机场 / 月份切片、用窗口函数排名。
 
 > 前置准备：确保已安装依赖 `pip install arrow-lake[olap]`，并有一个
 > 已写入数据的 Lance 数据集。
@@ -17,18 +17,18 @@ GROUP BY 聚合、窗口函数、JOIN 以及物化视图。
 `Lake.olap_query()` 在 Lance 数据集上执行只读 SQL（SELECT 语句），返回
 `OlapQueryResult`，其中 `.table` 是 PyArrow Table，可直接转 Pandas。
 
-> 本章示例查询 `papers` 研究论文库。先用下面代码载入（若你已有自己的数据集，把下文 `"papers"` 换成你的数据集名即可）：
+> 本章示例查询 `ontime` 航班数据集。先用下面代码载入（若你已有自己的数据集，把下文 `"ontime"` 换成你的数据集名即可）：
 
 ```python
-import pyarrow.csv as pacsv
+import pyarrow.parquet as pq
 from arrow_lake import Lake
 
 lake = Lake(base_uri="./data")
 
-# 载入 papers 研究论文库（OLAP 无需向量列）
-papers = pacsv.read_csv("datas/papers/metadata_zh.csv")
-lake.create_dataset("papers", papers)
-print(f"papers 已载入: {papers.num_rows} 行")
+# 载入 ontime 航班数据（OLAP 无需向量列）
+ontime = pq.read_table("datas/ontime/ontime_2022.parquet")
+lake.create_dataset("ontime", ontime)
+print(f"ontime 已载入: {ontime.num_rows} 行")
 ```
 
 ```python
@@ -36,11 +36,11 @@ from arrow_lake import Lake
 
 lake = Lake(base_uri="./data")
 
-# 按品类汇总销售额
+# 按航空公司汇总平均到达延误与航班数
 result = lake.olap_query(
-    "papers",
-    "SELECT category, AVG(word_count) AS avg_words, COUNT(*) as cnt "
-    "FROM papers GROUP BY category ORDER BY avg_words DESC",
+    "ontime",
+    "SELECT Reporting_Airline, AVG(ArrDelay) AS avg_delay, COUNT(*) AS cnt "
+    "FROM ontime WHERE Cancelled = 0 GROUP BY Reporting_Airline ORDER BY avg_delay DESC",
 )
 print(f"返回 {result.row_count} 行，{result.column_count} 列")
 print(result.table.to_pandas())
@@ -50,8 +50,8 @@ print(result.table.to_pandas())
 
 ```python
 result = lake.olap_query(
-    "papers",
-    "SELECT * FROM papers",
+    "ontime",
+    "SELECT * FROM ontime",
     max_rows=500,  # 最多返回 500 行
 )
 ```
@@ -68,23 +68,26 @@ DuckDB 支持完整的窗口函数语法，适合排名、累计求和、环比�
 
 ```python
 result = lake.olap_query(
-    "papers",
+    "ontime",
     """
     SELECT
-        title,
-        category,
-        word_count,
+        Flight_Number_Reporting_Airline,
+        Reporting_Airline,
+        Origin,
+        Dest,
+        ArrDelay,
         ROW_NUMBER() OVER (
-            PARTITION BY category ORDER BY word_count DESC
-        ) AS category_rank,
-        SUM(word_count) OVER (
-            PARTITION BY category
-        ) AS category_total,
-        word_count - LAG(word_count, 1) OVER (
-            PARTITION BY category ORDER BY word_count DESC
+            PARTITION BY Reporting_Airline ORDER BY ArrDelay DESC
+        ) AS airline_rank,
+        SUM(ArrDelay) OVER (
+            PARTITION BY Reporting_Airline
+        ) AS airline_total,
+        ArrDelay - LAG(ArrDelay, 1) OVER (
+            PARTITION BY Reporting_Airline ORDER BY ArrDelay DESC
         ) AS diff_from_prev
-    FROM papers
-    ORDER BY category, category_rank
+    FROM ontime
+    WHERE Cancelled = 0
+    ORDER BY Reporting_Airline, airline_rank
     """,
 )
 print(result.table.to_pandas())
@@ -94,11 +97,11 @@ print(result.table.to_pandas())
 
 | 函数               | 用途       | 示例                                                                          |
 | ---------------- | -------- | --------------------------------------------------------------------------- |
-| `ROW_NUMBER()`   | 行编号（不重复） | `ROW_NUMBER() OVER (ORDER BY word_count DESC)`                                  |
-| `RANK()`         | 排名（并列跳号） | `RANK() OVER (ORDER BY word_count DESC)`                                        |
-| `SUM() OVER`     | 累计求和     | `SUM(word_count) OVER (ORDER BY year)`                                          |
-| `AVG() OVER`     | 移动平均     | `AVG(word_count) OVER (ORDER BY year ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)` |
-| `LAG() / LEAD()` | 前/后值偏移   | `LAG(word_count, 1) OVER (ORDER BY year)`                                       |
+| `ROW_NUMBER()`   | 行编号（不重复） | `ROW_NUMBER() OVER (ORDER BY ArrDelay DESC)`                                  |
+| `RANK()`         | 排名（并列跳号） | `RANK() OVER (ORDER BY ArrDelay DESC)`                                        |
+| `SUM() OVER`     | 累计求和     | `SUM(ArrDelay) OVER (ORDER BY Month)`                                          |
+| `AVG() OVER`     | 移动平均     | `AVG(ArrDelay) OVER (ORDER BY Month ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)` |
+| `LAG() / LEAD()` | 前/后值偏移   | `LAG(ArrDelay, 1) OVER (ORDER BY Month)`                                       |
 
 ***
 
@@ -110,24 +113,24 @@ JOIN 操作。
 ```python
 import pyarrow as pa
 
-# 构造品类维度表（值必须与 papers.category 完全一致）
-category_info = pa.table({
-    "category": ["自然语言处理", "计算机视觉", "机器学习", "强化学习",
-                 "图机器学习", "数据系统"],
-    "field": ["语言", "视觉", "通用机器学习", "决策",
-              "图", "存储"],
+# 构造航空公司维度表（code 必须与 ontime.Reporting_Airline 一致）
+airline_info = pa.table({
+    "Reporting_Airline": ["AA", "DL", "UA", "WN", "B6", "AS"],
+    "airline_name": ["美国航空", "达美航空", "美联航", "西南航空", "捷蓝航空", "阿拉斯加航空"],
 })
 
 result = lake.olap_query(
-    "papers",
+    "ontime",
     """
-    SELECT s.category, c.field, AVG(s.word_count) AS avg_words, COUNT(*) AS cnt
-    FROM papers s
-    INNER JOIN category_info c ON s.category = c.category
-    GROUP BY s.category, c.field
-    ORDER BY avg_words DESC
+    SELECT s.Reporting_Airline, c.airline_name,
+           AVG(s.ArrDelay) AS avg_delay, COUNT(*) AS cnt
+    FROM ontime s
+    INNER JOIN airline_info c ON s.Reporting_Airline = c.Reporting_Airline
+    WHERE s.Cancelled = 0
+    GROUP BY s.Reporting_Airline, c.airline_name
+    ORDER BY avg_delay DESC
     """,
-    tables={"category_info": category_info},  # 注册临时表供 JOIN 使用
+    tables={"airline_info": airline_info},  # 注册临时表供 JOIN 使用
 )
 print(result.table.to_pandas())
 ```
@@ -157,9 +160,9 @@ lake = Lake(base_uri="./data", config=config)
 
 ```python
 view_name = lake.materialize(
-    "papers",
-    "SELECT category, AVG(word_count) AS avg_words FROM papers GROUP BY category",
-    view_name="category_summary",
+    "ontime",
+    "SELECT Reporting_Airline, AVG(ArrDelay) AS avg_delay FROM ontime WHERE Cancelled = 0 GROUP BY Reporting_Airline",
+    view_name="airline_delay_summary",
     ttl_days=7,
 )
 print(f"物化视图已创建：{view_name}")
@@ -207,12 +210,13 @@ dropped = lake.cleanup_materialized(ttl_days=3)
 
 ```python
 explain_output = lake.olap_query(
-    "papers",
+    "ontime",
     """
     EXPLAIN
-    SELECT category, AVG(word_count) AS avg_words
-    FROM papers
-    GROUP BY category
+    SELECT Reporting_Airline, AVG(ArrDelay) AS avg_delay
+    FROM ontime
+    WHERE Cancelled = 0
+    GROUP BY Reporting_Airline
     """,
 )
 ```
@@ -233,19 +237,19 @@ from arrow_lake import Lake
 lake = Lake(base_uri="./data")
 
 # 加载为延迟 Daft DataFrame，支持列选择和过滤
-df = lake.daft_query("papers")
+df = lake.daft_query("ontime")
 df_filtered = lake.daft_query(
-    "papers",
-    columns=["title", "category", "word_count"],
-    filter="word_count > 5000",
+    "ontime",
+    columns=["Reporting_Airline", "Origin", "Dest", "ArrDelay", "Distance"],
+    filter="ArrDelay > 60",
     limit=1000,
 )
 
 # 链式操作：选择列 -> 过滤 -> 排序 -> 收集
 result = (
-    df.select("title", "category", "word_count")
-    .filter("word_count > 8000")
-    .sort("word_count", desc=True)
+    df.select("Reporting_Airline", "ArrDelay", "Distance")
+    .filter("ArrDelay > 120")
+    .sort("ArrDelay", desc=True)
     .collect()  # 执行并返回 PyArrow Table
 )
 print(result.to_pandas())
@@ -256,12 +260,11 @@ print(result.to_pandas())
 ```python
 import daft
 
-grouped = df.select("category", "word_count").groupby("category")
+grouped = df.select("Reporting_Airline", "ArrDelay").groupby("Reporting_Airline")
 # 应用聚合表达式获得具体结果
 agg_result = grouped.agg(
-    daft.col("word_count").sum().alias("total"),
-    daft.col("word_count").mean().alias("avg_word_count"),
-    daft.col("word_count").count().alias("count"),
+    daft.col("ArrDelay").mean().alias("avg_delay"),
+    daft.col("ArrDelay").count().alias("count"),
 )
 print(agg_result.collect().to_pandas())
 ```
@@ -272,14 +275,14 @@ print(agg_result.collect().to_pandas())
 import daft
 import pyarrow as pa
 
-df1 = lake.daft_query("papers")
-# 一张小维度表（venue → 类型）作为 Daft DataFrame
-venue_dim = daft.from_arrow(pa.table({
-    "venue": ["NeurIPS", "ICLR", "CVPR", "ICML", "Nature", "Science"],
-    "type": ["会议", "会议", "会议", "会议", "期刊", "期刊"],
+df1 = lake.daft_query("ontime")
+# 一张小维度表（Origin 机场 → 枢纽城市）作为 Daft DataFrame
+airport_dim = daft.from_arrow(pa.table({
+    "Origin": ["JFK", "LAX", "ORD", "ATL", "DFW"],
+    "hub": ["纽约", "洛杉矶", "芝加哥", "亚特兰大", "达拉斯"],
 }))
 
-joined = df1.join(venue_dim, on="venue", how="inner")
+joined = df1.join(airport_dim, on="Origin", how="inner")
 result = joined.collect()
 print(result.to_pandas())
 ```
@@ -296,12 +299,12 @@ print(result.to_pandas())
 
 | 方法                     | 说明                | 示例                                  |
 | ---------------------- | ----------------- | ----------------------------------- |
-| `select(*columns)`     | 选择列               | `df.select("title", "word_count")`       |
-| `filter(predicate)`    | 过滤行               | `df.filter("word_count > 8000")`         |
-| `sort(column, desc)`   | 排序                | `df.sort("year", desc=True)`        |
-| `groupby(*columns)`    | 分组                | `df.groupby("category")`            |
-| `join(other, on, how)` | 连接                | `df.join(df2, on="venue", how="left")` |
-| `pivot(group_by, pivot_col, value_col, agg_fn)` | 透视（长转宽，交叉表） | `df.pivot("category", "venue", "word_count", "sum")` |
+| `select(*columns)`     | 选择列               | `df.select("Reporting_Airline", "ArrDelay")`       |
+| `filter(predicate)`    | 过滤行               | `df.filter("ArrDelay > 120")`         |
+| `sort(column, desc)`   | 排序                | `df.sort("Month", desc=True)`        |
+| `groupby(*columns)`    | 分组                | `df.groupby("Reporting_Airline")`            |
+| `join(other, on, how)` | 连接                | `df.join(df2, on="Origin", how="left")` |
+| `pivot(group_by, pivot_col, value_col, agg_fn)` | 透视（长转宽，交叉表） | `df.pivot("Reporting_Airline", "Origin", "ArrDelay", "sum")` |
 | `unpivot(ids, values)` | 逆透视（宽转长，melt）   | `df.unpivot("id", ["q1","q2"])`     |
 | `collect()`            | 执行并返回 Arrow Table | `df.collect()`                      |
 
@@ -318,21 +321,21 @@ from arrow_lake import Lake
 lake = Lake(base_uri="./data")
 
 # 导出为 Parquet（自动从后缀推断格式）
-result = lake.export("papers", "output/papers_export.parquet")
+result = lake.export("ontime", "output/ontime_export.parquet")
 print(f"导出完成：{result}")  # ExportResult 包含 path, format, row_count
 
 # 导出指定列
 result = lake.export(
-    "papers",
-    "output/papers_summary.csv",
-    columns=["category", "venue", "word_count"],
+    "ontime",
+    "output/ontime_summary.csv",
+    columns=["Reporting_Airline", "Origin", "Dest", "ArrDelay", "Distance"],
     format="csv",
 )
 
 # 导出特定版本 + 压缩
 result = lake.export(
-    "papers",
-    "output/papers_v1.parquet",
+    "ontime",
+    "output/ontime_v1.parquet",
     version=1,
     compression="snappy",
     overwrite=True,
@@ -400,7 +403,7 @@ from arrow_lake import Lake, QueryError
 lake = Lake(base_uri="./data")
 
 try:
-    result = lake.olap_query("papers", "DELETE FROM papers WHERE 1=1")
+    result = lake.olap_query("ontime", "DELETE FROM ontime WHERE 1=1")
 except QueryError as e:
     if e.error_code.name == "OLAP_QUERY_FAILED":
         print(f"查询失败：{e.message}")

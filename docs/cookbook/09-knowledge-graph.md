@@ -11,7 +11,7 @@ for multi-hop reasoning questions.
 > Prerequisites: Install dependencies with `pip install arrow-lake[kg]`, deploy a HugeGraph service,
 > and enable `hugegraph.enabled = True` in your configuration.
 
-> **Running dataset.** We close the loop on the `papers` library: the full-text PDFs ingested in [08](./08-rag-pipeline.md) are now mined for entities and relationships, turning the same corpus into a knowledge graph for GraphRAG.
+> **Running dataset.** We build on the **AIGC industry report** (`aigc_report`): the `datas/reports/aigc_industry_report.pdf` ingested in [08](./08-rag-pipeline.md) is now mined for entities and relationships, turning the same corpus into a knowledge graph for GraphRAG.
 
 ***
 
@@ -21,14 +21,14 @@ Before diving into KG usage, understand **why** GraphRAG exists.
 
 **The limit of pure vector RAG**: it retrieves by embedding similarity — returning *passages* lexically/semantically near the query. Great for single-hop "what is X" facts. It struggles with multi-hop, relation-dense questions:
 
-> Q: *"Which plan did the Emergency Command Center invoke for this incident, and which resources did it activate?"*
+> Q: *"GPT-4 from OpenAI uses RLHF for alignment — what problem does that method solve, and which upstream technologies does it depend on?"*
 >
-> - **Pure vector RAG**: retrieves a few passages mentioning "command center" or "plan", stitches a generic answer, likely missing the causal chain *invoked plan → that plan mandates these resources*.
-> - **GraphRAG**: locates the "Emergency Command Center" vertex, traverses typed edges (`invoked` / `activated`) to "plan" and "resource" vertices, injects those **structured neighbors** with `relation_type` into the LLM → a **traceable, relation-complete** answer.
+> - **Pure vector RAG**: retrieves a few passages mentioning "GPT-4" or "RLHF", stitches a generic answer, likely missing the causal chain *RLHF solves alignment → it depends on human feedback + reward models → reward models build on Transformer*.
+> - **GraphRAG**: locates the "GPT-4" vertex, traverses typed edges (`uses` / `based_on`) to "RLHF", "reward model", and "Transformer" vertices, injects those **structured neighbors** with `relation_type` into the LLM → a **traceable, relation-complete** answer.
 
 **Three differentiators of Arrow Lake GraphRAG**:
 
-1. **`relation_type` enrichment** — edges aren't just "A connects B" but "A *invoked* B", "A *activated* B"; the LLM sees *how* entities connect, not just that they co-occur.
+1. **`relation_type` enrichment** — edges aren't just "A connects B" but "A *uses* B", "A *based_on* B"; the LLM sees *how* entities connect, not just that they co-occur.
 2. **Template-driven extraction** — domain YAML templates (e.g. `project_concept_graph`: 22 types + 14 relations) yield strongly-typed entity-relations, not a bag of untyped triples.
 3. **Measurable quality** — the template-quality harness quantifies orphan rate / relation-type coverage / avg degree before shipping, turning "is this graph any good?" from a guess into a metric.
 
@@ -54,8 +54,8 @@ config.hugegraph.graph_name = "hugegraph"  # base name; actual graph derived per
 
 lake = Lake(base_uri="./data", config=config)
 
-# Trigger an async build — performs entity extraction on the "papers" dataset
-task_id = asyncio.run(lake.kg_build("papers"))
+# Trigger an async build — performs entity extraction on the "aigc_report" dataset
+task_id = asyncio.run(lake.kg_build("aigc_report"))
 print(f"Build task submitted: {task_id}")
 ```
 
@@ -129,7 +129,7 @@ for entity in entities:
 
 # Look up a specific entity by name
 results = asyncio.run(
-    lake.kg_query("g.V().has('entity', 'name', 'Arrow Lake').valueMap()")
+    lake.kg_query("g.V().has('entity', 'name', 'OpenAI').valueMap()")
 )
 print(results)
 ```
@@ -414,8 +414,8 @@ lake = Lake(base_uri="./data", config=config)
 # GraphRAG is enabled automatically — no extra code needed
 response = asyncio.run(
     lake.rag_query(
-        question="What methods and datasets do the LoRA and RAG papers relate to?",
-        dataset_name="papers",
+        question="Which layers does the AIGC industry chain have, and who are the representative companies in each layer?",
+        dataset_name="aigc_report",
         top_k=5,
     )
 )
@@ -486,15 +486,14 @@ async def main():
 
     lake = Lake(base_uri="./data", config=config)
 
-    # 2. Ingest the full text of a few papers (parse -> chunk -> embed -> index)
-    report = lake.ingest_documents_and_index("papers", [
-        "datas/papers/full_text/p016_lora.pdf",
-        "datas/papers/full_text/p011_rag.pdf",
+    # 2. Ingest the full text of the AIGC industry report (parse -> chunk -> embed -> index)
+    report = lake.ingest_documents_and_index("aigc_report", [
+        "datas/reports/aigc_industry_report.pdf",
     ])
     print(f"Ingested: {report.total_rows} chunks")
 
     # 3. Build the knowledge graph
-    task_id = await lake.kg_build("papers")
+    task_id = await lake.kg_build("aigc_report")
     print(f"Build task: {task_id}")
 
     # 4. Wait for build completion
@@ -511,8 +510,8 @@ async def main():
 
     # 6. GraphRAG Q&A
     response = await lake.rag_query(
-        question="What are the core methods and concepts in these papers, and how are they related?",
-        dataset_name="papers",
+        question="What are the core technologies and representative companies in the AIGC report, and how are they related?",
+        dataset_name="aigc_report",
     )
     print(f"Answer: {response.answer[:200]}...")
 
@@ -561,7 +560,7 @@ Configuration constraints:
 ### v1.7–v1.10 evolution overview
 
 v1.7.0 added a pluggable extraction backend and document-type-aware template routing to `kg_build`,
-significantly improving triple precision for domain-specific documents (papers, contracts, financial
+significantly improving triple precision for domain-specific documents (research articles, contracts, financial
 reports, medical records, etc.).
 
 ### Switching to the Hyper-Extract (`he`) Backend
@@ -624,7 +623,7 @@ table → KG builder:
 
 ```python
 # Python SDK
-lake.ingest_documents("papers", ["datas/papers/full_text/p016_lora.pdf"], doc_type="paper")
+lake.ingest_documents("aigc_report", ["datas/reports/aigc_industry_report.pdf"], doc_type="report")
 ```
 
 > CLI `kg build` has **no** `--doc-type` flag — set `doc_type` when ingesting. To override the *template*
