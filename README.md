@@ -16,7 +16,7 @@ Vectors · Full-text · SQL analytics · Knowledge Graph · GraphRAG · Document
 [![LanceDB](https://img.shields.io/badge/LanceDB-0.36.0-9cf?style=flat-square)](#)
 [![DuckDB](https://img.shields.io/badge/DuckDB-1.5.5-9cf?style=flat-square)](#)
 
-**Repo:** [Gitee](https://gitee.com/wits__sunpw/wits-infra-dintellihub) · [GitHub mirror](https://github.com/Witshine/arrow-lake)
+**Repo:** [Gitee](https://gitee.com/wits__sunpw/wits-infra-dintellihub) · [GitHub mirror](https://github.com/witsmaotech/arrow-lake)
 
 **English** | [中文](README.zh.md)
 

@@ -16,7 +16,7 @@
 [![LanceDB](https://img.shields.io/badge/LanceDB-0.36.0-9cf?style=flat-square)](#)
 [![DuckDB](https://img.shields.io/badge/DuckDB-1.5.5-9cf?style=flat-square)](#)
 
-**仓库：** [Gitee](https://gitee.com/wits__sunpw/wits-infra-dintellihub) · [GitHub 镜像](https://github.com/Witshine/arrow-lake)
+**仓库：** [Gitee](https://gitee.com/wits__sunpw/wits-infra-dintellihub) · [GitHub 镜像](https://github.com/witsmaotech/arrow-lake)
 
 **[English](README.md)** | 中文
 
