@@ -430,6 +430,6 @@ Contributions (code, docs, templates, bug reports) are very welcome. Please open
 
 ## License
 
-[Apache License 2.0](LICENSE) — © 2026 Witshine.
+[Apache License 2.0](LICENSE) — © 2026 witsmaotech.
 
 Apache-2.0 lets you use, modify, and distribute Arrow Lake freely (including commercially), as long as attribution and the license notice are retained. Built for adoption — and for the consulting/projects that follow it.

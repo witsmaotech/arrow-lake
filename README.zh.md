@@ -430,6 +430,6 @@ Arrow Lake 源自生产需求，而非演示玩具。非常欢迎贡献 —— �
 
 ## 许可证
 
-[Apache License 2.0](LICENSE) — © 2026 Witshine.
+[Apache License 2.0](LICENSE) — © 2026 witsmaotech.
 
 Apache-2.0 允许你自由地使用、修改与分发 Arrow Lake（含商业用途），只需保留署名与许可声明。为规模化采用而生 —— 也为随之而来的咨询/项目合作而生。
