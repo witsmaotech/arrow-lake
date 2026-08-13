@@ -418,6 +418,12 @@ lake = Lake.from_yaml("configs/prod.yaml")  # 生产
 
 - **Witshine**（[@witsmaotech](https://github.com/witsmaotech)）—— 架构、核心引擎，以及在真实企业数据平台上的实战验证（1 亿+ 行分析、大文档解析、GraphRAG 知识平台）。
 
+  数据/AI 基础设施架构师、CTO。研发经验丰富，主导多个 0-1 海量数据计算平台与业务产品从架构到稳定运行。欢迎加入团队或垂询交流。
+
+  <p align="left"><img src="docs/assets/images/weixin01.jpg" alt="微信二维码" width="180"/></p>
+
+  > 💬 微信扫码加好友 — 加入团队 / 技术交流 / 业务垂询
+
 Arrow Lake 源自生产需求，而非演示玩具。非常欢迎贡献 —— 代码、文档、领域模板、bug 报告；非平凡改动请先开 issue。
 
 非常欢迎贡献（代码、文档、模板、bug 报告）。非平凡改动请先开 issue。

@@ -418,6 +418,12 @@ Stable and in production use. Current release: **v1.10.4** — v1.10.0 knowledge
 
 - **Witshine** ([@witsmaotech](https://github.com/witsmaotech)) — architecture, core engine, and battle-testing on real enterprise data platforms (100M+ row analytics, large-document parsing, GraphRAG knowledge platforms).
 
+  Data/AI infrastructure architect & CTO. Veteran R&D lead — drove multiple 0→1 large-scale data compute platforms and products from architecture to stable production. Open to team expansion and inquiries.
+
+  <p align="left"><img src="docs/assets/images/weixin01.jpg" alt="WeChat QR" width="180"/></p>
+
+  > 💬 Scan WeChat to connect — join the team / tech exchange / business inquiry
+
 Arrow Lake is built from production needs, not a demo. Contributions — code, docs, domain templates, bug reports — are very welcome; please open an issue first for non-trivial changes.
 
 Contributions (code, docs, templates, bug reports) are very welcome. Please open an issue first for non-trivial changes.
