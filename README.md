@@ -416,7 +416,7 @@ Stable and in production use. Current release: **v1.10.4** — v1.10.0 knowledge
 
 ### 👥 Maintainer
 
-- **Witshine** ([@Witshine](https://github.com/Witshine)) — architecture, core engine, and battle-testing on real enterprise data platforms (100M+ row analytics, large-document parsing, GraphRAG knowledge platforms).
+- **Witshine** ([@witsmaotech](https://github.com/witsmaotech)) — architecture, core engine, and battle-testing on real enterprise data platforms (100M+ row analytics, large-document parsing, GraphRAG knowledge platforms).
 
 Arrow Lake is built from production needs, not a demo. Contributions — code, docs, domain templates, bug reports — are very welcome; please open an issue first for non-trivial changes.
 

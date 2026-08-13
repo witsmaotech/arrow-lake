@@ -416,7 +416,7 @@ lake = Lake.from_yaml("configs/prod.yaml")  # 生产
 
 ### 👥 维护者
 
-- **Witshine**（[@Witshine](https://github.com/Witshine)）—— 架构、核心引擎，以及在真实企业数据平台上的实战验证（1 亿+ 行分析、大文档解析、GraphRAG 知识平台）。
+- **Witshine**（[@witsmaotech](https://github.com/witsmaotech)）—— 架构、核心引擎，以及在真实企业数据平台上的实战验证（1 亿+ 行分析、大文档解析、GraphRAG 知识平台）。
 
 Arrow Lake 源自生产需求，而非演示玩具。非常欢迎贡献 —— 代码、文档、领域模板、bug 报告；非平凡改动请先开 issue。
 
