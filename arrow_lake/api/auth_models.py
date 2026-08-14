@@ -28,6 +28,7 @@ class TokenPayload(BaseModel):
     iss: str = "arrow-lake"
     jti: str = ""
     username: str | None = None
+    aud: str = ""  # v1.10.5 M0: audience claim (empty = pre-v1.10.5 legacy token)
 
 
 class TokenPair(BaseModel):

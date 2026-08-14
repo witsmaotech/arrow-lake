@@ -144,6 +144,36 @@ class IdentityStore:
                 (1 if is_active else 0, user_id),
             )
 
+    # ------------------------------------------------------------------
+    # per-user token cutoff (v1.10.5 M0)
+    # ------------------------------------------------------------------
+    def get_token_valid_after(self, user_id: int) -> float | None:
+        """Return the epoch-seconds token cutoff for a user, or None."""
+        cur = self._db.execute(
+            "SELECT token_valid_after FROM users WHERE id = ?", (user_id,)
+        )
+        row = cur.fetchone() if cur is not None else None
+        if row is None or row[0] is None:
+            return None
+        return float(row[0])
+
+    def bump_token_valid_after(self, user_id: int) -> bool:
+        """Advance the cutoff to now, invalidating all of the user's JWTs.
+
+        Called on password/role change and deactivation so existing tokens
+        die on their next request instead of at natural expiry.
+        Returns True if a row was updated.
+        """
+        import time as _time
+
+        with self._db.with_write() as db:
+            cur = db.execute(
+                "UPDATE users SET token_valid_after = ?, updated_at = datetime('now') "
+                "WHERE id = ?",
+                (_time.time(), user_id),
+            )
+            return cur is not None and cur.rowcount > 0
+
     def update_user(
         self,
         user_id: int,

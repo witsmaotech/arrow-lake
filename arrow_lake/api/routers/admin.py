@@ -145,6 +145,10 @@ async def update_user(
         raise HTTPException(status_code=409, detail="Could not update user (conflict or invalid input)") from exc
     if not ok:
         raise HTTPException(status_code=404, detail="User not found")
+    # v1.10.5 M0: privilege-affecting changes kill the user's existing JWTs
+    # (role embedded in token / password rotated / account reactivated).
+    if password_hash is not None or req.role is not None or req.is_active is not None:
+        store.bump_token_valid_after(user_id)
     if req.role is not None:
         await log_security_event(
             ROLE_CHANGED, actor_of(_user),
@@ -166,6 +170,8 @@ async def deactivate_user(
     if store is None:
         raise HTTPException(status_code=503, detail="User management requires system_db enabled")
     store.set_user_active(user_id, False)
+    # v1.10.5 M0: cut off the user's outstanding JWTs immediately.
+    store.bump_token_valid_after(user_id)
     logger.info("user_deactivated id=%s actor=%s", user_id, getattr(_user, "sub", "?"))
     await log_security_event(
         USER_DEACTIVATED, actor_of(_user),

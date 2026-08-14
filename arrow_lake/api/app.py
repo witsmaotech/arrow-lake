@@ -217,15 +217,33 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         from arrow_lake.api.auth_service import AuthService
 
         auth_cfg = config.auth
-        app.state.auth_service = AuthService(
-            secret_key=auth_cfg.jwt_secret_key,
-            algorithm=auth_cfg.jwt_algorithm,
-            public_key=auth_cfg.jwt_public_key,
-            private_key=auth_cfg.jwt_private_key,
-            access_token_minutes=auth_cfg.jwt_access_token_minutes,
-            refresh_token_days=auth_cfg.jwt_refresh_token_days,
-            issuer=auth_cfg.jwt_issuer,
-        )
+        # v1.10.5 M0: reuse the create_app instance when present (instead of
+        # replacing it) so the Redis blacklist wiring done there survives, and
+        # wire the per-user token cutoff provider (token_valid_after).
+        svc = getattr(app.state, "auth_service", None)
+        if svc is None:
+            svc = AuthService(
+                secret_key=auth_cfg.jwt_secret_key,
+                algorithm=auth_cfg.jwt_algorithm,
+                public_key=auth_cfg.jwt_public_key,
+                private_key=auth_cfg.jwt_private_key,
+                access_token_minutes=auth_cfg.jwt_access_token_minutes,
+                refresh_token_days=auth_cfg.jwt_refresh_token_days,
+                issuer=auth_cfg.jwt_issuer,
+                audience=auth_cfg.jwt_audience,
+                require_audience=auth_cfg.jwt_require_audience,
+            )
+            app.state.auth_service = svc
+
+        def _token_valid_after(sub: str) -> float | None:
+            if not sub.isdigit():
+                return None  # shared api-user / anonymous identities have no row
+            try:
+                return identity_store.get_token_valid_after(int(sub))
+            except Exception:
+                return None  # store hiccup → fail open (pre-M0 behaviour)
+
+        svc.set_token_valid_after_provider(_token_valid_after)
 
         # P1 stores: durable task history (fully wired), catalog / DLQ /
         # RAG-session stores (instantiated on app.state; their facade
@@ -634,6 +652,8 @@ def create_app(config: ArrowLakeConfig | None = None) -> FastAPI:
             access_token_minutes=config.auth.jwt_access_token_minutes,
             refresh_token_days=config.auth.jwt_refresh_token_days,
             issuer=config.auth.jwt_issuer,
+            audience=config.auth.jwt_audience,
+            require_audience=config.auth.jwt_require_audience,
         )
         app.state.auth_service = svc
 

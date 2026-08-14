@@ -9,6 +9,7 @@ import logging
 import threading
 import uuid
 from collections import OrderedDict
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 from arrow_lake.api.auth_models import Role, TokenPayload
@@ -41,6 +42,8 @@ class AuthService:
         access_token_minutes: int = 30,
         refresh_token_days: int = 7,
         issuer: str = "arrow-lake",
+        audience: str = "",
+        require_audience: bool = False,
     ) -> None:
         self._secret_key = secret_key
         self._algorithm = algorithm
@@ -49,6 +52,12 @@ class AuthService:
         self._access_minutes = access_token_minutes
         self._refresh_days = refresh_token_days
         self._issuer = issuer
+        # v1.10.5 M0: audience claim. Tokens minted here carry ``aud``;
+        # enforcement is opt-in via ``require_audience`` so pre-v1.10.5
+        # tokens (no aud) keep verifying during the compatibility window.
+        self._audience = audience
+        self._require_audience = require_audience
+        self._tva_provider: Callable[[str], float | None] | None = None
         self._blacklist: OrderedDict[str, float] = OrderedDict()
         self._blacklist_lock = threading.Lock()
         self._blacklist_max_size = 100_000
@@ -56,6 +65,21 @@ class AuthService:
 
         if _JWT_AVAILABLE:
             self._validate_config()
+
+    def set_token_valid_after_provider(
+        self, provider: Callable[[str], float | None] | None
+    ) -> None:
+        """Set a per-user token cutoff lookup (v1.10.5 M0).
+
+        The provider maps a token ``sub`` (user id string) to an epoch-seconds
+        cutoff, or None when unknown/not applicable (e.g. the shared
+        ``api-user`` identity). Tokens issued (``iat``) before the cutoff are
+        rejected — deactivating a user or changing their password/role takes
+        effect on the next request instead of waiting out the access TTL.
+        Provider errors fail open (skip the check) to match the
+        system_db-disabled behaviour.
+        """
+        self._tva_provider = provider
 
     def set_redis(self, client: object) -> None:
         """Set an optional Redis client for persistent blacklist."""
@@ -81,6 +105,7 @@ class AuthService:
             iss=self._issuer,
             jti=uuid.uuid4().hex,
             username=username,
+            aud=self._audience,
         )
 
     def create_refresh_token(
@@ -101,6 +126,7 @@ class AuthService:
             iss=self._issuer,
             jti=uuid.uuid4().hex,
             username=username,
+            aud=self._audience,
         )
         return self._encode(payload)
 
@@ -171,6 +197,11 @@ class AuthService:
                 self._verification_key(),
                 algorithms=[self._algorithm],
                 issuer=self._issuer,
+                # v1.10.5 M0: aud enforced manually below — PyJWT (>=2.12)
+                # rejects any aud-bearing token when no audience param is
+                # passed, which would break the legacy-token compatibility
+                # window.
+                options={"verify_aud": False},
             )
         except jwt.ExpiredSignatureError:
             raise ValueError("Token expired") from None
@@ -181,6 +212,23 @@ class AuthService:
         jti = data.get("jti", "")
         if jti and self.is_revoked(jti):
             raise ValueError("Token has been revoked")
+
+        # v1.10.5 M0: audience enforcement (opt-in — legacy tokens without
+        # aud stay valid while require_audience is False).
+        if self._require_audience and data.get("aud", "") != self._audience:
+            raise ValueError("Invalid audience")
+
+        # v1.10.5 M0: per-user cutoff — reject tokens issued before the
+        # user's token_valid_after (deactivate / password or role change).
+        if self._tva_provider is not None:
+            try:
+                cutoff = self._tva_provider(str(data.get("sub", "")))
+            except Exception:
+                cutoff = None  # store unreachable → fail open (pre-M0 behaviour)
+            if cutoff is not None:
+                iat = data.get("iat", 0)
+                if isinstance(iat, (int, float)) and iat < cutoff:
+                    raise ValueError("Token has been revoked (issued before user cutoff)")
 
         if require_refresh:
             now = datetime.now(UTC)

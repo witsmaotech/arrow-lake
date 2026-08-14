@@ -84,6 +84,11 @@ class AuthConfig(BaseModel):
         jwt_private_key: PEM-encoded private key (RS256/ES256).
         jwt_bootstrap_token: One-time bootstrap token for initial JWT
             acquisition when auth_mode is "jwt".
+        jwt_audience: Audience claim written into minted tokens (v1.10.5 M0).
+        jwt_require_audience: Enforce aud on verification (v1.10.5 M0). Keep
+            False during the compatibility window so pre-v1.10.5 tokens
+            (no aud) continue to verify; flip to True once they have expired
+            out (max refresh TTL).
         allow_unauthenticated_access: When True and no auth_service is
             configured, role checks are skipped (dev/test mode).
             Production deployments should keep this False (default).
@@ -98,6 +103,8 @@ class AuthConfig(BaseModel):
     jwt_public_key: str = ""
     jwt_private_key: str = ""
     jwt_bootstrap_token: str = ""
+    jwt_audience: str = "arrow-lake-api"
+    jwt_require_audience: bool = False
     allow_unauthenticated_access: bool = False
 
     @field_validator("jwt_secret_key")

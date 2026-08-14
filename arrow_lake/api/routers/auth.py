@@ -119,6 +119,8 @@ def _get_auth_service(request: Request):
         access_token_minutes=auth_cfg.jwt_access_token_minutes,
         refresh_token_days=auth_cfg.jwt_refresh_token_days,
         issuer=auth_cfg.jwt_issuer,
+        audience=auth_cfg.jwt_audience,
+        require_audience=auth_cfg.jwt_require_audience,
     )
 
 
