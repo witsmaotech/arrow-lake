@@ -5,6 +5,7 @@ Uses PyJWT for encoding/decoding. Gracefully no-ops when PyJWT is not installed.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import threading
 import uuid
@@ -292,3 +293,43 @@ class AuthService:
         if algo in ("RS256", "ES256", "PS256"):
             return self._public_key
         return self._secret_key
+
+    # ------------------------------------------------------------------
+    # JWKS (v1.10.5 M3)
+    # ------------------------------------------------------------------
+    def jwks(self) -> dict | None:
+        """Return the JWK Set for the configured signing key, or None.
+
+        Asymmetric algorithms (RS*/PS*/ES*) expose their public key as a JWK
+        (``{"keys": [{kty, n, e | x, y, crv, kid, alg, use}]}``) so external
+        verifiers — a gateway, or a future external IdP — can fetch and verify
+        tokens via ``GET /api/v1/auth/jwks``. Symmetric HS256 has no public
+        half to distribute → None (endpoint 404s).
+
+        ``kid`` is the first 8 hex chars of sha256(public key PEM) — stable for
+        a given key, different after rotation, letting JWKS clients cache per kid.
+        """
+        if not _JWT_AVAILABLE or not self._public_key:
+            return None
+        algo = self._algorithm.upper()
+        try:
+            from cryptography.hazmat.primitives import hashes
+
+            if algo.startswith(("RS", "PS")):
+                from jwt.algorithms import RSAAlgorithm
+
+                alg = RSAAlgorithm(hash_alg=hashes.SHA256)
+                jwk = alg.to_jwk(alg.prepare_key(self._public_key), as_dict=True)
+            elif algo.startswith("ES"):
+                from jwt.algorithms import ECAlgorithm
+
+                alg = ECAlgorithm(hash_alg=hashes.SHA256)
+                jwk = alg.to_jwk(alg.prepare_key(self._public_key), as_dict=True)
+            else:
+                return None
+        except Exception:  # noqa: BLE001 — malformed key → no JWKS, not a crash
+            return None
+        jwk.setdefault("kid", hashlib.sha256(self._public_key.encode()).hexdigest()[:8])
+        jwk.setdefault("alg", algo)
+        jwk.setdefault("use", "sig")
+        return {"keys": [jwk]}

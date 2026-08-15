@@ -98,6 +98,7 @@ async def api_key_middleware_fn(
         "/api/v1/auth/login",
         "/api/v1/auth/refresh",
         "/api/v1/auth/password-reset",  # v1.10.5 M1: one-time token is the credential
+        "/api/v1/auth/jwks",  # v1.10.5 M3: public key is public (anonymous fetch)
     ):
         return await call_next(request)
 

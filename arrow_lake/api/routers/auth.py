@@ -386,6 +386,24 @@ async def refresh_token(request: Request) -> TokenPair:
     )
 
 
+@router.get("/jwks", summary="JWKS public signing keys (asymmetric algorithms only)")
+async def get_jwks(request: Request) -> dict:
+    """Serve the public signing key as a JWK Set.
+
+    RS*/PS*/ES* → ``{"keys": [...]}`` (fetchable anonymously — a public key is
+    public, and this is the seam external verifiers use). HS256 → 404: a
+    symmetric secret has no distributable public half.
+    """
+    svc = _get_auth_service(request)
+    jwks = svc.jwks()
+    if jwks is None:
+        raise HTTPException(
+            status_code=404,
+            detail="JWKS unavailable: symmetric algorithm (HS256) exposes no public key",
+        )
+    return jwks
+
+
 @router.get("/me", summary="Get current user info")
 async def get_me(request: Request) -> dict:
     """Return the current authenticated user's info from JWT."""

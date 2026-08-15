@@ -640,7 +640,13 @@ def create_app(config: ArrowLakeConfig | None = None) -> FastAPI:
 
     # JWT authentication
     auth_mode = config.auth.auth_mode
-    if auth_mode in ("jwt", "both") and config.auth.jwt_secret_key:
+    # v1.10.5 M3: an RS256/ES256-only deployment (asymmetric key pair, no
+    # symmetric secret) is a valid JWT setup — the wiring below must not be
+    # gated on jwt_secret_key alone (previously the middleware + AuthService
+    # were silently skipped in that configuration).
+    if auth_mode in ("jwt", "both") and (
+        config.auth.jwt_secret_key or config.auth.jwt_private_key
+    ):
         from arrow_lake.api.auth_service import AuthService
         from arrow_lake.api.jwt_auth import jwt_auth_middleware_fn
 
