@@ -36,10 +36,17 @@ _JWT_DOC_PREFIXES: tuple[str, ...] = (
 
 async def jwt_auth_middleware_fn(
     request: Request, call_next, auth_service, *, docs_enabled: bool = True,
+    api_key_header: str | None = None,
 ) -> Response:
     """Pure ASGI JWT authentication middleware function.
 
     Validates JWT from Authorization header and sets request.state.user.
+
+    ``api_key_header`` (set only in auth_mode=both with the api-key middleware
+    active) delegates header-carrying, Bearer-less requests to that inner
+    middleware — it is the authority for the shared key / alp_ personal-token
+    scheme, so "Bearer OR X-API-Key" holds instead of the JWT layer rejecting
+    the request before the api-key layer ever runs.
     """
     path = request.url.path
 
@@ -71,6 +78,12 @@ async def jwt_auth_middleware_fn(
     # Extract Bearer token
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
+        # auth_mode=both: a request carrying the API-key header (shared key or
+        # alp_ personal token) authenticates via the inner api-key middleware —
+        # delegate to it instead of rejecting here. An INVALID key still 401s,
+        # the inner middleware is the authority for that scheme.
+        if api_key_header and request.headers.get(api_key_header, ""):
+            return await call_next(request)
         return JSONResponse(
             status_code=401,
             content={

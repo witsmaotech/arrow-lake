@@ -21,7 +21,21 @@ _WINDOW_SECONDS = 60.0
 
 
 def _extract_client_ip(request: Request, trusted_proxies: set[str]) -> str:
-    """Extract real client IP from X-Forwarded-For, skipping trusted proxies from right."""
+    """Extract the real client IP — XFF only trusted from a trusted peer (v1.10.5 H2).
+
+    X-Forwarded-For is client-controlled. It is honored ONLY when the direct
+    peer (``request.client.host``) is itself a configured trusted proxy (or
+    ``"*"`` explicitly opts in). With the default empty set, a direct client
+    rotating a spoofed XFF no longer gets a fresh per-IP lockout/rate-limit
+    bucket per attempt — the peer IP wins.
+
+    Behind a reverse proxy, add its address via
+    ``ARROW_LAKE__RATE_LIMIT__TRUSTED_PROXIES`` (JSON array, e.g.
+    ``["10.0.0.2"]``) to recover real client IPs.
+    """
+    peer = request.client.host if request.client else "unknown"
+    if "*" not in trusted_proxies and peer not in trusted_proxies:
+        return peer
     xff = request.headers.get("x-forwarded-for", "")
     if xff:
         ips = [ip.strip() for ip in xff.split(",") if ip.strip()]
@@ -32,7 +46,7 @@ def _extract_client_ip(request: Request, trusted_proxies: set[str]) -> str:
         # All IPs are trusted proxies — take leftmost
         if ips:
             return ips[0]
-    return request.client.host if request.client else "unknown"
+    return peer
 
 
 class _Counter:

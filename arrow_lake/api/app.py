@@ -697,9 +697,21 @@ def create_app(config: ArrowLakeConfig | None = None) -> FastAPI:
 
         @app.middleware("http")
         async def jwt_auth_middleware(request, call_next):
+            # both-mode: the api-key middleware (registered below, i.e. INNER)
+            # owns the X-API-Key scheme; delegate Bearer-less header-carrying
+            # requests to it so "Bearer OR X-API-Key" holds (v1.10.5 follow-up).
+            from arrow_lake.config._enums import AuthMode
+
+            delegate_header = (
+                config.api.api_key_header
+                if auth_mode == AuthMode.BOTH
+                and (config.api.api_key or getattr(config.system_db, "enabled", False))
+                else None
+            )
             return await jwt_auth_middleware_fn(
                 request, call_next, auth_service=svc,
                 docs_enabled=config.api.docs_enabled,
+                api_key_header=delegate_header,
             )
 
     # Catch-all for unhandled exceptions — registered as HTTP middleware so it

@@ -60,8 +60,10 @@ _last_login_evict = 0.0
 
 
 def _client_ip(request: Request) -> str:
-    # 复用 rate_limit 的 trusted-proxy-aware 提取(右起跳过可信代理,防 XFF leftmost 伪造绕 lockout)
-    return _extract_client_ip(request, set())
+    # 复用 rate_limit 的 trusted-proxy-aware 提取(v1.10.5 H2:仅当直连 peer 本身是
+    # 配置的可信代理时才信 XFF;默认空集 = 只认 peer IP,轮换伪造 XFF 无法绕锁定)
+    trusted = get_app_config(request).rate_limit.trusted_proxies
+    return _extract_client_ip(request, trusted)
 
 
 def _evict_stale_login_failures(now: float) -> None:
