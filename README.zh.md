@@ -2,10 +2,10 @@
 
 # Arrow Lake
 
-**面向 AI 的开源多模态数据湖仓。**
+**AI 时代的数据湖仓。**
 
-向量 · 全文检索 · SQL 分析 · 知识图谱 · GraphRAG · 文档智能 ——
-**一个自托管平台**，而非五件套拼接。
+向量 · 全文检索 · SQL 分析 · 知识图谱 · GraphRAG · 文档智能，收敛为 AI 系统的
+**可治理、可查询的记忆**——一个开源自托管平台，而非五件套拼接。
 
 [![Version](https://img.shields.io/badge/version-1.10.4-blue?style=flat-square)](#)
 [![License](https://img.shields.io/badge/license-Apache--2.0-informational?style=flat-square)](LICENSE)
