@@ -32,6 +32,9 @@ TOKEN_REVOKED = "security.token_revoked"
 ACL_GRANTED = "security.acl_granted"
 ACL_REVOKED = "security.acl_revoked"
 DENY_ADDED = "security.deny_added"
+USER_UPDATED = "security.user_updated"
+ACL_CHANGED = "security.acl_changed"  # schema-level ACL set/delete (v1.10.5 M2)
+DENY_CHANGED = "security.deny_changed"  # deny removal (v1.10.5 M2)
 PASSWORD_RESET_REQUESTED = "security.password_reset_requested"
 PASSWORD_RESET = "security.password_reset"
 

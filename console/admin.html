@@ -33,6 +33,7 @@
 <body>
 <div id="app">
 <main class="main"><div class="page">
+  <div id="sharedKeyBanner" style="border:1px solid var(--warn);background:var(--ink-950);padding:10px 14px;border-radius:var(--r-md);margin-bottom:var(--s4);font-size:.8rem;color:var(--warn);display:flex;gap:10px;align-items:baseline">⚠ <span><b>共享 API key 已计划弃用</b> — 无个体身份、不可按人撤销、审计粒度全有或全无。请改用 personal token(下方「用户管理 → 发token」);token 换取接口会持续打印弃用告警。</span></div>
   <div class="h-sec between">
     <div><h1>管理后台</h1><div class="desc">用户 · dataset ACL · schema ACL · deny · <span class="mono">/api/v1/admin/*</span> · 需 ADMIN 角色</div></div>
     <div class="flex"><span class="lamp ok"><i></i>同步写操作</span></div>

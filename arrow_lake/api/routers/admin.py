@@ -10,15 +10,18 @@ from pydantic import BaseModel, Field
 from arrow_lake.api.auth_models import Role
 from arrow_lake.api.deps import get_checker, require_role
 from arrow_lake.api._security_log import (
+    ACL_CHANGED,
     ACL_GRANTED,
     ACL_REVOKED,
     DENY_ADDED,
+    DENY_CHANGED,
     PASSWORD_RESET_REQUESTED,
     ROLE_CHANGED,
     TOKEN_ISSUED,
     TOKEN_REVOKED,
     USER_CREATED,
     USER_DEACTIVATED,
+    USER_UPDATED,
     actor_of,
     log_security_event,
 )
@@ -150,6 +153,19 @@ async def update_user(
     # (role embedded in token / password rotated / account reactivated).
     if password_hash is not None or req.role is not None or req.is_active is not None:
         store.bump_token_valid_after(user_id)
+    changed = [
+        field
+        for field, value in (
+            ("password", password_hash), ("email", req.email),
+            ("role", req.role), ("is_active", req.is_active),
+        )
+        if value is not None
+    ]
+    await log_security_event(
+        USER_UPDATED, actor_of(_user),
+        lake=getattr(request.app.state, "lake", None),
+        detail={"target_user_id": user_id, "fields": changed},
+    )
     if req.role is not None:
         await log_security_event(
             ROLE_CHANGED, actor_of(_user),
@@ -428,6 +444,7 @@ async def set_schema_acl(
     schema_name: str = Path(..., pattern=_NAME_PATTERN),
     *,
     req: SchemaAclRequest,
+    request: Request,
     _user: dict = Depends(require_role(Role.ADMIN)),
     checker=Depends(get_checker),
 ) -> SchemaAclResponse:
@@ -439,6 +456,12 @@ async def set_schema_acl(
         denied_actions=frozenset(req.denied_actions),
     )
     checker.set_schema_acl(acl)
+    await log_security_event(
+        ACL_CHANGED, actor_of(_user),
+        lake=getattr(request.app.state, "lake", None),
+        dataset_name=schema_name,
+        detail={"schema": schema_name, "action": "set", "role": req.role},
+    )
     return SchemaAclResponse(
         schema_name=schema_name,
         role=req.role,
@@ -475,11 +498,18 @@ async def delete_schema_acl(
     schema_name: str = Path(..., pattern=_NAME_PATTERN),
     role: str = Path(..., pattern=r"^(viewer|editor)$"),
     *,
+    request: Request,
     _user: dict = Depends(require_role(Role.ADMIN)),
     checker=Depends(get_checker),
 ) -> SchemaAclResponse:
     """Delete schema-level ACL for a role (admin only)."""
     checker.delete_schema_acl(schema_name, role)
+    await log_security_event(
+        ACL_CHANGED, actor_of(_user),
+        lake=getattr(request.app.state, "lake", None),
+        dataset_name=schema_name,
+        detail={"schema": schema_name, "action": "deleted", "role": role},
+    )
     return SchemaAclResponse(
         schema_name=schema_name, role=role, allowed_actions=[], denied_actions=[],
     )
@@ -510,11 +540,18 @@ async def remove_deny(
     dataset: str = Path(..., pattern=_NAME_PATTERN),
     action: str = Path(..., min_length=1),
     *,
+    request: Request,
     _user: dict = Depends(require_role(Role.ADMIN)),
     checker=Depends(get_checker),
 ) -> DenyResponse:
     """Remove explicit Deny for an action on a dataset (admin only)."""
     removed = checker.remove_deny(dataset, action)
+    await log_security_event(
+        DENY_CHANGED, actor_of(_user),
+        lake=getattr(request.app.state, "lake", None),
+        dataset_name=dataset,
+        detail={"action": action, "removed": removed},
+    )
     return DenyResponse(dataset=dataset, action=action, denied=not removed)
 
 

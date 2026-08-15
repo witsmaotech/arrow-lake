@@ -28,6 +28,27 @@ logger = logging.getLogger(__name__)
 # (usernames match _NAME_PATTERN: letters/digits/_/-; this has neither).
 _RESET_LOCKOUT_KEY = "__password_reset__"
 
+# v1.10.5 M2: shared API-key deprecation nudge — warn once per (ip, hour) so a
+# chatty SDK doesn't flood the log. The capability itself stays (auth_mode=both
+# semantics unchanged); the message steers callers to personal tokens.
+_SHARED_KEY_WARN: dict[str, bool] = {}
+_SHARED_KEY_WARN_MAX = 1024
+
+
+def _warn_shared_api_key_deprecated(ip: str) -> None:
+    hour = int(time.time() // 3600)
+    key = f"{ip}:{hour}"
+    if key in _SHARED_KEY_WARN:
+        return
+    if len(_SHARED_KEY_WARN) >= _SHARED_KEY_WARN_MAX:
+        _SHARED_KEY_WARN.clear()
+    _SHARED_KEY_WARN[key] = True
+    logger.warning(
+        "shared_api_key_deprecated ip=%s — 共享 API key 无个体身份(固定 VIEWER),"
+        "计划弃用:请改用 personal token(POST /api/v1/admin/users/{id}/tokens)",
+        ip,
+    )
+
 # v1.9.1: per-(username, client_ip) login failure lockout(防撞库;单进程内存,
 # 多 worker 部署需迁 Redis/system_db follow-up)
 _LOGIN_FAILURES: dict[str, list[float]] = {}
@@ -201,6 +222,18 @@ async def exchange_token(request: Request) -> TokenPair:
         raise HTTPException(status_code=500, detail="JWT secret key not configured")
 
     _check_api_key(request, config)
+
+    # v1.10.5 M2: deprecation nudge when the exchange rode the shared key
+    # (both mode + matching key). No behaviour change.
+    from arrow_lake.config._enums import AuthMode
+
+    if config.auth.auth_mode == AuthMode.BOTH:
+        shared_key = config.api.api_key
+        header_name = config.api.api_key_header
+        if shared_key and hmac.compare_digest(
+            request.headers.get(header_name, ""), shared_key
+        ):
+            _warn_shared_api_key_deprecated(_client_ip(request))
 
     svc = _get_auth_service(request)
 

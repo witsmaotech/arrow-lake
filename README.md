@@ -118,7 +118,7 @@ The same index and the same dataset serve all three modes. No separate search cl
 
 **Enterprise controls built in, not bolted on.**
 
-- **RBAC** with VIEWER / EDITOR / ADMIN roles, JWT + API-key **dual authentication**, and a Redis-backed token blacklist.
+- **RBAC** with VIEWER / EDITOR / ADMIN roles, JWT + API-key **dual authentication**, and a Redis-backed token blacklist. Prefer **per-user personal tokens** (`al_…`, admin-issued via `POST /api/v1/admin/users/{id}/tokens`) over the shared API key — the shared key carries no individual identity and is slated for deprecation.
 - **HMAC-SHA256 tamper-evident audit trail** and column-level **data masking**.
 - **Gravitino 1.3.0** federation — tags, policies, model catalog, and retention rules across heterogeneous sources.
 - **`system_db`** (libSQL) control plane for identities, RBAC, personal tokens, task history, and RAG sessions.
