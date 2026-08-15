@@ -329,7 +329,7 @@ async function issueToken(uid) {
 async function passwordReset(uid) {
   const u = USERS.find((x) => String(x.id) === String(uid));
   if (!u) return toast("用户不存在(刷新列表)", "warn");
-  if (!(await confirmDialog({ title: "生成密码重置 token", message: `为「${u.username}」生成一次性重置 token?30 分钟内有效、仅可使用一次,重置成功后该用户全部旧 token 立即失效。`, confirmText: "生成" }))) return;
+  if (!(await confirmDialog({ title: "生成密码重置 token", message: `为「${u.username}」生成一次性重置 token?30 分钟内有效、仅可使用一次,重置成功后该用户全部旧 JWT 与 personal token 立即失效。`, confirmText: "生成" }))) return;
   try {
     const r = await request("POST", `/admin/users/${uid}/password-reset`);
     showModal(`🔑 重置 token · ${esc(u.username)}`, `<div style="border:1px solid var(--warn);background:var(--ink-950);padding:12px;border-radius:var(--r-md);margin-bottom:12px;font-size:.8rem;color:var(--warn)">⚠ 明文仅此一次 · 30 分钟内有效(${esc(r.expires_at)} 到期) · 单次使用。</div>

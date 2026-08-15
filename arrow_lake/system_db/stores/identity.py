@@ -32,6 +32,8 @@ RESET_TOKEN_PREFIX = "alr_"  # arrow-lake one-time password reset token (v1.10.5
 # Default lifetime of a password-reset token (admin hands it to the user out of
 # band, so the window only needs to cover that handoff).
 RESET_TOKEN_TTL_SECONDS = 1800  # 30 min
+# Consumed/expired reset-token rows are purged once older than this (days).
+_RESET_TOKEN_RETENTION_DAYS = 7
 
 # Throttle window for last_used_at updates: writing it on every authenticated
 # request would serialize all API calls through the single-writer DB. Only
@@ -323,6 +325,21 @@ class IdentityStore:
             )
             return cur is not None and cur.rowcount > 0
 
+    def revoke_all_tokens(self, user_id: int) -> int:
+        """Revoke every active personal token for a user. Returns count revoked.
+
+        Used by the password-reset flow (v1.10.5 M1 review): a password reset is
+        incident response, so outstanding machine credentials must die with the
+        compromised password, not just the JWTs.
+        """
+        with self._db.with_write() as db:
+            cur = db.execute(
+                "UPDATE personal_tokens SET revoked_at = datetime('now') "
+                "WHERE user_id = ? AND revoked_at IS NULL",
+                (user_id,),
+            )
+            return cur.rowcount if cur is not None else 0
+
     def list_tokens(self, user_id: int) -> list[dict[str, Any]]:
         cur = self._db.execute(
             "SELECT id, name, token_prefix, scopes, expires_at, last_used_at, "
@@ -363,6 +380,24 @@ class IdentityStore:
             datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)
         ).strftime("%Y-%m-%dT%H:%M:%SZ")
         with self._db.with_write() as db:
+            # Single outstanding token per user: issuing a new one burns any
+            # prior unconsumed siblings (review: no second token waiting to
+            # re-rotate the password within its own TTL).
+            db.execute(
+                "UPDATE password_reset_tokens SET used_at = datetime('now') "
+                "WHERE user_id = ? AND used_at IS NULL",
+                (user_id,),
+            )
+            # Piggyback purge of rows older than 7 days — bounded table growth
+            # without a separate sweeper (issuance is admin-only, low volume).
+            db.execute(
+                "DELETE FROM password_reset_tokens WHERE expires_at < ?",
+                (
+                    (
+                        datetime.now(timezone.utc) - timedelta(days=_RESET_TOKEN_RETENTION_DAYS)
+                    ).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                ),
+            )
             cur = db.execute(
                 "INSERT INTO password_reset_tokens (user_id, token_hash, expires_at) "
                 "VALUES (?, ?, ?)",

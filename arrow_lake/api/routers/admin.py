@@ -197,6 +197,17 @@ async def issue_password_reset(
     _user: dict = Depends(require_role(Role.ADMIN)),
 ) -> dict:
     """Generate a single-use reset token (30min TTL). Plaintext returned EXACTLY ONCE."""
+    # Shared API-key identity (sub="api-key") must not mint reset tokens: it
+    # would let anyone holding the (deprecated, rotatable) shared key acquire
+    # a *persistent* password-based admin login that survives key rotation.
+    # Password reset issuance requires a real named admin user (M1 review H1).
+    # _user is a dict on the api-key path, a TokenPayload on the JWT path.
+    sub = _user.get("sub", "") if isinstance(_user, dict) else getattr(_user, "sub", "")
+    if str(sub) == "api-key":
+        raise HTTPException(
+            status_code=403,
+            detail="Password reset requires an authenticated admin user (not the shared API key)",
+        )
     store = getattr(request.app.state, "identity_store", None)
     if store is None:
         raise HTTPException(status_code=503, detail="User management requires system_db enabled")

@@ -23,6 +23,11 @@ from arrow_lake.config import ArrowLakeConfig
 
 logger = logging.getLogger(__name__)
 
+# Lockout sentinel for the password-reset endpoint. Deliberately not a legal
+# username shape, so its failure counter can never merge with a real account's
+# (usernames match _NAME_PATTERN: letters/digits/_/-; this has neither).
+_RESET_LOCKOUT_KEY = "__password_reset__"
+
 # v1.9.1: per-(username, client_ip) login failure lockout(防撞库;单进程内存,
 # 多 worker 部署需迁 Redis/system_db follow-up)
 _LOGIN_FAILURES: dict[str, list[float]] = {}
@@ -216,30 +221,39 @@ async def exchange_token(request: Request) -> TokenPair:
 async def password_reset(request: Request, req: PasswordResetRequest) -> dict:
     """Burn an admin-issued reset token and rotate the password.
 
-    All of the user's outstanding JWTs die immediately (token_valid_after bump).
-    Reuses the login lockout (key ``reset:<ip>``) so the unauthenticated token
-    guessing surface is throttled like the login endpoint.
+    All of the user's outstanding JWTs die immediately (token_valid_after bump)
+    and their personal API tokens are revoked — a reset is incident response,
+    so machine credentials must not outlive the compromised password.
+    Reuses the login lockout (key ``__password_reset__:<ip>``) so the
+    unauthenticated token guessing surface is throttled like login.
     """
     store = getattr(request.app.state, "identity_store", None)
     if store is None:
         raise HTTPException(status_code=503, detail="User auth requires system_db enabled")
     ip = _client_ip(request)
-    await _check_login_lockout("reset", ip, request)
+    await _check_login_lockout(_RESET_LOCKOUT_KEY, ip, request)
     user_id = store.consume_password_reset_token(req.token)
     user = store.get_user(user_id) if user_id is not None else None
     if user_id is None or user is None or not user.get("is_active"):
-        await _record_login_failure("reset", ip, request)
+        await _record_login_failure(_RESET_LOCKOUT_KEY, ip, request)
         logger.warning("password_reset_failed ip=%s", ip)
         raise HTTPException(status_code=401, detail="重置链接无效、已使用或已过期")
     from arrow_lake.api.passwords import hash_password
 
-    store.update_user(user_id, password_hash=hash_password(req.new_password))
+    if not store.update_user(user_id, password_hash=hash_password(req.new_password)):
+        # User row vanished between the consume and the write (hard delete).
+        raise HTTPException(status_code=404, detail="User not found")
     store.bump_token_valid_after(user_id)  # kill pre-reset JWTs now, not at TTL
-    logger.info("password_reset_done user_id=%s username=%s ip=%s", user_id, user["username"], ip)
+    revoked_tokens = store.revoke_all_tokens(user_id)
+    await _reset_login_failures(_RESET_LOCKOUT_KEY, ip, request)
+    logger.info(
+        "password_reset_done user_id=%s username=%s ip=%s revoked_tokens=%d",
+        user_id, user["username"], ip, revoked_tokens,
+    )
     await log_security_event(
         PASSWORD_RESET, user["username"],
         lake=getattr(request.app.state, "lake", None),
-        detail={"user_id": user_id, "ip": ip},
+        detail={"user_id": user_id, "ip": ip, "revoked_personal_tokens": revoked_tokens},
     )
     return {"message": "密码已重置,请用新密码登录"}
 
