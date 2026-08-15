@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from enum import StrEnum
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class Role(StrEnum):
@@ -44,3 +44,10 @@ class LoginRequest(BaseModel):
 
     username: str
     password: str
+
+
+class PasswordResetRequest(BaseModel):
+    """One-time reset token + new password for /auth/password-reset (v1.10.5 M1)."""
+
+    token: str = Field(..., min_length=8)
+    new_password: str = Field(..., min_length=8)

@@ -13,6 +13,7 @@ from arrow_lake.api._security_log import (
     ACL_GRANTED,
     ACL_REVOKED,
     DENY_ADDED,
+    PASSWORD_RESET_REQUESTED,
     ROLE_CHANGED,
     TOKEN_ISSUED,
     TOKEN_REVOKED,
@@ -179,6 +180,47 @@ async def deactivate_user(
         detail={"target_user_id": user_id},
     )
     return {"id": user_id, "deactivated": True}
+
+
+# ---------------------------------------------------------------------------
+# One-time password reset (v1.10.5 M1) — no email channel: the plaintext token
+# is returned to the admin exactly once and relayed to the user out of band.
+# ---------------------------------------------------------------------------
+@router.post(
+    "/users/{user_id}/password-reset",
+    summary="Issue a one-time password reset token (admin only)",
+)
+async def issue_password_reset(
+    user_id: int = Path(..., ge=1),
+    *,
+    request: Request,
+    _user: dict = Depends(require_role(Role.ADMIN)),
+) -> dict:
+    """Generate a single-use reset token (30min TTL). Plaintext returned EXACTLY ONCE."""
+    store = getattr(request.app.state, "identity_store", None)
+    if store is None:
+        raise HTTPException(status_code=503, detail="User management requires system_db enabled")
+    target = store.get_user(user_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    if not target.get("is_active", False):
+        raise HTTPException(status_code=422, detail="Cannot reset password for a deactivated user")
+    plaintext, rec = store.create_password_reset_token(user_id)
+    logger.info(
+        "password_reset_issued user_id=%s username=%s actor=%s",
+        user_id, target["username"], getattr(_user, "sub", "?"),
+    )
+    await log_security_event(
+        PASSWORD_RESET_REQUESTED, actor_of(_user),
+        lake=getattr(request.app.state, "lake", None),
+        detail={"target_user_id": user_id, "username": target["username"]},
+    )
+    return {
+        "token": plaintext,
+        "user_id": user_id,
+        "username": target["username"],
+        "expires_at": rec["expires_at"],
+    }
 
 
 # ---------------------------------------------------------------------------

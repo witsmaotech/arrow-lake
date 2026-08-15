@@ -9,12 +9,13 @@ import time
 
 from fastapi import APIRouter, HTTPException, Request
 
-from arrow_lake.api.auth_models import LoginRequest, Role, TokenPair
+from arrow_lake.api.auth_models import LoginRequest, PasswordResetRequest, Role, TokenPair
 from arrow_lake.api.deps import get_app_config
 from arrow_lake.api._security_log import (
     LOGIN_FAILURE,
     LOGIN_SUCCESS,
     LOGOUT,
+    PASSWORD_RESET,
     log_security_event,
 )
 from arrow_lake.api.rate_limit import _extract_client_ip
@@ -209,6 +210,38 @@ async def exchange_token(request: Request) -> TokenPair:
         access_token=svc._encode(payload),
         refresh_token=refresh,
     )
+
+
+@router.post("/password-reset", summary="Reset password with a one-time token")
+async def password_reset(request: Request, req: PasswordResetRequest) -> dict:
+    """Burn an admin-issued reset token and rotate the password.
+
+    All of the user's outstanding JWTs die immediately (token_valid_after bump).
+    Reuses the login lockout (key ``reset:<ip>``) so the unauthenticated token
+    guessing surface is throttled like the login endpoint.
+    """
+    store = getattr(request.app.state, "identity_store", None)
+    if store is None:
+        raise HTTPException(status_code=503, detail="User auth requires system_db enabled")
+    ip = _client_ip(request)
+    await _check_login_lockout("reset", ip, request)
+    user_id = store.consume_password_reset_token(req.token)
+    user = store.get_user(user_id) if user_id is not None else None
+    if user_id is None or user is None or not user.get("is_active"):
+        await _record_login_failure("reset", ip, request)
+        logger.warning("password_reset_failed ip=%s", ip)
+        raise HTTPException(status_code=401, detail="重置链接无效、已使用或已过期")
+    from arrow_lake.api.passwords import hash_password
+
+    store.update_user(user_id, password_hash=hash_password(req.new_password))
+    store.bump_token_valid_after(user_id)  # kill pre-reset JWTs now, not at TTL
+    logger.info("password_reset_done user_id=%s username=%s ip=%s", user_id, user["username"], ip)
+    await log_security_event(
+        PASSWORD_RESET, user["username"],
+        lake=getattr(request.app.state, "lake", None),
+        detail={"user_id": user_id, "ip": ip},
+    )
+    return {"message": "密码已重置,请用新密码登录"}
 
 
 @router.post("/login", summary="Login with username + password")

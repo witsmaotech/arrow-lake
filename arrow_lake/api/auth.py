@@ -93,7 +93,12 @@ async def api_key_middleware_fn(
     if docs_enabled and path in _DOC_PATHS:
         return await call_next(request)
 
-    if path == "/metrics" or path == "/api/v1/auth/login" or path == "/api/v1/auth/refresh":
+    if path in (
+        "/metrics",
+        "/api/v1/auth/login",
+        "/api/v1/auth/refresh",
+        "/api/v1/auth/password-reset",  # v1.10.5 M1: one-time token is the credential
+    ):
         return await call_next(request)
 
     # Bearer JWT 请求交给下游 jwt 依赖验证(支持密码登录;api_key 层放行,符合 BOTH = Bearer OR X-API-Key)

@@ -57,8 +57,14 @@ async def jwt_auth_middleware_fn(
     ):
         return await call_next(request)
 
-    # Auth endpoints bypass JWT (they use API key to get JWT)
-    if path == "/api/v1/auth/token" or path == "/api/v1/auth/refresh":
+    # Auth endpoints bypass JWT (they authenticate by their own means:
+    # API key / bootstrap token / the one-time reset token itself)
+    if path in (
+        "/api/v1/auth/token",
+        "/api/v1/auth/refresh",
+        "/api/v1/auth/login",  # v1.10.5 M1: was missing — blocked password login in jwt/both mode
+        "/api/v1/auth/password-reset",  # v1.10.5 M1: the reset token IS the credential
+    ):
         return await call_next(request)
 
     # Extract Bearer token

@@ -27,6 +27,11 @@ from arrow_lake.system_db.stores.base import FailMode
 logger = structlog.get_logger(__name__)
 
 TOKEN_PREFIX = "al_"  # arrow-lake personal token
+RESET_TOKEN_PREFIX = "alr_"  # arrow-lake one-time password reset token (v1.10.5 M1)
+
+# Default lifetime of a password-reset token (admin hands it to the user out of
+# band, so the window only needs to cover that handoff).
+RESET_TOKEN_TTL_SECONDS = 1800  # 30 min
 
 # Throttle window for last_used_at updates: writing it on every authenticated
 # request would serialize all API calls through the single-writer DB. Only
@@ -341,6 +346,79 @@ class IdentityStore:
         ]
 
     # ------------------------------------------------------------------
+    # one-time password reset tokens (v1.10.5 M1)
+    # ------------------------------------------------------------------
+    def create_password_reset_token(
+        self, user_id: int, *, ttl_seconds: int = RESET_TOKEN_TTL_SECONDS
+    ) -> tuple[str, dict[str, Any]]:
+        """Issue a single-use reset token. Returns ``(plaintext, record)``.
+
+        The plaintext is returned exactly once and never stored (sha256 only);
+        the admin relays it to the user out of band.
+        """
+        from datetime import datetime, timedelta, timezone
+
+        plaintext = RESET_TOKEN_PREFIX + secrets.token_urlsafe(32)
+        expires_at = (
+            datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)
+        ).strftime("%Y-%m-%dT%H:%M:%SZ")
+        with self._db.with_write() as db:
+            cur = db.execute(
+                "INSERT INTO password_reset_tokens (user_id, token_hash, expires_at) "
+                "VALUES (?, ?, ?)",
+                (user_id, _hash_token(plaintext), expires_at),
+            )
+            token_id = cur.lastrowid if cur is not None else None
+        record = {"id": token_id, "user_id": user_id, "expires_at": expires_at}
+        return plaintext, record
+
+    def consume_password_reset_token(self, plaintext: str) -> int | None:
+        """Validate and burn a reset token. Returns the ``user_id``, or None.
+
+        None when: malformed, unknown, already used, expired. The burn is a
+        conditional UPDATE inside the write transaction, so a concurrent
+        double-spend sees rowcount 0 and loses.
+        """
+        from datetime import datetime, timezone
+
+        if not plaintext.startswith(RESET_TOKEN_PREFIX):
+            return None
+        token_hash = _hash_token(plaintext)
+        with self._db.with_write() as db:
+            cur = db.execute(
+                "SELECT id, user_id, expires_at, used_at "
+                "FROM password_reset_tokens WHERE token_hash = ?",
+                (token_hash,),
+            )
+            row = cur.fetchone() if cur is not None else None
+            if row is None:
+                return None
+            token_id, user_id, expires_at, used_at = row
+            if used_at:
+                return None
+            try:
+                exp = datetime.fromisoformat(str(expires_at).replace("Z", "+00:00"))
+                if datetime.now(timezone.utc) > exp:
+                    # Expired still burns: no window where a stale token could
+                    # be replayed after the fact.
+                    db.execute(
+                        "UPDATE password_reset_tokens SET used_at = datetime('now') "
+                        "WHERE id = ?",
+                        (token_id,),
+                    )
+                    return None
+            except ValueError:
+                return None
+            burn = db.execute(
+                "UPDATE password_reset_tokens SET used_at = datetime('now') "
+                "WHERE id = ? AND used_at IS NULL",
+                (token_id,),
+            )
+            if burn is None or burn.rowcount != 1:
+                return None
+        return int(user_id)
+
+    # ------------------------------------------------------------------
     def _one(self, sql: str, params: tuple) -> dict[str, Any] | None:
         cur = self._db.execute(sql, params)
         row = cur.fetchone() if cur is not None else None
@@ -370,4 +448,10 @@ def _loads(raw: str | None) -> list[str]:
         return []
 
 
-__all__ = ["IdentityStore", "TOKEN_PREFIX", "SystemDBError"]
+__all__ = [
+    "IdentityStore",
+    "TOKEN_PREFIX",
+    "RESET_TOKEN_PREFIX",
+    "RESET_TOKEN_TTL_SECONDS",
+    "SystemDBError",
+]

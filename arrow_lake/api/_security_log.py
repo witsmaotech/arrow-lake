@@ -32,6 +32,8 @@ TOKEN_REVOKED = "security.token_revoked"
 ACL_GRANTED = "security.acl_granted"
 ACL_REVOKED = "security.acl_revoked"
 DENY_ADDED = "security.deny_added"
+PASSWORD_RESET_REQUESTED = "security.password_reset_requested"
+PASSWORD_RESET = "security.password_reset"
 
 
 def actor_of(user: Any) -> str:
