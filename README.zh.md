@@ -7,7 +7,7 @@
 多模态存储 · 向量与全文检索 · SQL 分析 · 知识图谱 · GraphRAG · 文档智能——
 **同一份数据、一套治理**。一个自托管平台，而非五件套拼接。
 
-[![Version](https://img.shields.io/badge/version-1.10.4-blue?style=flat-square)](#)
+[![Version](https://img.shields.io/badge/version-1.10.5-blue?style=flat-square)](#)
 [![License](https://img.shields.io/badge/license-Apache--2.0-informational?style=flat-square)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue?style=flat-square)](#)
 [![Tests](https://img.shields.io/badge/tests-6%2C100%2B-brightgreen?style=flat-square)](#)
@@ -401,7 +401,7 @@ lake = Lake.from_yaml("configs/prod.yaml")  # 生产
 
 ## 项目状态
 
-稳定且已在生产中使用。当前版本：**v1.10.4** —— v1.10.0 知识抽取模板管理（M1–M5：动态加载、CRUD、绑定、AI 编写、试运行、质量验证 harness）+ v1.10.1 稳定性与治理加固（docling GPU triton JIT 修复、KG 模板降级路径、配置精简、examples 整合进 cookbook）+ **v1.10.2 文本文档增量构建（ingest/KA/KG 增量）、性能基准套件扩充、超时/可靠性加固（OLAP `conn.interrupt()` 看门狗避免卡住扫描拖死连接池、异步任务心跳 + 僵尸回收避免 worker 死亡后任务永久卡 running、ingest 全链路补 per-call timeout），并复测 SSD 性能基线** + v1.10.3 docling 吞吐与质量优化（ThreadedPdfPipelineOptions 页批处理跑满 GPU、RapidOCR、置信度门控 OCR 重试、页面图片导出支持 ColPali/CLIP 多模态 RAG、bake bge-m3 tokenizer 让 HybridChunker 离线生效）+ **v1.10.4 per-dataset native lance scan opt-in + D-state 熔断器（无向量大数据集经 Rust 聚合下推快 34–145×，熔断器在重复 D-state 时自动降回 pyarrow 冷却）、OLAP 结果分页 + 字段分布统计明细、多语句 SQL 防护、structlog 级别过滤 + gravitino 同步周期日志降噪**。完整历史与路线图方向（更深入的多模态、分布式扩展、更多抽取后端）见 [CHANGELOG](CHANGELOG.md)。
+稳定且已在生产中使用。当前版本：**v1.10.5** —— **v1.10.5 认证/授权原生加固（JWT `aud` claim + per-user token 失效、admin 签发的一次性密码重置、admin 全写操作审计 + 共享 API key 弃用引导、JWKS 端点 + RS256 推荐、`require_permission` scope 化鉴权（空 permissions 回退 role 兼容）—— 未来接外部 IdP 的四条接缝全部就位而无需现在引入）** + v1.10.0 知识抽取模板管理（M1–M5：动态加载、CRUD、绑定、AI 编写、试运行、质量验证 harness）+ v1.10.1 稳定性与治理加固（docling GPU triton JIT 修复、KG 模板降级路径、配置精简、examples 整合进 cookbook）+ **v1.10.2 文本文档增量构建（ingest/KA/KG 增量）、性能基准套件扩充、超时/可靠性加固（OLAP `conn.interrupt()` 看门狗避免卡住扫描拖死连接池、异步任务心跳 + 僵尸回收避免 worker 死亡后任务永久卡 running、ingest 全链路补 per-call timeout），并复测 SSD 性能基线** + v1.10.3 docling 吞吐与质量优化（ThreadedPdfPipelineOptions 页批处理跑满 GPU、RapidOCR、置信度门控 OCR 重试、页面图片导出支持 ColPali/CLIP 多模态 RAG、bake bge-m3 tokenizer 让 HybridChunker 离线生效）+ **v1.10.4 per-dataset native lance scan opt-in + D-state 熔断器（无向量大数据集经 Rust 聚合下推快 34–145×，熔断器在重复 D-state 时自动降回 pyarrow 冷却）、OLAP 结果分页 + 字段分布统计明细、多语句 SQL 防护、structlog 级别过滤 + gravitino 同步周期日志降噪**。完整历史与路线图方向（更深入的多模态、分布式扩展、更多抽取后端）见 [CHANGELOG](CHANGELOG.md)。
 
 - **6,100+ 测试**，90%+ 覆盖率，零高危安全发现（bandit）
 - **186 条 REST 路由**，横跨 22 个 router

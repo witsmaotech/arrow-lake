@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.10.5] - 2026-08-15
+
+### 认证/授权原生加固（Logto-ready 接缝,不引外部 IdP）
+
+> 依据 2026-08-14 Logto 评估（`docs_offline/logto-auth-assessment-2026-08.md`）:单机内部栈不引入外部 IdP（+1 服务组 + 硬性 PostgreSQL）,用原生小改动补齐认证 P0 短板,同时把未来切外部 IdP 所需的协议接缝全部铺好。数据层 ACL（dataset/行/列 ACL）不迁不动。
+
+- **M0 — JWT `aud` claim + per-user token 失效**:token 写入 audience（`jwt_audience` 配置,`jwt_require_audience` 开关兼容存量 token）;users 表新增 `token_valid_after` 截止列（V008 migration）,停用用户/改密码/改角色即 bump → 存量 JWT 下一次请求即 401,不再等 30min TTL 自然过期。`verify_token` 经 provider 回调查截止,store 不可达时 fail-open 保持旧行为。
+- **M1 — 一次性密码重置**（无 email 通道的最小可行）:admin `POST /admin/users/{id}/password-reset` 签发单次 token（V009 表 `password_reset_tokens`,只存 sha256,30min TTL,明文仅返回一次,由 admin 线下转交）→ 用户 `POST /auth/password-reset` 消费（烧 token + 换 pbkdf2 密码 + bump `token_valid_after` 踢全部旧 JWT + 撤销全部 personal token）;复用登录锁定（key `__password_reset__:<ip>`）防撞库;事件入审计（`password_reset_requested`/`password_reset`）。**并发双花**由条件 UPDATE（`WHERE used_at IS NULL` + rowcount 校验）保证恰好一个赢家;过期 token 也烧毁不留重放窗口;签发即烧同用户旧 token（单 outstanding）+ 清理 >7 天老行。console admin.html 用户行「重置密码」按钮 + login.html 忘记密码提示。
+- **M2 — 管理操作审计补齐 + 共享 key 弃用引导**:`/admin` 全部写端点落审计（新增 `user_updated`/`acl_changed`(schema ACL)/`deny_changed` 事件,补齐 update_user、schema ACL set/delete、deny remove）;共享 API key 换 token 打 `shared_api_key_deprecated` 告警（按 IP+小时节流防刷屏,能力保留 `both` 语义不变）;admin.html 顶部横幅 + README 引导改用 `al_` personal token。
+- **M3 — JWKS 端点 + RS256 推荐**:`GET /auth/jwks` 非对称算法（RS*/PS*/ES*）返回 JWK Set（匿名可拉,`kid`=公钥 sha256 前 8 位供轮换缓存）,HS256 404;`jwt_algorithm` 默认保持 HS256 零 break,deploy `.env` 附 RS256 升级三步（openssl 生成 + env 注入 + 切换说明）。**修复隐性接线 bug**:纯 RS256 部署（只有密钥对无对称 secret）此前会静默跳过整个 JWT 中间件与 AuthService（接线条件只认 `jwt_secret_key`）。
+- **M4 — scope 化鉴权**:`deps.require_permission(Permission)`——token 带非空 `permissions` claim 时 claim 即授权（精确匹配无 role 下限,可低于 role 收紧、admin 签发的 personal token 也可高于 role 授单一权限）;空 claim 回退 role 层级（旧 token/共享 key/无 scope personal token 行为完全不变）。login 按 role 矩阵铸 claim;`alp_` personal token 的 scopes 贯通为 claim 终于可强制。渐进切换:datasets DELETE → `DATASET_DELETE`,10 个 ingest 端点 + clean 写回 → `DATASET_WRITE`;查询/admin/dataset ACL 层不动。
+- **修复既有认证 bug 三连**:① `/auth/login` 在 JWT 中间件层无豁免 → `auth_mode=jwt/both` 时密码登录在进路由前就被 401（生产 api_key 模式掩盖;login/password-reset/jwks 现于两层中间件显式豁免）;② **both 模式中间件次序**:JWT 中间件（外层）在 api-key 中间件（内层）之前就把纯 X-API-Key 请求 401,"Bearer OR X-API-Key" 语义破损（实证确认）→ JWT 中间件加委托参数,header 承载的无 Bearer 请求（共享 key 与 `alp_` token）交内层裁决;③ **XFF 绕 IP 锁定**:`_extract_client_ip` 无条件信任 X-Forwarded-For → 轮换伪造 XFF 即可每次拿新锁定/限流桶;现只在直连 peer 是配置的可信代理（`rate_limit.trusted_proxies`,或 `"*"` 显式 opt-in）时才信 XFF,默认只认 peer IP。
+- **安全 review 修复**（双 agent 对抗 review）:重置签发端点拒绝共享 key 身份（封"key 持有者铸造活过 key 轮换的持久 admin"链,`API_KEY_DEFAULT_ROLE=ADMIN` 放大面）;`update_user` 返回值检查;锁定 sentinel 改 `__password_reset__` 防与真实用户名撞车。
+
 ## [1.10.4] - 2026-08-10
 
 ### OLAP native scan opt-in + D-state 熔断器 + 结果增强
