@@ -14,7 +14,13 @@ from typing import Any
 from fastapi import APIRouter, Depends, File, Path, Query, Request, UploadFile
 
 from arrow_lake.api.auth_models import Role
-from arrow_lake.api.deps import authorize_dataset, get_lake, require_role
+from arrow_lake.api.deps import (
+    authorize_dataset,
+    get_lake,
+    require_permission,
+    require_role,
+)
+from arrow_lake.api.rbac import Permission
 from arrow_lake.api._security_log import actor_of
 from arrow_lake.api.models.common import _NAME_PATTERN, MessageResponse
 from arrow_lake.api.models.dataset import (
@@ -340,7 +346,7 @@ async def ingest_files(
     *,
     req: IngestFilesRequest,
     lake=Depends(get_lake),
-    _user: dict = Depends(require_role(Role.EDITOR)),
+    _user: dict = Depends(require_permission(Permission.DATASET_WRITE)),
 ) -> IngestResponse:
     """Ingest local files into a dataset."""
     all_paths = list(req.file_paths)
@@ -375,7 +381,7 @@ async def ingest_sql(
     *,
     req: IngestSqlRequest,
     lake=Depends(get_lake),
-    _user: dict = Depends(require_role(Role.EDITOR)),
+    _user: dict = Depends(require_permission(Permission.DATASET_WRITE)),
 ) -> IngestResponse:
     """Ingest data from a SQL database query."""
     transforms = None
@@ -402,7 +408,7 @@ async def ingest_kafka(
     *,
     req: IngestKafkaRequest,
     lake=Depends(get_lake),
-    _user: dict = Depends(require_role(Role.EDITOR)),
+    _user: dict = Depends(require_permission(Permission.DATASET_WRITE)),
 ) -> IngestResponse:
     """Ingest messages from Kafka topics."""
     transforms = None
@@ -430,7 +436,7 @@ async def ingest_iceberg(
     *,
     req: IngestIcebergRequest,
     lake=Depends(get_lake),
-    _user: dict = Depends(require_role(Role.EDITOR)),
+    _user: dict = Depends(require_permission(Permission.DATASET_WRITE)),
 ) -> IngestResponse:
     """Ingest data from an Apache Iceberg table."""
     transforms = None
@@ -453,7 +459,7 @@ async def ingest_deltalake(
     *,
     req: IngestDeltaLakeRequest,
     lake=Depends(get_lake),
-    _user: dict = Depends(require_role(Role.EDITOR)),
+    _user: dict = Depends(require_permission(Permission.DATASET_WRITE)),
 ) -> IngestResponse:
     """Ingest data from a Delta Lake table."""
     transforms = None
@@ -476,7 +482,7 @@ async def ingest_http(
     *,
     req: IngestHttpRequest,
     lake=Depends(get_lake),
-    _user: dict = Depends(require_role(Role.EDITOR)),
+    _user: dict = Depends(require_permission(Permission.DATASET_WRITE)),
 ) -> IngestResponse:
     """Ingest files from HTTP(S) URLs into a dataset."""
     report = await run_sync(
@@ -494,7 +500,7 @@ async def ingest_images(
     *,
     req: IngestImagesRequest,
     lake=Depends(get_lake),
-    _user: dict = Depends(require_role(Role.EDITOR)),
+    _user: dict = Depends(require_permission(Permission.DATASET_WRITE)),
 ) -> IngestResponse:
     """Ingest image files with thumbnails and EXIF metadata."""
     all_paths = list(req.file_paths)
@@ -527,7 +533,7 @@ async def ingest_videos(
     *,
     req: IngestVideosRequest,
     lake=Depends(get_lake),
-    _user: dict = Depends(require_role(Role.EDITOR)),
+    _user: dict = Depends(require_permission(Permission.DATASET_WRITE)),
 ) -> IngestResponse:
     """Ingest video files with keyframe extraction."""
     all_paths = list(req.file_paths)
@@ -560,7 +566,7 @@ async def ingest_mixed(
     *,
     req: IngestMixedRequest,
     lake=Depends(get_lake),
-    _user: dict = Depends(require_role(Role.EDITOR)),
+    _user: dict = Depends(require_permission(Permission.DATASET_WRITE)),
 ) -> IngestResponse:
     """Ingest mixed-modality sources (files, URLs, images, videos)."""
     sources = dict(req.sources)
@@ -589,7 +595,7 @@ async def ingest_documents(
     *,
     req: IngestDocumentsRequest,
     lake=Depends(get_lake),
-    _user: dict = Depends(require_role(Role.EDITOR)),
+    _user: dict = Depends(require_permission(Permission.DATASET_WRITE)),
 ) -> IngestResponse:
     """Ingest documents: parse → chunk → embed → store.
 
@@ -966,7 +972,7 @@ async def delete_dataset(
     ),
     *,
     lake=Depends(get_lake),
-    _user: dict = Depends(require_role(Role.EDITOR)),
+    _user: dict = Depends(require_permission(Permission.DATASET_DELETE)),
 ) -> MessageResponse:
     """Delete a dataset and all its data."""
     # 系统运行表(sys_ 前缀)是系统运行依赖,禁止删除。判断集中 _system_tables.py。

@@ -12,6 +12,7 @@ from functools import lru_cache
 from fastapi import HTTPException, Request
 
 from arrow_lake.api.auth_models import Role, TokenPayload
+from arrow_lake.api.rbac import Permission
 from arrow_lake.config import ArrowLakeConfig
 
 
@@ -90,6 +91,31 @@ def authorize_dataset(request: Request, name: str, *, write: bool = False) -> No
         raise HTTPException(status_code=403, detail=f"No write access to dataset '{name}'")
 
 
+def _resolve_user(request: Request) -> TokenPayload | None:
+    """Return the authenticated user from middleware state or Bearer fallback."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        svc = getattr(request.app.state, "auth_service", None)
+        if svc is not None:
+            user = get_current_user(request)
+    return user
+
+
+def _attach_user_id(request: Request, user: TokenPayload) -> None:
+    """Expose the numeric user id on the payload for task notifications (v1.9.3)."""
+    uid = getattr(request.state, "user_id", None)
+    if uid is None and getattr(user, "sub", "").isdigit():
+        uid = int(user.sub)  # v1.9.3: JWT path carries user_id in sub (login: str(user["id"]))
+    if uid is not None and getattr(user, "user_id", None) is None:
+        try:
+            user.user_id = uid
+        except Exception:  # noqa: BLE001
+            pass
+
+
+_ROLE_HIERARCHY = {Role.VIEWER: 0, Role.EDITOR: 1, Role.ADMIN: 2}
+
+
 def require_role(required_role: Role) -> Callable:
     """Factory that returns a dependency enforcing a minimum role.
 
@@ -98,16 +124,11 @@ def require_role(required_role: Role) -> Callable:
 
     Role hierarchy: ADMIN > EDITOR > VIEWER.
     """
-    _hierarchy = {Role.VIEWER: 0, Role.EDITOR: 1, Role.ADMIN: 2}
+    _hierarchy = _ROLE_HIERARCHY
 
     def _check(request: Request) -> TokenPayload:
         # Try to get user from middleware (API key or JWT set request.state.user)
-        user = getattr(request.state, "user", None)
-
-        if user is None:
-            svc = getattr(request.app.state, "auth_service", None)
-            if svc is not None:
-                user = get_current_user(request)
+        user = _resolve_user(request)
 
         if user is None:
             cfg = getattr(request.app.state, "config", None)
@@ -126,14 +147,51 @@ def require_role(required_role: Role) -> Callable:
                 status_code=403,
                 detail=f"Insufficient permissions: requires {required_role.value}",
             )
-        uid = getattr(request.state, "user_id", None)
-        if uid is None and getattr(user, "sub", "").isdigit():
-            uid = int(user.sub)  # v1.9.3: JWT path carries user_id in sub (login: str(user["id"]))
-        if uid is not None and getattr(user, "user_id", None) is None:
-            try:
-                user.user_id = uid  # v1.9.3: expose numeric id for task notifications
-            except Exception:  # noqa: BLE001
-                pass
+        _attach_user_id(request, user)
         return user
+
+    return _check
+
+
+# Minimum role gating each permission when the token carries NO permissions
+# claim (pre-v1.10.5 JWTs, the shared api-key identity, scope-less personal
+# tokens). Matches the require_role levels these endpoints enforced before
+# v1.10.5 M4 — the fallback must be behaviour-preserving.
+_PERMISSION_FALLBACK_ROLE: dict[Permission, Role] = {
+    Permission.DATASET_READ: Role.VIEWER,
+    Permission.DATASET_WRITE: Role.EDITOR,
+    Permission.DATASET_DELETE: Role.EDITOR,
+    Permission.ADMIN_MANAGE: Role.ADMIN,
+}
+
+
+def require_permission(permission: Permission) -> Callable:
+    """Factory enforcing a specific permission — scope-aware (v1.10.5 M4).
+
+    * Token with a NON-EMPTY ``permissions`` claim → the claim IS the
+      authorization: exact membership check, no role floor (least privilege,
+      in both directions — scopes can restrict below the role and, for
+      admin-issued personal tokens, grant one specific action above it).
+    * Token with an EMPTY claim → role-hierarchy fallback at the level the
+      endpoint enforced pre-M4 (pre-v1.10.5 JWTs, shared api-key identity,
+      scope-less personal tokens all behave exactly as before).
+
+    This is the seam a future external IdP maps its scopes onto; dataset ACL
+    (``authorize_dataset`` / row-column filters) is untouched — that is the
+    data layer.
+    """
+    role_check = require_role(_PERMISSION_FALLBACK_ROLE[permission])
+
+    def _check(request: Request) -> TokenPayload:
+        user = _resolve_user(request)
+        if user is not None and user.permissions:
+            if permission.value not in user.permissions:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Missing permission: {permission.value}",
+                )
+            _attach_user_id(request, user)
+            return user
+        return role_check(request)  # empty claim / unauthenticated → hierarchy
 
     return _check

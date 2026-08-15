@@ -320,7 +320,14 @@ async def login_with_password(request: Request, creds: LoginRequest) -> TokenPai
     except ValueError:
         role = Role.VIEWER
     svc = _get_auth_service(request)
-    payload = svc.create_access_token(user_id=str(user["id"]), role=role, username=user.get("username"))
+    # v1.10.5 M4: mint the permissions claim from the role matrix so
+    # require_permission endpoints can enforce exact scopes.
+    from arrow_lake.api.deps import get_checker
+
+    perms = sorted(get_checker(request).get_permissions(role))
+    payload = svc.create_access_token(
+        user_id=str(user["id"]), role=role, permissions=perms, username=user.get("username")
+    )
     refresh = svc.create_refresh_token(
         user_id=str(user["id"]), role=role, permissions=payload.permissions, username=user.get("username")
     )

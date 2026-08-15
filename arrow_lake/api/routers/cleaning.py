@@ -24,8 +24,8 @@ import pyarrow as pa
 import re
 from fastapi import APIRouter, Depends, Path, Request
 
-from arrow_lake.api.auth_models import Role
-from arrow_lake.api.deps import authorize_dataset, get_lake, require_role
+from arrow_lake.api.deps import authorize_dataset, get_lake, require_permission
+from arrow_lake.api.rbac import Permission
 from arrow_lake.api._security_log import actor_of
 from arrow_lake.api.models.cleaning import (
     CleanFilter,
@@ -226,7 +226,7 @@ async def clean_dataset(
     *,
     req: CleanRequest,
     lake=Depends(get_lake),
-    _user: dict = Depends(require_role(Role.EDITOR)),
+    _user: dict = Depends(require_permission(Permission.DATASET_WRITE)),
 ) -> CleanResponse:
     """对结构化数据集跑清洗管道(语义 steps + filters),可选写回。
 

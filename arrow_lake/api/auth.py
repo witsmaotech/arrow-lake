@@ -66,6 +66,10 @@ async def api_key_middleware_fn(
                 request.state.user = TokenPayload(
                     sub=str(resolved.get("username", "token")),
                     role=role,
+                    # v1.10.5 M4: surface the token's scopes as the permissions
+                    # claim so require_permission enforces them exactly; empty
+                    # scopes fall back to the role hierarchy.
+                    permissions=list(resolved.get("scopes") or []),
                     exp=0,
                     iat=0,
                 )
