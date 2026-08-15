@@ -4,8 +4,8 @@
 
 **The lakehouse for the AI era.**
 
-Vectors · Full-text · SQL analytics · Knowledge Graph · GraphRAG · Document AI converge into
-**governed, queryable memory for AI systems** — one open, self-hosted platform, not five tools stitched together.
+Multimodal storage · Vector & full-text search · SQL analytics · Knowledge Graph · GraphRAG · Document AI —
+all running over **the same datasets, under one governance plane**. One self-hosted platform, not five tools stitched together.
 
 [![Version](https://img.shields.io/badge/version-1.10.4-blue?style=flat-square)](#)
 [![License](https://img.shields.io/badge/license-Apache--2.0-informational?style=flat-square)](LICENSE)
