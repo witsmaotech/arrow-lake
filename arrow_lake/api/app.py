@@ -41,16 +41,21 @@ from arrow_lake.config import ArrowLakeConfig
 
 logger = logging.getLogger(__name__)
 
+# Outermost → innermost (Starlette: last registered = outermost). P0-4
+# (2026-08-21): rate_limit wraps the auth middlewares so 401 short-circuits
+# still count against the limit — brute-force attempts can no longer bypass
+# rate limiting by sending bad credentials.
 MIDDLEWARE_PIPELINE = [
-    "correlation_id",
-    "cors",
+    "cors",               # outermost (registered last)
+    "catch_unhandled",
+    "rate_limit",         # P0-4: outside auth — counts failed-auth attempts
+    "jwt_auth",
+    "api_key",
+    "security_headers",
+    "request_size_limit",
     "gzip",
     "metrics",
-    "request_size_limit",
-    "security_headers",
-    "rate_limit",
-    "api_key",
-    "jwt_auth",
+    "correlation_id",
 ]
 
 
@@ -602,25 +607,6 @@ def create_app(config: ArrowLakeConfig | None = None) -> FastAPI:
                 frame_options=frame_opts,
             )
 
-    # Rate limiting (enabled by default via RateLimitConfig.enabled = True)
-    if config.rate_limit.enabled:
-        from arrow_lake.api.rate_limit import rate_limit_middleware_fn
-
-        rl_rpm = config.rate_limit.default_requests_per_minute
-        rl_burst = config.rate_limit.default_burst
-        rl_exempt = config.rate_limit.exempt_paths
-        rl_trusted_proxies = config.rate_limit.trusted_proxies
-
-        @app.middleware("http")
-        async def rate_limit_middleware(request, call_next):
-            return await rate_limit_middleware_fn(
-                request, call_next,
-                rpm=rl_rpm,
-                burst=rl_burst,
-                exempt_paths=rl_exempt,
-                trusted_proxies=rl_trusted_proxies,
-            )
-
     # API Key middleware — registered when a shared api_key is configured OR
     # when the v1.9.0 system_db is enabled (personal-token auth path). The
     # middleware resolves personal tokens first (v1.9.0), then falls back to
@@ -712,6 +698,30 @@ def create_app(config: ArrowLakeConfig | None = None) -> FastAPI:
                 request, call_next, auth_service=svc,
                 docs_enabled=config.api.docs_enabled,
                 api_key_header=delegate_header,
+            )
+
+    # Rate limiting (enabled by default via RateLimitConfig.enabled = True).
+    # P0-4 (H4, 2026-08-21): registered AFTER the auth middlewares so it wraps
+    # them (later registration = outer layer). The auth middlewares 401
+    # short-circuit without calling call_next — with rate_limit inside them,
+    # brute-force attempts never touched the counters. As the outer layer every
+    # attempt now counts, before token verification work is spent.
+    if config.rate_limit.enabled:
+        from arrow_lake.api.rate_limit import rate_limit_middleware_fn
+
+        rl_rpm = config.rate_limit.default_requests_per_minute
+        rl_burst = config.rate_limit.default_burst
+        rl_exempt = config.rate_limit.exempt_paths
+        rl_trusted_proxies = config.rate_limit.trusted_proxies
+
+        @app.middleware("http")
+        async def rate_limit_middleware(request, call_next):
+            return await rate_limit_middleware_fn(
+                request, call_next,
+                rpm=rl_rpm,
+                burst=rl_burst,
+                exempt_paths=rl_exempt,
+                trusted_proxies=rl_trusted_proxies,
             )
 
     # Catch-all for unhandled exceptions — registered as HTTP middleware so it

@@ -34,6 +34,27 @@ DANGEROUS_SQL_KEYWORDS_RE = re.compile(
     re.IGNORECASE,
 )
 
+# P0-1 (C1, 2026-08-21): DuckDB reader/glob table functions must never appear
+# in user SQL. `read_text('/proc/self/environ')` returns every container secret
+# (JWT key, MinIO root, Redis password, LLM keys); read_csv/read_json reach any
+# file under /data/lake; *_scan() functions hit object stores or remote DBs,
+# bypassing dataset ACLs. Defense in depth with the session-level
+# `SET disabled_filesystems` (query/_db.py) — this layer also covers paths that
+# build SQL without a session (where clauses, previews).
+# Word-boundary note: `read_csv\b` does NOT match `read_csv_auto` (the trailing
+# underscore is a word char), so the _auto variants are listed explicitly.
+TABLE_FUNCTION_BLACKLIST_RE = re.compile(
+    r"\b("
+    r"read_csv_auto|read_csv|"
+    r"read_json_auto|read_json|"
+    r"read_parquet|read_text|read_blob|read_xlsx|"
+    r"parquet_scan|iceberg_scan|delta_scan|"
+    r"postgres_scan|mysql_scan|sqlite_scan|"
+    r"glob|file_search"
+    r")\b",
+    re.IGNORECASE,
+)
+
 # ---------------------------------------------------------------------------
 # Identifier validation
 # ---------------------------------------------------------------------------
@@ -77,6 +98,12 @@ def validate_sql_safety(sql: str) -> None:
     """
     if DANGEROUS_SQL_KEYWORDS_RE.search(sql):
         raise ValueError(f"Dangerous SQL keyword detected: {sql}")
+    if TABLE_FUNCTION_BLACKLIST_RE.search(sql):
+        match = TABLE_FUNCTION_BLACKLIST_RE.search(sql)
+        raise ValueError(
+            f"Dangerous SQL table function detected: {match.group()!r}. "
+            f"Only registered datasets may be queried."
+        )
     if ";" in sql:
         raise ValueError(f"Semicolons not allowed in SQL: {sql}")
     if _is_multi_statement(sql):
@@ -139,4 +166,9 @@ def validate_where_clause(where: str) -> None:
         raise ValueError(
             f"Where clause contains dangerous SQL keyword: {match.group()!r}. "
             f"Only SELECT-safe filter expressions are allowed."
+        )
+    func_match = TABLE_FUNCTION_BLACKLIST_RE.search(where)
+    if func_match:
+        raise ValueError(
+            f"Where clause contains dangerous SQL table function: {func_match.group()!r}."
         )

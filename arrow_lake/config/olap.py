@@ -80,6 +80,13 @@ class OlapConfig(BaseModel):
     enable_profiling: bool = False
     parquet_row_group_size: int = 100_000
     ducklake_index_columns: list[str] = []
+    # P0-1 (C1, 2026-08-21): DuckDB virtual filesystems disabled on every OLAP
+    # session. `read_text('/proc/self/environ')` class table functions would
+    # otherwise exfiltrate all container secrets through user SQL. Default blocks
+    # local files; extend (e.g. ["LocalFileSystem", "S3"]) to also stop direct
+    # object-storage scans that bypass dataset ACLs. User SQL is additionally
+    # guarded by the table-function blacklist in validation.py.
+    disabled_filesystems: list[str] = ["LocalFileSystem"]
 
     # Connection warmup
     warmup_enabled: bool = True

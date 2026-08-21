@@ -109,6 +109,11 @@ class StateRollback:
             )
 
         tmp_name = f"_rollback_safety_{dataset_name}"
+        # P0-2 (C3, 2026-08-21): only clean up the safety copy once the data is
+        # known to be safely back in place (restore or recovery succeeded). On
+        # the double-failure path the safety copy is the *only* surviving
+        # replica — deleting it there destroyed the data permanently.
+        data_restored = False
         try:
             # Create safety copy of the *original* dataset before touching it.
             self._storage.copy_dataset(dataset_name, tmp_name)
@@ -123,6 +128,7 @@ class StateRollback:
 
             # Delete original dataset and recreate with checkpoint data
             self._storage.restore_dataset(dataset_name, checkpoint_data)
+            data_restored = True
 
             new_version = self._storage.get_version(dataset_name)
             logger.info(
@@ -136,6 +142,7 @@ class StateRollback:
             # Attempt recovery from the safety copy
             try:
                 self._storage.restore_from(tmp_name, dataset_name)
+                data_restored = True
                 logger.info(
                     "rollback_recovery_from_safety_succeeded",
                     dataset=dataset_name,
@@ -145,19 +152,24 @@ class StateRollback:
                     "rollback_recovery_failed",
                     dataset=dataset_name,
                     tmp_name=tmp_name,
-                    message=f"Data may only exist at safety dataset '{tmp_name}'",
+                    message=(
+                        f"Data may only exist at safety dataset '{tmp_name}' — "
+                        f"safety copy preserved for manual recovery"
+                    ),
                 )
             raise
         finally:
-            # Always attempt to clean up the safety copy
-            try:
-                self._storage.delete_dataset(tmp_name)
-            except Exception:  # noqa: BLE001
-                logger.warning(
-                    "rollback_safety_cleanup_failed",
-                    tmp_name=tmp_name,
-                    message="Temp safety dataset not cleaned up",
-                )
+            # Clean up the safety copy only when the data is confirmed restored;
+            # otherwise it is the last surviving replica and must be kept.
+            if data_restored:
+                try:
+                    self._storage.delete_dataset(tmp_name)
+                except Exception:  # noqa: BLE001
+                    logger.warning(
+                        "rollback_safety_cleanup_failed",
+                        tmp_name=tmp_name,
+                        message="Temp safety dataset not cleaned up",
+                    )
 
     def has_checkpoint(self, dataset_name: str) -> bool:
         """Check if a dataset has a checkpoint.

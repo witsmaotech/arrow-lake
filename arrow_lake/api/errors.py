@@ -33,6 +33,23 @@ def _scrub_bytes(obj: Any) -> Any:
     return obj
 
 
+def _safe_validation_errors(exc: Any) -> list[dict]:
+    """422-safe view of ``exc.errors()`` (P0-4, 2026-08-21).
+
+    Two hazards in the raw error list:
+    1. ``input`` embeds the raw request value — reflecting it back echoes
+       passwords and other submitted secrets into the response (and from
+       there into client/proxy logs). Drop the key entirely: ``loc`` +
+       ``msg`` + ``type`` are enough to debug the validation failure.
+    2. ``input`` may be binary bytes, which crashes ``jsonable_encoder``
+       (see ``_scrub_bytes``).
+    """
+    return [
+        {k: v for k, v in err.items() if k != "input"}
+        for err in _scrub_bytes(exc.errors())
+    ]
+
+
 def _error_code_to_http_status(code: ErrorCode) -> int:
     """Map an ArrowLake ErrorCode to an HTTP status code.
 
@@ -145,11 +162,7 @@ def register_exception_handlers(app) -> None:
 
     @app.exception_handler(RequestValidationError)
     async def request_validation_error_handler(request: Request, exc: RequestValidationError):
-        # exc.errors() embeds the raw request ``input`` (which may be binary
-        # bytes for multipart/PDF uploads). jsonable_encoder would otherwise
-        # raise UnicodeDecodeError via its bytes->decode() encoder, masking the
-        # real 422 as a 500 INTERNAL_ERROR. Scrub bytes first.
-        safe_errors = _scrub_bytes(exc.errors())
+        safe_errors = _safe_validation_errors(exc)
         return JSONResponse(
             status_code=422,
             content={

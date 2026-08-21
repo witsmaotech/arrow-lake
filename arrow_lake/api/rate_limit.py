@@ -20,6 +20,30 @@ from arrow_lake.config import RateLimitConfig
 _WINDOW_SECONDS = 60.0
 
 
+def _peer_trusted(peer: str, trusted_proxies: set[str]) -> bool:
+    """Exact-IP or CIDR membership check against the trusted proxy set.
+
+    CIDR entries (e.g. ``172.18.0.0/16``) keep the config stable across docker
+    network re-creates, where container IPs drift. Malformed entries are
+    ignored (never widen trust for other peers, never crash a request).
+    """
+    if "*" in trusted_proxies or peer in trusted_proxies:
+        return True
+    import ipaddress
+
+    try:
+        addr = ipaddress.ip_address(peer)
+    except ValueError:
+        return False
+    for entry in trusted_proxies:
+        try:
+            if addr in ipaddress.ip_network(entry, strict=False):
+                return True
+        except ValueError:
+            continue  # exact-IP entries that are not valid networks
+    return False
+
+
 def _extract_client_ip(request: Request, trusted_proxies: set[str]) -> str:
     """Extract the real client IP — XFF only trusted from a trusted peer (v1.10.5 H2).
 
@@ -29,19 +53,19 @@ def _extract_client_ip(request: Request, trusted_proxies: set[str]) -> str:
     rotating a spoofed XFF no longer gets a fresh per-IP lockout/rate-limit
     bucket per attempt — the peer IP wins.
 
-    Behind a reverse proxy, add its address via
+    Behind a reverse proxy, add its address (exact IP or CIDR) via
     ``ARROW_LAKE__RATE_LIMIT__TRUSTED_PROXIES`` (JSON array, e.g.
-    ``["10.0.0.2"]``) to recover real client IPs.
+    ``["172.18.0.0/16"]``) to recover real client IPs.
     """
     peer = request.client.host if request.client else "unknown"
-    if "*" not in trusted_proxies and peer not in trusted_proxies:
+    if not _peer_trusted(peer, trusted_proxies):
         return peer
     xff = request.headers.get("x-forwarded-for", "")
     if xff:
         ips = [ip.strip() for ip in xff.split(",") if ip.strip()]
         # Walk right-to-left, skipping trusted proxies
         for ip in reversed(ips):
-            if ip not in trusted_proxies:
+            if not _peer_trusted(ip, trusted_proxies):
                 return ip
         # All IPs are trusted proxies — take leftmost
         if ips:

@@ -91,6 +91,27 @@ class RedisRateLimiter:
     def is_connected(self) -> bool:
         return self._connected
 
+    def _ensure_connected(self) -> bool:
+        """Lazy reconnect (P0-4, 2026-08-21).
+
+        The old ``_handle_error`` only flipped ``_connected = False`` forever —
+        the exact bug already fixed in ``_redis_task_store``: one Redis blip
+        permanently degraded that worker to the in-memory counter (limit and
+        login-lockout effectively ×4 across 4 gunicorn workers). Ping on each
+        call while disconnected; the ping rides the existing 5s socket timeout.
+        """
+        if self._connected:
+            return True
+        if self._redis is None:
+            return False
+        try:
+            self._redis.ping()
+            self._connected = True
+            logger.info("RedisRateLimiter reconnected")
+            return True
+        except Exception:
+            return False
+
     # ------------------------------------------------------------------
     # (ip, path) request counter — INCR + EXPIRE fixed window
     # ------------------------------------------------------------------
@@ -105,7 +126,7 @@ class RedisRateLimiter:
         Returns ``None`` when Redis is unavailable so the caller falls back
         to the in-memory counter.
         """
-        if not self._connected or self._redis is None:
+        if not self._ensure_connected():
             return None
         key = f"{self._prefix}hit:{ip}:{path}"
         try:
@@ -135,7 +156,7 @@ class RedisRateLimiter:
 
         Returns ``None`` when Redis unavailable (caller falls back).
         """
-        if not self._connected or self._redis is None:
+        if not self._ensure_connected():
             return None
         now = time.time()
         cutoff = now - self._login_lockout_seconds
@@ -158,7 +179,7 @@ class RedisRateLimiter:
 
     def record_login_failure(self, username: str, ip: str) -> None:
         """Record a login failure timestamp."""
-        if not self._connected or self._redis is None:
+        if not self._ensure_connected():
             return
         now = time.time()
         member = f"{username}:{ip}:{time.time_ns()}"  # nonce for uniqueness
@@ -174,7 +195,7 @@ class RedisRateLimiter:
 
     def reset_login(self, username: str, ip: str) -> None:
         """Clear failures for a (username, ip) pair on successful login."""
-        if not self._connected or self._redis is None:
+        if not self._ensure_connected():
             return
         try:
             members = self._redis.zrange(self._login_bucket, 0, -1)

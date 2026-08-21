@@ -120,6 +120,19 @@ class DuckDBSession:
                 with contextlib.suppress(duckdb.CatalogException):
                     conn.execute("SET profiling_mode = 'detailed';")
 
+        # P0-1 (C1): block file-scanning table functions at the engine level —
+        # `read_text('/proc/self/environ')` would otherwise return all container
+        # secrets. Applied unconditionally (even without olap_config) so
+        # standalone DuckDBSession usage is hardened too. The SQL-side blacklist
+        # (validation.TABLE_FUNCTION_BLACKLIST_RE) is the second layer.
+        disabled_fs = list(getattr(self._olap_config, "disabled_filesystems", None)
+                           or ["LocalFileSystem"])
+        fs_list = ", ".join(f"'{name.replace(chr(39), '')}'" for name in disabled_fs)
+        try:
+            conn.execute(f"SET disabled_filesystems={fs_list};")
+        except duckdb.Error as exc:  # Unknown setting in exotic builds — log loudly.
+            logger.warning("disabled_filesystems SET rejected by DuckDB: %s", exc)
+
     def _configure_s3(self, conn: duckdb.DuckDBPyConnection) -> None:
         """Apply S3 configuration from StorageConfig if backend is not LOCAL.
 

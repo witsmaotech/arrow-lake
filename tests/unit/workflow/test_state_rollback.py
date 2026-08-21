@@ -149,3 +149,48 @@ class TestStateRollback:
         rb.checkpoint("documents")
         assert rb.has_checkpoint("users")
         assert rb.has_checkpoint("documents")
+
+
+class TestRollbackSafetyCopyPreservation:
+    """P0-2 (C3, 2026-08-21): the safety copy is the last surviving replica on
+    the double-failure path and must never be deleted there."""
+
+    def _rb_with_checkpoint(self, storage: MagicMock) -> StateRollback:
+        rb = StateRollback(storage)
+        rb._checkpoints["ds"] = CheckpointInfo(
+            dataset_name="ds", version=2, tag="t", timestamp="ts"
+        )
+        return rb
+
+    def test_double_failure_preserves_safety_copy(self) -> None:
+        storage = MagicMock()
+        storage.read_at_tag.return_value = MagicMock()
+        storage.restore_dataset.side_effect = OSError("primary restore failed")
+        storage.restore_from.side_effect = OSError("recovery also failed")
+        rb = self._rb_with_checkpoint(storage)
+
+        with pytest.raises(OSError):
+            rb.rollback("ds")
+
+        # The only surviving copy must NOT have been deleted.
+        storage.delete_dataset.assert_not_called()
+
+    def test_happy_path_cleans_safety_copy(self) -> None:
+        storage = MagicMock()
+        storage.get_version.return_value = 7
+        rb = self._rb_with_checkpoint(storage)
+
+        rb.rollback("ds")
+
+        storage.delete_dataset.assert_called_once_with("_rollback_safety_ds")
+
+    def test_successful_recovery_cleans_safety_copy(self) -> None:
+        storage = MagicMock()
+        storage.read_at_tag.return_value = MagicMock()
+        storage.restore_dataset.side_effect = OSError("primary failed")
+        rb = self._rb_with_checkpoint(storage)
+
+        with pytest.raises(OSError):
+            rb.rollback("ds")  # recovery succeeded → original error re-raised
+
+        storage.delete_dataset.assert_called_once_with("_rollback_safety_ds")
