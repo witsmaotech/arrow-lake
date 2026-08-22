@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.10.6] - 2026-08-21
+
+### 安全加固 P0（实施前综合 Review 修复批,3 CRITICAL + 1 HIGH）
+
+> 依据 2026-08-21 四维并行 review（安全/可靠性/FastAPI/性能,报告 `docs_offline/pre-ms1-comprehensive-review-2026-08-21.md`）:P0 批当日修复+部署+线上验证;P1（数据面统一强制点/质量门控接线/ingest 线程池隔离）待排期。
+
+- **C1 — OLAP 文件读取漏洞封堵（双层）**:DuckDB 会话建连与空闲复用统一 `SET disabled_filesystems='LocalFileSystem'`（`OlapConfig.disabled_filesystems` 可扩展至 `["LocalFileSystem","S3"]`）,`read_text('/proc/self/environ')` 类表函数在引擎层即抛 `PermissionException`;`validation.py` 新增表函数黑名单（read_text/read_csv/read_json/read_parquet/read_blob/*_scan/glob/file_search 含 `_auto` 变体）,`validate_sql_safety` 与 `validate_where_clause` 双挂载——用户 SQL 再不能读取容器环境变量与本地文件。
+- **C3 — rollback 双失败路径数据丢失修复**:`StateRollback` 引入 `data_restored` 标志,安全副本仅在主恢复或副本恢复确认成功后清理;双失败时保留 `_rollback_safety_*` 副本供手工恢复（原 `finally` 无条件删除会销毁唯一幸存副本）。
+- **H3 — 限流/登录锁定 key 塌缩修复**:`trusted_proxies` 支持 CIDR 条目（`_peer_trusted` 基于 ipaddress,畸形条目忽略不扩权）,nginx 前置场景配置 `ARROW_LAKE__RATE_LIMIT__TRUSTED_PROXIES=["172.30.0.0/16"]`（双 .env）恢复真实客户端 IP 维度限流,消除全站共享 60rpm 与定向账号锁定 DoS;compose `HUGEGRAPH_PASSWORD` 改 `:?` 必填（不再回落弱默认）;`MASKING__HMAC_KEY` 轮换。
+- **H4 — 认证请求绕过限流修复**:rate-limit 中间件注册移至 auth 中间件之外（外层）,401 短路请求同样计数——暴力穷举不再免于 429（实测 70 次坏凭据:69×401+1×429）。
+- **限流器 Redis 懒重连**:`RedisRateLimiter._ensure_connected` 照抄 task-store 模式,一次 Redis 抖动不再永久降级至 4 倍稀释的进程内计数器。
+- **422 响应脱敏**:`_safe_validation_errors` 丢弃 `exc.errors()` 的 `input` 键,校验失败不再把提交的密码等原始值反射回响应。
+
+### 测试
+
+- 新增 105 个单测（TDD 先红后绿）:表函数黑名单 21 例/会话 fs 锁定 3 例/rollback 安全副本 3 例/trusted CIDR 7 例/限流懒重连+422 脱敏 3 例;`tests/unit/api` 全量回归与基线一致（8 个存量隔离污染失败经 stash 基线对照确认非本次引入）。
+
 ## [1.10.5] - 2026-08-15
 
 ### 认证/授权原生加固（Logto-ready 接缝,不引外部 IdP）
