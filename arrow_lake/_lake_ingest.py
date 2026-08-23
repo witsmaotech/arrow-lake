@@ -164,6 +164,7 @@ class _DeadLetterStorageAdapter:
         return table.num_rows
 
 
+
 class _LakeIngestMixin:
     """Provides data ingestion, dataset management, quality filtering, and dedup."""
 
@@ -184,6 +185,7 @@ class _LakeIngestMixin:
         validate appends against the real Lance schema.
         """
         from arrow_lake.ingest.ingestor import Ingestor
+        from arrow_lake.quality.dead_letter import DeadLetterWriter
         from arrow_lake.quality.gate import build_quality_gate
 
         quality_cfg = getattr(self._config, "quality", None)
@@ -199,7 +201,9 @@ class _LakeIngestMixin:
                 gate = build_quality_gate(
                     quality_cfg,
                     target_schema=target_schema,
-                    dead_letter_writer=_DeadLetterStorageAdapter(self._get_storage()),
+                    dead_letter_writer=DeadLetterWriter(
+                        storage=_DeadLetterStorageAdapter(self._get_storage())
+                    ),
                 )
         except Exception:  # noqa: BLE001 — gate wiring must never block ingest
             logger.warning("quality_gate_wiring_failed", exc_info=True)

@@ -169,6 +169,40 @@ class TestDeadLetter:
         gate.check(_table(), dataset_name="ds")
         writer.write.assert_not_called()
 
+    def test_real_dead_letter_writer_end_to_end(self) -> None:
+        """Regression (found in container verification): the wiring must
+        pass a REAL DeadLetterWriter — the gate calls write(ds, table,
+        filter_name) with 3 args, so a bare StorageWriter-protocol adapter
+        (2-arg write) fails silently under the except-and-warn. This pins
+        the actual production stack: gate → DeadLetterWriter → storage."""
+        from arrow_lake.quality.dead_letter import DeadLetterWriter
+
+        class _FakeStorage:
+            """Stands in for _DeadLetterStorageAdapter: StorageWriter protocol."""
+
+            def __init__(self) -> None:
+                self.written: dict[str, pa.Table] = {}
+
+            def write(self, table_name: str, table: pa.Table) -> int:
+                self.written[table_name] = table
+                return table.num_rows
+
+        storage = _FakeStorage()
+        dirty = pa.table({"id": [1, 2, 3], "text_content": ["ok", "", "also ok"]})
+        gate = IngestionQualityGate(
+            active_filters="text_length", filter_registry=_registry(),
+            dead_letter_writer=DeadLetterWriter(storage=storage),
+        )
+        passed, result = gate.check(dirty, dataset_name="ds")
+
+        assert result.filter_rejected == 1
+        assert "ds_dead_letter" in storage.written
+        dl = storage.written["ds_dead_letter"]
+        assert dl.num_rows == 1
+        assert "_rejection_reason" in dl.column_names
+        assert "_filter_name" in dl.column_names
+        assert dl.column("text_content").to_pylist() == [""]
+
 
 class TestShadowVsEnforce:
     def _ingestor_with(self, gate) -> tuple:
