@@ -9,11 +9,11 @@ import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import Request, APIRouter, Depends, HTTPException
 from starlette.responses import StreamingResponse
 
 from arrow_lake.api.auth_models import Role
-from arrow_lake.api.deps import get_lake, require_role
+from arrow_lake.api.deps import authorize_dataset, get_checker, get_lake, require_role
 from arrow_lake.api.models.rag import (
     RAGCitationResponse,
     RAGExtractRequest,
@@ -93,8 +93,21 @@ async def rag_query(
     req: RAGQueryRequest,
     lake: Any = Depends(get_lake),
     _user: dict = Depends(require_role(Role.EDITOR)),
+    request: Request,
+    checker=Depends(get_checker),
 ) -> RAGQueryResponse:
     """Run a RAG query: retrieve relevant documents and generate an answer."""
+    authorize_dataset(request, req.dataset_name)
+    _acl = checker.get_acl(req.dataset_name, _user["role"] if isinstance(_user, dict) else _user.role)
+    if _acl is not None and (_acl.row_filter or _acl.visible_columns):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"Dataset '{req.dataset_name}' has row/column ACL restrictions; "
+                "RAG endpoints cannot enforce them yet (v1.10.7 fail-closed) — "
+                "use search/OLAP endpoints for this dataset"
+            ),
+        )
     timeout_secs = float(lake._config.llm.timeout_seconds) + 30
     try:
         async with asyncio.timeout(timeout_secs):
@@ -127,8 +140,21 @@ async def rag_query_stream(
     req: RAGQueryRequest,
     lake: Any = Depends(get_lake),
     _user: dict = Depends(require_role(Role.EDITOR)),
+    request: Request,
+    checker=Depends(get_checker),
 ) -> StreamingResponse:
     """Stream a RAG query response via Server-Sent Events (SSE)."""
+    authorize_dataset(request, req.dataset_name)
+    _acl = checker.get_acl(req.dataset_name, _user["role"] if isinstance(_user, dict) else _user.role)
+    if _acl is not None and (_acl.row_filter or _acl.visible_columns):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"Dataset '{req.dataset_name}' has row/column ACL restrictions; "
+                "RAG endpoints cannot enforce them yet (v1.10.7 fail-closed) — "
+                "use search/OLAP endpoints for this dataset"
+            ),
+        )
 
     async def _event_generator() -> AsyncIterator[str]:
         event_id = uuid.uuid4().hex[:8]
@@ -188,8 +214,21 @@ async def rag_extract(
     req: RAGExtractRequest,
     lake: Any = Depends(get_lake),
     _user: dict = Depends(require_role(Role.EDITOR)),
+    request: Request,
+    checker=Depends(get_checker),
 ) -> RAGExtractResponse:
     """Extract entities from a dataset using RAG."""
+    authorize_dataset(request, req.dataset_name)
+    _acl = checker.get_acl(req.dataset_name, _user["role"] if isinstance(_user, dict) else _user.role)
+    if _acl is not None and (_acl.row_filter or _acl.visible_columns):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"Dataset '{req.dataset_name}' has row/column ACL restrictions; "
+                "RAG endpoints cannot enforce them yet (v1.10.7 fail-closed) — "
+                "use search/OLAP endpoints for this dataset"
+            ),
+        )
     try:
         timeout_secs = float(lake._config.llm.timeout_seconds) + 30
         async with asyncio.timeout(timeout_secs):

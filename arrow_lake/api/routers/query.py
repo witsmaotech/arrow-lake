@@ -9,12 +9,24 @@ from fastapi import APIRouter, Depends, HTTPException, Path
 from fastapi.responses import StreamingResponse
 
 from arrow_lake.api.auth_models import Role
-from arrow_lake.api.deps import get_checker, get_lake, require_role
+from arrow_lake.api.deps import authorize_dataset_read, get_checker, get_lake, require_role
 from arrow_lake.api.models.common import (
     _NAME_PATTERN,
     arrow_table_to_ipc_base64,
     arrow_table_to_response,
 )
+def _acl_enforced_sql(sql: str, name: str, checker: Any, role: Any) -> str:
+    """Source-level row/column ACL enforcement (v1.10.7 WP1b/c, review C2)."""
+    from arrow_lake.api.rbac_sql import AclSqlViolation, enforce_sql_acl
+
+    try:
+        return enforce_sql_acl(
+            sql, get_acl=lambda t: checker.get_acl(t, role), dataset=name
+        )
+    except AclSqlViolation as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 from arrow_lake.api.models.query import (
     DaftQueryRequest,
     DaftQueryResponse,
@@ -71,7 +83,9 @@ _GROUPBY_AGGS = {
 }
 
 
-def _apply_pipeline(req: DaftQueryRequest, frame: LazyDaftFrame) -> LazyDaftFrame:
+def _apply_pipeline(
+    req: DaftQueryRequest, frame: LazyDaftFrame, *, name: str = "", checker: Any = None, role: Any = None,
+) -> LazyDaftFrame:
     """Apply the chained operation pipeline from request to frame."""
     if req.sort is not None:
         frame = frame.sort(req.sort.column, desc=req.sort.desc)
@@ -90,7 +104,10 @@ def _apply_pipeline(req: DaftQueryRequest, frame: LazyDaftFrame) -> LazyDaftFram
         raise HTTPException(status_code=501, detail="Join requires multi-dataset loading via lake")
 
     if req.sql is not None:
-        frame = frame.sql(req.sql.query)
+        _q = req.sql.query
+        if checker is not None:
+            _q = _acl_enforced_sql(_q, name, checker, role)
+        frame = frame.sql(_q)
 
     if req.pivot is not None:
         frame = frame.pivot(
@@ -130,6 +147,7 @@ async def olap_query(
     req: OlapQueryRequest,
     lake=Depends(get_lake),
     _user: dict = Depends(require_role(Role.EDITOR)),
+    _acl_guard: None = Depends(authorize_dataset_read),
     checker=Depends(get_checker),
 ) -> OlapQueryResponse | StreamingResponse:
     """Execute OLAP SQL analytics query via DuckDB.
@@ -138,8 +156,9 @@ async def olap_query(
     for large result sets (>10,000 rows recommended).
     """
     validate_sql_safety(req.sql)
+    sql = _acl_enforced_sql(req.sql, name, checker, _user.role)
     result = await run_sync(
-        lake.olap_query, name, req.sql, max_rows=req.max_rows,
+        lake.olap_query, name, sql, max_rows=req.max_rows,
         timeout=_QUERY_TIMEOUT, label="olap_query", executor=olap_executor,
     )
     table = checker.apply_table_filter(result.table, dataset=name, role=_user.role)
@@ -162,12 +181,14 @@ async def metadata_query(
     req: OlapQueryRequest,
     lake=Depends(get_lake),
     _user: dict = Depends(require_role(Role.EDITOR)),
+    _acl_guard: None = Depends(authorize_dataset_read),
     checker=Depends(get_checker),
 ) -> OlapQueryResponse:
     """Execute metadata SQL query (semantic alias for olap_query)."""
     validate_sql_safety(req.sql)
+    sql = _acl_enforced_sql(req.sql, name, checker, _user.role)
     result = await run_sync(
-        lake.sql_query, name, req.sql, max_rows=req.max_rows,
+        lake.sql_query, name, sql, max_rows=req.max_rows,
         timeout=_QUERY_TIMEOUT, label="metadata_query", executor=olap_executor,
     )
     table = checker.apply_table_filter(result.table, dataset=name, role=_user.role)
@@ -182,6 +203,7 @@ async def graph_query(
     req: GraphQueryRequest,
     lake=Depends(get_lake),
     _user: dict = Depends(require_role(Role.VIEWER)),
+    _acl_guard: None = Depends(authorize_dataset_read),
     checker=Depends(get_checker),
 ) -> OlapQueryResponse:
     """Bounded graph traversal over the dataset's edges via recursive CTE (v1.8.0 #10).
@@ -215,6 +237,7 @@ async def daft_query(
     req: DaftQueryRequest,
     lake=Depends(get_lake),
     _user: dict = Depends(require_role(Role.VIEWER)),
+    _acl_guard: None = Depends(authorize_dataset_read),
     checker=Depends(get_checker),
 ) -> DaftQueryResponse:
     """Load dataset via Daft, apply chained operations, return as Arrow table.
@@ -223,7 +246,7 @@ async def daft_query(
     For datasets > 1M rows, use DuckDB OLAP endpoint instead.
     """
     frame = lake.daft_query(name)
-    frame = _apply_pipeline(req, frame)
+    frame = _apply_pipeline(req, frame, name=name, checker=checker, role=_user.role)
 
     try:
         warnings = await run_sync(

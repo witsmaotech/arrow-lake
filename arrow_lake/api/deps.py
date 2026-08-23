@@ -76,6 +76,17 @@ def get_current_user(request: Request) -> TokenPayload:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
 
 
+def authorize_dataset_read(name: str, request: Request) -> None:
+    """Depends()-ready dataset read ACL (v1.10.7 WP1a).
+
+    FastAPI injects the route's ``{name}`` path param into this sub-dependency,
+    so every read endpoint can enforce dataset-level deny/ACL with a single
+    ``Depends(authorize_dataset_read)`` instead of manual calls (which had
+    coverage only in 3 routers — review H1).
+    """
+    authorize_dataset(request, name)
+
+
 def authorize_dataset(request: Request, name: str, *, write: bool = False) -> None:
     """Enforce dataset-level ACL on top of role-level require_role (v1.9.1 security).
 

@@ -8,7 +8,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Path
 
 from arrow_lake.api.auth_models import Role
-from arrow_lake.api.deps import get_lake, require_role
+from arrow_lake.api.deps import authorize_dataset_read, get_lake, require_role
 from arrow_lake.api.models.common import _NAME_PATTERN
 from arrow_lake.api.models.embedding import (
     DropIndexResponse,
@@ -52,6 +52,7 @@ async def create_vector_index(
     *,
     req: VectorIndexRequest,
     lake=Depends(get_lake),
+    _acl_guard: None = Depends(authorize_dataset_read),
     _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> VectorIndexResponse:
     """Create a vector index on a dataset."""
@@ -81,6 +82,7 @@ async def create_fts_index(
     *,
     req: FtsIndexRequest,
     lake=Depends(get_lake),
+    _acl_guard: None = Depends(authorize_dataset_read),
     _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> FtsIndexResponse:
     """Create a full-text search index on a dataset."""
@@ -102,6 +104,7 @@ async def create_scalar_index(
     *,
     req: ScalarIndexRequest,
     lake=Depends(get_lake),
+    _acl_guard: None = Depends(authorize_dataset_read),
     _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> ScalarIndexResponse:
     """Create a scalar index on a column (accelerates metadata filtering)."""
@@ -129,6 +132,7 @@ async def create_facet_indexes(
     *,
     req: FacetsIndexRequest,
     lake=Depends(get_lake),
+    _acl_guard: None = Depends(authorize_dataset_read),
     _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> FacetsIndexResponse:
     """Create scalar indexes on facet columns in bulk."""
@@ -149,6 +153,7 @@ async def create_facet_indexes(
 async def list_indices(
     name: str = Path(..., pattern=_NAME_PATTERN),
     *,
+    _acl_guard: None = Depends(authorize_dataset_read),
     _user: dict = Depends(require_role(Role.VIEWER)),
     lake=Depends(get_lake),
 ) -> ListIndicesResponse:
@@ -165,6 +170,7 @@ async def drop_index(
     name: str = Path(..., pattern=_NAME_PATTERN),
     index_name: str = Path(..., pattern=_INDEX_NAME_PATTERN),
     *,
+    _acl_guard: None = Depends(authorize_dataset_read),
     _user: dict = Depends(require_role(Role.EDITOR)),
     lake=Depends(get_lake),
 ) -> DropIndexResponse:

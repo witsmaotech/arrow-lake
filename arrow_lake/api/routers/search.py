@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Path
 
 from arrow_lake.api.auth_models import Role
-from arrow_lake.api.deps import get_checker, get_lake, require_role
+from arrow_lake.api.deps import authorize_dataset_read, get_checker, get_lake, require_role
 from arrow_lake.api.models.common import _NAME_PATTERN, arrow_table_to_response
 from arrow_lake.api.models.search import (
     EnsembleSearchRequest,
@@ -34,6 +34,7 @@ async def vector_search(
     req: VectorSearchRequest,
     lake=Depends(get_lake),
     _user: dict = Depends(require_role(Role.VIEWER)),
+    _acl_guard: None = Depends(authorize_dataset_read),
     checker=Depends(get_checker),
 ) -> VectorSearchResponse:
     """Vector similarity search on a dataset."""
@@ -66,6 +67,7 @@ async def full_text_search(
     req: FullTextSearchRequest,
     lake=Depends(get_lake),
     _user: dict = Depends(require_role(Role.VIEWER)),
+    _acl_guard: None = Depends(authorize_dataset_read),
     checker=Depends(get_checker),
 ) -> FullTextSearchResponse:
     """Full-text search on a dataset."""
@@ -97,6 +99,7 @@ async def hybrid_search(
     req: HybridSearchRequest,
     lake=Depends(get_lake),
     _user: dict = Depends(require_role(Role.VIEWER)),
+    _acl_guard: None = Depends(authorize_dataset_read),
     checker=Depends(get_checker),
 ) -> HybridSearchResponse:
     """Hybrid vector + full-text search (RRF fusion)."""
@@ -130,6 +133,7 @@ async def faceted_search(
     req: FacetedSearchRequest,
     lake=Depends(get_lake),
     _user: dict = Depends(require_role(Role.VIEWER)),
+    _acl_guard: None = Depends(authorize_dataset_read),
     checker=Depends(get_checker),
 ) -> FacetedSearchResponse:
     """Vector search with faceted counts."""
@@ -163,6 +167,7 @@ async def ensemble_search(
     req: EnsembleSearchRequest,
     lake=Depends(get_lake),
     _user: dict = Depends(require_role(Role.VIEWER)),
+    _acl_guard: None = Depends(authorize_dataset_read),
     checker=Depends(get_checker),
 ) -> EnsembleSearchResponse:
     """Ensemble multi-column vector search with RRF fusion."""

@@ -34,6 +34,8 @@ dependencies = [
     "boto3>=1.35",
     # HTTP client (Story 3.2)
     "httpx>=0.28",
+    # v1.10.7 WP1c: source-level SQL ACL enforcement (AST parse/qualify/rewrite)
+    "sqlglot>=25.0",
     # Multimodal ingestion (Stories 3.3-3.4)
     "Pillow>=10.4",
     "av>=12.0",

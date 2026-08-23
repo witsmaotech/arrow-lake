@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path
 from pydantic import BaseModel, Field
 
 from arrow_lake.api.auth_models import Role
-from arrow_lake.api.deps import get_lake, require_role
+from arrow_lake.api.deps import authorize_dataset_read, get_lake, require_role
 from arrow_lake.api.models.common import _NAME_PATTERN
 from arrow_lake.api.models.query import ExportRequest, ExportTaskResponse, ExportTaskStatusResponse
 from arrow_lake.api.tasks import TaskManager, spawn_background
@@ -24,6 +24,7 @@ async def export_dataset(
     *,
     req: ExportRequest,
     lake=Depends(get_lake),
+    _acl_guard: None = Depends(authorize_dataset_read),
     _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> ExportTaskResponse:
     """Export a dataset to Parquet or CSV (async, returns task_id)."""
@@ -53,6 +54,7 @@ async def export_dataset(
 async def get_export_status(
     name: str = Path(..., pattern=_NAME_PATTERN),
     task_id: str = Path(...),
+    _acl_guard: None = Depends(authorize_dataset_read),
     _user: dict = Depends(require_role(Role.VIEWER)),
 ) -> ExportTaskStatusResponse:
     """Check the status of an async export task."""
@@ -75,6 +77,7 @@ async def get_export_status(
 async def download_export(
     name: str = Path(..., pattern=_NAME_PATTERN),
     task_id: str = Path(...),
+    _acl_guard: None = Depends(authorize_dataset_read),
     _user: dict = Depends(require_role(Role.VIEWER)),
 ) -> None:
     """Download an exported file (only available after task completes)."""
@@ -139,6 +142,7 @@ async def export_to(
     *,
     req: ExportToRequest,
     lake=Depends(get_lake),
+    _acl_guard: None = Depends(authorize_dataset_read),
     _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> dict[str, Any]:
     """Export dataset to an external target via Daft (sync)."""
