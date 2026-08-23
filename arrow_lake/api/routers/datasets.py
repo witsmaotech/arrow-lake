@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, File, Path, Query, Request, UploadFile
 from arrow_lake.api.auth_models import Role
 from arrow_lake.api.deps import (
     authorize_dataset,
+    authorize_dataset_read,
     get_lake,
     require_permission,
     require_role,
@@ -771,6 +772,7 @@ async def get_dataset(
     name: str = Path(..., pattern=_NAME_PATTERN),
     *,
     _auth: None = Depends(require_role(Role.VIEWER)),
+    _acl_guard: None = Depends(authorize_dataset_read),
     lake=Depends(get_lake),
 ) -> DatasetInfo:
     """Get metadata for a specific dataset."""
@@ -802,6 +804,7 @@ async def get_dataset_schema(
     name: str = Path(..., pattern=_NAME_PATTERN),
     *,
     _auth: None = Depends(require_role(Role.VIEWER)),
+    _acl_guard: None = Depends(authorize_dataset_read),
     lake=Depends(get_lake),
 ) -> SchemaResponse:
     """Return the dataset's authoritative field schema (name + Arrow type).

@@ -112,7 +112,16 @@ class DuckDBConnectionPool:
         with self._lock:
             self._active_count += 1
 
-        return duckdb.connect(self._database)
+        try:
+            return duckdb.connect(self._database)
+        except Exception:
+            # v1.10.7 WP6 (review H11): a failed connect must give the permit
+            # and the slot back — otherwise every failure permanently shrinks
+            # the pool until acquire() times out forever.
+            with self._lock:
+                self._active_count = max(0, self._active_count - 1)
+            self._semaphore.release()
+            raise
 
     def release(self, conn: Any) -> None:
         """Release a connection back to the pool.

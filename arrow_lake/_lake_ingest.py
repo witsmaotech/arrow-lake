@@ -147,6 +147,23 @@ def _read_embed_status_redis(dataset_name: str) -> dict | None:
         return None
 
 
+class _DeadLetterStorageAdapter:
+    """Adapt LanceStorageManager to the DeadLetterWriter StorageWriter protocol.
+
+    write(table_name, table) → create-or-append on the Lance dataset.
+    """
+
+    def __init__(self, manager: Any) -> None:
+        self._manager = manager
+
+    def write(self, table_name: str, table: Any) -> int:
+        if self._manager.dataset_exists(table_name):
+            self._manager.append_dataset(table_name, table)
+        else:
+            self._manager.create_dataset(table_name, table)
+        return table.num_rows
+
+
 class _LakeIngestMixin:
     """Provides data ingestion, dataset management, quality filtering, and dedup."""
 
@@ -156,6 +173,38 @@ class _LakeIngestMixin:
             return self.get_dataset_version(name)
         except Exception:  # noqa: BLE001
             return None
+
+    def _make_ingestor(self, dataset_name: str | None = None, **extra_kwargs: Any):
+        """Construct an Ingestor with the quality gate wired (v1.10.7 WP5).
+
+        Review H9: Ingestor had a quality_gate hook but no construction site
+        ever passed one — the gate was dead code. Every ingest path now goes
+        through here. ``gate_mode`` defaults to shadow (count/log only);
+        target_schema is set for existing datasets so the schema stage can
+        validate appends against the real Lance schema.
+        """
+        from arrow_lake.ingest.ingestor import Ingestor
+        from arrow_lake.quality.gate import build_quality_gate
+
+        quality_cfg = getattr(self._config, "quality", None)
+        gate = None
+        try:
+            if quality_cfg is not None:
+                target_schema = None
+                if dataset_name:
+                    try:
+                        target_schema = self.open_dataset(dataset_name).schema
+                    except Exception:  # noqa: BLE001 — first write: no schema yet
+                        target_schema = None
+                gate = build_quality_gate(
+                    quality_cfg,
+                    target_schema=target_schema,
+                    dead_letter_writer=_DeadLetterStorageAdapter(self._get_storage()),
+                )
+        except Exception:  # noqa: BLE001 — gate wiring must never block ingest
+            logger.warning("quality_gate_wiring_failed", exc_info=True)
+            gate = None
+        return Ingestor(self._get_storage(), quality_gate=gate, **extra_kwargs)
 
     def ingest(
         self,
@@ -180,7 +229,7 @@ class _LakeIngestMixin:
         """
         from arrow_lake.ingest.ingestor import Ingestor
 
-        report = Ingestor(self._get_storage()).ingest(
+        report = self._make_ingestor(dataset_name).ingest(
             dataset_name, file_paths, transforms=transforms,
         )
         try:
@@ -259,7 +308,7 @@ class _LakeIngestMixin:
         """
         from arrow_lake.ingest.ingestor import Ingestor
 
-        report = Ingestor(self._get_storage()).ingest_batch(
+        report = self._make_ingestor(dataset_name).ingest_batch(
             dataset_name, file_paths, transforms=transforms,
         )
         try:
@@ -297,7 +346,7 @@ class _LakeIngestMixin:
         """
         from arrow_lake.ingest.ingestor import Ingestor
 
-        report = Ingestor(self._get_storage()).ingest_sql(
+        report = self._make_ingestor(dataset_name).ingest_sql(
             dataset_name,
             sql=sql,
             connection_url=connection_url,
@@ -340,7 +389,7 @@ class _LakeIngestMixin:
         """
         from arrow_lake.ingest.ingestor import Ingestor
 
-        report = Ingestor(self._get_storage()).ingest_kafka(
+        report = self._make_ingestor(dataset_name).ingest_kafka(
             dataset_name,
             bootstrap_servers=bootstrap_servers,
             topics=topics,
@@ -368,7 +417,7 @@ class _LakeIngestMixin:
         """Ingest data from an Apache Iceberg table."""
         from arrow_lake.ingest.ingestor import Ingestor
 
-        report = Ingestor(self._get_storage()).ingest_iceberg(
+        report = self._make_ingestor(dataset_name).ingest_iceberg(
             dataset_name, table_uri=table_uri, transforms=transforms,
         )
         self._lineage_after_ingest(
@@ -390,7 +439,7 @@ class _LakeIngestMixin:
         """Ingest data from a Delta Lake table."""
         from arrow_lake.ingest.ingestor import Ingestor
 
-        report = Ingestor(self._get_storage()).ingest_deltalake(
+        report = self._make_ingestor(dataset_name).ingest_deltalake(
             dataset_name, table_uri=table_uri, version=version, transforms=transforms,
         )
         self._lineage_after_ingest(
@@ -497,7 +546,7 @@ class _LakeIngestMixin:
         """
         from arrow_lake.ingest.ingestor import Ingestor
 
-        report = Ingestor(self._get_storage()).ingest_http(dataset_name, urls)
+        report = self._make_ingestor(dataset_name).ingest_http(dataset_name, urls)
         self._lineage_after_ingest(
             dataset_name, source_paths=urls, transform_type="ingest_http", actor=actor,
             lance_version=self._safe_version(dataset_name), total_rows=report.total_rows,
@@ -524,7 +573,7 @@ class _LakeIngestMixin:
         """
         from arrow_lake.ingest.ingestor import Ingestor
 
-        report = Ingestor(self._get_storage()).ingest_images(dataset_name, image_paths)
+        report = self._make_ingestor(dataset_name).ingest_images(dataset_name, image_paths)
         self._lineage_after_ingest(
             dataset_name, source_paths=image_paths, transform_type="ingest_images", actor=actor,
             lance_version=self._safe_version(dataset_name), total_rows=report.total_rows,
@@ -551,7 +600,7 @@ class _LakeIngestMixin:
         """
         from arrow_lake.ingest.ingestor import Ingestor
 
-        report = Ingestor(self._get_storage()).ingest_videos(dataset_name, video_paths)
+        report = self._make_ingestor(dataset_name).ingest_videos(dataset_name, video_paths)
         self._lineage_after_ingest(
             dataset_name, source_paths=video_paths, transform_type="ingest_videos", actor=actor,
             lance_version=self._safe_version(dataset_name), total_rows=report.total_rows,
@@ -579,7 +628,7 @@ class _LakeIngestMixin:
         """
         from arrow_lake.ingest.ingestor import Ingestor
 
-        report = Ingestor(self._get_storage()).ingest_mixed(dataset_name, sources)
+        report = self._make_ingestor(dataset_name).ingest_mixed(dataset_name, sources)
         self._lineage_after_ingest(
             dataset_name, source_descriptor={"modalities": {k: len(v) for k, v in sources.items()}},
             transform_type="ingest_mixed", actor=actor,
@@ -642,9 +691,7 @@ class _LakeIngestMixin:
                     "ingest.doc_type_classifier_disabled", err=str(exc)[:150],
                 )
 
-        report = Ingestor(
-            self._get_storage(), doc_type_classifier=doc_type_classifier,
-        ).ingest_documents(
+        report = self._make_ingestor(dataset_name, doc_type_classifier=doc_type_classifier).ingest_documents(
             dataset_name, pdf_paths,
             doc_config=doc_config,
             doc_type=doc_type,
@@ -721,7 +768,13 @@ class _LakeIngestMixin:
         threshold = getattr(self._config.embedding, "embed_async_threshold", 5000)
         with _EMBED_BG_LOCK:
             cur = _embed_bg.get(dataset_name)
-            already_running = cur is not None and cur.status == "running"
+        already_running = cur is not None and cur.status == "running"
+        if not already_running:
+            # v1.10.7 WP6: gunicorn runs N workers — a backfill started by a
+            # sibling worker is invisible in our process-local dict. Consult
+            # the Redis mirror before starting a duplicate (drop+add race).
+            mirrored = _read_embed_status_redis(dataset_name)
+            already_running = mirrored is not None and mirrored.get("status") == "running"
 
         embed_async_info: dict | None = None
         embed_fn = getattr(self, "embed_and_add", None)

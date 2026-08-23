@@ -160,6 +160,9 @@ class QualityFilterRegistry:
             rejected=rejected.num_rows,
             filter_results=tuple(filter_results),
             duration_seconds=time.monotonic() - t0,
+            # v1.10.7 WP5: row-level tables for exact dead-letter routing.
+            passed_table=passed,
+            rejected_table=rejected,
         )
 
     # ------------------------------------------------------------------

@@ -163,7 +163,20 @@ async def rate_limit_middleware_fn(
     # ── Redis path (multi-worker) ──
     rl = getattr(request.app.state, "redis_rate_limiter", None)
     if rl is not None:
-        res = rl.hit(client_ip, path, limit=rpm, window=int(_WINDOW_SECONDS))
+        # v1.10.7 WP3 (review H5): the sync redis pipeline must not run inline
+        # — a slow/hung redis would block the event loop up to its 5s socket
+        # timeout on EVERY request. Off-loop with a 100ms budget; a timeout
+        # (or redis error → None) falls back to the in-memory counter.
+        from arrow_lake.api.utils import run_sync
+
+        try:
+            res = await run_sync(
+                rl.hit, client_ip, path,
+                limit=rpm, window=int(_WINDOW_SECONDS),
+                timeout=0.1, label="rl_hit",
+            )
+        except TimeoutError:
+            res = None
         if res is not None:
             allowed, remaining, retry_after = res
             if not allowed:

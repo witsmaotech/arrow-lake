@@ -95,9 +95,16 @@ async def jwt_auth_middleware_fn(
 
     token = auth_header[7:]  # strip "Bearer "
     try:
-        payload = auth_service.verify_token(token)
+        # v1.10.7 WP3 (review H5): verify_token touches the redis blacklist
+        # (EXISTS) and the libSQL token_valid_after provider — run it off the
+        # event loop so one slow storage call can't stall this worker.
+        from arrow_lake.api.utils import run_sync
+
+        payload = await run_sync(
+            auth_service.verify_token, token, timeout=1.0, label="verify_token"
+        )
         request.state.user = payload
-    except ValueError as exc:
+    except (ValueError, TimeoutError) as exc:
         msg = str(exc)
         logger.debug("JWT verification failed: %s", msg)
         if "expired" in msg.lower():

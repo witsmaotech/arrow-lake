@@ -60,7 +60,7 @@ class TestSyncTagsToAcls:
 
     def test_syncs_multiple_tables(self, resolver: TagAwareACLResolver) -> None:
         with patch.object(resolver, "_list_gravitino_tables", return_value=["t1", "t2"]), \
-             patch.object(resolver, "_sync_table", return_value=2):
+             patch.object(resolver, "_sync_table", return_value=(2, {("t1", "viewer")})):
             total = resolver.sync_tags_to_acls()
         assert total == 4  # 2 per table
 
@@ -72,7 +72,7 @@ class TestSyncTagsToAcls:
             call_count += 1
             if call_count == 1:
                 raise RuntimeError("fail")
-            return 1
+            return 1, set()
 
         with patch.object(resolver, "_list_gravitino_tables", return_value=["t1", "t2"]), \
              patch.object(resolver, "_sync_table", side_effect=_sync_table_side_effect):
@@ -86,12 +86,12 @@ class TestSyncTagsToAcls:
 class TestSyncTable:
     def test_no_column_tags_returns_zero(self, resolver: TagAwareACLResolver) -> None:
         with patch.object(resolver, "_fetch_column_tags", return_value={}):
-            assert resolver._sync_table("tbl") == 0
+            assert resolver._sync_table("tbl") == (0, set())
 
     def test_no_schema_returns_zero(self, resolver: TagAwareACLResolver) -> None:
         with patch.object(resolver, "_fetch_column_tags", return_value={"email": ["pii"]}), \
              patch.object(resolver, "_get_table_schema", return_value=[]):
-            assert resolver._sync_table("tbl") == 0
+            assert resolver._sync_table("tbl") == (0, set())
 
     def test_pii_tag_restricts_to_admin(self, resolver: TagAwareACLResolver, checker: MagicMock) -> None:
         column_tags = {"email": ["pii"], "name": []}
@@ -99,10 +99,11 @@ class TestSyncTable:
 
         with patch.object(resolver, "_fetch_column_tags", return_value=column_tags), \
              patch.object(resolver, "_get_table_schema", return_value=schema):
-            count = resolver._sync_table("users")
+            count, keys = resolver._sync_table("users")
 
         # pii on email → visible_to=[admin], denied = {editor, viewer}
         assert count == 2  # one ACL for editor, one for viewer
+        assert keys == {("users", "editor"), ("users", "viewer")}
         checker.set_acl.assert_called()
 
     def test_sensitive_tag_restricts_to_admin_editor(self, resolver: TagAwareACLResolver, checker: MagicMock) -> None:
@@ -111,10 +112,11 @@ class TestSyncTable:
 
         with patch.object(resolver, "_fetch_column_tags", return_value=column_tags), \
              patch.object(resolver, "_get_table_schema", return_value=schema):
-            count = resolver._sync_table("employees")
+            count, keys = resolver._sync_table("employees")
 
         # sensitive on salary → visible_to=[admin, editor], denied = {viewer}
         assert count == 1
+        assert keys == {("employees", "viewer")}
         # Viewer should have salary hidden
         call_args = checker.set_acl.call_args[0][0]
         assert "salary" not in call_args.visible_columns
@@ -126,7 +128,7 @@ class TestSyncTable:
 
         with patch.object(resolver, "_fetch_column_tags", return_value=column_tags), \
              patch.object(resolver, "_get_table_schema", return_value=schema):
-            assert resolver._sync_table("tbl") == 0
+            assert resolver._sync_table("tbl") == (0, set())
 
     def test_set_acl_exception_continues(self, resolver: TagAwareACLResolver, checker: MagicMock) -> None:
         """If checker.set_acl raises, _sync_table continues and returns partial count."""
@@ -145,11 +147,12 @@ class TestSyncTable:
 
         with patch.object(resolver, "_fetch_column_tags", return_value=column_tags), \
              patch.object(resolver, "_get_table_schema", return_value=schema):
-            count = resolver._sync_table("tbl")
+            count, keys = resolver._sync_table("tbl")
 
         # pii → denied roles = {editor, viewer} → 2 ACLs
         # First set_acl fails, second succeeds
         assert count == 1
+        assert keys == {("tbl", "viewer")}  # only the successful one is tracked
 
 
 # ── _list_gravitino_tables ──
@@ -189,11 +192,11 @@ class TestFetchColumnTags:
 
         assert tags == {"email": ["pii"], "salary": ["sensitive"]}
 
-    def test_fetch_failure_returns_empty(self, resolver: TagAwareACLResolver) -> None:
+    def test_fetch_failure_raises(self, resolver: TagAwareACLResolver) -> None:
+        """v1.10.7 WP6: failures propagate so the syncer keeps last-known ACLs."""
         with patch("arrow_lake.quality.gravitino_tags.GravitinoTagService", side_effect=RuntimeError("fail")):
-            tags = resolver._fetch_column_tags("users")
-
-        assert tags == {}
+            with pytest.raises(RuntimeError):
+                resolver._fetch_column_tags("users")
 
 
 # ── _get_table_schema ──

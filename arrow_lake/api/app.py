@@ -105,7 +105,6 @@ def _check_duckdb_extensions() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Application lifespan: initialize Lake instance on startup, cleanup on shutdown."""
-    import signal
     import threading
 
     from arrow_lake import Lake
@@ -419,15 +418,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             retention=True,
         )
 
-    original_sigterm = signal.getsignal(signal.SIGTERM)
-    original_sigint = signal.getsignal(signal.SIGINT)
-
-    def _graceful_shutdown(signum: int, frame: Any) -> None:
-        logger.info("Received signal %s, initiating graceful shutdown", signum)
-        lake.shutdown()
-
-    signal.signal(signal.SIGTERM, _graceful_shutdown)
-    signal.signal(signal.SIGINT, _graceful_shutdown)
+    # v1.10.7 WP4 (review H7): no signal handlers here. Installing our own
+    # SIGTERM/SIGINT handler replaced uvicorn/gunicorn's graceful-stop
+    # handler, so the worker never stopped, gunicorn waited out its timeout
+    # and SIGKILLed it — lifespan finally never ran and in-flight requests
+    # died. Cleanup below (lifespan finally) is what uvicorn runs on a
+    # graceful stop; Lake.shutdown() is idempotent if anything else raced it.
 
     # Required synchronous setup is complete — flip readiness so probes return 200.
     app.state.ready = True
@@ -446,8 +442,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             sys_db.close()
         TaskManager.shutdown_redis_store()
         lake.shutdown()
-        signal.signal(signal.SIGTERM, original_sigterm)
-        signal.signal(signal.SIGINT, original_sigint)
 
 
 def _validate_auth_config(config: ArrowLakeConfig) -> None:

@@ -19,9 +19,27 @@ from arrow_lake.api._security_log import (
     log_security_event,
 )
 from arrow_lake.api.rate_limit import _extract_client_ip
+from arrow_lake.api.utils import run_sync
 from arrow_lake.config import ArrowLakeConfig
 
 logger = logging.getLogger(__name__)
+
+# v1.10.7 WP3 (review H5): Redis/libSQL calls on the auth hot path get a short
+# executor timeout — a slow storage call must degrade to the in-memory path,
+# not block the event loop for the redis socket timeout (5s). PBKDF2 is CPU
+# work (~100ms at 200k iters, unbounded under load) — its timeout only guards
+# against pathological hangs, so it stays generous.
+_AUTH_IO_TIMEOUT = 0.5
+_RL_IO_TIMEOUT = 0.2
+_PBKDF2_TIMEOUT = 30.0
+
+
+async def _rl_call(func, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+    """Run a sync RedisRateLimiter method off-loop; None = fall back in-memory."""
+    try:
+        return await run_sync(func, *args, timeout=_RL_IO_TIMEOUT, label=func.__name__, **kwargs)
+    except TimeoutError:
+        return None  # redis slow → caller's in-memory fallback
 
 # Lockout sentinel for the password-reset endpoint. Deliberately not a legal
 # username shape, so its failure counter can never merge with a real account's
@@ -81,7 +99,7 @@ async def _check_login_lockout(username: str, ip: str, request: Request | None =
     # v1.9.2 批5: prefer Redis (multi-worker); fall back to in-memory.
     rl = getattr(request.app.state, "redis_rate_limiter", None) if request is not None else None
     if rl is not None:
-        res = rl.check_login(username, ip)
+        res = await _rl_call(rl.check_login, username, ip)
         if res is not None:
             locked, n = res
             if locked:
@@ -104,9 +122,9 @@ async def _record_login_failure(username: str, ip: str, request: Request | None 
     # v1.9.2 批5: prefer Redis; fall back to in-memory.
     rl = getattr(request.app.state, "redis_rate_limiter", None) if request is not None else None
     if rl is not None:
-        res = rl.check_login(username, ip)  # ensure limiter still connected
+        res = await _rl_call(rl.check_login, username, ip)  # ensure limiter still connected
         if res is not None:
-            rl.record_login_failure(username, ip)
+            await _rl_call(rl.record_login_failure, username, ip)
             return
         # res is None → Redis hiccup → fall through
 
@@ -121,7 +139,7 @@ async def _reset_login_failures(username: str, ip: str, request: Request | None 
     """Clear login failures on successful login (Redis + in-memory best-effort)."""
     rl = getattr(request.app.state, "redis_rate_limiter", None) if request is not None else None
     if rl is not None:
-        rl.reset_login(username, ip)
+        await _rl_call(rl.reset_login, username, ip)
     key = f"{username}:{ip}"
     async with _login_lock:
         _LOGIN_FAILURES.pop(key, None)
@@ -153,7 +171,7 @@ def _get_auth_service(request: Request):
     )
 
 
-def _check_api_key(request: Request, config: ArrowLakeConfig) -> None:
+async def _check_api_key(request: Request, config: ArrowLakeConfig) -> None:
     """Validate authentication for the token exchange endpoint.
 
     - auth_mode='both': validate API key header.
@@ -186,9 +204,12 @@ def _check_api_key(request: Request, config: ArrowLakeConfig) -> None:
         if auth_header.startswith("Bearer "):
             svc = _get_auth_service(request)
             try:
-                svc.verify_token(auth_header[7:], require_refresh=True)
+                await run_sync(
+                    svc.verify_token, auth_header[7:], require_refresh=True,
+                    timeout=_AUTH_IO_TIMEOUT, label="verify_refresh_token",
+                )
                 return
-            except (ValueError, AttributeError):
+            except (ValueError, AttributeError, TimeoutError):
                 pass
         raise HTTPException(
             status_code=401,
@@ -223,7 +244,7 @@ async def exchange_token(request: Request) -> TokenPair:
     if not auth_cfg.jwt_secret_key:
         raise HTTPException(status_code=500, detail="JWT secret key not configured")
 
-    _check_api_key(request, config)
+    await _check_api_key(request, config)
 
     # v1.10.5 M2: deprecation nudge when the exchange rode the shared key
     # (both mode + matching key). No behaviour change.
@@ -275,7 +296,10 @@ async def password_reset(request: Request, req: PasswordResetRequest) -> dict:
         raise HTTPException(status_code=401, detail="重置链接无效、已使用或已过期")
     from arrow_lake.api.passwords import hash_password
 
-    if not store.update_user(user_id, password_hash=hash_password(req.new_password)):
+    new_hash = await run_sync(
+        hash_password, req.new_password, timeout=_PBKDF2_TIMEOUT, label="hash_password"
+    )
+    if not store.update_user(user_id, password_hash=new_hash):
         # User row vanished between the consume and the write (hard delete).
         raise HTTPException(status_code=404, detail="User not found")
     store.bump_token_valid_after(user_id)  # kill pre-reset JWTs now, not at TTL
@@ -301,14 +325,17 @@ async def login_with_password(request: Request, creds: LoginRequest) -> TokenPai
         raise HTTPException(status_code=503, detail="User auth requires system_db enabled")
     ip = _client_ip(request)
     await _check_login_lockout(creds.username, ip, request)
-    user = store.get_user_with_credentials(creds.username)
+    user = await run_sync(
+        store.get_user_with_credentials, creds.username,
+        timeout=_AUTH_IO_TIMEOUT, label="get_user_with_credentials",
+    )
     from arrow_lake.api.passwords import verify_password
 
-    if (
-        not user
-        or not user.get("is_active")
-        or not verify_password(creds.password, user.get("password_hash"))
-    ):
+    ok = user and user.get("is_active") and await run_sync(
+        verify_password, creds.password, user.get("password_hash"),
+        timeout=_PBKDF2_TIMEOUT, label="verify_password",
+    )
+    if not ok:
         await _record_login_failure(creds.username, ip, request)
         logger.warning("login_failed ip=%s", ip)
         await log_security_event(

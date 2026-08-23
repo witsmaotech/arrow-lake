@@ -179,6 +179,7 @@ async def kg_build_info(
     dataset: str,
     lake: Any = Depends(get_lake),
     _user: dict = Depends(require_role(Role.VIEWER)),
+    checker=Depends(get_checker),
 ) -> KGBuildInfoResponse:
     """Pre-build diagnostics: whether a prior KA build exists.
 
@@ -188,6 +189,7 @@ async def kg_build_info(
     ``map_reduce.json``/``fed_chunks.json``) → an incremental build can reuse
     prior extractions; otherwise this will be a first build.
     """
+    _enforce_read_acl(checker, _user, dataset)  # v1.10.7 WP1 leftover: deny-list on build-info
     from pathlib import Path
 
     from arrow_lake.knowledge_graph import ka_versioning

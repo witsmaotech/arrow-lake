@@ -95,15 +95,20 @@ class Ingestor(_FileIngestMixin, _MediaIngestMixin, _SourceIngestMixin):
     ) -> None:
         """Write a table to the dataset (create or append) and track the source."""
         if self._quality_gate is not None:
-            table, result = self._quality_gate.check(table, dataset_name=dataset_name)
+            gated, result = self._quality_gate.check(table, dataset_name=dataset_name)
             if result.rejected > 0:
                 import structlog
                 structlog.get_logger(__name__).info(
                     "quality_gate.rejections",
                     dataset=dataset_name,
+                    mode=getattr(self._quality_gate, "mode", "enforce"),
                     rejected=result.rejected,
-                    reasons=result.rejection_reasons,
+                    reasons=list(result.rejection_reasons),
                 )
+            # v1.10.7 WP5: shadow mode counts/logs but never drops rows;
+            # only enforce swaps the gated (filtered) table in.
+            if getattr(self._quality_gate, "mode", "enforce") == "enforce":
+                table = gated
 
         # Best-effort column-comment capture from the source file (Parquet
         # field metadata / CSV sidecar). Daft discards field metadata on

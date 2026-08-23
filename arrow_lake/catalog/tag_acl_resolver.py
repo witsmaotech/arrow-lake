@@ -11,6 +11,10 @@ from arrow_lake.config.gravitino import GravitinoConfig
 logger = structlog.get_logger(__name__)
 
 
+class _TagFetchUnavailable(Exception):
+    """Gravitino tag fetch failed for a table (keep previous ACL state)."""
+
+
 class TagAwareACLResolver:
     """Periodically reads Gravitino column-level tags and syncs them into the local
     ``PermissionChecker`` as column-level ACLs.
@@ -30,11 +34,17 @@ class TagAwareACLResolver:
         self._config = config
         self._checker = checker
         self._rules = config.tag_access_rules
+        # (table, role) pairs whose current ACL we installed — only these are
+        # eligible for removal when their tags lift (v1.10.7 WP6, review H12:
+        # manual admin-configured ACLs must never be reaped by the syncer).
+        self._tag_derived: set[tuple[str, str]] = set()
 
     def sync_tags_to_acls(self) -> int:
-        """Read all tables from Gravitino, resolve column tags, inject ACLs into PermissionChecker.
+        """Read all tables from Gravitino, resolve column tags, sync ACLs.
 
-        Returns the number of ACL entries created.
+        Returns the number of ACL entries created. Also REMOVES tag-derived
+        ACLs whose restrictions no longer apply (tag lifted) — the old
+        one-way sync left columns hidden forever (review H12).
         """
         if not self._rules:
             return 0
@@ -44,27 +54,53 @@ class TagAwareACLResolver:
             return 0
 
         count = 0
+        desired: set[tuple[str, str]] = set()
         for table_name in tables:
             try:
-                n = self._sync_table(table_name)
+                n, keys = self._sync_table(table_name)
                 count += n
+                desired |= keys
+            except _TagFetchUnavailable:
+                # Gravitino hiccup on THIS table: keep last-known state —
+                # treating a failed fetch as "no tags" would strip protections
+                logger.warning("tag_acl_resolver.tag_fetch_unavailable",
+                               table=table_name, exc_info=True)
+                desired |= {k for k in self._tag_derived if k[0] == table_name}
             except Exception:
                 logger.warning("tag_acl_resolver.table_sync_failed",
                                table=table_name, exc_info=True)
+                desired |= {k for k in self._tag_derived if k[0] == table_name}
+
+        # Recovery direction: tag-derived ACLs not desired this round go away.
+        for key in self._tag_derived - desired:
+            table, role = key
+            try:
+                if self._checker.delete_acl(table, role):
+                    logger.info("tag_acl_resolver.acl_removed", table=table, role=role)
+            except Exception:
+                logger.debug("tag_acl_resolver.remove_acl_failed",
+                             table=table, role=role)
+        self._tag_derived = desired
+
         logger.info("tag_acl_resolver.sync_complete", tables=len(tables), acls=count)
         return count
 
-    def _sync_table(self, table_name: str) -> int:
-        """Resolve tags for one table and set ACLs. Returns number of ACL entries set."""
+    def _sync_table(self, table_name: str) -> tuple[int, set[tuple[str, str]]]:
+        """Resolve tags for one table and set ACLs.
+
+        Returns (acl_count, tag_derived_keys). Raises _TagFetchUnavailable
+        when the tag fetch itself failed (distinct from "no tags") so the
+        caller keeps the previous round's state instead of lifting ACLs.
+        """
         from arrow_lake.api.rbac import DatasetACL
 
         column_tags = self._fetch_column_tags(table_name)
         if not column_tags:
-            return 0
+            return 0, set()
 
         schema = self._get_table_schema(table_name)
         if not schema:
-            return 0
+            return 0, set()
 
         all_columns = [col["name"] for col in schema]
 
@@ -83,9 +119,10 @@ class TagAwareACLResolver:
                     restricted_columns.setdefault(role, set()).add(col)
 
         if not restricted_columns:
-            return 0
+            return 0, set()
 
         count = 0
+        keys: set[tuple[str, str]] = set()
         for role, hidden_cols in restricted_columns.items():
             visible = frozenset(c for c in all_columns if c not in hidden_cols)
             try:
@@ -96,11 +133,12 @@ class TagAwareACLResolver:
                 )
                 self._checker.set_acl(acl)
                 count += 1
+                keys.add((table_name, role))
             except Exception:
                 logger.debug("tag_acl_resolver.set_acl_failed",
                              table=table_name, role=role)
 
-        return count
+        return count, keys
 
     def _list_gravitino_tables(self) -> list[str]:
         """List table names from Gravitino REST API."""
@@ -123,14 +161,17 @@ class TagAwareACLResolver:
             return []
 
     def _fetch_column_tags(self, table_name: str) -> dict[str, list[str]]:
-        """Fetch column-level tags for a table via Gravitino SDK."""
-        try:
-            from arrow_lake.quality.gravitino_tags import GravitinoTagService
+        """Fetch column-level tags for a table via Gravitino SDK.
 
-            svc = GravitinoTagService(self._config)
-            return svc.list_column_tags(table_name)
-        except Exception:
-            return {}
+        v1.10.7 WP6: a failed fetch raises (caller keeps last-known ACLs) —
+        the old blanket ``return {}`` was indistinguishable from "no tags"
+        and would have lifted restrictions on a transient error once the
+        recovery direction landed.
+        """
+        from arrow_lake.quality.gravitino_tags import GravitinoTagService
+
+        svc = GravitinoTagService(self._config)
+        return svc.list_column_tags(table_name, strict=True)
 
     def _get_table_schema(self, table_name: str) -> list[dict[str, Any]]:
         """Get table column schema from Gravitino."""

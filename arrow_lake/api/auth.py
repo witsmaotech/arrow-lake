@@ -50,7 +50,14 @@ async def api_key_middleware_fn(
         token = request.headers.get(header_name, "")
         if token:
             try:
-                resolved = identity_store.validate_token(token)
+                # v1.10.7 WP3 (review H5): libSQL read on EVERY token-bearing
+                # request — off the event loop with a short timeout.
+                from arrow_lake.api.utils import run_sync
+
+                resolved = await run_sync(
+                    identity_store.validate_token, token,
+                    timeout=1.0, label="validate_token",
+                )
             except Exception:  # noqa: BLE001 — fail-close handled by caller
                 resolved = None
             if resolved is not None:

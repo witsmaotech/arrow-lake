@@ -157,12 +157,12 @@ class TestApplyRowFilterFunction:
     def test_invalid_expression(self) -> None:
         table = _make_table(a=[1, 2])
         result = _apply_row_filter(table, "not a valid expression")
-        assert result.num_rows == 2  # returns unfiltered
+        assert result.num_rows == 0  # fail-closed (review H3, v1.10.7)
 
     def test_missing_column(self) -> None:
         table = _make_table(a=[1, 2])
         result = _apply_row_filter(table, "nonexistent > 5")
-        assert result.num_rows == 2  # returns unfiltered
+        assert result.num_rows == 0  # fail-closed (review H3, v1.10.7)
 
     def test_empty_table(self) -> None:
         table = _make_table(a=[])

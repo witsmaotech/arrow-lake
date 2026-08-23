@@ -1,8 +1,20 @@
-"""Tests for quality/gate.py — IngestionQualityGate check pipeline."""
+"""Tests for quality/gate.py — IngestionQualityGate check pipeline.
+
+v1.10.7 WP5 (review H9/H10): the gate is now WIRED into ingest, so these
+tests run the REAL pipeline (schema validation / content filters / scoring)
+instead of patching stage methods. Each historical bug is pinned:
+
+- bug ① partial schema rejection silently re-admitted the rejected rows;
+- bug ② score threshold crashed on _DummyReport (no .total) — dead code
+  until wiring, so nobody noticed;
+- bug ③ datasets without an ``id`` column never dead-lettered rejections
+  (rows silently dropped in enforce mode).
+"""
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pyarrow as pa
 import pytest
@@ -12,15 +24,6 @@ from arrow_lake.quality.gate import GateResult, IngestionQualityGate, _dicts_to_
 
 def _table() -> pa.Table:
     return pa.table({"id": [1, 2, 3], "text": ["a", "b", "c"]})
-
-
-def _mock_metrics():
-    """Create mock metric objects for patching."""
-    m1 = MagicMock()
-    m1.labels.return_value.inc = MagicMock()
-    m2 = MagicMock()
-    m2.labels.return_value.inc = MagicMock()
-    return m1, m2
 
 
 class TestGateResult:
@@ -41,84 +44,190 @@ class TestGateResult:
             r.total = 99  # type: ignore[misc]
 
 
-class TestIngestionQualityGate:
-    def test_check_no_checks_passes_all(self) -> None:
-        """When no checks are enabled, all rows pass."""
+def _registry() -> "QualityFilterRegistry":
+    from arrow_lake.quality.base import QualityFilterRegistry
+    from arrow_lake.quality.builtin import TextLengthFilter
+
+    reg = QualityFilterRegistry()
+    reg.register(TextLengthFilter(min_chars=1))
+    return reg
+
+
+class TestRealPipeline:
+    def test_no_checks_passes_all(self) -> None:
         gate = IngestionQualityGate()
-        m1, m2 = _mock_metrics()
-        with patch("arrow_lake.core.metrics.quality_check_total", m1), \
-             patch("arrow_lake.core.metrics.quality_reject_total", m2):
-            passed, result = gate.check(_table(), dataset_name="ds")
+        passed, result = gate.check(_table(), dataset_name="ds")
         assert result.total == 3
         assert result.passed == 3
         assert result.rejected == 0
-        assert result.pass_rate == 1.0
+        assert passed.num_rows == 3
 
-    def test_check_schema_rejection(self) -> None:
-        """Schema validation rejects invalid rows."""
-        schema = pa.schema([("id", pa.int64()), ("text", pa.string())])
-        gate = IngestionQualityGate(schema_mode="strict", target_schema=schema)
-        m1, m2 = _mock_metrics()
-        with patch("arrow_lake.core.metrics.quality_check_total", m1), \
-             patch("arrow_lake.core.metrics.quality_reject_total", m2), \
-             patch.object(gate, "_validate_schema", return_value=(_table().slice(0, 2), 1)):
-            passed, result = gate.check(_table(), dataset_name="ds")
-        assert result.schema_rejected == 1
-        assert "schema:1" in result.rejection_reasons
+    def test_partial_rejection_drops_bad_rows(self) -> None:
+        """bug ①: 1 of 3 rows fails a stage → exactly the 2 good rows pass.
 
-    def test_check_with_active_filters(self) -> None:
-        """Content filtering is applied when active_filters is set."""
-        gate = IngestionQualityGate(active_filters="dedup")
-        m1, m2 = _mock_metrics()
-        with patch("arrow_lake.core.metrics.quality_check_total", m1), \
-             patch("arrow_lake.core.metrics.quality_reject_total", m2), \
-             patch.object(gate, "_apply_filters", return_value=(_table().slice(0, 2), 1)):
-            _, result = gate.check(_table(), dataset_name="ds")
+        (Pinned via the real text_length filter — per-row type variance
+        can't exist inside one arrow column, so the filter stage is the
+        faithful partial-rejection path.) The old gate handed back the
+        FULL table whenever any row survived a stage.
+        """
+        dirty = pa.table({"id": [1, 2, 3], "text_content": ["ok", "", "also ok"]})
+        gate = IngestionQualityGate(
+            active_filters="text_length", filter_registry=_registry(),
+        )
+        passed, result = gate.check(dirty, dataset_name="ds")
+
         assert result.filter_rejected == 1
+        assert "filter:1" in result.rejection_reasons
+        assert passed.num_rows == 2
+        assert passed.column("id").to_pylist() == [1, 3]
 
-    def test_check_with_score_threshold(self) -> None:
-        """Score threshold rejects low-quality rows."""
+    def test_real_filter_rejects_short_text(self) -> None:
+        """Real registry path: text_length filter drops empty-text rows."""
+        dirty = pa.table({"id": [1, 2, 3], "text_content": ["ok", "", "also ok"]})
+        gate = IngestionQualityGate(
+            active_filters="text_length", filter_registry=_registry(),
+        )
+        passed, result = gate.check(dirty, dataset_name="ds")
+
+        assert result.filter_rejected == 1
+        assert passed.column("id").to_pylist() == [1, 3]
+
+    def test_schema_rejection_all_rows(self) -> None:
+        """Schema stage: string ids vs int64 target reject every row."""
+        schema = pa.schema([("id", pa.int64()), ("text", pa.string())])
+        dirty = pa.table({"id": ["1", "2"], "text": ["a", "b"]})
+        gate = IngestionQualityGate(schema_mode="strict", target_schema=schema)
+        passed, result = gate.check(dirty, dataset_name="ds")
+
+        assert result.schema_rejected == 2
+        assert passed.num_rows == 0
+
+    def test_score_threshold_runs_without_crash(self) -> None:
+        """bug ②: _DummyReport had no .total → AttributeError. Real path must
+        complete and (survivors all score 1.0) reject nothing at 0.5."""
         gate = IngestionQualityGate(min_quality_score=0.5)
-        m1, m2 = _mock_metrics()
-        with patch("arrow_lake.core.metrics.quality_check_total", m1), \
-             patch("arrow_lake.core.metrics.quality_reject_total", m2), \
-             patch.object(gate, "_apply_score_threshold", return_value=(_table().slice(0, 2), 1)):
-            _, result = gate.check(_table(), dataset_name="ds")
-        assert result.score_rejected == 1
+        passed, result = gate.check(_table(), dataset_name="ds")
+        assert result.score_rejected == 0
+        assert passed.num_rows == 3
 
-    def test_check_empty_table(self) -> None:
+    def test_empty_table(self) -> None:
         gate = IngestionQualityGate()
         empty = pa.table({"id": pa.array([], type=pa.int64())})
-        m1, m2 = _mock_metrics()
-        with patch("arrow_lake.core.metrics.quality_check_total", m1), \
-             patch("arrow_lake.core.metrics.quality_reject_total", m2):
-            _, result = gate.check(empty, dataset_name="")
+        _, result = gate.check(empty, dataset_name="")
         assert result.total == 0
-        assert result.pass_rate == 0.0
 
-    def test_dead_letter_routing(self) -> None:
-        """Rejected rows are routed to dead letter writer."""
-        mock_writer = MagicMock()
-        gate = IngestionQualityGate(dead_letter_writer=mock_writer)
-        m1, m2 = _mock_metrics()
-        passed = _table().slice(0, 1)  # only 1 row passes
-        with patch("arrow_lake.core.metrics.quality_check_total", m1), \
-             patch("arrow_lake.core.metrics.quality_reject_total", m2), \
-             patch.object(gate, "_route_to_dead_letter") as mock_route:
-            gate.check(_table(), dataset_name="ds")
-            # Force rejected > 0 by mocking schema validation
-        # Test the route method directly
-        gate._route_to_dead_letter(_table(), passed, "ds")
-        mock_writer.write.assert_called_once()
+    def test_empty_schema_rejection_builds_typed_empty_table(self) -> None:
+        """All rows rejected → empty result table must carry the target schema
+        (typed columns, not null-typed) so downstream Lance writes don't choke."""
+        schema = pa.schema([("id", pa.int64()), ("text", pa.string())])
+        dirty = pa.table({"id": ["x", "y"], "text": ["a", "b"]})
+        gate = IngestionQualityGate(schema_mode="strict", target_schema=schema)
+        passed, result = gate.check(dirty, dataset_name="ds")
+        assert result.schema_rejected == 2
+        assert passed.num_rows == 0
+        assert passed.schema.field("id").type == pa.int64()
+
+
+class TestDeadLetter:
+    def test_dead_letter_without_id_column(self) -> None:
+        """bug ③: no ``id`` column → old gate returned early and the rejected
+        rows vanished. Now every stage contributes its exact rejected rows."""
+        writer = MagicMock()
+        dirty = pa.table({"text_content": ["ok", "", "also ok"], "kind": ["a", "b", "c"]})
+        gate = IngestionQualityGate(
+            active_filters="text_length", filter_registry=_registry(),
+            dead_letter_writer=writer,
+        )
+        passed, result = gate.check(dirty, dataset_name="ds")
+
+        assert result.filter_rejected == 1
+        writer.write.assert_called_once()
+        args = writer.write.call_args[0]
+        rejected_table = args[1]
+        assert rejected_table.num_rows == 1
+        assert rejected_table.column("text_content").to_pylist() == [""]
+
+    def test_dead_letter_schema_rejected_rows_exact(self) -> None:
+        writer = MagicMock()
+        schema = pa.schema([("id", pa.int64()), ("text", pa.string())])
+        dirty = pa.table({"id": ["1", "bad", "3"], "text": ["a", "b", "c"]})
+        gate = IngestionQualityGate(
+            schema_mode="strict", target_schema=schema, dead_letter_writer=writer,
+        )
+        passed, result = gate.check(dirty, dataset_name="ds")
+
+        assert result.schema_rejected == 3
+        writer.write.assert_called_once()
+        rejected_table = writer.write.call_args[0][1]
+        assert rejected_table.num_rows == 3
+        # original values survive (tolerant conversion keeps "bad" as-is)
+        assert "bad" in rejected_table.column("id").to_pylist()
 
     def test_no_dead_letter_when_all_pass(self) -> None:
-        mock_writer = MagicMock()
-        gate = IngestionQualityGate(dead_letter_writer=mock_writer)
-        m1, m2 = _mock_metrics()
-        with patch("arrow_lake.core.metrics.quality_check_total", m1), \
-             patch("arrow_lake.core.metrics.quality_reject_total", m2):
-            gate.check(_table(), dataset_name="ds")
-        mock_writer.write.assert_not_called()
+        writer = MagicMock()
+        gate = IngestionQualityGate(dead_letter_writer=writer)
+        gate.check(_table(), dataset_name="ds")
+        writer.write.assert_not_called()
+
+
+class TestShadowVsEnforce:
+    def _ingestor_with(self, gate) -> tuple:
+        from arrow_lake.ingest.ingestor import Ingestor
+
+        manager = MagicMock()
+        manager.dataset_exists.return_value = False
+        ing = Ingestor(manager, quality_gate=gate)
+        return ing, manager
+
+    def _filter_gate(self, mode: str) -> IngestionQualityGate:
+        return IngestionQualityGate(
+            mode=mode, active_filters="text_length", filter_registry=_registry(),
+        )
+
+    def test_shadow_keeps_all_rows(self) -> None:
+        """Shadow mode: rows still written, rejections only counted/logged."""
+        dirty = pa.table({"id": [1, 2, 3], "text_content": ["ok", "", "also ok"]})
+        ing, manager = self._ingestor_with(self._filter_gate("shadow"))
+
+        ing._write_table("ds", dirty, [], "test.csv")
+        written = manager.create_dataset.call_args[0][1]
+        assert written.num_rows == 3  # shadow: nothing dropped
+
+    def test_enforce_drops_bad_rows(self) -> None:
+        dirty = pa.table({"id": [1, 2, 3], "text_content": ["ok", "", "also ok"]})
+        ing, manager = self._ingestor_with(self._filter_gate("enforce"))
+
+        ing._write_table("ds", dirty, [], "test.csv")
+        written = manager.create_dataset.call_args[0][1]
+        assert written.num_rows == 2  # enforce: rejected rows never written
+
+
+class TestGateFactory:
+    def test_build_from_config_shadow_default(self) -> None:
+        from arrow_lake.quality.gate import build_quality_gate
+
+        cfg = SimpleNamespace(gate_mode="shadow", schema_validation="strict",
+                              active_filters="", filter_mode="all",
+                              min_quality_score=0.0, enabled=True)
+        gate = build_quality_gate(cfg)
+        assert gate is not None
+        assert gate.mode == "shadow"
+
+    def test_build_returns_none_when_off(self) -> None:
+        from arrow_lake.quality.gate import build_quality_gate
+
+        cfg = SimpleNamespace(gate_mode="off", schema_validation="lenient",
+                              active_filters="", filter_mode="all",
+                              min_quality_score=0.0, enabled=True)
+        assert build_quality_gate(cfg) is None
+
+    def test_build_returns_none_when_quality_disabled(self) -> None:
+        from arrow_lake.quality.gate import build_quality_gate
+
+        cfg = SimpleNamespace(gate_mode="shadow", schema_validation="lenient",
+                              active_filters="", filter_mode="all",
+                              min_quality_score=0.0, enabled=False)
+        assert build_quality_gate(cfg) is None
 
 
 class TestDictsToTable:
@@ -127,6 +236,7 @@ class TestDictsToTable:
         result = _dicts_to_table([], schema)
         assert result.num_rows == 0
         assert "id" in result.column_names
+        assert result.schema.field("id").type == pa.int64()
 
     def test_with_data(self) -> None:
         schema = pa.schema([("id", pa.int64()), ("name", pa.string())])

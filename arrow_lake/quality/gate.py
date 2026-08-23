@@ -1,9 +1,21 @@
-"""Ingestion quality gate — pre-write quality checks for incoming data."""
+"""Ingestion quality gate — pre-write quality checks for incoming data.
+
+v1.10.7 WP5 (review H9/H10): the gate is wired into every ingest path via
+``build_quality_gate`` + ``Ingestor(quality_gate=...)``. ``mode`` selects the
+policy: ``shadow`` (default — count/log only, rows unchanged) or ``enforce``
+(drop/reject). The three historical bugs are fixed here:
+
+1. partial schema rejection re-admitted the rejected rows;
+2. the score threshold crashed on a report stub with no ``.total``;
+3. datasets without an ``id`` column never dead-lettered rejections — every
+   stage now contributes its exact rejected rows, no id-diffing.
+"""
 
 from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from typing import Any
 
 import pyarrow as pa
 import structlog
@@ -34,25 +46,40 @@ class IngestionQualityGate:
     2. Content filtering (reuses QualityFilterRegistry)
     3. Quality scoring threshold (reuses compute_quality_scores)
 
-    Rejected rows are optionally routed to dead-letter storage.
+    Rejected rows are routed to dead-letter storage with their exact row
+    content (each stage knows precisely which rows it dropped).
     """
 
     def __init__(
         self,
         *,
+        mode: str = "enforce",
         schema_mode: str = "lenient",
         active_filters: str = "",
         filter_mode: str = "all",
         min_quality_score: float = 0.0,
+        none_score_policy: str = "pass",
         dead_letter_writer: Any | None = None,
         target_schema: pa.Schema | None = None,
+        filter_registry: Any | None = None,
     ) -> None:
+        self._mode = mode
         self._schema_mode = schema_mode
         self._active_filters = active_filters
         self._filter_mode = filter_mode
         self._min_quality_score = min_quality_score
+        self._none_score_policy = none_score_policy
         self._dead_letter_writer = dead_letter_writer
         self._target_schema = target_schema
+        # A registry pre-loaded with the configured builtin filters (see
+        # build_quality_gate). Bare QualityFilterRegistry() registers nothing,
+        # so active_filters alone would be a silent no-op.
+        self._filter_registry = filter_registry
+
+    @property
+    def mode(self) -> str:
+        """``shadow`` = count/log only; ``enforce`` = drop rejected rows."""
+        return self._mode
 
     def check(self, table: pa.Table, *, dataset_name: str = "") -> tuple[pa.Table, GateResult]:
         """Run all quality checks on table. Returns (passed_table, result)."""
@@ -65,30 +92,36 @@ class IngestionQualityGate:
         score_rejected = 0
         reasons: list[str] = []
         current = table
+        dead_letter_batches: list[pa.Table] = []
 
         # ── Stage 1: Schema validation ──
         if self._target_schema is not None:
-            current, n_schema_rej = self._validate_schema(current)
+            current, n_schema_rej, rejected_rows = self._validate_schema(current)
             schema_rejected = n_schema_rej
             if schema_rejected > 0:
                 reasons.append(f"schema:{schema_rejected}")
-        elif current.num_rows == 0:
-            schema_rejected = total_rows
+                if rejected_rows is not None and rejected_rows.num_rows > 0:
+                    dead_letter_batches.append(rejected_rows)
+        elif current.num_rows == 0 and total_rows == 0:
             reasons.append("schema:empty_table")
 
         # ── Stage 2: Content filtering ──
         if self._active_filters:
-            current, n_filter_rej = self._apply_filters(current, dataset_name)
+            current, n_filter_rej, filter_rejected_rows = self._apply_filters(current, dataset_name)
             filter_rejected = n_filter_rej
             if filter_rejected > 0:
                 reasons.append(f"filter:{filter_rejected}")
+                if filter_rejected_rows is not None and filter_rejected_rows.num_rows > 0:
+                    dead_letter_batches.append(filter_rejected_rows)
 
         # ── Stage 3: Quality scoring ──
         if self._min_quality_score > 0.0 and current.num_rows > 0:
-            current, n_score_rej = self._apply_score_threshold(current)
+            current, n_score_rej, score_rejected_rows = self._apply_score_threshold(current)
             score_rejected = n_score_rej
             if score_rejected > 0:
                 reasons.append(f"score:{score_rejected}")
+                if score_rejected_rows is not None and score_rejected_rows.num_rows > 0:
+                    dead_letter_batches.append(score_rejected_rows)
 
         # ── Metrics ──
         passed = current.num_rows
@@ -100,11 +133,20 @@ class IngestionQualityGate:
         for reason in reasons:
             quality_reject_total.labels(
                 dataset=dataset_name or "_unknown", reason=reason
-            ).inc(total_rows - passed)
+            ).inc(rejected)
 
-        # ── Dead letter ──
+        if self._mode == "shadow" and rejected > 0:
+            logger.info(
+                "quality_gate.shadow_rejections",
+                dataset=dataset_name,
+                rejected=rejected,
+                reasons=list(reasons),
+                note="shadow mode: rows pass through unchanged",
+            )
+
+        # ── Dead letter: exact rejected rows from every stage ──
         if rejected > 0 and self._dead_letter_writer is not None:
-            self._route_to_dead_letter(table, current, dataset_name)
+            self._route_to_dead_letter(dead_letter_batches, dataset_name)
 
         result = GateResult(
             total=total_rows,
@@ -121,8 +163,15 @@ class IngestionQualityGate:
 
     # ── Stage implementations ──
 
-    def _validate_schema(self, table: pa.Table) -> tuple[pa.Table, int]:
-        """Run schema validation and return (valid_table, rejected_count)."""
+    def _validate_schema(
+        self, table: pa.Table
+    ) -> tuple[pa.Table, int, pa.Table | None]:
+        """Run schema validation.
+
+        Returns (valid_table, rejected_count, rejected_rows_table). Bug ① fix:
+        a PARTIAL rejection returns only the valid rows — the old code handed
+        back the full table whenever at least one row survived.
+        """
         from arrow_lake.quality.schema_validation import SchemaValidationGate
 
         gate = SchemaValidationGate(mode=self._schema_mode)
@@ -131,82 +180,168 @@ class IngestionQualityGate:
             {col: rows[col][i] for col in rows}
             for i in range(table.num_rows)
         ]
-        valid, rejected = gate.validate(row_list, self._target_schema)
-        if not valid:
-            return _dicts_to_table(valid, self._target_schema), len(rejected)
-        return table, 0
+        valid, rejected_rows = gate.validate(row_list, self._target_schema)
+        n_rejected = table.num_rows - len(valid)
+        if n_rejected == 0:
+            return table, 0, None
+        rejected_table = _dicts_to_table(rejected_rows, self._target_schema)
+        return _dicts_to_table(valid, self._target_schema), n_rejected, rejected_table
 
-    def _apply_filters(self, table: pa.Table, dataset_name: str) -> tuple[pa.Table, int]:
-        """Run quality filters and return (passed_table, rejected_count)."""
+    def _apply_filters(
+        self, table: pa.Table, dataset_name: str
+    ) -> tuple[pa.Table, int, pa.Table | None]:
+        """Run quality filters; the report carries the exact rejected rows."""
         from arrow_lake.quality.base import QualityFilterRegistry
 
-        registry = QualityFilterRegistry()
+        registry = self._filter_registry or QualityFilterRegistry()
         report = registry.apply_all(table, self._active_filters, mode=self._filter_mode)
-        if report.passed_count < table.num_rows:
-            return report.passed_table, report.rejected_count
-        return table, 0
+        if report.rejected == 0:
+            return table, 0, None
+        return report.passed_table or table, report.rejected, report.rejected_table
 
-    def _apply_score_threshold(self, table: pa.Table) -> tuple[pa.Table, int]:
-        """Filter rows below quality score threshold."""
+    def _apply_score_threshold(
+        self, table: pa.Table
+    ) -> tuple[pa.Table, int, pa.Table | None]:
+        """Filter rows below the quality-score threshold.
+
+        Bug ② fix: a real ``QualityReport`` (the stub had no ``.total`` and
+        crashed compute_quality_scores). Rows whose score is None follow
+        ``none_score_policy``: ``pass`` (default, counted) or ``reject``.
+        """
+        from arrow_lake.quality.models import QualityReport
         from arrow_lake.quality.scoring import compute_quality_scores
 
-        scored = compute_quality_scores(table, _DummyReport())
+        report = QualityReport(total=table.num_rows, rejected=0)
+        scored = compute_quality_scores(table, report)
         scores = scored.column("quality_score")
-        mask = [
-            v.as_py() is not None and v.as_py() >= self._min_quality_score
-            for v in scores
-        ]
+        none_passed = 0
+        mask: list[bool] = []
+        for v in scores:
+            val = v.as_py()
+            if val is None:
+                keep = self._none_score_policy == "pass"
+                none_passed += 1 if keep else 0
+                mask.append(keep)
+            else:
+                mask.append(val >= self._min_quality_score)
         filtered = scored.filter(mask)
-        if "quality_score" in table.column_names:
+        if "quality_score" not in table.column_names:
             filtered = filtered.drop_columns(["quality_score"])
-        return filtered, table.num_rows - filtered.num_rows
+        n_rejected = table.num_rows - filtered.num_rows
+        if n_rejected == 0:
+            if none_passed:
+                logger.info(
+                    "quality_gate.none_score_passed",
+                    dataset_hint=none_passed,
+                    policy=self._none_score_policy,
+                )
+            return table, 0, None
+        rejected_rows = scored.filter([not m for m in mask])
+        if "quality_score" not in table.column_names:
+            rejected_rows = rejected_rows.drop_columns(["quality_score"])
+        return filtered, n_rejected, rejected_rows
 
     def _route_to_dead_letter(
-        self, original: pa.Table, passed: pa.Table, dataset_name: str
+        self, rejected_batches: list[pa.Table], dataset_name: str
     ) -> None:
-        """Write rejected rows to dead letter storage."""
-        try:
-            if passed.num_rows == 0:
-                rejected = original
-            else:
-                passed_ids = set()
-                if "id" in original.column_names:
-                    passed_ids = {
-                        v.as_py() for v in passed.column("id")
-                    }
-                    rejected_rows = [
-                        i for i in range(original.num_rows)
-                        if original.column("id")[i].as_py() not in passed_ids
-                    ]
-                else:
-                    return
-                if not rejected_rows:
-                    return
-                rejected = original.take(rejected_rows)
+        """Write each stage's rejected rows to dead letter storage.
 
-            self._dead_letter_writer.write(dataset_name, rejected, "quality_gate")
-        except Exception:
-            logger.debug("quality_gate.dead_letter_failed", dataset=dataset_name, exc_info=True)
+        Bug ③ fix: the old implementation diffed by an ``id`` column and
+        silently dropped rejections for id-less datasets. Stages now hand
+        over their exact rejected rows — no id required.
+        """
+        for batch in rejected_batches:
+            if batch.num_rows == 0:
+                continue
+            try:
+                self._dead_letter_writer.write(dataset_name, batch, "quality_gate")
+            except Exception:
+                logger.warning(
+                    "quality_gate.dead_letter_failed", dataset=dataset_name, exc_info=True
+                )
+
+
+def build_quality_gate(
+    config: Any,
+    *,
+    target_schema: pa.Schema | None = None,
+    dead_letter_writer: Any | None = None,
+) -> IngestionQualityGate | None:
+    """Construct the gate from a QualityConfig (v1.10.7 WP5 wiring).
+
+    Returns None when the gate is off (``gate_mode="off"`` or quality
+    disabled) so callers keep their no-gate fast path. Mirrors
+    ``Lake.quality_filter``'s builtin registration so ``active_filters``
+    actually resolves (a bare registry knows no filter names).
+    """
+    mode = str(getattr(config, "gate_mode", "shadow"))
+    if mode == "off" or not getattr(config, "enabled", True):
+        return None
+
+    from arrow_lake.quality.base import QualityFilterRegistry
+    from arrow_lake.quality.builtin import ImageResolutionFilter, TextLengthFilter
+
+    registry = QualityFilterRegistry()
+    active = str(getattr(config, "active_filters", "") or "")
+    if "text_length" in active:
+        registry.register(TextLengthFilter(
+            min_chars=int(getattr(config, "text_min_chars", 1)),
+            max_chars=getattr(config, "text_max_chars", None),
+        ))
+    if "image_resolution" in active:
+        registry.register(ImageResolutionFilter(
+            min_width=int(getattr(config, "image_min_width", 64)),
+            min_height=int(getattr(config, "image_min_height", 64)),
+        ))
+
+    return IngestionQualityGate(
+        mode=mode,
+        schema_mode=str(getattr(config, "schema_validation", "lenient")),
+        active_filters=active,
+        filter_mode=str(getattr(config, "filter_mode", "all")),
+        min_quality_score=float(getattr(config, "min_quality_score", 0.0) or 0.0),
+        dead_letter_writer=dead_letter_writer,
+        target_schema=target_schema,
+        filter_registry=registry,
+    )
 
 
 def _dicts_to_table(rows: list[dict], schema: pa.Schema) -> pa.Table:
-    """Convert a list of dicts to a PyArrow Table matching the given schema."""
+    """Convert a list of dicts to a PyArrow Table matching the given schema.
+
+    Rejected rows may hold values that don't fit the target type (that's why
+    they were rejected) — per-column typed conversion falls back to inferred
+    types so the dead-letter batch keeps the original value instead of
+    crashing the gate.
+    """
     if not rows:
-        return pa.table({f.name: [] for f in schema})
+        # Explicit types so an all-rejected batch still yields a typed empty
+        # table (null-typed columns break downstream Lance writes).
+        return pa.table(
+            {f.name: pa.array([], type=f.type) for f in schema}, schema=schema
+        )
     cols: dict[str, list] = {f.name: [] for f in schema}
+    extra: dict[str, list] = {}
+    schema_names = set(schema.names)
     for row in rows:
         for field in schema:
             cols[field.name].append(row.get(field.name))
-    return pa.table(cols, schema=schema)
-
-
-class _DummyReport:
-    """Minimal report stub for compute_quality_scores compatibility."""
-
-    passed_count = 0
-    rejected_count = 0
-    passed_table: pa.Table | None = None
-    rejected_table: pa.Table | None = None
-
-
-from typing import Any  # noqa: E402 — needed for forward reference
+        for key in row:
+            if key not in schema_names:
+                extra.setdefault(key, []).append(row[key])
+    arrays: dict[str, pa.Array] = {}
+    for field in schema:
+        try:
+            arrays[field.name] = pa.array(cols[field.name], type=field.type)
+        except (pa.ArrowInvalid, pa.ArrowTypeError, pa.ArrowNotImplementedError):
+            arrays[field.name] = pa.array(cols[field.name])
+    try:
+        table = pa.table(arrays, schema=pa.schema(
+            [pa.field(n, arrays[n].type) for n in schema.names]
+        ))
+    except (pa.ArrowInvalid, pa.ArrowTypeError):
+        table = pa.table(arrays)
+    # Preserve metadata columns like _rejection_reason for dead-lettering.
+    for key, values in extra.items():
+        table = table.append_column(key, pa.array(values))
+    return table

@@ -9,6 +9,7 @@ from arrow_lake.config._enums import (
     EmbeddingBackend,
     FilterMode,
     ModelSource,
+    QualityGateMode,
     SchemaValidationMode,
 )
 
@@ -111,6 +112,11 @@ class QualityConfig(BaseModel):
     text_max_chars: int | None = None
     image_min_width: int = 64
     image_min_height: int = 64
+    # v1.10.7 WP5 (review H9): ingestion quality gate wiring. Default shadow —
+    # counts, logs and dead-letters but never drops rows; enforce lands with
+    # the MS5 five-dimension gate.
+    gate_mode: QualityGateMode = QualityGateMode.SHADOW
+    min_quality_score: float = 0.0
 
     # NeMo Curator (Sprint 9, Story 8.5)
     # DEPRECATED (defined but never read by code; kept for compat): NeMoCuratorFilter 类未注册,半成品

@@ -22,6 +22,7 @@ from enum import StrEnum
 from typing import Any, Callable, ClassVar, Coroutine
 
 from arrow_lake.api._redis_task_store import RedisTaskStore
+from arrow_lake.api.utils import ingest_executor
 
 logger = logging.getLogger(__name__)
 
@@ -427,9 +428,12 @@ class TaskManager:
             if asyncio.iscoroutinefunction(func):
                 coro = func(*args, **kwargs)
             else:
+                # v1.10.7 WP2 (review H8): the shared default executor is what
+                # run_sync uses — heavy ingest there starved every route. The
+                # dedicated ingest pool keeps saturation impact local to ingest.
                 loop = asyncio.get_running_loop()
                 coro = loop.run_in_executor(
-                    None, functools.partial(func, *args, **kwargs),
+                    ingest_executor, functools.partial(func, *args, **kwargs),
                 )
             # Bound the run time as a backstop: a hung sync step (no client-side
             # timeout) must still transition to FAILED instead of idling in

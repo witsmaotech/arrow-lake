@@ -169,6 +169,12 @@ workflow_retries_total: Counter = Counter(
 
 # --- Phase 3: DuckDB Session Pool Metrics ---
 
+ingest_executor_active_threads: Gauge = Gauge(
+    "arrow_lake_ingest_executor_active_threads",
+    "In-flight submissions (running + queued) on the ingest/background pool.",
+    registry=REGISTRY,
+)
+
 duckdb_pool_active_sessions: Gauge = Gauge(
     "arrow_lake_duckdb_pool_active_sessions",
     "Number of currently active DuckDB sessions.",

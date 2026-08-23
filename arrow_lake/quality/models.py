@@ -52,6 +52,10 @@ class QualityReport:
     filter_results: tuple[FilterResult, ...] = ()
     schema_rejected: int = 0
     duration_seconds: float = 0.0
+    # v1.10.7 WP5 (review H10): optional row-level tables so the ingestion
+    # gate can dead-letter the exact rejected rows without diffing by id.
+    passed_table: Any | None = None
+    rejected_table: Any | None = None
 
     def overall_pass_rate(self) -> float:
         """Return overall pass rate as a percentage."""

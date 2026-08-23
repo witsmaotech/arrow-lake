@@ -82,6 +82,20 @@ class FilterMode(StrEnum):
     ANY = "any"
 
 
+class QualityGateMode(StrEnum):
+    """Ingestion quality gate policy (v1.10.7 WP5).
+
+    OFF: gate not constructed (ingest fast path unchanged).
+    SHADOW: gate runs, counts and dead-letters, but rows pass through —
+    the observability baseline before enforce (MS5 flips the default).
+    ENFORCE: rejected rows are dropped before the Lance write.
+    """
+
+    OFF = "off"
+    SHADOW = "shadow"
+    ENFORCE = "enforce"
+
+
 class LLMProviderType(StrEnum):
     """Supported LLM providers for RAG generation."""
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from typing import Any
@@ -13,6 +14,37 @@ import structlog
 _log = structlog.get_logger(__name__)
 
 _DEFAULT_TIMEOUT = 300
+
+
+class CountingThreadPoolExecutor(ThreadPoolExecutor):
+    """ThreadPoolExecutor tracking in-flight submissions (v1.10.7 WP2).
+
+    ``active`` counts submitted-but-not-yet-completed work items (running +
+    queued) — the pressure signal exported as a Prometheus gauge. CPython has
+    no public accessor for this, hence the submit/done_callback pair.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        self._in_flight = 0
+        self._count_lock = threading.Lock()
+        super().__init__(*args, **kwargs)
+
+    def submit(self, fn: Any, /, *args: Any, **kwargs: Any) -> Any:  # type: ignore[override]
+        fut = super().submit(fn, *args, **kwargs)
+        with self._count_lock:
+            self._in_flight += 1
+        fut.add_done_callback(self._mark_done)
+        return fut
+
+    def _mark_done(self, _fut: Any) -> None:
+        with self._count_lock:
+            self._in_flight -= 1
+
+    @property
+    def active(self) -> int:
+        with self._count_lock:
+            return self._in_flight
+
 
 # Dedicated pool for OLAP/DuckDB queries. A slow/blocked scan (e.g. the native
 # lance scanner stalled in D-state IO) cannot be interrupted from Python — the
@@ -26,6 +58,30 @@ olap_executor = ThreadPoolExecutor(
     max_workers=max(4, os.cpu_count() or 4),
     thread_name_prefix="olap",
 )
+
+# Dedicated pool for async ingest / background task work (v1.10.7 WP2, review
+# H8). run_background used to dispatch sync funcs to the asyncio default
+# executor — the same pool run_sync uses — so ≥14 concurrent heavy ingests
+# starved every route (2026-08-04 freeze pattern's residual entry point).
+# Isolating here means heavy ingest only queues behind other ingest.
+# Worker count via API_INGEST_WORKERS (default 8).
+ingest_executor = CountingThreadPoolExecutor(
+    max_workers=max(1, int(os.environ.get("API_INGEST_WORKERS", "8"))),
+    thread_name_prefix="ingest",
+)
+
+
+def _wire_ingest_executor_gauge() -> None:
+    """Export in-flight ingest work as arrow_lake_ingest_executor_active_threads."""
+    try:
+        from arrow_lake.core.metrics import ingest_executor_active_threads
+
+        ingest_executor_active_threads.set_function(lambda: ingest_executor.active)
+    except Exception:  # noqa: BLE001 — metrics are best-effort
+        _log.debug("ingest_executor_gauge_unavailable")
+
+
+_wire_ingest_executor_gauge()
 
 
 async def run_sync(

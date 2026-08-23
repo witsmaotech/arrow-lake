@@ -169,12 +169,20 @@ class GravitinoTagService:
                                    table=table, error=self._short_error(exc))
                 return []
 
-    def list_column_tags(self, table: str) -> dict[str, list[str]]:
-        """List column-level tags for a table. Returns {column_name: [tag_names]}."""
+    def list_column_tags(self, table: str, *, strict: bool = False) -> dict[str, list[str]]:
+        """List column-level tags for a table. Returns {column_name: [tag_names]}.
+
+        ``strict=True`` (v1.10.7 WP6): transient failures RAISE instead of
+        returning {} — callers that sync ACLs must distinguish "no tags"
+        from "Gravitino unreachable" (the latter must keep prior state, not
+        lift restrictions). Known-missing tables still return {} either way.
+        """
         if self._is_known_missing(table):
             return {}
         metalake = self._get_metalake()
         if metalake is None:
+            if strict:
+                raise RuntimeError("gravitino metalake unavailable")
             return {}
         with self._lock:
             try:
@@ -197,9 +205,11 @@ class GravitinoTagService:
                     self._mark_missing(table)
                     logger.debug("gravitino_list_column_tags_skipped",
                                  table=table, error=self._short_error(exc))
-                else:
-                    logger.warning("gravitino_list_column_tags_failed",
-                                   table=table, error=self._short_error(exc))
+                    return {}
+                logger.warning("gravitino_list_column_tags_failed",
+                               table=table, error=self._short_error(exc))
+                if strict:
+                    raise
                 return {}
 
     def get_tables_by_tag(self, tag: str) -> list[str]:

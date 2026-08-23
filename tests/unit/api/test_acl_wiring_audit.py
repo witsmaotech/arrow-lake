@@ -25,6 +25,9 @@ WIRING = {
         "create_vector_index", "create_fts_index", "create_scalar_index",
         "create_facet_indexes", "list_indices", "drop_index",
     ],
+    "arrow_lake/api/routers/datasets.py": [
+        "get_dataset", "get_dataset_schema",
+    ],
 }
 
 # endpoints enforcing SOURCE-level SQL ACL (review C2) — must call the helper.
@@ -35,6 +38,8 @@ SQL_ENFORCED = {
 # manual-guard endpoints (body param dataset_name)
 MANUAL = {
     "arrow_lake/api/routers/rag.py": ["rag_query", "rag_query_stream", "rag_extract"],
+    # kg build-info takes dataset as a query param → inline _enforce_read_acl
+    "arrow_lake/api/routers/knowledge_graph.py": ["kg_build_info"],
 }
 
 
@@ -78,3 +83,9 @@ def test_rag_endpoints_manual_guard_and_fail_closed() -> None:
         body = _body_block(src, fn)
         assert "authorize_dataset(request, req.dataset_name)" in body, fn
         assert "row/column ACL" in body and "403" in body, f"{fn} not fail-closed"
+
+
+def test_kg_build_info_manual_guard() -> None:
+    src = (ROOT / "arrow_lake/api/routers/knowledge_graph.py").read_text()
+    body = _body_block(src, "kg_build_info")
+    assert "_enforce_read_acl(checker, _user, dataset)" in body, "kg_build_info missing deny guard"
