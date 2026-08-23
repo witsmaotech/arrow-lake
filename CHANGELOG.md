@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.10.7] - 2026-08-23
+
+### P1 数据面加固冲刺（v1.11.x 平台列车地基,WP1-WP6）
+
+> 依据 `docs_offline/v1.10.7-p1-hardening-plan.md`:把"提示性"数据防护升级为"强制性";MS1（本体驱动 ACL）与 MS5（DQM 质量门）以本批为地基。P0 批已于 v1.10.6 交付。
+
+- **WP1 — 数据面统一强制点（C2/H1/H2,commit b75e1b8）**:新增 `api/rbac_sql.py`,sqlglot 源头级强制——行过滤下推进查询本体（数据集表引用改写为带谓词子查询,常量列别名/聚合泄露绕过失效）,列级 ACL 在 qualify 后的 AST 层拒绝任何隐藏列引用（直接/别名/表达式/CTE/子查询均拦,422;受限数据集上 `SELECT *` 拒绝、不可解析 SQL fail-closed）;deny/ACL 守卫（`Depends(authorize_dataset_read)`）补齐 query×4/search×5/export×4/embedding×6 全部 `{name}` 读端点;RAG 端点 deny + 行/列受限数据集 fail-closed（403 带指引）;17 例攻击样本套件（真实 DuckDB 执行）+ 接线源码审计测试。本版补齐残余:datasets 详情/schema 端点 + kg `/build-info` 挂守卫。
+- **WP2 — ingest 线程池隔离（H8）**:`run_background` 的同步函数派发改指专属 `ingest_executor`（`CountingThreadPoolExecutor`,`API_INGEST_WORKERS` 可配默认 8）,不再与 `run_sync` 共享 asyncio 默认池——≥14 并发重 ingest 不再冻结全 API;在途计数暴露为 `arrow_lake_ingest_executor_active_threads` gauge。
+- **WP3 — 认证热路径异步化（H5/H6）**:限流 Redis pipeline（100ms 预算,超时 fail-open 回落进程内计数）、登录锁定 helper（200ms）、JWT 校验中间件（redis 黑名单 EXISTS + libSQL token_valid_after）、personal token `validate_token`、登录的 libSQL 凭据读取全部 `run_sync` 移出事件循环;PBKDF2 verify/hash 出循环（宽松 CPU 超时 30s,不误杀高负载下的 200k 迭代）。并发登录实测重叠执行（真实 PBKDF2 20 并发 >2x 加速断言）。
+- **WP4 — lifespan 信号修复（H7）**:删除 lifespan 内的 `signal.signal(SIGTERM/SIGINT)` 接管——它覆盖了 uvicorn/gunicorn 的优雅停机 handler,worker 收到 SIGTERM 永不停止直至被 SIGKILL,lifespan finally 不执行、在途请求被硬杀;清理逻辑只放 lifespan finally（`Lake.shutdown` 幂等 once 标志兜底竞态）。
+- **WP5 — 质量门控接线 + 修三 bug（H9/H10）**:`build_quality_gate(QualityConfig)` 工厂 + `_make_ingestor` 在全部 11 处 ingest 构造点注入 gate;`quality.gate_mode: off|shadow|enforce`（**默认 shadow**——计数/日志/死信,不拦行;enforce 留待 MS5 五维门统一）;修 ① 部分拒绝放行（阶段部分拒收现在只返回有效行集,原代码任一行存活即放回全表）② `_DummyReport` 无 `.total` 接线即崩（换真 `QualityReport` + score=None 显式策略默认放行计数）③ 无 id 列拒收行不落死信（各阶段贡献精确拒收行,`QualityReport` 增加 `passed_table/rejected_table`,registry `apply_all` 填充,不再按 id 差集）;registry 预注册配置的 builtin filter（`active_filters` 不再静默 no-op）;appends 以真实 Lance schema 为 target;接线源码审计测试钉住全部构造点。
+- **WP6 — 可靠性杂组（H11/H12/embed guard）**:catalog DuckDB 池 `acquire()` 在 `duckdb.connect` 抛错时回滚 permit+计数（连接失败不再永久缩水池容量直至瘫痪）;tag→ACL 同步补回收方向（tag 撤销后陈旧 tag 派生 ACL 删除、列可见性恢复;手工 ACL 不受影响）且 tag 拉取失败保持上一轮限制（`list_column_tags(strict=True)` 区分"无 tag"与"Gravitino 不可达",后者不再误解除保护）;embed backfill 防重入守卫读 Redis mirror（gunicorn 多 worker 下 sibling worker 不再重复启动 drop+add 竞态）。
+
+### 兼容性说明
+
+- editor 自定义 SQL（无 ACL 数据集）零变化;有 row_filter/列 ACL 的数据集绕过路径被封,引用隐藏列 422。
+- RAG 对行/列受限数据集 fail-closed（403 带指引）,直至 MS1 语义层落地检索级下推。
+- 摄入质量默认 shadow 只计数不拦截,行为零变化;enforce 另行开关。
+- gunicorn 停机建议 `--timeout ≥60s`（已是 120s）;`docker stop -t 60` 实测优雅退出。
+
+### 测试
+
+- 新增 55+ 用例:攻击样本 17 例（WP1 批）+ 接线审计、ingest 池隔离 4 例、认证热路径 5 例（含真实 PBKDF2 并发重叠断言）、lifespan 信号 3 例、质量门控 19+3 例（去 mock 全链:配置→脏数据→拒收→死信;shadow/enforce 语义）、池回滚/tag 回收/embed 守卫 4+8 例;`tests/unit/api`、`tests/unit/quality`、`tests/unit/catalog`、`tests/unit/ingest` 回归与基线一致（gravitino SDK 依赖用例在宿主 venv 收集失败为存量环境限制,容器内可用）。
+
 ## [1.10.6] - 2026-08-21
 
 ### 安全加固 P0（实施前综合 Review 修复批,3 CRITICAL + 1 HIGH）
