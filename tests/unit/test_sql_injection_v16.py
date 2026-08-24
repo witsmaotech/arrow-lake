@@ -33,15 +33,15 @@ class TestBlockedDDLKeywords:
         assert DANGEROUS_SQL_KEYWORDS_RE.search(sql) is not None
 
     def test_comment_on_table_blocked(self) -> None:
-        with pytest.raises(ValueError, match="Dangerous SQL"):
+        with pytest.raises(ValueError, match="Only read-only SELECT|parsed"):
             validate_sql_safety("COMMENT ON TABLE test IS 'hi'")
 
     def test_rename_table_blocked(self) -> None:
-        with pytest.raises(ValueError, match="Dangerous SQL"):
+        with pytest.raises(ValueError, match="Only read-only SELECT|parsed"):
             validate_sql_safety("RENAME TABLE old TO new")
 
     def test_merge_into_blocked(self) -> None:
-        with pytest.raises(ValueError, match="Dangerous SQL"):
+        with pytest.raises(ValueError, match="Only read-only SELECT|parsed"):
             validate_sql_safety("MERGE INTO target USING src ON target.id = src.id")
 
     def test_safe_select_passes(self) -> None:

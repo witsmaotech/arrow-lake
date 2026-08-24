@@ -42,6 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **HIGH tag→ACL 回收 fail-open×2**:schema 拉取吞错返回 `[]`、`set_acl` 瞬时失败不入 desired——两者都让回收环删除仍有效的 PII ACL（共享 store,4 worker 全体生效）;per-column tag RPC 单列吞错还会用部分拉取弱化 ACL。修复:schema 拉取失败改 raise（调用方保上次状态）、strict 模式单列失败 raise、set_acl 失败保留 key（保护不被回收）并升 warning。
 - **测试**:大小写 12 例语料 + COLUMNS 3 例 + 作用域碰撞 2 例 + `--` 名 1 例（真实 DuckDB 执行）+ checker CI 2 例 + tag 保状态 3 例;rbac_sql 套件 41 绿;全量回归与存量基线一致。
 
+- **SQL 安全校验改结构白名单(2026-08-24 第二批,用户实测驱动)**:validate_sql_safety 主防线从关键词/表函数**穷举黑名单**改为 sqlglot **结构断言**——恰好一条语句、必须是 SELECT(WITH..SELECT 含内)、**表位置只允许命名数据集标识符**。一切变更类语句(PRAGMA/ATTACH/COPY/…)与非标识符表(read_text/glob/generate_series/**未来任何表函数**、`FROM 'file.parquet'` 路径)按构造被拒,无需枚举;解析失败 fail-closed。黑名单正则降级为纵深第二层(检查前剥离字符串字面量与引号标识符——引号内是数据,治中文/混合列名误杀);校验拒绝映射 422(不再 500);拒绝消息只报命中词不回显全 SQL。**行为变化**:FROM range() 等内联生成函数从放行改拒绝(表位置零函数,避免重开枚举面)。
+
 **遗留（后续版本分批消化,MS1/MS5 前清完 HIGH）**:同步 ingest 端点未走 ingest_executor（可用性）;`_get_row_col_acl` 控制面故障 fail-open;死信表在 ACL/隐藏层外;deny 不约束写路径;schema 校验 to_pydict 性能;refresh/logout/export 事件循环阻塞等 ~15 MEDIUM + ~8 LOW。
 
 ## [1.10.6] - 2026-08-21

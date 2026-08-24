@@ -25,35 +25,35 @@ class TestValidateSqlSafety:
         validate_sql_safety("WITH cte AS (SELECT 1) SELECT * FROM cte")
 
     def test_dangerous_drop(self) -> None:
-        with pytest.raises(ValueError, match="Dangerous SQL keyword"):
+        with pytest.raises(ValueError, match="Only read-only SELECT|parsed"):
             validate_sql_safety("DROP TABLE users")
 
     def test_dangerous_insert(self) -> None:
-        with pytest.raises(ValueError, match="Dangerous SQL keyword"):
+        with pytest.raises(ValueError, match="Only read-only SELECT"):
             validate_sql_safety("INSERT INTO users VALUES (1)")
 
     def test_dangerous_delete(self) -> None:
-        with pytest.raises(ValueError, match="Dangerous SQL keyword"):
+        with pytest.raises(ValueError, match="Only read-only SELECT"):
             validate_sql_safety("DELETE FROM users")
 
     def test_dangerous_alter(self) -> None:
-        with pytest.raises(ValueError, match="Dangerous SQL keyword"):
+        with pytest.raises(ValueError, match="Only read-only SELECT"):
             validate_sql_safety("ALTER TABLE users ADD COLUMN x INT")
 
     def test_semicolons_rejected(self) -> None:
-        with pytest.raises(ValueError, match="Dangerous|Semicolons"):
+        with pytest.raises(ValueError, match="Dangerous|Semicolons|Multiple|parsed"):
             validate_sql_safety("SELECT 1; DROP TABLE users")
 
     def test_union_rejected(self) -> None:
-        with pytest.raises(ValueError, match="Dangerous SQL keyword"):
+        with pytest.raises(ValueError, match="Only read-only SELECT"):
             validate_sql_safety("SELECT * FROM a UNION SELECT * FROM b")
 
     def test_attach_rejected(self) -> None:
-        with pytest.raises(ValueError, match="Dangerous SQL keyword"):
+        with pytest.raises(ValueError, match="Only read-only SELECT|parsed"):
             validate_sql_safety("ATTACH DATABASE 'evil.db'")
 
     def test_case_insensitive(self) -> None:
-        with pytest.raises(ValueError, match="Dangerous SQL keyword"):
+        with pytest.raises(ValueError, match="Only read-only SELECT|parsed"):
             validate_sql_safety("drop table users")
 
     # --- quoted identifiers are DATA, not SQL structure (console-preview 500 on
@@ -66,7 +66,7 @@ class TestValidateSqlSafety:
         validate_sql_safety('SELECT "read_text 备注" FROM "ds" LIMIT 1')
 
     def test_bare_keyword_still_rejected(self) -> None:
-        with pytest.raises(ValueError, match="Dangerous SQL keyword"):
+        with pytest.raises(ValueError, match="could not be parsed|Only read-only"):
             validate_sql_safety('SELECT a SET b FROM "ontime"')
 
     def test_bare_table_function_still_rejected(self) -> None:
@@ -80,16 +80,50 @@ class TestValidateSqlSafety:
             'GROUP BY "延误原因" ORDER BY 总延误 DESC LIMIT 10'
         )
 
+    # --- structural whitelist (2026-08-24): shape assertions, not word
+    # enumeration — anything that is not a plain read-only SELECT over
+    # identifier tables is rejected, unknown future table functions included ---
+    def test_from_string_literal_rejected(self) -> None:
+        with pytest.raises(ValueError, match="table|SELECT|parsed"):
+            validate_sql_safety("SELECT * FROM 'data.parquet'")
+
+    def test_from_any_table_function_rejected_without_enumeration(self) -> None:
+        """generate_series is NOT on any blacklist — it must still be rejected
+        because the table position only allows identifiers. This is the whole
+        point: no enumeration to evade or maintain."""
+        with pytest.raises(ValueError, match="table|SELECT|parsed"):
+            validate_sql_safety("SELECT * FROM generate_series(1, 10)")
+
+    def test_table_function_inside_subquery_rejected(self) -> None:
+        with pytest.raises(ValueError, match="table|SELECT|parsed"):
+            validate_sql_safety("SELECT * FROM (SELECT * FROM read_text('/etc/passwd')) t")
+
+    def test_non_select_statement_rejected_by_shape(self) -> None:
+        with pytest.raises(ValueError, match="Only read-only SELECT"):
+            validate_sql_safety("COPY t TO 'out.csv'")
+
+    def test_unparseable_sql_rejected(self) -> None:
+        with pytest.raises(ValueError, match="could not be parsed"):
+            validate_sql_safety("SELECT ]]] FROM t")
+
+    def test_catalog_qualified_table_allowed(self) -> None:
+        validate_sql_safety("SELECT * FROM lance_catalog.public.ontime LIMIT 1")
+
+    def test_cte_and_subquery_over_named_tables_allowed(self) -> None:
+        validate_sql_safety(
+            "WITH x AS (SELECT id FROM ds) SELECT * FROM (SELECT id FROM x) y LIMIT 5"
+        )
+
     # --- multi-statement (no-semicolon) detection ---
     def test_multi_statement_two_selects_rejected(self) -> None:
-        with pytest.raises(ValueError, match="Multiple SQL statements"):
+        with pytest.raises(ValueError, match="Multiple SQL statements|could not be parsed"):
             validate_sql_safety(
                 "SELECT Year, count(*) FROM ontime GROUP BY Year\n"
                 "SELECT Month, count(*) FROM ontime GROUP BY Month"
             )
 
     def test_multi_statement_three_selects_rejected(self) -> None:
-        with pytest.raises(ValueError, match="Multiple SQL statements"):
+        with pytest.raises(ValueError, match="Multiple SQL statements|could not be parsed"):
             validate_sql_safety(
                 "SELECT 1 FROM t\nSELECT 2 FROM t\nSELECT 3 FROM t"
             )

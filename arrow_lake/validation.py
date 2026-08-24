@@ -102,14 +102,56 @@ def _strip_literals_and_identifiers(sql: str) -> str:
 
 
 def validate_sql_safety(sql: str) -> None:
-    """Validate that a SQL string contains no dangerous keywords.
+    """Validate that user SQL is a read-only SELECT over named tables.
 
-    Keyword/table-function checks run on the structure only (literals and
-    quoted identifiers stripped — they are data, e.g. Chinese column names).
+    Layer 1 — STRUCTURAL WHITELIST (2026-08-24, replaces word enumeration as
+    the primary defense): parse with sqlglot and assert the query's SHAPE —
+    exactly one statement, it is a Select (WITH..SELECT included), and every
+    table position is a plain identifier. This rejects by construction:
+    every statement type that mutates or attaches (no keyword list needed),
+    every table-valued function past and future (``read_text`` parses as
+    Anonymous, ``generate_series`` as GenerateSeries — neither is an
+    Identifier, and neither is on any list), and file paths in table
+    position (``FROM 'x.parquet'`` parses as a quoted identifier failing
+    the dataset-name shape). Parse failure is fail-closed.
+
+    Layer 2 — the legacy keyword/table-function regexes run on the structure
+    (literals and quoted identifiers stripped — they are data, e.g. Chinese
+    column names) as defense-in-depth against parser quirks.
 
     Raises:
-        ValueError: If dangerous SQL keywords are detected.
+        ValueError: with a readable reason when the query is not allowed.
     """
+    import sqlglot
+    from sqlglot import exp as _exp
+
+    try:
+        statements = [s for s in sqlglot.parse(sql, read="duckdb") if s is not None]
+    except Exception:
+        raise ValueError(
+            "SQL could not be parsed — only read-only SELECT queries are allowed"
+        ) from None
+    if len(statements) != 1:
+        raise ValueError("Multiple SQL statements detected — run one query at a time")
+    tree = statements[0]
+    if not isinstance(tree, _exp.Select):
+        raise ValueError(
+            f"Only read-only SELECT queries are allowed (got {type(tree).__name__})"
+        )
+    for table in tree.find_all(_exp.Table):
+        ident = table.this
+        if not isinstance(ident, _exp.Identifier):
+            raise ValueError(
+                "Table position must be a named dataset — table functions and "
+                "file paths are not allowed"
+            )
+        if ident.quoted and not SAFE_IDENTIFIER_RE.match(ident.name):
+            raise ValueError(
+                f"Quoted table name is not a valid dataset identifier: "
+                f"{ident.name[:60]!r}"
+            )
+
+    # Layer 2 — defense in depth (see docstring).
     structure = _strip_literals_and_identifiers(sql)
     if (m := DANGEROUS_SQL_KEYWORDS_RE.search(structure)):
         raise ValueError(f"Dangerous SQL keyword detected: {m.group()!r}")

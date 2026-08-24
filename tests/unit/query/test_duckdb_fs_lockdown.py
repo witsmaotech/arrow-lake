@@ -60,12 +60,18 @@ class TestTableFunctionBlacklist:
             # Column names that merely contain blacklisted substrings.
             "SELECT read_time, csv_path FROM telemetry",
             "SELECT glob_score FROM jobs",
-            # range() is a harmless generator, not a file reader.
-            "SELECT * FROM range(10)",
         ],
     )
     def test_legitimate_sql_unaffected(self, sql: str) -> None:
         validate_sql_safety(sql)
+
+    def test_range_in_table_position_now_rejected(self):
+        """v1.10.7 structural whitelist: table position accepts NAMED DATASETS
+        only — range() was previously tolerated, but allowing any table-valued
+        function (even a harmless generator) reopens the enumeration game the
+        whitelist exists to end. Deliberate behavior change."""
+        with pytest.raises(ValueError, match="named dataset"):
+            validate_sql_safety("SELECT * FROM range(10)")
 
     def test_where_clause_also_checked(self) -> None:
         with pytest.raises(ValueError, match="table function"):
