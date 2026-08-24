@@ -151,7 +151,19 @@ class PermissionChecker:
                 row_filter=d["row_filter"],
                 denied_actions=d["denied_actions"],
             )
-        return self._row_col_acls.get(dataset, {}).get(role_name)
+        # In-memory path: exact hit first, then case-insensitive fallback —
+        # DuckDB resolves identifiers case-insensitively, so a lookup from
+        # the SQL enforcement layer may arrive in any case spelling (v1.10.7
+        # review: exact-only matching let mixed-case dataset names escape
+        # row/column ACL entirely).
+        exact = self._row_col_acls.get(dataset, {}).get(role_name)
+        if exact is not None:
+            return exact
+        lowered = dataset.lower()
+        for name, roles in self._row_col_acls.items():
+            if name.lower() == lowered and role_name in roles:
+                return roles[role_name]
+        return None
 
     def _get_schema_acl(
         self, schema: str, role_name: str

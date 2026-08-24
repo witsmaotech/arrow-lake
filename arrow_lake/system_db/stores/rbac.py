@@ -179,9 +179,12 @@ class RbacStore:
 
     def list_row_col_acls(self, dataset: str) -> list[dict[str, Any]]:
         def _read() -> list[dict[str, Any]]:
+            # COLLATE NOCASE (v1.10.7 review fix): DuckDB resolves identifiers
+            # case-insensitively — ACL lookups arriving from the SQL enforcement
+            # layer may spell the dataset name in any case.
             cur = self._db.execute(
                 "SELECT role, visible_columns, row_filter, denied_actions "
-                "FROM dataset_row_col_acls WHERE dataset_name = ?",
+                "FROM dataset_row_col_acls WHERE dataset_name = ? COLLATE NOCASE",
                 (dataset,),
             )
             rows = cur.fetchall() if cur is not None else []

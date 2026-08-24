@@ -44,14 +44,20 @@ def _normalize_predicate(row_filter: str) -> str:
 
 
 def _alias_map(tree: exp.Expression) -> dict[str, str]:
-    """Map every table alias (and bare name) in scope → real table name."""
+    """Map every table alias (and bare name) in scope → real table name.
+
+    Keys AND values are lowercased: DuckDB resolves identifiers
+    case-insensitively, so ACL matching must compare in a single canonical
+    case (sqlglot's qualify() normalizes to lowercase for the duckdb
+    dialect — lowercasing here keeps the map consistent regardless).
+    """
     mapping: dict[str, str] = {}
     for table in tree.find_all(exp.Table):
-        real = table.name
+        real = table.name.lower()
         mapping.setdefault(real, real)
         alias = table.alias
         if alias:
-            mapping.setdefault(alias, real)
+            mapping.setdefault(alias.lower(), real)
     return mapping
 
 
@@ -84,13 +90,21 @@ def enforce_sql_acl(
     """
     # Cheap pre-check: which tables does this SQL reference? Parse failure is
     # fail-closed — the SQL may reference a restricted dataset we can't see.
+    # Identifiers are matched case-insensitively (DuckDB semantics): acls is
+    # keyed by lowercased table name and every lookup lowercases its probe.
+    # The pre-review bug: exact-case keys missed both case-variant refs
+    # (FROM mydata vs MyData) AND exact refs after qualify() normalized
+    # identifiers to lowercase — mixed-case datasets escaped everything.
     pre = _parse_or_fail(sql)
     referenced = {t.name for t in pre.find_all(exp.Table)}
     acls: dict[str, DatasetACL] = {}
+    visible_lower: dict[str, frozenset[str]] = {}
     for tname in referenced:
-        acl = get_acl(tname)
+        acl = get_acl(tname.lower())
         if acl is not None and (acl.row_filter or acl.visible_columns):
-            acls[tname] = acl
+            key = tname.lower()
+            acls[key] = acl
+            visible_lower[key] = frozenset(c.lower() for c in acl.visible_columns)
     if not acls:
         return sql
 
@@ -110,12 +124,16 @@ def enforce_sql_acl(
     for col in tree.find_all(exp.Column):
         if isinstance(col.this, exp.Star):
             continue  # handled below
-        real = aliases.get(col.table, col.table)
+        real = aliases.get(col.table, col.table).lower()
         acl = acls.get(real)
-        if acl is not None and acl.visible_columns and col.name not in acl.visible_columns:
+        if (
+            acl is not None
+            and acl.visible_columns
+            and col.name.lower() not in visible_lower[real]
+        ):
             raise AclSqlViolation(
                 f"Column '{col.name}' is not in the visible column set for dataset "
-                f"'{real}' — reference removed by column-level ACL"
+                f"'{acl.dataset}' — reference removed by column-level ACL"
             )
 
     # 4) SELECT * / t.* on column-restricted tables
@@ -125,23 +143,24 @@ def enforce_sql_acl(
         col_parent = star.parent
         real: str | None = None
         if isinstance(col_parent, exp.Column) and col_parent.table:
-            real = aliases.get(col_parent.table, col_parent.table)
+            real = aliases.get(col_parent.table, col_parent.table).lower()
         restricted = [t for t, a in acls.items() if a.visible_columns]
         if real is not None:
             if real in restricted:
                 raise AclSqlViolation(
                     f"SELECT {real}.* is not allowed on column-restricted dataset "
-                    f"'{real}' — list visible columns explicitly"
+                    f"'{acls[real].dataset}' — list visible columns explicitly"
                 )
         elif restricted:
             raise AclSqlViolation(
                 "SELECT * is not allowed while column-restricted datasets are "
-                f"referenced ({', '.join(sorted(restricted))}) — list columns explicitly"
+                f"referenced ({', '.join(sorted(a.dataset for a in acls.values()))}) "
+                "— list columns explicitly"
             )
 
     # 5) row-filter rewrite: table → filtered subquery (predicate on raw rows)
     for table in tree.find_all(exp.Table):
-        acl = acls.get(table.name)
+        acl = acls.get(table.name.lower())
         if acl is None or not acl.row_filter:
             continue
         predicate = _normalize_predicate(acl.row_filter)

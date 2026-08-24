@@ -167,3 +167,126 @@ class TestColumnAclAstEnforcement:
             "SELECT id, salary FROM ds", get_acl=_getter(both)
         )
         assert {(r[0], r[1]) for r in duck.execute(out).fetchall()} == {(1, 100.0), (3, 300.0)}
+
+
+class TestCaseInsensitiveDatasetNames:
+    """CRITICAL review finding (2026-08-24): DuckDB resolves identifiers
+    case-insensitively but enforcement looked ACLs up exact-case — any
+    non-lowercase dataset name escaped BOTH the row-filter pushdown and
+    the column AST check. Worse: even an exact-case reference missed after
+    sqlglot qualify() normalized identifiers to lowercase, so mixed-case
+    datasets (e.g. AIGC_2023REPORT) were entirely unprotected."""
+
+    ROW_MC = DatasetACL(dataset="MyData", role="viewer", row_filter="region == 'east'")
+    COL_MC = DatasetACL(
+        dataset="MyData", role="viewer", visible_columns=frozenset({"id", "region", "salary"})
+    )
+
+    @staticmethod
+    def _ci_getter(acl):
+        # mirrors the fixed PermissionChecker.get_acl: case-insensitive hit
+        return lambda t: acl if t.lower() == "mydata" else None
+
+    @pytest.fixture()
+    def duck_mc(self):
+        conn = duckdb.connect()
+        conn.execute(
+            'CREATE TABLE "MyData" (id INTEGER, region VARCHAR, salary DOUBLE, phone VARCHAR);'
+        )
+        conn.execute(
+            'INSERT INTO "MyData" VALUES '
+            "(1, 'east', 100.0, '111'), (2, 'west', 900.0, '222'), (3, 'east', 300.0, '333')"
+        )
+        yield conn
+        conn.close()
+
+    # ── row filter: every case variant must get the predicate ──
+
+    @pytest.mark.parametrize("ref", ["mydata", "MYDATA", "MyData", '"MyData"'])
+    def test_row_filter_applies_to_every_case_variant(self, duck_mc, ref):
+        out = enforce_sql_acl(
+            f"SELECT id FROM {ref}", get_acl=self._ci_getter(self.ROW_MC)
+        )
+        assert {r[0] for r in duck_mc.execute(out).fetchall()} == {1, 3}
+
+    @pytest.mark.parametrize("ref", ["mydata", "MYDATA", '"MyData"'])
+    def test_aggregation_leak_blocked_for_every_case_variant(self, duck_mc, ref):
+        out = enforce_sql_acl(
+            f"SELECT max(salary) FROM {ref}", get_acl=self._ci_getter(self.ROW_MC)
+        )
+        assert duck_mc.execute(out).fetchone()[0] == 300.0  # east only
+
+    # ── column ACL: hidden column rejected under any case spelling ──
+
+    @pytest.mark.parametrize("ref", ["mydata", "MYDATA", "MyData", '"MyData"'])
+    def test_hidden_column_rejected_for_every_case_variant(self, ref):
+        with pytest.raises(AclSqlViolation):
+            enforce_sql_acl(
+                f"SELECT phone FROM {ref}", get_acl=self._ci_getter(self.COL_MC)
+            )
+
+    def test_hidden_column_uppercase_spelling_also_rejected(self):
+        with pytest.raises(AclSqlViolation):
+            enforce_sql_acl(
+                "SELECT PHONE FROM MyData", get_acl=self._ci_getter(self.COL_MC)
+            )
+
+    def test_visible_column_uppercase_spelling_allowed(self, duck_mc):
+        """Column names are case-insensitive in DuckDB too — a visible
+        column referenced uppercase must NOT be a false rejection."""
+        out = enforce_sql_acl(
+            "SELECT ID, SALARY FROM MyData WHERE SALARY > 150",
+            get_acl=self._ci_getter(self.COL_MC),
+        )
+        assert {r[0] for r in duck_mc.execute(out).fetchall()} == {2, 3}
+
+    def test_qualified_hidden_column_rejected(self):
+        with pytest.raises(AclSqlViolation):
+            enforce_sql_acl(
+                "SELECT MyData.phone FROM MyData", get_acl=self._ci_getter(self.COL_MC)
+            )
+
+    def test_mixed_case_join_both_sides_enforced(self, duck_mc):
+        """Mixed-case + lowercase datasets in one query: both ACLs apply."""
+        duck_mc.execute("CREATE TABLE ds (id INTEGER, region VARCHAR)")
+        duck_mc.execute("INSERT INTO ds VALUES (1, 'east'), (2, 'west')")
+
+        def get(t):
+            if t.lower() == "mydata":
+                return self.ROW_MC
+            if t == "ds":
+                return DatasetACL(dataset="ds", role="viewer", row_filter="region == 'west'")
+            return None
+
+        out = enforce_sql_acl(
+            'SELECT "MyData".id FROM "MyData" JOIN ds ON "MyData".id = ds.id',
+            get_acl=get,
+        )
+        # MyData: east only (1,3); ds: west only (2) → no join rows
+        assert duck_mc.execute(out).fetchall() == []
+
+
+class TestCheckerCaseInsensitiveGetAcl:
+    """PermissionChecker.get_acl must resolve case-insensitively (DuckDB
+    semantics): the enforcement layer passes SQL-written table names."""
+
+    def test_in_memory_lookup_case_insensitive(self):
+        from arrow_lake.api.rbac import PermissionChecker
+
+        checker = PermissionChecker()
+        checker.set_acl(DatasetACL(dataset="MyData", role="viewer", visible_columns=frozenset({"id"})))
+        for probe in ("mydata", "MYDATA", "MyData"):
+            acl = checker.get_acl(probe, "viewer")
+            assert acl is not None, probe
+            assert acl.dataset == "MyData"
+
+    def test_exact_match_preferred(self):
+        from arrow_lake.api.rbac import PermissionChecker
+
+        checker = PermissionChecker()
+        checker.set_acl(DatasetACL(dataset="MyData", role="viewer", visible_columns=frozenset({"id"})))
+        checker.set_acl(DatasetACL(dataset="mydata", role="viewer", visible_columns=frozenset({"id", "name"})))
+        # both exist (path-namespaced separately); exact key wins for its own case
+        assert checker.get_acl("mydata", "viewer").visible_columns == frozenset({"id", "name"})
+        assert checker.get_acl("MyData", "viewer").visible_columns == frozenset({"id"})
+

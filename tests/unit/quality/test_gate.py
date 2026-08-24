@@ -110,6 +110,24 @@ class TestRealPipeline:
         assert result.score_rejected == 0
         assert passed.num_rows == 3
 
+    def test_all_rows_rejected_returns_empty_table(self) -> None:
+        """Review finding (2026-08-24): an empty pa.Table is FALSY — the old
+        ``report.passed_table or table`` fallback re-admitted the ENTIRE batch
+        when a filter rejected every row (silently: rejected also read 0)."""
+        from arrow_lake.quality.base import QualityFilterRegistry
+        from arrow_lake.quality.builtin import TextLengthFilter
+
+        reg = QualityFilterRegistry()
+        reg.register(TextLengthFilter(min_chars=100))
+        dirty = pa.table({"id": [1, 2, 3], "text_content": ["a", "b", "c"]})
+        gate = IngestionQualityGate(active_filters="text_length", filter_registry=reg)
+
+        passed, result = gate.check(dirty, dataset_name="ds")
+
+        assert result.filter_rejected == 3
+        assert result.passed == 0
+        assert passed.num_rows == 0
+
     def test_empty_table(self) -> None:
         gate = IngestionQualityGate()
         empty = pa.table({"id": pa.array([], type=pa.int64())})

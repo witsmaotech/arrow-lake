@@ -197,7 +197,12 @@ class IngestionQualityGate:
         report = registry.apply_all(table, self._active_filters, mode=self._filter_mode)
         if report.rejected == 0:
             return table, 0, None
-        return report.passed_table or table, report.rejected, report.rejected_table
+        # NOT `report.passed_table or table` — an empty pa.Table is FALSY, so
+        # a filter that rejects EVERY row would fall back to the original
+        # full table and silently re-admit the whole batch (verified in
+        # review: enforce + all-rejected wrote all rows with rejected=0).
+        passed_table = report.passed_table if report.passed_table is not None else table
+        return passed_table, report.rejected, report.rejected_table
 
     def _apply_score_threshold(
         self, table: pa.Table
