@@ -18,6 +18,7 @@ from arrow_lake.system_db.stores.governance import GovernanceStore
 from arrow_lake.system_db.stores.identity import IdentityStore
 from arrow_lake.system_db.stores.ingest_dlq import IngestDLQStore
 from arrow_lake.system_db.stores.lineage_index import LineageIndexStore
+from arrow_lake.system_db.stores.ontology import OntologyRulesStore
 from arrow_lake.system_db.stores.rag_session import RagSessionStore
 from arrow_lake.system_db.stores.rbac import RbacStore
 from arrow_lake.system_db.stores.task_history import TaskHistoryStore
@@ -30,6 +31,7 @@ __all__ = [
     "IdentityStore",
     "IngestDLQStore",
     "LineageIndexStore",
+    "OntologyRulesStore",
     "RagSessionStore",
     "RbacStore",
     "TaskHistoryStore",

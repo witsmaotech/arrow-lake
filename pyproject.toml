@@ -57,6 +57,9 @@ dependencies = [
     "libsql>=0.1",
     # Deduplication (NeMo Curator MinHash fallback)
     "datasketch>=1.6",
+    # MS1 ontology formalization: template → SHACL shapes → pyshacl gate (v1.11.0)
+    "pyshacl>=0.26",
+    "rdflib>=7.0",
 ]
 
 [project.scripts]
