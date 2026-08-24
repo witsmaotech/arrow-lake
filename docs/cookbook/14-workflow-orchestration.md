@@ -393,7 +393,7 @@ argo_config = ArgoConfig(
     namespace="arrow-lake",       # Kubernetes namespace for Argo workflows
     service_account="arrow-lake", # Service account for workflow pods
     workflow_timeout=3600,        # Workflow execution timeout in seconds (>=60)
-    image="arrow-lake:1.10.4",    # Container image for workflow pods
+    image="arrow-lake:1.10.7",    # Container image for workflow pods
     image_pull_policy="IfNotPresent",  # Image pull policy
     artifact_storage="",          # Storage backend for artifacts (s3:// or minio://)
 )

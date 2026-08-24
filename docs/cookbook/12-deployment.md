@@ -16,7 +16,7 @@ The **primary production path** is `deploy/docker-compose.prod_minimal.yml` (16 
 docker compose --project-directory deploy -p arrow-lake \
   -f deploy/docker-compose.prod_minimal.yml up -d
 
-# Build only the api image (avoids the BuildKit shared-tag quirk; image tags arrow-lake:1.10.4)
+# Build only the api image (avoids the BuildKit shared-tag quirk; image tags arrow-lake:1.10.7)
 docker compose --project-directory deploy -p arrow-lake \
   -f deploy/docker-compose.prod_minimal.yml build api
 

@@ -112,7 +112,7 @@ docker exec -it deploy-api-1 .venv/bin/python /app/examples/19_knowledge_graph_b
 
 ## 版本
 
-对应 Arrow Lake v1.10.4
+对应 Arrow Lake v1.10.7
 
 ## 版本特性 / Release Notes
 
