@@ -38,6 +38,10 @@ class TestValidateSnapshot:
         violations = validate_snapshot(entities, relations, _shapes())
         assert violations == []
 
+    def test_empty_snapshot_zero_violations(self) -> None:
+        """合法边界:空 KG(0 实体 0 关系)直接通过,不进 pyshacl 报告。"""
+        assert validate_snapshot([], [], _shapes()) == []
+
     def test_type_outside_enum_is_reject(self) -> None:
         entities = [{"name": "X", "type": "神秘类型", "definition": "d"}]
         violations = validate_snapshot(entities, [], _shapes())

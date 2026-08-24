@@ -113,3 +113,13 @@ class TestBuildShapes:
         assert len(g2) == len(g)
         text = g2.serialize(format="turtle")
         assert "主体" in text and "项目" in text
+
+    def test_turtle_roundtrip_preserves_type_pairs(self) -> None:
+        """快照持久化关键契约:type-pair 元数据随 Turtle 往返不丢
+        (V010 存的就是 Turtle,丢约束 = 恢复后 gate 静默降级)。"""
+        from arrow_lake.ontology.validator import _pairs_from_shapes
+
+        spec = _spec(type_pairs=(("主体", "承建", "项目"), ("项目", "*", "金额")))
+        g = build_shapes(spec)
+        g2 = Graph().parse(data=to_turtle(g), format="turtle")
+        assert _pairs_from_shapes(g2) == (("主体", "承建", "项目"), ("项目", "*", "金额"))
