@@ -15,6 +15,21 @@ from arrow_lake.api.routers import datasets as ds_mod
 from arrow_lake.api.models.dataset import IngestDocumentsRequest
 
 
+def _authed_request() -> MagicMock:
+    """Request 伪对象:EDITOR user + allow-all checker(v1.10.7 WP1 守卫契约)。"""
+    from types import SimpleNamespace
+
+    from arrow_lake.api.auth_models import Role
+
+    req = MagicMock()
+    req.state.user = SimpleNamespace(role=Role.EDITOR, sub="1", user_id=1)
+    checker = MagicMock()
+    checker.check_dataset_access.return_value = True
+    req.app.state.checker = checker
+    return req
+
+
+
 @pytest.fixture
 def _patch_endpoint(monkeypatch: pytest.MonkeyPatch):
     """run_sync → async passthrough; stub _after_ingest_hooks + from_report."""
@@ -37,7 +52,7 @@ async def test_ingest_documents_calls_embed_and_fts_after_write(_patch_endpoint)
     req = IngestDocumentsRequest(pdf_paths=["x.md"])
 
     resp = await ds_mod.ingest_documents(
-        request=MagicMock(), name="ds", req=req, lake=lake, _user={},
+        request=_authed_request(), name="ds", req=req, lake=lake, _user={},
     )
 
     assert resp is _patch_endpoint
@@ -57,7 +72,7 @@ async def test_embed_failure_does_not_block_ingest_or_fts(_patch_endpoint) -> No
     req = IngestDocumentsRequest(pdf_paths=["x.md"])
 
     resp = await ds_mod.ingest_documents(
-        request=MagicMock(), name="ds", req=req, lake=lake, _user={},
+        request=_authed_request(), name="ds", req=req, lake=lake, _user={},
     )
 
     assert resp is _patch_endpoint            # ingest still succeeded
@@ -73,7 +88,7 @@ async def test_fts_failure_does_not_block_ingest(_patch_endpoint) -> None:
     req = IngestDocumentsRequest(pdf_paths=["x.md"])
 
     resp = await ds_mod.ingest_documents(
-        request=MagicMock(), name="ds", req=req, lake=lake, _user={},
+        request=_authed_request(), name="ds", req=req, lake=lake, _user={},
     )
 
     assert resp is _patch_endpoint            # ingest still succeeded despite FTS failure

@@ -52,7 +52,7 @@ from arrow_lake.api.models.dataset import (
     UploadedBlob,
     UploadResponse,
 )
-from arrow_lake.api.utils import run_sync
+from arrow_lake.api.utils import ingest_executor, run_sync
 from arrow_lake.exceptions import CatalogError, ErrorCode
 from arrow_lake._system_tables import is_internal_table, is_system_table
 
@@ -244,6 +244,7 @@ def _resolve_blob_sources(
 
 @router.post("/{name}/upload", response_model=UploadResponse, status_code=201)
 async def upload_files(
+    request: Request,
     name: str = Path(..., pattern=_NAME_PATTERN),
     files: list[UploadFile] = File(..., max_length=20),
     lake=Depends(get_lake),
@@ -254,6 +255,7 @@ async def upload_files(
     For better performance, prefer ``POST /{name}/upload/presign`` which
     returns presigned URLs for direct-to-MinIO upload.
     """
+    authorize_dataset(request, name, write=True)
     blob_store = _get_blob_store(lake)
     uploaded: list[UploadedBlob] = []
 
@@ -297,6 +299,7 @@ async def upload_files(
 
 @router.post("/{name}/upload/presign", response_model=PresignResponse)
 async def presign_upload(
+    request: Request,
     name: str = Path(..., pattern=_NAME_PATTERN),
     *,
     req: PresignRequest,
@@ -309,6 +312,7 @@ async def presign_upload(
     then calls an ingest endpoint with the returned blob keys.
     This avoids routing file data through the API server.
     """
+    authorize_dataset(request, name, write=True)
     blob_store = _get_blob_store(lake)
     uploads: list[PresignedUpload] = []
 
@@ -322,6 +326,7 @@ async def presign_upload(
 
 @router.delete("/{name}/upload/cleanup", response_model=CleanupResponse)
 async def cleanup_uploads(
+    request: Request,
     name: str = Path(..., pattern=_NAME_PATTERN),
     lake=Depends(get_lake),
     _user: dict = Depends(require_role(Role.EDITOR)),
@@ -330,6 +335,7 @@ async def cleanup_uploads(
 
     Call after dataset deletion to prevent orphaned uploads from accumulating.
     """
+    authorize_dataset(request, name, write=True)
     blob_store = _get_blob_store(lake)
     deleted = blob_store.delete_prefix(f"uploads/{name}/")
     return CleanupResponse(deleted_count=deleted)
@@ -350,6 +356,7 @@ async def ingest_files(
     _user: dict = Depends(require_permission(Permission.DATASET_WRITE)),
 ) -> IngestResponse:
     """Ingest local files into a dataset."""
+    authorize_dataset(request, name, write=True)
     all_paths = list(req.file_paths)
     tmp_dir: str | None = None
     try:
@@ -367,6 +374,7 @@ async def ingest_files(
             lake.ingest, name, all_paths,
             timeout=_INGEST_TIMEOUT, label="ingest_files", actor=actor_of(_user),
             transforms=transforms,
+            executor=ingest_executor,
         )
         _after_ingest_hooks(request.app.state, name, lake)
         return IngestResponse.from_report(report)
@@ -385,6 +393,7 @@ async def ingest_sql(
     _user: dict = Depends(require_permission(Permission.DATASET_WRITE)),
 ) -> IngestResponse:
     """Ingest data from a SQL database query."""
+    authorize_dataset(request, name, write=True)
     transforms = None
     if req.transforms:
         from arrow_lake.ingest.transforms import build_transforms
@@ -397,6 +406,7 @@ async def ingest_sql(
         num_partitions=req.num_partitions,
         transforms=transforms,
         timeout=_INGEST_TIMEOUT, label="ingest_sql", actor=actor_of(_user),
+        executor=ingest_executor,
     )
     _after_ingest_hooks(request, name, lake)
     return IngestResponse.from_report(report)
@@ -412,6 +422,7 @@ async def ingest_kafka(
     _user: dict = Depends(require_permission(Permission.DATASET_WRITE)),
 ) -> IngestResponse:
     """Ingest messages from Kafka topics."""
+    authorize_dataset(request, name, write=True)
     transforms = None
     if req.transforms:
         from arrow_lake.ingest.transforms import build_transforms
@@ -425,6 +436,7 @@ async def ingest_kafka(
         json_decode=req.json_decode,
         transforms=transforms,
         timeout=_INGEST_TIMEOUT, label="ingest_kafka", actor=actor_of(_user),
+        executor=ingest_executor,
     )
     _after_ingest_hooks(request, name, lake)
     return IngestResponse.from_report(report)
@@ -440,6 +452,7 @@ async def ingest_iceberg(
     _user: dict = Depends(require_permission(Permission.DATASET_WRITE)),
 ) -> IngestResponse:
     """Ingest data from an Apache Iceberg table."""
+    authorize_dataset(request, name, write=True)
     transforms = None
     if req.transforms:
         from arrow_lake.ingest.transforms import build_transforms
@@ -448,6 +461,7 @@ async def ingest_iceberg(
         lake.ingest_iceberg, name,
         table_uri=req.table_uri, transforms=transforms,
         timeout=_INGEST_TIMEOUT, label="ingest_iceberg", actor=actor_of(_user),
+        executor=ingest_executor,
     )
     _after_ingest_hooks(request, name, lake)
     return IngestResponse.from_report(report)
@@ -463,6 +477,7 @@ async def ingest_deltalake(
     _user: dict = Depends(require_permission(Permission.DATASET_WRITE)),
 ) -> IngestResponse:
     """Ingest data from a Delta Lake table."""
+    authorize_dataset(request, name, write=True)
     transforms = None
     if req.transforms:
         from arrow_lake.ingest.transforms import build_transforms
@@ -471,6 +486,7 @@ async def ingest_deltalake(
         lake.ingest_deltalake, name,
         table_uri=req.table_uri, version=req.version, transforms=transforms,
         timeout=_INGEST_TIMEOUT, label="ingest_deltalake", actor=actor_of(_user),
+        executor=ingest_executor,
     )
     _after_ingest_hooks(request, name, lake)
     return IngestResponse.from_report(report)
@@ -486,9 +502,11 @@ async def ingest_http(
     _user: dict = Depends(require_permission(Permission.DATASET_WRITE)),
 ) -> IngestResponse:
     """Ingest files from HTTP(S) URLs into a dataset."""
+    authorize_dataset(request, name, write=True)
     report = await run_sync(
         lake.ingest_http, name, req.urls,
         timeout=_INGEST_TIMEOUT, label="ingest_http", actor=actor_of(_user),
+        executor=ingest_executor,
     )
     _after_ingest_hooks(request, name, lake)
     return IngestResponse.from_report(report)
@@ -504,6 +522,7 @@ async def ingest_images(
     _user: dict = Depends(require_permission(Permission.DATASET_WRITE)),
 ) -> IngestResponse:
     """Ingest image files with thumbnails and EXIF metadata."""
+    authorize_dataset(request, name, write=True)
     all_paths = list(req.file_paths)
     tmp_dir: str | None = None
     try:
@@ -514,10 +533,11 @@ async def ingest_images(
         report = await run_sync(
             lake.ingest_images, name, all_paths,
             timeout=_INGEST_TIMEOUT, label="ingest_images", actor=actor_of(_user),
+            executor=ingest_executor,
         )
         # 自动 CLIP embed(图像语义检索;模型不可用 → 静默跳过,不阻塞摄入,图已落库可后续手动 embed)
         try:
-            await run_sync(lake.embed_media, name, image_column="image_data", timeout=_INGEST_TIMEOUT, label="embed_images")
+            await run_sync(lake.embed_media, name, image_column="image_data", timeout=_INGEST_TIMEOUT, label="embed_images", executor=ingest_executor)
         except Exception:
             pass
         _after_ingest_hooks(request.app.state, name, lake)
@@ -537,6 +557,7 @@ async def ingest_videos(
     _user: dict = Depends(require_permission(Permission.DATASET_WRITE)),
 ) -> IngestResponse:
     """Ingest video files with keyframe extraction."""
+    authorize_dataset(request, name, write=True)
     all_paths = list(req.file_paths)
     tmp_dir: str | None = None
     try:
@@ -547,10 +568,11 @@ async def ingest_videos(
         report = await run_sync(
             lake.ingest_videos, name, all_paths,
             timeout=_INGEST_TIMEOUT, label="ingest_videos", actor=actor_of(_user),
+            executor=ingest_executor,
         )
         # 自动 CLIP embed 关键帧(视频语义检索;模型不可用 → 静默跳过)
         try:
-            await run_sync(lake.embed_media, name, image_column="video_data", timeout=_INGEST_TIMEOUT, label="embed_videos")
+            await run_sync(lake.embed_media, name, image_column="video_data", timeout=_INGEST_TIMEOUT, label="embed_videos", executor=ingest_executor)
         except Exception:
             pass
         _after_ingest_hooks(request.app.state, name, lake)
@@ -570,6 +592,7 @@ async def ingest_mixed(
     _user: dict = Depends(require_permission(Permission.DATASET_WRITE)),
 ) -> IngestResponse:
     """Ingest mixed-modality sources (files, URLs, images, videos)."""
+    authorize_dataset(request, name, write=True)
     sources = dict(req.sources)
     tmp_dir: str | None = None
     try:
@@ -581,6 +604,7 @@ async def ingest_mixed(
         report = await run_sync(
             lake.ingest_mixed, name, sources,
             timeout=_INGEST_TIMEOUT, label="ingest_mixed", actor=actor_of(_user),
+            executor=ingest_executor,
         )
         _after_ingest_hooks(request.app.state, name, lake)
         return IngestResponse.from_report(report)
@@ -603,6 +627,7 @@ async def ingest_documents(
     Accepts any format the parser (kreuzberg) supports — PDF, markdown, plain
     text, HTML, Office docs (see ``_DOCUMENT_EXTENSIONS``).
     """
+    authorize_dataset(request, name, write=True)
     all_paths = list(req.pdf_paths)
     tmp_dir: str | None = None
     try:
@@ -620,6 +645,7 @@ async def ingest_documents(
             lake.ingest_documents_and_index, name, all_paths, doc_config=doc_config,
             doc_type=req.doc_type, timeout=_INGEST_TIMEOUT * 4, label="ingest_documents",
             actor=actor_of(_user),
+            executor=ingest_executor,
         )
         _after_ingest_hooks(request.app.state, name, lake)
         return IngestResponse.from_report(report)
@@ -687,6 +713,7 @@ def _save_desc(name: str, description: str) -> None:
 
 @router.put("/{name}/description", response_model=MessageResponse, summary="Set dataset description (console)")
 async def set_dataset_description(
+    request: Request,
     name: str = Path(..., pattern=_NAME_PATTERN),
     *,
     req: DatasetDescriptionRequest,
@@ -694,6 +721,7 @@ async def set_dataset_description(
     _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> MessageResponse:
     """Set/update a human-readable description for a dataset (local JSON store)."""
+    authorize_dataset(request, name, write=True)
     # 验证数据集存在(防给不存在的数据集写描述污染 store)
     result = await run_sync(lake.catalog, timeout=_ADMIN_TIMEOUT, label="catalog")
     if not any(e.name == name for e in result.datasets):
@@ -968,6 +996,7 @@ async def migrate_schema(
 
 @router.delete("/{name}", response_model=MessageResponse, status_code=200)
 async def delete_dataset(
+    request: Request,
     name: str = Path(..., pattern=_NAME_PATTERN),
     cascade: bool = Query(
         True, description="Also reclaim derived assets (KG graph, KA dump, "
@@ -978,6 +1007,7 @@ async def delete_dataset(
     _user: dict = Depends(require_permission(Permission.DATASET_DELETE)),
 ) -> MessageResponse:
     """Delete a dataset and all its data."""
+    authorize_dataset(request, name, write=True)
     # 系统运行表(sys_ 前缀)是系统运行依赖,禁止删除。判断集中 _system_tables.py。
     if is_system_table(name):
         from fastapi import HTTPException

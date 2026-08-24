@@ -106,6 +106,11 @@ class AuthConfig(BaseModel):
     jwt_audience: str = "arrow-lake-api"
     jwt_require_audience: bool = False
     allow_unauthenticated_access: bool = False
+    # B-2 (v1.10.7 review): when the identity store is unreachable during
+    # token verification, fail closed by default (the token cannot be
+    # confirmed un-revoked → rejected). Set True to restore the pre-v1.10.7
+    # fail-open behaviour (availability over revocation guarantees).
+    auth_tva_fail_open: bool = False
 
     @field_validator("jwt_secret_key")
     @classmethod

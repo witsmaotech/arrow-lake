@@ -242,12 +242,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         def _token_valid_after(sub: str) -> float | None:
             if not sub.isdigit():
                 return None  # shared api-user / anonymous identities have no row
-            try:
-                return identity_store.get_token_valid_after(int(sub))
-            except Exception:
-                return None  # store hiccup → fail open (pre-M0 behaviour)
+            # B-2: propagate store failures — AuthService decides fail-open vs
+            # fail-closed based on auth_tva_fail_open (default fail-closed).
+            return identity_store.get_token_valid_after(int(sub))
 
-        svc.set_token_valid_after_provider(_token_valid_after)
+        svc.set_token_valid_after_provider(
+            _token_valid_after,
+            fail_open=getattr(auth_cfg, "auth_tva_fail_open", False),
+        )
 
         # P1 stores: durable task history (fully wired), catalog / DLQ /
         # RAG-session stores (instantiated on app.state; their facade

@@ -87,14 +87,42 @@ def authorize_dataset_read(name: str, request: Request) -> None:
     authorize_dataset(request, name)
 
 
+def _dead_letter_parent(name: str) -> str | None:
+    """Return the parent dataset for a dead-letter table name, else None.
+
+    Matches both the v1.10.7+ ``_{ds}_dead_letter`` spelling and the legacy
+    ``{ds}_dead_letter`` one (pre-rename tables stay guarded).
+    """
+    from arrow_lake._system_tables import DEAD_LETTER_SUFFIX
+
+    if not name.endswith(DEAD_LETTER_SUFFIX):
+        return None
+    stem = name[: -len(DEAD_LETTER_SUFFIX)]
+    if stem.startswith("_"):
+        stem = stem[1:]
+    return stem or None
+
+
 def authorize_dataset(request: Request, name: str, *, write: bool = False) -> None:
     """Enforce dataset-level ACL on top of role-level require_role (v1.9.1 security).
 
     Raises 403 if the user's role lacks read (always) or write (when write=True)
     access to ``name``. Note: actual row/column filter application at the
     lake.read_dataset layer (passing the user through) is a separate follow-up.
+
+    Dead-letter tables (v1.10.7 review B-3) are ADMIN-only and inherit the
+    parent dataset's deny/ACL: the rows a quality gate rejects are exactly the
+    rows the dataset's policy refused — often the most sensitive ones.
     """
     user = getattr(request.state, "user", None) or get_current_user(request)
+    parent = _dead_letter_parent(name)
+    if parent is not None:
+        if user.role != Role.ADMIN:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Dead-letter table '{name}' is admin-only",
+            )
+        return  # ADMIN bypasses dataset ACL (consistent with check_dataset_access)
     checker = get_checker(request)
     if not checker.check_dataset_access(role=user.role, dataset=name, action="read"):
         raise HTTPException(status_code=403, detail=f"No read access to dataset '{name}'")

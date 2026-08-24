@@ -59,6 +59,10 @@ class AuthService:
         self._audience = audience
         self._require_audience = require_audience
         self._tva_provider: Callable[[str], float | None] | None = None
+        # B-2: tva provider failure defaults to fail-closed (token cannot be
+        # confirmed un-revoked → rejected). Deployments that prefer the
+        # pre-v1.10.7 fail-open behaviour must opt in explicitly.
+        self._tva_fail_open: bool = False
         self._blacklist: OrderedDict[str, float] = OrderedDict()
         self._blacklist_lock = threading.Lock()
         self._blacklist_max_size = 100_000
@@ -68,7 +72,7 @@ class AuthService:
             self._validate_config()
 
     def set_token_valid_after_provider(
-        self, provider: Callable[[str], float | None] | None
+        self, provider: Callable[[str], float | None] | None, *, fail_open: bool = False
     ) -> None:
         """Set a per-user token cutoff lookup (v1.10.5 M0).
 
@@ -77,10 +81,14 @@ class AuthService:
         ``api-user`` identity). Tokens issued (``iat``) before the cutoff are
         rejected — deactivating a user or changing their password/role takes
         effect on the next request instead of waiting out the access TTL.
-        Provider errors fail open (skip the check) to match the
-        system_db-disabled behaviour.
+
+        Provider errors fail closed by default (B-2: the token cannot be
+        confirmed un-revoked, so it is rejected); ``fail_open=True`` restores
+        the pre-v1.10.7 skip-the-check behaviour for deployments that prefer
+        availability over revocation guarantees.
         """
         self._tva_provider = provider
+        self._tva_fail_open = fail_open
 
     def set_redis(self, client: object) -> None:
         """Set an optional Redis client for persistent blacklist."""
@@ -225,7 +233,13 @@ class AuthService:
             try:
                 cutoff = self._tva_provider(str(data.get("sub", "")))
             except Exception:
-                cutoff = None  # store unreachable → fail open (pre-M0 behaviour)
+                if not self._tva_fail_open:
+                    # B-2 fail-closed: cannot confirm the token wasn't cut off
+                    # (password change / deactivation) → reject it.
+                    raise ValueError(
+                        "Identity store unreachable — cannot verify token revocation"
+                    ) from None
+                cutoff = None  # store unreachable → explicit opt-in fail-open
             if cutoff is not None:
                 iat = data.get("iat", 0)
                 if isinstance(iat, (int, float)) and iat < cutoff:

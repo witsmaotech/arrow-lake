@@ -61,7 +61,11 @@ class DeadLetterWriter:
             logger.debug("dead_letter_write_skipped", reason="empty_table")
             return 0
 
-        dead_letter_table = table_name + "_dead_letter"
+        # v1.10.7 review B-3: ``_`` prefix puts the dead-letter table in the
+        # internal namespace — hidden from non-admin listing and guarded as
+        # ADMIN-only at the API layer (rejected rows are exactly the rows the
+        # dataset's policy refused, often the most sensitive ones).
+        dead_letter_table = "_" + table_name + "_dead_letter"
         rejected_at = datetime.now(UTC).isoformat()
 
         # Extract existing rejection reason if present, otherwise use filter_name

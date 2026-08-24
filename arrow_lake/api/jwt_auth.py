@@ -104,7 +104,20 @@ async def jwt_auth_middleware_fn(
             auth_service.verify_token, token, timeout=1.0, label="verify_token"
         )
         request.state.user = payload
-    except (ValueError, TimeoutError) as exc:
+    except TimeoutError as exc:
+        # M-7 (review): a storage timeout is a dependency failure, not an
+        # invalid token — 503 lets clients retry instead of forcing re-login
+        # on every transient redis/libSQL hiccup.
+        logger.warning("JWT verification timed out: %s", exc)
+        return JSONResponse(
+            status_code=503,
+            content={
+                "success": False,
+                "error": "AUTH_STORE_UNAVAILABLE",
+                "message": "Token verification timed out — retry shortly",
+            },
+        )
+    except ValueError as exc:
         msg = str(exc)
         logger.debug("JWT verification failed: %s", msg)
         if "expired" in msg.lower():

@@ -214,8 +214,9 @@ class TestDeadLetter:
         passed, result = gate.check(dirty, dataset_name="ds")
 
         assert result.filter_rejected == 1
-        assert "ds_dead_letter" in storage.written
-        dl = storage.written["ds_dead_letter"]
+        # B-3: 死信表落 internal 命名空间(_ 前缀,非 admin 隐藏 + ADMIN-only 守卫)
+        assert "_ds_dead_letter" in storage.written
+        dl = storage.written["_ds_dead_letter"]
         assert dl.num_rows == 1
         assert "_rejection_reason" in dl.column_names
         assert "_filter_name" in dl.column_names

@@ -6,6 +6,21 @@ import os
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+
+from types import SimpleNamespace
+
+from arrow_lake.api.auth_models import Role
+
+
+def _authed_request() -> MagicMock:
+    """Request 伪对象:EDITOR user + allow-all checker(v1.10.7 WP1 守卫契约)。"""
+    req = MagicMock()
+    req.state.user = SimpleNamespace(role=Role.EDITOR, sub="1", user_id=1)
+    checker = MagicMock()
+    checker.check_dataset_access.return_value = True
+    req.app.state.checker = checker
+    return req
+
 from arrow_lake.api.models.dataset import (
     CleanupResponse,
     IngestDocumentsRequest,
@@ -163,6 +178,7 @@ class TestUploadEndpoint:
         mock_file.read = AsyncMock(return_value=b"id,name\n1,test\n")
 
         resp = await upload_files(
+            request=_authed_request(),
             name="test",
             files=[mock_file],
             lake=mock_lake,
@@ -195,6 +211,7 @@ class TestUploadEndpoint:
 
         with pytest.raises(ValueError, match="Invalid filename"):
             await upload_files(
+                request=_authed_request(),
                 name="test",
                 files=[mock_file],
                 lake=mock_lake,
@@ -296,6 +313,7 @@ class TestPresignEndpoint:
         mock_lake._get_component.return_value = mock_blob_store
 
         resp = await presign_upload(
+            request=_authed_request(),
             name="test",
             req=PresignRequest(filenames=["data.csv"]),
             lake=mock_lake,
@@ -324,6 +342,7 @@ class TestPresignEndpoint:
         mock_lake._get_component.return_value = mock_blob_store
 
         resp = await presign_upload(
+            request=_authed_request(),
             name="test",
             req=PresignRequest(filenames=["a.csv", "b.jsonl", "c.parquet"]),
             lake=mock_lake,
@@ -397,6 +416,7 @@ class TestCleanupEndpoint:
         mock_lake._get_component.return_value = mock_blob_store
 
         resp = await cleanup_uploads(
+            request=_authed_request(),
             name="test",
             lake=mock_lake,
             _user={"role": "editor"},
@@ -517,6 +537,7 @@ class TestContentTypeValidation:
 
         with pytest.raises(HTTPException) as exc_info:
             await upload_files(
+                request=_authed_request(),
                 name="test",
                 files=[mock_file],
                 lake=mock_lake,

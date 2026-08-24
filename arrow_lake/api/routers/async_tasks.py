@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 
 from arrow_lake.api._security_log import actor_of
 from arrow_lake.api.auth_models import Role
-from arrow_lake.api.deps import get_config, get_lake, require_role
+from arrow_lake.api.deps import authorize_dataset, get_config, get_lake, require_role
 from arrow_lake.api.models.dataset import (
     IngestDeltaLakeRequest,
     IngestDocumentsRequest,
@@ -406,6 +406,7 @@ async def ingest_files_async(
     _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> AsyncTaskResponse:
     """Async file ingest — returns task_id immediately (HTTP 202)."""
+    authorize_dataset(request, name, write=True)
     return _run_ingest_async(
         name, "ingest", _bg_ingest_files,
         (request.app.state, name, req.file_paths, req.blob_keys, req.transforms, lake, actor_of(_user), req.description),
@@ -430,6 +431,7 @@ async def ingest_documents_async(
 
     Poll via ``GET /api/v1/tasks/{task_id}/status`` or the tasks queue page.
     """
+    authorize_dataset(request, name, write=True)
     return _run_ingest_async(
         name, "ingest_documents", _bg_ingest_documents,
         (request.app.state, name, req.pdf_paths, req.blob_keys, req.doc_type, lake, actor_of(_user), req.description),
@@ -451,6 +453,7 @@ async def ingest_sql_async(
     _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> AsyncTaskResponse:
     """Async SQL ingest — returns task_id immediately."""
+    authorize_dataset(request, name, write=True)
     return _run_ingest_async(
         name, "ingest_sql", _bg_ingest_sql,
         (request.app.state, name, req.sql, req.connection_url, req.partition_col,
@@ -473,6 +476,7 @@ async def ingest_kafka_async(
     _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> AsyncTaskResponse:
     """Async Kafka ingest — returns task_id immediately."""
+    authorize_dataset(request, name, write=True)
     return _run_ingest_async(
         name, "ingest_kafka", _bg_ingest_kafka,
         (request.app.state, name, req.bootstrap_servers, req.topics, req.start,
@@ -495,6 +499,7 @@ async def ingest_iceberg_async(
     _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> AsyncTaskResponse:
     """Async Iceberg ingest — returns task_id immediately."""
+    authorize_dataset(request, name, write=True)
     return _run_ingest_async(
         name, "ingest_iceberg", _bg_ingest_iceberg,
         (request.app.state, name, req.table_uri, req.transforms, lake, actor_of(_user), req.description),
@@ -516,6 +521,7 @@ async def ingest_deltalake_async(
     _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> AsyncTaskResponse:
     """Async Delta Lake ingest — returns task_id immediately."""
+    authorize_dataset(request, name, write=True)
     return _run_ingest_async(
         name, "ingest_deltalake", _bg_ingest_deltalake,
         (request.app.state, name, req.table_uri, req.version, req.transforms, lake, actor_of(_user), req.description),
@@ -537,6 +543,7 @@ async def ingest_http_async(
     _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> AsyncTaskResponse:
     """Async HTTP URL ingest — returns task_id immediately."""
+    authorize_dataset(request, name, write=True)
     return _run_ingest_async(
         name, "ingest_http", _bg_ingest_http,
         (request.app.state, name, req.urls, lake, actor_of(_user), req.description),
@@ -558,6 +565,7 @@ async def ingest_images_async(
     _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> AsyncTaskResponse:
     """Async image ingest — returns task_id immediately."""
+    authorize_dataset(request, name, write=True)
     return _run_ingest_async(
         name, "ingest_images", _bg_ingest_media,
         (request.app.state, name, req.file_paths, req.blob_keys, lake, actor_of(_user), req.description, "images"),
@@ -579,6 +587,7 @@ async def ingest_videos_async(
     _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> AsyncTaskResponse:
     """Async video ingest — returns task_id immediately."""
+    authorize_dataset(request, name, write=True)
     return _run_ingest_async(
         name, "ingest_videos", _bg_ingest_media,
         (request.app.state, name, req.file_paths, req.blob_keys, lake, actor_of(_user), req.description, "videos"),
@@ -600,6 +609,7 @@ async def ingest_mixed_async(
     _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> AsyncTaskResponse:
     """Async mixed-modality ingest — returns task_id immediately."""
+    authorize_dataset(request, name, write=True)
     return _run_ingest_async(
         name, "ingest_mixed", _bg_ingest_mixed,
         (request.app.state, name, req.sources, req.blob_keys, lake, actor_of(_user), req.description),
@@ -644,6 +654,7 @@ def _bg_create_fts_index(lake: Any, name: str, **kwargs: Any) -> None:
     status_code=202,
 )
 async def create_vector_index_async(
+    request: Request,
     name: str = Path(..., pattern=r"^[a-zA-Z0-9_][a-zA-Z0-9_.-]*$"),
     *,
     req: AsyncVectorIndexRequest,
@@ -655,6 +666,7 @@ async def create_vector_index_async(
     Vector index builds (IVF_PQ/HNSW) can run minutes on large datasets; this
     avoids blocking the client. Poll via /tasks/{task_id}/status.
     """
+    authorize_dataset(request, name, write=True)
     task_id = TaskManager.create_task(
         "create_vector_index", name, user_id=_user.user_id,
         detail={
@@ -682,6 +694,7 @@ async def create_vector_index_async(
     status_code=202,
 )
 async def create_fts_index_async(
+    request: Request,
     name: str = Path(..., pattern=r"^[a-zA-Z0-9_][a-zA-Z0-9_.-]*$"),
     *,
     req: AsyncFtsIndexRequest,
@@ -689,6 +702,7 @@ async def create_fts_index_async(
     _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> AsyncTaskResponse:
     """Async FTS index creation — returns task_id immediately (HTTP 202)."""
+    authorize_dataset(request, name, write=True)
     task_id = TaskManager.create_task(
         "create_fts_index", name, user_id=_user.user_id,
         detail={"fts_column": req.fts_column},

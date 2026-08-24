@@ -44,6 +44,16 @@ _ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
 _ADMIN_ROLE = Role.ADMIN.value
 
 
+class AclStoreUnavailable(RuntimeError):
+    """The RBAC control-plane store raised while reading row/column ACLs.
+
+    v1.10.7 review B-2: returning ``None`` (no restriction) on a store failure
+    meant every WP1 enforcement point silently ran unfiltered — a control-plane
+    outage must refuse the data plane instead (fail-closed → 503 via the app
+    exception handler), never pretend there is no ACL.
+    """
+
+
 @dataclass(frozen=True)
 class DatasetACL:
     """Row/column-level access control for a dataset.
@@ -108,11 +118,14 @@ class PermissionChecker:
     # ------------------------------------------------------------------
     # Store-backed read helpers.
     #
-    # Fail-close semantics: when the store is present but a read raises,
-    # we log and return an empty result. The empty result propagates so
-    # that ``has_permission`` → False and ``check_dataset_access`` → deny
-    # (no grants, no ACL, role-default with empty perms). I.e. an
-    # unreachable control-plane DB denies rather than silently allows.
+    # Fail-close semantics: when the store is present but a read raises —
+    # * role/grant/schema reads log and return an empty result, which
+    #   propagates as deny (``has_permission`` → False, no grants →
+    #   role-default with empty perms);
+    # * row/col ACL reads raise ``AclStoreUnavailable`` (B-2) — returning
+    #   ``None`` there would read as "no restriction" at every enforcement
+    #   point, so an unreachable control-plane DB must surface as 503
+    #   instead of silently allowing unfiltered reads.
     # ------------------------------------------------------------------
     def _role_perms(self, role_name: str) -> frozenset[str]:
         if self._store is not None:
@@ -140,9 +153,14 @@ class PermissionChecker:
         if self._store is not None:
             try:
                 d = self._store.get_row_col_acl(dataset, role_name)
-            except Exception:
+            except Exception as exc:
+                # B-2: fail-closed. ``None`` means "no restriction" to every
+                # caller (check_dataset_access deny step, rbac_sql rewrite) —
+                # a store outage must not read as "no ACL configured".
                 logger.warning("rbac.store_rowcol_read_failed", dataset=dataset, exc_info=True)
-                return None
+                raise AclStoreUnavailable(
+                    f"Control-plane store unreachable while reading row/col ACL for '{dataset}'"
+                ) from exc
             if d is None:
                 return None
             return DatasetACL(

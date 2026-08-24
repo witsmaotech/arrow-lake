@@ -9,6 +9,7 @@ from fastapi.exceptions import RequestValidationError
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from arrow_lake.api.rbac import AclStoreUnavailable
 from arrow_lake.exceptions import ArrowLakeError, ErrorCode
 
 
@@ -157,6 +158,19 @@ def register_exception_handlers(app) -> None:
                 "error": exc.error_code.value,
                 "message": exc.message,
                 **({"context": safe_context} if safe_context else {}),
+            },
+        )
+
+    @app.exception_handler(AclStoreUnavailable)
+    async def acl_store_unavailable_handler(request: Request, exc: AclStoreUnavailable):
+        # B-2: control-plane outage during row/col ACL reads must surface as
+        # 503 (retryable dependency failure), never fall back to unfiltered.
+        return JSONResponse(
+            status_code=503,
+            content={
+                "success": False,
+                "error": "ACL_STORE_UNAVAILABLE",
+                "message": "Access-control store is unreachable — request refused (fail-closed)",
             },
         )
 

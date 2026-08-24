@@ -325,10 +325,18 @@ async def login_with_password(request: Request, creds: LoginRequest) -> TokenPai
         raise HTTPException(status_code=503, detail="User auth requires system_db enabled")
     ip = _client_ip(request)
     await _check_login_lockout(creds.username, ip, request)
-    user = await run_sync(
-        store.get_user_with_credentials, creds.username,
-        timeout=_AUTH_IO_TIMEOUT, label="get_user_with_credentials",
-    )
+    try:
+        user = await run_sync(
+            store.get_user_with_credentials, creds.username,
+            timeout=_AUTH_IO_TIMEOUT, label="get_user_with_credentials",
+        )
+    except TimeoutError as exc:
+        # M-7 (review): identity store timeout is a dependency failure — 503,
+        # not a bare 500 (and not a misleading 401 "wrong credentials").
+        logger.warning("login_identity_store_timeout username=%s ip=%s", creds.username, ip)
+        raise HTTPException(
+            status_code=503, detail="认证服务暂时不可用,请稍后重试"
+        ) from exc
     from arrow_lake.api.passwords import verify_password
 
     ok = user and user.get("is_active") and await run_sync(

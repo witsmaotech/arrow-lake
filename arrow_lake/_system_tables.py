@@ -16,6 +16,9 @@ from __future__ import annotations
 
 SYSTEM_TABLE_PREFIX: str = "sys_"
 INTERNAL_TABLE_PREFIX: str = "_"
+# 质量门控死信表后缀(v1.10.7 起写入 ``_{ds}_dead_letter``;旧命名 ``{ds}_dead_letter``
+# 的存量表同样按内部表处理 — 拒收行往往恰是被策略拒掉的最敏感行)。
+DEAD_LETTER_SUFFIX: str = "_dead_letter"
 
 
 def is_system_table(name: str) -> bool:
@@ -24,5 +27,5 @@ def is_system_table(name: str) -> bool:
 
 
 def is_internal_table(name: str) -> bool:
-    """内部表(sys_ 或 _ 前缀)→ 对非 admin 隐藏(系统运行表 + 临时表)。"""
-    return name.startswith((INTERNAL_TABLE_PREFIX, SYSTEM_TABLE_PREFIX))
+    """内部表(sys_ / _ 前缀,或死信表命名)→ 对非 admin 隐藏。"""
+    return name.startswith((INTERNAL_TABLE_PREFIX, SYSTEM_TABLE_PREFIX)) or name.endswith(DEAD_LETTER_SUFFIX)
