@@ -198,6 +198,12 @@ class GravitinoTagService:
                         if tags:
                             result[col_name] = tags
                     except Exception:
+                        if strict:
+                            # Review F2 corollary: a per-column RPC hiccup
+                            # silently dropping that column's tags would
+                            # weaken the ACL built from a partial fetch —
+                            # raise so the caller keeps last-known state.
+                            raise
                         pass
                 return result
             except Exception as exc:

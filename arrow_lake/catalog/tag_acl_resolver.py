@@ -133,10 +133,14 @@ class TagAwareACLResolver:
                 )
                 self._checker.set_acl(acl)
                 count += 1
-                keys.add((table_name, role))
             except Exception:
-                logger.debug("tag_acl_resolver.set_acl_failed",
-                             table=table_name, role=role)
+                # Review F3: keep the key in the tag-derived set even when
+                # this write failed — the PREVIOUS round's ACL still stands,
+                # and dropping the key here would make the recovery loop
+                # delete that protection one sync later.
+                logger.warning("tag_acl_resolver.set_acl_failed",
+                               table=table_name, role=role, exc_info=True)
+            keys.add((table_name, role))
 
         return count, keys
 
@@ -174,20 +178,24 @@ class TagAwareACLResolver:
         return svc.list_column_tags(table_name, strict=True)
 
     def _get_table_schema(self, table_name: str) -> list[dict[str, Any]]:
-        """Get table column schema from Gravitino."""
-        try:
-            import json
-            from urllib.request import Request, urlopen
+        """Get table column schema from Gravitino.
 
-            url = (
-                f"{self._config.uri}/api/metalakes/{self._config.metalake}"
-                f"/catalogs/{self._config.lance_catalog_name}"
-                f"/schemas/{self._config.lance_schema_name}/tables/{table_name}"
-            )
-            req = Request(url)
-            req.add_header("Accept", "application/vnd.gravitino.v1+json")
-            with urlopen(req, timeout=10) as resp:
-                data = json.loads(resp.read().decode())
-            return data.get("table", {}).get("columns", [])
-        except Exception:
-            return []
+        Raises on failure (review F2, 2026-08-24): the old blanket
+        ``return []`` was indistinguishable from "no schema", so a transient
+        schema-endpoint error made the table contribute no desired keys and
+        the recovery loop deleted its still-valid ACLs. The caller keeps
+        last-known state for this table.
+        """
+        import json
+        from urllib.request import Request, urlopen
+
+        url = (
+            f"{self._config.uri}/api/metalakes/{self._config.metalake}"
+            f"/catalogs/{self._config.lance_catalog_name}"
+            f"/schemas/{self._config.lance_schema_name}/tables/{table_name}"
+        )
+        req = Request(url)
+        req.add_header("Accept", "application/vnd.gravitino.v1+json")
+        with urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode())
+        return data.get("table", {}).get("columns", [])

@@ -128,6 +128,71 @@ class TestTagACLRecovery:
         assert ("ds", "viewer") not in checker.deleted
         assert checker.get_acl("ds", "viewer") is not None
 
+    def test_schema_fetch_failure_keeps_restrictions(self, monkeypatch):
+        """Review F2 (2026-08-24): _get_table_schema's OWN blanket except
+        returns [] on HTTP failure — indistinguishable from "no schema" —
+        so the table contributed no desired keys and the recovery loop
+        DELETED its still-valid ACLs. Exercise the internal swallow via the
+        real method + broken urlopen (a raise is already covered by the
+        generic carry-forward)."""
+        import urllib.request
+
+        checker = _FakeChecker()
+        r = self._resolver(checker)
+        monkeypatch.setattr(r, "_list_gravitino_tables", lambda: ["ds"])
+        monkeypatch.setattr(r, "_fetch_column_tags", lambda t: {"phone": ["pii"]})
+
+        def fake_open(req, timeout=0):  # noqa: ANN001
+            path = getattr(req, "full_url", "") or str(req)
+            if path.endswith("/tables/ds"):
+                body = b'{"table": {"columns": [{"name": "id"}, {"name": "phone"}]}}'
+            else:
+                raise AssertionError(f"unexpected url {path}")
+            import io
+            resp = io.BytesIO(body)
+            resp.__enter__ = lambda s: s
+            resp.__exit__ = lambda s, *a: False
+            return resp
+
+        monkeypatch.setattr(urllib.request, "urlopen", fake_open)
+        r.sync_tags_to_acls()
+        assert checker.get_acl("ds", "viewer") is not None
+
+        def broken_open(_req, timeout=0):
+            raise ConnectionError("schema endpoint down")
+
+        monkeypatch.setattr(urllib.request, "urlopen", broken_open)
+        r.sync_tags_to_acls()
+        assert ("ds", "viewer") not in checker.deleted, "schema fetch failure lifted PII ACL"
+        assert checker.get_acl("ds", "viewer") is not None
+
+    def test_set_acl_failure_does_not_delete_prior_acl(self, monkeypatch):
+        """Review F3: a transient set_acl failure removed the key from
+        desired → the recovery loop deleted the still-working protection
+        one round later (logged as a benign acl_removed)."""
+        checker = _FakeChecker()
+        r = self._resolver(checker)
+        monkeypatch.setattr(r, "_list_gravitino_tables", lambda: ["ds"])
+        monkeypatch.setattr(r, "_get_table_schema", lambda t: [{"name": "id"}, {"name": "phone"}])
+
+        monkeypatch.setattr(r, "_fetch_column_tags", lambda t: {"phone": ["pii"]})
+        r.sync_tags_to_acls()
+        assert checker.get_acl("ds", "viewer") is not None
+
+        # round 2: store write starts failing
+        def failing_set(acl):
+            raise RuntimeError("libSQL write error")
+
+        monkeypatch.setattr(checker, "set_acl", failing_set)
+        r.sync_tags_to_acls()
+
+        # round 3: store recovers — the prior ACL must still exist and not
+        # have been reaped during round 2
+        monkeypatch.setattr(r, "_fetch_column_tags", lambda t: {"phone": ["pii"]})
+        r.sync_tags_to_acls()
+        assert ("ds", "viewer") not in checker.deleted, "set_acl failure led to ACL deletion"
+        assert checker.get_acl("ds", "viewer") is not None
+
 
 class TestEmbedGuardReadsRedisMirror:
     def test_guard_consults_redis_mirror(self):

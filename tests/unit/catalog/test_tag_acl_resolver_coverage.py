@@ -131,7 +131,9 @@ class TestSyncTable:
             assert resolver._sync_table("tbl") == (0, set())
 
     def test_set_acl_exception_continues(self, resolver: TagAwareACLResolver, checker: MagicMock) -> None:
-        """If checker.set_acl raises, _sync_table continues and returns partial count."""
+        """If checker.set_acl raises, _sync_table continues and returns partial
+        count — but keeps BOTH keys (review F3: dropping a failed-write key
+        made the recovery loop delete the still-standing prior ACL)."""
         column_tags = {"email": ["pii"], "phone": ["pii"]}
         schema = [{"name": "email"}, {"name": "phone"}, {"name": "name"}]
 
@@ -152,7 +154,7 @@ class TestSyncTable:
         # pii → denied roles = {editor, viewer} → 2 ACLs
         # First set_acl fails, second succeeds
         assert count == 1
-        assert keys == {("tbl", "viewer")}  # only the successful one is tracked
+        assert keys == {("tbl", "editor"), ("tbl", "viewer")}
 
 
 # ── _list_gravitino_tables ──
@@ -215,10 +217,11 @@ class TestGetTableSchema:
         assert len(schema) == 2
         assert schema[0]["name"] == "id"
 
-    def test_fetch_failure_returns_empty(self, resolver: TagAwareACLResolver) -> None:
+    def test_fetch_failure_raises(self, resolver: TagAwareACLResolver) -> None:
+        """v1.10.8 (review F2): failures propagate — a swallowed [] made the
+        recovery loop delete still-valid ACLs on a transient schema error."""
         with patch("urllib.request.Request") as MockReq, \
              patch("urllib.request.urlopen", side_effect=RuntimeError("fail")):
             MockReq.return_value = MagicMock()
-            schema = resolver._get_table_schema("users")
-
-        assert schema == []
+            with pytest.raises(RuntimeError):
+                resolver._get_table_schema("users")

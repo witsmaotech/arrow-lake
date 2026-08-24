@@ -50,6 +50,11 @@ def _alias_map(tree: exp.Expression) -> dict[str, str]:
     case-insensitively, so ACL matching must compare in a single canonical
     case (sqlglot's qualify() normalizes to lowercase for the duckdb
     dialect — lowercasing here keeps the map consistent regardless).
+
+    GLOBAL fallback only — prefer :func:`_resolve_real_table`, which is
+    scope-aware: one global map lets an outer alias shadow an inner
+    scope's binding (review H-3: ``SELECT (SELECT a.secret FROM restricted
+    AS a ...) FROM public_tbl AS a`` hid the restricted table's columns).
     """
     mapping: dict[str, str] = {}
     for table in tree.find_all(exp.Table):
@@ -59,6 +64,53 @@ def _alias_map(tree: exp.Expression) -> dict[str, str]:
         if alias:
             mapping.setdefault(alias.lower(), real)
     return mapping
+
+
+def _local_alias_map(select: exp.Select) -> dict[str, str]:
+    """Alias → real table for ONE select's own FROM/JOIN sources only.
+
+    Deliberately does not descend into subqueries in the FROM clause —
+    those are separate scopes with their own bindings.
+    """
+    sources: list[exp.Table] = []
+    # sqlglot 30.x keys the FROM clause as "from_" (older: "from")
+    frm = select.args.get("from_") or select.args.get("from")
+    if frm is not None and isinstance(frm.this, exp.Table):
+        sources.append(frm.this)
+    for join in select.args.get("joins") or []:
+        node = join.this
+        if isinstance(node, exp.Subquery) and isinstance(node.this, exp.Table):
+            sources.append(node.this)
+        elif isinstance(node, exp.Table):
+            sources.append(node)
+    local: dict[str, str] = {}
+    for t in sources:
+        real = t.name.lower()
+        local[real] = real
+        if t.alias:
+            local[t.alias.lower()] = real
+    return local
+
+
+def _resolve_real_table(
+    column: exp.Column,
+    select_maps: dict[int, dict[str, str]],
+    global_map: dict[str, str],
+) -> str:
+    """Resolve a column's table reference the way SQL name resolution does:
+    the owning select's own aliases first, then enclosing scopes outward,
+    then the global map (CTE names etc.). All names lowercase."""
+    name = column.table
+    if not name:
+        return ""
+    probe = name.lower()
+    sel = column.parent_select
+    while sel is not None:
+        local = select_maps.get(id(sel))
+        if local and probe in local:
+            return local[probe]
+        sel = sel.parent_select
+    return global_map.get(probe, probe).lower()
 
 
 def enforce_sql_acl(
@@ -121,10 +173,13 @@ def enforce_sql_acl(
 
     # 3) column references (post-qualification binds table for each column)
     aliases = _alias_map(tree)
+    select_maps = {
+        id(s): _local_alias_map(s) for s in tree.find_all(exp.Select)
+    }
     for col in tree.find_all(exp.Column):
         if isinstance(col.this, exp.Star):
             continue  # handled below
-        real = aliases.get(col.table, col.table).lower()
+        real = _resolve_real_table(col, select_maps, aliases)
         acl = acls.get(real)
         if (
             acl is not None
@@ -136,6 +191,17 @@ def enforce_sql_acl(
                 f"'{acl.dataset}' — reference removed by column-level ACL"
             )
 
+    # 3b) DuckDB COLUMNS() wildcard (review H-1): references columns by
+    # string literal/regex — invisible to the exp.Column walk above and
+    # unresolvable against the visible set. Fail-closed whenever a
+    # column-restricted dataset is in scope (same policy as SELECT *).
+    if any(a.visible_columns for a in acls.values()):
+        if any(True for _ in tree.find_all(exp.Columns)):
+            raise AclSqlViolation(
+                "COLUMNS() wildcard is not allowed while column-restricted "
+                "datasets are referenced — list columns explicitly"
+            )
+
     # 4) SELECT * / t.* on column-restricted tables
     for star in tree.find_all(exp.Star):
         if isinstance(star.parent, exp.Count):
@@ -143,7 +209,7 @@ def enforce_sql_acl(
         col_parent = star.parent
         real: str | None = None
         if isinstance(col_parent, exp.Column) and col_parent.table:
-            real = aliases.get(col_parent.table, col_parent.table).lower()
+            real = _resolve_real_table(col_parent, select_maps, aliases)
         restricted = [t for t, a in acls.items() if a.visible_columns]
         if real is not None:
             if real in restricted:
@@ -164,7 +230,11 @@ def enforce_sql_acl(
         if acl is None or not acl.row_filter:
             continue
         predicate = _normalize_predicate(acl.row_filter)
-        sub_sql = f"SELECT * FROM {table.name} WHERE {predicate}"
+        # Quoted identifier (review H-5): dataset names may contain '--'
+        # (_NAME_PATTERN allows it); an unquoted f-string interpolation made
+        # the predicate parse as a comment and silently dropped the filter.
+        # The name pattern forbids '"' so double-quoting is unambiguous.
+        sub_sql = f'SELECT * FROM "{table.name}" WHERE {predicate}'
         sub = exp.Subquery(this=_parse_or_fail(sub_sql))
         alias_arg = table.args.get("alias")
         if alias_arg is not None:

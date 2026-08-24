@@ -266,6 +266,77 @@ class TestCaseInsensitiveDatasetNames:
         assert duck_mc.execute(out).fetchall() == []
 
 
+class TestColumnsWildcardBypass:
+    """Review H-1 (2026-08-24): DuckDB's COLUMNS('regex') / COLUMNS([...])
+    reference columns by string literal — invisible to the exp.Column walk.
+    It smuggled hidden columns out renamed as visible ones, defeating even
+    the post-hoc name whitelist."""
+
+    def test_columns_regex_rejected_under_column_acl(self):
+        with pytest.raises(AclSqlViolation, match="COLUMNS"):
+            enforce_sql_acl(
+                "SELECT v AS id FROM (SELECT COLUMNS('ph.*') FROM ds) AS t(v)",
+                get_acl=_getter(COL_ACL),
+            )
+
+    def test_columns_list_rejected_under_column_acl(self):
+        with pytest.raises(AclSqlViolation, match="COLUMNS"):
+            enforce_sql_acl(
+                "SELECT COLUMNS(['id', 'phone']) FROM ds", get_acl=_getter(COL_ACL)
+            )
+
+    def test_columns_star_rejected_under_column_acl(self):
+        with pytest.raises(AclSqlViolation, match="COLUMNS"):
+            enforce_sql_acl(
+                "SELECT COLUMNS(*) FROM ds", get_acl=_getter(COL_ACL)
+            )
+
+    def test_columns_allowed_without_column_acl(self, duck):
+        """Row-filter-only datasets keep COLUMNS(): the predicate rewrite
+        still applies to the expanded projection's source."""
+        out = enforce_sql_acl(
+            "SELECT COLUMNS(['id']) FROM ds", get_acl=_getter(ROW_ACL)
+        )
+        assert {r[0] for r in duck.execute(out).fetchall()} == {1, 3}
+
+
+class TestCrossScopeAliasCollision:
+    """Review H-3: _alias_map was one global dict — an outer alias with the
+    same name shadowed an inner scope's binding, hiding the inner table's
+    restricted columns from the check."""
+
+    def test_inner_scope_alias_resolved_correctly(self):
+        with pytest.raises(AclSqlViolation, match="phone"):
+            enforce_sql_acl(
+                "SELECT (SELECT a.phone FROM ds AS a LIMIT 1) AS leak FROM public_tbl AS a",
+                get_acl=_getter(COL_ACL),
+            )
+
+    def test_outer_scope_still_resolves(self):
+        """The per-scope fix must not break ordinary outer alias checks."""
+        with pytest.raises(AclSqlViolation, match="phone"):
+            enforce_sql_acl(
+                "SELECT a.phone FROM ds AS a", get_acl=_getter(COL_ACL)
+            )
+
+
+class TestDoubleHyphenDatasetName:
+    """Review H-5: _NAME_PATTERN allows 'x--y'; the row-filter subquery was
+    f-string built with the UNQUOTED name, so the predicate parsed as a
+    comment and the filter silently vanished."""
+
+    def test_predicate_survives_double_hyphen_name(self, duck):
+        duck.execute('CREATE TABLE "x--y" (id INTEGER, region VARCHAR)')
+        duck.execute("INSERT INTO \"x--y\" VALUES (1, 'east'), (2, 'west')")
+        acl = DatasetACL(dataset="x--y", role="viewer", row_filter="region == 'east'")
+        get = lambda t: acl if t == "x--y" else None  # noqa: E731
+
+        out = enforce_sql_acl("SELECT id FROM \"x--y\"", get_acl=get)
+        rows = duck.execute(out).fetchall()
+        assert rows == [(1,)]  # west row filtered — predicate survived
+
+
+
 class TestCheckerCaseInsensitiveGetAcl:
     """PermissionChecker.get_acl must resolve case-insensitively (DuckDB
     semantics): the enforcement layer passes SQL-written table names."""
