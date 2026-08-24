@@ -44,9 +44,21 @@ class TestValidateSqlSafety:
         with pytest.raises(ValueError, match="Dangerous|Semicolons|Multiple|parsed"):
             validate_sql_safety("SELECT 1; DROP TABLE users")
 
-    def test_union_rejected(self) -> None:
-        with pytest.raises(ValueError, match="Only read-only SELECT"):
-            validate_sql_safety("SELECT * FROM a UNION SELECT * FROM b")
+    def test_union_allowed_read_only_set_operations(self) -> None:
+        """v1.10.7 结构白名单下放行:set operations 是只读的,表位置检查对
+        两臂都生效;黑名单时代禁它属防御性过当(用户 worksheet 实需)。"""
+        validate_sql_safety("SELECT a FROM x UNION SELECT b FROM y")
+        validate_sql_safety("SELECT a FROM x UNION ALL SELECT b FROM y")
+        validate_sql_safety("SELECT a FROM x EXCEPT SELECT b FROM y")
+        # CTE 内 UNION(用户实际命中的形状:顶层 Select,旧正则误杀)
+        validate_sql_safety(
+            "WITH x AS (SELECT a FROM ds1 UNION SELECT b FROM ds2) SELECT * FROM x"
+        )
+
+    def test_union_arm_with_table_function_still_rejected(self) -> None:
+        with pytest.raises(ValueError, match="named dataset"):
+            validate_sql_safety("SELECT a FROM x UNION SELECT * FROM read_text('/etc/passwd')")
+
 
     def test_attach_rejected(self) -> None:
         with pytest.raises(ValueError, match="Only read-only SELECT|parsed"):

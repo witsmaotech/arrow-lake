@@ -28,7 +28,6 @@ DANGEROUS_SQL_KEYWORDS_RE = re.compile(
     r"INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|"
     r"GRANT|REVOKE|EXEC|EXECUTE|"
     r"COPY|IMPORT|EXPORT|"
-    r"UNION|EXCEPT|INTERSECT|"
     r"ATTACH|DETACH|PRAGMA|LOAD|CALL|SET|COMMENT|RENAME|MERGE"
     r")\b",
     re.IGNORECASE,
@@ -134,7 +133,12 @@ def validate_sql_safety(sql: str) -> None:
     if len(statements) != 1:
         raise ValueError("Multiple SQL statements detected — run one query at a time")
     tree = statements[0]
-    if not isinstance(tree, _exp.Select):
+    # Select + set operations (UNION/ALL/EXCEPT/INTERSECT, top-level or in a
+    # CTE/subquery): read-only, and the table-position check below applies to
+    # BOTH arms via find_all — safe under the structural whitelist. The legacy
+    # blacklist banned them defensively; worksheet analytics legitimately
+    # needs them (user report 2026-08-24).
+    if not isinstance(tree, (_exp.Select, _exp.Union, _exp.Except, _exp.Intersect)):
         raise ValueError(
             f"Only read-only SELECT queries are allowed (got {type(tree).__name__})"
         )
@@ -162,10 +166,10 @@ def validate_sql_safety(sql: str) -> None:
         )
     if ";" in sql:
         raise ValueError("Semicolons not allowed in SQL")
-    if _is_multi_statement(sql):
-        raise ValueError(
-            f"Multiple SQL statements detected — run one query at a time: {sql[:80]}"
-        )
+    # NOTE: _is_multi_statement (regex SELECT-counting) is retired from the
+    # active path — the parser-based `len(statements) != 1` above is strictly
+    # more accurate, AND the regex would false-positive on legitimate set
+    # operations (a UNION's second arm is a second top-level SELECT to it).
 
 
 def escape_sql_literal(value: str, max_length: int = _MAX_LITERAL_LENGTH) -> str:
