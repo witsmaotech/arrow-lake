@@ -485,7 +485,12 @@ async def _do_generate(req: "GenerateRequest", generate_fn) -> tuple[str, list, 
             msgs.append(("assistant", out))
             msgs.append(("user", he_err + "\n请按上述字段级错误逐一补正(缺失段就补该段,类型/枚举不符就改成合法值),只输出修正后的完整纯 YAML。"))
             continue
-        return yaml_text, [], attempt > 0
+        # 3. v1.11.0 F1.5: ontology 段 → guideline 规则文本增强(工具路径,
+        #    非运行时注入)。生成的模板带 ontology: 段时,把约束渲染进 prompt
+        #    规则,抽取与 SHACL 门禁同源;无段 no-op。
+        from arrow_lake.ontology.rules_renderer import enhance_template_yaml
+
+        return enhance_template_yaml(yaml_text), [], attempt > 0
     return last_yaml, last_errors, True
 
 

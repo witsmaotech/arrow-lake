@@ -86,13 +86,19 @@ class TestAdaptTemplate:
         assert spec.entity_field_types["confidence"] == "float"
 
     def test_real_project_concept_graph_degrades(self) -> None:
-        """真实模板(尚无 ontology: 段)必须可降级解析 — F1.6 补段前的基线。"""
+        """真实模板解析(F1.6 后):优先读 ontology: 段;剥掉该段后必须仍可
+        降级解析(存量模板兼容路径的活体样本)。"""
         path = _TEMPLATE_DIR / "project_concept_graph.yaml"
         tpl = yaml.safe_load(path.read_text(encoding="utf-8"))
         spec = adapt_template(tpl)
         assert spec.template_name == "project_concept_graph"
-        assert spec.entity_type_enum == ()  # 降级:枚举藏在 description 自然语言里
+        assert len(spec.entity_type_enum) == 22  # F1.6:段已补
         assert {"name", "type", "definition"} <= set(spec.required_entity_fields)
+        # 剥掉段 → 降级为仅必填/类型(与无段存量模板同路径)
+        stripped = {k: v for k, v in tpl.items() if k != "ontology"}
+        degraded = adapt_template(stripped)
+        assert degraded.entity_type_enum == ()
+        assert degraded.required_entity_fields == spec.required_entity_fields
 
     def test_minimal_template(self) -> None:
         """只有 name 的空模板 → 空 spec,不抛(最大兼容)。"""

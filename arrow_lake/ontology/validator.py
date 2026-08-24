@@ -85,6 +85,21 @@ def _parse_results(results_graph: Graph, focus_map: dict[BNode, str]) -> list[Vi
     return violations
 
 
+def _pair_allowed(
+    allowed_pairs: tuple[tuple[str, str, str], ...],
+    src_t: str, rel_type: str, dst_t: str,
+) -> bool:
+    """三元组匹配,src/rel/dst 任一为 ``"*"`` 即通配(relation_validator 语义)。
+
+    v1.11.0 F1.6:此前仅支持 ``(src, *, dst)`` 关系位通配,而运行时白名单
+    (报价/部署于/交付于/达成/遵循)需要 src/dst 位通配 —— 升级为三元全通配。
+    """
+    return any(
+        (s == "*" or s == src_t) and (r == "*" or r == rel_type) and (d == "*" or d == dst_t)
+        for s, r, d in allowed_pairs
+    )
+
+
 def _check_type_pairs(
     entities: list[dict[str, Any]],
     relations: list[dict[str, Any]],
@@ -96,7 +111,6 @@ def _check_type_pairs(
     entity_type = {
         str(e.get("name")): str(e.get("type", "")) for e in entities if e.get("name")
     }
-    allowed = set(allowed_pairs)
     violations: list[Violation] = []
     for idx, rel in enumerate(relations):
         rel_type = str(rel.get("type", ""))
@@ -104,7 +118,7 @@ def _check_type_pairs(
         dst_t = entity_type.get(str(rel.get("target", "")))
         if src_t is None or dst_t is None:
             continue  # 端点缺失由 SHACL required 层抓,不重复报
-        if (src_t, rel_type, dst_t) not in allowed and (src_t, "*", dst_t) not in allowed:
+        if not _pair_allowed(allowed_pairs, src_t, rel_type, dst_t):
             violations.append(
                 Violation(
                     level=LEVEL_REJECT,

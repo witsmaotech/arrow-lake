@@ -994,7 +994,12 @@ class KGBuilder:
                 {
                     "source": r.source,
                     "target": r.target,
-                    "type": r.relation_type,
+                    # v1.9.9 soft-degrade rewrites an illegal (verb, type-pair)
+                    # relation to the generic marker 相关. The gate measures RAW
+                    # extraction quality — capture the original verb so the pair
+                    # violation is still visible to the ontology gate.
+                    "type": dict(r.properties).get("original_relation_type")
+                            or r.relation_type,
                 }
                 for r in result.relations
             )
