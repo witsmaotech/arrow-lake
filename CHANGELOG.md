@@ -30,6 +30,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - 新增 55+ 用例:攻击样本 17 例（WP1 批）+ 接线审计、ingest 池隔离 4 例、认证热路径 5 例（含真实 PBKDF2 并发重叠断言）、lifespan 信号 3 例、质量门控 19+3 例（去 mock 全链:配置→脏数据→拒收→死信;shadow/enforce 语义）、池回滚/tag 回收/embed 守卫 4+8 例;`tests/unit/api`、`tests/unit/quality`、`tests/unit/catalog`、`tests/unit/ingest` 回归与基线一致（gravitino SDK 依赖用例在宿主 venv 收集失败为存量环境限制,容器内可用）。
 
+### 发布后四维 review 加固（2026-08-24,收敛于 v1.10.7）
+
+> 发版后对 v1.10.7 全量变更做了质量/安全/FastAPI 异步/静默失败四维并行 review;以下为当日实证并修复、直接并入 v1.10.7 的部分(6d4792f + 549c9c6):
+
+- **CRITICAL 标识符大小写绕过**:DuckDB 标识符解析大小写不敏感,而 SQL ACL 强制用精确匹配——非全小写数据集名（如 `AIGC_2023REPORT`）完全绕过行过滤下推与列 AST 检查;且 sqlglot `qualify()` 把标识符规范化为小写,精确大小写引用也逃逸。修复:强制域统一小写（rbac_sql 键/探针/可见集全链 lower）、`PermissionChecker.get_acl` 精确优先+大小写不敏感回落、store `COLLATE NOCASE`（仅读侧,admin 注册仍精确键）。
+- **HIGH COLUMNS() 绕过**:DuckDB `COLUMNS('regex')/[...]` 按字符串引用列,对 `exp.Column` 遍历不可见,可把隐藏列改名外带（连事后列名白名单也骗过）。列受限数据集在引用域内时一律 fail-closed 拒绝（与 `SELECT *` 同策略）。
+- **HIGH 跨作用域别名碰撞**:`_alias_map` 全局单字典,外层同名别名遮蔽内层受限表绑定（`SELECT (SELECT a.phone FROM restricted AS a ...) FROM public_tbl AS a`）。改为作用域感知解析:按各 SELECT 自身 FROM/JOIN 建别名表,从列所属 select 向外逐层解析（SQL 名字解析语义）,全局 map 仅作 CTE 回退。
+- **HIGH `--` 数据集名丢谓词**:`_NAME_PATTERN` 允许 `x--y`;行过滤子查询 f-string 拼未引号表名,谓词被解析成注释静默消失。子查询标识符改双引号（名称模式禁 `"`,无歧义）。
+- **HIGH 质量门控全拒批整批放回**:`report.passed_table or table` 在空 `pa.Table`（falsy）时回落原表——enforce 下全拒批被完整写入且计数为零（无日志/死信/指标）。改显式 `is not None` 判空。
+- **HIGH tag→ACL 回收 fail-open×2**:schema 拉取吞错返回 `[]`、`set_acl` 瞬时失败不入 desired——两者都让回收环删除仍有效的 PII ACL（共享 store,4 worker 全体生效）;per-column tag RPC 单列吞错还会用部分拉取弱化 ACL。修复:schema 拉取失败改 raise（调用方保上次状态）、strict 模式单列失败 raise、set_acl 失败保留 key（保护不被回收）并升 warning。
+- **测试**:大小写 12 例语料 + COLUMNS 3 例 + 作用域碰撞 2 例 + `--` 名 1 例（真实 DuckDB 执行）+ checker CI 2 例 + tag 保状态 3 例;rbac_sql 套件 41 绿;全量回归与存量基线一致。
+
+**遗留（后续版本分批消化,MS1/MS5 前清完 HIGH）**:同步 ingest 端点未走 ingest_executor（可用性）;`_get_row_col_acl` 控制面故障 fail-open;死信表在 ACL/隐藏层外;deny 不约束写路径;schema 校验 to_pydict 性能;refresh/logout/export 事件循环阻塞等 ~15 MEDIUM + ~8 LOW。
+
 ## [1.10.6] - 2026-08-21
 
 ### 安全加固 P0（实施前综合 Review 修复批,3 CRITICAL + 1 HIGH）
