@@ -22,6 +22,7 @@ from arrow_lake.config._enums import (
     LogLevel,
     ModelSource,
     OcrBackend,
+    OntologyGateMode,
     PdfParseMode,
     SchemaValidationMode,
     StorageBackend,
@@ -59,6 +60,7 @@ from arrow_lake.config.media import (
     QualityConfig,
 )
 from arrow_lake.config.olap import OlapConfig
+from arrow_lake.config.ontology import OntologyConfig
 from arrow_lake.config.rag import HugeGraphConfig, LLMConfig, RAGConfig
 from arrow_lake.config.redis import RedisConfig
 from arrow_lake.config.system_db import SystemDBConfig
@@ -88,6 +90,7 @@ __all__ = [  # noqa: RUF022
     "LogLevel",
     "ModelSource",
     "OcrBackend",
+    "OntologyGateMode",
     "PdfParseMode",
     "SchemaValidationMode",
     "StorageBackend",
@@ -118,6 +121,7 @@ __all__ = [  # noqa: RUF022
     "MediaConfig",
     "ObservabilityConfig",
     "OlapConfig",
+    "OntologyConfig",
     "OpenTelemetryConfig",
     "QualityConfig",
     "RAGConfig",

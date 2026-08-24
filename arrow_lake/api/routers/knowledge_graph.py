@@ -169,6 +169,7 @@ async def kg_build_status(
             new_chunks=status.get("new_chunks", 0),
             reused_chunks=status.get("reused_chunks", 0),
             error=status.get("error"),
+            ontology=status.get("ontology"),
         )
     except KGError as exc:
         raise HTTPException(status_code=_kg_error_to_status(exc), detail=exc.message) from exc

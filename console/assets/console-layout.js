@@ -66,6 +66,7 @@ const NAV = [
   ] },
   { group: "治理运维", items: [
     { id: "governance", label: "元数据治理", ic: "key", href: "governance.html" },
+    { id: "ontology", label: "本体与规则", ic: "code", href: "ontology.html" },
     { id: "lineage", label: "血缘图谱", ic: "database", href: "lineage.html" },
     { id: "audit", label: "审计日志", ic: "bell", href: "audit.html" },
     { id: "system", label: "系统运维", ic: "dashboard", href: "system.html" },

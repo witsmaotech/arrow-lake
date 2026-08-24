@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>本体与规则 · Arrow Lake Console</title>
+<link rel="stylesheet" href="assets/tokens.css"/>
+<link rel="stylesheet" href="assets/app.css"/>
+<link rel="stylesheet" href="assets/console.css"/>
+<style>
+  .ont-grid{display:grid;grid-template-columns:1.4fr 1.6fr;gap:var(--s4);align-items:start}
+  @media(max-width:1100px){.ont-grid{grid-template-columns:1fr;}}
+  .ver-row{padding:8px 12px;border-bottom:1px solid var(--line-soft);cursor:pointer;font-size:.78rem;display:flex;align-items:center;gap:10px;transition:background .12s}
+  .ver-row:hover{background:var(--ink-850)}
+  .ver-row.active{background:var(--ink-850);border-left:2px solid var(--teal-bright)}
+  .ver-row:last-child{border-bottom:none}
+  .ver-badge{font-family:var(--font-mono);font-size:.68rem;padding:1px 7px;border-radius:99px;border:1px solid var(--teal-bright);color:var(--teal-bright);flex-shrink:0}
+  .diff-sec{margin-bottom:10px}
+  .diff-sec h5{font-size:.72rem;color:var(--fg-md);margin:0 0 4px;font-family:var(--font-mono)}
+  .chip-add{display:inline-block;font-family:var(--font-mono);font-size:.68rem;padding:1px 7px;border-radius:var(--r-sm);background:rgba(16,185,129,.12);color:#34d399;margin:2px 4px 2px 0}
+  .chip-del{display:inline-block;font-family:var(--font-mono);font-size:.68rem;padding:1px 7px;border-radius:var(--r-sm);background:rgba(239,68,68,.12);color:#f87171;margin:2px 4px 2px 0;text-decoration:line-through}
+  .rules-table{width:100%;border-collapse:collapse;font-size:.76rem}
+  .rules-table th{text-align:left;color:var(--fg-md);font-weight:500;padding:6px 8px;border-bottom:1px solid var(--line);font-size:.7rem}
+  .rules-table td{padding:6px 8px;border-bottom:1px solid var(--line-soft);vertical-align:top}
+  .st{font-family:var(--font-mono);font-size:.66rem;padding:1px 8px;border-radius:99px}
+  .st-draft{border:1px solid var(--fg-md);color:var(--fg-md)}
+  .st-active{border:1px solid #34d399;color:#34d399}
+  .st-retired{border:1px solid var(--fg-faint,#666);color:var(--fg-faint,#888);text-decoration:line-through}
+  .ont-form{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-top:10px}
+  .ont-form input,.ont-form textarea{background:var(--ink-900);border:1px solid var(--line);color:var(--fg-hi);border-radius:var(--r-sm);padding:6px 10px;font:inherit;font-size:.78rem;font-family:var(--font-mono)}
+  .ont-form textarea{grid-column:1 / -1;resize:vertical;min-height:48px;font-size:.72rem}
+  .degraded{padding:14px;color:var(--warn);font-size:.82rem;border:1px dashed var(--warn);border-radius:var(--r-sm);background:rgba(245,158,11,.05)}
+  pre.turtle{max-height:320px;overflow:auto;font-size:.68rem;font-family:var(--font-mono);background:var(--ink-900);border:1px solid var(--line-soft);border-radius:var(--r-sm);padding:10px;margin:8px 0 0}
+</style>
+</head>
+<body>
+<div id="app">
+<main class="main"><div class="page">
+  <div class="h-sec between">
+    <div><h1>本体与规则</h1><div class="desc">SHACL 快照版本链 + 业务规则注册表 · <span class="mono">GET /api/v1/ontology/*</span></div></div>
+    <div class="flex"><button class="btn btn-ghost btn-sm" id="apiBtn"><i class="placeholder" data-ic="code"></i> API</button><button class="btn btn-primary btn-sm" id="refresh"><i class="placeholder" data-ic="dashboard"></i> 刷新</button></div>
+  </div>
+
+  <div id="adminGate" class="degraded" style="display:none">本体管理接口需要 ADMIN 权限(当前账号角色不足)。</div>
+
+  <div class="ont-grid" style="margin-top:var(--s4)">
+    <!-- 左:版本链 -->
+    <div class="panel flush">
+      <div class="panel-h">
+        <i class="placeholder" data-ic="code"></i><h3>本体版本链</h3>
+        <span class="sub" id="verMeta">—</span>
+      </div>
+      <div class="panel-b" style="padding:10px;display:flex;gap:8px;align-items:center">
+        <input id="scopeInput" placeholder="scope(数据集名,留空=全部)" style="flex:1;background:var(--ink-900);border:1px solid var(--line);color:var(--fg-hi);border-radius:var(--r-sm);padding:5px 10px;font:inherit;font-size:.76rem;font-family:var(--font-mono)"/>
+        <button class="btn btn-ghost btn-sm" id="scopeGo">查版本</button>
+      </div>
+      <div class="panel-b" id="verList" style="padding:0"><div class="muted" style="padding:10px">加载…</div></div>
+    </div>
+
+    <!-- 右:选中版本 diff + Turtle -->
+    <div class="panel flush">
+      <div class="panel-h"><i class="placeholder" data-ic="git-branch"></i><h3>版本 Diff</h3><span class="sub" id="diffMeta">选一个版本</span></div>
+      <div class="panel-b" id="verDiff"><div class="muted" style="padding:10px">左侧选版本查看与上一版的结构化 diff(枚举/必填/type-pairs 增删)</div></div>
+    </div>
+  </div>
+
+  <!-- 规则注册表 -->
+  <div class="panel flush" style="margin-top:var(--s4)">
+    <div class="panel-h"><i class="placeholder" data-ic="key"></i><h3>规则注册表</h3><span class="sub" id="ruleMeta">登记不执行(MS3 落求值)· 状态机 draft→active→retired</span></div>
+    <div class="panel-b" id="ruleList" style="padding:0"><div class="muted" style="padding:10px">加载…</div></div>
+    <div class="panel-b" style="border-top:1px solid var(--line-soft)">
+      <details>
+        <summary style="cursor:pointer;font-size:.8rem;color:var(--fg-md)">＋ 登记新规则</summary>
+        <div class="ont-form" id="ruleForm">
+          <input id="rId" placeholder="rule_id,如 GAS.LEAK.R001"/>
+          <input id="rScope" placeholder="scope(数据集名或 *)"/>
+          <textarea id="rCond" placeholder="条件表达式,如 浓度 > 20%LEL AND 持续 > 5min"></textarea>
+          <input id="rConc" placeholder="结论,如 触发泄漏预警"/>
+          <input id="rSrc" placeholder="来源引用(含国标版本号)"/>
+          <button class="btn btn-primary btn-sm" id="rAdd" style="justify-self:start">登记(draft)</button>
+        </div>
+      </details>
+    </div>
+  </div>
+
+</div></main>
+</div>
+
+<script src="assets/console-layout.js"></script>
+<script type="module">
+import { request } from "./src/api.js";
+import { isLoggedIn } from "./src/auth.js";
+import { toast } from "./src/ui/toast.js";
+
+if (!isLoggedIn()) location.href = "login.html";
+
+const { renderShell } = window;
+renderShell({ active: "ontology", crumb: "<b>本体与规则</b>" });
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const fmtDate = (s) => { if (!s) return "—"; const d = new Date(s); if (isNaN(d)) return String(s).slice(0, 16); const p = (n) => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
+const isAdmin = (() => {
+  try {
+    const tok = localStorage.getItem("al_access") || "";
+    const payload = JSON.parse(atob(tok.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+    return String(payload.role || "EDITOR").toUpperCase() === "ADMIN";
+  } catch (_) { return false; }
+})();
+
+/* ---------- 版本链 ---------- */
+async function loadVersions() {
+  const scope = $("#scopeInput").value.trim();
+  if (!isAdmin) { $("#adminGate").style.display = ""; $("#verList").innerHTML = ""; $("#verMeta").textContent = "需 ADMIN"; return; }
+  $("#verList").innerHTML = '<div class="muted" style="padding:10px">加载…</div>';
+  try {
+    const q = scope ? `?scope=${encodeURIComponent(scope)}` : "";
+    const r = await request("GET", `/ontology/versions${q}`);
+    const items = r?.data || [];
+    $("#verMeta").textContent = scope ? `${scope} · ${items.length} 版` : `全部 · ${items.length} 版`;
+    if (!items.length) {
+      $("#verList").innerHTML = '<div class="muted" style="padding:10px">无版本 — 在数据集上构建一次 KG 即产生首个快照</div>';
+      return;
+    }
+    $("#verList").innerHTML = items.map(v => `
+      <div class="ver-row" data-id="${v.id}">
+        <span class="ver-badge">v${v.version}</span>
+        <div style="flex:1;min-width:0">
+          <div style="color:var(--fg-hi)">${esc(v.template_name)} <span class="mono" style="color:var(--fg-md)">· ${esc(v.scope)}</span></div>
+          <div class="mono" style="font-size:.66rem;color:var(--fg-md)">${esc(String(v.source_hash || "").slice(0, 10))} · ${fmtDate(v.created_at)}</div>
+        </div>
+        ${v.diff ? `<span class="tag mono" style="font-size:.62rem;color:#34d399">有diff</span>` : ""}
+      </div>`).join("");
+    $("#verList").querySelectorAll(".ver-row").forEach(row => {
+      row.addEventListener("click", () => {
+        $("#verList").querySelectorAll(".ver-row").forEach(x => x.classList.remove("active"));
+        row.classList.add("active");
+        loadVersionDetail(Number(row.dataset.id));
+      });
+    });
+  } catch (e) {
+    $("#verList").innerHTML = `<div class="degraded">版本加载失败:${esc(e?.detail || e?.message || e)}</div>`;
+  }
+}
+
+async function loadVersionDetail(id) {
+  $("#diffMeta").textContent = `版本 #${id}`;
+  try {
+    const [full, diffR] = await Promise.all([
+      request("GET", `/ontology/versions/${id}`),
+      request("GET", `/ontology/versions/${id}/diff`),
+    ]);
+    const v = full?.data || {};
+    const diff = diffR?.data;
+    let html = "";
+    if (!diff) {
+      html += `<div class="muted" style="font-size:.78rem">首版快照(无上一版可 diff)</div>`;
+    } else {
+      const sections = [
+        ["entity_type_enum", "实体类型枚举"], ["relation_type_enum", "关系类型枚举"],
+        ["required_entity_fields", "实体必填字段"], ["required_relation_fields", "关系必填字段"],
+        ["type_pairs", "type-pairs"],
+      ];
+      const anyChange = sections.some(([k]) => (diff[k]?.added || []).length + (diff[k]?.removed || []).length > 0);
+      if (!anyChange) html += `<div class="muted" style="font-size:.78rem">与上一版无结构差异(仅模板文本变化)</div>`;
+      const fmtPair = (x) => { const [s, rel, d] = String(x).split("\x1f"); return `${s} -[${rel}]-> ${d}`; };
+      for (const [k, label] of sections) {
+        const sec = diff[k] || {};
+        const chips = [
+          ...(sec.added || []).map(x => `<span class="chip-add">+ ${esc(k === "type_pairs" ? fmtPair(x) : x)}</span>`),
+          ...(sec.removed || []).map(x => `<span class="chip-del">− ${esc(k === "type_pairs" ? fmtPair(x) : x)}</span>`),
+        ];
+        if (chips.length) html += `<div class="diff-sec"><h5>${label}</h5>${chips.join("")}</div>`;
+      }
+    }
+    html += `<details style="margin-top:10px"><summary style="cursor:pointer;font-size:.74rem;color:var(--fg-md)">SHACL Turtle(v${v.version})</summary><pre class="turtle">${esc(v.shapes_turtle || "")}</pre></details>`;
+    $("#verDiff").innerHTML = html;
+    $("#diffMeta").textContent = `${v.template_name} · ${v.scope} · v${v.version}`;
+  } catch (e) {
+    $("#verDiff").innerHTML = `<div class="degraded">详情加载失败:${esc(e?.detail || e?.message || e)}</div>`;
+  }
+}
+
+/* ---------- 规则注册表 ---------- */
+const NEXT_STATUS = { draft: "active", active: "retired", retired: "draft" };
+
+async function loadRules() {
+  if (!isAdmin) { $("#ruleList").innerHTML = ""; return; }
+  $("#ruleList").innerHTML = '<div class="muted" style="padding:10px">加载…</div>';
+  try {
+    const r = await request("GET", "/ontology/rules");
+    const rules = r?.data || [];
+    $("#ruleMeta").textContent = `${rules.length} 条 · 登记不执行(MS3 落求值)`;
+    if (!rules.length) {
+      $("#ruleList").innerHTML = '<div class="muted" style="padding:10px">暂无规则 — 用下方表单登记(F1.7 专家起草后录入)</div>';
+      return;
+    }
+    $("#ruleList").innerHTML = `<table class="rules-table"><thead><tr>
+      <th>rule_id</th><th>scope</th><th>条件</th><th>结论</th><th>来源</th><th>状态</th><th></th>
+    </tr></thead><tbody>${rules.map(x => `
+      <tr>
+        <td class="mono">${esc(x.rule_id)}</td>
+        <td class="mono">${esc(x.scope)}</td>
+        <td style="max-width:260px">${esc(x.condition_expr)}</td>
+        <td style="max-width:180px">${esc(x.conclusion)}</td>
+        <td class="mono" style="max-width:160px;font-size:.68rem">${esc(x.source_ref)}</td>
+        <td><span class="st st-${esc(x.status)}">${esc(x.status)}</span></td>
+        <td><button class="btn btn-ghost btn-sm" data-rule="${esc(x.rule_id)}" data-next="${NEXT_STATUS[x.status] || ""}" ${NEXT_STATUS[x.status] ? "" : "disabled"}>→ ${NEXT_STATUS[x.status] || "—"}</button></td>
+      </tr>`).join("")}</tbody></table>`;
+    $("#ruleList").querySelectorAll("button[data-rule]").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const rid = btn.dataset.rule, next = btn.dataset.next;
+        try {
+          await request("POST", `/ontology/rules/${encodeURIComponent(rid)}/transition?to_status=${next}`);
+          toast(`规则 ${rid} → ${next}`, "ok", 2200);
+          loadRules();
+        } catch (e) {
+          toast(`迁移失败:${esc(e?.detail || e?.message || e)}`, "err", 3200);
+        }
+      });
+    });
+  } catch (e) {
+    $("#ruleList").innerHTML = `<div class="degraded">规则加载失败:${esc(e?.detail || e?.message || e)}</div>`;
+  }
+}
+
+/* ---------- 登记新规则 ---------- */
+$("#rAdd").addEventListener("click", async () => {
+  const body = {
+    rule_id: $("#rId").value.trim(), scope: $("#rScope").value.trim() || "*",
+    condition_expr: $("#rCond").value.trim(), conclusion: $("#rConc").value.trim(),
+    source_ref: $("#rSrc").value.trim() || "manual",
+  };
+  if (!body.rule_id || !body.condition_expr || !body.conclusion) {
+    toast("rule_id / 条件 / 结论 必填", "err", 2600); return;
+  }
+  try {
+    await request("POST", "/ontology/rules", { body });
+    toast(`规则 ${body.rule_id} 已登记(draft)`, "ok", 2400);
+    ["#rId", "#rCond", "#rConc"].forEach(s => $(s).value = "");
+    loadRules();
+  } catch (e) {
+    toast(`登记失败:${esc(e?.detail || e?.message || e)}`, "err", 3200);
+  }
+});
+
+/* ---------- init ---------- */
+function loadAll() { loadVersions(); loadRules(); }
+loadAll();
+window.applyIcons && applyIcons(document);
+
+$("#refresh").addEventListener("click", () => { loadAll(); toast("已刷新本体与规则", "ok", 2000); });
+$("#scopeGo").addEventListener("click", loadVersions);
+$("#scopeInput").addEventListener("keydown", (e) => { if (e.key === "Enter") loadVersions(); });
+$("#apiBtn").addEventListener("click", () => window.openApi(
+  "本体与规则",
+  `curl -s $API/api/v1/ontology/versions?scope=DATASET -H "Authorization: Bearer $JWT" -H "X-API-Key: $KEY" | jq .\ncurl -s $API/api/v1/ontology/versions/1/diff -H "Authorization: Bearer $JWT" | jq .\ncurl -XPOST $API/api/v1/ontology/rules -H "Authorization: Bearer $JWT" -H "Content-Type: application/json" \\\n  -d '{"rule_id":"GAS.LEAK.R001","scope":"gas_pilot","condition_expr":"...","conclusion":"...","source_ref":"GB/T ..."}'\ncurl -XPOST "$API/api/v1/ontology/rules/GAS.LEAK.R001/transition?to_status=active" -H "Authorization: Bearer $JWT"`,
+  "# 全部端点需 ADMIN\n# 版本链在 KG 构建成功后自动快照(同模板 hash 不重复)"
+));
+</script>
+</body>
+</html>

@@ -96,6 +96,23 @@ class QualityGateMode(StrEnum):
     ENFORCE = "enforce"
 
 
+class OntologyGateMode(StrEnum):
+    """Ontology (SHACL) gate policy at KG build finish (v1.11.0 MS1 F1.3).
+
+    OFF: no validation, no metrics, no snapshot-side reads — zero overhead.
+    SHADOW: validate + count + attach the violation summary to the build
+        task, never fail the build (default; the two-week observation
+        window from the master plan before any enforce flip).
+    ENFORCE: reject-level violations flip the build task to FAILED with
+        the violation details (the graph insert itself is already done —
+        idempotent upserts — so the failure is the operator signal).
+    """
+
+    OFF = "off"
+    SHADOW = "shadow"
+    ENFORCE = "enforce"
+
+
 class LLMProviderType(StrEnum):
     """Supported LLM providers for RAG generation."""
 

@@ -671,12 +671,135 @@ class _LakeKGMixin:
                         # Sync updated state to Redis for cross-worker visibility
                         TaskManager._sync_to_redis(tm_task)
 
+                        # v1.11.0 MS1 (F1.3/F1.4): ontology gate + version
+                        # snapshot at build finish — insert 后、task 终态语义
+                        # 收口处。Gate runs only on a successful build (a failed
+                        # one has partial/no inserts — its error already tells
+                        # the story). Best-effort: a gate crash must never fail
+                        # an otherwise-successful build wrap-up.
+                        if kg_task.status == "COMPLETED":
+                            try:
+                                await self._ontology_gate(dataset_name, kg_task, tm_task)
+                            except Exception:  # noqa: BLE001 — gate is observability
+                                logger.exception(
+                                    "ontology gate failed (non-fatal) dataset=%s",
+                                    dataset_name,
+                                )
+                            try:
+                                await self._ontology_snapshot(dataset_name, kg_task)
+                            except Exception:  # noqa: BLE001 — snapshot best-effort
+                                logger.warning(
+                                    "ontology snapshot failed dataset=%s",
+                                    dataset_name, exc_info=True,
+                                )
+
             build_task = asyncio.create_task(_run_build())
             # Hold a strong reference so the GC cannot reclaim this task while
             # it is still pending (the classic asyncio fire-and-forget trap).
             _kg_bg_tasks.add(build_task)
             build_task.add_done_callback(_kg_bg_tasks.discard)
             return task_id
+
+    # ------------------------------------------------------------------
+    # v1.11.0 MS1: ontology gate + version snapshot at build finish
+    # ------------------------------------------------------------------
+
+    async def _ontology_gate(self, dataset_name: str, kg_task: Any, tm_task: Any) -> None:
+        """F1.3 — validate the just-inserted KG rows against the build's template.
+
+        ``shadow`` (default) counts + attaches the violation summary to both
+        tasks; ``enforce`` additionally flips them to FAILED with the violation
+        details (the HugeGraph insert itself is an idempotent upsert and stays —
+        the failure is the operator signal); ``off`` short-circuits inside the
+        runner with zero overhead. Timeout fails CLOSED (reject) per the plan's
+        risk mitigation.
+        """
+        from arrow_lake.ontology.gate import enforcement_error, run_ontology_gate
+
+        cfg = getattr(self._config, "ontology", None)
+        mode = str(getattr(cfg, "gate_mode", "shadow") or "shadow")
+        result = await run_ontology_gate(
+            dataset_name,
+            kg_task.inserted_entities,
+            kg_task.inserted_relations,
+            kg_task.template_path,
+            mode=mode,
+            timeout_seconds=float(getattr(cfg, "validation_timeout_seconds", 60.0)),
+            max_violations=int(getattr(cfg, "max_violations_reported", 20)),
+        )
+        if result is None:  # off
+            return
+
+        from arrow_lake.api.tasks import TaskStatus
+        from arrow_lake.knowledge_graph.builder import KGBuildStatus
+
+        summary = result.to_detail()
+        kg_task.ontology_result = summary
+        tm_task.detail["ontology"] = summary
+        flipped = False
+        if result.rejects and mode == "enforce":
+            from datetime import UTC, datetime
+
+            err = enforcement_error(result)
+            kg_task.status = KGBuildStatus.FAILED
+            kg_task.error = err
+            tm_task.status = TaskStatus.FAILED
+            tm_task.error = err
+            tm_task.completed_at = datetime.now(UTC).isoformat()
+            flipped = True
+            logger.warning(
+                "ontology_gate.enforce_rejected dataset=%s rejects=%d warns=%d",
+                dataset_name, result.rejects, result.warns,
+            )
+        elif result.rejects:
+            logger.info(
+                "ontology_gate.shadow_rejections dataset=%s rejects=%d warns=%d "
+                "note=shadow mode: build completes, violations counted only",
+                dataset_name, result.rejects, result.warns,
+            )
+        # Re-sync so the summary (and any enforce flip) reaches Redis. History
+        # re-persist ONLY on the enforce flip — otherwise _persist_history would
+        # re-notify the owner for every shadow build (double notifications).
+        from arrow_lake.api.tasks import TaskManager
+
+        TaskManager._sync_to_redis(tm_task)
+        if flipped:
+            TaskManager._persist_history(tm_task)
+
+    async def _ontology_snapshot(self, dataset_name: str, kg_task: Any) -> None:
+        """F1.4/W2.2 — snapshot the build's template shapes into V010.
+
+        Same ``source_hash`` skips (no new version); changed content creates
+        the next version with a structured diff. Runs in an executor (Turtle
+        serialize + one libSQL upsert). No-op when system_db is not wired
+        (host/CLI Lake without a lifespan).
+        """
+        store = getattr(self, "_ontology_store", None)
+        if store is None or not kg_task.template_path:
+            return
+
+        from arrow_lake.ontology.versioning import load_template_artifact
+
+        template_path = kg_task.template_path
+
+        def _snap() -> dict | None:
+            artifact = load_template_artifact(template_path)
+            if artifact is None:
+                return None
+            return store.snapshot(
+                scope=dataset_name,
+                template_name=artifact.template_name,
+                shapes_turtle=artifact.shapes_turtle,
+                source_hash=artifact.source_hash,
+            )
+
+        row = await asyncio.get_running_loop().run_in_executor(None, _snap)
+        if row is not None:
+            logger.info(
+                "ontology_snapshot dataset=%s template=%s version=%s created=%s",
+                dataset_name, row.get("template_name"), row.get("version"),
+                row.get("created"),
+            )
 
     def _load_kg_table(self, dataset_name: str):
         """Synchronous helper: load and normalize a Lance table for KG build."""
@@ -754,6 +877,9 @@ class _LakeKGMixin:
                 "started_at": task.started_at.isoformat() if task.started_at else None,
                 "completed_at": task.completed_at.isoformat() if task.completed_at else None,
                 "error": task.error,
+                # v1.11.0: ontology gate violation summary (None when gate off
+                # or not yet run — e.g. status polled mid-build).
+                "ontology": getattr(task, "ontology_result", None),
             }
 
         # v1.10.3 回落:builder 任务仅在发起构建的那个 worker 的内存里(builder._tasks
@@ -781,6 +907,7 @@ class _LakeKGMixin:
                     "started_at": tm.created_at,
                     "completed_at": tm.completed_at,
                     "error": tm.error,
+                    "ontology": d.get("ontology"),
                 }
         return None
 

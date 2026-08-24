@@ -24,7 +24,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
@@ -111,6 +111,16 @@ class KGBuildTask:
     first_build: bool = True
     new_chunks: int = 0
     reused_chunks: int = 0
+    # v1.11.0 MS1 (F1.3): ontology gate data plumbing. The three extraction
+    # branches record the build's resolved template here, and the single
+    # insert chokepoint (_insert_kg) records the rows it actually inserted;
+    # the kg_build finisher (in _lake_kg) validates them against SHACL shapes
+    # derived from the same template. Capture only — no extraction behavior
+    # change (red line: 抽取链路零改动).
+    template_path: str | None = None
+    inserted_entities: list = field(default_factory=list)
+    inserted_relations: list = field(default_factory=list)
+    ontology_result: dict | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -461,6 +471,7 @@ class KGBuilder:
             template_path = self._extractor._resolve_template(
                 dataset_doc_type, _sample, None,
             )
+            task.template_path = template_path
             # [#naming] use artifact_key_for so the build-time KA dir matches
             # the query-time dir (he_extractor._ka_dir_for) and the graph name.
             from arrow_lake.knowledge_graph._naming import artifact_key_for
@@ -559,6 +570,7 @@ class KGBuilder:
                     chunk_id_map,
                     entity_chunks=dataset_ka.entity_chunks,
                     write_sem=write_sem,
+                    task=task,
                 )
         elif _gran == "map_reduce":
             # --- v1.9.8 map-reduce: concurrent per-chunk extract (NO insert) →
@@ -570,6 +582,7 @@ class KGBuilder:
             template_path = self._extractor._resolve_template(
                 dataset_doc_type, _sample, None,
             )
+            task.template_path = template_path
 
             async def _extract_only(
                 idx: int, cid: str, content: str, doc_type: str | None = None,
@@ -828,6 +841,7 @@ class KGBuilder:
                     chunk_id_map,
                     entity_chunks=entity_chunks,
                     write_sem=write_sem,
+                    task=task,
                 )
                 # v1.10.2 M3: the per-cid checkpoint PERSISTS after a successful
                 # insert — it is the incremental-reuse source for the next build.
@@ -836,6 +850,15 @@ class KGBuilder:
                 # incremental build reuses matching cids / re-MAPs changed ones.)
         else:
             # --- per-chunk: fresh KA.parse() per chunk (legacy path) ---
+            # v1.11.0: resolve once from a sample for the ontology gate's
+            # template snapshot. Per-chunk extraction resolves per chunk inside
+            # the extractor; the sample-based pick is the majority template in
+            # practice (the temporal heuristic only diverges on mixed corpora,
+            # and the gate defaults to shadow).
+            task.template_path = self._extractor._resolve_template(
+                dataset_doc_type, next((c for c in contents if c), ""), None,
+            )
+
             async def _process_chunk(
                 idx: int, cid: str, content: str, doc_type: str | None = None,
             ) -> tuple[int, int]:
@@ -866,6 +889,7 @@ class KGBuilder:
                     chunk_id_map,
                     owning_chunk_id=cid,
                     write_sem=write_sem,
+                    task=task,
                 )
                 return ent_count, rel_count
 
@@ -933,6 +957,7 @@ class KGBuilder:
         entity_chunks: dict[str, list[str]] | None = None,
         owning_chunk_id: str | None = None,
         write_sem: asyncio.Semaphore | None = None,
+        task: KGBuildTask | None = None,
     ) -> None:
         """Insert one ExtractionResult's entities + relations into HugeGraph.
 
@@ -949,7 +974,31 @@ class KGBuilder:
                 entity gets one ``references`` edge per owning chunk.
             owning_chunk_id: per-chunk owner (single ``references`` edge each).
             write_sem: write-side gate; defaults to a fresh semaphore.
+            task: v1.11.0 — when given, the inserted rows are recorded on the
+                build task (plain dicts) for the ontology gate at build finish.
+                Capture only; ``None`` preserves the pre-gate behaviour.
         """
+        if task is not None:
+            def _entity_row(e: Any) -> dict[str, Any]:
+                # definition omitted when empty — the shapes treat a missing
+                # warn-field as the warn-level violation (W1 contract), so an
+                # empty extraction must surface as absent, not as a present "".
+                row = {"name": e.name, "type": e.entity_type}
+                definition = dict(e.properties).get("definition", "")
+                if definition:
+                    row["definition"] = definition
+                return row
+
+            task.inserted_entities.extend(_entity_row(e) for e in result.entities)
+            task.inserted_relations.extend(
+                {
+                    "source": r.source,
+                    "target": r.target,
+                    "type": r.relation_type,
+                }
+                for r in result.relations
+            )
+
         if write_sem is None:
             write_sem = asyncio.Semaphore(self._config.write_concurrency)
 

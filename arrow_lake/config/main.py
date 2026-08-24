@@ -35,6 +35,7 @@ from arrow_lake.config.media import (
     QualityConfig,
 )
 from arrow_lake.config.olap import OlapConfig
+from arrow_lake.config.ontology import OntologyConfig
 from arrow_lake.config.rag import HugeGraphConfig, LLMConfig, RAGConfig
 from arrow_lake.config.redis import RedisConfig
 from arrow_lake.config.system_db import SystemDBConfig
@@ -64,6 +65,7 @@ _SECTION_TYPES: dict[str, type[BaseModel]] = {
     "olap": OlapConfig,
     "daft": DaftConfig,
     "quality": QualityConfig,
+    "ontology": OntologyConfig,
     "workflow": WorkflowConfig,
     "argo": ArgoConfig,
     "autoscale": AutoscaleConfig,
@@ -120,6 +122,7 @@ class ArrowLakeConfig(BaseSettings):
     olap: OlapConfig = OlapConfig()
     daft: DaftConfig = DaftConfig()
     quality: QualityConfig = QualityConfig()
+    ontology: OntologyConfig = OntologyConfig()
     workflow: WorkflowConfig = WorkflowConfig()
     argo: ArgoConfig = ArgoConfig()
     autoscale: AutoscaleConfig = AutoscaleConfig()

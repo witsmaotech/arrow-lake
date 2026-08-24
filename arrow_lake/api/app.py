@@ -29,6 +29,7 @@ from arrow_lake.api.routers.doc_type_categories import router as doc_type_catego
 from arrow_lake.api.routers.lineage import router as lineage_router
 from arrow_lake.api.routers.materialized import router as materialized_router
 from arrow_lake.api.routers.maintenance import router as maintenance_router
+from arrow_lake.api.routers.ontology import router as ontology_router
 from arrow_lake.api.routers.quality import router as quality_router
 from arrow_lake.api.routers.cleaning import router as cleaning_router
 from arrow_lake.api.routers.query import router as query_router
@@ -292,6 +293,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         doc_type_store.seed_if_empty()
         app.state.doc_type_category_store = doc_type_store
         lake._doc_type_category_store = doc_type_store
+        # v1.11.0 MS1 (F1.2/F1.4): ontology version snapshots (written by the
+        # kg_build finisher) + the rules registry behind /api/v1/ontology.
+        from arrow_lake.system_db.stores.ontology import (
+            OntologyRulesStore,
+            OntologyVersionStore,
+        )
+
+        app.state.ontology_store = OntologyVersionStore(sys_db)
+        app.state.ontology_rules_store = OntologyRulesStore(sys_db)
+        lake._ontology_store = app.state.ontology_store
         # Activate RAG-session persistence in the Lake facade's RAG pipeline.
         lake._rag_session_store = app.state.rag_session_store
         # Activate the lineage adjacency index in the Lake facade's LineageStore.
@@ -776,6 +787,7 @@ def create_app(config: ArrowLakeConfig | None = None) -> FastAPI:
     app.include_router(kg_router)
     app.include_router(extraction_templates_router)
     app.include_router(doc_type_categories_router)
+    app.include_router(ontology_router)
     app.include_router(auth_router)
     app.include_router(admin_router)
     app.include_router(maintenance_router)

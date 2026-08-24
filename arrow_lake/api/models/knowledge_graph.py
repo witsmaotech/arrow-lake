@@ -60,6 +60,10 @@ class KGBuildStatusResponse(BaseModel):
     new_chunks: int = 0
     reused_chunks: int = 0
     error: str | None = None
+    # v1.11.0 MS1 (F1.3): ontology gate violation summary at build finish —
+    # {mode, outcome, rejects, warns, violations[]}; None when the gate is off
+    # or the status was polled before the finisher ran.
+    ontology: dict | None = None
 
 
 class KGBuildInfoResponse(BaseModel):

@@ -332,6 +332,15 @@ quality_score_distribution: Histogram = Histogram(
     buckets=[0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
 )
 
+# --- v1.11.0 MS1: Ontology (SHACL) Gate Metrics ---
+
+ontology_check_total: Counter = Counter(
+    "arrow_lake_ontology_check_total",
+    "Total number of ontology gate validations run at KG build finish.",
+    registry=REGISTRY,
+    labelnames=["dataset", "result"],
+)
+
 # --- Metrics toggle (thread-safe via Event) ---
 
 _metrics_enabled = threading.Event()
