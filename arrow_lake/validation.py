@@ -87,25 +87,39 @@ def _is_multi_statement(sql: str) -> bool:
     return len(re.findall(r"\bSELECT\b", s, re.IGNORECASE)) > 1
 
 
+def _strip_literals_and_identifiers(sql: str) -> str:
+    """Blank out string literals and quoted identifiers, keeping structure.
+
+    Quoted identifiers are DATA (column/table names in double quotes), not
+    SQL structure: a column named ``"Carrier SET Delay"`` or ``"read_text 备注"``
+    must not trip the keyword/table-function regexes — the console-preview
+    500 on Chinese/mixed column names (2026-08-24) was exactly this false
+    positive. Mirrors the stripping _is_multi_statement already does.
+    """
+    s = re.sub(r"'(?:[^']|'')*'", "''", sql)
+    s = re.sub(r'"(?:""|[^"])*"', '""', s)
+    return s
+
+
 def validate_sql_safety(sql: str) -> None:
     """Validate that a SQL string contains no dangerous keywords.
 
-    Args:
-        sql: SQL string to validate.
+    Keyword/table-function checks run on the structure only (literals and
+    quoted identifiers stripped — they are data, e.g. Chinese column names).
 
     Raises:
         ValueError: If dangerous SQL keywords are detected.
     """
-    if DANGEROUS_SQL_KEYWORDS_RE.search(sql):
-        raise ValueError(f"Dangerous SQL keyword detected: {sql}")
-    if TABLE_FUNCTION_BLACKLIST_RE.search(sql):
-        match = TABLE_FUNCTION_BLACKLIST_RE.search(sql)
+    structure = _strip_literals_and_identifiers(sql)
+    if (m := DANGEROUS_SQL_KEYWORDS_RE.search(structure)):
+        raise ValueError(f"Dangerous SQL keyword detected: {m.group()!r}")
+    if (m := TABLE_FUNCTION_BLACKLIST_RE.search(structure)):
         raise ValueError(
-            f"Dangerous SQL table function detected: {match.group()!r}. "
+            f"Dangerous SQL table function detected: {m.group()!r}. "
             f"Only registered datasets may be queried."
         )
     if ";" in sql:
-        raise ValueError(f"Semicolons not allowed in SQL: {sql}")
+        raise ValueError("Semicolons not allowed in SQL")
     if _is_multi_statement(sql):
         raise ValueError(
             f"Multiple SQL statements detected — run one query at a time: {sql[:80]}"

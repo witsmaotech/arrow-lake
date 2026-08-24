@@ -56,6 +56,30 @@ class TestValidateSqlSafety:
         with pytest.raises(ValueError, match="Dangerous SQL keyword"):
             validate_sql_safety("drop table users")
 
+    # --- quoted identifiers are DATA, not SQL structure (console-preview 500 on
+    # Chinese/mixed column names, 2026-08-24): a column named "载SET量" or a
+    # table-function-named column must not trip the keyword/function regexes ---
+    def test_quoted_identifier_containing_keyword_allowed(self) -> None:
+        validate_sql_safety('SELECT "载SET量", "分钟" FROM "ontime" LIMIT 5')
+
+    def test_quoted_identifier_containing_table_function_allowed(self) -> None:
+        validate_sql_safety('SELECT "read_text 备注" FROM "ds" LIMIT 1')
+
+    def test_bare_keyword_still_rejected(self) -> None:
+        with pytest.raises(ValueError, match="Dangerous SQL keyword"):
+            validate_sql_safety('SELECT a SET b FROM "ontime"')
+
+    def test_bare_table_function_still_rejected(self) -> None:
+        with pytest.raises(ValueError, match="table function"):
+            validate_sql_safety("SELECT * FROM read_text('/etc/passwd')")
+
+    def test_chinese_column_aggregation_allowed(self) -> None:
+        """The exact shape that 500'd from the console worksheet."""
+        validate_sql_safety(
+            'SELECT "延误原因", sum("分钟") AS 总延误 FROM "ontime" '
+            'GROUP BY "延误原因" ORDER BY 总延误 DESC LIMIT 10'
+        )
+
     # --- multi-statement (no-semicolon) detection ---
     def test_multi_statement_two_selects_rejected(self) -> None:
         with pytest.raises(ValueError, match="Multiple SQL statements"):

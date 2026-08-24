@@ -155,7 +155,11 @@ async def olap_query(
     When ``stream=True``, returns SSE events with Arrow IPC batches
     for large result sets (>10,000 rows recommended).
     """
-    validate_sql_safety(req.sql)
+    try:
+        validate_sql_safety(req.sql)
+    except ValueError as exc:
+        # 校验拒绝是可读的 422,不是 500(console 预览/Worksheet 的预期文案)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     sql = _acl_enforced_sql(req.sql, name, checker, _user.role)
     result = await run_sync(
         lake.olap_query, name, sql, max_rows=req.max_rows,
@@ -185,7 +189,11 @@ async def metadata_query(
     checker=Depends(get_checker),
 ) -> OlapQueryResponse:
     """Execute metadata SQL query (semantic alias for olap_query)."""
-    validate_sql_safety(req.sql)
+    try:
+        validate_sql_safety(req.sql)
+    except ValueError as exc:
+        # 校验拒绝是可读的 422,不是 500(console 预览/Worksheet 的预期文案)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     sql = _acl_enforced_sql(req.sql, name, checker, _user.role)
     result = await run_sync(
         lake.sql_query, name, sql, max_rows=req.max_rows,
