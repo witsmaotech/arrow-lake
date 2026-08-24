@@ -221,7 +221,12 @@ class PermissionChecker:
         return self._role_perms(role_name)
 
     def check_dataset_access(
-        self, *, role: str | Role, dataset: str, action: str
+        self,
+        *,
+        role: str | Role,
+        dataset: str,
+        action: str,
+        permissions: list[str] | frozenset[str] | None = None,
     ) -> bool:
         """Check if a role can perform an action on a dataset.
 
@@ -230,7 +235,13 @@ class PermissionChecker:
         2. Explicit Deny (per-dataset or per-schema)
         3. Per-dataset ACL grant
         4. Schema-level ACL inheritance
-        5. Role-based default (permission matrix)
+        5. Default: the token's permissions claim when non-empty
+           (require_permission semantics, v1.10.5 M4 — scopes can restrict
+           below the role or grant one action above it), else the role matrix.
+
+        ``permissions`` only feeds step 5: deny and dataset/schema ACL layers
+        (2-4) always evaluate from the role, so a write-scoped token can never
+        bypass an explicit deny (v1.10.7 review B-4 follow-up).
         """
         role_name = role if isinstance(role, str) else role.value
 
@@ -264,8 +275,10 @@ class PermissionChecker:
             if schema_acl and action in schema_acl.allowed_actions:
                 return True
 
-        # 5. Role-based default
+        # 5. Default — token permissions claim (non-empty) else role matrix
         full_perm = f"dataset:{action}"
+        if permissions:
+            return full_perm in permissions
         return self.has_permission(role_name, full_perm)
 
     def grant_dataset_access(

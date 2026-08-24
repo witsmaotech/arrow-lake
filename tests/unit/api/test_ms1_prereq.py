@@ -31,7 +31,7 @@ class _Checker:
         self._deny = deny_actions or set()
         self.calls: list[tuple[str, str, str]] = []
 
-    def check_dataset_access(self, *, role, dataset, action) -> bool:  # noqa: ANN001
+    def check_dataset_access(self, *, role, dataset, action, permissions=None) -> bool:  # noqa: ANN001
         self.calls.append((str(role), dataset, action))
         return action not in self._deny
 
@@ -208,6 +208,55 @@ class TestDeadLetterNamespace:
         request = _make_request(role=Role.ADMIN, checker=checker)
         authorize_dataset(request, "_orders_dead_letter")
         assert checker.calls == []  # admin bypass,无 ACL 查询
+
+    async def test_dead_letter_case_variants_still_admin_only(self) -> None:
+        """R-01 同型防御:大小写变体不得逃过 ADMIN-only 死信守卫。"""
+        from arrow_lake.api.deps import authorize_dataset
+
+        for name in ("_ORDERS_DEAD_LETTER", "_Orders_Dead_Letter", "ORDERS_DEAD_LETTER"):
+            request = _make_request(role=Role.VIEWER, checker=_Checker())
+            with pytest.raises(HTTPException) as ei:
+                authorize_dataset(request, name)
+            assert ei.value.status_code == 403
+
+    def test_is_internal_table_case_insensitive(self) -> None:
+        from arrow_lake._system_tables import is_internal_table, is_system_table
+
+        assert is_internal_table("DS_DEAD_LETTER")
+        assert is_system_table("SYS_AUDIT_TRAIL")
+
+
+class TestScopedTokenWrite:
+    """v1.10.5 M4 语义对齐:非空 permissions claim 即授权(require_permission),
+    但 deny/ACL 资源层永远按 role 评 — scope 抬得动 role-default,抬不动 deny。"""
+
+    def test_write_scoped_viewer_token_allowed_on_ungated_dataset(self) -> None:
+        from arrow_lake.api.rbac import PermissionChecker
+
+        checker = PermissionChecker()  # in-memory,无任何配置
+        assert checker.check_dataset_access(
+            role="viewer", dataset="ds", action="write",
+            permissions=["dataset:write"],
+        ) is True
+        # 同 checker 下无 scope 的 viewer 仍拒(claim 为空 → role default)
+        assert checker.check_dataset_access(
+            role="viewer", dataset="ds", action="write", permissions=None
+        ) is False
+
+    def test_write_scoped_viewer_token_still_denied_by_deny_list(self) -> None:
+        from arrow_lake.api.rbac import PermissionChecker
+
+        store = MagicMock()
+        store.list_denies.return_value = {"write"}
+        store.get_row_col_acl.return_value = None
+        store.get_dataset_grants.return_value = {}
+        store.get_schema_acl.return_value = None
+        checker = PermissionChecker()
+        checker.set_system_store(store)
+        assert checker.check_dataset_access(
+            role="viewer", dataset="ds", action="write",
+            permissions=["dataset:write"],
+        ) is False
 
 
 # ---------------------------------------------------------------------------

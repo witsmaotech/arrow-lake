@@ -22,10 +22,14 @@ DEAD_LETTER_SUFFIX: str = "_dead_letter"
 
 
 def is_system_table(name: str) -> bool:
-    """系统运行表(sys_ 前缀)→ 受保护,不可删除。"""
-    return name.startswith(SYSTEM_TABLE_PREFIX)
+    """系统运行表(sys_ 前缀)→ 受保护,不可删除。
+
+    大小写不敏感:数据集名允许大写,DuckDB 标识符解析也不区分大小写,
+    精确匹配会让 ``SYS_`` 变体绕过删除保护(R-01 同型)。"""
+    return name.lower().startswith(SYSTEM_TABLE_PREFIX)
 
 
 def is_internal_table(name: str) -> bool:
-    """内部表(sys_ / _ 前缀,或死信表命名)→ 对非 admin 隐藏。"""
-    return name.startswith((INTERNAL_TABLE_PREFIX, SYSTEM_TABLE_PREFIX)) or name.endswith(DEAD_LETTER_SUFFIX)
+    """内部表(sys_ / _ 前缀,或死信表命名)→ 对非 admin 隐藏(大小写不敏感)。"""
+    n = name.lower()
+    return n.startswith((INTERNAL_TABLE_PREFIX, SYSTEM_TABLE_PREFIX)) or n.endswith(DEAD_LETTER_SUFFIX)
