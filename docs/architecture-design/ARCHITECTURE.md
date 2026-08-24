@@ -1,9 +1,9 @@
 # Arrow Lake — 架构技术文档（Architecture Reference）
 
-> **版本基线**：v1.10.7（已合并 `master`；`arrow_lake/_version.py` = `pyproject.toml` = 1.10.7）
+> **版本基线**：v1.10.8（已合并 `master`；`arrow_lake/_version.py` = `pyproject.toml` = 1.10.8）
 > **文档日期**：2026-08-03
 > **状态**：随主干演进，与代码当前态对齐（已逐项核实 `arrow_lake/` 源码）。v1.9.0 起**控制面库（libSQL / Turso）**已落地接管 RBAC/身份/personal_token/catalog/任务/RAG 会话/血缘索引（见 [§4.9](#49-控制面system_db)），console 运维/合规/治理前端已完备（见 [§12.2](#122-compose-profiles--overlays)）。
-> **v1.9.0–v1.10.0 增量**（相对 v1.8.0；v1.10.1–v1.10.7 演进见 [§14](#14-版本演进)）：① v1.9.0 Turso 控制面 ② v1.9.1 console 核心（admin/my-workspace + personal token）③ v1.9.2 console 完备化 + 质量深化 ④ v1.9.3 数据集字段注释 + tidy/clean 清洗页 ⑤ v1.9.4 血缘审计评审 + KG MERGE_FIELD（治 BALANCED 合并爆炸）+ Gravitino 1.3.0 ⑥ v1.9.5 RAG 质量全链路（hybrid 默认生效 + GraphRAG + multi_query）⑦ v1.9.6 RAG 防幻觉(faithfulness) + cross-encoder reranker + KG snap/strict/三路并行 + 血缘可视化(lineage.html) + masking 治理(HMAC fail-fast) + 安全加固(fail-closed) ⑧ v1.8.8-v1.8.9 KG per-dataset KA + 双 LLM ⑨ v1.10.0 知识抽取模板管理（前端模板 CRUD + 后端按新模板动态抽取建图不 rebuild/restart + LLM 辅助生成 self-heal + dry-run 试跑沙箱 + 模板质量验证 harness + category↔doc_type 拉通 + V005/V006/V007 迁移）。详见 [§14](#14-版本演进)。
+> **v1.9.0–v1.10.0 增量**（相对 v1.8.0；v1.10.1–v1.10.8 演进见 [§14](#14-版本演进)）：① v1.9.0 Turso 控制面 ② v1.9.1 console 核心（admin/my-workspace + personal token）③ v1.9.2 console 完备化 + 质量深化 ④ v1.9.3 数据集字段注释 + tidy/clean 清洗页 ⑤ v1.9.4 血缘审计评审 + KG MERGE_FIELD（治 BALANCED 合并爆炸）+ Gravitino 1.3.0 ⑥ v1.9.5 RAG 质量全链路（hybrid 默认生效 + GraphRAG + multi_query）⑦ v1.9.6 RAG 防幻觉(faithfulness) + cross-encoder reranker + KG snap/strict/三路并行 + 血缘可视化(lineage.html) + masking 治理(HMAC fail-fast) + 安全加固(fail-closed) ⑧ v1.8.8-v1.8.9 KG per-dataset KA + 双 LLM ⑨ v1.10.0 知识抽取模板管理（前端模板 CRUD + 后端按新模板动态抽取建图不 rebuild/restart + LLM 辅助生成 self-heal + dry-run 试跑沙箱 + 模板质量验证 harness + category↔doc_type 拉通 + V005/V006/V007 迁移）。详见 [§14](#14-版本演进)。
 > **语言约定**：沿用本仓库全部技术文档（roadmap / implementation / 各优化 plan / CHANGELOG）的中文惯例。
 
 本文是 Arrow Lake 的**权威技术参考**：覆盖定位、顶层架构、设计模式、分层详解、公共 API、数据流、配置、安全、可观测性、可靠性、性能、部署、异常、版本演进与测试。面向新成员上手、架构评审与后续演进决策。
@@ -948,7 +948,7 @@ main.py: env_nested_delimiter="__"
 
 ### 12.5 镜像构建
 
-`Dockerfile`（builder + runtime 双显式构建代理，WSL2 mirror 模式 buildkit 自动代理不注入 → 手动注入；apt/PyPI 切 aliyun 镜像；extras 合并一次解析；`--mount=type=cache,target=/root/.cache/uv` 复用下载，改 `arrow_lake/` 源码后 rebuild ~3-5min）+ `Dockerfile.gpu`（CUDA 12.4 cu124 torch）。当前生产镜像 **`arrow-lake:1.10.7`**（`prod_minimal.yml` 声明 tag；CPU ~16.8GB）/ **`arrow-lake:1.10.7-gpu`**。
+`Dockerfile`（builder + runtime 双显式构建代理，WSL2 mirror 模式 buildkit 自动代理不注入 → 手动注入；apt/PyPI 切 aliyun 镜像；extras 合并一次解析；`--mount=type=cache,target=/root/.cache/uv` 复用下载，改 `arrow_lake/` 源码后 rebuild ~3-5min）+ `Dockerfile.gpu`（CUDA 12.4 cu124 torch）。当前生产镜像 **`arrow-lake:1.10.8`**（`prod_minimal.yml` 声明 tag；CPU ~16.8GB）/ **`arrow-lake:1.10.8-gpu`**。
 
 > **v1.9.6 模型 bake**：reranker（modelscope `BAAI--bge-reranker-v2-m3` 2.2G）+ docling（HF `docling-project/*` 506M）经 BuildKit **named context**（`--build-context hfmodels=…/msmodels=…`；compose `additional_contexts`）COPY 进镜像 → `/opt/models/`（reranker 本地路径加载）+ `/opt/hf-cache/`（docling）；`ENV HF_HOME=/opt/hf-cache` + `HF_HUB_OFFLINE=1` → **服务离线就绪，启动零模型下载**。reranker 走 modelscope（HF hub 国内受限，hf-mirror 经代理不稳）。
 
@@ -1012,6 +1012,7 @@ ArrowLakeError
 | **v1.10.5** | 2026-08-15 | **认证/授权原生加固**（Logto-ready 接缝不引外部 IdP）：JWT `aud` claim + per-user token 失效（token_valid_after）+ admin 一次性密码重置 + admin 全写操作审计 + 共享 API key 弃用引导 + JWKS/RS256 推荐 + `require_permission` scope 化鉴权（空 permissions 回退 role 兼容）。 |
 | **v1.10.6** | 2026-08-21 | **P0 安全加固**（pre-MS1 综合 review 批）：DuckDB 会话 `disabled_filesystems` + SQL 表函数黑名单（读容器文件类攻击全封）；rollback 双失败安全副本保留；限流 `trusted_proxies` CIDR（恢复真实客户端 IP 维度）；限流中间件外移（401 短路同样计数）；限流器 Redis 懒重连；422 响应脱敏。 |
 | **v1.10.7** | 2026-08-24 | **P1 数据面加固冲刺**（v1.11.x 平台列车地基，WP1-WP6）：① **源头级 SQL ACL 强制**（sqlglot：行过滤下推进查询 + 列引用 AST 拒绝，封别名/聚合/CTE 绕过类）；deny/ACL 守卫补齐全部 `{name}` 读端点；RAG 对行/列受限数据集 fail-closed；② ingest 专属线程池隔离；③ 认证热路径出事件循环；④ lifespan 信号修复（SIGTERM 优雅停机真正执行）；⑤ **质量门控接线**（`gate_mode=off|shadow|enforce` 默认 shadow，11 处 ingest 构造点注入 + 修三个潜伏 bug）；⑥ 池回滚/tag→ACL 回收/embed 守卫可靠性。**发布后四维 review 当日再修 7 项 HIGH 收敛进本版**（CRITICAL 大小写绕过——标识符匹配大小写不敏感化、COLUMNS() 通配拒绝、作用域感知别名解析、`--` 名谓词加引号、全拒批 falsy 判空、tag 回收两处 fail-open）；遗留 backlog 见 `docs_offline/v1.10.7-post-release-review-2026-08-24.md`。 |
+| **v1.10.8** | 2026-08-24 | **MS1 前置加固批**（发版后 review backlog B-1~B-4+M-7）：① 同步 ingest×10 端点补齐 ingest_executor 接线（WP2 只覆盖了 async 路径）；② 控制面故障 fail-closed——行/列 ACL store 异常 raise `AclStoreUnavailable`→503（不再被读作"无限制"）+ tva provider 故障默认拒绝（`auth_tva_fail_open` 显式开关）；③ 死信表移入 `_{ds}_dead_letter` internal 命名空间 + ADMIN-only 守卫（新旧命名、大小写不敏感）；④ deny(write) 约束写路径——ingest/index/upload/delete 全部 21 个端点挂 `authorize_dataset(write=True)`,scoped personal token 写语义对齐 require_permission（scope 抬得动 role-default 抬不动 deny）；⑤ 认证超时 503（verify_token 超时不再 401、登录 store 超时不再裸 500）。自查 review 补两修：死信守卫大小写绕过（R-01 同型）+ scoped token 过度拒绝。 |
 
 **v1.8.0 实施纪律**（trunk-based，直接提交 `master`，不开 feature 分支——项目约定优先于全局 PR 规则）：每项 TDD（RED→GREEN→REFACTOR）→ 对应 cookbook 跑通 → 全量 pytest 零失败 → CHANGELOG/roadmap/implementation 同步。
 

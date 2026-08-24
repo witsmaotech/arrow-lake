@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.10.8] - 2026-08-24
+
+### MS1 前置加固批（发版后 review backlog B-1~B-4 + M-7）
+
+> 依据 `docs_offline/v1.10.7-post-release-review-2026-08-24.md` §5 建议批次 1:安全与可用性主缝,MS1（v1.11.0）前清完。commit 5654f98 + fb73039（自查 review 修复 2 项）。
+
+- **B-1 — 同步 ingest 端点接线 ingest_executor**:datasets.py 全部 10 个同步 ingest 端点（含 images/videos 的自动 CLIP embed 跟进步骤）`run_sync(executor=ingest_executor)`——不再与 rl.hit/verify_token 共享 asyncio 默认池,重 ingest 饱和时有效 token 401、每请求 +100ms 的缝闭合（WP2 此前只覆盖 async 路径）。
+- **B-2 — 控制面故障 fail-closed**:`PermissionChecker._get_row_col_acl` 读 store 异常由 return None（=无限制,WP1 全部强制点压在这条缝）改为 raise `AclStoreUnavailable` → 全局 exception handler 503;tva provider 故障默认 fail-closed（改密用户旧 JWT 不再因 identity store 抖动存活）,`AuthConfig.auth_tva_fail_open` 显式开关恢复旧 fail-open。
+- **B-3 — 死信表移入防护**:`DeadLetterWriter` 写入 `_{ds}_dead_letter`（internal 前缀,非 admin list 隐藏）;`authorize_dataset` 对新旧两种命名一律 ADMIN-only 且大小写不敏感（自查修复:精确 endswith 让 `_ORDERS_DEAD_LETTER` 变体逃过守卫,R-01 同型）;`is_internal_table` 认 `_dead_letter` 后缀（存量旧命名表同步受保护,同样大小写不敏感）。enforce 下被策略拒掉的行不再对非 admin 裸奔。
+- **B-4 — deny(write) 约束写路径**:datasets.py（ingest×10 + upload×3 + description + delete）与 async_tasks.py（async ingest×9 + index×2）全部加 `authorize_dataset(request, name, write=True)`——admin `PUT /deny/{ds}` 对 ingest/index 终于可执行。自查修复:scoped personal token 写语义对齐 `require_permission`（非空 permissions claim 即授权,`check_dataset_access` 新增 permissions 参数仅喂 role-default 步）——write-scoped viewer token 不再被过度拒绝,且 scope 永远抬不动显式 deny。
+- **M-7 — 认证超时语义**:JWT 中间件 verify_token 超时 401→503（`AUTH_STORE_UNAVAILABLE`,有效 token 不再被当无效逼重登）;登录 `get_user_with_credentials` 超时裸 500→503。
+- **测试**:新增 `tests/unit/api/test_ms1_prereq.py` 21 用例（含大小写变体×3、scoped write 放行/撞 deny 仍拒）;受影响回归修复（`test_gate` 死信表名新契约、upload/documents 测试补 WP1 request 契约）;全量 API+quality 550 passed,6 failed 均为 HEAD 存量（stash 验证）。
+
+
 ## [1.10.7] - 2026-08-23
 
 ### P1 数据面加固冲刺（v1.11.x 平台列车地基,WP1-WP6）
