@@ -120,11 +120,19 @@ class DuckDBSession:
                 with contextlib.suppress(duckdb.CatalogException):
                     conn.execute("SET profiling_mode = 'detailed';")
 
-        # P0-1 (C1): block file-scanning table functions at the engine level —
-        # `read_text('/proc/self/environ')` would otherwise return all container
-        # secrets. Applied unconditionally (even without olap_config) so
-        # standalone DuckDBSession usage is hardened too. The SQL-side blacklist
-        # (validation.TABLE_FUNCTION_BLACKLIST_RE) is the second layer.
+        # NOTE (console-preview 500 regression): the filesystem lockdown is NOT
+        # set here anymore — it moved to _lockdown_filesystems, the LAST step
+        # of __enter__. DuckDB's own self-configuration (CREATE SECRET in
+        # _configure_s3, extension loading) needs LocalFileSystem and would
+        # raise PermissionException if locked down first.
+
+    def _lockdown_filesystems(self, conn: duckdb.DuckDBPyConnection) -> None:
+        """P0-1 (C1): block file-scanning table functions at the engine level —
+        `read_text('/proc/self/environ')` would otherwise return all container
+        secrets. Runs AFTER all engine self-configuration (CREATE SECRET et al.
+        need LocalFileSystem); it constrains USER SQL only. The SQL-side
+        blacklist (validation.TABLE_FUNCTION_BLACKLIST_RE) is the second layer.
+        """
         disabled_fs = list(getattr(self._olap_config, "disabled_filesystems", None)
                            or ["LocalFileSystem"])
         fs_list = ", ".join(f"'{name.replace(chr(39), '')}'" for name in disabled_fs)
@@ -214,6 +222,9 @@ class DuckDBSession:
         self._load_extensions(self._conn)
         self._configure_resources(self._conn)
         self._configure_s3(self._conn)
+        # Lockdown LAST: engine self-configuration above (CREATE SECRET,
+        # extension loads) needs LocalFileSystem; this constrains user SQL.
+        self._lockdown_filesystems(self._conn)
         return self._conn
 
     def __exit__(self, *args: object) -> None:

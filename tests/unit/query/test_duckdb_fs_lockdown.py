@@ -94,7 +94,9 @@ class TestSessionFilesystemLockdown:
             olap_config=olap_config,
         )
         fake = _FakeConn()
-        session._configure_resources(fake)
+        # v1.10.7 fix: lockdown moved out of _configure_resources (it ran before
+        # _configure_s3's CREATE SECRET, which needs LocalFileSystem)
+        session._lockdown_filesystems(fake)
         return fake
 
     def test_default_session_disables_local_filesystem(self) -> None:
@@ -136,3 +138,39 @@ class TestSessionFilesystemLockdown:
 
             db_mod.duckdb.connect = original_connect  # type: ignore[assignment]
         assert any("disabled_filesystems" in s for s in fake.executed)
+
+    def test_lockdown_is_the_last_step_of_enter(self):
+        """Regression (console preview 500, 2026-08-24): the fs lockdown ran
+        inside _configure_resources, BEFORE _configure_s3 — DuckDB's CREATE
+        SECRET needs LocalFileSystem, so every OLAP query died with
+        PermissionException → 500. The lockdown constrains USER SQL only and
+        must run after ALL engine self-configuration."""
+        from types import SimpleNamespace
+
+        import arrow_lake.query._db as db_mod
+        from arrow_lake.query._db import DuckDBSession
+
+        session = DuckDBSession(
+            storage_config=SimpleNamespace(
+                backend="minio",
+                s3_endpoint="http://minio:9000",
+                s3_access_key="ak",
+                s3_secret_key="sk",
+                s3_region="us-east-1",
+            )
+        )
+        session._load_extensions = lambda conn: None  # type: ignore[method-assign]
+        fake = _FakeConn()
+        original_connect = db_mod.duckdb.connect
+        try:
+            db_mod.duckdb.connect = lambda *a, **k: fake  # type: ignore[assignment]
+            session.__enter__()
+        finally:
+            db_mod.duckdb.connect = original_connect  # type: ignore[assignment]
+
+        idx = [i for i, s in enumerate(fake.executed) if "disabled_filesystems" in s]
+        assert idx, f"lockdown missing: {fake.executed}"
+        assert idx[0] == len(fake.executed) - 1, (
+            f"lockdown not last (engine config after it would hit the disabled "
+            f"LocalFileSystem, e.g. CREATE SECRET): {fake.executed}"
+        )
