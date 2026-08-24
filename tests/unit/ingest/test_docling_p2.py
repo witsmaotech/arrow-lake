@@ -217,10 +217,11 @@ class TestVlmPipelineBuilder:
         fmt = _FakeDocumentConverter.last_kwargs["format_options"]
         pdf_opt = fmt[_FakeInputFormat.PDF]
         assert pdf_opt.pipeline_cls is docling_patched
-        # VLM 分支只允许 PDF + IMAGE
-        assert set(_FakeDocumentConverter.last_kwargs["allowed_formats"]) == {
-            _FakeInputFormat.PDF, _FakeInputFormat.IMAGE,
-        }
+        # 2026-08-24 起 VLM 分支也放开 docling 格式全集(专用 pipeline 仍只挂
+        # PDF/IMAGE;其余格式走默认 SimplePipeline)
+        allowed = _FakeDocumentConverter.last_kwargs["allowed_formats"]
+        assert {_FakeInputFormat.PDF, _FakeInputFormat.IMAGE, _FakeInputFormat.MD} <= set(allowed)
+        assert set(fmt.keys()) == {_FakeInputFormat.PDF, _FakeInputFormat.IMAGE}
 
     def test_standard_converter_does_not_use_vlm(self, docling_patched, monkeypatch):
         # Arrange

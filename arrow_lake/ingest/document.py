@@ -36,7 +36,7 @@ try:
         ImageFormatOption,
         PdfFormatOption,
     )
-    from docling.datamodel.base_models import InputFormat
+    from docling.datamodel.base_models import FormatToExtensions, InputFormat
     from docling.datamodel.pipeline_options import (
         EasyOcrOptions,
         RapidOcrOptions,
@@ -56,6 +56,7 @@ except ImportError:
     PdfFormatOption = None  # type: ignore[assignment]
     ImageFormatOption = None  # type: ignore[assignment]
     InputFormat = None  # type: ignore[assignment]
+    FormatToExtensions = None  # type: ignore[assignment]
     RapidOcrOptions = None  # type: ignore[assignment]
     EasyOcrOptions = None  # type: ignore[assignment]
     TesseractOcrOptions = None  # type: ignore[assignment]
@@ -72,6 +73,34 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 __all__ = ["DocumentParser", "ParsedDocument"]
+
+
+def _docling_allowed_formats() -> list:
+    """docling 可识别格式全集 —— 不手工枚举。
+
+    2026-08-24 前各分支手写白名单(VLM 分支只 [PDF, IMAGE]),docling 升级
+    或格式增补即漂移(md 实测被 API 收下却在转换层被挡)。format_options 只
+    给 PDF/IMAGE 配专用 pipeline;其余格式走 docling 默认 SimplePipeline。
+    API 层 ``_DOCUMENT_EXTENSIONS`` 仍是用户可上传扩展名的真闸门。
+    真 InputFormat 是 Enum(``list()`` 即成员);测试桩(普通类)走 vars 展开。
+    """
+    if InputFormat is None:
+        return []
+    if getattr(InputFormat, "__members__", None) is not None:
+        return list(InputFormat)
+    return [v for k, v in vars(InputFormat).items() if not k.startswith("_")]
+
+
+def _docling_handles(path: Path) -> bool:
+    """该扩展名是否有 docling 对应格式(FormatToExtensions,大小写不敏感)。
+
+    无 docling 环境返回 False(全量走非 docling 后端)。.rtf/.rst/.org 等
+    docling 无格式的扩展 → False → kreuzberg 回落。
+    """
+    if FormatToExtensions is None:
+        return False
+    suffix = path.suffix.lower().lstrip(".")
+    return any(suffix in exts for exts in FormatToExtensions.values())
 
 
 @dataclass(frozen=True)
@@ -374,7 +403,13 @@ class DocumentParser:
         if self._config.ocr_backend == OcrBackend.TURBO_OCR:
             result = self._parse_turbo_ocr_primary(file_path, ocr_client, effective_max)
         elif self._config.ocr_backend == OcrBackend.DOCLING:
-            result = self._parse_docling(file_path, effective_max)
+            # docling 可识别的扩展走 docling;其余(.rtf/.rst/.org 等 docling
+            # 无对应格式但 API 契约收下的)回落 kreuzberg —— 2026-08-24 前这类
+            # 文件在 docling 层报 empty content / convert 失败。
+            if _docling_handles(file_path):
+                result = self._parse_docling(file_path, effective_max)
+            else:
+                result = self._parse_kreuzberg(file_path, effective_max)
         else:
             result = self._parse_kreuzberg(file_path, effective_max)
 
@@ -462,7 +497,7 @@ class DocumentParser:
                 pipeline_options=self._build_docling_vlm_pipeline(),
             )
             return DocumentConverter(
-                allowed_formats=[InputFormat.PDF, InputFormat.IMAGE],
+                allowed_formats=_docling_allowed_formats(),
                 format_options={
                     InputFormat.PDF: pdf_option,
                     InputFormat.IMAGE: pdf_option,
@@ -476,15 +511,11 @@ class DocumentParser:
             generate_images=bool(getattr(self._config, "docling_generate_images", False)),
             images_scale=float(getattr(self._config, "docling_images_scale", 2.0)),
         )
-        # 多格式默认首选：PDF/IMAGE 用配好的 pipeline(OCR)，
-        # DOCX/PPTX/XLSX/HTML/MD/ASCIIDOC 用默认 SimplePipeline（无需 layout 模型，快）
-        allowed = [
-            getattr(InputFormat, n) for n in (
-                "PDF", "DOCX", "PPTX", "XLSX", "HTML", "IMAGE", "MD", "ASCIIDOC",
-            ) if getattr(InputFormat, n, None) is not None
-        ]
+        # 多格式默认首选：PDF/IMAGE 用配好的 pipeline(OCR)，其余格式走
+        # docling 默认 SimplePipeline（无需 layout 模型，快）。全集由
+        # _docling_allowed_formats() 提供 — 不手工枚举,docling 升级自动跟进。
         return DocumentConverter(
-            allowed_formats=allowed,
+            allowed_formats=_docling_allowed_formats(),
             format_options={
                 InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline),
                 InputFormat.IMAGE: ImageFormatOption(pipeline_options=pipeline),
@@ -752,7 +783,13 @@ class DocumentParser:
             del result
             gc.collect()
             if n == 0:
-                break  # 超过文档末尾
+                # 无页格式(md/html/asciidoc 等 SimplePipeline 输出)没有页
+                # 概念,page_range 切片恒返 0 页:首块带内容(texts/tables)
+                # 即整篇收下,拆页兜底在 _build_parsed_from_docling 的
+                # not-pages 分支;仅后续切片 0 页才表示越过文档末尾。
+                if start == 1 and (getattr(doc, "texts", None) or getattr(doc, "tables", None)):
+                    docs.append(doc)
+                break
             docs.append(doc)
             pages_done += n
             if n < chunk_size:
