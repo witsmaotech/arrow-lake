@@ -304,6 +304,10 @@ services:
       # RAG hybrid 走 sub-bridge RRF, 绕开 DuckDB native lance vector stream + IVF_PQ 的 Rust panic (502/worker 崩)。
       # DuckDB lance scanner 对 IVF_PQ index 的 vector stream 有 abort bug; pyarrow_fallback 用 sync sub-bridge (实测 cosine/L2 OK)。
       ARROW_LAKE__OLAP__LANCE_SCAN_MODE: "pyarrow_fallback"
+      # v1.10.4 per-dataset opt-in: 无向量大数据集走 native Rust scanner(聚合下推 34-145×)。
+      # ontime(107M 行)默认 fallback 时 5 臂 UNION 聚合 90s 看门狗必超;native 秒级。
+      # 熔断器(v1.10.4)在 D-state 重复时自动降回 fallback 冷却,风险受控。
+      ARROW_LAKE__OLAP__LANCE_SCAN_MODE_OVERRIDES: '{"ontime":"native"}'
       ARROW_LAKE__OLAP__PARQUET_ROW_GROUP_SIZE: "100000"
       # v1.7.1: DuckDB per-query memory limit (minimal 下调到 512MB，配合 API_MEMORY_LIMIT 4G)
       ARROW_LAKE__OLAP__MAX_QUERY_MEMORY_MB: "${OLAP_MAX_QUERY_MEMORY_MB:-512}"
