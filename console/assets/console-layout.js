@@ -43,25 +43,25 @@ function icon(name, cls = "") {
 }
 window.icon = icon;
 
-/* —— Nav(model:console 当前只有 OLAP 接真,其余规划中灰显)—— */
+/* —— Nav(v1.11.0.1 W4.2:表格/文本两条数据线分组隔离,便于各自演进)—— */
 const NAV = [
-  { group: "数据", items: [
+  { group: "表格数据", items: [
     { id: "datasets", label: "数据集", ic: "database", href: "datasets.html" },
-    { id: "data-prep", label: "数据准备", ic: "file", href: "data-prep.html" },
     { id: "tidy", label: "清洗整理", ic: "olap", href: "tidy.html" },
+    { id: "data-prep", label: "数据准备", ic: "file", href: "data-prep.html" },
+    { id: "olap", label: "深度分析", ic: "olap", href: "olap.html" },
+  ] },
+  { group: "文本数据", items: [
     { id: "embeddings", label: "索引/嵌入", ic: "code", href: "embeddings.html" },
     { id: "search", label: "文本检索", ic: "search", href: "search.html" },
     { id: "image-search", label: "图像检索", ic: "file", href: "search.html?mode=image" },
-  ] },
-  { group: "智能", items: [
-    { id: "olap", label: "深度分析", ic: "olap", href: "olap.html" },
     { id: "rag", label: "RAG 问答", ic: "search", href: "rag.html" },
     { id: "kg", label: "知识图谱", ic: "code", href: "kg.html" },
+    { id: "templates", label: "抽取模板", ic: "code", href: "extraction-templates.html" },
   ] },
   { group: "管理", items: [
     { id: "tasks", label: "异步任务", ic: "dashboard", href: "tasks.html" },
     { id: "admin", label: "管理后台", ic: "key", href: "admin.html" },
-    { id: "templates", label: "抽取模板", ic: "code", href: "extraction-templates.html" },
     { id: "my-workspace", label: "我的工作区", ic: "bell", href: "my-workspace.html" },
   ] },
   { group: "治理运维", items: [
