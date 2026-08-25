@@ -119,6 +119,7 @@
     <div class="panel-b" id="buildBody" style="display:none">
       <div class="muted" style="font-size:.78rem;margin-bottom:8px">对当前数据集抽取实体/关系建图(异步,ADMIN;走全局轻量 LLM 抽取)。大 dataset 耗时较长,完成后自动刷新统计。</div>
       <div class="flex" style="gap:8px;align-items:center"><button class="btn btn-primary btn-sm" id="buildBtn">建 KG</button><span id="buildMode" class="tag" style="font-size:.72rem;display:none"></span><span id="buildStatus" class="muted" style="font-size:.74rem"></span></div>
+      <div id="ontoGate" style="display:none;margin-top:10px"></div>
     </div>
   </div>
 
@@ -641,6 +642,43 @@ $("#buildBtn").addEventListener("click", async () => {
   // 按钮保持 disabled;pollBuild 在完成/失败/超时时才 resetBuildBtn
   pollBuild(tid);
 });
+// v1.11.0: 本体门禁摘要(构建收尾校验;mode=shadow 只观察,enforce 拒绝会翻 FAILED)
+function renderOntoGate(o) {
+  const el = $("#ontoGate");
+  if (!el) return;
+  if (!o || !o.outcome) { el.style.display = "none"; return; }
+  if (o.outcome === "skip") {
+    el.style.display = "";
+    el.innerHTML = `<div class="muted" style="font-size:.74rem;padding:6px 10px;border:1px dashed var(--line);border-radius:var(--r-sm)">本体门禁:跳过(模板无 <span class="mono">ontology:</span> 段或不可读)</div>`;
+    return;
+  }
+  const color = o.outcome === "reject" ? "var(--danger,#f87171)" : (o.outcome === "warn" ? "var(--warn,#fbbf24)" : "var(--ok,#34d399)");
+  const vs = (o.violations || []).map(v => `
+    <tr>
+      <td><span class="tag mono" style="font-size:.6rem;color:${v.level === "reject" ? "var(--danger,#f87171)" : "var(--warn,#fbbf24)"}">${esc(v.level)}</span></td>
+      <td class="mono">${esc(v.focus)}<span style="color:var(--fg-md)">.${esc(v.path)}</span></td>
+      <td class="mono" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(v.value)}</td>
+      <td style="max-width:320px;font-size:.68rem;color:var(--fg-md)">${esc(v.message)}</td>
+    </tr>`).join("");
+  el.style.display = "";
+  el.innerHTML = `
+    <div style="border:1px solid var(--line);border-radius:var(--r-sm);padding:8px 10px">
+      <div style="display:flex;align-items:center;gap:8px;font-size:.76rem">
+        <span class="tag mono" style="font-size:.66rem;border:1px solid ${color};color:${color}">本体门禁 ${esc(o.mode)}</span>
+        <b style="color:${color}">${esc(o.outcome)}</b>
+        <span class="muted">${o.rejects ?? 0} 拒 · ${o.warns ?? 0} 警</span>
+        <a href="ontology.html" style="margin-left:auto;font-size:.68rem;color:var(--teal-bright)">本体与规则 →</a>
+      </div>
+      ${vs ? `<details style="margin-top:6px"><summary style="cursor:pointer;font-size:.7rem;color:var(--fg-md)">违规样本(${(o.violations || []).length} 条${(o.rejects + o.warns) > (o.violations || []).length ? ",已截断" : ""})</summary>
+        <table style="width:100%;border-collapse:collapse;font-size:.7rem;margin-top:4px">
+          <thead><tr style="color:var(--fg-md);text-align:left;font-size:.64rem"><th>级</th><th>对象</th><th>值</th><th>说明</th></tr></thead>
+          <tbody>${vs}</tbody>
+        </table></details>`
+      : `<div class="muted" style="font-size:.7rem;margin-top:4px">无违规 — 快照全部符合模板本体约束</div>`}
+      ${o.mode === "shadow" && o.rejects ? `<div class="muted" style="font-size:.66rem;margin-top:4px">shadow 模式:只计数不拦截(切 enforce 需基线 reject 率 &lt;10%)</div>` : ""}
+    </div>`;
+}
+
 function pollBuild(tid) {
   // 异步 KG 构建(map_reduce + LLM 抽取)大 dataset 可达数十分钟 → 不设硬超时,
   // 只要页面开着就跟踪到终态。渐进退避(前 ~5min 每 4s,之后每 10s)避免轰炸;
@@ -664,7 +702,13 @@ function pollBuild(tid) {
         if (s.first_build) msg = `首次构建完成 · 实体 ${s.entity_count ?? 0} · 关系 ${s.relation_count ?? 0}`;
         else if (s.incremental && (s.new_chunks || s.reused_chunks)) msg = `增量构建完成 · 复用 ${s.reused_chunks ?? 0} · 新抽取 ${s.new_chunks ?? 0}`;
         else msg = `KG 构建完成 · 实体 ${s.entity_count ?? 0} · 关系 ${s.relation_count ?? 0}`;
+        // v1.11.0: 本体门禁摘要(shadow 只观察不拦;enforce 拒绝会让任务 FAILED)
+        if (s.ontology && s.ontology.outcome && s.ontology.outcome !== "skip") {
+          const o = s.ontology;
+          msg += ` · 门禁 ${o.outcome}${(o.rejects || o.warns) ? `(${o.rejects}拒/${o.warns}警)` : ""}`;
+        }
         toast(msg + ",刷新统计…", "ok"); $("#buildStatus").textContent = "完成"; resetBuildBtn();
+        renderOntoGate(s.ontology);
         loadAll();                   // 立即刷新统计/Schema + buildMode 标签
         setTimeout(loadAll, 2500);   // 再刷一次(HugeGraph 提交/统计可能有延迟)
         return;
