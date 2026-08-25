@@ -92,6 +92,20 @@ class ContractStore:
         rows = cur.fetchall() if cur is not None else []
         return [_row_to_version(r, with_yaml=False) for r in rows]
 
+    def list_scopes(self) -> list[dict[str, Any]]:
+        """One row per scope carrying its latest version (list view)."""
+        cur = self._db.execute(
+            "SELECT scope, version, source_hash, created_at FROM dataset_contracts "
+            "WHERE version = (SELECT MAX(version) FROM dataset_contracts c2 "
+            "                 WHERE c2.scope = dataset_contracts.scope) "
+            "ORDER BY scope"
+        )
+        rows = cur.fetchall() if cur is not None else []
+        return [
+            {"scope": r[0], "version": r[1], "source_hash": r[2], "created_at": r[3]}
+            for r in rows
+        ]
+
     def get_version(
         self, scope: str, *, version: int | None = None,
     ) -> dict[str, Any] | None:

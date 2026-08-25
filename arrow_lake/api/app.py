@@ -29,6 +29,7 @@ from arrow_lake.api.routers.doc_type_categories import router as doc_type_catego
 from arrow_lake.api.routers.lineage import router as lineage_router
 from arrow_lake.api.routers.materialized import router as materialized_router
 from arrow_lake.api.routers.maintenance import router as maintenance_router
+from arrow_lake.api.routers.contracts import router as contracts_router
 from arrow_lake.api.routers.ontology import router as ontology_router
 from arrow_lake.api.routers.quality import router as quality_router
 from arrow_lake.api.routers.cleaning import router as cleaning_router
@@ -791,6 +792,7 @@ def create_app(config: ArrowLakeConfig | None = None) -> FastAPI:
     app.include_router(extraction_templates_router)
     app.include_router(doc_type_categories_router)
     app.include_router(ontology_router)
+    app.include_router(contracts_router)
     app.include_router(auth_router)
     app.include_router(admin_router)
     app.include_router(maintenance_router)

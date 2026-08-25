@@ -354,37 +354,51 @@ class BackupManager:
     def _backup_lance_dataset_remote(
         self, dataset_name: str, backup_prefix: str,
     ) -> tuple[int, dict[str, str]]:
-        """Copy a Lance dataset from remote (S3/MinIO) to backup via server-side copy."""
-        s3_prefix = self._s3_dataset_prefix(dataset_name)
+        """Copy a Lance dataset from remote (S3/MinIO) to backup via server-side copy.
 
+        Container datasets (DR14 W4.4): a container's tables live under
+        ``{base}/{name}/{table}.lance`` — when the plain ``{name}.lance/``
+        prefix has no objects, the ``{name}/`` prefix is retried and its
+        contents copied recursively (all tables in one manifest entry).
+        """
         row_count = -1
         file_hashes: dict[str, str] = {}
         found_any = False
-        continuation_token: str | None = None
+        base = self._storage_config.base_uri
+        if base.startswith("./"):
+            base = base[2:]
 
-        while True:
-            result = self._blob_store.list_blobs(
-                s3_prefix, max_keys=5000, continuation_token=continuation_token,
-            )
-            for key in result.keys:
-                found_any = True
-                rel_path = key[len(s3_prefix):]
-                backup_key = f"{backup_prefix}datasets/{dataset_name}/{rel_path}"
-                self._blob_store.copy(key, backup_key)
-                # Record etag+size for integrity verification without downloading
-                try:
-                    info = self._blob_store.head(backup_key)
-                    file_hashes[rel_path] = f"{info.etag}:{info.size_bytes}"
-                except Exception:
-                    file_hashes[rel_path] = "copy-ok"
-            if not result.truncated:
-                break
-            continuation_token = result.next_token
-            if not result.keys:
-                break
+        for s3_prefix in (f"{base}/{dataset_name}.lance/", f"{base}/{dataset_name}/"):
+            continuation_token: str | None = None
+            prefix_found = False
+            while True:
+                result = self._blob_store.list_blobs(
+                    s3_prefix, max_keys=5000, continuation_token=continuation_token,
+                )
+                for key in result.keys:
+                    prefix_found = True
+                    found_any = True
+                    rel_path = key[len(s3_prefix):]
+                    backup_key = f"{backup_prefix}datasets/{dataset_name}/{rel_path}"
+                    self._blob_store.copy(key, backup_key)
+                    # Record etag+size for integrity verification without downloading
+                    try:
+                        info = self._blob_store.head(backup_key)
+                        file_hashes[rel_path] = f"{info.etag}:{info.size_bytes}"
+                    except Exception:
+                        file_hashes[rel_path] = "copy-ok"
+                if not result.truncated:
+                    break
+                continuation_token = result.next_token
+                if not result.keys:
+                    break
+            if prefix_found:
+                break  # plain dataset hit — skip the container fallback
 
         if not found_any:
-            raise FileNotFoundError(f"Dataset not found in S3: {s3_prefix}")
+            raise FileNotFoundError(
+                f"Dataset not found in S3: {base}/{dataset_name}[.lance]/"
+            )
 
         try:
             import lancedb
