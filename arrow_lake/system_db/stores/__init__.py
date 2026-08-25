@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from arrow_lake.system_db.stores.base import TTLCache, FailMode
 from arrow_lake.system_db.stores.catalog import CatalogStore
+from arrow_lake.system_db.stores.contracts import ContractStore
 from arrow_lake.system_db.stores.governance import GovernanceStore
 from arrow_lake.system_db.stores.identity import IdentityStore
 from arrow_lake.system_db.stores.ingest_dlq import IngestDLQStore
@@ -26,6 +27,7 @@ from arrow_lake.system_db.stores.user_state import UserStateStore
 
 __all__ = [
     "CatalogStore",
+    "ContractStore",
     "FailMode",
     "GovernanceStore",
     "IdentityStore",
