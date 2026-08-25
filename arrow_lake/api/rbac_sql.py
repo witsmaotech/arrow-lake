@@ -47,11 +47,14 @@ def _table_key(table: exp.Table) -> str:
     """ACL identity of a table reference, lowercased.
 
     A two-part reference (``gas_net.segments`` — a container table, DR14
-    W3.2) authorizes against the CONTAINER dataset: sqlglot keeps the
-    schema in ``table.db`` and ``table.name`` alone would miss the dataset
-    ACL entirely (fail-open bypass). Plain refs key on the table name.
+    W3.2) keys on the FULL dotted name: the checker layers it (table-level
+    override ``ds::table`` first, container default fallback), and
+    ``table.name`` alone ("segments") would miss the dataset ACL entirely
+    (fail-open bypass). Plain refs key on the table name.
     """
-    return table.db.lower() if table.db else table.name.lower()
+    if table.db:
+        return f"{table.db}.{table.name}".lower()
+    return table.name.lower()
 
 
 def _alias_map(tree: exp.Expression) -> dict[str, str]:

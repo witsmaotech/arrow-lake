@@ -86,9 +86,20 @@ def authorize_dataset_read(name: str, request: Request) -> None:
 
     Two-part names (``ds.table``, DR14 W3.2) authorize against the CONTAINER
     dataset — ACL lookups on the full dotted name would miss and fail open.
+    A table-level override (D4) may additionally deny reads the container
+    allows; deny wins over the container default.
     """
     if "." in name:
-        name = name.split(".", 1)[0]
+        container, _, _table = name.partition(".")
+        user = getattr(request.state, "user", None) or get_current_user(request)
+        if user.role != Role.ADMIN:
+            acl = get_checker(request).get_acl(name)
+            if acl is not None and "read" in (acl.denied_actions or frozenset()):
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"No read access to table '{name}' (table-level deny)",
+                )
+        name = container
     authorize_dataset(request, name)
 
 

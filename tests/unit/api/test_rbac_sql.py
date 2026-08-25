@@ -394,7 +394,7 @@ class TestContainerTwoPartRefs:
     def test_two_part_row_filter_pushed(self, container_duck):
         out = enforce_sql_acl(
             "SELECT count(*) AS n FROM gas_net.segments",
-            get_acl=lambda t: ROW_ACL_CN if t == "gas_net" else None,
+            get_acl=lambda t: ROW_ACL_CN if t == "gas_net.segments" else None,
         )
         n = container_duck.execute(out).fetchone()[0]
         assert n == 2  # west row filtered
@@ -402,7 +402,7 @@ class TestContainerTwoPartRefs:
     def test_two_part_rewrite_preserves_qualifier(self, container_duck):
         out = enforce_sql_acl(
             "SELECT id FROM gas_net.segments",
-            get_acl=lambda t: ROW_ACL_CN if t == "gas_net" else None,
+            get_acl=lambda t: ROW_ACL_CN if t == "gas_net.segments" else None,
         )
         # the subquery keeps the two-part reference so DuckDB resolves the
         # schema-qualified table
@@ -414,27 +414,27 @@ class TestContainerTwoPartRefs:
         with pytest.raises(AclSqlViolation):
             enforce_sql_acl(
                 "SELECT phone FROM gas_net.segments",
-                get_acl=lambda t: COL_ACL_CN if t == "gas_net" else None,
+                get_acl=lambda t: COL_ACL_CN if t == "gas_net.segments" else None,
             )
 
     def test_two_part_alias_hidden_column_rejected(self, container_duck):
         with pytest.raises(AclSqlViolation):
             enforce_sql_acl(
                 "SELECT s.phone FROM gas_net.segments AS s",
-                get_acl=lambda t: COL_ACL_CN if t == "gas_net" else None,
+                get_acl=lambda t: COL_ACL_CN if t == "gas_net.segments" else None,
             )
 
     def test_two_part_star_rejected_when_column_restricted(self, container_duck):
         with pytest.raises(AclSqlViolation):
             enforce_sql_acl(
                 "SELECT * FROM gas_net.segments",
-                get_acl=lambda t: COL_ACL_CN if t == "gas_net" else None,
+                get_acl=lambda t: COL_ACL_CN if t == "gas_net.segments" else None,
             )
 
     def test_two_part_alias_row_filter_still_applies(self, container_duck):
         out = enforce_sql_acl(
             "SELECT count(*) AS n FROM gas_net.segments AS s WHERE s.salary > 50",
-            get_acl=lambda t: ROW_ACL_CN if t == "gas_net" else None,
+            get_acl=lambda t: ROW_ACL_CN if t == "gas_net.segments" else None,
         )
         n = container_duck.execute(out).fetchone()[0]
         assert n == 2
@@ -444,7 +444,55 @@ class TestContainerTwoPartRefs:
         container_duck.execute("INSERT INTO plain VALUES (1), (3)")
         out = enforce_sql_acl(
             "SELECT count(*) AS n FROM gas_net.segments g JOIN plain p ON g.id = p.id",
-            get_acl=lambda t: ROW_ACL_CN if t == "gas_net" else None,
+            get_acl=lambda t: ROW_ACL_CN if t == "gas_net.segments" else None,
         )
         n = container_duck.execute(out).fetchone()[0]
         assert n == 2  # ids 1,3 (east); west row filtered before the join
+
+
+# --------------------------------------------------------------------------- #
+# W3.4 (DR14 D4): table-level ACL override — checker layers 'ds.table' keys
+# (store key 'ds::table' first, container default fallback).
+# --------------------------------------------------------------------------- #
+
+class TestTableLevelAclLayering:
+    def _checker(self):
+        from arrow_lake.api.rbac import PermissionChecker
+
+        return PermissionChecker()  # in-memory path
+
+    def test_table_override_wins(self, container_duck):
+        chk = self._checker()
+        chk.set_acl(DatasetACL(dataset="gas_net", role="viewer",
+                               row_filter="region == 'east'"))
+        chk.set_acl(DatasetACL(dataset="gas_net.segments", role="viewer",
+                               row_filter="region == 'west'"))
+        out = enforce_sql_acl(
+            "SELECT count(*) AS n FROM gas_net.segments",
+            get_acl=lambda t: chk.get_acl(t, "viewer"),
+        )
+        n = container_duck.execute(out).fetchone()[0]
+        assert n == 1  # west override beat the east container default
+
+    def test_fallback_to_container_default(self, container_duck):
+        chk = self._checker()
+        chk.set_acl(DatasetACL(dataset="gas_net", role="viewer",
+                               row_filter="region == 'east'"))
+        out = enforce_sql_acl(
+            "SELECT count(*) AS n FROM gas_net.segments",
+            get_acl=lambda t: chk.get_acl(t, "viewer"),
+        )
+        n = container_duck.execute(out).fetchone()[0]
+        assert n == 2  # no table entry → container default applies
+
+    def test_layered_key_is_dotted_not_table_name(self, container_duck):
+        chk = self._checker()
+        # an ACL keyed on the bare table name must NOT apply to a two-part ref
+        chk.set_acl(DatasetACL(dataset="segments", role="viewer",
+                               row_filter="region == 'west'"))
+        out = enforce_sql_acl(
+            "SELECT count(*) AS n FROM gas_net.segments",
+            get_acl=lambda t: chk.get_acl(t, "viewer"),
+        )
+        n = container_duck.execute(out).fetchone()[0]
+        assert n == 3  # untouched — no gas_net ACL, 'segments' key not matched

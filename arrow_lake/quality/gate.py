@@ -234,7 +234,8 @@ class IngestionQualityGate:
                 )
                 rejected = con.execute(
                     f"SELECT *, NULLIF(concat_ws(';', {markers}), '') "
-                    f"AS _contract_violation FROM _batch WHERE {violated_expr}"
+                    f"AS _contract_violation, '{(table_name or dataset_name)}' "
+                    f"AS _source_table FROM _batch WHERE {violated_expr}"
                 ).fetch_arrow_table()
                 passed = con.execute(
                     f"SELECT * FROM _batch WHERE NOT ({violated_expr})"

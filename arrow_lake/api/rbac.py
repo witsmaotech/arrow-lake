@@ -150,6 +150,29 @@ class PermissionChecker:
     def _get_row_col_acl(
         self, dataset: str, role_name: str
     ) -> DatasetACL | None:
+        """Layered lookup (DR14 W3.4/D4): dataset default + table override.
+
+        A two-part key (``ds.table`` — a container table) resolves the
+        table-level override first (store key ``ds::table``; dataset names
+        cannot contain ':' so the convention is collision-free), then falls
+        back to the container dataset's ACL. Plain names unchanged.
+        """
+        if "." in dataset:
+            ds, _, table = dataset.partition(".")
+            # Table-level override: store convention key first ("ds::table"),
+            # then the dotted form (in-memory set_acl keys by acl.dataset
+            # verbatim). Either hit replaces the container default.
+            override = self._lookup_row_col(f"{ds}::{table}", role_name)
+            if override is None:
+                override = self._lookup_row_col(f"{ds}.{table}", role_name)
+            if override is not None:
+                return override
+            return self._lookup_row_col(ds, role_name)
+        return self._lookup_row_col(dataset, role_name)
+
+    def _lookup_row_col(
+        self, dataset: str, role_name: str
+    ) -> DatasetACL | None:
         if self._store is not None:
             try:
                 d = self._store.get_row_col_acl(dataset, role_name)
