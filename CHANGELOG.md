@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.11.0] - 2026-08-25 — MS1 本体与规则地基
+
+### Added
+- **ontology 模块**(`arrow_lake/ontology/`):`template_adapter`(模板 YAML→OntologySpec,存量无段降级)/ `shape_builder`(枚举+必填 PropertyShape,Turtle 导出)/ `validator`(pyshacl + type-pair 三元通配,reject/warn 分级,超时 fail-closed)/ `gate`(KG build 收尾运行器,off/shadow/enforce 默认 shadow)/ `versioning`(特征提取+两版结构化 diff)/ `rules_renderer`(段→guideline 规则行,哨兵+hash 幂等)。
+- **V010 迁移**:`ontology_versions`(快照版本链,同 source_hash 跳过)+ `ontology_rules`(规则注册表,draft→active→retired 状态机,登记不执行);`OntologyRulesStore` / `OntologyVersionStore`。
+- **KG build 收尾本体门禁**:`ARROW_LAKE__ONTOLOGY__GATE_MODE`(默认 shadow);指标 `arrow_lake_ontology_check_total{dataset,result}`;违规摘要进 `/kg/build/{tid}/status` 的 `ontology` 字段;enforce 翻 FAILED 带明细(HugeGraph upsert 幂等不回滚);构建成功自动快照模板 shapes 落版本链。
+- **模板 `ontology:` 段**:project_concept_graph 形式化(22 实体类 + 16 关系 + 72 type-pairs,与 `relation_validator.LEGAL_TYPE_PAIRS` 同源一致性测试钉死);builder 捕获保留软降级关系原始动词(门禁度量抽取原始质量)。
+- **管理 API `/api/v1/ontology`**(ADMIN):versions 列表/详情/diff + rules CRUD/状态迁移;system_db 关闭 503。
+- **console**:`ontology.html`(版本链/diff/规则注册表)+ 导航;kg.html 构建完成渲染门禁摘要卡片。
+- **基线脚本** `scripts/ontology_gate_baseline.py`:两口径缺陷逃逸对比;实测 czxm_lifeline 逃逸率 29.21%(type_pair 6610+越枚举 158)→ 决策维持 shadow(门槛 <10%)。
+- 配置段 `OntologyConfig`(gate_mode/validation_timeout_seconds/max_violations_reported)。
+
+### Fixed
+- docling `allowed_formats` 手工白名单漂移(VLM 分支只 PDF+IMAGE)→ `list(InputFormat)` 全集,docling 能识别即收;`.rtf/.rst/.org` 回落 kreuzberg。
+- `docling_chunk_size` 分块对无页格式(md/html)恒返 0 页被当"越过文档末尾"→ 误报 empty content;首块 0 页有内容整篇收下(md 摄入自 v1.10.3 起损坏,本版修复)。
+
 ## [1.10.8] - 2026-08-24
 
 ### MS1 前置加固批（发版后 review backlog B-1~B-4 + M-7）

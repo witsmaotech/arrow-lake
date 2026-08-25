@@ -40,11 +40,11 @@ x-arrow-lake: &arrow-lake
       - "hfmodels=/home/witshine/.cache/huggingface/hub"
       - "msmodels=/home/witshine/.cache/modelscope/models"
     args:
-      VERSION: "1.10.8"
+      VERSION: "1.11.0"
       HTTP_PROXY: "${BUILD_HTTP_PROXY:-}"
       HTTPS_PROXY: "${BUILD_HTTPS_PROXY:-}"
       NO_PROXY: "${BUILD_NO_PROXY:-127.0.0.1,localhost}"
-  image: arrow-lake:1.10.8
+  image: arrow-lake:1.11.0
   restart: unless-stopped
   env_file:
     - path: ../.env
