@@ -324,6 +324,15 @@ quality_reject_total: Counter = Counter(
     labelnames=["dataset", "reason"],
 )
 
+# --- v1.11.0.1 W3.1: Dataset Contract Gate Metrics (DR13/DR14) ---
+
+contract_check_total: Counter = Counter(
+    "arrow_lake_contract_check_total",
+    "Total number of contract gate checks run (result: pass|reject).",
+    registry=REGISTRY,
+    labelnames=["dataset", "result"],
+)
+
 quality_score_distribution: Histogram = Histogram(
     "arrow_lake_quality_score_distribution",
     "Distribution of quality scores for ingested rows.",

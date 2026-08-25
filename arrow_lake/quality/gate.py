@@ -36,6 +36,7 @@ class GateResult:
     pass_rate: float
     rejection_reasons: tuple[str, ...]
     duration_seconds: float
+    contract_rejected: int = 0
 
 
 class IngestionQualityGate:
@@ -62,6 +63,7 @@ class IngestionQualityGate:
         dead_letter_writer: Any | None = None,
         target_schema: pa.Schema | None = None,
         filter_registry: Any | None = None,
+        contract_constraints: tuple = (),
     ) -> None:
         self._mode = mode
         self._schema_mode = schema_mode
@@ -75,21 +77,40 @@ class IngestionQualityGate:
         # build_quality_gate). Bare QualityFilterRegistry() registers nothing,
         # so active_filters alone would be a silent no-op.
         self._filter_registry = filter_registry
+        # v1.11.0.1 W3.1: compiled contract row-constraints (TRUE = violation),
+        # already filtered per write target at check time via ``table_name``.
+        self._contract_constraints = tuple(contract_constraints)
 
     @property
     def mode(self) -> str:
         """``shadow`` = count/log only; ``enforce`` = drop rejected rows."""
         return self._mode
 
-    def check(self, table: pa.Table, *, dataset_name: str = "") -> tuple[pa.Table, GateResult]:
-        """Run all quality checks on table. Returns (passed_table, result)."""
-        from arrow_lake.core.metrics import quality_check_total, quality_reject_total
+    @property
+    def contract_constraints(self) -> tuple:
+        return self._contract_constraints
+
+    def check(
+        self, table: pa.Table, *, dataset_name: str = "", table_name: str | None = None,
+    ) -> tuple[pa.Table, GateResult]:
+        """Run all quality checks on table. Returns (passed_table, result).
+
+        ``table_name`` scopes contract constraints to the write target
+        (container table name, or the dataset-name section for legacy
+        single-table contracts — the default when omitted).
+        """
+        from arrow_lake.core.metrics import (
+            contract_check_total,
+            quality_check_total,
+            quality_reject_total,
+        )
 
         start = time.monotonic()
         total_rows = table.num_rows
         schema_rejected = 0
         filter_rejected = 0
         score_rejected = 0
+        contract_rejected = 0
         reasons: list[str] = []
         current = table
         dead_letter_batches: list[pa.Table] = []
@@ -122,6 +143,24 @@ class IngestionQualityGate:
                 reasons.append(f"score:{score_rejected}")
                 if score_rejected_rows is not None and score_rejected_rows.num_rows > 0:
                     dead_letter_batches.append(score_rejected_rows)
+
+        # ── Stage 4: Contract constraints (v1.11.0.1 W3.1) ──
+        if self._contract_constraints:
+            current, n_contract_rej, contract_rows = self._apply_contract(
+                current, dataset_name, table_name,
+            )
+            contract_rejected = n_contract_rej
+            if contract_rejected > 0:
+                reasons.append(f"contract:{contract_rejected}")
+                contract_check_total.labels(
+                    dataset=dataset_name or "_unknown", result="reject",
+                ).inc()
+                if contract_rows is not None and contract_rows.num_rows > 0:
+                    dead_letter_batches.append(contract_rows)
+            else:
+                contract_check_total.labels(
+                    dataset=dataset_name or "_unknown", result="pass",
+                ).inc()
 
         # ── Metrics ──
         passed = current.num_rows
@@ -158,10 +197,57 @@ class IngestionQualityGate:
             pass_rate=round(passed / max(total_rows, 1), 4),
             rejection_reasons=tuple(reasons),
             duration_seconds=round(elapsed, 4),
+            contract_rejected=contract_rejected,
         )
         return current, result
 
     # ── Stage implementations ──
+
+    def _apply_contract(
+        self, table: pa.Table, dataset_name: str, table_name: str | None,
+    ) -> tuple[pa.Table, int, pa.Table | None]:
+        """Stage 4: evaluate compiled contract constraints via in-memory DuckDB.
+
+        Constraints are scoped to the write target (``table_name`` or the
+        dataset-name section for legacy single-table contracts). Returns
+        (passed_table, rejected_count, rejected_rows) where rejected rows
+        carry a ``_contract_violation`` marker column (kind list per row).
+        Any evaluation failure is fail-open (rows pass) — the gate must not
+        block ingest on an internal error; the violation is logged instead.
+        """
+        section = table_name or dataset_name
+        applicable = [c for c in self._contract_constraints if c.table == section]
+        if not applicable or table.num_rows == 0:
+            return table, 0, None
+        try:
+            import duckdb
+
+            con = duckdb.connect(":memory:")
+            try:
+                con.register("_batch", table)
+                violated_expr = " OR ".join(
+                    f"COALESCE(({c.sql}), FALSE)" for c in applicable
+                )
+                markers = ", ".join(
+                    f"CASE WHEN COALESCE(({c.sql}), FALSE) THEN '{c.kind}' END"
+                    for c in applicable
+                )
+                rejected = con.execute(
+                    f"SELECT *, NULLIF(concat_ws(';', {markers}), '') "
+                    f"AS _contract_violation FROM _batch WHERE {violated_expr}"
+                ).fetch_arrow_table()
+                passed = con.execute(
+                    f"SELECT * FROM _batch WHERE NOT ({violated_expr})"
+                ).fetch_arrow_table()
+            finally:
+                con.close()
+        except Exception:  # noqa: BLE001 — fail-open: log, never block ingest
+            logger.warning(
+                "contract_gate_eval_failed", dataset=dataset_name,
+                table=table_name, exc_info=True,
+            )
+            return table, 0, None
+        return passed, rejected.num_rows, (rejected if rejected.num_rows else None)
 
     def _validate_schema(
         self, table: pa.Table
@@ -271,6 +357,7 @@ def build_quality_gate(
     *,
     target_schema: pa.Schema | None = None,
     dead_letter_writer: Any | None = None,
+    contract_constraints: tuple = (),
 ) -> IngestionQualityGate | None:
     """Construct the gate from a QualityConfig (v1.10.7 WP5 wiring).
 
@@ -308,6 +395,7 @@ def build_quality_gate(
         dead_letter_writer=dead_letter_writer,
         target_schema=target_schema,
         filter_registry=registry,
+        contract_constraints=contract_constraints,
     )
 
 

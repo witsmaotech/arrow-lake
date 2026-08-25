@@ -204,6 +204,7 @@ class _LakeIngestMixin:
                     dead_letter_writer=DeadLetterWriter(
                         storage=_DeadLetterStorageAdapter(self._get_storage())
                     ),
+                    contract_constraints=self._load_contract_constraints(dataset_name),
                 )
         except Exception:  # noqa: BLE001 — gate wiring must never block ingest
             logger.warning("quality_gate_wiring_failed", exc_info=True)
@@ -816,6 +817,32 @@ class _LakeIngestMixin:
         if embed_async_info is not None:
             report = replace(report, embed_async=embed_async_info)
         return report
+
+    def _load_contract_constraints(self, dataset_name: str | None) -> tuple:
+        """Fetch the dataset's contract and compile row constraints (W3.1).
+
+        Zero-overhead when no store is injected (host/CLI Lake) or no
+        contract exists. Best-effort: a broken contract must never block
+        ingest — it logs and returns no constraints.
+        """
+        if not dataset_name:
+            return ()
+        store = getattr(self, "_contract_store", None)
+        if store is None:
+            return ()
+        try:
+            rec = store.get_version(dataset_name)
+            if rec is None:
+                return ()
+            from arrow_lake.contract.compiler import compile_contract
+            from arrow_lake.contract.schema import parse_contract
+
+            return compile_contract(parse_contract(rec["contract_yaml"])).rows
+        except Exception:  # noqa: BLE001 — fail-open like the rest of the wiring
+            logger.warning(
+                "contract_gate_load_failed", dataset=dataset_name, exc_info=True
+            )
+            return ()
 
     def _register_container_table(self, name: str, table: str | None) -> None:
         """Best-effort control-plane registration of a container table (DR14 W1.2).

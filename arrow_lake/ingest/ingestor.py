@@ -101,7 +101,9 @@ class Ingestor(_FileIngestMixin, _MediaIngestMixin, _SourceIngestMixin):
         (DR14 W1.3); None keeps the single-table dataset behavior.
         """
         if self._quality_gate is not None:
-            gated, result = self._quality_gate.check(table, dataset_name=dataset_name)
+            gated, result = self._quality_gate.check(
+                table, dataset_name=dataset_name, table_name=target_table,
+            )
             if result.rejected > 0:
                 import structlog
                 structlog.get_logger(__name__).info(

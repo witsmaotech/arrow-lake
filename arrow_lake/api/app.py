@@ -257,6 +257,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # construction-site injection is a follow-up).
         from arrow_lake.system_db.stores import (
             CatalogStore,
+            ContractStore,
             IngestDLQStore,
             RagSessionStore,
             TaskHistoryStore,
@@ -264,6 +265,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         task_history_store = TaskHistoryStore(sys_db)
         app.state.catalog_store = CatalogStore(sys_db)
+        app.state.contract_store = ContractStore(sys_db)
         app.state.ingest_dlq_store = IngestDLQStore(sys_db)
         app.state.rag_session_store = RagSessionStore(sys_db)
         app.state.task_history_store = task_history_store
@@ -314,6 +316,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # and extraction-template bindings. Absent on the CLI Lake (no lifespan)
         # → getattr-None-guard in the cascade helper skips them gracefully.
         lake._catalog_store = app.state.catalog_store
+        lake._contract_store = app.state.contract_store
         lake._rbac_store = app.state.rbac_store
         lake._extraction_template_store = app.state.extraction_template_store
         # Wire TaskManager durable history (Redis still holds real-time state)
