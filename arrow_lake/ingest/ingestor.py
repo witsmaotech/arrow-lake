@@ -92,8 +92,14 @@ class Ingestor(_FileIngestMixin, _MediaIngestMixin, _SourceIngestMixin):
         table: pa.Table,
         sources: list[IngestionSource],
         source_path: str,
+        *,
+        target_table: str | None = None,
     ) -> None:
-        """Write a table to the dataset (create or append) and track the source."""
+        """Write a table to the dataset (create or append) and track the source.
+
+        ``target_table`` addresses a table inside a container dataset
+        (DR14 W1.3); None keeps the single-table dataset behavior.
+        """
         if self._quality_gate is not None:
             gated, result = self._quality_gate.check(table, dataset_name=dataset_name)
             if result.rejected > 0:
@@ -126,12 +132,13 @@ class Ingestor(_FileIngestMixin, _MediaIngestMixin, _SourceIngestMixin):
         # earlier request would wrongly try ``create_dataset`` and fail with
         # "already exists". Checking storage existence makes append-across-
         # requests work (the incremental file-input case).
-        already_exists = self._manager.dataset_exists(dataset_name)
-        if already_exists or self._first_table_seen.get(dataset_name, False):
-            self._manager.append_dataset(dataset_name, table)
+        seen_key = f"{dataset_name}/{target_table}" if target_table else dataset_name
+        already_exists = self._manager.dataset_exists(dataset_name, table=target_table)
+        if already_exists or self._first_table_seen.get(seen_key, False):
+            self._manager.append_dataset(dataset_name, table, table=target_table)
         else:
-            self._manager.create_dataset(dataset_name, table)
-        self._first_table_seen[dataset_name] = True
+            self._manager.create_dataset(dataset_name, table, table=target_table)
+        self._first_table_seen[seen_key] = True
 
         sources.append(IngestionSource(
             path=source_path,

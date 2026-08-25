@@ -217,6 +217,7 @@ class _LakeIngestMixin:
         *,
         transforms: list[Any] | None = None,
         actor: str = "system",
+        table: str | None = None,
     ) -> IngestionReport:
         """Ingest local files into a Lance dataset (Stories 3.1-3.5).
 
@@ -227,6 +228,8 @@ class _LakeIngestMixin:
             file_paths: List of file paths (CSV, JSON, JSONL, Parquet).
             transforms: Optional list of ``daft.DataFrame -> daft.DataFrame``
                         callables applied before Arrow conversion.
+            table: Optional table name — targets a table inside a container
+                dataset (DR14 W1.3).
 
         Returns:
             IngestionReport with per-source and total stats.
@@ -234,8 +237,9 @@ class _LakeIngestMixin:
         from arrow_lake.ingest.ingestor import Ingestor
 
         report = self._make_ingestor(dataset_name).ingest(
-            dataset_name, file_paths, transforms=transforms,
+            dataset_name, file_paths, transforms=transforms, target_table=table,
         )
+        self._register_container_table(dataset_name, table)
         try:
             self._lineage_after_ingest(
                 dataset_name, source_paths=file_paths, actor=actor,
@@ -334,6 +338,7 @@ class _LakeIngestMixin:
         num_partitions: int | None = None,
         transforms: list[Any] | None = None,
         actor: str = "system",
+        table: str | None = None,
     ) -> IngestionReport:
         """Ingest data from a SQL database query.
 
@@ -344,6 +349,8 @@ class _LakeIngestMixin:
             partition_col: Optional partition column for parallel reads.
             num_partitions: Number of read partitions.
             transforms: Optional Daft transform callables.
+            table: Optional table name — targets a table inside a container
+                dataset (DR14 W1.3).
 
         Returns:
             IngestionReport with stats.
@@ -357,7 +364,9 @@ class _LakeIngestMixin:
             partition_col=partition_col,
             num_partitions=num_partitions,
             transforms=transforms,
+            target_table=table,
         )
+        self._register_container_table(dataset_name, table)
         self._lineage_after_ingest(
             dataset_name, source_descriptor={"sql": sql, "connection_url": connection_url},
             actor=actor, lance_version=self._safe_version(dataset_name),
@@ -808,7 +817,29 @@ class _LakeIngestMixin:
             report = replace(report, embed_async=embed_async_info)
         return report
 
-    def create_dataset(self, name: str, data: pa.Table, *, actor: str = "system") -> None:
+    def _register_container_table(self, name: str, table: str | None) -> None:
+        """Best-effort control-plane registration of a container table (DR14 W1.2).
+
+        Container identity lives in the catalog store's ``container_registry``
+        (D3) — never sniffed from storage. Host/CLI Lake instances without the
+        injected ``_catalog_store`` skip registration (getattr None).
+        """
+        if table is None:
+            return
+        store = getattr(self, "_catalog_store", None)
+        if store is None:
+            return
+        try:
+            store.add_container_table(name, table)
+        except Exception:  # noqa: BLE001 — registration must never block ingest
+            logger.warning(
+                "container_table_register_failed", dataset=name, table=table, exc_info=True,
+            )
+
+    def create_dataset(
+        self, name: str, data: pa.Table, *, actor: str = "system",
+        table: str | None = None,
+    ) -> None:
         """Create a new dataset from an Arrow Table.
 
         This is the primary way to write programmatic data into Arrow Lake.
@@ -816,6 +847,8 @@ class _LakeIngestMixin:
         Args:
             name: Dataset name (must match ^[a-zA-Z_][a-zA-Z0-9_-]*$).
             data: PyArrow Table to write as a Lance dataset.
+            table: Optional table name — targets ``{name}/{table}`` inside a
+                container dataset (DR14 W1).
 
         Raises:
             StorageError: If dataset already exists or name is invalid.
@@ -845,7 +878,7 @@ class _LakeIngestMixin:
         nbytes = data.nbytes
         try:
             with tracer.start_as_current_span("create_dataset", attributes={"dataset": name, "rows": rows}):
-                self._get_storage().create_dataset(name, data)
+                self._get_storage().create_dataset(name, data, table=table)
         except (StorageError, OSError, ValueError) as exc:
             if get_metrics_enabled():
                 ingestion_errors_total.labels(source=source, error_type=type(exc).__name__).inc()
@@ -856,17 +889,22 @@ class _LakeIngestMixin:
                 ingestion_bytes_total.labels(source=source).inc(nbytes)
                 ingestion_duration_seconds.labels(source=source).set(time.monotonic() - t0)
                 catalog_tables_total.inc()
+            self._register_container_table(name, table)
             self._lineage_after_ingest(
                 name, transform_type="create", operation="create", actor=actor,
                 lance_version=self._safe_version(name), total_rows=rows,
             )
 
-    def append_dataset(self, name: str, data: pa.Table, *, actor: str = "system") -> None:
+    def append_dataset(
+        self, name: str, data: pa.Table, *, actor: str = "system",
+        table: str | None = None,
+    ) -> None:
         """Append rows to an existing dataset from an Arrow Table.
 
         Args:
             name: Dataset name to append to.
             data: PyArrow Table with matching schema.
+            table: Optional table name within a container dataset.
 
         Raises:
             StorageError: If dataset does not exist or schema mismatch.
@@ -892,7 +930,7 @@ class _LakeIngestMixin:
         rows = data.num_rows
         nbytes = data.nbytes
         try:
-            self._get_storage().append_dataset(name, data)
+            self._get_storage().append_dataset(name, data, table=table)
         except (StorageError, OSError, ValueError) as exc:
             if get_metrics_enabled():
                 ingestion_errors_total.labels(source=source, error_type=type(exc).__name__).inc()

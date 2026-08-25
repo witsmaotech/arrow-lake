@@ -14,39 +14,64 @@ from arrow_lake.exceptions import ErrorCode, StorageError
 class StorageCRUDMixin:
     """CRUD operations for Lance datasets."""
 
-    def create_dataset(self, name: str, data: pa.Table) -> None:
-        """Create a new Lance dataset.
+    def create_dataset(self, name: str, data: pa.Table, *, table: str | None = None) -> None:
+        """Create a new Lance dataset (or a table inside a container dataset).
 
         Args:
             name: Dataset name.
             data: Arrow table to write.
+            table: Optional table name — with it, the write targets
+                ``{base}/{name}/{table}.lance`` (container dataset, DR14 W1.1).
 
         Raises:
-            StorageError: If dataset already exists or name is invalid.
+            StorageError: If the target already exists, the name is invalid,
+                or the name already exists in the other shape (single-table
+                dataset vs container — identity conflict, D3).
         """
-        lock = self._dataset_lock(name)
-        self._acquire_dataset_lock(name)
+        lock_key = f"{name}/{table}" if table is not None else name
+        lock = self._dataset_lock(lock_key)
+        self._acquire_dataset_lock(lock_key)
         try:
             self._validate_name(name)
-            if self.dataset_exists(name):
-                raise StorageError(
-                    error_code=ErrorCode.STORAGE_WRITE_FAILED,
-                    message=f"Dataset '{name}' already exists",
-                )
-            path = self._get_dataset_path(name)
-            self._write_lance(data, path, mode="create")
+            if table is not None:
+                self._validate_table_name(table)
+                if self.dataset_exists(name):
+                    raise StorageError(
+                        error_code=ErrorCode.STORAGE_WRITE_FAILED,
+                        message=f"Dataset '{name}' already exists as a single-table dataset",
+                    )
+                if self.dataset_exists(name, table=table):
+                    raise StorageError(
+                        error_code=ErrorCode.STORAGE_WRITE_FAILED,
+                        message=f"Table '{name}/{table}' already exists",
+                    )
+            else:
+                if self.dataset_exists(name):
+                    raise StorageError(
+                        error_code=ErrorCode.STORAGE_WRITE_FAILED,
+                        message=f"Dataset '{name}' already exists",
+                    )
+                if self.list_container_tables(name):
+                    raise StorageError(
+                        error_code=ErrorCode.STORAGE_WRITE_FAILED,
+                        message=f"Dataset '{name}' already exists as a container",
+                    )
+            path = self._get_dataset_path(name, table)
+            self._write_lance(data, path, mode="create", container=name if table else None)
         finally:
             lock.release()
 
     def read_dataset(
-        self, name: str, version: int | None = None, columns: list[str] | None = None
+        self, name: str, version: int | None = None, columns: list[str] | None = None,
+        *, table: str | None = None,
     ) -> pa.Table:
-        """Read a Lance dataset.
+        """Read a Lance dataset (or a table inside a container dataset).
 
         Args:
             name: Dataset name.
             version: Specific version to read (None = latest).
             columns: Optional column subset to read.
+            table: Optional table name within a container dataset.
 
         Returns:
             Arrow Table with the dataset contents.
@@ -55,17 +80,21 @@ class StorageCRUDMixin:
             StorageError: If dataset does not exist, name is invalid, or version is invalid.
         """
         self._validate_name(name)
+        if table is not None:
+            self._validate_table_name(table)
 
-        if not self.dataset_exists(name):
+        if not self.dataset_exists(name, table=table):
+            target = f"{name}/{table}" if table is not None else name
             raise StorageError(
                 error_code=ErrorCode.STORAGE_PATH_NOT_FOUND,
-                message=f"Dataset '{name}' not found",
+                message=f"Dataset '{target}' not found",
             )
 
         if version is not None:
             import lance
 
-            lance_uri = self.dataset_uri(name)
+            lance_uri = self.dataset_uri(name, table)
+            target = f"{name}/{table}" if table is not None else name
             try:
                 ds = lance.dataset(
                     lance_uri, version=version, storage_options=self._storage_options
@@ -73,46 +102,56 @@ class StorageCRUDMixin:
             except (ValueError, OSError) as exc:
                 raise StorageError(
                     error_code=ErrorCode.STORAGE_PATH_NOT_FOUND,
-                    message=f"Version {version} not found for dataset '{name}'",
+                    message=f"Version {version} not found for dataset '{target}'",
                 ) from exc
 
             if columns is not None:
                 return ds.to_table(columns=columns)
             return ds.to_table()
 
-        table = self._open_lance(self._get_dataset_path(name))
+        lance_table = self._open_lance(
+            self._get_dataset_path(name, table),
+            container=name if table else None, table=table,
+        )
 
-        arrow_table = table.to_arrow()
+        arrow_table = lance_table.to_arrow()
         if columns is not None:
             return arrow_table.select(columns)
         return arrow_table
 
-    def append_dataset(self, name: str, data: pa.Table) -> None:
-        """Append data to an existing Lance dataset.
+    def append_dataset(self, name: str, data: pa.Table, *, table: str | None = None) -> None:
+        """Append data to an existing Lance dataset (or container table).
 
         Args:
             name: Dataset name.
             data: Arrow table to append.
+            table: Optional table name within a container dataset.
 
         Raises:
             StorageError: If dataset does not exist or name is invalid.
         """
-        lock = self._dataset_lock(name)
-        self._acquire_dataset_lock(name)
+        lock_key = f"{name}/{table}" if table is not None else name
+        lock = self._dataset_lock(lock_key)
+        self._acquire_dataset_lock(lock_key)
         try:
             self._validate_name(name)
-            path = self._get_dataset_path(name)
-            if not self.dataset_exists(name):
+            if table is not None:
+                self._validate_table_name(table)
+            path = self._get_dataset_path(name, table)
+            if not self.dataset_exists(name, table=table):
+                target = f"{name}/{table}" if table is not None else name
                 raise StorageError(
                     error_code=ErrorCode.STORAGE_PATH_NOT_FOUND,
-                    message=f"Dataset '{name}' does not exist, cannot append",
+                    message=f"Dataset '{target}' does not exist, cannot append",
                 )
-            data = self._evolve_and_align_schema(name, data)
-            self._write_lance(data, path, mode="append")
+            data = self._evolve_and_align_schema(name, data, table=table)
+            self._write_lance(data, path, mode="append", container=name if table else None)
         finally:
             lock.release()
 
-    def _evolve_and_align_schema(self, name: str, data: pa.Table) -> pa.Table:
+    def _evolve_and_align_schema(
+        self, name: str, data: pa.Table, *, table: str | None = None,
+    ) -> pa.Table:
         """Append-time schema alignment (v1.9.6).
 
         Columns present in ``data`` but missing from the existing dataset
@@ -129,7 +168,7 @@ class StorageCRUDMixin:
         try:
             import lance
 
-            uri = self.dataset_uri(name)
+            uri = self.dataset_uri(name, table)
             ds = lance.dataset(uri, storage_options=self._storage_options)
             old_names = set(ds.schema.names)
             extra = [c for c in data.column_names if c not in old_names]
@@ -162,7 +201,9 @@ class StorageCRUDMixin:
             )
             return data
 
-    def update_field_comments(self, name: str, comments: dict[str, str]) -> None:
+    def update_field_comments(
+        self, name: str, comments: dict[str, str], *, table: str | None = None,
+    ) -> None:
         """In-place update of column ``comment`` field metadata.
 
         Uses Lance 7's ``update_field_metadata`` (incremental, no data rewrite)
@@ -172,10 +213,13 @@ class StorageCRUDMixin:
         non-fatal behavior wrap in try/except.
         """
         self._validate_name(name)
-        if not self.dataset_exists(name):
+        if table is not None:
+            self._validate_table_name(table)
+        if not self.dataset_exists(name, table=table):
+            target = f"{name}/{table}" if table is not None else name
             raise StorageError(
                 error_code=ErrorCode.STORAGE_PATH_NOT_FOUND,
-                message=f"Dataset '{name}' does not exist, cannot annotate",
+                message=f"Dataset '{target}' does not exist, cannot annotate",
             )
         payload = {c: {"comment": v} for c, v in comments.items() if c}
         if not payload:
@@ -183,24 +227,53 @@ class StorageCRUDMixin:
         import lance
 
         ds = lance.dataset(
-            self.dataset_uri(name), storage_options=self._storage_options
+            self.dataset_uri(name, table), storage_options=self._storage_options
         )
         ds.update_field_metadata(payload, replace=False)
 
-    def delete_dataset(self, name: str) -> None:
-        """Delete a Lance dataset.
+    def delete_dataset(self, name: str, *, table: str | None = None) -> None:
+        """Delete a Lance dataset, a container table, or a whole container.
+
+        - ``table`` given: drop only that table inside the container.
+        - no ``table`` and ``name`` is a single-table dataset: legacy delete.
+        - no ``table`` and ``name`` is a container (has tables): drop ALL
+          container tables and remove the container directory.
 
         Args:
             name: Dataset name.
+            table: Optional table name within a container dataset.
 
         Raises:
-            StorageError: If dataset does not exist or name is invalid.
+            StorageError: If target does not exist or name is invalid.
         """
-        lock = self._dataset_lock(name)
-        self._acquire_dataset_lock(name)
+        lock_key = f"{name}/{table}" if table is not None else name
+        lock = self._dataset_lock(lock_key)
+        self._acquire_dataset_lock(lock_key)
         try:
             self._validate_name(name)
+            if table is not None:
+                self._validate_table_name(table)
+                if not self.dataset_exists(name, table=table):
+                    raise StorageError(
+                        error_code=ErrorCode.STORAGE_PATH_NOT_FOUND,
+                        message=f"Table '{name}/{table}' does not exist",
+                    )
+                if self._storage_config and self._storage_config.backend != StorageBackend.LOCAL:
+                    self._get_db(name).drop_table(table)
+                else:
+                    import shutil
+
+                    shutil.rmtree(self._lance_dir(name, table))
+                return
+
+            container_tables = self.list_container_tables(name)
+            is_container = bool(container_tables)
             if self._storage_config and self._storage_config.backend != StorageBackend.LOCAL:
+                if is_container:
+                    cdb = self._get_db(name)
+                    for t in container_tables:
+                        cdb.drop_table(t)
+                    return
                 import lancedb
 
                 if not self.dataset_exists(name):
@@ -213,6 +286,9 @@ class StorageCRUDMixin:
                 return
             import shutil
 
+            if is_container:
+                shutil.rmtree(Path(self.base_uri) / name)
+                return
             path = self._lance_dir(name)
             if not path.is_dir():
                 raise StorageError(
@@ -224,24 +300,50 @@ class StorageCRUDMixin:
             lock.release()
         # Clean up lock for deleted dataset to prevent unbounded growth
         with contextlib.suppress(KeyError):
-            del self._dataset_locks[name]
+            self._dataset_locks.pop(lock_key, None)
 
-    def dataset_exists(self, name: str) -> bool:
-        """Check if a dataset exists.
+    def dataset_exists(self, name: str, *, table: str | None = None) -> bool:
+        """Check if a dataset (or a table inside a container dataset) exists.
 
         Args:
             name: Dataset name.
+            table: Optional table name within a container dataset.
 
         Returns:
-            True if the dataset directory exists.
+            True if the dataset directory exists. A container dataset with
+            tables does NOT exist as a single-table dataset (and vice versa).
         """
         self._validate_name(name)
+        if table is not None:
+            self._validate_table_name(table)
+            if self._storage_config and self._storage_config.backend != StorageBackend.LOCAL:
+                cdb = self._get_db(name)
+                result = cdb.list_tables()
+                tables = result.tables if hasattr(result, "tables") else result
+                return table in tables
+            return self._lance_dir(name, table).is_dir()
         if self._storage_config and self._storage_config.backend != StorageBackend.LOCAL:
             db = self._get_db()
             result = db.list_tables()
             tables = result.tables if hasattr(result, "tables") else result
             return name in tables
         return self._lance_dir(name).is_dir()
+
+    def list_container_tables(self, name: str) -> list[str]:
+        """List table names inside a container dataset.
+
+        Enumerates via the container-scoped lancedb connection (authoritative
+        for table enumeration; container *identity* remains a control-plane
+        registration concern, D3). Returns [] when the dataset is not a
+        container / does not exist.
+        """
+        self._validate_name(name)
+        try:
+            result = self._get_db(name).list_tables()
+        except Exception:
+            return []
+        tables = result.tables if hasattr(result, "tables") else result
+        return sorted(t for t in tables if isinstance(t, str))
 
     def list_datasets(self) -> list[str]:
         """List all dataset names.
@@ -265,6 +367,7 @@ class StorageCRUDMixin:
         data: pa.Table,
         *,
         on: str = "id",
+        table: str | None = None,
     ) -> None:
         """Upsert rows using merge_insert on a key column.
 
@@ -275,6 +378,7 @@ class StorageCRUDMixin:
             name: Dataset name.
             data: Arrow table with rows to upsert.
             on: Column name to use as the merge key.
+            table: Optional table name within a container dataset.
 
         Raises:
             StorageError: If name is invalid or the on-column is not found.
@@ -282,26 +386,32 @@ class StorageCRUDMixin:
         self._validate_name(name)
         self._validate_identifier(on, "on_column")
 
-        lock = self._dataset_lock(name)
-        self._acquire_dataset_lock(name)
+        lock_key = f"{name}/{table}" if table is not None else name
+        lock = self._dataset_lock(lock_key)
+        self._acquire_dataset_lock(lock_key)
         try:
-            if not self.dataset_exists(name):
-                self.create_dataset(name, data)
+            if not self.dataset_exists(name, table=table):
+                self.create_dataset(name, data, table=table)
                 return
 
-            table = self._open_lance(self._get_dataset_path(name))
-            if on not in table.schema.names:
+            lance_table = self._open_lance(
+                self._get_dataset_path(name, table),
+                container=name if table else None, table=table,
+            )
+            if on not in lance_table.schema.names:
+                target = f"{name}/{table}" if table is not None else name
                 raise StorageError(
                     error_code=ErrorCode.STORAGE_PATH_NOT_FOUND,
-                    message=f"Merge key column '{on}' not found in dataset '{name}'",
+                    message=f"Merge key column '{on}' not found in dataset '{target}'",
                 )
 
             try:
-                table.merge_insert(on=on).when_matched_update_all().when_not_matched_insert_all().execute(data)
+                lance_table.merge_insert(on=on).when_matched_update_all().when_not_matched_insert_all().execute(data)
             except (ValueError, RuntimeError, OSError) as exc:
+                target = f"{name}/{table}" if table is not None else name
                 raise StorageError(
                     error_code=ErrorCode.STORAGE_WRITE_FAILED,
-                    message=f"Upsert failed on dataset '{name}': {exc}",
+                    message=f"Upsert failed on dataset '{target}': {exc}",
                 ) from exc
         finally:
             lock.release()
@@ -389,7 +499,7 @@ class StorageCRUDMixin:
         finally:
             lock.release()
 
-    def restore_dataset(self, name: str, data: pa.Table) -> None:
+    def restore_dataset(self, name: str, data: pa.Table, *, table: str | None = None) -> None:
         """Delete and recreate a dataset with new data (used for rollback).
 
         Uses the same cached LanceDB connection for both drop and create
@@ -398,11 +508,19 @@ class StorageCRUDMixin:
         Args:
             name: Dataset name.
             data: Arrow table to write.
+            table: Optional table name within a container dataset.
 
         Raises:
             StorageError: If dataset does not exist or write fails.
         """
         self._validate_name(name)
+        if table is not None:
+            self._validate_table_name(table)
+            db = self._get_db(name)
+            with contextlib.suppress(Exception):
+                db.drop_table(table)
+            db.create_table(table, data)
+            return
         db = self._get_db()
         with contextlib.suppress(Exception):
             db.drop_table(name)

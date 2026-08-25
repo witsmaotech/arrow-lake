@@ -267,11 +267,19 @@ class _LakeAdminMixin:
             summary["ka_dir"] = "failed"
             logger.warning("cascade KA dir purge failed for %s", name, exc_info=True)
 
-        # 2) libSQL catalog registry row (v1.9.0 control plane).
+        # 2) libSQL catalog registry row (v1.9.0 control plane) + container
+        # registry row (DR14 W1.2 — plain datasets are usually not registered
+        # as containers; unregister is a harmless no-op when absent).
         try:
             catalog_store = getattr(self, "_catalog_store", None)
             if catalog_store is not None:
                 catalog_store.delete_table(name)
+                try:
+                    catalog_store.unregister_container(name)
+                except Exception:  # noqa: BLE001
+                    logger.warning(
+                        "cascade container unregister failed for %s", name, exc_info=True
+                    )
                 summary["catalog"] = "ok"
             else:
                 summary["catalog"] = "skipped"

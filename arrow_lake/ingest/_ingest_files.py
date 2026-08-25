@@ -32,8 +32,9 @@ class _FileIngestMixin:
         file_paths: list[str],
         *,
         transforms: list[Any] | None = None,
+        target_table: str | None = None,
     ) -> Any:
-        """Ingest files into a Lance dataset."""
+        """Ingest files into a Lance dataset (or a container table)."""
         if not file_paths:
             raise IngestError(
                 error_code=ErrorCode.INGEST_UNSUPPORTED_FORMAT,
@@ -49,7 +50,7 @@ class _FileIngestMixin:
                 for t in transforms:
                     df = t(df)
             table = df.to_arrow()
-            self._write_table(dataset_name, table, sources, fp)
+            self._write_table(dataset_name, table, sources, fp, target_table=target_table)
 
         return self._build_report(sources)
 

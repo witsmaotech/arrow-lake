@@ -29,8 +29,9 @@ class _SourceIngestMixin:
         partition_col: str | None = None,
         num_partitions: int | None = None,
         transforms: list[Any] | None = None,
+        target_table: str | None = None,
     ) -> Any:
-        """Ingest data from a SQL database query."""
+        """Ingest data from a SQL database query (optionally into a container table)."""
         from arrow_lake.ingest.connectors_sql import SqlConnector
         from arrow_lake.ingest.ingestor import IngestionSource
 
@@ -44,7 +45,9 @@ class _SourceIngestMixin:
             for t in transforms:
                 df = t(df)
         row_count = df.count().to_arrow().column(0)[0].as_py()
-        self._manager.write_lance_from_dataframe(dataset_name, df, mode="create")
+        self._manager.write_lance_from_dataframe(
+            dataset_name, df, mode="create", table=target_table,
+        )
 
         # Best-effort column-comment capture (MySQL/PG catalog). Daft wrote the
         # DataFrame directly (no Arrow interception), so we apply comments to
@@ -52,7 +55,7 @@ class _SourceIngestMixin:
         try:
             comments = connector.fetch_column_comments(sql)
             if comments:
-                self._manager.update_field_comments(dataset_name, comments)
+                self._manager.update_field_comments(dataset_name, comments, table=target_table)
         except Exception:
             pass
 

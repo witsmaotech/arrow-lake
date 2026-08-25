@@ -127,11 +127,17 @@ async def list_tasks(
 # Async ingest
 # ---------------------------------------------------------------------------
 
+# DR14 W1.3: container table names follow the storage identifier rules
+# (strict subset of _INGEST_NAME_PATTERN; storage re-validates anyway).
+_TABLE_NAME_PATTERN = r"^[a-zA-Z_][a-zA-Z0-9_-]*$"
+
 
 class AsyncIngestRequest(IngestFilesRequest):
     """Async file ingest (= sync IngestFilesRequest + optional description)."""
 
     description: str | None = Field(default=None, max_length=1000)
+    # DR14 W1.3: optional container table target (structured file sources).
+    table: str | None = Field(default=None, pattern=_TABLE_NAME_PATTERN)
 
 
 class AsyncDocumentsIngestRequest(IngestDocumentsRequest):
@@ -142,6 +148,8 @@ class AsyncDocumentsIngestRequest(IngestDocumentsRequest):
 
 class AsyncIngestSqlRequest(IngestSqlRequest):
     description: str | None = Field(default=None, max_length=1000)
+    # DR14 W1.3: optional container table target.
+    table: str | None = Field(default=None, pattern=_TABLE_NAME_PATTERN)
 
 
 class AsyncIngestKafkaRequest(IngestKafkaRequest):
@@ -211,7 +219,7 @@ def _run_ingest_async(
 def _bg_ingest_files(
     app_state: Any, name: str, file_paths: list[str], blob_keys: list[str],
     transforms_spec: list[dict[str, Any]] | None, lake: Any, actor: str,
-    description: str | None,
+    description: str | None, table: str | None = None,
 ) -> Any:
     import shutil
     import tempfile
@@ -228,6 +236,7 @@ def _bg_ingest_files(
             all_paths.extend(local_paths)
         report = lake.ingest(
             name, all_paths, transforms=_build_transforms(transforms_spec), actor=actor,
+            table=table,
         )
         _finalize_ingest(app_state, name, lake, description)
         return report
@@ -270,11 +279,12 @@ def _bg_ingest_sql(
     app_state: Any, name: str, sql: str, connection_url: str,
     partition_col: str | None, num_partitions: int | None,
     transforms_spec: list[dict[str, Any]] | None, lake: Any, actor: str,
-    description: str | None,
+    description: str | None, table: str | None = None,
 ) -> Any:
     report = lake.ingest_sql(
         name, sql=sql, connection_url=connection_url, partition_col=partition_col,
         num_partitions=num_partitions, transforms=_build_transforms(transforms_spec), actor=actor,
+        table=table,
     )
     _finalize_ingest(app_state, name, lake, description)
     return report
@@ -409,7 +419,7 @@ async def ingest_files_async(
     authorize_dataset(request, name, write=True)
     return _run_ingest_async(
         name, "ingest", _bg_ingest_files,
-        (request.app.state, name, req.file_paths, req.blob_keys, req.transforms, lake, actor_of(_user), req.description),
+        (request.app.state, name, req.file_paths, req.blob_keys, req.transforms, lake, actor_of(_user), req.description, req.table),
         _user.user_id,
     )
 
@@ -457,7 +467,7 @@ async def ingest_sql_async(
     return _run_ingest_async(
         name, "ingest_sql", _bg_ingest_sql,
         (request.app.state, name, req.sql, req.connection_url, req.partition_col,
-         req.num_partitions, req.transforms, lake, actor_of(_user), req.description),
+         req.num_partitions, req.transforms, lake, actor_of(_user), req.description, req.table),
         _user.user_id,
     )
 

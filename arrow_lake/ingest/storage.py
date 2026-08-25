@@ -79,6 +79,11 @@ class LanceStorageManager(
         self._dataset_lock_max: int = 1024
         self._db: Any = None
         self._db_lock = threading.RLock()
+        # Container-scoped lancedb connections (DR14 W1.1): lancedb forbids
+        # ``/`` in table names, so a container dataset (a directory of tables)
+        # gets its own connection rooted at ``{base}/{ds}``; table names inside
+        # stay plain names. Keyed by dataset name; base connection untouched.
+        self._container_dbs: dict[str, Any] = {}
 
     @property
     def storage_options(self) -> dict[str, str] | None:
@@ -120,8 +125,26 @@ class LanceStorageManager(
         except Exception as exc:
             logger.error("Failed to cleanup partial dataset %s: %s", dataset_name, exc)
 
-    def _get_db(self):
-        """Return a cached LanceDB connection (thread-safe)."""
+    def _get_db(self, container: str | None = None):
+        """Return a cached LanceDB connection (thread-safe).
+
+        ``container=None`` returns the base connection (single-table
+        datasets, unchanged behavior). Otherwise returns a connection
+        rooted at ``{base}/{container}`` so container tables are addressed
+        by plain table names (lancedb rejects ``/`` in table names).
+        """
+        if container is not None:
+            with self._db_lock:
+                db = self._container_dbs.get(container)
+                if db is None:
+                    import lancedb
+
+                    db = lancedb.connect(
+                        self._connect_uri_for(container),
+                        storage_options=self._storage_options,
+                    )
+                    self._container_dbs[container] = db
+                return db
         if self._db is None:
             with self._db_lock:
                 if self._db is None:
@@ -133,13 +156,37 @@ class LanceStorageManager(
                     )
         return self._db
 
-    def _get_dataset_path(self, name: str) -> str:
+    def _connect_uri_for(self, container: str) -> str:
+        """Connect URI for a container-scoped connection (``{base}/{ds}``)."""
+        if self._storage_config and self._storage_config.backend != StorageBackend.LOCAL:
+            return f"{self._storage_config.s3_uri.rstrip('/')}/{container}"
+        return str(Path(self.base_uri) / container)
+
+    def _validate_table_name(self, table: str) -> None:
+        """Validate a container table name (dataset rules + length cap).
+
+        The length cap keeps ``{table}.lance/_versions`` path components
+        under filesystem NAME_MAX — without it a long name passes the
+        identifier regex and fails later as an opaque IO error.
+        """
+        if not _SAFE_DATASET_NAME_RE.match(table) or len(table) > 128:
+            raise StorageError(
+                error_code=ErrorCode.VALIDATION_INVALID_CONFIG,
+                message=(f"Invalid table name '{table}': must match "
+                         f"^[a-zA-Z_][a-zA-Z0-9_-]*$ and be <=128 chars"),
+            )
+
+    def _get_dataset_path(self, name: str, table: str | None = None) -> str:
         """Get the logical path for a named dataset (no .lance suffix).
 
         Used by lancedb operations (create/open) which manage
-        the .lance suffix internally.
+        the .lance suffix internally. With ``table`` the path addresses a
+        table inside a container dataset: ``{base}/{name}/{table}``.
         """
-        return str(Path(self.base_uri) / name)
+        if table is None:
+            return str(Path(self.base_uri) / name)
+        self._validate_table_name(table)
+        return str(Path(self.base_uri) / name / table)
 
     def _get_io_config(self) -> Any:
         """Build a Daft IOConfig from storage options for S3 operations."""
@@ -161,6 +208,8 @@ class LanceStorageManager(
         name: str,
         df: Any,
         mode: str = "create",
+        *,
+        table: str | None = None,
     ) -> None:
         """Write a Daft DataFrame directly to Lance, bypassing Arrow conversion.
 
@@ -168,15 +217,19 @@ class LanceStorageManager(
             name: Target dataset name.
             df: Daft DataFrame to write.
             mode: Write mode — "create", "append", or "overwrite".
+            table: Optional table name within a container dataset.
 
         Raises:
             StorageError: If write fails.
         """
         self._validate_name(name)
-        lock = self._dataset_lock(name)
-        self._acquire_dataset_lock(name)
+        if table is not None:
+            self._validate_table_name(table)
+        lock_key = f"{name}/{table}" if table is not None else name
+        lock = self._dataset_lock(lock_key)
+        self._acquire_dataset_lock(lock_key)
         try:
-            uri = str(self._lance_dir(name))  # <base>/<name>.lance — Daft 写入需完整路径（lancedb 按 .lance 解析）
+            uri = str(self._lance_dir(name, table))  # <base>/<name>.lance 或 <base>/<name>/<table>.lance — Daft 写入需完整路径（lancedb 按 .lance 解析）
             io_config = self._get_io_config()
             try:
                 df.write_lance(uri, mode=mode, io_config=io_config).collect()
@@ -231,34 +284,42 @@ class LanceStorageManager(
                 context={"format": format, "target_uri": target_uri},
             ) from exc
 
-    def _lance_dir(self, name: str) -> Path:
+    def _lance_dir(self, name: str, table: str | None = None) -> Path:
         """Get the filesystem directory for a named dataset (.lance suffix).
 
         Used for filesystem-level operations (exists, delete, list).
-        lancedb creates {name}.lance directories on disk.
+        lancedb creates {name}.lance directories on disk. With ``table``
+        the path addresses a table inside a container dataset.
         """
-        return Path(self.base_uri) / f"{name}.lance"
+        if table is None:
+            return Path(self.base_uri) / f"{name}.lance"
+        return Path(self.base_uri) / name / f"{table}.lance"
 
-    def dataset_uri(self, name: str) -> str:
+    def dataset_uri(self, name: str, table: str | None = None) -> str:
         """Get the Lance dataset URI for a named dataset.
 
         Returns the filesystem path to the .lance directory, suitable for
-        use with __lance_scan() or lance.dataset().
+        use with __lance_scan() or lance.dataset(). With ``table`` the URI
+        addresses a table inside a container dataset.
 
         Args:
             name: Dataset name.
+            table: Optional table name within a container dataset.
 
         Returns:
             Absolute path string to the Lance dataset directory.
             For S3 backends, returns an s3:// URI.
         """
         self._validate_name(name)
+        if table is not None:
+            self._validate_table_name(table)
         if self._storage_config and self._storage_config.backend != StorageBackend.LOCAL:
             path = self._storage_config.base_uri
             if path.startswith("./"):
                 path = path[2:]
-            return f"{self._storage_config.s3_uri.rstrip('/')}/{name}.lance"
-        return str(self._lance_dir(name))
+            suffix = f"{name}/{table}.lance" if table is not None else f"{name}.lance"
+            return f"{self._storage_config.s3_uri.rstrip('/')}/{suffix}"
+        return str(self._lance_dir(name, table))
 
     @staticmethod
     def _validate_name(name: str) -> None:
@@ -292,14 +353,19 @@ class LanceStorageManager(
                 message=f"Semicolons not allowed in SQL expression: {expr}",
             )
 
-    def _write_lance(self, data: pa.Table, path: str, mode: str = "create") -> None:
+    def _write_lance(
+        self, data: pa.Table, path: str, mode: str = "create",
+        container: str | None = None,
+    ) -> None:
         """Write data to Lance format via lancedb.
 
         Write optimization parameters (fragment size, row group size) are
         applied via post-write compaction when available, since lancedb's
-        create_table/add do not accept them directly.
+        create_table/add do not accept them directly. ``container`` scopes
+        the connection to a container dataset so ``name`` (derived from the
+        path's last segment) is the plain table name.
         """
-        db = self._get_db()
+        db = self._get_db(container)
         name = Path(path).name
 
         if mode == "create":
@@ -347,14 +413,18 @@ class LanceStorageManager(
         except Exception:
             logger.debug("append_idempotent_delete_skipped", exc_info=True)
 
-    def _open_lance(self, path: str) -> Any:
+    def _open_lance(
+        self, path: str, container: str | None = None, table: str | None = None,
+    ) -> Any:
         """Open a Lance dataset via lancedb (latest version only).
 
         For version-specific reads, use lance.dataset() directly
         in read_dataset() / read_at_tag().
 
         Args:
-            path: Dataset path.
+            path: Dataset path (``{base}/{name}`` or ``{base}/{ds}/{table}``).
+            container: Container dataset name (container-mode indicator).
+            table: Table name within the container.
 
         Returns:
             Lance dataset object.
@@ -362,6 +432,13 @@ class LanceStorageManager(
         Raises:
             StorageError: If dataset cannot be opened.
         """
+        if container is not None and table is not None:
+            if not self.dataset_exists(container, table=table):
+                raise StorageError(
+                    error_code=ErrorCode.STORAGE_PATH_NOT_FOUND,
+                    message=f"Table '{container}/{table}' not found",
+                )
+            return self._get_db(container).open_table(table)
 
         name = Path(path).stem
         if not self.dataset_exists(name):
