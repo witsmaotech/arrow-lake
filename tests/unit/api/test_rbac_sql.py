@@ -361,3 +361,90 @@ class TestCheckerCaseInsensitiveGetAcl:
         assert checker.get_acl("mydata", "viewer").visible_columns == frozenset({"id", "name"})
         assert checker.get_acl("MyData", "viewer").visible_columns == frozenset({"id"})
 
+
+
+# --------------------------------------------------------------------------- #
+# W3.2 (DR14): two-part refs — container tables authorize against the
+# container dataset. sqlglot keeps the schema in table.db; table.name alone
+# ("segments") missed the dataset ACL entirely → fail-open bypass.
+# --------------------------------------------------------------------------- #
+
+@pytest.fixture()
+def container_duck():
+    conn = duckdb.connect()
+    conn.execute("CREATE SCHEMA gas_net")
+    conn.execute(
+        "CREATE TABLE gas_net.segments (id INTEGER, region VARCHAR, salary DOUBLE, phone VARCHAR)"
+    )
+    conn.execute(
+        "INSERT INTO gas_net.segments VALUES "
+        "(1, 'east', 100.0, '111'), (2, 'west', 900.0, '222'), (3, 'east', 300.0, '333')"
+    )
+    yield conn
+    conn.close()
+
+
+ROW_ACL_CN = DatasetACL(dataset="gas_net", role="viewer", row_filter="region == 'east'")
+COL_ACL_CN = DatasetACL(
+    dataset="gas_net", role="viewer", visible_columns=frozenset({"id", "region", "salary"})
+)
+
+
+class TestContainerTwoPartRefs:
+    def test_two_part_row_filter_pushed(self, container_duck):
+        out = enforce_sql_acl(
+            "SELECT count(*) AS n FROM gas_net.segments",
+            get_acl=lambda t: ROW_ACL_CN if t == "gas_net" else None,
+        )
+        n = container_duck.execute(out).fetchone()[0]
+        assert n == 2  # west row filtered
+
+    def test_two_part_rewrite_preserves_qualifier(self, container_duck):
+        out = enforce_sql_acl(
+            "SELECT id FROM gas_net.segments",
+            get_acl=lambda t: ROW_ACL_CN if t == "gas_net" else None,
+        )
+        # the subquery keeps the two-part reference so DuckDB resolves the
+        # schema-qualified table
+        assert '"gas_net"."segments"' in out
+        ids = [r[0] for r in container_duck.execute(out).fetchall()]
+        assert sorted(ids) == [1, 3]
+
+    def test_two_part_hidden_column_rejected(self, container_duck):
+        with pytest.raises(AclSqlViolation):
+            enforce_sql_acl(
+                "SELECT phone FROM gas_net.segments",
+                get_acl=lambda t: COL_ACL_CN if t == "gas_net" else None,
+            )
+
+    def test_two_part_alias_hidden_column_rejected(self, container_duck):
+        with pytest.raises(AclSqlViolation):
+            enforce_sql_acl(
+                "SELECT s.phone FROM gas_net.segments AS s",
+                get_acl=lambda t: COL_ACL_CN if t == "gas_net" else None,
+            )
+
+    def test_two_part_star_rejected_when_column_restricted(self, container_duck):
+        with pytest.raises(AclSqlViolation):
+            enforce_sql_acl(
+                "SELECT * FROM gas_net.segments",
+                get_acl=lambda t: COL_ACL_CN if t == "gas_net" else None,
+            )
+
+    def test_two_part_alias_row_filter_still_applies(self, container_duck):
+        out = enforce_sql_acl(
+            "SELECT count(*) AS n FROM gas_net.segments AS s WHERE s.salary > 50",
+            get_acl=lambda t: ROW_ACL_CN if t == "gas_net" else None,
+        )
+        n = container_duck.execute(out).fetchone()[0]
+        assert n == 2
+
+    def test_join_container_and_plain(self, container_duck):
+        container_duck.execute("CREATE TABLE plain (id INTEGER)")
+        container_duck.execute("INSERT INTO plain VALUES (1), (3)")
+        out = enforce_sql_acl(
+            "SELECT count(*) AS n FROM gas_net.segments g JOIN plain p ON g.id = p.id",
+            get_acl=lambda t: ROW_ACL_CN if t == "gas_net" else None,
+        )
+        n = container_duck.execute(out).fetchone()[0]
+        assert n == 2  # ids 1,3 (east); west row filtered before the join

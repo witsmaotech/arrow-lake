@@ -87,6 +87,7 @@ class ErrorCode(StrEnum):
 
     # OLAP analytics errors (Story 5.4)
     OLAP_QUERY_FAILED = "OLAP_QUERY_FAILED"
+    OLAP_AMBIGUOUS_DATASET = "OLAP_AMBIGUOUS_DATASET"
 
     # Quality errors (Epic 4)
     QUALITY_FILTER_EXECUTION_ERROR = "QUALITY_FILTER_EXECUTION_ERROR"

@@ -151,6 +151,9 @@ class OlapSearchBridge:
         """
         _validate_dataset_name(dataset_name)
         self._validate_sql(sql)
+        source_ds, source_table = _split_two_part(dataset_name)
+        if source_table is None:
+            self._reject_bare_container(dataset_name)
 
         # Validate extra table names
         if tables:
@@ -187,11 +190,12 @@ class OlapSearchBridge:
         try:
             if use_streaming:
                 source = self._storage.scan_dataset(
-                    dataset_name,
+                    source_ds,
                     batch_size=self._config.scanner_batch_size,
+                    table=source_table,
                 )
             else:
-                source = self._storage.read_dataset(dataset_name)
+                source = self._storage.read_dataset(source_ds, table=source_table)
         except (StorageError, OSError) as exc:
             raise QueryError(
                 error_code=ErrorCode.OLAP_QUERY_FAILED,
@@ -594,9 +598,12 @@ class OlapSearchBridge:
         """
         _validate_dataset_name(dataset_name)
         self._validate_sql(sql)
+        source_ds, source_table = _split_two_part(dataset_name)
+        if source_table is None:
+            self._reject_bare_container(dataset_name)
 
         try:
-            table = self._storage.read_dataset(dataset_name)
+            table = self._storage.read_dataset(source_ds, table=source_table)
         except (StorageError, OSError) as exc:
             raise QueryError(
                 error_code=ErrorCode.OLAP_QUERY_FAILED,
@@ -785,6 +792,29 @@ class OlapSearchBridge:
             return True
         return False
 
+    def _reject_bare_container(self, dataset_name: str) -> None:
+        """D6: a multi-table container referenced without a table is
+        ambiguous — 422 with the available tables (a configured
+        ``default_table`` escape hatch lands with the console/API surface,
+        W4). Plain single-table datasets pass through untouched.
+        """
+        try:
+            tables = self._storage.list_container_tables(dataset_name)
+        except Exception:  # noqa: BLE001 — detection must not 500
+            return
+        # Require a REAL non-empty list: fakes/mocks return assorted truthy
+        # objects (MagicMock, list_tables results) that would false-positive.
+        if not isinstance(tables, (list, tuple)) or not tables:
+            return
+        raise QueryError(
+            error_code=ErrorCode.OLAP_AMBIGUOUS_DATASET,
+            message=(
+                f"Dataset '{dataset_name}' is a multi-table container — "
+                f"reference it as '{dataset_name}.<table>' "
+                f"(available: {', '.join(str(t) for t in tables)})"
+            ),
+        )
+
     def _register_dataset(self, conn: Any, dataset_name: str, source: Any) -> None:
         """Register a Lance dataset in DuckDB, preferring native lance scan.
 
@@ -799,19 +829,43 @@ class OlapSearchBridge:
         # Scan mode resolution (v1.10.4): per-dataset opt-in override → global +
         # auto-promote, then the breaker demotes a tripped native/auto dataset to
         # pyarrow_fallback. Vector datasets are hard-demoted (IVF_PQ panic guard).
+        # The key stays the FULL two-part name — scan overrides and the breaker
+        # are per container-table from day one (W3.3).
         mode = self._resolve_scan_mode(dataset_name, source)
+        # Two-part refs (W3.2): register under an internal flat name (adapter
+        # identifier rules reject dots), then expose a schema-qualified view
+        # so `FROM ds.table` resolves natively (probe-verified: DuckDB
+        # register() rejects dotted names; CREATE SCHEMA + view works).
+        two_part = "." in dataset_name
+        if two_part:
+            _ds, _, _tbl = dataset_name.partition(".")
+            register_name = f"_al__{_ds}__{_tbl}"
+            scan_ds, scan_table = _ds, _tbl
+        else:
+            register_name = dataset_name
+            scan_ds, scan_table = dataset_name, None
+
+        def _expose_two_part() -> None:
+            if two_part:
+                conn.execute(f'CREATE SCHEMA IF NOT EXISTS "{_ds}"')
+                conn.execute(
+                    f'CREATE OR REPLACE VIEW "{_ds}"."{_tbl}" AS '  # nosec B608
+                    f"SELECT * FROM {register_name}"
+                )
+
         if mode == "pyarrow_fallback":
             # Clear stale registration from pooled connections
             with contextlib.suppress(duckdb.Error):
-                conn.execute(f"DROP VIEW IF EXISTS {dataset_name}")  # nosec B608
-            conn.register(dataset_name, source)
+                conn.execute(f"DROP VIEW IF EXISTS {register_name}")  # nosec B608
+            conn.register(register_name, source)
+            _expose_two_part()
             return
 
         # Clear any stale VIEW or table function from pooled connections
         with contextlib.suppress(duckdb.Error):
-            conn.execute(f"DROP VIEW IF EXISTS {dataset_name}")  # nosec B608
+            conn.execute(f"DROP VIEW IF EXISTS {register_name}")  # nosec B608
         with contextlib.suppress(duckdb.Error):
-            conn.unregister(dataset_name)
+            conn.unregister(register_name)
 
         # Try native lance scan
         try:
@@ -820,14 +874,15 @@ class OlapSearchBridge:
                     self._storage_config
                     and self._storage_config.backend != StorageBackend.LOCAL
                 ):
-                    uri = f"{self._storage_config.s3_uri.rstrip('/')}/{dataset_name}.lance"
+                    uri = self._storage.dataset_uri(scan_ds, scan_table)
                 else:
-                    uri = self._storage.dataset_uri(dataset_name)
+                    uri = self._storage.dataset_uri(scan_ds, table=scan_table)
                 adapter = create_lance_scan_adapter(
                     conn,
                     mode=mode,
                 )
-                adapter.create_view(conn, uri, dataset_name)
+                adapter.create_view(conn, uri, register_name)
+                _expose_two_part()
                 logger.debug("Registered %s via native lance scan", dataset_name)
                 return
         except (duckdb.Error, OSError):
@@ -837,7 +892,8 @@ class OlapSearchBridge:
             )
 
         # Fallback: register Arrow source directly
-        conn.register(dataset_name, source)
+        conn.register(register_name, source)
+        _expose_two_part()
 
     def _managed_session(self, *, load_ducklake: bool = False) -> Any:
         """Acquire a managed session from SessionManager or fallback."""
@@ -921,7 +977,27 @@ class OlapSearchBridge:
 def _validate_dataset_name(dataset_name: str) -> None:
     """Validate dataset name to prevent path traversal and injection.
 
+    Accepts plain dataset names and two-part container references
+    (``ds.table``, DR14 W3.2); both segments validate as identifiers.
+
     Raises:
         ValueError: If dataset name contains unsafe characters.
     """
+    if "." in dataset_name:
+        ds, _, table = dataset_name.partition(".")
+        validate_identifier(ds)
+        validate_identifier(table)
+        return
     validate_identifier(dataset_name)
+
+
+def _split_two_part(dataset_name: str) -> tuple[str, str | None]:
+    """'ds.table' → ('ds', 'table'); plain name → (name, None).
+
+    Dataset names never contain dots (identifier rules), so a dot is an
+    unambiguous container-table reference (D1).
+    """
+    if "." in dataset_name:
+        ds, _, table = dataset_name.partition(".")
+        return ds, table
+    return dataset_name, None

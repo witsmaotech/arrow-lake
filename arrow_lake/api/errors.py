@@ -95,6 +95,10 @@ def _error_code_to_http_status(code: ErrorCode) -> int:
         return 400
     if code == ErrorCode.RAG_PROVIDER_ERROR:
         return 502
+    if code == ErrorCode.OLAP_AMBIGUOUS_DATASET:
+        # D6 (DR14): bare multi-table container reference — the request
+        # names no table; well-formed retries exist, so 422 not 500.
+        return 422
     # Knowledge Graph errors
     if code == ErrorCode.KG_GRAPH_NOT_FOUND:
         return 404

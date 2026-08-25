@@ -282,6 +282,7 @@ class StorageAdvancedMixin:
         columns: list[str] | None = None,
         filter_expr: str | None = None,
         batch_size: int = 10_000,
+        table: str | None = None,
     ) -> pa.RecordBatchReader:
         """Stream a Lance dataset as RecordBatchReader (zero materialization).
 
@@ -301,7 +302,9 @@ class StorageAdvancedMixin:
             StorageError: If dataset does not exist or name is invalid.
         """
         self._validate_name(name)
-        lance_dir = self._lance_dir(name)
+        if table is not None:
+            self._validate_table_name(table)
+        lance_dir = self._lance_dir(name, table)
 
         if self._storage_options is None and not lance_dir.is_dir():
             raise StorageError(
@@ -311,7 +314,10 @@ class StorageAdvancedMixin:
 
         import lance
 
-        uri = self.dataset_uri(name) if self._storage_config else str(lance_dir)
+        uri = (
+            self.dataset_uri(name, table)
+            if self._storage_config else str(lance_dir)
+        )
         ds = lance.dataset(uri, storage_options=self._storage_options)
         scanner = ds.scanner(
             columns=columns,

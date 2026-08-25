@@ -83,7 +83,12 @@ def authorize_dataset_read(name: str, request: Request) -> None:
     so every read endpoint can enforce dataset-level deny/ACL with a single
     ``Depends(authorize_dataset_read)`` instead of manual calls (which had
     coverage only in 3 routers — review H1).
+
+    Two-part names (``ds.table``, DR14 W3.2) authorize against the CONTAINER
+    dataset — ACL lookups on the full dotted name would miss and fail open.
     """
+    if "." in name:
+        name = name.split(".", 1)[0]
     authorize_dataset(request, name)
 
 

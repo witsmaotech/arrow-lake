@@ -43,6 +43,17 @@ def _normalize_predicate(row_filter: str) -> str:
     return out
 
 
+def _table_key(table: exp.Table) -> str:
+    """ACL identity of a table reference, lowercased.
+
+    A two-part reference (``gas_net.segments`` — a container table, DR14
+    W3.2) authorizes against the CONTAINER dataset: sqlglot keeps the
+    schema in ``table.db`` and ``table.name`` alone would miss the dataset
+    ACL entirely (fail-open bypass). Plain refs key on the table name.
+    """
+    return table.db.lower() if table.db else table.name.lower()
+
+
 def _alias_map(tree: exp.Expression) -> dict[str, str]:
     """Map every table alias (and bare name) in scope → real table name.
 
@@ -58,7 +69,7 @@ def _alias_map(tree: exp.Expression) -> dict[str, str]:
     """
     mapping: dict[str, str] = {}
     for table in tree.find_all(exp.Table):
-        real = table.name.lower()
+        real = _table_key(table)
         mapping.setdefault(real, real)
         alias = table.alias
         if alias:
@@ -85,7 +96,7 @@ def _local_alias_map(select: exp.Select) -> dict[str, str]:
             sources.append(node)
     local: dict[str, str] = {}
     for t in sources:
-        real = t.name.lower()
+        real = _table_key(t)
         local[real] = real
         if t.alias:
             local[t.alias.lower()] = real
@@ -148,13 +159,12 @@ def enforce_sql_acl(
     # (FROM mydata vs MyData) AND exact refs after qualify() normalized
     # identifiers to lowercase — mixed-case datasets escaped everything.
     pre = _parse_or_fail(sql)
-    referenced = {t.name for t in pre.find_all(exp.Table)}
+    referenced = {_table_key(t) for t in pre.find_all(exp.Table)}
     acls: dict[str, DatasetACL] = {}
     visible_lower: dict[str, frozenset[str]] = {}
-    for tname in referenced:
-        acl = get_acl(tname.lower())
+    for key in referenced:
+        acl = get_acl(key)
         if acl is not None and (acl.row_filter or acl.visible_columns):
-            key = tname.lower()
             acls[key] = acl
             visible_lower[key] = frozenset(c.lower() for c in acl.visible_columns)
     if not acls:
@@ -226,7 +236,7 @@ def enforce_sql_acl(
 
     # 5) row-filter rewrite: table → filtered subquery (predicate on raw rows)
     for table in tree.find_all(exp.Table):
-        acl = acls.get(table.name.lower())
+        acl = acls.get(_table_key(table))
         if acl is None or not acl.row_filter:
             continue
         predicate = _normalize_predicate(acl.row_filter)
@@ -234,7 +244,13 @@ def enforce_sql_acl(
         # (_NAME_PATTERN allows it); an unquoted f-string interpolation made
         # the predicate parse as a comment and silently dropped the filter.
         # The name pattern forbids '"' so double-quoting is unambiguous.
-        sub_sql = f'SELECT * FROM "{table.name}" WHERE {predicate}'
+        # Two-part refs (W3.2) keep their schema qualifier so DuckDB still
+        # resolves the container table inside the subquery.
+        if table.db:
+            ref_sql = f'"{table.db}"."{table.name}"'
+        else:
+            ref_sql = f'"{table.name}"'
+        sub_sql = f"SELECT * FROM {ref_sql} WHERE {predicate}"
         sub = exp.Subquery(this=_parse_or_fail(sub_sql))
         alias_arg = table.args.get("alias")
         if alias_arg is not None:
