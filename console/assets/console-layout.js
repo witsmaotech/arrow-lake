@@ -37,6 +37,7 @@ const P = {
   check: '<path d="M5 12l5 5 9-9"/>',
   arrowR: '<path d="M5 12h14M13 6l6 6-6 6"/>',
   key: '<circle cx="8" cy="8" r="4"/><path d="M11 11l9 9M16 16l2-2"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
 };
 function icon(name, cls = "") {
   return `<svg class="ic ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${P[name] || ""}</svg>`;
@@ -47,11 +48,14 @@ window.icon = icon;
 const NAV = [
   { group: "表格数据", items: [
     { id: "datasets", label: "数据集", ic: "database", href: "datasets.html" },
+    { id: "ingest-data", label: "数据摄入", ic: "plus", href: "ingest-data.html" },
     { id: "tidy", label: "清洗整理", ic: "olap", href: "tidy.html" },
     { id: "data-prep", label: "数据准备", ic: "file", href: "data-prep.html" },
     { id: "olap", label: "深度分析", ic: "olap", href: "olap.html" },
+    { id: "contracts", label: "数据契约", ic: "key", href: "contracts.html" },
   ] },
   { group: "文本数据", items: [
+    { id: "ingest-docs", label: "文档摄入", ic: "plus", href: "ingest-docs.html" },
     { id: "embeddings", label: "索引/嵌入", ic: "code", href: "embeddings.html" },
     { id: "search", label: "文本检索", ic: "search", href: "search.html" },
     { id: "image-search", label: "图像检索", ic: "file", href: "search.html?mode=image" },

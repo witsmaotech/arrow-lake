@@ -2,7 +2,7 @@
 <html lang="zh">
 <head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>数据摄入 · Arrow Lake Console</title>
+<title>文档摄入 · Arrow Lake Console</title>
 <link rel="stylesheet" href="assets/tokens.css"/>
 <link rel="stylesheet" href="assets/app.css"/>
 <link rel="stylesheet" href="assets/console.css"/>
@@ -20,17 +20,15 @@
 <div id="app">
 <main class="main"><div class="page">
   <div class="h-sec between">
-    <div><h1>数据摄入</h1><div class="desc">POST /datasets/{name}/ingest/{type} · 文档/图像/视频支持上传</div></div>
+    <div><h1>文档摄入</h1><div class="desc">非结构化源(文档/图像/视频/多模态)→ 解析 · chunk · embed · FTS · 全异步</div></div>
+    <div class="flex"><a class="btn btn-ghost btn-sm" href="ingest-data.html">▦ 表格数据摄入 →</a></div>
   </div>
   <div class="panel"><div class="panel-b">
     <div class="grid g-2">
-      <div class="field"><label>目标数据集</label><input class="input mono" id="ds" placeholder="my_dataset"/></div>
-      <div class="field"><label>说明介绍 <span class="muted" style="font-weight:400">(可选 · 数据集描述)</span></label><input class="input" id="desc" placeholder="如:JD 招聘岗位数据 / 某业务报表"/></div>
+      <div class="field"><label>目标数据集</label><input class="input mono" id="ds" placeholder="my_docs"/></div>
+      <div class="field"><label>说明介绍 <span class="muted" style="font-weight:400">(可选 · 数据集描述)</span></label><input class="input" id="desc" placeholder="如:产品手册合集 / 项目验收文档"/></div>
     </div>
-    <div class="grid g-2" style="margin-top:var(--s3)">
-      <div class="field"><label>来源大类</label><select class="select" id="srcCat"><option value="file">📁 文件(上传)</option><option value="daft">🔗 daft(数据源)</option></select></div>
-      <div class="field"><label>具体类型</label><select class="select" id="src"></select></div>
-    </div>
+    <div class="field" style="margin-top:var(--s3)"><label>来源类型</label><select class="select" id="src"></select></div>
     <div id="fields" style="margin-top:var(--s3)"></div>
     <div class="flex between" style="margin-top:var(--s4)">
       <div class="flex"><button class="btn btn-primary" id="submit"><i class="placeholder" data-ic="plus"></i> 开始摄入</button></div>
@@ -53,7 +51,7 @@ import { watchTask } from "./src/task.js";
 
 if (!isLoggedIn()) location.href = "login.html";
 const { renderShell } = window;
-renderShell({ active: "datasets", crumb: '<a href="datasets.html">数据集</a> › <b>摄入</b>' });
+renderShell({ active: "ingest-docs", crumb: '<a href="datasets.html">数据集</a> › <b>文档摄入</b>' });
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const MB = 1024 * 1024;
@@ -71,17 +69,13 @@ loadExistingMeta((dsParam || $("#ds").value).trim());
 
 let uploadedBlobs = [];
 let pickedFiles = [];
-const BY_CAT = {
-  file: [["documents", "文档(PDF/Word/Markdown…)"], ["images", "图像"], ["videos", "视频"]],
-  daft: [["csv", "CSV"], ["parquet", "Parquet"], ["json", "JSON / JSONL"], ["sql", "SQL 数据库"], ["clickhouse", "ClickHouse"], ["iceberg", "Iceberg"], ["deltalake", "Delta Lake"], ["kafka", "Kafka"], ["http", "HTTP 文件"], ["mixed", "多模态混合"]],
-};
-function fillSrc(cat) {
-  $("#src").innerHTML = BY_CAT[cat].map(([v, t]) => `<option value="${v}">${t}</option>`).join("");
+const SRCS = [["documents", "文档(PDF/Word/Markdown…)"], ["images", "图像"], ["videos", "视频"], ["mixed", "多模态混合"]];
+function fillSrc() {
+  $("#src").innerHTML = SRCS.map(([v, t]) => `<option value="${v}">${t}</option>`).join("");
   renderFields();
 }
-$("#srcCat").addEventListener("change", (e) => fillSrc(e.target.value));
 $("#src").addEventListener("change", renderFields);
-fillSrc("file");
+fillSrc();
 
 // 上传文件到 MinIO(multipart)→ blobs[]
 async function uploadFiles(name, files) {
@@ -213,14 +207,13 @@ async function fillExtTpl() {
 
 function renderFields() {
   const src = $("#src").value;
-  const _ep = src === "clickhouse" ? "sql" : (["csv", "parquet", "json"].includes(src) ? "" : src);
-  $("#endpt").textContent = `POST /datasets/{name}/ingest${_ep ? "/" + _ep : ""}`;
+  $("#endpt").textContent = `POST /datasets/{name}/ingest/${src}`;
   uploadedBlobs = []; pickedFiles = []; // 切换来源重置
   if (src === "documents") {
     $("#fields").innerHTML = renderUploadHTML(DOC_ACCEPT, "PDF · MD/TXT · HTML · DOCX/DOC · PPTX · XLSX/XLS · EPUB · RTF · ODT/ODS/ODP")
       + `<div class="field" style="margin-top:var(--s3)"><label>文件格式 <span class="muted" style="font-weight:400">(限定上传类型)</span></label><select class="select" id="fileFmt">${[["","自动识别(全部 14 种)"],[".pdf","PDF"],[".docx,.doc","Word(docx/doc)"],[".pptx,.ppt","PowerPoint(pptx/ppt)"],[".xlsx,.xls","Excel(xlsx/xls)"],[".md,.markdown","Markdown(md)"],[".txt","文本(txt)"],[".html,.htm","HTML"],[".epub","EPUB"],[".rtf","RTF"],[".odt","ODT"],[".ods","ODS"],[".odp","ODP"]].map(([v,t])=>`<option value="${v}">${t}</option>`).join("")}</select></div>
         <div class="field" style="margin-top:var(--s3)"><label>抽取模板 <span class="muted" style="font-weight:400">(选模板则 /kg/build 自动套用该模板 · 按 category 分组)</span></label><select class="select" id="extTpl"><option value="">未指定(走分类器自动路由)</option></select></div>
-        <div class="muted" style="font-size:.7rem;margin-top:var(--s3)">v1.8.9 端点自动:解析 → chunk → <b>embed</b> → <b>FTS 索引</b></div>`;
+        <div class="muted" style="font-size:.7rem;margin-top:var(--s3)">端点自动:解析 → chunk → <b>embed</b> → <b>FTS 索引</b></div>`;
     window.applyIcons && applyIcons($("#fields"));
     bindUpload();
     fillExtTpl();
@@ -237,47 +230,6 @@ function renderFields() {
       + `<div class="muted" style="font-size:.7rem;margin-top:var(--s3)">关键帧抽取;自动 CLIP embed(关键帧 image_embedding,支持视频语义检索)</div>`;
     window.applyIcons && applyIcons($("#fields"));
     bindUpload();
-  } else if (src === "csv" || src === "parquet" || src === "json") {
-    const acc = src === "csv" ? ".csv" : src === "parquet" ? ".parquet" : ".json,.jsonl,.ndjson";
-    $("#fields").innerHTML = renderUploadHTML(acc, `${src.toUpperCase()} 文件 · 多选 / 拖拽`)
-      + `<div class="muted" style="font-size:.7rem;margin-top:var(--s3)">结构化数据:上传后走 <code>daft.read_${src}</code> → Lance(同步 <code>/ingest</code>)。不自动 embed;如需检索,摄入后到「索引/嵌入」建向量/FTS。</div>`;
-    window.applyIcons && applyIcons($("#fields"));
-    bindUpload();
-  } else if (src === "sql") {
-    $("#fields").innerHTML = `
-      <div class="field"><label>connection_url(SQLAlchemy 连接串 · <b style="color:var(--warn)">必填</b>)</label><input class="input mono" id="connUrl" placeholder="postgresql://user:pass@host:5432/db"/></div>
-      <div class="muted" style="font-size:.7rem;margin-top:4px">支持 postgresql / mysql / sqlite / mssql;<b>含凭证,生产建议只读账号</b></div>
-      <div class="field" style="margin-top:var(--s3)"><label>SQL(SELECT · <b style="color:var(--warn)">必填</b>)</label><textarea class="input mono" id="sqlText" rows="4" style="font-family:var(--font-mono);resize:vertical" placeholder="SELECT id, title, content FROM articles"></textarea></div>
-      <div class="grid g-2" style="margin-top:var(--s3)">
-        <div class="field"><label>partition_col(可选)</label><input class="input mono" id="partCol" placeholder="id / created_at"/></div>
-        <div class="field"><label>num_partitions(可选 · ≥1)</label><input class="input mono" id="numPart" type="number" min="1" placeholder="4"/></div>
-      </div>`;
-  } else if (src === "clickhouse") {
-    $("#fields").innerHTML = `
-      <div class="field"><label>connection_url(ClickHouse · <b style="color:var(--warn)">必填</b>)</label><input class="input mono" id="connUrl" placeholder="clickhouse+native://user:pass@host:9000/db 或 clickhouse://user:pass@host:8123/db"/></div>
-      <div class="muted" style="font-size:.7rem;margin-top:4px">复用 <code>/ingest/sql</code>(daft <code>read_sql</code>,ConnectorX/SQLAlchemy);<b style="color:var(--warn)">SSRF 校验拒私有 IP</b>(内网 CH 须公网/NAT)</div>
-      <div class="field" style="margin-top:var(--s3)"><label>SQL(SELECT · <b style="color:var(--warn)">必填</b>)</label><textarea class="input mono" id="sqlText" rows="4" style="font-family:var(--font-mono);resize:vertical" placeholder="SELECT id, event, ts FROM events WHERE dt = today()"></textarea></div>
-      <div class="grid g-2" style="margin-top:var(--s3)">
-        <div class="field"><label>partition_col(可选)</label><input class="input mono" id="partCol" placeholder="id / dt"/></div>
-        <div class="field"><label>num_partitions(可选 · ≥1)</label><input class="input mono" id="numPart" type="number" min="1" placeholder="4"/></div>
-      </div>`;
-  } else if (src === "kafka") {
-    $("#fields").innerHTML = `
-      <div class="field"><label>bootstrap_servers(<b style="color:var(--warn)">必填</b>)</label><input class="input mono" id="brokers" placeholder="host1:9092, host2:9092"/></div>
-      <div class="field" style="margin-top:var(--s3)"><label>topics(<b style="color:var(--warn)">必填</b> · 逗号分隔 · 1-10)</label><input class="input mono" id="topics" placeholder="events, logs"/></div>
-      <div class="grid g-2" style="margin-top:var(--s3)">
-        <div class="field"><label>start</label><select class="select" id="start"><option value="earliest">earliest</option><option value="latest">latest</option><option value="0">offset 0</option></select></div>
-        <div class="field"><label>end(默认 latest)</label><input class="input mono" id="end" value="latest"/></div>
-      </div>
-      <label class="flex" style="gap:6px;margin-top:var(--s3);font-size:.82rem;color:var(--fg-md)"><input type="checkbox" id="jsonDecode" checked/> json_decode(自动解码 JSON)</label>`;
-  } else if (src === "iceberg") {
-    $("#fields").innerHTML = `<div class="field"><label>table_uri(<b style="color:var(--warn)">必填</b>)</label><input class="input mono" id="tableUri" placeholder="s3://bucket/warehouse/db.table"/></div><div class="muted" style="font-size:.7rem;margin-top:4px">从 Iceberg 表迁移;<b>不自动 embed</b></div>`;
-  } else if (src === "deltalake") {
-    $("#fields").innerHTML = `
-      <div class="field"><label>table_uri(<b style="color:var(--warn)">必填</b>)</label><input class="input mono" id="tableUri" placeholder="s3://bucket/delta/events"/></div>
-      <div class="field" style="margin-top:var(--s3)"><label>version(可选 · ≥1)</label><input class="input mono" id="version" type="number" min="1" placeholder="留空=latest"/></div>`;
-  } else if (src === "http") {
-    $("#fields").innerHTML = `<div class="field"><label>urls(<b style="color:var(--warn)">必填</b> · 逗号分隔 · 1-100)</label><input class="input mono" id="urls" placeholder="https://example.com/doc1.pdf"/></div><div class="muted" style="font-size:.7rem;margin-top:4px">必须 http/https;拒私有 IP(防 SSRF)</div>`;
   } else if (src === "mixed") {
     $("#fields").innerHTML = `
       <div class="muted" style="font-size:.78rem;margin-bottom:var(--s2)">多模态:sources 按 modality 分组,逗号分隔</div>
@@ -288,8 +240,6 @@ function renderFields() {
       <div class="muted" style="font-size:.7rem;margin-top:var(--s3)">至少一个 modality;路径相对(urls 除外)</div>`;
   }
 }
-
-// 来源下拉已改两级(srcCat → src),绑定在上方 fillSrc
 
 // 任务进度回调:驱动按钮恢复 + 完成/失败明确提示(+ best-effort embed 回填状态)
 async function handleIngestTask(t, btn) {
@@ -325,7 +275,7 @@ $("#submit").addEventListener("click", async () => {
   btn.disabled = true; btn.textContent = "摄入中…";
   let submitted = false;
   try {
-    // 防重复提交:同数据集已有活跃摄入任务(异步 documents 可能还在后台跑)→ 拦下
+    // 防重复提交:同数据集已有活跃摄入任务 → 拦下
     try {
       const tl = await request("GET", "/tasks");
       const tasks = Array.isArray(tl) ? tl : (tl?.tasks || []);
@@ -333,7 +283,7 @@ $("#submit").addEventListener("click", async () => {
         /ingest/i.test(t.operation || "") &&
         t.dataset_name === ds &&
         !/COMPLETED|SUCCESS|FAILED|ERROR|CANCELL/i.test(t.status || "") &&
-        (!t.created_at || (Date.now() - new Date(t.created_at).getTime()) < 2 * 60 * 60 * 1000));  // running 超 2h 视为僵尸(大文档 docling 摄入可达 1-2h,不误伤;僵尸仍能识别放行)
+        (!t.created_at || (Date.now() - new Date(t.created_at).getTime()) < 2 * 60 * 60 * 1000));
       if (dup) {
         toast(`数据集「${ds}」已有摄入任务进行中,请等完成或去队列查看`, "warn", 5000);
         $("#resultPanel").classList.remove("hidden");
@@ -342,8 +292,7 @@ $("#submit").addEventListener("click", async () => {
       }
     } catch (_) { /* /tasks 查询失败不阻塞提交(best-effort) */ }
     let body = {};
-    // 已选文件但未点"上传到 MinIO"→ 提交时自动上传兜底(documents/images/videos),
-    // 让"选文件 → 开始摄入"一步到位,不再卡"请先上传文件"。
+    // 已选文件但未点"上传到 MinIO"→ 提交时自动上传兜底
     const pendingFiles = pickedFiles;
     if (pendingFiles.length && !uploadedBlobs.length) {
       toast(`正在上传 ${pendingFiles.length} 个文件…`, "ok");
@@ -359,30 +308,9 @@ $("#submit").addEventListener("click", async () => {
     if (src === "documents") {
       if (!blobKeys.length) { toast("请先上传文件", "warn"); return; }
       body = { pdf_paths: [], blob_keys: blobKeys };
-    } else if (src === "images" || src === "videos" || src === "csv" || src === "parquet" || src === "json") {
+    } else if (src === "images" || src === "videos") {
       if (!blobKeys.length) { toast("请先上传文件", "warn"); return; }
       body = { file_paths: [], blob_keys: blobKeys };
-    } else if (src === "sql" || src === "clickhouse") {
-      const connUrl = $("#connUrl").value.trim(), sqlText = $("#sqlText").value.trim();
-      if (!connUrl || !sqlText) { toast("connection_url 和 SQL 必填", "warn"); return; }
-      const numPart = parseInt($("#numPart").value, 10);
-      body = { connection_url: connUrl, sql: sqlText, partition_col: $("#partCol").value.trim() || null, num_partitions: Number.isNaN(numPart) ? null : numPart };
-    } else if (src === "kafka") {
-      const brokers = $("#brokers").value.trim();
-      const topics = $("#topics").value.split(",").map((s) => s.trim()).filter(Boolean);
-      if (!brokers || !topics.length) { toast("bootstrap_servers 和 topics 必填", "warn"); return; }
-      if (topics.length > 10) { toast("topics 最多 10 个", "warn"); return; }
-      body = { bootstrap_servers: brokers, topics, start: $("#start").value, end: $("#end").value.trim() || "latest", json_decode: $("#jsonDecode").checked };
-    } else if (src === "iceberg" || src === "deltalake") {
-      const tableUri = $("#tableUri").value.trim();
-      if (!tableUri) { toast("table_uri 必填", "warn"); return; }
-      body = { table_uri: tableUri };
-      if (src === "deltalake") { const ver = parseInt($("#version").value, 10); body.version = Number.isNaN(ver) ? null : ver; }
-    } else if (src === "http") {
-      const urls = $("#urls").value.split(",").map((s) => s.trim()).filter(Boolean);
-      if (!urls.length) { toast("urls 必填", "warn"); return; }
-      if (urls.length > 100) { toast("urls 最多 100", "warn"); return; }
-      body = { urls };
     } else if (src === "mixed") {
       const splitList = (id) => (($(id)?.value) || "").split(",").map((s) => s.trim()).filter(Boolean);
       const sources = {};
@@ -397,13 +325,7 @@ $("#submit").addEventListener("click", async () => {
     }
     // 说明介绍随摄入 payload 一起发(后端在数据集创建后持久化,治 202 后 PUT 的竞态 422)
     body.description = $("#desc").value.trim() || null;
-    // 全类型走异步:立即返回 task_id,避免长耗时摄入阻塞浏览器。
-    // clickhouse 复用 /ingest/sql;csv/parquet/json 复用通用 /ingest
-    let ep;
-    if (src === "clickhouse" || src === "sql") ep = "sql";
-    else if (["csv", "parquet", "json"].includes(src)) ep = "";
-    else ep = src;
-    const url = `/datasets/${encodeURIComponent(ds)}/ingest${ep ? "/" + ep : ""}/async`;
+    const url = `/datasets/${encodeURIComponent(ds)}/ingest/${src}/async`;
     const res = await request("POST", url, { body });
     // 抽取模板绑定(documents 选了模板时;绑定后 /kg/build 自动套用,优先于 doc_type)
     const extTpl = $("#extTpl")?.value?.trim();
@@ -419,7 +341,6 @@ $("#submit").addEventListener("click", async () => {
       submitted = true;
       watchTask(tid, (t) => handleIngestTask(t, btn));
     } else {
-      // 兜底:无 task_id(理论上不该发生)→ 显示原始响应
       $("#result").innerHTML = `<pre style="white-space:pre-wrap;background:var(--ink-950);border:1px solid var(--line);border-radius:var(--r-md);padding:var(--s4);font-family:var(--font-mono);font-size:.78rem;color:var(--fg-md);margin:0">${esc(JSON.stringify(res, null, 2))}</pre>`;
       toast("摄入已提交", "ok");
     }
@@ -429,7 +350,6 @@ $("#submit").addEventListener("click", async () => {
     $("#resultPanel").classList.remove("hidden");
     $("#result").innerHTML = `<div style="color:var(--danger);padding:12px">${esc(msg)}</div>`;
   } finally {
-    // 异步任务:按钮由 handleIngestTask 在终态恢复;仅前置失败(未拿到 tid)时在此恢复
     if (!submitted) { btn.disabled = false; btn.innerHTML = '<i class="placeholder" data-ic="plus"></i> 开始摄入'; }
   }
 });

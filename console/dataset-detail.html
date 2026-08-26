@@ -40,7 +40,7 @@
     <div class="flex">
       <button class="btn btn-ghost btn-sm" id="exportPq" title="异步导出整数据集为 Parquet(202 任务 + 下载)" style="display:none">⬇ Parquet</button>
       <button class="btn btn-ghost btn-sm" id="exportCsv" title="异步导出整数据集为 CSV(202 任务 + 下载)" style="display:none">⬇ CSV</button>
-      <a class="btn btn-primary btn-sm" id="ingestBtn" href="ingest.html"><i class="placeholder" data-ic="plus"></i> 追加摄入</a>
+      <a class="btn btn-primary btn-sm" id="ingestBtn" href="ingest-data.html"><i class="placeholder" data-ic="plus"></i> 追加摄入</a>
     </div>
   </div>
 
@@ -116,6 +116,8 @@ const { renderShell, icon } = window;
 renderShell({ active: "datasets", crumb: '<a href="datasets.html">数据集</a> › <b id="crumbDs">—</b>' });
 const $ = (s) => document.querySelector(s);
 const ds = new URL(location.href).searchParams.get("ds");
+// DR14 W4.2:容器数据集的当前选中表(null = 单表数据集)
+let curTable = null;
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const fmtCell = (v) => {
   if (v == null) return '<span class="muted">—</span>';
@@ -185,7 +187,7 @@ document.querySelectorAll(".tab").forEach(t => t.addEventListener("click", () =>
 if (!ds) {
   $("#body").innerHTML = '<div class="muted" style="padding:28px;text-align:center">未指定数据集(<code>?ds=name</code>)— <a href="datasets.html" style="color:var(--teal-bright)">返回列表</a></div>';
 } else {
-  $("#ingestBtn").href = `ingest.html?ds=${encodeURIComponent(ds)}`;
+  $("#ingestBtn").href = `ingest-data.html?ds=${encodeURIComponent(ds)}`;
   $("#crumbDs").textContent = ds;
 
   (async () => {
@@ -199,21 +201,31 @@ if (!ds) {
       detailInfo = dRes.value;
       const d = detailInfo;
       $("#title").textContent = d.name;
-      $("#meta").textContent = `v${d.version} · ${(d.num_rows ?? 0).toLocaleString()} 行`;
+      $("#meta").textContent = d.kind === "container"
+        ? `容器 · ${(d.tables || []).length} 表 · ${(d.num_rows ?? 0).toLocaleString()} 行`
+        : `v${d.version} · ${(d.num_rows ?? 0).toLocaleString()} 行`;
+      if (d.kind === "container") {
+        curTable = (d.tables || [])[0] || null;
+      }
       $("#body").innerHTML = `
         <div class="grid g-3">
-          <div class="kpi"><div class="label">数据集</div><div class="val" style="font-size:1.05rem">${esc(d.name)}</div></div>
-          <div class="kpi"><div class="label">行数</div><div class="val">${(d.num_rows ?? 0).toLocaleString()}</div></div>
+          <div class="kpi"><div class="label">数据集${d.kind === "container" ? ' <span class="tag amber">📦 容器</span>' : d.kind === "document" ? ' <span class="tag info">📄 文档</span>' : ""}</div><div class="val" style="font-size:1.05rem">${esc(d.name)}</div></div>
+          <div class="kpi"><div class="label">${d.kind === "container" ? "总行数(各表求和)" : "行数"}</div><div class="val">${(d.num_rows ?? 0).toLocaleString()}</div></div>
           <div class="kpi"><div class="label">大小</div><div class="val">${fmtSize(d.size_bytes)}</div></div>
           <div class="kpi"><div class="label">版本</div><div class="val">${d.version ?? "—"}</div></div>
           <div class="kpi"><div class="label">创建</div><div class="val" style="font-size:.95rem">${fmtDate(d.created_at)}</div></div>
           <div class="kpi"><div class="label">更新</div><div class="val" style="font-size:.95rem">${fmtDate(d.updated_at)}</div></div>
         </div>
+        ${d.kind === "container" ? `
+        <div style="margin-top:var(--s3)">
+          <div class="muted" style="font-size:.72rem;margin-bottom:6px">容器表(点选切换 schema/预览;SQL 查询用 <span class="mono">FROM ${esc(d.name)}.&lt;表名&gt;</span>)</div>
+          <div id="ctrTables" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+        </div>` : ""}
         ${d.description ? `<div style="margin-top:var(--s3);padding:var(--s3) var(--s4);background:var(--ink-900);border:1px solid var(--line-soft);border-radius:var(--r-sm);font-size:.82rem;line-height:1.6;color:var(--fg-md)"><b style="color:var(--fg-hi);margin-right:6px">说明:</b>${esc(d.description)}</div>` : ""}
         <div id="docsBlock" style="margin-top:var(--s3)"></div>
         <div class="divider" style="margin:var(--s4) 0"></div>
         <div class="flex" style="gap:8px;flex-wrap:wrap">
-          <a class="btn btn-ghost btn-sm" href="ingest.html?ds=${encodeURIComponent(d.name)}">${icon("plus")} 追加摄入</a>
+          <a class="btn btn-ghost btn-sm" href="${d.kind === "document" ? "ingest-docs" : "ingest-data"}.html?ds=${encodeURIComponent(d.name)}">${icon("plus")} 追加摄入</a>
           <a class="btn btn-ghost btn-sm" href="tasks.html">${icon("dashboard")} 任务</a>
           <a class="btn btn-ghost btn-sm" href="datasets.html">${icon("arrowR")} 返回列表</a>
         </div>`;
@@ -221,29 +233,76 @@ if (!ds) {
       $("#body").innerHTML = `<div style="color:var(--danger);padding:24px">元数据加载失败:${esc(dRes.reason?.detail || dRes.reason?.message || dRes.reason)}</div>`;
       $("#meta").textContent = "加载失败";
     }
+    // 追加摄入按 kind 分流:文档型 → 文档摄入页;表格/容器 → 表格摄入页(容器带当前表)
+    if (detailInfo) {
+      const ingestHref = detailInfo.kind === "document"
+        ? `ingest-docs.html?ds=${encodeURIComponent(ds)}`
+        : `ingest-data.html?ds=${encodeURIComponent(ds)}${curTable ? `&table=${encodeURIComponent(curTable)}` : ""}`;
+      $("#ingestBtn").href = ingestHref;
+    }
 
     // 1.55) 后台预热 OLAP/DuckDB session — 让用户实际滚到预览时为 warm(~1.3s)
-    //       而非冷启动(~3.5s)。fire-and-forget
+    //       而非冷启动(~3.5s)。fire-and-forget(容器集预热选中表)
     if (detailInfo) {
+      const warm = curTable ? `${ds}.${curTable}` : `"${String(ds).replace(/"/g, '""')}"`;
       request("POST", `/datasets/${encodeURIComponent(ds)}/query/olap`,
-        { body: { sql: `SELECT COUNT(*) FROM "${String(ds).replace(/"/g, '""')}"` } }
+        { body: { sql: `SELECT COUNT(*) FROM ${warm}` } }
       ).catch(() => {});
     }
 
-    // 1.5) schema(已与元数据并行拉取,此处只处理结果)
+    // 1.5) schema:单表集用并行结果;容器集裸名 422 → 按选中表重拉(W4.2)
     let commentMap = {};
     let schemaFields = [];
     const trunc = (s, n = 16) => (s && s.length > n ? s.slice(0, n - 1) + "…" : s || "");
     const renderSchema = (fields) => {
-      $("#schemaMeta").textContent = `${fields.length} 个字段`;
+      $("#schemaMeta").textContent = curTable ? `${esc(curTable)} · ${fields.length} 个字段` : `${fields.length} 个字段`;
       $("#schema").innerHTML = fields.map((f) => {
         const cm = f.comment || "";
         const tip = `${esc(f.type)}${f.nullable ? "" : " · NOT NULL"}${cm ? "\n" + cm : ""}`;
         const cmHtml = cm ? ` <span class="cm" title="${esc(cm)}">// ${esc(trunc(cm))}</span>` : "";
-        return `<span class="schema-chip" title="${tip}">${esc(f.name)}<span style="color:var(--fg-lo)"> : ${esc(f.type)}</span>${cmHtml}<button class="ic-btn" data-field="${esc(f.name)}" data-cm="${esc(cm)}" title="编辑字段注释" type="button">✎</button></span>`;
+        // 字段注释编辑暂只支持单表集(annotate 端点未接 table 参数)
+        const editBtn = curTable ? "" : `<button class="ic-btn" data-field="${esc(f.name)}" data-cm="${esc(cm)}" title="编辑字段注释" type="button">✎</button>`;
+        return `<span class="schema-chip" title="${tip}">${esc(f.name)}<span style="color:var(--fg-lo)"> : ${esc(f.type)}</span>${cmHtml}${editBtn}</span>`;
       }).join("");
     };
-    if (sRes.status === "fulfilled") {
+    async function loadSchema() {
+      try {
+        const s = await request("GET", `/datasets/${encodeURIComponent(ds)}/schema${curTable ? `?table=${encodeURIComponent(curTable)}` : ""}`);
+        const fields = s?.fields || [];
+        commentMap = Object.fromEntries(fields.map((f) => [f.name, f.comment || ""]));
+        schemaFields = fields;
+        if (fields.length) {
+          $("#schemaPanel").style.display = "";
+          renderSchema(fields);
+        } else {
+          $("#schemaPanel").style.display = "none";
+        }
+      } catch (e) {
+        $("#schemaPanel").style.display = "none";
+      }
+    }
+    // 容器表 pills:点选切换当前表(schema/预览随之刷新)
+    function renderCtrTables() {
+      const host = $("#ctrTables");
+      if (!host) return;
+      const tables = detailInfo?.tables || [];
+      host.innerHTML = tables.map((t) =>
+        `<button class="btn btn-sm ${t === curTable ? "btn-primary" : "btn-ghost"}" data-ctr-table="${esc(t)}">${icon("database")} ${esc(t)}</button>`
+      ).join("") || '<span class="muted" style="font-size:.78rem">容器暂无表(经摄入端点带 table 参数写入)</span>';
+      host.querySelectorAll("[data-ctr-table]").forEach((b) => b.addEventListener("click", async () => {
+        if (curTable === b.dataset.ctrTable) return;
+        curTable = b.dataset.ctrTable;
+        renderCtrTables();
+        firstPageCache = null;
+        pv.page = 1; pv.q = "";
+        await loadSchema();
+        loadPreview();
+      }));
+    }
+    if (detailInfo?.kind === "container") {
+      renderCtrTables();
+      await loadSchema();
+    } else if (sRes.status === "fulfilled") {
       const fields = sRes.value?.fields || [];
       commentMap = Object.fromEntries(fields.map((f) => [f.name, f.comment || ""]));
       schemaFields = fields;
@@ -252,7 +311,7 @@ if (!ds) {
         renderSchema(fields);
       }
     }
-    if (detailInfo) loadDocs(detailInfo.name, schemaFields.some((f) => f.name === "document_name"));
+    if (detailInfo && !curTable) loadDocs(detailInfo.name, schemaFields.some((f) => f.name === "document_name"));
     // 字段注释编辑(铅笔 → prompt → POST annotate → 局部刷新)
     $("#schema").addEventListener("click", async (ev) => {
       const btn = ev.target.closest(".ic-btn");
@@ -314,7 +373,7 @@ if (!ds) {
         const clause = whereCols.map((c) => `"${escId(c)}"::VARCHAR LIKE '%${escQ}%'`).join(" OR ");
         where = `WHERE ${whereCols.length > 1 ? `(${clause})` : clause}`;
       }
-      const tbl = escId(ds);
+      const tbl = curTable ? `"${escId(ds)}"."${escId(curTable)}"` : `"${escId(ds)}"`;
       const dsEnc = encodeURIComponent(ds);
       try {
         const offset = Math.min((pv.page - 1) * pv.size, 100000); // cap deep-offset (perf + abuse guard)
@@ -322,7 +381,7 @@ if (!ds) {
           // 搜索:跳过精确 COUNT(LIKE '%x%' 前导通配全扫,noaa ~7s),探索式分页
           pv.total = -1;
         } else if (detailInfo?.num_rows == null) {
-          const cr = await request("POST", `/datasets/${dsEnc}/query/olap`, { body: { sql: `SELECT COUNT(*) AS c FROM "${tbl}"` } });
+          const cr = await request("POST", `/datasets/${dsEnc}/query/olap`, { body: { sql: `SELECT COUNT(*) AS c FROM ${tbl}` } });
           pv.total = Number(cr?.rows?.[0]?.c ?? 0);
         } else {
           // 无搜索 → 复用元数据行数,跳过全表 COUNT(*)
@@ -332,7 +391,7 @@ if (!ds) {
         const projCols = (schemaFields.length
           ? schemaFields.filter(f => !/embedding/i.test(f.name)).map(f => `"${String(f.name).replace(/"/g, '""')}"`).join(",")
           : "*") || "*";
-        const res = await request("POST", `/datasets/${dsEnc}/query/olap`, { body: { sql: `SELECT ${projCols} FROM "${tbl}" ${where} LIMIT ${pv.size} OFFSET ${offset}` } });
+        const res = await request("POST", `/datasets/${dsEnc}/query/olap`, { body: { sql: `SELECT ${projCols} FROM ${tbl} ${where} LIMIT ${pv.size} OFFSET ${offset}` } });
         const rows = res?.rows || [];
         if (pv.total === -1) {
           // 探索式:满页假定还有下一页;不满 → 末页

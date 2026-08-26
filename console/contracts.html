@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>数据契约 · Arrow Lake Console</title>
+<link rel="stylesheet" href="assets/tokens.css"/>
+<link rel="stylesheet" href="assets/app.css"/>
+<link rel="stylesheet" href="assets/console.css"/>
+<style>
+  .ctr-row{display:flex;gap:10px;align-items:center;padding:9px 12px;border-bottom:1px solid var(--line-soft);cursor:pointer;font-size:.82rem}
+  .ctr-row:hover{background:var(--ink-850)}
+  .ctr-row.active{background:var(--ink-850);box-shadow:inset 2px 0 0 var(--teal-bright)}
+  .ctr-row .sc{flex:1;min-width:0;font-family:var(--font-mono);color:var(--fg-hi);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .ver-row{display:flex;gap:10px;align-items:center;padding:8px 12px;border-bottom:1px solid var(--line-soft);cursor:pointer;font-size:.78rem}
+  .ver-row:hover{background:var(--ink-850)}
+  .ver-row.active{background:var(--ink-850);box-shadow:inset 2px 0 0 var(--teal-bright)}
+  .diff-add{color:var(--teal-bright)}
+  .diff-del{color:var(--danger)}
+  textarea.yaml{width:100%;min-height:320px;background:var(--ink-950);border:1px solid var(--line);border-radius:var(--r-sm);color:var(--fg-md);font-family:var(--font-mono);font-size:.76rem;line-height:1.7;padding:12px;resize:vertical;tab-size:2}
+</style>
+</head>
+<body>
+<div id="app">
+<main class="main"><div class="page">
+  <div class="h-sec between">
+    <div><h1>数据契约</h1><div class="desc">挂数据集的语义契约(枚举/值域/标识 pattern/引用)· 摄入门禁 contract_check 消费 · 版本链同 hash 跳过</div></div>
+    <div class="flex"><button class="btn btn-primary btn-sm" id="newBtn"><i class="placeholder" data-ic="plus"></i> 新建契约</button></div>
+  </div>
+
+  <div class="grid g-2">
+    <div>
+      <div class="panel flush">
+        <div class="panel-h"><i class="placeholder" data-ic="database"></i><h3>契约(scope = 数据集名)</h3><span class="sub" id="ctrMeta">—</span></div>
+        <div class="panel-b" id="ctrList" style="padding:0"><div class="muted" style="padding:10px">加载…</div></div>
+      </div>
+      <div class="panel flush" style="margin-top:var(--s4)">
+        <div class="panel-h"><i class="placeholder" data-ic="dashboard"></i><h3>版本链</h3><span class="sub" id="verMeta">选一个契约</span></div>
+        <div class="panel-b" id="verList" style="padding:0"><div class="muted" style="padding:10px">左侧选契约查看版本</div></div>
+      </div>
+    </div>
+    <div>
+      <div class="panel flush">
+        <div class="panel-h">
+          <i class="placeholder" data-ic="code"></i><h3>契约 YAML</h3><span class="sub" id="ymlMeta">—</span>
+          <span class="actions"><button class="btn btn-primary btn-sm" id="saveBtn" style="display:none">保存新版本</button></span>
+        </div>
+        <div class="panel-b" style="padding:10px">
+          <textarea class="yaml" id="yml" spellcheck="false" placeholder="# dataset: gas_network
+# tables:
+#   segments:
+#     object_class: 管段
+#     identifier: {column: seg_id, pattern: &quot;GAS.SEG.{region}.{seq}&quot;}
+#     columns:
+#       - {name: 材质, enum: [PE, 钢管, 球墨铸铁]}
+# references:
+#   - {from: segments.station_id, to: stations.id}"></textarea>
+          <div class="muted" id="ymlMsg" style="font-size:.72rem;margin-top:6px">契约内容是租户资产:枚举/值域按业务规范立,不从数据反推。保存即解析校验(parse 失败 422),变更产生新版本 + 结构化 diff。</div>
+        </div>
+      </div>
+      <div class="panel flush" style="margin-top:var(--s4)">
+        <div class="panel-h"><i class="placeholder" data-ic="git-branch"></i><h3>版本 Diff</h3><span class="sub" id="diffMeta">选一个版本</span></div>
+        <div class="panel-b" id="verDiff" style="padding:10px"><div class="muted">版本链里选版本,查看与上一版的结构化 diff(表/列/枚举/范围/引用 增删)</div></div>
+      </div>
+    </div>
+  </div>
+</div></main>
+</div>
+
+<script src="assets/console-layout.js"></script>
+<script type="module">
+import { request } from "./src/api.js";
+import { isLoggedIn } from "./src/auth.js";
+import { toast } from "./src/ui/toast.js";
+import { promptDialog } from "./src/ui/modal.js";
+
+if (!isLoggedIn()) location.href = "login.html";
+const { renderShell, icon } = window;
+renderShell({ active: "contracts", crumb: '<b>数据契约</b>' });
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const fmtDate = (s) => { if (!s) return "—"; const d = new Date(s); if (isNaN(d)) return String(s).slice(0, 16); const p = (n) => String(n).padStart(2, "0"); return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
+const isAdmin = (() => {
+  try {
+    const tok = localStorage.getItem("al_access") || "";
+    const payload = JSON.parse(atob(tok.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+    return String(payload.role || "EDITOR").toUpperCase() === "ADMIN";
+  } catch (_) { return false; }
+})();
+
+let curScope = null;
+
+async function loadList() {
+  try {
+    const r = await request("GET", "/contracts");
+    const items = r?.contracts || [];
+    $("#ctrMeta").textContent = `${items.length} 个`;
+    $("#ctrList").innerHTML = items.length
+      ? items.map((c) => `<div class="ctr-row${c.scope === curScope ? " active" : ""}" data-sc="${esc(c.scope)}">
+          <span class="sc">${icon("database")} ${esc(c.scope)}</span>
+          <span class="tag teal">v${c.version}</span>
+          <span class="muted" style="font-size:.7rem">${fmtDate(c.updated_at)}</span>
+        </div>`).join("")
+      : `<div class="muted" style="padding:18px;text-align:center">尚无契约 — 点右上「新建契约」按业务规范立契约</div>`;
+    $("#ctrList").querySelectorAll("[data-sc]").forEach((el) => el.addEventListener("click", () => selectScope(el.dataset.sc)));
+  } catch (e) {
+    const msg = e?.detail || e?.message || String(e);
+    const denied = /403|admin/i.test(msg);
+    $("#ctrList").innerHTML = `<div class="muted" style="padding:18px;text-align:center">${denied ? "契约管理需要 ADMIN 权限" : "加载失败:" + esc(msg)}</div>`;
+    $("#ctrMeta").textContent = "—";
+  }
+}
+
+async function selectScope(sc) {
+  curScope = sc;
+  $("#ctrList").querySelectorAll("[data-sc]").forEach((el) => el.classList.toggle("active", el.dataset.sc === sc));
+  $("#ymlMeta").textContent = sc;
+  if (isAdmin) $("#saveBtn").style.display = "";
+  await Promise.allSettled([loadYaml(sc), loadVersions(sc)]);
+}
+
+async function loadYaml(sc) {
+  try {
+    const r = await request("GET", `/contracts/${encodeURIComponent(sc)}`);
+    $("#yml").value = r?.contract_yaml || "";
+    $("#yml").disabled = !isAdmin;
+  } catch (e) {
+    $("#yml").value = "";
+    toast("契约加载失败:" + (e?.detail || e?.message || e), "warn", 4000);
+  }
+}
+
+async function loadVersions(sc) {
+  try {
+    const r = await request("GET", `/contracts/${encodeURIComponent(sc)}/versions`);
+    const vs = r?.versions || [];
+    $("#verMeta").textContent = `${vs.length} 版`;
+    $("#verList").innerHTML = vs.length
+      ? vs.map((v) => `<div class="ver-row" data-v="${v.version}">
+          <span class="tag ${v.diff ? "amber" : "teal"}">v${v.version}</span>
+          <span class="muted mono" style="font-size:.68rem">${esc(String(v.source_hash || "").slice(0, 8))}</span>
+          <span class="muted" style="margin-left:auto;font-size:.7rem">${fmtDate(v.created_at)}</span>
+          ${v.diff ? '<span class="tag info" style="font-size:.64rem">diff</span>' : ""}
+        </div>`).join("")
+      : `<div class="muted" style="padding:12px">无版本</div>`;
+    $("#verList").querySelectorAll("[data-v]").forEach((el) => el.addEventListener("click", () => showVersion(sc, +el.dataset.v)));
+  } catch (e) {
+    $("#verList").innerHTML = `<div class="muted" style="padding:12px">版本链加载失败</div>`;
+  }
+}
+
+async function showVersion(sc, v) {
+  $("#verList").querySelectorAll("[data-v]").forEach((el) => el.classList.toggle("active", +el.dataset.v === v));
+  $("#diffMeta").textContent = `${sc} · v${v}`;
+  try {
+    const r = await request("GET", `/contracts/${encodeURIComponent(sc)}/versions/${v}`);
+    const d = r?.diff;
+    if (!d) {
+      $("#verDiff").innerHTML = `<div class="muted" style="padding:8px">v1(首版,无 diff)</div>`;
+      return;
+    }
+    const line = (k, arr) => arr?.length ? `<div style="margin:4px 0"><b style="font-size:.74rem">${k}</b>${arr.map((x) => ` <span class="tag" style="font-size:.66rem">${esc(typeof x === "object" ? JSON.stringify(x) : x)}</span>`).join("")}</div>` : "";
+    const cols = (t, cs) => cs?.length ? `<div style="margin:6px 0 6px 12px"><span class="muted" style="font-size:.7rem">表 ${esc(t)}:</span>${cs.map((c) => {
+      const sign = c.change === "added" ? "diff-add" : c.change === "removed" ? "diff-del" : "";
+      const detail = c.change === "changed" ? `<span class="muted" style="font-size:.66rem">${esc(JSON.stringify(c.was))} → ${esc(JSON.stringify(c.now))}</span>` : "";
+      return ` <span class="tag ${sign}" style="font-size:.66rem">${esc(c.column)} ${esc(c.change)}</span>${detail}`;
+    }).join("")}</div>` : "";
+    const tables = Object.entries(d.tables || {}).map(([t, td]) => cols(t, td.columns)).join("");
+    $("#verDiff").innerHTML = `
+      ${line("+ 表", d.tables_added)}${line("− 表", d.tables_removed)}
+      ${tables || ""}
+      ${line("+ 引用", d.references_added)}${line("− 引用", d.references_removed)}
+      ${!d.tables_added?.length && !d.tables_removed?.length && !tables && !d.references_added?.length && !d.references_removed?.length ? '<div class="muted" style="padding:8px">无差异</div>' : ""}`;
+  } catch (e) {
+    $("#verDiff").innerHTML = `<div class="muted" style="padding:8px">版本加载失败</div>`;
+  }
+}
+
+$("#saveBtn")?.addEventListener("click", async () => {
+  if (!curScope) return;
+  const yml = $("#yml").value;
+  try {
+    const r = await request("PUT", `/contracts/${encodeURIComponent(curScope)}`, { body: { contract_yaml: yml } });
+    if (r?.created === false) {
+      toast("内容与当前版本相同(hash 一致),未产生新版本", "info", 4000);
+    } else {
+      toast(`已保存 v${r?.version}(变更产生结构化 diff)`, "ok");
+    }
+    loadList();
+    loadVersions(curScope);
+  } catch (e) {
+    const msg = typeof e?.detail === "string" ? e.detail : (e?.detail ? JSON.stringify(e.detail) : (e?.message || String(e)));
+    toast("保存失败: " + msg, "danger", 6000);
+    $("#ymlMsg").innerHTML = `<span style="color:var(--danger)">校验失败:${esc(msg)}</span>`;
+    setTimeout(() => { $("#ymlMsg").textContent = "契约内容是租户资产:枚举/值域按业务规范立,不从数据反推。"; }, 8000);
+  }
+});
+
+$("#newBtn")?.addEventListener("click", async () => {
+  const sc = await promptDialog({ title: "新建契约 — scope(须为已有/目标数据集名)", defaultValue: "", placeholder: "gas_network" });
+  if (!sc || !sc.trim()) return;
+  const name = sc.trim();
+  if (!/^[a-zA-Z_][a-zA-Z0-9_-]*$/.test(name)) { toast("scope 须匹配 ^[a-zA-Z_][a-zA-Z0-9_-]*$", "warn"); return; }
+  $("#yml").value = `dataset: ${name}\ntables:\n  ${name}:\n    object_class: \n    columns:\n      - name: id\n        required: true\n`;
+  $("#yml").disabled = !isAdmin;
+  $("#ymlMeta").textContent = `${name}(草案,未保存)`;
+  if (isAdmin) $("#saveBtn").style.display = "";
+  curScope = name; // 本地选中;保存成功后入库
+  loadList();
+});
+
+loadList();
+</script>
+</body>
+</html>
