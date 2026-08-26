@@ -364,7 +364,8 @@ async function loadDsSchema(name) {
 async function loadDatasets() {
   try {
     const data = await request("GET", "/datasets?limit=1000");
-    const list = data?.datasets || [];
+    // 表格线页面:排除文档型数据集(W4.2 分组过滤)
+    const list = (data?.datasets || []).filter(d => (d.kind || "structured") !== "document");
     const cur = new URLSearchParams(location.search).get("ds");
     $("#dsSel").innerHTML = list.length
       ? list.map((d) => `<option value="${esc(d.name)}"${d.name === cur ? " selected" : ""}>${esc(d.name)} · ${(d.num_rows ?? 0).toLocaleString()} 行</option>`).join("")

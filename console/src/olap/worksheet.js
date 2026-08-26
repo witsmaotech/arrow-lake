@@ -38,7 +38,9 @@ export async function initWorksheet() {
 
   // 1. Load datasets
   try {
-    const list = await request("GET", "/datasets?limit=500");
+    // 表格线页面:排除文档型数据集(W4.2 分组过滤)
+    const resp = await request("GET", "/datasets?limit=500");
+    const list = { datasets: (resp?.datasets || []).filter(d => (d.kind || "structured") !== "document") };
     // createElement + textContent: d.name 来自后端,防御性防注入
     dsSel.textContent = "";
     for (const d of list.datasets) {

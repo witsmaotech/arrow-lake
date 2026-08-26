@@ -14,7 +14,9 @@ function isTextCol(col) {
 
 export async function loadDatasets() {
   const resp = await request("GET", "/datasets?limit=200");
-  return Array.isArray(resp) ? resp : (resp.datasets || []);
+  const all = Array.isArray(resp) ? resp : (resp.datasets || []);
+  // 表格线页面:排除文档型数据集(W4.2 分组过滤)
+  return all.filter(d => (d.kind || "structured") !== "document");
 }
 
 export async function loadProfile(name) {

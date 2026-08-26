@@ -135,7 +135,8 @@ function curDs() { return $("#ds").value; }
 async function loadDatasets() {
   try {
     const data = await request("GET", "/datasets");
-    const list = data?.datasets || [];
+    // 文本线页面:只列文档型数据集(W4.2 分组过滤)
+    const list = (data?.datasets || []).filter(d => (d.kind || "structured") === "document");
     const preset = new URL(location.href).searchParams.get("ds");
     $("#ds").innerHTML = `<option value="">— 选择数据集 —</option>` + list.map(d => `<option value="${esc(d.name)}">${esc(d.name)} (${(d.num_rows ?? 0).toLocaleString()} 行)</option>`).join("");
     if (preset && list.some(d => d.name === preset)) $("#ds").value = preset;
