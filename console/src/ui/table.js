@@ -1,9 +1,16 @@
 // Result table renderer (columns + rows → HTMLElement). Caps rendered rows.
-export function renderTable(columns, rows, { max = 10000 } = {}) {
+export function renderTable(columns, rows, { max = 10000, comments = {} } = {}) {
   const wrap = document.createElement("div");
   wrap.className = "tbl-wrap";
   const shown = rows.slice(0, max);
-  const head = `<thead><tr>${columns.map(c => `<th>${escapeHtml(c)}</th>`).join("")}</tr></thead>`;
+  // 字段注释(W4.2:有注释则在表头列名下补一行,悬停看全文)
+  const cmOf = (c) => {
+    const cm = comments[c];
+    if (!cm) return "";
+    const short = cm.length > 24 ? cm.slice(0, 23) + "…" : cm;
+    return `<div title="${escapeHtml(cm)}" style="font-weight:400;font-style:italic;color:var(--fg-lo);font-size:.66rem;max-width:14ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">// ${escapeHtml(short)}</div>`;
+  };
+  const head = `<thead><tr>${columns.map(c => `<th>${escapeHtml(c)}${cmOf(c)}</th>`).join("")}</tr></thead>`;
   const body = `<tbody>${shown.map(r =>
     `<tr>${columns.map(c => `<td>${fmtCell(r[c])}</td>`).join("")}</tr>`).join("")}</tbody>`;
   wrap.innerHTML = `<table class="tbl">${head}${body}</table>`;

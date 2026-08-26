@@ -22,6 +22,9 @@ export function renderResult(host, resp, elapsedMs) {
   const rows = resp.rows || [];
   const columns = rows.length ? Object.keys(rows[0]) : [];
   _lastResult = { columns, rows, dataset: host.dataset?.ds || null };
+  // 字段注释(worksheet loadSchema 存到 dataset.cm,结果表头展示)
+  let comments = {};
+  try { comments = JSON.parse(host.dataset?.cm || "{}") || {}; } catch (_) { /* 无注释 */ }
 
   // 1. 元信息行(行/列/耗时)
   const meta = document.createElement("div");
@@ -120,7 +123,7 @@ export function renderResult(host, resp, elapsedMs) {
     if (pageIdx < 0) pageIdx = 0;
     tableHost.innerHTML = "";
     const start = pageIdx * pageSize;
-    tableHost.appendChild(renderTable(columns, rows.slice(start, start + pageSize), { max: pageSize }));
+    tableHost.appendChild(renderTable(columns, rows.slice(start, start + pageSize), { max: pageSize, comments }));
     pageLabel.textContent = `第 ${pageIdx + 1} / ${tp} 页 · 共 ${rows.length.toLocaleString()} 行`;
     firstBtn.disabled = prevBtn.disabled = pageIdx === 0;
     nextBtn.disabled = lastBtn.disabled = pageIdx >= tp - 1;

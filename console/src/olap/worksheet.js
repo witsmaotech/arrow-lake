@@ -67,6 +67,10 @@ export async function initWorksheet() {
     try {
       const s = await request("GET", `/datasets/${encodeURIComponent(ds)}/schema`);
       const fields = s.fields || [];
+      // 字段注释 map 存宿主(results.js 结果表头消费;dataset 属性只能存字符串)
+      resultHost.dataset.cm = JSON.stringify(
+        Object.fromEntries(fields.filter((f) => f.comment).map((f) => [f.name, f.comment]))
+      );
       schemaList.innerHTML = (fields.length
         ? `<div class="muted" style="padding:6px 8px;font-size:.68rem;text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--line-soft)">${fields.length} 字段 · 点击插入编辑器</div>` +
           fields.map((f) => {
