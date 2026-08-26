@@ -34,6 +34,10 @@ class CatalogEntry:
     size_bytes: int | None = None
     created_at: str | None = None
     updated_at: str | None = None
+    # W4.2: dataset lineage for the console's structured/document split —
+    # "container" (multi-table, DR14) | "document" (ingest-pipeline
+    # columns heuristic) | "structured" (default).
+    kind: str = "structured"
 
 
 @dataclass(frozen=True)

@@ -18,6 +18,10 @@ logger = logging.getLogger(__name__)
 _CATALOG_CACHE_TTL: float = 5.0
 _CATALOG_CACHE: dict[str, Any] = {"ts": 0.0, "result": None}
 
+# W4.2: columns stamped by the documents/images/videos ingest pipelines —
+# their presence marks a dataset for the console's text (non-structured) line.
+_DOCUMENT_HINT_COLUMNS = frozenset({"chunk_text", "page_number", "chunk_index"})
+
 if TYPE_CHECKING:
     from arrow_lake._models import CatalogResult, HealthInfo
     from arrow_lake.ops.backup import BackupInfo
@@ -48,6 +52,7 @@ class _LakeAdminMixin:
         for name in names:
             ds = None
             num_rows = 0
+            kind = "structured"
             try:
                 ds = storage.open_dataset(name)
                 num_rows = ds.count_rows()
@@ -78,6 +83,13 @@ class _LakeAdminMixin:
                         if pa.types.is_fixed_size_list(field.type):
                             vector_dim = int(field.type.list_size)
                             break
+                    # W4.2: document heuristic — the documents/images/videos
+                    # ingest pipelines stamp these columns; a table carrying
+                    # any of them is presented on the console's text line.
+                    if any(
+                        f.name in _DOCUMENT_HINT_COLUMNS for f in schema
+                    ):
+                        kind = "document"
                 except Exception:  # noqa: BLE001
                     pass
                 try:
@@ -130,7 +142,32 @@ class _LakeAdminMixin:
                 num_columns=num_columns, vector_dim=vector_dim,
                 has_vector_index=has_vector, has_fts_index=has_fts, size_bytes=size_bytes,
                 created_at=created_at, updated_at=updated_at,
+                kind=kind,
             ))
+        # W4.2: container datasets (DR14) — a directory of tables, invisible
+        # to the bare-table listing above. Sum per-table row counts cheaply
+        # via per-table opens; per-table schema/index details stay on the
+        # detail/schema endpoints (?table=), not on the catalog row.
+        try:
+            containers = storage.list_containers()
+        except Exception:  # noqa: BLE001 — listing must not fail the catalog
+            containers = []
+        for cname in containers:
+            num_rows = 0
+            try:
+                for tname in storage.list_container_tables(cname):
+                    try:
+                        num_rows += int(
+                            storage.open_dataset(cname, table=tname).count_rows())
+                    except (StorageError, OSError):
+                        pass
+            except (StorageError, OSError):
+                pass
+            entries.append(CatalogEntry(
+                name=cname, version=0, num_rows=num_rows, num_columns=0,
+                kind="container",
+            ))
+        entries.sort(key=lambda e: e.name)
         result = CatalogResult(datasets=entries, total=len(entries))
         _CATALOG_CACHE["ts"] = time.monotonic()
         _CATALOG_CACHE["result"] = result
@@ -168,11 +205,12 @@ class _LakeAdminMixin:
         """
         return self._get_storage().list_datasets()
 
-    def open_dataset(self, name: str) -> Any:
+    def open_dataset(self, name: str, *, table: str | None = None) -> Any:
         """Open a dataset and return the underlying Lance dataset object.
 
         Args:
             name: Dataset name.
+            table: Optional table name within a container dataset (DR14).
 
         Returns:
             The opened Lance dataset.
@@ -180,7 +218,7 @@ class _LakeAdminMixin:
         Raises:
             StorageError: If the dataset does not exist.
         """
-        return self._get_storage().open_dataset(name)
+        return self._get_storage().open_dataset(name, table=table)
 
     def update_field_comments(self, name: str, comments: dict[str, str]) -> None:
         """In-place update of column ``comment`` metadata (no data rewrite).

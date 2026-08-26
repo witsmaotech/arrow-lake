@@ -365,6 +365,10 @@ class DatasetInfo(BaseModel):
     created_at: str | None = None
     updated_at: str | None = None
     description: str | None = None
+    # W4.2: console structured/text split. kind mirrors CatalogEntry;
+    # `tables` is only populated on the detail endpoint for containers.
+    kind: str = "structured"
+    tables: list[str] | None = None
 
 
 class DatasetDescriptionRequest(BaseModel):

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 from pathlib import Path
+from typing import Any
 
 import pyarrow as pa
 
@@ -344,6 +345,66 @@ class StorageCRUDMixin:
             return []
         tables = result.tables if hasattr(result, "tables") else result
         return sorted(t for t in tables if isinstance(t, str))
+
+    def list_containers(self) -> list[str]:
+        """List container dataset names (DR14 W4.2 catalog visibility).
+
+        Single-table datasets live at ``{root}/{name}.lance``; a container is
+        a plain ``{root}/{name}/`` directory holding ``*.lance`` tables.
+
+        local: directories under base that are not ``.lance`` tables
+        themselves and hold at least one ``*.lance`` child (an empty or
+        foreign directory is not a container).
+        S3/MinIO: delimiter listing under the lancedb root prefix extracted
+        from ``_connect_uri`` (``s3://{bucket}/{prefix}``) — a single-table
+        dataset shows up as the ``{name}.lance/`` prefix, anything else at
+        that level is a container directory. The root prefix matters: host
+        and container configs may address different prefixes in one bucket.
+        """
+        if self._storage_config and self._storage_config.backend != StorageBackend.LOCAL:
+            import boto3
+
+            so = self._storage_options or {}
+            client = boto3.client(
+                "s3",
+                endpoint_url=self._storage_config.s3_endpoint,
+                aws_access_key_id=self._storage_config.s3_access_key,
+                aws_secret_access_key=self._storage_config.s3_secret_key,
+                region_name=str(so.get("region") or "us-east-1"),
+            )
+            # Root prefix the lancedb connection addresses (may be empty).
+            after_scheme = self._connect_uri.split("://", 1)[-1]
+            root = after_scheme.partition("/")[2].strip("/")
+            prefix = f"{root}/" if root else ""
+            names: list[str] = []
+            token: str | None = None
+            while True:
+                kwargs: dict[str, Any] = {
+                    "Bucket": self._storage_config.s3_bucket, "Delimiter": "/",
+                    **({"Prefix": prefix} if prefix else {}),
+                }
+                if token:
+                    kwargs["ContinuationToken"] = token
+                resp = client.list_objects_v2(**kwargs)
+                for p in resp.get("CommonPrefixes", []):
+                    name = str(p.get("Prefix", ""))[len(prefix):].rstrip("/")
+                    if name and not name.endswith(".lance") and "/" not in name:
+                        names.append(name)
+                if not resp.get("IsTruncated"):
+                    break
+                token = resp.get("NextContinuationToken")
+            # Same semantics as the local branch: a real container holds at
+            # least one table. Filters foreign directories that merely live
+            # under the root prefix (e.g. backup manifests).
+            return sorted(n for n in names if self.list_container_tables(n))
+        base = Path(self.base_uri)
+        if not base.exists():
+            return []
+        return sorted(
+            p.name for p in base.iterdir()
+            if p.is_dir() and not p.name.endswith(".lance")
+            and any(c.is_dir() and c.name.endswith(".lance") for c in p.iterdir())
+        )
 
     def list_datasets(self) -> list[str]:
         """List all dataset names.

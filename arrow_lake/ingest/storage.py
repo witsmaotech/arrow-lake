@@ -450,13 +450,14 @@ class LanceStorageManager(
         db = self._get_db()
         return db.open_table(name)
 
-    def open_dataset(self, dataset_name: str) -> Any:
+    def open_dataset(self, dataset_name: str, *, table: str | None = None) -> Any:
         """Open a Lance dataset by name via lancedb.
 
         Public wrapper around _open_lance for use by query bridges.
 
         Args:
             dataset_name: Dataset name.
+            table: Optional table name within a container dataset (DR14).
 
         Returns:
             LanceDB Table object.
@@ -464,7 +465,10 @@ class LanceStorageManager(
         Raises:
             StorageError: If dataset cannot be opened.
         """
-        return self._open_lance(self._get_dataset_path(dataset_name))
+        return self._open_lance(
+            self._get_dataset_path(dataset_name, table),
+            container=dataset_name if table else None, table=table,
+        )
 
     def open_dataset_versioned(self, dataset_name: str, version: int) -> Any:
         """Open a Lance dataset at a specific version.

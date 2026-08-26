@@ -53,7 +53,7 @@ from arrow_lake.api.models.dataset import (
     UploadResponse,
 )
 from arrow_lake.api.utils import ingest_executor, run_sync
-from arrow_lake.exceptions import CatalogError, ErrorCode
+from arrow_lake.exceptions import CatalogError, ErrorCode, QueryError
 from arrow_lake._system_tables import is_internal_table, is_system_table
 
 router = APIRouter(prefix="/api/v1/datasets", tags=["datasets"])
@@ -61,6 +61,8 @@ router = APIRouter(prefix="/api/v1/datasets", tags=["datasets"])
 _INGEST_TIMEOUT = 600
 _ADMIN_TIMEOUT = 60
 _DOWNLOAD_WORKERS = 4
+# DR14: container table names (same rule as AsyncIngestRequest.table).
+_TABLE_NAME_PATTERN = r"^[a-zA-Z_][a-zA-Z0-9_-]*$"
 # Total budget for a blob-download batch. One slow/hung download (boto3 default
 # retries amplify a flaky MinIO) must not stall the whole ingest; boto3's
 # per-call BotoConfig timeout bounds each download, this bounds the aggregate.
@@ -768,6 +770,7 @@ async def list_datasets(
             has_kg=artifact_key_for(e.name) in ka_keys,
             size_bytes=e.size_bytes, created_at=e.created_at, updated_at=e.updated_at,
             description=desc_map.get(e.name),
+            kind=getattr(e, "kind", "structured"),
         )
         for e in visible
     ]
@@ -807,6 +810,16 @@ async def get_dataset(
     result = await run_sync(lake.catalog, timeout=_ADMIN_TIMEOUT, label="catalog")
     for entry in result.datasets:
         if entry.name == name:
+            kind = getattr(entry, "kind", "structured")
+            tables: list[str] | None = None
+            if kind == "container":
+                # W4.2: container detail carries the table list (each table's
+                # schema/rows go through the ?table= endpoints).
+                def _tables() -> list[str]:
+                    got = lake._get_storage().list_container_tables(name)
+                    return list(got) if isinstance(got, (list, tuple)) else []
+
+                tables = await run_sync(_tables, timeout=_ADMIN_TIMEOUT, label="tables")
             return DatasetInfo(
                 name=entry.name,
                 version=entry.version,
@@ -820,6 +833,8 @@ async def get_dataset(
                 created_at=entry.created_at,
                 updated_at=entry.updated_at,
                 description=_read_desc_map().get(entry.name),
+                kind=kind,
+                tables=tables,
             )
     raise CatalogError(
         error_code=ErrorCode.CATALOG_DATASET_NOT_FOUND,
@@ -831,6 +846,7 @@ async def get_dataset(
 async def get_dataset_schema(
     name: str = Path(..., pattern=_NAME_PATTERN),
     *,
+    table: str | None = Query(None, pattern=_TABLE_NAME_PATTERN),
     _auth: None = Depends(require_role(Role.VIEWER)),
     _acl_guard: None = Depends(authorize_dataset_read),
     lake=Depends(get_lake),
@@ -839,10 +855,27 @@ async def get_dataset_schema(
 
     Unlike inferring columns from a preview row, this reads the Lance schema
     directly — so it's correct for empty datasets and carries field types.
-    Field comments (stored in Arrow field metadata) are included.
+    Field comments (stored in Arrow field metadata) are included. ``table``
+    addresses a table inside a container dataset (DR14 W4.2); a bare
+    container name is rejected with 422 (D6 semantics, mirroring OLAP).
     """
+    if table is None:
+        def _probe() -> list[str]:
+            got = lake._get_storage().list_container_tables(name)
+            return list(got) if isinstance(got, (list, tuple)) else []
+
+        tables = await run_sync(_probe, timeout=_ADMIN_TIMEOUT, label="tables")
+        if tables:
+            raise QueryError(
+                error_code=ErrorCode.OLAP_AMBIGUOUS_DATASET,
+                message=(
+                    f"Dataset '{name}' is a multi-table container — "
+                    f"pass ?table=<name> (available: {', '.join(tables)})"
+                ),
+            )
+
     def _read() -> list[dict[str, Any]]:
-        schema = lake.open_dataset(name).schema
+        schema = lake.open_dataset(name, table=table).schema
         return _schema_field_dicts(schema)
 
     fields = await run_sync(_read, timeout=_ADMIN_TIMEOUT, label="schema")
