@@ -245,9 +245,10 @@ if (!ds) {
 
     // 1.55) 后台预热 OLAP/DuckDB session — 让用户实际滚到预览时为 warm(~1.3s)
     //       而非冷启动(~3.5s)。fire-and-forget(容器集预热选中表)
+    //       P0-7:容器表经 ?table= 寻址({name} 路由禁点号,后端组合二段名注册)
     if (detailInfo) {
       const warm = curTable ? `${ds}.${curTable}` : `"${String(ds).replace(/"/g, '""')}"`;
-      request("POST", `/datasets/${encodeURIComponent(ds)}/query/olap`,
+      request("POST", `/datasets/${encodeURIComponent(ds)}/query/olap${curTable ? `?table=${encodeURIComponent(curTable)}` : ""}`,
         { body: { sql: `SELECT COUNT(*) FROM ${warm}` } }
       ).catch(() => {});
     }
@@ -383,7 +384,7 @@ if (!ds) {
           // 搜索:跳过精确 COUNT(LIKE '%x%' 前导通配全扫,noaa ~7s),探索式分页
           pv.total = -1;
         } else if (detailInfo?.num_rows == null) {
-          const cr = await request("POST", `/datasets/${dsEnc}/query/olap`, { body: { sql: `SELECT COUNT(*) AS c FROM ${tbl}` } });
+          const cr = await request("POST", `/datasets/${dsEnc}/query/olap${curTable ? `?table=${encodeURIComponent(curTable)}` : ""}`, { body: { sql: `SELECT COUNT(*) AS c FROM ${tbl}` } });
           pv.total = Number(cr?.rows?.[0]?.c ?? 0);
         } else {
           // 无搜索 → 复用元数据行数,跳过全表 COUNT(*)
@@ -393,7 +394,7 @@ if (!ds) {
         const projCols = (schemaFields.length
           ? schemaFields.filter(f => !/embedding/i.test(f.name)).map(f => `"${String(f.name).replace(/"/g, '""')}"`).join(",")
           : "*") || "*";
-        const res = await request("POST", `/datasets/${dsEnc}/query/olap`, { body: { sql: `SELECT ${projCols} FROM ${tbl} ${where} LIMIT ${pv.size} OFFSET ${offset}` } });
+        const res = await request("POST", `/datasets/${dsEnc}/query/olap${curTable ? `?table=${encodeURIComponent(curTable)}` : ""}`, { body: { sql: `SELECT ${projCols} FROM ${tbl} ${where} LIMIT ${pv.size} OFFSET ${offset}` } });
         const rows = res?.rows || [];
         if (pv.total === -1) {
           // 探索式:满页假定还有下一页;不满 → 末页

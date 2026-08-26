@@ -159,3 +159,20 @@ class TestSingleTableZeroRegression:
         wider = T3.append_column("c", pa.array([True, False, True]))
         mgr.append_dataset("gas_net", wider, table="segments")
         assert "c" in mgr.read_dataset("gas_net", table="segments").column_names
+
+
+class TestListContainersWithTables:
+    """P1-6 (review 2026-08-26): one enumeration pass returns {name: tables}
+    — catalog and Gravitino sync share it instead of re-querying
+    list_container_tables per container."""
+
+    def test_returns_name_to_tables_map(self, mgr: LanceStorageManager) -> None:
+        mgr.create_dataset("gas_net", T3, table="segments")
+        mgr.create_dataset("gas_net", T2, table="stations")
+        mgr.create_dataset("plain_ds", T3)
+        result = mgr.list_containers_with_tables()
+        assert result == {"gas_net": ["segments", "stations"]}
+
+    def test_names_only_view_matches_keys(self, mgr: LanceStorageManager) -> None:
+        mgr.create_dataset("gas_net", T3, table="segments")
+        assert mgr.list_containers() == list(mgr.list_containers_with_tables())

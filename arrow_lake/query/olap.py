@@ -25,6 +25,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import re
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -57,6 +58,11 @@ logger = logging.getLogger(__name__)
 # Dedupe the vector-override-ignored warning to once per (worker, dataset) so a
 # misconfigured high-traffic vector dataset doesn't spam the log every query.
 _warned_vector_override: set[str] = set()
+
+# P1-5 (review 2026-08-26): TTL for the bare-container guard's negative
+# cache ("this dataset is NOT a container") — bounded staleness traded for
+# removing one remote LIST from every plain-dataset query.
+_PLAIN_CACHE_TTL_SECONDS = 30.0
 
 
 @dataclass(frozen=True)
@@ -119,6 +125,10 @@ class OlapSearchBridge:
         # v1.10.4: per-dataset native-scan breaker (bridge is a cached singleton,
         # so one shared breaker spans all queries). Fail-open — constructed even
         # when Redis is absent (the lazy client returns None → no tripping).
+        # P1-5: negative cache for _reject_bare_container — {ds: monotonic}.
+        # Dict ops are GIL-atomic; worst case is a duplicate LIST, never a
+        # wrong 422 (positive results are never cached).
+        self._plain_cache: dict[str, float] = {}
         self._breaker = LanceScanBreaker(
             threshold=self._config.lance_breaker_trip_threshold,
             window_s=self._config.lance_breaker_window_seconds,
@@ -195,7 +205,10 @@ class OlapSearchBridge:
                     table=source_table,
                 )
             else:
-                source = self._storage.read_dataset(source_ds, table=source_table)
+                source = (
+                    self._storage.read_dataset(source_ds, table=source_table)
+                    if source_table is not None else self._storage.read_dataset(source_ds)
+                )
         except (StorageError, OSError) as exc:
             raise QueryError(
                 error_code=ErrorCode.OLAP_QUERY_FAILED,
@@ -210,19 +223,24 @@ class OlapSearchBridge:
             self._register_dataset(conn, dataset_name, source)
             for name, extra_table in (tables or {}).items():
                 conn.register(name, extra_table)
+            try:
 
-            def _exec_query() -> Any:
-                reader = conn.execute(limited_sql).arrow()
-                # DuckDB may return RecordBatchReader — convert to Table
-                return reader.read_all() if hasattr(reader, "read_all") else reader
+                def _exec_query() -> Any:
+                    reader = conn.execute(limited_sql).arrow()
+                    # DuckDB may return RecordBatchReader — convert to Table
+                    return reader.read_all() if hasattr(reader, "read_all") else reader
 
-            result_table = run_duckdb_interruptible(
-                conn,
-                _exec_query,
-                timeout=self._config.query_timeout_seconds,
-                label=f"olap_query:{dataset_name}",
-                on_uninterruptible=self._on_uninterruptible_tripper(session, dataset_name),
-            )
+                result_table = run_duckdb_interruptible(
+                    conn,
+                    _exec_query,
+                    timeout=self._config.query_timeout_seconds,
+                    label=f"olap_query:{dataset_name}",
+                    on_uninterruptible=self._on_uninterruptible_tripper(session, dataset_name),
+                )
+            finally:
+                # P0-6: pooled connections must return clean — a surviving
+                # registration is readable by the next user of this session.
+                self._cleanup_registration(conn, dataset_name, list((tables or {})))
 
         # Store in cache
         if self._cache is not None:
@@ -275,6 +293,12 @@ class OlapSearchBridge:
                 message="DuckLake materialization is not enabled (ducklake_enabled=False)",
             )
 
+        # Two-part convergence (P1-1, review 2026-08-26): bare containers are
+        # ambiguous; a two-part ref reads that container table.
+        source_ds, source_table = _split_two_part(dataset_name)
+        if source_table is None:
+            self._reject_bare_container(dataset_name)
+
         if view_name is None:
             view_name = f"_materialized_{dataset_name}"
 
@@ -287,7 +311,10 @@ class OlapSearchBridge:
 
         # Read dataset
         try:
-            source = self._storage.read_dataset(dataset_name)
+            source = (
+                self._storage.read_dataset(source_ds, table=source_table)
+                if source_table is not None else self._storage.read_dataset(source_ds)
+            )
         except (StorageError, OSError) as exc:
             raise QueryError(
                 error_code=ErrorCode.OLAP_QUERY_FAILED,
@@ -296,10 +323,13 @@ class OlapSearchBridge:
 
         with self._managed_session(load_ducklake=True) as conn:
             self._register_dataset(conn, dataset_name, source)
-            return workspace.materialize(
-                conn, sql, view_name,
-                index_columns=self._config.ducklake_index_columns or None,
-            )
+            try:
+                return workspace.materialize(
+                    conn, sql, view_name,
+                    index_columns=self._config.ducklake_index_columns or None,
+                )
+            finally:
+                self._cleanup_registration(conn, dataset_name)
 
     def cleanup_materialized(self, ttl_days: int | None = None) -> list[str]:
         """Drop expired materialized views.
@@ -412,6 +442,11 @@ class OlapSearchBridge:
                 message="start_node must not be None",
             )
 
+        # Two-part convergence (P1-1): edges may live in a container table.
+        edges_ds, edges_table = _split_two_part(edges_dataset)
+        if edges_table is None:
+            self._reject_bare_container(edges_dataset)
+
         # Bound max_depth to prevent runaway recursive expansion.
         clamped_depth = max(1, min(int(max_depth), 10))
         if clamped_depth != max_depth:
@@ -458,7 +493,10 @@ class OlapSearchBridge:
         )
 
         try:
-            source = self._storage.read_dataset(edges_dataset)
+            source = (
+                self._storage.read_dataset(edges_ds, table=edges_table)
+                if edges_table is not None else self._storage.read_dataset(edges_ds)
+            )
         except (StorageError, OSError) as exc:
             raise QueryError(
                 error_code=ErrorCode.OLAP_QUERY_FAILED,
@@ -486,6 +524,8 @@ class OlapSearchBridge:
                     error_code=ErrorCode.OLAP_QUERY_FAILED,
                     message=f"Graph traversal failed on '{edges_dataset}': {exc}",
                 ) from exc
+            finally:
+                self._cleanup_registration(conn, edges_dataset)
 
         return OlapQueryResult(
             table=result_table,
@@ -551,29 +591,39 @@ class OlapSearchBridge:
             # Materialize to a temp TABLE — PRAGMA create_fts_index needs a
             # base table, not the registered Lance view.
             self._register_dataset(conn, dataset_name, source)
-            conn.execute(f"DROP TABLE IF EXISTS {fts_table};")  # nosec B608
-            conn.execute(
-                f"CREATE TEMP TABLE {fts_table} AS SELECT * FROM {dataset_name};"  # nosec B608
-            )
-            conn.execute(
-                f"PRAGMA create_fts_index('{fts_table}', 'id', '{text_column}', overwrite=1);"
-            )
-            sql = (
-                f"SELECT *, fts_main_{fts_table}.match_bm25(id, $1) AS score "
-                f"FROM {fts_table} WHERE score IS NOT NULL "
-                f"ORDER BY score DESC LIMIT {max(1, int(top_k))}"
-            )
             try:
-                result_reader = conn.execute(sql, [query]).arrow()
-            except duckdb.Error as exc:
-                raise QueryError(
-                    error_code=ErrorCode.OLAP_QUERY_FAILED,
-                    message=f"DuckDB fts search failed: {exc}",
-                ) from exc
-            if hasattr(result_reader, "read_all"):
-                result_table = result_reader.read_all()
-            else:
-                result_table = result_reader
+                conn.execute(f"DROP TABLE IF EXISTS {fts_table};")  # nosec B608
+                conn.execute(
+                    f"CREATE TEMP TABLE {fts_table} AS SELECT * FROM {dataset_name};"  # nosec B608
+                )
+                conn.execute(
+                    f"PRAGMA create_fts_index('{fts_table}', 'id', '{text_column}', overwrite=1);"
+                )
+                sql = (
+                    f"SELECT *, fts_main_{fts_table}.match_bm25(id, $1) AS score "
+                    f"FROM {fts_table} WHERE score IS NOT NULL "
+                    f"ORDER BY score DESC LIMIT {max(1, int(top_k))}"
+                )
+                try:
+                    result_reader = conn.execute(sql, [query]).arrow()
+                except duckdb.Error as exc:
+                    raise QueryError(
+                        error_code=ErrorCode.OLAP_QUERY_FAILED,
+                        message=f"DuckDB fts search failed: {exc}",
+                    ) from exc
+                if hasattr(result_reader, "read_all"):
+                    result_table = result_reader.read_all()
+                else:
+                    result_table = result_reader
+            finally:
+                # P0-6: full-text base table + fts index structures + the
+                # registration are per-query; the pooled connection must
+                # return clean.
+                with contextlib.suppress(duckdb.Error):
+                    conn.execute(f"DROP TABLE IF EXISTS {fts_table};")  # nosec B608
+                with contextlib.suppress(duckdb.Error):
+                    conn.execute(f"DROP SCHEMA IF EXISTS fts_main_{fts_table} CASCADE")  # nosec B608
+                self._cleanup_registration(conn, dataset_name)
 
         return OlapQueryResult(
             table=result_table,
@@ -603,7 +653,10 @@ class OlapSearchBridge:
             self._reject_bare_container(dataset_name)
 
         try:
-            table = self._storage.read_dataset(source_ds, table=source_table)
+            table = (
+                self._storage.read_dataset(source_ds, table=source_table)
+                if source_table is not None else self._storage.read_dataset(source_ds)
+            )
         except (StorageError, OSError) as exc:
             raise QueryError(
                 error_code=ErrorCode.OLAP_QUERY_FAILED,
@@ -612,9 +665,12 @@ class OlapSearchBridge:
 
         with self._managed_session() as conn:
             self._register_dataset(conn, dataset_name, table)
-            result = conn.execute(f"EXPLAIN {sql}").fetchall()
-            explain_lines = [row[0] for row in result if row]
-            return "\n".join(explain_lines)
+            try:
+                result = conn.execute(f"EXPLAIN {sql}").fetchall()
+                explain_lines = [row[0] for row in result if row]
+                return "\n".join(explain_lines)
+            finally:
+                self._cleanup_registration(conn, dataset_name)
 
     def explain_analyze(self, dataset_name: str, sql: str) -> str:
         """Return DuckDB EXPLAIN ANALYZE output with actual execution stats.
@@ -641,8 +697,16 @@ class OlapSearchBridge:
         _validate_dataset_name(dataset_name)
         self._validate_sql(sql)
 
+        # Two-part convergence (P1-1, review 2026-08-26).
+        source_ds, source_table = _split_two_part(dataset_name)
+        if source_table is None:
+            self._reject_bare_container(dataset_name)
+
         try:
-            table = self._storage.read_dataset(dataset_name)
+            table = (
+                self._storage.read_dataset(source_ds, table=source_table)
+                if source_table is not None else self._storage.read_dataset(source_ds)
+            )
         except (StorageError, OSError) as exc:
             raise QueryError(
                 error_code=ErrorCode.OLAP_QUERY_FAILED,
@@ -651,17 +715,20 @@ class OlapSearchBridge:
 
         with self._managed_session() as conn:
             self._register_dataset(conn, dataset_name, table)
-            result = conn.execute(f"EXPLAIN ANALYZE {sql}").fetchall()
-            explain_lines = [row[0] for row in result if row]
+            try:
+                result = conn.execute(f"EXPLAIN ANALYZE {sql}").fetchall()
+                explain_lines = [row[0] for row in result if row]
 
-            # Append profiling metrics when enabled
-            profiling_section = self._get_profiling_info(conn)
-            if profiling_section:
-                explain_lines.append("")
-                explain_lines.append("--- Profiling ---")
-                explain_lines.append(profiling_section)
+                # Append profiling metrics when enabled
+                profiling_section = self._get_profiling_info(conn)
+                if profiling_section:
+                    explain_lines.append("")
+                    explain_lines.append("--- Profiling ---")
+                    explain_lines.append(profiling_section)
 
-            return "\n".join(explain_lines)
+                return "\n".join(explain_lines)
+            finally:
+                self._cleanup_registration(conn, dataset_name)
 
     @staticmethod
     def _get_profiling_info(conn: duckdb.DuckDBPyConnection) -> str | None:
@@ -797,7 +864,18 @@ class OlapSearchBridge:
         ambiguous — 422 with the available tables (a configured
         ``default_table`` escape hatch lands with the console/API surface,
         W4). Plain single-table datasets pass through untouched.
+
+        P1-5 (review 2026-08-26): plain datasets are remembered in a
+        short-TTL NEGATIVE cache so the guard stops adding a remote LIST to
+        every query on the hot path (10-15% latency on MinIO). Staleness is
+        benign and bounded: for TTL seconds after a container is created,
+        a bare-name query fails at read_dataset (not-found) instead of the
+        ambiguous-name 422; two-part addressing is unaffected.
         """
+        now = time.monotonic()
+        cached = self._plain_cache.get(dataset_name)
+        if cached is not None and now - cached < _PLAIN_CACHE_TTL_SECONDS:
+            return
         try:
             tables = self._storage.list_container_tables(dataset_name)
         except Exception:  # noqa: BLE001 — detection must not 500
@@ -805,6 +883,7 @@ class OlapSearchBridge:
         # Require a REAL non-empty list: fakes/mocks return assorted truthy
         # objects (MagicMock, list_tables results) that would false-positive.
         if not isinstance(tables, (list, tuple)) or not tables:
+            self._plain_cache[dataset_name] = now
             return
         raise QueryError(
             error_code=ErrorCode.OLAP_AMBIGUOUS_DATASET,
@@ -814,6 +893,47 @@ class OlapSearchBridge:
                 f"(available: {', '.join(str(t) for t in tables)})"
             ),
         )
+
+    @staticmethod
+    def _registration_names(dataset_name: str) -> tuple[str, str | None, str | None]:
+        """Resolve (register_name, scan_ds, scan_table) for a dataset ref.
+
+        Two-part refs (W3.2) register under an internal flat name (adapter
+        identifier rules reject dots) plus a schema-qualified view.
+        """
+        if "." in dataset_name:
+            _ds, _, _tbl = dataset_name.partition(".")
+            return f"_al__{_ds}__{_tbl}", _ds, _tbl
+        return dataset_name, dataset_name, None
+
+    def _cleanup_registration(
+        self, conn: Any, dataset_name: str, extra_names: list[str] | None = None,
+    ) -> None:
+        """Undo one query's DuckDB registrations before the pooled connection
+        is returned (P0-6, review 2026-08-26).
+
+        ``_register_dataset`` leaves the arrow registration, the two-part
+        schema-qualified VIEW, and (for two-part refs) a whole SCHEMA on the
+        connection. Sessions are pooled, so a later user of the same
+        connection could reference those objects by name and read another
+        user's data (verified live: a registered ``secret`` table was fully
+        readable by an unrelated subsequent query). Queries now unregister
+        everything they registered in a finally block — best-effort, never
+        raises.
+        """
+        register_name, _ds, _tbl = self._registration_names(dataset_name)
+        with contextlib.suppress(duckdb.Error):
+            conn.unregister(register_name)
+        if _tbl is not None:
+            with contextlib.suppress(duckdb.Error):
+                conn.execute(f'DROP VIEW IF EXISTS "{_ds}"."{_tbl}"')  # nosec B608
+            # Schema drop only succeeds when empty; a container's other
+            # tables (or a concurrently-registered sibling) suppress-fail.
+            with contextlib.suppress(duckdb.Error):
+                conn.execute(f'DROP SCHEMA IF EXISTS "{_ds}"')  # nosec B608
+        for name in extra_names or ():
+            with contextlib.suppress(duckdb.Error):
+                conn.unregister(name)
 
     def _register_dataset(self, conn: Any, dataset_name: str, source: Any) -> None:
         """Register a Lance dataset in DuckDB, preferring native lance scan.
@@ -837,13 +957,9 @@ class OlapSearchBridge:
         # so `FROM ds.table` resolves natively (probe-verified: DuckDB
         # register() rejects dotted names; CREATE SCHEMA + view works).
         two_part = "." in dataset_name
-        if two_part:
-            _ds, _, _tbl = dataset_name.partition(".")
-            register_name = f"_al__{_ds}__{_tbl}"
-            scan_ds, scan_table = _ds, _tbl
-        else:
-            register_name = dataset_name
-            scan_ds, scan_table = dataset_name, None
+        register_name, scan_ds, scan_table = self._registration_names(dataset_name)
+        _ds = scan_ds if two_part else None
+        _tbl = scan_table if two_part else None
 
         def _expose_two_part() -> None:
             if two_part:

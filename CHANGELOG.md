@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.11.0.1] - 2026-08-26 — 数据集契约 + 多表容器(DR13/DR14)· 发版前后 review 全清
+
+### Added
+- **契约核心(W2)**:`arrow_lake/contract/` 纯逻辑模块 —— schema(表节模型/引用三形态归一/pattern 双编译/分级 reject-warn)/ compiler(列规则→DuckDB TRUE=违规 谓词;NULL 语义=域检查放行、空值归 required)+ V012 `dataset_contracts`(版本链 sha1 幂等 + 结构化 diff)+ ContractStore。
+- **契约门禁(W3.1)**:quality gate 第四 stage `contract_check` —— 内存 DuckDB 评估编译行约束,按写入目标(`table_name`/legacy 数据集节)过滤;shadow 计数/死信、enforce 拒行;指标 `contract_check_total{dataset,result}`(pass/reject/skip/eval_error)。
+- **契约管理面(W4.1)**:`/api/v1/contracts`(ADMIN;列表/最新/版本链/详情/diff/PUT 保存 parse 校验 422)+ console `contracts.html`(YAML 编辑 + 版本链 + diff)。
+- **基线脚本(W5.1)**:`scripts/contract_gate_baseline.py` 两口径(无契约 vs 有契约)离线评估,切 enforce 决策门槛 reject<10%;`--from-store`/`--contract`/`--max-rows` 护栏 + partial 标记 + 跳过节强制 false(容器形契约打单表集不再假绿灯)。
+- **多表容器地基(W1)**:存储两段化 `{base}/{ds}/{table}.lance`(lancedb 禁 `/` 表名 → per-container 连接缓存,256 LRU);CRUD 全链 `table=` 参数;V011 `container_registry` + CatalogStore 容器方法(单条 UPSERT json1 原子合并);身份冲突双向 guard(D3:单表/容器互斥)。
+- **OLAP 二段名(W3.2/P0-7)**:`FROM ds.table` 经内部平名 `_al__ds__tbl` + schema 限定视图解析;REST `?table=` 参数(query/olap + query/metadata;`{name}` 路由 pattern 继续拒绝点号);裸容器名 422 `OLAP_AMBIGUOUS_DATASET`(D6);materialize/graph_query/explain_analyze 收敛同一寻址。
+- **console 容器视图(W4.2)**:数据集页 kind 分家(data/docs 两页 + 容器徽标)/dataset-detail 容器表 pills(schema?table=/预览/COUNT 带 ?table=)/摄入页拆 ingest-data(9 结构化源+容器表名)+ ingest-docs/Worksheet 容器表下拉。
+- **Gravitino 容器映射(W4.3)**:dataset→schema、table→table(元数据镜像幽灵路径约定;非 ASCII 列名过滤);备份容器化(W4.4:双前缀探测)+ restore 按 manifest 识别容器落位(P0-8)。
+
+### Security
+- **发版前四维 review(9 P0 + 10 P1)当日清零**(报告 `docs_offline/v1.11.0.1-review-2026-08-26.md` §〇/§〇b):
+  - 表级 ACL deny-read 闭环(P0-5):admin ACL/deny 路由放行二段名;`?table=` 参与 `authorize_dataset_read`(并修复该分支 `get_acl` 漏传 role 的预存断裂);`enforce_sql_acl` 对 SQL 引用的每张表 deny-read 检查;内存 deny 字典 casefold。
+  - 池化 DuckDB 跨用户注册读封堵(P0-6):全部查询入口 finally `_cleanup_registration`(unregister + DROP 二段视图/schema + FTS 临时结构),真连接复测泄漏阻断。
+  - 门禁失效修复(P0-1/2/3/4 + 遗留):契约缺列逐条 skip 不再整段放行;enforce 评估异常 fail-closed(eval_error 死信);SQL/ClickHouse/Kafka/Iceberg/Delta 五源统一 `_gated_write_from_dataframe` 过门禁;documents 带 `table` 显式 422。
+  - 契约 YAML 节点/深度双帽 loader(深嵌套 RecursionError→干净 422;PyYAML alias 引用共享无放大,实证修正 review 前提)。
+  - `restore_dataset`/`write_lance_from_dataframe` 补 D3 身份冲突 guard(P1-2);restore 身份冲突拒绝(P0-8)。
+
+### Performance
+- gate stage 4 单次物化(P1-7:shadow 只物化拒收行、enforce 单扫 Arrow 拆分);`_reject_bare_container` 30s 负缓存 + `_container_dbs` LRU 帽(P1-5);`list_containers_with_tables()` 单趟枚举 catalog/gravitino 共用(P1-6);upsert 条件传参修复存量回归(P0-9)。
+
 ## [1.11.0] - 2026-08-25 — MS1 本体与规则地基
 
 ### Added

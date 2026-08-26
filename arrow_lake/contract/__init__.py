@@ -1,5 +1,6 @@
 """Dataset contract core (DR13/DR14, v1.11.0.1): schema + SQL compiler."""
 
+from arrow_lake.contract.compiler import compile_contract
 from arrow_lake.contract.schema import (
     ColumnRule,
     DatasetContract,

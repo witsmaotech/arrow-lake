@@ -182,7 +182,39 @@ class CatalogStore:
             )
 
     def add_container_table(self, dataset: str, table: str) -> None:
-        """Record one table in a container's declared list (idempotent)."""
+        """Record one table in a container's declared list (idempotent).
+
+        P1-4 (review 2026-08-26, D8): the merge happens INSIDE one UPSERT
+        statement (SQLite json1) — the previous get→append→set read-modify-
+        write raced across workers, so two concurrent ingests into the same
+        NEW container silently dropped one table's registration (control-
+        plane identity drift). Falls back to the locked read-modify-write
+        when json1 is unavailable.
+        """
+        now = datetime.now(UTC).isoformat()
+        payload = _json.dumps([table])
+        with self._db.with_write() as db:
+            try:
+                db.execute(
+                    "INSERT INTO container_registry (dataset, tables_json, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?) "
+                    "ON CONFLICT(dataset) DO UPDATE SET "
+                    "tables_json = ("
+                    "  SELECT json_group_array(j.value) FROM ("
+                    "    SELECT DISTINCT value FROM ("
+                    "      SELECT value FROM json_each(container_registry.tables_json) "
+                    "      UNION ALL SELECT value FROM json_each(excluded.tables_json)"
+                    "    ) ORDER BY value"
+                    "  ) j"
+                    "), updated_at = excluded.updated_at",
+                    (dataset, payload, now, now),
+                )
+                return
+            except Exception:  # noqa: BLE001 — json1 missing: locked fallback
+                logger.warning(
+                    "catalog_add_table_json1_unavailable",
+                    dataset=dataset, table=table, exc_info=True,
+                )
         info = self.get_container(dataset)
         if info is None:
             self.register_container(dataset, [table])

@@ -132,6 +132,7 @@ def enforce_sql_acl(
     *,
     get_acl: Callable[[str], DatasetACL | None],
     dataset: str | None = None,
+    check_read: Callable[[str], bool] | None = None,
 ) -> str:
     """Return ACL-enforced SQL, or raise :class:`AclSqlViolation`.
 
@@ -141,8 +142,17 @@ def enforce_sql_acl(
             requester's role (``lambda t: checker.get_acl(t, role)``);
             tables with no ACL are untouched.
         dataset: Primary dataset of the endpoint (for error messages).
+        check_read: P0-5/P0-6 (review 2026-08-26): callable mapping a
+            referenced table key → bool read access. When given, EVERY table
+            the SQL references is deny-checked (deny list / denied_actions /
+            layered table ACL) — closes both the table-level deny-read gap
+            (keys like ``ds.table`` were never consulted) and the pooled-
+            session stale-registration leak (a deny on the referenced name
+            now rejects before execution instead of relying on the binder).
 
     Enforcement:
+        0. Read deny: every referenced table must be readable when
+           ``check_read`` is provided (fail-closed per table).
         1. Parse (duckdb dialect). Restricted query that cannot be parsed
            → rejected (fail-closed).
         2. Qualify columns so every reference is bound to its source table.
@@ -163,6 +173,13 @@ def enforce_sql_acl(
     # identifiers to lowercase — mixed-case datasets escaped everything.
     pre = _parse_or_fail(sql)
     referenced = {_table_key(t) for t in pre.find_all(exp.Table)}
+    if check_read is not None:
+        for key in sorted(referenced):
+            if not check_read(key):
+                raise AclSqlViolation(
+                    f"No read access to table '{key}' — reference rejected by "
+                    "dataset ACL (deny-read)"
+                )
     acls: dict[str, DatasetACL] = {}
     visible_lower: dict[str, frozenset[str]] = {}
     for key in referenced:

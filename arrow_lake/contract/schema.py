@@ -275,11 +275,62 @@ class DatasetContract(BaseModel):
 # Parsing (new container form + legacy singular auto-wrap)
 # --------------------------------------------------------------------------- #
 
+class _CappedLoader(yaml.SafeLoader):
+    """Guarded loader for ADMIN-submitted contract YAML (P1-8, review
+    2026-08-26).
+
+    Empirically checked: PyYAML aliases are REFERENCE-shared (a
+    billion-laughs payload of 182 bytes peaks at ~23 KB — no amplification),
+    so the real DoS vectors here are DEEP NESTING (``[[[[...`` →
+    RecursionError → 500) and sheer node count. Both get hard caps that
+    raise a clean ``yaml.YAMLError`` (mapped to 422 by parse_contract)
+    instead of crashing the worker.
+    """
+
+    MAX_NODES = 50_000
+    MAX_DEPTH = 200
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._cap_nodes = 0
+        self._cap_depth = 0
+
+    def compose_node(self, parent: Any, index: Any) -> Any:
+        self._cap_depth += 1
+        try:
+            if self._cap_depth > self.MAX_DEPTH:
+                raise yaml.YAMLError(
+                    f"contract YAML nesting exceeds {self.MAX_DEPTH} levels"
+                )
+            self._cap_nodes += 1
+            if self._cap_nodes > self.MAX_NODES:
+                raise yaml.YAMLError(
+                    f"contract YAML exceeds {self.MAX_NODES} nodes"
+                )
+            return super().compose_node(parent, index)
+        finally:
+            self._cap_depth -= 1
+
+
+def _contract_yaml_load(text: str) -> Any:
+    """safe_load with node/depth caps; DoS-shaped input → ValueError (422).
+
+    ``yaml.load(text, Loader=...)`` with a ``SafeLoader`` subclass keeps the
+    SAFE constructor set (``!!python/object`` stays rejected, verified) —
+    the custom loader only overrides node COMPOSITION for the caps."""
+    try:
+        return yaml.load(text, Loader=_CappedLoader)
+    except yaml.YAMLError as exc:
+        raise ValueError(f"contract YAML rejected: {exc}") from exc
+    except RecursionError as exc:  # belt-and-braces below the depth cap
+        raise ValueError("contract YAML rejected: nesting too deep") from exc
+
+
 def parse_contract(text: str) -> DatasetContract:
     """Parse contract YAML. Accepts the container form (``tables:``) and the
     legacy single-table form (top-level ``ontology:``), auto-wrapped into a
     default section named after the dataset."""
-    raw = yaml.safe_load(text)
+    raw = _contract_yaml_load(text)
     if not isinstance(raw, dict):
         raise ValueError("contract must be a YAML mapping")
     dataset = raw.get("dataset") or raw.get("name")

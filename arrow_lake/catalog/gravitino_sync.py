@@ -26,11 +26,13 @@ def _load_local_entries(lake: Any) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = [{"name": n, "location": ""} for n in names]
     # Container mapping (best-effort — a storage hiccup must not kill the
     # single-table sync): dataset→schema, table→table (D7).
+    # P1-6 (review 2026-08-26): one shared enumeration returns {name: tables};
+    # the per-container list_container_tables re-query is gone.
     try:
         storage = lake._get_storage()
-        for cname in storage.list_containers():
+        for cname, tnames in storage.list_containers_with_tables().items():
             tables: dict[str, Any] = {}
-            for tname in storage.list_container_tables(cname):
+            for tname in tnames:
                 try:
                     tables[tname] = storage.open_dataset(cname, table=tname).schema
                 except Exception:  # noqa: BLE001 — skip unreadable table

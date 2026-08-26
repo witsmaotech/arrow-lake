@@ -18,7 +18,43 @@ class _SourceIngestMixin:
     - ``_detect_file_type()`` class method
     - ``_read_bytes()`` static method
     - ``_write_table()`` method
+    - ``_quality_gate`` (IngestionQualityGate | None — the Ingestor's gate;
+      P0-2/遗留-1 review 2026-08-26: every DataFrame-source write passes it)
     """
+
+    def _gated_write_from_dataframe(
+        self, dataset_name: str, df: Any, *, target_table: str | None = None,
+    ) -> int:
+        """Materialize a Daft DataFrame, run the quality gate, write via
+        ``create_dataset``; returns the row count actually written.
+
+        P0-2 + 遗留-1 (review 2026-08-26): SQL/ClickHouse/Kafka/Iceberg/
+        DeltaLake sources used to write the Daft DataFrame directly via
+        ``write_lance_from_dataframe``, bypassing the quality gate (contract
+        + quality + dead-lettering) entirely. All of them now flow through
+        this single gated path.
+        """
+        batch = df.to_arrow()
+        if self._quality_gate is not None:
+            gated, result = self._quality_gate.check(
+                batch, dataset_name=dataset_name, table_name=target_table,
+            )
+            if result.rejected > 0:
+                import structlog
+
+                structlog.get_logger(__name__).info(
+                    "quality_gate.rejections",
+                    dataset=dataset_name,
+                    mode=getattr(self._quality_gate, "mode", "enforce"),
+                    rejected=result.rejected,
+                    reasons=list(result.rejection_reasons),
+                )
+            # Shadow counts/logs but never drops rows; only enforce swaps
+            # the gated (filtered) batch in (same contract as _write_table).
+            if getattr(self._quality_gate, "mode", "enforce") == "enforce":
+                batch = gated
+        self._manager.create_dataset(dataset_name, batch, table=target_table)
+        return batch.num_rows
 
     def ingest_sql(
         self,
@@ -31,7 +67,13 @@ class _SourceIngestMixin:
         transforms: list[Any] | None = None,
         target_table: str | None = None,
     ) -> Any:
-        """Ingest data from a SQL database query (optionally into a container table)."""
+        """Ingest data from a SQL database query (optionally into a container table).
+
+        P0-2 (review 2026-08-26): the batch is materialized to Arrow and run
+        through the quality gate (contract + quality + dead-letter) BEFORE the
+        write — this path previously wrote the Daft DataFrame directly and
+        bypassed gating entirely.
+        """
         from arrow_lake.ingest.connectors_sql import SqlConnector
         from arrow_lake.ingest.ingestor import IngestionSource
 
@@ -44,9 +86,8 @@ class _SourceIngestMixin:
         if transforms:
             for t in transforms:
                 df = t(df)
-        row_count = df.count().to_arrow().column(0)[0].as_py()
-        self._manager.write_lance_from_dataframe(
-            dataset_name, df, mode="create", table=target_table,
+        row_count = self._gated_write_from_dataframe(
+            dataset_name, df, target_table=target_table,
         )
 
         # Best-effort column-comment capture (MySQL/PG catalog). Daft wrote the
@@ -100,8 +141,7 @@ class _SourceIngestMixin:
             for t in transforms:
                 df = t(df)
 
-        row_count = df.count().to_arrow().column(0)[0].as_py()
-        self._manager.write_lance_from_dataframe(dataset_name, df, mode="create")
+        row_count = self._gated_write_from_dataframe(dataset_name, df)
 
         topic_str = topics if isinstance(topics, str) else ",".join(topics)
         sources = [IngestionSource(
@@ -127,8 +167,7 @@ class _SourceIngestMixin:
         if transforms:
             for t in transforms:
                 df = t(df)
-        row_count = df.count().to_arrow().column(0)[0].as_py()
-        self._manager.write_lance_from_dataframe(dataset_name, df, mode="create")
+        row_count = self._gated_write_from_dataframe(dataset_name, df)
         return self._build_report([IngestionSource(
             path=f"iceberg:{table_uri}", row_count=row_count, file_count=1,
         )])
@@ -150,8 +189,7 @@ class _SourceIngestMixin:
         if transforms:
             for t in transforms:
                 df = t(df)
-        row_count = df.count().to_arrow().column(0)[0].as_py()
-        self._manager.write_lance_from_dataframe(dataset_name, df, mode="create")
+        row_count = self._gated_write_from_dataframe(dataset_name, df)
         return self._build_report([IngestionSource(
             path=f"delta:{table_uri}", row_count=row_count, file_count=1,
         )])

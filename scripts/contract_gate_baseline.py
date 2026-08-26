@@ -14,9 +14,18 @@
 与摄入门禁的语义差:门禁只校验本次批次;本脚本离线扫**存量全量行**,
 评估"若 enforce,既有数据里有多少行会被拒"——用于订正/重建决策。
 
+⚠️ 内存警示(P1-10,review 2026-08-26):评估按**全量物化**读表 —— 大表
+集(如 ontime 107M 行)必然 OOM。用 ``--max-rows N`` 闸截断扫描量,报告
+会带 ``partial`` 标记(reject 率只代表前 N 行样本,不能直接作切 enforce
+依据)。
+
+⚠️ 跳过节(P1-10):契约节在目标数据集上无对应表(容器形契约打单表集,
+或容器缺表)时标记 no_data/skipped —— **存在跳过节时 enforce_ready 恒为
+false**(历史上这些节不计入决策,曾对未评估的契约亮绿灯)。
+
 用法(容器,契约已入库):
   docker exec arrow-lake-api-1 python3 /app/scripts/contract_gate_baseline.py \
-      --dataset gas_network --from-store
+      --dataset gas_network --from-store [--max-rows 1000000]
 
 用法(草案契约,宿主本地湖):
   python3 scripts/contract_gate_baseline.py --dataset ds --contract draft.yaml \
@@ -215,12 +224,22 @@ def _eval_references(
 
 def run_baseline(
     dataset: str, contract_yaml: str, storage: Any, *, sample_limit: int = 5,
+    max_rows: int | None = None,
 ) -> dict[str, Any]:
-    """Two-caliber offline evaluation of one contract against stored rows."""
+    """Two-caliber offline evaluation of one contract against stored rows.
+
+    ``max_rows`` (P1-10) caps each table's materialized scan — the report is
+    then marked ``partial`` and its reject rate speaks only for the sampled
+    prefix. Skipped sections (no matching table) block enforce_ready."""
     import duckdb
 
     from arrow_lake.contract.compiler import compile_contract
     from arrow_lake.contract.schema import parse_contract
+
+    def _bounded(tbl: Any) -> Any:
+        if max_rows is not None and tbl.num_rows > max_rows:
+            return tbl.slice(0, max_rows)
+        return tbl
 
     contract = parse_contract(contract_yaml)
     bundle = compile_contract(contract)
@@ -240,7 +259,7 @@ def run_baseline(
                         "constraints": [], "reject_rows": 0, "reject_rate": 0.0,
                     }
                     continue
-                tbl = storage.read_dataset(dataset, table=name)
+                tbl = _bounded(storage.read_dataset(dataset, table=name))
                 relation = f"sec_{name}"
                 con.register(relation, tbl)
                 loaded[name] = tbl
@@ -249,7 +268,7 @@ def run_baseline(
             uncontracted = sorted(set(container_tables) - set(contract.tables))
         else:
             try:
-                tbl = storage.read_dataset(dataset)
+                tbl = _bounded(storage.read_dataset(dataset))
             except Exception as exc:  # noqa: BLE001 — missing dataset etc.
                 return {"dataset": dataset, "error": f"cannot read dataset: {exc}"}
             # 门禁语义:单表集 section = 数据集名(legacy 自动包装的默认节)
@@ -276,9 +295,20 @@ def run_baseline(
     total_rows = sum(t["rows"] or 0 for t in tables_report.values())
     total_reject = sum(t["reject_rows"] for t in tables_report.values())
     rate = total_reject / max(total_rows, 1)
+    # P1-10: sections with no matching table were silently excluded from the
+    # decision — a container-shaped contract against a single-table set
+    # produced enforce_ready=true for constraints that never ran. Skipped
+    # sections now hard-block the green light.
+    skipped = sum(
+        1 for t in tables_report.values()
+        if t.get("note") in ("no_data", "skipped_not_container")
+    )
+    partial = max_rows is not None
     return {
         "dataset": dataset,
         "mode": mode,
+        "partial": partial,
+        "max_rows": max_rows,
         "tables": tables_report,
         "uncontracted_tables": uncontracted,
         "references": refs_report,
@@ -287,8 +317,15 @@ def run_baseline(
         "decision": {
             "reject_rate": round(rate, 4),
             "threshold": ENFORCE_THRESHOLD,
-            "enforce_ready": rate < ENFORCE_THRESHOLD,
-            "note": "引用完整性为信息级(门禁未接线引用约束),不计入 reject 率",
+            "skipped_sections": skipped,
+            "enforce_ready": rate < ENFORCE_THRESHOLD and skipped == 0 and not partial,
+            "note": (
+                "引用完整性为信息级(门禁未接线引用约束),不计入 reject 率"
+                + (f";{skipped} 个契约节无对应表未评估(enforce_ready 强制 false)"
+                   if skipped else "")
+                + (";样本截断口径(partial),不可直接作切 enforce 依据"
+                   if partial else "")
+            ),
         },
     }
 
@@ -331,6 +368,12 @@ def _print_report(report: dict[str, Any]) -> None:
     d = report["decision"]
     print(f"\n两口径: (a)无契约 reject=0  (b)有契约 reject="
           f"{report['calibers']['b_contract']}/{report['totals']['rows']}")
+    if report.get("partial"):
+        print(f"⚠️ partial 样本口径(--max-rows={report.get('max_rows')})"
+              f"——reject 率仅代表截断样本,不可直接作切 enforce 依据")
+    if d.get("skipped_sections"):
+        print(f"⚠️ {d['skipped_sections']} 个契约节无对应表未评估"
+              f"——enforce_ready 强制 false(先对齐契约 scope 与数据集形态)")
     verdict = "✅ 可切 enforce" if d["enforce_ready"] else \
         "❌ 暂缓 enforce(先订正数据或放宽契约)"
     print(f"总 reject 率 {d['reject_rate']:.2%}(门槛 <{d['threshold']:.0%})"
@@ -348,12 +391,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--base-uri", default=None,
                     help="本地湖根目录(宿主侧草案评估;缺省用容器/env 配置)")
     ap.add_argument("--sample-limit", type=int, default=5)
+    ap.add_argument("--max-rows", type=int, default=None,
+                    help="每表物化行数上限(大表防 OOM;设后报告为 partial 样本口径)")
     args = ap.parse_args(argv)
 
     contract_yaml = _load_contract(args.dataset, args.contract, args.from_store)
     report = run_baseline(
         args.dataset, contract_yaml, _make_storage(args.base_uri),
-        sample_limit=args.sample_limit)
+        sample_limit=args.sample_limit, max_rows=args.max_rows)
 
     if "error" in report:
         print(f"ERROR: {report['error']}", file=sys.stderr)

@@ -310,6 +310,22 @@ class IngestDocumentsRequest(BaseModel):
         description="Per-ingest document type for KG extraction routing (v1.7.0, e.g. research_paper, report). None = untyped.",
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def reject_table_field(cls, data: Any) -> Any:
+        """P0-4 (review 2026-08-26): documents ingest has no container-table
+        support; a ``table`` key was silently dropped by pydantic's
+        extra-ignore, landing rows on the single-table path while the caller
+        believed they had targeted a container table. Fail fast with 422
+        instead of accepting-and-ignoring."""
+        if isinstance(data, dict) and data.get("table") is not None:
+            raise ValueError(
+                "Documents ingest does not support 'table' (container tables "
+                "apply to structured sources: files/sql). Remove the field or "
+                "use the structured ingest endpoint."
+            )
+        return data
+
     @field_validator("pdf_paths")
     @classmethod
     def validate_pdf_paths(cls, paths: list[str]) -> list[str]:

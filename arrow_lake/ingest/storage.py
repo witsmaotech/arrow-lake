@@ -84,6 +84,8 @@ class LanceStorageManager(
         # gets its own connection rooted at ``{base}/{ds}``; table names inside
         # stay plain names. Keyed by dataset name; base connection untouched.
         self._container_dbs: dict[str, Any] = {}
+        # P1-5: bounded per-container connection cache (LRU eviction).
+        self._container_dbs_max = 256
 
     @property
     def storage_options(self) -> dict[str, str] | None:
@@ -139,11 +141,20 @@ class LanceStorageManager(
                 if db is None:
                     import lancedb
 
+                    # P1-5 (review 2026-08-26): cap the per-container
+                    # connection cache — an unbounded dict leaks a live
+                    # client per container for the process lifetime. LRU
+                    # eviction mirrors _dataset_lock's bound.
+                    if len(self._container_dbs) >= self._container_dbs_max:
+                        self._container_dbs.pop(next(iter(self._container_dbs)))
                     db = lancedb.connect(
                         self._connect_uri_for(container),
                         storage_options=self._storage_options,
                     )
                     self._container_dbs[container] = db
+                else:
+                    # LRU touch: most-recently-used last
+                    self._container_dbs[container] = self._container_dbs.pop(container)
                 return db
         if self._db is None:
             with self._db_lock:
@@ -220,11 +231,26 @@ class LanceStorageManager(
             table: Optional table name within a container dataset.
 
         Raises:
-            StorageError: If write fails.
+            StorageError: If write fails, or the write would create a
+                dual identity (single-table dataset vs container, D3).
         """
         self._validate_name(name)
         if table is not None:
             self._validate_table_name(table)
+            # P1-2 (review 2026-08-26): writing a container table next to an
+            # existing plain dataset (or vice versa below) leaves both shapes
+            # on disk — no downstream code can resolve which one ``name``
+            # refers to. Fail closed like create_dataset does.
+            if self.dataset_exists(name):
+                raise StorageError(
+                    error_code=ErrorCode.STORAGE_WRITE_FAILED,
+                    message=f"Dataset '{name}' already exists as a single-table dataset",
+                )
+        elif self.list_container_tables(name):
+            raise StorageError(
+                error_code=ErrorCode.STORAGE_WRITE_FAILED,
+                message=f"Dataset '{name}' already exists as a container",
+            )
         lock_key = f"{name}/{table}" if table is not None else name
         lock = self._dataset_lock(lock_key)
         self._acquire_dataset_lock(lock_key)

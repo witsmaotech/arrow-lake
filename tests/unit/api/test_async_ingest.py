@@ -165,6 +165,24 @@ def test_async_request_models_table_field() -> None:
         AsyncIngestSqlRequest(sql="SELECT 1", connection_url="sqlite://", table="x y")
 
 
+def test_documents_request_rejects_table_field() -> None:
+    """P0-4 (review 2026-08-26): documents ingest has no container-table
+    support; a ``table`` key must 422 at validation instead of being
+    silently dropped by pydantic's extra-ignore (rows would land on the
+    single-table path while the caller believed they targeted a table)."""
+    from pydantic import ValidationError
+
+    from arrow_lake.api.models.dataset import IngestDocumentsRequest
+    from arrow_lake.api.routers.async_tasks import AsyncDocumentsIngestRequest
+
+    # sanity: the field set still validates normally
+    assert IngestDocumentsRequest(blob_keys=["uploads/a.pdf"]).doc_type is None
+    with pytest.raises(ValidationError, match="does not support 'table'"):
+        IngestDocumentsRequest(blob_keys=["uploads/a.pdf"], table="segments")
+    with pytest.raises(ValidationError, match="does not support 'table'"):
+        AsyncDocumentsIngestRequest(blob_keys=["uploads/a.pdf"], table="segments")
+
+
 def test_same_dataset_different_tables_two_tasks_allowed() -> None:
     """D8: the backend imposes NO dataset-level ingest mutex — concurrent
     ingests into different tables of one container must both be dispatchable.

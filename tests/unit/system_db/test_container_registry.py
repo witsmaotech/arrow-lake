@@ -115,3 +115,34 @@ class TestContainerLifecycle:
         fresh = CatalogStore(db)
         assert fresh.is_container("gas_net") is True
         assert fresh.get_container("gas_net")["tables"] == ["segments"]
+
+
+class TestAddContainerTableAtomic:
+    """P1-4 (review 2026-08-26, D8): the table merge must survive concurrent
+    ingest — the old get→append→set read-modify-write lost a registration
+    when two writers raced (cross-worker control-plane identity drift)."""
+
+    def test_merge_preserves_existing_tables(self, catalog: CatalogStore) -> None:
+        catalog.register_container("gas_net", ["segments", "valves"])
+        catalog.add_container_table("gas_net", "stations")
+        assert catalog.get_container("gas_net")["tables"] == [
+            "segments", "stations", "valves",
+        ]
+
+    def test_concurrent_adds_all_land(self, catalog: CatalogStore) -> None:
+        from concurrent.futures import ThreadPoolExecutor
+
+        def _add(i: int) -> None:
+            catalog.add_container_table("race", f"t{i:02d}")
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            list(pool.map(_add, range(16)))
+        tables = catalog.get_container("race")["tables"]
+        assert tables == sorted(f"t{i:02d}" for i in range(16))
+
+    def test_merge_on_existing_json(self, catalog: CatalogStore) -> None:
+        # second add through the atomic path merges with the first's payload
+        catalog.add_container_table("gas_net", "alpha")
+        catalog.add_container_table("gas_net", "beta")
+        catalog.add_container_table("gas_net", "alpha")  # dedup via DISTINCT
+        assert catalog.get_container("gas_net")["tables"] == ["alpha", "beta"]

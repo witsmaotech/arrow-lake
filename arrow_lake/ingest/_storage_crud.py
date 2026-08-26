@@ -346,20 +346,16 @@ class StorageCRUDMixin:
         tables = result.tables if hasattr(result, "tables") else result
         return sorted(t for t in tables if isinstance(t, str))
 
-    def list_containers(self) -> list[str]:
-        """List container dataset names (DR14 W4.2 catalog visibility).
+    def list_containers_with_tables(self) -> dict[str, list[str]]:
+        """Enumerate containers with their tables in ONE pass (P1-6, review
+        2026-08-26): ``{name: [tables]}``.
 
-        Single-table datasets live at ``{root}/{name}.lance``; a container is
-        a plain ``{root}/{name}/`` directory holding ``*.lance`` tables.
-
-        local: directories under base that are not ``.lance`` tables
-        themselves and hold at least one ``*.lance`` child (an empty or
-        foreign directory is not a container).
-        S3/MinIO: delimiter listing under the lancedb root prefix extracted
-        from ``_connect_uri`` (``s3://{bucket}/{prefix}``) — a single-table
-        dataset shows up as the ``{name}.lance/`` prefix, anything else at
-        that level is a container directory. The root prefix matters: host
-        and container configs may address different prefixes in one bucket.
+        Callers used to run ``list_containers()`` (which already enumerates
+        each candidate's tables to validate it) and then re-query
+        ``list_container_tables(name)`` per container — doubling the remote
+        LISTs on the catalog path and again on every Gravitino sync cycle.
+        The dict is the shared enumeration result; empty-table candidates
+        are not containers and are dropped.
         """
         if self._storage_config and self._storage_config.backend != StorageBackend.LOCAL:
             import boto3
@@ -395,16 +391,47 @@ class StorageCRUDMixin:
                 token = resp.get("NextContinuationToken")
             # Same semantics as the local branch: a real container holds at
             # least one table. Filters foreign directories that merely live
-            # under the root prefix (e.g. backup manifests).
-            return sorted(n for n in names if self.list_container_tables(n))
+            # under the root prefix (e.g. backup manifests). The per-table
+            # listings are RETAINED instead of discarded.
+            out = {
+                n: tables
+                for n in names
+                if (tables := self.list_container_tables(n))
+            }
+            return dict(sorted(out.items()))
         base = Path(self.base_uri)
         if not base.exists():
-            return []
-        return sorted(
-            p.name for p in base.iterdir()
-            if p.is_dir() and not p.name.endswith(".lance")
-            and any(c.is_dir() and c.name.endswith(".lance") for c in p.iterdir())
-        )
+            return {}
+        out: dict[str, list[str]] = {}
+        for p in sorted(base.iterdir()):
+            if not p.is_dir() or p.name.endswith(".lance"):
+                continue
+            # Authoritative table enumeration (lancedb view), same as the
+            # S3 branch — a dir that is not a lancedb container yields [].
+            tables = self.list_container_tables(p.name)
+            if tables:
+                out[p.name] = tables
+        return out
+
+    def list_containers(self) -> list[str]:
+        """List container dataset names (DR14 W4.2 catalog visibility).
+
+        Single-table datasets live at ``{root}/{name}.lance``; a container is
+        a plain ``{root}/{name}/`` directory holding ``*.lance`` tables.
+
+        local: directories under base that are not ``.lance`` tables
+        themselves and hold at least one ``*.lance`` child (an empty or
+        foreign directory is not a container).
+        S3/MinIO: delimiter listing under the lancedb root prefix extracted
+        from ``_connect_uri`` (``s3://{bucket}/{prefix}``) — a single-table
+        dataset shows up as the ``{name}.lance/`` prefix, anything else at
+        that level is a container directory. The root prefix matters: host
+        and container configs may address different prefixes in one bucket.
+
+        Prefer :meth:`list_containers_with_tables` — the per-container table
+        enumeration this method triggers is otherwise discarded (P1-6).
+        """
+        return list(self.list_containers_with_tables())
 
     def list_datasets(self) -> list[str]:
         """List all dataset names.
@@ -452,7 +479,10 @@ class StorageCRUDMixin:
         self._acquire_dataset_lock(lock_key)
         try:
             if not self.dataset_exists(name, table=table):
-                self.create_dataset(name, data, table=table)
+                if table is not None:
+                    self.create_dataset(name, data, table=table)
+                else:
+                    self.create_dataset(name, data)
                 return
 
             lance_table = self._open_lance(
@@ -572,16 +602,35 @@ class StorageCRUDMixin:
             table: Optional table name within a container dataset.
 
         Raises:
-            StorageError: If dataset does not exist or write fails.
+            StorageError: If dataset does not exist, write fails, or the
+                restore would create a dual identity (P1-2, review 2026-08-26:
+                dropping/recreating one shape while the other exists leaves
+                ``{name}.lance`` next to ``{name}/{table}.lance``).
         """
         self._validate_name(name)
         if table is not None:
             self._validate_table_name(table)
+            if self.dataset_exists(name):
+                raise StorageError(
+                    error_code=ErrorCode.STORAGE_WRITE_FAILED,
+                    message=(
+                        f"Identity conflict for '{name}': restore targets table "
+                        f"'{table}' but a single-table dataset already exists"
+                    ),
+                )
             db = self._get_db(name)
             with contextlib.suppress(Exception):
                 db.drop_table(table)
             db.create_table(table, data)
             return
+        if self.list_container_tables(name):
+            raise StorageError(
+                error_code=ErrorCode.STORAGE_WRITE_FAILED,
+                message=(
+                    f"Identity conflict for '{name}': restore targets the "
+                    "single-table dataset but a container already exists"
+                ),
+            )
         db = self._get_db()
         with contextlib.suppress(Exception):
             db.drop_table(name)

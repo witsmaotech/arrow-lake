@@ -33,8 +33,45 @@ export async function initWorksheet() {
   const historySel = document.getElementById("historySel");
   const resultHost = document.getElementById("result");
 
-  // 模板:含 <dataset> 占位符,run 时替换为 "实际名"
-  const tpl = (name) => `SELECT *\nFROM ${name ? q(name) : "<dataset>"}\nLIMIT 100;`;
+  // P0-7(2026-08-26 review):容器数据集经 ?table= 寻址 —— {name} 路由禁点号,
+  // 后端把 {name}.{table} 组合成二段名注册,SQL 里写 FROM "ds"."tbl" 即可解析。
+  // 容器选中时在数据集下拉下追加表下拉;普通数据集隐藏。
+  let curTable = null;
+  const tblSel = document.createElement("select");
+  tblSel.className = "select";
+  tblSel.style.cssText = "margin-top:6px;font-size:.74rem";
+  tblSel.hidden = true;
+  dsSel.insertAdjacentElement("afterend", tblSel);
+  tblSel.addEventListener("change", async () => {
+    curTable = tblSel.value || null;
+    editor.value = tpl(dsSel.value);
+    toast(curTable ? `已切换到 ${dsSel.value}.${curTable}` : `已切换到 ${dsSel.value}`, "info", 1500);
+    loadSchema();
+  });
+  async function loadContainerTables(ds) {
+    curTable = null;
+    tblSel.hidden = true;
+    tblSel.textContent = "";
+    if (!ds) return;
+    try {
+      const d = await request("GET", `/datasets/${encodeURIComponent(ds)}`);
+      const tables = d?.kind === "container" ? (d.tables || []) : [];
+      if (!tables.length) return;
+      tblSel.textContent = "";
+      for (const t of tables) {
+        const opt = document.createElement("option");
+        opt.value = t;
+        opt.textContent = `📦 ${t}`;
+        tblSel.appendChild(opt);
+      }
+      tblSel.hidden = false;
+      curTable = tables[0];
+    } catch (_) { /* 详情拉不到 → 按普通数据集处理 */ }
+  }
+
+  // 模板:含 <dataset> 占位符,run 时替换为实际引用(容器 = "ds"."tbl")
+  const dsRef = () => (curTable ? `${q(dsSel.value)}.${q(curTable)}` : q(dsSel.value));
+  const tpl = (name) => `SELECT *\nFROM ${name ? (curTable ? `${q(name)}.${q(curTable)}` : q(name)) : "<dataset>"}\nLIMIT 100;`;
 
   // 1. Load datasets
   try {
@@ -55,6 +92,8 @@ export async function initWorksheet() {
   }
   // 结果宿主记下当前数据集名(供 results.js 的 Parquet 导出 / SUMMARIZE 复用)
   resultHost.dataset.ds = dsSel.value;
+  // 初选若是容器 → 拉表列表并刷新模板(schema 在表确定后加载)
+  await loadContainerTables(dsSel.value);
 
   // 2. Editor
   const initial = localStorage.getItem("al-last-sql") || tpl(dsSel.value);
@@ -65,7 +104,7 @@ export async function initWorksheet() {
     if (!ds || !schemaList) return;
     schemaList.innerHTML = `<div class="muted" style="padding:8px;font-size:.75rem">加载 schema…</div>`;
     try {
-      const s = await request("GET", `/datasets/${encodeURIComponent(ds)}/schema`);
+      const s = await request("GET", `/datasets/${encodeURIComponent(ds)}/schema${curTable ? `?table=${encodeURIComponent(curTable)}` : ""}`);
       const fields = s.fields || [];
       // 字段注释 map 存宿主(results.js 结果表头消费;dataset 属性只能存字符串)
       resultHost.dataset.cm = JSON.stringify(
@@ -117,7 +156,7 @@ export async function initWorksheet() {
     runBtn.disabled = true; runBtn.dataset.label = runBtn.innerHTML; runBtn.innerHTML = `${label || "运行"}…`;
     const t0 = performance.now();
     try {
-      const resp = await request("POST", `/datasets/${encodeURIComponent(ds)}/query/olap`,
+      const resp = await request("POST", `/datasets/${encodeURIComponent(ds)}/query/olap${curTable ? `?table=${encodeURIComponent(curTable)}` : ""}`,
         { body: { sql, format: "json", max_rows } });
       const ms = Math.round(performance.now() - t0);
       renderResult(resultHost, resp, ms);
@@ -134,12 +173,12 @@ export async function initWorksheet() {
     }
   }
 
-  // 替换 <dataset> 占位符为 "实际名"(带引号,兼容 api-test 等含 - 的名字);
+  // 替换 <dataset> 占位符为实际引用(普通集 "名";容器 "ds"."tbl");
   // 规范化(DuckDB 单语句 execute 要求):取首个分号前的单句 + 去结尾分号 + trim。
   // 否则后端 conn.execute 对结尾/多分号裸 500(无 JSON detail)。
   const fillSql = () =>
     editor.value
-      .replace(/<dataset>/g, q(dsSel.value))
+      .replace(/<dataset>/g, dsRef())
       .split(/;\s*\n|;\s*(?=\w)/)[0]   // 多语句 → 取首句(保留语句内分号,如字符串字面量极少见)
       .replace(/;\s*$/, "")            // 去结尾分号
       .trim();
@@ -167,7 +206,7 @@ export async function initWorksheet() {
   async function runSummarize() {
     const ds = dsSel.value;
     if (!ds) { toast("请先选择数据集", "warn"); return; }
-    await execute(`SELECT * FROM (SUMMARIZE ${q(ds)})`, "SUMMARIZE");
+    await execute(`SELECT * FROM (SUMMARIZE ${dsRef()})`, "SUMMARIZE");
   }
 
   function handleError(e) {
@@ -197,9 +236,10 @@ export async function initWorksheet() {
       historySel.value = "";
     }
   });
-  dsSel.addEventListener("change", () => {
+  dsSel.addEventListener("change", async () => {
+    await loadContainerTables(dsSel.value);
     editor.value = tpl(dsSel.value);
-    toast(`已切换到 ${dsSel.value}`, "info", 1500);
+    toast(curTable ? `已切换到 ${dsSel.value}.${curTable}` : `已切换到 ${dsSel.value}`, "info", 1500);
     loadSchema();
   });
   apiBtn?.addEventListener("click", () => {

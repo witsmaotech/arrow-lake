@@ -1,6 +1,6 @@
 # DuckDB SQL Worksheet · 设计文档
 
-> **版本基线**:v1.11.0([`arrow_lake/_version.py`](../../arrow_lake/_version.py)、容器实测;功能 v1.8.7 落地,文档随主干校准)
+> **版本基线**:v1.11.0.1([`arrow_lake/_version.py`](../../arrow_lake/_version.py)、容器实测;功能 v1.8.7 落地,文档随主干校准)
 > **文档日期**:2026-07-07
 > **状态**:已实施(commit `3855b20` + 安全修复 `4039da3`/`a1b2c3d`)。
 >

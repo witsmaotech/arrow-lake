@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import daft as _daft
-from fastapi import APIRouter, Depends, HTTPException, Path
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from fastapi.responses import StreamingResponse
 
 from arrow_lake.api.auth_models import Role
@@ -16,15 +16,58 @@ from arrow_lake.api.models.common import (
     arrow_table_to_response,
 )
 def _acl_enforced_sql(sql: str, name: str, checker: Any, role: Any) -> str:
-    """Source-level row/column ACL enforcement (v1.10.7 WP1b/c, review C2)."""
+    """Source-level row/column ACL enforcement (v1.10.7 WP1b/c, review C2).
+
+    P0-5/P0-6 (review 2026-08-26): every table the SQL references is also
+    deny-read checked via ``check_dataset_access`` — table-level deny keys
+    (``ds.table``) were previously never consulted, and a pooled-session
+    stale registration could not be denied at the SQL layer."""
     from arrow_lake.api.rbac_sql import AclSqlViolation, enforce_sql_acl
 
     try:
         return enforce_sql_acl(
-            sql, get_acl=lambda t: checker.get_acl(t, role), dataset=name
+            sql,
+            get_acl=lambda t: checker.get_acl(t, role),
+            dataset=name,
+            check_read=lambda t: checker.check_dataset_access(
+                role=role, dataset=t, action="read",
+            ),
         )
     except AclSqlViolation as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+# P0-7 (review 2026-08-26): container tables are addressed via ``?table=``
+# (the {name} path pattern forbids dots by design — do NOT relax it; a dotted
+# path would bypass the container-level ACL checks that key on the container).
+_TABLE_Q_PATTERN = r"^[a-zA-Z_][a-zA-Z0-9_-]{0,127}$"
+
+
+def _deny_table_read(name: str, table: str | None, request: Request) -> None:
+    """P0-5: when a query targets a container table, the table-level ACL
+    override must actually fire — non-admin users denied read on
+    ``{name}.{table}`` get 403 (layered lookup: table override first, then
+    the container default)."""
+    if not table:
+        return
+    user = getattr(request.state, "user", None)
+    if user is not None and getattr(user, "role", None) == Role.ADMIN:
+        return
+    checker = get_checker(request)
+    dotted = f"{name}.{table}"
+    acl = checker.get_acl(dotted, user.role if user is not None else "viewer")
+    if acl is not None and "read" in (acl.denied_actions or frozenset()):
+        raise HTTPException(
+            status_code=403,
+            detail=f"No read access to table '{dotted}' (table-level deny)",
+        )
+    if not checker.check_dataset_access(
+        role=user.role if user is not None else "viewer", dataset=dotted, action="read",
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail=f"No read access to table '{dotted}'",
+        )
 
 
 from arrow_lake.api.models.query import (
@@ -143,8 +186,10 @@ def _apply_pipeline(
 @router.post("/{name}/query/olap", response_model=None)
 async def olap_query(
     name: str = Path(..., pattern=_NAME_PATTERN),
+    table: str | None = Query(None, pattern=_TABLE_Q_PATTERN),
     *,
     req: OlapQueryRequest,
+    request: Request,
     lake=Depends(get_lake),
     _user: dict = Depends(require_role(Role.EDITOR)),
     _acl_guard: None = Depends(authorize_dataset_read),
@@ -154,53 +199,68 @@ async def olap_query(
 
     When ``stream=True``, returns SSE events with Arrow IPC batches
     for large result sets (>10,000 rows recommended).
+
+    ``?table=`` addresses a table inside a container dataset (P0-7): the
+    two-part target ``{name}.{table}`` is what gets registered, so SQL can
+    reference ``FROM {name}.{table}``; table-level deny-read is enforced
+    before execution (P0-5).
     """
+    _deny_table_read(name, table, request)
+    target = f"{name}.{table}" if table else name
     try:
         validate_sql_safety(req.sql)
     except ValueError as exc:
         # 校验拒绝是可读的 422,不是 500(console 预览/Worksheet 的预期文案)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    sql = _acl_enforced_sql(req.sql, name, checker, _user.role)
+    sql = _acl_enforced_sql(req.sql, target, checker, _user.role)
     result = await run_sync(
-        lake.olap_query, name, sql, max_rows=req.max_rows,
+        lake.olap_query, target, sql, max_rows=req.max_rows,
         timeout=_QUERY_TIMEOUT, label="olap_query", executor=olap_executor,
     )
-    table = checker.apply_table_filter(result.table, dataset=name, role=_user.role)
+    table_ = checker.apply_table_filter(result.table, dataset=target, role=_user.role)
 
     if req.stream:
         return StreamingResponse(
-            _stream_table(table, req.batch_size),
+            _stream_table(table_, req.batch_size),
             media_type="text/event-stream",
-            headers={"X-Row-Count": str(table.num_rows), "X-SQL": result.sql},
+            headers={"X-Row-Count": str(table_.num_rows), "X-SQL": result.sql},
         )
 
-    resp = arrow_table_to_response(table, req.format, meta={"sql": result.sql})
+    resp = arrow_table_to_response(table_, req.format, meta={"sql": result.sql})
     return OlapQueryResponse(**resp)
 
 
 @router.post("/{name}/query/metadata", response_model=OlapQueryResponse)
 async def metadata_query(
     name: str = Path(..., pattern=_NAME_PATTERN),
+    table: str | None = Query(None, pattern=_TABLE_Q_PATTERN),
     *,
     req: OlapQueryRequest,
+    request: Request,
     lake=Depends(get_lake),
     _user: dict = Depends(require_role(Role.EDITOR)),
     _acl_guard: None = Depends(authorize_dataset_read),
     checker=Depends(get_checker),
 ) -> OlapQueryResponse:
-    """Execute metadata SQL query (semantic alias for olap_query)."""
+    """Execute metadata SQL query (semantic alias for olap_query).
+
+    ``?table=`` addresses a container table (P0-7), with table-level
+    deny-read enforced first (P0-5).
+    """
+    _deny_table_read(name, table, request)
+    target = f"{name}.{table}" if table else name
     try:
         validate_sql_safety(req.sql)
     except ValueError as exc:
         # 校验拒绝是可读的 422,不是 500(console 预览/Worksheet 的预期文案)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    sql = _acl_enforced_sql(req.sql, name, checker, _user.role)
+    sql = _acl_enforced_sql(req.sql, target, checker, _user.role)
     result = await run_sync(
-        lake.sql_query, name, sql, max_rows=req.max_rows,
+        lake.sql_query, target, sql, max_rows=req.max_rows,
         timeout=_QUERY_TIMEOUT, label="metadata_query", executor=olap_executor,
     )
-    table = checker.apply_table_filter(result.table, dataset=name, role=_user.role)
-    resp = arrow_table_to_response(table, req.format, meta={"sql": result.sql})
+    table_ = checker.apply_table_filter(result.table, dataset=target, role=_user.role)
+    resp = arrow_table_to_response(table_, req.format, meta={"sql": result.sql})
     return OlapQueryResponse(**resp)
 
 

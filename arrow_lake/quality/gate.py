@@ -164,7 +164,14 @@ class IngestionQualityGate:
 
         # ── Metrics ──
         passed = current.num_rows
-        rejected = total_rows - passed
+        # Stage-counter sum, not row arithmetic: in enforce they are
+        # identical (each stage drops its rows from `current`), but in
+        # shadow stage 4 keeps `current` intact (P1-7 — the passed view is
+        # the caller's enforce artifact) while its rejections must still
+        # count for reporting, metrics, and dead-lettering.
+        rejected = (
+            schema_rejected + filter_rejected + score_rejected + contract_rejected
+        )
         elapsed = time.monotonic() - start
 
         if dataset_name:
@@ -212,13 +219,48 @@ class IngestionQualityGate:
         dataset-name section for legacy single-table contracts). Returns
         (passed_table, rejected_count, rejected_rows) where rejected rows
         carry a ``_contract_violation`` marker column (kind list per row).
-        Any evaluation failure is fail-open (rows pass) — the gate must not
-        block ingest on an internal error; the violation is logged instead.
+
+        P0-1 (review 2026-08-26): constraints referencing a column absent
+        from the batch schema are skipped INDIVIDUALLY (baseline-script
+        semantics) — one typo'd column must not silently disable the other
+        constraints. Evaluation failure: shadow counts and passes through
+        (observational mode), enforce is fail-closed (rejects the batch
+        with an ``eval_error`` marker) per project discipline B-2.
+
+        P1-7 (review 2026-08-26): shadow mode materializes ONLY the rejected
+        rows (the passed table is the caller's enforce artifact — the
+        Ingestor ignores ``gated`` unless mode == enforce, so the second
+        full-batch fetch was pure 2× memory waste); enforce does ONE full
+        scan with a nullable marker column and splits via Arrow filters.
         """
+        from arrow_lake.core.metrics import contract_check_total
+
         section = table_name or dataset_name
-        applicable = [c for c in self._contract_constraints if c.table == section]
+        applicable = []
+        skipped = []
+        for c in self._contract_constraints:
+            if c.table != section:
+                continue
+            if c.column not in table.column_names:
+                skipped.append(c)
+            else:
+                applicable.append(c)
+        for c in skipped:
+            logger.warning(
+                "contract_gate_column_missing",
+                dataset=dataset_name, table=table_name,
+                column=c.column, kind=c.kind,
+                note="constraint skipped: column absent from batch",
+            )
+            contract_check_total.labels(
+                dataset=dataset_name or "_unknown", result="skip",
+            ).inc()
         if not applicable or table.num_rows == 0:
             return table, 0, None
+        # P1-9 (review 2026-08-26): the _source_table literal is escaped like
+        # a SQL string (defense in depth — names are pattern-validated
+        # upstream, but this stage must stay injectable-proof on its own).
+        source_table_lit = str(table_name or dataset_name).replace("'", "''")
         try:
             import duckdb
 
@@ -232,22 +274,50 @@ class IngestionQualityGate:
                     f"CASE WHEN COALESCE(({c.sql}), FALSE) THEN '{c.kind}' END"
                     for c in applicable
                 )
-                rejected = con.execute(
+                marker_sel = (
                     f"SELECT *, NULLIF(concat_ws(';', {markers}), '') "
-                    f"AS _contract_violation, '{(table_name or dataset_name)}' "
-                    f"AS _source_table FROM _batch WHERE {violated_expr}"
-                ).fetch_arrow_table()
-                passed = con.execute(
-                    f"SELECT * FROM _batch WHERE NOT ({violated_expr})"
-                ).fetch_arrow_table()
+                    f"AS _contract_violation, '{source_table_lit}' "
+                    f"AS _source_table FROM _batch"
+                )
+                if self._mode != "enforce":
+                    # Shadow: only the rejected rows are needed (count +
+                    # dead letter); the passed table is the original batch.
+                    rejected = con.execute(
+                        f"{marker_sel} WHERE {violated_expr}"
+                    ).fetch_arrow_table()
+                    return table, rejected.num_rows, (
+                        rejected if rejected.num_rows else None
+                    )
+                # Enforce: one full scan with the marker, split in Arrow.
+                marked = con.execute(marker_sel).fetch_arrow_table()
             finally:
                 con.close()
-        except Exception:  # noqa: BLE001 — fail-open: log, never block ingest
-            logger.warning(
+        except Exception:  # noqa: BLE001 — internal eval error
+            logger.error(
                 "contract_gate_eval_failed", dataset=dataset_name,
-                table=table_name, exc_info=True,
+                table=table_name, mode=self._mode, exc_info=True,
             )
-            return table, 0, None
+            contract_check_total.labels(
+                dataset=dataset_name or "_unknown", result="eval_error",
+            ).inc()
+            if self._mode != "enforce":
+                return table, 0, None
+            # Fail-closed (enforce): reject the whole batch with an explicit
+            # marker so it dead-letters with a reason instead of passing.
+            marked = table.append_column(
+                "_contract_violation",
+                pa.array(["eval_error"] * table.num_rows),
+            ).append_column(
+                "_source_table", pa.array([str(table_name or dataset_name)] * table.num_rows),
+            )
+            return table.slice(0, 0), table.num_rows, marked
+        mask = [
+            bool(v) for v in marked.column("_contract_violation").to_pylist()
+        ]
+        rejected = marked.filter(mask)
+        passed = marked.filter([not m for m in mask]).drop_columns(
+            ["_contract_violation", "_source_table"],
+        )
         return passed, rejected.num_rows, (rejected if rejected.num_rows else None)
 
     def _validate_schema(

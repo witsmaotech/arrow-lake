@@ -231,7 +231,19 @@ class PermissionChecker:
             except Exception:
                 logger.warning("rbac.store_deny_read_failed", dataset=dataset, exc_info=True)
                 return set()
-        return self._deny_list.get(dataset, set())
+        # Exact key first; case-folded scan second — rbac_sql probes with
+        # lowercased identifiers, so an admin deny stored as "Secret" must
+        # still hit a probe for "secret" (v1.10.7 R-01 lesson: name-form
+        # checks default to casefold). Store-backed path needs no fallback
+        # (SQL lookups are COLLATE NOCASE).
+        denies = self._deny_list.get(dataset)
+        if denies is not None:
+            return denies
+        folded = dataset.casefold()
+        for key, actions in self._deny_list.items():
+            if key.casefold() == folded:
+                return actions
+        return set()
 
     def has_permission(self, role: str | Role, perm: str) -> bool:
         """Check if a role has a specific permission."""

@@ -129,6 +129,24 @@ class BackupRestorer:
                 message=f"Failed to restore dataset '{dataset_name}': {exc}",
             ) from exc
 
+    @staticmethod
+    def _backup_is_container(rel_paths: list[str]) -> bool:
+        """P0-8 (review 2026-08-26): do these backup rel paths hold a container?
+
+        Container backups (DR14 W4.4) store each table under a
+        ``{table}.lance/`` directory inside the dataset's backup prefix, so
+        a rel path whose FIRST segment ends with ``.lance`` and contains a
+        slash marks a container. Plain backups only carry Lance's internal
+        dirs (``_versions/``, ``_files/``, ...) which never match. A bare
+        file named ``*.lance`` (no slash, local-test fixture shape) is NOT
+        a container marker.
+        """
+        return any(
+            "/" in k and k.split("/", 1)[0].endswith(".lance")
+            for k in rel_paths
+            if k
+        )
+
     def _restore_lance_dataset_remote(
         self, dataset_name: str, manifest: Any, *, overwrite: bool = False,
     ) -> None:
@@ -137,36 +155,95 @@ class BackupRestorer:
         Safe ordering: download+verify to temp prefix first, then delete
         original and rename temp into place.  If anything fails during
         download/verify the original data is untouched.
+
+        P0-8: a CONTAINER backup (table dirs under ``{table}.lance/``)
+        restores to ``{base}/{name}/`` — the previous unconditional
+        ``{name}.lance/`` destination produced the illegal
+        ``{name}.lance/{table}.lance/`` layout and flipped the restored
+        identity to a single-table dataset.
         """
         base = self._storage_config.base_uri
         if base.startswith("./"):
             base = base[2:]
-        dest_prefix = f"{base}/{dataset_name}.lance/"
-        tmp_prefix = f"{base}/.{dataset_name}.lance.restore-{os.getpid()}/"
-
-        if not overwrite:
-            probe = self._blob_store.list_blobs(dest_prefix, max_keys=1)
-            if probe.count > 0:
-                raise StorageError(
-                    error_code=ErrorCode.STORAGE_WRITE_FAILED,
-                    message=f"Dataset '{dataset_name}' already exists. Use overwrite=True.",
-                )
 
         backup_prefix = f"{_BACKUP_PREFIX}{manifest.backup_id}/datasets/{dataset_name}/"
 
         ds_entry = next((d for d in manifest.datasets if d["name"] == dataset_name), None)
-        expected_hashes: dict[str, str] = ds_entry.get("file_hashes", {}) if ds_entry else {}
+        entry_hashes = (
+            ds_entry.get("file_hashes", {}) if isinstance(ds_entry, dict)
+            else getattr(ds_entry, "file_hashes", {}) if ds_entry else {}
+        )
+
+        # Container detection + destination prefixes. Detection uses the
+        # manifest hashes when present; otherwise it is deferred to the first
+        # page of the main backup listing (zero extra list calls).
+        dest_prefix: str | None = None
+        other_prefix: str | None = None
+        is_container: bool | None = None
+
+        def _resolve_prefixes(rel_paths: list[str]) -> None:
+            nonlocal dest_prefix, other_prefix, is_container
+            is_container = self._backup_is_container(rel_paths)
+            if is_container:
+                dest_prefix = f"{base}/{dataset_name}/"
+                other_prefix = f"{base}/{dataset_name}.lance/"
+            else:
+                dest_prefix = f"{base}/{dataset_name}.lance/"
+                other_prefix = f"{base}/{dataset_name}/"
+
+        def _probe_exists(prefix: str, *, use_count: bool = False) -> bool:
+            probe = self._blob_store.list_blobs(prefix, max_keys=1)
+            if use_count and getattr(probe, "count", 0) > 0:
+                return True
+            # Keys are prefix-filtered: list_blobs contractually returns only
+            # the requested prefix's keys (count alone is not trusted here —
+            # some backends/tests report it prefix-agnostically).
+            return any(str(k).startswith(prefix) for k in (probe.keys or []))
+
+        def _preflight_guards() -> None:
+            """Identity guard (D3) + already-exists probe (non-overwrite)."""
+            if not overwrite:
+                if _probe_exists(other_prefix):
+                    raise StorageError(
+                        error_code=ErrorCode.STORAGE_WRITE_FAILED,
+                        message=(
+                            f"Identity conflict for '{dataset_name}': backup holds "
+                            f"{'a container' if is_container else 'a single-table dataset'} "
+                            f"but storage already holds the other shape"
+                        ),
+                    )
+                if _probe_exists(dest_prefix, use_count=True):
+                    raise StorageError(
+                        error_code=ErrorCode.STORAGE_WRITE_FAILED,
+                        message=f"Dataset '{dataset_name}' already exists. Use overwrite=True.",
+                    )
+
+        if entry_hashes:
+            _resolve_prefixes(list(entry_hashes.keys()))
+            _preflight_guards()
+
+        expected_hashes: dict[str, str] = entry_hashes
 
         # Phase 1: Download all backup data to a temporary prefix and verify hashes.
         continuation_token: str | None = None
+        tmp_prefix: str | None = None
         try:
-            # Clean stale temp if it exists
-            self._blob_store.delete_prefix(tmp_prefix)
-
             while True:
                 result = self._blob_store.list_blobs(
                     backup_prefix, max_keys=5000, continuation_token=continuation_token,
                 )
+                if dest_prefix is None:
+                    # First listing page: detect the backup shape (manifest
+                    # carried no hashes) before any blob operation.
+                    _resolve_prefixes(
+                        [k[len(backup_prefix):] for k in result.keys]
+                    )
+                    _preflight_guards()
+                if tmp_prefix is None:
+                    tmp_prefix = f"{base}/.{dataset_name}.lance.restore-{os.getpid()}/"
+                    # Clean stale temp if it exists (once, before first write)
+                    self._blob_store.delete_prefix(tmp_prefix)
+
                 for key in result.keys:
                     rel_path = key[len(backup_prefix):]
                     tmp_key = f"{tmp_prefix}{rel_path}"

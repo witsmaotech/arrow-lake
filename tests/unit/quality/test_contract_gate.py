@@ -45,12 +45,14 @@ class TestContractStageShadow:
             mode="shadow", contract_constraints=_constraints(),
         )
         gated, result = gate.check(BATCH, dataset_name="gas_net", table_name="segments")
-        # gate-level: violations counted with reasons; the GATED view is the
-        # enforce artifact — shadow semantics live at the caller (Ingestor
-        # ignores `gated` unless mode == enforce), covered e2e below.
+        # gate-level: violations counted with reasons. P1-7 (review
+        # 2026-08-26): shadow no longer materializes the passed view — the
+        # gated table IS the original batch; shadow semantics (rows land
+        # unchanged) live at the caller, which ignores `gated` unless
+        # mode == enforce (covered e2e below).
         assert result.contract_rejected == 2
         assert any(r.startswith("contract:") for r in result.rejection_reasons)
-        assert gated.num_rows == 2
+        assert gated.num_rows == 4
 
     def test_shadow_dead_letter_carries_marker(self) -> None:
         writer = MagicMock()
@@ -119,7 +121,116 @@ class TestContractStageEnforce:
         assert after == before + 1
 
 
-class TestMakeIngestorWiring:
+class TestContractGateFailOpenFixes:
+    """P0-1/P0-3 (review 2026-08-26): one bad constraint must not disable
+    the others, and enforce must fail closed on evaluation errors."""
+
+    MISSING_COL_YAML = """
+dataset: gas_net
+tables:
+  segments:
+    columns:
+      - name: typo_col
+        enum: [a, b]
+      - name: material
+        enum: [PE, steel]
+"""
+
+    def test_missing_column_skips_only_that_constraint(self) -> None:
+        # P0-1: typo_col is absent from the batch; material must still be
+        # enforced (the old code fail-opened the WHOLE stage on Binder error).
+        bundle = compile_contract(parse_contract(self.MISSING_COL_YAML))
+        gate = IngestionQualityGate(
+            mode="enforce", contract_constraints=bundle.rows,
+        )
+        batch = pa.table({
+            "material": ["PE", "PVC"],
+            "note": ["a", "b"],
+        })
+        passed, result = gate.check(batch, dataset_name="gas_net", table_name="segments")
+        assert passed.num_rows == 1  # PVC dropped by material enum
+        assert result.contract_rejected == 1
+
+    def test_missing_column_emits_skip_metric(self) -> None:
+        from arrow_lake.core.metrics import contract_check_total
+
+        bundle = compile_contract(parse_contract(self.MISSING_COL_YAML))
+        gate = IngestionQualityGate(
+            mode="enforce", contract_constraints=bundle.rows,
+        )
+        before = contract_check_total.labels(dataset="skip_ds", result="skip")._value.get()
+        gate.check(
+            pa.table({"material": ["PE"]}), dataset_name="skip_ds", table_name="segments",
+        )
+        after = contract_check_total.labels(dataset="skip_ds", result="skip")._value.get()
+        assert after == before + 1
+
+    @staticmethod
+    def _broken_constraint() -> tuple:
+        # Column present in the batch but the SQL itself cannot bind
+        # (type mismatch) → evaluation error, not a missing column.
+        from arrow_lake.contract.compiler import RowConstraint
+        from arrow_lake.contract.schema import Severity
+
+        return (RowConstraint(
+            table="segments", column="note", kind="range",
+            severity=Severity.REJECT,
+            sql='"note" > 5',  # string column vs integer literal
+            message="broken",
+        ),)
+
+    def test_enforce_eval_error_fails_closed(self) -> None:
+        writer = MagicMock()
+        gate = IngestionQualityGate(
+            mode="enforce", contract_constraints=self._broken_constraint(),
+            dead_letter_writer=writer,
+        )
+        batch = pa.table({"material": ["PE"], "note": ["a"]})
+        passed, result = gate.check(batch, dataset_name="gas_net", table_name="segments")
+        assert passed.num_rows == 0  # whole batch rejected
+        assert result.rejected == 1
+        # dead-letter batch carries the eval_error marker
+        _, dl_batch, _ = writer.write.call_args[0]
+        assert dl_batch.column("_contract_violation").to_pylist() == ["eval_error"]
+
+    def test_shadow_eval_error_passes_rows(self) -> None:
+        gate = IngestionQualityGate(
+            mode="shadow", contract_constraints=self._broken_constraint(),
+        )
+        batch = pa.table({"material": ["PE"], "note": ["a"]})
+        passed, result = gate.check(batch, dataset_name="gas_net", table_name="segments")
+        assert passed.num_rows == 1  # shadow is observational: rows land
+
+    def test_source_table_literal_escaped(self) -> None:
+        """P1-9: a quote in the target name must not break (or inject into)
+        the marker SELECT — defense in depth below the route validators."""
+        from arrow_lake.contract.compiler import RowConstraint
+        from arrow_lake.contract.schema import Severity
+
+        constraint = (RowConstraint(
+            table="seg'", column="material", kind="enum",
+            severity=Severity.REJECT,
+            sql='"material" NOT IN (\'PE\', \'steel\')',
+            message="enum",
+        ),)
+        gate = IngestionQualityGate(mode="enforce", contract_constraints=constraint)
+        batch = pa.table({"material": ["PVC", "PE"], "note": ["a", "b"]})
+        passed, result = gate.check(batch, dataset_name="we'ird", table_name="seg'")
+        assert result.contract_rejected == 1  # PVC dropped, no SQL error
+        assert passed.num_rows == 1
+
+    def test_enforce_passed_has_no_marker_columns(self) -> None:
+        """P1-7 single-scan split: the passed view must not carry the marker
+        / source-table helper columns into the write."""
+        gate = IngestionQualityGate(
+            mode="enforce", contract_constraints=_constraints(),
+        )
+        passed, _ = gate.check(BATCH, dataset_name="gas_net", table_name="segments")
+        assert "_contract_violation" not in passed.column_names
+        assert "_source_table" not in passed.column_names
+
+
+
     def _lake(self, tmp_path):
         from arrow_lake.config import ArrowLakeConfig, StorageBackend
         from arrow_lake import Lake

@@ -146,3 +146,86 @@ def test_baseline_clean_dataset_enforce_ready(tmp_path: Path) -> None:
     assert report["decision"]["reject_rate"] == 0.0
     assert report["decision"]["enforce_ready"] is True
     assert report["references"][0]["violations"] == 0
+
+
+# ── P1-10 (review 2026-08-26): 假绿灯与 OOM 护栏 ──
+
+
+def test_container_contract_on_single_table_not_enforce_ready(tmp_path: Path) -> None:
+    """容器形契约打单表集:除同名节外全部 skipped —— 历史上这些节不计入
+    决策,0 行 0 拒也能亮 enforce_ready=true。现在跳过节强制 false。"""
+    from scripts.contract_gate_baseline import run_baseline
+
+    storage = _storage(tmp_path)
+    storage.create_dataset("gas_net", pa.table({"v": [1]}))  # 单表集,无容器表
+    report = run_baseline("gas_net", CONTRACT_YAML, storage)
+
+    assert report["mode"] == "single_table"
+    # 单表集只评估同名节(无约束);segments/stations 两节全 skipped
+    assert report["tables"]["segments"]["note"] == "skipped_not_container"
+    assert report["tables"]["stations"]["note"] == "skipped_not_container"
+    d = report["decision"]
+    assert d["skipped_sections"] == 2
+    assert d["enforce_ready"] is False         # 旧逻辑这里会是 true(假绿灯)
+    assert "未评估" in d["note"]
+
+
+def test_no_data_section_blocks_enforce_ready(tmp_path: Path) -> None:
+    """容器缺表(no_data)同样强制 false —— 未评估的约束不能默认放行。"""
+    from scripts.contract_gate_baseline import run_baseline
+
+    storage = _storage(tmp_path)
+    clean = pa.table({
+        "seg_id": ["GAS.SEG.1"],
+        "material": ["PE"],
+        "pressure": [100.0],
+        "station_id": ["S-1"],
+    })
+    storage.create_dataset("gas_net", clean, table="segments")  # stations 缺
+    report = run_baseline("gas_net", CONTRACT_YAML, storage)
+    assert report["decision"]["reject_rate"] == 0.0
+    assert report["decision"]["enforce_ready"] is False
+    assert report["decision"]["skipped_sections"] == 1
+
+
+def test_max_rows_partial_report(tmp_path: Path) -> None:
+    """--max-rows 闸:截断扫描 + partial 标记 + 不给绿灯。"""
+    from scripts.contract_gate_baseline import run_baseline
+
+    storage = _storage(tmp_path)
+    bad = pa.table({
+        "seg_id": [f"GAS.SEG.{i}" for i in range(10)],
+        "material": ["PVC"] * 10,               # 全违规
+        "pressure": [100.0] * 10,
+        "station_id": ["S-1"] * 10,
+    })
+    storage.create_dataset("gas_net", bad, table="segments")
+    storage.create_dataset("gas_net", _STATIONS, table="stations")
+
+    report = run_baseline("gas_net", CONTRACT_YAML, storage, max_rows=4)
+    assert report["partial"] is True
+    assert report["max_rows"] == 4
+    assert report["tables"]["segments"]["rows"] == 4     # 截断后计数
+    assert report["tables"]["segments"]["reject_rows"] == 4
+    assert report["decision"]["reject_rate"] == 0.8  # 4 拒 / (4+stations 1) 行
+    assert report["decision"]["enforce_ready"] is False  # partial 永不给绿灯
+    assert "样本截断" in report["decision"]["note"]
+
+
+def test_max_rows_above_rowcount_not_partial_gate(tmp_path: Path) -> None:
+    """max_rows ≥ 行数时数据完整,partial 标记仍在但绿灯只受 rate/skipped 管。"""
+    from scripts.contract_gate_baseline import run_baseline
+
+    storage = _storage(tmp_path)
+    clean = pa.table({
+        "seg_id": ["GAS.SEG.1", "GAS.SEG.2"],
+        "material": ["PE", "steel"],
+        "pressure": [100.0, 200.0],
+        "station_id": ["S-1", "S-1"],
+    })
+    storage.create_dataset("gas_net", clean, table="segments")
+    storage.create_dataset("gas_net", _STATIONS, table="stations")
+
+    report = run_baseline("gas_net", CONTRACT_YAML, storage, max_rows=1000)
+    assert report["partial"] is True            # 口径仍是样本口径
+    assert report["decision"]["enforce_ready"] is False

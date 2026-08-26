@@ -76,7 +76,7 @@ def get_current_user(request: Request) -> TokenPayload:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
 
 
-def authorize_dataset_read(name: str, request: Request) -> None:
+def authorize_dataset_read(name: str, request: Request, table: str | None = None) -> None:
     """Depends()-ready dataset read ACL (v1.10.7 WP1a).
 
     FastAPI injects the route's ``{name}`` path param into this sub-dependency,
@@ -88,18 +88,27 @@ def authorize_dataset_read(name: str, request: Request) -> None:
     dataset — ACL lookups on the full dotted name would miss and fail open.
     A table-level override (D4) may additionally deny reads the container
     allows; deny wins over the container default.
+
+    ``table`` (P0-5/P0-7, review 2026-08-26): the ``?table=`` query param —
+    FastAPI injects query params declared by the sub-dependency, so endpoints
+    addressing a container table get the same table-level deny-read override
+    fired for ``{name}.{table}`` (the HTTP path itself cannot carry dots —
+    ``_NAME_PATTERN`` keeps that door shut by design).
     """
+    dotted: str | None = None
     if "." in name:
-        container, _, _table = name.partition(".")
+        name, _, dotted = name.partition(".")
+    elif table:
+        dotted = f"{name}.{table}"
+    if dotted is not None:
         user = getattr(request.state, "user", None) or get_current_user(request)
         if user.role != Role.ADMIN:
-            acl = get_checker(request).get_acl(name)
+            acl = get_checker(request).get_acl(dotted, user.role)
             if acl is not None and "read" in (acl.denied_actions or frozenset()):
                 raise HTTPException(
                     status_code=403,
-                    detail=f"No read access to table '{name}' (table-level deny)",
+                    detail=f"No read access to table '{dotted}' (table-level deny)",
                 )
-        name = container
     authorize_dataset(request, name)
 
 

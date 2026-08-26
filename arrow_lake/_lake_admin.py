@@ -148,21 +148,20 @@ class _LakeAdminMixin:
         # to the bare-table listing above. Sum per-table row counts cheaply
         # via per-table opens; per-table schema/index details stay on the
         # detail/schema endpoints (?table=), not on the catalog row.
+        # P1-6 (review 2026-08-26): ONE enumeration returns {name: tables};
+        # the per-container list_container_tables re-query is gone.
         try:
-            containers = storage.list_containers()
+            containers = storage.list_containers_with_tables()
         except Exception:  # noqa: BLE001 — listing must not fail the catalog
-            containers = []
-        for cname in containers:
+            containers = {}
+        for cname, tnames in containers.items():
             num_rows = 0
-            try:
-                for tname in storage.list_container_tables(cname):
-                    try:
-                        num_rows += int(
-                            storage.open_dataset(cname, table=tname).count_rows())
-                    except (StorageError, OSError):
-                        pass
-            except (StorageError, OSError):
-                pass
+            for tname in tnames:
+                try:
+                    num_rows += int(
+                        storage.open_dataset(cname, table=tname).count_rows())
+                except (StorageError, OSError):
+                    pass
             entries.append(CatalogEntry(
                 name=cname, version=0, num_rows=num_rows, num_columns=0,
                 kind="container",

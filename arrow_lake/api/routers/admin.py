@@ -39,6 +39,13 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 
+# P0-5 (review 2026-08-26): ACL/deny targets may name a table inside a
+# container dataset (``ds.table``) — the table-level override layer keyed on
+# the dotted name was previously unreachable because the strict dataset
+# pattern forbids dots. The dot is unambiguous here (one optional table
+# segment, storage identifier rules), and this surface is ADMIN-only.
+_ACL_TARGET_PATTERN = r"^[a-zA-Z0-9_-]{1,128}(\.[a-zA-Z_][a-zA-Z0-9_-]{0,127})?$"
+
 
 @router.get("/users", summary="List users (admin only)")
 async def list_users(
@@ -333,7 +340,7 @@ async def revoke_user_token(
 
 @router.put("/acl/{dataset}", response_model=AclSetResponse)
 async def set_acl(
-    dataset: str = Path(..., pattern=_NAME_PATTERN),
+    dataset: str = Path(..., pattern=_ACL_TARGET_PATTERN),
     *,
     req: SetAclRequest,
     request: Request,
@@ -359,7 +366,7 @@ async def set_acl(
 
 @router.get("/acl/{dataset}", response_model=AclListResponse)
 async def list_acls(
-    dataset: str = Path(..., pattern=_NAME_PATTERN),
+    dataset: str = Path(..., pattern=_ACL_TARGET_PATTERN),
     *,
     _user: dict = Depends(require_role(Role.ADMIN)),
     checker=Depends(get_checker),
@@ -381,7 +388,7 @@ async def list_acls(
 
 @router.delete("/acl/{dataset}/{role}", response_model=AclDeleteResponse)
 async def delete_acl(
-    dataset: str = Path(..., pattern=_NAME_PATTERN),
+    dataset: str = Path(..., pattern=_ACL_TARGET_PATTERN),
     role: str = Path(..., pattern=r"^(viewer|editor)$"),
     *,
     request: Request,
@@ -517,7 +524,7 @@ async def delete_schema_acl(
 
 @router.put("/deny/{dataset}", response_model=DenyResponse)
 async def deny_action(
-    dataset: str = Path(..., pattern=_NAME_PATTERN),
+    dataset: str = Path(..., pattern=_ACL_TARGET_PATTERN),
     *,
     req: DenyRequest,
     request: Request,
@@ -537,7 +544,7 @@ async def deny_action(
 
 @router.delete("/deny/{dataset}/{action}", response_model=DenyResponse)
 async def remove_deny(
-    dataset: str = Path(..., pattern=_NAME_PATTERN),
+    dataset: str = Path(..., pattern=_ACL_TARGET_PATTERN),
     action: str = Path(..., min_length=1),
     *,
     request: Request,
@@ -557,7 +564,7 @@ async def remove_deny(
 
 @router.get("/deny/{dataset}", response_model=DenyListResponse)
 async def list_denies(
-    dataset: str = Path(..., pattern=_NAME_PATTERN),
+    dataset: str = Path(..., pattern=_ACL_TARGET_PATTERN),
     *,
     _user: dict = Depends(require_role(Role.ADMIN)),
     checker=Depends(get_checker),
