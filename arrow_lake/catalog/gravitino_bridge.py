@@ -138,6 +138,9 @@ _FILESET_CATALOG = "minio-fileset"
 _LANCE_CATALOG = "lance-catalog"
 _MODEL_CATALOG = "ml-models"
 _DEFAULT_SCHEMA = "arrow_lake"
+# Gravitino column-identifier rule (conservative ASCII word — the server
+# rejects e.g. Chinese column names with HTTP 400).
+_LEGAL_COLUMN_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
 
 @dataclass(frozen=True)
@@ -382,9 +385,15 @@ class GravitinoBridge:
                 )
 
     def _register_table(
-        self, name: str, schema: Any, location: str
+        self, name: str, schema: Any, location: str,
+        *, schema_name: str = _DEFAULT_SCHEMA,
     ) -> None:
-        """Register dataset as a Gravitino Table in lance-catalog."""
+        """Register dataset as a Gravitino Table in lance-catalog.
+
+        ``schema_name`` addresses the owning Gravitino schema — the default
+        for single-table datasets, the container name for container tables
+        (DR14 D7 dataset→schema mapping).
+        """
         columns = self._build_gravitino_columns(schema)
         s3_location = location.replace("s3a://", "s3://")
         body: dict[str, Any] = {
@@ -399,7 +408,7 @@ class GravitinoBridge:
         table_path = (
             f"/api/metalakes/{self._metalake}"
             f"/catalogs/{_LANCE_CATALOG}"
-            f"/schemas/{_DEFAULT_SCHEMA}/tables"
+            f"/schemas/{schema_name}/tables"
         )
         result = self._request("POST", table_path, body)
         if result is not None:
@@ -407,13 +416,80 @@ class GravitinoBridge:
                 "gravitino_table_registered",
                 name=name,
                 columns=len(columns),
+                schema=schema_name,
             )
         else:
             # Idempotent "already exists" — fires every sync cycle, no signal → debug.
-            logger.debug("gravitino_table_exists", name=name)
+            logger.debug("gravitino_table_exists", name=name, schema=schema_name)
+
+    def _ensure_container_schema(self, name: str) -> None:
+        """Idempotently ensure the container's schema exists (REST).
+
+        No S3 location property on purpose — REST schema creation with a
+        location would re-run the fileset-catalog S3-verification trap
+        (spurious 403, see _ensure_schema's SDK comment). The tables under
+        it carry their own locations.
+        """
+        schema_path = (
+            f"/api/metalakes/{self._metalake}"
+            f"/catalogs/{_LANCE_CATALOG}/schemas"
+        )
+        result = self._request("POST", schema_path, {
+            "name": name,
+            "comment": f"Arrow Lake container: {name}",
+            "properties": {},
+        })
+        if result is not None:
+            logger.info("gravitino_container_schema_created", name=name)
+        # 409 (already exists) → None → silent: every 30s cycle is a no-op.
+
+    def register_container(self, name: str, tables: dict[str, Any]) -> None:
+        """Register a container dataset (DR14 D7): dataset→schema, table→table.
+
+        ``tables`` maps table name → pyarrow schema (columns for governance).
+        Each table lands under a Gravitino schema named after the container;
+        single-table datasets keep the default-schema table mapping.
+
+        Table locations use the same metadata-mirror convention as
+        ``register_dataset``'s fallback — ``s3://{bucket}/{container}/{table}.lance``
+        at the bucket root, NOT the real storage prefix: Gravitino's
+        lakehouse-lance CREATE refuses locations that already hold a Lance
+        dataset ("Lance dataset already exists at location", HTTP 409), so
+        the real prefix can never be handed over anyway. Gravitino entries
+        are a governance projection (columns/tags/ACL), not a mount.
+        """
+        with self._lock:
+            self._ensure_schema()
+            self._ensure_container_schema(name)
+            for tname, tschema in tables.items():
+                try:
+                    self._register_table(
+                        tname, tschema,
+                        f"s3a://arrow-lake/{name}/{tname}.lance",
+                        schema_name=name,
+                    )
+                except GravitinoTransientError as exc:
+                    logger.warning(
+                        "gravitino_container_table_failed",
+                        container=name, table=tname,
+                        error=str(exc).splitlines()[0][:200],
+                    )
+            logger.info(
+                "gravitino_container_registered",
+                name=name, tables=len(tables),
+            )
 
     def _build_gravitino_columns(self, schema: Any) -> list[dict[str, Any]]:
-        """Convert PyArrow schema to Gravitino Table column definitions."""
+        """Convert PyArrow schema to Gravitino Table column definitions.
+
+        Gravitino rejects non-ASCII / non-word column names (HTTP 400
+        IllegalArgumentException) — e.g. Chinese column names (压力_kPa).
+        Such columns are omitted from the Gravitino projection (column-level
+        tag/ACL governance doesn't cover them) with a warning, instead of
+        failing the whole table registration (pre-existing behavior: a
+        single Chinese column silently kept the dataset out of Gravitino
+        on every sync cycle).
+        """
         if schema is None:
             return [{"name": "data", "type": "string", "nullable": True}]
         try:
@@ -421,12 +497,21 @@ class GravitinoBridge:
 
             if isinstance(schema, pa.Schema):
                 cols = []
+                skipped: list[str] = []
                 for field in schema:
+                    if not _LEGAL_COLUMN_RE.match(field.name):
+                        skipped.append(field.name)
+                        continue
                     cols.append({
                         "name": field.name,
                         "type": _arrow_type_to_gravitino(field.type),
                         "nullable": field.nullable,
                     })
+                if skipped:
+                    logger.warning(
+                        "gravitino_columns_omitted_illegal_name",
+                        omitted=skipped[:10], total=len(skipped),
+                    )
                 return cols if cols else [{"name": "data", "type": "string", "nullable": True}]
         except Exception:
             pass
@@ -467,11 +552,15 @@ class GravitinoBridge:
         synced = 0
         for entry in entries:
             try:
-                self.register_dataset(
-                    name=entry["name"],
-                    location=entry.get("location", ""),
-                    schema=entry.get("schema"),
-                )
+                if entry.get("container"):
+                    # DR14 D7: dataset→schema, table→table.
+                    self.register_container(entry["name"], entry.get("tables") or {})
+                else:
+                    self.register_dataset(
+                        name=entry["name"],
+                        location=entry.get("location", ""),
+                        schema=entry.get("schema"),
+                    )
                 synced += 1
             except Exception as exc:
                 logger.warning(

@@ -14,12 +14,32 @@ logger = structlog.get_logger(__name__)
 
 
 def _load_local_entries(lake: Any) -> list[dict[str, Any]]:
-    """Read current catalog entries via Lake facade."""
+    """Read current catalog entries via Lake facade.
+
+    Single-table datasets stay flat entries; containers (DR14 D7) carry
+    their tables with per-table schema + authoritative storage location.
+    """
     try:
         names = lake.list_datasets()
-        return [{"name": n, "location": ""} for n in names]
     except Exception:
         return []
+    entries: list[dict[str, Any]] = [{"name": n, "location": ""} for n in names]
+    # Container mapping (best-effort — a storage hiccup must not kill the
+    # single-table sync): dataset→schema, table→table (D7).
+    try:
+        storage = lake._get_storage()
+        for cname in storage.list_containers():
+            tables: dict[str, Any] = {}
+            for tname in storage.list_container_tables(cname):
+                try:
+                    tables[tname] = storage.open_dataset(cname, table=tname).schema
+                except Exception:  # noqa: BLE001 — skip unreadable table
+                    continue
+            if tables:
+                entries.append({"name": cname, "container": True, "tables": tables})
+    except Exception:  # noqa: BLE001 — container enumeration is optional
+        pass
+    return entries
 
 
 class GravitinoSyncScheduler:

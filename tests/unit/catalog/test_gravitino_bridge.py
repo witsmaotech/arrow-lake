@@ -603,3 +603,64 @@ class TestEnsureSchema:
 
         with patch.object(bridge, "_ensure_client", return_value=client):
             bridge._ensure_schema()  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# Container mapping (DR14 D7: dataset→schema, table→table) — W4.3
+# ---------------------------------------------------------------------------
+
+
+class TestContainerMapping:
+    """register_container creates a schema + per-table REST registrations."""
+
+    def _bridge(self) -> GravitinoBridge:
+        with patch("arrow_lake.catalog.gravitino_bridge.create_auth_provider"):
+            return GravitinoBridge(_make_config())
+
+    def test_register_container_schema_and_tables(self) -> None:
+        import pyarrow as pa
+
+        bridge = self._bridge()
+        calls: list[tuple[str, str]] = []
+        with patch.object(
+            bridge, "_request", side_effect=lambda m, p, b=None: calls.append((m, p)) or {"code": 0},
+        ), patch.object(bridge, "_ensure_schema"):
+            bridge.register_container("gas_net", {
+                "segments": pa.schema([("id", pa.string())]),
+                "stations": pa.schema([("sid", pa.string())]),
+            })
+        # 1 schema creation + 2 table registrations, all under the container name
+        assert ("POST", "/api/metalakes/arrow_lake/catalogs/lance-catalog/schemas") in calls
+        table_paths = [p for _, p in calls if p.endswith("/tables")]
+        assert len(table_paths) == 2
+        assert all(f"/schemas/gas_net/tables" in p for p in table_paths)
+        assert not any("/schemas/default/tables" in p for p in table_paths)
+
+    def test_sync_outbound_routes_container_entries(self) -> None:
+        bridge = self._bridge()
+        with patch.object(bridge, "register_container") as rc, patch.object(bridge, "register_dataset") as rd:
+            n = bridge.sync_outbound([
+                {"name": "plain", "location": ""},
+                {"name": "gas_net", "container": True, "tables": {"t1": None}},
+            ])
+        assert n == 2
+        rc.assert_called_once_with("gas_net", {"t1": None})
+        rd.assert_called_once_with(name="plain", location="", schema=None)
+
+    def test_load_local_entries_includes_containers(self, tmp_path) -> None:
+        import pyarrow as pa
+
+        from arrow_lake.catalog.gravitino_sync import _load_local_entries
+        from arrow_lake.ingest.storage import LanceStorageManager
+
+        storage = LanceStorageManager(str(tmp_path))
+        storage.create_dataset("gas_net", pa.table({"a": [1]}), table="t1")
+        storage.create_dataset("plain", pa.table({"b": [2]}))
+        lake = MagicMock()
+        lake.list_datasets.return_value = ["plain"]
+        lake._get_storage.return_value = storage
+        entries = _load_local_entries(lake)
+        by = {e["name"]: e for e in entries}
+        assert "container" not in by["plain"]  # flat entry: no container flag
+        assert by["gas_net"]["container"] is True
+        assert by["gas_net"]["tables"]["t1"].names == ["a"]
