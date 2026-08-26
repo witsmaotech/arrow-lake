@@ -76,6 +76,33 @@ def get_current_user(request: Request) -> TokenPayload:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
 
 
+def _deny_table_override(request: Request, dotted: str, *, write: bool) -> None:
+    """Raise 403 when a table-level deny blocks the action on ``dotted``.
+
+    Shared by ``authorize_dataset_read`` and ``authorize_dataset_table``.
+    Both deny mechanisms are consulted: the explicit deny list (what
+    ``PUT /admin/deny/{ds.table}`` writes) AND DatasetACL.denied_actions —
+    the first ship only checked the ACL object, so admin-created table denies
+    never fired on the ``?table=`` guard (caught by container-ops tests).
+    Write ops also honor deny-read (a write implies reading the table).
+    ADMIN bypasses, mirroring ``authorize_dataset``.
+    """
+    user = getattr(request.state, "user", None) or get_current_user(request)
+    if user.role == Role.ADMIN:
+        return
+    checker = get_checker(request)
+    denied: set[str] = set(checker._get_denies(dotted))
+    acl = checker.get_acl(dotted, user.role)
+    if acl is not None:
+        denied |= set(acl.denied_actions or frozenset())
+    if "read" in denied or (write and "write" in denied):
+        raise HTTPException(
+            status_code=403,
+            detail=f"No {'read/write' if write else 'read'} access to table "
+            f"'{dotted}' (table-level deny)",
+        )
+
+
 def authorize_dataset_read(name: str, request: Request, table: str | None = None) -> None:
     """Depends()-ready dataset read ACL (v1.10.7 WP1a).
 
@@ -101,15 +128,23 @@ def authorize_dataset_read(name: str, request: Request, table: str | None = None
     elif table:
         dotted = f"{name}.{table}"
     if dotted is not None:
-        user = getattr(request.state, "user", None) or get_current_user(request)
-        if user.role != Role.ADMIN:
-            acl = get_checker(request).get_acl(dotted, user.role)
-            if acl is not None and "read" in (acl.denied_actions or frozenset()):
-                raise HTTPException(
-                    status_code=403,
-                    detail=f"No read access to table '{dotted}' (table-level deny)",
-                )
+        _deny_table_override(request, dotted, write=False)
     authorize_dataset(request, name)
+
+
+def authorize_dataset_table(
+    name: str, request: Request, table: str | None = None, *, write: bool = False,
+) -> None:
+    """ACL for manually-called endpoints operating on a container table.
+
+    Same layering as ``authorize_dataset_read`` but with a ``write`` axis for
+    the quality/cleaning endpoints (review 2026-08-26 follow-up: tidy &
+    data-prep pages consume ``?table=``): dataset-level ACL first, then the
+    table-level deny override on ``{name}.{table}``.
+    """
+    if table:
+        _deny_table_override(request, f"{name}.{table}", write=write)
+    authorize_dataset(request, name, write=write)
 
 
 def _dead_letter_parent(name: str) -> str | None:

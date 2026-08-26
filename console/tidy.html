@@ -47,6 +47,7 @@
     <div class="panel-h"><i class="placeholder" data-ic="database"></i><h3>数据源</h3><span class="sub" id="dsMeta">—</span></div>
     <div class="panel-b" style="padding:12px">
       <select class="select" id="dsSel" style="width:100%;max-width:440px"><option value="">加载数据集…</option></select>
+      <select class="select" id="tblSel" hidden style="max-width:220px"></select>
       <div id="dsSchema" style="margin-top:10px"></div>
     </div>
   </div>
@@ -83,6 +84,33 @@ renderShell({ active: "tidy", crumb: "<b>清洗整理</b>" });
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const ds = () => $("#dsSel").value || new URLSearchParams(location.search).get("ds") || "";
+
+// 容器数据集(DR14 kind=container)→ 表级寻址:?table= 追加到全部 schema/clean/quality 调用
+let curTable = "";  // "" = 非容器(单表集,裸名寻址)
+function tq() { return curTable ? `?table=${encodeURIComponent(curTable)}` : ""; }
+
+async function loadContainerTables(name) {
+  curTable = "";
+  const sel = $("#tblSel");
+  sel.hidden = true;
+  sel.textContent = "";
+  if (!name) return;
+  try {
+    const d = await request("GET", `/datasets/${encodeURIComponent(name)}`);
+    const tables = d?.kind === "container" ? (d.tables || []) : [];
+    if (!tables.length) return;
+    curTable = tables[0];
+    for (const t of tables) {
+      const opt = document.createElement("option");
+      opt.value = t;
+      opt.textContent = `📦 ${t}`;
+      if (t === curTable) opt.selected = true;
+      sel.appendChild(opt);
+    }
+    sel.hidden = false;
+  } catch (_) { /* 详情拉不到时按单表处理,后端 422 会给出指引 */ }
+}
+$("#tblSel").addEventListener("change", () => { curTable = $("#tblSel").value || ""; loadDsSchema(ds()); });
 const enabled = new Set();
 
 // 算子图标(内联 svg,console-layout 图标集不够)
@@ -223,11 +251,11 @@ function buildTxReq(opId) {
 }
 
 async function runDiag(id, name) {
-  if (id === "profile") return request("GET", `/datasets/${encodeURIComponent(name)}/quality/profile`);
-  if (id === "report") return request("GET", `/datasets/${encodeURIComponent(name)}/quality/report`);
-  if (id === "dedup") { const v = cfgVals(); return request("POST", `/datasets/${encodeURIComponent(name)}/quality/deduplicate`, { body: { strategy: v.strategy || null, action: v.action || null } }); }
-  if (id === "validate") { const v = cfgVals(); return request("POST", `/datasets/${encodeURIComponent(name)}/quality/rules`, { body: { rules: Array.isArray(v.rules) ? v.rules : [] } }); }
-  if (id === "filter") { const v = cfgVals(); return request("POST", `/datasets/${encodeURIComponent(name)}/quality/filter`, { body: { active_filters: v.active_filters || "", mode: v.mode || "all" } }); }
+  if (id === "profile") return request("GET", `/datasets/${encodeURIComponent(name)}/quality/profile${tq()}`);
+  if (id === "report") return request("GET", `/datasets/${encodeURIComponent(name)}/quality/report${tq()}`);
+  if (id === "dedup") { const v = cfgVals(); return request("POST", `/datasets/${encodeURIComponent(name)}/quality/deduplicate${tq()}`, { body: { strategy: v.strategy || null, action: v.action || null } }); }
+  if (id === "validate") { const v = cfgVals(); return request("POST", `/datasets/${encodeURIComponent(name)}/quality/rules${tq()}`, { body: { rules: Array.isArray(v.rules) ? v.rules : [] } }); }
+  if (id === "filter") { const v = cfgVals(); return request("POST", `/datasets/${encodeURIComponent(name)}/quality/filter${tq()}`, { body: { active_filters: v.active_filters || "", mode: v.mode || "all" } }); }
 }
 
 function pollProfile(tid, title) {
@@ -287,7 +315,7 @@ async function runOp() {
     if (op.g === "diag") {
       if (op.id === "profile") {
         // 大数据集画像走异步任务:POST 启动 → poll 状态(全量精确,后台跑不阻塞)
-        const t = await request("POST", `/datasets/${encodeURIComponent(name)}/quality/profile/async`);
+        const t = await request("POST", `/datasets/${encodeURIComponent(name)}/quality/profile/async${tq()}`);
         html = await pollProfile(t.task_id, op.t);
       } else {
         const data = await runDiag(op.id, name);
@@ -297,7 +325,7 @@ async function runOp() {
     } else {
       const body = buildTxReq(op.id);
       body.write_back = wb;
-      const data = await request("POST", `/datasets/${encodeURIComponent(name)}/clean`, { body });
+      const data = await request("POST", `/datasets/${encodeURIComponent(name)}/clean${tq()}`, { body });
       html = renderClean(data, wb);
       $("#resMeta").textContent = `${op.t} ${wb ? "· 已写回" : "· 预览"}`;
     }
@@ -328,7 +356,7 @@ $("#runPipe").addEventListener("click", async () => {
   $("#resMeta").textContent = "运行管道…";
   $("#resArea").innerHTML = `<div class="bar-track"><i></i></div>`;
   try {
-    const data = await request("POST", `/datasets/${encodeURIComponent(name)}/clean`, { body: { steps, filters, write_back: wb } });
+    const data = await request("POST", `/datasets/${encodeURIComponent(name)}/clean${tq()}`, { body: { steps, filters, write_back: wb } });
     $("#resArea").innerHTML = `<div class="muted" style="font-size:.74rem;margin-bottom:8px">管道 ${ids.length} 算子 · 输入 ${data?.input_rows} → 输出 ${data?.output_rows}${wb ? ` · <span class="tag-pos">已写回 ${esc(name)}</span>` : " · 预览"}</div>` + escTbl(data?.preview || [], data?.columns || []);
     $("#resMeta").textContent = `管道 ✓ ${ids.length} 算子`;
     toast(`管道完成(${ids.length} 算子)${wb ? " · 已写回" : ""}`, "ok");
@@ -345,7 +373,7 @@ async function loadDsSchema(name) {
   if (!name) { if (box) box.innerHTML = ""; return; }
   box.innerHTML = `<span class="muted" style="font-size:.72rem">加载字段…</span>`;
   try {
-    const s = await request("GET", `/datasets/${encodeURIComponent(name)}/schema`);
+    const s = await request("GET", `/datasets/${encodeURIComponent(name)}/schema${tq()}`);
     const fs = s?.fields || [];
     $("#dsMeta").textContent = `${fs.length} 字段 · 已选:${name}`;
     box.innerHTML = fs.length
@@ -370,11 +398,11 @@ async function loadDatasets() {
     $("#dsSel").innerHTML = list.length
       ? list.map((d) => `<option value="${esc(d.name)}"${d.name === cur ? " selected" : ""}>${esc(d.name)} · ${(d.num_rows ?? 0).toLocaleString()} 行</option>`).join("")
       : `<option value="">(无数据集)</option>`;
-    if ($("#dsSel").value) loadDsSchema($("#dsSel").value);
+    if ($("#dsSel").value) { loadContainerTables($("#dsSel").value).then(() => loadDsSchema($("#dsSel").value)); }
     $("#dsSel").addEventListener("change", () => {
       const v = $("#dsSel").value;
       $("#dsMeta").textContent = v ? `已选:${v}` : "—";
-      loadDsSchema(v);
+      loadContainerTables(v).then(() => loadDsSchema(v));
     });
   } catch (e) {
     toast("数据集列表加载失败:" + (e?.detail || e?.message), "warn", 4000);

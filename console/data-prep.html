@@ -85,7 +85,7 @@
   <!-- 数据源 + 质量画像 KPI -->
   <div class="panel">
     <div class="panel-h"><i class="placeholder" data-ic="database"></i><h3>数据源 · 质量画像</h3>
-      <span class="actions"><select class="select" id="dsSelect" style="min-width:240px"></select></span>
+      <span class="actions"><select class="select" id="dsSelect" style="min-width:240px"></select><select class="select" id="tblSelect" hidden style="min-width:160px"></select></span>
     </div>
     <div class="panel-b kpi-row" id="kpis" style="grid-template-columns:repeat(5,1fr)">
       <div class="muted" style="grid-column:1/-1;padding:14px">选择数据集以加载质量画像…</div>
@@ -140,6 +140,7 @@
 <script src="assets/console-layout.js"></script>
 <script type="module">
 import { isLoggedIn } from "./src/auth.js";
+import { request } from "./src/api.js";
 import { loadDatasets, loadProfile, renderKpis } from "./src/data-prep/profile.js";
 import { OPS, renderOpList, icon } from "./src/data-prep/ops.js";
 import { runPreview, runSubmit } from "./src/data-prep/run.js";
@@ -153,7 +154,10 @@ window.applyIcons && applyIcons(document);
 
 $("#telem").innerHTML = `<span class="item"><span class="dot"></span>数据准备 <b>文档型</b></span><span class="item">引擎 <b>Daft + LLM</b></span><span class="item">模式 <b>预览 → 提交</b></span><span class="item" style="margin-left:auto">质量 / 规则 / 规整 / 去重 / 标注 / 抽取</span>`;
 
-const state = { current: null, textCols: [], op: OPS[0] };
+const state = { current: null, table: "", textCols: [], op: OPS[0] };
+
+// 容器数据集(DR14)→ 表级寻址:全部 profile/提交调用附 ?table=
+function tq() { return state.table ? `?table=${encodeURIComponent(state.table)}` : ""; }
 
 async function init() {
   try {
@@ -169,12 +173,37 @@ async function init() {
   } catch (e) { toastSafe("加载数据集失败: " + (e.detail || e.message), "danger"); }
 }
 
+// 容器 → 填充表下拉;单表集 → 隐藏并清空 state.table
+async function loadContainerTables(name) {
+  state.table = "";
+  const sel = $("#tblSelect");
+  sel.hidden = true;
+  sel.textContent = "";
+  if (!name) return;
+  try {
+    const d = await request("GET", `/datasets/${encodeURIComponent(name)}`);
+    const tables = d?.kind === "container" ? (d.tables || []) : [];
+    if (!tables.length) return;
+    state.table = tables[0];
+    for (const t of tables) {
+      const opt = document.createElement("option");
+      opt.value = t;
+      opt.textContent = `📦 ${t}`;
+      if (t === state.table) opt.selected = true;
+      sel.appendChild(opt);
+    }
+    sel.hidden = false;
+  } catch (_) { /* 详情拉不到按单表处理 */ }
+}
+
 let dsGen = 0;
 async function selectDataset(name) {
   const my = ++dsGen;
   state.current = name;
+  await loadContainerTables(name);
+  if (my !== dsGen) return;
   try {
-    const p = await loadProfile(name);
+    const p = await loadProfile(name, state.table);
     if (my !== dsGen) return;  // 被更新的选择取代,丢弃过期 profile
     state.textCols = p.textCols;
     state.profile = p;
@@ -188,6 +217,8 @@ async function selectDataset(name) {
   renderOpList($("#opList"), state.textCols, (op) => pickOp(op));
   pickOp(state.op);
 }
+
+$("#tblSelect").addEventListener("change", () => { state.table = $("#tblSelect").value || ""; selectDataset(state.current); });
 
 function pickOp(op) {
   state.op = op;
@@ -224,7 +255,7 @@ $("#previewBtn").addEventListener("click", async () => {
   if (!state.current) return;
   $("#previewBtn").disabled = true;
   try {
-    const { head, rows, meta } = await runPreview(state.current, state.op, $("#cfgArea"));
+    const { head, rows, meta } = await runPreview(state.current, state.op, $("#cfgArea"), state.table);
     renderPreviewTbl(head, rows);
     $("#previewMeta").textContent = meta;
   } catch (e) { toastSafe("预览失败: " + (e.detail || e.message), "warn"); }
@@ -242,7 +273,7 @@ $("#runBtn").addEventListener("click", async () => {
   if (!(await confirmDialog({ title: `${state.op.label}`, message: "将对该数据集执行写操作,确认?", danger: true }))) return;
   $("#runBtn").disabled = true; $("#runStatus").textContent = "提交中…";
   try {
-    await runSubmit(state.current, state.op, $("#cfgArea"), {
+    await runSubmit(state.current, state.op, $("#cfgArea"), state.table, {
       onProgress: (p, txt) => { $("#runBar").style.width = (p * 100) + "%"; $("#runPct").textContent = Math.round(p * 100) + "%"; if (txt) $("#runStatus").textContent = txt; },
       onResult: renderRunResult,
       onTask: (taskId, opName) => {

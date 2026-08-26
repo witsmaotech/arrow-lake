@@ -75,7 +75,7 @@ async def test_quality_filter(client: AsyncClient, mock_lake: MagicMock) -> None
     assert body["report"]["passed"] == 90
 
     mock_lake.quality_filter.assert_called_once_with(
-        "docs", "text_length", mode="all"
+        "docs", "text_length", mode="all", table=None
     )
 
 
@@ -86,7 +86,7 @@ async def test_quality_filter_default_mode(client: AsyncClient, mock_lake: Magic
         json={},
     )
     assert resp.status_code == 200
-    mock_lake.quality_filter.assert_called_once_with("docs", "", mode="all")
+    mock_lake.quality_filter.assert_called_once_with("docs", "", mode="all", table=None)
 
 
 @pytest.mark.asyncio
@@ -114,7 +114,8 @@ async def test_deduplicate(client: AsyncClient, mock_lake: MagicMock) -> None:
     assert body["report"]["duplicates"] == 5
 
     mock_lake.deduplicate.assert_called_once_with(
-        "docs", strategy="exact", action="flag", perceptual_threshold=None, text_column=None
+        "docs", strategy="exact", action="flag", perceptual_threshold=None, text_column=None,
+        table=None,
     )
 
 
@@ -126,7 +127,8 @@ async def test_deduplicate_perceptual(client: AsyncClient, mock_lake: MagicMock)
     )
     assert resp.status_code == 200
     mock_lake.deduplicate.assert_called_once_with(
-        "docs", strategy="perceptual", action="remove", perceptual_threshold=15, text_column=None
+        "docs", strategy="perceptual", action="remove", perceptual_threshold=15, text_column=None,
+        table=None,
     )
 
 
@@ -160,7 +162,7 @@ async def test_quality_report(client: AsyncClient, mock_lake: MagicMock) -> None
     assert body["report"]["total_rows"] == 100
     assert body["report"]["passed_rows"] == 90
 
-    mock_lake.quality_filter.assert_called_once_with("docs")
+    mock_lake.quality_filter.assert_called_once_with("docs", table=None)
 
 
 # ---------------------------------------------------------------------------

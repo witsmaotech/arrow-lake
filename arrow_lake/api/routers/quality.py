@@ -4,11 +4,16 @@ from __future__ import annotations
 
 from dataclasses import asdict
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Request
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 
 from arrow_lake.api.auth_models import Role
-from arrow_lake.api.deps import authorize_dataset, get_lake, require_role
-from arrow_lake.api.models.common import _NAME_PATTERN, arrow_table_to_response
+from arrow_lake.api.deps import (
+    authorize_dataset,
+    authorize_dataset_table,
+    get_lake,
+    require_role,
+)
+from arrow_lake.api.models.common import _NAME_PATTERN, _TABLE_Q_PATTERN, arrow_table_to_response
 from arrow_lake.api.models.quality import (
     DedupRequest,
     DedupResponse,
@@ -37,13 +42,14 @@ async def quality_filter(
     name: str = Path(..., pattern=_NAME_PATTERN),
     *,
     req: QualityFilterRequest,
+    table: str | None = Query(None, pattern=_TABLE_Q_PATTERN),
     lake=Depends(get_lake),
     _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> QualityFilterResponse:
-    """Run quality filters on a dataset."""
-    authorize_dataset(request, name)
+    """Run quality filters on a dataset (``?table=`` for container tables)."""
+    authorize_dataset_table(name, request, table)
     report = await run_sync(
-        lake.quality_filter, name, req.active_filters, mode=req.mode,
+        lake.quality_filter, name, req.active_filters, mode=req.mode, table=table,
         timeout=_QUALITY_TIMEOUT, label="quality_filter",
     )
     return QualityFilterResponse(report=asdict(report) if hasattr(report, "__dataclass_fields__") else report)
@@ -54,13 +60,14 @@ async def quality_report(
     request: Request,
     name: str = Path(..., pattern=_NAME_PATTERN),
     *,
+    table: str | None = Query(None, pattern=_TABLE_Q_PATTERN),
     lake=Depends(get_lake),
     _user: dict = Depends(require_role(Role.VIEWER)),
 ) -> QualityReportResponse:
     """Get quality report for a dataset (runs filters with default config)."""
-    authorize_dataset(request, name)
+    authorize_dataset_table(name, request, table)
     report = await run_sync(
-        lake.quality_filter, name,
+        lake.quality_filter, name, table=table,
         timeout=_QUALITY_TIMEOUT, label="quality_report",
     )
     return QualityReportResponse(report=report.to_json())
@@ -72,16 +79,18 @@ async def deduplicate(
     name: str = Path(..., pattern=_NAME_PATTERN),
     *,
     req: DedupRequest,
+    table: str | None = Query(None, pattern=_TABLE_Q_PATTERN),
     lake=Depends(get_lake),
     _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> DedupResponse:
-    """Run content deduplication on a dataset."""
-    authorize_dataset(request, name, write=True)
+    """Run content deduplication on a dataset (``?table=`` for container tables)."""
+    authorize_dataset_table(name, request, table, write=True)
     report = await run_sync(
         lake.deduplicate, name,
         strategy=req.strategy, action=req.action,
         perceptual_threshold=req.perceptual_threshold,
         text_column=req.text_column,
+        table=table,
         timeout=_QUALITY_TIMEOUT, label="deduplicate",
     )
     report_dict = asdict(report) if hasattr(report, "__dataclass_fields__") else report
@@ -96,19 +105,20 @@ async def quality_rules(
     name: str = Path(..., pattern=_NAME_PATTERN),
     *,
     req: QualityRuleSetRequest,
+    table: str | None = Query(None, pattern=_TABLE_Q_PATTERN),
     lake=Depends(get_lake),
     _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> QualityRuleSetResponse:
-    """Apply declarative quality rules to a dataset.
+    """Apply declarative quality rules to a dataset (``?table=`` for containers).
 
     Supports length, range, regex, and duplicate checks with
     reject, flag, or remove actions.
     """
     from arrow_lake.quality.rules import QualityRuleEngine, RuleDefinition
 
-    authorize_dataset(request, name, write=True)
-    table = await run_sync(
-        lake.read_dataset, name,
+    authorize_dataset_table(name, request, table)
+    data = await run_sync(
+        lake.read_dataset, name, table=table,
         timeout=_QUALITY_TIMEOUT, label="quality_rules_read",
     )
 
@@ -123,7 +133,7 @@ async def quality_rules(
             message=rule_req.message,
         ))
 
-    results = engine.evaluate(table)
+    results = engine.evaluate(data)
     total_affected = sum(r.affected_count for r in results)
 
     return QualityRuleSetResponse(
@@ -171,7 +181,7 @@ def _profile_to_dict(profile) -> dict:
     }
 
 
-def _bg_profile(lake, name) -> dict:
+def _bg_profile(lake, name, table: str | None = None) -> dict:
     """Read dataset + compute full quality profile. Runs in a worker thread.
 
     Column statistics over large tables are CPU-bound and synchronous — this must
@@ -180,8 +190,8 @@ def _bg_profile(lake, name) -> dict:
     """
     from arrow_lake.quality.profiler import QualityProfiler
 
-    table = lake.read_dataset(name)
-    profile = QualityProfiler().profile(table, name)
+    data = lake.read_dataset(name, table=table)
+    profile = QualityProfiler().profile(data, name)
     return _profile_to_dict(profile)
 
 
@@ -190,13 +200,14 @@ async def quality_profile(
     request: Request,
     name: str = Path(..., pattern=_NAME_PATTERN),
     *,
+    table: str | None = Query(None, pattern=_TABLE_Q_PATTERN),
     lake=Depends(get_lake),
     _user: dict = Depends(require_role(Role.VIEWER)),
 ) -> dict:
     """Get quality profile for a dataset — column-level statistics and quality scores."""
-    authorize_dataset(request, name)
+    authorize_dataset_table(name, request, table)
     data = await run_sync(
-        _bg_profile, lake, name,
+        _bg_profile, lake, name, table,
         timeout=_QUALITY_TIMEOUT, label="quality_profile", executor=olap_executor,
     )
     return {"success": True, "data": data, "error": None, "metadata": {}}
@@ -211,6 +222,7 @@ async def quality_profile_async(
     request: Request,
     name: str = Path(..., pattern=_NAME_PATTERN),
     *,
+    table: str | None = Query(None, pattern=_TABLE_Q_PATTERN),
     lake=Depends(get_lake),
     _user: dict = Depends(require_role(Role.VIEWER)),
 ) -> PrepTaskResponse:
@@ -221,9 +233,11 @@ async def quality_profile_async(
     endpoint's ``data``). Avoids the multi-minute blocking of the sync path on
     tables with 100M+ rows.
     """
-    authorize_dataset(request, name)
+    authorize_dataset_table(name, request, table)
     task_id = TaskManager.create_task("quality_profile", name)
-    spawn_background(TaskManager.run_background(task_id, _bg_profile, lake, name))
+    spawn_background(
+        TaskManager.run_background(task_id, _bg_profile, lake, name, table)
+    )
     return PrepTaskResponse(
         task_id=task_id,
         operation="quality_profile",
@@ -248,6 +262,7 @@ async def llm_label(
     name: str = Path(..., pattern=_NAME_PATTERN),
     *,
     req: LlmLabelRequest,
+    table: str | None = Query(None, pattern=_TABLE_Q_PATTERN),
     lake=Depends(get_lake),
     _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> PrepTaskResponse:
@@ -255,8 +270,9 @@ async def llm_label(
 
     Renders ``prompt_template`` (with ``{text}``) per row, writes results to
     ``new_column`` via native Lance column add. Poll ``GET /tasks/{task_id}/status``.
+    ``?table=`` targets a table inside a container dataset.
     """
-    authorize_dataset(request, name, write=True)
+    authorize_dataset_table(name, request, table, write=True)
     task_id = TaskManager.create_task(
         "llm_label", name,
         detail={"column": req.column, "new_column": req.new_column},
@@ -268,6 +284,7 @@ async def llm_label(
             model=req.model,
             max_rows=req.max_rows or _LLM_DEFAULT_MAX_ROWS,
             concurrency=req.concurrency,
+            table=table,
         )
     )
     return PrepTaskResponse(
@@ -287,14 +304,16 @@ async def extract(
     name: str = Path(..., pattern=_NAME_PATTERN),
     *,
     req: ExtractRequest,
+    table: str | None = Query(None, pattern=_TABLE_Q_PATTERN),
     lake=Depends(get_lake),
     _user: dict = Depends(require_role(Role.EDITOR)),
 ) -> PrepTaskResponse:
     """Batch structured extraction from a text column → multiple columns (async).
 
     Each field in ``fields`` becomes a new string column. Poll task status.
+    ``?table=`` targets a table inside a container dataset.
     """
-    authorize_dataset(request, name, write=True)
+    authorize_dataset_table(name, request, table, write=True)
     field_dicts = [f.model_dump() for f in req.fields]
     task_id = TaskManager.create_task(
         "extract", name,
@@ -307,6 +326,7 @@ async def extract(
             model=req.model,
             max_rows=req.max_rows or _LLM_DEFAULT_MAX_ROWS,
             concurrency=req.concurrency,
+            table=table,
         )
     )
     return PrepTaskResponse(

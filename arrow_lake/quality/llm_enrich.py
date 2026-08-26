@@ -80,13 +80,15 @@ def _check_size(n: int, max_rows: int) -> None:
         )
 
 
-def _verify_row_count_unchanged(lake: Any, name: str, expected_n: int) -> None:
+def _verify_row_count_unchanged(
+    lake: Any, name: str, expected_n: int, *, table: str | None = None,
+) -> None:
     """Re-read row count; abort if dataset changed during enrich.
 
     read→compute→add_columns 期间若有 ingest append,行数变化会导致新列行错位
     (label[i] 附到 row i+offset)。校验不一致即 abort,防数据损坏。
     """
-    current = lake.read_dataset(name).num_rows
+    current = lake.read_dataset(name, table=table).num_rows
     if current != expected_n:
         raise RuntimeError(
             f"dataset {name!r} changed during enrich ({expected_n}→{current} rows); "
@@ -113,18 +115,20 @@ async def label_column(
     max_rows: int = _DEFAULT_MAX_ROWS,
     concurrency: int = _DEFAULT_CONCURRENCY,
     provider: Any = None,
+    table: str | None = None,
 ) -> dict[str, Any]:
     """Label each row's text via LLM; persist as one new string column.
 
     ``prompt_template`` should contain a ``{text}`` placeholder.
+    ``table`` addresses a table inside a container dataset (DR14).
     """
-    table = lake.read_dataset(name)
-    if column not in table.column_names:
+    data = lake.read_dataset(name, table=table)
+    if column not in data.column_names:
         raise ValueError(f"column {column!r} not found in dataset {name!r}")
-    n = table.num_rows
+    n = data.num_rows
     _check_size(n, max_rows)
 
-    texts = table.column(column).to_pylist()
+    texts = data.column(column).to_pylist()
     prov = _get_provider(lake, provider, model)
     sem = asyncio.Semaphore(max(1, concurrency))
 
@@ -144,8 +148,10 @@ async def label_column(
 
     results = await _map_with_limit(sem, label_one, texts)
     succeeded = sum(1 for r in results if r != "")
-    _verify_row_count_unchanged(lake, name, n)
-    lake.add_columns_table(name, pa.table({new_column: pa.array(results, type=pa.string())}))
+    _verify_row_count_unchanged(lake, name, n, table=table)
+    lake.add_columns_table(
+        name, pa.table({new_column: pa.array(results, type=pa.string())}), table=table,
+    )
 
     sample = [{column: texts[i], new_column: results[i]} for i in range(min(5, n))]
     return EnrichReport(
@@ -163,24 +169,26 @@ async def extract_fields(
     max_rows: int = _DEFAULT_MAX_ROWS,
     concurrency: int = _DEFAULT_CONCURRENCY,
     provider: Any = None,
+    table: str | None = None,
 ) -> dict[str, Any]:
     """Extract structured fields from each row's text → multiple string columns.
 
     ``fields`` is a list of ``{name, type, description}`` dicts. Values are
     stored as strings (LLM JSON coerced via ``str()``) to avoid schema drift.
+    ``table`` addresses a table inside a container dataset (DR14).
     """
     fields = list(fields)
     if not fields:
         raise ValueError("fields must be a non-empty list")
     field_names = [f["name"] for f in fields]
 
-    table = lake.read_dataset(name)
-    if column not in table.column_names:
+    data = lake.read_dataset(name, table=table)
+    if column not in data.column_names:
         raise ValueError(f"column {column!r} not found in dataset {name!r}")
-    n = table.num_rows
+    n = data.num_rows
     _check_size(n, max_rows)
 
-    texts = table.column(column).to_pylist()
+    texts = data.column(column).to_pylist()
     prov = _get_provider(lake, provider, model)
     sem = asyncio.Semaphore(max(1, concurrency))
     schema_desc = json.dumps(
@@ -207,8 +215,8 @@ async def extract_fields(
     rows = await _map_with_limit(sem, extract_one, texts)
     succeeded = sum(1 for d in rows if any(d.values()))
     cols = pa.table({fn: pa.array([d[fn] for d in rows], type=pa.string()) for fn in field_names})
-    _verify_row_count_unchanged(lake, name, n)
-    lake.add_columns_table(name, cols)
+    _verify_row_count_unchanged(lake, name, n, table=table)
+    lake.add_columns_table(name, cols, table=table)
 
     sample = [{column: texts[i], **rows[i]} for i in range(min(5, n))]
     return EnrichReport(

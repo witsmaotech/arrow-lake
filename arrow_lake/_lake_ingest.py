@@ -1075,6 +1075,7 @@ class _LakeIngestMixin:
         active_filters: str = "",
         *,
         mode: str = "all",
+        table: str | None = None,
     ) -> QualityReport:
         """Run quality filters on a dataset and return a report (Epic 4).
 
@@ -1084,6 +1085,7 @@ class _LakeIngestMixin:
             dataset_name: Name of the Lance dataset.
             active_filters: Comma-separated filter names (empty = use config).
             mode: Filter combination mode ("all" for AND, "any" for OR).
+            table: Optional table within a container dataset (DR14).
 
         Returns:
             QualityReport with per-filter results and totals.
@@ -1117,8 +1119,8 @@ class _LakeIngestMixin:
         )
 
         with _QueryTimer("quality_filter"):
-            table = self._get_storage().read_dataset(dataset_name)
-            report = registry.apply_all(table, active_filters, mode=filter_mode)
+            data = self._get_storage().read_dataset(dataset_name, table=table)
+            report = registry.apply_all(data, active_filters, mode=filter_mode)
 
         if get_metrics_enabled():
             for fr in report.filter_results:
@@ -1134,6 +1136,7 @@ class _LakeIngestMixin:
         action: str | None = None,
         perceptual_threshold: int | None = None,
         text_column: str | None = None,
+        table: str | None = None,
     ) -> DedupResult:
         """Run content deduplication on a dataset (Story 4.7).
 
@@ -1145,6 +1148,7 @@ class _LakeIngestMixin:
             action: "flag" or "remove" (None = use config).
             perceptual_threshold: pHash Hamming distance (None = use config).
             text_column: Required for strategy="minhash" (semantic text dedup).
+            table: Optional table within a container dataset (DR14).
 
         Returns:
             DedupResult with dedup statistics and processed table.
@@ -1158,8 +1162,8 @@ class _LakeIngestMixin:
             perceptual_threshold=perceptual_threshold or config.dedup_perceptual_threshold,
             text_column=text_column,
         )
-        table = self._get_storage().read_dataset(dataset_name)
-        return dedup.deduplicate(table)
+        data = self._get_storage().read_dataset(dataset_name, table=table)
+        return dedup.deduplicate(data)
 
     def embed_and_add(
         self,

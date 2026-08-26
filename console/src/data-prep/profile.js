@@ -19,8 +19,9 @@ export async function loadDatasets() {
   return all.filter(d => (d.kind || "structured") !== "document");
 }
 
-export async function loadProfile(name) {
-  const resp = await request("GET", `/datasets/${encodeURIComponent(name)}/quality/profile`);
+export async function loadProfile(name, table) {
+  const q = table ? `?table=${encodeURIComponent(table)}` : "";
+  const resp = await request("GET", `/datasets/${encodeURIComponent(name)}/quality/profile${q}`);
   const data = (resp && resp.data) || {};
   const columns = Array.isArray(data.columns) ? data.columns : [];
   const textCols = columns.filter(isTextCol).map((c) => c.name);

@@ -13,6 +13,11 @@ from pydantic import BaseModel
 # Dataset name pattern: alphanumeric, underscore, hyphen; 1-128 chars
 _NAME_PATTERN = r"^[a-zA-Z0-9_-]{1,128}$"
 
+# Container table pattern for the ``?table=`` query param (DR14): letter/underscore
+# first, then word chars/hyphens; 1-128 chars. Mirrors the router-local pattern
+# in ``routers/query.py`` (kept in sync manually — see review backlog).
+_TABLE_Q_PATTERN = r"^[a-zA-Z_][a-zA-Z0-9_-]{0,127}$"
+
 # Dangerous SQL statement prefixes (only at statement start)
 _BLOCKED_SQL_PREFIXES = re.compile(
     r"^\s*(DROP|DELETE|INSERT|UPDATE|ALTER|CREATE|GRANT|REVOKE|TRUNCATE|EXEC|EXECUTE|COMMENT|RENAME|MERGE)\b",

@@ -3,6 +3,8 @@ import { colOptions } from "./profile.js";
 
 const _esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const val = (form, id) => (form.querySelector("#" + id)?.value ?? "").trim();
+// 容器表寻址(DR14):table 非空时拼 ?table=
+const tq = (table) => (table ? `?table=${encodeURIComponent(table)}` : "");
 
 // DuckDB 文本规整表达式(列引用用双引号)
 const TIDY = {
@@ -38,13 +40,13 @@ export const OPS = [
       <div class="muted" style="font-size:.72rem">length 用 min/max;regex 用 pattern;duplicate 无需参数。flag 不会删数据,安全可先试。</div>`;
     },
     previewCols(f) { return [val(f, "rCol")]; },
-    buildRequest(f, ds) {
+    buildRequest(f, ds, table) {
       const check = val(f, "rCheck");
       const params = {};
       if (check === "length") { if (val(f, "rMin")) params.min = +val(f, "rMin"); if (val(f, "rMax")) params.max = +val(f, "rMax"); }
       if (check === "regex") params.pattern = val(f, "rPat") || ".*";
       return {
-        method: "POST", path: `/datasets/${encodeURIComponent(ds)}/quality/rules`, async: false,
+        method: "POST", path: `/datasets/${encodeURIComponent(ds)}/quality/rules${tq(table)}`, async: false,
         body: { rules: [{ name: val(f, "rName") || `rule_${check}`, column: val(f, "rCol"), check, params, action: val(f, "rAct") }] },
       };
     },
@@ -69,7 +71,8 @@ export const OPS = [
       <div class="muted" style="font-size:.72rem">服务端 DuckDB 执行,无任意 Python(避免 RCE)。生成 SQL:<code class="mono" id="tSql" style="color:var(--teal-bright)"></code></div>`;
     },
     previewCols(f) { return [val(f, "tCol")]; },
-    buildRequest(f, ds) {
+    buildRequest(f, ds, table) {
+      if (table) throw new Error("schema/migrate 暂不支持容器表(后续版本);容器内规整请用「数据清洗」页 clean 管道");
       const col = val(f, "tCol"), op = val(f, "tOp"), newC = val(f, "tNew") || `${col}_clean`;
       const sql = TIDY[op] ? TIDY[op].sql(col) : `trim("${col}")`;
       return {
@@ -100,11 +103,11 @@ export const OPS = [
       <div class="muted" style="font-size:.72rem">exact 对二进制/文本完全匹配;minhash 对文本列做字符 n-gram MinHash LSH,抓释义型近重复。<b>flag 不删数据,建议先 flag 看 is_duplicate 列。</b></div>`;
     },
     previewCols(f) { return [val(f, "dCol")]; },
-    buildRequest(f, ds) {
+    buildRequest(f, ds, table) {
       const strategy = val(f, "dStrat");
       const body = { strategy, action: val(f, "dAct") };
       if (strategy === "minhash") body.text_column = val(f, "dCol");
-      return { method: "POST", path: `/datasets/${encodeURIComponent(ds)}/quality/deduplicate`, async: false, body };
+      return { method: "POST", path: `/datasets/${encodeURIComponent(ds)}/quality/deduplicate${tq(table)}`, async: false, body };
     },
     parseResp(r) {
       const rep = r.report || r;
@@ -132,7 +135,7 @@ export const OPS = [
       <div class="muted" style="font-size:.72rem">全量提交为<b>异步任务</b>(返回 task_id),逐行 LLM 调用,失败行留空。预览仅看列内容。</div>`;
     },
     previewCols(f) { return [val(f, "lCol")]; },
-    buildRequest(f, ds) {
+    buildRequest(f, ds, table) {
       const body = {
         column: val(f, "lCol"), new_column: val(f, "lNew"),
         prompt_template: f.querySelector("#lPrompt").value,
@@ -140,7 +143,7 @@ export const OPS = [
       };
       if (val(f, "lModel")) body.model = val(f, "lModel");
       const mr = +val(f, "lMax"); if (mr) body.max_rows = mr;
-      return { method: "POST", path: `/datasets/${encodeURIComponent(ds)}/quality/llm_label`, async: true, body };
+      return { method: "POST", path: `/datasets/${encodeURIComponent(ds)}/quality/llm_label${tq(table)}`, async: true, body };
     },
   },
 
@@ -168,7 +171,7 @@ export const OPS = [
       <div class="muted" style="font-size:.72rem">LLM 按字段 schema 输出 JSON,解析为多列落盘。异步任务。</div>`;
     },
     previewCols(f) { return [val(f, "eCol")]; },
-    buildRequest(f, ds) {
+    buildRequest(f, ds, table) {
       const rows = [...f.querySelectorAll("#extractFields .field-mini")].map((r) => ({
         name: r.querySelector('[data-f="name"]')?.value.trim(),
         type: r.querySelector('[data-f="type"]')?.value.trim() || "string",
@@ -177,7 +180,7 @@ export const OPS = [
       const body = { column: val(f, "eCol"), fields: rows, concurrency: +val(f, "eConc") || 8 };
       if (val(f, "eModel")) body.model = val(f, "eModel");
       const mr = +val(f, "eMax"); if (mr) body.max_rows = mr;
-      return { method: "POST", path: `/datasets/${encodeURIComponent(ds)}/quality/extract`, async: true, body };
+      return { method: "POST", path: `/datasets/${encodeURIComponent(ds)}/quality/extract${tq(table)}`, async: true, body };
     },
   },
 ];

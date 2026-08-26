@@ -405,7 +405,9 @@ class _LakeAdminMixin:
                 "best-effort KG graph drop failed for dataset %s", name, exc_info=True
             )
 
-    def restore_dataset(self, name: str, data: Any, *, actor: str = "system") -> None:
+    def restore_dataset(
+        self, name: str, data: Any, *, actor: str = "system", table: str | None = None,
+    ) -> None:
         """Replace a dataset entirely with new data (delete + recreate).
 
         Used for schema changes, column additions, and full dataset reloads.
@@ -413,11 +415,14 @@ class _LakeAdminMixin:
         Args:
             name: Dataset name.
             data: Arrow table with the new dataset content.
+            table: Optional table within a container dataset (DR14) — the
+                restore targets ``{name}/{table}.lance`` keeping container
+                layout intact.
 
         Raises:
             StorageError: If dataset does not exist or write fails.
         """
-        self._get_storage().restore_dataset(name, data)
+        self._get_storage().restore_dataset(name, data, table=table)
         # v1.9.4: audit restore (companion to delete audit); best-effort.
         try:
             self.audit_record(
@@ -620,7 +625,7 @@ class _LakeAdminMixin:
         """
         self._get_storage().add_column(name, column_name, sql_expr)
 
-    def add_columns_table(self, name: str, columns: Any) -> None:
+    def add_columns_table(self, name: str, columns: Any, *, table: str | None = None) -> None:
         """Add pre-computed columns to a dataset without full rewrite.
 
         Avoids the cost of ``restore_dataset`` (drop + recreate) by using
@@ -629,8 +634,9 @@ class _LakeAdminMixin:
         Args:
             name: Dataset name.
             columns: Arrow Table with new columns (must be row-aligned).
+            table: Optional table within a container dataset (DR14).
         """
-        self._get_storage().add_columns_table(name, columns)
+        self._get_storage().add_columns_table(name, columns, table=table)
 
     def alter_column(self, name: str, column_name: str, new_type: Any) -> None:
         """Change the data type of an existing column.
@@ -663,14 +669,17 @@ class _LakeAdminMixin:
         with self._trace_span("compact_dataset", dataset=name):
             return self._get_storage().compact(name)
 
-    def read_dataset(self, name: str, *, columns: list[str] | None = None) -> Any:
+    def read_dataset(
+        self, name: str, *, columns: list[str] | None = None, table: str | None = None,
+    ) -> Any:
         """Read a dataset as an Arrow table.
 
         Args:
             name: Dataset name.
             columns: Optional column names to read (None = all).
+            table: Optional table within a container dataset (DR14).
         """
-        return self._get_storage().read_dataset(name, columns=columns)
+        return self._get_storage().read_dataset(name, columns=columns, table=table)
 
     def scan_dataset(self, name: str, **kwargs: Any) -> Any:
         """Create a Lance dataset scanner for lazy row-by-row reading.

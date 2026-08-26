@@ -22,9 +22,9 @@ from __future__ import annotations
 import duckdb
 import pyarrow as pa
 import re
-from fastapi import APIRouter, Depends, Path, Request
+from fastapi import APIRouter, Depends, Path, Query, Request
 
-from arrow_lake.api.deps import authorize_dataset, get_lake, require_permission
+from arrow_lake.api.deps import authorize_dataset_table, get_lake, require_permission
 from arrow_lake.api.rbac import Permission
 from arrow_lake.api._security_log import actor_of
 from arrow_lake.api.models.cleaning import (
@@ -33,7 +33,7 @@ from arrow_lake.api.models.cleaning import (
     CleanResponse,
     CleanStep,
 )
-from arrow_lake.api.models.common import _NAME_PATTERN
+from arrow_lake.api.models.common import _NAME_PATTERN, _TABLE_Q_PATTERN
 from arrow_lake.api.utils import run_sync
 
 router = APIRouter(prefix="/api/v1/datasets", tags=["cleaning"])
@@ -225,6 +225,7 @@ async def clean_dataset(
     name: str = Path(..., pattern=_NAME_PATTERN),
     *,
     req: CleanRequest,
+    table: str | None = Query(None, pattern=_TABLE_Q_PATTERN),
     lake=Depends(get_lake),
     _user: dict = Depends(require_permission(Permission.DATASET_WRITE)),
 ) -> CleanResponse:
@@ -232,14 +233,18 @@ async def clean_dataset(
 
     鉴权:require_role(EDITOR) + authorize_dataset(dataset-level ACL;
     write_back 时 write=True)。与 quality 端点(filter/dedup/rules/profile)一致。
+    ``?table=`` 清洗容器数据集里的一张表(DR14),写回同表(容器布局不变)。
     """
-    authorize_dataset(request, name, write=bool(req.write_back))
-    table = _to_pa_table(
-        await run_sync(lake.read_dataset, name, timeout=_CLEAN_TIMEOUT, label="clean_read")
+    authorize_dataset_table(name, request, table, write=bool(req.write_back))
+    data = _to_pa_table(
+        await run_sync(
+            lake.read_dataset, name, timeout=_CLEAN_TIMEOUT, label="clean_read",
+            table=table,
+        )
     )
     con = duckdb.connect()
-    con.register("t", table)
-    sql = _build_sql(req.steps, req.filters, list(table.column_names))
+    con.register("t", data)
+    sql = _build_sql(req.steps, req.filters, list(data.column_names))
     if req.limit:
         sql = f"SELECT * FROM ({sql}) LIMIT {int(req.limit)}"
     cleaned = con.sql(sql).to_arrow_table()
@@ -248,13 +253,13 @@ async def clean_dataset(
     if req.write_back:
         await run_sync(
             lake.restore_dataset, name, cleaned, timeout=_CLEAN_TIMEOUT,
-            label="clean_write", actor=actor_of(_user),
+            label="clean_write", actor=actor_of(_user), table=table,
         )
         written = True
 
     preview = cleaned.slice(0, _PREVIEW_ROWS).to_pylist()
     return CleanResponse(
-        input_rows=table.num_rows,
+        input_rows=data.num_rows,
         output_rows=cleaned.num_rows,
         columns=list(cleaned.column_names),
         written_back=written,

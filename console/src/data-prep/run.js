@@ -1,10 +1,21 @@
-// 数据准备 · run 模块:预览(query/daft)+ 提交分派 + 异步任务轮询 + 结果归一
+// 数据准备 · run 模块:预览(query/daft;容器表走 query/olap?table=)+ 提交分派 + 异步任务轮询 + 结果归一
 import { request } from "../api.js";
 import { watchTask } from "../task.js";
 
 // 预览:取目标列前 8 行
-export async function runPreview(ds, op, formEl) {
+export async function runPreview(ds, op, formEl, table) {
   const cols = (op.previewCols(formEl) || []).filter(Boolean);
+  if (table) {
+    // 容器表:daft 端点不认 ?table=,复用 OLAP 二段名寻址(P0-7 端点)
+    const sel = cols.length ? cols.map((c) => `"${c.replace(/"/g, '""')}"`).join(", ") : "*";
+    const sql = `SELECT ${sel} FROM "${ds.replace(/"/g, '""')}"."${table.replace(/"/g, '""')}" LIMIT 8`;
+    const resp = await request("POST",
+      `/datasets/${encodeURIComponent(ds)}/query/olap?table=${encodeURIComponent(table)}`,
+      { body: { sql, format: "json", max_rows: 8 } });
+    const rows = resp.rows || [];
+    const head = cols.length ? cols : (rows.length ? Object.keys(rows[0]) : ["(空)"]);
+    return { head, rows, meta: `show(${rows.length}) · query/olap?table=${table}` };
+  }
   const body = { limit: 8, format: "json" };
   if (cols.length) body.columns = cols;
   const resp = await request("POST", `/datasets/${encodeURIComponent(ds)}/query/daft`, { body });
@@ -14,8 +25,8 @@ export async function runPreview(ds, op, formEl) {
 }
 
 // 提交:同步端点直出结果;异步端点(202)→ 轮询任务
-export async function runSubmit(ds, op, formEl, hooks) {
-  const spec = op.buildRequest(formEl, ds);
+export async function runSubmit(ds, op, formEl, table, hooks) {
+  const spec = op.buildRequest(formEl, ds, table);
   const resp = await request(spec.method, spec.path, { body: spec.body });
   if (spec.async) {
     const taskId = resp.task_id;

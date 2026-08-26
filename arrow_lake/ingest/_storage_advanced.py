@@ -165,7 +165,9 @@ class StorageAdvancedMixin:
         except Exception:  # noqa: BLE001 — governance is best-effort
             pass
 
-    def add_columns_table(self, name: str, columns: pa.Table) -> None:
+    def add_columns_table(
+        self, name: str, columns: pa.Table, *, table: str | None = None,
+    ) -> None:
         """Add pre-computed columns to a dataset without full rewrite.
 
         Uses Lance's native ``add_columns`` to append columns in-place,
@@ -177,6 +179,8 @@ class StorageAdvancedMixin:
         Args:
             name: Dataset name.
             columns: Arrow Table with new columns (row-aligned).
+            table: Optional table within a container dataset (DR14) — the
+                URI addresses ``{name}/{table}.lance``.
 
         Raises:
             StorageError: If dataset not found or column addition fails.
@@ -186,7 +190,7 @@ class StorageAdvancedMixin:
             self._validate_identifier(col_name, "add_column")
         try:
             import lance as lance_lib
-            uri = self.dataset_uri(name)
+            uri = self.dataset_uri(name, table)
             ds = lance_lib.dataset(uri, storage_options=self._storage_options)
             ds.add_columns(columns)
         except (OSError, ValueError, RuntimeError) as exc:
