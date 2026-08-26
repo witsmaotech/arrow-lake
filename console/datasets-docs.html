@@ -2,7 +2,7 @@
 <html lang="zh">
 <head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>数据集 · Arrow Lake Console</title>
+<title>文档数据集 · Arrow Lake Console</title>
 <link rel="stylesheet" href="assets/tokens.css"/>
 <link rel="stylesheet" href="assets/app.css"/>
 <link rel="stylesheet" href="assets/console.css"/>
@@ -11,18 +11,12 @@
 <div id="app">
 <main class="main"><div class="page">
   <div class="h-sec between">
-    <div><h1>数据集</h1><div class="desc">Lance 数据集 catalog · 点开进入工作区</div></div>
-    <div class="flex"><a class="btn btn-primary btn-sm" href="ingest-data.html"><i class="placeholder" data-ic="plus"></i> 摄入</a></div>
+    <div><h1>文档数据集</h1><div class="desc">文档/图像/视频摄入产生的非结构化数据集 · chunk·embed·FTS·KG 工作区</div></div>
+    <div class="flex"><a class="btn btn-ghost btn-sm" href="datasets-data.html" title="结构化/容器数据集">▦ 表格数据集 →</a><a class="btn btn-primary btn-sm" href="ingest-docs.html"><i class="placeholder" data-ic="plus"></i> 摄入</a></div>
   </div>
   <div class="panel flush">
     <div class="panel-h"><i class="placeholder" data-ic="search"></i><h3>数据集</h3><span class="sub" id="cnt">—</span><span class="actions">
-      <span id="kindTabs" style="display:inline-flex;gap:2px;margin-right:8px">
-        <button class="btn btn-sm btn-ghost kind-tab" data-kind="all">全部</button>
-        <button class="btn btn-sm btn-ghost kind-tab" data-kind="structured" title="表格/结构化数据集">▦ 表格</button>
-        <button class="btn btn-sm btn-ghost kind-tab" data-kind="document" title="文档摄入产生的非结构化数据集">📄 文档</button>
-        <button class="btn btn-sm btn-ghost kind-tab" data-kind="container" title="多表容器(DR14)">📦 容器</button>
-      </span>
-      <label class="muted" style="font-size:.78rem;display:inline-flex;align-items:center;gap:4px;cursor:pointer;margin-right:8px" title="显示 _ 前缀的系统运行表(受保护,不可删除)"><input type="checkbox" id="showSystem" style="margin:0"> 系统表</label><button class="btn btn-ghost btn-sm" id="refresh"><i class="placeholder" data-ic="refresh"></i></button></span></div>
+            <button class="btn btn-ghost btn-sm" id="refresh"><i class="placeholder" data-ic="refresh"></i></button></span></div>
     <div style="overflow-x:auto"><table class="tbl">
       <thead><tr><th>数据集</th><th>描述</th><th class="num">行数</th><th class="num">大小</th><th>列 / 向量</th><th>索引</th><th>KG</th><th class="num">版本</th><th>创建</th><th>更新</th><th></th></tr></thead>
       <tbody id="rows"></tbody>
@@ -41,7 +35,7 @@ import { confirmDialog } from "./src/ui/modal.js";
 
 if (!isLoggedIn()) location.href = "login.html";
 const { renderShell, icon } = window;
-renderShell({ active: "datasets", crumb: "<b>数据集</b>" });
+renderShell({ active: "datasets-docs", crumb: "<b>文档数据集</b>" });
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 // 导出需 EDITOR(/datasets/{n}/export role=EDITOR)
@@ -90,11 +84,9 @@ const fmtDate = (s) => {
   const p = (n) => String(n).padStart(2, "0");
   return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 };
-const STATE = { all: [], page: 1, pageSize: 10, showSystem: false, kind: "all" };
+const STATE = { all: [], page: 1, pageSize: 10 };
 // kind 徽标(W4.2 表格/文本分家):容器=多表数据集,文档=摄入管线特征列
-const kindBadge = (d) => d.kind === "container"
-  ? '<span class="tag amber" title="多表容器(DR14)">📦 容器</span>'
-  : d.kind === "document" ? '<span class="tag info" title="文档型(非结构化)">📄 文档</span>' : "";
+const kindBadge = (d) => '<span class="tag info" title="文档型(非结构化)">📄 文档</span>';
 // 描述:优先人工 description(ingest 时填),否则基于元数据自动摘要
 function descOf(d) {
   if (d.description && d.description.trim()) return d.description.trim();
@@ -103,7 +95,7 @@ function descOf(d) {
   if (d.has_vector_index && d.has_fts_index) tags.push("RAG 检索");
   else if (d.has_vector_index) tags.push("向量检索");
   else if (d.has_fts_index) tags.push("全文检索");
-  if (!tags.length) tags.push(d.name.startsWith("_") ? "系统表" : "分析表");
+  if (!tags.length) tags.push("文档集");
   const parts = [`${(d.num_rows ?? 0).toLocaleString()} 行`];
   if (d.vector_dim) parts.push(`${d.vector_dim}d`);
   return tags.join(" + ") + " · " + parts.join(" · ");
@@ -126,18 +118,13 @@ function rowOf(d) {
   </tr>`;
 }
 function renderPage() {
-  document.querySelectorAll(".kind-tab").forEach((b) => {
-    b.classList.toggle("btn-primary", b.dataset.kind === STATE.kind);
-    b.classList.toggle("btn-ghost", b.dataset.kind !== STATE.kind);
-  });
-  const all = STATE.all.filter((d) => (STATE.kind === "all" || (d.kind || "structured") === STATE.kind)
-    && (STATE.showSystem || (!d.name.startsWith("_") && !d.name.startsWith("sys_")))), total = all.length, ps = STATE.pageSize;
+  const all = STATE.all.filter((d) => (d.kind || "structured") === "document"), total = all.length, ps = STATE.pageSize;
   const totalPages = Math.max(1, Math.ceil(total / ps));
   if (STATE.page > totalPages) STATE.page = totalPages;
   const start = (STATE.page - 1) * ps;
   const page = all.slice(start, start + ps);
   $("#cnt").textContent = `${total} 个`;
-  $("#rows").innerHTML = total ? page.map(rowOf).join("") : `<tr><td colspan="11" class="muted" style="padding:28px;text-align:center">无数据集 — 去 <a href="ingest-data.html" style="color:var(--teal-bright)">摄入</a></td></tr>`;
+  $("#rows").innerHTML = total ? page.map(rowOf).join("") : `<tr><td colspan="11" class="muted" style="padding:28px;text-align:center">无文档数据集 — 去 <a href="ingest-docs.html" style="color:var(--teal-bright)">摄入</a></td></tr>`;
   const p = STATE.page;
   $("#pager").innerHTML = total ? `
     <span class="muted" style="font-size:.78rem">第 ${p}/${totalPages} 页 · 共 ${total}</span>
@@ -146,8 +133,6 @@ function renderPage() {
     <select class="select" id="pageSizeSel" style="width:auto;font-size:.78rem">${[10, 20, 50].map((n) => `<option value="${n}"${n === ps ? " selected" : ""}>${n} / 页</option>`).join("")}</select>` : "";
   $("#pager").querySelectorAll("[data-go]").forEach((b) => { if (!b.disabled) b.addEventListener("click", () => { STATE.page = +b.dataset.go; renderPage(); }); });
   const sel = $("#pageSizeSel"); if (sel) sel.addEventListener("change", () => { STATE.pageSize = +sel.value; STATE.page = 1; renderPage(); });
-  $("#showSystem")?.addEventListener("change", (e) => { STATE.showSystem = e.target.checked; STATE.page = 1; renderPage(); });
-  document.querySelectorAll(".kind-tab").forEach((b) => b.addEventListener("click", () => { STATE.kind = b.dataset.kind; STATE.page = 1; renderPage(); }));
   $("#rows").querySelectorAll("[data-export]").forEach((b) => b.addEventListener("click", () => doExport(b.dataset.export, b)));
   $("#rows").querySelectorAll("[data-delete]").forEach((b) => b.addEventListener("click", () => doDelete(b.dataset.delete, b)));
 }

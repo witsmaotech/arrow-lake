@@ -118,7 +118,7 @@ import { watchTask } from "./src/task.js";
 
 if (!isLoggedIn()) location.href = "login.html";
 const { renderShell, icon } = window;
-renderShell({ active: "embeddings", crumb: '<a href="datasets.html">数据集</a> › <b>索引/嵌入</b>' });
+renderShell({ active: "embeddings", crumb: '<a href="datasets-data.html">数据集</a> › <b>索引/嵌入</b>' });
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 

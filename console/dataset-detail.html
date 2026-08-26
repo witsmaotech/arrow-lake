@@ -113,7 +113,7 @@ import { confirmDialog, promptDialog } from "./src/ui/modal.js";
 
 if (!isLoggedIn()) location.href = "login.html";
 const { renderShell, icon } = window;
-renderShell({ active: "datasets", crumb: '<a href="datasets.html">数据集</a> › <b id="crumbDs">—</b>' });
+renderShell({ active: "datasets", crumb: '<a href="datasets-data.html">数据集</a> › <b id="crumbDs">—</b>' });
 const $ = (s) => document.querySelector(s);
 const ds = new URL(location.href).searchParams.get("ds");
 // DR14 W4.2:容器数据集的当前选中表(null = 单表数据集)
@@ -185,7 +185,7 @@ function switchTab(name) {
 document.querySelectorAll(".tab").forEach(t => t.addEventListener("click", () => switchTab(t.dataset.tab)));
 
 if (!ds) {
-  $("#body").innerHTML = '<div class="muted" style="padding:28px;text-align:center">未指定数据集(<code>?ds=name</code>)— <a href="datasets.html" style="color:var(--teal-bright)">返回列表</a></div>';
+  $("#body").innerHTML = '<div class="muted" style="padding:28px;text-align:center">未指定数据集(<code>?ds=name</code>)— <a href="datasets-data.html" style="color:var(--teal-bright)">返回表格数据集</a> · <a href="datasets-docs.html" style="color:var(--teal-bright)">返回文档数据集</a></div>';
 } else {
   $("#ingestBtn").href = `ingest-data.html?ds=${encodeURIComponent(ds)}`;
   $("#crumbDs").textContent = ds;
@@ -227,18 +227,20 @@ if (!ds) {
         <div class="flex" style="gap:8px;flex-wrap:wrap">
           <a class="btn btn-ghost btn-sm" href="${d.kind === "document" ? "ingest-docs" : "ingest-data"}.html?ds=${encodeURIComponent(d.name)}">${icon("plus")} 追加摄入</a>
           <a class="btn btn-ghost btn-sm" href="tasks.html">${icon("dashboard")} 任务</a>
-          <a class="btn btn-ghost btn-sm" href="datasets.html">${icon("arrowR")} 返回列表</a>
+          <a class="btn btn-ghost btn-sm" href="${d.kind === "document" ? "datasets-docs" : "datasets-data"}.html">${icon("arrowR")} 返回列表</a>
         </div>`;
     } else {
       $("#body").innerHTML = `<div style="color:var(--danger);padding:24px">元数据加载失败:${esc(dRes.reason?.detail || dRes.reason?.message || dRes.reason)}</div>`;
       $("#meta").textContent = "加载失败";
     }
-    // 追加摄入按 kind 分流:文档型 → 文档摄入页;表格/容器 → 表格摄入页(容器带当前表)
+    // 追加摄入/crumb 按 kind 分流:文档型 → 文档线页面;表格/容器 → 表格线
     if (detailInfo) {
       const ingestHref = detailInfo.kind === "document"
         ? `ingest-docs.html?ds=${encodeURIComponent(ds)}`
         : `ingest-data.html?ds=${encodeURIComponent(ds)}${curTable ? `&table=${encodeURIComponent(curTable)}` : ""}`;
       $("#ingestBtn").href = ingestHref;
+      const crumbA = document.querySelector(".crumb a");
+      if (crumbA) crumbA.href = detailInfo.kind === "document" ? "datasets-docs.html" : "datasets-data.html";
     }
 
     // 1.55) 后台预热 OLAP/DuckDB session — 让用户实际滚到预览时为 warm(~1.3s)

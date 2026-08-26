@@ -54,7 +54,7 @@ import { watchTask } from "./src/task.js";
 
 if (!isLoggedIn()) location.href = "login.html";
 const { renderShell } = window;
-renderShell({ active: "ingest-data", crumb: '<a href="datasets.html">数据集</a> › <b>表格摄入</b>' });
+renderShell({ active: "ingest-data", crumb: '<a href="datasets-data.html">数据集</a> › <b>表格摄入</b>' });
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const MB = 1024 * 1024;

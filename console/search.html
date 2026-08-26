@@ -125,7 +125,7 @@ import "./src/favorite.js";  // [data-fav] 自动绑收藏入口
 if (!isLoggedIn()) location.href = "login.html";
 const { renderShell } = window;
 const isImageMode = new URL(location.href).searchParams.get("mode") === "image";
-renderShell({ active: isImageMode ? "image-search" : "search", crumb: '<a href="datasets.html">数据集</a> › <b>' + (isImageMode ? "图像检索" : "检索") + "</b>" });
+renderShell({ active: isImageMode ? "image-search" : "search", crumb: '<a href="datasets-data.html">数据集</a> › <b>' + (isImageMode ? "图像检索" : "检索") + "</b>" });
 if (isImageMode) { document.querySelector("h1").textContent = "图像检索"; }
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));

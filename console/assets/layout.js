@@ -74,7 +74,7 @@ const NAV = [
     {id:'system',label:'系统健康',ic:'system',href:'system.html'},
   ]},
   {group:'数据',items:[
-    {id:'datasets',label:'数据集',ic:'database',href:'datasets.html'},
+    {id:'datasets',label:'数据集',ic:'database',href:'datasets-data.html'},
     {id:'ingest',label:'数据摄入',ic:'ingest',href:'ingest.html'},
     {id:'embeddings',label:'嵌入与索引',ic:'embed',href:'embeddings.html'},
   ]},

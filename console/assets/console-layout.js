@@ -47,7 +47,7 @@ window.icon = icon;
 /* —— Nav(v1.11.0.1 W4.2:表格/文本两条数据线分组隔离,便于各自演进)—— */
 const NAV = [
   { group: "表格数据", items: [
-    { id: "datasets", label: "数据集", ic: "database", href: "datasets.html" },
+    { id: "datasets", label: "表格数据集", ic: "database", href: "datasets-data.html" },
     { id: "ingest-data", label: "数据摄入", ic: "plus", href: "ingest-data.html" },
     { id: "tidy", label: "清洗整理", ic: "olap", href: "tidy.html" },
     { id: "data-prep", label: "数据准备", ic: "file", href: "data-prep.html" },
@@ -55,6 +55,7 @@ const NAV = [
     { id: "contracts", label: "数据契约", ic: "key", href: "contracts.html" },
   ] },
   { group: "文本数据", items: [
+    { id: "datasets-docs", label: "文档数据集", ic: "file", href: "datasets-docs.html" },
     { id: "ingest-docs", label: "文档摄入", ic: "plus", href: "ingest-docs.html" },
     { id: "embeddings", label: "索引/嵌入", ic: "code", href: "embeddings.html" },
     { id: "search", label: "文本检索", ic: "search", href: "search.html" },

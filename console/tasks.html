@@ -211,7 +211,7 @@ function render(all) {
   const hl = (t) => (focusId && t.task_id === focusId) ? ' style="background:var(--ink-900);box-shadow:inset 3px 0 0 var(--teal-bright)"' : "";
   const stop = `onclick="event.stopPropagation()"`;
   const ds = (t) => t.dataset_name
-    ? `<a href="datasets.html?ds=${encodeURIComponent(t.dataset_name)}" ${stop} style="color:var(--teal-bright)">${esc(t.dataset_name)}</a>`
+    ? `<a href="datasets-data.html?ds=${encodeURIComponent(t.dataset_name)}" ${stop} style="color:var(--teal-bright)">${esc(t.dataset_name)}</a>`
     : `<span class="muted">—</span>`;
 
   const rowActive = (t) => {
