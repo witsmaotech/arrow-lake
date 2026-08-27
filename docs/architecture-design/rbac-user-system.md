@@ -1,6 +1,6 @@
 # 多用户 RBAC 用户体系 · 设计文档(B 规划)
 
-> **版本基线**:v1.11.0.1 | **状态**:已实施（v1.9.0 system_db 接管 RBAC/identity/personal_token + v1.9.6 fail-closed 安全加固，见 §10）| **日期**:2026-07-08（初稿）/ 2026-08-03（v1.10.4 校准）
+> **版本基线**:v1.11.0.2 | **状态**:已实施（v1.9.0 system_db 接管 RBAC/identity/personal_token + v1.9.6 fail-closed 安全加固，见 §10）| **日期**:2026-07-08（初稿）/ 2026-08-03（v1.10.4 校准）
 > **关联**:[duckdb-sql-worksheet.md](./duckdb-sql-worksheet.md)、[00-architecture-design.md](./00-architecture-design.md) §5 横切关注点(RBAC)
 > **语言约定**:中文正文、英文图注
 

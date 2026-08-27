@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.11.0.2] - 2026-08-27 — 容器面补全(发版后目测验收反馈批)
+
+### Added
+- **tidy/data-prep 两页容器表支持**:数据清洗与数据准备页此前对容器多表数据集裸名寻址全部 422 —— `?table=` 容器寻址(P0-7 同形态)接到两页消费的全部端点:facade(`read_dataset`/`restore_dataset`/`add_columns_table`/`quality_filter`/`deduplicate`/`label_column`/`extract_fields`)+ quality 七端点(filter/report/deduplicate/rules/profile/profile-async/llm_label/extract)+ clean;前端容器检测(`kind=container`)→ 📦 表下拉 → 调用附 `?table=`;data-prep 预览容器表改走 `query/olap?table=`(daft 端点不认表)。
+- **schema/migrate 容器表支持**:`?table=` 贯通端点→facade(`add_column`/`alter_column`/`drop_column`)→storage;`_open_lance` 容器模式须传 `container=`/`table=` kwargs(传 path 会 `Path.stem` 取到表名);data-prep 文本规整算子解除容器限制。
+
+### Fixed
+- **表级 deny 双机制闭环(安全)**:表级 deny 有两条机制 —— `deny_action()` 走 `_get_denies()` 列表(admin `PUT /deny/{ds.table}` 写这条)、`DatasetACL.denied_actions` 走 `get_acl()`;`_deny_table_override` 首版只查 ACL 对象,admin 建的表级 deny 在 `?table=` guard 上从不生效 —— 现双查(`deps.py`),`authorize_dataset_read` 同享修复。
+- **lance SQL 方言预存 bug**(单表/容器同病):`add_columns` 的 `sql_expr` 里双引号被当字符串字面量(`trim("col")` 生成常量列)、TRIM/SUBSTR 不在支持集、`regexp_replace` 是 postgres 语义(默认只换首个匹配)—— data-prep TIDY 菜单重写为裸标识符+单引号+'g' flag 形态,特殊名列前端显式拒绝。
+- **dataset-detail 初始加载零 4xx**:容器集不再盲发裸名 schema 请求(detail 先行判 kind,按选中表拉)。
+- **存量 21 个 quality 测试腐烂**:`test_quality`/`test_quality_prep_endpoints` fixture 共享 key 默认 VIEWER(v1.10.7 降级后)打 editor/admin 端点全 403 → fixture 显式 `api_key_default_role`;断言对齐 `table=` 调用形态;26/26 全绿。
+
 ## [1.11.0.1] - 2026-08-26 — 数据集契约 + 多表容器(DR13/DR14)· 发版前后 review 全清
 
 ### Added
