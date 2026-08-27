@@ -103,3 +103,26 @@ class TestListDelete:
         assert store.delete(
             scope="x", table_name="y", source_system="z", source_id="w",
         ) is False
+
+
+class TestLookupObjectIds:
+    """W4.3 反向解析:行值(源 ID)→ 候选对象 ID 集(忽略 source_system)。"""
+
+    def test_same_object_across_systems_one_candidate(self, store: EntityMapStore) -> None:
+        store.upsert(**_row(source_system="A", object_id="OBJ-X"))
+        store.upsert(**_row(source_system="B", object_id="OBJ-X"))
+        assert store.lookup_object_ids(
+            scope="gas_net", table_name="segments", source_id="S-047",
+        ) == ["OBJ-X"]
+
+    def test_multiple_distinct_candidates(self, store: EntityMapStore) -> None:
+        store.upsert(**_row(source_system="A", object_id="OBJ-2"))
+        store.upsert(**_row(source_system="B", object_id="OBJ-1"))
+        assert store.lookup_object_ids(
+            scope="gas_net", table_name="segments", source_id="S-047",
+        ) == ["OBJ-1", "OBJ-2"]
+
+    def test_miss_empty(self, store: EntityMapStore) -> None:
+        assert store.lookup_object_ids(
+            scope="gas_net", table_name="segments", source_id="nope",
+        ) == []

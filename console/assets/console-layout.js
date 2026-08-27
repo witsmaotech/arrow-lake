@@ -53,6 +53,7 @@ const NAV = [
     { id: "data-prep", label: "数据准备", ic: "file", href: "data-prep.html" },
     { id: "olap", label: "深度分析", ic: "olap", href: "olap.html" },
     { id: "contracts", label: "数据契约", ic: "key", href: "contracts.html" },
+    { id: "objects", label: "对象浏览", ic: "olap", href: "objects.html" },
   ] },
   { group: "文本数据", items: [
     { id: "datasets-docs", label: "文档数据集", ic: "file", href: "datasets-docs.html" },

@@ -78,6 +78,20 @@ class EntityMapStore:
         ).fetchall()
         return str(rows[0][0]) if rows else None
 
+    def lookup_object_ids(
+        self, *, scope: str, table_name: str, source_id: str,
+    ) -> list[str]:
+        """反向解析(W4.3):行值(源 ID)→ 候选对象 ID 集(忽略
+        source_system,确定性排序)。恰好一个 → 可解析;多个 → 调用方按
+        歧义处理(不静默选第一个)。"""
+        rows = self._db.execute(
+            "SELECT DISTINCT object_id FROM entity_map "
+            "WHERE scope = ? AND table_name = ? AND source_id = ? "
+            "ORDER BY object_id",
+            (scope, table_name, source_id),
+        ).fetchall()
+        return [str(r[0]) for r in rows]
+
     def list_entries(
         self, *, scope: str, table_name: str | None = None, limit: int = 500,
     ) -> list[dict[str, Any]]:

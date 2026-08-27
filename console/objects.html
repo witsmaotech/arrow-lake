@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>对象浏览 · Arrow Lake Console</title>
+<link rel="stylesheet" href="assets/tokens.css"/>
+<link rel="stylesheet" href="assets/app.css"/>
+<link rel="stylesheet" href="assets/console.css"/>
+<style>
+  .obj-grid{display:grid;grid-template-columns:240px 1fr;gap:var(--s4);align-items:start}
+  @media(max-width:1100px){.obj-grid{grid-template-columns:1fr}}
+  .type-row{padding:9px 12px;border-bottom:1px solid var(--line-soft);cursor:pointer;font-size:.78rem;transition:background .12s}
+  .type-row:hover{background:var(--ink-850)}
+  .type-row.active{background:var(--ink-850);border-left:2px solid var(--teal-bright)}
+  .type-row .sub{font-size:.66rem;color:var(--fg-md);font-family:var(--font-mono);margin-top:2px}
+  .lc-badge{font-family:var(--font-mono);font-size:.62rem;padding:1px 7px;border-radius:99px;border:1px solid var(--teal-bright);color:var(--teal-bright);margin-left:6px}
+  .obj-table{width:100%;border-collapse:collapse;font-size:.76rem}
+  .obj-table th{text-align:left;color:var(--fg-md);font-weight:500;padding:6px 8px;border-bottom:1px solid var(--line);font-size:.7rem}
+  .obj-table td{padding:6px 8px;border-bottom:1px solid var(--line-soft);vertical-align:top}
+  .obj-table tbody tr{cursor:pointer;transition:background .12s}
+  .obj-table tbody tr:hover{background:var(--ink-850)}
+  .mono{font-family:var(--font-mono)}
+  .aligned-chip{font-family:var(--font-mono);font-size:.6rem;padding:0 6px;border-radius:99px;background:rgba(16,185,129,.12);color:#34d399;margin-left:5px}
+  .card-badge{font-family:var(--font-mono);font-size:.62rem;padding:1px 6px;border-radius:var(--r-sm);border:1px solid var(--fg-md);color:var(--fg-md);margin-right:6px}
+  .drawer{position:fixed;top:0;right:-560px;width:540px;max-width:92vw;height:100vh;background:var(--ink-900);border-left:1px solid var(--line);box-shadow:-12px 0 40px rgba(0,0,0,.45);z-index:60;transition:right .22s ease;overflow-y:auto;padding:18px 20px}
+  .drawer.open{right:0}
+  .drawer h4{margin:0 0 4px;font-size:.92rem}
+  .drawer .sec{margin-top:16px}
+  .drawer .sec h5{font-size:.7rem;color:var(--fg-md);margin:0 0 6px;font-family:var(--font-mono);text-transform:uppercase;letter-spacing:.06em}
+  .kv{display:grid;grid-template-columns:150px 1fr;gap:4px 10px;font-size:.76rem}
+  .kv .k{color:var(--fg-md);font-family:var(--font-mono);font-size:.7rem;word-break:break-all}
+  .link-card{border:1px solid var(--line-soft);border-radius:var(--r-sm);padding:8px 10px;margin-bottom:6px;font-size:.74rem;cursor:pointer}
+  .link-card:hover{border-color:var(--teal-bright)}
+  .rule-item{padding:6px 0;border-bottom:1px solid var(--line-soft);font-size:.72rem}
+  .degraded{padding:14px;color:var(--warn);font-size:.82rem;border:1px dashed var(--warn);border-radius:var(--r-sm);background:rgba(245,158,11,.05)}
+  .muted{color:var(--fg-md);font-size:.78rem}
+</style>
+</head>
+<body>
+<div id="app">
+<main class="main"><div class="page">
+  <div class="h-sec between">
+    <div><h1>对象浏览</h1><div class="desc">按业务对象查询(契约表节 = 对象类)· <span class="mono">POST /api/v1/objects/query</span></div></div>
+    <div class="flex" style="gap:8px">
+      <input id="dsInput" placeholder="数据集(容器)名" style="background:var(--ink-900);border:1px solid var(--line);color:var(--fg-hi);border-radius:var(--r-sm);padding:6px 10px;font:inherit;font-size:.78rem;width:200px;font-family:var(--font-mono)"/>
+      <label class="muted" style="font-size:.72rem;display:flex;align-items:center;gap:4px"><input type="checkbox" id="kgToggle"/> KG 关联</label>
+      <button class="btn btn-primary btn-sm" id="loadBtn"><i class="placeholder" data-ic="search"></i> 加载</button>
+    </div>
+  </div>
+
+  <div class="obj-grid" style="margin-top:var(--s4)">
+    <div class="panel flush">
+      <div class="panel-h"><i class="placeholder" data-ic="database"></i><h3>对象类型</h3><span class="sub" id="typeMeta">—</span></div>
+      <div class="panel-b" id="typeList" style="padding:0"><div class="muted" style="padding:10px">输入数据集名加载契约对象类</div></div>
+    </div>
+    <div class="panel flush">
+      <div class="panel-h"><i class="placeholder" data-ic="olap"></i><h3 id="objTitle">对象</h3><span class="sub" id="objMeta">—</span></div>
+      <div class="panel-b" id="objList" style="padding:0"><div class="muted" style="padding:10px">选择左侧对象类型</div></div>
+    </div>
+  </div>
+</div></main>
+</div>
+
+<div class="drawer" id="drawer">
+  <div class="flex between"><h4 id="dTitle">对象详情</h4><button class="btn btn-ghost btn-sm" id="dClose">✕</button></div>
+  <div class="muted mono" id="dId" style="font-size:.7rem;word-break:break-all"></div>
+  <div id="dBody"></div>
+</div>
+
+<script src="assets/console-layout.js"></script>
+<script type="module">
+import { request } from "./src/api.js";
+import { isLoggedIn } from "./src/auth.js";
+import { toast } from "./src/ui/toast.js";
+
+if (!isLoggedIn()) location.href = "login.html";
+const { renderShell } = window;
+renderShell({ active: "objects", crumb: "<b>对象浏览</b>" });
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const fmt = (v) => v === null || v === undefined ? "—" : (typeof v === "number" ? (Number.isInteger(v) ? v : +v.toFixed(6)) : esc(v));
+
+let state = { dataset: "", types: [], current: null, data: null };
+
+/* ---------- 对象类型 ---------- */
+async function loadTypes() {
+  const ds = $("#dsInput").value.trim();
+  if (!ds) { toast("输入数据集名", "err", 2200); return; }
+  state.dataset = ds;
+  $("#typeList").innerHTML = '<div class="muted" style="padding:10px">加载…</div>';
+  try {
+    const r = await request("GET", `/objects/types?dataset=${encodeURIComponent(ds)}`);
+    state.types = r?.types || [];
+    if (!r?.has_contract) {
+      $("#typeMeta").textContent = "无契约";
+      $("#typeList").innerHTML = `<div class="muted" style="padding:10px">数据集 '${esc(ds)}' 无契约 — 对象层以契约为先决(S8)</div>`;
+      return;
+    }
+    $("#typeMeta").textContent = `${state.types.length} 类`;
+    if (!state.types.length) {
+      $("#typeList").innerHTML = '<div class="muted" style="padding:10px">契约无表节</div>';
+      return;
+    }
+    $("#typeList").innerHTML = state.types.map(t => `
+      <div class="type-row" data-type="${esc(t.table)}">
+        <div>${esc(t.table)}${t.lifecycle ? `<span class="lc-badge">${esc(t.lifecycle.initial || "lc")}</span>` : ""}</div>
+        <div class="sub">${esc(t.object_class || "—")} · id: ${esc(t.identifier_column || "—")}</div>
+      </div>`).join("");
+    $("#typeList").querySelectorAll(".type-row").forEach(el =>
+      el.addEventListener("click", () => loadObjects(el.dataset.type)));
+  } catch (e) {
+    $("#typeList").innerHTML = `<div class="degraded">类型加载失败:${esc(e?.detail || e?.message || e)}</div>`;
+  }
+}
+
+/* ---------- 对象查询 ---------- */
+async function loadObjects(type) {
+  state.current = type;
+  $("#typeList").querySelectorAll(".type-row").forEach(el =>
+    el.classList.toggle("active", el.dataset.type === type));
+  $("#objTitle").textContent = type;
+  $("#objList").innerHTML = '<div class="muted" style="padding:10px">查询中…</div>';
+  const body = { dataset: state.dataset, object_type: type, limit: 50, include_rules: true, include_kg: $("#kgToggle").checked };
+  try {
+    const r = await request("POST", "/objects/query", { body });
+    state.data = r;
+    const n = (r?.objects || []).length;
+    const alignedCols = Object.keys(r?.aligned || {});
+    $("#objMeta").textContent = `${n} 个对象${alignedCols.length ? ` · 对齐 ${alignedCols.length} 列` : ""}`;
+    if (!n) { $("#objList").innerHTML = '<div class="muted" style="padding:10px">无对象(过滤条件或数据为空)</div>'; return; }
+    renderTable(r);
+  } catch (e) {
+    $("#objList").innerHTML = `<div class="degraded">查询失败:${esc(e?.detail || e?.message || e)}</div>`;
+  }
+}
+
+function renderTable(r) {
+  const cols = (r?.columns || []).slice(0, 7);
+  const head = `<tr><th>object_id</th><th>标识</th>${cols.map(c => `<th>${esc(c.label || c.name)}${r.aligned?.[c.name] ? '<span class="aligned-chip">aligned</span>' : ""}</th>`).join("")}</tr>`;
+  const rows = r.objects.map((o, i) => `
+    <tr data-row="${i}">
+      <td class="mono" style="max-width:220px;word-break:break-all">${esc(o.object_id ?? "—")}</td>
+      <td>${o.identifier.matched ? "✓" : (o.identifier.mapped ? "map" : "—")}</td>
+      ${cols.map(c => `<td>${fmt(o.attributes?.[c.name])}${c.unit ? `<span style="color:var(--fg-md);font-size:.62rem"> ${esc(c.unit)}</span>` : ""}</td>`).join("")}
+    </tr>`).join("");
+  $("#objList").innerHTML = `<table class="obj-table"><thead>${head}</thead><tbody>${rows}</tbody></table>`;
+  $("#objList").querySelectorAll("tr[data-row]").forEach(tr =>
+    tr.addEventListener("click", () => openDrawer(Number(tr.dataset.row))));
+}
+
+/* ---------- 详情抽屉 ---------- */
+function openDrawer(i) {
+  const o = state.data.objects[i];
+  if (!o) return;
+  $("#dTitle").textContent = `${state.current} · ${fmt(o.object_id)}`;
+  $("#dId").textContent = `matched=${o.identifier.matched} mapped=${o.identifier.mapped}` +
+    (Object.keys(o.identifier.components || {}).length
+      ? ` · 组件 ${JSON.stringify(o.identifier.components)}` : "");
+  const cols = state.data.columns || [];
+  const attrs = cols.map(c => `
+    <div class="k">${esc(c.label ? `${c.label} (${c.name})` : c.name)}${c.unit ? ` [${esc(c.unit)}]` : ""}${state.data.aligned?.[c.name] ? `<span class="aligned-chip">${esc(state.data.aligned[c.name].from)}→${esc(state.data.aligned[c.name].to)}</span>` : ""}</div>
+    <div class="v">${fmt(o.attributes?.[c.name])}</div>`).join("");
+  const lifecycle = o.lifecycle_state
+    ? `<div class="sec"><h5>生命周期</h5><span class="lc-badge">${esc(o.lifecycle_state)}</span></div>` : "";
+  const links = (o._links || []).map(l => `
+    <div class="link-card" data-link="${esc(l.to_table)}" data-col="${esc(l.to_column)}" data-val="${esc(l.value ?? "")}">
+      <span class="card-badge">${esc(l.cardinality || "ref")}</span><span class="card-badge">${esc(l.kind || "assoc")}</span>
+      ${esc(l.from_column)} → ${esc(l.to_dataset ? l.to_dataset + "." : "")}${esc(l.to_table)}.${esc(l.to_column)}
+      <span class="mono" style="color:var(--fg-md)">= ${fmt(l.value)}</span>
+    </div>`).join("");
+  const kg = o._kg
+    ? `<div class="sec"><h5>KG 关联(近似桥接)</h5>${
+        o._kg.matched
+          ? `<div style="font-size:.74rem;margin-bottom:4px">顶点:${esc(o._kg.vertex?.name)}(${esc(o._kg.vertex?.type || "—")})</div>` +
+            (o._kg.neighbors || []).map(n => `<div class="rule-item">— ${esc(n.name)} <span class="card-badge">${esc(n.relation_type || "rel")}</span></div>`).join("")
+          : '<div class="muted">无匹配顶点(miss 容忍)</div>'
+      }</div>`
+    : "";
+  const rules = (state.data._rules || []).map(r => `
+    <div class="rule-item">
+      <span class="card-badge">${esc(r.rule_type || "validation")}</span>
+      <span class="mono">${esc(r.rule_id)}</span> v${esc(r.version || "1")}
+      <div style="color:var(--fg-md)">${esc(r.conclusion)}</div>
+    </div>`).join("");
+  $("#dBody").innerHTML = `
+    <div class="sec"><h5>属性</h5><div class="kv">${attrs}</div></div>
+    ${lifecycle}
+    <div class="sec"><h5>关联对象</h5>${links || '<div class="muted">契约无 references 声明</div>'}</div>
+    ${kg}
+    <div class="sec"><h5>适用规则(登记不执行 · MS3 求值)</h5>${rules || '<div class="muted">无 active 规则</div>'}</div>`;
+  $("#dBody").querySelectorAll(".link-card").forEach(el =>
+    el.addEventListener("click", () => {
+      const { link, col, val } = el.dataset;
+      if (!link || val === "") return;
+      $("#drawer").classList.remove("open");
+      jumpTo(link, col, val);
+    }));
+  $("#drawer").classList.add("open");
+}
+
+async function jumpTo(type, col, val) {
+  // 关联跳转:目标类型 + 目标键过滤(值可能是对齐前的口径,miss 容忍)
+  $("#objList").innerHTML = '<div class="muted" style="padding:10px">查询中…</div>';
+  try {
+    const r = await request("POST", "/objects/query", {
+      body: { dataset: state.dataset, object_type: type, filter: [{ column: col, op: "eq", value: val }], limit: 50, include_rules: true, include_kg: $("#kgToggle").checked },
+    });
+    state.current = type; state.data = r;
+    $("#typeList").querySelectorAll(".type-row").forEach(el =>
+      el.classList.toggle("active", el.dataset.type === type));
+    $("#objTitle").textContent = type;
+    $("#objMeta").textContent = `${(r?.objects || []).length} 个对象`;
+    renderTable(r);
+  } catch (e) {
+    $("#objList").innerHTML = `<div class="degraded">跳转失败:${esc(e?.detail || e?.message || e)}</div>`;
+  }
+}
+
+$("#loadBtn").addEventListener("click", loadTypes);
+$("#dsInput").addEventListener("keydown", (e) => { if (e.key === "Enter") loadTypes(); });
+$("#dClose").addEventListener("click", () => $("#drawer").classList.remove("open"));
+
+// URL ?dataset= 预填
+const pre = new URLSearchParams(location.search).get("dataset");
+if (pre) { $("#dsInput").value = pre; loadTypes(); }
+</script>
+</body>
+</html>
