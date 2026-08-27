@@ -7,7 +7,6 @@ commit(libSQL 速查坑)。
 from __future__ import annotations
 
 import pytest
-
 from arrow_lake.system_db import Migrator, SystemDB
 from arrow_lake.system_db.stores.semantic_alignments import SemanticAlignmentStore
 

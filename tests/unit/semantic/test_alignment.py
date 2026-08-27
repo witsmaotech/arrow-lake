@@ -6,17 +6,16 @@
 
 from __future__ import annotations
 
-import pytest
-import pyarrow as pa
 import duckdb
-from pydantic import ValidationError
-
+import pyarrow as pa
+import pytest
 from arrow_lake.contract.schema import parse_contract
 from arrow_lake.semantic.alignment import (
     check_against_contract,
     parse_alignment,
     projection_sql,
 )
+from pydantic import ValidationError
 
 ALIGN_YAML = """
 dataset: gas_net
@@ -146,7 +145,7 @@ class TestProjectionEndToEnd:
             "材质": pa.array(["PE管", "未知材质", None], pa.string()),
             "站号": pa.array(["S1", "S2", "S3"], pa.string()),
         })
-        rel = duckdb.sql("SELECT * FROM tbl")
+        rel = duckdb.sql("SELECT * FROM tbl")  # noqa: F841 — replacement scan resolves `rel` by local name
         proj = ", ".join(
             projection_sql(cols[c], f'"{c}"')[0] if c in cols else f'"{c}"'
             for c in tbl.column_names

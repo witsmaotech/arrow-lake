@@ -7,8 +7,8 @@ lifecycle/外键列自动补选。422 语义:未知列/非法 op/类型不符。
 
 from __future__ import annotations
 
+import pyarrow as pa
 import pytest
-
 from arrow_lake.contract.schema import parse_contract
 from arrow_lake.semantic.alignment import parse_alignment
 from arrow_lake.semantic.objectset import build_object_query
@@ -60,7 +60,7 @@ class TestBasicShape:
     def test_select_from_limit_offset(self) -> None:
         q = _build(limit=10, offset=5)
         assert q.sql.startswith("SELECT ")
-        assert " FROM gas_net.segments " in q.sql
+        assert ' FROM "gas_net"."segments" ' in q.sql  # F15: quoted relation
         assert q.sql.rstrip().endswith("LIMIT 10 OFFSET 5")
         assert q.select_columns[0] == "seg_id"  # identifier auto-first
 
@@ -123,3 +123,104 @@ class TestFilters:
     def test_string_escaping(self) -> None:
         q = _build(filters=[{"column": "材质", "op": "eq", "value": "it's"}])
         assert "'it''s'" in q.sql
+
+
+class TestReviewHardening:
+    """W4 review 清偿回归(F6/F7/F9/F10/F15)。"""
+
+    def test_int64_precision_preserved(self) -> None:
+        # F6: snowflake ids > 2^53 must not round-trip through float()
+        big = 9007199254740993
+        q = _build(schema_fields={"oid": "int64"},
+                   filters=[{"column": "oid", "op": "eq", "value": big}])
+        assert "9007199254740993" in q.sql
+        assert "9007199254740992" not in q.sql
+
+    def test_like_on_numeric_rejected(self) -> None:
+        # F7: was a DuckDB binder error (500) at runtime
+        with pytest.raises(ValueError, match="string columns"):
+            _build(filters=[{"column": "压力", "op": "like", "value": "2%"}])
+
+    def test_like_on_string_column_ok(self) -> None:
+        q = _build(filters=[{"column": "seg_id", "op": "like", "value": "GAS%"}])
+        assert "LIKE 'GAS%'" in q.sql
+
+    def test_inf_nan_rejected(self) -> None:
+        with pytest.raises(ValueError, match="finite"):
+            _build(filters=[{"column": "压力", "op": "gt", "value": "inf"}])
+        with pytest.raises(ValueError, match="finite"):
+            _build(filters=[{"column": "压力", "op": "gt", "value": float("nan")}])
+
+    def test_null_string_value_rejected(self) -> None:
+        with pytest.raises(ValueError, match="must not be null"):
+            _build(filters=[{"column": "材质", "op": "eq", "value": None}])
+
+    def test_id_column_auto_included(self) -> None:
+        contract = parse_contract("""
+dataset: gas_net
+tables:
+  src_b:
+    columns: [{name: 压力}]
+""")
+        q = build_object_query(
+            contract=contract, alignment=None, table="src_b",
+            relation="gas_net.src_b",
+            schema_fields={"压力": "double", "本地编号": "string"},
+            columns=["压力"], id_column="本地编号",
+        )
+        assert list(q.select_columns) == ["本地编号", "压力"]
+
+    def test_id_column_unknown_rejected(self) -> None:
+        with pytest.raises(ValueError, match="id_column"):
+            _build(id_column="ghost")
+
+
+class TestRealDuckdbExecution:
+    """Review 盲区补测:组装产物对真 DuckDB 执行(quoted FROM/filters/对齐)。"""
+
+    def test_composed_sql_executes(self) -> None:
+        import duckdb
+
+        tbl = pa.table({
+            "seg_id": ["GAS.SEGMENT.RG01.S047", "GAS.SEGMENT.RG01.S048"],
+            "压力": [2.0, 0.5],
+            "材质": ["PE管", "钢管"],
+        })
+        duckdb.sql("CREATE SCHEMA IF NOT EXISTS gas_net")
+        duckdb.sql("CREATE OR REPLACE TABLE gas_net.segments AS SELECT * FROM tbl")
+        contract = parse_contract(CONTRACT_YAML)
+        q = build_object_query(
+            contract=contract, alignment=None, table="segments",
+            relation="gas_net.segments",
+            schema_fields={f.name: str(f.type) for f in tbl.schema},
+            filters=[{"column": "压力", "op": "gte", "value": 1}],
+        )
+        rows = duckdb.sql(q.sql).fetchall()
+        assert [r[0] for r in rows] == ["GAS.SEGMENT.RG01.S047"]
+
+    def test_composed_sql_with_alignment_executes(self) -> None:
+        import duckdb
+
+        tbl = pa.table({"压力": [2.0]})
+        duckdb.sql("CREATE SCHEMA IF NOT EXISTS gas_net")
+        duckdb.sql("CREATE OR REPLACE TABLE gas_net.src_b AS SELECT * FROM tbl")
+        q = build_object_query(
+            contract=parse_contract("""
+dataset: gas_net
+tables:
+  src_b:
+    columns: [{name: 压力, unit: kPa}]
+"""),
+            alignment=parse_alignment("""
+dataset: gas_net
+tables:
+  src_b:
+    columns:
+      压力: {unit: {from: MPa, to: kPa}}
+"""),
+            table="src_b", relation="gas_net.src_b",
+            schema_fields={f.name: str(f.type) for f in tbl.schema},
+            columns=None,
+        )
+        rows = duckdb.sql(q.sql).fetchall()
+        assert rows[0][0] == 2000.0

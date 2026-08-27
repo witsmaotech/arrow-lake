@@ -97,7 +97,7 @@ class StubChecker:
             denied_actions=spec.denied_actions,
         )
 
-    def check_dataset_access(self, *, role, dataset, action):
+    def check_dataset_access(self, *, role, dataset, action, permissions=None):
         self.access_calls.append(f"{dataset}:{action}")
         return self.allowed
 
@@ -220,6 +220,32 @@ tables:
         assert types["segments"]["lifecycle"]["states"] == ["在建", "在运", "报废"]
         assert types["segments"]["identifier_column"] == "seg_id"
         assert r2.json() == {"dataset": "unknown_ds", "has_contract": False, "types": []}
+
+    def test_types_denied_403(self, db: SystemDB) -> None:
+        """F1(review): deny 用户不得读契约结构。"""
+        lake = StubLake({"segments": RESULT_TABLE, "src_b": SRC_B_TABLE})
+        with _client(db, lake=lake, checker=StubChecker(allowed=False)) as c:
+            r = c.get("/api/v1/objects/types?dataset=gas_net")
+        assert r.status_code == 403
+
+    def test_viewer_rules_stripped_and_pre_enforcement_sql(self, db: SystemDB) -> None:
+        """F10(review): VIEWER 不见 condition_expr/source_ref;SQL 回带 enforce 前。"""
+        lake = StubLake({"segments": RESULT_TABLE, "src_b": SRC_B_TABLE})
+        with _client(db, lake=lake) as c:
+            r = c.post("/api/v1/objects/query", json=_body())
+        data = r.json()
+        rule = data["_rules"][0]
+        assert "condition_expr" not in rule and "source_ref" not in rule
+        assert rule["rule_id"] == "GAS.R1"
+        assert "FROM \"gas_net\".\"segments\"" in data["sql"]  # pre-enforcement
+
+    def test_id_column_unknown_422(self, db: SystemDB) -> None:
+        lake = StubLake({"segments": RESULT_TABLE, "src_b": SRC_B_TABLE})
+        with _client(db, lake=lake) as c:
+            r = c.post("/api/v1/objects/query",
+                       json={"dataset": "gas_net", "object_type": "src_b",
+                             "id_column": "ghost"})
+        assert r.status_code == 422
 
 
 class TestValidation:

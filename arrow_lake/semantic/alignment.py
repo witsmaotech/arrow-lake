@@ -44,6 +44,9 @@ class UnitTransform(BaseModel):
                 conversion(self.frm, self.to)
             except ValueError as exc:
                 raise ValueError(f"unit transform {self.frm!r} → {self.to!r}: {exc}") from exc
+        elif self.factor == 0:
+            # review 加固:注册表路径拒零因子(units.py),显式路径同护栏
+            raise ValueError("unit transform factor must be non-zero")
         return self
 
     def resolve(self) -> tuple[float, float]:

@@ -38,22 +38,24 @@ class EntityMapStore:
         self._db.commit()
 
     def bulk_upsert(self, rows: Iterable[Mapping[str, Any]]) -> int:
-        """批量 upsert(单事务一次 commit);返回写入行数(幂等重跑同数)。"""
-        count = 0
-        for r in rows:
-            self._db.execute(
-                """INSERT INTO entity_map
-                       (scope, table_name, source_system, source_id, object_id)
-                   VALUES (?, ?, ?, ?, ?)
-                   ON CONFLICT(scope, table_name, source_system, source_id)
-                   DO UPDATE SET object_id = excluded.object_id""",
-                (r["scope"], r["table_name"], r.get("source_system", ""),
-                 r["source_id"], r["object_id"]),
-            )
-            count += 1
-        if count:
-            self._db.commit()
-        return count
+        """批量 upsert(executemany 单事务一次 commit);返回写入行数。"""
+        payload = [
+            (r["scope"], r["table_name"], r.get("source_system", ""),
+             r["source_id"], r["object_id"])
+            for r in rows
+        ]
+        if not payload:
+            return 0
+        self._db.executemany(
+            """INSERT INTO entity_map
+                   (scope, table_name, source_system, source_id, object_id)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(scope, table_name, source_system, source_id)
+               DO UPDATE SET object_id = excluded.object_id""",
+            payload,
+        )
+        self._db.commit()
+        return len(payload)
 
     def delete(
         self, *, scope: str, table_name: str, source_system: str, source_id: str,
@@ -91,6 +93,30 @@ class EntityMapStore:
             (scope, table_name, source_id),
         ).fetchall()
         return [str(r[0]) for r in rows]
+
+    def lookup_object_ids_batch(
+        self, *, scope: str, table_name: str, source_ids: list[str],
+    ) -> dict[str, list[str]]:
+        """F2(review):一次往返批量反向解析(对象聚合逐行 N+1 的治本)。
+
+        返回 ``{source_id: [object_id, ...]}``(值去重升序);未命中的
+        source_id 不出现在结果里。
+        """
+        out: dict[str, list[str]] = {}
+        ids = sorted(set(source_ids))
+        for i in range(0, len(ids), 500):  # IN 列表分片,防超长 SQL
+            chunk = ids[i:i + 500]
+            marks = ", ".join("?" for _ in chunk)
+            rows = self._db.execute(
+                f"SELECT DISTINCT source_id, object_id FROM entity_map "
+                f"WHERE scope = ? AND table_name = ? AND source_id IN ({marks})",
+                (scope, table_name, *chunk),
+            ).fetchall()
+            for sid, oid in rows:
+                out.setdefault(str(sid), []).append(str(oid))
+        for v in out.values():
+            v.sort()
+        return out
 
     def list_entries(
         self, *, scope: str, table_name: str | None = None, limit: int = 500,

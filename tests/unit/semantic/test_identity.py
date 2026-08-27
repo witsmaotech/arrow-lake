@@ -8,13 +8,12 @@
 from __future__ import annotations
 
 import pytest
-from pydantic import ValidationError
-
 from arrow_lake.contract.schema import parse_contract
 from arrow_lake.semantic.identity import (
     parse_identifier,
     parse_table_identifier,
 )
+from pydantic import ValidationError
 
 
 class TestParseIdentifier:

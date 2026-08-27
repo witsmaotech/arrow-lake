@@ -145,8 +145,22 @@ async def object_types(
     request: Request,
     dataset: str = Query(description="dataset (container) name"),
     _user=Depends(require_role(Role.VIEWER)),
+    checker=Depends(get_checker),
 ) -> dict:
-    """Contract table sections as object types (S8: no contract → empty)."""
+    """Contract table sections as object types (S8: no contract → empty).
+
+    F1(review): contract STRUCTURE (table/identifier/lifecycle) is metadata
+    the deny-guarded dataset endpoints protect — same dataset read check as
+    /objects/query applies here.
+    """
+    # F1/F3: dataset-level read guard incl. scoped-token permissions
+    if not checker.check_dataset_access(
+        role=_user.role, dataset=dataset, action="read",
+        permissions=getattr(_user, "permissions", None),
+    ):
+        raise HTTPException(
+            status_code=403, detail=f"Read access to dataset '{dataset}' denied",
+        )
     contract_store = getattr(request.app.state, "contract_store", None)
     if contract_store is None:
         raise HTTPException(status_code=503,
@@ -205,6 +219,7 @@ async def object_set_query(
     # -- W4.2 安全关键:dataset 级读权(镜像 kg 路由的检查) ----------
     if not checker.check_dataset_access(
         role=_user.role, dataset=req.dataset, action="read",
+        permissions=getattr(_user, "permissions", None),  # F3: scoped tokens
     ):
         raise HTTPException(
             status_code=403,
@@ -257,6 +272,12 @@ async def object_set_query(
 
     schema = await run_sync(_schema, timeout=_OBJ_TIMEOUT, label="objects_schema")
     schema_fields = {f.name: str(f.type) for f in schema}
+    if req.id_column is not None and req.id_column not in schema_fields:
+        raise HTTPException(
+            status_code=422,
+            detail=f"id_column '{req.id_column}' not in schema (F9: reject "
+                   "instead of silently losing identity)",
+        )
 
     alignment = None
     if alignment_store is not None:
@@ -272,7 +293,8 @@ async def object_set_query(
             contract=contract, alignment=alignment, table=req.object_type,
             relation=target, schema_fields=schema_fields,
             filters=[f.model_dump() for f in req.filter],
-            columns=req.columns, limit=req.limit, offset=req.offset,
+            columns=req.columns, id_column=req.id_column,
+            limit=req.limit, offset=req.offset,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -324,20 +346,70 @@ async def object_set_query(
             kg_by_id = {str(n.get("id")): n for n in kg_nodes}
         except Exception:  # KG 是近似桥接面:任何失败降级为 miss
             logger.warning("objects_kg_enrichment_failed", exc_info=True)
+    # F4(review): adjacency prebuilt once — the per-row edge scan was
+    # O(rows × edges) in pure Python on the event loop.
+    kg_adj: dict[str, list[tuple[dict, Any]]] = {}
+    for e in kg_edges:
+        s, t = str(e.get("source")), str(e.get("target"))
+        rel = e.get("relation_type") or e.get("label")
+        other = kg_by_id.get(t)
+        if other is not None:
+            kg_adj.setdefault(s, []).append((other, rel))
+        other = kg_by_id.get(s)
+        if other is not None:
+            kg_adj.setdefault(t, []).append((other, rel))
 
     rules_payload: list[dict[str, Any]] = []
     if req.include_rules and rules_store is not None:
+        # F10(review): condition_expr/source_ref are ADMIN-only fields — the
+        # rules registry endpoint is ADMIN-gated; object viewers get the
+        # conclusion-level view (rule_id/type/version/conclusion).
+        is_admin = getattr(_user, "role", None) == Role.ADMIN
         for r in rules_store.list_rules(scope=req.dataset, status="active") + \
                 rules_store.list_rules(scope="*", status="active"):
-            rules_payload.append({
+            entry: dict[str, Any] = {
                 "rule_id": r["rule_id"], "rule_type": r.get("rule_type"),
-                "version": r.get("version"), "condition_expr": r["condition_expr"],
-                "conclusion": r["conclusion"], "source_ref": r["source_ref"],
+                "version": r.get("version"), "conclusion": r["conclusion"],
                 "scope": r["scope"],
-            })
+            }
+            if is_admin:
+                entry["condition_expr"] = r["condition_expr"]
+                entry["source_ref"] = r["source_ref"]
+            rules_payload.append(entry)
 
     objects: list[dict[str, Any]] = []
-    for row in table_.to_pylist():
+    rows = table_.to_pylist()
+    # F2(review): batch the reverse entity lookups — one libSQL round-trip
+    # off the event loop (was per-row sync N+1, up to 500 remote calls).
+    id_map: dict[str, list[str]] = {}
+    if entity_store is not None:
+        need = set()
+        for row in rows:
+            raw = row.get(ident_col) if ident_col else None
+            if raw is None:
+                continue
+            raw = str(raw)
+            parse = (parse_table_identifier(contract, req.object_type, raw)
+                     if section.identifier is not None else None)
+            if parse is not None and parse.matched:
+                continue
+            need.add(raw)
+        if need:
+
+            def _batch_lookup() -> dict[str, list[str]]:
+                return entity_store.lookup_object_ids_batch(
+                    scope=req.dataset, table_name=req.object_type,
+                    source_ids=sorted(need),
+                )
+
+            try:
+                id_map = await run_sync(_batch_lookup, timeout=_OBJ_TIMEOUT,
+                                        label="objects_entity_lookup")
+            except Exception:
+                logger.warning("objects_entity_lookup_failed", exc_info=True)
+                id_map = {}
+
+    for row in rows:
         raw_id = row.get(ident_col) if ident_col else None
         ident: dict[str, Any] = {"matched": False, "components": {}, "mapped": False}
         object_id: str | None = None
@@ -350,9 +422,7 @@ async def object_set_query(
                 ident = {"matched": True, "components": parse.components,
                          "mapped": False}
             else:
-                cands = (entity_store.lookup_object_ids(
-                    scope=req.dataset, table_name=req.object_type, source_id=raw_id,
-                ) if entity_store is not None else [])
+                cands = id_map.get(raw_id, [])
                 if len(cands) == 1:
                     object_id = cands[0]
                     ident = {"matched": False, "components": {}, "mapped": True}
@@ -380,20 +450,11 @@ async def object_set_query(
             node = kg_by_name.get(_norm(object_id)) if object_id else None
             if node is not None:
                 nid = str(node.get("id"))
-                neighbors: list[dict[str, Any]] = []
-                for e in kg_edges:
-                    other = None
-                    if e.get("source") == nid:
-                        other = kg_by_id.get(e.get("target"))
-                    elif e.get("target") == nid:
-                        other = kg_by_id.get(e.get("source"))
-                    if other is not None:
-                        neighbors.append({
-                            "name": other.get("name"), "type": other.get("type"),
-                            "relation_type": e.get("relation_type") or e.get("label"),
-                        })
-                    if len(neighbors) >= _KG_NEIGHBOR_CAP:
-                        break
+                neighbors = [
+                    {"name": o.get("name"), "type": o.get("type"),
+                     "relation_type": rel}
+                    for o, rel in kg_adj.get(nid, [])[:_KG_NEIGHBOR_CAP]
+                ]
                 obj["_kg"] = {
                     "matched": True,
                     "vertex": {"name": node.get("name"), "type": node.get("type"),
@@ -410,7 +471,12 @@ async def object_set_query(
         "count": len(objects),
         "columns": col_meta,
         "aligned": built.aligned,
+        # F8(review): documented semantics — filters compare the RAW (pre-
+        # alignment) column values, same caliber as admin row_filters; the
+        # displayed attributes are aligned. Echo the PRE-enforcement SQL
+        # (F10): the enforced form carries admin row-filter predicates.
+        "filter_semantics": "raw",
         "objects": objects,
         "_rules": rules_payload,
-        "sql": sql,
+        "sql": built.sql,
     }

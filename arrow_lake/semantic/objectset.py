@@ -11,6 +11,7 @@ op 白名单、值按 schema 类型强转、标识符引用(列名可中文)、�
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -22,10 +23,18 @@ _OPS = {"eq": "=", "ne": "!=", "gt": ">", "gte": ">=", "lt": "<", "lte": "<="}
 _NULL_OPS = {"is_null", "is_not_null"}
 _LIST_OPS = {"in"}
 _NUMERIC_HINTS = ("int", "float", "double", "decimal")
+_STRING_HINTS = ("string", "varchar", "char", "utf8")
 
 
 def _q(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
+
+
+def _q_relation(relation: str) -> str:
+    """Quote a (possibly two-part) FROM target — hyphen/uppercase/digit-led
+    legal names parse correctly (review F15; injection stays closed by the
+    contract-save whitelist + validate_sql_safety structure checks)."""
+    return ".".join(_q(p) for p in relation.split("."))
 
 
 def _lit(v: Any) -> str:
@@ -40,9 +49,25 @@ class ObjectSetSql:
 
 
 def _coerce_literal(column: str, type_str: str, value: Any) -> str:
-    """值 → SQL 字面量,按 schema 类型强转(不符 → ValueError,422)。"""
+    """值 → SQL 字面量,按 schema 类型强转(不符 → ValueError,422)。
+
+    review 加固:int 值直达 repr 不经 float()(int64 雪花 ID 保精度,F6);
+    inf/nan 拒(F10);None 显式拒(F10——字符串路径曾 str(None) 成 'None')。
+    """
+    if value is None:
+        raise ValueError(
+            f"filter value for column '{column}' must not be null (use is_null)"
+        )
     t = (type_str or "").lower()
     if any(h in t for h in _NUMERIC_HINTS):
+        if isinstance(value, bool):
+            raise ValueError(
+                f"filter value for numeric column '{column}' must be numeric, "
+                f"got {value!r}"
+            )
+        if isinstance(value, int) and "float" not in t and "double" not in t \
+                and "decimal" not in t:
+            return repr(value)  # exact int64 — no float() round-trip
         try:
             f = float(value)
         except (TypeError, ValueError) as exc:
@@ -50,6 +75,11 @@ def _coerce_literal(column: str, type_str: str, value: Any) -> str:
                 f"filter value for numeric column '{column}' must be numeric, "
                 f"got {value!r}"
             ) from exc
+        if not math.isfinite(f):
+            raise ValueError(
+                f"filter value for numeric column '{column}' must be finite "
+                f"(inf/nan rejected)"
+            )
         return repr(int(f)) if f.is_integer() and "float" not in t and \
             "double" not in t else repr(f)
     if t.startswith("bool"):
@@ -72,6 +102,7 @@ def build_object_query(
     schema_fields: Mapping[str, str],
     filters: Sequence[Mapping[str, Any]] = (),
     columns: Sequence[str] | None = None,
+    id_column: str | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> ObjectSetSql:
@@ -88,10 +119,16 @@ def build_object_query(
         alignment.tables.get(table, {}) if alignment is not None else {}
     )
 
-    # 聚合依赖列自动补选:identifier → lifecycle → 本表外键(_links)。
+    # 聚合依赖列自动补选:identifier → id_column(无声明时,F9)→ lifecycle
+    # → 本表外键(_links)。
     auto: list[str] = []
     if section.identifier is not None and section.identifier.column in schema_fields:
         auto.append(section.identifier.column)
+    if id_column is not None:
+        if id_column not in schema_fields:
+            raise ValueError(f"id_column '{id_column}' not in schema")
+        if id_column not in auto:
+            auto.append(id_column)
     lc = (section.lifecycle.column
           if section.lifecycle is not None and section.lifecycle.column else None)
     if lc is not None and lc in schema_fields and lc not in auto:
@@ -135,6 +172,14 @@ def build_object_query(
                          else f"{_q(col)} IS NOT NULL")
             continue
         if op == "like":
+            # F7: LIKE on numeric columns is a DuckDB binder error at RUNTIME
+            # (500) — reject at composition time (422). String-ish columns only.
+            ft = (schema_fields[col] or "").lower()
+            if not any(h in ft for h in _STRING_HINTS):
+                raise ValueError(
+                    f"filter op 'like' only applies to string columns "
+                    f"('{col}' is {schema_fields[col]})"
+                )
             value = _coerce_literal(col, schema_fields[col], f.get("value"))
             where.append(f"{_q(col)} LIKE {value}")
             continue
@@ -150,7 +195,7 @@ def build_object_query(
         lit = _coerce_literal(col, schema_fields[col], f.get("value"))
         where.append(f"{_q(col)} {_OPS[op]} {lit}")
 
-    sql = f"SELECT {', '.join(proj_parts)} FROM {relation}"
+    sql = f"SELECT {', '.join(proj_parts)} FROM {_q_relation(relation)}"
     if where:
         sql += " WHERE " + " AND ".join(where)
     sql += f" LIMIT {int(limit)} OFFSET {int(offset)}"

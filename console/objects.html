@@ -163,12 +163,15 @@ function openDrawer(i) {
     <div class="v">${fmt(o.attributes?.[c.name])}</div>`).join("");
   const lifecycle = o.lifecycle_state
     ? `<div class="sec"><h5>生命周期</h5><span class="lc-badge">${esc(o.lifecycle_state)}</span></div>` : "";
-  const links = (o._links || []).map(l => `
-    <div class="link-card" data-link="${esc(l.to_table)}" data-col="${esc(l.to_column)}" data-val="${esc(l.value ?? "")}">
-      <span class="card-badge">${esc(l.cardinality || "ref")}</span><span class="card-badge">${esc(l.kind || "assoc")}</span>
+  const links = (o._links || []).map(l => {
+    const cross = l.to_dataset && l.to_dataset !== state.dataset;
+    return `
+    <div class="link-card" ${cross ? 'data-cross="1" style="cursor:default;opacity:.6"' : ""} data-link="${esc(l.to_table)}" data-col="${esc(l.to_column)}" data-val="${esc(l.value ?? "")}">
+      <span class="card-badge">${esc(l.cardinality || "ref")}</span><span class="card-badge">${esc(l.kind || "assoc")}</span>${cross ? `<span class="card-badge">跨数据集</span>` : ""}
       ${esc(l.from_column)} → ${esc(l.to_dataset ? l.to_dataset + "." : "")}${esc(l.to_table)}.${esc(l.to_column)}
       <span class="mono" style="color:var(--fg-md)">= ${fmt(l.value)}</span>
-    </div>`).join("");
+    </div>`;
+  }).join("");
   const kg = o._kg
     ? `<div class="sec"><h5>KG 关联(近似桥接)</h5>${
         o._kg.matched
@@ -191,8 +194,10 @@ function openDrawer(i) {
     <div class="sec"><h5>适用规则(登记不执行 · MS3 求值)</h5>${rules || '<div class="muted">无 active 规则</div>'}</div>`;
   $("#dBody").querySelectorAll(".link-card").forEach(el =>
     el.addEventListener("click", () => {
+      if (el.dataset.cross) { toast("跨数据集引用暂不支持跳转", "err", 2600); return; }
       const { link, col, val } = el.dataset;
-      if (!link || val === "") return;
+      if (!link) return;
+      if (val === "") { toast("外键值为空,无关联对象", "err", 2200); return; }
       $("#drawer").classList.remove("open");
       jumpTo(link, col, val);
     }));

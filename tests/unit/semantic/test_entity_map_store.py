@@ -7,7 +7,6 @@ object_id;写后显式 commit(libSQL 速查坑);显式维护(ADMIN),不挂摄入
 from __future__ import annotations
 
 import pytest
-
 from arrow_lake.system_db import Migrator, SystemDB
 from arrow_lake.system_db.stores.entity_map import EntityMapStore
 
