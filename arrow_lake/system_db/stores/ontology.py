@@ -28,9 +28,17 @@ _LEGAL_TRANSITIONS: dict[str, set[str]] = {
     "retired": {"draft"},
 }
 
+# v1.11.1 W1.4 (DR15 D-2): 建模侧 M3 五分类 code(console 中文标签:验证/计算/
+# 推导/转换/风控)。SQLite CHECK 加不了,枚举在此与 API pydantic 双层把关。
+RULE_TYPES = (
+    "validation", "computation", "derivation", "transformation", "risk_control",
+)
+
 _RULE_COLUMNS = (
     "id", "rule_id", "scope", "condition_expr", "conclusion",
     "source_ref", "status", "created_at", "updated_at",
+    # ALTER ADD COLUMN lands at the END (V013), not in declaration order.
+    "rule_type", "version",
 )
 
 _VERSION_COLUMNS = (
@@ -67,19 +75,35 @@ class OntologyRulesStore:
         condition_expr: str,
         conclusion: str,
         source_ref: str,
+        rule_type: str | None = None,
+        version: str | None = None,
     ) -> None:
-        """新建或更新规则(更新不改 status — 状态只走 transition)。"""
+        """新建或更新规则(更新不改 status — 状态只走 transition)。
+
+        ``rule_type``/``version`` 省略时:插入回落默认(validation/'1'),
+        更新保留现值(不静默重置分类)。
+        """
+        if rule_type is not None and rule_type not in RULE_TYPES:
+            raise ValueError(
+                f"rule_type must be one of {RULE_TYPES}, got {rule_type!r}"
+            )
+        current = self.get_rule(rule_id)
+        rt = rule_type or (current["rule_type"] if current else "validation")
+        ver = version or (current["version"] if current else "1")
         self._db.execute(
             """INSERT INTO ontology_rules
-                   (rule_id, scope, condition_expr, conclusion, source_ref)
-               VALUES (?, ?, ?, ?, ?)
+                   (rule_id, scope, condition_expr, conclusion, source_ref,
+                    rule_type, version)
+               VALUES (?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(rule_id) DO UPDATE SET
                    scope = excluded.scope,
                    condition_expr = excluded.condition_expr,
                    conclusion = excluded.conclusion,
                    source_ref = excluded.source_ref,
+                   rule_type = excluded.rule_type,
+                   version = excluded.version,
                    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')""",
-            (rule_id, scope, condition_expr, conclusion, source_ref),
+            (rule_id, scope, condition_expr, conclusion, source_ref, rt, ver),
         )
         self._db.commit()
 
@@ -119,7 +143,8 @@ class OntologyRulesStore:
         return _row_to_dict(rows[0]) if rows else None
 
     def list_rules(
-        self, *, scope: str | None = None, status: str | None = None
+        self, *, scope: str | None = None, status: str | None = None,
+        rule_type: str | None = None,
     ) -> list[dict[str, Any]]:
         sql = "SELECT * FROM ontology_rules WHERE 1=1"
         params: list[Any] = []
@@ -129,6 +154,9 @@ class OntologyRulesStore:
         if status is not None:
             sql += " AND status = ?"
             params.append(status)
+        if rule_type is not None:
+            sql += " AND rule_type = ?"
+            params.append(rule_type)
         sql += " ORDER BY rule_id"
         rows = self._db.execute(sql, tuple(params)).fetchall()
         return [_row_to_dict(r) for r in rows]

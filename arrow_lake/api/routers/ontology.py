@@ -14,6 +14,7 @@ All endpoints are ADMIN (plan W2.3); 503 when system_db is disabled.
 from __future__ import annotations
 
 import logging
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
@@ -95,6 +96,13 @@ class RuleUpsertRequest(BaseModel):
     conclusion: str = Field(..., min_length=1)
     source_ref: str = Field(..., min_length=1,
                             description="provenance, incl. standard/guobiao version")
+    # v1.11.1 W1.4 (DR15 D-2): omitted → insert falls back to defaults,
+    # update keeps current values (store resolves).
+    rule_type: Literal[
+        "validation", "computation", "derivation", "transformation", "risk_control"
+    ] | None = Field(default=None, description="five-way rule classification")
+    version: str | None = Field(default=None, min_length=1, max_length=32,
+                                description="independent rule version, e.g. '1.2'")
 
 
 @router.get("/rules", dependencies=[Depends(require_role(Role.ADMIN))])
@@ -102,10 +110,13 @@ async def list_rules(
     request: Request,
     scope: str | None = Query(default=None),
     status: str | None = Query(default=None),
+    rule_type: Literal[
+        "validation", "computation", "derivation", "transformation", "risk_control"
+    ] | None = Query(default=None),
 ) -> dict:
-    """List ontology rules (filter by scope / status)."""
+    """List ontology rules (filter by scope / status / rule_type)."""
     store = _require_store(_rules_store(request), "ontology rules")
-    items = store.list_rules(scope=scope, status=status)
+    items = store.list_rules(scope=scope, status=status, rule_type=rule_type)
     return {"success": True, "data": items, "count": len(items)}
 
 
@@ -119,6 +130,8 @@ async def upsert_rule(req: RuleUpsertRequest, request: Request) -> dict:
         condition_expr=req.condition_expr,
         conclusion=req.conclusion,
         source_ref=req.source_ref,
+        rule_type=req.rule_type,
+        version=req.version,
     )
     rule = store.get_rule(req.rule_id)
     return {"success": True, "data": rule}

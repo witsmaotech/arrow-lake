@@ -127,7 +127,7 @@ class TestMigrator:
         assert applied == []
         # schema_version still has exactly the recorded versions.
         versions = Migrator(db).applied_versions()
-        assert versions == {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}
+        assert versions == {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13}
 
 
 # --------------------------------------------------------------------------- #

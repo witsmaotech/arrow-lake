@@ -77,6 +77,14 @@
           <textarea id="rCond" placeholder="条件表达式,如 浓度 > 20%LEL AND 持续 > 5min"></textarea>
           <input id="rConc" placeholder="结论,如 触发泄漏预警"/>
           <input id="rSrc" placeholder="来源引用(含国标版本号)"/>
+          <select id="rType">
+            <option value="validation">类型:验证(validation)</option>
+            <option value="computation">类型:计算(computation)</option>
+            <option value="derivation">类型:推导(derivation)</option>
+            <option value="transformation">类型:转换(transformation)</option>
+            <option value="risk_control">类型:风控(risk_control)</option>
+          </select>
+          <input id="rVer" placeholder="规则版本,如 1.2(默认 1)"/>
           <button class="btn btn-primary btn-sm" id="rAdd" style="justify-self:start">登记(draft)</button>
         </div>
       </details>
@@ -182,6 +190,8 @@ async function loadVersionDetail(id) {
 
 /* ---------- 规则注册表 ---------- */
 const NEXT_STATUS = { draft: "active", active: "retired", retired: "draft" };
+const RULE_TYPE_LABELS = { validation: "验证", computation: "计算", derivation: "推导", transformation: "转换", risk_control: "风控" };
+let ruleTypeFilter = "all";
 
 async function loadRules() {
   if (!isAdmin) { $("#ruleList").innerHTML = ""; return; }
@@ -194,18 +204,35 @@ async function loadRules() {
       $("#ruleList").innerHTML = '<div class="muted" style="padding:10px">暂无规则 — 用下方表单登记(F1.7 专家起草后录入)</div>';
       return;
     }
-    $("#ruleList").innerHTML = `<table class="rules-table"><thead><tr>
-      <th>rule_id</th><th>scope</th><th>条件</th><th>结论</th><th>来源</th><th>状态</th><th></th>
-    </tr></thead><tbody>${rules.map(x => `
+    const shown = rules.filter(x => ruleTypeFilter === "all" || x.rule_type === ruleTypeFilter);
+    $("#ruleList").innerHTML = `
+    <div style="display:flex;gap:8px;align-items:center;padding:8px 10px;border-bottom:1px solid var(--line-soft)">
+      <label for="ruleTypeSel" style="font-size:.72rem;color:var(--fg-md)">类型筛选</label>
+      <select id="ruleTypeSel" style="font-size:.75rem">
+        <option value="all">全部</option>
+        ${Object.entries(RULE_TYPE_LABELS).map(([v, l]) => `<option value="${v}">${l}(${v})</option>`).join("")}
+      </select>
+      <span class="sub" style="font-size:.7rem">${shown.length}/${rules.length} 条</span>
+    </div>
+    <table class="rules-table"><thead><tr>
+      <th>rule_id</th><th>scope</th><th>类型</th><th>条件</th><th>结论</th><th>来源</th><th>版本</th><th>状态</th><th></th>
+    </tr></thead><tbody>${shown.map(x => `
       <tr>
         <td class="mono">${esc(x.rule_id)}</td>
         <td class="mono">${esc(x.scope)}</td>
+        <td class="mono" style="font-size:.7rem">${esc(RULE_TYPE_LABELS[x.rule_type] || x.rule_type || "验证")}</td>
         <td style="max-width:260px">${esc(x.condition_expr)}</td>
         <td style="max-width:180px">${esc(x.conclusion)}</td>
         <td class="mono" style="max-width:160px;font-size:.68rem">${esc(x.source_ref)}</td>
+        <td class="mono">${esc(x.version || "1")}</td>
         <td><span class="st st-${esc(x.status)}">${esc(x.status)}</span></td>
         <td><button class="btn btn-ghost btn-sm" data-rule="${esc(x.rule_id)}" data-next="${NEXT_STATUS[x.status] || ""}" ${NEXT_STATUS[x.status] ? "" : "disabled"}>→ ${NEXT_STATUS[x.status] || "—"}</button></td>
       </tr>`).join("")}</tbody></table>`;
+    const sel = $("#ruleTypeSel");
+    if (sel) {
+      sel.value = ruleTypeFilter;
+      sel.addEventListener("change", () => { ruleTypeFilter = sel.value; loadRules(); });
+    }
     $("#ruleList").querySelectorAll("button[data-rule]").forEach(btn => {
       btn.addEventListener("click", async () => {
         const rid = btn.dataset.rule, next = btn.dataset.next;
@@ -229,7 +256,10 @@ $("#rAdd").addEventListener("click", async () => {
     rule_id: $("#rId").value.trim(), scope: $("#rScope").value.trim() || "*",
     condition_expr: $("#rCond").value.trim(), conclusion: $("#rConc").value.trim(),
     source_ref: $("#rSrc").value.trim() || "manual",
+    rule_type: $("#rType").value || "validation",
   };
+  const ver = $("#rVer").value.trim();
+  if (ver) body.version = ver;
   if (!body.rule_id || !body.condition_expr || !body.conclusion) {
     toast("rule_id / 条件 / 结论 必填", "err", 2600); return;
   }

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import re
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 import pyarrow as pa
 import yaml
@@ -138,11 +138,19 @@ class ColumnRule(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     name: str
+    label: str | None = None           # 业务显示名 (DR15 D-1); registration-only
     unit: str | None = None            # registration-only (F2.2); no row SQL
     range: tuple[float, float] | None = None   # closed interval
     enum: tuple[str, ...] | None = None
     type: str | None = None            # type assertion → warn level
     required: bool = False             # NOT NULL → reject level
+
+    @field_validator("label")
+    @classmethod
+    def _nonempty_label(cls, v: str | None) -> str | None:
+        if v is not None and not v.strip():
+            raise ValueError(f"label must be non-empty: {v!r}")
+        return v
 
     @field_validator("name")
     @classmethod
@@ -174,10 +182,49 @@ class ColumnRule(BaseModel):
         return Severity.REJECT
 
 
+class LifecycleDecl(BaseModel):
+    """Entity state declaration (DR15 D-1) — registration-only, MS3 状态机铺路.
+
+    ``column`` (optional) points at the state column; ``states`` enumerates
+    the legal values; ``initial`` must be one of them. Transitions stay MS3.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    column: str | None = None
+    states: tuple[str, ...]
+    initial: str | None = None
+
+    @field_validator("column")
+    @classmethod
+    def _nonempty_column(cls, v: str | None) -> str | None:
+        if v is not None and not v.strip():
+            raise ValueError(f"lifecycle column must be non-empty: {v!r}")
+        return v
+
+    @field_validator("states")
+    @classmethod
+    def _nonempty_unique(cls, v: tuple[str, ...]) -> tuple[str, ...]:
+        if not v:
+            raise ValueError("lifecycle states must list at least one state")
+        if len(set(v)) != len(v):
+            raise ValueError(f"lifecycle states must be unique: {list(v)}")
+        return v
+
+    @model_validator(mode="after")
+    def _initial_in_states(self) -> LifecycleDecl:
+        if self.initial is not None and self.initial not in self.states:
+            raise ValueError(
+                f"lifecycle initial {self.initial!r} not in states {list(self.states)}"
+            )
+        return self
+
+
 class TableSection(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     object_class: str | None = None
+    lifecycle: LifecycleDecl | None = None   # DR15 D-1; registration-only
     identifier: IdentifierRule | None = None
     columns: tuple[ColumnRule, ...] = ()
 
@@ -199,6 +246,10 @@ class ReferenceRule(BaseModel):
     to_table: str | None = None         # intra-container target table
     to_column: str
     to_dataset: str | None = None       # cross-container target dataset
+    # DR15 D-1 (+S3): model-layer relationship semantics, registration-only —
+    # never compiled, never enforcing cascades; consumed by F2.4 object browsing.
+    cardinality: Literal["1:1", "1:N", "N:1", "M:N"] | None = None
+    kind: Literal["association", "composition", "aggregation", "dependency"] | None = None
 
     @property
     def target_kind(self) -> str:
@@ -238,6 +289,7 @@ def _normalize_reference(
     return ReferenceRule(
         from_table=from_table, from_column=from_column,
         to_table=to_table, to_column=str(to_column), to_dataset=to_dataset,
+        cardinality=raw.get("cardinality"), kind=raw.get("kind"),
     )
 
 
@@ -398,9 +450,12 @@ def contract_features(c: DatasetContract) -> dict[str, Any]:
     for name, sec in c.tables.items():
         tables[name] = {
             "object_class": sec.object_class,
+            "lifecycle": None if sec.lifecycle is None else
+            [sec.lifecycle.column, list(sec.lifecycle.states), sec.lifecycle.initial],
             "identifier": None if sec.identifier is None else
             [sec.identifier.column, sec.identifier.pattern],
             "columns": {r.name: {
+                "label": r.label,
                 "unit": r.unit, "range": list(r.range) if r.range else None,
                 "enum": list(r.enum) if r.enum else None,
                 "type": r.type, "required": r.required,
@@ -410,7 +465,8 @@ def contract_features(c: DatasetContract) -> dict[str, Any]:
         "tables": tables,
         "references": sorted(
             [r.from_table, r.from_column,
-             r.to_dataset or "", r.to_table or "", r.to_column]
+             r.to_dataset or "", r.to_table or "", r.to_column,
+             r.cardinality or "", r.kind or ""]
             for r in c.references
         ),
     }
@@ -431,6 +487,8 @@ def diff_features(old: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]:
             entry["identifier"] = {"was": o["identifier"], "now": n["identifier"]}
         if o["object_class"] != n["object_class"]:
             entry["object_class"] = {"was": o["object_class"], "now": n["object_class"]}
+        if o["lifecycle"] != n["lifecycle"]:
+            entry["lifecycle"] = {"was": o["lifecycle"], "now": n["lifecycle"]}
         cols: list[dict[str, Any]] = []
         oc, nc = o["columns"], n["columns"]
         for col in sorted(set(nc) - set(oc)):
