@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.11.1] - 2026-08-27 — MS2 语义层(对象标识 / 语义对齐 / Object Set)
+
+### Added
+- **契约模型扩展(DR15 D-1)**:列 `label`(业务显示名)/表节 `lifecycle`(column?/states/initial 状态声明,MS3 铺路)/引用 `cardinality`(1:1/1:N/N:1/M:N)+`kind`(四分法)——全部 registration-only,compiler 输出零变化(测试钉住);契约版本 diff 特征同步反映四件增删改。
+- **规则五分类(DR15 D-2,V013)**:ontology_rules 加 `rule_type`(validation/computation/derivation/transformation/risk_control)+独立 `version`;更新省略保留现值;console 规则表加列+筛选。
+- **对象标识(F2.1)**:`semantic/identity.py`(契约 pattern 命名组件抽取,不合规标记不炸,lru_cache)+V014 entity_map(源系统 ID→对象 ID,四段 UNIQUE 键,ADMIN 显式维护批量导入);`/api/v1/objects/entity-map` 三端点。
+- **语义对齐(F2.2)**:`semantic/units.py` 仿射单位注册表(压力/温度偏移/浓度/流量/长度;%LEL 独立维度钉死不可换算边界)+封闭种类对齐配置(unit 仿射/value_map 二选一,V015 版本链+lineage 事件)+`projection_sql` 投影编译(unit→算术/value_map→CASE,miss 透传);`/api/v1/semantic`(CRUD+units 只读)。
+- **Object Set 查询(F2.3)**:`POST /api/v1/objects/query`(VIEWER)——服务端拼装受限 SQL(列/op 白名单+值类型强转+中文列引用)走 /query/olap 同一条安全路径;聚合对象(标识双路径/label+unit 属性/lifecycle/`_links` cardinality+kind/可选 KG 邻居封顶 miss 容忍/active 规则引用);`GET /objects/types`;console objects.html 对象浏览页。
+- **跨源同口径 DoD e2e**:demo 容器双源双单位全链路自动化断言(真 Lake+真 DuckDB)。
+
+### Fixed(发版前 review 清偿)
+- `/objects/types` 补 dataset 级读权(deny 用户不可读契约结构);对象聚合 entity 反查批量化(N+1→单往返+executor);KG 邻接表预构建;int64 过滤值精度保持;like 数值列 422(原 500);id_column 校验+自动补选;FROM 引用化;inf/nan/null/factor-0 保存期拒绝;VIEWER 响应剥离规则表达式与行过滤谓词。
+
 ## [1.11.0.3] - 2026-08-27 — 加固批(契约 enforce 试点 + 首页 401 根治 + review P2 六项)
 
 ### Fixed(发版后收敛,同版 rebuild)

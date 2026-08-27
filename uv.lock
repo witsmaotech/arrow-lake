@@ -406,7 +406,7 @@ wheels = [
 
 [[package]]
 name = "arrow-lake"
-version = "1.11.0.3"
+version = "1.11.1"
 source = { editable = "." }
 dependencies = [
     { name = "av" },
