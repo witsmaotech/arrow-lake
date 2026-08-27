@@ -174,7 +174,8 @@ async function init() {
 }
 
 // 容器 → 填充表下拉;单表集 → 隐藏并清空 state.table
-async function loadContainerTables(name) {
+// preferred: 同数据集内表切换时保留用户选择;切数据集/首载不传 → 回落第一张表
+async function loadContainerTables(name, preferred) {
   state.table = "";
   const sel = $("#tblSelect");
   sel.hidden = true;
@@ -184,7 +185,7 @@ async function loadContainerTables(name) {
     const d = await request("GET", `/datasets/${encodeURIComponent(name)}`);
     const tables = d?.kind === "container" ? (d.tables || []) : [];
     if (!tables.length) return;
-    state.table = tables[0];
+    state.table = preferred && tables.includes(preferred) ? preferred : tables[0];
     for (const t of tables) {
       const opt = document.createElement("option");
       opt.value = t;
@@ -199,8 +200,11 @@ async function loadContainerTables(name) {
 let dsGen = 0;
 async function selectDataset(name) {
   const my = ++dsGen;
+  // 修复:表下拉 change 也走这里 —— 同名数据集须保住用户刚选的表,
+  // 否则 loadContainerTables 重置回 tables[0](表现为"选表即刷新回第一张")
+  const keepTable = state.current === name ? state.table : "";
   state.current = name;
-  await loadContainerTables(name);
+  await loadContainerTables(name, keepTable);
   if (my !== dsGen) return;
   try {
     const p = await loadProfile(name, state.table);

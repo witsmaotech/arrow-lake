@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.11.0.3] - 2026-08-27 — 加固批(契约 enforce 试点 + 首页 401 根治 + review P2 六项)
 
+### Fixed(发版后收敛,同版 rebuild)
+- **数据准备页选容器表即"刷新"回第一张(console)**:表下拉 change → `selectDataset(current)` → `loadContainerTables` 无条件重置 `state.table = tables[0]` 并重灌下拉 —— 用户选择被丢弃、页面表现为刷新回默认表。修:`loadContainerTables(name, preferred)` 保留同数据集内用户刚选的表(`tables.includes` 校验;切数据集/首载仍回落第一张);`selectDataset` 按 `state.current === name` 判定传参。tidy.html 无此 bug(change 直走 `loadDsSchema` 不经重置)。Playwright 实测:demo_gas 切 `stations` 后下拉保持(修复前弹回 `segments`)。
+
 ### Added
 - **per-dataset 质量门禁档覆盖(W3,契约 enforce 试点机制)**:`QualityConfig.gate_mode_overrides`(env JSON blob `ARROW_LAKE__QUALITY__GATE_MODE_OVERRIDES='{"demo_gas":"enforce"}'`)+ `build_quality_gate(dataset_name=)` 解析(命中即覆盖全局档;非法值告警回落;`quality.enabled=False` 仍是总闸;解析日志 `quality_gate_mode_resolved`)。试点语义 = 全局保持 shadow,单数据集切 enforce(schema/filter/score 三 stage 不被全局收紧波及)。
 - **`DELETE /api/v1/datasets/{name}?table=`(P2-1)**:facade `delete_dataset(table=)` 贯通 —— 删容器单表(siblings 不动、不走 cascade)+ 同步回收 `container_registry` 行(`drop_container_table`,best-effort)+ 独立审计事件 `dataset.table_deleted`。此前 registry 只写不读不回收,表删除后控制面永久漂移。
