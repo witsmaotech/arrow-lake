@@ -636,6 +636,65 @@ class TestContainerMapping:
         assert all(f"/schemas/gas_net/tables" in p for p in table_paths)
         assert not any("/schemas/default/tables" in p for p in table_paths)
 
+    def test_register_container_4xx_does_not_abort_remaining_tables(self) -> None:
+        """P2-4 (review 2026-08-26 §三): only Transient was caught per-table —
+        a 4xx on one table (e.g. an illegal column 400) aborted the whole
+        loop, silently skipping every remaining table in the container."""
+        import pyarrow as pa
+
+        from arrow_lake.catalog.gravitino_bridge import GravitinoRequestError
+
+        bridge = self._bridge()
+        registered: list[str] = []
+
+        def flaky(method: str, path: str, body=None):
+            name = (body or {}).get("name", "")
+            if name:
+                registered.append(name)
+            if name == "segments":
+                raise GravitinoRequestError(
+                    f"gravitino {method} {path} -> HTTP 400", status=400,
+                )
+            return {"code": 0}
+
+        with patch.object(bridge, "_request", side_effect=flaky), \
+                patch.object(bridge, "_ensure_schema"), \
+                patch.object(bridge, "_ensure_container_schema"):
+            bridge.register_container("gas_net", {
+                "segments": pa.schema([("id", pa.string())]),
+                "stations": pa.schema([("sid", pa.string())]),
+            })
+        # stations STILL registered even though segments 4xx'd
+        assert "stations" in registered, \
+            f"remaining table must not be skipped: {registered}"
+
+    def test_register_container_transient_still_continues(self) -> None:
+        import pyarrow as pa
+
+        from arrow_lake.catalog.gravitino_bridge import GravitinoTransientError
+
+        bridge = self._bridge()
+        registered: list[str] = []
+
+        def flaky(method: str, path: str, body=None):
+            name = (body or {}).get("name", "")
+            if name:
+                registered.append(name)
+            if name == "segments":
+                raise GravitinoTransientError(
+                    f"gravitino {method} {path} -> HTTP 503", status=503,
+                )
+            return {"code": 0}
+
+        with patch.object(bridge, "_request", side_effect=flaky), \
+                patch.object(bridge, "_ensure_schema"), \
+                patch.object(bridge, "_ensure_container_schema"):
+            bridge.register_container("gas_net", {
+                "segments": pa.schema([("id", pa.string())]),
+                "stations": pa.schema([("sid", pa.string())]),
+            })
+        assert "stations" in registered
+
     def test_sync_outbound_routes_container_entries(self) -> None:
         bridge = self._bridge()
         with patch.object(bridge, "register_container") as rc, patch.object(bridge, "register_dataset") as rd:

@@ -285,7 +285,7 @@ class IngestionQualityGate:
                     rejected = con.execute(
                         f"{marker_sel} WHERE {violated_expr}"
                     ).fetch_arrow_table()
-                    return table, rejected.num_rows, (
+                    return table, rejected.num_rows, self._with_contract_reason(
                         rejected if rejected.num_rows else None
                     )
                 # Enforce: one full scan with the marker, split in Arrow.
@@ -310,7 +310,7 @@ class IngestionQualityGate:
             ).append_column(
                 "_source_table", pa.array([str(table_name or dataset_name)] * table.num_rows),
             )
-            return table.slice(0, 0), table.num_rows, marked
+            return table.slice(0, 0), table.num_rows, self._with_contract_reason(marked)
         mask = [
             bool(v) for v in marked.column("_contract_violation").to_pylist()
         ]
@@ -318,7 +318,26 @@ class IngestionQualityGate:
         passed = marked.filter([not m for m in mask]).drop_columns(
             ["_contract_violation", "_source_table"],
         )
-        return passed, rejected.num_rows, (rejected if rejected.num_rows else None)
+        return passed, rejected.num_rows, self._with_contract_reason(
+            rejected if rejected.num_rows else None
+        )
+
+    @staticmethod
+    def _with_contract_reason(t: pa.Table | None) -> pa.Table | None:
+        """P2-6 (review 2026-08-26 §三): derive the dead-letter
+        ``_rejection_reason`` from the per-row violation kinds — contract
+        rows used to hit the generic "Rejected by quality_gate" fallback,
+        hiding WHY a row was rejected (the kinds lived only in the
+        ``_contract_violation`` marker column)."""
+        if t is None or t.num_rows == 0 or "_rejection_reason" in t.column_names:
+            return t
+        kinds = t.column("_contract_violation").to_pylist()
+        return t.append_column(
+            "_rejection_reason",
+            pa.array(
+                [f"contract:{k or 'unknown'}" for k in kinds], type=pa.string(),
+            ),
+        )
 
     def _validate_schema(
         self, table: pa.Table
@@ -429,6 +448,7 @@ def build_quality_gate(
     target_schema: pa.Schema | None = None,
     dead_letter_writer: Any | None = None,
     contract_constraints: tuple = (),
+    dataset_name: str | None = None,
 ) -> IngestionQualityGate | None:
     """Construct the gate from a QualityConfig (v1.10.7 WP5 wiring).
 
@@ -436,8 +456,29 @@ def build_quality_gate(
     disabled) so callers keep their no-gate fast path. Mirrors
     ``Lake.quality_filter``'s builtin registration so ``active_filters``
     actually resolves (a bare registry knows no filter names).
+
+    v1.11.0.3 W3: ``dataset_name`` resolves ``gate_mode_overrides`` — a
+    listed dataset's mode replaces the global one (pilot semantics: one
+    dataset can enforce while the global mode stays shadow). Invalid
+    override values are ignored with a warning; ``quality.enabled=False``
+    stays the master switch.
     """
     mode = str(getattr(config, "gate_mode", "shadow"))
+    overrides = getattr(config, "gate_mode_overrides", None) or {}
+    if dataset_name and dataset_name in overrides:
+        resolved = str(overrides[dataset_name])
+        if resolved in ("off", "shadow", "enforce"):
+            if resolved != mode:
+                logger.info(
+                    "quality_gate_mode_resolved", dataset=dataset_name,
+                    mode=resolved, source="override", global_mode=mode,
+                )
+            mode = resolved
+        else:
+            logger.warning(
+                "quality_gate_mode_override_invalid", dataset=dataset_name,
+                value=resolved, note="expected off|shadow|enforce; keeping global",
+            )
     if mode == "off" or not getattr(config, "enabled", True):
         return None
 

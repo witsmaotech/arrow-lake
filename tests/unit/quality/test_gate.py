@@ -266,6 +266,58 @@ class TestGateFactory:
         assert gate is not None
         assert gate.mode == "shadow"
 
+    # ── v1.11.0.3 W3: per-dataset gate-mode override (contract enforce pilot) ──
+
+    def _cfg(self, **overrides) -> SimpleNamespace:
+        base = dict(gate_mode="shadow", schema_validation="lenient",
+                    active_filters="", filter_mode="all",
+                    min_quality_score=0.0, enabled=True,
+                    gate_mode_overrides={})
+        base.update(overrides)
+        return SimpleNamespace(**base)
+
+    def test_override_enforce_for_named_dataset(self) -> None:
+        from arrow_lake.quality.gate import build_quality_gate
+
+        cfg = self._cfg(gate_mode_overrides={"demo_gas": "enforce"})
+        assert build_quality_gate(cfg, dataset_name="demo_gas").mode == "enforce"
+
+    def test_other_datasets_keep_global_mode(self) -> None:
+        from arrow_lake.quality.gate import build_quality_gate
+
+        cfg = self._cfg(gate_mode_overrides={"demo_gas": "enforce"})
+        assert build_quality_gate(cfg, dataset_name="other_ds").mode == "shadow"
+
+    def test_override_off_disables_gate_for_dataset(self) -> None:
+        from arrow_lake.quality.gate import build_quality_gate
+
+        cfg = self._cfg(gate_mode_overrides={"noisy_ds": "off"})
+        assert build_quality_gate(cfg, dataset_name="noisy_ds") is None
+        assert build_quality_gate(cfg, dataset_name="kept_ds") is not None
+
+    def test_override_enforce_when_global_off(self) -> None:
+        from arrow_lake.quality.gate import build_quality_gate
+
+        # pilot semantics: global stays off, the listed dataset still enforces
+        cfg = self._cfg(gate_mode="off", gate_mode_overrides={"demo_gas": "enforce"})
+        assert build_quality_gate(cfg, dataset_name="demo_gas").mode == "enforce"
+
+    def test_invalid_override_value_ignored(self) -> None:
+        from arrow_lake.quality.gate import build_quality_gate
+
+        cfg = self._cfg(gate_mode_overrides={"demo_gas": "bogus"})
+        assert build_quality_gate(cfg, dataset_name="demo_gas").mode == "shadow"
+
+    def test_config_without_overrides_field_unchanged(self) -> None:
+        from arrow_lake.quality.gate import build_quality_gate
+
+        # pre-1.11.0.3 configs (SimpleNamespace mocks in older tests) lack the
+        # field entirely — getattr default must keep them working
+        cfg = SimpleNamespace(gate_mode="shadow", schema_validation="lenient",
+                              active_filters="", filter_mode="all",
+                              min_quality_score=0.0, enabled=True)
+        assert build_quality_gate(cfg, dataset_name="any").mode == "shadow"
+
     def test_build_returns_none_when_off(self) -> None:
         from arrow_lake.quality.gate import build_quality_gate
 

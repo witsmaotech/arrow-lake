@@ -229,3 +229,18 @@ def test_max_rows_above_rowcount_not_partial_gate(tmp_path: Path) -> None:
     report = run_baseline("gas_net", CONTRACT_YAML, storage, max_rows=1000)
     assert report["partial"] is True            # 口径仍是样本口径
     assert report["decision"]["enforce_ready"] is False
+
+
+def test_baseline_null_violation_sample_renders_explicit_null(tmp_path: Path) -> None:
+    """P2-6 (review 2026-08-26 §三): a NULL value among violation samples used
+    to render as the literal string "None" — indistinguishable from a real
+    value. Must render as an explicit ``<NULL>`` marker."""
+    from scripts.contract_gate_baseline import run_baseline
+
+    storage = _storage(tmp_path)
+    storage.create_dataset("gas_net", pa.table({"id": ["S-1", None], "name": ["a", "b"]}), table="stations")
+    report = run_baseline("gas_net", CONTRACT_YAML, storage)
+    st = report["tables"]["stations"]
+    by = {(c["column"], c["kind"]): c for c in st["constraints"]}
+    assert by[("id", "not_null")]["violations"] == 1  # compiler kind for required
+    assert by[("id", "not_null")]["samples"] == ["<NULL>"]

@@ -155,6 +155,35 @@ class TestPatternSyntax:
         with pytest.raises(ValueError):
             pattern_to_match_regex("{a:{b}}")
 
+    def test_bad_inner_regex_rejected_at_parse(self) -> None:
+        # P2-5 (review 2026-08-26 §三): the group's inner regex used to be
+        # accepted uncompiled — a typo like an unclosed character class only
+        # blew up at RUNTIME (first DuckDB evaluation / first F2.1 extract).
+        # Parse-time try-compile must reject it as a ValueError.
+        with pytest.raises(ValueError):
+            pattern_to_match_regex("{id:[0-9}")
+
+    def test_bad_inner_regex_rejected_via_model(self) -> None:
+        from arrow_lake.contract.schema import IdentifierRule
+
+        with pytest.raises(ValueError):
+            IdentifierRule(column="seg_id", pattern="{id:(unclosed")
+
+    def test_valid_pattern_compiles_both_forms(self) -> None:
+        import re
+
+        for form in (pattern_to_match_regex("GAS.SEG.{n:[0-9]+}"),
+                     pattern_to_extract_regex("GAS.SEG.{n:[0-9]+}")):
+            re.compile(form)  # must not raise
+
+    def test_pathological_group_regex_length_capped(self) -> None:
+        # ReDoS surface: cap the group regex length at parse time (the match
+        # form runs in DuckDB RE2 — linear — but the extract form is plain
+        # Python re in MS2 F2.1).
+        bomb = "{x:" + "a" * 300 + "}"
+        with pytest.raises(ValueError):
+            pattern_to_match_regex(bomb)
+
 
 class TestSeverityAnnotation:
     def test_row_constraint_severities(self) -> None:

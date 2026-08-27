@@ -138,6 +138,11 @@ _FILESET_CATALOG = "minio-fileset"
 _LANCE_CATALOG = "lance-catalog"
 _MODEL_CATALOG = "ml-models"
 _DEFAULT_SCHEMA = "arrow_lake"
+# P2-4 (review 2026-08-26 §三): single edit point for the mirror-location
+# bucket. These s3a:// URIs are the metadata-mirror convention (see
+# register_container's docstring) — deliberately NOT the real storage
+# prefix, so the bucket name is part of the convention, not a credential.
+_MIRROR_BUCKET = "arrow-lake"
 # Gravitino column-identifier rule (conservative ASCII word — the server
 # rejects e.g. Chinese column names with HTTP 400).
 _LEGAL_COLUMN_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
@@ -349,7 +354,7 @@ class GravitinoBridge:
         with self._lock:
             self._ensure_schema()
             if not location:
-                location = f"s3a://arrow-lake/{name}.lance"
+                location = f"s3a://{_MIRROR_BUCKET}/{name}.lance"
 
             # 1. Table in lance-catalog (hand-rolled REST, with columns).
             self._register_table(name, schema, location)
@@ -465,10 +470,16 @@ class GravitinoBridge:
                 try:
                     self._register_table(
                         tname, tschema,
-                        f"s3a://arrow-lake/{name}/{tname}.lance",
+                        f"s3a://{_MIRROR_BUCKET}/{name}/{tname}.lance",
                         schema_name=name,
                     )
-                except GravitinoTransientError as exc:
+                except GravitinoRequestError as exc:
+                    # P2-4 (review 2026-08-26 §三): only Transient was caught
+                    # before — a 4xx on ONE table (illegal column 400, auth
+                    # 401…) aborted the loop and silently skipped every
+                    # remaining table in the container. Any per-table request
+                    # failure logs and moves on; the tables dict came from a
+                    # single storage enumeration, skipping one is safe.
                     logger.warning(
                         "gravitino_container_table_failed",
                         container=name, table=tname,

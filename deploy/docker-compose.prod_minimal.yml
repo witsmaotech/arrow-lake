@@ -40,11 +40,11 @@ x-arrow-lake: &arrow-lake
       - "hfmodels=/home/witshine/.cache/huggingface/hub"
       - "msmodels=/home/witshine/.cache/modelscope/models"
     args:
-      VERSION: "1.11.0.2"
+      VERSION: "1.11.0.3"
       HTTP_PROXY: "${BUILD_HTTP_PROXY:-}"
       HTTPS_PROXY: "${BUILD_HTTPS_PROXY:-}"
       NO_PROXY: "${BUILD_NO_PROXY:-127.0.0.1,localhost}"
-  image: arrow-lake:1.11.0.2
+  image: arrow-lake:1.11.0.3
   restart: unless-stopped
   env_file:
     - path: ../.env
@@ -308,6 +308,10 @@ services:
       # ontime(107M 行)默认 fallback 时 5 臂 UNION 聚合 90s 看门狗必超;native 秒级。
       # 熔断器(v1.10.4)在 D-state 重复时自动降回 fallback 冷却,风险受控。
       ARROW_LAKE__OLAP__LANCE_SCAN_MODE_OVERRIDES: '{"ontime":"native"}'
+      # v1.11.0.3 W3 契约 enforce 试点:per-dataset 门禁档覆盖(全局保持 shadow)。
+      # demo_gas 基线 2026-08-27:reject 0.00%(0/5)+ 零 skipped → 双门控条件满足。
+      # 回滚 = 删本行 recreate 即回 shadow(契约保留继续 shadow 观察)。
+      ARROW_LAKE__QUALITY__GATE_MODE_OVERRIDES: '{"demo_gas":"enforce"}'
       ARROW_LAKE__OLAP__PARQUET_ROW_GROUP_SIZE: "100000"
       # v1.7.1: DuckDB per-query memory limit (minimal 下调到 512MB，配合 API_MEMORY_LIMIT 4G)
       ARROW_LAKE__OLAP__MAX_QUERY_MEMORY_MB: "${OLAP_MAX_QUERY_MEMORY_MB:-512}"

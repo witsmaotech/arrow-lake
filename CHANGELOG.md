@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.11.0.3] - 2026-08-27 — 加固批(契约 enforce 试点 + 首页 401 根治 + review P2 六项)
+
+### Added
+- **per-dataset 质量门禁档覆盖(W3,契约 enforce 试点机制)**:`QualityConfig.gate_mode_overrides`(env JSON blob `ARROW_LAKE__QUALITY__GATE_MODE_OVERRIDES='{"demo_gas":"enforce"}'`)+ `build_quality_gate(dataset_name=)` 解析(命中即覆盖全局档;非法值告警回落;`quality.enabled=False` 仍是总闸;解析日志 `quality_gate_mode_resolved`)。试点语义 = 全局保持 shadow,单数据集切 enforce(schema/filter/score 三 stage 不被全局收紧波及)。
+- **`DELETE /api/v1/datasets/{name}?table=`(P2-1)**:facade `delete_dataset(table=)` 贯通 —— 删容器单表(siblings 不动、不走 cascade)+ 同步回收 `container_registry` 行(`drop_container_table`,best-effort)+ 独立审计事件 `dataset.table_deleted`。此前 registry 只写不读不回收,表删除后控制面永久漂移。
+- **favicon 路由与资产(W2)**:`GET /favicon.ico` 公开(FileResponse + `Cache-Control: max-age=86400`,资产缺失回落 204);`_PUBLIC_PATHS` 放行。浏览器每次加载 console 页自动请求根路径 favicon,此前命中鉴权中间件 401 —— 即"首页间歇性 401"控制台报错的正源(与 token 无关,缓存命中时被掩盖)。
+
+### Fixed
+- **契约拒收行死信 reason 具体化(P2-6)**:`_rejection_reason` 从通用 "Rejected by quality_gate" 改为按行 violation kinds(`contract:enum`/`contract:not_null`/`contract:eval_error`);基线脚本违规样本 NULL 渲染为显式 `<NULL>`(行约束与引用完整性两处,不再是字面量 "None")。
+- **契约 pattern 内层 regex 保存时试编译(P2-5)**:`{name:regex}` 的 regex 体此前不经验证直接进 SQL/解析器(如未闭合字符类延迟到首次运行时才炸)—— 现在 match/extract 双形态 `re.compile` 试编译(保存即 422)+ group regex 长度帽 256(MS2 F2.1 extract 形态的 ReDoS 面)。
+- **Gravitino per-table 4xx 不再中断同容器其余表(P2-4)**:`register_container` 循环只捕 `GravitinoTransientError`,一个表的 400/401 会跳过同容器所有后续表;现捕 `GravitinoRequestError` 全系(记 warning 继续);镜像 location 桶名提取为 `_MIRROR_BUCKET` 单点。
+- **容器探测不再 mkdir 垃圾目录(P2-2)**:`list_container_tables` local 分支连接前先探目录(lancedb.connect 会 mkdir —— 身份 guard 每次写路径探测都会在真实数据旁留下容器形空目录);远端分支 fail-open 保留但降 debug 日志。
+- **容器级删除与表级写锁互斥(P2-3)**:容器删除(锁键=容器名)与表写(锁键=`{ds}/{table}`)此前可交错,rmtree vs append 留半删除态;现容器删除先按字典序获取全部已枚举表的写锁再删(残余竞态=枚举后新建表名,已注明)。
+
+### 部署
+- compose api env 新增 `ARROW_LAKE__QUALITY__GATE_MODE_OVERRIDES: '{"demo_gas":"enforce"}'` —— **契约 enforce 试点**(基线 2026-08-27:reject 0.00%(0/5 行)+ 零 skipped,双门控条件满足)。回滚 = 删该行 recreate 即回 shadow(契约保留继续观察)。
+- 容器注册表镜像语义已在校准入设计文档(D3:registry=镜像/加速面,身份权威=存储层枚举+冲突 guard;读接通留 MS2)。
+
 ## [1.11.0.2] - 2026-08-27 — 容器面补全(发版后目测验收反馈批)
 
 ### Added

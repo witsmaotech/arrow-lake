@@ -176,3 +176,62 @@ class TestListContainersWithTables:
     def test_names_only_view_matches_keys(self, mgr: LanceStorageManager) -> None:
         mgr.create_dataset("gas_net", T3, table="segments")
         assert mgr.list_containers() == list(mgr.list_containers_with_tables())
+
+
+class TestProbeHygiene:
+    """P2-2 (review 2026-08-26 §三): probing a name must not create a
+    container-shaped garbage directory (lancedb.connect mkdirs), because
+    identity guards call list_container_tables on every write path."""
+
+    def test_probe_missing_name_creates_no_dir(
+        self, mgr: LanceStorageManager, tmp_path: Path,
+    ) -> None:
+        assert mgr.list_container_tables("ghost") == []
+        assert not (tmp_path / "ghost").exists()
+
+    def test_probe_plain_dataset_leaves_no_container_dir(
+        self, mgr: LanceStorageManager, tmp_path: Path,
+    ) -> None:
+        mgr.create_dataset("plain_ds", T3)
+        assert mgr.list_container_tables("plain_ds") == []
+        # sibling container directory must NOT appear next to plain_ds.lance
+        assert not (tmp_path / "plain_ds").exists()
+
+    def test_real_container_still_lists_after_fix(self, mgr: LanceStorageManager) -> None:
+        mgr.create_dataset("gas_net", T3, table="segments")
+        assert mgr.list_container_tables("gas_net") == ["segments"]
+
+
+class TestContainerDeleteWriteLock:
+    """P2-3 (review 2026-08-26 §三): container-level delete and per-table
+    writes lock on different keys — an append to {name}/{t} could interleave
+    with rmtree leaving a half-deleted state. Container delete must wait for
+    every enumerated table's write lock."""
+
+    def test_container_delete_blocks_on_held_table_lock(
+        self, mgr: LanceStorageManager,
+    ) -> None:
+        import threading
+
+        mgr.create_dataset("gas_net", T3, table="segments")
+        mgr.create_dataset("gas_net", T2, table="stations")
+
+        held = mgr._dataset_lock("gas_net/segments")
+        held.acquire()
+        done: list[bool] = []
+
+        def deleter() -> None:
+            mgr.delete_dataset("gas_net")
+            done.append(True)
+
+        t = threading.Thread(target=deleter, daemon=True)
+        t.start()
+        t.join(timeout=0.6)
+        assert not done, "container delete must block while a table write lock is held"
+        # tables still intact while blocked
+        assert mgr.read_dataset("gas_net", table="stations").num_rows == 2
+
+        held.release()
+        t.join(timeout=10)
+        assert done, "container delete proceeds once the table lock is released"
+        assert mgr.list_container_tables("gas_net") == []

@@ -122,7 +122,10 @@ def _eval_section(
             f"SELECT count(*) FROM {rel} WHERE {expr}"
         ).fetchone()[0]
         samples = [
-            str(v[0]) for v in con.execute(
+            # P2-6 (review 2026-08-26 §三): SQL NULL used to render as the
+            # literal string "None" — indistinguishable from a real value.
+            "<NULL>" if v[0] is None else str(v[0])
+            for v in con.execute(
                 f"SELECT {_q(c.column)} FROM {rel} WHERE {expr} LIMIT {sample_limit}"
             ).fetchall()
         ]
@@ -210,7 +213,8 @@ def _eval_references(
                 f"SELECT count(*) FROM {_q(src_rel)} AS _src WHERE {pred}"
             ).fetchone()[0]
             samples = [
-                str(v[0]) for v in con.execute(
+                "<NULL>" if v[0] is None else str(v[0])  # P2-6: not literal "None"
+                for v in con.execute(
                     f"SELECT _src.{_q(ref.from_column)} FROM {_q(src_rel)} AS _src "
                     f"WHERE {pred} LIMIT {sample_limit}"
                 ).fetchall()

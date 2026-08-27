@@ -22,6 +22,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 _TABLE_NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_-]*$")
 # column names may be non-ASCII (压力/材质) but must stay SQL-quote safe
 _UNSAFE_COLUMN_RE = re.compile(r'["\';\x00-\x1f]')
+# P2-5 (review 2026-08-26 §三): ReDoS guard for contract identifier patterns
+# (match form runs in DuckDB RE2 — linear — but the extract form is plain
+# Python ``re`` in MS2 F2.1).
+_MAX_GROUP_REGEX = 256
 
 
 class Severity(str, Enum):
@@ -63,6 +67,14 @@ def _compile_pattern(pattern: str, *, named: bool) -> str:
         if not name:
             raise ValueError(f"Empty group name in pattern: {pattern!r}")
         group_re = regex if sep else r"[^.]+"
+        # P2-5 (review 2026-08-26 §三): cap the group regex — the match form
+        # runs in DuckDB RE2 (linear) but the extract form is plain Python
+        # ``re`` in MS2 F2.1, so pathological patterns have a ReDoS surface.
+        if len(group_re) > _MAX_GROUP_REGEX:
+            raise ValueError(
+                f"Pattern group regex exceeds {_MAX_GROUP_REGEX} chars "
+                f"in pattern: {pattern!r}"
+            )
         out.append(f"(?P<{name}>{group_re})" if named else group_re)
         i = close + 1
     return "".join(out)
@@ -70,12 +82,26 @@ def _compile_pattern(pattern: str, *, named: bool) -> str:
 
 def pattern_to_match_regex(pattern: str) -> str:
     """Validation form (DuckDB regexp_full_match): literals + groups, no captures."""
-    return _compile_pattern(pattern, named=False)
+    rx = _compile_pattern(pattern, named=False)
+    _assert_compilable(rx, pattern)
+    return rx
 
 
 def pattern_to_extract_regex(pattern: str) -> str:
     """Extraction form (F2.1 identifier parsing): named capture groups."""
-    return _compile_pattern(pattern, named=True)
+    rx = _compile_pattern(pattern, named=True)
+    _assert_compilable(rx, pattern)
+    return rx
+
+
+def _assert_compilable(rx: str, pattern: str) -> None:
+    """P2-5 (review 2026-08-26 §三): the inner ``{name:regex}`` body must be
+    a compilable regex — brace structure alone accepts garbage like an
+    unclosed character class, which used to surface only at RUNTIME."""
+    try:
+        re.compile(rx)
+    except re.error as exc:
+        raise ValueError(f"Invalid inner regex in pattern {pattern!r}: {exc}") from exc
 
 
 # --------------------------------------------------------------------------- #
@@ -91,7 +117,12 @@ class IdentifierRule(BaseModel):
     @field_validator("pattern")
     @classmethod
     def _pattern_syntax(cls, v: str) -> str:
-        _compile_pattern(v, named=False)  # raises ValueError on bad syntax
+        # P2-5 (review 2026-08-26 §三): try-compile BOTH translated forms —
+        # brace structure alone accepts an invalid inner regex (e.g. an
+        # unclosed character class), which used to blow up at RUNTIME (first
+        # DuckDB evaluation / first F2.1 extract) instead of at save time.
+        pattern_to_match_regex(v)
+        pattern_to_extract_regex(v)
         return v
 
     @property

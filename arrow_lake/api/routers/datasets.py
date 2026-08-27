@@ -1037,11 +1037,15 @@ async def delete_dataset(
         True, description="Also reclaim derived assets (KG graph, KA dump, "
         "Gravitino/catalog metadata, RBAC grants, template bindings)."
     ),
+    table: str | None = Query(
+        None, pattern=_TABLE_NAME_PATTERN,
+        description="Drop ONLY this container table (siblings untouched).",
+    ),
     *,
     lake=Depends(get_lake),
     _user: dict = Depends(require_permission(Permission.DATASET_DELETE)),
 ) -> MessageResponse:
-    """Delete a dataset and all its data."""
+    """Delete a dataset and all its data (or one container table)."""
     authorize_dataset(request, name, write=True)
     # 系统运行表(sys_ 前缀)是系统运行依赖,禁止删除。判断集中 _system_tables.py。
     if is_system_table(name):
@@ -1055,5 +1059,8 @@ async def delete_dataset(
     await run_sync(
         lake.delete_dataset, name, timeout=_ADMIN_TIMEOUT,
         label="delete_dataset", actor=actor_of(_user), cascade=cascade,
+        table=table,
     )
+    if table is not None:
+        return MessageResponse(message=f"Table '{name}/{table}' deleted")
     return MessageResponse(message=f"Dataset '{name}' deleted")

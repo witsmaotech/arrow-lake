@@ -12,6 +12,11 @@ _PUBLIC_PATHS: frozenset[str] = frozenset({
     "/health",
     "/health/live",
     "/health/ready",
+    # W2 (v1.11.0.3): browsers auto-request the favicon at the origin root on
+    # every console page load — an auth-wall 401 here surfaced as the
+    # "intermittent homepage 401" console error (the request carries no
+    # credentials by design; caching made it look intermittent).
+    "/favicon.ico",
 })
 
 # Doc paths that bypass auth only when docs are enabled.

@@ -7,9 +7,12 @@ from pathlib import Path
 from typing import Any
 
 import pyarrow as pa
+import structlog
 
 from arrow_lake.config import StorageBackend
 from arrow_lake.exceptions import ErrorCode, StorageError
+
+logger = structlog.get_logger(__name__)
 
 
 class StorageCRUDMixin:
@@ -250,6 +253,7 @@ class StorageCRUDMixin:
         lock_key = f"{name}/{table}" if table is not None else name
         lock = self._dataset_lock(lock_key)
         self._acquire_dataset_lock(lock_key)
+        table_lock_keys: list[str] = []
         try:
             self._validate_name(name)
             if table is not None:
@@ -269,6 +273,17 @@ class StorageCRUDMixin:
 
             container_tables = self.list_container_tables(name)
             is_container = bool(container_tables)
+            if is_container:
+                # P2-3 (review 2026-08-26 §三): container-level delete and a
+                # table-level write lock on different keys could interleave —
+                # rmtree vs append left a half-deleted state. Acquire every
+                # enumerated table's write lock (sorted → stable order,
+                # deadlock-safe) before dropping. Residual race: a table
+                # CREATED after this enumeration is not covered.
+                for t in sorted(container_tables):
+                    key = f"{name}/{t}"
+                    self._acquire_dataset_lock(key)
+                    table_lock_keys.append(key)
             if self._storage_config and self._storage_config.backend != StorageBackend.LOCAL:
                 if is_container:
                     cdb = self._get_db(name)
@@ -298,7 +313,12 @@ class StorageCRUDMixin:
                 )
             shutil.rmtree(path)
         finally:
+            for key in reversed(table_lock_keys):
+                self._dataset_lock(key).release()
             lock.release()
+            for key in table_lock_keys:
+                with contextlib.suppress(KeyError):
+                    self._dataset_locks.pop(key, None)
         # Clean up lock for deleted dataset to prevent unbounded growth
         with contextlib.suppress(KeyError):
             self._dataset_locks.pop(lock_key, None)
@@ -339,9 +359,17 @@ class StorageCRUDMixin:
         container / does not exist.
         """
         self._validate_name(name)
+        # P2-2 (review 2026-08-26 §三): local branch must not CONNECT on a
+        # missing directory — lancedb.connect mkdirs, so a probe (identity
+        # guards call this on every write path) would leave a container-
+        # shaped garbage directory next to the real data.
+        if not (self._storage_config and self._storage_config.backend != StorageBackend.LOCAL):
+            if not (Path(self.base_uri) / name).is_dir():
+                return []
         try:
             result = self._get_db(name).list_tables()
-        except Exception:
+        except Exception:  # noqa: BLE001 — remote fail-open ≠ "not a container"
+            logger.debug("list_container_tables_failed", dataset=name, exc_info=True)
             return []
         tables = result.tables if hasattr(result, "tables") else result
         return sorted(t for t in tables if isinstance(t, str))

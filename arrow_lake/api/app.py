@@ -821,6 +821,24 @@ def create_app(config: ArrowLakeConfig | None = None) -> FastAPI:
     if _console_dir.is_dir():
         app.mount("/console", StaticFiles(directory=str(_console_dir), html=True), name="console")
 
+        # W2 (v1.11.0.3): browsers auto-request /favicon.ico at the ORIGIN ROOT
+        # on every console page load — it fell through to the auth middleware
+        # and 401'd (the "intermittent homepage 401" console error; cached
+        # favicons masked it). Serve the console asset publicly with a long
+        # cache; 204 (not bare 404) when the asset is missing.
+        from starlette.responses import FileResponse, Response
+
+        _favicon = _console_dir / "assets" / "favicon.ico"
+
+        @app.get("/favicon.ico", include_in_schema=False)
+        async def favicon() -> Response:  # noqa: ANN202 — starlette route
+            if _favicon.is_file():
+                return FileResponse(
+                    str(_favicon), media_type="image/x-icon",
+                    headers={"Cache-Control": "public, max-age=86400"},
+                )
+            return Response(status_code=204)
+
     # OpenTelemetry (optional — no-op when disabled or deps not installed)
     if config.opentelemetry.enabled:
         from arrow_lake.api.telemetry import setup_telemetry

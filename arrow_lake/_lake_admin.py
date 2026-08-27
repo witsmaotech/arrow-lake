@@ -228,7 +228,8 @@ class _LakeAdminMixin:
         self._get_storage().update_field_comments(name, comments)
 
     def delete_dataset(
-        self, name: str, *, actor: str = "system", cascade: bool = True
+        self, name: str, *, actor: str = "system", cascade: bool = True,
+        table: str | None = None,
     ) -> None:
         """Delete a dataset and all its data.
 
@@ -242,10 +243,37 @@ class _LakeAdminMixin:
                 table (e.g. to preserve a KA dump for re-ingesting the same
                 name). Every cascade step is best-effort and never blocks the
                 core Lance-table deletion.
+            table: Optional — drop ONLY this table inside a container dataset
+                (siblings and container-derived assets are untouched, so
+                cascade does not apply). P2-1 (review 2026-08-26 §三): the
+                container_registry row is reclaimed here too — the registry
+                used to be write-only, so a dropped table stayed declared
+                forever (permanent control-plane drift).
         """
         pre_version = self._safe_version(name)
         with self._trace_span("delete_dataset", dataset=name):
-            self._get_storage().delete_dataset(name)
+            self._get_storage().delete_dataset(name, table=table)
+        if table is not None:
+            # Table-scoped delete: only the container_registry row needs
+            # reclaiming (best-effort — registry is a mirror, D3).
+            try:
+                catalog_store = getattr(self, "_catalog_store", None)
+                if catalog_store is not None:
+                    catalog_store.drop_container_table(name, table)
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "cascade container table unregister failed for %s/%s",
+                    name, table, exc_info=True,
+                )
+            try:
+                self.audit_record(
+                    "dataset.table_deleted", dataset_name=name, actor=actor,
+                    lance_version=pre_version,
+                    payload={"actor": actor, "table": table},
+                )
+            except Exception:  # noqa: BLE001
+                logger.warning("delete audit failed for %s", name, exc_info=True)
+            return
         # Cascade: reclaim derived assets (best-effort, per-subsystem isolation).
         # KG graph drop is gated by cascade too so cascade=False truly preserves
         # everything built on top (KG + KA + metadata) for same-name reuse.

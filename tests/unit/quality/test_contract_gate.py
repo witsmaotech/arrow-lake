@@ -68,6 +68,21 @@ class TestContractStageShadow:
         assert "_contract_violation" in batch.column_names
         assert batch.num_rows == 2
 
+    def test_shadow_dead_letter_reason_is_specific(self) -> None:
+        """P2-6 (review 2026-08-26 §三): contract-rejected rows used to hit
+        the generic "Rejected by quality_gate" fallback in the dead letter —
+        the specific violation kinds lived only in the marker column."""
+        writer = MagicMock()
+        gate = IngestionQualityGate(
+            mode="shadow", contract_constraints=_constraints(),
+            dead_letter_writer=writer,
+        )
+        gate.check(BATCH, dataset_name="gas_net", table_name="segments")
+        _, batch, _ = writer.write.call_args[0]
+        reasons = batch.column("_rejection_reason").to_pylist()
+        # compiler kind for `required:` is "not_null"
+        assert reasons == ["contract:enum", "contract:not_null"]
+
     def test_no_constraints_zero_overhead(self) -> None:
         gate = IngestionQualityGate(mode="enforce")
         passed, result = gate.check(BATCH, dataset_name="ds")

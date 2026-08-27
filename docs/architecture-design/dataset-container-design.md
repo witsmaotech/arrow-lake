@@ -61,7 +61,7 @@
 |---|---|---|---|
 | D1 | **寻址 = 两段名 `{ds}.{table}`,DuckDB 侧 dataset→schema 映射** | DuckDB 原生 `schema.table` 二段名;无新语法;与 Gravitino metalake→catalog→schema→table 对齐 | flat 引号名 `"ds.table"`(易错、rbac_sql 解析歧义)/前缀拼接 `ds__table`(不透明) |
 | D2 | **存储布局:新多表集 `{base_uri}/{ds}/{table}/`;旧单表集原路径保留** | 零物理迁移;容器化是登记行为不是搬数据 | 存量集物理搬迁(高风险无收益) |
-| D3 | **容器身份由控制面登记**(system_db catalog 记 `is_container` + 表清单),不靠目录猜测 | minio 前缀列举有最终一致性问题;catalog 是权威 | 目录结构嗅探(歧义:单表集本身也是目录) |
+| D3 | **容器身份由控制面登记**(system_db catalog 记 `is_container` + 表清单),不靠目录猜测。**v1.11.0.3 校准(P2-1)**:登记表实为**镜像**(加速/观测面)——运行时身份判定与表枚举走存储层(lancedb 连接枚举)+ 身份冲突 guard;表删除经 facade 同步回收登记行(`drop_container_table`);读接通留 MS2 契机再决断 | minio 前缀列举有最终一致性问题;登记写入即闭环 | 目录结构嗅探(歧义:单表集本身也是目录) |
 | D4 | **ACL 分层:数据集级=默认,表级=覆盖,deny 优先** | 域内表常有不同敏级别(监测数据 vs 台账);现 RBAC store 键扩展 `acl:{ds}::{table}` | 只有容器级(粒度倒退)/只有表级(每表重配,运营负担) |
 | D5 | **摄入目标带表名;门禁/死信/embed 回填/熔断/scan overrides 全部按 `{ds}.{table}` 键** | 粒度自然下沉;不同表不同 scan 模式反而更精准(ontime 类大表单独 native) | 容器级统一配置(丢精度) |
 | D6 | **多表集上 `FROM {ds}` 无表名 → 422**(可配 `default_table` 豁免);单表集上裸名继续工作 | 显式优于隐含;避免静默选表 | 静默默认表(查询语义漂移) |

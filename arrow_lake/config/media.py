@@ -116,6 +116,13 @@ class QualityConfig(BaseModel):
     # counts, logs and dead-letters but never drops rows; enforce lands with
     # the MS5 five-dimension gate.
     gate_mode: QualityGateMode = QualityGateMode.SHADOW
+    # v1.11.0.3 W3 (contract enforce pilot): per-dataset gate-mode override.
+    # Maps dataset → off|shadow|enforce; a listed dataset's mode replaces the
+    # global one at gate construction. Lets ONE pilot dataset enforce while
+    # the global mode stays shadow (flipping the global would tighten the
+    # schema/filter/score stages for every dataset at once). Env is a JSON
+    # blob (pydantic dict convention): ARROW_LAKE__QUALITY__GATE_MODE_OVERRIDES='{"demo_gas":"enforce"}'
+    gate_mode_overrides: dict[str, str] = {}
     min_quality_score: float = 0.0
 
     # NeMo Curator (Sprint 9, Story 8.5)

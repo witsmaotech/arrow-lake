@@ -205,6 +205,7 @@ class _LakeIngestMixin:
                         storage=_DeadLetterStorageAdapter(self._get_storage())
                     ),
                     contract_constraints=self._load_contract_constraints(dataset_name),
+                    dataset_name=dataset_name,  # v1.11.0.3 W3: gate_mode_overrides
                 )
         except Exception:  # noqa: BLE001 — gate wiring must never block ingest
             logger.warning("quality_gate_wiring_failed", exc_info=True)
