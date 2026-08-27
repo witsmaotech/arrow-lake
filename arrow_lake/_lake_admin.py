@@ -615,15 +615,18 @@ class _LakeAdminMixin:
         """Gravitino catalog health check (v1.8.0 #19)."""
         return self._get_gravitino_bridge().health()
 
-    def add_column(self, name: str, column_name: str, sql_expr: str) -> None:
+    def add_column(
+        self, name: str, column_name: str, sql_expr: str, *, table: str | None = None,
+    ) -> None:
         """Add a computed column to an existing dataset.
 
         Args:
             name: Dataset name.
             column_name: Name of the new column.
             sql_expr: SQL expression for the column value (e.g. "price * 0.9").
+            table: Optional table within a container dataset (DR14).
         """
-        self._get_storage().add_column(name, column_name, sql_expr)
+        self._get_storage().add_column(name, column_name, sql_expr, table=table)
 
     def add_columns_table(self, name: str, columns: Any, *, table: str | None = None) -> None:
         """Add pre-computed columns to a dataset without full rewrite.
@@ -638,24 +641,28 @@ class _LakeAdminMixin:
         """
         self._get_storage().add_columns_table(name, columns, table=table)
 
-    def alter_column(self, name: str, column_name: str, new_type: Any) -> None:
+    def alter_column(
+        self, name: str, column_name: str, new_type: Any, *, table: str | None = None,
+    ) -> None:
         """Change the data type of an existing column.
 
         Args:
             name: Dataset name.
             column_name: Column to modify.
             new_type: Target PyArrow data type (e.g. pa.float32()).
+            table: Optional table within a container dataset (DR14).
         """
-        self._get_storage().alter_column(name, column_name, new_type)
+        self._get_storage().alter_column(name, column_name, new_type, table=table)
 
-    def drop_column(self, name: str, column_name: str) -> None:
+    def drop_column(self, name: str, column_name: str, *, table: str | None = None) -> None:
         """Remove a column from a dataset.
 
         Args:
             name: Dataset name.
             column_name: Column to remove.
+            table: Optional table within a container dataset (DR14).
         """
-        self._get_storage().drop_column(name, column_name)
+        self._get_storage().drop_column(name, column_name, table=table)
 
     def compact_dataset(self, name: str) -> Any:
         """Compact a dataset by merging small fragments.

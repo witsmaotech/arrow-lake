@@ -128,13 +128,16 @@ class StorageAdvancedMixin:
         finally:
             lock.release()
 
-    def add_column(self, name: str, column_name: str, sql_expr: str) -> None:
+    def add_column(
+        self, name: str, column_name: str, sql_expr: str, *, table: str | None = None,
+    ) -> None:
         """Add a new column to a dataset via SQL expression.
 
         Args:
             name: Dataset name.
             column_name: Name of the new column.
             sql_expr: SQL expression for the column (e.g. "CAST(0 AS INT)").
+            table: Optional table within a container dataset (DR14).
 
         Raises:
             StorageError: If dataset does not exist or name/column invalid.
@@ -146,13 +149,14 @@ class StorageAdvancedMixin:
         self._validate_identifier(column_name, "column_name")
         self._validate_sql_expr(sql_expr)
 
-        table = self._open_lance(self._get_dataset_path(name))
-        checker = SchemaCompatibilityChecker(table.schema)
+        lt = (self._open_lance("", container=name, table=table)
+              if table is not None else self._open_lance(self._get_dataset_path(name)))
+        checker = SchemaCompatibilityChecker(lt.schema)
         issues = checker.check_add_column(column_name, pa.string())
         if issues:
             raise SchemaMigrationError("; ".join(issues))
 
-        table.add_columns({column_name: sql_expr})
+        lt.add_columns({column_name: sql_expr})
         self._record_schema_change(name, "add_column", {"column": column_name, "sql_expr": sql_expr})
 
     def _record_schema_change(self, name: str, change_type: str, details: dict) -> None:
@@ -213,13 +217,16 @@ class StorageAdvancedMixin:
         except Exception:  # noqa: BLE001 — dataset missing / unreadable
             return False
 
-    def alter_column(self, name: str, column_name: str, new_type: pa.DataType) -> None:
+    def alter_column(
+        self, name: str, column_name: str, new_type: pa.DataType, *, table: str | None = None,
+    ) -> None:
         """Change a column's data type.
 
         Args:
             name: Dataset name.
             column_name: Column to alter.
             new_type: New pyarrow data type.
+            table: Optional table within a container dataset (DR14).
 
         Raises:
             StorageError: If dataset does not exist or name invalid.
@@ -230,21 +237,23 @@ class StorageAdvancedMixin:
         self._validate_name(name)
         self._validate_identifier(column_name, "column_name")
 
-        table = self._open_lance(self._get_dataset_path(name))
-        checker = SchemaCompatibilityChecker(table.schema)
+        lt = (self._open_lance("", container=name, table=table)
+              if table is not None else self._open_lance(self._get_dataset_path(name)))
+        checker = SchemaCompatibilityChecker(lt.schema)
         issues = checker.check_alter_column(column_name, new_type)
         if issues:
             raise SchemaMigrationError("; ".join(issues))
 
-        table.alter_columns({"path": column_name, "data_type": new_type})
+        lt.alter_columns({"path": column_name, "data_type": new_type})
         self._record_schema_change(name, "type_change", {"column": column_name, "new_type": str(new_type)})
 
-    def drop_column(self, name: str, column_name: str) -> None:
+    def drop_column(self, name: str, column_name: str, *, table: str | None = None) -> None:
         """Remove a column from a dataset.
 
         Args:
             name: Dataset name.
             column_name: Column to drop.
+            table: Optional table within a container dataset (DR14).
 
         Raises:
             StorageError: If dataset does not exist or column not found.
@@ -255,8 +264,9 @@ class StorageAdvancedMixin:
         self._validate_name(name)
         self._validate_identifier(column_name, "column_name")
 
-        table = self._open_lance(self._get_dataset_path(name))
-        checker = SchemaCompatibilityChecker(table.schema)
+        lt = (self._open_lance("", container=name, table=table)
+              if table is not None else self._open_lance(self._get_dataset_path(name)))
+        checker = SchemaCompatibilityChecker(lt.schema)
 
         # Check indexed columns from config if available
         indexed = frozenset()
@@ -268,7 +278,7 @@ class StorageAdvancedMixin:
             raise SchemaMigrationError("; ".join(issues))
 
         try:
-            table.drop_columns([column_name])
+            lt.drop_columns([column_name])
         except RuntimeError as exc:
             msg = str(exc)
             if "does not exist" in msg:

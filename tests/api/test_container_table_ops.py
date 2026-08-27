@@ -210,6 +210,29 @@ class TestTableThreading:
             "/api/v1/datasets/gas/quality/profile?table=bad/name")
         assert resp.status_code == 422
 
+    @pytest.mark.asyncio
+    async def test_migrate_addresses_table(
+        self, client: AsyncClient, lake: MagicMock,
+    ) -> None:
+        """schema/migrate (data-prep 文本规整算子) hits the container table."""
+        from types import SimpleNamespace
+
+        lake.catalog.return_value = SimpleNamespace(
+            datasets=[SimpleNamespace(name="gas")])
+        lake._storage.open_dataset.return_value = MagicMock(
+            schema=pa.schema([("material", pa.string())]))
+        resp = await client.post(
+            "/api/v1/datasets/gas/schema/migrate?table=segments",
+            json={"actions": [{
+                "operation": "add_column", "column_name": "mat2",
+                "sql_expr": '"material"',
+            }], "dry_run": False},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["applied_count"] == 1
+        assert lake.add_column.call_args.kwargs.get("table") == "segments"
+        assert lake._storage.open_dataset.call_args.kwargs.get("table") == "segments"
+
 
 # ---------------------------------------------------------------------------
 # Table-level deny override on the manual-call auth path

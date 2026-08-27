@@ -914,6 +914,7 @@ async def migrate_schema(
     name: str = Path(..., pattern=_NAME_PATTERN),
     body: SchemaMigrationRequest = ...,
     *,
+    table: str | None = Query(None, pattern=_TABLE_NAME_PATTERN),
     lake=Depends(get_lake),
     _user: dict = Depends(require_role(Role.ADMIN)),
 ) -> SchemaMigrationResponse:
@@ -921,6 +922,7 @@ async def migrate_schema(
 
     With ``dry_run=true`` (default), only validates compatibility.
     Set ``dry_run=false`` to apply the migration.
+    ``?table=`` targets a table inside a container dataset (DR14).
     """
     import pyarrow as pa
 
@@ -940,7 +942,7 @@ async def migrate_schema(
         )
 
     # Read current schema
-    ds = lake._storage.open_dataset(name)
+    ds = lake._storage.open_dataset(name, table=table)
     current_schema = ds.schema
     checker = SchemaCompatibilityChecker(current_schema)
 
@@ -1000,20 +1002,20 @@ async def migrate_schema(
                 await run_sync(
                     lake.add_column,
                     name, action.column_name, action.sql_expr,
-                    timeout=_ADMIN_TIMEOUT, label="add_column",
+                    timeout=_ADMIN_TIMEOUT, label="add_column", table=table,
                 )
             elif action.operation == "alter_column":
                 new_type = _TYPE_MAP[action.new_type]
                 await run_sync(
                     lake.alter_column,
                     name, action.column_name, new_type,
-                    timeout=_ADMIN_TIMEOUT, label="alter_column",
+                    timeout=_ADMIN_TIMEOUT, label="alter_column", table=table,
                 )
             elif action.operation == "drop_column":
                 await run_sync(
                     lake.drop_column,
                     name, action.column_name,
-                    timeout=_ADMIN_TIMEOUT, label="drop_column",
+                    timeout=_ADMIN_TIMEOUT, label="drop_column", table=table,
                 )
             applied += 1
         except SchemaMigrationError:

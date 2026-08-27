@@ -47,6 +47,10 @@ def mock_lake() -> MagicMock:
 async def client(mock_lake: MagicMock) -> AsyncClient:
     config = ArrowLakeConfig()
     config.api.api_key = "test-api-key"
+    # 共享 key 升 ADMIN:套件打 editor 端点(filter/dedup/rules)+ ADMIN 端点
+    # (mask_preview);默认 VIEWER 会 403(v1.10.7 共享 key 降级后的存量腐烂,
+    # 2026-08-26 修)
+    config.api.api_key_default_role = "ADMIN"
     config.api.docs_enabled = False
     app = create_app(config=config)
     app.state.lake = mock_lake
@@ -197,7 +201,7 @@ async def test_quality_rules_length_check(client: AsyncClient, mock_lake: MagicM
     assert body["results"][0]["affected_count"] == 2
     assert body["total_affected_rows"] == 2
 
-    mock_lake.read_dataset.assert_called_once_with("docs")
+    mock_lake.read_dataset.assert_called_once_with("docs", table=None)
 
 
 @pytest.mark.asyncio

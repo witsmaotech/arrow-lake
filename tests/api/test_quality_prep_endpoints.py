@@ -25,6 +25,8 @@ def mock_lake() -> MagicMock:
 async def client(mock_lake: MagicMock) -> AsyncClient:
     config = ArrowLakeConfig()
     config.api.api_key = "test-api-key"
+    # llm_label/extract 是 EDITOR 端点;默认 VIEWER 共享 key 会 403(存量腐烂修)
+    config.api.api_key_default_role = "EDITOR"
     config.api.docs_enabled = False
     app = create_app(config=config)
     app.state.lake = mock_lake

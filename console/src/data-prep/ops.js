@@ -6,14 +6,17 @@ const val = (form, id) => (form.querySelector("#" + id)?.value ?? "").trim();
 // 容器表寻址(DR14):table 非空时拼 ?table=
 const tq = (table) => (table ? `?table=${encodeURIComponent(table)}` : "");
 
-// DuckDB 文本规整表达式(列引用用双引号)
+// 文本规整表达式 —— lance add_columns SQL 方言(实测 2026-08-27):
+//   ① 标识符必须裸写(双引号会被当字符串字面量,trim(col) 生成 'col' 常量列的
+//      预存 bug 即此);② 字符串用单引号;③ regexp_replace 是 postgres 语义
+//   (默认只换首个匹配),必须带 'g' flag;④ trim()/substr() 不在 lance 支持集。
 const TIDY = {
-  trim: { label: "去首尾空白 trim()", sql: (c) => `trim("${c}")` },
-  lower: { label: "转小写 lower()", sql: (c) => `lower("${c}")` },
-  ws: { label: "折叠多余空白 \\s+→' '", sql: (c) => `regexp_replace("${c}", '\\s+', ' ')` },
-  url: { label: "URL → [URL]", sql: (c) => `regexp_replace("${c}", 'https?://\\S+', '[URL]')` },
-  email: { label: "邮箱 → [EMAIL]", sql: (c) => `regexp_replace("${c}", '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+', '[EMAIL]')` },
-  phone: { label: "手机号 → [PHONE]", sql: (c) => `regexp_replace("${c}", '1[3-9]\\d{9}', '[PHONE]')` },
+  trim: { label: "去首尾空白", sql: (c) => `regexp_replace(${c}, '(^\\s+)|(\\s+$)', '', 'g')` },
+  lower: { label: "转小写 lower()", sql: (c) => `lower(${c})` },
+  ws: { label: "折叠多余空白 \\s+→' '", sql: (c) => `regexp_replace(${c}, '\\s+', ' ', 'g')` },
+  url: { label: "URL → [URL]", sql: (c) => `regexp_replace(${c}, 'https?://\\S+', '[URL]', 'g')` },
+  email: { label: "邮箱 → [EMAIL]", sql: (c) => `regexp_replace(${c}, '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+', '[EMAIL]', 'g')` },
+  phone: { label: "手机号 → [PHONE]", sql: (c) => `regexp_replace(${c}, '1[3-9]\\d{9}', '[PHONE]', 'g')` },
 };
 
 export const OPS = [
@@ -72,11 +75,14 @@ export const OPS = [
     },
     previewCols(f) { return [val(f, "tCol")]; },
     buildRequest(f, ds, table) {
-      if (table) throw new Error("schema/migrate 暂不支持容器表(后续版本);容器内规整请用「数据清洗」页 clean 管道");
       const col = val(f, "tCol"), op = val(f, "tOp"), newC = val(f, "tNew") || `${col}_clean`;
-      const sql = TIDY[op] ? TIDY[op].sql(col) : `trim("${col}")`;
+      // lance SQL 方言无标识符引法(双引号=字符串),特殊名列直接拒绝并提示
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(col)) {
+        throw new Error(`规整列名「${col}」含特殊字符,lance SQL 无法引用;请先用清洗页 rename 成合法标识符`);
+      }
+      const sql = TIDY[op] ? TIDY[op].sql(col) : `lower(${col})`;
       return {
-        method: "POST", path: `/datasets/${encodeURIComponent(ds)}/schema/migrate`, async: false,
+        method: "POST", path: `/datasets/${encodeURIComponent(ds)}/schema/migrate${tq(table)}`, async: false,
         body: { actions: [{ operation: "add_column", column_name: newC, sql_expr: sql }], dry_run: false },
       };
     },

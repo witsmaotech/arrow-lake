@@ -191,11 +191,11 @@ if (!ds) {
   $("#crumbDs").textContent = ds;
 
   (async () => {
-    // 1) 元数据 + schema 并行拉取(互不依赖;原串行 await 链让预览多等一轮)
+    // 1) 元数据先行 —— kind 决定 schema 寻址:容器集必须 ?table=(裸名按 D6 422,
+    //    盲发并行请求会在 network 面板留 422 噪音),单表集才走裸名。
     let detailInfo = null;
-    const [dRes, sRes] = await Promise.allSettled([
+    const [dRes] = await Promise.allSettled([
       request("GET", `/datasets/${encodeURIComponent(ds)}`),
-      request("GET", `/datasets/${encodeURIComponent(ds)}/schema`),
     ]);
     if (dRes.status === "fulfilled") {
       detailInfo = dRes.value;
@@ -304,15 +304,9 @@ if (!ds) {
     }
     if (detailInfo?.kind === "container") {
       renderCtrTables();
-      await loadSchema();
-    } else if (sRes.status === "fulfilled") {
-      const fields = sRes.value?.fields || [];
-      commentMap = Object.fromEntries(fields.map((f) => [f.name, f.comment || ""]));
-      schemaFields = fields;
-      if (fields.length) {
-        $("#schemaPanel").style.display = "";
-        renderSchema(fields);
-      }
+      await loadSchema();          // curTable 已定 → ?table= 寻址
+    } else if (detailInfo) {
+      await loadSchema();          // 单表集裸名寻址(curTable=null)
     }
     if (detailInfo && !curTable) loadDocs(detailInfo.name, schemaFields.some((f) => f.name === "document_name"));
     // 字段注释编辑(铅笔 → prompt → POST annotate → 局部刷新)
