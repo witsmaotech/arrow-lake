@@ -31,6 +31,7 @@ from arrow_lake.api.routers.materialized import router as materialized_router
 from arrow_lake.api.routers.maintenance import router as maintenance_router
 from arrow_lake.api.routers.contracts import router as contracts_router
 from arrow_lake.api.routers.objects import router as objects_router
+from arrow_lake.api.routers.semantic import router as semantic_router
 from arrow_lake.api.routers.ontology import router as ontology_router
 from arrow_lake.api.routers.quality import router as quality_router
 from arrow_lake.api.routers.cleaning import router as cleaning_router
@@ -313,6 +314,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         app.state.entity_map_store = EntityMapStore(sys_db)
         lake._entity_map_store = app.state.entity_map_store
+        # v1.11.1 MS2 (W3.2/F2.2): semantic alignment configs behind
+        # /api/v1/semantic (unit/value_map closed transforms; query-view only,
+        # never on the ingest hot path).
+        from arrow_lake.system_db.stores.semantic_alignments import (
+            SemanticAlignmentStore,
+        )
+
+        app.state.semantic_alignment_store = SemanticAlignmentStore(sys_db)
+        lake._semantic_alignment_store = app.state.semantic_alignment_store
         # Activate RAG-session persistence in the Lake facade's RAG pipeline.
         lake._rag_session_store = app.state.rag_session_store
         # Activate the lineage adjacency index in the Lake facade's LineageStore.
@@ -801,6 +811,7 @@ def create_app(config: ArrowLakeConfig | None = None) -> FastAPI:
     app.include_router(ontology_router)
     app.include_router(contracts_router)
     app.include_router(objects_router)
+    app.include_router(semantic_router)
     app.include_router(auth_router)
     app.include_router(admin_router)
     app.include_router(maintenance_router)
