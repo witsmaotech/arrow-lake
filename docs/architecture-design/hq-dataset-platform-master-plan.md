@@ -304,7 +304,7 @@ MS1 本体与规则地基 ──┬──▶ MS2 语义层 ──▶ MS3 决策�
 | v1.11.0.2 ✅ 已发版 2026-08-27 | MS1 补批收尾 | 容器面补全:tidy/data-prep/migrate 容器表 + 表级 deny 双机制闭环 + lance SQL 方言修 |
 | v1.11.0.3 ✅ 已发版 2026-08-27 | MS1 补批加固 | 契约 enforce 试点(demo_gas,per-dataset 门禁档)+ 首页 401 根治 + review P2 六项 |
 | v1.11.1 ✅ 已发版 2026-08-27 | MS2 | 语义层:对象标识/语义对齐/Object Set(版本计划 docs_offline/v1.11.1-version-plan.md,S1-S8 全项过) |
-| v1.11.2 | MS3 | 决策与行动层 |
+| v1.11.2 ✅ 已发版 2026-08-28 | MS3 | 决策与行动层:谓词 DSL/行动目录/研判引擎/执行中间件(版本计划 docs_offline/v1.11.2-version-plan.md,S1-S10+D1-D4;建模语言设计 docs_offline/ms3-modeling-language-design.md v1.1) |
 | v1.11.3 | MS4 | 标注闭环 |
 | v1.11.4 | MS5 | 评估发布与语料 |
 

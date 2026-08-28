@@ -6,6 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.11.2] — 2026-08-28
+
+### MS3 决策与行动层(F3.1-F3.6)
+
+**Added**
+- 建模语言地基:谓词 DSL(手写 tokenizer+优先级爬升 parser+frozen AST 求值,零新依赖)、
+  模板插值(`{{ path }}`/`{{ now() }}` 封闭两形态)、Action/Scenario pydantic 模型与保存期校验
+  (`arrow_lake/actions/`)。
+- 存储:V016(actions_catalog 版本链 + idempotency_keys,owner-token 并发裁决)、V017(scenarios);
+  `/api/v1/actions` 管理面(ADMIN CRUD+versions+幂等槽重置)与执行面(`POST /{id}/execute`,EDITOR)。
+- 研判引擎:`decisions/assess.py` + `POST /api/v1/decisions/assess`(VIEWER)——对象取数复用 Object Set
+  共享管线(对齐后口径+ACL 同路),规则求值与 `condition_expr` 同源编译,unruly 规则 fail-open 到条,
+  confidence 恒 1.0,actionable 从行动目录反查;黄金集 5 对象×7 规则。
+- 执行中间件八步序:认证→permission→目标解析(写向门禁)→幂等(owner-token)→前置→效果
+  (update_lifecycle=storage 原生行级 update;notify=user_state;none)→审计(scenario/step/rule_ids
+  归属)→post_event(进程内 pub/sub,订阅者异常隔离)。
+- Console:actions.html(目录/场景管理)、decisions.html(研判台,结构化引用链 F3.2 轻实现)。
+- 度量:`scripts/ms3_metrics_baseline.py`(研判准确率/依据可溯率/越权拦截计数)与
+  `scripts/ms3_seed_demo.py`(演示场景种子)。
+
+**Changed**
+- `semantic/objectset.py` 增运行时取数管线 `fetch_object_rows`(objects 端点编排段逐行提取,
+  deny/ACL 经闭包注入与 /query/olap 字面同源;零回归硬验收)。
+- storage `update_rows` 增 `table=` 容器寻址(沿 append 先例,旧签名兼容)。
+
+**Security**(W4.5 fan-out review 清偿)
+- update_lifecycle 物理写现过 write 级 dataset ACL + 表级写 deny 双查(原仅读检查);
+- assess 上下文服务端重评,客户端提供的 assess 不再进入前置/幂等键/审计依据;
+- 获幂等槽后前置失败置 failed(可重认领)+ ADMIN 幂等槽重置路由;
+- 超时类失败强制 manual_intervention(禁自动重放);审计失败保真(executed+audit_status=failed);
+- to_state 必须落在契约 lifecycle 词表;fields 键保存期白名单;scenario/step 归属存在性校验。
+
 ## [1.11.1] - 2026-08-27 — MS2 语义层(对象标识 / 语义对齐 / Object Set)
 
 ### Added

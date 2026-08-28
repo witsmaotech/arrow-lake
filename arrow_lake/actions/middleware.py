@@ -106,6 +106,8 @@ async def execute_action(
     if spec.permission is not None:
         perms = list(getattr(user, "permissions", None) or [])
         if perms and spec.permission not in perms:
+            await _audit_denied(lake, user, action_id, dataset, object_type,
+                                object_id, f"permission: {spec.permission}")
             raise ActionError(403, f"Missing permission: {spec.permission}")
 
     if spec.audit.reason_required and not (reason or "").strip():
@@ -155,6 +157,8 @@ async def execute_action(
             action="write",
             permissions=getattr(user, "permissions", None),
         ):
+            await _audit_denied(lake, user, action_id, dataset, object_type,
+                                object_id, "dataset write denied")
             raise ActionError(403, f"Write access to dataset '{dataset}' denied")
         if deny_table_write is not None:
             deny_table_write(dataset, table_param)
@@ -470,6 +474,31 @@ async def _run_effect(
         "columns": sorted(values),
         "target": res.target,
     }
+
+
+async def _audit_denied(
+    lake: Any, user: Any, action_id: str, dataset: str, object_type: str,
+    object_id: str, reason: str,
+) -> None:
+    """越权拦截落账(D3:403+action 维度走审计管道,不新增 /metrics)。
+
+    best-effort:审计面故障不掩盖 403 本身。
+    """
+    from arrow_lake.api.utils import run_sync
+
+    try:
+        await run_sync(
+            lambda: lake.audit_record(
+                "action.denied", dataset_name=dataset,
+                actor=getattr(user, "sub", ""),
+                payload={"action_id": action_id, "object_type": object_type,
+                         "object_id": object_id, "denied": reason},
+            ),
+            timeout=_EFFECT_TIMEOUT, label="action_audit_denied",
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("action_denied_audit_failed",
+                         extra={"action": action_id})
 
 
 async def _mark(
