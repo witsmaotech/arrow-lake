@@ -33,7 +33,7 @@ export function mountDatasetPicker(input, { onPick } = {}) {
   panel.style.display = "none";
   document.body.appendChild(panel);
 
-  const state = { items: null, sel: -1, open: false };
+  const state = { items: null, sel: -1, open: false, filter: "" };
 
   function close() {
     state.open = false;
@@ -41,9 +41,9 @@ export function mountDatasetPicker(input, { onPick } = {}) {
   }
 
   function visible() {
+    // 点开=先列全部(state.filter 清空);键入才过滤(filter 为小写子串)
     return (state.items || []).filter((d) =>
-      !input.value.trim() ||
-      d.name.toLowerCase().includes(input.value.trim().toLowerCase()));
+      !state.filter || d.name.toLowerCase().includes(state.filter));
   }
 
   function render() {
@@ -62,9 +62,10 @@ export function mountDatasetPicker(input, { onPick } = {}) {
       }));
   }
 
-  function open() {
+  function open(keepFilter = false) {
     state.open = true;
     state.sel = -1;
+    if (!keepFilter) state.filter = "";
     const r = input.getBoundingClientRect();
     panel.style.left = Math.max(8, Math.min(r.left, innerWidth - 280)) + "px";
     panel.style.top = Math.min(r.bottom + 4, innerHeight - 240) + "px";
@@ -101,7 +102,11 @@ export function mountDatasetPicker(input, { onPick } = {}) {
 
   input.addEventListener("focus", open);
   input.addEventListener("click", (e) => { e.stopPropagation(); if (!state.open) open(); });
-  input.addEventListener("input", () => { state.sel = -1; state.open ? render() : open(); });
+  input.addEventListener("input", () => {
+    state.sel = -1;
+    state.filter = input.value.trim().toLowerCase();
+    if (state.open) render(); else open(true);  // 闭合时键入:开但保留过滤
+  });
   input.addEventListener("blur", () => setTimeout(close, 120)); // 让 mousedown 生效
   input.addEventListener("keydown", (e) => {
     if (!state.open) return;
