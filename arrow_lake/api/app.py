@@ -31,6 +31,7 @@ from arrow_lake.api.routers.materialized import router as materialized_router
 from arrow_lake.api.routers.maintenance import router as maintenance_router
 from arrow_lake.api.routers.actions import router as actions_router
 from arrow_lake.api.routers.contracts import router as contracts_router
+from arrow_lake.api.routers.decisions import router as decisions_router
 from arrow_lake.api.routers.objects import router as objects_router
 from arrow_lake.api.routers.semantic import router as semantic_router
 from arrow_lake.api.routers.ontology import router as ontology_router
@@ -826,6 +827,7 @@ def create_app(config: ArrowLakeConfig | None = None) -> FastAPI:
     app.include_router(ontology_router)
     app.include_router(contracts_router)
     app.include_router(actions_router)
+    app.include_router(decisions_router)
     app.include_router(objects_router)
     app.include_router(semantic_router)
     app.include_router(auth_router)

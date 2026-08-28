@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 
 from arrow_lake.api.auth_models import Role
 from arrow_lake.api.deps import get_checker, get_lake, require_role
-from arrow_lake.api.utils import olap_executor, run_sync
+from arrow_lake.api.utils import run_sync
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/objects", tags=["objects"])
@@ -34,7 +34,8 @@ def _store(request: Request):
 def _require_store(store, name: str):
     if store is None:
         raise HTTPException(
-            status_code=503, detail=f"system_db disabled; {name} unavailable",
+            status_code=503,
+            detail=f"system_db disabled; {name} unavailable",
         )
     return store
 
@@ -45,17 +46,17 @@ def _require_store(store, name: str):
 
 
 class EntityMapping(BaseModel):
-    source_system: str = Field(default="", max_length=200,
-                               description="源系统标识,如 SCADA-A / GIS-B")
-    source_id: str = Field(..., min_length=1, max_length=500,
-                           description="源系统本地 ID")
-    object_id: str = Field(..., min_length=1, max_length=500,
-                           description="规范对象 ID(契约 identifier 形态)")
+    source_system: str = Field(
+        default="", max_length=200, description="源系统标识,如 SCADA-A / GIS-B"
+    )
+    source_id: str = Field(..., min_length=1, max_length=500, description="源系统本地 ID")
+    object_id: str = Field(
+        ..., min_length=1, max_length=500, description="规范对象 ID(契约 identifier 形态)"
+    )
 
 
 class EntityMapBulkRequest(BaseModel):
-    scope: str = Field(..., min_length=1, max_length=200,
-                       description="dataset(容器)名")
+    scope: str = Field(..., min_length=1, max_length=200, description="dataset(容器)名")
     table: str = Field(..., min_length=1, max_length=200)
     mappings: list[EntityMapping] = Field(..., min_length=1, max_length=10_000)
 
@@ -77,12 +78,10 @@ async def list_entity_map(
 async def bulk_upsert_entity_map(req: EntityMapBulkRequest, request: Request) -> dict:
     """Bulk upsert source-id → object-id mappings (idempotent)."""
     store = _require_store(_store(request), "entity map")
-    written = store.bulk_upsert([
-        {"scope": req.scope, "table_name": req.table, **m.model_dump()}
-        for m in req.mappings
-    ])
-    return {"success": True, "data": {"written": written, "scope": req.scope,
-                                      "table": req.table}}
+    written = store.bulk_upsert(
+        [{"scope": req.scope, "table_name": req.table, **m.model_dump()} for m in req.mappings]
+    )
+    return {"success": True, "data": {"written": written, "scope": req.scope, "table": req.table}}
 
 
 @router.delete("/entity-map", dependencies=[Depends(require_role(Role.ADMIN))])
@@ -96,8 +95,10 @@ async def delete_entity_map(
     """Delete one mapping by its four-part key."""
     store = _require_store(_store(request), "entity map")
     deleted = store.delete(
-        scope=scope, table_name=table,
-        source_system=source_system, source_id=source_id,
+        scope=scope,
+        table_name=table,
+        source_system=source_system,
+        source_id=source_id,
     )
     if not deleted:
         raise HTTPException(status_code=404, detail="entity mapping not found")
@@ -119,21 +120,22 @@ def _norm(v: Any) -> str:
 
 class ObjectFilter(BaseModel):
     column: str = Field(min_length=1, max_length=200)
-    op: Literal["eq", "ne", "gt", "gte", "lt", "lte",
-                "in", "like", "is_null", "is_not_null"]
+    op: Literal["eq", "ne", "gt", "gte", "lt", "lte", "in", "like", "is_null", "is_not_null"]
     value: Any = None
 
 
 class ObjectSetQueryRequest(BaseModel):
-    dataset: str = Field(min_length=1, max_length=200,
-                         description="dataset (container) name")
-    object_type: str = Field(min_length=1, max_length=200,
-                             description="contract table section name")
+    dataset: str = Field(min_length=1, max_length=200, description="dataset (container) name")
+    object_type: str = Field(
+        min_length=1, max_length=200, description="contract table section name"
+    )
     filter: list[ObjectFilter] = Field(default_factory=list, max_length=20)
     columns: list[str] | None = Field(default=None, max_length=100)
-    id_column: str | None = Field(default=None, max_length=200,
-                                  description="source-id column for tables "
-                                              "without a contract identifier")
+    id_column: str | None = Field(
+        default=None,
+        max_length=200,
+        description="source-id column for tables without a contract identifier",
+    )
     limit: int = Field(default=50, ge=1, le=500)
     offset: int = Field(default=0, ge=0)
     include_kg: bool = False
@@ -155,16 +157,18 @@ async def object_types(
     """
     # F1/F3: dataset-level read guard incl. scoped-token permissions
     if not checker.check_dataset_access(
-        role=_user.role, dataset=dataset, action="read",
+        role=_user.role,
+        dataset=dataset,
+        action="read",
         permissions=getattr(_user, "permissions", None),
     ):
         raise HTTPException(
-            status_code=403, detail=f"Read access to dataset '{dataset}' denied",
+            status_code=403,
+            detail=f"Read access to dataset '{dataset}' denied",
         )
     contract_store = getattr(request.app.state, "contract_store", None)
     if contract_store is None:
-        raise HTTPException(status_code=503,
-                            detail="system_db disabled; contracts unavailable")
+        raise HTTPException(status_code=503, detail="system_db disabled; contracts unavailable")
     latest = contract_store.get_version(dataset)
     if latest is None:
         return {"dataset": dataset, "has_contract": False, "types": []}
@@ -178,13 +182,14 @@ async def object_types(
         {
             "table": tname,
             "object_class": sec.object_class,
-            "lifecycle": None if sec.lifecycle is None else {
+            "lifecycle": None
+            if sec.lifecycle is None
+            else {
                 "column": sec.lifecycle.column,
                 "states": list(sec.lifecycle.states),
                 "initial": sec.lifecycle.initial,
             },
-            "identifier_column": (None if sec.identifier is None
-                                  else sec.identifier.column),
+            "identifier_column": (None if sec.identifier is None else sec.identifier.column),
         }
         for tname, sec in contract.tables.items()
     ]
@@ -200,126 +205,49 @@ async def object_set_query(
     checker=Depends(get_checker),
 ) -> dict:
     """Query business objects: composed SELECT → OLAP security path →
-    per-row aggregation (identifier / links / kg / rules)."""
+    per-row aggregation (identifier / links / kg / rules).
+
+    W3.1(v1.11.2):取数管线(读权守卫→…→表过滤)提取至
+    ``semantic/objectset.fetch_object_rows``,与 decisions/assess 共用;
+    deny/ACL 闭包绑定本路由的 ``_deny_table_read``/``_acl_enforced_sql``
+    ——安全路径字面同源,不建旁路。
+    """
     from arrow_lake.api.routers.query import _acl_enforced_sql, _deny_table_read
-    from arrow_lake.contract.schema import parse_contract
-    from arrow_lake.semantic.alignment import parse_alignment
     from arrow_lake.semantic.identity import parse_table_identifier
-    from arrow_lake.semantic.objectset import build_object_query
-    from arrow_lake.validation import validate_sql_safety
+    from arrow_lake.semantic.objectset import fetch_object_rows
 
     contract_store = getattr(request.app.state, "contract_store", None)
-    if contract_store is None:
-        raise HTTPException(status_code=503,
-                            detail="system_db disabled; contracts unavailable")
     alignment_store = getattr(request.app.state, "semantic_alignment_store", None)
     entity_store = getattr(request.app.state, "entity_map_store", None)
     rules_store = getattr(request.app.state, "ontology_rules_store", None)
 
-    # -- W4.2 安全关键:dataset 级读权(镜像 kg 路由的检查) ----------
-    if not checker.check_dataset_access(
-        role=_user.role, dataset=req.dataset, action="read",
-        permissions=getattr(_user, "permissions", None),  # F3: scoped tokens
-    ):
-        raise HTTPException(
-            status_code=403,
-            detail=f"Read access to dataset '{req.dataset}' denied",
-        )
-
-    latest = contract_store.get_version(req.dataset)
-    if latest is None:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Dataset '{req.dataset}' has no contract — the contract "
-                   "is the precondition of the object layer (S8)",
-        )
-    try:
-        contract = parse_contract(latest["contract_yaml"])
-    except Exception as exc:
-        raise HTTPException(status_code=422, detail=f"Invalid contract: {exc}") from exc
-    if req.object_type not in contract.tables:
-        raise HTTPException(
-            status_code=422,
-            detail=f"object_type '{req.object_type}' not in contract "
-                   f"(known: {', '.join(sorted(contract.tables))})",
-        )
-
-    # -- 物理寻址:容器二段名 / 单表裸名(与 /query/olap 同形态) -------
-    def _probe() -> list[str]:
-        got = lake._get_storage().list_container_tables(req.dataset)
-        return list(got) if isinstance(got, (list, tuple)) else []
-
-    container_tables = await run_sync(_probe, timeout=_OBJ_TIMEOUT,
-                                      label="objects_container_probe")
-    if container_tables:
-        if req.object_type not in container_tables:
-            raise HTTPException(
-                status_code=422,
-                detail=f"object_type '{req.object_type}' not a physical table "
-                       f"(available: {', '.join(sorted(container_tables))})",
-            )
-        table_param: str | None = req.object_type
-        target = f"{req.dataset}.{req.object_type}"
-    else:
-        table_param = None
-        target = req.dataset
-
-    # 表级 deny 双查(P0-5 同款;ADMIN 豁免由其内部处理)
-    _deny_table_read(req.dataset, table_param, request)
-
-    def _schema() -> Any:
-        return lake.open_dataset(req.dataset, table=table_param).schema
-
-    schema = await run_sync(_schema, timeout=_OBJ_TIMEOUT, label="objects_schema")
-    schema_fields = {f.name: str(f.type) for f in schema}
-    if req.id_column is not None and req.id_column not in schema_fields:
-        raise HTTPException(
-            status_code=422,
-            detail=f"id_column '{req.id_column}' not in schema (F9: reject "
-                   "instead of silently losing identity)",
-        )
-
-    alignment = None
-    if alignment_store is not None:
-        arec = alignment_store.get_version(req.dataset)
-        if arec is not None:
-            try:
-                alignment = parse_alignment(arec["alignment_yaml"])
-            except Exception:  # 对齐配置腐烂不阻塞查询(原样返回)
-                logger.warning("objects_alignment_parse_failed", exc_info=True)
-
-    try:
-        built = build_object_query(
-            contract=contract, alignment=alignment, table=req.object_type,
-            relation=target, schema_fields=schema_fields,
-            filters=[f.model_dump() for f in req.filter],
-            columns=req.columns, id_column=req.id_column,
-            limit=req.limit, offset=req.offset,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-    try:
-        validate_sql_safety(built.sql)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    sql = _acl_enforced_sql(built.sql, target, checker, _user.role)
-
-    result = await run_sync(
-        lake.olap_query, target, sql, max_rows=req.limit,
-        timeout=300, label="objectset_query", executor=olap_executor,
+    res = await fetch_object_rows(
+        lake=lake,
+        checker=checker,
+        role=_user.role,
+        permissions=getattr(_user, "permissions", None),
+        dataset=req.dataset,
+        object_type=req.object_type,
+        filters=[f.model_dump() for f in req.filter],
+        columns=req.columns,
+        id_column=req.id_column,
+        limit=req.limit,
+        offset=req.offset,
+        contract_store=contract_store,
+        alignment_store=alignment_store,
+        deny_table_read=lambda n, t: _deny_table_read(n, t, request),
+        acl_enforce=lambda sql, tgt: _acl_enforced_sql(sql, tgt, checker, _user.role),
     )
-    table_ = checker.apply_table_filter(result.table, dataset=target,
-                                        role=_user.role)
 
     # -- W4.3 聚合:每行 → 业务对象 ------------------------------------
+    contract = res.contract
     section = contract.tables[req.object_type]
-    ident_col = section.identifier.column if section.identifier else req.id_column
-    lc_col = (section.lifecycle.column
-              if section.lifecycle is not None else None)
+    ident_col = res.ident_col
+    lc_col = res.lifecycle_col
     refs = [r for r in contract.references if r.from_table == req.object_type]
     declared = {r.name: r for r in section.columns}
-    result_cols = list(table_.column_names)
+    result_cols = list(res.result_columns)
+    rows = res.rows
 
     col_meta: list[dict[str, Any]] = []
     for c in result_cols:
@@ -341,8 +269,7 @@ async def object_set_query(
             g = await lake.kg_get_graph(req.dataset, limit=_KG_GRAPH_FETCH_LIMIT)
             kg_nodes = g.get("nodes") or []
             kg_edges = g.get("edges") or []
-            kg_by_name = {_norm(n.get("name", "")): n
-                          for n in kg_nodes if n.get("name")}
+            kg_by_name = {_norm(n.get("name", "")): n for n in kg_nodes if n.get("name")}
             kg_by_id = {str(n.get("id")): n for n in kg_nodes}
         except Exception:  # KG 是近似桥接面:任何失败降级为 miss
             logger.warning("objects_kg_enrichment_failed", exc_info=True)
@@ -365,11 +292,14 @@ async def object_set_query(
         # rules registry endpoint is ADMIN-gated; object viewers get the
         # conclusion-level view (rule_id/type/version/conclusion).
         is_admin = getattr(_user, "role", None) == Role.ADMIN
-        for r in rules_store.list_rules(scope=req.dataset, status="active") + \
-                rules_store.list_rules(scope="*", status="active"):
+        for r in rules_store.list_rules(
+            scope=req.dataset, status="active"
+        ) + rules_store.list_rules(scope="*", status="active"):
             entry: dict[str, Any] = {
-                "rule_id": r["rule_id"], "rule_type": r.get("rule_type"),
-                "version": r.get("version"), "conclusion": r["conclusion"],
+                "rule_id": r["rule_id"],
+                "rule_type": r.get("rule_type"),
+                "version": r.get("version"),
+                "conclusion": r["conclusion"],
                 "scope": r["scope"],
             }
             if is_admin:
@@ -378,7 +308,6 @@ async def object_set_query(
             rules_payload.append(entry)
 
     objects: list[dict[str, Any]] = []
-    rows = table_.to_pylist()
     # F2(review): batch the reverse entity lookups — one libSQL round-trip
     # off the event loop (was per-row sync N+1, up to 500 remote calls).
     id_map: dict[str, list[str]] = {}
@@ -389,8 +318,11 @@ async def object_set_query(
             if raw is None:
                 continue
             raw = str(raw)
-            parse = (parse_table_identifier(contract, req.object_type, raw)
-                     if section.identifier is not None else None)
+            parse = (
+                parse_table_identifier(contract, req.object_type, raw)
+                if section.identifier is not None
+                else None
+            )
             if parse is not None and parse.matched:
                 continue
             need.add(raw)
@@ -398,13 +330,15 @@ async def object_set_query(
 
             def _batch_lookup() -> dict[str, list[str]]:
                 return entity_store.lookup_object_ids_batch(
-                    scope=req.dataset, table_name=req.object_type,
+                    scope=req.dataset,
+                    table_name=req.object_type,
                     source_ids=sorted(need),
                 )
 
             try:
-                id_map = await run_sync(_batch_lookup, timeout=_OBJ_TIMEOUT,
-                                        label="objects_entity_lookup")
+                id_map = await run_sync(
+                    _batch_lookup, timeout=_OBJ_TIMEOUT, label="objects_entity_lookup"
+                )
             except Exception:
                 logger.warning("objects_entity_lookup_failed", exc_info=True)
                 id_map = {}
@@ -415,12 +349,14 @@ async def object_set_query(
         object_id: str | None = None
         if raw_id is not None:
             raw_id = str(raw_id)
-            parse = (parse_table_identifier(contract, req.object_type, raw_id)
-                     if section.identifier is not None else None)
+            parse = (
+                parse_table_identifier(contract, req.object_type, raw_id)
+                if section.identifier is not None
+                else None
+            )
             if parse is not None and parse.matched:
                 object_id = parse.object_id
-                ident = {"matched": True, "components": parse.components,
-                         "mapped": False}
+                ident = {"matched": True, "components": parse.components, "mapped": False}
             else:
                 cands = id_map.get(raw_id, [])
                 if len(cands) == 1:
@@ -440,9 +376,11 @@ async def object_set_query(
             {
                 "from_column": r.from_column,
                 "value": row.get(r.from_column) if r.from_column in row else None,
-                "to_table": r.to_table, "to_column": r.to_column,
+                "to_table": r.to_table,
+                "to_column": r.to_column,
                 "to_dataset": r.to_dataset,
-                "cardinality": r.cardinality, "kind": r.kind,
+                "cardinality": r.cardinality,
+                "kind": r.kind,
             }
             for r in refs
         ]
@@ -451,14 +389,16 @@ async def object_set_query(
             if node is not None:
                 nid = str(node.get("id"))
                 neighbors = [
-                    {"name": o.get("name"), "type": o.get("type"),
-                     "relation_type": rel}
+                    {"name": o.get("name"), "type": o.get("type"), "relation_type": rel}
                     for o, rel in kg_adj.get(nid, [])[:_KG_NEIGHBOR_CAP]
                 ]
                 obj["_kg"] = {
                     "matched": True,
-                    "vertex": {"name": node.get("name"), "type": node.get("type"),
-                               "label": node.get("label")},
+                    "vertex": {
+                        "name": node.get("name"),
+                        "type": node.get("type"),
+                        "label": node.get("label"),
+                    },
                     "neighbors": neighbors,
                 }
             else:
@@ -470,7 +410,7 @@ async def object_set_query(
         "object_type": req.object_type,
         "count": len(objects),
         "columns": col_meta,
-        "aligned": built.aligned,
+        "aligned": res.aligned,
         # F8(review): documented semantics — filters compare the RAW (pre-
         # alignment) column values, same caliber as admin row_filters; the
         # displayed attributes are aligned. Echo the PRE-enforcement SQL
@@ -478,5 +418,5 @@ async def object_set_query(
         "filter_semantics": "raw",
         "objects": objects,
         "_rules": rules_payload,
-        "sql": built.sql,
+        "sql": res.sql,
     }
