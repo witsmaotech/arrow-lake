@@ -30,7 +30,8 @@
   <div class="panel flush" style="margin-bottom:var(--s4)">
     <div class="panel-b" style="display:flex;gap:10px;align-items:center;padding:10px 12px;flex-wrap:wrap">
       <span class="muted" style="font-size:.74rem">数据集</span>
-      <input class="ds" id="dsInput" value="demo_gas" style="width:180px" placeholder="dataset"/>
+      <input class="ds" list="dsList" id="dsInput" value="demo_gas" style="width:180px" placeholder="dataset"/>
+      <datalist id="dsList"></datalist>
       <span class="muted" style="font-size:.74rem">对象类</span>
       <select id="typeSel"><option value="">— 先加载数据集 —</option></select>
       <button class="btn btn-primary btn-sm" id="loadBtn">加载对象</button>
@@ -228,6 +229,15 @@ function renderChain(r) {
 }
 
 $("#loadBtn").addEventListener("click", async () => { await loadTypes(); loadObjects(); });
+
+// 数据集名自动补全(GET /datasets,VIEWER;静默失败不影响手输)
+(async () => {
+  try {
+    const data = await request("GET", "/datasets?limit=1000");
+    const names = (data?.datasets || []).map(d => d.name).filter(Boolean).sort();
+    $("#dsList").innerHTML = names.map(n => `<option value="${esc(n)}"></option>`).join("");
+  } catch (_) { /* 补全不可用不影响页面 */ }
+})();
 $("#dsInput").addEventListener("change", loadTypes);
 $("#assessBtn").addEventListener("click", assess);
 loadTypes();
