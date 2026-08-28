@@ -579,6 +579,8 @@ class StorageCRUDMixin:
         name: str,
         where: str,
         values: dict[str, str],
+        *,
+        table: str | None = None,
     ) -> None:
         """Update rows matching a filter expression with new values.
 
@@ -586,30 +588,40 @@ class StorageCRUDMixin:
             name: Dataset name.
             where: SQL WHERE expression (validated for safety).
             values: Dict mapping column names to SQL expressions for new values.
+            table: Optional table within a container dataset
+                (v1.11.2 W4, D1-①: container addressing mirrors append_dataset;
+                used by the action middleware's update_lifecycle effect).
 
         Raises:
             StorageError: If dataset not found or expression is unsafe.
         """
-        lock = self._dataset_lock(name)
-        self._acquire_dataset_lock(name)
+        lock_key = f"{name}/{table}" if table is not None else name
+        lock = self._dataset_lock(lock_key)
+        self._acquire_dataset_lock(lock_key)
         try:
             self._validate_name(name)
+            if table is not None:
+                self._validate_table_name(table)
             self._validate_sql_expr(where)
 
             for col in values:
                 self._validate_identifier(col, "update_column")
 
-            table = self._open_lance(self._get_dataset_path(name))
+            lance_table = self._open_lance(
+                self._get_dataset_path(name, table),
+                container=name if table else None, table=table,
+            )
 
             for col in values:
-                if col not in table.schema.names:
+                if col not in lance_table.schema.names:
+                    target = f"{name}/{table}" if table is not None else name
                     raise StorageError(
                         error_code=ErrorCode.STORAGE_PATH_NOT_FOUND,
-                        message=f"Column '{col}' not found in dataset '{name}'",
+                        message=f"Column '{col}' not found in dataset '{target}'",
                     )
 
             try:
-                table.update(where=where, values=values)
+                lance_table.update(where=where, values=values)
             except (ValueError, RuntimeError, OSError) as exc:
                 raise StorageError(
                     error_code=ErrorCode.STORAGE_WRITE_FAILED,

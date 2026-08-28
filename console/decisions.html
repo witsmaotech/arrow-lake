@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>研判台 · Arrow Lake Console</title>
+<link rel="stylesheet" href="assets/tokens.css"/>
+<link rel="stylesheet" href="assets/app.css"/>
+<link rel="stylesheet" href="assets/console.css"/>
+<style>
+  .obj-row{display:flex;gap:8px;align-items:center;padding:8px 12px;border-bottom:1px solid var(--line-soft);cursor:pointer;font-size:.78rem}
+  .obj-row:hover{background:var(--ink-850)}
+  .obj-row.active{background:var(--ink-850);box-shadow:inset 2px 0 0 var(--teal-bright)}
+  .obj-row .oid{flex:1;min-width:0;font-family:var(--font-mono);color:var(--fg-hi);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .conc{padding:8px 12px;border-bottom:1px solid var(--line-soft);font-size:.78rem}
+  .conc b{color:var(--fg-hi)}
+  .act-btn{margin:3px 4px 3px 0}
+  .chainbox{font-size:.72rem;line-height:1.9;padding:8px 12px}
+  .chainbox .tag{margin:0 4px 2px 0}
+  select,input.ds{background:var(--ink-900);border:1px solid var(--line);border-radius:var(--r-sm);color:var(--fg-md);padding:6px 10px;font-size:.78rem}
+  input.ds{font-family:var(--font-mono)}
+</style>
+</head>
+<body>
+<div id="app">
+<main class="main"><div class="page">
+  <div class="h-sec between">
+    <div><h1>研判台</h1><div class="desc">选对象 → 规则研判 → 受控执行(权限/前置/幂等/审计)· 引用链同屏:对象 + KG 邻居 + 命中规则(F3.2 轻实现)</div></div>
+  </div>
+
+  <div class="panel flush" style="margin-bottom:var(--s4)">
+    <div class="panel-b" style="display:flex;gap:10px;align-items:center;padding:10px 12px;flex-wrap:wrap">
+      <span class="muted" style="font-size:.74rem">数据集</span>
+      <input class="ds" id="dsInput" value="demo_gas" style="width:180px" placeholder="dataset"/>
+      <span class="muted" style="font-size:.74rem">对象类</span>
+      <select id="typeSel"><option value="">— 先加载数据集 —</option></select>
+      <button class="btn btn-primary btn-sm" id="loadBtn">加载对象</button>
+      <span class="muted" id="objMeta" style="font-size:.72rem;margin-left:auto"></span>
+    </div>
+  </div>
+
+  <div class="grid g-2">
+    <div>
+      <div class="panel flush">
+        <div class="panel-h"><i class="placeholder" data-ic="database"></i><h3>对象</h3><span class="sub" id="objCount">—</span></div>
+        <div class="panel-b" id="objList" style="padding:0;max-height:420px;overflow-y:auto"><div class="muted" style="padding:12px">加载数据集后列出对象(前 50)</div></div>
+      </div>
+      <div class="panel flush" style="margin-top:var(--s4)">
+        <div class="panel-h"><i class="placeholder" data-ic="sparkles"></i><h3>引用链(F3.2)</h3><span class="sub">对象 · KG 邻居 · 命中规则</span></div>
+        <div class="panel-b chainbox" id="chainBox"><span class="muted">研判后展示结构化引用链</span></div>
+      </div>
+    </div>
+    <div>
+      <div class="panel flush">
+        <div class="panel-h">
+          <i class="placeholder" data-ic="search"></i><h3>研判结论</h3><span class="sub" id="asMeta">—</span>
+          <span class="actions"><button class="btn btn-primary btn-sm" id="assessBtn" style="display:none">研判</button></span>
+        </div>
+        <div class="panel-b" id="asBox" style="padding:0;max-height:300px;overflow-y:auto"><div class="muted" style="padding:12px">左侧选择对象</div></div>
+      </div>
+      <div class="panel flush" style="margin-top:var(--s4)">
+        <div class="panel-h"><i class="placeholder" data-ic="play"></i><h3>可行动作</h3><span class="sub">执行需理由,落审计</span></div>
+        <div class="panel-b" id="actBox" style="padding:10px 12px"><span class="muted" style="font-size:.76rem">研判后列出前置为真的动作</span></div>
+      </div>
+    </div>
+  </div>
+</div></main>
+</div>
+
+<script src="assets/console-layout.js"></script>
+<script type="module">
+import { request } from "./src/api.js";
+import { isLoggedIn } from "./src/auth.js";
+import { toast } from "./src/ui/toast.js";
+import { promptDialog } from "./src/ui/modal.js";
+
+if (!isLoggedIn()) location.href = "login.html";
+const { renderShell } = window;
+renderShell({ active: "decisions", crumb: '<b>研判台</b>' });
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+let curObject = null;   // {object_id, attributes, lifecycle_state, _kg, _links}
+let curAssess = null;
+
+async function loadTypes() {
+  const ds = $("#dsInput").value.trim();
+  if (!ds) return;
+  try {
+    const r = await request("GET", `/objects/types?dataset=${encodeURIComponent(ds)}`);
+    const types = r?.types || [];
+    $("#typeSel").innerHTML = types.length
+      ? types.map((t) => `<option value="${esc(t.table)}">${esc(t.table)}${t.object_class ? " · " + esc(t.object_class) : ""}</option>`).join("")
+      : `<option value="">(无契约/无对象类)</option>`;
+  } catch (e) {
+    $("#typeSel").innerHTML = `<option value="">加载失败</option>`;
+    toast("对象类加载失败:" + (e?.detail || e?.message || e), "warn", 4000);
+  }
+}
+
+async function loadObjects() {
+  const ds = $("#dsInput").value.trim();
+  const ot = $("#typeSel").value;
+  if (!ds || !ot) { toast("先选数据集与对象类", "warn"); return; }
+  curObject = null; curAssess = null;
+  $("#asBox").innerHTML = '<div class="muted" style="padding:12px">左侧选择对象</div>';
+  $("#actBox").innerHTML = '<span class="muted" style="font-size:.76rem">研判后列出前置为真的动作</span>';
+  $("#chainBox").innerHTML = '<span class="muted">研判后展示结构化引用链</span>';
+  try {
+    const r = await request("POST", "/objects/query", { body: {
+      dataset: ds, object_type: ot, limit: 50, include_kg: true } });
+    const objs = r?.objects || [];
+    $("#objCount").textContent = `${objs.length} 个`;
+    $("#objMeta").textContent = `${ds} · ${ot} · 对齐后口径`;
+    $("#objList").innerHTML = objs.length
+      ? objs.map((o) => {
+          const st = o.lifecycle_state ? `<span class="tag amber">${esc(o.lifecycle_state)}</span>` : "";
+          const kg = o._kg?.matched ? '<span class="tag teal">KG</span>' : "";
+          return `<div class="obj-row" data-oid="${esc(o.object_id)}">
+            <span class="oid">${esc(o.object_id)}</span>${st}${kg}
+          </div>`;
+        }).join("")
+      : `<div class="muted" style="padding:12px">无对象</div>`;
+    $("#objList").querySelectorAll("[data-oid]").forEach((el) =>
+      el.addEventListener("click", () => selectObject(objs.find((o) => String(o.object_id) === el.dataset.oid))));
+  } catch (e) {
+    const msg = typeof e?.detail === "string" ? e.detail : (e?.message || e);
+    $("#objList").innerHTML = `<div class="muted" style="padding:12px">加载失败:${esc(msg)}</div>`;
+  }
+}
+
+function selectObject(o) {
+  curObject = o;
+  $("#objList").querySelectorAll("[data-oid]").forEach((el) =>
+    el.classList.toggle("active", el.dataset.oid === String(o.object_id)));
+  $("#asMeta").textContent = String(o.object_id);
+  $("#assessBtn").style.display = "";
+  renderChain();
+}
+
+async function assess() {
+  if (!curObject) return;
+  const ds = $("#dsInput").value.trim();
+  const ot = $("#typeSel").value;
+  try {
+    const r = await request("POST", "/decisions/assess", { body: {
+      dataset: ds, object_type: ot, object_id: String(curObject.object_id) } });
+    curAssess = r;
+    renderAssess(r);
+    renderActions(r);
+    renderChain(r);
+  } catch (e) {
+    const msg = typeof e?.detail === "string" ? e.detail : JSON.stringify(e?.detail || e?.message || e);
+    toast("研判失败:" + msg, "danger", 5000);
+  }
+}
+
+function renderAssess(r) {
+  const rows = (r.conclusions || []).map((c) =>
+    `<div class="conc"><span class="tag teal">${esc(c.rule_id)}</span>
+      <span class="tag">${esc(c.rule_type || "")}</span>
+      <b>${esc(c.conclusion)}</b>
+      <span class="muted" style="float:right">v${esc(c.version ?? "?")}</span></div>`).join("");
+  const unruly = (r.unruly || []).length
+    ? `<div class="conc"><span class="tag amber">unruly</span><span class="muted">${(r.unruly || []).map(esc).join(", ")}(编译失败,不参与研判)</span></div>` : "";
+  $("#asBox").innerHTML = `
+    <div class="conc"><span class="muted">命中</span> <b>${r.matched_rules}</b>
+      <span class="muted" style="margin-left:10px">置信度</span> <b>${r.confidence}</b>
+      ${r.lifecycle_state != null ? `<span class="tag amber" style="margin-left:10px">${esc(r.lifecycle_state)}</span>` : ""}</div>
+    ${rows || '<div class="conc muted">无命中规则</div>'}${unruly}`;
+}
+
+function renderActions(r) {
+  const acts = r.actionable || [];
+  if (!acts.length) {
+    $("#actBox").innerHTML = '<span class="muted" style="font-size:.76rem">无可行动作(目录为空或前置不满足)</span>';
+    return;
+  }
+  $("#actBox").innerHTML = acts.map((a) =>
+    `<button class="btn btn-primary btn-sm act-btn" data-act="${esc(a)}">${esc(a)}</button>`).join("");
+  $("#actBox").querySelectorAll("[data-act]").forEach((b) =>
+    b.addEventListener("click", () => execute(b.dataset.act)));
+}
+
+async function execute(actionId) {
+  if (!curObject || !curAssess) return;
+  const ds = $("#dsInput").value.trim();
+  const ot = $("#typeSel").value;
+  const reason = await promptDialog({
+    title: `执行 ${actionId}`, defaultValue: "",
+    placeholder: "执行理由(必填,落审计)",
+  });
+  if (reason === null) return;
+  try {
+    const r = await request("POST", `/actions/${encodeURIComponent(actionId)}/execute`, { body: {
+      dataset: ds, object_type: ot, object_id: String(curObject.object_id),
+      reason, assess: {
+        confidence: curAssess.confidence, matched_rules: curAssess.matched_rules,
+        rule_ids: (curAssess.conclusions || []).map((c) => c.rule_id),
+      } } });
+    if (r?.status === "executed") {
+      toast(`已执行(${actionId})· 审计 ${r.audit_id ?? ""}`, "ok", 4000);
+    } else if (r?.status === "already_in_effect") {
+      toast(`已生效(幂等命中,不重复执行)· ${r.idempotency?.state}`, "info", 4000);
+    } else {
+      toast(`${r?.status} · ${r?.error || ""}`, "warn", 5000);
+    }
+    await loadObjects();      // 状态可能已迁移:重载对象
+    await assess();           // 重新研判
+  } catch (e) {
+    const d = e?.detail;
+    const msg = typeof d === "string" ? d : (d?.message || JSON.stringify(d || e?.message || e));
+    toast("执行失败:" + msg, "danger", 6000);
+  }
+}
+
+function renderChain(r) {
+  const o = curObject;
+  if (!o) return;
+  const kg = o._kg || {};
+  const neighbors = (kg.neighbors || []).map((n) =>
+    `<span class="tag">${esc(n.name)}<span class="muted">·${esc(n.relation_type || "")}</span></span>`).join("");
+  const rules = (r?.conclusions || []).map((c) => `<span class="tag teal">${esc(c.rule_id)}</span>`).join("");
+  $("#chainBox").innerHTML = `
+    <div><span class="muted">对象</span> <span class="tag">${esc(o.object_id)}</span>
+      ${kg.matched ? `<span class="muted">KG 顶点</span> <span class="tag">${esc(kg.vertex?.name || "")}·${esc(kg.vertex?.type || "")}</span>` : '<span class="muted">(KG 未匹配)</span>'}</div>
+    <div style="margin-top:6px"><span class="muted">邻居(${(kg.neighbors || []).length})</span> ${neighbors || '<span class="muted">—</span>'}</div>
+    <div style="margin-top:6px"><span class="muted">命中规则</span> ${rules || '<span class="muted">—(未研判)</span>'}</div>`;
+}
+
+$("#loadBtn").addEventListener("click", async () => { await loadTypes(); loadObjects(); });
+$("#dsInput").addEventListener("change", loadTypes);
+$("#assessBtn").addEventListener("click", assess);
+loadTypes();
+</script>
+</body>
+</html>

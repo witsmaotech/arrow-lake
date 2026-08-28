@@ -1,9 +1,9 @@
-"""行动目录/场景管理 API(v1.11.2 MS3 W2.3,F3.3/S5)。
+"""行动目录/场景管理+执行 API(v1.11.2 MS3 W2.3+W4.1,F3.3/S4/S5)。
 
-全部 ADMIN;system_db 关闭 → 503。沿 contracts 路由约定(v1.11.0.1 W4.1)。
-保存期校验:YAML capped 解析 + W1 模型校验 + scenario→action 引用必须在
-目录(validate_scenario,issues 一次收齐)。⚠️ /scenarios 路由先注册,
-否则被 /{action_id} 捕获成 scope="scenarios"。
+管理面全部 ADMIN;执行面 EDITOR(F3.3 八步序中间件)。system_db 关闭 →
+503。沿 contracts 路由约定(v1.11.0.1 W4.1)。保存期校验:YAML capped
+解析 + W1 模型校验 + scenario→action 引用必须在目录(validate_scenario,
+issues 一次收齐)。⚠️ /scenarios 路由先注册,否则被 /{action_id} 捕获。
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from arrow_lake.actions.schema import ScenarioValidationError, validate_scenario
 from arrow_lake.actions.yaml_io import ActionYamlError, parse_action_yaml, parse_scenario_yaml
 from arrow_lake.api.auth_models import Role
-from arrow_lake.api.deps import require_role
+from arrow_lake.api.deps import get_checker, get_lake, require_role
 
 router = APIRouter(prefix="/api/v1/actions", tags=["actions"])
 
@@ -212,3 +212,76 @@ async def delete_action(action_id: str, request: Request) -> dict:
     if not store.delete_scope(action_id):
         raise HTTPException(status_code=404, detail=f"No action '{action_id}'")
     return {"action_id": action_id, "deleted": True}
+
+
+# --------------------------------------------------------------------------- #
+# 执行(F3.3 八步序中间件;EDITOR——行动才是 EDITOR,S9 的写侧)            #
+# --------------------------------------------------------------------------- #
+
+
+class ExecuteRequest(BaseModel):
+    dataset: str = Field(min_length=1, max_length=200)
+    object_type: str = Field(min_length=1, max_length=200)
+    object_id: str = Field(min_length=1, max_length=500)
+    reason: str | None = Field(
+        default=None, max_length=2000, description="执行理由(审计;reason_required 时必填)"
+    )
+    scenario_id: str | None = Field(default=None, max_length=200)
+    step_id: str | None = Field(default=None, max_length=200)
+    assess: dict[str, Any] | None = Field(
+        default=None,
+        description="研判上下文(confidence/matched_rules/rule_ids…;前置条件与审计依据消费)",
+    )
+
+
+@router.post("/{action_id}/execute", dependencies=[Depends(require_role(Role.EDITOR))])
+async def execute_action(
+    action_id: str,
+    req: ExecuteRequest,
+    request: Request,
+    lake=Depends(get_lake),
+    _user=Depends(require_role(Role.EDITOR)),
+    checker=Depends(get_checker),
+) -> dict:
+    """Execute an action against one object(八步序:认证→permission→目标
+    解析→前置→幂等→效果→审计→事件)。重放 → 200 already_in_effect。"""
+    from arrow_lake.actions.middleware import ActionError
+    from arrow_lake.actions.middleware import execute_action as _execute
+    from arrow_lake.api.routers.query import _acl_enforced_sql, _deny_table_read
+
+    action_store = _require(_action_store(request), "Action catalog")
+    idempotency_store = _require(
+        getattr(request.app.state, "idempotency_store", None), "Idempotency registry"
+    )
+    contract_store = getattr(request.app.state, "contract_store", None)
+    if contract_store is None:
+        raise HTTPException(status_code=503, detail="system_db disabled; contracts unavailable")
+    alignment_store = getattr(request.app.state, "semantic_alignment_store", None)
+    user_state_store = getattr(request.app.state, "user_state_store", None)
+
+    try:
+        return await _execute(
+            lake=lake,
+            checker=checker,
+            user=_user,
+            action_id=action_id,
+            dataset=req.dataset,
+            object_type=req.object_type,
+            object_id=req.object_id,
+            reason=req.reason,
+            scenario_id=req.scenario_id,
+            step_id=req.step_id,
+            assess=req.assess,
+            action_store=action_store,
+            idempotency_store=idempotency_store,
+            contract_store=contract_store,
+            alignment_store=alignment_store,
+            user_state_store=user_state_store,
+            deny_table_read=lambda n, t: _deny_table_read(n, t, request),
+            acl_enforce=lambda sql, tgt: _acl_enforced_sql(sql, tgt, checker, _user.role),
+        )
+    except ActionError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"message": exc.reason, "exception_class": exc.exception_class},
+        ) from exc
