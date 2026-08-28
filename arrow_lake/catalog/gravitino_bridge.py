@@ -163,7 +163,13 @@ class GravitinoBridge:
     Fileset/Schema operations use the official SDK; Table operations use
     the hand-rolled ``_request`` REST (see module docstring). Thread-safe:
     all REST/SDK interactions are serialized via ``_lock``.
+
+    所有 SDK HTTP 调用经 :meth:`_timed_call` 硬超时守护(SDK 自身无客户端
+    超时;服务端悬挂曾卡死摄入后 hook,2026-08-28)。
     """
+
+    #: SDK 单调用硬超时(秒)。同步周期 30s,留 15s 上限使熔断器可计数。
+    SDK_CALL_TIMEOUT_SECONDS = 15.0
 
     def __init__(self, config: GravitinoConfig) -> None:
         self._config = config
@@ -203,8 +209,8 @@ class GravitinoBridge:
         try:
             from gravitino.client.gravitino_client import GravitinoClient
 
-            self._client = GravitinoClient(
-                uri=self._config.uri, metalake_name=self._metalake
+            self._client = self._timed_call(
+                lambda: GravitinoClient(uri=self._config.uri, metalake_name=self._metalake)
             )
             logger.info(
                 "gravitino_sdk_client_initialized",
@@ -225,12 +231,12 @@ class GravitinoBridge:
     def _call_sdk(self, fn: Any) -> Any:
         """Run an SDK call, translating exceptions.
 
-          * ``AlreadyExistsException`` / ``NotFoundException`` → raise
-            :class:`_Idempotent` (caller treats as a no-op).
-          * ``InternalError`` (5xx) / network / timeout → raise
-            :class:`GravitinoTransientError` (retried by the decorator).
-          * Other ``RESTException`` (4xx) → raise
-            :class:`GravitinoRequestError` (not retried).
+        * ``AlreadyExistsException`` / ``NotFoundException`` → raise
+          :class:`_Idempotent` (caller treats as a no-op).
+        * ``InternalError`` (5xx) / network / timeout → raise
+          :class:`GravitinoTransientError` (retried by the decorator).
+        * Other ``RESTException`` (4xx) → raise
+          :class:`GravitinoRequestError` (not retried).
         """
         from gravitino.exceptions.base import (
             AlreadyExistsException,
@@ -240,7 +246,7 @@ class GravitinoBridge:
         )
 
         try:
-            return fn()
+            return self._timed_call(fn)
         except (AlreadyExistsException, NotFoundException) as exc:
             raise _Idempotent() from exc
         except InternalError as exc:
@@ -249,6 +255,34 @@ class GravitinoBridge:
             raise GravitinoRequestError(f"gravitino sdk: {exc}") from exc
         except (ConnectionError, OSError) as exc:
             raise GravitinoTransientError(f"gravitino sdk network: {exc}") from exc
+
+    def _timed_call(self, fn: Any, timeout: float | None = None) -> Any:
+        """SDK HTTP 调用统一硬超时(2026-08-28 发版期实证:fileset schema
+        的服务端 S3 校验可无限悬挂,SDK 无客户端超时,摄入后 hook 因此卡死)。
+
+        daemon 线程执行 + ``join(timeout)``——Python 线程不可杀,超时后
+        线程留后台、调用方立即解阻并抛 :class:`GravitinoTransientError`
+        (进入既有 告警/重试/熔断 通道;迟到的服务端副作用幂等可容忍)。
+        """
+        import threading
+
+        limit = timeout if timeout is not None else self.SDK_CALL_TIMEOUT_SECONDS
+        box: dict[str, Any] = {}
+
+        def _run() -> None:
+            try:
+                box["ok"] = fn()
+            except BaseException as exc:
+                box["err"] = exc
+
+        worker = threading.Thread(target=_run, daemon=True, name="gravitino-sdk-call")
+        worker.start()
+        worker.join(limit)
+        if worker.is_alive():
+            raise GravitinoTransientError(f"gravitino sdk call exceeded {limit}s (server hang?)")
+        if "err" in box:
+            raise box["err"]
+        return box.get("ok")
 
     # ------------------------------------------------------------------
     # Hand-rolled REST (table operations only)
@@ -260,9 +294,7 @@ class GravitinoBridge:
         max_backoff=5.0,
         retryable_exceptions=(GravitinoTransientError,),
     )
-    def _request(
-        self, method: str, path: str, body: dict | None = None
-    ) -> dict[str, Any] | None:
+    def _request(self, method: str, path: str, body: dict | None = None) -> dict[str, Any] | None:
         """Send an authenticated request to the Gravitino REST API.
 
         Return semantics (idempotent-aware, no silent failures):
@@ -313,15 +345,13 @@ class GravitinoBridge:
             return
         for catalog_name in (_LANCE_CATALOG, _FILESET_CATALOG):
             try:
-                catalog = client.load_catalog(catalog_name)
+                catalog = self._timed_call(lambda c=catalog_name: client.load_catalog(c))
                 # Skip create if the schema already exists. Gravitino's
                 # createSchema verifies the S3 location *before* reporting
                 # SchemaAlreadyExists, so re-ensuring on a fileset catalog
                 # whose s3a creds are misconfigured surfaces a spurious 403.
                 # schema_exists reads Gravitino's own metadata (no S3 call).
-                if self._call_sdk(
-                    lambda c=catalog: c.as_schemas().schema_exists(_DEFAULT_SCHEMA)
-                ):
+                if self._call_sdk(lambda c=catalog: c.as_schemas().schema_exists(_DEFAULT_SCHEMA)):
                     continue
                 self._call_sdk(
                     lambda c=catalog: c.as_schemas().create_schema(
@@ -347,9 +377,7 @@ class GravitinoBridge:
     # Dataset lifecycle
     # ------------------------------------------------------------------
 
-    def register_dataset(
-        self, name: str, schema: Any = None, location: str = ""
-    ) -> None:
+    def register_dataset(self, name: str, schema: Any = None, location: str = "") -> None:
         """Register a dataset in Gravitino as a Table with schema + a Fileset."""
         with self._lock:
             self._ensure_schema()
@@ -368,7 +396,7 @@ class GravitinoBridge:
                 from gravitino import NameIdentifier
                 from gravitino.api.file.fileset import Fileset
 
-                catalog = client.load_catalog(_FILESET_CATALOG)
+                catalog = self._timed_call(lambda: client.load_catalog(_FILESET_CATALOG))
                 ident = NameIdentifier.of(_DEFAULT_SCHEMA, name)
                 self._call_sdk(
                     lambda: catalog.as_fileset_catalog().create_multiple_location_fileset(
@@ -385,13 +413,15 @@ class GravitinoBridge:
                 # dataset — no signal, demote to debug (keeps *_registered at info).
                 logger.debug("gravitino_fileset_exists", name=name)
             except GravitinoRequestError as exc:
-                logger.warning(
-                    "gravitino_fileset_register_failed", name=name, error=str(exc)
-                )
+                logger.warning("gravitino_fileset_register_failed", name=name, error=str(exc))
 
     def _register_table(
-        self, name: str, schema: Any, location: str,
-        *, schema_name: str = _DEFAULT_SCHEMA,
+        self,
+        name: str,
+        schema: Any,
+        location: str,
+        *,
+        schema_name: str = _DEFAULT_SCHEMA,
     ) -> None:
         """Register dataset as a Gravitino Table in lance-catalog.
 
@@ -435,15 +465,16 @@ class GravitinoBridge:
         (spurious 403, see _ensure_schema's SDK comment). The tables under
         it carry their own locations.
         """
-        schema_path = (
-            f"/api/metalakes/{self._metalake}"
-            f"/catalogs/{_LANCE_CATALOG}/schemas"
+        schema_path = f"/api/metalakes/{self._metalake}/catalogs/{_LANCE_CATALOG}/schemas"
+        result = self._request(
+            "POST",
+            schema_path,
+            {
+                "name": name,
+                "comment": f"Arrow Lake container: {name}",
+                "properties": {},
+            },
         )
-        result = self._request("POST", schema_path, {
-            "name": name,
-            "comment": f"Arrow Lake container: {name}",
-            "properties": {},
-        })
         if result is not None:
             logger.info("gravitino_container_schema_created", name=name)
         # 409 (already exists) → None → silent: every 30s cycle is a no-op.
@@ -469,7 +500,8 @@ class GravitinoBridge:
             for tname, tschema in tables.items():
                 try:
                     self._register_table(
-                        tname, tschema,
+                        tname,
+                        tschema,
                         f"s3a://{_MIRROR_BUCKET}/{name}/{tname}.lance",
                         schema_name=name,
                     )
@@ -482,12 +514,14 @@ class GravitinoBridge:
                     # single storage enumeration, skipping one is safe.
                     logger.warning(
                         "gravitino_container_table_failed",
-                        container=name, table=tname,
+                        container=name,
+                        table=tname,
                         error=str(exc).splitlines()[0][:200],
                     )
             logger.info(
                 "gravitino_container_registered",
-                name=name, tables=len(tables),
+                name=name,
+                tables=len(tables),
             )
 
     def _build_gravitino_columns(self, schema: Any) -> list[dict[str, Any]]:
@@ -513,15 +547,18 @@ class GravitinoBridge:
                     if not _LEGAL_COLUMN_RE.match(field.name):
                         skipped.append(field.name)
                         continue
-                    cols.append({
-                        "name": field.name,
-                        "type": _arrow_type_to_gravitino(field.type),
-                        "nullable": field.nullable,
-                    })
+                    cols.append(
+                        {
+                            "name": field.name,
+                            "type": _arrow_type_to_gravitino(field.type),
+                            "nullable": field.nullable,
+                        }
+                    )
                 if skipped:
                     logger.warning(
                         "gravitino_columns_omitted_illegal_name",
-                        omitted=skipped[:10], total=len(skipped),
+                        omitted=skipped[:10],
+                        total=len(skipped),
                     )
                 return cols if cols else [{"name": "data", "type": "string", "nullable": True}]
         except Exception:
@@ -545,17 +582,13 @@ class GravitinoBridge:
                 try:
                     from gravitino import NameIdentifier
 
-                    catalog = client.load_catalog(_FILESET_CATALOG)
+                    catalog = self._timed_call(lambda: client.load_catalog(_FILESET_CATALOG))
                     ident = NameIdentifier.of(_DEFAULT_SCHEMA, name)
-                    self._call_sdk(
-                        lambda: catalog.as_fileset_catalog().drop_fileset(ident)
-                    )
+                    self._call_sdk(lambda: catalog.as_fileset_catalog().drop_fileset(ident))
                 except _Idempotent:
                     pass
                 except GravitinoRequestError as exc:
-                    logger.warning(
-                        "gravitino_fileset_drop_failed", name=name, error=str(exc)
-                    )
+                    logger.warning("gravitino_fileset_drop_failed", name=name, error=str(exc))
             logger.info("gravitino_dataset_deregistered", name=name)
 
     def sync_outbound(self, entries: list[dict[str, Any]]) -> int:
@@ -592,19 +625,19 @@ class GravitinoBridge:
             try:
                 from gravitino.namespace import Namespace
 
-                catalog = client.load_catalog(_FILESET_CATALOG)
+                catalog = self._timed_call(lambda: client.load_catalog(_FILESET_CATALOG))
                 # Bound FilesetCatalog expects a 1-level namespace (schema only);
                 # passing metalake.catalog.schema raises "must have 1 level".
                 ns = Namespace.of(_DEFAULT_SCHEMA)
-                idents = self._call_sdk(
-                    lambda: catalog.as_fileset_catalog().list_filesets(ns)
-                )
+                idents = self._call_sdk(lambda: catalog.as_fileset_catalog().list_filesets(ns))
                 for ident in idents or []:
                     nm = ident.name()
-                    entries.append({
-                        "name": nm,
-                        "location": f"gravitino://{_FILESET_CATALOG}/{_DEFAULT_SCHEMA}/{nm}",
-                    })
+                    entries.append(
+                        {
+                            "name": nm,
+                            "location": f"gravitino://{_FILESET_CATALOG}/{_DEFAULT_SCHEMA}/{nm}",
+                        }
+                    )
             except _Idempotent:
                 pass
             except GravitinoRequestError as exc:
@@ -621,17 +654,13 @@ class GravitinoBridge:
             try:
                 from gravitino import NameIdentifier
 
-                catalog = client.load_catalog(_FILESET_CATALOG)
+                catalog = self._timed_call(lambda: client.load_catalog(_FILESET_CATALOG))
                 ident = NameIdentifier.of(_DEFAULT_SCHEMA, name)
-                fs = self._call_sdk(
-                    lambda: catalog.as_fileset_catalog().load_fileset(ident)
-                )
+                fs = self._call_sdk(lambda: catalog.as_fileset_catalog().load_fileset(ident))
             except _Idempotent:
                 return None  # not found
             except GravitinoRequestError as exc:
-                logger.warning(
-                    "gravitino_stats_fetch_failed", name=name, error=str(exc)
-                )
+                logger.warning("gravitino_stats_fetch_failed", name=name, error=str(exc))
                 return None
             if fs is None:
                 return None

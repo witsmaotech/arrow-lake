@@ -293,14 +293,14 @@ class TestRegisterDataset:
             bridge = GravitinoBridge(_make_config())
         client, _schema_cat, fileset_cat = _make_sdk_mocks()
 
-        with patch.object(bridge, "_ensure_client", return_value=client), \
-             patch.object(bridge, "_request", return_value={"code": 0}) as mock_req:
+        with (
+            patch.object(bridge, "_ensure_client", return_value=client),
+            patch.object(bridge, "_request", return_value={"code": 0}) as mock_req,
+        ):
             bridge.register_dataset("docs")
 
         # Table POST via _request
-        assert any(
-            c[0][0] == "POST" and "tables" in c[0][1] for c in mock_req.call_args_list
-        )
+        assert any(c[0][0] == "POST" and "tables" in c[0][1] for c in mock_req.call_args_list)
         # Fileset create via SDK
         fileset_cat.create_multiple_location_fileset.assert_called_once()
 
@@ -311,12 +311,12 @@ class TestRegisterDataset:
         with patch("arrow_lake.catalog.gravitino_bridge.create_auth_provider"):
             bridge = GravitinoBridge(_make_config())
         client, _schema_cat, fileset_cat = _make_sdk_mocks()
-        fileset_cat.create_multiple_location_fileset.side_effect = (
-            AlreadyExistsException("exists")
-        )
+        fileset_cat.create_multiple_location_fileset.side_effect = AlreadyExistsException("exists")
 
-        with patch.object(bridge, "_ensure_client", return_value=client), \
-             patch.object(bridge, "_request", return_value={"code": 0}):
+        with (
+            patch.object(bridge, "_ensure_client", return_value=client),
+            patch.object(bridge, "_request", return_value={"code": 0}),
+        ):
             bridge.register_dataset("docs")  # must not raise
 
     def test_fileset_create_failure_is_not_misclassified_as_exists(self) -> None:
@@ -328,8 +328,10 @@ class TestRegisterDataset:
         client, _schema_cat, fileset_cat = _make_sdk_mocks()
         fileset_cat.create_multiple_location_fileset.side_effect = RESTException("400")
 
-        with patch.object(bridge, "_ensure_client", return_value=client), \
-             patch.object(bridge, "_request", return_value={"code": 0}):
+        with (
+            patch.object(bridge, "_ensure_client", return_value=client),
+            patch.object(bridge, "_request", return_value={"code": 0}),
+        ):
             bridge.register_dataset("docs")  # GravitinoRequestError caught
 
     def test_uses_default_location_when_empty(self) -> None:
@@ -337,8 +339,10 @@ class TestRegisterDataset:
             bridge = GravitinoBridge(_make_config())
         client, _schema_cat, fileset_cat = _make_sdk_mocks()
 
-        with patch.object(bridge, "_ensure_client", return_value=client), \
-             patch.object(bridge, "_request", return_value={"code": 0}):
+        with (
+            patch.object(bridge, "_ensure_client", return_value=client),
+            patch.object(bridge, "_request", return_value={"code": 0}),
+        ):
             bridge.register_dataset("ds", location="")
 
         # storage_locations (4th positional arg) gets the default s3 path.
@@ -350,8 +354,10 @@ class TestRegisterDataset:
             bridge = GravitinoBridge(_make_config())
         client, _schema_cat, fileset_cat = _make_sdk_mocks()
 
-        with patch.object(bridge, "_ensure_client", return_value=client), \
-             patch.object(bridge, "_request", return_value={"code": 0}):
+        with (
+            patch.object(bridge, "_ensure_client", return_value=client),
+            patch.object(bridge, "_request", return_value={"code": 0}),
+        ):
             bridge.register_dataset("ds", location="s3a://bucket/path")
 
         args = fileset_cat.create_multiple_location_fileset.call_args
@@ -361,14 +367,14 @@ class TestRegisterDataset:
         with patch("arrow_lake.catalog.gravitino_bridge.create_auth_provider"):
             bridge = GravitinoBridge(_make_config())
 
-        with patch.object(bridge, "_ensure_client", return_value=None), \
-             patch.object(bridge, "_request", return_value={"code": 0}) as mock_req:
+        with (
+            patch.object(bridge, "_ensure_client", return_value=None),
+            patch.object(bridge, "_request", return_value={"code": 0}) as mock_req,
+        ):
             bridge.register_dataset("docs")
 
         # Table still registered via REST; fileset skipped (no SDK client).
-        assert any(
-            c[0][0] == "POST" and "tables" in c[0][1] for c in mock_req.call_args_list
-        )
+        assert any(c[0][0] == "POST" and "tables" in c[0][1] for c in mock_req.call_args_list)
 
 
 # ---------------------------------------------------------------------------
@@ -384,8 +390,10 @@ class TestDeregisterDataset:
             bridge = GravitinoBridge(_make_config())
         client, _schema_cat, fileset_cat = _make_sdk_mocks()
 
-        with patch.object(bridge, "_ensure_client", return_value=client), \
-             patch.object(bridge, "_request", return_value=None) as mock_req:
+        with (
+            patch.object(bridge, "_ensure_client", return_value=client),
+            patch.object(bridge, "_request", return_value=None) as mock_req,
+        ):
             bridge.deregister_dataset("docs")
 
         # Table DELETE via _request (fileset drop is via SDK).
@@ -401,8 +409,10 @@ class TestDeregisterDataset:
         client, _schema_cat, fileset_cat = _make_sdk_mocks()
         fileset_cat.drop_fileset.side_effect = NotFoundException("missing")
 
-        with patch.object(bridge, "_ensure_client", return_value=client), \
-             patch.object(bridge, "_request", return_value=None):
+        with (
+            patch.object(bridge, "_ensure_client", return_value=client),
+            patch.object(bridge, "_request", return_value=None),
+        ):
             bridge.deregister_dataset("docs")  # must not raise
 
 
@@ -622,18 +632,26 @@ class TestContainerMapping:
 
         bridge = self._bridge()
         calls: list[tuple[str, str]] = []
-        with patch.object(
-            bridge, "_request", side_effect=lambda m, p, b=None: calls.append((m, p)) or {"code": 0},
-        ), patch.object(bridge, "_ensure_schema"):
-            bridge.register_container("gas_net", {
-                "segments": pa.schema([("id", pa.string())]),
-                "stations": pa.schema([("sid", pa.string())]),
-            })
+        with (
+            patch.object(
+                bridge,
+                "_request",
+                side_effect=lambda m, p, b=None: calls.append((m, p)) or {"code": 0},
+            ),
+            patch.object(bridge, "_ensure_schema"),
+        ):
+            bridge.register_container(
+                "gas_net",
+                {
+                    "segments": pa.schema([("id", pa.string())]),
+                    "stations": pa.schema([("sid", pa.string())]),
+                },
+            )
         # 1 schema creation + 2 table registrations, all under the container name
         assert ("POST", "/api/metalakes/arrow_lake/catalogs/lance-catalog/schemas") in calls
         table_paths = [p for _, p in calls if p.endswith("/tables")]
         assert len(table_paths) == 2
-        assert all(f"/schemas/gas_net/tables" in p for p in table_paths)
+        assert all("/schemas/gas_net/tables" in p for p in table_paths)
         assert not any("/schemas/default/tables" in p for p in table_paths)
 
     def test_register_container_4xx_does_not_abort_remaining_tables(self) -> None:
@@ -641,7 +659,6 @@ class TestContainerMapping:
         a 4xx on one table (e.g. an illegal column 400) aborted the whole
         loop, silently skipping every remaining table in the container."""
         import pyarrow as pa
-
         from arrow_lake.catalog.gravitino_bridge import GravitinoRequestError
 
         bridge = self._bridge()
@@ -653,24 +670,28 @@ class TestContainerMapping:
                 registered.append(name)
             if name == "segments":
                 raise GravitinoRequestError(
-                    f"gravitino {method} {path} -> HTTP 400", status=400,
+                    f"gravitino {method} {path} -> HTTP 400",
+                    status=400,
                 )
             return {"code": 0}
 
-        with patch.object(bridge, "_request", side_effect=flaky), \
-                patch.object(bridge, "_ensure_schema"), \
-                patch.object(bridge, "_ensure_container_schema"):
-            bridge.register_container("gas_net", {
-                "segments": pa.schema([("id", pa.string())]),
-                "stations": pa.schema([("sid", pa.string())]),
-            })
+        with (
+            patch.object(bridge, "_request", side_effect=flaky),
+            patch.object(bridge, "_ensure_schema"),
+            patch.object(bridge, "_ensure_container_schema"),
+        ):
+            bridge.register_container(
+                "gas_net",
+                {
+                    "segments": pa.schema([("id", pa.string())]),
+                    "stations": pa.schema([("sid", pa.string())]),
+                },
+            )
         # stations STILL registered even though segments 4xx'd
-        assert "stations" in registered, \
-            f"remaining table must not be skipped: {registered}"
+        assert "stations" in registered, f"remaining table must not be skipped: {registered}"
 
     def test_register_container_transient_still_continues(self) -> None:
         import pyarrow as pa
-
         from arrow_lake.catalog.gravitino_bridge import GravitinoTransientError
 
         bridge = self._bridge()
@@ -682,33 +703,43 @@ class TestContainerMapping:
                 registered.append(name)
             if name == "segments":
                 raise GravitinoTransientError(
-                    f"gravitino {method} {path} -> HTTP 503", status=503,
+                    f"gravitino {method} {path} -> HTTP 503",
+                    status=503,
                 )
             return {"code": 0}
 
-        with patch.object(bridge, "_request", side_effect=flaky), \
-                patch.object(bridge, "_ensure_schema"), \
-                patch.object(bridge, "_ensure_container_schema"):
-            bridge.register_container("gas_net", {
-                "segments": pa.schema([("id", pa.string())]),
-                "stations": pa.schema([("sid", pa.string())]),
-            })
+        with (
+            patch.object(bridge, "_request", side_effect=flaky),
+            patch.object(bridge, "_ensure_schema"),
+            patch.object(bridge, "_ensure_container_schema"),
+        ):
+            bridge.register_container(
+                "gas_net",
+                {
+                    "segments": pa.schema([("id", pa.string())]),
+                    "stations": pa.schema([("sid", pa.string())]),
+                },
+            )
         assert "stations" in registered
 
     def test_sync_outbound_routes_container_entries(self) -> None:
         bridge = self._bridge()
-        with patch.object(bridge, "register_container") as rc, patch.object(bridge, "register_dataset") as rd:
-            n = bridge.sync_outbound([
-                {"name": "plain", "location": ""},
-                {"name": "gas_net", "container": True, "tables": {"t1": None}},
-            ])
+        with (
+            patch.object(bridge, "register_container") as rc,
+            patch.object(bridge, "register_dataset") as rd,
+        ):
+            n = bridge.sync_outbound(
+                [
+                    {"name": "plain", "location": ""},
+                    {"name": "gas_net", "container": True, "tables": {"t1": None}},
+                ]
+            )
         assert n == 2
         rc.assert_called_once_with("gas_net", {"t1": None})
         rd.assert_called_once_with(name="plain", location="", schema=None)
 
     def test_load_local_entries_includes_containers(self, tmp_path) -> None:
         import pyarrow as pa
-
         from arrow_lake.catalog.gravitino_sync import _load_local_entries
         from arrow_lake.ingest.storage import LanceStorageManager
 
@@ -723,3 +754,75 @@ class TestContainerMapping:
         assert "container" not in by["plain"]  # flat entry: no container flag
         assert by["gas_net"]["container"] is True
         assert by["gas_net"]["tables"]["t1"].names == ["a"]
+
+
+# ---------------------------------------------------------------------------
+# SDK 硬超时守护(2026-08-28 发版期实证:fileset schema 服务端 S3 校验
+# 可无限悬挂,SDK 无客户端超时,摄入后 hook 卡死)
+# ---------------------------------------------------------------------------
+
+
+class TestSdkHardTimeout:
+    def _bridge(self) -> GravitinoBridge:
+        with patch("arrow_lake.catalog.gravitino_bridge.create_auth_provider"):
+            return GravitinoBridge(_make_config())
+
+    def test_hung_sdk_call_raises_transient_quickly(self) -> None:
+        import time
+
+        bridge = self._bridge()
+
+        def hang():
+            time.sleep(30)  # 模拟服务端悬挂(远超 15s 帽)
+
+        t0 = time.monotonic()
+        with pytest.raises(GravitinoTransientError, match="exceeded"):
+            bridge._timed_call(hang, timeout=0.3)
+        assert time.monotonic() - t0 < 3  # 调用方秒级解阻,非 30s
+
+    def test_timed_call_passes_result_and_exception(self) -> None:
+        bridge = self._bridge()
+        assert bridge._timed_call(lambda: 42) == 42
+        with pytest.raises(ValueError, match="boom"):
+            bridge._timed_call(lambda: (_ for _ in ()).throw(ValueError("boom")))
+
+    def test_call_sdk_timeout_classified_transient(self) -> None:
+        """_call_sdk 全链:悬挂 → GravitinoTransientError(进重试/熔断通道)。
+
+        注:宿主 venv 可无 apache-gravitino(14 个 SDK 依赖存量测试同因
+        跳过),这里注入最小假模块只测超时→分类的接线。
+        """
+        import sys
+        import time
+        import types
+
+        fake_base = types.ModuleType("gravitino.exceptions.base")
+
+        class _AnyExc(Exception):
+            pass
+
+        for name in (
+            "AlreadyExistsException",
+            "NotFoundException",
+            "InternalError",
+            "RESTException",
+        ):
+            setattr(fake_base, name, _AnyExc)
+        fake_exc = types.ModuleType("gravitino.exceptions")
+        fake_exc.base = fake_base
+        fake_pkg = types.ModuleType("gravitino")
+        fake_pkg.exceptions = fake_exc
+        bridge = self._bridge()
+        with (
+            patch.dict(
+                sys.modules,
+                {
+                    "gravitino": fake_pkg,
+                    "gravitino.exceptions": fake_exc,
+                    "gravitino.exceptions.base": fake_base,
+                },
+            ),
+            patch.object(bridge, "SDK_CALL_TIMEOUT_SECONDS", 0.3),
+        ):
+            with pytest.raises(GravitinoTransientError, match="exceeded"):
+                bridge._call_sdk(lambda: time.sleep(5))
