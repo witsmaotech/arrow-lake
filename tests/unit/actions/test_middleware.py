@@ -27,6 +27,8 @@ from arrow_lake.ingest.storage import LanceStorageManager
 from arrow_lake.system_db import Migrator, SystemDB
 from arrow_lake.system_db.stores.actions import ActionCatalogStore, IdempotencyStore
 from arrow_lake.system_db.stores.contracts import ContractStore
+from arrow_lake.system_db.stores.ontology import OntologyRulesStore
+from arrow_lake.system_db.stores.scenarios import ScenarioStore
 from arrow_lake.system_db.stores.semantic_alignments import SemanticAlignmentStore
 from arrow_lake.system_db.stores.user_state import UserStateStore
 
@@ -99,6 +101,15 @@ action_id: ACT.NOTIFY
 title: 通知
 target: {dataset: gas_net, object_class: 告警事件}
 effect: {type: notify, fields: {message: "对象 {{ target.object_id }} 已处理"}}
+"""
+
+# H-3:前置引用 canonical 字段,但阈值高于服务端重评可达值——客户端伪造无法通过
+ACT_NEED5 = """
+action_id: ACT.NEED5
+title: 需五条命中
+target: {dataset: gas_net, object_class: 告警事件}
+preconditions: ["assess.matched_rules >= 5"]
+effect: {type: none}
 """
 
 _ACT_FAIL_BASE = """
@@ -174,12 +185,23 @@ def env(tmp_path):
     db = SystemDB(":memory:")
     Migrator(db).run()
     ContractStore(db).save_contract("gas_net", CONTRACT_YAML)
+    rules = OntologyRulesStore(db)
+    rules.upsert_rule(
+        "ACT.R.STATE",
+        scope="gas_net",
+        condition_expr="target.state == 'pending'",
+        conclusion="待处置",
+        source_ref="w4t",
+        rule_type="validation",
+    )
+    rules.transition("ACT.R.STATE", "active")
     catalog = ActionCatalogStore(db)
     for yaml in (
         ACT_LOG,
         ACT_PUB,
         ACT_NOASSESS,
         ACT_NOTIFY,
+        ACT_NEED5,
         _ACT_FAIL_BASE.format(aid="ACT.FAIL.REJECT", fallback="REJECT"),
         _ACT_FAIL_BASE.format(aid="ACT.FAIL.DEAD", fallback="DEAD_LETTER"),
         _ACT_FAIL_BASE.format(aid="ACT.FAIL.MANUAL", fallback="MANUAL"),
@@ -197,6 +219,8 @@ def env(tmp_path):
         db=db,
         catalog=catalog,
         uid=uid,
+        rules=rules,
+        scenarios=ScenarioStore(db),
         idem=IdempotencyStore(db),
         contract=ContractStore(db),
         alignment=SemanticAlignmentStore(db),
@@ -221,10 +245,12 @@ async def _run(
     assess=None,
     scenario_id=None,
     step_id=None,
+    checker=None,
+    deny_write=None,
 ):
     return await execute_action(
         lake=env.lake,
-        checker=StubChecker(),
+        checker=checker or StubChecker(),
         user=user or _user(user_id=env.uid),
         action_id=action_id,
         dataset="gas_net",
@@ -239,8 +265,11 @@ async def _run(
         contract_store=env.contract,
         alignment_store=env.alignment,
         user_state_store=env.notify_store,
+        rules_store=env.rules,
+        scenario_store=env.scenarios,
         deny_table_read=lambda n, t: None,
         acl_enforce=lambda sql, tgt: sql,
+        deny_table_write=deny_write,
     )
 
 
@@ -254,27 +283,31 @@ def _row(env, object_id: str) -> dict:
 
 @pytest.mark.asyncio
 async def test_execute_none_effect_with_audit_context(env) -> None:
+    env.scenarios.save_scenario(
+        "GAS.SC", "scenario_id: GAS.SC\ntitle: t\nsteps:\n  - {id: publish, action: ACT.LOG}\n"
+    )
     out = await _run(env, "ACT.LOG", assess=ASSESS_OK, scenario_id="GAS.SC", step_id="publish")
     assert out["status"] == "executed" and out["effect"] == {"type": "none"}
     entry = env.lake.audits[-1]
     assert entry["event_type"] == "action.execute"
     assert entry["payload"]["scenario_id"] == "GAS.SC"
     assert entry["payload"]["step_id"] == "publish"
-    assert entry["payload"]["included"]["assess.rule_ids"] == ["GAS.R1"]
+    assert entry["payload"]["included"]["assess.rule_ids"] == ["ACT.R.STATE"]  # 服务端重评(H-3)
 
 
 @pytest.mark.asyncio
 async def test_precondition_not_met_422(env) -> None:
     with pytest.raises(ActionError) as ei:
-        await _run(env, "ACT.NOASSESS", assess={"confidence": 0.5})
+        await _run(env, "ACT.NEED5", assess={"matched_rules": 5})  # 伪造无效(H-3)
     assert ei.value.status_code == 422
     assert "precondition not met" in ei.value.reason
 
 
 @pytest.mark.asyncio
-async def test_precondition_with_assess_executes(env) -> None:
-    out = await _run(env, "ACT.NOASSESS", assess={"confidence": 0.95, "matched_rules": 0})
+async def test_server_recomputed_confidence_executes(env) -> None:
+    out = await _run(env, "ACT.NOASSESS")  # 无客户端 assess;服务端 confidence=1.0
     assert out["status"] == "executed"
+    assert out["assess_recomputed"]["rule_ids"] == ["ACT.R.STATE"]
 
 
 @pytest.mark.asyncio
@@ -381,7 +414,9 @@ async def test_update_lifecycle_real_write(env) -> None:
     assert out["status"] == "executed"
     row = _row(env, "GAS.ALERT.001")
     assert row["state"] == "published"
-    assert row["level"] == "橙"  # {{ assess.level }}
+    # H-3:{{ assess.level }} 属 canonical 四字段之外自造键,服务端重评不
+    # 提供 → 缺失渲染空串(fail-safe);可用的是 assess.rule_ids 等 canonical
+    assert row["level"] == ""
     assert row["published_at"] and "T" in row["published_at"]  # {{ now() }} ISO
     other = _row(env, "GAS.ALERT.002")
     assert other["state"] == "pending"  # 只动目标行
@@ -441,7 +476,7 @@ async def test_post_event_delivers_structured_payload(env) -> None:
     assert len(got) == 1
     ev = got[0]
     assert ev.payload["target.object_id"] == "GAS.ALERT.001"
-    assert ev.payload["assess.rule_ids"] == ["GAS.R1"]  # 原值(list)
+    assert ev.payload["assess.rule_ids"] == ["ACT.R.STATE"]  # 原值(list),服务端重评
     assert ev.payload["actor"]["sub"] == "op1"  # 原值(dict)
 
 
@@ -536,15 +571,15 @@ class TestExecuteRoute:
         )
         assert r.status_code == 200, r.text
         assert r.json()["status"] == "executed"
-        # 前置不满足 → 422(detail 带 exception_class)
+        # 前置不满足 → 422(detail 带 exception_class;伪造客户端 assess 无效 H-3)
         r2 = c.post(
-            "/api/v1/actions/ACT.NOASSESS/execute",
+            "/api/v1/actions/ACT.NEED5/execute",
             json={
                 "dataset": "gas_net",
                 "object_type": "alerts",
                 "object_id": "GAS.ALERT.001",
                 "reason": "x",
-                "assess": {"confidence": 0.1},
+                "assess": {"matched_rules": 5},
             },
         )
         assert r2.status_code == 422
@@ -564,3 +599,224 @@ class TestExecuteRoute:
             json={"dataset": "gas_net", "object_type": "alerts", "object_id": "GAS.ALERT.001"},
         )
         assert r.status_code in (401, 403, 503)
+
+
+# ---------------------------------------------------------------------------
+# W4.5 review 清偿专项(两路 fan-out:安全 3H/3M/2L + 正确性 1H/4M/2L)
+# ---------------------------------------------------------------------------
+
+
+class TestReviewRemediation:
+    """H-1 写向门禁 / H-2·正确性HIGH 前置槽泄漏 / H-3 assess 伪造 /
+    M-1 标识不唯一 / M-3 审计兜底 / M-4 to_state 词表 / M-2 超时禁重放 /
+    L-1 场景归属 / reset 运维面。"""
+
+    # -- H-1:写向门禁 ------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_h1_write_denied_dataset_403(self, env) -> None:
+        class WriteDenied(StubChecker):
+            def check_dataset_access(self, *, role, dataset, action, permissions=None):
+                return action == "read"
+
+        with pytest.raises(ActionError) as ei:
+            await _run(
+                env,
+                "ACT.PUBLISH",
+                checker=WriteDenied(),
+                user=_user(permissions=["alerts:publish"]),
+            )
+        assert ei.value.status_code == 403
+        assert "Write access" in ei.value.reason
+
+    @pytest.mark.asyncio
+    async def test_h1_table_write_deny_403(self, env) -> None:
+        from fastapi import HTTPException
+
+        def deny_write(name, table):
+            raise HTTPException(status_code=403, detail="table write deny")
+
+        with pytest.raises(HTTPException):
+            await _run(
+                env,
+                "ACT.PUBLISH",
+                deny_write=deny_write,
+                user=_user(permissions=["alerts:publish"]),
+            )
+        # 效果未落:目标行状态不变
+        assert _row(env, "GAS.ALERT.001")["state"] == "pending"
+
+    @pytest.mark.asyncio
+    async def test_h1_readonly_effect_no_write_gate(self, env) -> None:
+        """none/notify 效果不触发写向门禁(无物理写)。"""
+        out = await _run(env, "ACT.LOG", checker=StubChecker())
+        assert out["status"] == "executed"
+
+    # -- H-2(+正确性 HIGH):前置失败后槽置 failed,可重认领 ------------------
+
+    @pytest.mark.asyncio
+    async def test_h2_precondition_failure_marks_slot_failed(self, env) -> None:
+        # 001 当前 pending;前置要求 confirmed → 不满足
+        env.catalog.save_action(
+            "ACT.NEEDCONF",
+            """
+action_id: ACT.NEEDCONF
+title: 需确认态
+target: {dataset: gas_net, object_class: 告警事件}
+preconditions: ["target.state == 'confirmed'"]
+effect: {type: none}
+idempotency_key: "{{ target.object_id }}"
+""",
+        )
+        with pytest.raises(ActionError):
+            await _run(env, "ACT.NEEDCONF")
+        rec = env.idem.get("ACT.NEEDCONF", "GAS.ALERT.001")
+        assert rec["state"] == "failed"  # 非 running:可重认领
+        assert "precondition" in (rec["detail"] or "")
+        # 目录修复(前置改为 pending)后重放 → 执行成功
+        env.catalog.save_action(
+            "ACT.NEEDCONF",
+            """
+action_id: ACT.NEEDCONF
+title: 需确认态
+target: {dataset: gas_net, object_class: 告警事件}
+preconditions: ["target.state == 'pending'"]
+effect: {type: none}
+idempotency_key: "{{ target.object_id }}"
+""",
+        )
+        out = await _run(env, "ACT.NEEDCONF")
+        assert out["status"] == "executed"
+
+    # -- H-3:客户端 assess 伪造无效 ----------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_h3_forged_assess_cannot_pass(self, env) -> None:
+        with pytest.raises(ActionError) as ei:
+            await _run(env, "ACT.NEED5", assess={"matched_rules": 5})
+        assert "precondition not met" in ei.value.reason
+
+    @pytest.mark.asyncio
+    async def test_h3_response_carries_recomputed_assess(self, env) -> None:
+        out = await _run(env, "ACT.LOG", assess={"matched_rules": 999})
+        assert out["assess_recomputed"]["matched_rules"] == 1
+        assert out["assess_recomputed"]["rule_ids"] == ["ACT.R.STATE"]
+
+    # -- M-1:标识列不唯一 → 拒绝执行 ----------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_m1_duplicate_identifier_422(self, env) -> None:
+        env.storage.append_dataset(
+            "gas_net",
+            pa.table(
+                {
+                    "alert_id": ["GAS.ALERT.001"],
+                    "state": ["pending"],
+                    "level": pa.array([None], pa.string()),
+                    "published_at": pa.array([None], pa.string()),
+                }
+            ),
+            table="alerts",
+        )
+        with pytest.raises(ActionError) as ei:
+            await _run(env, "ACT.LOG")
+        assert ei.value.status_code == 422
+        assert "not unique" in ei.value.reason
+
+    # -- M-3:审计失败不吞效果事实 -------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_m3_audit_failure_keeps_effect_truth(self, env) -> None:
+        def boom(*a, **k):
+            raise RuntimeError("audit store down")
+
+        env.lake.audit_record = boom  # type: ignore[method-assign]
+        user = _user(permissions=["alerts:publish"])
+        out = await _run(env, "ACT.PUBLISH", user=user)  # ACT.PUB 带幂等键
+        assert out["status"] == "executed"
+        assert out["audit_id"] is None and out["audit_status"] == "failed"
+        assert out["idempotency"]["state"] == "completed"  # 效果真值优先
+        # 重放 already_in_effect,不双写(to_state 同值,fields now() 不再漂移)
+        replay = await _run(env, "ACT.PUBLISH", user=user)
+        assert replay["status"] == "already_in_effect"
+
+    # -- M-4:to_state 必须落在契约 lifecycle 词表 ---------------------------
+
+    @pytest.mark.asyncio
+    async def test_m4_to_state_outside_vocabulary_422(self, env) -> None:
+        env.catalog.save_action(
+            "ACT.BADSTATE",
+            """
+action_id: ACT.BADSTATE
+title: 拼错状态
+target: {dataset: gas_net, object_class: 告警事件}
+effect: {type: update_lifecycle, to_state: pubished}
+idempotency_key: "{{ target.object_id }}"
+""",
+        )
+        with pytest.raises(ActionError) as ei:
+            await _run(env, "ACT.BADSTATE")
+        assert "not in contract lifecycle states" in ei.value.reason
+        assert _row(env, "GAS.ALERT.001")["state"] == "pending"  # 未写
+
+    # -- M-2:超时类失败禁自动重放(强制 manual_intervention) ----------------
+
+    @pytest.mark.asyncio
+    async def test_m2_timeout_forces_manual_intervention(self, env, monkeypatch) -> None:
+        real_update = env.storage.update_rows
+
+        def slow_update(*a, **k):
+            raise TimeoutError("run_sync watchdog")
+
+        monkeypatch.setattr(env.storage, "update_rows", slow_update)
+        out = await _run(
+            env,
+            "ACT.FAIL.DEAD",  # 配置是 DEAD_LETTER
+            user=_user(permissions=["alerts:publish"]),
+        )
+        assert out["status"] == "manual_intervention"  # 超时覆盖 fallback
+        assert out["idempotency"]["state"] == "failed"
+        monkeypatch.setattr(env.storage, "update_rows", real_update)
+
+    # -- L-1:场景归属校验 ---------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_l1_ghost_scenario_422(self, env) -> None:
+        with pytest.raises(ActionError) as ei:
+            await _run(env, "ACT.LOG", scenario_id="GHOST.SC", step_id="x")
+        assert ei.value.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_l1_step_must_exist_in_scenario(self, env) -> None:
+        env.scenarios.save_scenario(
+            "GAS.SC2",
+            """
+scenario_id: GAS.SC2
+title: t
+steps:
+  - {id: publish, action: ACT.LOG}
+""",
+        )
+        with pytest.raises(ActionError) as ei:
+            await _run(env, "ACT.LOG", scenario_id="GAS.SC2", step_id="ghost_step")
+        assert "not in scenario" in ei.value.reason
+        out = await _run(env, "ACT.LOG", scenario_id="GAS.SC2", step_id="publish")
+        assert out["status"] == "executed"
+
+    @pytest.mark.asyncio
+    async def test_l1_step_without_scenario_422(self, env) -> None:
+        with pytest.raises(ActionError) as ei:
+            await _run(env, "ACT.LOG", step_id="orphan")
+        assert "requires scenario_id" in ei.value.reason
+
+    # -- H-2 运维面:running 槽 admin 重置 -----------------------------------
+
+    def test_reset_running_slot(self, env) -> None:
+        env.idem.try_acquire("ACT.X", "K", owner="dead-worker")
+        assert env.idem.get("ACT.X", "K")["state"] == "running"
+        assert env.idem.reset_running("ACT.X", "K") is True
+        rec = env.idem.get("ACT.X", "K")
+        assert rec["state"] == "failed" and "admin reset" in rec["detail"]
+        # completed 槽不可重置(已生效事实不容否认)
+        env.idem.mark("ACT.X", "K", "completed")
+        assert env.idem.reset_running("ACT.X", "K") is False

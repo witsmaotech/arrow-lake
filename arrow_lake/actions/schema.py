@@ -103,6 +103,19 @@ class ActionEffect(BaseModel):
     to_state: str | None = None
     fields: dict[str, str] = Field(default_factory=dict)
 
+    @field_validator("fields")
+    @classmethod
+    def _fields_keys_bare_identifiers(cls, v: dict[str, str]) -> dict[str, str]:
+        # W4.5 L-5:写路径(storage update)只认 ASCII 裸标识符列——保存期
+        # 就拒,而非执行期技术性 dead_letter(fail-closed 提前到 422 面)
+        for key in v:
+            if not re.match(r"^[A-Za-z_][A-Za-z0-9_-]*$", key):
+                raise ValueError(
+                    f"effect.fields keys must be bare ASCII identifiers "
+                    f"(storage update constraint), got {key!r}"
+                )
+        return v
+
     @field_validator("to_state")
     @classmethod
     def _to_state_template(cls, v: str | None) -> str | None:

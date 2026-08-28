@@ -27,7 +27,75 @@ from arrow_lake.semantic.objectset import fetch_object_rows
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["assess_object"]
+__all__ = ["assess_object", "evaluate_active_rules", "parse_catalog_action"]
+
+
+# ---------------------------------------------------------------------------
+# 共享子程序(W4.5 review:H-3 服务端重评 + L-2 事件循环安全)
+# ---------------------------------------------------------------------------
+
+# 目录条目解析缓存:action_id → (source_hash, spec)。写入整表替换保序,
+# 256 帽(管理面人工维护的目录规模远低于此;哈希变 → 重解析)。
+_SPEC_CACHE: dict[str, tuple[str, Any]] = {}
+_SPEC_CACHE_MAX = 256
+
+
+def parse_catalog_action(rec: dict[str, Any]) -> Any | None:
+    """带缓存的目录条目解析(腐烂条目 → None,调用方跳过)。"""
+    aid = rec.get("scope") or ""
+    cached = _SPEC_CACHE.get(aid)
+    if cached is not None and cached[0] == rec.get("source_hash"):
+        return cached[1]
+    try:
+        spec = parse_action_yaml(rec["action_yaml"])
+    except ActionYamlError:
+        logger.warning("assess_catalog_entry_unparseable", extra={"action": aid})
+        return None
+    if len(_SPEC_CACHE) >= _SPEC_CACHE_MAX:
+        _SPEC_CACHE.clear()
+    _SPEC_CACHE[aid] = (rec.get("source_hash") or "", spec)
+    return spec
+
+
+async def evaluate_active_rules(
+    rules_store: Any,
+    dataset: str,
+    target_ctx: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """active 规则(scope=数据集+``*``)对 target 上下文求值。
+
+    返回 (conclusions, unruly);unruly fail-open 到条(S8)。libSQL 调用
+    经 run_sync 下线程(W4.5 L-2:不阻塞事件循环)。
+    """
+    from arrow_lake.api.utils import run_sync
+
+    rules = await run_sync(
+        lambda: (
+            rules_store.list_rules(scope=dataset, status="active")
+            + rules_store.list_rules(scope="*", status="active")
+        ),
+        timeout=30,
+        label="assess_list_rules",
+    )
+    ctx = {"target": target_ctx}
+    conclusions: list[dict[str, Any]] = []
+    unruly: list[str] = []
+    for r in rules:
+        try:
+            pred = compile_predicate(r["condition_expr"])
+        except ParsedPredicateError:
+            unruly.append(r["rule_id"])
+            continue
+        if pred.evaluate(ctx):
+            conclusions.append(
+                {
+                    "rule_id": r["rule_id"],
+                    "rule_type": r.get("rule_type"),
+                    "version": r.get("version"),
+                    "conclusion": r["conclusion"],
+                }
+            )
+    return conclusions, unruly
 
 
 async def assess_object(
@@ -71,34 +139,26 @@ async def assess_object(
             status_code=404,
             detail=f"object '{object_id}' not found in {dataset}.{object_type}",
         )
+    if len(res.rows) > 1:
+        # W4.5 M-1:标识列值重复(limit=2 暴露畸形数据的设计意图)。研判只读
+        # → 取首行但显式告警;写侧(middleware)对同形态直接 422。
+        logger.warning(
+            "assess_identifier_not_unique",
+            extra={
+                "dataset": dataset,
+                "object_type": object_type,
+                "object_id": object_id,
+                "rows": len(res.rows),
+            },
+        )
     row = res.rows[0]
 
     target_ctx: dict[str, Any] = dict(row)
     if res.lifecycle_col is not None and res.lifecycle_col in row:
         target_ctx["lifecycle_state"] = row[res.lifecycle_col]
     target_ctx["object_id"] = object_id
-    rule_ctx: dict[str, Any] = {"target": target_ctx}
 
-    conclusions: list[dict[str, Any]] = []
-    unruly: list[str] = []
-    rules = rules_store.list_rules(scope=dataset, status="active") + rules_store.list_rules(
-        scope="*", status="active"
-    )
-    for r in rules:
-        try:
-            pred = compile_predicate(r["condition_expr"])
-        except ParsedPredicateError:
-            unruly.append(r["rule_id"])  # S8:fail-open 到条
-            continue
-        if pred.evaluate(rule_ctx):
-            conclusions.append(
-                {
-                    "rule_id": r["rule_id"],
-                    "rule_type": r.get("rule_type"),
-                    "version": r.get("version"),
-                    "conclusion": r["conclusion"],
-                }
-            )
+    conclusions, unruly = await evaluate_active_rules(rules_store, dataset, target_ctx)
 
     assess_ctx: dict[str, Any] = {
         "confidence": 1.0,
@@ -107,14 +167,20 @@ async def assess_object(
         "unruly_count": len(unruly),
     }
 
-    actionable = _actionable_actions(
-        action_store=action_store,
-        dataset=dataset,
-        object_type=object_type,
-        section_object_class=(res.contract.tables[object_type].object_class),
-        target_ctx=target_ctx,
-        assess_ctx=assess_ctx,
-        actor_ctx={"sub": actor_sub, "role": str(getattr(role, "value", role))},
+    from arrow_lake.api.utils import run_sync
+
+    actionable = await run_sync(
+        lambda: _actionable_actions(
+            action_store=action_store,
+            dataset=dataset,
+            object_type=object_type,
+            section_object_class=(res.contract.tables[object_type].object_class),
+            target_ctx=target_ctx,
+            assess_ctx=assess_ctx,
+            actor_ctx={"sub": actor_sub, "role": str(getattr(role, "value", role))},
+        ),
+        timeout=30,
+        label="assess_actionable",
     )
 
     return {
@@ -151,10 +217,8 @@ def _actionable_actions(
         rec = action_store.get_version(scope["scope"])
         if rec is None:
             continue
-        try:
-            spec = parse_action_yaml(rec["action_yaml"])
-        except ActionYamlError:
-            logger.warning("assess_catalog_entry_unparseable", extra={"action": scope["scope"]})
+        spec = parse_catalog_action(rec)  # 带缓存;腐烂条目 → None 跳过
+        if spec is None:
             continue
         if spec.target.dataset != dataset:
             continue

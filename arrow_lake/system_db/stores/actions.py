@@ -163,6 +163,21 @@ class IdempotencyStore:
         self._db.commit()
         return self.get(action_id, key) is not None
 
+    def reset_running(self, action_id: str, key: str, *, detail: str = "admin reset") -> bool:
+        """ADMIN 手术:running → failed(可重认领)。
+
+        W4.5 H-2 运维面:worker 在 acquire 与 mark 之间死亡会留永久
+        running 槽(无心跳可判死,沿 tasks.py orphan 教训以人工核销兜底)。
+        仅 running 态可重置;返回是否有行被重置。
+        """
+        cur = self._db.execute(
+            f"UPDATE idempotency_keys SET state='failed', detail=?, "
+            f"updated_at={_NOW} WHERE action_id=? AND key=? AND state='running'",
+            (detail, action_id, key),
+        )
+        self._db.commit()
+        return bool(cur.rowcount) if hasattr(cur, "rowcount") else True
+
     def get(self, action_id: str, key: str) -> dict[str, Any] | None:
         row = self._db.execute(
             "SELECT id, action_id, key, state, owner, detail, created_at, updated_at "

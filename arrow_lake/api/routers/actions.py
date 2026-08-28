@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from arrow_lake.actions.schema import ScenarioValidationError, validate_scenario
@@ -230,7 +230,8 @@ class ExecuteRequest(BaseModel):
     step_id: str | None = Field(default=None, max_length=200)
     assess: dict[str, Any] | None = Field(
         default=None,
-        description="研判上下文(confidence/matched_rules/rule_ids…;前置条件与审计依据消费)",
+        description="(兼容保留)调用方回显;W4.5 H-3 起服务端对 active 规则"
+        "重评 canonical 字段,客户端值不进入任何信任面",
     )
 
 
@@ -244,9 +245,11 @@ async def execute_action(
     checker=Depends(get_checker),
 ) -> dict:
     """Execute an action against one object(八步序:认证→permission→目标
-    解析→前置→幂等→效果→审计→事件)。重放 → 200 already_in_effect。"""
+    解析(+写向门禁)→幂等→前置→效果→审计→事件)。重放 → 200
+    already_in_effect;assess 上下文由服务端重评(不可伪造)。"""
     from arrow_lake.actions.middleware import ActionError
     from arrow_lake.actions.middleware import execute_action as _execute
+    from arrow_lake.api.deps import _deny_table_override
     from arrow_lake.api.routers.query import _acl_enforced_sql, _deny_table_read
 
     action_store = _require(_action_store(request), "Action catalog")
@@ -258,6 +261,8 @@ async def execute_action(
         raise HTTPException(status_code=503, detail="system_db disabled; contracts unavailable")
     alignment_store = getattr(request.app.state, "semantic_alignment_store", None)
     user_state_store = getattr(request.app.state, "user_state_store", None)
+    rules_store = getattr(request.app.state, "ontology_rules_store", None)
+    scenario_store = _scenario_store(request)
 
     try:
         return await _execute(
@@ -277,11 +282,31 @@ async def execute_action(
             contract_store=contract_store,
             alignment_store=alignment_store,
             user_state_store=user_state_store,
+            rules_store=rules_store,
+            scenario_store=scenario_store,
             deny_table_read=lambda n, t: _deny_table_read(n, t, request),
             acl_enforce=lambda sql, tgt: _acl_enforced_sql(sql, tgt, checker, _user.role),
+            deny_table_write=lambda n, t: (
+                _deny_table_override(request, f"{n}.{t}", write=True) if t else None
+            ),
         )
     except ActionError as exc:
         raise HTTPException(
             status_code=exc.status_code,
             detail={"message": exc.reason, "exception_class": exc.exception_class},
         ) from exc
+
+
+@router.post(
+    "/{action_id}/idempotency/reset",
+    dependencies=[Depends(require_role(Role.ADMIN))],
+)
+async def reset_idempotency_slot(
+    action_id: str,
+    request: Request,
+    key: str = Query(min_length=1, max_length=500),
+) -> dict:
+    """ADMIN 手术:重置卡死 running 的幂等槽(worker 在 acquire 与 mark
+    之间死亡遗留;W4.5 H-2 运维面,沿 tasks.py orphan-reap 教训人工核销)。"""
+    store = _require(getattr(request.app.state, "idempotency_store", None), "Idempotency registry")
+    return {"action_id": action_id, "key": key, "reset": store.reset_running(action_id, key)}
