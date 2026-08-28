@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>行动与场景 · Arrow Lake Console</title>
+<link rel="stylesheet" href="assets/tokens.css"/>
+<link rel="stylesheet" href="assets/app.css"/>
+<link rel="stylesheet" href="assets/console.css"/>
+<style>
+  .tabbar{display:flex;gap:6px;margin-bottom:var(--s4)}
+  .tabbar button{background:var(--ink-900);border:1px solid var(--line);border-radius:var(--r-md);color:var(--fg-md);padding:7px 14px;font-size:.78rem;cursor:pointer}
+  .tabbar button.active{background:var(--ink-850);color:var(--fg-hi);box-shadow:inset 0 -2px 0 0 var(--teal-bright)}
+  .ctr-row{display:flex;gap:10px;align-items:center;padding:9px 12px;border-bottom:1px solid var(--line-soft);cursor:pointer;font-size:.82rem}
+  .ctr-row:hover{background:var(--ink-850)}
+  .ctr-row.active{background:var(--ink-850);box-shadow:inset 2px 0 0 var(--teal-bright)}
+  .ctr-row .sc{flex:1;min-width:0;font-family:var(--font-mono);color:var(--fg-hi);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .ver-row{display:flex;gap:10px;align-items:center;padding:8px 12px;border-bottom:1px solid var(--line-soft);cursor:pointer;font-size:.78rem}
+  .ver-row:hover{background:var(--ink-850)}
+  .ver-row.active{background:var(--ink-850);box-shadow:inset 2px 0 0 var(--teal-bright)}
+  textarea.yaml{width:100%;min-height:340px;background:var(--ink-950);border:1px solid var(--line);border-radius:var(--r-sm);color:var(--fg-md);font-family:var(--font-mono);font-size:.76rem;line-height:1.7;padding:12px;resize:vertical;tab-size:2}
+  .issues{margin-top:8px;padding:10px 12px;border:1px solid var(--danger);border-radius:var(--r-sm);color:var(--danger);font-size:.74rem;line-height:1.8}
+</style>
+</head>
+<body>
+<div id="app">
+<main class="main"><div class="page">
+  <div class="h-sec between">
+    <div><h1>行动与场景</h1><div class="desc">MS3 决策与行动层 · 行动目录(原子行为:效果/幂等/补偿/审计)与场景(编排规范:步骤/网关/超时)· 保存期校验,版本链同 hash 跳过</div></div>
+    <div class="flex"><button class="btn btn-primary btn-sm" id="newBtn"><i class="placeholder" data-ic="plus"></i> 新建</button></div>
+  </div>
+
+  <div class="tabbar">
+    <button id="tabActions" class="active">行动目录</button>
+    <button id="tabScenarios">场景</button>
+  </div>
+
+  <div class="grid g-2">
+    <div>
+      <div class="panel flush">
+        <div class="panel-h"><i class="placeholder" data-ic="play"></i><h3 id="listTitle">行动目录</h3><span class="sub" id="ctrMeta">—</span></div>
+        <div class="panel-b" id="ctrList" style="padding:0"><div class="muted" style="padding:10px">加载…</div></div>
+      </div>
+      <div class="panel flush" style="margin-top:var(--s4)">
+        <div class="panel-h"><i class="placeholder" data-ic="dashboard"></i><h3>版本链</h3><span class="sub" id="verMeta">选一条</span></div>
+        <div class="panel-b" id="verList" style="padding:0"><div class="muted" style="padding:10px">左侧选择查看版本</div></div>
+      </div>
+    </div>
+    <div>
+      <div class="panel flush">
+        <div class="panel-h">
+          <i class="placeholder" data-ic="code"></i><h3 id="ymlTitle">行动 YAML</h3><span class="sub" id="ymlMeta">—</span>
+          <span class="actions">
+            <button class="btn btn-ghost btn-sm" id="delBtn" style="display:none;color:var(--danger)">删除</button>
+            <button class="btn btn-primary btn-sm" id="saveBtn" style="display:none">保存新版本</button>
+          </span>
+        </div>
+        <div class="panel-b" style="padding:10px">
+          <textarea class="yaml" id="yml" spellcheck="false" placeholder="# action_id: GAS.ALERT.PUBLISH"></textarea>
+          <div class="muted" id="ymlMsg" style="font-size:.72rem;margin-top:6px">保存即解析校验:effect 封闭集 / 模板 {{path}}·{{now()}} / 谓词 DSL / 引用完整。场景引用的行动必须已在目录。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div></main>
+</div>
+
+<script src="assets/console-layout.js"></script>
+<script type="module">
+import { request } from "./src/api.js";
+import { isLoggedIn } from "./src/auth.js";
+import { toast } from "./src/ui/toast.js";
+import { promptDialog, confirmDialog } from "./src/ui/modal.js";
+
+if (!isLoggedIn()) location.href = "login.html";
+const { renderShell } = window;
+renderShell({ active: "actions", crumb: '<b>行动与场景</b>' });
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const fmtDate = (s) => { if (!s) return "—"; const d = new Date(s); if (isNaN(d)) return String(s).slice(0, 16); const p = (n) => String(n).padStart(2, "0"); return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
+const isAdmin = (() => {
+  try {
+    const tok = localStorage.getItem("al_access") || "";
+    const payload = JSON.parse(atob(tok.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+    return String(payload.role || "EDITOR").toUpperCase() === "ADMIN";
+  } catch (_) { return false; }
+})();
+
+// mode: "actions" | "scenarios" —— 两态共用一套列表/编辑流,仅 API 面/字段名不同
+let mode = "actions";
+let curId = null;
+const cfg = () => mode === "actions"
+  ? { list: "/actions", item: (id) => `/actions/${encodeURIComponent(id)}`, ymlField: "action_yaml", idField: "action_id", label: "行动" }
+  : { list: "/actions/scenarios", item: (id) => `/actions/scenarios/${encodeURIComponent(id)}`, ymlField: "scenario_yaml", idField: "scenario_id", label: "场景" };
+
+const ACTION_TEMPLATE = (name) => `action_id: ${name}
+title: 发布燃气泄漏预警
+target: {dataset: gas_network, object_class: 告警事件, identity: contract_identifier}
+permission: alerts:publish
+preconditions:
+  - "target.lifecycle_state == '研判确认'"
+  - "assess.confidence >= 0.8"
+effect:
+  type: update_lifecycle
+  to_state: 已发布
+  fields: {published_at: "{{ now() }}"}
+idempotency_key: "{{ target.object_id }}"
+compensation: {action: GAS.ALERT.WITHDRAW, policy: manual}
+on_failure: {fallback: DEAD_LETTER, exception_class: technical}
+audit: {reason_required: true, include: [assess.rule_ids]}
+post_event: {name: alert.published, payload: [target.object_id, assess.rule_ids, actor]}
+`;
+
+const SCENARIO_TEMPLATE = (name) => `scenario_id: ${name}
+title: 燃气泄漏告警响应
+process: 告警研判与预警发布
+entries: ["target.lifecycle_state == '待研判'"]
+steps:
+  - {id: assess, type: assess, rules_scope: gas_network}
+  - {id: publish, action: GAS.ALERT.PUBLISH, requires: [assess]}
+  - {id: escalate_manual, action: GAS.ALERT.ESCALATE, requires: [assess], path: substitute}
+gateways:
+  - id: confidence_gate
+    type: xor
+    when: "assess.confidence >= 0.8 && assess.matched_rules >= 1"
+    then: [publish]
+    else: [escalate_manual]
+timeout: PT30M
+on_timeout: escalate_manual
+`;
+
+function switchMode(m) {
+  mode = m;
+  curId = null;
+  $("#tabActions").classList.toggle("active", m === "actions");
+  $("#tabScenarios").classList.toggle("active", m === "scenarios");
+  $("#listTitle").textContent = m === "actions" ? "行动目录" : "场景";
+  $("#ymlTitle").textContent = m === "actions" ? "行动 YAML" : "场景 YAML";
+  $("#ymlMeta").textContent = "—";
+  $("#yml").value = "";
+  $("#verList").innerHTML = '<div class="muted" style="padding:12px">左侧选择查看版本</div>';
+  $("#saveBtn").style.display = "none";
+  $("#delBtn").style.display = "none";
+  loadList();
+}
+$("#tabActions").addEventListener("click", () => switchMode("actions"));
+$("#tabScenarios").addEventListener("click", () => switchMode("scenarios"));
+
+async function loadList() {
+  const c = cfg();
+  try {
+    const r = await request("GET", c.list);
+    const items = r?.actions || r?.scenarios || [];
+    $("#ctrMeta").textContent = `${items.length} 条`;
+    $("#ctrList").innerHTML = items.length
+      ? items.map((it) => {
+          const id = it.action_id || it.scenario_id;
+          return `<div class="ctr-row${id === curId ? " active" : ""}" data-id="${esc(id)}">
+            <span class="sc">${esc(id)}</span>
+            <span class="tag teal">v${it.version}</span>
+            <span class="muted" style="font-size:.7rem">${fmtDate(it.updated_at)}</span>
+          </div>`;
+        }).join("")
+      : `<div class="muted" style="padding:18px;text-align:center">尚无${c.label} — 点右上「新建」</div>`;
+    $("#ctrList").querySelectorAll("[data-id]").forEach((el) => el.addEventListener("click", () => selectItem(el.dataset.id)));
+  } catch (e) {
+    const msg = e?.detail || e?.message || String(e);
+    const denied = /403|admin/i.test(msg);
+    $("#ctrList").innerHTML = `<div class="muted" style="padding:18px;text-align:center">${denied ? "行动与场景管理需要 ADMIN 权限" : "加载失败:" + esc(msg)}</div>`;
+    $("#ctrMeta").textContent = "—";
+  }
+}
+
+async function selectItem(id) {
+  curId = id;
+  const c = cfg();
+  $("#ctrList").querySelectorAll("[data-id]").forEach((el) => el.classList.toggle("active", el.dataset.id === id));
+  $("#ymlMeta").textContent = id;
+  if (isAdmin) { $("#saveBtn").style.display = ""; $("#delBtn").style.display = ""; }
+  await Promise.allSettled([loadYaml(id), loadVersions(id)]);
+}
+
+async function loadYaml(id) {
+  const c = cfg();
+  try {
+    const r = await request("GET", c.item(id));
+    $("#yml").value = r?.[c.ymlField] || "";
+    $("#yml").disabled = !isAdmin;
+  } catch (e) {
+    $("#yml").value = "";
+    toast("加载失败:" + (e?.detail || e?.message || e), "warn", 4000);
+  }
+}
+
+async function loadVersions(id) {
+  const c = cfg();
+  try {
+    const r = await request("GET", `${c.item(id)}/versions`);
+    const vs = r?.versions || [];
+    $("#verMeta").textContent = `${vs.length} 版`;
+    $("#verList").innerHTML = vs.length
+      ? vs.map((v) => `<div class="ver-row" data-v="${v.version}">
+          <span class="tag teal">v${v.version}</span>
+          <span class="muted" style="font-family:var(--font-mono);font-size:.68rem">${esc(String(v.source_hash || "").slice(0, 8))}</span>
+          <span class="muted" style="margin-left:auto;font-size:.7rem">${fmtDate(v.created_at)}</span>
+        </div>`).join("")
+      : `<div class="muted" style="padding:12px">无版本</div>`;
+    $("#verList").querySelectorAll("[data-v]").forEach((el) => el.addEventListener("click", () => showVersion(id, +el.dataset.v)));
+  } catch (e) {
+    $("#verList").innerHTML = '<div class="muted" style="padding:12px">版本链加载失败</div>';
+  }
+}
+
+async function showVersion(id, v) {
+  const c = cfg();
+  $("#verList").querySelectorAll("[data-v]").forEach((el) => el.classList.toggle("active", +el.dataset.v === v));
+  try {
+    const r = await request("GET", `${c.item(id)}/versions/${v}`);
+    $("#yml").value = r?.[c.ymlField] || "";
+    $("#ymlMeta").textContent = `${id} · v${v}(只读,保存生成新版本)`;
+  } catch (e) {
+    toast("版本加载失败", "warn", 3000);
+  }
+}
+
+function showError(e) {
+  const d = e?.detail;
+  let html;
+  if (d && typeof d === "object" && Array.isArray(d.issues)) {
+    html = `<b>${esc(d.message || "校验失败")}</b>${d.issues.map((i) => `<div>· ${esc(i)}</div>`).join("")}`;
+  } else {
+    const msg = typeof d === "string" ? d : (d ? JSON.stringify(d) : (e?.message || String(e)));
+    html = `<b>校验失败:</b><div>${esc(msg)}</div>`;
+  }
+  $("#ymlMsg").innerHTML = `<span style="color:var(--danger)">${html}</span>`;
+  toast("保存失败(校验未过)", "danger", 5000);
+}
+
+$("#saveBtn")?.addEventListener("click", async () => {
+  if (!curId) return;
+  const c = cfg();
+  const body = { [c.ymlField]: $("#yml").value };
+  try {
+    const r = await request("PUT", c.item(curId), { body });
+    if (r?.created === false) {
+      toast("内容与当前版本相同(hash 一致),未产生新版本", "info", 4000);
+    } else {
+      toast(`已保存 v${r?.version}`, "ok");
+    }
+    $("#ymlMsg").innerHTML = `<span class="muted">校验通过 · v${r?.version}</span>`;
+    loadList();
+    loadVersions(curId);
+  } catch (e) {
+    showError(e);
+  }
+});
+
+$("#delBtn")?.addEventListener("click", async () => {
+  if (!curId) return;
+  const c = cfg();
+  const ok = await confirmDialog({ title: `删除 ${c.label} ${curId}?`, message: "整条版本链一并删除,不可恢复。场景引用的行动被删后,该场景下次保存会 422。" });
+  if (!ok) return;
+  try {
+    await request("DELETE", c.item(curId));
+    toast(`已删除 ${curId}`, "ok");
+    switchMode(mode);
+  } catch (e) {
+    toast("删除失败:" + (e?.detail || e?.message || e), "danger", 5000);
+  }
+});
+
+$("#newBtn")?.addEventListener("click", async () => {
+  const c = cfg();
+  const name = await promptDialog({ title: `新建${c.label} — ID(${mode === "actions" ? "域.对象类.行为,如 GAS.ALERT.PUBLISH" : "如 GAS.LEAK.RESPONSE"})`, defaultValue: "", placeholder: mode === "actions" ? "GAS.ALERT.PUBLISH" : "GAS.LEAK.RESPONSE" });
+  if (!name || !name.trim()) return;
+  const id = name.trim();
+  if (!/^\w+(\.\w+)*$/.test(id)) { toast("ID 须匹配 词字符+点分(如 GAS.ALERT.PUBLISH)", "warn"); return; }
+  $("#yml").value = mode === "actions" ? ACTION_TEMPLATE(id) : SCENARIO_TEMPLATE(id);
+  $("#yml").disabled = !isAdmin;
+  $("#ymlMeta").textContent = `${id}(草案,未保存)`;
+  if (isAdmin) { $("#saveBtn").style.display = ""; $("#delBtn").style.display = "none"; }
+  curId = id;
+});
+
+loadList();
+</script>
+</body>
+</html>

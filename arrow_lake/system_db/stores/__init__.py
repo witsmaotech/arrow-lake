@@ -12,6 +12,7 @@ task-history / lineage-index / rag-session / governance / user-state stores.
 
 from __future__ import annotations
 
+from arrow_lake.system_db.stores.actions import ActionCatalogStore, IdempotencyStore
 from arrow_lake.system_db.stores.base import TTLCache, FailMode
 from arrow_lake.system_db.stores.catalog import CatalogStore
 from arrow_lake.system_db.stores.contracts import ContractStore
@@ -22,21 +23,25 @@ from arrow_lake.system_db.stores.lineage_index import LineageIndexStore
 from arrow_lake.system_db.stores.ontology import OntologyRulesStore, OntologyVersionStore
 from arrow_lake.system_db.stores.rag_session import RagSessionStore
 from arrow_lake.system_db.stores.rbac import RbacStore
+from arrow_lake.system_db.stores.scenarios import ScenarioStore
 from arrow_lake.system_db.stores.task_history import TaskHistoryStore
 from arrow_lake.system_db.stores.user_state import UserStateStore
 
 __all__ = [
+    "ActionCatalogStore",
     "CatalogStore",
     "ContractStore",
     "FailMode",
     "GovernanceStore",
     "IdentityStore",
+    "IdempotencyStore",
     "IngestDLQStore",
     "LineageIndexStore",
     "OntologyRulesStore",
     "OntologyVersionStore",
     "RagSessionStore",
     "RbacStore",
+    "ScenarioStore",
     "TaskHistoryStore",
     "TTLCache",
     "UserStateStore",

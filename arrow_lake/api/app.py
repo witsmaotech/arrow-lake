@@ -29,6 +29,7 @@ from arrow_lake.api.routers.doc_type_categories import router as doc_type_catego
 from arrow_lake.api.routers.lineage import router as lineage_router
 from arrow_lake.api.routers.materialized import router as materialized_router
 from arrow_lake.api.routers.maintenance import router as maintenance_router
+from arrow_lake.api.routers.actions import router as actions_router
 from arrow_lake.api.routers.contracts import router as contracts_router
 from arrow_lake.api.routers.objects import router as objects_router
 from arrow_lake.api.routers.semantic import router as semantic_router
@@ -323,6 +324,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         app.state.semantic_alignment_store = SemanticAlignmentStore(sys_db)
         lake._semantic_alignment_store = app.state.semantic_alignment_store
+        # v1.11.2 MS3 (W2.1/W2.2, F3.3/S5): actions catalog version chain +
+        # idempotency dedup + scenario registry behind /api/v1/actions; the
+        # execution middleware (W4) consumes idempotency/audit via app.state.
+        from arrow_lake.system_db.stores.actions import (
+            ActionCatalogStore,
+            IdempotencyStore,
+        )
+        from arrow_lake.system_db.stores.scenarios import ScenarioStore
+
+        app.state.action_store = ActionCatalogStore(sys_db)
+        app.state.idempotency_store = IdempotencyStore(sys_db)
+        app.state.scenario_store = ScenarioStore(sys_db)
+        lake._action_store = app.state.action_store
+        lake._scenario_store = app.state.scenario_store
         # Activate RAG-session persistence in the Lake facade's RAG pipeline.
         lake._rag_session_store = app.state.rag_session_store
         # Activate the lineage adjacency index in the Lake facade's LineageStore.
@@ -810,6 +825,7 @@ def create_app(config: ArrowLakeConfig | None = None) -> FastAPI:
     app.include_router(doc_type_categories_router)
     app.include_router(ontology_router)
     app.include_router(contracts_router)
+    app.include_router(actions_router)
     app.include_router(objects_router)
     app.include_router(semantic_router)
     app.include_router(auth_router)

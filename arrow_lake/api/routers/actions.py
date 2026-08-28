@@ -1,0 +1,214 @@
+"""行动目录/场景管理 API(v1.11.2 MS3 W2.3,F3.3/S5)。
+
+全部 ADMIN;system_db 关闭 → 503。沿 contracts 路由约定(v1.11.0.1 W4.1)。
+保存期校验:YAML capped 解析 + W1 模型校验 + scenario→action 引用必须在
+目录(validate_scenario,issues 一次收齐)。⚠️ /scenarios 路由先注册,
+否则被 /{action_id} 捕获成 scope="scenarios"。
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, Field
+
+from arrow_lake.actions.schema import ScenarioValidationError, validate_scenario
+from arrow_lake.actions.yaml_io import ActionYamlError, parse_action_yaml, parse_scenario_yaml
+from arrow_lake.api.auth_models import Role
+from arrow_lake.api.deps import require_role
+
+router = APIRouter(prefix="/api/v1/actions", tags=["actions"])
+
+
+def _action_store(request: Request) -> Any:
+    return getattr(request.app.state, "action_store", None)
+
+
+def _scenario_store(request: Request) -> Any:
+    return getattr(request.app.state, "scenario_store", None)
+
+
+def _require(store: Any, what: str) -> Any:
+    if store is None:
+        raise HTTPException(status_code=503, detail=f"{what} unavailable (system_db disabled)")
+    return store
+
+
+class ActionUpsertRequest(BaseModel):
+    action_yaml: str = Field(min_length=1, max_length=200_000)
+
+
+class ScenarioUpsertRequest(BaseModel):
+    scenario_yaml: str = Field(min_length=1, max_length=200_000)
+
+
+# --------------------------------------------------------------------------- #
+# scenarios(先注册——见模块 docstring)                                        #
+# --------------------------------------------------------------------------- #
+
+
+@router.get("/scenarios", dependencies=[Depends(require_role(Role.ADMIN))])
+async def list_scenarios(request: Request) -> dict:
+    """List scenario scopes with their latest version summary."""
+    store = _require(_scenario_store(request), "Scenario registry")
+    scopes = store.list_scopes()
+    return {
+        "total": len(scopes),
+        "scenarios": [
+            {
+                "scenario_id": s["scope"],
+                "version": s["version"],
+                "source_hash": s["source_hash"],
+                "updated_at": s["created_at"],
+            }
+            for s in scopes
+        ],
+    }
+
+
+@router.get("/scenarios/{scenario_id}", dependencies=[Depends(require_role(Role.ADMIN))])
+async def get_scenario(scenario_id: str, request: Request) -> dict:
+    store = _require(_scenario_store(request), "Scenario registry")
+    rec = store.get_version(scenario_id)
+    if rec is None:
+        raise HTTPException(status_code=404, detail=f"No scenario '{scenario_id}'")
+    return {"scenario_id": scenario_id, **rec}
+
+
+@router.get(
+    "/scenarios/{scenario_id}/versions",
+    dependencies=[Depends(require_role(Role.ADMIN))],
+)
+async def list_scenario_versions(scenario_id: str, request: Request) -> dict:
+    store = _require(_scenario_store(request), "Scenario registry")
+    versions = store.list_versions(scenario_id)
+    return {"scenario_id": scenario_id, "total": len(versions), "versions": versions}
+
+
+@router.put(
+    "/scenarios/{scenario_id}",
+    status_code=200,
+    dependencies=[Depends(require_role(Role.ADMIN))],
+)
+async def save_scenario(scenario_id: str, req: ScenarioUpsertRequest, request: Request) -> dict:
+    """Save a scenario: capped parse → 模型校验 → 引用校验(steps 引用的
+    action 必须在行动目录)→ 版本链保存(同 hash 跳过)。"""
+    store = _require(_scenario_store(request), "Scenario registry")
+    action_store = _require(_action_store(request), "Action catalog")
+    try:
+        spec = parse_scenario_yaml(req.scenario_yaml)
+    except ActionYamlError as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid scenario: {exc}") from exc
+    if spec.scenario_id != scenario_id:
+        raise HTTPException(
+            status_code=422,
+            detail=(f"scenario_id field ({spec.scenario_id!r}) must match path ({scenario_id!r})"),
+        )
+    known = {s["scope"] for s in action_store.list_scopes()}
+    try:
+        validate_scenario(spec, known)
+    except ScenarioValidationError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"message": "scenario references unresolvable", "issues": exc.issues},
+        ) from exc
+    rec = store.save_scenario(scenario_id, req.scenario_yaml)
+    return {"scenario_id": scenario_id, **rec}
+
+
+@router.delete(
+    "/scenarios/{scenario_id}",
+    dependencies=[Depends(require_role(Role.ADMIN))],
+)
+async def delete_scenario(scenario_id: str, request: Request) -> dict:
+    store = _require(_scenario_store(request), "Scenario registry")
+    if not store.delete_scope(scenario_id):
+        raise HTTPException(status_code=404, detail=f"No scenario '{scenario_id}'")
+    return {"scenario_id": scenario_id, "deleted": True}
+
+
+# --------------------------------------------------------------------------- #
+# actions catalog                                                              #
+# --------------------------------------------------------------------------- #
+
+
+@router.get("", dependencies=[Depends(require_role(Role.ADMIN))])
+async def list_actions(request: Request) -> dict:
+    """List catalog action ids with their latest version summary."""
+    store = _require(_action_store(request), "Action catalog")
+    scopes = store.list_scopes()
+    return {
+        "total": len(scopes),
+        "actions": [
+            {
+                "action_id": s["scope"],
+                "version": s["version"],
+                "source_hash": s["source_hash"],
+                "updated_at": s["created_at"],
+            }
+            for s in scopes
+        ],
+    }
+
+
+@router.get("/{action_id}", dependencies=[Depends(require_role(Role.ADMIN))])
+async def get_action(action_id: str, request: Request) -> dict:
+    store = _require(_action_store(request), "Action catalog")
+    rec = store.get_version(action_id)
+    if rec is None:
+        raise HTTPException(status_code=404, detail=f"No action '{action_id}'")
+    return {"action_id": action_id, **rec}
+
+
+@router.get("/{action_id}/versions", dependencies=[Depends(require_role(Role.ADMIN))])
+async def list_action_versions(action_id: str, request: Request) -> dict:
+    store = _require(_action_store(request), "Action catalog")
+    versions = store.list_versions(action_id)
+    return {"action_id": action_id, "total": len(versions), "versions": versions}
+
+
+@router.get(
+    "/{action_id}/versions/{version}",
+    dependencies=[Depends(require_role(Role.ADMIN))],
+)
+async def get_action_version(action_id: str, version: int, request: Request) -> dict:
+    store = _require(_action_store(request), "Action catalog")
+    rec = store.get_version(action_id, version=version)
+    if rec is None:
+        raise HTTPException(
+            status_code=404, detail=f"No action version {version} for '{action_id}'"
+        )
+    return {"action_id": action_id, **rec}
+
+
+@router.put(
+    "/{action_id}",
+    status_code=200,
+    dependencies=[Depends(require_role(Role.ADMIN))],
+)
+async def save_action(action_id: str, req: ActionUpsertRequest, request: Request) -> dict:
+    """Save an action: capped parse → 模型校验(effect 封闭集/模板/谓词)
+    → 版本链保存(同 hash 跳过)。"""
+    store = _require(_action_store(request), "Action catalog")
+    try:
+        spec = parse_action_yaml(req.action_yaml)
+    except ActionYamlError as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid action: {exc}") from exc
+    if spec.action_id != action_id:
+        raise HTTPException(
+            status_code=422,
+            detail=(f"action_id field ({spec.action_id!r}) must match path ({action_id!r})"),
+        )
+    rec = store.save_action(action_id, req.action_yaml)
+    return {"action_id": action_id, **rec}
+
+
+@router.delete("/{action_id}", dependencies=[Depends(require_role(Role.ADMIN))])
+async def delete_action(action_id: str, request: Request) -> dict:
+    """Delete an action (all versions). Scenarios referencing it fail their
+    next save — save-time reference discipline, no cascade."""
+    store = _require(_action_store(request), "Action catalog")
+    if not store.delete_scope(action_id):
+        raise HTTPException(status_code=404, detail=f"No action '{action_id}'")
+    return {"action_id": action_id, "deleted": True}
