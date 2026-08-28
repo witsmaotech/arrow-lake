@@ -798,7 +798,7 @@ class TestSdkHardTimeout:
 
         fake_base = types.ModuleType("gravitino.exceptions.base")
 
-        class _AnyExc(Exception):
+        class _FakeSdkError(Exception):
             pass
 
         for name in (
@@ -807,7 +807,7 @@ class TestSdkHardTimeout:
             "InternalError",
             "RESTException",
         ):
-            setattr(fake_base, name, _AnyExc)
+            setattr(fake_base, name, _FakeSdkError)
         fake_exc = types.ModuleType("gravitino.exceptions")
         fake_exc.base = fake_base
         fake_pkg = types.ModuleType("gravitino")
@@ -823,6 +823,6 @@ class TestSdkHardTimeout:
                 },
             ),
             patch.object(bridge, "SDK_CALL_TIMEOUT_SECONDS", 0.3),
+            pytest.raises(GravitinoTransientError, match="exceeded"),
         ):
-            with pytest.raises(GravitinoTransientError, match="exceeded"):
-                bridge._call_sdk(lambda: time.sleep(5))
+            bridge._call_sdk(lambda: time.sleep(5))
