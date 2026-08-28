@@ -12,8 +12,7 @@ function injectStyle() {
   styleInjected = true;
   const st = document.createElement("style");
   st.textContent = `
-.dsp-wrap{position:relative}
-.dsp-panel{position:absolute;top:calc(100% + 4px);left:0;min-width:240px;max-width:360px;max-height:300px;overflow-y:auto;background:var(--ink-900);border:1px solid var(--line);border-radius:var(--r-sm);box-shadow:0 10px 32px rgba(0,0,0,.45);z-index:70;padding:4px 0}
+.dsp-panel{position:fixed;min-width:240px;max-width:420px;max-height:300px;overflow-y:auto;background:var(--ink-900);border:1px solid var(--line);border-radius:var(--r-sm);box-shadow:0 10px 32px rgba(0,0,0,.45);z-index:9990;padding:4px 0}
 .dsp-row{display:flex;gap:8px;align-items:center;padding:7px 12px;font-size:.76rem;cursor:pointer}
 .dsp-row:hover,.dsp-row.sel{background:var(--ink-850)}
 .dsp-row.sel{box-shadow:inset 2px 0 0 var(--teal-bright)}
@@ -27,17 +26,12 @@ export function mountDatasetPicker(input, { onPick } = {}) {
   injectStyle();
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g,
     (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-  // 包一层 relative 容器(下拉锚定其下)
-  const wrap = document.createElement("span");
-  wrap.className = "dsp-wrap";
-  input.replaceWith(wrap);
-  wrap.appendChild(input);
   input.setAttribute("autocomplete", "off");
-
+  // 面板挂 body(fixed):逃离父容器 overflow 裁剪与层叠上下文
   const panel = document.createElement("div");
   panel.className = "dsp-panel";
   panel.style.display = "none";
-  wrap.appendChild(panel);
+  document.body.appendChild(panel);
 
   const state = { items: null, sel: -1, open: false };
 
@@ -71,6 +65,10 @@ export function mountDatasetPicker(input, { onPick } = {}) {
   function open() {
     state.open = true;
     state.sel = -1;
+    const r = input.getBoundingClientRect();
+    panel.style.left = Math.max(8, Math.min(r.left, innerWidth - 280)) + "px";
+    panel.style.top = Math.min(r.bottom + 4, innerHeight - 240) + "px";
+    panel.style.minWidth = Math.max(240, r.width) + "px";
     panel.style.display = "";
     if (state.items === null) {
       panel.innerHTML = '<div class="dsp-empty">探测契约中…</div>';
@@ -121,4 +119,6 @@ export function mountDatasetPicker(input, { onPick } = {}) {
   });
   document.addEventListener("click", close);
   panel.addEventListener("click", (e) => e.stopPropagation());
+  window.addEventListener("resize", close);
+  window.addEventListener("scroll", close, true);  // capture:内层滚动容器也收起
 }
