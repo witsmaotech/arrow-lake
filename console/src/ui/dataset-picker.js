@@ -101,7 +101,7 @@ export function mountDatasetPicker(input, { onPick } = {}) {
 
   input.addEventListener("focus", open);
   input.addEventListener("click", (e) => { e.stopPropagation(); if (!state.open) open(); });
-  input.addEventListener("input", () => { state.sel = -1; if (state.open) render(); });
+  input.addEventListener("input", () => { state.sel = -1; state.open ? render() : open(); });
   input.addEventListener("blur", () => setTimeout(close, 120)); // 让 mousedown 生效
   input.addEventListener("keydown", (e) => {
     if (!state.open) return;
