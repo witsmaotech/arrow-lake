@@ -11,10 +11,6 @@ from arrow_lake.config.gravitino import GravitinoConfig
 logger = structlog.get_logger(__name__)
 
 
-class _TagFetchUnavailable(Exception):
-    """Gravitino tag fetch failed for a table (keep previous ACL state)."""
-
-
 class TagAwareACLResolver:
     """Periodically reads Gravitino column-level tags and syncs them into the local
     ``PermissionChecker`` as column-level ACLs.
@@ -60,13 +56,9 @@ class TagAwareACLResolver:
                 n, keys = self._sync_table(table_name)
                 count += n
                 desired |= keys
-            except _TagFetchUnavailable:
-                # Gravitino hiccup on THIS table: keep last-known state —
-                # treating a failed fetch as "no tags" would strip protections
-                logger.warning("tag_acl_resolver.tag_fetch_unavailable",
-                               table=table_name, exc_info=True)
-                desired |= {k for k in self._tag_derived if k[0] == table_name}
             except Exception:
+                # M-15 (review 2026-08-24): 原 _TagFetchUnavailable 从未被
+                # raise(死代码,契约误导);generic 分支已提供等价保状态语义。
                 logger.warning("tag_acl_resolver.table_sync_failed",
                                table=table_name, exc_info=True)
                 desired |= {k for k in self._tag_derived if k[0] == table_name}
@@ -88,7 +80,7 @@ class TagAwareACLResolver:
     def _sync_table(self, table_name: str) -> tuple[int, set[tuple[str, str]]]:
         """Resolve tags for one table and set ACLs.
 
-        Returns (acl_count, tag_derived_keys). Raises _TagFetchUnavailable
+        Returns (acl_count, tag_derived_keys).
         when the tag fetch itself failed (distinct from "no tags") so the
         caller keeps the previous round's state instead of lifting ACLs.
         """

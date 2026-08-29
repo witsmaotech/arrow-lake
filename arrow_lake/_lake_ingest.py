@@ -102,8 +102,18 @@ def _embed_redis_client():
             return store._redis
     except Exception:
         pass
-    if _embed_redis_tried:
+    if _embed_redis is not None:
+        # M-14 (review 2026-08-24): 惰性健康检查——连接可能因 Redis 重启/
+        # 网络断已失效,try-once-forever 会让 mirror 永久静默。ping 失败
+        # → 置 None,下次调用重建(连接超时 2s,代价可控)。
+        try:
+            _embed_redis.ping()
+        except Exception:
+            _embed_redis = None
         return _embed_redis
+    if _embed_redis_tried:
+        # 上次直连失败过——但 store 可能后来连上了,给一次/调用周期重试
+        pass
     _embed_redis_tried = True
     try:
         import redis as _redis_mod
@@ -115,6 +125,7 @@ def _embed_redis_client():
         return _embed_redis
     except Exception:
         _embed_redis = None
+        # 不锁 _embed_redis_tried=True(下次调用允许重试,沿 M-14 懒重连)
         return None
 
 
