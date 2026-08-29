@@ -98,11 +98,16 @@ def main() -> int:
          json_body={"contract_yaml": demo.CONTRACT_YAML})
     print(f"[contract] {ds} saved")
 
-    # ④ 规则(含 unruly)
+    # ④ 规则(含 unruly)。重跑容忍:已是 active 的规则 transition 会 422
+    # (active→active 非法),视为已达目标态。
     for r in demo.RULES:
         _req("POST", f"{api}/api/v1/ontology/rules", tok, json_body=r, ok=(200, 201))
-        _req("POST", f"{api}/api/v1/ontology/rules/{r['rule_id']}/transition"
-                     f"?to_status=active", tok)
+        try:
+            _req("POST", f"{api}/api/v1/ontology/rules/{r['rule_id']}/transition"
+                         f"?to_status=active", tok)
+        except SystemExit as e:
+            if "illegal transition" not in str(e):
+                raise
     print(f"[rules] {len(demo.RULES)} seeded (incl. 1 unruly)")
 
     # ⑤ 行动 + 场景
