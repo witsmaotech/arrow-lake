@@ -280,3 +280,178 @@ async def dispatch(
         "project": req.project, "candidate_rows": len(rows),
         "message": "annotation dispatch started (poll /api/v1/tasks/{task_id}/status)",
     }
+
+
+# --------------------------------------------------------------------------- #
+# recover(W3.4):手动同步 LS → 解析 → 仲裁 → ADL 写回                         #
+# --------------------------------------------------------------------------- #
+
+
+class RecoverRequest(BaseModel):
+    project: str = Field(min_length=1, max_length=128)
+
+
+def _ls_tasks_payload(raw: Any) -> list[dict]:
+    """LS GET /api/tasks 响应 → task 列表(兼容 {"tasks":[...]} 与裸 list)。"""
+    if isinstance(raw, dict):
+        tasks = raw.get("tasks")
+        return tasks if isinstance(tasks, list) else []
+    return raw if isinstance(raw, list) else []
+
+
+def _existing_adl_state(
+    lake: Any, dataset: str
+) -> tuple[set[str], dict[tuple[str, str], int]]:
+    """读现有 {ds}_adl → (adl_id 集, (row,annotator)→最大版本)。表无 → 空。"""
+    try:
+        table = lake.read_dataset(f"{dataset}_adl")
+    except Exception:  # 表不存在 = 首次回收
+        return set(), {}
+    ids = set()
+    versions: dict[tuple[str, str], int] = {}
+    for row in table.select(
+        ["adl_id", "source_row_id", "annotator_id", "adl_version"]
+    ).to_pylist():
+        ids.add(row["adl_id"])
+        key = (row["source_row_id"], row["annotator_id"])
+        versions[key] = max(versions.get(key, 0), int(row["adl_version"] or 0))
+    return ids, versions
+
+
+@router.post(
+    "/recover",
+    status_code=200,
+    dependencies=[Depends(require_role(Role.ADMIN))],
+)
+async def recover(
+    req: RecoverRequest,
+    request: Request,
+    lake=Depends(get_lake),
+    user=Depends(require_role(Role.ADMIN)),
+) -> dict:
+    """手动同步(轮询对账的同一代码路径,S9):LS 增量 → 五段解析 →
+    仲裁(kappa/分歧)→ ADL 版本化写回(adl_id 幂等)→ audit。"""
+    import uuid as _uuid
+
+    from arrow_lake._lake_ingest import _DeadLetterStorageAdapter
+    from arrow_lake.annotation.adl import build_adl_batch, write_adl
+    from arrow_lake.annotation.dispatch import LSClient
+    from arrow_lake.annotation.quality import adjudicate, project_kappa
+    from arrow_lake.annotation.recover import incremental_tasks, parse_ls_annotation
+
+    store = _store(request)
+    rec = store.get_project(req.project)
+    if rec is None:
+        raise HTTPException(status_code=404, detail=f"No annotation project '{req.project}'")
+    config = request.app.state.config.annotation
+    if not config.ls_url or not config.ls_api_token:
+        raise HTTPException(
+            status_code=503,
+            detail="Label Studio not configured (annotation.ls_url / annotation.ls_api_token)",
+        )
+    ls_project_id = rec.get("ls_project_id")
+    if not ls_project_id:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Project '{req.project}' has no LS binding yet — dispatch first",
+        )
+
+    client = LSClient(config.ls_url, config.ls_api_token)
+    tasks = _ls_tasks_payload(client.list_tasks(ls_project_id, page_size=200))
+    watermark = int(rec.get("recover_watermark") or 0)
+    fresh, new_watermark = incremental_tasks(tasks, watermark=watermark)
+
+    recovered = [a for t in fresh for a in parse_ls_annotation(t)]
+    by_task: dict[str, list] = {}
+    for ann in recovered:
+        by_task.setdefault(ann.row_id, []).append(ann)
+    verdicts = adjudicate(by_task)
+
+    existing_ids, group_versions = _existing_adl_state(lake, rec["dataset"])
+    batch_id = f"rec-{_uuid.uuid4().hex[:8]}"
+    table, written = build_adl_batch(
+        dataset=rec["dataset"], recovered=recovered, adjudications=verdicts,
+        batch_id=batch_id, existing_adl_ids=existing_ids,
+        group_versions=group_versions,
+    )
+    if written:
+        write_adl(_DeadLetterStorageAdapter(lake._get_storage()), rec["dataset"], table)
+    store.set_watermark(req.project, new_watermark)
+
+    kappa = project_kappa(by_task)
+    counts = {"approved": 0, "arbitration": 0, "pending": 0}
+    for verdict in verdicts.values():
+        counts[verdict.status] = counts.get(verdict.status, 0) + 1
+    summary = {
+        "project": req.project,
+        "tasks_seen": len(fresh),
+        "annotations_recovered": len(recovered),
+        "adl_rows_written": written,
+        "review": counts,
+        "kappa": kappa,
+        "watermark": new_watermark,
+        "batch_id": batch_id,
+    }
+    with contextlib.suppress(Exception):  # audit best-effort
+        lake.audit_record(
+            "annotation.recover",
+            dataset_name=rec["dataset"],
+            actor=user.username or user.sub,
+            payload=summary,
+        )
+    return summary
+
+
+@router.get(
+    "/projects/{name}/adl",
+    dependencies=[Depends(require_role(Role.ADMIN))],
+)
+async def get_adl(name: str, request: Request, lake=Depends(get_lake)) -> dict:
+    """ADL 可见性:最近写回行(默认前 50,倒序)。"""
+    store = _store(request)
+    rec = store.get_project(name)
+    if rec is None:
+        raise HTTPException(status_code=404, detail=f"No annotation project '{name}'")
+    dataset = rec["dataset"]
+    try:
+        table = lake.read_dataset(f"{dataset}_adl")
+    except Exception as exc:  # 未 dispatch/recover 过
+        raise HTTPException(
+            status_code=404, detail=f"No ADL table for '{dataset}' yet (recover first): {exc}"
+        ) from exc
+    rows = table.to_pylist()
+    rows.reverse()  # 最近写回在前
+    return {"project": name, "dataset": dataset, "total": len(rows), "rows": rows[:50]}
+
+
+@router.post("/webhook")
+async def ls_webhook(request: Request, lake=Depends(get_lake)) -> dict:
+    """LS webhook 接收(S9 加速通道;轮询对账为主)。
+
+    无 AL 认证——LS 是内网旁路容器,D1 凭据方向是 AL→LS;本端点只做
+    解析 + 审计,不写 ADL(数据回收统一走 recover,adl_id 幂等保证
+    webhook/轮询双通道不重复)。
+    """
+    from arrow_lake.annotation.recover import parse_webhook
+
+    try:
+        payload = await request.json()
+    except Exception:  # 非 JSON(探测/误投)
+        return {"accepted": False}
+    if not isinstance(payload, dict):
+        return {"accepted": False}
+    rec = parse_webhook(payload)
+    action = str(payload.get("action") or "")
+    if rec is None:
+        return {"accepted": False, "action": action}
+    with contextlib.suppress(Exception):
+        lake.audit_record(
+            "annotation.webhook",
+            dataset_name="",
+            actor=f"ls-user:{rec.annotator_id}",
+            payload={
+                "action": action, "task_id": rec.task_id, "row_id": rec.row_id,
+                "annotator": rec.annotator_id,
+            },
+        )
+    return {"accepted": True, "action": action, "row_id": rec.row_id}

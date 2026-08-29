@@ -20,7 +20,7 @@ _NOW = "strftime('%Y-%m-%dT%H:%M:%SZ','now')"
 _COLS = (
     "id", "name", "dataset", "template_name", "labeling_config",
     "config_source", "config_hash", "ls_project_id", "status",
-    "created_at", "updated_at",
+    "created_at", "updated_at", "recover_watermark",
 )
 
 
@@ -90,6 +90,17 @@ class AnnotationProjectStore:
             f"UPDATE annotation_projects SET status = ?, updated_at = {_NOW} "
             "WHERE name = ?",
             (status, name),
+        )
+        self._db.commit()
+        return bool(getattr(cur, "rowcount", 0))
+
+    # --- 回收 watermark(W3.4,轮询对账增量游标) ---------------------------
+
+    def set_watermark(self, name: str, watermark: int) -> bool:
+        cur = self._db.execute(
+            f"UPDATE annotation_projects SET recover_watermark = ?, updated_at = {_NOW} "
+            "WHERE name = ?",
+            (int(watermark), name),
         )
         self._db.commit()
         return bool(getattr(cur, "rowcount", 0))
