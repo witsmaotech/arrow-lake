@@ -295,7 +295,7 @@ class IngestionQualityGate:
                 marked = con.execute(marker_sel).fetch_arrow_table()
             finally:
                 con.close()
-        except Exception:  # noqa: BLE001 — internal eval error
+        except Exception:
             logger.error(
                 "contract_gate_eval_failed", dataset=dataset_name,
                 table=table_name, mode=self._mode, exc_info=True,
@@ -366,7 +366,7 @@ class IngestionQualityGate:
             )
             try:
                 quality_gate_truncated_total.labels(stage="schema").inc()
-            except Exception:  # noqa: BLE001 — metric 面不阻塞门禁
+            except Exception:
                 pass
             table = table.slice(0, max_rows)
         rows = table.to_pydict()

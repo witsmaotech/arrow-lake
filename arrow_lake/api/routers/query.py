@@ -15,6 +15,8 @@ from arrow_lake.api.models.common import (
     arrow_table_to_ipc_base64,
     arrow_table_to_response,
 )
+
+
 def _acl_enforced_sql(sql: str, name: str, checker: Any, role: Any) -> str:
     """Source-level row/column ACL enforcement (v1.10.7 WP1b/c, review C2).
 
@@ -220,13 +222,16 @@ async def olap_query(
     table_ = checker.apply_table_filter(result.table, dataset=target, role=_user.role)
 
     if req.stream:
+        # M-9 (review 2026-08-24): X-SQL 回显用户原始 SQL,enforced 版本含
+        # 行过滤谓词值(admin 配置的 PII 范围),受限用户不可见
         return StreamingResponse(
             _stream_table(table_, req.batch_size),
             media_type="text/event-stream",
-            headers={"X-Row-Count": str(table_.num_rows), "X-SQL": result.sql},
+            headers={"X-Row-Count": str(table_.num_rows), "X-SQL": req.sql},
         )
 
-    resp = arrow_table_to_response(table_, req.format, meta={"sql": result.sql})
+    # M-9: meta.sql 同理——回显原始,不泄 enforced 形态
+    resp = arrow_table_to_response(table_, req.format, meta={"sql": req.sql})
     return OlapQueryResponse(**resp)
 
 
@@ -260,7 +265,8 @@ async def metadata_query(
         timeout=_QUERY_TIMEOUT, label="metadata_query", executor=olap_executor,
     )
     table_ = checker.apply_table_filter(result.table, dataset=target, role=_user.role)
-    resp = arrow_table_to_response(table_, req.format, meta={"sql": result.sql})
+    # M-9: meta.sql 回显原始 SQL,enforced 版本含行过滤谓词值
+    resp = arrow_table_to_response(table_, req.format, meta={"sql": req.sql})
     return OlapQueryResponse(**resp)
 
 
@@ -280,6 +286,18 @@ async def graph_query(
     recursive CTE — complementary to HugeGraph for lightweight neighbor/path
     queries. Returns ``depth, node, path`` (+ ``cost`` when ``weight_col`` set).
     """
+    # M-10 (review 2026-08-24): src/dst/weight 列须在用户 visible_columns
+    # 内——隐藏列值可通过遍历结果被推理(node/path 回显真实值)
+    acl = checker.get_acl(name, _user.role)
+    visible = getattr(acl, "visible_columns", None) if acl is not None else None
+    if visible:
+        allowed = set(visible)
+        for col in (req.src_col, req.dst_col, req.weight_col):
+            if col and col not in allowed:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"column '{col}' not in your visible columns",
+                )
     result = await run_sync(
         lake.graph_query,
         name,

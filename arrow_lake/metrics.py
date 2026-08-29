@@ -14,6 +14,9 @@ from arrow_lake.core.metrics import (
     processing_active_tasks,
     processing_embeddings_total,
     processing_quality_rejects_total,
+    quality_dead_letter_failures_total,
+    quality_gate_truncated_total,
+    quality_gate_wiring_failures_total,
     query_latency_seconds,
     query_results_total,
     query_total,
@@ -23,16 +26,7 @@ from arrow_lake.core.metrics import (
     workflow_steps_total,
 )
 
-from arrow_lake.core.metrics import (  # noqa: E402 — v1.11.2 backlog(M-12/M-13/M-16)
-    quality_dead_letter_failures_total,
-    quality_gate_truncated_total,
-    quality_gate_wiring_failures_total,
-)
-
 __all__ = [
-    "quality_dead_letter_failures_total",
-    "quality_gate_truncated_total",
-    "quality_gate_wiring_failures_total",
     "REGISTRY",
     "catalog_queries_total",
     "catalog_tables_total",
@@ -46,6 +40,9 @@ __all__ = [
     "processing_active_tasks",
     "processing_embeddings_total",
     "processing_quality_rejects_total",
+    "quality_dead_letter_failures_total",
+    "quality_gate_truncated_total",
+    "quality_gate_wiring_failures_total",
     "query_latency_seconds",
     "query_results_total",
     "query_total",

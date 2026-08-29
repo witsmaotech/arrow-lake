@@ -14,7 +14,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from arrow_lake.api.auth_models import Role
-from arrow_lake.api.deps import get_lake, require_role
+from arrow_lake.api.deps import authorize_dataset_read, get_lake, require_role
 
 logger = structlog.get_logger(__name__)
 
@@ -167,8 +167,18 @@ def list_tables(request: Request, lake=Depends(get_lake), _user=Depends(require_
 
 
 @router.get("/tables/{name}")
-def get_table(name: str, request: Request, lake=Depends(get_lake), _user=Depends(require_role(Role.VIEWER))) -> dict[str, Any]:
-    """Get table details; fall back to the lake dataset schema if not in Gravitino."""
+def get_table(
+    name: str,
+    request: Request,
+    lake=Depends(get_lake),
+    _user=Depends(require_role(Role.VIEWER)),
+    _acl_guard: None = Depends(authorize_dataset_read),
+) -> dict[str, Any]:
+    """Get table details; fall back to the lake dataset schema if not in Gravitino.
+
+    M-11 (review 2026-08-24): dataset deny guard — schema is metadata the
+    deny-guarded dataset endpoints protect.
+    """
     _validate_id(name, "table name")
     cfg = request.app.state.config.gravitino
     data = _gravitino_get(
@@ -221,6 +231,7 @@ def list_column_tags(
     request: Request,
     name: str,
     _user=Depends(require_role(Role.VIEWER)),
+    _acl_guard: None = Depends(authorize_dataset_read),
 ) -> dict[str, Any]:
     """List column-level tags for a table. Returns ``{column: [tag_names]}``.
 

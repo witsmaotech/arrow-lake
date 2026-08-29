@@ -7,7 +7,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
@@ -27,6 +27,7 @@ _embed_backfill_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix=
 # Graceful shutdown at process exit (don't block on stuck workers). Per-task
 # timeout is the embed backend's responsibility (LLM_TIMEOUT_SECONDS etc).
 import atexit as _atexit
+
 _atexit.register(_embed_backfill_executor.shutdown, wait=False)
 
 # Coarse per-step ceiling for the background embed+vector backfill. The real
@@ -49,7 +50,7 @@ def _run_step_with_timeout(func: Any, *, timeout: float, label: str) -> Any:
     def _work() -> None:
         try:
             holder["result"] = func()
-        except BaseException as exc:  # noqa: BLE001 — surfaced to caller
+        except BaseException as exc:
             holder["error"] = exc
 
     t = threading.Thread(target=_work, daemon=True, name=f"embed-bg-{label}")
@@ -61,7 +62,7 @@ def _run_step_with_timeout(func: Any, *, timeout: float, label: str) -> Any:
         raise holder["error"]
     return holder.get("result")
 _EMBED_BG_LOCK = threading.Lock()
-_embed_bg: dict[str, "_EmbedBackfillStatus"] = {}
+_embed_bg: dict[str, _EmbedBackfillStatus] = {}
 
 
 @dataclass
@@ -99,7 +100,7 @@ def _embed_redis_client():
         store = TaskManager._redis_store
         if store is not None and getattr(store, "_connected", False):
             return store._redis
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
     if _embed_redis_tried:
         return _embed_redis
@@ -112,7 +113,7 @@ def _embed_redis_client():
         _embed_redis = _redis_mod.Redis.from_url(url, socket_connect_timeout=2)
         _embed_redis.ping()
         return _embed_redis
-    except Exception:  # noqa: BLE001
+    except Exception:
         _embed_redis = None
         return None
 
@@ -126,7 +127,7 @@ def _sync_embed_status_redis(dataset_name: str, status: dict) -> None:
         import json as _json
         key = f"{_EMBED_REDIS_PREFIX}:{dataset_name}"
         r.set(key, _json.dumps(status, default=str), ex=_EMBED_STATUS_TTL_S)
-    except Exception:  # noqa: BLE001 — Redis is best-effort
+    except Exception:
         pass
 
 
@@ -143,7 +144,7 @@ def _read_embed_status_redis(dataset_name: str) -> dict | None:
         if isinstance(raw, bytes):
             raw = raw.decode()
         return _json.loads(raw)
-    except Exception:  # noqa: BLE001
+    except Exception:
         return None
 
 
@@ -172,7 +173,7 @@ class _LakeIngestMixin:
         """Best-effort current Lance version for lineage; None if unreadable."""
         try:
             return self.get_dataset_version(name)
-        except Exception:  # noqa: BLE001
+        except Exception:
             return None
 
     def _make_ingestor(self, dataset_name: str | None = None, **extra_kwargs: Any):
@@ -196,7 +197,7 @@ class _LakeIngestMixin:
                 if dataset_name:
                     try:
                         target_schema = self.open_dataset(dataset_name).schema
-                    except Exception:  # noqa: BLE001 — first write: no schema yet
+                    except Exception:
                         target_schema = None
                 gate = build_quality_gate(
                     quality_cfg,
@@ -207,13 +208,13 @@ class _LakeIngestMixin:
                     contract_constraints=self._load_contract_constraints(dataset_name),
                     dataset_name=dataset_name,  # v1.11.0.3 W3: gate_mode_overrides
                 )
-        except Exception:  # noqa: BLE001 — gate wiring must never block ingest
+        except Exception:
             logger.warning("quality_gate_wiring_failed", exc_info=True)
             try:
                 from arrow_lake.metrics import quality_gate_wiring_failures_total
 
                 quality_gate_wiring_failures_total.inc()
-            except Exception:  # noqa: BLE001 — metric 面不阻塞摄入
+            except Exception:
                 pass
             gate = None
         return Ingestor(self._get_storage(), quality_gate=gate, **extra_kwargs)
@@ -242,7 +243,6 @@ class _LakeIngestMixin:
         Returns:
             IngestionReport with per-source and total stats.
         """
-        from arrow_lake.ingest.ingestor import Ingestor
 
         report = self._make_ingestor(dataset_name).ingest(
             dataset_name, file_paths, transforms=transforms, target_table=table,
@@ -322,7 +322,6 @@ class _LakeIngestMixin:
         Returns:
             IngestionReport with per-group stats.
         """
-        from arrow_lake.ingest.ingestor import Ingestor
 
         report = self._make_ingestor(dataset_name).ingest_batch(
             dataset_name, file_paths, transforms=transforms,
@@ -363,7 +362,6 @@ class _LakeIngestMixin:
         Returns:
             IngestionReport with stats.
         """
-        from arrow_lake.ingest.ingestor import Ingestor
 
         report = self._make_ingestor(dataset_name).ingest_sql(
             dataset_name,
@@ -408,7 +406,6 @@ class _LakeIngestMixin:
         Returns:
             IngestionReport with stats.
         """
-        from arrow_lake.ingest.ingestor import Ingestor
 
         report = self._make_ingestor(dataset_name).ingest_kafka(
             dataset_name,
@@ -436,7 +433,6 @@ class _LakeIngestMixin:
         actor: str = "system",
     ) -> IngestionReport:
         """Ingest data from an Apache Iceberg table."""
-        from arrow_lake.ingest.ingestor import Ingestor
 
         report = self._make_ingestor(dataset_name).ingest_iceberg(
             dataset_name, table_uri=table_uri, transforms=transforms,
@@ -458,7 +454,6 @@ class _LakeIngestMixin:
         actor: str = "system",
     ) -> IngestionReport:
         """Ingest data from a Delta Lake table."""
-        from arrow_lake.ingest.ingestor import Ingestor
 
         report = self._make_ingestor(dataset_name).ingest_deltalake(
             dataset_name, table_uri=table_uri, version=version, transforms=transforms,
@@ -565,7 +560,6 @@ class _LakeIngestMixin:
         Returns:
             IngestionReport with per-source and total stats.
         """
-        from arrow_lake.ingest.ingestor import Ingestor
 
         report = self._make_ingestor(dataset_name).ingest_http(dataset_name, urls)
         self._lineage_after_ingest(
@@ -592,7 +586,6 @@ class _LakeIngestMixin:
         Returns:
             IngestionReport with per-source and total stats.
         """
-        from arrow_lake.ingest.ingestor import Ingestor
 
         report = self._make_ingestor(dataset_name).ingest_images(dataset_name, image_paths)
         self._lineage_after_ingest(
@@ -619,7 +612,6 @@ class _LakeIngestMixin:
         Returns:
             IngestionReport with per-source and total stats.
         """
-        from arrow_lake.ingest.ingestor import Ingestor
 
         report = self._make_ingestor(dataset_name).ingest_videos(dataset_name, video_paths)
         self._lineage_after_ingest(
@@ -647,7 +639,6 @@ class _LakeIngestMixin:
         Returns:
             Combined IngestionReport.
         """
-        from arrow_lake.ingest.ingestor import Ingestor
 
         report = self._make_ingestor(dataset_name).ingest_mixed(dataset_name, sources)
         self._lineage_after_ingest(
@@ -678,7 +669,6 @@ class _LakeIngestMixin:
         Returns:
             IngestionReport with per-document and total stats.
         """
-        from arrow_lake.ingest.ingestor import Ingestor
         from arrow_lake.ingest.ocr import TurboOcrClient
         from arrow_lake.storage.blob_store import BlobStoreManager
 
@@ -706,7 +696,7 @@ class _LakeIngestMixin:
             try:
                 from arrow_lake.knowledge_graph.doc_type_router import DocTypeClassifier
                 doc_type_classifier = DocTypeClassifier.from_llm_config(self._config.llm)
-            except Exception as exc:  # noqa: BLE001 — best-effort
+            except Exception as exc:
                 import structlog
                 structlog.get_logger(__name__).warning(
                     "ingest.doc_type_classifier_disabled", err=str(exc)[:150],
@@ -768,7 +758,7 @@ class _LakeIngestMixin:
             try:
                 fn(*args)
                 return True
-            except Exception as exc:  # noqa: BLE001 — never fail ingest on a post-step
+            except Exception as exc:
                 log.warning(
                     "ingest.post_step_failed",
                     dataset=dataset_name, step=label, err=str(exc)[:160],
@@ -845,7 +835,7 @@ class _LakeIngestMixin:
             from arrow_lake.contract.schema import parse_contract
 
             return compile_contract(parse_contract(rec["contract_yaml"])).rows
-        except Exception:  # noqa: BLE001 — fail-open like the rest of the wiring
+        except Exception:
             logger.warning(
                 "contract_gate_load_failed", dataset=dataset_name, exc_info=True
             )
@@ -865,7 +855,7 @@ class _LakeIngestMixin:
             return
         try:
             store.add_container_table(name, table)
-        except Exception:  # noqa: BLE001 — registration must never block ingest
+        except Exception:
             logger.warning(
                 "container_table_register_failed", dataset=name, table=table, exc_info=True,
             )
@@ -1228,9 +1218,10 @@ class _LakeIngestMixin:
         Centralizes the DAFT / OPENAI / LOCAL branches (v1.10.2 P1) so the
         first-time add and the null-backfill paths share one encoder path.
         """
+        import numpy as np
+
         from arrow_lake.config._enums import EmbeddingBackend
         from arrow_lake.embed.encoder import ApiEmbeddingEncoder, LocalEmbeddingEncoder
-        import numpy as np
 
         effective_batch = batch_size or emb_cfg.batch_size
         n = len(texts)
@@ -1346,7 +1337,7 @@ class _LakeIngestMixin:
         if not storage.has_column(dataset_name, embedding_column):
             try:
                 return storage.read_dataset(dataset_name, columns=["text_content"]).num_rows
-            except Exception:  # noqa: BLE001 — unreadable → treat as nothing to do
+            except Exception:
                 return 0
         # append: text_embedding 列已存在。不 read_dataset 全列(FixedSizeList
         # 2560dim 物化 child 卡死,实测 SELECT * 同列 120s 超时),用 lance
@@ -1354,7 +1345,7 @@ class _LakeIngestMixin:
         try:
             return int(storage.open_dataset(dataset_name).count_rows(
                 filter=f"{embedding_column} IS NULL"))
-        except Exception:  # noqa: BLE001
+        except Exception:
             return 0
 
     def _run_embed_and_vector_bg(self, dataset_name: str, null_rows: int) -> None:
@@ -1367,7 +1358,7 @@ class _LakeIngestMixin:
         """
         import structlog
         log = structlog.get_logger(__name__)
-        started = datetime.now(timezone.utc).isoformat()
+        started = datetime.now(UTC).isoformat()
         cur = _EmbedBackfillStatus(status="running", started_at=started, null_rows=null_rows)
         with _EMBED_BG_LOCK:
             _embed_bg[dataset_name] = cur
@@ -1384,17 +1375,17 @@ class _LakeIngestMixin:
                 )
             cur = _EmbedBackfillStatus(
                 status="completed", started_at=cur.started_at,
-                finished_at=datetime.now(timezone.utc).isoformat(),
+                finished_at=datetime.now(UTC).isoformat(),
                 null_rows=cur.null_rows,
             )
             with _EMBED_BG_LOCK:
                 _embed_bg[dataset_name] = cur
             _sync_embed_status_redis(dataset_name, asdict(cur))
             log.info("embed_backfill_bg_completed", dataset=dataset_name)
-        except Exception as exc:  # noqa: BLE001 — background thread, never raise
+        except Exception as exc:
             cur = _EmbedBackfillStatus(
                 status="failed", started_at=cur.started_at,
-                finished_at=datetime.now(timezone.utc).isoformat(),
+                finished_at=datetime.now(UTC).isoformat(),
                 null_rows=null_rows, error=type(exc).__name__,
             )
             with _EMBED_BG_LOCK:
