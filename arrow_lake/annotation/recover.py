@@ -80,11 +80,17 @@ def _parse_one(
         if rtype == "labels":
             from_name = item.get("from_name", "")
             text = str(value.get("text") or "")
-            if item.get("id"):
-                text_of[str(item["id"])] = text
             labels = value.get("labels") or []
             label = str(labels[0]) if labels else ""
-            span = Span(label, int(value.get("start", 0)), int(value.get("end", 0)), text)
+            # review P3: 非整数 offset(脏数据/恶意 payload)丢该 region,
+            # 不让一条坏标注 500 整个回收
+            try:
+                span = Span(
+                    label, int(value.get("start", 0)), int(value.get("end", 0)), text)
+            except (TypeError, ValueError):
+                continue
+            if item.get("id"):
+                text_of[str(item["id"])] = text
             (events if from_name == "events" else objects).append(span)
         elif rtype == "choices":
             choices = value.get("choices") or []
@@ -103,8 +109,12 @@ def _parse_one(
                 relations.append(Triple(subject, predicate, obj))
 
     data = task.get("data") or {}
+    try:
+        task_id = int(task.get("id", 0))
+    except (TypeError, ValueError):
+        task_id = 0
     return RecoveredAnnotation(
-        task_id=int(task.get("id", 0)),
+        task_id=task_id,
         row_id=str(data.get("row_id") or f"task-{task.get('id', 0)}"),
         strategy=str(data.get("strategy") or ""),
         annotator_id=str(annotation.get("completed_by", "")),
@@ -144,6 +154,12 @@ def incremental_tasks(
     tasks: list[dict[str, Any]], *, watermark: int
 ) -> tuple[list[dict[str, Any]], int]:
     """watermark 增量:``id > watermark`` 的任务 + 新 watermark(max)。"""
-    fresh = [t for t in tasks if int(t.get("id", 0)) > watermark]
-    new_wm = max((int(t.get("id", 0)) for t in fresh), default=watermark)
+    def _tid(t: dict[str, Any]) -> int:
+        try:
+            return int(t.get("id", 0))
+        except (TypeError, ValueError):  # review P3: 脏 id 视为 0(不阻断)
+            return 0
+
+    fresh = [t for t in tasks if _tid(t) > watermark]
+    new_wm = max((_tid(t) for t in fresh), default=watermark)
     return fresh, new_wm

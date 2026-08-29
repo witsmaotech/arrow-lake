@@ -17,6 +17,11 @@ _PUBLIC_PATHS: frozenset[str] = frozenset({
     # "intermittent homepage 401" console error (the request carries no
     # credentials by design; caching made it look intermittent).
     "/favicon.ico",
+    # v1.11.3 W4 review: LS webhooks carry no AL credentials (the D1 trust
+    # direction is AL→LS) — the global auth wall would 401 every LS event,
+    # silently killing the S9 acceleration channel. The endpoint carries its
+    # own shared-secret gate (annotation.webhook_secret; empty = disabled).
+    "/api/v1/annotation/webhook",
 })
 
 # Doc paths that bypass auth only when docs are enabled.

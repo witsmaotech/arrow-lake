@@ -12,6 +12,7 @@ labeling_config 两条路(S2):默认从绑定模板经 template_gen 生成;
 from __future__ import annotations
 
 import contextlib
+import logging
 import re
 from typing import Any
 
@@ -25,6 +26,8 @@ from arrow_lake.api.auth_models import Role
 from arrow_lake.api.deps import get_lake, require_role
 
 router = APIRouter(prefix="/api/v1/annotation", tags=["annotation"])
+
+logger = logging.getLogger(__name__)
 
 
 def _store(request: Request) -> Any:
@@ -187,6 +190,13 @@ async def _bg_dispatch(
     rec = store.get_project(project)
     extractor_factory = getattr(lake, "_get_kg_extractor", None)
     extractor = extractor_factory() if extractor_factory else None
+    # review P2: extractor 复用 KG 工厂(hugegraph.enabled gate)——KG 关闭
+    # 的部署预标注静默为空。显式记进 outcome/audit,不吞。
+    preannotation_mode = "hyper-extract" if extractor is not None else "skipped-no-extractor"
+    if extractor is None:
+        logger.warning(
+            "annotation.dispatch: no KG extractor (hugegraph disabled?) — "
+            "dispatching WITHOUT pre-annotations")
 
     def _audit(event: str, payload: dict) -> None:
         # audit best-effort,不阻塞派发结果
@@ -217,7 +227,7 @@ async def _bg_dispatch(
     return {
         "project": project, "ls_project_id": outcome.ls_project_id,
         "dispatched": outcome.dispatched, "skipped": outcome.skipped,
-        "strategies": outcome.strategies,
+        "strategies": outcome.strategies, "preannotation": preannotation_mode,
     }
 
 

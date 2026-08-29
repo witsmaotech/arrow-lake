@@ -120,7 +120,11 @@ def project_kappa(
     *,
     n_raters: int | None = None,
 ) -> float | None:
-    """项目级 Fleiss' kappa(MS5 信号);不足 2 人/无任务 → None。
+    """Fleiss' kappa across the given tasks(MS5 信号);不足 2 人 → None。
+
+    ⚠️ 轮级非累计(review C5):输入是本轮回收的 fresh 标注——增量
+    watermark 语义下这是"本轮批内一致性";项目全生命周期 kappa 需从
+    ADL 聚合(W5 试点后再做口径)。
 
     Fleiss 经典要求每任务标注者数一致:``n_raters`` 缺省取各任务标注数
     的最小值,只纳入达标任务。
