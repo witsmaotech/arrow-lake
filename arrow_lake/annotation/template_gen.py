@@ -27,7 +27,7 @@ import yaml
 
 from arrow_lake.ontology.template_adapter import OntologySpec, adapt_template
 
-__all__ = ["L4Fields", "LSConfig", "TemplateGenError", "generate_ls_config"]
+__all__ = ["EVENT_KEYWORDS", "L4Fields", "LSConfig", "TemplateGenError", "generate_ls_config"]
 
 # YAML 防御帽(输入虽是 gallery 文件,统一沿 actions/yaml_io 双帽纪律)
 _MAX_NODES = 20_000
@@ -35,8 +35,10 @@ _MAX_DEPTH = 64
 # manual_config 尺寸帽(label_config 本体就是小 XML,64KB 远超合理上限)
 _MAX_MANUAL_BYTES = 64 * 1024
 
-# events 启发式:枚举值命中任一关键词即视为事件类(设计 §3.2 "事件类")
-_EVENT_KEYWORDS = ("告警", "事故", "事件", "故障", "预警", "风险")
+# events 启发式:枚举值命中任一关键词即视为事件类(设计 §3.2 "事件类")。
+# 公共导出:preannotate 的实体分流(events vs objects)必须与 config 生成
+# 同源,两处定义会漂移。
+_EVENT_KEYWORDS = EVENT_KEYWORDS = ("告警", "事故", "事件", "故障", "预警", "风险")
 # scenario 默认三值(契约 lifecycle 联动在 W2 dispatch 接,W1 先给静态默认)
 _DEFAULT_SCENARIO_CHOICES = ("常规", "应急", "演练")
 

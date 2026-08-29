@@ -10,6 +10,7 @@ import yaml
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from arrow_lake.config.annotation import AnnotationConfig
 from arrow_lake.config.api import (
     ApiConfig,
     AuditConfig,
@@ -38,7 +39,6 @@ from arrow_lake.config.olap import OlapConfig
 from arrow_lake.config.ontology import OntologyConfig
 from arrow_lake.config.rag import HugeGraphConfig, LLMConfig, RAGConfig
 from arrow_lake.config.redis import RedisConfig
-from arrow_lake.config.system_db import SystemDBConfig
 from arrow_lake.config.search import (
     EnsembleSearchConfig,
     FacetedSearchConfig,
@@ -47,6 +47,7 @@ from arrow_lake.config.search import (
     VectorSearchConfig,
 )
 from arrow_lake.config.storage import StorageConfig
+from arrow_lake.config.system_db import SystemDBConfig
 from arrow_lake.config.workflow import ArgoConfig, AutoscaleConfig, WorkflowConfig
 
 # Registry mapping section names to their Pydantic model classes.
@@ -66,6 +67,7 @@ _SECTION_TYPES: dict[str, type[BaseModel]] = {
     "daft": DaftConfig,
     "quality": QualityConfig,
     "ontology": OntologyConfig,
+    "annotation": AnnotationConfig,
     "workflow": WorkflowConfig,
     "argo": ArgoConfig,
     "autoscale": AutoscaleConfig,
@@ -123,6 +125,7 @@ class ArrowLakeConfig(BaseSettings):
     daft: DaftConfig = DaftConfig()
     quality: QualityConfig = QualityConfig()
     ontology: OntologyConfig = OntologyConfig()
+    annotation: AnnotationConfig = AnnotationConfig()  # MS4 loop (v1.11.3)
     workflow: WorkflowConfig = WorkflowConfig()
     argo: ArgoConfig = ArgoConfig()
     autoscale: AutoscaleConfig = AutoscaleConfig()

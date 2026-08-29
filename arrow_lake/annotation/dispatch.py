@@ -16,10 +16,15 @@ import json
 import logging
 import urllib.error
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
 from typing import Any
 
-__all__ = ["LSClient", "LSClientError"]
+from arrow_lake.annotation.masking import apply_annotation_masking
+from arrow_lake.annotation.preannotate import to_ls_prediction
+from arrow_lake.annotation.sampler import SampleBudget, SampledRow, sample_rows
+
+__all__ = ["DispatchOutcome", "LSClient", "LSClientError", "run_dispatch"]
 
 logger = logging.getLogger(__name__)
 
@@ -126,3 +131,124 @@ class LSClient:
         return self._api(
             "GET", f"/api/tasks?project={project_id}&page={page}&page_size={page_size}"
         )
+
+
+# --------------------------------------------------------------------------- #
+# dispatch 全链(W2.4):采样 → 脱敏 → 预标注 → LS import                     #
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True)
+class DispatchOutcome:
+    """一次派发的结构化结果(audit payload 的数据面)。"""
+
+    project: str
+    dataset: str
+    ls_project_id: int
+    dispatched: int
+    skipped: int = 0
+    strategies: dict[str, int] = field(default_factory=dict)
+
+
+async def run_dispatch(
+    *,
+    project: str,
+    dataset: str,
+    labeling_config: str,
+    ls_project_id: int | None,
+    rows: list[dict[str, Any]],
+    text_column: str,
+    total: int,
+    budget: SampleBudget,
+    quality_scores: Mapping[str, float] | None,
+    embeddings: Mapping[str, Sequence[float]] | None,
+    dead_row_ids: Sequence[str] | None,
+    committee: Sequence[str] | None,
+    generalize_rules: Sequence[tuple[str, str]],
+    entity_names: Sequence[str],
+    hmac_key: bytes | None,
+    ls_client: LSClient,
+    extractor: Any,
+    bind_ls_project: Callable[[str, int], None] | None,
+    import_batch_size: int = 50,
+) -> DispatchOutcome:
+    """采样→脱敏→HE 预标注(脱敏文本上,span 自洽)→LS import。
+
+    依赖全注入(LSClient/extractor/bind 回调)——mock 即全链 e2e;行是
+    候选池 dicts,``row_id = "r{i}"``(池内序号,回收对账 join 键)。
+    LS 懒绑定:``ls_project_id`` 缺/失效 → create + ``bind_ls_project``
+    回写注册表(transient 重绑,W1.4 红线)。单行 HE 失败 → 空 prediction
+    仍派发(S4 预测是建议非强制);LS import 失败上抛(router → 502)。
+    """
+    row_ids = [f"r{i}" for i in range(len(rows))]
+    sampled: list[SampledRow] = sample_rows(
+        total=total, row_ids=row_ids,
+        quality_scores=quality_scores, embeddings=embeddings,
+        dead_row_ids=dead_row_ids, committee_disagreements=committee,
+        budget=budget,
+    )
+
+    # 懒绑定:无 id 或 LS 侧已消失 → (重)创建并回写
+    if ls_project_id is not None:
+        try:
+            ls_client.get_project(ls_project_id)
+        except LSClientError:
+            logger.info("annotation.dispatch: LS project %s gone — recreating", ls_project_id)
+            ls_project_id = None
+    if ls_project_id is None:
+        rec = await _maybe_async(
+            ls_client.create_project(project, labeling_config))
+        ls_project_id = int(rec.get("id", 0))
+        if not ls_project_id:
+            raise LSClientError("LS create_project returned no id")
+        if bind_ls_project is not None:
+            bind_ls_project(project, ls_project_id)
+
+    tasks: list[dict[str, Any]] = []
+    skipped = 0
+    for pick in sampled:
+        row = rows[int(pick.row_id[1:])]
+        text = str(row.get(text_column) or "").strip()
+        if not text:
+            skipped += 1
+            continue
+        masked = apply_annotation_masking(
+            text, generalize_rules=generalize_rules,
+            entity_names=entity_names, hmac_key=hmac_key,
+        )
+        try:
+            result = await extractor.extract(masked)
+        except Exception:  # 单行 HE 失败容错(空 prediction)
+            logger.warning("annotation.dispatch: extract failed for %s", pick.row_id)
+            result = None
+        prediction = to_ls_prediction(result) if result is not None else {
+            "model_version": "hyper-extract", "result": [],
+        }
+        tasks.append({
+            "data": {"text": masked, "row_id": pick.row_id, "strategy": pick.strategy},
+            "predictions": [prediction],
+        })
+
+    for start in range(0, len(tasks), max(1, import_batch_size)):
+        await _maybe_async(
+            ls_client.import_tasks(
+                ls_project_id, tasks[start:start + max(1, import_batch_size)])
+        )
+
+    strategies: dict[str, int] = {}
+    for t in tasks:
+        st = t["data"]["strategy"]
+        strategies[st] = strategies.get(st, 0) + 1
+    return DispatchOutcome(
+        project=project, dataset=dataset, ls_project_id=ls_project_id,
+        dispatched=len(tasks), skipped=skipped, strategies=strategies,
+    )
+
+
+async def _maybe_async(value: Any) -> Any:
+    """同步 client(测试替身/urllib 封装)与 async client 通吃。"""
+    import inspect
+
+    if inspect.isawaitable(value):
+        return await value
+    return value
