@@ -64,8 +64,11 @@ class IngestionQualityGate:
         target_schema: pa.Schema | None = None,
         filter_registry: Any | None = None,
         contract_constraints: tuple = (),
+        schema_max_rows: int = 100_000,
     ) -> None:
         self._mode = mode
+        # M-16: schema 段 to_pydict 物化截断帽(超出部分跳过该段采样)
+        self._schema_max_rows = max(1, int(schema_max_rows))
         self._schema_mode = schema_mode
         self._active_filters = active_filters
         self._filter_mode = filter_mode
@@ -351,6 +354,21 @@ class IngestionQualityGate:
         from arrow_lake.quality.schema_validation import SchemaValidationGate
 
         gate = SchemaValidationGate(mode=self._schema_mode)
+        # M-16: to_pydict 全量物化线性成本——截断帽保护(超出部分跳过,
+        # 采样代表性;enforce 大批须向量化,见 config 注释)
+        max_rows = self._schema_max_rows
+        if table.num_rows > max_rows:
+            from arrow_lake.metrics import quality_gate_truncated_total
+
+            logger.warning(
+                "quality_gate_schema_truncated",
+                total=table.num_rows, sampled=max_rows,
+            )
+            try:
+                quality_gate_truncated_total.labels(stage="schema").inc()
+            except Exception:  # noqa: BLE001 — metric 面不阻塞门禁
+                pass
+            table = table.slice(0, max_rows)
         rows = table.to_pydict()
         row_list = [
             {col: rows[col][i] for col in rows}
@@ -499,6 +517,7 @@ def build_quality_gate(
         ))
 
     return IngestionQualityGate(
+        schema_max_rows=getattr(config, 'schema_validation_max_rows', 100_000),
         mode=mode,
         schema_mode=str(getattr(config, "schema_validation", "lenient")),
         active_filters=active,

@@ -209,6 +209,12 @@ class _LakeIngestMixin:
                 )
         except Exception:  # noqa: BLE001 — gate wiring must never block ingest
             logger.warning("quality_gate_wiring_failed", exc_info=True)
+            try:
+                from arrow_lake.metrics import quality_gate_wiring_failures_total
+
+                quality_gate_wiring_failures_total.inc()
+            except Exception:  # noqa: BLE001 — metric 面不阻塞摄入
+                pass
             gate = None
         return Ingestor(self._get_storage(), quality_gate=gate, **extra_kwargs)
 

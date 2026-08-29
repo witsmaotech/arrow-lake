@@ -124,6 +124,10 @@ class QualityConfig(BaseModel):
     # blob (pydantic dict convention): ARROW_LAKE__QUALITY__GATE_MODE_OVERRIDES='{"demo_gas":"enforce"}'
     gate_mode_overrides: dict[str, str] = {}
     min_quality_score: float = 0.0
+    # M-16 (review 2026-08-24): schema 验证段的 to_pydict 全量物化——10 万行
+    # ≈0.97s 线性,百万行 GB 级内存。截断帽:超出部分跳过 schema 段(采样
+    # 代表性),log + metric 提示截断;enforce 大批前须向量化 SchemaValidationGate。
+    schema_validation_max_rows: int = 100_000
 
     # NeMo Curator (Sprint 9, Story 8.5)
     # DEPRECATED (defined but never read by code; kept for compat): NeMoCuratorFilter 类未注册,半成品

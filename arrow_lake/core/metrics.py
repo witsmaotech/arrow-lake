@@ -388,3 +388,19 @@ class _QueryTimer:
     def __exit__(self, *args: Any) -> None:
         if self._timer is not None:
             self._timer.__exit__(*args)
+
+
+# v1.11.2 backlog(M-12/M-13/M-16):quality gate 可观测三件
+quality_gate_wiring_failures_total = Counter(
+    "arrow_lake_quality_gate_wiring_failures_total",
+    "Quality gate construction failures (gate=None, ingest un-gated)",
+)
+quality_dead_letter_failures_total = Counter(
+    "arrow_lake_quality_dead_letter_failures_total",
+    "Dead-letter write failures (rows lost from DLQ, not just rejected)",
+)
+quality_gate_truncated_total = Counter(
+    "arrow_lake_quality_gate_truncated_total",
+    "Quality gate stage truncation (M-16 schema row-cap sampling)",
+    ["stage"],
+)
