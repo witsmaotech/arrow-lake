@@ -33,6 +33,7 @@ from arrow_lake.api.routers.actions import router as actions_router
 from arrow_lake.api.routers.contracts import router as contracts_router
 from arrow_lake.api.routers.decisions import router as decisions_router
 from arrow_lake.api.routers.objects import router as objects_router
+from arrow_lake.api.routers.annotation import router as annotation_router
 from arrow_lake.api.routers.semantic import router as semantic_router
 from arrow_lake.api.routers.ontology import router as ontology_router
 from arrow_lake.api.routers.quality import router as quality_router
@@ -339,6 +340,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.scenario_store = ScenarioStore(sys_db)
         lake._action_store = app.state.action_store
         lake._scenario_store = app.state.scenario_store
+        # v1.11.3 MS4 (W1.4, F4.2): annotation project registry behind
+        # /api/v1/annotation — LS side stays transient; SoT is this table.
+        from arrow_lake.system_db.stores.annotation import AnnotationProjectStore
+
+        app.state.annotation_project_store = AnnotationProjectStore(sys_db)
         # Activate RAG-session persistence in the Lake facade's RAG pipeline.
         lake._rag_session_store = app.state.rag_session_store
         # Activate the lineage adjacency index in the Lake facade's LineageStore.
@@ -829,6 +835,7 @@ def create_app(config: ArrowLakeConfig | None = None) -> FastAPI:
     app.include_router(actions_router)
     app.include_router(decisions_router)
     app.include_router(objects_router)
+    app.include_router(annotation_router)
     app.include_router(semantic_router)
     app.include_router(auth_router)
     app.include_router(admin_router)

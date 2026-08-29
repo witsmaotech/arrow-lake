@@ -13,6 +13,7 @@ task-history / lineage-index / rag-session / governance / user-state stores.
 from __future__ import annotations
 
 from arrow_lake.system_db.stores.actions import ActionCatalogStore, IdempotencyStore
+from arrow_lake.system_db.stores.annotation import AnnotationProjectStore
 from arrow_lake.system_db.stores.base import TTLCache, FailMode
 from arrow_lake.system_db.stores.catalog import CatalogStore
 from arrow_lake.system_db.stores.contracts import ContractStore
@@ -29,6 +30,7 @@ from arrow_lake.system_db.stores.user_state import UserStateStore
 
 __all__ = [
     "ActionCatalogStore",
+    "AnnotationProjectStore",
     "CatalogStore",
     "ContractStore",
     "FailMode",
