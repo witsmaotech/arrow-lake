@@ -22,10 +22,16 @@ class AnnotationConfig(BaseModel):
         candidate_pool_cap: 采样候选池帽(读表后截断;大表数据集的
             dispatch 内存护栏——已知限制,分页 scan 留试点后迭代)。
         import_batch_size: LS import API 分批大小(限速 1 req/s)。
+        require_masking: True 时 dispatch 必须带脱敏配置(entity_names 或
+            generalize_rules),否则 422——PII 数据集的强制门(review S1)。
+        webhook_secret: LS webhook 共享密钥;空 = webhook 端点整体禁用
+            (默认安全,review S2)。LS 侧配置 webhook URL 时带 ?secret=。
     """
 
     ls_url: str = ""
     ls_api_token: str = ""
+    require_masking: bool = False
+    webhook_secret: str = ""
     default_sample_total: int = 20
     max_sample_total: int = 200
     candidate_pool_cap: int = 5000

@@ -30,9 +30,12 @@ class AnnotationMaskingError(RuntimeError):
 
 
 def _alias(name: str, key: bytes) -> str:
-    """稳定假名:首字符保留可读性 + hmac-sha256 前 10 hex(等值连接)。"""
+    """稳定假名:首字符保留可读性 + hmac-sha256 前 10 hex(等值连接)。
+
+    单字符值不保留首字(保留=原值直接泄露,review S6)。"""
     digest = hmac.new(key, name.encode("utf-8"), hashlib.sha256).hexdigest()[:10]
-    return f"{name[0]}_{digest}"
+    prefix = name[0] if len(name) > 1 else "X"
+    return f"{prefix}_{digest}"
 
 
 def apply_annotation_masking(

@@ -65,6 +65,9 @@ const NAV = [
     { id: "kg", label: "知识图谱", ic: "code", href: "kg.html" },
     { id: "templates", label: "抽取模板", ic: "code", href: "extraction-templates.html" },
   ] },
+  { group: "标注闭环", items: [
+    { id: "annotation", label: "标注生产线", ic: "check", href: "annotation.html" },
+  ] },
   { group: "管理", items: [
     { id: "tasks", label: "异步任务", ic: "dashboard", href: "tasks.html" },
     { id: "admin", label: "管理后台", ic: "key", href: "admin.html" },

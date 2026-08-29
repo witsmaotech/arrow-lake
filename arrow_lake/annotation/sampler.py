@@ -10,9 +10,11 @@
 * committee    — 多模板分歧序(调用方算好,列表序即分歧大到小)
 
 预算(S3):默认 40/30/20/10;权重不求和为 1(按比例归一);某策略数据
-源缺失 → 剔除后重归一;配额用最大余数法(总名额守恒);策略池耗尽不
-强补(短给)。全部源缺失 → 顺序退化(sequential)。跨策略去重:策略按
-权重序先到先得,``SampledRow.strategy`` 记首个选中它的策略。
+源缺失 → 剔除后重归一;配额用最大余数法(总名额守恒)。策略池耗尽仍有
+余量 → 按候选序补齐 sequential(标注任务凑满 total 是目的,策略只决定
+"先标哪些");全部源缺失 → 全量 sequential。跨策略去重:按固定策略序
+(uncertainty→diversity→failure_case→committee)先到先得,
+``SampledRow.strategy`` 记首个选中它的策略。
 """
 
 from __future__ import annotations

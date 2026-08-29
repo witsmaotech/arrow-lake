@@ -110,7 +110,10 @@ class FakeLake:
         return self.storage
 
 
-def _make_app(db: SystemDB, lake: FakeLake, ls: LSScript, *, bound: bool = True) -> TestClient:
+def _make_app(
+    db: SystemDB, lake: FakeLake, ls: LSScript, *, bound: bool = True,
+    webhook_secret: str = "s3cret",
+) -> TestClient:
     from arrow_lake.api.routers.annotation import router
 
     store = AnnotationProjectStore(db)
@@ -124,7 +127,9 @@ def _make_app(db: SystemDB, lake: FakeLake, ls: LSScript, *, bound: bool = True)
     app.state.annotation_project_store = store
     app.state.lake = lake
     app.state.config = type("C", (), {
-        "annotation": AnnotationConfig(ls_url="http://ls", ls_api_token="tok")})()
+        "annotation": AnnotationConfig(
+            ls_url="http://ls", ls_api_token="tok",
+            webhook_secret=webhook_secret)})()
 
     @app.middleware("http")
     async def _inject(request: Request, call_next):
@@ -136,17 +141,17 @@ def _make_app(db: SystemDB, lake: FakeLake, ls: LSScript, *, bound: bool = True)
 
 
 def _patch_ls(ls: LSScript, monkeypatch: pytest.MonkeyPatch) -> None:
-    """让 recover 端点(函数内 import)拿到的 LSClient 用 script opener。"""
+    """让 recover_one(sync 模块内绑定)拿到的 LSClient 用 script opener。"""
 
-    from arrow_lake.annotation import dispatch as dispatch_mod
+    from arrow_lake.annotation import sync as sync_mod
 
-    real_client = dispatch_mod.LSClient
+    real_client = sync_mod.LSClient
 
     def patched(base_url, token, **kw):
         kw.setdefault("opener", ls)
         return real_client(base_url, token, **kw)
 
-    monkeypatch.setattr(dispatch_mod, "LSClient", patched)
+    monkeypatch.setattr(sync_mod, "LSClient", patched)
 
 
 class TestRecover:
@@ -231,8 +236,8 @@ class TestAdlEndpoint:
 
 
 class TestWebhook:
-    def _app(self, db: SystemDB, lake: FakeLake | None = None) -> TestClient:
-        return _make_app(db, lake or FakeLake(FakeStorage()), LSScript())
+    def _app(self, db: SystemDB, lake: FakeLake | None = None, **kw) -> TestClient:
+        return _make_app(db, lake or FakeLake(FakeStorage()), LSScript(), **kw)
 
     def test_annotation_created_accepted_and_audited(self, db):
         lake = FakeLake(FakeStorage())
@@ -242,20 +247,36 @@ class TestWebhook:
             "annotation": _ann(REGIONS_A, 7),
             "task": _task(3, []),
         }
-        resp = client.post("/api/v1/annotation/webhook", json=payload)
+        resp = client.post(
+            "/api/v1/annotation/webhook?secret=s3cret", json=payload)
         assert resp.status_code == 200
         assert resp.json()["accepted"] is True
         assert any(e == "annotation.webhook" for e, _ in lake.audits)
 
+    def test_bad_secret_403(self, db):
+        client = self._app(db)
+        resp = client.post(
+            "/api/v1/annotation/webhook?secret=wrong",
+            json={"action": "ANNOTATION_CREATED"})
+        assert resp.status_code == 403
+
+    def test_secret_unconfigured_endpoint_disabled(self, db):
+        client = self._app(db, webhook_secret="")
+        assert client.post(
+            "/api/v1/annotation/webhook?secret=anything",
+            json={"action": "ANNOTATION_CREATED"}).status_code == 403
+
     def test_unrelated_action_not_accepted(self, db):
         client = self._app(db)
-        resp = client.post("/api/v1/annotation/webhook", json={"action": "TASK_CREATED"})
+        resp = client.post(
+            "/api/v1/annotation/webhook?secret=s3cret",
+            json={"action": "TASK_CREATED"})
         assert resp.json()["accepted"] is False
 
     def test_garbage_body_not_accepted(self, db):
         client = self._app(db)
         resp = client.post(
-            "/api/v1/annotation/webhook",
+            "/api/v1/annotation/webhook?secret=s3cret",
             content=b"not json", headers={"Content-Type": "application/json"},
         )
         assert resp.json()["accepted"] is False

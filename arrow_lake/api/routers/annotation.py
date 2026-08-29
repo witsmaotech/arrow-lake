@@ -12,6 +12,7 @@ labeling_config 两条路(S2):默认从绑定模板经 template_gen 生成;
 from __future__ import annotations
 
 import contextlib
+import re
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -152,14 +153,20 @@ def _load_rows(lake: Any, dataset: str, text_column: str, cap: int) -> tuple[lis
         dead = _to_dicts(lake.read_dataset(f"_{dataset}_dead_letter"), [text_column])
         if dead:
             dead = dead[:cap]
-            dead_ids = [f"r{len(rows) + i}" for i in range(len(dead))]
+            base = len(rows)
             rows.extend(dead)
+            from arrow_lake.annotation.dispatch import stable_row_id as _rid
+
+            dead_ids = [
+                _rid(str(r.get(text_column) or ""), base + i)
+                for i, r in enumerate(dead)
+            ]
     except Exception:  # 死信表不存在 = 无 failure_case 源
         pass
     return rows, dead_ids
 
 
-def _bg_dispatch(
+async def _bg_dispatch(
     app_state: Any, lake: Any, actor: str, project: str, rows: list[dict],
     *, text_column: str, total: int, budget: SampleBudget,
     quality_scores: dict[str, float] | None, dead_row_ids: list[str] | None,
@@ -167,12 +174,13 @@ def _bg_dispatch(
     ls_url: str, ls_token: str, import_batch_size: int,
     ls_opener: Any = None,
 ) -> dict:
-    """后台 worker:run_dispatch 全链 + audit(成功与失败都记)。
+    """后台 worker(async;run_background 直接在主 loop await——extractor
+    是 Lake 缓存组件,KG build 也在主 loop 驱动它;若在 executor 线程
+    asyncio.run 新 loop 复用同一 extractor,httpx/openai 连接池的 loop
+    亲和性会静默断裂 → 预测全空,甚至毒化后续 KG build。review C3)。
 
     ``ls_opener`` 仅测试注入(真调用默认 urllib urlopen)。
     """
-    import asyncio
-
     from arrow_lake.annotation.dispatch import LSClient, LSClientError, run_dispatch
 
     store = app_state.annotation_project_store
@@ -186,7 +194,7 @@ def _bg_dispatch(
             lake.audit_record(event, dataset_name=rec["dataset"], actor=actor, payload=payload)
 
     try:
-        outcome = asyncio.run(run_dispatch(
+        outcome = await run_dispatch(
             project=project, dataset=rec["dataset"],
             labeling_config=rec["labeling_config"],
             ls_project_id=rec.get("ls_project_id"),
@@ -197,7 +205,7 @@ def _bg_dispatch(
             hmac_key=None, ls_client=LSClient(ls_url, ls_token, opener=ls_opener),
             extractor=extractor, bind_ls_project=store.set_ls_project_id,
             import_batch_size=import_batch_size,
-        ))
+        )
     except (LSClientError, AnnotationMaskingError) as exc:
         _audit("annotation.dispatch", {"project": project, "status": "failed", "error": str(exc)})
         raise
@@ -256,14 +264,45 @@ async def dispatch(
                 f"(missing column '{req.text_column}'?)"
             ),
         )
+    from arrow_lake.annotation.dispatch import stable_row_id as _rid
+
     quality_scores = None
     if rows and "quality_score" in rows[0]:
         quality_scores = {
-            f"r{i}": float(r["quality_score"])
+            _rid(str(r.get(req.text_column) or ""), i): float(r["quality_score"])
             for i, r in enumerate(rows) if r.get("quality_score") is not None
         }
-    budget = SampleBudget(**(req.budget or {}))
-    rules = [(p, r) for p, r in (req.generalize_rules or [])]
+    # S3: budget 白名单构造(未知键/负值 → 422,不裸 **dict)
+    raw_budget = req.budget or {}
+    allowed = {"uncertainty", "diversity", "failure_case", "committee"}
+    unknown = set(raw_budget) - allowed
+    if unknown or any(v < 0 for v in raw_budget.values()):
+        raise HTTPException(
+            status_code=422,
+            detail=f"budget keys must be {sorted(allowed)} with values >= 0; got {dict(raw_budget)}",
+        )
+    budget = SampleBudget(**raw_budget)
+
+    # S3: generalize_rules 编译预检 + 三帽(ReDoS 缓解;ADMIN 可信面的纵深)
+    rules = []
+    for pair in (req.generalize_rules or [])[:32]:
+        if not isinstance(pair, list) or len(pair) != 2:
+            raise HTTPException(status_code=422, detail=f"generalize_rules entries must be [pattern, replacement]: {pair!r}")
+        pattern, replacement = str(pair[0]), str(pair[1])
+        if len(pattern) > 512 or len(replacement) > 256:
+            raise HTTPException(status_code=422, detail="generalize_rules pattern/replacement too long (512/256)")
+        try:
+            re.compile(pattern)
+        except re.error as exc:
+            raise HTTPException(status_code=422, detail=f"generalize_rules invalid regex {pattern!r}: {exc}") from exc
+        rules.append((pattern, replacement))
+
+    # S1: require_masking 强制门(PII 数据集部署档)
+    if config.require_masking and not req.entity_names and not rules:
+        raise HTTPException(
+            status_code=422,
+            detail="annotation.require_masking=true — dispatch must carry entity_names or generalize_rules",
+        )
 
     task_id = TaskManager.create_task("annotation_dispatch", req.project, user_id=user.user_id)
     spawn_background(TaskManager.run_background(
@@ -291,33 +330,6 @@ class RecoverRequest(BaseModel):
     project: str = Field(min_length=1, max_length=128)
 
 
-def _ls_tasks_payload(raw: Any) -> list[dict]:
-    """LS GET /api/tasks 响应 → task 列表(兼容 {"tasks":[...]} 与裸 list)。"""
-    if isinstance(raw, dict):
-        tasks = raw.get("tasks")
-        return tasks if isinstance(tasks, list) else []
-    return raw if isinstance(raw, list) else []
-
-
-def _existing_adl_state(
-    lake: Any, dataset: str
-) -> tuple[set[str], dict[tuple[str, str], int]]:
-    """读现有 {ds}_adl → (adl_id 集, (row,annotator)→最大版本)。表无 → 空。"""
-    try:
-        table = lake.read_dataset(f"{dataset}_adl")
-    except Exception:  # 表不存在 = 首次回收
-        return set(), {}
-    ids = set()
-    versions: dict[tuple[str, str], int] = {}
-    for row in table.select(
-        ["adl_id", "source_row_id", "annotator_id", "adl_version"]
-    ).to_pylist():
-        ids.add(row["adl_id"])
-        key = (row["source_row_id"], row["annotator_id"])
-        versions[key] = max(versions.get(key, 0), int(row["adl_version"] or 0))
-    return ids, versions
-
-
 @router.post(
     "/recover",
     status_code=200,
@@ -329,15 +341,9 @@ async def recover(
     lake=Depends(get_lake),
     user=Depends(require_role(Role.ADMIN)),
 ) -> dict:
-    """手动同步(轮询对账的同一代码路径,S9):LS 增量 → 五段解析 →
-    仲裁(kappa/分歧)→ ADL 版本化写回(adl_id 幂等)→ audit。"""
-    import uuid as _uuid
-
-    from arrow_lake._lake_ingest import _DeadLetterStorageAdapter
-    from arrow_lake.annotation.adl import build_adl_batch, write_adl
-    from arrow_lake.annotation.dispatch import LSClient
-    from arrow_lake.annotation.quality import adjudicate, project_kappa
-    from arrow_lake.annotation.recover import incremental_tasks, parse_ls_annotation
+    """手动同步(轮询对账/scheduler 共用核心,S9):LS 增量 → 五段解析 →
+    仲裁(kappa/分歧)→ ADL 版本化写回(adl_id 幂等)→ 仲裁 task 生成。"""
+    from arrow_lake.annotation.sync import recover_one
 
     store = _store(request)
     rec = store.get_project(req.project)
@@ -349,49 +355,16 @@ async def recover(
             status_code=503,
             detail="Label Studio not configured (annotation.ls_url / annotation.ls_api_token)",
         )
-    ls_project_id = rec.get("ls_project_id")
-    if not ls_project_id:
+    if not rec.get("ls_project_id"):
         raise HTTPException(
             status_code=422,
             detail=f"Project '{req.project}' has no LS binding yet — dispatch first",
         )
-
-    client = LSClient(config.ls_url, config.ls_api_token)
-    tasks = _ls_tasks_payload(client.list_tasks(ls_project_id, page_size=200))
-    watermark = int(rec.get("recover_watermark") or 0)
-    fresh, new_watermark = incremental_tasks(tasks, watermark=watermark)
-
-    recovered = [a for t in fresh for a in parse_ls_annotation(t)]
-    by_task: dict[str, list] = {}
-    for ann in recovered:
-        by_task.setdefault(ann.row_id, []).append(ann)
-    verdicts = adjudicate(by_task)
-
-    existing_ids, group_versions = _existing_adl_state(lake, rec["dataset"])
-    batch_id = f"rec-{_uuid.uuid4().hex[:8]}"
-    table, written = build_adl_batch(
-        dataset=rec["dataset"], recovered=recovered, adjudications=verdicts,
-        batch_id=batch_id, existing_adl_ids=existing_ids,
-        group_versions=group_versions,
-    )
-    if written:
-        write_adl(_DeadLetterStorageAdapter(lake._get_storage()), rec["dataset"], table)
-    store.set_watermark(req.project, new_watermark)
-
-    kappa = project_kappa(by_task)
-    counts = {"approved": 0, "arbitration": 0, "pending": 0}
-    for verdict in verdicts.values():
-        counts[verdict.status] = counts.get(verdict.status, 0) + 1
-    summary = {
-        "project": req.project,
-        "tasks_seen": len(fresh),
-        "annotations_recovered": len(recovered),
-        "adl_rows_written": written,
-        "review": counts,
-        "kappa": kappa,
-        "watermark": new_watermark,
-        "batch_id": batch_id,
-    }
+    try:
+        summary = recover_one(
+            store=store, lake=lake, config=config, project_name=req.project)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     with contextlib.suppress(Exception):  # audit best-effort
         lake.audit_record(
             "annotation.recover",
@@ -419,20 +392,27 @@ async def get_adl(name: str, request: Request, lake=Depends(get_lake)) -> dict:
         raise HTTPException(
             status_code=404, detail=f"No ADL table for '{dataset}' yet (recover first): {exc}"
         ) from exc
-    rows = table.to_pylist()
-    rows.reverse()  # 最近写回在前
-    return {"project": name, "dataset": dataset, "total": len(rows), "rows": rows[:50]}
+    total = table.num_rows
+    recent = table.slice(max(0, total - 50), 50).to_pylist()
+    recent.reverse()  # 最近写回在前(先 slice 再物化,review S7)
+    return {"project": name, "dataset": dataset, "total": total, "rows": recent}
 
 
 @router.post("/webhook")
 async def ls_webhook(request: Request, lake=Depends(get_lake)) -> dict:
     """LS webhook 接收(S9 加速通道;轮询对账为主)。
 
-    无 AL 认证——LS 是内网旁路容器,D1 凭据方向是 AL→LS;本端点只做
-    解析 + 审计,不写 ADL(数据回收统一走 recover,adl_id 幂等保证
-    webhook/轮询双通道不重复)。
+    认证(review S2):共享密钥 ``annotation.webhook_secret``——空 =
+    端点禁用(默认安全;最小权限凭据无法伪造审计事件);LS 侧配
+    webhook URL 带 ``?secret=<同值>`` 或 ``X-LS-Secret`` 头。只做解析 +
+    审计,不写 ADL(数据回收统一走 recover,adl_id 幂等保证双通道不重)。
     """
     from arrow_lake.annotation.recover import parse_webhook
+
+    config = request.app.state.config.annotation
+    supplied = request.query_params.get("secret") or request.headers.get("x-ls-secret")
+    if not config.webhook_secret or supplied != config.webhook_secret:
+        raise HTTPException(status_code=403, detail="webhook disabled or bad secret")
 
     try:
         payload = await request.json()

@@ -16,7 +16,12 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from arrow_lake.annotation.dispatch import DispatchOutcome, LSClientError, run_dispatch
+from arrow_lake.annotation.dispatch import (
+    DispatchOutcome,
+    LSClientError,
+    run_dispatch,
+    stable_row_id,
+)
 from arrow_lake.annotation.sampler import SampleBudget
 from arrow_lake.knowledge_graph.extractor import (
     ExtractedEntity,
@@ -50,7 +55,8 @@ class FakeLS:
     def get_project(self, project_id: int) -> dict:
         self.calls.append(("get", project_id))
         if not self.existing:
-            raise LSClientError(f"LS GET /api/projects/{project_id} → 404: gone")
+            raise LSClientError(
+                f"LS GET /api/projects/{project_id} → 404: gone", status=404)
         return {"id": project_id}
 
     def import_tasks(self, project_id: int, tasks: list[dict]) -> dict:
@@ -85,7 +91,11 @@ def _run(ls: FakeLS, extractor: FakeExtractor, **overrides: Any):
     kwargs: dict[str, Any] = dict(
         project="p1", dataset="ds", labeling_config=CFG,
         ls_project_id=None, rows=ROWS, text_column="text", total=3,
-        budget=SampleBudget(), quality_scores={"r0": 0.9, "r1": 0.1, "r2": 0.5},
+        budget=SampleBudget(),
+        quality_scores={
+            stable_row_id(ROWS[i]["text"], i): v
+            for i, v in enumerate([0.9, 0.1, 0.5])
+        },
         embeddings=None, dead_row_ids=None, committee=None,
         generalize_rules=(), entity_names=(), hmac_key=b"k",
         ls_client=ls, extractor=extractor, bind_ls_project=None,

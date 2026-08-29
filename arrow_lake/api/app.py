@@ -116,6 +116,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     from arrow_lake import Lake
 
+    annotation_recover_scheduler: object | None = None  # W4.0b(early decl: store 段启动)
+
     import logging
     import sys
     # [#KG-0entity-debug] Surface ONLY he_extractor's stdlib DEBUG logs. he_extractor
@@ -345,6 +347,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         from arrow_lake.system_db.stores.annotation import AnnotationProjectStore
 
         app.state.annotation_project_store = AnnotationProjectStore(sys_db)
+        # W4.0b: 30s 回收轮询(S9 主通道;webhook 只加速)。LS 未配置 →
+        # 不启动(纯 dispatch-less 部署零后台线程);连续失败熔断停。
+        if config.annotation.ls_url and config.annotation.ls_api_token:
+            from arrow_lake.annotation.sync import AnnotationRecoverScheduler
+
+            annotation_recover_scheduler = AnnotationRecoverScheduler(
+                app.state.annotation_project_store, lake, config.annotation)
+            annotation_recover_scheduler.start()
+            app.state.annotation_recover_scheduler = annotation_recover_scheduler
         # Activate RAG-session persistence in the Lake facade's RAG pipeline.
         lake._rag_session_store = app.state.rag_session_store
         # Activate the lineage adjacency index in the Lake facade's LineageStore.
@@ -490,6 +501,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.ready = False
         if gravitino_sync is not None:
             gravitino_sync.stop()
+        if annotation_recover_scheduler is not None:
+            annotation_recover_scheduler.stop()
         if retention_enforcer is not None:
             retention_enforcer.stop()
         if maintenance_scheduler is not None:

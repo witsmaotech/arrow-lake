@@ -12,6 +12,7 @@ LS 是 transient 工作区——本 client 不持有任何业务状态,重启即
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import urllib.error
@@ -24,16 +25,42 @@ from arrow_lake.annotation.masking import apply_annotation_masking
 from arrow_lake.annotation.preannotate import to_ls_prediction
 from arrow_lake.annotation.sampler import SampleBudget, SampledRow, sample_rows
 
-__all__ = ["DispatchOutcome", "LSClient", "LSClientError", "run_dispatch"]
+__all__ = [
+    "DispatchOutcome",
+    "LSClient",
+    "LSClientError",
+    "run_dispatch",
+    "stable_row_id",
+]
+
+# row_id 稳定键(review C1):内容 hash 而非池序号——re-dispatch 时池位移
+# (新数据/死信增长)不再让 r5 指向不同源行,ADL 溯源跨批次稳定。
+# 同文本不同行会共用 row_id:标注语义上同文本=同样本,可接受。
+_ROW_ID_LEN = 12
+
+
+def stable_row_id(text: str | None, index: int) -> str:
+    """行 → 稳定标识:text 非空取 sha1 前 12 hex;空文本退回池序号。"""
+    if text:
+        return "h" + hashlib.sha1(text.encode("utf-8")).hexdigest()[:_ROW_ID_LEN]
+    return f"r{index}"
 
 logger = logging.getLogger(__name__)
 
 _TIMEOUT_SECONDS = 10
-_BODY_SNIPPET = 400
+_BODY_SNIPPET = 200
 
 
 class LSClientError(RuntimeError):
-    """LS REST 调用失败(网络/HTTP/解码);message 带 status 与 body 摘要。"""
+    """LS REST 调用失败(网络/HTTP/解码);message 带 status 与 body 摘要。
+
+    ``status`` 供调用方区分语义(404=project 没了可重建;5xx/网络=瞬时,
+    重建会孤儿化已有 tasks——review C2)。网络错误 status=None。
+    """
+
+    def __init__(self, message: str, *, status: int | None = None) -> None:
+        super().__init__(message)
+        self.status = status
 
 
 class LSClient:
@@ -66,7 +93,9 @@ class LSClient:
             return self._opener(req, timeout=self._timeout)
         except urllib.error.HTTPError as exc:
             detail = exc.read()[:_BODY_SNIPPET].decode("utf-8", "replace")
-            raise LSClientError(f"LS {method} {path} → {exc.code}: {detail}") from exc
+            raise LSClientError(
+                f"LS {method} {path} → {exc.code}: {detail}", status=exc.code
+            ) from exc
         except urllib.error.URLError as exc:
             raise LSClientError(f"LS {method} {path} unreachable: {exc.reason}") from exc
 
@@ -180,7 +209,9 @@ async def run_dispatch(
     回写注册表(transient 重绑,W1.4 红线)。单行 HE 失败 → 空 prediction
     仍派发(S4 预测是建议非强制);LS import 失败上抛(router → 502)。
     """
-    row_ids = [f"r{i}" for i in range(len(rows))]
+    texts = [str(r.get(text_column) or "").strip() for r in rows]
+    row_ids = [stable_row_id(t, i) for i, t in enumerate(texts)]
+    row_index = {rid: i for i, rid in enumerate(row_ids)}
     sampled: list[SampledRow] = sample_rows(
         total=total, row_ids=row_ids,
         quality_scores=quality_scores, embeddings=embeddings,
@@ -188,12 +219,15 @@ async def run_dispatch(
         budget=budget,
     )
 
-    # 懒绑定:无 id 或 LS 侧已消失 → (重)创建并回写
+    # 懒绑定:无 id 或 LS 侧确认 404 → (重)创建并回写。瞬时错误
+    # (5xx/网络)原样上抛——盲目重建会孤儿化已有 tasks(review C2)。
     if ls_project_id is not None:
         try:
             ls_client.get_project(ls_project_id)
-        except LSClientError:
-            logger.info("annotation.dispatch: LS project %s gone — recreating", ls_project_id)
+        except LSClientError as exc:
+            if getattr(exc, "status", None) != 404:
+                raise
+            logger.info("annotation.dispatch: LS project %s gone(404) — recreating", ls_project_id)
             ls_project_id = None
     if ls_project_id is None:
         rec = await _maybe_async(
@@ -207,7 +241,7 @@ async def run_dispatch(
     tasks: list[dict[str, Any]] = []
     skipped = 0
     for pick in sampled:
-        row = rows[int(pick.row_id[1:])]
+        row = rows[row_index[pick.row_id]]
         text = str(row.get(text_column) or "").strip()
         if not text:
             skipped += 1

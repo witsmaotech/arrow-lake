@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>标注闭环 · Arrow Lake Console</title>
+<link rel="stylesheet" href="assets/tokens.css"/>
+<link rel="stylesheet" href="assets/app.css"/>
+<link rel="stylesheet" href="assets/console.css"/>
+<style>
+  .proj-row{display:flex;gap:10px;align-items:center;padding:9px 12px;border-bottom:1px solid var(--line-soft);cursor:pointer;font-size:.82rem}
+  .proj-row:hover{background:var(--ink-850)}
+  .proj-row.active{background:var(--ink-850);box-shadow:inset 2px 0 0 0 var(--teal-bright)}
+  .proj-row .nm{flex:1;min-width:0;font-family:var(--font-mono);color:var(--fg-hi);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .proj-row .bd{font-size:.66rem;color:var(--fg-dim)}
+  .kv{display:grid;grid-template-columns:96px 1fr;gap:4px 10px;font-size:.76rem}
+  .kv b{color:var(--fg-dim);font-weight:500}
+  .kv span{font-family:var(--font-mono);color:var(--fg-md);word-break:break-all}
+  .statgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:10px}
+  .stat{background:var(--ink-950);border:1px solid var(--line-soft);border-radius:var(--r-sm);padding:10px 12px}
+  .stat .n{font-size:1.25rem;font-weight:600;color:var(--fg-hi);font-family:var(--font-mono)}
+  .stat .l{font-size:.64rem;color:var(--fg-dim);letter-spacing:.05em}
+  .stat.good .n{color:var(--teal-bright)} .stat.warn .n{color:var(--warn)} .stat.bad .n{color:var(--danger)}
+  .adl-tbl{width:100%;border-collapse:collapse;font-size:.72rem}
+  .adl-tbl th{text-align:left;color:var(--fg-dim);font-weight:500;padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+  .adl-tbl td{padding:6px 8px;border-bottom:1px solid var(--line-soft);font-family:var(--font-mono);color:var(--fg-md);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pill{display:inline-block;padding:1px 8px;border-radius:99px;font-size:.64rem;border:1px solid var(--line);color:var(--fg-dim)}
+  .pill.ok{color:var(--teal-bright);border-color:var(--teal-bright)} .pill.warn{color:var(--warn);border-color:var(--warn)} .pill.bad{color:var(--danger);border-color:var(--danger)}
+  .f-row{display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
+  .f-row label{font-size:.7rem;color:var(--fg-dim);min-width:72px}
+  input.f, select.f{background:var(--ink-950);border:1px solid var(--line);border-radius:var(--r-sm);color:var(--fg-hi);font-size:.76rem;padding:6px 9px;font-family:var(--font-mono)}
+  input.f{width:110px} select.f{flex:1;min-width:180px}
+  pre.cfg{background:var(--ink-950);border:1px solid var(--line);border-radius:var(--r-sm);color:var(--fg-md);font-family:var(--font-mono);font-size:.68rem;line-height:1.6;padding:10px;max-height:220px;overflow:auto;white-space:pre-wrap}
+</style>
+</head>
+<body>
+<div id="app">
+<main class="main"><div class="page">
+  <div class="h-sec between">
+    <div><h1>标注闭环</h1><div class="desc">MS4 标注生产线 · 采样→预标注→Label Studio 人工校对→kappa 质检→ADL 版本化写回 · LS 是临时工作区,标注真值落 Lance</div></div>
+    <div class="flex"><button class="btn btn-primary btn-sm" id="newBtn"><i class="placeholder" data-ic="plus"></i> 新建项目</button></div>
+  </div>
+
+  <div class="grid g-2">
+    <div>
+      <div class="panel flush">
+        <div class="panel-h"><i class="placeholder" data-ic="database"></i><h3>标注项目</h3><span class="sub" id="projMeta">—</span></div>
+        <div class="panel-b" id="projList" style="padding:0"><div class="muted" style="padding:10px">加载…</div></div>
+      </div>
+      <div class="panel flush" style="margin-top:var(--s4)">
+        <div class="panel-h"><i class="placeholder" data-ic="code"></i><h3>项目详情</h3>
+          <span class="actions"><button class="btn btn-ghost btn-sm" id="delBtn" style="display:none;color:var(--danger)">删除</button></span>
+        </div>
+        <div class="panel-b" id="projDetail" style="padding:12px"><div class="muted">左侧选择项目</div></div>
+      </div>
+    </div>
+    <div>
+      <div class="panel flush">
+        <div class="panel-h"><i class="placeholder" data-ic="play"></i><h3>采样派发</h3><span class="sub" id="dispMeta">四策略 uncertainty/diversity/failure_case/committee</span></div>
+        <div class="panel-b" style="padding:12px" id="dispPanel">
+          <div class="muted">选择项目后配置派发</div>
+        </div>
+      </div>
+      <div class="panel flush" style="margin-top:var(--s4)">
+        <div class="panel-h"><i class="placeholder" data-ic="dashboard"></i><h3>回收与质检</h3>
+          <span class="actions"><button class="btn btn-primary btn-sm" id="recoverBtn" style="display:none">手动回收</button></span>
+        </div>
+        <div class="panel-b" style="padding:12px" id="board"><div class="muted">回收后在此看板</div></div>
+      </div>
+      <div class="panel flush" style="margin-top:var(--s4)">
+        <div class="panel-h"><i class="placeholder" data-ic="file"></i><h3>ADL 最近写回</h3><span class="sub" id="adlMeta">—</span></div>
+        <div class="panel-b" id="adlBox" style="padding:0"><div class="muted" style="padding:10px">尚未写回</div></div>
+      </div>
+    </div>
+  </div>
+</div></main>
+</div>
+
+<script src="assets/console-layout.js"></script>
+<script type="module">
+import { request } from "./src/api.js";
+import { isLoggedIn } from "./src/auth.js";
+import { toast } from "./src/ui/toast.js";
+import { promptDialog, confirmDialog } from "./src/ui/modal.js";
+
+if (!isLoggedIn()) location.href = "login.html";
+const { renderShell } = window;
+renderShell({ active: "annotation", crumb: '<b>标注闭环</b>' });
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const isAdmin = (() => {
+  try {
+    const tok = localStorage.getItem("al_access") || "";
+    const payload = JSON.parse(atob(tok.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+    return String(payload.role || "EDITOR").toUpperCase() === "ADMIN";
+  } catch (_) { return false; }
+})();
+
+let projects = [];
+let cur = null;
+let templates = [];
+
+async function loadProjects() {
+  const r = await request("GET", "/annotation/projects");
+  projects = r.projects || [];
+  $("#projMeta").textContent = `${projects.length} 个`;
+  if (!projects.length) {
+    $("#projList").innerHTML = '<div class="muted" style="padding:10px">暂无项目 — 新建一个</div>';
+    return;
+  }
+  $("#projList").innerHTML = projects.map(p => `
+    <div class="proj-row ${cur && p.name === cur.name ? "active" : ""}" data-n="${esc(p.name)}">
+      <span class="nm">${esc(p.name)}</span>
+      <span class="bd">${esc(p.dataset)}</span>
+      <span class="pill ${p.status === "active" ? "ok" : ""}">${esc(p.status)}</span>
+    </div>`).join("");
+  [...document.querySelectorAll(".proj-row")].forEach(el =>
+    el.onclick = () => selectProject(el.dataset.n));
+}
+
+async function loadTemplates() {
+  try {
+    const r = await request("GET", "/admin/extraction-templates?selectable=true");
+    templates = (r.data || []).filter(t => t.selectable).map(t => t.name);
+  } catch (_) { templates = []; }
+}
+
+async function newProject() {
+  if (!isAdmin) return toast("需要 ADMIN", "warn");
+  const name = await promptDialog("项目名(唯一标识)", "gas-ner-p1");
+  if (!name) return;
+  const dataset = await promptDialog("源数据集(采样与写回对象)", "demo_ms3_alerts");
+  if (!dataset) return;
+  let tpl = "project_concept_graph";
+  if (templates.length) {
+    const pick = await promptDialog(`模板(可选项:${templates.slice(0, 6).join(" / ")}…)`, tpl);
+    if (pick) tpl = pick;
+  } else {
+    const pick = await promptDialog("本体模板名", tpl);
+    if (pick) tpl = pick;
+  }
+  try {
+    await request("POST", "/annotation/projects", {
+      body: { name: name.trim(), dataset: dataset.trim(), template_name: tpl.trim() },
+    });
+    toast("项目已创建(labeling config 已从模板生成)");
+    await loadProjects();
+    selectProject(name.trim());
+  } catch (e) { toast(`创建失败:${e.message || e}`, "error"); }
+}
+
+function selectProject(name) {
+  cur = projects.find(p => p.name === name) || null;
+  if (!cur) return;
+  document.querySelectorAll(".proj-row").forEach(el =>
+    el.classList.toggle("active", el.dataset.n === name));
+  $("#delBtn").style.display = isAdmin ? "" : "none";
+  $("#recoverBtn").style.display = isAdmin ? "" : "none";
+  $("#projDetail").innerHTML = `
+    <div class="kv">
+      <b>源数据集</b><span>${esc(cur.dataset)}</span>
+      <b>绑定模板</b><span>${esc(cur.template_name)}</span>
+      <b>LS 项目</b><span>${cur.ls_project_id ?? "未绑定(派发时懒创建)"}</span>
+      <b>配置来源</b><span>${esc(cur.config_source)}</span>
+      <b>watermark</b><span>${cur.recover_watermark ?? 0}</span>
+      <b>更新时间</b><span>${esc(cur.updated_at || "—")}</span>
+    </div>
+    <div class="muted" style="font-size:.66rem;margin:10px 0 4px">LS labeling config(生成物/手写覆盖)</div>
+    <pre class="cfg">${esc(cur.labeling_config)}</pre>`;
+  $("#dispPanel").innerHTML = `
+    <div class="f-row"><label>采样行数</label><input class="f" id="dTotal" type="number" value="20" min="1" max="200"/></div>
+    <div class="f-row"><label>文本列</label><input class="f" id="dCol" type="text" value="text"/></div>
+    <div class="f-row"><label>L3 假名实体</label><input class="f" id="dEnt" type="text" placeholder="逗号分隔,可空" style="width:220px"/></div>
+    <div class="f-row"><label></label><button class="btn btn-primary btn-sm" id="dGo"><i class="placeholder" data-ic="play"></i> 派发到 Label Studio</button></div>
+    <div class="muted" id="dispMsg" style="font-size:.7rem;margin-top:4px">脱敏→预标注→LS import 一键;异步任务可在「异步任务」页跟踪</div>`;
+  window.applyIcons($("#dispPanel"));
+  $("#dGo").onclick = doDispatch;
+  loadBoard();
+  loadAdl();
+}
+
+async function doDispatch() {
+  if (!cur || !isAdmin) return;
+  const body = { project: cur.name, text_column: $("#dCol").value.trim() || "text" };
+  const total = parseInt($("#dTotal").value, 10);
+  if (total > 0) body.total = total;
+  const ents = ($("#dEnt").value || "").split(/[,，]/).map(s => s.trim()).filter(Boolean);
+  if (ents.length) body.entity_names = ents;
+  $("#dGo").disabled = true;
+  try {
+    const r = await request("POST", "/annotation/dispatch", { body });
+    $("#dispMsg").textContent = `已派发(任务 ${r.task_id},候选 ${r.candidate_rows} 行)— 打开 LS 标注`;
+    toast(`派发任务 ${r.task_id} 已启动`);
+  } catch (e) {
+    $("#dispMsg").textContent = `派发失败:${e.message || e}`;
+    toast("派发失败", "error");
+  } finally { $("#dGo").disabled = false; }
+}
+
+function statPill(status) {
+  const cls = status === "approved" ? "ok" : status === "arbitration" ? "bad" : "warn";
+  return `<span class="pill ${cls}">${esc(status)}</span>`;
+}
+
+async function doRecover() {
+  if (!cur || !isAdmin) return;
+  $("#recoverBtn").disabled = true;
+  try {
+    const s = await request("POST", "/annotation/recover", { body: { project: cur.name } });
+    renderBoard(s);
+    toast(`回收完成:${s.adl_rows_written} 行写回`);
+    await loadProjects(); // watermark 刷新
+    if (cur) selectProject(cur.name);
+  } catch (e) {
+    toast(`回收失败:${e.message || e}`, "error");
+  } finally { $("#recoverBtn").disabled = false; }
+}
+
+function renderBoard(s) {
+  const kappa = s.kappa == null ? "—" : Number(s.kappa).toFixed(3);
+  const kcls = s.kappa == null ? "" : s.kappa >= 0.8 ? "good" : s.kappa >= 0 ? "warn" : "bad";
+  $("#board").innerHTML = `
+    <div class="statgrid">
+      <div class="stat good"><div class="n">${s.review?.approved ?? 0}</div><div class="l">APPROVED</div></div>
+      <div class="stat bad"><div class="n">${s.review?.arbitration ?? 0}</div><div class="l">ARBITRATION</div></div>
+      <div class="stat warn"><div class="n">${s.review?.pending ?? 0}</div><div class="l">PENDING</div></div>
+      <div class="stat ${kcls}"><div class="n">${kappa}</div><div class="l">FLEISS κ</div></div>
+    </div>
+    <div class="kv">
+      <b>回收标注</b><span>${s.annotations_recovered ?? 0}</span>
+      <b>ADL 写回</b><span>${s.adl_rows_written ?? 0} 行(批次 ${esc(s.batch_id || "—")})</span>
+      <b>仲裁 task</b><span>${s.arbitration_tasks_generated ?? 0} 个已生成</span>
+      <b>watermark</b><span>${s.watermark ?? "—"}</span>
+    </div>`;
+}
+
+async function loadBoard() {
+  $("#board").innerHTML = '<div class="muted">回收后在此看板(后台每 30s 自动对账)</div>';
+}
+
+async function loadAdl() {
+  if (!cur) return;
+  try {
+    const r = await request("GET", `/annotation/projects/${encodeURIComponent(cur.name)}/adl`);
+    $("#adlMeta").textContent = `共 ${r.total} 行`;
+    if (!r.rows?.length) {
+      $("#adlBox").innerHTML = '<div class="muted" style="padding:10px">尚未写回(派发→标注→回收)</div>';
+      return;
+    }
+    $("#adlBox").innerHTML = `<table class="adl-tbl">
+      <thead><tr><th>row</th><th>标注者</th><th>版本</th><th>状态</th><th>scenario</th><th>对象/关系</th><th>时间</th></tr></thead>
+      <tbody>${r.rows.map(row => `<tr>
+        <td>${esc(row.source_row_id)}</td><td>${esc(row.annotator_id)}</td>
+        <td>v${row.adl_version}</td><td>${statPill(row.review_status)}</td>
+        <td>${esc(row.scenario || "—")}</td>
+        <td>${(row.objects?.length ?? 0)}·${(row.relations?.length ?? 0)}</td>
+        <td>${esc((row.annotated_at || "").slice(0, 16))}</td>
+      </tr>`).join("")}</tbody></table>`;
+  } catch (_) {
+    $("#adlBox").innerHTML = '<div class="muted" style="padding:10px">尚未写回</div>';
+  }
+}
+
+$("#newBtn").onclick = newProject;
+$("#delBtn").onclick = async () => {
+  if (!cur || !isAdmin) return;
+  if (!(await confirmDialog(`删除标注项目 ${cur.name}?(ADL 表与 LS 项目不受影响)`))) return;
+  try {
+    await request("DELETE", `/annotation/projects/${encodeURIComponent(cur.name)}`);
+    toast("已删除");
+    cur = null;
+    $("#projDetail").innerHTML = '<div class="muted">左侧选择项目</div>';
+    $("#dispPanel").innerHTML = '<div class="muted">选择项目后配置派发</div>';
+    await loadProjects();
+  } catch (e) { toast(`删除失败:${e.message || e}`, "error"); }
+};
+$("#recoverBtn").onclick = doRecover;
+
+loadTemplates().then(loadProjects);
+if (!isAdmin) {
+  $("#newBtn").style.display = "none";
+  toast("标注闭环为 ADMIN 面,当前角色只读", "warn");
+}
+</script>
+</body>
+</html>

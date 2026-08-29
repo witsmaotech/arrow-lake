@@ -150,6 +150,51 @@ class TestEndpointValidation:
         assert resp.status_code == 422
 
 
+class TestDispatchValidationHardening:
+    """review S1/S3:require_masking 门 + budget 白名单 + regex 预检帽。"""
+
+    def _client(self, db: SystemDB, **cfg_kw) -> TestClient:
+        cfg = AnnotationConfig(ls_url="http://ls", ls_api_token="tok", **cfg_kw)
+        return _make_app(db=db, config=cfg, lake=FakeLakeWithHE())
+
+    def test_require_masking_blocks_bare_dispatch(self, db: SystemDB) -> None:
+        _seed_project(db)
+        client = self._client(db, require_masking=True)
+        resp = client.post("/api/v1/annotation/dispatch", json={"project": "p1"})
+        assert resp.status_code == 422
+        assert "require_masking" in resp.json()["detail"]
+
+    def test_require_masking_passes_with_entities(self, db: SystemDB) -> None:
+        _seed_project(db)
+        client = self._client(db, require_masking=True)
+        resp = client.post(
+            "/api/v1/annotation/dispatch",
+            json={"project": "p1", "entity_names": ["张三"]})
+        assert resp.status_code == 202
+
+    def test_budget_unknown_key_422(self, db: SystemDB) -> None:
+        _seed_project(db)
+        resp = self._client(db).post(
+            "/api/v1/annotation/dispatch",
+            json={"project": "p1", "budget": {"typo": 1.0}})
+        assert resp.status_code == 422
+
+    def test_bad_regex_422(self, db: SystemDB) -> None:
+        _seed_project(db)
+        resp = self._client(db).post(
+            "/api/v1/annotation/dispatch",
+            json={"project": "p1", "generalize_rules": [["[unclosed", "x"]]})
+        assert resp.status_code == 422
+        assert "regex" in resp.json()["detail"]
+
+    def test_oversized_rule_422(self, db: SystemDB) -> None:
+        _seed_project(db)
+        resp = self._client(db).post(
+            "/api/v1/annotation/dispatch",
+            json={"project": "p1", "generalize_rules": [["a" * 600, "x"]]})
+        assert resp.status_code == 422
+
+
 class LSFakeOpener:
     """script 式 LS 响应(refresh→create→import)。"""
 
@@ -193,7 +238,9 @@ def _run_bg(db: SystemDB, opener: LSFakeOpener) -> tuple[Any, FakeLakeWithHE]:
     )()
 
     def run() -> dict:
-        return _bg_dispatch(
+        import asyncio
+
+        return asyncio.run(_bg_dispatch(
             app_state, lake, "tester", "p1",
             rows=[
                 {"text": "调压站异常", "quality_score": 0.3},
@@ -204,7 +251,7 @@ def _run_bg(db: SystemDB, opener: LSFakeOpener) -> tuple[Any, FakeLakeWithHE]:
             generalize_rules=[], entity_names=[],
             ls_url="http://ls", ls_token="tok", import_batch_size=50,
             ls_opener=opener,
-        )
+        ))
 
     return run, lake
 
