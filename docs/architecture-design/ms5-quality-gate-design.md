@@ -1,6 +1,6 @@
 # MS5 五维质量门与发布层设计 — Quality Gate, Release & Corpus(F5.1-F5.8)
 
-> **版本基线**:v1.11.4(规划中;实施载体,`arrow_lake/_version.py` 当前 1.11.3)· 日期:2026-08-30 · 状态:**待评审**(S1-S12 待拍板)
+> **版本基线**:v1.11.4(规划中;实施载体,`arrow_lake/_version.py` 当前 1.11.3)· 日期:2026-08-30 · 状态:**已批准**(2026-08-30 用户评审:S1-S12 全项按推荐通过)
 > 上游:Master Plan MS5 · DR6(热路径零改动)· DR15(五维门=建模侧 M7 **QoS Annotation** 形态——质量约束以标注挂载到契约/对象,非独立承载层)
 > 地基:v1.11.3(MS4 标注闭环:ADL/kappa/仲裁/采样器全部就绪;MS5 前置 M-16/M-12/M-13 已在 v1.11.2 清偿)
 > 实施载体版本:v1.11.4(估 ~3 周,Master Plan 最后一个里程碑)
@@ -184,19 +184,19 @@ tests/benchmark/golden/      # 黄金集落点(④)
 
 ## 12. 评审清单(S1-S12,待拍板)
 
-- [ ] **S1 契约 quality 节**:权重/阈值/否决/准入作为契约顶层 `quality:` 节(登记不校验,沿 MS2 label 先例;缺省=业务手册默认)——vs 独立 system_db 配置层(否决理由:DR15 QoS Annotation 形态)
-- [ ] **S2 相关性评估载体**:复用 MS4 标注回路(人工权威,LLM 预标)——vs 纯 LLM 评估(快但非"人工复核"语义;保留为降级档)
-- [ ] **S3 准确性口径**:ADL 全量聚合 κ((row,annotator) 取最新版本)+ 无标注集 LLM 抽查折算——修 W5"轮级 κ"限制在此一并做
-- [ ] **S4 多样性指标**:类别分布 1−gini——vs 覆盖率×均匀度复合(gini 单指标,手册口径)
-- [ ] **S5 时效性口径**:updated_at 新鲜度 + 标注延迟 p95 双指标折算(领域参数 `max_p95_hours` 默认 72h)
-- [ ] **S6 漂移存储**:基线=发布时自动快照于 sys_drift_baselines(数值 32 桶直方图+类别 top-32 频率,KL 阈值默认 0.1)
-- [ ] **S7 语料四形态范围**:①SFT(ADL)②预训练(KG)③RLHF(decisions×ADL)④黄金集(pytest -m golden 离线,不进 CI)——四形态一次交付 vs ①④先行(推荐一次交付,②③ 数据面已就绪成本低)
-- [ ] **S8 发布版本语义**:Lance 版本锁定+语义化 MAJOR.MINOR.PATCH(人工指定,默认 MINOR)+ 拒绝劣化发布(可 override 带 audit)
-- [ ] **S9 发布存储**:sys_releases(system_db)注册表 + datasheet YAML 为**生成物**(不手编)——不建文件目录/外部 registry
-- [ ] **S10 门禁模式**:五维门只做发布门,shadow/enforce 按 release 端点(enforce=拒发布;不做 ingest 挂钩)
-- [ ] **S11 console 页面**:两页(quality-reports 报告页 + releases 发布页,治理运维组)——vs 一页(信息密度过高,分页)
-- [ ] **S12 试点数据集**:demo_annotation_alerts(燃气域,MS4 已有 ADL/κ 基础,直接续)——需先补相关性标注回路一轮
+- [x] **S1 契约 quality 节**:权重/阈值/否决/准入作为契约顶层 `quality:` 节(登记不校验,沿 MS2 label 先例;缺省=业务手册默认)——vs 独立 system_db 配置层(否决理由:DR15 QoS Annotation 形态)
+- [x] **S2 相关性评估载体**:复用 MS4 标注回路(人工权威,LLM 预标)——vs 纯 LLM 评估(快但非"人工复核"语义;保留为降级档)
+- [x] **S3 准确性口径**:ADL 全量聚合 κ((row,annotator) 取最新版本)+ 无标注集 LLM 抽查折算——修 W5"轮级 κ"限制在此一并做
+- [x] **S4 多样性指标**:类别分布 1−gini——vs 覆盖率×均匀度复合(gini 单指标,手册口径)
+- [x] **S5 时效性口径**:updated_at 新鲜度 + 标注延迟 p95 双指标折算(领域参数 `max_p95_hours` 默认 72h)
+- [x] **S6 漂移存储**:基线=发布时自动快照于 sys_drift_baselines(数值 32 桶直方图+类别 top-32 频率,KL 阈值默认 0.1)
+- [x] **S7 语料四形态范围**:①SFT(ADL)②预训练(KG)③RLHF(decisions×ADL)④黄金集(pytest -m golden 离线,不进 CI)——四形态一次交付 vs ①④先行(推荐一次交付,②③ 数据面已就绪成本低)
+- [x] **S8 发布版本语义**:Lance 版本锁定+语义化 MAJOR.MINOR.PATCH(人工指定,默认 MINOR)+ 拒绝劣化发布(可 override 带 audit)
+- [x] **S9 发布存储**:sys_releases(system_db)注册表 + datasheet YAML 为**生成物**(不手编)——不建文件目录/外部 registry
+- [x] **S10 门禁模式**:五维门只做发布门,shadow/enforce 按 release 端点(enforce=拒发布;不做 ingest 挂钩)
+- [x] **S11 console 页面**:两页(quality-reports 报告页 + releases 发布页,治理运维组)——vs 一页(信息密度过高,分页)
+- [x] **S12 试点数据集**:demo_annotation_alerts(燃气域,MS4 已有 ADL/κ 基础,直接续)——需先补相关性标注回路一轮
 
 ---
 
-*批准后:升 v1.1 定稿 + 出 `docs_offline/v1.11.4-version-plan.md`(W 分解:F5.1-F5.8 → 周次)。*
+*已批准(2026-08-30,S1-S12 全过);实施计划:`docs_offline/v1.11.4-version-plan.md`。*
