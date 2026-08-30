@@ -20,6 +20,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel, Field
 
 from arrow_lake.api.auth_models import Role
 from arrow_lake.api.deps import get_lake, require_role
@@ -443,4 +444,125 @@ async def start_relevance_loop(
         "ls_project_id": rec.get("ls_project_id"),
         "note": ("LLM 直评为建议非结论(降级档)"
                  if mode.startswith("llm_only") else None),
+    }
+
+
+# --------------------------------------------------------------------------- #
+# W4.3 / F5.8 — 飞轮回流(decisions 低置信行 → 标注队列)
+# --------------------------------------------------------------------------- #
+
+class FeedbackRequest(BaseModel):
+    object_rows: list[str] = Field(
+        min_length=1, max_length=500,
+        description="研判低置信/失败的行 id(stable_row_id)",
+    )
+    text_column: str = Field(default="text")
+    project: str | None = Field(
+        default=None, description="指定 L4 项目名(缺省自动找首个 active)",
+    )
+
+
+@router.post(
+    "/feedback/{dataset}",
+    status_code=200,
+    dependencies=[Depends(require_role(Role.ADMIN))],
+)
+async def feedback_loop(
+    dataset: str,
+    req: FeedbackRequest,
+    request: Request,
+    lake=Depends(get_lake),
+    user=Depends(require_role(Role.ADMIN)),
+) -> dict:
+    """飞轮回流(F5.8):低置信行打回 L4 标注队列(strategy=feedback)。
+
+    模型在哪错,标注就补哪:操作侧从研判结果挑出低置信行 → 幂等入队
+    (LS 已有该行的 feedback task 即跳过)→ 人工重标 → 下一轮 assess
+    反映。审计 ``quality.feedback``。
+    """
+    astore = getattr(request.app.state, "annotation_project_store", None)
+    if astore is None:
+        raise HTTPException(
+            status_code=503, detail="system_db disabled; annotation registry unavailable",
+        )
+    cfg = getattr(request.app.state, "config", None)
+    aconf = getattr(cfg, "annotation", None) if cfg is not None else None
+    if not (getattr(aconf, "ls_url", None) and getattr(aconf, "ls_api_token", None)):
+        raise HTTPException(
+            status_code=503, detail="Label Studio not configured for feedback",
+        )
+
+    # 找 L4 项目(active+bound,非 relevance 反馈专线)
+    if req.project is not None:
+        proj = astore.get_project(req.project)
+        if proj is None or proj.get("dataset") != dataset:
+            raise HTTPException(404, detail=f"no project '{req.project}' for '{dataset}'")
+    else:
+        proj = next(
+            (p for p in astore.list_projects()
+             if p.get("dataset") == dataset and p.get("status") == "active"
+             and p.get("ls_project_id")
+             and not p["name"].endswith("__relevance")),
+            None,
+        )
+    if proj is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"no active annotation project for '{dataset}' "
+                   "(relevance-only or unbound) — create an L4 project first",
+        )
+    ls_project_id = int(proj["ls_project_id"])
+
+    try:
+        source = lake.read_dataset(dataset)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=404, detail=f"Dataset '{dataset}' not readable: {exc}",
+        ) from exc
+    from arrow_lake.annotation.dispatch import LSClient, stable_row_id
+    from arrow_lake.annotation.masking import apply_annotation_masking
+
+    text_of: dict[str, str] = {}
+    for i, row in enumerate(source.to_pylist()):
+        text = str(row.get(req.text_column) or "").strip()
+        if text:
+            text_of[stable_row_id(text, i)] = text
+    missing = [r for r in req.object_rows if r not in text_of]
+    wanted = [r for r in req.object_rows if r in text_of]
+
+    # 测试/运维注入缝(relevance_provider 同款先例);缺省真 LSClient
+    factory = getattr(
+        request.app.state, "annotation_ls_client_factory", None) or LSClient
+    client = factory(aconf.ls_url, aconf.ls_api_token)
+    # 幂等:已有 feedback task(任意状态)的行跳过
+    queued: set[str] = set()
+    with contextlib.suppress(Exception):
+        for t in client.export_tasks(ls_project_id):
+            data = t.get("data") or {}
+            if str(data.get("strategy")) == "feedback":
+                queued.add(str(data.get("row_id") or ""))
+    fresh = [r for r in wanted if r not in queued]
+    tasks = [{
+        "data": {
+            "text": apply_annotation_masking(
+                text_of[r], generalize_rules=[], entity_names=[], hmac_key=None),
+            "row_id": r, "strategy": "feedback",
+        },
+    } for r in fresh]
+    if tasks:
+        client.import_tasks(ls_project_id, tasks)
+
+    actor = getattr(user, "sub", "system")
+    with contextlib.suppress(Exception):
+        lake.audit_record(
+            "quality.feedback", dataset_name=dataset, actor=actor,
+            payload={"project": proj["name"], "requested": len(req.object_rows),
+                     "queued": len(fresh), "skipped": len(queued & set(wanted)),
+                     "missing_rows": missing[:20]},
+        )
+    return {
+        "dataset": dataset, "project": proj["name"],
+        "requested": len(req.object_rows), "queued": len(fresh),
+        "already_queued": len(queued & set(wanted)),
+        "missing_rows": missing,
     }

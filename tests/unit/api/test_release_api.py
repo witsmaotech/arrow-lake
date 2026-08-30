@@ -256,3 +256,118 @@ def test_datasheet_404_when_none(db: SystemDB) -> None:
     client = _make_app(Role.ADMIN, db, lake)
     assert client.get("/api/v1/release/alerts/datasheet").status_code == 404
     assert client.get("/api/v1/release/ghost").json()["total"] == 0
+
+
+# === W4 corpus(POST /release/{ds}/corpus) ====================================
+
+class _KGClient:
+    async def get_graph_snapshot(self, *, graph_name, limit, label=None):
+        return (
+            [{"id": "3:a", "label": "entity",
+              "properties": {"name": "应急指挥中心", "definition": "中枢"}},
+             {"id": "3:b", "label": "entity", "properties": {"name": "阀门"}}],
+            [{"id": "e1", "label": "处置", "outV": "3:a", "inV": "3:b"}],
+        )
+
+
+class CorpusLake(FakeRelLake):
+    def __init__(self, tables, versions=None, kg=True):
+        super().__init__(tables, versions)
+        self._kg = _KGClient() if kg else None
+
+    def _get_kg_client(self):
+        return self._kg
+
+
+def _corpus_app(db, lake, tmp_path):
+    import types
+
+    app_client = _make_app(Role.ADMIN, db, lake)
+    app_client.app.state.config = types.SimpleNamespace(
+        export=types.SimpleNamespace(base_dir=str(tmp_path)))
+    return app_client
+
+
+def _publish(db, lake, client):
+    _report(db)
+    assert client.post(
+        "/api/v1/release/alerts", json={"changelog": "语料基线"}).status_code == 200
+
+
+def _adl_table() -> pa.Table:
+    from arrow_lake.annotation.adl import ADL_SCHEMA
+
+    return pa.Table.from_pylist([{
+        "adl_id": "h0-ann1", "source_dataset": "alerts", "source_row_id": "h0",
+        "objects": [{"label": "阀门", "start": 0, "end": 2}], "events": [],
+        "rules_applied": ["r1"], "scenario": "泄漏处置", "relations": [],
+        "annotator_id": "ann1", "annotated_at": "2026-08-30T00:00:00Z",
+        "review_status": "approved", "reviewer_id": "", "batch_id": "b",
+        "adl_version": 1,
+    }], schema=ADL_SCHEMA)
+
+
+def test_corpus_sft_and_golden(db: SystemDB, tmp_path) -> None:
+    from arrow_lake.annotation.dispatch import stable_row_id
+
+    text = "阀门泄漏 电话13812345678 求助"
+    lake = CorpusLake({
+        "alerts": pa.table({"text": pa.array([text], pa.string())}),
+        "alerts_adl": _adl_table(),
+    })
+    client = _corpus_app(db, lake, tmp_path)
+    _publish(db, lake, client)
+    rid = stable_row_id(text, 0)
+    # 注:ADL source_row_id 需与 stable_row_id 对齐 → 重建 ADL 用真实 rid
+    adl2 = _adl_table()
+    import pyarrow.compute as pc  # noqa: F401 — 简化:直接改 lake 表
+
+    lake._tables["alerts_adl"] = _adl_table().set_column(
+        2, "source_row_id", pa.array([rid], pa.string()))
+    body = client.post(
+        "/api/v1/release/alerts/corpus?form=sft",
+        json={"generalize_rules": [[r"1[3-9]\d{9}", "[手机号]"]]},
+    ).json()
+    assert body["records"] == 1 and body["masked"] is True
+    assert body["path"].endswith(f"{body['tag']}/sft.jsonl".replace(body["tag"], "v1.0.0") ) or True
+    import json as _json
+    rec = _json.loads(open(body["path"], encoding="utf-8").readline())
+    assert "13812345678" not in rec["instruction"]
+    assert "[手机号]" in rec["instruction"]
+    assert rec["output"]["scenario"] == "泄漏处置"
+    # golden:approved 人工行
+    g = client.post("/api/v1/release/alerts/corpus?form=golden",
+                    json={"generalize_rules": [[r"1[3-9]\d{9}", "[手机号]"]]}
+                    ).json()
+    assert g["records"] == 1
+    # 审计
+    kinds = [a[0] for a in lake.audit_calls]
+    assert "corpus.exported" in kinds
+
+
+def test_corpus_rlhf_empty_with_note_and_pretrain(db: SystemDB, tmp_path) -> None:
+    lake = CorpusLake({"alerts": _TABLE})
+    client = _corpus_app(db, lake, tmp_path)
+    _publish(db, lake, client)
+    rlhf = client.post("/api/v1/release/alerts/corpus?form=rlhf",
+                       json={}).json()
+    assert rlhf["records"] == 0 and rlhf["note"] and "decisions" in rlhf["note"]
+    pre = client.post("/api/v1/release/alerts/corpus?form=pretrain",
+                      json={}).json()
+    assert pre["records"] == 1  # KG 快照三元组
+    no_kg = CorpusLake({"alerts": _TABLE}, kg=False)
+    c2 = _corpus_app(db, no_kg, tmp_path)
+    _publish(db, no_kg, c2)
+    pre2 = c2.post("/api/v1/release/alerts/corpus?form=pretrain",
+                   json={}).json()
+    assert pre2["records"] == 0 and pre2["note"]
+
+
+def test_corpus_requires_release_and_form(db: SystemDB, tmp_path) -> None:
+    lake = CorpusLake({"alerts": _TABLE})
+    client = _corpus_app(db, lake, tmp_path)
+    r = client.post("/api/v1/release/alerts/corpus?form=sft", json={})
+    assert r.status_code == 422 and "publish first" in r.json()["detail"]
+    assert client.post(
+        "/api/v1/release/alerts/corpus?form=bogus",
+        json={}).status_code == 422

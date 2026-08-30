@@ -15,6 +15,7 @@ from __future__ import annotations
 import contextlib
 import logging
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
@@ -286,3 +287,164 @@ async def export_datasheet(
         headers={"Content-Disposition":
                  f'attachment; filename="{dataset}-{rec["tag"]}-datasheet.yaml"'},
     )
+
+
+# --------------------------------------------------------------------------- #
+# W4.1/F5.6 — 语料四形态导出
+# --------------------------------------------------------------------------- #
+
+class CorpusRequest(BaseModel):
+    generalize_rules: list[tuple[str, str]] = Field(
+        default_factory=list,
+        description="L2 泛化规则 [(regex, replacement)](脱敏=配置驱动)",
+    )
+    entity_names: list[str] = Field(
+        default_factory=list, description="L3 假名实体名(HMAC 需已配)",
+    )
+
+
+def _sft_system_prompt(dataset: str, contract: Any, request: Request) -> str:
+    """system = 本体对象类 + active 规则(设计 §8①;best-effort)。"""
+    lines = [f"你是数据集 {dataset} 的领域标注专家。"]
+    if contract is not None:
+        classes = [s.object_class for s in contract.tables.values()
+                   if s.object_class]
+        if classes:
+            lines.append("本体对象类:" + "、".join(sorted(set(classes))))
+    rules_store = getattr(request.app.state, "ontology_rules_store", None)
+    if rules_store is not None and hasattr(rules_store, "list_rules"):
+        with contextlib.suppress(Exception):
+            # 字段口径:ontology_rules 表 = rule_id/condition_expr/conclusion
+            active = [
+                r for r in rules_store.list_rules()
+                if r.get("status") == "active"
+            ]
+            if active:
+                lines.append("必须遵守的 active 规则:")
+                lines.extend(
+                    f"- {r['rule_id']}: 当 {r.get('condition_expr') or '?'} "
+                    f"则 {r.get('conclusion') or '?'}"
+                    for r in active[:20] if r.get("rule_id"))
+    lines.append("按五段结构(对象/事件/适用规则/场景/关系)输出标注。")
+    return "\n".join(lines)
+
+
+@router.post(
+    "/{dataset}/corpus",
+    status_code=200,
+    dependencies=[Depends(require_role(Role.ADMIN))],
+)
+async def export_corpus(
+    dataset: str,
+    req: CorpusRequest,
+    request: Request,
+    form: str = Query(description="sft | pretrain | rlhf | golden"),
+    text_column: str = Query(default="text"),
+    table: str | None = Query(default=None, description="容器内表名"),
+    lake=Depends(get_lake),
+    user=Depends(require_role(Role.ADMIN)),
+) -> dict:
+    """语料导出(F5.6):四形态之一 → ``{export_dir}/{tag}/{form}.jsonl``。
+
+    全部经 masking 出域(规则随请求注入,脱敏=配置驱动);须存在
+    **active 发布**(导出目录按其 tag);③RLHF 在 decisions 持久化前为
+    空导出+提示(设计风险表口径)。
+    """
+    from arrow_lake.release.corpus import (
+        build_golden_records,
+        build_pretrain_records,
+        build_sft_records,
+        write_corpus,
+    )
+
+    if form not in ("sft", "pretrain", "rlhf", "golden"):
+        raise HTTPException(
+            status_code=422, detail=f"unknown corpus form '{form}'",
+        )
+    store = _store(request, "release_store", "release registry")
+    rel = store.latest_release(dataset)
+    if rel is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"no active release for '{dataset}' — publish first",
+        )
+
+    source = _read_source(lake, dataset, table)
+    from arrow_lake.annotation.dispatch import stable_row_id
+
+    texts = [str(r.get(text_column) or "").strip() for r in source.to_pylist()]
+    rows = [
+        {"row_id": stable_row_id(t, i), text_column: t}
+        for i, t in enumerate(texts) if t
+    ]
+    adl = None
+    with contextlib.suppress(Exception):
+        adl = lake.read_dataset(f"{dataset}_adl")
+
+    rules = tuple(tuple(x) for x in req.generalize_rules)
+    entities = tuple(req.entity_names)
+    note: str | None = None
+
+    if form == "sft":
+        cstore = _store(request, "contract_store", "contract registry")
+        contract, _ = _load_contract_and_spec(cstore, dataset)
+        records = build_sft_records(
+            rows=rows, adl=adl, text_column=text_column,
+            system_prompt=_sft_system_prompt(dataset, contract, request),
+            generalize_rules=rules, entity_names=entities,
+        )
+    elif form == "pretrain":
+        client = None
+        with contextlib.suppress(Exception):
+            client = lake._get_kg_client()
+        if client is None:
+            records, note = [], "KG disabled or unreachable — empty export"
+        else:
+            graph = f"kg_{dataset}"
+            with contextlib.suppress(Exception):
+                vertices, edges = await client.get_graph_snapshot(
+                    graph_name=graph, limit=1000)
+            records = build_pretrain_records(
+                vertices=vertices, edges=edges)
+            if not records:
+                note = f"no resolvable triples in KG '{graph}'"
+    elif form == "rlhf":
+        # MS3 decisions 无状态(无持久数据面)→ 空导出+提示,不阻塞
+        records, note = [], (
+            "decisions are stateless (MS3) — RLHF pairs require a persisted "
+            "decision source; empty export by design"
+        )
+    else:  # golden
+        records = build_golden_records(
+            rows=rows, adl=adl, text_column=text_column,
+            generalize_rules=rules, entity_names=entities,
+        )
+
+    cfg = getattr(request.app.state, "config", None)
+    base = getattr(getattr(cfg, "export", None), "base_dir", None) \
+        or "/data/lake/exports"
+    path = write_corpus(
+        Path(base), tag=rel["tag"], form=form, records=records)
+
+    actor = getattr(user, "sub", "system")
+    with contextlib.suppress(Exception):
+        lake.audit_record(
+            "corpus.exported", dataset_name=dataset, actor=actor,
+            payload={"form": form, "tag": rel["tag"], "records": len(records),
+                     "path": str(path)},
+        )
+    from arrow_lake.api.utils import run_sync
+
+    with contextlib.suppress(Exception):
+        await run_sync(
+            lake.lineage_record_event, dataset, "corpus.exported",
+            actor=actor,
+            metadata={"form": form, "tag": rel["tag"],
+                      "records": len(records)},
+            timeout=5.0, label="corpus_lineage",
+        )
+    return {
+        "dataset": dataset, "tag": rel["tag"], "form": form,
+        "records": len(records), "path": str(path),
+        "masked": True, "note": note,
+    }

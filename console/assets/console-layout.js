@@ -75,6 +75,8 @@ const NAV = [
   ] },
   { group: "治理运维", items: [
     { id: "governance", label: "元数据治理", ic: "key", href: "governance.html" },
+    { id: "quality-reports", label: "质量报告", ic: "sparkles", href: "quality-reports.html" },
+    { id: "releases", label: "发布管理", ic: "play", href: "releases.html" },
     { id: "ontology", label: "本体与规则", ic: "code", href: "ontology.html" },
     { id: "actions", label: "行动与场景", ic: "play", href: "actions.html" },
     { id: "decisions", label: "研判台", ic: "sparkles", href: "decisions.html" },

@@ -390,3 +390,100 @@ def test_assess_relevance_dimension_from_adl(db: SystemDB) -> None:
     assert body["verdict"] == "pass"
     # 五维全评:20+35+20+7.5+10 = 92.5
     assert body["total_score"] == 92.5
+
+
+# === W4.3 飞轮(POST /quality/feedback/{ds}) ==================================
+
+class _FakeLSFeedback:
+    def __init__(self) -> None:
+        self.imported: list[dict] = []
+
+    def export_tasks(self, pid: int) -> list[dict]:
+        return [{"data": {"row_id": t["data"]["row_id"],
+                          "strategy": t["data"]["strategy"],
+                          "text": t["data"]["text"]}}
+                for t in self.imported]
+
+    def import_tasks(self, pid: int, tasks: list[dict]) -> dict:
+        self.imported.extend(tasks)
+        return {"task_ids": list(range(len(tasks)))}
+
+
+def _feedback_app(db, lake, fake_ls):
+    import types
+
+    from arrow_lake.system_db.stores.annotation import AnnotationProjectStore
+
+    client = _make_app(role=Role.ADMIN, db=db, lake=lake)
+    client.app.state.config = types.SimpleNamespace(
+        annotation=types.SimpleNamespace(
+            ls_url="http://ls", ls_api_token="tok"))
+    client.app.state.annotation_ls_client_factory = (
+        lambda url, token: fake_ls)
+    return client
+
+
+def test_feedback_queues_and_audits(db: SystemDB) -> None:
+    from arrow_lake.annotation.dispatch import stable_row_id
+    from arrow_lake.system_db.stores.annotation import AnnotationProjectStore
+
+    text = "管道压力异常待研判"
+    lake = FakeLake({"alerts": pa.table({"text": pa.array([text], pa.string())})})
+    store = AnnotationProjectStore(db)
+    store.create_project(
+        name="alerts_l4", dataset="alerts", template_name="alert_l4",
+        labeling_config="<View/>", config_source="generated")
+    store.set_ls_project_id("alerts_l4", 11)
+    fake = _FakeLSFeedback()
+    client = _feedback_app(db, lake, fake)
+    rid = stable_row_id(text, 0)
+    body = client.post("/api/v1/quality/feedback/alerts",
+                       json={"object_rows": [rid]}).json()
+    assert body["queued"] == 1 and body["project"] == "alerts_l4"
+    assert fake.imported[0]["data"]["strategy"] == "feedback"
+    assert fake.imported[0]["data"]["row_id"] == rid
+    assert any(a[0] == "quality.feedback" for a in lake.audit_calls)
+    # 幂等:重跑同行 → already_queued
+    body2 = client.post("/api/v1/quality/feedback/alerts",
+                        json={"object_rows": [rid]}).json()
+    assert body2["queued"] == 0 and body2["already_queued"] == 1
+
+
+def test_feedback_missing_rows_reported(db: SystemDB) -> None:
+    from arrow_lake.system_db.stores.annotation import AnnotationProjectStore
+
+    lake = FakeLake({"alerts": pa.table({"text": pa.array(["x"], pa.string())})})
+    store = AnnotationProjectStore(db)
+    store.create_project(
+        name="alerts_l4", dataset="alerts", template_name="t",
+        labeling_config="<View/>", config_source="generated")
+    store.set_ls_project_id("alerts_l4", 11)
+    client = _feedback_app(db, lake, _FakeLSFeedback())
+    body = client.post("/api/v1/quality/feedback/alerts",
+                       json={"object_rows": ["ghost-row"]}).json()
+    assert body["queued"] == 0 and body["missing_rows"] == ["ghost-row"]
+
+
+def test_feedback_no_l4_project_422(db: SystemDB) -> None:
+    from arrow_lake.system_db.stores.annotation import AnnotationProjectStore
+
+    lake = FakeLake({"alerts": pa.table({"text": pa.array(["x"], pa.string())})})
+    AnnotationProjectStore(db).create_project(
+        name="alerts__relevance", dataset="alerts", template_name="relevance",
+        labeling_config="<View/>", config_source="generated")
+    client = _feedback_app(db, lake, _FakeLSFeedback())
+    r = client.post("/api/v1/quality/feedback/alerts",
+                    json={"object_rows": ["h0"]})
+    assert r.status_code == 422 and "L4 project" in r.json()["detail"]
+
+
+def test_feedback_non_admin_403(db: SystemDB) -> None:
+    import types
+
+    lake = FakeLake({"alerts": pa.table({"text": pa.array(["x"], pa.string())})})
+    client = _make_app(role=Role.VIEWER, db=db, lake=lake)
+    client.app.state.config = types.SimpleNamespace(
+        annotation=types.SimpleNamespace(ls_url="http://ls", ls_api_token="t"))
+    assert client.post(
+        "/api/v1/quality/feedback/alerts", json={"object_rows": ["h0"]}
+    ).status_code == 403

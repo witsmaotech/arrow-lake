@@ -277,10 +277,13 @@ def compute_accuracy(adl_table: pa.Table | None) -> DimensionResult:
         )
 
     latest: dict[tuple[str, str], dict[str, Any]] = {}
-    llm_rows = 0
+    llm_rows = relevance_rows = 0
     for row in adl_table.to_pylist():
         if str(row["annotator_id"]).startswith("llm:"):
             llm_rows += 1
+            continue
+        if _is_relevance_row(row):  # Choices-only 行不是 L4 标注(W4 e2e 实证)
+            relevance_rows += 1
             continue
         key = (row["source_row_id"], row["annotator_id"])
         cur = latest.get(key)
@@ -297,6 +300,7 @@ def compute_accuracy(adl_table: pa.Table | None) -> DimensionResult:
         "adl_rows": adl_table.num_rows,
         "excluded_single": excluded_single,
         "llm_rows_excluded": llm_rows,
+        "relevance_rows_excluded": relevance_rows,
     }
     if not eligible:
         return DimensionResult(

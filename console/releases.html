@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>发布管理 · Arrow Lake Console</title>
+<link rel="stylesheet" href="assets/tokens.css"/>
+<link rel="stylesheet" href="assets/app.css"/>
+<link rel="stylesheet" href="assets/console.css"/>
+<style>
+  .f-row{display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
+  .f-row label{font-size:.7rem;color:var(--fg-dim);min-width:64px}
+  input.f,select.f{background:var(--ink-950);border:1px solid var(--line);border-radius:var(--r-sm);color:var(--fg-hi);font-size:.76rem;padding:6px 9px;font-family:var(--font-mono)}
+  .rel{border:1px solid var(--line-soft);border-radius:var(--r-sm);padding:12px 14px;margin-bottom:10px;background:var(--ink-950)}
+  .rel .hd{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .rel .tag{font-family:var(--font-mono);font-size:1.1rem;font-weight:600;color:var(--teal-bright)}
+  .pill{display:inline-block;padding:1px 8px;border-radius:99px;font-size:.64rem;border:1px solid var(--line);color:var(--fg-dim)}
+  .pill.ok{color:var(--teal-bright);border-color:var(--teal-bright)}
+  .pill.bad{color:var(--danger);border-color:var(--danger)}
+  .pill.warn{color:var(--warn);border-color:var(--warn)}
+  .kv{font-size:.72rem;color:var(--fg-md);margin-top:6px;font-family:var(--font-mono)}
+  .acts{margin-top:8px;display:flex;gap:6px;flex-wrap:wrap}
+  pre.sheet{background:var(--ink-950);border:1px solid var(--line-soft);border-radius:var(--r-sm);padding:12px;font-size:.68rem;overflow:auto;max-height:420px;font-family:var(--font-mono);color:var(--fg-md)}
+</style>
+</head>
+<body>
+<script src="assets/console-layout.js"></script>
+<script type="module">
+const { renderShell } = window;
+renderShell({ active: "releases", crumb: "<b>发布管理</b>" });
+</script>
+<main class="console-main"><section class="panel">
+  <h2 style="margin:0 0 4px">发布管理(MS5 F5.4/F5.6/F5.7)</h2>
+  <p class="hint" style="margin:0 0 12px;color:var(--fg-dim);font-size:.72rem">发布=Lance 版本锁定+语义化 tag+规格书;发布门=准入+否决+拒绝劣化+漂移;语料四形态全部脱敏出域。</p>
+  <div class="f-row">
+    <label>数据集</label><input id="ds" class="f" placeholder="dataset 名" style="width:220px"/>
+    <input id="changelog" class="f" placeholder="changelog(发布必填)" style="width:260px"/>
+    <select id="bump" class="f"><option value="minor">minor</option><option value="major">major</option><option value="patch">patch</option></select>
+    <button class="btn btn-primary btn-sm" id="publish">发布</button>
+  </div>
+  <div id="releases"><p class="hint" style="color:var(--fg-dim);font-size:.74rem">输入数据集名加载发布历史。</p></div>
+  <div id="sheet"></div>
+</section></main>
+<script type="module">
+import { request } from "./src/api.js";
+import { toast } from "./src/ui/toast.js";
+import { promptDialog, confirmDialog } from "./src/ui/modal.js";
+
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[<>"&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", '"': "&quot;", "&": "&amp;" }[c]));
+const FORMS = ["sft", "pretrain", "rlhf", "golden"];
+
+async function load() {
+  const ds = $("#ds").value.trim();
+  if (!ds) return;
+  const r = await request(`/api/v1/release/${encodeURIComponent(ds)}`);
+  const box = $("#releases");
+  $("#sheet").innerHTML = "";
+  if (!r.releases?.length) { box.innerHTML = `<p class="hint">无发布历史——先跑评估再发布。</p>`; return; }
+  box.innerHTML = r.releases.map((rel) => `
+    <div class="rep rel">
+      <div class="hd">
+        <span class="tag">${esc(rel.tag)}</span>
+        <span class="pill ${rel.status === "active" ? "ok" : "warn"}">${esc(rel.status)}</span>
+        <span class="pill">${rel.lance_version != null ? "lance@" + rel.lance_version : ""}</span>
+        <span class="pill">score ${rel.total_score ?? "—"}</span>
+        <span class="pill">${esc(rel.created_at)} · ${esc(rel.released_by)}</span>
+      </div>
+      <div class="kv">${esc(rel.changelog)}</div>
+      <div class="acts">
+        <button class="btn btn-line btn-sm" onclick="window.__viewSheet('${esc(rel.tag)}')">规格书</button>
+        ${FORMS.map((f) => `<button class="btn btn-line btn-sm" onclick="window.__corpus('${esc(rel.tag)}','${f}')">${f}</button>`).join("")}
+        ${rel.status === "active" ? `<button class="btn btn-ghost btn-sm" onclick="window.__retire('${esc(rel.tag)}')">retire</button>` : ""}
+      </div>
+    </div>`).join("");
+}
+
+async function publish() {
+  const ds = $("#ds").value.trim();
+  const changelog = $("#changelog").value.trim();
+  if (!ds || !changelog) return toast("数据集与 changelog 必填", "warn");
+  const body = { changelog, bump: $("#bump").value };
+  try {
+    const r = await request(`/api/v1/release/${encodeURIComponent(ds)}`, { method: "POST", body: JSON.stringify(body) });
+    toast(`已发布 ${r.tag}(lance@${r.lance_version})${r.forced ? " · force" : ""}`, "ok");
+    load();
+  } catch (e) {
+    const blocked = e?.payload?.blocked || e.message;
+    const wantForce = await confirmDialog({ title: "发布被拒", message: `${JSON.stringify(blocked)}\n\nforce 覆盖?(需填理由,审计留痕)` });
+    if (!wantForce) return;
+    const reason = await promptDialog({ title: "force 理由", message: "审计留痕,必填", value: "" });
+    if (!reason) return;
+    try {
+      const r = await request(`/api/v1/release/${encodeURIComponent(ds)}`, {
+        method: "POST", body: JSON.stringify({ ...body, force: true, reason }),
+      });
+      toast(`已 force 发布 ${r.tag}`, "ok"); load();
+    } catch (e2) { toast(`force 发布失败:${e2.message}`, "bad"); }
+  }
+}
+
+window.__viewSheet = async (tag) => {
+  const ds = $("#ds").value.trim();
+  const r = await request(`/api/v1/release/${encodeURIComponent(ds)}/datasheet?tag=${encodeURIComponent(tag)}`);
+  const text = await (typeof r === "string" ? r : r.text?.() || JSON.stringify(r));
+  $("#sheet").innerHTML = `<h3 style="font-size:.8rem;color:var(--fg-dim);margin:14px 0 6px">规格书 · ${esc(tag)}</h3><pre class="sheet">${esc(text)}</pre>`;
+};
+window.__corpus = async (tag, form) => {
+  const ds = $("#ds").value.trim();
+  try {
+    const r = await request(`/api/v1/release/${encodeURIComponent(ds)}/corpus?form=${form}&tag=${encodeURIComponent(tag)}`, { method: "POST", body: JSON.stringify({}) });
+    toast(`${form}:${r.records} 条 → ${r.path}${r.note ? " · " + r.note : ""}`, r.records ? "ok" : "warn");
+  } catch (e) { toast(`${form} 导出失败:${e.message}`, "bad"); }
+};
+window.__retire = async (tag) => {
+  const ds = $("#ds").value.trim();
+  if (!(await confirmDialog({ title: "下线发布", message: `retire ${ds}@${tag}?` }))) return;
+  try {
+    await request(`/api/v1/release/${encodeURIComponent(ds)}/retire`, { method: "POST", body: JSON.stringify({ tag }) });
+    toast(`已下线 ${tag}`, "ok"); load();
+  } catch (e) { toast(`下线失败:${e.message}`, "bad"); }
+};
+
+$("#ds").addEventListener("change", load);
+$("#publish").onclick = publish;
+</script>
+</body>
+</html>

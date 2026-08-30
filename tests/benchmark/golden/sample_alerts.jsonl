@@ -1,0 +1,2 @@
+{"input": "阀门泄漏处置:巡检发现 [手机号] 报告压力异常", "expected": {"objects": [{"label": "阀门", "start": 0, "end": 2}], "events": [], "rules_applied": ["r1"], "scenario": "泄漏处置", "relations": []}, "row_id": "h_sample_0", "source": "adl-approved"}
+{"input": "管道第三方施工破坏预警通报", "expected": {"objects": [], "events": [{"label": "施工破坏", "start": 2, "end": 6}], "rules_applied": ["r2"], "scenario": "第三方破坏", "relations": []}, "row_id": "h_sample_1", "source": "adl-approved"}

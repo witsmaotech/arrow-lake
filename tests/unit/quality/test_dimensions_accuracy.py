@@ -127,3 +127,19 @@ def test_partial_agreement_positive_kappa() -> None:
     res = compute_accuracy(_adl(rows))
     assert res.details["kappa"] == pytest.approx(0.4667, abs=1e-3)
     assert 0.0 < res.score < 100.0
+
+
+def test_accuracy_excludes_relevance_choice_rows() -> None:
+    """W4 e2e 实证:同 row 的 Choices-only(relevance)行不得混入 κ 评分者集。"""
+    rel = [{**_ann("r0", "ann1"), "adl_id": "r0-ann1-rel",
+            "objects": [], "rules_applied": [], "scenario": "高相关"},
+           {**_ann("r1", "ann1"), "adl_id": "r1-ann1-rel",
+            "objects": [], "rules_applied": [], "scenario": "不相关"}]
+    rows = [
+        _ann("r0", "ann1", objects=SPAN_A), _ann("r0", "ann2", objects=SPAN_A),
+        _ann("r1", "ann1", objects=SPAN_B), _ann("r1", "ann2", objects=SPAN_B),
+        *rel,
+    ]
+    res = compute_accuracy(_adl(rows))
+    assert res.details["kappa"] == pytest.approx(1.0)
+    assert res.details["relevance_rows_excluded"] == 2
