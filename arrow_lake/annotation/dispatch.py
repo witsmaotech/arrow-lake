@@ -1,9 +1,10 @@
 """F4.1/F4.4 — Label Studio REST client(v1.11.3 MS4 W1.3)。
 
-旁路模块。PAT 认证(D1):``POST /api/token/refresh`` 把 personal access
-token 换成 ~5min 短时 access token,业务请求带 ``Authorization: Bearer``;
-遇 401 丢缓存重换一次(仅一次,防循环)。HTTP 失败统一 ``LSClientError``
-携带 status + body 摘要(排障面,不吞)。
+旁路模块。认证(D1,W5 live 校准):legacy token 直接 ``Authorization:
+Token`` 头(refresh 端点在 LS 1.13.1 部署 404);仅 401 才走 PAT refresh
+→ ``Bearer``(短时 access,失效重换一次)。内网服务显式零代理直连
+(api 容器 HTTP_PROXY 会把容器名打上代理 → 502,W5 实证)。HTTP 失败
+统一 ``LSClientError`` 携带 status + body 摘要(排障面,不吞)。
 
 零新依赖(version-plan 红线):urllib.request;``opener`` 可注入供测试
 mock(FakeOpener 模式,与 tests/unit/annotation/test_dispatch_client.py 对应)。
@@ -77,7 +78,13 @@ class LSClient:
         self._base = base_url.rstrip("/")
         self._token = token
         self._timeout = timeout
-        self._opener = opener or urllib.request.urlopen
+        if opener is None:
+            # LS 是内网服务:显式零代理直连(urllib 默认读 HTTP_PROXY 环境变量
+            # → api 容器代理打内网容器名 → 502;W5 live 实证)。零新依赖。
+            self._opener = urllib.request.build_opener(
+                urllib.request.ProxyHandler({})).open
+        else:
+            self._opener = opener
         self._access: str | None = None
 
     # --- low-level ---------------------------------------------------------
@@ -119,13 +126,14 @@ class LSClient:
         return self._access
 
     def _api(self, method: str, path: str, body: Any = None) -> Any:
-        """带 PAT 认证的 API 调用;401 时重换 token 重试一次。"""
-        if not self._access:
-            self._refresh_access()
-        resp = self._open(method, path, body, f"Bearer {self._access}")
+        """认证调用:legacy ``Token`` 头直连(W5 live 实证,refresh 端点
+        在 LS 1.13.1 部署 404);仅当 401 才走 PAT refresh→``Bearer``。"""
+        auth = f"Token {self._token}"
+        if self._access:
+            auth = f"Bearer {self._access}"
+        resp = self._open(method, path, body, auth)
         if getattr(resp, "status", 200) == 401:
             logger.debug("LS 401 on %s %s — refreshing access token", method, path)
-            self._access = None
             self._refresh_access()
             resp = self._open(method, path, body, f"Bearer {self._access}")
         return self._read_json(resp)
@@ -144,7 +152,7 @@ class LSClient:
         return out if isinstance(out, dict) else {}
 
     def list_projects(self) -> list[dict[str, Any]]:
-        out = self._api("GET", "/api/projects.json?page_size=100")
+        out = self._api("GET", "/api/projects?page_size=100")
         if isinstance(out, dict) and isinstance(out.get("results"), list):
             return out["results"]
         return out if isinstance(out, list) else []
@@ -160,6 +168,21 @@ class LSClient:
         return self._api(
             "GET", f"/api/tasks?project={project_id}&page={page}&page_size={page_size}"
         )
+
+    def export_tasks(self, project_id: int) -> list[dict[str, Any]]:
+        """GET /api/projects/{id}/export(JSON,全量含 annotations)。
+
+        W5 live 实证:``/api/tasks`` 列表视图**裁剪 annotations/predictions
+        数组**(只留计数)——回收必须走 export(设计 §6.1 原口径)。
+        """
+        out = self._api(
+            "GET",
+            f"/api/projects/{project_id}/export?exportType=JSON&download_all_tasks=true",
+        )
+        if isinstance(out, dict):
+            tasks = out.get("tasks")
+            return tasks if isinstance(tasks, list) else []
+        return out if isinstance(out, list) else []
 
 
 # --------------------------------------------------------------------------- #

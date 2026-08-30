@@ -110,14 +110,38 @@ class TestWebhook:
 
 
 class TestWatermark:
+    def _tasks(self, ids_annos):
+        return [
+            _task([_ann(REGIONS, completed_by=7)] if ann else [], task_id=tid)
+            for tid, ann in ids_annos
+        ]
+
     def test_incremental_filter_and_new_watermark(self):
-        tasks = [_task([], task_id=i) for i in (1, 2, 5, 9)]
+        tasks = self._tasks([(1, True), (2, True), (5, True), (9, True)])
         batch, wm = incremental_tasks(tasks, watermark=2)
         assert [t["id"] for t in batch] == [5, 9]
         assert wm == 9
 
+    def test_unannotated_task_does_not_advance_watermark(self):
+        """W5 live 实证修:无标注 task 不推进——后到标注仍可回收。"""
+        tasks = self._tasks([(1, True), (5, False), (9, False)])
+        batch, wm = incremental_tasks(tasks, watermark=0)
+        assert [t["id"] for t in batch] == [1]
+        assert wm == 1  # 5/9 未标注,不推
+
+    def test_late_annotation_still_recovered(self):
+        """scheduler 先看(无标注)→ 标注者后标 → 下轮拉得到。"""
+        tasks = self._tasks([(5, True), (9, False)])
+        _, wm = incremental_tasks(tasks, watermark=0)
+        assert wm == 5
+        # (9 后来被标注)
+        tasks2 = self._tasks([(5, True), (9, True)])
+        batch, wm2 = incremental_tasks(tasks2, watermark=wm)
+        assert [t["id"] for t in batch] == [9]
+        assert wm2 == 9
+
     def test_no_new_tasks_keeps_watermark(self):
-        tasks = [_task([], task_id=3)]
+        tasks = self._tasks([(3, False)])
         batch, wm = incremental_tasks(tasks, watermark=3)
         assert batch == [] and wm == 3
 

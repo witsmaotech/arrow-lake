@@ -118,6 +118,9 @@ class FakeLSCl:
     def list_tasks(self, project_id, **kw):
         return {"tasks": self.tasks, "total": len(self.tasks)}
 
+    def export_tasks(self, project_id):
+        return self.tasks
+
     def import_tasks(self, project_id, tasks):
         self.imported.append((project_id, tasks))
         return {"task_ids": list(range(len(tasks)))}

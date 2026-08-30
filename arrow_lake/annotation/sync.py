@@ -45,13 +45,6 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 
-def _ls_tasks_payload(raw: Any) -> list[dict]:
-    if isinstance(raw, dict):
-        tasks = raw.get("tasks")
-        return tasks if isinstance(tasks, list) else []
-    return raw if isinstance(raw, list) else []
-
-
 def _existing_adl_state(
     lake: Any, dataset: str
 ) -> tuple[set[str], dict[tuple[str, str], int]]:
@@ -68,20 +61,6 @@ def _existing_adl_state(
         key = (row["source_row_id"], row["annotator_id"])
         versions[key] = max(versions.get(key, 0), int(row["adl_version"] or 0))
     return ids, versions
-
-
-def _fetch_all_tasks(client: Any, ls_project_id: int) -> list[dict]:
-    """翻页拉全 project 任务(单页 200;review C6——不翻页则 >200 任务后
-    watermark 卡死,后续标注静默永不回收)。10 页帽(2000)兜底。"""
-    out: list[dict] = []
-    for page in range(1, 11):
-        batch = _ls_tasks_payload(client.list_tasks(ls_project_id, page=page, page_size=200))
-        if not batch:
-            break
-        out.extend(batch)
-        if len(batch) < 200:
-            break
-    return out
 
 
 def arbitration_tasks(
@@ -137,7 +116,8 @@ def recover_one(
         raise LookupError(f"project {project_name!r} has no LS binding")
 
     client = ls_client or LSClient(config.ls_url, config.ls_api_token)
-    tasks = _fetch_all_tasks(client, ls_project_id)
+    # W5 live:export 全量(列表视图裁剪 annotations);大项目成本登记
+    tasks = client.export_tasks(ls_project_id)
     watermark = int(rec.get("recover_watermark") or 0)
     fresh, new_watermark = incremental_tasks(tasks, watermark=watermark)
 

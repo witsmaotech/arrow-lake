@@ -66,7 +66,7 @@ class LSScript:
         url = req.full_url
         if "token/refresh" in url:
             body = b'{"access": "a"}'
-        elif "/api/tasks" in url:
+        elif "/api/tasks" in url or "/export" in url:
             body = json.dumps({"tasks": self.tasks, "total": len(self.tasks)}).encode()
         else:
             body = b"{}"

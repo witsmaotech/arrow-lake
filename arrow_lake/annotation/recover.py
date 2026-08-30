@@ -153,13 +153,24 @@ def parse_webhook(payload: dict[str, Any]) -> RecoveredAnnotation | None:
 def incremental_tasks(
     tasks: list[dict[str, Any]], *, watermark: int
 ) -> tuple[list[dict[str, Any]], int]:
-    """watermark 增量:``id > watermark`` 的任务 + 新 watermark(max)。"""
+    """watermark 增量:**仅带标注的任务**推进 watermark(W5 live 实证修)。
+
+    标注晚于 task 创建——若按 task id 无条件推进,后到的标注会永远落在
+    增量窗口外(scheduler 曾在标注发生前把 watermark 推满,ADL 空)。
+    现语义:``id > watermark 且 annotations 非空`` 才构成增量;无标注的
+    pending task 留在窗口内反复重拉(页帽 200 保护成本),被标注后即
+    回收。已知限制(登记):已回收 task 的**重标注**(id ≤ watermark)
+    轮询模型捕获不了——webhook ANNOTATION_UPDATED 是补丁通道。
+    """
     def _tid(t: dict[str, Any]) -> int:
         try:
             return int(t.get("id", 0))
         except (TypeError, ValueError):  # review P3: 脏 id 视为 0(不阻断)
             return 0
 
-    fresh = [t for t in tasks if _tid(t) > watermark]
+    fresh = [
+        t for t in tasks
+        if _tid(t) > watermark and t.get("annotations")
+    ]
     new_wm = max((_tid(t) for t in fresh), default=watermark)
     return fresh, new_wm

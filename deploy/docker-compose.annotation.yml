@@ -15,7 +15,20 @@
 # LABEL_STUDIO_API_TOKEN(W2 dispatch 用;凭据不入 compose)。
 # ==============================================================================
 
+# MS4 的全部 compose 配置集中在本文件(LS 容器 + api 的 annotation env
+# 补充块)。⚠️ api 服务的任何 compose 操作必须叠加本文件,否则 recreate
+# 出的 api 缺 annotation env(dispatch 503 / scheduler 不启动——良性,
+# 重新叠加 recreate 即恢复;与 dev.override 同款纪律)。
+
 services:
+  # api 补充块:annotation dispatch/recover 面的连接配置(旁路;默认栈
+  # 单独渲染时无此块 → annotation 面自动禁用,零污染)。
+  api:
+    environment:
+      ARROW_LAKE__ANNOTATION__LS_URL: "http://label-studio:8080"
+      ARROW_LAKE__ANNOTATION__LS_API_TOKEN: "${ANNOTATION_LS_API_TOKEN:-}"
+      ARROW_LAKE__ANNOTATION__WEBHOOK_SECRET: "${ANNOTATION_WEBHOOK_SECRET:-}"
+
   label-studio:
     image: heartexlabs/label-studio:1.13.1   # S1 评审定版
     container_name: arrow-lake-label-studio
@@ -24,6 +37,9 @@ services:
       - "127.0.0.1:8085:8080"                 # 内网段,不暴露公网(DR6 旁路)
     environment:
       LABEL_STUDIO_HOST: localhost
+      # 首启自动建 admin(D1 一次性;PAT 经 UI/API 取后写 deploy/.env)
+      LABEL_STUDIO_USERNAME: ${LABEL_STUDIO_USERNAME:?set LABEL_STUDIO_USERNAME in deploy/.env}
+      LABEL_STUDIO_PASSWORD: ${LABEL_STUDIO_PASSWORD:?set LABEL_STUDIO_PASSWORD in deploy/.env}
       # S3 source storage(脱敏任务文件经 MinIO 中转;W2 接 source storage 时用)
       # ⚠️ review S4:专用 scoped 凭据(仅 arrow-lake-annotation 桶),不给
       # root——LS 是大体量第三方 Web 应用,RCE 即凭据泄露,root = 全湖失陷。

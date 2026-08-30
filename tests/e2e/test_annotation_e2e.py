@@ -63,7 +63,7 @@ class LSScript:
             self.imported.extend(batch)
             self.tasks.extend(batch)
             body = json.dumps({"task_ids": [t["id"] for t in batch]}).encode()
-        elif "/api/tasks" in url:
+        elif "/api/tasks" in url or "/export" in url:
             body = json.dumps({"tasks": self.tasks, "total": len(self.tasks)}).encode()
         else:
             body = b"{}"
