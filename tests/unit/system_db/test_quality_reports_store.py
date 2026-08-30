@@ -74,7 +74,7 @@ def test_limit_and_missing_dataset(db: SystemDB) -> None:
 
 
 def test_migration_count_bumped() -> None:
-    """V020 加入后迁移序号断言同步(项目约定:test_system_db 对齐)。"""
+    """迁移序号断言同步(项目约定:test_system_db 对齐)。"""
     from pathlib import Path
     migrations = Path("arrow_lake/system_db/migrations").glob("V*.sql")
-    assert len(list(migrations)) == 20
+    assert len(list(migrations)) == 21  # V020 reports + V022 drift (MS5)

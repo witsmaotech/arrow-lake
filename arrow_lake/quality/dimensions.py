@@ -35,6 +35,7 @@ from arrow_lake.contract.schema import DatasetContract
 __all__ = [
     "DEAD_LETTER_MAX",
     "MAX_CATEGORY_CARDINALITY",
+    "RELEVANCE_LABELS",
     "REQUIRED_MISSING_MAX",
     "DimensionResult",
     "adl_signature",
@@ -42,6 +43,7 @@ __all__ = [
     "compute_accuracy",
     "compute_completeness",
     "compute_diversity",
+    "compute_relevance",
     "compute_timeliness",
     "detect_timestamp_column",
     "freshness_hours",
@@ -266,6 +268,7 @@ def compute_accuracy(adl_table: pa.Table | None) -> DimensionResult:
 
     降级(评分层跳过该维):ADL 空 → ``no annotations``;无双标注行 →
     ``no double-annotated rows``(单标注者/LLM 折算路径不在 W1)。
+    ``llm:`` 前缀标注者(W2 LLM 直评/降级)不入 κ——κ 是人-人一致性。
     """
     if adl_table is None or adl_table.num_rows == 0:
         return DimensionResult(
@@ -274,7 +277,11 @@ def compute_accuracy(adl_table: pa.Table | None) -> DimensionResult:
         )
 
     latest: dict[tuple[str, str], dict[str, Any]] = {}
+    llm_rows = 0
     for row in adl_table.to_pylist():
+        if str(row["annotator_id"]).startswith("llm:"):
+            llm_rows += 1
+            continue
         key = (row["source_row_id"], row["annotator_id"])
         cur = latest.get(key)
         if cur is None or row["adl_version"] >= cur["adl_version"]:
@@ -286,7 +293,11 @@ def compute_accuracy(adl_table: pa.Table | None) -> DimensionResult:
     eligible = [sigs for sigs in by_task.values() if len(sigs) >= 2]
     excluded_single = len(by_task) - len(eligible)
 
-    base = {"adl_rows": adl_table.num_rows, "excluded_single": excluded_single}
+    base = {
+        "adl_rows": adl_table.num_rows,
+        "excluded_single": excluded_single,
+        "llm_rows_excluded": llm_rows,
+    }
     if not eligible:
         return DimensionResult(
             name="accuracy", score=None,
@@ -315,6 +326,100 @@ def compute_accuracy(adl_table: pa.Table | None) -> DimensionResult:
             "annotators": len({a for (_r, a) in latest}),
         },
         source="adl",
+    )
+
+
+# --------------------------------------------------------------------------- #
+# relevance(ADL 聚合,W2.1 / F5.2)
+# --------------------------------------------------------------------------- #
+
+#: 三分类标签(D2):LS Choices 的 value 即回收后的 scenario 值。
+RELEVANCE_LABELS: tuple[str, str, str] = ("高相关", "间接相关", "不相关")
+_RELEVANCE_RANK = {"高相关": 2, "间接相关": 1, "不相关": 0}
+_RELEVANCE_GRADE = {"高相关": 1.0, "间接相关": 0.5, "不相关": 0.0}
+
+
+def _is_relevance_row(rec: dict[str, Any]) -> bool:
+    """Choices-only 标注:scenario ∈ 三分类 且无任何结构(spans/关系/规则)。
+
+    L4 结构化标注的 scenario 撞名不认——带 span 的行属于标注本体,
+    不是相关性判定。
+    """
+    return (
+        rec.get("scenario") in RELEVANCE_LABELS
+        and not rec.get("objects")
+        and not rec.get("events")
+        and not rec.get("relations")
+        and not rec.get("rules_applied")
+    )
+
+
+def compute_relevance(adl_table: pa.Table | None) -> DimensionResult:
+    """相关性:ADL 聚合三分类 → 100×(high + 0.5×somewhat)/total(§2.1)。
+
+    聚合:(row,annotator) 取最新 ``adl_version`` → per-row **majority**,
+    人工票优先于 LLM 票(annotator_id ``llm:`` 前缀;行内有人工票则弃
+    LLM 票),平票取低档(门禁保守)。``source`` 标数据形态:
+    ``annotation``(全人)/ ``llm``(全 LLM,降级——建议非结论)/
+    ``mixed``。
+    """
+    if adl_table is None or adl_table.num_rows == 0:
+        return DimensionResult(
+            name="relevance", score=None,
+            details={"note": "no annotations"}, source="annotation",
+        )
+
+    latest: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in adl_table.to_pylist():
+        if not _is_relevance_row(row):
+            continue
+        key = (row["source_row_id"], row["annotator_id"])
+        cur = latest.get(key)
+        if cur is None or row["adl_version"] >= cur["adl_version"]:
+            latest[key] = row
+    if not latest:
+        return DimensionResult(
+            name="relevance", score=None,
+            details={"note": "no relevance annotations"}, source="annotation",
+        )
+
+    by_row: dict[str, list[dict[str, Any]]] = {}
+    for (row_id, _annotator), row in latest.items():
+        by_row.setdefault(row_id, []).append(row)
+
+    counts = {label: 0 for label in RELEVANCE_LABELS}
+    human_rows = llm_rows = 0
+    for recs in by_row.values():
+        humans = [r for r in recs if not str(r["annotator_id"]).startswith("llm:")]
+        pool = humans if humans else recs
+        if humans:
+            human_rows += 1
+        else:
+            llm_rows += 1
+        tally: dict[str, int] = {}
+        for r in pool:
+            tally[r["scenario"]] = tally.get(r["scenario"], 0) + 1
+        best = max(tally.values())
+        winners = [label for label, n in tally.items() if n == best]
+        counts[min(winners, key=lambda l: _RELEVANCE_RANK[l])] += 1
+
+    total = sum(counts.values())
+    score = 100.0 * (
+        counts["高相关"] + 0.5 * counts["间接相关"]
+    ) / total
+    source = (
+        "annotation" if llm_rows == 0
+        else ("llm" if human_rows == 0 else "mixed")
+    )
+    details: dict[str, Any] = {
+        "counts": counts, "rows": total,
+        "human_rows": human_rows, "llm_rows": llm_rows,
+    }
+    if source == "llm":
+        details["assessed_by"] = "llm"
+        details["note"] = "LLM-only assessment — suggestions, not human verdicts"
+    return DimensionResult(
+        name="relevance", score=round(score, 4), details=details, source=source,
     )
 
 

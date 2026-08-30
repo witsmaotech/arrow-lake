@@ -22,10 +22,12 @@ from arrow_lake.contract.schema import (
     KNOWN_QUALITY_VETOES,
     QualitySpec,
 )
+from arrow_lake.quality.drift import DEFAULT_DRIFT_KL
 
 __all__ = [
     "CRITICAL_ACCURACY_THRESHOLD",
     "DEFAULT_ADMISSION",
+    "DEFAULT_DRIFT_KL",
     "DEFAULT_MAX_P95_HOURS",
     "DEFAULT_THRESHOLDS",
     "DEFAULT_VETOES",
@@ -67,6 +69,7 @@ class ResolvedQualitySpec:
         "_weights",
         "admission",
         "critical",
+        "drift_kl",
         "max_p95_hours",
         "thresholds",
         "vetoes",
@@ -81,6 +84,7 @@ class ResolvedQualitySpec:
         admission: tuple[float, float, float],
         max_p95_hours: float,
         critical: bool,
+        drift_kl: float,
     ) -> None:
         object.__setattr__(self, "_weights", MappingProxyType(dict(weights)))
         object.__setattr__(self, "thresholds", MappingProxyType(dict(thresholds)))
@@ -88,6 +92,7 @@ class ResolvedQualitySpec:
         object.__setattr__(self, "admission", admission)
         object.__setattr__(self, "max_p95_hours", max_p95_hours)
         object.__setattr__(self, "critical", critical)
+        object.__setattr__(self, "drift_kl", drift_kl)
 
     @property
     def weights(self) -> Mapping[str, float]:
@@ -112,6 +117,7 @@ def resolve_quality_spec(q: QualitySpec | None) -> ResolvedQualitySpec:
             admission=DEFAULT_ADMISSION,
             max_p95_hours=DEFAULT_MAX_P95_HOURS,
             critical=False,
+            drift_kl=DEFAULT_DRIFT_KL,
         )
 
     if q.weights is None:
@@ -142,4 +148,5 @@ def resolve_quality_spec(q: QualitySpec | None) -> ResolvedQualitySpec:
             if q.timeliness is not None else DEFAULT_MAX_P95_HOURS
         ),
         critical=q.critical,
+        drift_kl=q.drift_kl if q.drift_kl is not None else DEFAULT_DRIFT_KL,
     )

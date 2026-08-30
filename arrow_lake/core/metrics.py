@@ -350,6 +350,15 @@ ontology_check_total: Counter = Counter(
     labelnames=["dataset", "result"],
 )
 
+# --- v1.11.4 MS5 W2: Drift Detection Metrics (F5.3) ---
+
+quality_drift_kl: Gauge = Gauge(
+    "arrow_lake_quality_drift_kl",
+    "Latest KL divergence of a column against its drift baseline.",
+    registry=REGISTRY,
+    labelnames=["dataset", "column"],
+)
+
 # --- Metrics toggle (thread-safe via Event) ---
 
 _metrics_enabled = threading.Event()

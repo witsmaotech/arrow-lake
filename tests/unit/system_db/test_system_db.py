@@ -126,8 +126,9 @@ class TestMigrator:
         applied = Migrator(db).run()
         assert applied == []
         # schema_version still has exactly the recorded versions.
+        # V021 预留给 W3 releases(MS5 设计 §10),当前缺号属预期。
         versions = Migrator(db).applied_versions()
-        assert versions == set(range(1, 21))  # V020 sys_quality_reports (MS5 W1)
+        assert versions == set(range(1, 21)) | {22}
 
 
 # --------------------------------------------------------------------------- #

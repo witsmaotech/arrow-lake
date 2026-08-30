@@ -364,6 +364,14 @@ class QualitySpec(BaseModel):
     admission: AdmissionDecl | None = None
     timeliness: TimelinessDecl | None = None
     critical: bool = False
+    drift_kl: float | None = None   # 漂移 KL 阈值覆盖(W2.2;缺省 0.1)
+
+    @field_validator("drift_kl")
+    @classmethod
+    def _positive_drift_kl(cls, v: float | None) -> float | None:
+        if v is not None and not 0 < v <= 10:
+            raise ValueError(f"drift_kl must satisfy 0 < v <= 10, got {v}")
+        return v
 
     @field_validator("weights")
     @classmethod

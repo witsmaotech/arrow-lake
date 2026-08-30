@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pyarrow as pa
 import pytest
@@ -39,7 +40,7 @@ tables:
 
 
 class FakeLake:
-    """最小只读 Lake:read_dataset / audit / lineage 记调用。"""
+    """最小只读 Lake:read_dataset / audit / lineage 记调用 + ADL 写面。"""
 
     def __init__(self, tables: dict[str, pa.Table]) -> None:
         self._tables = tables
@@ -57,6 +58,19 @@ class FakeLake:
 
     def lineage_record_event(self, dataset: str, operation: str, **kw) -> None:
         self.lineage_calls.append((dataset, operation))
+
+    # --- llm_only 相关性直评的写面(ADL create-or-append) ---
+    def _get_storage(self) -> FakeLake:
+        return self
+
+    def dataset_exists(self, name: str) -> bool:
+        return name in self._tables
+
+    def create_dataset(self, name: str, table: pa.Table) -> None:
+        self._tables[name] = table
+
+    def append_dataset(self, name: str, table: pa.Table) -> None:
+        self._tables[name] = pa.concat_tables([self._tables[name], table])
 
 
 def _source_table(n: int = 10) -> pa.Table:
@@ -99,10 +113,18 @@ def db() -> SystemDB:
 
 def _make_app(
     *, role: Role, db: SystemDB | None, lake: FakeLake | None,
+    relevance_provider: Any | None = None,
 ) -> TestClient:
+    from arrow_lake.system_db.stores.annotation import AnnotationProjectStore
+    from arrow_lake.system_db.stores.drift_baselines import DriftBaselineStore
+
     app = FastAPI()
     app.state.quality_report_store = QualityReportStore(db) if db else None
     app.state.contract_store = ContractStore(db) if db else None
+    app.state.drift_baseline_store = DriftBaselineStore(db) if db else None
+    app.state.annotation_project_store = (
+        AnnotationProjectStore(db) if db else None)
+    app.state.relevance_provider = relevance_provider
 
     @app.middleware("http")
     async def _inject_user(request: Request, call_next):
@@ -153,7 +175,7 @@ def test_assess_happy_path_persists_and_audits(db: SystemDB) -> None:
         "relevance", "accuracy", "completeness", "diversity", "timeliness"}
     assert body["dimensions"]["accuracy"]["score"] == 100.0
     assert body["audit_recorded"] is True and body["lineage_recorded"] is True
-    assert ("quality.assess",) == (lake.audit_calls[0][0],)
+    assert (lake.audit_calls[0][0],) == ("quality.assess",)
     assert lake.lineage_calls[0][:2] == ("alerts", "quality.assessed")
 
 
@@ -210,3 +232,161 @@ quality:
     latest = client.get("/api/v1/quality/reports/alerts").json()["latest"]
     assert latest["spec"]["critical"] is True
     assert latest["spec"]["thresholds"]["accuracy"] == 95
+
+
+# === W2 drift(POST /quality/drift/{ds}) =====================================
+
+def _skewed_table() -> pa.Table:
+    rows = [
+        {"severity": "high" if i < 9 else "low",  # 90/10 偏移(基线 50/50)
+         "text": f"alert {i}", "updated_at": 1}
+        for i in range(10)
+    ]
+    return pa.Table.from_pylist(rows, schema=pa.schema([
+        ("severity", pa.string()), ("text", pa.string()),
+        ("updated_at", _TS),
+    ]))
+
+
+def test_drift_first_call_creates_baseline(db: SystemDB) -> None:
+    _, lake = _ready(db)
+    client = _make_app(role=Role.ADMIN, db=db, lake=lake)
+    body = client.post("/api/v1/quality/drift/alerts").json()
+    assert body["status"] == "baseline_created"
+    assert body["columns"] >= 1  # severity + text(非空类别列)
+    # 第二次同数据 → compared,无漂移
+    body2 = client.post("/api/v1/quality/drift/alerts").json()
+    assert body2["status"] == "compared"
+    assert body2["drifted"] == []
+
+
+def test_drift_detects_shift_and_sets_metric(db: SystemDB) -> None:
+    from arrow_lake.core.metrics import REGISTRY
+
+    _, lake = _ready(db)
+    client = _make_app(role=Role.ADMIN, db=db, lake=lake)
+    client.post("/api/v1/quality/drift/alerts")          # 落基线(50/50)
+    lake._tables["alerts"] = _skewed_table()              # 数据偏移(90/10)
+    body = client.post("/api/v1/quality/drift/alerts").json()
+    assert body["status"] == "compared"
+    assert "severity" in body["drifted"]
+    assert body["columns"]["severity"]["kl"] > 0.1
+    # metrics Gauge 已写
+    val = REGISTRY.get_sample_value(
+        "arrow_lake_quality_drift_kl", {"dataset": "alerts", "column": "severity"})
+    assert val is not None and val > 0.1
+
+
+def test_drift_reset_rebaselines(db: SystemDB) -> None:
+    _, lake = _ready(db)
+    client = _make_app(role=Role.ADMIN, db=db, lake=lake)
+    client.post("/api/v1/quality/drift/alerts")
+    lake._tables["alerts"] = _skewed_table()
+    body = client.post("/api/v1/quality/drift/alerts?reset=true").json()
+    assert body["status"] == "baseline_reset"
+    # 重置后同数据无漂移
+    assert client.post("/api/v1/quality/drift/alerts").json()["drifted"] == []
+
+
+def test_drift_unknown_dataset_404_and_threshold_override(db: SystemDB) -> None:
+    lake = FakeLake({})
+    client = _make_app(role=Role.ADMIN, db=db, lake=lake)
+    assert client.post("/api/v1/quality/drift/ghost").status_code == 404
+    # 契约 drift_kl 覆盖 → threshold 回带(_ready 之后再存,避免被版本链盖掉)
+    _, lake2 = _ready(db)
+    ContractStore(db).save_contract("alerts", CONTRACT + "quality:\n  drift_kl: 0.5\n")
+    client2 = _make_app(role=Role.ADMIN, db=db, lake=lake2)
+    client2.post("/api/v1/quality/drift/alerts")
+    lake2._tables["alerts"] = _skewed_table()
+    body = client2.post("/api/v1/quality/drift/alerts").json()
+    assert body["threshold"] == 0.5
+    assert body["drifted"] == []  # 同样的偏移在 0.5 阈下不漂
+
+
+# === W2 relevance(POST /quality/relevance/{ds}) =============================
+
+class _StaticProvider:
+    """relevance 端点注入的静态 LLM(测试/运维钩子)。"""
+
+    model = "test-model"
+
+    def __init__(self, content: str) -> None:
+        self._content = content
+
+    async def generate(self, messages):
+        from arrow_lake.rag.provider import LLMResponse
+
+        return LLMResponse(
+            content=self._content, model=self.model, provider="fake")
+
+
+def test_relevance_endpoint_llm_only_accepted(db: SystemDB) -> None:
+    _, lake = _ready(db)
+    client = _make_app(
+        role=Role.ADMIN, db=db, lake=lake,
+        relevance_provider=_StaticProvider("高相关"))
+    r = client.post("/api/v1/quality/relevance/alerts?n=4")
+    assert r.status_code == 202, r.text
+    body = r.json()
+    assert body["project"] == "alerts__relevance"
+    assert body["mode"].startswith("llm_only")  # LS 未配置 → 自动降级
+    assert body["sampled"] == 4
+    # 项目已注册(回收 scheduler 可自动拾取 active 项目)
+    from arrow_lake.system_db.stores.annotation import AnnotationProjectStore
+
+    rec = AnnotationProjectStore(db).get_project("alerts__relevance")
+    assert rec is not None and rec["status"] == "active"
+    assert "高相关" in rec["labeling_config"]
+
+
+def test_relevance_endpoint_errors(db: SystemDB) -> None:
+    lake = FakeLake({})
+    client = _make_app(role=Role.ADMIN, db=db, lake=lake)
+    assert client.post("/api/v1/quality/relevance/ghost").status_code == 404
+    # 无 LS 无 LLM → 503
+    _, lake2 = _ready(db)
+    client2 = _make_app(role=Role.ADMIN, db=db, lake=lake2)
+    assert client2.post("/api/v1/quality/relevance/alerts").status_code == 503
+    # 文本列缺失 → 422
+    no_text = FakeLake({"alerts": pa.table({"x": [1, 2]})})
+    client3 = _make_app(
+        role=Role.ADMIN, db=db, lake=no_text,
+        relevance_provider=_StaticProvider("高相关"))
+    assert client3.post(
+        "/api/v1/quality/relevance/alerts").status_code == 422
+
+
+def test_relevance_endpoint_non_admin_403(db: SystemDB) -> None:
+    _, lake = _ready(db)
+    client = _make_app(
+        role=Role.VIEWER, db=db, lake=lake,
+        relevance_provider=_StaticProvider("高相关"))
+    assert client.post("/api/v1/quality/relevance/alerts").status_code == 403
+
+
+def test_assess_relevance_dimension_from_adl(db: SystemDB) -> None:
+    """W2.g:relevance 行进 ADL → assess 五维全评估,verdict=pass。"""
+    from arrow_lake.annotation.adl import ADL_SCHEMA
+
+    l4 = _adl()  # L4 双标注(κ=1)
+    rel_rows = []
+    for i in range(4):
+        rel_rows.append({
+            "adl_id": f"rel{i}-ann1", "source_dataset": "alerts",
+            "source_row_id": f"rel-r{i}", "objects": [], "events": [],
+            "rules_applied": [], "scenario": "高相关", "relations": [],
+            "annotator_id": "ann1", "annotated_at": NOW.isoformat(),
+            "review_status": "approved", "reviewer_id": "", "batch_id": "b",
+            "adl_version": 1,
+        })
+    adl = pa.concat_tables([l4, pa.Table.from_pylist(rel_rows, schema=ADL_SCHEMA)])
+    ContractStore(db).save_contract("alerts", CONTRACT)
+    lake = FakeLake({"alerts": _source_table(), "alerts_adl": adl})
+    client = _make_app(role=Role.ADMIN, db=db, lake=lake)
+    body = client.post("/api/v1/quality/assess/alerts").json()
+    assert body["dimensions"]["relevance"]["score"] == 100.0
+    assert body["dimensions"]["relevance"]["source"] == "annotation"
+    assert body["degraded"] == []
+    assert body["verdict"] == "pass"
+    # 五维全评:20+35+20+7.5+10 = 92.5
+    assert body["total_score"] == 92.5
