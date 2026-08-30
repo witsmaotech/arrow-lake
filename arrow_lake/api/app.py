@@ -34,6 +34,7 @@ from arrow_lake.api.routers.contracts import router as contracts_router
 from arrow_lake.api.routers.decisions import router as decisions_router
 from arrow_lake.api.routers.objects import router as objects_router
 from arrow_lake.api.routers.annotation import router as annotation_router
+from arrow_lake.api.routers.quality_report import router as quality_report_router
 from arrow_lake.api.routers.semantic import router as semantic_router
 from arrow_lake.api.routers.ontology import router as ontology_router
 from arrow_lake.api.routers.quality import router as quality_router
@@ -347,6 +348,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         from arrow_lake.system_db.stores.annotation import AnnotationProjectStore
 
         app.state.annotation_project_store = AnnotationProjectStore(sys_db)
+        # v1.11.4 MS5 (W1.4/W1.5, F5.1): five-dimension quality assessment
+        # reports behind /api/v1/quality — 发布门报告链(评估历史/准入依据)。
+        from arrow_lake.system_db.stores.quality_reports import QualityReportStore
+
+        app.state.quality_report_store = QualityReportStore(sys_db)
         # W4.0b: 30s 回收轮询(S9 主通道;webhook 只加速)。LS 未配置 →
         # 不启动(纯 dispatch-less 部署零后台线程);连续失败熔断停。
         if config.annotation.ls_url and config.annotation.ls_api_token:
@@ -849,6 +855,7 @@ def create_app(config: ArrowLakeConfig | None = None) -> FastAPI:
     app.include_router(decisions_router)
     app.include_router(objects_router)
     app.include_router(annotation_router)
+    app.include_router(quality_report_router)
     app.include_router(semantic_router)
     app.include_router(auth_router)
     app.include_router(admin_router)

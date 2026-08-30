@@ -17,7 +17,7 @@ from typing import Any, Literal
 
 import pyarrow as pa
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 _TABLE_NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_-]*$")
 # column names may be non-ASCII (压力/材质) but must stay SQL-quote safe
@@ -293,6 +293,118 @@ def _normalize_reference(
     )
 
 
+# --------------------------------------------------------------------------- #
+# Quality node (MS5 W1.1 / DR15 S1) — QoS Annotation form, registration-only
+# --------------------------------------------------------------------------- #
+
+#: 五维名(relevance/accuracy/completeness/diversity/timeliness)。
+QUALITY_DIMENSIONS = ("relevance", "accuracy", "completeness", "diversity", "timeliness")
+
+#: 一票否决项注册表(契约 veto 只能从中增删;release-time 项在评估期跳过)。
+KNOWN_QUALITY_VETOES = frozenset({
+    "accuracy_below_threshold",
+    "relevance_below_threshold",
+    "required_missing_gt_5pct",
+    "unmasked_corpus_publish",   # 发布语料时检查(assess 期不可触发)
+})
+
+
+class AdmissionDecl(BaseModel):
+    """准入门分(铜/银/金)——加权总分落档即得发布准入层级。"""
+
+    model_config = ConfigDict(frozen=True)
+
+    bronze: float
+    silver: float
+    gold: float
+
+    @model_validator(mode="after")
+    def _ordered(self) -> AdmissionDecl:
+        if not (0 <= self.bronze <= self.silver <= self.gold <= 100):
+            raise ValueError(
+                f"admission must satisfy 0 <= bronze <= silver <= gold <= 100, "
+                f"got ({self.bronze}, {self.silver}, {self.gold})"
+            )
+        return self
+
+
+class TimelinessDecl(BaseModel):
+    """时效领域参数(S5):标注延迟 p95 上限(小时)。"""
+
+    model_config = ConfigDict(frozen=True)
+
+    max_p95_hours: float
+
+    @field_validator("max_p95_hours")
+    @classmethod
+    def _positive(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError(f"max_p95_hours must be positive, got {v}")
+        return v
+
+
+class QualitySpec(BaseModel):
+    """契约顶层 ``quality:`` 节(MS5 五维门配置)——**登记不校验**。
+
+    QoS Annotation 形态(DR15/S1):权重/阈值/否决/准入只是挂载到契约的
+    质量标注,compiler 不消费(入口门零变化),评估期由
+    ``arrow_lake.quality.spec.resolve_quality_spec`` 与默认常量合成生效
+    配置。所有字段可缺省——契约不写 quality 节即用业务手册默认值。
+
+    语义注记:``weights`` 若写则**整体替换**五维向量(未列维度=0),随
+    后按和归一;``thresholds`` 逐键覆盖默认;``critical=true`` 将准确
+    性门槛抬到 95(取 max)。
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    weights: dict[str, float] | None = None
+    thresholds: dict[str, float] | None = None
+    veto: tuple[str, ...] | None = None
+    admission: AdmissionDecl | None = None
+    timeliness: TimelinessDecl | None = None
+    critical: bool = False
+
+    @field_validator("weights")
+    @classmethod
+    def _known_positive(cls, v: dict[str, float] | None) -> dict[str, float] | None:
+        if v is None:
+            return v
+        unknown = set(v) - set(QUALITY_DIMENSIONS)
+        if unknown:
+            raise ValueError(f"unknown quality dimensions in weights: {sorted(unknown)}")
+        if any(w < 0 for w in v.values()):
+            raise ValueError(f"quality weights must be non-negative, got {v}")
+        if not any(w > 0 for w in v.values()):
+            raise ValueError("quality weights must include at least one positive value")
+        return v
+
+    @field_validator("thresholds")
+    @classmethod
+    def _bounded(cls, v: dict[str, float] | None) -> dict[str, float] | None:
+        if v is None:
+            return v
+        unknown = set(v) - set(QUALITY_DIMENSIONS)
+        if unknown:
+            raise ValueError(f"unknown quality dimensions in thresholds: {sorted(unknown)}")
+        for name, t in v.items():
+            if not 0 <= t <= 100:
+                raise ValueError(f"quality threshold {name}={t} outside [0, 100]")
+        return v
+
+    @field_validator("veto")
+    @classmethod
+    def _known_vetoes(cls, v: tuple[str, ...] | None) -> tuple[str, ...] | None:
+        if v is None:
+            return v
+        unknown = set(v) - KNOWN_QUALITY_VETOES
+        if unknown:
+            raise ValueError(f"unknown quality veto items: {sorted(unknown)}")
+        if len(set(v)) != len(v):
+            raise ValueError(f"quality veto items must be unique: {list(v)}")
+        return v
+
+
 class DatasetContract(BaseModel):
     """Parsed contract: one document, N table sections, M references."""
 
@@ -301,6 +413,7 @@ class DatasetContract(BaseModel):
     dataset: str
     tables: dict[str, TableSection]
     references: tuple[ReferenceRule, ...] = ()
+    quality: QualitySpec | None = None   # MS5 W1.1; registration-only
 
     @field_validator("dataset")
     @classmethod
@@ -438,12 +551,36 @@ def parse_contract(text: str) -> DatasetContract:
     refs = tuple(
         _normalize_reference(r, default_table or dataset) for r in refs_raw
     )
-    return DatasetContract(dataset=dataset, tables=sections, references=refs)
+    quality_raw = raw.get("quality")
+    quality = (
+        QualitySpec(**quality_raw) if isinstance(quality_raw, dict) else None
+    )
+    return DatasetContract(
+        dataset=dataset, tables=sections, references=refs, quality=quality,
+    )
 
 
 # --------------------------------------------------------------------------- #
 # Feature extraction + structured diff (version chain, mirrors ontology/versioning)
 # --------------------------------------------------------------------------- #
+
+def _quality_features(q: QualitySpec | None) -> dict[str, Any] | None:
+    """Quality 节 → 可比较特征(未写字段省略;版本链 diff 用)。"""
+    if q is None:
+        return None
+    feat: dict[str, Any] = {"critical": q.critical}
+    if q.weights is not None:
+        feat["weights"] = {k: q.weights[k] for k in sorted(q.weights)}
+    if q.thresholds is not None:
+        feat["thresholds"] = {k: q.thresholds[k] for k in sorted(q.thresholds)}
+    if q.veto is not None:
+        feat["veto"] = list(q.veto)
+    if q.admission is not None:
+        feat["admission"] = [q.admission.bronze, q.admission.silver, q.admission.gold]
+    if q.timeliness is not None:
+        feat["timeliness"] = q.timeliness.max_p95_hours
+    return feat
+
 
 def contract_features(c: DatasetContract) -> dict[str, Any]:
     tables: dict[str, Any] = {}
@@ -469,6 +606,7 @@ def contract_features(c: DatasetContract) -> dict[str, Any]:
              r.cardinality or "", r.kind or ""]
             for r in c.references
         ),
+        "quality": _quality_features(c.quality),
     }
 
 
@@ -505,10 +643,13 @@ def diff_features(old: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]:
             tables_diff[name] = entry
     old_refs = {tuple(r) for r in old["references"]}
     new_refs = {tuple(r) for r in new["references"]}
-    return {
+    out: dict[str, Any] = {
         "tables_added": added,
         "tables_removed": removed,
         "tables": tables_diff,
         "references_added": sorted(list(r) for r in new_refs - old_refs),
         "references_removed": sorted(list(r) for r in old_refs - new_refs),
     }
+    if old.get("quality") != new.get("quality"):
+        out["quality"] = {"was": old.get("quality"), "now": new.get("quality")}
+    return out
