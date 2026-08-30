@@ -54,7 +54,7 @@ def test_missing_dataset_none(db: SystemDB) -> None:
 def test_migration_count_21() -> None:
     from pathlib import Path
     n = len(list(Path("arrow_lake/system_db/migrations").glob("V*.sql")))
-    assert n == 21  # V022 加入后
+    assert n == 22  # V020-V022
 
 
 # --- W2.c 契约 quality.drift_kl 覆盖 -----------------------------------------

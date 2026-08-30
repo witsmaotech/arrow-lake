@@ -27,6 +27,7 @@ __all__ = [
     "DEFAULT_DRIFT_KL",
     "NUMERIC_BINS",
     "categorical_kl",
+    "evaluate_drift",
     "numeric_kl",
     "snapshot_column",
     "snapshot_table",
@@ -168,3 +169,31 @@ def categorical_kl(current: pa.ChunkedArray, baseline: dict[str, Any]) -> float:
     if q[-1] == 0 and p[-1] == 0:
         p, q = p[:-1], q[:-1]
     return _kl(p, q)
+
+
+def evaluate_drift(
+    table: pa.Table,
+    baseline_columns: dict[str, Any],
+    threshold: float,
+) -> dict[str, Any]:
+    """逐列 KL 评估(assess 漂移节 + 发布层超限拒共用,W3)。
+
+    基线有、当前 schema 无的列跳过;返回 ``{columns, drifted}``。
+    """
+    columns: dict[str, Any] = {}
+    drifted: list[str] = []
+    for name, base in baseline_columns.items():
+        if name not in table.column_names:
+            continue
+        col = table.column(name)
+        if base.get("kind") == "numeric":
+            kl = numeric_kl(col, base)
+        elif base.get("kind") == "categorical":
+            kl = categorical_kl(col, base)
+        else:  # pragma: no cover — 快照只产这两种 kind
+            continue
+        is_drift = kl > threshold
+        columns[name] = {"kl": round(kl, 6), "kind": base["kind"], "drifted": is_drift}
+        if is_drift:
+            drifted.append(name)
+    return {"columns": columns, "drifted": drifted}

@@ -34,7 +34,7 @@ from arrow_lake.quality.dimensions import (
     compute_timeliness,
     freshness_hours,
 )
-from arrow_lake.quality.drift import categorical_kl, numeric_kl, snapshot_table
+from arrow_lake.quality.drift import evaluate_drift, snapshot_table
 from arrow_lake.quality.relevance import (
     RELEVANCE_LS_CONFIG,
     RELEVANCE_SAMPLE_CAP,
@@ -98,7 +98,8 @@ def _drift_scan(
 ) -> dict[str, Any]:
     """无基线 → 落基线(首次 assess 自动,风险表口径);有 → 逐列 KL。
 
-    KL 写 metrics Gauge;基线列已从当前 schema 消失 → 跳过该列。
+    KL 写 metrics Gauge;逐列评估复用 ``drift.evaluate_drift``(发布层
+    超限拒同款,W3)。
     """
     baseline = store.get_baseline(dataset)
     snap = snapshot_table(source)
@@ -106,28 +107,14 @@ def _drift_scan(
         store.set_baseline(dataset, snap, source="assess")
         return {"status": "baseline_created", "columns": len(snap)}
 
-    columns: dict[str, Any] = {}
-    drifted: list[str] = []
-    for name, base in baseline.get("columns", {}).items():
-        if name not in source.column_names:
-            continue
-        col = source.column(name)
-        if base.get("kind") == "numeric":
-            kl = numeric_kl(col, base)
-        elif base.get("kind") == "categorical":
-            kl = categorical_kl(col, base)
-        else:  # pragma: no cover — 快照只产这两种 kind
-            continue
-        is_drift = kl > spec.drift_kl
-        columns[name] = {"kl": round(kl, 6), "kind": base["kind"], "drifted": is_drift}
-        quality_drift_kl.labels(dataset=dataset, column=name).set(kl)
-        if is_drift:
-            drifted.append(name)
+    result = evaluate_drift(source, baseline.get("columns", {}), spec.drift_kl)
+    for name, info in result["columns"].items():
+        quality_drift_kl.labels(dataset=dataset, column=name).set(info["kl"])
     return {
         "status": "compared", "threshold": spec.drift_kl,
         "baseline_id": baseline.get("id"),
         "baseline_at": baseline.get("created_at"),
-        "columns": columns, "drifted": drifted,
+        **result,
     }
 
 
