@@ -215,13 +215,18 @@ services:
       ARROW_LAKE__RATE_LIMIT__ENABLED: "${RATE_LIMIT_ENABLED:-true}"
       ARROW_LAKE__RATE_LIMIT__DEFAULT_REQUESTS_PER_MINUTE: "${RATE_LIMIT_RPM:-60}"
       ARROW_LAKE__RATE_LIMIT__DEFAULT_BURST: "${RATE_LIMIT_BURST:-10}"
+      # v1.11.3 MS4 标注闭环(原 annotation.yml api 补充块,2026-08-30 并入):
+      # LS 是 transient 工作区非 SoT(真值落 ADL);token 空则回收 scheduler 不启。
+      ARROW_LAKE__ANNOTATION__LS_URL: "http://label-studio:8080"
+      ARROW_LAKE__ANNOTATION__LS_API_TOKEN: "${ANNOTATION_LS_API_TOKEN:-}"
+      ARROW_LAKE__ANNOTATION__WEBHOOK_SECRET: "${ANNOTATION_WEBHOOK_SECRET:-}"
       TZ: "Asia/Shanghai"
       HTTP_PROXY: "http://host.docker.internal:17887"
       HTTPS_PROXY: "http://host.docker.internal:17887"
       http_proxy: "http://host.docker.internal:17887"
       https_proxy: "http://host.docker.internal:17887"
-      NO_PROXY: "127.0.0.1,localhost,host.docker.internal,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,172.19.0.0/16,172.30.0.0/16,minio,redis,metaflow-metadata,metaflow-db,hg-server,hg-pd,hg-store,gravitino,lance-rest,arrow-lake-gravitino,arrow-lake-lance-rest"
-      no_proxy: "127.0.0.1,localhost,host.docker.internal,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,172.19.0.0/16,172.30.0.0/16,minio,redis,metaflow-metadata,metaflow-db,hg-server,hg-pd,hg-store,gravitino,lance-rest,arrow-lake-gravitino,arrow-lake-lance-rest"
+      NO_PROXY: "127.0.0.1,localhost,host.docker.internal,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,172.19.0.0/16,172.30.0.0/16,minio,redis,metaflow-metadata,metaflow-db,hg-server,hg-pd,hg-store,gravitino,lance-rest,arrow-lake-gravitino,arrow-lake-lance-rest,label-studio"
+      no_proxy: "127.0.0.1,localhost,host.docker.internal,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,172.19.0.0/16,172.30.0.0/16,minio,redis,metaflow-metadata,metaflow-db,hg-server,hg-pd,hg-store,gravitino,lance-rest,arrow-lake-gravitino,arrow-lake-lance-rest,label-studio"
       ARROW_LAKE__EMBEDDING__BACKEND: "openai"
       ARROW_LAKE__EMBEDDING__API_BASE: "http://host.docker.internal:11534/v1"
       ARROW_LAKE__EMBEDDING__MODEL: "${ARROW_LAKE__EMBEDDING__MODEL:-qwen3-embedding:4b}"
@@ -859,6 +864,53 @@ services:
           memory: 64M
     stop_grace_period: 5s
 
+  # ---------------------------------------------------------------------------
+  # Label Studio CE — v1.11.3 MS4 标注闭环(原 annotation.yml,2026-08-30
+  # 并入默认栈)。LS 是 transient 工作区非 SoT(标注真值落 Lance ADL),
+  # 可随时销毁重建(dispatch 懒重绑);与 ingest/query 热路径零耦合(DR6)。
+  # 认证(D1):首启经 LS UI(127.0.0.1:8085)建 admin → PAT 写 deploy/.env
+  # 的 ANNOTATION_LS_API_TOKEN。S3 凭据是 scoped 专用号(仅
+  # arrow-lake-annotation 桶,建号命令见上),不给 minio root。
+  # ---------------------------------------------------------------------------
+  label-studio:
+    image: heartexlabs/label-studio:1.13.1   # S1 评审定版
+    container_name: arrow-lake-label-studio
+    init: true                                # reap healthcheck 孤儿(速查坑)
+    ports:
+      - "127.0.0.1:8085:8080"                 # 内网段,不暴露公网(DR6 旁路)
+    environment:
+      LABEL_STUDIO_HOST: localhost
+      # 首启自动建 admin(D1 一次性;PAT 经 UI/API 取后写 deploy/.env)
+      LABEL_STUDIO_USERNAME: ${LABEL_STUDIO_USERNAME:?set LABEL_STUDIO_USERNAME in deploy/.env}
+      LABEL_STUDIO_PASSWORD: ${LABEL_STUDIO_PASSWORD:?set LABEL_STUDIO_PASSWORD in deploy/.env}
+      # S3 source storage(脱敏任务文件经 MinIO 中转)
+      # ⚠️ review S4:专用 scoped 凭据(仅 arrow-lake-annotation 桶),不给
+      # root——LS 是大体量第三方 Web 应用,RCE 即凭据泄露,root = 全湖失陷。
+      # 建号:mc admin user add local anno-ls <strong-key>
+      #       mc admin policy attach local readwrite --user anno-ls --resource arn:minio:s3:::arrow-lake-annotation/*
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: ${ANNOTATION_S3_ACCESS_KEY:?scoped key for the annotation bucket (see comment)}
+      S3_SECRET_KEY: ${ANNOTATION_S3_SECRET_KEY:?scoped secret for the annotation bucket}
+      S3_BUCKET: arrow-lake-annotation        # 独立桶,与主数据桶物理隔离(S7)
+      # LS 容器只连内部 minio,不走代理(gravitino 死代理教训)
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      http_proxy: ""
+      https_proxy: ""
+      NO_PROXY: "*"
+      no_proxy: "*"
+    volumes:
+      - ls-data:/label-studio/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - arrow-lake-net
+
 # ==============================================================================
 # Networks
 # ==============================================================================
@@ -876,6 +928,8 @@ networks:
 
 volumes:
   minio-data:
+    driver: local
+  ls-data:
     driver: local
   lake-data:
     driver: local
