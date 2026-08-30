@@ -84,11 +84,16 @@ def _choices_prediction(label: str | None, model: str) -> dict[str, Any]:
     return {"model_version": f"llm-relevance:{model}", "result": result}
 
 
-def _masked_text(text: str) -> str:
+def _masked_text(
+    text: str,
+    generalize_rules: tuple[tuple[str, str], ...] = (),
+    entity_names: tuple[str, ...] = (),
+) -> str:
     from arrow_lake.annotation.masking import apply_annotation_masking
 
     return apply_annotation_masking(
-        text, generalize_rules=[], entity_names=[], hmac_key=None)
+        text, generalize_rules=generalize_rules,
+        entity_names=entity_names, hmac_key=None)
 
 
 async def dispatch_relevance(
@@ -101,6 +106,8 @@ async def dispatch_relevance(
     ls_project_id: int | None,
     bind_ls_project: Any = None,
     import_batch_size: int = 50,
+    generalize_rules: tuple[tuple[str, str], ...] = (),
+    entity_names: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """抽样行(调用方已抽)→ 脱敏 → LLM 初判 → LS import(choices 预标)。
 
@@ -132,7 +139,7 @@ async def dispatch_relevance(
         if not text:
             skipped += 1
             continue
-        masked = _masked_text(text)
+        masked = _masked_text(text, generalize_rules, entity_names)
         label: str | None = None
         if provider is not None:
             with contextlib.suppress(Exception):
@@ -160,6 +167,8 @@ async def dispatch_relevance(
 async def llm_only_relevance(
     *, lake: Any, dataset: str, rows: list[dict[str, Any]],
     text_column: str, provider: Any,
+    generalize_rules: tuple[tuple[str, str], ...] = (),
+    entity_names: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """LLM 直评降级:判定直接写 ADL(annotator_id=llm:<model>)。
 
@@ -181,7 +190,7 @@ async def llm_only_relevance(
         text = str(row.get(text_column) or "").strip()
         if not text:
             continue
-        masked = _masked_text(text)
+        masked = _masked_text(text, generalize_rules, entity_names)
         try:
             label = await classify_relevance(provider, masked)
         except Exception:

@@ -144,11 +144,11 @@ def test_ms5_vertical_slice(client: TestClient) -> None:
     assert "coverage: 1.0" in sheet.text  # 4/4 行有标注
 
     # ④ 语料:sft/golden 非空;rlhf 空带 note;pretrain KG 关 → 空+note
-    sft = client.post("/api/v1/release/ms5_e2e/corpus?form=sft", json={})
+    sft = client.post("/api/v1/release/ms5_e2e/corpus?form=sft", json={"generalize_rules": [[r"\d{6,}", "[编号]"]]})
     assert sft.status_code == 200 and sft.json()["records"] == 4
-    gold = client.post("/api/v1/release/ms5_e2e/corpus?form=golden", json={})
+    gold = client.post("/api/v1/release/ms5_e2e/corpus?form=golden", json={"generalize_rules": [[r"\d{6,}", "[编号]"]]})
     assert gold.json()["records"] == 4
-    rlhf = client.post("/api/v1/release/ms5_e2e/corpus?form=rlhf", json={})
+    rlhf = client.post("/api/v1/release/ms5_e2e/corpus?form=rlhf", json={"generalize_rules": [[r"\d{6,}", "[编号]"]]})
     assert rlhf.json()["records"] == 0 and rlhf.json()["note"]
     pre = client.post("/api/v1/release/ms5_e2e/corpus?form=pretrain", json={})
     assert pre.json()["records"] == 0 and pre.json()["note"]

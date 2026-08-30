@@ -347,6 +347,13 @@ async def start_relevance_loop(
         default=False,
         description="true=跳过 LS 人工复核,LLM 直评写 ADL(降级档)",
     ),
+    rules_json: str | None = Query(
+        default=None,
+        description='L2 泛化规则 JSON [[regex, replacement],...](LLM 外发/LS 文本脱敏)',
+    ),
+    entities_json: str | None = Query(
+        default=None, description="L3 假名实体名 JSON 数组",
+    ),
     lake=Depends(get_lake),
     user=Depends(require_role(Role.ADMIN)),
 ) -> dict:
@@ -382,6 +389,8 @@ async def start_relevance_loop(
         raise HTTPException(status_code=422, detail=f"dataset '{dataset}' is empty")
     sample = _random.sample(rows, min(n, len(rows)))
 
+    rel_rules: tuple = ()
+    rel_entities: tuple = ()
     name = relevance_project_name(dataset)
     rec = astore.get_project(name)
     if rec is None:
@@ -415,18 +424,36 @@ async def start_relevance_loop(
         mode = "llm_only"
         if not llm_only:
             mode = "llm_only(auto: LS not configured)"
+        import json as _json
+
+        with contextlib.suppress(ValueError):
+            rel_rules = tuple(
+                tuple(x) for x in _json.loads(rules_json or "[]"))
+            rel_entities = tuple(_json.loads(entities_json or "[]"))
+        if not (rel_rules or rel_entities):
+            logger.warning(
+                "quality.relevance llm_only WITHOUT masking config — raw "
+                "text goes to the LLM provider; pass rules_json/entities_json")
         work = llm_only_relevance(
             lake=lake, dataset=dataset, rows=sample,
             text_column=text_column, provider=provider,
+            generalize_rules=rel_rules, entity_names=rel_entities,
         )
     else:
         from arrow_lake.annotation.dispatch import LSClient
 
+        import json as _rules_json
+
+        with contextlib.suppress(ValueError):
+            rel_rules = tuple(
+                tuple(x) for x in _rules_json.loads(rules_json or "[]"))
+            rel_entities = tuple(_rules_json.loads(entities_json or "[]"))
         work = dispatch_relevance(
             ls_client=LSClient(aconf.ls_url, aconf.ls_api_token),
             project_title=name, rows=sample, text_column=text_column,
             provider=provider, ls_project_id=rec.get("ls_project_id"),
             bind_ls_project=lambda pid: astore.set_ls_project_id(name, pid),
+            generalize_rules=rel_rules, entity_names=rel_entities,
         )
 
     from arrow_lake.api.tasks import spawn_background
@@ -460,6 +487,11 @@ class FeedbackRequest(BaseModel):
     project: str | None = Field(
         default=None, description="指定 L4 项目名(缺省自动找首个 active)",
     )
+    generalize_rules: list[tuple[str, str]] = Field(
+        default_factory=list,
+        description="L2 泛化规则(security review 2026-08-30:空=透传,如实回报)",
+    )
+    entity_names: list[str] = Field(default_factory=list)
 
 
 @router.post(
@@ -542,10 +574,18 @@ async def feedback_loop(
             if str(data.get("strategy")) == "feedback":
                 queued.add(str(data.get("row_id") or ""))
     fresh = [r for r in wanted if r not in queued]
+    fb_rules = tuple(tuple(x) for x in req.generalize_rules)
+    fb_entities = tuple(req.entity_names)
+    if not (fb_rules or fb_entities):
+        logger.warning(
+            "quality.feedback dispatched WITHOUT masking config (passthrough) "
+            "dataset=%s rows=%d — supply generalize_rules/entity_names",
+            dataset, len(fresh))
     tasks = [{
         "data": {
             "text": apply_annotation_masking(
-                text_of[r], generalize_rules=[], entity_names=[], hmac_key=None),
+                text_of[r], generalize_rules=fb_rules,
+                entity_names=fb_entities, hmac_key=None),
             "row_id": r, "strategy": "feedback",
         },
     } for r in fresh]
@@ -565,4 +605,5 @@ async def feedback_loop(
         "requested": len(req.object_rows), "queued": len(fresh),
         "already_queued": len(queued & set(wanted)),
         "missing_rows": missing,
+        "masking": {"applied": bool(fb_rules or fb_entities)},
     }

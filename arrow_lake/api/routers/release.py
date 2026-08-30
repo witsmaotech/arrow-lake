@@ -341,6 +341,10 @@ async def export_corpus(
     form: str = Query(description="sft | pretrain | rlhf | golden"),
     text_column: str = Query(default="text"),
     table: str | None = Query(default=None, description="容器内表名"),
+    allow_unmasked: bool = Query(
+        default=False,
+        description="红线④ fail-closed 的显式豁免(audit corpus.unmasked)",
+    ),
     lake=Depends(get_lake),
     user=Depends(require_role(Role.ADMIN)),
 ) -> dict:
@@ -385,6 +389,29 @@ async def export_corpus(
     entities = tuple(req.entity_names)
     note: str | None = None
 
+    # 红线④ fail-closed(security review 2026-08-30):语料出域必须带
+    # 脱敏配置;无配置即拒(豁免须显式,audit corpus.unmasked 留痕)。
+    actor = getattr(user, "sub", "system")
+    masked = bool(rules or entities)
+    if not masked:
+        text_bearing = form in ("sft", "rlhf", "golden")  # pretrain 无原文
+        if text_bearing and not allow_unmasked:
+            raise HTTPException(
+                status_code=422,
+                detail="corpus export requires masking config "
+                       "(generalize_rules / entity_names) — red line ④; "
+                       "explicit ?allow_unmasked=true overrides (audited)",
+            )
+        if text_bearing and allow_unmasked:
+            logger.warning(
+                "corpus.exported UNMASKED dataset=%s form=%s actor=%s "
+                "(allow_unmasked override)", dataset, form, actor)
+            with contextlib.suppress(Exception):
+                lake.audit_record(
+                    "corpus.unmasked", dataset_name=dataset, actor=actor,
+                    payload={"form": form, "tag": rel["tag"]},
+                )
+
     if form == "sft":
         cstore = _store(request, "contract_store", "contract registry")
         contract, _ = _load_contract_and_spec(cstore, dataset)
@@ -426,7 +453,6 @@ async def export_corpus(
     path = write_corpus(
         Path(base), tag=rel["tag"], form=form, records=records)
 
-    actor = getattr(user, "sub", "system")
     with contextlib.suppress(Exception):
         lake.audit_record(
             "corpus.exported", dataset_name=dataset, actor=actor,
@@ -446,5 +472,6 @@ async def export_corpus(
     return {
         "dataset": dataset, "tag": rel["tag"], "form": form,
         "records": len(records), "path": str(path),
-        "masked": True, "note": note,
+        "masking": {"applied": masked, "rules": len(rules),
+                      "entities": len(entities)}, "note": note,
     }

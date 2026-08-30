@@ -328,7 +328,7 @@ def test_corpus_sft_and_golden(db: SystemDB, tmp_path) -> None:
         "/api/v1/release/alerts/corpus?form=sft",
         json={"generalize_rules": [[r"1[3-9]\d{9}", "[手机号]"]]},
     ).json()
-    assert body["records"] == 1 and body["masked"] is True
+    assert body["records"] == 1 and body["masking"]["applied"] is True
     assert body["path"].endswith(f"{body['tag']}/sft.jsonl".replace(body["tag"], "v1.0.0") ) or True
     import json as _json
     rec = _json.loads(open(body["path"], encoding="utf-8").readline())
@@ -350,7 +350,7 @@ def test_corpus_rlhf_empty_with_note_and_pretrain(db: SystemDB, tmp_path) -> Non
     client = _corpus_app(db, lake, tmp_path)
     _publish(db, lake, client)
     rlhf = client.post("/api/v1/release/alerts/corpus?form=rlhf",
-                       json={}).json()
+                       json={"generalize_rules": [[r"\d+", "N"]]}).json()
     assert rlhf["records"] == 0 and rlhf["note"] and "decisions" in rlhf["note"]
     pre = client.post("/api/v1/release/alerts/corpus?form=pretrain",
                       json={}).json()
@@ -371,3 +371,26 @@ def test_corpus_requires_release_and_form(db: SystemDB, tmp_path) -> None:
     assert client.post(
         "/api/v1/release/alerts/corpus?form=bogus",
         json={}).status_code == 422
+
+
+def test_corpus_fail_closed_without_masking(db: SystemDB, tmp_path) -> None:
+    """红线④(security review 2026-08-30):无脱敏配置 → 422;豁免须显式。"""
+    lake = CorpusLake({"alerts": _TABLE})
+    client = _corpus_app(db, lake, tmp_path)
+    _publish(db, lake, client)
+    r = client.post("/api/v1/release/alerts/corpus?form=sft", json={})
+    assert r.status_code == 422 and "masking" in r.json()["detail"]
+    # 豁免:显式 allow_unmasked → 过 + 审计 corpus.unmasked
+    r2 = client.post(
+        "/api/v1/release/alerts/corpus?form=sft?x=1&allow_unmasked=true",
+        json={})
+    # (上行为防误写;正确形态如下)
+    r2 = client.post(
+        "/api/v1/release/alerts/corpus?form=sft&allow_unmasked=true", json={})
+    assert r2.status_code == 200 and r2.json()["masking"]["applied"] is False
+    kinds = [a[0] for a in lake.audit_calls]
+    assert "corpus.unmasked" in kinds
+    # pretrain 无原文 → 不受门约束
+    pre = client.post("/api/v1/release/alerts/corpus?form=pretrain",
+                      json={}).json()
+    assert pre["masking"]["applied"] is False  # 如实回报,不拦
