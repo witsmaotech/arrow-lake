@@ -136,6 +136,22 @@ curl -X POST http://localhost:8000/api/v1/auth/refresh \
       <tr><td><code>POST</code></td><td><code>/api/v1/kg/query/graphrag</code></td><td>GraphRAG 问答</td><td>VIEWER</td></tr>
     </tbody>
   </table></div>
+  <h3>高质量数据集平台（v1.11.x）</h3>
+  <table>
+    <thead><tr><th>分组</th><th>端点</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td rowspan="2">契约/本体</td><td><code>PUT/GET /api/v1/contracts/{ds}</code></td><td>契约保存（版本链/diff）;POST /contracts/parse 仅校验</td></tr>
+      <tr><td><code>/api/v1/ontology/rules</code> · <code>/versions</code></td><td>规则 CRUD+状态机;本体版本链（Turtle/diff）</td></tr>
+      <tr><td rowspan="2">对象/研判</td><td><code>POST /api/v1/objects/query</code> · <code>GET /objects/types</code></td><td>Object Set 业务对象查询（对齐口径）;契约对象类</td></tr>
+      <tr><td><code>POST /api/v1/decisions/assess?record_history=</code> · <code>GET /decisions/history/{ds}</code></td><td>规则求值（可记历史）;研判历史摘要</td></tr>
+      <tr><td rowspan="2">标注闭环</td><td><code>/api/v1/annotation/projects|dispatch|recover</code></td><td>LS 标注生产线（四策略采样/预标注/脱敏）</td></tr>
+      <tr><td><code>GET /annotation/projects/{n}/status|adl</code></td><td>只读看板（κ/review 统计）;ADL 真值行</td></tr>
+      <tr><td rowspan="3">质量/发布</td><td><code>POST /quality/assess|relevance|drift|feedback/{ds}</code></td><td>五维评估/相关性回路/漂移/飞轮回流</td></tr>
+      <tr><td><code>POST/GET /api/v1/release/{ds}</code> · <code>/retire</code> · <code>/datasheet</code></td><td>发布门+版本锁定+规格书（force 需 reason 审计）</td></tr>
+      <tr><td><code>POST /release/{ds}/corpus?form=sft|pretrain|rlhf|golden</code></td><td>语料四形态导出（红线④:无脱敏配置 422）</td></tr>
+    </tbody>
+  </table>
+
   <h3>认证（v2）</h3>
   <div class="tbl-wrap"><table class="tbl">
     <thead><tr><th>方法</th><th>端点</th><th>说明</th></tr></thead>

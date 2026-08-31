@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>v1.8–v1.9 新特性 · Arrow Lake 文档</title>
+<title>版本新特性 · Arrow Lake 文档</title>
 <link rel="stylesheet" href="../assets/tokens.css"/>
 <link rel="stylesheet" href="../assets/app.css"/>
 <link rel="stylesheet" href="../assets/landing.css"/>
@@ -19,7 +19,7 @@
   <div class="lnav-cta"><a class="btn btn-primary btn-sm" href="../system.html">打开控制台 →</a></div>
 </nav>
 <div class="subnav">
-  <a href="index.html">文档中心</a><span class="crumb-sep">/</span><a href="new-features.html" style="color:var(--teal-bright)">v1.8–v1.9 新特性</a>
+  <a href="index.html">文档中心</a><span class="crumb-sep">/</span><a href="new-features.html" style="color:var(--teal-bright)">版本新特性</a>
   <span class="pager-spacer"></span>
   <div class="prevnext">
     <a href="gravitino.html"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg><span class="lbl">上一章</span></a>
@@ -30,8 +30,8 @@
 <header class="tut-hero">
   <div class="tut-hero-inner">
     <span class="num-badge">第 16 章 · 演进</span>
-    <h1>v1.8–v1.9 新特性实战</h1>
-    <p class="sub">11 项 v1.8.0 roadmap 落地能力（CLIP 跨模态、Lance branches、blob 存储、hf://、VLM、Gravitino 联邦、行级血缘、Daft 流式写、async 检索、日文分词）+ v1.9.0–v1.9.6 控制面/多模态/治理/RAG 质量/KG 性能演进。</p>
+    <h1>版本新特性实战</h1>
+    <p class="sub">v1.11 高质量数据集平台（契约→标注→评估→发布→语料→飞轮,Master Plan 五里程碑收官）+ v1.10 系列加固与模板管理 + 11 项 v1.8.0 roadmap 能力 + v1.9.0–v1.9.6 控制面/多模态/治理/RAG 质量/KG 性能演进。</p>
     <div class="tut-meta">
       <span><i></i>难度 · 进阶</span>
       <span><i></i>耗时 · 25 分钟</span>
@@ -42,6 +42,19 @@
 
 <article class="tut-body">
   <p>本章分两部分：<strong>§16.1–16.13</strong> 是 v1.8.0 roadmap 落地的 11 项新能力（+ 2 项压测 DEFER）；<strong>§16.14</strong> 是 v1.9.0–v1.9.6 的演进。每项给一句话价值、facade 方法签名、最小用法。</p>
+
+  <div class="callout" style="border-left:3px solid var(--teal-bright);padding:14px 18px;margin:18px 0;background:var(--ink-950)">
+    <h2 style="margin:0 0 10px;font-size:1.05rem"><span class="hn" style="color:var(--teal-bright)">0</span>v1.11 · 高质量数据集平台（2026-08-25 → 08-31,五里程碑七天收官）</h2>
+    <p style="margin:0 0 10px;line-height:1.9;font-size:.85rem">把「普通表格」变成「可信发布物」的完整生产线,全部旁路交付（热路径零改动）:</p>
+    <ul style="margin:0;padding-left:20px;line-height:2;font-size:.85rem">
+      <li><strong>v1.11.0 本体与契约</strong>——数据集契约（列规则编译为 DuckDB 谓词,shadow/enforce 质量门禁第四 stage）;多表容器 <code>?table=</code> 寻址;本体版本链（SHACL Turtle+结构化 diff）与规则注册表;KG 构建收尾本体门禁。</li>
+      <li><strong>v1.11.1 语义层</strong>——对象标识（契约 pattern 解析+entity_map 源系统映射）;语义对齐（仿射单位换算,跨源同口径）;Object Set 查询（<code>POST /objects/query</code> 返回业务对象:标识组件/label+unit 属性/生命周期/_links/KG 邻居/规则引用,走 /query/olap 同一安全路径）。</li>
+      <li><strong>v1.11.2 决策与行动层</strong>——谓词 DSL（手写 tokenizer+frozen AST,无 eval）;行动/场景 YAML 目录版本链;八步执行中间件（幂等先于前置、写前行数核验、补偿、审计）;<code>POST /decisions/assess</code> 研判 API。</li>
+      <li><strong>v1.11.3 标注闭环</strong>——Label Studio CE 旁路工作区（Lance ADL 为唯一真值源）;模板→标注界面生成器;四策略采样+预标注+脱敏;30s 自动回收（复合 watermark,第二标注者不丢）;Fleiss κ+仲裁流。</li>
+      <li><strong>v1.11.4 五维质量门+发布层</strong>——五维评估（契约声明权重/星级/准入/一票否决）;漂移 KL+发布基线快照;发布门（拒绝劣化/force 审计/Lance 版本锁定+语义化 tag+规格书）;语料四形态（SFT/预训练/RLHF/黄金集,红线④脱敏 fail-closed 出域）;数据飞轮（低置信回流）。</li>
+    </ul>
+    <p style="margin:10px 0 0;font-size:.8rem;color:var(--fg-md)">配套:v1.10.5 认证加固（JWT aud/per-user 失效/JWKS/scope 鉴权）· v1.10.7 数据面 ACL 强制 · v1.10.8~v1.10.7.x 系列加固 · v1.10.0 模板管理。<strong>Console 导航六组</strong>:表格/文本/本体与语义/高质量数据集（含生产向导页）/治理运维/管理;实操手册见 cookbook <a href="https://github.com" style="color:var(--teal-bright)">第 20/21 章</a>。</p>
+  </div>
   <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">运行示例</span></figcaption><pre><code>.venv/bin/python docs/cookbook/examples/41_v1_8_0_new_features.py            <span class="c-rem"># 全部</span>
 .venv/bin/python docs/cookbook/examples/41_v1_8_0_new_features.py branches   <span class="c-rem"># 单项（缺模型/服务时优雅 SKIP）</span></code></pre></figure>
 

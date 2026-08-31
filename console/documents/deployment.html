@@ -47,7 +47,7 @@
   </table></div>
 
   <h2><span class="hn">2</span>Docker Compose 与 Profile</h2>
-  <p><strong>推荐生产栈</strong>（v1.9.x 主路径）为 <code>deploy/docker-compose.prod_minimal.yml</code>——取代旧版 <code>--profile core</code>，是唯一受运维验证的部署栈（api / system-db / minio / redis / hg-server / gravitino / lance-rest / nginx / ollama-relay / proxy-forwarder + init）。</p>
+  <p><strong>推荐生产栈</strong>（v1.11.x 主路径）为 <code>deploy/docker-compose.prod_minimal.yml</code>——取代旧版 <code>--profile core</code>，是唯一受运维验证的部署栈（api / system-db / minio / redis / hg-server / gravitino / lance-rest / nginx / ollama-relay / proxy-forwarder + init+ <strong>label-studio</strong>（v1.11.3 起随默认栈,标注闭环旁路工作区,127.0.0.1:8085））。</p>
   <figure class="code shell"><figcaption><span class="lang">bash</span><span class="file">推荐：prod_minimal 启动</span></figcaption><pre><code><span class="c-rem"># 启动整个生产栈（读 deploy/.env）</span>
 make prod-minimal
 <span class="c-rem"># 单服务启动 / 重建（复用镜像不 rebuild）</span>
