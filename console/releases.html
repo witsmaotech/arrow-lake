@@ -112,7 +112,7 @@ async function publish() {
 window.__viewSheet = async (tag) => {
   const ds = $("#ds").value.trim();
   const r = await request("GET", `/release/${encodeURIComponent(ds)}/datasheet?tag=${encodeURIComponent(tag)}`);
-  const text = await (typeof r === "string" ? r : r.text?.() || JSON.stringify(r));
+  const text = r?.yaml || JSON.stringify(r);
   $("#sheet").innerHTML = `<h3 style="font-size:.8rem;color:var(--fg-dim);margin:14px 0 6px">规格书 · ${esc(tag)}</h3><pre class="sheet">${esc(text)}</pre>`;
 };
 window.__corpus = async (tag, form) => {

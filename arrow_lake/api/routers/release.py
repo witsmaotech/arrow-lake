@@ -303,11 +303,14 @@ async def export_datasheet(
             status_code=404, detail=f"no release for '{dataset}'"
             + (f" with tag {tag}" if tag else ""),
         )
-    return Response(
-        content=rec["datasheet_yaml"], media_type="application/yaml",
-        headers={"Content-Disposition":
-                 f'attachment; filename="{dataset}-{rec["tag"]}-datasheet.yaml"'},
-    )
+    # 2026-08-31 UI review:此前返回纯 YAML 文本(全平台唯一非 JSON 端点),
+    # console request() 按 JSON 解析即抛——规格书按钮从未真正可用。
+    # 统一 JSON 包装(yaml 字段携全文;下载文件名随 payload 保留)。
+    return {
+        "dataset": dataset, "tag": rec["tag"],
+        "filename": f"{dataset}-{rec['tag']}-datasheet.yaml",
+        "yaml": rec["datasheet_yaml"],
+    }
 
 
 # --------------------------------------------------------------------------- #
