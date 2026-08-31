@@ -284,7 +284,7 @@ function wireRules() {
 // ---------- 动作 ----------
 async function loadDomains() {
   try {
-    const r = await request("/api/v1/contracts");
+    const r = await request("GET", "/contracts");
     $("#domList").innerHTML = (r.contracts || []).map((c) =>
       `<div class="dom-row" data-scope="${esc(c.scope)}">${esc(c.scope)}<div style="font-size:.6rem;color:var(--fg-dim)">v${c.version}</div></div>`).join("")
       || '<div class="hintline">无契约域——点「+ 新建域」</div>';
@@ -293,8 +293,8 @@ async function loadDomains() {
 }
 async function loadDomain(scope) {
   try {
-    const rec = await request(`/api/v1/contracts/${encodeURIComponent(scope)}`);
-    const parsed = await request("/api/v1/contracts/parse", { method: "POST", body: JSON.stringify({ contract_yaml: rec.contract_yaml }) });
+    const rec = await request(`/contracts/${encodeURIComponent(scope)}`);
+    const parsed = await request("POST", "/contracts/parse", { body: { contract_yaml: rec.contract_yaml } });
     S.dataset = parsed.dataset;
     S.tables = Object.entries(parsed.tables || {}).map(([name, t]) => ({
       name, object_class: t.object_class || "",
@@ -307,7 +307,7 @@ async function loadDomain(scope) {
     render();
     // 规则一并拉取
     try {
-      const rules = await request(`/api/v1/ontology/rules?scope=${encodeURIComponent(scope)}`);
+      const rules = await request(`/ontology/rules?scope=${encodeURIComponent(scope)}`);
       S.rules = (rules.data || []).map((r) => ({ rule_id: r.rule_id, condition_expr: r.condition_expr, conclusion: r.conclusion, source_ref: r.source_ref, rule_type: r.rule_type || "validation", version: r.version || "" }));
       renderRules();
     } catch (_) { /* 规则加载失败不阻塞契约 */ }
@@ -318,7 +318,7 @@ async function saveContract() {
   if (!S.dataset.trim()) return toast("数据集名必填", "warn");
   const yamlText = genYAML();
   try {
-    const r = await request(`/api/v1/contracts/${encodeURIComponent(S.dataset.trim())}`, { method: "PUT", body: JSON.stringify({ contract_yaml: yamlText }) });
+    const r = await request("PUT", `/contracts/${encodeURIComponent(S.dataset.trim())}`, { body: { contract_yaml: yamlText } });
     toast(`契约已保存 v${r.version}${r.created ? "(新版本)" : "(同 hash 跳过)"}`, "ok");
     loadDomains();
   } catch (e) { toast(`保存被拒:${e.message}`, "bad"); }
@@ -329,7 +329,7 @@ async function saveRules() {
   let ok = 0;
   for (const r of todo) {
     try {
-      await request("/api/v1/ontology/rules", { method: "POST", body: JSON.stringify({ ...r, scope: S.dataset.trim() || "*" }) });
+      await request("POST", "/ontology/rules", { body: { ...r, scope: S.dataset.trim() || "*" } });
       ok++;
     } catch (e) { toast(`规则 ${r.rule_id} 失败:${e.message}`, "bad"); }
   }
@@ -337,7 +337,7 @@ async function saveRules() {
 }
 async function validateOnly() {
   try {
-    await request("/api/v1/contracts/parse", { method: "POST", body: JSON.stringify({ contract_yaml: genYAML() }) });
+    await request("POST", "/contracts/parse", { body: { contract_yaml: genYAML() } });
     toast("契约 YAML 解析+编译通过", "ok");
   } catch (e) { toast(`校验失败:${e.message}`, "bad"); }
 }
