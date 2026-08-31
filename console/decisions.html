@@ -53,7 +53,12 @@
       <div class="panel flush">
         <div class="panel-h">
           <i class="placeholder" data-ic="search"></i><h3>研判结论</h3><span class="sub" id="asMeta">—</span>
-          <span class="actions"><button class="btn btn-primary btn-sm" id="assessBtn" style="display:none">研判</button></span>
+          <span class="actions" style="display:flex;gap:8px;align-items:center">
+            <label id="recWrap" style="font-size:.7rem;color:var(--fg-dim);display:none;cursor:pointer">
+              <input type="checkbox" id="recChk" checked style="vertical-align:-2px"/> 记录研判
+            </label>
+            <button class="btn btn-primary btn-sm" id="assessBtn" style="display:none">研判</button>
+          </span>
         </div>
         <div class="panel-b" id="asBox" style="padding:0;max-height:300px;overflow-y:auto"><div class="muted" style="padding:12px">左侧选择对象</div></div>
       </div>
@@ -79,6 +84,15 @@ const { renderShell } = window;
 renderShell({ active: "decisions", crumb: '<b>研判台</b>' });
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+// decisions_history 写入需 EDITOR+(VIEWER 只读求值);UI 默认记录,让飞轮/RLHF 有数据源
+const canRecord = (() => {
+  try {
+    const tok = localStorage.getItem("al_access") || "";
+    const payload = JSON.parse(atob(tok.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+    return ["ADMIN", "EDITOR"].includes(String(payload.role || "VIEWER").toUpperCase());
+  } catch (_) { return false; }
+})();
+$("#recWrap").style.display = canRecord ? "" : "none";
 
 let curObject = null;   // {object_id, attributes, lifecycle_state, _kg, _links}
 let curAssess = null;
@@ -142,13 +156,15 @@ async function assess() {
   if (!curObject) return;
   const ds = $("#dsInput").value.trim();
   const ot = $("#typeSel").value;
+  const record = canRecord && $("#recChk").checked;
   try {
-    const r = await request("POST", "/decisions/assess", { body: {
+    const r = await request("POST", `/decisions/assess${record ? "?record_history=true" : ""}`, { body: {
       dataset: ds, object_type: ot, object_id: String(curObject.object_id) } });
     curAssess = r;
     renderAssess(r);
     renderActions(r);
     renderChain(r);
+    if (r.history_recorded) toast("研判已记录 decisions_history(飞轮 auto / RLHF 配对数据源)", "info", 3500);
   } catch (e) {
     const msg = typeof e?.detail === "string" ? e.detail : JSON.stringify(e?.detail || e?.message || e);
     toast("研判失败:" + msg, "danger", 5000);

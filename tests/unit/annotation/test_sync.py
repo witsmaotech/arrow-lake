@@ -16,6 +16,7 @@ from __future__ import annotations
 from arrow_lake.annotation.sync import (
     AnnotationRecoverScheduler,
     arbitration_tasks,
+    project_status,
     recover_one,
 )
 from arrow_lake.config.annotation import AnnotationConfig
@@ -178,6 +179,41 @@ class TestRecoverOne:
             project_name="p1", ls_client=ls)
         assert summary["arbitration_tasks_generated"] == 0
         assert ls.imported == []
+
+
+class TestProjectStatus:
+    """M3 看板只读语义:全量统计 + 零副作用(不写 ADL/不动 watermark/不 import)。"""
+
+    def test_full_stats_without_side_effects(self):
+        ls = FakeLSCl([
+            _task(1, [_ann(REGIONS_A, 7), _ann(REGIONS_B, 8)]),        # r1 分歧
+            _task(2, [_ann(REGIONS_A, 7), _ann(REGIONS_A, 8)],
+                  row_id="r2"),                                         # r2 一致
+        ])
+        store = FakeStore([_project()])
+        s = project_status(store=store, config=CONFIG, project_name="p1",
+                           ls_client=ls)
+        assert s["bound"] is True
+        assert s["tasks_total"] == 2 and s["annotated_rows"] == 2
+        assert s["review"] == {"approved": 1, "arbitration": 1, "pending": 0}
+        assert s["kappa"] is not None
+        # 只读铁律:watermark 不动、LS 零写入
+        assert store._projects["p1"]["recover_watermark"] == 0
+        assert ls.imported == []
+
+    def test_unbound_project_returns_skeleton(self):
+        store = FakeStore([_project(ls_project_id=None)])
+        s = project_status(store=store, config=CONFIG, project_name="p1",
+                           ls_client=FakeLSCl([]))
+        assert s["bound"] is False
+        assert s["kappa"] is None and s["tasks_total"] == 0
+
+    def test_unknown_project_raises(self):
+        import pytest
+
+        with pytest.raises(LookupError):
+            project_status(store=FakeStore([]), config=CONFIG,
+                           project_name="ghost", ls_client=FakeLSCl([]))
 
 
 class TestScheduler:

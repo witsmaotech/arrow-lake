@@ -217,7 +217,10 @@ services:
       ARROW_LAKE__RATE_LIMIT__DEFAULT_BURST: "${RATE_LIMIT_BURST:-10}"
       # v1.11.3 MS4 标注闭环(原 annotation.yml api 补充块,2026-08-30 并入):
       # LS 是 transient 工作区非 SoT(真值落 ADL);token 空则回收 scheduler 不启。
+      # LS_PUBLIC_URL = 浏览器可达地址(console「打开 LS」链接用;api 容器内
+      # LS_URL 走容器网络,前端拿去打不开)——2026-08-31 审计 M4。
       ARROW_LAKE__ANNOTATION__LS_URL: "http://label-studio:8080"
+      ARROW_LAKE__ANNOTATION__LS_PUBLIC_URL: "${ANNOTATION_LS_PUBLIC_URL:-http://127.0.0.1:8085}"
       ARROW_LAKE__ANNOTATION__LS_API_TOKEN: "${ANNOTATION_LS_API_TOKEN:-}"
       ARROW_LAKE__ANNOTATION__WEBHOOK_SECRET: "${ANNOTATION_WEBHOOK_SECRET:-}"
       TZ: "Asia/Shanghai"

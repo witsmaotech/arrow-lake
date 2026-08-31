@@ -24,6 +24,7 @@
   .dim.na .v{color:var(--fg-dim)}
   .vetoes{margin-top:8px;font-size:.7rem;color:var(--danger)}
   .drift{margin-top:8px;font-size:.7rem;color:var(--fg-md);font-family:var(--font-mono)}
+  pre.pack{background:var(--ink-950);border:1px solid var(--line-soft);border-radius:var(--r-sm);padding:12px;font-size:.68rem;line-height:1.7;overflow:auto;max-height:480px;font-family:var(--font-mono);color:var(--fg-md);white-space:pre-wrap;margin-top:8px}
 </style>
 </head>
 <body>
@@ -43,6 +44,7 @@ renderShell({ active: "quality-reports", crumb: "<b>质量报告</b>" });
     <button class="btn btn-line btn-sm" id="drift">漂移检测</button>
     <button class="btn btn-line btn-sm" id="feedback">飞轮回流</button>
     <button class="btn btn-line btn-sm" id="refeed">反哺清单</button>
+    <button class="btn btn-line btn-sm" id="reviewPack">评审材料包</button>
   </div>
   <div id="reports"><p class="hint" style="color:var(--fg-dim);font-size:.74rem">输入数据集名加载评估历史。</p></div>
 </section></main>
@@ -51,7 +53,8 @@ renderShell({ active: "quality-reports", crumb: "<b>质量报告</b>" });
 <script type="module">
 import { request } from "./src/api.js";
 import { toast } from "./src/ui/toast.js";
-import { promptDialog } from "./src/ui/modal.js";
+import { promptDialog, confirmDialog } from "./src/ui/modal.js";
+import { mountDatasetPicker } from "./src/ui/dataset-picker.js";
 
 const $ = (s) => document.querySelector(s);
 const stars = (n) => "★".repeat(Math.max(n, 0)) + "☆".repeat(Math.max(5 - n, 0));
@@ -99,7 +102,7 @@ async function relevance() {
   const ds = $("#ds").value.trim();
   if (!ds) return toast("输入数据集名", "warn");
   try {
-    const n = await promptDialog({ title: "相关性回路", message: "抽样规模(≤500)", value: "500" });
+    const n = await promptDialog({ title: "相关性回路", message: "抽样规模(≤500)", defaultValue: "500" });
     const r = await request(`/api/v1/quality/relevance/${encodeURIComponent(ds)}?n=${encodeURIComponent(n || 500)}`, { method: "POST" });
     toast(`已启动(${r.mode})· 抽样 ${r.sampled} 行;回收后重跑评估`, "ok");
   } catch (e) { toast(`启动失败:${e.message}`, "bad"); }
@@ -119,12 +122,27 @@ async function feedback() {
   const ds = $("#ds").value.trim();
   if (!ds) return toast("输入数据集名", "warn");
   try {
-    const rows = await promptDialog({ title: "飞轮回流", message: "低置信行 id(逗号分隔)", value: "" });
-    if (!rows) return;
+    const useAuto = await confirmDialog({
+      title: "飞轮回流 · 模式",
+      message: "自动挑低置信研判入队?\n(decisions_history 中 confidence < 阈值的对象行;与手动行叠加)",
+      confirmText: "自动 + 手动", cancelText: "仅手动" });
+    const manual = await promptDialog({ title: "飞轮回流 · 手动行", message: "低置信行 id(逗号分隔,可空)", defaultValue: "" });
+    if (manual === null) return;
+    const object_rows = manual.split(",").map((x) => x.trim()).filter(Boolean);
+    let auto = false, threshold = 0.6;
+    if (useAuto) {
+      const t = await promptDialog({ title: "飞轮回流 · 低置信阈值", message: "confidence < 阈值的研判对象行入队", defaultValue: "0.6" });
+      if (t === null) return;
+      const v = parseFloat(t);
+      if (!Number.isNaN(v) && v > 0 && v < 1) threshold = v;
+      auto = true;
+    }
+    if (!object_rows.length && !auto) return toast("未提供行且未开自动", "warn");
     const r = await request(`/api/v1/quality/feedback/${encodeURIComponent(ds)}`, {
-      method: "POST", body: JSON.stringify({ object_rows: rows.split(",").map((x) => x.trim()).filter(Boolean) }),
+      method: "POST", body: JSON.stringify({
+        object_rows, auto_low_confidence: auto, confidence_threshold: threshold }),
     });
-    toast(`入队 ${r.queued} · 已在队 ${r.already_queued} · 未找到 ${r.missing_rows?.length || 0}`, "ok");
+    toast(`入队 ${r.queued} · 已在队 ${r.already_queued} · 未找到 ${r.missing_rows?.length || 0}${r.masking && !r.masking.applied ? " · ⚠未带脱敏配置" : ""}`, "ok");
   } catch (e) { toast(`回流失败:${e.message}`, "bad"); }
 }
 
@@ -146,12 +164,31 @@ async function refeed() {
   } catch (e) { toast(`反哺失败:${e.message}`, "bad"); }
 }
 
+async function reviewPack() {
+  const ds = $("#ds").value.trim();
+  if (!ds) return toast("输入数据集名", "warn");
+  try {
+    const r = await request(`/api/v1/quality/review-pack/${encodeURIComponent(ds)}`);
+    $("#reports").insertAdjacentHTML("afterbegin", `
+      <div class="rep" id="packBox">
+        <div class="hd"><span class="score" style="font-size:.9rem">评审材料包</span>
+          <span class="pill">F1.7 · 专家签字用</span><span class="pill">${esc(r.dataset)}</span>
+          <span class="pill">${esc(r.hint || "")}</span></div>
+        <pre class="pack">${esc(r.content)}</pre>
+      </div>`);
+    toast("评审材料包已生成(置顶展示,可复制存档)", "ok");
+  } catch (e) { toast(`生成失败:${e.message}`, "bad"); }
+}
+
 $("#ds").addEventListener("change", load);
+// 数据集选择器(不过滤契约:五维评估不要求契约,无契约集完整性降级即可评)
+mountDatasetPicker($("#ds"), { contractsOnly: false, onPick: load });
 $("#assess").onclick = assess;
 $("#relevance").onclick = relevance;
 $("#drift").onclick = drift;
 $("#feedback").onclick = feedback;
 $("#refeed").onclick = refeed;
+$("#reviewPack").onclick = reviewPack;
 </script>
 </body>
 </html>

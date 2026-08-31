@@ -61,7 +61,38 @@ class ProjectCreate(BaseModel):
 @router.get("/projects", dependencies=[Depends(require_role(Role.ADMIN))])
 async def list_projects(request: Request) -> dict:
     projects = _store(request).list_projects()
-    return {"total": len(projects), "projects": projects}
+    # ls_url(浏览器可达变体优先)外露给前端渲染「打开 LS」入口(M4)
+    cfg = request.app.state.config.annotation
+    return {"total": len(projects), "projects": projects,
+            "ls_url": cfg.ls_public_url or cfg.ls_url or None}
+
+
+@router.get(
+    "/projects/{name}/status",
+    dependencies=[Depends(require_role(Role.ADMIN))],
+)
+async def get_project_status(name: str, request: Request) -> dict:
+    """项目当前看板(只读):review 统计 + Fleiss κ(全量 tasks)。
+
+    与手动回收共用聚合逻辑但零副作用——后台 30s 自动回收的进度
+    由此对 UI 可见(M3);不写 ADL、不生成仲裁、不动 watermark。
+    """
+    from arrow_lake.annotation.sync import project_status
+
+    config = request.app.state.config.annotation
+    if not (config.ls_url and config.ls_api_token):
+        raise HTTPException(
+            status_code=503, detail="Label Studio not configured",
+        )
+    try:
+        return project_status(
+            store=_store(request), config=config, project_name=name)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:  # LS 不可达等(看板容错,不阻断其他面板)
+        raise HTTPException(
+            status_code=502, detail=f"LS status fetch failed: {exc}",
+        ) from exc
 
 
 @router.get("/projects/{name}", dependencies=[Depends(require_role(Role.ADMIN))])

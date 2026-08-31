@@ -16,6 +16,10 @@ class AnnotationConfig(BaseModel):
     Attributes:
         ls_url: LS CE base URL(如 ``http://label-studio:8080``)。空 →
             dispatch 503(未部署 profile 时明确拒绝而非静默失败)。
+        ls_public_url: 浏览器可达的 LS 地址(如 ``http://127.0.0.1:8085``)。
+            ``ls_url`` 是 api 容器内网络地址,console 前端拿去打不开;此
+            字段供 list_projects 响应外露给前端渲染「打开 LS」链接,空 =
+            回退 ls_url(宿主直通部署时两者可同值)。
         ls_api_token: PAT(D1)。空 → dispatch 503。
         default_sample_total: 一次派发默认采样行数。
         max_sample_total: 单次派发行数上限(防误把全表派去标注)。
@@ -29,6 +33,7 @@ class AnnotationConfig(BaseModel):
     """
 
     ls_url: str = ""
+    ls_public_url: str = ""
     ls_api_token: str = ""
     require_masking: bool = False
     webhook_secret: str = ""

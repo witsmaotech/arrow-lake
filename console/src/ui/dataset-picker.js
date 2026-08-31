@@ -22,7 +22,7 @@ function injectStyle() {
   document.head.appendChild(st);
 }
 
-export function mountDatasetPicker(input, { onPick } = {}) {
+export function mountDatasetPicker(input, { onPick, contractsOnly = true } = {}) {
   injectStyle();
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g,
     (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -52,9 +52,9 @@ export function mountDatasetPicker(input, { onPick } = {}) {
     panel.innerHTML = list.length
       ? list.map((d, i) => `
         <div class="dsp-row${i === state.sel ? " sel" : ""}" data-i="${i}">
-          <span class="nm">${esc(d.name)}</span><span class="bd">${d.types} 类</span>
+          <span class="nm">${esc(d.name)}</span>${d.types ? `<span class="bd">${d.types} 类</span>` : ""}
         </div>`).join("")
-      : '<div class="dsp-empty">无匹配数据集(仅有契约者可选)</div>';
+      : `<div class="dsp-empty">无匹配数据集${contractsOnly ? "(仅有契约者可选)" : ""}</div>`;
     panel.querySelectorAll(".dsp-row").forEach((el) =>
       el.addEventListener("mousedown", (e) => {  // mousedown 先于 input blur
         e.preventDefault();
@@ -81,13 +81,17 @@ export function mountDatasetPicker(input, { onPick } = {}) {
     try {
       const data = await request("GET", "/datasets?limit=1000");
       const names = (data?.datasets || []).map((d) => d.name).filter(Boolean).sort();
-      // 并行探测契约(VIEWER;失败=无读权或无契约 → 不上列表)
-      const probes = await Promise.allSettled(names.map((n) =>
-        request("GET", `/objects/types?dataset=${encodeURIComponent(n)}`)));
-      state.items = probes
-        .map((p, i) => (p.status === "fulfilled" && p.value?.has_contract
-          ? { name: names[i], types: (p.value?.types || []).length } : null))
-        .filter(Boolean);
+      if (contractsOnly) {
+        // 并行探测契约(VIEWER;失败=无读权或无契约 → 不上列表)
+        const probes = await Promise.allSettled(names.map((n) =>
+          request("GET", `/objects/types?dataset=${encodeURIComponent(n)}`)));
+        state.items = probes
+          .map((p, i) => (p.status === "fulfilled" && p.value?.has_contract
+            ? { name: names[i], types: (p.value?.types || []).length } : null))
+          .filter(Boolean);
+      } else {
+        state.items = names.map((n) => ({ name: n, types: 0 }));
+      }
     } catch (_) {
       state.items = [];
     }

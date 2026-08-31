@@ -47,6 +47,7 @@ renderShell({ active: "releases", crumb: "<b>发布管理</b>" });
 import { request } from "./src/api.js";
 import { toast } from "./src/ui/toast.js";
 import { promptDialog, confirmDialog } from "./src/ui/modal.js";
+import { mountDatasetPicker } from "./src/ui/dataset-picker.js";
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[<>"&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", '"': "&quot;", "&": "&amp;" }[c]));
@@ -71,8 +72,10 @@ async function load() {
       <div class="kv">${esc(rel.changelog)}</div>
       <div class="acts">
         <button class="btn btn-line btn-sm" onclick="window.__viewSheet('${esc(rel.tag)}')">规格书</button>
-        ${FORMS.map((f) => `<button class="btn btn-line btn-sm" onclick="window.__corpus('${esc(rel.tag)}','${f}')">${f}</button>`).join("")}
-        ${rel.status === "active" ? `<button class="btn btn-ghost btn-sm" onclick="window.__retire('${esc(rel.tag)}')">retire</button>` : ""}
+        ${rel.status === "active"
+          ? FORMS.map((f) => `<button class="btn btn-line btn-sm" onclick="window.__corpus('${esc(rel.tag)}','${f}')">${f}</button>`).join("")
+            + `<button class="btn btn-ghost btn-sm" onclick="window.__retire('${esc(rel.tag)}')">retire</button>`
+          : `<span class="pill">语料导出仅限 active(后端固定最新 active,历史 tag 不可导)</span>`}
       </div>
     </div>`).join("");
 }
@@ -87,10 +90,15 @@ async function publish() {
     toast(`已发布 ${r.tag}(lance@${r.lance_version})${r.forced ? " · force" : ""}`, "ok");
     load();
   } catch (e) {
-    const blocked = e?.payload?.blocked || e.message;
-    const wantForce = await confirmDialog({ title: "发布被拒", message: `${JSON.stringify(blocked)}\n\nforce 覆盖?(需填理由,审计留痕)` });
+    // 422 detail 可能是 {blocked:[...], decision, hint}(结构化门禁)或纯文本
+    const d = e?.detail;
+    const reasons = Array.isArray(d?.blocked) ? d.blocked : null;
+    const msg = reasons
+      ? `门禁:${d.decision || "blocked"}\n${reasons.map((r) => `· ${r}`).join("\n")}${d.hint ? `\n${d.hint}` : ""}`
+      : (typeof d === "string" && d) || e.message;
+    const wantForce = await confirmDialog({ title: "发布被拒", message: `${msg}\n\nforce 覆盖?(需填理由,审计留痕)` });
     if (!wantForce) return;
-    const reason = await promptDialog({ title: "force 理由", message: "审计留痕,必填", value: "" });
+    const reason = await promptDialog({ title: "force 理由", message: "审计留痕,必填", defaultValue: "" });
     if (!reason) return;
     try {
       const r = await request(`/api/v1/release/${encodeURIComponent(ds)}`, {
@@ -124,6 +132,7 @@ window.__retire = async (tag) => {
 };
 
 $("#ds").addEventListener("change", load);
+mountDatasetPicker($("#ds"), { contractsOnly: false, onPick: load });
 $("#publish").onclick = publish;
 </script>
 </body>

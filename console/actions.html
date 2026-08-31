@@ -32,6 +32,7 @@
   <div class="tabbar">
     <button id="tabActions" class="active">行动目录</button>
     <button id="tabScenarios">场景</button>
+    <span class="muted" id="modeNote" style="font-size:.68rem;align-self:center;margin-left:8px"></span>
   </div>
 
   <div class="grid g-2">
@@ -133,6 +134,10 @@ function switchMode(m) {
   curId = null;
   $("#tabActions").classList.toggle("active", m === "actions");
   $("#tabScenarios").classList.toggle("active", m === "scenarios");
+  // 场景=编排定义态(steps/gateways/timeout);执行走「研判台」对对象逐 action 受控触发
+  $("#modeNote").textContent = m === "scenarios"
+    ? "场景为编排定义态——单步执行走「研判台」(对对象触发 action,前置/幂等/审计在彼侧)"
+    : "";
   $("#listTitle").textContent = m === "actions" ? "行动目录" : "场景";
   $("#ymlTitle").textContent = m === "actions" ? "行动 YAML" : "场景 YAML";
   $("#ymlMeta").textContent = "—";

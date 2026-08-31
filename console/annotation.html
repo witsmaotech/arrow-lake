@@ -98,10 +98,12 @@ const isAdmin = (() => {
 let projects = [];
 let cur = null;
 let templates = [];
+let lsUrl = null;  // 浏览器可达 LS 地址(config ls_public_url 优先;空=后端未配)
 
 async function loadProjects() {
   const r = await request("GET", "/annotation/projects");
   projects = r.projects || [];
+  lsUrl = r.ls_url || null;
   $("#projMeta").textContent = `${projects.length} 个`;
   if (!projects.length) {
     $("#projList").innerHTML = '<div class="muted" style="padding:10px">暂无项目 — 新建一个</div>';
@@ -126,18 +128,16 @@ async function loadTemplates() {
 
 async function newProject() {
   if (!isAdmin) return toast("需要 ADMIN", "warn");
-  const name = await promptDialog("项目名(唯一标识)", "gas-ner-p1");
+  const name = await promptDialog({ title: "新建标注项目 · 1/3", message: "项目名(唯一标识)", defaultValue: "gas-ner-p1" });
   if (!name) return;
-  const dataset = await promptDialog("源数据集(采样与写回对象)", "demo_ms3_alerts");
+  const dataset = await promptDialog({ title: "新建标注项目 · 2/3", message: "源数据集(采样与写回对象)", defaultValue: "demo_ms3_alerts" });
   if (!dataset) return;
   let tpl = "project_concept_graph";
-  if (templates.length) {
-    const pick = await promptDialog(`模板(可选项:${templates.slice(0, 6).join(" / ")}…)`, tpl);
-    if (pick) tpl = pick;
-  } else {
-    const pick = await promptDialog("本体模板名", tpl);
-    if (pick) tpl = pick;
-  }
+  const tplMsg = templates.length
+    ? `本体模板名。可选项:${templates.slice(0, 8).join(" / ")}${templates.length > 8 ? " …" : ""}`
+    : "本体模板名(模板列表加载失败,手输)";
+  const pick = await promptDialog({ title: "新建标注项目 · 3/3", message: tplMsg, defaultValue: tpl });
+  if (pick) tpl = pick;
   try {
     await request("POST", "/annotation/projects", {
       body: { name: name.trim(), dataset: dataset.trim(), template_name: tpl.trim() },
@@ -159,7 +159,9 @@ function selectProject(name) {
     <div class="kv">
       <b>源数据集</b><span>${esc(cur.dataset)}</span>
       <b>绑定模板</b><span>${esc(cur.template_name)}</span>
-      <b>LS 项目</b><span>${cur.ls_project_id ?? "未绑定(派发时懒创建)"}</span>
+      <b>LS 项目</b><span>${cur.ls_project_id && lsUrl
+        ? `<a href="${esc(lsUrl)}/projects/${cur.ls_project_id}/data" target="_blank" rel="noopener" style="text-decoration:underline">#${cur.ls_project_id} ↗</a>`
+        : (cur.ls_project_id ? `#${cur.ls_project_id}(配置 ls_public_url 可加链接)` : "未绑定(派发时懒创建)")}</span>
       <b>配置来源</b><span>${esc(cur.config_source)}</span>
       <b>watermark</b><span>${cur.recover_watermark ?? 0}</span>
       <b>更新时间</b><span>${esc(cur.updated_at || "—")}</span>
@@ -169,6 +171,13 @@ function selectProject(name) {
   $("#dispPanel").innerHTML = `
     <div class="f-row"><label>采样行数</label><input class="f" id="dTotal" type="number" value="20" min="1" max="200"/></div>
     <div class="f-row"><label>文本列</label><input class="f" id="dCol" type="text" value="text"/></div>
+    <div class="f-row"><label>策略配比</label><select class="f" id="dStrat">
+      <option value="">均衡(uncertainty .4 / diversity .3 / failure_case .2 / committee .1)</option>
+      <option value="uncertainty">uncertainty 优先(低置信优先,主动学习)</option>
+      <option value="diversity">diversity 优先(k-center 覆盖面)</option>
+      <option value="failure_case">failure_case 优先(质量门死信行)</option>
+      <option value="committee">committee 优先(预标注分歧)</option>
+    </select></div>
     <div class="f-row"><label>L3 假名实体</label><input class="f" id="dEnt" type="text" placeholder="逗号分隔,可空" style="width:220px"/></div>
     <div class="f-row"><label></label><button class="btn btn-primary btn-sm" id="dGo"><i class="placeholder" data-ic="play"></i> 派发到 Label Studio</button></div>
     <div class="muted" id="dispMsg" style="font-size:.7rem;margin-top:4px">脱敏→预标注→LS import 一键;异步任务可在「异步任务」页跟踪</div>`;
@@ -183,12 +192,15 @@ async function doDispatch() {
   const body = { project: cur.name, text_column: $("#dCol").value.trim() || "text" };
   const total = parseInt($("#dTotal").value, 10);
   if (total > 0) body.total = total;
+  const strat = $("#dStrat")?.value || "";
+  if (strat) body.budget = { [strat]: 1.0 };  // 单策略 100% SamplingBudget 权重覆盖
   const ents = ($("#dEnt").value || "").split(/[,，]/).map(s => s.trim()).filter(Boolean);
   if (ents.length) body.entity_names = ents;
   $("#dGo").disabled = true;
   try {
     const r = await request("POST", "/annotation/dispatch", { body });
-    $("#dispMsg").textContent = `已派发(任务 ${r.task_id},候选 ${r.candidate_rows} 行)— 打开 LS 标注`;
+    $("#dispMsg").innerHTML = `已派发(任务 ${esc(r.task_id)},候选 ${r.candidate_rows} 行)— ${
+      lsUrl ? `<a href="${esc(lsUrl)}/projects/" target="_blank" rel="noopener" style="text-decoration:underline">打开 LS 标注</a>` : "打开 LS 标注"}`;
     toast(`派发任务 ${r.task_id} 已启动`);
   } catch (e) {
     $("#dispMsg").textContent = `派发失败:${e.message || e}`;
@@ -218,6 +230,13 @@ async function doRecover() {
 function renderBoard(s) {
   const kappa = s.kappa == null ? "—" : Number(s.kappa).toFixed(3);
   const kcls = s.kappa == null ? "" : s.kappa >= 0.8 ? "good" : s.kappa >= 0 ? "warn" : "bad";
+  // 两种来源:/status(全量只读看板,有 tasks_total)与 /recover(本轮增量,有 ADL 字段)
+  const isStatus = s.tasks_total != null;
+  const kvRows = isStatus
+    ? `<b>LS 任务</b><span>${s.tasks_total}(已标 ${s.annotated_rows ?? 0} 行)${s.bound === false ? " · 未绑定" : ""}</span>`
+    : `<b>回收标注</b><span>${s.annotations_recovered ?? 0}</span>
+       <b>ADL 写回</b><span>${s.adl_rows_written ?? 0} 行(批次 ${esc(s.batch_id || "—")})</span>
+       <b>仲裁 task</b><span>${s.arbitration_tasks_generated ?? 0} 个已生成</span>`;
   $("#board").innerHTML = `
     <div class="statgrid">
       <div class="stat good"><div class="n">${s.review?.approved ?? 0}</div><div class="l">APPROVED</div></div>
@@ -225,16 +244,20 @@ function renderBoard(s) {
       <div class="stat warn"><div class="n">${s.review?.pending ?? 0}</div><div class="l">PENDING</div></div>
       <div class="stat ${kcls}"><div class="n">${kappa}</div><div class="l">FLEISS κ</div></div>
     </div>
-    <div class="kv">
-      <b>回收标注</b><span>${s.annotations_recovered ?? 0}</span>
-      <b>ADL 写回</b><span>${s.adl_rows_written ?? 0} 行(批次 ${esc(s.batch_id || "—")})</span>
-      <b>仲裁 task</b><span>${s.arbitration_tasks_generated ?? 0} 个已生成</span>
+    <div class="kv">${kvRows}
       <b>watermark</b><span>${s.watermark ?? "—"}</span>
     </div>`;
 }
 
 async function loadBoard() {
-  $("#board").innerHTML = '<div class="muted">回收后在此看板(后台每 30s 自动对账)</div>';
+  if (!cur) return;
+  $("#board").innerHTML = '<div class="muted">加载看板…</div>';
+  try {
+    const s = await request("GET", `/annotation/projects/${encodeURIComponent(cur.name)}/status`);
+    renderBoard(s);
+  } catch (e) {
+    $("#board").innerHTML = `<div class="muted">看板不可用:${esc(e?.detail || e?.message || e)}<br/>后台每 30s 自动对账不受影响</div>`;
+  }
 }
 
 async function loadAdl() {
@@ -263,7 +286,9 @@ async function loadAdl() {
 $("#newBtn").onclick = newProject;
 $("#delBtn").onclick = async () => {
   if (!cur || !isAdmin) return;
-  if (!(await confirmDialog(`删除标注项目 ${cur.name}?(ADL 表与 LS 项目不受影响)`))) return;
+  const lsNote = cur.ls_project_id
+    ? `LS 项目 #${cur.ls_project_id} 将残留为孤儿(同名重建会新建 LS 项目,不影响 ADL 真值)` : "该项目尚未绑定 LS";
+  if (!(await confirmDialog({ title: `删除标注项目 ${cur.name}?`, message: `ADL 表不受影响。\n${lsNote}`, danger: true }))) return;
   try {
     await request("DELETE", `/annotation/projects/${encodeURIComponent(cur.name)}`);
     toast("已删除");

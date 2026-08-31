@@ -94,6 +94,52 @@ def arbitration_tasks(
     return out
 
 
+def project_status(
+    *,
+    store: Any,
+    config: AnnotationConfig,
+    project_name: str,
+    ls_client: LSClient | None = None,
+) -> dict:
+    """项目当前看板(只读):全量 LS tasks 的裁决统计 + Fleiss κ。
+
+    与 :func:`recover_one` 同源聚合(export→parse→adjudicate),但
+    **不写 ADL、不生成仲裁、不动 watermark**——后台自动回收的结果
+    因此在 UI 可见,无需触发一次手动回收副作用。未绑定 LS 的项目
+    返回 ``bound: False`` 骨架而非报错(派发前看板可用)。
+    """
+    from arrow_lake.annotation.quality import adjudicate, project_kappa
+    from arrow_lake.annotation.recover import parse_ls_annotation
+
+    rec = store.get_project(project_name)
+    if rec is None:
+        raise LookupError(f"no annotation project {project_name!r}")
+    ls_project_id = rec.get("ls_project_id")
+    if not ls_project_id:
+        return {"project": project_name, "bound": False, "tasks_total": 0,
+                "annotated_rows": 0,
+                "review": {"approved": 0, "arbitration": 0, "pending": 0},
+                "kappa": None,
+                "watermark": int(rec.get("recover_watermark") or 0)}
+
+    client = ls_client or LSClient(config.ls_url, config.ls_api_token)
+    tasks = client.export_tasks(ls_project_id)
+    by_task: dict[str, list[Any]] = {}
+    for t in tasks:
+        for ann in parse_ls_annotation(t):
+            by_task.setdefault(ann.row_id, []).append(ann)
+    verdicts = adjudicate(by_task)
+    counts = {"approved": 0, "arbitration": 0, "pending": 0}
+    for verdict in verdicts.values():
+        counts[verdict.status] = counts.get(verdict.status, 0) + 1
+    return {
+        "project": project_name, "bound": True,
+        "tasks_total": len(tasks), "annotated_rows": len(by_task),
+        "review": counts, "kappa": project_kappa(by_task),
+        "watermark": int(rec.get("recover_watermark") or 0),
+    }
+
+
 def recover_one(
     *,
     store: Any,
