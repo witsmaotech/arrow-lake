@@ -607,3 +607,52 @@ async def feedback_loop(
         "missing_rows": missing,
         "masking": {"applied": bool(fb_rules or fb_entities)},
     }
+
+
+@router.get(
+    "/relevance/{dataset}/refeed",
+    dependencies=[Depends(require_role(Role.ADMIN))],
+)
+async def relevance_refeed(
+    dataset: str,
+    request: Request,
+    lake=Depends(get_lake),
+    _user=Depends(require_role(Role.ADMIN)),
+) -> dict:
+    """F5.2 反哺清单(设计 §3.3,收官审计 2026-08-31 补齐)。
+
+    相关性评估结果的行级反哺:判「不相关」的行 → **过滤整改建议**
+    (从数据集清出的候选清单);判「高相关」的行 → **补标优先清单**
+    (经 ``POST /quality/feedback`` 打回 L4 队列,F5.8 同路)。只读派生,
+    不落库——每次按当前 ADL 实时计算。
+    """
+    _contract_store(request)  # 仅作 system_db 在线性检查
+    try:
+        lake.read_dataset(dataset)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=404, detail=f"Dataset '{dataset}' not readable: {exc}",
+        ) from exc
+    adl = _read_table(lake, f"{dataset}_adl", table=None)
+    if adl is not None and adl.num_rows == 0:
+        adl = None
+    res = compute_relevance(adl)
+    if res.score is None:
+        return {
+            "dataset": dataset, "relevance_score": None,
+            "note": res.details.get("note", "no relevance annotations"),
+            "filter_suggestions": [], "priority_annotate": [],
+        }
+    d = res.details
+    return {
+        "dataset": dataset,
+        "relevance_score": res.score,
+        "source": res.source,
+        "counts": d["counts"],
+        "filter_suggestions": d["irrelevant_row_ids"],
+        "priority_annotate": d["high_relevance_row_ids"],
+        "usage": {
+            "filter": "irrelevant 行建议从训练集过滤(整改建议,人工确认后执行)",
+            "annotate": "high 行经 POST /quality/feedback 优先补 L4 标注",
+        },
+    }

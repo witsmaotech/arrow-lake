@@ -125,3 +125,15 @@ def test_accuracy_llm_only_not_assessed() -> None:
     rows = [_l4("r0", "llm:qwen"), _l4("r1", "llm:qwen")]
     res = compute_accuracy(_adl(rows))
     assert res.score is None  # 排除 LLM 后无双标注行
+
+
+def test_relevance_details_carry_refeed_row_lists() -> None:
+    """F5.2 反哺:details 带行级清单(不相关→过滤建议;高相关→补标优先)。"""
+    rows = [
+        _rel("r0", "高相关"), _rel("r1", "不相关"), _rel("r2", "间接相关"),
+        _rel("r3", "不相关"),
+    ]
+    res = compute_relevance(_adl(rows))
+    d = res.details
+    assert d["irrelevant_row_ids"] == ["r1", "r3"]
+    assert d["high_relevance_row_ids"] == ["r0"]

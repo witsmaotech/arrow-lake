@@ -487,3 +487,34 @@ def test_feedback_non_admin_403(db: SystemDB) -> None:
     assert client.post(
         "/api/v1/quality/feedback/alerts", json={"object_rows": ["h0"]}
     ).status_code == 403
+
+
+def test_relevance_refeed_lists(db: SystemDB) -> None:
+    """F5.2 反哺(2026-08-31 补齐):不相关→过滤建议;高相关→补标优先。"""
+    from arrow_lake.annotation.adl import ADL_SCHEMA
+
+    rel_rows = [
+        {"adl_id": f"rr{i}", "source_dataset": "alerts",
+         "source_row_id": rid, "objects": [], "events": [],
+         "rules_applied": [], "scenario": label, "relations": [],
+         "annotator_id": "ann1", "annotated_at": NOW.isoformat(),
+         "review_status": "approved", "reviewer_id": "", "batch_id": "b",
+         "adl_version": 1}
+        for i, (rid, label) in enumerate(
+            [("r0", "高相关"), ("r1", "不相关"), ("r2", "不相关")])
+    ]
+    adl = pa.Table.from_pylist(rel_rows, schema=ADL_SCHEMA)
+    lake = FakeLake({"alerts": _source_table(), "alerts_adl": adl})
+    client = _make_app(role=Role.ADMIN, db=db, lake=lake)
+    body = client.get("/api/v1/quality/relevance/alerts/refeed").json()
+    assert body["relevance_score"] == pytest.approx(100 / 3, abs=1e-3)
+    assert body["filter_suggestions"] == ["r1", "r2"]
+    assert body["priority_annotate"] == ["r0"]
+    assert "feedback" in body["usage"]["annotate"]
+    # 404 / 空 ADL
+    assert client.get(
+        "/api/v1/quality/relevance/ghost/refeed").status_code == 404
+    empty_lake = FakeLake({"alerts": _source_table()})
+    c2 = _make_app(role=Role.ADMIN, db=db, lake=empty_lake)
+    assert c2.get("/api/v1/quality/relevance/alerts/refeed").json()[
+        "relevance_score"] is None

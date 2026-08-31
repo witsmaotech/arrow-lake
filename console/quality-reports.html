@@ -41,6 +41,7 @@ renderShell({ active: "quality-reports", crumb: "<b>质量报告</b>" });
     <button class="btn btn-line btn-sm" id="relevance">相关性回路</button>
     <button class="btn btn-line btn-sm" id="drift">漂移检测</button>
     <button class="btn btn-line btn-sm" id="feedback">飞轮回流</button>
+    <button class="btn btn-line btn-sm" id="refeed">反哺清单</button>
   </div>
   <div id="reports"><p class="hint" style="color:var(--fg-dim);font-size:.74rem">输入数据集名加载评估历史。</p></div>
 </section></main>
@@ -124,11 +125,30 @@ async function feedback() {
   } catch (e) { toast(`回流失败:${e.message}`, "bad"); }
 }
 
+async function refeed() {
+  const ds = $("#ds").value.trim();
+  if (!ds) return toast("输入数据集名", "warn");
+  try {
+    const r = await request(`/api/v1/quality/relevance/${encodeURIComponent(ds)}/refeed`);
+    const box = $("#reports");
+    if (r.relevance_score == null) { toast(`无相关性标注:${r.note || "先跑相关性回路"}`, "warn"); return; }
+    box.insertAdjacentHTML("afterbegin", `
+      <div class="rep">
+        <div class="hd"><span class="score">反哺清单</span>
+          <span class="pill">relevance ${r.relevance_score} · ${esc(r.source)}</span></div>
+        <div class="vetoes" style="color:var(--fg-dim)">过滤整改建议(${r.filter_suggestions.length}):${esc(r.filter_suggestions.join(", ") || "无")}</div>
+        <div class="drift">补标优先(${r.priority_annotate.length}):${esc(r.priority_annotate.join(", ") || "无")} → 经「飞轮回流」入队</div>
+      </div>`);
+    toast(`反哺:过滤 ${r.filter_suggestions.length} · 补标 ${r.priority_annotate.length}`, "ok");
+  } catch (e) { toast(`反哺失败:${e.message}`, "bad"); }
+}
+
 $("#ds").addEventListener("change", load);
 $("#assess").onclick = assess;
 $("#relevance").onclick = relevance;
 $("#drift").onclick = drift;
 $("#feedback").onclick = feedback;
+$("#refeed").onclick = refeed;
 </script>
 </body>
 </html>

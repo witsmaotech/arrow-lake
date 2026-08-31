@@ -392,8 +392,9 @@ def compute_relevance(adl_table: pa.Table | None) -> DimensionResult:
         by_row.setdefault(row_id, []).append(row)
 
     counts = {label: 0 for label in RELEVANCE_LABELS}
+    row_ids_by_label: dict[str, list[str]] = {label: [] for label in RELEVANCE_LABELS}
     human_rows = llm_rows = 0
-    for recs in by_row.values():
+    for row_id, recs in by_row.items():
         humans = [r for r in recs if not str(r["annotator_id"]).startswith("llm:")]
         pool = humans if humans else recs
         if humans:
@@ -405,7 +406,9 @@ def compute_relevance(adl_table: pa.Table | None) -> DimensionResult:
             tally[r["scenario"]] = tally.get(r["scenario"], 0) + 1
         best = max(tally.values())
         winners = [label for label, n in tally.items() if n == best]
-        counts[min(winners, key=lambda l: _RELEVANCE_RANK[l])] += 1
+        final_label = min(winners, key=lambda l: _RELEVANCE_RANK[l])
+        counts[final_label] += 1
+        row_ids_by_label[final_label].append(row_id)
 
     total = sum(counts.values())
     score = 100.0 * (
@@ -418,6 +421,10 @@ def compute_relevance(adl_table: pa.Table | None) -> DimensionResult:
     details: dict[str, Any] = {
         "counts": counts, "rows": total,
         "human_rows": human_rows, "llm_rows": llm_rows,
+        # F5.2 反哺清单(设计 §3.3):不相关行→整改过滤建议;
+        # 高相关行→标注/复核优先(经 /quality/feedback 同路回补)
+        "irrelevant_row_ids": row_ids_by_label["不相关"],
+        "high_relevance_row_ids": row_ids_by_label["高相关"],
     }
     if source == "llm":
         details["assessed_by"] = "llm"
