@@ -63,7 +63,7 @@ const esc = (s) => String(s ?? "").replace(/[<>"&]/g, (c) => ({ "<": "&lt;", ">"
 async function load() {
   const ds = $("#ds").value.trim();
   if (!ds) return toast("输入数据集名", "warn");
-  const r = await request(`/api/v1/quality/reports/${encodeURIComponent(ds)}?limit=10`);
+  const r = await request("GET", `/quality/reports/${encodeURIComponent(ds)}?limit=10`);
   const box = $("#reports");
   if (!r.reports?.length) { box.innerHTML = `<p class="hint">无评估历史——点击「评估」生成首份报告。</p>`; return; }
   box.innerHTML = r.reports.map((rep) => `
@@ -90,7 +90,7 @@ async function assess() {
   const ds = $("#ds").value.trim();
   if (!ds) return toast("输入数据集名", "warn");
   try {
-    const r = await request(`/api/v1/quality/assess/${encodeURIComponent(ds)}`, { method: "POST" });
+    const r = await request("POST", `/quality/assess/${encodeURIComponent(ds)}`);
     toast(`评估完成:${r.total_score ?? "—"} 分 · ${r.admission}`, "ok");
     if (r.drift?.status === "compared" && r.drift.drifted?.length)
       toast(`漂移超阈:${r.drift.drifted.join(", ")}`, "warn");
@@ -103,7 +103,7 @@ async function relevance() {
   if (!ds) return toast("输入数据集名", "warn");
   try {
     const n = await promptDialog({ title: "相关性回路", message: "抽样规模(≤500)", defaultValue: "500" });
-    const r = await request(`/api/v1/quality/relevance/${encodeURIComponent(ds)}?n=${encodeURIComponent(n || 500)}`, { method: "POST" });
+    const r = await request("POST", `/quality/relevance/${encodeURIComponent(ds)}?n=${encodeURIComponent(n || 500)}`);
     toast(`已启动(${r.mode})· 抽样 ${r.sampled} 行;回收后重跑评估`, "ok");
   } catch (e) { toast(`启动失败:${e.message}`, "bad"); }
 }
@@ -112,7 +112,7 @@ async function drift() {
   const ds = $("#ds").value.trim();
   if (!ds) return toast("输入数据集名", "warn");
   try {
-    const r = await request(`/api/v1/quality/drift/${encodeURIComponent(ds)}`, { method: "POST" });
+    const r = await request("POST", `/quality/drift/${encodeURIComponent(ds)}`);
     if (r.status === "baseline_created") toast(`基线已建立(${r.columns} 列),再次检测开始比较`, "ok");
     else toast(r.drifted?.length ? `漂移超阈:${r.drifted.join(", ")}` : "无漂移", r.drifted?.length ? "warn" : "ok");
   } catch (e) { toast(`检测失败:${e.message}`, "bad"); }
@@ -138,9 +138,8 @@ async function feedback() {
       auto = true;
     }
     if (!object_rows.length && !auto) return toast("未提供行且未开自动", "warn");
-    const r = await request(`/api/v1/quality/feedback/${encodeURIComponent(ds)}`, {
-      method: "POST", body: JSON.stringify({
-        object_rows, auto_low_confidence: auto, confidence_threshold: threshold }),
+    const r = await request("POST", `/quality/feedback/${encodeURIComponent(ds)}`, {
+      body: { object_rows, auto_low_confidence: auto, confidence_threshold: threshold },
     });
     toast(`入队 ${r.queued} · 已在队 ${r.already_queued} · 未找到 ${r.missing_rows?.length || 0}${r.masking && !r.masking.applied ? " · ⚠未带脱敏配置" : ""}`, "ok");
   } catch (e) { toast(`回流失败:${e.message}`, "bad"); }
@@ -150,7 +149,7 @@ async function refeed() {
   const ds = $("#ds").value.trim();
   if (!ds) return toast("输入数据集名", "warn");
   try {
-    const r = await request(`/api/v1/quality/relevance/${encodeURIComponent(ds)}/refeed`);
+    const r = await request("GET", `/quality/relevance/${encodeURIComponent(ds)}/refeed`);
     const box = $("#reports");
     if (r.relevance_score == null) { toast(`无相关性标注:${r.note || "先跑相关性回路"}`, "warn"); return; }
     box.insertAdjacentHTML("afterbegin", `
@@ -168,7 +167,7 @@ async function reviewPack() {
   const ds = $("#ds").value.trim();
   if (!ds) return toast("输入数据集名", "warn");
   try {
-    const r = await request(`/api/v1/quality/review-pack/${encodeURIComponent(ds)}`);
+    const r = await request("GET", `/quality/review-pack/${encodeURIComponent(ds)}`);
     $("#reports").insertAdjacentHTML("afterbegin", `
       <div class="rep" id="packBox">
         <div class="hd"><span class="score" style="font-size:.9rem">评审材料包</span>

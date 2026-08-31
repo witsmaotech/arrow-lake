@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>生产向导 · Arrow Lake Console</title>
+<link rel="stylesheet" href="assets/tokens.css"/>
+<link rel="stylesheet" href="assets/app.css"/>
+<link rel="stylesheet" href="assets/console.css"/>
+<style>
+  .steps{display:flex;flex-direction:column;gap:10px}
+  .step{display:grid;grid-template-columns:44px 1fr auto;gap:12px;align-items:center;
+        border:1px solid var(--line-soft);border-radius:var(--r-md);padding:12px 14px;background:var(--ink-950)}
+  .step .no{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+        font-family:var(--font-mono);font-size:1rem;font-weight:600;border:1px solid var(--line)}
+  .step.done .no{color:var(--teal-bright);border-color:var(--teal-bright)}
+  .step.warn .no{color:var(--warn);border-color:var(--warn)}
+  .step.todo .no{color:var(--fg-lo)}
+  .step h3{margin:0;font-size:.9rem;display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
+  .step .m{font-family:var(--font-mono);font-size:.74rem;color:var(--fg-md);margin-top:3px}
+  .step .hint{font-size:.7rem;color:var(--fg-lo);margin-top:3px;line-height:1.5}
+  .step .go{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+  .lamp-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:1px}
+  .ok{background:var(--teal-bright)} .warn{background:var(--warn)} .todo{background:var(--fg-lo)}
+  pre.play{background:var(--ink-950);border:1px solid var(--line-soft);border-radius:var(--r-sm);
+        padding:12px;font-size:.7rem;line-height:1.8;overflow:auto;font-family:var(--font-mono);
+        color:var(--fg-md);white-space:pre-wrap;margin-top:8px}
+  input.ds{background:var(--ink-900);border:1px solid var(--line);border-radius:var(--r-sm);
+        color:var(--fg-md);padding:8px 12px;font-size:.8rem;font-family:var(--font-mono);width:240px}
+</style>
+</head>
+<body>
+<div id="app">
+<main class="main"><div class="page">
+  <div class="h-sec between">
+    <div><h1>生产向导</h1>
+      <div class="desc">高质量数据集六步主线:契约 → 标注 → 评估 → 发布 → 语料 → 飞轮。选一个数据集,看它走到哪、卡在哪,就地直达操作。</div></div>
+  </div>
+
+  <div class="panel flush" style="margin-bottom:var(--s4)">
+    <div class="panel-b" style="display:flex;gap:12px;align-items:center;padding:10px 14px;flex-wrap:wrap">
+      <span class="muted" style="font-size:.76rem">数据集</span>
+      <input class="ds" id="dsInput" value="demo_annotation_alerts" placeholder="dataset"/>
+      <button class="btn btn-primary btn-sm" id="loadBtn">查看进度</button>
+      <span class="muted" id="sum" style="font-size:.72rem;margin-left:auto"></span>
+    </div>
+  </div>
+
+  <div class="steps" id="steps">
+    <div class="muted" style="padding:16px;text-align:center">输入数据集名查看六步进度。</div>
+  </div>
+
+  <div class="panel" style="margin-top:var(--s4)">
+    <div class="panel-h"><i class="placeholder" data-ic="file"></i><h3>试点剧本(demo_annotation_alerts 全链实录)</h3></div>
+    <div class="panel-b">
+      <div class="muted" style="font-size:.74rem;line-height:1.7">一条数据集从普通表格到高质量发布物的标准操作顺序。前置:标注员账号已在 Label Studio(127.0.0.1:8085)就位。</div>
+      <pre class="play">① 契约   本体与语义 → 建模工作台:设计对象类/标识/属性 → 保存「数据契约」
+② 标注   本页第②步 → 标注生产线:新建项目(选数据集+模板)→ 采样派发
+         → 标注员打开 Label Studio 标注(相关性三分类 + 实体/关系)
+         → 回收(30s 自动 / 手动)→ ADL 真值落库,看板显示 approved/κ
+③ 评估   本页第③步「立即评估」→ 五维得分;relevance 低时先点质量报告页
+         「相关性回路」补标 → 人工标完再评估(Annotation 权重最高)
+④ 发布   本页第④步 → 发布管理:填 changelog 发布(门禁=报告准入+否决
+         +拒绝劣化+漂移;被拒会显示原因,force 需理由留审计)
+⑤ 语料   本页第⑤步:填脱敏规则(L2 泛化,如手机号→[手机号])→ 四形态
+         导出(sft/pretrain/rlhf/golden),golden 可入 tests/benchmark/golden
+⑥ 飞轮   研判台:勾「记录研判」对对象研判(EDITOR+)→ 本页第⑥步看低置信
+         → 质量报告「飞轮回流」auto 入队 → 标注补标 → 回到③,闭环</pre>
+    </div>
+  </div>
+</div></main>
+</div>
+
+<script src="assets/console-layout.js"></script>
+<script type="module">
+import { request } from "./src/api.js";
+import { isLoggedIn } from "./src/auth.js";
+import { toast } from "./src/ui/toast.js";
+import { mountDatasetPicker } from "./src/ui/dataset-picker.js";
+
+if (!isLoggedIn()) location.href = "login.html";
+const { renderShell } = window;
+renderShell({ active: "hq-guide", crumb: '<b>生产向导</b>' });
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+function stepHtml(no, title, cls, dotText, metrics, hint, buttons) {
+  return `<div class="step ${cls}">
+    <div class="no">${no}</div>
+    <div>
+      <h3><span class="lamp-dot ${cls === "done" ? "ok" : cls}"></span>${title}</h3>
+      <div class="m">${metrics}</div>
+      <div class="hint">${hint}</div>
+    </div>
+    <div class="go">${buttons}</div>
+  </div>`;
+}
+const btn = (label, href) => `<a class="btn btn-line btn-sm" href="${href}">${label}</a>`;
+const actBtn = (id, label, primary) =>
+  `<button class="btn ${primary ? "btn-primary" : "btn-line"} btn-sm" id="${id}">${label}</button>`;
+
+async function load() {
+  const ds = $("#dsInput").value.trim();
+  if (!ds) return toast("输入数据集名", "warn");
+  $("#steps").innerHTML = '<div class="muted" style="padding:16px;text-align:center">加载六步状态…</div>';
+  const parts = [];
+
+  // ① 契约(/objects/types 是 VIEWER 级轻探测)
+  try {
+    const t = await request("GET", `/objects/types?dataset=${encodeURIComponent(ds)}`);
+    parts.push(t?.has_contract
+      ? stepHtml(1, "契约", "done", "", `v? · ${t.types.length} 对象类 · ${t.types.map(x => esc(x.table)).slice(0, 3).join(" / ")}`,
+          "契约已就位(对象类/标识/生命周期)。改结构去建模工作台。", [btn("建模工作台 →", "ontology-designer.html")])
+      : stepHtml(1, "契约", "todo", "", "—",
+          "还没有契约——这是第一步。去建模工作台设计对象类/标识 pattern/属性列,保存即生成数据契约。",
+          [btn("去建模工作台 →", "ontology-designer.html")]));
+  } catch (e) {
+    parts.push(stepHtml(1, "契约", "warn", "", "探测失败", esc(e?.detail || e.message), []));
+  }
+
+  // ② 标注(ADMIN 面;无权限时降级提示)
+  try {
+    const pr = await request("GET", "/annotation/projects");
+    const mine = (pr.projects || []).filter(p => p.dataset === ds);
+    let adlRows = null, lsHint = "";
+    for (const p of mine) {
+      if (p.status === "active" && p.ls_project_id) {
+        try {
+          const a = await request("GET", `/annotation/projects/${encodeURIComponent(p.name)}/adl`);
+          adlRows = (adlRows || 0) + (a.total || 0);
+        } catch (_) {}
+      }
+    }
+    if (!mine.length) {
+      parts.push(stepHtml(2, "标注", "todo", "", "无项目",
+        "去标注生产线新建项目(选数据集+抽取模板)→ 采样派发到 Label Studio → 标注员标注 → 回收落 ADL 真值。",
+        [btn("去标注 →", "annotation.html")]));
+    } else {
+      const active = mine.filter(p => p.status === "active").length;
+      lsHint = mine.some(p => p.ls_project_id)
+        ? " 标注员入口:Label Studio(127.0.0.1:8085)。" : "";
+      parts.push(stepHtml(2, "标注", adlRows ? "done" : "warn", "",
+        `${mine.length} 项目(${active} active)· ADL ${adlRows ?? 0} 行`,
+        adlRows
+          ? `ADL 真值已落库,κ/看板在标注生产线。${lsHint}`
+          : `已建项目但 ADL 为 0——派发了吗?标注完了吗?回收看板在标注生产线。${lsHint}`,
+        [btn("标注生产线 →", "annotation.html")]));
+    }
+  } catch (e) {
+    parts.push(stepHtml(2, "标注", "warn", "", "需要 ADMIN 权限", "标注面为 ADMIN 专属。", []));
+  }
+
+  // ③ 评估(就地一键)
+  try {
+    const r = await request("GET", `/quality/reports/${encodeURIComponent(ds)}?limit=1`);
+    const rep = (r.reports || [])[0];
+    if (!rep) {
+      parts.push(stepHtml(3, "评估", "todo", "", "无报告",
+        "还没有五维评估报告——点右侧「立即评估」一键生成(约数秒),或去质量报告页操作。",
+        [actBtn("doAssess", "立即评估", true), btn("质量报告 →", "quality-reports.html")]));
+    } else {
+      const stars = "★".repeat(rep.star || 0);
+      const cls = rep.admission !== "none" ? "done" : "warn";
+      const veto = (rep.vetoes || []).length;
+      parts.push(stepHtml(3, "评估", cls, "",
+        `${rep.total_score ?? "—"} 分 ${stars || "☆"} · ${rep.admission} · ${rep.verdict}${veto ? ` · ⚠${veto} 否决` : ""}`,
+        cls === "done"
+          ? "已达准入档。数据变化后重跑评估即可刷新。"
+          : "未达准入(admission=none,常因 relevance/accuracy veto)——去质量报告页跑「相关性回路」补人工标注后再评估。",
+        [actBtn("doAssess", "重跑评估", false), btn("质量报告 →", "quality-reports.html")]));
+    }
+  } catch (e) {
+    parts.push(stepHtml(3, "评估", "warn", "", "查询失败", esc(e?.detail || e.message), []));
+  }
+
+  // ④ 发布
+  try {
+    const r = await request("GET", `/release/${encodeURIComponent(ds)}`);
+    const rel = r.latest_active;
+    parts.push(rel
+      ? stepHtml(4, "发布", "done", "", `${rel.tag} active · lance@${rel.lance_version} · score ${rel.total_score ?? "—"}`,
+          "已有 active 发布(版本已锁定)。语料导出/下游消费以它为准;数据迭代后评估再发新版本。",
+          [btn("发布管理 →", "releases.html")])
+      : stepHtml(4, "发布", (r.releases || []).length ? "warn" : "todo", "",
+          (r.releases || []).length ? `${r.releases.length} 条历史全 retired` : "无发布",
+          "评估达标后去发布管理:填 changelog → 发布(门禁=准入+否决+拒绝劣化+漂移;被拒显示原因,force 需理由)。",
+          [btn("去发布 →", "releases.html")]));
+  } catch (e) {
+    parts.push(stepHtml(4, "发布", "warn", "", "查询失败", esc(e?.detail || e.message), []));
+  }
+
+  // ⑤ 语料(就地导出;须 active 发布 + 脱敏规则)
+  try {
+    const r = await request("GET", `/release/${encodeURIComponent(ds)}`);
+    const rel = r.latest_active;
+    parts.push(rel
+      ? stepHtml(5, "语料", "done", "", `四形态导出就绪(active ${rel.tag})`,
+          "填 L2 脱敏规则后一键导出(sft/pretrain/rlhf/golden;红线④无规则拒)。golden 可复制入 tests/benchmark/golden 做回归。",
+          [`<input id="ruleIn" placeholder='规则 如 1[3-9]\\d{9}→[手机号](可空格分隔多条)' style="width:220px;background:var(--ink-900);border:1px solid var(--line);border-radius:var(--r-sm);color:var(--fg-md);padding:6px 8px;font-size:.7rem;font-family:var(--font-mono)">`,
+           actBtn("doSft", "SFT", false), actBtn("doGolden", "Golden", false),
+           btn("发布管理 →", "releases.html")].join(""))
+      : stepHtml(5, "语料", "todo", "", "—", "语料导出须先有 active 发布(第④步)。", []));
+  } catch (_) {
+    parts.push(stepHtml(5, "语料", "todo", "", "—", "语料导出须先有 active 发布(第④步)。", []));
+  }
+
+  // ⑥ 飞轮
+  try {
+    const h = await request("GET", `/decisions/history/${encodeURIComponent(ds)}`);
+    const total = h.total || 0;
+    parts.push(stepHtml(6, "飞轮", total ? "done" : "todo", "",
+      `研判历史 ${total} 条 · 低置信 ${h.low_confidence}${total ? ` · 最近 ${esc(h.recent?.[0]?.object_id || "")}` : ""}`,
+      total
+        ? "研判在积累(RLHF 配对/低置信回流的燃料)。低置信对象去质量报告页「飞轮回流」auto 入队补标,闭环回第③步。"
+        : "还没有研判记录——去研判台勾选「记录研判」对对象求值(EDITOR+),历史是 RLHF 与飞轮自动回流的数据源。",
+        [btn("研判台 →", "decisions.html"), btn("飞轮回流 →", "quality-reports.html")]));
+  } catch (e) {
+    parts.push(stepHtml(6, "飞轮", "todo", "", "—",
+      "去研判台勾选「记录研判」对对象求值(EDITOR+),历史是 RLHF 与飞轮的数据源。", [btn("研判台 →", "decisions.html")]));
+  }
+
+  $("#steps").innerHTML = parts.join("");
+  const done = parts.filter(p => p.includes('class="step done')).length;
+  $("#sum").textContent = `${ds} · 六步中 ${done} 步就绪`;
+  window.applyIcons($("#steps"));
+
+  // 就地动作
+  $("#doAssess")?.addEventListener("click", async (ev) => {
+    ev.target.disabled = true;
+    try {
+      const r = await request("POST", `/quality/assess/${encodeURIComponent(ds)}`);
+      toast(`评估完成:${r.total_score} 分 · ${r.admission}`, "ok");
+      load();
+    } catch (e) { toast(`评估失败:${e.message}`, "bad", 5000); ev.target.disabled = false; }
+  });
+  const rules = () => ($("#ruleIn")?.value || "").trim()
+    .split(/[;；]/).map(x => x.trim()).filter(Boolean)
+    .map(x => { const [p, r] = x.split("→"); return [p.trim(), (r || "").trim()]; })
+    .filter(x => x[0] && x[1]);
+  const exportForm = async (form) => {
+    try {
+      const r = await request("POST",
+        `/release/${encodeURIComponent(ds)}/corpus?form=${form}&allow_unmasked=${rules().length ? "false" : "true"}`,
+        { body: { generalize_rules: rules() } });
+      toast(`${form} 导出:${r.records} 条 → ${r.path}${r.masking && !r.masking.applied ? "(未脱敏,已审计)" : ""}`,
+            r.records ? "ok" : "warn", 6000);
+    } catch (e) { toast(`${form} 导出失败:${e.message}(无规则会被拒——填规则或确认已 active 发布)`, "bad", 6000); }
+  };
+  $("#doSft")?.addEventListener("click", () => exportForm("sft"));
+  $("#doGolden")?.addEventListener("click", () => exportForm("golden"));
+}
+
+$("#loadBtn").addEventListener("click", load);
+$("#dsInput").addEventListener("change", load);
+mountDatasetPicker($("#dsInput"), { contractsOnly: false, onPick: load });
+load();
+</script>
+</body>
+</html>

@@ -72,6 +72,7 @@ const NAV = [
     { id: "objects", label: "对象浏览", ic: "olap", href: "objects.html" },
   ] },
   { group: "高质量数据集", items: [
+    { id: "hq-guide", label: "生产向导", ic: "dashboard", href: "hq-guide.html" },
     { id: "annotation", label: "标注生产线", ic: "check", href: "annotation.html" },
     { id: "quality-reports", label: "质量报告", ic: "sparkles", href: "quality-reports.html" },
     { id: "releases", label: "发布管理", ic: "play", href: "releases.html" },

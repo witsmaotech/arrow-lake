@@ -56,7 +56,7 @@ const FORMS = ["sft", "pretrain", "rlhf", "golden"];
 async function load() {
   const ds = $("#ds").value.trim();
   if (!ds) return;
-  const r = await request(`/api/v1/release/${encodeURIComponent(ds)}`);
+  const r = await request("GET", `/release/${encodeURIComponent(ds)}`);
   const box = $("#releases");
   $("#sheet").innerHTML = "";
   if (!r.releases?.length) { box.innerHTML = `<p class="hint">无发布历史——先跑评估再发布。</p>`; return; }
@@ -86,7 +86,7 @@ async function publish() {
   if (!ds || !changelog) return toast("数据集与 changelog 必填", "warn");
   const body = { changelog, bump: $("#bump").value };
   try {
-    const r = await request(`/api/v1/release/${encodeURIComponent(ds)}`, { method: "POST", body: JSON.stringify(body) });
+    const r = await request("POST", `/release/${encodeURIComponent(ds)}`, { body: body });
     toast(`已发布 ${r.tag}(lance@${r.lance_version})${r.forced ? " · force" : ""}`, "ok");
     load();
   } catch (e) {
@@ -101,8 +101,8 @@ async function publish() {
     const reason = await promptDialog({ title: "force 理由", message: "审计留痕,必填", defaultValue: "" });
     if (!reason) return;
     try {
-      const r = await request(`/api/v1/release/${encodeURIComponent(ds)}`, {
-        method: "POST", body: JSON.stringify({ ...body, force: true, reason }),
+      const r = await request("POST", `/release/${encodeURIComponent(ds)}`, {
+        body: { ...body, force: true, reason },
       });
       toast(`已 force 发布 ${r.tag}`, "ok"); load();
     } catch (e2) { toast(`force 发布失败:${e2.message}`, "bad"); }
@@ -111,14 +111,14 @@ async function publish() {
 
 window.__viewSheet = async (tag) => {
   const ds = $("#ds").value.trim();
-  const r = await request(`/api/v1/release/${encodeURIComponent(ds)}/datasheet?tag=${encodeURIComponent(tag)}`);
+  const r = await request("GET", `/release/${encodeURIComponent(ds)}/datasheet?tag=${encodeURIComponent(tag)}`);
   const text = await (typeof r === "string" ? r : r.text?.() || JSON.stringify(r));
   $("#sheet").innerHTML = `<h3 style="font-size:.8rem;color:var(--fg-dim);margin:14px 0 6px">规格书 · ${esc(tag)}</h3><pre class="sheet">${esc(text)}</pre>`;
 };
 window.__corpus = async (tag, form) => {
   const ds = $("#ds").value.trim();
   try {
-    const r = await request(`/api/v1/release/${encodeURIComponent(ds)}/corpus?form=${form}&tag=${encodeURIComponent(tag)}`, { method: "POST", body: JSON.stringify({}) });
+    const r = await request("POST", `/release/${encodeURIComponent(ds)}/corpus?form=${form}&tag=${encodeURIComponent(tag)}`, { body: {} });
     toast(`${form}:${r.records} 条 → ${r.path}${r.note ? " · " + r.note : ""}`, r.records ? "ok" : "warn");
   } catch (e) { toast(`${form} 导出失败:${e.message}`, "bad"); }
 };
@@ -126,7 +126,7 @@ window.__retire = async (tag) => {
   const ds = $("#ds").value.trim();
   if (!(await confirmDialog({ title: "下线发布", message: `retire ${ds}@${tag}?` }))) return;
   try {
-    await request(`/api/v1/release/${encodeURIComponent(ds)}/retire`, { method: "POST", body: JSON.stringify({ tag }) });
+    await request("POST", `/release/${encodeURIComponent(ds)}/retire`, { body: { tag } });
     toast(`已下线 ${tag}`, "ok"); load();
   } catch (e) { toast(`下线失败:${e.message}`, "bad"); }
 };

@@ -99,3 +99,40 @@ async def assess(
                 )
                 result["history_recorded"] = True
     return result
+
+
+@router.get(
+    "/history/{dataset}",
+    dependencies=[Depends(require_role(Role.ADMIN))],
+)
+async def decision_history(
+    dataset: str,
+    request: Request,
+    threshold: float = Query(default=0.6, gt=0, lt=1,
+                             description="低置信阈值(飞轮口径)"),
+) -> dict:
+    """研判历史只读摘要(hq-guide 第⑥步飞轮状态,2026-08-31)。
+
+    ``total`` 用独立计数查询(list_history 的 limit 不代表总量);
+    ``low_confidence`` 与飞轮 auto 同源同参。
+    """
+    hstore = getattr(request.app.state, "decisions_history_store", None)
+    if hstore is None:
+        raise HTTPException(
+            status_code=503, detail="system_db disabled; history unavailable")
+    recent = hstore.list_history(dataset, limit=5)
+    low = hstore.low_confidence(dataset, threshold=threshold, limit=100)
+    cur = hstore._db.execute(  # noqa: SLF001 — store 未封装 count,薄查询
+        "SELECT COUNT(*) FROM decisions_history WHERE dataset = ?", (dataset,))
+    total = int((cur.fetchone() if cur is not None else [0])[0])
+    return {
+        "dataset": dataset, "total": total,
+        "low_confidence": len(low), "threshold": threshold,
+        "recent": [{
+            "object_id": r.get("object_id"),
+            "object_type": r.get("object_type"),
+            "confidence": r.get("confidence"),
+            "matched_rules": r.get("matched_rules"),
+            "assessed_at": r.get("assessed_at"),
+        } for r in recent],
+    }
