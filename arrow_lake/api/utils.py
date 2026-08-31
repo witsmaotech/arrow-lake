@@ -78,6 +78,14 @@ auth_io_executor = ThreadPoolExecutor(
     max_workers=4, thread_name_prefix="auth-io",
 )
 
+# Dedicated pool for Label Studio REST IO(四维 review H13):LSClient 是
+# 同步 urllib(10s 超时/页),recover/status/feedback/relevance 此前直呼在
+# event loop 上——LS 慢/挂即冻结该 worker 全部并发请求。2 线程小池把
+# 饱和半径收敛到标注面(LS import 本身限速 1 req/s,多线程无益)。
+ls_io_executor = ThreadPoolExecutor(
+    max_workers=2, thread_name_prefix="ls-io",
+)
+
 
 def _wire_ingest_executor_gauge() -> None:
     """Export in-flight ingest work as arrow_lake_ingest_executor_active_threads."""

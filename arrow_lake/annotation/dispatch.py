@@ -13,6 +13,7 @@ LS 是 transient 工作区——本 client 不持有任何业务状态,重启即
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -263,28 +264,38 @@ async def run_dispatch(
 
     tasks: list[dict[str, Any]] = []
     skipped = 0
-    for pick in sampled:
+    picks = [p for p in sampled
+             if str(rows[row_index[p.row_id]].get(text_column) or "").strip()]
+    skipped = len(sampled) - len(picks)
+
+    # M16(四维 review):预标注 LLM 并发(Semaphore 8)——此前逐行串行,
+    # 200 行 × 1-3s = 5-10 分钟;qwen-turbo 完全可承受并发。gather 保序。
+    sem = asyncio.Semaphore(8)
+
+    async def _predict_one(pick: Any) -> dict[str, Any]:
         row = rows[row_index[pick.row_id]]
         text = str(row.get(text_column) or "").strip()
-        if not text:
-            skipped += 1
-            continue
         masked = apply_annotation_masking(
             text, generalize_rules=generalize_rules,
             entity_names=entity_names, hmac_key=hmac_key,
         )
-        try:
-            result = await extractor.extract(masked)
-        except Exception:  # 单行 HE 失败容错(空 prediction)
-            logger.warning("annotation.dispatch: extract failed for %s", pick.row_id)
-            result = None
+        async with sem:
+            try:
+                result = await extractor.extract(masked)
+            except Exception:  # 单行 HE 失败容错(空 prediction)
+                logger.warning(
+                    "annotation.dispatch: extract failed for %s", pick.row_id)
+                result = None
         prediction = to_ls_prediction(result) if result is not None else {
             "model_version": "hyper-extract", "result": [],
         }
-        tasks.append({
-            "data": {"text": masked, "row_id": pick.row_id, "strategy": pick.strategy},
+        return {
+            "data": {"text": masked, "row_id": pick.row_id,
+                     "strategy": pick.strategy},
             "predictions": [prediction],
-        })
+        }
+
+    tasks = list(await asyncio.gather(*[_predict_one(p) for p in picks]))
 
     for start in range(0, len(tasks), max(1, import_batch_size)):
         await _maybe_async(

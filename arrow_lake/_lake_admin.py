@@ -705,7 +705,8 @@ class _LakeAdminMixin:
             return self._get_storage().compact(name)
 
     def read_dataset(
-        self, name: str, *, columns: list[str] | None = None, table: str | None = None,
+        self, name: str, *, columns: list[str] | None = None,
+        table: str | None = None, version: int | None = None,
     ) -> Any:
         """Read a dataset as an Arrow table.
 
@@ -713,8 +714,12 @@ class _LakeAdminMixin:
             name: Dataset name.
             columns: Optional column names to read (None = all).
             table: Optional table within a container dataset (DR14).
+            version: Lance as-of version(四维 review M9:发布链三读同源
+                ——锁版本后按 version 读,drift 基线/datasheet 与锁定的
+                lance_version 一致;None = latest)。
         """
-        return self._get_storage().read_dataset(name, columns=columns, table=table)
+        return self._get_storage().read_dataset(
+            name, columns=columns, table=table, version=version)
 
     def scan_dataset(self, name: str, **kwargs: Any) -> Any:
         """Create a Lance dataset scanner for lazy row-by-row reading.

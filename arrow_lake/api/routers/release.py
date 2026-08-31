@@ -60,9 +60,13 @@ def _store(request: Request, name: str, what: str) -> Any:
     return store
 
 
-def _read_source(lake: Any, dataset: str, table: str | None) -> Any:
+def _read_source(
+    lake: Any, dataset: str, table: str | None, *, version: int | None = None,
+    columns: list[str] | None = None,
+) -> Any:
     try:
-        source = lake.read_dataset(dataset, table=table)
+        source = lake.read_dataset(
+            dataset, table=table, version=version, columns=columns)
     except Exception as exc:
         raise HTTPException(
             status_code=404, detail=f"Dataset '{dataset}' not readable: {exc}",
@@ -85,139 +89,156 @@ async def create_release(
     lake=Depends(get_lake),
     user=Depends(require_role(Role.ADMIN)),
 ) -> dict:
-    """发布:校验链 → 锁版本+tag+规格书 → 基线快照 → 审计/血缘。"""
+    """发布:校验链 → 锁版本+tag+规格书 → 基线快照 → 审计/血缘。
+
+    H15(四维 review):同步链(版本锁定/读表/漂移/准入/datasheet/落库/
+    基线快照/audit)整体收 ``run_sync(olap_executor)``——此前跑在 event
+    loop 上,大表漂移扫描分钟级独占该 worker。M9:锁版本**先行**,之后
+    全链按该 version 读——datasheet 与 drift 基线快照消费同一 Lance
+    版本(原 source 先读/版本后锁/基线用旧 source 的三读时点漂移)。
+    """
     store = _store(request, "release_store", "release registry")
     qstore = _store(request, "quality_report_store", "quality reports")
     dstore = _store(request, "drift_baseline_store", "drift baselines")
     cstore = _store(request, "contract_store", "contract registry")
-
-    source = _read_source(lake, dataset, table)
-
-    report = qstore.latest_report(dataset)
-    if report is None:
-        raise HTTPException(
-            status_code=422,
-            detail=f"no quality report for '{dataset}' — run /quality/assess first",
-        )
-
-    contract, spec = _load_contract_and_spec(cstore, dataset)
-
-    # 漂移超限拒(基线存在才比较;发布成功后刷新基线)
-    drift_info: dict[str, Any] | None = None
-    baseline = dstore.get_baseline(dataset)
-    if baseline is not None:
-        drift_info = evaluate_drift(
-            source, baseline.get("columns", {}), spec.drift_kl)
-
-    # 准入:否决 / below_bronze / 拒绝劣化(基准 = 最新 active 发布)
-    latest_active = store.latest_release(dataset)
-    previous_total = (
-        latest_active["total_score"] if latest_active else None)
-    decision = evaluate_admission(
-        ScoredReport(
-            dimensions={},
-            total_score=report.get("total_score"),
-            star=report.get("star") or 0,
-            admission=report.get("admission") or "none",
-            verdict=report.get("verdict") or "pass",
-            vetoes=tuple(report.get("vetoes") or []),
-            degraded=tuple(report.get("degraded") or []),
-        ),
-        previous_total=previous_total,
-    )
-    reasons = list(decision.reasons)
-    if drift_info and drift_info["drifted"]:
-        reasons.extend(f"drift:{c}" for c in drift_info["drifted"])
-
     actor = getattr(user, "sub", "system")
-    forced = bool(reasons)
-    if reasons:
-        if not req.force:
+
+    def _work() -> dict[str, Any]:
+        # M9:版本锁定先行 → 后续 read/drift/datasheet/基线全按此版本
+        try:
+            lance_version = int(
+                lake._get_storage().open_dataset(dataset, table=table).version)
+        except Exception as exc:
             raise HTTPException(
                 status_code=422,
-                detail={
-                    "blocked": reasons, "decision": decision.tier,
-                    "hint": "force=true + reason to override (audited)",
-                },
-            )
-        if not (req.reason or "").strip():
+                detail=f"cannot lock Lance version for '{dataset}': {exc}",
+            ) from exc
+        source = _read_source(lake, dataset, table, version=lance_version)
+
+        report = qstore.latest_report(dataset)
+        if report is None:
             raise HTTPException(
-                status_code=422, detail="force requires a reason",
+                status_code=422,
+                detail=f"no quality report for '{dataset}' — run /quality/assess first",
             )
 
-    # tag:对全部历史(含 retired)取最大号再 bump
-    prev_any = store.latest_release(dataset, active_only=False)
-    latest_version = parse_tag(prev_any["tag"]) if prev_any else None
-    tag = format_tag(next_tag(latest_version, bump=req.bump))
+        contract, spec = _load_contract_and_spec(cstore, dataset)
 
-    # Lance 版本锁定(发布时刻快照号)
-    try:
-        lance_version = int(
-            lake._get_storage().open_dataset(dataset, table=table).version)
-    except Exception as exc:
-        raise HTTPException(
-            status_code=422,
-            detail=f"cannot lock Lance version for '{dataset}': {exc}",
-        ) from exc
+        # 漂移超限拒(基线存在才比较;发布成功后刷新基线)
+        drift_info: dict[str, Any] | None = None
+        baseline = dstore.get_baseline(dataset)
+        if baseline is not None:
+            drift_info = evaluate_drift(
+                source, baseline.get("columns", {}), spec.drift_kl)
 
-    adl = None
-    with contextlib.suppress(Exception):
-        adl = lake.read_dataset(f"{dataset}_adl")
-
-    datasheet = build_datasheet(
-        dataset=dataset, tag=tag, lance_version=lance_version, report=report,
-        contract=contract, table=source, adl=adl, changelog=req.changelog,
-        released_by=actor, released_at=datetime.now(tz=UTC).isoformat(),
-        category=req.category,
-    )
-    rec = store.create_release(
-        dataset=dataset, tag=tag, lance_version=lance_version,
-        changelog=req.changelog, quality_report_id=report.get("id"),
-        total_score=report.get("total_score"), star=report.get("star"),
-        admission=report.get("admission"),
-        datasheet_yaml=datasheet_yaml(datasheet), released_by=actor,
-    )
-    if rec is None:
-        raise HTTPException(
-            status_code=422, detail=f"release tag '{tag}' already exists",
+        # 准入:否决 / below_bronze / 拒绝劣化(基准 = 最新 active 发布)
+        latest_active = store.latest_release(dataset)
+        previous_total = (
+            latest_active["total_score"] if latest_active else None)
+        decision = evaluate_admission(
+            ScoredReport(
+                dimensions={},
+                total_score=report.get("total_score"),
+                star=report.get("star") or 0,
+                admission=report.get("admission") or "none",
+                verdict=report.get("verdict") or "pass",
+                vetoes=tuple(report.get("vetoes") or []),
+                degraded=tuple(report.get("degraded") or []),
+            ),
+            previous_total=previous_total,
         )
+        reasons = list(decision.reasons)
+        if drift_info and drift_info["drifted"]:
+            reasons.extend(f"drift:{c}" for c in drift_info["drifted"])
 
-    # 发布时自动快照基线(设计 §5);best-effort 不阻塞发布
-    with contextlib.suppress(Exception):
-        dstore.set_baseline(dataset, snapshot_table(source), source="release")
+        forced = bool(reasons)
+        if reasons:
+            if not req.force:
+                raise HTTPException(
+                    status_code=422,
+                    detail={
+                        "blocked": reasons, "decision": decision.tier,
+                        "hint": "force=true + reason to override (audited)",
+                    },
+                )
+            if not (req.reason or "").strip():
+                raise HTTPException(
+                    status_code=422, detail="force requires a reason",
+                )
 
-    with contextlib.suppress(Exception):
-        lake.audit_record(
-            "release.published", dataset_name=dataset, actor=actor,
-            payload={
-                "tag": tag, "lance_version": lance_version,
-                "total_score": report.get("total_score"),
-                "forced": forced,
-            },
+        # tag:对全部历史(含 retired)取最大号再 bump
+        prev_any = store.latest_release(dataset, active_only=False)
+        latest_version = parse_tag(prev_any["tag"]) if prev_any else None
+        tag = format_tag(next_tag(latest_version, bump=req.bump))
+
+        adl = None
+        with contextlib.suppress(Exception):
+            adl = lake.read_dataset(f"{dataset}_adl")
+
+        datasheet = build_datasheet(
+            dataset=dataset, tag=tag, lance_version=lance_version,
+            report=report,
+            contract=contract, table=source, adl=adl, changelog=req.changelog,
+            released_by=actor, released_at=datetime.now(tz=UTC).isoformat(),
+            category=req.category,
         )
-    if forced:
+        rec = store.create_release(
+            dataset=dataset, tag=tag, lance_version=lance_version,
+            changelog=req.changelog, quality_report_id=report.get("id"),
+            total_score=report.get("total_score"), star=report.get("star"),
+            admission=report.get("admission"),
+            datasheet_yaml=datasheet_yaml(datasheet), released_by=actor,
+        )
+        if rec is None:
+            raise HTTPException(
+                status_code=422, detail=f"release tag '{tag}' already exists",
+            )
+
+        # 发布时自动快照基线(设计 §5);best-effort 不阻塞发布;
+        # source 按 lance_version 读 → 基线与锁定的版本严格同源(M9)
+        with contextlib.suppress(Exception):
+            dstore.set_baseline(dataset, snapshot_table(source), source="release")
+
         with contextlib.suppress(Exception):
             lake.audit_record(
-                "release.forced", dataset_name=dataset, actor=actor,
-                payload={"tag": tag, "reason": req.reason,
-                         "overridden": reasons},
+                "release.published", dataset_name=dataset, actor=actor,
+                payload={
+                    "tag": tag, "lance_version": lance_version,
+                    "total_score": report.get("total_score"),
+                    "forced": forced,
+                },
             )
-    with contextlib.suppress(Exception):
-        from arrow_lake.api.utils import run_sync
+        if forced:
+            with contextlib.suppress(Exception):
+                lake.audit_record(
+                    "release.forced", dataset_name=dataset, actor=actor,
+                    payload={"tag": tag, "reason": req.reason,
+                             "overridden": reasons},
+                )
+        return {"rec": rec, "datasheet": datasheet, "forced": forced,
+                "reasons": reasons, "tag": tag,
+                "lance_version": lance_version,
+                "total_score": report.get("total_score")}
 
+    from arrow_lake.api.utils import olap_executor, run_sync
+
+    out = await run_sync(_work, timeout=900.0, label="release_create",
+                         executor=olap_executor)
+    with contextlib.suppress(Exception):
         await run_sync(
             lake.lineage_record_event, dataset, "release.published",
             actor=actor,
             metadata={
-                "tag": tag, "lance_version": lance_version,
-                "total_score": report.get("total_score"),
+                "tag": out["tag"], "lance_version": out["lance_version"],
+                "total_score": out["total_score"],
             },
             timeout=5.0, label="release_lineage",
         )
 
     return {
-        **rec, "datasheet": datasheet,
-        "forced": forced, "overridden_reasons": reasons if forced else [],
+        **out["rec"], "datasheet": out["datasheet"],
+        "forced": out["forced"],
+        "overridden_reasons": out["reasons"] if out["forced"] else [],
     }
 
 
@@ -229,13 +250,13 @@ async def release_history(dataset: str, request: Request) -> dict:
     """发布历史(newest-first)+ 最新 active。"""
     store = _store(request, "release_store", "release registry")
     releases = store.list_releases(dataset)
+    latest_active = store.latest_release(dataset)  # M17:一次查询复用
     return {"dataset": dataset, "total": len(releases), "releases": [
         {k: v for k, v in r.items() if k != "datasheet_yaml"}
         for r in releases
     ], "latest_active": (
-        {k: v for k, v in store.latest_release(dataset).items()
-         if k != "datasheet_yaml"}
-        if store.latest_release(dataset) else None)}
+        {k: v for k, v in latest_active.items() if k != "datasheet_yaml"}
+        if latest_active else None)}
 
 
 @router.post(
@@ -452,17 +473,26 @@ async def export_corpus(
             detail=f"no active release for '{dataset}' — publish first",
         )
 
-    source = _read_source(lake, dataset, table)
     from arrow_lake.annotation.dispatch import stable_row_id
 
-    # 带全列(RLHF 按 object_id 值扫描需要);i 与 texts 对齐(stable_row_id 语义)
-    rows = []
-    for i, raw in enumerate(source.to_pylist()):
-        t = str(raw.get(text_column) or "").strip()
-        if not t:
-            continue
-        rows.append({"row_id": stable_row_id(t, i), **{
-            k: v for k, v in raw.items() if v is not None}})
+    # H11(四维 review):按形态列裁剪——sft/golden 只需 text 列;rlhf 按
+    # object_id 值反查需全列;pretrain 走 KG 快照不用源行。此前四形态
+    # 一律全表全列物化(500k 行 × 30 列 = 数 GB)。i 与 texts 对齐
+    # (stable_row_id 语义)不受列裁剪影响。
+    rows: list[dict[str, Any]] = []
+    if form != "pretrain":
+        try:
+            source = _read_source(
+                lake, dataset, table,
+                columns=None if form == "rlhf" else [text_column])
+        except Exception:
+            source = _read_source(lake, dataset, table)  # text 列缺 → 宽容全列
+        for i, raw in enumerate(source.to_pylist()):
+            t = str(raw.get(text_column) or "").strip()
+            if not t:
+                continue
+            rows.append({"row_id": stable_row_id(t, i), **{
+                k: v for k, v in raw.items() if v is not None}})
     adl = None
     with contextlib.suppress(Exception):
         adl = lake.read_dataset(f"{dataset}_adl")

@@ -82,6 +82,7 @@ async def get_project_status(name: str, request: Request) -> dict:
     由此对 UI 可见(M3);不写 ADL、不生成仲裁、不动 watermark。
     """
     from arrow_lake.annotation.sync import project_status
+    from arrow_lake.api.utils import ls_io_executor, run_sync
 
     config = request.app.state.config.annotation
     if not (config.ls_url and config.ls_api_token):
@@ -89,8 +90,11 @@ async def get_project_status(name: str, request: Request) -> dict:
             status_code=503, detail="Label Studio not configured",
         )
     try:
-        return project_status(
-            store=_store(request), config=config, project_name=name)
+        return await run_sync(
+            lambda: project_status(
+                store=_store(request), config=config, project_name=name),
+            timeout=120.0, label="annotation_status",
+            executor=ls_io_executor)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:  # LS 不可达等(看板容错,不阻断其他面板)
@@ -413,8 +417,16 @@ async def recover(
             detail=f"Project '{req.project}' has no LS binding yet — dispatch first",
         )
     try:
-        summary = recover_one(
-            store=store, lake=lake, config=config, project_name=req.project)
+        from arrow_lake.api.utils import ls_io_executor, run_sync
+
+        # H13(四维 review):LS 同步 IO(urllib 10s 超时)收专用线程池——
+        # 直跑 event loop 时 LS 慢/挂即冻结该 worker 全部并发请求
+        summary = await run_sync(
+            lambda: recover_one(
+                store=store, lake=lake, config=config,
+                project_name=req.project),
+            timeout=600.0, label="annotation_recover",
+            executor=ls_io_executor)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:  # H2:另一 worker/scheduler 正在回收该项目

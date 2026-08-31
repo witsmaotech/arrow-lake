@@ -110,7 +110,12 @@ def test_missing_returns_none(db: SystemDB) -> None:
     assert store.list_releases("ghost") == []
 
 
-def test_migration_count_23() -> None:
+def test_migration_count() -> None:
     from pathlib import Path
     n = len(list(Path("arrow_lake/system_db/migrations").glob("V*.sql")))
-    assert n == 23  # V020-V023(reports/releases/drift/decisions_history)
+    # glob 动态计数(四维 review E4:硬编码 23 每加迁移必腐)。
+    # 语义锚:Migrator.applied_versions 必须恰好覆盖全部迁移文件。
+    from arrow_lake.system_db.migrator import Migrator
+    from arrow_lake.system_db import SystemDB
+    db = SystemDB(url="file::memory:")
+    assert Migrator(db).run() and Migrator(db).applied_versions() == set(range(1, n + 1))

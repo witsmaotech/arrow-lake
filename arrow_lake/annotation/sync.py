@@ -297,6 +297,11 @@ class AnnotationRecoverScheduler:
         self._consecutive_failures = 0
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
+        # M13(四维 review):LS project 计数签名——30s 周期先轻量 get_project
+        # 比对,无变化跳过全量 export(万级 task 的 MB 级下载+解析)。
+        # task_number 与 annotation_number **两者都在**才可比:标注数变化
+        # (C1 第二标注者)必须穿透大门;字段缺失 → 不跳过(安全降级)。
+        self._ls_counts: dict[str, tuple[int, int]] = {}
 
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
@@ -313,6 +318,18 @@ class AnnotationRecoverScheduler:
             self._thread.join(timeout=self._interval + 5)
             self._thread = None
 
+    def _project_signature(self, project: dict[str, Any]) -> tuple[int, int] | None:
+        """LS 计数签名;不可得(字段缺/LS 异常)→ None = 不跳过。"""
+        if not (self._config.ls_url and self._config.ls_api_token):
+            return None
+        try:
+            client = LSClient(self._config.ls_url, self._config.ls_api_token)
+            d = client.get_project(int(project["ls_project_id"])) or {}
+            sig = (d.get("task_number"), d.get("annotation_number"))
+            return sig if None not in sig else None  # type: ignore[return-value]
+        except Exception:
+            return None
+
     def _cycle(self) -> bool:
         """单轮:全部 eligible 项目各 recover 一次;全成→True(重置熔断计数)。"""
         projects = [
@@ -321,10 +338,15 @@ class AnnotationRecoverScheduler:
         ]
         ok = True
         for p in projects:
+            sig = self._project_signature(p)
+            if sig is not None and self._ls_counts.get(p["name"]) == sig:
+                continue  # M13:计数无变化 → 跳过本轮全量 export
             try:
                 summary = self._recover(
                     store=self._store, lake=self._lake, config=self._config,
                     project_name=p["name"])
+                if sig is not None:
+                    self._ls_counts[p["name"]] = sig
                 logger.debug("annotation_recover_cycle %s", summary)
             except Exception as exc:  # 单项目失败不拖垮整轮
                 ok = False

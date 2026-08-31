@@ -51,6 +51,8 @@ router = APIRouter(prefix="/api/v1/quality", tags=["quality-gate"])
 logger = logging.getLogger(__name__)
 
 _LINEAGE_TIMEOUT = 5.0
+#: assess 全链(读表+五维+漂移+落库)超时——大表 drift 分钟级(H15)。
+_ASSESS_TIMEOUT = 900.0
 
 
 def _report_store(request: Request) -> Any:
@@ -103,8 +105,8 @@ def _drift_scan(
     超限拒同款,W3)。
     """
     baseline = store.get_baseline(dataset)
-    snap = snapshot_table(source)
     if baseline is None:
+        snap = snapshot_table(source)  # 仅建基线才扫(M10:有基线时不白付)
         store.set_baseline(dataset, snap, source="assess")
         return {"status": "baseline_created", "columns": len(snap)}
 
@@ -120,11 +122,15 @@ def _drift_scan(
 
 
 def _row_count(lake: Any, name: str) -> int:
-    """行数,读不到(表不存在等)→ 0。旁路评估对缺表宽容。"""
+    """行数,读不到(表不存在等)→ 0。旁路评估对缺表宽容。
+
+    M15:走 Lance manifest 元数据 count_rows——read_dataset 全列物化
+    只为 num_rows,死信表(含原始 payload)可达百万行级。
+    """
     with contextlib.suppress(Exception):
-        table = lake.read_dataset(name)
-        if table is not None:
-            return int(table.num_rows)
+        ds = lake._get_storage().open_dataset(name)
+        if ds is not None:
+            return int(ds.count_rows())
     return 0
 
 
@@ -162,79 +168,103 @@ async def assess_dataset(
     lake=Depends(get_lake),
     user=Depends(require_role(Role.ADMIN)),
 ) -> dict:
-    """触发一次五维评估并落报告(全只读;审计+血缘 best-effort)。"""
+    """触发一次五维评估并落报告(全只读;审计+血缘 best-effort)。
+
+    H15(四维 review):同步重活(read/五维/落报告/audit/drift)整体收
+    ``run_sync(olap_executor)``——此前直接跑在 event loop 上,大表单次
+    assess 分钟级独占该 worker(含 /health 全部挂起)。
+    """
     store = _report_store(request)
     contract_store = _contract_store(request)
-
-    try:
-        source = lake.read_dataset(dataset, table=table)
-    except Exception as exc:
-        raise HTTPException(
-            status_code=404, detail=f"Dataset '{dataset}' not readable: {exc}",
-        ) from exc
-    if source is None:
-        raise HTTPException(status_code=404, detail=f"Dataset '{dataset}' not found")
-
-    contract, spec = _load_contract_and_spec(contract_store, dataset)
-
-    base = table or dataset
-    dead_rows = _row_count(lake, f"_{base}_dead_letter")
-    adl = _read_table(lake, f"{dataset}_adl", table=None)
-    if adl is not None and adl.num_rows == 0:
-        adl = None
-
-    now = datetime.now(tz=UTC)
-    delay = (
-        annotation_delay_p95_hours(source, adl, text_column=text_column)
-        if adl is not None and text_column else None
-    )
-    dimensions: dict[str, DimensionResult] = {
-        "relevance": compute_relevance(adl),
-        "accuracy": compute_accuracy(adl),
-        "completeness": compute_completeness(
-            source, contract, dead_letter_rows=dead_rows, table_name=table,
-        ),
-        "diversity": compute_diversity(source),
-        "timeliness": compute_timeliness(
-            freshness_hours=freshness_hours(source, now=now),
-            annotation_delay_p95_hours=delay,
-            max_p95_hours=spec.max_p95_hours,
-        ),
-    }
-
-    report = score_dimensions(dimensions, spec)
     actor = getattr(user, "sub", "system")
-    persisted = store.create_report(
-        dataset,
-        total_score=report.total_score,
-        star=report.star,
-        admission=report.admission,
-        verdict=report.verdict,
-        dimensions={
-            n: {"score": r.score, "details": r.details, "source": r.source}
-            for n, r in report.dimensions.items()
-        },
-        vetoes=[dict(v) for v in report.vetoes],
-        degraded=list(report.degraded),
-        spec=_spec_snapshot(spec),
-        assessed_by=actor,
-    )
 
-    audit_recorded = False
-    with contextlib.suppress(Exception):
-        lake.audit_record(
-            "quality.assess", dataset_name=dataset, actor=actor,
-            payload={
-                "report_id": persisted.get("id"),
-                "total_score": report.total_score, "star": report.star,
-                "admission": report.admission, "verdict": report.verdict,
-            },
+    def _work() -> dict[str, Any]:
+        try:
+            source = lake.read_dataset(dataset, table=table)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Dataset '{dataset}' not readable: {exc}",
+            ) from exc
+        if source is None:
+            raise HTTPException(
+                status_code=404, detail=f"Dataset '{dataset}' not found")
+
+        contract, spec = _load_contract_and_spec(contract_store, dataset)
+
+        base = table or dataset
+        dead_rows = _row_count(lake, f"_{base}_dead_letter")
+        adl = _read_table(lake, f"{dataset}_adl", table=None)
+        if adl is not None and adl.num_rows == 0:
+            adl = None
+
+        now = datetime.now(tz=UTC)
+        delay = (
+            annotation_delay_p95_hours(source, adl, text_column=text_column)
+            if adl is not None and text_column else None
         )
-        audit_recorded = True
+        dimensions: dict[str, DimensionResult] = {
+            "relevance": compute_relevance(adl),
+            "accuracy": compute_accuracy(adl),
+            "completeness": compute_completeness(
+                source, contract, dead_letter_rows=dead_rows, table_name=table,
+            ),
+            "diversity": compute_diversity(source),
+            "timeliness": compute_timeliness(
+                freshness_hours=freshness_hours(source, now=now),
+                annotation_delay_p95_hours=delay,
+                max_p95_hours=spec.max_p95_hours,
+            ),
+        }
+
+        report = score_dimensions(dimensions, spec)
+        persisted = store.create_report(
+            dataset,
+            total_score=report.total_score,
+            star=report.star,
+            admission=report.admission,
+            verdict=report.verdict,
+            dimensions={
+                n: {"score": r.score, "details": r.details, "source": r.source}
+                for n, r in report.dimensions.items()
+            },
+            vetoes=[dict(v) for v in report.vetoes],
+            degraded=list(report.degraded),
+            spec=_spec_snapshot(spec),
+            assessed_by=actor,
+        )
+
+        audit_recorded = False
+        with contextlib.suppress(Exception):
+            lake.audit_record(
+                "quality.assess", dataset_name=dataset, actor=actor,
+                payload={
+                    "report_id": persisted.get("id"),
+                    "total_score": report.total_score, "star": report.star,
+                    "admission": report.admission, "verdict": report.verdict,
+                },
+            )
+            audit_recorded = True
+
+        # 漂移随评估跑(设计 §5:发布/手动/评估触发;首次自动落基线)
+        drift: dict[str, Any] | None = None
+        dstore = getattr(request.app.state, "drift_baseline_store", None)
+        if dstore is not None:
+            with contextlib.suppress(Exception):
+                drift = _drift_scan(
+                    dataset=dataset, source=source, store=dstore, spec=spec)
+        return {"report": report, "persisted": persisted,
+                "audit_recorded": audit_recorded, "drift": drift}
+
+    from arrow_lake.api.utils import olap_executor, run_sync
+
+    out = await run_sync(_work, timeout=_ASSESS_TIMEOUT,
+                         label="quality_assess", executor=olap_executor)
+    report = out["report"]
+    persisted = out["persisted"]
+
     lineage_recorded = False
     with contextlib.suppress(Exception):
-        from arrow_lake.api.utils import run_sync
-
         await run_sync(
             lake.lineage_record_event, dataset, "quality.assessed",
             actor=actor,
@@ -246,19 +276,12 @@ async def assess_dataset(
             timeout=_LINEAGE_TIMEOUT, label="quality_assess_lineage",
         )
         lineage_recorded = True
-    if not audit_recorded or not lineage_recorded:
+    if not out["audit_recorded"] or not lineage_recorded:
         logger.warning(
             "quality.assess side-channel degraded (audit=%s lineage=%s)",
-            audit_recorded, lineage_recorded,
+            out["audit_recorded"], lineage_recorded,
         )
-
-    # 漂移随评估跑(设计 §5:发布/手动/评估触发;首次自动落基线)
-    drift: dict[str, Any] | None = None
-    dstore = getattr(request.app.state, "drift_baseline_store", None)
-    if dstore is not None:
-        with contextlib.suppress(Exception):
-            drift = _drift_scan(
-                dataset=dataset, source=source, store=dstore, spec=spec)
+    drift = out["drift"]
 
     return {
         "dataset": dataset,
@@ -274,7 +297,7 @@ async def assess_dataset(
             for n, r in report.dimensions.items()
         },
         "assessed_at": persisted.get("assessed_at"),
-        "audit_recorded": audit_recorded,
+        "audit_recorded": out["audit_recorded"],
         "lineage_recorded": lineage_recorded,
         "drift": drift,
     }
@@ -560,7 +583,12 @@ async def feedback_loop(
     ls_project_id = int(proj["ls_project_id"])
 
     try:
-        source = lake.read_dataset(dataset)
+        try:
+            # H12:常态只读 text 列建 row_id 映射(此前全列物化);
+            # text 列缺/旧源 → 回退全列保持宽容语义(text_of 空,全 missing)
+            source = lake.read_dataset(dataset, columns=[req.text_column])
+        except Exception:
+            source = lake.read_dataset(dataset)
     except Exception as exc:
         raise HTTPException(
             status_code=404, detail=f"Dataset '{dataset}' not readable: {exc}",
@@ -568,7 +596,12 @@ async def feedback_loop(
     from arrow_lake.annotation.dispatch import LSClient, stable_row_id
     from arrow_lake.annotation.masking import apply_annotation_masking
 
-    # auto 模式:低置信研判 → 对象行(decisions_history 数据面,F5.8 升级)
+    # auto 模式:低置信研判 → 对象行(decisions_history 数据面,F5.8 升级)。
+    # H1(四维 review,批次表补漏):object_id 是**契约标识列的值**(如
+    # GAS-001),不是 stable_row_id——直接当 row_id 查恒落 missing_rows。
+    # 修:按值在源行全列反查该行 → stable_row_id(_build_rlhf_pairs 同构;
+    # 全列读只在 auto 分支付,H12 常态手动路径保持窄列)。
+    auto_note: str | None = None
     if req.auto_low_confidence:
         hstore = getattr(request.app.state, "decisions_history_store", None)
         if hstore is None:
@@ -578,11 +611,32 @@ async def feedback_loop(
             )
         low = hstore.low_confidence(
             dataset, threshold=req.confidence_threshold)
-        auto_rows = [str(h.get("object_id") or "") for h in low]
+        auto_row_ids: list[str] = []
+        if low:
+            full_rows = lake.read_dataset(dataset).to_pylist()  # 全列值反查
+            value_to_rid: dict[str, str] = {}
+            for i, row in enumerate(full_rows):
+                text = str(row.get(req.text_column) or "").strip()
+                if not text:
+                    continue
+                rid = stable_row_id(text, i)
+                for v in row.values():
+                    if v is not None:
+                        value_to_rid.setdefault(str(v), rid)
+            for h in low:
+                rid = value_to_rid.get(str(h.get("object_id") or ""))
+                if rid:
+                    auto_row_ids.append(rid)
+        else:
+            auto_note = ("no decisions below threshold — assess confidence "
+                         "is deterministic (恒 1.0) until MS3 yields real "
+                         "confidence; record via POST /decisions/assess?"
+                         "record_history=true")
         req = req.model_copy(
             update={"object_rows": list(dict.fromkeys(
-                [*req.object_rows, *auto_rows]))})
+                [*req.object_rows, *auto_row_ids]))})
 
+    # H12:只为建 row_id→text 映射,读窄列(此前全列物化)
     text_of: dict[str, str] = {}
     for i, row in enumerate(source.to_pylist()):
         text = str(row.get(req.text_column) or "").strip()
@@ -595,13 +649,23 @@ async def feedback_loop(
     factory = getattr(
         request.app.state, "annotation_ls_client_factory", None) or LSClient
     client = factory(aconf.ls_url, aconf.ls_api_token)
-    # 幂等:已有 feedback task(任意状态)的行跳过
-    queued: set[str] = set()
-    with contextlib.suppress(Exception):
+
+    def _ls_scan_queued() -> set[str]:
+        out: set[str] = set()
         for t in client.export_tasks(ls_project_id):
             data = t.get("data") or {}
             if str(data.get("strategy")) == "feedback":
-                queued.add(str(data.get("row_id") or ""))
+                out.add(str(data.get("row_id") or ""))
+        return out
+
+    from arrow_lake.api.utils import ls_io_executor, run_sync
+
+    # 幂等:已有 feedback task(任意状态)的行跳过;H13:LS IO 收专用池
+    queued: set[str] = set()
+    with contextlib.suppress(Exception):
+        queued = await run_sync(
+            _ls_scan_queued, timeout=60.0, label="feedback_ls_scan",
+            executor=ls_io_executor)
     fresh = [r for r in wanted if r not in queued]
     fb_rules = tuple(tuple(x) for x in req.generalize_rules)
     fb_entities = tuple(req.entity_names)
@@ -619,7 +683,10 @@ async def feedback_loop(
         },
     } for r in fresh]
     if tasks:
-        client.import_tasks(ls_project_id, tasks)
+        await run_sync(
+            client.import_tasks, ls_project_id, tasks,
+            timeout=120.0, label="feedback_ls_import",
+            executor=ls_io_executor)
 
     actor = getattr(user, "sub", "system")
     with contextlib.suppress(Exception):
@@ -635,6 +702,7 @@ async def feedback_loop(
         "already_queued": len(queued & set(wanted)),
         "missing_rows": missing,
         "masking": {"applied": bool(fb_rules or fb_entities)},
+        "auto_note": auto_note,
     }
 
 

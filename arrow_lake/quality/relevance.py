@@ -15,6 +15,7 @@ ADL 的 scenario 字段)→ ``compute_relevance`` 聚合。本模块只补两块
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import uuid
 from datetime import UTC, datetime
@@ -133,27 +134,34 @@ async def dispatch_relevance(
 
     model = getattr(provider, "model", "llm") if provider is not None else "llm"
     tasks: list[dict[str, Any]] = []
-    skipped = preannotated = 0
-    for i, row in enumerate(rows):
+    # M16(四维 review):预标注 LLM 并发——此前逐行串行,500 行 ≈ 12-25 分钟
+    sem = asyncio.Semaphore(8)
+
+    async def _one(i: int, row: dict[str, Any]) -> dict[str, Any] | None:
         text = str(row.get(text_column) or "").strip()
         if not text:
-            skipped += 1
-            continue
+            return None
         masked = _masked_text(text, generalize_rules, entity_names)
         label: str | None = None
         if provider is not None:
-            with contextlib.suppress(Exception):
-                label = await classify_relevance(provider, masked)
-        if label is not None:
-            preannotated += 1
-        tasks.append({
+            async with sem:
+                with contextlib.suppress(Exception):
+                    label = await classify_relevance(provider, masked)
+        return {
             "data": {
                 "text": masked,
                 "row_id": stable_row_id(text, i),
                 "strategy": "relevance",
             },
             "predictions": [_choices_prediction(label, model)],
-        })
+            "_pre": label is not None,
+        }
+
+    out = [t for t in await asyncio.gather(
+        *[_one(i, r) for i, r in enumerate(rows)]) if t is not None]
+    tasks = [{k: v for k, v in t.items() if k != "_pre"} for t in out]
+    skipped = len(rows) - len(tasks)
+    preannotated = sum(1 for t in out if t["_pre"])
 
     for start in range(0, len(tasks), max(1, import_batch_size)):
         await _maybe_async(ls_client.import_tasks(
@@ -184,26 +192,31 @@ async def llm_only_relevance(
     model = getattr(provider, "model", "llm")
     annotator = f"llm:{model}"
     now = datetime.now(tz=UTC).isoformat()
-    recs = []
-    failed = 0
-    for i, row in enumerate(rows):
+    # M16:LLM 直评并发(同 dispatch_relevance)
+    sem = asyncio.Semaphore(8)
+
+    async def _one(i: int, row: dict[str, Any]) -> RecoveredAnnotation | None:
         text = str(row.get(text_column) or "").strip()
         if not text:
-            continue
+            return None
         masked = _masked_text(text, generalize_rules, entity_names)
-        try:
-            label = await classify_relevance(provider, masked)
-        except Exception:
-            label = None
+        async with sem:
+            try:
+                label = await classify_relevance(provider, masked)
+            except Exception:
+                label = None
         if label is None:
-            failed += 1
-            continue
-        recs.append(RecoveredAnnotation(
+            return None
+        return RecoveredAnnotation(
             task_id=0, row_id=stable_row_id(text, i), strategy="relevance",
             annotator_id=annotator, annotated_at=now, ground_truth=False,
             objects=(), events=(), relations=(), rules_applied=(),
             scenario=label,
-        ))
+        )
+
+    results = await asyncio.gather(*[_one(i, r) for i, r in enumerate(rows)])
+    recs = [r for r in results if r is not None]
+    failed = len(results) - len(recs)
 
     written = 0
     if recs:

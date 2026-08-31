@@ -34,7 +34,8 @@ class FakeRelLake:
         self.audit_calls: list[tuple[str, dict]] = []
         self.lineage_calls: list[tuple[str, str, dict]] = []
 
-    def read_dataset(self, name: str, columns=None, table=None):
+    def read_dataset(self, name: str, columns=None, table=None, version=None):
+        # version:发布链 M9 同源读(fake 全量小表,忽略版本即代表该版本)
         if name not in self._tables:
             raise KeyError(name)
         return self._tables[name]
