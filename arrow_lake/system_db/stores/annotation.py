@@ -20,7 +20,7 @@ _NOW = "strftime('%Y-%m-%dT%H:%M:%SZ','now')"
 _COLS = (
     "id", "name", "dataset", "template_name", "labeling_config",
     "config_source", "config_hash", "ls_project_id", "status",
-    "created_at", "updated_at", "recover_watermark",
+    "created_at", "updated_at", "recover_watermark", "recovered_counts",
 )
 
 
@@ -101,6 +101,16 @@ class AnnotationProjectStore:
             f"UPDATE annotation_projects SET recover_watermark = ?, updated_at = {_NOW} "
             "WHERE name = ?",
             (int(watermark), name),
+        )
+        self._db.commit()
+        return bool(getattr(cur, "rowcount", 0))
+
+    def set_recovered_counts(self, name: str, counts_json: str) -> bool:
+        """per-task 已回收标注数(V024,复合增量判据——第二标注者回收)。"""
+        cur = self._db.execute(
+            f"UPDATE annotation_projects SET recovered_counts = ?, updated_at = {_NOW} "
+            "WHERE name = ?",
+            (counts_json, name),
         )
         self._db.commit()
         return bool(getattr(cur, "rowcount", 0))

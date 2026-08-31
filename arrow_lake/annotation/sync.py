@@ -21,6 +21,8 @@ scheduler 连续 ``max_failures`` 轮失败熔断停(LS 挂了不该拖着日志
 
 from __future__ import annotations
 
+import contextlib
+import json
 import logging
 import threading
 from collections.abc import Callable
@@ -38,11 +40,51 @@ from arrow_lake.config.annotation import AnnotationConfig
 
 __all__ = [
     "AnnotationRecoverScheduler",
+    "RecoverInProgress",
     "arbitration_tasks",
+    "project_status",
     "recover_one",
 ]
 
 logger = logging.getLogger(__name__)
+
+
+class RecoverInProgress(RuntimeError):
+    """另一进程/worker 正在回收同一项目(H2 跨进程互斥)。"""
+
+
+# --- H2:跨进程回收互斥(4 worker 各起 scheduler/手动端点并发) -----------
+# Redis SETNX EX;Redis 不可用 → fail-open 返回 None(无锁,维持单机旧
+# 语义;hermetic 测试无 Redis 也走通)。TTL 兜底防持锁进程死亡死锁。
+
+_RECOVER_LOCK_TTL_SECONDS = 60
+
+
+def _acquire_recover_lock(project_name: str):
+    """返回 (release_fn) 持锁;False=被他方持有;None=无 Redis(fail-open)。"""
+    try:
+        from arrow_lake._lake_ingest import _embed_redis_client
+
+        client = _embed_redis_client()
+        if client is None:
+            return None
+        key = f"arrow-lake:recover:{project_name}"
+        token = f"{threading.get_ident():x}-{id(project_name):x}"
+        if not client.set(key, token, nx=True, ex=_RECOVER_LOCK_TTL_SECONDS):
+            return False
+        def _release() -> None:
+            with contextlib.suppress(Exception):
+                if client.get(key) == token:  # 只删自己的锁(防误删续期后他人锁)
+                    client.delete(key)
+        return _release
+    except Exception:
+        return None
+
+
+def _release_quietly(release) -> None:
+    if callable(release):
+        with contextlib.suppress(Exception):
+            release()
 
 
 def _existing_adl_state(
@@ -128,7 +170,8 @@ def project_status(
     for t in tasks:
         for ann in parse_ls_annotation(t):
             by_task.setdefault(ann.row_id, []).append(ann)
-    verdicts = adjudicate(by_task)
+    verdicts = adjudicate(
+        by_task, min_annotators=config.adjudicate_min_annotators)
     counts = {"approved": 0, "arbitration": 0, "pending": 0}
     for verdict in verdicts.values():
         counts[verdict.status] = counts.get(verdict.status, 0) + 1
@@ -149,7 +192,15 @@ def recover_one(
     ls_client: LSClient | None = None,
     generate_arbitration: bool = True,
 ) -> dict:
-    """一个项目的完整回收(scheduler 与手动端点共用);失败上抛。"""
+    """一个项目的完整回收(scheduler 与手动端点共用);失败上抛。
+
+    H2:入口持 Redis 跨进程互斥(4 worker 各起 scheduler 并发回收同项目
+    → 丢标注/重复行/仲裁重复导入);他方持锁 → :class:`RecoverInProgress`。
+    C1:增量判据 = task id 前进 ∪ 已回收 task 标注数增长(第二标注者)。
+    M4(质量):watermark 先推、仲裁 task 后导的顺序保留——仲裁 import
+    失败不回滚 watermark 时,新判据下该批 task 的 counts 已推进,但
+    分歧裁决下一轮仍会因 verdicts 稳定而跳过;仲裁补生成见 webhook 兜底。
+    """
     import uuid as _uuid
 
     from arrow_lake._lake_ingest import _DeadLetterStorageAdapter
@@ -161,50 +212,67 @@ def recover_one(
     if not ls_project_id:
         raise LookupError(f"project {project_name!r} has no LS binding")
 
-    client = ls_client or LSClient(config.ls_url, config.ls_api_token)
-    # W5 live:export 全量(列表视图裁剪 annotations);大项目成本登记
-    tasks = client.export_tasks(ls_project_id)
-    watermark = int(rec.get("recover_watermark") or 0)
-    fresh, new_watermark = incremental_tasks(tasks, watermark=watermark)
+    lock = _acquire_recover_lock(project_name)
+    if lock is False:
+        raise RecoverInProgress(
+            f"another recover is running for {project_name!r} (lock held)")
+    try:
+        client = ls_client or LSClient(config.ls_url, config.ls_api_token)
+        # W5 live:export 全量(列表视图裁剪 annotations);大项目成本登记
+        tasks = client.export_tasks(ls_project_id)
+        watermark = int(rec.get("recover_watermark") or 0)
+        prev_counts: dict[str, int] = {}
+        raw_counts = rec.get("recovered_counts")
+        if isinstance(raw_counts, str) and raw_counts:
+            with contextlib.suppress(ValueError, TypeError):
+                prev_counts = {str(k): int(v)
+                               for k, v in json.loads(raw_counts).items()}
+        fresh, new_watermark, new_counts = incremental_tasks(
+            tasks, watermark=watermark, recovered_counts=prev_counts,
+        )
 
-    recovered = [a for t in fresh for a in parse_ls_annotation(t)]
-    by_task: dict[str, list[RecoveredAnnotation]] = {}
-    for ann in recovered:
-        by_task.setdefault(ann.row_id, []).append(ann)
-    verdicts = adjudicate(by_task)
+        recovered = [a for t in fresh for a in parse_ls_annotation(t)]
+        by_task: dict[str, list[RecoveredAnnotation]] = {}
+        for ann in recovered:
+            by_task.setdefault(ann.row_id, []).append(ann)
+        verdicts = adjudicate(
+            by_task, min_annotators=config.adjudicate_min_annotators)
 
-    existing_ids, group_versions = _existing_adl_state(lake, rec["dataset"])
-    batch_id = f"rec-{_uuid.uuid4().hex[:8]}"
-    table, written = build_adl_batch(
-        dataset=rec["dataset"], recovered=recovered, adjudications=verdicts,
-        batch_id=batch_id, existing_adl_ids=existing_ids,
-        group_versions=group_versions,
-    )
-    if written:
-        write_adl(_DeadLetterStorageAdapter(lake._get_storage()), rec["dataset"], table)
-    store.set_watermark(project_name, new_watermark)
+        existing_ids, group_versions = _existing_adl_state(lake, rec["dataset"])
+        batch_id = f"rec-{_uuid.uuid4().hex[:8]}"
+        table, written = build_adl_batch(
+            dataset=rec["dataset"], recovered=recovered, adjudications=verdicts,
+            batch_id=batch_id, existing_adl_ids=existing_ids,
+            group_versions=group_versions,
+        )
+        if written:
+            write_adl(_DeadLetterStorageAdapter(lake._get_storage()), rec["dataset"], table)
+        store.set_watermark(project_name, new_watermark)
+        store.set_recovered_counts(project_name, json.dumps(new_counts))
 
-    arb_generated = 0
-    if generate_arbitration:
-        arb = arbitration_tasks(fresh=fresh, recovered=recovered, verdicts=verdicts)
-        if arb:
-            client.import_tasks(ls_project_id, arb)
-            arb_generated = len(arb)
+        arb_generated = 0
+        if generate_arbitration:
+            arb = arbitration_tasks(fresh=fresh, recovered=recovered, verdicts=verdicts)
+            if arb:
+                client.import_tasks(ls_project_id, arb)
+                arb_generated = len(arb)
 
-    counts = {"approved": 0, "arbitration": 0, "pending": 0}
-    for verdict in verdicts.values():
-        counts[verdict.status] = counts.get(verdict.status, 0) + 1
-    return {
-        "project": project_name,
-        "tasks_seen": len(fresh),
-        "annotations_recovered": len(recovered),
-        "adl_rows_written": written,
-        "review": counts,
-        "kappa": project_kappa(by_task),
-        "watermark": new_watermark,
-        "batch_id": batch_id,
-        "arbitration_tasks_generated": arb_generated,
-    }
+        counts = {"approved": 0, "arbitration": 0, "pending": 0}
+        for verdict in verdicts.values():
+            counts[verdict.status] = counts.get(verdict.status, 0) + 1
+        return {
+            "project": project_name,
+            "tasks_seen": len(fresh),
+            "annotations_recovered": len(recovered),
+            "adl_rows_written": written,
+            "review": counts,
+            "kappa": project_kappa(by_task),
+            "watermark": new_watermark,
+            "batch_id": batch_id,
+            "arbitration_tasks_generated": arb_generated,
+        }
+    finally:
+        _release_quietly(lock)
 
 
 class AnnotationRecoverScheduler:

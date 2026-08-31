@@ -13,6 +13,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from arrow_lake.annotation.sync import (
     AnnotationRecoverScheduler,
     arbitration_tasks,
@@ -103,6 +105,10 @@ class FakeStore:
 
     def set_watermark(self, name, wm):
         self._projects[name]["recover_watermark"] = wm
+        return True
+
+    def set_recovered_counts(self, name, counts_json):
+        self._projects[name]["recovered_counts"] = counts_json
         return True
 
     def set_ls_project_id(self, name, i):
@@ -214,6 +220,63 @@ class TestProjectStatus:
         with pytest.raises(LookupError):
             project_status(store=FakeStore([]), config=CONFIG,
                            project_name="ghost", ls_client=FakeLSCl([]))
+
+
+class TestRecoverOneBatchB:
+    """批 B(四维 review):复合增量 + 跨进程锁 + min_annotators 接线。"""
+
+    def test_second_annotator_recovered_across_rounds(self):
+        """C1 治本:第一轮 1 标注回收 → 第二人补标 → 第二轮被捞回。"""
+        ls = FakeLSCl([_task(1, [_ann(REGIONS_A, 7)])])
+        store = FakeStore([_project()])
+        recover_one(store=store, lake=FakeLakeLite(), config=CONFIG,
+                    project_name="p1", ls_client=ls)
+        assert store._projects["p1"]["recovered_counts"] == '{"1": 1}'
+        # 第二标注者加入(annotations 1→2)
+        ls.tasks = [_task(1, [_ann(REGIONS_A, 7), _ann(REGIONS_A, 8)])]
+        summary = recover_one(store=store, lake=FakeLakeLite(), config=CONFIG,
+                              project_name="p1", ls_client=ls)
+        assert summary["annotations_recovered"] == 2  # 两人一起重新解析
+        assert store._projects["p1"]["recovered_counts"] == '{"1": 2}'
+
+    def test_no_change_round_is_noop(self):
+        ls = FakeLSCl([_task(1, [_ann(REGIONS_A, 7)])])
+        store = FakeStore([_project()])
+        recover_one(store=store, lake=FakeLakeLite(), config=CONFIG,
+                    project_name="p1", ls_client=ls)
+        summary = recover_one(store=store, lake=FakeLakeLite(), config=CONFIG,
+                              project_name="p1", ls_client=ls)
+        assert summary["annotations_recovered"] == 0
+        assert summary["adl_rows_written"] == 0
+
+    def test_lock_held_raises_recover_in_progress(self, monkeypatch):
+        """H2:互斥锁被他方持有 → RecoverInProgress(路由层转 409)。"""
+        import arrow_lake.annotation.sync as sync_mod
+
+        monkeypatch.setattr(sync_mod, "_acquire_recover_lock", lambda name: False)
+        ls = FakeLSCl([_task(1, [_ann(REGIONS_A, 7)])])
+        with pytest.raises(sync_mod.RecoverInProgress):
+            recover_one(store=FakeStore([_project()]), lake=FakeLakeLite(),
+                        config=CONFIG, project_name="p1", ls_client=ls)
+
+    def test_no_redis_fail_open(self, monkeypatch):
+        """H2:Redis 不可用 → fail-open(None)正常回收。"""
+        import arrow_lake.annotation.sync as sync_mod
+
+        monkeypatch.setattr(sync_mod, "_acquire_recover_lock", lambda name: None)
+        ls = FakeLSCl([_task(1, [_ann(REGIONS_A, 7)])])
+        summary = recover_one(store=FakeStore([_project()]), lake=FakeLakeLite(),
+                              config=CONFIG, project_name="p1", ls_client=ls)
+        assert summary["annotations_recovered"] == 1
+
+    def test_min_annotators_one_single_approved(self):
+        """H4:adjudicate_min_annotators=1 → 单标注直接 approved。"""
+        cfg1 = AnnotationConfig(
+            ls_url="http://ls", ls_api_token="tok", adjudicate_min_annotators=1)
+        ls = FakeLSCl([_task(1, [_ann(REGIONS_A, 7)])])
+        summary = recover_one(store=FakeStore([_project()]), lake=FakeLakeLite(),
+                              config=cfg1, project_name="p1", ls_client=ls)
+        assert summary["review"]["approved"] == 1  # 默认 2 时为 pending
 
 
 class TestScheduler:

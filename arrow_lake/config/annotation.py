@@ -41,6 +41,10 @@ class AnnotationConfig(BaseModel):
     max_sample_total: int = 200
     candidate_pool_cap: int = 5000
     import_batch_size: int = 50
+    adjudicate_min_annotators: int = 2
+    """裁决最少标注人数(H4):2=双标注一致才 approved(默认);单人标注
+    试点设 1(单标注直接 approved——docstring 一直宣称的风险表缓解,
+    四维 review 后真正接线)。recover_one/project_status 均透传。"""
 
     @field_validator("default_sample_total", "max_sample_total", "import_batch_size")
     @classmethod

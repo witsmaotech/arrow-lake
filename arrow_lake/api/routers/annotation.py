@@ -14,6 +14,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -416,6 +417,13 @@ async def recover(
             store=store, lake=lake, config=config, project_name=req.project)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:  # H2:另一 worker/scheduler 正在回收该项目
+        from arrow_lake.annotation.sync import RecoverInProgress
+
+        if isinstance(exc, RecoverInProgress):
+            raise HTTPException(
+                status_code=409, detail=str(exc)) from exc
+        raise
     with contextlib.suppress(Exception):  # audit best-effort
         lake.audit_record(
             "annotation.recover",
@@ -455,8 +463,11 @@ async def ls_webhook(request: Request, lake=Depends(get_lake)) -> dict:
 
     认证(review S2):共享密钥 ``annotation.webhook_secret``——空 =
     端点禁用(默认安全;最小权限凭据无法伪造审计事件);LS 侧配
-    webhook URL 带 ``?secret=<同值>`` 或 ``X-LS-Secret`` 头。只做解析 +
-    审计,不写 ADL(数据回收统一走 recover,adl_id 幂等保证双通道不重)。
+    webhook URL 带 ``?secret=<同值>`` 或 ``X-LS-Secret`` 头。
+    C1 补丁通道落地(四维 review):ANNOTATION_CREATED/UPDATED 在审计外
+    还**后台触发一轮 recover_one**(单线程串行天然去抖;adl_id 幂等吸收
+    排队重复)。此前 webhook 只审计不写 ADL——docstring 宣称的补丁通道
+    名不符实,复合计数判据也抓不到「同数量内容变化(草稿→提交)」。
     """
     from arrow_lake.annotation.recover import parse_webhook
 
@@ -485,4 +496,39 @@ async def ls_webhook(request: Request, lake=Depends(get_lake)) -> dict:
                 "annotator": rec.annotator_id,
             },
         )
+    # 即时回收(后台单线程;找不到匹配项目=非本项目标注,静默跳过)
+    with contextlib.suppress(Exception):
+        pid_raw = payload.get("project") or {}
+        pid = int(pid_raw.get("id") or 0) if isinstance(pid_raw, dict) else int(pid_raw or 0)
+        target = None
+        if pid:
+            for p in _store(request).list_projects():
+                if (p.get("status") == "active"
+                        and int(p.get("ls_project_id") or 0) == pid):
+                    target = p["name"]
+                    break
+        if target:
+            cfg = request.app.state.config
+            _WEBHOOK_RECOVER_EXECUTOR.submit(
+                _webhook_recover, request.app.state, lake, cfg, target)
     return {"accepted": True, "action": action, "row_id": rec.row_id}
+
+
+# webhook 即时回收:单 worker 串行化(多条 webhook 排队,一轮全量幂等吸收)
+_WEBHOOK_RECOVER_EXECUTOR = ThreadPoolExecutor(
+    max_workers=1, thread_name_prefix="ls-webhook-recover")
+
+
+def _webhook_recover(app_state: Any, lake: Any, cfg: Any, project: str) -> None:
+    from arrow_lake.annotation.sync import recover_one
+
+    try:
+        recover_one(
+            store=app_state.annotation_project_store, lake=lake,
+            config=cfg.annotation, project_name=project)
+    except Exception as exc:  # 兜底通道失败不抛(30s scheduler 仍是主通道)
+        with contextlib.suppress(Exception):
+            lake.audit_record(
+                "annotation.webhook_recover_failed", dataset_name="",
+                actor="ls-webhook",
+                payload={"project": project, "error": str(exc)[:200]})

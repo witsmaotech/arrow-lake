@@ -128,7 +128,7 @@ class TestMigrator:
         # schema_version still has exactly the recorded versions.
         # V021 预留给 W3 releases(MS5 设计 §10),当前缺号属预期。
         versions = Migrator(db).applied_versions()
-        assert versions == set(range(1, 24))  # V020-V023
+        assert versions == set(range(1, 25))  # V020-V024(V024=recovered_counts)
 
 
 # --------------------------------------------------------------------------- #

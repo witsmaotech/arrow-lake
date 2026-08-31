@@ -118,32 +118,69 @@ class TestWatermark:
 
     def test_incremental_filter_and_new_watermark(self):
         tasks = self._tasks([(1, True), (2, True), (5, True), (9, True)])
-        batch, wm = incremental_tasks(tasks, watermark=2)
+        batch, wm, _ = incremental_tasks(tasks, watermark=2)
         assert [t["id"] for t in batch] == [5, 9]
         assert wm == 9
 
     def test_unannotated_task_does_not_advance_watermark(self):
         """W5 live 实证修:无标注 task 不推进——后到标注仍可回收。"""
         tasks = self._tasks([(1, True), (5, False), (9, False)])
-        batch, wm = incremental_tasks(tasks, watermark=0)
+        batch, wm, _ = incremental_tasks(tasks, watermark=0)
         assert [t["id"] for t in batch] == [1]
         assert wm == 1  # 5/9 未标注,不推
 
     def test_late_annotation_still_recovered(self):
         """scheduler 先看(无标注)→ 标注者后标 → 下轮拉得到。"""
         tasks = self._tasks([(5, True), (9, False)])
-        _, wm = incremental_tasks(tasks, watermark=0)
+        _, wm, counts = incremental_tasks(tasks, watermark=0)
         assert wm == 5
         # (9 后来被标注)
         tasks2 = self._tasks([(5, True), (9, True)])
-        batch, wm2 = incremental_tasks(tasks2, watermark=wm)
+        batch, wm2, _ = incremental_tasks(
+            tasks2, watermark=wm, recovered_counts=counts)
         assert [t["id"] for t in batch] == [9]
         assert wm2 == 9
 
     def test_no_new_tasks_keeps_watermark(self):
         tasks = self._tasks([(3, False)])
-        batch, wm = incremental_tasks(tasks, watermark=3)
+        batch, wm, _ = incremental_tasks(tasks, watermark=3)
         assert batch == [] and wm == 3
 
     def test_empty_input(self):
-        assert incremental_tasks([], watermark=0) == ([], 0)
+        assert incremental_tasks([], watermark=0) == ([], 0, {})
+
+    # --- C1(四维 review CRITICAL):第二标注者的标注不再永久丢失 ---------
+
+    def test_second_annotator_on_recovered_task_is_fresh(self):
+        """同 task(窗口外)标注数 1→2 → 重回收;watermark 不动。"""
+        first = [_task([_ann(REGIONS, completed_by=7)], task_id=5)]
+        _, wm, counts = incremental_tasks(first, watermark=0)
+        assert wm == 5 and counts == {"5": 1}
+        second = [_task(
+            [_ann(REGIONS, completed_by=7), _ann(REGIONS, completed_by=8)],
+            task_id=5)]
+        batch, wm2, counts2 = incremental_tasks(
+            second, watermark=wm, recovered_counts=counts)
+        assert [t["id"] for t in batch] == [5]   # 第二人被捞回
+        assert wm2 == 5                            # watermark 不回退不重推
+        assert counts2 == {"5": 2}
+
+    def test_same_count_no_re_recover(self):
+        """标注数不变(幂等重拉)→ 不重回收。"""
+        tasks = [_task([_ann(REGIONS, completed_by=7)], task_id=5)]
+        _, wm, counts = incremental_tasks(tasks, watermark=5)
+        batch, _, _ = incremental_tasks(
+            tasks, watermark=wm, recovered_counts=counts)
+        assert batch == []
+
+    def test_upgrade_first_run_backfills(self):
+        """显式空 dict(升级首跑)→ 已回收 task 全部重捞一轮;
+        缺省 None = id-only 原语义(向后兼容)。"""
+        tasks = self._tasks([(1, True), (5, True)])
+        batch, wm, counts = incremental_tasks(
+            tasks, watermark=5, recovered_counts={})
+        assert [t["id"] for t in batch] == [1, 5]  # 幂等补捞历史丢失
+        assert wm == 5 and counts == {"1": 1, "5": 1}
+        # 缺省:仅 id > watermark(原语义不变)
+        batch2, _, _ = incremental_tasks(tasks, watermark=5)
+        assert [t["id"] for t in batch2] == []

@@ -151,26 +151,39 @@ def parse_webhook(payload: dict[str, Any]) -> RecoveredAnnotation | None:
 
 
 def incremental_tasks(
-    tasks: list[dict[str, Any]], *, watermark: int
-) -> tuple[list[dict[str, Any]], int]:
-    """watermark 增量:**仅带标注的任务**推进 watermark(W5 live 实证修)。
+    tasks: list[dict[str, Any]], *, watermark: int,
+    recovered_counts: dict[str, int] | None = None,
+) -> tuple[list[dict[str, Any]], int, dict[str, int]]:
+    """复合增量判据(四维 review C1 治本):task id 前进 ∪ 标注数增长。
 
-    标注晚于 task 创建——若按 task id 无条件推进,后到的标注会永远落在
-    增量窗口外(scheduler 曾在标注发生前把 watermark 推满,ADL 空)。
-    现语义:``id > watermark 且 annotations 非空`` 才构成增量;无标注的
-    pending task 留在窗口内反复重拉(页帽 200 保护成本),被标注后即
-    回收。已知限制(登记):已回收 task 的**重标注**(id ≤ watermark)
-    轮询模型捕获不了——webhook ANNOTATION_UPDATED 是补丁通道。
+    - ``id > watermark 且 annotations 非空``:新 task 的首批标注(原语义)。
+    - ``len(annotations) > recovered_counts[id]``:**已回收 task 的新增
+      标注**(第二标注者/补充标注)——原纯 id watermark 使其永远落在
+      窗口外,κ/accuracy 的双标注地基结构性不可达。
+    - ``recovered_counts`` 缺省 None = id-only 原语义(向后兼容);显式传
+      ``{}`` = 升级首跑:id ≤ watermark 且有标注的 task 全部重回收一轮
+      (adl_id 内容幂等无重复,恰好补捞历史丢失的第二标注)。
+    - 同数量内容变化(草稿→提交)计数判据抓不到——webhook ANNOTATION_UPDATED
+      触发即时 recover 兜底(annotation.py 路由层)。
+    返回 ``(fresh, new_watermark, new_counts)``;无标注 task 不记计数。
     """
+    counts: dict[str, int] = {}
     def _tid(t: dict[str, Any]) -> int:
         try:
             return int(t.get("id", 0))
         except (TypeError, ValueError):  # review P3: 脏 id 视为 0(不阻断)
             return 0
 
-    fresh = [
-        t for t in tasks
-        if _tid(t) > watermark and t.get("annotations")
-    ]
-    new_wm = max((_tid(t) for t in fresh), default=watermark)
-    return fresh, new_wm
+    prev = recovered_counts  # None=缺省(id-only 原语义,向后兼容);
+    fresh = []               # {}=升级首跑全量补捞(幂等,捞历史第二标注)
+    for t in tasks:
+        tid = _tid(t)
+        key = str(tid)  # counts key 全程 str(JSON 往返一致)
+        n = len(t.get("annotations") or [])
+        grew = prev is not None and n > prev.get(key, 0)
+        if n and (tid > watermark or grew):
+            fresh.append(t)
+        if n:
+            counts[key] = n
+    new_wm = max((watermark, *(_tid(t) for t in fresh)))
+    return fresh, new_wm, counts
