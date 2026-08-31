@@ -62,6 +62,7 @@ ingest → index → { search | SQL | RAG | GraphRAG } → export / govern
 | RAG & GraphRAG | [08 RAG](./08-rag-pipeline.md) · [09 KG](./09-knowledge-graph.md) |
 | Configure / deploy | [03 Config](./03-configuration.md) · [12 Deployment](./12-deployment.md) |
 | **Ship a high-quality dataset (v1.11.4)** | [20 HQ Pipeline](./20-hq-dataset.md) |
+| Define the business meaning (ontology/contract) | [21 Ontology & Contracts](./21-ontology-contracts-objects.md) |
 
 > **New here?** The fastest path to "I understand what this platform does": [01 Quickstart](./01-quickstart.md) → [19 REST Recipes](./19-rest-recipes.md) (end-to-end) → dive into any pillar above.
 

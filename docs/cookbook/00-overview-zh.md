@@ -62,6 +62,7 @@ lake = Lake("./my_lake")   # 本地文件系统 —— 无需 MinIO、无需 Doc
 | RAG 与 GraphRAG | [08 RAG](./08-rag-pipeline-zh.md) · [09 知识图谱](./09-knowledge-graph-zh.md) |
 | 配置 / 部署 | [03 配置](./03-configuration-zh.md) · [12 部署](./12-deployment-zh.md) |
 | **发布高质量数据集(v1.11.4)** | [20 高质量数据集流水线](./20-hq-dataset-zh.md) |
+| 定义业务语义(本体/契约/对象) | [21 本体、契约与对象](./21-ontology-contracts-objects-zh.md) |
 
 > **新手？** 最快建立"我懂这个平台能干什么"的路径：[01 快速入门](./01-quickstart-zh.md) → [19 实战配方](./19-rest-recipes-zh.md)（端到端）→ 再进上面任一支柱深入。
 
