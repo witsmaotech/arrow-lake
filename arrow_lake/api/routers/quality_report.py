@@ -23,7 +23,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from arrow_lake.api.auth_models import Role
-from arrow_lake.api.deps import get_lake, require_role
+from arrow_lake.api.deps import audit_write, get_lake, require_role
 from arrow_lake.core.metrics import quality_drift_kl
 from arrow_lake.quality.dimensions import (
     DimensionResult,
@@ -349,6 +349,10 @@ async def detect_drift(
     if reset:
         snap = snapshot_table(source)
         rec = store.set_baseline(dataset, snap, source="manual")
+        audit_write(  # M2:基线重置使劣化检测「失明」,必须留痕
+            lake, "quality.drift_baseline_reset",
+            actor=getattr(user, "sub", "system"), dataset=dataset,
+            payload={"baseline_id": rec.get("id"), "columns": len(snap)})
         return {"dataset": dataset, "status": "baseline_reset",
                 "baseline_id": rec.get("id"), "columns": len(snap)}
 
@@ -437,6 +441,29 @@ async def start_relevance_loop(
     aconf = getattr(aconf, "annotation", None) if aconf is not None else None
     ls_ready = bool(
         getattr(aconf, "ls_url", None) and getattr(aconf, "ls_api_token", None))
+
+    # D4/M3(四维 review):规则解析统一前置 + require_masking 强制档
+    # 三路同门(dispatch 早有;relevance/feedback 此前只 warning 不拦,
+    # PII 部署档被姊妹端点静默绕过)
+    import json as _rules_json
+
+    rel_rules: tuple = ()
+    rel_entities: tuple = ()
+    with contextlib.suppress(ValueError):
+        rel_rules = tuple(
+            tuple(x) for x in _rules_json.loads(rules_json or "[]"))
+        rel_entities = tuple(_rules_json.loads(entities_json or "[]"))
+    if getattr(aconf, "require_masking", False) and not (rel_rules or rel_entities):
+        raise HTTPException(
+            status_code=422,
+            detail="annotation.require_masking=true — relevance must carry "
+                   "rules_json / entities_json",
+        )
+    if not (rel_rules or rel_entities):
+        logger.warning(
+            "quality.relevance dispatched WITHOUT masking config — raw text "
+            "goes to LS annotators / the LLM provider")
+
     mode = "ls"
     if llm_only or not ls_ready:
         if provider is None:
@@ -447,30 +474,14 @@ async def start_relevance_loop(
         mode = "llm_only"
         if not llm_only:
             mode = "llm_only(auto: LS not configured)"
-        import json as _json
-
-        with contextlib.suppress(ValueError):
-            rel_rules = tuple(
-                tuple(x) for x in _json.loads(rules_json or "[]"))
-            rel_entities = tuple(_json.loads(entities_json or "[]"))
-        if not (rel_rules or rel_entities):
-            logger.warning(
-                "quality.relevance llm_only WITHOUT masking config — raw "
-                "text goes to the LLM provider; pass rules_json/entities_json")
         work = llm_only_relevance(
             lake=lake, dataset=dataset, rows=sample,
             text_column=text_column, provider=provider,
             generalize_rules=rel_rules, entity_names=rel_entities,
         )
     else:
-        import json as _rules_json
-
         from arrow_lake.annotation.dispatch import LSClient
 
-        with contextlib.suppress(ValueError):
-            rel_rules = tuple(
-                tuple(x) for x in _rules_json.loads(rules_json or "[]"))
-            rel_entities = tuple(_rules_json.loads(entities_json or "[]"))
         work = dispatch_relevance(
             ls_client=LSClient(aconf.ls_url, aconf.ls_api_token),
             project_title=name, rows=sample, text_column=text_column,
@@ -559,6 +570,14 @@ async def feedback_loop(
     if not (getattr(aconf, "ls_url", None) and getattr(aconf, "ls_api_token", None)):
         raise HTTPException(
             status_code=503, detail="Label Studio not configured for feedback",
+        )
+    # D4/M3:require_masking 三路统一(feedback 原文 import 进 LS 亦出域)
+    if getattr(aconf, "require_masking", False) and not (
+            req.generalize_rules or req.entity_names):
+        raise HTTPException(
+            status_code=422,
+            detail="annotation.require_masking=true — feedback must carry "
+                   "generalize_rules / entity_names",
         )
 
     # 找 L4 项目(active+bound,非 relevance 反馈专线)

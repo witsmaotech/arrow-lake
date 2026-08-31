@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from arrow_lake.api.auth_models import Role
-from arrow_lake.api.deps import get_checker, get_lake, require_role
+from arrow_lake.api.deps import audit_write, get_checker, get_lake, require_role
 from arrow_lake.api.utils import run_sync
 
 logger = logging.getLogger(__name__)
@@ -91,6 +91,7 @@ async def delete_entity_map(
     table: str = Query(),
     source_system: str = Query(default=""),
     source_id: str = Query(),
+    user=Depends(require_role(Role.ADMIN)),
 ) -> dict:
     """Delete one mapping by its four-part key."""
     store = _require_store(_store(request), "entity map")
@@ -102,6 +103,10 @@ async def delete_entity_map(
     )
     if not deleted:
         raise HTTPException(status_code=404, detail="entity mapping not found")
+    audit_write(request, "semantic.entity_map_deleted", actor=user.sub,
+                dataset=scope,
+                payload={"table": table, "source_system": source_system,
+                         "source_id": source_id})
     return {"success": True, "data": {"deleted": True}}
 
 

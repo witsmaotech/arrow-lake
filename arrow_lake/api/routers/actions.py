@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from arrow_lake.actions.schema import ScenarioValidationError, validate_scenario
 from arrow_lake.actions.yaml_io import ActionYamlError, parse_action_yaml, parse_scenario_yaml
 from arrow_lake.api.auth_models import Role
-from arrow_lake.api.deps import get_checker, get_lake, require_role
+from arrow_lake.api.deps import audit_write, get_checker, get_lake, require_role
 
 router = APIRouter(prefix="/api/v1/actions", tags=["actions"])
 
@@ -121,10 +121,13 @@ async def save_scenario(scenario_id: str, req: ScenarioUpsertRequest, request: R
     "/scenarios/{scenario_id}",
     dependencies=[Depends(require_role(Role.ADMIN))],
 )
-async def delete_scenario(scenario_id: str, request: Request) -> dict:
+async def delete_scenario(scenario_id: str, request: Request,
+                              user=Depends(require_role(Role.ADMIN))) -> dict:
     store = _require(_scenario_store(request), "Scenario registry")
     if not store.delete_scope(scenario_id):
         raise HTTPException(status_code=404, detail=f"No scenario '{scenario_id}'")
+    audit_write(request, "actions.scenario_deleted", actor=user.sub,
+                payload={"scenario_id": scenario_id})
     return {"scenario_id": scenario_id, "deleted": True}
 
 
@@ -205,12 +208,15 @@ async def save_action(action_id: str, req: ActionUpsertRequest, request: Request
 
 
 @router.delete("/{action_id}", dependencies=[Depends(require_role(Role.ADMIN))])
-async def delete_action(action_id: str, request: Request) -> dict:
+async def delete_action(action_id: str, request: Request,
+                          user=Depends(require_role(Role.ADMIN))) -> dict:
     """Delete an action (all versions). Scenarios referencing it fail their
     next save — save-time reference discipline, no cascade."""
     store = _require(_action_store(request), "Action catalog")
     if not store.delete_scope(action_id):
         raise HTTPException(status_code=404, detail=f"No action '{action_id}'")
+    audit_write(request, "actions.action_deleted", actor=user.sub,
+                payload={"action_id": action_id})
     return {"action_id": action_id, "deleted": True}
 
 
@@ -305,8 +311,13 @@ async def reset_idempotency_slot(
     action_id: str,
     request: Request,
     key: str = Query(min_length=1, max_length=500),
+    lake=Depends(get_lake),
+    user=Depends(require_role(Role.ADMIN)),
 ) -> dict:
     """ADMIN 手术:重置卡死 running 的幂等槽(worker 在 acquire 与 mark
     之间死亡遗留;W4.5 H-2 运维面,沿 tasks.py orphan-reap 教训人工核销)。"""
     store = _require(getattr(request.app.state, "idempotency_store", None), "Idempotency registry")
-    return {"action_id": action_id, "key": key, "reset": store.reset_running(action_id, key)}
+    reset = store.reset_running(action_id, key)
+    audit_write(request, "actions.idempotency_reset", actor=user.sub,
+                payload={"action_id": action_id, "key": key, "reset": reset})
+    return {"action_id": action_id, "key": key, "reset": reset}

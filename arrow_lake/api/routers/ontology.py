@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from arrow_lake.api.auth_models import Role
-from arrow_lake.api.deps import require_role
+from arrow_lake.api.deps import audit_write, get_lake, require_role
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/ontology", tags=["ontology"])
@@ -121,7 +121,8 @@ async def list_rules(
 
 
 @router.post("/rules", status_code=201, dependencies=[Depends(require_role(Role.ADMIN))])
-async def upsert_rule(req: RuleUpsertRequest, request: Request) -> dict:
+async def upsert_rule(req: RuleUpsertRequest, request: Request,
+                      user=Depends(require_role(Role.ADMIN))) -> dict:
     """Create or update a rule (updates never touch status — transitions only)."""
     store = _require_store(_rules_store(request), "ontology rules")
     store.upsert_rule(
@@ -134,6 +135,10 @@ async def upsert_rule(req: RuleUpsertRequest, request: Request) -> dict:
         version=req.version,
     )
     rule = store.get_rule(req.rule_id)
+    audit_write(request, "ontology.rule_upserted", actor=user.sub,
+                dataset=req.scope,
+                payload={"rule_id": req.rule_id, "rule_type": req.rule_type,
+                         "version": rule.get("version") if rule else None})
     return {"success": True, "data": rule}
 
 
@@ -145,6 +150,7 @@ async def transition_rule(
     rule_id: str,
     request: Request,
     to_status: str = Query(description="target status (draft/active/retired)"),
+    user=Depends(require_role(Role.ADMIN)),
 ) -> dict:
     """Move a rule along the state machine (draft→active→retired→draft)."""
     store = _require_store(_rules_store(request), "ontology rules")
@@ -154,13 +160,23 @@ async def transition_rule(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if not moved:
         raise HTTPException(status_code=404, detail=f"rule {rule_id!r} not found")
-    return {"success": True, "data": store.get_rule(rule_id)}
+    rule = store.get_rule(rule_id)
+    audit_write(request, "ontology.rule_transitioned", actor=user.sub,
+                dataset=str(rule.get("scope") or "") if rule else "",
+                payload={"rule_id": rule_id, "to_status": to_status})
+    return {"success": True, "data": rule}
 
 
 @router.delete("/rules/{rule_id}", dependencies=[Depends(require_role(Role.ADMIN))])
-async def delete_rule(rule_id: str, request: Request) -> dict:
+async def delete_rule(rule_id: str, request: Request,
+                      user=Depends(require_role(Role.ADMIN))) -> dict:
     """Delete a rule entirely (prefer retiring via transition for audit)."""
     store = _require_store(_rules_store(request), "ontology rules")
+    prev = store.get_rule(rule_id)
     if not store.delete_rule(rule_id):
         raise HTTPException(status_code=404, detail=f"rule {rule_id!r} not found")
+    audit_write(request, "ontology.rule_deleted", actor=user.sub,
+                dataset=str(prev.get("scope") or "") if prev else "",
+                payload={"rule_id": rule_id,
+                         "prev_status": prev.get("status") if prev else None})
     return {"success": True, "data": {"rule_id": rule_id, "deleted": True}}

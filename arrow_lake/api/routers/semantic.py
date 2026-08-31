@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from arrow_lake.api.auth_models import Role
-from arrow_lake.api.deps import require_role
+from arrow_lake.api.deps import audit_write, get_lake, require_role
 from arrow_lake.api.utils import run_sync
 
 logger = logging.getLogger(__name__)
@@ -143,8 +143,10 @@ async def save_alignment(
 
 
 @router.delete("/alignments/{scope}", dependencies=[Depends(require_role(Role.ADMIN))])
-async def delete_alignment(scope: str, request: Request) -> dict:
+async def delete_alignment(scope: str, request: Request,
+                                user=Depends(require_role(Role.ADMIN))) -> dict:
     store = _require_store(_store(request), "semantic alignments")
     if not store.delete_scope(scope):
         raise HTTPException(status_code=404, detail=f"No alignment for '{scope}'")
+    audit_write(request, "semantic.alignment_deleted", actor=user.sub, dataset=scope)
     return {"scope": scope, "deleted": True}

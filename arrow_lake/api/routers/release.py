@@ -503,18 +503,20 @@ async def export_corpus(
 
     # 红线④ fail-closed(security review 2026-08-30):语料出域必须带
     # 脱敏配置;无配置即拒(豁免须显式,audit corpus.unmasked 留痕)。
+    # M1(四维 review):pretrain 纳入门禁——definition 是源文本抽取片段
+    # 可含 PII,此前被 text_bearing 排除在门外原文出域,与 datasheet
+    # 「all forms masked」宣称矛盾。
     actor = getattr(user, "sub", "system")
     masked = bool(rules or entities)
     if not masked:
-        text_bearing = form in ("sft", "rlhf", "golden")  # pretrain 无原文
-        if text_bearing and not allow_unmasked:
+        if not allow_unmasked:
             raise HTTPException(
                 status_code=422,
                 detail="corpus export requires masking config "
                        "(generalize_rules / entity_names) — red line ④; "
                        "explicit ?allow_unmasked=true overrides (audited)",
             )
-        if text_bearing and allow_unmasked:
+        if allow_unmasked:
             logger.warning(
                 "corpus.exported UNMASKED dataset=%s form=%s actor=%s "
                 "(allow_unmasked override)", dataset, form, actor)
@@ -546,8 +548,16 @@ async def export_corpus(
             with contextlib.suppress(Exception):
                 vertices, edges = await client.get_graph_snapshot(
                     graph_name=graph, limit=1000)
+            # M1:definition 段应用与 SFT 同款 L2/L3 规则(带配置时)
+            def _mask_def(s: str) -> str:
+                from arrow_lake.annotation.masking import apply_annotation_masking
+
+                return apply_annotation_masking(
+                    s, generalize_rules=rules, entity_names=entities,
+                    hmac_key=None)
             records = build_pretrain_records(
-                vertices=vertices, edges=edges)
+                vertices=vertices, edges=edges,
+                definition_masker=_mask_def if masked else None)
             if not records:
                 note = f"no resolvable triples in KG '{graph}'"
     elif form == "rlhf":

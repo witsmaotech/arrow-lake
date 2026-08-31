@@ -353,14 +353,17 @@ def test_corpus_rlhf_empty_with_note_and_pretrain(db: SystemDB, tmp_path) -> Non
     rlhf = client.post("/api/v1/release/alerts/corpus?form=rlhf",
                        json={"generalize_rules": [[r"\d+", "N"]]}).json()
     assert rlhf["records"] == 0 and rlhf["note"] and "decisions" in rlhf["note"]
-    pre = client.post("/api/v1/release/alerts/corpus?form=pretrain",
-                      json={}).json()
-    assert pre["records"] == 1  # KG 快照三元组
+    # M1:pretrain 也须带脱敏配置(definition 源文本片段出域)
+    pre = client.post(
+        "/api/v1/release/alerts/corpus?form=pretrain",
+        json={"generalize_rules": [[r"\d+", "N"]]}).json()
+    assert pre["records"] == 1  # KG 快照三元组(definition 已过规则)
     no_kg = CorpusLake({"alerts": _TABLE}, kg=False)
     c2 = _corpus_app(db, no_kg, tmp_path)
     _publish(db, no_kg, c2)
-    pre2 = c2.post("/api/v1/release/alerts/corpus?form=pretrain",
-                   json={}).json()
+    pre2 = c2.post(
+        "/api/v1/release/alerts/corpus?form=pretrain",
+        json={"generalize_rules": [[r"\d+", "N"]]}).json()
     assert pre2["records"] == 0 and pre2["note"]
 
 
@@ -391,7 +394,11 @@ def test_corpus_fail_closed_without_masking(db: SystemDB, tmp_path) -> None:
     assert r2.status_code == 200 and r2.json()["masking"]["applied"] is False
     kinds = [a[0] for a in lake.audit_calls]
     assert "corpus.unmasked" in kinds
-    # pretrain 无原文 → 不受门约束
-    pre = client.post("/api/v1/release/alerts/corpus?form=pretrain",
-                      json={}).json()
-    assert pre["masking"]["applied"] is False  # 如实回报,不拦
+    # M1(四维 review):pretrain definition 是源文本抽取片段,同样受
+    # 门约束——无配置 422(此前被 text_bearing 排除,原文出域违红线④)
+    pre = client.post("/api/v1/release/alerts/corpus?form=pretrain", json={})
+    assert pre.status_code == 422 and "masking" in pre.json()["detail"]
+    pre2 = client.post(
+        "/api/v1/release/alerts/corpus?form=pretrain&allow_unmasked=true",
+        json={})
+    assert pre2.status_code == 200 and pre2.json()["masking"]["applied"] is False

@@ -29,6 +29,14 @@ def _client(db: SystemDB) -> TestClient:
     app.state.ontology_store = OntologyVersionStore(db)
     app.state.ontology_rules_store = OntologyRulesStore(db)
 
+    class _AuditLake:
+        """audit_write best-effort 吞异常——替身只为通过 get_lake 依赖。"""
+
+        def audit_record(self, *a, **kw) -> str:
+            return "audit-test"
+
+    app.state.lake = _AuditLake()
+
     @app.middleware("http")
     async def _inject_user(request: Request, call_next):
         request.state.user = TokenPayload(sub="tester", role=Role.ADMIN, exp=0, iat=0)

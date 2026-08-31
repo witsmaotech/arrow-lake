@@ -24,7 +24,7 @@ from arrow_lake.annotation.masking import AnnotationMaskingError
 from arrow_lake.annotation.sampler import SampleBudget
 from arrow_lake.annotation.template_gen import TemplateGenError, generate_ls_config
 from arrow_lake.api.auth_models import Role
-from arrow_lake.api.deps import get_lake, require_role
+from arrow_lake.api.deps import audit_write, get_lake, require_role
 
 router = APIRouter(prefix="/api/v1/annotation", tags=["annotation"])
 
@@ -116,7 +116,8 @@ async def get_project(name: str, request: Request) -> dict:
     status_code=200,
     dependencies=[Depends(require_role(Role.ADMIN))],
 )
-async def create_project(req: ProjectCreate, request: Request) -> dict:
+async def create_project(req: ProjectCreate, request: Request,
+                            user=Depends(require_role(Role.ADMIN))) -> dict:
     store = _store(request)
     manual: str | None = None
     template_yaml: str = ""
@@ -143,13 +144,24 @@ async def create_project(req: ProjectCreate, request: Request) -> dict:
     )
     if rec is None:
         raise HTTPException(status_code=422, detail=f"Annotation project '{req.name}' already exists")
+    audit_write(request, "annotation.project_created",
+                actor=user.username or user.sub, dataset=req.dataset,
+                payload={"project": req.name, "template": req.template_name,
+                         "config_source": config_source})
     return rec
 
 
 @router.delete("/projects/{name}", dependencies=[Depends(require_role(Role.ADMIN))])
-async def delete_project(name: str, request: Request) -> dict:
+async def delete_project(name: str, request: Request,
+                            user=Depends(require_role(Role.ADMIN))) -> dict:
+    rec = _store(request).get_project(name)
     if not _store(request).delete_project(name):
         raise HTTPException(status_code=404, detail=f"No annotation project '{name}'")
+    audit_write(request, "annotation.project_deleted",
+                actor=user.username or user.sub,
+                dataset=str(rec.get("dataset") or "") if rec else "",
+                payload={"project": name,
+                         "ls_project_id": rec.get("ls_project_id") if rec else None})
     return {"name": name, "deleted": True}
 
 

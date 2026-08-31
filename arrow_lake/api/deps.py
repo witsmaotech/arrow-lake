@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from functools import lru_cache
+from typing import Any
 
 from fastapi import HTTPException, Request
 
@@ -301,3 +302,25 @@ def require_permission(permission: Permission) -> Callable:
         return role_check(request)  # empty claim / unauthenticated → hierarchy
 
     return _check
+
+
+def audit_write(request: Any, event: str, *, actor: str, dataset: str = "",
+                payload: dict | None = None) -> None:
+    """治理面写操作审计 best-effort(四维 review M2,2026-08-31)。
+
+    rules/actions/annotation/contracts/semantic/objects/drift 九类写端点
+    此前零 sys_audit_trail——被攻陷 ADMIN 可静默拆治理设施(删 active
+    规则/reset 漂移基线/删标注项目)零痕迹,与 release/execute 的审计
+    纪律不对称。本 helper 统一补齐;**lake 从 app.state 宽松取,缺失
+    (测试 fixture 等 lifespan 未跑环境)静默跳过**——不引入 get_lake
+    依赖,免各测试 app 补替身。
+    """
+    import contextlib
+
+    lake = getattr(getattr(request, "app", None), "state", None)
+    lake = getattr(lake, "lake", None)
+    if lake is None:
+        return
+    with contextlib.suppress(Exception):
+        lake.audit_record(
+            event, dataset_name=dataset, actor=actor, payload=payload or None)

@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 from pathlib import Path
 from typing import Any
@@ -129,14 +130,25 @@ def build_sft_records(
 
 def build_pretrain_records(
     *, vertices: list[dict[str, Any]], edges: list[dict[str, Any]],
+    definition_masker: Any | None = None,
 ) -> list[dict[str, Any]]:
-    """KG 快照 → 三元组+定义上下文(chunk 顶点/缺端点跳过)。"""
+    """KG 快照 → 三元组+定义上下文(chunk 顶点/缺端点跳过)。
+
+    M1(四维 review):``definition_masker``(可选 callable str→str)对
+    双端 definition 应用 L2/L3 脱敏——definition 是从源文本抽取的片段,
+    可含 PII/敏感地名人名,此前 pretrain 形态被 ``text_bearing`` 门排除、
+    原文出域与红线④矛盾(datasheet 宣称 all forms masked)。
+    """
     def _name(v: dict[str, Any]) -> tuple[str, str] | None:
         props = v.get("properties") or {}
         name = str(props.get("name") or v.get("name") or "").strip()
         if not name or str(v.get("label") or "") == "chunk":
             return None
-        return name, str(props.get("definition") or "")
+        definition = str(props.get("definition") or "")
+        if definition_masker is not None and definition:
+            with contextlib.suppress(Exception):  # 脱敏失败保真不造假
+                definition = definition_masker(definition)
+        return name, definition
 
     info: dict[str, tuple[str, str]] = {}
     for v in vertices:

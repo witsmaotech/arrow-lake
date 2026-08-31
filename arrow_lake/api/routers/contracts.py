@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from arrow_lake.api.auth_models import Role
-from arrow_lake.api.deps import require_role
+from arrow_lake.api.deps import audit_write, get_lake, require_role
 
 router = APIRouter(prefix="/api/v1/contracts", tags=["contracts"])
 
@@ -150,7 +150,8 @@ async def get_latest_diff(scope: str, request: Request) -> dict:
 
 
 @router.put("/{scope}", status_code=200, dependencies=[Depends(require_role(Role.ADMIN))])
-async def save_contract(scope: str, req: ContractUpsertRequest, request: Request) -> dict:
+async def save_contract(scope: str, req: ContractUpsertRequest, request: Request,
+                          user=Depends(require_role(Role.ADMIN))) -> dict:
     """Save a contract: validates by parsing first, then stores the next
     version (same content hash → no new version, created=False)."""
     store = _require_store(_store(request))
@@ -166,4 +167,7 @@ async def save_contract(scope: str, req: ContractUpsertRequest, request: Request
             detail=f"Contract 'dataset' field ({parsed.dataset!r}) must match scope ({scope!r})",
         )
     rec = store.save_contract(scope, req.contract_yaml)
+    audit_write(request, "contract.saved", actor=user.sub, dataset=scope,
+                payload={"version": rec.get("version"),
+                         "created": rec.get("created")})
     return {"scope": scope, **rec}

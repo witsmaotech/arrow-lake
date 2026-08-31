@@ -456,6 +456,35 @@ async def _run_effect(
     where = f"{res.ident_col} = {_sql_lit(object_id)}"
     storage = lake._get_storage()
 
+    # H8(四维 review):写前行数核验——fetch 走 ACL 过滤只能看到可见域,
+    # 裸标识 WHERE 物理可命中跨分区重复标识的**不可见行**(契约只验
+    # pattern 不验唯一性)。count_rows 不过滤:≠1 即拒绝(2=重复标识
+    # 越权面;0=行已删),幂等分支在 M-1 查重前早已返回。
+    def _count_target() -> int:
+        try:
+            ds = storage.open_dataset(dataset, table=table_param)
+            return int(ds.count_rows(where))
+        except Exception as exc:
+            raise ActionError(
+                422,
+                f"cannot verify target uniqueness for '{object_id}': {exc}",
+                exception_class="technical",
+            ) from exc
+
+    from arrow_lake.api.utils import olap_executor as _olap_exec
+
+    matched = await run_sync(
+        _count_target, timeout=_EFFECT_TIMEOUT,
+        label="action_count_target", executor=_olap_exec)
+    if matched != 1:
+        raise ActionError(
+            422,
+            f"identifier '{object_id}' physically matches {matched} rows "
+            f"(cross-partition duplicate identifiers?) — refusing write "
+            f"outside the ACL-visible window",
+            exception_class="business",
+        )
+
     def _update() -> None:
         storage.update_rows(dataset, where, values, table=table_param)
 
