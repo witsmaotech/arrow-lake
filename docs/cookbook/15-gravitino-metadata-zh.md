@@ -4,7 +4,7 @@
 > 治理），**不在数据/查询热路径**上：数据集 CRUD、查询、KG、search、RAG 均不依赖 Gravitino。
 > 卡死或不需要时，设置 `gravitino.enabled: false` 临时关闭即可，核心功能完全不受影响。
 >
-> 版本：本章对应 Arrow Lake v1.10.7。Gravitino server 已升级至 **1.3.0**，Python SDK pin 在
+> 版本：本章对应 Arrow Lake v1.11.4。Gravitino server 已升级至 **1.3.0**，Python SDK pin 在
 > `apache-gravitino==1.3.0`（`pyproject.toml:75`）。1.3.0 的 docker 布局变更：
 > `GRAVITINO_HOME=/opt/gravitino`（非旧版 `/root/gravitino`），数据卷须挂 `/opt/gravitino/data`。
 > Catalog S3 属性使用 **`s3.*`**（`s3.endpoint`/`s3.access-key-id`/`s3.secret-access-key`，

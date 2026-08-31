@@ -52,6 +52,7 @@ Arrow Lake 数据湖平台实战教程，涵盖数据摄取、搜索、分析、
 | #  | 中文                                           | English                                               |
 | -- | -------------------------------------------- | ----------------------------------------------------- |
 | 19 | [**REST 实战配方**](./19-rest-recipes-zh.md)      | [**REST Recipes**](./19-rest-recipes.md)              |
+| 20 | [**高质量数据集流水线**](./20-hq-dataset-zh.md) | [**HQ Dataset Pipeline**](./20-hq-dataset.md)        |
 
 > **版本特性**：第 16 章（v1.8 新特性）及各版本演进详见文末 [版本特性 / Release Notes](#版本特性--release-notes) 区。
 
@@ -65,6 +66,7 @@ Arrow Lake 数据湖平台实战教程，涵盖数据摄取、搜索、分析、
 | **搜索进阶** | 04 → 05 → 06 | 向量 → 全文 → 混合 / 分面 |
 | **分析 & AI** | 07 → 08 → 09 | OLAP → RAG → 知识图谱 |
 | **生产部署** | 12 → 10 → 11 | 部署 → REST API → 质量去重 |
+| **高质量数据集** | 20 → 19 | 标注→评估→发布→语料 → REST 配方 |
 | **参考手册** | 13 · 14 | CLI 参考 · 工作流编排 |
 | **治理与安全** | 15 · 17 · 18 | Gravitino · 脱敏 · 血缘 |
 | **端到端实战** | 19 | REST Recipes |
@@ -112,7 +114,7 @@ docker exec -it deploy-api-1 .venv/bin/python /app/examples/19_knowledge_graph_b
 
 ## 版本
 
-对应 Arrow Lake v1.10.7
+对应 Arrow Lake v1.11.4
 
 ## 版本特性 / Release Notes
 

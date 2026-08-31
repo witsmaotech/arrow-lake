@@ -560,7 +560,7 @@ Arrow Lake 采用**严格五层架构**：请求自上而下穿越 **① 接入 
 
 ![部署拓扑](./diagrams/05-deployment-topology.png)
 
-Docker Compose 单栈交付（镜像 `arrow-lake:1.11.3`），六个功能区：
+Docker Compose 单栈交付（镜像 `arrow-lake:1.11.4`），六个功能区：
 
 | 区 | 服务 | 说明 |
 |---|---|---|

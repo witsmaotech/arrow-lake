@@ -385,7 +385,7 @@ argo_config = ArgoConfig(
     namespace="arrow-lake",       # Argo workflow 的 K8s 命名空间
     service_account="arrow-lake", # workflow pod 的服务账号
     workflow_timeout=3600,        # workflow 执行超时(秒,>=60)
-    image="arrow-lake:1.10.7",    # workflow pod 的容器镜像
+    image="arrow-lake:1.11.4",    # workflow pod 的容器镜像
     image_pull_policy="IfNotPresent",  # 镜像拉取策略
     artifact_storage="",          # artifact 存储后端(s3:// 或 minio://)
 )

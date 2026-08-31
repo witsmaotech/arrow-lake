@@ -15,7 +15,7 @@
 docker compose --project-directory deploy -p arrow-lake \
   -f deploy/docker-compose.prod_minimal.yml up -d
 
-# 只 build api 镜像（避开 BuildKit 共享 tag quirk；镜像 tag 为 arrow-lake:1.10.7）
+# 只 build api 镜像（避开 BuildKit 共享 tag quirk；镜像 tag 为 arrow-lake:1.11.4）
 docker compose --project-directory deploy -p arrow-lake \
   -f deploy/docker-compose.prod_minimal.yml build api
 
