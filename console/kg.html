@@ -117,7 +117,7 @@
   <div class="panel" style="margin-top:var(--s4)">
     <div class="panel-h" id="buildToggle" style="cursor:pointer;user-select:none"><i class="placeholder" data-ic="plus"></i><h3>建 / 重建 KG</h3><span class="sub toggle-mark" style="margin-left:auto">▸</span></div>
     <div class="panel-b" id="buildBody" style="display:none">
-      <div class="muted" style="font-size:.78rem;margin-bottom:8px">对当前数据集抽取实体/关系建图(异步,ADMIN;走全局轻量 LLM 抽取)。大 dataset 耗时较长,完成后自动刷新统计。</div>
+      <div class="muted" style="font-size:.78rem;margin-bottom:8px">对当前数据集抽取实体/关系建图(异步,ADMIN;走全局轻量 LLM 抽取)。大 dataset 耗时较长,完成后自动刷新统计。抽取用的模板取数据集绑定 — <a href="extraction-templates.html" style="text-decoration:underline">管理模板/绑定 →</a></div>
       <div class="flex" style="gap:8px;align-items:center"><button class="btn btn-primary btn-sm" id="buildBtn">建 KG</button><span id="buildMode" class="tag" style="font-size:.72rem;display:none"></span><span id="buildStatus" class="muted" style="font-size:.74rem"></span></div>
       <div id="ontoGate" style="display:none;margin-top:10px"></div>
     </div>

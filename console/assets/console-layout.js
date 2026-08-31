@@ -63,12 +63,12 @@ const NAV = [
     { id: "image-search", label: "图像检索", ic: "file", href: "search.html?mode=image" },
     { id: "rag", label: "RAG 问答", ic: "search", href: "rag.html" },
     { id: "kg", label: "知识图谱", ic: "code", href: "kg.html" },
+    { id: "templates", label: "抽取模板", ic: "code", href: "extraction-templates.html" },
   ] },
   { group: "本体与语义", items: [
     { id: "ontology-designer", label: "建模工作台", ic: "plus", href: "ontology-designer.html" },
     { id: "ontology", label: "本体与规则", ic: "code", href: "ontology.html" },
     { id: "contracts", label: "数据契约", ic: "key", href: "contracts.html" },
-    { id: "templates", label: "抽取模板", ic: "code", href: "extraction-templates.html" },
     { id: "objects", label: "对象浏览", ic: "olap", href: "objects.html" },
   ] },
   { group: "高质量数据集", items: [

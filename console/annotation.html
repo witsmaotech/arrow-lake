@@ -158,7 +158,7 @@ function selectProject(name) {
   $("#projDetail").innerHTML = `
     <div class="kv">
       <b>源数据集</b><span>${esc(cur.dataset)}</span>
-      <b>绑定模板</b><span>${esc(cur.template_name)}</span>
+      <b>绑定模板</b><span>${esc(cur.template_name)} · <a href="extraction-templates.html" style="text-decoration:underline">管理 →</a></span>
       <b>LS 项目</b><span>${cur.ls_project_id && lsUrl
         ? `<a href="${esc(lsUrl)}/projects/${cur.ls_project_id}/data" target="_blank" rel="noopener" style="text-decoration:underline">#${cur.ls_project_id} ↗</a>`
         : (cur.ls_project_id ? `#${cur.ls_project_id}(配置 ls_public_url 可加链接)` : "未绑定(派发时懒创建)")}</span>
