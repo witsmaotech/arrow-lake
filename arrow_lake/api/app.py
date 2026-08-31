@@ -351,6 +351,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.annotation_project_store = AnnotationProjectStore(sys_db)
         # v1.11.4 MS5 (W1.4/W1.5, F5.1): five-dimension quality assessment
         # reports behind /api/v1/quality — 发布门报告链(评估历史/准入依据)。
+        from arrow_lake.system_db.stores.decisions_history import (
+            DecisionsHistoryStore,
+        )
         from arrow_lake.system_db.stores.drift_baselines import DriftBaselineStore
         from arrow_lake.system_db.stores.quality_reports import QualityReportStore
         from arrow_lake.system_db.stores.releases import ReleaseStore
@@ -360,6 +363,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # v1.11.4 MS5 (W3.1/W3.2, F5.4): release registry behind
         # /api/v1/release — 发布门(准入+否决+劣化+漂移)+ 规格书存档。
         app.state.release_store = ReleaseStore(sys_db)
+        # 发版前清偿 D 项:研判历史(RLHF 配对/飞轮低置信数据面)
+        app.state.decisions_history_store = DecisionsHistoryStore(sys_db)
         # W4.0b: 30s 回收轮询(S9 主通道;webhook 只加速)。LS 未配置 →
         # 不启动(纯 dispatch-less 部署零后台线程);连续失败熔断停。
         if config.annotation.ls_url and config.annotation.ls_api_token:

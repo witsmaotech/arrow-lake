@@ -20,13 +20,13 @@ import threading
 import time
 import weakref
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 import duckdb
 
 from arrow_lake.config import OlapConfig, RedisConfig, StorageConfig
-from arrow_lake.exceptions import ErrorCode, QueryError
 from arrow_lake.core.metrics import (
     duckdb_memory_budget_mb,
     duckdb_pool_active_sessions,
@@ -41,6 +41,7 @@ from arrow_lake.core.metrics import (
     duckdb_pool_warmup_total,
     get_metrics_enabled,
 )
+from arrow_lake.exceptions import ErrorCode, QueryError
 from arrow_lake.query._db import DuckDBSession
 
 logger = logging.getLogger(__name__)
@@ -101,7 +102,7 @@ def run_duckdb_interruptible(
     def _work() -> None:
         try:
             holder["result"] = func()
-        except BaseException as exc:  # noqa: BLE001 - re-raised on the caller thread
+        except BaseException as exc:
             holder["error"] = exc
 
     worker = threading.Thread(target=_work, daemon=True, name=f"duckdb-{label}")
@@ -112,7 +113,7 @@ def run_duckdb_interruptible(
         # Timeout reached — interrupt the in-flight query from this thread.
         try:
             conn.interrupt()
-        except Exception as exc:  # noqa: BLE001 - interrupt must never mask the timeout
+        except Exception as exc:
             logger.warning("conn.interrupt() failed for %s: %s", label, exc)
         worker.join(_INTERRUPT_GRACE_SECONDS)
         if worker.is_alive():
@@ -419,7 +420,45 @@ class DuckDBSessionManager:
             healthy = False
         else:
             healthy = self._health_check(managed._conn)
+        if healthy:
+            self._sweep_session_objects(managed._conn)
         self._return_or_close(managed._conn, healthy, managed._created_at)
+
+    def _sweep_session_objects(self, conn: Any) -> None:
+        """M-6 兜底(v1.10.7 review):归还空闲池前清掉查询期残留对象。
+
+        逐查询的 finally 清理(P0-6)是主通道;此处防漏网路径——任何
+        在本连接上注册/建出的**临时对象与桥接 schema** 若被带回空闲池,
+        下一个借用者可按名引用读到上一用户的数据(跨端点数据可见性)。
+        范围刻意收窄:**main schema 的用户对象(如物化视图)不碰**;
+        只清 ①conn.register 落点的 temp 对象 ②两段容器注册产生的非
+        main/temp schema(整 schema CASCADE)。best-effort,永不抛。
+        """
+        import contextlib
+
+        import duckdb
+
+        with contextlib.suppress(Exception):
+            # ① 非内部、非 main/temp 的 schema = 桥接两段注册残留
+            schemas = conn.execute(
+                "SELECT schema_name FROM duckdb_schemas() "
+                "WHERE NOT internal "
+                "AND schema_name NOT IN ('main', 'temp')"
+            ).fetchall() or []
+            for (schema,) in schemas:
+                with contextlib.suppress(duckdb.Error):
+                    conn.execute(  # nosec B608 — 名称来自元数据且加引号
+                        f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+        with contextlib.suppress(Exception):
+            # ② conn.register(arrow) 落点 = temporary view(database 'temp';
+            # 实证 duckdb_views:registered temporary=True,CREATE VIEW=False
+            # ——按 temporary 精确圈定,用户物化视图(temporary=False)不碰)
+            temps = conn.execute(
+                "SELECT view_name FROM duckdb_views() WHERE temporary"
+            ).fetchall() or []
+            for (name,) in temps:
+                with contextlib.suppress(duckdb.Error):
+                    conn.unregister(name)
 
     def _return_or_close(
         self,

@@ -140,3 +140,26 @@ def test_kl_boundary_threshold_semantics() -> None:
     mild = categorical_kl(_cat(["a"] * 60 + ["b"] * 40), base)
     severe = categorical_kl(_cat(["a"] * 95 + ["b"] * 5), base)
     assert mild < 0.1 < severe
+
+
+# === evaluate_drift(发布层复用,W3) ==========================================
+
+def test_evaluate_drift_flags_and_skips_missing() -> None:
+    from arrow_lake.quality.drift import evaluate_drift
+    base = {
+        "severity": snapshot_column(_cat(["a"] * 50 + ["b"] * 50)),
+        "gone": snapshot_column(_cat(["x"] * 10)),   # 基线有、当前无
+    }
+    shifted = pa.table({"severity": pa.array(["a"] * 95 + ["b"] * 5, pa.string())})
+    out = evaluate_drift(shifted, base, threshold=0.1)
+    assert "gone" not in out["columns"]              # 消失列跳过
+    assert out["columns"]["severity"]["drifted"] is True
+    assert out["drifted"] == ["severity"]
+
+
+def test_evaluate_drift_stable_no_flags() -> None:
+    from arrow_lake.quality.drift import evaluate_drift
+    values = ["a"] * 50 + ["b"] * 50
+    base = {"c": snapshot_column(_cat(values))}
+    out = evaluate_drift(pa.table({"c": pa.array(values, pa.string())}), base, 0.1)
+    assert out["drifted"] == [] and out["columns"]["c"]["kl"] == pytest.approx(0.0)

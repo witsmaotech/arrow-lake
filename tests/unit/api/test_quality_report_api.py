@@ -518,3 +518,22 @@ def test_relevance_refeed_lists(db: SystemDB) -> None:
     c2 = _make_app(role=Role.ADMIN, db=db, lake=empty_lake)
     assert c2.get("/api/v1/quality/relevance/alerts/refeed").json()[
         "relevance_score"] is None
+
+
+def test_review_pack_generation(db: SystemDB) -> None:
+    """F1.7 评审材料包:对象清单+active 规则+质量摘要+签字栏。"""
+    from arrow_lake.system_db.stores import ontology as _o  # noqa: F401
+    _, lake = _ready(db)
+    client = _make_app(role=Role.ADMIN, db=db, lake=lake)
+    client.post("/api/v1/quality/assess/alerts")
+    r = client.get("/api/v1/quality/review-pack/alerts")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["format"] == "markdown"
+    c = body["content"]
+    assert "对象清单" in c and "severity" in c and "必填" in c
+    assert "评审人" in c and "签字" in c
+    assert "总分" in c  # 质量摘要
+    # 无契约数据集也可生成
+    r2 = client.get("/api/v1/quality/review-pack/ghost")
+    assert r2.status_code == 200 and "无契约" in r2.json()["content"]

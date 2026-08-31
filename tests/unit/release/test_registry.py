@@ -110,7 +110,7 @@ def test_missing_returns_none(db: SystemDB) -> None:
     assert store.list_releases("ghost") == []
 
 
-def test_migration_count_22() -> None:
+def test_migration_count_23() -> None:
     from pathlib import Path
     n = len(list(Path("arrow_lake/system_db/migrations").glob("V*.sql")))
-    assert n == 22  # V021 releases 加入后(V020/V022 已在 W1/W2)
+    assert n == 23  # V020-V023(reports/releases/drift/decisions_history)

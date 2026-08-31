@@ -7,7 +7,7 @@ VIEWER(S9:纯读+规则求值,行动才是 EDITOR)。对象读取经 W3.1 共享
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from arrow_lake.api.auth_models import Role
@@ -30,8 +30,12 @@ class AssessRequest(BaseModel):
 async def assess(
     req: AssessRequest,
     request: Request,
+    record_history: bool = Query(
+        default=False,
+        description="true=研判落 decisions_history(RLHF/飞轮数据面,EDITOR 写)",
+    ),
     lake=Depends(get_lake),
-    _user=Depends(require_role(Role.VIEWER)),
+    user=Depends(require_role(Role.VIEWER)),
     checker=Depends(get_checker),
 ) -> dict:
     """Assess one object:对齐后取数 → active 规则求值 → 结论+可行动作。"""
@@ -48,12 +52,12 @@ async def assess(
             detail="system_db disabled; rules registry unavailable",
         )
 
-    return await assess_object(
+    result = await assess_object(
         lake=lake,
         checker=checker,
-        role=_user.role,
-        permissions=getattr(_user, "permissions", None),
-        actor_sub=getattr(_user, "sub", ""),
+        role=user.role,
+        permissions=getattr(user, "permissions", None),
+        actor_sub=getattr(user, "sub", ""),
         dataset=req.dataset,
         object_type=req.object_type,
         object_id=req.object_id,
@@ -62,5 +66,35 @@ async def assess(
         rules_store=rules_store,
         action_store=action_store,
         deny_table_read=lambda n, t: _deny_table_read(n, t, request),
-        acl_enforce=lambda sql, tgt: _acl_enforced_sql(sql, tgt, checker, _user.role),
+        acl_enforce=lambda sql, tgt: _acl_enforced_sql(sql, tgt, checker, user.role),
     )
+
+    # opt-in 研判历史(RLHF/飞轮数据面,发版前清偿 D 项);写操作要求
+    # EDITOR——VIEWER 只读即时求值语义不变
+    if record_history:
+        from arrow_lake.api.auth_models import Role as _Role
+
+        if user.role != _Role.ADMIN and user.role != _Role.EDITOR:
+            from fastapi import HTTPException
+
+            raise HTTPException(
+                status_code=403,
+                detail="recording decision history requires EDITOR",
+            )
+        hstore = getattr(request.app.state, "decisions_history_store", None)
+        if hstore is not None:
+            import contextlib
+
+            with contextlib.suppress(Exception):  # 历史落库不阻塞研判
+                hstore.record(
+                    dataset=req.dataset, object_type=req.object_type,
+                    object_id=req.object_id,
+                    lifecycle_state=result.get("lifecycle_state"),
+                    matched_rules=result.get("matched_rules") or 0,
+                    rule_ids=result.get("rule_ids") or [],
+                    conclusions=result.get("conclusions") or [],
+                    confidence=result.get("confidence") or 1.0,
+                    actor=getattr(user, "sub", ""),
+                )
+                result["history_recorded"] = True
+    return result

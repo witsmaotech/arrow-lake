@@ -130,3 +130,78 @@ def test_run_background_marks_failed_when_a_step_hangs(monkeypatch, isolated_tas
     t = TaskManager._tasks[task_id]
     assert t.status == TaskStatus.FAILED
     assert "max lifetime" in (t.error or "")
+
+
+# === M-5(v1.10.7 review,发版前清偿):排队不假 RUNNING / lifetime 只计执行 ===
+
+def test_sync_task_pending_while_queued_then_running() -> None:
+    """池满排队:状态=PENDING+queued_at,不心跳;获槽后才 RUNNING。"""
+    import asyncio
+    import threading
+    import time
+
+    from arrow_lake.api import tasks as tasks_mod
+    from arrow_lake.api.tasks import TaskManager, TaskStatus
+
+    TaskManager._redis_store = None
+    # 用 1 槽闸逼出排队路径
+    tasks_mod._ingest_slots = asyncio.Semaphore(1)
+    try:
+        hold = threading.Event()
+        release = threading.Event()
+
+        def _blocker() -> str:
+            hold.set()
+            release.wait(timeout=10)
+            return "blocker-done"
+
+        def _queued() -> str:
+            return "queued-done"
+
+        t1 = TaskManager.create_task("op", "blocker")
+        t2 = TaskManager.create_task("op", "queued")
+
+        async def _drive() -> None:
+            # 同一 loop 内先占满唯一槽(asyncio 原语绑 loop——生产单 loop
+            # 同语义;跨 asyncio.run 双 loop 是测试伪影,勿复现)
+            bg1 = asyncio.create_task(
+                TaskManager.run_background(t1, _blocker))
+            for _ in range(100):
+                if hold.is_set():
+                    break
+                await asyncio.sleep(0.05)
+            assert hold.is_set(), "blocker 未获槽"
+            assert TaskManager._tasks[t1].status == TaskStatus.RUNNING
+            # 第二个任务在闸上排队
+            bg2 = asyncio.create_task(
+                TaskManager.run_background(t2, _queued))
+            await asyncio.sleep(0.3)  # 排队窗口
+            assert TaskManager._tasks[t2].status == TaskStatus.PENDING
+            assert "queued_at" in TaskManager._tasks[t2].detail
+            assert "heartbeat" not in TaskManager._tasks[t2].detail
+            release.set()
+            await bg1
+            await bg2
+            assert TaskManager._tasks[t2].status == TaskStatus.COMPLETED
+            assert TaskManager._tasks[t2].result == {"value": "queued-done"}
+
+        asyncio.run(_drive())
+    finally:
+        tasks_mod._ingest_slots = None
+
+
+def test_async_task_running_immediately_with_heartbeat_visible() -> None:
+    """async 任务不走闸:立即 RUNNING(语义回归锚)。"""
+    import asyncio
+
+    from arrow_lake.api.tasks import TaskManager, TaskStatus
+
+    TaskManager._redis_store = None
+
+    async def _quick() -> dict:
+        return {"ok": True}
+
+    tid = TaskManager.create_task("op", "quick")
+    asyncio.run(TaskManager.run_background(tid, _quick))
+    assert TaskManager._tasks[tid].status == TaskStatus.COMPLETED
+    assert TaskManager._tasks[tid].result == {"ok": True}

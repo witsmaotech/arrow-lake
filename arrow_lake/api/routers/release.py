@@ -329,6 +329,80 @@ def _sft_system_prompt(dataset: str, contract: Any, request: Request) -> str:
     return "\n".join(lines)
 
 
+
+
+def _build_rlhf_pairs(
+    *, request: Request, dataset: str, rows: list[dict[str, Any]],
+    adl: Any, text_column: str,
+    rules: tuple, entities: tuple,
+) -> tuple[list[dict[str, Any]], str | None]:
+    """RLHF 偏好对(decisions_history × ADL,设计 §8③)。
+
+    配对键:契约 identifier 列的值(=decisions 的 object_id)→ 源行文本
+    → stable_row_id → ADL 最新人工 L4(chosen);rejected=该对象的最新
+    模型研判结论。任一侧缺失的对象跳过;无历史 → 空导出+提示。
+    """
+    from arrow_lake.release.corpus import _latest_human_by_row, build_rlhf_records
+
+    hstore = getattr(request.app.state, "decisions_history_store", None)
+    cstore = _store(request, "contract_store", "contract registry")
+    contract, _ = _load_contract_and_spec(cstore, dataset)
+    if hstore is None or contract is None:
+        return [], ("decisions history or contract unavailable — RLHF "
+                    "pairing needs both; empty export")
+    history = hstore.list_history(dataset, limit=500)
+    if not history:
+        return [], ("no recorded decisions — POST /decisions/assess?"
+                    "record_history=true to build the RLHF source")
+
+    # 配对:object_id 按值在源行全列扫描(契约 identifier 值即 object_id;
+    # 不要求契约显式声明 identifier——值匹配对 demo/无 identifier 契约同样成立)
+    pairs: list[dict[str, Any]] = []
+    by_row = _latest_human_by_row(adl) if adl is not None else {}
+    from arrow_lake.annotation.dispatch import stable_row_id
+
+    text_of: dict[str, str] = {r["row_id"]: str(r.get(text_column) or "")
+                               for r in rows}
+    for h in history:
+        oid = str(h.get("object_id") or "")
+        if not oid:
+            continue
+        # 在源行里找 identifier 值等于 oid 的行(全列扫,不依赖单一列名)
+        target_text = None
+        for r in rows:
+            if oid in [str(v) for v in r.values() if v is not None]:
+                target_text = str(r.get(text_column) or "") or None
+                if target_text:
+                    break
+        if not target_text:
+            continue
+        rid = stable_row_id(target_text, 0)
+        expert = by_row.get(rid)
+        if expert is None:
+            continue
+        rejected = {
+            "rule_ids": h.get("rule_ids") or [],
+            "conclusions": h.get("conclusions") or [],
+            "matched_rules": h.get("matched_rules"),
+        }
+        pairs.append({
+            "prompt": target_text,
+            "chosen": {
+                "objects": expert.get("objects") or [],
+                "events": expert.get("events") or [],
+                "rules_applied": expert.get("rules_applied") or [],
+                "scenario": expert.get("scenario") or "",
+                "relations": expert.get("relations") or [],
+            },
+            "rejected": rejected,
+        })
+    records = build_rlhf_records(
+        pairs=pairs, generalize_rules=rules, entity_names=entities)
+    note = None if records else "no expert/model pairs resolvable (need ADL L4 + recorded decisions on the same objects)"
+    return records, note
+
+
+
 @router.post(
     "/{dataset}/corpus",
     status_code=200,
@@ -376,11 +450,14 @@ async def export_corpus(
     source = _read_source(lake, dataset, table)
     from arrow_lake.annotation.dispatch import stable_row_id
 
-    texts = [str(r.get(text_column) or "").strip() for r in source.to_pylist()]
-    rows = [
-        {"row_id": stable_row_id(t, i), text_column: t}
-        for i, t in enumerate(texts) if t
-    ]
+    # 带全列(RLHF 按 object_id 值扫描需要);i 与 texts 对齐(stable_row_id 语义)
+    rows = []
+    for i, raw in enumerate(source.to_pylist()):
+        t = str(raw.get(text_column) or "").strip()
+        if not t:
+            continue
+        rows.append({"row_id": stable_row_id(t, i), **{
+            k: v for k, v in raw.items() if v is not None}})
     adl = None
     with contextlib.suppress(Exception):
         adl = lake.read_dataset(f"{dataset}_adl")
@@ -436,10 +513,11 @@ async def export_corpus(
             if not records:
                 note = f"no resolvable triples in KG '{graph}'"
     elif form == "rlhf":
-        # MS3 decisions 无状态(无持久数据面)→ 空导出+提示,不阻塞
-        records, note = [], (
-            "decisions are stateless (MS3) — RLHF pairs require a persisted "
-            "decision source; empty export by design"
+        # 发版前清偿 D 项:decisions_history×ADL 自动配对(chosen=专家 L4,
+        # rejected=模型研判);无历史/无可配对仍空导出+提示(不阻塞)
+        records, note = _build_rlhf_pairs(
+            request=request, dataset=dataset, rows=rows, adl=adl,
+            text_column=text_column, rules=rules, entities=entities,
         )
     else:  # golden
         records = build_golden_records(

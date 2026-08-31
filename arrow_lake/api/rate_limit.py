@@ -9,6 +9,7 @@ Uses a fixed-window counter with asyncio.Lock for thread safety.
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from collections import defaultdict
 
@@ -112,6 +113,9 @@ class _Counter:
 
 # Module-level counter storage shared across middleware instances.
 _counters: dict[str, _Counter] = defaultdict(_Counter)
+
+#: 回落均摊用 worker 数(M-8):与部署 worker 数对齐(env 优先,默认 4)。
+_WORKER_COUNT = max(1, int(os.environ.get("ARROW_LAKE__API__WORKERS", "4")))
 _last_cleanup = 0.0
 _CLEANUP_INTERVAL = 120.0  # seconds
 
@@ -167,13 +171,14 @@ async def rate_limit_middleware_fn(
         # — a slow/hung redis would block the event loop up to its 5s socket
         # timeout on EVERY request. Off-loop with a 100ms budget; a timeout
         # (or redis error → None) falls back to the in-memory counter.
-        from arrow_lake.api.utils import run_sync
+        from arrow_lake.api.utils import auth_io_executor, run_sync
 
         try:
             res = await run_sync(
                 rl.hit, client_ip, path,
                 limit=rpm, window=int(_WINDOW_SECONDS),
                 timeout=0.1, label="rl_hit",
+                executor=auth_io_executor,  # M-8:auth 面独立池
             )
         except TimeoutError:
             res = None
@@ -198,11 +203,16 @@ async def rate_limit_middleware_fn(
             return response
         # res is None → Redis hiccup → fall through to in-memory
 
-    # ── In-memory fallback (single-process) ──
+    # ── In-memory fallback (per-process) ──
+    # M-8(v1.10.7 review,发版前清偿):回落是进程内计数,gunicorn N worker
+    # =全站实际限额 ×N。均摊修正是近似全局口径:每 worker 预算 = limit/N
+    # (N=ARROW_LAKE__API__WORKERS 或 4)。Redis 恢复后自动回到精确全局
+    # 计数;文档语义:fail-open 期间限额收紧而非放大。
     _evict_stale_counters(now)
     counter = _counters[key]
 
-    allowed, earliest = await counter.hit(now, _WINDOW_SECONDS, limit=rpm)
+    fallback_limit = max(1, rpm // _WORKER_COUNT)
+    allowed, earliest = await counter.hit(now, _WINDOW_SECONDS, limit=fallback_limit)
 
     if not allowed:
         from arrow_lake.core.metrics import rate_limit_rejected_total

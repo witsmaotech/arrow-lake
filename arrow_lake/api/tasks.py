@@ -16,10 +16,11 @@ import functools
 import logging
 import os
 import uuid
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any, Callable, ClassVar, Coroutine
+from typing import Any, ClassVar
 
 from arrow_lake.api._redis_task_store import RedisTaskStore
 from arrow_lake.api.utils import ingest_executor
@@ -173,6 +174,20 @@ def _resolve_max_lifetime() -> float | None:
     return _TASK_MAX_LIFETIME_SECONDS
 
 
+# M-5(v1.10.7 review):同步后台任务的执行槽闸——与 ingest_executor 池同
+# 尺寸;获槽后才转 RUNNING/启心跳/计 lifetime。lazy 创建(asyncio 原语
+# 绑 loop;每进程单 loop,gunicorn 多 worker 各自独立,语义正确)。
+_ingest_slots: asyncio.Semaphore | None = None
+
+
+def _ingest_slots_gate() -> asyncio.Semaphore:
+    global _ingest_slots
+    if _ingest_slots is None:
+        workers = getattr(ingest_executor, "_max_workers", None) or 8
+        _ingest_slots = asyncio.Semaphore(workers)
+    return _ingest_slots
+
+
 class TaskManager:
     """In-process background task tracker with optional Redis sharing.
 
@@ -235,7 +250,7 @@ class TaskManager:
         if cls._history_store is not None:
             try:
                 cls._history_store.record(task.to_dict())
-            except Exception as exc:  # noqa: BLE001 — fail-soft: history is best-effort
+            except Exception as exc:
                 logger.warning("TaskManager: history persist failed for %s: %s", task.task_id, exc)
         cls._notify_owner(task)
 
@@ -252,7 +267,7 @@ class TaskManager:
             msg, kind = f"{task.operation} 失败{ds}{': ' + err if err else ''}", "error"
         try:
             cls._user_state_store.notify(task.user_id, msg, kind=kind)
-        except Exception as exc:  # noqa: BLE001 — notifications are best-effort
+        except Exception as exc:
             logger.warning("TaskManager: notify owner failed for %s: %s", task.task_id, exc)
 
     # ------------------------------------------------------------------
@@ -329,7 +344,7 @@ class TaskManager:
         if cls._history_store is not None and local is None:
             try:
                 hist = cls._history_store.get(task_id)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 hist = None
             if hist is not None:
                 return BackgroundTask.from_dict(hist)
@@ -389,6 +404,9 @@ class TaskManager:
         if cls._redis_store is not None:
             cls._redis_store.update_task(task.task_id, task.to_dict())
 
+
+
+
     # ------------------------------------------------------------------
     # Generic background runner
     # ------------------------------------------------------------------
@@ -404,48 +422,86 @@ class TaskManager:
         """Run any callable as a background task with status tracking.
 
         ``func`` may be sync or async.  Sync functions are dispatched to
-        the default executor so they don't block the event loop.
+        the dedicated ingest executor so they don't block the event loop.
 
         A heartbeat is written while running so :meth:`reap_orphaned_tasks` can
         tell a live task from one whose owning worker died (reload/recycle/
         crash) — without it, such tasks strand in ``running`` forever because
         this method's ``finally`` never runs on a dead process.
+
+        M-5(v1.10.7 review,发版前清偿):同步任务**先占槽再入池**——池满
+        排队期间状态=PENDING+``detail.queued_at``(**不**假显 RUNNING、
+        心跳不跳),``max-lifetime`` 只计实际执行(获槽后起算)。旧语义
+        把排队时间计入 lifetime:从未启动的任务被标 failed 而 executor
+        线程稍后仍会执行(restore 重跑=双跑风险)。排队占用回收豁免:
+        reaper 只在进程启动期跑,活进程的排队任务不会被误收。
         """
         task = cls._tasks.get(task_id)
         if task is None:
             return
-        task.status = TaskStatus.RUNNING
-        cls._sync_to_redis(task)
+
+        is_async_fn = asyncio.iscoroutinefunction(func)
+
+        async def _mark_running() -> None:
+            task.status = TaskStatus.RUNNING
+            task.detail.pop("queued_at", None)
+            cls._sync_to_redis(task)
+
+        if is_async_fn:
+            await _mark_running()
+        else:
+            # 排队可见(诚实态):未获槽前不装 RUNNING
+            task.status = TaskStatus.PENDING
+            task.detail["queued_at"] = datetime.now(UTC).isoformat()
+            cls._sync_to_redis(task)
 
         async def _heartbeat() -> None:
             while True:
                 await asyncio.sleep(_HEARTBEAT_INTERVAL_SECONDS)
+                if task.status != TaskStatus.RUNNING:
+                    continue  # M-5:排队期不假跳心跳
                 task.detail["heartbeat"] = datetime.now(UTC).isoformat()
                 cls._sync_to_redis(task)
 
         heartbeat = asyncio.create_task(_heartbeat())
         try:
-            if asyncio.iscoroutinefunction(func):
+            if is_async_fn:
                 coro = func(*args, **kwargs)
             else:
                 # v1.10.7 WP2 (review H8): the shared default executor is what
                 # run_sync uses — heavy ingest there starved every route. The
                 # dedicated ingest pool keeps saturation impact local to ingest.
-                loop = asyncio.get_running_loop()
-                coro = loop.run_in_executor(
-                    ingest_executor, functools.partial(func, *args, **kwargs),
-                )
+                #
+                # M-5: async gate sized to the executor pool — acquire BEFORE
+                # submitting so queue time is neither heartbeated nor
+                # lifetime-counted (double-run class eliminated at the source).
+                gate = _ingest_slots_gate()
+
+                async def _gated() -> Any:
+                    await gate.acquire()
+                    try:
+                        await _mark_running()
+                        loop = asyncio.get_running_loop()
+                        return await loop.run_in_executor(
+                            ingest_executor,
+                            functools.partial(func, *args, **kwargs),
+                        )
+                    finally:
+                        gate.release()
+
+                coro = _gated()
             # Bound the run time as a backstop: a hung sync step (no client-side
             # timeout) must still transition to FAILED instead of idling in
             # running forever. The executor thread can't be force-killed, but
             # the status becomes correct and the de-dup guard unblocks.
+            # (M-5: gate acquisition happens *outside* the lifetime window.)
             lifetime = _resolve_max_lifetime()
             try:
                 if lifetime is None:
                     result = await coro
                 else:
                     result = await asyncio.wait_for(coro, timeout=lifetime)
-            except asyncio.TimeoutError as exc:
+            except TimeoutError as exc:
                 raise TimeoutError(
                     f"task exceeded {lifetime:.0f}s max lifetime"
                 ) from exc

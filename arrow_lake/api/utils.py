@@ -70,6 +70,14 @@ ingest_executor = CountingThreadPoolExecutor(
     thread_name_prefix="ingest",
 )
 
+# Dedicated pool for auth-plane Redis IO (M-8, v1.10.7 review 发版前清偿):
+# 限流/登录的 Redis 调用原先走 run_sync 默认池——Redis 慢/挂时每个调用
+# 以 5s 弃线程占位,~3 req/s/worker 即饱和该池,登录面雪崩放大到全站。
+# 独立 4 线程小池把饱和半径收敛到 auth 面(olap/ingest 隔离同款纪律)。
+auth_io_executor = ThreadPoolExecutor(
+    max_workers=4, thread_name_prefix="auth-io",
+)
+
 
 def _wire_ingest_executor_gauge() -> None:
     """Export in-flight ingest work as arrow_lake_ingest_executor_active_threads."""
@@ -77,7 +85,7 @@ def _wire_ingest_executor_gauge() -> None:
         from arrow_lake.core.metrics import ingest_executor_active_threads
 
         ingest_executor_active_threads.set_function(lambda: ingest_executor.active)
-    except Exception:  # noqa: BLE001 — metrics are best-effort
+    except Exception:
         _log.debug("ingest_executor_gauge_unavailable")
 
 

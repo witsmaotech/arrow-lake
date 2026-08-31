@@ -440,9 +440,9 @@ async def start_relevance_loop(
             generalize_rules=rel_rules, entity_names=rel_entities,
         )
     else:
-        from arrow_lake.annotation.dispatch import LSClient
-
         import json as _rules_json
+
+        from arrow_lake.annotation.dispatch import LSClient
 
         with contextlib.suppress(ValueError):
             rel_rules = tuple(
@@ -480,12 +480,21 @@ async def start_relevance_loop(
 
 class FeedbackRequest(BaseModel):
     object_rows: list[str] = Field(
-        min_length=1, max_length=500,
-        description="研判低置信/失败的行 id(stable_row_id)",
+        default_factory=list, max_length=500,
+        description="研判低置信/失败的行 id(stable_row_id);"
+                    "auto_low_confidence=true 时可为空(自动补充)",
     )
     text_column: str = Field(default="text")
     project: str | None = Field(
         default=None, description="指定 L4 项目名(缺省自动找首个 active)",
+    )
+    auto_low_confidence: bool = Field(
+        default=False,
+        description="true=从 decisions_history 自动挑低置信(<threshold)对象行入队"
+                    "(发版前清偿 D 项;object_rows 可为空)",
+    )
+    confidence_threshold: float = Field(
+        default=0.6, description="auto 模式的低置信阈值",
     )
     generalize_rules: list[tuple[str, str]] = Field(
         default_factory=list,
@@ -516,6 +525,11 @@ async def feedback_loop(
     if astore is None:
         raise HTTPException(
             status_code=503, detail="system_db disabled; annotation registry unavailable",
+        )
+    if not req.object_rows and not req.auto_low_confidence:
+        raise HTTPException(
+            status_code=422,
+            detail="object_rows is empty and auto_low_confidence is false",
         )
     cfg = getattr(request.app.state, "config", None)
     aconf = getattr(cfg, "annotation", None) if cfg is not None else None
@@ -553,6 +567,21 @@ async def feedback_loop(
         ) from exc
     from arrow_lake.annotation.dispatch import LSClient, stable_row_id
     from arrow_lake.annotation.masking import apply_annotation_masking
+
+    # auto 模式:低置信研判 → 对象行(decisions_history 数据面,F5.8 升级)
+    if req.auto_low_confidence:
+        hstore = getattr(request.app.state, "decisions_history_store", None)
+        if hstore is None:
+            raise HTTPException(
+                status_code=503,
+                detail="system_db disabled; decisions history unavailable",
+            )
+        low = hstore.low_confidence(
+            dataset, threshold=req.confidence_threshold)
+        auto_rows = [str(h.get("object_id") or "") for h in low]
+        req = req.model_copy(
+            update={"object_rows": list(dict.fromkeys(
+                [*req.object_rows, *auto_rows]))})
 
     text_of: dict[str, str] = {}
     for i, row in enumerate(source.to_pylist()):
@@ -655,4 +684,118 @@ async def relevance_refeed(
             "filter": "irrelevant 行建议从训练集过滤(整改建议,人工确认后执行)",
             "annotate": "high 行经 POST /quality/feedback 优先补 L4 标注",
         },
+    }
+
+
+# --------------------------------------------------------------------------- #
+# F1.7 评审材料包(发版前清偿 E 项,2026-08-31)
+# --------------------------------------------------------------------------- #
+
+@router.get(
+    "/review-pack/{dataset}",
+    dependencies=[Depends(require_role(Role.ADMIN))],
+)
+async def review_pack(
+    dataset: str,
+    request: Request,
+    lake=Depends(get_lake),
+    _user=Depends(require_role(Role.ADMIN)),
+) -> dict:
+    """专家评审材料包(F1.7 / Master Plan §6.3)。
+
+    平台侧自动生成评审材料(对象清单/active 规则/最新质量报告摘要),
+    降低专家负担——专家到场 1 小时即可签字;签字栏留空由专家手填,
+    签字结果另行经 admin 接口留痕(system_db)。只读派生。
+    """
+    cstore = _contract_store(request)
+    contract, spec = _load_contract_and_spec(cstore, dataset)
+
+    lines: list[str] = [
+        f"# 数据集评审材料包 · {dataset}",
+        "",
+        f"> 生成时间:{datetime.now(tz=UTC).isoformat()} · "
+        "用途:领域专家评审签字(F1.7 / MS1 DoD ③)",
+        "",
+        "## 一、对象清单(契约)",
+        "",
+    ]
+    if contract is None:
+        lines.append("(无契约——数据集未声明本体结构)")
+    else:
+        for tname, sec in contract.tables.items():
+            lines.append(f"### 表节:{tname}"
+                         + (f"(对象类:{sec.object_class})" if sec.object_class else ""))
+            if sec.identifier:
+                lines.append(f"- 标识规范:列 `{sec.identifier.column}`,"
+                             f"pattern `{sec.identifier.pattern}`")
+            if sec.lifecycle:
+                lines.append(f"- 生命周期:{sec.lifecycle.column} ∈ "
+                             f"{list(sec.lifecycle.states)}"
+                             f"(初始 {sec.lifecycle.initial})")
+            for r in sec.columns:
+                parts = [f"`{r.name}`"]
+                if r.label:
+                    parts.append(f"({r.label})")
+                if r.required:
+                    parts.append("**必填**")
+                if r.enum:
+                    parts.append(f"枚举 {list(r.enum)}")
+                if r.range:
+                    parts.append(f"值域 {list(r.range)}")
+                if r.unit:
+                    parts.append(f"单位 {r.unit}")
+                lines.append("- " + " ".join(parts))
+            lines.append("")
+
+    lines.append("## 二、active 规则(ontology_rules)")
+    lines.append("")
+    rules_store = getattr(request.app.state, "ontology_rules_store", None)
+    if rules_store is None or not hasattr(rules_store, "list_rules"):
+        lines.append("(system_db 关闭或无规则)")
+    else:
+        active = [r for r in rules_store.list_rules()
+                  if r.get("status") == "active"]
+        if not active:
+            lines.append("(无 active 规则)")
+        for r in active:
+            lines.append(
+                f"- **{r.get('rule_id')}**:当 `{r.get('condition_expr')}` "
+                f"→ {r.get('conclusion')}"
+                + (f"(来源:{r.get('source_ref')})" if r.get("source_ref") else ""))
+    lines.append("")
+    lines.append("## 三、最新质量评估摘要")
+    lines.append("")
+    qstore = _report_store(request)
+    latest = qstore.latest_report(dataset)
+    if latest is None:
+        lines.append("(尚未评估——先跑 POST /quality/assess)")
+    else:
+        lines.append(
+            f"- 总分 {latest.get('total_score')} · "
+            f"星级 {latest.get('star')}★ · "
+            f"准入 {latest.get('admission')} · "
+            f"结论 {latest.get('verdict')}"
+            + (f"(否决:{[v.get('kind') for v in latest.get('vetoes') or []]})"
+               if latest.get("vetoes") else ""))
+        if latest.get("degraded"):
+            lines.append(f"- 降级维度:{latest['degraded']}")
+    lines += [
+        "",
+        "## 四、专家签字栏",
+        "",
+        "| 项 | 内容 |",
+        "|---|---|",
+        "| 评审人(姓名/单位) | ______ |",
+        "| 评审日期 | ______ |",
+        "| 意见(同意/修改后同意/不同意) | ______ |",
+        "| 补充意见 | ______ |",
+        "",
+        "> 签字结果由管理员录入 system_db 留痕;材料包内容为平台自动生成,",
+        "> 专家仅需核对领域正确性(对象清单/规则/值域)。",
+    ]
+    markdown = "\\n".join(lines)
+    return {
+        "dataset": dataset, "format": "markdown",
+        "content": markdown,
+        "hint": "复制 content 存档或打印供专家签字",
     }

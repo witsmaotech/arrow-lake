@@ -62,13 +62,14 @@ async def api_key_middleware_fn(
             try:
                 # v1.10.7 WP3 (review H5): libSQL read on EVERY token-bearing
                 # request — off the event loop with a short timeout.
-                from arrow_lake.api.utils import run_sync
+                from arrow_lake.api.utils import auth_io_executor, run_sync
 
                 resolved = await run_sync(
                     identity_store.validate_token, token,
                     timeout=1.0, label="validate_token",
+                    executor=auth_io_executor,  # M-8:auth 面独立池
                 )
-            except Exception:  # noqa: BLE001 — fail-close handled by caller
+            except Exception:
                 resolved = None
             if resolved is not None:
                 from arrow_lake.api.auth_models import Role, TokenPayload
