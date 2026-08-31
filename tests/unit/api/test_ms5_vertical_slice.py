@@ -150,7 +150,8 @@ def test_ms5_vertical_slice(client: TestClient) -> None:
     assert gold.json()["records"] == 4
     rlhf = client.post("/api/v1/release/ms5_e2e/corpus?form=rlhf", json={"generalize_rules": [[r"\d{6,}", "[编号]"]]})
     assert rlhf.json()["records"] == 0 and rlhf.json()["note"]
-    pre = client.post("/api/v1/release/ms5_e2e/corpus?form=pretrain", json={})
+    pre = client.post("/api/v1/release/ms5_e2e/corpus?form=pretrain",
+                      json={"generalize_rules": [[r"\d{6,}", "[编号]"]]})
     assert pre.json()["records"] == 0 and pre.json()["note"]
 
     # ⑤ 审计 + 血缘全链三事件(真 Lake 落库)

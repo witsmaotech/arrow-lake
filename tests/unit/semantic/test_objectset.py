@@ -64,6 +64,20 @@ class TestBasicShape:
         assert q.sql.rstrip().endswith("LIMIT 10 OFFSET 5")
         assert q.select_columns[0] == "seg_id"  # identifier auto-first
 
+    # M22(四维 review):边界用例——limit 下界 / offset 超界 / 无过滤全表
+    def test_limit_one(self) -> None:
+        q = _build(limit=1, offset=0)
+        assert "LIMIT 1" in q.sql
+
+    def test_offset_beyond_table_is_still_valid_sql(self) -> None:
+        # 组装器不做行数判断(执行层语义);超大 offset 只影响返回空集
+        q = _build(limit=50, offset=10_000)
+        assert "OFFSET 10000" in q.sql
+
+    def test_no_filters_selects_all(self) -> None:
+        q = _build(filters=())
+        assert "WHERE" not in q.sql
+
     def test_identifier_lifecycle_fk_auto_included(self) -> None:
         q = _build(columns=["压力"])
         assert list(q.select_columns) == ["seg_id", "压力", "状态", "station_id"]

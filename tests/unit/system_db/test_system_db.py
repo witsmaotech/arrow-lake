@@ -128,7 +128,12 @@ class TestMigrator:
         # schema_version still has exactly the recorded versions.
         # V021 预留给 W3 releases(MS5 设计 §10),当前缺号属预期。
         versions = Migrator(db).applied_versions()
-        assert versions == set(range(1, 25))  # V020-V024(V024=recovered_counts)
+        # E4(四维 review):glob 动态比对迁移文件集——硬编码 range 每加
+        # 迁移必腐(本轮已是第 4 次 23→24 手工 bump)。
+        from pathlib import Path
+
+        n = len(list(Path("arrow_lake/system_db/migrations").glob("V*.sql")))
+        assert versions == set(range(1, n + 1))
 
 
 # --------------------------------------------------------------------------- #

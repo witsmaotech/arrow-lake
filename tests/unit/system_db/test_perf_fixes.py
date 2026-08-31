@@ -45,7 +45,10 @@ class TestAsyncLineageWorker:
                 self.recorded: list[tuple] = []
 
             def lineage_record_event(self, dn, op, *, source_datasets=None,
-                                     transform_type="", metadata=None) -> None:
+                                     transform_type="", metadata=None,
+                                     actor="system", lance_version=None) -> None:
+                # worker 自 v1.9.4 起 thread actor/lance_version(缺 kwargs
+                # 会 TypeError 被 best-effort 吞 → recorded 恒空假红)
                 self.recorded.append((dn, op, transform_type, metadata))
 
         lake = _L()

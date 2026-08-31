@@ -39,7 +39,7 @@ class _Lake:
         self._tables = tables
         self.audit_calls: list[tuple[str, dict]] = []
 
-    def read_dataset(self, name, columns=None, table=None):
+    def read_dataset(self, name, columns=None, table=None, version=None):
         if name not in self._tables:
             raise KeyError(name)
         return self._tables[name]
@@ -221,15 +221,21 @@ def test_feedback_auto_low_confidence(db: SystemDB) -> None:
     from arrow_lake.annotation.dispatch import stable_row_id
     from arrow_lake.system_db.stores.annotation import AnnotationProjectStore
 
+    # H1(四维 review)语义:decisions_history.object_id 是**契约标识列的值**
+    # ——auto 模式按值在源行全列反查该行 → stable_row_id(与
+    # _build_rlhf_pairs 同构),不再把 object_id 直接当 row_id 用。
     text = "低置信研判对象行"
     rid = stable_row_id(text, 0)
-    lake = _Lake({"alerts": pa.table({"text": pa.array([text], pa.string())})})
+    lake = _Lake({"alerts": pa.table({
+        "alert_no": pa.array(["GAS.ALERT.001"], pa.string()),
+        "text": pa.array([text], pa.string()),
+    })})
     AnnotationProjectStore(db).create_project(
         name="alerts_l4", dataset="alerts", template_name="t",
         labeling_config="<View/>", config_source="generated")
     AnnotationProjectStore(db).set_ls_project_id("alerts_l4", 11)
     DecisionsHistoryStore(db).record(
-        dataset="alerts", object_type="alerts", object_id=rid,
+        dataset="alerts", object_type="alerts", object_id="GAS.ALERT.001",
         lifecycle_state=None, matched_rules=0, rule_ids=[], conclusions=[],
         confidence=0.3, actor="t")
 

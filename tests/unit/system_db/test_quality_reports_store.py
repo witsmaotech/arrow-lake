@@ -77,4 +77,4 @@ def test_migration_count_bumped() -> None:
     """迁移序号断言同步(项目约定:test_system_db 对齐)。"""
     from pathlib import Path
     migrations = Path("arrow_lake/system_db/migrations").glob("V*.sql")
-    assert len(list(migrations)) == 23  # V020-V023
+    assert len(list(migrations)) >= 24  # ≥V024(动态下界锚)

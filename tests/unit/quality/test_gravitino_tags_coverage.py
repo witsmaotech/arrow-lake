@@ -6,6 +6,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+# M18(四维 review):gravitino 是可选 extra —— 未装的 host 环境
+# 整个文件 collection error 会阻断 quality 目录 332 个测试。
+pytest.importorskip("gravitino", reason="optional extra not installed")
+
 from arrow_lake.config.gravitino import GravitinoConfig
 from arrow_lake.quality.gravitino_tags import GravitinoTagService
 
