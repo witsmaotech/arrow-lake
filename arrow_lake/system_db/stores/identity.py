@@ -288,6 +288,8 @@ class IdentityStore:
 
             try:
                 exp = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+                if exp.tzinfo is None:  # naive 串按 UTC 解释(2026-08-31:
+                    exp = exp.replace(tzinfo=timezone.utc)  # 否则 TypeError→恒 401)
                 if datetime.now(timezone.utc) > exp:
                     return None
             except ValueError:

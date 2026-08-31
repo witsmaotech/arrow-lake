@@ -258,6 +258,20 @@ class TestIdentityStore:
         )
         assert identity.validate_token(plaintext) is None
 
+    def test_token_naive_expiry_treated_as_utc(self, identity: IdentityStore) -> None:
+        """naive expires_at(无 Z/offset)按 UTC 解释而非 TypeError 恒 401。
+
+        2026-08-31 实证:铸 token 传 naive 串 → validate 抛 naive-vs-aware
+        TypeError → middleware catch 成 resolved=None → token 永久 401。
+        """
+        uid = identity.create_user("bob", role="editor")
+        future, _ = identity.create_token(
+            uid, name="ci", expires_at="2999-01-01T00:00:00")
+        assert identity.validate_token(future) is not None  # 未过期仍有效
+        past, _ = identity.create_token(
+            uid, name="ci2", expires_at="2000-01-01T00:00:00")
+        assert identity.validate_token(past) is None  # naive 过期仍拒
+
     def test_inactive_user_blocks(self, identity: IdentityStore) -> None:
         uid = identity.create_user("bob", role="editor")
         plaintext, _ = identity.create_token(uid, name="ci")
