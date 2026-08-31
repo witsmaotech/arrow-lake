@@ -28,6 +28,7 @@ const P = {
   logout: '<path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"/><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/>',
   menu: '<path d="M3 6h18M3 12h18M3 18h18"/>',
   close: '<path d="M6 6l12 12M18 6L6 18"/>',
+  chevron: '<path d="M6 9l6 6 6-6"/>',
   command: '<path d="M9 6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3z"/>',
   bell: '<path d="M6 9a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6z"/><path d="M10 19a2 2 0 0 0 4 0"/>',
   play: '<path d="M7 4l13 8-13 8z"/>',
@@ -103,10 +104,24 @@ function renderShell({ active, crumb } = {}) {
   const tok = localStorage.getItem("al_access");
   const u = tok ? decodeUser(tok) : { user_id: "guest", role: "GUEST" };
   const initials = (u.user_id || "U").slice(0, 2).toUpperCase();
-  const navHtml = NAV.map(g => `<div class="nav-group-title">${g.group}</div>` + g.items.map(it => `
+  // 组折叠(用户需求 2026-08-31):每组可独立折叠,状态存 al-nav-fold
+  // (JSON {组名:1});**当前页所在组强制展开**——防折叠态下迷路。
+  const foldRaw = localStorage.getItem("al-nav-fold");
+  let folded = {};
+  try { folded = JSON.parse(foldRaw || "{}") || {}; } catch (_) { folded = {}; }
+  const navHtml = NAV.map(g => {
+    const hasActive = g.items.some(it => it.id === active);
+    const cls = !hasActive && folded[g.group] ? " collapsed" : "";
+    return `<div class="nav-group${cls}" data-group="${g.group}">
+    <button class="nav-group-title" type="button" aria-expanded="${cls ? "false" : "true"}" title="折叠/展开 ${g.group}">
+      <span>${g.group}</span>${icon("chevron", "fold-caret")}
+    </button>
+    <div class="nav-items">${g.items.map(it => `
     <a class="nav-item ${it.id === active ? "active" : ""}" href="${it.href}" data-nav="${it.id}">
       ${icon(it.ic)}<span class="nav-label">${it.label}</span>
-    </a>`).join("")).join("");
+    </a>`).join("")}</div>
+  </div>`;
+  }).join("");
   const sidebar = `
   <aside class="sidebar">
     <a class="brand" href="index.html">${icon("dashboard")}<span><div class="brand-name">Arrow Lake</div><div class="brand-sub">数据湖仓</div></span></a>
@@ -127,6 +142,19 @@ function renderShell({ active, crumb } = {}) {
   const root = $("#app"); if (!root) return;
   root.className = "app" + (collapsed ? " collapsed" : "");
   root.insertAdjacentHTML("afterbegin", sidebar + header);
+  // 组折叠交互(委托):点标题 toggle + 持久化
+  document.querySelectorAll(".nav-group-title").forEach(btn =>
+    btn.addEventListener("click", () => {
+      const grp = btn.closest(".nav-group");
+      const name = grp.dataset.group;
+      grp.classList.toggle("collapsed");
+      btn.setAttribute("aria-expanded", grp.classList.contains("collapsed") ? "false" : "true");
+      try {
+        const f = JSON.parse(localStorage.getItem("al-nav-fold") || "{}") || {};
+        f[name] = grp.classList.contains("collapsed") ? 1 : 0;
+        localStorage.setItem("al-nav-fold", JSON.stringify(f));
+      } catch (_) { /* 折叠功能不因存储失败而失效 */ }
+    }));
   $("#navToggle")?.addEventListener("click", () => {
     const c = $("#app"); c.classList.toggle("collapsed");
     localStorage.setItem("al-collapse", c.classList.contains("collapsed") ? "1" : "0");

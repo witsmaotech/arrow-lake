@@ -890,13 +890,26 @@ def create_app(config: ArrowLakeConfig | None = None) -> FastAPI:
     # docs/architecture-design/duckdb-sql-worksheet.md.
     from pathlib import Path
 
+    from typing import Any
+
     from starlette.staticfiles import StaticFiles
 
     # app.py 位于 <repo>/arrow_lake/api/app.py(镜像内 /app/arrow_lake/api/app.py);
     # console 在 <repo>/console(镜像内 /app/console)→ 向上 3 级(parents[2])。
     _console_dir = Path(__file__).resolve().parents[2] / "console"
     if _console_dir.is_dir():
-        app.mount("/console", StaticFiles(directory=str(_console_dir), html=True), name="console")
+        # 2026-08-31:console 静态资源带 no-cache(静态文件名无 hash 指纹,
+        # 部署热改后经 HTTP 代理(如 Windows 7887 中继)的浏览器会拿到新旧
+        # 混杂缓存,曾致「研判台打不开」假故障;no-cache 允许缓存但强制
+        # 重验证(ETag/Last-Modified 304 仍生效,代价仅一次条件请求)。
+        class _NoCacheStatic(StaticFiles):
+            def file_response(self, *args: Any, **kwargs: Any):  # type: ignore[override]
+                resp = super().file_response(*args, **kwargs)
+                resp.headers["Cache-Control"] = "no-cache"
+                return resp
+
+        app.mount("/console", _NoCacheStatic(
+            directory=str(_console_dir), html=True), name="console")
 
         # W2 (v1.11.0.3): browsers auto-request /favicon.ico at the ORIGIN ROOT
         # on every console page load — it fell through to the auth middleware
