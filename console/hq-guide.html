@@ -207,12 +207,24 @@ async function load() {
   try {
     const h = await request("GET", `/decisions/history/${encodeURIComponent(ds)}`);
     const total = h.total || 0;
-    parts.push(stepHtml(6, "飞轮", total ? "done" : "todo", "",
-      `研判历史 ${total} 条 · 低置信 ${h.low_confidence}${total ? ` · 最近 ${esc(h.recent?.[0]?.object_id || "")}` : ""}`,
-      total
-        ? "研判在积累(RLHF 配对/低置信回流的燃料)。低置信对象去质量报告页「飞轮回流」auto 入队补标,闭环回第③步。"
-        : "还没有研判记录——去研判台勾选「记录研判」对对象求值(EDITOR+),历史是 RLHF 与飞轮自动回流的数据源。",
+    // 无标识列契约:研判(对象层)不适用——诚实呈现而非误导去操作
+    let idCols = null;
+    try {
+      const t = await request("GET", `/objects/types?dataset=${encodeURIComponent(ds)}`);
+      idCols = (t.types || []).some(x => x.identifier_column);
+    } catch (_) {}
+    if (idCols === false && !total) {
+      parts.push(stepHtml(6, "飞轮", "todo", "", "无对象标识列",
+        "该数据集契约未声明 identifier 列——研判/行动(对象层闭环)不适用。相关性飞轮照常可用:质量报告页「反哺清单」→「飞轮回流」补标。对象层飞轮见有标识契约的数据集(如 demo_gas)。",
+        [btn("反哺清单 →", "quality-reports.html")]));
+    } else {
+      parts.push(stepHtml(6, "飞轮", total ? "done" : "todo", "",
+        `研判历史 ${total} 条 · 低置信 ${h.low_confidence}${total ? ` · 最近 ${esc(h.recent?.[0]?.object_id || "")}` : ""}`,
+        total
+          ? "研判在积累(RLHF 配对/低置信回流的燃料)。低置信对象去质量报告页「飞轮回流」auto 入队补标,闭环回第③步。"
+          : "还没有研判记录——去研判台勾选「记录研判」对对象求值(EDITOR+),历史是 RLHF 与飞轮自动回流的数据源。",
         [btn("研判台 →", "decisions.html"), btn("飞轮回流 →", "quality-reports.html")]));
+    }
   } catch (e) {
     parts.push(stepHtml(6, "飞轮", "todo", "", "—",
       "去研判台勾选「记录研判」对对象求值(EDITOR+),历史是 RLHF 与飞轮的数据源。", [btn("研判台 →", "decisions.html")]));
