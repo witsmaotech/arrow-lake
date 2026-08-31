@@ -32,6 +32,7 @@
 const { renderShell } = window;
 renderShell({ active: "quality-reports", crumb: "<b>质量报告</b>" });
 </script>
+<div id="app">
 <main class="console-main"><section class="panel">
   <h2 style="margin:0 0 4px">五维质量报告(MS5 F5.1)</h2>
   <p class="hint" style="margin:0 0 12px;color:var(--fg-dim);font-size:.72rem">评估→星级→准入门(85/95/98)→一票否决;相关性经标注回路,准确性=ADL 聚合 κ。</p>
@@ -45,6 +46,8 @@ renderShell({ active: "quality-reports", crumb: "<b>质量报告</b>" });
   </div>
   <div id="reports"><p class="hint" style="color:var(--fg-dim);font-size:.74rem">输入数据集名加载评估历史。</p></div>
 </section></main>
+</div>
+
 <script type="module">
 import { request } from "./src/api.js";
 import { toast } from "./src/ui/toast.js";

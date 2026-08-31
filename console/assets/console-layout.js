@@ -44,7 +44,8 @@ function icon(name, cls = "") {
 }
 window.icon = icon;
 
-/* —— Nav(v1.11.0.1 W4.2:表格/文本两条数据线分组隔离,便于各自演进)—— */
+/* —— Nav(v1.11.4 收官重组:两条数据线(湖仓基座)+ 本体与语义(MS1/MS2
+   定义层)+ 高质量数据集(MS3-MS5 产出+飞轮闭环)+ 治理运维(底座)—— */
 const NAV = [
   { group: "表格数据", items: [
     { id: "datasets", label: "表格数据集", ic: "database", href: "datasets-data.html" },
@@ -52,8 +53,6 @@ const NAV = [
     { id: "tidy", label: "清洗整理", ic: "olap", href: "tidy.html" },
     { id: "data-prep", label: "数据准备", ic: "file", href: "data-prep.html" },
     { id: "olap", label: "深度分析", ic: "olap", href: "olap.html" },
-    { id: "contracts", label: "数据契约", ic: "key", href: "contracts.html" },
-    { id: "objects", label: "对象浏览", ic: "olap", href: "objects.html" },
   ] },
   { group: "文本数据", items: [
     { id: "datasets-docs", label: "文档数据集", ic: "file", href: "datasets-docs.html" },
@@ -63,26 +62,30 @@ const NAV = [
     { id: "image-search", label: "图像检索", ic: "file", href: "search.html?mode=image" },
     { id: "rag", label: "RAG 问答", ic: "search", href: "rag.html" },
     { id: "kg", label: "知识图谱", ic: "code", href: "kg.html" },
-    { id: "templates", label: "抽取模板", ic: "code", href: "extraction-templates.html" },
   ] },
-  { group: "标注闭环", items: [
+  { group: "本体与语义", items: [
+    { id: "ontology", label: "本体与规则", ic: "code", href: "ontology.html" },
+    { id: "contracts", label: "数据契约", ic: "key", href: "contracts.html" },
+    { id: "templates", label: "抽取模板", ic: "code", href: "extraction-templates.html" },
+    { id: "objects", label: "对象浏览", ic: "olap", href: "objects.html" },
+  ] },
+  { group: "高质量数据集", items: [
     { id: "annotation", label: "标注生产线", ic: "check", href: "annotation.html" },
+    { id: "quality-reports", label: "质量报告", ic: "sparkles", href: "quality-reports.html" },
+    { id: "releases", label: "发布管理", ic: "play", href: "releases.html" },
+    { id: "decisions", label: "研判台", ic: "sparkles", href: "decisions.html" },
+    { id: "actions", label: "行动与场景", ic: "play", href: "actions.html" },
+  ] },
+  { group: "治理运维", items: [
+    { id: "governance", label: "元数据治理", ic: "key", href: "governance.html" },
+    { id: "lineage", label: "血缘图谱", ic: "database", href: "lineage.html" },
+    { id: "audit", label: "审计日志", ic: "bell", href: "audit.html" },
+    { id: "system", label: "系统运维", ic: "dashboard", href: "system.html" },
   ] },
   { group: "管理", items: [
     { id: "tasks", label: "异步任务", ic: "dashboard", href: "tasks.html" },
     { id: "admin", label: "管理后台", ic: "key", href: "admin.html" },
     { id: "my-workspace", label: "我的工作区", ic: "bell", href: "my-workspace.html" },
-  ] },
-  { group: "治理运维", items: [
-    { id: "governance", label: "元数据治理", ic: "key", href: "governance.html" },
-    { id: "quality-reports", label: "质量报告", ic: "sparkles", href: "quality-reports.html" },
-    { id: "releases", label: "发布管理", ic: "play", href: "releases.html" },
-    { id: "ontology", label: "本体与规则", ic: "code", href: "ontology.html" },
-    { id: "actions", label: "行动与场景", ic: "play", href: "actions.html" },
-    { id: "decisions", label: "研判台", ic: "sparkles", href: "decisions.html" },
-    { id: "lineage", label: "血缘图谱", ic: "database", href: "lineage.html" },
-    { id: "audit", label: "审计日志", ic: "bell", href: "audit.html" },
-    { id: "system", label: "系统运维", ic: "dashboard", href: "system.html" },
   ] },
 ];
 

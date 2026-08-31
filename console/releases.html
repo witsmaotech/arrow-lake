@@ -28,6 +28,7 @@
 const { renderShell } = window;
 renderShell({ active: "releases", crumb: "<b>发布管理</b>" });
 </script>
+<div id="app">
 <main class="console-main"><section class="panel">
   <h2 style="margin:0 0 4px">发布管理(MS5 F5.4/F5.6/F5.7)</h2>
   <p class="hint" style="margin:0 0 12px;color:var(--fg-dim);font-size:.72rem">发布=Lance 版本锁定+语义化 tag+规格书;发布门=准入+否决+拒绝劣化+漂移;语料四形态全部脱敏出域。</p>
@@ -40,6 +41,8 @@ renderShell({ active: "releases", crumb: "<b>发布管理</b>" });
   <div id="releases"><p class="hint" style="color:var(--fg-dim);font-size:.74rem">输入数据集名加载发布历史。</p></div>
   <div id="sheet"></div>
 </section></main>
+</div>
+
 <script type="module">
 import { request } from "./src/api.js";
 import { toast } from "./src/ui/toast.js";
