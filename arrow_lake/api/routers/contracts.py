@@ -36,6 +36,62 @@ class ContractUpsertRequest(BaseModel):
     contract_yaml: str = Field(min_length=1, max_length=200_000)
 
 
+class ContractParseRequest(BaseModel):
+    contract_yaml: str = Field(min_length=1, max_length=262_144)
+
+
+@router.post("/parse", dependencies=[Depends(require_role(Role.ADMIN))])
+async def parse_contract_yaml(req: ContractParseRequest) -> dict:
+    """建模工作台支撑(2026-08-31):契约 YAML → 结构化 JSON(表单回填用)。
+
+    复用服务端权威解析器(``parse_contract``+compile 校验);浏览器侧
+    零 YAML 依赖。解析/编译失败 → 422(工作台"仅校验"也走这里)。
+    """
+    from arrow_lake.contract.compiler import compile_contract
+    from arrow_lake.contract.schema import parse_contract
+
+    try:
+        contract = parse_contract(req.contract_yaml)
+        compile_contract(contract)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    tables = {}
+    for name, sec in contract.tables.items():
+        tables[name] = {
+            "object_class": sec.object_class,
+            "lifecycle": None if sec.lifecycle is None else {
+                "column": sec.lifecycle.column,
+                "states": list(sec.lifecycle.states),
+                "initial": sec.lifecycle.initial,
+            },
+            "identifier": None if sec.identifier is None else {
+                "column": sec.identifier.column,
+                "pattern": sec.identifier.pattern,
+            },
+            "columns": [{
+                "name": r.name, "label": r.label, "unit": r.unit,
+                "type": r.type, "required": r.required,
+                "range": list(r.range) if r.range else None,
+                "enum": list(r.enum) if r.enum else None,
+            } for r in sec.columns],
+        }
+    return {
+        "dataset": contract.dataset,
+        "tables": tables,
+        "references": [{
+            "from_table": r.from_table, "from_column": r.from_column,
+            "to_dataset": r.to_dataset, "to_table": r.to_table,
+            "to_column": r.to_column, "cardinality": r.cardinality,
+            "kind": r.kind,
+        } for r in contract.references],
+        "quality": None if contract.quality is None else {
+            "critical": contract.quality.critical,
+            "drift_kl": contract.quality.drift_kl,
+        },
+    }
+
+
 @router.get("", dependencies=[Depends(require_role(Role.ADMIN))])
 async def list_contracts(request: Request) -> dict:
     """List contract scopes with their latest version summary."""

@@ -64,6 +64,7 @@ const NAV = [
     { id: "kg", label: "知识图谱", ic: "code", href: "kg.html" },
   ] },
   { group: "本体与语义", items: [
+    { id: "ontology-designer", label: "建模工作台", ic: "plus", href: "ontology-designer.html" },
     { id: "ontology", label: "本体与规则", ic: "code", href: "ontology.html" },
     { id: "contracts", label: "数据契约", ic: "key", href: "contracts.html" },
     { id: "templates", label: "抽取模板", ic: "code", href: "extraction-templates.html" },

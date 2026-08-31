@@ -140,3 +140,19 @@ def test_scope_dataset_mismatch_422(db: SystemDB) -> None:
     client = _make_app(role=Role.ADMIN, db=db)
     r = client.put("/api/v1/contracts/wrong_scope", json={"contract_yaml": V1})
     assert r.status_code == 422
+
+
+def test_parse_endpoint_roundtrip(db: SystemDB) -> None:
+    """建模工作台支撑:YAML→结构化 JSON;坏 YAML→422。"""
+    client = _make_app(role=Role.ADMIN, db=db)
+    r = client.post("/api/v1/contracts/parse", json={"contract_yaml": V1})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["dataset"] == "gas_net"
+    seg = body["tables"]["segments"]
+    assert seg["columns"][0]["name"] == "material"
+    assert body["tables"]["segments"]["columns"][0]["enum"] == ["PE", "steel"]
+    # 坏 YAML → 422(校验通道同款)
+    r2 = client.post("/api/v1/contracts/parse",
+                     json={"contract_yaml": "dataset: x\nontology:\n  columns:\n    - name: q\n      enum: []\n"})
+    assert r2.status_code == 422

@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>本体建模工作台 · Arrow Lake Console</title>
+<link rel="stylesheet" href="assets/tokens.css"/>
+<link rel="stylesheet" href="assets/app.css"/>
+<link rel="stylesheet" href="assets/console.css"/>
+<style>
+  .wb{display:grid;grid-template-columns:210px 1fr 400px;gap:12px;align-items:start}
+  .wb .col{border:1px solid var(--line-soft);border-radius:var(--r-sm);background:var(--ink-950);padding:10px 12px;min-height:70vh}
+  .wb h4{margin:2px 0 8px;font-size:.72rem;color:var(--fg-dim);letter-spacing:.06em}
+  .dom-row{display:block;padding:7px 9px;border-radius:var(--r-sm);cursor:pointer;font-size:.78rem;font-family:var(--font-mono);color:var(--fg-md);border:1px solid transparent}
+  .dom-row:hover{background:var(--ink-850)} .dom-row.active{border-color:var(--teal-bright);color:var(--fg-hi)}
+  input.f,select.f{background:var(--ink-900);border:1px solid var(--line);border-radius:var(--r-sm);color:var(--fg-hi);font-size:.74rem;padding:5px 8px;font-family:var(--font-mono);width:100%}
+  .frm{font-size:.74rem}
+  .frm .row{display:grid;grid-template-columns:repeat(12,1fr);gap:6px;margin-bottom:6px;align-items:center}
+  .frm label{color:var(--fg-dim);font-size:.66rem}
+  .sec{border:1px solid var(--line-soft);border-radius:var(--r-sm);padding:8px 10px;margin-bottom:10px}
+  .sec > .hd{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+  .sec > .hd b{font-size:.78rem;color:var(--fg-hi)}
+  .chip{font-size:.62rem;color:var(--fg-dim);border:1px solid var(--line);border-radius:99px;padding:1px 8px}
+  .x{cursor:pointer;color:var(--danger);font-size:.7rem;background:none;border:none;padding:0 4px}
+  pre.pv{background:var(--ink-900);border:1px solid var(--line-soft);border-radius:var(--r-sm);padding:10px;font-size:.66rem;font-family:var(--font-mono);color:var(--fg-md);overflow:auto;max-height:300px;white-space:pre-wrap;word-break:break-all;margin:0 0 10px}
+  .tabs{display:flex;gap:6px;margin-bottom:8px}
+  .tabs button{font-size:.68rem;padding:3px 10px;border-radius:99px;border:1px solid var(--line);background:none;color:var(--fg-dim);cursor:pointer}
+  .tabs button.on{color:var(--teal-bright);border-color:var(--teal-bright)}
+  .hintline{font-size:.64rem;color:var(--fg-dim);margin:4px 0 8px}
+</style>
+</head>
+<body>
+<script src="assets/console-layout.js"></script>
+<div id="app">
+<main class="console-main"><section class="panel">
+  <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+    <h2 style="margin:0">本体建模工作台</h2>
+    <span class="chip">表单设计 → 契约 YAML · 标注 config · 规则注册(DR15 建模语言用户面)</span>
+    <span style="flex:1"></span>
+    <button class="btn btn-primary btn-sm" id="saveBtn">保存契约</button>
+    <button class="btn btn-line btn-sm" id="saveRulesBtn">保存规则</button>
+    <button class="btn btn-line btn-sm" id="validateBtn">仅校验</button>
+    <a class="btn btn-ghost btn-sm" href="objects.html" target="_blank">对象验证 ↗</a>
+  </div>
+  <div class="wb">
+    <div class="col"><h4>域 / 数据集</h4><div id="domList"></div>
+      <button class="btn btn-ghost btn-sm" style="width:100%;margin-top:8px" id="newBtn">+ 新建域</button></div>
+    <div class="col frm"><h4>结构化设计(右侧实时预览生成物)</h4><div id="form"></div></div>
+    <div class="col"><h4>生成物预览</h4>
+      <div class="tabs"><button class="on" data-t="yaml">契约 YAML</button><button data-t="ls">标注 config</button><button data-t="tpl">模板骨架</button></div>
+      <pre class="pv" id="pv"></pre>
+      <h4 style="margin-top:4px">业务规则(rule_type 五分类 → ontology_rules)</h4>
+      <div id="rulesBox"></div>
+      <button class="btn btn-ghost btn-sm" style="width:100%" id="addRule">+ 规则</button>
+      <div class="hintline">保存契约走版本链(PUT /contracts);规则 upsert 不触状态机。</div>
+    </div>
+  </div>
+</section></main>
+</div>
+<script type="module">
+import { request } from "./src/api.js";
+import { toast } from "./src/ui/toast.js";
+const { renderShell } = window;
+renderShell({ active: "ontology-designer", crumb: "<b>本体建模工作台</b>" });
+
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[<>"&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", '"': "&quot;", "&": "&amp;" }[c]));
+
+// ---------- 状态 ----------
+let S = blank();
+function blank() {
+  return {
+    dataset: "", tables: [blankTable()],
+    references: [], rules: [],
+  };
+}
+function blankTable() {
+  return { name: "", object_class: "", lc: { column: "", states: "", initial: "" },
+           id: { column: "", pattern: "" }, columns: [blankCol()] };
+}
+function blankCol() { return { name: "", label: "", unit: "", type: "", required: false, lo: "", hi: "", enums: "" }; }
+function blankRule() { return { rule_id: "", condition_expr: "", conclusion: "", source_ref: "", rule_type: "validation", version: "" }; }
+
+// ---------- YAML 生成 ----------
+const BARE = /^[A-Za-z0-9_][A-Za-z0-9._-]*$/;
+const RESERVED = new Set(["true","false","null","yes","no","on","off"]);
+function y(v) {
+  if (v === "" || v == null) return '""';
+  const s = String(v);
+  if (BARE.test(s) && !RESERVED.has(s.toLowerCase()) && !/^\d/.test(s)) return s;
+  return JSON.stringify(s);
+}
+function genYAML() {
+  const L = [];
+  L.push(`dataset: ${y(S.dataset)}`, "tables:");
+  for (const t of S.tables) {
+    L.push(`  ${y(t.name || "table1")}:`);
+    if (t.object_class) L.push(`    object_class: ${y(t.object_class)}`);
+    if (t.lc.column || t.lc.states) {
+      L.push(`    lifecycle: {column: ${y(t.lc.column)}, states: [${t.lc.states.split(/[,，\s]+/).filter(Boolean).map(y).join(", ")}]` +
+             (t.lc.initial ? `, initial: ${y(t.lc.initial)}` : "") + "}");
+    }
+    if (t.id.column || t.id.pattern)
+      L.push(`    identifier: {column: ${y(t.id.column)}, pattern: ${JSON.stringify(t.id.pattern)}}`);
+    L.push("    columns:");
+    let any = false;
+    for (const c of t.columns) {
+      if (!c.name && !c.label && !c.enums && c.lo === "" && c.hi === "") continue;
+      any = true;
+      const kv = [`name: ${y(c.name)}`];
+      if (c.label) kv.push(`label: ${y(c.label)}`);
+      if (c.unit) kv.push(`unit: ${y(c.unit)}`);
+      if (c.type) kv.push(`type: ${y(c.type)}`);
+      if (c.required) kv.push("required: true");
+      if (c.lo !== "" && c.hi !== "") kv.push(`range: [${Number(c.lo)}, ${Number(c.hi)}]`);
+      if (c.enums) kv.push(`enum: [${c.enums.split(/[,，\s]+/).filter(Boolean).map(y).join(", ")}]`);
+      L.push(`      - {${kv.join(", ")}}`);
+    }
+    if (!any) L.push("      []");
+  }
+  if (S.references.length) {
+    L.push("references:");
+    for (const r of S.references) {
+      const kv = [];
+      if (r.from_table && r.from_column) kv.push(`from: ${y(r.from_table + "." + r.from_column)}`);
+      if (r.to_table && r.to_column) kv.push(`to: ${y(r.to_table + "." + r.to_column)}`);
+      if (r.to_dataset) kv.push(`to_dataset: ${y(r.to_dataset)}`);
+      if (r.kind) kv.push(`kind: ${y(r.kind)}`);
+      if (r.cardinality) kv.push(`cardinality: ${JSON.stringify(r.cardinality)}`);
+      if (kv.length) L.push(`  - {${kv.join(", ")}}`);
+    }
+  }
+  return L.join("\n");
+}
+function genLS() {
+  const labels = new Set();
+  for (const t of S.tables) {
+    if (t.object_class) labels.add(t.object_class);
+    for (const c of t.columns) {
+      if (c.label) labels.add(c.label);
+      if (c.enums) c.enums.split(/[,，\s]+/).filter(Boolean).forEach((v) => labels.add(v));
+    }
+  }
+  const lab = [...labels].map((v) => `    <Label value="${esc(v)}"/>`).join("\n");
+  return `<View>
+  <Text name="text" value="$text"/>
+  <Labels name="objects" toName="text">
+${lab || "    <Label value=\"对象\"/>"}
+  </Labels>
+  <Choices name="scenario" toName="text" required="true" showInLine="true">
+    <Choice value="常规"/><Choice value="应急"/><Choice value="演练"/>
+  </Choices>
+  <TextArea name="rules_applied" toName="text" placeholder="适用规则编号"/>
+  <Relations>
+    <Relation value="关联"/>
+  </Relations>
+</View>`;
+}
+function genTpl() {
+  const ents = S.tables.map((t) => t.object_class || t.name).filter(Boolean);
+  const rels = S.references.filter((r) => r.from_table && r.to_table)
+    .map((r) => `  - {subject: ${r.from_table}, predicate: ${r.kind || "references"}, object: ${r.to_table}}`);
+  return `# 抽取模板骨架(建议稿——去「抽取模板」页 AI 细化后试跑)
+name: ${S.dataset || "domain"}_derived
+version: "1"
+entities:
+${ents.map((e) => `  - name: ${e}`).join("\n") || "  []"}
+relations:
+${rels.join("\n") || "  []"}
+# 提示:实体类型承自对象类/列 label;关系承自契约 references。`;
+}
+
+// ---------- 渲染 ----------
+let tab = "yaml";
+function render() {
+  $("#pv").textContent = tab === "yaml" ? genYAML() : tab === "ls" ? genLS() : genTpl();
+  renderForm();
+  renderRules();
+}
+function renderForm() {
+  const box = $("#form");
+  const tHtml = S.tables.map((t, ti) => `
+  <div class="sec">
+    <div class="hd"><b>表节 ${ti + 1}</b><span class="chip">${esc(t.name || "未命名")}</span>
+      <span style="flex:1"></span>${S.tables.length > 1 ? `<button class="x" data-del-t="${ti}">✕</button>` : ""}</div>
+    <div class="row"><label style="grid-column:1/3">表名</label><input class="f" data-t="${ti}" data-k="name" value="${esc(t.name)}"/>
+      <label style="grid-column:5/7">对象类</label><input class="f" data-t="${ti}" data-k="object_class" value="${esc(t.object_class)}" style="grid-column:7/13"/></div>
+    <div class="row"><label style="grid-column:1/3">状态列</label><input class="f" data-t="${ti}" data-k="lc.column" value="${esc(t.lc.column)}"/>
+      <label style="grid-column:5/7">状态集</label><input class="f" data-t="${ti}" data-k="lc.states" value="${esc(t.lc.states)}" placeholder="逗号分隔" style="grid-column:7/10"/>
+      <label style="grid-column:10/11">初始</label><input class="f" data-t="${ti}" data-k="lc.initial" value="${esc(t.lc.initial)}" style="grid-column:11/13"/></div>
+    <div class="row"><label style="grid-column:1/3">标识列</label><input class="f" data-t="${ti}" data-k="id.column" value="${esc(t.id.column)}"/>
+      <label style="grid-column:5/7">pattern</label><input class="f" data-t="${ti}" data-k="id.pattern" value="${esc(t.id.pattern)}" placeholder="GAS.ALERT.{区域}.{序号}" style="grid-column:7/13"/></div>
+    <div style="margin:6px 0 2px" class="hintline">属性列(名称/中文label/单位/类型/必填/值域/枚举)</div>
+    ${t.columns.map((c, ci) => `
+    <div class="row">
+      <input class="f" data-t="${ti}" data-c="${ci}" data-k="name" value="${esc(c.name)}" placeholder="列名" style="grid-column:1/3"/>
+      <input class="f" data-t="${ti}" data-c="${ci}" data-k="label" value="${esc(c.label)}" placeholder="中文名" style="grid-column:3/5"/>
+      <input class="f" data-t="${ti}" data-c="${ci}" data-k="unit" value="${esc(c.unit)}" placeholder="单位" style="grid-column:5/6"/>
+      <input class="f" data-t="${ti}" data-c="${ci}" data-k="type" value="${esc(c.type)}" placeholder="类型" style="grid-column:6/7"/>
+      <label style="grid-column:7/8;text-align:center"><input type="checkbox" data-t="${ti}" data-c="${ci}" data-k="required" ${c.required ? "checked" : ""}/></label>
+      <input class="f" data-t="${ti}" data-c="${ci}" data-k="lo" value="${esc(c.lo)}" placeholder="≥" style="grid-column:8/10"/>
+      <input class="f" data-t="${ti}" data-c="${ci}" data-k="hi" value="${esc(c.hi)}" placeholder="≤" style="grid-column:10/12"/>
+      <button class="x" data-del-c="${ti}:${ci}" style="grid-column:12/13">✕</button>
+      <input class="f" data-t="${ti}" data-c="${ci}" data-k="enums" value="${esc(c.enums)}" placeholder="枚举值(逗号分隔)" style="grid-column:1/7"/>
+    </div>`).join("")}
+    <button class="btn btn-ghost btn-sm" data-add-c="${ti}">+ 列</button>
+  </div>`).join("");
+  const rHtml = S.references.map((r, ri) => `
+  <div class="sec"><div class="hd"><b>引用 ${ri + 1}</b><span style="flex:1"></span><button class="x" data-del-r="${ri}">✕</button></div>
+    <div class="row">
+      <input class="f" data-r="${ri}" data-k="from_table" value="${esc(r.from_table)}" placeholder="from 表" style="grid-column:1/3"/>
+      <input class="f" data-r="${ri}" data-k="from_column" value="${esc(r.from_column)}" placeholder="from 列" style="grid-column:3/5"/>
+      <input class="f" data-r="${ri}" data-k="to_table" value="${esc(r.to_table)}" placeholder="to 表" style="grid-column:5/7"/>
+      <input class="f" data-r="${ri}" data-k="to_column" value="${esc(r.to_column)}" placeholder="to 列" style="grid-column:7/9"/>
+      <input class="f" data-r="${ri}" data-k="to_dataset" value="${esc(r.to_dataset)}" placeholder="跨容器(可选)" style="grid-column:9/11"/>
+      <select class="f" data-r="${ri}" data-k="cardinality" style="grid-column:11/12">${["", "1:1", "1:N", "N:1", "M:N"].map((v) => `<option ${r.cardinality === v ? "selected" : ""}>${v}</option>`).join("")}</select>
+      <select class="f" data-r="${ri}" data-k="kind" style="grid-column:12/13">${["", "association", "composition", "aggregation", "dependency"].map((v) => `<option ${r.kind === v ? "selected" : ""}>${v}</option>`).join("")}</select>
+    </div></div>`).join("");
+  box.innerHTML = `
+  <div class="sec"><div class="row">
+    <label style="grid-column:1/3">数据集(域)</label>
+    <input class="f" id="dsName" value="${esc(S.dataset)}" placeholder="demo_gas" style="grid-column:3/9"/>
+    <span class="chip" style="grid-column:9/13;align-self:center">dataset 名 = 契约 scope = 容器名</span>
+  </div></div>
+  ${tHtml}
+  <button class="btn btn-ghost btn-sm" id="addT">+ 表节</button>
+  <div style="height:10px"></div>
+  <h4>跨表/跨容器引用</h4>${rHtml || '<div class="hintline">暂无引用</div>'}
+  <button class="btn btn-ghost btn-sm" id="addRef">+ 引用</button>`;
+  wireForm();
+}
+function renderRules() {
+  $("#rulesBox").innerHTML = S.rules.map((r, i) => `
+  <div class="sec" style="padding:6px 8px;margin-bottom:6px">
+    <div class="row" style="margin-bottom:4px">
+      <input class="f" data-ru="${i}" data-k="rule_id" value="${esc(r.rule_id)}" placeholder="规则号 GAS.LEAK.R001" style="grid-column:1/5"/>
+      <select class="f" data-ru="${i}" data-k="rule_type" style="grid-column:5/8">${["validation","computation","derivation","transformation","risk_control"].map((v) => `<option ${r.rule_type === v ? "selected" : ""}>${v}</option>`).join("")}</select>
+      <input class="f" data-ru="${i}" data-k="version" value="${esc(r.version)}" placeholder="版本" style="grid-column:8/10"/>
+      <button class="x" data-del-ru="${i}" style="grid-column:12/13">✕</button>
+    </div>
+    <div class="row" style="margin-bottom:4px">
+      <input class="f" data-ru="${i}" data-k="condition_expr" value="${esc(r.condition_expr)}" placeholder="条件 target.pressure >= 3000" style="grid-column:1/13"/>
+    </div>
+    <div class="row">
+      <input class="f" data-ru="${i}" data-k="conclusion" value="${esc(r.conclusion)}" placeholder="结论 极高压需通报" style="grid-column:1/8"/>
+      <input class="f" data-ru="${i}" data-k="source_ref" value="${esc(r.source_ref)}" placeholder="来源/国标版本" style="grid-column:8/13"/>
+    </div>
+  </div>`).join("") || '<div class="hintline">暂无规则(保存规则 → ontology_rules,MS3 研判即消费)</div>';
+  wireRules();
+}
+function setDeep(obj, path, v) {
+  const ks = path.split("."); let o = obj;
+  for (let i = 0; i < ks.length - 1; i++) o = o[ks[i]];
+  o[ks[ks.length - 1]] = v;
+}
+function wireForm() {
+  $("#form").querySelectorAll("input.f,select.f").forEach((el) => {
+    el.oninput = el.onchange = () => {
+      const v = el.type === "checkbox" ? el.checked : el.value;
+      if (el.id === "dsName") S.dataset = el.value;
+      else if (el.dataset.t != null && el.dataset.c != null)
+        S.tables[+el.dataset.t].columns[+el.dataset.c][el.dataset.k] = v;
+      else if (el.dataset.t != null) setDeep(S.tables[+el.dataset.t], el.dataset.k, v);
+      else if (el.dataset.r != null) S.references[+el.dataset.r][el.dataset.k] = v;
+      $("#pv").textContent = tab === "yaml" ? genYAML() : tab === "ls" ? genLS() : genTpl();
+    };
+  });
+  $("#form").querySelectorAll("[data-del-c]").forEach((b) => b.onclick = () => {
+    const [t, c] = b.dataset.delC.split(":").map(Number);
+    S.tables[t].columns.splice(c, 1); render();
+  });
+  $("#form").querySelectorAll("[data-del-t]").forEach((b) => b.onclick = () => { S.tables.splice(+b.dataset.delT, 1); render(); });
+  $("#form").querySelectorAll("[data-del-r]").forEach((b) => b.onclick = () => { S.references.splice(+b.dataset.delR, 1); render(); });
+  $("#form").querySelectorAll("[data-add-c]").forEach((b) => b.onclick = () => { S.tables[+b.dataset.addC].columns.push(blankCol()); render(); });
+  $("#addT").onclick = () => { S.tables.push(blankTable()); render(); };
+  $("#addRef").onclick = () => { S.references.push({ from_table: "", from_column: "", to_table: "", to_column: "", to_dataset: "", cardinality: "", kind: "" }); render(); };
+}
+function wireRules() {
+  $("#rulesBox").querySelectorAll("input.f,select.f").forEach((el) => {
+    el.oninput = el.onchange = () => { S.rules[+el.dataset.ru][el.dataset.k] = el.value; };
+  });
+  $("#rulesBox").querySelectorAll("[data-del-ru]").forEach((b) => b.onclick = () => { S.rules.splice(+b.dataset.delRu, 1); renderRules(); });
+}
+
+// ---------- 动作 ----------
+async function loadDomains() {
+  try {
+    const r = await request("/api/v1/contracts");
+    $("#domList").innerHTML = (r.contracts || []).map((c) =>
+      `<div class="dom-row" data-scope="${esc(c.scope)}">${esc(c.scope)}<div style="font-size:.6rem;color:var(--fg-dim)">v${c.version}</div></div>`).join("")
+      || '<div class="hintline">无契约域——点「+ 新建域」</div>';
+    $("#domList").querySelectorAll(".dom-row").forEach((el) => el.onclick = () => loadDomain(el.dataset.scope));
+  } catch (e) { $("#domList").innerHTML = `<div class="hintline">加载失败:${esc(e.message)}</div>`; }
+}
+async function loadDomain(scope) {
+  try {
+    const rec = await request(`/api/v1/contracts/${encodeURIComponent(scope)}`);
+    const parsed = await request("/api/v1/contracts/parse", { method: "POST", body: JSON.stringify({ contract_yaml: rec.contract_yaml }) });
+    S.dataset = parsed.dataset;
+    S.tables = Object.entries(parsed.tables || {}).map(([name, t]) => ({
+      name, object_class: t.object_class || "",
+      lc: { column: t.lifecycle?.column || "", states: (t.lifecycle?.states || []).join(","), initial: t.lifecycle?.initial || "" },
+      id: { column: t.identifier?.column || "", pattern: t.identifier?.pattern || "" },
+      columns: (t.columns || []).map((c) => ({ name: c.name, label: c.label || "", unit: c.unit || "", type: c.type || "", required: !!c.required, lo: c.range ? c.range[0] : "", hi: c.range ? c.range[1] : "", enums: (c.enum || []).join(",") })),
+    })) || [blankTable()];
+    if (!S.tables.length) S.tables = [blankTable()];
+    S.references = (parsed.references || []).map((r) => ({ ...r }));
+    render();
+    // 规则一并拉取
+    try {
+      const rules = await request(`/api/v1/ontology/rules?scope=${encodeURIComponent(scope)}`);
+      S.rules = (rules.data || []).map((r) => ({ rule_id: r.rule_id, condition_expr: r.condition_expr, conclusion: r.conclusion, source_ref: r.source_ref, rule_type: r.rule_type || "validation", version: r.version || "" }));
+      renderRules();
+    } catch (_) { /* 规则加载失败不阻塞契约 */ }
+    toast(`已加载 ${scope}(v${rec.version})`, "ok");
+  } catch (e) { toast(`加载失败:${e.message}`, "bad"); }
+}
+async function saveContract() {
+  if (!S.dataset.trim()) return toast("数据集名必填", "warn");
+  const yamlText = genYAML();
+  try {
+    const r = await request(`/api/v1/contracts/${encodeURIComponent(S.dataset.trim())}`, { method: "PUT", body: JSON.stringify({ contract_yaml: yamlText }) });
+    toast(`契约已保存 v${r.version}${r.created ? "(新版本)" : "(同 hash 跳过)"}`, "ok");
+    loadDomains();
+  } catch (e) { toast(`保存被拒:${e.message}`, "bad"); }
+}
+async function saveRules() {
+  const todo = S.rules.filter((r) => r.rule_id && r.condition_expr && r.conclusion && r.source_ref);
+  if (!todo.length) return toast("无可保存规则(四字段必填)", "warn");
+  let ok = 0;
+  for (const r of todo) {
+    try {
+      await request("/api/v1/ontology/rules", { method: "POST", body: JSON.stringify({ ...r, scope: S.dataset.trim() || "*" }) });
+      ok++;
+    } catch (e) { toast(`规则 ${r.rule_id} 失败:${e.message}`, "bad"); }
+  }
+  if (ok) toast(`规则已保存 ${ok}/${todo.length}(scope=${S.dataset.trim() || "*"})`, "ok");
+}
+async function validateOnly() {
+  try {
+    await request("/api/v1/contracts/parse", { method: "POST", body: JSON.stringify({ contract_yaml: genYAML() }) });
+    toast("契约 YAML 解析+编译通过", "ok");
+  } catch (e) { toast(`校验失败:${e.message}`, "bad"); }
+}
+
+$("#saveBtn").onclick = saveContract;
+$("#saveRulesBtn").onclick = saveRules;
+$("#validateBtn").onclick = validateOnly;
+$("#addRule").onclick = () => { S.rules.push(blankRule()); renderRules(); };
+$("#newBtn").onclick = () => { S = blank(); render(); toast("空白域——从左栏选已有或直接设计", "ok"); };
+document.querySelectorAll(".tabs button").forEach((b) => b.onclick = () => {
+  document.querySelectorAll(".tabs button").forEach((x) => x.classList.remove("on"));
+  b.classList.add("on"); tab = b.dataset.t; render();
+});
+loadDomains();
+render();
+</script>
+</body>
+</html>
