@@ -75,8 +75,9 @@ async def assess(
         from arrow_lake.api.auth_models import Role as _Role
 
         if user.role != _Role.ADMIN and user.role != _Role.EDITOR:
-            from fastapi import HTTPException
-
+            # 注意:此处勿再 from fastapi import HTTPException——函数内 import
+            # 会把 HTTPException 绑成局部名,使本函数 50 行的提前 raise 抛
+            # UnboundLocalError(503 变 500;测试 test_rules_store_missing_503 钉住)
             raise HTTPException(
                 status_code=403,
                 detail="recording decision history requires EDITOR",

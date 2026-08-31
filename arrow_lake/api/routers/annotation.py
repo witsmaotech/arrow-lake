@@ -61,10 +61,13 @@ class ProjectCreate(BaseModel):
 @router.get("/projects", dependencies=[Depends(require_role(Role.ADMIN))])
 async def list_projects(request: Request) -> dict:
     projects = _store(request).list_projects()
-    # ls_url(浏览器可达变体优先)外露给前端渲染「打开 LS」入口(M4)
-    cfg = request.app.state.config.annotation
+    # ls_url(浏览器可达变体优先)外露给前端渲染「打开 LS」入口(M4);
+    # getattr 防御:测试 fixture 等 lifespan 未跑的环境 state.config 可缺
+    cfg = getattr(getattr(request.app.state, "config", None),
+                  "annotation", None)
     return {"total": len(projects), "projects": projects,
-            "ls_url": cfg.ls_public_url or cfg.ls_url or None}
+            "ls_url": (cfg.ls_public_url or cfg.ls_url or None)
+            if cfg is not None else None}
 
 
 @router.get(
