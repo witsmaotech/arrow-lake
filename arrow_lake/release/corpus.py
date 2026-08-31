@@ -61,14 +61,28 @@ def _five_part(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _is_relevance_choice_row(row: dict[str, Any]) -> bool:
+    """Choices-only(relevance)行:同 W4 κ 修复口径,不是 L4 标注——
+    不得作为 SFT target / golden expected(W5 DoD 自查实证:scenario
+    '高相关' 曾被选为五段 target)。"""
+    return (
+        row.get("scenario") in ("高相关", "间接相关", "不相关")
+        and not row.get("objects") and not row.get("events")
+        and not row.get("relations") and not row.get("rules_applied")
+    )
+
+
 def _latest_human_by_row(
     adl: pa.Table,
     *, approved_only: bool = False,
 ) -> dict[str, dict[str, Any]]:
-    """ADL → 每行取最新**人工**标注(llm: 前缀弃;重标注取最大版本)。"""
+    """ADL → 每行取最新**人工 L4**标注(llm:/Choices-only 弃;重标注取
+    最大版本)。"""
     latest: dict[str, dict[str, Any]] = {}
     for row in (adl.to_pylist() if adl is not None else []):
         if _is_llm(row.get("annotator_id")):
+            continue
+        if _is_relevance_choice_row(row):
             continue
         if approved_only and row.get("review_status") != "approved":
             continue

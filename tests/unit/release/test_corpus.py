@@ -181,3 +181,20 @@ def test_write_corpus_jsonl(tmp_path: Path) -> None:
     # 空形态也落空文件(消费方可感知形态存在但无数据)
     p2 = write_corpus(tmp_path, tag="v1.0.0", form="rlhf", records=[])
     assert p2.exists() and p2.read_text(encoding="utf-8") == ""
+
+
+def test_sft_golden_exclude_relevance_choice_rows() -> None:
+    """W5 DoD 自查实证:relevance(Choices-only)行不得成为五段 target。"""
+    adl = _adl([
+        _adl_row("h0", "ann1", status="approved", scenario="泄漏处置",
+                 objects=[{"label": "阀门", "start": 0, "end": 2}]),
+        # 更晚的 relevance 行(版本更高,Choices-only:无 span/无规则)——曾被误选
+        _adl_row("h0", "ann1", version=2, status="approved", scenario="高相关",
+                 rules=[]),
+    ])
+    rows = [{"text": "t", "row_id": "h0"}]
+    sft = build_sft_records(rows=rows, adl=adl, system_prompt="s",
+                            text_column="text")
+    assert sft[0]["output"]["scenario"] == "泄漏处置"
+    gold = build_golden_records(rows=rows, adl=adl, text_column="text")
+    assert gold[0]["expected"]["scenario"] == "泄漏处置"
