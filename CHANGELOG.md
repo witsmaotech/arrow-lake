@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.11.4] - 2026-08-31 — MS5 五维质量门+发布层(Master Plan 收官)
+
+### 交付(F5.1-F5.8)
+- **五维评估引擎**:契约 `quality:` 节声明权重(登记不校验);相关性 .20/准确性 .35(ADL 聚合 κ)/完整性 .20(契约+profiler)/多样性 .15(Gini-Simpson)/时效性 .10(SLO 折算);星级+bronze/silver/gold 准入+逐维一票否决(降级≠否决)
+- **相关性回路**(W2):LS 三分类项目复用 dispatch 纪律;LLM 直评降级(annotator=llm:);per-row majority 人工票优先;`GET /quality/relevance/{ds}/refeed` 反哺清单(过滤整改+补标优先)
+- **漂移监控**(W2):数值 32 桶+类别 top-32 直方图 KL(ε 只加未观测桶,同分布精确 0);发布时自动基线快照(source=release)
+- **发布门+发布层**(W3):准入/否决/拒绝劣化(基准=最新 active)/漂移超限四重门;force 须 reason 落审计;Lance 版本锁定+语义化 tag(V021)+datasheet YAML 生成物;三读同源(锁版本后按 version 读)
+- **语料四形态**(W4):SFT(ADL 五段×源表)/预训练(KG 快照)/RLHF(decisions_history×ADL 按标识值配对)/黄金集(approved 人工行);全部经 masking 出域(红线④ fail-closed,`allow_unmasked` 豁免审计); Choices-only 行不入选
+- **数据飞轮**:`POST /quality/feedback`(auto_low_confidence 从研判历史自动补行;按标识值反查源行)
+- **F1.7 评审材料包**:`GET /quality/review-pack/{ds}`(对象清单/规则/质量摘要/签字栏)
+- **console**:生产向导页 hq-guide(六步状态灯+就地操作+试点剧本);质量报告/发布管理页;本体建模工作台(表单→契约 YAML/LS config/模板骨架三生成物);导航六组重组+分组折叠;`GET /decisions/history/{ds}`
+- **部署**:annotation.yml 并入 prod_minimal(LS 入默认栈);`ls_public_url` 浏览器可达配置;静态资源 no-cache
+
+### 同日四维综合 review(质量/性能/测试/安全;1C+15H+22M)A-E 五批全清
+- **C1 双标注丢失治本**:watermark 复合判据(V024 recovered_counts——id 前进 ∪ 已回收 task 标注数增长)+ webhook 真触发 recover_one;升级首跑幂等补捞历史丢失
+- **H2 跨进程回收互斥**(Redis SETNX,fail-open);H4 `adjudicate_min_annotators` 接线(单人试点可直接 approved)
+- **性能**:drift 向量化(Arrow 分桶内核)+NaN 过滤;assess/发布链/LS IO 收专用 executor(olap/ls_io);corpus/feedback 按形态列裁剪;RLHF 倒排;LLM Semaphore(8) 并发;scheduler LS 计数签名大门
+- **安全**:action 写前 count_rows ≠1 拒(跨分区重复标识越权面);pretrain 纳入红线④门+definition 脱敏;治理面写审计九端点补齐(deps.audit_write);require_masking 三路统一 422;identity naive expires 修复
+- **测试**:gravitino importorskip(332 测试解封);golden 断言补强+退化哨兵;llm_enrich 首批测试;迁移数动态化;全站 23 页 64 项交互浏览器逐一实测(修复 8 处"从未调通"级 API 调用:双前缀/单参形态/非 JSON 端点)
+
+### 试点
+- demo_annotation_alerts 全链:补契约 v1 → 五维评估(completeness 100)→ force 发布 v1.4.0 → sft 10/golden 8 带脱敏;demo_gas 研判 record_history 落库(飞轮数据面)
+
+## [1.11.3] - 2026-08-30 — MS4 标注闭环
+
+- LS CE 1.13.1 独立 profile(transient 工作区,ADL 为 SoT);模板→LS labeling config 生成器;四策略采样(uncertainty/diversity/failure_case/committee);脱敏后预标注(span 对齐);dispatch 一键 202;回收 export 对账(adl_id 内容幂等+(row,annotator) 版本链+仅随带标注任务推进的 watermark);Fleiss κ+signature 仲裁(分歧自动生成仲裁 task);30s 回收 scheduler(熔断);console 标注页;W4 fan-out review 13 项+W5 live 校准 6 项当日清偿
+
 ## [1.11.2] — 2026-08-28
 
 ### MS3 决策与行动层(F3.1-F3.6)
