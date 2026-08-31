@@ -793,7 +793,7 @@ async def review_pack(
         "> 签字结果由管理员录入 system_db 留痕;材料包内容为平台自动生成,",
         "> 专家仅需核对领域正确性(对象清单/规则/值域)。",
     ]
-    markdown = "\\n".join(lines)
+    markdown = "\n".join(lines)
     return {
         "dataset": dataset, "format": "markdown",
         "content": markdown,

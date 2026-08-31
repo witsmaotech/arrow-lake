@@ -175,21 +175,28 @@ def _load_rows(lake: Any, dataset: str, text_column: str, cap: int) -> tuple[lis
 
     死信行是被质量门拒掉的行——不在主表,但正是 failure_case 策略的
     目标样本,拼进候选池尾段(只取 text_column + quality_score)。
+    review 修:先 ``slice(0, cap)`` 再 to_pylist——cap 是内存护栏,此前
+    全表物化后才 ``[:cap]`` 形同虚设(107M 行级数据集 GB 级 churn)。
     """
-    def _to_dicts(table: Any, wanted: list[str]) -> list[dict]:
+    def _to_dicts(table: Any, wanted: list[str], limit: int) -> list[dict]:
         cols = [c for c in wanted if c in table.column_names]
         if text_column in table.column_names and text_column not in cols:
             cols.append(text_column)
         if text_column not in cols:
             return []  # 文本列缺失 → 该表不构成候选
-        return table.select(cols).to_pylist()
+        return table.select(cols).slice(0, limit).to_pylist()
 
-    rows = _to_dicts(lake.read_dataset(dataset), ["quality_score", text_column])[:cap]
+    try:
+        main = lake.read_dataset(dataset)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=404, detail=f"Dataset '{dataset}' not readable: {exc}",
+        ) from exc
+    rows = _to_dicts(main, ["quality_score", text_column], cap)
     dead_ids: list[str] | None = None
     try:
-        dead = _to_dicts(lake.read_dataset(f"_{dataset}_dead_letter"), [text_column])
+        dead = _to_dicts(lake.read_dataset(f"_{dataset}_dead_letter"), [text_column], cap)
         if dead:
-            dead = dead[:cap]
             base = len(rows)
             rows.extend(dead)
             from arrow_lake.annotation.dispatch import stable_row_id as _rid

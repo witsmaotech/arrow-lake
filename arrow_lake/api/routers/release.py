@@ -356,24 +356,29 @@ def _build_rlhf_pairs(
                     "record_history=true to build the RLHF source")
 
     # 配对:object_id 按值在源行全列扫描(契约 identifier 值即 object_id;
-    # 不要求契约显式声明 identifier——值匹配对 demo/无 identifier 契约同样成立)
+    # 不要求契约显式声明 identifier——值匹配对 demo/无 identifier 契约同样成立)。
+    # review 修:①倒排一次建 value→text(此前 O(H×R×C) 逐值 str() 十亿量级);
+    # ②text 与 corpus rows 同口径 strip(此前带首尾空白即 hash 不配对,L4)
     pairs: list[dict[str, Any]] = []
     by_row = _latest_human_by_row(adl) if adl is not None else {}
     from arrow_lake.annotation.dispatch import stable_row_id
 
-    text_of: dict[str, str] = {r["row_id"]: str(r.get(text_column) or "")
-                               for r in rows}
+    value_to_text: dict[str, str] = {}
+    for r in rows:
+        text = str(r.get(text_column) or "").strip()
+        if not text:
+            continue
+        for v in r.values():
+            if v is None:
+                continue
+            s = str(v)
+            if s and s not in value_to_text:
+                value_to_text[s] = text
     for h in history:
         oid = str(h.get("object_id") or "")
         if not oid:
             continue
-        # 在源行里找 identifier 值等于 oid 的行(全列扫,不依赖单一列名)
-        target_text = None
-        for r in rows:
-            if oid in [str(v) for v in r.values() if v is not None]:
-                target_text = str(r.get(text_column) or "") or None
-                if target_text:
-                    break
+        target_text = value_to_text.get(oid)
         if not target_text:
             continue
         rid = stable_row_id(target_text, 0)
@@ -505,6 +510,9 @@ async def export_corpus(
             records, note = [], "KG disabled or unreachable — empty export"
         else:
             graph = f"kg_{dataset}"
+            # 预置空:快照失败(kg_{ds} 未建图/超时)时 suppress 吞异常,
+            # 若不预置则 with 块外 UnboundLocalError → 500(四维 review H3)
+            vertices, edges = [], []
             with contextlib.suppress(Exception):
                 vertices, edges = await client.get_graph_snapshot(
                     graph_name=graph, limit=1000)
