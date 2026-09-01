@@ -6,7 +6,13 @@ Baselines are JSON files in tests/benchmark/baselines/. A test fails if
 current performance is more than threshold_pct worse than baseline.
 """
 
+
+
 from __future__ import annotations
+
+import pytest
+
+pytestmark = pytest.mark.benchmark
 
 import json
 from pathlib import Path

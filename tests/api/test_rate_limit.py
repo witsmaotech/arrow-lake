@@ -83,8 +83,15 @@ async def test_rate_limit_config_accessible(rl_config: ArrowLakeConfig) -> None:
 
 
 @pytest.mark.asyncio
-async def test_rate_limit_returns_429(rl_app) -> None:
+async def test_rate_limit_returns_429(rl_app, monkeypatch: pytest.MonkeyPatch) -> None:
     """After exceeding the rate limit, should return 429 with Retry-After header."""
+    # M-8 (v1.10.7): the in-memory fallback amortizes the limit across
+    # workers — fallback_limit = max(1, rpm // _WORKER_COUNT) — so the default
+    # W=4 turns rpm=3 into 1 allowed request. Pin W=1 so this test exercises
+    # the full single-worker budget (3 passes, 4th limited).
+    from arrow_lake.api import rate_limit
+    monkeypatch.setattr(rate_limit, "_WORKER_COUNT", 1)
+
     async with AsyncClient(transport=ASGITransport(app=rl_app), base_url="http://test",
                            headers={"X-API-Key": "test-rl-key"}) as ac:
         # Burn through the rate limit on a non-exempt endpoint

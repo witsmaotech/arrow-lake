@@ -15,7 +15,11 @@ import time
 import httpx
 import pytest
 
-from tests.conftest_services import require_hugegraph, require_ollama
+from tests.conftest_services import require_hugegraph, require_live_api, require_ollama
+
+# Module-level gate: the live stack must be reachable AND the configured key
+# must authenticate (see conftest_services.require_live_api).
+pytestmark = require_live_api
 
 # ---------------------------------------------------------------------------
 # System (5 endpoints)

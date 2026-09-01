@@ -16,7 +16,13 @@ Run::
     .venv/bin/pytest tests/benchmark/test_bench_olap.py -m benchmark -s
 """
 
+
+
 from __future__ import annotations
+
+import pytest
+
+pytestmark = pytest.mark.benchmark
 
 import numpy as np
 import pyarrow as pa

@@ -1,12 +1,15 @@
-"""Router-level tests for /ingest/documents post-ingest embed + FTS index (v1.8.9).
+"""Router-level tests for /ingest/documents (v1.8.x 架构评审 #4 之后的契约).
 
-The documents endpoint must, after writing text_content, (1) embed → text_embedding
-and (2) build the FTS index, so the dataset is FTS/vector/RAG searchable. Both are
-best-effort: ingest succeeds even if the embedder or FTS index build fails.
+The parse→store→embed→FTS→vector sequence is consolidated in the facade
+(``lake.ingest_documents_and_index`` — its best-effort semantics are covered by
+tests/unit/api/test_ingest_documents_and_index.py). This file pins the ROUTE
+contract: delegation with doc_config, the HTTP-layer post-hooks
+(gravitino registration + query-cache invalidation), and error propagation.
 """
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -17,8 +20,6 @@ from arrow_lake.api.models.dataset import IngestDocumentsRequest
 
 def _authed_request() -> MagicMock:
     """Request 伪对象:EDITOR user + allow-all checker(v1.10.7 WP1 守卫契约)。"""
-    from types import SimpleNamespace
-
     from arrow_lake.api.auth_models import Role
 
     req = MagicMock()
@@ -29,26 +30,23 @@ def _authed_request() -> MagicMock:
     return req
 
 
-
 @pytest.fixture
 def _patch_endpoint(monkeypatch: pytest.MonkeyPatch):
-    """run_sync → async passthrough; stub _after_ingest_hooks + from_report."""
+    """run_sync → async passthrough; stub from_report so the sentinel proves wiring."""
     async def fake_run_sync(fn, *a, **k):
         return fn(*a, **k)
 
     monkeypatch.setattr(ds_mod, "run_sync", fake_run_sync)
-    monkeypatch.setattr(ds_mod, "_after_ingest_hooks", lambda *a, **k: None)
     sentinel = MagicMock(name="IngestResponse")
     monkeypatch.setattr(ds_mod.IngestResponse, "from_report", lambda report: sentinel)
     return sentinel
 
 
 @pytest.mark.asyncio
-async def test_ingest_documents_calls_embed_and_fts_after_write(_patch_endpoint) -> None:
+async def test_ingest_documents_delegates_to_facade(_patch_endpoint) -> None:
+    """Route calls ingest_documents_and_index with doc_config and wraps the report."""
     lake = MagicMock()
-    lake.ingest_documents = MagicMock(return_value=MagicMock(name="report"))
-    lake.embed_and_add = MagicMock()
-    lake.create_fts_index = MagicMock()
+    lake._config.document = MagicMock(name="doc_config")
     req = IngestDocumentsRequest(pdf_paths=["x.md"])
 
     resp = await ds_mod.ingest_documents(
@@ -56,39 +54,39 @@ async def test_ingest_documents_calls_embed_and_fts_after_write(_patch_endpoint)
     )
 
     assert resp is _patch_endpoint
-    lake.ingest_documents.assert_called_once()
-    lake.embed_and_add.assert_called_once()
-    assert lake.embed_and_add.call_args.args[0] == "ds"
-    lake.create_fts_index.assert_called_once()
-    assert lake.create_fts_index.call_args.args[0] == "ds"
+    lake.ingest_documents_and_index.assert_called_once()
+    call = lake.ingest_documents_and_index.call_args
+    assert call.args[:2] == ("ds", ["x.md"])
+    assert call.kwargs["doc_config"] is lake._config.document
 
 
 @pytest.mark.asyncio
-async def test_embed_failure_does_not_block_ingest_or_fts(_patch_endpoint) -> None:
+async def test_ingest_documents_runs_http_layer_hooks(_patch_endpoint, monkeypatch: pytest.MonkeyPatch) -> None:
+    """_after_ingest_hooks (gravitino + cache invalidate) runs after a successful ingest."""
+    hook_calls: list[tuple] = []
+    monkeypatch.setattr(
+        ds_mod, "_after_ingest_hooks",
+        lambda app_state, ds, lake: hook_calls.append((app_state, ds, lake)),
+    )
     lake = MagicMock()
-    lake.ingest_documents = MagicMock(return_value=MagicMock(name="report"))
-    lake.embed_and_add = MagicMock(side_effect=RuntimeError("embedder down"))
-    lake.create_fts_index = MagicMock()
     req = IngestDocumentsRequest(pdf_paths=["x.md"])
+    request = _authed_request()
 
-    resp = await ds_mod.ingest_documents(
-        request=_authed_request(), name="ds", req=req, lake=lake, _user={},
+    await ds_mod.ingest_documents(
+        request=request, name="ds", req=req, lake=lake, _user={},
     )
 
-    assert resp is _patch_endpoint            # ingest still succeeded
-    lake.create_fts_index.assert_called_once()  # FTS index still attempted
+    assert hook_calls == [(request.app.state, "ds", lake)]
 
 
 @pytest.mark.asyncio
-async def test_fts_failure_does_not_block_ingest(_patch_endpoint) -> None:
+async def test_facade_failure_propagates(_patch_endpoint) -> None:
+    """A facade-level ingest failure surfaces — the route does not swallow it."""
     lake = MagicMock()
-    lake.ingest_documents = MagicMock(return_value=MagicMock(name="report"))
-    lake.embed_and_add = MagicMock()
-    lake.create_fts_index = MagicMock(side_effect=RuntimeError("fts build failed"))
+    lake.ingest_documents_and_index = MagicMock(side_effect=RuntimeError("parse failed"))
     req = IngestDocumentsRequest(pdf_paths=["x.md"])
 
-    resp = await ds_mod.ingest_documents(
-        request=_authed_request(), name="ds", req=req, lake=lake, _user={},
-    )
-
-    assert resp is _patch_endpoint            # ingest still succeeded despite FTS failure
+    with pytest.raises(RuntimeError, match="parse failed"):
+        await ds_mod.ingest_documents(
+            request=_authed_request(), name="ds", req=req, lake=lake, _user={},
+        )

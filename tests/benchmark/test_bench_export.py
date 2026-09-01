@@ -1,6 +1,12 @@
 """Data export benchmarks — Story 5.9."""
 
+
+
 from __future__ import annotations
+
+import pytest
+
+pytestmark = pytest.mark.benchmark
 
 import numpy as np
 import pyarrow as pa

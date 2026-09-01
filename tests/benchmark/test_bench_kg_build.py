@@ -4,7 +4,13 @@ Benchmarks KG schema creation, vertex/edge insertion, and traversal queries.
 Uses a mock HugeGraphClient to avoid external dependencies.
 """
 
+
+
 from __future__ import annotations
+
+import pytest
+
+pytestmark = pytest.mark.benchmark
 
 from typing import Any
 

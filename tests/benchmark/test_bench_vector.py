@@ -1,6 +1,12 @@
 """Vector search benchmarks — Story 5.8."""
 
+
+
 from __future__ import annotations
+
+import pytest
+
+pytestmark = pytest.mark.benchmark
 
 import numpy as np
 import pyarrow as pa

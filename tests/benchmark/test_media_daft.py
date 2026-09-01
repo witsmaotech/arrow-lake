@@ -1,6 +1,12 @@
 """Tests for Daft-native media processing — batch image, video, and hash migration."""
 
+
+
 from __future__ import annotations
+
+import pytest
+
+pytestmark = pytest.mark.benchmark
 
 import io
 from unittest.mock import MagicMock, patch

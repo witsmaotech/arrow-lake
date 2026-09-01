@@ -32,6 +32,12 @@ def _create_app_with_kg_disabled() -> TestClient:
 
     config = ArrowLakeConfig()
     config.hugegraph.enabled = False
+    # Pin the API key the TestClient sends: a bare ArrowLakeConfig() inherits
+    # the rotated deployment key + VIEWER default role from the repo-root
+    # .env, so the hardcoded dev-key header would 401/403 instead of the
+    # expected 404s (observed: assert 401 == 404, then 403 == 404).
+    config.api.api_key = "dev-api-key-for-local-testing-only"
+    config.api.api_key_default_role = "ADMIN"
 
     app = create_app(config=config)
 

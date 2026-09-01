@@ -52,7 +52,9 @@ class TestErrorCodeMappings:
             (ErrorCode.KG_CONNECTION_FAILED, 502),
             (ErrorCode.KG_EXTRACT_FAILED, 502),
             # KG catch-all → 500
-            (ErrorCode.KG_QUERY_FAILED, 500),
+            # errors.py: query-semantics failure (too-expensive traversal/OOM)
+            # is a well-formed-but-unsatisfiable request → 422, not a 500.
+            (ErrorCode.KG_QUERY_FAILED, 422),
             (ErrorCode.KG_BUILD_FAILED, 500),
             # Auth errors
             (ErrorCode.AUTH_TOKEN_EXPIRED, 401),

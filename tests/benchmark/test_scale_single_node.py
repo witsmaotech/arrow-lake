@@ -5,7 +5,13 @@ NFR-SCALE-03: Concurrent query up to 100 QPS
 NFR-PERF-01: Vector search latency (10M rows, top_k=100) < 10ms
 """
 
+
+
 from __future__ import annotations
+
+import pytest
+
+pytestmark = pytest.mark.benchmark
 
 import concurrent.futures
 

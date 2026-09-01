@@ -1,6 +1,12 @@
 """Dataset ingestion benchmarks — Story 5.8."""
 
+
+
 from __future__ import annotations
+
+import pytest
+
+pytestmark = pytest.mark.benchmark
 
 import pytest
 

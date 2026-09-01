@@ -20,6 +20,12 @@ class TestIngestDocumentsAndIndex:
     def _call(self, **lake_overrides):
         lake = MagicMock()
         lake.ingest_documents.return_value = "report"
+        # P1.4 embed-async gate: pin both operands to real ints — MagicMock
+        # ordering comparisons return NotImplemented (TypeError at the
+        # `n_null > threshold` branch), and pinning to 0 keeps the INLINE
+        # embed path so these tests exercise the synchronous contract.
+        lake._estimate_null_embeddings.return_value = 0
+        lake._config.embedding.embed_async_threshold = 5000
         for k, v in lake_overrides.items():
             setattr(lake, k, v)
         report = _LakeIngestMixin.ingest_documents_and_index(
@@ -52,6 +58,9 @@ class TestIngestDocumentsAndIndex:
         """If a step attr is absent (None), getattr→None→skipped, not crashed."""
         lake = MagicMock()
         lake.ingest_documents.return_value = "report"
+        # P1.4 embed-async gate operands (see _call) — MagicMock comparisons raise.
+        lake._estimate_null_embeddings.return_value = 0
+        lake._config.embedding.embed_async_threshold = 5000
         # del create_vector_index → getattr returns MagicMock by default; force None
         lake.create_vector_index = None
         report = _LakeIngestMixin.ingest_documents_and_index(

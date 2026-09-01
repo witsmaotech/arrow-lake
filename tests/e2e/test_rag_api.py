@@ -85,6 +85,17 @@ def _create_app_with_rag() -> TestClient:
 
     mock_lake.rag_query = AsyncMock(wraps=pipeline.query)
     mock_lake.rag_query_stream = pipeline.query_stream
+
+    # v1.9.6 P1-9: /query/stream calls rag_query_stream_rich — a (phase,
+    # payload) async generator (citations → content ×N → done). Wiring only
+    # the legacy rag_query_stream left the route iterating a bare MagicMock
+    # → error event right after metadata.
+    async def _rich_stream(*, question, dataset_name, top_k, strategy=None, template_name=None):
+        yield "citations", []
+        yield "content", "This is a mock RAG response."
+        yield "done", {"latency_ms": 1}
+
+    mock_lake.rag_query_stream_rich = _rich_stream
     mock_lake.rag_extract = AsyncMock(wraps=pipeline.extract_entities)
     mock_lake.rag_get_history = lambda sid: session_store.get_history(sid)
     app.state.lake = mock_lake

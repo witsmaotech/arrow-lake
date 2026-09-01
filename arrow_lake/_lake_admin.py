@@ -14,9 +14,11 @@ logger = logging.getLogger(__name__)
 # Short-TTL cache for catalog() — /datasets opens every dataset on each call
 # (count_rows + list_versions + list_indices). This avoids re-doing that work
 # within a few seconds. Stale window ≤ _CATALOG_CACHE_TTL; bumped through on
-# next call. Invalidation is time-based (ingest/delete settle within TTL).
+# next call. v1.11.5-W1: the cache moved from a module-level global (which
+# leaked one Lake's listing into every other Lake in the process — multi-lake
+# test suites got lake A's EMPTY list served to lake B) to per-instance state;
+# invalidate_query_cache() drops it so ingest→list is fresh within the TTL.
 _CATALOG_CACHE_TTL: float = 5.0
-_CATALOG_CACHE: dict[str, Any] = {"ts": 0.0, "result": None}
 
 # W4.2: columns stamped by the documents/images/videos ingest pipelines —
 # their presence marks a dataset for the console's text (non-structured) line.
@@ -42,8 +44,9 @@ class _LakeAdminMixin:
             catalog_queries_total.inc()
         from arrow_lake._models import CatalogEntry, CatalogResult
 
-        cached = _CATALOG_CACHE["result"]
-        if cached is not None and (time.monotonic() - _CATALOG_CACHE["ts"]) < _CATALOG_CACHE_TTL:
+        cache = self._components.setdefault("_catalog_cache", {"ts": 0.0, "result": None})
+        cached = cache["result"]
+        if cached is not None and (time.monotonic() - cache["ts"]) < _CATALOG_CACHE_TTL:
             return cached
 
         storage = self._get_storage()
@@ -168,8 +171,8 @@ class _LakeAdminMixin:
             ))
         entries.sort(key=lambda e: e.name)
         result = CatalogResult(datasets=entries, total=len(entries))
-        _CATALOG_CACHE["ts"] = time.monotonic()
-        _CATALOG_CACHE["result"] = result
+        cache["ts"] = time.monotonic()
+        cache["result"] = result
         return result
 
     def list_indices(self, dataset_name: str) -> list[dict[str, Any]]:

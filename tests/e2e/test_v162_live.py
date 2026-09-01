@@ -2,14 +2,40 @@
 
 Usage:
     python tests/e2e/test_v162_live.py --api http://localhost:8000 --api-key <KEY>
+
+As pytest tests they are opt-in: they probe the LIVE stack with a real key
+(``ARROW_LAKE_API_KEY`` env) and build a KG on a real dataset — without both
+they cannot validate anything and are skipped (v1.11.5-W1 suite-stability
+gating; the module doubles as a manual script via argparse below).
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
+
+import pytest
+
+_LIVE_API_KEY = os.environ.get("ARROW_LAKE_API_KEY", "")
+
+# cheap reachability probe — no auth, no side effects
+def _api_reachable(base: str = "http://localhost:8000") -> bool:
+    try:
+        from urllib.request import Request, urlopen
+
+        with urlopen(Request(f"{base}/health"), timeout=2):
+            return True
+    except Exception:
+        return False
+
+
+pytestmark = pytest.mark.skipif(
+    not (_LIVE_API_KEY and _api_reachable()),
+    reason="live-stack probe: set ARROW_LAKE_API_KEY and start the API to run",
+)
 from urllib.request import Request, urlopen
 
 BASE = "http://localhost:8000"

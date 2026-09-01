@@ -61,6 +61,19 @@ class TestIngestAndQuery:
         assert entry.version >= 1
 
 
+try:
+    import daft_lance  # noqa: F401
+
+    _HAS_DAFT_LANCE = True
+except ImportError:
+    # The daft↔lance bridge is an optional install (absent in this venv and
+    # historically in the container image); lake.daft_query needs it.
+    _HAS_DAFT_LANCE = False
+
+
+@pytest.mark.skipif(
+    not _HAS_DAFT_LANCE, reason="daft-lance bridge not installed — lake.daft_query unavailable"
+)
 class TestDaftQueryIntegration:
     """Integration tests for Daft lazy query path."""
 

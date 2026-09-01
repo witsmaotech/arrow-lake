@@ -413,6 +413,7 @@ dependencies = [
     { name = "boto3" },
     { name = "click" },
     { name = "daft" },
+    { name = "daft-lance" },
     { name = "datasketch" },
     { name = "duckdb" },
     { name = "fastapi" },
@@ -530,6 +531,7 @@ requires-dist = [
     { name = "chonkie", marker = "extra == 'chunking-semantic'", specifier = ">=1.0" },
     { name = "click", specifier = ">=8.1" },
     { name = "daft", specifier = "==0.7.21" },
+    { name = "daft-lance", specifier = ">=0.4.0" },
     { name = "datasketch", specifier = ">=1.6" },
     { name = "docling", marker = "extra == 'docling'", specifier = ">=2.0" },
     { name = "duckdb", specifier = "==1.5.5" },
@@ -1473,6 +1475,20 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/61/26/e7820790b286aa7711846a40408aab09692b72ada10a9481e92ca14ee2f0/daft-0.7.21-cp310-abi3-manylinux_2_24_aarch64.whl", hash = "sha256:bad1a622db5ad592a84409171b8555b0020e46af6a1480286bb545355f570b75", size = 53880723, upload-time = "2026-07-17T20:35:51.869Z" },
     { url = "https://files.pythonhosted.org/packages/e7/8b/152f56f6da4315f6f09067368c8838c414dd1410e034c70c80e2d71b032e/daft-0.7.21-cp310-abi3-manylinux_2_24_x86_64.whl", hash = "sha256:12f4dc2df39a1849d350112a5088e12af5223ef45b558b355e3b874d473733c3", size = 56083959, upload-time = "2026-07-17T20:35:55.47Z" },
     { url = "https://files.pythonhosted.org/packages/e0/41/6a0814ebb930c21c6ad9b600d3778b7bb44ce72d60b3ccbeec131626a989/daft-0.7.21-cp310-abi3-win_amd64.whl", hash = "sha256:3295dedaf132e1e4fc04a1e0b1c2577546f24c6289d32cd60566af357a1b5cc3", size = 55190558, upload-time = "2026-07-17T20:35:58.435Z" },
+]
+
+[[package]]
+name = "daft-lance"
+version = "0.4.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "lance-namespace" },
+    { name = "lance-namespace-urllib3-client" },
+    { name = "pylance" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d2/64/8a9b5e8356c86571b46c94ca97ff7d8f635ce2666da8135d4bb816aa5270/daft_lance-0.4.0.tar.gz", hash = "sha256:47c179f402870c434030083287676e154cff282779d5871844e79ae99f2f108e", size = 142385, upload-time = "2026-06-05T22:07:48.163Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d2/f5/b416b00e630940b2f7b1422782fa5ff32b712c831bdaee5c25f05be9d032/daft_lance-0.4.0-py3-none-any.whl", hash = "sha256:c3f35dd9d8b90246807eec9b8b3bef8fb412c7deff301e9ec7c1aa7f93c97693", size = 40928, upload-time = "2026-06-05T22:07:47.034Z" },
 ]
 
 [[package]]

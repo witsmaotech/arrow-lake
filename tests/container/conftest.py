@@ -78,11 +78,10 @@ def _generate_smoke_jsonl() -> str:
 # Service reachability (delegated to shared conftest_services)
 # ---------------------------------------------------------------------------
 
-# Module-level skip: skip ALL container tests if API is not reachable
-pytestmark = pytest.mark.skipif(
-    not api_reachable(),
-    reason=f"API not reachable at {API_BASE_URL} (start with: docker compose -f deploy/docker-compose.prod.yml up -d)",
-)
+# NOTE (v1.11.5-W1): the reachability/auth gate lives as a module-level
+# ``pytestmark = require_live_api`` in test_container_smoke.py — a
+# ``pytestmark`` assignment in conftest.py is silently ignored by pytest, so
+# the previous API-unreachable skip defined here never actually applied.
 
 # Markers for external services (using shared reachability checks)
 require_ollama = pytest.mark.skipif(

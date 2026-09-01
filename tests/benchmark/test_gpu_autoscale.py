@@ -1,6 +1,12 @@
 """Benchmark tests for GPUAutoscaler — cold start, idle scale-down, pulse load."""
 
+
+
 from __future__ import annotations
+
+import pytest
+
+pytestmark = pytest.mark.benchmark
 
 import time
 

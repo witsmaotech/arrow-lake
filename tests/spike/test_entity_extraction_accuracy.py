@@ -14,7 +14,13 @@ Full benchmark (50 samples):
     HUGEGRAPH_FULL_BENCHMARK=1 uv run pytest tests/spike/test_entity_extraction_accuracy.py -v -m spike -s
 """
 
+
+
 from __future__ import annotations
+
+import pytest
+
+pytestmark = pytest.mark.spike
 
 import contextlib
 import json

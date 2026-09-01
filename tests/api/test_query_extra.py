@@ -105,16 +105,26 @@ async def test_olap_with_acl_filter(mock_lake: MagicMock) -> None:
         base_url="http://test",
         headers={"X-API-Key": "test-api-key"},
     ) as ac:
+        # v1.10.7 WP1 (数据面强制): a column-restricted dataset rejects
+        # column wildcards at the source — SELECT * would have to be
+        # rewritten against a hidden-column allowlist, so it fails 422
+        # with guidance instead of being silently filtered server-side.
         resp = await ac.post(
             "/api/v1/datasets/docs/query/olap",
             json={"sql": "SELECT * FROM docs", "format": "json"},
         )
-    assert resp.status_code == 200
+        assert resp.status_code == 422
+
+        # Explicitly selecting allowed columns is the supported path.
+        resp = await ac.post(
+            "/api/v1/datasets/docs/query/olap",
+            json={"sql": "SELECT id, score FROM docs", "format": "json"},
+        )
+    assert resp.status_code == 200, resp.text
     body = resp.json()
     returned_cols = set(body["rows"][0].keys()) if body["rows"] else set()
-    assert "region" not in returned_cols or body["row_count"] == 0 or True
-    # The ACL filters columns, so region should not appear in visible columns
-    # (if rows exist and columns are returned)
+    # The ACL-restricted SELECT only ever surfaces allowed columns.
+    assert returned_cols <= {"id", "score"}
 
 
 # ---------------------------------------------------------------------------

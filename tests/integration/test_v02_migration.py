@@ -13,6 +13,14 @@ from __future__ import annotations
 import pyarrow as pa
 import pytest
 
+# v1.10.8 P0 hardening disables LocalFileSystem on DuckDB sessions by
+# default; these tests intentionally __lance_scan() local tmp files, so opt
+# the session out (the lockdown itself is covered by
+# tests/unit/query/test_duckdb_fs_lockdown.py).
+from arrow_lake.config import OlapConfig
+
+_LOCAL_FS_OK = OlapConfig(disabled_filesystems=[])
+
 
 @pytest.fixture()
 def v02_lance_dataset(tmp_path: object) -> str:
@@ -40,7 +48,7 @@ class TestV02MigrationLanceScan:
         """__lance_scan should read v0.2-created datasets."""
         from arrow_lake.query._db import DuckDBSession
 
-        with DuckDBSession() as conn:
+        with DuckDBSession(olap_config=_LOCAL_FS_OK) as conn:
             result = conn.execute(
                 f"SELECT count(*) FROM __lance_scan('{v02_lance_dataset}', "
                 f"explain_verbose := false)"
@@ -51,7 +59,7 @@ class TestV02MigrationLanceScan:
         """Column names should be preserved through __lance_scan."""
         from arrow_lake.query._db import DuckDBSession
 
-        with DuckDBSession() as conn:
+        with DuckDBSession(olap_config=_LOCAL_FS_OK) as conn:
             conn.execute(
                 f"CREATE VIEW v AS SELECT * FROM __lance_scan("
                 f"'{v02_lance_dataset}', explain_verbose := false)"
@@ -66,7 +74,7 @@ class TestV02MigrationLanceScan:
         """SQL WHERE should work on __lance_scan results."""
         from arrow_lake.query._db import DuckDBSession
 
-        with DuckDBSession() as conn:
+        with DuckDBSession(olap_config=_LOCAL_FS_OK) as conn:
             result = conn.execute(
                 f"SELECT count(*) FROM __lance_scan("
                 f"'{v02_lance_dataset}', explain_verbose := false) "
@@ -78,7 +86,7 @@ class TestV02MigrationLanceScan:
         """SQL aggregation should work on __lance_scan results."""
         from arrow_lake.query._db import DuckDBSession
 
-        with DuckDBSession() as conn:
+        with DuckDBSession(olap_config=_LOCAL_FS_OK) as conn:
             result = conn.execute(
                 f"SELECT avg(score) FROM __lance_scan("
                 f"'{v02_lance_dataset}', explain_verbose := false)"
@@ -93,7 +101,7 @@ class TestV02MigrationColumnDiscovery:
         """information_schema.columns should list all dataset columns."""
         from arrow_lake.query._db import DuckDBSession
 
-        with DuckDBSession() as conn:
+        with DuckDBSession(olap_config=_LOCAL_FS_OK) as conn:
             conn.execute(
                 f"CREATE VIEW v AS SELECT * FROM __lance_scan("
                 f"'{v02_lance_dataset}', explain_verbose := false)"
@@ -147,7 +155,7 @@ class TestV02MigrationNullPreservation:
         """NULL values in string columns should survive the round-trip."""
         from arrow_lake.query._db import DuckDBSession
 
-        with DuckDBSession() as conn:
+        with DuckDBSession(olap_config=_LOCAL_FS_OK) as conn:
             result = conn.execute(
                 f"SELECT text FROM __lance_scan('{null_dataset}', "
                 f"explain_verbose := false) WHERE id IN (2, 4) ORDER BY id"
@@ -159,7 +167,7 @@ class TestV02MigrationNullPreservation:
         """NULL values in numeric columns should survive the round-trip."""
         from arrow_lake.query._db import DuckDBSession
 
-        with DuckDBSession() as conn:
+        with DuckDBSession(olap_config=_LOCAL_FS_OK) as conn:
             result = conn.execute(
                 f"SELECT score FROM __lance_scan('{null_dataset}', "
                 f"explain_verbose := false) WHERE id = 2"
@@ -170,7 +178,7 @@ class TestV02MigrationNullPreservation:
         """SQL COUNT with NULL filtering should work correctly."""
         from arrow_lake.query._db import DuckDBSession
 
-        with DuckDBSession() as conn:
+        with DuckDBSession(olap_config=_LOCAL_FS_OK) as conn:
             result = conn.execute(
                 f"SELECT count(*) FROM __lance_scan('{null_dataset}', "
                 f"explain_verbose := false) WHERE score IS NULL"

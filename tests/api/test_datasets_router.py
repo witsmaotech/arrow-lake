@@ -172,7 +172,10 @@ async def test_ingest_http_endpoint(client: AsyncClient, mock_lake: MagicMock) -
 
 @pytest.mark.asyncio
 async def test_ingest_documents(client: AsyncClient, mock_lake: MagicMock) -> None:
-    mock_lake.ingest_documents.return_value = _FakeReport(
+    # The route calls ingest_documents_and_index (not the older
+    # ingest_documents) — stubbing the wrong name leaves a bare MagicMock
+    # whose embed_async attribute fails IngestResponse validation (500).
+    mock_lake.ingest_documents_and_index.return_value = _FakeReport(
         total_rows=30, total_files=3,
     )
     mock_lake._config.document = None

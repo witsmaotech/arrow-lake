@@ -97,6 +97,24 @@ def api_reachable() -> bool:
     return _http_reachable(API_BASE_URL, "/health")
 
 
+def api_auth_ok() -> bool:
+    """The configured API key actually authenticates against the live API.
+
+    v1.11.5-W1: the live stack's key was rotated (2026-08-17), so the default
+    dev key gets 401 on every request — reachability alone is not a sufficient
+    precondition for authenticated live-stack suites.
+    """
+    try:
+        r = httpx.get(
+            f"{API_BASE_URL}/api/v1/datasets?limit=1",
+            headers={"X-API-Key": API_KEY},
+            timeout=5,
+        )
+        return r.status_code == 200
+    except Exception:
+        return False
+
+
 def has_vllm_api_key() -> bool:
     return bool(os.getenv("VLLM_API_KEY", os.getenv("OPENAI_API_KEY", "")))
 
@@ -123,6 +141,17 @@ require_vllm = pytest.mark.skipif(
 require_api = pytest.mark.skipif(
     not api_reachable(),
     reason=f"API not reachable at {API_BASE_URL}",
+)
+
+# Authenticated live-API gate (v1.11.5-W1): reachable AND the configured key
+# authenticates. Apply as a MODULE-level pytestmark in the test module —
+# pytestmark in conftest.py is silently ignored by pytest.
+require_live_api = pytest.mark.skipif(
+    not (api_reachable() and api_auth_ok()),
+    reason=(
+        f"live API at {API_BASE_URL} unreachable, or ARROW_LAKE_API_KEY does "
+        "not authenticate (set the rotated key to run live-stack suites)"
+    ),
 )
 
 # ---------------------------------------------------------------------------

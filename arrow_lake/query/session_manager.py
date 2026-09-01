@@ -546,11 +546,12 @@ class DuckDBSessionManager:
                 # connections (idempotent SET; guards against settings lost on
                 # config_changed reconfig above or future drift).
                 with contextlib.suppress(duckdb.Error):
-                    fs_list = ", ".join(
-                        f"'{name.replace(chr(39), '')}'"
-                        for name in self._olap_config.disabled_filesystems
-                    )
-                    conn.execute(f"SET disabled_filesystems={fs_list};")
+                    fs_names = list(self._olap_config.disabled_filesystems)
+                    if fs_names:  # [] = explicit opt-out; empty SET is a syntax error
+                        fs_list = ", ".join(
+                            f"'{name.replace(chr(39), '')}'" for name in fs_names
+                        )
+                        conn.execute(f"SET disabled_filesystems={fs_list};")
                 return conn, created_at
             else:
                 self._close_conn(conn)

@@ -48,10 +48,11 @@ class FakeLake:
         self._table = table
         self.added: tuple[str, pa.Table] | None = None
 
-    def read_dataset(self, name: str) -> pa.Table:
+    def read_dataset(self, name: str, *, table: str | None = None) -> pa.Table:
+        # production passes table= for container datasets (DR14); accept it.
         return self._table
 
-    def add_columns_table(self, name: str, columns: pa.Table) -> None:
+    def add_columns_table(self, name: str, columns: pa.Table, *, table: str | None = None) -> None:
         self.added = (name, columns)
 
 

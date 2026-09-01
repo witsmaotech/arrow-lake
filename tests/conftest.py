@@ -7,30 +7,53 @@ PyArrow test tables, and storage managers.
 from __future__ import annotations
 
 import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 # ---------------------------------------------------------------------------
-# Hermetic storage anchor (v1.11.5-W1)
+# Hermetic suite anchors (v1.11.5-W1)
 # ---------------------------------------------------------------------------
-# The repo-root .env is deployment config (STORAGE__BACKEND=minio + real
-# credentials) and pydantic-settings loads it into every bare
-# ArrowLakeConfig() — including Lake.__init__'s ``config or ArrowLakeConfig()``
-# fallback. With a remote backend LanceStorageManager derives its connect URI
-# from the S3 config and ignores base_uri entirely (ingest/storage.py
-# ``_connect_uri``), so facade tests like ``Lake(base_uri=tmp_path)`` silently
-# write to the SHARED dev minio: rows accumulate across runs, "dataset
-# exists" errors surface, and the full-suite failure set drifts run to run
-# (memory issue_test_isolation_pollution; 2026-08-25 minio-pollution proof).
+# The repo-root .env is deployment config and pydantic-settings loads it into
+# every bare ArrowLakeConfig() — including Lake.__init__'s
+# ``config or ArrowLakeConfig()`` fallback. Four leak axes made the full
+# suite unstable and slow; each anchor below pins one axis. Env vars outrank
+# .env in pydantic-settings, setdefault keeps explicit developer intent in
+# charge (host-e2e sessions exporting their own values), and init kwargs
+# still beat env vars, so tests constructing explicit configs are unaffected.
+# Contracts: tests/test_isolation_contract.py.
 #
-# Env vars outrank .env in pydantic-settings, so pinning the backend here
-# forces the whole suite onto local storage. setdefault keeps explicit
-# developer intent in charge (host-e2e sessions exporting their own backend),
-# and init kwargs still beat env vars, so tests constructing configs with
-# minio/s3 explicitly are unaffected. Contracts: tests/test_isolation_contract.py.
+# 1) Storage: with a remote backend LanceStorageManager derives its connect
+#    URI from the S3 config and ignores base_uri entirely (ingest/storage.py
+#    ``_connect_uri``), so ``Lake(base_uri=tmp_path)`` silently wrote to the
+#    SHARED dev minio — rows accumulated across runs and the failure set
+#    drifted run to run (memory issue_test_isolation_pollution).
+_HERMETIC_LAKE_DIR = tempfile.mkdtemp(prefix="al-hermetic-lake-")
 os.environ.setdefault("ARROW_LAKE__STORAGE__BACKEND", "local")
+#    base_uri: bare constructions must not touch CWD ./data either — the
+#    /health storage probe reports not_found (503 degraded) on a missing
+#    local dir, and a stray ./data would re-introduce cross-run residue.
+os.environ.setdefault("ARROW_LAKE__STORAGE__BASE_URI", _HERMETIC_LAKE_DIR)
+#
+# 2) Auth: the deployment key is ROTATED and API_KEY_DEFAULT_ROLE=VIEWER
+#    (2026-08-17 hardening), so bare-config local apps 401/403'd the
+#    hardcoded dev-key TestClient headers (kg_api/rag_api/query_v152/…).
+os.environ.setdefault("ARROW_LAKE__API__API_KEY", "dev-api-key-for-local-testing-only")
+os.environ.setdefault("ARROW_LAKE__API__API_KEY_DEFAULT_ROLE", "ADMIN")
+#
+# 3) Rate limiter: defaults to enabled (60 req/min) and local-app tests trip
+#    429 partway through a file. test_rate_limit.py pins an explicit
+#    RateLimitConfig; the auth router's login lockout is a separate counter.
+os.environ.setdefault("ARROW_LAKE__RATE_LIMIT__ENABLED", "false")
+#
+# 4) Redis: .env leaks REDIS__ENABLED=true, and something real listens on
+#    localhost:6379 — create_app attaches a redis rate limiter whose buckets
+#    are shared across tests AND runs (per-test _counters.clear() can't reach
+#    them), and every request pays a network roundtrip. Redis-based tests
+#    construct explicit configs (fakes / dedicated URLs).
+os.environ.setdefault("ARROW_LAKE__REDIS__ENABLED", "false")
 
 
 def pytest_configure(config):

@@ -17,7 +17,13 @@ Run::
     .venv/bin/pytest tests/benchmark/test_bench_concurrency.py -m benchmark -s
 """
 
+
+
 from __future__ import annotations
+
+import pytest
+
+pytestmark = pytest.mark.benchmark
 
 import time
 from concurrent.futures import ThreadPoolExecutor

@@ -43,7 +43,15 @@ def _check_storage(config: ArrowLakeConfig) -> tuple[str, bool]:
     base_uri = storage.base_uri
     if os.path.isdir(base_uri):
         return "accessible", True
-    return "not_found", False
+    # A fresh LOCAL deployment has no storage dir until the first write
+    # (lancedb.connect creates it lazily) — "not yet created" is ready, not
+    # degraded; otherwise a brand-new local-backend pod would never pass its
+    # readiness gate. Create it like the first write would.
+    try:
+        os.makedirs(base_uri, exist_ok=True)
+        return "accessible", True
+    except OSError:
+        return "not_found", False
 
 
 def _check_gravitino(uri: str) -> tuple[str, bool]:

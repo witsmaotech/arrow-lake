@@ -8,7 +8,13 @@ spike_test_ prefixed labels to avoid interfering with existing monitoring data.
 Never call /clear on the shared graph.
 """
 
+
+
 from __future__ import annotations
+
+import pytest
+
+pytestmark = pytest.mark.spike
 
 import contextlib
 import time

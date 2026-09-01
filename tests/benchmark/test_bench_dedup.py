@@ -1,6 +1,12 @@
 """Content deduplication benchmarks — Story 4.7."""
 
+
+
 from __future__ import annotations
+
+import pytest
+
+pytestmark = pytest.mark.benchmark
 
 import os
 

@@ -7,7 +7,13 @@ Tests cover: Schema CRUD, Vertex CRUD (single+batch), Edge CRUD (single+batch),
 Gremlin queries, Traverser API (kneighbor, paths), Graph management.
 """
 
+
+
 from __future__ import annotations
+
+import pytest
+
+pytestmark = pytest.mark.spike
 
 import contextlib
 import time

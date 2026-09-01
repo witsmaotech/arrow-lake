@@ -133,8 +133,15 @@ class DuckDBSession:
         need LocalFileSystem); it constrains USER SQL only. The SQL-side
         blacklist (validation.TABLE_FUNCTION_BLACKLIST_RE) is the second layer.
         """
-        disabled_fs = list(getattr(self._olap_config, "disabled_filesystems", None)
-                           or ["LocalFileSystem"])
+        # None (unset) → hardened default; [] → explicit opt-out (tests/tools
+        # that intentionally scan local files). A bare `or [default]` would
+        # swallow the empty list and make the opt-out unreachable.
+        disabled_fs = getattr(self._olap_config, "disabled_filesystems", None)
+        if disabled_fs is None:
+            disabled_fs = ["LocalFileSystem"]
+        disabled_fs = list(disabled_fs)
+        if not disabled_fs:
+            return
         fs_list = ", ".join(f"'{name.replace(chr(39), '')}'" for name in disabled_fs)
         try:
             conn.execute(f"SET disabled_filesystems={fs_list};")

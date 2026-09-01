@@ -14,7 +14,13 @@ Run: ``.venv/bin/pytest tests/benchmark/test_bench_batch3_gates.py -m benchmark 
 （``-s`` 看 gate verdict 打印；``-m benchmark`` 跳过默认 CI）。
 """
 
+
+
 from __future__ import annotations
+
+import pytest
+
+pytestmark = pytest.mark.benchmark
 
 import time
 from concurrent.futures import ThreadPoolExecutor

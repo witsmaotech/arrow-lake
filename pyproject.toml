@@ -20,6 +20,10 @@ dependencies = [
     "lancedb==0.36.0",
     "pylance>=7.0.0",
     "duckdb==1.5.5",
+    # daft↔lance IO bridge (lake.daft_query / query.daft_api) — historically
+    # missing from venv AND the container image (v1.11.5-W1: 67-test suite
+    # cluster failed on the absent module).
+    "daft-lance>=0.4.0",
     # Data models & config
     "pydantic>=2.10",
     "pydantic-settings>=2.7",
@@ -184,6 +188,11 @@ ignore_missing_imports = true
 testpaths = ["tests"]
 asyncio_mode = "auto"
 pythonpath = ["."]
+# v1.11.5-W1: benchmarks (latency/throughput, several require a local LLM)
+# and spikes are opt-in — excluded from the default suite so "全量 pytest"
+# measures correctness deterministically. Run explicitly with -m benchmark /
+# -m spike (a later -m on the CLI overrides this one).
+addopts = "-m 'not benchmark and not spike'"
 markers = [
     "integration: Integration tests (require Docker Compose)",
     "e2e: End-to-end tests",

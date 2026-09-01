@@ -4,7 +4,13 @@ Benchmarks RAG end-to-end latency: retrieval, context assembly, and LLM generati
 Uses MockLLMProvider to isolate pipeline overhead from LLM latency.
 """
 
+
+
 from __future__ import annotations
+
+import pytest
+
+pytestmark = pytest.mark.benchmark
 
 import asyncio
 

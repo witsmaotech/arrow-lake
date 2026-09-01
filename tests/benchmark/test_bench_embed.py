@@ -15,7 +15,13 @@ Run::
     .venv/bin/python3 -m pytest tests/benchmark/test_bench_embed.py -m benchmark -s
 """
 
+
+
 from __future__ import annotations
+
+import pytest
+
+pytestmark = pytest.mark.benchmark
 
 import pytest
 

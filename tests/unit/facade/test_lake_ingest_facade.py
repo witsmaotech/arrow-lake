@@ -378,6 +378,7 @@ class TestEmbedAndAdd:
     def test_embed_local_backend(self, lake: _TestLake) -> None:
         import numpy as np
 
+        lake._storage.has_column.return_value = False
         mock_table = pa.table({"text_content": ["hello", "world"]})
         lake._storage.read_dataset.return_value = mock_table
 
@@ -398,6 +399,10 @@ class TestEmbedAndAdd:
     def test_embed_api_backend(self, lake: _TestLake) -> None:
         import numpy as np
         from arrow_lake.config._enums import EmbeddingBackend
+
+        # P1 backfill gate: a MagicMock has_column is truthy and would
+        # route embed_and_add into the null-backfill branch.
+        lake._storage.has_column.return_value = False
 
         lake._config.embedding.backend = EmbeddingBackend.OPENAI
         lake._config.embedding.api_base = "http://localhost:11434"
@@ -420,6 +425,10 @@ class TestEmbedAndAdd:
 
     def test_embed_daft_backend(self, lake: _TestLake) -> None:
         """DAFT backend: encode_to_vectors tuple 契约 + expected_dim 传入 + 向量回写。"""
+        # P1 backfill gate: a MagicMock has_column is truthy and would
+        # route embed_and_add into the null-backfill branch.
+        lake._storage.has_column.return_value = False
+
         import numpy as np
 
         from arrow_lake.config._enums import EmbeddingBackend
@@ -454,6 +463,10 @@ class TestEmbedAndAdd:
     def test_embed_custom_batch_size(self, lake: _TestLake) -> None:
         import numpy as np
 
+        # P1 backfill gate: a MagicMock has_column is truthy and would
+        # route embed_and_add into the null-backfill branch.
+        lake._storage.has_column.return_value = False
+
         mock_table = pa.table({"text_content": ["a"]})
         lake._storage.read_dataset.return_value = mock_table
 
@@ -474,6 +487,10 @@ class TestEmbedAndAdd:
     def test_embed_custom_columns(self, lake: _TestLake) -> None:
         import numpy as np
 
+        # P1 backfill gate: a MagicMock has_column is truthy and would
+        # route embed_and_add into the null-backfill branch.
+        lake._storage.has_column.return_value = False
+
         mock_table = pa.table({"body": ["text here"]})
         lake._storage.read_dataset.return_value = mock_table
 
@@ -490,7 +507,10 @@ class TestEmbedAndAdd:
             lake._storage.read_dataset.assert_called_once_with("ds", columns=["body"])
 
             call_args = mock_encoder.encode_to_vectors.call_args
-            assert call_args.kwargs.get("column") == "body"
+            # _encode_texts wraps the extracted texts into a temp table with a
+            # fixed internal column name ("t") — assert the TEXTS arrived, not
+            # the source column name flowing through.
+            assert call_args.args[0].column("t").to_pylist() == ["text here"]
 
             add_call_args = lake._storage.add_columns_table.call_args
             vec_table = add_call_args[0][1]

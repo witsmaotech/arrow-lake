@@ -104,6 +104,10 @@ class _LakeQueryMixin:
             cache = getattr(olap, "_cache", None) if olap else None
             if cache is not None:
                 cache.invalidate_dataset(dataset_name)
+            # [#step2-B] catalog listing cache (instance-scoped, short TTL):
+            # drop it so a just-ingested dataset shows up in lake.catalog()
+            # and GET /datasets within the TTL window.
+            comps.pop("_catalog_cache", None)
             # [#step2-C] also drop cached facet counts for this dataset
             facet_bridge = comps.get("faceted")
             facet_inv = getattr(facet_bridge, "invalidate_dataset", None) if facet_bridge else None

@@ -8,7 +8,13 @@ All tests marked @pytest.mark.distributed_gpu — excluded from CI.
 Requires K8s cluster with GPU support.
 """
 
+
+
 from __future__ import annotations
+
+import pytest
+
+pytestmark = pytest.mark.benchmark
 
 import pytest
 

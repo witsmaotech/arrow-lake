@@ -16,9 +16,11 @@ class TestConfigBackwardCompat:
             StorageBackend,
         )
 
-        # The suite pins ARROW_LAKE__STORAGE__BACKEND=local (tests/conftest.py
-        # hermetic anchor); scrub it to assert the true class default.
+        # The suite pins ARROW_LAKE__STORAGE__BACKEND=local and BASE_URI=<hermetic
+        # tmp dir> (tests/conftest.py hermetic anchors); scrub both to assert
+        # the true class defaults.
         monkeypatch.delenv("ARROW_LAKE__STORAGE__BACKEND", raising=False)
+        monkeypatch.delenv("ARROW_LAKE__STORAGE__BASE_URI", raising=False)
         config = ArrowLakeConfig()
 
         # Storage

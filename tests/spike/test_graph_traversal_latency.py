@@ -8,7 +8,13 @@ Usage:
     uv run pytest tests/spike/test_graph_traversal_latency.py -v -m spike -s
 """
 
+
+
 from __future__ import annotations
+
+import pytest
+
+pytestmark = pytest.mark.spike
 
 import contextlib
 import random
