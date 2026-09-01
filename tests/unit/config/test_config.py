@@ -122,6 +122,9 @@ class TestArrowLakeConfig:
 
     def test_default_storage_values(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("ARROW_LAKE__STORAGE__S3_ENDPOINT", raising=False)
+        # The suite pins BACKEND=local (tests/conftest.py hermetic anchor);
+        # scrub it to assert the true class default.
+        monkeypatch.delenv("ARROW_LAKE__STORAGE__BACKEND", raising=False)
         config = ArrowLakeConfig()
         assert config.storage.backend == "minio"
         assert config.storage.s3_endpoint == "http://127.0.0.1:9000"
@@ -203,7 +206,12 @@ storage:
         config = ArrowLakeConfig.from_yaml(str(yaml_file))
         assert config.storage.backend == "gcs"
 
-    def test_yaml_partial_override_keeps_defaults(self, tmp_path: Any) -> None:
+    def test_yaml_partial_override_keeps_defaults(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The suite pins BACKEND=local (tests/conftest.py hermetic anchor);
+        # scrub it so the "keeps defaults" assertion sees the true default.
+        monkeypatch.delenv("ARROW_LAKE__STORAGE__BACKEND", raising=False)
         yaml_content = """
 observability:
   log_level: DEBUG
@@ -269,7 +277,13 @@ class TestEnumTypes:
 class TestEnvFileLoading:
     """Test .env file loading (layer 2)."""
 
-    def test_env_file_overrides_defaults(self, tmp_path: Any) -> None:
+    def test_env_file_overrides_defaults(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The suite pins BACKEND=local (tests/conftest.py hermetic anchor) and
+        # env vars outrank dotenv — scrub it so this dotenv-layer test sees
+        # only its own .env file.
+        monkeypatch.delenv("ARROW_LAKE__STORAGE__BACKEND", raising=False)
         env_content = "ARROW_LAKE__STORAGE__BACKEND=s3\n"
         env_file = tmp_path / ".env"
         env_file.write_text(env_content)

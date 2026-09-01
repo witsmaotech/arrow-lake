@@ -9,13 +9,16 @@ from __future__ import annotations
 class TestConfigBackwardCompat:
     """Verify ArrowLakeConfig() no-arg defaults remain stable."""
 
-    def test_arrow_lake_config_defaults(self) -> None:
+    def test_arrow_lake_config_defaults(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """ArrowLakeConfig() with no arguments should produce expected defaults."""
         from arrow_lake.config import (
             ArrowLakeConfig,
             StorageBackend,
         )
 
+        # The suite pins ARROW_LAKE__STORAGE__BACKEND=local (tests/conftest.py
+        # hermetic anchor); scrub it to assert the true class default.
+        monkeypatch.delenv("ARROW_LAKE__STORAGE__BACKEND", raising=False)
         config = ArrowLakeConfig()
 
         # Storage

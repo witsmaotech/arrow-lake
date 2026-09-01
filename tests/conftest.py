@@ -6,10 +6,31 @@ PyArrow test tables, and storage managers.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
 import pytest
+
+# ---------------------------------------------------------------------------
+# Hermetic storage anchor (v1.11.5-W1)
+# ---------------------------------------------------------------------------
+# The repo-root .env is deployment config (STORAGE__BACKEND=minio + real
+# credentials) and pydantic-settings loads it into every bare
+# ArrowLakeConfig() — including Lake.__init__'s ``config or ArrowLakeConfig()``
+# fallback. With a remote backend LanceStorageManager derives its connect URI
+# from the S3 config and ignores base_uri entirely (ingest/storage.py
+# ``_connect_uri``), so facade tests like ``Lake(base_uri=tmp_path)`` silently
+# write to the SHARED dev minio: rows accumulate across runs, "dataset
+# exists" errors surface, and the full-suite failure set drifts run to run
+# (memory issue_test_isolation_pollution; 2026-08-25 minio-pollution proof).
+#
+# Env vars outrank .env in pydantic-settings, so pinning the backend here
+# forces the whole suite onto local storage. setdefault keeps explicit
+# developer intent in charge (host-e2e sessions exporting their own backend),
+# and init kwargs still beat env vars, so tests constructing configs with
+# minio/s3 explicitly are unaffected. Contracts: tests/test_isolation_contract.py.
+os.environ.setdefault("ARROW_LAKE__STORAGE__BACKEND", "local")
 
 
 def pytest_configure(config):

@@ -51,10 +51,13 @@ class TestConfigDefaults:
         config = ArrowLakeConfig()
         assert config is not None
 
-    def test_default_storage_backend(self) -> None:
-        """Default storage backend is minio."""
+    def test_default_storage_backend(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Class-default storage backend is minio (suite anchor scrubbed)."""
         from arrow_lake.config import ArrowLakeConfig, StorageBackend
 
+        # The suite pins ARROW_LAKE__STORAGE__BACKEND=local (tests/conftest.py
+        # hermetic anchor); scrub it to assert the true class default.
+        monkeypatch.delenv("ARROW_LAKE__STORAGE__BACKEND", raising=False)
         config = ArrowLakeConfig()
         assert config.storage.backend == StorageBackend.MINIO
 
