@@ -4,14 +4,42 @@ from __future__ import annotations
 
 import queue
 import threading
+import weakref
 from typing import Any
 
 import pyarrow as pa
 
-# v1.9.0 async lineage capture: bounded queue + daemon worker per Lake so the
-# Lance _lineage_events append + index write never blocks the ingest path.
+# v1.9.0 async lineage capture: bounded queue + daemon worker so the Lance
+# _lineage_events append + index write never blocks the ingest path.
+#
+# v1.11.5-W1: the worker is process-wide (ONE thread). It was previously one
+# immortal daemon thread PER Lake — a process creating many Lakes (the test
+# suite: hundreds per run) accumulated dozens of threads, each pinning its
+# Lake's pyarrow/lance object graph forever (bound-method self reference) and
+# still appending to storage after the owning test/tmp-dir was gone. The
+# buildup segfaulted long runs non-deterministically (signal 11, crash
+# position drifting run to run — 64 threads alive at the dump). Events now
+# carry a weakref to the owning Lake; a collected Lake's pending events are
+# dropped (lineage is best-effort, reconstructable from Lance), and appends
+# from different Lakes are serialized on the single worker.
 _LINEAGE_INIT_LOCK = threading.Lock()
 _LINEAGE_QUEUE_MAXSIZE = 10000
+_LINEAGE_QUEUE: queue.Queue | None = None
+
+
+def _lineage_worker() -> None:
+    """Drain the process-wide lineage queue (single daemon thread)."""
+    while True:
+        item = _LINEAGE_QUEUE.get()
+        try:
+            lake_ref, payload = item
+            lake = lake_ref() if lake_ref is not None else None
+            if lake is not None:
+                lake._lineage_handle_event(*payload)
+        except Exception:  # noqa: BLE001 — best-effort
+            pass
+        finally:
+            _LINEAGE_QUEUE.task_done()
 
 
 class _LakeLineageMixin:
@@ -55,57 +83,62 @@ class _LakeLineageMixin:
         """
         try:
             self._get_lineage_queue().put_nowait(
-                (dataset_name, operation, list(source_paths or []),
-                 dict(source_descriptor or {}), transform_type,
-                 actor, lance_version, total_rows)
+                (weakref.ref(self),
+                 (dataset_name, operation, list(source_paths or []),
+                  dict(source_descriptor or {}), transform_type,
+                  actor, lance_version, total_rows))
             )
         except Exception:  # noqa: BLE001 — queue full / unavailable → drop
             pass
 
     def _get_lineage_queue(self) -> Any:
-        """Lazy-init one bounded queue + daemon worker per Lake instance."""
+        """Lazy-init the process-wide bounded lineage queue + single worker.
+
+        Keeps an instance alias ``self._lineage_queue`` so callers/tests can
+        ``join()`` it, but the queue and worker are shared process-wide.
+        """
+        global _LINEAGE_QUEUE
         q = getattr(self, "_lineage_queue", None)
         if q is not None:
             return q
         with _LINEAGE_INIT_LOCK:
-            q = getattr(self, "_lineage_queue", None)
-            if q is not None:
-                return q
-            q = queue.Queue(maxsize=_LINEAGE_QUEUE_MAXSIZE)
-            self._lineage_queue = q
-            worker = threading.Thread(
-                target=self._lineage_worker, name="lineage-async", daemon=True
-            )
-            worker.start()
-            return q
+            if _LINEAGE_QUEUE is None:
+                _LINEAGE_QUEUE = queue.Queue(maxsize=_LINEAGE_QUEUE_MAXSIZE)
+                threading.Thread(
+                    target=_lineage_worker, name="lineage-async", daemon=True
+                ).start()
+            q = _LINEAGE_QUEUE
+        self._lineage_queue = q
+        return q
 
-    def _lineage_worker(self) -> None:
-        """Drain the lineage queue; record each event best-effort."""
-        q = self._lineage_queue
-        while True:
-            try:
-                (dataset_name, operation, source_paths, source_descriptor,
-                 transform_type, actor, lance_version, total_rows) = q.get()
-            except Exception:  # noqa: BLE001
-                break
-            try:
-                from arrow_lake.catalog.lineage_hooks import _extract_source_datasets
-                source_datasets = _extract_source_datasets(source_paths)
-                meta = {"source_paths": source_paths, **source_descriptor}
-                if total_rows is not None:
-                    meta["total_rows"] = total_rows
-                self.lineage_record_event(
-                    dataset_name, operation,
-                    source_datasets=source_datasets,
-                    transform_type=transform_type,
-                    actor=actor,
-                    lance_version=lance_version,
-                    metadata=meta,
-                )
-            except Exception:  # noqa: BLE001 — best-effort
-                pass
-            finally:
-                q.task_done()
+    def _lineage_handle_event(
+        self,
+        dataset_name: str,
+        operation: str,
+        source_paths: list[str],
+        source_descriptor: dict[str, Any],
+        transform_type: str,
+        actor: str,
+        lance_version: int | None,
+        total_rows: int | None,
+    ) -> None:
+        """Record one queued lineage event (runs on the shared worker)."""
+        try:
+            from arrow_lake.catalog.lineage_hooks import _extract_source_datasets
+            source_datasets = _extract_source_datasets(source_paths)
+            meta = {"source_paths": source_paths, **source_descriptor}
+            if total_rows is not None:
+                meta["total_rows"] = total_rows
+            self.lineage_record_event(
+                dataset_name, operation,
+                source_datasets=source_datasets,
+                transform_type=transform_type,
+                actor=actor,
+                lance_version=lance_version,
+                metadata=meta,
+            )
+        except Exception:  # noqa: BLE001 — best-effort
+            pass
 
     def lineage_record_event(
         self,
