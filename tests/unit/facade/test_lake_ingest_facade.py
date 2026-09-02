@@ -65,7 +65,7 @@ class TestIngestDelegation:
 
         result = lake.ingest("ds", ["/tmp/f.csv"])
         assert result is mock_report
-        mock_cls.return_value.ingest.assert_called_once_with("ds", ["/tmp/f.csv"], transforms=None)
+        mock_cls.return_value.ingest.assert_called_once_with("ds", ["/tmp/f.csv"], transforms=None, target_table=None)
 
     @patch("arrow_lake.ingest.ingestor.Ingestor")
     def test_ingest_http_delegates(self, mock_cls: MagicMock, lake: _TestLake) -> None:
@@ -142,7 +142,7 @@ class TestCreateDataset:
             mock_tracer.return_value.start_as_current_span.return_value.__enter__ = MagicMock(return_value=MagicMock())
             mock_tracer.return_value.start_as_current_span.return_value.__exit__ = MagicMock(return_value=False)
             lake.create_dataset("test_ds", table)
-            lake._storage.create_dataset.assert_called_once_with("test_ds", table)
+            lake._storage.create_dataset.assert_called_once_with("test_ds", table, table=None)
 
     def test_create_dataset_rejects_non_table(self, lake: _TestLake) -> None:
         from arrow_lake.exceptions import ValidationError
@@ -195,7 +195,7 @@ class TestAppendDataset:
         table = pa.table({"id": [1]})
         with patch("arrow_lake.core.metrics.get_metrics_enabled", return_value=False):
             lake.append_dataset("ds", table)
-            lake._storage.append_dataset.assert_called_once_with("ds", table)
+            lake._storage.append_dataset.assert_called_once_with("ds", table, table=None)
 
     def test_append_rejects_non_table(self, lake: _TestLake) -> None:
         from arrow_lake.exceptions import ValidationError
@@ -353,6 +353,7 @@ class TestDeduplicate:
                 strategy=lake._config.quality.dedup_strategy,
                 action=lake._config.quality.dedup_action,
                 perceptual_threshold=lake._config.quality.dedup_perceptual_threshold,
+                text_column=None,
             )
 
     def test_deduplicate_with_custom_params(self, lake: _TestLake) -> None:
@@ -369,6 +370,7 @@ class TestDeduplicate:
                 strategy="perceptual",
                 action="remove",
                 perceptual_threshold=5,
+                text_column=None,
             )
 
 

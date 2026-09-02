@@ -56,10 +56,10 @@ def _make_mixin(tmp_path) -> StorageAdvancedMixin:
 
             return _lock()
 
-        def _lance_dir(self, name: str):
+        def _lance_dir(self, name: str, table: str | None = None):
             return self._base_path / name
 
-        def dataset_uri(self, name: str) -> str:
+        def dataset_uri(self, name: str, table: str | None = None) -> str:
             return str(self._base_path / name)
 
         def _get_dataset_path(self, name: str) -> str:

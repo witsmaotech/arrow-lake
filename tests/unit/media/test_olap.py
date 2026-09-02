@@ -159,17 +159,15 @@ class TestSQLValidation:
         # 'description' is fine
         bridge._validate_sql("SELECT description FROM data")
 
-    def test_standalone_keywords_blocked(self) -> None:
-        """Standalone dangerous keywords should still be blocked."""
+    def test_union_of_selects_allowed(self) -> None:
+        """v1.10.8+: AST-based validation — UNION of SELECTs is read-only, allowed."""
         bridge = self._bridge()
-        with pytest.raises(QueryError, match="not allowed"):
-            bridge._validate_sql("SELECT * FROM data UNION SELECT * FROM other")
+        bridge._validate_sql("SELECT * FROM data UNION SELECT * FROM other")
 
-    def test_union_except_intersect_blocked(self) -> None:
-        """UNION, EXCEPT, INTERSECT should be blocked."""
+    def test_except_of_selects_allowed(self) -> None:
+        """v1.10.8+: EXCEPT of SELECTs is read-only, allowed."""
         bridge = self._bridge()
-        with pytest.raises(QueryError, match="not allowed"):
-            bridge._validate_sql("SELECT * FROM data EXCEPT SELECT * FROM other")
+        bridge._validate_sql("SELECT * FROM data EXCEPT SELECT * FROM other")
 
 
 # ---------------------------------------------------------------------------
@@ -359,7 +357,7 @@ class TestConfigDrivenDefaults:
         bridge = OlapSearchBridge(storage)
 
         assert bridge._config.max_result_rows == 100_000
-        assert bridge._config.enable_predicate_pushdown is True
+        # enable_predicate_pushdown was removed in the v1.10.x 配置精简 (dead field).
 
 
 # ---------------------------------------------------------------------------

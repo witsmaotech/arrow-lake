@@ -122,7 +122,7 @@ class TestWriteTable:
 
         ingestor._write_table("ds", table, sources, "/a.csv")
 
-        ingestor._manager.create_dataset.assert_called_once_with("ds", table)
+        ingestor._manager.create_dataset.assert_called_once_with("ds", table, table=None)
         assert len(sources) == 1
         assert sources[0].row_count == 1
 
@@ -149,7 +149,7 @@ class TestWriteTable:
 
         ing._write_table("ds", table, sources, "/a.csv")
 
-        ing._manager.append_dataset.assert_called_once_with("ds", table)
+        ing._manager.append_dataset.assert_called_once_with("ds", table, table=None)
         ing._manager.create_dataset.assert_not_called()
 
     def test_quality_gate_check_called(self, mock_manager: MagicMock) -> None:

@@ -20,8 +20,14 @@ class _FakeStorage:
 def _bridge(table: pa.Table) -> Any:
     from arrow_lake.query.olap import OlapSearchBridge
 
+    # disabled_filesystems=[] — these tests scan in-memory/local tables; the
+    # v1.10.8 P0 LocalFileSystem lockdown would block them (the lockdown itself
+    # is covered by tests/unit/query/test_duckdb_fs_lockdown.py).
     return OlapSearchBridge(
-        _FakeStorage(table), config=OlapConfig(lance_scan_mode="pyarrow_fallback")
+        _FakeStorage(table),
+        config=OlapConfig(
+            lance_scan_mode="pyarrow_fallback", disabled_filesystems=[]
+        ),
     )
 
 

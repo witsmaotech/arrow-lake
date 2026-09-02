@@ -34,6 +34,7 @@ def _svc(*, enabled: bool = True, **kw: object) -> GravitinoTagService:
     svc._config = cfg
     svc._lock = __import__("threading").Lock()
     svc._client = kw.get("client") if "client" in kw else MagicMock()
+    svc._missing_cache = {}  # NoSuchTable TTL cache (set in __init__; __new__ bypasses it)
     return svc
 
 
@@ -54,6 +55,7 @@ class TestInitClient:
         svc._config = cfg
         svc._lock = __import__("threading").Lock()
         svc._client = None
+        svc._missing_cache = {}  # set in __init__; __new__ bypasses it
         import sys
         sys.modules.pop("gravitino.client.gravitino_client", None)
         with patch.dict("sys.modules", {}, clear=False):
@@ -67,6 +69,7 @@ class TestInitClient:
         svc._config = cfg
         svc._lock = __import__("threading").Lock()
         svc._client = None
+        svc._missing_cache = {}  # set in __init__; __new__ bypasses it
         # Patch the import to return a mock client class
         with patch(
             "arrow_lake.quality.gravitino_tags.GrvitinoClient",

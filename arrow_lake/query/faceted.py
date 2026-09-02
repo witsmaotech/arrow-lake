@@ -158,7 +158,9 @@ class FacetedSearchBridge:
 
         # Apply where filter to results if provided
         if source is not None and where:
-            validate_sql_safety(where)
+            # ``where`` is an expression fragment — validate it wrapped as a
+            # full statement (bare fragments trip statement-level checks).
+            validate_sql_safety(f"SELECT * FROM t WHERE {where}")
             if self._session_manager is not None:
                 managed = self._session_manager.acquire()
                 try:
@@ -346,7 +348,11 @@ class FacetedSearchBridge:
         """
         facet_cols = ", ".join(facets)
         if where:
-            validate_sql_safety(where)
+            # ``where`` is an expression FRAGMENT (e.g. "score > 0.7"), not a
+            # statement — validating it bare trips the statement-level checks
+            # (sqlglot root is GT/etc). Wrap it into a full SELECT so the same
+            # injection protections apply to the fragment's content.
+            validate_sql_safety(f"SELECT * FROM t WHERE {where}")
             where_clause = f" WHERE {where}"
         else:
             where_clause = ""

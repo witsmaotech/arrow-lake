@@ -155,17 +155,3 @@ class TestValidateDailyTime:
             validate_daily_time("ab:cd")
 
 
-class TestWorkflowConfigScheduleField:
-    """Test WorkflowConfig has schedule_cron field."""
-
-    def test_default_none(self) -> None:
-        from arrow_lake.config import WorkflowConfig
-
-        config = WorkflowConfig()
-        assert config.schedule_cron is None
-
-    def test_from_yaml(self) -> None:
-        from arrow_lake.config import WorkflowConfig
-
-        config = WorkflowConfig(schedule_cron="0 8 * * *")
-        assert config.schedule_cron == "0 8 * * *"

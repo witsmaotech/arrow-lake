@@ -129,9 +129,20 @@ def _check_server_error_or_skip(script_name: str, combined: str, expect_keywords
 
 @pytest.fixture(scope="module", autouse=True)
 def skip_if_no_server():
-    """Skip all tests if the server is not available."""
-    if not _server_available():
-        pytest.skip(f"Arrow Lake server not available at {BASE_URL}")
+    """Skip all tests if the server is unavailable or the key doesn't authenticate.
+
+    v1.11.5-W1: the live stack's key was rotated (2026-08-17) — with the
+    default dev key the example scripts fail in assorted late-stage ways that
+    output-pattern matching can't reliably classify. Require authenticated
+    reachability up front (same gate as container_smoke).
+    """
+    from tests.conftest_services import api_auth_ok
+
+    if not _server_available() or not api_auth_ok():
+        pytest.skip(
+            f"Arrow Lake server not available at {BASE_URL}, or "
+            "ARROW_LAKE_API_KEY does not authenticate"
+        )
 
 
 # ===========================================================================

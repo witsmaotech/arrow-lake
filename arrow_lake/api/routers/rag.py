@@ -169,6 +169,7 @@ async def rag_query_stream(
                 yield f"id: {event_id}-meta\nevent: metadata\ndata: {meta}\n\n"
 
                 # v1.9.6 P1-9: rich stream — citations first, content ×N, done with latency.
+                done_sent = False
                 async for phase, payload in lake.rag_query_stream_rich(
                     question=req.question,
                     dataset_name=req.dataset_name,
@@ -185,7 +186,13 @@ async def rag_query_stream(
                     elif phase == "content":
                         yield f"event: content\ndata: {json.dumps({'data': payload})}\n\n"
                     elif phase == "done":
+                        done_sent = True
                         yield f"id: {event_id}-done\nevent: done\ndata: {json.dumps(payload)}\n\n"
+                # SSE terminator: an empty upstream (or one that crashed before
+                # emitting done) must still end with a done event — clients
+                # wait on it to close the stream.
+                if not done_sent:
+                    yield f"id: {event_id}-done\nevent: done\ndata: {json.dumps({'latency_ms': 0})}\n\n"
 
         except TimeoutError:
             logger.warning("RAG stream timed out after 300s")

@@ -134,15 +134,24 @@ class TestCLIPImageEncoderEncode:
         embedding = embedding / np.linalg.norm(embedding)
 
         model_output = MagicMock()
-        # Mock torch tensor behavior: .cpu() returns self, .numpy() returns ndarray
+        # Mock torch tensor behavior: .detach()/.cpu() return self,
+        # .numpy() returns a (n, dim) ndarray.
         tensor_mock = MagicMock()
+        tensor_mock.detach.return_value = tensor_mock
         tensor_mock.cpu.return_value = tensor_mock
         tensor_mock.numpy.return_value = np.array([embedding])
+        # transformers ≥5.x: get_image_features/get_text_features return an
+        # output object whose pooler_output holds the projected embeddings —
+        # hasattr(pooler_output) is truthy on a bare MagicMock child, which
+        # would bypass the configured tensor and break normalization.
+        model_output.pooler_output = tensor_mock
         model_output.image_embeds = tensor_mock
 
-        processor.return_value = {"pixel_values": np.zeros((1, 3, 224, 224))}
+        model.get_image_features.return_value = model_output
+        model.get_text_features.return_value = model_output
         model.return_value = model_output
 
+        processor.return_value = {"pixel_values": np.zeros((1, 3, 224, 224))}
         return processor, model
 
     @patch("arrow_lake.embed.image_encoder.AutoImageProcessor")

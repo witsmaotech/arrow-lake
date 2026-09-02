@@ -118,6 +118,13 @@ class TestRAGStreamEndpoint:
             yield " world"
 
         mock_lake.rag_query_stream = mock_stream
+
+        async def mock_rich_stream(*args, **kwargs):
+            yield "citations", []
+            yield "content", "Hello world"
+            yield "done", {"latency_ms": 1}
+
+        mock_lake.rag_query_stream_rich = mock_rich_stream
         app.state.lake = mock_lake
 
         return TestClient(app, headers={"X-API-Key": _KEY})
@@ -133,7 +140,9 @@ class TestRAGStreamEndpoint:
         content = resp.text
         assert "event: content" in content
         assert "event: done" in content
-        assert '"data":"Hello"' in content or '"data": "Hello"' in content
+        # rich stream wraps content payloads as {"data": "..."} (json.dumps
+        # default separators include a space after the colon)
+        assert '"data": "Hello world"' in content
 
     def test_stream_includes_metadata(self, client: TestClient) -> None:
         resp = client.post(
@@ -160,6 +169,13 @@ class TestRAGStreamEndpoint:
             raise RuntimeError("LLM connection failed")
 
         mock_lake.rag_query_stream = mock_stream_fail
+
+        async def mock_rich_fail(*args, **kwargs):
+            yield "citations", []
+            yield "content", "OK"
+            raise RuntimeError("LLM connection failed")
+
+        mock_lake.rag_query_stream_rich = mock_rich_fail
         app.state.lake = mock_lake
 
         client = TestClient(app, headers={"X-API-Key": _KEY})
@@ -188,6 +204,12 @@ class TestRAGStreamEndpoint:
             yield  # type: ignore[unreachable]
 
         mock_lake.rag_query_stream = mock_stream_empty
+
+        async def mock_rich_empty(*args, **kwargs):
+            return
+            yield  # type: ignore[unreachable]
+
+        mock_lake.rag_query_stream_rich = mock_rich_empty
         app.state.lake = mock_lake
 
         client = TestClient(app, headers={"X-API-Key": _KEY})

@@ -104,7 +104,7 @@ class TestLineageGraph:
             graph: dict[str, Any] = mixin.lineage_graph("ds_a", max_depth=5)
 
         assert graph is mock_bridge.trace_full_graph.return_value
-        mock_bridge.trace_full_graph.assert_called_once_with("ds_a", max_depth=5)
+        mock_bridge.trace_full_graph.assert_called_once_with("ds_a", max_depth=5, max_nodes=500)
 
     def test_lineage_graph_default_max_depth(self) -> None:
         mixin = _make_mixin()
@@ -119,7 +119,7 @@ class TestLineageGraph:
         ):
             mixin.lineage_graph("ds_b")
 
-        mock_bridge.trace_full_graph.assert_called_once_with("ds_b", max_depth=10)
+        mock_bridge.trace_full_graph.assert_called_once_with("ds_b", max_depth=10, max_nodes=500)
 
 
 # ---------------------------------------------------------------------------

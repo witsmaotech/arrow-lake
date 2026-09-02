@@ -129,7 +129,7 @@ class TestMaskingEngine:
             result = engine.apply_masking(table, dataset="users", role="viewer")
         hashed = result.column("email")[0].as_py()
         assert hashed != "a@b.com"
-        assert len(hashed) == 16  # truncated SHA-256
+        assert len(hashed) == 32  # truncated HMAC-SHA256 (hexdigest[:32])
 
     def test_partial_masking(self, table: pa.Table) -> None:
         from arrow_lake.quality.masking_engine import MaskingEngine, MaskRule
@@ -340,7 +340,7 @@ class TestConfigV142:
         assert cfg.stats_cache_ttl_seconds == 300
         assert cfg.stats_auto_route_threshold == 1_000_000
         assert cfg.model_resolver_cache_ttl_seconds == 600
-        assert cfg.lineage_sync_to_gravitino is True
+        # lineage_sync_to_gravitino was removed in the v1.10.x 配置精简 (dead field).
         assert cfg.federated_query_max_rows == 100_000
 
     def test_custom_values(self) -> None:
