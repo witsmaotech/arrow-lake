@@ -96,7 +96,7 @@ class TestCLIPImageEncoderInit:
 
     def test_default_model_source(self) -> None:
         enc = CLIPImageEncoder()
-        assert enc.model_source == "modelscope"
+        assert enc.model_source == "huggingface"
 
     def test_default_image_column(self) -> None:
         enc = CLIPImageEncoder()
@@ -156,7 +156,7 @@ class TestCLIPImageEncoderEncode:
         # Simulate image bytes
         table = pa.table(
             {
-                "image": [b"\xff\xd8\xff\xe0"],  # fake JPEG header
+                "image": [b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\xcf\xc0\x00\x00\x03\x01\x01\x00\xc9\xfe\x92\xef\x00\x00\x00\x00IEND\xaeB`\x82'],  # fake JPEG header
                 "id": [1],
             }
         )

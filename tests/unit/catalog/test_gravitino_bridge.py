@@ -122,7 +122,9 @@ def _make_sdk_mocks() -> tuple[MagicMock, MagicMock, MagicMock]:
     catalog = MagicMock()
     schema_cat = MagicMock()
     fileset_cat = MagicMock()
-    catalog.as_schema_catalog.return_value = schema_cat
+    # SDK 1.x renamed Catalog.as_schema_catalog() → as_schemas() (the bridge
+    # calls the new name; see gravitino_bridge.py _ensure_schema).
+    catalog.as_schemas.return_value = schema_cat
     catalog.as_fileset_catalog.return_value = fileset_cat
     client.load_catalog.return_value = catalog
     return client, schema_cat, fileset_cat
@@ -584,6 +586,9 @@ class TestEnsureSchema:
         with patch("arrow_lake.catalog.gravitino_bridge.create_auth_provider"):
             bridge = GravitinoBridge(_make_config())
         client, schema_cat, _fileset_cat = _make_sdk_mocks()
+        # schema_exists defaulting to a truthy MagicMock would make the bridge
+        # skip creation — force "not yet present" for both catalogs.
+        schema_cat.schema_exists.return_value = False
 
         with patch.object(bridge, "_ensure_client", return_value=client):
             bridge._ensure_schema()
@@ -595,6 +600,7 @@ class TestEnsureSchema:
         with patch("arrow_lake.catalog.gravitino_bridge.create_auth_provider"):
             bridge = GravitinoBridge(_make_config())
         client, schema_cat, _fileset_cat = _make_sdk_mocks()
+        schema_cat.schema_exists.return_value = False
 
         with patch.object(bridge, "_ensure_client", return_value=client):
             bridge._ensure_schema()

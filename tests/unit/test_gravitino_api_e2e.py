@@ -37,6 +37,8 @@ def app_with_gravitino() -> FastAPI:
     app.state.gravitino_bridge = bridge
     app.state.gravitino_tag_service = tag_svc
     app.state.gravitino_model_registry = model_reg
+    # Some metadata routes also read the Lake facade from app.state.
+    app.state.lake = MagicMock()
 
     app.include_router(gravitino_router)
     return app
@@ -83,7 +85,7 @@ class TestCatalogEndpoints:
                 {"name": "minio-fileset"},
             ],
         }
-        resp = client.get("/metadata/catalogs")
+        resp = client.get("/api/v1/metadata/catalogs")
         assert resp.status_code == 200
         body = resp.json()
         assert body["success"] is True
@@ -93,7 +95,7 @@ class TestCatalogEndpoints:
     @patch("arrow_lake.api.routers.gravitino._gravitino_get")
     def test_list_catalogs_unreachable(self, mock_get: MagicMock, client: TestClient) -> None:
         mock_get.return_value = None
-        resp = client.get("/metadata/catalogs")
+        resp = client.get("/api/v1/metadata/catalogs")
         assert resp.status_code == 200
         body = resp.json()
         assert body["success"] is False
@@ -114,7 +116,7 @@ class TestTableEndpoints:
                 {"name": "images"},
             ],
         }
-        resp = client.get("/metadata/tables")
+        resp = client.get("/api/v1/metadata/tables")
         assert resp.status_code == 200
         body = resp.json()
         assert body["success"] is True
@@ -129,17 +131,21 @@ class TestTableEndpoints:
                 "properties": {"lance.latest_version": "5"},
             },
         }
-        resp = client.get("/metadata/tables/documents")
+        resp = client.get("/api/v1/metadata/tables/documents")
         assert resp.status_code == 200
         body = resp.json()
         assert body["success"] is True
         assert body["data"]["name"] == "documents"
         assert len(body["data"]["columns"]) == 1
 
+    @patch("arrow_lake.api.routers.gravitino._lake_table_fallback", return_value=None)
     @patch("arrow_lake.api.routers.gravitino._gravitino_get")
-    def test_get_table_not_found(self, mock_get: MagicMock, client: TestClient) -> None:
+    def test_get_table_not_found(
+        self, mock_get: MagicMock, mock_fb: MagicMock, client: TestClient
+    ) -> None:
+        """Both sources miss (Gravitino unregistered + lake fallback None) → success False."""
         mock_get.return_value = None
-        resp = client.get("/metadata/tables/nonexistent")
+        resp = client.get("/api/v1/metadata/tables/nonexistent")
         assert resp.status_code == 200
         body = resp.json()
         assert body["success"] is False
@@ -154,21 +160,21 @@ class TestTagEndpoints:
     def test_list_tags(self, client: TestClient) -> None:
         tag_svc = client.app.state.gravitino_tag_service
         tag_svc.list_tags.return_value = ["pii", "sensitive"]
-        resp = client.get("/metadata/tags?table=test_table")
+        resp = client.get("/api/v1/metadata/tags?table=test_table")
         assert resp.status_code == 200
         body = resp.json()
         assert body["success"] is True
         assert len(body["data"]) == 2
 
     def test_create_tag(self, client: TestClient) -> None:
-        resp = client.post("/metadata/tags?body=%7B%22name%22%3A%22pii%22%2C%22comment%22%3A%22PII%22%7D")
+        resp = client.post("/api/v1/metadata/tags", json={'name': 'pii', 'comment': 'PII'})
         assert resp.status_code == 200
         body = resp.json()
         assert body["success"] is True
         assert body["data"]["name"] == "pii"
 
     def test_create_tag_missing_name(self, client: TestClient) -> None:
-        resp = client.post("/metadata/tags?body=%7B%7D")
+        resp = client.post("/api/v1/metadata/tags", json={})
         assert resp.status_code == 400
 
 
@@ -181,18 +187,18 @@ class TestPolicyEndpoints:
     @patch("arrow_lake.api.routers.gravitino._gravitino_get")
     def test_list_policies(self, mock_get: MagicMock, client: TestClient) -> None:
         mock_get.return_value = {"identifiers": [{"name": "retention_30d"}]}
-        resp = client.get("/metadata/policies")
+        resp = client.get("/api/v1/metadata/policies")
         assert resp.status_code == 200
         body = resp.json()
         assert body["success"] is True
         assert body["data"][0]["name"] == "retention_30d"
 
     def test_create_retention_policy_missing_name(self, client: TestClient) -> None:
-        resp = client.post("/metadata/policies/retention?body=%7B%7D")
+        resp = client.post("/api/v1/metadata/policies/retention", json={})
         assert resp.status_code == 400
 
     def test_create_masking_policy_missing_name(self, client: TestClient) -> None:
-        resp = client.post("/metadata/policies/masking?body=%7B%7D")
+        resp = client.post("/api/v1/metadata/policies/masking", json={})
         assert resp.status_code == 400
 
 
@@ -211,7 +217,7 @@ class TestStatisticsEndpoints:
         mock_lake._catalog._pool = MagicMock()
         client.app.state.lake = mock_lake
 
-        resp = client.post("/metadata/statistics/test")
+        resp = client.post("/api/v1/metadata/statistics/test")
         assert resp.status_code == 200
         body = resp.json()
         assert body["success"] is True
@@ -227,7 +233,7 @@ class TestModelEndpoints:
     def test_list_models(self, client: TestClient) -> None:
         reg = client.app.state.gravitino_model_registry
         reg.list_models.return_value = ["bge-small-zh", "qwen2-7b"]
-        resp = client.get("/metadata/models")
+        resp = client.get("/api/v1/metadata/models")
         assert resp.status_code == 200
         body = resp.json()
         assert body["success"] is True
@@ -242,7 +248,7 @@ class TestModelEndpoints:
         reg.get_latest_version.return_value = latest
         reg.get_production_version.return_value = None
 
-        resp = client.get("/metadata/models/bge-small-zh/versions")
+        resp = client.get("/api/v1/metadata/models/bge-small-zh/versions")
         assert resp.status_code == 200
         body = resp.json()
         assert body["success"] is True
@@ -263,7 +269,7 @@ class TestDisabledGravitino:
         app.include_router(gravitino_router)
         c = TestClient(app)
 
-        resp = c.get("/metadata/tags")
+        resp = c.get("/api/v1/metadata/tags")
         assert resp.status_code == 503
 
     def test_models_returns_503_when_disabled(self) -> None:
@@ -273,5 +279,5 @@ class TestDisabledGravitino:
         app.include_router(gravitino_router)
         c = TestClient(app)
 
-        resp = c.get("/metadata/models")
+        resp = c.get("/api/v1/metadata/models")
         assert resp.status_code == 503
