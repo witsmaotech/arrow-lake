@@ -19,7 +19,7 @@ class TestHugeGraphConfig:
         assert cfg.timeout_seconds == 30.0
         assert cfg.username == ""
         assert cfg.password == ""
-        assert cfg.auto_build_on_ingest is False
+        # auto_build_on_ingest was removed in the v1.10.x 配置精简 (dead field).
         assert cfg.build_batch_size == 50
         assert cfg.build_concurrency == 3
         assert cfg.write_concurrency == 2

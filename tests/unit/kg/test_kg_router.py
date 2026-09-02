@@ -388,7 +388,9 @@ class TestKGSearchEndpoint:
         )
         client = TestClient(_make_app(lake))
         resp = client.post("/api/v1/kg/search", json={"dataset": "ds", "query": "q"})
-        assert resp.status_code == 500  # KG_QUERY_FAILED → 500
+        # KG_QUERY_FAILED maps to 422 (errors.py: query-semantics failure, not
+        # a server fault — HugeGraph OOM guidance change).
+        assert resp.status_code == 422
 
 
 class TestKGAskEndpoint:

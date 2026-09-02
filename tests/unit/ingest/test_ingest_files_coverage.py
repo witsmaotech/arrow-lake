@@ -49,6 +49,8 @@ class _FakeHost:
         table: pa.Table,
         sources: list[IngestionSource],
         source_path: str,
+        *,
+        target_table: str | None = None,
     ) -> None:
         sources.append(IngestionSource(path=source_path, row_count=table.num_rows))
 

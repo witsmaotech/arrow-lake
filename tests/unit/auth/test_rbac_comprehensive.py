@@ -322,15 +322,16 @@ class TestApplyMasking:
         engine.apply_masking.assert_called_once_with(sample_table, dataset="ds", role="viewer")
         assert result is masked
 
-    def test_with_engine_failure_returns_original(
+    def test_with_engine_failure_fails_closed(
         self, checker: PermissionChecker, sample_table: pa.Table,
     ) -> None:
+        """Masking engine failure → empty table (fail-closed: never leak unmasked)."""
         engine = MagicMock()
         engine.apply_masking.side_effect = RuntimeError("masking error")
         checker.set_masking_engine(engine)
 
         result = checker._apply_masking(sample_table, "ds", "viewer")
-        assert result is sample_table
+        assert result.num_rows == 0
 
     def test_set_masking_engine_stores_engine(self, checker: PermissionChecker) -> None:
         engine = MagicMock()
@@ -390,21 +391,24 @@ class TestApplyRowFilterEdgeCases:
     """Test _apply_row_filter edge cases."""
 
     def test_unparseable_expression(self) -> None:
+        # Fail-closed (v1.10.x security posture): an unparseable ACL filter
+        # returns an EMPTY table, never the unfiltered original.
         tbl = pa.table({"x": [1, 2, 3]})
         result = _apply_row_filter(tbl, "not a valid filter!!!")
-        assert result.num_rows == 3  # returns unchanged
+        assert result.num_rows == 0
 
     def test_missing_column(self) -> None:
+        # Fail-closed: filter referencing a missing column → empty table.
         tbl = pa.table({"x": [1, 2, 3]})
         result = _apply_row_filter(tbl, "nonexistent > 5")
-        assert result.num_rows == 3  # returns unchanged
+        assert result.num_rows == 0
 
     def test_type_mismatch(self) -> None:
-        """Comparing string column to numeric value returns unchanged."""
+        """Comparing string column to numeric value fails closed (empty)."""
         tbl = pa.table({"name": ["alice", "bob"]})
         result = _apply_row_filter(tbl, "name > 100")
-        # name is string, 100 is int -> type mismatch -> unchanged
-        assert result.num_rows == 2
+        # name is string, 100 is int -> type mismatch -> fail-closed
+        assert result.num_rows == 0
 
     def test_numeric_int_parsing(self) -> None:
         tbl = pa.table({"val": [1, 5, 10]})

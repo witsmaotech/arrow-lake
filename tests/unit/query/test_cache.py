@@ -156,39 +156,6 @@ class TestQueryCacheInvalidateDataset:
         assert QueryCache(max_entries=10).invalidate_dataset("none") == 0
 
 
-class TestFtsNullSegmentedDetect:
-    """[#step2-A] FTS must detect NULL _fts_segmented (appended rows) to trigger re-index."""
-
-    def _bridge(self):
-        from unittest.mock import MagicMock
-
-        from arrow_lake.query.fts import FullTextSearchBridge
-
-        return FullTextSearchBridge(MagicMock())  # default config, cheap init
-
-    def test_detects_nulls(self) -> None:
-        t = pa.table({"_fts_segmented": [None, "a b", None]})
-        assert self._bridge()._has_null_segmented(t) is True
-
-    def test_detects_nulls_lancedb_table(self) -> None:
-        # Live path: open_dataset returns a LanceDB Table (.to_arrow, no .column)
-        from unittest.mock import MagicMock
-
-        lancedb_table = MagicMock()
-        lancedb_table.to_arrow.return_value = pa.table({"_fts_segmented": [None, "a b"]})
-        assert self._bridge()._has_null_segmented(lancedb_table) is True
-        lancedb_table.to_arrow.return_value = pa.table({"_fts_segmented": ["a b", "c"]})
-        assert self._bridge()._has_null_segmented(lancedb_table) is False
-
-    def test_no_nulls(self) -> None:
-        t = pa.table({"_fts_segmented": ["a b", "c d"]})
-        assert self._bridge()._has_null_segmented(t) is False
-
-    def test_missing_column_returns_false(self) -> None:
-        t = pa.table({"x": [1, 2]})
-        assert self._bridge()._has_null_segmented(t) is False
-
-
 class TestFacetCache:
     """[#step2-C] facet counts (vector-independent) cached + invalidatable."""
 

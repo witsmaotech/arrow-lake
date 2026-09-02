@@ -65,12 +65,17 @@ _PROBE_GRAPH = "kg_m2test_idem"
 
 
 def _hg_reachable() -> bool:
-    """True if the local HugeGraph answers /versions within 2s."""
+    """True if the local HugeGraph answers an AUTH-ENFORCED endpoint within 2s.
+
+    /versions is unauthenticated — it 200'd with stale credentials while every
+    real graphspace call 401'd (2026-09-02), so the probe must hit /graphs
+    (auth-enforced) to prove BOTH reachability and valid credentials.
+    """
     import httpx  # local import — only needed when the test runs
 
     try:
         r = httpx.get(
-            f"http://{_HG_HOST}:{_HG_PORT}/versions",
+            f"http://{_HG_HOST}:{_HG_PORT}/graphs",
             auth=(_HG_USER, _HG_PASS), timeout=2.0,
         )
         return r.status_code == 200

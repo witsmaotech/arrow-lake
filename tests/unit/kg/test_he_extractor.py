@@ -55,15 +55,24 @@ def llm_config() -> SimpleNamespace:
 
 @pytest.fixture
 def router() -> DocTypeRouter:
+    # default must be a REAL loadable template — the extractor's degrade chain
+    # retries it via Template.create, and the old fake "general/default_graph"
+    # raised "template not found" instead of degrading.
     return DocTypeRouter(
         {"research_paper": "academic/paper", "resume": "general/biography_graph"},
-        default_template="general/default_graph",
+        default_template="general/concept_graph",
     )
 
 
 @pytest.fixture
 def extractor(llm_config: SimpleNamespace, router: DocTypeRouter) -> HyperExtractExtractor:
-    return HyperExtractExtractor(llm_config, doc_type_router=router, language="zh")
+    # [#10/#2] contract: hugegraph_config is passed explicitly (he_chunk_size /
+    # he_ka_base_dir are read from it in _parse_fresh) — a None config crashes
+    # with AttributeError on cfg.he_chunk_size.
+    return HyperExtractExtractor(
+        llm_config, doc_type_router=router, language="zh",
+        hugegraph_config=_hg_config(),
+    )
 
 
 def _wire_template(extractor: HyperExtractExtractor, ka: SimpleNamespace) -> None:
@@ -290,7 +299,7 @@ async def test_extract_routes_to_template_by_doc_type(
     assert seen == [
         "academic/paper",
         "general/biography_graph",
-        "general/default_graph",
+        "general/concept_graph",  # fixture default (real, loadable)
     ]
 
 

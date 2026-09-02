@@ -14,7 +14,7 @@ class TestRateLimitConfig:
         assert config.enabled is True
         assert config.default_requests_per_minute == 60
         assert config.default_burst == 10
-        assert config.override_per_endpoint == {}
+        # override_per_endpoint was removed in the v1.10.x 配置精简 (dead field).
         assert len(config.exempt_paths) > 0
 
     def test_enabled_true(self) -> None:
@@ -24,13 +24,16 @@ class TestRateLimitConfig:
     def test_custom_limits(self) -> None:
         config = RateLimitConfig(
             default_requests_per_minute=100,
-            override_per_endpoint={"/api/v1/search": 200},
+            default_burst=20,
         )
         assert config.default_requests_per_minute == 100
-        assert config.override_per_endpoint["/api/v1/search"] == 200
+        assert config.default_burst == 20
 
-    def test_config_integration(self) -> None:
+    def test_config_integration(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """RateLimitConfig is accessible via ArrowLakeConfig."""
+        # The suite pins RATE_LIMIT__ENABLED=false (tests/conftest.py hermetic
+        # anchor); scrub it to assert the class default.
+        monkeypatch.delenv("ARROW_LAKE__RATE_LIMIT__ENABLED", raising=False)
         config = ArrowLakeConfig()
         assert hasattr(config, "rate_limit")
         assert isinstance(config.rate_limit, RateLimitConfig)

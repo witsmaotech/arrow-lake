@@ -80,9 +80,11 @@ class TestSummaryAndDetail:
         t = gallery.get("general/concept_graph")
         assert t is not None
         s = t.to_summary()
+        # source/mtime added with the v1.10.x template-management series.
         assert set(s) == {
             "path", "category", "name", "type", "tags",
             "is_high_risk", "description_zh", "description_en",
+            "source", "mtime",
         }
 
     def test_to_detail_shape(self, gallery: TemplateGallery) -> None:

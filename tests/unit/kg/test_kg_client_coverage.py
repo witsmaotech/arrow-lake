@@ -318,7 +318,7 @@ class TestEnsureSchema:
             mock_resp.status_code = 403
             mock_resp.text = "forbidden"
             c._client.post.return_value = mock_resp
-            with pytest.raises(KGError, match="PropertyKey"):
+            with pytest.raises(KGError, match="propertykeys creation failed"):
                 await c.ensure_schema({
                     "property_keys": [{"name": "pk1", "data_type": "TEXT", "cardinality": "SINGLE"}]
                 })
@@ -331,7 +331,7 @@ class TestEnsureSchema:
             mock_resp.status_code = 403
             mock_resp.text = "forbidden"
             c._client.post.return_value = mock_resp
-            with pytest.raises(KGError, match="VertexLabel"):
+            with pytest.raises(KGError, match="vertexlabels creation failed"):
                 await c.ensure_schema({
                     "vertex_labels": [{"name": "vl1"}]
                 })
@@ -344,7 +344,7 @@ class TestEnsureSchema:
             mock_resp.status_code = 403
             mock_resp.text = "forbidden"
             c._client.post.return_value = mock_resp
-            with pytest.raises(KGError, match="EdgeLabel"):
+            with pytest.raises(KGError, match="edgelabels creation failed"):
                 await c.ensure_schema({
                     "edge_labels": [{"name": "el1", "source_label": "a", "target_label": "b"}]
                 })
@@ -357,7 +357,7 @@ class TestEnsureSchema:
             mock_resp.status_code = 403
             mock_resp.text = "forbidden"
             c._client.post.return_value = mock_resp
-            with pytest.raises(KGError, match="IndexLabel"):
+            with pytest.raises(KGError, match="indexlabels creation failed"):
                 await c.ensure_schema({
                     "index_labels": [{"name": "il1"}]
                 })
@@ -420,13 +420,18 @@ class TestGetStats:
     @pytest.mark.asyncio
     async def test_success(self) -> None:
         c = _client()
+        # get_stats short-circuits via graph_exists() first (one extra GET on
+        # /graphs) before fetching vertices + edges — feed all three responses.
+        g_resp = MagicMock()
+        g_resp.status_code = 200
+        g_resp.json.return_value = {"graphs": [c._config.graph_name]}
         v_resp = MagicMock()
         v_resp.status_code = 200
         v_resp.json.return_value = {"vertices": [{"id": 1}]}
         e_resp = MagicMock()
         e_resp.status_code = 200
         e_resp.json.return_value = {"edges": [{"id": 1}, {"id": 2}]}
-        c._client.get.side_effect = [v_resp, e_resp]
+        c._client.get.side_effect = [g_resp, v_resp, e_resp]
         result = await c.get_stats()
         assert result["total_vertices"] == 1
         assert result["total_edges"] == 2

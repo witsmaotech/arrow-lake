@@ -115,28 +115,28 @@ class TestSQLInjectionInSQLBody:
         """SQL body containing DROP should raise ValueError."""
         from arrow_lake.validation import validate_sql_safety
 
-        with pytest.raises(ValueError, match="Dangerous SQL keyword"):
+        with pytest.raises(ValueError, match="Multiple SQL statements|Only read-only SELECT"):
             validate_sql_safety("SELECT * FROM t1; DROP TABLE t2")
 
     def test_materialize_rejects_delete_in_sql(self) -> None:
         """SQL body containing DELETE should raise ValueError."""
         from arrow_lake.validation import validate_sql_safety
 
-        with pytest.raises(ValueError, match="Dangerous SQL keyword"):
+        with pytest.raises(ValueError, match="Multiple SQL statements|Only read-only SELECT"):
             validate_sql_safety("DELETE FROM users WHERE 1=1")
 
     def test_materialize_rejects_insert_in_sql(self) -> None:
         """SQL body containing INSERT should raise ValueError."""
         from arrow_lake.validation import validate_sql_safety
 
-        with pytest.raises(ValueError, match="Dangerous SQL keyword"):
+        with pytest.raises(ValueError, match="Multiple SQL statements|Only read-only SELECT"):
             validate_sql_safety("INSERT INTO t1 VALUES (1)")
 
     def test_materialize_rejects_semicolons_in_sql(self) -> None:
         """SQL body containing semicolons should raise ValueError."""
         from arrow_lake.validation import validate_sql_safety
 
-        with pytest.raises(ValueError, match="Semicolons not allowed"):
+        with pytest.raises(ValueError, match="Multiple SQL statements"):
             validate_sql_safety("SELECT 1; SELECT 2")
 
     def test_materialize_accepts_safe_select(self) -> None:
@@ -145,12 +145,11 @@ class TestSQLInjectionInSQLBody:
 
         validate_sql_safety("SELECT * FROM t1 JOIN t2 ON t1.id = t2.id")
 
-    def test_materialize_rejects_union_in_sql(self) -> None:
-        """SQL body containing UNION should raise ValueError."""
+    def test_materialize_allows_union_of_selects(self) -> None:
+        """v1.10.8+: AST-based validation — UNION of SELECTs is read-only and legitimate."""
         from arrow_lake.validation import validate_sql_safety
 
-        with pytest.raises(ValueError, match="Dangerous SQL keyword"):
-            validate_sql_safety("SELECT 1 UNION SELECT 2")
+        validate_sql_safety("SELECT 1 UNION SELECT 2")
 
 
 class TestCleanupExpiredErrorHandling:

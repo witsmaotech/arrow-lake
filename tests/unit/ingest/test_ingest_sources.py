@@ -43,7 +43,7 @@ class _FakeHost:
     def _read_bytes(data: bytes, file_type: str) -> pa.Table:
         return pa.table({"col": [1]})
 
-    def _write_table(self, name, table, sources, path):
+    def _write_table(self, name, table, sources, path, *, target_table=None):
         sources.append(_FakeSource(path=path, row_count=table.num_rows))
 
 

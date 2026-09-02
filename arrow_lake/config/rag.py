@@ -183,6 +183,7 @@ class HugeGraphConfig(BaseModel):
         "legal": "legal_concept_graph",
         "finance": "finance_concept_graph",
         "project": "project_concept_graph",
+        "ddd": "ddd_concept_graph",  # domain sibling — tight enums, override like the rest
     }
     he_language: Literal["zh", "en"] = "zh"
     he_model: str | None = None

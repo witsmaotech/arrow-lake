@@ -50,6 +50,7 @@ DOC_TYPE_ALIASES: dict[str, tuple[str, ...]] = {
     "medicine": ("医疗", "病历", "clinical", "medical"),  # gallery category: medicine
     "industry": ("设备", "topology", "equipment", "故障", "failure", "事故", "incident"),
     "tcm": ("中医", "中药", "herb"),
+    "education": ("课程", "教学", "course", "curriculum", "syllabus", "教案"),  # gallery category: education
     "general": (),  # fallback — no aliases
 }
 
@@ -280,10 +281,22 @@ class TemplateGallery:
             return None
         key = doc_type.lower()
 
-        # 1. exact tag hit (e.g. doc_type="concept" matches concept_graph's tag)
-        for t in self.templates:
-            if key in t.tags:
-                return t
+        # 1. exact tag hit (e.g. doc_type="concept" matches concept_graph's tag).
+        #    When several templates share the tag, break the tie: exact NAME
+        #    equality first, then the unspecialized "general" category (the
+        #    canonical template for shared tags) — otherwise list order
+        #    (alphabetical by category) would decide arbitrarily (e.g.
+        #    education/course_concept_graph used to beat general/concept_graph
+        #    for doc_type="concept").
+        tag_hits = [t for t in self.templates if key in t.tags]
+        if tag_hits:
+            for t in tag_hits:
+                if t.name == key:
+                    return t
+            for t in tag_hits:
+                if t.category == "general":
+                    return t
+            return tag_hits[0]
 
         # 2. category hit (e.g. doc_type="finance" → a finance template)
         cat_hits = [t for t in self.templates if t.category == key]
@@ -628,7 +641,7 @@ DOC_TYPE_DESCRIPTIONS: dict[str, str] = {
     "medicine": "clinical, treatment, drug interaction, anatomy, hospital",
     "tcm": "traditional chinese medicine: herbs, formulas, meridians, syndromes",
     "industry": "industrial: equipment topology, operation flow, safety, failure",
-    "project": "project tender/contract/solution/design doc: parties, deliverables, specs, amounts, milestones",
+    "education": "course / curriculum / teaching structure: modules, prerequisites, objectives",
     "general": "general-purpose (fallback)",
 }
 

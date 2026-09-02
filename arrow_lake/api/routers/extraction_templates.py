@@ -379,7 +379,10 @@ def _hyperextract_check(yaml_text: str) -> tuple[bool, str]:
     fd, tmp = tempfile.mkstemp(suffix=".yaml")
     try:
         os.write(fd, yaml_text.encode("utf-8")); os.close(fd)
-        Template.create(tmp)  # 不传 llm_client/embedder,仅解析模板结构
+        # language is required for knowledge templates (hyperextract enforces
+        # it once its global state is primed) — pass a concrete code so the
+        # structural parse succeeds regardless of process-global he state.
+        Template.create(tmp, language="zh")  # 不传 llm_client/embedder,仅解析模板结构
         return True, ""
     except Exception as exc:  # TemplateCfg ValidationError 等
         msg = str(exc)

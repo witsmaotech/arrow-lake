@@ -12,17 +12,31 @@ from arrow_lake.api.routers.extraction_templates import (
     GenerateRequest, _do_generate, _strip_fences,
 )
 
+# Shape mirrors the CURRENT hyperextract TemplateCfg schema (verified against
+# arrow_lake/knowledge_graph/templates/concept_graph.yaml): output.description,
+# guideline.rules_for_entities/rules_for_relations and display are required —
+# the old minimal fixture failed the pre-save load check with 9 field errors.
+# Shape mirrors the CURRENT hyperextract TemplateCfg schema (verified against
+# arrow_lake/knowledge_graph/templates/concept_graph.yaml): output.description,
+# entities/relations.description, guideline.rules_* (string LISTS) and plain-
+# string display labels are required — the old minimal fixture failed the
+# pre-save load check with 9 field errors.
 _VALID = (
     "language: [zh, en]\nname: security_concept_graph\ntype: graph\ntags: [security]\n"
     "description: {zh: s, en: s}\n"
-    "output:\n  entities:\n    fields:\n"
+    "output:\n  description: {zh: so, en: so}\n"
+    "  entities:\n    description: {zh: ed, en: ed}\n    fields:\n"
     "      - {name: name, type: str, description: d}\n"
     "      - {name: type, type: str, description: d}\n"
-    "  relations:\n    fields:\n"
+    "  relations:\n    description: {zh: rd, en: rd}\n    fields:\n"
     "      - {name: source, type: str, description: d}\n"
     "      - {name: target, type: str, description: d}\n"
     "      - {name: type, type: str, description: d}\n"
     "guideline:\n  target: {zh: e, en: e}\n"
+    "  rules_for_entities: {zh: [r1], en: [r1]}\n"
+    "  rules_for_relations: {zh: [r2], en: [r2]}\n"
+    "display:\n  entity_label: '{name}'\n  relation_label: '{type}'\n"
+    "identifiers:\n  entity_id: name\n"
 )
 
 

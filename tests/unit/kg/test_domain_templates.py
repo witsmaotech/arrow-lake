@@ -27,18 +27,19 @@ def test_domain_doc_types_route_to_project_templates() -> None:
         assert "/presets/" not in path, f"{doc_type} routed to a preset: {path}"
 
 
-def test_paper_doc_type_uses_project_concept_graph() -> None:
-    """paper → project-local concept_graph (strict type/relation enum + required
-    definition), NOT the gallery general/concept_graph preset.
+def test_paper_doc_type_uses_entity_graph_override() -> None:
+    """paper → entity_graph override (documented default, config/rag.py).
 
-    P0#2 (commit d0223fc) switched default/paper/report off the free-type gallery
-    preset onto the strict project template to kill the 80+ type / 0% definition
-    noise. This is the inverse of the old 'stays on preset' regression guard.
+    Supersedes P0#2 (d0223fc): paper/report were later switched OFF the
+    strict project concept_graph onto the generic entity_graph — concept_graph
+    is reserved for concept/taxonomy routing (tag match / default). The
+    invariant that survives: paper is an explicit override, never the free-type
+    gallery preset.
     """
     r = _router()
     path, source = r.resolve_with_source("paper")
     assert source == "override"
-    assert path.endswith("concept_graph.yaml")
+    assert path.endswith("entity_graph.yaml")
     assert "/presets/" not in path
 
 

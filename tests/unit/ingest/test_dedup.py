@@ -345,7 +345,7 @@ class TestDedupConfig:
         from arrow_lake.config import QualityConfig
 
         cfg = QualityConfig()
-        assert cfg.dedup_enabled is False
+        # dedup_enabled was removed in the v1.10.x 配置精简 (dead field).
         assert cfg.dedup_strategy == "exact"
         assert cfg.dedup_action == "flag"
         assert cfg.dedup_perceptual_threshold == 10
@@ -354,12 +354,10 @@ class TestDedupConfig:
         from arrow_lake.config import QualityConfig
 
         cfg = QualityConfig(
-            dedup_enabled=True,
             dedup_strategy="both",
             dedup_action="remove",
             dedup_perceptual_threshold=5,
         )
-        assert cfg.dedup_enabled is True
         assert cfg.dedup_strategy == "both"
         assert cfg.dedup_action == "remove"
         assert cfg.dedup_perceptual_threshold == 5
@@ -368,13 +366,7 @@ class TestDedupConfig:
         from arrow_lake.config import ExportConfig
 
         cfg = ExportConfig()
-        assert cfg.default_format == "parquet"
+        # default_format/allow_overwrite + validators were removed in the
+        # v1.10.x 配置精简 (dead fields).
         assert cfg.parquet_compression == "snappy"
         assert cfg.csv_delimiter == ","
-        assert cfg.allow_overwrite is False
-
-    def test_export_config_invalid_format(self) -> None:
-        from arrow_lake.config import ExportConfig
-
-        with pytest.raises(ValueError, match="format"):
-            ExportConfig(default_format="json")
