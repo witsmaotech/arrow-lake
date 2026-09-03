@@ -29,7 +29,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install dependencies (all extras — W1 lesson: --group dev alone prunes he/document extras)
+      - name: Install dependencies (all extras — W1 lesson, --group dev alone prunes he/document extras)
         run: uv sync --all-extras --group dev
 
       # Gate = high-signal error classes only (syntax + undefined names — the
