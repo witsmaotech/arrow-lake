@@ -80,14 +80,14 @@ class TestKGDocTypeMetadata:
     @pytest.mark.asyncio()
     async def test_list_doc_types_shape(self, lake: _TestLake) -> None:
         items = await lake.kg_list_doc_types()
-        assert len(items) == 10  # canonical doc_types
+        assert len(items) == 11  # education joined the taxonomy (v1.11.5-W1)  # canonical doc_types
         keys = {i["doc_type"] for i in items}
         assert {"paper", "report", "general", "tcm", "legal"} <= keys
         first = items[0]
         assert set(first) == {
-            "doc_type", "description", "aliases",
-            "resolved_template", "resolution",
-        }
+            "doc_type", "description", "description_zh", "aliases",
+            "resolved_template", "resolution", "source",
+        }  # description_zh/source added with the bilingual + source series
         assert first["resolution"] in {"override", "gallery", "degraded", "default"}
 
     @pytest.mark.asyncio()

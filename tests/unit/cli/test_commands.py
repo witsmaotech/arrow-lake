@@ -170,7 +170,7 @@ class TestCatalogGroup:
         lake, _ = mock_lake
         result = _invoke(runner, ["catalog", "delete", "ds1", "--yes"])
         assert result.exit_code == 0
-        lake.delete_dataset.assert_called_once_with("ds1")
+        lake.delete_dataset.assert_called_once_with("ds1", cascade=True)
 
 
 # ===================================================================

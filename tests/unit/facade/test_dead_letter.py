@@ -26,7 +26,8 @@ class TestDeadLetterWriter:
         writer.write("my_dataset", table, "text_length")
         storage.write.assert_called_once()
         call_args = storage.write.call_args
-        assert call_args[0][0] == "my_dataset_dead_letter"
+        # v1.x internal-table convention: dead-letter tables carry the `_` prefix
+        assert call_args[0][0] == "_my_dataset_dead_letter"
 
     def test_write_adds_extra_columns(self) -> None:
         storage = self._mock_storage()

@@ -161,10 +161,10 @@ class TestSQLValidationPassesForJoin:
             "SELECT a.modality, COUNT(*) FROM data a JOIN data b ON a.id = b.id GROUP BY a.modality"
         )
 
-    def test_union_still_blocked(self) -> None:
+    def test_union_allowed(self) -> None:
+        """v1.10.8+: AST validation — UNION of SELECTs is read-only, allowed."""
         bridge = _make_bridge(enable_join=True)
-        with pytest.raises(QueryError, match="UNION"):
-            bridge._validate_sql("SELECT id FROM data UNION SELECT id FROM data")
+        bridge._validate_sql("SELECT id FROM data UNION SELECT id FROM data")
 
     def test_subquery_join(self) -> None:
         bridge = _make_bridge(enable_join=True)

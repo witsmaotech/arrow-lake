@@ -41,7 +41,7 @@ class TestLakeIngestDelegation:
             mock_ingestor.return_value.ingest.return_value = mock_report
             result = lake.ingest("test_ds", ["/tmp/file.csv"])
             assert result is mock_report
-            mock_ingestor.return_value.ingest.assert_called_once_with("test_ds", ["/tmp/file.csv"], transforms=None)
+            mock_ingestor.return_value.ingest.assert_called_once_with("test_ds", ["/tmp/file.csv"], transforms=None, target_table=None)
 
     def test_ingest_http_delegates(self, lake: Lake) -> None:
         mock_report = MagicMock()

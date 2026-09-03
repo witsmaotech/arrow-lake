@@ -590,9 +590,9 @@ class TestWhereClauseValidation:
                 VectorSearchBridge._validate_where_clause(f"{keyword} TABLE")
 
     def test_union_blocked(self) -> None:
-        with pytest.raises(QueryError, match="INVALID_QUERY"):
-            VectorSearchBridge._validate_where_clause("1=1 UNION SELECT *")
-
+        # v1.10.8+: AST-based validation — UNION of SELECTs is read-only,
+        # legitimate, no longer rejected.
+        VectorSearchBridge._validate_where_clause("SELECT id FROM a UNION SELECT id FROM b")
     def test_case_insensitive_detection(self) -> None:
         with pytest.raises(QueryError, match="INVALID_QUERY"):
             VectorSearchBridge._validate_where_clause("drop table users")

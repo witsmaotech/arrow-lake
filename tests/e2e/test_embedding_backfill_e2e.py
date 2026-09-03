@@ -117,8 +117,30 @@ def run_e2e() -> dict:
     return report
 
 
+import pytest
+
+
 def test_embedding_backfill_e2e() -> None:
-    """pytest entry: incremental embedding backfill end-to-end (P1)."""
+    """pytest entry: incremental embedding backfill end-to-end (P1).
+
+    Requires a LIVE embedding endpoint (the configured embedding API base);
+    skipped when it answers non-200 (e.g. relay down) so the default suite
+    stays hermetic.
+    """
+    import os
+    import urllib.request
+
+    from arrow_lake.config import ArrowLakeConfig
+
+    base = ArrowLakeConfig().embedding.api_base
+    try:
+        req = urllib.request.Request(base.rstrip("/") + "/models")
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            if resp.status != 200:
+                raise OSError(f"status {resp.status}")
+    except Exception:
+        pytest.skip(f"embedding endpoint unavailable at {base} — live-stack e2e")
+
     report = run_e2e()
     assert report["a_preserved"]
     assert report["search_top1"] == "b1"

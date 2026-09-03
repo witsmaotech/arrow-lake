@@ -91,14 +91,19 @@ class TestSchemaContract:
         assert result.schema.field("name").type == pa.string()
         assert result.schema.field("score").type == pa.float64()
 
-    def test_append_schema_mismatch_raises(self, tmp_path: Path) -> None:
+    def test_append_schema_mismatch_aligns(self, tmp_path: Path) -> None:
+        """v1.9.6 append-time schema alignment: mismatched columns are added
+        NULL / backfilled instead of raising (the strict raise broke appending
+        to older datasets when ingest added page_number/doc_type)."""
         manager = LanceStorageManager(base_uri=str(tmp_path))
         table1 = pa.table({"id": [1], "value": [1.0]})
         manager.create_dataset("mismatch_test", table1)
 
         table2 = pa.table({"id": [2], "extra_col": ["x"]})
-        with pytest.raises(Exception):
-            manager.append_dataset("mismatch_test", table2)
+        manager.append_dataset("mismatch_test", table2)
+        result = manager.read_dataset("mismatch_test")
+        assert result.num_rows == 2
+        assert {"id", "value", "extra_col"} <= set(result.column_names)
 
     def test_dataset_not_found_raises(self, tmp_path: Path) -> None:
         manager = LanceStorageManager(base_uri=str(tmp_path))

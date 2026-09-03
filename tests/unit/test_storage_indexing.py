@@ -561,4 +561,4 @@ class TestCreateFacetIndexes:
 
         result = mixin.create_facet_indexes("my_ds")
 
-        assert set(result.keys()) == {"modality", "source", "doc_type", "created_at", "quality_score"}
+        assert set(result.keys()) == {"modality", "source", "doc_type", "created_at", "quality_score", "chunk_index"}  # chunk_index joined the facet defaults

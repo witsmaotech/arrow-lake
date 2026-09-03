@@ -244,7 +244,9 @@ class TestProfilingInfo:
 
 class TestRegisterDataset:
     def test_pyarrow_fallback_mode(self) -> None:
-        b = _make_bridge(lance_scan_mode="pyarrow_fallback")
+        # v1.10.4: auto_promote flips a vector-less pyarrow_fallback dataset to
+        # auto — the early direct-register branch needs it explicitly OFF.
+        b = _make_bridge(lance_scan_mode="pyarrow_fallback", lance_auto_promote=False)
         mock_conn = MagicMock()
         source = pa.table({"a": [1]})
         b._register_dataset(mock_conn, "ds", source)

@@ -232,9 +232,15 @@ class TestCLIPImageEncoderEncodeText:
         model = MagicMock()
         emb = np.random.randn(n, dim).astype(np.float32)
         tensor_mock = MagicMock()
+        tensor_mock.detach.return_value = tensor_mock
         tensor_mock.cpu.return_value = tensor_mock
         tensor_mock.numpy.return_value = emb
-        model.get_text_features.return_value = tensor_mock
+        # transformers ≥5.x output object: pooler_output holds the embeddings;
+        # hasattr(pooler_output) is truthy on a bare auto-child mock, which
+        # would bypass the configured tensor (axis error in L2 normalize).
+        out = MagicMock()
+        out.pooler_output = tensor_mock
+        model.get_text_features.return_value = out
 
         tokenizer = MagicMock()
         tokenizer.return_value = {"input_ids": [[1, 2]] * n}
@@ -242,11 +248,11 @@ class TestCLIPImageEncoderEncodeText:
         proc = MagicMock()
         return model, tokenizer, proc
 
-    @patch("arrow_lake.embed.image_encoder.AutoTokenizer")
     @patch("arrow_lake.embed.image_encoder.AutoImageProcessor")
+    @patch("arrow_lake.embed.image_encoder.AutoTokenizer")
     @patch("arrow_lake.embed.image_encoder.AutoModel")
     def test_encode_text_returns_normalized_vectors(
-        self, mock_model_cls: Any, mock_proc_cls: Any, mock_tok_cls: Any
+        self, mock_model_cls: Any, mock_tok_cls: Any, mock_proc_cls: Any
     ) -> None:
         dim = 512
         model, tokenizer, proc = self._make_text_mocks(dim=dim, n=2)
@@ -265,11 +271,11 @@ class TestCLIPImageEncoderEncodeText:
         model.get_text_features.assert_called_once()
         tokenizer.assert_called_once()
 
-    @patch("arrow_lake.embed.image_encoder.AutoTokenizer")
     @patch("arrow_lake.embed.image_encoder.AutoImageProcessor")
+    @patch("arrow_lake.embed.image_encoder.AutoTokenizer")
     @patch("arrow_lake.embed.image_encoder.AutoModel")
     def test_encode_text_empty_raises(
-        self, mock_model_cls: Any, mock_proc_cls: Any, mock_tok_cls: Any
+        self, mock_model_cls: Any, mock_tok_cls: Any, mock_proc_cls: Any
     ) -> None:
         enc = CLIPImageEncoder(model_source="huggingface")
         with pytest.raises(ValueError, match="empty"):
@@ -277,11 +283,11 @@ class TestCLIPImageEncoderEncodeText:
         # Model not loaded when input is empty
         mock_model_cls.from_pretrained.assert_not_called()
 
-    @patch("arrow_lake.embed.image_encoder.AutoTokenizer")
     @patch("arrow_lake.embed.image_encoder.AutoImageProcessor")
+    @patch("arrow_lake.embed.image_encoder.AutoTokenizer")
     @patch("arrow_lake.embed.image_encoder.AutoModel")
     def test_encode_text_tokenizer_cached_across_calls(
-        self, mock_model_cls: Any, mock_proc_cls: Any, mock_tok_cls: Any
+        self, mock_model_cls: Any, mock_tok_cls: Any, mock_proc_cls: Any
     ) -> None:
         model, tokenizer, proc = self._make_text_mocks(dim=512, n=1)
         mock_model_cls.from_pretrained.return_value = model
@@ -295,11 +301,11 @@ class TestCLIPImageEncoderEncodeText:
         mock_tok_cls.from_pretrained.assert_called_once()
         assert tokenizer.call_count == 2
 
-    @patch("arrow_lake.embed.image_encoder.AutoTokenizer")
     @patch("arrow_lake.embed.image_encoder.AutoImageProcessor")
+    @patch("arrow_lake.embed.image_encoder.AutoTokenizer")
     @patch("arrow_lake.embed.image_encoder.AutoModel")
     def test_encode_text_uses_shared_model(
-        self, mock_model_cls: Any, mock_proc_cls: Any, mock_tok_cls: Any
+        self, mock_model_cls: Any, mock_tok_cls: Any, mock_proc_cls: Any
     ) -> None:
         """encode_text reuses the same model instance loaded for encode()."""
         model, tokenizer, proc = self._make_text_mocks(dim=512, n=1)

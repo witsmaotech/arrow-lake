@@ -59,11 +59,15 @@ class _LakeAdminMixin:
             try:
                 ds = storage.open_dataset(name)
                 num_rows = ds.count_rows()
-            except (StorageError, OSError):
+            except (StorageError, OSError, ValueError, FileNotFoundError):
+                # ValueError: lancedb raises it for a table mid-creation — the
+                # async lineage worker appends _lineage_events concurrently
+                # with catalog reads; a half-open table reads as 0 rows, not
+                # as a catalog failure.
                 ds = None
             try:
                 version = storage.get_version(name)
-            except (StorageError, OSError):
+            except (StorageError, OSError, ValueError, FileNotFoundError):
                 version = 0
             num_columns = 0
             vector_dim: int | None = None

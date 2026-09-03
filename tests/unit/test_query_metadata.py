@@ -82,9 +82,9 @@ class TestMetadataSearchBridgeValidation:
             bridge.query("my_ds", "SELECT 1;")
         assert exc_info.value.error_code == ErrorCode.QUERY_SYNTAX_ERROR
 
-    def test_union_keyword_blocked(self, bridge):
-        with pytest.raises(QueryError, match="Keyword 'UNION' is not allowed"):
-            bridge.query("my_ds", "SELECT 1 UNION SELECT 2")
+    def test_union_of_selects_allowed(self, bridge):
+        """v1.10.8+: AST validation — UNION of SELECTs is read-only, allowed."""
+        bridge.query("my_ds", "SELECT 1 UNION SELECT 2")
 
     def test_extra_table_invalid_name_raises(self, bridge):
         with pytest.raises(ValueError):

@@ -335,7 +335,7 @@ class TestConfigV142:
         cfg = GravitinoConfig()
         assert cfg.retention_enforce_interval_seconds == 3600
         assert cfg.masking_policy_cache_ttl_seconds == 60
-        assert cfg.tag_acl_sync_interval_seconds == 300
+        # tag_acl_sync_interval_seconds was removed in the v1.10.x 配置精简.
         assert "pii" in cfg.tag_access_rules
         assert cfg.stats_cache_ttl_seconds == 300
         assert cfg.stats_auto_route_threshold == 1_000_000
