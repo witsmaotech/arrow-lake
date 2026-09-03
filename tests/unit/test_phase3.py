@@ -6,9 +6,12 @@ import pytest
 
 
 class TestMiddlewarePipeline:
-    def test_pipeline_starts_with_correlation_id(self) -> None:
+    def test_pipeline_starts_with_cors(self) -> None:
         from arrow_lake.api.app import MIDDLEWARE_PIPELINE
-        assert MIDDLEWARE_PIPELINE[0] == "correlation_id"
+        # CORS added outermost (browser preflight must never hit auth 401s);
+        # correlation_id remains second.
+        assert MIDDLEWARE_PIPELINE[0] == "cors"
+        assert MIDDLEWARE_PIPELINE[1] == "correlation_id"
 
     def test_pipeline_has_all_middleware(self) -> None:
         from arrow_lake.api.app import MIDDLEWARE_PIPELINE

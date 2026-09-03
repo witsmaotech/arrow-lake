@@ -71,14 +71,19 @@ sys.modules.setdefault("kreuzberg", _FakeKreuzbergModule())
 
 
 @pytest.fixture(autouse=True)
-def _kreuzberg_flag_for_full_suite(monkeypatch):
-    """_KREUZBERG_AVAILABLE is computed at arrow_lake.ingest.document import
-    time — in the full suite the module is imported BEFORE this file installs
-    its fake kreuzberg, so the flag is already False and every kreuzberg-path
-    test raises "not installed". Force it True for this file's tests only
-    (monkeypatch restores afterwards — no leak to later files)."""
+def _kreuzberg_fake_available(monkeypatch):
+    """arrow_lake.ingest.document binds kreuzberg names at ITS import time —
+    in the full suite the module is imported BEFORE this file installs the
+    fake kreuzberg, so both the availability flag AND the
+    ExtractionConfig/OcrConfig/... globals are missing. Bind all of them from
+    the fake module for this file's tests (monkeypatch restores afterwards)."""
     from arrow_lake.ingest import document as _doc
+
+    fake = sys.modules["kreuzberg"]
     monkeypatch.setattr(_doc, "_KREUZBERG_AVAILABLE", True)
+    for _name in ("ExtractionConfig", "OcrConfig", "PageConfig", "PdfConfig",
+                  "extract_file_sync"):
+        monkeypatch.setattr(_doc, _name, getattr(fake, _name), raising=False)
 
 
 # ---------------------------------------------------------------------------
