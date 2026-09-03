@@ -388,7 +388,10 @@ class _QueryTimer:
         self._timer: Any = None
 
     def __enter__(self) -> _QueryTimer:
-        if _metrics_enabled:
+        # .is_set() — bare truthiness on a threading.Event is ALWAYS True
+        # (Event defines neither __bool__ nor __len__), so `if _metrics_enabled:`
+        # silently ignored disable_metrics() and the timer kept recording.
+        if _metrics_enabled.is_set():
             query_total.labels(query_type=self._query_type).inc()
             self._timer = query_latency_seconds.labels(query_type=self._query_type).time()
             self._timer.__enter__()

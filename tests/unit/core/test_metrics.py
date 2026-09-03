@@ -89,11 +89,20 @@ class TestQueryTimer:
     """Test the _QueryTimer context manager."""
 
     @staticmethod
-    def _get_counter_value() -> float:
-        """Read current query_total counter value."""
+    def _get_counter_value(query_type: str = "test") -> float:
+        """Read the query_total counter value for one query_type label.
+
+        Must match on the label: prometheus_client emits one sample per
+        label value in sorted order, so an unfiltered "first sample" read
+        picks up whichever query_type sorts first (e.g. hybrid_search from
+        any earlier search test) and this test's increment is invisible.
+        """
         for family in query_total.collect():
             for sample in family.samples:
-                if sample.name == "arrow_lake_query_total":
+                if (
+                    sample.name == "arrow_lake_query_total"
+                    and sample.labels.get("query_type") == query_type
+                ):
                     return sample.value
         return 0.0
 
@@ -113,12 +122,12 @@ class TestQueryTimer:
 
         disable_metrics()
         try:
-            before = self._get_counter_value()
+            before = self._get_counter_value("test_disabled")
 
             with _QueryTimer(query_type="test_disabled"):
                 pass
 
-            after = self._get_counter_value()
+            after = self._get_counter_value("test_disabled")
             assert after == before
         finally:
             enable_metrics()
