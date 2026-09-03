@@ -59,7 +59,7 @@ ENV https_proxy=${BUILD_PROXY}
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv venv .venv \
     && . .venv/bin/activate \
-    && uv pip install ".[fts,otel,rag,he,document,docling,chunking-full,dedup,nemo-curator,gpu]" \
+    && uv pip install ".[fts,otel,rag,he,sql,document,docling,chunking-full,dedup,nemo-curator,gpu]" \
     && uv pip install jupyterlab ipywidgets \
     && uv pip install modelscope>=1.18 PyJWT "apache-gravitino==1.3.0" "boto3==1.43.0" "botocore==1.43.0"
 

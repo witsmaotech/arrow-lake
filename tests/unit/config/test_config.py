@@ -123,11 +123,13 @@ class TestArrowLakeConfig:
     def test_default_storage_values(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("ARROW_LAKE__STORAGE__S3_ENDPOINT", raising=False)
         # The suite pins BACKEND=local (tests/conftest.py hermetic anchor);
-        # scrub it to assert the true class default.
+        # scrub it to assert the true class default. _env_file=None also skips
+        # the repo root .env (deploy values), else the assertion is env-coupled
+        # (passed locally via .env's 127.0.0.1, failed on CI's class default).
         monkeypatch.delenv("ARROW_LAKE__STORAGE__BACKEND", raising=False)
-        config = ArrowLakeConfig()
+        config = ArrowLakeConfig(_env_file=None)
         assert config.storage.backend == "minio"
-        assert config.storage.s3_endpoint == "http://127.0.0.1:9000"
+        assert config.storage.s3_endpoint == "http://localhost:9000"
 
     def test_default_observability_values(self) -> None:
         config = ArrowLakeConfig()

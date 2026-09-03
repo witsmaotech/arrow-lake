@@ -439,6 +439,20 @@ class TestLocalEmbeddingEncoder:
 class TestApiEmbeddingEncoder:
     """ApiEmbeddingEncoder — retry, fallback, error mapping."""
 
+    @pytest.fixture(autouse=True)
+    def _clear_fallback_cache(self) -> None:
+        """Hermetic per-test class-level fallback cache.
+
+        ApiEmbeddingEncoder._fallback_cache is CLASS-level (process-wide):
+        without clearing, an earlier test's cached LocalEmbeddingEncoder keeps
+        ITS mock model — a later fallback test then encodes through the stale
+        mock (CI full-suite order made this an IndexError in the empty branch;
+        local orders passed by luck).
+        """
+        ApiEmbeddingEncoder._fallback_cache.clear()
+        yield
+        ApiEmbeddingEncoder._fallback_cache.clear()
+
     def test_init_default_params(self) -> None:
         with patch("arrow_lake.embed.encoder.httpx.Client") as mock_client_cls:
             mock_client = MagicMock()

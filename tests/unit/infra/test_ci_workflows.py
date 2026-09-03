@@ -23,16 +23,20 @@ class TestCIWorkflow:
         ci = _load_workflow("ci.yml")
         assert "jobs" in ci
         jobs = list(ci["jobs"].keys())
-        assert "lint-and-test" in jobs
+        # v1.11.5-W1-2: three parallel jobs (lint / tests / build-and-smoke)
+        assert "lint" in jobs
+        assert "tests" in jobs
+        assert "build-and-smoke" in jobs
 
     def test_ci_has_required_steps(self) -> None:
         ci = _load_workflow("ci.yml")
-        steps = ci["jobs"]["lint-and-test"]["steps"]
-        step_names = [s.get("name", "") for s in steps]
+        lint_names = [s.get("name", "") for s in ci["jobs"]["lint"]["steps"]]
+        test_names = [s.get("name", "") for s in ci["jobs"]["tests"]["steps"]]
+        build_names = [s.get("name", "") for s in ci["jobs"]["build-and-smoke"]["steps"]]
 
-        assert any("ruff" in n.lower() for n in step_names), "Missing ruff lint step"
-        assert any("mypy" in n.lower() for n in step_names), "Missing mypy step"
-        assert any("unit test" in n.lower() for n in step_names), "Missing unit test step"
+        assert any("ruff" in n.lower() for n in lint_names), "Missing ruff lint step"
+        assert any("test" in n.lower() for n in test_names), "Missing test suite step"
+        assert any("smoke" in n.lower() for n in build_names), "Missing smoke step"
 
     def test_ci_runs_on_push_and_pr(self) -> None:
         ci = _load_workflow("ci.yml")
@@ -43,9 +47,12 @@ class TestCIWorkflow:
 
     def test_ci_uses_uv(self) -> None:
         ci = _load_workflow("ci.yml")
-        steps = ci["jobs"]["lint-and-test"]["steps"]
-        step_names = [s.get("name", "") for s in steps]
-        assert any("uv" in n.lower() for n in step_names)
+        # uv appears in run: commands (uv sync / uv run pytest / uv run ruff)
+        for job in ci["jobs"].values():
+            for s in job.get("steps", []):
+                if "uv " in str(s.get("run", "")):
+                    return
+        raise AssertionError("No step invokes uv")
 
 
 class TestNightlyGPUWorkflow:

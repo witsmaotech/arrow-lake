@@ -161,11 +161,14 @@ class TestConfigIntegration:
     def test_llm_config_in_section_types(self) -> None:
         from arrow_lake.config import _build_merged_update
 
-        base = ArrowLakeConfig()
+        # _env_file=None: RAGConfig's class default is enabled=False; asserting
+        # True only held where the repo root .env set RAG__ENABLED (env-coupled,
+        # failed on CI).
+        base = ArrowLakeConfig(_env_file=None)
         merged = _build_merged_update(base, {"llm": {"provider": "vllm"}})
         assert merged["llm"].provider == "vllm"
         # rag section absent from override — should keep base value
-        assert merged["rag"].enabled is True
+        assert merged["rag"].enabled is False
 
     def test_rag_config_in_section_types(self) -> None:
         from arrow_lake.config import _build_merged_update

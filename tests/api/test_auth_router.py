@@ -206,10 +206,13 @@ class TestNoSecretKey:
     """When jwt_secret_key is empty, create_app raises ValueError."""
 
     def test_create_app_rejects_empty_secret(self) -> None:
-        config = ArrowLakeConfig()
+        config = ArrowLakeConfig(_env_file=None)
         config.auth.auth_mode = AuthMode.JWT
         config.auth.jwt_secret_key = ""
         config.api.api_key = ""
+        # _validate_auth_config only runs with the API server enabled — set it
+        # explicitly (else the test only raised where root .env enabled it).
+        config.api.enabled = True
         with pytest.raises(ValueError, match="jwt_secret_key"):
             create_app(config=config)
 

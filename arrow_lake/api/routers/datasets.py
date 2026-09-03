@@ -1061,6 +1061,16 @@ async def delete_dataset(
         label="delete_dataset", actor=actor_of(_user), cascade=cascade,
         table=table,
     )
+    # 真缺陷 #11(W1-2): lake.catalog() 有 5s TTL 实例缓存,删除不清时
+    # GET /datasets/{name} 在窗口内返回已删数据集(200 幽灵)。慢环境(带
+    # redis/gravitino 等组件)删除 >5s 掩盖了它;快路径(CI/裸 local)必现。
+    # invalidate_query_cache 顺带清 _catalog_cache(W1 修复 #1 的语义)。
+    invalidate = getattr(lake, "invalidate_query_cache", None)
+    if callable(invalidate):
+        try:
+            invalidate(name)
+        except Exception:  # noqa: BLE001 — 失效失败不阻断删除结果
+            pass
     if table is not None:
         return MessageResponse(message=f"Table '{name}/{table}' deleted")
     return MessageResponse(message=f"Dataset '{name}' deleted")
