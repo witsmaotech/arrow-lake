@@ -5,6 +5,11 @@ M0a Day 4 — ensures ArrowLakeConfig defaults don't silently change.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import pytest
+
 
 class TestConfigBackwardCompat:
     """Verify ArrowLakeConfig() no-arg defaults remain stable."""

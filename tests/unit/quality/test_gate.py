@@ -14,10 +14,14 @@ instead of patching stage methods. Each historical bug is pinned:
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pyarrow as pa
 import pytest
+
+if TYPE_CHECKING:
+    from arrow_lake.quality.base import QualityFilterRegistry
 
 from arrow_lake.quality.gate import GateResult, IngestionQualityGate, _dicts_to_table
 

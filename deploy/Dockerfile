@@ -77,7 +77,14 @@ ENV NO_PROXY="*"
 # ==============================================================================
 # Stage 2 — runtime
 # ==============================================================================
-FROM python:3.12-slim AS runtime
+# runtime-base: everything except the baked-model COPYs. Two final targets:
+#   - runtime      (LAST stage → default for compose `docker compose build`):
+#                   bakes reranker/bge-m3/docling models from BuildKit named
+#                   contexts (msmodels/hfmodels, supplied via compose
+#                   additional_contexts — host-local dirs, offline-ready image).
+#   - runtime-ci : bare base (no models). CI (`docker build --target runtime-ci`)
+#                   has no host model dirs — validates deps+code+boot+console.
+FROM python:3.12-slim AS runtime-base
 
 ARG VERSION=dev
 ARG TARGETARCH
@@ -179,27 +186,6 @@ COPY docs/cookbook/examples/ /app/examples/
 # Copy SQL Worksheet console (static frontend, served at /console via app.py StaticFiles mount)
 COPY console/ /app/console/
 
-# v1.9.6: bake reranker (bge-reranker-v2-m3) + docling models into the image so the
-# service is offline-ready (no runtime model download, no network dependency at boot).
-# Sources (BuildKit named contexts — supply via compose build.additional_contexts or
-# buildx --build-context):
-#   msmodels = modelscope models dir  → reranker snapshots/master (local-path load)
-#   hfmodels = huggingface hub dir    → docling models (HF_HOME cache)
-# Reranker loads from RERANKER_MODEL=/opt/models/bge-reranker-v2-m3 (local path);
-# docling reads via HF_HOME. HF_HUB_OFFLINE=1 forbids any runtime network fetch.
-COPY --from=msmodels BAAI--bge-reranker-v2-m3/snapshots/master /opt/models/bge-reranker-v2-m3
-# v1.10.3 §5.10: bake bge-m3 tokenizer for HybridChunker (DOCLING_HYBRID 结构感知分块) offline.
-# tokenizer-only snapshot(config.json/sentencepiece.bpe.model/tokenizer.json, ~18MB);loaded via
-# local path docling_chunk_tokenizer=/opt/models/bge-m3(同 reranker 本地路径加载模式)。
-COPY --from=msmodels BAAI--bge-m3/snapshots/master /opt/models/bge-m3
-# Preserve models--<org>--<name>/ layer (HF cache layout docling expects).
-# Multi-source COPY flattens contents and loses the models-- dir → docling
-# "Cannot find cached snapshot folder". Copy each to its own models-- path.
-COPY --from=hfmodels models--docling-project--docling-layout-heron /opt/hf-cache/hub/models--docling-project--docling-layout-heron
-COPY --from=hfmodels models--docling-project--docling-models /opt/hf-cache/hub/models--docling-project--docling-models
-ENV HF_HOME=/opt/hf-cache
-ENV HF_HUB_OFFLINE=1
-
 # Activate venv in PATH
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONPATH="/app" \
@@ -213,3 +199,35 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
     CMD ["curl", "-sf", "http://localhost:8000/health"]
 
 CMD ["uvicorn", "arrow_lake.api.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+
+# ==============================================================================
+# CI variant — bare runtime-base, no model bake. CI runners have no host
+# msmodels/hfmodels named-context dirs. Built with `docker build --target
+# runtime-ci`; validates deps + code + boot + console serving.
+# ==============================================================================
+FROM runtime-base AS runtime-ci
+
+# ==============================================================================
+# Full runtime — LAST stage = default target for `docker compose build`.
+# v1.9.6: bake reranker (bge-reranker-v2-m3) + docling models into the image so the
+# service is offline-ready (no runtime model download, no network dependency at boot).
+# Sources (BuildKit named contexts — supply via compose build.additional_contexts or
+# buildx --build-context):
+#   msmodels = modelscope models dir  → reranker snapshots/master (local-path load)
+#   hfmodels = huggingface hub dir    → docling models (HF_HOME cache)
+# Reranker loads from RERANKER_MODEL=/opt/models/bge-reranker-v2-m3 (local path);
+# docling reads via HF_HOME. HF_HUB_OFFLINE=1 forbids any runtime network fetch.
+# ==============================================================================
+FROM runtime-base AS runtime
+COPY --from=msmodels BAAI--bge-reranker-v2-m3/snapshots/master /opt/models/bge-reranker-v2-m3
+# v1.10.3 §5.10: bake bge-m3 tokenizer for HybridChunker (DOCLING_HYBRID 结构感知分块) offline.
+# tokenizer-only snapshot(config.json/sentencepiece.bpe.model/tokenizer.json, ~18MB);loaded via
+# local path docling_chunk_tokenizer=/opt/models/bge-m3(同 reranker 本地路径加载模式)。
+COPY --from=msmodels BAAI--bge-m3/snapshots/master /opt/models/bge-m3
+# Preserve models--<org>--<name>/ layer (HF cache layout docling expects).
+# Multi-source COPY flattens contents and loses the models-- dir → docling
+# "Cannot find cached snapshot folder". Copy each to its own models-- path.
+COPY --from=hfmodels models--docling-project--docling-layout-heron /opt/hf-cache/hub/models--docling-project--docling-layout-heron
+COPY --from=hfmodels models--docling-project--docling-models /opt/hf-cache/hub/models--docling-project--docling-models
+ENV HF_HOME=/opt/hf-cache
+ENV HF_HUB_OFFLINE=1

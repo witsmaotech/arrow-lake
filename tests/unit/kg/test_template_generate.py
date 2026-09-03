@@ -55,6 +55,11 @@ async def test_strip_fences_leading_prose() -> None:
     assert out.startswith("language:")
 
 
+# xfail(W1-1 登记):同进程内他处先触发 hyperextract import 后,其模块级全局
+# 态令 _do_generate 的模板 load 抛第三方内部错误(单跑本文件全绿,全量必败,
+# 两态均见 docs_offline/v1115-w1-test-isolation-record.md 三i)。非 strict:
+# 第三方修复后单跑 XPASS 不应翻红。
+@pytest.mark.xfail(reason="hyperextract module-level global state (third-party)", strict=False)
 @pytest.mark.asyncio
 async def test_generate_valid_first_try() -> None:
     calls = 0

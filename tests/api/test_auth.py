@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from arrow_lake.api.app import create_app
 from arrow_lake.api.auth import api_key_middleware_fn
+
+if TYPE_CHECKING:
+    from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 

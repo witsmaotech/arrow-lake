@@ -12,6 +12,14 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+# v1.11.5-W1-2 (真缺陷 #10): five except-block handlers called logger.warning
+# with NO logger defined in this module — the error handler itself raised
+# NameError and masked the original failure. stdlib logger, positional style
+# (matches the call sites' exc_info=True kwargs).
+import logging
+
+logger = logging.getLogger(__name__)
+
 if TYPE_CHECKING:
     from arrow_lake.ingest.ingestor import IngestionReport
     from arrow_lake.quality.dedup import DedupResult
@@ -848,7 +856,7 @@ class _LakeIngestMixin:
             return compile_contract(parse_contract(rec["contract_yaml"])).rows
         except Exception:
             logger.warning(
-                "contract_gate_load_failed", dataset=dataset_name, exc_info=True
+                "contract_gate_load_failed dataset=%s", dataset_name, exc_info=True
             )
             return ()
 
@@ -868,7 +876,7 @@ class _LakeIngestMixin:
             store.add_container_table(name, table)
         except Exception:
             logger.warning(
-                "container_table_register_failed", dataset=name, table=table, exc_info=True,
+                "container_table_register_failed dataset=%s table=%s", name, table, exc_info=True,
             )
 
     def create_dataset(
