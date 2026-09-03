@@ -158,13 +158,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             _names = lake.list_datasets()
             if _old in _names and _new not in _names:
                 lake.rename_dataset(_old, _new)
-                logger.info("system_table_renamed", **{"from": _old, "to": _new})
+                logger.info("system_table_renamed from=%s to=%s", _old, _new)
         except Exception as _e:  # noqa: BLE001 — 多 worker 并发迁移:落败者撞源表已被迁走
             _msg = str(_e).lower()
             if "not found" in _msg or "exist" in _msg:
-                logger.debug("system_table_rename_skipped", old=_old, reason=str(_e)[:80])
+                logger.debug("system_table_rename_skipped old=%s reason=%s", _old, str(_e)[:80])
             else:
-                logger.warning("system_table_rename_failed", old=_old, exc_info=True)
+                logger.warning("system_table_rename_failed old=%s", _old, exc_info=True)
 
     # Create the session manager WITHOUT blocking on warmup, then run warmup in
     # a background daemon thread. The pool lazy-creates sessions on demand, so
@@ -395,9 +395,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         TaskManager.init_user_state_store(app.state.user_state_store)
 
         logger.info(
-            "system_db_enabled",
-            url=config.system_db.url,
-            fail_mode=config.system_db.fail_mode,
+            "system_db_enabled url=%s fail_mode=%s",
+            config.system_db.url, config.system_db.fail_mode,
         )
 
     # ── v1.6.2: Redis-backed task state sharing ──
@@ -494,13 +493,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.maintenance_scheduler = maintenance_scheduler
 
         logger.info(
-            "gravitino_integration_enabled",
-            uri=config.gravitino.uri,
-            metalake=config.gravitino.metalake,
-            masking=True,
-            stats=True,
-            tag_acl=config.gravitino.tag_access_rules != {},
-            retention=True,
+            "gravitino_integration_enabled uri=%s metalake=%s masking=True stats=True tag_acl=%s retention=True",
+            config.gravitino.uri, config.gravitino.metalake,
+            config.gravitino.tag_access_rules != {},
         )
 
     # v1.10.7 WP4 (review H7): no signal handlers here. Installing our own

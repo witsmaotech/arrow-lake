@@ -43,6 +43,16 @@ def _fake_index_config(
     )
 
 
+# Mocking strategy note: ``delete_vector_index`` lazy-imports ``lance`` and
+# ``arrow_lake.query.async_conn_pool`` (which pulls in the native ``lancedb``).
+# We patch attributes on the REAL modules (``patch("lance.dataset", ...)``)
+# instead of faking ``sys.modules["lance"]`` -- patch.dict(sys.modules, ...)
+# evicts every module first-imported inside its window on exit, so the first
+# test evicted ``lancedb`` and every later lazy import re-executed its pyo3
+# module body (env_logger double-init panic). Attribute patching never touches
+# sys.modules, making the suite order-coupling-free in both directions.
+
+
 # ---------------------------------------------------------------------------
 # delete_vector_index
 # ---------------------------------------------------------------------------
@@ -56,10 +66,8 @@ class TestDeleteVectorIndex:
         mixin = _make_mixin()
         mock_ds = MagicMock()
         mock_ds.drop_index = MagicMock()
-        mock_lance_module = MagicMock()
-        mock_lance_module.dataset.return_value = mock_ds
 
-        with patch.dict("sys.modules", {"lance": mock_lance_module}):
+        with patch("lance.dataset", return_value=mock_ds):
             mixin.delete_vector_index("my_ds", "my_idx")
 
         mixin._validate_name.assert_called_once_with("my_ds")
@@ -69,13 +77,11 @@ class TestDeleteVectorIndex:
         mixin = _make_mixin()
         mock_ds = MagicMock()
         mock_ds.drop_index = MagicMock()
-        mock_lance_module = MagicMock()
-        mock_lance_module.dataset.return_value = mock_ds
 
-        with patch.dict("sys.modules", {"lance": mock_lance_module}):
+        with patch("lance.dataset", return_value=mock_ds) as mock_dataset:
             mixin.delete_vector_index("my_ds", "my_idx")
 
-        mock_lance_module.dataset.assert_called_once_with(
+        mock_dataset.assert_called_once_with(
             "/tmp/data/test_ds.lance",
             storage_options=None,
         )
@@ -84,10 +90,8 @@ class TestDeleteVectorIndex:
         """delete_vector_index delegates to ds.drop_index."""
         mixin = _make_mixin()
         mock_ds = MagicMock()
-        mock_lance_module = MagicMock()
-        mock_lance_module.dataset.return_value = mock_ds
 
-        with patch.dict("sys.modules", {"lance": mock_lance_module}):
+        with patch("lance.dataset", return_value=mock_ds):
             mixin.delete_vector_index("my_ds", "my_idx")
 
         mock_ds.drop_index.assert_called_once_with("my_idx")
@@ -95,10 +99,8 @@ class TestDeleteVectorIndex:
     def test_value_error_raises_storage_error(self) -> None:
         """ValueError from lance wraps into StorageError(QUERY_INDEX_NOT_FOUND)."""
         mixin = _make_mixin()
-        mock_lance_module = MagicMock()
-        mock_lance_module.dataset.side_effect = ValueError("not found")
 
-        with patch.dict("sys.modules", {"lance": mock_lance_module}):
+        with patch("lance.dataset", side_effect=ValueError("not found")):
             with pytest.raises(StorageError) as exc_info:
                 mixin.delete_vector_index("my_ds", "bad_idx")
 
@@ -111,10 +113,8 @@ class TestDeleteVectorIndex:
         mixin = _make_mixin()
         mock_ds = MagicMock()
         mock_ds.drop_index.side_effect = RuntimeError("io error")
-        mock_lance_module = MagicMock()
-        mock_lance_module.dataset.return_value = mock_ds
 
-        with patch.dict("sys.modules", {"lance": mock_lance_module}):
+        with patch("lance.dataset", return_value=mock_ds):
             with pytest.raises(StorageError) as exc_info:
                 mixin.delete_vector_index("my_ds", "my_idx")
 
@@ -125,10 +125,8 @@ class TestDeleteVectorIndex:
         mixin = _make_mixin()
         mock_ds = MagicMock()
         mock_ds.drop_index.side_effect = OSError("permission denied")
-        mock_lance_module = MagicMock()
-        mock_lance_module.dataset.return_value = mock_ds
 
-        with patch.dict("sys.modules", {"lance": mock_lance_module}):
+        with patch("lance.dataset", return_value=mock_ds):
             with pytest.raises(StorageError) as exc_info:
                 mixin.delete_vector_index("my_ds", "my_idx")
 
@@ -139,13 +137,11 @@ class TestDeleteVectorIndex:
         mixin = _make_mixin()
         mixin._storage_options = {"region": "us-east-1"}  # type: ignore[assignment]
         mock_ds = MagicMock()
-        mock_lance_module = MagicMock()
-        mock_lance_module.dataset.return_value = mock_ds
 
-        with patch.dict("sys.modules", {"lance": mock_lance_module}):
+        with patch("lance.dataset", return_value=mock_ds) as mock_dataset:
             mixin.delete_vector_index("my_ds", "my_idx")
 
-        mock_lance_module.dataset.assert_called_once_with(
+        mock_dataset.assert_called_once_with(
             "/tmp/data/test_ds.lance",
             storage_options={"region": "us-east-1"},
         )

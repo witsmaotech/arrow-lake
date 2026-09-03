@@ -279,9 +279,12 @@ def enforce_sql_acl(
 
     rewritten = tree.sql(dialect=_DIALECT)
     if dataset:
+        # Positional %-style: this logger is stdlib (logging.getLogger at module
+        # top) — structlog-style kwargs would TypeError in Logger._log once the
+        # root level is at INFO (e.g. after a third-party basicConfig flip).
         logger.info(
-            "acl_sql_enforced", dataset=dataset,
-            restricted_tables=sorted(acls), rewritten=True,
+            "acl_sql_enforced dataset=%s restricted=%s rewritten=True",
+            dataset, ",".join(sorted(acls)),
         )
     return rewritten
 

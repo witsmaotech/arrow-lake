@@ -126,7 +126,7 @@ class Ingestor(_FileIngestMixin, _MediaIngestMixin, _SourceIngestMixin):
             file_type = self._detect_file_type(source_path)
             table = capture_for_file(source_path, file_type, table)
         except Exception:
-            logger.debug("field_comment_capture_skipped", path=source_path, exc_info=True)
+            logger.debug("field_comment_capture_skipped path=%s", source_path, exc_info=True)
 
         # Decide create vs append by STORAGE state, not just this Ingestor's
         # history. ``_first_table_seen`` only tracks writes within one Ingestor

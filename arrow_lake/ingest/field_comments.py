@@ -84,7 +84,7 @@ def extract_csv_sidecar_comments(path: str) -> dict[str, str]:
         try:
             data = json.loads(json_path.read_text(encoding="utf-8"))
         except Exception:
-            logger.debug("csv_sidecar_json_parse_failed", path=str(json_path), exc_info=True)
+            logger.debug("csv_sidecar_json_parse_failed path=%s", json_path, exc_info=True)
             data = None
         if isinstance(data, dict):
             return {
@@ -101,7 +101,7 @@ def extract_csv_sidecar_comments(path: str) -> dict[str, str]:
 
             data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
         except Exception:
-            logger.debug("csv_sidecar_yaml_parse_failed", path=str(yaml_path), exc_info=True)
+            logger.debug("csv_sidecar_yaml_parse_failed path=%s", yaml_path, exc_info=True)
             data = None
         cols = None
         if isinstance(data, dict):
@@ -165,7 +165,7 @@ def capture_for_file(source_path: str, file_type: str, table: pa.Table) -> pa.Ta
             return table
         return attach_field_comments(table, comments)
     except Exception:
-        logger.debug("field_comment_capture_failed", path=source_path, exc_info=True)
+        logger.debug("field_comment_capture_failed path=%s", source_path, exc_info=True)
         return table
 
 

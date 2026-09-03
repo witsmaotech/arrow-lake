@@ -74,10 +74,8 @@ class DaftBatchEncoder:
             effective_partitions = min(self._num_partitions, max(1, total_rows // 100))
             if effective_partitions != self._num_partitions:
                 logger.info(
-                    "daft_partitions_adjusted",
-                    requested=self._num_partitions,
-                    effective=effective_partitions,
-                    rows=total_rows,
+                    "daft_partitions_adjusted requested=%d effective=%d rows=%d",
+                    self._num_partitions, effective_partitions, total_rows,
                 )
             df = df.into_partitions(effective_partitions)
 

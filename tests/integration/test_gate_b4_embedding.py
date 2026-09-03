@@ -9,12 +9,21 @@ Validates LocalEmbeddingEncoder produces fixed_size_list<float>[1024]:
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import numpy as np
 import pyarrow as pa
 import pytest
 from arrow_lake.ingest.storage import LanceStorageManager
+
+_MODEL = "Qwen/Qwen3-Embedding-0.6B"
+
+
+def _model_cached(model_name: str = _MODEL) -> bool:
+    """True when the model is already in the local HF hub cache."""
+    hub = Path(os.environ.get("HF_HOME", Path.home() / ".cache/huggingface")) / "hub"
+    return (hub / ("models--" + model_name.replace("/", "--"))).is_dir()
 
 
 class TestGateB4TextEmbedding:
@@ -42,8 +51,13 @@ class TestGateB4TextEmbedding:
         assert result.null_rows == 0
         assert result.embedding_dim == 1024
 
-    def test_null_text_handling(self) -> None:
+    # Gate: runs only from the local HF cache, offline (no hub network check —
+    # that check is the DoD dual-run jitter source through the flaky proxy);
+    # skips on machines without the cached model.
+    @pytest.mark.skipif(not _model_cached(), reason="Qwen3-Embedding-0.6B not in local HF cache")
+    def test_null_text_handling(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """NULL texts produce null_mask=True and are skipped."""
+        monkeypatch.setenv("HF_HUB_OFFLINE", "1")
         from arrow_lake.embed.encoder import LocalEmbeddingEncoder
 
         encoder = LocalEmbeddingEncoder(model_name="Qwen/Qwen3-Embedding-0.6B")
