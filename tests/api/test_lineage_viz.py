@@ -83,7 +83,7 @@ class TestToMermaid:
         result = _to_mermaid("test", graph)
         text = result.body.decode()
         # orphan should appear as isolated node
-        assert "orphan[orphan]" in text
+        assert 'orphan["orphan"]' in text  # mermaid quotes node labels now
 
     def test_empty_graph(self) -> None:
         graph = {"nodes": [], "edges": []}

@@ -49,7 +49,7 @@ async def test_liveness_always_200() -> None:
 @pytest.mark.asyncio
 async def test_liveness_with_valid_storage() -> None:
     """GET /health/live returns 200 regardless of storage state."""
-    app = _make_app(storage_dir="/tmp/nonexistent_dir")
+    app = _make_app(storage_dir="/dev/null/__uncreatable__")  # parent is a file → makedirs fails
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         resp = await ac.get("/health/live")
@@ -77,7 +77,7 @@ async def test_readiness_ok_with_valid_storage() -> None:
 @pytest.mark.asyncio
 async def test_readiness_degraded_with_invalid_storage() -> None:
     """GET /health/ready returns 503 when storage is not accessible."""
-    app = _make_app(storage_dir="/tmp/nonexistent_arrow_lake_test_dir")
+    app = _make_app(storage_dir="/dev/null/__uncreatable__")  # parent is a file → makedirs fails
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         resp = await ac.get("/health/ready")
@@ -109,7 +109,7 @@ async def test_health_backward_compat() -> None:
 @pytest.mark.asyncio
 async def test_health_backward_compat_degraded() -> None:
     """GET /health returns 503 when storage is not accessible (backward compat)."""
-    app = _make_app(storage_dir="/tmp/nonexistent_arrow_lake_test_dir")
+    app = _make_app(storage_dir="/dev/null/__uncreatable__")  # parent is a file → makedirs fails
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         resp = await ac.get("/health")

@@ -44,8 +44,9 @@ class TestTokenValidAfterProvider:
         svc.set_token_valid_after_provider(lambda sub: None)
         assert svc.verify_token(token).sub == "api-user"
 
-    def test_provider_exception_skips_check_fail_open(self) -> None:
-        """Store unreachable → current (pre-v1.10.5) behaviour, not a lockout."""
+    def test_provider_exception_fails_closed(self) -> None:
+        """Store unreachable → raise (v1.10.x hardening: revoked tokens must
+        not pass verification during identity-store outages)."""
         svc = AuthService(secret_key=SECRET)
         token = svc.create_refresh_token(user_id="7")
 
@@ -53,7 +54,8 @@ class TestTokenValidAfterProvider:
             raise RuntimeError("store down")
 
         svc.set_token_valid_after_provider(_boom)
-        assert svc.verify_token(token).sub == "7"
+        with pytest.raises(ValueError, match="Identity store unreachable"):
+            svc.verify_token(token)
 
     def test_refresh_flow_respects_cutoff(self) -> None:
         svc = AuthService(secret_key=SECRET)

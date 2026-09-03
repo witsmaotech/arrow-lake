@@ -329,7 +329,7 @@ class TestCreateTag:
             base_url="http://test",
             headers={"X-API-Key": "test-api-key"},
         ) as ac:
-            resp = await ac.post(f"/api/v1/metadata/tags?body={body_json}")
+            resp = await ac.post("/api/v1/metadata/tags", json=json.loads(body_json))
 
         assert resp.status_code == 200
         body = resp.json()
@@ -348,7 +348,7 @@ class TestCreateTag:
             base_url="http://test",
             headers={"X-API-Key": "test-api-key"},
         ) as ac:
-            resp = await ac.post(f"/api/v1/metadata/tags?body={body_json}")
+            resp = await ac.post("/api/v1/metadata/tags", json=json.loads(body_json))
 
         assert resp.status_code == 400
 
@@ -427,7 +427,7 @@ class TestCreateRetentionPolicy:
                 base_url="http://test",
                 headers={"X-API-Key": "test-api-key"},
             ) as ac:
-                resp = await ac.post(f"/api/v1/metadata/policies/retention?body={body_json}")
+                resp = await ac.post("/api/v1/metadata/policies/retention", json=json.loads(body_json))
 
         assert resp.status_code == 200
         body = resp.json()
@@ -444,7 +444,7 @@ class TestCreateRetentionPolicy:
             base_url="http://test",
             headers={"X-API-Key": "test-api-key"},
         ) as ac:
-            resp = await ac.post(f"/api/v1/metadata/policies/retention?body={body_json}")
+            resp = await ac.post("/api/v1/metadata/policies/retention", json=json.loads(body_json))
 
         assert resp.status_code == 400
 
@@ -474,7 +474,7 @@ class TestCreateMaskingPolicy:
                 base_url="http://test",
                 headers={"X-API-Key": "test-api-key"},
             ) as ac:
-                resp = await ac.post(f"/api/v1/metadata/policies/masking?body={body_json}")
+                resp = await ac.post("/api/v1/metadata/policies/masking", json=json.loads(body_json))
 
         assert resp.status_code == 200
         body = resp.json()

@@ -18,6 +18,12 @@ import ray
 from arrow_lake.catalog.actor import CatalogActor
 from arrow_lake.ingest.storage import LanceStorageManager
 
+# v1.11.5-W1: OPT-OUT of the default suite (spike = "requires external
+# services"). In-process ray.init() leaks interpreter state past
+# ray.shutdown() and broke downstream mock-based tests (see
+# tests/integration/test_catalog_actor.py for the twin case).
+pytestmark = pytest.mark.spike
+
 
 @pytest.fixture(scope="module")
 def ray_init() -> None:

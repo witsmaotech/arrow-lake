@@ -67,20 +67,16 @@ class TestJWTCredentials:
 class TestTimeoutValidation:
     """C3: All timeout fields enforce minimum >= 1."""
 
-    def test_api_request_timeout_minimum(self) -> None:
-        ApiConfig(request_timeout_seconds=5.0)  # OK
-        with pytest.raises(ValueError, match="request_timeout_seconds"):
-            ApiConfig(request_timeout_seconds=0.5)
+    # request_timeout_seconds was removed in the v1.10.1 配置精简 (dead field —
+    # request timeouts live at the gunicorn/route layer now).
 
     def test_http_timeout_minimum(self) -> None:
         HttpConfig(timeout_seconds=5.0)  # OK
         with pytest.raises(ValueError, match="timeout_seconds"):
             HttpConfig(timeout_seconds=0)
 
-    def test_ocr_timeout_minimum(self) -> None:
-        DocumentConfig(ocr_timeout_seconds=10)  # OK
-        with pytest.raises(ValueError, match="ocr_timeout_seconds"):
-            DocumentConfig(ocr_timeout_seconds=0)
+    # ocr_timeout_seconds was removed in the v1.10.1 配置精简 (dead field —
+    # document parsing timeouts are governed by the docling/kreuzberg configs).
 
 
 class TestTopKValidation:

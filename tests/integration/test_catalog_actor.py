@@ -16,6 +16,14 @@ import contextlib
 
 import pytest
 
+# v1.11.5-W1: OPT-OUT of the default suite (spike = "requires external
+# services"). ray.init() in-process monkeypatches the interpreter and
+# ray.shutdown() does NOT undo it — the leaked state broke the 18 mock-based
+# tests/unit/catalog/test_catalog_actor_coverage.py tests later in the run
+# ('method' object has no attribute 'return_value'). Run explicitly with
+# `pytest -m spike` when you want the live Ray actor exercised.
+pytestmark = pytest.mark.spike
+
 # Ray integration tests require the ray runtime available
 pytest.importorskip("ray")
 

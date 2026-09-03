@@ -73,10 +73,19 @@ async def lineage_history(
         lake.lineage_history, dataset_name,
         timeout=_LINEAGE_TIMEOUT, label="lineage_history",
     )
-    from dataclasses import asdict
-    serialized = [
-        e if isinstance(e, dict) else asdict(e) for e in events
-    ]
+    from dataclasses import asdict, is_dataclass
+
+    def _serialize(e: object) -> dict:
+        if isinstance(e, dict):
+            return e
+        if is_dataclass(e) and not isinstance(e, type):
+            return asdict(e)
+        # Non-dict, non-dataclass events (e.g. plain strings from legacy
+        # stores) wrap as {"event": str(...)} — LineageHistoryResponse.events
+        # is list[dict]; asdict()/bare str would 500 the endpoint.
+        return {"event": str(e)}
+
+    serialized = [_serialize(e) for e in events]
     return LineageHistoryResponse(
         dataset_name=dataset_name,
         events=serialized,

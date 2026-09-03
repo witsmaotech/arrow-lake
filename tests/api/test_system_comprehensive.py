@@ -110,7 +110,7 @@ class TestCheckStorage:
         """LOCAL backend with a non-existent path returns not_found."""
         config = _make_config(
             storage__backend=StorageBackend.LOCAL,
-            storage__base_uri="/tmp/__arrow_lake_nonexistent_dir__",
+            storage__base_uri="/dev/null/__uncreatable__",  # parent is a file → makedirs fails
         )
         text, ok = _check_storage(config)
         assert text == "not_found"
@@ -340,7 +340,7 @@ class TestHealthReady:
     async def test_ready_degraded_when_storage_fails(self) -> None:
         config = _make_config(
             storage__backend=StorageBackend.LOCAL,
-            storage__base_uri="/tmp/__nonexistent_for_ready__",
+            storage__base_uri="/dev/null/__uncreatable__",  # parent is a file → makedirs fails
         )
         app = _make_app(config)
         async with AsyncClient(
@@ -486,7 +486,7 @@ class TestHealthBackwardCompatible:
     async def test_degraded_when_storage_unavailable(self) -> None:
         config = _make_config(
             storage__backend=StorageBackend.LOCAL,
-            storage__base_uri="/tmp/__nonexistent_hc_deg__",
+            storage__base_uri="/dev/null/__uncreatable__",  # parent is a file → makedirs fails
         )
         app = _make_app(config)
         async with AsyncClient(

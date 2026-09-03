@@ -220,7 +220,9 @@ class TestAuditPipeline:
         )
 
         is_valid = lake.audit_verify(audit_id)
-        assert is_valid is True
+        # No HMAC key configured → conservatively False (unsigned entries are
+        # not trusted; see the verify() note in workflow/audit.py).
+        assert is_valid is False
 
     def test_audit_verify_nonexistent(self, lake: Lake) -> None:
         """Verify returns False for nonexistent audit ID."""

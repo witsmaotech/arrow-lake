@@ -66,14 +66,14 @@ async def test_lineage_graph(client: AsyncClient, mock_lake: MagicMock) -> None:
     assert body["stats"]["total_edges"] == 1
     assert body["stats"]["max_depth"] == 1
 
-    mock_lake.lineage_graph.assert_called_once_with("docs", max_depth=10)
+    mock_lake.lineage_graph.assert_called_once_with("docs", max_depth=10, max_nodes=500)
 
 
 @pytest.mark.asyncio
 async def test_lineage_graph_custom_depth(client: AsyncClient, mock_lake: MagicMock) -> None:
     resp = await client.get("/api/v1/lineage/graph/docs?max_depth=5")
     assert resp.status_code == 200
-    mock_lake.lineage_graph.assert_called_once_with("docs", max_depth=5)
+    mock_lake.lineage_graph.assert_called_once_with("docs", max_depth=5, max_nodes=500)
 
 
 @pytest.mark.asyncio

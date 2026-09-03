@@ -68,7 +68,12 @@ class TestDuckDBSessionLoadsLance:
         """__lance_scan should work on a real Lance dataset via DuckDBSession."""
         import lance
         import pyarrow as pa
+        from arrow_lake.config import OlapConfig
         from arrow_lake.query._db import DuckDBSession
+
+        # Opt out of the LocalFileSystem lockdown — this test scans a local
+        # tmp dataset (lockdown itself: test_duckdb_fs_lockdown.py).
+        session = DuckDBSession(olap_config=OlapConfig(disabled_filesystems=[]))
 
         # Create a small Lance dataset
         table = pa.table({"id": [1, 2, 3], "text": ["a", "b", "c"]})
@@ -76,7 +81,7 @@ class TestDuckDBSessionLoadsLance:
         lance.write_dataset(table, tmp_dir)
 
         try:
-            with DuckDBSession() as conn:
+            with session as conn:
                 result = conn.execute(
                     f"SELECT count(*) FROM __lance_scan('{tmp_dir}', explain_verbose := false)"
                 ).fetchone()
@@ -94,14 +99,18 @@ class TestColumnDiscovery:
         """DESCRIBE should work on __lance_scan results."""
         import lance
         import pyarrow as pa
+        from arrow_lake.config import OlapConfig
         from arrow_lake.query._db import DuckDBSession
+
+        # Opt out of the LocalFileSystem lockdown — scans a local tmp dataset.
+        session = DuckDBSession(olap_config=OlapConfig(disabled_filesystems=[]))
 
         table = pa.table({"id": [1, 2], "name": ["alice", "bob"], "score": [3.14, 2.71]})
         tmp_dir = "/tmp/test_lance_describe"
         lance.write_dataset(table, tmp_dir)
 
         try:
-            with DuckDBSession() as conn:
+            with session as conn:
                 conn.execute(
                     f"CREATE VIEW v AS SELECT * FROM __lance_scan('{tmp_dir}', explain_verbose := false)"
                 )

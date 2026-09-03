@@ -29,7 +29,7 @@ class TestRecordAndVerify:
         )
 
         assert audit_id
-        assert trail.verify(audit_id) is True
+        assert trail.verify(audit_id) is True  # signed with a real key → intact
 
     def test_verify_nonexistent_id(self, tmp_path: Path) -> None:
         """verify() returns False for non-existent audit ID."""
@@ -39,11 +39,10 @@ class TestRecordAndVerify:
         assert trail.verify("00000000-0000-0000-0000-000000000000") is False
 
     def test_verify_no_secret(self, tmp_path: Path) -> None:
-        """verify() returns True when no secret key is configured (dev mode)."""
+        """No secret key → conservatively False (unsigned entries untrusted)."""
         trail = AuditTrail(_make_storage(tmp_path), hmac_secret_key="")
         audit_id = trail.record(event_type="create", dataset_name="ds")
-
-        assert trail.verify(audit_id) is True
+        assert trail.verify(audit_id) is False
 
 
 class TestQueryByDataset:
