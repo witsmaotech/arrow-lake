@@ -28,10 +28,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv for fast dependency management
-COPY deploy/uv-local /bin/uv
-COPY deploy/uvx-local /bin/uvx
-RUN chmod +x /bin/uv /bin/uvx
+# Install uv for fast dependency management. Official distroless image (works
+# identically locally and on CI — the previous deploy/uv-local binaries were
+# gitignored 57MB host artifacts, so CI checkouts had no uv at all).
+COPY --from=ghcr.io/astral-sh/uv:0.5.24 /uv /uvx /bin/
 
 WORKDIR /build
 
