@@ -221,6 +221,47 @@ async def test_maintenance_status_with_scheduler(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_maintenance_status_scheduler_error_never_500s(client: AsyncClient) -> None:
+    """W1-3: /status must degrade gracefully — an exception from the scheduler
+    (mid-run state, thread teardown, ...) previously escaped as a 500."""
+    scheduler = MagicMock()
+    scheduler.status.side_effect = RuntimeError("scheduler mid-run teardown")
+    client._transport.app.state.maintenance_scheduler = scheduler
+
+    resp = await client.get("/api/v1/admin/maintenance/status")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["enabled"] is False
+    assert body["error"] == "scheduler mid-run teardown"
+
+
+@pytest.mark.asyncio
+async def test_maintenance_status_malformed_report_never_500s(client: AsyncClient) -> None:
+    """W1-3: a report with None fields (failed maintenance run) trips the
+    all-int MaintenanceReportModel → ValidationError → 500. Degrade instead."""
+    from types import SimpleNamespace
+
+    scheduler = MagicMock()
+    scheduler.status.return_value = SimpleNamespace(
+        enabled=True, last_run="2025-01-01T00:00:00", next_run="2025-01-01T01:00:00",
+        interval_seconds=3600,
+        last_report=SimpleNamespace(
+            datasets_compacted=None, datasets_cleaned=0,
+            total_fragments_before=None, total_fragments_after=0,
+            total_versions_removed=0, duration_seconds=0.0,
+        ),
+    )
+    client._transport.app.state.maintenance_scheduler = scheduler
+
+    resp = await client.get("/api/v1/admin/maintenance/status")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["enabled"] is True
+    assert body["last_report"] is None
+    assert body["error"]
+
+
+@pytest.mark.asyncio
 async def test_maintenance_run_with_scheduler(client: AsyncClient) -> None:
     from arrow_lake.ingest.maintenance_scheduler import MaintenanceReport
 

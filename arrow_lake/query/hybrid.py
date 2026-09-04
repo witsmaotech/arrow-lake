@@ -222,15 +222,17 @@ class HybridSearchBridge:
         where: str | None = None,
         version: int | None = None,
     ) -> HybridSearchResult:
-        """Async hybrid search — non-blocking wrapper (v1.8.0 #17).
+        """Async hybrid search — non-blocking wrapper (v1.8.0 #17; W1-3 review).
 
         Delegates the sync :meth:`search` to a worker thread via
         ``asyncio.to_thread`` so async handlers don't block the event loop on
-        a long RRF + rerank pass. lancedb has no native async FTS path
-        (``AsyncTable`` lacks FTS), so the sub-bridge fusion can't be made
-        GIL-free like ``VectorSearchBridge.search_async`` — the value here is a
-        non-blocking async interface for the FastAPI layer under concurrent
-        mixed workloads. Same params/return as :meth:`search`.
+        a long RRF + rerank pass. Deliberately kept a thread offload (W1-3):
+        the wrapped work is Python-side fusion over the sub-bridges' results,
+        not a single lancedb call — the lance/Rust portions already release
+        the GIL inside the thread, so a native-async restructure of the shared
+        fusion code buys nothing measurable. (AsyncTable has native FTS since
+        0.33 — the old "lacks FTS" claim was wrong; the pure-FTS bridge
+        migrated in fts.py.) Same params/return as :meth:`search`.
         """
         return await asyncio.to_thread(
             self.search,

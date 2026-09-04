@@ -229,14 +229,15 @@ class FacetedSearchBridge:
         where: str | None = None,
         version: int | None = None,
     ) -> FacetedSearchResult:
-        """Async faceted search — non-blocking wrapper (v1.8.0 #17).
+        """Async faceted search — non-blocking wrapper (v1.8.0 #17; W1-3 review).
 
         Delegates the sync :meth:`search` to a worker thread via
         ``asyncio.to_thread`` so async handlers don't block the event loop on
-        the DuckDB CUBE aggregation. Faceted search has no native async path
-        (aggregations run through DuckDB), so this is a thread offload — the
-        value is a non-blocking interface for the FastAPI layer under
-        concurrent mixed workloads. Same params/return as :meth:`search`.
+        the DuckDB CUBE aggregation. Deliberately kept a thread offload (W1-3):
+        the aggregation runs through DuckDB (not lancedb), so there is no
+        native-async equivalent to migrate to; the value is a non-blocking
+        interface for the FastAPI layer under concurrent mixed workloads.
+        Same params/return as :meth:`search`.
         """
         return await asyncio.to_thread(
             self.search,

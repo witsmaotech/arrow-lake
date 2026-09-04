@@ -20,6 +20,9 @@ class MaintenanceStatusResponse(BaseModel):
     next_run: str
     interval_seconds: int
     last_report: MaintenanceReportModel | None
+    # W1-3: degraded-status reason (scheduler error / malformed report) —
+    # populated instead of escaping as a 500.
+    error: str | None = None
 
 
 class MaintenanceRunResponse(BaseModel):

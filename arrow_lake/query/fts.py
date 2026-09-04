@@ -266,25 +266,109 @@ class FullTextSearchBridge:
         version: int | None = None,
         offset: int = 0,
     ) -> FullTextSearchResult:
-        """Async FTS — non-blocking wrapper (v1.8.0 #17).
+        """Async FTS — native AsyncTable FTS path (v1.11.5-W1-3, backlog #8).
 
-        Delegates the sync :meth:`search` to a worker thread via
-        ``asyncio.to_thread`` so async handlers don't block the event loop on
-        a long FTS scan. lancedb's async API has no FTS path (``AsyncTable``
-        lacks ``create_fts_index``), so unlike
-        ``VectorSearchBridge.search_async`` this is a thread offload, not a
-        GIL-free native async path — the value is a non-blocking interface for
-        the FastAPI layer. Same params/return as :meth:`search`.
+        Runs the FTS query on lancedb's native async API (supported since
+        0.33 — the old "AsyncTable lacks FTS" note was wrong) via the pooled
+        ``AsyncTable`` (``async_conn_pool``): no worker-thread hop and no GIL
+        contention under concurrent scans. ``version is not None`` still goes
+        through sync :meth:`search` on a worker thread (the pool is not
+        version-aware). Same params/return as :meth:`search`.
         """
-        return await asyncio.to_thread(
-            self.search,
-            dataset_name,
-            query,
-            top_k=top_k,
-            fts_column=fts_column,
-            where=where,
-            version=version,
-            offset=offset,
+        if version is not None:
+            return await asyncio.to_thread(
+                self.search,
+                dataset_name,
+                query,
+                top_k=top_k,
+                fts_column=fts_column,
+                where=where,
+                version=version,
+                offset=offset,
+            )
+
+        if not query or not query.strip():
+            raise QueryError(
+                error_code=ErrorCode.FTS_SEARCH_FAILED,
+                message="Search query must not be empty",
+            )
+        if where is not None:
+            self._validate_where_clause(where)
+        column = fts_column or self._config.fts_column
+        effective_top_k = top_k if top_k is not None else self._config.default_top_k
+        if effective_top_k < 1:
+            raise QueryError(
+                error_code=ErrorCode.FTS_SEARCH_FAILED,
+                message=f"top_k must be >= 1, got {effective_top_k}",
+            )
+
+        base_uri = getattr(self._storage, "_connect_uri", None)
+        if not base_uri:
+            raise QueryError(
+                error_code=ErrorCode.FTS_SEARCH_FAILED,
+                message="async FTS requires storage._connect_uri",
+            )
+
+        from arrow_lake.query.async_conn_pool import get_async_table
+
+        try:
+            table = await get_async_table(
+                base_uri,
+                dataset_name,
+                getattr(self._storage, "_storage_options", None),
+            )
+            schema = await table.schema()
+            if column not in schema.names:
+                raise QueryError(
+                    error_code=ErrorCode.FTS_SEARCH_FAILED,
+                    message=f"Column '{column}' not found in dataset '{dataset_name}'",
+                )
+            try:
+                query_builder = await table.search(
+                    query, query_type="fts", fts_columns=column
+                )
+            except ValueError:
+                # Same disambiguation as the sync path: lancedb needs the
+                # vector column named when the dataset also has one.
+                for field in schema:
+                    if pa.types.is_fixed_size_list(field.type) and pa.types.is_floating(
+                        field.type.value_type
+                    ):
+                        query_builder = await table.search(
+                            query,
+                            query_type="fts",
+                            fts_columns=column,
+                            vector_column_name=field.name,
+                        )
+                        break
+                else:
+                    raise
+            if where is not None:
+                query_builder = query_builder.where(where)
+            if offset > 0:
+                query_builder = query_builder.offset(offset)
+            query_builder = query_builder.limit(effective_top_k)
+            result_table = await query_builder.to_arrow()
+        except QueryError:
+            raise
+        except (ValueError, RuntimeError) as exc:
+            raise QueryError(
+                error_code=ErrorCode.FTS_SEARCH_FAILED,
+                message=f"Async FTS search failed: {exc}",
+            ) from exc
+
+        max_score: float | None = None
+        if result_table.num_rows > 0 and "_score" in result_table.column_names:
+            max_val = pc.max(result_table.column("_score"))
+            max_score = max_val.as_py() if max_val.is_valid else None
+
+        return FullTextSearchResult(
+            table=result_table,
+            row_count=result_table.num_rows,
+            query=query,
+            top_k=effective_top_k,
+            fts_column=column,
+            max_score=max_score,
         )
 
     @staticmethod
