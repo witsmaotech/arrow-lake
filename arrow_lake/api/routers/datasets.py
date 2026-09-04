@@ -11,7 +11,8 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError, as_completed
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Path, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, Request, UploadFile
+from pydantic import BaseModel, Field
 
 from arrow_lake.api.auth_models import Role
 from arrow_lake.api.deps import (
@@ -733,6 +734,113 @@ async def set_dataset_description(
         )
     _save_desc(name, req.description)
     return MessageResponse(message=f"description updated for {name}")
+
+
+# --------------------------------------------------------------------------- #
+# PII 分级(v1.11.5 W2 #4:登记不校验;分级-脱敏绑定校验在 corpus 导出面)       #
+# --------------------------------------------------------------------------- #
+
+
+class DatasetClassificationRequest(BaseModel):
+    tier: str = Field(min_length=1, max_length=32,
+                      description="public | internal | confidential | restricted")
+    note: str | None = Field(default=None, max_length=500)
+
+
+def _classification_store(request: Request) -> Any:
+    store = getattr(request.app.state, "dataset_classification_store", None)
+    if store is None:
+        raise HTTPException(
+            status_code=503,
+            detail="classification unavailable (system_db disabled)",
+        )
+    return store
+
+
+@router.get("/{name}/classification", summary="Get dataset PII classification")
+async def get_dataset_classification(
+    request: Request,
+    name: str = Path(..., pattern=_NAME_PATTERN),
+    _auth: None = Depends(require_role(Role.VIEWER)),
+) -> dict:
+    """读数据集 PII 分级;未分级 → tier=null(消费面按未分级从严)。"""
+    store = _classification_store(request)
+    from arrow_lake.system_db.stores.classification import TIERS
+
+    rec = store.get(name)
+    if rec is None:
+        return {"dataset": name, "tier": None, "tiers": list(TIERS)}
+    return {"dataset": name, "tiers": list(TIERS), **rec}
+
+
+@router.put("/{name}/classification", summary="Set dataset PII classification")
+async def set_dataset_classification(
+    request: Request,
+    name: str = Path(..., pattern=_NAME_PATTERN),
+    *,
+    req: DatasetClassificationRequest,
+    lake=Depends(get_lake),
+    user=Depends(require_role(Role.EDITOR)),
+) -> dict:
+    """分级四档(登记不校验);变更落审计(from→to);数据集须存在。"""
+    from arrow_lake.system_db.stores.classification import TIERS
+
+    if req.tier not in TIERS:
+        raise HTTPException(
+            status_code=422, detail=f"tier must be one of {list(TIERS)}, got {req.tier!r}"
+        )
+    authorize_dataset(request, name, write=True)
+    result = await run_sync(lake.catalog, timeout=_ADMIN_TIMEOUT, label="catalog")
+    if not any(e.name == name for e in result.datasets):
+        raise CatalogError(
+            error_code=ErrorCode.CATALOG_DATASET_NOT_FOUND,
+            message=f"Dataset '{name}' not found",
+        )
+    store = _classification_store(request)
+    prev = store.get(name)
+    rec = store.set(name, req.tier, actor=getattr(user, "sub", ""), note=req.note)
+    with contextlib.suppress(Exception):  # 审计 best-effort,不阻塞分级
+        await run_sync(
+            lake.audit_record,
+            "dataset.classification_changed",
+            timeout=10,
+            label="classification_audit",
+            dataset_name=name,
+            actor=getattr(user, "sub", ""),
+            payload={
+                "from": prev["tier"] if prev else None,
+                "to": req.tier,
+                "note": req.note,
+            },
+        )
+    return {"dataset": name, "tier": rec["tier"], "previous_tier": prev["tier"] if prev else None}
+
+
+@router.delete("/{name}/classification", summary="Clear dataset PII classification")
+async def clear_dataset_classification(
+    request: Request,
+    name: str = Path(..., pattern=_NAME_PATTERN),
+    lake=Depends(get_lake),
+    user=Depends(require_role(Role.EDITOR)),
+) -> dict:
+    """清除分级(回到未分级;消费面按未分级从严)。审计留痕。"""
+    authorize_dataset(request, name, write=True)
+    store = _classification_store(request)
+    prev = store.get(name)
+    if prev is None:
+        raise HTTPException(status_code=404, detail=f"No classification for '{name}'")
+    store.delete(name)
+    with contextlib.suppress(Exception):
+        await run_sync(
+            lake.audit_record,
+            "dataset.classification_changed",
+            timeout=10,
+            label="classification_audit",
+            dataset_name=name,
+            actor=getattr(user, "sub", ""),
+            payload={"from": prev["tier"], "to": None, "cleared": True},
+        )
+    return {"dataset": name, "tier": None, "previous_tier": prev["tier"]}
 
 
 @router.get("", response_model=DatasetListResponse)

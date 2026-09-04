@@ -304,7 +304,8 @@ def test_golden_set(object_id: str, expected: set[str], db: SystemDB) -> None:
     matched = {c["rule_id"] for c in body["conclusions"]}
     assert matched == expected
     assert body["matched_rules"] == len(expected)
-    assert body["confidence"] == 1.0
+    # W4 #10:命中 → 1.0(本夹具无 unruly);未命中 → 无佐证基线 0.5
+    assert body["confidence"] == (1.0 if expected else 0.5)
     # 全部 active 结论条目携带四元组
     for c in body["conclusions"]:
         assert {"rule_id", "rule_type", "version", "conclusion"} <= set(c)
@@ -330,14 +331,33 @@ def test_unruly_rule_marked_not_fatal(db: SystemDB) -> None:
     assert {c["rule_id"] for c in body["conclusions"]} == GOLDEN_EXPECTED[
         "GAS.ALERT.001"
     ]  # 其余规则照常求值
+    # W4 #10:unruly 降权 -0.1(3 命中 1 unruly → 0.9)
+    assert body["confidence"] == 0.9
 
 
-def test_no_rules_matched_confidence_still_one(db: SystemDB) -> None:
-    """S10:确定性规则 confidence 恒 1.0(未命中也不断言不确定性)。"""
+def test_unruly_penalty_capped(db: SystemDB) -> None:
+    """unruly 降权封顶 -0.3(规则集再烂置信地板 0.7 命中/0.2 未命中)。"""
+    rules = OntologyRulesStore(db)
+    for i in range(5):
+        rid = f"GAS.R.BAD{i}"
+        rules.upsert_rule(
+            rid, scope="gas_net", condition_expr="压力 >== 1",
+            conclusion="坏规则", source_ref="bad",
+        )
+        rules.transition(rid, "active")
+    body = _assess(_client(db), "GAS.ALERT.001").json()
+    assert len(body["unruly"]) == 5
+    assert body["confidence"] == 0.7  # 1.0 - min(0.5, 0.3)
+    no_match = _assess(_client(db), "GAS.ALERT.004").json()
+    assert no_match["confidence"] == 0.2  # 0.5 - 0.3
+
+
+def test_no_rules_matched_confidence_baseline(db: SystemDB) -> None:
+    """W4 #10:未命中任何规则 → 无佐证基线 0.5(S10 恒 1.0 语义升级)。"""
     body = _assess(_client(db), "GAS.ALERT.004").json()
     assert body["matched_rules"] == 0
     assert body["conclusions"] == []
-    assert body["confidence"] == 1.0
+    assert body["confidence"] == 0.5
 
 
 def test_actionable_from_catalog(db: SystemDB) -> None:

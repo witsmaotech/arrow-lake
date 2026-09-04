@@ -96,6 +96,13 @@ def client(tmp_path) -> TestClient:
     app.state.release_store = ReleaseStore(db)
     app.state.contract_store = ContractStore(db)
     app.state.annotation_project_store = AnnotationProjectStore(db)
+    # W2 #5:分级 store(夹具直接分好级,不走未分级门禁)
+    from arrow_lake.system_db.stores.classification import (
+        DatasetClassificationStore,
+    )
+
+    app.state.dataset_classification_store = DatasetClassificationStore(db)
+    DatasetClassificationStore(db).set("ms5_e2e", "internal", actor="e2e-admin")
     app.state.config = SimpleNamespace(
         export=SimpleNamespace(base_dir=str(tmp_path / "exports")))
 

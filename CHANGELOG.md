@@ -6,6 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.11.5-未发版] — 投产准备+场景执行引擎(MS3 转正)
+
+> 平台侧 W1-W4 全部合入;**发版等真实数据首跑闸门**(W2 #6 硬 DoD:业务侧
+> ≥万行数据集 摄入→契约→标注→评估→发布 全链出第一个 active 发布)。数据
+> 到位当天清偿后按四段 SOP 出 tag。
+
+### W1 测试治理与 CI
+- **测试隔离治理**:conftest 四锚点(storage/api-key/rate-limit/redis env setdefault)根治「全量 448 failed 不稳定」——修前 448 failed+30 errors/3h24m 随机段错误 → 2 failed(全第三方)/64min 稳定;产线真缺陷累计 11 个(catalog TTL 幽灵数据集/logger kwargs TypeError/Event 恒真致 disable_metrics 失效等)
+- **CI 骨架**:四段流水线三 job(lint E9/F821 门禁 / 全量单测 / runtime-ci 镜像 build+纯容器冒烟六组首页 200),master 绿跑留档(run #125)
+- 小项清偿:maintenance/status 500 防御 + LanceDB 原生 async FTS 迁移
+
+### W3 场景执行引擎(MS3 转正)
+- **scenario runner**(`actions/runner.py`):场景从「规范+审计词表」转正执行面——requires 门槛/XOR 网关(求值点=引用步 requires 终态,落选臂 skipped+级联)/AND gather 并发/死锁守卫/deadline 超时升级(on_timeout 步)/声明式补偿(failed|dead_letter|manual_intervention 挂人工待办,不自动执行)/terminate/断点续跑(resume 重入;崩溃窗口 running 步经幂 already_in_effect 兑现;已 succeeded 步不盲重放)
+- **V025** 场景实例两表(instance 终态机 running|completed|compensated|timeout|failed|terminated;步行 UNIQUE upsert)+ 启动期孤儿回收
+- **五端点**:`POST /actions/scenarios/{id}/instantiate`(202 后台跑,entries 求值)/instances 列表/详情(步时间线)/terminate(ADMIN)/resume(EDITOR,deadline 重算)
+- **console 执行态**:actions.html 场景 tab 行内试跑+实例抽屉(状态徽标轮询/时间线/补偿待办人工核销/续跑/终止)
+
+### W2 PII 分级与投产流程
+- **数据集 PII 分级**(V026 四档 public/internal/confidential/restricted,登记不校验):`GET/PUT/DELETE /datasets/{name}/classification`,变更审计留痕;console 数据集详情页分级面板
+- **分级-脱敏绑定校验**:corpus 导出未分级须显式 `?allow_unclassified=true`(审计 corpus.unclassified);confidential/restricted 未脱敏豁免提示点名档位;releases/hq-guide 弹窗确认
+
+### W4 confidence 真实语义
+- **降权因子(只加不改,发布门阈值零改动)**:未命中任何规则 → 0.5 基线;每条 unruly 规则 −0.1 封顶 −0.3;场景网关走 substitute 臂 ×0.9——confidence 分布非恒 1.0,飞轮 auto_low_confidence 有真实筛选
+
+
 ## [1.11.4] - 2026-08-31 — MS5 五维质量门+发布层(Master Plan 收官)
 
 ### 交付(F5.1-F5.8)

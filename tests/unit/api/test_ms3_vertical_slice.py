@@ -177,7 +177,8 @@ class TestVerticalSliceDoD:
             assert {c["rule_id"] for c in a["conclusions"]} == \
                 demo.GOLDEN_EXPECTED["GAS.ALERT.D001"]
             assert a["unruly"] == ["DEMO.R.UNRULY"]      # S8:坏规则隔离
-            assert a["confidence"] == 1.0
+            # W4 #10:3 命中 + 1 unruly → 1.0 - 0.1 = 0.9(真实置信)
+            assert a["confidence"] == 0.9
             assert {"GAS.ALERT.PUBLISH", "GAS.ALERT.NOTIFY",
                     "GAS.ALERT.ESCALATE"} <= set(a["actionable"])
 

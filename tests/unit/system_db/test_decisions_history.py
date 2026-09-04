@@ -75,6 +75,13 @@ def _app(db: SystemDB, lake: _Lake, role: Role = Role.ADMIN) -> TestClient:
     app.state.contract_store = ContractStore(db)
     app.state.quality_report_store = QualityReportStore(db)
     app.state.release_store = ReleaseStore(db)
+    # W2 #5:分级 store(夹具直接分好级,不走未分级门禁)
+    from arrow_lake.system_db.stores.classification import (
+        DatasetClassificationStore,
+    )
+
+    app.state.dataset_classification_store = DatasetClassificationStore(db)
+    DatasetClassificationStore(db).set("alerts", "internal", actor="tester")
     app.state.config = types.SimpleNamespace(
         export=types.SimpleNamespace(base_dir="/tmp/al-test-exports"))
 

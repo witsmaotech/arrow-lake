@@ -448,6 +448,10 @@ async def export_corpus(
         default=False,
         description="红线④ fail-closed 的显式豁免(audit corpus.unmasked)",
     ),
+    allow_unclassified: bool = Query(
+        default=False,
+        description="W2 #5:未分级数据集导出的显式确认(audit corpus.unclassified)",
+    ),
     lake=Depends(get_lake),
     user=Depends(require_role(Role.ADMIN)),
 ) -> dict:
@@ -509,24 +513,51 @@ async def export_corpus(
     # M1(四维 review):pretrain 纳入门禁——definition 是源文本抽取片段
     # 可含 PII,此前被 text_bearing 排除在门外原文出域,与 datasheet
     # 「all forms masked」宣称矛盾。
+    # W2 #5(v1.11.5)分级-脱敏绑定校验:①未分级集导出须显式确认
+    # (?allow_unclassified=true,audit corpus.unclassified)——分级是投产
+    # 流程的一环,未分级=PII 状态未知,从严;②confidential/restricted
+    # 未带脱敏配置 → 豁免提示点名分级档位。
     actor = getattr(user, "sub", "system")
+    cstore = getattr(request.app.state, "dataset_classification_store", None)
+    crec = cstore.get(dataset) if cstore is not None else None
+    tier = crec["tier"] if crec else None
+    if tier is None and not allow_unclassified:
+        raise HTTPException(
+            status_code=422,
+            detail=f"dataset '{dataset}' is unclassified (PII status unknown) — "
+                   "classify via PUT /datasets/{name}/classification first, or "
+                   "pass ?allow_unclassified=true to confirm (audited)",
+        )
+    if tier is None and allow_unclassified:
+        logger.warning(
+            "corpus.exported UNCLASSIFIED dataset=%s form=%s actor=%s "
+            "(allow_unclassified override)", dataset, form, actor)
+        with contextlib.suppress(Exception):
+            lake.audit_record(
+                "corpus.unclassified", dataset_name=dataset, actor=actor,
+                payload={"form": form, "tag": rel["tag"]},
+            )
     masked = bool(rules or entities)
     if not masked:
         if not allow_unmasked:
+            tier_hint = (
+                f" (dataset tier: {tier} — masking strongly advised)"
+                if tier in ("confidential", "restricted") else ""
+            )
             raise HTTPException(
                 status_code=422,
                 detail="corpus export requires masking config "
                        "(generalize_rules / entity_names) — red line ④; "
-                       "explicit ?allow_unmasked=true overrides (audited)",
+                       f"explicit ?allow_unmasked=true overrides (audited){tier_hint}",
             )
         if allow_unmasked:
             logger.warning(
-                "corpus.exported UNMASKED dataset=%s form=%s actor=%s "
-                "(allow_unmasked override)", dataset, form, actor)
+                "corpus.exported UNMASKED dataset=%s form=%s actor=%s tier=%s "
+                "(allow_unmasked override)", dataset, form, actor, tier)
             with contextlib.suppress(Exception):
                 lake.audit_record(
                     "corpus.unmasked", dataset_name=dataset, actor=actor,
-                    payload={"form": form, "tag": rel["tag"]},
+                    payload={"form": form, "tag": rel["tag"], "tier": tier},
                 )
 
     if form == "sft":
@@ -601,6 +632,7 @@ async def export_corpus(
     return {
         "dataset": dataset, "tag": rel["tag"], "form": form,
         "records": len(records), "path": str(path),
+        "classification": tier,
         "masking": {"applied": masked, "rules": len(rules),
                       "entities": len(entities)}, "note": note,
     }

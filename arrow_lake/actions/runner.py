@@ -64,7 +64,7 @@ _ACTION_STATUS_MAP = {
 }
 
 _DEFAULT_ASSESS: dict[str, Any] = {
-    "confidence": 1.0,
+    "confidence": 0.5,  # W4 #10:无任何研判步跑过 = 无佐证基线(不再恒 1.0)
     "matched_rules": 0,
     "rule_ids": [],
     "unruly_count": 0,
@@ -118,12 +118,18 @@ def _sync(func: Any, *args: Any, **kwargs: Any) -> Awaitable[Any]:
 def _normalize_assess(out: Mapping[str, Any]) -> dict[str, Any]:
     """assess 步输出归一化:canonical 字段补全(evaluate_active_rules 只给
     conclusions/unruly,conf/matched/rule_ids 在此派生,与中间件同口径)。"""
+    from arrow_lake.decisions.assess import compute_confidence
+
     conclusions = list(out.get("conclusions") or [])
     unruly = list(out.get("unruly") or [])
     return {
         "conclusions": conclusions,
         "unruly": unruly,
-        "confidence": out.get("confidence", 1.0),
+        # W4 #10:缺省置信按同款降权因子派生(不再恒 1.0)
+        "confidence": out.get(
+            "confidence",
+            compute_confidence(matched_rules=len(conclusions), unruly_count=len(unruly)),
+        ),
         "matched_rules": out.get("matched_rules", len(conclusions)),
         "rule_ids": list(
             out.get("rule_ids") or [c.get("rule_id") for c in conclusions if c.get("rule_id")]
@@ -201,6 +207,15 @@ class ScenarioRunner:
                     decided[gw.id] = compile_predicate(gw.when or "true").evaluate(ctx)
                 except ParsedPredicateError:
                     decided[gw.id] = False
+                # W4 #10 网关评估参与(降权因子):走 substitute(else)臂 →
+                # 根 assess 置信 ×0.9(下游前置/幂等键渲染即见);只降不加
+                if decided[gw.id] is False:
+                    a = dict(ctx.get("assess") or {})
+                    a["confidence"] = round(
+                        float(a.get("confidence", 1.0)) * 0.9, 4
+                    )
+                    a.setdefault("gateway_downweight", []).append(gw.id)
+                    ctx["assess"] = a
                 losing = set(gw.else_) if decided[gw.id] else set(gw.then)
                 for sid in sorted(losing):
                     if status.get(sid) not in _STEP_TERMINAL:

@@ -647,10 +647,10 @@ async def feedback_loop(
                 if rid:
                     auto_row_ids.append(rid)
         else:
-            auto_note = ("no decisions below threshold — assess confidence "
-                         "is deterministic (恒 1.0) until MS3 yields real "
-                         "confidence; record via POST /decisions/assess?"
-                         "record_history=true")
+            auto_note = ("no decisions below threshold — record more assess "
+                         "history via POST /decisions/assess?record_history=true "
+                         "(v1.11.5 confidence: 未命中 0.5 / unruly −0.1 每条 / "
+                         "网关 substitute ×0.9)")
         req = req.model_copy(
             update={"object_rows": list(dict.fromkeys(
                 [*req.object_rows, *auto_row_ids]))})

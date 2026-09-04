@@ -90,8 +90,13 @@ curl -X POST -H "X-API-Key: $TOKEN" -H "Content-Type: application/json" \
 curl -X POST -H "X-API-Key: $TOKEN" -H "Content-Type: application/json" \
   -d '{"dataset":"demo_gas","object_type":"segments","object_id":"GAS.SEG.1"}' \
   "http://127.0.0.1:8000/api/v1/decisions/assess?record_history=true"
-# → {"matched_rules": 1, "confidence": 1.0, "conclusions": [...], "actionable": [...],
+# → {"matched_rules": 1, "confidence": 0.9, "conclusions": [...], "actionable": [...],
 //   "history_recorded": true}
+# confidence uses real down-weighting semantics (v1.11.5): no rule matched → 0.5
+# baseline; each unruly rule (uncompilable) −0.1 capped at −0.3; a scenario
+# gateway taking the substitute arm multiplies by 0.9. Release-gate thresholds
+# are unchanged — low-confidence objects feed the flywheel auto_low_confidence
+# via decisions_history.
 ```
 
 Actions and scenarios are YAML catalogs (version chains, same-hash skips): actions declare effects (update_lifecycle / field writes), idempotency keys, compensation, and audit requirements; scenarios orchestrate multiple steps (steps/gateways/timeouts). Execution runs an eight-step middleware — permission → idempotency → preconditions → **pre-write row-count verification** (a bare identifier physically matching ≠1 rows is refused, blocking cross-partition duplicate-identifier writes) → effect → audit → events:
@@ -104,7 +109,36 @@ curl -X POST -H "X-API-Key: $TOKEN" -H "Content-Type: application/json" \
 # → {"status":"executed","audit_id":"..."} or {"status":"already_in_effect"} (idempotent hit)
 ```
 
-Scenarios are currently an orchestration *definition* form (single-step execution goes through the decision console) — a registered Master Plan deviation, not a defect.
+**Scenario runner (promoted in v1.11.5)**: scenarios are now instantiable and executable against a target object — `instantiate` runs the whole flow in the background (XOR gateway arms / AND parallelism / timeout escalation / resume), with the instance row as the source of truth:
+
+```bash
+# Instantiate (202 + background run; entry mismatch / missing object → 422)
+curl -X POST -H "X-API-Key: $TOKEN" -H "Content-Type: application/json" \
+  -d '{"dataset":"demo_gas","object_type":"segments","object_id":"GAS.SEG.1",
+       "reason":"automated response"}' \
+  http://127.0.0.1:8000/api/v1/actions/scenarios/GAS.LEAK.RESPONSE/instantiate
+# → {"instance_id": 1, "status": "running"}
+curl -H "X-API-Key: $TOKEN" \
+  "http://127.0.0.1:8000/api/v1/actions/scenarios/instances/1"       # detail + step timeline
+curl -X POST -H "X-API-Key: $TOKEN" \
+  http://127.0.0.1:8000/api/v1/actions/scenarios/instances/1/resume   # resume (EDITOR)
+```
+
+A failed step with a declared compensation terminal-states the instance as
+`compensated` with a manual compensation backlog (executed one by one from the
+console "instances" drawer). The console "Actions & scenarios" page offers a
+per-scenario trial-run button and the instance timeline.
+
+**PII classification (v1.11.5)**: four dataset tiers (registry-only), enforced
+at the corpus-export boundary — unclassified datasets require an explicit
+`?allow_unclassified=true` (audited as `corpus.unclassified`); confidential or
+restricted tiers without masking config get a tier-named override prompt:
+
+```bash
+curl -X PUT -H "X-API-Key: $TOKEN" -H "Content-Type: application/json" \
+  -d '{"tier":"internal","note":"pilot classification"}' \
+  http://127.0.0.1:8000/api/v1/datasets/demo_gas/classification   # audited on change
+```
 
 ---
 
@@ -117,6 +151,7 @@ Scenarios are currently an orchestration *definition* form (single-step executio
 | rule changed but assessment unchanged | state machine: only `active` rules evaluate; freshly saved ones are draft |
 | action execute 422 `physically matches N rows` | pre-write uniqueness verification tripped (duplicate identifier values) — fix the data or tighten the pattern |
 | object query returns the wrong unit | semantic alignment not registered; check `GET /semantic/units` |
+| corpus export 422 `unclassified` | W2 #5 classification gate: classify via `PUT /datasets/{name}/classification` first, or pass an explicit `?allow_unclassified=true` (audited) |
 | ontology gate always skip | template has no `ontology:` section or GATE_MODE=off; see `arrow_lake_ontology_check_total` on `/metrics` |
 
 Next: [20 HQ Dataset Pipeline](./20-hq-dataset.md) · Deep dive: [ARCHITECTURE](../architecture-design/ARCHITECTURE.md) §v1.11.0–v1.11.2

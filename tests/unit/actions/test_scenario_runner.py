@@ -368,6 +368,22 @@ async def test_xor_else_arm_runs_then_skipped() -> None:
     assert store.get_instance(iid)["status"] == "completed"
 
 
+async def test_xor_substitute_arm_downweights_confidence() -> None:
+    """W4 #10 网关评估参与:走 substitute(else)臂 → 根 assess 置信 ×0.9。"""
+    store = FakeStore()
+    spec = _xor_scenario()
+    iid = _seed_instance(store)
+    runner = _make_runner(
+        store, spec, iid,
+        assess_impl={"gas_net": {"conclusions": [], "unruly": [], "confidence": 0.8}},
+    )
+    await runner.run()
+
+    ctx = json.loads(store.get_instance(iid)["context_json"])
+    assert ctx["assess"]["confidence"] == 0.72  # 0.8 × 0.9
+    assert ctx["assess"]["gateway_downweight"] == ["gw1"]
+
+
 async def test_xor_skip_cascades_to_dependents() -> None:
     store = FakeStore()
     spec = _spec(

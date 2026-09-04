@@ -8,7 +8,8 @@
    谓词 DSL 编译(lru 缓存,与 W1 同源);**编译失败 → unruly 列表,
    不炸整个研判**(S8,fail-open 到条);求值上下文 = ``target``(对齐后
    属性 + lifecycle_state + object_id,缺失比较恒 False);
-3. confidence 恒 1.0(确定性规则,S10;LLM 置信度留 F3.2);
+3. confidence = ``compute_confidence``(W4 #10:确定性降权因子——未命中
+   无佐证 0.5 / unruly 规则 -0.1 每条封顶 -0.3;发布门阈值零改动);
 4. actionable:行动目录反查(dataset+object_class 匹配本对象类)且
    preconditions 对 {target, assess, actor} 求值为真的动作。
 """
@@ -27,7 +28,35 @@ from arrow_lake.semantic.objectset import fetch_object_rows
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["assess_object", "evaluate_active_rules", "parse_catalog_action"]
+__all__ = [
+    "assess_object",
+    "compute_confidence",
+    "evaluate_active_rules",
+    "parse_catalog_action",
+]
+
+# ---------------------------------------------------------------------------
+# W4 #10(v1.11.5)真实置信——只加不改:降权因子,发布门阈值/权重零改动。
+# ---------------------------------------------------------------------------
+# 无任何结论佐证(未命中任何规则)→ 证据空缺,基线直接降半
+_NO_MATCH_CONFIDENCE = 0.5
+# 每条 unruly 规则(规则集自身腐烂)-0.1,封顶 -0.3
+_UNRULY_PENALTY = 0.1
+_UNRULY_PENALTY_CAP = 0.3
+# 场景网关走 substitute(else)臂 → 置信 ×0.9(actions/runner.py 消费)
+GATEWAY_SUBSTITUTE_FACTOR = 0.9
+
+
+def compute_confidence(*, matched_rules: int, unruly_count: int) -> float:
+    """规则研判置信(S10 语义升级:确定性但非恒 1.0)。
+
+    消费面:decisions_history.confidence(飞轮 auto_low_confidence 数据面
+    F5.8)/ assess 响应 / 中间件 H-3 服务端重评。**阈值不动**——发布门与
+    auto 选择器的 confidence_threshold 语义不变,只是分布从恒 1.0 变真实。
+    """
+    conf = _NO_MATCH_CONFIDENCE if matched_rules <= 0 else 1.0
+    conf -= min(_UNRULY_PENALTY * max(unruly_count, 0), _UNRULY_PENALTY_CAP)
+    return round(max(conf, 0.1), 4)
 
 
 # ---------------------------------------------------------------------------
@@ -161,7 +190,9 @@ async def assess_object(
     conclusions, unruly = await evaluate_active_rules(rules_store, dataset, target_ctx)
 
     assess_ctx: dict[str, Any] = {
-        "confidence": 1.0,
+        "confidence": compute_confidence(
+            matched_rules=len(conclusions), unruly_count=len(unruly)
+        ),
         "matched_rules": len(conclusions),
         "rule_ids": [c["rule_id"] for c in conclusions],
         "unruly_count": len(unruly),
@@ -190,7 +221,7 @@ async def assess_object(
         "lifecycle_state": target_ctx.get("lifecycle_state"),
         "conclusions": conclusions,
         "matched_rules": len(conclusions),
-        "confidence": 1.0,
+        "confidence": assess_ctx["confidence"],
         "unruly": unruly,
         "actionable": actionable,
     }

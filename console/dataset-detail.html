@@ -222,6 +222,15 @@ if (!ds) {
           <div id="ctrTables" style="display:flex;gap:6px;flex-wrap:wrap"></div>
         </div>` : ""}
         ${d.description ? `<div style="margin-top:var(--s3);padding:var(--s3) var(--s4);background:var(--ink-900);border:1px solid var(--line-soft);border-radius:var(--r-sm);font-size:.82rem;line-height:1.6;color:var(--fg-md)"><b style="color:var(--fg-hi);margin-right:6px">说明:</b>${esc(d.description)}</div>` : ""}
+        <div style="margin-top:var(--s3);padding:var(--s3) var(--s4);background:var(--ink-900);border:1px solid var(--line-soft);border-radius:var(--r-sm)">
+          <div class="flex" style="gap:8px;align-items:center;flex-wrap:wrap">
+            <b style="font-size:.8rem">PII 分级</b>
+            <span id="piiBadge" class="tag">加载…</span>
+            <select class="select" id="piiSel" style="max-width:180px"></select>
+            <button class="btn btn-primary btn-sm" id="piiSave">保存分级</button>
+            <span class="muted" style="font-size:.7rem">登记不校验;未分级集导出语料须显式确认,confidential/restricted 强烈建议带脱敏配置(变更审计留痕)</span>
+          </div>
+        </div>
         <div id="docsBlock" style="margin-top:var(--s3)"></div>
         <div class="divider" style="margin:var(--s4) 0"></div>
         <div class="flex" style="gap:8px;flex-wrap:wrap">
@@ -242,6 +251,35 @@ if (!ds) {
       const crumbA = document.querySelector(".crumb a");
       if (crumbA) crumbA.href = detailInfo.kind === "document" ? "datasets-docs.html" : "datasets-data.html";
     }
+
+    // W2 #4:PII 分级维护(四档;登记不校验;变更审计)
+    const TIER_LABEL = { public: "公开", internal: "内部", confidential: "机密", restricted: "受限" };
+    const loadPii = async () => {
+      let c;
+      try { c = await request("GET", `/datasets/${encodeURIComponent(ds)}/classification`); }
+      catch (e) { $("#piiBadge").textContent = "不可用(system_db 关闭?)"; return; }
+      const sel = $("#piiSel");
+      sel.innerHTML = `<option value="">— 未分级 —</option>` +
+        (c.tiers || []).map((t) => `<option value="${t}">${t}(${TIER_LABEL[t] || t})</option>`).join("");
+      sel.value = c.tier || "";
+      const b = $("#piiBadge");
+      b.textContent = c.tier ? `${c.tier} · ${TIER_LABEL[c.tier] || ""}` : "未分级";
+      b.className = "tag " + (c.tier === "restricted" || c.tier === "confidential" ? "amber" : c.tier ? "teal" : "");
+      $("#piiSave").onclick = async () => {
+        const tier = sel.value;
+        try {
+          if (tier) {
+            const r = await request("PUT", `/datasets/${encodeURIComponent(ds)}/classification`, { body: { tier } });
+            toast(`已分级 ${tier}${r.previous_tier ? `(原 ${r.previous_tier})` : ""}`, "ok");
+          } else {
+            await request("DELETE", `/datasets/${encodeURIComponent(ds)}/classification`);
+            toast("已清除分级(回到未分级)", "ok");
+          }
+          loadPii();
+        } catch (e) { toast("分级失败:" + (e?.detail || e?.message || e), "bad", 5000); }
+      };
+    };
+    if (detailInfo) loadPii();
 
     // 1.55) 后台预热 OLAP/DuckDB session — 让用户实际滚到预览时为 warm(~1.3s)
     //       而非冷启动(~3.5s)。fire-and-forget(容器集预热选中表)

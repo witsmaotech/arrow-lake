@@ -78,6 +78,12 @@ def _make_app(role: Role, db: SystemDB | None,
         app.state.quality_report_store = QualityReportStore(db)
         app.state.drift_baseline_store = DriftBaselineStore(db)
         app.state.contract_store = ContractStore(db)
+        # W2 #4/#5:分级 store(未挂 = gate 按未分级从严,路径语义同旧)
+        from arrow_lake.system_db.stores.classification import (
+            DatasetClassificationStore,
+        )
+
+        app.state.dataset_classification_store = DatasetClassificationStore(db)
 
     @app.middleware("http")
     async def _inject_user(request: Request, call_next):
@@ -291,6 +297,12 @@ def _corpus_app(db, lake, tmp_path):
 
 def _publish(db, lake, client):
     _report(db)
+    # W2 #5:常态夹具把 alerts 分级为 internal(未分级会触发新门禁)
+    from arrow_lake.system_db.stores.classification import (
+        DatasetClassificationStore,
+    )
+
+    DatasetClassificationStore(db).set("alerts", "internal", actor="tester")
     assert client.post(
         "/api/v1/release/alerts", json={"changelog": "语料基线"}).status_code == 200
 
@@ -402,3 +414,59 @@ def test_corpus_fail_closed_without_masking(db: SystemDB, tmp_path) -> None:
         "/api/v1/release/alerts/corpus?form=pretrain&allow_unmasked=true",
         json={})
     assert pre2.status_code == 200 and pre2.json()["masking"]["applied"] is False
+
+
+def test_corpus_unclassified_requires_explicit_confirm(
+    db: SystemDB, tmp_path
+) -> None:
+    """W2 #5 DoD:未分级集导出必须显式确认(参数;audit corpus.unclassified)。"""
+    from arrow_lake.system_db.stores.classification import (
+        DatasetClassificationStore,
+    )
+
+    lake = CorpusLake({"alerts": _TABLE})
+    client = _corpus_app(db, lake, tmp_path)
+    _report(db)
+    DatasetClassificationStore(db).set("alerts", "internal", actor="tester")
+    assert client.post(
+        "/api/v1/release/alerts", json={"changelog": "x"}).status_code == 200
+    # 撤销分级 → 未分级:即使带脱敏配置也须显式确认
+    DatasetClassificationStore(db).delete("alerts")
+    r = client.post(
+        "/api/v1/release/alerts/corpus?form=sft",
+        json={"generalize_rules": [[r"\d+", "N"]]},
+    )
+    assert r.status_code == 422 and "unclassified" in r.json()["detail"]
+    # 显式确认 → 过 + 审计 corpus.unclassified + 响应带 classification=null
+    r2 = client.post(
+        "/api/v1/release/alerts/corpus?form=sft&allow_unclassified=true",
+        json={"generalize_rules": [[r"\d+", "N"]]},
+    )
+    assert r2.status_code == 200 and r2.json()["classification"] is None
+    kinds = [a[0] for a in lake.audit_calls]
+    assert "corpus.unclassified" in kinds
+
+
+def test_corpus_confidential_unmasked_names_tier(
+    db: SystemDB, tmp_path
+) -> None:
+    """confidential 未带脱敏 → 422 点名分级;分级后正常 masked 导出回显档位。"""
+    from arrow_lake.system_db.stores.classification import (
+        DatasetClassificationStore,
+    )
+
+    lake = CorpusLake({"alerts": _TABLE})
+    client = _corpus_app(db, lake, tmp_path)
+    _report(db)
+    cstore = DatasetClassificationStore(db)
+    cstore.set("alerts", "confidential", actor="tester")
+    assert client.post(
+        "/api/v1/release/alerts", json={"changelog": "x"}).status_code == 200
+    r = client.post("/api/v1/release/alerts/corpus?form=sft", json={})
+    assert r.status_code == 422 and "confidential" in r.json()["detail"]
+    # masked 导出:正常过,响应回显 classification 档位
+    r2 = client.post(
+        "/api/v1/release/alerts/corpus?form=sft",
+        json={"generalize_rules": [[r"\d+", "N"]]},
+    )
+    assert r2.status_code == 200 and r2.json()["classification"] == "confidential"

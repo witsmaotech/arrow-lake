@@ -204,11 +204,17 @@ async def execute_action(
         "unruly_count": 0,
     }
     if rules_store is not None:
-        from arrow_lake.decisions.assess import evaluate_active_rules
+        from arrow_lake.decisions.assess import (
+            compute_confidence,
+            evaluate_active_rules,
+        )
 
         conclusions, unruly = await evaluate_active_rules(rules_store, dataset, target_ctx)
         assess_ctx = {
-            "confidence": 1.0,
+            # W4 #10:真实置信(降权因子;此前恒 1.0)——H-3 服务端重评口径
+            "confidence": compute_confidence(
+                matched_rules=len(conclusions), unruly_count=len(unruly)
+            ),
             "matched_rules": len(conclusions),
             "rule_ids": [c["rule_id"] for c in conclusions],
             "unruly_count": len(unruly),

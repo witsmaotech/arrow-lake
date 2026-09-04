@@ -248,14 +248,25 @@ async function load() {
     .split(/[;；]/).map(x => x.trim()).filter(Boolean)
     .map(x => { const [p, r] = x.split("→"); return [p.trim(), (r || "").trim()]; })
     .filter(x => x[0] && x[1]);
-  const exportForm = async (form) => {
+  const exportForm = async (form, extra = "") => {
     try {
       const r = await request("POST",
-        `/release/${encodeURIComponent(ds)}/corpus?form=${form}&allow_unmasked=${rules().length ? "false" : "true"}`,
+        `/release/${encodeURIComponent(ds)}/corpus?form=${form}&allow_unmasked=${rules().length ? "false" : "true"}${extra}`,
         { body: { generalize_rules: rules() } });
       toast(`${form} 导出:${r.records} 条 → ${r.path}${r.masking && !r.masking.applied ? "(未脱敏,已审计)" : ""}`,
             r.records ? "ok" : "warn", 6000);
-    } catch (e) { toast(`${form} 导出失败:${e.message}(无规则会被拒——填规则或确认已 active 发布)`, "bad", 6000); }
+    } catch (e) {
+      // W2 #5:未分级门禁 → 显式确认后重试(audit corpus.unclassified)
+      if (/unclassified/.test(e?.message || "")) {
+        if (await confirmDialog({
+          title: "数据集未分级",
+          message: `${ds} 尚未做 PII 分级(未分级=PII 状态未知)。建议先在数据集详情页分级;确认按未分级继续导出吗?(审计留痕)`,
+          confirmText: "确认继续",
+        })) return exportForm(form, "&allow_unclassified=true");
+        return;
+      }
+      toast(`${form} 导出失败:${e.message}(无规则会被拒——填规则或确认已 active 发布)`, "bad", 6000);
+    }
   };
   $("#doSft")?.addEventListener("click", () => exportForm("sft"));
   $("#doGolden")?.addEventListener("click", () => exportForm("golden"));

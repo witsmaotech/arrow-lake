@@ -115,12 +115,23 @@ window.__viewSheet = async (tag) => {
   const text = r?.yaml || JSON.stringify(r);
   $("#sheet").innerHTML = `<h3 style="font-size:.8rem;color:var(--fg-dim);margin:14px 0 6px">规格书 · ${esc(tag)}</h3><pre class="sheet">${esc(text)}</pre>`;
 };
-window.__corpus = async (tag, form) => {
+window.__corpus = async (tag, form, extra = "") => {
   const ds = $("#ds").value.trim();
   try {
-    const r = await request("POST", `/release/${encodeURIComponent(ds)}/corpus?form=${form}&tag=${encodeURIComponent(tag)}`, { body: {} });
-    toast(`${form}:${r.records} 条 → ${r.path}${r.note ? " · " + r.note : ""}`, r.records ? "ok" : "warn");
-  } catch (e) { toast(`${form} 导出失败:${e.message}`, "bad"); }
+    const r = await request("POST", `/release/${encodeURIComponent(ds)}/corpus?form=${form}&tag=${encodeURIComponent(tag)}${extra}`, { body: {} });
+    toast(`${form}:${r.records} 条 → ${r.path}${r.note ? " · " + r.note : ""}${r.classification ? ` · 分级 ${r.classification}` : ""}`, r.records ? "ok" : "warn");
+  } catch (e) {
+    // W2 #5:未分级门禁 → 显式确认后重试(audit corpus.unclassified)
+    if (/unclassified/.test(e?.message || "")) {
+      if (await confirmDialog({
+        title: "数据集未分级",
+        message: `${ds} 尚未做 PII 分级(未分级=PII 状态未知)。建议先在数据集详情页分级;确认按未分级继续导出吗?(审计留痕)`,
+        confirmText: "确认继续",
+      })) return window.__corpus(tag, form, "&allow_unclassified=true");
+      return;
+    }
+    toast(`${form} 导出失败:${e.message}`, "bad");
+  }
 };
 window.__retire = async (tag) => {
   const ds = $("#ds").value.trim();

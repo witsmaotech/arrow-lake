@@ -356,6 +356,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 )
         except Exception:  # noqa: BLE001 — 回收失败不阻塞启动
             logger.exception("scenario_orphan_reap_failed")
+        # v1.11.5 W2 (#4): dataset PII classification — corpus 导出分级-脱敏
+        # 绑定校验(#5)的消费面。
+        from arrow_lake.system_db.stores.classification import (
+            DatasetClassificationStore,
+        )
+
+        app.state.dataset_classification_store = DatasetClassificationStore(sys_db)
         # v1.11.3 MS4 (W1.4, F4.2): annotation project registry behind
         # /api/v1/annotation — LS side stays transient; SoT is this table.
         from arrow_lake.system_db.stores.annotation import AnnotationProjectStore
