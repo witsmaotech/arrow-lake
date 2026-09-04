@@ -60,8 +60,17 @@ def _reset_embed_bg(monkeypatch):
     with _EMBED_BG_LOCK:
         _embed_bg.clear()
     yield
-    # Drain any lingering background task before the next test starts.
-    time.sleep(0.05)
+    # Drain REAL pending executor work before clearing: a still-running
+    # backfill thread from this test would otherwise land its status in
+    # _embed_bg during the NEXT test (CI timing made the old fixed-50ms
+    # sleep lose that race). unfinished_tasks==0 ⇒ queue fully drained.
+    from arrow_lake._lake_ingest import _embed_backfill_executor
+
+    q = getattr(_embed_backfill_executor, "_work_queue", None)
+    if q is not None:
+        deadline = time.monotonic() + 10
+        while getattr(q, "unfinished_tasks", 0) and time.monotonic() < deadline:
+            time.sleep(0.05)
     with _EMBED_BG_LOCK:
         _embed_bg.clear()
 
