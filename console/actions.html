@@ -19,6 +19,35 @@
   .ver-row.active{background:var(--ink-850);box-shadow:inset 2px 0 0 var(--teal-bright)}
   textarea.yaml{width:100%;min-height:340px;background:var(--ink-950);border:1px solid var(--line);border-radius:var(--r-sm);color:var(--fg-md);font-family:var(--font-mono);font-size:.76rem;line-height:1.7;padding:12px;resize:vertical;tab-size:2}
   .issues{margin-top:8px;padding:10px 12px;border:1px solid var(--danger);border-radius:var(--r-sm);color:var(--danger);font-size:.74rem;line-height:1.8}
+  /* 场景执行态(W3):行内操作按钮 + 实例抽屉 */
+  .ctr-row .rowbtns{display:flex;gap:6px}
+  .ctr-row .rowbtns button{background:var(--ink-900);border:1px solid var(--line);border-radius:var(--r-sm);color:var(--fg-md);font-size:.68rem;padding:3px 8px;cursor:pointer;white-space:nowrap}
+  .ctr-row .rowbtns button:hover{color:var(--fg-hi);border-color:var(--teal-bright)}
+  .drawer-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:60;opacity:0;transition:opacity .18s}
+  .drawer-overlay.show{opacity:1}
+  .drawer{position:fixed;top:0;right:-640px;width:620px;max-width:94vw;bottom:0;background:var(--ink-900);border-left:1px solid var(--line);z-index:61;display:flex;flex-direction:column;transition:right .22s;box-shadow:-12px 0 40px rgba(0,0,0,.45)}
+  .drawer.show{right:0}
+  .drawer-h{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--line-soft)}
+  .drawer-h h3{margin:0;font-size:.9rem;color:var(--fg-hi)}
+  .drawer-b{flex:1;overflow-y:auto;padding:12px 18px}
+  .inst-row{display:flex;gap:10px;align-items:center;padding:9px 10px;border:1px solid var(--line-soft);border-radius:var(--r-sm);margin-bottom:8px;cursor:pointer;font-size:.78rem}
+  .inst-row:hover{background:var(--ink-850)}
+  .inst-row .mono{font-family:var(--font-mono);color:var(--fg-hi)}
+  .badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:.66rem;font-weight:600;letter-spacing:.02em}
+  .badge.completed{background:rgba(38,166,154,.16);color:#4fd1c5}
+  .badge.running{background:rgba(237,160,20,.16);color:#f0b429;animation:pulse 1.6s infinite}
+  .badge.failed{background:rgba(229,74,94,.16);color:#ff7b8a}
+  .badge.compensated{background:rgba(230,140,60,.16);color:#f0a050}
+  .badge.timeout{background:rgba(160,110,230,.18);color:#c09bf5}
+  .badge.terminated{background:rgba(120,130,145,.18);color:#9aa5b1}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.45}}
+  .tl{border-left:2px solid var(--line);margin:10px 0 4px 6px;padding-left:14px}
+  .tl-step{position:relative;padding:7px 0;font-size:.76rem}
+  .tl-step::before{content:"";position:absolute;left:-19px;top:12px;width:8px;height:8px;border-radius:50%;background:var(--ink-700);border:1px solid var(--line)}
+  .tl-step.succeeded::before{background:var(--teal-bright);border-color:var(--teal-bright)}
+  .tl-step.failed::before,.tl-step.timeout::before{background:var(--danger);border-color:var(--danger)}
+  .tl-step.skipped::before{background:var(--ink-800)}
+  .comp-panel{margin-top:10px;padding:10px 12px;border:1px solid var(--warn,var(--danger));border-radius:var(--r-sm);font-size:.76rem}
 </style>
 </head>
 <body>
@@ -134,9 +163,9 @@ function switchMode(m) {
   curId = null;
   $("#tabActions").classList.toggle("active", m === "actions");
   $("#tabScenarios").classList.toggle("active", m === "scenarios");
-  // 场景=编排定义态(steps/gateways/timeout);执行走「研判台」对对象逐 action 受控触发
+  // W3 起场景升执行态:定义(YAML)+ 试跑(instantiate)/实例(抽屉)
   $("#modeNote").textContent = m === "scenarios"
-    ? "场景为编排定义态——单步执行走「研判台」(对对象触发 action,前置/幂等/审计在彼侧)"
+    ? "场景已支持执行:行内「试跑」对目标对象实例化后台跑;「实例」看运行时间线与补偿待办"
     : "";
   $("#listTitle").textContent = m === "actions" ? "行动目录" : "场景";
   $("#ymlTitle").textContent = m === "actions" ? "行动 YAML" : "场景 YAML";
@@ -159,14 +188,23 @@ async function loadList() {
     $("#ctrList").innerHTML = items.length
       ? items.map((it) => {
           const id = it.action_id || it.scenario_id;
+          const btns = mode === "scenarios"
+            ? `<span class="rowbtns">
+                 <button data-try="${esc(id)}" title="对目标对象实例化执行">▶ 试跑</button>
+                 <button data-inst="${esc(id)}" title="查看运行实例">☰ 实例</button>
+               </span>`
+            : `<span class="muted" style="font-size:.7rem">${fmtDate(it.updated_at)}</span>`;
           return `<div class="ctr-row${id === curId ? " active" : ""}" data-id="${esc(id)}">
             <span class="sc">${esc(id)}</span>
             <span class="tag teal">v${it.version}</span>
-            <span class="muted" style="font-size:.7rem">${fmtDate(it.updated_at)}</span>
+            ${btns}
           </div>`;
         }).join("")
       : `<div class="muted" style="padding:18px;text-align:center">尚无${c.label} — 点右上「新建」</div>`;
     $("#ctrList").querySelectorAll("[data-id]").forEach((el) => el.addEventListener("click", () => selectItem(el.dataset.id)));
+    // 场景行内执行按钮(stopPropagation 防触发行选中)
+    $("#ctrList").querySelectorAll("[data-try]").forEach((el) => el.addEventListener("click", (e) => { e.stopPropagation(); tryInstantiate(el.dataset.try); }));
+    $("#ctrList").querySelectorAll("[data-inst]").forEach((el) => el.addEventListener("click", (e) => { e.stopPropagation(); openInstances(el.dataset.inst); }));
   } catch (e) {
     const msg = e?.detail || e?.message || String(e);
     const denied = /403|admin/i.test(msg);
@@ -285,6 +323,203 @@ $("#newBtn")?.addEventListener("click", async () => {
   if (isAdmin) { $("#saveBtn").style.display = ""; $("#delBtn").style.display = "none"; }
   curId = id;
 });
+
+// ---------------------------------------------------------------------------
+// W3 场景执行态:试跑(instantiate)+ 实例抽屉(时间线/补偿待办)
+// ---------------------------------------------------------------------------
+
+/** 试跑表单(四段:dataset/object_type/object_id/reason)→ 202 后开抽屉。 */
+function tryInstantiate(scenarioId) {
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal-card" role="dialog" aria-modal="true" style="max-width:460px">
+      <div class="modal-title">试跑 ${esc(scenarioId)}</div>
+      <div class="modal-msg">对目标对象实例化执行;entries 不匹配/对象不存在将 422。</div>
+      <div style="display:grid;gap:8px;margin-top:10px">
+        <input class="input" data-f="dataset" placeholder="数据集(如 gas_net)" style="width:100%;box-sizing:border-box">
+        <input class="input" data-f="object_type" placeholder="对象类(如 alerts)" style="width:100%;box-sizing:border-box">
+        <input class="input" data-f="object_id" placeholder="对象标识(如 GAS.ALERT.001)" style="width:100%;box-sizing:border-box">
+        <input class="input" data-f="reason" placeholder="执行理由(可选,审计)" style="width:100%;box-sizing:border-box">
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost btn-sm" data-act="cancel">取消</button>
+        <button class="btn btn-primary btn-sm" data-act="confirm">实例化执行</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  requestAnimationFrame(() => overlay.classList.add("show"));
+  const val = (f) => (overlay.querySelector(`[data-f="${f}"]`)?.value || "").trim();
+  const close = () => { overlay.classList.remove("show"); setTimeout(() => overlay.remove(), 180); };
+  overlay.addEventListener("click", async (e) => {
+    if (e.target === overlay) return close();
+    const act = e.target.closest("[data-act]")?.dataset.act;
+    if (act === "cancel") return close();
+    if (act !== "confirm") return;
+    const dataset = val("dataset"), object_type = val("object_type"), object_id = val("object_id");
+    if (!dataset || !object_type || !object_id) { toast("数据集/对象类/对象标识均必填", "warn"); return; }
+    try {
+      const r = await request("POST", `/actions/scenarios/${encodeURIComponent(scenarioId)}/instantiate`, {
+        body: { dataset, object_type, object_id, reason: val("reason") || null },
+      });
+      close();
+      toast(`已实例化 #${r.instance_id},后台执行中`, "ok");
+      openInstances(scenarioId, r.instance_id);
+    } catch (err) {
+      const d = err?.detail;
+      toast("实例化失败:" + (typeof d === "string" ? d : (d?.message || err?.message || err)), "danger", 5000);
+    }
+  });
+  setTimeout(() => overlay.querySelector('[data-f="dataset"]')?.focus(), 60);
+}
+
+let drawerTimer = null;
+
+/** 实例抽屉:列表(运行中自动轮询)→ 点击展开步时间线 + 补偿待办。 */
+function openInstances(scenarioId, focusId = null) {
+  document.querySelector(".scn-drawer")?.remove();
+  const overlay = document.createElement("div");
+  overlay.className = "drawer-overlay scn-drawer";
+  const drawer = document.createElement("div");
+  drawer.className = "drawer scn-drawer";
+  drawer.innerHTML = `
+    <div class="drawer-h">
+      <h3>实例 · ${esc(scenarioId)}</h3>
+      <span class="sub" id="drMeta">—</span>
+      <button class="btn btn-ghost btn-sm" style="margin-left:auto" data-close>关闭</button>
+    </div>
+    <div class="drawer-b" id="drBody"><div class="muted">加载…</div></div>`;
+  document.body.append(overlay, drawer);
+  requestAnimationFrame(() => { overlay.classList.add("show"); drawer.classList.add("show"); });
+  const close = () => {
+    if (drawerTimer) { clearInterval(drawerTimer); drawerTimer = null; }
+    overlay.classList.remove("show"); drawer.classList.remove("show");
+    setTimeout(() => { overlay.remove(); drawer.remove(); }, 220);
+  };
+  overlay.addEventListener("click", close);
+  drawer.querySelector("[data-close]").addEventListener("click", close);
+
+  let expanded = focusId;
+  async function refresh() {
+    let data;
+    try {
+      data = await request("GET", `/actions/scenarios/instances?scenario_id=${encodeURIComponent(scenarioId)}&limit=50`);
+    } catch (e) {
+      drawer.querySelector("#drBody").innerHTML = `<div class="muted">加载失败:${esc(e?.detail || e?.message || e)}</div>`;
+      return;
+    }
+    const insts = data?.instances || [];
+    drawer.querySelector("#drMeta").textContent = `${insts.length} 条`;
+    if (!insts.length) {
+      drawer.querySelector("#drBody").innerHTML = '<div class="muted" style="padding:8px 2px">尚无实例 — 行内「▶ 试跑」发起第一次执行</div>';
+      return;
+    }
+    const anyRunning = insts.some((i) => i.status === "running");
+    drawer.querySelector("#drBody").innerHTML = insts.map((i) => `
+      <div class="inst-row" data-iid="${i.id}">
+        <span class="mono">#${i.id}</span>
+        <span class="badge ${esc(i.status)}">${esc(i.status)}</span>
+        <span class="muted mono" style="font-size:.7rem">${esc(i.object_id || "—")}</span>
+        <span class="muted" style="margin-left:auto;font-size:.7rem">${fmtDate(i.created_at)}</span>
+      </div>`).join("")
+      + (expanded ? '<div id="drDetail" style="margin-top:6px"></div>' : "");
+    drawer.querySelectorAll("[data-iid]").forEach((el) => el.addEventListener("click", () => {
+      expanded = +el.dataset.iid === expanded ? null : +el.dataset.iid;
+      refresh();
+    }));
+    if (expanded) await loadDetail(expanded);
+    // 运行中 2s 轮询(抽屉关/全终态即停)
+    if (drawerTimer) { clearInterval(drawerTimer); drawerTimer = null; }
+    if (anyRunning) drawerTimer = setInterval(() => {
+      if (!document.body.contains(drawer)) { clearInterval(drawerTimer); drawerTimer = null; return; }
+      refresh();
+    }, 2000);
+  }
+
+  async function loadDetail(iid) {
+    const box = drawer.querySelector("#drDetail");
+    if (!box) return;
+    let d;
+    try {
+      d = await request("GET", `/actions/scenarios/instances/${iid}`);
+    } catch (e) {
+      box.innerHTML = `<div class="muted">详情加载失败:${esc(e?.detail || e?.message || e)}</div>`;
+      return;
+    }
+    const inst = d.instance;
+    const kindTag = (s) => `<span class="tag" style="font-size:.62rem">${s.kind === "assess" ? "研判" : "行动"}</span>`;
+    const comp = (inst.pending_compensation || []).map((aid) => `
+      <div style="display:flex;gap:8px;align-items:center;padding:5px 0">
+        <span class="mono" style="font-size:.74rem">${esc(aid)}</span>
+        <button class="btn btn-ghost btn-sm" style="margin-left:auto;color:var(--danger)" data-comp="${esc(aid)}">人工执行</button>
+      </div>`).join("");
+    box.innerHTML = `
+      <div class="panel flush">
+        <div class="panel-h"><h3 style="font-size:.8rem">实例 #${iid} · ${esc(inst.status)}</h3>
+          <span class="actions">
+            ${["failed", "timeout", "compensated", "terminated"].includes(inst.status) ? `<button class="btn btn-primary btn-sm" data-resume="${iid}">断点续跑</button>` : ""}
+            ${inst.status === "running" && isAdmin ? `<button class="btn btn-ghost btn-sm" style="color:var(--danger)" data-stop="${iid}">终止</button>` : ""}
+          </span>
+        </div>
+        <div class="panel-b" style="padding:10px 12px">
+          ${inst.error ? `<div style="color:var(--danger);font-size:.72rem;margin-bottom:8px">${esc(inst.error)}</div>` : ""}
+          <div class="muted" style="font-size:.7rem;margin-bottom:6px">
+            目标 <span class="mono">${esc(inst.dataset || "—")}.${esc(inst.object_type || "—")} / ${esc(inst.object_id || "—")}</span>
+            · 发起 ${esc(inst.actor || "—")} · ${fmtDate(inst.created_at)}${inst.finished_at ? " → " + fmtDate(inst.finished_at) : ""}
+          </div>
+          <div class="tl">
+            ${(d.step_runs || []).map((s) => `
+              <div class="tl-step ${esc(s.status)}">
+                <b>${esc(s.step_id)}</b> ${kindTag(s)}
+                <span class="badge ${esc(s.status)}" style="margin-left:6px">${esc(s.status)}</span>
+                <span class="muted" style="font-size:.68rem;margin-left:6px">${fmtDate(s.started_at)}${s.finished_at ? " → " + fmtDate(s.finished_at) : ""}</span>
+                ${s.error ? `<div class="muted" style="font-size:.68rem;color:var(--danger)">${esc(s.error)}</div>` : ""}
+              </div>`).join("") || '<div class="muted">暂无步运行记录</div>'}
+          </div>
+          ${comp ? `<div class="comp-panel"><b style="color:#f0a050">补偿待办(声明式+人工)</b>${comp}
+            <div class="muted" style="font-size:.66rem;margin-top:4px">逐条人工执行(走单 action execute 端点,同八步审计);全部核销后可「断点续跑」。</div></div>` : ""}
+        </div>
+      </div>`;
+    box.querySelectorAll("[data-comp]").forEach((btn) => btn.addEventListener("click", async () => {
+      const aid = btn.dataset.comp;
+      btn.disabled = true;
+      try {
+        const r = await request("POST", `/actions/${encodeURIComponent(aid)}/execute`, {
+          body: {
+            dataset: inst.dataset, object_type: inst.object_type, object_id: inst.object_id,
+            reason: `补偿核销(实例 #${iid})`, scenario_id: inst.scenario_id,
+          },
+        });
+        toast(`补偿 ${aid}:${esc(r?.status || "executed")}`, "ok");
+        refresh();
+      } catch (e) {
+        btn.disabled = false;
+        toast("补偿执行失败:" + (e?.detail?.message || e?.detail || e?.message || e), "danger", 5000);
+      }
+    }));
+    box.querySelector("[data-resume]")?.addEventListener("click", async () => {
+      try {
+        await request("POST", `/actions/scenarios/instances/${iid}/resume`);
+        toast("已重入运行循环", "ok");
+        refresh();
+      } catch (e) {
+        toast("续跑失败:" + (e?.detail || e?.message || e), "danger", 5000);
+      }
+    });
+    box.querySelector("[data-stop]")?.addEventListener("click", async () => {
+      if (!(await confirmDialog({ title: `终止实例 #${iid}?`, message: "运行中实例转 terminated;在途步不中断,下一轮退出。", danger: true, confirmText: "终止" }))) return;
+      try {
+        await request("POST", `/actions/scenarios/instances/${iid}/terminate`);
+        toast("已终止", "ok");
+        refresh();
+      } catch (e) {
+        toast("终止失败:" + (e?.detail || e?.message || e), "danger", 5000);
+      }
+    });
+  }
+
+  refresh();
+}
 
 loadList();
 </script>

@@ -337,6 +337,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             ActionCatalogStore,
             IdempotencyStore,
         )
+        from arrow_lake.system_db.stores.scenario_instances import ScenarioInstanceStore
         from arrow_lake.system_db.stores.scenarios import ScenarioStore
 
         app.state.action_store = ActionCatalogStore(sys_db)
@@ -344,6 +345,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.scenario_store = ScenarioStore(sys_db)
         lake._action_store = app.state.action_store
         lake._scenario_store = app.state.scenario_store
+        # v1.11.5 W3 (S7/S8): scenario instance registry + startup orphan reap
+        # (进程重启即全部孤儿 → failed,可 resume;多 worker 限制见设计 §六)。
+        app.state.scenario_instance_store = ScenarioInstanceStore(sys_db)
+        try:
+            reaped = app.state.scenario_instance_store.mark_orphaned_running()
+            if reaped:
+                logger.warning(
+                    "scenario_orphaned_runners_reaped", extra={"count": reaped}
+                )
+        except Exception:  # noqa: BLE001 — 回收失败不阻塞启动
+            logger.exception("scenario_orphan_reap_failed")
         # v1.11.3 MS4 (W1.4, F4.2): annotation project registry behind
         # /api/v1/annotation — LS side stays transient; SoT is this table.
         from arrow_lake.system_db.stores.annotation import AnnotationProjectStore
