@@ -124,6 +124,37 @@ class TestEndpointValidation:
         assert body["operation"] == "annotation_dispatch"
         assert body["candidate_rows"] == 2
 
+    def test_dispatch_filters_empty_text_rows_in_pool(self, db: SystemDB) -> None:
+        """W2 #6 首跑发现(2026-09-04):稀疏文本列头部全空 → sequential
+        采样 dispatched=0 且 watermark 不前移(重派饥饿)——候选池须滤空行。"""
+        _seed_project(db)
+        cfg = AnnotationConfig(ls_url="http://ls", ls_api_token="tok")
+        lake = FakeLake()
+        lake.table = pa.table(
+            {"text": ["", "   ", "软管无管卡,需整改"],
+             "quality_score": [None, None, 0.5]})
+        client = _make_app(db=db, config=cfg, lake=lake)
+        resp = client.post("/api/v1/annotation/dispatch", json={"project": "p1"})
+        assert resp.status_code == 202, resp.text
+        assert resp.json()["candidate_rows"] == 1  # 空文本行不入候选池
+
+    def test_dispatch_sparse_text_pool_escalates_window(self, db: SystemDB) -> None:
+        """同日第二发现:cap 截断在过滤之前 → 可标注行在 cap 之外整段丢失
+        (lpg_danger 前 7922 行 desc 全空,cap=5000)。过滤后不足须升窗。"""
+        _seed_project(db)
+        # cap 下限 100(config 校验)→ 造 120 行:前 110 空 + 尾 10 条可标注
+        cfg = AnnotationConfig(
+            ls_url="http://ls", ls_api_token="tok", candidate_pool_cap=100)
+        lake = FakeLake()
+        lake.table = pa.table(
+            {"text": [""] * 110 + [f"隐患描述 {i}" for i in range(10)],
+             "quality_score": [None] * 110 + [0.5] * 10})
+        client = _make_app(db=db, config=cfg, lake=lake)
+        resp = client.post("/api/v1/annotation/dispatch", json={"project": "p1"})
+        assert resp.status_code == 202, resp.text
+        # cap=100 窗口全空 → 8×100=800 窗口越过空段 → 池=10 条可标注行(cap 内)
+        assert resp.json()["candidate_rows"] == 10
+
     def test_unknown_project_404(self, db: SystemDB) -> None:
         cfg = AnnotationConfig(ls_url="http://ls", ls_api_token="tok")
         client = _make_app(db=db, config=cfg, lake=FakeLakeWithHE())

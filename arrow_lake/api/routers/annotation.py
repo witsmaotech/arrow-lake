@@ -194,14 +194,23 @@ def _load_rows(lake: Any, dataset: str, text_column: str, cap: int) -> tuple[lis
     目标样本,拼进候选池尾段(只取 text_column + quality_score)。
     review 修:先 ``slice(0, cap)`` 再 to_pylist——cap 是内存护栏,此前
     全表物化后才 ``[:cap]`` 形同虚设(107M 行级数据集 GB 级 churn)。
+
+    W2 #6 首跑发现(2026-09-04,lpg_danger 真实数据):稀疏文本列数据集
+    头部可整段无文本(前 7922 行 desc 全空)——①空文本行不可标注须从
+    候选池过滤,否则 sequential 采样 dispatched=0 且 watermark 不前移
+    (重派饥饿);②cap 截断在过滤之前会把可标注行整段截掉 → 过滤后
+    仍不足时按 8×cap 升级窗口重扫一次(仍截断护栏,极稀疏列诚实见底)。
     """
-    def _to_dicts(table: Any, wanted: list[str], limit: int) -> list[dict]:
+    def _annotatable(table: Any, wanted: list[str], window: int) -> list[dict]:
         cols = [c for c in wanted if c in table.column_names]
         if text_column in table.column_names and text_column not in cols:
             cols.append(text_column)
         if text_column not in cols:
             return []  # 文本列缺失 → 该表不构成候选
-        return table.select(cols).slice(0, limit).to_pylist()
+        return [
+            r for r in table.select(cols).slice(0, window).to_pylist()
+            if str(r.get(text_column) or "").strip()
+        ]
 
     try:
         main = lake.read_dataset(dataset)
@@ -209,10 +218,13 @@ def _load_rows(lake: Any, dataset: str, text_column: str, cap: int) -> tuple[lis
         raise HTTPException(
             status_code=404, detail=f"Dataset '{dataset}' not readable: {exc}",
         ) from exc
-    rows = _to_dicts(main, ["quality_score", text_column], cap)
+    rows = _annotatable(main, ["quality_score", text_column], cap)
+    if len(rows) < cap:
+        rows = _annotatable(main, ["quality_score", text_column], cap * 8)
+    rows = rows[:cap]
     dead_ids: list[str] | None = None
     try:
-        dead = _to_dicts(lake.read_dataset(f"_{dataset}_dead_letter"), [text_column], cap)
+        dead = _annotatable(lake.read_dataset(f"_{dataset}_dead_letter"), [text_column], cap)
         if dead:
             base = len(rows)
             rows.extend(dead)
