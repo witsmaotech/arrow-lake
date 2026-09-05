@@ -103,3 +103,53 @@ class TestWrapper:
     def test_empty_result_yields_empty(self):
         assert to_ls_prediction(_result([]))["result"] == []
         assert to_ls_prediction(ExtractionResult(entities=(), relations=(), raw_text=""))["result"] == []
+
+
+# --------------------------------------------------------------------------- #
+# W2 #6 首跑发现(2026-09-05):精简 config + NER 预测 → 悬空 relation 崩 LS
+# --------------------------------------------------------------------------- #
+
+
+def test_filter_prediction_to_config_choices_only_drops_ner_and_relations():
+    """Choices-only config:NER region(objects/events 控件不存在)与依赖
+    它们的 relation 全部丢弃——LS 端不会再出现悬空引用。"""
+    from arrow_lake.annotation.preannotate import filter_prediction_to_config
+
+    pred = {"model_version": "hyper-extract", "result": [
+        {"id": "e0", "from_name": "objects", "to_name": "text", "type": "labels",
+         "value": {"start": 0, "end": 2, "text": "钢瓶", "labels": ["设备"]}},
+        {"id": "e1", "from_name": "events", "to_name": "text", "type": "labels",
+         "value": {"start": 3, "end": 5, "text": "泄漏", "labels": ["事件"]}},
+        {"id": "r2", "type": "relation", "from_id": "e0", "to_id": "e1",
+         "direction": "right", "labels": ["导致"]},
+    ]}
+    cfg = ('<View><Text name="text" value="$text"/>'
+           '<Choices name="relevance" toName="text" required="true">'
+           '<Choice value="高相关"/></Choices></View>')
+    out = filter_prediction_to_config(pred, cfg)
+    assert out["result"] == []
+
+
+def test_filter_prediction_to_config_keeps_matching_controls():
+    """控件匹配(Labels objects/events + Choices)全保留;relation 端点
+    存活才保留,端点被丢则连坐丢弃。"""
+    from arrow_lake.annotation.preannotate import filter_prediction_to_config
+
+    pred = {"model_version": "hyper-extract", "result": [
+        {"id": "e0", "from_name": "objects", "to_name": "text", "type": "labels",
+         "value": {"start": 0, "end": 2, "text": "钢瓶", "labels": ["设备"]}},
+        {"id": "e9", "from_name": "ghost", "to_name": "text", "type": "labels",
+         "value": {"start": 0, "end": 2, "text": "x", "labels": ["y"]}},
+        {"id": "r1", "type": "relation", "from_id": "e0", "to_id": "e9",
+         "direction": "right", "labels": ["导致"]},
+        {"id": "r2", "type": "relation", "from_id": "e0", "to_id": "e0",
+         "direction": "right", "labels": ["自环"]},
+    ]}
+    cfg = ('<View><Text name="text" value="$text"/>'
+           '<Labels name="objects" toName="text"><Label value="设备"/></Labels>'
+           '<Labels name="events" toName="text"><Label value="事件"/></Labels></View>')
+    out = filter_prediction_to_config(pred, cfg)
+    ids = [i["id"] for i in out["result"]]
+    assert "e0" in ids and "e9" not in ids
+    assert "r1" not in ids  # to_id e9 被丢 → relation 连坐
+    assert "r2" in ids      # 端点 e0 存活(自环语义由 LS 处置,保真不裁)

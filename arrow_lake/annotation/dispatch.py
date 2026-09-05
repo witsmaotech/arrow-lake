@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from arrow_lake.annotation.masking import apply_annotation_masking
-from arrow_lake.annotation.preannotate import to_ls_prediction
+from arrow_lake.annotation.preannotate import filter_prediction_to_config, to_ls_prediction
 from arrow_lake.annotation.sampler import SampleBudget, SampledRow, sample_rows
 
 __all__ = [
@@ -289,6 +289,9 @@ async def run_dispatch(
         prediction = to_ls_prediction(result) if result is not None else {
             "model_version": "hyper-extract", "result": [],
         }
+        # W2 #6 首跑发现(2026-09-05):精简 config(Choices-only)+ NER 预测
+        # → LS 丢 region 留 relation → 悬空引用崩标注页。按项目 config 过滤。
+        prediction = filter_prediction_to_config(prediction, labeling_config)
         return {
             "data": {"text": masked, "row_id": pick.row_id,
                      "strategy": pick.strategy},
