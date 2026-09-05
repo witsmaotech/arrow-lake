@@ -1,6 +1,6 @@
 [project]
 name = "arrow-lake"
-version = "1.11.4"
+version = "1.11.5"
 description = "Unified multimodal data lakehouse — Lance + Daft + Ray"
 readme = "README.md"
 requires-python = ">=3.11"

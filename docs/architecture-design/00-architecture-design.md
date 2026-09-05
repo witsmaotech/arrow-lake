@@ -2,7 +2,7 @@
 
 > 📐 **图集速览**：本文以图为骨架（Midnight Blueprint 8 套图）重组架构要点。**权威文本参考**见 [`ARCHITECTURE.md`](ARCHITECTURE.md)（逐项核实源码，深度 API 回链）；本文深度细节回链其 §3/§5。
 
-> **版本基线**：v1.11.4（[`arrow_lake/_version.py`](../../arrow_lake/_version.py) = `pyproject.toml` = 1.11.4）
+> **版本基线**：v1.11.5（[`arrow_lake/_version.py`](../../arrow_lake/_version.py) = `pyproject.toml` = 1.11.5）
 > **文档日期**：2026-08-03
 > **状态**：随主干演进，与代码当前态对齐。v1.9.0 起**控制面库（libSQL/Turso `system_db`）**落地（接管 RBAC/identity/personal_token/catalog/任务/lineage/RAG 会话/governance，**数据面零改动**），**console** 运维/合规/治理前端完备（v1.9.1–v1.9.2）；v1.9.3–v1.9.6 增量（数据集字段注释/清洗、血缘审计、RAG 质量全链路、RAG 防幻觉+cross-encoder reranker、KG snap/strict/三路并行、lineage 可视化、masking 治理、fail-closed 安全加固、镜像模型 bake）；**v1.10.0 知识抽取模板管理**（前端模板 CRUD + 后端按新模板动态抽取建图不 rebuild/restart + LLM 辅助生成 + dry-run 试跑 + 质量验证 harness + category↔doc_type 拉通 + V005/V006/V007 迁移）。详见 [`v1.9.6-architecture-design.md`](./v1.9.6-architecture-design.md)。
 > **语言约定**：中文正文、英文图注（技术图惯例 + 渲染稳定）
@@ -560,7 +560,7 @@ Arrow Lake 采用**严格五层架构**：请求自上而下穿越 **① 接入 
 
 ![部署拓扑](./diagrams/05-deployment-topology.png)
 
-Docker Compose 单栈交付（镜像 `arrow-lake:1.11.4`），六个功能区：
+Docker Compose 单栈交付（镜像 `arrow-lake:1.11.5`），六个功能区：
 
 | 区 | 服务 | 说明 |
 |---|---|---|

@@ -1,6 +1,6 @@
 # MS5 五维质量门与发布层设计 — Quality Gate, Release & Corpus(F5.1-F5.8)
 
-> **版本基线**:v1.11.4(已发版 2026-08-31,`arrow_lake/_version.py` = 1.11.4)· 日期:2026-08-30 · 状态:**已交付**(W1-W5 全交付 + 四维 review 五批修复 + 全站 UI 实测;收官审计见 master-plan v1.1)
+> **版本基线**:v1.11.5(已发版 2026-08-31,`arrow_lake/_version.py` = 1.11.5)· 日期:2026-08-30 · 状态:**已交付**(W1-W5 全交付 + 四维 review 五批修复 + 全站 UI 实测;收官审计见 master-plan v1.1)
 > 上游:Master Plan MS5 · DR6(热路径零改动)· DR15(五维门=建模侧 M7 **QoS Annotation** 形态——质量约束以标注挂载到契约/对象,非独立承载层)
 > 地基:v1.11.3(MS4 标注闭环:ADL/kappa/仲裁/采样器全部就绪;MS5 前置 M-16/M-12/M-13 已在 v1.11.2 清偿)
 > 实施载体版本:v1.11.4(估 ~3 周,Master Plan 最后一个里程碑)

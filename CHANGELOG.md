@@ -6,11 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [1.11.5-未发版] — 投产准备+场景执行引擎(MS3 转正)
+## [1.11.5] - 2026-09-05 — 投产准备+场景执行引擎(MS3 转正)+ 真实数据首跑
 
-> 平台侧 W1-W4 全部合入;**发版等真实数据首跑闸门**(W2 #6 硬 DoD:业务侧
-> ≥万行数据集 摄入→契约→标注→评估→发布 全链出第一个 active 发布)。数据
-> 到位当天清偿后按四段 SOP 出 tag。
+> 平台侧 W1-W4 全部合入;发版闸门(W2 #6 硬 DoD:业务侧 ≥万行数据集
+> 摄入→契约→标注→评估→发布 全链出第一个 active 发布)**已严格口径达成**——
+> lpg_danger 2 万行真实数据(合肥液化气隐患)v1.1.0 干净发布,不走 force。
+
+### W2 #6 真实数据首跑(发版闸门,2026-09-04~05)
+- **lpg_danger 数据集**(2 万行=最新 6 周):契约 v2(uid identifier/danger_state lifecycle/enum 词表+quality.weights 按域调权:diversity 归零——监控数据集近恒定枚举合法);confidential 分级;4 active 规则
+- **v1.1.0 干净发布**:五维 98.69/gold/五星;双标注(用户首标+annotator-b 同票)审定 9 行 κ=1.0;v1.0.0 force 首发留档
+- **首跑当日清 4 真缺陷**:①标注采样稀疏文本列饥饿(空文本过滤后 8×cap 扩窗重扫)②cap 截断在过滤之前 ③LS 相关性词表必须用平台标准三分类「高相关/间接相关/不相关」④预标注按项目 labeling config 过滤(悬空 relation 崩 LS 标注页)
 
 ### W1 测试治理与 CI
 - **测试隔离治理**:conftest 四锚点(storage/api-key/rate-limit/redis env setdefault)根治「全量 448 failed 不稳定」——修前 448 failed+30 errors/3h24m 随机段错误 → 2 failed(全第三方)/64min 稳定;产线真缺陷累计 11 个(catalog TTL 幽灵数据集/logger kwargs TypeError/Event 恒真致 disable_metrics 失效等)
