@@ -6,7 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [1.11.5] - 2026-09-05 — 投产准备+场景执行引擎(MS3 转正)+ 真实数据首跑
+## [1.11.6-未发版] — 生产运营批(进行中)
+
+> 规划:docs_offline/v1.11.6-version-plan.md(真实数据规模化/多模态接入/闭环运转/生产运营)。
+
+### 前置批:字段变更前后端联动(2026-09-07)
+- **schema/migrate dry_run 增强**:静态方言 lint(`lint_lance_expr`——TRIM/SUBSTR 不支持、双引号=字符串字面量、**CASE 不支持(实测确认,单条件用 `CAST(cond AS INT)`,复杂逻辑走预计算列)**)+ **表达式 5 行采样试算**(`previews`:推断类型+样例值,错误表达式在 dry_run 即暴露,不再静默生成常量列或半路炸在 apply)
+- **console dataset-detail「字段变更」面板**:加列/改类型/删列三操作;容器表经 `?table=` 自动寻址;预览校验(红 issues/绿样例)→ 二次确认应用 → schema 局部刷新;删列 danger 确认;方言防呆提示内嵌
+- 验收:21 API 测试全过 + playwright 真浏览器全链(lint 拦截→试算样例→应用→schema 刷新→drop 清理,零 pageerror,截图 /tmp/w3-val/migrate-panel.png)
 
 > 平台侧 W1-W4 全部合入;发版闸门(W2 #6 硬 DoD:业务侧 ≥万行数据集
 > 摄入→契约→标注→评估→发布 全链出第一个 active 发布)**已严格口径达成**——

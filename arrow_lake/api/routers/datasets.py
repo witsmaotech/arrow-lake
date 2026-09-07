@@ -48,6 +48,7 @@ from arrow_lake.api.models.dataset import (
     PresignRequest,
     PresignResponse,
     SchemaMigrationIssue,
+    SchemaMigrationPreview,
     SchemaMigrationRequest,
     SchemaMigrationResponse,
     UploadedBlob,
@@ -1034,7 +1035,11 @@ async def migrate_schema(
     """
     import pyarrow as pa
 
-    from arrow_lake.ingest.schema import SchemaCompatibilityChecker, SchemaMigrationError
+    from arrow_lake.ingest.schema import (
+        SchemaCompatibilityChecker,
+        SchemaMigrationError,
+        lint_lance_expr,
+    )
 
     # Get current schema
     catalog = await run_sync(lake.catalog, timeout=_ADMIN_TIMEOUT, label="catalog")
@@ -1068,6 +1073,7 @@ async def migrate_schema(
         if action.operation == "add_column":
             col_type = _TYPE_MAP.get(action.new_type, pa.string())
             issues = checker.check_add_column(action.column_name, col_type)
+            issues.extend(lint_lance_expr(action.sql_expr))
         elif action.operation == "alter_column":
             new_type = _TYPE_MAP.get(action.new_type)
             if new_type is None:
@@ -1095,11 +1101,46 @@ async def migrate_schema(
         )
 
     if body.dry_run:
+        async def _preview_add_column(idx: int, action) -> SchemaMigrationPreview:
+            """Evaluate the add_column expression on a 5-row sample (v1.11.6).
+
+            Dynamic dialect check: a wrong expression fails here (or shows its
+            constant-column sample values) instead of surfacing at apply time.
+            """
+            def _eval() -> SchemaMigrationPreview:
+                pv = SchemaMigrationPreview(
+                    action_index=idx,
+                    column_name=action.column_name,
+                    sql_expr=action.sql_expr,
+                )
+                try:
+                    lt = lake._storage.open_dataset(name, table=table)
+                    sample = lt.to_lance().to_table(
+                        columns={action.column_name: action.sql_expr}, limit=5,
+                    )
+                    col = sample.column(0)
+                    pv.inferred_type = str(col.type)
+                    pv.sample_values = [
+                        "<NULL>" if v is None else str(v)[:60] for v in col.to_pylist()
+                    ]
+                except Exception as exc:  # preview is best-effort diagnostics
+                    pv.ok = False
+                    pv.error = str(exc)[:300]
+                return pv
+
+            return await run_sync(_eval, timeout=_ADMIN_TIMEOUT, label="migrate_preview")
+
+        previews = [
+            await _preview_add_column(i, action)
+            for i, action in enumerate(body.actions)
+            if action.operation == "add_column" and action.sql_expr.strip()
+        ]
         return SchemaMigrationResponse(
             success=True,
             dry_run=True,
             issues=[],
             applied_count=0,
+            previews=previews,
         )
 
     # Apply migration

@@ -114,6 +114,40 @@ class SchemaMigrationError(Exception):
     """Raised when a schema migration is incompatible with existing data."""
 
 
+def lint_lance_expr(sql_expr: str) -> list[str]:
+    """Static lint for Lance ``add_columns`` SQL expressions (v1.11.6).
+
+    Catches the dialect traps recorded in v1.11.0.2: Lance SQL does not
+    support TRIM()/SUBSTR(), and double quotes are string literals (not
+    identifiers), so ``"col"`` silently materialises a constant column.
+    """
+    import re
+
+    issues: list[str] = []
+    if not sql_expr.strip():
+        return issues
+    lowered = sql_expr.casefold()
+    for fn in ("trim", "substr"):
+        if re.search(rf"\b{fn}\s*\(", lowered):
+            issues.append(
+                f"Lance SQL does not support {fn.upper()}(); "
+                "use regexp_replace(col, pattern, replacement, 'g')"
+            )
+    if re.search(r'"[A-Za-z_][A-Za-z0-9_]*"', sql_expr):
+        issues.append(
+            "Double quotes are string literals in Lance SQL, not identifiers "
+            "(this silently creates a constant column); use bare identifiers "
+            "and single-quoted strings"
+        )
+    if re.search(r"\bcase\b", lowered):
+        issues.append(
+            "Lance SQL does not support CASE expressions (live-probed 2026-09-07); "
+            "use CAST(condition AS INT) for single flags, or precomputed columns "
+            "(DuckDB → add_columns_table) for complex logic"
+        )
+    return issues
+
+
 # Narrowing pairs: (check_source, check_target) → warning
 _NARROWING_CHECKS: list[tuple[Any, Any]] = [
     # (is_source_type, is_target_type)

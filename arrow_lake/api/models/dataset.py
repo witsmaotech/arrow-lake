@@ -513,12 +513,30 @@ class SchemaMigrationIssue(BaseModel):
     messages: list[str]
 
 
+class SchemaMigrationPreview(BaseModel):
+    """Dry-run preview of an add_column expression (v1.11.6).
+
+    Evaluates the SQL expression against a small sample so dialect traps
+    (double-quote literals, unsupported functions) surface as visible sample
+    values or errors instead of silently materialising a constant column.
+    """
+
+    action_index: int
+    column_name: str
+    sql_expr: str
+    ok: bool = True
+    inferred_type: str = ""
+    sample_values: list[str] = Field(default_factory=list)
+    error: str = ""
+
+
 class SchemaMigrationResponse(BaseModel):
     """Response for schema migration."""
 
     success: bool = True
     dry_run: bool = True
     issues: list[SchemaMigrationIssue] = Field(default_factory=list)
+    previews: list[SchemaMigrationPreview] = Field(default_factory=list)
     applied_count: int = 0
 
 

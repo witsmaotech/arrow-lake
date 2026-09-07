@@ -55,7 +55,7 @@
   <div class="tab-panel active" id="tab-overview" role="tabpanel">
     <div class="panel"><div class="panel-b" id="body"></div></div>
     <div class="panel flush" id="schemaPanel" style="margin-top:var(--s4);display:none">
-      <div class="panel-h"><i class="placeholder" data-ic="code"></i><h3>Schema(字段)</h3><span class="sub" id="schemaMeta">—</span></div>
+      <div class="panel-h"><i class="placeholder" data-ic="code"></i><h3>Schema(字段)</h3><span class="sub" id="schemaMeta">—</span><button class="btn btn-ghost btn-sm" id="migrateBtn" style="margin-left:auto" type="button">字段变更</button></div>
       <div class="panel-b" id="schema"></div>
     </div>
     <div class="panel flush" id="kgPanel" style="margin-top:var(--s4);display:none">
@@ -322,6 +322,101 @@ if (!ds) {
         $("#schemaPanel").style.display = "none";
       }
     }
+    // 1.6) 字段变更(加列/改类型/删列;容器表经 ?table= 寻址;预览=dry_run 试算样例)
+    const MIG_TYPES = ["int8", "int16", "int32", "int64", "float32", "float64", "string", "binary", "bool"];
+    function migrateDialog() {
+      const overlay = document.createElement("div");
+      overlay.className = "modal-overlay";
+      overlay.innerHTML = `
+        <div class="modal-card" role="dialog" aria-modal="true" style="max-width:580px">
+          <div class="modal-title">字段变更 ${curTable ? `· ${esc(curTable)}` : `· ${esc(ds)}`}</div>
+          <div style="display:flex;gap:8px;margin-top:10px;align-items:center">
+            <select class="input" data-el="op" style="width:132px">
+              <option value="add_column">➕ 加列</option>
+              <option value="alter_column">⇄ 改类型</option>
+              <option value="drop_column">🗑 删列</option>
+            </select>
+            <select class="input" data-el="colsel" style="flex:1"></select>
+          </div>
+          <input class="input" data-el="colname" placeholder="新列名" style="width:100%;margin-top:8px;box-sizing:border-box">
+          <select class="input" data-el="newtype" style="width:130px;margin-top:8px;display:none"></select>
+          <textarea class="input" data-el="expr" rows="3" placeholder="SQL 表达式,例:upper(district) · CAST(danger_level = '重大' AS INT) · regexp_replace(col, '\\s+', ' ', 'g');空占位列用 CAST(0 AS INT)" style="width:100%;margin-top:8px;box-sizing:border-box;font-family:monospace;font-size:.82rem"></textarea>
+          <div class="muted" style="font-size:.75rem;margin-top:6px;line-height:1.6">
+            Lance 表达式方言:列名用<b>裸标识符</b>——双引号是字符串字面量(会静默生成常量列!);字符串值用单引号;不支持 TRIM/SUBSTR/<b>CASE</b>(用 <code>regexp_replace(col, pat, rep, 'g')</code> / 单条件 <code>CAST(cond AS INT)</code>,复杂逻辑走预计算列);「预览校验」先看 5 行样例再应用。
+          </div>
+          <div data-el="result" style="margin-top:8px;font-size:.8rem"></div>
+          <div class="modal-actions">
+            <button class="btn btn-ghost btn-sm" data-act="cancel" type="button">取消</button>
+            <button class="btn btn-ghost btn-sm" data-act="dry" type="button">预览校验</button>
+            <button class="btn btn-primary btn-sm" data-act="apply" type="button">确认应用</button>
+          </div>
+        </div>`;
+      document.body.appendChild(overlay);
+      requestAnimationFrame(() => overlay.classList.add("show"));
+      const q = (s) => overlay.querySelector(`[data-el="${s}"]`);
+      const op = q("op"), colsel = q("colsel"), colname = q("colname"), newtype = q("newtype"), expr = q("expr"), result = q("result");
+      newtype.innerHTML = MIG_TYPES.map((t) => `<option>${t}</option>`).join("");
+      const refresh = () => {
+        const o = op.value;
+        colsel.style.display = o === "add_column" ? "none" : "";
+        colname.style.display = o === "add_column" ? "" : "none";
+        newtype.style.display = o === "alter_column" ? "" : "none";
+        expr.style.display = o === "add_column" ? "" : "none";
+        if (o !== "add_column") colsel.innerHTML = schemaFields.map((f) => `<option>${esc(f.name)}</option>`).join("");
+      };
+      op.addEventListener("change", refresh);
+      refresh();
+      const close = () => {
+        overlay.classList.remove("show");
+        setTimeout(() => overlay.remove(), 180);
+      };
+      const buildAction = () => {
+        const a = { operation: op.value, column_name: op.value === "add_column" ? colname.value.trim() : colsel.value };
+        if (op.value === "add_column") a.sql_expr = expr.value.trim();
+        if (op.value === "alter_column") a.new_type = newtype.value;
+        return a;
+      };
+      const renderResult = (r) => {
+        if (!r) { result.innerHTML = ""; return; }
+        const iss = (r.issues || []).map((i) => `<div style="color:#e5484d">✗ ${esc(i.column_name)}:${i.messages.map(esc).join(";")}</div>`).join("");
+        const pv = (r.previews || []).map((p) => p.ok
+          ? `<div style="color:#30a46c">✓ ${esc(p.column_name)} → ${esc(p.inferred_type)} · 样例:${p.sample_values.map(esc).join(" | ")}</div>`
+          : `<div style="color:#e5484d">✗ ${esc(p.column_name)} 试算失败:${esc(p.error)}</div>`).join("");
+        result.innerHTML = iss + pv || '<span class="muted">(无结果)</span>';
+      };
+      overlay.addEventListener("click", async (e) => {
+        if (e.target === overlay) return close();
+        const act = e.target.closest("[data-act]")?.dataset.act;
+        if (!act) return;
+        if (act === "cancel") return close();
+        const action = buildAction();
+        if (!action.column_name) { toast("请填写列名", "bad"); return; }
+        if (action.operation === "add_column" && !action.sql_expr) { toast("加列需要 SQL 表达式(空占位列用 CAST(0 AS INT))", "bad", 4000); return; }
+        const url = `/datasets/${encodeURIComponent(ds)}/schema/migrate${curTable ? `?table=${encodeURIComponent(curTable)}` : ""}`;
+        try {
+          if (act === "dry") {
+            renderResult(null);
+            const r = await request("POST", url, { body: { actions: [action], dry_run: true } });
+            renderResult(r);
+            if (r.success) toast("校验通过(未应用)", "ok", 2500);
+          } else if (act === "apply") {
+            const danger = action.operation === "drop_column";
+            if (!(await confirmDialog({
+              title: danger ? "删除字段" : "应用字段变更",
+              message: danger ? `确认删除 ${action.column_name}?该列数据将被移除。` : `确认对 ${curTable || ds} 应用字段 ${action.column_name} 的变更?`,
+              danger, confirmText: danger ? "删除" : "应用",
+            }))) return;
+            const r = await request("POST", url, { body: { actions: [action], dry_run: false } });
+            if (r.success) { toast(`已应用 ${r.applied_count} 项变更`, "ok"); close(); loadSchema(); }
+            else renderResult(r);
+          }
+        } catch (err) {
+          renderResult({ issues: [{ column_name: action.column_name, messages: [err?.detail || err?.message || String(err)] }] });
+        }
+      });
+    }
+    $("#migrateBtn")?.addEventListener("click", migrateDialog);
+
     // 容器表 pills:点选切换当前表(schema/预览随之刷新)
     function renderCtrTables() {
       const host = $("#ctrTables");

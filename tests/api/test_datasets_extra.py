@@ -317,6 +317,65 @@ async def test_schema_migrate_dataset_not_found(client: AsyncClient, mock_lake: 
 
 
 @pytest.mark.asyncio
+async def test_schema_migrate_dry_run_lint_traps(client: AsyncClient, mock_lake: MagicMock) -> None:
+    """v1.11.6: dry_run statically lints Lance dialect traps (TRIM + double-quote literal + CASE)."""
+    fake_ds = MagicMock()
+    fake_ds.schema = pa.schema([pa.field("name", pa.string())])
+    mock_lake._storage.open_dataset.return_value = fake_ds
+
+    resp = await client.post(
+        "/api/v1/datasets/test/schema/migrate",
+        json={
+            "actions": [{"operation": "add_column", "column_name": "x",
+                         "sql_expr": 'TRIM("name")'}],
+            "dry_run": True,
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["success"] is False
+    msgs = " ".join(body["issues"][0]["messages"])
+    assert "TRIM" in msgs
+    assert "Double quotes" in msgs
+
+    resp = await client.post(
+        "/api/v1/datasets/test/schema/migrate",
+        json={
+            "actions": [{"operation": "add_column", "column_name": "flag",
+                         "sql_expr": "CASE WHEN name = 'a' THEN 1 ELSE 0 END"}],
+            "dry_run": True,
+        },
+    )
+    body = resp.json()
+    assert body["success"] is False
+    assert "CASE" in " ".join(body["issues"][0]["messages"])
+
+
+@pytest.mark.asyncio
+async def test_schema_migrate_dry_run_expression_preview(client: AsyncClient, mock_lake: MagicMock) -> None:
+    """v1.11.6: dry_run samples the add_column expression (values + inferred type)."""
+    fake_lt = MagicMock()
+    fake_lt.schema = pa.schema([pa.field("name", pa.string())])
+    fake_lt.to_lance.return_value.to_table.return_value = pa.table({"shout": ["A", "B"]})
+    mock_lake._storage.open_dataset.return_value = fake_lt
+
+    resp = await client.post(
+        "/api/v1/datasets/test/schema/migrate",
+        json={
+            "actions": [{"operation": "add_column", "column_name": "shout",
+                         "sql_expr": "upper(name)"}],
+            "dry_run": True,
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["success"] is True
+    assert body["previews"][0]["ok"] is True
+    assert body["previews"][0]["sample_values"] == ["A", "B"]
+    assert "string" in body["previews"][0]["inferred_type"]
+
+
+@pytest.mark.asyncio
 async def test_schema_migrate_unknown_operation(client: AsyncClient, mock_lake: MagicMock) -> None:
     fake_ds = MagicMock()
     fake_ds.schema = pa.schema([pa.field("name", pa.string())])
