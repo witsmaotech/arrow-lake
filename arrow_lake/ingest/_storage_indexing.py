@@ -171,6 +171,15 @@ class StorageIndexingMixin:
         try:
             table.create_scalar_index(column, **kwargs)
         except (ValueError, RuntimeError, OSError) as exc:
+            # lancedb 0.36 lags lance core on newer scalar index types
+            # (e.g. NGRAM, live-probed 2026-09-08): retry via the lance
+            # dataset API before giving up (v1.11.6).
+            if "Unknown index type" in str(exc):
+                try:
+                    table.to_lance().create_scalar_index(column, **kwargs)
+                    return
+                except (ValueError, RuntimeError, OSError):
+                    pass  # fall through and surface the original error
             raise StorageError(
                 error_code=ErrorCode.SCALAR_INDEX_FAILED,
                 message=(

@@ -183,25 +183,48 @@ class _LakeAdminMixin:
         """List indexes on a dataset as [{name, type, columns}].
 
         Normalizes Lance's IndexMetadata (dict or object form) for the API.
+        v1.11.6: lancedb 0.36 lags lance core on newer index types (NGRAM
+        etc.) — merge the lance-core view so fallback-created indexes stay
+        visible and droppable.
         """
         ds = self._get_storage().open_dataset(dataset_name)
+        idx_list = list(ds.list_indices() or [])
+        try:
+            core = ds.to_lance().list_indices() or []
+            seen = {
+                (i.get("name") if isinstance(i, dict) else getattr(i, "name", None))
+                for i in idx_list
+            }
+            for idx in core:
+                n = idx.get("name") if isinstance(idx, dict) else getattr(idx, "name", None)
+                if n and n not in seen:
+                    idx_list.append(idx)
+        except Exception:  # noqa: BLE001 — listing stays on the lancedb view
+            pass
         out: list[dict[str, Any]] = []
-        for idx in ds.list_indices() or []:
+        for idx in idx_list:
             if isinstance(idx, dict):
                 name = idx.get("name")
                 t = idx.get("type") or idx.get("index_type")
-                cols = idx.get("columns") or []
+                cols = idx.get("columns") or idx.get("fields") or []
             else:
                 name = getattr(idx, "name", None)
                 t = getattr(idx, "type", None) or getattr(idx, "index_type", None)
-                cols = getattr(idx, "columns", None) or []
+                cols = getattr(idx, "columns", None) or getattr(idx, "fields", None) or []
             out.append({"name": name, "type": str(t or ""), "columns": list(cols)})
         return out
 
     def drop_index(self, dataset_name: str, index_name: str) -> None:
-        """Drop an index by name (LanceTable.drop_index)."""
+        """Drop an index by name (LanceTable.drop_index).
+
+        v1.11.6: falls back to the lance-core API when lancedb cannot see
+        the index (NGRAM etc. created via the storage fallback path).
+        """
         ds = self._get_storage().open_dataset(dataset_name)
-        ds.drop_index(index_name)
+        try:
+            ds.drop_index(index_name)
+        except Exception:  # noqa: BLE001 — retry via lance core
+            ds.to_lance().drop_index(index_name)
 
     def list_datasets(self) -> list[str]:
         """List all dataset names.

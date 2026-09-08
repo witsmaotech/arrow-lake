@@ -6,9 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [1.11.6-未发版] — 字段与多模态类型扩展(进行中)
+## [1.11.6] — 字段与多模态类型扩展 · 2026-09-08
 
 > 2026-09-08 裁决:版本主体 = 字段变更批 + 多模态字段类型扩展(底层 Lance 多模态能力转正进 schema 面);原「真实数据规模化/生产运营」W1-W4 规划冻结为搁置轨道(规划文档 §九,重启开新版本活段)。规划:docs_offline/v1.11.6-version-plan.md。
+
+### 追加批:Lance 索引面扩展(2026-09-08,技能重建对照产出)
+- **console dataset-detail「索引管理」面板**:现有索引列表(名称/类型/列+删除);新建分组——标量 BTREE(等值/范围)/BITMAP(低基数枚举)/ZONEMAP(轻量剪枝)/**NGRAM(子串/LIKE/正则)** + 向量 IVF 家族(IVF_PQ 默认/IVF_SQ/IVF_HNSW_SQ/**IVF_RQ=RabitQ 1-bit 超压缩**/IVF_HNSW_PQ/IVF_FLAT);列下拉源自 schema、向量参数留空自动;容器表暂不开放(REST 未接 ?table=);REST `/index` 全链早已就绪(v1.7.1),本批补的是产品入口与 lancedb 滞后适配
+- **lancedb 0.36 滞后双回落**(lance 11 实测):`create_scalar_index` 对 "Unknown index type"(NGRAM)回落 lance core API;`list_indices` 合并 lance core 视角(fields→columns 映射);`drop_index` 回落——core 建的索引可见可删
+- **实测修正三则**:RTREE 需 GeoArrow geometry 列(单 longitude/latitude 列不可直建,登记数据建模课题);lance core 无裸 HNSW(仅 IVF 系;<256 行 brute-force 是设计行为,「小集 HNSW」取消);**Zvec 评估前提过时**(lance 11 已有 IVF_RQ/RabitQ,原「Lance 缺 RaBitQ」不再成立,DiskANN 仍缺)
+- 验收:playwright 真浏览器 9 项全过(BITMAP/NGRAM 建成-可见-可删全链零 pageerror);单测 +4(回落路径);受影响面 377 passed 零回归
+
+### W2:前端双模式 UI + 发版(2026-09-08)
+- **console 字段变更面板升级**(dataset-detail migrateDialog):类型下拉**分组化**(标量/时间/字节与大对象/向量 (embedding),optgroup);加列**双模式切换**(🧮 SQL 表达式 ↔ 📦 类型化占位列,占位模式隐藏表达式框、显示类型选择);**vector 选中展开维度输入**(缺维度提交拦截);占位模式提示文案(全 NULL 语义/blobs 2.2 版本要求与 binary 退路/向量走 embed 回填);alter 同享分组下拉
+- **playwright 真浏览器验收 10 项全过**(lpg_danger 实页):表达式默认模式回归/分组下拉/占位文案/vector:768 绿 preview/blob 版本墙红 issue/timestamp 占位 apply→schema 刷新出现/drop 清理/24 列下拉;产品页零 pageerror(截图 /tmp/w2-val/migrate-placeholder.png)
+- **发版**:四段 SOP 走完(21 文件版本对齐+uv build→镜像 1.11.6 build→纯镜像验证→tag 双推)
 
 ### 多模态字段类型扩展 W1:后端类型体系(2026-09-08)
 - **类型语法**:`resolve_lance_type`(`ingest/schema.py`)——migrate 类型面从 9 种标量扩到全语法:标量 + `large_string`/`large_binary`/`timestamp[us]`/`date32` + **`vector:<dim>`**(fixed_size_list<float32>,与 embed 管线对齐;Lance SQL 表达式产不出向量列——占位+回填是唯一正路)+ **`blob`**(lance.blob.v2 大对象列,图片/视频原始字节);未知类型全路径 fail-closed(修掉 add 分支静默回落 string)

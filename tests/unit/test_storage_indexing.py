@@ -558,3 +558,43 @@ class TestCreateFacetIndexes:
         result = mixin.create_facet_indexes("my_ds")
 
         assert set(result.keys()) == {"modality", "source", "doc_type", "created_at", "quality_score", "chunk_index", "document_id"}  # chunk_index/document_id joined the facet defaults
+
+
+class TestCreateScalarIndexLanceFallback:
+    """v1.11.6: lancedb "Unknown index type" falls back to the lance core API."""
+
+    def test_lancedb_success_no_fallback(self) -> None:
+        mixin = _make_mixin()
+        table = MagicMock()
+        mixin._open_lance.return_value = table
+        mixin.create_scalar_index("ds", "col", index_type="BITMAP")
+        table.create_scalar_index.assert_called_once_with("col", index_type="BITMAP", replace=True)
+        table.to_lance.assert_not_called()
+
+    def test_unknown_type_falls_back_to_lance(self) -> None:
+        mixin = _make_mixin()
+        table = MagicMock()
+        table.create_scalar_index.side_effect = RuntimeError("Unknown index type NGRAM")
+        mixin._open_lance.return_value = table
+        mixin.create_scalar_index("ds", "col", index_type="NGRAM")
+        table.to_lance.return_value.create_scalar_index.assert_called_once_with(
+            "col", index_type="NGRAM", replace=True,
+        )
+
+    def test_fallback_failure_surfaces_original_error(self) -> None:
+        mixin = _make_mixin()
+        table = MagicMock()
+        table.create_scalar_index.side_effect = ValueError("Unknown index type NGRAM")
+        table.to_lance.return_value.create_scalar_index.side_effect = RuntimeError("boom")
+        mixin._open_lance.return_value = table
+        with pytest.raises(StorageError, match="Unknown index type NGRAM"):
+            mixin.create_scalar_index("ds", "col", index_type="NGRAM")
+
+    def test_other_errors_do_not_fall_back(self) -> None:
+        mixin = _make_mixin()
+        table = MagicMock()
+        table.create_scalar_index.side_effect = RuntimeError("column not found")
+        mixin._open_lance.return_value = table
+        with pytest.raises(StorageError, match="column not found"):
+            mixin.create_scalar_index("ds", "col")
+        table.to_lance.assert_not_called()

@@ -55,7 +55,7 @@
   <div class="tab-panel active" id="tab-overview" role="tabpanel">
     <div class="panel"><div class="panel-b" id="body"></div></div>
     <div class="panel flush" id="schemaPanel" style="margin-top:var(--s4);display:none">
-      <div class="panel-h"><i class="placeholder" data-ic="code"></i><h3>Schema(字段)</h3><span class="sub" id="schemaMeta">—</span><button class="btn btn-ghost btn-sm" id="migrateBtn" style="margin-left:auto" type="button">字段变更</button></div>
+      <div class="panel-h"><i class="placeholder" data-ic="code"></i><h3>Schema(字段)</h3><span class="sub" id="schemaMeta">—</span><button class="btn btn-ghost btn-sm" id="indexBtn" style="margin-left:auto" type="button">索引管理</button><button class="btn btn-ghost btn-sm" id="migrateBtn" style="margin-left:0" type="button">字段变更</button></div>
       <div class="panel-b" id="schema"></div>
     </div>
     <div class="panel flush" id="kgPanel" style="margin-top:var(--s4);display:none">
@@ -323,7 +323,15 @@ if (!ds) {
       }
     }
     // 1.6) 字段变更(加列/改类型/删列;容器表经 ?table= 寻址;预览=dry_run 试算样例)
-    const MIG_TYPES = ["int8", "int16", "int32", "int64", "float32", "float64", "string", "binary", "bool"];
+    // v1.11.6:类型分组(标量/时间/字节与大对象/向量)+ 加列双模式(表达式 ↔ 类型化占位列)
+    const MIG_TYPE_GROUPS = [
+      ["标量", ["int8", "int16", "int32", "int64", "float32", "float64", "string", "bool"]],
+      ["时间", ["timestamp", "date32"]],
+      ["字节与大对象", ["binary", "large_binary", "blob"]],
+      ["向量 (embedding)", ["vector"]],
+    ];
+    const MIG_HINT_EXPR = `Lance 表达式方言:列名用<b>裸标识符</b>——双引号是字符串字面量(会静默生成常量列!);字符串值用单引号;不支持 TRIM/SUBSTR/<b>CASE</b>(用 <code>regexp_replace(col, pat, rep, 'g')</code> / 单条件 <code>CAST(cond AS INT)</code>,复杂逻辑走预计算列);「预览校验」先看 5 行样例再应用。`;
+    const MIG_HINT_PLACEHOLDER = `类型化占位列:建出<b>全 NULL</b> 的指定类型列,数据由后续回填写入——向量列建好后走 embedding 回填(摄取/重建索引时自动),图片/视频字节走二进制回填。<b>blob</b> 为大对象专用列(原始字节不进行存扫描),要求表数据文件版本 ≥2.2,存量表(默认 2.1)会被「预览校验」拦下,可退用 binary 内嵌。`;
     function migrateDialog() {
       const overlay = document.createElement("div");
       overlay.className = "modal-overlay";
@@ -339,11 +347,16 @@ if (!ds) {
             <select class="input" data-el="colsel" style="flex:1"></select>
           </div>
           <input class="input" data-el="colname" placeholder="新列名" style="width:100%;margin-top:8px;box-sizing:border-box">
-          <select class="input" data-el="newtype" style="width:130px;margin-top:8px;display:none"></select>
+          <select class="input" data-el="addmode" style="width:170px;margin-top:8px;display:none">
+            <option value="expr">🧮 SQL 表达式</option>
+            <option value="type">📦 类型化占位列</option>
+          </select>
           <textarea class="input" data-el="expr" rows="3" placeholder="SQL 表达式,例:upper(district) · CAST(danger_level = '重大' AS INT) · regexp_replace(col, '\\s+', ' ', 'g');空占位列用 CAST(0 AS INT)" style="width:100%;margin-top:8px;box-sizing:border-box;font-family:monospace;font-size:.82rem"></textarea>
-          <div class="muted" style="font-size:.75rem;margin-top:6px;line-height:1.6">
-            Lance 表达式方言:列名用<b>裸标识符</b>——双引号是字符串字面量(会静默生成常量列!);字符串值用单引号;不支持 TRIM/SUBSTR/<b>CASE</b>(用 <code>regexp_replace(col, pat, rep, 'g')</code> / 单条件 <code>CAST(cond AS INT)</code>,复杂逻辑走预计算列);「预览校验」先看 5 行样例再应用。
+          <div style="display:flex;gap:8px;margin-top:8px;align-items:center">
+            <select class="input" data-el="newtype" style="width:190px;display:none"></select>
+            <input class="input" data-el="vdim" type="number" min="1" max="65536" placeholder="维度" style="width:96px;display:none;box-sizing:border-box">
           </div>
+          <div class="muted" data-el="hint" style="font-size:.75rem;margin-top:6px;line-height:1.6"></div>
           <div data-el="result" style="margin-top:8px;font-size:.8rem"></div>
           <div class="modal-actions">
             <button class="btn btn-ghost btn-sm" data-act="cancel" type="button">取消</button>
@@ -354,17 +367,27 @@ if (!ds) {
       document.body.appendChild(overlay);
       requestAnimationFrame(() => overlay.classList.add("show"));
       const q = (s) => overlay.querySelector(`[data-el="${s}"]`);
-      const op = q("op"), colsel = q("colsel"), colname = q("colname"), newtype = q("newtype"), expr = q("expr"), result = q("result");
-      newtype.innerHTML = MIG_TYPES.map((t) => `<option>${t}</option>`).join("");
+      const op = q("op"), colsel = q("colsel"), colname = q("colname"), addmode = q("addmode"),
+            newtype = q("newtype"), vdim = q("vdim"), expr = q("expr"), result = q("result"), hint = q("hint");
+      newtype.innerHTML = MIG_TYPE_GROUPS.map(([g, opts]) =>
+        `<optgroup label="${esc(g)}">${opts.map((t) => `<option value="${t}">${t === "vector" ? "vector:&lt;维度&gt;" : t}</option>`).join("")}</optgroup>`
+      ).join("");
+      const typeSpec = () => (newtype.value === "vector" ? `vector:${vdim.value || ""}` : newtype.value);
       const refresh = () => {
-        const o = op.value;
-        colsel.style.display = o === "add_column" ? "none" : "";
-        colname.style.display = o === "add_column" ? "" : "none";
-        newtype.style.display = o === "alter_column" ? "" : "none";
-        expr.style.display = o === "add_column" ? "" : "none";
-        if (o !== "add_column") colsel.innerHTML = schemaFields.map((f) => `<option>${esc(f.name)}</option>`).join("");
+        const o = op.value, isAdd = o === "add_column", m = addmode.value;
+        colsel.style.display = isAdd ? "none" : "";
+        colname.style.display = isAdd ? "" : "none";
+        addmode.style.display = isAdd ? "" : "none";
+        expr.style.display = isAdd && m === "expr" ? "" : "none";
+        const showType = !isAdd || (isAdd && m === "type");
+        newtype.style.display = showType ? "" : "none";
+        vdim.style.display = showType && newtype.value === "vector" ? "" : "none";
+        hint.innerHTML = isAdd && m === "expr" ? MIG_HINT_EXPR : (isAdd ? MIG_HINT_PLACEHOLDER : "");
+        if (!isAdd) colsel.innerHTML = schemaFields.map((f) => `<option>${esc(f.name)}</option>`).join("");
       };
       op.addEventListener("change", refresh);
+      addmode.addEventListener("change", refresh);
+      newtype.addEventListener("change", refresh);
       refresh();
       const close = () => {
         overlay.classList.remove("show");
@@ -372,8 +395,9 @@ if (!ds) {
       };
       const buildAction = () => {
         const a = { operation: op.value, column_name: op.value === "add_column" ? colname.value.trim() : colsel.value };
-        if (op.value === "add_column") a.sql_expr = expr.value.trim();
-        if (op.value === "alter_column") a.new_type = newtype.value;
+        if (op.value === "add_column" && addmode.value === "expr") a.sql_expr = expr.value.trim();
+        if (op.value === "add_column" && addmode.value === "type") a.new_type = typeSpec();
+        if (op.value === "alter_column") a.new_type = typeSpec();
         return a;
       };
       const renderResult = (r) => {
@@ -391,7 +415,8 @@ if (!ds) {
         if (act === "cancel") return close();
         const action = buildAction();
         if (!action.column_name) { toast("请填写列名", "bad"); return; }
-        if (action.operation === "add_column" && !action.sql_expr) { toast("加列需要 SQL 表达式(空占位列用 CAST(0 AS INT))", "bad", 4000); return; }
+        if (action.operation === "add_column" && addmode.value === "expr" && !action.sql_expr) { toast("表达式模式需要 SQL 表达式(空占位列请切「类型化占位列」或用 CAST(0 AS INT))", "bad", 4000); return; }
+        if (action.new_type === "vector:") { toast("请填写向量维度(如 384 / 1024 / 2560)", "bad", 3000); return; }
         const url = `/datasets/${encodeURIComponent(ds)}/schema/migrate${curTable ? `?table=${encodeURIComponent(curTable)}` : ""}`;
         try {
           if (act === "dry") {
@@ -416,6 +441,125 @@ if (!ds) {
       });
     }
     $("#migrateBtn")?.addEventListener("click", migrateDialog);
+
+    // 1.7) 索引管理(v1.11.6:标量 BTREE/BITMAP/ZONEMAP/NGRAM + 向量 IVF 家族;
+    // REST /index 全链早已就绪,此处补 console 入口;容器表暂不开放)
+    const SCALAR_IDX_TYPES = [
+      ["BTREE", "等值/范围(通用)"],
+      ["BITMAP", "低基数枚举(status/区县)"],
+      ["ZONEMAP", "轻量扫描剪枝(有序数值)"],
+      ["NGRAM", "子串/LIKE/正则加速(文本)"],
+    ];
+    const VECTOR_IDX_TYPES = [
+      ["IVF_PQ", "默认,高压缩"],
+      ["IVF_SQ", "均衡精度"],
+      ["IVF_HNSW_SQ", "细搜快,中等压缩"],
+      ["IVF_HNSW_PQ", "HNSW+PQ 组合"],
+      ["IVF_RQ", "RabitQ 1-bit 超压缩(超大规模)"],
+      ["IVF_FLAT", "簇内精确,无压缩"],
+    ];
+    async function indexDialog() {
+      if (curTable) { toast("索引管理暂仅支持普通数据集(容器表索引请走 CLI/API)", "bad", 4000); return; }
+      const overlay = document.createElement("div");
+      overlay.className = "modal-overlay";
+      overlay.innerHTML = `
+        <div class="modal-card" role="dialog" aria-modal="true" style="max-width:600px">
+          <div class="modal-title">索引管理 · ${esc(ds)}</div>
+          <div data-el="list" style="margin-top:8px;font-size:.8rem;max-height:180px;overflow:auto"></div>
+          <div style="border-top:1px solid var(--line);margin-top:10px;padding-top:10px">
+            <div style="font-size:.8rem;font-weight:600;margin-bottom:6px">新建索引</div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <select class="input" data-el="kind" style="width:92px">
+                <option value="scalar">标量</option>
+                <option value="vector">向量</option>
+              </select>
+              <select class="input" data-el="itype" style="flex:1"></select>
+              <select class="input" data-el="col" style="flex:1"></select>
+            </div>
+            <div style="display:flex;gap:8px;margin-top:8px;align-items:center">
+              <select class="input" data-el="metric" style="width:110px;display:none">
+                <option value="cosine">cosine</option><option value="L2">L2</option>
+              </select>
+              <input class="input" data-el="npart" type="number" placeholder="partitions(空=自动)" style="flex:1;display:none;box-sizing:border-box">
+              <input class="input" data-el="nsub" type="number" placeholder="sub_vectors(空=自动)" style="flex:1;display:none;box-sizing:border-box">
+            </div>
+            <div class="muted" style="font-size:.75rem;margin-top:6px;line-height:1.6">
+              标量索引加速查询的 where 过滤(NGRAM 服务子串/LIKE);向量索引需 fixed_size_list 列(≥256 行才建 IVF);RTREE 空间索引需 GeoArrow 几何列,本版未开放。
+            </div>
+          </div>
+          <div data-el="result" style="margin-top:8px;font-size:.8rem"></div>
+          <div class="modal-actions">
+            <button class="btn btn-ghost btn-sm" data-act="cancel" type="button">关闭</button>
+            <button class="btn btn-primary btn-sm" data-act="create" type="button">创建索引</button>
+          </div>
+        </div>`;
+      document.body.appendChild(overlay);
+      requestAnimationFrame(() => overlay.classList.add("show"));
+      const q = (s) => overlay.querySelector(`[data-el="${s}"]`);
+      const kind = q("kind"), itype = q("itype"), col = q("col"), metric = q("metric"),
+            npart = q("npart"), nsub = q("nsub"), list = q("list"), result = q("result");
+      const vecCols = () => schemaFields.filter((f) => (f.type || "").includes("fixed_size_list"));
+      const refresh = () => {
+        const groups = kind.value === "vector" ? VECTOR_IDX_TYPES : SCALAR_IDX_TYPES;
+        itype.innerHTML = groups.map(([v, l]) => `<option value="${v}">${v} · ${l}</option>`).join("");
+        const isVec = kind.value === "vector";
+        metric.style.display = npart.style.display = nsub.style.display = isVec ? "" : "none";
+        col.innerHTML = isVec
+          ? (vecCols().length
+              ? vecCols().map((f) => `<option>${esc(f.name)}</option>`).join("")
+              : `<option value="">(无向量列)</option>`)
+          : schemaFields.map((f) => `<option>${esc(f.name)}</option>`).join("");
+      };
+      kind.addEventListener("change", refresh);
+      refresh();
+      const loadList = async () => {
+        try {
+          const r = await request("GET", `/datasets/${encodeURIComponent(ds)}/index`);
+          list.innerHTML = (r.indices || []).length
+            ? r.indices.map((i) => `<div style="display:flex;gap:8px;align-items:center;padding:3px 0">
+                <span class="mono" style="flex:1">${esc(i.name || "—")}</span>
+                <span class="tag info" style="font-size:.68rem">${esc(i.type || "?")}</span>
+                <span class="muted" style="flex:1;text-align:right">${(i.columns || []).map(esc).join(", ")}</span>
+                <button class="btn btn-ghost btn-sm" data-del="${esc(i.name || "")}" style="color:var(--danger)" type="button">删</button>
+              </div>`).join("")
+            : '<span class="muted">(暂无索引)</span>';
+        } catch (e) {
+          list.innerHTML = `<span class="muted">索引列表加载失败:${esc(e?.detail || e?.message || e)}</span>`;
+        }
+      };
+      loadList();
+      const close = () => { overlay.classList.remove("show"); setTimeout(() => overlay.remove(), 180); };
+      overlay.addEventListener("click", async (e) => {
+        if (e.target === overlay) return close();
+        const del = e.target.closest("[data-del]")?.dataset.del;
+        if (del) {
+          if (!(await confirmDialog({ title: "删除索引", message: `确认删除索引 ${del}?`, danger: true, confirmText: "删除" }))) return;
+          try {
+            await request("DELETE", `/datasets/${encodeURIComponent(ds)}/index/${encodeURIComponent(del)}`);
+            toast(`已删除 ${del}`, "ok"); loadList();
+          } catch (err) { result.innerHTML = `<span style="color:#e5484d">✗ ${esc(err?.detail || err?.message || err)}</span>`; }
+          return;
+        }
+        const act = e.target.closest("[data-act]")?.dataset.act;
+        if (!act || act === "cancel") return close();
+        if (kind.value === "vector" && !col.value) { toast("该数据集无向量列(fixed_size_list)", "bad", 3500); return; }
+        result.innerHTML = "";
+        try {
+          if (kind.value === "scalar") {
+            await request("POST", `/datasets/${encodeURIComponent(ds)}/index/scalar`, { body: { column: col.value, index_type: itype.value } });
+          } else {
+            const body = { vector_column: col.value, index_type: itype.value, metric: metric.value };
+            if (npart.value) body.num_partitions = parseInt(npart.value, 10);
+            if (nsub.value) body.num_sub_vectors = parseInt(nsub.value, 10);
+            await request("POST", `/datasets/${encodeURIComponent(ds)}/index/vector`, { body });
+          }
+          toast(`已创建 ${itype.value} @ ${col.value}`, "ok"); loadList();
+        } catch (err) {
+          result.innerHTML = `<span style="color:#e5484d">✗ ${esc(err?.detail || err?.message || err)}</span>`;
+        }
+      });
+    }
+    $("#indexBtn")?.addEventListener("click", indexDialog);
 
     // 容器表 pills:点选切换当前表(schema/预览随之刷新)
     function renderCtrTables() {
