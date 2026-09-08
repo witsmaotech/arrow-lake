@@ -9,6 +9,7 @@ from arrow_lake.ingest.schema import (
     SchemaCompatibilityChecker,
     SchemaMigrationError,
     UNIFIED_SCHEMA,
+    resolve_lance_type,
 )
 
 
@@ -134,3 +135,50 @@ class TestSchemaMigrationError:
 
     def test_exception_is_exception(self) -> None:
         assert issubclass(SchemaMigrationError, Exception)
+
+
+class TestStringToBinaryAlter:
+    """v1.11.6: text → raw bytes alters column semantics and is rejected."""
+
+    def test_string_to_binary_rejected(self) -> None:
+        checker = SchemaCompatibilityChecker(pa.schema([pa.field("s", pa.string())]))
+        issues = checker.check_alter_column("s", pa.binary())
+        assert any("raw bytes" in msg for msg in issues)
+
+    def test_large_string_to_large_binary_rejected(self) -> None:
+        checker = SchemaCompatibilityChecker(pa.schema([pa.field("s", pa.large_string())]))
+        issues = checker.check_alter_column("s", pa.large_binary())
+        assert any("raw bytes" in msg for msg in issues)
+
+    def test_binary_to_string_not_flagged(self) -> None:
+        checker = SchemaCompatibilityChecker(pa.schema([pa.field("b", pa.binary())]))
+        assert checker.check_alter_column("b", pa.string()) == []
+
+
+class TestResolveLanceType:
+    """v1.11.6: type-spec resolution for migrate (scalars + temporal + vector + blob)."""
+
+    def test_scalar_aliases(self) -> None:
+        assert resolve_lance_type("int32") == (pa.int32(), False)
+        assert resolve_lance_type("STRING") == (pa.string(), False)
+        assert resolve_lance_type("bool") == (pa.bool_(), False)
+
+    def test_temporal_and_large_types(self) -> None:
+        assert resolve_lance_type("timestamp") == (pa.timestamp("us"), False)
+        assert resolve_lance_type("date32") == (pa.date32(), False)
+        assert resolve_lance_type("large_binary") == (pa.large_binary(), False)
+
+    def test_vector_spec(self) -> None:
+        data_type, is_blob = resolve_lance_type("vector:1024")
+        assert data_type == pa.list_(pa.float32(), 1024)
+        assert is_blob is False
+
+    def test_blob_spec(self) -> None:
+        data_type, is_blob = resolve_lance_type("blob")
+        assert is_blob is True
+        assert "blob" in str(data_type).lower()
+
+    @pytest.mark.parametrize("bad", ["vector:0", "vector:abc", "vector:70000", "float16", "", "  "])
+    def test_invalid_specs_fail_closed(self, bad: str) -> None:
+        with pytest.raises(ValueError):
+            resolve_lance_type(bad)

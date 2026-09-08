@@ -148,6 +148,57 @@ def lint_lance_expr(sql_expr: str) -> list[str]:
     return issues
 
 
+# v1.11.6: type specs accepted by schema/migrate (alter_column + typed
+# placeholder add_column). Kept case-insensitive on purpose.
+_SCALAR_TYPE_SPECS: dict[str, pa.DataType] = {
+    "int8": pa.int8(), "int16": pa.int16(), "int32": pa.int32(), "int64": pa.int64(),
+    "float32": pa.float32(), "float64": pa.float64(),
+    "string": pa.string(), "binary": pa.binary(),
+    "large_string": pa.large_string(), "large_binary": pa.large_binary(),
+    "bool": pa.bool_(),
+    "timestamp": pa.timestamp("us"),
+    "date32": pa.date32(),
+}
+
+_BLOB_SPEC = "blob"
+_VECTOR_MAX_DIM = 65536
+
+
+def resolve_lance_type(spec: str) -> tuple[pa.DataType, bool]:
+    """Resolve a type-spec string for schema/migrate (v1.11.6).
+
+    Returns ``(data_type, is_blob)``; raises ``ValueError`` with a readable
+    message on unknown/invalid specs (fail-closed — callers surface the
+    message as a migration issue).
+
+    Supported specs:
+      - scalar aliases (int8..float64, string, binary, bool)
+      - large_string / large_binary, timestamp[us], date32
+      - ``vector:<dim>`` → fixed_size_list<float32>[dim], aligned with the
+        embedding pipeline (Lance SQL cannot produce vector columns —
+        typed placeholder + backfill is the supported path)
+      - ``blob`` → lance.blob.v2 extension type for large objects (raw
+        image/video bytes). Requires table data files at version >= 2.2;
+        callers must gate on ``data_storage_version`` before writing.
+    """
+    s = spec.strip().casefold()
+    if s in _SCALAR_TYPE_SPECS:
+        return _SCALAR_TYPE_SPECS[s], False
+    if s == _BLOB_SPEC:
+        import lance.blob as lb
+
+        return lb.blob_field("_").type, True
+    if s.startswith("vector:"):
+        raw = s.split(":", 1)[1]
+        if not raw.isdigit() or not 1 <= int(raw) <= _VECTOR_MAX_DIM:
+            raise ValueError(
+                f"Invalid vector dimension '{raw}' (use vector:<dim>, 1..{_VECTOR_MAX_DIM})"
+            )
+        return pa.list_(pa.float32(), int(raw)), False
+    known = ", ".join([*_SCALAR_TYPE_SPECS, "vector:<dim>", _BLOB_SPEC])
+    raise ValueError(f"Unknown type '{spec}' (supported: {known})")
+
+
 # Narrowing pairs: (check_source, check_target) → warning
 _NARROWING_CHECKS: list[tuple[Any, Any]] = [
     # (is_source_type, is_target_type)
@@ -248,6 +299,18 @@ class SchemaCompatibilityChecker:
                 issues.append(
                     f"Vector dimension mismatch: {old_type.list_size} → {new_type.list_size}"
                 )
+
+        # v1.11.6: text → raw bytes changes column semantics (OLAP string
+        # functions / FTS stop applying) — reject loudly, point at the
+        # add-a-new-column path instead of an in-place conversion.
+        if (pa.types.is_string(old_type) or pa.types.is_large_string(old_type)) and (
+            pa.types.is_binary(new_type) or pa.types.is_large_binary(new_type)
+        ):
+            issues.append(
+                f"{old_type} → {new_type} changes column semantics (text → raw bytes); "
+                "OLAP string functions and FTS no longer apply — add a new binary "
+                "column instead"
+            )
 
         return issues
 

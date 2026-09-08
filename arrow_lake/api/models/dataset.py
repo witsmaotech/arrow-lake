@@ -494,8 +494,18 @@ class SchemaMigrationAction(BaseModel):
 
     operation: str = Field(description="One of: add_column, alter_column, drop_column")
     column_name: str = Field(description="Column name to add/alter/drop")
-    sql_expr: str = Field(default="", description="SQL expression for add_column")
-    new_type: str = Field(default="", description="PyArrow type string for alter_column (e.g. 'int32')")
+    sql_expr: str = Field(
+        default="",
+        description="SQL expression for add_column (expression mode); mutually "
+        "exclusive with new_type",
+    )
+    new_type: str = Field(
+        default="",
+        description="Type spec for alter_column, or for add_column typed-placeholder "
+        "mode: scalar aliases (int32, string, binary, bool...), timestamp, date32, "
+        "large_binary, 'vector:<dim>' (float32), or 'blob' (requires data files "
+        ">= 2.2)",
+    )
 
 
 class SchemaMigrationRequest(BaseModel):

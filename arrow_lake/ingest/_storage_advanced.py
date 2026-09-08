@@ -204,6 +204,68 @@ class StorageAdvancedMixin:
             ) from exc
         self._record_schema_change(name, "add_columns", {"columns": list(columns.column_names)})
 
+    def add_null_column(
+        self, name: str, column_name: str, data_type: pa.DataType, *,
+        blob: bool = False, table: str | None = None,
+    ) -> None:
+        """Add an all-NULL placeholder column of the given type (v1.11.6).
+
+        Opens the typed-add path for types Lance SQL expressions cannot
+        produce (vector / blob / timestamp): the column is created via the
+        precomputed-columns route and filled by a later backfill (embed
+        pipeline, blob upload). Blob columns additionally require data files
+        at version >= 2.2 (lancedb defaults to 2.1 — older tables must be
+        rewritten or fall back to ``binary``).
+
+        Args:
+            name: Dataset name.
+            column_name: Name of the new column.
+            data_type: Target pyarrow type (from ``resolve_lance_type``).
+            blob: True when ``data_type`` is the lance.blob.v2 extension
+                type — triggers the storage-version gate and builds the
+                column through ``lance.blob.blob_field``.
+            table: Optional table within a container dataset (DR14).
+
+        Raises:
+            StorageError: If dataset not found or the column cannot be added.
+            SchemaMigrationError: If a blob column hits the version wall.
+        """
+        from arrow_lake.ingest.schema import SchemaMigrationError
+
+        self._validate_name(name)
+        self._validate_identifier(column_name, "add_column")
+        try:
+            import lance as lance_lib
+            uri = self.dataset_uri(name, table)
+            ds = lance_lib.dataset(uri, storage_options=self._storage_options)
+            n = ds.count_rows()
+            if blob:
+                import lance.blob as lb
+
+                version = float(str(getattr(ds, "data_storage_version", 0) or 0))
+                if version < 2.2:
+                    raise SchemaMigrationError(
+                        f"blob columns require data files at version >= 2.2 "
+                        f"(dataset '{name}' is at {ds.data_storage_version}); rewrite the "
+                        "dataset with data_storage_version='2.2', or use 'binary' for "
+                        "inline bytes"
+                    )
+                col = pa.Table.from_arrays(
+                    [pa.array([None] * n)],
+                    schema=pa.schema([lb.blob_field(column_name, nullable=True)]),
+                )
+            else:
+                col = pa.table({column_name: pa.array([None] * n, type=data_type)})
+            ds.add_columns(col)
+        except SchemaMigrationError:
+            raise
+        except (OSError, ValueError, RuntimeError) as exc:
+            raise StorageError(
+                error_code=ErrorCode.STORAGE_WRITE_FAILED,
+                message=f"Failed to add placeholder column to '{name}': {exc}",
+            ) from exc
+        self._record_schema_change(name, "add_null_column", {"column": column_name})
+
     def has_column(self, name: str, column_name: str) -> bool:
         """Return True iff ``column_name`` exists in dataset ``name`` (v1.10.2 P1).
 

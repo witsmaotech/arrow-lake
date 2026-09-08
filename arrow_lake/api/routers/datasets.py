@@ -1039,6 +1039,7 @@ async def migrate_schema(
         SchemaCompatibilityChecker,
         SchemaMigrationError,
         lint_lance_expr,
+        resolve_lance_type,
     )
 
     # Get current schema
@@ -1059,27 +1060,77 @@ async def migrate_schema(
     current_schema = ds.schema
     checker = SchemaCompatibilityChecker(current_schema)
 
-    all_issues: list[SchemaMigrationIssue] = []
+    def _resolve(spec: str) -> tuple[pa.DataType | None, bool | None, str | None]:
+        """Spec → (type, is_blob, error) — fail-closed on unknown types."""
+        try:
+            resolved, is_blob = resolve_lance_type(spec)
+            return resolved, is_blob, None
+        except ValueError as exc:
+            return None, None, str(exc)
 
-    # Type mapping for alter_column
-    _TYPE_MAP: dict[str, pa.DataType] = {
-        "int8": pa.int8(), "int16": pa.int16(), "int32": pa.int32(), "int64": pa.int64(),
-        "float32": pa.float32(), "float64": pa.float64(),
-        "string": pa.string(), "binary": pa.binary(), "bool": pa.bool_(),
-    }
+    def _blob_version_issues(column_name: str) -> list[str]:
+        """v1.11.6: blob columns need data files at version >= 2.2 (lancedb
+        defaults to 2.1, so pre-existing tables hit this wall)."""
+        try:
+            lt = ds.to_lance() if hasattr(ds, "to_lance") else ds
+            version = float(str(getattr(lt, "data_storage_version", 0) or 0))
+        except Exception:  # noqa: BLE001 — refuse blob on unverifiable version
+            return [
+                f"Cannot verify storage version for blob column '{column_name}' — "
+                "refusing (blob requires data files >= 2.2)"
+            ]
+        if version < 2.2:
+            return [
+                f"blob columns require data files at version >= 2.2 (dataset "
+                f"'{name}' is at {version}); rewrite with data_storage_version='2.2', "
+                "or use 'binary' for inline bytes"
+            ]
+        return []
+
+    all_issues: list[SchemaMigrationIssue] = []
 
     for i, action in enumerate(body.actions):
         issues: list[str] = []
         if action.operation == "add_column":
-            col_type = _TYPE_MAP.get(action.new_type, pa.string())
-            issues = checker.check_add_column(action.column_name, col_type)
-            issues.extend(lint_lance_expr(action.sql_expr))
-        elif action.operation == "alter_column":
-            new_type = _TYPE_MAP.get(action.new_type)
-            if new_type is None:
-                issues = [f"Unknown type '{action.new_type}'"]
+            # The col_type arg only feeds default-value validation (never set
+            # by this endpoint); the name-collision check is what matters.
+            issues = checker.check_add_column(action.column_name, pa.string())
+            has_expr = bool(action.sql_expr.strip())
+            has_type = bool(action.new_type.strip())
+            if has_expr and has_type:
+                issues.append(
+                    "add_column: provide either sql_expr (expression) or new_type "
+                    "(typed placeholder), not both"
+                )
+            elif has_expr:
+                # Mode A — expression; the type is inferred by Lance SQL and
+                # surfaced by the dry-run sample preview.
+                issues.extend(lint_lance_expr(action.sql_expr))
+            elif has_type:
+                # Mode B — typed placeholder (v1.11.6): opens vector/blob/
+                # timestamp adds that expressions cannot produce. The column
+                # lands all-NULL and is filled by a later backfill.
+                data_type, is_blob, err = _resolve(action.new_type)
+                if err is not None:
+                    issues.append(err)
+                elif is_blob:
+                    issues.extend(_blob_version_issues(action.column_name))
             else:
-                issues = checker.check_alter_column(action.column_name, new_type)
+                issues.append(
+                    "add_column needs a sql_expr (expression) or a new_type "
+                    "(typed placeholder, e.g. 'vector:768' / 'binary' / 'timestamp')"
+                )
+        elif action.operation == "alter_column":
+            data_type, is_blob, err = _resolve(action.new_type)
+            if err is not None:
+                issues = [err]
+            elif is_blob:
+                issues = [
+                    "alter_column to blob is not supported — add a new blob "
+                    "column instead"
+                ]
+            else:
+                issues = checker.check_alter_column(action.column_name, data_type)
         elif action.operation == "drop_column":
             issues = checker.check_drop_column(action.column_name)
         else:
@@ -1130,11 +1181,27 @@ async def migrate_schema(
 
             return await run_sync(_eval, timeout=_ADMIN_TIMEOUT, label="migrate_preview")
 
-        previews = [
-            await _preview_add_column(i, action)
-            for i, action in enumerate(body.actions)
-            if action.operation == "add_column" and action.sql_expr.strip()
-        ]
+        previews = []
+        for i, action in enumerate(body.actions):
+            if action.operation != "add_column":
+                continue
+            if action.sql_expr.strip():
+                previews.append(await _preview_add_column(i, action))
+            elif action.new_type.strip():
+                # Mode B preview — no expression to sample; report the
+                # resolved type and the placeholder semantics instead.
+                data_type, _is_blob, _err = _resolve(action.new_type)
+                if data_type is not None:
+                    previews.append(SchemaMigrationPreview(
+                        action_index=i,
+                        column_name=action.column_name,
+                        sql_expr="(typed placeholder)",
+                        inferred_type=str(data_type),
+                        sample_values=[
+                            "<NULL> — placeholder column; fill via backfill "
+                            "(embed pipeline for vectors, upload for blobs)"
+                        ],
+                    ))
         return SchemaMigrationResponse(
             success=True,
             dry_run=True,
@@ -1148,13 +1215,24 @@ async def migrate_schema(
     for action in body.actions:
         try:
             if action.operation == "add_column":
-                await run_sync(
-                    lake.add_column,
-                    name, action.column_name, action.sql_expr,
-                    timeout=_ADMIN_TIMEOUT, label="add_column", table=table,
-                )
+                if action.sql_expr.strip():
+                    await run_sync(
+                        lake.add_column,
+                        name, action.column_name, action.sql_expr,
+                        timeout=_ADMIN_TIMEOUT, label="add_column", table=table,
+                    )
+                else:
+                    # Typed placeholder (v1.11.6 mode B) — the spec passed
+                    # validation above, so resolution cannot fail here.
+                    data_type, is_blob, _err = _resolve(action.new_type)
+                    await run_sync(
+                        lake.add_null_column,
+                        name, action.column_name, data_type,
+                        timeout=_ADMIN_TIMEOUT, label="add_null_column",
+                        blob=bool(is_blob), table=table,
+                    )
             elif action.operation == "alter_column":
-                new_type = _TYPE_MAP[action.new_type]
+                new_type = _resolve(action.new_type)[0]
                 await run_sync(
                     lake.alter_column,
                     name, action.column_name, new_type,

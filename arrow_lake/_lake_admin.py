@@ -663,6 +663,27 @@ class _LakeAdminMixin:
         """
         self._get_storage().add_column(name, column_name, sql_expr, table=table)
 
+    def add_null_column(
+        self, name: str, column_name: str, data_type: Any, *,
+        blob: bool = False, table: str | None = None,
+    ) -> None:
+        """Add an all-NULL placeholder column of the given type (v1.11.6).
+
+        Companion to ``add_column`` for types Lance SQL expressions cannot
+        produce (vector / blob / timestamp): the column lands via the
+        precomputed-columns route and a later backfill fills it.
+
+        Args:
+            name: Dataset name.
+            column_name: Name of the new column.
+            data_type: Target pyarrow type (from ``resolve_lance_type``).
+            blob: True when ``data_type`` is the lance.blob.v2 extension type.
+            table: Optional table within a container dataset (DR14).
+        """
+        self._get_storage().add_null_column(
+            name, column_name, data_type, blob=blob, table=table,
+        )
+
     def add_columns_table(self, name: str, columns: Any, *, table: str | None = None) -> None:
         """Add pre-computed columns to a dataset without full rewrite.
 

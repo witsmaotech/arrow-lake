@@ -4,6 +4,7 @@ presign, cleanup, schema migration (supplements test_datasets.py)."""
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pyarrow as pa
@@ -373,6 +374,165 @@ async def test_schema_migrate_dry_run_expression_preview(client: AsyncClient, mo
     assert body["previews"][0]["ok"] is True
     assert body["previews"][0]["sample_values"] == ["A", "B"]
     assert "string" in body["previews"][0]["inferred_type"]
+
+
+# ---------------------------------------------------------------------------
+# POST /{name}/schema/migrate — typed placeholder mode (v1.11.6 mode B)
+# ---------------------------------------------------------------------------
+
+def _fake_ds(mock_lake: MagicMock, schema: pa.Schema, storage_version: float = 2.1) -> MagicMock:
+    """A dataset stub whose to_lance() reports the given data-file version."""
+    fake_ds = MagicMock()
+    fake_ds.schema = schema
+    fake_ds.to_lance.return_value.data_storage_version = storage_version
+    mock_lake._storage.open_dataset.return_value = fake_ds
+    return fake_ds
+
+
+@pytest.mark.asyncio
+async def test_migrate_typed_placeholder_dry_run(client: AsyncClient, mock_lake: MagicMock) -> None:
+    """new_type + empty expr → placeholder preview carries the resolved type."""
+    _fake_ds(mock_lake, pa.schema([pa.field("s", pa.string())]))
+    resp = await client.post(
+        "/api/v1/datasets/test/schema/migrate",
+        json={"actions": [
+            {"operation": "add_column", "column_name": "emb", "new_type": "vector:768"},
+        ], "dry_run": True},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["success"] is True
+    preview = body["previews"][0]
+    assert "float" in preview["inferred_type"]
+    assert "768" in preview["inferred_type"]
+    assert any("NULL" in v for v in preview["sample_values"])
+
+
+@pytest.mark.asyncio
+async def test_migrate_add_unknown_type_rejected(client: AsyncClient, mock_lake: MagicMock) -> None:
+    """Unknown type fails closed on the add path too (no silent string fallback)."""
+    _fake_ds(mock_lake, pa.schema([pa.field("s", pa.string())]))
+    resp = await client.post(
+        "/api/v1/datasets/test/schema/migrate",
+        json={"actions": [
+            {"operation": "add_column", "column_name": "x", "new_type": "float16"},
+        ], "dry_run": True},
+    )
+    body = resp.json()
+    assert body["success"] is False
+    assert "Unknown type" in " ".join(body["issues"][0]["messages"])
+
+
+@pytest.mark.asyncio
+async def test_migrate_add_expr_and_type_conflict(client: AsyncClient, mock_lake: MagicMock) -> None:
+    _fake_ds(mock_lake, pa.schema([pa.field("s", pa.string())]))
+    resp = await client.post(
+        "/api/v1/datasets/test/schema/migrate",
+        json={"actions": [
+            {"operation": "add_column", "column_name": "x",
+             "sql_expr": "upper(s)", "new_type": "int32"},
+        ], "dry_run": True},
+    )
+    body = resp.json()
+    assert body["success"] is False
+    assert "not both" in " ".join(body["issues"][0]["messages"])
+
+
+@pytest.mark.asyncio
+async def test_migrate_add_neither_expr_nor_type(client: AsyncClient, mock_lake: MagicMock) -> None:
+    _fake_ds(mock_lake, pa.schema([pa.field("s", pa.string())]))
+    resp = await client.post(
+        "/api/v1/datasets/test/schema/migrate",
+        json={"actions": [{"operation": "add_column", "column_name": "x"}], "dry_run": True},
+    )
+    body = resp.json()
+    assert body["success"] is False
+    assert "needs a sql_expr" in " ".join(body["issues"][0]["messages"])
+
+
+@pytest.mark.asyncio
+async def test_migrate_blob_version_wall_issue(client: AsyncClient, mock_lake: MagicMock) -> None:
+    """blob on a 2.1 table is rejected with the rewrite/binary guidance."""
+    _fake_ds(mock_lake, pa.schema([pa.field("s", pa.string())]), storage_version=2.1)
+    resp = await client.post(
+        "/api/v1/datasets/test/schema/migrate",
+        json={"actions": [
+            {"operation": "add_column", "column_name": "photo", "new_type": "blob"},
+        ], "dry_run": True},
+    )
+    body = resp.json()
+    assert body["success"] is False
+    msgs = " ".join(body["issues"][0]["messages"])
+    assert "2.2" in msgs
+    assert "binary" in msgs
+
+
+@pytest.mark.asyncio
+async def test_migrate_blob_on_2_2_passes(client: AsyncClient, mock_lake: MagicMock) -> None:
+    _fake_ds(mock_lake, pa.schema([pa.field("s", pa.string())]), storage_version=2.2)
+    resp = await client.post(
+        "/api/v1/datasets/test/schema/migrate",
+        json={"actions": [
+            {"operation": "add_column", "column_name": "photo", "new_type": "blob"},
+        ], "dry_run": True},
+    )
+    body = resp.json()
+    assert body["success"] is True
+    assert "blob" in body["previews"][0]["inferred_type"].lower()
+
+
+@pytest.mark.asyncio
+async def test_migrate_alter_to_blob_rejected(client: AsyncClient, mock_lake: MagicMock) -> None:
+    _fake_ds(mock_lake, pa.schema([pa.field("s", pa.string())]))
+    resp = await client.post(
+        "/api/v1/datasets/test/schema/migrate",
+        json={"actions": [
+            {"operation": "alter_column", "column_name": "s", "new_type": "blob"},
+        ], "dry_run": True},
+    )
+    body = resp.json()
+    assert body["success"] is False
+    assert "not supported" in " ".join(body["issues"][0]["messages"])
+
+
+@pytest.mark.asyncio
+async def test_migrate_alter_vector_dimension_issue(client: AsyncClient, mock_lake: MagicMock) -> None:
+    """Vector specs reach the (previously dead) dimension check in the checker."""
+    _fake_ds(mock_lake, pa.schema([pa.field("emb", pa.list_(pa.float32(), 384))]))
+    resp = await client.post(
+        "/api/v1/datasets/test/schema/migrate",
+        json={"actions": [
+            {"operation": "alter_column", "column_name": "emb", "new_type": "vector:768"},
+        ], "dry_run": True},
+    )
+    body = resp.json()
+    assert body["success"] is False
+    assert "dimension" in " ".join(body["issues"][0]["messages"]).lower()
+
+
+@pytest.mark.asyncio
+async def test_migrate_typed_placeholder_apply_routes_to_add_null_column(
+    client: AsyncClient, mock_lake: MagicMock,
+) -> None:
+    """Apply mode B dispatches to lake.add_null_column with the resolved type."""
+    _fake_ds(mock_lake, pa.schema([pa.field("s", pa.string())]))
+    mock_lake.catalog.return_value = _FakeCatalogResult(
+        datasets=[SimpleNamespace(name="test")], total=1,
+    )
+    resp = await client.post(
+        "/api/v1/datasets/test/schema/migrate",
+        json={"actions": [
+            {"operation": "add_column", "column_name": "emb", "new_type": "vector:384"},
+        ], "dry_run": False},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["success"] is True
+    assert body["applied_count"] == 1
+    mock_lake.add_null_column.assert_called_once()
+    call = mock_lake.add_null_column.call_args
+    assert call.args == ("test", "emb", pa.list_(pa.float32(), 384))
+    assert call.kwargs["blob"] is False
 
 
 @pytest.mark.asyncio

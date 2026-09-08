@@ -225,7 +225,7 @@ class TestTableThreading:
             "/api/v1/datasets/gas/schema/migrate?table=segments",
             json={"actions": [{
                 "operation": "add_column", "column_name": "mat2",
-                "sql_expr": '"material"',
+                "sql_expr": "upper(material)",
             }], "dry_run": False},
         )
         assert resp.status_code == 200, resp.text

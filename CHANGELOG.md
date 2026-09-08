@@ -6,9 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [1.11.6-未发版] — 生产运营批(进行中)
+## [1.11.6-未发版] — 字段与多模态类型扩展(进行中)
 
-> 规划:docs_offline/v1.11.6-version-plan.md(真实数据规模化/多模态接入/闭环运转/生产运营)。
+> 2026-09-08 裁决:版本主体 = 字段变更批 + 多模态字段类型扩展(底层 Lance 多模态能力转正进 schema 面);原「真实数据规模化/生产运营」W1-W4 规划冻结为搁置轨道(规划文档 §九,重启开新版本活段)。规划:docs_offline/v1.11.6-version-plan.md。
+
+### 多模态字段类型扩展 W1:后端类型体系(2026-09-08)
+- **类型语法**:`resolve_lance_type`(`ingest/schema.py`)——migrate 类型面从 9 种标量扩到全语法:标量 + `large_string`/`large_binary`/`timestamp[us]`/`date32` + **`vector:<dim>`**(fixed_size_list<float32>,与 embed 管线对齐;Lance SQL 表达式产不出向量列——占位+回填是唯一正路)+ **`blob`**(lance.blob.v2 大对象列,图片/视频原始字节);未知类型全路径 fail-closed(修掉 add 分支静默回落 string)
+- **加列双模式**:模式 A 表达式(现有)/ **模式 B 类型化占位列**(`new_type`+空 expr → `add_columns_table` 全 null 列;storage `add_null_column` + facade 包装)——binary/vector/timestamp/blob 的加列通路一步打开;dry_run 占位预览复用 `previews` 结构(前端免改)
+- **blob 版本墙**(容器内 live 探测实证):blob 列要求 `data_storage_version>=2.2`,**lancedb 0.36 默认写 2.1 → 存量表加 blob 列直接被拒**;dry_run 预检(`ds.data_storage_version`)+ apply 双保险,issue 给两条路(2.2 重写 / 退 `binary` 内嵌);alter 成 blob 不支持(指引加新列)
+- **checker**:向量维度检查从死代码转正(vector 入白名单自动接通);string→binary 数据语义警告(文本变原始字节,OLAP 字符串函数/FTS 失效,拒并指引进「加新列」)
+- **Lance 11.0 实证结论入册**(方案地基):blob API=`lance.blob.blob_field/blob_array`;`add_columns_table` 全 null 占位列四类型全通;SQL `CAST(NULL AS BINARY)` 可产 binary、parser 不认 `FLOAT[]`;alter 维度变更/binary↔large_binary 被 Lance 拒(改型组合拳=加列+回填+删列);`lt.update` 是 dict 形态且数组字面量可 parse(向量回填通路)
+- 验收:单测 +40(解析全语法/占位四类型/版本墙/未知类型/维度/语义警告)全绿;tests/unit/ingest 全量 752 passed 零回归;顺修存量腐烂 1 处(test_container_table_ops 双引号表达式撞新 lint 规则,31f0e82 遗留);live 三连验证(vector 占位 preview/blob 版本墙/未知类型 fail-closed)过
 
 ### 前置批:字段变更前后端联动(2026-09-07)
 - **schema/migrate dry_run 增强**:静态方言 lint(`lint_lance_expr`——TRIM/SUBSTR 不支持、双引号=字符串字面量、**CASE 不支持(实测确认,单条件用 `CAST(cond AS INT)`,复杂逻辑走预计算列)**)+ **表达式 5 行采样试算**(`previews`:推断类型+样例值,错误表达式在 dry_run 即暴露,不再静默生成常量列或半路炸在 apply)
