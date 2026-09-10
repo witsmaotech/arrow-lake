@@ -38,8 +38,8 @@ services:
       - 172.30.0.0/16
     environment:
       PYTHONPATH: /app
-      HF_HUB_CACHE: /hf-hub
-      HF_HUB_OFFLINE: "1"
+      # HF 模型缓存跟随基础文件的卷策略(HF_HOME=/app/.docling-cache 卷,v1.11.6.1);
+      # 旧 HF_HUB_CACHE=/hf-hub host 直挂已移除(与 prod 布线不一致,dev 验证会失真)。
       ARROW_LAKE__RAG__RERANKER_MODEL: "/bge-reranker"
       ARROW_LAKE__RAG__ENABLE_VERIFICATION: "true"
       ARROW_LAKE__HUGEGRAPH__HE_STRICT_DEFINITION: "true"
@@ -51,10 +51,6 @@ services:
       - type: bind
         source: ../console
         target: /app/console
-        read_only: true
-      - type: bind
-        source: /home/witshine/.cache/huggingface/hub
-        target: /hf-hub
         read_only: true
       - type: bind
         source: /home/witshine/.cache/modelscope/models/BAAI--bge-reranker-v2-m3/snapshots/master

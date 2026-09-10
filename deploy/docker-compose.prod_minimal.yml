@@ -40,11 +40,11 @@ x-arrow-lake: &arrow-lake
       - "hfmodels=/home/witshine/.cache/huggingface/hub"
       - "msmodels=/home/witshine/.cache/modelscope/models"
     args:
-      VERSION: "1.11.6"
+      VERSION: "1.11.6.1"
       HTTP_PROXY: "${BUILD_HTTP_PROXY:-}"
       HTTPS_PROXY: "${BUILD_HTTPS_PROXY:-}"
       NO_PROXY: "${BUILD_NO_PROXY:-127.0.0.1,localhost}"
-  image: arrow-lake:1.11.6
+  image: arrow-lake:1.11.6.1
   restart: unless-stopped
   env_file:
     - path: ../.env
@@ -361,9 +361,11 @@ services:
       ARROW_LAKE__GRAVITINO__AUTH_TYPE: "${GRAVITINO_AUTH_TYPE:-simple}"
       ARROW_LAKE__GRAVITINO__AUTH_SIMPLE_USER: "${GRAVITINO_AUTH_USER:-arrow_lake}"
       ARROW_LAKE__GRAVITINO__FEDERATED_QUERY_MAX_ROWS: "${GRAVITINO_QUERY_MAX_ROWS:-100000}"
-      # v1.9.6: 模型 bake 进镜像 /opt/hf-cache（reranker bge-reranker-v2-m3 + docling layout/models），离线就绪
-      HF_HOME: "/opt/hf-cache"
-      HF_HUB_OFFLINE: "1"  # 模型已在镜像，禁止运行时联网拉
+      # v1.11.6.1: HF_HOME 指向可写卷 docling-cache(/app/.docling-cache)——模型缓存以卷为准
+      # (docling layout/models 同镜像版本 + granite-docling-258M VLM 档,host 侧经 ModelScope 预置入卷)。
+      # 镜像 /opt/hf-cache 的 bake 保留作新卷冷启动兜底。HF_HUB_OFFLINE 维持离线(卷内即真相,禁联网拉)。
+      HF_HOME: "/app/.docling-cache"
+      HF_HUB_OFFLINE: "1"
       # triton JIT kernel cache 显式指向可写卷(read_only 根 FS 下默认 ~/.triton=/app/.triton 会 Errno 30)
       TRITON_CACHE_DIR: "/app/.triton"
       # v1.9.6 P0-6: masking HMAC fail-fast — 无默认，缺 key 启动阻断（生产 fail loudly）。

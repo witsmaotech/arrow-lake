@@ -28,6 +28,7 @@ def _cfg(engine: str = "rapidocr", langs: tuple[str, ...] = ("ch_sim",)) -> Simp
         docling_vlm_preset=None,
         docling_ocr_engine=engine,
         docling_ocr_languages=list(langs),
+        docling_heading_hierarchy=True,
     )
 
 
@@ -101,3 +102,14 @@ def test_unavailable_docling_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     p = DocumentParser(_cfg())  # type: ignore[arg-type]
     with pytest.raises(doc_mod.DocumentError):
         p._get_docling_converter()
+
+
+def test_heading_hierarchy_flips_signature() -> None:
+    """heading hierarchy 开关参与 converter 签名——不同值不得共享缓存的 converter。"""
+    cfg_on = _cfg()
+    cfg_off = _cfg()
+    cfg_off.docling_heading_hierarchy = False
+    assert (
+        DocumentParser(cfg_on)._docling_signature()  # type: ignore[arg-type]
+        != DocumentParser(cfg_off)._docling_signature()  # type: ignore[arg-type]
+    )

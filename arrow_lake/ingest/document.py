@@ -476,6 +476,7 @@ class DocumentParser:
             str(getattr(cfg, "docling_vlm_preset", None)),
             str(getattr(cfg, "docling_ocr_engine", None)),
             tuple(str(x) for x in langs),
+            bool(getattr(cfg, "docling_heading_hierarchy", False)),
         )
 
     def _build_docling_converter(self, force_full_page_ocr: bool = False) -> Any:
@@ -510,6 +511,7 @@ class DocumentParser:
             engine, langs, force_full_page_ocr=force_full_page_ocr,
             generate_images=bool(getattr(self._config, "docling_generate_images", False)),
             images_scale=float(getattr(self._config, "docling_images_scale", 2.0)),
+            heading_hierarchy=bool(getattr(self._config, "docling_heading_hierarchy", False)),
         )
         # 多格式默认首选：PDF/IMAGE 用配好的 pipeline(OCR)，其余格式走
         # docling 默认 SimplePipeline（无需 layout 模型，快）。全集由
@@ -920,6 +922,7 @@ class DocumentParser:
     def _build_docling_pipeline(
         engine: str, langs: list[str], force_full_page_ocr: bool = False,
         generate_images: bool = False, images_scale: float = 2.0,
+        heading_hierarchy: bool = False,
     ) -> Any:
         """构造 Docling ThreadedPdfPipelineOptions（GPU 页批处理 + OCR 引擎 + 表格优化）。
 
@@ -976,6 +979,16 @@ class DocumentParser:
         if generate_images:
             pipeline.generate_page_images = True
             pipeline.images_scale = images_scale
+        # 标题层级恢复(docling v2.126):PDF 标题默认全 level 1,从书签/编号/字体样式
+        # 三信号恢复层级(零模型开销)。style 信号需 generate_parsed_pages(保留解析
+        # cells,分块路径下内存 O(块大小));无信号文档输出与关闭时完全一致。
+        if heading_hierarchy:
+            try:
+                from docling.datamodel.pipeline_options import HeadingHierarchyOptions
+                pipeline.heading_hierarchy_options = HeadingHierarchyOptions(enabled=True)
+                pipeline.generate_parsed_pages = True
+            except Exception as e:  # noqa: BLE001
+                logger.debug("HeadingHierarchyOptions skipped: %s", e)
         # 表格识别优化（中文多列防错并）
         try:
             from docling.datamodel.pipeline_options import TableFormerMode

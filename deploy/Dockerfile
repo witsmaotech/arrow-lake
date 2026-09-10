@@ -63,8 +63,9 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     && uv pip install jupyterlab ipywidgets \
     && uv pip install modelscope>=1.18 PyJWT "apache-gravitino==1.3.0" "boto3==1.43.0" "botocore==1.43.0"
 
-# docling 模型运行时经 HF_HOME 持久卷下载(compose docling-cache 卷)，首次下载后复用
-# 放弃镜像内预取: 构建容器下载 HF 模型受网络/代理限制(SSL/限流)，运行时卷兜底已验证可用且构建快
+# docling 模型缓存策略(v1.11.6.1): compose HF_HOME 指向 docling-cache 卷(/app/.docling-cache),
+# 卷内预置 standard 档两模型(同下方 hfmodels bake 版本)+ granite-docling-258M(VLM 档)。
+# 镜像 bake 保留作新卷冷启动兜底;host 侧经 ModelScope 直连预置入卷(不依赖构建期网络)。
 
 # Clear proxy ENV after all network-dependent steps
 ENV HTTP_PROXY=""

@@ -76,6 +76,10 @@ class DocumentConfig(BaseModel):
     # 路径入 ParsedDocument.page_images(供下游多模态检索消费)。⚠️ 增 convert 内存(页栅格 retained),
     # 大文档须配 P0-3 分块;images_scale=2.0(ColPali 推荐 ≥2x 保 patch 分辨率)。
     docling_generate_images: bool = True
+    # 标题层级恢复(docling v2.126 HeadingHierarchyOptions):PDF 标题默认全 level 1,
+    # 此开关从书签/大纲编号/字体样式三信号恢复层级(零模型开销)。下游 markdown # 深度、
+    # HybridChunker heading path、RAG 结构信号受益。无信号文档输出不变(安全默认开)。
+    docling_heading_hierarchy: bool = True
     docling_images_scale: float = 2.0
     docling_images_dir: str = "/data/lake/page_images"
     chunk_strategy: ChunkStrategy = ChunkStrategy.RECURSIVE

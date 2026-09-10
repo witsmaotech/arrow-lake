@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.11.6.1] — Docling VLM 档修复 + 标题层级恢复 · 2026-09-10
+
+> 补丁批(docling skill v2.126.0 快照重建对照评估产出):配置面已通的 `docling_pipeline_type=vlm` 模型链三重闭合(镜像无 bake/HF_HUB_OFFLINE/read-only FS)打通;顺带把 v2.126 的零模型标题层级恢复接线。方案:docs_offline/v1.11.6.1-vlm-fix-plan.md。
+
+### VLM 档可用性(HF_HOME 改卷路线,不动镜像)
+- **HF_HOME → docling-cache 可写卷**:原死挂载卷激活——standard 两模型(layout-heron `8f39ad3c` / docling-models `v2.3.0`)与镜像 bake 同 commit 已在卷内(7 月运行时下载遗留,refs 比对核实);镜像 bake 保留作新卷冷启动兜底;HF_HUB_OFFLINE 维持离线(卷内即真相)
+- **granite-docling-258M 入卷**:HF/7887 代理双断,**ModelScope 直连**(国内分流 DIRECT 可达,同 repo `ibm-granite/granite-docling-258M` 12 文件 sha256 全校验;curl 大文件须 `-L`——API 返回 CDN 重定向页);手工构造标准 HF cache 布局(refs/main + snapshots/<commit> 真实文件,离线 `try_to_load_from_cache` + `AutoModelForImageTextToText` 真加载验证过);卷内 hub/ chown 999
+- **live 实测**:`docling_pipeline_type=vlm` granite GPU 转换真实 PDF → markdown 结构正确非空;init 8.6s/单页 53.9s;峰值显存 8046MiB(基线 6751,**+1.3GB**);standard 档零回归(卷加载 10.8s + 解析 13.5s);转换后清理 engine 的 NoneType warning 为 docling 退出清理已知瑕疵,不影响结果
+
+### 标题层级恢复(F1)
+- **`docling_heading_hierarchy` config 默认开**(`config/document.py`):docling v2.126 `HeadingHierarchyOptions` 接线进 `_build_docling_pipeline`——书签→编号→字体样式三信号恢复 PDF 标题层级(零模型开销,无信号文档输出与关闭时一致);style 信号需 `generate_parsed_pages=True` 已配套;converter 签名含开关(缓存正确分桶);live 验证:扁平 `#` 全 level-1 → `##`/`###` 分层,下游 markdown 深度/分块 heading path/RAG 结构信号受益
+- **dev override 对齐生产**:移除 `HF_HUB_CACHE=/hf-hub` host 直挂历史遗留(会压过 HF_HOME 卷路径,dev 验证失真)
+
+### 登记轨(触发挂起)
+- **OCR 上 GPU(P0-2 解锁,下一小批首位)**:卷解除 read-only 后 RapidOCR torch 后端可行(原 ADR 注释「torch 需 .pth 模型 read-only 写不了」不再成立)→ OCR 张量挪 VRAM → page_batch 16 可上调
+- VLM 推理服务化(vLLM serve granite + ApiVlmOptions + concurrency,官方最佳 GPU 利用率路径)/ Flash Attention2 / NativePdfPipeline 快车道(对照 kreuzberg)/ 图片描述 enrichment(可走 ollama relay API 型,不一定要入卷)/ 视频 ASR+说话人分离(VideoPipeline,关键帧项目已有)/ Code&Formula/图表理解/docling PII(与搁置 W2 #3 合并)
+
 ## [1.11.6] — 字段与多模态类型扩展 · 2026-09-08
 
 > 2026-09-08 裁决:版本主体 = 字段变更批 + 多模态字段类型扩展(底层 Lance 多模态能力转正进 schema 面);原「真实数据规模化/生产运营」W1-W4 规划冻结为搁置轨道(规划文档 §九,重启开新版本活段)。规划:docs_offline/v1.11.6-version-plan.md。
