@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.11.6.2] — RapidOCR OCR 上 GPU · 2026-09-11
+
+> 补丁批(v1.11.6.1 登记轨首位 P0-2 落地):docling standard 档的 RapidOCR OCR 推理从 CPU ONNX 迁 GPU。
+
+### 实施(onnxruntime-gpu 路线)
+- **选型**:torch 后端(.pth 下载)vs onnxruntime-gpu(模型零改动)——实验证明 ORT-gpu 1.30 默认 **CUDA 13 构建**(与镜像 torch 2.14+cu130 同代,报错自述 "Require cuDNN 9.* and CUDA 13.*"),helper 容器实测 CUDA EP 创建 + det 模型推理成功;torch 后端需额外下载模型,弃
+- **Dockerfile**:builder 阶段新增换包步骤(`uv pip uninstall onnxruntime` + `--no-deps` 装 `onnxruntime-gpu==1.30.0`,清华镜像直连清代理,防 numpy 变动;flatbuffers 已在依赖树);旧 `rapidocr_onnxruntime` 包(pyproject 声明但代码零引用)本批未动(surgical 原则)。⚠️ build 踩坑:清华镜像对 wheel 下载**间歇性 403**(host 先前成功、build 时 403),重试即过
+- **compose**:api env 一条 `LD_LIBRARY_PATH` 复用 torch 自带 CUDA 库(`nvidia/cu13/lib` + `nvidia/cudnn/lib`,cudnn 9 ✓;torch cu130 的 nvidia 目录是 `cu13/` 新布局);路径硬绑镜像 python3.12(升级须同步)
+- **项目代码零改动**:docling 内部按 `AcceleratorOptions(device=CUDA)` 自动设 `use_cuda`(onnxruntime/paddle/torch 三后端都接了)——项目现有 GPU 自动判定(GPU_COUNT=0 → AUTO/CPU → use_cuda False)天然安全回落
+
+### 验证(DoD,2026-09-11 live 实测)
+- **CUDA EP 证据**:容器 providers `[Tensorrt, CUDA, CPU]`;det/rec 模型 `InferenceSession(providers=['CUDAExecutionProvider'])` active 落 CUDA;显存基线 6563 → 峰值 **8346MiB(OCR +1.7GB**,v6 det+cls+rec 三模型+张量)
+- **质量回归严格等价**:合成中文扫描件(城市生命线巡检单,无文本层强制 OCR)CPU vs GPU 输出**规范化文本逐字符一致**(normlen 187=187,文本头相同),识别内容全对(编号/数字/标题层级)
+- **速度**:单页扫描件 GPU 11.6s vs CPU 12.7s(单页差异小——GPU 批量优势经 page_batch 兑现;`ARROW_LAKE_DOCLING_PAGE_BATCH` env 可调,api 内存限制现 32GiB,当年 16GiB 时代的保守默认 16 可按需上调)
+- 版本 1.11.6.2 容器内确认;healthy
+
 ## [1.11.6.1] — Docling VLM 档修复 + 标题层级恢复 · 2026-09-10
 
 > 补丁批(docling skill v2.126.0 快照重建对照评估产出):配置面已通的 `docling_pipeline_type=vlm` 模型链三重闭合(镜像无 bake/HF_HUB_OFFLINE/read-only FS)打通;顺带把 v2.126 的零模型标题层级恢复接线。方案:docs_offline/v1.11.6.1-vlm-fix-plan.md。

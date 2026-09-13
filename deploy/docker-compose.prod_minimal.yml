@@ -40,11 +40,11 @@ x-arrow-lake: &arrow-lake
       - "hfmodels=/home/witshine/.cache/huggingface/hub"
       - "msmodels=/home/witshine/.cache/modelscope/models"
     args:
-      VERSION: "1.11.6.1"
+      VERSION: "1.11.6.2"
       HTTP_PROXY: "${BUILD_HTTP_PROXY:-}"
       HTTPS_PROXY: "${BUILD_HTTPS_PROXY:-}"
       NO_PROXY: "${BUILD_NO_PROXY:-127.0.0.1,localhost}"
-  image: arrow-lake:1.11.6.1
+  image: arrow-lake:1.11.6.2
   restart: unless-stopped
   env_file:
     - path: ../.env
@@ -366,6 +366,10 @@ services:
       # 镜像 /opt/hf-cache 的 bake 保留作新卷冷启动兜底。HF_HUB_OFFLINE 维持离线(卷内即真相,禁联网拉)。
       HF_HOME: "/app/.docling-cache"
       HF_HUB_OFFLINE: "1"
+      # v1.11.6.2: onnxruntime-gpu(CUDA13)动态库路径——复用 torch cu130 自带的 nvidia 库,
+      # RapidOCR OCR 推理上 GPU(docling 按 accelerator CUDA 自动 use_cuda)。路径硬绑镜像
+      # python3.12(升级 python 须同步)。GPU_COUNT=0 时 docling 判 AUTO/CPU,自动回落 CPU EP。
+      LD_LIBRARY_PATH: "/app/.venv/lib/python3.12/site-packages/nvidia/cu13/lib:/app/.venv/lib/python3.12/site-packages/nvidia/cudnn/lib"
       # triton JIT kernel cache 显式指向可写卷(read_only 根 FS 下默认 ~/.triton=/app/.triton 会 Errno 30)
       TRITON_CACHE_DIR: "/app/.triton"
       # v1.9.6 P0-6: masking HMAC fail-fast — 无默认，缺 key 启动阻断（生产 fail loudly）。
