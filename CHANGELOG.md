@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.11.6.5] — PII 分级自动建议 · 2026-09-14
+
+> 补丁批(搁置 W2 #3 复活,与登记轨「docling PII」合并裁定:按产品锚准则裁掉 GLiNER 模型面,交付确定性建议引擎)。
+
+### 实施
+- **引擎**(`arrow_lake/quality/pii_suggest.py`,零模型依赖):内容模式匹配(身份证 GB11643 校验位→restricted / 银行卡 Luhn(标注启发式)+手机号+车牌+详细地址→confidential / 邮箱+固话+列名弱语义→internal)+ 列名语义(身份证/坐标/地址区划/联系人/邮箱;org/unit/uid/url 负面清单防 org_name 误报)+ 自由文本列提示(平均 ≥50 字符→建议人工复核);档位聚合有量门槛(内容命中 ≥3 行或 ≥1%,列名证据恒有效)
+- **API**:`GET /datasets/{name}/classification/suggest`(EDITOR,只读零写入,不依赖 classification store→system_db 关闭不 503);返回 `suggested_tier/engine/scanned_rows/reasons[](列/模式/命中率/脱敏样本)/hints`;**大表安全**:Lance `scanner(columns=字符串列, limit=500)` 存储层截断(read_dataset 全量后 slice 对 107M 行表会 OOM)
+- **console**:分级面板「🔍 建议档位」→ 建议徽标+理由列表+自由文本提示 →「采纳为 X」填入并走同一保存/审计路径
+- 红线:建议≠自动写入(登记不校验原则不变);GLiNER/docling 模型面裁掉(中文质量未验证+模型入卷成本;硬 PII 正则已确定性覆盖;触发条件留档:文档型中文人名/住址检测需求实测出现)
+
+### live 验证(2026-09-14)
+- **DoD 命中**:lpg_danger → **confidential**(longitude/latitude geo_name + district/street address_name 四条列名证据,887ms)
+- **负例**:ontime(107M 行)→ **public**,0 命中,0.7s(scanner limit 生效,无 OOM)
+- console 真浏览器(playwright):建议渲染/理由列名/一键采纳幂等/未知数据集 404 优雅渲染/零 pageerror
+- 单测 35 绿(校验器/词边界/负面清单/档位量门槛/API 契约含 VIEWER 403)
+
+### 踩坑
+- **追踪类系统 id 列撞银行卡 Luhn**:lpg_danger.uid(2026 开头长数字)首次实测 45/500 命中(~9% 正是 Luhn 偶然命中率)——修:内容扫描跳过 `_COLUMN_EXCLUDE` 列名(系统生成 id 非自然人 PII 载体;真 PII 藏在用户输入列仍全量检出)
+- lancedb `Table.read_dataset` 全量物化与 `open_dataset().to_lance().scanner(limit)` 的取舍:大表采样必须走 scanner
+
+
 ## [1.11.6.4] — 图片描述 enrichment · 2026-09-14
 
 > 补丁批(登记轨「图片描述」落地,RAG 文本路线增强——图片内容进检索文本链,与 ColPali 向量路线互补)。

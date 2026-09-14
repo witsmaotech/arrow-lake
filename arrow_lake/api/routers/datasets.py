@@ -844,6 +844,40 @@ async def clear_dataset_classification(
     return {"dataset": name, "tier": None, "previous_tier": prev["tier"]}
 
 
+@router.get(
+    "/{name}/classification/suggest",
+    summary="Suggest dataset PII classification (rule-based content scan)",
+)
+async def suggest_dataset_classification(
+    request: Request,
+    name: str = Path(..., pattern=_NAME_PATTERN),
+    lake=Depends(get_lake),
+    _auth: None = Depends(require_role(Role.EDITOR)),
+) -> dict:
+    """PII 分级自动建议(v1.11.6.5,搁置 W2 #3):确定性内容扫描。
+
+    列内容模式匹配(身份证校验位/手机号/银行卡 Luhn/邮箱/车牌/详细地址)
+    + 列名语义(地址/坐标/联系人列)+ 自由文本提示 → 四档建议 + 可解释
+    理由(列/模式/命中率/脱敏样本)。只读零写入;建议≠自动写入(登记
+    不校验原则不变)。不依赖 classification store(纯扫描面)。
+    """
+    from arrow_lake.quality.pii_suggest import suggest_classification
+
+    authorize_dataset(request, name)
+    result = await run_sync(lake.catalog, timeout=_ADMIN_TIMEOUT, label="catalog")
+    if not any(e.name == name for e in result.datasets):
+        raise CatalogError(
+            error_code=ErrorCode.CATALOG_DATASET_NOT_FOUND,
+            message=f"Dataset '{name}' not found",
+        )
+    suggestion = await run_sync(
+        lambda: suggest_classification(lake._get_storage(), name),
+        timeout=120,
+        label="pii_suggest",
+    )
+    return {"dataset": name, **suggestion}
+
+
 @router.get("", response_model=DatasetListResponse)
 async def list_datasets(
     _auth: None = Depends(require_role(Role.VIEWER)),

@@ -127,3 +127,70 @@ def test_clear_classification(db: SystemDB) -> None:
 def test_store_missing_503() -> None:
     with _make_app(None, role=Role.EDITOR, lake=_Lake()) as c:
         assert c.get("/api/v1/datasets/alerts/classification").status_code == 503
+
+
+# ── W2 #3(复活 v1.11.6.5):classification/suggest 规则建议 ─────────────────
+
+
+class _ScanLake(_Lake):
+    """catalog + 只读扫描 storage(open_dataset 回固定表的 lancedb 仿真)。"""
+
+    def __init__(self, table) -> None:
+        super().__init__()
+        self._table = table
+
+    def _get_storage(self):
+        def _scanner(columns=None, limit=None):
+            import pyarrow as pa
+
+            sel = self._table.select(columns) if columns else self._table
+            return SimpleNamespace(
+                to_table=lambda: sel.slice(0, limit) if limit else sel
+            )
+
+        lt = SimpleNamespace(
+            schema=self._table.schema,
+            to_lance=lambda: SimpleNamespace(scanner=_scanner),
+        )
+        return SimpleNamespace(open_dataset=lambda n, *, table=None: lt)
+
+
+def _pii_table() -> "object":
+    import pyarrow as pa
+
+    return pa.table(
+        {
+            "uid": ["a1f" + str(i) for i in range(6)],
+            "longitude": [117.0 + i for i in range(6)],
+            "street": ["XX路"] * 6,
+        }
+    )
+
+
+def test_suggest_editor_200(db: SystemDB) -> None:
+    lake = _ScanLake(_pii_table())
+    with _make_app(db, role=Role.EDITOR, lake=lake) as c:
+        r = c.get("/api/v1/datasets/alerts/classification/suggest")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["dataset"] == "alerts"
+        assert body["suggested_tier"] == "confidential"  # 坐标+区划列名证据
+        assert body["engine"] == "rule_based"
+        assert {"geo_name", "address_name"} <= {x["evidence"] for x in body["reasons"]}
+
+
+def test_suggest_works_without_system_db() -> None:
+    """建议面是纯扫描,不依赖 classification store(system_db 关闭不 503)。"""
+    with _make_app(None, role=Role.EDITOR, lake=_ScanLake(_pii_table())) as c:
+        assert c.get("/api/v1/datasets/alerts/classification/suggest").status_code == 200
+
+
+def test_suggest_viewer_403(db: SystemDB) -> None:
+    with _make_app(db, role=Role.VIEWER, lake=_ScanLake(_pii_table())) as c:
+        assert c.get("/api/v1/datasets/alerts/classification/suggest").status_code == 403
+
+
+def test_suggest_unknown_dataset_404(db: SystemDB) -> None:
+    with _make_app(db, role=Role.EDITOR, lake=_ScanLake(_pii_table())) as c:
+        r = c.get("/api/v1/datasets/ghost/classification/suggest")
+        assert r.status_code == 404

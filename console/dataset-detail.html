@@ -228,8 +228,10 @@ if (!ds) {
             <span id="piiBadge" class="tag">加载…</span>
             <select class="select" id="piiSel" style="max-width:180px"></select>
             <button class="btn btn-primary btn-sm" id="piiSave">保存分级</button>
+            <button class="btn btn-ghost btn-sm" id="piiSuggest">🔍 建议档位</button>
             <span class="muted" style="font-size:.7rem">登记不校验;未分级集导出语料须显式确认,confidential/restricted 强烈建议带脱敏配置(变更审计留痕)</span>
           </div>
+          <div id="piiSuggestBox" style="display:none;margin-top:8px"></div>
         </div>
         <div id="docsBlock" style="margin-top:var(--s3)"></div>
         <div class="divider" style="margin:var(--s4) 0"></div>
@@ -277,6 +279,34 @@ if (!ds) {
           }
           loadPii();
         } catch (e) { toast("分级失败:" + (e?.detail || e?.message || e), "bad", 5000); }
+      };
+      // W2 #3(复活 v1.11.6.5):规则扫描建议档位 + 一键采纳(填入+走同一保存/审计路径)
+      $("#piiSuggest").onclick = async () => {
+        const btn = $("#piiSuggest"), box = $("#piiSuggestBox");
+        btn.disabled = true; btn.textContent = "扫描中…";
+        try {
+          const s = await request("GET", `/datasets/${encodeURIComponent(ds)}/classification/suggest`);
+          const sevCls = { high: "amber", medium: "amber", low: "teal" };
+          const rows = (s.reasons || []).map((r) => `<li style="margin:2px 0"><span class="tag ${sevCls[r.severity] || ""}">${esc(r.severity)}</span> <code>${esc(r.column)}</code> · ${esc(r.label)}${r.hit_ratio != null ? ` · 命中 ${r.hits} 行(${(r.hit_ratio * 100).toFixed(1)}%)` : ""}${(r.masked_samples || []).length ? ` · 样本 ${r.masked_samples.map(esc).join(" / ")}` : ""}</li>`).join("");
+          const t = s.suggested_tier || "public";
+          box.style.display = "block";
+          box.innerHTML = `
+            <div class="flex" style="gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
+              <span class="muted" style="font-size:.72rem">规则扫描(前 ${s.scanned_rows} 行)建议:</span>
+              <span class="tag ${t === "restricted" || t === "confidential" ? "amber" : "teal"}">${t}(${TIER_LABEL[t] || t})</span>
+              <button class="btn btn-primary btn-sm" id="piiAdopt">采纳为 ${t}</button>
+            </div>
+            ${rows ? `<ul style="margin:0 0 4px;padding-left:18px;font-size:.72rem">${rows}</ul>` : `<div class="muted" style="font-size:.72rem;margin-bottom:4px">未检出 PII 模式</div>`}
+            ${(s.hints || []).map((h) => `<div class="muted" style="font-size:.7rem">⚠ ${esc(h)}</div>`).join("")}
+            <div class="muted" style="font-size:.68rem">规则建议供人工决策;「采纳」填入档位并保存(审计留痕)</div>`;
+          $("#piiAdopt").onclick = async () => {
+            sel.value = t;
+            await $("#piiSave").onclick();
+          };
+        } catch (e) {
+          box.style.display = "block";
+          box.innerHTML = `<div style="font-size:.72rem;color:var(--danger,inherit)">建议失败:${esc(e?.detail || e?.message || e)}</div>`;
+        } finally { btn.disabled = false; btn.textContent = "🔍 建议档位"; }
       };
     };
     if (detailInfo) loadPii();
