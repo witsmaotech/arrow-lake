@@ -59,6 +59,18 @@ class DocumentConfig(BaseModel):
     docling_pipeline_type: DoclingPipelineType = DoclingPipelineType.STANDARD
     # VLM preset 名（VlmConvertOptions.from_preset）；默认 granite_docling = 258M DocTags 模型。
     docling_vlm_preset: str = "granite_docling"
+    # VLM 推理服务化(v1.11.6.3):OpenAI 兼容 chat-completions 端点。空=inline 本地
+    # Transformers(默认,免依赖);设值=API 型(enable_remote_services 自动开)——
+    # 云 API(阿里百炼 compatible-mode 等)或自托管推理服务(vLLM/Ollama)皆可,
+    # 平台不自带推理服务(定位:数据湖仓,非大模型原生应用)。
+    docling_vlm_endpoint: str = ""
+    # API 型并发页数(ApiVlmEngineOptions.concurrency);须 <= docling page_batch(默认 4)。
+    docling_vlm_concurrency: int = 4
+    # API 型模型名覆盖(如百炼 qwen-vl-max-latest);空=用 preset 默认 repo 名。
+    # preset 建议配 docling_vlm_preset="qwen"(markdown 输出,云端 VLM 通用)。
+    docling_vlm_model: str = ""
+    # API 型鉴权(空=匿名,内网推理服务);云 API 须设,Bearer 进 Authorization header。
+    docling_vlm_api_key: str = ""
     # HybridChunker 分词器(chunk_strategy="docling_hybrid" 时用)。
     # v1.10.3: 默认指向镜像内 baked 本地路径(/opt/models/bge-m3,tokenizer-only),
     # 离线容器下 HybridChunker 即用;host/无镜像环境改回 "BAAI/bge-m3"(需联网)或其他 HF id。

@@ -26,6 +26,7 @@ def _cfg(engine: str = "rapidocr", langs: tuple[str, ...] = ("ch_sim",)) -> Simp
     return SimpleNamespace(
         docling_pipeline_type="standard",
         docling_vlm_preset=None,
+        docling_vlm_endpoint="",
         docling_ocr_engine=engine,
         docling_ocr_languages=list(langs),
         docling_heading_hierarchy=True,
@@ -113,3 +114,16 @@ def test_heading_hierarchy_flips_signature() -> None:
         DocumentParser(cfg_on)._docling_signature()  # type: ignore[arg-type]
         != DocumentParser(cfg_off)._docling_signature()  # type: ignore[arg-type]
     )
+
+
+def test_vlm_endpoint_flips_signature() -> None:
+    """vlm endpoint 参与 converter 签名——inline 与 API 型(及不同端点)各自分桶。"""
+    cfg_inline = _cfg()
+    cfg_api = _cfg()
+    cfg_api.docling_vlm_endpoint = "http://vlm:8000/v1/chat/completions"
+    cfg_api2 = _cfg()
+    cfg_api2.docling_vlm_endpoint = "http://other:9000/v1/chat/completions"
+    sig_i = DocumentParser(cfg_inline)._docling_signature()  # type: ignore[arg-type]
+    sig_a = DocumentParser(cfg_api)._docling_signature()  # type: ignore[arg-type]
+    sig_b = DocumentParser(cfg_api2)._docling_signature()  # type: ignore[arg-type]
+    assert len({sig_i, sig_a, sig_b}) == 3  # inline / api-a / api-b 三桶

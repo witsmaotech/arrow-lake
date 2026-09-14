@@ -40,11 +40,11 @@ x-arrow-lake: &arrow-lake
       - "hfmodels=/home/witshine/.cache/huggingface/hub"
       - "msmodels=/home/witshine/.cache/modelscope/models"
     args:
-      VERSION: "1.11.6.2"
+      VERSION: "1.11.6.3"
       HTTP_PROXY: "${BUILD_HTTP_PROXY:-}"
       HTTPS_PROXY: "${BUILD_HTTPS_PROXY:-}"
       NO_PROXY: "${BUILD_NO_PROXY:-127.0.0.1,localhost}"
-  image: arrow-lake:1.11.6.2
+  image: arrow-lake:1.11.6.3
   restart: unless-stopped
   env_file:
     - path: ../.env
@@ -357,6 +357,17 @@ services:
       # 备选 kreuzberg(快,数字原生 PDF 文本层抽取;表格检测弱,复杂表格拍平成文本)
       # 或 turbo_ocr(TurboOCR sidecar 主 + kreuzberg fallback)。三值见 OcrBackend 枚举。
       ARROW_LAKE__DOCUMENT__OCR_BACKEND: "${DOCUMENT_OCR_BACKEND:-docling}"
+      # v1.11.6.3: docling VLM 档 API 化(OpenAI 兼容端点;空=inline 本地 Transformers)。
+      # 云 API 示例(百炼):DOCLING_VLM_ENDPOINT=https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
+      # + DOCLING_VLM_PRESET=qwen(markdown 输出)+ DOCLING_VLM_MODEL=qwen-vl-max-latest
+      # + DOCLING_VLM_API_KEY=sk-... + DOCLING_PIPELINE_TYPE=vlm,recreate api。
+      # 自托管推理服务(vLLM/Ollama)同机理;平台默认不自带推理服务(定位=数据湖仓)。
+      ARROW_LAKE__DOCUMENT__DOCLING_VLM_ENDPOINT: "${DOCLING_VLM_ENDPOINT:-}"
+      ARROW_LAKE__DOCUMENT__DOCLING_VLM_CONCURRENCY: "${DOCLING_VLM_CONCURRENCY:-4}"
+      ARROW_LAKE__DOCUMENT__DOCLING_VLM_MODEL: "${DOCLING_VLM_MODEL:-}"
+      ARROW_LAKE__DOCUMENT__DOCLING_VLM_API_KEY: "${DOCLING_VLM_API_KEY:-}"
+      ARROW_LAKE__DOCUMENT__DOCLING_VLM_PRESET: "${DOCLING_VLM_PRESET:-granite_docling}"
+      ARROW_LAKE__DOCUMENT__DOCLING_PIPELINE_TYPE: "${DOCLING_PIPELINE_TYPE:-standard}"
       # v1.5.1: Gravitino authentication (simple by default)
       ARROW_LAKE__GRAVITINO__AUTH_TYPE: "${GRAVITINO_AUTH_TYPE:-simple}"
       ARROW_LAKE__GRAVITINO__AUTH_SIMPLE_USER: "${GRAVITINO_AUTH_USER:-arrow_lake}"

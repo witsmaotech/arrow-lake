@@ -474,6 +474,8 @@ class DocumentParser:
         return (
             str(getattr(cfg, "docling_pipeline_type", None)),
             str(getattr(cfg, "docling_vlm_preset", None)),
+            str(getattr(cfg, "docling_vlm_endpoint", "") or ""),
+            str(getattr(cfg, "docling_vlm_model", "") or ""),
             str(getattr(cfg, "docling_ocr_engine", None)),
             tuple(str(x) for x in langs),
             bool(getattr(cfg, "docling_heading_hierarchy", False)),
@@ -553,12 +555,33 @@ class DocumentParser:
             return entry
 
     def _build_docling_vlm_pipeline(self) -> Any:
-        """构造 Docling VlmPipelineOptions（GraniteDocling 端到端视觉模型，本地 Transformers）。
+        """构造 Docling VlmPipelineOptions（GraniteDocling 端到端视觉模型）。
 
-        preset 默认 granite_docling（258M，DocTags 输出）；模型从 HF_HOME 卷加载，
-        CPU 可跑（慢，~100s/页），有 GPU 则快。换 preset/runt­ime 见 ADR §P2。
+        双模式(v1.11.6.3):``docling_vlm_endpoint`` 空 = inline 本地 Transformers
+        (模型从 HF_HOME 卷加载);设值 = OpenAI 兼容推理服务(vLLM/Ollama/LM Studio,
+        ApiVlmEngineOptions + enable_remote_services,批量并发走 concurrency)。
+        preset 默认 granite_docling(258M,DocTags 输出)。换 preset 见 ADR §P2。
         """
         preset = self._config.docling_vlm_preset or "granite_docling"
+        endpoint = (getattr(self._config, "docling_vlm_endpoint", "") or "").strip()
+        if endpoint:
+            from docling.datamodel.vlm_engine_options import ApiVlmEngineOptions
+            concurrency = int(getattr(self._config, "docling_vlm_concurrency", 4) or 4)
+            params: dict[str, Any] = {}
+            model = (getattr(self._config, "docling_vlm_model", "") or "").strip()
+            if model:
+                params["model"] = model
+            headers: dict[str, str] = {}
+            api_key = (getattr(self._config, "docling_vlm_api_key", "") or "").strip()
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
+            engine = ApiVlmEngineOptions(
+                url=endpoint, concurrency=concurrency,
+                params=params or None, headers=headers or None,
+            )
+            vlm_options = VlmConvertOptions.from_preset(preset, engine_options=engine)
+            # API 型必须显式允许外发(数据送推理服务;云 API 走出网代理)
+            return VlmPipelineOptions(vlm_options=vlm_options, enable_remote_services=True)
         engine = TransformersVlmEngineOptions()
         vlm_options = VlmConvertOptions.from_preset(preset, engine_options=engine)
         return VlmPipelineOptions(vlm_options=vlm_options)

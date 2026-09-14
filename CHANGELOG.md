@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.11.6.3] — Docling VLM 档 API 化 · 2026-09-14
+
+> 补丁批(登记轨「VLM 推理服务化」落地,架构定调修正:走 OpenAI 兼容 API,平台不自带推理服务)。
+
+### 实施
+- **方向裁决**:vLLM 容器方案弃——官方镜像 ~9GB 经国内 mirror 拉取 25+ 轮全部大层 EOF 失败,且与产品定位(数据湖仓平台,非大模型原生应用)不符;docling `ApiVlmEngineOptions` 本就支持任意 OpenAI 兼容端点,云 API/自托管服务同机理
+- **config 四字段**(`config/document.py`):`docling_vlm_endpoint`(空=inline 本地 Transformers 默认)/`docling_vlm_model`(覆盖 API model 名)/`docling_vlm_api_key`(Bearer header;内网服务留空)/`docling_vlm_concurrency`(默认 4)
+- **接线**(`document.py` `_build_docling_vlm_pipeline` 双模式):API 型=`VlmConvertOptions.from_preset(preset, engine_options=ApiVlmEngineOptions(url/params/headers/concurrency))` + `enable_remote_services=True`;converter 签名含 endpoint+model(缓存分桶,preset 名沿用 `docling_vlm_preset`,云端 VLM 建议配 `qwen`——markdown 输出)
+- **compose**:`DOCLING_VLM_ENDPOINT/MODEL/API_KEY/CONCURRENCY/PRESET` + `DOCLING_PIPELINE_TYPE` 六键透传(deploy/.env 单一控制面);`.env.example` 带百炼配方
+- 测试:converter 签名三分桶(inline/api-a/api-b)+ model 维度
+
+### live 验证(2026-09-14,百炼 qwen-vl-max)
+- **扫描件单页 5.2s**(inline 本地 granite GPU 53.9s → **10x**)、**零本地显存**;数字原生 PDF 19.9s 内容完整(标题层级/作者/摘要,「幻觉」二字识别比本地 granite 准)
+- 走出网代理链路现成(api 容器 HTTP_PROXY=17887,dashscope 不在 NO_PROXY)
+
+### 踩坑
+- 百炼 `qwen-vl-max-latest` 变体名 **403 access_denied**(账号对该变体无权限),`qwen-vl-max` 正常——云模型名以实测为准
+- VLM API 调用失败时 docling 仍返回 `ConversionStatus.SUCCESS` + 空 content(错误在 `res.errors`),上游解析层需防「假成功空文本」(项目 `_build_parsed_from_docling` 的 empty-content 守卫恰好兜住,抛 DOCUMENT_PARSE_FAILED)
+- vLLM 镜像国内拉取:4 mirror 全不稳,9GB 大层必 EOF(已试 25+ 轮)——需要时再评估 daemon mirror 调整或分块方案
+
 ## [1.11.6.2] — RapidOCR OCR 上 GPU · 2026-09-11
 
 > 补丁批(v1.11.6.1 登记轨首位 P0-2 落地):docling standard 档的 RapidOCR OCR 推理从 CPU ONNX 迁 GPU。
