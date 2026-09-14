@@ -40,11 +40,11 @@ x-arrow-lake: &arrow-lake
       - "hfmodels=/home/witshine/.cache/huggingface/hub"
       - "msmodels=/home/witshine/.cache/modelscope/models"
     args:
-      VERSION: "1.11.6.3"
+      VERSION: "1.11.6.4"
       HTTP_PROXY: "${BUILD_HTTP_PROXY:-}"
       HTTPS_PROXY: "${BUILD_HTTPS_PROXY:-}"
       NO_PROXY: "${BUILD_NO_PROXY:-127.0.0.1,localhost}"
-  image: arrow-lake:1.11.6.3
+  image: arrow-lake:1.11.6.4
   restart: unless-stopped
   env_file:
     - path: ../.env
@@ -368,6 +368,11 @@ services:
       ARROW_LAKE__DOCUMENT__DOCLING_VLM_API_KEY: "${DOCLING_VLM_API_KEY:-}"
       ARROW_LAKE__DOCUMENT__DOCLING_VLM_PRESET: "${DOCLING_VLM_PRESET:-granite_docling}"
       ARROW_LAKE__DOCUMENT__DOCLING_PIPELINE_TYPE: "${DOCLING_PIPELINE_TYPE:-standard}"
+      # v1.11.6.4: 图片描述 enrichment(API 型,默认关;鉴权复用 DOCLING_VLM_API_KEY)
+      ARROW_LAKE__DOCUMENT__DOCLING_PICTURE_DESCRIPTION: "${DOCLING_PICTURE_DESCRIPTION:-false}"
+      ARROW_LAKE__DOCUMENT__DOCLING_PICTURE_DESCRIPTION_ENDPOINT: "${DOCLING_PICTURE_DESCRIPTION_ENDPOINT:-}"
+      ARROW_LAKE__DOCUMENT__DOCLING_PICTURE_DESCRIPTION_MODEL: "${DOCLING_PICTURE_DESCRIPTION_MODEL:-}"
+      ARROW_LAKE__DOCUMENT__DOCLING_PICTURE_DESCRIPTION_PROMPT: "${DOCLING_PICTURE_DESCRIPTION_PROMPT:-}"
       # v1.5.1: Gravitino authentication (simple by default)
       ARROW_LAKE__GRAVITINO__AUTH_TYPE: "${GRAVITINO_AUTH_TYPE:-simple}"
       ARROW_LAKE__GRAVITINO__AUTH_SIMPLE_USER: "${GRAVITINO_AUTH_USER:-arrow_lake}"

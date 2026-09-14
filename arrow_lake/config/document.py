@@ -71,6 +71,15 @@ class DocumentConfig(BaseModel):
     docling_vlm_model: str = ""
     # API 型鉴权(空=匿名,内网推理服务);云 API 须设,Bearer 进 Authorization header。
     docling_vlm_api_key: str = ""
+    # 图片描述 enrichment(v1.11.6.4):picture→中文描述段落注入 markdown(`<!-- image -->`
+    # 后跟描述文本),随 export_to_markdown 自动进检索文本链(FTS/向量可查,与 ColPali
+    # 向量路线互补)。默认关;开启须配 API 型端点(OpenAI 兼容;平台不附带描述模型),
+    # 鉴权复用 docling_vlm_api_key(同 provider)。模型名必填(OpenAI API 语义)。
+    # prompt 建议中文(默认英文 prompt 产英文描述,中文查询检索效果差)。
+    docling_picture_description: bool = False
+    docling_picture_description_endpoint: str = ""
+    docling_picture_description_model: str = ""
+    docling_picture_description_prompt: str = ""
     # HybridChunker 分词器(chunk_strategy="docling_hybrid" 时用)。
     # v1.10.3: 默认指向镜像内 baked 本地路径(/opt/models/bge-m3,tokenizer-only),
     # 离线容器下 HybridChunker 即用;host/无镜像环境改回 "BAAI/bge-m3"(需联网)或其他 HF id。

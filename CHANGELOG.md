@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.11.6.4] — 图片描述 enrichment · 2026-09-14
+
+> 补丁批(登记轨「图片描述」落地,RAG 文本路线增强——图片内容进检索文本链,与 ColPali 向量路线互补)。
+
+### 实施
+- **config 四字段**:`docling_picture_description`(默认关)/`_endpoint`/`_model`(必填,OpenAI API 语义)/`_prompt`(建议中文,默认英文 prompt 产英文描述影响中文检索);鉴权复用 `docling_vlm_api_key`(同 provider)
+- **接线**(`document.py` `_maybe_apply_picture_description`,standard/vlm 两档汇合点共用):`PictureDescriptionApiOptions`(url/headers/params/prompt/timeout=90/concurrency=2)+ `generate_picture_images=True` + `enable_remote_services=True`;endpoint/model 缺失 → warning + 跳过(不炸转换主链);converter 签名含开关+(endpoint,model) 元组
+- **流向**(摸底实证):描述落 `PictureItem.meta.description`,docling `export_to_markdown()` 自动渲染为 `<!-- image -->` + 描述段落 → 项目 `_build_parsed_from_docling` 的 `parsed.text` 直接承接 → chunk/embed/FTS 全链可查,**下游零改动**
+- compose 透传 `DOCLING_PICTURE_DESCRIPTION/ENDPOINT/MODEL/PROMPT` 四键;`.env.example` 百炼配方
+
+### live 验证(2026-09-14,百炼 qwen-vl-max)
+- 合成柱状图 PDF(三种燃气浓度,数值标签 70/50/30):转换 13.0s,**描述「这是一张柱状图,展示了甲烷、丙烷和丁烷三种物质的数值对比。其中甲烷的数值为70,丙烷为50,丁烷为30」——数值全对**,直接出现在 `ParsedDocument.text`
+- 负例 1(默认关):无描述、零 API 调用,零回归
+- 负例 2(开关开但 endpoint 空):warning 降级,转换正常完成
+
+### 踩坑
+- standard 档 `PdfPipelineOptions` 的 API 型 enrichment 同样要 `enable_remote_services=True`(与 VLM 档同总闸,构造期 guard)
+- docling-core markdown 对图片是**注释占位+文本段**(`<!-- image -->\n\n描述`),非 `![alt]()` 形态——检索链等价,展示层若要 alt 形态需后处理(未做,YAGNI)
+- 手构 DoclingDocument 验证导出行为时 ImageRef 需 uri+mimetype+size 三件套、ProvenanceItem 需 charspan(动态实验比手构省事,直接真转换验证)
+
 ## [1.11.6.3] — Docling VLM 档 API 化 · 2026-09-14
 
 > 补丁批(登记轨「VLM 推理服务化」落地,架构定调修正:走 OpenAI 兼容 API,平台不自带推理服务)。

@@ -27,9 +27,13 @@ def _cfg(engine: str = "rapidocr", langs: tuple[str, ...] = ("ch_sim",)) -> Simp
         docling_pipeline_type="standard",
         docling_vlm_preset=None,
         docling_vlm_endpoint="",
+        docling_vlm_model="",
         docling_ocr_engine=engine,
         docling_ocr_languages=list(langs),
         docling_heading_hierarchy=True,
+        docling_picture_description=False,
+        docling_picture_description_endpoint="",
+        docling_picture_description_model="",
     )
 
 
@@ -127,3 +131,21 @@ def test_vlm_endpoint_flips_signature() -> None:
     sig_a = DocumentParser(cfg_api)._docling_signature()  # type: ignore[arg-type]
     sig_b = DocumentParser(cfg_api2)._docling_signature()  # type: ignore[arg-type]
     assert len({sig_i, sig_a, sig_b}) == 3  # inline / api-a / api-b 三桶
+
+
+def test_picture_description_flips_signature() -> None:
+    """图片描述开关+端点参与签名——关/开(端点A)/开(端点B)各自分桶。"""
+    cfg_off = _cfg()
+    cfg_on = _cfg()
+    cfg_on.docling_picture_description = True
+    cfg_on.docling_picture_description_endpoint = "https://a.example/v1/chat/completions"
+    cfg_on.docling_picture_description_model = "qwen-vl-max"
+    cfg_on2 = _cfg()
+    cfg_on2.docling_picture_description = True
+    cfg_on2.docling_picture_description_endpoint = "https://b.example/v1/chat/completions"
+    cfg_on2.docling_picture_description_model = "qwen-vl-max"
+    sigs = {
+        DocumentParser(c)._docling_signature()  # type: ignore[arg-type]
+        for c in (cfg_off, cfg_on, cfg_on2)
+    }
+    assert len(sigs) == 3

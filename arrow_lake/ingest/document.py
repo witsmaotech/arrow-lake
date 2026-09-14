@@ -479,6 +479,11 @@ class DocumentParser:
             str(getattr(cfg, "docling_ocr_engine", None)),
             tuple(str(x) for x in langs),
             bool(getattr(cfg, "docling_heading_hierarchy", False)),
+            bool(getattr(cfg, "docling_picture_description", False)),
+            (
+                str(getattr(cfg, "docling_picture_description_endpoint", "") or ""),
+                str(getattr(cfg, "docling_picture_description_model", "") or ""),
+            ),
         )
 
     def _build_docling_converter(self, force_full_page_ocr: bool = False) -> Any:
@@ -495,9 +500,11 @@ class DocumentParser:
         # VLM 流水线（GraniteDocling）：端到端视觉模型，复杂版面/扫描件/公式。
         # 与标准流水线互斥——VLM 独占 PDF/IMAGE 的 pipeline_cls。
         if self._config.docling_pipeline_type == DoclingPipelineType.VLM:
+            vlm_po = self._build_docling_vlm_pipeline()
+            self._maybe_apply_picture_description(vlm_po)
             pdf_option = PdfFormatOption(
                 pipeline_cls=VlmPipeline,
-                pipeline_options=self._build_docling_vlm_pipeline(),
+                pipeline_options=vlm_po,
             )
             return DocumentConverter(
                 allowed_formats=_docling_allowed_formats(),
@@ -515,6 +522,7 @@ class DocumentParser:
             images_scale=float(getattr(self._config, "docling_images_scale", 2.0)),
             heading_hierarchy=bool(getattr(self._config, "docling_heading_hierarchy", False)),
         )
+        self._maybe_apply_picture_description(pipeline)
         # 多格式默认首选：PDF/IMAGE 用配好的 pipeline(OCR)，其余格式走
         # docling 默认 SimplePipeline（无需 layout 模型，快）。全集由
         # _docling_allowed_formats() 提供 — 不手工枚举,docling 升级自动跟进。
@@ -1033,6 +1041,44 @@ class DocumentParser:
         except Exception as e:
             logger.debug("docling accelerator config skipped: %s", e)
         return pipeline
+
+    def _maybe_apply_picture_description(self, pipeline: Any) -> None:
+        """图片描述 enrichment 接线(standard/vlm 两档共用,v1.11.6.4)。
+
+        API 型(OpenAI 兼容,平台不附带描述模型):描述段落注入 markdown
+        (``<!-- image -->`` 后跟文本),随 export_to_markdown 进检索文本链。
+        endpoint/model 缺失时 warning + 跳过(不炸转换主链)。
+        """
+        if not bool(getattr(self._config, "docling_picture_description", False)):
+            return
+        endpoint = (getattr(self._config, "docling_picture_description_endpoint", "") or "").strip()
+        model = (getattr(self._config, "docling_picture_description_model", "") or "").strip()
+        prompt = (getattr(self._config, "docling_picture_description_prompt", "") or "").strip()
+        api_key = (getattr(self._config, "docling_vlm_api_key", "") or "").strip()
+        if not (endpoint and model):
+            logger.warning(
+                "picture_description enabled but endpoint/model missing — skipped "
+                "(endpoint=%.20r model=%r)", endpoint, model,
+            )
+            return
+        try:
+            from docling.datamodel.pipeline_options import PictureDescriptionApiOptions
+            headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+            pipeline.do_picture_description = True
+            pipeline.generate_picture_images = True
+            pipeline.picture_description_options = PictureDescriptionApiOptions(
+                url=endpoint,
+                headers=headers,
+                params={"model": model},
+                prompt=prompt or None,
+                timeout=90,
+                concurrency=2,
+            )
+            # API 型 enrichment 与 API 型 VLM 同一「允许外发」总闸
+            pipeline.enable_remote_services = True
+            logger.info("docling picture_description enabled model=%s", model)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("picture_description wiring skipped: %s", e)
 
     def _parse_turbo_ocr_primary(
         self, file_path: Path, ocr_client: Any, max_pages: int,
