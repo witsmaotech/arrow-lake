@@ -224,10 +224,13 @@ services:
       ARROW_LAKE__ANNOTATION__LS_API_TOKEN: "${ANNOTATION_LS_API_TOKEN:-}"
       ARROW_LAKE__ANNOTATION__WEBHOOK_SECRET: "${ANNOTATION_WEBHOOK_SECRET:-}"
       TZ: "Asia/Shanghai"
-      HTTP_PROXY: "http://host.docker.internal:17887"
-      HTTPS_PROXY: "http://host.docker.internal:17887"
-      http_proxy: "http://host.docker.internal:17887"
-      https_proxy: "http://host.docker.internal:17887"
+      # v1.11.6.6 收敛(2026-09-15):WSL 切 NAT——17887 socat 中继(mirrored
+      # 时代通往 Windows 7887)目标不可达,百炼 dashscope 直连已验证可达;
+      # 代理清空,内网服务本就无需代理。未来如需代理改回显式值即可。
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      http_proxy: ""
+      https_proxy: ""
       NO_PROXY: "127.0.0.1,localhost,host.docker.internal,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,172.19.0.0/16,172.30.0.0/16,minio,redis,metaflow-metadata,metaflow-db,hg-server,hg-pd,hg-store,gravitino,lance-rest,arrow-lake-gravitino,arrow-lake-lance-rest,label-studio"
       no_proxy: "127.0.0.1,localhost,host.docker.internal,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,172.19.0.0/16,172.30.0.0/16,minio,redis,metaflow-metadata,metaflow-db,hg-server,hg-pd,hg-store,gravitino,lance-rest,arrow-lake-gravitino,arrow-lake-lance-rest,label-studio"
       ARROW_LAKE__EMBEDDING__BACKEND: "openai"
