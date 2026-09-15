@@ -552,3 +552,62 @@ class TestKgChatGraphContext:
         assert out[0][1]["retrieval_count"] == 0 or isinstance(out[0][1]["retrieval_count"], int)
         deltas = [p for k, p in out if k == "delta"]
         assert "".join(deltas) == "Hello"
+
+
+class TestNeighborContextTwoHop:
+    """2 跳路径(v1.11.6.6 提示词收敛批):A 经 B 间接关联 C 的桥接素材。"""
+
+    def _snapshot(self):
+        verts = [
+            {"id": "A", "label": "x", "properties": {"name": "锚点"}},
+            {"id": "B", "label": "x", "properties": {"name": "桥"}},
+            {"id": "C", "label": "x", "properties": {"name": "终点"}},
+            {"id": "D", "label": "x", "properties": {"name": "直连点"}},
+        ]
+        edges = [
+            {"outV": "A", "inV": "B", "properties": {"relation_type": "依赖"}},
+            {"outV": "B", "inV": "C", "properties": {"relation_type": "部署于"}},
+            {"outV": "A", "inV": "D", "properties": {"relation_type": "直连"}},
+        ]
+        return verts, edges
+
+    def test_two_hop_paths_collected(self) -> None:
+        from arrow_lake._lake_kg import _build_neighbor_context
+
+        verts, edges = self._snapshot()
+        ctx = _build_neighbor_context(["锚点"], verts, edges, max_hops=2)
+        assert ctx and ctx[0]["paths"], "应有 2 跳路径"
+        p = ctx[0]["paths"][0]
+        assert "锚点" in p and "依赖" in p and "桥" in p and "部署于" in p and "终点" in p
+
+    def test_two_hop_skips_direct_and_loops(self) -> None:
+        from arrow_lake._lake_kg import _build_neighbor_context
+
+        verts, edges = self._snapshot()
+        # D 是 1 跳直连;A-B-A 环
+        edges.append({"outV": "B", "inV": "A", "properties": {"relation_type": "回环"}})
+        ctx = _build_neighbor_context(["锚点"], verts, edges, max_hops=2)
+        ends = [p for p in ctx[0]["paths"]]
+        assert all("直连点" not in p for p in ends)  # 1 跳可达不重复出现在路径
+        assert len(set(ends)) == len(ends)  # 无重复路径
+
+    def test_two_hop_hops1_keeps_legacy_shape(self) -> None:
+        from arrow_lake._lake_kg import _build_neighbor_context
+
+        verts, edges = self._snapshot()
+        ctx = _build_neighbor_context(["锚点"], verts, edges, max_hops=1)
+        assert ctx and "paths" not in ctx[0]  # 旧行为(仅 1 跳)不受影响
+
+    def test_two_hop_hub_caps(self) -> None:
+        """hub 中间节点扇出被 max_edges_per_mid/max_paths_per_anchor 封顶。"""
+        from arrow_lake._lake_kg import _build_neighbor_context
+
+        verts = [{"id": "A", "label": "x", "properties": {"name": "锚点"}},
+                 {"id": "B", "label": "x", "properties": {"name": "hub"}}]
+        verts += [{"id": f"C{i}", "label": "x", "properties": {"name": f"c{i}"}} for i in range(20)]
+        edges = [{"outV": "A", "inV": "B", "properties": {"relation_type": "r0"}}]
+        edges += [{"outV": "B", "inV": f"C{i}", "properties": {"relation_type": "r"}} for i in range(20)]
+        ctx = _build_neighbor_context(
+            ["锚点"], verts, edges, max_hops=2, max_edges_per_mid=3, max_paths_per_anchor=6
+        )
+        assert len(ctx[0]["paths"]) <= 3  # 单中间节点只扩 3 条
