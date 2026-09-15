@@ -42,15 +42,16 @@ COPY flows/ flows/
 
 # Create virtual environment and install everything (with BuildKit cache)
 # Use China PyPI mirror for faster downloads
+# v1.11.6.6 收敛:WSL 已切 NAT 模式——mirrored 时代的 17887 构建代理
+# (proxy-forwarder)不再存在,死代理烘焙进镜像曾令全部 RUN 步外网请求
+# connect 失败。默认直连(如未来需要可 build-arg 传入);uv 并发降 8,
+# 阿里 CDN 对默认 50 路并发下载限流 RST。
 ENV UV_HTTP_TIMEOUT=120
+ENV UV_CONCURRENCY=8
 ENV UV_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
 ENV UV_TRUSTED_HOST=mirrors.aliyun.com
 
-# WSL2 mirror-mode build proxy (proxy-forwarder host:17887 → Windows 7887, see
-# memory wsl2-proxy). BuildKit's daemon-proxy auto-injection is NOT reliably
-# applied to RUN steps here, so set it explicitly — uv/pip need it to reach the
-# aliyun PyPI mirror (without it: "Connection refused" on pip downloads).
-ARG BUILD_PROXY="http://127.0.0.1:17887"
+ARG BUILD_PROXY=""
 ENV HTTP_PROXY=${BUILD_PROXY}
 ENV HTTPS_PROXY=${BUILD_PROXY}
 ENV http_proxy=${BUILD_PROXY}
@@ -110,11 +111,10 @@ LABEL description="Arrow Lake — Unified multimodal data lakehouse (Lance + Daf
 LABEL org.opencontainers.image.source="https://github.com/wits-sunpw/arrow-lake"
 LABEL org.opencontainers.image.version="${VERSION}"
 
-# WSL2 mirror-mode build proxy (proxy-forwarder on host:17887 → Windows 7887,
-# see memory wsl2-proxy). network:host build makes 127.0.0.1:17887 reachable.
-# Set EXPLICITLY because BuildKit's auto-proxy is not reliably injected into
-# RUN steps in this env. Override via --build-arg BUILD_PROXY=... for other envs.
-ARG BUILD_PROXY="http://127.0.0.1:17887"
+# v1.11.6.6 收敛:WSL 已切 NAT——proxy-forwarder(17887)不复存在,构建
+# 默认直连(阿里 apt/PyPI mirror 直连可达,容器内已验证)。如未来需要
+# 代理,--build-arg BUILD_PROXY=... 传入即可。
+ARG BUILD_PROXY=""
 ENV HTTP_PROXY=${BUILD_PROXY}
 ENV HTTPS_PROXY=${BUILD_PROXY}
 ENV http_proxy=${BUILD_PROXY}

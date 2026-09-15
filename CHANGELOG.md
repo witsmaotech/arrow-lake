@@ -426,7 +426,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 认证/授权原生加固（Logto-ready 接缝,不引外部 IdP）
 
-> 依据 2026-08-14 Logto 评估（`docs_offline/logto-auth-assessment-2026-08.md`）:单机内部栈不引入外部 IdP（+1 服务组 + 硬性 PostgreSQL）,用原生小改动补齐认证 P0 短板,同时把未来切外部 IdP 所需的协议接缝全部铺好。数据层 ACL（dataset/行/列 ACL）不迁不动。
+> 依据 2026-08-14 Logto 评估（`docs_offline/logto-auth-assessment-2026-08-14.md`）:单机内部栈不引入外部 IdP（+1 服务组 + 硬性 PostgreSQL）,用原生小改动补齐认证 P0 短板,同时把未来切外部 IdP 所需的协议接缝全部铺好。数据层 ACL（dataset/行/列 ACL）不迁不动。
 
 - **M0 — JWT `aud` claim + per-user token 失效**:token 写入 audience（`jwt_audience` 配置,`jwt_require_audience` 开关兼容存量 token）;users 表新增 `token_valid_after` 截止列（V008 migration）,停用用户/改密码/改角色即 bump → 存量 JWT 下一次请求即 401,不再等 30min TTL 自然过期。`verify_token` 经 provider 回调查截止,store 不可达时 fail-open 保持旧行为。
 - **M1 — 一次性密码重置**（无 email 通道的最小可行）:admin `POST /admin/users/{id}/password-reset` 签发单次 token（V009 表 `password_reset_tokens`,只存 sha256,30min TTL,明文仅返回一次,由 admin 线下转交）→ 用户 `POST /auth/password-reset` 消费（烧 token + 换 pbkdf2 密码 + bump `token_valid_after` 踢全部旧 JWT + 撤销全部 personal token）;复用登录锁定（key `__password_reset__:<ip>`）防撞库;事件入审计（`password_reset_requested`/`password_reset`）。**并发双花**由条件 UPDATE（`WHERE used_at IS NULL` + rowcount 校验）保证恰好一个赢家;过期 token 也烧毁不留重放窗口;签发即烧同用户旧 token（单 outstanding）+ 清理 >7 天老行。console admin.html 用户行「重置密码」按钮 + login.html 忘记密码提示。
