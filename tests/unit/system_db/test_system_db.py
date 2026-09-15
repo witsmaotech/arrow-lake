@@ -135,6 +135,55 @@ class TestMigrator:
         n = len(list(Path("arrow_lake/system_db/migrations").glob("V*.sql")))
         assert versions == set(range(1, n + 1))
 
+    def test_race_loser_with_stale_snapshot_skips_applied(self, db: SystemDB) -> None:
+        """v1.11.6.6 live 实证:多 worker 并发跑 Migrator,输家持过期快照重放
+        ——幂等 SQL + INSERT OR IGNORE 使重放零异常(部分后端脚本重放直接
+        幂等过;炸则走 test_race_loser_script_error 异常复核路径)。"""
+        first = Migrator(db)
+        first.run()
+        stale = Migrator(db)
+        stale.applied_versions = lambda: set()  # 模拟 SELECT 早于 sibling 提交
+        stale.run()  # 输家全量重放:零异常
+        versions = Migrator(db).applied_versions()
+        from pathlib import Path
+
+        n = len(list(Path("arrow_lake/system_db/migrations").glob("V*.sql")))
+        assert versions == set(range(1, n + 1))  # 版本表完整且无重复
+
+    def test_race_loser_script_error_with_version_present_skips(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """异常路径:输家事务抛错(live Hrana 的 UNIQUE/duplicate column;
+        :memory: 后端静默吞 SQL 错,故 monkeypatch 模拟)但版本行已被
+        sibling 记账 → 复核命中即静默跳过,不杀 worker。"""
+        from arrow_lake.system_db import SystemDB
+
+        db = SystemDB(":memory:")
+        try:
+            Migrator(db).run()  # 基线 1..N
+            d = tmp_path
+            (d / "V900__a.sql").write_text("CREATE TABLE race_t (id INTEGER);")
+            Migrator(db, d).run()  # 应用 900
+            m = Migrator(db, d)
+            # 仅 run() 的初始快照过期;异常复核须真查版本表(同 live 语义)
+            real_versions = Migrator.applied_versions
+            calls = {"n": 0}
+
+            def _stale_snapshot_then_real():
+                calls["n"] += 1
+                return set() if calls["n"] == 1 else real_versions(m)
+
+            m.applied_versions = _stale_snapshot_then_real
+
+            def _boom(self):
+                raise RuntimeError("Hrana: stream error (UNIQUE constraint)")
+
+            monkeypatch.setattr(SystemDB, "with_write", _boom)
+            assert m.run() == []  # 异常 → 版本表复核命中 900 → 跳过
+            assert 900 in Migrator(db, d).applied_versions()
+        finally:
+            db.close()
+
 
 # --------------------------------------------------------------------------- #
 # RbacStore

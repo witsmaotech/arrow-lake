@@ -219,12 +219,17 @@ class _LakeAdminMixin:
 
         v1.11.6: falls back to the lance-core API when lancedb cannot see
         the index (NGRAM etc. created via the storage fallback path).
+        M1(v1.11.6.6): 删除成功后失效池化 AsyncTable 句柄(对照
+        storage.delete_vector_index;否则异步检索持陈旧句柄)。
         """
         ds = self._get_storage().open_dataset(dataset_name)
         try:
             ds.drop_index(index_name)
         except Exception:  # noqa: BLE001 — retry via lance core
             ds.to_lance().drop_index(index_name)
+        from arrow_lake.query.async_conn_pool import invalidate_async_table
+
+        invalidate_async_table(dataset_name)
 
     def list_datasets(self) -> list[str]:
         """List all dataset names.

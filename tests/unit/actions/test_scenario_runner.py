@@ -88,6 +88,7 @@ class FakeStore:
         scenario_id: str | None = None,
         status: str | None = None,
         limit: int = 50,
+        offset: int = 0,
     ) -> list[dict[str, Any]]:
         out = []
         for row in sorted(self.instances.values(), key=lambda r: -r["id"]):
@@ -96,7 +97,35 @@ class FakeStore:
             if status is not None and row["status"] != status:
                 continue
             out.append(row)
-        return out[:limit]
+        return out[offset : offset + limit]
+
+    def count_instances(
+        self, *, scenario_id: str | None = None, status: str | None = None
+    ) -> int:
+        return len(self.list_instances(scenario_id=scenario_id, status=status, limit=10**9))
+
+    def resume_instance(self, instance_id: int, *, deadline_at: str | None = "") -> bool:
+        # M9:CAS 终态→running(非终态/不存在 → False)
+        row = self.instances.get(instance_id)
+        if row is None or row["status"] not in (
+            "failed", "timeout", "compensated", "terminated",
+        ):
+            return False
+        row["status"] = "running"
+        row["error"] = None
+        row["finished_at"] = None
+        row["deadline_at"] = deadline_at or None
+        return True
+
+    def terminate_instance(self, instance_id: int) -> bool:
+        # LOW:CAS running→terminated(非 running → False)
+        row = self.instances.get(instance_id)
+        if row is None or row["status"] != "running":
+            return False
+        row["status"] = "terminated"
+        row["error"] = "terminated by admin"
+        row["finished_at"] = "2026-09-04T00:00:00Z"
+        return True
 
     def update_instance(
         self,
@@ -125,6 +154,11 @@ class FakeStore:
         if finished:
             row["finished_at"] = "2026-09-04T00:00:00Z"
         return True
+
+    def touch(self, instance_id: int) -> bool:
+        # H-1:runner 心跳镜像(真实 store 只刷 updated_at)
+        row = self.instances.get(instance_id)
+        return row is not None and row["status"] == "running"
 
     def start_step(self, instance_id: int, step_id: str, kind: str) -> None:
         runs = self.step_runs[instance_id]
@@ -600,6 +634,37 @@ async def test_dead_letter_with_compensation_also_marks_pending() -> None:
     inst = store.get_instance(iid)
     assert inst is not None and inst["status"] == "compensated"
     assert json.loads(inst["pending_compensation_json"]) == ["ACT.UNPUB"]
+
+
+async def test_and_batch_aggregates_all_compensations() -> None:
+    """M7(v1.11.6.6):AND 并发批多步失败——实例级补偿待办聚合批内全部
+    失败步的声明(原 stop 覆盖语义只留最后一个失败步)。"""
+    store = FakeStore()
+    spec = _spec(
+        [
+            ScenarioStep(id="act_a", action="ACT.A"),
+            ScenarioStep(id="act_b", action="ACT.B"),
+        ],
+        [ScenarioGateway(id="gw1", type="and_split", branches=(("act_a",), ("act_b",)))],
+    )
+    iid = _seed_instance(store)
+    runner = _make_runner(
+        store, spec, iid,
+        action_impl={
+            "act_a": RuntimeError("a failed"),
+            "act_b": {"status": "dead_letter", "error": "b partial"},
+        },
+        action_specs={
+            "ACT.A": _action_spec("ACT.A", compensation="ACT.UNDO_A"),
+            "ACT.B": _action_spec("ACT.B", compensation="ACT.UNDO_B"),
+        },
+    )
+    await runner.run()
+
+    inst = store.get_instance(iid)
+    assert inst is not None and inst["status"] == "compensated"
+    pending = json.loads(inst["pending_compensation_json"])
+    assert set(pending) == {"ACT.UNDO_A", "ACT.UNDO_B"}  # 两步待办都在
 
 
 # --------------------------------------------------------------------------- #

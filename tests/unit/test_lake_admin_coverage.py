@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -71,6 +72,77 @@ class TestLifecycle:
         with patch.object(lake, "_get_lifecycle_manager", return_value=mock_mgr):
             result = lake.lifecycle_rules("pfx/")
         assert result["rules"] == [{"id": "r1"}]
+
+
+# ── list_indices 归一化(LOW③,v1.11.6.6)──
+
+
+class TestListIndices:
+    def test_normalizes_dict_and_object_forms(self) -> None:
+        """lancedb IndexMetadata 双形态(dict: index_type/fields;对象:
+        type/columns)+ lance-core 视图合并去重(NGram 等 fallback 建的
+        索引保持可见)。"""
+        lake = _make_lake()
+        dict_form = {"name": "idx_a", "index_type": "NGram", "fields": ["t"]}
+        obj_form = SimpleNamespace(name="idx_b", type="BTree", columns=["x"])
+        obj_dup = SimpleNamespace(name="idx_a", type="NGram", columns=["t"])
+        mock_ds = MagicMock()
+        mock_ds.list_indices.return_value = [dict_form]
+        mock_ds.to_lance.return_value.list_indices.return_value = [obj_form, obj_dup]
+        storage = MagicMock()
+        storage.open_dataset.return_value = mock_ds
+        with patch.object(lake, "_get_storage", return_value=storage):
+            out = lake.list_indices("ds1")
+        assert {"name": "idx_a", "type": "NGram", "columns": ["t"]} in out
+        assert {"name": "idx_b", "type": "BTree", "columns": ["x"]} in out
+        assert len(out) == 2  # core 视图的 idx_a 重复项被 seen 集合去重
+
+
+# ── drop_index(M1,v1.11.6.6)──
+
+
+class TestDropIndex:
+    def test_drop_index_invalidates_async_table(self) -> None:
+        """M1:删除成功后失效池化 AsyncTable 句柄(跨全部连接,只清本表)。"""
+        from arrow_lake.query import async_conn_pool
+
+        lake = _make_lake()
+        mock_ds = MagicMock()
+        storage = MagicMock()
+        storage.open_dataset.return_value = mock_ds
+        with patch.object(lake, "_get_storage", return_value=storage):
+            async_conn_pool._table_cache[("uri_a", "ds1")] = object()
+            async_conn_pool._table_cache[("uri_b", "ds1")] = object()
+            async_conn_pool._table_cache[("uri_a", "other")] = object()
+            try:
+                lake.drop_index("ds1", "idx1")
+                mock_ds.drop_index.assert_called_once_with("idx1")
+                assert ("uri_a", "ds1") not in async_conn_pool._table_cache
+                assert ("uri_b", "ds1") not in async_conn_pool._table_cache
+                assert ("uri_a", "other") in async_conn_pool._table_cache
+            finally:
+                async_conn_pool._table_cache.clear()
+
+    def test_drop_index_falls_back_to_lance_core_and_invalidates(self) -> None:
+        """lancedb 看不见的索引(NGRAM 等走 core 创建)回落 lance-core 删除,
+        同样失效句柄(v1.11.6 双回落;M1 补失效)。"""
+        from arrow_lake.query import async_conn_pool
+
+        lake = _make_lake()
+        mock_ds = MagicMock()
+        mock_ds.drop_index.side_effect = ValueError("lancedb cannot see it")
+        storage = MagicMock()
+        storage.open_dataset.return_value = mock_ds
+        with patch.object(lake, "_get_storage", return_value=storage):
+            async_conn_pool._table_cache[("uri_a", "ds1")] = object()
+            try:
+                lake.drop_index("ds1", "ngram_idx")
+                mock_ds.to_lance.return_value.drop_index.assert_called_once_with(
+                    "ngram_idx"
+                )
+                assert ("uri_a", "ds1") not in async_conn_pool._table_cache
+            finally:
+                async_conn_pool._table_cache.clear()
 
 
 # ── audit_analyze ──

@@ -16,10 +16,14 @@ from arrow_lake.system_db.connection import SystemDB
 
 _NOW = "strftime('%Y-%m-%dT%H:%M:%SZ','now')"
 
+# 孤儿回收年龄阈值(秒):runner 心跳 20s 触写 updated_at,阈值对照
+# api/tasks.py _ORPHAN_STALE_SECONDS=180 先例——防 sibling 重启误杀活 runner。
+_ORPHAN_STALE_SECONDS = 180.0
+
 _INSTANCE_COLS = (
     "id, scenario_id, scenario_version, dataset, object_type, object_id, "
     "status, current_step, context_json, deadline_at, "
-    "pending_compensation_json, error, actor, created_at, finished_at"
+    "pending_compensation_json, error, actor, created_at, finished_at, updated_at"
 )
 
 
@@ -40,6 +44,7 @@ def _instance_row(r: Any) -> dict[str, Any]:
         "actor": r[12],
         "created_at": r[13],
         "finished_at": r[14],
+        "updated_at": r[15],
     }
 
 
@@ -80,8 +85,8 @@ class ScenarioInstanceStore:
         cur = self._db.execute(
             "INSERT INTO scenario_instances "
             "(scenario_id, scenario_version, dataset, object_type, object_id, "
-            " status, context_json, deadline_at, actor) "
-            "VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?)",
+            f" status, context_json, deadline_at, actor, updated_at) "
+            f"VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?, {_NOW})",
             (scenario_id, scenario_version, dataset, object_type, object_id,
              context_json, deadline_at, actor),
         )
@@ -129,6 +134,7 @@ class ScenarioInstanceStore:
             sets.append("finished_at=NULL")
         if not sets:
             return False
+        sets.append(f"updated_at={_NOW}")  # H-1:每次写即心跳(孤儿回收年龄锚)
         params.append(instance_id)
         cur = self._db.execute(
             f"UPDATE scenario_instances SET {', '.join(sets)} WHERE id=?", tuple(params)
@@ -136,12 +142,63 @@ class ScenarioInstanceStore:
         self._db.commit()
         return bool(cur.rowcount) if hasattr(cur, "rowcount") else True
 
-    def mark_orphaned_running(self) -> int:
-        """启动期孤儿回收:进程重启即全部孤儿 → failed(可 resume)。"""
+    def touch(self, instance_id: int) -> bool:
+        """仅刷新 updated_at(runner 心跳;孤儿回收年龄锚,H-1)。"""
+        cur = self._db.execute(
+            f"UPDATE scenario_instances SET updated_at={_NOW} WHERE id=? AND status='running'",
+            (instance_id,),
+        )
+        self._db.commit()
+        return bool(cur.rowcount) if hasattr(cur, "rowcount") else True
+
+    # resume CAS 可重开的终态(与 router 的 409 校验同词表)
+    RESUMABLE_STATUSES = ("failed", "timeout", "compensated", "terminated")
+
+    def resume_instance(self, instance_id: int, *, deadline_at: str | None = "") -> bool:
+        """CAS 终态→running(M9,v1.11.6.6)。
+
+        WHERE 带终态条件:并发 resume/resume(或 terminate 竞争)仅一方
+        成功,0 行=状态已漂移(调用方 409);防双活 runner。
+        """
+        cur = self._db.execute(
+            f"UPDATE scenario_instances SET status='running', error=NULL, "
+            f"deadline_at=?, finished_at=NULL, updated_at={_NOW} "
+            "WHERE id=? AND status IN "
+            "('failed','timeout','compensated','terminated')",
+            (deadline_at or None, instance_id),
+        )
+        self._db.commit()
+        return bool(cur.rowcount) if hasattr(cur, "rowcount") else True
+
+    def terminate_instance(self, instance_id: int) -> bool:
+        """CAS running→terminated(LOW,v1.11.6.6):读-写窗口内实例自行
+        completed/failed 时不覆写其终态(0 行=已漂移,调用方 409)。"""
+        cur = self._db.execute(
+            f"UPDATE scenario_instances SET status='terminated', "
+            f"error='terminated by admin', finished_at={_NOW}, updated_at={_NOW} "
+            "WHERE id=? AND status='running'",
+            (instance_id,),
+        )
+        self._db.commit()
+        return bool(cur.rowcount) if hasattr(cur, "rowcount") else True
+
+    def mark_orphaned_running(
+        self, *, stale_seconds: float = _ORPHAN_STALE_SECONDS
+    ) -> int:
+        """启动期孤儿回收:**超龄** running → failed(可 resume)。
+
+        H-1(四维 review):原无条件杀全部 running,sibling worker 重启即
+        误杀活 runner。改为年龄阈值——runner 心跳 20s 触写 updated_at(回
+        退 created_at),阈值须 > 心跳间隔;单步执行期间心跳由 runner 内
+        置任务维持(见 ScenarioRunner.run),超龄即真孤儿。
+        """
         cur = self._db.execute(
             f"UPDATE scenario_instances SET status='failed', "
             f"error='orphaned runner: owning worker exited', finished_at={_NOW} "
-            "WHERE status='running'"
+            "WHERE status='running' "
+            "AND (strftime('%s','now') - "
+            "     COALESCE(strftime('%s', updated_at), strftime('%s', created_at))) > ?",
+            (int(stale_seconds),),
         )
         self._db.commit()
         return int(getattr(cur, "rowcount", 0) or 0)
@@ -161,6 +218,7 @@ class ScenarioInstanceStore:
         scenario_id: str | None = None,
         status: str | None = None,
         limit: int = 50,
+        offset: int = 0,
     ) -> list[dict[str, Any]]:
         sql = f"SELECT {_INSTANCE_COLS} FROM scenario_instances"
         conds: list[str] = []
@@ -173,10 +231,33 @@ class ScenarioInstanceStore:
             params.append(status)
         if conds:
             sql += " WHERE " + " AND ".join(conds)
-        sql += " ORDER BY id DESC LIMIT ?"
+        sql += " ORDER BY id DESC LIMIT ? OFFSET ?"
         params.append(int(limit))
+        params.append(int(offset))
         rows = self._db.execute(sql, tuple(params)).fetchall()
         return [_instance_row(r) for r in rows]
+
+    def count_instances(
+        self,
+        *,
+        scenario_id: str | None = None,
+        status: str | None = None,
+    ) -> int:
+        """过滤同 list_instances 的真总数(M12:``total=len(rows)`` 只反映
+        当前页,翻页后前端计数错)。"""
+        sql = "SELECT COUNT(*) FROM scenario_instances"
+        conds: list[str] = []
+        params: list[Any] = []
+        if scenario_id is not None:
+            conds.append("scenario_id=?")
+            params.append(scenario_id)
+        if status is not None:
+            conds.append("status=?")
+            params.append(status)
+        if conds:
+            sql += " WHERE " + " AND ".join(conds)
+        row = self._db.execute(sql, tuple(params)).fetchone()
+        return int(row[0]) if row is not None else 0
 
     # -- 步运行(upsert:UNIQUE(instance_id, step_id))---------------------
 

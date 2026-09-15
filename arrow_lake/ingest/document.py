@@ -388,6 +388,8 @@ class DocumentParser:
         effective_max = max_pages or self._config.max_pages
 
         # [#step3-B] parse cache: identical content + config → reuse ParsedDocument
+        # M5(v1.11.6.6):key 加 docling 签名——picture_description 开关/endpoint/
+        # model 等 parse 相关配置变化后不再复用旧解析(旧缓存自然失效)。
         import hashlib
         _obe = self._config.ocr_backend
         cache_key = (
@@ -395,6 +397,7 @@ class DocumentParser:
             getattr(_obe, "value", str(_obe)),
             str(self._config.pdf_parse_mode),
             effective_max,
+            self._docling_signature(),
         )
         _cached = _parse_cache_get(cache_key)
         if _cached is not None:
@@ -484,6 +487,9 @@ class DocumentParser:
                 str(getattr(cfg, "docling_picture_description_endpoint", "") or ""),
                 str(getattr(cfg, "docling_picture_description_model", "") or ""),
             ),
+            # M6:并发/超时参与签名(改变行为,不得共享旧 converter)
+            int(getattr(cfg, "docling_picture_description_concurrency", 2)),
+            float(getattr(cfg, "docling_picture_description_timeout", 90.0)),
         )
 
     def _build_docling_converter(self, force_full_page_ocr: bool = False) -> Any:
@@ -548,6 +554,17 @@ class DocumentParser:
                 error_code=ErrorCode.DOCUMENT_PARSE_FAILED,
                 message="docling package is not installed. Install with: pip install arrow-lake[docling]",
             )
+        # M4(v1.11.6.6):page_batch 赋值移到 standard/VLM 两路径汇合点——原在
+        # standard 管线构建内,VLM 档(docling_pipeline_type=vlm)永不执行,
+        # docling 默认 4 静默封顶 ApiVlmEngineOptions concurrency(引擎实际
+        # 并发=min(concurrency, page_batch))。
+        if _docling_settings is not None:
+            try:
+                _docling_settings.perf.page_batch_size = int(
+                    os.environ.get("ARROW_LAKE_DOCLING_PAGE_BATCH", "16")
+                )
+            except (ValueError, AttributeError):
+                pass
         sig = self._docling_signature()
         cached = _DOCLING_CONVERTERS.get(sig)
         if cached is not None:
@@ -560,6 +577,17 @@ class DocumentParser:
             converter = self._build_docling_converter()
             entry = (converter, _threading.RLock())
             _DOCLING_CONVERTERS[sig] = entry
+            # LOW⑤(v1.11.6.6):GPU 静默回落 CPU 无可观测——converter 首建时
+            # 记一次 onnxruntime 编译进的 providers(CUDA EP 缺库/驱动不配,
+            # 此处现形;torch 升级/镜像换 base 后必看这行)。
+            try:
+                import onnxruntime as _ort
+
+                logger.info(
+                    "docling onnxruntime providers=%s", _ort.get_available_providers()
+                )
+            except Exception:  # 观测性日志,缺包不影响解析
+                pass
             return entry
 
     def _build_docling_vlm_pipeline(self) -> Any:
@@ -992,20 +1020,15 @@ class DocumentParser:
             ocr_batch_size=_ocr_batch, layout_batch_size=_layout_batch,
             table_batch_size=_table_batch,
         )
-        # page_batch_size:docling 全局并发页数(默认 4)。v1.10.3 默认 16——M0 实测 page_batch=64
-        # 在 552 页全量 + OCR-on-CPU 下 OOM-killed 整个 16GiB api 容器(64 页并发 × 页栅格 +
-        # ONNX OCR 张量撑爆宿主 RAM)。16 在 16GiB 容器安全;大内存机器 env 调高(32/64)。
-        # 根因缓解待 P0-2(OCR 上 GPU,张量从 RAM 挪 VRAM,腾 RAM 才能用大 batch)。
-        if _docling_settings is not None:
-            try:
-                _docling_settings.perf.page_batch_size = int(
-                    os.environ.get("ARROW_LAKE_DOCLING_PAGE_BATCH", "16")
-                )
-            except (ValueError, AttributeError):
-                pass
+        # page_batch_size:docling 全局并发页数(默认 4)——赋值已移至两路径
+        # 汇合点 _get_docling_converter(M4,v1.11.6.6;VLM 档此前永不执行)。
+        # v1.10.3 默认 16:M0 实测 page_batch=64 在 552 页全量 + OCR-on-CPU 下
+        # OOM-killed 整个 16GiB api 容器;16 安全,大内存机器 env 调高(32/64)。
+        if _docling_settings is not None and os.environ.get(
+            "ARROW_LAKE_DOCLING_PROFILE", ""
+        ).lower() in ("1", "true"):
             # [P1/§5.4] 阶段级 profile(layout/OCR/table 耗时),生产默认关,压测/调参时开。
-            if os.environ.get("ARROW_LAKE_DOCLING_PROFILE", "").lower() in ("1", "true"):
-                _docling_settings.debug.profile_pipeline_timings = True
+            _docling_settings.debug.profile_pipeline_timings = True
         # [P2-2] 图片导出(ColPali/CLIP 多模态 RAG 前置):渲染页面 PNG,下游 _extract_page_images 落盘。
         if generate_images:
             pipeline.generate_page_images = True
@@ -1071,8 +1094,14 @@ class DocumentParser:
                 headers=headers,
                 params={"model": model},
                 prompt=prompt or None,
-                timeout=90,
-                concurrency=2,
+                # M6(v1.11.6.6):并发/超时 config 化(默认 2/90s 同历史硬编码;
+                # 图多文档上调,防整文档 convert 超时连带 converter 驱逐)。
+                timeout=float(
+                    getattr(self._config, "docling_picture_description_timeout", 90.0)
+                ),
+                concurrency=int(
+                    getattr(self._config, "docling_picture_description_concurrency", 2)
+                ),
             )
             # API 型 enrichment 与 API 型 VLM 同一「允许外发」总闸
             pipeline.enable_remote_services = True

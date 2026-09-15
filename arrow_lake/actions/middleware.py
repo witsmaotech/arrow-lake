@@ -71,6 +71,7 @@ async def execute_action(
     reason: str | None,
     scenario_id: str | None = None,
     step_id: str | None = None,
+    scenario_version: int | None = None,  # H-2:归属校验钉实例锚定版本
     assess: dict[str, Any] | None = None,  # 回显用(W4.5 H-3:不再信任)
     action_store: Any,
     idempotency_store: Any,
@@ -164,10 +165,21 @@ async def execute_action(
             deny_table_write(dataset, table_param)
 
     # -- 场景归属校验(W4.5 L-1):scenario/step 必须在场景库中真实存在 --
+    # H-2(v1.11.6.6):带 scenario_version 时钉该版校验(runner 续跑实例
+    # 锚定版本;无版本上下文的直接执行端点仍查最新版)。
     if scenario_id is not None and scenario_store is not None:
-        srec = scenario_store.get_version(scenario_id)
+        srec = (
+            scenario_store.get_version(scenario_id, version=scenario_version)
+            if scenario_version is not None
+            else scenario_store.get_version(scenario_id)
+        )
         if srec is None:
-            raise ActionError(422, f"scenario '{scenario_id}' not found")
+            raise ActionError(
+                422,
+                f"scenario '{scenario_id}'"
+                + (f" v{scenario_version}" if scenario_version is not None else "")
+                + " not found",
+            )
         if step_id is not None:
             from arrow_lake.actions.yaml_io import parse_scenario_yaml
 

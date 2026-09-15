@@ -318,6 +318,32 @@ async def test_schema_migrate_dataset_not_found(client: AsyncClient, mock_lake: 
 
 
 @pytest.mark.asyncio
+async def test_schema_migrate_dry_run_rejects_dangerous_sql(
+    client: AsyncClient, mock_lake: MagicMock
+) -> None:
+    """M2(v1.11.6.6): dry_run 同 apply 路径过安全黑名单——preview 直投
+    to_table 求值,DROP 关键字在求值前即被拒。"""
+    fake_ds = MagicMock()
+    fake_ds.schema = pa.schema([pa.field("name", pa.string())])
+    mock_lake._storage.open_dataset.return_value = fake_ds
+
+    resp = await client.post(
+        "/api/v1/datasets/test/schema/migrate",
+        json={
+            "actions": [{"operation": "add_column", "column_name": "x",
+                         "sql_expr": "DROP TABLE secrets; --"}],
+            "dry_run": True,
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["success"] is False
+    msgs = " ".join(body["issues"][0]["messages"])
+    assert "Dangerous SQL keyword" in msgs
+    assert not body.get("previews")  # 未触达 preview 求值
+
+
+@pytest.mark.asyncio
 async def test_schema_migrate_dry_run_lint_traps(client: AsyncClient, mock_lake: MagicMock) -> None:
     """v1.11.6: dry_run statically lints Lance dialect traps (TRIM + double-quote literal + CASE)."""
     fake_ds = MagicMock()

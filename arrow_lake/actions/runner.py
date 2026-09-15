@@ -51,6 +51,10 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["ScenarioRunner", "parse_iso_duration"]
 
+# H-1:心跳间隔(秒)——与 api/tasks.py _HEARTBEAT_INTERVAL_SECONDS 同值;
+# 须 < store 侧 _ORPHAN_STALE_SECONDS(180)。
+_HEARTBEAT_INTERVAL_SECONDS = 20.0
+
 # 步终态(succeeded/skipped 之外均不可自动推进下游)
 _STEP_TERMINAL = frozenset(
     {"succeeded", "failed", "skipped", "manual_intervention", "dead_letter", "timeout"}
@@ -188,94 +192,120 @@ class ScenarioRunner:
         deadline = _parse_deadline(inst.get("deadline_at"))
         decided: dict[str, bool] = {}
 
-        while True:
-            inst = await _sync(self._store.get_instance, self._instance_id)
-            if inst is None or inst.get("status") != "running":
-                return  # 外部 terminate
+        # H-1:单步执行期间无实例行写入 → 心跳维持 updated_at(孤儿回收
+        # 年龄锚,防 sibling worker 重启按年龄误杀长步活 runner)
+        heartbeat = asyncio.create_task(self._heartbeat())
+        try:
+            while True:
+                inst = await _sync(self._store.get_instance, self._instance_id)
+                if inst is None or inst.get("status") != "running":
+                    return  # 外部 terminate
 
-            succeeded = {sid for sid, st in status.items() if st == "succeeded"}
-            terminal = {sid for sid, st in status.items() if st in _STEP_TERMINAL}
+                succeeded = {sid for sid, st in status.items() if st == "succeeded"}
+                terminal = {sid for sid, st in status.items() if st in _STEP_TERMINAL}
 
-            # -- XOR 网关决策:引用步 requires 全终态后求值一次 ------------------
-            for gw in self._spec.gateways:
-                if gw.type != "xor" or gw.id in decided:
-                    continue
-                reqs = self._gateway_requirements(gw)
-                if reqs and not reqs.issubset(terminal):
-                    continue  # 求值点未到
-                try:
-                    decided[gw.id] = compile_predicate(gw.when or "true").evaluate(ctx)
-                except ParsedPredicateError:
-                    decided[gw.id] = False
-                # W4 #10 网关评估参与(降权因子):走 substitute(else)臂 →
-                # 根 assess 置信 ×0.9(下游前置/幂等键渲染即见);只降不加
-                if decided[gw.id] is False:
-                    a = dict(ctx.get("assess") or {})
-                    a["confidence"] = round(
-                        float(a.get("confidence", 1.0)) * 0.9, 4
-                    )
-                    a.setdefault("gateway_downweight", []).append(gw.id)
-                    ctx["assess"] = a
-                losing = set(gw.else_) if decided[gw.id] else set(gw.then)
-                for sid in sorted(losing):
-                    if status.get(sid) not in _STEP_TERMINAL:
-                        await self._mark_step(sid, "skipped")
-                        status[sid] = "skipped"
-                        terminal.add(sid)
-            # 级联:依赖 skipped 的步一并 skipped(替代路径已定,主线依赖作废)
-            changed = True
-            while changed:
-                changed = False
-                for step in self._spec.steps:
-                    if status.get(step.id) in _STEP_TERMINAL:
+                # -- XOR 网关决策:引用步 requires 全终态后求值一次 --------------
+                for gw in self._spec.gateways:
+                    if gw.type != "xor" or gw.id in decided:
                         continue
-                    if any(status.get(req) == "skipped" for req in step.requires):
-                        await self._mark_step(step.id, "skipped")
-                        status[step.id] = "skipped"
-                        changed = True
+                    reqs = self._gateway_requirements(gw)
+                    if reqs and not reqs.issubset(terminal):
+                        continue  # 求值点未到
+                    try:
+                        decided[gw.id] = compile_predicate(gw.when or "true").evaluate(ctx)
+                    except ParsedPredicateError:
+                        decided[gw.id] = False
+                    # W4 #10 网关评估参与(降权因子):走 substitute(else)臂 →
+                    # 根 assess 置信 ×0.9;只降不加。M10(v1.11.6.6 口径收敛):
+                    # 因子只作用于本 runner 上下文(后续 assess 步镜像/网关谓词/
+                    # 实例 context 快照)——中间件的服务端重评 assess_ctx(W4.5
+                    # H-3)独立重算不读 runner ctx(防伪造研判,by design),故
+                    # 降权不达 action 前置;那侧以规则实际命中为准。
+                    if decided[gw.id] is False:
+                        a = dict(ctx.get("assess") or {})
+                        a["confidence"] = round(
+                            float(a.get("confidence", 1.0)) * 0.9, 4
+                        )
+                        a.setdefault("gateway_downweight", []).append(gw.id)
+                        ctx["assess"] = a
+                    losing = set(gw.else_) if decided[gw.id] else set(gw.then)
+                    for sid in sorted(losing):
+                        if status.get(sid) not in _STEP_TERMINAL:
+                            await self._mark_step(sid, "skipped")
+                            status[sid] = "skipped"
+                            terminal.add(sid)
+                # 级联:依赖 skipped 的步一并 skipped(替代路径已定,主线依赖作废)
+                changed = True
+                while changed:
+                    changed = False
+                    for step in self._spec.steps:
+                        if status.get(step.id) in _STEP_TERMINAL:
+                            continue
+                        if any(status.get(req) == "skipped" for req in step.requires):
+                            await self._mark_step(step.id, "skipped")
+                            status[step.id] = "skipped"
+                            changed = True
 
-            # -- 超时检查(每批派发前)------------------------------------------
-            if deadline is not None and _now() >= deadline:
-                await self._handle_timeout(status)
-                return
+                # -- 超时检查(每批派发前)----------------------------------------
+                if deadline is not None and _now() >= deadline:
+                    await self._handle_timeout(status)
+                    return
 
-            # -- 可运行集 --------------------------------------------------------
-            runnable = self._runnable_steps(status, succeeded, decided)
-            if not runnable:
-                pending = [
-                    s.id for s in self._spec.steps if status.get(s.id) not in _STEP_TERMINAL
-                ]
-                if pending:
-                    await self._finish(
-                        ctx, "failed", error="unsatisfiable remains: " + ", ".join(sorted(pending))
-                    )
-                else:
-                    await self._finish(ctx, "completed")
-                return
+                # -- 可运行集 ------------------------------------------------------
+                runnable = self._runnable_steps(status, succeeded, decided)
+                if not runnable:
+                    pending = [
+                        s.id for s in self._spec.steps if status.get(s.id) not in _STEP_TERMINAL
+                    ]
+                    if pending:
+                        await self._finish(
+                            ctx, "failed", error="unsatisfiable remains: " + ", ".join(sorted(pending))
+                        )
+                    else:
+                        await self._finish(ctx, "completed")
+                    return
 
-            # -- 派发(gather 并发;实例行写在 loop 上串行,无锁)-----------------
-            await _sync(
-                self._store.update_instance,
-                self._instance_id,
-                current_step=",".join(s.id for s in runnable),
-                context_json=json.dumps(ctx, ensure_ascii=False, default=str),
-            )
-            results = await asyncio.gather(
-                *(self._exec_step(step, ctx, steps_out) for step in runnable),
-                return_exceptions=True,
-            )
-            stop: tuple[str, str, list[str] | None] | None = None
-            for step, res in zip(runnable, results):
-                if isinstance(res, BaseException):  # 防御:_exec_step 已内捕
-                    outcome = (step.id, "failed", None, f"{type(res).__name__}: {res}")
-                else:
-                    outcome = res
-                status[outcome[0]] = outcome[1]
-                if outcome[1] != "succeeded":
-                    stop = (outcome[0], outcome[1], outcome[2])
-            if stop is not None:
-                await self._handle_failure(stop, ctx)
-                return
+                # -- 派发(gather 并发;实例行写在 loop 上串行,无锁)-------------
+                await _sync(
+                    self._store.update_instance,
+                    self._instance_id,
+                    current_step=",".join(s.id for s in runnable),
+                    context_json=json.dumps(ctx, ensure_ascii=False, default=str),
+                )
+                results = await asyncio.gather(
+                    *(self._exec_step(step, ctx, steps_out) for step in runnable),
+                    return_exceptions=True,
+                )
+                stop: tuple[str, str, list[str] | None] | None = None
+                comp: list[str] = []  # M7:批内全部非 succeeded 步的补偿聚合
+                for step, res in zip(runnable, results):
+                    if isinstance(res, BaseException):  # 防御:_exec_step 已内捕
+                        outcome = (step.id, "failed", None, f"{type(res).__name__}: {res}")
+                    else:
+                        outcome = res
+                    status[outcome[0]] = outcome[1]
+                    if outcome[1] != "succeeded":
+                        if stop is None:  # 首个失败步作实例 error 载体
+                            stop = (outcome[0], outcome[1], None)
+                        for a in outcome[2] or []:
+                            if a not in comp:
+                                comp.append(a)
+                if stop is not None:
+                    await self._handle_failure((stop[0], stop[1], comp or None), ctx)
+                    return
+        finally:
+            heartbeat.cancel()
+
+    async def _heartbeat(self) -> None:
+        """孤儿回收年龄锚的轻量心跳(对照 api/tasks.py 同款模式)。"""
+        while True:
+            await asyncio.sleep(_HEARTBEAT_INTERVAL_SECONDS)
+            try:
+                await _sync(self._store.touch, self._instance_id)
+            except Exception:  # 心跳失败不杀运行循环(下轮再试)
+                logger.debug(
+                    "scenario_heartbeat_failed", extra={"instance": self._instance_id}
+                )
 
     # ------------------------------------------------------------------ #
     # 内部件                                                               #

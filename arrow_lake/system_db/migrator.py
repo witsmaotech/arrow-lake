@@ -68,7 +68,13 @@ class Migrator:
         return {int(r[0]) for r in rows}
 
     def run(self) -> list[int]:
-        """Apply every pending migration. Returns the versions applied now."""
+        """Apply every pending migration. Returns the versions applied now.
+
+        多 worker 启动竞争(v1.11.6.6 live 实证):4 个 uvicorn worker 并发
+        各跑一次 Migrator,输家重放撞 sibling 已提交(UNIQUE 版本行 / ALTER
+        duplicate column)——迁移 SQL 本身幂等,输家按版本表复核后静默跳过,
+        不再崩 lifespan 等 gunicorn 重生(worker 重生窗口=部署期 502)。
+        """
         applied_now: list[int] = []
         versions = self.applied_versions()
         for version, path in self.list_files():
@@ -76,12 +82,20 @@ class Migrator:
                 continue
             sql = path.read_text(encoding="utf-8")
             logger.info("system_db_migrate", version=version, file=path.name)
-            with self._db.with_write() as db:
-                db.executescript(sql)
-                db.execute(
-                    "INSERT INTO schema_version (version, filename) VALUES (?, ?)",
-                    (version, path.name),
-                )
+            try:
+                with self._db.with_write() as db:
+                    db.executescript(sql)
+                    db.execute(
+                        "INSERT OR IGNORE INTO schema_version (version, filename) "
+                        "VALUES (?, ?)",
+                        (version, path.name),
+                    )
+            except Exception:
+                # 竞争输家:sibling 已提交该版本 → 复核命中即跳过,否则上抛
+                if version in self.applied_versions():
+                    logger.info("system_db_migrate_race_lost", version=version)
+                    continue
+                raise
             applied_now.append(version)
         if applied_now:
             logger.info("system_db_migrate_done", applied=applied_now)

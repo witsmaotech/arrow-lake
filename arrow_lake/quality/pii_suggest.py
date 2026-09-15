@@ -31,6 +31,9 @@ _HIT_RATIO_THRESHOLD = 0.01  # 内容命中占比达此值视为有效证据
 _HIT_ABS_THRESHOLD = 3       # 或绝对命中数达此值
 _FREE_TEXT_AVG_LEN = 50      # 平均长度超此值的字符串列视为自由文本列
 _MAX_SAMPLES = 3             # 每条证据最多带回的脱敏样本数
+# M3(v1.11.6.6):单值截断——PII 模式最长 ~30 字符,截断零检出损失;文档型
+# chunk 列单值几十-几百 KB,全值正则 7 趟 ×500 行可耗尽 120s run_sync。
+_MAX_VALUE_CHARS = 4096
 
 # severity → 建议档位(high>medium>low 取最高;零证据 → public)
 _SEVERITY_ORDER = ("high", "medium", "low")
@@ -109,8 +112,12 @@ _PATTERNS: tuple[_Pattern, ...] = (
         ),
     ),
     _Pattern(
+        # M3:局部部/域标签按 RFC 5321 上界(64/63)——无界 `+` 在无 @ 的长
+        # 字母串上 O(n²) 回退(实测 4KB 截断值 ×500 行仍 15s),有界后线性。
         key="email", label="邮箱", severity="low",
-        regex=re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+"),
+        regex=re.compile(
+            r"[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63})+"
+        ),
     ),
     _Pattern(
         key="landline", label="固定电话", severity="low",
@@ -230,6 +237,8 @@ def suggest_classification(
     *,
     sample_rows: int = _SAMPLE_ROWS,
     table: str | None = None,
+    allowed_columns: Any = None,
+    contract_hints: Any = None,
 ) -> dict[str, Any]:
     """扫描数据集列内容/列名 → 四档分级建议 + 可解释理由(只读,零写入)。
 
@@ -238,32 +247,75 @@ def suggest_classification(
         dataset_name: 单表数据集名(容器表 ``?table=`` 语义不在本建议面)。
         sample_rows: 每列扫描行数上限(前 N 行;行数不足则全量)。
         table: 容器数据集内表名(透传 read_dataset)。
+        allowed_columns: 调用者可见列集(**小写**,H-3 列级 ACL 交集;
+            None=无限制)。列名语义与内容扫描均只对允许列生效;受限视角
+            下可见字符串列空集=零列采样(不回落全列)。
+        contract_hints: 契约字段语义(M11,``{列: "identifier"|"person"}``;
+            None=无契约)。标识列/自然人型列各作 LOW 证据(免采样)。
 
     Returns:
         ``{suggested_tier, engine, scanned_rows, reasons[], hints[]}``;
         reasons 按严重度降序,含脱敏样本。
     """
+    allowed_lower = (
+        frozenset(c.lower() for c in allowed_columns)
+        if allowed_columns is not None
+        else None
+    )
+
+    def _visible(col: str) -> bool:
+        return allowed_lower is None or col.lower() in allowed_lower
+
     lt = storage.open_dataset(dataset_name, table=table)
     schema = lt.schema
     # 大表安全采样:走 Lance scanner limit(在存储层截断),只物化字符串列
     # ×N 行(read_dataset 全量加载后 slice 对 107M 行表会 OOM)。
     string_cols = [
         f.name for f in schema
-        if pa.types.is_string(f.type) or pa.types.is_large_string(f.type)
+        if (pa.types.is_string(f.type) or pa.types.is_large_string(f.type))
+        and _visible(f.name)
     ]
-    data = (
-        lt.to_lance()
-        .scanner(columns=string_cols or None, limit=max(1, sample_rows))
-        .to_table()
-    )
+    if allowed_lower is None:
+        scan_cols: list[str] | None = string_cols or None  # 历史行为:空→全列
+    else:
+        scan_cols = string_cols  # 受限视角:空集=零列(不回落全列)
+    if scan_cols is None or scan_cols:
+        data = (
+            lt.to_lance()
+            .scanner(columns=scan_cols, limit=max(1, sample_rows))
+            .to_table()
+        )
+    else:
+        data = pa.table({})  # 受限且零可见字符串列:无内容可扫(scanned_rows=0)
 
     evidences: list[_Evidence] = []
     hints: list[str] = []
-    # 列名语义:全 schema 生效(数值列如经纬度无需内容即可作证)
+    # 列名语义:全 schema 生效(数值列如经纬度无需内容即可作证;受限视角
+    # 只对允许列作证)
     for field in schema:
+        if not _visible(field.name):
+            continue
         semantic = _column_semantic(field.name)
         if semantic is not None:
             evidences.append(semantic)
+    # 契约字段语义(M11):identifier=业务标识列(跟踪面),type 含 person/
+    # 自然人=自然人载体列——各作 LOW 证据(列不在 schema 时跳过,契约可能
+    # 先于/滞后于物理 schema)
+    _contract_labels = {
+        "identifier": ("contract_identifier", "业务标识列(契约 identifier)"),
+        "person": ("contract_person", "自然人载体列(契约 type)"),
+    }
+    if contract_hints:
+        schema_names = {f.name for f in schema}
+        for col, kind in dict(contract_hints).items():
+            if col not in schema_names or not _visible(col):
+                continue
+            key_label = _contract_labels.get(str(kind))
+            if key_label is None:
+                continue
+            evidences.append(
+                _Evidence(column=col, key=key_label[0], label=key_label[1], severity="low")
+            )
     # 内容扫描 + 自由文本提示:仅字符串列采样(string_cols 为空时 scanner 回
     # 落全列,此处再按类型过滤防数值列进正则)。追踪类系统标识列(uid/hash/
     # 时间戳 id)内容扫描跳过——系统生成 id 不是自然人 PII 载体,且长数字
@@ -276,7 +328,12 @@ def suggest_classification(
             continue
         if _COLUMN_EXCLUDE.search(field.name):
             continue
-        values = [v for v in data.column(field.name).to_pylist() if v is not None]
+        # M3:入口一次截断(内容扫描 + 自由文本 avg-len 共用截断值)
+        values = [
+            v[:_MAX_VALUE_CHARS]
+            for v in data.column(field.name).to_pylist()
+            if v is not None
+        ]
         if not values:
             continue
         evidences.extend(_scan_string_column(field.name, values))

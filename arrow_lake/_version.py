@@ -1,3 +1,3 @@
 """Arrow Lake version information."""
 
-__version__ = "1.11.6.5"
+__version__ = "1.11.6.6"

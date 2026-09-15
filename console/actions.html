@@ -448,10 +448,16 @@ function openInstances(scenarioId, focusId = null) {
     }
     const inst = d.instance;
     const kindTag = (s) => `<span class="tag" style="font-size:.62rem">${s.kind === "assess" ? "研判" : "行动"}</span>`;
+    // M8:补偿 action → 声明它的步(核销端点以步为单位)
+    const compStep = {};
+    (d.step_runs || []).forEach((s) => {
+      ((s.output && s.output.pending_compensation) || []).forEach((a) => { compStep[a] = s.step_id; });
+    });
     const comp = (inst.pending_compensation || []).map((aid) => `
       <div style="display:flex;gap:8px;align-items:center;padding:5px 0">
         <span class="mono" style="font-size:.74rem">${esc(aid)}</span>
         <button class="btn btn-ghost btn-sm" style="margin-left:auto;color:var(--danger)" data-comp="${esc(aid)}">人工执行</button>
+        <button class="btn btn-ghost btn-sm" data-ack="${esc(aid)}"${compStep[aid] ? "" : " disabled title=\"无声明步记录\""}>核销</button>
       </div>`).join("");
     box.innerHTML = `
       <div class="panel flush">
@@ -477,7 +483,7 @@ function openInstances(scenarioId, focusId = null) {
               </div>`).join("") || '<div class="muted">暂无步运行记录</div>'}
           </div>
           ${comp ? `<div class="comp-panel"><b style="color:#f0a050">补偿待办(声明式+人工)</b>${comp}
-            <div class="muted" style="font-size:.66rem;margin-top:4px">逐条人工执行(走单 action execute 端点,同八步审计);全部核销后可「断点续跑」。</div></div>` : ""}
+            <div class="muted" style="font-size:.66rem;margin-top:4px">逐条人工执行(走单 action execute 端点,同八步审计);执行完点「核销」清待办(M8);全部清后可「断点续跑」。</div></div>` : ""}
         </div>
       </div>`;
     box.querySelectorAll("[data-comp]").forEach((btn) => btn.addEventListener("click", async () => {
@@ -495,6 +501,22 @@ function openInstances(scenarioId, focusId = null) {
       } catch (e) {
         btn.disabled = false;
         toast("补偿执行失败:" + (e?.detail?.message || e?.detail || e?.message || e), "danger", 5000);
+      }
+    }));
+    box.querySelectorAll("[data-ack]").forEach((btn) => btn.addEventListener("click", async () => {
+      // M8:人工核销——清该步声明的待办(执行后点;或裁决不做时直接清)
+      const aid = btn.dataset.ack;
+      const sid = compStep[aid];
+      if (!sid) { toast("该待办无声明步记录,无法核销", "danger", 4000); return; }
+      btn.disabled = true;
+      try {
+        const r = await request("POST", `/actions/scenarios/instances/${iid}/compensation/${encodeURIComponent(sid)}/ack`);
+        toast(`已核销 ${aid}(剩余 ${(r.pending_compensation || []).length} 条)`, "ok");
+        loadDetail(iid);
+        refresh();
+      } catch (e) {
+        btn.disabled = false;
+        toast("核销失败:" + (e?.detail || e?.message || e), "danger", 5000);
       }
     }));
     box.querySelector("[data-resume]")?.addEventListener("click", async () => {

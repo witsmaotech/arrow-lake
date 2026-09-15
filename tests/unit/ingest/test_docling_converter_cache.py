@@ -149,3 +149,60 @@ def test_picture_description_flips_signature() -> None:
         for c in (cfg_off, cfg_on, cfg_on2)
     }
     assert len(sigs) == 3
+
+
+# ── M4/M5(v1.11.6.6)──────────────────────────────────────────────────────
+
+
+def test_page_batch_set_at_convergence_point(monkeypatch: pytest.MonkeyPatch) -> None:
+    """M4:page_batch 赋值在 standard/VLM 汇合点——VLM 档同样生效(此前
+    只在 standard 管线构建内赋值,VLM 永不执行,docling 默认 4 静默封顶
+    引擎并发 min(concurrency, page_batch))。"""
+    _fake_build_counter(monkeypatch)
+    fake_settings = SimpleNamespace(perf=SimpleNamespace(page_batch_size=4))
+    monkeypatch.setattr(doc_mod, "_docling_settings", fake_settings)
+    monkeypatch.setenv("ARROW_LAKE_DOCLING_PAGE_BATCH", "32")
+    cfg = _cfg()
+    cfg.docling_pipeline_type = "vlm"  # VLM 档(修复前永不赋值)
+    DocumentParser(cfg)._get_docling_converter()  # type: ignore[arg-type]
+    assert fake_settings.perf.page_batch_size == 32
+    # 缓存命中路径同样保持(幂等重设)
+    DocumentParser(cfg)._get_docling_converter()  # type: ignore[arg-type]
+    assert fake_settings.perf.page_batch_size == 32
+
+
+def test_parse_cache_key_includes_docling_signature(
+    monkeypatch: pytest.MonkeyPatch, tmp_path,
+) -> None:
+    """M5:parse 缓存 key 含 docling 签名——同内容同基础配置,picture_
+    description 开关翻转后各命中各自缓存,不混用旧解析。"""
+    from arrow_lake.config import DocumentConfig
+    from arrow_lake.config._enums import OcrBackend
+    from arrow_lake.ingest.document import ParsedDocument
+
+    f = tmp_path / "doc.pdf"
+    f.write_bytes(b"%PDF-fake-m5")
+    monkeypatch.setattr(doc_mod, "_docling_handles", lambda fp: True)
+
+    calls: list[bool] = []
+
+    def _fake_parse_docling(self, fp, max_pages):
+        calls.append(self._config.docling_picture_description)
+        return ParsedDocument(
+            text=f"desc={self._config.docling_picture_description}",
+            pages=[(1, "x")], page_count=1, backend="docling",
+        )
+
+    monkeypatch.setattr(DocumentParser, "_parse_docling", _fake_parse_docling)
+
+    cfg_off = DocumentConfig(ocr_backend=OcrBackend.DOCLING)
+    cfg_on = DocumentConfig(
+        ocr_backend=OcrBackend.DOCLING, docling_picture_description=True
+    )
+    r1 = DocumentParser(cfg_off).parse(f)
+    r2 = DocumentParser(cfg_off).parse(f)  # 同 config → 缓存命中
+    assert calls == [False]
+    assert r1 is r2  # 缓存对象同一性
+    r3 = DocumentParser(cfg_on).parse(f)  # 签名翻转 → 不命中,重解析
+    assert calls == [False, True]
+    assert r3.text == "desc=True"

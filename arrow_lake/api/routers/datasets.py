@@ -18,6 +18,7 @@ from arrow_lake.api.auth_models import Role
 from arrow_lake.api.deps import (
     authorize_dataset,
     authorize_dataset_read,
+    caller_visible_columns,
     get_lake,
     require_permission,
     require_role,
@@ -844,6 +845,37 @@ async def clear_dataset_classification(
     return {"dataset": name, "tier": None, "previous_tier": prev["tier"]}
 
 
+def _contract_semantic_hints(request: Request, name: str) -> dict[str, str]:
+    """契约字段语义 → PII 建议 LOW 证据来源(M11,v1.11.6.6)。
+
+    identifier=业务标识列(跟踪面);ColumnRule.type 含 person/自然人 =
+    自然人载体列。best-effort:无 store/无契约/契约腐烂一律空 dict,
+    不阻塞建议面(纯扫描)。
+    """
+    store = getattr(request.app.state, "contract_store", None)
+    if store is None:
+        return {}
+    try:
+        rec = store.get_version(name)
+        if rec is None:
+            return {}
+        from arrow_lake.contract.schema import parse_contract
+
+        contract = parse_contract(rec["contract_yaml"])
+    except Exception:  # 契约腐烂不给建议面添堵(纯扫描面)
+        return {}
+    hints: dict[str, str] = {}
+    for table in contract.tables.values():
+        ident = getattr(table, "identifier", None)
+        if ident is not None and ident.column:
+            hints[ident.column] = "identifier"
+        for col in table.columns:
+            t = str(col.type or "")
+            if "person" in t.lower() or "自然人" in t:
+                hints.setdefault(col.name, "person")
+    return hints
+
+
 @router.get(
     "/{name}/classification/suggest",
     summary="Suggest dataset PII classification (rule-based content scan)",
@@ -852,7 +884,7 @@ async def suggest_dataset_classification(
     request: Request,
     name: str = Path(..., pattern=_NAME_PATTERN),
     lake=Depends(get_lake),
-    _auth: None = Depends(require_role(Role.EDITOR)),
+    user=Depends(require_role(Role.EDITOR)),
 ) -> dict:
     """PII 分级自动建议(v1.11.6.5,搁置 W2 #3):确定性内容扫描。
 
@@ -860,6 +892,8 @@ async def suggest_dataset_classification(
     + 列名语义(地址/坐标/联系人列)+ 自由文本提示 → 四档建议 + 可解释
     理由(列/模式/命中率/脱敏样本)。只读零写入;建议≠自动写入(登记
     不校验原则不变)。不依赖 classification store(纯扫描面)。
+    H-3(v1.11.6.6):按调用者 visible_columns 列交集(列受限用户不见
+    隐藏列证据);采样为前 N 行,未施加行级过滤(note 声明)。
     """
     from arrow_lake.quality.pii_suggest import suggest_classification
 
@@ -870,11 +904,22 @@ async def suggest_dataset_classification(
             error_code=ErrorCode.CATALOG_DATASET_NOT_FOUND,
             message=f"Dataset '{name}' not found",
         )
+    allowed = caller_visible_columns(request, name)
     suggestion = await run_sync(
-        lambda: suggest_classification(lake._get_storage(), name),
+        lambda: suggest_classification(
+            lake._get_storage(), name,
+            allowed_columns=allowed,
+            contract_hints=_contract_semantic_hints(request, name),
+        ),
         timeout=120,
         label="pii_suggest",
     )
+    if allowed is not None:
+        suggestion["columns_filtered"] = True
+    note = suggestion.get("note") or ""
+    suggestion["note"] = (
+        f"{note};" if note else ""
+    ) + "采样为前 N 行,未施加行级过滤(row_filter 语义不下推)"
     return {"dataset": name, **suggestion}
 
 
@@ -1140,6 +1185,15 @@ async def migrate_schema(
                 # Mode A — expression; the type is inferred by Lance SQL and
                 # surfaced by the dry-run sample preview.
                 issues.extend(lint_lance_expr(action.sql_expr))
+                # M2(v1.11.6.6):安全黑名单同 apply 路径——preview 直投
+                # to_table 求值,不过校验=表达式注入面(DROP 关键字/分号)。
+                from arrow_lake.exceptions import StorageError
+                from arrow_lake.ingest.storage import LanceStorageManager
+
+                try:
+                    LanceStorageManager._validate_sql_expr(action.sql_expr)
+                except StorageError as exc:
+                    issues.append(str(getattr(exc, "message", "") or exc))
             elif has_type:
                 # Mode B — typed placeholder (v1.11.6): opens vector/blob/
                 # timestamp adds that expressions cannot produce. The column

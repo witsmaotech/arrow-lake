@@ -7,8 +7,9 @@
   (instance_id, step_id)——未启动步直接 finish(skipped/timeout)亦建行;
 * 重启持久:写后显式 commit(libSQL 不 autocommit,速查坑)——新建连接
   重读全部可见;
-* 孤儿回收:mark_orphaned_running 把 running 实例标 failed("orphaned
-  runner"),终态实例不动。
+* 孤儿回收(H-1,v1.11.6.6):mark_orphaned_running 把**超龄** running 实例
+  标 failed("orphaned runner")——年龄锚=updated_at(回退 created_at),
+  runner 心跳 20s 触写;新 running 与终态实例不动(防 sibling 重启误杀)。
 """
 
 from __future__ import annotations
@@ -153,15 +154,111 @@ def test_restart_persistence_file_db(tmp_path) -> None:
     db2.close()
 
 
-def test_mark_orphaned_running(store: ScenarioInstanceStore) -> None:
-    live = _create(store)  # running
+def test_mark_orphaned_running_only_stale(
+    store: ScenarioInstanceStore, db: SystemDB
+) -> None:
+    stale = _create(store)  # running 但超龄(伪造 updated_at,真孤儿)
+    db.execute(
+        "UPDATE scenario_instances SET updated_at='2020-01-01T00:00:00Z' WHERE id=?",
+        (stale,),
+    )
+    db.commit()
+    fresh = _create(store)  # running 且新(runner 心跳维持 → sibling 重启不误杀)
     done = _create(store, status="completed")
     failed = _create(store, status="failed")
     n = store.mark_orphaned_running()
-    assert n == 1  # 只有 running 被回收
-    a = store.get_instance(live)
+    assert n == 1  # 只有超龄 running 被回收
+    a = store.get_instance(stale)
     assert a is not None and a["status"] == "failed"
     assert "orphaned" in (a["error"] or "")
     assert a["finished_at"] is not None
+    assert store.get_instance(fresh)["status"] == "running"
     assert store.get_instance(done)["status"] == "completed"
     assert store.get_instance(failed)["status"] == "failed"
+
+
+def test_mark_orphaned_running_stale_threshold(
+    store: ScenarioInstanceStore, db: SystemDB
+) -> None:
+    # 阈值参数:updated_at 落在 10 秒前——大阈值内不回收,小于年龄即回收
+    iid = _create(store)
+    db.execute(
+        "UPDATE scenario_instances SET updated_at=datetime('now', '-10 seconds') "
+        "WHERE id=?",
+        (iid,),
+    )
+    db.commit()
+    assert store.mark_orphaned_running(stale_seconds=3600) == 0
+    assert store.get_instance(iid)["status"] == "running"
+    assert store.mark_orphaned_running(stale_seconds=5) == 1
+    assert store.get_instance(iid)["status"] == "failed"
+
+
+def test_touch_refreshes_updated_at_running_only(
+    store: ScenarioInstanceStore, db: SystemDB
+) -> None:
+    iid = _create(store)
+    db.execute(
+        "UPDATE scenario_instances SET updated_at='2020-01-01T00:00:00Z' WHERE id=?",
+        (iid,),
+    )
+    db.commit()
+    assert store.touch(iid) is True
+    rec = store.get_instance(iid)
+    assert rec is not None and (rec["updated_at"] or "") > "2020-"
+    # 终态实例不 touch(心跳不会刷新已终止实例的年龄)
+    store.update_instance(iid, status="completed", finished=True)
+    assert store.touch(iid) is False
+
+
+# ── M9/M12(v1.11.6.6)-------------------------------------------------------
+
+
+def test_resume_instance_cas(store: ScenarioInstanceStore) -> None:
+    """M9:resume CAS——终态开一次成功;running 态再开(并发双击)False。"""
+    iid = _create(store, status="failed")
+    assert store.resume_instance(iid) is True
+    rec = store.get_instance(iid)
+    assert rec is not None
+    assert rec["status"] == "running" and rec["error"] is None
+    assert rec["finished_at"] is None
+    # 已 running(第二个并发 resume 读到的旧快照)→ 0 行,False,不翻状态
+    assert store.resume_instance(iid) is False
+    assert store.get_instance(iid)["status"] == "running"
+    # 其他终态档可开;deadline_at 重算落地("" → NULL)
+    store.update_instance(iid, status="terminated", finished=True)
+    assert store.resume_instance(iid, deadline_at="2030-01-01T00:00:00Z") is True
+    assert store.get_instance(iid)["deadline_at"] == "2030-01-01T00:00:00Z"
+
+
+def test_list_instances_offset_and_count(store: ScenarioInstanceStore) -> None:
+    """M12:offset 翻页 + count_instances 真 total(过滤同 list)。"""
+    ids = [_create(store) for _ in range(5)]
+    store.update_instance(ids[0], status="completed", finished=True)
+    page1 = store.list_instances(limit=2, offset=0)
+    page2 = store.list_instances(limit=2, offset=2)
+    assert len(page1) == 2 and len(page2) == 2
+    assert page1[0]["id"] > page2[0]["id"]  # id DESC
+    all_rows = store.list_instances(limit=10)
+    assert [r["id"] for r in all_rows[:2]] == [r["id"] for r in page1]
+    assert [r["id"] for r in all_rows[2:4]] == [r["id"] for r in page2]
+    assert store.count_instances() == 5
+    assert store.count_instances(status="running") == 4
+    assert store.count_instances(scenario_id="SCN.TEST", status="completed") == 1
+
+
+def test_terminate_instance_cas(store: ScenarioInstanceStore) -> None:
+    """LOW(v1.11.6.6):CAS running→terminated;非 running(读-写窗口内
+    自行终态)不覆写。"""
+    iid = _create(store)  # running
+    assert store.terminate_instance(iid) is True
+    rec = store.get_instance(iid)
+    assert rec is not None
+    assert rec["status"] == "terminated" and "terminated" in (rec["error"] or "")
+    assert rec["finished_at"] is not None
+    # 已终态再 terminate(并发竞争)→ False,原终态不被覆写
+    assert store.terminate_instance(iid) is False
+    assert store.get_instance(iid)["status"] == "terminated"
+    done = _create(store, status="completed")
+    assert store.terminate_instance(done) is False  # completed 不覆写
+    assert store.get_instance(done)["status"] == "completed"

@@ -197,3 +197,86 @@ def test_suggest_numeric_columns_only_name_semantics() -> None:
     out = suggest_classification(_FakeStorage(t), "ds")
     assert out["suggested_tier"] == "confidential"  # geo_name 列名证据
     assert all(r["hit_ratio"] is None for r in out["reasons"])
+
+
+# ── H-3 列级 ACL 交集(v1.11.6.6)------------------------------------------
+
+
+def test_suggest_allowed_columns_hides_restricted_evidence() -> None:
+    """H-3:列受限视角——隐藏列不进内容扫描与列名语义(证据面)。"""
+    t = pa.table(
+        {
+            "id_card_no": [_VALID_ID] * 5,  # 列名 high + 内容 high
+            "level": ["一般"] * 5,
+        }
+    )
+    out = suggest_classification(_FakeStorage(t), "ds")
+    assert out["suggested_tier"] == "restricted"
+
+    # 只允许 level:id_card_no 不可见 → 零证据 public
+    out2 = suggest_classification(_FakeStorage(t), "ds", allowed_columns={"level"})
+    assert out2["suggested_tier"] == "public"
+    assert out2["reasons"] == []
+
+
+def test_suggest_allowed_columns_numeric_only_name_semantics() -> None:
+    """受限视角仅剩数值列:零列采样(scanned_rows=0),列名语义仍作证。"""
+    t = pa.table(
+        {
+            "id_card_no": [_VALID_ID] * 5,
+            "longitude": pa.array([117.0] * 5, type=pa.float64()),
+        }
+    )
+    out = suggest_classification(
+        _FakeStorage(t), "ds", allowed_columns={"longitude"}
+    )
+    assert out["suggested_tier"] == "confidential"  # geo_name 列名证据
+    assert out["scanned_rows"] == 0  # 可见字符串列空集=零列,不回落全列
+    assert {r["column"] for r in out["reasons"]} == {"longitude"}
+
+
+# ── M11 契约字段语义(v1.11.6.6)---------------------------------------------
+
+
+def test_suggest_contract_hints_low_evidence() -> None:
+    """M11:契约 identifier/person 列各作 LOW 证据(免采样,越过负面清单
+    ——契约是显式声明);LOW-only → internal。"""
+    t = pa.table({"uid": ["a1f001"] * 5, "level": ["一般"] * 5})
+    out = suggest_classification(
+        _FakeStorage(t), "ds",
+        contract_hints={"uid": "identifier", "level": "person"},
+    )
+    evs = {r["evidence"]: r for r in out["reasons"]}
+    assert evs["contract_identifier"]["severity"] == "low"
+    assert evs["contract_identifier"]["column"] == "uid"
+    assert evs["contract_person"]["severity"] == "low"
+    assert out["suggested_tier"] == "internal"  # LOW-only 证据 → internal
+    # 契约声明不在 schema 的列 → 跳过(契约可能先于/滞后物理 schema)
+    out2 = suggest_classification(
+        _FakeStorage(t), "ds", contract_hints={"ghost_col": "identifier"},
+    )
+    assert all(r["column"] != "ghost_col" for r in out2["reasons"])
+    # 受限视角:隐藏列的契约证据同样不可见
+    out3 = suggest_classification(
+        _FakeStorage(t), "ds",
+        contract_hints={"uid": "identifier"}, allowed_columns={"level"},
+    )
+    assert all(r["evidence"] != "contract_identifier" for r in out3["reasons"])
+
+
+# ── M3 单值截断(v1.11.6.6)-------------------------------------------------
+
+
+def test_suggest_truncates_long_values_head_still_detected() -> None:
+    """M3:文档型 chunk 列 10KB 单值——头部手机号仍检出,扫描耗时有上界。"""
+    import time
+
+    long_head = "联系手机 13812345678 " + "x" * (10 * 1024)
+    t = pa.table({"desc": [long_head] * 500})
+    t0 = time.monotonic()
+    out = suggest_classification(_FakeStorage(t), "ds")
+    elapsed = time.monotonic() - t0
+    ev = next(r for r in out["reasons"] if r["evidence"] == "phone")
+    assert ev["hits"] == 500
+    # 截断后每列物化 ~2MB(500×4KB)而非全值 5MB×7 趟正则
+    assert elapsed < 5.0

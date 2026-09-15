@@ -346,7 +346,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         lake._action_store = app.state.action_store
         lake._scenario_store = app.state.scenario_store
         # v1.11.5 W3 (S7/S8): scenario instance registry + startup orphan reap
-        # (进程重启即全部孤儿 → failed,可 resume;多 worker 限制见设计 §六)。
+        # (H-1,v1.11.6.6:仅回收超龄孤儿——runner 心跳维持 updated_at,阈值
+        # 180s 对照 tasks.py 先例;sibling 重启不再误杀活 runner)。
         app.state.scenario_instance_store = ScenarioInstanceStore(sys_db)
         try:
             reaped = app.state.scenario_instance_store.mark_orphaned_running()

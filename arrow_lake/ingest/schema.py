@@ -120,20 +120,25 @@ def lint_lance_expr(sql_expr: str) -> list[str]:
     Catches the dialect traps recorded in v1.11.0.2: Lance SQL does not
     support TRIM()/SUBSTR(), and double quotes are string literals (not
     identifiers), so ``"col"`` silently materialises a constant column.
+
+    LOW①(v1.11.6.6): 单引号字符串字面量先剥除——``regexp_replace(s,'case','x')``
+    不再被 CASE 规则自己拦。lint 是方言提示不是安全闸(危险关键字黑名单在
+    ``LanceStorageManager._validate_sql_expr``)。
     """
     import re
 
     issues: list[str] = []
     if not sql_expr.strip():
         return issues
-    lowered = sql_expr.casefold()
+    stripped = re.sub(r"'(?:[^']|'')*'", "''", sql_expr)  # 剥字面量('' 转义随整体)
+    lowered = stripped.casefold()
     for fn in ("trim", "substr"):
         if re.search(rf"\b{fn}\s*\(", lowered):
             issues.append(
                 f"Lance SQL does not support {fn.upper()}(); "
                 "use regexp_replace(col, pattern, replacement, 'g')"
             )
-    if re.search(r'"[A-Za-z_][A-Za-z0-9_]*"', sql_expr):
+    if re.search(r'"[A-Za-z_][A-Za-z0-9_]*"', stripped):
         issues.append(
             "Double quotes are string literals in Lance SQL, not identifiers "
             "(this silently creates a constant column); use bare identifiers "
@@ -190,7 +195,9 @@ def resolve_lance_type(spec: str) -> tuple[pa.DataType, bool]:
         return lb.blob_field("_").type, True
     if s.startswith("vector:"):
         raw = s.split(":", 1)[1]
-        if not raw.isdigit() or not 1 <= int(raw) <= _VECTOR_MAX_DIM:
+        # LOW②: isdecimal(非 isdigit)——上标数字 "²" isdigit() 为 True 但
+        # int() 裸炸;isdecimal 与 int() 可解析集一致
+        if not raw.isdecimal() or not 1 <= int(raw) <= _VECTOR_MAX_DIM:
             raise ValueError(
                 f"Invalid vector dimension '{raw}' (use vector:<dim>, 1..{_VECTOR_MAX_DIM})"
             )

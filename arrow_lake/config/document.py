@@ -64,7 +64,10 @@ class DocumentConfig(BaseModel):
     # 云 API(阿里百炼 compatible-mode 等)或自托管推理服务(vLLM/Ollama)皆可,
     # 平台不自带推理服务(定位:数据湖仓,非大模型原生应用)。
     docling_vlm_endpoint: str = ""
-    # API 型并发页数(ApiVlmEngineOptions.concurrency);须 <= docling page_batch(默认 4)。
+    # API 型并发页数(ApiVlmEngineOptions.concurrency);引擎实际并发 =
+    # min(concurrency, docling page_batch)。page_batch 由 env
+    # ARROW_LAKE_DOCLING_PAGE_BATCH 控制(v1.10.3 起默认 16,docling 原生
+    # 默认才是 4;M4 起两档流水线均生效)。
     docling_vlm_concurrency: int = 4
     # API 型模型名覆盖(如百炼 qwen-vl-max-latest);空=用 preset 默认 repo 名。
     # preset 建议配 docling_vlm_preset="qwen"(markdown 输出,云端 VLM 通用)。
@@ -80,6 +83,12 @@ class DocumentConfig(BaseModel):
     docling_picture_description_endpoint: str = ""
     docling_picture_description_model: str = ""
     docling_picture_description_prompt: str = ""
+    # 图片描述并发/超时(M6,v1.11.6.6):docling 侧 ThreadPoolExecutor 每图
+    # 一往返——~200 图文档在默认 concurrency=2/timeout=90s 下 ≈1300s,可撞
+    # 整文档 convert 超时(1200s)→ 全文档失败+converter 驱逐。图多文档上调
+    # concurrency(受推理服务限流约束);两字段参与 converter 签名。
+    docling_picture_description_concurrency: int = 2
+    docling_picture_description_timeout: float = 90.0
     # HybridChunker 分词器(chunk_strategy="docling_hybrid" 时用)。
     # v1.10.3: 默认指向镜像内 baked 本地路径(/opt/models/bge-m3,tokenizer-only),
     # 离线容器下 HybridChunker 即用;host/无镜像环境改回 "BAAI/bge-m3"(需联网)或其他 HF id。

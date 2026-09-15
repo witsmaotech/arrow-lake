@@ -93,6 +93,40 @@ def _decode_instance(rec: dict) -> dict:
     return out
 
 
+def _pruned_target_ctx(
+    request: Request, user: Any, rec: dict, ctx: dict[str, Any]
+) -> dict[str, Any]:
+    """H-3②(v1.11.6.6):实例读按调用者复查列级 ACL。
+
+    context.target 裁到调用者可见列集(visible_columns 交集);调用者无
+    dataset 读权(deny/ACL)→ target 置空+acl_pruned 标记——实例化者视角
+    不得成为越权查看通道。行过滤语义不下推(单行 target,声明不裁)。
+    """
+    from arrow_lake.api.deps import caller_visible_columns
+
+    dataset = rec.get("dataset") or ""
+    target = ctx.get("target")
+    if not dataset or not isinstance(target, dict) or not target:
+        return ctx
+    if getattr(user, "role", None) == Role.ADMIN:
+        return ctx
+    checker = get_checker(request)
+    perms = getattr(user, "permissions", None) or None
+    if not checker.check_dataset_access(
+        role=user.role, dataset=dataset, action="read", permissions=perms
+    ):
+        return {**ctx, "target": {}, "acl_pruned": True}
+    allowed = caller_visible_columns(
+        request, dataset, rec.get("object_type") or None
+    )
+    if allowed is None:
+        return ctx
+    kept = {k: v for k, v in target.items() if k.lower() in allowed}
+    if len(kept) == len(target):
+        return ctx
+    return {**ctx, "target": kept, "acl_pruned": True}
+
+
 async def _fetch_target_ctx(
     *, lake, checker, user, dataset: str, object_type: str, object_id: str,
     contract_store, alignment_store, request,
@@ -168,6 +202,12 @@ def _spawn_scenario_runner(
         except Exception:  # noqa: BLE001 — 腐烂条目无补偿可解析,跳过
             continue
 
+    # H-2:实例行是版本 SoT——middleware 场景归属校验按锚定版本钉住
+    # (升版后旧实例续跑不再被最新版的 step 集合误拒)。
+    pinned_version = (instance_store.get_instance(instance_id) or {}).get(
+        "scenario_version"
+    )
+
     async def run_action(action_id: str, step_id: str) -> dict[str, Any]:
         from arrow_lake.api.deps import _deny_table_override
 
@@ -184,6 +224,7 @@ def _spawn_scenario_runner(
                 reason=f"scenario {spec.scenario_id} step {step_id}",
                 scenario_id=spec.scenario_id,
                 step_id=step_id,
+                scenario_version=pinned_version,  # H-2:归属校验钉实例锚定版
                 action_store=action_store,
                 idempotency_store=idempotency_store,
                 contract_store=contract_store,
@@ -286,6 +327,29 @@ async def instantiate_scenario(
         request=request,
     )
 
+    # M9(v1.11.6.6):同 (scenario,dataset,object) 已有 running 实例 → 409
+    # (防双活 runner 写竞争;等终态后可再 instantiate 或 resume)。
+    dup = next(
+        (
+            r for r in instance_store.list_instances(
+                scenario_id=scenario_id, status="running", limit=200,
+            )
+            if r.get("dataset") == req.dataset
+            and r.get("object_type") == req.object_type
+            and r.get("object_id") == req.object_id
+        ),
+        None,
+    )
+    if dup is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"scenario '{scenario_id}' already running for object "
+                f"'{req.object_id}' (instance {dup['id']}); resume or wait "
+                "for a terminal state"
+            ),
+        )
+
     # entries 求值(任一真即可入;空 entries 无门)
     if spec.entries:
         entry_ctx = {"target": target_ctx}
@@ -336,25 +400,34 @@ async def instantiate_scenario(
     return {"instance_id": iid, "scenario_id": scenario_id, "status": "running"}
 
 
-@router.get("/scenarios/instances", dependencies=[Depends(require_role(Role.VIEWER))])
+@router.get("/scenarios/instances")
 async def list_scenario_instances(
     request: Request,
+    user=Depends(require_role(Role.VIEWER)),
     scenario_id: str | None = Query(default=None, max_length=200),
     status: str | None = Query(default=None, max_length=32),
     limit: int = Query(default=20, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
 ) -> dict:
     store = _require(_instance_store(request), "Scenario instance registry")
-    instances = store.list_instances(scenario_id=scenario_id, status=status, limit=limit)
-    return {
-        "total": len(instances),
-        "instances": [_decode_instance(i) for i in instances],
-    }
+    instances = store.list_instances(
+        scenario_id=scenario_id, status=status, limit=limit, offset=offset
+    )
+    # H-3②(v1.11.6.6):列表不回 context_json——完整 target 走详情端点
+    # (那里按调用者 ACL 裁剪),列表行逐行裁剪既重又不必要。
+    rows = [
+        {k: v for k, v in _decode_instance(i).items() if k != "context_json"}
+        for i in instances
+    ]
+    # M12(v1.11.6.6):total=过滤后真总数(COUNT(*)),非当前页行数
+    total = store.count_instances(scenario_id=scenario_id, status=status)
+    return {"total": total, "limit": limit, "offset": offset, "instances": rows}
 
 
-@router.get(
-    "/scenarios/instances/{instance_id}", dependencies=[Depends(require_role(Role.VIEWER))]
-)
-async def get_scenario_instance(instance_id: int, request: Request) -> dict:
+@router.get("/scenarios/instances/{instance_id}")
+async def get_scenario_instance(
+    instance_id: int, request: Request, user=Depends(require_role(Role.VIEWER))
+) -> dict:
     import json as _json
 
     store = _require(_instance_store(request), "Scenario instance registry")
@@ -370,11 +443,80 @@ async def get_scenario_instance(instance_id: int, request: Request) -> dict:
             run["output"] = {}
         step_runs.append(run)
     out = _decode_instance(rec)
+    out.pop("context_json", None)  # 原始串不可旁路下面的裁剪
     try:
-        out["context"] = _json.loads(rec.get("context_json") or "{}")
+        ctx = _json.loads(rec.get("context_json") or "{}")
     except ValueError:
-        out["context"] = {}
+        ctx = {}
+    out["context"] = _pruned_target_ctx(request, user, rec, ctx)
     return {"instance": out, "step_runs": step_runs}
+
+
+@router.post(
+    "/scenarios/instances/{instance_id}/compensation/{step_id}/ack",
+    dependencies=[Depends(require_role(Role.EDITOR))],
+)
+async def ack_scenario_compensation(
+    instance_id: int,
+    step_id: str,
+    request: Request,
+    user=Depends(require_role(Role.EDITOR)),
+) -> dict:
+    """M8(v1.11.6.6):人工补偿核销——清该步声明的 pending 项。
+
+    实例级 ``pending_compensation`` 原是 append-only(待办只增不减,补偿
+    action 无 idem key 时重复点击=双补偿);核销以步为单位:步行走
+    ``output.pending_compensation`` 声明,核销即从实例清单剔除。
+    """
+    import json as _json
+
+    instance_store = _require(_instance_store(request), "Scenario instance registry")
+    rec = instance_store.get_instance(instance_id)
+    if rec is None:
+        raise HTTPException(status_code=404, detail=f"No scenario instance {instance_id}")
+    pending = _json.loads(rec.get("pending_compensation_json") or "[]")
+    if not pending:
+        raise HTTPException(
+            status_code=409,
+            detail=f"instance {instance_id} has no pending compensation",
+        )
+    step = next(
+        (r for r in instance_store.list_step_runs(instance_id) if r["step_id"] == step_id),
+        None,
+    )
+    if step is None:
+        raise HTTPException(
+            status_code=404, detail=f"No step '{step_id}' on instance {instance_id}"
+        )
+    try:
+        declared = list(
+            _json.loads(step.get("output_json") or "{}").get("pending_compensation") or []
+        )
+    except ValueError:
+        declared = []
+    if not declared:
+        raise HTTPException(
+            status_code=409, detail=f"step '{step_id}' declared no compensation"
+        )
+    acked = set(declared)
+    remaining = [a for a in pending if a not in acked]
+    if remaining == pending:
+        raise HTTPException(
+            status_code=409,
+            detail=f"compensation declared by step '{step_id}' already acknowledged",
+        )
+    instance_store.update_instance(instance_id, pending_compensation=remaining)
+    audit_write(
+        request, "actions.scenario_compensation_acked", actor=user.sub,
+        payload={"instance_id": instance_id, "step_id": step_id,
+                 "acked": declared, "remaining": remaining},
+    )
+    return {
+        "instance_id": instance_id,
+        "step_id": step_id,
+        "acked": declared,
+        "pending_compensation": remaining,
+    }
 
 
 @router.post(
@@ -384,7 +526,10 @@ async def get_scenario_instance(instance_id: int, request: Request) -> dict:
 async def terminate_scenario_instance(
     instance_id: int, request: Request, user=Depends(require_role(Role.ADMIN))
 ) -> dict:
-    """运行中 → terminated(runner 下一轮循环退出;在途步不中断)。"""
+    """运行中 → terminated(runner 下一轮循环退出;在途步不中断)。
+
+    LOW(v1.11.6.6):CAS 写——读-写窗口内实例自行终态(completed/failed)
+    时不覆写。"""
     store = _require(_instance_store(request), "Scenario instance registry")
     rec = store.get_instance(instance_id)
     if rec is None:
@@ -393,7 +538,11 @@ async def terminate_scenario_instance(
         raise HTTPException(
             status_code=409, detail=f"instance {instance_id} is '{rec['status']}', not running"
         )
-    store.update_instance(instance_id, status="terminated", finished=True)
+    if not store.terminate_instance(instance_id):
+        raise HTTPException(
+            status_code=409,
+            detail=f"instance {instance_id} reached a terminal state concurrently",
+        )
     audit_write(request, "actions.scenario_terminated", actor=user.sub,
                 payload={"instance_id": instance_id})
     return {"instance_id": instance_id, "status": "terminated"}
@@ -427,11 +576,17 @@ async def resume_scenario_instance(
             detail=f"instance {instance_id} is '{rec['status']}' (resumable: "
             f"failed/timeout/compensated/terminated)",
         )
-    srec = scenario_store.get_version(rec["scenario_id"])
+    # H-2(v1.11.6.6):钉实例锚定版本——升版后的新 spec 不混入续跑语义
+    # (要用新版本须另 instantiate;middleware 归属校验同钉,见 run_action)。
+    srec = scenario_store.get_version(
+        rec["scenario_id"], version=rec["scenario_version"]
+    )
     if srec is None:
         raise HTTPException(
             status_code=422,
-            detail=f"scenario '{rec['scenario_id']}' no longer exists; cannot resume",
+            detail=f"scenario '{rec['scenario_id']}' version "
+            f"{rec['scenario_version']} no longer exists; cannot resume "
+            "(instantiate a new instance to run the current version)",
         )
     try:
         spec = parse_scenario_yaml(srec["scenario_yaml"])
@@ -445,9 +600,15 @@ async def resume_scenario_instance(
             deadline_at = deadline.strftime("%Y-%m-%dT%H:%M:%SZ")
         except ValueError:
             deadline_at = None
-    instance_store.update_instance(
-        instance_id, status="running", error=None, deadline_at=deadline_at or "", reopen=True
-    )
+    # M9:CAS 终态→running(并发 resume/terminate 竞争仅一方成功,防双活)
+    if not instance_store.resume_instance(instance_id, deadline_at=deadline_at or ""):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"instance {instance_id} changed state concurrently and is no "
+                "longer resumable (re-read and retry)"
+            ),
+        )
     audit_write(request, "actions.scenario_resumed", actor=user.sub,
                 payload={"instance_id": instance_id})
     _spawn_scenario_runner(

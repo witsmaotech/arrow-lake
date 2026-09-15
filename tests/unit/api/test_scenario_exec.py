@@ -119,12 +119,14 @@ def world(tmp_path):
     db.close()
 
 
-def _client(world, *, role: Role, user_id: int | None = None) -> TestClient:
+def _client(
+    world, *, role: Role, user_id: int | None = None, checker: object | None = None
+) -> TestClient:
     from arrow_lake.api.routers.actions import router as actions_router
 
     app = FastAPI()
     app.state.lake = world.lake
-    app.state.checker = _PassthroughChecker()
+    app.state.checker = checker or _PassthroughChecker()
     app.state.contract_store = ContractStore(world.db)
     app.state.semantic_alignment_store = SemanticAlignmentStore(world.db)
     app.state.ontology_rules_store = OntologyRulesStore(world.db)
@@ -294,6 +296,127 @@ def test_detail_404(world) -> None:
         assert c.get("/api/v1/actions/scenarios/instances/999").status_code == 404
 
 
+# --- H-3②:实例读列级 ACL(v1.11.6.6)---------------------------------------
+
+
+class _ColAclChecker(_PassthroughChecker):
+    """读面复查用:visible 列集 / 读权开关(执行面沿用 passthrough 语义)。"""
+
+    def __init__(self, visible: list[str] | None = None, read_ok: bool = True) -> None:
+        self.visible = visible
+        self.read_ok = read_ok
+
+    def get_acl(self, dataset, role):
+        if self.visible is None:
+            return None
+        from arrow_lake.api.rbac import DatasetACL
+
+        return DatasetACL(
+            dataset=dataset, role="editor", visible_columns=self.visible,
+            row_filter=None, denied_actions=[],
+        )
+
+    def check_dataset_access(self, *, role, dataset, action, permissions=None):
+        return self.read_ok
+
+
+def test_instance_detail_prunes_target_columns(world) -> None:
+    """H-3②:列受限读者看实例 detail——context.target 裁到可见列集 +
+    acl_pruned 标记;无读权 → target 置空;原始 context_json 不回。
+    (实例化者视角不得成为越权查看通道。)"""
+    with _client(world, role=Role.EDITOR, user_id=world.uid) as c:
+        a = _instantiate(c, "GAS.LEAK.RESPONSE", "GAS.ALERT.D001").json()["instance_id"]
+        detail = _await_terminal(c, a)
+        assert detail["instance"]["status"] == "completed"
+        target_full = detail["instance"]["context"]["target"]
+        assert "pressure" in target_full  # 实例化者视角完整
+        assert "context_json" not in detail["instance"]  # 原始串不旁路
+
+    with _client(
+        world, role=Role.EDITOR, user_id=world.uid,
+        checker=_ColAclChecker(visible=["alert_id", "state"]),
+    ) as c:
+        d = c.get(f"/api/v1/actions/scenarios/instances/{a}").json()
+        ctx = d["instance"]["context"]
+        assert set(ctx["target"]) == {"alert_id", "state"}  # 隐藏列裁掉
+        assert ctx["acl_pruned"] is True
+        assert "context_json" not in d["instance"]
+    # 无读权 → target 置空+标记
+    with _client(
+        world, role=Role.VIEWER, user_id=world.uid,
+        checker=_ColAclChecker(read_ok=False),
+    ) as c:
+        d2 = c.get(f"/api/v1/actions/scenarios/instances/{a}").json()
+        assert d2["instance"]["context"]["target"] == {}
+        assert d2["instance"]["context"]["acl_pruned"] is True
+
+
+def test_instance_list_strips_context_json(world) -> None:
+    """H-3②:列表行不回 context_json(完整 target 走详情端点的裁剪路径);
+    M12:offset 翻页 + total 为过滤后真总数。"""
+    with _client(world, role=Role.EDITOR, user_id=world.uid) as c:
+        a = _instantiate(c, "GAS.LEAK.RESPONSE", "GAS.ALERT.D001").json()["instance_id"]
+        _await_terminal(c, a)
+        body = c.get("/api/v1/actions/scenarios/instances").json()
+        assert body["instances"]
+        assert all("context_json" not in r for r in body["instances"])
+        assert body["total"] == len(body["instances"])  # 单页场景下也一致
+        # 第二实例 + 过滤翻页语义
+        b = _instantiate(c, "GAS.LEAK.RESPONSE", "GAS.ALERT.D002").json()["instance_id"]
+        _await_terminal(c, b)
+        page = c.get("/api/v1/actions/scenarios/instances?limit=1&offset=1").json()
+        assert page["total"] == 2 and len(page["instances"]) == 1  # total≠当前页行数
+        assert page["instances"][0]["id"] == a  # id DESC,第二页=较旧实例
+
+
+# --- M8/M9(v1.11.6.6)-------------------------------------------------------
+
+
+def test_instantiate_rejects_duplicate_running(world) -> None:
+    """M9:同 (scenario,dataset,object) 已有 running 实例 → 409(防双活)。"""
+    from arrow_lake.system_db.stores.scenario_instances import ScenarioInstanceStore
+
+    ScenarioInstanceStore(world.db).create_instance(
+        scenario_id="GAS.LEAK.RESPONSE", scenario_version=1,
+        dataset=demo.DEMO_DATASET, object_type="alerts",
+        object_id="GAS.ALERT.D001", actor="op",
+    )
+    with _client(world, role=Role.EDITOR, user_id=world.uid) as c:
+        r = _instantiate(c, "GAS.LEAK.RESPONSE", "GAS.ALERT.D001")
+        assert r.status_code == 409
+        assert "already running" in r.json()["detail"]
+        # 不同对象不受影响
+        r2 = _instantiate(c, "GAS.LEAK.RESPONSE", "GAS.ALERT.D002")
+        assert r2.status_code == 202
+
+
+def test_compensation_ack_clears_pending(world) -> None:
+    """M8:核销端点清该步声明的待办;重复核销/无声明步 409。"""
+    with _client(world, role=Role.EDITOR, user_id=world.uid) as c:
+        ActionCatalogStore(world.db).save_action("DEMO.ACT.GUARDFAIL", ACT_GUARD_FAIL)
+        ScenarioStore(world.db).save_scenario("DEMO.SCN.COMPENSATE", SCN_COMPENSATE)
+        iid = _instantiate(c, "DEMO.SCN.COMPENSATE", "GAS.ALERT.D002").json()["instance_id"]
+        detail = _await_terminal(c, iid)
+        assert detail["instance"]["status"] == "compensated"
+        assert detail["instance"]["pending_compensation"] == ["DEMO.ACT.WITHDRAW"]
+
+        r = c.post(f"/api/v1/actions/scenarios/instances/{iid}/compensation/bad/ack")
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["acked"] == ["DEMO.ACT.WITHDRAW"]
+        assert body["pending_compensation"] == []  # 待办清空
+        d2 = c.get(f"/api/v1/actions/scenarios/instances/{iid}").json()
+        assert d2["instance"]["pending_compensation"] == []
+        # 重复核销 → 409(无剩余待办)
+        assert c.post(
+            f"/api/v1/actions/scenarios/instances/{iid}/compensation/bad/ack"
+        ).status_code == 409
+        # 无补偿声明的步 → 409
+        assert c.post(
+            f"/api/v1/actions/scenarios/instances/{iid}/compensation/assess/ack"
+        ).status_code == 409
+
+
 # --- terminate / resume -------------------------------------------------------
 
 
@@ -343,6 +466,35 @@ def test_resume_after_catalog_fix_completes(world) -> None:
         # completed 不可再 resume(409)
         r4 = c.post(f"/api/v1/actions/scenarios/instances/{iid}/resume")
         assert r4.status_code == 409
+
+
+def test_resume_pins_instance_scenario_version(world) -> None:
+    """H-2(v1.11.6.6):实例锚 v1;场景升 v2(步集改名)后 resume——
+    runner 仍按 v1 的 step 集续跑(不修则 resume 取最新版 + middleware
+    归属校验按 v2 把 step1 误拒 422,实例必 failed)。"""
+    with _client(world, role=Role.EDITOR, user_id=world.uid) as c:
+        catalog = ActionCatalogStore(world.db)
+        store = ScenarioStore(world.db)
+        catalog.save_action("DEMO.ACT.RESUME", ACT_RESUME % "nonexistent")
+        scn = SCN_RESUME.replace("DEMO.SCN.RESUME", "DEMO.SCN.PIN")
+        store.save_scenario("DEMO.SCN.PIN", scn)  # v1:step1
+        iid = _instantiate(c, "DEMO.SCN.PIN", "GAS.ALERT.D001").json()["instance_id"]
+        detail = _await_terminal(c, iid)
+        assert detail["instance"]["status"] == "failed"  # 词表守卫
+        v1 = store.get_version("DEMO.SCN.PIN")["version"]
+
+        # 升 v2:步 id 换名(全新步集)
+        store.save_scenario("DEMO.SCN.PIN", scn.replace("step1", "step_new"))
+        assert store.get_version("DEMO.SCN.PIN")["version"] == v1 + 1
+
+        # 修 action 词表后 resume:续跑按 v1 的 step1;v2 的 step_new 不混入
+        catalog.save_action("DEMO.ACT.RESUME", ACT_RESUME % "escalated")
+        r = c.post(f"/api/v1/actions/scenarios/instances/{iid}/resume")
+        assert r.status_code == 200, r.text
+        detail2 = _await_terminal(c, iid)
+        assert detail2["instance"]["status"] == "completed", detail2["instance"].get("error")
+        runs = {s["step_id"]: s["status"] for s in detail2["step_runs"]}
+        assert runs == {"step1": "succeeded"}
 
 
 # --- 补偿端到端 -----------------------------------------------------------------

@@ -104,6 +104,30 @@ def _deny_table_override(request: Request, dotted: str, *, write: bool) -> None:
         )
 
 
+def caller_visible_columns(
+    request: Request, dataset: str, table: str | None = None
+) -> frozenset[str] | None:
+    """Calling user's visible column set for ``dataset``(H-3,v1.11.6.6)。
+
+    返回 None = 无列限制(ADMIN 旁路/未配 ACL/visible_columns 空=全列);
+    否则返回**小写**允许列集(与查询层 rbac_sql 的 DuckDB 大小写不敏感
+    语义一致,使用侧对列名 lower 后匹配)。
+
+    用途:不走 sqlglot 改写的读面(PII suggest / 场景实例读)此前直读
+    全列,绕过了 visible_columns——本 helper 是这些面的列交集来源。
+    二段名(``ds.table``)走 rbac 分层查表(table override 先于容器默认)。
+    """
+    user = getattr(request.state, "user", None) or get_current_user(request)
+    if user.role == Role.ADMIN:
+        return None
+    checker = get_checker(request)
+    lookup = f"{dataset}.{table}" if table else dataset
+    acl = checker.get_acl(lookup, user.role)
+    if acl is None or not acl.visible_columns:
+        return None
+    return frozenset(c.lower() for c in acl.visible_columns)
+
+
 def authorize_dataset_read(name: str, request: Request, table: str | None = None) -> None:
     """Depends()-ready dataset read ACL (v1.10.7 WP1a).
 

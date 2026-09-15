@@ -21,6 +21,9 @@ class _Checker:
     def check_dataset_access(self, *, role, dataset, action, permissions=None):
         return True
 
+    def get_acl(self, dataset, role):
+        return None
+
 
 class _Lake:
     """catalog 只回一个 alerts;audit_record 捕获。"""
@@ -44,14 +47,16 @@ def db() -> SystemDB:
     conn.close()
 
 
-def _make_app(db: SystemDB | None, *, role: Role, lake: _Lake) -> TestClient:
+def _make_app(
+    db: SystemDB | None, *, role: Role, lake: _Lake, checker: object | None = None
+) -> TestClient:
     from arrow_lake.api.errors import register_exception_handlers
     from arrow_lake.api.routers.datasets import router
 
     app = FastAPI()
     register_exception_handlers(app)  # CatalogError → 404 同真 app
     app.state.lake = lake
-    app.state.checker = _Checker()
+    app.state.checker = checker or _Checker()
     if db is not None:
         app.state.dataset_classification_store = DatasetClassificationStore(db)
 
@@ -194,3 +199,43 @@ def test_suggest_unknown_dataset_404(db: SystemDB) -> None:
     with _make_app(db, role=Role.EDITOR, lake=_ScanLake(_pii_table())) as c:
         r = c.get("/api/v1/datasets/ghost/classification/suggest")
         assert r.status_code == 404
+
+
+class _AclChecker(_Checker):
+    def __init__(self, acl) -> None:
+        self._acl = acl
+
+    def get_acl(self, dataset, role):
+        return self._acl
+
+
+def test_suggest_visible_columns_intersection(db: SystemDB) -> None:
+    """H-3(v1.11.6.6):列受限 EDITOR——隐藏列证据不可见 + note 声明
+    行级过滤未施加 + columns_filtered 标记;ADMIN 视角零变化。"""
+    import pyarrow as pa
+    from arrow_lake.api.rbac import DatasetACL
+
+    t = pa.table(
+        {
+            "id_card_no": ["11010519491231002X"] * 5,  # 列名+内容 high
+            "level": ["一般"] * 5,
+        }
+    )
+    acl = DatasetACL(
+        dataset="alerts", role="editor", visible_columns=["level"],
+        row_filter=None, denied_actions=[],
+    )
+    with _make_app(
+        db, role=Role.EDITOR, lake=_ScanLake(t), checker=_AclChecker(acl)
+    ) as c:
+        r = c.get("/api/v1/datasets/alerts/classification/suggest")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["suggested_tier"] == "public"  # id_card_no 被列 ACL 遮蔽
+        assert body["reasons"] == []
+        assert body["columns_filtered"] is True
+        assert "row_filter" in body["note"]
+    with _make_app(db, role=Role.ADMIN, lake=_ScanLake(t)) as c:
+        body2 = c.get("/api/v1/datasets/alerts/classification/suggest").json()
+        assert body2["suggested_tier"] == "restricted"  # ADMIN 视角零变化
+        assert "columns_filtered" not in body2

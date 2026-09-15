@@ -6,6 +6,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.11.6.6] — 四维 review 加固批 · 2026-09-14
+
+> 四维综合 review(安全/质量功能×2/性能四路并行 agent+主线预审,范围 a36867a..HEAD 六版本 +5500 行)发现 3 HIGH+12 MEDIUM+12 LOW,本批 P0(H×3+M1-M5)+P1(M6-M12)+LOW 顺手清全量收敛;规划 `docs_offline/v1.11.6.6-hardening-plan.md`。
+
+### HIGH ×3
+- **H-1 场景孤儿回收误杀活 runner**:启动期 `mark_orphaned_running()` 原无条件杀全部 running——sibling worker 重启(panic/OOM 常客)即杀活 runner(runner 循环顶见非 running 静默退出)。修:V027 `scenario_instances.updated_at` 列(存量回填 created_at)+ 回收加年龄条件(`stale_seconds=180`,对照 tasks.py 孤儿回收先例)+ runner 内置 20s 心跳(`store.touch`)——单步执行期间也维持年龄锚,超龄即真孤儿
+- **H-2 resume/middleware 不按 `scenario_version` 钉版**:resume 取最新版 spec,middleware 场景归属校验同——场景升 v2 后旧实例续跑混入新版 step 集(v2 若改名,v1 步被 422 误拒/语义错配)。修:resume 按实例行锚定版本 `get_version(scenario_id, version=...)`,中间件 `execute_action(scenario_version=)` 同钉;要用新版须另 instantiate
+- **H-3 列级 ACL 旁路(两读面)**:`visible_columns` 只在查询层 sqlglot 强制,①PII suggest 直读全列前 500 行回显脱敏样本给列受限 EDITOR;②场景实例 list/detail 暴露实例化者视角完整 target 行零 ACL 复查。修:`deps.caller_visible_columns()` 共享 helper(ADMIN 旁路/小写匹配/二段名分层查表)——suggest 与允许列交集(受限视角零列采样不回落全列)+ note 声明采样未施加行级过滤;实例列表剥 `context_json`、详情按调用者裁剪 `context.target`(无读权置空+`acl_pruned` 标记,原始串不回防旁路)。行过滤下推不做(YAGNI,声明)
+
+### MEDIUM ×12
+- M1 `drop_index` 删除成功后补 `invalidate_async_table`(删索引后异步检索不再持陈旧句柄;含 lance-core 回落路径)
+- M2 schema/migrate dry-run preview 直投 `to_table` 求值前过 `_validate_sql_expr` 危险关键字黑名单(同 apply 路径;DROP/分号 preview 即拒)
+- M3 PII 扫描单值截断 4096 字符(PII 模式最长 ~30 字符零检出损失;实测文档型长值列 email 无界正则 O(n²) 回退 500 行 15s——email 局部部/域标签按 RFC 5321 上界(64/63)线性化,整文件测试 21s→3s)
+- M4 docling `page_batch_size` 赋值移 standard/VLM 两路径汇合点(`_get_docling_converter`)——VLM 档此前永不执行该赋值,被 docling 默认 4 静默封顶引擎并发;config 注释修正(基线 16 非 4)
+- M5 parse 缓存 key 拼 docling 签名——picture_description 开关/endpoint/model 变化后不再复用旧解析(正确性缺陷)
+- M6 图片描述并发/超时 config 化(`docling_picture_description_concurrency/timeout`,默认 2/90s 同历史硬编码;参与 converter 签名;compose 透传)——~200 图文档原 ≈1300s 撞 1200s convert 超时连带 converter 驱逐
+- M7 AND 并发批补偿待办聚合——批内多步失败时实例级 `pending_compensation` 收全部失败步声明(原 stop 覆盖只留最后一个)
+- M8 补偿核销端点 `POST /scenarios/instances/{id}/compensation/{step}/ack`(EDITOR,审计 `actions.scenario_compensation_acked`)+ console 待办行核销按钮——待办原 append-only 只增不减,无 idem key 的补偿 action 重复点击=双补偿
+- M9 instantiate 同 (scenario,dataset,object) running 查重 409 + resume CAS(`store.resume_instance` 条件 UPDATE WHERE 终态,0 行=状态漂移 409)——防双活 runner
+- M10 网关降权口径收敛:×0.9 因子只作用 runner 上下文(assess 镜像/网关谓词/实例快照),中间件服务端重评 `assess_ctx`(W4.5 H-3)独立重算不读 runner ctx(防伪造研判 by design)——注释/文档钉口径,不改行为
+- M11 契约字段语义进建议面(identifier=业务标识列/person 型列各作 LOW 证据,best-effort 不阻塞)+ console suggest 死按钮修复(system_db 关闭时 loadPii 早退致 handler 永不绑定;绑定移出+采纳降态直连 PUT)
+- M12 实例列表 `offset` 翻页 + `COUNT(*)` 真 total(原 `total=len(当前页)`;列表行已不回 `context_json` 见 H-3)
+
+### LOW 顺手清
+- lint 剥单引号字面量(`regexp_replace(s,'case','x')` 不再被 CASE 规则自己拦);`isdigit`→`isdecimal`(上标数字 `vector:²` 不再 int() 裸炸);terminate CAS 不覆写并发终态;resume CAS 顺带清 error;onnxruntime providers 首建 converter 时日志(GPU 静默回落 CPU 可观测);`decisions/__init__` docstring 过期表述修正(confidence 不再恒 1.0);PII 面板 `${t}`/scanned_rows esc 补齐;门面 `list_indices` 归一化 + drop 回落 mock 测试补齐
+
+### 测试
+- 新增/改造 ~20 用例:孤儿回收三态(超龄/新活/阈值边界)+touch 心跳;resume 钉版(升 v2 后续跑走 v1 步集);suggest 列受限证据遮蔽(API+模块双层)+ 契约语义;实例 detail 裁剪/列表脱 context_json+翻页;CAS resume/terminate;补偿核销 409 族;AND 批补偿聚合;drop_index 句柄失效(双回落);preview 危险 SQL 拒;PII 长值截断+耗时上界;page_batch 汇合点(VLM 档);parse 缓存签名分桶;lint 字面量剥除族
+- lint 增量零(改动文件 vs 基线 diff 相同);受影响面回归(actions/api/system_db/quality/ingest)全绿;全量套件见发版闸门记录
+
+
 ## [1.11.6.5] — PII 分级自动建议 · 2026-09-14
 
 > 补丁批(搁置 W2 #3 复活,与登记轨「docling PII」合并裁定:按产品锚准则裁掉 GLiNER 模型面,交付确定性建议引擎)。
