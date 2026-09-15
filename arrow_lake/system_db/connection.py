@@ -100,10 +100,22 @@ class SystemDB:
             pass
         self._conn = self._connect_with_retry()
 
+    def _conn_alive(self) -> bool:
+        """区分连接死活:活连接上的语义 SQL 错(UNIQUE/语法/约束)重连
+        无益且有害——:memory: 重连即空库,远端重连=白往返+非幂等语句
+        双执行风险(V028 唯一索引令其显形)。"""
+        try:
+            self._conn.execute("SELECT 1")
+            return True
+        except Exception:  # noqa: BLE001
+            return False
+
     def execute(self, sql: str, params: tuple = ()) -> Any:
         try:
             return self._conn.execute(sql, params)
         except Exception:
+            if self._conn_alive():
+                raise  # 语义错:原样上抛,不重连不重放
             self._reconnect()
             return self._conn.execute(sql, params)
 
@@ -111,6 +123,8 @@ class SystemDB:
         try:
             return self._conn.executemany(sql, params)
         except Exception:
+            if self._conn_alive():
+                raise
             self._reconnect()
             return self._conn.executemany(sql, params)
 
@@ -118,6 +132,8 @@ class SystemDB:
         try:
             return self._conn.executescript(sql)
         except Exception:
+            if self._conn_alive():
+                raise
             self._reconnect()
             return self._conn.executescript(sql)
 

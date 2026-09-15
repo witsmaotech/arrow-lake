@@ -862,7 +862,14 @@ def _contract_semantic_hints(request: Request, name: str) -> dict[str, str]:
         from arrow_lake.contract.schema import parse_contract
 
         contract = parse_contract(rec["contract_yaml"])
-    except Exception:  # 契约腐烂不给建议面添堵(纯扫描面)
+    except Exception as exc:  # 契约腐烂不给建议面添堵(纯扫描面)
+        # 收敛:同症状三类因(store 故障/契约腐烂/解析失败)留 debug 痕迹
+        # ——建议档位可能因 hints 缺席而 internal→public,排障须有迹。
+        import structlog
+
+        structlog.get_logger(__name__).debug(
+            "pii_contract_hints_unavailable", dataset=name, error=str(exc)[:120],
+        )
         return {}
     hints: dict[str, str] = {}
     for table in contract.tables.values():

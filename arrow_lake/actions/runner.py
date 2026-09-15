@@ -170,10 +170,42 @@ class ScenarioRunner:
     # ------------------------------------------------------------------ #
 
     async def run(self, *, resume: bool = False) -> None:
+        try:
+            await self._run_inner(resume=resume)
+        except Exception as exc:  # 质量 H-2:循环内未预期异常必须落终态
+            # 否则实例永久 running + M9 对该对象一律 409 = 对象级静默死锁
+            # (system_db 抖动在本项目有实证史——迁移竞争同源故障)。
+            logger.exception(
+                "scenario_runner_crashed", extra={"instance": self._instance_id}
+            )
+            try:
+                # 只落状态不动 context_json(崩溃兜底不得覆盖真实 target/
+                # steps 历史;_finish 会整体重写 context)
+                await _sync(
+                    self._store.update_instance, self._instance_id,
+                    status="failed",
+                    error=f"runner crashed: {type(exc).__name__}: {exc}",
+                    finished=True,
+                )
+            except Exception:
+                logger.exception(
+                    "scenario_runner_crash_finish_failed",
+                    extra={"instance": self._instance_id},
+                )
+
+    async def _run_inner(self, *, resume: bool = False) -> None:
         inst = await _sync(self._store.get_instance, self._instance_id)
         if inst is None or inst.get("status") != "running":
             return  # 不存在/已终态/已被终止
-        ctx: dict[str, Any] = json.loads(inst.get("context_json") or "{}")
+        try:
+            ctx: dict[str, Any] = json.loads(inst.get("context_json") or "{}")
+        except ValueError:
+            # 腐烂 context:按空上下文续跑(步状态行是独立 SoT,不受影响)
+            logger.warning(
+                "scenario_context_json_corrupt",
+                extra={"instance": self._instance_id},
+            )
+            ctx = {}
         ctx.setdefault("target", {})
         ctx.setdefault("actor", {})
         ctx.setdefault("assess", dict(_DEFAULT_ASSESS))
@@ -297,14 +329,31 @@ class ScenarioRunner:
             heartbeat.cancel()
 
     async def _heartbeat(self) -> None:
-        """孤儿回收年龄锚的轻量心跳(对照 api/tasks.py 同款模式)。"""
+        """孤儿回收年龄锚的轻量心跳(对照 api/tasks.py 同款模式)。
+
+        可见性(质量 M-1):持续失败 >180s 正是活 runner 被 sibling 重启
+        误杀的前置条件,debug 级生产不可见——连续 3 次失败升 warning。
+        touch 返回 False = 实例已被外部终态(terminate/回收),留痕后停跳
+        (主循环下一轮 get_instance 自行退出)。
+        """
+        misses = 0
         while True:
             await asyncio.sleep(_HEARTBEAT_INTERVAL_SECONDS)
             try:
-                await _sync(self._store.touch, self._instance_id)
+                alive = await _sync(self._store.touch, self._instance_id)
+                misses = 0
+                if alive is False:
+                    logger.warning(
+                        "scenario_heartbeat_instance_finalized",
+                        extra={"instance": self._instance_id},
+                    )
+                    return
             except Exception:  # 心跳失败不杀运行循环(下轮再试)
-                logger.debug(
-                    "scenario_heartbeat_failed", extra={"instance": self._instance_id}
+                misses += 1
+                log = logger.warning if misses >= 3 else logger.debug
+                log(
+                    "scenario_heartbeat_failed",
+                    extra={"instance": self._instance_id, "consecutive_misses": misses},
                 )
 
     # ------------------------------------------------------------------ #

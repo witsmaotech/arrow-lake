@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Path
+from fastapi import APIRouter, Depends, HTTPException, Path
 
 from arrow_lake.api.auth_models import Role
 from arrow_lake.api.deps import authorize_dataset_read, get_checker, get_lake, require_role
@@ -71,17 +71,28 @@ async def full_text_search(
     checker=Depends(get_checker),
 ) -> FullTextSearchResponse:
     """Full-text search on a dataset."""
-    result = await run_sync(
-        lake.text_search,
-        name,
-        req.query,
-        top_k=req.top_k,
-        fts_column=req.fts_column,
-        where=req.where,
-        offset=req.offset,
-        timeout=_SEARCH_TIMEOUT,
-        label="text_search",
-    )
+    from arrow_lake.exceptions import QueryError
+
+    try:
+        result = await run_sync(
+            lake.text_search,
+            name,
+            req.query,
+            top_k=req.top_k,
+            fts_column=req.fts_column,
+            where=req.where,
+            offset=req.offset,
+            timeout=_SEARCH_TIMEOUT,
+            label="text_search",
+        )
+    except QueryError as exc:
+        # 收敛(v1.11.6.6 压测实证):数据集无 FTS 列(结构化集)是调用方
+        # 语义错,非服务端故障——422 指明列名,不再 500。
+        if "not found in dataset" in str(exc):
+            raise HTTPException(
+                status_code=422, detail=str(exc)
+            ) from exc
+        raise
     table = checker.apply_table_filter(result.table, dataset=name, role=_user.role)
     resp = arrow_table_to_response(table, req.format, meta={
         "query": result.query,

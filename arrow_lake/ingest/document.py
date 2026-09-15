@@ -563,8 +563,16 @@ class DocumentParser:
                 _docling_settings.perf.page_batch_size = int(
                     os.environ.get("ARROW_LAKE_DOCLING_PAGE_BATCH", "16")
                 )
-            except (ValueError, AttributeError):
-                pass
+            except (ValueError, AttributeError) as exc:
+                # 收敛:非法值(如 "32x")静默回落 docling 默认 4 并发——
+                # VLM 档也吃该值(M4 扩大了影响面),配错须留痕。
+                import structlog
+
+                structlog.get_logger(__name__).warning(
+                    "docling_page_batch_invalid_fallback",
+                    value=os.environ.get("ARROW_LAKE_DOCLING_PAGE_BATCH"),
+                    error=str(exc)[:80],
+                )
         sig = self._docling_signature()
         cached = _DOCLING_CONVERTERS.get(sig)
         if cached is not None:

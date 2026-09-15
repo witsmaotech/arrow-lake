@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 from starlette.responses import JSONResponse, PlainTextResponse, Response
@@ -164,21 +165,29 @@ async def health_ready(
             status_code=503,
         )
     status: dict = {"status": "ok", "version": _get_version()}
-    storage_text, storage_ok = _check_storage(config)
-    status["storage"] = storage_text
-    if not storage_ok:
-        status["status"] = "degraded"
+    # 收敛(v1.11.6.6 压测实证 166ms):探测原在事件循环上同步串行跑
+    # (storage→gravitino→ray→redis 各一次 HTTP 往返)——同步 urllib 直调
+    # 阻塞 worker,串行叠加延迟。现并行下线程:最坏 = 最慢单探(3s 超时
+    # 上限不变),不再阻塞其他在途请求。
+    import asyncio
 
-    # Dependency probes (non-fatal — informational only)
+    probes: list[tuple[str, Any]] = [("storage", _check_storage, (config,))]
     if config.gravitino.enabled:
-        grav_text, _grav_ok = _check_gravitino(config.gravitino.uri)
-        status["gravitino"] = grav_text
+        probes.append(("gravitino", _check_gravitino, (config.gravitino.uri,)))
     if hasattr(config, "compute") and getattr(config.compute, "ray_dashboard_url", ""):
-        ray_text, _ = _check_ray(config.compute.ray_dashboard_url)
-        status["ray"] = ray_text
+        probes.append(("ray", _check_ray, (config.compute.ray_dashboard_url,)))
     if hasattr(config, "redis") and getattr(config.redis, "enabled", False):
-        redis_text, _ = _check_redis(config.redis.url)
-        status["redis"] = redis_text
+        probes.append(("redis", _check_redis, (config.redis.url,)))
+    results = await asyncio.gather(
+        *(
+            asyncio.to_thread(fn, *args)
+            for _name, fn, args in probes
+        )
+    )
+    for (name, _fn, _args), (text, ok) in zip(probes, results, strict=True):
+        status[name] = text
+        if name == "storage" and not ok:
+            status["status"] = "degraded"
 
     if request is not None:
         _attach_pool_stats(status, request)
@@ -202,18 +211,24 @@ async def health_check(
             status_code=503,
         )
     status: dict = {"status": "ok", "version": _get_version()}
-    storage_text, storage_ok = _check_storage(config)
-    status["storage"] = storage_text
-    if not storage_ok:
-        status["status"] = "degraded"
+    # 收敛(v1.11.6.6):探测并行下线程(同 /health/ready;原同步串行
+    # 阻塞事件循环,压测实测 p50 166ms)。
+    import asyncio
 
-    # Gravitino health (non-fatal — optional dependency)
+    probes: list[tuple[str, Any, tuple]] = [("storage", _check_storage, (config,))]
     if config.gravitino.enabled:
-        grav_text, _grav_ok = _check_gravitino(config.gravitino.uri)
-        status["gravitino"] = grav_text
+        probes.append(("gravitino", _check_gravitino, (config.gravitino.uri,)))
         if config.gravitino.lance_rest_enabled:
-            lr_text, _lr_ok = _check_lance_rest(config.gravitino.lance_rest_uri)
-            status["lance_rest"] = lr_text
+            probes.append(
+                ("lance_rest", _check_lance_rest, (config.gravitino.lance_rest_uri,))
+            )
+    results = await asyncio.gather(
+        *(asyncio.to_thread(fn, *args) for _n, fn, args in probes)
+    )
+    for (name, _fn, _args), (text, ok) in zip(probes, results, strict=True):
+        status[name] = text
+        if name == "storage" and not ok:
+            status["status"] = "degraded"
 
     _attach_pool_stats(status, request)
     http_code = 200 if status["status"] == "ok" else 503

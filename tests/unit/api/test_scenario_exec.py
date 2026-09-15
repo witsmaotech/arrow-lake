@@ -535,3 +535,105 @@ def test_guard_failure_with_compensation_marks_pending(world) -> None:
         )
         assert w.status_code == 200, w.text
         assert w.json()["status"] == "executed"
+
+
+# --- v1.11.6.6 收敛批:审查加固(安全 H-1/质量 H-1/安全 M-1)--------------------
+
+
+def test_instance_detail_skeletonizes_steps_for_restricted_reader(world) -> None:
+    """安全 H-1(收敛):target 受限(列裁/无读权)时,context.steps 与
+    step_runs 的 output/error 同步骨架化——幂等键模板可嵌隐藏列明文、
+    错误串可嵌单元格值,无法按列裁只能整体剥(时间线 status 保留)。"""
+    with _client(world, role=Role.EDITOR, user_id=world.uid) as c:
+        a = _instantiate(c, "GAS.LEAK.RESPONSE", "GAS.ALERT.D001").json()["instance_id"]
+        detail = _await_terminal(c, a)
+        assert detail["instance"]["status"] == "completed"
+        assert detail["instance"]["context"]["steps"]  # 实例化者视角完整
+        assert any(r["output"] for r in detail["step_runs"])
+
+    with _client(
+        world, role=Role.EDITOR, user_id=world.uid,
+        checker=_ColAclChecker(visible=["alert_id", "state"]),
+    ) as c:
+        d = c.get(f"/api/v1/actions/scenarios/instances/{a}").json()
+        assert d["instance"]["context"]["steps"] == {}  # steps 整体剥
+        for r in d["step_runs"]:
+            assert r["output"] == {"acl_pruned": True}
+            assert r["error"] is None
+            assert r["status"] in ("succeeded", "skipped")  # 时间线骨架保留
+    # 无读权:target/steps 双清
+    with _client(
+        world, role=Role.VIEWER, user_id=world.uid,
+        checker=_ColAclChecker(read_ok=False),
+    ) as c:
+        d2 = c.get(f"/api/v1/actions/scenarios/instances/{a}").json()
+        assert d2["instance"]["context"]["steps"] == {}
+        assert all(r["output"] == {"acl_pruned": True} for r in d2["step_runs"])
+
+
+def test_pruned_target_ctx_container_dataset_no_object_type(monkeypatch) -> None:
+    """质量 H-1(收敛):object_type 不得作为表名传列 ACL 查找——容器表
+    dataset("gas.segments")会被拼成三段 miss → fail-open 零裁剪。"""
+    import arrow_lake.api.routers.actions as act_mod
+
+    calls: dict = {}
+
+    def fake_cvc(request, dataset, table=None):
+        calls["dataset"], calls["table"] = dataset, table
+        return frozenset({"uid"})  # 命中 gas.segments 键 → 列受限
+
+    monkeypatch.setattr(act_mod, "get_checker", lambda req: _PassthroughChecker())
+    monkeypatch.setattr("arrow_lake.api.deps.caller_visible_columns", fake_cvc)
+    monkeypatch.setattr(
+        "arrow_lake.api.deps._deny_table_override",
+        lambda req, key, write=False: False,
+    )
+    user = SimpleNamespace(role=Role.EDITOR, permissions=None)
+    rec = {"dataset": "gas.segments", "object_type": "alerts"}
+    ctx = {"target": {"uid": "u1", "secret_col": "s"}, "steps": {"s1": {"o": 1}}}
+    out, restricted = act_mod._pruned_target_ctx(None, user, rec, ctx)
+    assert calls["table"] is None  # 关键:不再把 object_type 当表名
+    assert calls["dataset"] == "gas.segments"
+    assert out["target"] == {"uid": "u1"} and restricted is True
+
+
+def test_pruned_target_ctx_table_deny_clears_target(monkeypatch) -> None:
+    """安全 M-1(收敛):dataset 自身作为二段键的表级 deny → target 清空
+    (check_dataset_access 的 dataset 键查找盖不到 ds.table deny)。"""
+    import arrow_lake.api.routers.actions as act_mod
+
+    monkeypatch.setattr(act_mod, "get_checker", lambda req: _PassthroughChecker())
+    monkeypatch.setattr(
+        "arrow_lake.api.deps.caller_visible_columns",
+        lambda req, dataset, table=None: None,
+    )
+    seen: list[str] = []
+
+    def fake_deny(req, key, write=False):
+        seen.append(key)
+        return key == "gas.segments" and not write
+
+    monkeypatch.setattr("arrow_lake.api.deps._deny_table_override", fake_deny)
+    user = SimpleNamespace(role=Role.EDITOR, permissions=None)
+    rec = {"dataset": "gas.segments", "object_type": "alerts"}
+    ctx = {"target": {"uid": "u1"}}
+    out, restricted = act_mod._pruned_target_ctx(None, user, rec, ctx)
+    assert out["target"] == {} and out["acl_pruned"] is True and restricted is True
+    assert "gas.segments" in seen
+
+
+def test_instance_list_filters_rows_by_dataset_read(world) -> None:
+    """安全 M-1(收敛):非 ADMIN 列表行按 dataset 读权过滤——整库拒读
+    用户不得经实例列表枚举对象标识;ADMIN 不滤。"""
+    with _client(world, role=Role.EDITOR, user_id=world.uid) as c:
+        a = _instantiate(c, "GAS.LEAK.RESPONSE", "GAS.ALERT.D001").json()["instance_id"]
+        _await_terminal(c, a)
+    with _client(
+        world, role=Role.VIEWER, user_id=world.uid,
+        checker=_ColAclChecker(read_ok=False),
+    ) as c:
+        body = c.get("/api/v1/actions/scenarios/instances").json()
+        assert body["instances"] == []  # 无读权 → 行全滤
+    with _client(world, role=Role.ADMIN, user_id=world.uid) as c:
+        body = c.get("/api/v1/actions/scenarios/instances").json()
+        assert any(r["id"] == a for r in body["instances"])  # ADMIN 不滤

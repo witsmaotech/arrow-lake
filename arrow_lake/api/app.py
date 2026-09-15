@@ -830,6 +830,19 @@ def create_app(config: ArrowLakeConfig | None = None) -> FastAPI:
     async def catch_unhandled_errors_middleware(request, call_next):  # noqa: ANN001
         try:
             return await call_next(request)
+        except RuntimeError as exc:
+            # 断连(v1.11.6.6 压测实证):客户端在响应前断开时 starlette
+            # call_next 抛 "No response returned"——不是服务端错误,静默
+            # (debug 级)返回 499,不再刷 unhandled_error 500 堆栈。
+            if "No response returned" in str(exc):
+                import structlog
+                from starlette.responses import Response
+
+                structlog.get_logger(__name__).debug(
+                    "client_disconnected_before_response", path=request.url.path,
+                )
+                return Response(status_code=499)
+            raise
         except Exception as exc:  # noqa: BLE001 — log + normalize to JSON 500
             import structlog
             from starlette.responses import JSONResponse

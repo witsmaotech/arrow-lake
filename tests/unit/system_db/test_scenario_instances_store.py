@@ -14,11 +14,22 @@
 
 from __future__ import annotations
 
+import itertools
 import json
 
 import pytest
 from arrow_lake.system_db import Migrator, SystemDB
 from arrow_lake.system_db.stores.scenario_instances import ScenarioInstanceStore
+
+# V028(收敛):同 (scenario,dataset,object) 至多一条 running——多实例
+# 用例的 object_id 须唯一(首条保持 GAS.ALERT.001 不破坏既有断言)。
+_seq = itertools.count(1)
+
+
+@pytest.fixture(autouse=True)
+def _reset_seq() -> None:
+    global _seq
+    _seq = itertools.count(1)
 
 
 @pytest.fixture
@@ -35,14 +46,15 @@ def store(db: SystemDB) -> ScenarioInstanceStore:
 
 
 def _create(store: ScenarioInstanceStore, *, actor: str = "op", status: str | None = None) -> int:
+    object_id = f"GAS.ALERT.{next(_seq):03d}"
     iid = store.create_instance(
         scenario_id="SCN.TEST",
         scenario_version=1,
         dataset="gas_net",
         object_type="alerts",
-        object_id="GAS.ALERT.001",
+        object_id=object_id,
         actor=actor,
-        context_json=json.dumps({"target": {"object_id": "GAS.ALERT.001"}}),
+        context_json=json.dumps({"target": {"object_id": object_id}}),
         deadline_at="2030-01-01T00:00:00Z",
     )
     if status is not None:
@@ -262,3 +274,63 @@ def test_terminate_instance_cas(store: ScenarioInstanceStore) -> None:
     done = _create(store, status="completed")
     assert store.terminate_instance(done) is False  # completed 不覆写
     assert store.get_instance(done)["status"] == "completed"
+
+
+def test_v028_running_unique_per_object(store: ScenarioInstanceStore) -> None:
+    """V028(收敛):同 (scenario,dataset,object) 至多一条 running——
+    部分唯一索引在 DB 层封死 TOCTOU 双活;终态后可再建(resume/instantiate)。"""
+    iid = _create(store)  # GAS.ALERT.001 running
+    with pytest.raises(Exception, match="UNIQUE"):
+        store.create_instance(
+            scenario_id="SCN.TEST", scenario_version=1, dataset="gas_net",
+            object_type="alerts", object_id="GAS.ALERT.001",
+            context_json="{}",
+        )
+    # 终态释放:failed 后同对象可再 instantiate
+    store.update_instance(iid, status="failed", finished=True)
+    iid2 = store.create_instance(
+        scenario_id="SCN.TEST", scenario_version=1, dataset="gas_net",
+        object_type="alerts", object_id="GAS.ALERT.001", context_json="{}",
+    )
+    assert store.get_instance(iid2)["status"] == "running"
+
+
+def test_exists_running_pushdown(store: ScenarioInstanceStore) -> None:
+    """性能 H-2(收敛):查重 EXISTS 下推——命中返 {id},非同对象/终态返 None。"""
+    iid = _create(store)  # GAS.ALERT.001 running
+    assert store.exists_running(
+        scenario_id="SCN.TEST", dataset="gas_net", object_type="alerts",
+        object_id="GAS.ALERT.001",
+    ) == {"id": iid}
+    assert store.exists_running(
+        scenario_id="SCN.TEST", dataset="gas_net", object_type="alerts",
+        object_id="GAS.ALERT.999",
+    ) is None
+    store.update_instance(iid, status="failed", finished=True)
+    assert store.exists_running(
+        scenario_id="SCN.TEST", dataset="gas_net", object_type="alerts",
+        object_id="GAS.ALERT.001",
+    ) is None
+
+
+def test_list_instances_context_slim(store: ScenarioInstanceStore) -> None:
+    """性能 H-1(收敛):include_context=False 不取 context_json(NULL 占位)。"""
+    _create(store)
+    rows = store.list_instances(include_context=False)
+    assert rows and rows[0]["context_json"] is None
+    assert rows[0]["dataset"] == "gas_net"  # 其余列不受占位影响
+    full = store.list_instances(include_context=True)
+    assert full and full[0]["context_json"]  # 全列形态照旧
+
+
+def test_ack_pending_cas(store: ScenarioInstanceStore) -> None:
+    """M8(收敛):CAS 核销——expect_json 钉旧值,并发变更 → False。"""
+    iid = _create(store)
+    store.update_instance(iid, pending_compensation=["comp_a", "comp_b"])
+    old = store.get_instance(iid)["pending_compensation_json"]
+    ok = store.ack_pending(iid, expect_json=old, remaining=["comp_b"])
+    assert ok is True
+    assert json.loads(store.get_instance(iid)["pending_compensation_json"]) == ["comp_b"]
+    # 旧值重放(并发窗口)→ 0 行 False,不复活已清项
+    assert store.ack_pending(iid, expect_json=old, remaining=[]) is False
+    assert json.loads(store.get_instance(iid)["pending_compensation_json"]) == ["comp_b"]

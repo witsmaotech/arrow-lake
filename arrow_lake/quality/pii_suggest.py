@@ -276,7 +276,10 @@ def suggest_classification(
         and _visible(f.name)
     ]
     if allowed_lower is None:
-        scan_cols: list[str] | None = string_cols or None  # 历史行为:空→全列
+        # 收敛(性能 L-3):无 ACL 且无字符串列 → 空表短路。历史行为是
+        # columns=None 物化全部列 500 行(含 1024-2560 维向量列 ≈ 2-5MB)
+        # 然后一处不用——零字符串列本就无可扫内容。
+        scan_cols: list[str] | None = string_cols
     else:
         scan_cols = string_cols  # 受限视角:空集=零列(不回落全列)
     if scan_cols is None or scan_cols:

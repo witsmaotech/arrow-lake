@@ -68,6 +68,28 @@ def compute_confidence(*, matched_rules: int, unruly_count: int) -> float:
 _SPEC_CACHE: dict[str, tuple[str, Any]] = {}
 _SPEC_CACHE_MAX = 256
 
+# 收敛(性能 M-3):目录反查 N+1——list_scopes 后逐条 get_version 拉全量
+# YAML(100 action ≈ 101 次远端往返 ≈ 200-500ms/次 assess)。rec 级缓存
+# 按 list_scopes 自带的 source_hash 命中(目录变更即自动失效)。
+_REC_CACHE: dict[str, tuple[str, dict[str, Any]]] = {}
+_REC_CACHE_MAX = 256
+
+
+def _catalog_rec(action_store: Any, scope_row: dict[str, Any]) -> dict[str, Any] | None:
+    """带 rec 缓存的目录条目取回(source_hash 未变 → 零往返)。"""
+    scope = scope_row["scope"]
+    h = scope_row.get("source_hash") or ""
+    cached = _REC_CACHE.get(scope)
+    if cached is not None and cached[0] == h:
+        return cached[1]
+    rec = action_store.get_version(scope)
+    if rec is None:
+        return None
+    if len(_REC_CACHE) >= _REC_CACHE_MAX:
+        _REC_CACHE.clear()
+    _REC_CACHE[scope] = (h, rec)
+    return rec
+
 
 def parse_catalog_action(rec: dict[str, Any]) -> Any | None:
     """带缓存的目录条目解析(腐烂条目 → None,调用方跳过)。"""
@@ -245,7 +267,7 @@ def _actionable_actions(
         return []
     out: list[str] = []
     for scope in action_store.list_scopes():
-        rec = action_store.get_version(scope["scope"])
+        rec = _catalog_rec(action_store, scope)
         if rec is None:
             continue
         spec = parse_catalog_action(rec)  # 带缓存;腐烂条目 → None 跳过

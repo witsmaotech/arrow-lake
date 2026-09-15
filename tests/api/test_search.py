@@ -277,3 +277,23 @@ async def test_search_dataset_name_traversal_rejected(client: AsyncClient) -> No
         json={"query_vector": [0.1]},
     )
     assert resp.status_code in (404, 422)
+
+
+@pytest.mark.asyncio
+async def test_fts_missing_column_is_422_not_500(
+    client: AsyncClient, mock_lake: MagicMock
+) -> None:
+    """v1.11.6.6 收敛:数据集无 FTS 列(结构化集)是调用方语义错——
+    422 带列名,不再 500(压测实证 lpg_danger 撞 500)。"""
+    from arrow_lake.exceptions import ErrorCode, QueryError
+
+    mock_lake.text_search.side_effect = QueryError(
+        error_code=ErrorCode.FTS_SEARCH_FAILED,
+        message="Column 'text_content' not found in dataset 'lpg_danger'",
+    )
+    resp = await client.post(
+        "/api/v1/datasets/lpg_danger/search/fts",
+        json={"query": "液化气", "format": "json"},
+    )
+    assert resp.status_code == 422
+    assert "text_content" in resp.json()["detail"]

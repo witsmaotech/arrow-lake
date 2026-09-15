@@ -436,3 +436,22 @@ class TestTTLCache:
         cache.set("b", 2)
         cache.invalidate()
         assert cache.get("a") is None and cache.get("b") is None
+
+
+def test_execute_semantic_error_keeps_connection(db: SystemDB) -> None:
+    """v1.11.6.6 收敛:语义 SQL 错(UNIQUE/约束)不触发重连重放——
+    :memory: 重连即空库,远端重连=白往返+非幂等语句双执行风险。
+    (V028 唯一索引令此预存缺陷显形;修=重连前探 SELECT 1。)"""
+    db.execute("CREATE TABLE sem_t (id INTEGER PRIMARY KEY)")
+    db.commit()
+    db.execute("INSERT INTO sem_t VALUES (1)")
+    db.commit()
+    import pytest as _pytest
+
+    with _pytest.raises(Exception, match="UNIQUE"):
+        db.execute("INSERT INTO sem_t VALUES (1)")  # 语义错:原样上抛
+    # 连接未被误重建(:memory: 重建=空库即 no such table)
+    assert db.execute("SELECT COUNT(*) FROM sem_t").fetchone()[0] == 1
+    db.execute("INSERT INTO sem_t VALUES (2)")  # 连接仍可正常写
+    db.commit()
+    assert db.execute("SELECT COUNT(*) FROM sem_t").fetchone()[0] == 2

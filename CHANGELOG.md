@@ -6,9 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [1.11.6.6] — 四维 review 加固批 · 2026-09-14
+## [1.11.6.6] — 四维 review 加固批 · 2026-09-14(2026-09-15 生产级测试收敛批同版并入)
 
 > 四维综合 review(安全/质量功能×2/性能四路并行 agent+主线预审,范围 a36867a..HEAD 六版本 +5500 行)发现 3 HIGH+12 MEDIUM+12 LOW,本批 P0(H×3+M1-M5)+P1(M6-M12)+LOW 顺手清全量收敛;规划 `docs_offline/v1.11.6.6-hardening-plan.md`。
+>
+> **2026-09-15 生产级测试收敛批(同版收敛,沿 v1.10.7 先例 tag 强推)**:live 压测(关键端点并发梯度 p50/p95/p99,2 万行聚合热态 4ms/107M 行亚秒/峰值 CPU 400% 内存 3.9/32GiB)+ 三维审查 agent(安全/性能/静默失败)对修复批本身的复审,发现并全量收敛:1 安全 HIGH+1 可靠性 HIGH+2 性能 HIGH+4 MEDIUM+LOW 批。
+
+### 2026-09-15 收敛批(压测+三维复审发现)
+
+- **安全 H-1(残留泄露通道封堵)**:实例详情原只裁 `context.target`——`context.steps` 与 `step_runs[*].output` 原样返回,幂等键模板(如 `fix-{{target.phone}}`,action YAML 作者可控)渲染后含隐藏列明文、错误串可嵌单元格值。修:target 受限(列裁/无读权)时 steps 整体剥离+step_runs output/error 骨架化(时间线 status 保留)
+- **质量 H-1(容器表剪枝 fail-open)**:`_pruned_target_ctx` 误把 `object_type`(Object Set 语义类型)当物理表名传 `caller_visible_columns` 二段名查找——容器表 dataset("gas.segments")被拼成三段 miss → ACL 查不到 → 零剪枝。修:只传 dataset(dataset 自身分层查找已覆盖二段键)
+- **质量 H-2(runner 崩溃=对象级死锁)**:`run()` 循环内未预期异常(如 Hrana stream error,有实证史)无兜底 → 实例永久 running + M9 对该对象一律 409 + 零日志。修:顶层 except 落 failed(不动 context)+ `context_json` 腐烂按空上下文续跑警告
+- **性能 H-1/H-2(context_json 白传输)**:列表/查重原 SQL 层全量取回 context_json(随步数增长可达几十 KB/行)再在路由层丢弃——console 2s 轮询放大为每轮 ~1MB;查重拉 200 行全字段比 3 个小字段且 >200 running 盲区漏检。修:`list_instances(include_context=False)` NULL 占位列瘦身 + `exists_running` EXISTS 下推 + **V028 部分唯一索引**(running 态 `(scenario,dataset,object,object)` 唯一,存量重复先回收;TOCTOU 窗口 DB 层封死,并发 INSERT 撞索引转 409)
+- **性能 M-1(事件循环纪律)**:路由层 6 处新增 `async def` 直调同步 libSQL 远端(阻塞 worker 1-3ms/次)——统一 `run_sync` 下线程(实例读写/查重/resume/terminate/ack/pinned 版本/action 目录批读)
+- **性能 M-2(写锁纪律)**:ScenarioInstanceStore 全部 mutator 补 `with_write`(runner×心跳×ack 三线程并发写同一共享连接,锁竞争曾依赖断线重连兜底放大为秒级停顿)
+- **层缺陷(连接重连误伤,V028 令其显形)**:`SystemDB.execute` 对一切异常重连重放——UNIQUE 语义错也触发(:memory: 重连=空库;远端=白往返+非幂等语句双执行风险)。修:重连前探 `SELECT 1`,活连接语义错原样上抛
+- **安全 M-1**:实例列表非 ADMIN 按 dataset 读权过滤行(整库拒读用户不得枚举对象标识);`_pruned_target_ctx` 补表级 deny(`ds.table` 键)
+- **质量 M-1(心跳可见性)**:连续 3 次失败升 warning(持续失败>180s 正是被误杀前置条件);`touch` 返 False(外部终态)留痕停跳
+- **质量 M-2(核销 CAS)**:并发核销不再互相复活已清项(`ack_pending` WHERE 钉旧值);JSON 腐烂统一 422 带原因(原实例侧 500/步侧误 409);ack 补 dataset 读权门禁
+- **压测撞出**:客户端断连 → starlette `No response returned` → 500 刷栈,现捕获静默 499;`/health`·`/health/ready` 探测并行下线程(原同步串行 urllib 阻塞事件循环,压测实测 p50 166ms);FTS 无 `text_content` 列(结构化集)422 带列名(原 500)
+- **性能 M-3**:assess 目录反查 N+1(100 action≈101 次往返)rec 级缓存按 source_hash 命中
+- **Migrator 收敛**:竞争认定区分竞争特征(duplicate/UNIQUE→info)与真实故障(warning 带原异常);PII 零字符串列+无 ACL 时空表短路(免 2-5MB 向量列物化);ScenarioSpec 步数上帽 200;page_batch 非法值 warning;契约 hints 降级留痕;resumable 词表单源;计时断言放宽防 CI flake;console 补偿核销歧义文案
+- **裁决不改**:`update_lifecycle` count+update 双扫是 H8 写前物理唯一性守卫(先写后验=脏写无法回滚),大表缓解走目标列 BTREE 索引(运维面)
+- 测试:+14 用例(V028 唯一索引生命周期/exists_running/列瘦身/CAS 核销/语义错不重连/骨架化/容器表/表 deny/列表行过滤/runner 崩溃兜底/FTS 422);受影响面 445 全绿;lint 相对基线净减
 
 ### HIGH ×3
 - **H-1 场景孤儿回收误杀活 runner**:启动期 `mark_orphaned_running()` 原无条件杀全部 running——sibling worker 重启(panic/OOM 常客)即杀活 runner(runner 循环顶见非 running 静默退出)。修:V027 `scenario_instances.updated_at` 列(存量回填 created_at)+ 回收加年龄条件(`stale_seconds=180`,对照 tasks.py 孤儿回收先例)+ runner 内置 20s 心跳(`store.touch`)——单步执行期间也维持年龄锚,超龄即真孤儿

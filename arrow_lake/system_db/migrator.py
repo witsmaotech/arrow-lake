@@ -90,10 +90,21 @@ class Migrator:
                         "VALUES (?, ?)",
                         (version, path.name),
                     )
-            except Exception:
-                # 竞争输家:sibling 已提交该版本 → 复核命中即跳过,否则上抛
+            except Exception as exc:
+                # 竞争输家:sibling 已提交该版本 → 复核命中即跳过,否则上抛。
+                # 收敛(v1.11.6.6):版本行存在=该版本已被应用过,跳过语义
+                # 正确;但"竞争特征"(duplicate column/UNIQUE)与真实故障
+                # (磁盘/权限/语法)要分开留痕——后者 warning 带原异常,
+                # 防真实错误被误标 race_lost 无迹可查。
                 if version in self.applied_versions():
-                    logger.info("system_db_migrate_race_lost", version=version)
+                    msg = str(exc).lower()
+                    is_race = "unique" in msg or "duplicate" in msg or "already" in msg
+                    log = logger.info if is_race else logger.warning
+                    log(
+                        "system_db_migrate_race_lost" if is_race
+                        else "system_db_migrate_skip_on_preexisting_version",
+                        version=version, error=str(exc)[:200],
+                    )
                     continue
                 raise
             applied_now.append(version)

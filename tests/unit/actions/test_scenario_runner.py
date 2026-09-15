@@ -818,3 +818,50 @@ async def test_manual_statuses_fail_instance(step_status: str) -> None:
     assert "act_a" in (inst["error"] or "")
     runs = {r["step_id"]: r["status"] for r in store.list_step_runs(iid)}
     assert runs == {"act_a": step_status}
+
+
+def test_run_crash_marks_instance_failed() -> None:
+    """质量 H-2(v1.11.6.6 收敛):主循环内未预期异常(如 system_db 抖动)
+    不得让实例永久 running——顶层兜底落 failed,且不覆盖真实 context。"""
+    import arrow_lake.actions.runner as runner_mod
+
+    class _CrashOnceStore(FakeStore):
+        def __init__(self) -> None:
+            super().__init__()
+            self.crashed = False
+
+        def update_instance(self, iid, **kw):
+            if not self.crashed:
+                self.crashed = True
+                raise RuntimeError("Hrana: stream error (simulated db blip)")
+            return super().update_instance(iid, **kw)
+
+    spec = _spec(
+        steps=[ScenarioStep(id="s1", action="ACT.A")],
+    )
+    store = _CrashOnceStore()
+    iid = store.create_instance(
+        scenario_id="SCN.CRASH", scenario_version=1,
+        context_json='{"target": {"uid": "u1"}, "actor": {}}',
+    )
+
+    async def run_action(action_id: str, step_id: str) -> dict:
+        return {"status": "succeeded"}
+
+    async def run_assess(scope) -> dict:
+        return {"conclusions": [], "unruly": []}
+
+    runner = runner_mod.ScenarioRunner(
+        spec=spec, store=store, instance_id=iid,
+        run_action=run_action, run_assess=run_assess,
+    )
+    import asyncio
+
+    asyncio.run(runner.run())  # 不抛
+    rec = store.instances[iid]
+    assert rec["status"] == "failed"
+    assert "runner crashed" in (rec["error"] or "")
+    # 崩溃兜底不动 context(target 历史保留)
+    import json as _json
+
+    assert _json.loads(rec["context_json"])["target"] == {"uid": "u1"}

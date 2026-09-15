@@ -457,7 +457,7 @@ function openInstances(scenarioId, focusId = null) {
       <div style="display:flex;gap:8px;align-items:center;padding:5px 0">
         <span class="mono" style="font-size:.74rem">${esc(aid)}</span>
         <button class="btn btn-ghost btn-sm" style="margin-left:auto;color:var(--danger)" data-comp="${esc(aid)}">人工执行</button>
-        <button class="btn btn-ghost btn-sm" data-ack="${esc(aid)}"${compStep[aid] ? "" : " disabled title=\"无声明步记录\""}>核销</button>
+        <button class="btn btn-ghost btn-sm" data-ack="${esc(aid)}"${compStep[aid] ? "" : " disabled title=\"无声明步记录\""} title="${compStep[aid] ? "核销即清该补偿 action 的全部待办" : "无声明步记录"}">核销</button>
       </div>`).join("");
     box.innerHTML = `
       <div class="panel flush">

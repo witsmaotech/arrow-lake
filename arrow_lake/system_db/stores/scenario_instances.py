@@ -82,15 +82,15 @@ class ScenarioInstanceStore:
         context_json: str = "{}",
         deadline_at: str | None = None,
     ) -> int:
-        cur = self._db.execute(
-            "INSERT INTO scenario_instances "
-            "(scenario_id, scenario_version, dataset, object_type, object_id, "
-            f" status, context_json, deadline_at, actor, updated_at) "
-            f"VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?, {_NOW})",
-            (scenario_id, scenario_version, dataset, object_type, object_id,
-             context_json, deadline_at, actor),
-        )
-        self._db.commit()
+        with self._db.with_write() as db:
+            cur = db.execute(
+                "INSERT INTO scenario_instances "
+                "(scenario_id, scenario_version, dataset, object_type, object_id, "
+                f" status, context_json, deadline_at, actor, updated_at) "
+                f"VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?, {_NOW})",
+                (scenario_id, scenario_version, dataset, object_type, object_id,
+                 context_json, deadline_at, actor),
+            )
         return int(getattr(cur, "lastrowid", 0) or 0)
 
     def update_instance(
@@ -136,23 +136,51 @@ class ScenarioInstanceStore:
             return False
         sets.append(f"updated_at={_NOW}")  # H-1:每次写即心跳(孤儿回收年龄锚)
         params.append(instance_id)
-        cur = self._db.execute(
-            f"UPDATE scenario_instances SET {', '.join(sets)} WHERE id=?", tuple(params)
-        )
-        self._db.commit()
+        with self._db.with_write() as db:
+            cur = db.execute(
+                f"UPDATE scenario_instances SET {', '.join(sets)} WHERE id=?",
+                tuple(params),
+            )
         return bool(cur.rowcount) if hasattr(cur, "rowcount") else True
 
     def touch(self, instance_id: int) -> bool:
-        """仅刷新 updated_at(runner 心跳;孤儿回收年龄锚,H-1)。"""
-        cur = self._db.execute(
-            f"UPDATE scenario_instances SET updated_at={_NOW} WHERE id=? AND status='running'",
-            (instance_id,),
-        )
-        self._db.commit()
+        """仅刷新 updated_at(runner 心跳;孤儿回收年龄锚,H-1)。
+
+        返回 False = 0 行 —— 实例已非 running(外部 terminate/回收),
+        长步执行期的心跳据此感知并留痕(主循环下一轮 get_instance 退出)。
+        """
+        with self._db.with_write() as db:
+            cur = db.execute(
+                f"UPDATE scenario_instances SET updated_at={_NOW} "
+                "WHERE id=? AND status='running'",
+                (instance_id,),
+            )
         return bool(cur.rowcount) if hasattr(cur, "rowcount") else True
 
-    # resume CAS 可重开的终态(与 router 的 409 校验同词表)
+    def ack_pending(
+        self, instance_id: int, *, expect_json: str | None, remaining: list[str]
+    ) -> bool:
+        """M8 CAS 核销:WHERE 钉旧 pending 串,0 行=并发核销/已变更 → 409。
+
+        读-改-写无条件覆盖会让两笔并发核销互相复活对方已清项(审计与
+        实例状态静默分裂)——expect_json 是调用方读出的原始串(None 匹配
+        SQL NULL)。
+        """
+        import json as _json
+
+        with self._db.with_write() as db:
+            cur = db.execute(
+                f"UPDATE scenario_instances SET pending_compensation_json=?, "
+                f"updated_at={_NOW} "
+                "WHERE id=? AND pending_compensation_json IS ?",
+                (_json.dumps(remaining), instance_id, expect_json),
+            )
+        return bool(cur.rowcount) if hasattr(cur, "rowcount") else True
+
+    # resume CAS 可重开的终态——router 409 校验共用本词表(单一来源,
+    # 防 SQL 内联/路由校验/常量三处漂移)
     RESUMABLE_STATUSES = ("failed", "timeout", "compensated", "terminated")
+    _RESUMABLE_SQL = "(" + ", ".join(f"'{s}'" for s in RESUMABLE_STATUSES) + ")"
 
     def resume_instance(self, instance_id: int, *, deadline_at: str | None = "") -> bool:
         """CAS 终态→running(M9,v1.11.6.6)。
@@ -160,26 +188,25 @@ class ScenarioInstanceStore:
         WHERE 带终态条件:并发 resume/resume(或 terminate 竞争)仅一方
         成功,0 行=状态已漂移(调用方 409);防双活 runner。
         """
-        cur = self._db.execute(
-            f"UPDATE scenario_instances SET status='running', error=NULL, "
-            f"deadline_at=?, finished_at=NULL, updated_at={_NOW} "
-            "WHERE id=? AND status IN "
-            "('failed','timeout','compensated','terminated')",
-            (deadline_at or None, instance_id),
-        )
-        self._db.commit()
+        with self._db.with_write() as db:
+            cur = db.execute(
+                f"UPDATE scenario_instances SET status='running', error=NULL, "
+                f"deadline_at=?, finished_at=NULL, updated_at={_NOW} "
+                f"WHERE id=? AND status IN {self._RESUMABLE_SQL}",
+                (deadline_at or None, instance_id),
+            )
         return bool(cur.rowcount) if hasattr(cur, "rowcount") else True
 
     def terminate_instance(self, instance_id: int) -> bool:
         """CAS running→terminated(LOW,v1.11.6.6):读-写窗口内实例自行
         completed/failed 时不覆写其终态(0 行=已漂移,调用方 409)。"""
-        cur = self._db.execute(
-            f"UPDATE scenario_instances SET status='terminated', "
-            f"error='terminated by admin', finished_at={_NOW}, updated_at={_NOW} "
-            "WHERE id=? AND status='running'",
-            (instance_id,),
-        )
-        self._db.commit()
+        with self._db.with_write() as db:
+            cur = db.execute(
+                f"UPDATE scenario_instances SET status='terminated', "
+                f"error='terminated by admin', finished_at={_NOW}, updated_at={_NOW} "
+                "WHERE id=? AND status='running'",
+                (instance_id,),
+            )
         return bool(cur.rowcount) if hasattr(cur, "rowcount") else True
 
     def mark_orphaned_running(
@@ -192,15 +219,15 @@ class ScenarioInstanceStore:
         退 created_at),阈值须 > 心跳间隔;单步执行期间心跳由 runner 内
         置任务维持(见 ScenarioRunner.run),超龄即真孤儿。
         """
-        cur = self._db.execute(
-            f"UPDATE scenario_instances SET status='failed', "
-            f"error='orphaned runner: owning worker exited', finished_at={_NOW} "
-            "WHERE status='running' "
-            "AND (strftime('%s','now') - "
-            "     COALESCE(strftime('%s', updated_at), strftime('%s', created_at))) > ?",
-            (int(stale_seconds),),
-        )
-        self._db.commit()
+        with self._db.with_write() as db:
+            cur = db.execute(
+                f"UPDATE scenario_instances SET status='failed', "
+                f"error='orphaned runner: owning worker exited', finished_at={_NOW} "
+                "WHERE status='running' "
+                "AND (strftime('%s','now') - "
+                "     COALESCE(strftime('%s', updated_at), strftime('%s', created_at))) > ?",
+                (int(stale_seconds),),
+            )
         return int(getattr(cur, "rowcount", 0) or 0)
 
     # -- 实例读 -----------------------------------------------------------
@@ -219,8 +246,15 @@ class ScenarioInstanceStore:
         status: str | None = None,
         limit: int = 50,
         offset: int = 0,
+        include_context: bool = True,
     ) -> list[dict[str, Any]]:
-        sql = f"SELECT {_INSTANCE_COLS} FROM scenario_instances"
+        """include_context=False 列瘦身(性能 H-1):context_json 是随步数
+        增长的累积对象(可达几十 KB/行),列表/查重不需要——SELECT 用
+        NULL 占位保持行结构,免传输免反序列化。"""
+        cols = _INSTANCE_COLS if include_context else _INSTANCE_COLS.replace(
+            "context_json", "NULL"
+        )
+        sql = f"SELECT {cols} FROM scenario_instances"
         conds: list[str] = []
         params: list[Any] = []
         if scenario_id is not None:
@@ -236,6 +270,28 @@ class ScenarioInstanceStore:
         params.append(int(offset))
         rows = self._db.execute(sql, tuple(params)).fetchall()
         return [_instance_row(r) for r in rows]
+
+    def exists_running(
+        self,
+        *,
+        scenario_id: str,
+        dataset: str | None,
+        object_type: str | None,
+        object_id: str | None,
+    ) -> dict[str, Any] | None:
+        """性能 H-2/M9:同 (scenario,dataset,object) running 查重下推 SQL。
+
+        原实现拉 200 行全字段(含 context_json)内存比对——>200 条 running
+        时盲区漏检(双活 runner),且单次 instantiate 可达 MB 级传输。
+        V028 部分唯一索引兜底 TOCTOU 窗口。
+        """
+        row = self._db.execute(
+            "SELECT id FROM scenario_instances "
+            "WHERE scenario_id=? AND status='running' "
+            "AND dataset=? AND object_type=? AND object_id=? LIMIT 1",
+            (scenario_id, dataset, object_type, object_id),
+        ).fetchone()
+        return {"id": row[0]} if row is not None else None
 
     def count_instances(
         self,
@@ -264,16 +320,16 @@ class ScenarioInstanceStore:
     def start_step(self, instance_id: int, step_id: str, kind: str) -> None:
         import json
 
-        self._db.execute(
-            f"INSERT INTO scenario_step_runs "
-            f"(instance_id, step_id, kind, status, output_json, started_at) "
-            f"VALUES (?, ?, ?, 'running', ?, {_NOW}) "
-            "ON CONFLICT(instance_id, step_id) DO UPDATE SET "
-            "status='running', output_json='{}', error=NULL, "
-            f"started_at={_NOW}",
-            (instance_id, step_id, kind, json.dumps({})),
-        )
-        self._db.commit()
+        with self._db.with_write() as db:
+            db.execute(
+                f"INSERT INTO scenario_step_runs "
+                f"(instance_id, step_id, kind, status, output_json, started_at) "
+                f"VALUES (?, ?, ?, 'running', ?, {_NOW}) "
+                "ON CONFLICT(instance_id, step_id) DO UPDATE SET "
+                "status='running', output_json='{}', error=NULL, "
+                f"started_at={_NOW}",
+                (instance_id, step_id, kind, json.dumps({})),
+            )
 
     def finish_step(
         self,
@@ -286,16 +342,16 @@ class ScenarioInstanceStore:
         error: str | None = None,
     ) -> bool:
         """终态 upsert;未启动步(网关 skipped/超时 timeout)也建行。"""
-        self._db.execute(
-            f"INSERT INTO scenario_step_runs "
-            f"(instance_id, step_id, kind, status, output_json, error, started_at, finished_at) "
-            f"VALUES (?, ?, ?, ?, ?, ?, {_NOW}, {_NOW}) "
-            "ON CONFLICT(instance_id, step_id) DO UPDATE SET "
-            "status=excluded.status, output_json=excluded.output_json, "
-            "error=excluded.error, finished_at=excluded.finished_at",
-            (instance_id, step_id, kind, status, output_json or "{}", error),
-        )
-        self._db.commit()
+        with self._db.with_write() as db:
+            db.execute(
+                f"INSERT INTO scenario_step_runs "
+                f"(instance_id, step_id, kind, status, output_json, error, started_at, finished_at) "
+                f"VALUES (?, ?, ?, ?, ?, ?, {_NOW}, {_NOW}) "
+                "ON CONFLICT(instance_id, step_id) DO UPDATE SET "
+                "status=excluded.status, output_json=excluded.output_json, "
+                "error=excluded.error, finished_at=excluded.finished_at",
+                (instance_id, step_id, kind, status, output_json or "{}", error),
+            )
         return True
 
     def list_step_runs(self, instance_id: int) -> list[dict[str, Any]]:

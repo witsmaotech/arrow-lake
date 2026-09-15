@@ -329,7 +329,10 @@ class ScenarioSpec(BaseModel):
     title: str
     process: str | None = None
     entries: tuple[str, ...] = ()
-    steps: tuple[ScenarioStep, ...] = Field(min_length=1)
+    # 收敛(性能 L-1):步数上帽 200——runner 每批全量重写 context_json
+    # (O(S×Σ输出))+ 级联 skip O(S²),千步级病态 spec 才会显形;现实
+    # 场景 ≤30 步,200 帽只挡病态输入不挡真实用法。
+    steps: tuple[ScenarioStep, ...] = Field(min_length=1, max_length=200)
     gateways: tuple[ScenarioGateway, ...] = ()
     timeout: str | None = None
     on_timeout: str | None = None
